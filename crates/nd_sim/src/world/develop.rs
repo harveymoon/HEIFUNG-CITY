@@ -67,7 +67,6 @@ impl World {
         t.depot_capacity = depots * transit::DEPOT_CAPACITY;
         t.waiting = bus_wait + rail_wait;
         t.riding = riding;
-        self.transit.stats = t.clone();
         let r = &mut self.rail.stats;
         r.waiting = rail_wait;
         r.riding = on_train;

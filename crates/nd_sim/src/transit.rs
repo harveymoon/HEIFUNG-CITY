@@ -23,9 +23,10 @@ pub const BUS_TRIP_MIN: f32 = 160.0;
 pub const BUS_CAPACITY: usize = 40;
 /// Seconds a bus stands at a stop.
 pub const DWELL_SECONDS: f32 = 18.0;
-/// Sim minutes a rider waits before giving up and walking. Traffic runs
-/// at the walking time scale (a bus loop of a kilometre takes an hour or
-/// two of clock), and the bus is still many times faster than feet.
+/// Sim minutes a rider waits before giving up and walking. Vehicles move
+/// `traffic_seconds_per_tick` (4) seconds per clock minute, so a bus loop of
+/// a kilometre comes round in well under an hour; three hours is a generous
+/// ceiling for a sparse or broken line.
 pub const WAIT_GIVE_UP: u64 = 180;
 pub const SERVICE_START: u32 = 5 * 60 + 30;
 pub const SERVICE_END: u32 = 23 * 60 + 30;
@@ -134,8 +135,6 @@ pub struct TransitStats {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Transit {
     pub routes: SlotMap<RouteId, BusRoute>,
-    #[serde(default)]
-    pub stats: TransitStats,
     #[serde(default)]
     pub next_line: u32,
     #[serde(default)]

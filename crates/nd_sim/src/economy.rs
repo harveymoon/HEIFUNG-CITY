@@ -110,6 +110,7 @@ pub struct Economy {
     pub emigrated_total: u32,
     /// Immigrants turned away because nothing was affordable, cumulative.
     pub priced_out_total: u32,
+    /// Market statistics: their only home (rail's are `Rail::stats`).
     pub market: crate::market::MarketStats,
     #[serde(default)]
     pub parking_capacity: u32,
@@ -137,6 +138,8 @@ pub struct Economy {
     pub tax_today: f32,
     #[serde(default)]
     pub power: crate::power::PowerStats,
+    /// Bus statistics: their only home. Older saves also carry a copy in
+    /// `transit.stats`, which is ignored on load.
     #[serde(default)]
     pub transit: crate::transit::TransitStats,
     /// Building sites, and the homes and jobs they will add when they open.
