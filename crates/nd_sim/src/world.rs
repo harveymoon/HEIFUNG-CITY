@@ -120,7 +120,7 @@ impl Default for WorldConfig {
 /// partial work: the next cycle starts afresh and the grid merely stays a
 /// little older for two hours.
 #[derive(Default)]
-pub struct LandValueWork {
+struct LandValueWork {
     builder: Option<LandValueBuilder>,
 }
 
@@ -2685,7 +2685,14 @@ impl World {
                 link.road_connected = road_ok;
             }
         }
+        let had_yards = !self.yards.is_empty();
         self.refresh_facility_cache();
+        // The freight timetable starts when the first yard opens; otherwise
+        // the stranded-goods drain would see "no train for two headways"
+        // before the first one has had its chance.
+        if !had_yards && !self.yards.is_empty() {
+            self.rail.last_freight_tick = self.clock.tick;
+        }
     }
 
     /// The building on a facility's lot.
@@ -4514,9 +4521,17 @@ mod tests {
         let rent0 = w.buildings[bid].rent;
         // Tenants move in while the land is cheap. The grid is recomputed
         // every two hours, so the scenario value is pinned before each tick.
+        // Nobody here eats (IdleMind), so satiety is pinned: the test is
+        // about rent driving people out, not hunger.
+        let fed = |w: &mut World| {
+            for c in w.citizens.values_mut() {
+                c.satiety = 1.0;
+            }
+        };
         let mut minds = IdleMind;
         for _ in 0..600 {
             w.land_value.fill(0.1);
+            fed(&mut w);
             w.tick(&mut minds);
         }
         let residents = w.buildings[bid].residents.clone();
@@ -4525,6 +4540,7 @@ mod tests {
         // The land becomes dear. Three days of that and the building is rebuilt.
         for _ in 0..(REDEVELOP_DAYS as usize + 1) * 1440 {
             w.land_value.fill(0.95);
+            fed(&mut w);
             w.tick(&mut minds);
         }
         let b = &w.buildings[bid];
@@ -4538,8 +4554,10 @@ mod tests {
         assert!(!priced_out.is_empty(), "somebody is priced out by {rent:.0}/day");
         for _ in 0..5 * 1440 {
             w.land_value.fill(0.95);
+            fed(&mut w);
             w.tick(&mut minds);
         }
+        assert!(w.citizens.values().all(|c| c.hungry_days == 0), "nobody is starving: what follows is about rent");
         for cid in &priced_out {
             assert!(w.citizens.get(*cid).map_or(true, |c| c.home != Some(bid)), "a priced-out tenant is still there");
         }
@@ -4813,5 +4831,634 @@ mod tests {
             w.tick(&mut minds);
         }
         assert!(w.rail.trains.values().all(|t| t.stops.iter().all(|(s, _)| w.buildings.contains_key(*s))), "no train aims at a vanished stop");
+    }
+
+    // ── review follow-ups ────────────────────────────────────────────────────
+
+    /// The rail scenario of `trains_call_at_stations_and_yards_bring_freight`
+    /// up to the point where trains run: branch, street, zones, two
+    /// connected stations and a connected yard.
+    fn rail_city() -> (World, GestureId, BuildingId, BuildingId, BuildingId) {
+        use crate::rail::RailFacility;
+        let mut w = World::new(WorldConfig::default());
+        w.economy.treasury = 200_000.0;
+        let branch = w.add_rail(&[Vec2::new(-200.0, TRUNK_Y), Vec2::new(-100.0, -400.0), Vec2::new(-40.0, -300.0), Vec2::new(0.0, -200.0), Vec2::new(0.0, -60.0), Vec2::new(900.0, -60.0)]);
+        w.add_road(&[Vec2::new(-100.0, 0.0), Vec2::new(1000.0, 0.0)], 1, 1);
+        w.add_zone(vec![Vec2::new(150.0, 10.0), Vec2::new(330.0, 10.0), Vec2::new(330.0, 90.0), Vec2::new(150.0, 90.0)], LandUse::Residential);
+        w.add_zone(vec![Vec2::new(650.0, 10.0), Vec2::new(830.0, 10.0), Vec2::new(830.0, 90.0), Vec2::new(650.0, 90.0)], LandUse::Commercial);
+        let place = |w: &mut World, kind, p| {
+            let id = w.place_rail_facility(kind, p).expect("facility");
+            let end = w.facilities.values().find(|f| f.building == Some(id)).unwrap().road_line()[1];
+            w.add_road(&[end, Vec2::new(end.x, 0.0)], 1, 1);
+            assert!(w.buildings[id].rail.as_ref().unwrap().works(), "{:?}", w.buildings[id].rail);
+            id
+        };
+        let a = place(&mut w, RailFacility::Station, Vec2::new(240.0, -45.0));
+        let b = place(&mut w, RailFacility::Station, Vec2::new(740.0, -45.0));
+        let yard = place(&mut w, RailFacility::FreightYard, Vec2::new(460.0, -50.0));
+        (w, branch, a, b, yard)
+    }
+
+    #[test]
+    fn bulldozing_the_branch_takes_the_trains_off_and_strands_riders_sanely() {
+        use crate::rail::TrainKind;
+        let (mut w, branch, station_a, station_b, _) = rail_city();
+        let home_lot = lot_near(&w, Vec2::new(240.0, 40.0), LandUse::Residential);
+        w.build_on(home_lot);
+        let home = w.lots[home_lot].building.unwrap();
+        w.finish_construction(home);
+        let mut minds = IdleMind;
+        for _ in 0..600 {
+            if !w.citizens.is_empty() {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let rider = w.citizens.keys().next().expect("someone moved in");
+        // Let a passenger train get well onto the branch.
+        let mut train = None;
+        for _ in 0..600 {
+            w.tick(&mut minds);
+            if let Some((id, t)) = w.rail.trains.iter().find(|(_, t)| t.kind == TrainKind::Passenger && t.on_branch()) {
+                train = Some((id, t.head()));
+                break;
+            }
+        }
+        let (train, head) = train.expect("a train on the branch");
+        // Someone is aboard, bound for station B.
+        w.rail.trains[train].passengers.push(rider);
+        w.citizens[rider].activity = Activity::OnTrain { train };
+        w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Rail { board: station_a, alight: station_b }, target: home, purpose: Purpose::Home, since: 0 });
+        w.start_project();
+        w.remove_gesture(branch);
+        w.implement();
+        assert!(w.rail.trains.is_empty(), "every train came off with the rebuild");
+        let c = &w.citizens[rider];
+        assert!(matches!(c.activity, Activity::Idle) && c.transit.is_none(), "the rider stands where the train was: {}", c.activity.label());
+        assert!(c.pos.distance(head) < 1.0 && c.pos.is_finite());
+        assert!(!w.buildings[station_a].rail.as_ref().unwrap().rail_connected, "the stations are off the railway");
+        for _ in 0..600 {
+            w.tick(&mut minds);
+            for t in w.rail.trains.values() {
+                assert!(t.stops.iter().all(|(s, _)| w.buildings.contains_key(*s)), "no train aims at a vanished stop");
+                for p in &t.poly {
+                    let (_, _, q) = w.roads.nearest_rail(*p).expect("track exists");
+                    assert!(q.distance(*p) < 3.0, "a train's route leaves the track at {p:?}");
+                }
+            }
+        }
+        assert!(w.citizens.values().all(|c| !matches!(c.activity, Activity::OnTrain { .. }) || w.rail.trains.values().any(|t| t.passengers.contains(&rider))));
+    }
+
+    #[test]
+    fn imports_stranded_at_a_disconnected_yard_go_by_truck_and_sites_never_wait() {
+        let (mut w, branch, _, _, yard) = rail_city();
+        let shop_lot = lot_near(&w, Vec2::new(815.0, 40.0), LandUse::Commercial);
+        w.build_on(shop_lot);
+        let shop = w.lots[shop_lot].building.unwrap();
+        w.finish_construction(shop);
+        // A site's parts never queue for a train.
+        let queued0 = w.buildings[yard].rail_inbound.len();
+        let site_lot = lot_near(&w, Vec2::new(700.0, 40.0), LandUse::Commercial);
+        w.build_on(site_lot);
+        assert_eq!(w.buildings[yard].rail_inbound.len(), queued0, "construction parts came by truck");
+        // A shop's order does, and it is stranded when the branch goes.
+        w.import(shop, Resource::Parts, 10.0, 100.0);
+        assert_eq!(w.buildings[yard].rail_inbound.len(), queued0 + 1);
+        let stock0 = w.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Parts);
+        w.start_project();
+        w.remove_gesture(branch);
+        w.implement();
+        assert!(!w.buildings[yard].rail.as_ref().unwrap().works());
+        let mut minds = IdleMind;
+        for _ in 0..60 {
+            w.tick(&mut minds);
+        }
+        assert!(w.buildings[yard].rail_inbound.is_empty(), "the stranded order left the yard within the hour");
+        let delivered = w.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Parts) > stock0;
+        let on_the_road = w.traffic.cars.values().any(|c| c.cargo.is_some_and(|k| k.to == shop && k.resource == Resource::Parts));
+        assert!(delivered || on_the_road, "the parts are on a truck or on the shelf");
+        // A working yard whose trains stopped coming is drained too.
+        let (mut w, _, _, _, yard) = rail_city();
+        let shop_lot = lot_near(&w, Vec2::new(815.0, 40.0), LandUse::Commercial);
+        w.build_on(shop_lot);
+        let shop = w.lots[shop_lot].building.unwrap();
+        w.finish_construction(shop);
+        while w.clock.tick % 60 != 59 {
+            w.tick(&mut minds);
+        }
+        w.import(shop, Resource::Parts, 10.0, 100.0);
+        assert_eq!(w.buildings[yard].rail_inbound.len(), 1);
+        w.rail.last_freight_tick = 0;
+        w.tick(&mut minds);
+        assert!(w.buildings[yard].rail_inbound.is_empty(), "two headways without a freight train and the goods go by road");
+    }
+
+    #[test]
+    fn a_short_commute_at_eight_arrives_before_nine() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
+        let home_lot = lot_near(&w, Vec2::new(150.0, 20.0), LandUse::Residential);
+        let work_lot = lot_near(&w, Vec2::new(-150.0, 20.0), LandUse::Commercial);
+        w.build_on(home_lot);
+        w.build_on(work_lot);
+        let home = w.lots[home_lot].building.unwrap();
+        let work = w.lots[work_lot].building.unwrap();
+        w.finish_construction(home);
+        w.finish_construction(work);
+        let apart = w.lots[home_lot].entrance().distance(w.lots[work_lot].entrance());
+        assert!((250.0..=350.0).contains(&apart), "home and work are {apart:.0} m apart");
+        assert!((w.config.walk_speed - w.config.metres_per_tick(WALK_MPS)).abs() < 1e-6);
+        assert!((w.config.bike_speed - BIKE_MPS * w.config.traffic_seconds_per_tick).abs() < 1e-6);
+        let mut minds = IdleMind;
+        for _ in 0..600 {
+            if !w.citizens.is_empty() {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let c = w.citizens.keys().next().expect("someone moved in");
+        {
+            let cz = &mut w.citizens[c];
+            cz.inside = Some(home);
+            cz.activity = Activity::AtHome;
+            cz.owns_bike = false;
+            cz.owns_car = false;
+            cz.work = Some(work);
+        }
+        w.clock.tick = (w.clock.day() + 1) * crate::clock::MINUTES_PER_DAY + 8 * 60;
+        w.travel_to(c, Some(work), Purpose::Work);
+        assert_eq!(w.citizens[c].mode, TravelMode::Walk);
+        for _ in 0..120 {
+            if w.citizens[c].inside == Some(work) {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        assert_eq!(w.citizens[c].inside, Some(work), "arrived: {}", w.citizens[c].activity.label());
+        assert!(w.clock.minute_of_day() < 9 * 60, "clocked in at {}", w.clock.format_hhmm());
+    }
+
+    #[test]
+    fn a_station_is_road_connected_only_through_a_zoned_island() {
+        use crate::rail::RailFacility;
+        let mut w = World::new(WorldConfig::default());
+        w.economy.treasury = 500_000.0;
+        // Island A: the town. Island B: a street with homes, not joined to
+        // A. Island C: a street in a field.
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        w.add_road(&[Vec2::new(200.0, 600.0), Vec2::new(1000.0, 600.0)], 1, 1);
+        w.add_zone(square(300.0, 610.0, 150.0), LandUse::Residential);
+        w.add_road(&[Vec2::new(-900.0, 700.0), Vec2::new(-500.0, 700.0)], 1, 1);
+        let on_b = w.place_rail_facility(RailFacility::Station, Vec2::new(700.0, 560.0)).expect("station on island B");
+        let on_c = w.place_rail_facility(RailFacility::Station, Vec2::new(-700.0, 660.0)).expect("station on island C");
+        let town_lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Residential);
+        let b_lot = w.buildings[on_b].lot;
+        assert!(w.roads.path(w.lots[b_lot].access_node, w.lots[town_lot].access_node).is_none(), "islands A and B are separate");
+        assert!(w.buildings[on_b].rail.as_ref().unwrap().road_connected, "a street with homes on it is a city, whichever lot the map lists first");
+        assert!(!w.buildings[on_c].rail.as_ref().unwrap().road_connected, "a street in a field is not");
+        // Joining C to A connects it.
+        w.add_road(&[Vec2::new(-500.0, 700.0), Vec2::new(-400.0, 0.0)], 1, 1);
+        assert!(w.buildings[on_c].rail.as_ref().unwrap().road_connected);
+    }
+
+    #[test]
+    fn a_save_with_dangling_ids_and_missing_fields_loads_cleanly() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
+        let mut minds = IdleMind;
+        for _ in 0..(10 * 60) {
+            w.tick(&mut minds);
+        }
+        finish_all(&mut w);
+        for _ in 0..120 {
+            w.tick(&mut minds);
+        }
+        let c = w.citizens.keys().next().expect("someone moved in");
+        // An id nothing points at any more.
+        let ghost = {
+            let any = w.buildings.values().next().unwrap().clone();
+            let id = w.buildings.insert(any);
+            w.buildings.remove(id);
+            id
+        };
+        {
+            let cz = &mut w.citizens[c];
+            cz.home = Some(ghost);
+            cz.work = Some(ghost);
+            cz.inside = Some(ghost);
+            cz.parked_at = Some(ghost);
+            cz.activity = Activity::Visiting(ghost);
+            cz.transit = Some(TransitTrip { leg: TransitLeg::Rail { board: ghost, alight: ghost }, target: ghost, purpose: Purpose::Home, since: 0 });
+        }
+        let lot = w.lots.keys().next().unwrap();
+        w.lots[lot].building = Some(ghost);
+        let text = w.to_ron().unwrap();
+        assert!(text.contains("version: 1"));
+        // An older save: no version, and a config field that did not exist yet.
+        let text = text.replacen("version: 1,", "", 1);
+        let text = {
+            let start = text.find("bike_threshold:").unwrap();
+            let end = start + text[start..].find('\n').unwrap() + 1;
+            format!("{}{}", &text[..start], &text[end..])
+        };
+        let mut back = World::from_ron(&text).expect("loads");
+        assert_eq!(back.version, SAVE_VERSION);
+        assert_eq!(back.config.bike_threshold, WorldConfig::default().bike_threshold, "a missing field takes its default");
+        let cz = &back.citizens[c];
+        assert!(cz.home.is_none() && cz.work.is_none() && cz.inside.is_none() && cz.parked_at.is_none() && cz.transit.is_none());
+        assert!(matches!(cz.activity, Activity::Idle));
+        assert!(back.lots[lot].building.is_none());
+        for _ in 0..200 {
+            back.tick(&mut minds);
+        }
+    }
+
+    #[test]
+    fn the_overdraft_floor_refuses_purchases_and_doors_and_the_ledger_balances() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Commercial);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Entertainment);
+        w.add_zone(square(-400.0, 10.0, 190.0), LandUse::Residential);
+        let shop_lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Commercial);
+        let venue_lot = lot_near(&w, Vec2::new(-100.0, 20.0), LandUse::Entertainment);
+        let home_lot = lot_near(&w, Vec2::new(-300.0, 20.0), LandUse::Residential);
+        w.build_on(shop_lot);
+        w.build_on(venue_lot);
+        w.build_on(home_lot);
+        let shop = w.lots[shop_lot].building.unwrap();
+        let venue = w.lots[venue_lot].building.unwrap();
+        finish_all(&mut w);
+        w.buildings[shop].business = Some(Business::new(BusinessKind::GadgetShop, 4));
+        w.buildings[shop].business.as_mut().unwrap().add(Resource::Goods, 5.0);
+        assert_eq!(w.buildings[venue].business.as_ref().unwrap().kind, BusinessKind::Venue);
+        let mut minds = IdleMind;
+        for _ in 0..600 {
+            if !w.citizens.is_empty() {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let c = w.citizens.keys().next().expect("someone moved in");
+        // Skint: the shop sells nothing and the door is shut.
+        w.citizens[c].savings = OVERDRAFT + 1.0;
+        let mood0 = w.citizens[c].mood;
+        w.buy(c, shop, Resource::Goods);
+        assert_eq!(w.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Goods), 5.0, "nothing sold");
+        assert!(w.citizens[c].mood < mood0 && w.citizens[c].thought.contains("Skint"));
+        let entrance = w.building_entrance(venue).unwrap();
+        w.citizens[c].activity = Activity::Traveling { to: Some(venue), purpose: Purpose::Visit(LandUse::Entertainment), path: vec![entrance], idx: 1 };
+        w.arrive(c);
+        assert!(w.citizens[c].inside.is_none() && matches!(w.citizens[c].activity, Activity::Idle), "turned away");
+        assert!(w.citizens[c].savings >= OVERDRAFT);
+        // Flush: served and charged.
+        w.citizens[c].savings = 100.0;
+        w.citizens[c].activity = Activity::Traveling { to: Some(venue), purpose: Purpose::Visit(LandUse::Entertainment), path: vec![entrance], idx: 1 };
+        w.arrive(c);
+        assert_eq!(w.citizens[c].inside, Some(venue));
+        assert!((w.citizens[c].savings - (100.0 - VENUE_COVER)).abs() < 0.01);
+        w.citizens[c].inside = None;
+        w.citizens[c].activity = Activity::Idle;
+        w.buy(c, shop, Resource::Goods);
+        assert_eq!(w.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Goods), 4.0);
+        // A shut venue is not somewhere to go out to.
+        w.buildings[venue].business.as_mut().unwrap().closed = true;
+        w.apply_decision(c, Decision { intent: Intent::Visit(LandUse::Entertainment), thought: String::new(), memory: None });
+        assert!(matches!(w.citizens[c].activity, Activity::Idle), "nobody heads for a closed venue");
+        // The ledger: every treasury move is booked, so the day's flows sum
+        // to the day's change.
+        let before = w.economy.treasury;
+        let today0 = w.economy.ledger.today;
+        let ind = lot_near(&w, Vec2::new(-350.0, 20.0), LandUse::Residential);
+        w.lots[ind].land_use = LandUse::Industrial;
+        w.build_power(ind, PowerPlantKind::Solar).expect("plant");
+        assert!(w.economy.ledger.today_of(Flow::Construction) < 0.0);
+        let booked: f32 = (0..9).map(|i| w.economy.ledger.today[i] - today0[i]).sum();
+        assert!((w.economy.treasury - before - booked).abs() < 0.01, "treasury moved {} but the books say {}", w.economy.treasury - before, booked);
+    }
+
+    #[test]
+    fn same_seed_and_script_give_identical_saves() {
+        fn run() -> String {
+            let mut w = World::new(WorldConfig { seed: 11, ..WorldConfig::default() });
+            for i in -1..=1 {
+                let c = i as f32 * 200.0;
+                w.add_road(&[Vec2::new(-500.0, c), Vec2::new(500.0, c)], 1, 1);
+                w.add_road(&[Vec2::new(c, -500.0), Vec2::new(c, 500.0)], 1, 1);
+            }
+            w.add_zone(square(-190.0, -190.0, 180.0), LandUse::Residential);
+            w.add_zone(square(10.0, 10.0, 180.0), LandUse::Commercial);
+            w.add_zone(square(-190.0, 10.0, 180.0), LandUse::Industrial);
+            w.add_zone(square(10.0, -190.0, 60.0), LandUse::Park);
+            let mut minds = IdleMind;
+            for _ in 0..(36 * 60) {
+                w.tick(&mut minds);
+            }
+            finish_all(&mut w);
+            for _ in 0..(6 * 60) {
+                w.tick(&mut minds);
+            }
+            assert!(!w.citizens.is_empty() && !w.traffic.cars.is_empty(), "something happened");
+            w.to_ron().unwrap()
+        }
+        let (a, b) = (run(), run());
+        assert!(a == b, "two runs of the same script diverged");
+    }
+
+    /// A block with a bus line, a depot and a bus out on the loop.
+    fn bus_city() -> (World, RouteId) {
+        use crate::transit;
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_road(&[Vec2::new(-400.0, 140.0), Vec2::new(400.0, 140.0)], 1, 1);
+        w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(-300.0, 140.0)], 1, 1);
+        w.add_road(&[Vec2::new(300.0, 0.0), Vec2::new(300.0, 140.0)], 1, 1);
+        w.add_zone(vec![Vec2::new(-390.0, 10.0), Vec2::new(-310.0, 10.0), Vec2::new(-310.0, 130.0), Vec2::new(-390.0, 130.0)], LandUse::Residential);
+        w.add_zone(vec![Vec2::new(310.0, 10.0), Vec2::new(390.0, 10.0), Vec2::new(390.0, 130.0), Vec2::new(310.0, 130.0)], LandUse::Commercial);
+        w.add_zone(vec![Vec2::new(-100.0, -150.0), Vec2::new(100.0, -150.0), Vec2::new(100.0, -10.0), Vec2::new(-100.0, -10.0)], LandUse::Industrial);
+        let route = w.add_bus_route();
+        for p in [Vec2::new(-200.0, 4.0), Vec2::new(200.0, 4.0), Vec2::new(296.0, 70.0), Vec2::new(200.0, 136.0), Vec2::new(-200.0, 136.0), Vec2::new(-296.0, 70.0)] {
+            w.add_bus_stop(route, p).expect("stop snaps to the street");
+        }
+        let depot_lot = w.lots.iter().find(|(_, l)| l.usable() && l.building.is_none() && l.land_use == LandUse::Industrial && l.area() >= transit::DEPOT_MIN_AREA).map(|(id, _)| id).expect("industrial lot");
+        w.build_depot(depot_lot).expect("depot built");
+        (w, route)
+    }
+
+    #[test]
+    fn a_save_mid_journey_keeps_trucks_buses_and_riders() {
+        let (mut w, route) = bus_city();
+        let home_lot = lot_near(&w, Vec2::new(-350.0, 70.0), LandUse::Residential);
+        let shop_lot = lot_near(&w, Vec2::new(350.0, 70.0), LandUse::Commercial);
+        w.build_on(home_lot);
+        w.build_on(shop_lot);
+        finish_all(&mut w);
+        let mut minds = IdleMind;
+        // Run until a bus is out and people have moved in; sites order
+        // trucks of their own as the city grows.
+        for _ in 0..(12 * 60) {
+            w.tick(&mut minds);
+        }
+        let bus = w.traffic.cars.iter().find(|(_, c)| c.bus.is_some()).map(|(id, _)| id).expect("a bus is out");
+        let riders: Vec<CitizenId> = w.citizens.keys().take(3).collect();
+        assert!(!riders.is_empty(), "someone moved in");
+        for &r in &riders {
+            w.traffic.cars[bus].bus.as_mut().unwrap().passengers.push(r);
+            let c = &mut w.citizens[r];
+            c.inside = None;
+            c.activity = Activity::Riding { bus };
+            c.transit = Some(TransitTrip { leg: TransitLeg::Bus { route, board: 0, alight: 3 }, target: w.lots[shop_lot].building.unwrap(), purpose: Purpose::Shop(Resource::Goods), since: 0 });
+        }
+        // A truck on the road too.
+        let shop = w.lots[shop_lot].building.unwrap();
+        w.import(shop, Resource::Goods, 3.0, 10.0);
+        let trucks = w.traffic.cars.values().filter(|c| c.cargo.is_some()).count();
+        let cars = w.traffic.cars.len();
+        let riding = w.citizens.values().filter(|c| matches!(c.activity, Activity::Riding { .. })).count();
+        assert!(trucks >= 1 && riding == riders.len(), "trucks {trucks} riding {riding}");
+        let mut back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+        assert_eq!(back.traffic.cars.len(), cars, "every car reattached to its lane");
+        assert_eq!(back.traffic.cars.values().filter(|c| c.cargo.is_some()).count(), trucks);
+        assert_eq!(back.traffic.cars[bus].bus.as_ref().unwrap().passengers.len(), riders.len());
+        assert_eq!(back.citizens.values().filter(|c| matches!(c.activity, Activity::Riding { .. })).count(), riding);
+        for _ in 0..200 {
+            back.tick(&mut minds);
+        }
+        assert!(back.citizens.values().all(|c| c.pos.is_finite()));
+    }
+
+    #[test]
+    fn a_business_that_cannot_pay_closes_goes_derelict_and_is_demolished() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Commercial);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Residential);
+        let shop_lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Commercial);
+        let home_lot = lot_near(&w, Vec2::new(-100.0, 20.0), LandUse::Residential);
+        w.build_on(shop_lot);
+        w.build_on(home_lot);
+        let shop = w.lots[shop_lot].building.unwrap();
+        finish_all(&mut w);
+        w.buildings[shop].business = Some(Business::new(BusinessKind::Bakery, w.buildings[shop].jobs));
+        let mut minds = IdleMind;
+        for _ in 0..600 {
+            if !w.citizens.is_empty() {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let worker = w.citizens.keys().next().expect("someone moved in");
+        if w.citizens[worker].work != Some(shop) {
+            if let Some(old) = w.citizens[worker].work {
+                w.buildings[old].workers.retain(|&c| c != worker);
+            }
+            w.citizens[worker].work = None;
+            w.assign_job(worker, shop);
+        }
+        w.buildings[shop].business.as_mut().unwrap().money = -1000.0;
+        w.drain_events();
+        for day in 0..5 {
+            assert!(!w.buildings[shop].business.as_ref().unwrap().closed, "still open on day {day}");
+            w.daily_businesses();
+        }
+        let b = &w.buildings[shop];
+        assert!(b.business.as_ref().unwrap().closed, "five broke days and it shuts");
+        assert!(b.is_derelict(), "a shut shop is a derelict shell: condition {}", b.condition);
+        assert!(b.workers.is_empty());
+        assert_eq!(w.citizens[worker].work, None);
+        assert_eq!(w.citizens[worker].income, GIG_INCOME);
+        assert!(w.citizens[worker].memories.iter().any(|m| m.text.contains("shut down")));
+        assert!(w.drain_events().iter().any(|e| matches!(e, SimEvent::BusinessClosed(x) if *x == shop)));
+        assert_eq!(w.economy.market.closed_total, 1);
+        for _ in 0..7 {
+            w.daily_businesses();
+            assert!(w.buildings.contains_key(shop), "a week of grace");
+        }
+        w.daily_businesses();
+        assert!(!w.buildings.contains_key(shop), "then the lot is cleared");
+        assert!(w.lots[shop_lot].building.is_none() || !w.buildings.contains_key(w.lots[shop_lot].building.unwrap()));
+    }
+
+    #[test]
+    fn four_hungry_days_and_a_citizen_leaves() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        let home_lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Residential);
+        w.build_on(home_lot);
+        let home = w.lots[home_lot].building.unwrap();
+        w.finish_construction(home);
+        let mut minds = IdleMind;
+        for _ in 0..600 {
+            if !w.citizens.is_empty() {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let c = w.citizens.keys().next().expect("someone moved in");
+        assert!(w.buildings[home].residents.contains(&c));
+        w.citizens[c].satiety = 0.0;
+        w.citizens[c].savings = 1000.0;
+        for day in 0..3 {
+            w.daily_citizen(c);
+            assert!(w.citizens.contains_key(c), "still here after {} hungry days", day + 1);
+            assert_eq!(w.citizens[c].hungry_days, day + 1);
+        }
+        w.daily_citizen(c);
+        assert!(!w.citizens.contains_key(c), "gone on the fourth");
+        assert!(!w.buildings[home].residents.contains(&c));
+        assert_eq!(w.economy.emigrated_total, 1);
+        assert!(w.drain_events().iter().any(|e| matches!(e, SimEvent::CitizenLeft(x) if *x == c)));
+    }
+
+    #[test]
+    fn job_search_fills_open_jobs_with_the_fixed_skill_formula() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
+        let home_lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Residential);
+        w.build_on(home_lot);
+        w.finish_construction(w.lots[home_lot].building.unwrap());
+        let mut minds = IdleMind;
+        for _ in 0..600 {
+            if !w.citizens.is_empty() {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let c = w.citizens.keys().next().expect("someone moved in");
+        if let Some(old) = w.citizens[c].work {
+            w.buildings[old].workers.retain(|&x| x != c);
+        }
+        w.lay_off(c, None);
+        assert_eq!((w.citizens[c].work, w.citizens[c].income), (None, GIG_INCOME));
+        // No jobs anywhere: nothing happens.
+        for b in w.buildings.values_mut() {
+            b.jobs = 0;
+        }
+        w.job_search();
+        assert_eq!(w.citizens[c].work, None);
+        // One opening, and it is filled at the wage times the person's skill.
+        let shop_lot = lot_near(&w, Vec2::new(-100.0, 20.0), LandUse::Commercial);
+        w.build_on(shop_lot);
+        let shop = w.lots[shop_lot].building.unwrap();
+        w.finish_construction(shop);
+        w.buildings[shop].jobs = 1;
+        w.job_search();
+        assert_eq!(w.citizens[c].work, Some(shop));
+        assert!(w.buildings[shop].workers.contains(&c));
+        let expected = w.buildings[shop].wage() * World::skill_of(w.citizens[c].seed);
+        assert!((w.citizens[c].income - expected).abs() < 0.01);
+        assert_eq!(w.buildings[shop].free_jobs(), 0);
+    }
+
+    #[test]
+    fn gini_is_zero_when_equal_and_near_one_when_one_has_everything() {
+        assert_eq!(Economy::gini(&mut vec![]), 0.0);
+        assert_eq!(Economy::gini(&mut vec![50.0]), 0.0);
+        assert!(Economy::gini(&mut vec![40.0, 40.0, 40.0, 40.0]).abs() < 1e-6);
+        let g = Economy::gini(&mut vec![0.0, 0.0, 0.0, 100.0]);
+        assert!((g - 0.75).abs() < 1e-6, "(n-1)/n for a single earner: {g}");
+        let mut unsorted = vec![100.0, 0.0, 0.0, 0.0];
+        assert!((Economy::gini(&mut unsorted) - 0.75).abs() < 1e-6, "order does not matter");
+        assert!(Economy::gini(&mut vec![10.0, 20.0, 30.0, 40.0]) < g);
+        assert_eq!(Economy::gini(&mut vec![0.0, 0.0]), 0.0, "no income, no inequality");
+    }
+
+    #[test]
+    fn removing_a_bus_stop_shifts_riders_and_buses_and_cancels_trips_through_it() {
+        let (mut w, route) = bus_city();
+        let home_lot = lot_near(&w, Vec2::new(-350.0, 70.0), LandUse::Residential);
+        w.build_on(home_lot);
+        finish_all(&mut w);
+        let mut minds = IdleMind;
+        for _ in 0..600 {
+            if !w.citizens.is_empty() {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let shop = w.buildings.keys().next().unwrap();
+        let ids: Vec<CitizenId> = w.citizens.keys().collect();
+        let (a, b) = (ids[0], *ids.get(1).unwrap_or(&ids[0]));
+        let trip = |board, alight| Some(TransitTrip { leg: TransitLeg::Bus { route, board, alight }, target: shop, purpose: Purpose::Shop(Resource::Goods), since: 0 });
+        w.citizens[a].transit = trip(1, 4);
+        w.citizens[a].activity = Activity::Waiting { at: Vec2::ZERO };
+        if b != a {
+            w.citizens[b].transit = trip(2, 5);
+            w.citizens[b].activity = Activity::Waiting { at: Vec2::ZERO };
+        }
+        // A bus between stops 1 and 3, heading for 3.
+        let stops = w.transit.routes[route].stops.clone();
+        let (lanes, s0, s1) = w.traffic.net.find_route(stops[1].segment, stops[1].pos, stops[3].segment, stops[3].pos).expect("route");
+        let car = w.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, 0);
+        let depot = w.buildings.iter().find(|(_, b)| b.depot).map(|(id, _)| id).unwrap();
+        w.traffic.cars[car].bus = Some(Bus { route, next_stop: 3, passengers: Vec::new(), to_depot: false, depot });
+        w.remove_bus_stop(route, 2);
+        assert_eq!(w.transit.routes[route].stops.len(), 5);
+        assert_eq!(w.traffic.cars[car].bus.as_ref().unwrap().next_stop, 2, "the bus's next stop moved down one");
+        assert_eq!(w.citizens[a].transit.map(|t| t.leg), Some(TransitLeg::Bus { route, board: 1, alight: 3 }), "indices past the gap shift");
+        if b != a {
+            assert!(w.citizens[b].transit.is_none() && matches!(w.citizens[b].activity, Activity::Idle), "a trip through the removed stop is cancelled");
+        }
+        // Removing a stop before the bus's target does not touch a bus heading home.
+        w.traffic.cars[car].bus.as_mut().unwrap().next_stop = usize::MAX;
+        w.remove_bus_stop(route, 0);
+        assert_eq!(w.traffic.cars[car].bus.as_ref().unwrap().next_stop, usize::MAX);
+        assert_eq!(w.citizens[a].transit.map(|t| t.leg), Some(TransitLeg::Bus { route, board: 0, alight: 2 }));
+    }
+
+    #[test]
+    fn brownouts_cut_production() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Industrial);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Residential);
+        let ind: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial).map(|(id, _)| id).collect();
+        let res: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Residential).map(|(id, _)| id).collect();
+        for &l in ind.iter().chain(res.iter()) {
+            w.build_on(l);
+        }
+        finish_all(&mut w);
+        // A fully staffed grain farm (no inputs, so output depends on power alone).
+        let farm = w.lots[ind[0]].building.unwrap();
+        {
+            let b = &mut w.buildings[farm];
+            b.tier = Tier::Low;
+            b.jobs = 8;
+            b.business = Some(Business::new(BusinessKind::GrainFarm, 8));
+            b.workers = vec![CitizenId::default(); 8];
+        }
+        let full = w.buildings[farm].business.clone().unwrap().produce(8, 1.0);
+        assert!(full > 0.0);
+        // Lights on: an hour makes the full amount.
+        let stock0 = w.buildings[farm].business.as_ref().unwrap().stock_of(Resource::Grain);
+        w.hourly_economy();
+        assert!(w.buildings[farm].powered >= 0.999, "powered {}", w.buildings[farm].powered);
+        let made_lit = w.buildings[farm].business.as_ref().unwrap().stock_of(Resource::Grain) - stock0;
+        assert!((made_lit - full).abs() < 1e-3, "lit: {made_lit} vs {full}");
+        // Towers everywhere: demand outruns the grid and the cheap farm is
+        // served last, so it makes less.
+        for b in w.buildings.values_mut() {
+            if b.lot != ind[0] {
+                b.floors = 30;
+                b.tier = Tier::High;
+            }
+        }
+        let stock1 = w.buildings[farm].business.as_ref().unwrap().stock_of(Resource::Grain);
+        w.hourly_economy();
+        let p = w.buildings[farm].powered;
+        assert!(p < 0.9, "the farm is browned out: {p}");
+        assert!(w.economy.power.brownout_hours_today >= 1);
+        let made_dark = w.buildings[farm].business.as_ref().unwrap().stock_of(Resource::Grain) - stock1;
+        assert!(made_dark < made_lit * 0.9, "dark: {made_dark} vs lit {made_lit}");
+        assert!((made_dark - full * p).abs() < 1e-3, "output scales with power: {made_dark} vs {}", full * p);
     }
 }
