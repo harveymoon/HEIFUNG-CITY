@@ -7,7 +7,7 @@
 //! continuous, mitred carriageway and pavement, so a curved road reads as
 //! one road instead of a string of pieces.
 
-use crate::buildings::parts::{bench_world, bin_world, bollard_world, lamp_post_world, mul, rgba, tree_world, CHARCOAL, DARK};
+use crate::buildings::parts::{bench_world, bin_world, bollard_world, lamp_post_world, mul, pick, railway_track, rgba, tree_world, CHARCOAL, DARK};
 use crate::mesh::{offset_path, path_length, point_along};
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface::*};
@@ -19,7 +19,7 @@ use nd_sim::traffic::{LaneId, LaneKind, LaneNetwork};
 use nd_sim::zoning::SIDEWALK;
 use nd_sim::NodeId;
 use rand::Rng;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 pub struct StreetInput<'a> {
     pub roads: &'a RoadNetwork,
@@ -282,7 +282,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             let side = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
             let (p, d, right) = at(s, side, hw + 1.2);
             match rng.random_range(0..6) {
-                0 | 1 => bin_world(&mut g, p, mul(pal.metal_paint[0], 0.9)),
+                0 | 1 => bin_world(&mut g, p, mul(pal.metal_paint(0), 0.9)),
                 2 if lv_mid > 0.35 => {
                     let (bp, _, _) = at(s, side, back_off);
                     bench_world(&mut g, bp, d.y.atan2(d.x) + if side > 0.0 { std::f32::consts::PI } else { 0.0 }, pal.wood, CHARCOAL);
@@ -290,16 +290,17 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
                 3 if lv_mid < 0.55 => {
                     let (kp, _, _) = at(s, side, hw + 1.4);
                     let yaw = d.y.atan2(d.x);
-                    g.part(Metal).boxed(Vec3::new(kp.x, 1.2, kp.y), Vec3::new(1.0, 2.4, 0.9), yaw, rgba(pal.metal_paint[2]));
+                    g.part(Metal).boxed(Vec3::new(kp.x, 1.2, kp.y), Vec3::new(1.0, 2.4, 0.9), yaw, rgba(pal.metal_paint(2)));
                     let face = kp - right * side * 0.47;
-                    g.part(Glow).boxed(Vec3::new(face.x, 1.5, face.y), Vec3::new(0.6, 0.8, 0.04), yaw, rgba(mul(pal.led_colors[1], 0.5)));
+                    let out = Vec3::new(-right.x, 0.0, -right.y) * side;
+                    g.part(Glow).decal(Vec3::new(face.x, 1.5, face.y), Vec3::new(d.x, 0.0, d.y), Vec3::Y, 0.6, 0.8, out, rgba(mul(pal.led(1), 0.5)));
                 }
                 4 if len > 80.0 => {
                     // A phone box where a shelter used to stand at random;
                     // shelters now mark real bus stops.
                     let (sp, d, _) = at(s, side, hw + SIDEWALK * 0.55);
                     let yaw = d.y.atan2(d.x);
-                    g.part(Glass).boxed(Vec3::new(sp.x, 1.2, sp.y), Vec3::new(1.0, 2.4, 1.0), yaw, rgba(mul(pal.glass[0], 1.0)));
+                    g.part(Glass).boxed(Vec3::new(sp.x, 1.2, sp.y), Vec3::new(1.0, 2.4, 1.0), yaw, rgba(pal.glass(0)));
                     g.part(Panel).boxed(Vec3::new(sp.x, 2.45, sp.y), Vec3::new(1.1, 0.1, 1.1), yaw, rgba(mul(pal.steel, 0.8)));
                 }
                 _ => {}
@@ -325,7 +326,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
 
     // Junction pads, crossings and stop lines (bends need none).
     for (i, node) in roads.nodes.iter().enumerate() {
-        let alive: Vec<_> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).count_and_list();
+        let alive: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).collect();
         let paths_here = node.segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).kind == RoadKind::Path).count();
         let rails_here: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_rail()).collect();
         if !alive.is_empty() && !rails_here.is_empty() {
@@ -464,37 +465,17 @@ fn street_grit(g: &mut Geometry, pal: &Palette, walk: &[Vec2], hw: f32, len: f32
         match rng.random_range(0..4) {
             0 => g.part(Tarp).boxed(Vec3::new(c.x, base + 0.14, c.y), Vec3::new(0.4, 0.28, 0.32), yaw, rgba([0.07, 0.07, 0.08])),
             1 => g.part(Matte).boxed(Vec3::new(c.x, base + 0.06, c.y), Vec3::new(0.1, 0.12, 0.1), yaw, rgba(mul(pal.paving, 1.4))),
-            2 => g.part(Tarp).boxed(Vec3::new(c.x, base + 0.01, c.y), Vec3::new(0.5, 0.02, 0.4), yaw, rgba(mul(pal.tarp_colors[rng.random_range(0..pal.tarp_colors.len().max(1))], 0.8))),
+            2 => g.part(Tarp).boxed(Vec3::new(c.x, base + 0.01, c.y), Vec3::new(0.5, 0.02, 0.4), yaw, rgba(mul(pick(rng, &pal.tarp_colors), 0.8))),
             _ => g.part(Wood).boxed(Vec3::new(c.x, base + 0.025, c.y), Vec3::new(0.6, 0.05, 0.45), yaw, rgba(mul(pal.plywood, 0.75))),
         }
         s += rng.random_range(5.0..14.0);
     }
 }
 
-trait CountAndList: Iterator<Item = SegmentId> + Sized {
-    fn count_and_list(self) -> Vec<SegmentId> {
-        self.collect()
-    }
-}
-impl<I: Iterator<Item = SegmentId>> CountAndList for I {}
-
-/// A path for walkers and bikes: paving with edge stones, low lamps, the odd
-/// bench and bin, and bollards where it meets a street so cars stay out.
-/// Single track: ballast, sleepers, two rails.
+/// Single track: ballast, sleepers, two rails, drawn by the same hand as a
+/// freight yard's sidings.
 fn railway(g: &mut Geometry, pal: &Palette, run: &Run) {
-    let pts = &run.points;
-    g.part(Dirt).path_strip(pts, 0.0, RAIL_HALF_WIDTH * 2.0, 0.04, rgba(mul(pal.gravel, 0.85)));
-    g.part(Dirt).path_strip(pts, 0.0, 3.0, 0.1, rgba(mul(pal.gravel, 1.0)));
-    let len = path_length(pts);
-    let mut s = 0.35;
-    while s < len {
-        let (p, d) = point_along(pts, s);
-        g.part(Wood).boxed(Vec3::new(p.x, 0.17, p.y), Vec3::new(0.24, 0.14, 2.5), d.y.atan2(d.x), rgba(mul(pal.wood, 0.55)));
-        s += 0.7;
-    }
-    for side in [-1.0f32, 1.0] {
-        g.part(Metal).path_box(pts, side * 0.72, 0.08, 0.24, 0.38, rgba(mul(pal.steel, 0.75)));
-    }
+    railway_track(g, pal, &run.points, RAIL_HALF_WIDTH * 2.0);
 }
 
 /// Where track crosses a street: planks between the rails over the
@@ -520,16 +501,18 @@ fn level_crossing(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, at: Vec2
             let p = at + sd * side * (RAIL_HALF_WIDTH + 1.6) + s_right * s2 * (hw + SIDEWALK * 0.4);
             g.part(Matte).boxed(Vec3::new(p.x, 1.6, p.y), Vec3::new(0.1, 3.2, 0.1), 0.0, rgba(mul(pal.steel, 0.6)));
             let yaw = sd.y.atan2(sd.x);
-            g.part(Matte).boxed(Vec3::new(p.x, 3.0, p.y), Vec3::new(1.2, 0.18, 0.04), yaw + 0.6, rgba([0.95, 0.95, 0.9]));
-            g.part(Matte).boxed(Vec3::new(p.x, 3.0, p.y), Vec3::new(1.2, 0.18, 0.04), yaw - 0.6, rgba([0.95, 0.95, 0.9]));
-            g.part(Glow).boxed(Vec3::new(p.x, 2.4, p.y), Vec3::new(0.22, 0.22, 0.1), yaw, rgba([2.2, 0.3, 0.2]));
+            g.part(Matte).boxed(Vec3::new(p.x, 3.0, p.y), Vec3::new(1.2, 0.18, 0.04), yaw + 0.6, rgba(pal.chalk));
+            g.part(Matte).boxed(Vec3::new(p.x, 3.0, p.y), Vec3::new(1.2, 0.18, 0.04), yaw - 0.6, rgba(pal.chalk));
+            g.part(Glow).boxed(Vec3::new(p.x, 2.4, p.y), Vec3::new(0.22, 0.22, 0.1), yaw, rgba(pal.warning_light));
             // Barrier arm, raised.
-            g.part(Matte).boxed(Vec3::new(p.x, 2.2, p.y), Vec3::new(0.12, 2.8, 0.12), 0.0, rgba([0.9, 0.9, 0.9]));
-            g.part(Matte).boxed(Vec3::new(p.x, 2.6, p.y), Vec3::new(0.14, 0.4, 0.14), 0.0, rgba([0.9, 0.2, 0.15]));
+            g.part(Matte).boxed(Vec3::new(p.x, 2.2, p.y), Vec3::new(0.12, 2.8, 0.12), 0.0, rgba(pal.chalk));
+            g.part(Matte).boxed(Vec3::new(p.x, 2.6, p.y), Vec3::new(0.14, 0.4, 0.14), 0.0, rgba(mul(pal.warning_light, 0.4)));
         }
     }
 }
 
+/// A path for walkers and bikes: paving with edge stones, low lamps, the odd
+/// bench and bin, and bollards where it meets a street so cars stay out.
 fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run: &Run, rng: &mut impl Rng) {
     // Where the path meets a street, stop at the back of that street's
     // pavement and flare out onto it, instead of running under the kerb.
@@ -586,7 +569,7 @@ fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run: &Run, rng
         if rng.random_bool(0.6) {
             bench_world(g, p, d.y.atan2(d.x) + if side > 0.0 { std::f32::consts::PI } else { 0.0 }, pal.wood, CHARCOAL);
         } else {
-            bin_world(g, p, mul(pal.metal_paint[0], 0.9));
+            bin_world(g, p, mul(pal.metal_paint(0), 0.9));
         }
         s += 26.0 + rng.random_range(0.0..20.0);
     }
@@ -615,7 +598,7 @@ pub fn shelter(g: &mut Geometry, pal: &Palette, p: Vec2, d: Vec2, out: Vec2) {
     let back = p + out * 0.8;
     g.part(Glass).boxed(Vec3::new(back.x, 1.4, back.y), Vec3::new(3.6, 2.2, 0.05), yaw, rgba(pal.glass_dark));
     let ad = p + out * 0.78 + d * 1.0;
-    g.part(Glow).boxed(Vec3::new(ad.x, 1.5, ad.y), Vec3::new(1.2, 1.6, 0.04), yaw, rgba(mul(pal.led_colors[2], 0.45)));
+    g.part(Glow).decal(Vec3::new(ad.x, 1.5, ad.y), Vec3::new(d.x, 0.0, d.y), Vec3::Y, 1.2, 1.6, Vec3::new(-out.x, 0.0, -out.y), rgba(mul(pal.led(2), 0.45)));
     g.part(Glow).boxed(Vec3::new(p.x, 2.57, p.y), Vec3::new(2.0, 0.05, 0.4), yaw, rgba(mul(pal.lamp, 0.6)));
     let seat = p + out * 0.4;
     g.part(Wood).boxed(Vec3::new(seat.x, 0.5, seat.y), Vec3::new(2.4, 0.08, 0.4), yaw, rgba(pal.wood));
@@ -628,19 +611,34 @@ struct SignalGroup {
     heading: f32,
 }
 
-/// Approaches to signalised junctions grouped by segment and direction.
+/// Road lanes feeding each connector lane, built once: the signal passes
+/// used to scan every lane for every connector of every junction, and the
+/// result came out of a `HashMap` in a different order each run.
+fn feeders(net: &LaneNetwork) -> BTreeMap<LaneId, Vec<LaneId>> {
+    let mut map: BTreeMap<LaneId, Vec<LaneId>> = BTreeMap::new();
+    for (lid, lane) in net.lanes.iter().enumerate() {
+        if lane.is_connector() {
+            continue;
+        }
+        for &next in &lane.next {
+            map.entry(next).or_default().push(lid as LaneId);
+        }
+    }
+    map
+}
+
+/// Approaches to signalised junctions grouped by segment and direction, in
+/// segment order so the street mesh is the same every time it is built.
 fn signal_groups(net: &LaneNetwork) -> Vec<SignalGroup> {
-    use std::collections::HashMap;
-    let mut groups: HashMap<(u32, bool), Vec<(u8, Vec2, Vec2)>> = HashMap::new();
+    let feeders = feeders(net);
+    let mut groups: BTreeMap<(u32, bool), Vec<(u8, Vec2, Vec2)>> = BTreeMap::new();
     for inter in &net.intersections {
         if !inter.signalized {
             continue;
         }
         for &(conn, _) in &inter.connectors {
-            for lane in net.lanes.iter() {
-                if !lane.next.contains(&conn) || lane.is_connector() {
-                    continue;
-                }
+            for &lid in feeders.get(&conn).map(|v| v.as_slice()).unwrap_or(&[]) {
+                let lane = &net.lanes[lid as usize];
                 if let LaneKind::Road { segment, forward, index } = lane.kind {
                     let (p, d) = lane.point_at(lane.length - 0.6);
                     let entry = groups.entry((segment.0, forward)).or_default();
@@ -652,7 +650,7 @@ fn signal_groups(net: &LaneNetwork) -> Vec<SignalGroup> {
         }
     }
     let mut out = Vec::new();
-    for (_, lanes) in groups {
+    for lanes in groups.into_values() {
         let Some((_, _, d)) = lanes.first() else { continue };
         let d = *d;
         let right = Vec2::new(-d.y, d.x);
@@ -664,22 +662,82 @@ fn signal_groups(net: &LaneNetwork) -> Vec<SignalGroup> {
     out
 }
 
-/// Lamp positions for the renderer, one per lane feeding a signal.
+/// Lamp positions for the renderer, one per lane feeding a signal, in lane
+/// order.
 pub fn signal_posts(net: &LaneNetwork) -> Vec<SignalPost> {
-    let mut out = Vec::new();
+    let feeders = feeders(net);
+    let mut seen = HashSet::new();
+    let mut lanes: Vec<LaneId> = Vec::new();
     for inter in &net.intersections {
         if !inter.signalized {
             continue;
         }
-        let mut seen = std::collections::HashSet::new();
         for &(conn, _) in &inter.connectors {
-            for (lid, lane) in net.lanes.iter().enumerate() {
-                if lane.next.contains(&conn) && !lane.is_connector() && seen.insert(lid) {
-                    let (p, d) = lane.point_at(lane.length - 0.6);
-                    out.push(SignalPost { lane: lid as LaneId, lamp: Vec3::new(p.x - d.x * 0.24, 4.95, p.y - d.y * 0.24), heading: d.y.atan2(d.x) });
+            for &lid in feeders.get(&conn).map(|v| v.as_slice()).unwrap_or(&[]) {
+                if seen.insert(lid) {
+                    lanes.push(lid);
                 }
             }
         }
     }
-    out
+    lanes.sort_unstable();
+    lanes
+        .into_iter()
+        .map(|lid| {
+            let lane = &net.lanes[lid as usize];
+            let (p, d) = lane.point_at(lane.length - 0.6);
+            SignalPost { lane: lid, lamp: Vec3::new(p.x - d.x * 0.24, 4.95, p.y - d.y * 0.24), heading: d.y.atan2(d.x) }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nd_sim::roads::RoadNetwork;
+
+    /// The street network the building sweep uses: straight, diagonal and
+    /// curved roads crossing, so there are bends, junctions and signals.
+    fn network() -> (RoadNetwork, LaneNetwork) {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-400.0, -40.0), Vec2::new(400.0, -40.0)], 2, 2);
+        roads.add_polyline(&[Vec2::new(-120.0, -300.0), Vec2::new(60.0, 300.0)], 1, 1);
+        roads.add_polyline(&[Vec2::new(-400.0, 200.0), Vec2::new(400.0, 200.0)], 1, 1);
+        roads.add_polyline(&[Vec2::new(0.0, -300.0), Vec2::new(0.0, 300.0)], 2, 2);
+        let curve: Vec<Vec2> = (0..=20).map(|i| {
+            let t = i as f32 / 20.0;
+            Vec2::new(-300.0 + 600.0 * t, 80.0 + 60.0 * (t * std::f32::consts::TAU).sin())
+        }).collect();
+        roads.add_polyline(&curve, 1, 1);
+        roads.add_polyline_kind(&[Vec2::new(-350.0, 150.0), Vec2::new(350.0, 150.0)], 1, 1, RoadKind::Rail);
+        roads.add_polyline_kind(&[Vec2::new(-200.0, -40.0), Vec2::new(-200.0, 200.0)], 1, 1, RoadKind::Path);
+        let mut net = LaneNetwork::default();
+        net.rebuild(&roads);
+        (roads, net)
+    }
+
+    #[test]
+    fn streets_are_finite_low_and_deterministic() {
+        let (roads, net) = network();
+        let lv = LandValue::new(400.0, 50.0);
+        let pal = Palette::default();
+        let inp = StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 5 };
+        let a = generate_street(&inp);
+        assert!(a.triangle_count() > 1000, "{} triangles is not a street network", a.triangle_count());
+        for (s, m) in a.iter() {
+            assert_eq!(m.positions.len(), m.uvs.len(), "{s:?} uv count");
+            assert_eq!(m.positions.len(), m.tangents.len(), "{s:?} tangent count");
+            for p in &m.positions {
+                assert!(p.iter().all(|v| v.is_finite()), "{s:?} has NaN");
+                assert!(p[1] >= -0.01 && p[1] < 12.0, "{s:?} at height {}", p[1]);
+            }
+            assert!(m.indices.iter().all(|&i| (i as usize) < m.positions.len()), "{s:?} bad index");
+        }
+        let b = generate_street(&inp);
+        assert!(a == b, "the same network drew two different streets");
+        let posts = signal_posts(&net);
+        assert!(!posts.is_empty(), "the four-way junctions should be signalised");
+        assert!(posts.windows(2).all(|w| w[0].lane < w[1].lane), "signal posts come in lane order");
+        assert!(posts.iter().all(|p| p.lamp.is_finite()));
+    }
 }

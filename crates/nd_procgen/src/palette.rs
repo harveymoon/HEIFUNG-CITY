@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-/// Rust tone used by the building grammar for units and stains.
+/// Rust tone used by the building grammar for units and stains. These are
+/// the defaults for `Palette::rust` and `Palette::rust_stain`; generators
+/// read the palette so a hot-reloaded file can retune them.
 pub const RUST: [f32; 3] = [0.42, 0.22, 0.12];
 pub const RUST_STAIN: [f32; 3] = [0.30, 0.16, 0.09];
 
@@ -8,6 +10,10 @@ pub const RUST_STAIN: [f32; 3] = [0.30, 0.16, 0.09];
 /// linear RGB; glow colours are meant to exceed 1.0 so bloom picks them up.
 /// Surfaces are textured in greys, so these colours set the hue of brick,
 /// render, cladding and so on.
+///
+/// Lists (`concrete`, `glass`, ...) are read through the accessors below
+/// rather than indexed, so a palette file with an emptied list cannot panic
+/// the renderer: an empty list falls back to a neutral grey.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Palette {
@@ -48,6 +54,8 @@ pub struct Palette {
     pub sign_colors: Vec<[f32; 3]>,
     pub aviation_light: [f32; 3],
     pub rust: [f32; 3],
+    /// Darker rust for streaks and leak stains under pipes and sills.
+    pub rust_stain: [f32; 3],
     pub foliage: [f32; 3],
     pub foliage_dry: [f32; 3],
     pub bark: [f32; 3],
@@ -59,6 +67,8 @@ pub struct Palette {
     pub concrete: Vec<[f32; 3]>,
     pub glass: Vec<[f32; 3]>,
     pub glass_dark: [f32; 3],
+    /// Tinted car and bus glazing.
+    pub car_glass: [f32; 3],
     pub stone: [f32; 3],
     pub steel: [f32; 3],
     pub brick: Vec<[f32; 3]>,
@@ -71,6 +81,26 @@ pub struct Palette {
     pub water: [f32; 3],
     pub dirt: [f32; 3],
     pub gravel: [f32; 3],
+    /// Brand and safety colours the grammar used to hard-code.
+    /// Chalk-white spray paint and sign lettering.
+    pub chalk: [f32; 3],
+    /// Chain-link mesh seen as a grey sheet.
+    pub fence_mesh: [f32; 3],
+    /// Site hi-vis orange: barriers, vests, hoarding stripes.
+    pub hi_vis: [f32; 3],
+    /// Hard hats.
+    pub helmet: [f32; 3],
+    /// Tower-crane yellow.
+    pub crane: [f32; 3],
+    /// Statue bronze.
+    pub bronze: [f32; 3],
+    /// Red hazard lamps: level crossings, tank-farm signs, flare tips.
+    pub warning_light: [f32; 3],
+    /// Blue car-park "P" and police lamps.
+    pub parking_sign: [f32; 3],
+    pub police_light: [f32; 3],
+    /// Yellow safety line along a platform edge.
+    pub platform_line: [f32; 3],
 }
 
 impl Default for Palette {
@@ -128,6 +158,7 @@ impl Default for Palette {
             sign_colors: vec![[1.4, 0.9, 0.4], [1.1, 1.15, 1.3], [1.3, 0.45, 0.35], [0.6, 1.0, 1.2], [1.2, 0.5, 0.9]],
             aviation_light: [2.0, 0.2, 0.15],
             rust: RUST,
+            rust_stain: RUST_STAIN,
             foliage: [0.22, 0.34, 0.18],
             foliage_dry: [0.30, 0.30, 0.14],
             bark: [0.20, 0.16, 0.12],
@@ -149,6 +180,7 @@ impl Default for Palette {
             concrete: vec![[0.50, 0.49, 0.47], [0.44, 0.44, 0.45], [0.56, 0.54, 0.50], [0.38, 0.39, 0.40]],
             glass: vec![[0.26, 0.38, 0.52], [0.34, 0.46, 0.58], [0.20, 0.30, 0.42], [0.40, 0.48, 0.56], [0.30, 0.44, 0.48]],
             glass_dark: [0.10, 0.13, 0.16],
+            car_glass: [0.12, 0.15, 0.18],
             stone: [0.30, 0.29, 0.27],
             steel: [0.60, 0.62, 0.65],
             brick: vec![[0.56, 0.30, 0.22], [0.48, 0.26, 0.20], [0.62, 0.40, 0.30], [0.36, 0.22, 0.18], [0.60, 0.52, 0.42]],
@@ -161,12 +193,120 @@ impl Default for Palette {
             water: [0.3, 0.7, 0.9],
             dirt: [0.34, 0.29, 0.22],
             gravel: [0.40, 0.39, 0.36],
+            chalk: [0.82, 0.82, 0.76],
+            fence_mesh: [0.28, 0.29, 0.30],
+            hi_vis: [0.95, 0.42, 0.04],
+            helmet: [0.95, 0.80, 0.10],
+            crane: [0.92, 0.70, 0.08],
+            bronze: [0.35, 0.3, 0.2],
+            warning_light: [2.2, 0.3, 0.2],
+            parking_sign: [0.3, 0.6, 2.4],
+            police_light: [0.3, 0.6, 2.6],
+            platform_line: [1.4, 1.2, 0.2],
         }
     }
+}
+
+/// Neutral grey an emptied colour list falls back to.
+pub const FALLBACK: [f32; 3] = [0.5, 0.5, 0.5];
+
+/// Entry `i` of a colour list, wrapping round, or the fallback grey when the
+/// list is empty. Every fixed-index read of a palette list goes through
+/// here so a hot-reloaded palette with a shortened list cannot panic.
+pub fn at(list: &[[f32; 3]], i: usize) -> [f32; 3] {
+    if list.is_empty() { FALLBACK } else { list[i % list.len()] }
 }
 
 impl Palette {
     pub fn zone_color(&self, land_use: nd_sim::LandUse) -> [f32; 3] {
         self.zone_colors[land_use.index()]
+    }
+
+    /// Refill any list a palette file left empty, so `pick` and the
+    /// accessors always have something to choose from. Call after loading.
+    pub fn validate(&mut self) {
+        let d = Palette::default();
+        let lists: [(&mut Vec<[f32; 3]>, Vec<[f32; 3]>); 11] = [
+            (&mut self.glow_colors, d.glow_colors),
+            (&mut self.car_colors, d.car_colors),
+            (&mut self.sign_colors, d.sign_colors),
+            (&mut self.container_colors, d.container_colors),
+            (&mut self.tarp_colors, d.tarp_colors),
+            (&mut self.led_colors, d.led_colors),
+            (&mut self.concrete, d.concrete),
+            (&mut self.glass, d.glass),
+            (&mut self.brick, d.brick),
+            (&mut self.plaster, d.plaster),
+            (&mut self.panel, d.panel),
+        ];
+        for (list, default) in lists {
+            if list.is_empty() {
+                *list = default;
+            }
+        }
+        if self.metal_paint.is_empty() {
+            self.metal_paint = d.metal_paint;
+        }
+        if self.awning_colors.is_empty() {
+            self.awning_colors = d.awning_colors;
+        }
+    }
+
+    pub fn concrete(&self, i: usize) -> [f32; 3] {
+        at(&self.concrete, i)
+    }
+    pub fn glass(&self, i: usize) -> [f32; 3] {
+        at(&self.glass, i)
+    }
+    pub fn brick(&self, i: usize) -> [f32; 3] {
+        at(&self.brick, i)
+    }
+    pub fn plaster(&self, i: usize) -> [f32; 3] {
+        at(&self.plaster, i)
+    }
+    pub fn panel(&self, i: usize) -> [f32; 3] {
+        at(&self.panel, i)
+    }
+    pub fn metal_paint(&self, i: usize) -> [f32; 3] {
+        at(&self.metal_paint, i)
+    }
+    pub fn led(&self, i: usize) -> [f32; 3] {
+        at(&self.led_colors, i)
+    }
+    pub fn awning(&self, i: usize) -> [f32; 3] {
+        at(&self.awning_colors, i)
+    }
+    pub fn tarp(&self, i: usize) -> [f32; 3] {
+        at(&self.tarp_colors, i)
+    }
+    pub fn car(&self, i: usize) -> [f32; 3] {
+        at(&self.car_colors, i)
+    }
+    pub fn sign(&self, i: usize) -> [f32; 3] {
+        at(&self.sign_colors, i)
+    }
+    pub fn glow(&self, i: usize) -> [f32; 3] {
+        at(&self.glow_colors, i)
+    }
+    pub fn container(&self, i: usize) -> [f32; 3] {
+        at(&self.container_colors, i)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emptied_lists_fall_back_instead_of_panicking() {
+        let mut p = Palette::default();
+        p.concrete.clear();
+        p.metal_paint.clear();
+        assert_eq!(p.concrete(0), FALLBACK);
+        assert_eq!(p.metal_paint(2), FALLBACK);
+        assert_eq!(p.glass(7), p.glass[7 % p.glass.len()]);
+        p.validate();
+        assert_eq!(p.concrete, Palette::default().concrete);
+        assert_eq!(p.metal_paint, Palette::default().metal_paint);
     }
 }

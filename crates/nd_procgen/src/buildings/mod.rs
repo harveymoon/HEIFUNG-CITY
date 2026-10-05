@@ -119,6 +119,11 @@ pub enum Style {
 }
 
 impl Style {
+    /// Position in `ALL`, for per-style tables.
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
     pub const ALL: [Style; 44] = [
         Style::Stacks,
         Style::Tenement,
@@ -238,7 +243,57 @@ pub struct BuildingRules {
     pub styles: Vec<StyleWeight>,
 }
 
+impl LandUseRules {
+    /// Clamp the chances a rules file may have set outside `0..=1`; they
+    /// feed `random_bool`, which panics on anything larger than one.
+    pub fn validate(&mut self) {
+        for p in [&mut self.sign_chance, &mut self.vertical_sign_chance, &mut self.roof_antenna_chance] {
+            *p = if p.is_finite() { p.clamp(0.0, 1.0) } else { 0.0 };
+        }
+        self.floor_height = self.floor_height.clamp(2.2, 12.0);
+        self.inset = self.inset.max(0.0);
+        self.window_spacing = self.window_spacing.max(0.8);
+        self.window_size = [self.window_size[0].max(0.2), self.window_size[1].max(0.2)];
+    }
+}
+
+impl TierStyle {
+    pub fn validate(&mut self) {
+        for p in [&mut self.lit_chance, &mut self.grime, &mut self.clutter] {
+            *p = if p.is_finite() { p.clamp(0.0, 1.0) } else { 0.0 };
+        }
+        if self.wall_colors.is_empty() {
+            self.wall_colors.push([0.5, 0.5, 0.5]);
+        }
+        if self.window_colors.is_empty() {
+            self.window_colors.push([1.2, 1.1, 0.9]);
+        }
+    }
+
+    /// Entry `i` of the lit-window colours, wrapping, never panicking.
+    pub fn window_color(&self, i: usize) -> [f32; 3] {
+        crate::palette::at(&self.window_colors, i)
+    }
+
+    pub fn wall_color(&self, i: usize) -> [f32; 3] {
+        crate::palette::at(&self.wall_colors, i)
+    }
+}
+
 impl BuildingRules {
+    /// Clamp every loaded chance and refill emptied colour lists. The
+    /// generators also clamp at the point of use, so this is belt and
+    /// braces for anything that reads the rules directly.
+    pub fn validate(&mut self) {
+        for r in [&mut self.residential, &mut self.commercial, &mut self.industrial, &mut self.entertainment, &mut self.civic, &mut self.park] {
+            r.validate();
+        }
+        for t in &mut self.tiers {
+            t.validate();
+        }
+        self.styles.retain(|w| w.weight.is_finite());
+    }
+
     pub fn for_land_use(&self, lu: LandUse) -> &LandUseRules {
         match lu {
             LandUse::Residential => &self.residential,
@@ -391,7 +446,12 @@ impl Default for BuildingRules {
 
 /// Parcel-aligned coordinate frame: `u` runs along the frontage, `v` inward
 /// from the road, origin at the centre of the parcel's bounding rectangle.
-#[derive(Clone, Copy, Debug)]
+///
+/// Generators work in two coordinate systems: lot-local (`Ctx::lot_poly`,
+/// `Face`, `Frame::bx`) and world (`ParkLayout`, `RailLink`, the `*_world`
+/// helpers). The identity frame from [`Frame::world`] lets a frame-taking
+/// helper draw in world space; [`Frame::is_world`] tells which one a frame is.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Frame {
     pub center: Vec2,
     pub along: Vec2,
@@ -408,8 +468,25 @@ impl Frame {
         Self { center, along, inward, width: lot.width(), depth: lot.depth() }
     }
 
+    /// The identity frame: lot-local and world coordinates coincide, so the
+    /// frame-taking helpers draw straight into world space (parks, rail and
+    /// vacant lots lay out from world polygons).
+    pub fn world() -> Self {
+        Self { center: Vec2::ZERO, along: Vec2::X, inward: Vec2::Y, width: 0.0, depth: 0.0 }
+    }
+
+    pub fn is_world(&self) -> bool {
+        self.center == Vec2::ZERO && self.along == Vec2::X && self.inward == Vec2::Y
+    }
+
     pub fn yaw(&self) -> f32 {
         self.along.y.atan2(self.along.x)
+    }
+
+    /// Lot-local direction to world, without translation.
+    pub fn dir3(&self, d: Vec2) -> Vec3 {
+        let w = self.along * d.x + self.inward * d.y;
+        Vec3::new(w.x, 0.0, w.y)
     }
 
     pub fn to_world(&self, u: f32, v: f32) -> Vec2 {
@@ -442,6 +519,16 @@ impl Frame {
         g.part(s).boxed(Vec3::new(p.x, y, p.y), size, self.yaw() + extra, parts::rgba(color));
     }
 
+    /// Flat painted mark lying on the ground at height `y`: `w` along the
+    /// frame (plus `extra` yaw) and `d` across. One upward quad.
+    #[allow(clippy::too_many_arguments)]
+    pub fn flat(&self, g: &mut Geometry, s: Surface, u: f32, y: f32, v: f32, w: f32, d: f32, extra: f32, color: [f32; 3]) {
+        let yaw = self.yaw() + extra;
+        let along = Vec3::new(yaw.cos(), 0.0, yaw.sin());
+        let across = Vec3::new(-yaw.sin(), 0.0, yaw.cos());
+        g.part(s).decal(self.at(u, y, v), along, across, w, d, Vec3::Y, parts::rgba(color));
+    }
+
     /// Lot-local polygon to world points at height `y`.
     pub fn poly3(&self, poly: &[Vec2], y: f32) -> Vec<Vec3> {
         poly.iter().map(|p| self.at2(*p, y)).collect()
@@ -462,11 +549,26 @@ pub struct Face {
 }
 
 impl Face {
+    /// The edge a→b with its outside on the right of travel, as the edges
+    /// of a counter-clockwise footprint have.
     pub fn from_edge(a: Vec2, b: Vec2) -> Self {
         let len = a.distance(b);
         let tangent = if len > 1e-4 { (b - a) / len } else { Vec2::X };
         let out = Vec2::new(tangent.y, -tangent.x);
         Self { a, b, tangent, out, len, is_front: out.dot(Vec2::new(0.0, -1.0)) > 0.6 }
+    }
+
+    /// The edge a→b facing the side `out` points to. The endpoints are
+    /// swapped when needed so `tangent`, `out`, `a` and `b` always agree,
+    /// which a struct literal override of one field cannot promise.
+    pub fn new(a: Vec2, b: Vec2, out: Vec2) -> Self {
+        let f = Self::from_edge(a, b);
+        if f.out.dot(out) < 0.0 { f.reversed() } else { f }
+    }
+
+    /// The same edge seen from the other side.
+    pub fn reversed(&self) -> Self {
+        Self::from_edge(self.b, self.a)
     }
 
     pub fn mid(&self) -> Vec2 {
@@ -488,6 +590,14 @@ impl Face {
     pub fn bx(&self, g: &mut Geometry, f: &Frame, s: Surface, t: f32, y: f32, d: f32, size: Vec3, color: [f32; 3]) {
         let p = self.at(t, d);
         f.bx_yaw(g, s, p.x, y, p.y, size, color, self.yaw());
+    }
+
+    /// One quad `w` wide and `h` high, `d` proud of the face and facing the
+    /// way the face does: panes, frames, signs, stains, anything flat that
+    /// is only ever seen from the front. See [`parts::decal`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn decal(&self, g: &mut Geometry, f: &Frame, s: Surface, t: f32, y: f32, d: f32, w: f32, h: f32, color: [f32; 3]) {
+        parts::decal(g, f, s, self, t, y, d, w, h, color);
     }
 }
 
@@ -550,11 +660,14 @@ impl Ctx<'_> {
         self.floors.max(1) as f32 * self.fh()
     }
 
+    /// Chance a window is lit, clamped so rule files cannot push it past 1.
     pub fn lit_chance(&self) -> f32 {
-        self.style.lit_chance * (1.0 - 0.8 * self.wear) * self.powered.clamp(0.08, 1.0)
+        (self.style.lit_chance * (1.0 - 0.8 * self.wear) * self.powered.clamp(0.08, 1.0)).clamp(0.0, 1.0)
     }
 
-    pub fn inside(&self, p: Vec2) -> bool {
+    /// Whether a lot-local point lies on the parcel. World points go through
+    /// `Frame::to_local` first (or `park::Park::inside_world`).
+    pub fn inside_local(&self, p: Vec2) -> bool {
         point_in_polygon(p, &self.lot_poly)
     }
 
@@ -588,34 +701,26 @@ impl Ctx<'_> {
         (0..n).map(|i| Face::from_edge(poly[i], poly[(i + 1) % n])).collect()
     }
 
+    /// Index of the face of a polygon that looks at the road: the longest
+    /// edge facing -v. Fences and hoardings leave that edge for the gate.
+    pub fn front_face_index(&self, poly: &[Vec2]) -> Option<usize> {
+        let faces = self.faces(poly);
+        (0..faces.len()).max_by(|&i, &j| {
+            let si = faces[i].out.dot(Vec2::new(0.0, -1.0)) * faces[i].len;
+            let sj = faces[j].out.dot(Vec2::new(0.0, -1.0)) * faces[j].len;
+            si.total_cmp(&sj)
+        })
+    }
+
     /// The face of a polygon that looks at the road.
     pub fn front_face(&self, poly: &[Vec2]) -> Face {
         let faces = self.faces(poly);
-        faces
-            .iter()
-            .copied()
-            .max_by(|a, b| {
-                let sa = a.out.dot(Vec2::new(0.0, -1.0)) * a.len;
-                let sb = b.out.dot(Vec2::new(0.0, -1.0)) * b.len;
-                sa.total_cmp(&sb)
-            })
-            .unwrap_or(Face::from_edge(Vec2::new(-1.0, -1.0), Vec2::new(1.0, -1.0)))
+        self.front_face_index(poly).map(|i| faces[i]).unwrap_or(Face::from_edge(Vec2::new(-1.0, -1.0), Vec2::new(1.0, -1.0)))
     }
 
     /// Random point inside the parcel at least `margin` from its edges.
     pub fn random_inside(&self, rng: &mut impl Rng, margin: f32) -> Option<Vec2> {
-        let poly = parts::offset_poly(&self.lot_poly, margin);
-        if poly.len() < 3 {
-            return None;
-        }
-        let (lo, hi) = parts::bounds(&poly);
-        for _ in 0..24 {
-            let p = Vec2::new(rng.random_range(lo.x..=hi.x), rng.random_range(lo.y..=hi.y));
-            if point_in_polygon(p, &poly) {
-                return Some(p);
-            }
-        }
-        None
+        parts::random_in_poly(rng, &self.lot_poly, margin)
     }
 }
 
@@ -681,7 +786,7 @@ fn generate_styled_extras(
     let mut rng = rng_for(seed, 13);
     let frame = Frame::from_lot(lot);
     let r = rules.for_land_use(land_use);
-    let mut lot_poly: Vec<Vec2> = lot.polygon.iter().map(|p| frame.to_local(*p)).collect();
+    let mut lot_poly: Vec<Vec2> = parts::clean_poly(&lot.polygon.iter().map(|p| frame.to_local(*p)).collect::<Vec<_>>(), 0.3);
     if lot_poly.len() < 3 {
         let (hw, hd) = (frame.width * 0.5, frame.depth * 0.5);
         lot_poly = vec![Vec2::new(-hw, -hd), Vec2::new(hw, -hd), Vec2::new(hw, hd), Vec2::new(-hw, hd)];
@@ -768,11 +873,12 @@ fn back_edge_link(lot: &Lot, kind: RailFacility) -> RailLink {
     let a = lot.corners[3];
     let b = lot.corners[2];
     let d = (b - a).normalize_or_zero();
-    let out = Vec2::new(-d.y, d.x);
     let back = (a + b) * 0.5 + lot.front_dir * -4.0;
     let half = (a.distance(b) * 0.45).min(40.0);
-    let _ = out;
-    RailLink { kind, segment: nd_sim::SegmentId(0), platform: [back - d * half, back + d * half], side: 1.0, rail_connected: true, road_connected: true }
+    // `perp(along) * side` is the direction from the track to the building:
+    // here, from behind the lot towards the road.
+    let side = if Vec2::new(-d.y, d.x).dot(lot.front_dir) >= 0.0 { 1.0 } else { -1.0 };
+    RailLink { kind, segment: nd_sim::SegmentId(0), platform: [back - d * half, back + d * half], side, rail_connected: true, road_connected: true }
 }
 
 #[cfg(test)]
@@ -792,6 +898,17 @@ mod tests {
         lots.values().cloned().collect()
     }
 
+    fn check_mesh(g: &Geometry, what: &str) {
+        for (s, m) in g.iter() {
+            assert_eq!(m.positions.len(), m.uvs.len(), "{what} {s:?} uv count");
+            assert_eq!(m.positions.len(), m.tangents.len(), "{what} {s:?} tangent count");
+            assert!(m.positions.iter().all(|p| p.iter().all(|v| v.is_finite())), "{what} {s:?} has NaN");
+            assert!(m.normals.iter().all(|p| p.iter().all(|v| v.is_finite())), "{what} {s:?} has NaN normals");
+            assert!(m.uvs.iter().all(|p| p.iter().all(|v| v.is_finite())), "{what} {s:?} has NaN uvs");
+            assert!(m.indices.iter().all(|&i| (i as usize) < m.positions.len()), "{what} {s:?} bad index");
+        }
+    }
+
     #[test]
     fn every_style_builds_on_odd_parcels_without_nans() {
         let rules = BuildingRules::default();
@@ -806,13 +923,7 @@ mod tests {
                     for tier in [Tier::Low, Tier::Mid, Tier::High] {
                         let g = generate_styled(lot, lu, floors, tier, 0.7, 42, style, &rules, &pal);
                         assert!(g.triangle_count() > 0, "{style:?} produced nothing");
-                        for (s, m) in g.iter() {
-                            assert_eq!(m.positions.len(), m.uvs.len(), "{style:?} {s:?} uv count");
-                            assert!(m.positions.iter().all(|p| p.iter().all(|v| v.is_finite())), "{style:?} {s:?} has NaN");
-                            assert!(m.normals.iter().all(|p| p.iter().all(|v| v.is_finite())), "{style:?} {s:?} has NaN normals");
-                            assert!(m.uvs.iter().all(|p| p.iter().all(|v| v.is_finite())), "{style:?} {s:?} has NaN uvs");
-                            assert!(m.indices.iter().all(|&i| (i as usize) < m.positions.len()), "{style:?} {s:?} bad index");
-                        }
+                        check_mesh(&g, &format!("{style:?}"));
                     }
                 }
             }
@@ -840,6 +951,60 @@ mod tests {
         lot.polygon.iter().map(|p| f.to_local(*p)).collect()
     }
 
+    /// How far a world point lies outside the lot's outline (zero inside).
+    /// The outline, not its bounding box: a triangular corner lot has a lot
+    /// of box that is somebody else's land.
+    fn outside_by(q: Vec2, lot: &Lot) -> f32 {
+        if point_in_polygon(q, &lot.polygon) { 0.0 } else { parts::distance_to_boundary(q, &lot.polygon) }
+    }
+
+    /// Distance from a point to the track corridor a station or yard was
+    /// given: the platform segment widened by `half`.
+    fn outside_corridor(q: Vec2, link: &RailLink, half: f32) -> f32 {
+        let (_, p) = nd_sim::roads::project_on_segment(q, link.platform[0], link.platform[1]);
+        (q.distance(p) - half).max(0.0)
+    }
+
+    /// Worst overshoot, lowest and highest vertex of a building, with a
+    /// description of the worst offender.
+    fn extent(g: &Geometry, lot: &Lot, link: Option<&RailLink>) -> (f32, f32, f32, String) {
+        let frame = Frame::from_lot(lot);
+        let (mut over, mut top, mut low) = (0.0f32, 0.0f32, 0.0f32);
+        let mut culprit = String::new();
+        for (surface, m) in g.iter() {
+            for p in &m.positions {
+                let q = Vec2::new(p[0], p[2]);
+                let mut d = outside_by(q, lot);
+                if let Some(l) = link {
+                    // Platforms, sidings, apron and the gantry reach out to
+                    // the track by design; they must stay in its corridor.
+                    let half = if l.kind == RailFacility::FreightYard { 19.0 } else { 10.0 };
+                    d = d.min(outside_corridor(q, l, half));
+                }
+                if d > over {
+                    over = d;
+                    let l = frame.to_local(q);
+                    culprit = format!("{surface:?} at local ({:.1}, {:.1}) y {:.1}", l.x, l.y, p[1]);
+                }
+                if p[1] < low {
+                    low = p[1];
+                    if over <= 0.0 {
+                        let l = frame.to_local(q);
+                        culprit = format!("{surface:?} at local ({:.1}, {:.1}) y {:.1}", l.x, l.y, p[1]);
+                    }
+                }
+                top = top.max(p[1]);
+            }
+        }
+        (over, top, low, culprit)
+    }
+
+    /// Triangles a style may spend on a lot: a base, a share per floor for
+    /// facades, and a share per square metre for yards and parks.
+    fn budget(floors: u8, lot: &Lot) -> usize {
+        4000 + 300 * floors as usize + 2 * polygon_area(&lot.polygon).abs() as usize
+    }
+
     /// Building sites at every stage stay on their lot and are well formed.
     #[test]
     fn construction_sites_stay_on_their_lot() {
@@ -849,43 +1014,31 @@ mod tests {
         for lu in LandUse::ALL {
             let lots = many_lots(lu);
             for (li, lot) in lots.iter().enumerate() {
-                let (lo, hi) = parts::bounds(&lot.polygon);
                 for (seed, floors, tier) in [(1u64, 2u8, Tier::Low), (7, 9, Tier::Mid), (13, 30, Tier::High)] {
                     for progress in [0.0f32, 0.05, 0.3, 0.55, 0.8, 0.96, 1.0] {
                         let extras = Extras { construction: Some(progress), ..Extras::default() };
                         let g = generate_building(lot, lu, floors, tier, 1.0, seed + li as u64, &rules, &pal, &extras);
                         assert!(g.triangle_count() > 0, "site at {progress} on {lu:?} lot {li} drew nothing");
-                        let mut over = 0.0f32;
-                        let mut top = 0.0f32;
-                        let mut culprit = String::new();
-                        let frame = Frame::from_lot(lot);
-                        for (s, m) in g.iter() {
-                            assert_eq!(m.positions.len(), m.uvs.len(), "{s:?} uv count");
-                            for p in &m.positions {
-                                assert!(p.iter().all(|v| v.is_finite()), "{s:?} has NaN");
-                                let q = Vec2::new(p[0], p[2]);
-                                let d = (lo - q).max(q - hi).max_element();
-                                if d > over {
-                                    over = d;
-                                    let l = frame.to_local(q);
-                                    culprit = format!("{s:?} at local ({:.1}, {:.1}) y {:.1}", l.x, l.y, p[1]);
-                                }
-                                top = top.max(p[1]);
-                            }
-                        }
-                        let allow = 4.0;
-                        if over > allow || top > (60.0 + floors as f32 * 5.0).max(90.0) {
+                        check_mesh(&g, &format!("site at {progress} on {lu:?} lot {li}"));
+                        let (over, top, low, culprit) = extent(&g, lot, None);
+                        // Scaffolding and hoarding are dense, and a site is temporary: it
+                        // gets twice the finished building's budget.
+                        let site_budget = budget(floors, lot) * 2;
+                        if over > 1.0 || top > (60.0 + floors as f32 * 5.0).max(90.0) || low < -0.3 || g.triangle_count() > site_budget {
+                            let frame = Frame::from_lot(lot);
                             let (plo, phi) = parts::bounds(&frame_poly(&frame, lot));
-                            worst.push(format!("{lu:?} lot {li} floors {floors} at {progress}: overshoots {over:.1} m, top {top:.0} m ({} verts, local {:.0}..{:.0} x {:.0}..{:.0}): {culprit}", lot.polygon.len(), plo.x, phi.x, plo.y, phi.y));
+                            worst.push(format!("{lu:?} lot {li} floors {floors} at {progress}: overshoots {over:.1} m, top {top:.0} m, low {low:.1}, {} tris ({} verts, local {:.0}..{:.0} x {:.0}..{:.0}): {culprit}", g.triangle_count(), lot.polygon.len(), plo.x, phi.x, plo.y, phi.y));
                         }
                     }
                 }
             }
         }
-        assert!(worst.is_empty(), "{} sites leave their lot:\n{}", worst.len(), worst.join("\n"));
+        assert!(worst.is_empty(), "{} sites leave their lot or budget:\n{}", worst.len(), worst.join("\n"));
     }
 
-    /// Nothing a building generates may reach far beyond its own lot.
+    /// Nothing a building generates may reach beyond its own lot outline
+    /// (a short way for canopies and kerbside clutter), dig into the
+    /// ground, or blow its triangle budget.
     #[test]
     fn geometry_stays_near_its_lot() {
         let rules = BuildingRules::default();
@@ -895,44 +1048,22 @@ mod tests {
             let lots = many_lots(lu);
             assert!(lots.len() > 10, "{lu:?}: {} lots", lots.len());
             for (li, lot) in lots.iter().enumerate() {
-                let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
-                for p in &lot.polygon {
-                    lo = lo.min(*p);
-                    hi = hi.max(*p);
-                }
-                let span = (hi - lo).max_element();
+                let span = { let (lo, hi) = parts::bounds(&lot.polygon); (hi - lo).max_element() };
                 for style in Style::ALL {
                     for (seed, floors, tier) in [(1u64, 2u8, Tier::Low), (7, 9, Tier::Mid), (13, 30, Tier::High)] {
                         let g = generate_styled(lot, lu, floors, tier, 0.6, seed + li as u64, style, &rules, &pal);
-                        let mut over = 0.0f32;
-                        let mut top = 0.0f32;
-                        let mut low = 0.0f32;
-                        let mut culprit = String::new();
-                        let frame = Frame::from_lot(lot);
-                        for (surface, m) in g.iter() {
-                            for p in &m.positions {
-                                let q = Vec2::new(p[0], p[2]);
-                                let d = (lo - q).max(q - hi).max_element();
-                                if d > over {
-                                    over = d;
-                                    let l = frame.to_local(q);
-                                    culprit = format!("{surface:?} at local ({:.1}, {:.1}) y {:.1}", l.x, l.y, p[1]);
-                                }
-                                if p[1] < low {
-                                    low = p[1];
-                                    if over <= 4.0 {
-                                        let l = frame.to_local(q);
-                                        culprit = format!("{surface:?} at local ({:.1}, {:.1}) y {:.1}", l.x, l.y, p[1]);
-                                    }
-                                }
-                                top = top.max(p[1]);
-                            }
-                        }
-                        // Stations and yards reach out to the track beside the lot by design.
-                        let allow = match style { Style::FreightYard => 90.0, Style::Station => 60.0, _ => 4.0 };
-                        if over > allow || top > (60.0 + floors as f32 * 5.0).max(90.0) || low < -2.0 {
+                        let link = match style {
+                            Style::Station => Some(back_edge_link(lot, RailFacility::Station)),
+                            Style::FreightYard => Some(back_edge_link(lot, RailFacility::FreightYard)),
+                            _ => None,
+                        };
+                        let (over, top, low, culprit) = extent(&g, lot, link.as_ref());
+                        let tris = g.triangle_count();
+                        let allow = 1.0;
+                        if over > allow || top > (60.0 + floors as f32 * 5.0).max(90.0) || low < -0.3 || tris > budget(floors, lot) {
+                            let frame = Frame::from_lot(lot);
                             let (plo, phi) = parts::bounds(&frame_poly(&frame, lot));
-                            worst.push((over.max(-low), format!("{style:?} {lu:?} lot {li} ({} verts, span {span:.0}, local {:.0}..{:.0} x {:.0}..{:.0}) overshoots {over:.1} m, top {top:.0} m, low {low:.1}, floors {floors}: {culprit}", lot.polygon.len(), plo.x, phi.x, plo.y, phi.y)));
+                            worst.push((over.max(-low).max((tris as f32 - budget(floors, lot) as f32) / 1000.0), format!("{style:?} {lu:?} lot {li} ({} verts, span {span:.0}, local {:.0}..{:.0} x {:.0}..{:.0}) overshoots {over:.1} m, top {top:.0} m, low {low:.1}, {tris} tris of {}, floors {floors}: {culprit}", lot.polygon.len(), plo.x, phi.x, plo.y, phi.y, budget(floors, lot))));
                         }
                     }
                 }
@@ -949,7 +1080,7 @@ mod tests {
                 seen.push(style);
             }
         }
-        assert!(worst.is_empty(), "{} style/lot combinations reach beyond their lot", worst.len());
+        assert!(worst.is_empty(), "{} style/lot combinations reach beyond their lot or budget", worst.len());
     }
 
     #[test]
@@ -961,6 +1092,150 @@ mod tests {
             assert!(matches!(s, Style::Junkyard | Style::RustyWarehouse));
             let s = rules.pick_style(LandUse::Industrial, Tier::High, &mut rng);
             assert!(matches!(s, Style::Datacenter | Style::Depot));
+        }
+    }
+
+    /// The same inputs draw the same building, byte for byte: the renderer
+    /// keys caches on (lot, seed) and a save must look the same on reload.
+    #[test]
+    fn generation_is_deterministic() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let lots = many_lots(LandUse::Commercial);
+        for (li, lot) in lots.iter().take(6).enumerate() {
+            for style in [Style::Shophouse, Style::Stacks, Style::Junkyard, Style::Plaza, Style::Crystal] {
+                let a = generate_styled(lot, LandUse::Commercial, 5, Tier::Mid, 0.6, 99 + li as u64, style, &rules, &pal);
+                let b = generate_styled(lot, LandUse::Commercial, 5, Tier::Mid, 0.6, 99 + li as u64, style, &rules, &pal);
+                assert!(a == b, "{style:?} on lot {li} differs between two runs");
+            }
+            let extras = Extras { powered: 0.4, ..Extras::default() };
+            let a = generate_building(lot, LandUse::Residential, 7, Tier::Low, 0.5, 3 + li as u64, &rules, &pal, &extras);
+            let b = generate_building(lot, LandUse::Residential, 7, Tier::Low, 0.5, 3 + li as u64, &rules, &pal, &extras);
+            assert!(a == b, "generate_building on lot {li} differs between two runs");
+        }
+    }
+
+    #[test]
+    fn enum_tables_match_their_indices() {
+        for (i, s) in Surface::ALL.iter().enumerate() {
+            assert_eq!(s.index(), i, "{s:?}");
+        }
+        for (i, s) in Style::ALL.iter().enumerate() {
+            assert_eq!(s.index(), i, "{s:?}");
+        }
+        assert_eq!(Geometry::default().parts.len(), Surface::ALL.len());
+    }
+
+    /// Rule files may hold chances above one; nothing downstream may panic.
+    #[test]
+    fn out_of_range_rules_are_clamped() {
+        let mut rules = BuildingRules::default();
+        rules.commercial.sign_chance = 7.0;
+        rules.entertainment.vertical_sign_chance = f32::NAN;
+        rules.tiers[0].lit_chance = 3.0;
+        rules.tiers[1].window_colors.clear();
+        rules.validate();
+        assert_eq!(rules.commercial.sign_chance, 1.0);
+        assert_eq!(rules.entertainment.vertical_sign_chance, 0.0);
+        assert_eq!(rules.tiers[0].lit_chance, 1.0);
+        assert!(!rules.tiers[1].window_colors.is_empty());
+        // Even without validate() the generators clamp at the point of use.
+        let mut raw = BuildingRules::default();
+        raw.tiers[2].lit_chance = 4.0;
+        raw.commercial.sign_chance = 2.0;
+        let pal = Palette::default();
+        let lots = many_lots(LandUse::Commercial);
+        for style in [Style::Shophouse, Style::RetailBlock, Style::Tenement] {
+            let g = generate_styled(&lots[0], LandUse::Commercial, 5, Tier::High, 0.3, 1, style, &raw, &pal);
+            assert!(g.triangle_count() > 0);
+        }
+    }
+
+    /// Extras change the look without breaking the lot: brown-outs, car
+    /// park occupancy, a bus depot, a planned multi-lot park and a real
+    /// railway link on either side of the track.
+    #[test]
+    fn extras_paths_stay_on_their_lot() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let lots = many_lots(LandUse::Commercial);
+        let lot = &lots[0];
+        // Brown-out: fewer lit windows than full power, same footprint.
+        let lit = |g: &Geometry| g.get(Surface::Glow).indices.len();
+        let bright = generate_building(lot, LandUse::Residential, 8, Tier::Mid, 0.9, 5, &rules, &pal, &Extras::default());
+        let dim = generate_building(lot, LandUse::Residential, 8, Tier::Mid, 0.9, 5, &rules, &pal, &Extras { powered: 0.1, ..Extras::default() });
+        assert!(lit(&dim) < lit(&bright), "a brown-out should put windows out ({} vs {})", lit(&dim), lit(&bright));
+        for g in [&bright, &dim] {
+            check_mesh(g, "powered");
+            assert!(extent(g, lot, None).0 <= 1.0);
+        }
+        // Parking: a full lot has more car than an empty one.
+        let empty = generate_building(lot, LandUse::Commercial, 1, Tier::Low, 0.8, 5, &rules, &pal, &Extras { parking: Some(0.0), ..Extras::default() });
+        let full = generate_building(lot, LandUse::Commercial, 1, Tier::Low, 0.8, 5, &rules, &pal, &Extras { parking: Some(1.0), ..Extras::default() });
+        assert!(full.triangle_count() > empty.triangle_count() + 100, "cars should show up in a full car park");
+        let deck = generate_building(lot, LandUse::Commercial, 4, Tier::Mid, 0.8, 5, &rules, &pal, &Extras { parking: Some(0.7), ..Extras::default() });
+        for g in [&empty, &full, &deck] {
+            check_mesh(g, "parking");
+            let (over, _, low, culprit) = extent(g, lot, None);
+            assert!(over <= 1.0 && low >= -0.3, "parking leaves its lot: {over:.1} m / {low:.1}: {culprit}");
+        }
+        // Depot.
+        let depot = generate_building(lot, LandUse::Civic, 2, Tier::Mid, 0.8, 5, &rules, &pal, &Extras { depot: true, ..Extras::default() });
+        check_mesh(&depot, "depot");
+        assert!(extent(&depot, lot, None).0 <= 1.0);
+
+        // A real park plan over several adjoining lots, drawn lot by lot.
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-400.0, -40.0), Vec2::new(400.0, -40.0)], 1, 1);
+        roads.add_polyline(&[Vec2::new(-400.0, 200.0), Vec2::new(400.0, 200.0)], 1, 1);
+        roads.add_polyline(&[Vec2::new(-120.0, -300.0), Vec2::new(60.0, 300.0)], 1, 1);
+        let zone = Zone { polygon: vec![Vec2::new(-200.0, -20.0), Vec2::new(200.0, -20.0), Vec2::new(200.0, 180.0), Vec2::new(-200.0, 180.0)], land_use: LandUse::Park };
+        let mut park_lots = SlotMap::with_key();
+        generate_lots(ZoneId::default(), &zone, &roads, &mut park_lots, &[]);
+        let mut lv = nd_sim::land_value::LandValue::new(400.0, 50.0);
+        for v in &mut lv.values {
+            *v = 0.8;
+        }
+        nd_sim::park::plan_parks(&mut park_lots, &lv);
+        let planned: Vec<&Lot> = park_lots.values().filter(|l| l.usable() && l.park.is_some()).collect();
+        assert!(planned.iter().any(|l| l.park.as_ref().unwrap().cluster_lots >= 2), "the park zone should plan at least one multi-lot park");
+        assert!(planned.iter().any(|l| !l.park.as_ref().unwrap().shared_edges.is_empty()), "adjoining park lots should share an edge");
+        let mut drawn = 0;
+        for lot in planned {
+            let layout = lot.park.as_ref().unwrap();
+            let g = generate_building(lot, LandUse::Park, 1, layout.tier, 1.0, 11, &rules, &pal, &Extras { park: Some(layout), ..Extras::default() });
+            check_mesh(&g, "park");
+            let (over, _, low, culprit) = extent(&g, lot, None);
+            assert!(over <= 1.0 && low >= -0.3, "park lot ({} lots, tier {:?}) leaves its lot: {over:.1} m / {low:.1}: {culprit}", layout.cluster_lots, layout.tier);
+            drawn += 1;
+        }
+        assert!(drawn > 3);
+
+        // A real railway link along the back of the lot, on both sides of
+        // the track, for the station and the yard.
+        for kind in [RailFacility::Station, RailFacility::FreightYard] {
+            for side in [1.0f32, -1.0] {
+                for (li, lot) in lots.iter().take(12).enumerate() {
+                    let a = lot.corners[3];
+                    let b = lot.corners[2];
+                    let d = (b - a).normalize_or_zero();
+                    // `out` must point from the track towards the lot, so pick the
+                    // platform direction that makes perp(along) * side do that.
+                    let along = if Vec2::new(-d.y, d.x).dot(lot.front_dir) * side > 0.0 { d } else { -d };
+                    let centre = (a + b) * 0.5 - lot.front_dir * 4.0;
+                    let half = (a.distance(b) * 0.45).min(40.0);
+                    let link = RailLink { kind, segment: nd_sim::SegmentId(0), platform: [centre - along * half, centre + along * half], side, rail_connected: true, road_connected: true };
+                    let g = generate_building(lot, LandUse::Industrial, 2, Tier::Mid, 0.8, 5 + li as u64, &rules, &pal, &Extras { rail: Some(&link), ..Extras::default() });
+                    check_mesh(&g, "rail");
+                    let (over, _, low, culprit) = extent(&g, lot, Some(&link));
+                    assert!(over <= 1.0 && low >= -0.3, "{kind:?} side {side} on lot {li} leaves its lot and track: {over:.1} m / {low:.1}: {culprit}");
+                    // The platform furniture must land on the lot's side of the track.
+                    let out = Vec2::new(-along.y, along.x) * side;
+                    let platform_side = g.get(Surface::Concrete).positions.iter().filter(|p| (Vec2::new(p[0], p[2]) - centre).dot(out) > 0.5).count();
+                    let far_side = g.get(Surface::Concrete).positions.iter().filter(|p| (Vec2::new(p[0], p[2]) - centre).dot(out) < -8.0).count();
+                    assert!(platform_side > far_side, "{kind:?} side {side} on lot {li} built across the track");
+                }
+            }
         }
     }
 }

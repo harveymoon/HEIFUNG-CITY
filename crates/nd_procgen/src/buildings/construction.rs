@@ -6,7 +6,6 @@
 
 use super::parts::*;
 use super::{Ctx, Face};
-use crate::palette::RUST;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::zoning::point_in_polygon;
@@ -14,9 +13,6 @@ use nd_sim::LandUse;
 use rand::Rng;
 
 const HOARDING_H: f32 = 2.3;
-const HI_VIS: [f32; 3] = [0.95, 0.42, 0.04];
-const HELMET: [f32; 3] = [0.95, 0.80, 0.10];
-const CRANE: [f32; 3] = [0.92, 0.70, 0.08];
 
 /// Draw the site at `progress` in `0..1`.
 pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: f32) {
@@ -67,7 +63,7 @@ pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress
     for k in [0usize, hoard.len() / 2] {
         let corner = hoard[k % hoard.len()];
         let p = corner.lerp(poly_center(&hoard), 0.08);
-        if c.inside(p) {
+        if c.inside_local(p) {
             floodlight(g, c, p, 6.5);
         }
     }
@@ -75,7 +71,7 @@ pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress
     // The raft, and the structure on it.
     let poly = &c.poly;
     if poly.len() >= 3 {
-        extrude(g, f, Concrete, poly, 0.0, 0.35, mul(pal.concrete[0], 0.7));
+        extrude(g, f, Concrete, poly, 0.0, 0.35, mul(pal.concrete(0), 0.7));
         if !landscaping {
             structure(g, c, rng, poly, built, floors_done, fh, concrete, pale, steel);
             if progress > 0.02 && progress < 0.97 && built > 0.3 {
@@ -97,7 +93,7 @@ pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress
 
     // Site clutter: everything stays off the footprint and inside the fence.
     let keep_out = offset_poly(poly, -1.2);
-    let clear = |p: Vec2| c.inside(p) && distance_to_boundary(p, &c.lot_poly) > 1.4 && !(keep_out.len() >= 3 && point_in_polygon(p, &keep_out));
+    let clear = |p: Vec2| c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.4 && !(keep_out.len() >= 3 && point_in_polygon(p, &keep_out));
     let yard_front = front.out * -1.0;
     // Cabin and mixer by the gate.
     let cabin_at = front.at(-front.len * 0.32, -3.6);
@@ -139,7 +135,7 @@ pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress
         let n = 3 + (c.floors as usize / 6).min(3);
         for k in 0..n {
             if k % 2 == 0 && floors_done > 0 && poly.len() >= 3 {
-                if let Some(p) = random_in_poly(rng, poly) {
+                if let Some(p) = random_in_poly(rng, poly, 0.0) {
                     worker(g, c, rng, p, slab_top + 0.35);
                     continue;
                 }
@@ -181,9 +177,9 @@ fn hoarding(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, gate: Op
         // Posters and a warning stripe.
         if rng.random_bool(0.5) && len > 4.0 {
             let t = rng.random_range(a + 1.0..b - 1.0);
-            face.bx(g, f, Glow, t, 1.3, 0.04, Vec3::new(1.2, 1.6, 0.02), mul(pick(rng, &c.palette.sign_colors), 0.6));
+            face.decal(g, f, Glow, t, 1.3, 0.04, 1.2, 1.6, mul(pick(rng, &c.palette.sign_colors), 0.6));
         }
-        face.bx(g, f, Matte, mid, 0.45, 0.035, Vec3::new(len, 0.25, 0.01), HI_VIS);
+        face.decal(g, f, Matte, mid, 0.45, 0.035, len, 0.25, c.palette.hi_vis);
     }
     if let Some(gw) = gate {
         if face.len > gw + 2.0 {
@@ -194,7 +190,7 @@ fn hoarding(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, gate: Op
             face.bx(g, f, Matte, -gw * 0.5 - gw * 0.3, h * 0.5, -0.25, Vec3::new(gw * 0.6, h * 0.92, 0.04), [0.30, 0.31, 0.33]);
             face.bx(g, f, Matte, gw * 0.5 - gw * 0.15, h * 0.5, 0.25, Vec3::new(gw * 0.3, h * 0.92, 0.04), [0.30, 0.31, 0.33]);
             // A barrier across the opening.
-            face.bx(g, f, Matte, 0.0, 0.9, 0.4, Vec3::new(gw * 0.8, 0.12, 0.08), HI_VIS);
+            face.bx(g, f, Matte, 0.0, 0.9, 0.4, Vec3::new(gw * 0.8, 0.12, 0.08), c.palette.hi_vis);
         }
     }
 }
@@ -214,7 +210,7 @@ fn structure(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], built
             let n = (face.len / 1.6) as i32;
             for k in 0..n {
                 let t = -face.len * 0.5 + (k as f32 + 0.5) * (face.len / n.max(1) as f32);
-                face.bx(g, f, Rust, t, 0.35 + 0.45, -0.25, Vec3::new(0.04, 0.9, 0.04), RUST);
+                face.bx(g, f, Rust, t, 0.35 + 0.45, -0.25, Vec3::new(0.04, 0.9, 0.04), c.palette.rust);
             }
         }
         return;
@@ -237,7 +233,7 @@ fn structure(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], built
                     if t.abs() > face.len * 0.5 - ww * 0.6 {
                         continue;
                     }
-                    face.bx(g, f, Matte, t, y, 0.02, Vec3::new(ww, wh.min(fh - 0.8), 0.04), DARK);
+                    face.decal(g, f, Matte, t, y, 0.02, ww, wh.min(fh - 0.8), DARK);
                 }
             }
         }
@@ -260,7 +256,7 @@ fn structure(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], built
             let n = (face.len / 4.0).floor().max(1.0) as i32;
             for k in 0..=n {
                 let t = (-face.len * 0.5 + k as f32 * (face.len / n as f32)).clamp(-face.len * 0.5 + 0.5, face.len * 0.5 - 0.5);
-                face.bx(g, f, Rust, t, y1 + 0.45, -0.27, Vec3::new(0.05, 0.9, 0.05), RUST);
+                face.bx(g, f, Rust, t, y1 + 0.45, -0.27, Vec3::new(0.05, 0.9, 0.05), c.palette.rust);
                 if rng.random_bool(0.4) {
                     face.bx(g, f, Wood, t, (y0 + y1) * 0.5, -0.27, Vec3::new(0.7, y1 - y0, 0.7), mul(c.palette.plywood, 0.9));
                 }
@@ -276,7 +272,7 @@ fn structure(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], built
         }
         // Props and loose kit on the slab.
         for _ in 0..rng.random_range(2..5) {
-            if let Some(p) = random_in_poly(rng, &offset_poly(poly, 0.8)) {
+            if let Some(p) = random_in_poly(rng, poly, 0.8) {
                 f.bx_yaw(g, Wood, p.x, y0 + 0.07, p.y, Vec3::new(1.2, 0.14, 1.0), c.palette.wood, rng.random_range(-0.5..0.5));
                 f.bx(g, Concrete, p.x, y0 + 0.14 + 0.3, p.y, Vec3::new(1.0, 0.6, 0.8), pale);
             }
@@ -293,6 +289,10 @@ fn scaffolding(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], top
     let f = &c.frame;
     let lift = 2.0;
     let lifts = (top / lift).floor().max(1.0) as i32;
+    // Decks, transoms and rails only on the lifts being worked; below them
+    // the scaffold is bare tube, which is what a tall site looks like and
+    // keeps a thirty-floor shell from costing more than the building.
+    let worked = 6;
     let d_in = 0.35;
     let d_out = 1.25;
     for face in c.faces(poly) {
@@ -300,7 +300,7 @@ fn scaffolding(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], top
             continue;
         }
         // Skip a side where the scaffold would stand outside the fence.
-        if !c.inside(face.at(-face.len * 0.5, d_out)) || !c.inside(face.at(face.len * 0.5, d_out)) || !c.inside(face.at(0.0, d_out)) {
+        if !c.inside_local(face.at(-face.len * 0.5, d_out)) || !c.inside_local(face.at(face.len * 0.5, d_out)) || !c.inside_local(face.at(0.0, d_out)) {
             continue;
         }
         let bays = (face.len / 2.2).ceil().max(1.0) as i32;
@@ -310,9 +310,12 @@ fn scaffolding(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], top
             for d in [d_in, d_out] {
                 face.bx(g, f, Metal, t, top * 0.5, d, Vec3::new(0.09, top, 0.09), steel);
             }
-            // Transoms between the two standards.
-            for l in 1..=lifts {
-                face.bx(g, f, Metal, t, l as f32 * lift, (d_in + d_out) * 0.5, Vec3::new(0.07, 0.07, d_out - d_in), steel);
+            // Transoms between the two standards, every other bay, on the
+            // working lifts.
+            if k % 2 == 0 {
+                for l in (lifts - worked + 1).max(1)..=lifts {
+                    face.bx(g, f, Metal, t, l as f32 * lift, (d_in + d_out) * 0.5, Vec3::new(0.07, 0.07, d_out - d_in), steel);
+                }
             }
         }
         for l in 1..=lifts {
@@ -320,15 +323,23 @@ fn scaffolding(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], top
             for d in [d_in, d_out] {
                 face.bx(g, f, Metal, 0.0, y, d, Vec3::new(face.len, 0.07, 0.07), steel);
             }
-            // Planks, a few missing; toe board and guard rail outside.
-            let planks = bays * 2;
-            let pw = face.len / planks as f32;
-            for k in 0..planks {
-                if rng.random_bool(0.12) {
-                    continue;
+            if l <= lifts - worked {
+                continue; // bare tube below the working lifts
+            }
+            // The plank deck: one run per lift with one or two planks
+            // missing, drawn as the runs between the gaps rather than a box
+            // per plank (a tall site has hundreds of lifts of planking).
+            let pw = step * 0.5;
+            let gaps = rng.random_range(0..=2);
+            let mut cuts: Vec<f32> = (0..gaps).map(|_| rng.random_range(-face.len * 0.45..face.len * 0.45)).collect();
+            cuts.sort_by(|a, b| a.total_cmp(b));
+            let mut start = -face.len * 0.5;
+            for cut in cuts.iter().chain(std::iter::once(&(face.len * 0.5 + pw))) {
+                let end = (cut - pw * 0.5).min(face.len * 0.5);
+                if end - start > 0.3 {
+                    face.bx(g, f, Wood, (start + end) * 0.5, y + 0.06, (d_in + d_out) * 0.5, Vec3::new(end - start, 0.05, d_out - d_in), mul(c.palette.wood, rng.random_range(0.85..1.1)));
                 }
-                let t = -face.len * 0.5 + (k as f32 + 0.5) * pw;
-                face.bx(g, f, Wood, t, y + 0.06, (d_in + d_out) * 0.5, Vec3::new(pw - 0.04, 0.05, d_out - d_in), mul(c.palette.wood, rng.random_range(0.85..1.1)));
+                start = cut + pw * 0.5;
             }
             face.bx(g, f, Metal, 0.0, y + 1.0, d_out, Vec3::new(face.len, 0.06, 0.06), steel);
             face.bx(g, f, Wood, 0.0, y + 0.18, d_out - 0.04, Vec3::new(face.len, 0.2, 0.03), mul(c.palette.wood, 0.9));
@@ -352,7 +363,7 @@ fn tower_crane(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], bui
     let mut best: Option<(f32, Vec2)> = None;
     for face in c.faces(poly) {
         let p = face.at(0.0, 2.6);
-        if !c.inside(p) {
+        if !c.inside_local(p) {
             continue;
         }
         let room = distance_to_boundary(p, &c.lot_poly);
@@ -366,20 +377,20 @@ fn tower_crane(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], bui
     let w = 1.5;
     // Lattice mast: corner legs and a lighter core.
     for (du, dv) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-        f.bx(g, Matte, base.x + du * w * 0.45, mast_h * 0.5, base.y + dv * w * 0.45, Vec3::new(0.14, mast_h, 0.14), CRANE);
+        f.bx(g, Matte, base.x + du * w * 0.45, mast_h * 0.5, base.y + dv * w * 0.45, Vec3::new(0.14, mast_h, 0.14), c.palette.crane);
     }
     let bands = (mast_h / 2.5) as i32;
     for k in 0..=bands {
         let y = k as f32 * 2.5;
-        f.bx(g, Matte, base.x, y, base.y, Vec3::new(w, 0.08, 0.08), CRANE);
-        f.bx(g, Matte, base.x, y, base.y, Vec3::new(0.08, 0.08, w), CRANE);
+        f.bx(g, Matte, base.x, y, base.y, Vec3::new(w, 0.08, 0.08), c.palette.crane);
+        f.bx(g, Matte, base.x, y, base.y, Vec3::new(0.08, 0.08, w), c.palette.crane);
     }
-    f.bx(g, Matte, base.x, mast_h * 0.5, base.y, Vec3::new(w * 0.5, mast_h, w * 0.5), mul(CRANE, 0.8));
+    f.bx(g, Matte, base.x, mast_h * 0.5, base.y, Vec3::new(w * 0.5, mast_h, w * 0.5), mul(c.palette.crane, 0.8));
     // Foundation block and ballast.
-    f.bx(g, Concrete, base.x, 0.4, base.y, Vec3::new(w + 2.0, 0.8, w + 2.0), mul(c.palette.concrete[0], 0.75));
+    f.bx(g, Concrete, base.x, 0.4, base.y, Vec3::new(w + 2.0, 0.8, w + 2.0), mul(c.palette.concrete(0), 0.75));
     // Slewing unit, cab, and the jib out over the footprint.
     let top = mast_h + 0.6;
-    f.bx(g, Matte, base.x, top, base.y, Vec3::new(w + 0.4, 1.2, w + 0.4), mul(CRANE, 0.9));
+    f.bx(g, Matte, base.x, top, base.y, Vec3::new(w + 0.4, 1.2, w + 0.4), mul(c.palette.crane, 0.9));
     let dir = {
         let d = centre - base;
         if d.length() > 0.5 { d.normalize() } else { Vec2::new(rng.random_range(-1.0..1.0), rng.random_range(-1.0..1.0)).normalize_or_zero().max(Vec2::X) }
@@ -388,7 +399,7 @@ fn tower_crane(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], bui
     // Reach over the footprint, but never past the fence.
     let reach = |d: Vec2, want: f32, least: f32| {
         let mut len = want;
-        while len > least && !c.inside(base + d * len) {
+        while len > least && !c.inside_local(base + d * len) {
             len -= 0.5;
         }
         len.max(least)
@@ -398,20 +409,20 @@ fn tower_crane(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], bui
     let angle = dir.y.atan2(dir.x);
     let jib_y = top + 1.4;
     let jib_mid = base + dir * jib_len * 0.5;
-    f.bx_yaw(g, Matte, jib_mid.x, jib_y, jib_mid.y, Vec3::new(jib_len, 0.9, 0.9), CRANE, angle);
-    f.bx_yaw(g, Matte, jib_mid.x, jib_y + 0.6, jib_mid.y, Vec3::new(jib_len * 0.98, 0.1, 0.1), mul(CRANE, 0.8), angle);
+    f.bx_yaw(g, Matte, jib_mid.x, jib_y, jib_mid.y, Vec3::new(jib_len, 0.9, 0.9), c.palette.crane, angle);
+    f.bx_yaw(g, Matte, jib_mid.x, jib_y + 0.6, jib_mid.y, Vec3::new(jib_len * 0.98, 0.1, 0.1), mul(c.palette.crane, 0.8), angle);
     // Counter-jib with ballast blocks, kept inside the fence too.
     let back_len = reach(-dir, jib_len * 0.4, 2.0);
     let back_mid = base - dir * back_len * 0.5;
-    f.bx_yaw(g, Matte, back_mid.x, jib_y, back_mid.y, Vec3::new(back_len, 0.8, 1.0), CRANE, angle);
+    f.bx_yaw(g, Matte, back_mid.x, jib_y, back_mid.y, Vec3::new(back_len, 0.8, 1.0), c.palette.crane, angle);
     let ballast = base - dir * (back_len - 1.0);
-    f.bx_yaw(g, Concrete, ballast.x, jib_y - 0.9, ballast.y, Vec3::new(1.8, 1.4, 1.6), mul(c.palette.concrete[0], 0.8), angle);
+    f.bx_yaw(g, Concrete, ballast.x, jib_y - 0.9, ballast.y, Vec3::new(1.8, 1.4, 1.6), mul(c.palette.concrete(0), 0.8), angle);
     // Cab beside the mast, facing the jib.
     let cab = base + dir * (w * 0.5 + 1.0);
-    f.bx_yaw(g, Matte, cab.x, top + 0.2, cab.y, Vec3::new(1.8, 1.9, 1.6), mul(CRANE, 0.95), angle);
+    f.bx_yaw(g, Matte, cab.x, top + 0.2, cab.y, Vec3::new(1.8, 1.9, 1.6), mul(c.palette.crane, 0.95), angle);
     f.bx_yaw(g, Glass, cab.x + dir.x * 0.5, top + 0.4, cab.y + dir.y * 0.5, Vec3::new(1.0, 1.1, 1.7), c.palette.glass_dark, angle);
     // Tower top and pendant lines.
-    f.bx(g, Matte, base.x, jib_y + 3.0, base.y, Vec3::new(0.4, 5.0, 0.4), CRANE);
+    f.bx(g, Matte, base.x, jib_y + 3.0, base.y, Vec3::new(0.4, 5.0, 0.4), c.palette.crane);
     let apex = f.at2(base, jib_y + 5.5);
     g.part(Matte).tube(apex, f.at2(base + dir * jib_len * 0.9, jib_y + 0.5), 0.03, 4, rgba(DARK));
     g.part(Matte).tube(apex, f.at2(base - dir * back_len * 0.9, jib_y + 0.4), 0.03, 4, rgba(DARK));
@@ -425,10 +436,11 @@ fn tower_crane(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], bui
     f.bx(g, Matte, trolley.x, hook_y - 0.3, trolley.y, Vec3::new(0.5, 0.7, 0.3), DARK);
     if rng.random_bool(0.7) {
         let load = hook_y - 1.6;
-        if rng.random_bool(0.5) {
+        // A swinging steel bundle is 3.6 m long: only where it clears the fence.
+        if rng.random_bool(0.5) && poly_inside(c, &rect_yaw(trolley.x, trolley.y, 1.9, 0.6, angle + 0.4)) {
             f.bx_yaw(g, Metal, trolley.x, load, trolley.y, Vec3::new(3.6, 0.5, 1.0), mul(c.palette.steel, 0.8), angle + 0.4);
         } else {
-            f.bx_yaw(g, Concrete, trolley.x, load, trolley.y, Vec3::new(1.4, 1.2, 1.2), mul(c.palette.concrete[0], 0.9), angle);
+            f.bx_yaw(g, Concrete, trolley.x, load, trolley.y, Vec3::new(1.4, 1.2, 1.2), mul(c.palette.concrete(0), 0.9), angle);
         }
     }
     // Aviation lights.
@@ -446,7 +458,7 @@ fn site_cabin(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f32) 
     let at = |lu: f32, lv: f32| Vec2::new(p.x + lu * co - lv * s, p.y + lu * s + lv * co);
     for lu in [-2.6f32, 2.6] {
         let q = at(lu, 0.0);
-        f.bx_yaw(g, Concrete, q.x, 0.12, q.y, Vec3::new(0.6, 0.25, 2.4), mul(c.palette.concrete[0], 0.7), yaw);
+        f.bx_yaw(g, Concrete, q.x, 0.12, q.y, Vec3::new(0.6, 0.25, 2.4), mul(c.palette.concrete(0), 0.7), yaw);
     }
     let win = at(0.8, -1.27);
     f.bx_yaw(g, Glow, win.x, 1.7, win.y, Vec3::new(1.6, 0.9, 0.03), mul(c.palette.window_warm, 0.9), yaw);
@@ -464,7 +476,7 @@ fn site_cabin(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f32) 
 fn mixer_truck(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f32) {
     let f = &c.frame;
     let col = pick(rng, &[[0.85, 0.85, 0.82], [0.75, 0.25, 0.1], [0.2, 0.3, 0.45]]);
-    vehicle(g, f, rng, p, yaw, Vehicle::Truck, col);
+    vehicle(g, f, c.palette, rng, p, 0.0, yaw, Vehicle::Truck, col);
     // Drum: a tilted tube over the body, hopper at the back.
     let w = f.to_world(p.x, p.y);
     let a = f.yaw() + yaw;
@@ -476,7 +488,7 @@ fn mixer_truck(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f32)
     g.part(Matte).boxed(at(-4.6, 4.3, 0.0), Vec3::new(0.8, 0.9, 1.0), a, rgba(DARK));
     g.part(Matte).boxed(at(-4.4, 2.3, 0.0), Vec3::new(0.3, 1.6, 0.3), a, rgba(mul(c.palette.steel, 0.6)));
     // Wet concrete splashed down the chute.
-    g.part(Concrete).boxed(at(-4.9, 0.3, 0.6), Vec3::new(1.2, 0.08, 1.0), a + 0.3, rgba(mul(c.palette.concrete[0], 0.6)));
+    g.part(Concrete).boxed(at(-4.9, 0.3, 0.6), Vec3::new(1.2, 0.08, 1.0), a + 0.3, rgba(mul(c.palette.concrete(0), 0.6)));
 }
 
 /// Pallet of blocks, bundle of steel, stack of pipe or drums.
@@ -507,15 +519,15 @@ fn material_stack(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f
         }
         3 => {
             // Rebar: long rusty rods.
-            f.bx_yaw(g, Rust, p.x, 0.15, p.y, Vec3::new(5.0, 0.3, 0.7), RUST, yaw);
-            f.bx_yaw(g, Rust, p.x, 0.38, p.y, Vec3::new(5.0, 0.18, 0.45), mul(RUST, 1.1), yaw);
+            f.bx_yaw(g, Rust, p.x, 0.15, p.y, Vec3::new(5.0, 0.3, 0.7), c.palette.rust, yaw);
+            f.bx_yaw(g, Rust, p.x, 0.38, p.y, Vec3::new(5.0, 0.18, 0.45), mul(c.palette.rust, 1.1), yaw);
         }
         _ => {
             // Drums and a gas bottle cage.
             for k in 0..rng.random_range(2..5) {
                 let q = p + Vec2::new((k % 2) as f32 * 0.7, (k / 2) as f32 * 0.7);
                 let w = f.to_world(q.x, q.y);
-                g.part(Metal).cylinder(w, 0.3, 0.3, 0.0, 0.9, 10, rgba(pick(rng, &[[0.2, 0.3, 0.6], [0.7, 0.1, 0.1], RUST, [0.8, 0.8, 0.75]])));
+                g.part(Metal).cylinder(w, 0.3, 0.3, 0.0, 0.9, 10, rgba(pick(rng, &[[0.2, 0.3, 0.6], [0.7, 0.1, 0.1], c.palette.rust, [0.8, 0.8, 0.75]])));
             }
             f.bx_yaw(g, Matte, p.x + 1.4, 0.7, p.y, Vec3::new(1.0, 1.4, 0.8), mul(pal.steel, 0.6), yaw);
         }
@@ -537,25 +549,8 @@ fn worker(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, y: f32) {
     let f = &c.frame;
     let yaw = rng.random_range(0.0..std::f32::consts::TAU);
     f.bx_yaw(g, Matte, p.x, y + 0.45, p.y, Vec3::new(0.3, 0.9, 0.42), [0.18, 0.18, 0.22], yaw);
-    f.bx_yaw(g, Matte, p.x, y + 1.15, p.y, Vec3::new(0.34, 0.5, 0.5), HI_VIS, yaw);
+    f.bx_yaw(g, Matte, p.x, y + 1.15, p.y, Vec3::new(0.34, 0.5, 0.5), c.palette.hi_vis, yaw);
     f.bx_yaw(g, Matte, p.x, y + 1.52, p.y, Vec3::new(0.24, 0.24, 0.24), c.palette.citizen, yaw);
-    f.bx_yaw(g, Matte, p.x, y + 1.7, p.y, Vec3::new(0.3, 0.14, 0.32), HELMET, yaw);
+    f.bx_yaw(g, Matte, p.x, y + 1.7, p.y, Vec3::new(0.3, 0.14, 0.32), c.palette.helmet, yaw);
 }
 
-/// Random point inside a lot-local polygon, if one is found quickly.
-fn random_in_poly(rng: &mut impl Rng, poly: &[Vec2]) -> Option<Vec2> {
-    if poly.len() < 3 {
-        return None;
-    }
-    let (lo, hi) = bounds(poly);
-    if hi.x - lo.x < 0.5 || hi.y - lo.y < 0.5 {
-        return None;
-    }
-    for _ in 0..16 {
-        let p = Vec2::new(rng.random_range(lo.x..=hi.x), rng.random_range(lo.y..=hi.y));
-        if point_in_polygon(p, poly) {
-            return Some(p);
-        }
-    }
-    None
-}

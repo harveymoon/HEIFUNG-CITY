@@ -5,7 +5,6 @@
 
 use super::parts::*;
 use super::Ctx;
-use crate::mesh::MeshData;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use rand::Rng;
@@ -15,7 +14,6 @@ pub fn station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
     let Some(link) = c.rail.as_ref() else { return };
-    let lot_w: Vec<Vec2> = c.lot_poly.iter().map(|p| f.to_world(p.x, p.y)).collect();
     // Forecourt the whole lot, paved.
     ground(g, f, Paving, &offset_poly(&c.lot_poly, 0.3), 0.04, mul(pal.paving, 1.1));
     // Hall: on the road half of the lot, as wide as the lot allows.
@@ -31,8 +29,8 @@ pub fn station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     front.bx(g, f, Glass, 0.0, h * 0.5, 0.06, Vec3::new((front.len * 0.7).max(3.0), h * 0.7, 0.1), pick(rng, &pal.glass));
     front.bx(g, f, Glow, 0.0, h * 0.5, 0.0, Vec3::new((front.len * 0.66).max(2.6), h * 0.62, 0.08), mul(pal.window_warm, 0.55));
     canopy(g, c, &front, 0.0, 4.0, (front.len * 0.8).max(4.0), 3.0, mul(pal.steel, 0.9));
-    front.bx(g, f, Panel, 0.0, h + 1.0, -0.6, Vec3::new(2.0, 2.0, 0.6), mul(pal.plaster[0], 1.1));
-    front.bx(g, f, Glow, 0.0, h + 1.0, -0.28, Vec3::new(1.2, 1.2, 0.05), [0.95, 0.95, 0.9]);
+    front.bx(g, f, Panel, 0.0, h + 1.0, -0.6, Vec3::new(2.0, 2.0, 0.6), mul(pal.plaster(0), 1.1));
+    front.decal(g, f, Glow, 0.0, h + 1.0, -0.29, 1.2, 1.2, pal.chalk);
     sign_board(g, c, rng, &front, 0.0, h - 1.4, (front.len * 0.6).min(14.0), 1.0);
     for face in c.faces(&hall) {
         if !face.is_front && face.len > 5.0 {
@@ -45,11 +43,11 @@ pub fn station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let along = link.along();
     let out = Vec2::new(-along.y, along.x) * link.side;
     let length = pa.distance(pb);
-    let concrete = mul(pal.concrete[0], 1.2);
+    let concrete = mul(pal.concrete(0), 1.2);
     let edge_a = pa - out * 1.3;
     let edge_b = pb - out * 1.3;
     g.part(Concrete).path_box(&[edge_a + out * 2.0, edge_b + out * 2.0], 0.0, 4.0, 0.0, 0.95, rgba(concrete));
-    g.part(Glow).path_strip(&[edge_a + out * 0.5, edge_b + out * 0.5], 0.0, 0.15, 0.96, rgba([1.4, 1.2, 0.2]));
+    g.part(Glow).path_strip(&[edge_a + out * 0.5, edge_b + out * 0.5], 0.0, 0.15, 0.96, rgba(pal.platform_line));
     let posts = ((length / 7.0).floor() as i32).max(2);
     for k in 0..=posts {
         let p = pa.lerp(pb, k as f32 / posts as f32) + out * 2.4;
@@ -67,56 +65,42 @@ pub fn station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         g.part(Panel).boxed(Vec3::new(p.x, 3.2, p.y), Vec3::new(2.4, 0.5, 0.06), along.y.atan2(along.x), rgba([0.1, 0.2, 0.5]));
         g.part(Glow).boxed(Vec3::new(p.x, 3.2, p.y), Vec3::new(2.2, 0.3, 0.07), along.y.atan2(along.x), rgba([1.3, 1.3, 1.2]));
     }
-    // Path from the hall to the platform, ramped up.
+    // Path from the hall to the platform, ramped up. It leaves the lot at
+    // the lot's point nearest the platform, not in a straight line that
+    // might cut across a neighbour.
     let hc = poly_center(&hall);
     let hw = f.to_world(hc.x, hc.y);
     let pc = link.centre() + out * 2.8;
-    g.part(Paving).path_strip(&[hw, pc], 0.0, 3.0, 0.05, rgba(mul(pal.paving, 1.2)));
-    g.part(Concrete).slab(Vec3::new(pc.x + (hw.x - pc.x) * 0.25, 0.05, pc.y + (hw.y - pc.y) * 0.25), Vec3::new(pc.x, 0.95, pc.y), 3.0, 0.15, rgba(concrete));
+    let exit_l = clamp_into(&c.lot_poly, f.to_local(pc));
+    // Step in from the edge so the 3 m path does not spill sideways.
+    let exit_l = exit_l + (hc - exit_l).normalize_or_zero() * 1.6;
+    let exit = f.to_world(exit_l.x, exit_l.y);
+    g.part(Paving).path_strip(&[hw, exit, pc], 0.0, 3.0, 0.05, rgba(mul(pal.paving, 1.2)));
+    g.part(Concrete).slab(Vec3::new(exit.x, 0.05, exit.y), Vec3::new(pc.x, 0.95, pc.y), 3.0, 0.15, rgba(concrete));
     // Forecourt: taxi rank, bike racks, bins, bollards, a lamp.
     let gate = c.front_face(&offset_poly(&c.lot_poly, 0.3));
     for s in [-1.0f32, 1.0] {
         let p = gate.at(s * gate.len * 0.3, -4.0);
-        if c.inside(p) {
+        if vehicle_fits(c, p, 0.0, Vehicle::Car) {
             let col = pick(rng, &pal.car_colors);
-            vehicle(g, f, rng, p, 0.0, Vehicle::Car, col);
+            vehicle(g, f, pal, rng, p, 0.0, 0.0, Vehicle::Car, col);
         }
     }
     for k in 0..4 {
         let p = gate.at(-gate.len * 0.42 + k as f32 * 1.0, -2.0);
-        if c.inside(p) {
+        if c.inside_local(p) {
             f.bx(g, Matte, p.x, 0.45, p.y, Vec3::new(0.05, 0.9, 0.8), mul(pal.steel, 0.8));
         }
     }
     bollards(g, c, &gate, 6, -1.0);
     lamp_post(g, f, gate.at(gate.len * 0.42, -1.6), 5.0, pal.lamp);
-    let _ = lot_w;
-}
-
-/// A siding: ballast, sleepers, rails, like the main line.
-fn track(g: &mut Geometry, pal: &crate::palette::Palette, pts: &[Vec2]) {
-    if pts.len() < 2 {
-        return;
-    }
-    g.part(Dirt).path_strip(pts, 0.0, 4.4, 0.04, rgba(mul(pal.gravel, 0.85)));
-    let len: f32 = pts.windows(2).map(|w| w[0].distance(w[1])).sum();
-    let mut s = 0.35;
-    while s < len {
-        let (p, d) = nd_sim::rail::point_along(pts, s);
-        g.part(Wood).boxed(Vec3::new(p.x, 0.17, p.y), Vec3::new(0.24, 0.14, 2.5), d.y.atan2(d.x), rgba(mul(pal.wood, 0.55)));
-        s += 0.7;
-    }
-    for side in [-1.0f32, 1.0] {
-        g.part(Metal).path_box(pts, side * 0.72, 0.08, 0.24, 0.38, rgba(mul(pal.steel, 0.75)));
-    }
 }
 
 pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
     let Some(link) = c.rail.as_ref() else { return };
-    let yard = offset_poly(&c.lot_poly, 0.4);
-    ground(g, f, Concrete, &yard, 0.03, mul(pal.concrete[0], 0.95));
+    let yard = yard(g, c, 0.4, Concrete, mul(pal.concrete(0), 0.95));
     // Warehouse by the road, doors to the yard.
     let poly = &c.poly;
     let (lo, hi) = bounds(poly);
@@ -132,7 +116,7 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let doors = ((face.len / 6.0).floor() as i32).clamp(1, 4);
         for k in 0..doors {
             let t = -face.len * 0.5 + (k as f32 + 0.5) * face.len / doors as f32;
-            roller_door(g, c, &face, t, 4.0, 4.5, mul(pal.metal_paint[0], 0.9));
+            roller_door(g, c, &face, t, 4.0, 4.5, mul(pal.metal_paint(0), 0.9));
         }
         grime(g, c, rng, &face, 0.0, h, 2.5);
     }
@@ -147,22 +131,33 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // The platform line sits 3.8 m off the track centre; sidings every 4.6 m.
     let main = -(nd_sim::roads::RAIL_HALF_WIDTH + 1.4);
     let sidings = if length > 80.0 { 3 } else { 2 };
+    // The points where a siding rejoins the main line are clamped to the
+    // lot's own extent along the track, so a yard does not lay rail through
+    // its neighbours: a short lot gets short, steep turnouts.
+    let (lot_lo, lot_hi) = c.lot_poly.iter().map(|p| (f.to_world(p.x, p.y) - pa).dot(along)).fold((f32::MAX, f32::MIN), |(lo, hi), s| (lo.min(s), hi.max(s)));
+    let (lot_lo, lot_hi) = (lot_lo.min(-2.0), lot_hi.max(length + 2.0));
     for k in 1..=sidings {
         let off = main + 4.6 * k as f32;
-        let a0 = pa - along * (26.0 + 8.0 * k as f32) + out * main;
-        let a1 = pa - along * 6.0 + out * (main + (off - main) * 0.55);
-        let b1 = pb + along * 6.0 + out * (main + (off - main) * 0.55);
-        let b0 = pb + along * (26.0 + 8.0 * k as f32) + out * main;
+        let reach = 26.0 + 8.0 * k as f32;
+        let s0 = (-reach).max(lot_lo);
+        let s1 = (length + reach).min(lot_hi);
+        let a0 = pa + along * s0 + out * main;
+        let a1 = pa + along * (s0 * 0.25) + out * (main + (off - main) * 0.55);
+        let b1 = pa + along * (length + (s1 - length) * 0.75) + out * (main + (off - main) * 0.55);
+        let b0 = pa + along * s1 + out * main;
         let ctrl = [a0, a1, pa + out * off, pb + out * off, b1, b0];
         let pts = nd_sim::plan::sample_curve(&ctrl);
-        track(g, pal, &pts);
+        railway_track(g, pal, &pts, 4.4);
     }
     let apron_in = main + 4.6 * sidings as f32 + 3.4;
-    let apron_w = 9.0;
-    g.part(Concrete).path_box(&[pa + out * (apron_in + apron_w * 0.5), pb + out * (apron_in + apron_w * 0.5)], 0.0, apron_w, 0.0, 0.3, rgba(mul(pal.concrete[0], 1.1)));
-    g.part(Glow).path_strip(&[pa + out * (apron_in + 0.3), pb + out * (apron_in + 0.3)], 0.0, 0.12, 0.32, rgba([1.4, 1.2, 0.2]));
+    // The apron ends inside the lot: its far edge is the lot's extent
+    // across the track, measured from the platform line.
+    let lot_across = c.lot_poly.iter().map(|p| (f.to_world(p.x, p.y) - pa).dot(out)).fold(f32::MIN, f32::max);
+    let apron_w = (lot_across - 0.6 - apron_in).clamp(3.0, 9.0);
+    g.part(Concrete).path_box(&[pa + out * (apron_in + apron_w * 0.5), pb + out * (apron_in + apron_w * 0.5)], 0.0, apron_w, 0.0, 0.3, rgba(mul(pal.concrete(0), 1.1)));
+    g.part(Glow).path_strip(&[pa + out * (apron_in + 0.3), pb + out * (apron_in + 0.3)], 0.0, 0.12, 0.32, rgba(pal.platform_line));
     // Gantry: legs on the apron and beyond the main line, beam over everything.
-    let steel = mul(pal.metal_paint[0], 1.1);
+    let steel = mul(pal.metal_paint(0), 1.1);
     let far_off = main - 3.0;
     let near_off = apron_in + apron_w - 0.6;
     for t in [0.25f32, 0.75] {
@@ -186,7 +181,7 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for k in 0..n {
         let p = pa.lerp(pb, (k as f32 + 0.5) / n as f32) + out * (apron_in + apron_w + 1.8);
         let lp = f.to_local(p);
-        if !c.inside(lp) {
+        if !poly_inside(c, &rect_yaw(lp.x, lp.y, 3.1, 1.3, along.y.atan2(along.x) - f.yaw())) {
             continue;
         }
         let stack = rng.random_range(1..=3);
@@ -197,32 +192,29 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Forklift and lorries at the doors.
     let fp = pa.lerp(pb, 0.5) + out * (apron_in + apron_w + 5.5);
-    if c.inside(f.to_local(fp)) {
-        let yaw = rng.random_range(0.0..3.0);
-        vehicle(g, f, rng, f.to_local(fp), yaw, Vehicle::Van, [0.9, 0.7, 0.1]);
+    let yaw = rng.random_range(0.0..3.0);
+    if vehicle_fits(c, f.to_local(fp), yaw, Vehicle::Van) {
+        vehicle(g, f, pal, rng, f.to_local(fp), 0.0, yaw, Vehicle::Van, [0.9, 0.7, 0.1]);
     }
     let front = c.front_face(&shed);
     for s in [-1.0f32, 1.0] {
         let p = front.at(s * front.len * 0.25, 5.5);
-        if c.inside(p) {
+        if vehicle_fits(c, p, FRAC_PI_2, Vehicle::Truck) {
             let col = pick(rng, &pal.car_colors);
-            vehicle(g, f, rng, p, FRAC_PI_2, Vehicle::Truck, col);
+            vehicle(g, f, pal, rng, p, 0.0, FRAC_PI_2, Vehicle::Truck, col);
         }
     }
     // Fence, gate, floodlights, weighbridge.
-    let faces = c.faces(&yard);
     let gate = c.front_face(&yard);
-    let front_idx = faces.iter().position(|x| x.a.distance(gate.a) < 0.1);
-    fence_poly(g, c, &yard, 2.4, front_idx, true);
+    fence_lot(g, c, &yard, 2.4, true);
     barrier(g, c, &gate, gate.len * 0.2, -1.0, 3.5);
     for p in [gate.at(-gate.len * 0.4, -1.5), Vec2::new(lo.x + 2.0, hi.y - 2.0), Vec2::new(hi.x - 2.0, hi.y - 2.0)] {
-        if c.inside(p) {
+        if c.inside_local(p) {
             floodlight(g, c, p, 11.0);
         }
     }
     let wb = gate.at(-gate.len * 0.2, -5.0);
-    if c.inside(wb) {
+    if poly_inside(c, &rect(wb.x, wb.y, 1.6, 4.6)) {
         f.bx(g, Metal, wb.x, 0.08, wb.y, Vec3::new(3.0, 0.16, 9.0), mul(pal.steel, 0.5));
     }
-    let _ = MeshData::default();
 }

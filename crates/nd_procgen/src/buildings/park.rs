@@ -40,8 +40,17 @@ struct Park<'a> {
 }
 
 impl Park<'_> {
-    fn inside(&self, w: Vec2, margin: f32) -> bool {
+    /// Whether a world point lies on this lot, `margin` in from its edge.
+    /// Parks are planned in world coordinates, unlike every other style, so
+    /// the name says which space it takes (`Ctx::inside_local` is the other).
+    fn inside_world(&self, w: Vec2, margin: f32) -> bool {
         nd_sim::zoning::point_in_polygon(w, &self.lot) && edge_distance(w, &self.lot) >= margin
+    }
+
+    /// Distance from a world point to the lot edge: how big a paved apron or
+    /// a ring of tables can be before it spills onto the neighbours.
+    fn room(&self, w: Vec2) -> f32 {
+        if nd_sim::zoning::point_in_polygon(w, &self.lot) { edge_distance(w, &self.lot) } else { 0.0 }
     }
 
     /// Distance from a point to the nearest path centreline.
@@ -73,11 +82,6 @@ fn project(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
     a + ab * ((p - a).dot(ab) / l2).clamp(0.0, 1.0)
 }
 
-/// An identity frame: world helpers that take a frame get world coordinates.
-fn world_frame() -> Frame {
-    Frame { center: Vec2::ZERO, along: Vec2::X, inward: Vec2::Y, width: 1.0, depth: 1.0 }
-}
-
 fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
     let Some(layout) = c.park.as_ref() else { return };
     let f = &c.frame;
@@ -102,11 +106,12 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
             // Patches of dry grass and bare scrapes.
             for _ in 0..rng.random_range(6..14) {
                 if let Some(p) = c.random_inside(rng, 2.0) {
-                    let blob = ngon(p.x, p.y, rng.random_range(1.5..4.0), 7, rng.random_range(0.0..TAU));
+                    let r = rng.random_range(1.5f32..4.0).min(distance_to_boundary(p, &c.lot_poly) - 0.3);
+                    let blob = ngon(p.x, p.y, r, 7, rng.random_range(0.0..TAU));
                     ground(g, f, Foliage, &blob, 0.04, mul(pal.foliage_dry, rng.random_range(0.8..1.1)));
                 }
             }
-            super::industrial::weeds(g, c, rng, &inner, 24);
+            weeds(g, c, rng, &inner, 24);
         }
         Tier::Mid => ground(g, f, Foliage, &inner, 0.03, mul(pal.foliage, 0.9)),
         Tier::High => {
@@ -153,7 +158,7 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
                 let right = Vec2::new(-d.y, d.x);
                 while s_lamp < len {
                     let w = a + d * s_lamp + right * side * (park.path_width * 0.5 + 0.7);
-                    if park.inside(w, 0.6) && park.clear_of_features(w, 0.5) && park.clear_of_benches(w, 1.2) {
+                    if park.inside_world(w, 0.6) && park.clear_of_features(w, 0.5) && park.clear_of_benches(w, 1.2) {
                         lamp_post_world(g, w, if tier == Tier::High { 4.0 } else { 3.4 }, pal.lamp);
                     }
                     side = -side;
@@ -162,7 +167,7 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
                 s_lamp -= len;
                 while s_bin < len {
                     let w = a + d * s_bin - right * side * (park.path_width * 0.5 + 0.5);
-                    if park.inside(w, 0.5) && park.clear_of_features(w, 0.5) && park.clear_of_benches(w, 1.0) {
+                    if park.inside_world(w, 0.5) && park.clear_of_features(w, 0.5) && park.clear_of_benches(w, 1.0) {
                         bin_world(g, w, mul(pal.steel, 0.5));
                     }
                     s_bin += 27.0;
@@ -173,7 +178,7 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
     } else if let (Some(gate), Some(path)) = (layout.entrances.first(), layout.paths.first()) {
         let dir = (path.get(1).copied().unwrap_or(*gate) - *gate).normalize_or_zero();
         let w = *gate + dir * 1.5 + dir.perp() * 1.6;
-        if park.inside(w, 0.3) {
+        if park.inside_world(w, 0.3) {
             lamp_post_world(g, w, 4.5, mul(pal.street_lamp, 0.4));
         }
     }
@@ -198,8 +203,8 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
     if tier == Tier::Low {
         if let Some((w, facing)) = layout.benches.first() {
             let p = *w + Vec2::from_angle(*facing) * 2.0;
-            if park.inside(p, 0.8) {
-                drum_fire(g, f, f.to_local(p));
+            if park.inside_world(p, 0.8) {
+                drum_fire(g, f, pal, f.to_local(p));
             }
         }
     }
@@ -352,7 +357,7 @@ fn trees(g: &mut Geometry, rng: &mut impl Rng, park: &Park, pal: &Palette) {
                 while s < len - 4.0 {
                     for side in [-1.0f32, 1.0] {
                         let w = a + d * s + right * side * (park.path_width * 0.5 + 2.4);
-                        if park.inside(w, 2.6) && park.clear_of_features(w, 1.5) && park.clear_of_benches(w, 1.6) && placed.iter().all(|(p, _)| p.distance(w) > 5.0) && park.path_distance(w) > park.path_width * 0.5 + 1.6 {
+                        if park.inside_world(w, 2.6) && park.clear_of_features(w, 1.5) && park.clear_of_benches(w, 1.6) && placed.iter().all(|(p, _)| p.distance(w) > 5.0) && park.path_distance(w) > park.path_width * 0.5 + 1.6 {
                             tree_world(g, w, 5.5, 2.4, pal.bark, mul(pal.foliage, 0.95));
                             placed.push((w, 2.4));
                         }
@@ -399,75 +404,51 @@ fn trees(g: &mut Geometry, rng: &mut impl Rng, park: &Park, pal: &Palette) {
                 _ => (1, rng.random_range(5.0..8.0), rng.random_range(3.0..4.5)),
             },
         };
-        if !park.inside(w, canopy + 0.4) || park.path_distance(w) < park.path_width * 0.5 + canopy * 0.6 + 0.6 || !park.clear_of_features(w, canopy * 0.5 + 1.0) || !park.clear_of_benches(w, 1.4) {
+        // Room each kind needs to the lot edge: a palm's fronds reach 3.4 m.
+        let reach = match kind {
+            0 => 1.6,
+            2 => canopy + 0.4,
+            3 => 3.6,
+            _ => canopy * 0.5 + 0.6,
+        };
+        if !park.inside_world(w, reach) || park.path_distance(w) < park.path_width * 0.5 + canopy * 0.6 + 0.6 || !park.clear_of_features(w, canopy * 0.5 + 1.0) || !park.clear_of_benches(w, 1.4) {
             continue;
         }
         if placed.iter().any(|(p, pc)| p.distance(w) < spacing.min(canopy + pc + 1.0).max(spacing * 0.6)) {
             continue;
         }
-        match kind {
-            0 => dead_tree(g, w, h, mul(pal.bark, 0.8)),
-            2 => conifer(g, w, h, canopy, pal.bark, mul(pal.foliage, 0.7)),
-            3 => palm(g, w, h, pal.bark, mul(pal.foliage, 1.1)),
-            _ => tree_world(g, w, h, canopy, pal.bark, mul(pal.foliage, rng.random_range(0.8..1.15))),
-        }
+        let (tk, leaf) = match kind {
+            0 => (TreeKind::Dead, pal.foliage),
+            2 => (TreeKind::Conifer, mul(pal.foliage, 0.7)),
+            3 => (TreeKind::Palm, mul(pal.foliage, 1.1)),
+            _ => (TreeKind::Round, mul(pal.foliage, rng.random_range(0.8..1.15))),
+        };
+        tree_kind(g, w, 0.0, tk, h, canopy, if tk == TreeKind::Dead { mul(pal.bark, 0.8) } else { pal.bark }, leaf);
         placed.push((w, canopy));
         count += 1;
     }
 }
 
-fn dead_tree(g: &mut Geometry, w: Vec2, h: f32, bark: [f32; 3]) {
-    g.part(Wood).cylinder(w, 0.22, 0.08, 0.0, h, 6, rgba(bark));
-    for k in 0..3 {
-        let a = k as f32 * 2.1 + w.x * 0.37;
-        let dir = Vec3::new(a.cos(), 0.9, a.sin()).normalize();
-        let from = Vec3::new(w.x, h * (0.55 + 0.12 * k as f32), w.y);
-        g.part(Wood).beam(from, from + dir * (h * 0.35), 0.1, rgba(bark));
-    }
-}
-
-fn conifer(g: &mut Geometry, w: Vec2, h: f32, r: f32, bark: [f32; 3], leaf: [f32; 3]) {
-    g.part(Wood).cylinder(w, 0.22, 0.12, 0.0, h * 0.3, 6, rgba(bark));
-    for k in 0..3 {
-        let y0 = h * (0.25 + 0.22 * k as f32);
-        let rr = r * (1.0 - 0.22 * k as f32);
-        g.part(Foliage).frustum(&MeshData::ngon(w, rr, 8, 0.3 * k as f32, y0), &MeshData::ngon(w, rr * 0.12, 8, 0.3 * k as f32, y0 + h * 0.32), rgba(mul(leaf, 1.0 - 0.06 * k as f32)));
-    }
-}
-
-fn palm(g: &mut Geometry, w: Vec2, h: f32, bark: [f32; 3], leaf: [f32; 3]) {
-    let lean = Vec2::new(w.y * 0.013, w.x * 0.011).normalize_or_zero() * 0.9;
-    let top = Vec3::new(w.x + lean.x, h, w.y + lean.y);
-    g.part(Wood).beam(Vec3::new(w.x, 0.0, w.y), Vec3::new(w.x + lean.x * 0.5, h * 0.55, w.y + lean.y * 0.5), 0.34, rgba(bark));
-    g.part(Wood).beam(Vec3::new(w.x + lean.x * 0.5, h * 0.55, w.y + lean.y * 0.5), top, 0.26, rgba(bark));
-    for k in 0..7 {
-        let a = k as f32 / 7.0 * TAU;
-        let dir = Vec3::new(a.cos(), 0.35, a.sin()).normalize();
-        let mid = top + dir * 1.6;
-        let tip = mid + Vec3::new(dir.x, -0.5, dir.z).normalize() * 1.8;
-        g.part(Foliage).beam(top, mid, 0.5, rgba(leaf));
-        g.part(Foliage).beam(mid, tip, 0.32, rgba(mul(leaf, 0.9)));
-    }
-    g.part(Foliage).cylinder(Vec2::new(top.x, top.z), 0.5, 0.5, h - 0.4, h + 0.3, 6, rgba(mul(leaf, 0.8)));
-}
-
 // ── features ─────────────────────────────────────────────────────────────────
 
+/// Features are planned by the sim to fit their radius on the lot; what each
+/// one adds around that radius (paving, tables, a booth, steps) is checked
+/// against the lot here so nothing lands on the neighbours.
 fn feature(g: &mut Geometry, rng: &mut impl Rng, park: &Park, s: &ParkFeatureSlot, pal: &Palette) {
     let (w, r, yaw) = (s.pos, s.radius, s.heading);
     match s.kind {
-        ParkFeature::Court => court(g, rng, w, r, yaw, park.tier, pal),
+        ParkFeature::Court => court(g, rng, park, w, r, yaw, park.tier, pal),
         ParkFeature::Skatepark => skatepark(g, w, r, yaw, pal),
         ParkFeature::Playground => playground(g, rng, w, r, yaw, park.tier, pal),
         ParkFeature::Pond => water(g, rng, w, r, park.tier, pal, false),
         ParkFeature::Lake => water(g, rng, w, r, park.tier, pal, true),
-        ParkFeature::Fountain => fountain(g, w, r, pal),
-        ParkFeature::Bandstand => bandstand(g, w, r, yaw, pal),
-        ParkFeature::Carousel => carousel(g, rng, w, r, pal),
-        ParkFeature::FerrisWheel => ferris_wheel(g, w, r, yaw, pal),
-        ParkFeature::Kiosk => kiosk(g, rng, w, r, yaw, pal),
+        ParkFeature::Fountain => fountain(g, park, w, r, pal),
+        ParkFeature::Bandstand => bandstand(g, park, w, r, yaw, pal),
+        ParkFeature::Carousel => carousel(g, rng, park, w, r, pal),
+        ParkFeature::FerrisWheel => ferris_wheel(g, park, w, r, yaw, pal),
+        ParkFeature::Kiosk => kiosk(g, rng, park, w, r, yaw, pal),
         ParkFeature::FlowerBed => flower_bed(g, rng, w, r, pal),
-        ParkFeature::Statue => statue(g, w, r, yaw, pal),
+        ParkFeature::Statue => statue(g, park, w, r, yaw, pal),
         ParkFeature::DogRun => dog_run(g, w, r, yaw, pal),
         ParkFeature::Lawn => g.part(Foliage).ground_polygon(&circle(w, r, 16, 0.0), 0.045, rgba(mul(pal.foliage, 1.15))),
     }
@@ -488,22 +469,32 @@ fn rail(g: &mut Geometry, a: Vec2, b: Vec2, y: f32, thick: f32, color: [f32; 3])
     g.part(Matte).beam(Vec3::new(a.x, y, a.y), Vec3::new(b.x, y, b.y), thick, rgba(color));
 }
 
-fn court(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, yaw: f32, tier: Tier, pal: &Palette) {
+#[allow(clippy::too_many_arguments)]
+fn court(g: &mut Geometry, rng: &mut impl Rng, park: &Park, w: Vec2, r: f32, yaw: f32, tier: Tier, pal: &Palette) {
     let (hw, hd) = (r * 0.92, r * 0.55);
     let worn = if tier == Tier::Low { 0.8 } else { 1.0 };
     g.part(Asphalt).boxed(Vec3::new(w.x, 0.03, w.y), Vec3::new(hw * 2.0, 0.06, hd * 2.0), yaw, rgba(mul(pal.asphalt, 1.35 * worn)));
     let line = mul(pal.lane_marker, 0.8 * worn);
     let d = Vec2::from_angle(yaw);
     let n = d.perp();
+    let d3 = Vec3::new(d.x, 0.0, d.y);
+    let n3 = Vec3::new(n.x, 0.0, n.y);
+    // Painted lines: one quad each.
+    let paint = |g: &mut Geometry, c: Vec2, along: Vec3, across: Vec3, len: f32| {
+        g.part(Matte).decal(Vec3::new(c.x, 0.072, c.y), along, across, len, 0.08, Vec3::Y, rgba(line));
+    };
     for s in [-1.0f32, 1.0] {
-        g.part(Matte).boxed(Vec3::new(w.x + n.x * hd * s * 0.97, 0.07, w.y + n.y * hd * s * 0.97), Vec3::new(hw * 1.94, 0.01, 0.08), yaw, rgba(line));
-        g.part(Matte).boxed(Vec3::new(w.x + d.x * hw * s * 0.97, 0.07, w.y + d.y * hw * s * 0.97), Vec3::new(0.08, 0.01, hd * 1.94), yaw, rgba(line));
+        paint(g, w + n * hd * s * 0.97, d3, n3, hw * 1.94);
+        paint(g, w + d * hw * s * 0.97, n3, d3, hd * 1.94);
     }
-    g.part(Matte).boxed(Vec3::new(w.x, 0.07, w.y), Vec3::new(0.08, 0.01, hd * 1.94), yaw, rgba(line));
+    paint(g, w, n3, d3, hd * 1.94);
     g.part(Matte).cylinder(w, 1.8, 1.8, 0.065, 0.075, 16, rgba(line));
     for s in [-1.0f32, 1.0] {
         let base = w + d * (hw * s - 0.9 * s);
         let post = base + d * s * 0.9;
+        if !park.inside_world(post, 0.3) {
+            continue;
+        }
         g.part(Matte).cylinder(post, 0.07, 0.07, 0.0, 3.3, 8, rgba(mul(pal.steel, 0.6)));
         let bent = tier == Tier::Low && s > 0.0;
         if bent {
@@ -518,14 +509,15 @@ fn court(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, yaw: f32, tier: 
     if tier == Tier::Low {
         for _ in 0..rng.random_range(3..7) {
             let p = w + d * rng.random_range(-hw * 0.9..hw * 0.9) + n * rng.random_range(-hd * 0.9..hd * 0.9);
-            g.part(Matte).boxed(Vec3::new(p.x, 0.065, p.y), Vec3::new(rng.random_range(1.0..3.0), 0.01, 0.08), rng.random_range(0.0..TAU), rgba([0.05, 0.05, 0.05]));
+            let a = rng.random_range(0.0..TAU);
+            g.part(Matte).decal(Vec3::new(p.x, 0.068, p.y), Vec3::new(a.cos(), 0.0, a.sin()), Vec3::new(-a.sin(), 0.0, a.cos()), rng.random_range(1.0..3.0), 0.08, Vec3::Y, rgba([0.05, 0.05, 0.05]));
         }
     }
 }
 
 fn skatepark(g: &mut Geometry, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
     let (hw, hd) = (r * 0.9, r * 0.6);
-    let concrete = mul(pal.concrete[0], 1.1);
+    let concrete = mul(pal.concrete(0), 1.1);
     g.part(Concrete).boxed(Vec3::new(w.x, 0.05, w.y), Vec3::new(hw * 2.0, 0.1, hd * 2.0), yaw, rgba(concrete));
     let d = Vec2::from_angle(yaw);
     let n = d.perp();
@@ -675,9 +667,12 @@ fn water(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, tier: Tier, pal:
     }
 }
 
-fn fountain(g: &mut Geometry, w: Vec2, r: f32, pal: &Palette) {
+fn fountain(g: &mut Geometry, park: &Park, w: Vec2, r: f32, pal: &Palette) {
     let stone = mul(pal.stone, 1.4);
-    g.part(Paving).ground_polygon(&circle(w, r + 1.6, 20, 0.0), 0.045, rgba(mul(pal.paving, 1.2)));
+    let apron = (r + 1.6).min(park.room(w) - 0.2);
+    if apron > r {
+        g.part(Paving).ground_polygon(&circle(w, apron, 20, 0.0), 0.045, rgba(mul(pal.paving, 1.2)));
+    }
     g.part(Stone).cylinder(w, r, r, 0.0, 0.7, 20, rgba(stone));
     g.part(Glow).cylinder(w, r - 0.35, r - 0.35, 0.7, 0.74, 20, rgba(mul(pal.water, 0.8)));
     g.part(Stone).cylinder(w, r * 0.38, r * 0.32, 0.7, 1.7, 12, rgba(stone));
@@ -691,19 +686,21 @@ fn fountain(g: &mut Geometry, w: Vec2, r: f32, pal: &Palette) {
     }
 }
 
-fn bandstand(g: &mut Geometry, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
+fn bandstand(g: &mut Geometry, park: &Park, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
     let stone = mul(pal.stone, 1.3);
     g.part(Stone).cylinder(w, r, r, 0.0, 0.8, 8, rgba(stone));
     // Steps on the path side.
     let step = w + Vec2::from_angle(yaw) * (r + 0.4);
-    g.part(Stone).boxed(Vec3::new(step.x, 0.2, step.y), Vec3::new(2.4, 0.4, 1.2), yaw, rgba(stone));
+    if park.inside_world(step, 0.7) {
+        g.part(Stone).boxed(Vec3::new(step.x, 0.2, step.y), Vec3::new(2.4, 0.4, 1.2), yaw, rgba(stone));
+    }
     let mut cols: Vec<Vec3> = Vec::new();
     for k in 0..8 {
         let p = w + Vec2::from_angle(k as f32 / 8.0 * TAU + yaw + PI / 8.0) * (r * 0.85);
         g.part(Panel).cylinder(p, 0.14, 0.12, 0.8, 4.0, 8, rgba([0.9, 0.9, 0.86]));
         cols.push(Vec3::new(p.x, 4.0, p.y));
     }
-    let wf = world_frame();
+    let wf = Frame::world();
     for k in 0..8 {
         let (a, b) = (cols[k], cols[(k + 1) % 8]);
         if k != 3 {
@@ -711,16 +708,19 @@ fn bandstand(g: &mut Geometry, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
         }
         string_lights(g, &wf, a - Vec3::Y * 0.3, b - Vec3::Y * 0.3, 6, mul(pal.window_warm, 1.2));
     }
-    g.part(Metal).frustum(&MeshData::ngon(w, r * 1.08, 8, yaw + PI / 8.0, 4.0), &MeshData::ngon(w, 0.3, 8, yaw + PI / 8.0, 6.2), rgba(mul(pal.metal_paint[0], 0.9)));
+    g.part(Metal).frustum(&MeshData::ngon(w, r * 1.08, 8, yaw + PI / 8.0, 4.0), &MeshData::ngon(w, 0.3, 8, yaw + PI / 8.0, 6.2), rgba(mul(pal.metal_paint(0), 0.9)));
     g.part(Glow).boxed(Vec3::new(w.x, 6.5, w.y), Vec3::new(0.3, 0.6, 0.3), 0.0, rgba(mul(pal.lamp, 0.9)));
 }
 
-fn carousel(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, pal: &Palette) {
+fn carousel(g: &mut Geometry, rng: &mut impl Rng, park: &Park, w: Vec2, r: f32, pal: &Palette) {
     let a = pick(rng, &pal.awning_colors);
     let b = pick(rng, &pal.awning_colors);
-    g.part(Paving).ground_polygon(&circle(w, r + 1.2, 16, 0.0), 0.045, rgba(mul(pal.paving, 1.1)));
+    let apron = (r + 1.2).min(park.room(w) - 0.2);
+    if apron > r {
+        g.part(Paving).ground_polygon(&circle(w, apron, 16, 0.0), 0.045, rgba(mul(pal.paving, 1.1)));
+    }
     g.part(Wood).cylinder(w, r, r, 0.0, 0.5, 16, rgba(mul(pal.wood, 1.1)));
-    g.part(Metal).cylinder(w, 0.45, 0.45, 0.5, 4.6, 10, rgba(pal.metal_paint[0]));
+    g.part(Metal).cylinder(w, 0.45, 0.45, 0.5, 4.6, 10, rgba(pal.metal_paint(0)));
     // Striped canopy from alternating wedges.
     for k in 0..12 {
         let a0 = k as f32 / 12.0 * TAU;
@@ -742,13 +742,13 @@ fn carousel(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, pal: &Palette
     }
 }
 
-fn ferris_wheel(g: &mut Geometry, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
+fn ferris_wheel(g: &mut Geometry, park: &Park, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
     let rw = r * 0.85;
     let hub_y = rw + 2.5;
     let d = Vec2::from_angle(yaw);
     let n = d.perp();
-    let steel = pal.metal_paint[1 % pal.metal_paint.len()];
-    g.part(Concrete).boxed(Vec3::new(w.x, 0.1, w.y), Vec3::new(rw * 1.2, 0.2, 6.0), yaw, rgba(mul(pal.concrete[0], 1.1)));
+    let steel = pal.metal_paint(1);
+    g.part(Concrete).boxed(Vec3::new(w.x, 0.1, w.y), Vec3::new(rw * 1.2, 0.2, 6.0), yaw, rgba(mul(pal.concrete(0), 1.1)));
     let hub = Vec3::new(w.x, hub_y, w.y);
     let n3 = Vec3::new(n.x, 0.0, n.y);
     for side in [-1.0f32, 1.0] {
@@ -774,19 +774,24 @@ fn ferris_wheel(g: &mut Geometry, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
         }
         // Gondola hanging from the rim.
         let gp = a - Vec3::Y * 0.9;
-        g.part(Matte).boxed(gp, Vec3::new(1.3, 1.1, 1.0), yaw, rgba(pal.awning_colors[k % pal.awning_colors.len()]));
+        g.part(Matte).boxed(gp, Vec3::new(1.3, 1.1, 1.0), yaw, rgba(pal.awning(k)));
         g.part(Glow).boxed(a, Vec3::new(0.22, 0.22, 0.22), 0.0, rgba(mul(pal.window_warm, 1.4)));
     }
-    // Ticket booth.
+    // Ticket booth, where the lot has room for it.
     let booth = w + n * 4.5 + d * rw * 0.5;
-    g.part(Panel).boxed(Vec3::new(booth.x, 1.2, booth.y), Vec3::new(2.0, 2.4, 1.6), yaw, rgba(mul(pal.panel[0], 0.9)));
-    g.part(Glow).boxed(Vec3::new(booth.x, 1.4, booth.y) - n3 * 0.81, Vec3::new(1.2, 0.6, 0.04), yaw, rgba(mul(pal.window_warm, 0.8)));
+    if park.inside_world(booth, 1.4) {
+        g.part(Panel).boxed(Vec3::new(booth.x, 1.2, booth.y), Vec3::new(2.0, 2.4, 1.6), yaw, rgba(mul(pal.panel(0), 0.9)));
+        g.part(Glow).decal(Vec3::new(booth.x, 1.4, booth.y) - n3 * 0.81, Vec3::new(d.x, 0.0, d.y), Vec3::Y, 1.2, 0.6, -n3, rgba(mul(pal.window_warm, 0.8)));
+    }
 }
 
-fn kiosk(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
+fn kiosk(g: &mut Geometry, rng: &mut impl Rng, park: &Park, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
     let d = Vec2::from_angle(yaw);
     let n = d.perp();
-    g.part(Paving).ground_polygon(&circle(w, r + 1.0, 14, 0.0), 0.045, rgba(mul(pal.paving, 1.05)));
+    let apron = (r + 1.0).min(park.room(w) - 0.2);
+    if apron > r * 0.5 {
+        g.part(Paving).ground_polygon(&circle(w, apron, 14, 0.0), 0.045, rgba(mul(pal.paving, 1.05)));
+    }
     let k = w - d * (r * 0.35);
     g.part(Glass).boxed(Vec3::new(k.x, 1.4, k.y), Vec3::new(3.0, 2.8, 2.4), yaw, rgba(pick(rng, &pal.glass)));
     g.part(Glow).boxed(Vec3::new(k.x, 1.5, k.y), Vec3::new(2.4, 1.3, 1.9), yaw, rgba(mul(pal.window_warm, 0.6)));
@@ -795,6 +800,9 @@ fn kiosk(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, yaw: f32, pal: &
     // Café tables with stools and a parasol each.
     for (i, (du, dv)) in [(0.5f32, -1.1f32), (0.5, 1.1), (0.95, 0.0)].iter().enumerate() {
         let t = w + d * (r * du) + n * (r * dv);
+        if !park.inside_world(t, 1.3) {
+            continue; // the parasol would hang over the fence
+        }
         g.part(Metal).cylinder(t, 0.05, 0.05, 0.0, 0.75, 6, rgba(mul(pal.steel, 0.7)));
         g.part(Metal).cylinder(t, 0.5, 0.5, 0.75, 0.8, 10, rgba(mul(pal.steel, 0.8)));
         for s in 0..3 {
@@ -818,12 +826,15 @@ fn flower_bed(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, pal: &Palet
     }
 }
 
-fn statue(g: &mut Geometry, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
+fn statue(g: &mut Geometry, park: &Park, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
     let stone = mul(pal.stone, 1.5);
-    g.part(Paving).ground_polygon(&circle(w, r + 1.0, 12, 0.0), 0.045, rgba(mul(pal.paving, 1.15)));
+    let apron = (r + 1.0).min(park.room(w) - 0.2);
+    if apron > r * 0.5 {
+        g.part(Paving).ground_polygon(&circle(w, apron, 12, 0.0), 0.045, rgba(mul(pal.paving, 1.15)));
+    }
     g.part(Stone).boxed(Vec3::new(w.x, 0.7, w.y), Vec3::new(1.6, 1.4, 1.6), yaw, rgba(stone));
     g.part(Stone).boxed(Vec3::new(w.x, 1.5, w.y), Vec3::new(1.2, 0.2, 1.2), yaw, rgba(mul(stone, 1.05)));
-    let bronze = [0.35, 0.3, 0.2];
+    let bronze = pal.bronze;
     g.part(Metal).frustum(&MeshData::ngon(w, 0.45, 8, yaw, 1.6), &MeshData::ngon(w, 0.3, 8, yaw, 3.3), rgba(bronze));
     g.part(Metal).cylinder(w, 0.22, 0.2, 3.3, 3.75, 8, rgba(bronze));
     let arm = w + Vec2::from_angle(yaw) * 0.5;
@@ -860,7 +871,7 @@ fn dog_run(g: &mut Geometry, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
         rail(g, p - n * 0.8, p + n * 0.8, 0.45, 0.05, mul(pal.wood, 1.1));
     }
     let tunnel = w + n * (r * 0.3);
-    g.part(Matte).tube(Vec3::new(tunnel.x - d.x * 1.5, 0.45, tunnel.y - d.y * 1.5), Vec3::new(tunnel.x + d.x * 1.5, 0.45, tunnel.y + d.y * 1.5), 0.45, 10, rgba(mul(pal.awning_colors[0], 0.9)));
+    g.part(Matte).tube(Vec3::new(tunnel.x - d.x * 1.5, 0.45, tunnel.y - d.y * 1.5), Vec3::new(tunnel.x + d.x * 1.5, 0.45, tunnel.y + d.y * 1.5), 0.45, 10, rgba(mul(pal.awning(0), 0.9)));
     let bowl = w - n * (r * 0.4);
     g.part(Metal).cylinder(bowl, 0.25, 0.25, 0.0, 0.12, 8, rgba(mul(pal.steel, 0.9)));
 }
