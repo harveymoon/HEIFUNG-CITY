@@ -3,11 +3,14 @@
 use super::*;
 
 impl World {
-    /// Place a power plant on a vacant lot, paying from the treasury.
+    /// Place a power plant on a lot, paying from the treasury. Whatever grew
+    /// there is bought out and pulled down: the city outranks the market.
     pub fn build_power(&mut self, lot_id: LotId, kind: PowerPlantKind) -> Result<BuildingId, String> {
         let lot = self.lots.get(lot_id).ok_or("no such lot")?;
-        if lot.building.is_some() {
-            return Err("that lot is taken".into());
+        if let Some(b) = lot.building.and_then(|b| self.buildings.get(b)) {
+            if Self::is_civic_structure(b) {
+                return Err(format!("{} stands there; bulldoze it first", b.name));
+            }
         }
         if lot.landlocked {
             return Err("that land has no road access".into());
@@ -24,6 +27,7 @@ impl World {
         if self.economy.treasury < kind.build_cost() {
             return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), kind.build_cost()));
         }
+        self.take_over_lot(lot_id, kind.label())?;
         self.economy.debit(Flow::Construction, kind.build_cost());
         let name = format!("{} {}", match kind {
             PowerPlantKind::Coal => "Blackridge",

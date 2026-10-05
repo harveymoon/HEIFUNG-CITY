@@ -3,11 +3,14 @@
 use super::*;
 
 impl World {
-    /// Place a bus depot on a vacant lot with street access.
+    /// Place a bus depot on a lot with street access. Whatever grew there
+    /// is bought out and pulled down, as for every civic structure.
     pub fn build_depot(&mut self, lot_id: LotId) -> Result<BuildingId, String> {
         let lot = self.lots.get(lot_id).ok_or("no such lot")?;
-        if lot.building.is_some() {
-            return Err("that lot is taken".into());
+        if let Some(b) = lot.building.and_then(|b| self.buildings.get(b)) {
+            if Self::is_civic_structure(b) {
+                return Err(format!("{} stands there; bulldoze it first", b.name));
+            }
         }
         if lot.landlocked || !lot.car_access() {
             return Err("a depot needs a street".into());
@@ -24,6 +27,7 @@ impl World {
         if self.economy.treasury < transit::DEPOT_COST {
             return Err(format!("the treasury has {:.0}; a depot costs {:.0}", self.economy.treasury, transit::DEPOT_COST));
         }
+        self.take_over_lot(lot_id, "bus depot")?;
         self.economy.debit(Flow::Construction, transit::DEPOT_COST);
         let name = format!("Depot {}", self.rng.random_range(1..20));
         Ok(self.place_special(lot_id, name, transit::DEPOT_JOBS, 0, |b| b.depot = true))
