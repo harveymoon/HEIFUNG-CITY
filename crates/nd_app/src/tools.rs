@@ -20,14 +20,16 @@ pub enum Tool {
     Zone,
     Edit,
     Bulldoze,
-    Power,
+    /// Placed specials by sub-category: power, services, transit, rail,
+    /// attractions (`nd_sim::services::BuildCategory`).
+    Buildings,
     Transit,
     Rail,
 }
 
 impl Tool {
     /// Toolbar order, which is also the digit hotkey order (1 to 8).
-    pub const ALL: [Tool; 8] = [Tool::Inspect, Tool::Road, Tool::Zone, Tool::Edit, Tool::Bulldoze, Tool::Power, Tool::Transit, Tool::Rail];
+    pub const ALL: [Tool; 8] = [Tool::Inspect, Tool::Road, Tool::Zone, Tool::Edit, Tool::Bulldoze, Tool::Buildings, Tool::Transit, Tool::Rail];
 
     /// The name on the toolbar button.
     pub fn label(self) -> &'static str {
@@ -37,7 +39,7 @@ impl Tool {
             Tool::Zone => "Zone",
             Tool::Edit => "Edit",
             Tool::Bulldoze => "Bulldoze",
-            Tool::Power => "Power",
+            Tool::Buildings => "Buildings",
             Tool::Transit => "Buses",
             Tool::Rail => "Rail",
         }
@@ -52,7 +54,7 @@ impl Tool {
             Tool::Zone => "3 / Z",
             Tool::Edit => "4",
             Tool::Bulldoze => "5 / B",
-            Tool::Power => "6 / N",
+            Tool::Buildings => "6 / N",
             Tool::Transit => "7 / T",
             Tool::Rail => "8 / Y",
         }
@@ -83,8 +85,11 @@ pub struct ToolState {
     pub selected_gesture: Option<GestureId>,
     /// Street or path.
     pub kind: RoadKind,
-    /// Plant to place with the Power tool.
-    pub power_kind: nd_sim::PowerPlantKind,
+    /// Buildings tool: the open sub-category, the item picked in it and
+    /// the tier for services and attractions.
+    pub build_cat: nd_sim::BuildCategory,
+    pub build: nd_sim::Placeable,
+    pub build_tier: nd_sim::Tier,
     /// Transit tool: drawing lines or placing a depot.
     pub transit_mode: TransitMode,
     /// The line being drawn or edited.
@@ -116,6 +121,20 @@ pub const ROAD_PRESETS: [(&str, u8, u8, RoadKind); 8] = [
 ];
 
 impl ToolState {
+    /// What the Buildings tool puts down: the picked item at the picked tier.
+    pub fn build_item(&self) -> nd_sim::Placeable {
+        self.build.with_tier(self.build_tier)
+    }
+
+    /// Pick an item (and open its sub-category).
+    pub fn pick_build(&mut self, p: nd_sim::Placeable) {
+        self.build_cat = p.category();
+        if let nd_sim::Placeable::Service(_, t) = p {
+            self.build_tier = t;
+        }
+        self.build = p;
+    }
+
     /// Where a road end dropped at `p` would snap to.
     pub fn road_snap(sim: &Sim, p: SVec2, kind: RoadKind) -> (SVec2, bool) {
         sim.world.roads.snap_point_kind(p, POINT_PICK_RADIUS, kind)
@@ -138,7 +157,9 @@ impl Default for ToolState {
             curved: false,
             selected_gesture: None,
             kind: RoadKind::Street,
-            power_kind: nd_sim::PowerPlantKind::Solar,
+            build_cat: nd_sim::BuildCategory::Power,
+            build: nd_sim::Placeable::Plant(nd_sim::PowerPlantKind::Solar),
+            build_tier: nd_sim::Tier::Mid,
             transit_mode: TransitMode::Route,
             route_sel: None,
             hover_stop: None,
@@ -290,7 +311,7 @@ pub(crate) fn tool_input(
         (KeyCode::Digit3, Some(KeyCode::KeyZ), Tool::Zone),
         (KeyCode::Digit4, None, Tool::Edit),
         (KeyCode::Digit5, Some(KeyCode::KeyB), Tool::Bulldoze),
-        (KeyCode::Digit6, Some(KeyCode::KeyN), Tool::Power),
+        (KeyCode::Digit6, Some(KeyCode::KeyN), Tool::Buildings),
         (KeyCode::Digit7, Some(KeyCode::KeyT), Tool::Transit),
         (KeyCode::Digit8, Some(KeyCode::KeyY), Tool::Rail),
     ];
@@ -567,23 +588,17 @@ pub(crate) fn tool_input(
                 }
             }
         }
-        Tool::Power => {
+        Tool::Buildings => {
             if click {
                 if let Some(p) = ground {
-                    let lot = sim.world.lots.iter().find(|(_, l)| point_in_polygon(p, &l.polygon)).map(|(id, _)| id);
-                    match lot {
-                        Some(lot) => {
-                            let kind = tools.power_kind;
-                            tools.status = match sim.world.build_power(lot, kind) {
-                                Ok(id) => {
-                                    *selection = Selection::Building(id);
-                                    format!("{} built for {:.0}.", kind.label(), kind.build_cost())
-                                }
-                                Err(e) => format!("Cannot build: {e}."),
-                            };
+                    let what = tools.build_item();
+                    tools.status = match sim.world.place_building(what, p) {
+                        Ok(id) => {
+                            *selection = Selection::Building(id);
+                            format!("{} built for {:.0}; {:.0}/day to run.", what.label(), what.cost(), what.upkeep())
                         }
-                        None => tools.status = "Click a vacant lot.".into(),
-                    }
+                        Err(e) => format!("Cannot build: {e}."),
+                    };
                 }
             }
         }
@@ -722,19 +737,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 }
             }
         }
-        Tool::Power => {
-            if let Some(c) = cursor.ground {
-                if let Some((_, lot)) = sim.world.lots.iter().find(|(_, l)| point_in_polygon(c, &l.polygon)) {
-                    let k = tools.power_kind;
-                    let ok = lot.building.is_none() && !lot.landlocked && k.allowed_on(lot.land_use) && lot.area() >= k.min_area();
-                    let mut pts: Vec<Vec3> = lot.polygon.iter().map(|&p| lift(p)).collect();
-                    if pts.len() >= 3 {
-                        pts.push(pts[0]);
-                        gizmos.linestrip(pts, if ok { Color::linear_rgb(0.3, 2.5, 0.6) } else { red });
-                    }
-                }
-            }
-        }
+        Tool::Buildings => draw_build_preview(&mut gizmos, &tools, &cursor, &sim),
         Tool::Rail => {
             if let Some(c) = cursor.ground {
                 // The piece as it would land: footprint, track side, street side.
@@ -915,4 +918,39 @@ fn sub_polyline(pts: &[SVec2], s0: f32, s1: f32) -> Vec<SVec2> {
     }
     out.push(nd_sim::rail::point_along(pts, s1).0);
     out
+}
+
+/// The Buildings tool's preview: the lot under the cursor green or red,
+/// the coverage radius round it for services (road distance; the ring is
+/// the straight-line bound), and for rail pieces the footprint as placed.
+fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, sim: &Sim) {
+    let Some(c) = cursor.ground else { return };
+    let w = &sim.world;
+    let what = tools.build_item();
+    let lift = |p: SVec2| Vec3::new(p.x, 0.8, p.y);
+    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    let green = Color::linear_rgb(0.3, 2.5, 0.6);
+    let red = Color::linear_rgb(3.0, 0.2, 0.4);
+    if let nd_sim::Placeable::Rail(kind) = what {
+        let (f, _, _) = nd_sim::Facility::plan(kind, c, &w.roads);
+        let fp = f.footprint();
+        let blocked = w.buildings.values().any(|b| b.is_special() && w.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp)));
+        let mut pts: Vec<Vec3> = fp.iter().map(|&p| lift(p)).collect();
+        pts.push(pts[0]);
+        gizmos.linestrip(pts, if blocked { red } else { green });
+        return;
+    }
+    let Some((id, lot)) = w.lots.iter().find(|(_, l)| point_in_polygon(c, &l.polygon)) else { return };
+    let ok = w.placement_problem(what, id).is_none();
+    let mut pts: Vec<Vec3> = lot.polygon.iter().map(|&p| lift(p)).collect();
+    if pts.len() >= 3 {
+        pts.push(pts[0]);
+        gizmos.linestrip(pts, if ok { green } else { red });
+    }
+    let r = what.radius();
+    if r > 0.0 {
+        let col = Color::linear_rgb(0.4, 1.4, 2.4);
+        gizmos.circle(Isometry3d::new(lift(lot.center), flat), r, col);
+        gizmos.circle(Isometry3d::new(lift(lot.center), flat), (r - nd_sim::services::COVERAGE_FADE).max(1.0), col.with_alpha(0.5));
+    }
 }

@@ -134,10 +134,10 @@ pub fn tool_of(s: &str) -> Result<Tool, String> {
         "zone" => Ok(Tool::Zone),
         "edit" => Ok(Tool::Edit),
         "bulldoze" => Ok(Tool::Bulldoze),
-        "power" => Ok(Tool::Power),
+        "buildings" | "building" | "power" | "services" => Ok(Tool::Buildings),
         "transit" | "bus" | "buses" => Ok(Tool::Transit),
         "rail" => Ok(Tool::Rail),
-        _ => Err(format!("unknown tool {s:?}; one of inspect, road, zone, edit, bulldoze, power, transit, rail")),
+        _ => Err(format!("unknown tool {s:?}; one of inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail")),
     }
 }
 
@@ -148,7 +148,7 @@ pub fn tool_name(t: Tool) -> &'static str {
         Tool::Zone => "zone",
         Tool::Edit => "edit",
         Tool::Bulldoze => "bulldoze",
-        Tool::Power => "power",
+        Tool::Buildings => "buildings",
         Tool::Transit => "transit",
         Tool::Rail => "rail",
     }
@@ -443,4 +443,23 @@ pub fn route_row(id: RouteId, r: &nd_sim::BusRoute) -> Value {
         "stops": r.stops.iter().map(|s| json!({ "pos": v2(s.pos), "segment": s.segment.0 })).collect::<Vec<_>>(),
         "broken_legs": r.broken, "legs": r.legs.len(),
     })
+}
+
+/// The remote-API name of something the Buildings tool places: a plant
+/// name, `depot`, `station`, `freight_yard`, or `<service>:<tier>`.
+pub fn placeable_key(p: nd_sim::Placeable) -> String {
+    match p {
+        nd_sim::Placeable::Plant(k) => plant_name(k).to_string(),
+        nd_sim::Placeable::Service(k, t) => format!("{}:{}", k.key(), tier_key(t)),
+        nd_sim::Placeable::BusDepot => "depot".to_string(),
+        nd_sim::Placeable::Rail(f) => rail_name(f).to_string(),
+    }
+}
+
+pub fn tier_key(t: nd_sim::Tier) -> &'static str {
+    match t {
+        nd_sim::Tier::Low => "low",
+        nd_sim::Tier::Mid => "mid",
+        nd_sim::Tier::High => "high",
+    }
 }

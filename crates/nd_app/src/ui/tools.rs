@@ -3,7 +3,7 @@
 
 use bevy_egui::egui;
 use nd_sim::roads::RoadKind;
-use nd_sim::{Gesture, LandUse, PowerPlantKind, RailFacility};
+use nd_sim::{BuildCategory, Gesture, LandUse, Placeable, RailFacility, ServiceKind, Tier};
 
 use super::help;
 use super::{hint, section, zone_color32, WARN};
@@ -20,7 +20,7 @@ pub fn sub_pane(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &
         Tool::Inspect => hint(ui, help::tool_hint(Tool::Inspect)),
         Tool::Transit => transit(ui, sim, tools),
         Tool::Rail => rail(ui, sim, tools),
-        Tool::Power => power(ui, tools),
+        Tool::Buildings => buildings(ui, sim, tools),
     }
 }
 
@@ -198,17 +198,69 @@ fn rail(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
     hint(ui, &format!("{} station{} · {} yard{} · {} train{} out · next passenger train in {} min · {} waiting · {} riding · {} riders today · fares {:.0} · {:.0} units of freight in today, {:.0} waiting at yards · upkeep {:.0}/day", r.stations, if r.stations == 1 { "" } else { "s" }, r.yards, if r.yards == 1 { "" } else { "s" }, r.trains, if r.trains == 1 { "" } else { "s" }, r.next_passenger_in, r.waiting, r.riding, r.riders_today, r.fares_today, r.freight_in_today, r.freight_waiting, r.upkeep_today));
 }
 
-fn power(ui: &mut egui::Ui, tools: &mut ToolState) {
-    ui.horizontal_wrapped(|ui| {
-        for k in PowerPlantKind::ALL {
-            if ui.selectable_label(tools.power_kind == k, format!("{} {:.0} MW", k.label(), k.capacity_mw())).clicked() {
-                tools.power_kind = k;
+/// The Buildings tool: a row of sub-categories, the items in the open one,
+/// a tier picker for services and attractions, and what it costs and does.
+fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
+    ui.horizontal(|ui| {
+        for cat in BuildCategory::ALL {
+            if ui.selectable_label(tools.build_cat == cat, cat.label()).clicked() && tools.build_cat != cat {
+                tools.build_cat = cat;
+                if let Some(first) = cat.items().first() {
+                    tools.build = *first;
+                }
             }
         }
     });
-    let k = tools.power_kind;
-    hint(ui, &format!("costs {:.0} to build, {:.0}/day to run, {} jobs{}", k.build_cost(), k.upkeep_per_day(), k.jobs(), help::power_note(k)));
-    hint(ui, help::tool_hint(Tool::Power));
+    ui.horizontal_wrapped(|ui| {
+        for item in tools.build_cat.items() {
+            let on = std::mem::discriminant(&tools.build) == std::mem::discriminant(&item) && tools.build.with_tier(Tier::Mid) == item.with_tier(Tier::Mid);
+            let text = match item {
+                Placeable::Plant(k) => format!("{} {:.0} MW", k.label(), k.capacity_mw()),
+                other => other.menu_label().to_string(),
+            };
+            if ui.selectable_label(on, text).clicked() {
+                tools.build = item;
+            }
+        }
+        if tools.build.has_tiers() {
+            ui.separator();
+            for t in Tier::ALL {
+                if ui.selectable_label(tools.build_tier == t, tools.build.with_tier(t).label()).clicked() {
+                    tools.build_tier = t;
+                }
+            }
+        }
+    });
+    let what = tools.build_item();
+    let mut line = format!("{} · costs {:.0} to build, {:.0}/day to run, {} jobs", what.label(), what.cost(), what.upkeep(), what.jobs());
+    if what.min_area() > 0.0 {
+        line += &format!(", needs {:.0} m²", what.min_area());
+    }
+    match what {
+        Placeable::Plant(k) => line += help::power_note(k),
+        Placeable::Service(k, t) => {
+            if k.radius(t) > 0.0 {
+                line += &format!(", covers {:.0} m by road", k.radius(t));
+            }
+            if k.units(t) > 0 {
+                line += &format!(", {} {}{}", k.units(t), k.unit_kind().map_or("", |u| u.label()), if k.units(t) == 1 { "" } else { "s" });
+            }
+            let cap = k.capacity(t);
+            if cap > 0 {
+                line += &format!(", {cap} {}", match k { ServiceKind::Health => "beds", ServiceKind::Stadium => "seats", _ => "places" });
+            }
+            line += ". ";
+            line += help::service_note(k);
+        }
+        Placeable::BusDepot => line += &format!(". {}", help::TRANSIT_DEPOT),
+        Placeable::Rail(_) => line += ". Set beside track or a street it fuses to them; otherwise it lays stubs to join (see the Rail tool).",
+    }
+    hint(ui, &line);
+    if tools.build_cat == BuildCategory::Services {
+        let s = &sim.world.services.stats;
+        hint(ui, &format!("Coverage of homes: police {:.0}% · fire {:.0}% · health {:.0}% · schools {:.0}% · {} incidents today · avg response {:.0} min · {}/{} units out · {} fires burning", s.coverage[0] * 100.0, s.coverage[1] * 100.0, s.coverage[2] * 100.0, s.coverage[3] * 100.0, s.incidents_today.iter().sum::<u32>(), s.avg_response(), s.units_busy, s.units, s.fires_burning));
+    }
+    hint(ui, help::tool_hint(Tool::Buildings));
 }
 
 /// Colour for a figure that should worry the player.

@@ -538,7 +538,7 @@ fn camera_pose(ctx: &Ctx) -> Value {
 fn tool_state(t: &ToolState) -> Value {
     json!({
         "name": tool_name(t.tool), "road_kind": road_kind_name(t.kind), "lanes_fwd": t.lanes_fwd, "lanes_bwd": t.lanes_bwd, "curved": t.curved,
-        "land_use": t.land_use.label(), "power_kind": plant_name(t.power_kind), "rail_kind": rail_name(t.rail_kind),
+        "land_use": t.land_use.label(), "building": placeable_key(t.build_item()), "building_category": t.build_cat.key(), "rail_kind": rail_name(t.rail_kind),
         "transit_mode": transit_mode_name(t.transit_mode), "route": opt_key(t.route_sel), "show_routes": t.show_routes,
         "pending_points": t.points.len(), "selected_gesture": t.selected_gesture.map(|g| g.0), "status": t.status,
     })
@@ -727,19 +727,16 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             };
             (id, note.to_string())
         }
-        "depot" => {
-            let lot = lot_near(w, p).ok_or("no lot there: click on or near a vacant lot by a street")?;
-            (w.build_depot(lot)?, "bus depot built".into())
-        }
         "parking" => {
             let lot = lot_near(w, p).ok_or("no lot there")?;
             (w.build_parking(lot).ok_or("cannot build parking there: the lot is taken, landlocked or too small")?, "parking built".into())
         }
         other => {
-            let plant = plant_of(other).ok_or_else(|| format!("unknown kind {other:?}; one of station, freight_yard, depot, parking, coal, solar, wind, nuclear"))?;
-            let lot = lot_near(w, p).ok_or("no lot there: aim at a vacant lot")?;
-            let id = w.build_power(lot, plant)?;
-            (id, format!("{} built for {:.0}", plant.label(), plant.build_cost()))
+            let tier = opt_str(cmd, "tier")?.map(|t| nd_sim::services::parse_tier(t).ok_or_else(|| format!("unknown tier {t:?}; low, mid or high"))).transpose()?;
+            let what = nd_sim::Placeable::parse(other, tier).ok_or_else(|| format!("unknown kind {other:?}; one of station, freight_yard, depot, parking, coal, solar, wind, nuclear, police, fire, hospital (clinic), school, dispatch, monument, stadium (services take tier low|mid|high or a :tier suffix)"))?;
+            let lot = lot_near(w, p).ok_or("no lot there: aim at a lot")?;
+            let id = w.place_on_lot(what, lot)?;
+            (id, format!("{} built for {:.0}; {:.0}/day", what.label(), what.cost(), what.upkeep()))
         }
     };
     *ctx.selection = Selection::Building(id);
@@ -1085,7 +1082,22 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         // `kind` means whatever the active tool chooses between.
         match t.tool {
             Tool::Road | Tool::Edit => t.kind = road_kind_of(kind)?,
-            Tool::Power => t.power_kind = plant_of(kind).ok_or_else(|| format!("unknown plant {kind:?}; one of coal, solar, wind, nuclear"))?,
+            Tool::Buildings => {
+                let tier = opt_str(cmd, "tier")?.and_then(nd_sim::services::parse_tier);
+                let cat = nd_sim::BuildCategory::ALL.iter().copied().find(|c| c.key() == kind.to_ascii_lowercase());
+                match cat {
+                    Some(c) => {
+                        t.build_cat = c;
+                        if let Some(first) = c.items().first() {
+                            t.build = *first;
+                        }
+                    }
+                    None => t.pick_build(nd_sim::Placeable::parse(kind, tier).ok_or_else(|| format!("unknown building {kind:?}; a category (power, services, transit, rail, attractions) or a kind as for place"))?),
+                }
+                if let Some(tier) = tier {
+                    t.build_tier = tier;
+                }
+            }
             Tool::Rail => {
                 t.rail_kind = match kind.to_ascii_lowercase().as_str() {
                     "station" => RailFacility::Station,

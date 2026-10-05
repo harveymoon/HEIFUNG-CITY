@@ -21,7 +21,7 @@ pub const TOOL_HINTS: [(Tool, &str); 8] = [
     (Tool::Inspect, "Click a glowing citizen, a car, or a building. Hover a parcel for a quick read-out; a selected person opens the person pane, where the star keeps them in the People window's favourites."),
     (Tool::Transit, "Click streets in order to lay stops round a loop (the side you click is the side buses serve); Enter or right-click closes the line. Click a stop to select its line, drag it to move it, Delete removes it, Backspace drops the last stop."),
     (Tool::Rail, "Nothing runs until both connectors are joined: track from its rail stub to the line (a trunk already crosses the map to the south) and a road from its street stub to the city. Unjoined stubs show red. Track is laid with the Road tool's Rail preset."),
-    (Tool::Power, "Click a vacant lot to build. Without plants the regional grid sells the city 60 MW at a price; beyond that, the poorest districts go dark first."),
+    (Tool::Buildings, "Pick a sub-category and an item, then click a lot (rail pieces go anywhere). Whatever grew there is bought out and pulled down; another civic building must be bulldozed first. Green outline: it fits; the blue ring is the coverage radius by road."),
 ];
 
 pub fn tool_hint(tool: Tool) -> &'static str {
@@ -43,5 +43,19 @@ pub fn power_note(k: PowerPlantKind) -> &'static str {
         PowerPlantKind::Solar => ". Any vacant lot. Clean, but only by day and dimmed by cloud.",
         PowerPlantKind::Wind => ". Any vacant lot. Clean; output follows the wind.",
         PowerPlantKind::Nuclear => ". Industrial land only. Enormous, steady, expensive, and the neighbours are nervous.",
+    }
+}
+
+/// One line on what a service or attraction does, for the Buildings pane.
+pub fn service_note(k: nd_sim::ServiceKind) -> &'static str {
+    use nd_sim::ServiceKind as K;
+    match k {
+        K::Police => "Patrol cars answer crimes; coverage cuts crime and arrests come quicker.",
+        K::Fire => "Engines put out fires before they spread; coverage cuts fire risk.",
+        K::Health => "Ambulances take the sick to its beds; coverage keeps people healthy.",
+        K::School => "Workers living in its district earn more (night classes, a trade).",
+        K::Dispatch => "Its staff answer 911: with a dispatcher at the desk units go out in minutes, without one calls go to the slow regional line.",
+        K::Monument => "Lifts land value around it; people come to look.",
+        K::Stadium => "Hosts games some evenings: crowds come, tickets pay into the treasury.",
     }
 }
