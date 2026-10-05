@@ -96,6 +96,69 @@ pub enum BusinessKind {
     Parking,
 }
 
+/// Opening hours on the clock, `open..close`; a close earlier than the open
+/// runs past midnight, and equal hours mean round the clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hours {
+    pub open: u8,
+    pub close: u8,
+}
+
+impl Hours {
+    pub const ALWAYS: Hours = Hours { open: 0, close: 0 };
+
+    pub const fn new(open: u8, close: u8) -> Self {
+        Self { open, close }
+    }
+
+    pub fn always(self) -> bool {
+        self.open == self.close
+    }
+
+    /// Is the hour `h` (0..24) inside?
+    pub fn contains(self, h: u8) -> bool {
+        if self.always() {
+            true
+        } else if self.open < self.close {
+            (self.open..self.close).contains(&h)
+        } else {
+            h >= self.open || h < self.close
+        }
+    }
+
+    /// Hours open per day.
+    pub fn span(self) -> u8 {
+        if self.always() {
+            24
+        } else {
+            (self.close + 24 - self.open) % 24
+        }
+    }
+
+    /// The shift a worker with `seed` works: the whole day when it is ten
+    /// hours or less, else one of two or three back-to-back shifts.
+    pub fn shift(self, seed: u64) -> Hours {
+        let span = self.span();
+        if span <= 10 {
+            return self;
+        }
+        let n = span.div_ceil(8);
+        let len = span / n;
+        let i = (seed % n as u64) as u8;
+        let open = (self.open + i * len) % 24;
+        let close = if i + 1 == n { self.close } else { (open + len) % 24 };
+        Hours { open, close }
+    }
+
+    pub fn label(self) -> String {
+        if self.always() {
+            "24h".to_string()
+        } else {
+            format!("{:02}:00-{:02}:00", self.open, self.close)
+        }
+    }
+}
+
 /// What a business turns into what, per filled job per hour.
 #[derive(Clone, Debug)]
 pub struct Recipe {
@@ -152,6 +215,36 @@ impl BusinessKind {
             LandUse::Civic => &[BusinessKind::Office],
             _ => &[],
         }
+    }
+
+    /// When the doors are open (and the shifts run).
+    pub fn hours(self) -> Hours {
+        match self {
+            BusinessKind::Grocery => Hours::new(7, 22),
+            BusinessKind::Bakery => Hours::new(6, 19),
+            BusinessKind::GadgetShop => Hours::new(9, 20),
+            BusinessKind::Venue => Hours::new(18, 3),
+            BusinessKind::Office => Hours::new(8, 18),
+            BusinessKind::Parking => Hours::ALWAYS,
+            // Plants run two shifts.
+            BusinessKind::VertFarm | BusinessKind::GrainFarm | BusinessKind::ProteinVat | BusinessKind::Dairy | BusinessKind::Mill | BusinessKind::Fab | BusinessKind::Assembly => Hours::new(6, 22),
+        }
+    }
+
+    /// Shops and venues that serve citizens at the door, and how many at once
+    /// per job.
+    pub fn customers_per_job(self) -> Option<u16> {
+        match self {
+            BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop => Some(3),
+            BusinessKind::Venue => Some(8),
+            _ => None,
+        }
+    }
+
+    /// Part of the food chain, from farm to shelf: staffed first, and
+    /// ordering ahead when the town is growing.
+    pub fn is_food(self) -> bool {
+        matches!(self, BusinessKind::VertFarm | BusinessKind::GrainFarm | BusinessKind::ProteinVat | BusinessKind::Dairy | BusinessKind::Mill | BusinessKind::Grocery | BusinessKind::Bakery)
     }
 
     /// Stock a business tries to keep of each input, in hours of production.
@@ -318,4 +411,35 @@ pub struct MarketStats {
     pub closed_total: u32,
     pub meals_sold_today: u32,
     pub hungry: u32,
+    /// Groceries bought from outside today because local shelves ran short.
+    #[serde(default)]
+    pub grocery_imports_today: f32,
+    /// Shoppers who found a shop shut or full today.
+    #[serde(default)]
+    pub turned_away_today: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hours_wrap_midnight_and_split_into_shifts() {
+        let venue = BusinessKind::Venue.hours();
+        assert!(venue.contains(23) && venue.contains(2) && !venue.contains(3) && !venue.contains(12));
+        assert_eq!(venue.span(), 9);
+        assert_eq!(venue.shift(1), venue, "a short day is one shift");
+        let plant = BusinessKind::Mill.hours();
+        assert_eq!(plant.shift(0), Hours::new(6, 14));
+        assert_eq!(plant.shift(1), Hours::new(14, 22));
+        let park = BusinessKind::Parking.hours();
+        assert!((0..24).all(|h| park.contains(h)));
+        let shifts: Vec<Hours> = (0..3).map(|s| park.shift(s)).collect();
+        assert_eq!(shifts, vec![Hours::new(0, 8), Hours::new(8, 16), Hours::new(16, 0)]);
+        // Every hour of a long day is covered by some shift.
+        let groc = BusinessKind::Grocery.hours();
+        for h in 0..24 {
+            assert_eq!(groc.contains(h), (0..4).any(|s| groc.shift(s).contains(h)), "hour {h}");
+        }
+    }
 }
