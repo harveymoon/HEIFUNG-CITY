@@ -12,6 +12,7 @@ use crate::plan::{preview, Gesture, GestureId, Plan, PlanPreview, Project};
 use crate::roads::{NodeId, RoadNetwork, SegmentId};
 use crate::traffic::Traffic;
 use crate::walk::WalkGraph;
+use crate::power::{demand_mw, PowerPlantKind, Weather, GRID_IMPORT_MW, GRID_IMPORT_PRICE};
 use crate::citizens::TravelMode;
 use crate::roads::RoadKind;
 use crate::zoning::{generate_lots, LandUse, Lot, LotId, Zone, ZoneId};
@@ -96,6 +97,8 @@ pub struct World {
     /// Pedestrian network, derived from roads and lots.
     #[serde(skip)]
     pub walk: WalkGraph,
+    #[serde(default)]
+    pub weather: Weather,
     pub economy: Economy,
     pub land_value: LandValue,
     #[serde(skip)]
@@ -106,6 +109,8 @@ pub struct World {
 impl World {
     pub fn new(config: WorldConfig) -> Self {
         let land_value = LandValue::new(config.half_extent + 200.0, 32.0);
+        let mut economy = Economy::default();
+        economy.treasury = 60_000.0;
         Self {
             land_value,
             rng: SimRng::seed_from_u64(config.seed),
@@ -122,7 +127,8 @@ impl World {
             citizens: SlotMap::with_key(),
             traffic: Traffic::default(),
             walk: WalkGraph::default(),
-            economy: Economy::default(),
+            weather: Weather::default(),
+            economy,
             events: Vec::new(),
             next_seed: 1,
         }
@@ -553,6 +559,12 @@ impl World {
             if bld.is_derelict() {
                 b.splat(c, 100.0, -0.12);
             }
+            if let Some(kind) = bld.plant {
+                let (r, w) = kind.pollution();
+                if r > 0.0 {
+                    b.splat(c, r, w);
+                }
+            }
         }
         for lot in self.lots.values() {
             if lot.building.is_none() {
@@ -574,6 +586,16 @@ impl World {
     /// Once a sim day: buildings wear, upgrade or decay; citizens pay rent and
     /// react to it.
     fn daily_update(&mut self) {
+        // Treasury: yesterday's taxes in, plant upkeep and imported power out.
+        let upkeep: f32 = self.buildings.values().filter_map(|b| b.plant).map(|k| k.upkeep_per_day()).sum();
+        self.economy.treasury += self.economy.tax_today - upkeep - self.economy.power.import_cost_today;
+        self.economy.power.upkeep_today = upkeep;
+        self.economy.tax_today = 0.0;
+        self.economy.power.import_cost_today = 0.0;
+        self.economy.power.brownout_hours_today = 0;
+        for b in self.buildings.values_mut() {
+            b.unpowered_hours_today = 0;
+        }
         self.economy.parking_street_today = 0;
         self.economy.parking_fees_today = 0.0;
         self.economy.walk_trips_today = 0;
@@ -636,6 +658,8 @@ impl World {
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         let mut demolish = Vec::new();
         for bid in ids {
+            let revenue = self.buildings[bid].business.as_ref().map_or(0.0, |z| z.revenue_today);
+            self.economy.tax_today += revenue * 0.05;
             let (wage_bill, workers, publicly_funded, kind) = {
                 let b = &self.buildings[bid];
                 let Some(bz) = &b.business else { continue };
@@ -695,6 +719,8 @@ impl World {
     /// the market or imports, exporting surplus, and market statistics.
     fn hourly_economy(&mut self) {
         let tick = self.clock.tick;
+        self.weather.step(&mut self.rng);
+        self.allocate_power();
         // Hunger and home cooking.
         for c in self.citizens.values_mut() {
             c.satiety = (c.satiety - 0.04).max(0.0);
@@ -711,7 +737,7 @@ impl World {
             let (jobs, staffing) = (b.jobs, b.staffing());
             if let Some(bz) = b.business.as_mut() {
                 if !bz.closed {
-                    bz.produce(jobs, staffing);
+                    bz.produce(jobs, staffing * b.powered.clamp(0.0, 1.0));
                 }
             }
         }
@@ -952,6 +978,7 @@ impl World {
         let (stress, class, savings) = {
             let c = &mut self.citizens[cid];
             c.savings += income - rent - 20.0;
+            self.economy.tax_today += income * 0.12;
             // Wheels: a bike is cheap and first; a car needs a middle income and
             // savings; the poor sell a car they cannot keep.
             if !c.owns_bike && c.savings > 60.0 && self.rng.random_bool(0.08) {
@@ -1609,6 +1636,129 @@ impl World {
         }
     }
 
+    /// Place a power plant on a vacant lot, paying from the treasury.
+    pub fn build_power(&mut self, lot_id: LotId, kind: PowerPlantKind) -> Result<BuildingId, String> {
+        let lot = self.lots.get(lot_id).ok_or("no such lot")?;
+        if lot.building.is_some() {
+            return Err("that lot is taken".into());
+        }
+        if lot.landlocked {
+            return Err("that land has no road access".into());
+        }
+        if !kind.allowed_on(lot.land_use) {
+            return Err(format!("a {} cannot go on {} land", kind.label(), lot.land_use.label().to_lowercase()));
+        }
+        if lot.area() < kind.min_area() {
+            return Err(format!("too small: a {} needs {:.0} m²", kind.label(), kind.min_area()));
+        }
+        if self.economy.treasury < kind.build_cost() {
+            return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), kind.build_cost()));
+        }
+        let lu = lot.land_use;
+        let center = lot.center;
+        let value = self.land_value.at(center);
+        self.economy.treasury -= kind.build_cost();
+        let seed = self.fresh_seed();
+        let name = format!("{} {}", match kind {
+            PowerPlantKind::Coal => "Blackridge",
+            PowerPlantKind::Solar => "Sunfield",
+            PowerPlantKind::Wind => "Westerly",
+            PowerPlantKind::Nuclear => "Calder",
+        }, self.rng.random_range(1..9));
+        let mut b = Building::new(lot_id, lu, 1, Tier::Mid, seed, name, self.clock.tick, value);
+        b.plant = Some(kind);
+        b.homes = 0;
+        b.jobs = kind.jobs();
+        b.business = None;
+        b.parking_capacity = kind.jobs() / 2;
+        let id = self.buildings.insert(b);
+        self.lots[lot_id].building = Some(id);
+        self.events.push(SimEvent::BuildingBuilt(id));
+        self.allocate_power();
+        Ok(id)
+    }
+
+    /// Share the hour's supply out: plants first, then what the regional
+    /// grid will sell; the rich are served first, so cheap districts brown
+    /// out first. Buildings whose power state changes are redrawn.
+    fn allocate_power(&mut self) {
+        let day = self.clock.day_fraction();
+        let mut supply: f32 = 0.0;
+        let mut plants = 0;
+        for b in self.buildings.values() {
+            if let Some(kind) = b.plant {
+                if !b.is_derelict() {
+                    supply += kind.capacity_mw() * kind.availability(&self.weather, day);
+                    plants += 1;
+                }
+            }
+        }
+        let demand: f32 = self.buildings.values().map(demand_mw).sum::<f32>() + 0.0; // sum of nothing is -0.0
+        let shortfall = (demand - supply).max(0.0);
+        let imported = shortfall.min(GRID_IMPORT_MW);
+        self.economy.power.import_cost_today += imported * GRID_IMPORT_PRICE;
+        let mut remaining = supply + imported;
+        let mut order: Vec<(BuildingId, f32)> = self.buildings.iter().map(|(id, b)| (id, demand_mw(b))).collect();
+        order.sort_by(|a, b| {
+            let ta = self.buildings[a.0].tier;
+            let tb = self.buildings[b.0].tier;
+            tb.cmp(&ta).then(b.1.total_cmp(&a.1))
+        });
+        let mut unpowered = 0;
+        let mut changed = Vec::new();
+        for (id, need) in order {
+            let b = &mut self.buildings[id];
+            let powered = if need <= 0.0 {
+                1.0
+            } else if remaining >= need {
+                remaining -= need;
+                1.0
+            } else {
+                let p = remaining / need;
+                remaining = 0.0;
+                p
+            };
+            let before = (b.powered * 2.0).round();
+            b.powered = powered;
+            if powered < 0.6 {
+                b.unpowered_hours_today = b.unpowered_hours_today.saturating_add(1);
+                unpowered += 1;
+            }
+            if (powered * 2.0).round() != before {
+                changed.push(id);
+            }
+        }
+        for id in changed {
+            self.events.push(SimEvent::BuildingChanged(id));
+        }
+        let p = &mut self.economy.power;
+        p.supply_mw = supply;
+        p.demand_mw = demand;
+        p.imported_mw = imported;
+        p.served = if demand > 0.0 { ((supply + imported) / demand).min(1.0) } else { 1.0 };
+        p.plants = plants;
+        p.unpowered_buildings = unpowered;
+        if p.served < 0.98 {
+            p.brownout_hours_today += 1;
+        }
+        // People in the dark notice.
+        let tick = self.clock.tick;
+        let ids: Vec<CitizenId> = self.citizens.keys().collect();
+        for cid in ids {
+            let Some(inside) = self.citizens[cid].inside else { continue };
+            let powered = self.buildings.get(inside).map_or(1.0, |b| b.powered);
+            if powered < 0.6 {
+                let name = self.buildings[inside].name.clone();
+                let c = &mut self.citizens[cid];
+                c.mood = (c.mood - 0.012).max(0.0);
+                if self.rng.random_bool(0.04) {
+                    c.thought = "The power is out again.".to_string();
+                    c.remember(tick, format!("Sat in the dark at {name}. No power."));
+                }
+            }
+        }
+    }
+
     /// Open a parking business on a vacant lot: a surface lot where land is
     /// cheap, a multi-storey car park in the middle. The cheapest business
     /// there is: two to four jobs and a little float.
@@ -2048,5 +2198,66 @@ mod tests {
         w.park_car(c);
         assert_eq!(w.economy.parking_street_today, street0 + 1);
         assert!(w.citizens[c].parked_at.is_none());
+    }
+
+    #[test]
+    fn power_is_rationed_rich_first_and_plants_fix_it() {
+        use crate::power::{demand_mw, PowerPlantKind};
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Industrial);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Residential);
+        let ind: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial).map(|(id, _)| id).collect();
+        let res: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Residential).map(|(id, _)| id).collect();
+        assert!(ind.len() >= 3 && res.len() >= 2);
+        // Placement rules.
+        assert!(w.build_power(res[0], PowerPlantKind::Coal).is_err(), "coal is industrial only");
+        let big = ind.iter().copied().max_by(|a, b| w.lots[*a].area().total_cmp(&w.lots[*b].area())).unwrap();
+        let treasury0 = w.economy.treasury;
+        w.economy.treasury = 100.0;
+        assert!(w.build_power(big, PowerPlantKind::Solar).is_err(), "no money");
+        w.economy.treasury = treasury0;
+        // Fill the rest with heavy industry: more demand than the regional grid sells.
+        for &l in ind.iter().filter(|&&l| l != big) {
+            w.build_on(l);
+        }
+        for &l in &res {
+            w.build_on(l);
+        }
+        for b in w.buildings.values_mut() {
+            b.floors = 30;
+        }
+        let demand: f32 = w.buildings.values().map(demand_mw).sum();
+        assert!(demand > crate::power::GRID_IMPORT_MW, "demand {demand}");
+        w.allocate_power();
+        let p = &w.economy.power;
+        assert!(p.served < 1.0 && p.unpowered_buildings > 0 && p.imported_mw > 0.0, "{p:?}");
+        // The highest tiers are served before the lowest.
+        let worst_high = w.buildings.values().filter(|b| b.tier == Tier::High).map(|b| b.powered).fold(1.0f32, f32::min);
+        let best_low = w.buildings.values().filter(|b| b.tier == Tier::Low && demand_mw(b) > 0.0).map(|b| b.powered).fold(0.0f32, f32::max);
+        if w.buildings.values().any(|b| b.tier == Tier::High) && w.buildings.values().any(|b| b.tier == Tier::Low) {
+            assert!(worst_high >= best_low, "high {worst_high} vs low {best_low}");
+        }
+        // A nuclear plant covers everything.
+        w.economy.treasury = 200_000.0;
+        let plant = w.build_power(big, PowerPlantKind::Nuclear).expect("nuclear plant built");
+        assert!(w.buildings[plant].plant == Some(PowerPlantKind::Nuclear) && w.buildings[plant].jobs == 60);
+        assert!(w.economy.treasury < 200_000.0);
+        let p = &w.economy.power;
+        assert_eq!(p.plants, 1);
+        assert!(p.served >= 0.999 && p.unpowered_buildings == 0, "{p:?}");
+        assert!(w.buildings.values().all(|b| b.powered >= 0.999));
+        // Weather only matters to solar and wind.
+        let noon = 0.5;
+        assert_eq!(PowerPlantKind::Nuclear.availability(&w.weather, noon), 1.0);
+        let mut clear = w.weather.clone();
+        clear.cloud = 0.0;
+        let mut dull = clear.clone();
+        dull.cloud = 1.0;
+        assert!(PowerPlantKind::Solar.availability(&clear, noon) > PowerPlantKind::Solar.availability(&dull, noon));
+        assert_eq!(PowerPlantKind::Solar.availability(&clear, 0.0), 0.0, "no sun at midnight");
+        // Round trip keeps the plant.
+        let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+        assert_eq!(back.buildings[plant].plant, Some(PowerPlantKind::Nuclear));
     }
 }

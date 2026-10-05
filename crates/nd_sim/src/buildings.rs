@@ -119,6 +119,18 @@ pub struct Building {
     /// Fee per visit for paying customers (parking businesses).
     #[serde(default)]
     pub parking_price: f32,
+    /// A power plant placed by the player.
+    #[serde(default)]
+    pub plant: Option<crate::power::PowerPlantKind>,
+    /// Share of its electricity demand met this hour.
+    #[serde(default = "one")]
+    pub powered: f32,
+    #[serde(default)]
+    pub unpowered_hours_today: u16,
+}
+
+fn one() -> f32 {
+    1.0
 }
 
 impl Building {
@@ -143,6 +155,9 @@ impl Building {
             parking_capacity: 0,
             parking_used: 0,
             parking_price: 0.0,
+            plant: None,
+            powered: 1.0,
+            unpowered_hours_today: 0,
         };
         b.recompute_capacity();
         b.update_rent(land_value);
@@ -167,7 +182,7 @@ impl Building {
     }
 
     pub fn recompute_capacity(&mut self) {
-        if self.is_parking() {
+        if self.is_parking() || self.plant.is_some() {
             return;
         }
         let f = self.floors as u16;

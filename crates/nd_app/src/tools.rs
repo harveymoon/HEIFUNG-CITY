@@ -19,6 +19,7 @@ pub enum Tool {
     Zone,
     Edit,
     Bulldoze,
+    Power,
 }
 
 #[derive(Resource)]
@@ -38,6 +39,8 @@ pub struct ToolState {
     pub selected_gesture: Option<GestureId>,
     /// Street or path.
     pub kind: RoadKind,
+    /// Plant to place with the Power tool.
+    pub power_kind: nd_sim::PowerPlantKind,
 }
 
 /// Road presets in the spirit of Cities Skylines' road menu: (label, forward, backward, kind).
@@ -73,6 +76,7 @@ impl Default for ToolState {
             curved: false,
             selected_gesture: None,
             kind: RoadKind::Street,
+            power_kind: nd_sim::PowerPlantKind::Solar,
         }
     }
 }
@@ -177,6 +181,7 @@ fn tool_input(
         (KeyCode::Digit3, KeyCode::KeyZ, Tool::Zone),
         (KeyCode::Digit4, KeyCode::KeyE, Tool::Edit),
         (KeyCode::Digit5, KeyCode::KeyB, Tool::Bulldoze),
+        (KeyCode::Digit6, KeyCode::KeyN, Tool::Power),
     ];
     for (a, b, tool) in picks {
         if (keys.just_pressed(a) || (keys.just_pressed(b) && !ctrl)) && !(tool == Tool::Zone && ctrl) {
@@ -339,6 +344,26 @@ fn tool_input(
                 }
             }
         }
+        Tool::Power => {
+            if click {
+                if let Some(p) = ground {
+                    let lot = sim.world.lots.iter().find(|(_, l)| point_in_polygon(p, &l.polygon)).map(|(id, _)| id);
+                    match lot {
+                        Some(lot) => {
+                            let kind = tools.power_kind;
+                            tools.status = match sim.world.build_power(lot, kind) {
+                                Ok(id) => {
+                                    *selection = Selection::Building(id);
+                                    format!("{} built for {:.0}.", kind.label(), kind.build_cost())
+                                }
+                                Err(e) => format!("Cannot build: {e}."),
+                            };
+                        }
+                        None => tools.status = "Click a vacant lot.".into(),
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -424,6 +449,19 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                         pts.push(pts[0]);
                     }
                     gizmos.linestrip(pts, red);
+                }
+            }
+        }
+        Tool::Power => {
+            if let Some(c) = cursor.ground {
+                if let Some((_, lot)) = sim.world.lots.iter().find(|(_, l)| point_in_polygon(c, &l.polygon)) {
+                    let k = tools.power_kind;
+                    let ok = lot.building.is_none() && !lot.landlocked && k.allowed_on(lot.land_use) && lot.area() >= k.min_area();
+                    let mut pts: Vec<Vec3> = lot.polygon.iter().map(|&p| lift(p)).collect();
+                    if pts.len() >= 3 {
+                        pts.push(pts[0]);
+                        gizmos.linestrip(pts, if ok { Color::linear_rgb(0.3, 2.5, 0.6) } else { red });
+                    }
                 }
             }
         }

@@ -16,7 +16,7 @@ use bevy::pbr::DistanceFog;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use nd_procgen::street::{generate_street, signal_posts, StreetInput};
-use nd_procgen::{build_terrain, generate_building, generate_texture, mip_chain, Geometry, MeshData, Surface, TerrainConfig};
+use nd_procgen::{build_terrain, generate_building, generate_texture, mip_chain, Extras, Geometry, MeshData, Surface, TerrainConfig};
 use nd_sim::roads::{LANE_WIDTH, SHOULDER};
 use nd_sim::traffic::LaneId;
 use nd_sim::{BuildingId, CarId, CitizenId, SimEvent, Vec2 as SVec2};
@@ -42,6 +42,8 @@ struct SignalTag(LaneId);
 struct OverlayTag;
 #[derive(Component)]
 struct PathsTag;
+#[derive(Component)]
+struct HazeTag;
 
 /// Toggleable data layers drawn over the ground.
 #[derive(Resource, Default)]
@@ -113,6 +115,7 @@ struct RenderState {
     overlay_shown: bool,
     paths_version: u64,
     paths_shown: bool,
+    haze_signature: usize,
 }
 
 /// Renderer statistics shown in the UI.
@@ -129,7 +132,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RenderState>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_systems(Startup, setup).add_systems(
             Update,
-            (sync_terrain, sync_roads, sync_signals, sync_preview, sync_lots, sync_overlay, sync_paths, sync_buildings, sync_citizens, sync_cars, update_daylight)
+            (sync_terrain, sync_roads, sync_signals, sync_preview, sync_lots, sync_overlay, sync_paths, sync_haze, sync_buildings, sync_citizens, sync_cars, update_daylight)
                 .chain()
                 .in_set(SimSet::Sync),
         );
@@ -501,7 +504,8 @@ fn sync_lots(
 fn spawn_building(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, sim: &Sim, assets: &GameAssets, id: BuildingId) -> Option<(Vec<Entity>, usize)> {
     let b = sim.world.buildings.get(id)?;
     let lot = sim.world.lots.get(b.lot)?;
-    let geo = generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, b.parking_visual());
+    let extras = Extras { parking: b.parking_visual(), plant: b.plant, powered: b.powered };
+    let geo = generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras);
     let tris = geo.triangle_count();
     Some((spawn_geometry(commands, meshes, mats, &geo, BuildingTag(id)), tris))
 }
@@ -759,6 +763,44 @@ fn sync_paths(
     if !mesh.is_empty() {
         commands.spawn((Mesh3d(meshes.add(to_mesh(&mesh, false))), MeshMaterial3d(mats.glow()), Transform::IDENTITY, PathsTag));
     }
+}
+
+/// Brown haze over coal plants: stacked translucent layers that read as a
+/// dome from above and as murk from the street.
+fn sync_haze(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    mats: Res<Materials>,
+    mut state: ResMut<RenderState>,
+    existing: Query<Entity, With<HazeTag>>,
+) {
+    let w = &sim.world;
+    let coal: Vec<SVec2> = w.buildings.values().filter(|b| b.plant.map_or(false, |k| k.makes_haze())).filter_map(|b| w.lots.get(b.lot).map(|l| l.center)).collect();
+    let signature = coal.iter().fold(coal.len(), |acc, c| acc ^ ((c.x * 7.0 + c.y * 13.0) as i64 as usize));
+    if signature == state.haze_signature {
+        return;
+    }
+    state.haze_signature = signature;
+    despawn_all(&mut commands, &existing);
+    if coal.is_empty() {
+        return;
+    }
+    let mut mesh = MeshData::default();
+    for c in coal {
+        // Four thin layers, light enough that the ground still reads through;
+        // the plume drifts the upper layers a little downwind.
+        for (k, (h, r)) in [(22.0f32, 95.0f32), (42.0, 135.0), (66.0, 165.0), (92.0, 185.0)].iter().enumerate() {
+            let drift = SVec2::new(18.0, 8.0) * k as f32;
+            let poly: Vec<SVec2> = (0..28).map(|i| {
+                let a = i as f32 / 28.0 * std::f32::consts::TAU;
+                c + drift + SVec2::new(a.cos(), a.sin()) * *r
+            }).collect();
+            let alpha = 0.075 - k as f32 * 0.012;
+            mesh.ground_polygon(&poly, *h, [0.52, 0.40, 0.27, alpha]);
+        }
+    }
+    commands.spawn((Mesh3d(meshes.add(to_mesh(&mesh, false))), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, HazeTag));
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {

@@ -23,6 +23,11 @@ fn main() {
     world.add_zone(vec![Vec2::new(-120.0, -60.0), Vec2::new(-10.0, -60.0), Vec2::new(-10.0, -10.0), Vec2::new(-120.0, -10.0)], LandUse::Park);
     world.add_zone(block(240.0, -240.0), LandUse::Industrial);
 
+    // One coal plant to start with, as the demo district has.
+    let lot = world.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial && l.area() >= 600.0).max_by(|a, b| a.1.area().total_cmp(&b.1.area())).map(|(id, _)| id);
+    if let Some(lot) = lot {
+        world.build_power(lot, nd_sim::PowerPlantKind::Coal).expect("coal plant");
+    }
     println!("lots: {}", world.lots.len());
     let mut minds = RuleBasedMind::default();
     for day in 0..days {
@@ -57,6 +62,7 @@ fn main() {
             e.emigrated_total,
             e.priced_out_total,
         );
+        println!("         power: supply {:.0} + import {:.0} MW vs demand {:.0} MW, served {:.0}%, plants {}, dark {}, treasury {:.0}", e.power.supply_mw, e.power.imported_mw, e.power.demand_mw, e.power.served * 100.0, e.power.plants, e.power.unpowered_buildings, e.treasury);
         println!("         parking: {}/{} spaces in {} lots, circling {} , fees {:.0}", e.parking_used, e.parking_capacity, e.parking_lots, e.parking_street_today, e.parking_fees_today);
         let m = &e.market;
         println!(

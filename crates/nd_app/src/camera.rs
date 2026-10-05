@@ -222,6 +222,16 @@ fn control_camera(
         }
     }
 
+    // F11: jump to a random power plant.
+    if keys.just_pressed(KeyCode::F11) {
+        let candidates: Vec<_> = sim.world.buildings.values().filter(|b| b.plant.is_some()).filter_map(|b| sim.world.lots.get(b.lot)).map(|l| l.center).collect();
+        if let Some(c) = candidates.choose(&mut rand::rng()) {
+            cam.target = Vec3::new(c.x, 0.0, c.y);
+            cam.distance = 150.0;
+            cam.pitch = 0.5;
+        }
+    }
+
     // Rotate with the right mouse button, pan with the middle button or shift+left.
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     if buttons.pressed(MouseButton::Right) {

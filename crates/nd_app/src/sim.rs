@@ -66,6 +66,20 @@ impl Sim {
             self.world.add_gesture(Gesture::Zone { polygon: cell(x, y), land_use: lu });
         }
         self.world.implement();
+        // A coal plant to start with: cheap power and a haze over the industrial corner.
+        if self.world.buildings.values().any(|b| b.plant.is_some()) {
+            return;
+        }
+        let lot = self
+            .world
+            .lots
+            .iter()
+            .filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial && l.building.is_none() && l.area() >= 600.0)
+            .max_by(|a, b| a.1.area().total_cmp(&b.1.area()))
+            .map(|(id, _)| id);
+        if let Some(lot) = lot {
+            let _ = self.world.build_power(lot, nd_sim::PowerPlantKind::Coal);
+        }
     }
 
     /// Fraction of the way from the last tick to the next, for interpolation.

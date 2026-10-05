@@ -142,6 +142,21 @@ Citizens are rendered from their simulated positions every frame.
   end at the nearest street, the last stretch is walked over the pedestrian network,
   and the car is parked at a nearby parking business for a fee (or circles, which pulls
   a lot into existence). Shops and industry still need a street.
+- **Power** (`nd_sim::power`): the city runs on electricity and the player supplies it.
+  Every building draws megawatts by land use, floors and tier (industry most, homes
+  least, high tiers more); plants draw none. Four kinds of plant go on vacant lots with
+  the Power tool, paid from the treasury: coal (120 MW, cheap, steady, industrial land
+  only, a brown haze and a heavy land value penalty for 300 m), solar (25 MW nameplate,
+  any land, output follows the sun and is dimmed by cloud), wind (40 MW nameplate, any
+  land, output follows the wind) and nuclear (400 MW, steady, very expensive to build and
+  run, industrial land only, a smaller penalty for the nervous neighbours). Weather is a
+  slow random walk of cloud and wind, stepped hourly. Each hour the supply is summed, the
+  regional grid sells up to 60 MW at a price to cover any shortfall, and what is left is
+  shared out highest tier first, so brownouts land on the cheap districts. A building
+  below 60% power counts a dark hour: its businesses produce proportionally less, its
+  windows go dark, the people inside lose mood and say so ("The power is out again."),
+  and the inspector marks it UNDERPOWERED. The treasury starts at 60,000, takes 12% of
+  incomes and 5% of business revenue each day, and pays plant upkeep and imported power.
 - **Economy stats**: demand per land use, Gini of incomes, class counts, rents per
   tier, displaced, emigrated and priced-out counters, plus market stats: businesses,
   deals, imports, exports, meals sold, hungry citizens, closures, and the average
@@ -233,6 +248,12 @@ trait MindProvider {
   own a car and/or a bike by class (poor: 12% car, 60% bike; middle: 60% / 35%; rich: 92% / 35%)
   and buy or sell them as savings allow. Walkers use the middle of the pavement, bikes the road
   shoulder, both the centre of a path; bike owners ride to parks for pleasure.
+- Power plants have their own styles: a coal station with a boiler hall, two stacks with
+  plumes, a coal pile and conveyor and a transformer yard; rows of tilted panels on posts;
+  white turbines with nacelles and three blades; a containment dome, hyperbolic cooling
+  towers with steam and a double fence. Coal plants get a haze: stacked translucent brown
+  discs on the overlay material that read as a dome from above and murk from the street.
+  Underpowered buildings light fewer windows (`Ctx::lit_chance` scales with `powered`).
 - Paths (`RoadKind::Path`): 3.2 m ways with no car lanes, drawn as paving with edge stones,
   low lamps, benches and bollards where they meet a street; they cut parcels but give no
   frontage, and a path crossing a street mid-block gets a zebra.
@@ -249,6 +270,8 @@ trait MindProvider {
   and exports, hunger and shopping, business closures.
 - v0.8 (done): polygonal parcels, 35 architectural styles per land use and tier from a
   parts toolkit, textured surfaces with normal maps, street furniture, walk mode.
+- v0.12 (done): electricity: four plant kinds placed by the player, weather-dependent
+  renewables, rationing by tier, brownouts that dim buildings and sour moods, a treasury.
 - v0.11 (done): pedestrian network through blocks with footfall and walk-in trade.
 - v0.10 (done): parking as a business with capacity, fees and shortage-driven
   construction; occupancy shown in the geometry; scale audit (metres everywhere).

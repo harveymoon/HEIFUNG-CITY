@@ -14,6 +14,7 @@ mod industrial;
 mod park;
 mod parking;
 pub mod parts;
+mod power;
 mod residential;
 
 use crate::palette::Palette;
@@ -21,6 +22,7 @@ use crate::surface::{Geometry, Surface};
 use glam::{Vec2, Vec3};
 use nd_sim::rng_for;
 use nd_sim::zoning::{point_in_polygon, polygon_area};
+use nd_sim::power::PowerPlantKind;
 use nd_sim::{LandUse, Lot, Tier};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -100,10 +102,15 @@ pub enum Style {
     // parking businesses
     ParkingLot,
     CarPark,
+    // power plants
+    PowerCoal,
+    PowerSolar,
+    PowerWind,
+    PowerNuclear,
 }
 
 impl Style {
-    pub const ALL: [Style; 37] = [
+    pub const ALL: [Style; 41] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -141,6 +148,10 @@ impl Style {
         Style::Plaza,
         Style::ParkingLot,
         Style::CarPark,
+        Style::PowerCoal,
+        Style::PowerSolar,
+        Style::PowerWind,
+        Style::PowerNuclear,
     ];
 
     pub fn label(self) -> &'static str {
@@ -182,6 +193,10 @@ impl Style {
             Style::Plaza => "plaza",
             Style::ParkingLot => "parking lot",
             Style::CarPark => "car park",
+            Style::PowerCoal => "coal plant",
+            Style::PowerSolar => "solar farm",
+            Style::PowerWind => "wind farm",
+            Style::PowerNuclear => "nuclear plant",
         }
     }
 }
@@ -482,6 +497,22 @@ pub struct Ctx<'a> {
     pub seed: u64,
     /// For parking lots: share of bays holding a car.
     pub parking: Option<f32>,
+    /// Share of the building's electricity demand met: dark windows when low.
+    pub powered: f32,
+}
+
+/// Per-building state that changes the look beyond style and condition.
+#[derive(Clone, Copy, Debug)]
+pub struct Extras {
+    pub parking: Option<f32>,
+    pub plant: Option<PowerPlantKind>,
+    pub powered: f32,
+}
+
+impl Default for Extras {
+    fn default() -> Self {
+        Self { parking: None, plant: None, powered: 1.0 }
+    }
 }
 
 impl Ctx<'_> {
@@ -494,7 +525,7 @@ impl Ctx<'_> {
     }
 
     pub fn lit_chance(&self) -> f32 {
-        self.style.lit_chance * (1.0 - 0.8 * self.wear)
+        self.style.lit_chance * (1.0 - 0.8 * self.wear) * self.powered.clamp(0.08, 1.0)
     }
 
     pub fn inside(&self, p: Vec2) -> bool {
@@ -548,15 +579,19 @@ pub fn generate_building(
     seed: u64,
     rules: &BuildingRules,
     palette: &Palette,
-    parking: Option<f32>,
+    extras: &Extras,
 ) -> Geometry {
     let mut rng = rng_for(seed, 11);
-    let style = match parking {
-        Some(_) if tier == Tier::Low || floors < 2 => Style::ParkingLot,
-        Some(_) => Style::CarPark,
-        None => rules.pick_style(land_use, tier, &mut rng),
+    let style = match (extras.plant, extras.parking) {
+        (Some(PowerPlantKind::Coal), _) => Style::PowerCoal,
+        (Some(PowerPlantKind::Solar), _) => Style::PowerSolar,
+        (Some(PowerPlantKind::Wind), _) => Style::PowerWind,
+        (Some(PowerPlantKind::Nuclear), _) => Style::PowerNuclear,
+        (None, Some(_)) if tier == Tier::Low || floors < 2 => Style::ParkingLot,
+        (None, Some(_)) => Style::CarPark,
+        (None, None) => rules.pick_style(land_use, tier, &mut rng),
     };
-    generate_styled_parking(lot, land_use, floors, tier, condition, seed, style, rules, palette, parking)
+    generate_styled_extras(lot, land_use, floors, tier, condition, seed, style, rules, palette, extras)
 }
 
 /// Generate a specific style; used by the tests and the style browser.
@@ -572,11 +607,11 @@ pub fn generate_styled(
     rules: &BuildingRules,
     palette: &Palette,
 ) -> Geometry {
-    generate_styled_parking(lot, land_use, floors, tier, condition, seed, style, rules, palette, None)
+    generate_styled_extras(lot, land_use, floors, tier, condition, seed, style, rules, palette, &Extras::default())
 }
 
 #[allow(clippy::too_many_arguments)]
-fn generate_styled_parking(
+fn generate_styled_extras(
     lot: &Lot,
     land_use: LandUse,
     floors: u8,
@@ -586,8 +621,9 @@ fn generate_styled_parking(
     style: Style,
     rules: &BuildingRules,
     palette: &Palette,
-    parking: Option<f32>,
+    extras: &Extras,
 ) -> Geometry {
+    let parking = extras.parking;
     let mut g = Geometry::default();
     let mut rng = rng_for(seed, 13);
     let frame = Frame::from_lot(lot);
@@ -616,6 +652,7 @@ fn generate_styled_parking(
         poly,
         seed,
         parking,
+        powered: extras.powered,
     };
     match style {
         Style::Stacks => residential::stacks(&mut g, &ctx, &mut rng),
@@ -655,6 +692,10 @@ fn generate_styled_parking(
         Style::Plaza => park::plaza(&mut g, &ctx, &mut rng),
         Style::ParkingLot => parking::parking_lot(&mut g, &ctx, &mut rng),
         Style::CarPark => parking::car_park(&mut g, &ctx, &mut rng),
+        Style::PowerCoal => power::coal(&mut g, &ctx, &mut rng),
+        Style::PowerSolar => power::solar(&mut g, &ctx, &mut rng),
+        Style::PowerWind => power::wind(&mut g, &ctx, &mut rng),
+        Style::PowerNuclear => power::nuclear(&mut g, &ctx, &mut rng),
     }
     g
 }

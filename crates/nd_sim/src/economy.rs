@@ -50,6 +50,17 @@ pub struct Economy {
     pub walk_trips_today: u32,
     #[serde(default)]
     pub walk_in_sales_today: f32,
+    /// City money: taxes in, plants and imported power out.
+    #[serde(default = "default_treasury")]
+    pub treasury: f32,
+    #[serde(default)]
+    pub tax_today: f32,
+    #[serde(default)]
+    pub power: crate::power::PowerStats,
+}
+
+fn default_treasury() -> f32 {
+    60_000.0
 }
 
 impl Economy {

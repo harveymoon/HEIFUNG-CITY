@@ -103,7 +103,7 @@ fn side_panel(
             if *mode == CameraMode::Walk {
                 ui.label(egui::RichText::new("Mouse to look, WASD to walk, Shift to run, Tab or Esc to return.").small().weak());
             } else {
-                ui.label(egui::RichText::new("Right-drag rotate · middle-drag or shift-drag pan · wheel or [ ] zoom · WASD/QE · F6 busiest junction · F7/F8/F9 jump to a low/middle/high tier building").small().weak());
+                ui.label(egui::RichText::new("Right-drag rotate · middle-drag or shift-drag pan · wheel or [ ] zoom · WASD/QE · F6 busiest junction · F7/F8/F9 jump to a low/middle/high tier building · F11 to a power plant").small().weak());
             }
             ui.separator();
 
@@ -163,6 +163,7 @@ fn side_panel(
                     (Tool::Zone, "Zone [3]"),
                     (Tool::Edit, "Edit [4]"),
                     (Tool::Bulldoze, "Bulldoze [5]"),
+                    (Tool::Power, "Power [6]"),
                 ] {
                     if ui.selectable_label(tools.tool == tool, label).clicked() {
                         tools.tool = tool;
@@ -267,6 +268,23 @@ fn side_panel(
                 Tool::Inspect => {
                     ui.label(egui::RichText::new("Click a glowing citizen, a car, or a building.").small().weak());
                 }
+                Tool::Power => {
+                    ui.horizontal_wrapped(|ui| {
+                        for k in nd_sim::PowerPlantKind::ALL {
+                            if ui.selectable_label(tools.power_kind == k, format!("{} {:.0} MW", k.label(), k.capacity_mw())).clicked() {
+                                tools.power_kind = k;
+                            }
+                        }
+                    });
+                    let k = tools.power_kind;
+                    ui.label(egui::RichText::new(format!("costs {:.0} to build, {:.0}/day to run, {} jobs{}", k.build_cost(), k.upkeep_per_day(), k.jobs(), match k {
+                        nd_sim::PowerPlantKind::Coal => ". Industrial land only. Cheap and steady; the haze drags land value down for hundreds of metres.",
+                        nd_sim::PowerPlantKind::Solar => ". Any vacant lot. Clean, but only by day and dimmed by cloud.",
+                        nd_sim::PowerPlantKind::Wind => ". Any vacant lot. Clean; output follows the wind.",
+                        nd_sim::PowerPlantKind::Nuclear => ". Industrial land only. Enormous, steady, expensive, and the neighbours are nervous.",
+                    })).small().weak());
+                    ui.label(egui::RichText::new("Click a vacant lot to build. Without plants the regional grid sells the city 60 MW at a price; beyond that, the poorest districts go dark first.").small().weak());
+                }
             }
             if !tools.status.is_empty() {
                 ui.label(egui::RichText::new(&tools.status).small());
@@ -310,6 +328,16 @@ fn side_panel(
                 sim.world.traffic.net.lanes.len(),
                 sim.world.traffic.net.intersections.iter().filter(|i| i.signalized).count()
             ));
+            ui.separator();
+            section(ui, "POWER & TREASURY");
+            {
+                let e = &sim.world.economy;
+                let p = &e.power;
+                let col = if p.served < 0.98 { egui::Color32::from_rgb(255, 120, 90) } else { egui::Color32::from_rgb(200, 220, 200) };
+                ui.label(egui::RichText::new(format!("supply {:.0} MW + import {:.0} MW   demand {:.0} MW   served {:.0}%", p.supply_mw, p.imported_mw, p.demand_mw, p.served * 100.0)).color(col));
+                ui.label(format!("plants {}   buildings in the dark {}   brownout hours today {}   weather {} (cloud {:.0}%, wind {:.0}%)", p.plants, p.unpowered_buildings, p.brownout_hours_today, sim.world.weather.label(), sim.world.weather.cloud * 100.0, sim.world.weather.wind * 100.0));
+                ui.label(format!("treasury {:.0}   taxes so far today {:.0}   plant upkeep {:.0}/day   imported power {:.0} today", e.treasury, e.tax_today, p.upkeep_today, p.import_cost_today));
+            }
             ui.separator();
             section(ui, "LAND & CLASS");
             ui.checkbox(&mut overlays.land_value, "Land value overlay [V]");
@@ -396,6 +424,13 @@ fn side_panel(
                     ui.label(format!("residents {}/{}  ·  workers {}/{}  ·  visitors {}", b.residents.len(), b.homes, b.workers.len(), b.jobs, b.visitors));
                     if let Some(lot) = sim.world.lots.get(b.lot) {
                         ui.label(format!("foot traffic today {}  ·  this hour {}{}", lot.footfall_today, lot.footfall_hour, if lot.car_access() { "" } else { "  ·  on a footpath: cars stop at the street, residents park nearby" }));
+                    }
+                    if let Some(kind) = b.plant {
+                        ui.label(format!("{}: {:.0} MW nameplate, {:.0}% available now, {:.0}/day upkeep", kind.label(), kind.capacity_mw(), kind.availability(&sim.world.weather, sim.world.clock.day_fraction()) * 100.0, kind.upkeep_per_day()));
+                    } else if b.powered < 0.98 {
+                        ui.label(egui::RichText::new(format!("UNDERPOWERED: {:.0}% of {:.1} MW, {} dark hours today", b.powered * 100.0, nd_sim::power::demand_mw(b), b.unpowered_hours_today)).color(egui::Color32::from_rgb(255, 120, 90)));
+                    } else {
+                        ui.label(format!("power {:.1} MW, fully served", nd_sim::power::demand_mw(b)));
                     }
                     if b.parking_capacity > 0 {
                         ui.label(format!("parking {}/{} spaces{}", b.parking_used, b.parking_capacity, if b.is_parking() { format!("  ·  {:.1} per visit", b.parking_price) } else { "  ·  for residents and workers".to_string() }));
