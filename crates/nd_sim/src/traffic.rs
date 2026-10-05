@@ -24,6 +24,8 @@ pub type LaneId = u32;
 pub const CAR_LENGTH: f32 = 4.5;
 pub const BUS_LENGTH: f32 = 12.0;
 const ROAD_SPEED: f32 = 13.0;
+/// Highway carriageways (one-way, three lanes or more).
+pub const HIGHWAY_SPEED: f32 = 25.0;
 const CONNECTOR_SPEED: f32 = 6.0;
 const IDM_ACCEL: f32 = 1.4;
 const IDM_BRAKE: f32 = 2.0;
@@ -319,16 +321,17 @@ impl LaneNetwork {
             let total = seg.lanes() as f32;
             let left_edge = -total * 0.5 * LANE_WIDTH;
             let mut ids = Vec::new();
+            let speed = if seg.is_highway() { HIGHWAY_SPEED } else { ROAD_SPEED };
             for i in 0..seg.lanes_fwd {
                 let off = right * (left_edge + (seg.lanes_bwd as f32 + i as f32 + 0.5) * LANE_WIDTH);
                 let id = self.lanes.len() as LaneId;
-                self.lanes.push(Lane::new(vec![p0 + off, p1 + off], LaneKind::Road { segment: sid, forward: true, index: i }, seg.b, ROAD_SPEED));
+                self.lanes.push(Lane::new(vec![p0 + off, p1 + off], LaneKind::Road { segment: sid, forward: true, index: i }, seg.b, speed));
                 ids.push(id);
             }
             for j in 0..seg.lanes_bwd {
                 let off = right * (left_edge + (seg.lanes_bwd as f32 - j as f32 - 0.5) * LANE_WIDTH);
                 let id = self.lanes.len() as LaneId;
-                self.lanes.push(Lane::new(vec![p1 + off, p0 + off], LaneKind::Road { segment: sid, forward: false, index: j }, seg.a, ROAD_SPEED));
+                self.lanes.push(Lane::new(vec![p1 + off, p0 + off], LaneKind::Road { segment: sid, forward: false, index: j }, seg.a, speed));
                 ids.push(id);
             }
             self.segment_lanes.insert(sid, ids);
@@ -368,7 +371,9 @@ impl LaneNetwork {
                     let (p_out, d_out) = (self.lanes[out as usize].start(), self.lanes[out as usize].start_dir());
                     let pts = connector_curve(p_in, d_in, p_out, d_out, radius);
                     let id = self.lanes.len() as LaneId;
-                    let speed = if approaches.len() <= 2 && d_in.dot(d_out) > 0.7 { ROAD_SPEED } else { CONNECTOR_SPEED };
+                    let through = self.lanes[inc as usize].speed_limit.min(self.lanes[out as usize].speed_limit);
+                    // Along a highway (past a ramp too) traffic keeps its speed.
+                    let speed = if through > ROAD_SPEED && d_in.dot(d_out) > 0.9 { through } else if approaches.len() <= 2 && d_in.dot(d_out) > 0.7 { ROAD_SPEED } else { CONNECTOR_SPEED };
                     self.lanes.push(Lane::new(pts, LaneKind::Connector { node: nid, approach }, nid, speed));
                     self.lanes[id as usize].next.push(out);
                     self.lanes[inc as usize].next.push(id);
@@ -648,7 +653,8 @@ impl Traffic {
             if nl.is_connector() && !lane.is_connector() && k == car.idx + 1 {
                 if let LaneKind::Connector { node, approach } = nl.kind {
                     if let Some(inter) = self.net.node_intersection.get(node.0 as usize).and_then(|&i| self.net.intersections.get(i)) {
-                        if !inter.signalized && inter.approaches >= 3 {
+                        // Merging traffic yields; the highway mainline does not.
+                        if !inter.signalized && inter.approaches >= 3 && lane.speed_limit <= ROAD_SPEED {
                             let busy = inter.connectors.iter().any(|&(lid, ap)| ap != approach && !self.net.lanes[lid as usize].cars.is_empty());
                             if busy {
                                 return (dist - 1.0 + IDM_MIN_GAP, 0.0);

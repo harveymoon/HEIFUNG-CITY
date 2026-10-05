@@ -17,6 +17,12 @@ fn finish_all(w: &mut World) {
     }
 }
 
+/// The old flat map with no river or highway, for tests that count
+/// gestures or depend on the exact random stream of a dry town.
+fn flat_world() -> World {
+    World::new(WorldConfig { landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::default() })
+}
+
 #[test]
 fn city_grows_and_round_trips_through_ron() {
     let mut w = World::new(WorldConfig::default());
@@ -43,7 +49,7 @@ fn city_grows_and_round_trips_through_ron() {
 
 #[test]
 fn projects_undo_redo_and_keep_buildings_on_implement() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = flat_world();
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
     let lot = w.lots.iter().find(|(_, l)| l.usable()).map(|(id, _)| id).unwrap();
@@ -588,7 +594,7 @@ fn lot_near(w: &World, p: Vec2, lu: LandUse) -> LotId {
 
 #[test]
 fn road_works_pull_down_the_buildings_whose_parcels_change() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = flat_world();
     let road = w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_road(&[Vec2::new(-400.0, 400.0), Vec2::new(400.0, 400.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
@@ -710,7 +716,7 @@ fn stations_and_yards_never_share_ground_with_other_buildings() {
 
 #[test]
 fn cheap_buildings_on_dear_land_are_redeveloped_and_price_people_out() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = flat_world();
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
     w.land_value.fill(0.1);

@@ -166,6 +166,8 @@ impl World {
         for (_, points, fwd, bwd, kind) in self.master.roads() {
             // Track is eased into smooth curves and tangential switches.
             let points = if kind == RoadKind::Rail { rail::smooth_track(&points, &roads) } else { points };
+            // Breaks at every waterline, so a bridge is exactly the span.
+            let points = self.split_at_water(&points);
             let (fwd, bwd) = match kind {
                 RoadKind::Street if fwd == 0 && bwd == 0 => (1, 1),
                 RoadKind::Street => (fwd, bwd),
@@ -175,6 +177,7 @@ impl World {
         }
         roads.version = self.roads.version + 1;
         self.roads = roads;
+        self.mark_bridges();
         self.rebuild_road_components();
 
         // Zones, newest first so a zone drawn over an older one takes the ground.
@@ -191,22 +194,29 @@ impl World {
         // Lots: regenerate, then match old lots with buildings to new ones.
         let old_lots = std::mem::replace(&mut self.lots, SlotMap::with_key());
         let mut covering: Vec<Zone> = Vec::new();
+        let water = self.water_mask();
         for zid in zone_ids {
             let zone = self.zones[zid].clone();
-            generate_lots(zid, &zone, &self.roads, &mut self.lots, &covering);
+            crate::zoning::generate_lots_wet(zid, &zone, &self.roads, &mut self.lots, &covering, &water);
             covering.push(zone);
         }
+        // Lots on ground too steep to level are left as rough land.
+        self.grade_lots();
         // Facilities: their footprints are lots of their own, and zoned lots
         // under them give way.
         // A lot whose centre is under a footprint, or whose outline crosses
         // one, would share ground with the station or yard.
-        let footprints: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).collect();
+        let footprints: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect();
         self.lots.retain(|_, l| !footprints.iter().any(|fp| point_in_polygon(l.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.98), &l.polygon)));
         let fids: Vec<FacilityId> = self.facilities.keys().collect();
         for fid in fids {
             // A facility with no street anywhere to front gets no lot this
             // time round; its building goes with the old lot below.
             self.facilities[fid].lot = self.facility_lot(fid).map(|lot| self.lots.insert(lot));
+        }
+        let pids: Vec<crate::ports::PortId> = self.ports.ports.keys().collect();
+        for pid in pids {
+            self.ports.ports[pid].lot = self.port_lot(pid).map(|lot| self.lots.insert(lot));
         }
         // Match old lots to new ones through a coarse grid of the new lots'
         // bounding boxes, so a rebuild costs lots × neighbours, not lots².
@@ -251,6 +261,10 @@ impl World {
             }
         }
 
+        // Road heights and the ground they are graded into; new bridges are paid for.
+        self.rebuild_ground();
+        self.charge_bridges();
+
         // Lanes and cars.
         self.traffic.rebuild(&self.roads);
         for (_, car) in self.traffic.clear_cars() {
@@ -266,6 +280,7 @@ impl World {
         }
         self.transit.refresh_legs(&self.traffic.net);
         self.refresh_rail_links();
+        self.refresh_port_links();
         self.rebuild_walk();
 
         self.events.push(SimEvent::RoadsChanged);

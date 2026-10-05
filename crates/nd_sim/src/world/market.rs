@@ -208,7 +208,7 @@ impl World {
         // Exports: surplus outputs leave town at a discount, less of one
         // when a freight yard ships them by rail.
         let yards: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::FreightYard) && !b.is_derelict()).map(|(id, _)| id).collect();
-        let export_bonus = if yards.is_empty() { 1.0 } else { rail::RAIL_EXPORT_BONUS };
+        let export_bonus = (if yards.is_empty() { 1.0 } else { rail::RAIL_EXPORT_BONUS }).max(self.sea_export_bonus());
         let mut shipped = 0.0f32;
         for &bid in &ids {
             let b = &mut self.buildings[bid];
@@ -365,6 +365,10 @@ impl World {
         // each load would quadruple build times, so their parts come by
         // the developer's own trucks.
         let site = self.buildings.get(to).is_some_and(|b| b.construction.is_some());
+        // By sea is cheaper still than by rail.
+        if !site && self.import_by_sea(to, cargo) {
+            return;
+        }
         if !site {
             if let Some(yard) = self.nearest_yard(to) {
                 let refund = price * (1.0 - rail::RAIL_IMPORT_FACTOR);
@@ -420,7 +424,7 @@ impl World {
     }
 
     pub(super) fn entry_node_const(&self) -> Option<NodeId> {
-        let leaves = self.roads.leaf_nodes();
+        let leaves = self.city_leaves();
         let max = leaves.iter().map(|&n| self.roads.node(n).pos.length()).fold(0.0, f32::max);
         leaves.into_iter().find(|&n| self.roads.node(n).pos.length() >= max * 0.6)
     }

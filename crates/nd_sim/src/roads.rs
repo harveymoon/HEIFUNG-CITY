@@ -46,6 +46,12 @@ pub enum RoadKind {
     Rail,
 }
 
+/// Whether a way with these lanes is a highway carriageway (see
+/// [`Segment::is_highway`]).
+pub fn is_highway_spec(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> bool {
+    kind == RoadKind::Street && (lanes_fwd == 0 || lanes_bwd == 0) && lanes_fwd + lanes_bwd >= 3
+}
+
 /// Half the width of a path, in metres.
 /// Half the corridor of a single track: ballast shoulder to ballast shoulder.
 pub const RAIL_HALF_WIDTH: f32 = 2.4;
@@ -62,6 +68,10 @@ pub struct Segment {
     pub alive: bool,
     #[serde(default)]
     pub kind: RoadKind,
+    /// Carried over water on a deck (set by the world from the landscape
+    /// when the network is rebuilt).
+    #[serde(default)]
+    pub bridge: bool,
 }
 
 impl Segment {
@@ -75,6 +85,13 @@ impl Segment {
 
     pub fn is_rail(&self) -> bool {
         self.kind == RoadKind::Rail
+    }
+
+    /// A one-way street of three or more lanes: a highway carriageway. It is
+    /// fast, fronts no lots, and is grade-separated: other ways cross it
+    /// without a junction unless an end is dropped on it (a ramp).
+    pub fn is_highway(&self) -> bool {
+        is_highway_spec(self.kind, self.lanes_fwd, self.lanes_bwd)
     }
 
     pub fn half_width(&self) -> f32 {
@@ -287,7 +304,7 @@ impl RoadNetwork {
             return existing;
         }
         self.index.take();
-        self.segments.push(Segment { a, b, lanes_fwd, lanes_bwd, alive: true, kind });
+        self.segments.push(Segment { a, b, lanes_fwd, lanes_bwd, alive: true, kind, bridge: false });
         let id = SegmentId((self.segments.len() - 1) as u32);
         self.nodes[a.0 as usize].segments.push(id);
         self.nodes[b.0 as usize].segments.push(id);
@@ -301,8 +318,11 @@ impl RoadNetwork {
         for n in [s.a, s.b] {
             self.nodes[n.0 as usize].segments.retain(|&x| x != sid);
         }
-        self.link(s.a, at, s.lanes_fwd, s.lanes_bwd, s.kind);
-        self.link(at, s.b, s.lanes_fwd, s.lanes_bwd, s.kind);
+        let first = self.link(s.a, at, s.lanes_fwd, s.lanes_bwd, s.kind);
+        let second = self.link(at, s.b, s.lanes_fwd, s.lanes_bwd, s.kind);
+        for id in [first, second] {
+            self.segments[id.0 as usize].bridge = s.bridge;
+        }
     }
 
     /// Add a road along `points`. Crossing existing segments splits them so
@@ -343,9 +363,14 @@ impl RoadNetwork {
         // candidates are fixed before splitting starts, in ascending id
         // order, so the junction nodes come out as a full scan makes them.
         let candidates = self.grid().in_box(pa.min(pb), pa.max(pb));
+        let highway = is_highway_spec(kind, lanes_fwd, lanes_bwd);
         for i in candidates {
             let s = self.segments[i as usize].clone();
             if !s.alive || s.a == a || s.a == b || s.b == a || s.b == b {
+                continue;
+            }
+            // Highways are grade-separated: crossing one is a flyover.
+            if s.is_highway() != highway {
                 continue;
             }
             let (p0, p1) = (self.node(s.a).pos, self.node(s.b).pos);
@@ -377,6 +402,9 @@ impl RoadNetwork {
                 }
                 let mut alive = n.segments.iter().copied().filter(|&s| self.segments[s.0 as usize].alive).peekable();
                 if alive.peek().is_none() || !alive.any(|s| Self::joins(self.segments[s.0 as usize].kind, kind)) {
+                    continue;
+                }
+                if n.segments.iter().any(|&s| self.segments[s.0 as usize].alive && self.segments[s.0 as usize].is_highway() != highway) {
                     continue;
                 }
                 cuts.push((t, id));

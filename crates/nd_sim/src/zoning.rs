@@ -380,7 +380,8 @@ fn corridor_edge(seg: &crate::roads::Segment) -> f32 {
 /// Distance from a point to the nearest road centreline, with that
 /// segment. Paths count only when `allow_paths` (homes may line a path).
 fn nearest_road(roads: &RoadNetwork, p: Vec2, allow_paths: bool) -> Option<(SegmentId, f32, f32)> {
-    let (sid, t, q) = roads.nearest_where(p, |seg| !seg.is_rail() && (seg.is_street() || allow_paths))?;
+    // Highways and bridges front nothing: no driveway joins either.
+    let (sid, t, q) = roads.nearest_where(p, |seg| !seg.is_rail() && !seg.is_highway() && !seg.bridge && (seg.is_street() || allow_paths))?;
     Some((sid, t, p.distance(q)))
 }
 
@@ -897,6 +898,59 @@ pub fn generate_lots(
     lots: &mut SlotMap<LotId, Lot>,
     covering: &[Zone],
 ) -> Vec<LotId> {
+    generate_lots_wet(zone_id, zone, roads, lots, covering, &WaterMask::default())
+}
+
+/// Water to keep parcels off: polygons (with holes) and their boxes.
+#[derive(Clone, Default)]
+pub struct WaterMask {
+    polys: Vec<((Vec2, Vec2), Polygon<f64>)>,
+}
+
+impl WaterMask {
+    /// From outlines with holes, as `Landscape::water_polygons` gives them.
+    pub fn new(polys: &[(Vec<Vec2>, Vec<Vec<Vec2>>)]) -> Self {
+        let mut out = Vec::new();
+        for (outer, holes) in polys {
+            if outer.len() < 3 || geom::self_intersects(outer) {
+                continue;
+            }
+            let ring = |r: &[Vec2]| LineString::from(ccw(r).iter().map(|p| Coord { x: p.x as f64, y: p.y as f64 }).collect::<Vec<_>>());
+            let poly = Polygon::new(ring(outer), holes.iter().filter(|h| h.len() >= 3).map(|h| ring(h)).collect());
+            out.push((bounds_of(outer), poly));
+        }
+        WaterMask { polys: out }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.polys.is_empty()
+    }
+
+    /// The water touching a box, as one multipolygon.
+    fn near(&self, lo: Vec2, hi: Vec2) -> Option<MultiPolygon<f64>> {
+        let mut acc: Option<MultiPolygon<f64>> = None;
+        for (b, p) in &self.polys {
+            if !boxes_overlap(*b, (lo, hi), 1.0) {
+                continue;
+            }
+            acc = Some(match acc {
+                None => MultiPolygon(vec![p.clone()]),
+                Some(m) => m.union(p),
+            });
+        }
+        acc
+    }
+}
+
+/// [`generate_lots`] that also keeps parcels off the water.
+pub fn generate_lots_wet(
+    zone_id: ZoneId,
+    zone: &Zone,
+    roads: &RoadNetwork,
+    lots: &mut SlotMap<LotId, Lot>,
+    covering: &[Zone],
+    water: &WaterMask,
+) -> Vec<LotId> {
     let lu = zone.land_use;
     let mut created = Vec::new();
     if zone.polygon.len() < 3 || roads.is_empty() || geom::self_intersects(&zone.polygon) {
@@ -941,6 +995,10 @@ pub fn generate_lots(
     }
     if let Some(c) = &covered {
         blocks = blocks.difference(c);
+    }
+    // Rivers, lakes and the sea are nobody's parcel.
+    if let Some(w) = water.near(zlo, zhi) {
+        blocks = blocks.difference(&w);
     }
 
     let mut parcels: Vec<Vec<Vec2>> = Vec::new();
