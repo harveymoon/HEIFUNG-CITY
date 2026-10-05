@@ -418,10 +418,61 @@ fn cut(poly: &Polygon<f32>, origin: Vec2, normal: Vec2) -> Vec<Polygon<f32>> {
     out
 }
 
-/// Slice a block into parcels of roughly the land use's size. Cuts run
-/// perpendicular to the road frontage with some jitter, occasionally at an
-/// angle, deep blocks get a back row, and concave pieces are cut straight at
-/// their reflex corner so every parcel ends up convex.
+/// Polyline of a frontage run, first vertex to last.
+fn run_polyline(poly: &[Vec2], chain: &[usize]) -> Vec<Vec2> {
+    let n = poly.len();
+    let mut out: Vec<Vec2> = chain.iter().map(|&i| poly[i]).collect();
+    if let Some(&last) = chain.last() {
+        out.push(poly[(last + 1) % n]);
+    }
+    out
+}
+
+/// Polyline shifted to the interior side (left of travel for a
+/// counter-clockwise polygon) with mitred, limited corners.
+fn offset_inward(points: &[Vec2], offset: f32) -> Vec<Vec2> {
+    let n = points.len();
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let d_in = if i > 0 { (points[i] - points[i - 1]).normalize_or_zero() } else { Vec2::ZERO };
+        let d_out = if i + 1 < n { (points[i + 1] - points[i]).normalize_or_zero() } else { Vec2::ZERO };
+        let d_in = if d_in == Vec2::ZERO { d_out } else { d_in };
+        let d_out = if d_out == Vec2::ZERO { d_in } else { d_out };
+        let n_in = Vec2::new(-d_in.y, d_in.x);
+        let n_out = Vec2::new(-d_out.y, d_out.x);
+        let m = (n_in + n_out).normalize_or_zero();
+        let (m, scale) = if m == Vec2::ZERO { (n_in, 1.0) } else { (m, (1.0 / m.dot(n_in).max(1e-3)).min(1.8)) };
+        out.push(points[i] + m * offset * scale);
+    }
+    out
+}
+
+/// Cut a polygon by the road direction at arc length `s` along a run.
+fn cut_along_run(poly: &Polygon<f32>, pts: &[Vec2], chain: &[usize], s: f32, rng: &mut impl Rng) -> Vec<Polygon<f32>> {
+    let n = pts.len();
+    let mut acc = 0.0;
+    for &i in chain {
+        let a = pts[i];
+        let b = pts[(i + 1) % n];
+        let len = a.distance(b);
+        if acc + len >= s {
+            let q = a.lerp(b, ((s - acc) / len).clamp(0.05, 0.95));
+            let d = (b - a) / len;
+            let angle: f32 = if rng.random_bool(0.12) { rng.random_range(-0.18..0.18) } else { 0.0 };
+            let (sn, co) = angle.sin_cos();
+            let normal = Vec2::new(d.x * co - d.y * sn, d.x * sn + d.y * co);
+            return cut(poly, q, normal);
+        }
+        acc += len;
+    }
+    Vec::new()
+}
+
+/// Slice a block into parcels. Rows are peeled off each road frontage one
+/// lot deep (an offset of the frontage, so curved roads get curved rows),
+/// each row is cut across at lot width perpendicular to the local road, and
+/// whatever is left without frontage stays as unusable ground. Sharp inward
+/// corners get one straight cut first so every parcel is reasonably convex.
 fn subdivide(poly: Polygon<f32>, lu: LandUse, roads: &RoadNetwork, rng: &mut impl Rng, depth: u32, out: &mut Vec<Vec<Vec2>>) {
     let area = poly.unsigned_area();
     if area < MIN_AREA {
@@ -431,12 +482,10 @@ fn subdivide(poly: Polygon<f32>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
     if pts.len() < 3 {
         return;
     }
-    if depth > 40 {
+    if depth > 48 {
         out.push(pts);
         return;
     }
-    // Holes (a block wrapped around a loop road) cannot be parcels: cut
-    // straight through the hole so the pieces are simple.
     if let Some(hole) = poly.interiors().first() {
         if let Some(c) = hole.0.first() {
             let origin = Vec2::new(c.x, c.y);
@@ -446,8 +495,6 @@ fn subdivide(poly: Polygon<f32>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
             return;
         }
     }
-    // Sharp inward corners get one straight cut: across the road if the
-    // corner sits on a road edge, else along the edge that leads into it.
     if let Some((i, _)) = reflex_vertex(&pts, 0.6) {
         let n = pts.len();
         let a = pts[(i + n - 1) % n];
@@ -466,58 +513,67 @@ fn subdivide(poly: Polygon<f32>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
 
     let lw = lu.lot_width();
     let ld = lu.lot_depth();
-    let n = pts.len();
     let runs = frontage_runs(&pts, roads);
     let Some((chain, chain_len)) = runs.first().cloned() else {
-        // No road frontage at all: one piece of unusable ground.
         out.push(pts);
         return;
     };
-    // Slice along the longest straight frontage, perpendicular to the local
-    // road direction. Corner lots keep both of their frontages.
-    if chain_len > lw * 1.7 && area > lw * ld * 1.3 {
+    let line = run_polyline(&pts, &chain);
+
+    // How deep is the block behind this frontage?
+    let n_avg = {
+        let mut acc = Vec2::ZERO;
+        for w in line.windows(2) {
+            let d = w[1] - w[0];
+            acc += Vec2::new(-d.y, d.x);
+        }
+        acc.normalize_or_zero()
+    };
+    let (lo, hi) = extents(&pts, n_avg);
+    let block_depth = hi - lo;
+    let row_depth = ld * rng.random_range(1.0..1.3);
+
+    // Peel a row off this frontage, unless what would remain behind it is
+    // too thin for another row: then the lots simply run deeper.
+    if block_depth > row_depth + ld * 0.6 {
+        let inner = offset_inward(&line, row_depth);
+        let mut band: Vec<Vec2> = line.clone();
+        band.extend(inner.iter().rev());
+        let band_area = polygon_area(&band);
+        if band_area.abs() > MIN_AREA && band.len() >= 4 {
+            let band_poly = to_geo(&ccw(&band));
+            let front: MultiPolygon<f32> = poly.intersection(&band_poly);
+            let rest: MultiPolygon<f32> = poly.difference(&band_poly);
+            let front_area: f32 = front.0.iter().map(|p| p.unsigned_area()).sum();
+            if front_area > MIN_AREA && front_area < area * 0.98 {
+                for piece in front.0 {
+                    subdivide(piece, lu, roads, rng, depth + 1, out);
+                }
+                for piece in rest.0 {
+                    subdivide(piece, lu, roads, rng, depth + 1, out);
+                }
+                return;
+            }
+        }
+        // The offset band failed (tight bend): fall back to a straight cut
+        // parallel to the frontage, one row deep.
+        let origin = line[0] + n_avg * (lo - line[0].dot(n_avg) + row_depth);
+        let pieces = cut(&poly, origin, n_avg);
+        if pieces.len() >= 2 {
+            for piece in pieces {
+                subdivide(piece, lu, roads, rng, depth + 1, out);
+            }
+            return;
+        }
+    }
+
+    // A shallow row: cut across at lot width, perpendicular to the road.
+    if chain_len > lw * 1.7 && area > lw * ld * 0.9 {
         let mut s = lw * rng.random_range(0.85..1.35);
         if chain_len - s < lw * 0.8 {
             s = chain_len * 0.5;
         }
-        let mut acc = 0.0;
-        for &i in &chain {
-            let a = pts[i];
-            let b = pts[(i + 1) % n];
-            let len = a.distance(b);
-            if acc + len >= s {
-                let q = a.lerp(b, ((s - acc) / len).clamp(0.05, 0.95));
-                let d = (b - a) / len;
-                let angle: f32 = if rng.random_bool(0.15) { rng.random_range(-0.2..0.2) } else { 0.0 };
-                let (sn, co) = angle.sin_cos();
-                let normal = Vec2::new(d.x * co - d.y * sn, d.x * sn + d.y * co);
-                let pieces = cut(&poly, q, normal);
-                if pieces.len() >= 2 {
-                    for piece in pieces {
-                        subdivide(piece, lu, roads, rng, depth + 1, out);
-                    }
-                    return;
-                }
-                break;
-            }
-            acc += len;
-        }
-    }
-    // Depth: a back row behind the frontage parcels.
-    let longest = chain.iter().copied().max_by(|&a, &b| pts[a].distance(pts[(a + 1) % n]).total_cmp(&pts[b].distance(pts[(b + 1) % n]))).unwrap_or(chain[0]);
-    let along = (pts[(longest + 1) % n] - pts[longest]).normalize_or_zero();
-    if along == Vec2::ZERO {
-        out.push(pts);
-        return;
-    }
-    let inward = Vec2::new(-along.y, along.x);
-    let (u0, u1) = extents(&pts, along);
-    let (v0, v1) = extents(&pts, inward);
-    let dep = v1 - v0;
-    if dep > ld * 1.9 {
-        let c = v0 + ld * rng.random_range(0.95..1.25);
-        let origin = along * ((u0 + u1) * 0.5) + inward * c;
-        let pieces = cut(&poly, origin, inward);
+        let pieces = cut_along_run(&poly, &pts, &chain, s, rng);
         if pieces.len() >= 2 {
             for piece in pieces {
                 subdivide(piece, lu, roads, rng, depth + 1, out);
@@ -527,6 +583,7 @@ fn subdivide(poly: Polygon<f32>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
     }
     out.push(pts);
 }
+
 
 fn polygon_seed(poly: &[Vec2]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -806,5 +863,34 @@ mod tests {
         // Usable land covers most of the block.
         let usable_area: f32 = good.iter().map(|l| l.area()).sum();
         assert!(usable_area > 122.0 * 122.0 * 0.5, "usable {usable_area}");
+    }
+
+    #[test]
+    fn s_curve_through_a_block_keeps_most_land_usable() {
+        let mut roads = RoadNetwork::default();
+        for c in [-70.0f32, 70.0] {
+            roads.add_polyline(&[Vec2::new(-300.0, c), Vec2::new(300.0, c)], 1, 1);
+            roads.add_polyline(&[Vec2::new(c, -300.0), Vec2::new(c, 300.0)], 1, 1);
+        }
+        let curve = crate::plan::sample_curve(&[Vec2::new(-20.0, -70.0), Vec2::new(-35.0, -20.0), Vec2::new(25.0, 20.0), Vec2::new(10.0, 70.0)]);
+        roads.add_polyline(&curve, 1, 1);
+        let zone = Zone {
+            polygon: vec![Vec2::new(-65.0, -65.0), Vec2::new(65.0, -65.0), Vec2::new(65.0, 65.0), Vec2::new(-65.0, 65.0)],
+            land_use: LandUse::Residential,
+        };
+        let mut lots = SlotMap::with_key();
+        generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[]);
+        let good: Vec<&Lot> = lots.values().filter(|l| l.usable()).collect();
+        let usable_area: f32 = good.iter().map(|l| l.area()).sum();
+        let curve_len: f32 = curve.windows(2).map(|w| w[0].distance(w[1])).sum();
+        let block_area = 122.0 * 122.0 - 140.0 * 2.0 * 8.95 - curve_len * 2.0 * 8.95;
+        let dead: Vec<f32> = lots.values().filter(|l| l.landlocked).map(|l| l.area()).collect();
+        assert!(good.len() >= 20, "only {} usable parcels around the curve; usable {usable_area:.0} of {block_area:.0}; dead {:?}", good.len(), dead);
+        assert!(usable_area > block_area * 0.6, "usable {usable_area} of {block_area}");
+        // Lots along the curve are not too deep or too shallow.
+        for l in &good {
+            let d = l.depth();
+            assert!(d > 7.0 && d < 50.0, "odd lot depth {d}");
+        }
     }
 }

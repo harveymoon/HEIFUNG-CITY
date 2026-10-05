@@ -167,10 +167,11 @@ trait MindProvider {
   be unwrapped. Vertex colours set the hue; the textures are grey. Glow stays unlit
   with mildly HDR vertex colours and low bloom.
 - Parcels: the road corridors are subtracted from a zone with polygon booleans
-  (`geo`), so a curved road removes exactly its own strip. Each block is sliced along
-  its longest run of road-facing edges, perpendicular to the local road direction
-  (radial parcels around bends), with jitter and occasional angled cuts, plus a back
-  row on deep blocks; sharp inward corners get one straight cut. A parcel is usable
+  (`geo`), so a curved road removes exactly its own strip. Rows one lot deep are peeled
+  off each road frontage as an offset of that frontage (so a curved road gets a curved
+  row of even depth), each row is cut across at lot width perpendicular to the local
+  road, a row takes the whole depth when the leftover would be too thin for another,
+  and sharp inward corners get one straight cut first. A parcel is usable
   only if an edge of at least six metres lies along a road and its shape is compact;
   anything else (block cores, slivers, land behind other lots) is kept as landlocked,
   unusable ground that nothing is ever built on. Parcels keep their exact outline, so
