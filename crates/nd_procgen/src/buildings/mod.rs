@@ -17,6 +17,7 @@ mod parking;
 pub mod parts;
 mod power;
 mod rail;
+pub mod waterworks;
 pub mod transit;
 mod residential;
 
@@ -116,6 +117,12 @@ pub enum Style {
     BusDepot,
     Station,
     FreightYard,
+    // landscape: water and hot-ground plants, docks
+    PowerHydro,
+    PowerTidal,
+    PowerGeothermal,
+    ShippingPort,
+    FerryTerminal,
 }
 
 impl Style {
@@ -124,7 +131,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 44] = [
+    pub const ALL: [Style; 49] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -169,6 +176,11 @@ impl Style {
         Style::BusDepot,
         Style::Station,
         Style::FreightYard,
+        Style::PowerHydro,
+        Style::PowerTidal,
+        Style::PowerGeothermal,
+        Style::ShippingPort,
+        Style::FerryTerminal,
     ];
 
     pub fn label(self) -> &'static str {
@@ -217,6 +229,11 @@ impl Style {
             Style::BusDepot => "bus depot",
             Style::Station => "railway station",
             Style::FreightYard => "freight yard",
+            Style::PowerHydro => "hydro plant",
+            Style::PowerTidal => "tidal plant",
+            Style::PowerGeothermal => "geothermal plant",
+            Style::ShippingPort => "shipping port",
+            Style::FerryTerminal => "ferry terminal",
         }
     }
 }
@@ -640,6 +657,8 @@ pub struct Extras<'a> {
     /// A bus depot.
     pub depot: bool,
     pub rail: Option<&'a RailLink>,
+    /// A shipping port or ferry terminal.
+    pub port: Option<nd_sim::ports::PortKind>,
     /// Still being built: progress in `0..1`. The site is drawn instead of
     /// the finished style.
     pub construction: Option<f32>,
@@ -647,7 +666,7 @@ pub struct Extras<'a> {
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, construction: None }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None }
     }
 }
 
@@ -739,12 +758,17 @@ pub fn generate_building(
     let mut rng = rng_for(seed, 11);
     let style = match (extras.plant, extras.parking) {
         _ if extras.depot => Style::BusDepot,
+        _ if extras.port == Some(nd_sim::ports::PortKind::ShippingPort) => Style::ShippingPort,
+        _ if extras.port == Some(nd_sim::ports::PortKind::FerryTerminal) => Style::FerryTerminal,
         _ if extras.rail.is_some_and(|r| r.kind == RailFacility::Station) => Style::Station,
         _ if extras.rail.is_some_and(|r| r.kind == RailFacility::FreightYard) => Style::FreightYard,
         (Some(PowerPlantKind::Coal), _) => Style::PowerCoal,
         (Some(PowerPlantKind::Solar), _) => Style::PowerSolar,
         (Some(PowerPlantKind::Wind), _) => Style::PowerWind,
         (Some(PowerPlantKind::Nuclear), _) => Style::PowerNuclear,
+        (Some(PowerPlantKind::Hydro), _) => Style::PowerHydro,
+        (Some(PowerPlantKind::Tidal), _) => Style::PowerTidal,
+        (Some(PowerPlantKind::Geothermal), _) => Style::PowerGeothermal,
         (None, Some(_)) if tier == Tier::Low || floors < 2 => Style::ParkingLot,
         (None, Some(_)) => Style::CarPark,
         (None, None) => rules.pick_style(land_use, tier, &mut rng),
@@ -863,6 +887,11 @@ fn generate_styled_extras(
         Style::BusDepot => transit::bus_depot(&mut g, &ctx, &mut rng),
         Style::Station => rail::station(&mut g, &ctx, &mut rng),
         Style::FreightYard => rail::freight_yard(&mut g, &ctx, &mut rng),
+        Style::PowerHydro => waterworks::hydro(&mut g, &ctx, &mut rng),
+        Style::PowerTidal => waterworks::tidal(&mut g, &ctx, &mut rng),
+        Style::PowerGeothermal => waterworks::geothermal(&mut g, &ctx, &mut rng),
+        Style::ShippingPort => waterworks::shipping_port(&mut g, &ctx, &mut rng),
+        Style::FerryTerminal => waterworks::ferry_terminal(&mut g, &ctx, &mut rng),
     }
     g
 }

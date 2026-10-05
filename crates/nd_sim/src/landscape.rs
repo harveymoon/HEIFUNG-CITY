@@ -1174,6 +1174,8 @@ pub struct Ground {
     h: Vec<f32>,
     /// Lot pads, by lot.
     pub pads: std::collections::HashMap<LotId, f32>,
+    /// Bridge decks: ends, half width (with the pavement), end heights.
+    pub decks: Vec<(Vec2, Vec2, f32, f32, f32)>,
 }
 
 impl std::fmt::Debug for Ground {
@@ -1189,8 +1191,17 @@ impl Ground {
         for (id, lot) in lots.iter() {
             pads.insert(id, lot_pad(roads, node_z, lot, land));
         }
+        let decks: Vec<(Vec2, Vec2, f32, f32, f32)> = roads
+            .alive_segments()
+            .filter(|(_, s)| s.bridge)
+            .map(|(id, s)| {
+                let (a, b) = roads.segment_points(id);
+                let hw = s.half_width() + if s.is_street() { crate::zoning::SIDEWALK } else { 0.5 };
+                (a, b, hw, node_z.get(s.a.0 as usize).copied().unwrap_or(0.0), node_z.get(s.b.0 as usize).copied().unwrap_or(0.0))
+            })
+            .collect();
         if land.is_flat() {
-            return Ground { half, n: 0, h: Vec::new(), pads };
+            return Ground { half, n: 0, h: Vec::new(), pads, decks };
         }
         let n = (half * 2.0 / GROUND_CELL) as usize + 1;
         let at = |i: usize, j: usize| Vec2::new(-half + i as f32 * GROUND_CELL, -half + j as f32 * GROUND_CELL);
@@ -1253,7 +1264,21 @@ impl Ground {
                 h[k] = h[k] * (1.0 - w[k]) + t * w[k];
             }
         }
-        Ground { half, n, h, pads }
+        Ground { half, n, h, pads, decks }
+    }
+
+    /// Height of a bridge deck at `p`, if `p` is on one.
+    pub fn deck_at(&self, p: Vec2) -> Option<f32> {
+        for &(a, b, hw, za, zb) in &self.decks {
+            if p.x < a.x.min(b.x) - hw || p.x > a.x.max(b.x) + hw || p.y < a.y.min(b.y) - hw || p.y > a.y.max(b.y) + hw {
+                continue;
+            }
+            let (t, q) = project_on_segment(p, a, b);
+            if q.distance(p) <= hw {
+                return Some(za + (zb - za) * t);
+            }
+        }
+        None
     }
 
     /// Height of the built ground (natural terrain outside the raster).

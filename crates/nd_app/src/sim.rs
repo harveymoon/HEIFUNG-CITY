@@ -34,11 +34,7 @@ pub struct Sim {
 
 impl Sim {
     pub fn new() -> Self {
-        let mut world = World::new(WorldConfig::default());
-        // Two starter avenues so the city has entrances from day one.
-        world.add_road(&[SVec2::new(-700.0, 0.0), SVec2::new(700.0, 0.0)], 2, 2);
-        world.add_road(&[SVec2::new(0.0, -700.0), SVec2::new(0.0, 700.0)], 2, 2);
-        world.drain_events();
+        let world = Self::fresh_world(nd_sim::LandscapeParams::default());
         Self {
             world,
             minds: HybridMind::new(Box::new(MockBackend::default())),
@@ -50,6 +46,27 @@ impl Sim {
             ticks_last_frame: 0,
             effective_speed: 1.0,
         }
+    }
+
+    /// A new world on a landscape, with the starter avenues.
+    fn fresh_world(landscape: nd_sim::LandscapeParams) -> World {
+        let mut world = World::new(WorldConfig { landscape, ..WorldConfig::default() });
+        // Two starter avenues so the city has entrances from day one.
+        world.add_road(&[SVec2::new(-700.0, 0.0), SVec2::new(700.0, 0.0)], 2, 2);
+        world.add_road(&[SVec2::new(0.0, -700.0), SVec2::new(0.0, 700.0)], 2, 2);
+        // The bridges the avenues need come with the map.
+        world.economy.treasury = 60_000.0;
+        world.economy.ledger = Default::default();
+        world.drain_events();
+        world
+    }
+
+    /// Throw the city away and start again on a new landscape.
+    pub fn new_game(&mut self, landscape: nd_sim::LandscapeParams) {
+        self.world = Self::fresh_world(landscape);
+        self.events.clear();
+        self.accumulator = 0.0;
+        self.full_rebuild = true;
     }
 
     /// The demo district is laid out blind over the centre of the map, so

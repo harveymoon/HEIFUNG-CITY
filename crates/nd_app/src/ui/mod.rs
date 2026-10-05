@@ -9,6 +9,7 @@
 mod help;
 mod hover;
 mod inspector;
+pub mod newgame;
 mod people;
 mod person;
 mod saves;
@@ -151,6 +152,7 @@ fn side_panel(
     let content = egui::Rect::from_min_max(egui::pos2(view.left(), top_rect.bottom()), egui::pos2(view.right(), bottom_rect.top()));
     windows::show_all(ctx, &mut p, content);
     inspector::window(ctx, &mut p, content);
+    newgame::window(ctx, &mut p, content);
     let fly_to = p.fly_to;
 
     flags.panel_rects = vec![top_rect, bottom_rect];

@@ -198,15 +198,10 @@ impl World {
         if self.landscape.is_flat() {
             return 0.0;
         }
-        if let Some((sid, t, q)) = self.roads.nearest_where(p, |s| s.bridge) {
-            if q.distance(p) <= self.roads.segment(sid).half_width() + 1.5 {
-                return self.road_height(sid, t);
-            }
+        if let Some(z) = self.ground.deck_at(p) {
+            return z;
         }
-        if self.landscape.is_water(p) {
-            return WATER_LEVEL;
-        }
-        self.ground_height(p)
+        self.ground_height(p).max(WATER_LEVEL)
     }
 
     /// The pad a lot is levelled to.

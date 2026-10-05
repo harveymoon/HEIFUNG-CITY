@@ -15,6 +15,7 @@
 //! (default 4817). It binds 127.0.0.1 only: the API has no authentication.
 
 mod history;
+mod land;
 mod list;
 mod map;
 mod report;
@@ -352,6 +353,19 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             ctx.history.reset(&ctx.sim.world, "city loaded");
             Ok(json!({ "message": ctx.flags.message, "clock": clock(&ctx.sim), "paused": ctx.sim.paused }))
         }
+        "new_game" => {
+            let params = land::params_from(cmd)?;
+            ctx.sim.new_game(params);
+            *ctx.tools = ToolState::default();
+            *ctx.selection = Selection::None;
+            ctx.eplan.invalidate();
+            ctx.follow.0 = None;
+            ctx.tools.status = format!("New city on a {} landscape", ctx.sim.world.landscape.params.preset.label().to_lowercase());
+            ctx.history.reset(&ctx.sim.world, "new game");
+            Ok(land::summary(&ctx.sim.world))
+        }
+        "terrain_at" => Ok(land::terrain_at(&ctx.sim.world, req_point(cmd)?)),
+        "landscape" => Ok(land::summary(&ctx.sim.world)),
         "list_saves" => Ok(list_saves()),
         "plan" => Ok(plan(ctx)),
         "add_road" => add_road(cmd, ctx),
@@ -734,6 +748,17 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "parking" => {
             let lot = lot_near(w, p).ok_or("no lot there")?;
             (w.build_parking(lot).ok_or("cannot build parking there: the lot is taken, landlocked or too small")?, "parking built".into())
+        }
+        other if land::dock_of(other).is_some() => {
+            let dock = land::dock_of(other).unwrap();
+            let id = w.place_port(dock, p)?;
+            let port = w.ports.port_of(id).cloned();
+            let note = match port {
+                Some(p) if p.works() => format!("{} built with its pier; ships call from the next sailing", dock.label()),
+                Some(p) if !p.road_connected => format!("{} built with its pier; join its street stub to the city's roads", dock.label()),
+                _ => format!("{} built, but no ship can reach it from off the map", dock.label()),
+            };
+            (id, note)
         }
         other => {
             let plant = plant_of(other).ok_or_else(|| format!("unknown kind {other:?}; one of station, freight_yard, depot, parking, coal, solar, wind, nuclear"))?;
@@ -1356,7 +1381,10 @@ fn help() -> Value {
             "add_zone": { "polygon": "[[x,y],...] (3+)", "land_use": "residential|commercial|industrial|entertainment|civic|park", "implement": "bool" },
             "bulldoze": { "gesture_id": "int", "implement": "bool" },
             "project": { "action": "start|implement|undo|redo|discard" },
-            "place": { "kind": "station|freight_yard|depot|parking|coal|solar|wind|nuclear", "x": "f", "y": "f" },
+            "place": { "kind": "station|freight_yard|depot|parking|coal|solar|wind|nuclear|hydro|tidal|geothermal|shipping_port|ferry_terminal", "x": "f", "y": "f", "note": "hydro beside a river or stream with a current >= 0.8 m/s, tidal on the sea shore, geothermal over a hot spot; docks at the water's edge (they build a pier and a street stub)" },
+            "new_game": { "preset": "river_valley|islands|coast|delta|plains|flat (default river_valley)", "seed": "u64", "water": "0..1", "relief": "0..1 height variation", "branching": "0..1", "islands": "0..8", "highway": "bool", "note": "throws the city away; omitted levers take the preset's" },
+            "terrain_at": { "x": "f", "y": "f", "returns": "natural/ground/surface heights, slope, water (kind, current, width), nearest shore, hot spot, power sites and dock placement for the lot there" },
+            "landscape": { "returns": "preset and levers, rivers (width, current, hydro_ok), lakes, sea, hot spots, highway ends and through cars, bridges, docks, ships" },
             "bus": { "action": "new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses" },
             "find": { "what": "citizens|buildings|lots|cars|trains|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
             "inspect": { "citizen|building|lot|car|train|route": "id", "gesture": "int; with no id, the current selection" },

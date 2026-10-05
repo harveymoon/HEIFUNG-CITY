@@ -212,6 +212,7 @@ impl Plugin for RenderPlugin {
                 .chain()
                 .in_set(SimSet::Sync),
         );
+        app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
     }
 }
 
@@ -297,7 +298,10 @@ fn hash_f32s<H: Hasher>(h: &mut H, pts: impl IntoIterator<Item = SVec2>) {
 /// past the edge of the city and the mesh reaches twice as far out.
 fn terrain_config(w: &World) -> TerrainConfig {
     let half = w.config.half_extent;
-    TerrainConfig { half_size: half * 2.0, basin_radius: half + 100.0, ..TerrainConfig::default() }
+    // On a landscape the scatter is generated flat and set on the ground
+    // by `lift_spawned`, so it must not carry the old hills itself.
+    let hill_height = if w.landscape.is_flat() { TerrainConfig::default().hill_height } else { 0.0 };
+    TerrainConfig { half_size: half * 2.0, basin_radius: half + 100.0, hill_height, ..TerrainConfig::default() }
 }
 
 fn tiling_image(size: usize, rgba: &[u8], srgb: bool) -> Image {
@@ -505,6 +509,10 @@ fn sync_terrain(
     existing: Query<Entity, With<TerrainTag>>,
 ) {
     if !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
+        return;
+    }
+    // A landscape's ground is drawn by `sync_landscape`.
+    if !sim.world.landscape.is_flat() {
         return;
     }
     despawn_all(&mut commands, &existing);
@@ -946,9 +954,13 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, id: B
         park: lot.park.as_ref(),
         depot: b.depot,
         rail: b.rail.as_ref(),
+        port: b.port,
         construction: b.construction.as_ref().map(|c| c.progress),
     };
-    geo.append(&generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras));
+    let mut g = generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras);
+    // Every building stands on its lot's levelled pad.
+    nd_procgen::terrain::raise_geometry(&mut g, world.lot_pad(b.lot));
+    geo.append(&g);
     Some(())
 }
 
@@ -1476,6 +1488,193 @@ fn update_daylight(
         let glow_k = glow_key as f32 / 64.0;
         if let Some(mut m) = materials.get_mut(&mats.glow()) {
             m.base_color = Color::linear_rgb(glow_k, glow_k, glow_k);
+        }
+    }
+}
+
+// ── landscape: ground, water, waterworks, ships, and setting things on the ground ──
+
+/// Marker for anything that moves and should stand on the ground (hills,
+/// bridge decks): add it to a moving entity and `lift_movers` raises it each
+/// frame after its pose is written. Citizens, cars and trains have it implied.
+#[derive(Component)]
+pub struct Grounded;
+
+/// The lift `lift_movers` last applied, and the height it left the entity
+/// at, so a pose not rewritten this frame is not lifted twice.
+#[derive(Component)]
+struct Lifted {
+    after: f32,
+    lift: f32,
+}
+
+#[derive(Component)]
+struct WaterTag;
+#[derive(Component, Clone)]
+struct WaterworksTag;
+#[derive(Component)]
+struct ShipTag;
+
+#[derive(Resource, Default)]
+struct LandscapeRender {
+    /// What the ground, water and works were built for.
+    signature: Option<u64>,
+    water_mat: Option<Handle<StandardMaterial>>,
+    ship_meshes: Option<[Handle<Mesh>; 2]>,
+    ships: HashMap<nd_sim::ports::ShipId, Entity>,
+}
+
+fn landscape_signature(w: &World) -> u64 {
+    let mut h = DefaultHasher::new();
+    w.landscape.params.seed.hash(&mut h);
+    format!("{:?}", w.landscape.params.preset).hash(&mut h);
+    w.landscape.rivers.len().hash(&mut h);
+    w.roads.version.hash(&mut h);
+    w.lots.len().hash(&mut h);
+    w.ports.ports.len().hash(&mut h);
+    w.buildings.values().filter(|b| b.plant.is_some()).count().hash(&mut h);
+    w.landscape.is_flat().hash(&mut h);
+    h.finish()
+}
+
+/// The ground of a landscape (graded to the roads and lots), the water
+/// sheet, and the bridges, piers, weirs and vents. Rebuilt when roads, lots,
+/// docks or plants change, since the ground is graded to them.
+#[allow(clippy::too_many_arguments)]
+fn sync_landscape(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    sim: Res<Sim>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut state: ResMut<LandscapeRender>,
+    terrain: Query<Entity, With<TerrainTag>>,
+    water: Query<Entity, With<WaterTag>>,
+    works: Query<Entity, With<WaterworksTag>>,
+) {
+    let w = &sim.world;
+    let sig = landscape_signature(w);
+    if state.signature == Some(sig) && !assets.palette_changed && !sim.full_rebuild {
+        return;
+    }
+    state.signature = Some(sig);
+    despawn_all(&mut commands, &water);
+    despawn_all(&mut commands, &works);
+    if w.landscape.is_flat() {
+        return;
+    }
+    despawn_all(&mut commands, &terrain);
+    let ground = nd_procgen::terrain::build_landscape_terrain(w, &assets.palette, 8.0);
+    commands.spawn((Mesh3d(meshes.add(to_mesh(&ground, true))), MeshMaterial3d(mats.surface(Surface::Dirt)), Transform::IDENTITY, TerrainTag));
+    let water_mat = state
+        .water_mat
+        .get_or_insert_with(|| {
+            materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                alpha_mode: AlphaMode::Blend,
+                perceptual_roughness: 0.06,
+                reflectance: 0.6,
+                metallic: 0.1,
+                ..default()
+            })
+        })
+        .clone();
+    let sheet = nd_procgen::terrain::build_water(w, &assets.palette);
+    if !sheet.is_empty() {
+        commands.spawn((Mesh3d(meshes.add(to_mesh(&sheet, false))), MeshMaterial3d(water_mat), Transform::IDENTITY, NotShadowCaster, WaterTag));
+    }
+    let geo = nd_procgen::terrain::waterworks(w, &assets.palette);
+    spawn_geometry(&mut commands, &mut meshes, &mats, &geo, WaterworksTag);
+}
+
+/// Freighters and ferries along their routes, blended between ticks.
+fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut state: ResMut<LandscapeRender>, mut q: Query<&mut Transform, With<ShipTag>>) {
+    let ships = &sim.world.ports.ships;
+    if ships.is_empty() && state.ships.is_empty() {
+        return;
+    }
+    let handles = state
+        .ship_meshes
+        .get_or_insert_with(|| [meshes.add(shared_mesh(&nd_procgen::terrain::ship_mesh(true, &assets.palette), true)), meshes.add(shared_mesh(&nd_procgen::terrain::ship_mesh(false, &assets.palette), true))])
+        .clone();
+    for (id, ship) in ships.iter() {
+        if !state.ships.contains_key(&id) {
+            let mesh = if ship.kind == nd_sim::ShipKind::Freighter { handles[0].clone() } else { handles[1].clone() };
+            let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(mats.surface(Surface::Panel)), Transform::IDENTITY, ShipTag)).id();
+            state.ships.insert(id, e);
+        }
+    }
+    let gone: Vec<nd_sim::ports::ShipId> = state.ships.keys().copied().filter(|id| !ships.contains_key(*id)).collect();
+    for id in gone {
+        if let Some(e) = state.ships.remove(&id) {
+            commands.entity(e).despawn();
+        }
+    }
+    let f = sim.frac();
+    for (id, e) in state.ships.iter() {
+        let Some(ship) = ships.get(*id) else { continue };
+        let s = ship.prev_s + (ship.s - ship.prev_s) * f;
+        let (p, dir) = ship.pose_at(s);
+        if let Ok(mut tf) = q.get_mut(*e) {
+            tf.translation = Vec3::new(p.x, nd_sim::landscape::WATER_LEVEL, p.y);
+            tf.rotation = Quat::from_rotation_y(-dir.y.atan2(dir.x));
+        }
+    }
+}
+
+/// Set freshly spawned flat-datum meshes (streets, lot fills, previews,
+/// overlays, parks, vacant dressing, stops, scatter) on the built ground,
+/// and signal lamps with them. Buildings are raised to their pad when they
+/// are generated.
+#[allow(clippy::type_complexity)]
+fn lift_spawned(
+    sim: Res<Sim>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    q: Query<&Mesh3d, Or<(Added<RoadsTag>, Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>)>>,
+    mut signals: Query<&mut Transform, Added<SignalTag>>,
+) {
+    let w = &sim.world;
+    if w.landscape.is_flat() {
+        return;
+    }
+    for m in &q {
+        let Some(mut mesh) = meshes.get_mut(&m.0) else { continue };
+        if let Some(bevy::mesh::VertexAttributeValues::Float32x3(pos)) = mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
+            for p in pos.iter_mut() {
+                p[1] += w.surface_height(SVec2::new(p[0], p[2]));
+            }
+        }
+    }
+    for mut tf in &mut signals {
+        tf.translation.y += w.surface_height(SVec2::new(tf.translation.x, tf.translation.z));
+    }
+}
+
+/// Raise movers onto the ground after their poses are written.
+#[allow(clippy::type_complexity)]
+fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>), Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>>) {
+    let w = &sim.world;
+    if w.landscape.is_flat() {
+        return;
+    }
+    for (e, mut tf, lifted) in &mut q {
+        let base = match &lifted {
+            // Not rewritten since the last lift: take the old lift off.
+            Some(l) if tf.translation.y == l.after => tf.translation.y - l.lift,
+            _ => tf.translation.y,
+        };
+        let lift = w.surface_height(SVec2::new(tf.translation.x, tf.translation.z));
+        tf.translation.y = base + lift;
+        let after = tf.translation.y;
+        match lifted {
+            Some(mut l) => {
+                l.after = after;
+                l.lift = lift;
+            }
+            None => {
+                commands.entity(e).insert(Lifted { after, lift });
+            }
         }
     }
 }
