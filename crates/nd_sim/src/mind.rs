@@ -46,6 +46,19 @@ pub struct MindContext<'a> {
     /// Whether any shop sells groceries right now.
     pub groceries_for_sale: bool,
     pub meals_for_sale: bool,
+    /// Child, adult or retiree.
+    pub stage: crate::citizens::LifeStage,
+    /// Alertness in `0..1`; below `citizens::TIRED` it is time for bed.
+    pub wakefulness: f32,
+    /// Asleep at home.
+    pub asleep: bool,
+    pub at_home: bool,
+    /// The workplace is open and this hour is in the citizen's shift.
+    pub on_shift: bool,
+    /// People sharing the home, the citizen included.
+    pub household_size: usize,
+    /// The household pantry is under half its target: someone should shop.
+    pub pantry_low: bool,
 }
 
 pub trait MindProvider {

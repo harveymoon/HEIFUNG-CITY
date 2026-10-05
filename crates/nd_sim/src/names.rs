@@ -22,6 +22,23 @@ const HANDLE: &[&str] = &[
     "Patch", "Drift", "Vex", "Halo", "Signal",
 ];
 
+/// A family name shared by a household.
+pub fn family_name(rng: &mut impl Rng) -> String {
+    LAST.choose(rng).unwrap().to_string()
+}
+
+/// A member of the `family` household: their own first name (and maybe a
+/// street handle), the family's last name.
+pub fn member_name(rng: &mut impl Rng, family: &str) -> String {
+    let first = FIRST.choose(rng).unwrap();
+    if rng.random_bool(0.2) {
+        let handle = HANDLE.choose(rng).unwrap();
+        format!("{first} \"{handle}\" {family}")
+    } else {
+        format!("{first} {family}")
+    }
+}
+
 pub fn citizen_name(rng: &mut impl Rng) -> String {
     let first = FIRST.choose(rng).unwrap();
     let last = LAST.choose(rng).unwrap();

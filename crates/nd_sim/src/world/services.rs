@@ -363,6 +363,13 @@ impl World {
     // ── the hourly roll ────────────────────────────────────────────────────
 
     pub(super) fn hourly_services(&mut self) {
+        if !self.config.emergencies {
+            let tick = self.clock.tick;
+            let citizens = &self.citizens;
+            self.services.admissions.retain(|a| a.until > tick && citizens.get(a.citizen).is_some_and(|c| c.inside == Some(a.hospital)));
+            self.refresh_coverage();
+            return;
+        }
         let hour = self.clock.hour();
         let night = !(5..20).contains(&hour);
         let pop = self.citizens.len().max(1);
@@ -401,11 +408,13 @@ impl World {
         for cid in cids {
             let c = &self.citizens[cid];
             let Some(inside) = c.inside else { continue };
-            let age = 18.0 + (c.seed % 62) as f32;
+            // Small children and the old fall ill most.
+            let age = c.age as f32;
+            let frailty = if age < 6.0 { 1.8 } else if age >= 67.0 { 1.5 + (age - 67.0) / 15.0 } else { 0.6 + age / 80.0 };
             let hunger = ((0.35 - c.satiety) / 0.35).clamp(0.0, 1.0);
             let home_lot = c.home.and_then(|h| self.buildings.get(h)).or_else(|| self.buildings.get(inside)).map(|b| b.lot);
             let cov = home_lot.map_or(0.0, |l| self.services.coverage_of(l, ServiceKind::Health));
-            let p = SICK_RISK * (0.5 + age / 60.0) * (1.0 + 4.0 * hunger) * (1.0 - SICK_COVER_CUT * cov);
+            let p = SICK_RISK * frailty * (1.0 + 4.0 * hunger) * (1.0 - SICK_COVER_CUT * cov);
             if self.rng.random::<f32>() < p && !self.is_patient(cid) {
                 self.fall_ill(cid);
             }
@@ -446,6 +455,21 @@ impl World {
         }
         if self.clock.minute_of_day() == EVENT_MINUTE {
             self.start_stadium_events();
+        }
+        if self.clock.minute_of_day() == SCHOOL_MINUTE {
+            self.send_children_to_school();
+        }
+        // Pupils stay until the school closes.
+        if tick % 10 == 5 {
+            let hour = self.clock.hour() as u8;
+            let buildings = &self.buildings;
+            for c in self.citizens.values_mut() {
+                if let Activity::Visiting(b) = c.activity {
+                    if c.goes_to_school() && buildings.get(b).and_then(|x| x.service).is_some_and(|s| s.kind == ServiceKind::School && s.kind.hours().contains(hour)) {
+                        c.next_decision_tick = c.next_decision_tick.max(tick + 15);
+                    }
+                }
+            }
         }
         // Keep the record short.
         let resolved = self.services.incidents.iter().filter(|i| !i.active()).count();
@@ -598,9 +622,12 @@ impl World {
             return true;
         }
         if intensity > SPREAD_INTENSITY && tick % SPREAD_EVERY == 0 {
-            let here = self.building_lot(bid).map(|l| l.center);
-            if let Some(here) = here {
-                let near: Vec<BuildingId> = self.buildings.iter().filter(|(nid, nb)| *nid != bid && self.lots.get(nb.lot).is_some_and(|l| l.center.distance(here) <= SPREAD_RADIUS)).map(|(nid, _)| nid).collect();
+            let here = self.building_lot(bid).map(|l| (l.center, l.polygon.clone()));
+            if let Some((here, poly)) = here {
+                // Neighbours: lots that touch this one (a shared corner within
+                // SPREAD_RADIUS of reach) or stand that close centre to centre.
+                let touches = |l: &Lot| l.center.distance(here) <= SPREAD_RADIUS || (l.center.distance(here) < 150.0 && l.polygon.iter().any(|p| poly.iter().any(|q| q.distance(*p) < SPREAD_GAP)));
+                let near: Vec<BuildingId> = self.buildings.iter().filter(|(nid, nb)| *nid != bid && self.lots.get(nb.lot).is_some_and(touches)).map(|(nid, _)| nid).collect();
                 for nb in near {
                     if self.rng.random::<f32>() < SPREAD_CHANCE * intensity {
                         if let Some(new) = self.start_fire(nb) {
@@ -912,6 +939,18 @@ impl World {
                 c.thought = "Hooked up to a drip. At least it's warm.".to_string();
                 c.remember(tick, format!("The ambulance took me to {hname}."));
                 self.services.admissions.push(Admission { citizen: p, hospital: h, until });
+                // The household pays what it can; the city covers the rest.
+                let paid = match self.citizens[p].household.and_then(|hh| self.households.get_mut(hh)) {
+                    Some(hh) => {
+                        let pay = hh.money.clamp(0.0, HOSPITAL_BILL);
+                        hh.money -= pay;
+                        pay
+                    }
+                    None => 0.0,
+                };
+                self.economy.credit(Flow::ServiceUpkeep, paid);
+                self.services.stats.bills_paid_today += paid;
+                self.services.stats.bills_covered_today += HOSPITAL_BILL - paid;
                 self.resolve(id, Outcome::Admitted);
             }
             (Some(id), _, _) => self.resolve(id, Outcome::Gone),
@@ -974,6 +1013,42 @@ impl World {
     }
 
     // ── stadium nights and the daily books ─────────────────────────────────
+
+    /// School-age children at home or about go to the nearest school whose
+    /// district covers their home and that has places left.
+    fn send_children_to_school(&mut self) {
+        let tick = self.clock.tick;
+        let mut schools: Vec<(BuildingId, Vec2, u32, LandUse)> = self
+            .buildings
+            .iter()
+            .filter_map(|(id, b)| b.service.filter(|s| s.kind == ServiceKind::School).map(|s| (id, b, s)))
+            .filter(|(_, b, _)| !b.is_derelict() && b.construction.is_none())
+            .filter_map(|(id, b, s)| self.lots.get(b.lot).map(|l| (id, l.center, s.kind.capacity(s.tier), b.land_use)))
+            .collect();
+        if schools.is_empty() {
+            return;
+        }
+        let kids: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.goes_to_school() && matches!(c.activity, Activity::AtHome | Activity::Idle) && c.home.is_some()).map(|(id, _)| id).collect();
+        for cid in kids {
+            if self.is_patient(cid) {
+                continue;
+            }
+            let Some(home_lot) = self.citizens[cid].home.and_then(|h| self.buildings.get(h)).map(|b| b.lot) else { continue };
+            if self.services.coverage_of(home_lot, ServiceKind::School) <= 0.0 {
+                continue;
+            }
+            let at = self.lots.get(home_lot).map_or(Vec2::ZERO, |l| l.center);
+            let Some(k) = (0..schools.len()).filter(|&k| schools[k].2 > 0).min_by(|&a, &b| schools[a].1.distance(at).total_cmp(&schools[b].1.distance(at))) else { break };
+            schools[k].2 -= 1;
+            let (sid, lu) = (schools[k].0, schools[k].3);
+            let name = self.buildings[sid].name.clone();
+            let c = &mut self.citizens[cid];
+            c.asleep = false;
+            c.remember(tick, format!("Off to {name} for the day."));
+            self.services.stats.pupils_today += 1;
+            self.travel_to(cid, Some(sid), Purpose::Visit(lu));
+        }
+    }
 
     fn start_stadium_events(&mut self) {
         let tick = self.clock.tick;
@@ -1043,6 +1118,9 @@ impl World {
         st.response_ticks_today = 0;
         st.responses_today = 0;
         st.tickets_today = 0.0;
+        st.pupils_today = 0;
+        st.bills_paid_today = 0.0;
+        st.bills_covered_today = 0.0;
         st.stadium_crowd_today = 0;
         st.upkeep_today = upkeep;
         st.education_bonus_today = bonus;
@@ -1407,5 +1485,34 @@ mod tests {
         let _ = before;
         w.daily_services();
         assert!(w.economy.ledger.today_of(Flow::ServiceUpkeep) < 0.0);
+    }
+
+    #[test]
+    fn children_go_to_a_school_that_covers_their_home_and_staff_work_round_the_clock() {
+        let mut w = town();
+        people(&mut w, 40);
+        let kids: Vec<CitizenId> = w.citizens.iter().filter(|(_, c)| c.goes_to_school()).map(|(id, _)| id).collect();
+        assert!(!kids.is_empty(), "families with school-age children arrived");
+        let school = w.build_service(civic_lot(&w, -150.0), ServiceKind::School, Tier::Mid).unwrap();
+        for &k in &kids {
+            let h = w.citizens[k].home.unwrap();
+            let e = w.building_entrance(h).unwrap();
+            let c = &mut w.citizens[k];
+            c.activity = Activity::AtHome;
+            c.inside = Some(h);
+            c.pos = e;
+        }
+        while w.clock.minute_of_day() != SCHOOL_MINUTE - 1 {
+            w.clock.advance();
+        }
+        w.tick(&mut IdleMind);
+        assert!(w.services.stats.pupils_today > 0);
+        let going = kids.iter().filter(|k| matches!(&w.citizens[**k].activity, Activity::Traveling { to: Some(b), .. } | Activity::Driving { to: Some(b), .. } if *b == school)).count();
+        assert!(going > 0, "children set off for school");
+        // Emergency services staff in shifts round the clock; schools by day.
+        let fire = w.build_service(civic_lot(&w, 350.0), ServiceKind::Fire, Tier::Low).unwrap();
+        let shifts: std::collections::HashSet<u8> = (0..30u64).map(|seed| w.buildings[fire].shift_for(seed).open).collect();
+        assert!(shifts.len() >= 3, "three shifts: {shifts:?}");
+        assert!(!w.buildings[school].opening_hours().contains(22));
     }
 }

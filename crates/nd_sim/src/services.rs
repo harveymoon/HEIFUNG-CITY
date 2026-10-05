@@ -37,7 +37,7 @@ pub const COVERAGE_FADE: f32 = 200.0;
 pub const COVERED: f32 = 0.5;
 /// Hourly chance a building catches fire, by tier, before condition, land
 /// use and fire coverage. Cheap, worn buildings burn.
-pub const FIRE_RISK: [f32; 3] = [1.4e-4, 0.8e-4, 0.5e-4];
+pub const FIRE_RISK: [f32; 3] = [4.0e-5, 2.5e-5, 1.5e-5];
 /// Hourly chance of a crime at an occupied building, before unemployment,
 /// land value, night and police coverage.
 pub const CRIME_RISK: f32 = 2.0e-4;
@@ -60,9 +60,11 @@ pub const BURNED_DOWN: f32 = 0.08;
 /// centres), checked every `SPREAD_EVERY` ticks with `SPREAD_CHANCE` x
 /// intensity per neighbour.
 pub const SPREAD_INTENSITY: f32 = 0.5;
-pub const SPREAD_RADIUS: f32 = 32.0;
+pub const SPREAD_RADIUS: f32 = 28.0;
+/// Lots with corners this close count as touching.
+pub const SPREAD_GAP: f32 = 4.0;
 pub const SPREAD_EVERY: u64 = 20;
-pub const SPREAD_CHANCE: f32 = 0.15;
+pub const SPREAD_CHANCE: f32 = 0.04;
 /// Ticks from the call to the dispatch: a dispatcher on shift, a staffed
 /// centre with nobody at the desk (on call), and no dispatch centre at all
 /// (the call goes to the regional line).
@@ -92,6 +94,11 @@ pub const EVENT_CHANCE: [f64; 3] = [0.3, 0.4, 0.6];
 pub const EVENT_MINUTE: u64 = 18 * 60;
 /// How far a fan travels to a game.
 pub const EVENT_REACH: f32 = 1600.0;
+/// Pupils set off for school at this minute and stay until it closes.
+pub const SCHOOL_MINUTE: u64 = 7 * 60 + 30;
+/// A hospital stay, billed to the patient's household; what it cannot pay
+/// the city covers.
+pub const HOSPITAL_BILL: f32 = 60.0;
 /// Rubble stays on a burned lot this many ticks before it can be rebuilt.
 pub const RUBBLE_TICKS: u64 = 2 * 1440;
 /// Resolved incidents kept for the record.
@@ -166,6 +173,17 @@ impl ServiceKind {
             ServiceKind::Stadium => ["sports ground", "stadium", "mega-arena"],
         };
         names[tier.index()]
+    }
+
+    /// When it is staffed and open: emergency services round the clock
+    /// (three shifts), schools by day, stadiums from noon to midnight.
+    pub fn hours(self) -> crate::market::Hours {
+        use crate::market::Hours;
+        match self {
+            ServiceKind::Police | ServiceKind::Fire | ServiceKind::Health | ServiceKind::Dispatch | ServiceKind::Monument => Hours::ALWAYS,
+            ServiceKind::School => Hours::new(8, 16),
+            ServiceKind::Stadium => Hours::new(12, 0),
+        }
     }
 
     pub fn is_attraction(self) -> bool {
@@ -780,6 +798,11 @@ pub struct ServiceStats {
     pub tickets_today: f32,
     pub stadium_crowd_today: u32,
     pub dispatchers_on_shift: u32,
+    /// Children who went to school today.
+    pub pupils_today: u32,
+    /// Hospital bills paid by households today, and what the city covered.
+    pub bills_paid_today: f32,
+    pub bills_covered_today: f32,
     /// Workers' wage bonus from schooling, summed over the city, today.
     pub education_bonus_today: f32,
 }

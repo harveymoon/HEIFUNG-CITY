@@ -69,7 +69,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 ui.label(format!("{}  ·  {} tier  ·  {}  ·  {} floors  ·  built day {}", b.land_use.label(), b.tier.label(), style.label(), b.floors, b.built_tick / 1440 + 1));
             }
             ui.label(format!("land value {:.2}  ·  rent {:.0}/day  ·  wage {:.0}/day  ·  condition {:.0}%{}", b.land_value, b.rent, b.wage(), b.condition * 100.0, if b.is_derelict() { "  ·  DERELICT" } else { "" }));
-            ui.label(format!("residents {}/{}  ·  workers {}/{}  ·  visitors {}", b.residents.len(), b.homes, b.workers.len(), b.jobs, b.visitors));
+            ui.label(format!("homes {}/{} ({} residents)  ·  workers {}/{}  ·  visitors {}", b.households.len(), b.homes, b.residents.len(), b.workers.len(), b.jobs, b.visitors));
             if let Some(lot) = sim.world.lots.get(b.lot) {
                 ui.label(format!("foot traffic today {}  ·  this hour {}{}", lot.footfall_today, lot.footfall_hour, if lot.car_access() { "" } else { "  ·  on a footpath: cars stop at the street, residents park nearby" }));
                 if let Some(park) = &lot.park {

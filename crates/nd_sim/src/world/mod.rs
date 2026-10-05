@@ -30,7 +30,7 @@ mod trains;
 mod trips;
 
 use crate::buildings::{Building, BuildingId, Construction, Tier};
-use crate::citizens::{Activity, Citizen, CitizenId, Purpose};
+use crate::citizens::{Activity, Citizen, CitizenId, Household, HouseholdId, Purpose};
 use crate::clock::SimClock;
 use crate::economy::{Economy, Flow, GIG_INCOME, OVERDRAFT};
 use crate::events::SimEvent;
@@ -111,6 +111,10 @@ pub struct WorldConfig {
     pub development_interval: u64,
     /// Upper bound on buildings started per development interval.
     pub max_builds_per_interval: usize,
+    /// Fires, crimes and illness roll every hour (`world/services.rs`).
+    /// Tests about other systems turn it off so a random fire cannot take
+    /// their building away.
+    pub emergencies: bool,
 }
 
 impl WorldConfig {
@@ -140,6 +144,7 @@ impl Default for WorldConfig {
             immigration_interval: 30,
             development_interval: 20,
             max_builds_per_interval: 2,
+            emergencies: true,
         };
         c.derive_speeds();
         c
@@ -198,6 +203,10 @@ pub struct World {
     pub lots: SlotMap<LotId, Lot>,
     pub buildings: SlotMap<BuildingId, Building>,
     pub citizens: SlotMap<CitizenId, Citizen>,
+    /// [people] Households: who lives together and shares money and a
+    /// pantry. Saves before version 2 get one per citizen in `after_load`.
+    #[serde(default)]
+    pub households: SlotMap<HouseholdId, Household>,
     pub traffic: Traffic,
     /// Pedestrian network, derived from roads and lots.
     #[serde(skip)]
@@ -269,6 +278,7 @@ impl World {
             lots: SlotMap::with_key(),
             buildings: SlotMap::with_key(),
             citizens: SlotMap::with_key(),
+            households: SlotMap::with_key(),
             traffic: Traffic::default(),
             walk: WalkGraph::default(),
             weather: Weather::default(),
@@ -318,6 +328,9 @@ impl World {
         // walks at today's pace.
         self.config.derive_speeds();
         self.validate();
+        // [people] Saves from before households: one per citizen. Detected
+        // per citizen (no household), so no version bump is needed.
+        self.migrate_households();
         self.version = SAVE_VERSION;
         self.rebuild_road_components();
         self.traffic.rebuild(&self.roads);
@@ -366,6 +379,22 @@ impl World {
             }
             if f.lot.is_some_and(|l| !self.lots.contains_key(l)) {
                 f.lot = None;
+            }
+        }
+        // [people] Households and citizens must agree about who belongs where.
+        for h in self.households.values_mut() {
+            h.members.retain(|c| self.citizens.contains_key(*c));
+            if h.home.is_some_and(|b| !self.buildings.contains_key(b)) {
+                h.home = None;
+            }
+        }
+        self.households.retain(|_, h| !h.members.is_empty());
+        for b in self.buildings.values_mut() {
+            b.households.retain(|h| self.households.contains_key(*h));
+        }
+        for c in self.citizens.values_mut() {
+            if c.household.is_some_and(|h| !self.households.contains_key(h)) {
+                c.household = None;
             }
         }
         let buildings = &self.buildings;

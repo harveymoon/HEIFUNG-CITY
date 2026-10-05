@@ -260,8 +260,8 @@ Citizens are rendered from their simulated positions every frame.
   scene, works (engines knock fire down 0.012 a minute; crimes 25 min, patients 12), resolves (fire
   out, arrest 75 % if quick else 40 %, patient driven to the nearest hospital with a free bed for
   6-24 h) and drives home. Unanswered crimes go unsolved after 3 h, patients recover alone after 8 h;
-  unanswered fires grow, jump to buildings within 32 m and burn a building down at condition 0.08,
-  leaving rubble for two days. Workers near a school earn up to 12 % more. Stadiums host a game on
+  unanswered fires grow, jump to buildings on touching lots (4 % x intensity per neighbour every 20 min) and burn a building down at condition 0.08,
+  leaving rubble for two days. Workers near a school earn up to 12 % more; school-age children whose home a school covers go there at 07:30 until it closes at 16:00. Stations, hospitals and dispatch work three round-the-clock shifts; the sick are weighted by age (small children and the old most); a hospital stay bills the household 60, the city covering what it cannot pay. Stadiums host a game on
   30-60 % of evenings; fans within 1.6 km buy a ticket and go. Upkeep is booked at midnight under
   `service upkeep`, tickets under `tickets`. A placed special buys out whatever grew on its lot.
 - **Economy stats**: demand per land use, Gini of incomes, class counts, rents per

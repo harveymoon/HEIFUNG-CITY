@@ -37,7 +37,7 @@ pub fn card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
                 Some(b) => {
                     neon(ui, &b.name);
                     ui.label(small(format!("{}  ·  {} tier  ·  {} floors{}", b.land_use.label(), b.tier.label(), b.floors, if b.is_derelict() { "  ·  derelict" } else { "" })));
-                    ui.label(small(format!("homes {}/{}  ·  jobs {}/{}", b.residents.len(), b.homes, b.workers.len(), b.jobs)));
+                    ui.label(small(format!("homes {}/{}  ·  jobs {}/{}", b.households.len(), b.homes, b.workers.len(), b.jobs)));
                     if let Some(bz) = &b.business {
                         ui.label(small(format!("{}{}", bz.kind.label(), if bz.closed { "  (closed)" } else { "" })));
                     }
