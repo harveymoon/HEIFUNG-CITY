@@ -201,6 +201,11 @@ trait MindProvider {
   and exports, hunger and shopping, business closures.
 - v0.8 (done): polygonal parcels, 35 architectural styles per land use and tier from a
   parts toolkit, textured surfaces with normal maps, street furniture, walk mode.
+- v0.9 (done): road tool in the spirit of Cities Skylines: ends snap to any point on a
+  road and split it into a junction, curved roads (centripetal Catmull-Rom through the
+  control points, built as 7 m pieces whose bends keep road speed), lane presets and
+  one-way roads, ramps as yield merges (signals only where three two-way roads meet),
+  and an upgrade panel in the Edit tool for lanes, direction and curvature.
 - v1: household economy with resources and a market, districts and names, demand that
   reacts to prices, ambient through-traffic, lane changing, smooth arc roads.
 - v2: LLM spotlight citizens with real backends, dialogue, gossip.

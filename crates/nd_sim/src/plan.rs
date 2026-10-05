@@ -14,11 +14,65 @@ pub struct GestureId(pub u64);
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Gesture {
-    Road { points: Vec<Vec2>, lanes_fwd: u8, lanes_bwd: u8 },
+    Road {
+        points: Vec<Vec2>,
+        lanes_fwd: u8,
+        lanes_bwd: u8,
+        /// Smooth spline through the control points instead of straight legs.
+        #[serde(default)]
+        curved: bool,
+    },
     Zone { polygon: Vec<Vec2>, land_use: LandUse },
 }
 
+/// Spacing of the straight pieces a curved road is built from, in metres.
+pub const CURVE_STEP: f32 = 7.0;
+
+/// Centripetal Catmull-Rom spline through `pts`, sampled every `CURVE_STEP`.
+/// The road passes through every control point, so the Edit tool's handles
+/// sit on the road itself.
+pub fn sample_curve(pts: &[Vec2]) -> Vec<Vec2> {
+    if pts.len() < 3 {
+        return pts.to_vec();
+    }
+    let n = pts.len();
+    let mut out = vec![pts[0]];
+    for i in 0..n - 1 {
+        let p0 = if i == 0 { pts[0] * 2.0 - pts[1] } else { pts[i - 1] };
+        let p1 = pts[i];
+        let p2 = pts[i + 1];
+        let p3 = if i + 2 < n { pts[i + 2] } else { pts[n - 1] * 2.0 - pts[n - 2] };
+        let steps = ((p1.distance(p2) / CURVE_STEP).ceil() as usize).max(1);
+        // Centripetal parameterisation avoids loops and cusps.
+        let t0 = 0.0;
+        let t1 = t0 + p0.distance(p1).sqrt().max(1e-3);
+        let t2 = t1 + p1.distance(p2).sqrt().max(1e-3);
+        let t3 = t2 + p2.distance(p3).sqrt().max(1e-3);
+        for k in 1..=steps {
+            let t = t1 + (t2 - t1) * k as f32 / steps as f32;
+            let a1 = p0 * ((t1 - t) / (t1 - t0)) + p1 * ((t - t0) / (t1 - t0));
+            let a2 = p1 * ((t2 - t) / (t2 - t1)) + p2 * ((t - t1) / (t2 - t1));
+            let a3 = p2 * ((t3 - t) / (t3 - t2)) + p3 * ((t - t2) / (t3 - t2));
+            let b1 = a1 * ((t2 - t) / (t2 - t0)) + a2 * ((t - t0) / (t2 - t0));
+            let b2 = a2 * ((t3 - t) / (t3 - t1)) + a3 * ((t - t1) / (t3 - t1));
+            let c = b1 * ((t2 - t) / (t2 - t1)) + b2 * ((t - t1) / (t2 - t1));
+            out.push(c);
+        }
+    }
+    out
+}
+
 impl Gesture {
+    /// The polyline a road is actually built from: the control points, or the
+    /// sampled spline for curved roads.
+    pub fn road_polyline(&self) -> Vec<Vec2> {
+        match self {
+            Gesture::Road { points, curved: true, .. } => sample_curve(points),
+            Gesture::Road { points, .. } => points.clone(),
+            Gesture::Zone { polygon, .. } => polygon.clone(),
+        }
+    }
+
     pub fn points(&self) -> &[Vec2] {
         match self {
             Gesture::Road { points, .. } => points,
@@ -55,9 +109,10 @@ pub struct Plan {
 }
 
 impl Plan {
-    pub fn roads(&self) -> impl Iterator<Item = (GestureId, &[Vec2], u8, u8)> {
+    /// Built polylines of every road (curves already sampled).
+    pub fn roads(&self) -> impl Iterator<Item = (GestureId, Vec<Vec2>, u8, u8)> + '_ {
         self.gestures.iter().filter_map(|(id, g)| match g {
-            Gesture::Road { points, lanes_fwd, lanes_bwd } => Some((*id, points.as_slice(), *lanes_fwd, *lanes_bwd)),
+            Gesture::Road { lanes_fwd, lanes_bwd, .. } => Some((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd)),
             _ => None,
         })
     }
@@ -178,7 +233,7 @@ pub fn preview(master: &Plan, project: &Project) -> PlanPreview {
             continue;
         }
         match g {
-            Gesture::Road { points, lanes_fwd, lanes_bwd } => out.planned_roads.push((*id, points.clone(), *lanes_fwd, *lanes_bwd)),
+            Gesture::Road { lanes_fwd, lanes_bwd, .. } => out.planned_roads.push((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd)),
             Gesture::Zone { polygon, land_use } => out.planned_zones.push((*id, polygon.clone(), *land_use)),
         }
     }
@@ -188,7 +243,7 @@ pub fn preview(master: &Plan, project: &Project) -> PlanPreview {
             continue;
         }
         match g {
-            Gesture::Road { points, lanes_fwd, lanes_bwd } => out.removed_roads.push((*id, points.clone(), *lanes_fwd, *lanes_bwd)),
+            Gesture::Road { lanes_fwd, lanes_bwd, .. } => out.removed_roads.push((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd)),
             Gesture::Zone { polygon, .. } => out.removed_zones.push((*id, polygon.clone())),
         }
     }

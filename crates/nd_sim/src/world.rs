@@ -240,7 +240,7 @@ impl World {
     /// Convenience for scripts and tests: build a road right away.
     pub fn add_road(&mut self, points: &[Vec2], lanes_fwd: u8, lanes_bwd: u8) -> GestureId {
         let had_project = self.project.take();
-        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd, lanes_bwd });
+        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd, lanes_bwd, curved: false });
         self.implement();
         self.project = had_project;
         id
@@ -265,7 +265,7 @@ impl World {
         let mut roads = RoadNetwork::default();
         for (_, points, fwd, bwd) in self.master.roads() {
             let (fwd, bwd) = if fwd == 0 && bwd == 0 { (1, 1) } else { (fwd, bwd) };
-            roads.add_polyline(points, fwd, bwd);
+            roads.add_polyline(&points, fwd, bwd);
         }
         roads.version = self.roads.version + 1;
         self.roads = roads;
@@ -1523,12 +1523,12 @@ mod tests {
         w.build_on(lot);
         let building = w.lots[lot].building.unwrap();
 
-        let id = w.add_gesture(Gesture::Road { points: vec![Vec2::new(300.0, -300.0), Vec2::new(300.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1 });
+        let id = w.add_gesture(Gesture::Road { points: vec![Vec2::new(300.0, -300.0), Vec2::new(300.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false });
         assert_eq!(w.preview().planned_roads.len(), 1);
         assert!(w.undo());
         assert_eq!(w.preview().planned_roads.len(), 0);
         assert!(w.redo());
-        w.set_gesture(id, Gesture::Road { points: vec![Vec2::new(320.0, -300.0), Vec2::new(320.0, 300.0)], lanes_fwd: 2, lanes_bwd: 2 }, true);
+        w.set_gesture(id, Gesture::Road { points: vec![Vec2::new(320.0, -300.0), Vec2::new(320.0, 300.0)], lanes_fwd: 2, lanes_bwd: 2, curved: false }, true);
         w.implement();
         assert!(!w.has_project());
         assert_eq!(w.master.gestures.len(), 3);

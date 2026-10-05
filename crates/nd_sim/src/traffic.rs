@@ -132,6 +132,8 @@ pub struct LaneNetwork {
     pub intersections: Vec<Intersection>,
     pub segment_lanes: HashMap<SegmentId, Vec<LaneId>>,
     pub node_radius: Vec<f32>,
+    /// Index into `intersections` per node, `usize::MAX` for none.
+    pub node_intersection: Vec<usize>,
     pub version: u64,
 }
 
@@ -214,6 +216,7 @@ impl LaneNetwork {
         self.lanes.clear();
         self.intersections.clear();
         self.segment_lanes.clear();
+        self.node_intersection = vec![usize::MAX; roads.nodes.len()];
         self.version += 1;
 
         // Intersection radius per node: enough to fit the widest road.
@@ -226,6 +229,18 @@ impl LaneNetwork {
                 match alive.len() {
                     0 => 0.0,
                     1 => w * 0.8,
+                    2 => {
+                        // A bend: the sharper it is, the more room the turn needs.
+                        let (sa, sb) = (*alive[0], *alive[1]);
+                        let (a0, a1) = roads.segment_points(sa);
+                        let (b0, b1) = roads.segment_points(sb);
+                        let here = n.pos;
+                        let da = (if a0.distance(here) < a1.distance(here) { a1 - a0 } else { a0 - a1 }).normalize_or_zero();
+                        let db = (if b0.distance(here) < b1.distance(here) { b1 - b0 } else { b0 - b1 }).normalize_or_zero();
+                        // da and db both point away from the node; straight through means da . db = -1.
+                        let bend = (1.0 + da.dot(db)).clamp(0.0, 2.0) * 0.5; // 0 straight, 1 hairpin
+                        (0.6 + (w + 1.0) * bend).min(w + 1.0)
+                    }
                     _ => w + 1.0,
                 }
             })
@@ -304,13 +319,17 @@ impl LaneNetwork {
                     let (p_out, d_out) = (self.lanes[out as usize].start(), self.lanes[out as usize].start_dir());
                     let pts = connector_curve(p_in, d_in, p_out, d_out, radius);
                     let id = self.lanes.len() as LaneId;
-                    self.lanes.push(Lane::new(pts, LaneKind::Connector { node: nid, approach }, nid, CONNECTOR_SPEED));
+                    let speed = if approaches.len() <= 2 && d_in.dot(d_out) > 0.7 { ROAD_SPEED } else { CONNECTOR_SPEED };
+                    self.lanes.push(Lane::new(pts, LaneKind::Connector { node: nid, approach }, nid, speed));
                     self.lanes[id as usize].next.push(out);
                     self.lanes[inc as usize].next.push(id);
                     connectors.push((id, approach));
                 }
             }
-            let signalized = approaches.len() >= 3;
+            let two_way = approaches.iter().filter(|&&s| roads.segment(s).lanes_fwd > 0 && roads.segment(s).lanes_bwd > 0).count();
+            let signalized = (approaches.len() >= 3 && two_way >= 3) || approaches.len() >= 4;
+            self.node_intersection.resize(roads.nodes.len().max(self.node_intersection.len()), usize::MAX);
+            self.node_intersection[ni] = self.intersections.len();
             self.intersections.push(Intersection { node: nid, radius, approaches: approaches.len(), phase: 0, timer: 0.0, connectors, signalized });
         }
         let _ = road_lane_count;
@@ -503,6 +522,16 @@ impl Traffic {
             // Do not enter a junction unless the exit lane has room: this is
             // what keeps a saturated grid from locking up.
             if nl.is_connector() && !lane.is_connector() && k == car.idx + 1 {
+                if let LaneKind::Connector { node, approach } = nl.kind {
+                    if let Some(inter) = self.net.node_intersection.get(node.0 as usize).and_then(|&i| self.net.intersections.get(i)) {
+                        if !inter.signalized && inter.approaches >= 3 {
+                            let busy = inter.connectors.iter().any(|&(lid, ap)| ap != approach && !self.net.lanes[lid as usize].cars.is_empty());
+                            if busy {
+                                return (dist - 1.0 + IDM_MIN_GAP, 0.0);
+                            }
+                        }
+                    }
+                }
                 if let Some(&exit) = route.get(k + 1) {
                     let el = &self.net.lanes[exit as usize];
                     let blocked = el.cars.first().map_or(false, |&c| self.cars[c].s < CAR_LENGTH + IDM_MIN_GAP + 1.0) && el.cars.len() as f32 * (CAR_LENGTH + IDM_MIN_GAP) > el.length - nl.length;
@@ -674,5 +703,34 @@ mod tests {
         }
         assert!(arrived, "car should arrive within four minutes");
         assert!(t.cars[car].pos.distance(Vec2::new(2.0, 150.0)) < 6.0);
+    }
+
+    #[test]
+    fn ramps_merge_without_signals_and_bends_keep_speed() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 2, 2);
+        // A one-way ramp joining at a shallow angle.
+        roads.add_polyline(&[Vec2::new(-150.0, 60.0), Vec2::new(-20.0, 2.0)], 1, 0);
+        // A two-way side street.
+        roads.add_polyline(&[Vec2::new(150.0, 200.0), Vec2::new(150.0, 3.0)], 1, 1);
+        let mut net = LaneNetwork::default();
+        net.rebuild(&roads);
+        let merge = net.intersections.iter().find(|i| roads.node(i.node).pos.distance(Vec2::new(-20.0, 0.0)) < 1.0).expect("merge junction");
+        assert_eq!(merge.approaches, 3);
+        assert!(!merge.signalized, "a one-way ramp yields instead of getting a signal");
+        let t = net.intersections.iter().find(|i| roads.node(i.node).pos.distance(Vec2::new(150.0, 0.0)) < 1.0).expect("T junction");
+        assert!(t.signalized, "three two-way roads get signals");
+
+        // A curved road is a chain of short straight pieces; its bends run at road speed.
+        let curve = crate::plan::sample_curve(&[Vec2::new(0.0, -300.0), Vec2::new(60.0, -200.0), Vec2::new(0.0, -100.0)]);
+        assert!(curve.len() > 10);
+        let mut roads2 = RoadNetwork::default();
+        roads2.add_polyline(&curve, 1, 1);
+        let mut net2 = LaneNetwork::default();
+        net2.rebuild(&roads2);
+        // Only the bends: dead ends keep their slow U-turn connectors.
+        let bend_connectors: Vec<&Lane> = net2.lanes.iter().filter(|l| matches!(l.kind, LaneKind::Connector { node, .. } if roads2.node(node).segments.len() == 2)).collect();
+        assert!(!bend_connectors.is_empty());
+        assert!(bend_connectors.iter().all(|l| l.speed_limit >= ROAD_SPEED - 0.01), "bends do not slow traffic to junction speed");
     }
 }

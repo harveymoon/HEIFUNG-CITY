@@ -10,7 +10,8 @@ use crate::camera::CameraMode;
 use crate::render::{Lighting, Overlays, RenderStats};
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use crate::sim::{Sim, SPEEDS};
-use crate::tools::{Selection, Tool, ToolState};
+use crate::tools::{Selection, Tool, ToolState, ROAD_PRESETS};
+use nd_sim::Gesture;
 
 const SAVE_PATH: &str = "saves/city.ron";
 
@@ -171,12 +172,29 @@ fn side_panel(
             });
             match tools.tool {
                 Tool::Road => {
-                    ui.add(egui::Slider::new(&mut tools.lanes_fwd, 0..=3).text("lanes forward"));
-                    ui.add(egui::Slider::new(&mut tools.lanes_bwd, 0..=3).text("lanes backward"));
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, f, b) in ROAD_PRESETS {
+                            let on = tools.lanes_fwd == f && tools.lanes_bwd == b;
+                            if ui.selectable_label(on, label).clicked() {
+                                tools.lanes_fwd = f;
+                                tools.lanes_bwd = b;
+                            }
+                        }
+                    });
+                    ui.add(egui::Slider::new(&mut tools.lanes_fwd, 0..=4).text("lanes forward"));
+                    ui.add(egui::Slider::new(&mut tools.lanes_bwd, 0..=4).text("lanes backward"));
                     if tools.lanes_fwd + tools.lanes_bwd == 0 {
                         tools.lanes_fwd = 1;
                     }
-                    ui.label(egui::RichText::new("Click to place nodes (snaps to existing nodes), Enter or right-click to add to the project, Backspace undoes a node.").small().weak());
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(!tools.curved, "Straight").clicked() {
+                            tools.curved = false;
+                        }
+                        if ui.selectable_label(tools.curved, "Curved").clicked() {
+                            tools.curved = true;
+                        }
+                    });
+                    ui.label(egui::RichText::new("Click to place points; ends dropped near a road snap onto it and make a junction (white ring). Curved roads bend through every point. One-way presets make ramps: a Ramp joining a road is a yield merge with no signals. Enter or right-click adds the road, Backspace undoes a point.").small().weak());
                 }
                 Tool::Zone => {
                     ui.horizontal_wrapped(|ui| {
@@ -190,7 +208,48 @@ fn side_panel(
                     ui.label(egui::RichText::new("Click polygon corners around a road, Enter or right-click to add to the project. Ctrl-click inside an existing zone to repaint it with the selected land use. Zones drawn over older ones take the ground.").small().weak());
                 }
                 Tool::Edit => {
-                    ui.label(egui::RichText::new("Drag a control point to move it. Shift-click a road or zone edge to insert a point. Delete removes the hovered point.").small().weak());
+                    ui.label(egui::RichText::new("Click a road to select it for upgrading. Drag a control point to move it. Shift-click a road or zone edge to insert a point. Delete removes the hovered point.").small().weak());
+                    if let Some(id) = tools.selected_gesture {
+                        match sim.world.gesture(id) {
+                            Some(Gesture::Road { points, lanes_fwd, lanes_bwd, curved }) => {
+                                section(ui, "ROAD UPGRADE");
+                                let (mut f, mut b, mut c) = (lanes_fwd, lanes_bwd, curved);
+                                let mut changed = false;
+                                ui.horizontal_wrapped(|ui| {
+                                    for (label, pf, pb) in ROAD_PRESETS {
+                                        if ui.selectable_label(f == pf && b == pb, label).clicked() {
+                                            f = pf;
+                                            b = pb;
+                                            changed = true;
+                                        }
+                                    }
+                                });
+                                changed |= ui.add(egui::Slider::new(&mut f, 0..=4).text("lanes forward")).changed();
+                                changed |= ui.add(egui::Slider::new(&mut b, 0..=4).text("lanes backward")).changed();
+                                ui.horizontal(|ui| {
+                                    if ui.button("Flip direction").clicked() {
+                                        std::mem::swap(&mut f, &mut b);
+                                        changed = true;
+                                    }
+                                    changed |= ui.checkbox(&mut c, "Curved").changed();
+                                    if ui.button("Deselect").clicked() {
+                                        tools.selected_gesture = None;
+                                    }
+                                });
+                                if changed {
+                                    if f + b == 0 {
+                                        f = 1;
+                                    }
+                                    sim.world.set_gesture(id, Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved: c }, true);
+                                    tools.status = "Road changed. Ctrl+Enter implements; buildings along it stay.".into();
+                                }
+                            }
+                            Some(_) => {
+                                ui.label(egui::RichText::new("Selected a zone; use the Zone tool with Ctrl-click to repaint it.").small().weak());
+                            }
+                            None => tools.selected_gesture = None,
+                        }
+                    }
                 }
                 Tool::Bulldoze => {
                     ui.label(egui::RichText::new("Click a road or zone to mark it for removal.").small().weak());

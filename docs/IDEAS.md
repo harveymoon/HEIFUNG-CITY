@@ -13,7 +13,8 @@ Add freely. Move items into `DESIGN.md` when they get scheduled.
 ## Simulation
 - Ambient through-traffic from the city edges so streets feel busy even in a small town.
 - Lane changing and turn-lane choice; smarter signal timing (actuated, green waves).
-- Smooth arc roads instead of polylines; one-way streets; road upgrades in place.
+- Elevated roads and bridges for proper grade-separated ramps; angle and grid snapping guides while drawing.
+- Turn lanes and priority rules (main road has right of way over a ramp).
 - Parking: cars that are not driving sit somewhere.
 - Power and data grids as utilities; brownouts dim the neon.
 - Crime and police presence as a per-district pressure.

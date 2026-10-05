@@ -4,6 +4,7 @@
 use bevy::prelude::*;
 use nd_sim::roads::project_on_segment;
 use nd_sim::zoning::point_in_polygon;
+use nd_sim::plan::sample_curve;
 use nd_sim::{BuildingId, CitizenId, Gesture, GestureId, LandUse, Plan, Vec2 as SVec2};
 
 use crate::camera::{CameraMode, Cursor};
@@ -30,6 +31,20 @@ pub struct ToolState {
     pub drag: Option<(GestureId, usize)>,
     pub hover_point: Option<(GestureId, usize)>,
     pub hover_gesture: Option<GestureId>,
+    /// Draw smooth roads through the clicked points.
+    pub curved: bool,
+    /// Road picked with the Edit tool for upgrading.
+    pub selected_gesture: Option<GestureId>,
+}
+
+/// Road presets in the spirit of Cities Skylines' road menu: (label, forward, backward).
+pub const ROAD_PRESETS: [(&str, u8, u8); 6] = [("Lane", 1, 1), ("Street", 2, 2), ("Avenue", 3, 3), ("One-way", 2, 0), ("Ramp", 1, 0), ("Highway", 4, 0)];
+
+impl ToolState {
+    /// Where a road end dropped at `p` would snap to.
+    pub fn road_snap(sim: &Sim, p: SVec2) -> (SVec2, bool) {
+        sim.world.roads.snap_point(p, POINT_PICK_RADIUS)
+    }
 }
 
 impl Default for ToolState {
@@ -44,6 +59,8 @@ impl Default for ToolState {
             drag: None,
             hover_point: None,
             hover_gesture: None,
+            curved: false,
+            selected_gesture: None,
         }
     }
 }
@@ -89,13 +106,25 @@ fn nearest_gesture(plan: &Plan, p: SVec2) -> Option<(GestureId, usize)> {
     let mut best: Option<(f32, GestureId, usize)> = None;
     for (id, g) in &plan.gestures {
         match g {
-            Gesture::Road { points, lanes_fwd, lanes_bwd } => {
+            Gesture::Road { points, lanes_fwd, lanes_bwd, curved } => {
                 let hw = (*lanes_fwd + *lanes_bwd) as f32 * nd_sim::roads::LANE_WIDTH * 0.5 + 3.0;
-                for (i, w) in points.windows(2).enumerate() {
+                let built = g.road_polyline();
+                for (i, w) in built.windows(2).enumerate() {
                     let (_, q) = project_on_segment(p, w[0], w[1]);
                     let d = p.distance(q);
                     if d < hw && best.map_or(true, |b| d < b.0) {
-                        best = Some((d, *id, i));
+                        // Map the built leg back to the control leg for insertion.
+                        let ctrl = if *curved {
+                            let mid = (w[0] + w[1]) * 0.5;
+                            (0..points.len().saturating_sub(1)).min_by(|&a, &b| {
+                                let da = project_on_segment(mid, points[a], points[a + 1]).1.distance(mid);
+                                let db = project_on_segment(mid, points[b], points[b + 1]).1.distance(mid);
+                                da.total_cmp(&db)
+                            }).unwrap_or(0)
+                        } else {
+                            i
+                        };
+                        best = Some((d, *id, ctrl));
                     }
                 }
             }
@@ -152,6 +181,9 @@ fn tool_input(
     if keys.just_pressed(KeyCode::Backspace) && matches!(tools.tool, Tool::Road | Tool::Zone) {
         tools.points.pop();
     }
+    if keys.just_pressed(KeyCode::KeyC) && tools.tool == Tool::Road && !ctrl {
+        tools.curved = !tools.curved;
+    }
 
     // Project commands.
     if ctrl && keys.just_pressed(KeyCode::KeyZ) {
@@ -178,15 +210,18 @@ fn tool_input(
         Tool::Road => {
             if click {
                 if let Some(p) = ground {
-                    let p = sim.world.roads.node_near(p, POINT_PICK_RADIUS).map(|n| sim.world.roads.node(n).pos).unwrap_or(p);
+                    let (p, snapped) = ToolState::road_snap(&sim, p);
                     tools.points.push(p);
+                    if snapped {
+                        tools.status = "Snapped to the road: a junction forms there.".into();
+                    }
                 }
             }
             if finish {
                 if tools.points.len() >= 2 {
-                    let g = Gesture::Road { points: tools.points.clone(), lanes_fwd: tools.lanes_fwd, lanes_bwd: tools.lanes_bwd };
+                    let g = Gesture::Road { points: tools.points.clone(), lanes_fwd: tools.lanes_fwd, lanes_bwd: tools.lanes_bwd, curved: tools.curved && tools.points.len() >= 3 };
                     sim.world.add_gesture(g);
-                    tools.status = format!("Road added to project ({} nodes). Ctrl+Enter implements.", tools.points.len());
+                    tools.status = format!("{} road added to project ({} points). Ctrl+Enter implements.", if tools.curved { "Curved" } else { "Straight" }, tools.points.len());
                 }
                 tools.points.clear();
             }
@@ -241,6 +276,12 @@ fn tool_input(
             } else if click {
                 if let Some(hp) = tools.hover_point {
                     tools.drag = Some(hp);
+                    tools.selected_gesture = Some(hp.0);
+                } else {
+                    tools.selected_gesture = tools.hover_gesture;
+                    if tools.selected_gesture.is_some() {
+                        tools.status = "Road selected: change lanes, direction or curve in the panel.".into();
+                    }
                 }
             } else if shift_click {
                 if let (Some(p), Some((id, seg))) = (ground, ground.and_then(|p| nearest_gesture(&plan, p))) {
@@ -321,21 +362,25 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
 
     match tools.tool {
         Tool::Road | Tool::Zone => {
-            let mut pts: Vec<Vec3> = tools.points.iter().map(|&p| lift(p)).collect();
+            let mut ctrl: Vec<SVec2> = tools.points.clone();
             if let Some(c) = cursor.ground {
-                let c = if tools.tool == Tool::Road {
-                    sim.world.roads.node_near(c, POINT_PICK_RADIUS).map(|n| sim.world.roads.node(n).pos).unwrap_or(c)
-                } else {
-                    c
-                };
-                gizmos.circle(Isometry3d::new(lift(c), flat), 3.0, cyan);
-                pts.push(lift(c));
+                let (c, snapped) = if tools.tool == Tool::Road { ToolState::road_snap(&sim, c) } else { (c, false) };
+                gizmos.circle(Isometry3d::new(lift(c), flat), if snapped { 4.5 } else { 3.0 }, if snapped { white } else { cyan });
+                ctrl.push(c);
             }
+            for &p in &tools.points {
+                gizmos.circle(Isometry3d::new(lift(p), flat), 2.0, cyan);
+            }
+            let built: Vec<SVec2> = if tools.tool == Tool::Road && tools.curved { sample_curve(&ctrl) } else { ctrl.clone() };
+            let mut pts: Vec<Vec3> = built.iter().map(|&p| lift(p)).collect();
             if pts.len() >= 2 {
                 if tools.tool == Tool::Zone && pts.len() >= 3 {
                     pts.push(pts[0]);
                 }
                 gizmos.linestrip(pts, cyan);
+                if tools.tool == Tool::Road && tools.curved && ctrl.len() >= 3 {
+                    gizmos.linestrip(ctrl.iter().map(|&p| lift(p)).collect::<Vec<_>>(), Color::linear_rgb(0.3, 0.4, 0.5));
+                }
             }
         }
         Tool::Edit => {
@@ -346,13 +391,14 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                     gizmos.circle(Isometry3d::new(lift(p), flat), if hovered { 5.0 } else { 2.5 }, if hovered { white } else { cyan });
                 }
             }
-            if let Some(id) = tools.hover_gesture {
+            for (id, colour) in [(tools.hover_gesture, Color::linear_rgb(0.0, 1.2, 1.5)), (tools.selected_gesture, Color::linear_rgb(2.5, 1.6, 0.4))] {
+                let Some(id) = id else { continue };
                 if let Some(g) = plan.gestures.get(&id) {
-                    let mut pts: Vec<Vec3> = g.points().iter().map(|&p| lift(p)).collect();
+                    let mut pts: Vec<Vec3> = g.road_polyline().iter().map(|&p| lift(p)).collect();
                     if !g.is_road() && pts.len() >= 3 {
                         pts.push(pts[0]);
                     }
-                    gizmos.linestrip(pts, Color::linear_rgb(0.0, 1.2, 1.5));
+                    gizmos.linestrip(pts, colour);
                 }
             }
         }

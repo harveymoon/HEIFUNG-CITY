@@ -17,6 +17,8 @@ pub const SNAP_RADIUS: f32 = 5.0;
 pub const LANE_WIDTH: f32 = 3.5;
 /// Extra asphalt beyond the lanes (sidewalk / shoulder).
 pub const SHOULDER: f32 = 1.5;
+/// How far a road end may be dropped from an existing road and still join it.
+pub const END_SNAP_RADIUS: f32 = 9.0;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Node {
@@ -98,6 +100,42 @@ impl RoadNetwork {
         NodeId((self.nodes.len() - 1) as u32)
     }
 
+    /// Node for a road end: an existing node nearby, else a new node on the
+    /// nearest road within `radius` (splitting it into a junction), else a
+    /// fresh node at `p`.
+    fn end_node(&mut self, p: Vec2, radius: f32) -> NodeId {
+        if let Some(id) = self.node_near(p, SNAP_RADIUS) {
+            return id;
+        }
+        if let Some((sid, _t, q)) = self.nearest_on_network(p) {
+            if q.distance(p) <= radius {
+                if let Some(id) = self.node_near(q, SNAP_RADIUS) {
+                    return id;
+                }
+                self.nodes.push(Node { pos: q, segments: Vec::new() });
+                let id = NodeId((self.nodes.len() - 1) as u32);
+                self.split_segment(sid, id);
+                return id;
+            }
+        }
+        self.nodes.push(Node { pos: p, segments: Vec::new() });
+        NodeId((self.nodes.len() - 1) as u32)
+    }
+
+    /// Where a road end dropped at `p` would land: a node, a point on a road,
+    /// or `p` itself. Used by the tools to show the snap before committing.
+    pub fn snap_point(&self, p: Vec2, radius: f32) -> (Vec2, bool) {
+        if let Some(id) = self.node_near(p, radius) {
+            return (self.node(id).pos, true);
+        }
+        if let Some((sid, _, q)) = self.nearest_on_network(p) {
+            if q.distance(p) <= self.segment(sid).half_width() + radius {
+                return (q, true);
+            }
+        }
+        (p, false)
+    }
+
     fn find_link(&self, a: NodeId, b: NodeId) -> Option<SegmentId> {
         self.node(a).segments.iter().copied().find(|&sid| {
             let s = self.segment(sid);
@@ -130,11 +168,16 @@ impl RoadNetwork {
     /// intersections become real nodes. Returns the created segments.
     pub fn add_polyline(&mut self, points: &[Vec2], lanes_fwd: u8, lanes_bwd: u8) -> Vec<SegmentId> {
         let mut out = Vec::new();
-        for w in points.windows(2) {
+        let last = points.len().saturating_sub(1);
+        for (i, w) in points.windows(2).enumerate() {
             if w[0].distance(w[1]) < 0.5 {
                 continue;
             }
-            out.extend(self.add_segment(w[0], w[1], lanes_fwd, lanes_bwd));
+            // Road ends snap onto whatever road they were dropped near so a
+            // T-junction forms; interior points only split roads they cross.
+            let a = if i == 0 { self.end_node(w[0], END_SNAP_RADIUS) } else { self.get_or_add_node(w[0]) };
+            let b = if i + 1 == last { self.end_node(w[1], END_SNAP_RADIUS) } else { self.get_or_add_node(w[1]) };
+            out.extend(self.add_segment_between(a, b, lanes_fwd, lanes_bwd));
         }
         if !out.is_empty() {
             self.version += 1;
@@ -142,9 +185,7 @@ impl RoadNetwork {
         out
     }
 
-    fn add_segment(&mut self, pa: Vec2, pb: Vec2, lanes_fwd: u8, lanes_bwd: u8) -> Vec<SegmentId> {
-        let a = self.get_or_add_node(pa);
-        let b = self.get_or_add_node(pb);
+    fn add_segment_between(&mut self, a: NodeId, b: NodeId, lanes_fwd: u8, lanes_bwd: u8) -> Vec<SegmentId> {
         if a == b {
             return Vec::new();
         }
@@ -343,5 +384,32 @@ mod tests {
         let a = net.node_near(Vec2::new(-200.0, -200.0), 1.0).unwrap();
         let b = net.node_near(Vec2::new(200.0, 200.0), 1.0).unwrap();
         assert!(net.path(a, b).is_some());
+    }
+
+    #[test]
+    fn road_end_dropped_near_a_road_snaps_and_makes_a_junction() {
+        let mut net = RoadNetwork::default();
+        net.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+        // The end lands 6 m off the centreline, well inside the snap radius.
+        net.add_polyline(&[Vec2::new(50.0, 150.0), Vec2::new(50.0, 6.0)], 1, 1);
+        let junction = net.nodes.iter().position(|n| n.pos.distance(Vec2::new(50.0, 0.0)) < 0.5).expect("node on the road");
+        let alive = net.nodes[junction].segments.iter().filter(|&&s| net.segment(s).alive).count();
+        assert_eq!(alive, 3, "the long road is split at the snapped end");
+        assert_eq!(net.alive_segments().count(), 3);
+        // Far away ends stay free.
+        net.add_polyline(&[Vec2::new(-50.0, 150.0), Vec2::new(-50.0, 40.0)], 1, 1);
+        assert!(net.nodes.iter().any(|n| n.pos.distance(Vec2::new(-50.0, 40.0)) < 0.5));
+    }
+
+    #[test]
+    fn snap_point_prefers_nodes_then_roads() {
+        let mut net = RoadNetwork::default();
+        net.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 2, 2);
+        let (p, snapped) = net.snap_point(Vec2::new(30.0, 9.0), 8.0);
+        assert!(snapped && p.distance(Vec2::new(30.0, 0.0)) < 0.01);
+        let (p, snapped) = net.snap_point(Vec2::new(196.0, 5.0), 8.0);
+        assert!(snapped && p == Vec2::new(200.0, 0.0));
+        let (_, snapped) = net.snap_point(Vec2::new(30.0, 60.0), 8.0);
+        assert!(!snapped);
     }
 }
