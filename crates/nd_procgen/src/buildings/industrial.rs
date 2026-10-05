@@ -40,6 +40,21 @@ pub fn junkyard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let front = c.front_face(&poly);
     let front_idx = c.faces(&poly).iter().position(|x| x.a.distance(front.a) < 0.1);
     fence_poly(g, c, &poly, 2.4, front_idx, true);
+    // Hoardings of corrugated sheet just inside the fence on the back and
+    // sides, tagged on both faces.
+    for face in c.faces(&poly) {
+        if face.is_front || face.len < 7.0 || !rng.random_bool(0.7) {
+            continue;
+        }
+        let span = (face.len * rng.random_range(0.45..0.8)).min(24.0);
+        let slack = (face.len - span) * 0.5;
+        let t = rng.random_range(-slack..slack);
+        face.bx(g, f, Metal, t, 1.25, -0.22, Vec3::new(span, 2.5, 0.08), mul(pick(rng, &pal.metal_paint), 0.75));
+        let outer = Face::from_edge(face.at(t - span * 0.5, -0.18), face.at(t + span * 0.5, -0.18));
+        graffiti(g, c, rng, &outer, 0.1, 2.4, 1.2);
+        let inner = Face::from_edge(face.at(t + span * 0.5, -0.26), face.at(t - span * 0.5, -0.26));
+        graffiti(g, c, rng, &inner, 0.1, 2.4, 2.0);
+    }
 
     // Piles and wrecks.
     for _ in 0..rng.random_range(2..5) {
@@ -124,6 +139,7 @@ pub fn rusty_warehouse(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             continue;
         }
         grime(g, c, rng, &face, 1.2, h, 7.0);
+        graffiti(g, c, rng, &face, 1.2, 4.5, 1.2);
         // High clerestory windows, many boarded or broken.
         let mut spec = WindowSpec::from_ctx(c);
         spec.w = 2.2;

@@ -232,10 +232,11 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
                     fence(g, c, face.a, face.at(-face.len * 0.2, 0.0), 1.8, false);
                 } else {
                     face.bx(g, f, Concrete, 0.0, 0.9, -0.2, Vec3::new(face.len * 0.8, 1.8, 0.3), mul(pick(rng, &pal.concrete), 0.8));
-                    for _ in 0..rng.random_range(1..4) {
-                        let t = rng.random_range(-face.len * 0.35..face.len * 0.35);
-                        face.bx(g, f, Matte, t, rng.random_range(0.6..1.4), -0.03, Vec3::new(rng.random_range(1.0..3.0), rng.random_range(0.5..1.0), 0.03), pick(rng, &pal.awning_colors));
-                    }
+                    // Tagged on both sides: the inside faces the lot, the outside the neighbour.
+                    let inner = Face::from_edge(face.at(face.len * 0.4, -0.35), face.at(-face.len * 0.4, -0.35));
+                    graffiti(g, c, rng, &inner, 0.1, 1.7, 2.5);
+                    let outer = Face::from_edge(face.at(-face.len * 0.4, -0.05), face.at(face.len * 0.4, -0.05));
+                    graffiti(g, c, rng, &outer, 0.1, 1.7, 1.5);
                 }
             }
         }

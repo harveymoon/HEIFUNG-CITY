@@ -187,19 +187,24 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             railway(&mut g, pal, &run);
             continue;
         }
+        // Cheap streets are neglected: faded markings, potholes, cracked
+        // slabs and litter. The land value in the middle of the run decides.
+        let lv_mid = inp.land_value.at(point_along(pts, path_length(pts) * 0.5).0);
+        let grit = lv_mid < 0.35;
+        let fade = |c: [f32; 4]| if grit { [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5, c[3]] } else { c };
         // Carriageway and markings run the whole way; the junction pads overlap the ends.
         g.part(Asphalt).path_strip(pts, 0.0, hw * 2.0, ASPHALT_Y, asphalt_c);
-        g.part(Glow).path_strip(pts, hw - SHOULDER * 0.5, 0.18, MARK_Y, edge_c);
-        g.part(Glow).path_strip(pts, -(hw - SHOULDER * 0.5), 0.18, MARK_Y, edge_c);
+        g.part(Glow).path_strip(pts, hw - SHOULDER * 0.5, 0.18, MARK_Y, fade(edge_c));
+        g.part(Glow).path_strip(pts, -(hw - SHOULDER * 0.5), 0.18, MARK_Y, fade(edge_c));
         for k in 1..(run.lanes_fwd + run.lanes_bwd) as u32 {
             let off = (k as f32 - total * 0.5) * LANE_WIDTH;
             let is_centre = run.lanes_fwd > 0 && run.lanes_bwd > 0 && k == run.lanes_bwd as u32;
             if is_centre {
-                g.part(Glow).path_strip(pts, off + 0.18, 0.14, MARK_Y, centre_c);
-                g.part(Glow).path_strip(pts, off - 0.18, 0.14, MARK_Y, centre_c);
+                g.part(Glow).path_strip(pts, off + 0.18, 0.14, MARK_Y, fade(centre_c));
+                g.part(Glow).path_strip(pts, off - 0.18, 0.14, MARK_Y, fade(centre_c));
             } else {
                 let path = offset_path(pts, off);
-                dashes_along(g.part(Glow), &path, 0.16, MARK_Y, 3.0, 4.0, divider_c);
+                dashes_along(g.part(Glow), &path, 0.16, MARK_Y, 3.0, 4.0, fade(divider_c));
             }
         }
 
@@ -220,7 +225,6 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
 
         // Furniture by arc length along the pavement.
         let len = path_length(&walk);
-        let lv_mid = inp.land_value.at(point_along(&walk, len * 0.5).0);
         let lamp_off = hw + 0.95;
         let back_off = hw + SIDEWALK - 0.7;
         let at = |s: f32, side: f32, off: f32| {
@@ -301,6 +305,9 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
                 _ => {}
             }
             s += 22.0 + rng.random_range(0.0..20.0);
+        }
+        if grit {
+            street_grit(&mut g, pal, &walk, hw, len, &mut rng);
         }
         // Bollards where the pavement meets a junction.
         for (s_end, deg) in [(0.0, d_start), (len, d_end)] {
@@ -394,6 +401,74 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         }
     }
     g
+}
+
+/// Neglect on a cheap street: potholes as dark patches on the carriageway,
+/// cracks across the pavement slabs and litter blown up against the kerb.
+/// The strips themselves are untouched; this only lays thin things on top.
+fn street_grit(g: &mut Geometry, pal: &Palette, walk: &[Vec2], hw: f32, len: f32, rng: &mut impl Rng) {
+    let pothole = rgba(mul(pal.asphalt, 0.5));
+    let crack = rgba(mul(pal.paving, 0.35));
+    let at = |s: f32| {
+        let (p, d) = point_along(walk, s);
+        (p, d, Vec2::new(-d.y, d.x))
+    };
+    // Potholes.
+    let lane_room = hw - SHOULDER - 0.7;
+    if lane_room > 0.2 {
+        let mut s = rng.random_range(3.0..12.0);
+        while s < len - 2.0 {
+            let (p, _, right) = at(s);
+            let c = p + right * rng.random_range(-lane_room..lane_room);
+            let r = rng.random_range(0.3..0.8);
+            let rot = rng.random_range(0.0..std::f32::consts::TAU);
+            let squash = rng.random_range(0.6..1.0);
+            let poly: Vec<Vec2> = (0..7)
+                .map(|k| {
+                    let a = k as f32 / 7.0 * std::f32::consts::TAU;
+                    let (x, y) = (a.cos() * r, a.sin() * r * squash);
+                    c + Vec2::new(x * rot.cos() - y * rot.sin(), x * rot.sin() + y * rot.cos())
+                })
+                .collect();
+            g.part(Asphalt).ground_polygon(&poly, ASPHALT_Y + 0.006, pothole);
+            s += rng.random_range(9.0..22.0);
+        }
+    }
+    // Cracks in the pavement slabs, with a branch now and then.
+    let mut s = 2.0;
+    while s < len - 1.0 {
+        for side in [-1.0f32, 1.0] {
+            if !rng.random_bool(0.55) {
+                continue;
+            }
+            let (p, d, right) = at(s);
+            let yaw = d.y.atan2(d.x) + rng.random_range(-0.6..0.6);
+            let c = p + right * side * (hw + 0.3 + rng.random_range(0.4..SIDEWALK - 0.8));
+            let l = rng.random_range(0.6..2.2);
+            g.part(Matte).boxed(Vec3::new(c.x, KERB_H - 0.005, c.y), Vec3::new(l, 0.012, 0.05), yaw, crack);
+            if rng.random_bool(0.5) {
+                let b = c + Vec2::new(yaw.cos(), yaw.sin()) * l * 0.3;
+                g.part(Matte).boxed(Vec3::new(b.x, KERB_H - 0.005, b.y), Vec3::new(l * 0.5, 0.012, 0.05), yaw + rng.random_range(0.6..1.2), crack);
+            }
+        }
+        s += rng.random_range(4.0..9.0);
+    }
+    // Litter against the kerb: bags, cans, sheets of plastic, cardboard.
+    let mut s = 1.0;
+    while s < len - 1.0 {
+        let side = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
+        let (p, d, right) = at(s);
+        let c = p + right * side * (hw + rng.random_range(0.35..1.1));
+        let yaw = d.y.atan2(d.x) + rng.random_range(0.0..std::f32::consts::TAU);
+        let base = KERB_H - 0.01;
+        match rng.random_range(0..4) {
+            0 => g.part(Tarp).boxed(Vec3::new(c.x, base + 0.14, c.y), Vec3::new(0.4, 0.28, 0.32), yaw, rgba([0.07, 0.07, 0.08])),
+            1 => g.part(Matte).boxed(Vec3::new(c.x, base + 0.06, c.y), Vec3::new(0.1, 0.12, 0.1), yaw, rgba(mul(pal.paving, 1.4))),
+            2 => g.part(Tarp).boxed(Vec3::new(c.x, base + 0.01, c.y), Vec3::new(0.5, 0.02, 0.4), yaw, rgba(mul(pal.tarp_colors[rng.random_range(0..pal.tarp_colors.len().max(1))], 0.8))),
+            _ => g.part(Wood).boxed(Vec3::new(c.x, base + 0.025, c.y), Vec3::new(0.6, 0.05, 0.45), yaw, rgba(mul(pal.plywood, 0.75))),
+        }
+        s += rng.random_range(5.0..14.0);
+    }
 }
 
 trait CountAndList: Iterator<Item = SegmentId> + Sized {

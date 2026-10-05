@@ -16,7 +16,7 @@ use bevy::pbr::DistanceFog;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use nd_procgen::street::{generate_street, signal_posts, StreetInput};
-use nd_procgen::{build_terrain, bus_stops, generate_building, generate_texture, mip_chain, Extras, Geometry, MeshData, Surface, TerrainConfig};
+use nd_procgen::{build_terrain, bus_stops, generate_building, generate_texture, generate_vacant, mip_chain, scatter_nature, Extras, Geometry, MeshData, Surface, TerrainConfig};
 use nd_sim::roads::{LANE_WIDTH, SHOULDER};
 use nd_sim::traffic::LaneId;
 use nd_sim::{BuildingId, CarId, CitizenId, SimEvent, Vec2 as SVec2};
@@ -30,6 +30,8 @@ use crate::tools::Selection;
 struct SunTag;
 #[derive(Component)]
 struct TerrainTag;
+#[derive(Component, Clone)]
+struct ScatterTag;
 #[derive(Component)]
 struct RoadsTag;
 #[derive(Component, Clone)]
@@ -123,9 +125,11 @@ struct RenderState {
     roads_version: u64,
     lanes_version: u64,
     plan_version: u64,
-    lots_signature: (usize, usize, usize, u64),
+    lots_signature: (usize, usize, usize, u64, u64),
     /// Whether the lot meshes were built with the zoning outlines.
     lots_zoning_shown: bool,
+    /// Roads version and zone count the open-ground scatter was built for.
+    scatter_signature: Option<(u64, usize)>,
     buildings: HashMap<BuildingId, Vec<Entity>>,
     citizens: HashMap<CitizenId, Entity>,
     cars: HashMap<CarId, [Entity; 2]>,
@@ -152,7 +156,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RenderState>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_systems(Startup, setup).add_systems(
             Update,
-            (sync_terrain, sync_roads, sync_signals, sync_preview, sync_lots, sync_overlay, sync_paths, sync_haze, sync_transit, sync_buildings, sync_citizens, sync_cars, sync_trains, update_daylight)
+            (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_overlay, sync_paths, sync_haze, sync_transit, sync_buildings, sync_citizens, sync_cars, sync_trains, update_daylight)
                 .chain()
                 .in_set(SimSet::Sync),
         );
@@ -403,6 +407,38 @@ fn sync_terrain(
     commands.spawn((Mesh3d(meshes.add(to_mesh(&data, true))), MeshMaterial3d(mats.surface(Surface::Dirt)), Transform::IDENTITY, TerrainTag));
 }
 
+/// Rocks, scrub and dead trees on the open ground: everything at least 40 m
+/// from any road or track and outside every zone. Rebuilt when roads or
+/// zones change, since both push the scrub back.
+fn sync_scatter(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut state: ResMut<RenderState>,
+    existing: Query<Entity, With<ScatterTag>>,
+) {
+    let w = &sim.world;
+    let signature = (w.roads.version, w.zones.len());
+    if state.scatter_signature == Some(signature) && !assets.palette_changed && !sim.full_rebuild {
+        return;
+    }
+    state.scatter_signature = Some(signature);
+    despawn_all(&mut commands, &existing);
+    let zones: Vec<&[SVec2]> = w.zones.values().map(|z| z.polygon.as_slice()).collect();
+    let clear = |p: SVec2| {
+        if zones.iter().any(|z| nd_sim::zoning::point_in_polygon(p, z)) {
+            return false;
+        }
+        let near_street = w.roads.nearest_on_network(p).is_some_and(|(_, _, q)| q.distance(p) < 40.0);
+        let near_rail = w.roads.nearest_of_kind(p, nd_sim::roads::RoadKind::Rail).is_some_and(|(_, _, q)| q.distance(p) < 40.0);
+        !near_street && !near_rail
+    };
+    let geo = scatter_nature(&TerrainConfig::default(), &assets.palette, w.config.seed, &clear);
+    spawn_geometry(&mut commands, &mut meshes, &mats, &geo, ScatterTag);
+}
+
 fn sync_roads(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -536,7 +572,8 @@ fn sync_lots(
     }
     let w = &sim.world;
     let vacant = w.lots.values().filter(|l| l.building.is_none()).count();
-    let signature = (w.lots.len(), vacant, w.zones.len(), w.roads.version);
+    // Vacant lots follow the land value, so they resync when it is recomputed.
+    let signature = (w.lots.len(), vacant, w.zones.len(), w.roads.version, w.land_value.version);
     if signature == state.lots_signature && overlays.zoning == state.lots_zoning_shown && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
@@ -547,6 +584,8 @@ fn sync_lots(
     let outlines = overlays.zoning;
     let mut glow = MeshData::default();
     let mut fill = MeshData::default();
+    // Every vacant lot's dressing, merged into one mesh per surface.
+    let mut vacant_geo = Geometry::default();
     if outlines {
         for zone in w.zones.values() {
             let c = pal.zone_color(zone.land_use);
@@ -577,10 +616,15 @@ fn sync_lots(
                 outline.push(lot.polygon[0]);
                 glow.ground_strip(&outline, 0.22, 0.035, scale(c, 0.45));
             }
-            fill.ground_polygon(&lot.polygon, 0.02, [c[0] * 0.08 + pal.lot_vacant[0], c[1] * 0.08 + pal.lot_vacant[1], c[2] * 0.08 + pal.lot_vacant[2], 1.0]);
+            // Dormant, going wild or kept as a parklet, by what the land is worth.
+            let seed = w.config.seed ^ ((lot.center.x * 31.0 + lot.center.y * 17.0).abs() as u64);
+            vacant_geo.append(&generate_vacant(lot, w.land_value.at(lot.center), seed, pal));
         } else {
             fill.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel));
         }
+    }
+    if vacant_geo.triangle_count() > 0 {
+        spawn_geometry(&mut commands, &mut meshes, &mats, &vacant_geo, LotsTag);
     }
     if !fill.is_empty() {
         commands.spawn((Mesh3d(meshes.add(to_mesh(&fill, true))), MeshMaterial3d(mats.surface(Surface::Dirt)), Transform::IDENTITY, LotsTag));

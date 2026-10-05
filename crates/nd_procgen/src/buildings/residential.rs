@@ -174,6 +174,13 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let col = mul(unit.color, (0.75 + rng.random_range(0.0..0.3)) * (1.0 - 0.4 * c.wear));
         let yc = unit.y0 + unit.h * 0.5;
         container_unit(g, c, rng, unit.u, unit.v, unit.yaw, unit.len, unit.wid, unit.h, unit.y0, col);
+        // Tags along a long side of the lower units, where a spray can reaches.
+        if unit.level <= 1 && rng.random_bool(0.55) {
+            let s = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
+            let ga = unit.local_to_lot(s * unit.len * 0.5, s * unit.wid * 0.5);
+            let gb = unit.local_to_lot(-s * unit.len * 0.5, s * unit.wid * 0.5);
+            graffiti(g, c, rng, &Face::from_edge(ga, gb), unit.y0 + 0.15, unit.y0 + unit.h - 0.15, 1.6);
+        }
         let place = |g: &mut Geometry, s, lu: f32, y: f32, lv: f32, size: Vec3, color: [f32; 3]| {
             let p = unit.local_to_lot(lu, lv);
             f.bx_yaw(g, s, p.x, y, p.y, size, color, unit.yaw);
@@ -257,7 +264,7 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             su += 1.0;
         }
         if su < hi.x - 2.0 {
-            stair_zigzag(g, f, su, sv, top_level, 2.6, 3.4, steel);
+            stair_zigzag(g, c, su, sv, top_level, 2.6, 3.4, steel);
         }
     }
     // Utility pole and wires that reach real units.
@@ -350,6 +357,7 @@ pub fn tenement(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         windows(g, c, rng, face, 0.0, floors, fh, &spec);
         grime(g, c, rng, face, 0.0, h, 2.5);
+        graffiti(g, c, rng, face, 0.0, fh, 1.3);
         downpipes(g, c, rng, face, h);
     }
     let front = c.front_face(poly);
