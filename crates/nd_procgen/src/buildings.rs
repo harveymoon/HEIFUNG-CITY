@@ -57,11 +57,11 @@ impl Default for BuildingRules {
         let base = LandUseRules {
             floor_height: 3.2,
             inset: 1.5,
-            wall_colors: vec![[0.05, 0.05, 0.07], [0.07, 0.06, 0.09], [0.04, 0.045, 0.06]],
-            roof_color: [0.03, 0.035, 0.05],
+            wall_colors: vec![[0.22, 0.22, 0.27], [0.28, 0.25, 0.30], [0.18, 0.20, 0.26]],
+            roof_color: [0.12, 0.13, 0.17],
             window_spacing: 2.4,
             window_size: [1.2, 1.6],
-            lit_chance: 0.55,
+            lit_chance: 0.45,
             warm_window_chance: 0.6,
             sign_chance: 0.3,
             vertical_sign_chance: 0.1,
@@ -78,7 +78,7 @@ impl Default for BuildingRules {
                 warm_window_chance: 0.35,
                 sign_chance: 0.9,
                 vertical_sign_chance: 0.5,
-                wall_colors: vec![[0.06, 0.06, 0.08], [0.08, 0.07, 0.1]],
+                wall_colors: vec![[0.25, 0.26, 0.32], [0.30, 0.28, 0.36]],
                 ..base.clone()
             },
             industrial: LandUseRules {
@@ -91,7 +91,7 @@ impl Default for BuildingRules {
                 sign_chance: 0.5,
                 vertical_sign_chance: 0.0,
                 roof_antenna_chance: 0.9,
-                wall_colors: vec![[0.07, 0.06, 0.05], [0.05, 0.05, 0.05]],
+                wall_colors: vec![[0.30, 0.26, 0.22], [0.22, 0.22, 0.22]],
                 ..base.clone()
             },
             entertainment: LandUseRules {
@@ -100,7 +100,7 @@ impl Default for BuildingRules {
                 warm_window_chance: 0.2,
                 sign_chance: 1.0,
                 vertical_sign_chance: 0.8,
-                wall_colors: vec![[0.08, 0.03, 0.08], [0.05, 0.04, 0.09]],
+                wall_colors: vec![[0.30, 0.15, 0.30], [0.20, 0.18, 0.32]],
                 ..base.clone()
             },
             civic: LandUseRules {
@@ -112,7 +112,7 @@ impl Default for BuildingRules {
                 warm_window_chance: 0.1,
                 sign_chance: 0.6,
                 vertical_sign_chance: 0.0,
-                wall_colors: vec![[0.09, 0.09, 0.11], [0.1, 0.1, 0.12]],
+                wall_colors: vec![[0.42, 0.42, 0.47], [0.36, 0.37, 0.42]],
                 ..base.clone()
             },
             park: LandUseRules { inset: 2.0, sign_chance: 0.0, vertical_sign_chance: 0.0, ..base },
@@ -213,8 +213,8 @@ pub fn generate_building(
     if rng.random_bool(r.roof_antenna_chance as f64) {
         let ah = rng.random_range(3.0..9.0);
         let ac = frame.to_world(rng.random_range(-fw * 0.3..fw * 0.3), rng.random_range(-fd * 0.3..fd * 0.3));
-        g.solid.boxed(Vec3::new(ac.x, top_h + ah * 0.5, ac.y), Vec3::new(0.4, ah, 0.4), yaw, rgba([0.1, 0.1, 0.12]));
-        g.glow.boxed(Vec3::new(ac.x, top_h + ah + 0.3, ac.y), Vec3::new(0.5, 0.5, 0.5), yaw, [6.0, 0.4, 0.3, 1.0]);
+        g.solid.boxed(Vec3::new(ac.x, top_h + ah * 0.5, ac.y), Vec3::new(0.4, ah, 0.4), yaw, rgba([0.2, 0.2, 0.24]));
+        g.glow.boxed(Vec3::new(ac.x, top_h + ah + 0.3, ac.y), Vec3::new(0.5, 0.5, 0.5), yaw, [3.5, 0.3, 0.2, 1.0]);
     }
     let units = rng.random_range(0..3);
     for _ in 0..units {
@@ -238,7 +238,7 @@ pub fn generate_building(
         let vh = (floors as f32 * fh * rng.random_range(0.3..0.7)).max(4.0);
         let sc = frame.to_world(side * (fw * 0.5 + 0.6), -fd * 0.5 + 1.0);
         let y = (floors as f32 * fh * 0.55).max(vh * 0.5 + 2.0);
-        g.solid.boxed(Vec3::new(sc.x, y, sc.y), Vec3::new(1.4, vh, 0.5), yaw, rgba([0.04, 0.04, 0.05]));
+        g.solid.boxed(Vec3::new(sc.x, y, sc.y), Vec3::new(1.4, vh, 0.5), yaw, rgba([0.12, 0.12, 0.14]));
         g.glow.boxed(Vec3::new(sc.x, y, sc.y), Vec3::new(1.0, vh - 0.6, 0.62), yaw, rgba(col));
     }
 

@@ -5,6 +5,7 @@
 
 use bevy::asset::RenderAssetUsages;
 use bevy::light::GlobalAmbientLight;
+use bevy::pbr::DistanceFog;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use nd_procgen::{build_terrain, generate_building, MeshData, TerrainConfig};
@@ -15,6 +16,8 @@ use crate::assets::GameAssets;
 use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
 
+#[derive(Component)]
+struct SunTag;
 #[derive(Component)]
 struct TerrainTag;
 #[derive(Component)]
@@ -51,7 +54,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RenderState>()
             .add_systems(Startup, setup)
-            .add_systems(Update, (sync_terrain, sync_roads, sync_lots, sync_buildings, sync_citizens).chain().in_set(SimSet::Sync));
+            .add_systems(Update, (sync_terrain, sync_roads, sync_lots, sync_buildings, sync_citizens, update_daylight).chain().in_set(SimSet::Sync));
     }
 }
 
@@ -82,8 +85,9 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
 
     commands.insert_resource(GlobalAmbientLight { color: Color::linear_rgb(0.35, 0.45, 0.9), brightness: 70.0, ..default() });
     commands.spawn((
-        DirectionalLight { color: Color::linear_rgb(0.45, 0.55, 1.0), illuminance: 700.0, shadow_maps_enabled: false, ..default() },
+        DirectionalLight { color: Color::linear_rgb(0.45, 0.55, 1.0), illuminance: 700.0, shadow_maps_enabled: true, ..default() },
         Transform::from_xyz(300.0, 500.0, -200.0).looking_at(Vec3::ZERO, Vec3::Y),
+        SunTag,
     ));
 }
 
@@ -327,5 +331,66 @@ fn sync_citizens(
         if mat.0 != *wanted {
             mat.0 = wanted.clone();
         }
+    }
+}
+
+fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
+}
+
+fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Sun, ambient light, sky, fog and glow strength follow the sim clock.
+fn update_daylight(
+    sim: Res<Sim>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut ambient: ResMut<GlobalAmbientLight>,
+    mut clear: ResMut<ClearColor>,
+    mut sun: Query<(&mut DirectionalLight, &mut Transform), With<SunTag>>,
+    mut fog: Query<&mut DistanceFog>,
+) {
+    let pal = &assets.palette;
+    let t = sim.world.clock.day_fraction();
+    // Elevation peaks at noon (t = 0.5) and bottoms out at midnight.
+    let elev = ((t - 0.25) * std::f32::consts::TAU).sin();
+    let daylight = smoothstep(-0.12, 0.30, elev);
+    let low_sun = 1.0 - smoothstep(0.05, 0.45, elev.abs());
+    let dusk = (1.0 - smoothstep(0.0, 0.22, elev.abs())) * 0.8;
+
+    let sun_color = lerp3(lerp3(pal.sun_low, pal.sun, 1.0 - low_sun), pal.moon, 1.0 - daylight);
+    let illuminance = 500.0 + 9500.0 * daylight;
+    let azimuth = (t - 0.25) * std::f32::consts::TAU;
+    let sun_dir = if elev > 0.02 {
+        let r = (1.0 - elev * elev).sqrt();
+        Vec3::new(azimuth.cos() * r, elev, azimuth.sin() * r)
+    } else {
+        Vec3::new(0.4, 0.75, -0.5)
+    };
+    for (mut light, mut tf) in &mut sun {
+        light.color = Color::linear_rgb(sun_color[0], sun_color[1], sun_color[2]);
+        light.illuminance = illuminance;
+        tf.translation = sun_dir * 1000.0;
+        tf.look_at(Vec3::ZERO, Vec3::Y);
+    }
+
+    let sky = lerp3(lerp3(pal.sky, pal.sky_day, daylight), pal.sky_dusk, dusk * 0.6);
+    let fog_c = lerp3(lerp3(pal.fog, pal.fog_day, daylight), pal.sky_dusk, dusk * 0.5);
+    clear.0 = Color::linear_rgb(sky[0], sky[1], sky[2]);
+    for mut f in &mut fog {
+        f.color = Color::linear_rgb(fog_c[0], fog_c[1], fog_c[2]);
+    }
+    ambient.brightness = 70.0 + 700.0 * daylight;
+    let amb = lerp3([0.35, 0.45, 0.9], [0.8, 0.85, 1.0], daylight);
+    ambient.color = Color::linear_rgb(amb[0], amb[1], amb[2]);
+
+    // Neon fades during the day.
+    let glow_k = 1.0 - 0.7 * daylight;
+    if let Some(mut m) = materials.get_mut(&mats.glow) {
+        m.base_color = Color::linear_rgb(glow_k, glow_k, glow_k);
     }
 }

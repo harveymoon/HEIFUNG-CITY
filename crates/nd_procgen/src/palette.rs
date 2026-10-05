@@ -3,9 +3,17 @@ use serde::{Deserialize, Serialize};
 /// World colours. Loaded from `assets/palette.ron` and hot-reloaded. Values are
 /// linear RGB; glow colours are meant to exceed 1.0 so bloom picks them up.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Palette {
+    /// Night sky, fog and light. Day values below are blended in by the clock.
     pub sky: [f32; 3],
     pub fog: [f32; 3],
+    pub moon: [f32; 3],
+    pub sky_day: [f32; 3],
+    pub fog_day: [f32; 3],
+    pub sun: [f32; 3],
+    pub sun_low: [f32; 3],
+    pub sky_dusk: [f32; 3],
     pub ground: [f32; 3],
     pub ground_variation: [f32; 3],
     pub hills: [f32; 3],
@@ -27,13 +35,19 @@ impl Default for Palette {
         Self {
             sky: [0.012, 0.010, 0.030],
             fog: [0.03, 0.02, 0.07],
-            ground: [0.020, 0.018, 0.040],
-            ground_variation: [0.010, 0.012, 0.025],
-            hills: [0.015, 0.020, 0.045],
-            asphalt: [0.030, 0.030, 0.040],
-            lane_marker: [0.0, 3.5, 4.0],
-            curb: [0.08, 0.08, 0.11],
-            lot_vacant: [0.035, 0.030, 0.055],
+            moon: [0.45, 0.55, 1.0],
+            sky_day: [0.30, 0.42, 0.62],
+            fog_day: [0.38, 0.45, 0.58],
+            sun: [1.0, 0.95, 0.85],
+            sun_low: [1.0, 0.45, 0.25],
+            sky_dusk: [0.35, 0.10, 0.30],
+            ground: [0.035, 0.030, 0.060],
+            ground_variation: [0.015, 0.018, 0.030],
+            hills: [0.040, 0.050, 0.075],
+            asphalt: [0.018, 0.018, 0.026],
+            lane_marker: [0.0, 2.0, 2.4],
+            curb: [0.10, 0.10, 0.14],
+            lot_vacant: [0.045, 0.040, 0.070],
             zone_colors: [
                 [1.0, 0.0, 0.55],  // residential magenta
                 [1.0, 0.35, 0.0],  // commercial orange
@@ -43,15 +57,15 @@ impl Default for Palette {
                 [0.0, 1.0, 0.5],   // park green
             ],
             glow_colors: vec![
-                [0.0, 4.0, 5.0],
-                [5.0, 0.0, 2.5],
-                [5.0, 1.5, 0.0],
-                [2.5, 0.3, 5.0],
-                [0.0, 5.0, 2.0],
-                [5.0, 4.0, 0.0],
+                [0.0, 2.6, 3.2],
+                [3.2, 0.0, 1.6],
+                [3.2, 1.0, 0.0],
+                [1.6, 0.2, 3.2],
+                [0.0, 3.2, 1.3],
+                [3.2, 2.6, 0.0],
             ],
-            window_warm: [3.0, 2.0, 0.8],
-            window_cold: [0.8, 2.5, 3.5],
+            window_warm: [1.5, 1.05, 0.45],
+            window_cold: [0.45, 1.25, 1.7],
             citizen: [0.5, 3.0, 4.0],
             citizen_spotlight: [6.0, 1.0, 4.0],
             preview: [0.0, 2.5, 3.0],

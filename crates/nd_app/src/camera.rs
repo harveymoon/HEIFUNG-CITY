@@ -39,10 +39,10 @@ fn spawn_camera(mut commands: Commands) {
         Camera3d::default(),
         Hdr,
         Tonemapping::TonyMcMapface,
-        Bloom { intensity: 0.22, low_frequency_boost: 0.6, ..default() },
+        Bloom { intensity: 0.14, low_frequency_boost: 0.5, ..default() },
         DistanceFog {
             color: Color::linear_rgb(0.03, 0.02, 0.07),
-            falloff: FogFalloff::Linear { start: 700.0, end: 2600.0 },
+            falloff: FogFalloff::Linear { start: 900.0, end: 3200.0 },
             ..default()
         },
         OrbitCamera { target: Vec3::ZERO, yaw: 0.7, pitch: 0.85, distance: 520.0 },
@@ -66,14 +66,14 @@ fn control_camera(
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     if buttons.pressed(MouseButton::Right) {
         cam.yaw -= motion.delta.x * 0.005;
-        cam.pitch = (cam.pitch - motion.delta.y * 0.005).clamp(0.15, 1.5);
+        cam.pitch = (cam.pitch + motion.delta.y * 0.005).clamp(0.15, 1.5);
     } else if buttons.pressed(MouseButton::Middle) || (shift && buttons.pressed(MouseButton::Left)) {
         let (s, c) = cam.yaw.sin_cos();
         let right = Vec3::new(c, 0.0, -s);
         let forward = Vec3::new(s, 0.0, c);
         let k = cam.distance * 0.0016;
         cam.target -= right * motion.delta.x * k;
-        cam.target += forward * motion.delta.y * k;
+        cam.target -= forward * motion.delta.y * k;
     }
 
     if !flags.pointer_over_ui {
