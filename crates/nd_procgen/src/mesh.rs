@@ -10,6 +10,9 @@ pub struct MeshData {
     pub normals: Vec<[f32; 3]>,
     pub colors: Vec<[f32; 4]>,
     pub uvs: Vec<[f32; 2]>,
+    /// Tangent per vertex (xyz, handedness w): the texture `u` axis, so no
+    /// mikktspace pass is needed on the renderer side.
+    pub tangents: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
 }
 
@@ -38,6 +41,7 @@ impl MeshData {
         self.normals.extend_from_slice(&other.normals);
         self.colors.extend_from_slice(&other.colors);
         self.uvs.extend_from_slice(&other.uvs);
+        self.tangents.extend_from_slice(&other.tangents);
         self.indices.extend(other.indices.iter().map(|i| i + base));
     }
 
@@ -46,6 +50,7 @@ impl MeshData {
         self.normals.push(n.to_array());
         self.colors.push(color);
         self.uvs.push([p.dot(basis.0), p.dot(basis.1)]);
+        self.tangents.push([basis.0.x, basis.0.y, basis.0.z, 1.0]);
     }
 
     /// A quad from four corners in counter-clockwise order (seen from the

@@ -172,7 +172,11 @@ pub fn to_mesh(data: &MeshData, tangents: bool) -> Mesh {
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, data.uvs.clone())
         .with_inserted_indices(Indices::U32(data.indices.clone()));
     if tangents && !data.indices.is_empty() {
-        let _ = mesh.generate_tangents();
+        if data.tangents.len() == data.positions.len() {
+            mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, data.tangents.clone());
+        } else {
+            let _ = mesh.generate_tangents();
+        }
     }
     mesh
 }
