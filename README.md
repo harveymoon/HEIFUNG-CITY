@@ -16,7 +16,7 @@ links Bevy dynamically for quicker iteration.
 
 - **Screen**: the top bar holds the clock, pause and speed (a red percentage when the sim cannot keep
   up), the treasury and population, buttons that open the info windows (City, Economy, Market,
-  People, Power, Transit, Land, Saves, Help) and the Orbit/Walk camera switch. The **Dev** menu
+  People, Power, Transit, Land, Saves, Help, Dev) and the Orbit/Walk camera switch. The **Dev** window
   there seeds the demo district and shows frame figures. The bottom toolbar has one button per tool
   with its hotkey; above it a sub-pane shows only the active tool's settings and status, and the
   project controls sit beside the buttons while a project is pending. Windows drag anywhere and
@@ -41,7 +41,7 @@ links Bevy dynamically for quicker iteration.
 - Space pauses, `-`/`=` change speed. Camera: right-drag rotate, middle-drag or shift-drag pan,
   wheel zoom, WASD/QE, `Tab` walks the street (Esc returns). Tools by digit `1`–`8` (letters
   `I R Z B N T Y` also work), `O` toggles zoning outlines, `V` land value, `P` the pedestrian
-  network, `G` seeds a demo district on an empty map (Dev ▸ Seed in the top bar adds it to any
+  network, `G` seeds a demo district on an empty map (Seed in the Dev window adds it to any
   map), `F5`–`F12` jump the camera (`F5` station or yard, `F6` busiest junction, `F7`–`F9` tiers,
   `F11` plant, `F12` park), Backspace drops the last point or stop, Delete removes the hovered one,
   Esc clears points and the selection. Hotkeys stand down while a text field has focus.

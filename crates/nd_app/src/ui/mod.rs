@@ -212,7 +212,7 @@ fn toast(ctx: &egui::Context, flags: &mut UiFlags, above: f32) {
                 .fill(egui::Color32::from_rgba_unmultiplied(8, 10, 20, 235).gamma_multiply(alpha))
                 .stroke(egui::Stroke::new(1.0, GOLD.gamma_multiply(alpha)))
                 .show(ui, |ui| {
-                    ui.label(egui::RichText::new(text).color(egui::Color32::from_rgb(230, 225, 210).gamma_multiply(alpha)));
+                    ui.add(egui::Label::new(egui::RichText::new(text).color(IVORY.gamma_multiply(alpha))).wrap_mode(egui::TextWrapMode::Extend));
                 });
         });
 }
@@ -250,7 +250,10 @@ fn zone_color32(c: [f32; 3]) -> egui::Color32 {
 fn style(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
     visuals.panel_fill = egui::Color32::from_rgba_unmultiplied(8, 10, 20, 235);
-    visuals.window_fill = egui::Color32::from_rgba_unmultiplied(8, 10, 20, 235);
+    // Windows overlap each other, so they are opaque: egui blends in linear
+    // space here, where even a 2% leak shows the text of the window behind
+    // as legible grey. The bars sit over the map only and may stay sheer.
+    visuals.window_fill = egui::Color32::from_rgb(8, 10, 20);
     visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(95, 75, 45));
     visuals.selection.bg_fill = egui::Color32::from_rgb(120, 85, 30);
     visuals.hyperlink_color = GOLD;

@@ -4,15 +4,17 @@
 //! its own for them. Each window's body is one function below, ported from
 //! the sections of the old side panel.
 
+use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy_egui::egui;
 use nd_sim::economy::Flow;
 use nd_sim::{LandUse, Resource as Good};
 
 use super::tools::warn_if;
 use super::{help, hint, neon, people, saves, section, zone_color32, UiCtx, GOLD, WARN};
+use crate::camera::CameraMode;
 
 /// The windows the top bar can open, in toggle order. `Saves` and `Help`
-/// come after a separator in the bar.
+/// come after a separator in the bar, `Dev` after another.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Info {
     City,
@@ -24,10 +26,11 @@ pub enum Info {
     Land,
     Saves,
     Help,
+    Dev,
 }
 
 impl Info {
-    pub const ALL: [Info; 9] = [Info::City, Info::Economy, Info::Market, Info::People, Info::Power, Info::Transit, Info::Land, Info::Saves, Info::Help];
+    pub const ALL: [Info; 10] = [Info::City, Info::Economy, Info::Market, Info::People, Info::Power, Info::Transit, Info::Land, Info::Saves, Info::Help, Info::Dev];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -40,6 +43,7 @@ impl Info {
             Info::Land => "Land",
             Info::Saves => "Saves",
             Info::Help => "Help",
+            Info::Dev => "Dev",
         }
     }
 
@@ -48,6 +52,7 @@ impl Info {
         match self {
             Info::People => 420.0,
             Info::Help => 440.0,
+            Info::Dev => 300.0,
             _ => 380.0,
         }
     }
@@ -92,6 +97,7 @@ pub fn show_all(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
                 Info::Land => land(ui, p),
                 Info::Saves => saves::panel(ui, p.sim, p.tools, p.selection, p.plan, p.saves, p.flags),
                 Info::Help => help_window(ui),
+                Info::Dev => dev(ui, p),
             });
         if !open {
             info.set_open(ctx, false);
@@ -290,5 +296,32 @@ fn help_window(ui: &mut egui::Ui) {
     }
     section(ui, "SAVES");
     ui.label(egui::RichText::new(help::SAVES).small());
+    hint(ui, help::ASSETS_RELOAD);
+}
+
+/// Developer odds and ends: the demo seed, the mind backend, frame and mesh
+/// figures, asset errors. Out of the way of play but one click off. (A
+/// window rather than a menu: egui's menu popup would not open from a bar
+/// laid out on the background layer.)
+fn dev(ui: &mut egui::Ui, p: &mut UiCtx) {
+    if *p.mode == CameraMode::Orbit {
+        let has_buildings = !p.sim.world.buildings.is_empty();
+        let label = if has_buildings { "Seed demo district anyway" } else { "Seed demo district [G]" };
+        if ui.button(label).clicked() {
+            p.sim.seed_demo_district();
+            p.tools.status = "Demo district laid out around the centre".into();
+        }
+        if has_buildings {
+            hint(ui, help::SEED_EXISTING);
+        }
+        ui.separator();
+    }
+    hint(ui, &format!("minds: {} · backend: {}", nd_sim::MindProvider::name(&p.sim.minds), p.sim.minds.backend_name()));
+    let fps = p.diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
+    hint(ui, &format!("{fps:.0} fps · {} ticks/frame · effective speed {:.0}%", p.sim.ticks_last_frame, p.sim.effective_speed * 100.0));
+    hint(ui, &format!("{} building meshes · {}k triangles", p.stats.building_entities, (p.stats.street_triangles + p.stats.building_triangles) / 1000));
+    if let Some(err) = &p.assets.last_error {
+        ui.label(egui::RichText::new(err).small().color(egui::Color32::from_rgb(255, 60, 90)));
+    }
     hint(ui, help::ASSETS_RELOAD);
 }
