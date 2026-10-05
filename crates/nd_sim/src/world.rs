@@ -11,6 +11,8 @@ use crate::names;
 use crate::plan::{preview, Gesture, GestureId, Plan, PlanPreview, Project};
 use crate::roads::{NodeId, RoadNetwork, SegmentId};
 use crate::traffic::Traffic;
+use crate::citizens::TravelMode;
+use crate::roads::RoadKind;
 use crate::zoning::{generate_lots, LandUse, Lot, LotId, Zone, ZoneId};
 use crate::SimRng;
 use glam::Vec2;
@@ -25,7 +27,14 @@ pub struct WorldConfig {
     /// Half-size of the buildable square, in metres.
     pub half_extent: f32,
     /// Metres per tick (minute) when walking.
+    /// Metres walked per tick. Movement shows `traffic_seconds_per_tick` of
+    /// real motion per sim minute, so this is 1.4 m/s times that.
     pub walk_speed: f32,
+    #[serde(default = "default_bike_speed")]
+    pub bike_speed: f32,
+    /// Trips at least this long are cycled when the citizen owns a bike.
+    #[serde(default = "default_bike_threshold")]
+    pub bike_threshold: f32,
     /// Trips at least this long (straight line) are driven, shorter ones walked.
     pub drive_threshold: f32,
     /// Seconds of vehicle physics simulated per tick. Smaller than 60 keeps
@@ -38,12 +47,22 @@ pub struct WorldConfig {
     pub max_builds_per_interval: usize,
 }
 
+fn default_bike_speed() -> f32 {
+    4.5 * 1.5
+}
+
+fn default_bike_threshold() -> f32 {
+    40.0
+}
+
 impl Default for WorldConfig {
     fn default() -> Self {
         Self {
             seed: 7,
             half_extent: 900.0,
-            walk_speed: 2.4,
+            walk_speed: 1.4 * 1.5,
+            bike_speed: default_bike_speed(),
+            bike_threshold: default_bike_threshold(),
             drive_threshold: 60.0,
             traffic_seconds_per_tick: 1.5,
             traffic_substeps: 3,
@@ -240,7 +259,16 @@ impl World {
     /// Convenience for scripts and tests: build a road right away.
     pub fn add_road(&mut self, points: &[Vec2], lanes_fwd: u8, lanes_bwd: u8) -> GestureId {
         let had_project = self.project.take();
-        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd, lanes_bwd, curved: false });
+        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd, lanes_bwd, curved: false, kind: RoadKind::Street });
+        self.implement();
+        self.project = had_project;
+        id
+    }
+
+    /// Convenience for scripts and tests: a walking and cycling path right away.
+    pub fn add_path(&mut self, points: &[Vec2]) -> GestureId {
+        let had_project = self.project.take();
+        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Path });
         self.implement();
         self.project = had_project;
         id
@@ -263,9 +291,13 @@ impl World {
 
         // Roads.
         let mut roads = RoadNetwork::default();
-        for (_, points, fwd, bwd) in self.master.roads() {
-            let (fwd, bwd) = if fwd == 0 && bwd == 0 { (1, 1) } else { (fwd, bwd) };
-            roads.add_polyline(&points, fwd, bwd);
+        for (_, points, fwd, bwd, kind) in self.master.roads() {
+            let (fwd, bwd) = match kind {
+                RoadKind::Street if fwd == 0 && bwd == 0 => (1, 1),
+                RoadKind::Street => (fwd, bwd),
+                RoadKind::Path => (0, 0),
+            };
+            roads.add_polyline_kind(&points, fwd, bwd, kind);
         }
         roads.version = self.roads.version + 1;
         self.roads = roads;
@@ -857,9 +889,27 @@ impl World {
             (c.income, c.home)
         };
         let rent = home.and_then(|h| self.buildings.get(h)).map(|b| b.rent).unwrap_or(0.0);
+        let tick = self.clock.tick;
         let (stress, class, savings) = {
             let c = &mut self.citizens[cid];
             c.savings += income - rent - 20.0;
+            // Wheels: a bike is cheap and first; a car needs a middle income and
+            // savings; the poor sell a car they cannot keep.
+            if !c.owns_bike && c.savings > 60.0 && self.rng.random_bool(0.08) {
+                c.owns_bike = true;
+                c.savings -= 45.0;
+                c.remember(tick, "Bought a bike. The city just got smaller.");
+            }
+            if !c.owns_car && c.class() != Tier::Low && c.savings > 400.0 && self.rng.random_bool(0.04) {
+                c.owns_car = true;
+                c.savings -= 300.0;
+                c.remember(tick, "Bought a car.");
+            }
+            if c.owns_car && c.class() == Tier::Low && c.savings < -100.0 {
+                c.owns_car = false;
+                c.savings += 150.0;
+                c.remember(tick, "Sold the car. Couldn't afford to keep it.");
+            }
             let stressed = rent > income * 0.5;
             c.rent_stress_days = if stressed { c.rent_stress_days.saturating_add(1) } else { 0 };
             c.mood = (c.mood + if stressed { -0.05 } else { 0.01 }).clamp(0.0, 1.0);
@@ -1054,6 +1104,13 @@ impl World {
             let name = names::citizen_name(&mut self.rng);
             let tick = self.clock.tick;
             let pos = self.roads.node(entry).pos;
+            let (car_chance, bike_chance) = match Tier::for_income(income) {
+                Tier::Low => (0.12, 0.6),
+                Tier::Mid => (0.6, 0.35),
+                Tier::High => (0.92, 0.35),
+            };
+            let owns_car = self.rng.random_bool(car_chance);
+            let owns_bike = self.rng.random_bool(bike_chance);
             let mut citizen = Citizen {
                 name,
                 seed,
@@ -1061,6 +1118,11 @@ impl World {
                 work: None,
                 pos,
                 heading: 0.0,
+                prev_pos: pos,
+                prev_heading: 0.0,
+                mode: TravelMode::Walk,
+                owns_car,
+                owns_bike,
                 activity: Activity::Idle,
                 memories: Vec::new(),
                 thought: "New city. New me.".to_string(),
@@ -1120,8 +1182,11 @@ impl World {
             // Walking.
             let arrived = {
                 let c = &mut self.citizens[id];
+                c.prev_pos = c.pos;
+                c.prev_heading = c.heading;
+                let speed = if c.mode == TravelMode::Bike { self.config.bike_speed } else { self.config.walk_speed };
                 if let Activity::Traveling { path, idx, .. } = &mut c.activity {
-                    let mut remaining = self.config.walk_speed;
+                    let mut remaining = speed;
                     while remaining > 0.0 && *idx < path.len() {
                         let target = path[*idx];
                         let d = c.pos.distance(target);
@@ -1385,8 +1450,15 @@ impl World {
         let (to_seg, to_node) = (lot.front_segment, lot.access_node);
         let entrance = lot.entrance();
 
-        // Drive when it is far enough and a lane route exists.
-        if from_pt.distance(entrance) >= self.config.drive_threshold {
+        let dist = from_pt.distance(entrance);
+        let (owns_car, owns_bike) = {
+            let c = &self.citizens[id];
+            (c.owns_car, c.owns_bike)
+        };
+        // Park outings on a bike are a pleasure, not a commute: bike owners ride.
+        let park_ride = owns_bike && matches!(purpose, Purpose::Visit(LandUse::Park));
+        // Drive when the citizen has a car, it is far enough and a lane route exists.
+        if owns_car && !park_ride && dist >= self.config.drive_threshold {
             if let Some((route, s0, s1)) = self.traffic.net.find_route(from_seg, from_pt, to_seg, entrance) {
                 let exit_pos = self.leave_building(id);
                 let color = self.rng.random_range(0..8u8);
@@ -1407,19 +1479,23 @@ impl World {
             c.activity = Activity::Idle;
             return;
         };
+        let mode = if owns_bike && (park_ride || dist >= self.config.bike_threshold) { TravelMode::Bike } else { TravelMode::Walk };
         let exit_pos = self.leave_building(id);
-        let mut path = self.pavement_path(&nodes);
+        let mut path = self.route_path(&nodes, mode);
         path.push(entrance);
         let c = &mut self.citizens[id];
         if let Some(p) = exit_pos {
             c.pos = p;
+            c.prev_pos = p;
         }
+        c.mode = mode;
         c.activity = Activity::Traveling { to: Some(target), purpose, path, idx: 0 };
     }
 
-    /// Walking route along the right-hand pavement of each leg instead of
-    /// down the middle of the road.
-    fn pavement_path(&self, nodes: &[NodeId]) -> Vec<Vec2> {
+    /// Route along the right-hand side of each leg: walkers in the middle
+    /// of the pavement, bikes on the road shoulder; both down the middle of
+    /// a path (walkers keep right, bikes keep left).
+    fn route_path(&self, nodes: &[NodeId], mode: TravelMode) -> Vec<Vec2> {
         if nodes.len() < 2 {
             return nodes.iter().map(|&n| self.roads.node(n).pos).collect();
         }
@@ -1429,13 +1505,14 @@ impl World {
             let b = self.roads.node(w[1]).pos;
             let d = (b - a).normalize_or_zero();
             let right = Vec2::new(-d.y, d.x);
-            let hw = self
-                .roads
-                .neighbors(w[0])
-                .find(|(n, _)| *n == w[1])
-                .map(|(_, sid)| self.roads.segment(sid).half_width())
-                .unwrap_or(5.0);
-            let off = right * (hw + 1.0);
+            let seg = self.roads.neighbors(w[0]).find(|(n, _)| *n == w[1]).map(|(_, sid)| self.roads.segment(sid));
+            let offset = match (seg.map(|s| s.kind).unwrap_or(RoadKind::Street), mode) {
+                (RoadKind::Street, TravelMode::Walk) => seg.map_or(5.0, |s| s.half_width()) + crate::zoning::SIDEWALK * 0.55,
+                (RoadKind::Street, TravelMode::Bike) => seg.map_or(5.0, |s| s.half_width()) - crate::roads::SHOULDER * 0.5,
+                (RoadKind::Path, TravelMode::Walk) => 0.6,
+                (RoadKind::Path, TravelMode::Bike) => -0.5,
+            };
+            let off = right * offset;
             out.push(a + off);
             out.push(b + off);
         }
@@ -1447,14 +1524,29 @@ impl World {
         if self.roads.nodes.is_empty() {
             return;
         }
+        // Bike owners who are comfortable take joy rides to a park when there is one.
+        let (owns_bike, class) = {
+            let c = &self.citizens[id];
+            (c.owns_bike, c.class())
+        };
+        if owns_bike && (class == Tier::High || self.rng.random_bool(0.35)) {
+            let parks: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.land_use == LandUse::Park).map(|(id, _)| id).collect();
+            if let Some(&park) = parks.choose(&mut self.rng) {
+                self.travel_to(id, Some(park), Purpose::Visit(LandUse::Park));
+                return;
+            }
+        }
         let end = NodeId(self.rng.random_range(0..self.roads.nodes.len() as u32));
         let Some(nodes) = self.roads.path(start, end) else { return };
+        let mode = if owns_bike && self.rng.random_bool(0.5) { TravelMode::Bike } else { TravelMode::Walk };
         let exit_pos = self.leave_building(id);
-        let path = self.pavement_path(&nodes);
+        let path = self.route_path(&nodes, mode);
         let c = &mut self.citizens[id];
         if let Some(p) = exit_pos {
             c.pos = p;
+            c.prev_pos = p;
         }
+        c.mode = mode;
         c.activity = Activity::Traveling { to: None, purpose: Purpose::Wander, path, idx: 0 };
     }
 }
@@ -1526,12 +1618,12 @@ mod tests {
         w.build_on(lot);
         let building = w.lots[lot].building.unwrap();
 
-        let id = w.add_gesture(Gesture::Road { points: vec![Vec2::new(300.0, -300.0), Vec2::new(300.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false });
+        let id = w.add_gesture(Gesture::Road { points: vec![Vec2::new(300.0, -300.0), Vec2::new(300.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street });
         assert_eq!(w.preview().planned_roads.len(), 1);
         assert!(w.undo());
         assert_eq!(w.preview().planned_roads.len(), 0);
         assert!(w.redo());
-        w.set_gesture(id, Gesture::Road { points: vec![Vec2::new(320.0, -300.0), Vec2::new(320.0, 300.0)], lanes_fwd: 2, lanes_bwd: 2, curved: false }, true);
+        w.set_gesture(id, Gesture::Road { points: vec![Vec2::new(320.0, -300.0), Vec2::new(320.0, 300.0)], lanes_fwd: 2, lanes_bwd: 2, curved: false, kind: RoadKind::Street }, true);
         w.implement();
         assert!(!w.has_project());
         assert_eq!(w.master.gestures.len(), 3);
@@ -1604,5 +1696,36 @@ mod tests {
             }
         }
         assert!(saw_car, "commuters should have driven at some point");
+    }
+
+    #[test]
+    fn bike_owners_cycle_long_trips_and_motion_is_tracked() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
+        let mut minds = IdleMind;
+        for _ in 0..(6 * 60) {
+            w.tick(&mut minds);
+        }
+        let c = w.citizens.keys().next().expect("someone moved in");
+        {
+            let cz = &mut w.citizens[c];
+            cz.owns_car = false;
+            cz.owns_bike = true;
+            cz.inside = None;
+            cz.activity = Activity::Idle;
+            cz.pos = Vec2::new(-150.0, 10.0);
+        }
+        let far = w.buildings.iter().map(|(id, b)| (id, w.lots[b.lot].center)).max_by(|a, b| a.1.x.total_cmp(&b.1.x)).unwrap().0;
+        w.travel_to(c, Some(far), Purpose::Work);
+        assert_eq!(w.citizens[c].mode, TravelMode::Bike);
+        assert!(matches!(w.citizens[c].activity, Activity::Traveling { .. }));
+        let before = w.citizens[c].pos;
+        w.tick(&mut minds);
+        let cz = &w.citizens[c];
+        assert!((cz.prev_pos.distance(before)) < 0.01, "previous pose is kept for interpolation");
+        let moved = cz.pos.distance(before);
+        assert!((moved - w.config.bike_speed).abs() < 0.5, "cycled {moved} m in a tick");
     }
 }

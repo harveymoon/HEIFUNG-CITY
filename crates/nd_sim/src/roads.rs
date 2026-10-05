@@ -26,6 +26,18 @@ pub struct Node {
     pub segments: Vec<SegmentId>,
 }
 
+/// What a road carries. Streets have car lanes and pavements; paths are for
+/// people on foot and on bikes only.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RoadKind {
+    #[default]
+    Street,
+    Path,
+}
+
+/// Half the width of a path, in metres.
+pub const PATH_HALF_WIDTH: f32 = 1.6;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Segment {
     pub a: NodeId,
@@ -35,6 +47,8 @@ pub struct Segment {
     /// Lanes running b -> a.
     pub lanes_bwd: u8,
     pub alive: bool,
+    #[serde(default)]
+    pub kind: RoadKind,
 }
 
 impl Segment {
@@ -42,8 +56,15 @@ impl Segment {
         self.lanes_fwd + self.lanes_bwd
     }
 
+    pub fn is_street(&self) -> bool {
+        self.kind == RoadKind::Street
+    }
+
     pub fn half_width(&self) -> f32 {
-        self.lanes() as f32 * LANE_WIDTH * 0.5 + SHOULDER
+        match self.kind {
+            RoadKind::Street => self.lanes() as f32 * LANE_WIDTH * 0.5 + SHOULDER,
+            RoadKind::Path => PATH_HALF_WIDTH,
+        }
     }
 }
 
@@ -143,11 +164,16 @@ impl RoadNetwork {
         })
     }
 
-    fn link(&mut self, a: NodeId, b: NodeId, lanes_fwd: u8, lanes_bwd: u8) -> SegmentId {
+    /// Number of alive streets at a node (paths do not count).
+    pub fn street_degree(&self, n: NodeId) -> usize {
+        self.node(n).segments.iter().filter(|&&s| self.segment(s).alive && self.segment(s).is_street()).count()
+    }
+
+    fn link(&mut self, a: NodeId, b: NodeId, lanes_fwd: u8, lanes_bwd: u8, kind: RoadKind) -> SegmentId {
         if let Some(existing) = self.find_link(a, b) {
             return existing;
         }
-        self.segments.push(Segment { a, b, lanes_fwd, lanes_bwd, alive: true });
+        self.segments.push(Segment { a, b, lanes_fwd, lanes_bwd, alive: true, kind });
         let id = SegmentId((self.segments.len() - 1) as u32);
         self.nodes[a.0 as usize].segments.push(id);
         self.nodes[b.0 as usize].segments.push(id);
@@ -160,13 +186,18 @@ impl RoadNetwork {
         for n in [s.a, s.b] {
             self.nodes[n.0 as usize].segments.retain(|&x| x != sid);
         }
-        self.link(s.a, at, s.lanes_fwd, s.lanes_bwd);
-        self.link(at, s.b, s.lanes_fwd, s.lanes_bwd);
+        self.link(s.a, at, s.lanes_fwd, s.lanes_bwd, s.kind);
+        self.link(at, s.b, s.lanes_fwd, s.lanes_bwd, s.kind);
     }
 
     /// Add a road along `points`. Crossing existing segments splits them so
     /// intersections become real nodes. Returns the created segments.
     pub fn add_polyline(&mut self, points: &[Vec2], lanes_fwd: u8, lanes_bwd: u8) -> Vec<SegmentId> {
+        self.add_polyline_kind(points, lanes_fwd, lanes_bwd, RoadKind::Street)
+    }
+
+    /// Add a road or path along `points`.
+    pub fn add_polyline_kind(&mut self, points: &[Vec2], lanes_fwd: u8, lanes_bwd: u8, kind: RoadKind) -> Vec<SegmentId> {
         let mut out = Vec::new();
         let last = points.len().saturating_sub(1);
         for (i, w) in points.windows(2).enumerate() {
@@ -177,7 +208,7 @@ impl RoadNetwork {
             // T-junction forms; interior points only split roads they cross.
             let a = if i == 0 { self.end_node(w[0], END_SNAP_RADIUS) } else { self.get_or_add_node(w[0]) };
             let b = if i + 1 == last { self.end_node(w[1], END_SNAP_RADIUS) } else { self.get_or_add_node(w[1]) };
-            out.extend(self.add_segment_between(a, b, lanes_fwd, lanes_bwd));
+            out.extend(self.add_segment_between(a, b, lanes_fwd, lanes_bwd, kind));
         }
         if !out.is_empty() {
             self.version += 1;
@@ -185,7 +216,7 @@ impl RoadNetwork {
         out
     }
 
-    fn add_segment_between(&mut self, a: NodeId, b: NodeId, lanes_fwd: u8, lanes_bwd: u8) -> Vec<SegmentId> {
+    fn add_segment_between(&mut self, a: NodeId, b: NodeId, lanes_fwd: u8, lanes_bwd: u8, kind: RoadKind) -> Vec<SegmentId> {
         if a == b {
             return Vec::new();
         }
@@ -220,7 +251,7 @@ impl RoadNetwork {
         if *chain.last().unwrap() != b {
             chain.push(b);
         }
-        chain.windows(2).map(|w| self.link(w[0], w[1], lanes_fwd, lanes_bwd)).collect()
+        chain.windows(2).map(|w| self.link(w[0], w[1], lanes_fwd, lanes_bwd, kind)).collect()
     }
 
     /// Closest point on any alive segment.

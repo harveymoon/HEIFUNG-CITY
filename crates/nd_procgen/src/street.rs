@@ -14,7 +14,7 @@ use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::land_value::LandValue;
 use nd_sim::rng_for;
-use nd_sim::roads::{RoadNetwork, SegmentId, LANE_WIDTH, SHOULDER};
+use nd_sim::roads::{RoadKind, RoadNetwork, SegmentId, LANE_WIDTH, PATH_HALF_WIDTH, SHOULDER};
 use nd_sim::traffic::{LaneId, LaneKind, LaneNetwork};
 use nd_sim::zoning::SIDEWALK;
 use nd_sim::NodeId;
@@ -47,12 +47,18 @@ struct Run {
     first: SegmentId,
     lanes_fwd: u8,
     lanes_bwd: u8,
+    kind: RoadKind,
     start_node: NodeId,
     end_node: NodeId,
 }
 
+/// Roads of one kind at a node.
+fn degree_of(roads: &RoadNetwork, n: NodeId, kind: RoadKind) -> usize {
+    roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).kind == kind).count()
+}
+
 fn degree(roads: &RoadNetwork, n: NodeId) -> usize {
-    roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive).count()
+    roads.street_degree(n)
 }
 
 /// Oriented lanes of a segment when travelling from `from` to its far node.
@@ -68,10 +74,11 @@ fn oriented(roads: &RoadNetwork, sid: SegmentId, from: NodeId) -> (NodeId, u8, u
 /// The segment continuing past a bend node, if the node is a plain bend of
 /// the same road kind.
 fn continuation(roads: &RoadNetwork, node: NodeId, from_seg: SegmentId, lanes_fwd: u8, lanes_bwd: u8) -> Option<SegmentId> {
-    if degree(roads, node) != 2 {
+    let kind = roads.segment(from_seg).kind;
+    if degree_of(roads, node, kind) != 2 {
         return None;
     }
-    let next = roads.node(node).segments.iter().copied().find(|&s| s != from_seg && roads.segment(s).alive)?;
+    let next = roads.node(node).segments.iter().copied().find(|&s| s != from_seg && roads.segment(s).alive && roads.segment(s).kind == kind)?;
     let (_, f, b) = oriented(roads, next, node);
     (f == lanes_fwd && b == lanes_bwd).then_some(next)
 }
@@ -116,7 +123,7 @@ fn build_runs(roads: &RoadNetwork) -> Vec<Run> {
                 _ => break,
             }
         }
-        runs.push(Run { points, first, lanes_fwd: run_f, lanes_bwd: run_b, start_node, end_node: node });
+        runs.push(Run { points, first, lanes_fwd: run_f, lanes_bwd: run_b, kind: roads.segment(first).kind, start_node, end_node: node });
     }
     runs
 }
@@ -170,6 +177,10 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         let mut rng = rng_for(inp.seed ^ (run.first.0 as u64 * 7919), 3);
         let pts = &run.points;
         if path_length(pts) < 0.5 {
+            continue;
+        }
+        if run.kind == RoadKind::Path {
+            footpath(&mut g, pal, roads, &run, &mut rng);
             continue;
         }
         // Carriageway and markings run the whole way; the junction pads overlap the ends.
@@ -299,7 +310,25 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
 
     // Junction pads, crossings and stop lines (bends need none).
     for (i, node) in roads.nodes.iter().enumerate() {
-        let alive: Vec<_> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive).count_and_list();
+        let alive: Vec<_> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).count_and_list();
+        let paths_here = node.segments.iter().filter(|&&s| roads.segment(s).alive && !roads.segment(s).is_street()).count();
+        if alive.len() == 2 && paths_here > 0 {
+            // A path crossing a street: zebra across the carriageway.
+            let sid = alive[0];
+            let seg = roads.segment(sid);
+            let (a, b) = roads.segment_points(sid);
+            let d = (b - a).normalize_or_zero();
+            let right = Vec2::new(-d.y, d.x);
+            let hw = seg.half_width();
+            let c0 = node.pos - d * 1.3;
+            let c1 = node.pos + d * 1.3;
+            let mut s = -hw + SHOULDER + 0.4;
+            while s < hw - SHOULDER - 0.2 {
+                g.part(Glow).ground_strip(&[c0 + right * s, c1 + right * s], 0.5, MARK_Y + 0.002, rgba(mul(pal.lane_marker, 0.9)));
+                s += 1.0;
+            }
+            continue;
+        }
         if alive.is_empty() || alive.len() == 2 {
             continue;
         }
@@ -360,6 +389,55 @@ trait CountAndList: Iterator<Item = SegmentId> + Sized {
     }
 }
 impl<I: Iterator<Item = SegmentId>> CountAndList for I {}
+
+/// A path for walkers and bikes: paving with edge stones, low lamps, the odd
+/// bench and bin, and bollards where it meets a street so cars stay out.
+fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run: &Run, rng: &mut impl Rng) {
+    let pts = &run.points;
+    let w = PATH_HALF_WIDTH * 2.0;
+    g.part(Paving).path_strip(pts, 0.0, w, ASPHALT_Y + 0.02, rgba(mul(pal.paving, 1.05)));
+    g.part(Concrete).path_box(pts, PATH_HALF_WIDTH + 0.1, 0.2, 0.0, 0.08, rgba(pal.curb));
+    g.part(Concrete).path_box(pts, -(PATH_HALF_WIDTH + 0.1), 0.2, 0.0, 0.08, rgba(pal.curb));
+    // Centre line for bikes to keep to one side.
+    g.part(Glow).path_strip(pts, 0.0, 0.08, MARK_Y, rgba(mul(pal.lane_divider, 0.6)));
+    let len = path_length(pts);
+    let at = |s: f32, off: f32| {
+        let (p, d) = point_along(pts, s);
+        let right = Vec2::new(-d.y, d.x);
+        (p + right * off, d)
+    };
+    let mut s = 8.0;
+    let mut side = 1.0;
+    while s < len - 4.0 {
+        let (p, _) = at(s, side * (PATH_HALF_WIDTH + 0.6));
+        lamp_post_world(g, p, 4.0, mul(pal.lamp, 0.9));
+        s += 22.0;
+        side = -side;
+    }
+    let mut s = 14.0 + rng.random_range(0.0..10.0);
+    while s < len - 6.0 {
+        let side = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
+        let (p, d) = at(s, side * (PATH_HALF_WIDTH + 0.9));
+        if rng.random_bool(0.6) {
+            bench_world(g, p, d.y.atan2(d.x) + if side > 0.0 { std::f32::consts::PI } else { 0.0 }, pal.wood, CHARCOAL);
+        } else {
+            bin_world(g, p, mul(pal.metal_paint[0], 0.9));
+        }
+        s += 26.0 + rng.random_range(0.0..20.0);
+    }
+    // Bollards where the path meets a street.
+    for (s_end, node) in [(0.0, run.start_node), (len, run.end_node)] {
+        if roads.street_degree(node) == 0 {
+            continue;
+        }
+        let back = if s_end == 0.0 { 1.0 } else { -1.0 };
+        let (p, d) = point_along(pts, (s_end + back * 2.0).clamp(0.0, len));
+        let right = Vec2::new(-d.y, d.x);
+        for off in [-0.9f32, 0.0, 0.9] {
+            bollard_world(g, p + right * off, mul(pal.steel, 0.7));
+        }
+    }
+}
 
 /// Bus shelter: two posts, a roof, a back panel and a lit advert.
 fn shelter(g: &mut Geometry, pal: &Palette, p: Vec2, d: Vec2, out: Vec2) {

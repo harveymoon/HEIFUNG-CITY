@@ -4,6 +4,7 @@
 //! Everything in the world's road network, zones and lots is derived from the
 //! master plan, so implementing a project is "apply deltas, rebuild".
 
+use crate::roads::RoadKind;
 use crate::zoning::LandUse;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,9 @@ pub enum Gesture {
         /// Smooth spline through the control points instead of straight legs.
         #[serde(default)]
         curved: bool,
+        /// Street with car lanes, or a path for walkers and bikes.
+        #[serde(default)]
+        kind: RoadKind,
     },
     Zone { polygon: Vec<Vec2>, land_use: LandUse },
 }
@@ -110,9 +114,9 @@ pub struct Plan {
 
 impl Plan {
     /// Built polylines of every road (curves already sampled).
-    pub fn roads(&self) -> impl Iterator<Item = (GestureId, Vec<Vec2>, u8, u8)> + '_ {
+    pub fn roads(&self) -> impl Iterator<Item = (GestureId, Vec<Vec2>, u8, u8, RoadKind)> + '_ {
         self.gestures.iter().filter_map(|(id, g)| match g {
-            Gesture::Road { lanes_fwd, lanes_bwd, .. } => Some((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd)),
+            Gesture::Road { lanes_fwd, lanes_bwd, kind, .. } => Some((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd, *kind)),
             _ => None,
         })
     }
@@ -212,9 +216,9 @@ impl Project {
 #[derive(Clone, Debug, Default)]
 pub struct PlanPreview {
     /// Roads that will exist after implementing and differ from master.
-    pub planned_roads: Vec<(GestureId, Vec<Vec2>, u8, u8)>,
+    pub planned_roads: Vec<(GestureId, Vec<Vec2>, u8, u8, RoadKind)>,
     /// Master roads that will be removed or replaced.
-    pub removed_roads: Vec<(GestureId, Vec<Vec2>, u8, u8)>,
+    pub removed_roads: Vec<(GestureId, Vec<Vec2>, u8, u8, RoadKind)>,
     pub planned_zones: Vec<(GestureId, Vec<Vec2>, LandUse)>,
     pub removed_zones: Vec<(GestureId, Vec<Vec2>)>,
     /// Every control point of every road or zone in the effective plan.
@@ -233,7 +237,7 @@ pub fn preview(master: &Plan, project: &Project) -> PlanPreview {
             continue;
         }
         match g {
-            Gesture::Road { lanes_fwd, lanes_bwd, .. } => out.planned_roads.push((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd)),
+            Gesture::Road { lanes_fwd, lanes_bwd, kind, .. } => out.planned_roads.push((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd, *kind)),
             Gesture::Zone { polygon, land_use } => out.planned_zones.push((*id, polygon.clone(), *land_use)),
         }
     }
@@ -243,7 +247,7 @@ pub fn preview(master: &Plan, project: &Project) -> PlanPreview {
             continue;
         }
         match g {
-            Gesture::Road { lanes_fwd, lanes_bwd, .. } => out.removed_roads.push((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd)),
+            Gesture::Road { lanes_fwd, lanes_bwd, kind, .. } => out.removed_roads.push((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd, *kind)),
             Gesture::Zone { polygon, .. } => out.removed_zones.push((*id, polygon.clone())),
         }
     }

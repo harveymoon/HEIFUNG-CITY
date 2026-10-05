@@ -224,7 +224,7 @@ impl LaneNetwork {
             .nodes
             .iter()
             .map(|n| {
-                let alive: Vec<_> = n.segments.iter().filter(|&&s| roads.segment(s).alive).collect();
+                let alive: Vec<_> = n.segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).is_street()).collect();
                 let w = alive.iter().map(|&&s| roads.segment(s).half_width()).fold(0.0, f32::max);
                 match alive.len() {
                     0 => 0.0,
@@ -247,6 +247,9 @@ impl LaneNetwork {
             .collect();
 
         for (sid, seg) in roads.alive_segments() {
+            if !seg.is_street() {
+                continue;
+            }
             let (pa, pb) = roads.segment_points(sid);
             let len = pa.distance(pb);
             if len < 0.5 {
@@ -288,7 +291,7 @@ impl LaneNetwork {
         let road_lane_count = self.lanes.len();
         for (ni, node) in roads.nodes.iter().enumerate() {
             let nid = NodeId(ni as u32);
-            let approaches: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive).collect();
+            let approaches: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).collect();
             if approaches.is_empty() {
                 continue;
             }
@@ -732,5 +735,20 @@ mod tests {
         let bend_connectors: Vec<&Lane> = net2.lanes.iter().filter(|l| matches!(l.kind, LaneKind::Connector { node, .. } if roads2.node(node).segments.len() == 2)).collect();
         assert!(!bend_connectors.is_empty());
         assert!(bend_connectors.iter().all(|l| l.speed_limit >= ROAD_SPEED - 0.01), "bends do not slow traffic to junction speed");
+    }
+
+    #[test]
+    fn paths_carry_no_car_lanes_and_do_not_make_junctions() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+        let path = roads.add_polyline_kind(&[Vec2::new(0.0, 150.0), Vec2::new(0.0, 3.0)], 0, 0, crate::roads::RoadKind::Path);
+        let mut net = LaneNetwork::default();
+        net.rebuild(&roads);
+        assert!(path.iter().all(|s| !net.segment_lanes.contains_key(s)), "paths have no lanes");
+        let node = roads.nodes.iter().position(|n| n.pos.distance(Vec2::new(0.0, 0.0)) < 0.5).unwrap();
+        let inter = net.intersections.iter().find(|i| i.node.0 as usize == node).unwrap();
+        assert_eq!(inter.approaches, 2, "a path joining a street is not a junction for cars");
+        assert!(!inter.signalized);
+        assert!(roads.path(crate::roads::NodeId(node as u32), roads.segment(path[0]).a).is_some(), "walkers can use the path");
     }
 }

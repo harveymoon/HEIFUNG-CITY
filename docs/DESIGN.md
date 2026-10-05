@@ -194,7 +194,16 @@ trait MindProvider {
 - Performance: the sim gets a real-time budget per frame (12 ms) and drops its
   backlog instead of stalling the renderer; shadows use three cascades out to 650 m;
   the HUD shows fps, meshes and triangles.
-- Citizens: small figures that walk the pavements; cars and trucks have wheels.
+- Citizens: small figures that walk the pavements, or ride a bike mesh when cycling; positions
+  are interpolated between ticks from the previous pose so nothing jumps. Cars and trucks have wheels.
+- Mobility: one sim minute shows `traffic_seconds_per_tick` (1.5 s) of motion for everyone, so
+  walking is 1.4 m/s, cycling 4.5 m/s and driving the lane speed limit on the same clock. Citizens
+  own a car and/or a bike by class (poor: 12% car, 60% bike; middle: 60% / 35%; rich: 92% / 35%)
+  and buy or sell them as savings allow. Walkers use the middle of the pavement, bikes the road
+  shoulder, both the centre of a path; bike owners ride to parks for pleasure.
+- Paths (`RoadKind::Path`): 3.2 m ways with no car lanes, drawn as paving with edge stones,
+  low lamps, benches and bollards where they meet a street; they cut parcels but give no
+  frontage, and a path crossing a street mid-block gets a zebra.
 
 ## Roadmap
 

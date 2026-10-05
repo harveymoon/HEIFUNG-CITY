@@ -41,6 +41,13 @@ links Bevy dynamically for quicker iteration.
   move in when they can afford a home, take jobs, commute, and move or leave when rent bites.
   `V` toggles the land value overlay; the panel shows class counts, rents and the Gini index.
   `F7`/`F8`/`F9` jump the camera to a random low, middle or high tier building; `[` and `]` zoom.
+- **Paths**: the Path preset draws a 3 m way for walkers and bikes only. Cars never route over it, it
+  joins streets at junctions without signals, and where it crosses a street mid-block it gets a zebra.
+  Paths do not create building frontage; they are for parks and shortcuts.
+- **Getting around**: everyone walks at human pace, bike owners cycle trips over 40 m on the road
+  shoulder or down paths, car owners drive trips over 60 m. Ownership follows class: most poor
+  citizens have a bike and no car, the well-off have both and take bike rides to parks. Figures
+  move smoothly between ticks; one sim minute shows 1.5 seconds of motion, the same scale as traffic.
 - `Tab` walks the street: first-person on the pavement nearest the camera target, mouse to look,
   WASD to walk, Shift to run, Tab or Esc to return. Tools are off while walking.
 - Each land use has its own architecture per tier: junkyards and rusted sheds on cheap industrial

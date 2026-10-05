@@ -272,10 +272,14 @@ fn corridor(a: Vec2, b: Vec2, hw: f32) -> Polygon<f32> {
     to_geo(&[a + n, b + n, b - n, a - n])
 }
 
-/// Distance from a point to the nearest road centreline, with that segment.
+/// Distance from a point to the nearest street centreline, with that
+/// segment. Paths never count as frontage.
 fn nearest_road(roads: &RoadNetwork, p: Vec2) -> Option<(SegmentId, f32, f32)> {
     let mut best: Option<(SegmentId, f32, f32)> = None;
-    for (sid, _) in roads.alive_segments() {
+    for (sid, seg) in roads.alive_segments() {
+        if !seg.is_street() {
+            continue;
+        }
         let (a, b) = roads.segment_points(sid);
         let (t, q) = project_on_segment(p, a, b);
         let dist = p.distance(q);
@@ -546,7 +550,7 @@ pub fn generate_lots(
     let mut corridors: Option<MultiPolygon<f32>> = None;
     for (sid, seg) in roads.alive_segments() {
         let (a, b) = roads.segment_points(sid);
-        let hw = seg.half_width() + SIDEWALK;
+        let hw = if seg.is_street() { seg.half_width() + SIDEWALK } else { seg.half_width() + 1.0 };
         let lo = a.min(b) - Vec2::splat(hw * 2.0);
         let hi = a.max(b) + Vec2::splat(hw * 2.0);
         if hi.x < zlo.x || hi.y < zlo.y || lo.x > zhi.x || lo.y > zhi.y {
@@ -734,5 +738,21 @@ mod tests {
         assert!(!front.is_empty());
         assert!(front.iter().all(|l| l.center.y < 60.0), "only the first row fronts the road");
         assert!(lots.values().any(|l| l.landlocked && l.center.y > 60.0), "back land is landlocked");
+    }
+
+    #[test]
+    fn paths_cut_lots_but_give_no_frontage() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+        roads.add_polyline_kind(&[Vec2::new(-300.0, 80.0), Vec2::new(300.0, 80.0)], 0, 0, crate::roads::RoadKind::Path);
+        let zone = Zone {
+            polygon: vec![Vec2::new(-80.0, 10.0), Vec2::new(80.0, 10.0), Vec2::new(80.0, 150.0), Vec2::new(-80.0, 150.0)],
+            land_use: LandUse::Residential,
+        };
+        let mut lots = SlotMap::with_key();
+        generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[]);
+        assert!(lots.values().all(|l| (l.center.y - 80.0).abs() > 2.0), "no lot sits on the path");
+        assert!(lots.values().filter(|l| l.usable()).all(|l| l.center.y < 60.0), "land beyond the path is not usable from it");
+        assert!(lots.values().any(|l| l.center.y > 90.0 && l.landlocked));
     }
 }

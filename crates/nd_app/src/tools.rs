@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use nd_sim::roads::project_on_segment;
 use nd_sim::zoning::point_in_polygon;
 use nd_sim::plan::sample_curve;
+use nd_sim::roads::RoadKind;
 use nd_sim::{BuildingId, CitizenId, Gesture, GestureId, LandUse, Plan, Vec2 as SVec2};
 
 use crate::camera::{CameraMode, Cursor};
@@ -35,10 +36,20 @@ pub struct ToolState {
     pub curved: bool,
     /// Road picked with the Edit tool for upgrading.
     pub selected_gesture: Option<GestureId>,
+    /// Street or path.
+    pub kind: RoadKind,
 }
 
-/// Road presets in the spirit of Cities Skylines' road menu: (label, forward, backward).
-pub const ROAD_PRESETS: [(&str, u8, u8); 6] = [("Lane", 1, 1), ("Street", 2, 2), ("Avenue", 3, 3), ("One-way", 2, 0), ("Ramp", 1, 0), ("Highway", 4, 0)];
+/// Road presets in the spirit of Cities Skylines' road menu: (label, forward, backward, kind).
+pub const ROAD_PRESETS: [(&str, u8, u8, RoadKind); 7] = [
+    ("Path", 0, 0, RoadKind::Path),
+    ("Lane", 1, 1, RoadKind::Street),
+    ("Street", 2, 2, RoadKind::Street),
+    ("Avenue", 3, 3, RoadKind::Street),
+    ("One-way", 2, 0, RoadKind::Street),
+    ("Ramp", 1, 0, RoadKind::Street),
+    ("Highway", 4, 0, RoadKind::Street),
+];
 
 impl ToolState {
     /// Where a road end dropped at `p` would snap to.
@@ -61,6 +72,7 @@ impl Default for ToolState {
             hover_gesture: None,
             curved: false,
             selected_gesture: None,
+            kind: RoadKind::Street,
         }
     }
 }
@@ -106,8 +118,8 @@ fn nearest_gesture(plan: &Plan, p: SVec2) -> Option<(GestureId, usize)> {
     let mut best: Option<(f32, GestureId, usize)> = None;
     for (id, g) in &plan.gestures {
         match g {
-            Gesture::Road { points, lanes_fwd, lanes_bwd, curved } => {
-                let hw = (*lanes_fwd + *lanes_bwd) as f32 * nd_sim::roads::LANE_WIDTH * 0.5 + 3.0;
+            Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind } => {
+                let hw = if *kind == RoadKind::Path { 4.0 } else { (*lanes_fwd + *lanes_bwd) as f32 * nd_sim::roads::LANE_WIDTH * 0.5 + 3.0 };
                 let built = g.road_polyline();
                 for (i, w) in built.windows(2).enumerate() {
                     let (_, q) = project_on_segment(p, w[0], w[1]);
@@ -219,9 +231,11 @@ fn tool_input(
             }
             if finish {
                 if tools.points.len() >= 2 {
-                    let g = Gesture::Road { points: tools.points.clone(), lanes_fwd: tools.lanes_fwd, lanes_bwd: tools.lanes_bwd, curved: tools.curved && tools.points.len() >= 3 };
+                    let kind = tools.kind;
+                    let (lf, lb) = if kind == RoadKind::Path { (0, 0) } else { (tools.lanes_fwd, tools.lanes_bwd) };
+                    let g = Gesture::Road { points: tools.points.clone(), lanes_fwd: lf, lanes_bwd: lb, curved: tools.curved && tools.points.len() >= 3, kind };
                     sim.world.add_gesture(g);
-                    tools.status = format!("{} road added to project ({} points). Ctrl+Enter implements.", if tools.curved { "Curved" } else { "Straight" }, tools.points.len());
+                    tools.status = format!("{} {} added to project ({} points). Ctrl+Enter implements.", if tools.curved { "Curved" } else { "Straight" }, if kind == RoadKind::Path { "path" } else { "road" }, tools.points.len());
                 }
                 tools.points.clear();
             }

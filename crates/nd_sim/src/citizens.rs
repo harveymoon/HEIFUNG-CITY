@@ -64,6 +64,14 @@ impl Activity {
     }
 }
 
+/// How a citizen gets around on the current trip.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TravelMode {
+    #[default]
+    Walk,
+    Bike,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Memory {
     pub tick: u64,
@@ -80,6 +88,17 @@ pub struct Citizen {
     pub work: Option<BuildingId>,
     pub pos: Vec2,
     pub heading: f32,
+    /// Position and heading at the previous tick, for smooth rendering.
+    #[serde(default)]
+    pub prev_pos: Vec2,
+    #[serde(default)]
+    pub prev_heading: f32,
+    #[serde(default)]
+    pub mode: TravelMode,
+    #[serde(default)]
+    pub owns_car: bool,
+    #[serde(default)]
+    pub owns_bike: bool,
     pub activity: Activity,
     pub memories: Vec<Memory>,
     pub thought: String,

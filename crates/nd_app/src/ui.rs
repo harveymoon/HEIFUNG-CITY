@@ -11,6 +11,7 @@ use crate::render::{Lighting, Overlays, RenderStats};
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use crate::sim::{Sim, SPEEDS};
 use crate::tools::{Selection, Tool, ToolState, ROAD_PRESETS};
+use nd_sim::roads::RoadKind;
 use nd_sim::Gesture;
 
 const SAVE_PATH: &str = "saves/city.ron";
@@ -173,18 +174,25 @@ fn side_panel(
             match tools.tool {
                 Tool::Road => {
                     ui.horizontal_wrapped(|ui| {
-                        for (label, f, b) in ROAD_PRESETS {
-                            let on = tools.lanes_fwd == f && tools.lanes_bwd == b;
+                        for (label, f, b, k) in ROAD_PRESETS {
+                            let on = tools.kind == k && (k == RoadKind::Path || (tools.lanes_fwd == f && tools.lanes_bwd == b));
                             if ui.selectable_label(on, label).clicked() {
-                                tools.lanes_fwd = f;
-                                tools.lanes_bwd = b;
+                                tools.kind = k;
+                                if k == RoadKind::Street {
+                                    tools.lanes_fwd = f;
+                                    tools.lanes_bwd = b;
+                                }
                             }
                         }
                     });
-                    ui.add(egui::Slider::new(&mut tools.lanes_fwd, 0..=4).text("lanes forward"));
-                    ui.add(egui::Slider::new(&mut tools.lanes_bwd, 0..=4).text("lanes backward"));
-                    if tools.lanes_fwd + tools.lanes_bwd == 0 {
-                        tools.lanes_fwd = 1;
+                    if tools.kind == RoadKind::Path {
+                        ui.label(egui::RichText::new("Path: 3 m wide, for walkers and bikes only. Cars never use it; it joins streets at junctions and crosses them with a zebra.").small().weak());
+                    } else {
+                        ui.add(egui::Slider::new(&mut tools.lanes_fwd, 0..=4).text("lanes forward"));
+                        ui.add(egui::Slider::new(&mut tools.lanes_bwd, 0..=4).text("lanes backward"));
+                        if tools.lanes_fwd + tools.lanes_bwd == 0 {
+                            tools.lanes_fwd = 1;
+                        }
                     }
                     ui.horizontal(|ui| {
                         if ui.selectable_label(!tools.curved, "Straight").clicked() {
@@ -211,13 +219,15 @@ fn side_panel(
                     ui.label(egui::RichText::new("Click a road to select it for upgrading. Drag a control point to move it. Shift-click a road or zone edge to insert a point. Delete removes the hovered point.").small().weak());
                     if let Some(id) = tools.selected_gesture {
                         match sim.world.gesture(id) {
-                            Some(Gesture::Road { points, lanes_fwd, lanes_bwd, curved }) => {
+                            Some(Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind }) => {
                                 section(ui, "ROAD UPGRADE");
-                                let (mut f, mut b, mut c) = (lanes_fwd, lanes_bwd, curved);
+                                let (mut f, mut b, mut c, mut k) = (lanes_fwd, lanes_bwd, curved, kind);
                                 let mut changed = false;
                                 ui.horizontal_wrapped(|ui| {
-                                    for (label, pf, pb) in ROAD_PRESETS {
-                                        if ui.selectable_label(f == pf && b == pb, label).clicked() {
+                                    for (label, pf, pb, pk) in ROAD_PRESETS {
+                                        let on = k == pk && (pk == RoadKind::Path || (f == pf && b == pb));
+                                        if ui.selectable_label(on, label).clicked() {
+                                            k = pk;
                                             f = pf;
                                             b = pb;
                                             changed = true;
@@ -237,10 +247,10 @@ fn side_panel(
                                     }
                                 });
                                 if changed {
-                                    if f + b == 0 {
+                                    if f + b == 0 && k == RoadKind::Street {
                                         f = 1;
                                     }
-                                    sim.world.set_gesture(id, Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved: c }, true);
+                                    sim.world.set_gesture(id, Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved: c, kind: k }, true);
                                     tools.status = "Road changed. Ctrl+Enter implements; buildings along it stay.".into();
                                 }
                             }
@@ -345,7 +355,7 @@ fn side_panel(
                     let home = c.home.and_then(|h| sim.world.buildings.get(h)).map(|b| b.name.as_str()).unwrap_or("none");
                     let work = c.work.and_then(|h| sim.world.buildings.get(h)).map(|b| b.name.as_str()).unwrap_or("unemployed");
                     ui.label(format!("{}  ·  home: {home}  ·  work: {work}", c.activity.label()));
-                    ui.label(format!("mood {:.0}%  ·  arrived day {}", c.mood * 100.0, c.arrived_tick / 1440 + 1));
+                    ui.label(format!("mood {:.0}%  ·  arrived day {}  ·  {}{}{}", c.mood * 100.0, c.arrived_tick / 1440 + 1, if c.owns_car { "has a car" } else { "no car" }, if c.owns_bike { ", has a bike" } else { "" }, if c.mode == nd_sim::citizens::TravelMode::Bike && c.activity.is_traveling() { "  ·  cycling" } else { "" }));
                     ui.label(format!("satiety {:.0}%  ·  meals at home {:.0}{}", c.satiety * 100.0, c.groceries, if c.hungry_days > 0 { format!("  ·  hungry {}d", c.hungry_days) } else { String::new() }));
                     let rent = c.home.and_then(|h| sim.world.buildings.get(h)).map(|b| b.rent).unwrap_or(0.0);
                     ui.label(format!("{} class  ·  income {:.0}/day  ·  rent {:.0}/day  ·  savings {:.0}{}", c.class().label(), c.income, rent, c.savings, if c.rent_stress_days > 0 { format!("  ·  rent stress {}d", c.rent_stress_days) } else { String::new() }));

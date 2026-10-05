@@ -76,6 +76,7 @@ struct Materials {
     citizen_spotlight: Handle<StandardMaterial>,
     citizen_selected: Handle<StandardMaterial>,
     citizen_mesh: Handle<Mesh>,
+    bike_mesh: Handle<Mesh>,
     car_bodies: Vec<Handle<StandardMaterial>>,
     car_body_mesh: Handle<Mesh>,
     truck_body_mesh: Handle<Mesh>,
@@ -225,6 +226,19 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         m.boxed(Vec3::new(0.0, 1.62, 0.0), Vec3::new(0.25, 0.26, 0.25), 0.0, [1.3, 1.2, 1.1, 1.0]);
         meshes.add(to_mesh(&m, false))
     };
+    let bike_mesh = {
+        let mut m = MeshData::default();
+        // wheels, frame, seated rider
+        for x in [-0.55f32, 0.55] {
+            m.boxed(Vec3::new(x, 0.34, 0.0), Vec3::new(0.68, 0.68, 0.06), 0.0, [0.1, 0.1, 0.1, 1.0]);
+        }
+        m.boxed(Vec3::new(0.0, 0.6, 0.0), Vec3::new(1.1, 0.06, 0.06), 0.0, [0.6, 0.6, 0.65, 1.0]);
+        m.boxed(Vec3::new(0.35, 0.95, 0.0), Vec3::new(0.06, 0.6, 0.4), 0.0, [0.6, 0.6, 0.65, 1.0]);
+        m.boxed(Vec3::new(-0.15, 0.95, 0.0), Vec3::new(0.4, 0.5, 0.26), 0.0, [0.45, 0.45, 0.5, 1.0]);
+        m.boxed(Vec3::new(-0.2, 1.4, 0.0), Vec3::new(0.45, 0.55, 0.3), 0.0, [1.0, 1.0, 1.0, 1.0]);
+        m.boxed(Vec3::new(-0.15, 1.82, 0.0), Vec3::new(0.25, 0.26, 0.25), 0.0, [1.3, 1.2, 1.1, 1.0]);
+        meshes.add(to_mesh(&m, false))
+    };
     let car_bodies = pal
         .car_colors
         .iter()
@@ -274,6 +288,7 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         citizen_spotlight,
         citizen_selected,
         citizen_mesh,
+        bike_mesh,
         car_bodies,
         car_body_mesh,
         truck_body_mesh,
@@ -402,13 +417,13 @@ fn sync_preview(
     let pv = sim.world.preview();
     let pal = &assets.palette;
     let mut glow = MeshData::default();
-    for (_, pts, fwd, bwd) in &pv.planned_roads {
-        let w = (*fwd + *bwd) as f32 * LANE_WIDTH + SHOULDER * 2.0;
+    for (_, pts, fwd, bwd, kind) in &pv.planned_roads {
+        let w = if *kind == nd_sim::roads::RoadKind::Path { nd_sim::roads::PATH_HALF_WIDTH * 2.0 } else { (*fwd + *bwd) as f32 * LANE_WIDTH + SHOULDER * 2.0 };
         glow.ground_strip(pts, w, 0.22, scale(pal.preview, 0.35));
         glow.ground_strip(pts, 0.5, 0.23, rgba(pal.preview));
     }
-    for (_, pts, fwd, bwd) in &pv.removed_roads {
-        let w = (*fwd + *bwd) as f32 * LANE_WIDTH + SHOULDER * 2.0;
+    for (_, pts, fwd, bwd, kind) in &pv.removed_roads {
+        let w = if *kind == nd_sim::roads::RoadKind::Path { nd_sim::roads::PATH_HALF_WIDTH * 2.0 } else { (*fwd + *bwd) as f32 * LANE_WIDTH + SHOULDER * 2.0 };
         glow.ground_strip(pts, w, 0.22, scale(pal.preview_remove, 0.35));
         dashes(&mut glow, pts[0], *pts.last().unwrap(), 0.6, 0.23, 4.0, 3.0, rgba(pal.preview_remove));
     }
@@ -564,9 +579,10 @@ fn sync_citizens(
     mats: Res<Materials>,
     selection: Res<Selection>,
     mut state: ResMut<RenderState>,
-    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), With<CitizenTag>>,
+    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d), With<CitizenTag>>,
 ) {
     let w = &sim.world;
+    let f = sim.frac();
     for (id, _) in w.citizens.iter() {
         if !state.citizens.contains_key(&id) {
             let e = commands
@@ -583,11 +599,18 @@ fn sync_citizens(
     }
     for (id, &e) in state.citizens.iter() {
         let Some(c) = w.citizens.get(*id) else { continue };
-        let Ok((mut tf, mut vis, mut mat)) = q.get_mut(e) else { continue };
+        let Ok((mut tf, mut vis, mut mat, mut mesh)) = q.get_mut(e) else { continue };
         if c.is_visible() {
             *vis = Visibility::Visible;
-            tf.translation = Vec3::new(c.pos.x, 0.16, c.pos.y);
-            tf.rotation = Quat::from_rotation_y(-c.heading);
+            let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
+            let heading = lerp_angle(c.prev_heading, c.heading, f);
+            tf.translation = Vec3::new(pos.x, 0.16, pos.y);
+            tf.rotation = Quat::from_rotation_y(-heading);
+            let cycling = c.mode == nd_sim::citizens::TravelMode::Bike && c.activity.is_traveling();
+            let wanted_mesh = if cycling { &mats.bike_mesh } else { &mats.citizen_mesh };
+            if mesh.0 != *wanted_mesh {
+                mesh.0 = wanted_mesh.clone();
+            }
         } else {
             *vis = Visibility::Hidden;
         }
