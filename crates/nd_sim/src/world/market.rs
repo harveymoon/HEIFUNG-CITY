@@ -1,0 +1,526 @@
+//! The market: businesses' daily and hourly bookkeeping, restocking,
+//! the seller index, trucks, deliveries, imports and exports, and what
+//! citizens buy in shops.
+
+use super::*;
+
+impl World {
+    /// Businesses pay wages; those that cannot for several days close, and
+    /// closed buildings are demolished after a week so the lot can be reused.
+    pub(super) fn daily_businesses(&mut self) {
+        let ids: Vec<BuildingId> = self.buildings.keys().collect();
+        let mut demolish = Vec::new();
+        for bid in ids {
+            if self.buildings[bid].construction.is_some() {
+                continue;
+            }
+            let revenue = self.buildings[bid].business.as_ref().map_or(0.0, |z| z.revenue_today);
+            let (wage_bill, workers, publicly_funded, kind) = {
+                let b = &self.buildings[bid];
+                let Some(bz) = &b.business else { continue };
+                let publicly_funded = matches!(bz.kind, BusinessKind::Office) || b.land_use == LandUse::Civic;
+                (b.workers.len() as f32 * b.wage() * 0.6, b.workers.clone(), publicly_funded, bz.kind)
+            };
+            let b = &mut self.buildings[bid];
+            let bz = b.business.as_mut().unwrap();
+            if bz.closed {
+                // A shut business takes nothing and owes no tax; whatever
+                // the inspector still showed from its last day is cleared.
+                bz.revenue_today = 0.0;
+                bz.spend_today = 0.0;
+                bz.broke_days = bz.broke_days.saturating_add(1);
+                if bz.broke_days > 7 {
+                    demolish.push(bid);
+                }
+                continue;
+            }
+            self.economy.tax_today += revenue * 0.05;
+            self.economy.credit(Flow::BusinessTax, revenue * 0.05);
+            if !publicly_funded {
+                bz.money -= wage_bill;
+                bz.spend_today += wage_bill;
+            }
+            bz.revenue_today = 0.0;
+            bz.spend_today = 0.0;
+            if bz.money < -300.0 && !publicly_funded {
+                bz.broke_days = bz.broke_days.saturating_add(1);
+            } else {
+                bz.broke_days = 0;
+            }
+            if bz.broke_days >= 5 {
+                bz.closed = true;
+                bz.broke_days = 0;
+                b.condition = b.condition.min(0.25);
+                b.workers.clear();
+                let name = b.name.clone();
+                let _ = kind;
+                for w in workers {
+                    self.lay_off(w, Some(format!("{name} shut down. Out of a job.")));
+                    if let Some(c) = self.citizens.get_mut(w) {
+                        c.mood = (c.mood - 0.15).max(0.0);
+                    }
+                }
+                self.economy.market.closed_total += 1;
+                self.events.push(SimEvent::BusinessClosed(bid));
+                self.events.push(SimEvent::BuildingChanged(bid));
+            }
+        }
+        for bid in demolish {
+            self.demolish(bid);
+        }
+        self.economy.market.deals_today = 0;
+        self.economy.market.imports_today = 0.0;
+        self.economy.market.exports_today = 0.0;
+        self.economy.market.meals_sold_today = 0;
+    }
+
+    /// Every sim hour: hunger, eating at home, production, restocking through
+    /// the market or imports, exporting surplus, and market statistics.
+    pub(super) fn hourly_economy(&mut self) {
+        let tick = self.clock.tick;
+        self.weather.step(&mut self.rng);
+        self.allocate_power();
+        // Hunger and home cooking.
+        for c in self.citizens.values_mut() {
+            c.satiety = (c.satiety - 0.04).max(0.0);
+            let at_home = c.home.is_some() && c.inside == c.home;
+            if at_home && c.satiety < 0.6 && c.groceries >= 1.0 {
+                c.groceries -= 1.0;
+                c.satiety = (c.satiety + 0.45).min(1.0);
+            }
+        }
+        // Production.
+        let ids: Vec<BuildingId> = self.buildings.keys().collect();
+        for &bid in &ids {
+            let b = &mut self.buildings[bid];
+            if b.construction.is_some() {
+                continue;
+            }
+            let (jobs, staffing) = (b.jobs, b.staffing());
+            if let Some(bz) = b.business.as_mut() {
+                if !bz.closed {
+                    bz.produce(jobs, staffing * b.powered.clamp(0.0, 1.0));
+                }
+            }
+        }
+        // Walk-in trade: a share of the people who passed a shop this hour
+        // step inside and buy something off the shelf.
+        for &bid in &ids {
+            let (lot, jobs) = (self.buildings[bid].lot, self.buildings[bid].jobs);
+            let feet = self.lots.get(lot).map_or(0, |l| l.footfall_hour);
+            if feet == 0 {
+                continue;
+            }
+            let b = &mut self.buildings[bid];
+            if b.construction.is_some() {
+                continue;
+            }
+            let Some(bz) = b.business.as_mut() else { continue };
+            if bz.closed {
+                continue;
+            }
+            let output = match bz.kind {
+                BusinessKind::Grocery => Resource::Groceries,
+                BusinessKind::Bakery => Resource::BakedGoods,
+                BusinessKind::GadgetShop => Resource::Goods,
+                _ => continue,
+            };
+            let want = feet as f32 * 0.06;
+            let got = bz.take(output, want.min(bz.stock_of(output)));
+            if got > 0.0 {
+                let price = bz.sell_price(output, jobs);
+                bz.money += got * price;
+                bz.revenue_today += got * price;
+                bz.deals += 1;
+                self.economy.walk_in_sales_today += got * price;
+                if output == Resource::BakedGoods {
+                    self.economy.market.meals_sold_today += got as u32;
+                }
+            }
+        }
+        for l in self.lots.values_mut() {
+            l.footfall_hour = 0;
+        }
+        // Restocking: find the cheapest delivered supplier or import.
+        self.refresh_seller_index();
+        for &bid in &ids {
+            let (kind, jobs, needs, at, closed) = {
+                let b = &self.buildings[bid];
+                if b.construction.is_some() {
+                    continue;
+                }
+                let Some(bz) = &b.business else { continue };
+                let Some(lot) = self.lots.get(b.lot) else { continue };
+                let needs: Vec<(Resource, f32)> = bz
+                    .kind
+                    .recipe()
+                    .inputs
+                    .iter()
+                    .filter_map(|(r, _)| {
+                        let target = bz.target_input(*r, b.jobs);
+                        let have = bz.stock_of(*r) + bz.inbound_of(*r);
+                        if have < target * 0.5 { Some((*r, target - have)) } else { None }
+                    })
+                    .collect();
+                (bz.kind, b.jobs, needs, lot.center, bz.closed)
+            };
+            let _ = (kind, jobs);
+            if closed {
+                continue;
+            }
+            for (r, amount) in needs {
+                let amount = amount.min(400.0);
+                let seller = self.best_seller(r, at, amount, bid);
+                match seller {
+                    Some((seller_id, price)) => {
+                        let got = self.buildings[seller_id].business.as_mut().unwrap().take(r, amount);
+                        if got <= 0.0 {
+                            continue;
+                        }
+                        let cost = got * price;
+                        {
+                            let sb = self.buildings[seller_id].business.as_mut().unwrap();
+                            sb.money += cost;
+                            sb.revenue_today += cost;
+                            sb.deals += 1;
+                        }
+                        {
+                            let bb = self.buildings[bid].business.as_mut().unwrap();
+                            bb.money -= cost;
+                            bb.spend_today += cost;
+                        }
+                        self.economy.market.deals_today += 1;
+                        self.ship(seller_id, bid, r, got, cost);
+                    }
+                    None => {
+                        let cost = amount * r.base_price() * IMPORT_MARKUP;
+                        {
+                            let bb = self.buildings[bid].business.as_mut().unwrap();
+                            bb.money -= cost;
+                            bb.spend_today += cost;
+                        }
+                        self.economy.market.imports_today += cost;
+                        self.import(bid, r, amount, cost);
+                    }
+                }
+            }
+        }
+        // Exports: surplus outputs leave town at a discount, less of one
+        // when a freight yard ships them by rail.
+        let yards: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::FreightYard) && !b.is_derelict()).map(|(id, _)| id).collect();
+        let export_bonus = if yards.is_empty() { 1.0 } else { rail::RAIL_EXPORT_BONUS };
+        let mut shipped = 0.0f32;
+        for &bid in &ids {
+            let b = &mut self.buildings[bid];
+            if b.construction.is_some() {
+                continue;
+            }
+            let jobs = b.jobs;
+            let Some(bz) = b.business.as_mut() else { continue };
+            if bz.closed {
+                continue;
+            }
+            for (r, per) in bz.kind.recipe().outputs {
+                if r.is_retail() {
+                    continue;
+                }
+                let keep = per * jobs as f32 * crate::market::JOB_RATE * 48.0;
+                let have = bz.stock_of(*r);
+                if have > keep * 1.2 {
+                    let surplus = have - keep;
+                    bz.take(*r, surplus);
+                    let income = surplus * r.base_price() * EXPORT_DISCOUNT * export_bonus;
+                    shipped += surplus;
+                    bz.money += income;
+                    bz.revenue_today += income;
+                    self.economy.market.exports_today += income;
+                }
+            }
+        }
+        if let Some(&y) = yards.first() {
+            self.buildings[y].rail_outbound += shipped;
+        }
+        self.drain_stranded_rail_imports();
+        // Statistics.
+        let mut sums: std::collections::BTreeMap<Resource, (f32, u32, f32)> = std::collections::BTreeMap::new();
+        let mut businesses = 0;
+        for b in self.buildings.values() {
+            let Some(bz) = &b.business else { continue };
+            if bz.closed || b.construction.is_some() {
+                continue;
+            }
+            businesses += 1;
+            for r in Resource::ALL {
+                let e = sums.entry(r).or_insert((0.0, 0, 0.0));
+                e.2 += bz.stock_of(r);
+                if bz.sells(r) {
+                    e.0 += bz.sell_price(r, b.jobs);
+                    e.1 += 1;
+                }
+            }
+        }
+        let m = &mut self.economy.market;
+        m.businesses = businesses;
+        for (r, (sum, n, stock)) in sums {
+            m.avg_price.insert(r, if n > 0 { sum / n as f32 } else { r.base_price() });
+            m.stock.insert(r, stock);
+        }
+        m.hungry = self.citizens.values().filter(|c| c.satiety < 0.3).count() as u32;
+        let _ = tick;
+    }
+
+    /// Goods waiting at a yard no freight train will reach go by truck:
+    /// the yard lost its track or its street, or no freight has run for two
+    /// headways (the dispatcher is stuck, say at `MAX_TRAINS`).
+    pub(super) fn drain_stranded_rail_imports(&mut self) {
+        let tick = self.clock.tick;
+        let stuck = tick.saturating_sub(self.rail.last_freight_tick) >= rail::FREIGHT_HEADWAY * 2;
+        let yards: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| !b.rail_inbound.is_empty() && b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::FreightYard)).map(|(id, _)| id).collect();
+        for y in yards {
+            let works = self.buildings[y].rail.as_ref().is_some_and(|l| l.works()) && !self.buildings[y].is_derelict();
+            if works && !stuck {
+                continue;
+            }
+            let queued = std::mem::take(&mut self.buildings[y].rail_inbound);
+            for cargo in queued {
+                self.dispatch_truck(TruckOrigin::Building(y), cargo, 6);
+            }
+        }
+    }
+
+    /// Who sells what this hour, with their lot centres. Built once an hour
+    /// so each buyer's search is a walk over the sellers of one resource,
+    /// not over every building; prices and stock are still read live.
+    pub(super) fn refresh_seller_index(&mut self) {
+        let hour = self.clock.tick / 60;
+        if self.seller_index_hour == Some(hour) {
+            return;
+        }
+        self.seller_index_hour = Some(hour);
+        self.seller_index.clear();
+        for (id, b) in self.buildings.iter() {
+            if b.construction.is_some() {
+                continue;
+            }
+            let Some(bz) = &b.business else { continue };
+            if bz.closed {
+                continue;
+            }
+            let Some(lot) = self.lots.get(b.lot) else { continue };
+            for (r, _) in bz.kind.recipe().outputs {
+                self.seller_index.entry(*r).or_default().push((id, lot.center));
+            }
+        }
+    }
+
+    /// Best local seller of `r` for a buyer at `at` (other than `buyer`):
+    /// cheapest delivered price among those holding at least half the lot.
+    pub(super) fn best_seller(&mut self, r: Resource, at: Vec2, amount: f32, buyer: BuildingId) -> Option<(BuildingId, f32)> {
+        self.refresh_seller_index();
+        let mut best: Option<(BuildingId, f32)> = None;
+        for &(id, pos) in self.seller_index.get(&r).map(|v| v.as_slice()).unwrap_or(&[]) {
+            if id == buyer {
+                continue;
+            }
+            let Some(b) = self.buildings.get(id) else { continue };
+            let Some(bz) = &b.business else { continue };
+            if bz.closed || b.construction.is_some() || bz.stock_of(r) < amount * 0.5 {
+                continue;
+            }
+            let price = bz.sell_price(r, b.jobs) + HAULAGE * pos.distance(at) * r.base_price();
+            if best.map_or(true, |(_, p)| price < p) {
+                best = Some((id, price));
+            }
+        }
+        best
+    }
+
+    /// Send a truck from one business to another; deliver instantly when no
+    /// road route exists.
+    pub(super) fn ship(&mut self, from: BuildingId, to: BuildingId, resource: Resource, amount: f32, price: f32) {
+        let cargo = Cargo { from, to, resource, amount, price };
+        self.note_inbound(to, resource, amount);
+        self.dispatch_truck(TruckOrigin::Building(from), cargo, 7);
+    }
+
+    pub(super) fn truck_count(&self) -> usize {
+        self.traffic.cars.values().filter(|c| c.cargo.is_some()).count()
+    }
+
+    /// The buyer counts a load as on its way so it does not reorder.
+    pub(super) fn note_inbound(&mut self, to: BuildingId, resource: Resource, amount: f32) {
+        if let Some(bz) = self.buildings.get_mut(to).and_then(|b| b.business.as_mut()) {
+            *bz.inbound.entry(resource).or_insert(0.0) += amount;
+        }
+    }
+
+    /// Import from outside: by rail through the nearest working yard when
+    /// there is one, else a truck from the city edge.
+    pub(super) fn import(&mut self, to: BuildingId, resource: Resource, amount: f32, price: f32) {
+        let cargo = Cargo { from: to, to, resource, amount, price };
+        self.note_inbound(to, resource, amount);
+        // With a freight yard in town the goods come by rail, cheaper and
+        // later: the order waits at the yard for the next train. Building
+        // sites are the exception: a quarter of the work waiting hours for
+        // each load would quadruple build times, so their parts come by
+        // the developer's own trucks.
+        let site = self.buildings.get(to).is_some_and(|b| b.construction.is_some());
+        if !site {
+            if let Some(yard) = self.nearest_yard(to) {
+                let refund = price * (1.0 - rail::RAIL_IMPORT_FACTOR);
+                if let Some(bz) = self.buildings.get_mut(to).and_then(|b| b.business.as_mut()) {
+                    bz.money += refund;
+                    bz.spend_today -= refund;
+                }
+                self.economy.market.imports_today -= refund;
+                self.buildings[yard].rail_inbound.push(Cargo { from: yard, to, resource, amount, price: price * rail::RAIL_IMPORT_FACTOR });
+                return;
+            }
+        }
+        self.dispatch_truck(TruckOrigin::CityEdge, cargo, 6);
+    }
+
+    /// Where a truck can pull up at a building: its street, or for a lot
+    /// that lines a footpath, the nearest street it was given.
+    pub(super) fn truck_stop(&self, b: BuildingId) -> Option<(SegmentId, Vec2)> {
+        let lot = self.building_lot(b)?;
+        Some(match lot.car_segment {
+            Some(s) => (s, lot.car_point),
+            None => (lot.front_segment, lot.entrance()),
+        })
+    }
+
+    /// Put a truck on the road with `cargo`, from a building or the city
+    /// edge. Delivered on the spot when there is no route or the road is
+    /// full of trucks already: the buyer counts the load as inbound.
+    pub(super) fn dispatch_truck(&mut self, origin: TruckOrigin, cargo: Cargo, color: u8) {
+        if self.truck_count() >= crate::market::MAX_TRUCKS {
+            self.deliver(cargo);
+            return;
+        }
+        let route = (|| {
+            let (from_seg, from_pt) = match origin {
+                TruckOrigin::Building(b) => self.truck_stop(b)?,
+                TruckOrigin::CityEdge => {
+                    let entry = self.entry_node_const()?;
+                    let node = self.roads.node(entry);
+                    let seg = *node.segments.iter().find(|&&s| self.roads.segment(s).alive)?;
+                    (seg, node.pos)
+                }
+            };
+            let (to_seg, to_pt) = self.truck_stop(cargo.to)?;
+            self.traffic.net.find_route(from_seg, from_pt, to_seg, to_pt)
+        })();
+        match route {
+            Some((route, s0, s1)) => {
+                self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, color);
+            }
+            None => self.deliver(cargo),
+        }
+    }
+
+    pub(super) fn entry_node_const(&self) -> Option<NodeId> {
+        let leaves = self.roads.leaf_nodes();
+        let max = leaves.iter().map(|&n| self.roads.node(n).pos.length()).fold(0.0, f32::max);
+        leaves.into_iter().find(|&n| self.roads.node(n).pos.length() >= max * 0.6)
+    }
+
+    pub(super) fn deliver(&mut self, cargo: Cargo) {
+        let Some(b) = self.buildings.get_mut(cargo.to) else { return };
+        if let Some(bz) = b.business.as_mut() {
+            let left = (bz.inbound_of(cargo.resource) - cargo.amount).max(0.0);
+            bz.inbound.insert(cargo.resource, left);
+        }
+        // Materials for a building site go onto the site, not the shelves.
+        if let Some(c) = b.construction.as_mut() {
+            c.deliveries = c.deliveries.saturating_add(1);
+            c.ordered = false;
+            return;
+        }
+        if let Some(bz) = b.business.as_mut() {
+            bz.add(cargo.resource, cargo.amount);
+        }
+    }
+
+    /// Any business currently stocking a retail resource.
+    pub(super) fn retail_available(&self, r: Resource) -> bool {
+        self.buildings.values().any(|b| b.construction.is_none() && b.business.as_ref().map_or(false, |bz| !bz.closed && bz.sells(r) && bz.stock_of(r) >= 1.0))
+    }
+
+    /// Nearest well-stocked shop for a resource, cheapest within reach.
+    pub(super) fn best_shop(&self, r: Resource, at: Vec2) -> Option<BuildingId> {
+        let mut best: Option<(f32, BuildingId)> = None;
+        for (id, b) in self.buildings.iter() {
+            let Some(bz) = &b.business else { continue };
+            if b.construction.is_some() || bz.closed || !bz.sells(r) || bz.stock_of(r) < 1.0 {
+                continue;
+            }
+            let Some(lot) = self.lots.get(b.lot) else { continue };
+            let score = bz.sell_price(r, b.jobs) + lot.center.distance(at) * 0.02;
+            if best.map_or(true, |(s, _)| score < s) {
+                best = Some((score, id));
+            }
+        }
+        best.map(|(_, id)| id)
+    }
+
+    /// A citizen buys at a shop they have reached.
+    pub(super) fn buy(&mut self, cid: CitizenId, shop: BuildingId, r: Resource) {
+        let tick = self.clock.tick;
+        let Some(b) = self.buildings.get_mut(shop) else { return };
+        let jobs = b.jobs;
+        let name = b.name.clone();
+        let Some(bz) = b.business.as_mut() else { return };
+        let want: f32 = match r {
+            Resource::Groceries => 3.0,
+            _ => 1.0,
+        };
+        let price = bz.sell_price(r, jobs);
+        let c = &mut self.citizens[cid];
+        // Buy what the overdraft allows, whole units; nothing if not even one.
+        let affordable = ((c.savings - OVERDRAFT) / price).floor();
+        if affordable < 1.0 {
+            c.remember(tick, format!("Couldn't afford anything at {name}."));
+            c.thought = "Skint. Can't even afford the basics.".to_string();
+            c.mood = (c.mood - 0.06).max(0.0);
+            return;
+        }
+        let got = bz.take(r, want.min(affordable));
+        if got <= 0.0 {
+            c.remember(tick, format!("Shelves were empty at {name}."));
+            c.mood = (c.mood - 0.05).max(0.0);
+            return;
+        }
+        let cost = got * price;
+        c.savings -= cost;
+        bz.money += cost;
+        bz.revenue_today += cost;
+        self.economy.market.deals_today += 1;
+        match r {
+            Resource::Groceries => {
+                c.groceries += got;
+                self.economy.market.meals_sold_today += got as u32;
+            }
+            Resource::BakedGoods => {
+                c.satiety = (c.satiety + 0.35 * got).min(1.0);
+                self.economy.market.meals_sold_today += 1;
+                if self.rng.random_bool(0.3) {
+                    c.remember(tick, format!("Grabbed a bite at {name}."));
+                }
+            }
+            Resource::Goods => {
+                c.mood = (c.mood + 0.12).min(1.0);
+                c.remember(tick, format!("Treated myself to something new at {name}."));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Where a truck sets off from.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum TruckOrigin {
+    Building(BuildingId),
+    /// The far end of a road leaving the map: an import.
+    CityEdge,
+}
