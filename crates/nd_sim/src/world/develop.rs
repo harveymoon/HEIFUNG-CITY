@@ -176,6 +176,11 @@ impl World {
                     RailFacility::FreightYard => b.splat(c, 160.0, -0.12),
                 }
             }
+            // Services reassure, landmarks draw (`services::ServiceKind::land_value`).
+            if let Some(s) = bld.service {
+                let (r, w) = s.kind.land_value(s.tier);
+                b.splat(c, r, w);
+            }
         }
     }
 
@@ -236,7 +241,7 @@ impl World {
                 let b = &self.buildings[bid];
                 let full = if b.land_use == LandUse::Residential { b.homes > 0 && b.free_homes() == 0 } else { b.jobs > 0 && b.free_jobs() == 0 };
                 let value = self.lots.get(b.lot).map(|l| self.land_value.at(l.center)).unwrap_or(b.land_value);
-                let special = b.is_parking() || b.plant.is_some() || b.depot || b.rail.is_some();
+                let special = b.is_parking() || b.is_special();
                 (b.land_use, b.tier, value, b.is_derelict(), full, special)
             };
             let decay = match tier {
@@ -361,7 +366,7 @@ impl World {
 
     pub fn build_on(&mut self, lot_id: LotId) {
         let Some(lot) = self.lots.get(lot_id) else { return };
-        if lot.landlocked || lot.building.is_some() || self.under_facility(lot.center) {
+        if lot.landlocked || lot.building.is_some() || self.under_facility(lot.center) || self.services.is_rubble(lot_id) {
             return;
         }
         let lu = self.lots[lot_id].land_use;

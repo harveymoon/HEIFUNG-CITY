@@ -206,6 +206,10 @@ pub struct Building {
     /// Still being built: no homes, no permanent jobs, a site crew instead.
     #[serde(default)]
     pub construction: Option<Construction>,
+    /// A police, fire, health, school or dispatch building, or an
+    /// attraction, placed by the player (`nd_sim::services`).
+    #[serde(default)]
+    pub service: Option<crate::services::ServiceSite>,
 }
 
 fn one() -> f32 {
@@ -246,6 +250,7 @@ impl Building {
             rail_inbound: Vec::new(),
             rail_outbound: 0.0,
             construction: None,
+            service: None,
         };
         b.recompute_capacity();
         b.update_rent(land_value);
@@ -254,6 +259,12 @@ impl Building {
 
     pub fn is_parking(&self) -> bool {
         self.business.as_ref().map_or(false, |b| b.kind == Business::PARKING_KIND)
+    }
+
+    /// Placed by the player: a plant, depot, station, yard, service or
+    /// attraction. Never upgraded, redeveloped or counted towards density.
+    pub fn is_special(&self) -> bool {
+        self.plant.is_some() || self.depot || self.rail.is_some() || self.service.is_some()
     }
 
     pub fn parking_free(&self) -> u16 {
@@ -282,7 +293,7 @@ impl Building {
             self.parking_capacity = 0;
             return;
         }
-        if self.is_parking() || self.plant.is_some() || self.depot || self.rail.is_some() {
+        if self.is_parking() || self.is_special() {
             return;
         }
         let f = self.floors as u16;
