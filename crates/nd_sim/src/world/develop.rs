@@ -203,6 +203,7 @@ impl World {
         self.economy.debit(Flow::PlantUpkeep, upkeep);
         let grid = self.economy.power.import_cost_today;
         self.economy.debit(Flow::GridImport, grid);
+        self.daily_ports();
         self.economy.power.upkeep_today = upkeep;
         self.economy.tax_today = 0.0;
         self.economy.power.import_cost_today = 0.0;

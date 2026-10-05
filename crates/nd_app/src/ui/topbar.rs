@@ -88,6 +88,9 @@ fn window_toggles(ui: &mut egui::Ui) {
         if matches!(info, Info::Saves | Info::Dev) {
             ui.separator();
         }
+        if info == Info::Saves {
+            super::newgame::toggle(ui);
+        }
         let open = info.is_open(ui.ctx());
         if ui.selectable_label(open, info.title()).clicked() {
             info.set_open(ui.ctx(), !open);

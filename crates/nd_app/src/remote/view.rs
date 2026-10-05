@@ -123,6 +123,9 @@ pub fn plant_of(s: &str) -> Option<PowerPlantKind> {
         "solar" => Some(PowerPlantKind::Solar),
         "wind" => Some(PowerPlantKind::Wind),
         "nuclear" => Some(PowerPlantKind::Nuclear),
+        "hydro" => Some(PowerPlantKind::Hydro),
+        "tidal" => Some(PowerPlantKind::Tidal),
+        "geothermal" => Some(PowerPlantKind::Geothermal),
         _ => None,
     }
 }
@@ -168,6 +171,9 @@ pub fn plant_name(k: PowerPlantKind) -> &'static str {
         PowerPlantKind::Solar => "solar",
         PowerPlantKind::Wind => "wind",
         PowerPlantKind::Nuclear => "nuclear",
+        PowerPlantKind::Hydro => "hydro",
+        PowerPlantKind::Tidal => "tidal",
+        PowerPlantKind::Geothermal => "geothermal",
     }
 }
 

@@ -340,7 +340,7 @@ impl World {
     }
 
     pub(super) fn entry_node(&mut self) -> Option<NodeId> {
-        let leaves = self.roads.leaf_nodes();
+        let leaves = self.city_leaves();
         if leaves.is_empty() {
             return None;
         }
