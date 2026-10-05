@@ -50,11 +50,19 @@ struct TransitTag;
 struct TrainTag(nd_sim::TrainId);
 
 /// Toggleable data layers drawn over the ground.
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct Overlays {
     pub land_value: bool,
     /// Pedestrian network: lot loops, alleys and gates.
     pub paths: bool,
+    /// Zone outline glows and vacant-lot outlines. The ground fills stay.
+    pub zoning: bool,
+}
+
+impl Default for Overlays {
+    fn default() -> Self {
+        Self { land_value: false, paths: false, zoning: true }
+    }
 }
 
 /// Sun and sky control. By default the lighting follows the sim clock; the
@@ -116,6 +124,8 @@ struct RenderState {
     lanes_version: u64,
     plan_version: u64,
     lots_signature: (usize, usize, usize, u64),
+    /// Whether the lot meshes were built with the zoning outlines.
+    lots_zoning_shown: bool,
     buildings: HashMap<BuildingId, Vec<Entity>>,
     citizens: HashMap<CitizenId, Entity>,
     cars: HashMap<CarId, [Entity; 2]>,
@@ -508,31 +518,42 @@ fn sync_preview(
     }
 }
 
+/// Lot ground fills, park layouts, and (with the zoning overlay, toggled
+/// with O) the zone outline glows and vacant-lot outlines.
 fn sync_lots(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
+    keys: Res<ButtonInput<KeyCode>>,
     sim: Res<Sim>,
     assets: Res<GameAssets>,
     mats: Res<Materials>,
+    mut overlays: ResMut<Overlays>,
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<LotsTag>>,
 ) {
+    if keys.just_pressed(KeyCode::KeyO) {
+        overlays.zoning = !overlays.zoning;
+    }
     let w = &sim.world;
     let vacant = w.lots.values().filter(|l| l.building.is_none()).count();
     let signature = (w.lots.len(), vacant, w.zones.len(), w.roads.version);
-    if signature == state.lots_signature && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
+    if signature == state.lots_signature && overlays.zoning == state.lots_zoning_shown && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
     state.lots_signature = signature;
+    state.lots_zoning_shown = overlays.zoning;
     despawn_all(&mut commands, &existing);
     let pal = &assets.palette;
+    let outlines = overlays.zoning;
     let mut glow = MeshData::default();
     let mut fill = MeshData::default();
-    for zone in w.zones.values() {
-        let c = pal.zone_color(zone.land_use);
-        let mut outline = zone.polygon.clone();
-        outline.push(zone.polygon[0]);
-        glow.ground_strip(&outline, 0.5, 0.04, scale(c, 1.0));
+    if outlines {
+        for zone in w.zones.values() {
+            let c = pal.zone_color(zone.land_use);
+            let mut outline = zone.polygon.clone();
+            outline.push(zone.polygon[0]);
+            glow.ground_strip(&outline, 0.5, 0.04, scale(c, 1.0));
+        }
     }
     for lot in w.lots.values() {
         let c = pal.zone_color(lot.land_use);
@@ -551,9 +572,11 @@ fn sync_lots(
             // Unusable ground: plain earth, no outline.
             fill.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15));
         } else if lot.building.is_none() {
-            let mut outline = lot.polygon.clone();
-            outline.push(lot.polygon[0]);
-            glow.ground_strip(&outline, 0.22, 0.035, scale(c, 0.45));
+            if outlines {
+                let mut outline = lot.polygon.clone();
+                outline.push(lot.polygon[0]);
+                glow.ground_strip(&outline, 0.22, 0.035, scale(c, 0.45));
+            }
             fill.ground_polygon(&lot.polygon, 0.02, [c[0] * 0.08 + pal.lot_vacant[0], c[1] * 0.08 + pal.lot_vacant[1], c[2] * 0.08 + pal.lot_vacant[2], 1.0]);
         } else {
             fill.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel));
