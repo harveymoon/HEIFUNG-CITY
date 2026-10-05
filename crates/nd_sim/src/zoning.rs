@@ -361,34 +361,47 @@ fn reflex_vertex(poly: &[Vec2], min_turn: f32) -> Option<(usize, f32)> {
     best
 }
 
-/// Longest run of consecutive edges that lie along roads: (edge indices,
-/// total length). Cuts are placed along this chain, perpendicular to the
-/// local road direction, so curved frontages get radial parcels.
-fn frontage_chain(poly: &[Vec2], roads: &RoadNetwork) -> Option<(Vec<usize>, f32)> {
+/// Straight runs of road frontage: consecutive road-facing edges that bend
+/// by less than ~25 degrees between them (a curved road is one run, a block
+/// corner separates two). Returns (edge indices, total length), longest
+/// first. Cuts are placed along a run, perpendicular to the local road, so
+/// straight frontages get regular lots, curves get radial ones, and corners
+/// are never cut right at the corner.
+fn frontage_runs(poly: &[Vec2], roads: &RoadNetwork) -> Vec<(Vec<usize>, f32)> {
     let n = poly.len();
     let on: Vec<bool> = (0..n).map(|i| edge_on_road(roads, poly[i], poly[(i + 1) % n]).is_some()).collect();
     if !on.iter().any(|&b| b) {
-        return None;
+        return Vec::new();
     }
-    // Start after a gap so a chain that wraps around is read in one piece.
-    let start = (0..n).find(|&i| !on[i]).map(|i| (i + 1) % n).unwrap_or(0);
-    let mut best: Option<(Vec<usize>, f32)> = None;
+    let dir = |i: usize| (poly[(i + 1) % n] - poly[i]).normalize_or_zero();
+    // Start at an edge that begins a run: after a gap or after a corner.
+    let begins = |i: usize| {
+        let prev = (i + n - 1) % n;
+        !on[prev] || dir(prev).dot(dir(i)) < 0.9
+    };
+    let start = (0..n).find(|&i| on[i] && begins(i)).unwrap_or(0);
+    let mut runs: Vec<(Vec<usize>, f32)> = Vec::new();
     let mut cur: Vec<usize> = Vec::new();
     let mut cur_len = 0.0;
-    for k in 0..=n {
+    for k in 0..n {
         let i = (start + k) % n;
-        if k < n && on[i] {
+        if on[i] {
+            if k > 0 && begins(i) && !cur.is_empty() {
+                runs.push((std::mem::take(&mut cur), cur_len));
+                cur_len = 0.0;
+            }
             cur.push(i);
             cur_len += poly[i].distance(poly[(i + 1) % n]);
-        } else {
-            if !cur.is_empty() && best.as_ref().map_or(true, |(_, l)| cur_len > *l) {
-                best = Some((cur.clone(), cur_len));
-            }
-            cur.clear();
+        } else if !cur.is_empty() {
+            runs.push((std::mem::take(&mut cur), cur_len));
             cur_len = 0.0;
         }
     }
-    best
+    if !cur.is_empty() {
+        runs.push((cur, cur_len));
+    }
+    runs.sort_by(|a, b| b.1.total_cmp(&a.1));
+    runs
 }
 
 /// Cut a polygon by a line, returning the pieces on both sides.
@@ -411,11 +424,15 @@ fn cut(poly: &Polygon<f32>, origin: Vec2, normal: Vec2) -> Vec<Polygon<f32>> {
 /// their reflex corner so every parcel ends up convex.
 fn subdivide(poly: Polygon<f32>, lu: LandUse, roads: &RoadNetwork, rng: &mut impl Rng, depth: u32, out: &mut Vec<Vec<Vec2>>) {
     let area = poly.unsigned_area();
-    if area < MIN_AREA || depth > 40 {
+    if area < MIN_AREA {
         return;
     }
     let pts = from_geo(&poly);
     if pts.len() < 3 {
+        return;
+    }
+    if depth > 40 {
+        out.push(pts);
         return;
     }
     // Holes (a block wrapped around a loop road) cannot be parcels: cut
@@ -450,12 +467,14 @@ fn subdivide(poly: Polygon<f32>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
     let lw = lu.lot_width();
     let ld = lu.lot_depth();
     let n = pts.len();
-    let Some((chain, chain_len)) = frontage_chain(&pts, roads) else {
+    let runs = frontage_runs(&pts, roads);
+    let Some((chain, chain_len)) = runs.first().cloned() else {
         // No road frontage at all: one piece of unusable ground.
         out.push(pts);
         return;
     };
-    // Slice along the frontage, perpendicular to the local road direction.
+    // Slice along the longest straight frontage, perpendicular to the local
+    // road direction. Corner lots keep both of their frontages.
     if chain_len > lw * 1.7 && area > lw * ld * 1.3 {
         let mut s = lw * rng.random_range(0.85..1.35);
         if chain_len - s < lw * 0.8 {
@@ -754,5 +773,38 @@ mod tests {
         assert!(lots.values().all(|l| (l.center.y - 80.0).abs() > 2.0), "no lot sits on the path");
         assert!(lots.values().filter(|l| l.usable()).all(|l| l.center.y < 60.0), "land beyond the path is not usable from it");
         assert!(lots.values().any(|l| l.center.y > 90.0 && l.landlocked));
+    }
+
+    #[test]
+    fn every_road_side_of_a_block_gets_parcels_including_corners() {
+        let mut roads = RoadNetwork::default();
+        for c in [-70.0f32, 70.0] {
+            roads.add_polyline(&[Vec2::new(-300.0, c), Vec2::new(300.0, c)], 1, 1);
+            roads.add_polyline(&[Vec2::new(c, -300.0), Vec2::new(c, 300.0)], 1, 1);
+        }
+        let zone = Zone {
+            polygon: vec![Vec2::new(-65.0, -65.0), Vec2::new(65.0, -65.0), Vec2::new(65.0, 65.0), Vec2::new(-65.0, 65.0)],
+            land_use: LandUse::Residential,
+        };
+        let mut lots = SlotMap::with_key();
+        generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[]);
+        let good: Vec<&Lot> = lots.values().filter(|l| l.usable()).collect();
+        // Parcels front all four roads.
+        for (axis, sign) in [(0, -1.0f32), (0, 1.0), (1, -1.0), (1, 1.0)] {
+            let n = good.iter().filter(|l| {
+                let e = l.entrance();
+                let v = if axis == 0 { e.x } else { e.y };
+                (v * sign) > 50.0
+            }).count();
+            assert!(n >= 3, "side {axis}/{sign} has only {n} usable parcels");
+        }
+        // Corners are claimed by a lot whose polygon reaches both roads.
+        for (sx, sy) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+            let corner = Vec2::new(sx * 58.0, sy * 58.0);
+            assert!(good.iter().any(|l| l.contains(corner)), "corner {corner:?} is not in a usable lot");
+        }
+        // Usable land covers most of the block.
+        let usable_area: f32 = good.iter().map(|l| l.area()).sum();
+        assert!(usable_area > 122.0 * 122.0 * 0.5, "usable {usable_area}");
     }
 }
