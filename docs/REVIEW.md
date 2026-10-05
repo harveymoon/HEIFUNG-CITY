@@ -213,3 +213,36 @@ earlier failure was the screenshot script sending keys to an unfocused window.
 4. Item 7 (grid indices) before the city grows past a few hundred buildings.
 5. Items 10–11 and the test gaps, then the structural splits (19) as a no-behaviour-
    change refactor when the UI rework starts.
+
+---
+
+## 6. Status after the second pass (five parallel branches, merged October 2026)
+
+Every open item in section 3 was addressed. Branches: `review/sim-geometry`, `review/sim-world`,
+`review/procgen`, `review/app-render`, `review/app-ui`. Tests: 57 → 108 (90 nd_sim, 18 nd_procgen).
+
+| # | Status | How |
+|---|---|---|
+| 1 | Fixed | Newer zones are subtracted from older ones before subdivision. |
+| 2 | Fixed | Rebuild clears trains and strands riders; stops are looked up with `get`. |
+| 3 | Fixed | Disconnected or idle yards drain their imports by truck; site parts always go by truck. |
+| 4 | Fixed | `traffic_seconds_per_tick` 4.0, speeds derived from m/s via `metres_per_tick`; a 300 m commute at 08:00 arrives before 09:00. |
+| 5 | Fixed | Tangents from procgen, 128 m chunk batching per surface, render-world-only meshes, shadow flags. Vertex colours stay Float32x4 (Bevy requires it). |
+| 6 | Fixed | Lot fills, parks and vacant dressing are three syncs keyed on what they draw. |
+| 7 | Fixed | Uniform grids for segments, lots and walk nodes; hourly seller index; stats every 10 ticks. A* generation-stamp buffers not done (not needed yet). |
+| 8 | Fixed | Decals, shared cap rings, ring-strip wires: mean 2,948 → 1,730 tris per building; per-style budget asserted. |
+| 9 | Fixed | Union-find road components. |
+| 10 | Fixed | `WorldConfig` defaults, `World.version`, `validate()` on load; timestamped slots, Load confirm, autosave at dawn. |
+| 11 | Fixed | Overdraft floor, closed venues skipped, named treasury ledger. |
+| 12 | Fixed | Sweep measures against the lot polygon with 1 m allowance, real `RailLink` both sides, multi-lot parks. `vacant.rs` sweep still uses the AABB. |
+| 13 | Fixed | Glow material written only when the quantised value changes. |
+| 14 | Fixed | Palette accessors, `validate()`, clamped probabilities. |
+| 15 | Fixed | Connector map built once, `BTreeMap` grouping, determinism test. |
+| 16 | Fixed | `G` seeds only on an empty map in orbit mode; the panel button adds it to a built city. |
+| 17 | Fixed | `pointer_over_ui` computed in `PreUpdate`; `keyboard_captured` gates every hotkey. |
+| 18 | Fixed | `dispatch_truck`, `board_waiting`, `place_special`, `nd_sim::geom`, shared procgen parts. |
+| 19 | Partly | `ui/` split done; `world.rs` module split in progress on `review/world-split`. |
+| 20–30 | Fixed | See the branch commit messages; `cargo check` is warning-free. |
+
+Known leftovers: A* scratch buffers, the vacant sweep's AABB test, and a chunk regenerates
+all its buildings on one change (no per-building geometry cache).
