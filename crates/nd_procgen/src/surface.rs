@@ -142,7 +142,7 @@ impl Surface {
 }
 
 /// Mesh data split by surface. Empty surfaces are skipped by the renderer.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Geometry {
     pub parts: Vec<MeshData>,
 }
