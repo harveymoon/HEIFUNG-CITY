@@ -13,6 +13,9 @@ use crate::roads::{NodeId, RoadNetwork, SegmentId};
 use crate::traffic::Traffic;
 use crate::walk::WalkGraph;
 use crate::power::{demand_mw, PowerPlantKind, Weather, GRID_IMPORT_MW, GRID_IMPORT_PRICE};
+use crate::traffic::{Bus, CarId};
+use std::collections::HashMap;
+use crate::transit::{self, BusStop, RouteId, Transit, TransitTrip};
 use crate::citizens::TravelMode;
 use crate::roads::RoadKind;
 use crate::zoning::{generate_lots, LandUse, Lot, LotId, Zone, ZoneId};
@@ -99,6 +102,8 @@ pub struct World {
     pub walk: WalkGraph,
     #[serde(default)]
     pub weather: Weather,
+    #[serde(default)]
+    pub transit: Transit,
     pub economy: Economy,
     pub land_value: LandValue,
     #[serde(skip)]
@@ -128,6 +133,7 @@ impl World {
             traffic: Traffic::default(),
             walk: WalkGraph::default(),
             weather: Weather::default(),
+            transit: Transit::default(),
             economy,
             events: Vec::new(),
             next_seed: 1,
@@ -154,8 +160,9 @@ impl World {
         self.traffic.rebuild(&self.roads);
         self.rebuild_walk();
         for (_, car) in self.traffic.reattach_cars() {
-            self.strand_driver(car.citizen, car.pos);
+            self.strand_car(car);
         }
+        self.transit.refresh_legs(&self.traffic.net);
         self.plan_version += 1;
         self.events.push(SimEvent::PlanChanged);
     }
@@ -366,8 +373,13 @@ impl World {
         // Lanes and cars.
         self.traffic.rebuild(&self.roads);
         for (_, car) in self.traffic.clear_cars() {
-            self.strand_driver(car.citizen, car.pos);
+            self.strand_car(car);
         }
+        // Bus stops follow the streets they sat on, or go.
+        for route in self.transit.routes.values_mut() {
+            route.stops = route.stops.iter().filter_map(|s| BusStop::snap(&self.roads, s.pos)).collect();
+        }
+        self.transit.refresh_legs(&self.traffic.net);
         self.rebuild_walk();
 
         self.events.push(SimEvent::RoadsChanged);
@@ -403,6 +415,20 @@ impl World {
 
     /// A driver whose car vanished (network rebuilt, bad save) stands where
     /// the car was and decides again.
+    /// A car taken off the road: its driver, or a bus's riders, stand there.
+    fn strand_car(&mut self, car: crate::traffic::Car) {
+        if let Some(bus) = &car.bus {
+            for &p in &bus.passengers {
+                if let Some(c) = self.citizens.get_mut(p) {
+                    c.transit = None;
+                }
+                self.strand_driver(p, car.pos);
+            }
+        } else {
+            self.strand_driver(car.citizen, car.pos);
+        }
+    }
+
     fn strand_driver(&mut self, cid: CitizenId, pos: Vec2) {
         if let Some(c) = self.citizens.get_mut(cid) {
             c.pos = pos;
@@ -463,12 +489,17 @@ impl World {
             }
         }
         self.step_traffic();
+        self.step_transit();
         self.step_citizens(minds);
     }
 
     fn step_traffic(&mut self) {
         let arrived = self.traffic.step(self.config.traffic_seconds_per_tick, self.config.traffic_substeps);
         for car_id in arrived {
+            if self.traffic.cars.get(car_id).is_some_and(|c| c.bus.is_some()) {
+                self.bus_arrived(car_id);
+                continue;
+            }
             let Some(car) = self.traffic.remove_car(car_id) else { continue };
             if let Some(cargo) = car.cargo {
                 self.deliver(cargo);
@@ -488,6 +519,15 @@ impl World {
             if let Some(c) = self.citizens.get_mut(car.citizen) {
                 c.pos = car.pos;
                 c.heading = car.heading;
+            }
+            if let Some(bus) = &car.bus {
+                for &p in &bus.passengers {
+                    if let Some(c) = self.citizens.get_mut(p) {
+                        c.pos = car.pos;
+                        c.prev_pos = car.pos;
+                        c.heading = car.heading;
+                    }
+                }
             }
         }
     }
@@ -596,6 +636,17 @@ impl World {
         self.economy.power.brownout_hours_today = 0;
         for b in self.buildings.values_mut() {
             b.unpowered_hours_today = 0;
+        }
+        // Buses and depots cost money; yesterday's fares were taken as they came.
+        let bus_days = self.traffic.cars.values().filter(|c| c.bus.is_some()).count() as f32;
+        let depots = self.buildings.values().filter(|b| b.depot).count() as f32;
+        let transit_upkeep = bus_days * transit::BUS_UPKEEP_PER_DAY + depots * transit::DEPOT_UPKEEP_PER_DAY;
+        self.economy.treasury -= transit_upkeep;
+        self.economy.transit.upkeep_today = transit_upkeep;
+        self.economy.transit.riders_today = 0;
+        self.economy.transit.fares_today = 0.0;
+        for r in self.transit.routes.values_mut() {
+            r.riders_today = 0;
         }
         self.economy.parking_street_today = 0;
         self.economy.parking_fees_today = 0.0;
@@ -1240,6 +1291,7 @@ impl World {
                 owns_car,
                 owns_bike,
                 parked_at: None,
+                transit: None,
                 activity: Activity::Idle,
                 memories: Vec::new(),
                 thought: "New city. New me.".to_string(),
@@ -1388,6 +1440,15 @@ impl World {
         }
         let c = &mut self.citizens[id];
         match (purpose, to) {
+            (Purpose::ToStop, Some(_)) => {
+                c.activity = Activity::Waiting { at: c.pos };
+                c.inside = None;
+                c.prev_pos = c.pos;
+                if let Some(t) = c.transit.as_mut() {
+                    t.since = tick;
+                }
+                return;
+            }
             (Purpose::Sit, Some(b)) => {
                 let lot = self.buildings.get(b).map(|bld| bld.lot);
                 let facing = lot.and_then(|l| self.lots.get(l)).and_then(|l| l.park.as_ref()).and_then(|p| p.benches.iter().min_by(|x, y| x.0.distance(c.pos).total_cmp(&y.0.distance(c.pos)))).map(|b| b.1);
@@ -1673,6 +1734,277 @@ impl World {
         }
     }
 
+    // ── buses ────────────────────────────────────────────────────────────────
+
+    /// Place a bus depot on a vacant lot with street access.
+    pub fn build_depot(&mut self, lot_id: LotId) -> Result<BuildingId, String> {
+        let lot = self.lots.get(lot_id).ok_or("no such lot")?;
+        if lot.building.is_some() {
+            return Err("that lot is taken".into());
+        }
+        if lot.landlocked || !lot.car_access() {
+            return Err("a depot needs a street".into());
+        }
+        if matches!(lot.land_use, LandUse::Residential | LandUse::Park) {
+            return Err("a depot cannot go on homes or parks".into());
+        }
+        if lot.area() < transit::DEPOT_MIN_AREA {
+            return Err(format!("too small: a depot needs {:.0} m²", transit::DEPOT_MIN_AREA));
+        }
+        if self.economy.treasury < transit::DEPOT_COST {
+            return Err(format!("the treasury has {:.0}; a depot costs {:.0}", self.economy.treasury, transit::DEPOT_COST));
+        }
+        let lu = lot.land_use;
+        let value = self.land_value.at(lot.center);
+        self.economy.treasury -= transit::DEPOT_COST;
+        let seed = self.fresh_seed();
+        let name = format!("Depot {}", self.rng.random_range(1..20));
+        let mut b = Building::new(lot_id, lu, 1, Tier::Mid, seed, name, self.clock.tick, value);
+        b.depot = true;
+        b.homes = 0;
+        b.jobs = transit::DEPOT_JOBS;
+        b.business = None;
+        b.parking_capacity = 0;
+        let id = self.buildings.insert(b);
+        self.lots[lot_id].building = Some(id);
+        self.events.push(SimEvent::BuildingBuilt(id));
+        Ok(id)
+    }
+
+    pub fn add_bus_route(&mut self) -> RouteId {
+        self.transit.new_route()
+    }
+
+    /// Append a stop to a line, snapped to the nearest street.
+    pub fn add_bus_stop(&mut self, route: RouteId, p: Vec2) -> Result<usize, String> {
+        let stop = BusStop::snap(&self.roads, p).ok_or("click next to a street")?;
+        let r = self.transit.routes.get_mut(route).ok_or("no such line")?;
+        if r.stops.iter().any(|s| s.pos.distance(stop.pos) < 3.0) {
+            return Err("there is a stop there already".into());
+        }
+        r.stops.push(stop);
+        let idx = r.stops.len() - 1;
+        self.transit.refresh_legs(&self.traffic.net);
+        Ok(idx)
+    }
+
+    pub fn move_bus_stop(&mut self, route: RouteId, idx: usize, p: Vec2) -> bool {
+        let Some(stop) = BusStop::snap(&self.roads, p) else { return false };
+        let Some(r) = self.transit.routes.get_mut(route) else { return false };
+        if idx >= r.stops.len() {
+            return false;
+        }
+        r.stops[idx] = stop;
+        self.transit.refresh_legs(&self.traffic.net);
+        true
+    }
+
+    /// Remove a stop; a line with no stops left is removed too.
+    pub fn remove_bus_stop(&mut self, route: RouteId, idx: usize) {
+        let Some(r) = self.transit.routes.get_mut(route) else { return };
+        if idx < r.stops.len() {
+            r.stops.remove(idx);
+        }
+        let empty = r.stops.is_empty();
+        // Buses heading past the removed stop re-aim at what is now there.
+        for car in self.traffic.cars.values_mut() {
+            if let Some(bus) = car.bus.as_mut() {
+                if bus.route == route && bus.next_stop != usize::MAX && bus.next_stop >= idx {
+                    bus.next_stop = bus.next_stop.saturating_sub(1);
+                }
+            }
+        }
+        if empty {
+            self.remove_bus_route(route);
+        } else {
+            self.transit.refresh_legs(&self.traffic.net);
+        }
+    }
+
+    pub fn remove_bus_route(&mut self, route: RouteId) {
+        self.transit.routes.remove(route);
+        let buses: Vec<CarId> = self.traffic.cars.iter().filter(|(_, c)| c.bus.as_ref().is_some_and(|b| b.route == route)).map(|(id, _)| id).collect();
+        for id in buses {
+            if let Some(car) = self.traffic.remove_car(id) {
+                self.strand_car(car);
+            }
+        }
+        let riders: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.transit.is_some_and(|t| t.route == route)).map(|(id, _)| id).collect();
+        for id in riders {
+            self.citizens[id].transit = None;
+            if matches!(self.citizens[id].activity, Activity::Waiting { .. }) {
+                self.citizens[id].activity = Activity::Idle;
+                self.citizens[id].next_decision_tick = self.clock.tick + 1;
+            }
+        }
+        self.transit.refresh_legs(&self.traffic.net);
+    }
+
+    pub fn set_route_buses(&mut self, route: RouteId, n: u8) {
+        if let Some(r) = self.transit.routes.get_mut(route) {
+            r.buses = n.min(transit::DEPOT_CAPACITY as u8);
+            self.transit.version += 1;
+        }
+    }
+
+    /// Dispatch buses from depots during service, call them home after,
+    /// count the system, and let riders who waited too long walk.
+    fn step_transit(&mut self) {
+        let tick = self.clock.tick;
+        let minute = self.clock.minute_of_day();
+        let in_service = Transit::in_service(minute as u32);
+        let depots: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.depot && !b.is_derelict()).map(|(id, _)| id).collect();
+        // Buses out per line, and per depot.
+        let mut running: HashMap<RouteId, u32> = HashMap::new();
+        let mut at_depot: HashMap<BuildingId, u32> = HashMap::new();
+        for car in self.traffic.cars.values() {
+            if let Some(bus) = &car.bus {
+                if !bus.to_depot {
+                    *running.entry(bus.route).or_default() += 1;
+                }
+                *at_depot.entry(bus.depot).or_default() += 1;
+            }
+        }
+        if in_service && tick.saturating_sub(self.transit.last_dispatch_tick) >= transit::DISPATCH_GAP {
+            let want: Option<RouteId> = self.transit.routes.iter().filter(|(id, r)| r.runnable() && running.get(id).copied().unwrap_or(0) < r.buses as u32).map(|(id, _)| id).next();
+            if let Some(route) = want {
+                // The depot with room nearest the first stop.
+                let first = self.transit.routes[route].stops[0];
+                let depot = depots
+                    .iter()
+                    .copied()
+                    .filter(|d| at_depot.get(d).copied().unwrap_or(0) < transit::DEPOT_CAPACITY)
+                    .filter_map(|d| self.building_lot(d).map(|l| (d, l.car_point.distance(first.pos))))
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .map(|(d, _)| d);
+                if let Some(depot) = depot {
+                    if let Some((seg, pt)) = self.building_lot(depot).and_then(|l| l.car_segment.map(|s| (s, l.car_point))) {
+                        if let Some((lanes, s0, s1)) = self.traffic.net.find_route(seg, pt, first.segment, first.pos) {
+                            let color = self.transit.routes[route].color;
+                            let id = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, color);
+                            self.traffic.cars[id].bus = Some(Bus { route, next_stop: 0, passengers: Vec::new(), to_depot: false, depot });
+                            self.transit.last_dispatch_tick = tick;
+                        }
+                    }
+                }
+            }
+        }
+        if !in_service {
+            for car in self.traffic.cars.values_mut() {
+                if let Some(bus) = car.bus.as_mut() {
+                    bus.to_depot = true;
+                }
+            }
+        }
+        // Riders who gave up.
+        let tired: Vec<CitizenId> = self
+            .citizens
+            .iter()
+            .filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_some_and(|t| t.since > 0 && tick.saturating_sub(t.since) > transit::WAIT_GIVE_UP))
+            .map(|(id, _)| id)
+            .collect();
+        for id in tired {
+            let Some(trip) = self.citizens[id].transit.take() else { continue };
+            self.citizens[id].thought = "No bus is coming. Walking it.".to_string();
+            self.travel_to_opts(id, Some(trip.target), trip.purpose, false);
+        }
+        // The count.
+        let s = &mut self.economy.transit;
+        s.buses = self.traffic.cars.values().filter(|c| c.bus.is_some()).count() as u32;
+        s.depots = depots.len() as u32;
+        s.depot_capacity = depots.len() as u32 * transit::DEPOT_CAPACITY;
+        s.waiting = self.citizens.values().filter(|c| matches!(c.activity, Activity::Waiting { .. })).count() as u32;
+        s.riding = self.citizens.values().filter(|c| matches!(c.activity, Activity::Riding { .. })).count() as u32;
+        self.transit.stats = s.clone();
+    }
+
+    /// A bus reached the end of a leg: a stop, or the depot.
+    fn bus_arrived(&mut self, car_id: CarId) {
+        let tick = self.clock.tick;
+        let (bus, pos) = {
+            let car = &self.traffic.cars[car_id];
+            (car.bus.clone().unwrap(), car.pos)
+        };
+        let gone = |w: &mut World, car_id: CarId| {
+            if let Some(car) = w.traffic.remove_car(car_id) {
+                w.strand_car(car);
+            }
+        };
+        if bus.next_stop == usize::MAX {
+            // Home at the depot.
+            gone(self, car_id);
+            return;
+        }
+        let stop_idx = bus.next_stop;
+        let (here, fare, n) = match self.transit.routes.get(bus.route) {
+            Some(r) if stop_idx < r.stops.len() => (r.stops[stop_idx], r.fare, r.stops.len()),
+            _ => {
+                gone(self, car_id);
+                return;
+            }
+        };
+        // Off.
+        let mut passengers = bus.passengers.clone();
+        let alighting: Vec<CitizenId> = passengers.iter().copied().filter(|p| self.citizens.get(*p).and_then(|c| c.transit).is_none_or(|t| t.alight == stop_idx || t.route != bus.route)).collect();
+        passengers.retain(|p| !alighting.contains(p));
+        for p in alighting {
+            let Some(trip) = self.citizens.get_mut(p).and_then(|c| {
+                c.pos = here.pos;
+                c.prev_pos = here.pos;
+                c.activity = Activity::Idle;
+                c.transit.take()
+            }) else {
+                continue;
+            };
+            self.travel_to_opts(p, Some(trip.target), trip.purpose, false);
+        }
+        // On, up to the capacity.
+        let boarding: Vec<CitizenId> = self
+            .citizens
+            .iter()
+            .filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_some_and(|t| t.route == bus.route && t.board == stop_idx))
+            .map(|(id, _)| id)
+            .take(transit::BUS_CAPACITY.saturating_sub(passengers.len()))
+            .collect();
+        for p in boarding {
+            let c = &mut self.citizens[p];
+            c.activity = Activity::Riding { bus: car_id };
+            c.savings -= fare;
+            c.remember(tick, format!("Caught the {} bus.", self.transit.routes[bus.route].name));
+            passengers.push(p);
+            self.economy.treasury += fare;
+            self.economy.transit.fares_today += fare;
+            self.economy.transit.riders_today += 1;
+            self.transit.routes[bus.route].riders_today += 1;
+        }
+        // On to the next stop, or home.
+        let (next_idx, to_seg, to_pos) = if bus.to_depot {
+            match self.building_lot(bus.depot).and_then(|l| l.car_segment.map(|s| (s, l.car_point))) {
+                Some((s, p)) => (usize::MAX, s, p),
+                None => {
+                    gone(self, car_id);
+                    return;
+                }
+            }
+        } else {
+            let k = (stop_idx + 1) % n;
+            let s = self.transit.routes[bus.route].stops[k];
+            (k, s.segment, s.pos)
+        };
+        match self.traffic.net.find_route(here.segment, pos, to_seg, to_pos) {
+            Some((lanes, s0, s1)) => {
+                self.traffic.reroute(car_id, lanes, s0, s1);
+                let car = &mut self.traffic.cars[car_id];
+                car.hold = transit::DWELL_SECONDS;
+                if let Some(b) = car.bus.as_mut() {
+                    b.next_stop = next_idx;
+                    b.passengers = passengers;
+                }
+            }
+            None => gone(self, car_id),
+        }
+    }
+
     /// Place a power plant on a vacant lot, paying from the treasury.
     pub fn build_power(&mut self, lot_id: LotId, kind: PowerPlantKind) -> Result<BuildingId, String> {
         let lot = self.lots.get(lot_id).ok_or("no such lot")?;
@@ -1834,6 +2166,9 @@ impl World {
 
     fn leave_building(&mut self, id: CitizenId) -> Option<Vec2> {
         self.release_parking(id);
+        if matches!(self.citizens[id].activity, Activity::Waiting { .. }) {
+            self.citizens[id].activity = Activity::Idle;
+        }
         if let Activity::Sitting { park, .. } = self.citizens[id].activity {
             if let Some(b) = self.buildings.get_mut(park) {
                 b.visitors = b.visitors.saturating_sub(1);
@@ -1863,7 +2198,12 @@ impl World {
     }
 
     fn travel_to(&mut self, id: CitizenId, target: Option<BuildingId>, purpose: Purpose) {
+        self.travel_to_opts(id, target, purpose, true);
+    }
+
+    fn travel_to_opts(&mut self, id: CitizenId, target: Option<BuildingId>, purpose: Purpose, allow_bus: bool) {
         let Some(target) = target else { return };
+        self.citizens[id].transit = None;
         let Some((from_seg, from_pt, from_node)) = self.origin_for(id) else {
             self.citizens[id].activity = Activity::Idle;
             return;
@@ -1912,6 +2252,34 @@ impl World {
         let seated = matches!(self.citizens[id].activity, Activity::Sitting { .. });
         let mode = if owns_bike && !seated && (park_ride || dist >= self.config.bike_threshold) { TravelMode::Bike } else { TravelMode::Walk };
         let walk_from = if self.citizens[id].inside.is_some() { from_pt } else { self.citizens[id].pos };
+
+        // The bus, for long trips on foot when a line serves both ends and
+        // a depot has buses out. Walk to the stop first.
+        if allow_bus && mode == TravelMode::Walk && self.economy.transit.buses > 0 {
+            if let Some((route, board, alight)) = self.transit.plan_trip(walk_from, entrance) {
+                let stop = self.transit.routes[route].stops[board].pos;
+                let exit_pos = self.leave_building(id);
+                let start = exit_pos.unwrap_or(walk_from);
+                let mut path = match self.walk.route(start, stop) {
+                    Some((pts, nodes)) => {
+                        self.count_footfall(&nodes);
+                        pts
+                    }
+                    None => vec![start],
+                };
+                path.push(stop);
+                let tick = self.clock.tick;
+                let c = &mut self.citizens[id];
+                if let Some(p) = exit_pos {
+                    c.pos = p;
+                    c.prev_pos = p;
+                }
+                c.mode = TravelMode::Walk;
+                c.transit = Some(TransitTrip { route, board, alight, target, purpose, since: tick });
+                c.activity = Activity::Traveling { to: Some(target), purpose: Purpose::ToStop, path, idx: 0 };
+                return;
+            }
+        }
         let exit_pos = self.leave_building(id);
         let mut path = match mode {
             TravelMode::Walk => match self.walk.route(walk_from, entrance) {
@@ -2287,6 +2655,115 @@ mod tests {
         assert!(w.citizens[c].pos.distance(at) < 0.5, "starts from the bench");
         assert_eq!(w.citizens[c].mode, TravelMode::Walk);
         assert!(matches!(w.citizens[c].activity, Activity::Traveling { .. }));
+    }
+
+    #[test]
+    fn buses_need_a_depot_run_a_loop_and_carry_riders() {
+        use crate::transit;
+        let mut w = World::new(WorldConfig::default());
+        // A block: two east-west streets joined by two north-south ones.
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_road(&[Vec2::new(-400.0, 140.0), Vec2::new(400.0, 140.0)], 1, 1);
+        w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(-300.0, 140.0)], 1, 1);
+        w.add_road(&[Vec2::new(300.0, 0.0), Vec2::new(300.0, 140.0)], 1, 1);
+        w.add_zone(vec![Vec2::new(-390.0, 10.0), Vec2::new(-310.0, 10.0), Vec2::new(-310.0, 130.0), Vec2::new(-390.0, 130.0)], LandUse::Residential);
+        w.add_zone(vec![Vec2::new(310.0, 10.0), Vec2::new(390.0, 10.0), Vec2::new(390.0, 130.0), Vec2::new(310.0, 130.0)], LandUse::Commercial);
+        w.add_zone(vec![Vec2::new(-100.0, -150.0), Vec2::new(100.0, -150.0), Vec2::new(100.0, -10.0), Vec2::new(-100.0, -10.0)], LandUse::Industrial);
+        let route = w.add_bus_route();
+        // Clockwise round the block, stops on the kerb the bus drives along.
+        for p in [Vec2::new(-200.0, 4.0), Vec2::new(200.0, 4.0), Vec2::new(296.0, 70.0), Vec2::new(200.0, 136.0), Vec2::new(-200.0, 136.0), Vec2::new(-296.0, 70.0)] {
+            w.add_bus_stop(route, p).expect("stop snaps to the street");
+        }
+        assert!(w.add_bus_stop(route, Vec2::new(-200.0, 4.0)).is_err(), "no duplicate stops");
+        assert!(w.add_bus_stop(route, Vec2::new(0.0, 500.0)).is_err(), "far from any street");
+        assert_eq!(w.transit.routes[route].stops.len(), 6);
+        assert!(w.transit.routes[route].runnable(), "every leg has a road: {:?}", w.transit.routes[route].broken);
+        assert!(w.transit.routes[route].legs.iter().all(|l| l.len() >= 2));
+        let mut minds = IdleMind;
+        // No depot: no bus, however long we wait.
+        for _ in 0..200 {
+            w.tick(&mut minds);
+        }
+        assert_eq!(w.traffic.cars.values().filter(|c| c.bus.is_some()).count(), 0, "buses need a depot");
+        let depot_lot = w.lots.iter().find(|(_, l)| l.usable() && l.building.is_none() && l.land_use == LandUse::Industrial && l.area() >= transit::DEPOT_MIN_AREA).map(|(id, _)| id).expect("industrial lot");
+        let home_lot = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Residential).min_by(|a, b| a.1.center.distance(Vec2::new(-320.0, 70.0)).total_cmp(&b.1.center.distance(Vec2::new(-320.0, 70.0)))).map(|(id, _)| id).unwrap();
+        assert!(w.build_depot(home_lot).is_err(), "no depots on homes");
+        let depot = w.build_depot(depot_lot).expect("depot built");
+        assert!(w.buildings[depot].depot && w.economy.treasury < 60_000.0);
+        let mut bus_seen = false;
+        let mut stops_passed = 0usize;
+        let mut last_next = 0usize;
+        for _ in 0..1200 {
+            w.tick(&mut minds);
+            if let Some(car) = w.traffic.cars.values().find(|c| c.bus.is_some()) {
+                bus_seen = true;
+                let b = car.bus.as_ref().unwrap();
+                if b.next_stop != last_next {
+                    stops_passed += 1;
+                    last_next = b.next_stop;
+                }
+            }
+        }
+        assert!(bus_seen, "a bus left the depot");
+        assert!(stops_passed >= 4, "the bus went round the loop: {stops_passed} stops");
+        assert!(w.economy.transit.buses >= 1);
+        // A rider: lives in the west, works in the east, no bike, no car.
+        w.build_on(home_lot);
+        let shop_lot = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Commercial).min_by(|a, b| a.1.center.distance(Vec2::new(320.0, 70.0)).total_cmp(&b.1.center.distance(Vec2::new(320.0, 70.0)))).map(|(id, _)| id).unwrap();
+        w.build_on(shop_lot);
+        let home = w.lots[home_lot].building.unwrap();
+        let shop = w.lots[shop_lot].building.unwrap();
+        for _ in 0..(6 * 60) {
+            w.tick(&mut minds);
+        }
+        let c = w.citizens.keys().next().expect("someone arrived");
+        // Buses sleep at the depot overnight: start the trip mid-morning
+        // with a bus out on the line.
+        while !(7 * 60..=12 * 60).contains(&(w.clock.minute_of_day() as u32)) || w.economy.transit.buses == 0 {
+            w.tick(&mut minds);
+        }
+        {
+            let cz = &mut w.citizens[c];
+            cz.inside = Some(home);
+            cz.activity = Activity::AtHome;
+            cz.owns_bike = false;
+            cz.owns_car = false;
+            cz.savings = 50.0;
+        }
+        w.travel_to(c, Some(shop), Purpose::Shop(Resource::Goods));
+        assert!(matches!(w.citizens[c].activity, Activity::Traveling { purpose: Purpose::ToStop, .. }), "walks to the stop first: {}", w.citizens[c].activity.label());
+        assert!(w.citizens[c].transit.is_some());
+        let (mut waited, mut rode) = (false, false);
+        let mut arrived = false;
+        for _ in 0..3000 {
+            w.tick(&mut minds);
+            match w.citizens[c].activity {
+                Activity::Waiting { .. } => waited = true,
+                Activity::Riding { .. } => rode = true,
+                _ => {}
+            }
+            if w.citizens[c].inside == Some(shop) {
+                arrived = true;
+                break;
+            }
+        }
+        assert!(waited && rode && arrived, "waited {waited} rode {rode} arrived {arrived}: {}", w.citizens[c].activity.label());
+        assert!(w.citizens[c].savings < 50.0, "paid the fare");
+        assert!(w.transit.routes[route].riders_today >= 1 && w.economy.transit.fares_today > 0.0);
+        // Editing: moving and removing stops keeps the line sane; removing the
+        // last stop removes the line and its buses.
+        assert!(w.move_bus_stop(route, 1, Vec2::new(250.0, 4.0)));
+        assert!(w.transit.routes[route].runnable());
+        w.remove_bus_stop(route, 3);
+        assert_eq!(w.transit.routes[route].stops.len(), 5);
+        w.set_route_buses(route, 2);
+        assert_eq!(w.transit.routes[route].buses, 2);
+        w.remove_bus_route(route);
+        assert!(w.transit.routes.is_empty());
+        assert_eq!(w.traffic.cars.values().filter(|c| c.bus.is_some()).count(), 0);
+        // Round trip keeps the depot.
+        let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+        assert!(back.buildings[depot].depot);
     }
 
     #[test]

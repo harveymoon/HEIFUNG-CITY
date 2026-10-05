@@ -80,6 +80,24 @@ impl Sim {
         if let Some(lot) = lot {
             let _ = self.world.build_power(lot, nd_sim::PowerPlantKind::Coal);
         }
+        // A bus depot on industrial land and one line round the four central blocks.
+        if self.world.transit.routes.is_empty() {
+            let lot = self
+                .world
+                .lots
+                .iter()
+                .filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial && l.building.is_none() && l.car_access() && l.area() >= nd_sim::transit::DEPOT_MIN_AREA)
+                .max_by(|a, b| a.1.area().total_cmp(&b.1.area()))
+                .map(|(id, _)| id);
+            if let Some(lot) = lot {
+                let _ = self.world.build_depot(lot);
+            }
+            let line = self.world.add_bus_route();
+            for p in [(-70.0, -136.0), (70.0, -136.0), (136.0, -70.0), (136.0, 70.0), (70.0, 136.0), (-70.0, 136.0), (-136.0, 70.0), (-136.0, -70.0)] {
+                let _ = self.world.add_bus_stop(line, SVec2::new(p.0, p.1));
+            }
+            self.world.set_route_buses(line, 2);
+        }
     }
 
     /// Fraction of the way from the last tick to the next, for interpolation.

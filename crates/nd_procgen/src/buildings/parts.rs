@@ -907,6 +907,7 @@ pub enum Vehicle {
     Van,
     Truck,
     Wreck,
+    Bus,
 }
 
 pub fn vehicle(g: &mut Geometry, f: &Frame, rng: &mut impl Rng, p: Vec2, yaw: f32, kind: Vehicle, color: [f32; 3]) {
@@ -939,6 +940,16 @@ pub fn vehicle(g: &mut Geometry, f: &Frame, rng: &mut impl Rng, p: Vec2, yaw: f3
             for dx in [-3.5f32, -2.3, 2.6] {
                 for dz in [-1.1f32, 1.1] {
                     m(g, Matte, dx, 0.5, dz, Vec3::new(1.0, 1.0, 0.35), DARK);
+                }
+            }
+        }
+        Vehicle::Bus => {
+            m(g, Metal, 0.0, 1.6, 0.0, Vec3::new(11.5, 3.0, 2.5), color);
+            m(g, Glass, 0.0, 2.2, 0.0, Vec3::new(11.0, 0.9, 2.56), [0.12, 0.15, 0.18]);
+            m(g, Glass, 5.6, 1.9, 0.0, Vec3::new(0.4, 1.6, 2.3), [0.12, 0.15, 0.18]);
+            for dx in [-3.8f32, 3.6] {
+                for dz in [-1.15f32, 1.15] {
+                    m(g, Matte, dx, 0.5, dz, Vec3::new(1.0, 1.0, 0.3), DARK);
                 }
             }
         }

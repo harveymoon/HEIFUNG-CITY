@@ -22,6 +22,7 @@ new_key_type! {
 pub type LaneId = u32;
 
 pub const CAR_LENGTH: f32 = 4.5;
+pub const BUS_LENGTH: f32 = 12.0;
 const ROAD_SPEED: f32 = 13.0;
 const CONNECTOR_SPEED: f32 = 6.0;
 const IDM_ACCEL: f32 = 1.4;
@@ -85,6 +86,19 @@ impl Lane {
     }
 
     /// Closest point on the lane to `p`: `(distance along, distance from)`.
+    /// Points of the lane from `s0` to `s1`, the ends interpolated.
+    pub fn points_between(&self, s0: f32, s1: f32) -> Vec<Vec2> {
+        let (s0, s1) = (s0.clamp(0.0, self.length), s1.clamp(0.0, self.length));
+        let mut out = vec![self.point_at(s0).0];
+        for (i, p) in self.points.iter().enumerate() {
+            if i < self.cum.len() && self.cum[i] > s0 && self.cum[i] < s1 {
+                out.push(*p);
+            }
+        }
+        out.push(self.point_at(s1).0);
+        out
+    }
+
     pub fn project(&self, p: Vec2) -> (f32, f32) {
         let mut best = (0.0, f32::MAX);
         for (i, w) in self.points.windows(2).enumerate() {
@@ -166,6 +180,30 @@ pub struct Car {
     /// Seconds spent on the trip; stalled trips time out.
     #[serde(default)]
     pub age: f32,
+    /// A bus on a line.
+    #[serde(default)]
+    pub bus: Option<Bus>,
+    /// Seconds left standing still (a bus at a stop).
+    #[serde(default)]
+    pub hold: f32,
+}
+
+impl Car {
+    pub fn length(&self) -> f32 {
+        if self.bus.is_some() { BUS_LENGTH } else { CAR_LENGTH }
+    }
+}
+
+/// What a bus is doing on its line.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Bus {
+    pub route: crate::transit::RouteId,
+    /// Stop the bus is driving to; `usize::MAX` when heading for the depot.
+    pub next_stop: usize,
+    pub passengers: Vec<CitizenId>,
+    /// Finish the loop at the next stop and go home.
+    pub to_depot: bool,
+    pub depot: crate::buildings::BuildingId,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -373,6 +411,22 @@ impl LaneNetwork {
         best
     }
 
+    /// The polyline a route drives, for drawing.
+    pub fn polyline(&self, lanes: &[LaneId], s0: f32, s1: f32) -> Vec<Vec2> {
+        let mut out: Vec<Vec2> = Vec::new();
+        for (k, &l) in lanes.iter().enumerate() {
+            let lane = &self.lanes[l as usize];
+            let a = if k == 0 { s0 } else { 0.0 };
+            let b = if k + 1 == lanes.len() { s1 } else { lane.length };
+            for p in lane.points_between(a, b) {
+                if out.last().is_none_or(|q| q.distance(p) > 0.05) {
+                    out.push(p);
+                }
+            }
+        }
+        out
+    }
+
     /// A* over lanes from a point on one segment to a point on another.
     pub fn find_route(&self, from_seg: SegmentId, from: Vec2, to_seg: SegmentId, to: Vec2) -> Option<(Vec<LaneId>, f32, f32)> {
         let (start, s_start, _) = self.nearest_lane_on(from_seg, from)?;
@@ -496,9 +550,40 @@ impl Traffic {
         let lane = route[0];
         let (pos, dir) = self.net.lanes[lane as usize].point_at(s_start);
         let heading = dir.y.atan2(dir.x);
-        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0 });
+        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0 });
         self.insert_sorted(lane, id);
         id
+    }
+
+    /// Send a car on a new route from where it stands: a bus leaving a stop.
+    /// If the new route starts on the car's current lane it keeps its place;
+    /// otherwise it is moved to the start of the new route.
+    pub fn reroute(&mut self, id: CarId, route: Vec<LaneId>, s_start: f32, s_end: f32) {
+        if route.is_empty() {
+            return;
+        }
+        let old_lane = self.cars[id].route[self.cars[id].idx];
+        if route[0] == old_lane {
+            let car = &mut self.cars[id];
+            car.route = route;
+            car.idx = 0;
+            car.s_end = s_end;
+            car.age = 0.0;
+            return;
+        }
+        if let Some(l) = self.net.lanes.get_mut(old_lane as usize) {
+            l.cars.retain(|&c| c != id);
+        }
+        let first = route[0];
+        {
+            let car = &mut self.cars[id];
+            car.route = route;
+            car.idx = 0;
+            car.s = s_start;
+            car.s_end = s_end;
+            car.age = 0.0;
+        }
+        self.insert_sorted(first, id);
     }
 
     pub fn remove_car(&mut self, id: CarId) -> Option<Car> {
@@ -573,8 +658,12 @@ impl Traffic {
             for lane in &self.net.lanes {
                 for (k, &cid) in lane.cars.iter().enumerate() {
                     let car = &self.cars[cid];
+                    if car.hold > 0.0 {
+                        accs.push((cid, -1000.0));
+                        continue;
+                    }
                     let (mut gap, mut lead_v) = match lane.cars.get(k + 1) {
-                        Some(&lead) => (self.cars[lead].s - car.s - CAR_LENGTH, self.cars[lead].v),
+                        Some(&lead) => (self.cars[lead].s - car.s - self.cars[lead].length(), self.cars[lead].v),
                         None => self.lookahead(car, lane),
                     };
                     if car.idx + 1 == car.route.len() {
@@ -589,6 +678,11 @@ impl Traffic {
             }
             for (cid, acc) in accs {
                 let car = &mut self.cars[cid];
+                if car.hold > 0.0 {
+                    car.hold -= dt;
+                    car.v = 0.0;
+                    continue;
+                }
                 car.v = (car.v + acc * dt).max(0.0);
                 car.s += car.v * dt;
             }

@@ -127,6 +127,9 @@ pub struct Building {
     pub powered: f32,
     #[serde(default)]
     pub unpowered_hours_today: u16,
+    /// A bus depot placed by the player.
+    #[serde(default)]
+    pub depot: bool,
 }
 
 fn one() -> f32 {
@@ -158,6 +161,7 @@ impl Building {
             plant: None,
             powered: 1.0,
             unpowered_hours_today: 0,
+            depot: false,
         };
         b.recompute_capacity();
         b.update_rent(land_value);
@@ -182,7 +186,7 @@ impl Building {
     }
 
     pub fn recompute_capacity(&mut self) {
-        if self.is_parking() || self.plant.is_some() {
+        if self.is_parking() || self.plant.is_some() || self.depot {
             return;
         }
         let f = self.floors as u16;

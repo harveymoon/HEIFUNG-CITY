@@ -16,7 +16,7 @@ use bevy::pbr::DistanceFog;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use nd_procgen::street::{generate_street, signal_posts, StreetInput};
-use nd_procgen::{build_terrain, generate_building, generate_texture, mip_chain, Extras, Geometry, MeshData, Surface, TerrainConfig};
+use nd_procgen::{build_terrain, bus_stops, generate_building, generate_texture, mip_chain, Extras, Geometry, MeshData, Surface, TerrainConfig};
 use nd_sim::roads::{LANE_WIDTH, SHOULDER};
 use nd_sim::traffic::LaneId;
 use nd_sim::{BuildingId, CarId, CitizenId, SimEvent, Vec2 as SVec2};
@@ -44,6 +44,8 @@ struct OverlayTag;
 struct PathsTag;
 #[derive(Component)]
 struct HazeTag;
+#[derive(Component, Clone)]
+struct TransitTag;
 
 /// Toggleable data layers drawn over the ground.
 #[derive(Resource, Default)]
@@ -86,6 +88,7 @@ struct Materials {
     car_bodies: Vec<Handle<StandardMaterial>>,
     car_body_mesh: Handle<Mesh>,
     truck_body_mesh: Handle<Mesh>,
+    bus_body_mesh: Handle<Mesh>,
     car_lights_mesh: Handle<Mesh>,
     signal_green: Handle<StandardMaterial>,
     signal_red: Handle<StandardMaterial>,
@@ -116,6 +119,7 @@ struct RenderState {
     paths_version: u64,
     paths_shown: bool,
     haze_signature: usize,
+    transit_version: u64,
 }
 
 /// Renderer statistics shown in the UI.
@@ -132,7 +136,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RenderState>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_systems(Startup, setup).add_systems(
             Update,
-            (sync_terrain, sync_roads, sync_signals, sync_preview, sync_lots, sync_overlay, sync_paths, sync_haze, sync_buildings, sync_citizens, sync_cars, update_daylight)
+            (sync_terrain, sync_roads, sync_signals, sync_preview, sync_lots, sync_overlay, sync_paths, sync_haze, sync_transit, sync_buildings, sync_citizens, sync_cars, update_daylight)
                 .chain()
                 .in_set(SimSet::Sync),
         );
@@ -275,6 +279,15 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         wheels(&mut m, &[-2.6, -1.4, 2.6], 1.05, 0.5);
         meshes.add(to_mesh(&m, true))
     };
+    let bus_body_mesh = {
+        let mut m = MeshData::default();
+        m.boxed(Vec3::new(0.0, 1.65, 0.0), Vec3::new(11.5, 3.0, 2.5), 0.0, [1.0, 1.0, 1.0, 1.0]);
+        m.boxed(Vec3::new(0.0, 2.25, 0.0), Vec3::new(11.0, 0.9, 2.56), 0.0, [0.14, 0.17, 0.2, 1.0]);
+        m.boxed(Vec3::new(5.6, 1.95, 0.0), Vec3::new(0.4, 1.6, 2.3), 0.0, [0.14, 0.17, 0.2, 1.0]);
+        m.boxed(Vec3::new(-5.72, 2.95, 0.0), Vec3::new(0.1, 0.4, 1.6), 0.0, [1.0, 0.7, 0.2, 1.0]);
+        wheels(&mut m, &[-3.8, 3.6], 1.15, 0.5);
+        meshes.add(to_mesh(&m, true))
+    };
     let car_lights_mesh = {
         let mut m = MeshData::default();
         for z in [-0.6, 0.6] {
@@ -301,6 +314,7 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         car_bodies,
         car_body_mesh,
         truck_body_mesh,
+        bus_body_mesh,
         car_lights_mesh,
         signal_green,
         signal_red,
@@ -515,7 +529,7 @@ fn sync_lots(
 fn spawn_building(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, sim: &Sim, assets: &GameAssets, id: BuildingId) -> Option<(Vec<Entity>, usize)> {
     let b = sim.world.buildings.get(id)?;
     let lot = sim.world.lots.get(b.lot)?;
-    let extras = Extras { parking: b.parking_visual(), plant: b.plant, powered: b.powered, park: lot.park.as_ref() };
+    let extras = Extras { parking: b.parking_visual(), plant: b.plant, powered: b.powered, park: lot.park.as_ref(), depot: b.depot };
     let geo = generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras);
     let tris = geo.triangle_count();
     Some((spawn_geometry(commands, meshes, mats, &geo, BuildingTag(id)), tris))
@@ -673,7 +687,13 @@ fn sync_cars(
     for (id, car) in traffic.cars.iter() {
         if !state.cars.contains_key(&id) {
             let body_mat = mats.car_bodies[car.color as usize % mats.car_bodies.len().max(1)].clone();
-            let mesh = if car.cargo.is_some() { mats.truck_body_mesh.clone() } else { mats.car_body_mesh.clone() };
+            let mesh = if car.bus.is_some() {
+                mats.bus_body_mesh.clone()
+            } else if car.cargo.is_some() {
+                mats.truck_body_mesh.clone()
+            } else {
+                mats.car_body_mesh.clone()
+            };
             let body = commands.spawn((Mesh3d(mesh), MeshMaterial3d(body_mat), Transform::IDENTITY, CarTag(id))).id();
             let lights = commands.spawn((Mesh3d(mats.car_lights_mesh.clone()), MeshMaterial3d(mats.glow()), Transform::IDENTITY, CarTag(id))).id();
             state.cars.insert(id, [body, lights]);
@@ -776,6 +796,47 @@ fn sync_paths(
     if !mesh.is_empty() {
         commands.spawn((Mesh3d(meshes.add(to_mesh(&mesh, false))), MeshMaterial3d(mats.glow()), Transform::IDENTITY, PathsTag));
     }
+}
+
+/// Bus stops: a pole, a sign, a kerb mark and a shelter at every stop of
+/// every line, redrawn when a line is edited.
+fn sync_transit(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut state: ResMut<RenderState>,
+    existing: Query<Entity, With<TransitTag>>,
+) {
+    let w = &sim.world;
+    if w.transit.version == state.transit_version && !existing.is_empty() == !w.transit.routes.is_empty() && !assets.palette_changed {
+        return;
+    }
+    state.transit_version = w.transit.version;
+    despawn_all(&mut commands, &existing);
+    let mut stops: Vec<(SVec2, SVec2, SVec2)> = Vec::new();
+    for route in w.transit.routes.values() {
+        for stop in &route.stops {
+            if !w.roads.segment(stop.segment).alive {
+                continue;
+            }
+            let (a, b) = w.roads.segment_points(stop.segment);
+            let mut d = (b - a).normalize_or_zero();
+            let mut right = SVec2::new(-d.y, d.x);
+            let (_, q) = nd_sim::roads::project_on_segment(stop.pos, a, b);
+            if (stop.pos - q).dot(right) < 0.0 {
+                d = -d;
+                right = -right;
+            }
+            stops.push((stop.pos, d, right));
+        }
+    }
+    if stops.is_empty() {
+        return;
+    }
+    let geo = bus_stops(&stops, &assets.palette);
+    spawn_geometry(&mut commands, &mut meshes, &mats, &geo, TransitTag);
 }
 
 /// Brown haze over coal plants: stacked translucent layers that read as a

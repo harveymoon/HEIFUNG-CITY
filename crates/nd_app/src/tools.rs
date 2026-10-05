@@ -20,6 +20,14 @@ pub enum Tool {
     Edit,
     Bulldoze,
     Power,
+    Transit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TransitMode {
+    #[default]
+    Route,
+    Depot,
 }
 
 #[derive(Resource)]
@@ -41,6 +49,14 @@ pub struct ToolState {
     pub kind: RoadKind,
     /// Plant to place with the Power tool.
     pub power_kind: nd_sim::PowerPlantKind,
+    /// Transit tool: drawing lines or placing a depot.
+    pub transit_mode: TransitMode,
+    /// The line being drawn or edited.
+    pub route_sel: Option<nd_sim::RouteId>,
+    pub hover_stop: Option<(nd_sim::RouteId, usize)>,
+    pub stop_drag: Option<(nd_sim::RouteId, usize)>,
+    /// Draw the lines whatever tool is active.
+    pub show_routes: bool,
 }
 
 /// Road presets in the spirit of Cities Skylines' road menu: (label, forward, backward, kind).
@@ -77,6 +93,11 @@ impl Default for ToolState {
             selected_gesture: None,
             kind: RoadKind::Street,
             power_kind: nd_sim::PowerPlantKind::Solar,
+            transit_mode: TransitMode::Route,
+            route_sel: None,
+            hover_stop: None,
+            stop_drag: None,
+            show_routes: false,
         }
     }
 }
@@ -182,6 +203,7 @@ fn tool_input(
         (KeyCode::Digit4, KeyCode::KeyE, Tool::Edit),
         (KeyCode::Digit5, KeyCode::KeyB, Tool::Bulldoze),
         (KeyCode::Digit6, KeyCode::KeyN, Tool::Power),
+        (KeyCode::Digit7, KeyCode::KeyT, Tool::Transit),
     ];
     for (a, b, tool) in picks {
         if (keys.just_pressed(a) || (keys.just_pressed(b) && !ctrl)) && !(tool == Tool::Zone && ctrl) {
@@ -197,6 +219,17 @@ fn tool_input(
     }
     if keys.just_pressed(KeyCode::Backspace) && matches!(tools.tool, Tool::Road | Tool::Zone) {
         tools.points.pop();
+    }
+    if keys.just_pressed(KeyCode::Backspace) && tools.tool == Tool::Transit {
+        if let Some(r) = tools.route_sel {
+            let n = sim.world.transit.routes.get(r).map_or(0, |x| x.stops.len());
+            if n > 0 {
+                sim.world.remove_bus_stop(r, n - 1);
+                if !sim.world.transit.routes.contains_key(r) {
+                    tools.route_sel = None;
+                }
+            }
+        }
     }
     if keys.just_pressed(KeyCode::KeyC) && tools.tool == Tool::Road && !ctrl {
         tools.curved = !tools.curved;
@@ -344,6 +377,77 @@ fn tool_input(
                 }
             }
         }
+        Tool::Transit => match tools.transit_mode {
+            TransitMode::Route => {
+                tools.hover_stop = ground.and_then(|p| sim.world.transit.stop_near(p, 5.0));
+                if click {
+                    if let Some((r, i)) = tools.hover_stop {
+                        tools.route_sel = Some(r);
+                        tools.stop_drag = Some((r, i));
+                        tools.status = format!("{} selected. Drag the stop to move it, Delete removes it, click a street to add stops.", sim.world.transit.routes[r].name);
+                    } else if let Some(p) = ground {
+                        let r = match tools.route_sel {
+                            Some(r) if sim.world.transit.routes.contains_key(r) => r,
+                            _ => {
+                                let r = sim.world.add_bus_route();
+                                tools.route_sel = Some(r);
+                                r
+                            }
+                        };
+                        tools.status = match sim.world.add_bus_stop(r, p) {
+                            Ok(i) => format!("Stop {} added to {}. Keep clicking streets round a loop; Enter or right-click when done.", i + 1, sim.world.transit.routes[r].name),
+                            Err(e) => format!("No stop: {e}."),
+                        };
+                    }
+                }
+                if buttons.just_released(MouseButton::Left) {
+                    if let Some((r, i)) = tools.stop_drag.take() {
+                        if let Some(p) = ground {
+                            let moved = sim.world.transit.routes.get(r).and_then(|x| x.stops.get(i)).is_some_and(|s| s.pos.distance(p) > 2.5);
+                            if moved && sim.world.move_bus_stop(r, i, p) {
+                                tools.status = "Stop moved.".into();
+                            }
+                        }
+                    }
+                }
+                if keys.just_pressed(KeyCode::Delete) {
+                    if let Some((r, i)) = tools.hover_stop.take() {
+                        sim.world.remove_bus_stop(r, i);
+                        if !sim.world.transit.routes.contains_key(r) {
+                            tools.route_sel = None;
+                            tools.status = "Line removed.".into();
+                        } else {
+                            tools.status = "Stop removed.".into();
+                        }
+                    }
+                }
+                if finish {
+                    if let Some(r) = tools.route_sel.take() {
+                        let n = sim.world.transit.routes.get(r).map_or(0, |x| x.stops.len());
+                        tools.status = if n >= 2 { "Line closed into a loop. Buses leave the depot in the morning.".into() } else { "A line needs at least two stops.".into() };
+                    }
+                }
+            }
+            TransitMode::Depot => {
+                if click {
+                    if let Some(p) = ground {
+                        let lot = sim.world.lots.iter().find(|(_, l)| point_in_polygon(p, &l.polygon)).map(|(id, _)| id);
+                        match lot {
+                            Some(lot) => {
+                                tools.status = match sim.world.build_depot(lot) {
+                                    Ok(id) => {
+                                        *selection = Selection::Building(id);
+                                        "Bus depot built. Buses leave it in the morning.".into()
+                                    }
+                                    Err(e) => format!("Cannot build: {e}."),
+                                };
+                            }
+                            None => tools.status = "Click a vacant lot by a street.".into(),
+                        }
+                    }
+                }
+            }
+        },
         Tool::Power => {
             if click {
                 if let Some(p) = ground {
@@ -398,6 +502,36 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
     let white = Color::linear_rgb(3.0, 3.0, 3.0);
     let lift = |p: SVec2| Vec3::new(p.x, 0.8, p.y);
     let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+
+    // Bus lines: the lane path of every leg in the line's colour, stops as
+    // rings, the selected line bright, broken legs red.
+    if tools.tool == Tool::Transit || tools.show_routes {
+        let palette = [[0.2, 1.4, 2.2], [2.4, 0.5, 0.3], [0.5, 2.2, 0.5], [2.2, 1.8, 0.3], [1.8, 0.4, 2.0], [0.3, 1.0, 2.4], [2.2, 1.0, 0.6], [1.2, 1.2, 1.2]];
+        for (id, route) in &sim.world.transit.routes {
+            let c = palette[route.color as usize % palette.len()];
+            let sel = tools.route_sel == Some(id);
+            let k = if sel { 1.6 } else { 0.7 };
+            let col = Color::linear_rgb(c[0] * k, c[1] * k, c[2] * k);
+            for (i, leg) in route.legs.iter().enumerate() {
+                let pts: Vec<Vec3> = leg.iter().map(|&p| Vec3::new(p.x, 1.2, p.y)).collect();
+                if pts.len() >= 2 {
+                    gizmos.linestrip(pts, if route.broken.contains(&i) { red } else { col });
+                }
+            }
+            for (i, s) in route.stops.iter().enumerate() {
+                let hovered = tools.hover_stop == Some((id, i));
+                gizmos.circle(Isometry3d::new(Vec3::new(s.pos.x, 1.2, s.pos.y), flat), if hovered { 4.0 } else { 2.4 }, if hovered { white } else { col });
+            }
+        }
+        if tools.tool == Tool::Transit {
+            if let Some(c) = cursor.ground {
+                let on_street = sim.world.roads.nearest_street(c).is_some_and(|(_, _, q)| q.distance(c) <= nd_sim::transit::STOP_SNAP);
+                if tools.transit_mode == TransitMode::Route && on_street && tools.hover_stop.is_none() {
+                    gizmos.circle(Isometry3d::new(lift(c), flat), 2.0, cyan);
+                }
+            }
+        }
+    }
 
     match tools.tool {
         Tool::Road | Tool::Zone => {
@@ -465,6 +599,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 }
             }
         }
+        Tool::Transit => {}
         Tool::Inspect => {}
     }
 }

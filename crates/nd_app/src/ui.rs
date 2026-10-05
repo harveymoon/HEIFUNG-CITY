@@ -164,6 +164,7 @@ fn side_panel(
                     (Tool::Edit, "Edit [4]"),
                     (Tool::Bulldoze, "Bulldoze [5]"),
                     (Tool::Power, "Power [6]"),
+                    (Tool::Transit, "Buses [7]"),
                 ] {
                     if ui.selectable_label(tools.tool == tool, label).clicked() {
                         tools.tool = tool;
@@ -267,6 +268,62 @@ fn side_panel(
                 }
                 Tool::Inspect => {
                     ui.label(egui::RichText::new("Click a glowing citizen, a car, or a building.").small().weak());
+                }
+                Tool::Transit => {
+                    use crate::tools::TransitMode;
+                    ui.horizontal(|ui| {
+                        for (m, label) in [(TransitMode::Route, "Lines"), (TransitMode::Depot, "Depot")] {
+                            if ui.selectable_label(tools.transit_mode == m, label).clicked() {
+                                tools.transit_mode = m;
+                                tools.route_sel = None;
+                            }
+                        }
+                        ui.checkbox(&mut tools.show_routes, "Always show lines");
+                    });
+                    let t = &sim.world.economy.transit;
+                    if t.depots == 0 {
+                        ui.label(egui::RichText::new(format!("No depot: buses cannot run. Place one with Depot on a vacant lot by a street ({:.0} to build, {:.0}/day, {} buses).", nd_sim::transit::DEPOT_COST, nd_sim::transit::DEPOT_UPKEEP_PER_DAY, nd_sim::transit::DEPOT_CAPACITY)).small().color(egui::Color32::from_rgb(255, 160, 90)));
+                    } else {
+                        ui.label(egui::RichText::new(format!("{} depot{} for {} buses · {} out · {} waiting · {} riding · {} riders today · fares {:.0} · upkeep {:.0}/day", t.depots, if t.depots == 1 { "" } else { "s" }, t.depot_capacity, t.buses, t.waiting, t.riding, t.riders_today, t.fares_today, t.upkeep_today)).small().weak());
+                    }
+                    match tools.transit_mode {
+                        TransitMode::Route => {
+                            ui.label(egui::RichText::new("Click streets in order to lay stops round a loop (the side you click is the side buses serve); Enter or right-click closes the line. Click a stop to select its line, drag it to move it, Delete removes it, Backspace drops the last stop.").small().weak());
+                            let ids: Vec<nd_sim::RouteId> = sim.world.transit.routes.keys().collect();
+                            let mut remove: Option<nd_sim::RouteId> = None;
+                            let mut set_buses: Option<(nd_sim::RouteId, u8)> = None;
+                            for id in ids {
+                                let r = &sim.world.transit.routes[id];
+                                ui.horizontal(|ui| {
+                                    let sel = tools.route_sel == Some(id);
+                                    if ui.selectable_label(sel, format!("{} · {} stops · {} bus{} · {} riders today{}", r.name, r.stops.len(), r.buses, if r.buses == 1 { "" } else { "es" }, r.riders_today, if r.broken.is_empty() { "" } else { " · NO ROAD between some stops" })).clicked() {
+                                        tools.route_sel = if sel { None } else { Some(id) };
+                                    }
+                                    if ui.small_button("−").clicked() && r.buses > 0 {
+                                        set_buses = Some((id, r.buses - 1));
+                                    }
+                                    if ui.small_button("+").clicked() {
+                                        set_buses = Some((id, r.buses + 1));
+                                    }
+                                    if ui.small_button("delete").clicked() {
+                                        remove = Some(id);
+                                    }
+                                });
+                            }
+                            if let Some((id, n)) = set_buses {
+                                sim.world.set_route_buses(id, n);
+                            }
+                            if let Some(id) = remove {
+                                sim.world.remove_bus_route(id);
+                                if tools.route_sel == Some(id) {
+                                    tools.route_sel = None;
+                                }
+                            }
+                        }
+                        TransitMode::Depot => {
+                            ui.label(egui::RichText::new("Click a vacant lot by a street (not homes or parks). Buses park here overnight and leave at 05:30; each bus costs its upkeep per day and riders pay a fare.").small().weak());
+                        }
+                    }
                 }
                 Tool::Power => {
                     ui.horizontal_wrapped(|ui| {
@@ -432,6 +489,10 @@ fn side_panel(
                                 ui.label(format!("{sitting} sitting on the benches"));
                             }
                         }
+                    }
+                    if b.depot {
+                        let out = sim.world.traffic.cars.values().filter(|c| c.bus.as_ref().is_some_and(|x| x.depot == id)).count();
+                        ui.label(format!("bus depot: room for {} buses, {} out on the lines, {:.0}/day", nd_sim::transit::DEPOT_CAPACITY, out, nd_sim::transit::DEPOT_UPKEEP_PER_DAY));
                     }
                     if let Some(kind) = b.plant {
                         ui.label(format!("{}: {:.0} MW nameplate, {:.0}% available now, {:.0}/day upkeep", kind.label(), kind.capacity_mw(), kind.availability(&sim.world.weather, sim.world.clock.day_fraction()) * 100.0, kind.upkeep_per_day()));

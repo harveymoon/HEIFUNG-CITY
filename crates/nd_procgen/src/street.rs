@@ -287,8 +287,12 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
                     g.part(Glow).boxed(Vec3::new(face.x, 1.5, face.y), Vec3::new(0.6, 0.8, 0.04), yaw, rgba(mul(pal.led_colors[1], 0.5)));
                 }
                 4 if len > 80.0 => {
-                    let (sp, d, right) = at(s, side, hw + SIDEWALK * 0.55);
-                    shelter(&mut g, pal, sp, d, right * side);
+                    // A phone box where a shelter used to stand at random;
+                    // shelters now mark real bus stops.
+                    let (sp, d, _) = at(s, side, hw + SIDEWALK * 0.55);
+                    let yaw = d.y.atan2(d.x);
+                    g.part(Glass).boxed(Vec3::new(sp.x, 1.2, sp.y), Vec3::new(1.0, 2.4, 1.0), yaw, rgba(mul(pal.glass[0], 1.0)));
+                    g.part(Panel).boxed(Vec3::new(sp.x, 2.45, sp.y), Vec3::new(1.1, 0.1, 1.1), yaw, rgba(mul(pal.steel, 0.8)));
                 }
                 _ => {}
             }
@@ -467,7 +471,7 @@ fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run: &Run, rng
 }
 
 /// Bus shelter: two posts, a roof, a back panel and a lit advert.
-fn shelter(g: &mut Geometry, pal: &Palette, p: Vec2, d: Vec2, out: Vec2) {
+pub fn shelter(g: &mut Geometry, pal: &Palette, p: Vec2, d: Vec2, out: Vec2) {
     let yaw = d.y.atan2(d.x);
     for s in [-1.6f32, 1.6] {
         let q = p + d * s;

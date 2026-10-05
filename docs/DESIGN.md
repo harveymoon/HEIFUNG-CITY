@@ -161,6 +161,25 @@ Citizens are rendered from their simulated positions every frame.
   visit no longer vanishes into a building: the visitor walks the paths to a bench and
   sits (`Activity::Sitting`, drawn seated, visible, facing the path or the water),
   then walks off the bench when the next decision comes.
+- **Buses** (`nd_sim::transit`): the player draws lines and places a depot; without a
+  depot no bus runs. A line is a loop of stops on streets; a click snaps to the nearest
+  street and the stop sits on the kerb of the side clicked, so buses driving that way
+  serve it (the two sides of a street are two stops). Each leg is a lane route between
+  consecutive stops; legs with no road are flagged and the line does not run. Buses are
+  cars of the traffic model with a `Bus` state: 12 m long, so following cars keep a
+  longer gap, and a `hold` that keeps them standing at a stop for 18 traffic seconds
+  while riders get off and on. From 05:30 depots send out one bus every few ticks until
+  every line has the buses it asked for (ten per depot); from 23:30 buses finish the
+  loop and drive back to the depot. A bus reaching a stop is rerouted in place to the
+  next stop, so it never leaves the road. People without a bike take the bus for trips
+  over 160 m when a line has a stop within 110 m of both ends and walking the two ends
+  saves real distance: they walk to the stop, wait (`Activity::Waiting`, visible),
+  board when their line's bus dwells there (`Activity::Riding`, carried with the bus),
+  pay a fare into the treasury, alight at their stop and walk the last leg. Riders who
+  wait three hours of clock walk instead. Buses cost upkeep per day and depots too.
+  Editing: stops can be added, dragged, deleted; buses per line set; lines deleted (the
+  buses are taken off and riders stranded on the kerb). Roads changing re-snap the stops
+  or drop them.
 - **Power** (`nd_sim::power`): the city runs on electricity and the player supplies it.
   Every building draws megawatts by land use, floors and tier (industry most, homes
   least, high tiers more); plants draw none. Four kinds of plant go on vacant lots with
@@ -276,6 +295,11 @@ trait MindProvider {
   turbine blades) checks the polygon first. A test generates every style on about
   six hundred lots cut by straight, diagonal and curved roads and fails if any vertex
   is more than 4 m outside its lot, below ground, or absurdly tall.
+- Bus depots (`buildings/transit.rs`): a shed with roller doors, bus bays with parked
+  buses, a fuel island, a wash arch, an office and a barrier at the gate. Bus stops are
+  drawn by the app from the lines (pole, sign, kerb mark, shelter), so the random street
+  shelters became phone boxes. Buses are a long body with a window band and a destination
+  blind, coloured by their line.
 - Parks are drawn from the sim's plan (`buildings/park.rs`): the ground, path surface,
   bench condition, fence or hedge or railing and the tree mix follow the tier (dirt and
   weeds, dead trees, a broken bench and a drum fire on cheap land; lawn, hedges and
@@ -310,6 +334,8 @@ trait MindProvider {
   and exports, hunger and shopping, business closures.
 - v0.8 (done): polygonal parcels, 35 architectural styles per land use and tier from a
   parts toolkit, textured surfaces with normal maps, street furniture, walk mode.
+- v0.14 (done): buses: lines drawn as loops of kerb-side stops, depots that dispatch and
+  house them, riders who walk to a stop, wait, ride and pay.
 - v0.13 (done): parks planned over connected parcels: paths lot to lot, benches people
   sit on, features by land value (courts to ferris wheels), adaptive trees, parks on paths.
 - v0.12 (done): electricity: four plant kinds placed by the player, weather-dependent

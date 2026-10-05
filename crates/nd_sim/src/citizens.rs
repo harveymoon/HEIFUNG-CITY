@@ -18,6 +18,8 @@ pub enum Purpose {
     Wander,
     /// Walking to a park bench.
     Sit,
+    /// Walking to a bus stop.
+    ToStop,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -46,6 +48,14 @@ pub enum Activity {
         at: Vec2,
         park: BuildingId,
     },
+    /// At a bus stop, waiting for the line.
+    Waiting {
+        at: Vec2,
+    },
+    /// On a bus.
+    Riding {
+        bus: CarId,
+    },
 }
 
 impl Activity {
@@ -57,6 +67,8 @@ impl Activity {
             Activity::Visiting(_) => "out",
             Activity::Idle => "loitering",
             Activity::Sitting { .. } => "sitting in the park",
+            Activity::Waiting { .. } => "waiting for the bus",
+            Activity::Riding { .. } => "on the bus",
             Activity::Traveling { purpose, .. } | Activity::Driving { purpose, .. } => match purpose {
                 Purpose::Home => "heading home",
                 Purpose::Work => "commuting",
@@ -64,12 +76,13 @@ impl Activity {
                 Purpose::Shop(_) => "shopping",
                 Purpose::Wander => "wandering",
                 Purpose::Sit => "heading for a bench",
+                Purpose::ToStop => "walking to the bus stop",
             },
         }
     }
 
     pub fn is_traveling(&self) -> bool {
-        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. })
+        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. })
     }
 }
 
@@ -111,6 +124,9 @@ pub struct Citizen {
     /// Where the car is parked while the citizen is inside somewhere.
     #[serde(default)]
     pub parked_at: Option<BuildingId>,
+    /// The bus trip under way, if any.
+    #[serde(default)]
+    pub transit: Option<crate::transit::TransitTrip>,
     pub activity: Activity,
     pub memories: Vec<Memory>,
     pub thought: String,
@@ -148,6 +164,6 @@ impl Citizen {
     }
 
     pub fn is_visible(&self) -> bool {
-        matches!(self.activity, Activity::Traveling { .. } | Activity::Idle | Activity::Sitting { .. })
+        matches!(self.activity, Activity::Traveling { .. } | Activity::Idle | Activity::Sitting { .. } | Activity::Waiting { .. })
     }
 }

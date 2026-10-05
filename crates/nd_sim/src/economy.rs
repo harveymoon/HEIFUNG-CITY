@@ -57,6 +57,8 @@ pub struct Economy {
     pub tax_today: f32,
     #[serde(default)]
     pub power: crate::power::PowerStats,
+    #[serde(default)]
+    pub transit: crate::transit::TransitStats,
 }
 
 fn default_treasury() -> f32 {

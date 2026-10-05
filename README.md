@@ -62,6 +62,11 @@ links Bevy dynamically for quicker iteration.
   Cheap land gets a bare lot with a court; the middle gets playgrounds, a pond and a kiosk; dear land
   gets a lake, a fountain, a bandstand, a carousel and a ferris wheel. Park paths are part of the
   walking network, so people cut through parks, and a visit ends on a bench, sitting, in the open.
+- **Buses [7]**: draw a line by clicking streets round a loop (the side you click is the kerb the bus
+  serves); Enter closes it. Click a stop to select its line, drag to move, Delete to remove. The panel
+  sets buses per line. Place a depot (Depot mode) on a vacant lot by a street: no depot, no buses.
+  Buses leave at 05:30, dwell at every stop, and go home at 23:30. People without a bike ride when a
+  line serves both ends of a long trip; they wait at the stop, pay a fare, and walk the last leg.
 - **Power**: buildings need electricity. The Power tool (`6`) places a coal plant, solar farm, wind
   farm or nuclear plant on a vacant lot, paid from the treasury. Coal is cheap and steady but hangs a
   toxic haze over the district and drags land value down; solar and wind are clean but follow the sun,

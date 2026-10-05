@@ -15,6 +15,7 @@ mod park;
 mod parking;
 pub mod parts;
 mod power;
+pub mod transit;
 mod residential;
 
 use crate::palette::Palette;
@@ -108,10 +109,12 @@ pub enum Style {
     PowerSolar,
     PowerWind,
     PowerNuclear,
+    // transit
+    BusDepot,
 }
 
 impl Style {
-    pub const ALL: [Style; 41] = [
+    pub const ALL: [Style; 42] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -153,6 +156,7 @@ impl Style {
         Style::PowerSolar,
         Style::PowerWind,
         Style::PowerNuclear,
+        Style::BusDepot,
     ];
 
     pub fn label(self) -> &'static str {
@@ -198,6 +202,7 @@ impl Style {
             Style::PowerSolar => "solar farm",
             Style::PowerWind => "wind farm",
             Style::PowerNuclear => "nuclear plant",
+            Style::BusDepot => "bus depot",
         }
     }
 }
@@ -511,11 +516,13 @@ pub struct Extras<'a> {
     pub plant: Option<PowerPlantKind>,
     pub powered: f32,
     pub park: Option<&'a ParkLayout>,
+    /// A bus depot.
+    pub depot: bool,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false }
     }
 }
 
@@ -611,6 +618,7 @@ pub fn generate_building(
 ) -> Geometry {
     let mut rng = rng_for(seed, 11);
     let style = match (extras.plant, extras.parking) {
+        _ if extras.depot => Style::BusDepot,
         (Some(PowerPlantKind::Coal), _) => Style::PowerCoal,
         (Some(PowerPlantKind::Solar), _) => Style::PowerSolar,
         (Some(PowerPlantKind::Wind), _) => Style::PowerWind,
@@ -725,6 +733,7 @@ fn generate_styled_extras(
         Style::PowerSolar => power::solar(&mut g, &ctx, &mut rng),
         Style::PowerWind => power::wind(&mut g, &ctx, &mut rng),
         Style::PowerNuclear => power::nuclear(&mut g, &ctx, &mut rng),
+        Style::BusDepot => transit::bus_depot(&mut g, &ctx, &mut rng),
     }
     g
 }
