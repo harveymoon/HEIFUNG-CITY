@@ -3,6 +3,9 @@
 
 use super::*;
 
+/// Most newcomers in one arrival, however empty the town.
+const MAX_ARRIVALS: u32 = 12;
+
 impl World {
     pub(super) fn daily_citizen(&mut self, cid: CitizenId) {
         let (income, home) = {
@@ -144,6 +147,33 @@ impl World {
         candidates.choose(&mut self.rng).copied()
     }
 
+    /// An open job for someone arriving or looking: the least-staffed
+    /// employer first, and food sellers (grocers, bakeries) ahead of the
+    /// rest, so a growing town staffs its shops before its sites and plants
+    /// and nobody goes hungry beside full warehouses. Ties are broken at
+    /// random so the same firm is not always picked.
+    pub(super) fn pick_job(&mut self) -> Option<BuildingId> {
+        let food = |b: &Building| b.business.as_ref().is_some_and(|z| z.sells(Resource::Groceries) || z.sells(Resource::BakedGoods));
+        let scored: Vec<(f32, BuildingId)> = self
+            .buildings
+            .iter()
+            .filter(|(_, b)| b.free_jobs() > 0)
+            .map(|(id, b)| (b.staffing() - if food(b) { 0.5 } else { 0.0 }, id))
+            .collect();
+        let best = scored.iter().map(|(s, _)| *s).fold(f32::INFINITY, f32::min);
+        let near_best: Vec<BuildingId> = scored.iter().filter(|(s, _)| *s <= best + 0.1).map(|(_, id)| *id).collect();
+        near_best.choose(&mut self.rng).copied()
+    }
+
+    /// Newcomers per arrival: one to three, plus more while homes and jobs
+    /// stand open, so the town fills about as fast as it is built (a fixed
+    /// trickle left a thousand homes empty and the shops unstaffed).
+    pub(super) fn arrivals(&mut self, free_homes: u32) -> u32 {
+        let free_jobs: u32 = self.buildings.values().map(|b| b.free_jobs() as u32).sum();
+        let pull = free_homes.min(free_jobs + 10) / 40;
+        (self.rng.random_range(1..=3) + pull).min(MAX_ARRIVALS).min(free_homes)
+    }
+
     pub(super) fn immigrate(&mut self) {
         let free_homes: u32 = self.buildings.values().map(|b| b.free_homes() as u32).sum();
         if free_homes == 0 {
@@ -151,11 +181,11 @@ impl World {
             return;
         }
         let Some(entry) = self.entry_node() else { return };
-        let n = self.rng.random_range(1..=3).min(free_homes);
+        let n = self.arrivals(free_homes);
         for _ in 0..n {
             // Income first: a job if one is open, gig money otherwise. Then a
             // home they can afford, the best tier available.
-            let job = self.pick_building(|b| b.free_jobs() > 0);
+            let job = self.pick_job();
             let seed = self.fresh_seed();
             let skill = Self::skill_of(seed);
             let income = job.and_then(|j| self.buildings.get(j)).map(|b| b.wage() * skill).unwrap_or(GIG_INCOME * skill);
@@ -247,7 +277,7 @@ impl World {
     pub(super) fn job_search(&mut self) {
         let jobless: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.work.is_none()).map(|(id, _)| id).collect();
         for id in jobless {
-            let Some(job) = self.pick_building(|b| b.free_jobs() > 0) else { break };
+            let Some(job) = self.pick_job() else { break };
             self.assign_job(id, job);
         }
     }

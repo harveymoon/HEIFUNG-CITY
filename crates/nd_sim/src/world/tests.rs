@@ -1662,3 +1662,35 @@ fn brownouts_cut_production() {
     assert!(made_dark < made_lit * 0.9, "dark: {made_dark} vs lit {made_lit}");
     assert!((made_dark - full * p).abs() < 1e-3, "output scales with power: {made_dark} vs {}", full * p);
 }
+
+#[test]
+fn job_seekers_staff_the_food_shops_first_and_arrivals_scale_with_open_homes() {
+    use crate::market::{Business, BusinessKind};
+    let mut w = World::new(WorldConfig::default());
+    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
+    let a = lot_near(&w, Vec2::new(-150.0, 20.0), LandUse::Commercial);
+    let b = lot_near(&w, Vec2::new(-60.0, 20.0), LandUse::Commercial);
+    w.build_on(a);
+    w.build_on(b);
+    let (grocer, gadgets) = (w.lots[a].building.unwrap(), w.lots[b].building.unwrap());
+    for (id, kind) in [(grocer, BusinessKind::Grocery), (gadgets, BusinessKind::GadgetShop)] {
+        w.finish_construction(id);
+        let bld = &mut w.buildings[id];
+        bld.jobs = 10;
+        bld.workers.clear();
+        bld.business = Some(Business::new(kind, 10));
+    }
+    // An empty grocer and an empty gadget shop: the grocer is picked every
+    // time (food sellers get a half-staffing head start).
+    for _ in 0..20 {
+        assert_eq!(w.pick_job(), Some(grocer));
+    }
+    // A full grocer leaves only the gadget shop.
+    w.buildings[grocer].workers = (0..10).map(|_| CitizenId::default()).collect();
+    assert_eq!(w.pick_job(), Some(gadgets));
+    // Arrivals grow with open homes and jobs, capped.
+    assert!((1..=3).contains(&w.arrivals(5)));
+    let many = w.arrivals(2_000);
+    assert!(many >= 1 && many <= 12);
+}
