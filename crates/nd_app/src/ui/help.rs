@@ -1,6 +1,6 @@
-//! The long help copy, in one place, so the panel code reads as layout and
+//! The long help copy, in one place, so the HUD code reads as layout and
 //! the bindings are documented where they can be checked against the input
-//! systems in one glance.
+//! systems in one glance. The Help window shows most of it.
 
 use crate::tools::Tool;
 use nd_sim::PowerPlantKind;
@@ -10,17 +10,7 @@ pub const CAMERA_ORBIT: &str = "Right-drag rotate · middle-drag or shift-drag p
 pub const HOTKEYS: &str = "Space pause · - / = speed · Ctrl+Z / Ctrl+Y undo and redo · Ctrl+Enter implement · Esc clears points and the selection · Backspace drops the last point or stop · Delete removes the hovered point or stop · O zoning outlines · V land value · P pedestrian network · G seeds the demo on an empty map";
 pub const TOOL_KEYS: &str = "Tools by digit 1–8 or by letter I R Z B N T Y (Edit has no letter: Q and E turn the camera).";
 
-/// Tool buttons: label with the keys that pick the tool.
-pub const TOOL_LABELS: [(Tool, &str); 8] = [
-    (Tool::Inspect, "Inspect [1/I]"),
-    (Tool::Road, "Road [2/R]"),
-    (Tool::Zone, "Zone [3/Z]"),
-    (Tool::Edit, "Edit [4]"),
-    (Tool::Bulldoze, "Bulldoze [5/B]"),
-    (Tool::Power, "Power [6/N]"),
-    (Tool::Transit, "Buses [7/T]"),
-    (Tool::Rail, "Rail [8/Y]"),
-];
+pub const WINDOWS: &str = "The buttons in the top bar open and close the info windows; drag them anywhere, they remember where they were. The Inspect tool opens the inspector on a building or car and the person pane on a citizen.";
 
 /// The one-line hint under each tool's controls.
 pub const TOOL_HINTS: [(Tool, &str); 8] = [
@@ -28,7 +18,7 @@ pub const TOOL_HINTS: [(Tool, &str); 8] = [
     (Tool::Zone, "Click polygon corners around a road, Enter or right-click to add to the project. Ctrl-click inside an existing zone to repaint it with the selected land use. Zones drawn over older ones take the ground."),
     (Tool::Edit, "Click a road to select it for upgrading. Drag a control point to move it. Shift-click a road or zone edge to insert a point. Delete removes the hovered point."),
     (Tool::Bulldoze, "Click a road or zone to mark it for removal."),
-    (Tool::Inspect, "Click a glowing citizen, a car, or a building. Hover a parcel for a quick read-out; a selected person opens the person pane, where the star keeps them in FAVOURITES."),
+    (Tool::Inspect, "Click a glowing citizen, a car, or a building. Hover a parcel for a quick read-out; a selected person opens the person pane, where the star keeps them in the People window's favourites."),
     (Tool::Transit, "Click streets in order to lay stops round a loop (the side you click is the side buses serve); Enter or right-click closes the line. Click a stop to select its line, drag it to move it, Delete removes it, Backspace drops the last stop."),
     (Tool::Rail, "Nothing runs until both connectors are joined: track from its rail stub to the line (a trunk already crosses the map to the south) and a road from its street stub to the city. Unjoined stubs show red. Track is laid with the Road tool's Rail preset."),
     (Tool::Power, "Click a vacant lot to build. Without plants the regional grid sells the city 60 MW at a price; beyond that, the poorest districts go dark first."),
@@ -44,6 +34,7 @@ pub const EDIT_ZONE_SELECTED: &str = "Selected a zone; use the Zone tool with Ct
 pub const TRANSIT_DEPOT: &str = "Click a vacant lot by a street (not homes or parks). Buses park here overnight and leave at 05:30; each bus costs its upkeep per day and riders pay a fare.";
 pub const PROJECT_NONE: &str = "No pending project. Drawing or bulldozing starts one.";
 pub const SEED_EXISTING: &str = "The map already has buildings: the demo is laid out blind over the centre and implements at once (no undo).";
+pub const SAVES: &str = "Save writes saves/city.ron (always the latest) and a dated slot; the newest eight slots are kept. Load on a running city asks first, then comes up paused with the tools reset.";
 pub const ASSETS_RELOAD: &str = "assets/palette.ron and assets/rules/buildings.ron hot-reload while running.";
 
 pub fn power_note(k: PowerPlantKind) -> &'static str {

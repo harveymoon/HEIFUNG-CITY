@@ -75,8 +75,9 @@ pub fn memory_line(ui: &mut egui::Ui, m: &nd_sim::Memory) {
 
 /// A draggable window on the selected citizen: who they are, what they are
 /// doing, where they are going, and everything they remember. The star keeps
-/// them in the FAVOURITES list; closing the pane deselects them.
-pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection) {
+/// them in the People window's favourites; closing the pane deselects them.
+/// `content` is the map area between the bars the window stays inside.
+pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, content: egui::Rect) {
     let Selection::Citizen(id) = *selection else { return };
     if !sim.world.citizens.contains_key(id) {
         return;
@@ -88,12 +89,13 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
     egui::Window::new(egui::RichText::new(title).color(egui::Color32::from_rgb(230, 225, 210)).strong())
         .id(egui::Id::new("person_pane"))
         .open(&mut open)
-        .default_pos(egui::pos2(ctx.viewport_rect().right() - 372.0, 24.0))
+        .default_pos(egui::pos2(content.right() - 372.0, content.top() + 12.0))
         .default_width(340.0)
+        .constrain_to(content)
         .resizable(false)
         .show(ctx, |ui| {
             let star = if is_fav { "★ favourite" } else { "☆ favourite" };
-            if ui.selectable_label(is_fav, star).on_hover_text("Keep this person in the FAVOURITES list in the side panel").clicked() {
+            if ui.selectable_label(is_fav, star).on_hover_text("Keep this person in the favourites list of the People window").clicked() {
                 toggle_fav = true;
             }
             ui.separator();

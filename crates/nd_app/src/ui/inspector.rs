@@ -1,12 +1,35 @@
-//! The INSPECTOR section: the selected citizen, building or vehicle.
+//! The inspector: the selected building or vehicle in a window of its own
+//! (a selected citizen opens the person pane instead), and the read-out
+//! shared with it.
 
 use bevy_egui::egui;
 
 use super::person::{citizen_summary, memory_line, spotlight_toggle};
-use super::{hint, neon, WARN};
+use super::{hint, neon, UiCtx, GOLD, WARN};
 use crate::assets::GameAssets;
 use crate::sim::Sim;
 use crate::tools::Selection;
+
+/// The inspector window on a selected building or car, on the right where
+/// the person pane opens too. Closing it deselects.
+pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
+    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_)) {
+        return;
+    }
+    let mut open = true;
+    egui::Window::new(egui::RichText::new("Inspector").color(GOLD).strong())
+        .id(egui::Id::new("inspector_window"))
+        .open(&mut open)
+        .default_pos(egui::pos2(content.right() - 392.0, content.top() + 12.0))
+        .default_width(360.0)
+        .constrain_to(content)
+        .max_height(content.height() - 24.0)
+        .vscroll(true)
+        .show(ctx, |ui| show(ui, p.sim, p.selection, p.assets));
+    if !open {
+        *p.selection = Selection::None;
+    }
+}
 
 pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets: &GameAssets) {
     match *selection {

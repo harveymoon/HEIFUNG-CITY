@@ -25,6 +25,40 @@ pub enum Tool {
     Rail,
 }
 
+impl Tool {
+    /// Toolbar order, which is also the digit hotkey order (1 to 8).
+    pub const ALL: [Tool; 8] = [Tool::Inspect, Tool::Road, Tool::Zone, Tool::Edit, Tool::Bulldoze, Tool::Power, Tool::Transit, Tool::Rail];
+
+    /// The name on the toolbar button.
+    pub fn label(self) -> &'static str {
+        match self {
+            Tool::Inspect => "Inspect",
+            Tool::Road => "Road",
+            Tool::Zone => "Zone",
+            Tool::Edit => "Edit",
+            Tool::Bulldoze => "Bulldoze",
+            Tool::Power => "Power",
+            Tool::Transit => "Buses",
+            Tool::Rail => "Rail",
+        }
+    }
+
+    /// The keys that pick the tool (see `tool_hotkeys`), shown under the
+    /// button. Edit has no letter: Q and E turn the camera.
+    pub fn hotkey(self) -> &'static str {
+        match self {
+            Tool::Inspect => "1 / I",
+            Tool::Road => "2 / R",
+            Tool::Zone => "3 / Z",
+            Tool::Edit => "4",
+            Tool::Bulldoze => "5 / B",
+            Tool::Power => "6 / N",
+            Tool::Transit => "7 / T",
+            Tool::Rail => "8 / Y",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum TransitMode {
     #[default]
@@ -65,7 +99,7 @@ pub struct ToolState {
     pub show_routes: bool,
     /// Rail tool: station or freight yard.
     pub rail_kind: nd_sim::RailFacility,
-    /// People starred in the person pane; listed in the side panel.
+    /// People starred in the person pane; listed in the People window.
     pub favorites: Vec<CitizenId>,
 }
 
