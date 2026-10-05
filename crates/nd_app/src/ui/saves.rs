@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 use nd_sim::SimEvent;
 
-use super::{hint, section, UiFlags, WARN};
+use super::{hint, UiFlags, WARN};
 use crate::sim::Sim;
 use crate::tools::{EffectivePlan, Selection, ToolState};
 
@@ -138,8 +138,8 @@ pub fn load_now(path: &Path, sim: &mut Sim, tools: &mut ToolState, selection: &m
     };
 }
 
+/// The body of the Saves window: save, the slot list, the load confirmation.
 pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, plan: &mut EffectivePlan, saves: &mut Saves, flags: &mut UiFlags) {
-    section(ui, "SAVE & LOAD");
     if saves.dirty {
         saves.rescan();
     }

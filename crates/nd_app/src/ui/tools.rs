@@ -1,4 +1,5 @@
-//! The TOOLS section: the tool buttons and one sub-panel per tool.
+//! The toolbar's sub-pane: one block of parameters per tool, shown for the
+//! active tool only. The buttons that pick the tool live in `toolbar`.
 
 use bevy_egui::egui;
 use nd_sim::roads::RoadKind;
@@ -10,17 +11,7 @@ use crate::assets::GameAssets;
 use crate::sim::Sim;
 use crate::tools::{EffectivePlan, Tool, ToolState, TransitMode, ROAD_PRESETS};
 
-pub fn tool_panel(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut EffectivePlan, assets: &GameAssets) {
-    section(ui, "TOOLS");
-    ui.horizontal_wrapped(|ui| {
-        for (tool, label) in help::TOOL_LABELS {
-            if ui.selectable_label(tools.tool == tool, label).clicked() {
-                tools.tool = tool;
-                tools.points.clear();
-                tools.drag = None;
-            }
-        }
-    });
+pub fn sub_pane(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut EffectivePlan, assets: &GameAssets) {
     match tools.tool {
         Tool::Road => road(ui, tools),
         Tool::Zone => zone(ui, tools, assets),
@@ -30,9 +21,6 @@ pub fn tool_panel(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan:
         Tool::Transit => transit(ui, sim, tools),
         Tool::Rail => rail(ui, sim, tools),
         Tool::Power => power(ui, tools),
-    }
-    if !tools.status.is_empty() {
-        ui.label(egui::RichText::new(&tools.status).small());
     }
 }
 
@@ -49,18 +37,16 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
             }
         }
     });
-    match tools.kind {
-        RoadKind::Path => hint(ui, help::ROAD_PATH),
-        RoadKind::Rail => hint(ui, help::ROAD_RAIL),
-        RoadKind::Street => {
-            ui.add(egui::Slider::new(&mut tools.lanes_fwd, 0..=4).text("lanes forward"));
-            ui.add(egui::Slider::new(&mut tools.lanes_bwd, 0..=4).text("lanes backward"));
+    // Lanes and curvature share a row so the bar stays shallow.
+    ui.horizontal(|ui| {
+        if tools.kind == RoadKind::Street {
+            ui.add(egui::Slider::new(&mut tools.lanes_fwd, 0..=4).text("lanes fwd"));
+            ui.add(egui::Slider::new(&mut tools.lanes_bwd, 0..=4).text("lanes back"));
             if tools.lanes_fwd + tools.lanes_bwd == 0 {
                 tools.lanes_fwd = 1;
             }
+            ui.separator();
         }
-    }
-    ui.horizontal(|ui| {
         if ui.selectable_label(!tools.curved, "Straight").clicked() {
             tools.curved = false;
         }
@@ -68,6 +54,11 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
             tools.curved = true;
         }
     });
+    match tools.kind {
+        RoadKind::Path => hint(ui, help::ROAD_PATH),
+        RoadKind::Rail => hint(ui, help::ROAD_RAIL),
+        RoadKind::Street => {}
+    }
     hint(ui, help::tool_hint(Tool::Road));
 }
 
@@ -102,9 +93,9 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
                     }
                 }
             });
-            changed |= ui.add(egui::Slider::new(&mut f, 0..=4).text("lanes forward")).changed();
-            changed |= ui.add(egui::Slider::new(&mut b, 0..=4).text("lanes backward")).changed();
             ui.horizontal(|ui| {
+                changed |= ui.add(egui::Slider::new(&mut f, 0..=4).text("lanes fwd")).changed();
+                changed |= ui.add(egui::Slider::new(&mut b, 0..=4).text("lanes back")).changed();
                 if ui.button("Flip direction").clicked() {
                     std::mem::swap(&mut f, &mut b);
                     changed = true;
@@ -149,24 +140,13 @@ fn transit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
             let ids: Vec<nd_sim::RouteId> = sim.world.transit.routes.keys().collect();
             let mut remove: Option<nd_sim::RouteId> = None;
             let mut set_buses: Option<(nd_sim::RouteId, u8)> = None;
-            for id in ids {
-                let r = &sim.world.transit.routes[id];
-                ui.horizontal(|ui| {
-                    let sel = tools.route_sel == Some(id);
-                    if ui.selectable_label(sel, format!("{} · {} stops · {} bus{} · {} riders today{}", r.name, r.stops.len(), r.buses, if r.buses == 1 { "" } else { "es" }, r.riders_today, if r.broken.is_empty() { "" } else { " · NO ROAD between some stops" })).clicked() {
-                        tools.route_sel = if sel { None } else { Some(id) };
-                    }
-                    if ui.small_button("−").clicked() && r.buses > 0 {
-                        set_buses = Some((id, r.buses - 1));
-                    }
-                    if ui.small_button("+").clicked() {
-                        set_buses = Some((id, r.buses + 1));
-                    }
-                    if ui.small_button("delete").clicked() {
-                        remove = Some(id);
-                    }
-                });
-            }
+            // The list scrolls past three lines so the bar keeps its height.
+            egui::ScrollArea::vertical().max_height(66.0).show(ui, |ui| {
+                for id in ids {
+                    let r = &sim.world.transit.routes[id];
+                    route_row(ui, tools, id, r, &mut set_buses, &mut remove);
+                }
+            });
             if let Some((id, n)) = set_buses {
                 sim.world.set_route_buses(id, n);
             }
@@ -179,6 +159,25 @@ fn transit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         }
         TransitMode::Depot => hint(ui, help::TRANSIT_DEPOT),
     }
+}
+
+/// One bus line: select it, add or remove a bus, delete it.
+fn route_row(ui: &mut egui::Ui, tools: &mut ToolState, id: nd_sim::RouteId, r: &nd_sim::transit::BusRoute, set_buses: &mut Option<(nd_sim::RouteId, u8)>, remove: &mut Option<nd_sim::RouteId>) {
+    ui.horizontal(|ui| {
+        let sel = tools.route_sel == Some(id);
+        if ui.selectable_label(sel, format!("{} · {} stops · {} bus{} · {} riders today{}", r.name, r.stops.len(), r.buses, if r.buses == 1 { "" } else { "es" }, r.riders_today, if r.broken.is_empty() { "" } else { " · NO ROAD between some stops" })).clicked() {
+            tools.route_sel = if sel { None } else { Some(id) };
+        }
+        if ui.small_button("−").clicked() && r.buses > 0 {
+            *set_buses = Some((id, r.buses - 1));
+        }
+        if ui.small_button("+").clicked() {
+            *set_buses = Some((id, r.buses + 1));
+        }
+        if ui.small_button("delete").clicked() {
+            *remove = Some(id);
+        }
+    });
 }
 
 fn rail(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
