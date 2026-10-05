@@ -158,7 +158,8 @@ fn control_camera(
         walk.pitch = (walk.pitch - motion.delta.y * LOOK_SPEED).clamp(-1.35, 1.35);
         let (sy, cy) = walk.yaw.sin_cos();
         let forward = Vec3::new(sy, 0.0, cy);
-        let right = Vec3::new(cy, 0.0, -sy);
+        // right = forward x up in this Y-up, right-handed world.
+        let right = Vec3::new(-cy, 0.0, sy);
         let mut mv = Vec3::ZERO;
         if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
             mv += forward;
