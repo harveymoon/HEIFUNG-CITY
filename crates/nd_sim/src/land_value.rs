@@ -112,3 +112,52 @@ impl LandValueBuilder {
         lv.version += 1;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grid_covers_the_half_extent_and_fill_bumps_the_version() {
+        let mut lv = LandValue::new(400.0, 32.0);
+        assert_eq!(lv.n, 25, "800 m at 32 m cells rounds up to 25");
+        assert_eq!(lv.values.len(), 25 * 25);
+        assert_eq!(lv.version, 0);
+        assert!((lv.at(Vec2::ZERO) - 0.3).abs() < 1e-6, "fresh land is worth a little");
+        lv.fill(0.75);
+        assert_eq!(lv.version, 1);
+        assert!(lv.values.iter().all(|&v| v == 0.75));
+        assert_eq!(lv.average(), 0.75);
+        // Points off the grid read the edge cell rather than panicking.
+        assert_eq!(lv.at(Vec2::new(10_000.0, -10_000.0)), 0.75);
+        lv.values[0] = 0.1;
+        assert_eq!(lv.at(Vec2::new(-10_000.0, -10_000.0)), 0.1, "the far south-west corner is cell 0");
+        assert!(lv.cell_center(0, 0).distance(Vec2::new(-384.0, -384.0)) < 1e-4);
+        assert_eq!(lv.at(lv.cell_center(0, 0)), 0.1);
+        assert_eq!(LandValue::new(10.0, 32.0).average(), 0.3);
+    }
+
+    #[test]
+    fn the_builder_splats_blurs_and_clamps() {
+        let mut lv = LandValue::new(400.0, 32.0);
+        let before = lv.version;
+        let mut b = LandValueBuilder::new(&lv);
+        b.splat(Vec2::ZERO, 150.0, 2.0);
+        b.splat(Vec2::new(300.0, 300.0), 60.0, -5.0);
+        b.finish(0.3, &mut lv);
+        assert_eq!(lv.version, before + 1);
+        assert!(lv.values.iter().all(|v| (0.0..=1.0).contains(v)), "clamped to 0..1");
+        let centre = lv.at(Vec2::ZERO);
+        let edge = lv.at(Vec2::new(120.0, 0.0));
+        let far = lv.at(Vec2::new(-300.0, -300.0));
+        assert!(centre > edge && edge > far, "value falls off from the splat: {centre} {edge} {far}");
+        assert!((far - 0.3).abs() < 1e-4, "untouched land is the base");
+        assert_eq!(lv.at(Vec2::new(300.0, 300.0)), 0.0, "a nuisance drags land to the floor");
+        // A splat off the grid touches nothing.
+        let mut b = LandValueBuilder::new(&lv);
+        b.splat(Vec2::new(5000.0, 5000.0), 100.0, 9.0);
+        let mut other = LandValue::new(400.0, 32.0);
+        b.finish(0.3, &mut other);
+        assert!(other.values.iter().all(|&v| (v - 0.3).abs() < 1e-6));
+    }
+}
