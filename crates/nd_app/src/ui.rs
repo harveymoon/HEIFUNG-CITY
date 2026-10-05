@@ -64,7 +64,7 @@ fn side_panel(
         egui::UiBuilder::new().layer_id(egui::LayerId::background()).max_rect(ctx.viewport_rect()),
     );
 
-    egui::Panel::left("neon_panel").default_size(340.0).show(&mut root, |ui| {
+    let panel = egui::Panel::left("neon_panel").default_size(340.0).show(&mut root, |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(4.0);
             ui.heading(egui::RichText::new("DISTRICT 2040").color(egui::Color32::from_rgb(235, 180, 90)).size(22.0));
@@ -441,7 +441,10 @@ fn side_panel(
         });
     });
 
-    flags.pointer_over_ui = ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input();
+    // The panel lives on the background layer, which egui's own hit test
+    // ignores, so check its rectangle directly as well.
+    let over_panel = ctx.pointer_latest_pos().map_or(false, |p| panel.response.rect.contains(p));
+    flags.pointer_over_ui = over_panel || ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input();
     Ok(())
 }
 

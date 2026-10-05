@@ -290,10 +290,11 @@ fn project_cursor(
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<OrbitCamera>>,
     mode: Res<CameraMode>,
+    flags: Res<UiFlags>,
     mut cursor: ResMut<Cursor>,
 ) {
     cursor.ground = None;
-    if *mode == CameraMode::Walk {
+    if *mode == CameraMode::Walk || flags.pointer_over_ui {
         return;
     }
     let Ok(window) = windows.single() else { return };
