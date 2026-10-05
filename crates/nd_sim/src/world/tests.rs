@@ -666,20 +666,24 @@ fn stations_and_yards_never_share_ground_with_other_buildings() {
     w.add_road(&[Vec2::new(-100.0, 0.0), Vec2::new(1000.0, 0.0)], 1, 1);
     w.add_zone(vec![Vec2::new(150.0, 10.0), Vec2::new(330.0, 10.0), Vec2::new(330.0, 90.0), Vec2::new(150.0, 90.0)], LandUse::Commercial);
     w.add_zone(vec![Vec2::new(650.0, 10.0), Vec2::new(830.0, 10.0), Vec2::new(830.0, 90.0), Vec2::new(650.0, 90.0)], LandUse::Commercial);
-    // A shop stands where the station would go: the placement is refused.
+    // A shop stands where the station would go: the city buys it out and
+    // the station takes the ground.
     let shop_lot = lot_near(&w, Vec2::new(240.0, 25.0), LandUse::Commercial);
     w.build_on(shop_lot);
     let shop = w.lots[shop_lot].building.unwrap();
     let shop_center = w.lots[shop_lot].center;
-    let err = w.place_rail_facility(RailFacility::Station, shop_center).expect_err("a station cannot go over a shop");
-    assert!(err.contains("built"), "{err}");
-    assert!(w.buildings.contains_key(shop) && w.facilities.is_empty());
+    let station = w.place_rail_facility(RailFacility::Station, shop_center).expect("a station takes over a shop's ground");
+    assert!(!w.buildings.contains_key(shop), "the shop was bought out");
+    assert!(w.buildings.contains_key(station));
+    // But one civic structure never replaces another.
+    let err = w.place_rail_facility(RailFacility::FreightYard, shop_center).expect_err("a yard cannot replace a station");
+    assert!(err.contains("bulldoze") || err.contains("too close"), "{err}");
     let lots_before = w.lots.len();
     // A yard over vacant zoned lots takes the ground; the lots under and
     // across its footprint give way.
     let yard = w.place_rail_facility(RailFacility::FreightYard, Vec2::new(740.0, 40.0)).expect("yard");
     assert!(w.lots.len() < lots_before, "zoned lots under the yard gave way");
-    let fp = w.facilities.values().next().unwrap().footprint();
+    let fp = w.facilities.values().find(|f| f.building == Some(yard)).unwrap().footprint();
     let yard_lot = w.buildings[yard].lot;
     for (id, l) in w.lots.iter() {
         if id == yard_lot {
@@ -698,8 +702,9 @@ fn stations_and_yards_never_share_ground_with_other_buildings() {
     for _ in 0..50 {
         w.develop();
     }
-    for (id, b) in w.buildings.iter() {
-        if id == yard {
+    for (_, b) in w.buildings.iter() {
+        // The station and the yard stand on their own facility ground.
+        if b.rail.is_some() {
             continue;
         }
         let l = &w.lots[b.lot];
@@ -1699,4 +1704,26 @@ fn job_seekers_staff_the_food_shops_first_and_arrivals_scale_with_open_homes() {
     assert!((1..=3).contains(&w.arrivals(5)));
     let many = w.arrivals(2_000);
     assert!(many >= 1 && many <= 12);
+}
+
+#[test]
+fn the_city_buys_out_grown_buildings_for_its_own_structures_but_not_each_other() {
+    let mut w = World::new(WorldConfig::default());
+    w.economy.treasury = 500_000.0;
+    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    w.add_zone(square(10.0, 10.0, 190.0), LandUse::Industrial);
+    let lot = lot_near(&w, Vec2::new(100.0, 40.0), LandUse::Industrial);
+    w.build_on(lot);
+    let works = w.lots[lot].building.unwrap();
+    w.finish_construction(works);
+    let plant = w.build_power(lot, PowerPlantKind::Solar).expect("the plant takes over the works");
+    assert!(!w.buildings.contains_key(works), "the works was bought out");
+    assert_eq!(w.lots[lot].building, Some(plant));
+    assert!(w.drain_events().iter().any(|e| matches!(e, SimEvent::Expropriated(b, _) if *b == works)));
+    // A second plant on the same lot is refused, and the first one stays.
+    let err = w.build_power(lot, PowerPlantKind::Coal).expect_err("a plant never replaces a plant");
+    assert!(err.contains("bulldoze"), "{err}");
+    assert!(w.buildings.contains_key(plant));
+    let err = w.build_depot(lot).expect_err("a depot never replaces a plant");
+    assert!(err.contains("bulldoze"), "{err}");
 }
