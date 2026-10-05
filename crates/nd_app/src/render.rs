@@ -1,7 +1,8 @@
 //! Turns simulation state into Bevy entities. Static geometry (terrain,
-//! streets, lots, zones, project preview) is rebuilt as whole meshes when it
-//! changes; buildings get one entity per surface they use; citizens and cars
-//! are small meshes moved every frame.
+//! streets, lot ground, project preview) is rebuilt as whole meshes when it
+//! changes; buildings and vacant-lot dressing are batched per [`CHUNK`]-metre
+//! cell, one mesh per surface per cell, and a cell is rebuilt when anything in
+//! it changes; citizens and cars are small shared meshes moved every frame.
 //!
 //! Every [`Surface`] has a material with a procedurally generated, seamlessly
 //! tiling colour texture and normal map. Meshes carry world-scale UVs, so the
@@ -9,7 +10,7 @@
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
-use bevy::light::{CascadeShadowConfigBuilder, GlobalAmbientLight};
+use bevy::light::{CascadeShadowConfigBuilder, GlobalAmbientLight, NotShadowCaster, NotShadowReceiver};
 use bevy::math::Affine2;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::DistanceFog;
@@ -19,12 +20,27 @@ use nd_procgen::street::{generate_street, signal_posts, StreetInput};
 use nd_procgen::{build_terrain, bus_stops, generate_building, generate_texture, generate_vacant, mip_chain, scatter_nature, Extras, Geometry, MeshData, Surface, TerrainConfig};
 use nd_sim::roads::{LANE_WIDTH, SHOULDER};
 use nd_sim::traffic::LaneId;
-use nd_sim::{BuildingId, CarId, CitizenId, SimEvent, Vec2 as SVec2};
-use std::collections::HashMap;
+use nd_sim::{BuildingId, CarId, CitizenId, LotId, SimEvent, Vec2 as SVec2, World};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 
 use crate::assets::GameAssets;
 use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
+
+/// Side of the square cells that buildings and vacant-lot dressing are
+/// batched into. Wide enough that a few hundred buildings become a few dozen
+/// meshes per surface, small enough that one changed building regenerates a
+/// street block rather than the whole city.
+const CHUNK: f32 = 128.0;
+
+/// Cell index of a world position on the [`CHUNK`] grid.
+type ChunkKey = (i32, i32);
+
+fn chunk_of(p: SVec2) -> ChunkKey {
+    ((p.x / CHUNK).floor() as i32, (p.y / CHUNK).floor() as i32)
+}
 
 #[derive(Component)]
 struct SunTag;
@@ -34,8 +50,15 @@ struct TerrainTag;
 struct ScatterTag;
 #[derive(Component)]
 struct RoadsTag;
+/// Lot ground fills and outline glows: one mesh per surface for the whole city.
 #[derive(Component, Clone)]
 struct LotsTag;
+/// Park layouts, one set of entities per park lot.
+#[derive(Component, Clone)]
+struct ParkTag;
+/// Vacant-lot dressing, batched per chunk.
+#[derive(Component, Clone)]
+struct VacantTag;
 #[derive(Component)]
 struct PreviewTag;
 #[derive(Component)]
@@ -48,8 +71,10 @@ struct PathsTag;
 struct HazeTag;
 #[derive(Component, Clone)]
 struct TransitTag;
+/// Marker only: which train an entity belongs to is tracked in
+/// [`RenderState::trains`], so the tag carries no id.
 #[derive(Component)]
-struct TrainTag(nd_sim::TrainId);
+struct TrainTag;
 
 /// Toggleable data layers drawn over the ground.
 #[derive(Resource)]
@@ -81,12 +106,17 @@ impl Default for Lighting {
         Self { follow_clock: true, hour: 14.0 }
     }
 }
+/// One chunk's worth of building geometry. Which buildings a mesh holds is
+/// tracked in [`RenderState::building_chunks`]; selection and inspection go
+/// through the sim's lots, never through mesh entities, so no id is needed.
 #[derive(Component, Clone)]
-pub struct BuildingTag(pub BuildingId);
+pub struct BuildingTag;
+/// Movers are looked up through the maps in [`RenderState`], so these tags
+/// are plain markers for the per-frame transform queries.
 #[derive(Component)]
-pub struct CitizenTag(pub CitizenId);
+pub struct CitizenTag;
 #[derive(Component)]
-pub struct CarTag(pub CarId);
+pub struct CarTag;
 
 #[derive(Resource)]
 struct Materials {
@@ -120,17 +150,33 @@ impl Materials {
     }
 }
 
+/// The meshes of one chunk and what they were built from.
+#[derive(Default)]
+struct ChunkMeshes {
+    entities: Vec<Entity>,
+    triangles: usize,
+}
+
 #[derive(Resource, Default)]
 struct RenderState {
     roads_version: u64,
     lanes_version: u64,
     plan_version: u64,
-    lots_signature: (usize, usize, usize, u64, u64),
-    /// Whether the lot meshes were built with the zoning outlines.
-    lots_zoning_shown: bool,
+    /// What the lot ground meshes were built for: lot and zone counts, roads
+    /// version, zoning overlay, and a hash of every lot's built/park/
+    /// landlocked state.
+    lots_signature: Option<(usize, usize, u64, bool, u64)>,
+    /// Park lots drawn, with a hash of the layout and polygon they show.
+    parks: HashMap<LotId, (u64, Vec<Entity>)>,
+    /// Vacant dressing per chunk, with a hash of the lots and land-value
+    /// buckets it was generated from.
+    vacant_chunks: HashMap<ChunkKey, (u64, Vec<Entity>)>,
     /// Roads version and zone count the open-ground scatter was built for.
     scatter_signature: Option<(u64, usize)>,
-    buildings: HashMap<BuildingId, Vec<Entity>>,
+    /// Which chunk each drawn building sits in, so a changed or removed
+    /// building can mark its chunk dirty.
+    building_chunks: HashMap<BuildingId, ChunkKey>,
+    chunks: HashMap<ChunkKey, ChunkMeshes>,
     citizens: HashMap<CitizenId, Entity>,
     cars: HashMap<CarId, [Entity; 2]>,
     overlay_version: u64,
@@ -140,11 +186,16 @@ struct RenderState {
     haze_signature: usize,
     transit_version: u64,
     trains: HashMap<nd_sim::TrainId, Vec<Entity>>,
+    /// Quantised sun elevation the lighting was last written for.
+    daylight_key: Option<i32>,
+    /// Quantised glow strength last written to the shared Glow material.
+    glow_key: Option<i32>,
 }
 
 /// Renderer statistics shown in the UI.
 #[derive(Resource, Default)]
 pub struct RenderStats {
+    /// Building meshes alive: one per non-empty surface per chunk.
     pub building_entities: usize,
     pub street_triangles: usize,
     pub building_triangles: usize,
@@ -156,7 +207,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RenderState>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_systems(Startup, setup).add_systems(
             Update,
-            (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_overlay, sync_paths, sync_haze, sync_transit, sync_buildings, sync_citizens, sync_cars, sync_trains, update_daylight)
+            (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_haze, sync_transit, sync_buildings, sync_citizens, sync_cars, sync_trains, update_daylight)
                 .chain()
                 .in_set(SimSet::Sync),
         );
@@ -164,8 +215,26 @@ impl Plugin for RenderPlugin {
 }
 
 /// Convert mesh data; lit meshes get tangents so normal maps work.
+///
+/// The CPU copy is dropped once the mesh is uploaded: nothing reads vertices
+/// back, and the generated city is hundreds of megabytes of them. Vertex
+/// colours stay `Float32x4` because that is the only format Bevy accepts for
+/// `ATTRIBUTE_COLOR`, and the generators use values above 1 for emissive
+/// surfaces anyway.
 pub fn to_mesh(data: &MeshData, tangents: bool) -> Mesh {
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+    mesh_with_usage(data, tangents, RenderAssetUsages::RENDER_WORLD)
+}
+
+/// A mesh many entities share over the whole run (citizens, cars, signal
+/// lamps). These keep their CPU copy: Bevy computes an entity's bounds from
+/// the main-world mesh when the entity is spawned, and movers are spawned
+/// long after the mesh was first uploaded.
+fn shared_mesh(data: &MeshData, tangents: bool) -> Mesh {
+    mesh_with_usage(data, tangents, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
+}
+
+fn mesh_with_usage(data: &MeshData, tangents: bool, usage: RenderAssetUsages) -> Mesh {
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, usage)
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, data.positions.clone())
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, data.normals.clone())
         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, data.colors.clone())
@@ -189,15 +258,45 @@ fn scale(c: [f32; 3], k: f32) -> [f32; 4] {
     [c[0] * k, c[1] * k, c[2] * k, 1.0]
 }
 
-/// Spawn one entity per non-empty surface of a geometry.
+/// Spawn one entity per non-empty surface of a geometry. Glow strips are
+/// thin unlit decals: they neither cast nor receive shadows, which also
+/// keeps them out of the shadow passes.
 fn spawn_geometry<T: Component + Clone>(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, geo: &Geometry, tag: T) -> Vec<Entity> {
     let mut out = Vec::new();
     for (s, data) in geo.iter() {
         let mesh = to_mesh(data, !s.is_glow());
-        let e = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, tag.clone())).id();
-        out.push(e);
+        let mut e = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, tag.clone()));
+        if s.is_glow() {
+            e.insert((NotShadowCaster, NotShadowReceiver));
+        }
+        out.push(e.id());
     }
     out
+}
+
+/// Spawn a glow-surface mesh: unlit, no shadows either way.
+fn spawn_glow<T: Component>(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, data: &MeshData, tag: T) {
+    commands.spawn((Mesh3d(meshes.add(to_mesh(data, false))), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, tag));
+}
+
+/// Spawn a translucent overlay mesh (heat map, haze): no shadows either way.
+fn spawn_overlay<T: Component>(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, data: &MeshData, tag: T) {
+    commands.spawn((Mesh3d(meshes.add(to_mesh(data, false))), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, tag));
+}
+
+/// Hash helper for change detection on generated geometry inputs.
+fn hash_f32s<H: Hasher>(h: &mut H, pts: impl IntoIterator<Item = SVec2>) {
+    for p in pts {
+        p.x.to_bits().hash(h);
+        p.y.to_bits().hash(h);
+    }
+}
+
+/// Terrain extents follow the buildable square: the hills start a little
+/// past the edge of the city and the mesh reaches twice as far out.
+fn terrain_config(w: &World) -> TerrainConfig {
+    let half = w.config.half_extent;
+    TerrainConfig { half_size: half * 2.0, basin_radius: half + 100.0, ..TerrainConfig::default() }
 }
 
 fn tiling_image(size: usize, rgba: &[u8], srgb: bool) -> Image {
@@ -261,7 +360,7 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         m.boxed(Vec3::new(0.0, 0.42, 0.0), Vec3::new(0.34, 0.84, 0.28), 0.0, [0.45, 0.45, 0.5, 1.0]);
         m.boxed(Vec3::new(0.0, 1.14, 0.0), Vec3::new(0.5, 0.62, 0.3), 0.0, [1.0, 1.0, 1.0, 1.0]);
         m.boxed(Vec3::new(0.0, 1.62, 0.0), Vec3::new(0.25, 0.26, 0.25), 0.0, [1.3, 1.2, 1.1, 1.0]);
-        meshes.add(to_mesh(&m, false))
+        meshes.add(shared_mesh(&m, false))
     };
     let bike_mesh = {
         let mut m = MeshData::default();
@@ -274,7 +373,7 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         m.boxed(Vec3::new(-0.15, 0.95, 0.0), Vec3::new(0.4, 0.5, 0.26), 0.0, [0.45, 0.45, 0.5, 1.0]);
         m.boxed(Vec3::new(-0.2, 1.4, 0.0), Vec3::new(0.45, 0.55, 0.3), 0.0, [1.0, 1.0, 1.0, 1.0]);
         m.boxed(Vec3::new(-0.15, 1.82, 0.0), Vec3::new(0.25, 0.26, 0.25), 0.0, [1.3, 1.2, 1.1, 1.0]);
-        meshes.add(to_mesh(&m, false))
+        meshes.add(shared_mesh(&m, false))
     };
     let car_bodies = pal
         .car_colors
@@ -293,7 +392,7 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         m.boxed(Vec3::new(0.0, 0.75, 0.0), Vec3::new(4.2, 0.8, 1.85), 0.0, [1.0, 1.0, 1.0, 1.0]);
         m.boxed(Vec3::new(-0.3, 1.45, 0.0), Vec3::new(2.2, 0.6, 1.6), 0.0, [0.25, 0.28, 0.32, 1.0]);
         wheels(&mut m, &[-1.35, 1.35], 0.86, 0.34);
-        meshes.add(to_mesh(&m, true))
+        meshes.add(shared_mesh(&m, true))
     };
     let truck_body_mesh = {
         let mut m = MeshData::default();
@@ -301,7 +400,7 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         m.boxed(Vec3::new(3.0, 1.4, 0.0), Vec3::new(2.0, 1.8, 2.2), 0.0, [0.5, 0.5, 0.55, 1.0]);
         m.boxed(Vec3::new(3.9, 1.8, 0.0), Vec3::new(0.2, 0.7, 2.0), 0.0, [0.2, 0.25, 0.3, 1.0]);
         wheels(&mut m, &[-2.6, -1.4, 2.6], 1.05, 0.5);
-        meshes.add(to_mesh(&m, true))
+        meshes.add(shared_mesh(&m, true))
     };
     let bus_body_mesh = {
         let mut m = MeshData::default();
@@ -310,7 +409,7 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         m.boxed(Vec3::new(5.6, 1.95, 0.0), Vec3::new(0.4, 1.6, 2.3), 0.0, [0.14, 0.17, 0.2, 1.0]);
         m.boxed(Vec3::new(-5.72, 2.95, 0.0), Vec3::new(0.1, 0.4, 1.6), 0.0, [1.0, 0.7, 0.2, 1.0]);
         wheels(&mut m, &[-3.8, 3.6], 1.15, 0.5);
-        meshes.add(to_mesh(&m, true))
+        meshes.add(shared_mesh(&m, true))
     };
     let rail_wheels = |m: &mut MeshData, len: f32| {
         for x in [-len * 0.35, len * 0.35] {
@@ -327,7 +426,7 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         m.boxed(Vec3::new(8.8, 1.1, 0.0), Vec3::new(0.6, 0.6, 2.4), 0.0, [0.9, 0.2, 0.1, 1.0]);
         m.boxed(Vec3::new(-2.0, 3.6, 0.0), Vec3::new(9.0, 0.5, 2.0), 0.0, [0.3, 0.3, 0.32, 1.0]);
         rail_wheels(&mut m, 17.0);
-        meshes.add(to_mesh(&m, true))
+        meshes.add(shared_mesh(&m, true))
     };
     let coach_mesh = {
         let mut m = MeshData::default();
@@ -335,14 +434,14 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         m.boxed(Vec3::new(0.0, 2.6, 0.0), Vec3::new(17.8, 0.9, 2.86), 0.0, [0.14, 0.17, 0.2, 1.0]);
         m.boxed(Vec3::new(0.0, 3.5, 0.0), Vec3::new(18.0, 0.3, 2.4), 0.0, [0.5, 0.5, 0.52, 1.0]);
         rail_wheels(&mut m, 18.0);
-        meshes.add(to_mesh(&m, true))
+        meshes.add(shared_mesh(&m, true))
     };
     let wagon_mesh = {
         let mut m = MeshData::default();
         m.boxed(Vec3::new(0.0, 1.0, 0.0), Vec3::new(13.6, 0.5, 2.7), 0.0, [0.2, 0.2, 0.22, 1.0]);
         m.boxed(Vec3::new(0.0, 2.55, 0.0), Vec3::new(12.2, 2.6, 2.44), 0.0, [1.0, 1.0, 1.0, 1.0]);
         rail_wheels(&mut m, 13.0);
-        meshes.add(to_mesh(&m, true))
+        meshes.add(shared_mesh(&m, true))
     };
     let car_lights_mesh = {
         let mut m = MeshData::default();
@@ -350,7 +449,7 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
             m.boxed(Vec3::new(2.1, 0.7, z), Vec3::new(0.15, 0.3, 0.4), 0.0, rgba(pal.headlight));
             m.boxed(Vec3::new(-2.1, 0.75, z), Vec3::new(0.15, 0.25, 0.4), 0.0, rgba(pal.taillight));
         }
-        meshes.add(to_mesh(&m, false))
+        meshes.add(shared_mesh(&m, false))
     };
     let overlay = materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, alpha_mode: AlphaMode::Blend, ..default() });
     let signal_green = materials.add(unlit(pal.signal_green));
@@ -358,7 +457,7 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
     let signal_mesh = {
         let mut m = MeshData::default();
         m.boxed(Vec3::ZERO, Vec3::new(0.08, 0.26, 0.26), 0.0, [1.0, 1.0, 1.0, 1.0]);
-        meshes.add(to_mesh(&m, false))
+        meshes.add(shared_mesh(&m, false))
     };
     commands.insert_resource(Materials {
         surfaces,
@@ -399,16 +498,69 @@ fn despawn_all<T: Component>(commands: &mut Commands, q: &Query<Entity, With<T>>
 fn sync_terrain(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
     assets: Res<GameAssets>,
     mats: Res<Materials>,
     existing: Query<Entity, With<TerrainTag>>,
 ) {
-    if !existing.is_empty() && !assets.palette_changed {
+    if !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
     despawn_all(&mut commands, &existing);
-    let data = build_terrain(&TerrainConfig::default(), &assets.palette);
+    let data = build_terrain(&terrain_config(&sim.world), &assets.palette);
     commands.spawn((Mesh3d(meshes.add(to_mesh(&data, true))), MeshMaterial3d(mats.surface(Surface::Dirt)), Transform::IDENTITY, TerrainTag));
+}
+
+/// Open ground within `reach` metres of a way, answered from a coarse grid.
+/// The scatter pass asks about ~40k sample points, and the network can hold
+/// thousands of segments, so a linear nearest-segment scan per sample was a
+/// visible hitch on every implement. Each segment is binned into every cell
+/// its reach-expanded bounding box touches, so a query only looks in its own
+/// cell.
+struct NearWays {
+    cell: f32,
+    reach: f32,
+    origin: SVec2,
+    cols: i32,
+    rows: i32,
+    bins: Vec<Vec<(SVec2, SVec2)>>,
+}
+
+impl NearWays {
+    fn new(roads: &nd_sim::RoadNetwork, reach: f32, half_size: f32, keep: impl Fn(&nd_sim::Segment) -> bool) -> Self {
+        let cell = reach;
+        let origin = SVec2::splat(-half_size - reach);
+        let cols = ((half_size + reach) * 2.0 / cell).ceil() as i32 + 1;
+        let mut me = Self { cell, reach, origin, cols, rows: cols, bins: vec![Vec::new(); (cols * cols) as usize] };
+        for (sid, seg) in roads.alive_segments() {
+            if !keep(seg) {
+                continue;
+            }
+            let (a, b) = roads.segment_points(sid);
+            let lo = a.min(b) - SVec2::splat(reach);
+            let hi = a.max(b) + SVec2::splat(reach);
+            let (c0, r0) = me.cell_of(lo);
+            let (c1, r1) = me.cell_of(hi);
+            for r in r0.max(0)..=r1.min(me.rows - 1) {
+                for c in c0.max(0)..=c1.min(me.cols - 1) {
+                    me.bins[(r * me.cols + c) as usize].push((a, b));
+                }
+            }
+        }
+        me
+    }
+
+    fn cell_of(&self, p: SVec2) -> (i32, i32) {
+        (((p.x - self.origin.x) / self.cell).floor() as i32, ((p.y - self.origin.y) / self.cell).floor() as i32)
+    }
+
+    fn near(&self, p: SVec2) -> bool {
+        let (c, r) = self.cell_of(p);
+        if c < 0 || r < 0 || c >= self.cols || r >= self.rows {
+            return false;
+        }
+        self.bins[(r * self.cols + c) as usize].iter().any(|&(a, b)| nd_sim::roads::project_on_segment(p, a, b).1.distance(p) < self.reach)
+    }
 }
 
 /// Rocks, scrub and dead trees on the open ground: everything at least 40 m
@@ -430,16 +582,29 @@ fn sync_scatter(
     }
     state.scatter_signature = Some(signature);
     despawn_all(&mut commands, &existing);
-    let zones: Vec<&[SVec2]> = w.zones.values().map(|z| z.polygon.as_slice()).collect();
+    let cfg = terrain_config(w);
+    const REACH: f32 = 40.0;
+    // Streets and paths keep the scrub back, and so does the railway; the
+    // network's own nearest queries treat them separately, so bin them all.
+    let ways = NearWays::new(&w.roads, REACH, cfg.half_size, |_| true);
+    // Zone polygons with bounding boxes so most samples skip the point test.
+    let zones: Vec<(SVec2, SVec2, &[SVec2])> = w
+        .zones
+        .values()
+        .filter(|z| !z.polygon.is_empty())
+        .map(|z| {
+            let lo = z.polygon.iter().copied().fold(SVec2::splat(f32::MAX), SVec2::min);
+            let hi = z.polygon.iter().copied().fold(SVec2::splat(f32::MIN), SVec2::max);
+            (lo, hi, z.polygon.as_slice())
+        })
+        .collect();
     let clear = |p: SVec2| {
-        if zones.iter().any(|z| nd_sim::zoning::point_in_polygon(p, z)) {
+        if zones.iter().any(|(lo, hi, poly)| p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y && nd_sim::zoning::point_in_polygon(p, poly)) {
             return false;
         }
-        let near_street = w.roads.nearest_on_network(p).is_some_and(|(_, _, q)| q.distance(p) < 40.0);
-        let near_rail = w.roads.nearest_of_kind(p, nd_sim::roads::RoadKind::Rail).is_some_and(|(_, _, q)| q.distance(p) < 40.0);
-        !near_street && !near_rail
+        !ways.near(p)
     };
-    let geo = scatter_nature(&TerrainConfig::default(), &assets.palette, w.config.seed, &clear);
+    let geo = scatter_nature(&cfg, &assets.palette, w.config.seed, &clear);
     spawn_geometry(&mut commands, &mut meshes, &mats, &geo, ScatterTag);
 }
 
@@ -463,7 +628,10 @@ fn sync_roads(
     let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed });
     stats.street_triangles = geo.triangle_count();
     for (s, data) in geo.iter() {
-        commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, RoadsTag));
+        let mut e = commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, RoadsTag));
+        if s.is_glow() {
+            e.insert((NotShadowCaster, NotShadowReceiver));
+        }
     }
 }
 
@@ -486,6 +654,7 @@ fn sync_signals(
                 Mesh3d(mats.signal_mesh.clone()),
                 MeshMaterial3d(mats.signal_red.clone()),
                 Transform::from_translation(post.lamp).with_rotation(Quat::from_rotation_y(-post.heading)),
+                NotShadowCaster,
                 SignalTag(post.lane),
             ));
         }
@@ -554,12 +723,26 @@ fn sync_preview(
         glow.ground_strip(&outline, 0.8, 0.22, rgba(pal.preview_remove));
     }
     if !glow.is_empty() {
-        commands.spawn((Mesh3d(meshes.add(to_mesh(&glow, false))), MeshMaterial3d(mats.glow()), Transform::IDENTITY, PreviewTag));
+        spawn_glow(&mut commands, &mut meshes, &mats, &glow, PreviewTag);
     }
 }
 
-/// Lot ground fills, park layouts, and (with the zoning overlay, toggled
-/// with O) the zone outline glows and vacant-lot outlines.
+/// Park land is a park as soon as it is planned, built or not, and park
+/// backland with no road is reached through the park itself.
+fn is_park_lot(lot: &nd_sim::Lot) -> bool {
+    lot.building.is_none() && lot.park.is_some()
+}
+
+/// A lot with nothing on it and no park plan: it gets the vacant dressing.
+fn is_vacant_lot(lot: &nd_sim::Lot) -> bool {
+    lot.building.is_none() && lot.park.is_none() && !lot.landlocked
+}
+
+/// Lot ground fills and (with the zoning overlay, toggled with O) the zone
+/// outline glows and vacant-lot outlines: two meshes for the whole city,
+/// rebuilt when a lot appears, disappears, or changes between built, vacant
+/// and park. Land value does not reach them, so the periodic land-value
+/// recompute no longer touches any ground mesh.
 fn sync_lots(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -575,23 +758,23 @@ fn sync_lots(
         overlays.zoning = !overlays.zoning;
     }
     let w = &sim.world;
-    let vacant = w.lots.values().filter(|l| l.building.is_none()).count();
-    // Vacant lots follow the land value, so they resync when it is recomputed.
-    let signature = (w.lots.len(), vacant, w.zones.len(), w.roads.version, w.land_value.version);
-    if signature == state.lots_signature && overlays.zoning == state.lots_zoning_shown && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
+    let mut h = DefaultHasher::new();
+    for (id, lot) in w.lots.iter() {
+        id.hash(&mut h);
+        (lot.building.is_some(), lot.park.is_some(), lot.landlocked).hash(&mut h);
+    }
+    let signature = (w.lots.len(), w.zones.len(), w.roads.version, overlays.zoning, h.finish());
+    if state.lots_signature == Some(signature) && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
-    state.lots_signature = signature;
-    state.lots_zoning_shown = overlays.zoning;
+    state.lots_signature = Some(signature);
     despawn_all(&mut commands, &existing);
     let pal = &assets.palette;
     let outlines = overlays.zoning;
     let mut glow = MeshData::default();
     let mut fill = MeshData::default();
-    // Every vacant lot's dressing, merged into one mesh per surface.
-    let mut vacant_geo = Geometry::default();
     if outlines {
-        for zone in w.zones.values() {
+        for zone in w.zones.values().filter(|z| !z.polygon.is_empty()) {
             let c = pal.zone_color(zone.land_use);
             let mut outline = zone.polygon.clone();
             outline.push(zone.polygon[0]);
@@ -599,48 +782,161 @@ fn sync_lots(
         }
     }
     for lot in w.lots.values() {
-        let c = pal.zone_color(lot.land_use);
-        // Park land is a park as soon as it is planned, built or not, and
-        // park backland with no road is reached through the park itself.
-        if lot.building.is_none() {
-            if let Some(layout) = &lot.park {
-                let seed = (lot.center.x * 31.0 + lot.center.y * 17.0).abs() as u64;
-                let extras = Extras { park: Some(layout), ..Extras::default() };
-                let geo = generate_building(lot, nd_sim::LandUse::Park, 1, layout.tier, 1.0, seed, &assets.rules, &assets.palette, &extras);
-                spawn_geometry(&mut commands, &mut meshes, &mats, &geo, LotsTag);
-                continue;
-            }
+        if is_park_lot(lot) || lot.polygon.is_empty() {
+            continue;
         }
         if lot.landlocked {
             // Unusable ground: plain earth, no outline.
             fill.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15));
         } else if lot.building.is_none() {
             if outlines {
+                let c = pal.zone_color(lot.land_use);
                 let mut outline = lot.polygon.clone();
                 outline.push(lot.polygon[0]);
                 glow.ground_strip(&outline, 0.22, 0.035, scale(c, 0.45));
             }
-            // Dormant, going wild or kept as a parklet, by what the land is worth.
-            let seed = w.config.seed ^ ((lot.center.x * 31.0 + lot.center.y * 17.0).abs() as u64);
-            vacant_geo.append(&generate_vacant(lot, w.land_value.at(lot.center), seed, pal));
         } else {
             fill.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel));
         }
-    }
-    if vacant_geo.triangle_count() > 0 {
-        spawn_geometry(&mut commands, &mut meshes, &mats, &vacant_geo, LotsTag);
     }
     if !fill.is_empty() {
         commands.spawn((Mesh3d(meshes.add(to_mesh(&fill, true))), MeshMaterial3d(mats.surface(Surface::Dirt)), Transform::IDENTITY, LotsTag));
     }
     if !glow.is_empty() {
-        commands.spawn((Mesh3d(meshes.add(to_mesh(&glow, false))), MeshMaterial3d(mats.glow()), Transform::IDENTITY, LotsTag));
+        spawn_glow(&mut commands, &mut meshes, &mats, &glow, LotsTag);
     }
 }
 
-fn spawn_building(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, sim: &Sim, assets: &GameAssets, id: BuildingId) -> Option<(Vec<Entity>, usize)> {
-    let b = sim.world.buildings.get(id)?;
-    let lot = sim.world.lots.get(b.lot)?;
+/// What a park lot's drawing depends on: its tier and feature set, its
+/// paths and benches, and the parcel outline itself.
+fn park_key(lot: &nd_sim::Lot, layout: &nd_sim::ParkLayout) -> u64 {
+    let mut h = DefaultHasher::new();
+    layout.tier.hash(&mut h);
+    hash_f32s(&mut h, lot.polygon.iter().copied());
+    for f in &layout.features {
+        f.kind.hash(&mut h);
+        hash_f32s(&mut h, [f.pos, SVec2::new(f.radius, f.heading)]);
+    }
+    for path in &layout.paths {
+        hash_f32s(&mut h, path.iter().copied());
+    }
+    for &(p, facing) in &layout.benches {
+        hash_f32s(&mut h, [p]);
+        facing.to_bits().hash(&mut h);
+    }
+    layout.shared_edges.hash(&mut h);
+    h.finish()
+}
+
+/// Park layouts, one set of entities per park lot. A park is regenerated
+/// only when its own layout or outline changes; neighbouring parks and the
+/// land-value recompute leave it alone.
+fn sync_parks(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut state: ResMut<RenderState>,
+) {
+    let w = &sim.world;
+    let rebuild_all = assets.palette_changed || assets.rules_changed || sim.full_rebuild;
+    // Drop parks that are gone, built on, or stale.
+    let mut wanted: HashMap<LotId, u64> = HashMap::new();
+    for (id, lot) in w.lots.iter() {
+        if let Some(layout) = lot.park.as_ref().filter(|_| is_park_lot(lot)) {
+            wanted.insert(id, park_key(lot, layout));
+        }
+    }
+    let stale: Vec<LotId> = state.parks.iter().filter(|(id, (key, _))| rebuild_all || wanted.get(id) != Some(key)).map(|(id, _)| *id).collect();
+    for id in stale {
+        if let Some((_, ents)) = state.parks.remove(&id) {
+            for e in ents {
+                commands.entity(e).despawn();
+            }
+        }
+    }
+    for (id, key) in wanted {
+        if state.parks.contains_key(&id) {
+            continue;
+        }
+        let lot = &w.lots[id];
+        let Some(layout) = &lot.park else { continue };
+        let seed = (lot.center.x * 31.0 + lot.center.y * 17.0).abs() as u64;
+        let extras = Extras { park: Some(layout), ..Extras::default() };
+        let geo = generate_building(lot, nd_sim::LandUse::Park, 1, layout.tier, 1.0, seed, &assets.rules, &assets.palette, &extras);
+        let ents = spawn_geometry(&mut commands, &mut meshes, &mats, &geo, ParkTag);
+        state.parks.insert(id, (key, ents));
+    }
+}
+
+/// Which look a vacant lot gets for a land value: dormant, wild or parklet.
+fn vacant_bucket(land_value: f32) -> u8 {
+    if land_value < nd_procgen::vacant::LOW {
+        0
+    } else if land_value < nd_procgen::vacant::HIGH {
+        1
+    } else {
+        2
+    }
+}
+
+/// Vacant-lot dressing, merged into one mesh per surface per chunk. A chunk
+/// is regenerated when the set of vacant lots in it changes, a lot's outline
+/// changes, or a lot crosses a land-value bucket; the land-value recompute
+/// itself (every 120 ticks) changes nothing until a lot crosses a threshold.
+fn sync_vacant(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut state: ResMut<RenderState>,
+) {
+    let w = &sim.world;
+    let rebuild_all = assets.palette_changed || sim.full_rebuild;
+    // Per chunk: the lots in it and a hash of what their dressing depends on.
+    let mut per_chunk: HashMap<ChunkKey, (DefaultHasher, Vec<LotId>)> = HashMap::new();
+    for (id, lot) in w.lots.iter() {
+        if !is_vacant_lot(lot) {
+            continue;
+        }
+        let (h, ids) = per_chunk.entry(chunk_of(lot.center)).or_insert_with(|| (DefaultHasher::new(), Vec::new()));
+        id.hash(h);
+        vacant_bucket(w.land_value.at(lot.center)).hash(h);
+        hash_f32s(h, lot.polygon.iter().copied());
+        ids.push(id);
+    }
+    let wanted: HashMap<ChunkKey, (u64, Vec<LotId>)> = per_chunk.into_iter().map(|(k, (h, ids))| (k, (h.finish(), ids))).collect();
+    let stale: Vec<ChunkKey> = state.vacant_chunks.iter().filter(|(k, (key, _))| rebuild_all || wanted.get(k).map(|(h, _)| h) != Some(key)).map(|(k, _)| *k).collect();
+    for k in stale {
+        if let Some((_, ents)) = state.vacant_chunks.remove(&k) {
+            for e in ents {
+                commands.entity(e).despawn();
+            }
+        }
+    }
+    let pal = &assets.palette;
+    for (k, (key, ids)) in wanted {
+        if state.vacant_chunks.contains_key(&k) {
+            continue;
+        }
+        let mut geo = Geometry::default();
+        for id in ids {
+            let lot = &w.lots[id];
+            // Dormant, going wild or kept as a parklet, by what the land is worth.
+            let seed = w.config.seed ^ ((lot.center.x * 31.0 + lot.center.y * 17.0).abs() as u64);
+            geo.append(&generate_vacant(lot, w.land_value.at(lot.center), seed, pal));
+        }
+        let ents = if geo.triangle_count() > 0 { spawn_geometry(&mut commands, &mut meshes, &mats, &geo, VacantTag) } else { Vec::new() };
+        state.vacant_chunks.insert(k, (key, ents));
+    }
+}
+
+/// Generate one building's geometry into the chunk's merged geometry.
+fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, id: BuildingId) -> Option<()> {
+    let b = world.buildings.get(id)?;
+    let lot = world.lots.get(b.lot)?;
     let extras = Extras {
         parking: b.parking_visual(),
         plant: b.plant,
@@ -650,11 +946,22 @@ fn spawn_building(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mat
         rail: b.rail.as_ref(),
         construction: b.construction.as_ref().map(|c| c.progress),
     };
-    let geo = generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras);
-    let tris = geo.triangle_count();
-    Some((spawn_geometry(commands, meshes, mats, &geo, BuildingTag(id)), tris))
+    geo.append(&generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras));
+    Some(())
 }
 
+/// The chunk a building is drawn in: by its lot centre, so a building and
+/// its lot's vacant/park neighbours share cells.
+fn building_chunk(world: &World, id: BuildingId) -> Option<ChunkKey> {
+    let b = world.buildings.get(id)?;
+    Some(chunk_of(world.lots.get(b.lot)?.center))
+}
+
+/// Buildings, batched per [`CHUNK`] cell: one mesh per non-empty surface per
+/// cell instead of one per surface per building. A cell is thrown away and
+/// regenerated whenever a building in it is built, changed or removed, so
+/// an edit costs one street block of procgen rather than the whole city, and
+/// a few hundred buildings are a few dozen draw calls per surface.
 fn sync_buildings(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -665,12 +972,14 @@ fn sync_buildings(
     mut stats: ResMut<RenderStats>,
 ) {
     let rebuild_all = sim.full_rebuild || assets.rules_changed || assets.palette_changed;
+    let mut dirty: HashSet<ChunkKey> = HashSet::new();
     if rebuild_all {
-        for (_, ents) in state.buildings.drain() {
-            for e in ents {
+        for (_, chunk) in state.chunks.drain() {
+            for e in chunk.entities {
                 commands.entity(e).despawn();
             }
         }
+        state.building_chunks.clear();
         if sim.full_rebuild {
             // Slotmap keys are reused by a loaded world, so an old car mesh
             // could stand in for a new bus; start the movers from scratch.
@@ -688,57 +997,74 @@ fn sync_buildings(
                 }
             }
         }
-        stats.building_triangles = 0;
-        let ids: Vec<BuildingId> = sim.world.buildings.keys().collect();
-        for id in ids {
-            if let Some((ents, tris)) = spawn_building(&mut commands, &mut meshes, &mats, &sim, &assets, id) {
-                state.buildings.insert(id, ents);
-                stats.building_triangles += tris;
+        for id in sim.world.buildings.keys() {
+            if let Some(k) = building_chunk(&sim.world, id) {
+                dirty.insert(k);
             }
         }
     } else {
-        let changed: Vec<BuildingId> = sim
-            .events
-            .iter()
-            .filter_map(|e| match e {
-                SimEvent::BuildingChanged(id) => Some(*id),
-                _ => None,
-            })
-            .collect();
-        for id in changed {
-            if let Some(ents) = state.buildings.remove(&id) {
-                for e in ents {
-                    commands.entity(e).despawn();
+        // Built or changed: the chunk the building lives in now, and the one
+        // it was drawn in (the same unless the lot moved under it).
+        for e in &sim.events {
+            if let SimEvent::BuildingBuilt(id) | SimEvent::BuildingChanged(id) = e {
+                if let Some(k) = building_chunk(&sim.world, *id) {
+                    dirty.insert(k);
+                }
+                if let Some(k) = state.building_chunks.get(id) {
+                    dirty.insert(*k);
                 }
             }
         }
-        let new_ids: Vec<BuildingId> = sim
-            .events
-            .iter()
-            .filter_map(|e| match e {
-                SimEvent::BuildingBuilt(id) | SimEvent::BuildingChanged(id) => Some(*id),
-                _ => None,
-            })
-            .collect();
-        for id in new_ids {
-            if state.buildings.contains_key(&id) {
-                continue;
-            }
-            if let Some((ents, tris)) = spawn_building(&mut commands, &mut meshes, &mats, &sim, &assets, id) {
-                state.buildings.insert(id, ents);
-                stats.building_triangles += tris;
+        // Removed buildings leave no event in some paths (a rebuild of the
+        // master plan drops them), so compare against what was drawn.
+        let gone: Vec<BuildingId> = state.building_chunks.keys().copied().filter(|id| !sim.world.buildings.contains_key(*id)).collect();
+        for id in gone {
+            if let Some(k) = state.building_chunks.remove(&id) {
+                dirty.insert(k);
             }
         }
-        let gone: Vec<BuildingId> = state.buildings.keys().copied().filter(|id| !sim.world.buildings.contains_key(*id)).collect();
-        for id in gone {
-            if let Some(ents) = state.buildings.remove(&id) {
-                for e in ents {
-                    commands.entity(e).despawn();
+        // Buildings that exist but were never drawn (missed events) are
+        // caught the same way, cheaply, since the map lookup is O(1).
+        for id in sim.world.buildings.keys() {
+            if !state.building_chunks.contains_key(&id) {
+                if let Some(k) = building_chunk(&sim.world, id) {
+                    dirty.insert(k);
                 }
             }
         }
     }
-    stats.building_entities = state.buildings.values().map(|v| v.len()).sum();
+    let touched = !dirty.is_empty();
+    if touched {
+        // Bucket every building once; only the dirty cells are regenerated.
+        let mut members: HashMap<ChunkKey, Vec<BuildingId>> = HashMap::new();
+        for id in sim.world.buildings.keys() {
+            if let Some(k) = building_chunk(&sim.world, id) {
+                if dirty.contains(&k) {
+                    members.entry(k).or_default().push(id);
+                }
+            }
+        }
+        for k in dirty {
+            if let Some(chunk) = state.chunks.remove(&k) {
+                for e in chunk.entities {
+                    commands.entity(e).despawn();
+                }
+            }
+            let Some(ids) = members.remove(&k) else { continue };
+            let mut geo = Geometry::default();
+            for &id in &ids {
+                if append_building(&mut geo, &sim.world, &assets, id).is_some() {
+                    state.building_chunks.insert(id, k);
+                }
+            }
+            let entities = spawn_geometry(&mut commands, &mut meshes, &mats, &geo, BuildingTag);
+            state.chunks.insert(k, ChunkMeshes { entities, triangles: geo.triangle_count() });
+        }
+    }
+    if rebuild_all || touched {
+        stats.building_entities = state.chunks.values().map(|c| c.entities.len()).sum();
+        stats.building_triangles = state.chunks.values().map(|c| c.triangles).sum();
+    }
     // Clear the full-rebuild flag last so every sync system saw it this frame.
     if sim.full_rebuild {
         sim.full_rebuild = false;
@@ -758,7 +1084,7 @@ fn sync_citizens(
     for (id, _) in w.citizens.iter() {
         if !state.citizens.contains_key(&id) {
             let e = commands
-                .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(mats.citizen.clone()), Transform::IDENTITY, Visibility::Hidden, CitizenTag(id)))
+                .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(mats.citizen.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CitizenTag))
                 .id();
             state.citizens.insert(id, e);
         }
@@ -831,8 +1157,8 @@ fn sync_cars(
             } else {
                 mats.car_body_mesh.clone()
             };
-            let body = commands.spawn((Mesh3d(mesh), MeshMaterial3d(body_mat), Transform::IDENTITY, CarTag(id))).id();
-            let lights = commands.spawn((Mesh3d(mats.car_lights_mesh.clone()), MeshMaterial3d(mats.glow()), Transform::IDENTITY, CarTag(id))).id();
+            let body = commands.spawn((Mesh3d(mesh), MeshMaterial3d(body_mat), Transform::IDENTITY, NotShadowCaster, CarTag)).id();
+            let lights = commands.spawn((Mesh3d(mats.car_lights_mesh.clone()), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag)).id();
             state.cars.insert(id, [body, lights]);
         }
     }
@@ -849,7 +1175,9 @@ fn sync_cars(
         let Some(car) = traffic.cars.get(*id) else { continue };
         let pos = car.prev_pos.lerp(car.pos, f);
         let heading = lerp_angle(car.prev_heading, car.heading, f);
-        let selected = *selection == Selection::Citizen(car.citizen);
+        // Lifted when selected, whether through its driver or, for a bus or
+        // truck with nobody to inspect, as the vehicle itself.
+        let selected = *selection == Selection::Citizen(car.citizen) || *selection == Selection::Car(*id);
         for e in ents {
             if let Ok(mut tf) = q.get_mut(*e) {
                 tf.translation = Vec3::new(pos.x, 0.05 + if selected { 0.4 } else { 0.0 }, pos.y);
@@ -897,7 +1225,7 @@ fn sync_overlay(
             mesh.ground_polygon(&poly, 0.3, [col[0], col[1], col[2], 0.42]);
         }
     }
-    commands.spawn((Mesh3d(meshes.add(to_mesh(&mesh, false))), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, OverlayTag));
+    spawn_overlay(&mut commands, &mut meshes, &mats, &mesh, OverlayTag);
 }
 
 /// The pedestrian network inside blocks: loops, alleys and gates. Toggled with P.
@@ -931,7 +1259,7 @@ fn sync_paths(
         mesh.ground_strip(&[a, b], 0.7, 0.25, scale(pal.preview, 0.5));
     }
     if !mesh.is_empty() {
-        commands.spawn((Mesh3d(meshes.add(to_mesh(&mesh, false))), MeshMaterial3d(mats.glow()), Transform::IDENTITY, PathsTag));
+        spawn_glow(&mut commands, &mut meshes, &mats, &mesh, PathsTag);
     }
 }
 
@@ -956,7 +1284,7 @@ fn sync_trains(
                 };
                 let colour = if k == 0 || train.kind == nd_sim::TrainKind::Passenger { train.color as usize } else { (train.color as usize + k * 3) % mats.car_bodies.len().max(1) };
                 let mat = mats.car_bodies[colour % mats.car_bodies.len().max(1)].clone();
-                ents.push(commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, TrainTag(id))).id());
+                ents.push(commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, TrainTag)).id());
             }
             state.trains.insert(id, ents);
         }
@@ -1059,7 +1387,7 @@ fn sync_haze(
             mesh.ground_polygon(&poly, *h, [0.52, 0.40, 0.27, alpha]);
         }
     }
-    commands.spawn((Mesh3d(meshes.add(to_mesh(&mesh, false))), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, HazeTag));
+    spawn_overlay(&mut commands, &mut meshes, &mats, &mesh, HazeTag);
 }
 
 fn preview_width(kind: nd_sim::roads::RoadKind, fwd: u8, bwd: u8) -> f32 {
@@ -1080,11 +1408,17 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 }
 
 /// Sun, ambient light, sky, fog and glow strength follow the sim clock.
+///
+/// Everything is written only when the quantised time of day moves, which
+/// is far below a visible step, and the shared Glow material (whose rewrite re-uploads it and breaks the
+/// batches of every glow mesh) is rounded to 1/64 of its range, so a full
+/// day costs at most a few dozen material updates instead of one per frame.
 fn update_daylight(
     sim: Res<Sim>,
     lighting: Res<Lighting>,
     assets: Res<GameAssets>,
     mats: Res<Materials>,
+    mut state: ResMut<RenderState>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut clear: ResMut<ClearColor>,
@@ -1093,6 +1427,14 @@ fn update_daylight(
 ) {
     let pal = &assets.palette;
     let t = if lighting.follow_clock { sim.world.clock.day_fraction() } else { (lighting.hour / 24.0).rem_euclid(1.0) };
+    // Quantised to 1/4096 of a day (about 20 sim seconds, a 0.09 degree
+    // step of the sun), so at 1x speed the lighting is written a few times a
+    // second rather than every frame.
+    let daylight_key = (t * 4096.0).round() as i32;
+    if state.daylight_key == Some(daylight_key) && !assets.palette_changed {
+        return;
+    }
+    state.daylight_key = Some(daylight_key);
     let elev = ((t - 0.25) * std::f32::consts::TAU).sin();
     let daylight = smoothstep(-0.12, 0.30, elev);
     let low_sun = 1.0 - smoothstep(0.05, 0.45, elev.abs());
@@ -1124,8 +1466,12 @@ fn update_daylight(
     let amb = lerp3([0.35, 0.45, 0.9], [0.8, 0.85, 1.0], daylight);
     ambient.color = Color::linear_rgb(amb[0], amb[1], amb[2]);
 
-    let glow_k = 1.0 - 0.7 * daylight;
-    if let Some(mut m) = materials.get_mut(&mats.glow()) {
-        m.base_color = Color::linear_rgb(glow_k, glow_k, glow_k);
+    let glow_key = ((1.0 - 0.7 * daylight) * 64.0).round() as i32;
+    if state.glow_key != Some(glow_key) || assets.palette_changed {
+        state.glow_key = Some(glow_key);
+        let glow_k = glow_key as f32 / 64.0;
+        if let Some(mut m) = materials.get_mut(&mats.glow()) {
+            m.base_color = Color::linear_rgb(glow_k, glow_k, glow_k);
+        }
     }
 }
