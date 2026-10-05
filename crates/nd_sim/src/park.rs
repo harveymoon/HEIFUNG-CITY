@@ -10,11 +10,14 @@
 //! a bandstand and rides.
 
 use crate::buildings::Tier;
+use crate::geom::{bounds, point_in_polygon, polygon_area, polygon_centroid, project_on_segment as project, shared_stretch};
 use crate::land_value::LandValue;
-use crate::zoning::{point_in_polygon, polygon_area, polygon_centroid, LandUse, Lot, LotId};
+use crate::zoning::{LandUse, Lot, LotId};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
+
+pub use crate::geom::distance_to_outline as distance_to_boundary;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ParkFeature {
@@ -553,26 +556,6 @@ fn heading_to_path(p: Vec2, paths: &[Vec<Vec2>]) -> f32 {
 
 // ── geometry ─────────────────────────────────────────────────────────────────
 
-fn bounds(poly: &[Vec2]) -> (Vec2, Vec2) {
-    poly.iter().fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)))
-}
-
-/// Parameter and point of the projection of `p` on segment `a`-`b`.
-fn project(p: Vec2, a: Vec2, b: Vec2) -> (f32, Vec2) {
-    let ab = b - a;
-    let l2 = ab.length_squared();
-    if l2 < 1e-6 {
-        return (0.0, a);
-    }
-    let t = ((p - a).dot(ab) / l2).clamp(0.0, 1.0);
-    (t, a + ab * t)
-}
-
-pub fn distance_to_boundary(p: Vec2, poly: &[Vec2]) -> f32 {
-    let n = poly.len();
-    (0..n).map(|i| p.distance(project(p, poly[i], poly[(i + 1) % n]).1)).fold(f32::MAX, f32::min)
-}
-
 /// Distance from the centroid to the nearest edge.
 pub fn inradius(poly: &[Vec2]) -> f32 {
     let c = polygon_centroid(poly);
@@ -622,20 +605,10 @@ fn shared_edge(a: &[Vec2], b: &[Vec2]) -> Option<(Vec2, usize, usize)> {
     let mut best: Option<(f32, (Vec2, usize, usize))> = None;
     for i in 0..a.len() {
         let (p, q) = (a[i], a[(i + 1) % a.len()]);
-        let pq = q - p;
-        let len = pq.length();
-        if len < 1e-3 {
-            continue;
-        }
-        let dir = pq / len;
-        let nrm = Vec2::new(-dir.y, dir.x);
+        let dir = (q - p).normalize_or_zero();
         for j in 0..b.len() {
             let (r, s) = (b[j], b[(j + 1) % b.len()]);
-            if (r - p).dot(nrm).abs() > 1.0 || (s - p).dot(nrm).abs() > 1.0 {
-                continue;
-            }
-            let (t0, t1) = ((r - p).dot(dir), (s - p).dot(dir));
-            let (lo, hi) = (t0.min(t1).max(0.0), t0.max(t1).min(len));
+            let Some((lo, hi)) = shared_stretch(p, q, r, s) else { continue };
             let shared = hi - lo;
             if shared >= SHARED_MIN && best.is_none_or(|(bs, _)| shared > bs) {
                 best = Some((shared, (p + dir * ((lo + hi) * 0.5), i, j)));

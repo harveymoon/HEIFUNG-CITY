@@ -38,6 +38,12 @@ pub const DEPOT_UPKEEP_PER_DAY: f32 = 250.0;
 pub const DEPOT_CAPACITY: u32 = 10;
 pub const DEPOT_JOBS: u16 = 12;
 pub const DEPOT_MIN_AREA: f32 = 500.0;
+/// A ride may be this many times the crow-flight distance, plus
+/// [`RIDE_SLACK`] metres, before walking is the better idea. Buses run a
+/// loop one way, so the "forward" ride from a stop to the one just behind
+/// it goes nearly all the way round; this is what rules that out.
+pub const RIDE_DETOUR: f32 = 2.5;
+pub const RIDE_SLACK: f32 = 200.0;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct BusStop {
@@ -91,6 +97,25 @@ impl BusRoute {
     pub fn hops(&self, a: usize, b: usize) -> usize {
         let n = self.stops.len().max(1);
         (b + n - a) % n
+    }
+
+    /// Metres a bus drives from stop `a` forward round the loop to stop
+    /// `b`, along the legs' lane polylines; stop to stop as the crow flies
+    /// when the legs are not computed yet (right after a load).
+    pub fn ride_length(&self, a: usize, b: usize) -> f32 {
+        let n = self.stops.len();
+        if n < 2 {
+            return 0.0;
+        }
+        (0..self.hops(a, b))
+            .map(|k| {
+                let i = (a + k) % n;
+                match self.legs.get(i) {
+                    Some(leg) if self.legs.len() == n => crate::geom::path_length(leg),
+                    _ => self.stops[i].pos.distance(self.stops[(i + 1) % n].pos),
+                }
+            })
+            .sum()
     }
 }
 
@@ -152,11 +177,16 @@ impl Transit {
         }
     }
 
-    /// The route and stop pair for a trip, if a line serves both ends: the
-    /// pair with the shortest walking at either end, as long as the ride
-    /// goes forward round the loop and saves real distance.
+    /// The route and stop pair for a trip, if a line serves both ends: among
+    /// the stops within reach of each end, the pair with the shortest
+    /// walking, as long as the ride saves real distance and, riding forward
+    /// round the loop from the boarding stop, is no more than
+    /// [`RIDE_DETOUR`] times the crow-flight distance plus [`RIDE_SLACK`].
+    /// So a rider whose nearest stop is just past the destination's does
+    /// not go all the way round; a stop a little further back may do.
     pub fn plan_trip(&self, from: Vec2, to: Vec2) -> Option<(RouteId, usize, usize)> {
-        if from.distance(to) < BUS_TRIP_MIN {
+        let direct = from.distance(to);
+        if direct < BUS_TRIP_MIN {
             return None;
         }
         let mut best: Option<(f32, RouteId, usize, usize)> = None;
@@ -164,19 +194,24 @@ impl Transit {
             if !route.runnable() || route.buses == 0 {
                 continue;
             }
-            let nearest = |p: Vec2| -> Option<(usize, f32)> {
-                route.stops.iter().enumerate().map(|(i, s)| (i, s.pos.distance(p))).filter(|(_, d)| *d <= STOP_REACH).min_by(|a, b| a.1.total_cmp(&b.1))
-            };
-            let (Some((a, da)), Some((b, db))) = (nearest(from), nearest(to)) else { continue };
-            if a == b {
-                continue;
-            }
-            let walking = da + db;
-            if walking + 60.0 > from.distance(to) {
-                continue;
-            }
-            if best.is_none_or(|(w, ..)| walking < w) {
-                best = Some((walking, id, a, b));
+            let within = |p: Vec2| -> Vec<(usize, f32)> { route.stops.iter().enumerate().map(|(i, s)| (i, s.pos.distance(p))).filter(|(_, d)| *d <= STOP_REACH).collect() };
+            let (boards, alights) = (within(from), within(to));
+            for &(a, da) in &boards {
+                for &(b, db) in &alights {
+                    if a == b {
+                        continue;
+                    }
+                    let walking = da + db;
+                    if walking + 60.0 > direct {
+                        continue;
+                    }
+                    if route.ride_length(a, b) > direct * RIDE_DETOUR + RIDE_SLACK {
+                        continue;
+                    }
+                    if best.is_none_or(|(w, ..)| walking < w) {
+                        best = Some((walking, id, a, b));
+                    }
+                }
             }
         }
         best.map(|(_, id, a, b)| (id, a, b))
@@ -199,6 +234,89 @@ impl Transit {
     /// Minutes of the day when buses are out.
     pub fn in_service(minute_of_day: u32) -> bool {
         (SERVICE_START..SERVICE_END).contains(&minute_of_day)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A runnable loop with stops at `pts`, legs as straight lines.
+    fn line(transit: &mut Transit, pts: &[Vec2], buses: u8) -> RouteId {
+        let id = transit.new_route();
+        let r = &mut transit.routes[id];
+        r.stops = pts.iter().map(|&p| BusStop { segment: SegmentId(0), pos: p }).collect();
+        let n = pts.len();
+        r.legs = (0..n).map(|i| vec![pts[i], pts[(i + 1) % n]]).collect();
+        r.buses = buses;
+        id
+    }
+
+    /// A 600 x 600 m loop served clockwise: six stops, 2065 m round.
+    fn block() -> [Vec2; 6] {
+        [Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0), Vec2::new(300.0, 300.0), Vec2::new(200.0, 600.0), Vec2::new(-200.0, 600.0), Vec2::new(-300.0, 300.0)]
+    }
+
+    #[test]
+    fn rides_go_forward_round_the_loop_and_never_nearly_all_the_way_round() {
+        let mut t = Transit::default();
+        let id = line(&mut t, &block(), 1);
+        let r = &t.routes[id];
+        assert!(r.runnable());
+        assert_eq!(r.hops(5, 2), 3);
+        let diag = 100.0f32.hypot(300.0);
+        assert!((r.ride_length(0, 1) - 400.0).abs() < 1e-3);
+        assert!((r.ride_length(1, 0) - (400.0 + 4.0 * diag)).abs() < 1e-2, "forward from 1 to 0 is the loop bar one leg");
+        // West to east along the bottom: board 0, alight 1, a forward ride.
+        assert_eq!(t.plan_trip(Vec2::new(-230.0, -20.0), Vec2::new(230.0, -20.0)), Some((id, 0, 1)));
+        // East to west along the same street: the only stops within reach
+        // are 1 and 0, and riding forward from 1 to 0 is 1665 m for a 460 m
+        // trip, more than 2.5 x 460 + 200. Walking it is.
+        assert_eq!(t.plan_trip(Vec2::new(230.0, -20.0), Vec2::new(-230.0, -20.0)), None);
+        // Short trips are walked; lines with no buses out do not count.
+        assert_eq!(t.plan_trip(Vec2::new(-230.0, -20.0), Vec2::new(-100.0, -20.0)), None);
+        t.routes[id].buses = 0;
+        assert_eq!(t.plan_trip(Vec2::new(-230.0, -20.0), Vec2::new(230.0, -20.0)), None);
+    }
+
+    #[test]
+    fn a_stop_further_back_is_taken_when_the_nearest_one_rides_the_long_way() {
+        // A -> B -> C -> D -> E -> A, 2600 m round, with E a short hop before A.
+        let stops = [Vec2::ZERO, Vec2::new(500.0, 0.0), Vec2::new(500.0, 800.0), Vec2::new(0.0, 800.0), Vec2::new(0.0, 200.0)];
+        let mut t = Transit::default();
+        let id = line(&mut t, &stops, 1);
+        // Starting between A and E, a step nearer E, bound for D.
+        let (from, to) = (Vec2::new(0.0, 105.0), Vec2::new(20.0, 800.0));
+        let r = &t.routes[id];
+        assert!(r.ride_length(4, 3) > from.distance(to) * RIDE_DETOUR + RIDE_SLACK, "E to D is the whole loop");
+        assert!(r.ride_length(0, 3) <= from.distance(to) * RIDE_DETOUR + RIDE_SLACK, "A to D is not");
+        assert_eq!(t.plan_trip(from, to), Some((id, 0, 3)), "board at A, not at the nearer E");
+    }
+
+    #[test]
+    fn ride_length_falls_back_to_stop_distances_without_legs() {
+        let mut t = Transit::default();
+        let id = line(&mut t, &block(), 1);
+        t.routes[id].legs.clear();
+        let r = &t.routes[id];
+        assert!((r.ride_length(0, 2) - (400.0 + 100.0f32.hypot(300.0))).abs() < 1e-3);
+        assert_eq!(r.ride_length(2, 2), 0.0);
+        let mut single = Transit::default();
+        let s = line(&mut single, &[Vec2::ZERO], 1);
+        assert_eq!(single.routes[s].ride_length(0, 0), 0.0);
+    }
+
+    #[test]
+    fn stop_near_finds_the_closest_stop_of_any_line() {
+        let mut t = Transit::default();
+        assert!(t.stop_near(Vec2::ZERO, 50.0).is_none());
+        let a = line(&mut t, &block(), 1);
+        let b = line(&mut t, &[Vec2::new(0.0, 500.0), Vec2::new(100.0, 500.0), Vec2::new(50.0, 600.0)], 1);
+        assert_eq!(t.stop_near(Vec2::new(-190.0, 5.0), 20.0), Some((a, 0)));
+        assert_eq!(t.stop_near(Vec2::new(60.0, 590.0), 20.0), Some((b, 2)));
+        assert!(t.stop_near(Vec2::new(0.0, 300.0), 50.0).is_none(), "nothing within 50 m");
+        // With several stops in range, the closest wins.
+        assert_eq!(t.stop_near(Vec2::new(-200.0, 60.0), 300.0), Some((a, 0)));
     }
 }
 

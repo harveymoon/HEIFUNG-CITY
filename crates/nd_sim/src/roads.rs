@@ -1,10 +1,19 @@
 //! Road network: a node/segment graph with snapping, intersection splitting
 //! and A* pathfinding.
 
+use crate::geom::Grid;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
+use std::cell::OnceCell;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
+
+pub use crate::geom::project_on_segment;
+
+/// Cell size of the segment index. Road pieces are 7 m (curves) to a few
+/// hundred metres (straight roads); a nearest query reads a 3x3 block of
+/// cells in the common case.
+const SEGMENT_CELL: f32 = 40.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NodeId(pub u32);
@@ -83,9 +92,48 @@ pub struct RoadNetwork {
     pub segments: Vec<Segment>,
     /// Incremented on every change so renderers can cheaply detect updates.
     pub version: u64,
+    /// Grid over the alive segments, built on the first nearest query after
+    /// a change and dropped by the next change. Every mutation goes through
+    /// `link` or `split_segment`, which reset it.
+    #[serde(skip)]
+    index: OnceCell<Grid>,
 }
 
 impl RoadNetwork {
+    /// The segment index, built if a change dropped it. Items are segment
+    /// indices; dead segments get an empty box and are never returned.
+    fn grid(&self) -> &Grid {
+        self.index.get_or_init(|| {
+            Grid::new(
+                SEGMENT_CELL,
+                self.segments.iter().map(|s| {
+                    if s.alive {
+                        let (a, b) = (self.node(s.a).pos, self.node(s.b).pos);
+                        (a.min(b), a.max(b))
+                    } else {
+                        (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN))
+                    }
+                }),
+            )
+        })
+    }
+
+    /// Closest point on any alive segment that passes `keep`. Exact ties go
+    /// to the lower segment id, as the linear scan this replaces did.
+    pub fn nearest_where(&self, p: Vec2, keep: impl Fn(&Segment) -> bool) -> Option<(SegmentId, f32, Vec2)> {
+        let (i, _) = self.grid().nearest(p, |i| {
+            let seg = &self.segments[i as usize];
+            if !seg.alive || !keep(seg) {
+                return f32::INFINITY;
+            }
+            let (a, b) = (self.node(seg.a).pos, self.node(seg.b).pos);
+            p.distance(project_on_segment(p, a, b).1)
+        })?;
+        let sid = SegmentId(i);
+        let (a, b) = self.segment_points(sid);
+        let (t, q) = project_on_segment(p, a, b);
+        Some((sid, t, q))
+    }
     pub fn node(&self, id: NodeId) -> &Node {
         &self.nodes[id.0 as usize]
     }
@@ -214,19 +262,7 @@ impl RoadNetwork {
 
     /// Closest point on any alive way that `kind` can join.
     pub fn nearest_of_kind(&self, p: Vec2, kind: RoadKind) -> Option<(SegmentId, f32, Vec2)> {
-        let mut best: Option<(f32, SegmentId, f32, Vec2)> = None;
-        for (sid, seg) in self.alive_segments() {
-            if !Self::joins(seg.kind, kind) {
-                continue;
-            }
-            let (p0, p1) = self.segment_points(sid);
-            let (t, q) = project_on_segment(p, p0, p1);
-            let d = p.distance(q);
-            if best.is_none_or(|(bd, ..)| d < bd) {
-                best = Some((d, sid, t, q));
-            }
-        }
-        best.map(|(_, sid, t, q)| (sid, t, q))
+        self.nearest_where(p, |seg| Self::joins(seg.kind, kind))
     }
 
     /// Closest point on the railway.
@@ -250,6 +286,7 @@ impl RoadNetwork {
         if let Some(existing) = self.find_link(a, b) {
             return existing;
         }
+        self.index.take();
         self.segments.push(Segment { a, b, lanes_fwd, lanes_bwd, alive: true, kind });
         let id = SegmentId((self.segments.len() - 1) as u32);
         self.nodes[a.0 as usize].segments.push(id);
@@ -259,6 +296,7 @@ impl RoadNetwork {
 
     fn split_segment(&mut self, sid: SegmentId, at: NodeId) {
         let s = self.segments[sid.0 as usize].clone();
+        self.index.take();
         self.segments[sid.0 as usize].alive = false;
         for n in [s.a, s.b] {
             self.nodes[n.0 as usize].segments.retain(|&x| x != sid);
@@ -301,9 +339,12 @@ impl RoadNetwork {
         let pb = self.node(b).pos;
 
         let mut cuts: Vec<(f32, NodeId)> = Vec::new();
-        let count = self.segments.len();
-        for i in 0..count {
-            let s = self.segments[i].clone();
+        // Only segments whose box touches the new piece can cross it. The
+        // candidates are fixed before splitting starts, in ascending id
+        // order, so the junction nodes come out as a full scan makes them.
+        let candidates = self.grid().in_box(pa.min(pb), pa.max(pb));
+        for i in candidates {
+            let s = self.segments[i as usize].clone();
             if !s.alive || s.a == a || s.a == b || s.b == a || s.b == b {
                 continue;
             }
@@ -328,15 +369,17 @@ impl RoadNetwork {
                     continue;
                 }
                 let n = &self.nodes[i];
-                let alive: Vec<SegmentId> = n.segments.iter().copied().filter(|&s| self.segments[s.0 as usize].alive).collect();
-                if alive.is_empty() || !alive.iter().any(|&s| Self::joins(self.segments[s.0 as usize].kind, kind)) {
-                    continue;
-                }
+                // Geometry first: it is the cheap test, and most nodes fail it.
                 let (t, q) = project_on_segment(n.pos, pa, pb);
                 let margin = SNAP_RADIUS / len;
-                if t > margin && t < 1.0 - margin && q.distance(n.pos) <= SNAP_RADIUS {
-                    cuts.push((t, id));
+                if !(t > margin && t < 1.0 - margin && q.distance(n.pos) <= SNAP_RADIUS) {
+                    continue;
                 }
+                let mut alive = n.segments.iter().copied().filter(|&s| self.segments[s.0 as usize].alive).peekable();
+                if alive.peek().is_none() || !alive.any(|s| Self::joins(self.segments[s.0 as usize].kind, kind)) {
+                    continue;
+                }
+                cuts.push((t, id));
             }
         }
         cuts.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(Ordering::Equal));
@@ -355,36 +398,17 @@ impl RoadNetwork {
 
     /// Closest point on any alive street (paths excluded): where a car can be.
     pub fn nearest_street(&self, p: Vec2) -> Option<(SegmentId, f32, Vec2)> {
-        let mut best: Option<(f32, SegmentId, f32, Vec2)> = None;
-        for (sid, seg) in self.alive_segments() {
-            if !seg.is_street() {
-                continue;
-            }
-            let (p0, p1) = self.segment_points(sid);
-            let (t, q) = project_on_segment(p, p0, p1);
-            let d = p.distance(q);
-            if best.map_or(true, |(bd, ..)| d < bd) {
-                best = Some((d, sid, t, q));
-            }
-        }
-        best.map(|(_, sid, t, q)| (sid, t, q))
+        self.nearest_where(p, Segment::is_street)
     }
 
     /// Closest point on any alive street or path (never the railway).
     pub fn nearest_on_network(&self, p: Vec2) -> Option<(SegmentId, f32, Vec2)> {
-        let mut best: Option<(f32, SegmentId, f32, Vec2)> = None;
-        for (sid, seg) in self.alive_segments() {
-            if seg.is_rail() {
-                continue;
-            }
-            let (p0, p1) = self.segment_points(sid);
-            let (t, q) = project_on_segment(p, p0, p1);
-            let d = p.distance(q);
-            if best.map_or(true, |(bd, ..)| d < bd) {
-                best = Some((d, sid, t, q));
-            }
-        }
-        best.map(|(_, sid, t, q)| (sid, t, q))
+        self.nearest_where(p, |seg| !seg.is_rail())
+    }
+
+    /// Alive segments whose bounding box touches `(lo, hi)`, ascending.
+    pub fn segments_in_box(&self, lo: Vec2, hi: Vec2) -> impl Iterator<Item = SegmentId> + '_ {
+        self.grid().in_box(lo, hi).into_iter().map(SegmentId).filter(move |&s| self.segments[s.0 as usize].alive)
     }
 
     /// Endpoint of `sid` closest to parameter `t`.
@@ -519,20 +543,133 @@ pub fn segment_intersection(p0: Vec2, p1: Vec2, q0: Vec2, q1: Vec2) -> Option<(f
     }
 }
 
-/// Project `p` onto segment `ab`; returns `(t, point)`.
-pub fn project_on_segment(p: Vec2, a: Vec2, b: Vec2) -> (f32, Vec2) {
-    let ab = b - a;
-    let len2 = ab.length_squared();
-    if len2 < 1e-6 {
-        return (0.0, a);
-    }
-    let t = ((p - a).dot(ab) / len2).clamp(0.0, 1.0);
-    (t, a + ab * t)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The reference every grid-backed query must match: a full scan that
+    /// keeps the first best.
+    fn linear_nearest(net: &RoadNetwork, p: Vec2, keep: impl Fn(&Segment) -> bool) -> Option<(SegmentId, f32, Vec2)> {
+        let mut best: Option<(f32, SegmentId, f32, Vec2)> = None;
+        for (sid, seg) in net.alive_segments() {
+            if !keep(seg) {
+                continue;
+            }
+            let (p0, p1) = net.segment_points(sid);
+            let (t, q) = project_on_segment(p, p0, p1);
+            let d = p.distance(q);
+            if best.is_none_or(|(bd, ..)| d < bd) {
+                best = Some((d, sid, t, q));
+            }
+        }
+        best.map(|(_, sid, t, q)| (sid, t, q))
+    }
+
+    fn city_grid(half: i32, spacing: f32) -> RoadNetwork {
+        let mut net = RoadNetwork::default();
+        let ext = half as f32 * spacing;
+        for i in -half..=half {
+            let c = i as f32 * spacing;
+            net.add_polyline(&[Vec2::new(-ext, c), Vec2::new(ext, c)], 1, 1);
+            net.add_polyline(&[Vec2::new(c, -ext), Vec2::new(c, ext)], 1, 1);
+        }
+        net.add_polyline_kind(&[Vec2::new(-ext, -ext - 30.0), Vec2::new(ext, -ext - 30.0)], 0, 0, RoadKind::Rail);
+        net.add_polyline_kind(&[Vec2::new(-ext - 20.0, 0.0), Vec2::new(-ext - 20.0, ext)], 0, 0, RoadKind::Path);
+        net
+    }
+
+    #[test]
+    fn grid_nearest_queries_match_the_linear_scan() {
+        let net = city_grid(6, 90.0);
+        assert!(net.alive_segments().count() > 150);
+        let mut seed = 11u32;
+        for k in 0..600 {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let mut p = Vec2::new((seed >> 8) as f32 / 16_777_216.0 * 1400.0 - 700.0, (seed >> 20) as f32 / 4096.0 * 1400.0 - 700.0);
+            // Every third query sits on a junction or a lane centreline,
+            // where several segments tie exactly.
+            if k % 3 == 0 {
+                p = Vec2::new((p.x / 90.0).round() * 90.0, if k % 2 == 0 { (p.y / 90.0).round() * 90.0 } else { p.y });
+            }
+            assert_eq!(net.nearest_street(p), linear_nearest(&net, p, Segment::is_street), "street at {p:?}");
+            assert_eq!(net.nearest_on_network(p), linear_nearest(&net, p, |s| !s.is_rail()), "network at {p:?}");
+            assert_eq!(net.nearest_of_kind(p, RoadKind::Rail), linear_nearest(&net, p, |s| s.is_rail()), "rail at {p:?}");
+            assert_eq!(net.nearest_of_kind(p, RoadKind::Path), linear_nearest(&net, p, |s| !s.is_rail()), "path at {p:?}");
+        }
+        // Far outside the city the answer is still the right edge segment.
+        let far = Vec2::new(5000.0, -3000.0);
+        assert_eq!(net.nearest_street(far), linear_nearest(&net, far, Segment::is_street));
+        // An empty network has no nearest.
+        assert!(RoadNetwork::default().nearest_street(Vec2::ZERO).is_none());
+        // The index follows edits: a new road becomes the nearest at once.
+        let mut net = net;
+        net.add_polyline(&[Vec2::new(2000.0, 2000.0), Vec2::new(2100.0, 2000.0)], 1, 1);
+        let p = Vec2::new(2050.0, 2010.0);
+        assert_eq!(net.nearest_street(p), linear_nearest(&net, p, Segment::is_street));
+        assert!(net.nearest_street(p).unwrap().2.distance(Vec2::new(2050.0, 2000.0)) < 1e-3);
+    }
+
+    /// Rebuild cost of a large city: `cargo test -p nd_sim --release -- --ignored nearest_bench`.
+    #[test]
+    #[ignore]
+    fn nearest_bench() {
+        let net = city_grid(40, 50.0);
+        let n = net.alive_segments().count();
+        let t0 = std::time::Instant::now();
+        let mut acc = 0.0;
+        for i in 0..20_000 {
+            let p = Vec2::new((i % 300) as f32 * 13.7 - 2000.0, (i / 300) as f32 * 31.1 - 2000.0);
+            acc += net.nearest_street(p).map_or(0.0, |(_, t, _)| t);
+        }
+        let grid = t0.elapsed();
+        let t0 = std::time::Instant::now();
+        for i in 0..20_000 {
+            let p = Vec2::new((i % 300) as f32 * 13.7 - 2000.0, (i / 300) as f32 * 31.1 - 2000.0);
+            acc += linear_nearest(&net, p, Segment::is_street).map_or(0.0, |(_, t, _)| t);
+        }
+        let linear = t0.elapsed();
+        eprintln!("{n} segments, 20k queries: grid {grid:?}, linear {linear:?} ({acc})");
+        assert!(grid < linear);
+    }
+
+    #[test]
+    fn a_street_crossing_the_track_near_a_rail_node_becomes_a_level_crossing() {
+        let mut net = RoadNetwork::default();
+        net.add_polyline_kind(&[Vec2::new(-100.0, 0.0), Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], 0, 0, RoadKind::Rail);
+        // The street crosses the track 3 m from its middle node: within the
+        // snap radius, so the crossing is that node rather than a second one
+        // a step away.
+        net.add_polyline(&[Vec2::new(3.0, -100.0), Vec2::new(3.0, 100.0)], 1, 1);
+        let crossing = net.node_near(Vec2::ZERO, SNAP_RADIUS).expect("crossing node");
+        let kinds: Vec<RoadKind> = net.neighbors(crossing).map(|(_, s)| net.segment(s).kind).collect();
+        assert_eq!(kinds.len(), 4, "two rail and two street pieces meet at the crossing: {kinds:?}");
+        assert_eq!(kinds.iter().filter(|k| **k == RoadKind::Rail).count(), 2);
+        assert_eq!(net.nodes.iter().filter(|n| n.pos.distance(Vec2::ZERO) < SNAP_RADIUS).count(), 1, "no second node beside the crossing");
+        // Both ways still run through: trains along the track, cars along the street.
+        let (ra, rb) = (net.node_near(Vec2::new(-100.0, 0.0), 1.0).unwrap(), net.node_near(Vec2::new(100.0, 0.0), 1.0).unwrap());
+        assert_eq!(net.rail_path(ra, rb).map(|p| p.len()), Some(3));
+        let (sa, sb) = (net.node_near(Vec2::new(3.0, -100.0), 1.0).unwrap(), net.node_near(Vec2::new(3.0, 100.0), 1.0).unwrap());
+        assert_eq!(net.path(sa, sb).map(|p| p.len()), Some(3));
+        // The rail ends are still the only rail leaves.
+        assert_eq!(net.rail_leaf_nodes().len(), 2);
+    }
+
+    #[test]
+    fn a_self_crossing_polyline_splits_itself_at_the_crossing() {
+        let mut net = RoadNetwork::default();
+        // A figure of eight: the second half crosses the first.
+        let pts = [Vec2::new(-100.0, -50.0), Vec2::new(100.0, 50.0), Vec2::new(100.0, -50.0), Vec2::new(-100.0, 50.0)];
+        let made = net.add_polyline(&pts, 1, 1);
+        assert!(made.len() >= 4, "the crossing splits a leg: {} pieces", made.len());
+        let x = net.node_near(Vec2::ZERO, 1.0).expect("a node at the crossing");
+        assert_eq!(net.neighbors(x).count(), 4);
+        assert!(net.nodes.iter().all(|n| n.pos.is_finite()));
+        let (a, b) = (net.node_near(pts[0], 1.0).unwrap(), net.node_near(pts[3], 1.0).unwrap());
+        let path = net.path(a, b).expect("the ends connect");
+        // Via the crossing is shorter than along the whole figure.
+        assert_eq!(path.len(), 3);
+        assert_eq!(net.leaf_nodes().len(), 2);
+    }
 
     #[test]
     fn a_road_drawn_through_a_junction_joins_it() {

@@ -253,3 +253,98 @@ pub fn preview(master: &Plan, project: &Project) -> PlanPreview {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn road(x: f32) -> Gesture {
+        Gesture::Road { points: vec![Vec2::new(x, 0.0), Vec2::new(x, 100.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street }
+    }
+
+    #[test]
+    fn projects_undo_redo_and_amend() {
+        let mut master = Plan::default();
+        master.gestures.insert(GestureId(1), road(0.0));
+        let mut p = Project::default();
+        assert!(p.is_empty() && !p.undo() && !p.redo());
+        p.push(GestureId(2), Some(road(10.0)));
+        p.push(GestureId(1), None);
+        assert_eq!(p.version, 2);
+        let eff = p.apply_to(&master);
+        assert_eq!(eff.gestures.keys().copied().collect::<Vec<_>>(), vec![GestureId(2)], "the new road is in, the master road is removed");
+        assert!(p.undo());
+        assert_eq!(p.apply_to(&master).gestures.len(), 2, "undo brings the master road back");
+        assert!(p.redo());
+        assert_eq!(p.apply_to(&master).gestures.len(), 1);
+        // A new step after an undo clears the redo stack.
+        assert!(p.undo());
+        p.push(GestureId(3), Some(road(20.0)));
+        assert!(!p.redo());
+        assert_eq!(p.apply_to(&master).gestures.len(), 3);
+        // Amending replaces the last step when it is the same gesture...
+        let steps = p.steps.len();
+        p.amend(GestureId(3), Some(road(25.0)));
+        assert_eq!(p.steps.len(), steps);
+        assert_eq!(p.apply_to(&master).gestures[&GestureId(3)].points()[0].x, 25.0);
+        // ...and records a new one otherwise.
+        p.amend(GestureId(2), Some(road(11.0)));
+        assert_eq!(p.steps.len(), steps + 1);
+        let touched: Vec<GestureId> = p.touched().collect();
+        assert!(touched.contains(&GestureId(2)) && touched.contains(&GestureId(3)));
+        // Undoing an amended step drops the whole drag.
+        assert!(p.undo() && p.undo());
+        assert!(!p.apply_to(&master).gestures.contains_key(&GestureId(3)));
+        assert_eq!(p.apply_to(&master).gestures[&GestureId(2)].points()[0].x, 10.0);
+    }
+
+    #[test]
+    fn preview_reports_planned_and_removed_gestures() {
+        let mut master = Plan::default();
+        master.gestures.insert(GestureId(1), road(0.0));
+        master.gestures.insert(GestureId(2), Gesture::Zone { polygon: vec![Vec2::ZERO, Vec2::X, Vec2::Y], land_use: LandUse::Park });
+        let mut p = Project::default();
+        p.push(GestureId(1), Some(road(5.0)));
+        p.push(GestureId(2), None);
+        p.push(GestureId(3), Some(road(50.0)));
+        let pv = preview(&master, &p);
+        assert_eq!(pv.planned_roads.iter().map(|r| r.0).collect::<Vec<_>>(), vec![GestureId(1), GestureId(3)]);
+        assert_eq!(pv.removed_roads.iter().map(|r| r.0).collect::<Vec<_>>(), vec![GestureId(1)], "a moved road is removed and planned");
+        assert_eq!(pv.removed_zones.len(), 1);
+        assert!(pv.planned_zones.is_empty());
+        assert_eq!(pv.control_points.len(), 4, "two points per planned road");
+        assert!(preview(&master, &Project::default()).planned_roads.is_empty());
+    }
+
+    #[test]
+    fn curves_pass_through_control_points_and_survive_duplicates() {
+        let pts = [Vec2::ZERO, Vec2::new(50.0, 40.0), Vec2::new(100.0, 0.0), Vec2::new(150.0, 40.0)];
+        let curve = sample_curve(&pts);
+        assert_eq!(curve[0], pts[0]);
+        assert!(curve.last().unwrap().distance(pts[3]) < 1e-3);
+        for p in &pts {
+            assert!(curve.iter().any(|q| q.distance(*p) < 1e-3), "passes through {p:?}");
+        }
+        assert!(curve.windows(2).all(|w| w[0].distance(w[1]) <= CURVE_STEP * 1.5), "sampled about every CURVE_STEP");
+        // Fewer than three points: the polyline itself.
+        assert_eq!(sample_curve(&pts[..2]), pts[..2].to_vec());
+        // A doubled control point (the player clicked twice) gives no NaN
+        // and still ends where it should.
+        let doubled = [Vec2::ZERO, Vec2::new(50.0, 40.0), Vec2::new(50.0, 40.0), Vec2::new(100.0, 0.0)];
+        let curve = sample_curve(&doubled);
+        assert!(curve.iter().all(|p| p.is_finite()));
+        assert!(curve.last().unwrap().distance(doubled[3]) < 1e-3);
+        assert!(curve.iter().any(|q| q.distance(doubled[1]) < 1e-3));
+        // Collinear control points stay on their line, in order.
+        let line = [Vec2::ZERO, Vec2::new(40.0, 0.0), Vec2::new(70.0, 0.0), Vec2::new(150.0, 0.0)];
+        let curve = sample_curve(&line);
+        assert!(curve.iter().all(|p| p.y.abs() < 1e-3), "no bulge off a straight line");
+        assert!(curve.windows(2).all(|w| w[1].x >= w[0].x - 1e-3), "monotonic along the line");
+        assert!(curve.last().unwrap().distance(line[3]) < 1e-3);
+        // The Edit tool's handles sit on the built road.
+        let g = Gesture::Road { points: pts.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: true, kind: RoadKind::Street };
+        assert!(g.road_polyline().len() > pts.len());
+        assert_eq!(g.min_points(), 2);
+        assert_eq!(Gesture::Zone { polygon: Vec::new(), land_use: LandUse::Park }.min_points(), 3);
+    }
+}
