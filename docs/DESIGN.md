@@ -127,6 +127,16 @@ Citizens are rendered from their simulated positions every frame.
   It is the cheapest business in town and lives or dies on fees. Parking lots render
   their occupancy: cars fill the painted bays of a surface lot and the edges and roof
   of a car park in proportion to the spaces in use.
+- **Pedestrian network** (`nd_sim::walk`): a second graph for people on foot. Pavements
+  on both sides of every street, path centres, a crossing hub at every junction, a
+  walkable setback loop inset into every usable lot with its front joined to the
+  pavement, an alley cross through the Stacks, and gates between lots that share a
+  few metres of boundary (never through industrial lots or gated high-end homes).
+  Walkers route over it with A* (interior edges cost 15% more), so people cut through
+  blocks; bikes stay on streets and paths. Every pedestrian route counts the lots it
+  passes (`Lot::footfall_*`), and each hour 6% of the people who passed a grocer,
+  bakery or gadget shop buy something off the shelf: walk-in trade that rewards shops
+  where the feet are. The P overlay draws the in-block network.
 - **Economy stats**: demand per land use, Gini of incomes, class counts, rents per
   tier, displaced, emigrated and priced-out counters, plus market stats: businesses,
   deals, imports, exports, meals sold, hungry citizens, closures, and the average
@@ -234,6 +244,7 @@ trait MindProvider {
   and exports, hunger and shopping, business closures.
 - v0.8 (done): polygonal parcels, 35 architectural styles per land use and tier from a
   parts toolkit, textured surfaces with normal maps, street furniture, walk mode.
+- v0.11 (done): pedestrian network through blocks with footfall and walk-in trade.
 - v0.10 (done): parking as a business with capacity, fees and shortage-driven
   construction; occupancy shown in the geometry; scale audit (metres everywhere).
 - v0.9 (done): road tool in the spirit of Cities Skylines: ends snap to any point on a

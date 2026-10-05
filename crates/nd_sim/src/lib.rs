@@ -16,6 +16,7 @@ pub mod names;
 pub mod plan;
 pub mod roads;
 pub mod traffic;
+pub mod walk;
 pub mod world;
 pub mod zoning;
 
@@ -30,6 +31,7 @@ pub use mind::{Decision, Intent, MindContext, MindProvider};
 pub use plan::{Gesture, GestureId, Plan, PlanPreview, Project};
 pub use roads::{NodeId, RoadNetwork, Segment, SegmentId};
 pub use traffic::{Car, CarId, Cargo, LaneId, Traffic};
+pub use walk::WalkGraph;
 pub use world::{World, WorldConfig};
 pub use zoning::{LandUse, Lot, LotId, Zone, ZoneId};
 

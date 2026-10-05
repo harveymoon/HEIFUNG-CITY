@@ -87,6 +87,9 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let area = nd_sim::zoning::polygon_area(&c.lot_poly).abs();
 
     ground(g, f, Dirt, &c.lot_poly, 0.03, pal.dirt);
+    // Alleys: trodden paving through the middle of the lot both ways.
+    f.bx(g, Paving, 0.0, 0.04, 0.0, Vec3::new(2.2, 0.02, (hi.y - lo.y) * 0.98), mul(pal.paving, 0.8));
+    f.bx(g, Paving, 0.0, 0.04, 0.0, Vec3::new((hi.x - lo.x) * 0.98, 0.02, 2.2), mul(pal.paving, 0.8));
 
     let mut units: Vec<Unit> = Vec::new();
     let ground_target = ((area / 40.0) as i32).clamp(2, 10);
@@ -119,6 +122,11 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             let cand = Unit { u, v, yaw, len, wid, h, level, y0, trailer, color };
             // Stay inside the parcel (a little overhang at the back is fine).
             if cand.corners().iter().any(|p| !c.inside(*p) && p.y < hi.y - 1.5) {
+                continue;
+            }
+            // Keep the alleys clear: a cross through the middle of the pile
+            // that people walk and that joins the neighbours' alleys.
+            if level == 0 && cand.corners().iter().any(|p| p.x.abs() < 1.3 || p.y.abs() < 1.3) && (cand.corners().iter().any(|p| p.x < -1.3) && cand.corners().iter().any(|p| p.x > 1.3) || cand.corners().iter().any(|p| p.y < -1.3) && cand.corners().iter().any(|p| p.y > 1.3)) {
                 continue;
             }
             if units.iter().any(|o| o.level == level && units_overlap(o, &cand, 0.35)) {

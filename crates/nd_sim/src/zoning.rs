@@ -122,6 +122,11 @@ pub struct Lot {
     /// built here.
     #[serde(default)]
     pub landlocked: bool,
+    /// Pedestrians who passed this lot today and in the current hour.
+    #[serde(default)]
+    pub footfall_today: u32,
+    #[serde(default)]
+    pub footfall_hour: u32,
 }
 
 impl Lot {
@@ -991,6 +996,8 @@ pub fn generate_lots(
             access_node: roads.nearest_endpoint(sid, t),
             building: None,
             landlocked,
+            footfall_today: 0,
+            footfall_hour: 0,
         };
         created.push(lots.insert(lot));
     }

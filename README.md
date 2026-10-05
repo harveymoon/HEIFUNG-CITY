@@ -48,6 +48,10 @@ links Bevy dynamically for quicker iteration.
   shoulder or down paths, car owners drive trips over 60 m. Ownership follows class: most poor
   citizens have a bike and no car, the well-off have both and take bike rides to parks. Figures
   move smoothly between ticks; one sim minute shows 1.5 seconds of motion, the same scale as traffic.
+- **Walking**: people route over a pedestrian network that runs along pavements, down paths, around
+  the setbacks of every lot, through the alleys of the Stacks and through gates between neighbouring
+  lots, so they cut through blocks. Shops count the feet that pass and sell to walk-ins; `P` shows
+  the network, the inspector shows a lot's foot traffic.
 - **Parking**: drivers need a space. Towers have their own, middle blocks a few, cheap buildings none.
   When drivers keep circling, a parking lot opens nearby (surface lot on cheap land, multi-storey car
   park in the middle) and charges per visit; its bays fill visibly as spaces are taken. The City

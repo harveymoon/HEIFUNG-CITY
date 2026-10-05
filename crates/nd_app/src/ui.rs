@@ -302,6 +302,7 @@ fn side_panel(
                     "parking {}/{} spaces in {} lots   circling today {}   fees today {:.0}",
                     e.parking_used, e.parking_capacity, e.parking_lots, e.parking_street_today, e.parking_fees_today
                 ));
+                ui.label(format!("walking trips today {}   walk-in sales {:.0}   pedestrian nodes {}", e.walk_trips_today, e.walk_in_sales_today, sim.world.walk.nodes.len()));
             }
             ui.label(format!(
                 "cars on the road {}   lanes {}   intersections {}",
@@ -312,6 +313,7 @@ fn side_panel(
             ui.separator();
             section(ui, "LAND & CLASS");
             ui.checkbox(&mut overlays.land_value, "Land value overlay [V]");
+            ui.checkbox(&mut overlays.paths, "Pedestrian network overlay [P]");
             ui.label(format!(
                 "land value avg {:.2}   gini {:.2}   displaced {}   left town {}   priced out {}",
                 e.avg_land_value, e.gini, e.displaced_total, e.emigrated_total, e.priced_out_total
@@ -392,6 +394,9 @@ fn side_panel(
                     ui.label(format!("{}  ·  {} tier  ·  {}  ·  {} floors  ·  built day {}", b.land_use.label(), b.tier.label(), style.label(), b.floors, b.built_tick / 1440 + 1));
                     ui.label(format!("land value {:.2}  ·  rent {:.0}/day  ·  wage {:.0}/day  ·  condition {:.0}%{}", b.land_value, b.rent, b.wage(), b.condition * 100.0, if b.is_derelict() { "  ·  DERELICT" } else { "" }));
                     ui.label(format!("residents {}/{}  ·  workers {}/{}  ·  visitors {}", b.residents.len(), b.homes, b.workers.len(), b.jobs, b.visitors));
+                    if let Some(lot) = sim.world.lots.get(b.lot) {
+                        ui.label(format!("foot traffic today {}  ·  this hour {}", lot.footfall_today, lot.footfall_hour));
+                    }
                     if b.parking_capacity > 0 {
                         ui.label(format!("parking {}/{} spaces{}", b.parking_used, b.parking_capacity, if b.is_parking() { format!("  ·  {:.1} per visit", b.parking_price) } else { "  ·  for residents and workers".to_string() }));
                     }

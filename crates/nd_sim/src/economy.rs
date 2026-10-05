@@ -45,6 +45,11 @@ pub struct Economy {
     /// Where the last driver gave up looking for a space.
     #[serde(default)]
     pub parking_shortage_at: Option<glam::Vec2>,
+    /// Pedestrian trips started today and sales to passers-by.
+    #[serde(default)]
+    pub walk_trips_today: u32,
+    #[serde(default)]
+    pub walk_in_sales_today: f32,
 }
 
 impl Economy {

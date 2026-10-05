@@ -11,6 +11,7 @@ use crate::names;
 use crate::plan::{preview, Gesture, GestureId, Plan, PlanPreview, Project};
 use crate::roads::{NodeId, RoadNetwork, SegmentId};
 use crate::traffic::Traffic;
+use crate::walk::WalkGraph;
 use crate::citizens::TravelMode;
 use crate::roads::RoadKind;
 use crate::zoning::{generate_lots, LandUse, Lot, LotId, Zone, ZoneId};
@@ -92,6 +93,9 @@ pub struct World {
     pub buildings: SlotMap<BuildingId, Building>,
     pub citizens: SlotMap<CitizenId, Citizen>,
     pub traffic: Traffic,
+    /// Pedestrian network, derived from roads and lots.
+    #[serde(skip)]
+    pub walk: WalkGraph,
     pub economy: Economy,
     pub land_value: LandValue,
     #[serde(skip)]
@@ -117,10 +121,15 @@ impl World {
             buildings: SlotMap::with_key(),
             citizens: SlotMap::with_key(),
             traffic: Traffic::default(),
+            walk: WalkGraph::default(),
             economy: Economy::default(),
             events: Vec::new(),
             next_seed: 1,
         }
+    }
+
+    fn rebuild_walk(&mut self) {
+        self.walk = WalkGraph::build(&self.roads, &self.lots, &self.land_value, self.walk.version + 1);
     }
 
     pub fn to_ron(&self) -> Result<String, ron::Error> {
@@ -136,6 +145,7 @@ impl World {
     /// Rebuild derived state that is not serialised.
     fn after_load(&mut self) {
         self.traffic.rebuild(&self.roads);
+        self.rebuild_walk();
         for (_, car) in self.traffic.reattach_cars() {
             self.strand_driver(car.citizen, car.pos);
         }
@@ -351,6 +361,7 @@ impl World {
         for (_, car) in self.traffic.clear_cars() {
             self.strand_driver(car.citizen, car.pos);
         }
+        self.rebuild_walk();
 
         self.events.push(SimEvent::RoadsChanged);
         self.events.push(SimEvent::LotsChanged);
@@ -563,6 +574,11 @@ impl World {
     fn daily_update(&mut self) {
         self.economy.parking_street_today = 0;
         self.economy.parking_fees_today = 0.0;
+        self.economy.walk_trips_today = 0;
+        self.economy.walk_in_sales_today = 0.0;
+        for l in self.lots.values_mut() {
+            l.footfall_today = 0;
+        }
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         for bid in ids {
             let (lu, tier, value, derelict_before, full) = {
@@ -696,6 +712,41 @@ impl World {
                     bz.produce(jobs, staffing);
                 }
             }
+        }
+        // Walk-in trade: a share of the people who passed a shop this hour
+        // step inside and buy something off the shelf.
+        for &bid in &ids {
+            let (lot, jobs) = (self.buildings[bid].lot, self.buildings[bid].jobs);
+            let feet = self.lots.get(lot).map_or(0, |l| l.footfall_hour);
+            if feet == 0 {
+                continue;
+            }
+            let b = &mut self.buildings[bid];
+            let Some(bz) = b.business.as_mut() else { continue };
+            if bz.closed {
+                continue;
+            }
+            let output = match bz.kind {
+                BusinessKind::Grocery => Resource::Groceries,
+                BusinessKind::Bakery => Resource::BakedGoods,
+                BusinessKind::GadgetShop => Resource::Goods,
+                _ => continue,
+            };
+            let want = feet as f32 * 0.06;
+            let got = bz.take(output, want.min(bz.stock_of(output)));
+            if got > 0.0 {
+                let price = bz.sell_price(output, jobs);
+                bz.money += got * price;
+                bz.revenue_today += got * price;
+                bz.deals += 1;
+                self.economy.walk_in_sales_today += got * price;
+                if output == Resource::BakedGoods {
+                    self.economy.market.meals_sold_today += got as u32;
+                }
+            }
+        }
+        for l in self.lots.values_mut() {
+            l.footfall_hour = 0;
         }
         // Restocking: find the cheapest delivered supplier or import.
         for &bid in &ids {
@@ -1627,7 +1678,16 @@ impl World {
         };
         let mode = if owns_bike && (park_ride || dist >= self.config.bike_threshold) { TravelMode::Bike } else { TravelMode::Walk };
         let exit_pos = self.leave_building(id);
-        let mut path = self.route_path(&nodes, mode);
+        let mut path = match mode {
+            TravelMode::Walk => match self.walk.route(from_pt, entrance) {
+                Some((pts, walk_nodes)) => {
+                    self.count_footfall(&walk_nodes);
+                    pts
+                }
+                None => self.route_path(&nodes, mode),
+            },
+            TravelMode::Bike => self.route_path(&nodes, mode),
+        };
         path.push(entrance);
         let c = &mut self.citizens[id];
         if let Some(p) = exit_pos {
@@ -1636,6 +1696,17 @@ impl World {
         }
         c.mode = mode;
         c.activity = Activity::Traveling { to: Some(target), purpose, path, idx: 0 };
+    }
+
+    /// Everyone on foot who passes a lot is a potential customer.
+    fn count_footfall(&mut self, walk_nodes: &[u32]) {
+        self.economy.walk_trips_today += 1;
+        for lid in self.walk.lots_passed(walk_nodes) {
+            if let Some(l) = self.lots.get_mut(lid) {
+                l.footfall_today += 1;
+                l.footfall_hour += 1;
+            }
+        }
     }
 
     /// Route along the right-hand side of each leg: walkers in the middle
@@ -1682,11 +1753,28 @@ impl World {
                 return;
             }
         }
-        let end = NodeId(self.rng.random_range(0..self.roads.nodes.len() as u32));
-        let Some(nodes) = self.roads.path(start, end) else { return };
         let mode = if owns_bike && self.rng.random_bool(0.5) { TravelMode::Bike } else { TravelMode::Walk };
-        let exit_pos = self.leave_building(id);
-        let path = self.route_path(&nodes, mode);
+        let here = self.citizens[id].pos;
+        let walk_route = if mode == TravelMode::Walk && !self.walk.nodes.is_empty() {
+            let target = self.walk.nodes[self.rng.random_range(0..self.walk.nodes.len())].pos;
+            self.walk.route(here, target)
+        } else {
+            None
+        };
+        let path = match walk_route {
+            Some((pts, walk_nodes)) => {
+                self.count_footfall(&walk_nodes);
+                self.leave_building(id);
+                pts
+            }
+            None => {
+                let end = NodeId(self.rng.random_range(0..self.roads.nodes.len() as u32));
+                let Some(nodes) = self.roads.path(start, end) else { return };
+                self.leave_building(id);
+                self.route_path(&nodes, mode)
+            }
+        };
+        let exit_pos: Option<Vec2> = None;
         let c = &mut self.citizens[id];
         if let Some(p) = exit_pos {
             c.pos = p;

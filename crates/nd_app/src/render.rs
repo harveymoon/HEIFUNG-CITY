@@ -40,11 +40,15 @@ struct PreviewTag;
 struct SignalTag(LaneId);
 #[derive(Component)]
 struct OverlayTag;
+#[derive(Component)]
+struct PathsTag;
 
 /// Toggleable data layers drawn over the ground.
 #[derive(Resource, Default)]
 pub struct Overlays {
     pub land_value: bool,
+    /// Pedestrian network: lot loops, alleys and gates.
+    pub paths: bool,
 }
 
 /// Sun and sky control. By default the lighting follows the sim clock; the
@@ -107,6 +111,8 @@ struct RenderState {
     cars: HashMap<CarId, [Entity; 2]>,
     overlay_version: u64,
     overlay_shown: bool,
+    paths_version: u64,
+    paths_shown: bool,
 }
 
 /// Renderer statistics shown in the UI.
@@ -123,7 +129,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RenderState>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_systems(Startup, setup).add_systems(
             Update,
-            (sync_terrain, sync_roads, sync_signals, sync_preview, sync_lots, sync_overlay, sync_buildings, sync_citizens, sync_cars, update_daylight)
+            (sync_terrain, sync_roads, sync_signals, sync_preview, sync_lots, sync_overlay, sync_paths, sync_buildings, sync_citizens, sync_cars, update_daylight)
                 .chain()
                 .in_set(SimSet::Sync),
         );
@@ -718,6 +724,41 @@ fn sync_overlay(
         }
     }
     commands.spawn((Mesh3d(meshes.add(to_mesh(&mesh, false))), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, OverlayTag));
+}
+
+/// The pedestrian network inside blocks: loops, alleys and gates. Toggled with P.
+fn sync_paths(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    sim: Res<Sim>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut overlays: ResMut<Overlays>,
+    mut state: ResMut<RenderState>,
+    existing: Query<Entity, With<PathsTag>>,
+) {
+    if keys.just_pressed(KeyCode::KeyP) {
+        overlays.paths = !overlays.paths;
+    }
+    let walk = &sim.world.walk;
+    if overlays.paths == state.paths_shown && walk.version == state.paths_version {
+        return;
+    }
+    state.paths_shown = overlays.paths;
+    state.paths_version = walk.version;
+    despawn_all(&mut commands, &existing);
+    if !overlays.paths {
+        return;
+    }
+    let pal = &assets.palette;
+    let mut mesh = MeshData::default();
+    for (a, b) in walk.interior_edges() {
+        mesh.ground_strip(&[a, b], 0.7, 0.25, scale(pal.preview, 0.5));
+    }
+    if !mesh.is_empty() {
+        commands.spawn((Mesh3d(meshes.add(to_mesh(&mesh, false))), MeshMaterial3d(mats.glow()), Transform::IDENTITY, PathsTag));
+    }
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
