@@ -44,6 +44,11 @@ struct Slot {
 }
 
 impl Saves {
+    /// The directory changed behind the panel's back (the remote API saved).
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
     fn rescan(&mut self) {
         self.dirty = false;
         self.slots.clear();
@@ -98,7 +103,7 @@ fn age(modified: Option<SystemTime>) -> String {
 }
 
 /// Write the latest slot and a dated copy of it.
-fn save_now(sim: &Sim, saves: &mut Saves, flags: &mut UiFlags) {
+pub fn save_now(sim: &Sim, saves: &mut Saves, flags: &mut UiFlags) {
     saves.dirty = true;
     flags.message = match sim.save(LATEST) {
         Ok(()) => {
@@ -119,7 +124,7 @@ fn save_now(sim: &Sim, saves: &mut Saves, flags: &mut UiFlags) {
 /// Replace the running city. The tools and the selection refer to ids in
 /// the old world, so they go back to defaults; the plan cache forgets its
 /// version key; and the city comes up paused so the player can look first.
-fn load_now(path: &Path, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, plan: &mut EffectivePlan, flags: &mut UiFlags) {
+pub fn load_now(path: &Path, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, plan: &mut EffectivePlan, flags: &mut UiFlags) {
     let shown = path.display().to_string();
     flags.message = match sim.load(&shown) {
         Ok(()) => {

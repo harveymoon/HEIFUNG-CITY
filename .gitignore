@@ -3,3 +3,4 @@
 *.log
 parcels*.txt
 .claude/
+/screenshots
