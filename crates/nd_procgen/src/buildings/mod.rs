@@ -9,6 +9,7 @@
 
 mod civic;
 mod commercial;
+mod construction;
 mod entertainment;
 mod industrial;
 mod park;
@@ -529,11 +530,14 @@ pub struct Extras<'a> {
     /// A bus depot.
     pub depot: bool,
     pub rail: Option<&'a RailLink>,
+    /// Still being built: progress in `0..1`. The site is drawn instead of
+    /// the finished style.
+    pub construction: Option<f32>,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, construction: None }
     }
 }
 
@@ -705,6 +709,10 @@ fn generate_styled_extras(
         rail: extras.rail.cloned().or_else(|| matches!(style, Style::Station | Style::FreightYard).then(|| back_edge_link(lot, if style == Style::Station { RailFacility::Station } else { RailFacility::FreightYard }))),
         park: if land_use == LandUse::Park || matches!(style, Style::ScrubLot | Style::Garden | Style::Plaza) { Some(extras.park.cloned().unwrap_or_else(|| nd_sim::park::plan_single(lot, tier))) } else { None },
     };
+    if let Some(progress) = extras.construction {
+        construction::construction_site(&mut g, &ctx, &mut rng, progress);
+        return g;
+    }
     match style {
         Style::Stacks => residential::stacks(&mut g, &ctx, &mut rng),
         Style::Tenement => residential::tenement(&mut g, &ctx, &mut rng),
@@ -828,6 +836,51 @@ mod tests {
 
     fn frame_poly(f: &Frame, lot: &Lot) -> Vec<Vec2> {
         lot.polygon.iter().map(|p| f.to_local(*p)).collect()
+    }
+
+    /// Building sites at every stage stay on their lot and are well formed.
+    #[test]
+    fn construction_sites_stay_on_their_lot() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let mut worst: Vec<String> = Vec::new();
+        for lu in LandUse::ALL {
+            let lots = many_lots(lu);
+            for (li, lot) in lots.iter().enumerate() {
+                let (lo, hi) = parts::bounds(&lot.polygon);
+                for (seed, floors, tier) in [(1u64, 2u8, Tier::Low), (7, 9, Tier::Mid), (13, 30, Tier::High)] {
+                    for progress in [0.0f32, 0.05, 0.3, 0.55, 0.8, 0.96, 1.0] {
+                        let extras = Extras { construction: Some(progress), ..Extras::default() };
+                        let g = generate_building(lot, lu, floors, tier, 1.0, seed + li as u64, &rules, &pal, &extras);
+                        assert!(g.triangle_count() > 0, "site at {progress} on {lu:?} lot {li} drew nothing");
+                        let mut over = 0.0f32;
+                        let mut top = 0.0f32;
+                        let mut culprit = String::new();
+                        let frame = Frame::from_lot(lot);
+                        for (s, m) in g.iter() {
+                            assert_eq!(m.positions.len(), m.uvs.len(), "{s:?} uv count");
+                            for p in &m.positions {
+                                assert!(p.iter().all(|v| v.is_finite()), "{s:?} has NaN");
+                                let q = Vec2::new(p[0], p[2]);
+                                let d = (lo - q).max(q - hi).max_element();
+                                if d > over {
+                                    over = d;
+                                    let l = frame.to_local(q);
+                                    culprit = format!("{s:?} at local ({:.1}, {:.1}) y {:.1}", l.x, l.y, p[1]);
+                                }
+                                top = top.max(p[1]);
+                            }
+                        }
+                        let allow = 4.0;
+                        if over > allow || top > (60.0 + floors as f32 * 5.0).max(90.0) {
+                            let (plo, phi) = parts::bounds(&frame_poly(&frame, lot));
+                            worst.push(format!("{lu:?} lot {li} floors {floors} at {progress}: overshoots {over:.1} m, top {top:.0} m ({} verts, local {:.0}..{:.0} x {:.0}..{:.0}): {culprit}", lot.polygon.len(), plo.x, phi.x, plo.y, phi.y));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(worst.is_empty(), "{} sites leave their lot:\n{}", worst.len(), worst.join("\n"));
     }
 
     /// Nothing a building generates may reach far beyond its own lot.

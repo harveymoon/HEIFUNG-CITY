@@ -59,6 +59,16 @@ pub struct Economy {
     pub power: crate::power::PowerStats,
     #[serde(default)]
     pub transit: crate::transit::TransitStats,
+    /// Building sites, and the homes and jobs they will add when they open.
+    #[serde(default)]
+    pub sites: u32,
+    #[serde(default)]
+    pub homes_building: u32,
+    #[serde(default)]
+    pub jobs_building: u32,
+    /// Building materials bought from outside today, at import prices.
+    #[serde(default)]
+    pub materials_today: f32,
 }
 
 fn default_treasury() -> f32 {
@@ -72,8 +82,11 @@ impl Economy {
 
     pub fn recompute(&mut self) {
         let pop = self.population.max(1) as f32;
-        let housing_pressure = (self.waiting_immigrants as f32 + self.unhoused as f32) / 6.0;
-        let job_pressure = self.unemployed as f32 / pop;
+        // Homes and jobs already going up count against the pressure, so a
+        // boom does not start a site on every vacant lot while the first ones
+        // are still scaffolding.
+        let housing_pressure = ((self.waiting_immigrants as f32 + self.unhoused as f32) - self.homes_building as f32 * 0.5).max(0.0) / 6.0;
+        let job_pressure = (self.unemployed as f32 - self.jobs_building as f32 * 0.5).max(0.0) / pop;
         let entertainment_pressure = (pop / 40.0).min(1.0);
 
         let mut d = [0.0f32; 6];

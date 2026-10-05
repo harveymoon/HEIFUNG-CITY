@@ -166,6 +166,10 @@ pub fn demand_mw(b: &Building) -> f32 {
     if b.plant.is_some() {
         return 0.0;
     }
+    // A site runs a few floodlights and a mixer, not a building's worth.
+    if b.construction.is_some() {
+        return 0.05;
+    }
     let per_floor = match b.land_use {
         LandUse::Residential => 0.08,
         LandUse::Commercial => 0.12,

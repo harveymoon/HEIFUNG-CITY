@@ -1,4 +1,4 @@
-use crate::buildings::{Building, BuildingId, Tier};
+use crate::buildings::{Building, BuildingId, Construction, Tier};
 use crate::citizens::{Activity, Citizen, CitizenId, Purpose};
 use crate::clock::SimClock;
 use crate::economy::Economy;
@@ -494,7 +494,7 @@ impl World {
 
     fn available_land_uses(&self) -> [bool; 6] {
         let mut out = [false; 6];
-        for b in self.buildings.values() {
+        for b in self.buildings.values().filter(|b| b.construction.is_none()) {
             out[b.land_use.index()] = true;
         }
         out
@@ -511,6 +511,7 @@ impl World {
         }
         if tick % 60 == 0 {
             self.hourly_economy();
+            self.step_construction();
         }
         if tick % 120 == 0 {
             self.update_land_value();
@@ -589,6 +590,13 @@ impl World {
         e.parking_capacity = self.buildings.values().map(|b| b.parking_capacity as u32).sum();
         e.parking_used = self.buildings.values().map(|b| b.parking_used as u32).sum();
         e.parking_lots = self.buildings.values().filter(|b| b.is_parking()).count() as u32;
+        e.sites = self.buildings.values().filter(|b| b.construction.is_some()).count() as u32;
+        let (hb, jb) = self.buildings.values().filter(|b| b.construction.is_some()).fold((0u32, 0u32), |(h, j), b| {
+            let (homes, jobs) = b.planned_capacity();
+            (h + homes as u32, j + jobs as u32)
+        });
+        e.homes_building = hb;
+        e.jobs_building = jb;
         let mut tier_counts = [0u32; 3];
         let mut rent_sum = [0.0f32; 3];
         for b in self.buildings.values().filter(|b| b.land_use == LandUse::Residential) {
@@ -712,6 +720,7 @@ impl World {
         }
         self.economy.parking_street_today = 0;
         self.economy.parking_fees_today = 0.0;
+        self.economy.materials_today = 0.0;
         self.economy.walk_trips_today = 0;
         self.economy.walk_in_sales_today = 0.0;
         for l in self.lots.values_mut() {
@@ -719,6 +728,9 @@ impl World {
         }
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         for bid in ids {
+            if self.buildings[bid].construction.is_some() {
+                continue;
+            }
             let (lu, tier, value, derelict_before, full) = {
                 let b = &self.buildings[bid];
                 let full = if b.land_use == LandUse::Residential { b.homes > 0 && b.free_homes() == 0 } else { b.jobs > 0 && b.free_jobs() == 0 };
@@ -772,6 +784,9 @@ impl World {
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         let mut demolish = Vec::new();
         for bid in ids {
+            if self.buildings[bid].construction.is_some() {
+                continue;
+            }
             let revenue = self.buildings[bid].business.as_ref().map_or(0.0, |z| z.revenue_today);
             self.economy.tax_today += revenue * 0.05;
             let (wage_bill, workers, publicly_funded, kind) = {
@@ -848,6 +863,9 @@ impl World {
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         for &bid in &ids {
             let b = &mut self.buildings[bid];
+            if b.construction.is_some() {
+                continue;
+            }
             let (jobs, staffing) = (b.jobs, b.staffing());
             if let Some(bz) = b.business.as_mut() {
                 if !bz.closed {
@@ -864,6 +882,9 @@ impl World {
                 continue;
             }
             let b = &mut self.buildings[bid];
+            if b.construction.is_some() {
+                continue;
+            }
             let Some(bz) = b.business.as_mut() else { continue };
             if bz.closed {
                 continue;
@@ -894,6 +915,9 @@ impl World {
         for &bid in &ids {
             let (kind, jobs, needs, at, closed) = {
                 let b = &self.buildings[bid];
+                if b.construction.is_some() {
+                    continue;
+                }
                 let Some(bz) = &b.business else { continue };
                 let Some(lot) = self.lots.get(b.lot) else { continue };
                 let needs: Vec<(Resource, f32)> = bz
@@ -916,7 +940,7 @@ impl World {
             for (r, amount) in needs {
                 let amount = amount.min(400.0);
                 let seller = {
-                    let sellers = self.buildings.iter().filter(|(id, _)| *id != bid).filter_map(|(id, b)| {
+                    let sellers = self.buildings.iter().filter(|(id, b)| *id != bid && b.construction.is_none()).filter_map(|(id, b)| {
                         let bz = b.business.as_ref()?;
                         let lot = self.lots.get(b.lot)?;
                         Some((id, bz, b.jobs, lot.center))
@@ -964,6 +988,9 @@ impl World {
         let mut shipped = 0.0f32;
         for &bid in &ids {
             let b = &mut self.buildings[bid];
+            if b.construction.is_some() {
+                continue;
+            }
             let jobs = b.jobs;
             let Some(bz) = b.business.as_mut() else { continue };
             if bz.closed {
@@ -994,7 +1021,7 @@ impl World {
         let mut businesses = 0;
         for b in self.buildings.values() {
             let Some(bz) = &b.business else { continue };
-            if bz.closed {
+            if bz.closed || b.construction.is_some() {
                 continue;
             }
             businesses += 1;
@@ -1093,13 +1120,131 @@ impl World {
     }
 
     fn deliver(&mut self, cargo: Cargo) {
-        if let Some(b) = self.buildings.get_mut(cargo.to) {
-            if let Some(bz) = b.business.as_mut() {
-                bz.add(cargo.resource, cargo.amount);
-                let left = (bz.inbound_of(cargo.resource) - cargo.amount).max(0.0);
-                bz.inbound.insert(cargo.resource, left);
+        let Some(b) = self.buildings.get_mut(cargo.to) else { return };
+        if let Some(bz) = b.business.as_mut() {
+            let left = (bz.inbound_of(cargo.resource) - cargo.amount).max(0.0);
+            bz.inbound.insert(cargo.resource, left);
+        }
+        // Materials for a building site go onto the site, not the shelves.
+        if let Some(c) = b.construction.as_mut() {
+            c.deliveries = c.deliveries.saturating_add(1);
+            c.ordered = false;
+            return;
+        }
+        if let Some(bz) = b.business.as_mut() {
+            bz.add(cargo.resource, cargo.amount);
+        }
+    }
+
+    // ── construction ─────────────────────────────────────────────────────────
+
+    /// Every sim hour: building sites advance, wait for materials at each
+    /// quarter, and open when the work is done.
+    fn step_construction(&mut self) {
+        let ids: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.construction.is_some()).map(|(id, _)| id).collect();
+        for bid in ids {
+            let (order, waiting, before, after) = {
+                let c = self.buildings[bid].construction.as_mut().unwrap();
+                let before = c.progress;
+                // One load is kept on the road ahead of the work, so a
+                // quarter only stalls when its truck is late.
+                let order = !c.ordered && c.deliveries < Construction::DELIVERIES && c.deliveries <= c.stage() + 1;
+                if c.waiting_for_materials() {
+                    (order, true, before, before)
+                } else {
+                    let ceiling = (c.stage() as f32 + 1.0) * 0.25;
+                    c.progress = (c.progress + c.hourly_step()).min(ceiling);
+                    (order, false, before, c.progress)
+                }
+            };
+            if order {
+                self.order_materials(bid);
+            }
+            if waiting {
+                continue;
+            }
+            if after >= 1.0 {
+                self.finish_construction(bid);
+            } else if (after * 10.0).floor() > (before * 10.0).floor() {
+                self.events.push(SimEvent::BuildingChanged(bid));
             }
         }
+    }
+
+    /// A truckload of parts for a building site: from a local fab when one
+    /// has stock, else imported. The developer pays, so the money comes from
+    /// outside the city like export income does.
+    fn order_materials(&mut self, bid: BuildingId) {
+        let Some(b) = self.buildings.get(bid) else { return };
+        let Some(lot) = self.lots.get(b.lot) else { return };
+        let at = lot.center;
+        let amount = 4.0 + b.floors as f32 * 2.0;
+        let resource = Resource::Parts;
+        if let Some(c) = self.buildings[bid].construction.as_mut() {
+            c.ordered = true;
+        }
+        let seller = {
+            let sellers = self.buildings.iter().filter(|(id, b)| *id != bid && b.construction.is_none()).filter_map(|(id, b)| {
+                let bz = b.business.as_ref()?;
+                let lot = self.lots.get(b.lot)?;
+                Some((id, bz, b.jobs, lot.center))
+            });
+            best_seller(sellers, resource, at, amount)
+        };
+        if let Some((seller_id, price)) = seller {
+            let got = self.buildings[seller_id].business.as_mut().unwrap().take(resource, amount);
+            if got > 0.0 {
+                let cost = got * price;
+                let sb = self.buildings[seller_id].business.as_mut().unwrap();
+                sb.money += cost;
+                sb.revenue_today += cost;
+                sb.deals += 1;
+                self.economy.market.deals_today += 1;
+                self.ship(seller_id, bid, resource, got, cost);
+                return;
+            }
+        }
+        let cost = amount * resource.base_price() * IMPORT_MARKUP;
+        self.economy.materials_today += cost;
+        self.import(bid, resource, amount, 0.0);
+    }
+
+    /// Open a finished building: the real homes and jobs appear, the site
+    /// crew is let go (and steps outside if it was on site). Public so tests
+    /// and scripts can skip the wait.
+    pub fn finish_construction(&mut self, bid: BuildingId) {
+        let tick = self.clock.tick;
+        let (car_access, entrance) = match self.buildings.get(bid).and_then(|b| self.lots.get(b.lot)) {
+            Some(l) => (l.car_access(), l.entrance()),
+            None => (true, Vec2::ZERO),
+        };
+        let Some(b) = self.buildings.get_mut(bid) else { return };
+        if b.construction.take().is_none() {
+            return;
+        }
+        let crew = std::mem::take(&mut b.workers);
+        b.recompute_capacity();
+        if !car_access {
+            b.parking_capacity = 0;
+        }
+        b.built_tick = tick;
+        let name = b.name.clone();
+        for cid in crew {
+            let Some(c) = self.citizens.get_mut(cid) else { continue };
+            if c.work == Some(bid) {
+                c.work = None;
+                c.income = 40.0;
+                c.remember(tick, format!("Topped out {name}. Crew's laid off; looking for the next site."));
+            }
+            if c.inside == Some(bid) {
+                c.inside = None;
+                c.pos = entrance;
+                c.prev_pos = entrance;
+                c.activity = Activity::Idle;
+                c.next_decision_tick = tick + 1;
+            }
+        }
+        self.events.push(SimEvent::BuildingChanged(bid));
     }
 
     fn daily_citizen(&mut self, cid: CitizenId) {
@@ -1301,9 +1446,13 @@ impl World {
             let jobs = b.jobs;
             b.business = Some(Business::new(*kind, jobs));
         }
+        // Nothing opens overnight: the lot becomes a building site first.
+        b.construction = Some(Construction::new(Construction::days_for(floors, tier)));
+        b.recompute_capacity();
         let id = self.buildings.insert(b);
         self.lots[lot_id].building = Some(id);
         self.events.push(SimEvent::BuildingBuilt(id));
+        self.order_materials(id);
     }
 
     fn entry_node(&mut self) -> Option<NodeId> {
@@ -1634,7 +1783,7 @@ impl World {
                 }
             }
             Intent::Visit(lu) => {
-                let target = self.pick_building(|b| b.land_use == lu);
+                let target = self.pick_building(|b| b.land_use == lu && b.construction.is_none());
                 if let Some(b) = target {
                     if inside != Some(b) {
                         self.travel_to(id, Some(b), Purpose::Visit(lu));
@@ -1657,7 +1806,7 @@ impl World {
 
     /// Any business currently stocking a retail resource.
     fn retail_available(&self, r: Resource) -> bool {
-        self.buildings.values().any(|b| b.business.as_ref().map_or(false, |bz| !bz.closed && bz.sells(r) && bz.stock_of(r) >= 1.0))
+        self.buildings.values().any(|b| b.construction.is_none() && b.business.as_ref().map_or(false, |bz| !bz.closed && bz.sells(r) && bz.stock_of(r) >= 1.0))
     }
 
     /// Nearest well-stocked shop for a resource, cheapest within reach.
@@ -1665,7 +1814,7 @@ impl World {
         let mut best: Option<(f32, BuildingId)> = None;
         for (id, b) in self.buildings.iter() {
             let Some(bz) = &b.business else { continue };
-            if bz.closed || !bz.sells(r) || bz.stock_of(r) < 1.0 {
+            if b.construction.is_some() || bz.closed || !bz.sells(r) || bz.stock_of(r) < 1.0 {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };
@@ -3014,6 +3163,14 @@ mod tests {
         vec![Vec2::new(x0, y0), Vec2::new(x0 + size, y0), Vec2::new(x0 + size, y0 + size), Vec2::new(x0, y0 + size)]
     }
 
+    /// Open every building site at once, for tests about what happens after.
+    fn finish_all(w: &mut World) {
+        let ids: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.construction.is_some()).map(|(id, _)| id).collect();
+        for id in ids {
+            w.finish_construction(id);
+        }
+    }
+
     #[test]
     fn city_grows_and_round_trips_through_ron() {
         let mut w = World::new(WorldConfig::default());
@@ -3027,6 +3184,10 @@ mod tests {
             w.tick(&mut minds);
         }
         assert!(!w.buildings.is_empty());
+        finish_all(&mut w);
+        for _ in 0..120 {
+            w.tick(&mut minds);
+        }
         assert!(!w.citizens.is_empty());
         let text = w.to_ron().unwrap();
         let back = World::from_ron(&text).unwrap();
@@ -3133,6 +3294,10 @@ mod tests {
         for _ in 0..(6 * 60) {
             w.tick(&mut minds);
         }
+        finish_all(&mut w);
+        for _ in 0..60 {
+            w.tick(&mut minds);
+        }
         let c = w.citizens.keys().next().expect("someone moved in");
         {
             let cz = &mut w.citizens[c];
@@ -3165,13 +3330,19 @@ mod tests {
         // A shop next to a parking lot.
         w.build_on(lots[0]);
         let shop = w.lots[lots[0]].building.unwrap();
+        w.finish_construction(shop);
         let lot = w.build_parking(lots[1]).expect("parking lot opens");
+        assert!(w.buildings[lot].construction.is_none(), "parking is laid out at once");
         let cap = w.buildings[lot].parking_capacity;
         assert!(cap >= 4 && w.buildings[lot].is_parking() && w.buildings[lot].jobs == 2);
         assert!(w.buildings[lot].parking_price > 0.0);
         // Low-tier shops have no spaces of their own, so a driver pays at the lot.
         let mut minds = IdleMind;
         for _ in 0..(12 * 60) {
+            w.tick(&mut minds);
+        }
+        finish_all(&mut w);
+        for _ in 0..60 {
             w.tick(&mut minds);
         }
         let c = w.citizens.keys().next().expect("someone arrived");
@@ -3215,6 +3386,8 @@ mod tests {
         w.build_on(park_lot);
         let park = w.lots[park_lot].building.expect("park building");
         let home = w.lots[home_lot].building.unwrap();
+        w.finish_construction(home);
+        w.finish_construction(park);
         let mut minds = IdleMind;
         for _ in 0..(8 * 60) {
             w.tick(&mut minds);
@@ -3301,13 +3474,18 @@ mod tests {
         w.build_on(shop_lot);
         let home = w.lots[home_lot].building.unwrap();
         let shop = w.lots[shop_lot].building.unwrap();
+        w.finish_construction(home);
+        w.finish_construction(shop);
         for _ in 0..(6 * 60) {
             w.tick(&mut minds);
         }
         let c = w.citizens.keys().next().expect("someone arrived");
         // Buses sleep at the depot overnight: start the trip mid-morning
-        // with a bus out on the line.
-        while !(7 * 60..=12 * 60).contains(&(w.clock.minute_of_day() as u32)) || w.economy.transit.buses == 0 {
+        // with a bus out on the line. A lap of the block takes longer than
+        // a rider will wait, so set off as the bus heads for the stop
+        // before the rider's.
+        let bus_due = |w: &World| w.traffic.cars.values().any(|c| c.bus.as_ref().is_some_and(|b| b.next_stop == 4 && !b.to_depot));
+        while !(7 * 60..=12 * 60).contains(&(w.clock.minute_of_day() as u32)) || w.economy.transit.buses == 0 || !bus_due(&w) {
             w.tick(&mut minds);
         }
         {
@@ -3415,6 +3593,8 @@ mod tests {
         w.build_on(shop_lot);
         let home = w.lots[home_lot].building.unwrap();
         let shop = w.lots[shop_lot].building.unwrap();
+        w.finish_construction(home);
+        w.finish_construction(shop);
         // A passenger train comes within the headway and calls at both stations.
         let mut minds = IdleMind;
         let mut saw_train = false;
@@ -3517,6 +3697,7 @@ mod tests {
         for &l in &res {
             w.build_on(l);
         }
+        finish_all(&mut w);
         for b in w.buildings.values_mut() {
             b.floors = 30;
         }
@@ -3552,5 +3733,206 @@ mod tests {
         // Round trip keeps the plant.
         let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
         assert_eq!(back.buildings[plant].plant, Some(PowerPlantKind::Nuclear));
+    }
+
+    #[test]
+    fn buildings_go_up_over_days_and_people_move_in_after() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        let lot = w.lots.iter().find(|(_, l)| l.usable()).map(|(id, _)| id).unwrap();
+        w.build_on(lot);
+        let id = w.lots[lot].building.unwrap();
+        let (floors, tier) = (w.buildings[id].floors, w.buildings[id].tier);
+        {
+            let b = &w.buildings[id];
+            let c = b.construction.as_ref().expect("a building site, not a building");
+            assert_eq!(c.progress, 0.0);
+            assert!((c.days - Construction::days_for(floors, tier)).abs() < 1e-6 && c.days >= 1.0);
+            assert_eq!(b.homes, 0, "nobody can live on a site");
+            assert_eq!(b.jobs, Construction::crew(floors), "the crew is the only work here");
+            assert!(b.wage() > 0.0, "labourers are paid");
+            assert_eq!(b.parking_capacity, 0);
+        }
+        let (planned_homes, _) = w.buildings[id].planned_capacity();
+        assert!(planned_homes > 0);
+        // The first load was ordered right away: a truck is on the road, or
+        // it was dropped on the spot when no route exists.
+        {
+            let c = w.buildings[id].construction.as_ref().unwrap();
+            assert!(c.deliveries == 1 || c.ordered, "{c:?}");
+            assert!(w.economy.materials_today > 0.0, "parts are bought from outside when no fab is in town");
+        }
+        // The site is still standing after a save.
+        let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+        assert_eq!(back.buildings[id].construction, w.buildings[id].construction);
+
+        let mut minds = IdleMind;
+        let mut changed = 0usize;
+        let mut hours = 0u32;
+        w.drain_events();
+        while w.buildings[id].construction.is_some() {
+            for _ in 0..60 {
+                w.tick(&mut minds);
+            }
+            hours += 1;
+            changed += w.drain_events().iter().filter(|e| matches!(e, SimEvent::BuildingChanged(x) if *x == id)).count();
+            let b = &w.buildings[id];
+            if b.construction.is_some() {
+                assert!(b.residents.is_empty() && b.homes == 0, "nobody moves in before the building opens");
+            }
+            assert!(w.economy.sites >= 1 || hours < 1);
+            assert!(hours < 24 * 20, "construction never finished: {:?}", b.construction);
+        }
+        let days = Construction::days_for(floors, tier);
+        assert!(hours as f32 >= days * 24.0 - 1.0, "finished in {hours} h, planned {days} days");
+        assert!(hours as f32 <= days * 24.0 + 8.0, "took {hours} h for {days} days of work: stalled too long");
+        assert!(changed >= 9, "the renderer saw the site grow: {changed} redraws");
+        let b = &w.buildings[id];
+        assert!(b.homes > 0 && b.homes == planned_homes, "homes {} planned {planned_homes}", b.homes);
+        assert_eq!(b.jobs, 0);
+        assert!(b.workers.is_empty(), "the crew was let go");
+        // People move in once it is open.
+        for _ in 0..240 {
+            w.tick(&mut minds);
+            if !w.buildings[id].residents.is_empty() {
+                break;
+            }
+        }
+        assert!(!w.buildings[id].residents.is_empty(), "residents move in after completion");
+    }
+
+    #[test]
+    fn a_site_waits_for_its_materials_and_resumes_on_delivery() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Commercial);
+        let lot = w.lots.iter().find(|(_, l)| l.usable()).map(|(id, _)| id).unwrap();
+        w.build_on(lot);
+        let id = w.lots[lot].building.unwrap();
+        let mut minds = IdleMind;
+        // Let the first truck arrive, then pretend it never did: nothing happens.
+        for _ in 0..600 {
+            if w.buildings[id].construction.as_ref().unwrap().deliveries >= 1 {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let p0 = {
+            let c = w.buildings[id].construction.as_mut().unwrap();
+            assert_eq!(c.deliveries, 1, "the first load came: {c:?}");
+            c.deliveries = 0;
+            c.ordered = true;
+            assert!(c.waiting_for_materials());
+            c.progress
+        };
+        for _ in 0..180 {
+            w.tick(&mut minds);
+        }
+        assert_eq!(w.buildings[id].construction.as_ref().unwrap().progress, p0, "no parts, no work");
+        assert_eq!(w.buildings[id].construction.as_ref().unwrap().deliveries, 0, "no second order while one is on its way");
+        // The truck arrives.
+        w.deliver(Cargo { from: id, to: id, resource: Resource::Parts, amount: 8.0, price: 0.0 });
+        {
+            let c = w.buildings[id].construction.as_ref().unwrap();
+            assert_eq!(c.deliveries, 1);
+            assert!(!c.ordered && !c.waiting_for_materials());
+        }
+        for _ in 0..60 {
+            w.tick(&mut minds);
+        }
+        let p = w.buildings[id].construction.as_ref().unwrap().progress;
+        assert!(p > p0, "work resumed: {p}");
+        // Work stops again at the quarter until the next load comes (the
+        // one ordered ahead is still on the road).
+        {
+            let c = w.buildings[id].construction.as_mut().unwrap();
+            c.progress = 0.25 - c.hourly_step() * 0.5;
+            c.deliveries = 1;
+            c.ordered = true;
+        }
+        for _ in 0..240 {
+            w.tick(&mut minds);
+        }
+        let c = w.buildings[id].construction.as_ref().unwrap();
+        assert!((c.progress - 0.25).abs() < 1e-6, "stalls at the quarter: {}", c.progress);
+        assert!(c.waiting_for_materials());
+        w.deliver(Cargo { from: id, to: id, resource: Resource::Parts, amount: 8.0, price: 0.0 });
+        for _ in 0..60 {
+            w.tick(&mut minds);
+        }
+        assert!(w.buildings[id].construction.as_ref().unwrap().progress > 0.25);
+        // A delivery to a site never lands on the shop's shelves.
+        let stock: f32 = w.buildings[id].business.as_ref().map_or(0.0, |bz| bz.stock_of(Resource::Parts));
+        assert_eq!(stock, 0.0);
+        // Skipping the wait opens the building with its real jobs.
+        let planned = w.buildings[id].planned_capacity();
+        w.finish_construction(id);
+        let b = &w.buildings[id];
+        assert!(b.construction.is_none());
+        assert_eq!((b.homes, b.jobs), planned);
+        assert!(b.jobs > 0 && b.jobs != Construction::crew(b.floors));
+    }
+
+    #[test]
+    fn site_crews_commute_and_are_released_when_the_building_opens() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
+        let home_lot = w.lots.iter().find(|(_, l)| l.usable() && l.land_use == LandUse::Residential).map(|(id, _)| id).unwrap();
+        let site_lot = w.lots.iter().find(|(_, l)| l.usable() && l.land_use == LandUse::Commercial).map(|(id, _)| id).unwrap();
+        w.build_on(home_lot);
+        let home = w.lots[home_lot].building.unwrap();
+        w.finish_construction(home);
+        w.build_on(site_lot);
+        let site = w.lots[site_lot].building.unwrap();
+        // Make the site the only employer so the newcomers join the crew.
+        let others: Vec<BuildingId> = w.buildings.keys().filter(|&b| b != home && b != site).collect();
+        for b in others {
+            w.buildings[b].jobs = 0;
+        }
+        let mut minds = IdleMind;
+        for _ in 0..(4 * 60) {
+            w.tick(&mut minds);
+            for b in w.buildings.values_mut() {
+                if b.construction.is_some() && b.lot != site_lot {
+                    b.jobs = 0;
+                }
+            }
+        }
+        assert!(!w.buildings[site].workers.is_empty(), "the unemployed take site work");
+        let crew = w.buildings[site].workers.clone();
+        for &c in &crew {
+            assert_eq!(w.citizens[c].work, Some(site));
+            assert!((w.citizens[c].income - Building::SITE_WAGE * (0.75 + (w.citizens[c].seed % 1000) as f32 / 1000.0 * 0.6)).abs() < 0.01);
+        }
+        w.finish_construction(site);
+        assert!(w.buildings[site].workers.is_empty());
+        for &c in &crew {
+            assert_eq!(w.citizens[c].work, None, "laid off cleanly");
+            assert_ne!(w.citizens[c].inside, Some(site));
+        }
+    }
+
+    #[test]
+    fn player_placed_plants_and_depots_work_from_the_moment_of_placement() {
+        use crate::power::PowerPlantKind;
+        use crate::transit;
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Industrial);
+        let ind: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial).map(|(id, _)| id).collect();
+        let big = ind.iter().copied().max_by(|a, b| w.lots[*a].area().total_cmp(&w.lots[*b].area())).unwrap();
+        let plant = w.build_power(big, PowerPlantKind::Coal).expect("coal plant");
+        let b = &w.buildings[plant];
+        assert!(b.construction.is_none(), "specials are placed finished");
+        assert_eq!(b.jobs, PowerPlantKind::Coal.jobs());
+        assert_eq!(w.economy.power.plants, 1, "it is on the grid at once");
+        let depot_lot = ind.iter().copied().find(|&l| l != big && w.lots[l].building.is_none() && w.lots[l].area() >= transit::DEPOT_MIN_AREA && w.lots[l].car_access());
+        if let Some(l) = depot_lot {
+            let depot = w.build_depot(l).expect("depot");
+            assert!(w.buildings[depot].construction.is_none() && w.buildings[depot].jobs == transit::DEPOT_JOBS);
+        }
     }
 }
