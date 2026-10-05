@@ -262,7 +262,106 @@ fn sample(surface: Surface, u: f32, v: f32, px: i32, py: i32) -> Sample {
             Sample { value: 0.9 + 0.08 * g, tint: 0.0, height: 0.1 * g }
         }
         Surface::Glow => Sample { value: 1.0, tint: 0.0, height: 0.0 },
+        // Weathered surfaces are generated through `generate_wear`.
+        other => sample(other.base(), u, v, px, py),
     }
+}
+
+/// How weathered the `Worn*` surfaces are drawn.
+pub const WORN: f32 = 0.85;
+
+/// A thin dark line where `field` crosses one half: the hairline crack
+/// pattern, widening with `wear`.
+fn crack_line(field: f32, width: f32) -> f32 {
+    let d = (field - 0.5).abs();
+    if d < width { 1.0 - d / width } else { 0.0 }
+}
+
+/// Grit laid over a clean sample: water stains and soot blotches, drip
+/// streaks running down (v is up a wall), cracks, worn-through paint and,
+/// on steel, rust bleeding from the fixings. Ground surfaces get crazing,
+/// chipped slabs and patched asphalt instead of drips. Strength `wear`,
+/// 0 leaves the sample untouched.
+fn grit(surface: Surface, s: Sample, u: f32, v: f32, px: i32, py: i32, wear: f32) -> Sample {
+    if wear <= 0.0 {
+        return s;
+    }
+    let Sample { mut value, mut tint, mut height } = s;
+    let ground = matches!(surface, Surface::Paving | Surface::Asphalt);
+    // Broad stains: damp patches and soot, a little warm.
+    let stain = fbm(u, v, 3, 4, 401);
+    let st = ((stain - 0.45) * 2.5).clamp(0.0, 1.0) * wear;
+    value *= 1.0 - 0.32 * st;
+    tint += 0.05 * st;
+    // Fine dirt in the grain everywhere.
+    let dirt = grain(px, py, 409);
+    value *= 1.0 - 0.10 * wear * dirt;
+    if !ground {
+        // Drip streaks: stretched noise along v, darkest under the
+        // stain bands, as rain carries dirt down a facade.
+        let drip = fbm(u * 6.0, v * 0.5, 6, 3, 419);
+        let dr = ((drip - 0.55) * 4.0).clamp(0.0, 1.0) * wear;
+        value *= 1.0 - 0.28 * dr;
+        height -= 0.15 * dr;
+    }
+    // Cracks: two crossing hairline fields, wider with wear.
+    let w = 0.004 + 0.010 * wear;
+    let c1 = crack_line(fbm(u, v, 3, 4, 431), w);
+    let c2 = crack_line(fbm(u, v, 5, 3, 433), w * 0.7);
+    let crack = c1.max(c2);
+    value *= 1.0 - 0.45 * crack;
+    height -= 1.2 * crack;
+    match surface {
+        Surface::Panel | Surface::Metal | Surface::Plaster => {
+            // Worn paint: blotches where the topcoat has gone, a lighter,
+            // cooler primer showing through.
+            let chip = fbm(u, v, 8, 3, 443);
+            if chip > 0.68 - 0.12 * wear {
+                value = value * 0.8 + 0.12;
+                tint -= 0.03;
+                height -= 0.3;
+            }
+        }
+        _ => {}
+    }
+    if matches!(surface, Surface::Metal | Surface::Panel) {
+        // Rust bleeding down from fixings in vertical runs.
+        let run = fbm(u * 10.0, v * 0.6, 10, 2, 457);
+        let r = ((run - 0.62) * 5.0).clamp(0.0, 1.0) * wear;
+        value *= 1.0 - 0.2 * r;
+        tint += 0.18 * r;
+    }
+    if matches!(surface, Surface::Brick | Surface::Concrete) {
+        // Efflorescence: pale salt blooms.
+        let salt = fbm(u, v, 4, 3, 461);
+        if salt > 0.74 {
+            value = value * 0.85 + 0.12 * wear;
+        }
+    }
+    if ground {
+        // Crazing in a coarse cell pattern, chipped edges and dark spots
+        // (gum, oil) on paving; patched repairs on asphalt.
+        let cu = u * 6.0;
+        let cv = v * 6.0;
+        let (iu, iv) = (cu.floor() as i32, cv.floor() as i32);
+        let jitter = hash(iu.rem_euclid(6), iv.rem_euclid(6), 467);
+        let edge = (cu.fract() - 0.5).abs().max((cv.fract() - 0.5).abs());
+        if jitter < 0.5 * wear && edge > 0.47 {
+            value *= 0.6;
+            height -= 1.0;
+        }
+        if grain(px, py, 479) > 1.0 - 0.012 * wear {
+            value *= 0.45;
+        }
+        if surface == Surface::Asphalt {
+            let patch = fbm(u, v, 2, 2, 487);
+            if patch > 0.66 {
+                value *= 0.82;
+                height += 0.2;
+            }
+        }
+    }
+    Sample { value: value.clamp(0.0, 1.0), tint, height }
 }
 
 /// Texture size the bump strengths in `Surface::bump` were tuned at.
@@ -271,16 +370,27 @@ const REFERENCE_SIZE: f32 = 256.0;
 /// Generate the colour and normal textures for a surface. `None` for glow,
 /// which stays a flat emissive colour.
 pub fn generate(surface: Surface, size: usize) -> Option<Texture> {
+    if surface.is_worn() {
+        return generate_wear(surface.base(), size, WORN);
+    }
+    generate_wear(surface, size, 0.0)
+}
+
+/// The texture of a surface weathered by `wear` in `0..1`: 0 is the clean
+/// texture, byte for byte; more adds stains, cracks, streaks and worn paint.
+pub fn generate_wear(surface: Surface, size: usize, wear: f32) -> Option<Texture> {
     if surface.is_glow() {
         return None;
     }
+    let surface = surface.base();
+    let wear = if wear.is_finite() { wear.clamp(0.0, 1.0) } else { 0.0 };
     let mut heights = vec![0.0f32; size * size];
     let mut color = vec![0u8; size * size * 4];
     for py in 0..size {
         for px in 0..size {
             let u = (px as f32 + 0.5) / size as f32;
             let v = (py as f32 + 0.5) / size as f32;
-            let s = sample(surface, u, v, px as i32, py as i32);
+            let s = grit(surface, sample(surface, u, v, px as i32, py as i32), u, v, px as i32, py as i32, wear);
             heights[py * size + px] = s.height;
             let r = (s.value * (1.0 + s.tint)).clamp(0.0, 1.0);
             let g = s.value.clamp(0.0, 1.0);
@@ -295,7 +405,7 @@ pub fn generate(surface: Surface, size: usize) -> Option<Texture> {
     // The height field is a function of (u, v), so the finite difference
     // between neighbouring pixels shrinks as the texture grows; scaling by
     // the size keeps the normal map's slope the same at any resolution.
-    let strength = surface.bump() * 0.5 * (size as f32 / REFERENCE_SIZE);
+    let strength = surface.bump() * (1.0 + 0.25 * wear) * 0.5 * (size as f32 / REFERENCE_SIZE);
     let mut normal = vec![0u8; size * size * 4];
     let at = |x: i32, y: i32| heights[(y.rem_euclid(size as i32) as usize) * size + x.rem_euclid(size as i32) as usize];
     for py in 0..size as i32 {
@@ -362,6 +472,35 @@ mod tests {
         };
         let (a, b) = (spread(&small), spread(&large));
         assert!((a - b).abs() < a.max(b) * 0.25, "normal x range differs: 64px {a}, 256px {b}");
+    }
+
+    fn mean(t: &Texture) -> f32 {
+        t.color.chunks(4).map(|p| p[1] as f32).sum::<f32>() / (t.size * t.size) as f32
+    }
+
+    fn dark(t: &Texture, below: f32) -> usize {
+        t.color.chunks(4).filter(|p| (p[1] as f32) < below).count()
+    }
+
+    /// Wear 0 is the clean texture; weathering darkens it and adds dark
+    /// marks (stains, cracks, streaks), deterministically.
+    #[test]
+    fn wear_adds_grit() {
+        for (base, worn) in Surface::WEATHERED {
+            let clean = generate(base, 64).unwrap();
+            let zero = generate_wear(base, 64, 0.0).unwrap();
+            assert!(clean.color == zero.color && clean.normal == zero.normal, "{base:?}: wear 0 must be the clean texture");
+            let a = generate(worn, 64).unwrap();
+            let b = generate(worn, 64).unwrap();
+            assert!(a.color == b.color, "{worn:?} is not deterministic");
+            let (m0, m1) = (mean(&clean), mean(&a));
+            let (d0, d1) = (dark(&clean, m0 * 0.7), dark(&a, m0 * 0.7));
+            assert!(m1 < m0 * 0.97, "{worn:?} should be darker: {m1} vs {m0}");
+            assert!(d1 > d0, "{worn:?} should have more dark marks: {d1} vs {d0}");
+            let half = generate_wear(base, 64, 0.4).unwrap();
+            let mh = mean(&half);
+            assert!(mh <= m0 && mh >= m1, "{base:?}: wear should be monotone ({m0} {mh} {m1})");
+        }
     }
 
     #[test]
