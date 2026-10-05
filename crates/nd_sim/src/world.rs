@@ -504,7 +504,7 @@ impl World {
         for car in self.traffic.cars.values() {
             b.splat(car.pos, 45.0, -0.004);
         }
-        b.finish(0.2, &mut self.land_value);
+        b.finish(0.25, &mut self.land_value);
         let lv = &self.land_value;
         for bld in self.buildings.values_mut() {
             if let Some(lot) = self.lots.get(bld.lot) {
