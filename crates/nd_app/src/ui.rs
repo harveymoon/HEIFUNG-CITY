@@ -378,14 +378,19 @@ fn side_panel(
             // Stats.
             let e = &sim.world.economy;
             section(ui, "CITY");
+            let sites = sim.world.buildings.values().filter(|b| b.construction.is_some()).count();
             ui.label(format!(
-                "population {}   buildings {}   lots {} ({} vacant, {} unusable)",
+                "population {}   buildings {}   under construction {}   lots {} ({} vacant, {} unusable)",
                 sim.world.citizens.len(),
-                sim.world.buildings.len(),
+                sim.world.buildings.len() - sites,
+                sites,
                 sim.world.lots.len(),
                 sim.world.lots.values().filter(|l| l.building.is_none() && l.usable()).count(),
                 sim.world.lots.values().filter(|l| l.landlocked).count()
             ));
+            if sites > 0 {
+                ui.label(format!("building sites will add {} homes and {} jobs", e.homes_building, e.jobs_building));
+            }
             ui.label(format!(
                 "homes {}/{}   jobs {}/{}   waiting to move in {}",
                 e.homes_total - e.homes_free,
@@ -500,7 +505,17 @@ fn side_panel(
                     };
                     neon(ui, &b.name);
                     let style = assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11));
-                    ui.label(format!("{}  ·  {} tier  ·  {}  ·  {} floors  ·  built day {}", b.land_use.label(), b.tier.label(), style.label(), b.floors, b.built_tick / 1440 + 1));
+                    if let Some(c) = &b.construction {
+                        ui.label(format!("{}  ·  {} tier  ·  {}  ·  {} floors  ·  started day {}", b.land_use.label(), b.tier.label(), style.label(), b.floors, b.built_tick / 1440 + 1));
+                        let (homes, jobs) = b.planned_capacity();
+                        let days_left = c.days_left();
+                        let left = if days_left < 1.0 { format!("{:.0} hours left", (days_left * 24.0).ceil().max(1.0)) } else { format!("{:.1} days left", days_left) };
+                        let status = if c.waiting_for_materials() { if c.ordered { ", waiting for materials (truck on its way)" } else { ", waiting for materials" } } else { "" };
+                        ui.label(egui::RichText::new(format!("UNDER CONSTRUCTION, {:.0}%, {left}{status}", c.progress * 100.0)).color(egui::Color32::from_rgb(255, 200, 90)));
+                        ui.label(format!("{} of {} deliveries in  ·  {:.1} days of work in all  ·  site crew {}/{}  ·  will have {} homes and {} jobs", c.deliveries, nd_sim::Construction::DELIVERIES, c.days, b.workers.len(), b.jobs, homes, jobs));
+                    } else {
+                        ui.label(format!("{}  ·  {} tier  ·  {}  ·  {} floors  ·  built day {}", b.land_use.label(), b.tier.label(), style.label(), b.floors, b.built_tick / 1440 + 1));
+                    }
                     ui.label(format!("land value {:.2}  ·  rent {:.0}/day  ·  wage {:.0}/day  ·  condition {:.0}%{}", b.land_value, b.rent, b.wage(), b.condition * 100.0, if b.is_derelict() { "  ·  DERELICT" } else { "" }));
                     ui.label(format!("residents {}/{}  ·  workers {}/{}  ·  visitors {}", b.residents.len(), b.homes, b.workers.len(), b.jobs, b.visitors));
                     if let Some(lot) = sim.world.lots.get(b.lot) {

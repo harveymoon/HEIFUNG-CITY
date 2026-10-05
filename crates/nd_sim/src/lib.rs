@@ -24,7 +24,7 @@ pub mod walk;
 pub mod world;
 pub mod zoning;
 
-pub use buildings::{Building, BuildingId, Tier};
+pub use buildings::{Building, BuildingId, Construction, Tier};
 pub use land_value::LandValue;
 pub use market::{Business, BusinessKind, MarketStats, Resource};
 pub use citizens::{Activity, Citizen, CitizenId, Memory, Purpose};

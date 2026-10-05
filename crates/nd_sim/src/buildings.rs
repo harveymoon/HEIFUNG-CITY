@@ -85,6 +85,66 @@ impl Tier {
     }
 }
 
+/// A building site. Work advances every sim hour and needs a delivery of
+/// parts at the start of each quarter; it waits at the quarter boundary
+/// until the truck arrives.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Construction {
+    /// Share of the work done, `0..1`.
+    pub progress: f32,
+    /// Total build time in days at full pace.
+    pub days: f32,
+    /// Deliveries of materials received so far (four are needed).
+    pub deliveries: u8,
+    /// A delivery has been ordered and is on its way.
+    #[serde(default)]
+    pub ordered: bool,
+}
+
+impl Construction {
+    /// Deliveries a site needs before it can start each quarter.
+    pub const DELIVERIES: u8 = 4;
+
+    pub fn new(days: f32) -> Self {
+        Self { progress: 0.0, days: days.clamp(1.0, 12.0), deliveries: 0, ordered: false }
+    }
+
+    /// Build time for a building of this size and quality.
+    pub fn days_for(floors: u8, tier: Tier) -> f32 {
+        let tier_factor = match tier {
+            Tier::Low => 0.8,
+            Tier::Mid => 1.0,
+            Tier::High => 1.3,
+        };
+        ((1.0 + floors as f32 * 0.4) * tier_factor).clamp(1.0, 12.0)
+    }
+
+    /// Quarter of the work the site is in, `0..=3`.
+    pub fn stage(&self) -> u8 {
+        ((self.progress / 0.25).floor() as u8).min(3)
+    }
+
+    /// Materials for the current quarter have not arrived yet.
+    pub fn waiting_for_materials(&self) -> bool {
+        self.progress < 1.0 && self.deliveries <= self.stage()
+    }
+
+    /// Progress made in one sim hour at full pace.
+    pub fn hourly_step(&self) -> f32 {
+        1.0 / (self.days * 24.0)
+    }
+
+    /// Days of work left, counting stalls as if the truck came now.
+    pub fn days_left(&self) -> f32 {
+        ((1.0 - self.progress) * self.days).max(0.0)
+    }
+
+    /// Site crew for a building of this size.
+    pub fn crew(floors: u8) -> u16 {
+        3 + floors as u16 / 2
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Building {
     pub lot: LotId,
@@ -143,6 +203,9 @@ pub struct Building {
     /// Export units waiting on the apron (yards).
     #[serde(default)]
     pub rail_outbound: f32,
+    /// Still being built: no homes, no permanent jobs, a site crew instead.
+    #[serde(default)]
+    pub construction: Option<Construction>,
 }
 
 fn one() -> f32 {
@@ -150,6 +213,9 @@ fn one() -> f32 {
 }
 
 impl Building {
+    /// Daily pay for a labourer on a building site.
+    pub const SITE_WAGE: f32 = 70.0;
+
     pub fn new(lot: LotId, land_use: LandUse, floors: u8, tier: Tier, seed: u64, name: String, built_tick: u64, land_value: f32) -> Self {
         let mut b = Self {
             lot,
@@ -179,6 +245,7 @@ impl Building {
             rail: None,
             rail_inbound: Vec::new(),
             rail_outbound: 0.0,
+            construction: None,
         };
         b.recompute_capacity();
         b.update_rent(land_value);
@@ -202,7 +269,19 @@ impl Building {
         }
     }
 
+    pub fn under_construction(&self) -> bool {
+        self.construction.is_some()
+    }
+
     pub fn recompute_capacity(&mut self) {
+        if self.construction.is_some() {
+            // A building site: nobody lives here yet, and the only work is
+            // for the crew putting it up.
+            self.homes = 0;
+            self.jobs = Construction::crew(self.floors);
+            self.parking_capacity = 0;
+            return;
+        }
         if self.is_parking() || self.plant.is_some() || self.depot || self.rail.is_some() {
             return;
         }
@@ -232,6 +311,17 @@ impl Building {
         };
     }
 
+    /// Homes and jobs the building will have once construction is over.
+    pub fn planned_capacity(&self) -> (u16, u16) {
+        if self.construction.is_none() {
+            return (self.homes, self.jobs);
+        }
+        let mut done = self.clone();
+        done.construction = None;
+        done.recompute_capacity();
+        (done.homes, done.jobs)
+    }
+
     pub fn update_rent(&mut self, land_value: f32) {
         self.land_value = land_value;
         self.rent = self.tier.base_rent() * (0.6 + land_value) * (0.7 + 0.3 * self.condition);
@@ -239,6 +329,9 @@ impl Building {
 
     /// Daily wage for a job here.
     pub fn wage(&self) -> f32 {
+        if self.construction.is_some() {
+            return Self::SITE_WAGE;
+        }
         let base = match self.land_use {
             LandUse::Industrial => 65.0,
             LandUse::Commercial => 90.0,

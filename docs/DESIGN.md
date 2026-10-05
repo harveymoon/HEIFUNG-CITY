@@ -161,6 +161,25 @@ Citizens are rendered from their simulated positions every frame.
   visit no longer vanishes into a building: the visitor walks the paths to a bench and
   sits (`Activity::Sitting`, drawn seated, visible, facing the path or the water),
   then walks off the bench when the next decision comes.
+- **Construction** (`buildings::Construction`): nothing pops into existence. `build_on` opens
+  a site with a build time of (1 + 0.4 × floors) days scaled by tier, clamped to 1–12 days;
+  it offers no homes and a temporary crew of jobs that the unemployed commute to. Progress
+  advances hourly and needs four loads of parts, one per quarter, each ordered a quarter
+  ahead from a local seller or by import; a late truck stalls the site at the next quarter.
+  Every 10% the renderer redraws the site; on completion the crew is released, the real
+  homes and jobs open, and tenants may move in. Player-placed specials and parking lots
+  complete at once. Housing and job pressure are damped by what is already under
+  construction. Sites are drawn as hoarding, raft, shell to the last full floor, scaffold,
+  a tower crane from six floors, pallets, cabin, mixer and hi-vis workers.
+- **Eminent domain**: when a parcel changes shape under a building on a rebuild (area off by
+  more than 12% or an outline point moved more than 3 m) the building is pulled down and
+  residents remember why (`SimEvent::Expropriated`). Specials own their ground: zoned lots
+  under a facility footprint go, placement over a built lot is refused, and development never
+  builds under a footprint.
+- **Redevelopment and density**: a Low-tier building on High-value land for three days is
+  rebuilt in place at the land's tier; rents rise and the displacement rules move people on.
+  New buildings are capped at two floors plus one per ten neighbouring floors within 150 m,
+  so high-rises appear only where the block is already dense.
 - **Railway** (`RoadKind::Rail`, `nd_sim::rail`): track is a third kind of way in the road
   network, single track 4.8 m wide. A trunk line crosses the map 480 m south of the
   centre from the start; the player lays branches off it with the Road tool's Rail
@@ -327,6 +346,20 @@ trait MindProvider {
   turbine blades) checks the polygon first. A test generates every style on about
   six hundred lots cut by straight, diagonal and curved roads and fails if any vertex
   is more than 4 m outside its lot, below ground, or absurdly tall.
+- Vacant land (`nd_procgen::vacant`) dresses by land value: below 0.38 it is dormant and
+  trashy (dead grass, weeds, rubbish, tyres, drums, a broken fence, a tagged wall, sometimes a
+  drum fire); in the middle dirt and gravel with wild grass, shrubs, rocks and a young tree or
+  two; from 0.66 a parklet with mown lawn, a hedge with a gap, a path to a bench, bin, lamp and
+  trees. Open ground far from roads gets rocks, scrub and dry trees scattered by noise
+  (`terrain::scatter_nature`, capped at 3500 pieces, kept 40 m from any way).
+- Grit: `parts::graffiti` paints tags, bubble letters and throw-ups on stacks, tenements,
+  warehouses, junkyard hoardings, scrub-lot walls and any worn face; outdoor stairs, fire
+  escapes and ladders rust when wear passes 0.4; streets below land value 0.35 get potholes,
+  cracked slabs, faded markings and kerb litter.
+- Inspecting: the selected building's lot is outlined, people and cars get a ring, the
+  selected person's remaining route and recent trail are drawn with the destination lot, a
+  hover card describes the parcel under the cursor, and a draggable person pane carries their
+  story with a favourites list to jump back to. Zoning outlines toggle with O.
 - Track (`street.rs`): ballast, sleepers every 0.7 m, two rails; level crossings get planks
   over the carriageway, crossbuck signs, lights and raised barrier arms. Stations
   (`buildings/rail.rs`): brick hall with an arched glass front, canopy, clock and name
@@ -375,6 +408,8 @@ trait MindProvider {
   and exports, hunger and shopping, business closures.
 - v0.8 (done): polygonal parcels, 35 architectural styles per land use and tier from a
   parts toolkit, textured surfaces with normal maps, street furniture, walk mode.
+- v0.16 (done): construction over time, eminent domain, redevelopment and density heights,
+  vacant-land dressing and open-ground nature, graffiti and street grit, inspect UX.
 - v0.15 (done): railway: trunk line and branches, level crossings, stations and freight
   yards beside the track, passenger and freight trains on headways, rail riders, rail freight.
 - v0.14 (done): buses: lines drawn as loops of kerb-side stops, depots that dispatch and
