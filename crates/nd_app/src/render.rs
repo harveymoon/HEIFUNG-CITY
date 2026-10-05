@@ -30,6 +30,9 @@ use crate::ui::UiFlags;
 use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
 
+/// Emergency vehicles, fires and rubble (render/emergency.rs).
+mod emergency;
+
 /// Side of the square cells that buildings and vacant-lot dressing are
 /// batched into. Wide enough that a few hundred buildings become a few dozen
 /// meshes per surface, small enough that one changed building regenerates a
@@ -222,6 +225,8 @@ impl Plugin for RenderPlugin {
                 .chain()
                 .in_set(SimSet::Sync),
         );
+        // Emergency vehicles, fires and rubble, after the cars they hide.
+        app.add_systems(Update, emergency::sync_emergency.after(sync_cars).in_set(SimSet::Sync));
     }
 }
 

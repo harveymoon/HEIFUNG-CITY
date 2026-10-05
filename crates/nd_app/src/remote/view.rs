@@ -295,6 +295,7 @@ pub fn building_row(w: &World, id: BuildingId, b: &Building) -> Value {
         "under_construction": b.construction.is_some(),
         "business": b.business.as_ref().map(|z| z.kind.label()), "plant": b.plant.map(plant_name),
         "depot": b.depot, "rail": b.rail.as_ref().map(|r| rail_name(r.kind)), "derelict": b.is_derelict(),
+        "service": b.service.map(|s| format!("{}:{}", s.kind.key(), tier_key(s.tier))), "burning": w.services.is_burning(id),
     })
 }
 
