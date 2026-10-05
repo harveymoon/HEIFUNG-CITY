@@ -4,7 +4,7 @@
 use crate::geom::Grid;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
-use std::cell::OnceCell;
+use std::sync::OnceLock;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
@@ -96,7 +96,7 @@ pub struct RoadNetwork {
     /// a change and dropped by the next change. Every mutation goes through
     /// `link` or `split_segment`, which reset it.
     #[serde(skip)]
-    index: OnceCell<Grid>,
+    index: OnceLock<Grid>,
 }
 
 impl RoadNetwork {
