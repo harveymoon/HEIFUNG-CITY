@@ -11,6 +11,9 @@ pub enum SimEvent {
     /// Tier or condition changed enough to look different.
     BuildingChanged(BuildingId),
     BuildingRemoved(BuildingId, LotId),
+    /// Eminent domain: road or path works reshaped the parcel under a
+    /// building, so it was pulled down (a `BuildingRemoved` follows).
+    Expropriated(BuildingId, LotId),
     CitizenArrived(CitizenId),
     CitizenLeft(CitizenId),
     NewThought(CitizenId),

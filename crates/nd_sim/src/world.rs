@@ -17,7 +17,7 @@ use crate::traffic::{Bus, CarId};
 use std::collections::HashMap;
 use crate::transit::{self, BusStop, RouteId, Transit, TransitLeg, TransitTrip};
 use crate::rail::{self, Facility, FacilityId, Rail, RailFacility, RailLink, Train, TrainId, TrainKind};
-use crate::zoning::point_in_polygon;
+use crate::zoning::{outlines_differ, point_in_polygon, polygons_overlap};
 use crate::citizens::TravelMode;
 use crate::roads::RoadKind;
 use crate::zoning::{generate_lots, LandUse, Lot, LotId, Zone, ZoneId};
@@ -29,6 +29,17 @@ use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
 pub use crate::rail::TRUNK_Y;
+
+/// A parcel that loses or gains more than this share of its area under a
+/// building is treated as a new parcel: the building goes.
+pub const EXPROPRIATE_AREA_TOL: f32 = 0.12;
+/// ... or whose outline moves more than this many metres anywhere.
+pub const EXPROPRIATE_DIST_TOL: f32 = 3.0;
+/// Days a low-tier building may stand on high-value land before it is
+/// redeveloped at the land's tier.
+pub const REDEVELOP_DAYS: u8 = 3;
+/// Buildings within this distance count towards a lot's local density.
+pub const DENSITY_RADIUS: f32 = 150.0;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorldConfig {
@@ -380,15 +391,18 @@ impl World {
         }
         // Facilities: their footprints are lots of their own, and zoned lots
         // under them give way.
+        // A lot whose centre is under a footprint, or whose outline crosses
+        // one, would share ground with the station or yard.
         let footprints: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).collect();
-        self.lots.retain(|_, l| !footprints.iter().any(|fp| point_in_polygon(l.center, fp)));
+        self.lots.retain(|_, l| !footprints.iter().any(|fp| point_in_polygon(l.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.98), &l.polygon)));
         let fids: Vec<FacilityId> = self.facilities.keys().collect();
         for fid in fids {
             let lot = self.facility_lot(fid);
             let id = self.lots.insert(lot);
             self.facilities[fid].lot = Some(id);
         }
-        let mut demolish: Vec<BuildingId> = Vec::new();
+        // (building, where it stood, pulled down for the works?)
+        let mut demolish: Vec<(BuildingId, Vec2, bool)> = Vec::new();
         for (_, old) in old_lots.iter() {
             let Some(bid) = old.building else { continue };
             let found = self
@@ -400,17 +414,30 @@ impl World {
                 .min_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|(id, _)| id);
             match found {
+                // Eminent domain: a parcel reshaped by road or path works
+                // cannot keep its building, even if a lot is still there.
+                Some(new_lot) if outlines_differ(&old.polygon, &self.lots[new_lot].polygon, EXPROPRIATE_AREA_TOL, EXPROPRIATE_DIST_TOL) => {
+                    demolish.push((bid, old.center, true));
+                }
                 Some(new_lot) => {
                     self.lots[new_lot].building = Some(bid);
                     if let Some(b) = self.buildings.get_mut(bid) {
                         b.lot = new_lot;
                     }
                 }
-                None => demolish.push(bid),
+                None => demolish.push((bid, old.center, false)),
             }
         }
-        for bid in demolish {
-            self.demolish(bid);
+        for (bid, at, expropriated) in demolish {
+            if expropriated {
+                let lot = self.buildings.get(bid).map(|b| b.lot);
+                if let Some(lot) = lot {
+                    self.events.push(SimEvent::Expropriated(bid, lot));
+                }
+                self.demolish_with(bid, Some(at), Some("Our block was pulled down for the road works. Homeless again."));
+            } else {
+                self.demolish_with(bid, Some(at), None);
+            }
         }
 
         // Lanes and cars.
@@ -432,14 +459,23 @@ impl World {
     }
 
     fn demolish(&mut self, bid: BuildingId) {
+        self.demolish_with(bid, None, None);
+    }
+
+    /// Take a building down. `at` is where it stood when its lot is already
+    /// gone; `memory` replaces the residents' default note about it.
+    fn demolish_with(&mut self, bid: BuildingId, at: Option<Vec2>, memory: Option<&str>) {
         let Some(b) = self.buildings.remove(bid) else { return };
         let tick = self.clock.tick;
-        let center = self.lots.get(b.lot).map(|l| l.center).unwrap_or(Vec2::ZERO);
+        let center = self.lots.get(b.lot).map(|l| l.center).or(at).unwrap_or(Vec2::ZERO);
         for cid in b.residents.iter().chain(b.workers.iter()).copied() {
             if let Some(c) = self.citizens.get_mut(cid) {
                 if c.home == Some(bid) {
                     c.home = None;
-                    c.remember(tick, format!("{} was demolished. Homeless again.", b.name));
+                    match memory {
+                        Some(m) => c.remember(tick, m.to_string()),
+                        None => c.remember(tick, format!("{} was demolished. Homeless again.", b.name)),
+                    }
                 }
                 if c.work == Some(bid) {
                     c.work = None;
@@ -490,6 +526,55 @@ impl World {
 
     pub fn building_entrance(&self, b: BuildingId) -> Option<Vec2> {
         self.building_lot(b).map(|l| l.entrance())
+    }
+
+    /// Is `p` inside a station's or yard's footprint? Nothing but the
+    /// facility itself is ever built on that ground.
+    pub fn under_facility(&self, p: Vec2) -> bool {
+        self.facilities.values().any(|f| point_in_polygon(p, &f.footprint()))
+    }
+
+    /// How tall the surroundings of a lot justify building: the floors of
+    /// the ordinary buildings within `DENSITY_RADIUS` plus the lot's footfall
+    /// today. An empty field allows two floors; every ten floors nearby (or
+    /// four hundred passers-by) allow one more, so towers only rise where
+    /// the block is already busy.
+    pub fn height_cap(&self, lot_id: LotId) -> u8 {
+        let Some(lot) = self.lots.get(lot_id) else { return 3 };
+        let center = lot.center;
+        let near_floors: u32 = self
+            .buildings
+            .values()
+            .filter(|b| b.lot != lot_id && b.land_use != LandUse::Park && !b.is_parking() && b.plant.is_none() && !b.depot && b.rail.is_none())
+            .filter_map(|b| self.lots.get(b.lot).map(|l| (b.floors as u32, l.center)))
+            .filter(|(_, c)| c.distance(center) <= DENSITY_RADIUS)
+            .map(|(f, _)| f)
+            .sum();
+        let density = near_floors as f32 + lot.footfall_today as f32 / 40.0;
+        (2.0 + density / 10.0).min(255.0) as u8
+    }
+
+    /// Floors for a new building on `lot_id`: the tier's range, held down
+    /// by `height_cap` so the first houses in a field are low.
+    fn pick_floors(&mut self, lot_id: LotId, lu: LandUse, tier: Tier) -> u8 {
+        if lu == LandUse::Park {
+            return 0;
+        }
+        let base: u8 = match lu {
+            LandUse::Residential => self.rng.random_range(2..=7),
+            LandUse::Commercial => self.rng.random_range(2..=8),
+            LandUse::Industrial => self.rng.random_range(1..=3),
+            LandUse::Entertainment => self.rng.random_range(2..=5),
+            LandUse::Civic => self.rng.random_range(2..=5),
+            LandUse::Park => 0,
+        };
+        let floors = match (lu, tier) {
+            (LandUse::Industrial, _) => base,
+            (_, Tier::High) => (base as f32 * 1.8) as u8 + 2,
+            (_, Tier::Mid) => base + 1,
+            (_, Tier::Low) => base.max(1),
+        };
+        floors.clamp(1, self.height_cap(lot_id).max(1))
     }
 
     fn available_land_uses(&self) -> [bool; 6] {
@@ -721,12 +806,15 @@ impl World {
         for l in self.lots.values_mut() {
             l.footfall_today = 0;
         }
+        let tick = self.clock.tick;
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         for bid in ids {
-            let (lu, tier, value, derelict_before, full) = {
+            let (lu, tier, value, derelict_before, full, special) = {
                 let b = &self.buildings[bid];
                 let full = if b.land_use == LandUse::Residential { b.homes > 0 && b.free_homes() == 0 } else { b.jobs > 0 && b.free_jobs() == 0 };
-                (b.land_use, b.tier, b.land_value, b.is_derelict(), full)
+                let value = self.lots.get(b.lot).map(|l| self.land_value.at(l.center)).unwrap_or(b.land_value);
+                let special = b.is_parking() || b.plant.is_some() || b.depot || b.rail.is_some();
+                (b.land_use, b.tier, value, b.is_derelict(), full, special)
             };
             let decay = match tier {
                 Tier::Low => 0.02,
@@ -739,7 +827,34 @@ impl World {
             }
             let target = Tier::for_land_value(value);
             let mut changed = false;
-            if lu != LandUse::Park {
+            // A cheap building on dear land does not last: after three days
+            // in the high band it is redeveloped at the land's tier, so the
+            // rent rises and those who cannot pay it move on.
+            let redevelop = if lu != LandUse::Park && !special {
+                let b = &mut self.buildings[bid];
+                b.high_land_days = if tier == Tier::Low && target == Tier::High { b.high_land_days.saturating_add(1) } else { 0 };
+                b.high_land_days >= REDEVELOP_DAYS
+            } else {
+                false
+            };
+            if redevelop {
+                let lot = self.buildings[bid].lot;
+                let floors = self.pick_floors(lot, lu, target);
+                let b = &mut self.buildings[bid];
+                b.high_land_days = 0;
+                b.tier = target;
+                b.floors = floors.max(1);
+                b.condition = 1.0;
+                b.built_tick = tick;
+                let name = b.name.clone();
+                let residents = b.residents.clone();
+                for cid in residents {
+                    if let Some(c) = self.citizens.get_mut(cid) {
+                        c.remember(tick, format!("{name} was torn down and rebuilt for richer tenants. The rent went up with it."));
+                    }
+                }
+                changed = true;
+            } else if lu != LandUse::Park {
                 if target > tier && full && self.rng.random::<f32>() < 0.15 {
                     let b = &mut self.buildings[bid];
                     b.tier = tier.up();
@@ -1270,7 +1385,8 @@ impl World {
     }
 
     pub fn build_on(&mut self, lot_id: LotId) {
-        if self.lots.get(lot_id).map_or(true, |l| l.landlocked) {
+        let Some(lot) = self.lots.get(lot_id) else { return };
+        if lot.landlocked || lot.building.is_some() || self.under_facility(lot.center) {
             return;
         }
         let lu = self.lots[lot_id].land_use;
@@ -1280,21 +1396,7 @@ impl World {
         if lu == LandUse::Residential && self.economy.waiting_immigrants > 6 && tier > Tier::Low && self.rng.random_bool(0.5) {
             tier = tier.down();
         }
-        let base: u8 = match lu {
-            LandUse::Residential => self.rng.random_range(2..=7),
-            LandUse::Commercial => self.rng.random_range(2..=8),
-            LandUse::Industrial => self.rng.random_range(1..=3),
-            LandUse::Entertainment => self.rng.random_range(2..=5),
-            LandUse::Civic => self.rng.random_range(2..=5),
-            LandUse::Park => 0,
-        };
-        let floors = match (lu, tier) {
-            (LandUse::Park, _) => 0,
-            (LandUse::Industrial, _) => base,
-            (_, Tier::High) => (base as f32 * 1.8) as u8 + 2,
-            (_, Tier::Mid) => base + 1,
-            (_, Tier::Low) => base.max(1),
-        };
+        let floors = self.pick_floors(lot_id, lu, tier);
         let seed = self.fresh_seed();
         let name = names::building_name(&mut self.rng, lu);
         let mut b = Building::new(lot_id, lu, floors, tier, seed, name, self.clock.tick, value);
@@ -1854,7 +1956,7 @@ impl World {
             return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), cost));
         }
         let fp = facility.footprint();
-        if self.buildings.values().any(|b| self.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp) || fp.iter().any(|c| point_in_polygon(*c, &l.polygon)))) {
+        if self.buildings.values().any(|b| self.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp) || polygons_overlap(&fp, &l.polygon))) {
             return Err("something is built there".into());
         }
         if self.facilities.values().any(|f| f.center.distance(facility.center) < Facility::size(kind).0 * 0.9) {
@@ -2330,6 +2432,9 @@ impl World {
         if lot.landlocked || !lot.car_access() {
             return Err("a depot needs a street".into());
         }
+        if self.under_facility(lot.center) {
+            return Err("that ground belongs to a station or yard".into());
+        }
         if matches!(lot.land_use, LandUse::Residential | LandUse::Park) {
             return Err("a depot cannot go on homes or parks".into());
         }
@@ -2599,6 +2704,9 @@ impl World {
         if lot.landlocked {
             return Err("that land has no road access".into());
         }
+        if self.under_facility(lot.center) {
+            return Err("that ground belongs to a station or yard".into());
+        }
         if !kind.allowed_on(lot.land_use) {
             return Err(format!("a {} cannot go on {} land", kind.label(), lot.land_use.label().to_lowercase()));
         }
@@ -2718,7 +2826,7 @@ impl World {
     /// there is: two to four jobs and a little float.
     pub fn build_parking(&mut self, lot_id: LotId) -> Option<BuildingId> {
         let lot = self.lots.get(lot_id)?;
-        if lot.building.is_some() || lot.landlocked {
+        if lot.building.is_some() || lot.landlocked || self.under_facility(lot.center) {
             return None;
         }
         let lu = lot.land_use;
@@ -2982,6 +3090,13 @@ impl World {
 }
 
 /// RON cannot encode the RNG's 128-bit counter, so persist it as seed + position.
+/// A polygon scaled about its centroid, to test overlap without counting
+/// outlines that merely touch.
+fn shrink_about_centroid(poly: &[Vec2], factor: f32) -> Vec<Vec2> {
+    let c = crate::zoning::polygon_centroid(poly);
+    poly.iter().map(|&p| c + (p - c) * factor).collect()
+}
+
 mod rng_serde {
     use crate::SimRng;
     use rand::SeedableRng;
@@ -3557,5 +3672,221 @@ mod tests {
         // Round trip keeps the plant.
         let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
         assert_eq!(back.buildings[plant].plant, Some(PowerPlantKind::Nuclear));
+    }
+
+    /// The usable lot of `lu` nearest `p`, vacant.
+    fn lot_near(w: &World, p: Vec2, lu: LandUse) -> LotId {
+        w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none() && l.land_use == lu).min_by(|a, b| a.1.center.distance(p).total_cmp(&b.1.center.distance(p))).map(|(id, _)| id).expect("a vacant lot")
+    }
+
+    #[test]
+    fn road_works_pull_down_the_buildings_whose_parcels_change() {
+        let mut w = World::new(WorldConfig::default());
+        let road = w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_road(&[Vec2::new(-400.0, 400.0), Vec2::new(400.0, 400.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        w.add_zone(square(10.0, 410.0, 190.0), LandUse::Residential);
+        let front_lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Residential);
+        assert!(w.lots[front_lot].front_segment == w.roads.nearest_street(Vec2::new(100.0, 20.0)).unwrap().0, "the lot fronts the main road");
+        w.build_on(front_lot);
+        let fronting = w.lots[front_lot].building.unwrap();
+        let far_lot = lot_near(&w, Vec2::new(100.0, 420.0), LandUse::Residential);
+        w.build_on(far_lot);
+        let far = w.lots[far_lot].building.unwrap();
+        // People move in, so somebody is there to be displaced.
+        let mut minds = IdleMind;
+        for _ in 0..400 {
+            w.tick(&mut minds);
+        }
+        assert!(!w.buildings[fronting].residents.is_empty(), "residents moved in");
+        let resident = w.buildings[fronting].residents[0];
+        let old_outline = w.lots[front_lot].polygon.clone();
+        w.drain_events();
+
+        // Widen the road to 3+3: every parcel along it loses a strip.
+        w.set_gesture(road, Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 3, lanes_bwd: 3, curved: false, kind: RoadKind::Street }, true);
+        w.implement();
+        assert!(!w.buildings.contains_key(fronting), "the building fronting the widened road is gone");
+        assert!(w.buildings.contains_key(far), "a building on an untouched lot stays");
+        assert!(w.lots.values().all(|l| l.building != Some(fronting)));
+        let events = w.drain_events();
+        assert!(events.iter().any(|e| matches!(e, SimEvent::Expropriated(b, _) if *b == fronting)), "an expropriation event was raised: {events:?}");
+        assert!(events.iter().any(|e| matches!(e, SimEvent::BuildingRemoved(b, _) if *b == fronting)));
+        let c = &w.citizens[resident];
+        assert_eq!(c.home, None);
+        assert!(c.memories.iter().any(|m| m.text.contains("pulled down for the road works")), "{:?}", c.memories);
+        // The ground is still there, as a smaller lot, and can be built on again.
+        let new_lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Residential);
+        assert!(outlines_differ(&old_outline, &w.lots[new_lot].polygon, EXPROPRIATE_AREA_TOL, EXPROPRIATE_DIST_TOL));
+
+        // A footpath drawn through a built lot removes that building too.
+        let far_center = w.lots[far_lot].center;
+        w.add_path(&[Vec2::new(far_center.x, 380.0), Vec2::new(far_center.x, 620.0)]);
+        assert!(!w.buildings.contains_key(far), "a path through the lot takes the building");
+        assert!(w.lots.values().all(|l| l.building != Some(far)));
+    }
+
+    #[test]
+    fn unchanged_parcels_keep_their_buildings_through_unrelated_works() {
+        // A new road elsewhere must not shake buildings off parcels that did
+        // not change: the outline comparison has to tolerate regeneration.
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        let lots: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable()).map(|(id, _)| id).collect();
+        for &l in &lots {
+            w.build_on(l);
+        }
+        let n = w.buildings.len();
+        assert!(n >= 3);
+        w.add_road(&[Vec2::new(-300.0, -300.0), Vec2::new(-300.0, 300.0)], 2, 2);
+        assert_eq!(w.buildings.len(), n, "nothing fronting the untouched road was expropriated");
+        assert!(w.drain_events().iter().all(|e| !matches!(e, SimEvent::Expropriated(..))));
+    }
+
+    #[test]
+    fn stations_and_yards_never_share_ground_with_other_buildings() {
+        use crate::rail::RailFacility;
+        let mut w = World::new(WorldConfig::default());
+        w.economy.treasury = 500_000.0;
+        w.add_road(&[Vec2::new(-100.0, 0.0), Vec2::new(1000.0, 0.0)], 1, 1);
+        w.add_zone(vec![Vec2::new(150.0, 10.0), Vec2::new(330.0, 10.0), Vec2::new(330.0, 90.0), Vec2::new(150.0, 90.0)], LandUse::Commercial);
+        w.add_zone(vec![Vec2::new(650.0, 10.0), Vec2::new(830.0, 10.0), Vec2::new(830.0, 90.0), Vec2::new(650.0, 90.0)], LandUse::Commercial);
+        // A shop stands where the station would go: the placement is refused.
+        let shop_lot = lot_near(&w, Vec2::new(240.0, 25.0), LandUse::Commercial);
+        w.build_on(shop_lot);
+        let shop = w.lots[shop_lot].building.unwrap();
+        let shop_center = w.lots[shop_lot].center;
+        let err = w.place_rail_facility(RailFacility::Station, shop_center).expect_err("a station cannot go over a shop");
+        assert!(err.contains("built"), "{err}");
+        assert!(w.buildings.contains_key(shop) && w.facilities.is_empty());
+        let lots_before = w.lots.len();
+        // A yard over vacant zoned lots takes the ground; the lots under and
+        // across its footprint give way.
+        let yard = w.place_rail_facility(RailFacility::FreightYard, Vec2::new(740.0, 40.0)).expect("yard");
+        assert!(w.lots.len() < lots_before, "zoned lots under the yard gave way");
+        let fp = w.facilities.values().next().unwrap().footprint();
+        let yard_lot = w.buildings[yard].lot;
+        for (id, l) in w.lots.iter() {
+            if id == yard_lot {
+                continue;
+            }
+            assert!(!point_in_polygon(l.center, &fp), "a lot centre under the yard: {:?}", l.center);
+            assert!(!polygons_overlap(&fp, &l.polygon), "a lot crossing the yard: {:?}", l.polygon);
+        }
+        // Nothing ever gets built on that ground: force development onto
+        // every lot and let the city develop on its own for a while.
+        let all: Vec<LotId> = w.lots.keys().collect();
+        for l in all {
+            w.build_on(l);
+        }
+        w.economy.demand = [1.0; 6];
+        for _ in 0..50 {
+            w.develop();
+        }
+        for (id, b) in w.buildings.iter() {
+            if id == yard {
+                continue;
+            }
+            let l = &w.lots[b.lot];
+            assert!(!w.under_facility(l.center), "{} was built under the yard", b.name);
+            assert!(!polygons_overlap(&fp, &l.polygon), "{} shares ground with the yard", b.name);
+        }
+        // Plants, depots and parking refuse facility ground too (the yard's
+        // own lot is the only lot there, and it is taken).
+        assert!(w.build_power(yard_lot, crate::power::PowerPlantKind::Solar).is_err());
+        assert!(w.build_depot(yard_lot).is_err());
+        assert!(w.build_parking(yard_lot).is_none());
+        assert!(w.buildings.contains_key(yard) && w.buildings[yard].rail.is_some());
+    }
+
+    #[test]
+    fn cheap_buildings_on_dear_land_are_redeveloped_and_price_people_out() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        w.land_value.fill(0.1);
+        let lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Residential);
+        w.build_on(lot);
+        let bid = w.lots[lot].building.unwrap();
+        assert_eq!(w.buildings[bid].tier, Tier::Low);
+        let rent0 = w.buildings[bid].rent;
+        // Tenants move in while the land is cheap. The grid is recomputed
+        // every two hours, so the scenario value is pinned before each tick.
+        let mut minds = IdleMind;
+        for _ in 0..600 {
+            w.land_value.fill(0.1);
+            w.tick(&mut minds);
+        }
+        let residents = w.buildings[bid].residents.clone();
+        assert!(residents.len() >= 2, "tenants moved in: {}", residents.len());
+        assert_eq!(w.buildings[bid].tier, Tier::Low, "cheap land keeps a cheap building");
+        // The land becomes dear. Three days of that and the building is rebuilt.
+        for _ in 0..(REDEVELOP_DAYS as usize + 1) * 1440 {
+            w.land_value.fill(0.95);
+            w.tick(&mut minds);
+        }
+        let b = &w.buildings[bid];
+        assert!(b.tier > Tier::Low, "the building left the low tier: {:?}", b.tier);
+        assert!(b.rent > rent0 * 2.0, "rent rose from {rent0:.0} to {:.0}", b.rent);
+        assert!(b.residents.iter().all(|c| residents.contains(c)), "no one new moved in yet");
+        assert!(w.citizens.values().any(|c| c.memories.iter().any(|m| m.text.contains("rebuilt for richer tenants"))));
+        // The old tenants cannot pay the new rent and move on.
+        let rent = w.buildings[bid].rent;
+        let priced_out: Vec<CitizenId> = w.buildings[bid].residents.iter().copied().filter(|&c| w.citizens[c].income * 0.5 < rent).collect();
+        assert!(!priced_out.is_empty(), "somebody is priced out by {rent:.0}/day");
+        for _ in 0..5 * 1440 {
+            w.land_value.fill(0.95);
+            w.tick(&mut minds);
+        }
+        for cid in &priced_out {
+            assert!(w.citizens.get(*cid).map_or(true, |c| c.home != Some(bid)), "a priced-out tenant is still there");
+        }
+        assert!(w.economy.displaced_total + w.economy.emigrated_total > 0);
+    }
+
+    #[test]
+    fn heights_follow_density() {
+        let mut w = World::new(WorldConfig::default());
+        // One city block ringed by streets.
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_road(&[Vec2::new(-400.0, 240.0), Vec2::new(400.0, 240.0)], 1, 1);
+        w.add_road(&[Vec2::new(0.0, -100.0), Vec2::new(0.0, 340.0)], 1, 1);
+        w.add_road(&[Vec2::new(240.0, -100.0), Vec2::new(240.0, 340.0)], 1, 1);
+        w.add_zone(square(0.0, 0.0, 240.0), LandUse::Residential);
+        // Dear land: a tower zone, but nothing stands yet.
+        w.land_value.fill(0.95);
+        let middle = Vec2::new(120.0, 120.0);
+        let mut lots: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable()).map(|(id, _)| id).collect();
+        lots.sort_by(|a, b| w.lots[*a].center.distance(middle).total_cmp(&w.lots[*b].center.distance(middle)));
+        assert!(lots.len() >= 16, "{} lots", lots.len());
+        assert_eq!(w.height_cap(lots[0]), 2, "an empty field allows two floors");
+        w.build_on(lots[0]);
+        let first = w.buildings[w.lots[lots[0]].building.unwrap()].clone();
+        assert_eq!(first.tier, Tier::High);
+        assert!(first.floors >= 1 && first.floors <= 3, "the first building is short: {} floors", first.floors);
+        // A few more go up around it; they stay short while the block is sparse.
+        for &l in &lots[1..6] {
+            w.build_on(l);
+        }
+        assert!(w.buildings.values().all(|b| b.floors <= 4), "{:?}", w.buildings.values().map(|b| b.floors).collect::<Vec<_>>());
+        // Once the block is dense (every neighbour a tower), the full range opens.
+        for b in w.buildings.values_mut() {
+            b.floors = 40;
+        }
+        assert!(w.height_cap(lots[6]) >= 12, "cap {}", w.height_cap(lots[6]));
+        let mut tallest = 0;
+        for &l in &lots[6..12] {
+            w.build_on(l);
+            tallest = tallest.max(w.buildings[w.lots[l].building.unwrap()].floors);
+        }
+        assert!(tallest > 6, "a new building in a dense block can be tall: {tallest}");
+        // Parks are untouched by the rule.
+        let mut p = World::new(WorldConfig::default());
+        p.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        p.add_zone(square(10.0, 10.0, 100.0), LandUse::Park);
+        let park = lot_near(&p, Vec2::new(60.0, 20.0), LandUse::Park);
+        p.build_on(park);
+        assert_eq!(p.buildings[p.lots[park].building.unwrap()].floors, 0);
     }
 }
