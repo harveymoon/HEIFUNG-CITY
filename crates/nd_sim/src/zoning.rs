@@ -8,12 +8,15 @@
 //! are never built on.
 
 use crate::buildings::BuildingId;
-use crate::roads::{project_on_segment, NodeId, RoadNetwork, SegmentId};
+use crate::geom::{self, bounds as bounds_of, boxes_overlap, perimeter, Grid};
+use crate::roads::{NodeId, RoadNetwork, SegmentId};
 use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use glam::Vec2;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use slotmap::{new_key_type, SlotMap};
+
+pub use crate::geom::{distance_to_outline, point_in_polygon, polygon_area, polygon_centroid};
 
 /// Pavement between the kerb and the parcel line, in metres.
 pub const SIDEWALK: f32 = 3.2;
@@ -177,52 +180,6 @@ impl Lot {
     }
 }
 
-pub fn point_in_polygon(p: Vec2, poly: &[Vec2]) -> bool {
-    let n = poly.len();
-    if n < 3 {
-        return false;
-    }
-    let mut inside = false;
-    let mut j = n - 1;
-    for i in 0..n {
-        let (pi, pj) = (poly[i], poly[j]);
-        if (pi.y > p.y) != (pj.y > p.y) {
-            let x = pi.x + (p.y - pi.y) / (pj.y - pi.y) * (pj.x - pi.x);
-            if p.x < x {
-                inside = !inside;
-            }
-        }
-        j = i;
-    }
-    inside
-}
-
-/// Signed area; positive means counter-clockwise.
-pub fn polygon_area(poly: &[Vec2]) -> f32 {
-    let n = poly.len();
-    let mut a = 0.0;
-    for i in 0..n {
-        let j = (i + 1) % n;
-        a += poly[i].perp_dot(poly[j]);
-    }
-    a * 0.5
-}
-
-/// Distance from `p` to the outline of `poly`.
-pub fn distance_to_outline(p: Vec2, poly: &[Vec2]) -> f32 {
-    let n = poly.len();
-    let mut best = f32::INFINITY;
-    for i in 0..n {
-        let a = poly[i];
-        let b = poly[(i + 1) % n];
-        let ab = b - a;
-        let len2 = ab.length_squared();
-        let t = if len2 > 1e-9 { ((p - a).dot(ab) / len2).clamp(0.0, 1.0) } else { 0.0 };
-        best = best.min(p.distance(a + ab * t));
-    }
-    best
-}
-
 /// Has a parcel changed shape? True when the areas differ by more than
 /// `area_tol` (a fraction of the larger) or a vertex of either outline lies
 /// more than `dist_tol` metres from the other outline.
@@ -263,21 +220,6 @@ pub fn polygons_overlap(a: &[Vec2], b: &[Vec2]) -> bool {
         }
     }
     false
-}
-
-pub fn polygon_centroid(poly: &[Vec2]) -> Vec2 {
-    let a = polygon_area(poly);
-    if a.abs() < 1e-3 {
-        return poly.iter().fold(Vec2::ZERO, |s, p| s + *p) / poly.len().max(1) as f32;
-    }
-    let n = poly.len();
-    let mut c = Vec2::ZERO;
-    for i in 0..n {
-        let j = (i + 1) % n;
-        let cross = poly[i].perp_dot(poly[j]);
-        c += (poly[i] + poly[j]) * cross;
-    }
-    c / (6.0 * a)
 }
 
 /// Keep the part of a convex `poly` where `(p - origin) . normal >= 0`.
@@ -406,28 +348,10 @@ fn road_chains(roads: &RoadNetwork) -> Vec<(Vec<Vec2>, f32, bool, bool)> {
     out
 }
 
-/// Polyline shifted to its left (the interior for a counter-clockwise ring)
-/// by `offset`, with mitred corners limited so sharp bends do not spike.
-fn offset_inward(points: &[Vec2], offset: f32) -> Vec<Vec2> {
-    let n = points.len();
-    let mut out = Vec::with_capacity(n);
-    for i in 0..n {
-        let d_in = if i > 0 { (points[i] - points[i - 1]).normalize_or_zero() } else { Vec2::ZERO };
-        let d_out = if i + 1 < n { (points[i + 1] - points[i]).normalize_or_zero() } else { Vec2::ZERO };
-        let d_in = if d_in == Vec2::ZERO { d_out } else { d_in };
-        let d_out = if d_out == Vec2::ZERO { d_in } else { d_out };
-        let n_in = Vec2::new(-d_in.y, d_in.x);
-        let n_out = Vec2::new(-d_out.y, d_out.x);
-        let m = (n_in + n_out).normalize_or_zero();
-        let (m, scale) = if m == Vec2::ZERO { (n_in, 1.0) } else { (m, (1.0 / m.dot(n_in).max(1e-3)).min(1.8)) };
-        out.push(points[i] + m * offset * scale);
-    }
-    out
-}
-
-/// Corridor polygon of a chain: both sides offset with mitred joins so a
-/// curve's outline is smooth, ends extended by the half-width at junctions
-/// and dead ends so the corners get cleared.
+/// Corridor polygon of a chain: both sides offset with mitred joins (the
+/// shared [`geom::MITRE_LIMIT`] policy) so a curve's outline is smooth, ends
+/// extended by the half-width at junctions and dead ends so the corners get
+/// cleared.
 fn chain_corridor(pts: &[Vec2], hw: f32, ext_start: bool, ext_end: bool) -> Option<Polygon<f64>> {
     if pts.len() < 2 {
         return None;
@@ -438,8 +362,8 @@ fn chain_corridor(pts: &[Vec2], hw: f32, ext_start: bool, ext_end: bool) -> Opti
     let d1 = (p[n - 1] - p[n - 2]).normalize_or_zero();
     p[0] -= d0 * if ext_start { hw } else { 0.5 };
     p[n - 1] += d1 * if ext_end { hw } else { 0.5 };
-    let left = offset_inward(&p, hw);
-    let right = offset_inward(&p, -hw);
+    let left = geom::offset_polyline(&p, hw);
+    let right = geom::offset_polyline(&p, -hw);
     let mut ring = left;
     ring.extend(right.iter().rev());
     if polygon_area(&ring).abs() < 1.0 {
@@ -456,19 +380,8 @@ fn corridor_edge(seg: &crate::roads::Segment) -> f32 {
 /// Distance from a point to the nearest road centreline, with that
 /// segment. Paths count only when `allow_paths` (homes may line a path).
 fn nearest_road(roads: &RoadNetwork, p: Vec2, allow_paths: bool) -> Option<(SegmentId, f32, f32)> {
-    let mut best: Option<(SegmentId, f32, f32)> = None;
-    for (sid, seg) in roads.alive_segments() {
-        if seg.is_rail() || (!seg.is_street() && !allow_paths) {
-            continue;
-        }
-        let (a, b) = roads.segment_points(sid);
-        let (t, q) = project_on_segment(p, a, b);
-        let dist = p.distance(q);
-        if best.map_or(true, |(_, _, d)| dist < d) {
-            best = Some((sid, t, dist));
-        }
-    }
-    best
+    let (sid, t, q) = roads.nearest_where(p, |seg| !seg.is_rail() && (seg.is_street() || allow_paths))?;
+    Some((sid, t, p.distance(q)))
 }
 
 /// Is this edge lying along a road's pavement line? Returns the segment and
@@ -918,9 +831,7 @@ fn merge_backland(mut parcels: Vec<Vec<Vec2>>, lu: LandUse, roads: &RoadNetwork)
                 if i == j || !good[j] || removed[j] {
                     continue;
                 }
-                let (lo_i, hi_i) = boxes[i];
-                let (lo_j, hi_j) = boxes[j];
-                if hi_i.x < lo_j.x - 0.5 || hi_j.x < lo_i.x - 0.5 || hi_i.y < lo_j.y - 0.5 || hi_j.y < lo_i.y - 0.5 {
+                if !boxes_overlap(boxes[i], boxes[j], 0.5) {
                     continue;
                 }
                 let u: MultiPolygon<f64> = gi.union(&to_geo(&parcels[j]));
@@ -961,10 +872,6 @@ fn merge_backland(mut parcels: Vec<Vec<Vec2>>, lu: LandUse, roads: &RoadNetwork)
     parcels
 }
 
-fn bounds_of(poly: &[Vec2]) -> (Vec2, Vec2) {
-    poly.iter().fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)))
-}
-
 fn polygon_seed(poly: &[Vec2]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for p in poly {
@@ -976,16 +883,13 @@ fn polygon_seed(poly: &[Vec2]) -> u64 {
     h
 }
 
-fn perimeter(poly: &[Vec2]) -> f32 {
-    let n = poly.len();
-    (0..n).map(|i| poly[i].distance(poly[(i + 1) % n])).sum()
-}
-
-/// Carve `zone` into parcels: subtract every road corridor, slice the blocks
-/// along their frontages, and keep parcels whose centre is not covered by one
-/// of the `covering` zones (drawn later, so they win) or an existing lot.
-/// Parcels with no road frontage or a sliver shape are kept as landlocked,
-/// unusable ground. New lots are appended to `lots`.
+/// Carve `zone` into parcels: subtract every road corridor and the ground
+/// taken by the `covering` zones (drawn later, so they win), slice the
+/// blocks along their frontages, and keep parcels whose centre is not inside
+/// a covering zone or an existing lot. Parcels with no road frontage or a
+/// sliver shape are kept as landlocked, unusable ground. New lots are
+/// appended to `lots`. A self-crossing outline is not a region and yields
+/// nothing: boolean ops on it would produce garbage parcels.
 pub fn generate_lots(
     zone_id: ZoneId,
     zone: &Zone,
@@ -995,12 +899,12 @@ pub fn generate_lots(
 ) -> Vec<LotId> {
     let lu = zone.land_use;
     let mut created = Vec::new();
-    if zone.polygon.len() < 3 || roads.is_empty() {
+    if zone.polygon.len() < 3 || roads.is_empty() || geom::self_intersects(&zone.polygon) {
         return created;
     }
     let mut rng = crate::rng_for(polygon_seed(&zone.polygon), 5);
     let zone_poly = to_geo(&ccw(&zone.polygon));
-    let (zlo, zhi) = zone.polygon.iter().fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+    let (zlo, zhi) = bounds_of(&zone.polygon);
 
     // Blocks: the zone minus every nearby road corridor (one smooth polygon
     // per chain of road pieces).
@@ -1017,16 +921,41 @@ pub fn generate_lots(
             Some(m) => m.union(&c),
         });
     }
-    let blocks: MultiPolygon<f64> = match &corridors {
+    let mut blocks: MultiPolygon<f64> = match &corridors {
         Some(m) => zone_poly.difference(m),
         None => MultiPolygon(vec![zone_poly]),
     };
+    // Ground under a newer zone is theirs: take it out before slicing, so
+    // the parcels along the shared boundary stop at it instead of straddling
+    // it. (The centre test below still guards against slivers of overlap.)
+    let mut covered: Option<MultiPolygon<f64>> = None;
+    for z in covering {
+        if z.polygon.len() < 3 || geom::self_intersects(&z.polygon) || !boxes_overlap(bounds_of(&z.polygon), (zlo, zhi), 0.0) {
+            continue;
+        }
+        let c = to_geo(&z.polygon);
+        covered = Some(match covered {
+            None => MultiPolygon(vec![c]),
+            Some(m) => m.union(&c),
+        });
+    }
+    if let Some(c) = &covered {
+        blocks = blocks.difference(c);
+    }
 
     let mut parcels: Vec<Vec<Vec2>> = Vec::new();
     for block in blocks.0 {
         subdivide(block, lu, roads, &mut rng, 0, &mut parcels);
     }
     let parcels = merge_backland(parcels, lu, roads);
+
+    // Lots already there (other zones) by bounding box, so each parcel is
+    // tested against its neighbours only. Lots made by this call are few
+    // and checked directly.
+    let existing: Vec<(LotId, (Vec2, Vec2))> = lots.iter().map(|(id, l)| (id, bounds_of(&l.polygon))).collect();
+    let existing_grid = Grid::new(60.0, existing.iter().map(|(_, b)| *b));
+    let mut mine: Vec<(LotId, (Vec2, Vec2))> = Vec::new();
+    let shares_ground = |l: &Lot, center: Vec2, poly: &[Vec2]| l.contains(center) || point_in_polygon(l.center, poly);
 
     for poly in parcels {
         let poly = ccw(&poly);
@@ -1043,7 +972,10 @@ pub fn generate_lots(
         if covering.iter().any(|z| z.contains(center)) {
             continue;
         }
-        if lots.values().any(|l| l.contains(center) || point_in_polygon(l.center, &poly)) {
+        let pbox = bounds_of(&poly);
+        let taken = existing_grid.in_box(pbox.0, pbox.1).into_iter().any(|i| shares_ground(&lots[existing[i as usize].0], center, &poly))
+            || mine.iter().any(|(id, b)| boxes_overlap(*b, pbox, 0.0) && shares_ground(&lots[*id], center, &poly));
+        if taken {
             continue;
         }
         let area = polygon_area(&poly);
@@ -1109,7 +1041,9 @@ pub fn generate_lots(
             car_point,
             park: None,
         };
-        created.push(lots.insert(lot));
+        let id = lots.insert(lot);
+        mine.push((id, pbox));
+        created.push(id);
     }
     created
 }
@@ -1186,6 +1120,58 @@ mod tests {
         let mut lots = SlotMap::with_key();
         let ids = generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[cover]);
         assert!(ids.is_empty());
+    }
+
+    fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> Vec<Vec2> {
+        vec![Vec2::new(x0, y0), Vec2::new(x1, y0), Vec2::new(x1, y1), Vec2::new(x0, y1)]
+    }
+
+    #[test]
+    fn partially_overlapping_zones_do_not_share_ground() {
+        let roads = roads_cross();
+        // An older residential zone in the corner of the cross, and a newer
+        // commercial one drawn over its eastern part; both front the road
+        // along y = 0.
+        let older = Zone { polygon: rect(10.0, 10.0, 150.0, 150.0), land_use: LandUse::Residential };
+        let newer = Zone { polygon: rect(90.0, 10.0, 230.0, 170.0), land_use: LandUse::Commercial };
+        let mut lots = SlotMap::with_key();
+        let new_ids = generate_lots(ZoneId::default(), &newer, &roads, &mut lots, &[]);
+        let old_ids = generate_lots(ZoneId::default(), &older, &roads, &mut lots, &[newer.clone()]);
+        assert!(new_ids.iter().any(|&id| lots[id].usable()) && old_ids.iter().any(|&id| lots[id].usable()));
+        // The older zone's parcels stop at the newer zone's edge instead of
+        // running under it.
+        for &id in &old_ids {
+            for p in &lots[id].polygon {
+                assert!(p.x <= 90.0 + 0.05, "old-zone parcel vertex {p:?} lies inside the newer zone");
+            }
+        }
+        // No two usable parcels overlap by more than a sliver.
+        let good = usable(&lots);
+        for i in 0..good.len() {
+            for j in (i + 1)..good.len() {
+                let inter = to_geo(&good[i].polygon).intersection(&to_geo(&good[j].polygon)).unsigned_area() as f32;
+                let smaller = good[i].area().min(good[j].area());
+                assert!(inter < 1.0 && inter < smaller * 0.01, "parcels overlap by {inter:.1} m2 of {smaller:.0}: {:?} / {:?}", good[i].center, good[j].center);
+            }
+        }
+        // Both zones still get their row along each frontage: about 280 m
+        // of frontage on the older zone and 140 m on the newer, a lot deep.
+        let total: f32 = good.iter().map(|l| l.area()).sum();
+        assert!(total > 420.0 * 24.0 * 0.6, "usable {total}");
+    }
+
+    #[test]
+    fn a_self_crossing_zone_yields_nothing_instead_of_garbage() {
+        let roads = roads_cross();
+        let bow = Zone { polygon: vec![Vec2::new(10.0, 10.0), Vec2::new(150.0, 150.0), Vec2::new(150.0, 10.0), Vec2::new(10.0, 150.0)], land_use: LandUse::Residential };
+        let mut lots = SlotMap::with_key();
+        assert!(generate_lots(ZoneId::default(), &bow, &roads, &mut lots, &[]).is_empty());
+        // As a covering zone it is ignored for the ground subtraction and
+        // only its centre test applies: the zone under it still parcels.
+        let zone = Zone { polygon: rect(10.0, 10.0, 150.0, 150.0), land_use: LandUse::Commercial };
+        let ids = generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[bow]);
+        assert!(!ids.is_empty());
+        assert!(ids.iter().all(|&id| polygon_area(&lots[id].polygon) > 0.0 && lots[id].polygon.iter().all(|p| p.is_finite())));
     }
 
     #[test]

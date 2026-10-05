@@ -9,6 +9,7 @@ pub mod citizens;
 pub mod clock;
 pub mod economy;
 pub mod events;
+pub mod geom;
 pub mod land_value;
 pub mod market;
 pub mod mind;

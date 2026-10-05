@@ -12,6 +12,8 @@ use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use slotmap::{new_key_type, SlotMap};
 
+pub use crate::geom::{path_length, point_along, project_on_poly};
+
 new_key_type! {
     pub struct TrainId;
     pub struct FacilityId;
@@ -397,8 +399,15 @@ impl Rail {
         (SERVICE_START..SERVICE_END).contains(&minute_of_day)
     }
 
-    /// Whether `train` must wait: another train's head is in the block
-    /// ahead of it on the same track.
+    /// Whether `train` must wait: another train's head or tail stands on
+    /// this train's track within [`BLOCK`] metres ahead of its head.
+    ///
+    /// Each point is projected onto this train's polyline once, taking the
+    /// single closest point. That assumes a route never passes the same
+    /// place twice (no loops, no out-and-back over the same track), which
+    /// holds for the trunk-and-branch railway: a train runs the line from
+    /// one end to the other. A route that did fold back on itself could
+    /// pick the wrong pass and miss a block.
     pub fn blocked(&self, id: TrainId) -> bool {
         let Some(me) = self.trains.get(id) else { return false };
         for (oid, other) in &self.trains {
@@ -409,7 +418,7 @@ impl Rail {
             let tail = point_along(&other.poly, other.s - other.length()).0;
             for p in [head, tail] {
                 if let Some((s, d)) = project_on_poly(&me.poly, p) {
-                    if d < 3.0 && s > me.s && s < me.s + BLOCK + me.length() * 0.0 {
+                    if d < 3.0 && s > me.s && s < me.s + BLOCK {
                         return true;
                     }
                 }
@@ -495,42 +504,87 @@ pub fn sharpest_turn(pts: &[Vec2]) -> f32 {
     worst
 }
 
-// ── polyline helpers ─────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-pub fn path_length(pts: &[Vec2]) -> f32 {
-    pts.windows(2).map(|w| w[0].distance(w[1])).sum()
-}
+    /// A straight trunk along `TRUNK_Y`, as the world lays it.
+    fn trunk() -> RoadNetwork {
+        let mut net = RoadNetwork::default();
+        net.add_polyline_kind(&[Vec2::new(-2000.0, TRUNK_Y), Vec2::new(2000.0, TRUNK_Y)], 0, 0, crate::roads::RoadKind::Rail);
+        net
+    }
 
-/// Point and direction at arc length `s` along a polyline (clamped).
-pub fn point_along(pts: &[Vec2], s: f32) -> (Vec2, Vec2) {
-    if pts.len() < 2 {
-        return (pts.first().copied().unwrap_or(Vec2::ZERO), Vec2::X);
+    #[test]
+    fn a_branch_snapped_at_both_ends_leaves_and_rejoins_along_the_trunk() {
+        let net = trunk();
+        // Drawn as a square loop off the trunk and back onto it.
+        let drawn = [Vec2::new(-300.0, TRUNK_Y + 3.0), Vec2::new(-300.0, TRUNK_Y + 300.0), Vec2::new(300.0, TRUNK_Y + 300.0), Vec2::new(300.0, TRUNK_Y - 2.0)];
+        let built = smooth_track(&drawn, &net);
+        assert!(built.len() > drawn.len() * 4, "sampled into a dense curve: {} points", built.len());
+        assert!(built.iter().all(|p| p.is_finite()));
+        // Both ends sit on the trunk.
+        assert!((built[0].y - TRUNK_Y).abs() < 0.01 && (built.last().unwrap().y - TRUNK_Y).abs() < 0.01);
+        // And run along it for the switch lead before turning away.
+        let (start_dir, end_dir) = (built[1] - built[0], built[built.len() - 1] - built[built.len() - 2]);
+        assert!(start_dir.normalize().dot(Vec2::X).abs() > 0.95, "leaves the trunk tangentially: {start_dir:?}");
+        assert!(end_dir.normalize().dot(Vec2::X).abs() > 0.95, "arrives tangentially: {end_dir:?}");
+        // No corner tighter than the spline can take.
+        assert!(sharpest_turn(&built) < 0.6, "sharpest turn {:.2}", sharpest_turn(&built));
+        // Lines that touch no track are only eased, not snapped.
+        let free = smooth_track(&[Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0), Vec2::new(100.0, 100.0)], &net);
+        assert!(free[0] == Vec2::ZERO && *free.last().unwrap() == Vec2::new(100.0, 100.0));
+        assert!(sharpest_turn(&free) < std::f32::consts::FRAC_PI_2 * 0.5);
+        assert_eq!(smooth_track(&[Vec2::ZERO], &net), vec![Vec2::ZERO]);
     }
-    let mut s = s.max(0.0);
-    for w in pts.windows(2) {
-        let len = w[0].distance(w[1]);
-        if s <= len {
-            let d = (w[1] - w[0]).normalize_or_zero();
-            return (w[0] + d * s, d);
-        }
-        s -= len;
-    }
-    let n = pts.len();
-    (pts[n - 1], (pts[n - 1] - pts[n - 2]).normalize_or_zero())
-}
 
-/// Arc length of the closest point on a polyline to `p`, and the distance.
-pub fn project_on_poly(pts: &[Vec2], p: Vec2) -> Option<(f32, f32)> {
-    let mut best: Option<(f32, f32)> = None;
-    let mut acc = 0.0;
-    for w in pts.windows(2) {
-        let (t, q) = project_on_segment(p, w[0], w[1]);
-        let len = w[0].distance(w[1]);
-        let d = p.distance(q);
-        if best.is_none_or(|(_, bd)| d < bd) {
-            best = Some((acc + t * len, d));
-        }
-        acc += len;
+    #[test]
+    fn sharpest_turn_measures_the_worst_corner() {
+        assert_eq!(sharpest_turn(&[Vec2::ZERO, Vec2::X]), 0.0);
+        let right_angle = [Vec2::ZERO, Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0), Vec2::new(20.0, 10.0)];
+        assert!((sharpest_turn(&right_angle) - std::f32::consts::FRAC_PI_2).abs() < 1e-4);
+        let gentle = [Vec2::ZERO, Vec2::new(10.0, 0.0), Vec2::new(20.0, 1.0)];
+        assert!(sharpest_turn(&gentle) < 0.11);
+        let reversal = [Vec2::ZERO, Vec2::new(10.0, 0.0), Vec2::ZERO];
+        assert!((sharpest_turn(&reversal) - std::f32::consts::PI).abs() < 1e-4);
     }
-    best
+
+    fn train(poly: Vec<Vec2>, s: f32, branch: Option<(f32, f32)>) -> Train {
+        Train { kind: TrainKind::Passenger, cars: 2, nodes: Vec::new(), poly, s, prev_s: s, speed: 0.0, stops: Vec::new(), next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo: Vec::new(), color: 0, held: false, branch }
+    }
+
+    #[test]
+    fn blocks_hold_a_train_behind_another_on_the_same_track() {
+        let line = vec![Vec2::ZERO, Vec2::new(1000.0, 0.0)];
+        let mut rail = Rail::default();
+        let behind = rail.trains.insert(train(line.clone(), 200.0, None));
+        let ahead = rail.trains.insert(train(line.clone(), 200.0 + BLOCK * 0.5, None));
+        assert!(rail.blocked(behind), "the train ahead has its tail in the block");
+        assert!(!rail.blocked(ahead), "nothing ahead of the leader");
+        // Far enough ahead to be clear.
+        rail.trains[ahead].s = 200.0 + BLOCK + rail.trains[ahead].length() + 1.0;
+        assert!(!rail.blocked(behind));
+        // A train on a different track beside this one does not count.
+        let other = vec![Vec2::new(0.0, 10.0), Vec2::new(1000.0, 10.0)];
+        let beside = rail.trains.insert(train(other, 230.0, None));
+        assert!(!rail.blocked(behind));
+        assert!(!rail.blocked(beside));
+        assert!(!rail.blocked(TrainId::default()), "an unknown train is never blocked");
+    }
+
+    #[test]
+    fn on_branch_covers_the_whole_train_not_just_its_head() {
+        let line = vec![Vec2::ZERO, Vec2::new(1000.0, 0.0)];
+        let mut t = train(line, 0.0, Some((300.0, 600.0)));
+        let len = t.length();
+        t.s = 100.0;
+        assert!(!t.on_branch(), "not yet there");
+        t.s = 350.0;
+        assert!(t.on_branch(), "head on the branch");
+        t.s = 600.0 + len * 0.5;
+        assert!(t.on_branch(), "head past the branch, tail still on it");
+        t.s = 600.0 + len + 1.0;
+        assert!(!t.on_branch(), "clear of it");
+        assert!(!train(vec![Vec2::ZERO, Vec2::X], 0.5, None).on_branch(), "no branch on the route");
+    }
 }

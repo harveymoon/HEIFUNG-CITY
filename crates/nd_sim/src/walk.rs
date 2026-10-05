@@ -4,6 +4,7 @@
 //! share an edge. Walkers route over this with A*, so people cut through
 //! blocks and the shops they pass get walk-in trade.
 
+use crate::geom::{self, Grid};
 use crate::roads::{RoadKind, RoadNetwork, SegmentId};
 use crate::zoning::{Lot, LotId, SIDEWALK};
 use crate::{LandUse, LandValue, Tier};
@@ -17,6 +18,13 @@ const LOOP_INSET: f32 = 1.2;
 const GATE_MIN_SHARED: f32 = 4.0;
 /// How far a lot's front node may be from the pavement to connect.
 const FRONT_REACH: f32 = 14.0;
+/// Cell size of the node index; pavement nodes are a lot's width apart.
+const NODE_CELL: f32 = 20.0;
+/// Route cost multipliers. Park paths are pleasant, so routes prefer them
+/// a little; interior edges (alleys, loops, gates) cost a little more so
+/// people do not thread through back yards when the pavement is as short.
+const PARK_FACTOR: f32 = 0.92;
+const INTERIOR_FACTOR: f32 = 1.15;
 
 #[derive(Clone, Debug)]
 pub struct WalkNode {
@@ -44,6 +52,9 @@ pub struct WalkGraph {
     pub version: u64,
     /// Park benches: node, lot, and the direction a sitter faces.
     pub benches: Vec<(u32, LotId, f32)>,
+    /// Grid over `nodes`, built at the end of `build`. `nearest` falls back
+    /// to a scan if the node list has grown since.
+    index: Grid,
 }
 
 /// Can people walk through this lot to the next one?
@@ -85,22 +96,30 @@ impl WalkGraph {
         let mut street_nodes: Vec<u32> = Vec::new();
         // Pavement node opposite every lot front, keyed by lot.
         let mut front_nodes: HashMap<LotId, u32> = HashMap::new();
+        // Usable lots by the segment they front, in lot order, so each
+        // segment looks only at its own lots.
+        let mut fronting: HashMap<SegmentId, Vec<(LotId, &Lot)>> = HashMap::new();
+        for (id, l) in lots.iter() {
+            if !l.landlocked {
+                fronting.entry(l.front_segment).or_default().push((id, l));
+            }
+        }
         for (sid, seg) in roads.alive_segments() {
             let (a, b) = roads.segment_points(sid);
             let len = a.distance(b).max(1e-3);
             let d = (b - a) / len;
             let right = Vec2::new(-d.y, d.x);
+            let fronts = fronting.get(&sid).map(Vec::as_slice).unwrap_or(&[]);
             match seg.kind {
                 RoadKind::Street => {
                     let off = seg.half_width() + SIDEWALK * 0.55;
                     for side in [-1i8, 1] {
                         let o = right * off * side as f32;
                         // Lots fronting this side, ordered along the segment.
-                        let mut stops: Vec<(f32, LotId)> = lots
+                        let mut stops: Vec<(f32, LotId)> = fronts
                             .iter()
-                            .filter(|(_, l)| l.front_segment == sid && !l.landlocked)
                             .filter(|(_, l)| ((l.entrance() - a).dot(right) >= 0.0) == (side > 0))
-                            .map(|(id, l)| (l.front_t.clamp(0.02, 0.98), id))
+                            .map(|(id, l)| (l.front_t.clamp(0.02, 0.98), *id))
                             .collect();
                         stops.sort_by(|x, y| x.0.total_cmp(&y.0));
                         let na = g.add_node(a + o, None);
@@ -124,11 +143,7 @@ impl WalkGraph {
                 RoadKind::Rail => {}
                 RoadKind::Path => {
                     // Homes may line a path: a node opposite each of them.
-                    let mut stops: Vec<(f32, LotId)> = lots
-                        .iter()
-                        .filter(|(_, l)| l.front_segment == sid && !l.landlocked)
-                        .map(|(id, l)| (l.front_t.clamp(0.02, 0.98), id))
-                        .collect();
+                    let mut stops: Vec<(f32, LotId)> = fronts.iter().map(|(id, l)| (l.front_t.clamp(0.02, 0.98), *id)).collect();
                     stops.sort_by(|x, y| x.0.total_cmp(&y.0));
                     let na = g.add_node(a, None);
                     let mut prev = na;
@@ -184,6 +199,7 @@ impl WalkGraph {
         // Each usable lot gets a loop inset from its edges with a node at
         // every vertex and every edge midpoint; the front midpoint links to
         // the nearest street node.
+        let street_grid = Grid::new(NODE_CELL, street_nodes.iter().map(|&n| (g.nodes[n as usize].pos, g.nodes[n as usize].pos)));
         struct LoopInfo {
             lot: LotId,
             /// Node at each edge midpoint, by edge index.
@@ -195,7 +211,7 @@ impl WalkGraph {
             if lot.polygon.len() < 3 {
                 continue;
             }
-            let ring = inset_ring(&lot.polygon, LOOP_INSET);
+            let ring = geom::inset_ring(&lot.polygon, LOOP_INSET);
             if ring.len() != lot.polygon.len() {
                 continue;
             }
@@ -221,7 +237,14 @@ impl WalkGraph {
             match front_nodes.get(&lid) {
                 Some(&n) => g.link(front, n, true),
                 None => {
-                    if let Some(best) = street_nodes.iter().copied().filter(|&s| g.nodes[s as usize].pos.distance(fp) < FRONT_REACH).min_by(|&a, &b| g.nodes[a as usize].pos.distance(fp).total_cmp(&g.nodes[b as usize].pos.distance(fp))) {
+                    // Items are positions in `street_nodes`, so a tie goes
+                    // to the earlier entry as a scan would resolve it.
+                    let within = |i: u32| {
+                        let d = g.nodes[street_nodes[i as usize] as usize].pos.distance(fp);
+                        if d < FRONT_REACH { d } else { f32::INFINITY }
+                    };
+                    if let Some((i, _)) = street_grid.nearest(fp, within) {
+                        let best = street_nodes[i as usize];
                         g.link(front, best, true);
                         g.nodes[best as usize].near.push(lid);
                     }
@@ -274,8 +297,8 @@ impl WalkGraph {
                             }
                             let other = &lots[loops[lj].lot].polygon;
                             let (c, d) = (other[j], other[(j + 1) % other.len()]);
-                            if let Some(shared) = shared_length(a, b, c, d) {
-                                if shared >= GATE_MIN_SHARED {
+                            if let Some((lo, hi)) = geom::shared_stretch(a, b, c, d) {
+                                if hi - lo >= GATE_MIN_SHARED {
                                     let na = info.mids[i];
                                     let nb = loops[lj].mids[j];
                                     if !gated.contains(&(na, nb)) {
@@ -333,6 +356,7 @@ impl WalkGraph {
                 g.benches.push((n, lid, *facing));
             }
         }
+        g.index = Grid::new(NODE_CELL, g.nodes.iter().map(|n| (n.pos, n.pos)));
         g
     }
 
@@ -346,19 +370,29 @@ impl WalkGraph {
         }
     }
 
+    /// Nearest node within `max_dist`; exact ties go to the lower index.
     pub fn nearest(&self, p: Vec2, max_dist: f32) -> Option<u32> {
+        let within = |i: usize| {
+            let d = self.nodes[i].pos.distance(p);
+            if d <= max_dist { d } else { f32::INFINITY }
+        };
+        if self.index.len() == self.nodes.len() {
+            return self.index.nearest(p, |i| within(i as usize)).map(|(i, _)| i);
+        }
         let mut best: Option<(f32, u32)> = None;
-        for (i, n) in self.nodes.iter().enumerate() {
-            let d = n.pos.distance(p);
-            if d <= max_dist && best.map_or(true, |(bd, _)| d < bd) {
+        for i in 0..self.nodes.len() {
+            let d = within(i);
+            if d.is_finite() && best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, i as u32));
             }
         }
         best.map(|(_, i)| i)
     }
 
-    /// A* between two nodes. Interior edges cost a little more so people do
-    /// not thread through back yards when the pavement is as short.
+    /// A* between two nodes with the edge costs of [`PARK_FACTOR`] and
+    /// [`INTERIOR_FACTOR`]. The heuristic is the straight-line distance
+    /// scaled by the cheapest factor, so it never overestimates and the
+    /// first time the goal pops it is optimal.
     pub fn route_nodes(&self, from: u32, to: u32) -> Option<Vec<u32>> {
         #[derive(PartialEq)]
         struct Item(f32, u32);
@@ -375,23 +409,24 @@ impl WalkGraph {
         }
         let n = self.nodes.len();
         let goal = self.nodes[to as usize].pos;
+        let h = |i: u32| self.nodes[i as usize].pos.distance(goal) * PARK_FACTOR;
         let mut dist = vec![f32::INFINITY; n];
         let mut prev = vec![u32::MAX; n];
         let mut heap = BinaryHeap::new();
         dist[from as usize] = 0.0;
-        heap.push(Item(self.nodes[from as usize].pos.distance(goal), from));
+        heap.push(Item(h(from), from));
         while let Some(Item(_, u)) = heap.pop() {
             if u == to {
                 break;
             }
             let du = dist[u as usize];
             for e in &self.adj[u as usize] {
-                let cost = e.len * if e.park { 0.92 } else if e.interior { 1.15 } else { 1.0 };
+                let cost = e.len * if e.park { PARK_FACTOR } else if e.interior { INTERIOR_FACTOR } else { 1.0 };
                 let nd = du + cost;
                 if nd < dist[e.to as usize] {
                     dist[e.to as usize] = nd;
                     prev[e.to as usize] = u;
-                    heap.push(Item(nd + self.nodes[e.to as usize].pos.distance(goal), e.to));
+                    heap.push(Item(nd + h(e.to), e.to));
                 }
             }
         }
@@ -449,56 +484,54 @@ impl WalkGraph {
     }
 }
 
-/// Polygon ring inset by `d`, same vertex count, or empty if it collapses.
-fn inset_ring(poly: &[Vec2], d: f32) -> Vec<Vec2> {
-    let n = poly.len();
-    let ccw = crate::zoning::polygon_area(poly) > 0.0;
-    let sign = if ccw { 1.0 } else { -1.0 };
-    let mut out = Vec::with_capacity(n);
-    for i in 0..n {
-        let p0 = poly[(i + n - 1) % n];
-        let p1 = poly[i];
-        let p2 = poly[(i + 1) % n];
-        let d1 = (p1 - p0).normalize_or_zero();
-        let d2 = (p2 - p1).normalize_or_zero();
-        let n1 = Vec2::new(-d1.y, d1.x) * sign;
-        let n2 = Vec2::new(-d2.y, d2.x) * sign;
-        let m = (n1 + n2).normalize_or_zero();
-        let scale = if m == Vec2::ZERO { 1.0 } else { (1.0 / m.dot(n1).max(0.3)).min(2.5) };
-        let m = if m == Vec2::ZERO { n1 } else { m };
-        out.push(p1 + m * d * scale);
-    }
-    if crate::zoning::polygon_area(&out).abs() < 4.0 {
-        return Vec::new();
-    }
-    out
-}
-
-/// Length of the stretch where segment `ab` runs along segment `cd`
-/// (collinear within a metre, opposite or same direction).
-fn shared_length(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> Option<f32> {
-    let ab = b - a;
-    let len = ab.length();
-    if len < 1e-3 {
-        return None;
-    }
-    let dir = ab / len;
-    let nrm = Vec2::new(-dir.y, dir.x);
-    let off_c = (c - a).dot(nrm).abs();
-    let off_d = (d - a).dot(nrm).abs();
-    if off_c > 1.0 || off_d > 1.0 {
-        return None;
-    }
-    let tc = (c - a).dot(dir);
-    let td = (d - a).dot(dir);
-    let (lo, hi) = (tc.min(td).max(0.0), tc.max(td).min(len));
-    (hi > lo).then_some(hi - lo)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::zoning::{generate_lots, Zone, ZoneId};
+
+    /// A hand-built graph: `nodes` positions and `edges` as (a, b, interior, park).
+    fn graph(nodes: &[Vec2], edges: &[(u32, u32, bool, bool)]) -> WalkGraph {
+        let mut g = WalkGraph::default();
+        for p in nodes {
+            g.add_node(*p, None);
+        }
+        for &(a, b, interior, park) in edges {
+            g.link_kind(a, b, interior, park);
+        }
+        g.index = Grid::new(NODE_CELL, g.nodes.iter().map(|n| (n.pos, n.pos)));
+        g
+    }
+
+    #[test]
+    fn the_heuristic_never_talks_a_route_out_of_a_cheaper_park_path() {
+        // Start and goal 100 m apart on a pavement; a park path makes a
+        // detour of 108 m that costs 99.36 with the park factor. With the
+        // plain straight-line heuristic the goal popped first (f = 100
+        // against 103.68 for the detour's corner) and the dearer pavement
+        // was returned.
+        let s = Vec2::ZERO;
+        let goal = Vec2::new(100.0, 0.0);
+        let corner = Vec2::new(50.0, (54.0f32 * 54.0 - 50.0 * 50.0).sqrt());
+        let g = graph(&[s, goal, corner], &[(0, 1, false, false), (0, 2, true, true), (2, 1, true, true)]);
+        let route = g.route_nodes(0, 1).expect("route");
+        assert_eq!(route, vec![0, 2, 1], "the park detour is cheaper: 0.92 x 108 < 100");
+        // And the pavement wins once the detour costs more than it saves.
+        let far = Vec2::new(50.0, 40.0);
+        let g = graph(&[s, goal, far], &[(0, 1, false, false), (0, 2, true, true), (2, 1, true, true)]);
+        assert_eq!(g.route_nodes(0, 1).unwrap(), vec![0, 1]);
+    }
+
+    #[test]
+    fn nearest_node_matches_a_scan_and_respects_the_radius() {
+        let pts: Vec<Vec2> = (0..15).flat_map(|y| (0..15).map(move |x| Vec2::new(x as f32 * 9.0, y as f32 * 9.0))).collect();
+        let g = graph(&pts, &[]);
+        for q in [Vec2::new(4.5, 4.5), Vec2::new(31.0, 70.2), Vec2::new(-3.0, 200.0), Vec2::new(63.0, 63.0)] {
+            let lin = (0..pts.len()).filter(|&i| pts[i].distance(q) <= 60.0).min_by(|&a, &b| pts[a].distance(q).total_cmp(&pts[b].distance(q))).map(|i| i as u32);
+            assert_eq!(g.nearest(q, 60.0), lin, "at {q:?}");
+        }
+        assert!(g.nearest(Vec2::new(500.0, 500.0), 60.0).is_none());
+        assert!(WalkGraph::default().nearest(Vec2::ZERO, 60.0).is_none());
+    }
 
     #[test]
     fn walkers_cut_through_blocks_and_shops_see_them() {
