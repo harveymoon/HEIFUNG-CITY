@@ -148,6 +148,26 @@ impl MeshData {
         self.indices.extend(other.indices.iter().map(|i| i + base));
     }
 
+    /// Split off everything added since the mesh had `vstart` vertices and
+    /// `istart` indices, rebased to start at zero. Meshes only grow by
+    /// appending, so the tail's indices all point into the tail.
+    pub fn take_from(&mut self, vstart: usize, istart: usize) -> MeshData {
+        let vstart = vstart.min(self.positions.len());
+        let istart = istart.min(self.indices.len());
+        let mut out = MeshData {
+            positions: self.positions.split_off(vstart),
+            normals: self.normals.split_off(vstart.min(self.normals.len())),
+            colors: self.colors.split_off(vstart.min(self.colors.len())),
+            uvs: self.uvs.split_off(vstart.min(self.uvs.len())),
+            tangents: self.tangents.split_off(vstart.min(self.tangents.len())),
+            indices: self.indices.split_off(istart),
+        };
+        for i in &mut out.indices {
+            *i -= vstart as u32;
+        }
+        out
+    }
+
     fn push(&mut self, p: Vec3, n: Vec3, color: [f32; 4], basis: (Vec3, Vec3)) {
         self.positions.push(p.to_array());
         self.normals.push(n.to_array());

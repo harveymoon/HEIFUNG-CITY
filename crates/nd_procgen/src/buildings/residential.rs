@@ -1,6 +1,6 @@
 //! Homes: container piles and brick walk-ups for the poor, concrete slabs and
-//! courtyard blocks for the middle, glass, terraces and walled compounds for
-//! the rich.
+//! courtyard blocks for the middle, glass and terraces for the rich (the
+//! glass castle lives in `towers`).
 
 use super::parts::*;
 use super::{Ctx, Face};
@@ -681,9 +681,13 @@ pub fn crystal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         let crown = top.iter().fold(Vec3::ZERO, |a, p| a + *p) / top.len() as f32;
         if main {
-            let spire = rng.random_range(4.0..12.0);
-            g.part(Matte).frustum(&MeshData::ngon(top_center, r * taper * 0.5, sides, rot, podium_h + h), &MeshData::ngon(top_center, 0.3, sides, rot, podium_h + h + spire), rgba(pal.steel));
-            g.part(Glow).boxed(Vec3::new(crown.x, podium_h + h + spire + 0.15, crown.z), Vec3::splat(0.5), 0.0, rgba(pal.aviation_light));
+            // A faceted, lit cap rather than a needle: the top ring lifted
+            // into a short shallow prism with a glowing seam.
+            let cap_top = MeshData::ngon(top_center, r * taper * 0.55, sides, rot + 0.3, podium_h + h + (r * taper * 0.6).clamp(1.5, 5.0));
+            g.part(Glass).frustum(&top, &cap_top, rgba(mul(glass, 1.15)));
+            g.part(Glow).frustum(&top.iter().map(|p| *p + Vec3::Y * 0.02).collect::<Vec<_>>(), &top.iter().map(|p| *p + Vec3::Y * 0.22).collect::<Vec<_>>(), rgba(mul(pal.window_cold, 0.8)));
+            let top_y = cap_top[0].y;
+            g.part(Glow).boxed(Vec3::new(crown.x, top_y + 0.15, crown.z), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
         } else {
             g.part(Glow).boxed(Vec3::new(crown.x, podium_h + h + 0.15, crown.z), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
         }
@@ -704,115 +708,6 @@ pub fn crystal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         front.bx(g, f, Glow, t, 0.45, -0.8, Vec3::new(0.25, 0.9, 0.25), mul(pal.lamp, 0.7));
     }
     entrance(g, c, rng, &front, 0.0, 3.0, podium_h * 0.8);
-}
-
-// ── fortress compounds ───────────────────────────────────────────────────────
-
-pub fn fortress(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
-    let f = &c.frame;
-    let pal = c.palette;
-    let stone = mul(pal.stone, 1.0 + rng.random_range(0.0..0.4));
-    let wall_h = rng.random_range(6.0..9.5);
-    let wall_t = 1.4;
-    let lit_chance = c.lit_chance();
-    let poly = offset_poly(&c.lot_poly, 0.8);
-    let faces = c.faces(&poly);
-    let front = c.front_face(&poly);
-    let gate_w = 5.0;
-
-    ground(g, f, Paving, &poly, 0.04, mul(pal.paving, 1.1));
-    for face in &faces {
-        let is_gate = face.a.distance(front.a) < 0.1;
-        if is_gate && face.len > gate_w + 4.0 {
-            let side = (face.len - gate_w) * 0.5;
-            face.bx(g, f, Stone, -(gate_w * 0.5 + side * 0.5), wall_h * 0.5, -wall_t * 0.5, Vec3::new(side, wall_h, wall_t), stone);
-            face.bx(g, f, Stone, gate_w * 0.5 + side * 0.5, wall_h * 0.5, -wall_t * 0.5, Vec3::new(side, wall_h, wall_t), stone);
-            // Gatehouse with lintel, lamp and warning light.
-            face.bx(g, f, Stone, 0.0, wall_h + 1.0, -wall_t * 0.5, Vec3::new(gate_w + 2.0, 2.4, wall_t + 1.5), mul(stone, 0.9));
-            face.bx(g, f, Glow, 0.0, wall_h + 2.4, 0.9, Vec3::new(0.6, 0.3, 0.3), pal.aviation_light);
-            face.bx(g, f, Stone, 0.0, 4.9, -wall_t * 0.5, Vec3::new(gate_w + 0.6, 0.6, wall_t), mul(stone, 0.9));
-            face.bx(g, f, Glow, 0.0, 4.55, -wall_t * 0.5, Vec3::new(gate_w * 0.8, 0.1, 0.4), mul(pal.lamp, 1.1));
-            face.bx(g, f, Matte, -gate_w * 0.25, 2.2, -wall_t * 0.5, Vec3::new(gate_w * 0.48, 4.4, 0.12), CHARCOAL);
-            bollards(g, c, face, 4, 1.4);
-        } else {
-            // The wall stops short of an acute corner it would poke through.
-            let mut half = face.len * 0.5 + wall_t * 0.5;
-            while half > 1.0 && !(c.inside_local(face.at(-half, -wall_t)) && c.inside_local(face.at(half, -wall_t))) {
-                half -= 0.4;
-            }
-            face.bx(g, f, Stone, 0.0, wall_h * 0.5, -wall_t * 0.5, Vec3::new(half * 2.0, wall_h, wall_t), stone);
-        }
-        // Crenellations.
-        let n = (face.len / 2.0).floor() as i32;
-        for k in 0..n {
-            let t = -face.len * 0.5 + 1.0 + k as f32 * 2.0;
-            if is_gate && t.abs() < gate_w * 0.5 + 1.0 {
-                continue;
-            }
-            face.bx(g, f, Stone, t, wall_h + 0.5, -wall_t * 0.5, Vec3::new(1.0, 1.0, wall_t), stone);
-        }
-    }
-    // Corner towers at every vertex, pulled in so they stand on the lot.
-    let pc = poly_center(&poly);
-    for p in &poly {
-        let p = &(*p + (pc - *p).normalize_or_zero() * 2.0);
-        // Towers at acute corners shrink to the room they have.
-        let tr = (2.6f32).min(distance_to_boundary(*p, &c.lot_poly) - 0.1);
-        if tr < 1.2 || !c.inside_local(*p) {
-            continue;
-        }
-        let center = f.to_world(p.x, p.y);
-        let th = wall_h + rng.random_range(4.0..9.0);
-        g.part(Stone).frustum(&MeshData::ngon(center, tr, 8, 0.0, 0.0), &MeshData::ngon(center, tr * 0.85, 8, 0.0, th), rgba(stone));
-        g.part(Stone).frustum(&MeshData::ngon(center, tr, 8, 0.0, th), &MeshData::ngon(center, 0.6, 8, 0.0, th + 2.5), rgba(mul(stone, 0.8)));
-        let dir = (pc - *p).normalize_or_zero();
-        for k in 0..3 {
-            if coin(rng, lit_chance) {
-                let wc = pick(rng, &c.style.window_colors);
-                let wy = wall_h + 1.5 + k as f32 * 1.6;
-                let radius = tr - 0.4 * (wy / th).clamp(0.0, 1.0);
-                let q = f.to_world(p.x + dir.x * (radius - 0.1), p.y + dir.y * (radius - 0.1));
-                g.part(Glow).boxed(Vec3::new(q.x, wy, q.y), Vec3::new(0.3, 1.0, 0.3), 0.0, rgba(wc));
-            }
-        }
-    }
-    // Keep: a tapered core with a lantern top, following the parcel shape.
-    let keep_h = c.height().max(wall_h + 10.0);
-    let keep = fit_inside(c, &shift_poly(&scale_poly(&poly, 0.42), Vec2::new(0.0, inradius(&poly) * 0.25)));
-    loft(g, f, Stone, &keep, &scale_poly(&keep, 0.72), 0.0, keep_h, mul(stone, 1.15));
-    loft(g, f, Stone, &scale_poly(&keep, 0.8), &scale_poly(&keep, 0.5), keep_h, keep_h + 3.0, mul(stone, 0.9));
-    extrude(g, f, Glow, &scale_poly(&keep, 0.73), keep_h - 1.2, keep_h - 0.4, mul(c.style.window_color(0), 0.9));
-    let fl = (keep_h / c.fh()) as i32;
-    for face in c.faces(&keep) {
-        for k in 1..fl {
-            if !coin(rng, lit_chance) {
-                continue;
-            }
-            let t = k as f32 / fl as f32;
-            let shrink = 1.0 - 0.28 * t;
-            let p = poly_center(&keep) + (face.mid() - poly_center(&keep)) * shrink;
-            let tt = rng.random_range(-face.len * 0.3..face.len * 0.3) * shrink;
-            let q = p + face.tangent * tt;
-            f.bx_yaw(g, Glow, q.x, k as f32 * c.fh() + 1.2, q.y, Vec3::new(0.45, 1.6, 0.1), pick(rng, &c.style.window_colors), face.yaw());
-        }
-    }
-    // Annex, garden, pool and lamps.
-    let annex = fit_inside(c, &shift_poly(&scale_poly(&poly, 0.3), Vec2::new(-inradius(&poly) * 0.5, -inradius(&poly) * 0.3)));
-    extrude(g, f, Stone, &annex, 0.0, 8.0, mul(stone, 1.05));
-    curtain_lights(g, c, rng, &annex, 0.0, 2, 4.0);
-    let garden = Vec2::new(inradius(&poly) * 0.5, -inradius(&poly) * 0.35);
-    if poly_inside(c, &rect(garden.x, garden.y, 3.9, 2.7)) {
-        pool(g, c, garden.x, garden.y, 6.0, 3.5);
-        if c.inside_local(garden + Vec2::new(8.5, 2.0)) && c.inside_local(garden + Vec2::new(0.5, 2.0)) && c.inside_local(garden + Vec2::new(4.5, 6.0)) && c.inside_local(garden + Vec2::new(4.5, -2.0)) {
-            tree(g, f, garden + Vec2::new(4.5, 2.0), 5.0, 4.0, pal.bark, pal.foliage);
-        }
-    }
-    for face in &faces {
-        if face.len > 8.0 {
-            lamp_post_in(g, c, face.at(-face.len * 0.3, -2.0), 3.0, pal.lamp);
-            lamp_post_in(g, c, face.at(face.len * 0.3, -2.0), 3.0, pal.lamp);
-        }
-    }
 }
 
 // ── garden tower ─────────────────────────────────────────────────────────────

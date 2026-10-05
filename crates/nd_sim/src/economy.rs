@@ -155,6 +155,25 @@ pub struct Economy {
     /// Treasury sources and sinks by name.
     #[serde(default)]
     pub ledger: Ledger,
+    /// Households in town, and how many have each size (index = members,
+    /// 5 counts five or more; index 0 is unused).
+    #[serde(default)]
+    pub households: u32,
+    #[serde(default)]
+    pub household_sizes: [u32; 6],
+    /// Households whose rent is over half their income.
+    #[serde(default)]
+    pub rent_stressed_households: u32,
+    /// Households who wanted a home of each tier and found none they could
+    /// afford (newcomers turned away, stressed tenants looking for cheaper);
+    /// decays daily. Pulls new housing towards that tier.
+    #[serde(default)]
+    pub housing_demand_by_tier: [f32; 3],
+    /// Population at the last midnight, and the day's growth as a share of it.
+    #[serde(default)]
+    pub population_yesterday: u32,
+    #[serde(default)]
+    pub growth_per_day: f32,
 }
 
 fn default_treasury() -> f32 {
@@ -171,6 +190,19 @@ impl Economy {
     /// Money out of the treasury, booked under `flow`.
     pub fn debit(&mut self, flow: Flow, amount: f32) {
         self.credit(flow, -amount);
+    }
+
+    /// How far ahead the food chain orders: one plus the day's growth, so a
+    /// town growing by a third a day stocks a third more. Capped at double.
+    pub fn food_order_factor(&self) -> f32 {
+        (1.0 + self.growth_per_day).clamp(1.0, 2.0)
+    }
+
+    /// Close the day's population count.
+    pub fn roll_population(&mut self, population: u32) {
+        let base = self.population_yesterday.max(50) as f32;
+        self.growth_per_day = (population as f32 - self.population_yesterday as f32) / base;
+        self.population_yesterday = population;
     }
 
     pub fn demand_for(&self, lu: LandUse) -> f32 {
@@ -212,5 +244,23 @@ impl Economy {
         }
         let weighted: f32 = incomes.iter().enumerate().map(|(i, &x)| (i as f32 + 1.0) * x).sum();
         ((2.0 * weighted) / (n * total) - (n + 1.0) / n).clamp(0.0, 1.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn growth_drives_the_food_order_factor() {
+        let mut e = Economy::default();
+        e.roll_population(0);
+        assert_eq!(e.food_order_factor(), 1.0);
+        e.roll_population(400);
+        assert_eq!(e.food_order_factor(), 2.0, "a boom from nothing is capped at double");
+        e.roll_population(600);
+        assert!((e.food_order_factor() - 1.5).abs() < 1e-4);
+        e.roll_population(500);
+        assert_eq!(e.food_order_factor(), 1.0, "shrinking never orders less than today");
     }
 }

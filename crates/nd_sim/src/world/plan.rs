@@ -318,6 +318,36 @@ impl World {
         }
     }
 
+    /// Is this one of the city's own structures (a plant, depot, station
+    /// or yard)? Those are never taken over by another placement; the player
+    /// bulldozes them first.
+    pub(super) fn is_civic_structure(b: &Building) -> bool {
+        b.plant.is_some() || b.depot || b.rail.is_some()
+    }
+
+    /// The city takes a lot for one of its own structures: whatever grew
+    /// there (homes, a shop, a site still going up) is bought out and pulled
+    /// down, its residents and staff move on with a memory of it. Another
+    /// civic structure is not replaced: that is an error the player sees.
+    pub(super) fn take_over_lot(&mut self, lot_id: LotId, for_what: &str) -> Result<(), String> {
+        let Some(bid) = self.lots.get(lot_id).and_then(|l| l.building) else { return Ok(()) };
+        let Some(b) = self.buildings.get(bid) else { return Ok(()) };
+        if Self::is_civic_structure(b) {
+            return Err(format!("{} stands there; bulldoze it first", b.name));
+        }
+        self.check_take_over(bid)?;
+        let memory = format!("The city bought out {} to build a {for_what}. Had to move on.", b.name);
+        self.events.push(SimEvent::Expropriated(bid, lot_id));
+        self.demolish_with(bid, None, Some(&memory));
+        Ok(())
+    }
+
+    /// Hook for refusing a take-over (none today: the city may take any
+    /// grown building).
+    fn check_take_over(&self, _bid: BuildingId) -> Result<(), String> {
+        Ok(())
+    }
+
     pub(super) fn demolish(&mut self, bid: BuildingId) {
         self.demolish_with(bid, None, None);
     }

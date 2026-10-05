@@ -72,6 +72,8 @@ impl World {
         self.economy.market.imports_today = 0.0;
         self.economy.market.exports_today = 0.0;
         self.economy.market.meals_sold_today = 0;
+        self.economy.market.grocery_imports_today = 0.0;
+        self.economy.market.turned_away_today = 0;
     }
 
     /// Every sim hour: hunger, eating at home, production, restocking through
@@ -80,23 +82,19 @@ impl World {
         let tick = self.clock.tick;
         self.weather.step(&mut self.rng);
         self.allocate_power();
-        // Hunger and home cooking.
-        for c in self.citizens.values_mut() {
-            c.satiety = (c.satiety - 0.04).max(0.0);
-            let at_home = c.home.is_some() && c.inside == c.home;
-            if at_home && c.satiety < 0.6 && c.groceries >= 1.0 {
-                c.groceries -= 1.0;
-                c.satiety = (c.satiety + 0.45).min(1.0);
-            }
-        }
-        // Production.
+        self.sync_households();
+        let exhausted = self.sleep_and_eat();
+        self.venue_tabs();
+        // Production. Workers dead on their feet do half a shift's work.
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         for &bid in &ids {
             let b = &mut self.buildings[bid];
             if b.construction.is_some() {
                 continue;
             }
-            let (jobs, staffing) = (b.jobs, b.staffing());
+            let tired = exhausted.get(&bid).copied().unwrap_or(0) as f32;
+            let jobs = b.jobs;
+            let staffing = if jobs == 0 { 0.0 } else { ((b.workers.len() as f32 - tired * 0.5) / jobs as f32).clamp(0.0, 1.0) };
             if let Some(bz) = b.business.as_mut() {
                 if !bz.closed {
                     bz.produce(jobs, staffing * b.powered.clamp(0.0, 1.0));
@@ -104,7 +102,8 @@ impl World {
             }
         }
         // Walk-in trade: a share of the people who passed a shop this hour
-        // step inside and buy something off the shelf.
+        // step inside and buy something off the shelf, if it is open.
+        let hour = self.clock.hour() as u8;
         for &bid in &ids {
             let (lot, jobs) = (self.buildings[bid].lot, self.buildings[bid].jobs);
             let feet = self.lots.get(lot).map_or(0, |l| l.footfall_hour);
@@ -115,8 +114,9 @@ impl World {
             if b.construction.is_some() {
                 continue;
             }
+            let open = b.opening_hours().contains(hour);
             let Some(bz) = b.business.as_mut() else { continue };
-            if bz.closed {
+            if bz.closed || !open {
                 continue;
             }
             let output = match bz.kind {
@@ -141,8 +141,13 @@ impl World {
         for l in self.lots.values_mut() {
             l.footfall_hour = 0;
         }
-        // Restocking: find the cheapest delivered supplier or import.
+        // Restocking: find the cheapest delivered supplier or import. The
+        // food chain orders ahead of a growing town, and grocers short of
+        // groceries for the people they serve buy some in from outside.
         self.refresh_seller_index();
+        let food_factor = self.economy.food_order_factor();
+        let grocery_share = self.grocery_share_per_day();
+        let grocery_short = grocery_share > 0.0 && self.town_grocery_stock() < self.citizens.len() as f32 * crate::citizens::GROCERIES_PER_PERSON_DAY * 0.25;
         for &bid in &ids {
             let (kind, jobs, needs, at, closed) = {
                 let b = &self.buildings[bid];
@@ -151,7 +156,11 @@ impl World {
                 }
                 let Some(bz) = &b.business else { continue };
                 let Some(lot) = self.lots.get(b.lot) else { continue };
-                let needs: Vec<(Resource, f32)> = bz
+                // (resource, what is short of the usual target, what more
+                // the food chain wants ahead of growth). The extra is only
+                // bought locally: ordering ahead never imports.
+                let factor = if bz.kind.is_food() { food_factor } else { 1.0 };
+                let mut needs: Vec<(Resource, f32, f32)> = bz
                     .kind
                     .recipe()
                     .inputs
@@ -159,18 +168,49 @@ impl World {
                     .filter_map(|(r, _)| {
                         let target = bz.target_input(*r, b.jobs);
                         let have = bz.stock_of(*r) + bz.inbound_of(*r);
-                        if have < target * 0.5 { Some((*r, target - have)) } else { None }
+                        if have < target * factor * 0.5 {
+                            let short = (target - have).max(0.0);
+                            Some((*r, short, target * factor - have - short))
+                        } else {
+                            None
+                        }
                     })
                     .collect();
+                // Shelves nearly bare while the whole town is short: buy
+                // groceries in from outside to cover half a day.
+                if bz.kind == BusinessKind::Grocery && grocery_short {
+                    let have = bz.stock_of(Resource::Groceries) + bz.inbound_of(Resource::Groceries);
+                    if have < grocery_share * 0.25 {
+                        needs.push((Resource::Groceries, grocery_share * 0.5 - have, 0.0));
+                    }
+                }
                 (bz.kind, b.jobs, needs, lot.center, bz.closed)
             };
             let _ = (kind, jobs);
             if closed {
                 continue;
             }
-            for (r, amount) in needs {
-                let amount = amount.min(400.0);
-                let seller = self.best_seller(r, at, amount, bid);
+            for (r, short, ahead) in needs {
+                // Grocers never buy groceries from each other: short shelves
+                // in town are filled from outside.
+                let local = !(r == Resource::Groceries && kind == BusinessKind::Grocery);
+                let full = (short + ahead).min(400.0);
+                let seller = if !local {
+                    None
+                } else {
+                    match self.best_seller(r, at, full, bid) {
+                        Some(s) => Some((s, full)),
+                        None if short > 0.0 => self.best_seller(r, at, short.min(400.0), bid).map(|s| (s, short.min(400.0))),
+                        None => None,
+                    }
+                };
+                let (seller, amount) = match seller {
+                    Some((s, amount)) => (Some(s), amount),
+                    None => (None, short.min(400.0)),
+                };
+                if amount <= 0.0 {
+                    continue;
+                }
                 match seller {
                     Some((seller_id, price)) => {
                         let got = self.buildings[seller_id].business.as_mut().unwrap().take(r, amount);
@@ -193,13 +233,20 @@ impl World {
                         self.ship(seller_id, bid, r, got, cost);
                     }
                     None => {
-                        let cost = amount * r.base_price() * IMPORT_MARKUP;
+                        // Groceries bought in for a hungry town come at wholesale, not
+                        // at the import markup: a grocer covering a shortage
+                        // should not be ruined by it.
+                        let markup = if r == Resource::Groceries { 1.0 } else { IMPORT_MARKUP };
+                        let cost = amount * r.base_price() * markup;
                         {
                             let bb = self.buildings[bid].business.as_mut().unwrap();
                             bb.money -= cost;
                             bb.spend_today += cost;
                         }
                         self.economy.market.imports_today += cost;
+                        if r == Resource::Groceries {
+                            self.economy.market.grocery_imports_today += amount;
+                        }
                         self.import(bid, r, amount, cost);
                     }
                 }
@@ -267,6 +314,95 @@ impl World {
         }
         m.hungry = self.citizens.values().filter(|c| c.satiety < 0.3).count() as u32;
         let _ = tick;
+    }
+
+    /// Every hour: people sleep at home or tire; satiety drains (slower
+    /// asleep); people at home eat from the household pantry, those out eat
+    /// the meal they packed. Returns how many exhausted people are at work
+    /// in each building, for production; working exhausted costs mood.
+    pub(super) fn sleep_and_eat(&mut self) -> HashMap<BuildingId, u16> {
+        let tick = self.clock.tick;
+        let hour = self.clock.hour();
+        let night = !(6..22).contains(&hour);
+        let mut exhausted: HashMap<BuildingId, u16> = HashMap::new();
+        for c in self.citizens.values_mut() {
+            let at_home = c.home.is_some() && c.inside == c.home && matches!(c.activity, Activity::AtHome);
+            if !at_home {
+                c.asleep = false;
+            } else if !c.asleep && (night || c.wakefulness < crate::citizens::TIRED) {
+                c.asleep = true;
+            }
+            if c.asleep {
+                c.wakefulness = (c.wakefulness + 0.12).min(1.0);
+                if c.wakefulness >= 0.95 && !night {
+                    c.asleep = false;
+                    c.next_decision_tick = c.next_decision_tick.min(tick + 1);
+                }
+            } else {
+                let working = matches!(c.activity, Activity::Working);
+                c.wakefulness = (c.wakefulness - if working { 0.055 } else { 0.045 }).max(0.0);
+                if working && c.wakefulness < crate::citizens::EXHAUSTED {
+                    if let Some(w) = c.work {
+                        *exhausted.entry(w).or_default() += 1;
+                    }
+                    c.mood = (c.mood - 0.02).max(0.0);
+                }
+            }
+            c.satiety = (c.satiety - if c.asleep { 0.02 } else { 0.04 }).max(0.0);
+            let pantry = c.household.and_then(|h| self.households.get_mut(h));
+            if at_home && c.satiety < 0.65 {
+                if let Some(hh) = pantry {
+                    if hh.groceries >= 1.0 {
+                        hh.groceries -= 1.0;
+                        c.satiety = (c.satiety + 0.45).min(1.0);
+                    }
+                    c.groceries = hh.groceries;
+                } else if c.groceries >= 1.0 {
+                    c.groceries -= 1.0;
+                    c.satiety = (c.satiety + 0.45).min(1.0);
+                }
+            } else if !at_home && c.satiety < 0.45 && c.packed_meal >= 1.0 {
+                c.packed_meal -= 1.0;
+                c.satiety = (c.satiety + 0.45).min(1.0);
+            }
+        }
+        exhausted
+    }
+
+    /// Every hour out at a venue is a round of drinks, paid from the
+    /// pocket while there is pocket money for it.
+    pub(super) fn venue_tabs(&mut self) {
+        for c in self.citizens.values_mut() {
+            let Activity::Visiting(b) = c.activity else { continue };
+            if c.savings < VENUE_TAB {
+                continue;
+            }
+            let Some(bz) = self.buildings.get_mut(b).and_then(|b| b.business.as_mut()) else { continue };
+            if bz.kind != BusinessKind::Venue || bz.closed {
+                continue;
+            }
+            c.savings -= VENUE_TAB;
+            bz.money += VENUE_TAB;
+            bz.revenue_today += VENUE_TAB;
+            c.mood = (c.mood + 0.01).min(1.0);
+        }
+    }
+
+    /// Groceries on the shelves of every open grocer in town.
+    pub(super) fn town_grocery_stock(&self) -> f32 {
+        self.buildings.values().filter(|b| b.construction.is_none()).filter_map(|b| b.business.as_ref()).filter(|z| z.kind == BusinessKind::Grocery && !z.closed).map(|z| z.stock_of(Resource::Groceries)).sum()
+    }
+
+    /// Groceries a day each open grocer should have for its share of the
+    /// town (everyone eats `GROCERIES_PER_PERSON_DAY`), grown by the food
+    /// order factor; zero when no grocer is open.
+    pub(super) fn grocery_share_per_day(&self) -> f32 {
+        let grocers = self.buildings.values().filter(|b| b.construction.is_none() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Grocery && !z.closed)).count();
+        if grocers == 0 {
+            return 0.0;
+        }
+        // Bakeries feed some of it; grocers cover two thirds.
+        self.citizens.len() as f32 * crate::citizens::GROCERIES_PER_PERSON_DAY * 0.66 * self.economy.food_order_factor() / grocers as f32
     }
 
     /// Goods waiting at a yard no freight train will reach go by truck:
@@ -450,12 +586,14 @@ impl World {
         self.buildings.values().any(|b| b.construction.is_none() && b.business.as_ref().map_or(false, |bz| !bz.closed && bz.sells(r) && bz.stock_of(r) >= 1.0))
     }
 
-    /// Nearest well-stocked shop for a resource, cheapest within reach.
+    /// Nearest well-stocked shop for a resource, cheapest within reach,
+    /// among those open now with room inside.
     pub(super) fn best_shop(&self, r: Resource, at: Vec2) -> Option<BuildingId> {
+        let hour = self.clock.hour() as u8;
         let mut best: Option<(f32, BuildingId)> = None;
         for (id, b) in self.buildings.iter() {
             let Some(bz) = &b.business else { continue };
-            if b.construction.is_some() || bz.closed || !bz.sells(r) || bz.stock_of(r) < 1.0 {
+            if b.construction.is_some() || bz.closed || !bz.sells(r) || bz.stock_of(r) < 1.0 || !b.serves_at(hour) {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };
@@ -474,14 +612,19 @@ impl World {
         let jobs = b.jobs;
         let name = b.name.clone();
         let Some(bz) = b.business.as_mut() else { return };
-        let want: f32 = match r {
-            Resource::Groceries => 3.0,
-            _ => 1.0,
-        };
         let price = bz.sell_price(r, jobs);
         let c = &mut self.citizens[cid];
+        // Groceries are bought for the household's pantry from its purse,
+        // enough to fill it; the rest from the shopper's pocket.
+        let hh = if r == Resource::Groceries { c.household.and_then(|h| self.households.get_mut(h)) } else { None };
+        let want: f32 = match (&hh, r) {
+            (Some(h), _) => (h.pantry_target() - h.groceries).clamp(2.0, 15.0).floor(),
+            (None, Resource::Groceries) => 3.0,
+            _ => 1.0,
+        };
+        let purse = hh.as_ref().map_or(c.savings, |h| h.money + c.savings.max(0.0));
         // Buy what the overdraft allows, whole units; nothing if not even one.
-        let affordable = ((c.savings - OVERDRAFT) / price).floor();
+        let affordable = ((purse - OVERDRAFT) / price).floor();
         if affordable < 1.0 {
             c.remember(tick, format!("Couldn't afford anything at {name}."));
             c.thought = "Skint. Can't even afford the basics.".to_string();
@@ -495,13 +638,22 @@ impl World {
             return;
         }
         let cost = got * price;
-        c.savings -= cost;
+        match hh {
+            Some(h) => {
+                h.money -= cost;
+                h.groceries += got;
+                c.groceries = h.groceries;
+            }
+            None => c.savings -= cost,
+        }
         bz.money += cost;
         bz.revenue_today += cost;
         self.economy.market.deals_today += 1;
         match r {
             Resource::Groceries => {
-                c.groceries += got;
+                if c.household.is_none() {
+                    c.groceries += got;
+                }
                 self.economy.market.meals_sold_today += got as u32;
             }
             Resource::BakedGoods => {
@@ -519,6 +671,9 @@ impl World {
         }
     }
 }
+
+/// A round at a venue, per hour spent there.
+pub(super) const VENUE_TAB: f32 = 5.0;
 
 /// Where a truck sets off from.
 #[derive(Clone, Copy, Debug)]

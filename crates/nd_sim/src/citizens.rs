@@ -7,6 +7,85 @@ use slotmap::new_key_type;
 
 new_key_type! {
     pub struct CitizenId;
+    pub struct HouseholdId;
+}
+
+/// Age at which a child becomes an adult who works.
+pub const ADULT_AGE: u8 = 18;
+/// Age at which an adult retires and lives on a pension.
+pub const RETIRE_AGE: u8 = 67;
+/// School years. Nothing uses them yet: when schools exist, children of this
+/// age go to one during the day (see `Citizen::goes_to_school`).
+pub const SCHOOL_AGES: std::ops::Range<u8> = 6..ADULT_AGE;
+/// Daily pension of a retiree.
+pub const PENSION: f32 = 45.0;
+/// Groceries one person eats in a day (a unit restores 0.45 satiety, and
+/// satiety drains about 0.8 a day).
+pub const GROCERIES_PER_PERSON_DAY: f32 = 2.0;
+/// Days of groceries a household tries to keep at home.
+pub const PANTRY_DAYS: f32 = 2.5;
+/// Pocket money each adult carries for fares, lunches and treats; the rest
+/// of the household's money is shared.
+pub const POCKET_MONEY: f32 = 40.0;
+
+/// Where a citizen is in life: children neither work nor pay, adults work,
+/// retirees draw a pension.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum LifeStage {
+    Child,
+    Adult,
+    Retiree,
+}
+
+impl LifeStage {
+    pub fn of_age(age: u8) -> Self {
+        if age < ADULT_AGE {
+            LifeStage::Child
+        } else if age < RETIRE_AGE {
+            LifeStage::Adult
+        } else {
+            LifeStage::Retiree
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LifeStage::Child => "child",
+            LifeStage::Adult => "adult",
+            LifeStage::Retiree => "retiree",
+        }
+    }
+}
+
+/// The people who share a home, a purse and a pantry: one to five citizens
+/// of any age. A home holds one household; rent and groceries are paid from
+/// its money. Each member keeps their own mood, memories and personality.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Household {
+    pub members: Vec<CitizenId>,
+    pub home: Option<BuildingId>,
+    /// Shared money: every member's earnings come in, rent and groceries go
+    /// out. Adults also carry `Citizen::savings` as pocket money.
+    pub money: f32,
+    /// Meals stocked at home, for everyone.
+    pub groceries: f32,
+    /// Consecutive days the rent ate more than half the household income.
+    #[serde(default)]
+    pub rent_stress_days: u8,
+    /// Day the household moved in (or arrived), so nobody moves twice a day.
+    #[serde(default)]
+    pub moved_day: u64,
+}
+
+impl Household {
+    pub fn size(&self) -> usize {
+        self.members.len()
+    }
+
+    /// Groceries the household likes to have at home.
+    pub fn pantry_target(&self) -> f32 {
+        self.members.len().max(1) as f32 * GROCERIES_PER_PERSON_DAY * PANTRY_DAYS
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,7 +249,37 @@ pub struct Citizen {
     /// nothing, and not per leg of a bus or train trip).
     #[serde(default)]
     pub pending_footfall: Vec<LotId>,
+    /// The household this citizen lives with. Old saves get one household
+    /// per citizen on load.
+    #[serde(default)]
+    pub household: Option<HouseholdId>,
+    /// Age in years; saves from before ages count everyone as an adult.
+    #[serde(default = "default_age")]
+    pub age: u8,
+    /// Alertness in `0..1`: drains while awake, restored by sleeping at home.
+    #[serde(default = "one")]
+    pub wakefulness: f32,
+    /// Asleep at home (until rested and it is day).
+    #[serde(default)]
+    pub asleep: bool,
+    /// A meal taken from the household pantry on the way out, eaten when
+    /// hungry away from home.
+    #[serde(default)]
+    pub packed_meal: f32,
 }
+
+fn default_age() -> u8 {
+    35
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+/// Wakefulness below this and a citizen heads home to sleep.
+pub const TIRED: f32 = 0.2;
+/// Wakefulness below this at work and the shift goes badly.
+pub const EXHAUSTED: f32 = 0.12;
 
 impl Citizen {
     /// Record the current position if the citizen has moved on since the
@@ -200,6 +309,34 @@ impl Citizen {
 
     pub fn class(&self) -> Tier {
         Tier::for_income(self.income)
+    }
+
+    pub fn stage(&self) -> LifeStage {
+        LifeStage::of_age(self.age)
+    }
+
+    /// Only adults take jobs.
+    pub fn can_work(&self) -> bool {
+        self.stage() == LifeStage::Adult
+    }
+
+    /// Hook for schools: children of school age would spend the day there.
+    /// Nothing reads it yet beyond the minds keeping children near home.
+    pub fn goes_to_school(&self) -> bool {
+        SCHOOL_AGES.contains(&self.age)
+    }
+
+    pub fn is_tired(&self) -> bool {
+        self.wakefulness < TIRED
+    }
+
+    /// Output of a shift worked at this wakefulness, `0.5..1`.
+    pub fn productivity(&self) -> f32 {
+        if self.wakefulness < EXHAUSTED {
+            0.5
+        } else {
+            1.0
+        }
     }
 
     pub fn is_visible(&self) -> bool {
@@ -242,7 +379,40 @@ mod tests {
             hungry_days: 0,
             trail: Vec::new(),
             pending_footfall: Vec::new(),
+            household: None,
+            age: 35,
+            wakefulness: 1.0,
+            asleep: false,
+            packed_meal: 0.0,
         }
+    }
+
+    #[test]
+    fn life_stages_follow_age() {
+        assert_eq!(LifeStage::of_age(4), LifeStage::Child);
+        assert_eq!(LifeStage::of_age(18), LifeStage::Adult);
+        assert_eq!(LifeStage::of_age(70), LifeStage::Retiree);
+        let mut c = citizen_at(Vec2::ZERO);
+        c.age = 9;
+        assert!(!c.can_work() && c.goes_to_school());
+        c.age = 40;
+        assert!(c.can_work() && !c.goes_to_school());
+        c.wakefulness = 0.05;
+        assert!(c.is_tired() && c.productivity() < 1.0);
+    }
+
+    #[test]
+    fn an_old_citizen_without_the_new_fields_loads_as_a_rested_adult() {
+        let mut c = citizen_at(Vec2::ZERO);
+        c.age = 12;
+        let text = ron::to_string(&c).unwrap();
+        // Strip the fields added with households, as an old save would lack them.
+        let old = text.replace(",household:None", "").replace(",age:12", "").replace(",wakefulness:1.0", "").replace(",asleep:false", "").replace(",packed_meal:0.0", "");
+        assert!(!old.contains("wakefulness"), "{old}");
+        let back: Citizen = ron::from_str(&old).unwrap();
+        assert_eq!(back.age, 35);
+        assert_eq!(back.wakefulness, 1.0);
+        assert!(back.household.is_none());
     }
 
     #[test]

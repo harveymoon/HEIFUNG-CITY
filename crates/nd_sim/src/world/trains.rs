@@ -36,11 +36,22 @@ impl World {
             return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), cost));
         }
         let fp = facility.footprint();
-        if self.buildings.values().any(|b| self.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp) || polygons_overlap(&fp, &l.polygon))) {
-            return Err("something is built there".into());
+        // Everything that grew under the footprint is bought out; another
+        // civic structure there stops the placement.
+        let under: Vec<(BuildingId, LotId)> = self
+            .buildings
+            .iter()
+            .filter(|(_, b)| self.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp) || polygons_overlap(&fp, &l.polygon)))
+            .map(|(id, b)| (id, b.lot))
+            .collect();
+        if let Some(b) = under.iter().filter_map(|(id, _)| self.buildings.get(*id)).find(|b| Self::is_civic_structure(b)) {
+            return Err(format!("{} stands there; bulldoze it first", b.name));
         }
         if self.facilities.values().any(|f| f.center.distance(facility.center) < Facility::size(kind).0 * 0.9) {
             return Err("too close to another station or yard".into());
+        }
+        for (_, lot) in under {
+            self.take_over_lot(lot, kind.label())?;
         }
         self.economy.debit(Flow::Construction, cost);
         let fid = self.facilities.insert(facility.clone());

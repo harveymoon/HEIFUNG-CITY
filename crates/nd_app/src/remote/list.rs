@@ -69,7 +69,8 @@ pub fn rows(w: &World, what: &str) -> Result<Vec<Value>, String> {
                 json!({
                     "id": key_str(id), "name": c.name, "class": c.class().label(), "activity": c.activity.label(),
                     "income": round(c.income), "savings": round(c.savings), "rent": round(rent),
-                    "rent_share": if c.income > 0.0 { r3(rent / c.income) } else { 0.0 }, "rent_stress_days": c.rent_stress_days,
+                    "rent_share": r3(w.rent_share_of(id).filter(|s| s.is_finite()).unwrap_or(0.0)), "rent_stress_days": c.rent_stress_days,
+                    "age": c.age, "household": c.household.map(key_str),
                     "mood": r3(c.mood), "satiety": r3(c.satiety), "hungry_days": c.hungry_days, "groceries": round(c.groceries),
                     "home": opt_key(c.home), "work": opt_key(c.work), "housed": c.home.is_some(), "employed": c.work.is_some(),
                     "owns_car": c.owns_car, "owns_bike": c.owns_bike, "arrived_day": c.arrived_tick / 1440 + 1, "pos": v2(c.pos),

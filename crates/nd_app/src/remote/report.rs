@@ -190,10 +190,10 @@ fn overview(w: &World, alerts: &[Alert]) -> Value {
     }
     let vacant = w.lots.values().filter(|l| l.building.is_none() && l.usable()).count();
     let unusable = w.lots.values().filter(|l| !l.usable()).count();
-    let housed = w.citizens.values().filter(|c| c.home.is_some()).count();
+    let housed = w.households.values().filter(|h| h.home.is_some()).count();
     json!({
         "day": w.clock.day() + 1, "time": w.clock.format_hhmm(),
-        "population": w.citizens.len(), "households_housed": housed,
+        "population": w.citizens.len(), "households": w.households.len(), "households_housed": housed,
         "homes": { "total": e.homes_total, "free": e.homes_free, "being_built": e.homes_building },
         "jobs": { "total": e.jobs_total, "filled": e.jobs_total - e.jobs_free.min(e.jobs_total), "free": e.jobs_free, "being_built": e.jobs_building },
         "buildings": { "built": built, "under_construction": sites, "derelict": derelict, "vacant_lots": vacant, "unusable_lots": unusable, "lots_total": w.lots.len() },
@@ -224,6 +224,26 @@ fn memory_reason(text: &str) -> String {
     format!("{}…", words.join(" "))
 }
 
+/// Households: how many, their sizes, life stages, shared money and rent.
+fn households(w: &World) -> Value {
+    let e = &w.economy;
+    let mut stages = [0u32; 3];
+    for c in w.citizens.values() {
+        stages[c.stage() as usize] += 1;
+    }
+    let money: Vec<f32> = w.households.values().map(|h| h.money).collect();
+    let s = e.household_sizes;
+    json!({
+        "count": w.households.len(),
+        "sizes": { "1": s[1], "2": s[2], "3": s[3], "4": s[4], "5+": s[5] },
+        "mean_size": round(w.citizens.len() as f32 / w.households.len().max(1) as f32),
+        "life_stages": { "children": stages[0], "adults": stages[1], "retirees": stages[2] },
+        "rent_stressed": e.rent_stressed_households, "rent_stressed_share": share(e.rent_stressed_households as usize, w.households.len()),
+        "housing_demand_by_tier": { "low": round(e.housing_demand_by_tier[0]), "middle": round(e.housing_demand_by_tier[1]), "high": round(e.housing_demand_by_tier[2]) },
+        "money": distribution(money, 16, None),
+    })
+}
+
 fn people(w: &World) -> Value {
     let tick = w.clock.tick;
     let n = w.citizens.len();
@@ -243,7 +263,7 @@ fn people(w: &World) -> Value {
     let mut modes: BTreeMap<&str, u32> = BTreeMap::new();
     let (mut owns_car, mut owns_bike) = (0, 0);
     let mut reasons: BTreeMap<String, u32> = BTreeMap::new();
-    for c in w.citizens.values() {
+    for (cid, c) in w.citizens.iter() {
         by_class[c.class().index()] += 1;
         *by_activity.entry(c.activity.label()).or_default() += 1;
         if let Some(job) = c.work.and_then(|b| w.buildings.get(b)) {
@@ -265,7 +285,8 @@ fn people(w: &World) -> Value {
         }
         if let Some(home) = c.home.and_then(|h| w.buildings.get(h)) {
             housed += 1;
-            let s = if c.income > 0.0 { home.rent / c.income } else { f32::INFINITY };
+            // Rent is paid by the household, from everyone's income.
+            let s = w.rent_share_of(cid).unwrap_or(if c.income > 0.0 { home.rent / c.income } else { f32::INFINITY });
             if s > RENT_BURDEN_SHARE {
                 burden30 += 1;
             }
@@ -322,6 +343,7 @@ fn people(w: &World) -> Value {
             "unemployed_on_gig_income": n - employed, "unemployment_share": share(n - employed, n), "jobs_free": e.jobs_free,
         },
         "housing": { "housed": housed, "unhoused": n - housed, "waiting_immigrants": e.waiting_immigrants, "homes_free": e.homes_free },
+        "households": households(w),
         "income_per_day": distribution(incomes, 16, None),
         "savings": { "in_overdraft": overdraft, "at_overdraft_floor": at_floor, "overdraft_floor": round(OVERDRAFT), "distribution": distribution(savings, 16, None) },
         "rent_burden": {
@@ -794,7 +816,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
             unhoused.add(k.clone(), Some(c.pos));
         }
         if let Some(home) = c.home.and_then(|h| w.buildings.get(h)) {
-            if c.rent_stress_days > 0 || home.rent > c.income * RENT_STRESS_SHARE {
+            if c.rent_stress_days > 0 || w.rent_share_of(id).unwrap_or(home.rent / c.income.max(0.01)) > RENT_STRESS_SHARE {
                 rent.add(k, building_pos(w, home));
             }
         }
@@ -819,7 +841,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
                     }
                 }
             }
-            if b.residents.len() > b.homes as usize && b.homes > 0 {
+            if b.households.len() > b.homes as usize && b.homes > 0 {
                 crowded.add(k.clone(), at);
             }
             if b.is_derelict() {

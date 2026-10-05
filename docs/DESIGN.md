@@ -39,7 +39,7 @@ Changed:
 crates/
   nd_sim      engine-independent simulation (roads, zoning, lots, buildings,
               citizens, economy, clock, save/load, Mind trait)
-  nd_procgen  generators: terrain, parcels' buildings (35 styles from a parts
+  nd_procgen  generators: terrain, parcels' buildings (47 styles from a parts
               toolkit), streets, seamless textures, palettes
   nd_minds    Mind implementations: RuleBasedMind, LlmMind (+ backend trait)
   nd_app      Bevy app: rendering, camera, planning tools, egui UI, hot reload
@@ -288,7 +288,12 @@ trait MindProvider {
 - Terrain: flat basin for the city, procedural hills around it.
 - Surfaces: every primitive a generator emits lands in one of sixteen surface buckets
   (concrete, plaster, brick, stone, panel, metal, rust, glass, wood, tarp, asphalt,
-  paving, dirt, foliage, matte, glow). Each surface is a material with a procedurally
+  paving, dirt, foliage, matte, glow), plus seven weathered variants (worn concrete,
+  plaster, brick, panel, metal, paving, asphalt) whose textures bake in stains, drip
+  streaks, cracks, worn-through paint and rust bleeding from fixings
+  (`textures::generate_wear`). Low-tier buildings, decayed ones and streets on cheap
+  land are moved onto the worn materials wholesale (`Geometry::weather`), so grit costs
+  no triangles. Each surface is a material with a procedurally
   generated, seamlessly tiling colour texture and normal map (`nd_procgen::textures`),
   roughness and metalness. Meshes carry world-scale planar UVs (horizontal along a
   wall, vertical up it), so brick courses line up across a facade and nothing has to
@@ -314,18 +319,39 @@ trait MindProvider {
   weight from `assets/rules/buildings.ron`, assembled from a shared parts toolkit
   (`nd_procgen::buildings::parts`: facades, windows, storefronts, signs, LED screens,
   balconies, fire escapes, roof gear, fences, tanks, pipes, cranes, vehicles, trees,
-  stalls, string lights). Thirty-five styles so far:
-  - Residential: the Stacks, walk-up tenements, brutalist blocks, balcony slabs,
-    courtyard blocks, crystal towers, fortress compounds, garden towers, villa clusters.
-  - Commercial: shophouse rows, market halls, retail blocks, podium offices, corporate
-    slabs, twist towers, cantilevered malls.
-  - Industrial: junkyards and rusted warehouses (low), saw-tooth factories and tank
-    farms (middle), datacentres and container depots (high).
-  - Entertainment: shack bars, clubs, cinemas, casinos, arenas.
+  stalls, string lights) and a dense-city kit (`buildings::kit`: footprint cells,
+  crammed windows with cages and AC boxes, signs hung out over the pavement, antenna
+  forests, sky bridges, glowing crown outlines, laundry poles). Forty-seven styles:
+  - Residential: the Stacks, Kowloon walled blocks, capsule hotels, walk-up tenements,
+    brutalist blocks, balcony slabs, courtyard blocks, Hong Kong pencil towers, Shanghai
+    twin slabs, stepped hillside terraces, crystal towers, glass castles (clusters of
+    faceted crystals with cut crowns, replacing the old stone keep), garden towers,
+    Ghost-in-the-Shell glass terraces, Akira megastructures, villa clusters.
+  - Commercial: shophouse rows, market halls, night market arcades, retail blocks,
+    podium offices, pencil towers, neon towers, corporate slabs, twist towers,
+    cantilevered malls, glass terraces, megastructures.
+  - Industrial: junkyards, rusted warehouses and garage workshops (low), saw-tooth
+    factories, tank farms and flatted factories (middle), datacentres, container depots
+    and semiconductor fabs (high).
+  - Entertainment: shack bars and night markets, clubs, cinemas and neon towers,
+    casinos, arenas and megastructures.
   - Civic: precinct houses, ministries, libraries, courthouses, monuments.
   - Park: scrub lots, gardens, plazas.
   Everything is attached to a surface: roof gear uses the roof footprint, columns hold
   up overhangs, wires run from poles to real units, jacks prop unsupported corners.
+  The newer styles change form with their floors (`kit::Form`): a low site gets the
+  walk-up or pavilion version, a middle one a podium and slab, a tall one a tower with
+  setbacks and a crown. Rules files that predate a style fall back to its built-in
+  weight.
+- Style adjacency (`buildings::adjacency`): every style has a family (slum, walk-up,
+  slab, spire, luxury, retail, office, night, heavy, tech) and a cluster score for its
+  own kind; families like or dislike each other. The pick multiplies each option's
+  weight by its fit to the site (towers need floors, pencil towers a narrow frontage)
+  and by `exp` of the summed affinities of the buildings within 60 m, nearer ones
+  counting more. The Stacks and Shanghai slabs cluster; spires, glass castles and
+  arenas avoid repeating a neighbour. The renderer keeps a `StyleBook` that resolves
+  styles in build order (a building sees only older neighbours), so the result does not
+  depend on drawing order and a building keeps its look when a newer neighbour arrives.
 - Streets (`nd_procgen::street`): roads are drawn as runs, chains of segments joined
   at plain bends, with one continuous mitred carriageway and pavement per run so a
   curved road is one road rather than a string of pieces; asphalt with lane markings, kerbs and paved
@@ -335,7 +361,13 @@ trait MindProvider {
   where the land is worth it.
 - Cameras: an orbit camera for planning and a first-person walk mode (Tab) that
   steps onto the nearest pavement with mouse look and WASD, a wider field of view and
-  closer fog. Tools are disabled while walking.
+  closer fog. Tools are disabled while walking. In walk mode only, `nd_procgen::walk`
+  adds street-level detail within 90 m of the eye (redrawn every 25 m): lit A-frames,
+  lightboxes and blade signs at shopfronts, vending machines, food carts with steam,
+  manholes and steam vents, cables, lanterns and banners strung across cheap streets,
+  puddles holding a smear of sign colour, scooters in the gutter, bin bags, crates,
+  bikes, cones, planters, and cracks, stains and gum on the slabs. It is laid out per
+  road segment from its own seed, so props stay put as the walker moves.
 - Performance: the sim gets a real-time budget per frame (12 ms) and drops its
   backlog instead of stalling the renderer; shadows use three cascades out to 650 m;
   the HUD shows fps, meshes and triangles.
