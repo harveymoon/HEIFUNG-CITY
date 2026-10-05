@@ -32,7 +32,9 @@ const IDM_HEADWAY: f32 = 1.2;
 const GREEN_SECONDS: f32 = 14.0;
 const CLEARANCE_SECONDS: f32 = 3.0;
 const LOOKAHEAD: f32 = 90.0;
-/// Trips older than this (traffic seconds) end where the car stands.
+/// Trips older than this (traffic seconds) end where the car stands. A bus
+/// is never ended this way (its riders would be teleported with it): it is
+/// re-planned from where it stands instead.
 const TRIP_TIMEOUT: f32 = 1800.0;
 
 #[derive(Clone, Debug)]
@@ -133,7 +135,13 @@ impl Lane {
 pub struct Intersection {
     pub node: NodeId,
     pub radius: f32,
+    /// Streets meeting here, exits included.
     pub approaches: usize,
+    /// Approach indices that have incoming lanes, in approach order: the
+    /// signal cycles through these, so a one-way exit never gets a green
+    /// phase in which nothing can move.
+    pub phases: Vec<usize>,
+    /// Index into `phases` of the approach that has the green.
     pub phase: usize,
     pub timer: f32,
     pub connectors: Vec<(LaneId, usize)>,
@@ -368,10 +376,13 @@ impl LaneNetwork {
                 }
             }
             let two_way = approaches.iter().filter(|&&s| roads.segment(s).lanes_fwd > 0 && roads.segment(s).lanes_bwd > 0).count();
-            let signalized = (approaches.len() >= 3 && two_way >= 3) || approaches.len() >= 4;
+            let mut phases: Vec<usize> = (0..approaches.len()).filter(|&ap| incoming.iter().any(|&(_, s)| s == approaches[ap])).collect();
+            phases.dedup();
+            // One incoming approach has nobody to yield to.
+            let signalized = ((approaches.len() >= 3 && two_way >= 3) || approaches.len() >= 4) && phases.len() >= 2;
             self.node_intersection.resize(roads.nodes.len().max(self.node_intersection.len()), usize::MAX);
             self.node_intersection[ni] = self.intersections.len();
-            self.intersections.push(Intersection { node: nid, radius, approaches: approaches.len(), phase: 0, timer: 0.0, connectors, signalized });
+            self.intersections.push(Intersection { node: nid, radius, approaches: approaches.len(), phases, phase: 0, timer: 0.0, connectors, signalized });
         }
         let _ = road_lane_count;
         self.apply_signals();
@@ -379,8 +390,9 @@ impl LaneNetwork {
 
     fn apply_signals(&mut self) {
         for inter in &self.intersections {
+            let green_approach = inter.phases.get(inter.phase).copied();
             for &(lane, approach) in &inter.connectors {
-                self.lanes[lane as usize].green = !inter.signalized || (approach == inter.phase && inter.timer < GREEN_SECONDS);
+                self.lanes[lane as usize].green = !inter.signalized || (Some(approach) == green_approach && inter.timer < GREEN_SECONDS);
             }
         }
     }
@@ -393,7 +405,7 @@ impl LaneNetwork {
             inter.timer += dt;
             if inter.timer >= GREEN_SECONDS + CLEARANCE_SECONDS {
                 inter.timer = 0.0;
-                inter.phase = (inter.phase + 1) % inter.approaches.max(1);
+                inter.phase = (inter.phase + 1) % inter.phases.len().max(1);
             }
         }
         self.apply_signals();
@@ -431,9 +443,17 @@ impl LaneNetwork {
     pub fn find_route(&self, from_seg: SegmentId, from: Vec2, to_seg: SegmentId, to: Vec2) -> Option<(Vec<LaneId>, f32, f32)> {
         let (start, s_start, _) = self.nearest_lane_on(from_seg, from)?;
         let (goal, s_end, _) = self.nearest_lane_on(to_seg, to)?;
+        self.route_lanes(start, s_start, goal, s_end)
+    }
+
+    /// A* over lanes from `s_start` along `start` to `s_end` along `goal`;
+    /// the route begins with `start`. A goal behind the start on the same
+    /// lane has no route: lanes are one way and the start is never re-entered.
+    pub fn route_lanes(&self, start: LaneId, s_start: f32, goal: LaneId, s_end: f32) -> Option<(Vec<LaneId>, f32, f32)> {
         if start == goal && s_end >= s_start {
             return Some((vec![start], s_start, s_end));
         }
+        let to = self.lanes.get(goal as usize)?.point_at(s_end).0;
         let mut open = BinaryHeap::new();
         let mut came: HashMap<LaneId, LaneId> = HashMap::new();
         let mut g: HashMap<LaneId, f32> = HashMap::new();
@@ -596,6 +616,22 @@ impl Traffic {
         Some(car)
     }
 
+    /// Route a stalled car afresh from the lane it stands on to the same
+    /// destination, keeping its place in the lane. False when no route
+    /// exists (the destination is behind it on its own lane, say).
+    fn replan_from_here(&mut self, id: CarId) -> bool {
+        let (here, s, goal, s_end) = {
+            let c = &self.cars[id];
+            (c.route[c.idx], c.s, *c.route.last().unwrap(), c.s_end)
+        };
+        let Some((route, _, _)) = self.net.route_lanes(here, s, goal, s_end) else { return false };
+        let car = &mut self.cars[id];
+        car.route = route;
+        car.idx = 0;
+        car.age = 0.0;
+        true
+    }
+
     /// Gap and leader speed for a car with no leader on its own lane: look
     /// down the route for the next car or a red light.
     fn lookahead(&self, car: &Car, lane: &Lane) -> (f32, f32) {
@@ -621,9 +657,13 @@ impl Traffic {
                     }
                 }
                 if let Some(&exit) = route.get(k + 1) {
+                    // Room is measured with the real vehicles on the exit
+                    // lane: a bus takes nearly three cars' worth.
                     let el = &self.net.lanes[exit as usize];
-                    let blocked = el.cars.first().map_or(false, |&c| self.cars[c].s < CAR_LENGTH + IDM_MIN_GAP + 1.0) && el.cars.len() as f32 * (CAR_LENGTH + IDM_MIN_GAP) > el.length - nl.length;
-                    let tail_near = el.cars.first().map_or(false, |&c| self.cars[c].s < CAR_LENGTH + 0.5);
+                    let queue: f32 = el.cars.iter().map(|&c| self.cars[c].length() + IDM_MIN_GAP).sum();
+                    let last = el.cars.first().map(|&c| &self.cars[c]);
+                    let blocked = last.is_some_and(|c| c.s < c.length() + IDM_MIN_GAP + 1.0) && queue > el.length - nl.length;
+                    let tail_near = last.is_some_and(|c| c.s < c.length() + 0.5);
                     if blocked || (tail_near && !nl.cars.is_empty()) {
                         return (dist - 1.0 + IDM_MIN_GAP, 0.0);
                     }
@@ -631,7 +671,7 @@ impl Traffic {
             }
             if let Some(&first) = nl.cars.first() {
                 let lead = &self.cars[first];
-                return (dist + lead.s - CAR_LENGTH, lead.v);
+                return (dist + lead.s - lead.length(), lead.v);
             }
             dist += nl.length;
             if dist > LOOKAHEAD {
@@ -695,6 +735,9 @@ impl Traffic {
                     (lane_id, c.idx, self.net.lanes[lane_id as usize].length, c.s, c.s_end)
                 };
                 if self.cars[cid].age > TRIP_TIMEOUT {
+                    if self.cars[cid].bus.is_some() && self.replan_from_here(cid) {
+                        continue;
+                    }
                     if !arrived.contains(&cid) {
                         arrived.push(cid);
                     }
@@ -829,6 +872,96 @@ mod tests {
         let bend_connectors: Vec<&Lane> = net2.lanes.iter().filter(|l| matches!(l.kind, LaneKind::Connector { node, .. } if roads2.node(node).segments.len() == 2)).collect();
         assert!(!bend_connectors.is_empty());
         assert!(bend_connectors.iter().all(|l| l.speed_limit >= ROAD_SPEED - 0.01), "bends do not slow traffic to junction speed");
+    }
+
+    #[test]
+    fn a_one_way_exit_gets_no_green_phase() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+        roads.add_polyline(&[Vec2::new(0.0, -200.0), Vec2::new(0.0, 0.0)], 1, 1);
+        // The north arm leaves the junction one way: nothing ever arrives from it.
+        roads.add_polyline(&[Vec2::new(0.0, 0.0), Vec2::new(0.0, 200.0)], 1, 0);
+        let mut net = LaneNetwork::default();
+        net.rebuild(&roads);
+        let centre = net.intersections.iter().position(|i| roads.node(i.node).pos.distance(Vec2::ZERO) < 1.0).expect("centre");
+        let inter = &net.intersections[centre];
+        assert_eq!(inter.approaches, 4);
+        assert!(inter.signalized);
+        assert_eq!(inter.phases.len(), 3, "three approaches feed the junction: {:?}", inter.phases);
+        // Over a whole cycle every incoming approach gets a green, and at
+        // no time is the junction red for everyone during a green window.
+        let cycle = GREEN_SECONDS + CLEARANCE_SECONDS;
+        let mut greens_seen = std::collections::HashSet::new();
+        for step in 0..(3.0 * cycle) as usize {
+            net.update_signals(1.0);
+            let inter = &net.intersections[centre];
+            if inter.timer < GREEN_SECONDS - 1.0 {
+                let green: Vec<usize> = inter.connectors.iter().filter(|(l, _)| net.lanes[*l as usize].green).map(|(_, ap)| *ap).collect();
+                assert!(!green.is_empty(), "nobody has the green at {step}s");
+                greens_seen.extend(green);
+            }
+        }
+        assert_eq!(greens_seen.len(), 3);
+        // The cycle is three phases long, not four.
+        let inter = &net.intersections[centre];
+        assert_eq!(inter.phase, 0, "back at the first phase after three greens");
+    }
+
+    #[test]
+    fn the_lookahead_sees_a_bus_as_long_as_it_is() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let west = roads.nearest_street(Vec2::new(-100.0, 0.0)).unwrap().0;
+        let east = roads.nearest_street(Vec2::new(100.0, 0.0)).unwrap().0;
+        // Both points on the eastbound (right-hand, +y) side.
+        let (route, s0, s1) = t.net.find_route(west, Vec2::new(-30.0, 2.0), east, Vec2::new(150.0, 2.0)).expect("route");
+        assert_eq!(route.len(), 3, "lane, bend connector, lane");
+        // A bus standing just past the start of the far lane.
+        let bus_route = vec![route[2]];
+        let bus = t.spawn_car(CitizenId::default(), None, bus_route, 6.0, 150.0, 0);
+        t.cars[bus].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 0, passengers: Vec::new(), to_depot: false, depot: BuildingId::default() });
+        let car = t.spawn_car(CitizenId::default(), None, route.clone(), s0, s1, 0);
+        let lane = &t.net.lanes[route[0] as usize];
+        let (gap, lead_v) = t.lookahead(&t.cars[car], lane);
+        let expected = (lane.length - s0) + t.net.lanes[route[1] as usize].length + 6.0 - BUS_LENGTH;
+        assert!((gap - expected).abs() < 1e-3, "gap {gap} vs {expected}: the bus is {BUS_LENGTH} m, not a car");
+        assert_eq!(lead_v, 0.0);
+    }
+
+    #[test]
+    fn a_stalled_bus_is_replanned_instead_of_teleported() {
+        let roads = cross();
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let west = roads.nearest_street(Vec2::new(-150.0, 0.0)).unwrap().0;
+        let north = roads.nearest_street(Vec2::new(0.0, 150.0)).unwrap().0;
+        let (route, s0, s1) = t.net.find_route(west, Vec2::new(-150.0, -2.0), north, Vec2::new(2.0, 150.0)).expect("route");
+        let goal = *route.last().unwrap();
+        let bus = t.spawn_car(CitizenId::default(), None, route.clone(), s0, s1, 0);
+        t.cars[bus].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 1, passengers: Vec::new(), to_depot: false, depot: BuildingId::default() });
+        let car = t.spawn_car(CitizenId::default(), None, route, s0 + 20.0, s1, 0);
+        // Both have been out far too long; neither has moved.
+        t.cars[bus].age = TRIP_TIMEOUT + 1.0;
+        t.cars[car].age = TRIP_TIMEOUT + 1.0;
+        let arrived = t.step(1.0, 1);
+        assert!(arrived.contains(&car), "a private car gives up where it stands");
+        assert!(!arrived.contains(&bus), "the bus does not");
+        let b = &t.cars[bus];
+        assert!(b.age < 2.0, "its clock restarted");
+        assert_eq!(b.idx, 0);
+        assert_eq!(*b.route.last().unwrap(), goal, "still bound for the same stop");
+        assert!((b.s_end - s1).abs() < 1e-4);
+        assert!(t.net.lanes[b.route[0] as usize].cars.contains(&bus), "and still on its lane");
+        // A bus whose stop is behind it on its own lane cannot be replanned
+        // (lanes are one way) and times out like a car.
+        let east = roads.nearest_street(Vec2::new(150.0, 0.0)).unwrap().0;
+        let (lane, s, _) = t.net.nearest_lane_on(east, Vec2::new(150.0, 2.0)).unwrap();
+        let stuck = t.spawn_car(CitizenId::default(), None, vec![lane], s, s - 20.0, 0);
+        t.cars[stuck].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 1, passengers: Vec::new(), to_depot: false, depot: BuildingId::default() });
+        t.cars[stuck].age = TRIP_TIMEOUT + 1.0;
+        assert!(t.step(1.0, 1).contains(&stuck));
     }
 
     #[test]
