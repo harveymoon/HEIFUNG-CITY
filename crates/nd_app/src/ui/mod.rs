@@ -20,7 +20,7 @@ use crate::render::{Lighting, Overlays, RenderStats};
 use crate::sim::{Sim, SimSet};
 use crate::tools::{EffectivePlan, Selection, Tool, ToolState};
 
-pub use saves::Saves;
+pub use saves::{load_now, save_now, Saves, LATEST};
 
 /// What the UI wants the rest of the app to know about input this frame.
 #[derive(Resource, Default)]

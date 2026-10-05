@@ -3,6 +3,7 @@
 
 mod assets;
 mod camera;
+mod remote;
 mod render;
 mod sim;
 mod tools;
@@ -31,6 +32,7 @@ fn main() {
             tools::ToolsPlugin,
             render::RenderPlugin,
             ui::UiPlugin,
+            remote::RemotePlugin,
         ))
         .run();
 }

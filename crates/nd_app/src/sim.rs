@@ -139,6 +139,15 @@ impl Sim {
         SPEEDS[self.speed_index].1
     }
 
+    /// Advance the world `n` ticks right now, paused or not: the remote API's
+    /// `step`. The events stay in `World::events` for `step_sim` to drain
+    /// this frame, so renderers see them exactly as they see a normal tick.
+    pub fn step_ticks(&mut self, n: u32) {
+        for _ in 0..n {
+            self.world.tick(&mut self.minds);
+        }
+    }
+
     pub fn save(&self, path: &str) -> Result<(), String> {
         let text = self.world.to_ron().map_err(|e| e.to_string())?;
         if let Some(dir) = std::path::Path::new(path).parent() {

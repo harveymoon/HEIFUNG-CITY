@@ -222,7 +222,7 @@ fn nearest_gesture(plan: &Plan, p: SVec2) -> Option<(GestureId, usize)> {
     best.map(|(_, id, i)| (id, i))
 }
 
-fn tool_input(
+pub(crate) fn tool_input(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,

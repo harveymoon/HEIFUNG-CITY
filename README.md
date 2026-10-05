@@ -97,6 +97,9 @@ links Bevy dynamically for quicker iteration.
   casinos. Parcels follow the roads, so corner and diagonal lots get odd-shaped buildings. The
   inspector names a building's style.
   Save and Load use `saves/city.ron`.
+- **Remote control**: the game serves a JSON API on `http://127.0.0.1:4817` (`ND_REMOTE_PORT`,
+  `ND_REMOTE=0` to disable) for scripts and AI assistants to build, inspect, move the camera and take
+  screenshots; `tools/mcp/nd_mcp.py` wraps it as an MCP server. See `docs/REMOTE.md`.
 
 ## Tinkering
 
