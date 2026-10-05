@@ -78,8 +78,7 @@ struct Sample {
     height: f32,
 }
 
-fn sample(surface: Surface, u: f32, v: f32, px: i32, py: i32, size: usize) -> Sample {
-    let n = size as f32;
+fn sample(surface: Surface, u: f32, v: f32, px: i32, py: i32) -> Sample {
     match surface {
         Surface::Concrete => {
             // 3 m tile: formwork boards every 0.25 m horizontally, tie holes on a 1 m grid.
@@ -106,8 +105,10 @@ fn sample(surface: Surface, u: f32, v: f32, px: i32, py: i32, size: usize) -> Sa
             Sample { value, tint: 0.0, height: g * 0.2 + if crack < 1.0 { -0.8 } else { 0.0 } }
         }
         Surface::Brick => {
-            // 1 m tile: 13 courses, 4 bricks per course, running bond.
-            let courses = 13.0;
+            // 1 m tile: 12 courses, 4 bricks per course, running bond. An even
+            // count keeps the half-brick offset alternating across the tile
+            // seam; 13 put two same-offset courses together at every repeat.
+            let courses = 12.0;
             let per = 4.0;
             let row = (v * courses).floor();
             let offset = if row as i32 % 2 == 0 { 0.0 } else { 0.5 };
@@ -262,14 +263,10 @@ fn sample(surface: Surface, u: f32, v: f32, px: i32, py: i32, size: usize) -> Sa
         }
         Surface::Glow => Sample { value: 1.0, tint: 0.0, height: 0.0 },
     }
-    .with_size(n)
 }
 
-impl Sample {
-    fn with_size(self, _n: f32) -> Self {
-        self
-    }
-}
+/// Texture size the bump strengths in `Surface::bump` were tuned at.
+const REFERENCE_SIZE: f32 = 256.0;
 
 /// Generate the colour and normal textures for a surface. `None` for glow,
 /// which stays a flat emissive colour.
@@ -283,7 +280,7 @@ pub fn generate(surface: Surface, size: usize) -> Option<Texture> {
         for px in 0..size {
             let u = (px as f32 + 0.5) / size as f32;
             let v = (py as f32 + 0.5) / size as f32;
-            let s = sample(surface, u, v, px as i32, py as i32, size);
+            let s = sample(surface, u, v, px as i32, py as i32);
             heights[py * size + px] = s.height;
             let r = (s.value * (1.0 + s.tint)).clamp(0.0, 1.0);
             let g = s.value.clamp(0.0, 1.0);
@@ -295,7 +292,10 @@ pub fn generate(surface: Surface, size: usize) -> Option<Texture> {
             color[i + 3] = 255;
         }
     }
-    let strength = surface.bump() * 0.5;
+    // The height field is a function of (u, v), so the finite difference
+    // between neighbouring pixels shrinks as the texture grows; scaling by
+    // the size keeps the normal map's slope the same at any resolution.
+    let strength = surface.bump() * 0.5 * (size as f32 / REFERENCE_SIZE);
     let mut normal = vec![0u8; size * size * 4];
     let at = |x: i32, y: i32| heights[(y.rem_euclid(size as i32) as usize) * size + x.rem_euclid(size as i32) as usize];
     for py in 0..size as i32 {
@@ -345,6 +345,24 @@ pub fn mip_chain(size: usize, rgba: &[u8]) -> (Vec<u8>, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The slope the normal map encodes should not depend on how many
+    /// pixels the texture has.
+    #[test]
+    fn normal_strength_is_independent_of_size() {
+        let small = generate(Surface::Metal, 64).unwrap();
+        let large = generate(Surface::Metal, 256).unwrap();
+        let spread = |t: &Texture| {
+            let (mut lo, mut hi) = (255u8, 0u8);
+            for px in t.normal.chunks(4) {
+                lo = lo.min(px[0]);
+                hi = hi.max(px[0]);
+            }
+            hi as f32 - lo as f32
+        };
+        let (a, b) = (spread(&small), spread(&large));
+        assert!((a - b).abs() < a.max(b) * 0.25, "normal x range differs: 64px {a}, 256px {b}");
+    }
 
     #[test]
     fn textures_tile_and_have_mips() {

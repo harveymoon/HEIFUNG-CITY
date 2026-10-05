@@ -11,7 +11,6 @@ pub mod textures;
 pub mod vacant;
 
 pub use buildings::transit::bus_stops;
-pub use buildings::Style as BuildingStyle;
 pub use buildings::{generate_building, BuildingRules, Extras, LandUseRules, Style};
 pub use mesh::MeshData;
 pub use palette::Palette;
