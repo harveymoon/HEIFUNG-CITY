@@ -63,6 +63,9 @@ fn main() {
             e.priced_out_total,
         );
         println!("         power: supply {:.0} + import {:.0} MW vs demand {:.0} MW, served {:.0}%, plants {}, dark {}, treasury {:.0}", e.power.supply_mw, e.power.imported_mw, e.power.demand_mw, e.power.served * 100.0, e.power.plants, e.power.unpowered_buildings, e.treasury);
+        // Where the treasury's money came from and went: the day just closed.
+        let book: Vec<String> = e.ledger.yesterday_sorted().iter().map(|(f, x)| format!("{} {:+.0}", f.label(), x)).collect();
+        println!("         treasury: {}", if book.is_empty() { "no flows".to_string() } else { book.join(", ") });
         println!("         parking: {}/{} spaces in {} lots, circling {} , fees {:.0}", e.parking_used, e.parking_capacity, e.parking_lots, e.parking_street_today, e.parking_fees_today);
         let m = &e.market;
         println!(

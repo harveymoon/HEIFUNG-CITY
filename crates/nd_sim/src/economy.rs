@@ -1,6 +1,86 @@
 use crate::zoning::LandUse;
 use serde::{Deserialize, Serialize};
 
+/// How far into the red a citizen's savings may go. Below this, shops,
+/// venues and car parks refuse them: without a floor, consumer debt grows
+/// without limit and every purchase is money printed on the spot.
+pub const OVERDRAFT: f32 = -200.0;
+/// Daily gig income of someone without a job.
+pub const GIG_INCOME: f32 = 40.0;
+
+/// A named source or sink of treasury money.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Flow {
+    /// 12% of every citizen's daily income.
+    IncomeTax,
+    /// 5% of every open business's daily revenue.
+    BusinessTax,
+    BusFares,
+    RailFares,
+    PlantUpkeep,
+    /// Electricity bought from the regional grid.
+    GridImport,
+    /// Buses and depots.
+    TransitUpkeep,
+    /// Stations and yards.
+    RailUpkeep,
+    /// Plants, depots, stations and yards placed by the player.
+    Construction,
+}
+
+impl Flow {
+    pub const ALL: [Flow; 9] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Flow::IncomeTax => "income tax",
+            Flow::BusinessTax => "business tax",
+            Flow::BusFares => "bus fares",
+            Flow::RailFares => "rail fares",
+            Flow::PlantUpkeep => "plant upkeep",
+            Flow::GridImport => "grid import",
+            Flow::TransitUpkeep => "transit upkeep",
+            Flow::RailUpkeep => "rail upkeep",
+            Flow::Construction => "construction",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// Where the treasury's money came from and went, by source and sink, for
+/// today so far and for the whole of yesterday. Positive is income.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Ledger {
+    pub today: [f32; 9],
+    pub yesterday: [f32; 9],
+}
+
+impl Ledger {
+    pub fn today_of(&self, f: Flow) -> f32 {
+        self.today[f.index()]
+    }
+
+    pub fn yesterday_of(&self, f: Flow) -> f32 {
+        self.yesterday[f.index()]
+    }
+
+    /// Close the day's books.
+    pub fn roll(&mut self) {
+        self.yesterday = self.today;
+        self.today = [0.0; 9];
+    }
+
+    /// Yesterday's entries, largest first, for a report.
+    pub fn yesterday_sorted(&self) -> Vec<(Flow, f32)> {
+        let mut v: Vec<(Flow, f32)> = Flow::ALL.iter().map(|&f| (f, self.yesterday[f.index()])).filter(|(_, x)| *x != 0.0).collect();
+        v.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs()));
+        v
+    }
+}
+
 /// Deliberately simple demand model. Demand per land use is in `0..1` and
 /// drives how quickly vacant lots develop.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -69,6 +149,9 @@ pub struct Economy {
     /// Building materials bought from outside today, at import prices.
     #[serde(default)]
     pub materials_today: f32,
+    /// Treasury sources and sinks by name.
+    #[serde(default)]
+    pub ledger: Ledger,
 }
 
 fn default_treasury() -> f32 {
@@ -76,6 +159,17 @@ fn default_treasury() -> f32 {
 }
 
 impl Economy {
+    /// Money into the treasury, booked under `flow`.
+    pub fn credit(&mut self, flow: Flow, amount: f32) {
+        self.treasury += amount;
+        self.ledger.today[flow.index()] += amount;
+    }
+
+    /// Money out of the treasury, booked under `flow`.
+    pub fn debit(&mut self, flow: Flow, amount: f32) {
+        self.credit(flow, -amount);
+    }
+
     pub fn demand_for(&self, lu: LandUse) -> f32 {
         self.demand[lu.index()]
     }
