@@ -5,6 +5,9 @@ use bevy::prelude::*;
 use nd_minds::{HybridMind, MockBackend};
 use nd_sim::{SimEvent, Vec2 as SVec2, World, WorldConfig};
 
+use crate::camera::CameraMode;
+use crate::ui::UiFlags;
+
 /// Sim minutes per real second for each speed step.
 pub const SPEEDS: [(&str, f32); 5] = [("1×", 1.0), ("4×", 4.0), ("16×", 16.0), ("64×", 64.0), ("256×", 256.0)];
 const MAX_TICKS_PER_FRAME: u32 = 400;
@@ -23,6 +26,10 @@ pub struct Sim {
     /// Set by load; render systems rebuild everything.
     pub full_rebuild: bool,
     pub ticks_last_frame: u32,
+    /// Ticks actually run per second of sim time asked for, smoothed over
+    /// about half a second: 1.0 means the sim keeps up with the chosen
+    /// speed, less means the tick budget is throttling it. Shown in the HUD.
+    pub effective_speed: f32,
 }
 
 impl Sim {
@@ -41,7 +48,15 @@ impl Sim {
             events: Vec::new(),
             full_rebuild: true,
             ticks_last_frame: 0,
+            effective_speed: 1.0,
         }
+    }
+
+    /// The demo district is laid out blind over the centre of the map, so
+    /// the hotkey only fires on an empty city; the panel button may add it to
+    /// an existing one deliberately.
+    pub fn can_seed_by_hotkey(&self) -> bool {
+        self.world.buildings.is_empty()
     }
 
     /// Lay out a small grid with mixed zoning around the starter avenues.
@@ -144,7 +159,7 @@ pub struct SimPlugin;
 
 impl Plugin for SimPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Sim::new()).add_systems(Update, step_sim.in_set(SimSet::Step));
+        app.insert_resource(Sim::new()).add_systems(Update, (sim_hotkeys.in_set(SimSet::Input), step_sim.in_set(SimSet::Step)));
     }
 }
 
@@ -158,20 +173,37 @@ pub enum SimSet {
     Sync,
 }
 
-fn step_sim(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, mut sim: ResMut<Sim>) {
+/// Pause, speed and the demo seed. Hotkeys that drive the simulation itself
+/// live here; the tool hotkeys live in `tools::tool_input`. Nothing fires
+/// while an egui text field has the keyboard.
+fn sim_hotkeys(keys: Res<ButtonInput<KeyCode>>, mut flags: ResMut<UiFlags>, mode: Res<CameraMode>, mut sim: ResMut<Sim>) {
+    if flags.keyboard_captured {
+        return;
+    }
     if keys.just_pressed(KeyCode::Space) {
         sim.paused = !sim.paused;
     }
     if keys.just_pressed(KeyCode::Equal) || keys.just_pressed(KeyCode::NumpadAdd) {
         sim.speed_index = (sim.speed_index + 1).min(SPEEDS.len() - 1);
     }
-    if keys.just_pressed(KeyCode::KeyG) {
-        sim.seed_demo_district();
-    }
     if keys.just_pressed(KeyCode::Minus) || keys.just_pressed(KeyCode::NumpadSubtract) {
         sim.speed_index = sim.speed_index.saturating_sub(1);
     }
+    // Seeding is irreversible (it implements straight away), so it takes a
+    // deliberate chord, only on an empty map, and never from the pavement.
+    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    if ctrl && shift && keys.just_pressed(KeyCode::KeyG) && *mode == CameraMode::Orbit {
+        if sim.can_seed_by_hotkey() {
+            sim.seed_demo_district();
+            flags.message = "Demo district laid out around the centre".into();
+        } else {
+            flags.message = "The city already has buildings; use the Seed button in the panel to add the demo anyway.".into();
+        }
+    }
+}
 
+fn step_sim(time: Res<Time>, mut sim: ResMut<Sim>) {
     let mut ticks = 0;
     if !sim.paused {
         let speed = sim.speed();
@@ -192,6 +224,15 @@ fn step_sim(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, mut sim: ResMut<Si
         }
     }
     sim.ticks_last_frame = ticks;
+    // Ticks delivered against ticks asked for, as a half-second moving
+    // average: single frames carry 0 or 1 tick at low speeds, so the raw
+    // ratio is meaningless without smoothing.
+    let dt = time.delta_secs();
+    if !sim.paused && dt > 0.0 {
+        let ratio = ticks as f32 / (dt * sim.speed());
+        let k = 1.0 - (-dt / 0.5).exp();
+        sim.effective_speed += (ratio - sim.effective_speed) * k;
+    }
     let events = sim.world.drain_events();
     sim.events = events;
 }

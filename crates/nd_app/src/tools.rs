@@ -7,7 +7,7 @@ use nd_sim::roads::project_on_segment;
 use nd_sim::zoning::point_in_polygon;
 use nd_sim::plan::sample_curve;
 use nd_sim::roads::RoadKind;
-use nd_sim::{Activity, BuildingId, CarId, CitizenId, Gesture, GestureId, LandUse, Plan, Vec2 as SVec2};
+use nd_sim::{Activity, BuildingId, CarId, CitizenId, Gesture, GestureId, LandUse, Plan, Vec2 as SVec2, World};
 
 use crate::camera::{CameraMode, Cursor};
 use crate::sim::{Sim, SimSet};
@@ -116,6 +116,32 @@ impl Default for ToolState {
     }
 }
 
+/// The master plan with the project applied, cached between changes.
+/// `World::effective_plan()` clones every gesture, and the tools, the gizmos
+/// and the Edit panel all want it each frame; `plan_version` bumps on every
+/// change to either, so comparing it is enough to know when to clone again.
+#[derive(Resource, Default)]
+pub struct EffectivePlan {
+    plan: Plan,
+    key: Option<u64>,
+}
+
+impl EffectivePlan {
+    /// Bring the cache up to date with `world` (a clone only when the plan changed).
+    pub fn sync(&mut self, world: &World) -> &Plan {
+        if self.key != Some(world.plan_version) {
+            self.plan = world.effective_plan();
+            self.key = Some(world.plan_version);
+        }
+        &self.plan
+    }
+
+    /// Forget the cache: a loaded world starts its own `plan_version` count.
+    pub fn invalidate(&mut self) {
+        self.key = None;
+    }
+}
+
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Selection {
     #[default]
@@ -133,6 +159,7 @@ impl Plugin for ToolsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ToolState>()
             .init_resource::<Selection>()
+            .init_resource::<EffectivePlan>()
             .configure_sets(Update, (SimSet::Input, SimSet::Step, SimSet::Sync).chain())
             .add_systems(Update, (tool_input, draw_gizmos).chain().in_set(SimSet::Input));
     }
@@ -205,6 +232,7 @@ fn tool_input(
     mut tools: ResMut<ToolState>,
     mut selection: ResMut<Selection>,
     mut sim: ResMut<Sim>,
+    mut eplan: ResMut<EffectivePlan>,
 ) {
     if *mode == CameraMode::Walk {
         tools.drag = None;
@@ -212,6 +240,12 @@ fn tool_input(
     }
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    // While an egui text field has focus every key is typing, not a hotkey.
+    let key = |k: KeyCode| !flags.keyboard_captured && keys.just_pressed(k);
+    // Keys that stand in for a click on the map count only when the pointer
+    // is on the map; over the panel they belong to the widget under it.
+    let map_key = |k: KeyCode| key(k) && !flags.pointer_over_ui;
+    let plan = eplan.sync(&sim.world);
 
     // Tool hotkeys.
     // Digits always; letters as aliases where they do not clash with the
@@ -227,22 +261,22 @@ fn tool_input(
         (KeyCode::Digit8, Some(KeyCode::KeyY), Tool::Rail),
     ];
     for (a, b, tool) in picks {
-        let alias = b.is_some_and(|b| keys.just_pressed(b) && !ctrl);
-        if (keys.just_pressed(a) || alias) && !(tool == Tool::Zone && ctrl) {
+        let alias = b.is_some_and(|b| key(b) && !ctrl);
+        if (key(a) || alias) && !(tool == Tool::Zone && ctrl) {
             tools.tool = tool;
             tools.points.clear();
             tools.drag = None;
         }
     }
-    if keys.just_pressed(KeyCode::Escape) {
+    if key(KeyCode::Escape) {
         tools.points.clear();
         tools.drag = None;
         *selection = Selection::None;
     }
-    if keys.just_pressed(KeyCode::Backspace) && matches!(tools.tool, Tool::Road | Tool::Zone) {
+    if map_key(KeyCode::Backspace) && matches!(tools.tool, Tool::Road | Tool::Zone) {
         tools.points.pop();
     }
-    if keys.just_pressed(KeyCode::Backspace) && tools.tool == Tool::Transit {
+    if map_key(KeyCode::Backspace) && tools.tool == Tool::Transit {
         if let Some(r) = tools.route_sel {
             let n = sim.world.transit.routes.get(r).map_or(0, |x| x.stops.len());
             if n > 0 {
@@ -253,20 +287,20 @@ fn tool_input(
             }
         }
     }
-    if keys.just_pressed(KeyCode::KeyC) && tools.tool == Tool::Road && !ctrl {
+    if key(KeyCode::KeyC) && tools.tool == Tool::Road && !ctrl {
         tools.curved = !tools.curved;
     }
 
     // Project commands.
-    if ctrl && keys.just_pressed(KeyCode::KeyZ) {
+    if ctrl && key(KeyCode::KeyZ) {
         tools.points.clear();
         tools.drag = None;
         tools.status = if sim.world.undo() { "Undid last step".into() } else { "Nothing to undo".into() };
     }
-    if ctrl && keys.just_pressed(KeyCode::KeyY) {
+    if ctrl && key(KeyCode::KeyY) {
         tools.status = if sim.world.redo() { "Redid step".into() } else { "Nothing to redo".into() };
     }
-    if ctrl && keys.just_pressed(KeyCode::Enter) {
+    if ctrl && key(KeyCode::Enter) {
         tools.points.clear();
         tools.drag = None;
         sim.world.implement();
@@ -282,7 +316,7 @@ fn tool_input(
             (Some(down), Some(up)) => down.distance(up) < 6.0,
             _ => false,
         };
-    let finish = (keys.just_pressed(KeyCode::Enter) && !ctrl) || right_click;
+    let finish = (map_key(KeyCode::Enter) && !ctrl) || right_click;
     let click = buttons.just_pressed(MouseButton::Left) && !shift && !flags.pointer_over_ui;
     let shift_click = buttons.just_pressed(MouseButton::Left) && shift && !flags.pointer_over_ui;
     let ground = cursor.ground;
@@ -310,8 +344,7 @@ fn tool_input(
             }
         }
         Tool::Zone => {
-            let plan = sim.world.effective_plan();
-            tools.hover_gesture = ground.and_then(|p| nearest_gesture(&plan, p)).and_then(|(id, _)| match plan.gestures.get(&id) {
+            tools.hover_gesture = ground.and_then(|p| nearest_gesture(plan, p)).and_then(|(id, _)| match plan.gestures.get(&id) {
                 Some(Gesture::Zone { .. }) => Some(id),
                 _ => None,
             });
@@ -336,9 +369,8 @@ fn tool_input(
             }
         }
         Tool::Edit => {
-            let plan = sim.world.effective_plan();
-            tools.hover_point = ground.and_then(|p| nearest_control_point(&plan, p));
-            tools.hover_gesture = ground.and_then(|p| nearest_gesture(&plan, p)).map(|(id, _)| id);
+            tools.hover_point = ground.and_then(|p| nearest_control_point(plan, p));
+            tools.hover_gesture = ground.and_then(|p| nearest_gesture(plan, p)).map(|(id, _)| id);
 
             if let Some((id, idx)) = tools.drag {
                 if let (Some(p), Some(mut g)) = (ground, plan.gestures.get(&id).cloned()) {
@@ -367,7 +399,7 @@ fn tool_input(
                     }
                 }
             } else if shift_click {
-                if let (Some(p), Some((id, seg))) = (ground, ground.and_then(|p| nearest_gesture(&plan, p))) {
+                if let (Some(p), Some((id, seg))) = (ground, ground.and_then(|p| nearest_gesture(plan, p))) {
                     if let Some(mut g) = plan.gestures.get(&id).cloned() {
                         let at = (seg + 1).min(g.points().len());
                         g.points_mut().insert(at, p);
@@ -376,7 +408,7 @@ fn tool_input(
                     }
                 }
             }
-            if keys.just_pressed(KeyCode::Delete) && !flags.pointer_over_ui {
+            if map_key(KeyCode::Delete) {
                 if let Some((id, idx)) = tools.hover_point {
                     if let Some(mut g) = plan.gestures.get(&id).cloned() {
                         if g.points().len() > g.min_points() {
@@ -392,8 +424,7 @@ fn tool_input(
             }
         }
         Tool::Bulldoze => {
-            let plan = sim.world.effective_plan();
-            tools.hover_gesture = ground.and_then(|p| nearest_gesture(&plan, p)).map(|(id, _)| id);
+            tools.hover_gesture = ground.and_then(|p| nearest_gesture(plan, p)).map(|(id, _)| id);
             if click {
                 if let Some(id) = tools.hover_gesture {
                     sim.world.remove_gesture(id);
@@ -441,7 +472,7 @@ fn tool_input(
                         }
                     }
                 }
-                if keys.just_pressed(KeyCode::Delete) {
+                if map_key(KeyCode::Delete) {
                     if let Some((r, i)) = tools.hover_stop.take() {
                         sim.world.remove_bus_stop(r, i);
                         if !sim.world.transit.routes.contains_key(r) {
@@ -486,12 +517,15 @@ fn tool_input(
                     tools.status = match sim.world.place_rail_facility(kind, p) {
                         Ok(id) => {
                             *selection = Selection::Building(id);
-                            let link = sim.world.buildings[id].rail.clone().unwrap();
-                            match (link.rail_connected, link.road_connected) {
-                                (true, true) => format!("{} placed and connected. Trains call from the next headway.", kind.label()),
-                                (true, false) => format!("{} placed on the track. Join a road to its street stub and it opens.", kind.label()),
-                                (false, true) => format!("{} placed by the street. Lay track onto its rail stub and it opens.", kind.label()),
-                                (false, false) => format!("{} placed. Lay track to its rail stub and a road to its street stub.", kind.label()),
+                            // `place_rail_facility` sets the link; should a sim change
+                            // ever leave it off, say so rather than panic mid-click.
+                            let link = sim.world.buildings.get(id).and_then(|b| b.rail.as_ref()).map(|l| (l.rail_connected, l.road_connected));
+                            match link {
+                                Some((true, true)) => format!("{} placed and connected. Trains call from the next headway.", kind.label()),
+                                Some((true, false)) => format!("{} placed on the track. Join a road to its street stub and it opens.", kind.label()),
+                                Some((false, true)) => format!("{} placed by the street. Lay track onto its rail stub and it opens.", kind.label()),
+                                Some((false, false)) => format!("{} placed. Lay track to its rail stub and a road to its street stub.", kind.label()),
+                                None => format!("{} placed, but it reports no rail link; select it to check.", kind.label()),
                             }
                         }
                         Err(e) => format!("Cannot build: {e}."),
@@ -562,7 +596,9 @@ fn pick(sim: &Sim, p: SVec2) -> Selection {
     Selection::None
 }
 
-fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, selection: Res<Selection>) {
+fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, selection: Res<Selection>, mut eplan: ResMut<EffectivePlan>) {
+    // Re-sync so a point dragged by `tool_input` this frame draws where it is.
+    let plan = eplan.sync(&sim.world);
     draw_selection(&mut gizmos, &sim, *selection);
     let cyan = Color::linear_rgb(1.4, 1.6, 1.8);
     let red = Color::linear_rgb(3.0, 0.2, 0.4);
@@ -624,7 +660,6 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             }
         }
         Tool::Edit => {
-            let plan = sim.world.effective_plan();
             for (id, g) in &plan.gestures {
                 for (i, &p) in g.points().iter().enumerate() {
                     let hovered = tools.hover_point == Some((*id, i)) || tools.drag == Some((*id, i));
@@ -644,7 +679,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
         }
         Tool::Bulldoze => {
             if let Some(id) = tools.hover_gesture {
-                if let Some(g) = sim.world.gesture(id) {
+                if let Some(g) = plan.gestures.get(&id) {
                     let mut pts: Vec<Vec3> = g.points().iter().map(|&p| lift(p)).collect();
                     if !g.is_road() && pts.len() >= 3 {
                         pts.push(pts[0]);
