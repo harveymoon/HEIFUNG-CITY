@@ -10,6 +10,7 @@ pub mod clock;
 pub mod economy;
 pub mod events;
 pub mod land_value;
+pub mod market;
 pub mod mind;
 pub mod names;
 pub mod plan;
@@ -20,6 +21,7 @@ pub mod zoning;
 
 pub use buildings::{Building, BuildingId, Tier};
 pub use land_value::LandValue;
+pub use market::{Business, BusinessKind, MarketStats, Resource};
 pub use citizens::{Activity, Citizen, CitizenId, Memory, Purpose};
 pub use clock::SimClock;
 pub use economy::Economy;
@@ -27,7 +29,7 @@ pub use events::SimEvent;
 pub use mind::{Decision, Intent, MindContext, MindProvider};
 pub use plan::{Gesture, GestureId, Plan, PlanPreview, Project};
 pub use roads::{NodeId, RoadNetwork, Segment, SegmentId};
-pub use traffic::{Car, CarId, LaneId, Traffic};
+pub use traffic::{Car, CarId, Cargo, LaneId, Traffic};
 pub use world::{World, WorldConfig};
 pub use zoning::{LandUse, Lot, LotId, Zone, ZoneId};
 

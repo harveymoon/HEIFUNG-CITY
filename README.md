@@ -29,6 +29,10 @@ links Bevy dynamically for quicker iteration.
 - Traffic: cars follow lanes, queue, and obey the signals at junctions with three or more roads.
 - Space pauses, `-`/`=` change speed. Camera: right-drag rotate, middle-drag or shift-drag pan,
   wheel zoom, WASD/QE.
+- Every shop, plant and venue is a business with stock, cash and prices. Grocers need produce, flour,
+  meat and dairy; mills need grain; assembly plants need parts. Businesses buy from the cheapest
+  supplier (trucks drive the goods over) or import at a markup. Citizens get hungry, shop, and
+  leave if they cannot eat. Businesses that cannot pay wages close and go derelict.
 - Buildings appear on vacant lots when demand is high, in the tier the land value supports. People
   move in when they can afford a home, take jobs, commute, and move or leave when rent bites.
   `V` toggles the land value overlay; the panel shows class counts, rents and the Gini index.

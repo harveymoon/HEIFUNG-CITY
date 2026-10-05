@@ -5,7 +5,9 @@
 //! The lane network is rebuilt from the road network whenever roads change
 //! and is never serialised; cars are.
 
+use crate::buildings::BuildingId;
 use crate::citizens::CitizenId;
+use crate::market::Resource;
 use crate::roads::{project_on_segment, NodeId, RoadNetwork, SegmentId, LANE_WIDTH};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
@@ -29,6 +31,8 @@ const IDM_HEADWAY: f32 = 1.2;
 const GREEN_SECONDS: f32 = 14.0;
 const CLEARANCE_SECONDS: f32 = 3.0;
 const LOOKAHEAD: f32 = 90.0;
+/// Trips older than this (traffic seconds) end where the car stands.
+const TRIP_TIMEOUT: f32 = 1800.0;
 
 #[derive(Clone, Debug)]
 pub enum LaneKind {
@@ -131,9 +135,22 @@ pub struct LaneNetwork {
     pub version: u64,
 }
 
+/// Freight carried by a truck between two businesses.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Cargo {
+    pub from: BuildingId,
+    pub to: BuildingId,
+    pub resource: Resource,
+    pub amount: f32,
+    /// Money the buyer owes on delivery.
+    pub price: f32,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Car {
+    /// Driver for private cars; a null key for trucks.
     pub citizen: CitizenId,
+    pub cargo: Option<Cargo>,
     pub route: Vec<LaneId>,
     pub idx: usize,
     pub s: f32,
@@ -144,6 +161,9 @@ pub struct Car {
     pub prev_pos: Vec2,
     pub prev_heading: f32,
     pub color: u8,
+    /// Seconds spent on the trip; stalled trips time out.
+    #[serde(default)]
+    pub age: f32,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -442,11 +462,11 @@ impl Traffic {
         list.insert(pos, car);
     }
 
-    pub fn spawn_car(&mut self, citizen: CitizenId, route: Vec<LaneId>, s_start: f32, s_end: f32, color: u8) -> CarId {
+    pub fn spawn_car(&mut self, citizen: CitizenId, cargo: Option<Cargo>, route: Vec<LaneId>, s_start: f32, s_end: f32, color: u8) -> CarId {
         let lane = route[0];
         let (pos, dir) = self.net.lanes[lane as usize].point_at(s_start);
         let heading = dir.y.atan2(dir.x);
-        let id = self.cars.insert(Car { citizen, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color });
+        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0 });
         self.insert_sorted(lane, id);
         id
     }
@@ -465,11 +485,24 @@ impl Traffic {
     /// down the route for the next car or a red light.
     fn lookahead(&self, car: &Car, lane: &Lane) -> (f32, f32) {
         let mut dist = lane.length - car.s;
-        for &next in car.route.iter().skip(car.idx + 1).take(4) {
+        let route = &car.route;
+        for (k, &next) in route.iter().enumerate().skip(car.idx + 1).take(4) {
             let nl = &self.net.lanes[next as usize];
             if nl.is_connector() && !nl.green {
                 // Stop line just before the lane ends; the min gap keeps the nose clear.
                 return (dist - 1.0 + IDM_MIN_GAP, 0.0);
+            }
+            // Do not enter a junction unless the exit lane has room: this is
+            // what keeps a saturated grid from locking up.
+            if nl.is_connector() && !lane.is_connector() && k == car.idx + 1 {
+                if let Some(&exit) = route.get(k + 1) {
+                    let el = &self.net.lanes[exit as usize];
+                    let blocked = el.cars.first().map_or(false, |&c| self.cars[c].s < CAR_LENGTH + IDM_MIN_GAP + 1.0) && el.cars.len() as f32 * (CAR_LENGTH + IDM_MIN_GAP) > el.length - nl.length;
+                    let tail_near = el.cars.first().map_or(false, |&c| self.cars[c].s < CAR_LENGTH + 0.5);
+                    if blocked || (tail_near && !nl.cars.is_empty()) {
+                        return (dist - 1.0 + IDM_MIN_GAP, 0.0);
+                    }
+                }
             }
             if let Some(&first) = nl.cars.first() {
                 let lead = &self.cars[first];
@@ -490,6 +523,7 @@ impl Traffic {
         for car in self.cars.values_mut() {
             car.prev_pos = car.pos;
             car.prev_heading = car.heading;
+            car.age += seconds;
         }
         let mut arrived = Vec::new();
         for _ in 0..substeps {
@@ -526,6 +560,12 @@ impl Traffic {
                     let lane_id = c.route[c.idx];
                     (lane_id, c.idx, self.net.lanes[lane_id as usize].length, c.s, c.s_end)
                 };
+                if self.cars[cid].age > TRIP_TIMEOUT {
+                    if !arrived.contains(&cid) {
+                        arrived.push(cid);
+                    }
+                    continue;
+                }
                 if idx + 1 == self.cars[cid].route.len() {
                     if s >= s_end - 0.5 {
                         let c = &mut self.cars[cid];
@@ -591,7 +631,7 @@ mod tests {
         let (route, s0, s1) = t.net.find_route(west, Vec2::new(-150.0, -2.0), north, Vec2::new(2.0, 150.0)).expect("route");
         assert!(route.len() >= 3);
         let citizen = CitizenId::default();
-        let car = t.spawn_car(citizen, route, s0, s1, 0);
+        let car = t.spawn_car(citizen, None, route, s0, s1, 0);
         let mut arrived = false;
         for _ in 0..240 {
             if t.step(1.0, 2).contains(&car) {

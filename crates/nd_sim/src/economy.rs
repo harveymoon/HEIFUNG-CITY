@@ -30,6 +30,7 @@ pub struct Economy {
     pub emigrated_total: u32,
     /// Immigrants turned away because nothing was affordable, cumulative.
     pub priced_out_total: u32,
+    pub market: crate::market::MarketStats,
 }
 
 impl Economy {

@@ -4,6 +4,8 @@ use crate::clock::SimClock;
 use crate::economy::Economy;
 use crate::events::SimEvent;
 use crate::land_value::{LandValue, LandValueBuilder};
+use crate::market::{best_seller, Business, BusinessKind, Resource, EXPORT_DISCOUNT, IMPORT_MARKUP};
+use crate::traffic::Cargo;
 use crate::mind::{Decision, Intent, MindContext, MindProvider};
 use crate::names;
 use crate::plan::{preview, Gesture, GestureId, Plan, PlanPreview, Project};
@@ -387,6 +389,9 @@ impl World {
             self.events.push(SimEvent::NewDay(self.clock.day()));
             self.daily_update();
         }
+        if tick % 60 == 0 {
+            self.hourly_economy();
+        }
         if tick % 120 == 0 {
             self.update_land_value();
         }
@@ -415,6 +420,10 @@ impl World {
         let arrived = self.traffic.step(self.config.traffic_seconds_per_tick, self.config.traffic_substeps);
         for car_id in arrived {
             let Some(car) = self.traffic.remove_car(car_id) else { continue };
+            if let Some(cargo) = car.cargo {
+                self.deliver(cargo);
+                continue;
+            }
             if let Some(c) = self.citizens.get_mut(car.citizen) {
                 c.pos = car.pos;
                 c.heading = car.heading;
@@ -561,6 +570,285 @@ impl World {
         for cid in cids {
             self.daily_citizen(cid);
         }
+        self.daily_businesses();
+    }
+
+    /// Businesses pay wages; those that cannot for several days close, and
+    /// closed buildings are demolished after a week so the lot can be reused.
+    fn daily_businesses(&mut self) {
+        let tick = self.clock.tick;
+        let ids: Vec<BuildingId> = self.buildings.keys().collect();
+        let mut demolish = Vec::new();
+        for bid in ids {
+            let (wage_bill, workers, publicly_funded, kind) = {
+                let b = &self.buildings[bid];
+                let Some(bz) = &b.business else { continue };
+                let publicly_funded = matches!(bz.kind, BusinessKind::Office) || b.land_use == LandUse::Civic;
+                (b.workers.len() as f32 * b.wage() * 0.6, b.workers.clone(), publicly_funded, bz.kind)
+            };
+            let b = &mut self.buildings[bid];
+            let bz = b.business.as_mut().unwrap();
+            if bz.closed {
+                bz.broke_days = bz.broke_days.saturating_add(1);
+                if bz.broke_days > 7 {
+                    demolish.push(bid);
+                }
+                continue;
+            }
+            if !publicly_funded {
+                bz.money -= wage_bill;
+                bz.spend_today += wage_bill;
+            }
+            bz.revenue_today = 0.0;
+            bz.spend_today = 0.0;
+            if bz.money < -300.0 && !publicly_funded {
+                bz.broke_days = bz.broke_days.saturating_add(1);
+            } else {
+                bz.broke_days = 0;
+            }
+            if bz.broke_days >= 5 {
+                bz.closed = true;
+                bz.broke_days = 0;
+                b.condition = b.condition.min(0.25);
+                b.workers.clear();
+                let name = b.name.clone();
+                let _ = kind;
+                for w in workers {
+                    if let Some(c) = self.citizens.get_mut(w) {
+                        c.work = None;
+                        c.income = 40.0;
+                        c.remember(tick, format!("{name} shut down. Out of a job."));
+                        c.mood = (c.mood - 0.15).max(0.0);
+                    }
+                }
+                self.economy.market.closed_total += 1;
+                self.events.push(SimEvent::BusinessClosed(bid));
+                self.events.push(SimEvent::BuildingChanged(bid));
+            }
+        }
+        for bid in demolish {
+            self.demolish(bid);
+        }
+        self.economy.market.deals_today = 0;
+        self.economy.market.imports_today = 0.0;
+        self.economy.market.exports_today = 0.0;
+        self.economy.market.meals_sold_today = 0;
+    }
+
+    /// Every sim hour: hunger, eating at home, production, restocking through
+    /// the market or imports, exporting surplus, and market statistics.
+    fn hourly_economy(&mut self) {
+        let tick = self.clock.tick;
+        // Hunger and home cooking.
+        for c in self.citizens.values_mut() {
+            c.satiety = (c.satiety - 0.04).max(0.0);
+            let at_home = c.home.is_some() && c.inside == c.home;
+            if at_home && c.satiety < 0.6 && c.groceries >= 1.0 {
+                c.groceries -= 1.0;
+                c.satiety = (c.satiety + 0.45).min(1.0);
+            }
+        }
+        // Production.
+        let ids: Vec<BuildingId> = self.buildings.keys().collect();
+        for &bid in &ids {
+            let b = &mut self.buildings[bid];
+            let (jobs, staffing) = (b.jobs, b.staffing());
+            if let Some(bz) = b.business.as_mut() {
+                if !bz.closed {
+                    bz.produce(jobs, staffing);
+                }
+            }
+        }
+        // Restocking: find the cheapest delivered supplier or import.
+        for &bid in &ids {
+            let (kind, jobs, needs, at, closed) = {
+                let b = &self.buildings[bid];
+                let Some(bz) = &b.business else { continue };
+                let Some(lot) = self.lots.get(b.lot) else { continue };
+                let needs: Vec<(Resource, f32)> = bz
+                    .kind
+                    .recipe()
+                    .inputs
+                    .iter()
+                    .filter_map(|(r, _)| {
+                        let target = bz.target_input(*r, b.jobs);
+                        let have = bz.stock_of(*r) + bz.inbound_of(*r);
+                        if have < target * 0.5 { Some((*r, target - have)) } else { None }
+                    })
+                    .collect();
+                (bz.kind, b.jobs, needs, lot.center, bz.closed)
+            };
+            let _ = (kind, jobs);
+            if closed {
+                continue;
+            }
+            for (r, amount) in needs {
+                let amount = amount.min(400.0);
+                let seller = {
+                    let sellers = self.buildings.iter().filter(|(id, _)| *id != bid).filter_map(|(id, b)| {
+                        let bz = b.business.as_ref()?;
+                        let lot = self.lots.get(b.lot)?;
+                        Some((id, bz, b.jobs, lot.center))
+                    });
+                    best_seller(sellers, r, at, amount)
+                };
+                match seller {
+                    Some((seller_id, price)) => {
+                        let got = self.buildings[seller_id].business.as_mut().unwrap().take(r, amount);
+                        if got <= 0.0 {
+                            continue;
+                        }
+                        let cost = got * price;
+                        {
+                            let sb = self.buildings[seller_id].business.as_mut().unwrap();
+                            sb.money += cost;
+                            sb.revenue_today += cost;
+                            sb.deals += 1;
+                        }
+                        {
+                            let bb = self.buildings[bid].business.as_mut().unwrap();
+                            bb.money -= cost;
+                            bb.spend_today += cost;
+                        }
+                        self.economy.market.deals_today += 1;
+                        self.ship(seller_id, bid, r, got, cost);
+                    }
+                    None => {
+                        let cost = amount * r.base_price() * IMPORT_MARKUP;
+                        {
+                            let bb = self.buildings[bid].business.as_mut().unwrap();
+                            bb.money -= cost;
+                            bb.spend_today += cost;
+                        }
+                        self.economy.market.imports_today += cost;
+                        self.import(bid, r, amount, cost);
+                    }
+                }
+            }
+        }
+        // Exports: surplus outputs leave town at a discount.
+        for &bid in &ids {
+            let b = &mut self.buildings[bid];
+            let jobs = b.jobs;
+            let Some(bz) = b.business.as_mut() else { continue };
+            if bz.closed {
+                continue;
+            }
+            for (r, per) in bz.kind.recipe().outputs {
+                if r.is_retail() {
+                    continue;
+                }
+                let keep = per * jobs as f32 * crate::market::JOB_RATE * 48.0;
+                let have = bz.stock_of(*r);
+                if have > keep * 1.2 {
+                    let surplus = have - keep;
+                    bz.take(*r, surplus);
+                    let income = surplus * r.base_price() * EXPORT_DISCOUNT;
+                    bz.money += income;
+                    bz.revenue_today += income;
+                    self.economy.market.exports_today += income;
+                }
+            }
+        }
+        // Statistics.
+        let mut sums: std::collections::BTreeMap<Resource, (f32, u32, f32)> = std::collections::BTreeMap::new();
+        let mut businesses = 0;
+        for b in self.buildings.values() {
+            let Some(bz) = &b.business else { continue };
+            if bz.closed {
+                continue;
+            }
+            businesses += 1;
+            for r in Resource::ALL {
+                let e = sums.entry(r).or_insert((0.0, 0, 0.0));
+                e.2 += bz.stock_of(r);
+                if bz.sells(r) {
+                    e.0 += bz.sell_price(r, b.jobs);
+                    e.1 += 1;
+                }
+            }
+        }
+        let m = &mut self.economy.market;
+        m.businesses = businesses;
+        for (r, (sum, n, stock)) in sums {
+            m.avg_price.insert(r, if n > 0 { sum / n as f32 } else { r.base_price() });
+            m.stock.insert(r, stock);
+        }
+        m.hungry = self.citizens.values().filter(|c| c.satiety < 0.3).count() as u32;
+        let _ = tick;
+    }
+
+    /// Send a truck from one business to another; deliver instantly when no
+    /// road route exists.
+    fn ship(&mut self, from: BuildingId, to: BuildingId, resource: Resource, amount: f32, price: f32) {
+        let cargo = Cargo { from, to, resource, amount, price };
+        if let Some(bz) = self.buildings.get_mut(to).and_then(|b| b.business.as_mut()) {
+            *bz.inbound.entry(resource).or_insert(0.0) += amount;
+        }
+        if self.truck_count() >= crate::market::MAX_TRUCKS {
+            self.deliver(cargo);
+            return;
+        }
+        let route = (|| {
+            let fl = self.building_lot(from)?;
+            let tl = self.building_lot(to)?;
+            let fp = fl.corners[0].lerp(fl.corners[1], 0.5);
+            let tp = tl.corners[0].lerp(tl.corners[1], 0.5);
+            self.traffic.net.find_route(fl.front_segment, fp, tl.front_segment, tp)
+        })();
+        match route {
+            Some((route, s0, s1)) => {
+                let color = 7;
+                self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, color);
+            }
+            None => self.deliver(cargo),
+        }
+    }
+
+    /// Import from outside: a truck enters at the city edge.
+    fn truck_count(&self) -> usize {
+        self.traffic.cars.values().filter(|c| c.cargo.is_some()).count()
+    }
+
+    fn import(&mut self, to: BuildingId, resource: Resource, amount: f32, price: f32) {
+        let cargo = Cargo { from: to, to, resource, amount, price };
+        if let Some(bz) = self.buildings.get_mut(to).and_then(|b| b.business.as_mut()) {
+            *bz.inbound.entry(resource).or_insert(0.0) += amount;
+        }
+        if self.truck_count() >= crate::market::MAX_TRUCKS {
+            self.deliver(cargo);
+            return;
+        }
+        let route = (|| {
+            let entry = self.entry_node_const()?;
+            let node = self.roads.node(entry);
+            let seg = *node.segments.iter().find(|&&s| self.roads.segment(s).alive)?;
+            let tl = self.building_lot(to)?;
+            let tp = tl.corners[0].lerp(tl.corners[1], 0.5);
+            self.traffic.net.find_route(seg, node.pos, tl.front_segment, tp)
+        })();
+        match route {
+            Some((route, s0, s1)) => {
+                self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, 6);
+            }
+            None => self.deliver(cargo),
+        }
+    }
+
+    fn entry_node_const(&self) -> Option<NodeId> {
+        let leaves = self.roads.leaf_nodes();
+        let max = leaves.iter().map(|&n| self.roads.node(n).pos.length()).fold(0.0, f32::max);
+        leaves.into_iter().find(|&n| self.roads.node(n).pos.length() >= max * 0.6)
+    }
+
+    fn deliver(&mut self, cargo: Cargo) {
+        if let Some(b) = self.buildings.get_mut(cargo.to) {
+            if let Some(bz) = b.business.as_mut() {
+                bz.add(cargo.resource, cargo.amount);
+                let left = (bz.inbound_of(cargo.resource) - cargo.amount).max(0.0);
+                bz.inbound.insert(cargo.resource, left);
+            }
+        }
     }
 
     fn daily_citizen(&mut self, cid: CitizenId) {
@@ -577,6 +865,21 @@ impl World {
             c.mood = (c.mood + if stressed { -0.05 } else { 0.01 }).clamp(0.0, 1.0);
             (c.rent_stress_days, c.class(), c.savings)
         };
+        {
+            let c = &mut self.citizens[cid];
+            if c.satiety < 0.25 {
+                c.hungry_days = c.hungry_days.saturating_add(1);
+                c.mood = (c.mood - 0.1).max(0.0);
+            } else {
+                c.hungry_days = 0;
+            }
+            if c.hungry_days >= 4 {
+                let tick = self.clock.tick;
+                c.remember(tick, "Couldn't keep myself fed here. Leaving.".to_string());
+                self.emigrate(cid);
+                return;
+            }
+        }
         if stress >= 3 {
             let cheaper = self.pick_building(|b| b.land_use == LandUse::Residential && b.free_homes() > 0 && b.rent <= income * 0.45);
             match cheaper {
@@ -691,7 +994,11 @@ impl World {
         };
         let seed = self.fresh_seed();
         let name = names::building_name(&mut self.rng, lu);
-        let b = Building::new(lot_id, lu, floors, tier, seed, name, self.clock.tick, value);
+        let mut b = Building::new(lot_id, lu, floors, tier, seed, name, self.clock.tick, value);
+        if let Some(kind) = BusinessKind::candidates(lu).choose(&mut self.rng) {
+            let jobs = b.jobs;
+            b.business = Some(Business::new(*kind, jobs));
+        }
         let id = self.buildings.insert(b);
         self.lots[lot_id].building = Some(id);
         self.events.push(SimEvent::BuildingBuilt(id));
@@ -762,6 +1069,9 @@ impl World {
                 income,
                 savings: self.rng.random_range(20.0..120.0),
                 rent_stress_days: 0,
+                satiety: 0.7,
+                groceries: 2.0,
+                hungry_days: 0,
             };
             citizen.remember(tick, format!("Rolled into Neon District on day {} at {}.", self.clock.day() + 1, self.clock.format_hhmm()));
             let id = self.citizens.insert(citizen);
@@ -799,6 +1109,8 @@ impl World {
         let tick = self.clock.tick;
         let available = self.available_land_uses();
         let population = self.citizens.len() as u32;
+        let groceries_for_sale = self.retail_available(Resource::Groceries);
+        let meals_for_sale = self.retail_available(Resource::BakedGoods);
         let ids: Vec<CitizenId> = self.citizens.keys().collect();
 
         for id in ids {
@@ -847,6 +1159,10 @@ impl World {
                     work_name: c.work.and_then(|w| self.buildings.get(w)).map(|b| b.name.as_str()),
                     available,
                     population,
+                    satiety: c.satiety,
+                    groceries: c.groceries,
+                    groceries_for_sale,
+                    meals_for_sale,
                 };
                 minds.decide(&ctx)
             };
@@ -884,7 +1200,26 @@ impl World {
                     let name = bld.name.clone();
                     c.remember(tick, format!("Spent the evening at {name}."));
                     c.mood = (c.mood + 0.05).min(1.0);
+                    // Venues charge at the door.
+                    if let Some(bz) = bld.business.as_mut() {
+                        if bz.kind == BusinessKind::Venue {
+                            let cover = 15.0;
+                            c.savings -= cover;
+                            bz.money += cover;
+                            bz.revenue_today += cover;
+                        }
+                    }
                 }
+            }
+            (Purpose::Shop(r), Some(b)) => {
+                c.activity = Activity::Visiting(b);
+                c.inside = Some(b);
+                if let Some(bld) = self.buildings.get_mut(b) {
+                    bld.visitors += 1;
+                }
+                c.next_decision_tick = tick + 10 + self.rng.random_range(0..20);
+                self.buy(id, b, r);
+                return;
             }
             _ => {
                 c.activity = Activity::Idle;
@@ -935,6 +1270,82 @@ impl World {
                 }
             }
             Intent::Wander => self.wander(id),
+            Intent::Shop(r) => {
+                let here = self.citizens[id].pos;
+                if let Some(b) = self.best_shop(r, here) {
+                    if inside != Some(b) {
+                        self.travel_to(id, Some(b), Purpose::Shop(r));
+                    } else {
+                        self.buy(id, b, r);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Any business currently stocking a retail resource.
+    fn retail_available(&self, r: Resource) -> bool {
+        self.buildings.values().any(|b| b.business.as_ref().map_or(false, |bz| !bz.closed && bz.sells(r) && bz.stock_of(r) >= 1.0))
+    }
+
+    /// Nearest well-stocked shop for a resource, cheapest within reach.
+    fn best_shop(&self, r: Resource, at: Vec2) -> Option<BuildingId> {
+        let mut best: Option<(f32, BuildingId)> = None;
+        for (id, b) in self.buildings.iter() {
+            let Some(bz) = &b.business else { continue };
+            if bz.closed || !bz.sells(r) || bz.stock_of(r) < 1.0 {
+                continue;
+            }
+            let Some(lot) = self.lots.get(b.lot) else { continue };
+            let score = bz.sell_price(r, b.jobs) + lot.center.distance(at) * 0.02;
+            if best.map_or(true, |(s, _)| score < s) {
+                best = Some((score, id));
+            }
+        }
+        best.map(|(_, id)| id)
+    }
+
+    /// A citizen buys at a shop they have reached.
+    fn buy(&mut self, cid: CitizenId, shop: BuildingId, r: Resource) {
+        let tick = self.clock.tick;
+        let Some(b) = self.buildings.get_mut(shop) else { return };
+        let jobs = b.jobs;
+        let name = b.name.clone();
+        let Some(bz) = b.business.as_mut() else { return };
+        let want = match r {
+            Resource::Groceries => 3.0,
+            _ => 1.0,
+        };
+        let price = bz.sell_price(r, jobs);
+        let got = bz.take(r, want);
+        let c = &mut self.citizens[cid];
+        if got <= 0.0 {
+            c.remember(tick, format!("Shelves were empty at {name}."));
+            c.mood = (c.mood - 0.05).max(0.0);
+            return;
+        }
+        let cost = got * price;
+        c.savings -= cost;
+        bz.money += cost;
+        bz.revenue_today += cost;
+        self.economy.market.deals_today += 1;
+        match r {
+            Resource::Groceries => {
+                c.groceries += got;
+                self.economy.market.meals_sold_today += got as u32;
+            }
+            Resource::BakedGoods => {
+                c.satiety = (c.satiety + 0.35 * got).min(1.0);
+                self.economy.market.meals_sold_today += 1;
+                if self.rng.random_bool(0.3) {
+                    c.remember(tick, format!("Grabbed a bite at {name}."));
+                }
+            }
+            Resource::Goods => {
+                c.mood = (c.mood + 0.12).min(1.0);
+                c.remember(tick, format!("Treated myself to something new at {name}."));
+            }
+            _ => {}
         }
     }
 
@@ -976,7 +1387,7 @@ impl World {
             if let Some((route, s0, s1)) = self.traffic.net.find_route(from_seg, from_pt, to_seg, entrance) {
                 let exit_pos = self.leave_building(id);
                 let color = self.rng.random_range(0..8u8);
-                let car = self.traffic.spawn_car(id, route, s0, s1, color);
+                let car = self.traffic.spawn_car(id, None, route, s0, s1, color);
                 let c = &mut self.citizens[id];
                 if let Some(p) = exit_pos {
                     c.pos = p;
@@ -1051,6 +1462,7 @@ mod rng_serde {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::market::Resource;
     use crate::mind::IdleMind;
 
     fn square(x0: f32, y0: f32, size: f32) -> Vec<Vec2> {
@@ -1116,6 +1528,33 @@ mod tests {
         w.implement();
         // The newer commercial zone still sits on top of the repainted one.
         assert!(w.lots.values().filter(|l| point_in_polygon(l.center, &tri)).all(|l| l.land_use == LandUse::Commercial));
+    }
+
+    #[test]
+    fn supply_chain_feeds_the_city() {
+        let mut w = World::new(WorldConfig::default());
+        for i in -1..=1 {
+            let c = i as f32 * 200.0;
+            w.add_road(&[Vec2::new(-500.0, c), Vec2::new(500.0, c)], 1, 1);
+            w.add_road(&[Vec2::new(c, -500.0), Vec2::new(c, 500.0)], 1, 1);
+        }
+        w.add_zone(square(-190.0, -190.0, 180.0), LandUse::Residential);
+        w.add_zone(square(10.0, 10.0, 180.0), LandUse::Commercial);
+        w.add_zone(square(-190.0, 10.0, 180.0), LandUse::Industrial);
+        w.add_zone(square(10.0, -190.0, 180.0), LandUse::Industrial);
+        let mut minds = IdleMind;
+        for _ in 0..(5 * 24 * 60) {
+            w.tick(&mut minds);
+        }
+        let m = &w.economy.market;
+        assert!(m.businesses > 3, "businesses should exist: {}", m.businesses);
+        let groceries_in_town: f32 = w.buildings.values().filter_map(|b| b.business.as_ref()).map(|bz| bz.stock_of(Resource::Groceries)).sum();
+        assert!(groceries_in_town > 0.0, "grocers should have stock from local or imported inputs");
+        let deals: u32 = w.buildings.values().filter_map(|b| b.business.as_ref()).map(|bz| bz.deals).sum();
+        assert!(deals > 0 || m.imports_today > 0.0, "either local deals or imports must have happened");
+        // Save round-trip keeps businesses and cargo.
+        let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+        assert_eq!(back.economy.market.businesses, m.businesses);
     }
 
     #[test]

@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use nd_minds::Personality;
-use nd_sim::LandUse;
+use nd_sim::{LandUse, Resource};
 
 use crate::assets::GameAssets;
 use crate::render::Overlays;
@@ -201,6 +201,23 @@ fn side_panel(
                 e.tier_counts[0], e.tier_counts[1], e.tier_counts[2], e.avg_rent[0], e.avg_rent[1], e.avg_rent[2]
             ));
             ui.label(format!("people   low {} · middle {} · high {}", e.class_counts[0], e.class_counts[1], e.class_counts[2]));
+            ui.separator();
+            section(ui, "MARKET");
+            let m = &e.market;
+            ui.label(format!(
+                "businesses {}   deals today {}   imports {:.0}   exports {:.0}   meals sold {}   hungry {}   closed {}",
+                m.businesses, m.deals_today, m.imports_today, m.exports_today, m.meals_sold_today, m.hungry, m.closed_total
+            ));
+            ui.horizontal_wrapped(|ui| {
+                for r in [Resource::Produce, Resource::Grain, Resource::Flour, Resource::Meat, Resource::Dairy, Resource::Groceries, Resource::BakedGoods, Resource::Parts, Resource::Electronics, Resource::Goods] {
+                    let price = m.avg_price.get(&r).copied().unwrap_or(r.base_price());
+                    let stock = m.stock.get(&r).copied().unwrap_or(0.0);
+                    let hot = price > r.base_price() * 1.25;
+                    let text = egui::RichText::new(format!("{} {:.1} ({:.0})", r.label(), price, stock)).small();
+                    ui.label(if hot { text.color(egui::Color32::from_rgb(255, 120, 90)) } else { text });
+                }
+            });
+            ui.label(egui::RichText::new("price (stock in town); red = scarce").small().weak());
             ui.label(egui::RichText::new("demand").small().weak());
             for lu in LandUse::ALL {
                 let col = zone_color32(assets.palette.zone_color(lu));
@@ -226,6 +243,7 @@ fn side_panel(
                     let work = c.work.and_then(|h| sim.world.buildings.get(h)).map(|b| b.name.as_str()).unwrap_or("unemployed");
                     ui.label(format!("{}  ·  home: {home}  ·  work: {work}", c.activity.label()));
                     ui.label(format!("mood {:.0}%  ·  arrived day {}", c.mood * 100.0, c.arrived_tick / 1440 + 1));
+                    ui.label(format!("satiety {:.0}%  ·  meals at home {:.0}{}", c.satiety * 100.0, c.groceries, if c.hungry_days > 0 { format!("  ·  hungry {}d", c.hungry_days) } else { String::new() }));
                     let rent = c.home.and_then(|h| sim.world.buildings.get(h)).map(|b| b.rent).unwrap_or(0.0);
                     ui.label(format!("{} class  ·  income {:.0}/day  ·  rent {:.0}/day  ·  savings {:.0}{}", c.class().label(), c.income, rent, c.savings, if c.rent_stress_days > 0 { format!("  ·  rent stress {}d", c.rent_stress_days) } else { String::new() }));
                     ui.add_space(4.0);
@@ -253,6 +271,17 @@ fn side_panel(
                     ui.label(format!("{}  ·  {} tier  ·  {} floors  ·  built day {}", b.land_use.label(), b.tier.label(), b.floors, b.built_tick / 1440 + 1));
                     ui.label(format!("land value {:.2}  ·  rent {:.0}/day  ·  wage {:.0}/day  ·  condition {:.0}%{}", b.land_value, b.rent, b.wage(), b.condition * 100.0, if b.is_derelict() { "  ·  DERELICT" } else { "" }));
                     ui.label(format!("residents {}/{}  ·  workers {}/{}  ·  visitors {}", b.residents.len(), b.homes, b.workers.len(), b.jobs, b.visitors));
+                    if let Some(bz) = &b.business {
+                        neon(ui, &format!("{}{}", bz.kind.label(), if bz.closed { "  (CLOSED)" } else { "" }));
+                        ui.label(format!("cash {:.0}  ·  today +{:.0} / -{:.0}  ·  deals {}  ·  staffing {:.0}%", bz.money, bz.revenue_today, bz.spend_today, bz.deals, b.staffing() * 100.0));
+                        let recipe = bz.kind.recipe();
+                        for (r, _) in recipe.inputs {
+                            ui.label(egui::RichText::new(format!("needs {}: {:.0} in stock (target {:.0})", r.label(), bz.stock_of(*r), bz.target_input(*r, b.jobs))).small());
+                        }
+                        for (r, _) in recipe.outputs {
+                            ui.label(egui::RichText::new(format!("sells {}: {:.0} in stock at {:.1}", r.label(), bz.stock_of(*r), bz.sell_price(*r, b.jobs))).small());
+                        }
+                    }
                     ui.label(egui::RichText::new("people here").small().weak());
                     let names: Vec<String> = b
                         .residents

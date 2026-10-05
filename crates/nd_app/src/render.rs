@@ -56,6 +56,7 @@ struct Materials {
     citizen_mesh: Handle<Mesh>,
     car_bodies: Vec<Handle<StandardMaterial>>,
     car_body_mesh: Handle<Mesh>,
+    truck_body_mesh: Handle<Mesh>,
     car_lights_mesh: Handle<Mesh>,
     signal_green: Handle<StandardMaterial>,
     signal_red: Handle<StandardMaterial>,
@@ -130,6 +131,12 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         m.boxed(Vec3::new(-0.3, 1.45, 0.0), Vec3::new(2.2, 0.6, 1.6), 0.0, [0.6, 0.6, 0.7, 1.0]);
         meshes.add(to_mesh(&m))
     };
+    let truck_body_mesh = {
+        let mut m = MeshData::default();
+        m.boxed(Vec3::new(-0.9, 1.4, 0.0), Vec3::new(5.6, 2.6, 2.3), 0.0, [1.0, 1.0, 1.0, 1.0]);
+        m.boxed(Vec3::new(3.0, 1.1, 0.0), Vec3::new(2.0, 2.0, 2.2), 0.0, [0.5, 0.5, 0.55, 1.0]);
+        meshes.add(to_mesh(&m))
+    };
     let car_lights_mesh = {
         let mut m = MeshData::default();
         for z in [-0.6, 0.6] {
@@ -156,6 +163,7 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         citizen_mesh,
         car_bodies,
         car_body_mesh,
+        truck_body_mesh,
         car_lights_mesh,
         signal_green,
         signal_red,
@@ -588,7 +596,8 @@ fn sync_cars(
     for (id, car) in traffic.cars.iter() {
         if !state.cars.contains_key(&id) {
             let body_mat = mats.car_bodies[car.color as usize % mats.car_bodies.len().max(1)].clone();
-            let body = commands.spawn((Mesh3d(mats.car_body_mesh.clone()), MeshMaterial3d(body_mat), Transform::IDENTITY, CarTag(id))).id();
+            let mesh = if car.cargo.is_some() { mats.truck_body_mesh.clone() } else { mats.car_body_mesh.clone() };
+            let body = commands.spawn((Mesh3d(mesh), MeshMaterial3d(body_mat), Transform::IDENTITY, CarTag(id))).id();
             let lights = commands.spawn((Mesh3d(mats.car_lights_mesh.clone()), MeshMaterial3d(mats.glow.clone()), Transform::IDENTITY, CarTag(id))).id();
             state.cars.insert(id, [body, lights]);
         }

@@ -3,7 +3,7 @@
 //! backend and falls back to the rules while an answer is pending.
 
 use nd_sim::mind::{Decision, Intent, MindContext, MindProvider};
-use nd_sim::{CitizenId, LandUse, SimRng};
+use nd_sim::{CitizenId, LandUse, Resource, SimRng};
 use rand::seq::IndexedRandom;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -99,6 +99,13 @@ const WANDER_THOUGHTS: &[&str] = &[
     "New towers going up every week.",
     "Where does this street even go?",
 ];
+const HUNGRY_THOUGHTS: &[&str] = &[
+    "Fridge is empty. Groceries run.",
+    "Stomach's growling. Need food.",
+    "Ration packs are gone. Shopping.",
+];
+const LUNCH_THOUGHTS: &[&str] = &["Grabbing a bite.", "Synth-bun and a coffee.", "Lunch break. Finally."];
+const GOODS_THOUGHTS: &[&str] = &["Credits burning a hole. New optics?", "Treat yourself. The feed says so."];
 const NO_HOME_THOUGHTS: &[&str] = &[
     "No place to crash yet. Keep moving.",
     "Someone's gotta have a free bunk.",
@@ -119,6 +126,17 @@ impl MindProvider for RuleBasedMind {
         if !ctx.has_home {
             let t = self.pick(NO_HOME_THOUGHTS);
             return decide(Intent::Wander, t);
+        }
+
+        // Food comes before everything but sleep.
+        let hungry = ctx.satiety < 0.45 && ctx.groceries < 1.0;
+        if hungry && ctx.groceries_for_sale && !clock.is_night() && self.rng.random_bool(0.8) {
+            let t = self.pick(HUNGRY_THOUGHTS);
+            return decide(Intent::Shop(Resource::Groceries), t);
+        }
+        if (12..14).contains(&clock.hour()) && ctx.satiety < 0.6 && ctx.meals_for_sale && self.rng.random_bool((0.3 + p.hedonism * 0.4) as f64) {
+            let t = self.pick(LUNCH_THOUGHTS);
+            return decide(Intent::Shop(Resource::BakedGoods), t);
         }
 
         if clock.is_night() {
@@ -152,9 +170,13 @@ impl MindProvider for RuleBasedMind {
                 let t = self.pick(PARTY_THOUGHTS);
                 return decide(Intent::Visit(LandUse::Entertainment), t);
             }
-            if roll < p_party + p_shop && ctx.available[LandUse::Commercial.index()] {
+            if roll < p_party + p_shop && ctx.groceries_for_sale {
                 let t = self.pick(SHOP_THOUGHTS);
-                return decide(Intent::Visit(LandUse::Commercial), t);
+                return decide(Intent::Shop(Resource::Groceries), t);
+            }
+            if ctx.citizen.savings > 250.0 && p.hedonism > 0.5 && self.rng.random_bool(0.08) {
+                let t = self.pick(GOODS_THOUGHTS);
+                return decide(Intent::Shop(Resource::Goods), t);
             }
             if roll < p_party + p_shop + p_park && ctx.available[LandUse::Park.index()] {
                 let t = self.pick(PARK_THOUGHTS);
@@ -296,7 +318,7 @@ impl HybridMind {
             activity: ctx.citizen.activity.label().to_string(),
             recent_memories: ctx.citizen.memories.iter().rev().take(6).map(|m| m.text.clone()).collect(),
             population: ctx.population,
-            options: ["Stay", "GoHome", "GoWork", "Visit(Commercial)", "Visit(Entertainment)", "Visit(Park)", "Wander"]
+            options: ["Stay", "GoHome", "GoWork", "Shop(Groceries)", "Shop(BakedGoods)", "Shop(Goods)", "Visit(Entertainment)", "Visit(Park)", "Wander"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
@@ -313,6 +335,9 @@ impl HybridMind {
             "Visit(Entertainment)" => Intent::Visit(LandUse::Entertainment),
             "Visit(Park)" => Intent::Visit(LandUse::Park),
             "Visit(Civic)" => Intent::Visit(LandUse::Civic),
+            "Shop(Groceries)" => Intent::Shop(Resource::Groceries),
+            "Shop(BakedGoods)" => Intent::Shop(Resource::BakedGoods),
+            "Shop(Goods)" => Intent::Shop(Resource::Goods),
             _ => return None,
         })
     }

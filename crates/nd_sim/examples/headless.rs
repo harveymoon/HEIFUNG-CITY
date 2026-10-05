@@ -3,7 +3,7 @@
 //!
 //! cargo run --example headless -p nd_sim -- [days]
 
-use nd_sim::mind::IdleMind;
+use nd_minds::RuleBasedMind;
 use nd_sim::{LandUse, Vec2, World, WorldConfig};
 
 fn main() {
@@ -21,9 +21,10 @@ fn main() {
     world.add_zone(block(-240.0, 0.0), LandUse::Industrial);
     world.add_zone(block(0.0, 0.0), LandUse::Residential);
     world.add_zone(vec![Vec2::new(-120.0, -60.0), Vec2::new(-10.0, -60.0), Vec2::new(-10.0, -10.0), Vec2::new(-120.0, -10.0)], LandUse::Park);
+    world.add_zone(block(240.0, -240.0), LandUse::Industrial);
 
     println!("lots: {}", world.lots.len());
-    let mut minds = IdleMind;
+    let mut minds = RuleBasedMind::default();
     for day in 0..days {
         let mut peak_cars = 0usize;
         for _ in 0..1440 {
@@ -55,6 +56,22 @@ fn main() {
             e.displaced_total,
             e.emigrated_total,
             e.priced_out_total,
+        );
+        let m = &e.market;
+        println!(
+            "         market: businesses {} deals {} imports {:.0} exports {:.0} meals {} hungry {} closed {} | groceries {:.1} ({:.0}) produce {:.1} flour {:.1} electronics {:.1}",
+            m.businesses,
+            m.deals_today,
+            m.imports_today,
+            m.exports_today,
+            m.meals_sold_today,
+            m.hungry,
+            m.closed_total,
+            m.avg_price.get(&nd_sim::Resource::Groceries).copied().unwrap_or(0.0),
+            m.stock.get(&nd_sim::Resource::Groceries).copied().unwrap_or(0.0),
+            m.avg_price.get(&nd_sim::Resource::Produce).copied().unwrap_or(0.0),
+            m.avg_price.get(&nd_sim::Resource::Flour).copied().unwrap_or(0.0),
+            m.avg_price.get(&nd_sim::Resource::Electronics).copied().unwrap_or(0.0),
         );
     }
     if let Some((_, c)) = world.citizens.iter().next() {

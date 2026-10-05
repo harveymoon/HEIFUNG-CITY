@@ -13,6 +13,8 @@ pub enum Intent {
     GoHome,
     GoWork,
     Visit(LandUse),
+    /// Buy a retail resource at the nearest well-stocked shop.
+    Shop(crate::market::Resource),
     Wander,
 }
 
@@ -37,6 +39,13 @@ pub struct MindContext<'a> {
     /// Land uses that exist in the city, so minds only ask for places that exist.
     pub available: [bool; 6],
     pub population: u32,
+    /// Hunger satisfaction in `0..1`.
+    pub satiety: f32,
+    /// Meals at home.
+    pub groceries: f32,
+    /// Whether any shop sells groceries right now.
+    pub groceries_for_sale: bool,
+    pub meals_for_sale: bool,
 }
 
 pub trait MindProvider {

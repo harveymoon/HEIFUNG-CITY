@@ -1,4 +1,5 @@
 use crate::citizens::CitizenId;
+use crate::market::Business;
 use crate::zoning::{LandUse, LotId};
 use serde::{Deserialize, Serialize};
 use slotmap::new_key_type;
@@ -107,6 +108,8 @@ pub struct Building {
     pub rent: f32,
     /// Land value at the lot when last evaluated.
     pub land_value: f32,
+    /// The business operating here, for non-residential buildings.
+    pub business: Option<Business>,
 }
 
 impl Building {
@@ -127,6 +130,7 @@ impl Building {
             condition: 1.0,
             rent: 0.0,
             land_value,
+            business: None,
         };
         b.recompute_capacity();
         b.update_rent(land_value);
@@ -186,5 +190,14 @@ impl Building {
 
     pub fn is_derelict(&self) -> bool {
         self.condition < 0.3
+    }
+
+    /// Fraction of jobs filled.
+    pub fn staffing(&self) -> f32 {
+        if self.jobs == 0 {
+            0.0
+        } else {
+            (self.workers.len() as f32 / self.jobs as f32).clamp(0.0, 1.0)
+        }
     }
 }

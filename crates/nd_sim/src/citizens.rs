@@ -14,6 +14,7 @@ pub enum Purpose {
     Home,
     Work,
     Visit(LandUse),
+    Shop(crate::market::Resource),
     Wander,
 }
 
@@ -52,6 +53,7 @@ impl Activity {
                 Purpose::Home => "heading home",
                 Purpose::Work => "commuting",
                 Purpose::Visit(_) => "going out",
+                Purpose::Shop(_) => "shopping",
                 Purpose::Wander => "wandering",
             },
         }
@@ -94,6 +96,12 @@ pub struct Citizen {
     pub savings: f32,
     /// Consecutive days where rent ate too much of the income.
     pub rent_stress_days: u8,
+    /// Hunger satisfaction in `0..1`; drops every hour, restored by eating.
+    pub satiety: f32,
+    /// Meals stocked at home.
+    pub groceries: f32,
+    /// Days without a proper meal.
+    pub hungry_days: u8,
 }
 
 impl Citizen {

@@ -91,9 +91,30 @@ Citizens are rendered from their simulated positions every frame.
   best home they can afford (rent at most half their income) and are turned away if
   there is none. Three days of rent stress sends people looking for somewhere cheaper,
   or out of town once their savings are gone; the comfortable move up a tier.
-- **Economy**: demand per land use from unhoused people, unemployment and population,
-  plus inequality stats: Gini of incomes, class counts, rents per tier, displaced,
-  emigrated and priced-out counters.
+- **Resources and businesses**: ten resources (produce, grain, flour, baked goods,
+  meat, dairy, groceries, parts, electronics, goods). Every non-residential building
+  hosts a business with a recipe: farms, protein vats, dairies, mills, fabs and
+  assembly plants on industrial lots; grocers, bakeries, gadget shops and offices on
+  commercial; venues on entertainment. Output per hour scales with filled jobs.
+  Businesses hold stock and cash; prices rise when stock is scarce and fall when it
+  piles up.
+- **Market**: a buyer whose stock plus inbound deliveries drops below half its target
+  asks for the cheapest supplier, delivered price including haulage distance, strikes
+  the deal, and a truck carries it. With no local seller it imports at a markup from a
+  truck entering at the city edge; surplus raw outputs export at a discount. Trucks on
+  the road are capped; beyond the cap deliveries are instant.
+- **Hunger**: citizens lose satiety every hour and eat from their pantry at home.
+  When the pantry is empty they shop for groceries; at lunch they may buy baked
+  goods; the comfortable buy goods for mood. Days without food cost mood and
+  eventually drive people out of town.
+- **Business accounting**: businesses pay a share of their workers' wages daily.
+  Deep in debt for five days means closure: workers laid off, the building goes
+  derelict, and after a week it is demolished so the lot can be reused. Offices
+  and civic buildings are publicly funded.
+- **Economy stats**: demand per land use, Gini of incomes, class counts, rents per
+  tier, displaced, emigrated and priced-out counters, plus market stats: businesses,
+  deals, imports, exports, meals sold, hungry citizens, closures, and the average
+  price and stock of every resource.
 
 ## Minds and the LLM plan
 
@@ -155,6 +176,8 @@ trait MindProvider {
   junctions with signals, car-following traffic, vehicles.
 - v0.6 (done): land value, three building tiers, rents, wages, class, displacement,
   the worn 2040 look.
+- v0.7 (done): resources, businesses with recipes, the market with trucks, imports
+  and exports, hunger and shopping, business closures.
 - v1: household economy with resources and a market, districts and names, demand that
   reacts to prices, ambient through-traffic, lane changing, smooth arc roads.
 - v2: LLM spotlight citizens with real backends, dialogue, gossip.

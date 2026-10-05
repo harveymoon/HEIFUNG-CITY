@@ -17,4 +17,6 @@ pub enum SimEvent {
     NewDay(u64),
     /// The master plan changed (implemented or loaded).
     PlanChanged,
+    /// A business shut down (building stays, goes derelict).
+    BusinessClosed(BuildingId),
 }

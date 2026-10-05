@@ -13,3 +13,6 @@ rand_chacha = { workspace = true }
 slotmap = { workspace = true }
 ron = { workspace = true }
 anyhow = { workspace = true }
+
+[dev-dependencies]
+nd_minds = { workspace = true }
