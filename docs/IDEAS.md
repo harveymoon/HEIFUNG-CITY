@@ -42,14 +42,19 @@ Add freely. Move items into `DESIGN.md` when they get scheduled.
 - Photo mode with filters.
 
 ## Architecture
-- More Stacks variety: buses and RVs as units, external stair towers, hanging laundry, graffiti.
-- Brutalist variants: megastructure blocks spanning two lots, elevated walkways between them.
-- Crystal variants: twisted towers, cantilevered crowns, holographic crests for corporations.
-- Fortress variants: moats, helipads, private gardens, drone pads.
-- Signage that names the actual business inside (text on LED screens).
+- More Stacks variety: buses and RVs as units, external stair towers, graffiti.
+- Megastructure blocks spanning two lots, elevated walkways between them.
+- Holographic crests for corporations; signage that names the actual business inside.
+- Buildings that react to their condition over time: boarded windows, squats in derelicts, scaffolding during upgrades.
+- Interiors visible through shopfronts in walk mode; doors you can walk through.
+- Parcel merging for big styles (arenas, depots) so they take two or three lots.
+- Non-convex zones: proper polygon clipping instead of half-plane cuts.
 
 ## Rendering
 - Instanced rendering for windows and citizens once counts get large.
+- Decals: posters, graffiti and puddles on the generated textures.
+- Collision in walk mode (kerbs, walls) and a photo-mode free camera.
+- Citizens with walk cycles and varied clothing; cars as real models.
 - Screen-space reflections on wet ground.
 - Volumetric fog shafts under flying billboards.
 - LOD for distant buildings (merged district meshes).

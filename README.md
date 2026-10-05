@@ -37,12 +37,20 @@ links Bevy dynamically for quicker iteration.
   move in when they can afford a home, take jobs, commute, and move or leave when rent bites.
   `V` toggles the land value overlay; the panel shows class counts, rents and the Gini index.
   `F7`/`F8`/`F9` jump the camera to a random low, middle or high tier building; `[` and `]` zoom.
+- `Tab` walks the street: first-person on the pavement nearest the camera target, mouse to look,
+  WASD to walk, Shift to run, Tab or Esc to return. Tools are off while walking.
+- Each land use has its own architecture per tier: junkyards and rusted sheds on cheap industrial
+  land, datacentres and container depots on dear land; shophouses to twist towers; shack bars to
+  casinos. Parcels follow the roads, so corner and diagonal lots get odd-shaped buildings. The
+  inspector names a building's style.
   Save and Load use `saves/city.ron`.
 
 ## Tinkering
 
 - `assets/palette.ron`: every world colour. Glow colours above 1.0 bloom.
-- `assets/rules/buildings.ron`: the building grammar per land use (floor height, windows, signs).
+- `assets/rules/buildings.ron`: the building grammar per land use (floor height, windows, signs) and
+  the `styles` table: which styles each (land use, tier) draws from and how often. Delete the file
+  to regenerate it after an update.
   Both files hot-reload while the game runs and are created with defaults on first launch.
 - `docs/DESIGN.md` is the living design doc, `docs/IDEAS.md` the backlog.
 
@@ -51,6 +59,6 @@ links Bevy dynamically for quicker iteration.
 | Crate | What |
 | --- | --- |
 | `nd_sim` | roads, zoning, lots, buildings, citizens, economy, clock, save/load, the `MindProvider` trait |
-| `nd_procgen` | terrain, building geometry, palette |
+| `nd_procgen` | terrain, parcels' buildings (35 styles, parts toolkit), streets, seamless textures, palette |
 | `nd_minds` | `RuleBasedMind`, `HybridMind` + `MindBackend` trait (`MockBackend` now, LLM backends next) |
 | `nd_app` | Bevy front end: rendering, camera, tools, egui UI, hot reload |

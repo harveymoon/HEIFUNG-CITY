@@ -6,7 +6,9 @@ use nd_minds::Personality;
 use nd_sim::{LandUse, Resource};
 
 use crate::assets::GameAssets;
-use crate::render::{Lighting, Overlays};
+use crate::camera::CameraMode;
+use crate::render::{Lighting, Overlays, RenderStats};
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use crate::sim::{Sim, SPEEDS};
 use crate::tools::{Selection, Tool, ToolState};
 
@@ -47,7 +49,10 @@ fn side_panel(
     mut flags: ResMut<UiFlags>,
     mut overlays: ResMut<Overlays>,
     mut lighting: ResMut<Lighting>,
+    mut mode: ResMut<CameraMode>,
     assets: Res<GameAssets>,
+    stats: Res<RenderStats>,
+    diagnostics: Res<DiagnosticsStore>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     style(ctx);
@@ -80,6 +85,24 @@ fn side_panel(
                     }
                 }
             });
+            ui.separator();
+
+            // Camera.
+            section(ui, "CAMERA");
+            ui.horizontal(|ui| {
+                let walking = *mode == CameraMode::Walk;
+                if ui.selectable_label(!walking, "Orbit").clicked() {
+                    *mode = CameraMode::Orbit;
+                }
+                if ui.selectable_label(walking, "Walk the street [Tab]").clicked() {
+                    *mode = CameraMode::Walk;
+                }
+            });
+            if *mode == CameraMode::Walk {
+                ui.label(egui::RichText::new("Mouse to look, WASD to walk, Shift to run, Tab or Esc to return.").small().weak());
+            } else {
+                ui.label(egui::RichText::new("Right-drag rotate · middle-drag or shift-drag pan · wheel or [ ] zoom · WASD/QE · F6 busiest junction · F7/F8/F9 jump to a low/middle/high tier building").small().weak());
+            }
             ui.separator();
 
             // Lighting.
@@ -288,7 +311,8 @@ fn side_panel(
                         return;
                     };
                     neon(ui, &b.name);
-                    ui.label(format!("{}  ·  {} tier  ·  {} floors  ·  built day {}", b.land_use.label(), b.tier.label(), b.floors, b.built_tick / 1440 + 1));
+                    let style = assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11));
+                    ui.label(format!("{}  ·  {} tier  ·  {}  ·  {} floors  ·  built day {}", b.land_use.label(), b.tier.label(), style.label(), b.floors, b.built_tick / 1440 + 1));
                     ui.label(format!("land value {:.2}  ·  rent {:.0}/day  ·  wage {:.0}/day  ·  condition {:.0}%{}", b.land_value, b.rent, b.wage(), b.condition * 100.0, if b.is_derelict() { "  ·  DERELICT" } else { "" }));
                     ui.label(format!("residents {}/{}  ·  workers {}/{}  ·  visitors {}", b.residents.len(), b.homes, b.workers.len(), b.jobs, b.visitors));
                     if let Some(bz) = &b.business {
@@ -342,8 +366,8 @@ fn side_panel(
                 ui.label(egui::RichText::new(err).small().color(egui::Color32::from_rgb(255, 60, 90)));
             }
             ui.label(egui::RichText::new("assets/palette.ron and assets/rules/buildings.ron hot-reload while running.").small().weak());
-            ui.label(egui::RichText::new("Camera: right-drag rotate · middle-drag or shift-drag pan · wheel or [ ] zoom · WASD/QE · F6 busiest junction · F7/F8/F9 jump to a low/middle/high tier building").small().weak());
-            ui.label(egui::RichText::new(format!("{} ticks/frame", sim.ticks_last_frame)).small().weak());
+            let fps = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
+            ui.label(egui::RichText::new(format!("{fps:.0} fps  ·  {} ticks/frame  ·  {} building meshes  ·  {}k triangles", sim.ticks_last_frame, stats.building_entities, (stats.street_triangles + stats.building_triangles) / 1000)).small().weak());
         });
     });
 

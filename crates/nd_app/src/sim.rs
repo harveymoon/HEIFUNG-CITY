@@ -8,6 +8,8 @@ use nd_sim::{SimEvent, Vec2 as SVec2, World, WorldConfig};
 /// Sim minutes per real second for each speed step.
 pub const SPEEDS: [(&str, f32); 5] = [("1×", 1.0), ("4×", 4.0), ("16×", 16.0), ("64×", 64.0), ("256×", 256.0)];
 const MAX_TICKS_PER_FRAME: u32 = 400;
+/// Real time the sim may consume per frame before it yields to rendering.
+const TICK_BUDGET: std::time::Duration = std::time::Duration::from_millis(12);
 
 #[derive(Resource)]
 pub struct Sim {
@@ -132,13 +134,18 @@ fn step_sim(time: Res<Time>, keys: Res<ButtonInput<KeyCode>>, mut sim: ResMut<Si
         let speed = sim.speed();
         sim.accumulator += time.delta_secs() * speed;
         let s = &mut *sim;
+        let start = std::time::Instant::now();
         while s.accumulator >= 1.0 && ticks < MAX_TICKS_PER_FRAME {
             s.world.tick(&mut s.minds);
             s.accumulator -= 1.0;
             ticks += 1;
+            if start.elapsed() > TICK_BUDGET {
+                break;
+            }
         }
-        if ticks >= MAX_TICKS_PER_FRAME {
-            s.accumulator = 0.0;
+        // Drop any backlog we could not afford: the sim runs slower, the frame stays smooth.
+        if s.accumulator > 2.0 {
+            s.accumulator = 1.0;
         }
     }
     sim.ticks_last_frame = ticks;

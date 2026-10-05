@@ -6,7 +6,7 @@ use nd_sim::roads::project_on_segment;
 use nd_sim::zoning::point_in_polygon;
 use nd_sim::{BuildingId, CitizenId, Gesture, GestureId, LandUse, Plan, Vec2 as SVec2};
 
-use crate::camera::Cursor;
+use crate::camera::{CameraMode, Cursor};
 use crate::sim::{Sim, SimSet};
 use crate::ui::UiFlags;
 
@@ -117,10 +117,15 @@ fn tool_input(
     buttons: Res<ButtonInput<MouseButton>>,
     cursor: Res<Cursor>,
     flags: Res<UiFlags>,
+    mode: Res<CameraMode>,
     mut tools: ResMut<ToolState>,
     mut selection: ResMut<Selection>,
     mut sim: ResMut<Sim>,
 ) {
+    if *mode == CameraMode::Walk {
+        tools.drag = None;
+        return;
+    }
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 
@@ -299,7 +304,7 @@ fn pick(sim: &Sim, p: SVec2) -> Selection {
     }
     for (_, lot) in w.lots.iter() {
         if let Some(b) = lot.building {
-            if point_in_polygon(p, &lot.corners) {
+            if point_in_polygon(p, &lot.polygon) {
                 return Selection::Building(b);
             }
         }

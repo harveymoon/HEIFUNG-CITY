@@ -39,12 +39,13 @@ Changed:
 crates/
   nd_sim      engine-independent simulation (roads, zoning, lots, buildings,
               citizens, economy, clock, save/load, Mind trait)
-  nd_procgen  generators: terrain, building geometry, names, palettes
+  nd_procgen  generators: terrain, parcels' buildings (35 styles from a parts
+              toolkit), streets, seamless textures, palettes
   nd_minds    Mind implementations: RuleBasedMind, LlmMind (+ backend trait)
   nd_app      Bevy app: rendering, camera, planning tools, egui UI, hot reload
 assets/
   palette.ron           world and glow colors
-  rules/buildings.ron   building grammar per land use
+  rules/buildings.ron   building grammar per land use and the style weights per tier
 docs/
   DESIGN.md, IDEAS.md
 ```
@@ -146,31 +147,47 @@ trait MindProvider {
 
 - Y-up world. Sim `(x, y)` maps to world `(x, 0, y)`.
 - Terrain: flat basin for the city, procedural hills around it.
-- Buildings: two meshes each. A lit mesh with vertex colors for walls and roofs, and
-  an unlit mesh with mildly HDR vertex colors for windows, signs, lamps and LED
-  screens. Bloom is kept low; the look is worn near-future, not neon.
-- Architecture by tier, each a separate generator in `nd_procgen::buildings`:
-  - Low: the Stacks. Containers and old trailers piled the way people would do it:
-    dropped on the lot at mixed orientations, each upper unit placed only where units
-    below support most of its footprint, overhanging corners propped on steel jacks,
-    planks between neighbours, an external zigzag stair, a utility pole with wires
-    that run to specific units and between units (laundry on some), tarps, dishes,
-    water drums, plywood patches, rust streaks, a drum fire. Market stalls at street
-    level on shop lots. Grime scales with the building's condition.
-  - Middle: brutalist concrete. Stacked slabs with alternating overhangs, floor plates,
-    recessed window bands with lit segments, vertical fins, mechanical penthouses, and
-    LED advert screens on the facade and roof (always on shops and venues). Civic
-    buildings use the same grammar on pilotis over a stepped plaza.
-  - High: crystal towers (one to three faceted, tapered, leaning glass shards on a
-    podium with lit floor bands, spires and skybridges) or, for some homes, fortress
-    compounds (crenellated walls, octagonal corner towers, a gatehouse, a tapered keep
-    with slit windows, an annex and a garden).
-  - Industrial lots get sheds with saw-tooth roof lights, roll-up doors, chimneys, tanks
-    and pipes regardless of tier.
-  Everything is attached to a surface: roof gear uses the top slab's footprint, lamps
-  sit on poles, windows follow tapers.
-- Roads: flat dark strips with emissive lane markers.
-- Citizens: small emissive markers that move along the roads.
+- Surfaces: every primitive a generator emits lands in one of sixteen surface buckets
+  (concrete, plaster, brick, stone, panel, metal, rust, glass, wood, tarp, asphalt,
+  paving, dirt, foliage, matte, glow). Each surface is a material with a procedurally
+  generated, seamlessly tiling colour texture and normal map (`nd_procgen::textures`),
+  roughness and metalness. Meshes carry world-scale planar UVs (horizontal along a
+  wall, vertical up it), so brick courses line up across a facade and nothing has to
+  be unwrapped. Vertex colours set the hue; the textures are grey. Glow stays unlit
+  with mildly HDR vertex colours and low bloom.
+- Parcels: a zone is cut into blocks by the road corridors that cross it, and each
+  block is sliced along its frontage into parcels of the land use's size, with jitter
+  and occasional angled cuts, plus a back row on deep blocks. Parcels keep their exact
+  outline, so lots on a diagonal road are trapezoids and corner lots are triangles.
+  Buildings extrude the parcel polygon, so footprints are rarely plain rectangles.
+- Architecture: every (land use, tier) pair has its own family of styles, picked by
+  weight from `assets/rules/buildings.ron`, assembled from a shared parts toolkit
+  (`nd_procgen::buildings::parts`: facades, windows, storefronts, signs, LED screens,
+  balconies, fire escapes, roof gear, fences, tanks, pipes, cranes, vehicles, trees,
+  stalls, string lights). Thirty-five styles so far:
+  - Residential: the Stacks, walk-up tenements, brutalist blocks, balcony slabs,
+    courtyard blocks, crystal towers, fortress compounds, garden towers, villa clusters.
+  - Commercial: shophouse rows, market halls, retail blocks, podium offices, corporate
+    slabs, twist towers, cantilevered malls.
+  - Industrial: junkyards and rusted warehouses (low), saw-tooth factories and tank
+    farms (middle), datacentres and container depots (high).
+  - Entertainment: shack bars, clubs, cinemas, casinos, arenas.
+  - Civic: precinct houses, ministries, libraries, courthouses, monuments.
+  - Park: scrub lots, gardens, plazas.
+  Everything is attached to a surface: roof gear uses the roof footprint, columns hold
+  up overhangs, wires run from poles to real units, jacks prop unsupported corners.
+- Streets (`nd_procgen::street`): asphalt with lane markings, kerbs and paved
+  pavements, zebra crossings and stop lines at junctions, signal posts with an arm
+  and one head per lane, lamps, bins, benches, bus shelters, vending kiosks, bollards
+  at the corners, utility poles with sagging wires on cheap streets, trees in planters
+  where the land is worth it.
+- Cameras: an orbit camera for planning and a first-person walk mode (Tab) that
+  steps onto the nearest pavement with mouse look and WASD, a wider field of view and
+  closer fog. Tools are disabled while walking.
+- Performance: the sim gets a real-time budget per frame (12 ms) and drops its
+  backlog instead of stalling the renderer; shadows use three cascades out to 650 m;
+  the HUD shows fps, meshes and triangles.
+- Citizens: small figures that walk the pavements; cars and trucks have wheels.
 
 ## Roadmap
 
@@ -182,6 +199,8 @@ trait MindProvider {
   the worn 2040 look.
 - v0.7 (done): resources, businesses with recipes, the market with trucks, imports
   and exports, hunger and shopping, business closures.
+- v0.8 (done): polygonal parcels, 35 architectural styles per land use and tier from a
+  parts toolkit, textured surfaces with normal maps, street furniture, walk mode.
 - v1: household economy with resources and a market, districts and names, demand that
   reacts to prices, ambient through-traffic, lane changing, smooth arc roads.
 - v2: LLM spotlight citizens with real backends, dialogue, gossip.

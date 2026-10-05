@@ -22,6 +22,7 @@ fn main() {
             }),
             ..default()
         }))
+        .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
         .add_plugins(bevy_egui::EguiPlugin::default())
         .add_plugins((
             assets::GameAssetsPlugin,

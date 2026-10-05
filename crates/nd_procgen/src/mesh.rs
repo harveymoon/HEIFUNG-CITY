@@ -1,13 +1,27 @@
 use glam::{Vec2, Vec3};
 
-/// Engine-independent triangle mesh with per-vertex colours. Colours may
-/// exceed 1.0 for HDR glow when rendered through an unlit material.
+/// Engine-independent triangle mesh with per-vertex colours and world-scaled
+/// UVs. Colours may exceed 1.0 for HDR glow when rendered through an unlit
+/// material. UVs are planar projections in metres (u horizontal, v up for
+/// walls), so a repeating texture lines up across every face of a building.
 #[derive(Clone, Debug, Default)]
 pub struct MeshData {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub colors: Vec<[f32; 4]>,
+    pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<u32>,
+}
+
+/// Texture basis for a face: `u` runs horizontally, `v` runs up the wall (or
+/// along -Z on horizontal faces), both in world metres.
+fn uv_basis(n: Vec3) -> (Vec3, Vec3) {
+    if n.y.abs() > 0.99 {
+        (Vec3::X, Vec3::NEG_Z)
+    } else {
+        let u = Vec3::Y.cross(n).normalize();
+        (u, n.cross(u))
+    }
 }
 
 impl MeshData {
@@ -20,18 +34,25 @@ impl MeshData {
         self.positions.extend_from_slice(&other.positions);
         self.normals.extend_from_slice(&other.normals);
         self.colors.extend_from_slice(&other.colors);
+        self.uvs.extend_from_slice(&other.uvs);
         self.indices.extend(other.indices.iter().map(|i| i + base));
+    }
+
+    fn push(&mut self, p: Vec3, n: Vec3, color: [f32; 4], basis: (Vec3, Vec3)) {
+        self.positions.push(p.to_array());
+        self.normals.push(n.to_array());
+        self.colors.push(color);
+        self.uvs.push([p.dot(basis.0), p.dot(basis.1)]);
     }
 
     /// A quad from four corners in counter-clockwise order (seen from the
     /// front). Normal is computed from the corners.
     pub fn quad(&mut self, corners: [Vec3; 4], color: [f32; 4]) {
         let n = (corners[1] - corners[0]).cross(corners[3] - corners[0]).normalize_or_zero();
+        let basis = uv_basis(n);
         let base = self.positions.len() as u32;
         for c in corners {
-            self.positions.push(c.to_array());
-            self.normals.push(n.to_array());
-            self.colors.push(color);
+            self.push(c, n, color, basis);
         }
         self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
@@ -56,6 +77,19 @@ impl MeshData {
         self.quad([corner(-1., -1., -1.), corner(-1., -1., 1.), corner(-1., 1., 1.), corner(-1., 1., -1.)], color);
     }
 
+    /// Box without its bottom face, for things that sit on the ground.
+    pub fn boxed_open(&mut self, center: Vec3, size: Vec3, yaw: f32, color: [f32; 4]) {
+        let h = size * 0.5;
+        let (s, c) = yaw.sin_cos();
+        let rot = |p: Vec3| Vec3::new(p.x * c - p.z * s, p.y, p.x * s + p.z * c) + center;
+        let corner = |x: f32, y: f32, z: f32| rot(Vec3::new(x * h.x, y * h.y, z * h.z));
+        self.quad([corner(-1., 1., 1.), corner(1., 1., 1.), corner(1., 1., -1.), corner(-1., 1., -1.)], color);
+        self.quad([corner(-1., -1., 1.), corner(1., -1., 1.), corner(1., 1., 1.), corner(-1., 1., 1.)], color);
+        self.quad([corner(1., -1., -1.), corner(-1., -1., -1.), corner(-1., 1., -1.), corner(1., 1., -1.)], color);
+        self.quad([corner(1., -1., 1.), corner(1., -1., -1.), corner(1., 1., -1.), corner(1., 1., 1.)], color);
+        self.quad([corner(-1., -1., -1.), corner(-1., -1., 1.), corner(-1., 1., 1.), corner(-1., 1., -1.)], color);
+    }
+
     /// Flat polygon on the ground plane at height `y` (fan triangulation, so
     /// it must be convex or close to it).
     pub fn ground_polygon(&mut self, poly: &[Vec2], y: f32, color: [f32; 4]) {
@@ -64,10 +98,9 @@ impl MeshData {
         }
         let base = self.positions.len() as u32;
         let ccw = nd_sim::zoning::polygon_area(poly) > 0.0;
+        let basis = uv_basis(Vec3::Y);
         for p in poly {
-            self.positions.push([p.x, y, p.y]);
-            self.normals.push([0.0, 1.0, 0.0]);
-            self.colors.push(color);
+            self.push(Vec3::new(p.x, y, p.y), Vec3::Y, color, basis);
         }
         for i in 1..poly.len() as u32 - 1 {
             if ccw {
@@ -91,15 +124,39 @@ impl MeshData {
         }
     }
 
+    /// Raised strip (kerb, sidewalk, wall footing) running from `a` to `b`,
+    /// shifted sideways by `offset` (positive = right of travel), `width`
+    /// across, from height `y0` to `y1`. Top and all four sides are drawn.
+    pub fn strip_box(&mut self, a: Vec2, b: Vec2, offset: f32, width: f32, y0: f32, y1: f32, color: [f32; 4]) {
+        let d = (b - a).normalize_or_zero();
+        if d == Vec2::ZERO {
+            return;
+        }
+        let right = Vec2::new(-d.y, d.x);
+        let c0 = a + right * (offset - width * 0.5);
+        let c1 = b + right * (offset - width * 0.5);
+        let c2 = b + right * (offset + width * 0.5);
+        let c3 = a + right * (offset + width * 0.5);
+        let lo = |p: Vec2| Vec3::new(p.x, y0, p.y);
+        let hi = |p: Vec2| Vec3::new(p.x, y1, p.y);
+        self.quad_facing([hi(c0), hi(c1), hi(c2), hi(c3)], Vec3::Y, color);
+        let out_l = Vec3::new(-right.x, 0.0, -right.y);
+        let out_r = -out_l;
+        self.quad_facing([lo(c0), lo(c1), hi(c1), hi(c0)], out_l, color);
+        self.quad_facing([lo(c3), lo(c2), hi(c2), hi(c3)], out_r, color);
+        let fwd = Vec3::new(d.x, 0.0, d.y);
+        self.quad_facing([lo(c1), lo(c2), hi(c2), hi(c1)], fwd, color);
+        self.quad_facing([lo(c0), lo(c3), hi(c3), hi(c0)], -fwd, color);
+    }
+
     /// Triangle with the normal flipped, if needed, to face `outward`.
     pub fn tri_facing(&mut self, a: Vec3, b: Vec3, c: Vec3, outward: Vec3, color: [f32; 4]) {
         let n = (b - a).cross(c - a).normalize_or_zero();
         let (b, c, n) = if n.dot(outward) < 0.0 { (c, b, -n) } else { (b, c, n) };
+        let basis = uv_basis(n);
         let base = self.positions.len() as u32;
         for p in [a, b, c] {
-            self.positions.push(p.to_array());
-            self.normals.push(n.to_array());
-            self.colors.push(color);
+            self.push(p, n, color, basis);
         }
         self.indices.extend_from_slice(&[base, base + 1, base + 2]);
     }
@@ -134,6 +191,41 @@ impl MeshData {
             self.tri_facing(top_c, top[i], top[j], Vec3::Y, color);
             self.tri_facing(bot_c, bottom[i], bottom[j], Vec3::NEG_Y, color);
         }
+    }
+
+    /// Vertical cylinder (or cone when `r1 != r0`) between two heights.
+    pub fn cylinder(&mut self, center: Vec2, r0: f32, r1: f32, y0: f32, y1: f32, sides: usize, color: [f32; 4]) {
+        self.frustum(&MeshData::ngon(center, r0, sides, 0.0, y0), &MeshData::ngon(center, r1, sides, 0.0, y1), color);
+    }
+
+    /// Horizontal cylinder along the direction `dir` (unit, in the ground
+    /// plane), centred at `center`, at height `y`.
+    pub fn pipe(&mut self, center: Vec2, dir: Vec2, len: f32, r: f32, y: f32, sides: usize, color: [f32; 4]) {
+        let a = Vec3::new(center.x - dir.x * len * 0.5, y, center.y - dir.y * len * 0.5);
+        let b = Vec3::new(center.x + dir.x * len * 0.5, y, center.y + dir.y * len * 0.5);
+        self.tube(a, b, r, sides, color);
+    }
+
+    /// Round tube between two points in space.
+    pub fn tube(&mut self, a: Vec3, b: Vec3, r: f32, sides: usize, color: [f32; 4]) {
+        let d = b - a;
+        let len = d.length();
+        if len < 1e-3 {
+            return;
+        }
+        let dir = d / len;
+        let helper = if dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
+        let p1 = dir.cross(helper).normalize();
+        let p2 = dir.cross(p1).normalize();
+        let ring = |c: Vec3| -> Vec<Vec3> {
+            (0..sides)
+                .map(|i| {
+                    let t = i as f32 / sides as f32 * std::f32::consts::TAU;
+                    c + (p1 * t.cos() + p2 * t.sin()) * r
+                })
+                .collect()
+        };
+        self.frustum(&ring(a), &ring(b), color);
     }
 
     /// Regular polygon in the XZ plane at height `y`.
@@ -173,5 +265,17 @@ impl MeshData {
         let c = [a + p1 + p2, a - p1 + p2, a - p1 - p2, a + p1 - p2];
         let e = [b + p1 + p2, b - p1 + p2, b - p1 - p2, b + p1 - p2];
         self.frustum(&c, &e, color);
+    }
+
+    /// A wire that sags under its own weight between two anchors.
+    pub fn wire(&mut self, a: Vec3, b: Vec3, sag: f32, thickness: f32, color: [f32; 4]) {
+        let segs = 6;
+        let mut prev = a;
+        for i in 1..=segs {
+            let t = i as f32 / segs as f32;
+            let p = a.lerp(b, t) - Vec3::Y * (sag * 4.0 * t * (1.0 - t));
+            self.beam(prev, p, thickness, color);
+            prev = p;
+        }
     }
 }

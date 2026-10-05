@@ -12,3 +12,6 @@ glam = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 noise = { workspace = true }
+
+[dev-dependencies]
+slotmap = { workspace = true }

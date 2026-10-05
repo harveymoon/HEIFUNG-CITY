@@ -55,6 +55,7 @@ pub fn build_terrain(cfg: &TerrainConfig, palette: &Palette) -> MeshData {
             mesh.positions.push([x, h, z]);
             mesh.normals.push([0.0, 1.0, 0.0]);
             mesh.colors.push(c);
+            mesh.uvs.push([x, -z]);
         }
     }
 

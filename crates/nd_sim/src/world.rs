@@ -296,8 +296,8 @@ impl World {
                 .lots
                 .iter()
                 .filter(|(_, l)| l.building.is_none())
-                .map(|(id, l)| (id, l.center.distance(old.center)))
-                .filter(|(_, d)| *d < 4.0)
+                .map(|(id, l)| (id, if l.contains(old.center) { 0.0 } else { l.center.distance(old.center) }))
+                .filter(|(_, d)| *d < 6.0)
                 .min_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|(id, _)| id);
             match found {
@@ -369,7 +369,7 @@ impl World {
     }
 
     pub fn building_entrance(&self, b: BuildingId) -> Option<Vec2> {
-        self.building_lot(b).map(|l| l.corners[0].lerp(l.corners[1], 0.5))
+        self.building_lot(b).map(|l| l.entrance())
     }
 
     fn available_land_uses(&self) -> [bool; 6] {
@@ -792,8 +792,8 @@ impl World {
         let route = (|| {
             let fl = self.building_lot(from)?;
             let tl = self.building_lot(to)?;
-            let fp = fl.corners[0].lerp(fl.corners[1], 0.5);
-            let tp = tl.corners[0].lerp(tl.corners[1], 0.5);
+            let fp = fl.entrance();
+            let tp = tl.entrance();
             self.traffic.net.find_route(fl.front_segment, fp, tl.front_segment, tp)
         })();
         match route {
@@ -824,7 +824,7 @@ impl World {
             let node = self.roads.node(entry);
             let seg = *node.segments.iter().find(|&&s| self.roads.segment(s).alive)?;
             let tl = self.building_lot(to)?;
-            let tp = tl.corners[0].lerp(tl.corners[1], 0.5);
+            let tp = tl.entrance();
             self.traffic.net.find_route(seg, node.pos, tl.front_segment, tp)
         })();
         match route {
@@ -1365,7 +1365,7 @@ impl World {
         let c = &self.citizens[id];
         if let Some(b) = c.inside {
             let lot = self.building_lot(b)?;
-            let entrance = lot.corners[0].lerp(lot.corners[1], 0.5);
+            let entrance = lot.entrance();
             return Some((lot.front_segment, entrance, lot.access_node));
         }
         let (sid, t, q) = self.roads.nearest_on_network(c.pos)?;
@@ -1380,7 +1380,7 @@ impl World {
         };
         let Some(lot) = self.building_lot(target) else { return };
         let (to_seg, to_node) = (lot.front_segment, lot.access_node);
-        let entrance = lot.corners[0].lerp(lot.corners[1], 0.5);
+        let entrance = lot.entrance();
 
         // Drive when it is far enough and a lane route exists.
         if from_pt.distance(entrance) >= self.config.drive_threshold {
