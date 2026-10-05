@@ -246,6 +246,24 @@ Citizens are rendered from their simulated positions every frame.
   windows go dark, the people inside lose mood and say so ("The power is out again."),
   and the inspector marks it UNDERPOWERED. The treasury starts at 60,000, takes 12% of
   incomes and 5% of business revenue each day, and pays plant upkeep and imported power.
+- **Services and emergencies** (`nd_sim::services`, `world/services.rs`): police, fire, health,
+  schools and a 911 dispatch centre, plus monuments and stadiums, placed by the player in three
+  tiers (cost x0.5 / 1 / 2.2, upkeep x0.6 / 1 / 1.8, jobs half / base / double, radius x0.7 / 1 / 1.4,
+  vehicles 1 / 2 / 4). Coverage is by road: a multi-source Dijkstra over street nodes from every
+  station with its radius as budget; a lot is fully covered with 200 m of budget left, fading to none.
+  Hourly, each building may catch fire (by tier, condition, land use, x(1 - 0.7 fire coverage)), an
+  occupied one may suffer a crime (by unemployment, land value, night, x(1 - 0.75 police coverage)),
+  and each citizen indoors may fall ill (by age, hunger, x(1 - 0.5 health coverage)). Someone present
+  calls it in after a few minutes; the dispatcher (a worker at a dispatch centre who is at the desk:
+  2 min; staffed but nobody in: 8; no centre: 20, the regional line) sends the nearest idle unit whose
+  station has the crew; the vehicle is a car of the traffic model, drives over the lanes, parks on
+  scene, works (engines knock fire down 0.012 a minute; crimes 25 min, patients 12), resolves (fire
+  out, arrest 75 % if quick else 40 %, patient driven to the nearest hospital with a free bed for
+  6-24 h) and drives home. Unanswered crimes go unsolved after 3 h, patients recover alone after 8 h;
+  unanswered fires grow, jump to buildings within 32 m and burn a building down at condition 0.08,
+  leaving rubble for two days. Workers near a school earn up to 12 % more. Stadiums host a game on
+  30-60 % of evenings; fans within 1.6 km buy a ticket and go. Upkeep is booked at midnight under
+  `service upkeep`, tickets under `tickets`. A placed special buys out whatever grew on its lot.
 - **Economy stats**: demand per land use, Gini of incomes, class counts, rents per
   tier, displaced, emigrated and priced-out counters, plus market stats: businesses,
   deals, imports, exports, meals sold, hungry citizens, closures, and the average

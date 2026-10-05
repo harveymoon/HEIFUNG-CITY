@@ -103,11 +103,20 @@ Reply: `gesture_id`, `implemented`, `project` (`steps`, `redo`), `plan_version`.
   message says whether track and street are joined.
 - `depot`, `parking`, `coal`, `solar`, `wind`, `nuclear`: on the lot under the point, or the nearest
   vacant lot within 80 m (`build_depot`, `build_parking`, `build_power`).
+- Services and attractions: `police`, `fire`, `hospital` (`clinic` is a low-tier hospital), `school`,
+  `dispatch`, `monument`, `stadium`, with `tier` low / mid / high (default mid) or a suffix
+  (`"fire:high"`), on the lot under the point (`World::place_on_lot`, `build_service`). Whatever grew
+  on the lot is bought out and pulled down; another civic building refuses ("bulldoze it first").
+  Refusals name the reason: land use, lot area, no street out front (police, fire, health, stadium),
+  treasury. Costs, upkeep, jobs, coverage radius, vehicles and capacity per tier are in
+  `nd_sim::services::ServiceKind`.
 
 Reply: `building` id, `message`, `row`, `treasury`; or the sim's reason as `error`.
 
 ```json
 {"cmd": "place", "kind": "solar", "x": -210, "y": -210}
+{"cmd": "place", "kind": "fire", "tier": "high", "x": 120, "y": 40}
+{"cmd": "place", "kind": "dispatch:low", "x": -80, "y": 40}
 ```
 
 ### Buses
@@ -163,7 +172,7 @@ with none, the current selection. The detail matches what the inspector and the 
 | --- | --- |
 | `select` | `citizen` / `building` / `car` id, or `at: [x, y]` (picks like a click), or nothing to clear |
 | `favourite` | `citizen`, `on` (omit to toggle) |
-| `tool` | `name` (inspect, road, zone, edit, bulldoze, power, transit, rail), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway), `kind` (the active tool's sub-mode: road kind, plant, station / freight_yard, route / depot, land use), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture` |
+| `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture` |
 | `overlay` | `land_value`, `paths`, `zoning` (bools) |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
 | `window` | `name` city / economy / market / people / power / transit / land / saves / help / dev, `open` (omit to toggle). Reply `open`, `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it |
@@ -229,7 +238,7 @@ Each reply carries `took_ms`; see the timings measured on a real city at the end
 | `people` | by_class, by_activity, employment {employed, employed_in_businesses, employed_on_building_sites, unemployed_on_gig_income, unemployment_share, jobs_free}, housing {housed, unhoused, waiting_immigrants, homes_free}, income_per_day and savings (distributions; savings also in_overdraft, at_overdraft_floor), rent_burden {over_30pct_of_income, over_50pct_of_income, their shares, rent_stressed_now, rent_to_income distribution}, mood (distribution 0..1), hunger {hungry_now, mean_satiety, no_groceries_at_home, hungry_days histogram 0..4+}, commute_modes_now (walk/bike/car/bus/train counts and shares of the people travelling now; owns_car_share, owns_bike_share), moves (displaced, emigrated, priced-out totals), recent_memory_reasons (memories of the last 2 days grouped by their fixed text, e.g. "Rent got too steep", "Couldn't afford anything at") |
 | `economy` | treasury, ledger {today_so_far and yesterday by flow, nets}, tax_today, upkeep_today, trade_today {imports_value, exports_value, building_materials_imported, deals, meals_sold, walk_in_sales, parking_fees}, businesses {total, open, closed_ever, by_kind: count, open, closed, mean_staffing, mean_money, revenue and spend totals, inputs (stock, target, fill), outputs (stock, mean_price)}, resources (town_stock, avg_price, price_vs_base, local_sellers_open, local_supply_per_day, business_demand_per_day, scarce), most_profitable_today and least_profitable_today (10 each, with ids) |
 | `land` | lots_by_land_use {vacant, built, under_construction, unusable, total, area_m2}, buildings_by_land_use_and_tier, special_buildings, floors_histogram, rents_by_tier {buildings, homes, residents, occupancy, rent_per_home_day_avg, min, max}, land_value {avg_grid, lots distribution, tier_cuts}, parks {lots, area_m2} |
-| `services` | power {supply, demand and imported MW, served_share, unpowered_buildings, brownout_hours_today, weather, plants: id, kind, capacity_mw, available_mw, output_mw_est, upkeep, pollution}, transit {routes: id, stops, buses_wanted, buses_running, riders_today, waiting, length_m, broken_legs, runnable; totals}, rail {facilities: id, kind, rail_connected, road_connected, works, waiting_passengers, freight units; trains by kind; riders, freight}, parking {capacity, used, occupancy, parked_on_street_today, last_shortage_at}, traffic {vehicles, cars, trucks, buses, mean_speed_kmh_moving, stopped, stuck, lanes, intersections, signals} |
+| `services` | emergency {coverage_pct_of_homes {police, fire, health, school}, incidents_today {fire, crime, medical}, resolved_today, unanswered_today, arrests_today, avg_response_min (call to arrival, today or else yesterday), units, units_busy, fires_burning, burned_down_total, waiting_for_ambulance, in_hospital, dispatch {dispatcher_on_duty, minutes_to_dispatch}, stadium_crowd_today, tickets_today, stadium_events_tonight, upkeep_per_day, education_wage_bonus_today, stations: id, kind, tier, workers, radius_m, units, units_crewed, units_busy, beds_used, capacity; active_incidents: id, kind, stage, building, minutes_since_start, intensity, unit, dispatcher; recent (last 10 resolved with outcome and response_min)}, power {supply, demand and imported MW, served_share, unpowered_buildings, brownout_hours_today, weather, plants: id, kind, capacity_mw, available_mw, output_mw_est, upkeep, pollution}, transit {routes: id, stops, buses_wanted, buses_running, riders_today, waiting, length_m, broken_legs, runnable; totals}, rail {facilities: id, kind, rail_connected, road_connected, works, waiting_passengers, freight units; trains by kind; riders, freight}, parking {capacity, used, occupancy, parked_on_street_today, last_shortage_at}, traffic {vehicles, cars, trucks, buses, mean_speed_kmh_moving, stopped, stuck, lanes, intersections, signals} |
 | `alerts` | the ranked list below |
 
 A distribution is `{count, mean, median, p10, p90, min, max, histogram: {edges (bins + 1), counts}}`
@@ -243,7 +252,10 @@ food_sellers_understaffed, food_sellers_empty, closed_businesses, broke_business
 unpowered_buildings, overcrowded_homes, rail_facility_not_connected, bus_route_broken,
 construction_waiting_for_materials, stuck_vehicles, derelict_buildings,
 vacant_lots_with_high_demand, high_unemployment, treasury_losing_money, parking_shortage,
-scarce_resources. The thresholds are named constants at the top of `remote/report.rs`: hungry =
+scarce_resources, fires_burning, no_police_coverage, no_fire_coverage, no_health_coverage,
+no_school_coverage (residential buildings outside a service's road reach, once there are 10+),
+slow_emergency_response (average over 20 minutes from call to arrival), no_dispatcher (calls go to
+the regional line). The thresholds are named constants at the top of `remote/report.rs`: hungry =
 satiety < 0.3; starving = 2+ hungry days (the sim sends people away at 4); a food seller is
 understaffed below 50 %; unpowered = under 60 % of demand met; rent stress = rent over 50 % of
 income; stuck = slower than 0.5 m/s on a trip older than 900 s; high demand ≥ 0.6; unemployment
@@ -368,3 +380,11 @@ the time spent on the main thread inside the frame; best and worst of five calls
 - Remote edits go through the same `World` calls as the tools, so they behave identically,
   including undo within a project, costs and refusals.
 - `load` replaces the city: all ids from before are invalid.
+
+## Services and emergencies
+
+Events in the log (`events`): `IncidentStarted`, `EmergencyCall`, `UnitDispatched`, `UnitOnScene`,
+`IncidentResolved` (each with `incident`, `type` fire / crime / medical, `building`, `outcome`),
+`FireSpread`, `BurnedDown`, `StadiumEvent`. Building rows carry `service` (`"fire:mid"`) and
+`burning`. Emergency vehicles are cars in `find {what: "cars"}`; the units behind them are in
+`report {sections: ["services"]}` under `emergency.stations` and `emergency.active_incidents`.
