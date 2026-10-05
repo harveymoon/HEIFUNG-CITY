@@ -158,4 +158,20 @@ impl MeshData {
             })
             .collect()
     }
+
+    /// Thin square-section bar between two points in space (wires, braces).
+    pub fn beam(&mut self, a: Vec3, b: Vec3, thickness: f32, color: [f32; 4]) {
+        let d = b - a;
+        let len = d.length();
+        if len < 1e-3 {
+            return;
+        }
+        let dir = d / len;
+        let helper = if dir.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
+        let p1 = dir.cross(helper).normalize() * thickness * 0.5;
+        let p2 = dir.cross(p1).normalize() * thickness * 0.5;
+        let c = [a + p1 + p2, a - p1 + p2, a - p1 - p2, a + p1 - p2];
+        let e = [b + p1 + p2, b - p1 + p2, b - p1 - p2, b + p1 - p2];
+        self.frustum(&c, &e, color);
+    }
 }

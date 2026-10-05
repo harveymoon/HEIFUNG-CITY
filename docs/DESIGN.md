@@ -125,11 +125,13 @@ trait MindProvider {
   an unlit mesh with mildly HDR vertex colors for windows, signs, lamps and LED
   screens. Bloom is kept low; the look is worn near-future, not neon.
 - Architecture by tier, each a separate generator in `nd_procgen::buildings`:
-  - Low: the Stacks. A rusted steel scaffold with a deck per level, up to ten levels
-    of shipping containers and old trailers, cantilevers, walkways with railings and
-    bare bulbs, ladders, tarps hanging off the sides, cables strung to the neighbours,
-    plywood patches, dishes, rust streaks. Market stalls at street level on commercial
-    lots. Grime scales with the building's condition.
+  - Low: the Stacks. Containers and old trailers piled the way people would do it:
+    dropped on the lot at mixed orientations, each upper unit placed only where units
+    below support most of its footprint, overhanging corners propped on steel jacks,
+    planks between neighbours, an external zigzag stair, a utility pole with wires
+    that run to specific units and between units (laundry on some), tarps, dishes,
+    water drums, plywood patches, rust streaks, a drum fire. Market stalls at street
+    level on shop lots. Grime scales with the building's condition.
   - Middle: brutalist concrete. Stacked slabs with alternating overhangs, floor plates,
     recessed window bands with lit segments, vertical fins, mechanical penthouses, and
     LED advert screens on the facade and roof (always on shops and venues). Civic

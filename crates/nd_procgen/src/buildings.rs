@@ -267,206 +267,342 @@ pub fn generate_building(
 
 // ── low tier: the Stacks ─────────────────────────────────────────────────────
 //
-// A rusted steel scaffold with a deck per level, stacked high, holding a mix
-// of shipping containers and old trailers. Cantilevers, tarps hanging off the
-// sides, cables strung to the neighbours, plywood patches, dishes, ladders and
-// bare bulbs. Grime scales with wear.
+// Shipping containers and old trailers piled up the way people would do it:
+// dropped on the lot at mixed orientations, each upper unit resting on units
+// below (most of its footprint must be supported), overhanging corners propped
+// on steel jacks, planks between neighbours, an external zigzag stair, and
+// wires that run from a utility pole on the lot to the units. Grime scales
+// with wear.
+
+#[derive(Clone, Copy)]
+struct Unit {
+    /// Centre in lot coordinates (u along frontage, v inward).
+    u: f32,
+    v: f32,
+    /// Rotation relative to the lot frame.
+    yaw: f32,
+    len: f32,
+    wid: f32,
+    h: f32,
+    level: i32,
+    /// Bottom height.
+    y0: f32,
+    trailer: bool,
+    color: [f32; 3],
+}
+
+impl Unit {
+    fn local_to_lot(&self, lu: f32, lv: f32) -> Vec2 {
+        let (s, c) = self.yaw.sin_cos();
+        Vec2::new(self.u + lu * c - lv * s, self.v + lu * s + lv * c)
+    }
+
+    fn corners(&self) -> [Vec2; 4] {
+        let (hl, hw) = (self.len * 0.5, self.wid * 0.5);
+        [self.local_to_lot(-hl, -hw), self.local_to_lot(hl, -hw), self.local_to_lot(hl, hw), self.local_to_lot(-hl, hw)]
+    }
+
+    fn contains(&self, p: Vec2) -> bool {
+        let (s, c) = self.yaw.sin_cos();
+        let d = p - Vec2::new(self.u, self.v);
+        let lu = d.x * c + d.y * s;
+        let lv = -d.x * s + d.y * c;
+        lu.abs() <= self.len * 0.5 && lv.abs() <= self.wid * 0.5
+    }
+
+    fn top(&self) -> f32 {
+        self.y0 + self.h
+    }
+}
+
+/// Separating-axis overlap test for two rotated rectangles.
+fn units_overlap(a: &Unit, b: &Unit, margin: f32) -> bool {
+    let ca = a.corners();
+    let cb = b.corners();
+    let axes = [
+        ca[1] - ca[0],
+        ca[3] - ca[0],
+        cb[1] - cb[0],
+        cb[3] - cb[0],
+    ];
+    for axis in axes {
+        let axis = axis.normalize_or_zero();
+        if axis == Vec2::ZERO {
+            continue;
+        }
+        let proj = |cs: &[Vec2; 4]| {
+            let v: Vec<f32> = cs.iter().map(|p| p.dot(axis)).collect();
+            (v.iter().cloned().fold(f32::MAX, f32::min), v.iter().cloned().fold(f32::MIN, f32::max))
+        };
+        let (a0, a1) = proj(&ca);
+        let (b0, b1) = proj(&cb);
+        if a1 + margin < b0 || b1 + margin < a0 {
+            return false;
+        }
+    }
+    true
+}
 
 fn containers(g: &mut BuildingGeometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
-    let level_h = 3.3;
-    let (unit_l, unit_w) = (6.05, 2.44);
-    let cell_l = unit_l + 0.5;
-    let cell_w = unit_w + 0.8;
-    let cols = ((c.fw + 0.5) / cell_l).floor().clamp(1.0, 6.0) as i32;
-    let rows = ((c.fd + 0.8) / cell_w).floor().clamp(1.0, 4.0) as i32;
-    let levels = ((c.floors as f32 * 1.6).round() as i32).clamp(3, 10);
-    let grid_w = cols as f32 * cell_l;
-    let grid_d = rows as f32 * cell_w;
-    let u0 = -grid_w * 0.5 + cell_l * 0.5;
-    let v0 = -grid_d * 0.5 + cell_w * 0.5;
-    let top = levels as f32 * level_h;
+    let yaw0 = f.yaw();
     let steel = scale(pal.steel, 0.45 - 0.15 * c.wear);
-    let rust = pal.rust;
-    let deck = scale(pal.steel, 0.35);
-
-    // Scaffold: vertical girders at every grid corner, rust-streaked.
-    for x in 0..=cols {
-        for z in 0..=rows {
-            let u = -grid_w * 0.5 + x as f32 * cell_l;
-            let v = -grid_d * 0.5 + z as f32 * cell_w;
-            let col = if rng.random_bool(0.4) { rust } else { steel };
-            f.boxed(&mut g.solid, u, top * 0.5 + 0.6, v, Vec3::new(0.3, top + 1.2, 0.3), rgba(col));
-        }
-    }
-    // Decks and cross beams per level.
-    for l in 0..=levels {
-        let y = l as f32 * level_h;
-        if l > 0 {
-            f.boxed(&mut g.solid, 0.0, y - 0.08, 0.0, Vec3::new(grid_w + 0.6, 0.16, grid_d + 0.6), rgba(deck));
-        }
-        for z in 0..=rows {
-            let v = -grid_d * 0.5 + z as f32 * cell_w;
-            f.boxed(&mut g.solid, 0.0, y + 0.1, v, Vec3::new(grid_w + 0.3, 0.2, 0.2), rgba(steel));
-        }
-        for x in 0..=cols {
-            let u = -grid_w * 0.5 + x as f32 * cell_l;
-            f.boxed(&mut g.solid, u, y + 0.1, 0.0, Vec3::new(0.2, 0.2, grid_d + 0.3), rgba(steel));
-        }
-    }
-
-    // Units on the decks. Higher levels thin out; some units cantilever past
-    // the frame.
-    let mut present = vec![false; (cols * rows * levels) as usize];
-    let idx = |x: i32, z: i32, l: i32| ((l * rows + z) * cols + x) as usize;
-    for l in 0..levels {
-        let p_keep = (0.95 - 0.06 * l as f32).max(0.45);
-        for z in 0..rows {
-            for x in 0..cols {
-                present[idx(x, z, l)] = rng.random_bool(p_keep as f64);
-            }
-        }
-    }
     let lit_chance = c.style.lit_chance * (1.0 - 0.8 * c.wear);
-    for l in 0..levels {
-        let y0 = l as f32 * level_h + 0.04;
-        for z in 0..rows {
-            for x in 0..cols {
-                if !present[idx(x, z, l)] {
-                    // Empty bay: sometimes junk or a parked van.
-                    if rng.random_bool(0.35) {
-                        let u = u0 + x as f32 * cell_l + rng.random_range(-1.0..1.0);
-                        let v = v0 + z as f32 * cell_w;
-                        f.boxed(&mut g.solid, u, y0 + 0.9, v, Vec3::new(4.4, 1.8, 1.9), rgba(scale(*pal.container_colors.choose(rng).unwrap(), 0.8)));
-                    }
-                    continue;
-                }
-                let trailer = rng.random_bool(0.25);
-                let cant = if x == 0 || x == cols - 1 { rng.random_range(-0.3..0.9) * if x == 0 { -1.0 } else { 1.0 } } else { rng.random_range(-0.3..0.3) };
-                let u = u0 + x as f32 * cell_l + cant;
-                let v = v0 + z as f32 * cell_w + rng.random_range(-0.2..0.2);
-                let (size, base) = if trailer {
-                    (Vec3::new(7.4, 2.9, 2.7), scale([0.62, 0.60, 0.55], rng.random_range(0.6..0.95)))
-                } else {
-                    (Vec3::new(unit_l, 2.6, unit_w), *pal.container_colors.choose(rng).unwrap())
-                };
-                let col = scale(base, (0.6 + rng.random_range(0.0..0.3)) * (1.0 - 0.45 * c.wear));
-                let yc = y0 + size.y * 0.5;
-                f.boxed(&mut g.solid, u, yc, v, size, rgba(col));
-                if trailer {
-                    // Coloured stripe and a flat roof cap.
-                    let stripe = scale(*pal.container_colors.choose(rng).unwrap(), 0.8);
-                    for side in [-1.0f32, 1.0] {
-                        f.boxed(&mut g.solid, u, yc - 0.3, v + side * (size.z * 0.5 + 0.02), Vec3::new(size.x * 0.96, 0.35, 0.04), rgba(stripe));
-                    }
-                    f.boxed(&mut g.solid, u, y0 + size.y + 0.05, v, Vec3::new(size.x * 1.02, 0.1, size.z * 1.02), rgba(scale(col, 0.7)));
-                } else {
-                    // Corrugation ribs and dark door end.
-                    for k in 0..4 {
-                        let ru = u + (k as f32 - 1.5) * size.x * 0.22;
-                        for side in [-1.0f32, 1.0] {
-                            f.boxed(&mut g.solid, ru, yc, v + side * (size.z * 0.5 + 0.02), Vec3::new(0.2, size.y * 0.9, 0.04), rgba(scale(col, 0.72)));
+    let (hw, hd) = (c.fw * 0.5 + 0.6, c.fd * 0.5 + 0.6);
+
+    // ── placement ────────────────────────────────────────────────────────────
+    let mut units: Vec<Unit> = Vec::new();
+    let ground_target = ((c.fw * c.fd / 26.0) as i32).clamp(2, 10);
+    let levels = ((c.floors as f32 * 1.3) as i32).clamp(2, 8);
+    let mut prev_count = ground_target;
+    for level in 0..levels {
+        let target = if level == 0 { ground_target } else { ((prev_count as f32 * rng.random_range(0.6..0.9)).round() as i32).max(1) };
+        let mut placed = 0;
+        let mut attempts = 0;
+        while placed < target && attempts < 80 {
+            attempts += 1;
+            let trailer = rng.random_bool(0.2);
+            let (len, wid, h) = if trailer { (rng.random_range(6.5..8.5), 2.7, 2.9) } else if rng.random_bool(0.3) { (12.1, 2.44, 2.6) } else { (6.05, 2.44, 2.6) };
+            let yaw = match rng.random_range(0..10) {
+                0..=5 => 0.0,
+                6..=8 => std::f32::consts::FRAC_PI_2,
+                _ => rng.random_range(-0.45..0.45),
+            };
+            let (u, v, y0) = if level == 0 {
+                (rng.random_range(-hw + len * 0.5..hw - len * 0.5).clamp(-hw, hw), rng.random_range(-hd + wid * 0.5..hd - wid * 0.5).clamp(-hd, hd), 0.0)
+            } else {
+                let below: Vec<&Unit> = units.iter().filter(|x| x.level == level - 1).collect();
+                let Some(support) = below.choose(rng) else { break };
+                let reach = support.len.max(len) * 0.45;
+                let off = Vec2::new(rng.random_range(-reach..reach), rng.random_range(-2.0..2.0));
+                let off = if support.yaw.abs() > 0.5 { Vec2::new(off.y, off.x) } else { off };
+                (support.u + off.x, support.v + off.y, support.top())
+            };
+            let color = if trailer { scale([0.62, 0.60, 0.55], rng.random_range(0.6..0.95)) } else { *pal.container_colors.choose(rng).unwrap() };
+            let cand = Unit { u, v, yaw, len, wid, h, level, y0, trailer, color };
+            // Stay roughly inside the lot.
+            if cand.corners().iter().any(|p| p.x.abs() > hw + 1.0 || p.y.abs() > hd + 1.0) {
+                continue;
+            }
+            // No overlap with units on the same level.
+            if units.iter().any(|o| o.level == level && units_overlap(o, &cand, 0.35)) {
+                continue;
+            }
+            // Upper units need most of their footprint supported.
+            if level > 0 {
+                let mut inside = 0;
+                let samples = 15;
+                for i in 0..5 {
+                    for j in 0..3 {
+                        let lu = (i as f32 + 0.5) / 5.0 * len - len * 0.5;
+                        let lv = (j as f32 + 0.5) / 3.0 * wid - wid * 0.5;
+                        let p = cand.local_to_lot(lu, lv);
+                        if units.iter().any(|o| o.level == level - 1 && o.contains(p)) {
+                            inside += 1;
                         }
                     }
-                    let door_side = if rng.random_bool(0.5) { -1.0 } else { 1.0 };
-                    f.boxed(&mut g.solid, u + door_side * (size.x * 0.5 + 0.02), yc, v, Vec3::new(0.04, size.y * 0.92, size.z * 0.92), rgba(scale(col, 0.55)));
                 }
-                // Street-side face: cut-in window with light, plywood patch, tarp.
-                if z == 0 {
-                    let fv = v - size.z * 0.5 - 0.05;
-                    if rng.random_bool(lit_chance as f64) {
-                        let wc = if rng.random_bool(0.3) { [0.5, 0.75, 1.1] } else { *c.style.window_colors.choose(rng).unwrap() };
-                        f.boxed(&mut g.glow, u + rng.random_range(-1.8..1.8), yc + 0.3, fv, Vec3::new(0.9, 0.7, 0.06), rgba(scale(wc, 0.9)));
-                    }
-                    if rng.random_bool((0.25 + 0.4 * c.wear) as f64) {
-                        f.boxed(&mut g.solid, u + rng.random_range(-2.0..2.0), yc + rng.random_range(-0.6..0.6), fv, Vec3::new(rng.random_range(0.6..1.4), rng.random_range(0.6..1.2), 0.05), rgba([0.36, 0.26, 0.14]));
-                    }
-                    if rng.random_bool(0.3) {
-                        let tc = scale(*pal.tarp_colors.choose(rng).unwrap(), 0.8);
-                        let tw = rng.random_range(2.0..4.0);
-                        f.boxed(&mut g.solid, u + rng.random_range(-1.5..1.5), yc + size.y * 0.1, fv - 0.1, Vec3::new(tw, size.y * 0.8, 0.08), rgba(tc));
-                    }
+                if (inside as f32) < samples as f32 * 0.55 {
+                    continue;
                 }
-                // Rust and drip stains.
-                for _ in 0..rng.random_range(0..=(1.0 + 2.0 * c.wear) as u32 + 1) {
-                    let side = if rng.random_bool(0.5) { -1.0 } else { 1.0 };
-                    f.boxed(&mut g.solid, u + rng.random_range(-2.5..2.5), yc + rng.random_range(-0.8..0.8), v + side * (size.z * 0.5 + 0.06), Vec3::new(rng.random_range(0.3..1.4), rng.random_range(0.3..1.3), 0.04), rgba(crate::palette::RUST_STAIN));
+            }
+            units.push(cand);
+            placed += 1;
+        }
+        if placed == 0 {
+            break;
+        }
+        prev_count = placed;
+    }
+
+    // ── draw units ───────────────────────────────────────────────────────────
+    for unit in &units {
+        let col = scale(unit.color, (0.6 + rng.random_range(0.0..0.3)) * (1.0 - 0.45 * c.wear));
+        let center = unit.local_to_lot(0.0, 0.0);
+        let world = f.to_world(center.x, center.y);
+        let yaw = yaw0 + unit.yaw;
+        let yc = unit.y0 + unit.h * 0.5;
+        g.solid.boxed(Vec3::new(world.x, yc, world.y), Vec3::new(unit.len, unit.h, unit.wid), yaw, rgba(col));
+        let place = |mesh: &mut MeshData, lu: f32, y: f32, lv: f32, size: Vec3, color: [f32; 4]| {
+            let p = unit.local_to_lot(lu, lv);
+            let w = f.to_world(p.x, p.y);
+            mesh.boxed(Vec3::new(w.x, y, w.y), size, yaw, color);
+        };
+        if unit.trailer {
+            let stripe = scale(*pal.container_colors.choose(rng).unwrap(), 0.8);
+            for side in [-1.0f32, 1.0] {
+                place(&mut g.solid, 0.0, yc - 0.3, side * (unit.wid * 0.5 + 0.02), Vec3::new(unit.len * 0.96, 0.35, 0.04), rgba(stripe));
+            }
+            place(&mut g.solid, 0.0, unit.top() + 0.05, 0.0, Vec3::new(unit.len * 1.02, 0.1, unit.wid * 1.02), rgba(scale(col, 0.7)));
+        } else {
+            let ribs = (unit.len / 1.5) as i32;
+            for k in 0..ribs {
+                let lu = (k as f32 + 0.5) / ribs as f32 * unit.len - unit.len * 0.5;
+                for side in [-1.0f32, 1.0] {
+                    place(&mut g.solid, lu, yc, side * (unit.wid * 0.5 + 0.02), Vec3::new(0.18, unit.h * 0.9, 0.04), rgba(scale(col, 0.72)));
                 }
-                // Dishes and AC units on top of some units.
-                if rng.random_bool(0.3) {
-                    f.boxed(&mut g.solid, u + rng.random_range(-2.0..2.0), y0 + size.y + 0.5, v, Vec3::new(0.1, 1.0, 0.1), rgba(steel));
-                    f.boxed(&mut g.solid, u + rng.random_range(-2.0..2.0), y0 + size.y + 1.0, v - 0.3, Vec3::new(0.9, 0.9, 0.12), rgba(scale(pal.steel, 1.1)));
-                }
-                if rng.random_bool(0.25) {
-                    f.boxed(&mut g.solid, u + rng.random_range(-2.0..2.0), yc - 0.6, v - size.z * 0.5 - 0.35, Vec3::new(0.8, 0.5, 0.6), rgba(if rng.random_bool(0.4) { rust } else { [0.5, 0.5, 0.5] }));
-                }
+            }
+            let door = if rng.random_bool(0.5) { -1.0 } else { 1.0 };
+            place(&mut g.solid, door * (unit.len * 0.5 + 0.02), yc, 0.0, Vec3::new(0.04, unit.h * 0.92, unit.wid * 0.92), rgba(scale(col, 0.55)));
+        }
+        // A cut-in window with light on one long side, plywood, tarp, rust.
+        let side = if rng.random_bool(0.5) { -1.0 } else { 1.0 };
+        if rng.random_bool(lit_chance as f64) {
+            let wc = if rng.random_bool(0.3) { [0.5, 0.75, 1.1] } else { *c.style.window_colors.choose(rng).unwrap() };
+            place(&mut g.glow, rng.random_range(-unit.len * 0.3..unit.len * 0.3), yc + 0.3, side * (unit.wid * 0.5 + 0.05), Vec3::new(0.9, 0.7, 0.06), rgba(scale(wc, 0.9)));
+        }
+        if rng.random_bool((0.25 + 0.4 * c.wear) as f64) {
+            place(&mut g.solid, rng.random_range(-unit.len * 0.3..unit.len * 0.3), yc + rng.random_range(-0.5..0.5), -side * (unit.wid * 0.5 + 0.05), Vec3::new(rng.random_range(0.6..1.4), rng.random_range(0.6..1.2), 0.05), rgba([0.36, 0.26, 0.14]));
+        }
+        if rng.random_bool(0.25) {
+            let tc = scale(*pal.tarp_colors.choose(rng).unwrap(), 0.8);
+            place(&mut g.solid, rng.random_range(-unit.len * 0.25..unit.len * 0.25), yc + unit.h * 0.15, side * (unit.wid * 0.5 + 0.1), Vec3::new(rng.random_range(2.0..4.0), unit.h * 0.75, 0.08), rgba(tc));
+        }
+        for _ in 0..rng.random_range(0..=(1.0 + 2.0 * c.wear) as u32 + 1) {
+            let s2 = if rng.random_bool(0.5) { -1.0 } else { 1.0 };
+            place(&mut g.solid, rng.random_range(-unit.len * 0.4..unit.len * 0.4), yc + rng.random_range(-0.8..0.8), s2 * (unit.wid * 0.5 + 0.06), Vec3::new(rng.random_range(0.3..1.4), rng.random_range(0.3..1.3), 0.04), rgba(crate::palette::RUST_STAIN));
+        }
+        // Roof clutter on the topmost units: tarps, dishes, AC, a water drum.
+        let exposed = !units.iter().any(|o| o.level == unit.level + 1 && o.contains(center));
+        if exposed {
+            if rng.random_bool(0.45) {
+                let tc = scale(*pal.tarp_colors.choose(rng).unwrap(), 0.85);
+                place(&mut g.solid, rng.random_range(-unit.len * 0.2..unit.len * 0.2), unit.top() + 0.08, 0.0, Vec3::new(rng.random_range(2.5..unit.len.max(3.0)), 0.1, unit.wid * 0.9), rgba(tc));
+            }
+            if rng.random_bool(0.4) {
+                let lu = rng.random_range(-unit.len * 0.35..unit.len * 0.35);
+                place(&mut g.solid, lu, unit.top() + 0.5, 0.0, Vec3::new(0.1, 1.0, 0.1), rgba(steel));
+                place(&mut g.solid, lu, unit.top() + 1.0, -0.3, Vec3::new(0.9, 0.9, 0.12), rgba(scale(pal.steel, 1.1)));
+            }
+            if rng.random_bool(0.35) {
+                place(&mut g.solid, rng.random_range(-unit.len * 0.35..unit.len * 0.35), unit.top() + 0.45, rng.random_range(-0.6..0.6), Vec3::new(0.9, 0.9, 0.9), rgba(if rng.random_bool(0.5) { pal.rust } else { [0.2, 0.3, 0.6] }));
             }
         }
-        // Walkway in front of each upper level with a railing, bulbs underneath.
-        if l > 0 {
-            let wv = -grid_d * 0.5 - 0.9;
-            f.boxed(&mut g.solid, 0.0, y0 + 0.04, wv, Vec3::new(grid_w, 0.12, 1.3), rgba(deck));
-            f.boxed(&mut g.solid, 0.0, y0 + 1.05, wv - 0.6, Vec3::new(grid_w, 0.05, 0.05), rgba(steel));
-            for k in 0..((grid_w / 2.2) as i32).max(1) {
-                let pu = -grid_w * 0.5 + 0.6 + k as f32 * 2.2;
-                f.boxed(&mut g.solid, pu, y0 + 0.55, wv - 0.6, Vec3::new(0.06, 1.0, 0.06), rgba(steel));
+        if rng.random_bool(0.25) {
+            place(&mut g.solid, rng.random_range(-unit.len * 0.3..unit.len * 0.3), yc - 0.6, side * (unit.wid * 0.5 + 0.35), Vec3::new(0.8, 0.5, 0.6), rgba(if rng.random_bool(0.4) { pal.rust } else { [0.5, 0.5, 0.5] }));
+        }
+    }
+
+    // ── jacks under unsupported corners ─────────────────────────────────────
+    for unit in units.iter().filter(|x| x.level > 0) {
+        for corner in unit.corners() {
+            let inset = corner + (Vec2::new(unit.u, unit.v) - corner).normalize_or_zero() * 0.35;
+            let supported = units.iter().any(|o| o.level == unit.level - 1 && o.contains(inset));
+            if supported {
+                continue;
             }
-            for k in 0..((grid_w / 3.5) as i32).max(1) {
-                if rng.random_bool(0.6) {
-                    let pu = -grid_w * 0.5 + 1.8 + k as f32 * 3.5;
-                    f.boxed(&mut g.solid, pu, y0 - 0.2, wv, Vec3::new(0.03, 0.4, 0.03), rgba([0.05, 0.05, 0.05]));
-                    f.boxed(&mut g.glow, pu, y0 - 0.45, wv, Vec3::new(0.16, 0.16, 0.16), rgba(scale(pal.lamp, 1.0)));
-                }
+            // Rest on the highest unit below that covers the point, else the ground.
+            let base = units.iter().filter(|o| o.level < unit.level && o.contains(inset)).map(|o| o.top()).fold(0.0, f32::max);
+            let w = f.to_world(inset.x, inset.y);
+            let h = unit.y0 - base;
+            if h > 0.3 {
+                g.solid.boxed(Vec3::new(w.x, base + h * 0.5, w.y), Vec3::new(0.22, h, 0.22), yaw0, rgba(if rng.random_bool(0.4) { pal.rust } else { steel }));
             }
         }
     }
 
-    // Ladders up the front corners with rungs.
-    for side in [-1.0f32, 1.0] {
-        let lu = side * (grid_w * 0.5 - 0.4);
-        let lv = -grid_d * 0.5 - 1.5;
-        f.boxed(&mut g.solid, lu - 0.25, top * 0.5, lv, Vec3::new(0.06, top, 0.06), rgba(steel));
-        f.boxed(&mut g.solid, lu + 0.25, top * 0.5, lv, Vec3::new(0.06, top, 0.06), rgba(steel));
-        let mut y = 0.6;
-        while y < top {
-            f.boxed(&mut g.solid, lu, y, lv, Vec3::new(0.5, 0.05, 0.05), rgba(steel));
-            y += 1.0;
+    // ── planks between neighbours on the same level ──────────────────────────
+    for i in 0..units.len() {
+        for j in (i + 1)..units.len() {
+            let (a, b) = (units[i], units[j]);
+            if a.level != b.level || a.level == 0 {
+                continue;
+            }
+            let ca = Vec2::new(a.u, a.v);
+            let cb = Vec2::new(b.u, b.v);
+            let dist = ca.distance(cb);
+            let reach = (a.len.max(a.wid) + b.len.max(b.wid)) * 0.5;
+            if dist > reach + 2.2 || dist < reach * 0.6 {
+                continue;
+            }
+            let mid = (ca + cb) * 0.5;
+            if a.contains(mid) || b.contains(mid) {
+                continue;
+            }
+            let w = f.to_world(mid.x, mid.y);
+            let d = cb - ca;
+            let span = (dist - reach * 0.7).max(1.0);
+            g.solid.boxed(Vec3::new(w.x, a.y0 + 0.08, w.y), Vec3::new(span, 0.12, 0.9), yaw0 + d.y.atan2(d.x), rgba([0.36, 0.26, 0.14]));
         }
     }
 
-    // Cables strung from the top of the scaffold out past the lot edges.
-    for _ in 0..rng.random_range(3..7) {
-        let from = f.to_world(rng.random_range(-grid_w * 0.5..grid_w * 0.5), rng.random_range(-grid_d * 0.5..grid_d * 0.5));
-        let y_from = rng.random_range(top * 0.5..top);
-        let ang = rng.random_range(0.0..std::f32::consts::TAU);
-        let len = rng.random_range(10.0..26.0);
-        let to = from + Vec2::new(ang.cos(), ang.sin()) * len;
-        let y_to = y_from - rng.random_range(0.5..3.0);
-        let mid = (from + to) * 0.5;
-        let dir = to - from;
-        let yaw = dir.y.atan2(dir.x);
-        g.solid.boxed(Vec3::new(mid.x, (y_from + y_to) * 0.5, mid.y), Vec3::new(len, 0.06, 0.06), yaw, rgba([0.05, 0.05, 0.05]));
+    // ── external zigzag stair up one side of the pile ───────────────────────
+    let top_level = units.iter().map(|x| x.level).max().unwrap_or(0);
+    if top_level >= 1 {
+        let su = -hw + 1.2;
+        let sv = rng.random_range(-hd * 0.5..hd * 0.5);
+        let run = 3.4;
+        let mut y = 0.0;
+        for l in 0..top_level {
+            let rise = 2.6;
+            let steps = 8;
+            let dir = if l % 2 == 0 { 1.0 } else { -1.0 };
+            for s in 0..steps {
+                let t = (s as f32 + 0.5) / steps as f32;
+                f.boxed(&mut g.solid, su, y + t * rise, sv + dir * (t * run - run * 0.5), Vec3::new(0.9, 0.16, 0.42), rgba(steel));
+            }
+            f.boxed(&mut g.solid, su - 0.5, y + rise * 0.5 + 0.5, sv, Vec3::new(0.06, rise + 1.0, run), rgba(steel));
+            f.boxed(&mut g.solid, su, y + rise + 0.08, sv + dir * run * 0.5, Vec3::new(1.0, 0.16, 1.0), rgba(steel));
+            y += rise;
+        }
+        f.boxed(&mut g.solid, su, y * 0.5, sv + run * 0.55, Vec3::new(0.15, y, 0.15), rgba(steel));
+        f.boxed(&mut g.solid, su, y * 0.5, sv - run * 0.55, Vec3::new(0.15, y, 0.15), rgba(steel));
     }
 
-    // Tarps draped over the top level and a floodlight on a girder.
+    // ── utility pole and wires that reach real units ─────────────────────────
+    let pole = Vec2::new(hw - 1.0, -hd - 1.2);
+    let pole_h = 9.0;
+    let pw = f.to_world(pole.x, pole.y);
+    g.solid.boxed(Vec3::new(pw.x, pole_h * 0.5, pw.y), Vec3::new(0.3, pole_h, 0.3), yaw0, rgba([0.28, 0.22, 0.16]));
+    f.boxed(&mut g.solid, pole.x, pole_h - 0.6, pole.y, Vec3::new(1.8, 0.12, 0.12), rgba([0.28, 0.22, 0.16]));
+    f.boxed(&mut g.glow, pole.x, pole_h - 1.6, pole.y - 0.5, Vec3::new(0.5, 0.25, 0.4), rgba(pal.street_lamp));
+    let pole_top = Vec3::new(pw.x, pole_h - 0.6, pw.y);
+    let upper: Vec<&Unit> = units.iter().filter(|x| x.level >= 1).collect();
+    for unit in upper.choose_multiple(rng, 3) {
+        let corner = unit.corners()[rng.random_range(0..4)];
+        let w = f.to_world(corner.x, corner.y);
+        g.solid.beam(pole_top, Vec3::new(w.x, unit.top() + 0.1, w.y), 0.05, rgba([0.05, 0.05, 0.05]));
+    }
     for _ in 0..rng.random_range(2..5) {
-        let tc = scale(*pal.tarp_colors.choose(rng).unwrap(), 0.85);
-        f.boxed(&mut g.solid, rng.random_range(-grid_w * 0.35..grid_w * 0.35), top + 0.1, rng.random_range(-grid_d * 0.3..grid_d * 0.3), Vec3::new(rng.random_range(3.0..7.0), 0.1, rng.random_range(2.0..3.2)), rgba(tc));
+        let (Some(a), Some(b)) = (upper.choose(rng), upper.choose(rng)) else { break };
+        if std::ptr::eq(*a, *b) {
+            continue;
+        }
+        let pa = f.to_world(a.u, a.v);
+        let pb = f.to_world(b.u, b.v);
+        if pa.distance(pb) < 3.0 {
+            continue;
+        }
+        let from = Vec3::new(pa.x, a.top() + 0.1, pa.y);
+        let to = Vec3::new(pb.x, b.top() + 0.1, pb.y);
+        g.solid.beam(from, to, 0.04, rgba([0.05, 0.05, 0.05]));
+        // Laundry on some lines.
+        if rng.random_bool(0.5) {
+            for k in 1..4 {
+                let t = k as f32 / 4.0;
+                let p = from.lerp(to, t);
+                let tc = *pal.tarp_colors.choose(rng).unwrap();
+                g.solid.boxed(Vec3::new(p.x, p.y - 0.4, p.z), Vec3::new(0.5, 0.7, 0.04), yaw0 + rng.random_range(-0.5..0.5), rgba(scale(tc, 1.4)));
+            }
+        }
     }
-    f.boxed(&mut g.glow, grid_w * 0.5, top + 1.0, -grid_d * 0.5, Vec3::new(0.5, 0.35, 0.5), rgba(pal.street_lamp));
-    f.boxed(&mut g.glow, -grid_w * 0.5, top * 0.5, grid_d * 0.5, Vec3::new(0.35, 0.3, 0.35), rgba(pal.aviation_light));
 
-    // Ground level: market stalls or a lit shop front for commercial lots.
+    // ── street level: stalls for shops, a drum fire, junk ────────────────────
     if matches!(c.land_use, LandUse::Commercial | LandUse::Entertainment) {
-        let sv = -grid_d * 0.5 - 1.6;
-        for k in 0..((grid_w / 5.0) as i32).max(1) {
-            let su = -grid_w * 0.5 + 2.5 + k as f32 * 5.0;
+        let sv = -hd - 1.0;
+        for k in 0..((c.fw / 5.0) as i32).max(1) {
+            let su = -hw + 2.5 + k as f32 * 5.0;
             f.boxed(&mut g.solid, su, 2.4, sv, Vec3::new(4.2, 0.1, 2.2), rgba(scale(*pal.tarp_colors.choose(rng).unwrap(), 0.9)));
             f.boxed(&mut g.solid, su, 0.5, sv, Vec3::new(3.6, 1.0, 1.2), rgba([0.3, 0.22, 0.14]));
             let sc = *pal.sign_colors.choose(rng).unwrap();
             f.boxed(&mut g.glow, su, 2.1, sv - 1.0, Vec3::new(3.0, 0.3, 0.08), rgba(scale(sc, 0.9 - 0.5 * c.wear)));
         }
+    }
+    if rng.random_bool(0.4) {
+        let bu = rng.random_range(-hw * 0.8..hw * 0.8);
+        f.boxed(&mut g.solid, bu, 0.45, -hd - 1.2, Vec3::new(0.6, 0.9, 0.6), rgba(pal.rust));
+        f.boxed(&mut g.glow, bu, 1.0, -hd - 1.2, Vec3::new(0.3, 0.2, 0.3), rgba([2.0, 0.9, 0.3]));
     }
 }
 
