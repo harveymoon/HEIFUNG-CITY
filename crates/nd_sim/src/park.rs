@@ -101,6 +101,9 @@ pub struct ParkLayout {
     pub benches: Vec<(Vec2, f32)>,
     pub features: Vec<ParkFeatureSlot>,
     pub entrances: Vec<Vec2>,
+    /// Indices of polygon edges that border another lot of the same park:
+    /// nothing is built along them.
+    pub shared_edges: Vec<usize>,
     /// The connected park this lot belongs to.
     pub cluster_lots: u32,
     pub cluster_area: f32,
@@ -118,7 +121,7 @@ const SHARED_MIN: f32 = 4.0;
 /// Plan every park in the city. Lots that are not usable park land lose
 /// their layout.
 pub fn plan_parks(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue) {
-    let ids: Vec<LotId> = lots.iter().filter(|(_, l)| l.land_use == LandUse::Park && l.usable()).map(|(id, _)| id).collect();
+    let ids: Vec<LotId> = lots.iter().filter(|(_, l)| l.land_use == LandUse::Park && l.polygon.len() >= 3).map(|(id, _)| id).collect();
     for (id, l) in lots.iter_mut() {
         if !ids.contains(&id) {
             l.park = None;
@@ -127,11 +130,14 @@ pub fn plan_parks(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue) {
     let n = ids.len();
     // Adjacency: lots sharing a few metres of edge, with the gap's midpoint.
     let mut adj: Vec<Vec<(usize, Vec2)>> = vec![Vec::new(); n];
+    let mut shared: Vec<Vec<usize>> = vec![Vec::new(); n];
     for i in 0..n {
         for j in (i + 1)..n {
-            if let Some(mid) = shared_edge(&lots[ids[i]].polygon, &lots[ids[j]].polygon) {
+            if let Some((mid, ei, ej)) = shared_edge(&lots[ids[i]].polygon, &lots[ids[j]].polygon) {
                 adj[i].push((j, mid));
                 adj[j].push((i, mid));
+                shared[i].push(ei);
+                shared[j].push(ej);
             }
         }
     }
@@ -156,7 +162,8 @@ pub fn plan_parks(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue) {
     for c in 0..next {
         let members: Vec<usize> = (0..n).filter(|&i| cluster[i] == c).collect();
         let layouts = plan_cluster(&members, &ids, &adj, lots, land_value);
-        for (i, layout) in members.iter().zip(layouts) {
+        for (i, mut layout) in members.iter().zip(layouts) {
+            layout.shared_edges = shared[*i].clone();
             lots[ids[*i]].park = Some(layout);
         }
     }
@@ -164,7 +171,7 @@ pub fn plan_parks(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue) {
 
 /// A one-lot park with no neighbours, for previews and tests.
 pub fn plan_single(lot: &Lot, tier: Tier) -> ParkLayout {
-    let mut l = plan_lot_paths(lot, &[]);
+    let mut l = plan_lot_paths(lot, &[], true);
     l.tier = tier;
     let area = polygon_area(&lot.polygon).abs();
     let wanted = feature_budget(tier, area, inradius(&lot.polygon));
@@ -195,7 +202,7 @@ fn plan_cluster(members: &[usize], ids: &[LotId], adj: &[Vec<(usize, Vec2)>], lo
         .iter()
         .map(|&i| {
             let gaps: Vec<Vec2> = adj[i].iter().map(|(_, m)| *m).collect();
-            let mut l = plan_lot_paths(&lots[ids[i]], &gaps);
+            let mut l = plan_lot_paths(&lots[ids[i]], &gaps, !lots[ids[i]].landlocked);
             l.tier = tier;
             l
         })
@@ -319,12 +326,15 @@ fn feature_radius(kind: ParkFeature, tier: Tier, lot_inradius: f32) -> f32 {
 
 /// Spokes from a hub deep in the lot to every entrance, plus a loop on big
 /// lots with only one way in.
-fn plan_lot_paths(lot: &Lot, gaps: &[Vec2]) -> ParkLayout {
+fn plan_lot_paths(lot: &Lot, gaps: &[Vec2], has_gate: bool) -> ParkLayout {
     let poly = &lot.polygon;
     let mut entrances: Vec<Vec2> = Vec::new();
-    // Street gate: the front edge midpoint, pulled a step inside.
-    let gate = lot.entrance() - lot.front_dir * 0.8;
-    entrances.push(if point_in_polygon(gate, poly) { gate } else { pull_inside(poly, lot.entrance(), lot.center) });
+    // Street gate: the front edge midpoint, pulled a step inside. Backland
+    // with no road is reached only through the gaps to its neighbours.
+    if has_gate {
+        let gate = lot.entrance() - lot.front_dir * 0.8;
+        entrances.push(if point_in_polygon(gate, poly) { gate } else { pull_inside(poly, lot.entrance(), lot.center) });
+    }
     for g in gaps {
         let inward = (lot.center - *g).normalize_or_zero();
         let p = *g + inward * 0.8;
@@ -334,6 +344,10 @@ fn plan_lot_paths(lot: &Lot, gaps: &[Vec2]) -> ParkLayout {
         }
     }
     let hub = hub_point(poly, &entrances);
+    if entrances.is_empty() {
+        // Nothing reaches this lot: a loop of its own, at least.
+        entrances.push(pull_inside(poly, hub + (polygon_centroid(poly) - hub).normalize_or_zero() * 2.0 + Vec2::X * 0.5, hub));
+    }
     let mut paths: Vec<Vec<Vec2>> = entrances.iter().map(|e| vec![*e, hub]).collect();
     let r = inradius(poly);
     if entrances.len() == 1 && r >= 9.0 {
@@ -346,7 +360,7 @@ fn plan_lot_paths(lot: &Lot, gaps: &[Vec2]) -> ParkLayout {
         let b = pull_inside(poly, hub - side * 0.8 + (out - hub) * 0.5, hub);
         paths.push(vec![hub, a, out, b, hub]);
     }
-    ParkLayout { tier: Tier::Mid, paths, benches: Vec::new(), features: Vec::new(), entrances, cluster_lots: 1, cluster_area: polygon_area(poly).abs() }
+    ParkLayout { tier: Tier::Mid, paths, benches: Vec::new(), features: Vec::new(), entrances, shared_edges: Vec::new(), cluster_lots: 1, cluster_area: polygon_area(poly).abs() }
 }
 
 /// Spurs to the features, bends around them, then benches along every path
@@ -602,9 +616,10 @@ pub fn pull_inside(poly: &[Vec2], p: Vec2, anchor: Vec2) -> Vec2 {
     anchor.lerp(p, lo)
 }
 
-/// Midpoint of the stretch two polygons share, if it is long enough.
-fn shared_edge(a: &[Vec2], b: &[Vec2]) -> Option<Vec2> {
-    let mut best: Option<(f32, Vec2)> = None;
+/// Midpoint of the stretch two polygons share, if it is long enough, with
+/// the edge index on each side.
+fn shared_edge(a: &[Vec2], b: &[Vec2]) -> Option<(Vec2, usize, usize)> {
+    let mut best: Option<(f32, (Vec2, usize, usize))> = None;
     for i in 0..a.len() {
         let (p, q) = (a[i], a[(i + 1) % a.len()]);
         let pq = q - p;
@@ -623,7 +638,7 @@ fn shared_edge(a: &[Vec2], b: &[Vec2]) -> Option<Vec2> {
             let (lo, hi) = (t0.min(t1).max(0.0), t0.max(t1).min(len));
             let shared = hi - lo;
             if shared >= SHARED_MIN && best.is_none_or(|(bs, _)| shared > bs) {
-                best = Some((shared, p + dir * ((lo + hi) * 0.5)));
+                best = Some((shared, (p + dir * ((lo + hi) * 0.5), i, j)));
             }
         }
     }

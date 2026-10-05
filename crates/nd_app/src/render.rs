@@ -32,7 +32,7 @@ struct SunTag;
 struct TerrainTag;
 #[derive(Component)]
 struct RoadsTag;
-#[derive(Component)]
+#[derive(Component, Clone)]
 struct LotsTag;
 #[derive(Component)]
 struct PreviewTag;
@@ -481,6 +481,17 @@ fn sync_lots(
     }
     for lot in w.lots.values() {
         let c = pal.zone_color(lot.land_use);
+        // Park land is a park as soon as it is planned, built or not, and
+        // park backland with no road is reached through the park itself.
+        if lot.building.is_none() {
+            if let Some(layout) = &lot.park {
+                let seed = (lot.center.x * 31.0 + lot.center.y * 17.0).abs() as u64;
+                let extras = Extras { park: Some(layout), ..Extras::default() };
+                let geo = generate_building(lot, nd_sim::LandUse::Park, 1, layout.tier, 1.0, seed, &assets.rules, &assets.palette, &extras);
+                spawn_geometry(&mut commands, &mut meshes, &mats, &geo, LotsTag);
+                continue;
+            }
+        }
         if lot.landlocked {
             // Unusable ground: plain earth, no outline.
             fill.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15));

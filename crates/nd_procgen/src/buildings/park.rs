@@ -218,11 +218,14 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
     // Every entrance (the street gate and the gaps to neighbouring park
     // lots) gets an opening in whatever lines the edge.
     let gaps: Vec<Vec2> = layout.entrances.iter().map(|e| f.to_local(*e)).collect();
+    // Edges shared with the rest of the park stay open; the offset polygon
+    // keeps the vertex order, so face indices match polygon edges.
+    let open = |i: usize| faces.len() == c.lot_poly.len() && layout.shared_edges.contains(&i);
     match tier {
         Tier::Low => {
             // Bits of chain-link, a tagged wall.
             for (i, face) in faces.iter().enumerate() {
-                if face.is_front || face.len < 5.0 {
+                if face.is_front || face.len < 5.0 || open(i) {
                     continue;
                 }
                 if i % 2 == 0 {
@@ -237,8 +240,8 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
             }
         }
         Tier::Mid => {
-            for face in &faces {
-                if face.len < 3.0 {
+            for (i, face) in faces.iter().enumerate() {
+                if face.len < 3.0 || open(i) {
                     continue;
                 }
                 for (t0, t1) in edge_runs(face, &gaps, 2.0) {
@@ -251,8 +254,8 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
             }
         }
         Tier::High => {
-            for face in &faces {
-                if face.len < 3.0 {
+            for (i, face) in faces.iter().enumerate() {
+                if face.len < 3.0 || open(i) {
                     continue;
                 }
                 for (t0, t1) in edge_runs(face, &gaps, 2.2) {
