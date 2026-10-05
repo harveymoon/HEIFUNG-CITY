@@ -119,6 +119,11 @@ pub enum Style {
 }
 
 impl Style {
+    /// Position in `ALL`, for per-style tables.
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
     pub const ALL: [Style; 44] = [
         Style::Stacks,
         Style::Tenement,
@@ -238,7 +243,57 @@ pub struct BuildingRules {
     pub styles: Vec<StyleWeight>,
 }
 
+impl LandUseRules {
+    /// Clamp the chances a rules file may have set outside `0..=1`; they
+    /// feed `random_bool`, which panics on anything larger than one.
+    pub fn validate(&mut self) {
+        for p in [&mut self.sign_chance, &mut self.vertical_sign_chance, &mut self.roof_antenna_chance] {
+            *p = if p.is_finite() { p.clamp(0.0, 1.0) } else { 0.0 };
+        }
+        self.floor_height = self.floor_height.clamp(2.2, 12.0);
+        self.inset = self.inset.max(0.0);
+        self.window_spacing = self.window_spacing.max(0.8);
+        self.window_size = [self.window_size[0].max(0.2), self.window_size[1].max(0.2)];
+    }
+}
+
+impl TierStyle {
+    pub fn validate(&mut self) {
+        for p in [&mut self.lit_chance, &mut self.grime, &mut self.clutter] {
+            *p = if p.is_finite() { p.clamp(0.0, 1.0) } else { 0.0 };
+        }
+        if self.wall_colors.is_empty() {
+            self.wall_colors.push([0.5, 0.5, 0.5]);
+        }
+        if self.window_colors.is_empty() {
+            self.window_colors.push([1.2, 1.1, 0.9]);
+        }
+    }
+
+    /// Entry `i` of the lit-window colours, wrapping, never panicking.
+    pub fn window_color(&self, i: usize) -> [f32; 3] {
+        crate::palette::at(&self.window_colors, i)
+    }
+
+    pub fn wall_color(&self, i: usize) -> [f32; 3] {
+        crate::palette::at(&self.wall_colors, i)
+    }
+}
+
 impl BuildingRules {
+    /// Clamp every loaded chance and refill emptied colour lists. The
+    /// generators also clamp at the point of use, so this is belt and
+    /// braces for anything that reads the rules directly.
+    pub fn validate(&mut self) {
+        for r in [&mut self.residential, &mut self.commercial, &mut self.industrial, &mut self.entertainment, &mut self.civic, &mut self.park] {
+            r.validate();
+        }
+        for t in &mut self.tiers {
+            t.validate();
+        }
+        self.styles.retain(|w| w.weight.is_finite());
+    }
+
     pub fn for_land_use(&self, lu: LandUse) -> &LandUseRules {
         match lu {
             LandUse::Residential => &self.residential,
@@ -391,7 +446,12 @@ impl Default for BuildingRules {
 
 /// Parcel-aligned coordinate frame: `u` runs along the frontage, `v` inward
 /// from the road, origin at the centre of the parcel's bounding rectangle.
-#[derive(Clone, Copy, Debug)]
+///
+/// Generators work in two coordinate systems: lot-local (`Ctx::lot_poly`,
+/// `Face`, `Frame::bx`) and world (`ParkLayout`, `RailLink`, the `*_world`
+/// helpers). The identity frame from [`Frame::world`] lets a frame-taking
+/// helper draw in world space; [`Frame::is_world`] tells which one a frame is.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Frame {
     pub center: Vec2,
     pub along: Vec2,
@@ -408,8 +468,25 @@ impl Frame {
         Self { center, along, inward, width: lot.width(), depth: lot.depth() }
     }
 
+    /// The identity frame: lot-local and world coordinates coincide, so the
+    /// frame-taking helpers draw straight into world space (parks, rail and
+    /// vacant lots lay out from world polygons).
+    pub fn world() -> Self {
+        Self { center: Vec2::ZERO, along: Vec2::X, inward: Vec2::Y, width: 0.0, depth: 0.0 }
+    }
+
+    pub fn is_world(&self) -> bool {
+        self.center == Vec2::ZERO && self.along == Vec2::X && self.inward == Vec2::Y
+    }
+
     pub fn yaw(&self) -> f32 {
         self.along.y.atan2(self.along.x)
+    }
+
+    /// Lot-local direction to world, without translation.
+    pub fn dir3(&self, d: Vec2) -> Vec3 {
+        let w = self.along * d.x + self.inward * d.y;
+        Vec3::new(w.x, 0.0, w.y)
     }
 
     pub fn to_world(&self, u: f32, v: f32) -> Vec2 {
@@ -442,6 +519,16 @@ impl Frame {
         g.part(s).boxed(Vec3::new(p.x, y, p.y), size, self.yaw() + extra, parts::rgba(color));
     }
 
+    /// Flat painted mark lying on the ground at height `y`: `w` along the
+    /// frame (plus `extra` yaw) and `d` across. One upward quad.
+    #[allow(clippy::too_many_arguments)]
+    pub fn flat(&self, g: &mut Geometry, s: Surface, u: f32, y: f32, v: f32, w: f32, d: f32, extra: f32, color: [f32; 3]) {
+        let yaw = self.yaw() + extra;
+        let along = Vec3::new(yaw.cos(), 0.0, yaw.sin());
+        let across = Vec3::new(-yaw.sin(), 0.0, yaw.cos());
+        g.part(s).decal(self.at(u, y, v), along, across, w, d, Vec3::Y, parts::rgba(color));
+    }
+
     /// Lot-local polygon to world points at height `y`.
     pub fn poly3(&self, poly: &[Vec2], y: f32) -> Vec<Vec3> {
         poly.iter().map(|p| self.at2(*p, y)).collect()
@@ -462,11 +549,26 @@ pub struct Face {
 }
 
 impl Face {
+    /// The edge a→b with its outside on the right of travel, as the edges
+    /// of a counter-clockwise footprint have.
     pub fn from_edge(a: Vec2, b: Vec2) -> Self {
         let len = a.distance(b);
         let tangent = if len > 1e-4 { (b - a) / len } else { Vec2::X };
         let out = Vec2::new(tangent.y, -tangent.x);
         Self { a, b, tangent, out, len, is_front: out.dot(Vec2::new(0.0, -1.0)) > 0.6 }
+    }
+
+    /// The edge a→b facing the side `out` points to. The endpoints are
+    /// swapped when needed so `tangent`, `out`, `a` and `b` always agree,
+    /// which a struct literal override of one field cannot promise.
+    pub fn new(a: Vec2, b: Vec2, out: Vec2) -> Self {
+        let f = Self::from_edge(a, b);
+        if f.out.dot(out) < 0.0 { f.reversed() } else { f }
+    }
+
+    /// The same edge seen from the other side.
+    pub fn reversed(&self) -> Self {
+        Self::from_edge(self.b, self.a)
     }
 
     pub fn mid(&self) -> Vec2 {
@@ -488,6 +590,14 @@ impl Face {
     pub fn bx(&self, g: &mut Geometry, f: &Frame, s: Surface, t: f32, y: f32, d: f32, size: Vec3, color: [f32; 3]) {
         let p = self.at(t, d);
         f.bx_yaw(g, s, p.x, y, p.y, size, color, self.yaw());
+    }
+
+    /// One quad `w` wide and `h` high, `d` proud of the face and facing the
+    /// way the face does: panes, frames, signs, stains, anything flat that
+    /// is only ever seen from the front. See [`parts::decal`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn decal(&self, g: &mut Geometry, f: &Frame, s: Surface, t: f32, y: f32, d: f32, w: f32, h: f32, color: [f32; 3]) {
+        parts::decal(g, f, s, self, t, y, d, w, h, color);
     }
 }
 
@@ -550,11 +660,14 @@ impl Ctx<'_> {
         self.floors.max(1) as f32 * self.fh()
     }
 
+    /// Chance a window is lit, clamped so rule files cannot push it past 1.
     pub fn lit_chance(&self) -> f32 {
-        self.style.lit_chance * (1.0 - 0.8 * self.wear) * self.powered.clamp(0.08, 1.0)
+        (self.style.lit_chance * (1.0 - 0.8 * self.wear) * self.powered.clamp(0.08, 1.0)).clamp(0.0, 1.0)
     }
 
-    pub fn inside(&self, p: Vec2) -> bool {
+    /// Whether a lot-local point lies on the parcel. World points go through
+    /// `Frame::to_local` first (or `park::Park::inside_world`).
+    pub fn inside_local(&self, p: Vec2) -> bool {
         point_in_polygon(p, &self.lot_poly)
     }
 
@@ -588,34 +701,26 @@ impl Ctx<'_> {
         (0..n).map(|i| Face::from_edge(poly[i], poly[(i + 1) % n])).collect()
     }
 
+    /// Index of the face of a polygon that looks at the road: the longest
+    /// edge facing -v. Fences and hoardings leave that edge for the gate.
+    pub fn front_face_index(&self, poly: &[Vec2]) -> Option<usize> {
+        let faces = self.faces(poly);
+        (0..faces.len()).max_by(|&i, &j| {
+            let si = faces[i].out.dot(Vec2::new(0.0, -1.0)) * faces[i].len;
+            let sj = faces[j].out.dot(Vec2::new(0.0, -1.0)) * faces[j].len;
+            si.total_cmp(&sj)
+        })
+    }
+
     /// The face of a polygon that looks at the road.
     pub fn front_face(&self, poly: &[Vec2]) -> Face {
         let faces = self.faces(poly);
-        faces
-            .iter()
-            .copied()
-            .max_by(|a, b| {
-                let sa = a.out.dot(Vec2::new(0.0, -1.0)) * a.len;
-                let sb = b.out.dot(Vec2::new(0.0, -1.0)) * b.len;
-                sa.total_cmp(&sb)
-            })
-            .unwrap_or(Face::from_edge(Vec2::new(-1.0, -1.0), Vec2::new(1.0, -1.0)))
+        self.front_face_index(poly).map(|i| faces[i]).unwrap_or(Face::from_edge(Vec2::new(-1.0, -1.0), Vec2::new(1.0, -1.0)))
     }
 
     /// Random point inside the parcel at least `margin` from its edges.
     pub fn random_inside(&self, rng: &mut impl Rng, margin: f32) -> Option<Vec2> {
-        let poly = parts::offset_poly(&self.lot_poly, margin);
-        if poly.len() < 3 {
-            return None;
-        }
-        let (lo, hi) = parts::bounds(&poly);
-        for _ in 0..24 {
-            let p = Vec2::new(rng.random_range(lo.x..=hi.x), rng.random_range(lo.y..=hi.y));
-            if point_in_polygon(p, &poly) {
-                return Some(p);
-            }
-        }
-        None
+        parts::random_in_poly(rng, &self.lot_poly, margin)
     }
 }
 
@@ -768,10 +873,8 @@ fn back_edge_link(lot: &Lot, kind: RailFacility) -> RailLink {
     let a = lot.corners[3];
     let b = lot.corners[2];
     let d = (b - a).normalize_or_zero();
-    let out = Vec2::new(-d.y, d.x);
     let back = (a + b) * 0.5 + lot.front_dir * -4.0;
     let half = (a.distance(b) * 0.45).min(40.0);
-    let _ = out;
     RailLink { kind, segment: nd_sim::SegmentId(0), platform: [back - d * half, back + d * half], side: 1.0, rail_connected: true, road_connected: true }
 }
 

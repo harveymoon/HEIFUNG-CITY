@@ -3,7 +3,6 @@
 
 use super::parts::*;
 use super::Ctx;
-use crate::mesh::MeshData;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use rand::Rng;
@@ -11,8 +10,7 @@ use rand::Rng;
 pub fn shack_bar(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
-    let yard = offset_poly(&c.lot_poly, 0.4);
-    ground(g, f, Dirt, &yard, 0.03, pal.dirt);
+    let yard = yard(g, c, 0.4, Dirt, pal.dirt);
     let front = c.front_face(&yard);
     // Main shack along the front, two or three smaller ones behind.
     let n = rng.random_range(2..=4);
@@ -23,7 +21,7 @@ pub fn shack_bar(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let (mut w, mut d) = (w, d);
         let mut fits = false;
         for _ in 0..8 {
-            if rect(p.x, p.y, w * 0.5 + 0.8, d * 0.5 + 0.9).iter().all(|q| c.inside(*q)) {
+            if rect(p.x, p.y, w * 0.5 + 0.8, d * 0.5 + 0.9).iter().all(|q| c.inside_local(*q)) {
                 fits = true;
                 break;
             }
@@ -45,16 +43,17 @@ pub fn shack_bar(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             let side = if rng.random_bool(0.5) { -1.0 } else { 1.0 };
             f.bx_yaw(g, Wood, p.x + rng.random_range(-w * 0.3..w * 0.3), rng.random_range(0.8..h - 0.6), p.y + side * (d * 0.5 + 0.03), Vec3::new(rng.random_range(0.6..1.6), rng.random_range(0.6..1.4), 0.05), pal.plywood, yaw);
         }
-        let face = super::Face::from_edge(p + Vec2::new(w * 0.5, -d * 0.5), p + Vec2::new(-w * 0.5, -d * 0.5));
-        let face = super::Face { out: Vec2::new(0.0, -1.0), tangent: Vec2::X, ..face };
-        face.bx(g, f, Matte, w * 0.3, 1.1, 0.04, Vec3::new(1.0, 2.2, 0.06), DARK);
-        face.bx(g, f, Glow, -w * 0.2, 1.8, 0.05, Vec3::new(1.6, 0.9, 0.04), mul(pick(rng, &pal.glow_colors), 0.9));
+        // The shack's road side, facing the road (the shack's own yaw is small
+        // enough that the door and signs read as flush).
+        let face = super::Face::new(p + Vec2::new(-w * 0.5, -d * 0.5), p + Vec2::new(w * 0.5, -d * 0.5), Vec2::new(0.0, -1.0));
+        face.decal(g, f, Matte, w * 0.3, 1.1, 0.04, 1.0, 2.2, DARK);
+        face.decal(g, f, Glow, -w * 0.2, 1.8, 0.05, 1.6, 0.9, mul(pick(rng, &pal.glow_colors), 0.9));
         // neon tube outline on the main shack
         if i == 0 {
             let nc = pick(rng, &pal.sign_colors);
-            face.bx(g, f, Glow, 0.0, h - 0.15, 0.08, Vec3::new(w * 0.96, 0.06, 0.06), nc);
-            face.bx(g, f, Glow, -w * 0.48, h * 0.5, 0.08, Vec3::new(0.06, h * 0.9, 0.06), nc);
-            face.bx(g, f, Glow, w * 0.48, h * 0.5, 0.08, Vec3::new(0.06, h * 0.9, 0.06), nc);
+            face.decal(g, f, Glow, 0.0, h - 0.15, 0.08, w * 0.96, 0.06, nc);
+            face.decal(g, f, Glow, -w * 0.48, h * 0.5, 0.08, 0.06, h * 0.9, nc);
+            face.decal(g, f, Glow, w * 0.48, h * 0.5, 0.08, 0.06, h * 0.9, nc);
             sign_board(g, c, rng, &face, 0.0, h + 1.0, w * 0.8, 0.9);
             if rng.random_bool(0.7) {
                 vertical_sign(g, c, rng, &face, w * 0.5 + 0.6, 0.8, h + 1.2);
@@ -85,14 +84,14 @@ pub fn shack_bar(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             ground(g, f, Glow, &ngon(p.x, p.y, 3.0, 8, 0.0), 0.05, mul(pick(rng, &pal.led_colors), 0.25));
         }
     }
-    drum_fire(g, f, front.at(front.len * 0.3, -1.5));
+    drum_fire(g, f, pal, front.at(front.len * 0.3, -1.5));
     for _ in 0..2 {
         if let Some(p) = c.random_inside(rng, 2.0) {
             if shacks.iter().all(|(q, w, d, _)| (q.x - p.x).abs() > w * 0.5 + 2.5 || (q.y - p.y).abs() > d * 0.5 + 2.5) {
                 let yaw = rng.random_range(0.0..3.0);
                 let kind = if rng.random_bool(0.5) { Vehicle::Wreck } else { Vehicle::Car };
                 let col = pick(rng, &pal.car_colors);
-                vehicle(g, f, rng, p, yaw, kind, col);
+                vehicle(g, f, pal, rng, p, 0.0, yaw, kind, col);
             }
         }
     }
@@ -116,8 +115,8 @@ pub fn club(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     led_screen(g, c, rng, &front, 0.0, h * 0.55 + 1.5, (front.len * 0.8).min(22.0), h * 0.6);
     let nc = pick(rng, &pal.led_colors);
     for face in c.faces(poly) {
-        face.bx(g, f, Glow, 0.0, h - 0.3, 0.05, Vec3::new(face.len * 0.98, 0.12, 0.05), nc);
-        face.bx(g, f, Glow, 0.0, 0.4, 0.05, Vec3::new(face.len * 0.98, 0.1, 0.05), nc);
+        face.decal(g, f, Glow, 0.0, h - 0.3, 0.05, face.len * 0.98, 0.12, nc);
+        face.decal(g, f, Glow, 0.0, 0.4, 0.05, face.len * 0.98, 0.1, nc);
         if !face.is_front {
             grime(g, c, rng, &face, 0.0, h, 1.5);
         }
@@ -128,7 +127,7 @@ pub fn club(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let t = -front.len * 0.25 + 2.5 + k as f32 * 1.4;
         front.bx(g, f, Matte, t, 0.5, 1.6, Vec3::new(0.08, 1.0, 0.08), pal.steel);
     }
-    front.bx(g, f, Matte, -front.len * 0.25 + 5.3, 1.0, 1.6, Vec3::new(5.6, 0.05, 0.05), [0.6, 0.1, 0.1]);
+    front.bx(g, f, Matte, -front.len * 0.25 + 5.3, 1.0, 1.6, Vec3::new(5.6, 0.05, 0.05), mul(pal.warning_light, 0.3));
     vertical_sign(g, c, rng, &front, front.len * 0.45, 2.0, h - 3.0);
     // Rooftop bar with string lights, speakers, and search lights.
     parapet(g, c, poly, h, 1.1, 0.3, Concrete, dark);
@@ -171,10 +170,10 @@ pub fn cinema(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     front.bx(g, f, Panel, 0.0, lobby_h * 0.62, 2.0, Vec3::new(front.len * 0.9, 0.5, 4.0), mul(c.style.trim_color, 0.9));
     front.bx(g, f, Glow, 0.0, lobby_h * 0.62 - 0.26, 2.0, Vec3::new(front.len * 0.85, 0.04, 3.6), mul(pal.window_warm, 0.9));
     front.bx(g, f, Matte, 0.0, lobby_h * 0.62 + 1.1, 3.9, Vec3::new(front.len * 0.86, 1.8, 0.2), DARK);
-    front.bx(g, f, Glow, 0.0, lobby_h * 0.62 + 1.1, 4.02, Vec3::new(front.len * 0.8, 1.4, 0.04), mul([1.3, 1.3, 1.25], 0.9));
+    front.decal(g, f, Glow, 0.0, lobby_h * 0.62 + 1.1, 4.02, front.len * 0.8, 1.4, mul([1.3, 1.3, 1.25], 0.9));
     for k in 0..4 {
         let t = -front.len * 0.4 + (k as f32 + 0.5) * front.len * 0.2;
-        front.bx(g, f, Glow, t, lobby_h * 0.62 + 1.1, 4.06, Vec3::new(front.len * 0.11, 0.9, 0.03), mul(pick(rng, &pal.led_colors), 0.6));
+        front.decal(g, f, Glow, t, lobby_h * 0.62 + 1.1, 4.04, front.len * 0.11, 0.9, mul(pick(rng, &pal.led_colors), 0.6));
     }
     let posters = ((front.len / 4.0) as i32).clamp(2, 6);
     for k in 0..posters {
@@ -213,7 +212,7 @@ pub fn casino(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // LED strips wrap the podium at three heights.
     for face in c.faces(poly) {
         for k in 0..3 {
-            face.bx(g, f, Glow, 0.0, podium_h * (0.2 + 0.3 * k as f32), 0.05, Vec3::new(face.len * 0.98, 0.25, 0.05), mul(pick(rng, &pal.led_colors), 0.7));
+            face.decal(g, f, Glow, 0.0, podium_h * (0.2 + 0.3 * k as f32), 0.05, face.len * 0.98, 0.25, mul(pick(rng, &pal.led_colors), 0.7));
         }
     }
     let front = c.front_face(poly);
@@ -244,17 +243,15 @@ pub fn casino(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     entrance(g, c, rng, &front, 0.0, 5.0, podium_h * 0.6);
     let fp = front.at(0.0, -4.0);
-    if c.inside(fp) && c.inside(fp - Vec2::new(0.0, 3.0)) {
+    if c.inside_local(fp) && c.inside_local(fp - Vec2::new(0.0, 3.0)) {
         pool(g, c, fp.x, fp.y, 5.0, 3.0);
         f.bx(g, Glow, fp.x, 1.2, fp.y, Vec3::new(0.3, 2.0, 0.3), mul(pal.water, 1.6));
     }
     for s in [-1.0f32, 1.0] {
         let p = front.at(s * front.len * 0.38, -2.5);
-        if c.inside(p) {
-            let w = f.to_world(p.x, p.y);
-            g.part(Wood).cylinder(w, 0.25, 0.18, 0.0, 7.0, 7, rgba(pal.bark));
-            g.part(Foliage).frustum(&MeshData::ngon(w, 2.2, 6, 0.0, 6.6), &MeshData::ngon(w, 0.3, 6, 0.5, 7.8), rgba(pal.foliage));
-            vehicle(g, f, rng, front.at(s * front.len * 0.2, -3.0), front.yaw(), Vehicle::Car, [0.05, 0.05, 0.06]);
+        if c.inside_local(p) {
+            tree_kind(g, f.to_world(p.x, p.y), 0.0, TreeKind::Palm, 7.0, 2.2, pal.bark, pal.foliage);
+            vehicle(g, f, pal, rng, front.at(s * front.len * 0.2, -3.0), 0.0, front.yaw(), Vehicle::Car, [0.05, 0.05, 0.06]);
         }
     }
     bollards(g, c, &front, 8, (reach + 1.0).max(1.0));
@@ -266,8 +263,7 @@ pub fn arena(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     let f = &c.frame;
     let pal = c.palette;
-    let plaza = offset_poly(&c.lot_poly, 0.5);
-    ground(g, f, Paving, &plaza, 0.04, pal.paving);
+    let plaza = yard(g, c, 0.5, Paving, pal.paving);
     let center = poly_center(&c.poly);
     let r = (inradius(&c.poly) * 0.92).max(4.0);
     let h = (c.floors as f32 * c.fh()).clamp(12.0, 26.0);
@@ -290,8 +286,8 @@ pub fn arena(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Front gates and a big screen.
     let front = c.front_face(&c.poly);
-    let gate = super::Face::from_edge(front.at(-r * 0.4, 0.0), front.at(r * 0.4, 0.0));
-    let gate = super::Face { a: center + Vec2::new(-r * 0.4, -r), b: center + Vec2::new(r * 0.4, -r), ..gate };
+    // Gates on the bowl's road side, facing the road.
+    let gate = super::Face::new(center + Vec2::new(-r * 0.4, -r), center + Vec2::new(r * 0.4, -r), Vec2::new(0.0, -1.0));
     for k in 0..3 {
         gate.bx(g, f, Matte, (k as f32 - 1.0) * r * 0.25, 1.8, 0.1, Vec3::new(2.4, 3.6, 0.3), DARK);
         gate.bx(g, f, Glow, (k as f32 - 1.0) * r * 0.25, 3.9, 0.3, Vec3::new(2.2, 0.3, 0.1), mul(pal.lamp, 0.9));
@@ -300,7 +296,7 @@ pub fn arena(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Pylons with floodlights, trees and bollards on the plaza.
     for p in &plaza {
         let inset = *p + (center - *p).normalize_or_zero() * 2.5;
-        if c.inside(inset) && inset.distance(center) > r * 1.2 + 2.0 {
+        if c.inside_local(inset) && inset.distance(center) > r * 1.2 + 2.0 {
             floodlight(g, c, inset, 14.0);
         }
     }
@@ -308,7 +304,7 @@ pub fn arena(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         if face.len > 10.0 {
             for k in 0..3 {
                 let p = face.at(-face.len * 0.3 + k as f32 * face.len * 0.3, -2.0);
-                if c.inside(p) && p.distance(center) > r * 1.15 + 2.5 {
+                if c.inside_local(p) && p.distance(center) > r * 1.15 + 2.5 {
                     tree(g, f, p, 3.5, 3.0, pal.bark, pal.foliage);
                 }
             }

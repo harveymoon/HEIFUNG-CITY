@@ -12,8 +12,8 @@
 //! (triangles, slivers, concave corners) get the same treatment as a
 //! rectangle without spilling onto the street.
 
-use crate::buildings::parts::{bench_world, bin_world, distance_to_boundary, graffiti_world, mix, mul, ngon, offset_poly, pick, rgba, rock_world, scrub_world, tree_world, CHARCOAL, DARK};
-use crate::palette::{Palette, RUST};
+use crate::buildings::parts::{bench_world, bin_world, coin, distance_to_boundary, graffiti_world, mix, mul, ngon, offset_poly, pick, random_in_poly, rgba, rock_world, scrub_world, tree_world, CHARCOAL, DARK};
+use crate::palette::Palette;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::rng_for;
@@ -80,14 +80,7 @@ impl Site {
 
     /// A random point at least `margin` from the edge, if one can be found.
     fn sample(&self, rng: &mut impl Rng, margin: f32) -> Option<Vec2> {
-        let (lo, hi) = self.bounds();
-        for _ in 0..24 {
-            let p = Vec2::new(rng.random_range(lo.x..=hi.x), rng.random_range(lo.y..=hi.y));
-            if self.inside(p, margin) {
-                return Some(p);
-            }
-        }
-        None
+        random_in_poly(rng, &self.lot, margin)
     }
 
     /// Jittered grid of points inside the lot, `margin` from the edge.
@@ -158,7 +151,8 @@ fn patch(g: &mut Geometry, site: &Site, s: crate::surface::Surface, p: Vec2, r: 
 
 /// Chain-link fence from `a` to `b`. `broken` (0..1) removes posts and
 /// panels; a missing panel sometimes lies on the ground just inside.
-fn fence_run(g: &mut Geometry, rng: &mut impl Rng, a: Vec2, b: Vec2, inward: Vec2, h: f32, broken: f32, post: [f32; 3]) {
+#[allow(clippy::too_many_arguments)]
+fn fence_run(g: &mut Geometry, rng: &mut impl Rng, a: Vec2, b: Vec2, inward: Vec2, h: f32, broken: f32, post: [f32; 3], mesh: [f32; 3]) {
     let len = a.distance(b);
     if len < 1.0 {
         return;
@@ -167,9 +161,8 @@ fn fence_run(g: &mut Geometry, rng: &mut impl Rng, a: Vec2, b: Vec2, inward: Vec
     let yaw = t.y.atan2(t.x);
     let bays = (len / 2.6).ceil().max(1.0) as i32;
     let bay = len / bays as f32;
-    let mesh = [0.28, 0.29, 0.30];
     for i in 0..=bays {
-        if rng.random_bool((broken * 0.25) as f64) {
+        if coin(rng, broken * 0.25) {
             continue;
         }
         let p = a + t * (i as f32 * bay);
@@ -177,7 +170,7 @@ fn fence_run(g: &mut Geometry, rng: &mut impl Rng, a: Vec2, b: Vec2, inward: Vec
     }
     for i in 0..bays {
         let m = a + t * ((i as f32 + 0.5) * bay);
-        if rng.random_bool((broken * 0.5) as f64) {
+        if coin(rng, broken * 0.5) {
             if rng.random_bool(0.5) {
                 let q = m + inward * rng.random_range(0.8..1.6);
                 bx(g, Matte, q, 0.03, Vec3::new(bay * 0.9, 0.03, h * 0.9), yaw + rng.random_range(-0.4..0.4), mesh);
@@ -270,15 +263,15 @@ fn dormant(g: &mut Geometry, site: &Site, rng: &mut impl Rng, pal: &Palette) {
             for _ in 0..rng.random_range(2..5) {
                 let q = p + Vec2::new(rng.random_range(-0.9..0.9), rng.random_range(-0.9..0.9));
                 let size = Vec3::new(rng.random_range(0.5..1.6), rng.random_range(0.1..0.5), rng.random_range(0.3..1.2));
-                bx(g, Rust, q, size.y * 0.5, size, rng.random_range(0.0..TAU), mul(RUST, rng.random_range(0.7..1.1)));
+                bx(g, Rust, q, size.y * 0.5, size, rng.random_range(0.0..TAU), mul(pal.rust, rng.random_range(0.7..1.1)));
             }
             if rng.random_bool(0.6) {
                 let q = p + Vec2::new(rng.random_range(-1.0..1.0), rng.random_range(-1.0..1.0));
                 if rng.random_bool(0.5) {
-                    g.part(Rust).cylinder(q, 0.3, 0.3, 0.0, 0.9, 8, rgba(RUST));
+                    g.part(Rust).cylinder(q, 0.3, 0.3, 0.0, 0.9, 8, rgba(pal.rust));
                 } else {
                     let d = Vec2::from_angle(rng.random_range(0.0..TAU));
-                    g.part(Rust).pipe(q, d, 0.9, 0.3, 0.3, 8, rgba(mul(RUST, 0.9)));
+                    g.part(Rust).pipe(q, d, 0.9, 0.3, 0.3, 8, rgba(mul(pal.rust, 0.9)));
                 }
             }
         }
@@ -287,7 +280,7 @@ fn dormant(g: &mut Geometry, site: &Site, rng: &mut impl Rng, pal: &Palette) {
     let (a, b) = site.front_line(0.45);
     if a.distance(b) > 3.0 {
         let broken = rng.random_range(0.4..0.9);
-        fence_run(g, rng, a, b, site.inward, 1.7, broken, mul(pal.steel, 0.45));
+        fence_run(g, rng, a, b, site.inward, 1.7, broken, mul(pal.steel, 0.45), pal.fence_mesh);
     }
     // A tagged wall on one side, left over from whatever stood here.
     let sides: Vec<_> = site.side_edges().into_iter().filter(|(a, b, _)| a.distance(*b) > 6.0).collect();
@@ -313,7 +306,7 @@ fn dormant(g: &mut Geometry, site: &Site, rng: &mut impl Rng, pal: &Palette) {
     // A drum fire for whoever sleeps here.
     if rng.random_bool(0.3) {
         if let Some(p) = site.sample(rng, 1.5) {
-            g.part(Rust).cylinder(p, 0.3, 0.3, 0.0, 0.9, 8, rgba(RUST));
+            g.part(Rust).cylinder(p, 0.3, 0.3, 0.0, 0.9, 8, rgba(pal.rust));
             bx(g, Glow, p, 1.0, Vec3::new(0.3, 0.25, 0.3), 0.0, [2.0, 0.9, 0.3]);
         }
     }
@@ -413,7 +406,7 @@ fn parklet(g: &mut Geometry, site: &Site, rng: &mut impl Rng, pal: &Palette) {
             keep_clear.push((seat, 2.0));
             let bin = seat + Vec2::new(-site.inward.y, site.inward.x) * 1.6;
             if site.inside(bin, 0.6) {
-                bin_world(g, bin, mul(pal.metal_paint[0], 0.9));
+                bin_world(g, bin, mul(pal.metal_paint(0), 0.9));
             }
             // A low lamp by the path.
             let lamp = start + site.inward * (reach * 0.5) + Vec2::new(site.inward.y, -site.inward.x) * 1.2;

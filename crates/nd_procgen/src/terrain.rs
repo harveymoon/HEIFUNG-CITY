@@ -1,7 +1,7 @@
 //! The ground: a flat basin for the city with procedural hills around it, and
 //! a scatter pass that puts rocks, scrub and dead trees on the open ground.
 
-use crate::buildings::parts::{dry_tree_world, mix, mul, ngon, rgba, rock_world, scrub_world};
+use crate::buildings::parts::{mix, mul, ngon, rgba, rock_world, scrub_world, tree_kind, TreeKind};
 use crate::mesh::MeshData;
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface};
@@ -48,19 +48,23 @@ fn height_noise(cfg: &TerrainConfig) -> Fbm<Perlin> {
 /// noise so the growth clusters in some washes and leaves other ground bare;
 /// `clear(p)`, supplied by the caller, rejects anything near a road or on
 /// zoned land. Capped at a few thousand small pieces.
+///
+/// Every cell draws from its own RNG seeded by its grid position, so a new
+/// road that clears one cell leaves every rock downstream exactly where it
+/// was instead of re-rolling the whole field.
 pub fn scatter_nature(cfg: &TerrainConfig, palette: &Palette, seed: u64, clear: &dyn Fn(Vec2) -> bool) -> Geometry {
     const STEP: f32 = 18.0;
     const CAP: usize = 3500;
     let mut g = Geometry::default();
     let heights = height_noise(cfg);
     let density = Fbm::<Perlin>::new(cfg.seed.wrapping_add(7)).set_octaves(2);
-    let mut rng = rng_for(seed, 41);
     let n = ((cfg.half_size * 2.0 - 40.0) / STEP) as i32;
     let dry = palette.foliage_dry;
     let rock = mix(palette.stone, palette.hills, 0.3);
     let mut count = 0;
     for j in 0..n {
         for i in 0..n {
+            let mut rng = rng_for(seed, 41 + ((i as u64) << 20 | j as u64) * 0x9E37);
             let x = -cfg.half_size + 20.0 + (i as f32 + 0.5 + rng.random_range(-0.45..0.45)) * STEP;
             let z = -cfg.half_size + 20.0 + (j as f32 + 0.5 + rng.random_range(-0.45..0.45)) * STEP;
             let d = density.get([x as f64 * 0.004, z as f64 * 0.004]) as f32 * 0.5 + 0.5;
@@ -80,7 +84,7 @@ pub fn scatter_nature(cfg: &TerrainConfig, palette: &Palette, seed: u64, clear: 
             match kind {
                 0..=4 => scrub_world(&mut g, &mut rng, p, y, 0.7 + size * 0.9, mix(dry, palette.foliage, tint * 0.4)),
                 5..=7 => rock_world(&mut g, &mut rng, p, y, 0.4 + size * 1.2, mul(rock, 0.85 + tint * 0.4)),
-                8 => dry_tree_world(&mut g, &mut rng, p, y, 3.0 + size * 3.0, mul(palette.bark, 0.8)),
+                8 => tree_kind(&mut g, p, y, TreeKind::Dead, 3.0 + size * 3.0, 0.0, mul(palette.bark, 0.8), dry),
                 _ => {
                     let rot = tint * std::f32::consts::TAU;
                     g.part(Surface::Foliage).ground_polygon(&ngon(x, z, 0.8 + size * 1.2, 6, rot), y + 0.12, rgba(mul(dry, 0.9)));

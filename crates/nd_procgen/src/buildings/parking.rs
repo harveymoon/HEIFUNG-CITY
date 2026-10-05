@@ -16,7 +16,7 @@ const AISLE: f32 = 6.0;
 
 /// Bay centres and their yaw (bays face the aisle), laid out in double rows
 /// across the footprint's bounding rectangle, kept inside the polygon.
-fn bays(c: &Ctx, poly: &[Vec2], margin: f32) -> Vec<(Vec2, f32)> {
+fn bays(poly: &[Vec2], margin: f32) -> Vec<(Vec2, f32)> {
     let inner = offset_poly(poly, margin);
     if inner.len() < 3 {
         return Vec::new();
@@ -46,7 +46,6 @@ fn bays(c: &Ctx, poly: &[Vec2], margin: f32) -> Vec<(Vec2, f32)> {
             }
         }
     }
-    let _ = c;
     out
 }
 
@@ -54,12 +53,12 @@ fn bays(c: &Ctx, poly: &[Vec2], margin: f32) -> Vec<(Vec2, f32)> {
 fn fill_bays(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, bays: &[(Vec2, f32)], y: f32, occupancy: f32, line: [f32; 3]) {
     let f = &c.frame;
     for (p, yaw) in bays {
-        // Side lines of the bay, along its depth.
+        // Side lines of the bay, along its depth: painted, so one quad each.
         for s in [-1.0f32, 1.0] {
             let (sn, cs) = yaw.sin_cos();
             let off = Vec2::new(-sn, cs) * (BAY_W * 0.5 * s);
             let q = *p + off;
-            f.bx_yaw(g, Glow, q.x, y + 0.01, q.y, Vec3::new(BAY_D * 0.9, 0.01, 0.1), line, *yaw);
+            f.flat(g, Glow, q.x, y + 0.012, q.y, BAY_D * 0.9, 0.1, *yaw, line);
         }
     }
     let n = ((bays.len() as f32) * occupancy.clamp(0.0, 1.0)).round() as usize;
@@ -69,18 +68,7 @@ fn fill_bays(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, bays: &[(Vec2, f32)]
     for &i in order.iter().take(n) {
         let (p, yaw) = bays[i];
         let col = pick(rng, &c.palette.car_colors);
-        let q = f.to_world(p.x, p.y);
-        let a = f.yaw() + yaw;
-        // Draw straight into world space at deck height.
-        let m = |g: &mut Geometry, s, dx: f32, dy: f32, dz: f32, size: Vec3, col: [f32; 3]| {
-            let (sn, cs) = a.sin_cos();
-            g.part(s).boxed(Vec3::new(q.x + dx * cs - dz * sn, y + dy, q.y + dx * sn + dz * cs), size, a, rgba(col));
-        };
-        m(g, Metal, 0.0, 0.7, 0.0, Vec3::new(4.2, 0.8, 1.85), col);
-        m(g, Glass, -0.3, 1.4, 0.0, Vec3::new(2.2, 0.6, 1.6), [0.12, 0.15, 0.18]);
-        for (dx, dz) in [(-1.35f32, -0.9f32), (1.35, -0.9), (-1.35, 0.9), (1.35, 0.9)] {
-            m(g, Matte, dx, 0.33, dz, Vec3::new(0.66, 0.66, 0.24), DARK);
-        }
+        vehicle(g, f, c.palette, rng, p, y, yaw, Vehicle::Car, col);
     }
 }
 
@@ -89,14 +77,14 @@ fn gate(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, front: &Face, y: f32) {
     let f = &c.frame;
     let t = -front.len * 0.3;
     front.bx(g, f, Panel, t - 2.2, y + 1.3, -1.6, Vec3::new(1.8, 2.6, 1.8), mul(pick(rng, &c.palette.panel), 0.95));
-    front.bx(g, f, Glow, t - 2.2, y + 1.6, -0.68, Vec3::new(1.2, 0.8, 0.04), mul(c.style.window_colors[0], 0.7));
+    front.decal(g, f, Glow, t - 2.2, y + 1.6, -0.68, 1.2, 0.8, mul(c.style.window_color(0), 0.7));
     front.bx(g, f, Matte, t, y + 0.5, -1.0, Vec3::new(0.3, 1.0, 0.3), CHARCOAL);
-    front.bx(g, f, Matte, t + 1.9, y + 1.0, -1.0, Vec3::new(4.0, 0.08, 0.08), [0.8, 0.12, 0.1]);
-    front.bx(g, f, Matte, t + 1.9, y + 1.0, -1.0, Vec3::new(4.0, 0.06, 0.12), [0.95, 0.95, 0.9]);
+    front.bx(g, f, Matte, t + 1.9, y + 1.0, -1.0, Vec3::new(4.0, 0.08, 0.08), mul(c.palette.warning_light, 0.4));
+    front.bx(g, f, Matte, t + 1.9, y + 1.0, -1.0, Vec3::new(4.0, 0.06, 0.12), c.palette.chalk);
     // P sign
     front.bx(g, f, Matte, front.len * 0.35, y + 3.2, -0.6, Vec3::new(0.15, 3.6, 0.15), c.palette.steel);
-    front.bx(g, f, Glow, front.len * 0.35, y + 4.6, -0.6, Vec3::new(1.2, 1.2, 0.1), [0.3, 0.6, 2.4]);
-    front.bx(g, f, Matte, front.len * 0.35, y + 4.6, -0.5, Vec3::new(0.5, 0.8, 0.02), [0.98, 0.98, 1.0]);
+    front.bx(g, f, Glow, front.len * 0.35, y + 4.6, -0.6, Vec3::new(1.2, 1.2, 0.1), c.palette.parking_sign);
+    front.decal(g, f, Matte, front.len * 0.35, y + 4.6, -0.54, 0.5, 0.8, c.palette.chalk);
 }
 
 /// Surface lot: asphalt, painted bays, a booth, a barrier, lamps and a fence.
@@ -104,10 +92,9 @@ pub fn parking_lot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
     let occupancy = c.parking.unwrap_or(0.3);
-    let yard = offset_poly(&c.lot_poly, 0.4);
-    ground(g, f, Asphalt, &yard, 0.04, mul(pal.asphalt, 1.2 + 0.4 * c.wear));
+    let yard = yard(g, c, 0.4, Asphalt, mul(pal.asphalt, 1.2 + 0.4 * c.wear));
     let front = c.front_face(&yard);
-    let b = bays(c, &yard, 3.0);
+    let b = bays(&yard, 3.0);
     fill_bays(g, c, rng, &b, 0.045, occupancy, mul(pal.lane_marker, 0.6));
     gate(g, c, rng, &front, 0.0);
     for (i, face) in c.faces(&yard).iter().enumerate() {
@@ -121,7 +108,7 @@ pub fn parking_lot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     lamp_post(g, f, front.at(front.len * 0.1, -1.4), 7.0, pal.street_lamp);
     if c.wear > 0.4 {
-        super::industrial::weeds(g, c, rng, &yard, 6);
+        weeds(g, c, rng, &yard, 6);
     }
 }
 
@@ -136,7 +123,7 @@ pub fn car_park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let poly = &c.poly;
     let concrete = mul(pick(rng, &pal.concrete), 1.0 - 0.25 * c.wear);
     let front = c.front_face(poly);
-    let deck_bays = bays(c, poly, 1.8);
+    let deck_bays = bays(poly, 1.8);
     for k in 0..=floors {
         let y = k as f32 * fh;
         // Deck slab and parapet; the ground floor has no slab of its own.
@@ -180,10 +167,10 @@ pub fn car_park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     extrude(g, f, Concrete, &core, 0.0, top + 3.0, mul(concrete, 0.85));
     extrude(g, f, Glow, &offset_poly(&core, 0.2), top + 2.2, top + 2.7, mul(pal.window_cold, 0.6));
     gate(g, c, rng, &front, 0.0);
-    front.bx(g, f, Glow, 0.0, fh * 0.5 + 0.4, 0.05, Vec3::new((front.len * 0.5).min(10.0), 0.8, 0.04), [0.3, 0.6, 2.4]);
+    front.decal(g, f, Glow, 0.0, fh * 0.5 + 0.4, 0.05, (front.len * 0.5).min(10.0), 0.8, pal.parking_sign);
     // Level markers glow on each deck edge.
     for k in 1..floors {
-        front.bx(g, f, Glow, -front.len * 0.4, k as f32 * fh + 0.6, 0.05, Vec3::new(0.6, 0.6, 0.04), mul(pal.window_warm, 0.8));
+        front.decal(g, f, Glow, -front.len * 0.4, k as f32 * fh + 0.6, 0.05, 0.6, 0.6, mul(pal.window_warm, 0.8));
     }
     grime(g, c, rng, &front, 0.0, top, 2.0);
 }

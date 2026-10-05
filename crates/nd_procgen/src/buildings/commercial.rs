@@ -50,14 +50,15 @@ pub fn shophouse(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             1 => sub.bx(g, f, s, 0.0, h + 0.5, -0.3, Vec3::new(uw * 0.5, 1.0, 0.6), col),
             _ => cornice_face(g, c, &sub, h - 0.2, 0.4, 0.3, mul(col, 1.2)),
         }
-        if rng.random_bool(c.rules.vertical_sign_chance as f64 + 0.25) {
+        if coin(rng, c.rules.vertical_sign_chance + 0.25) {
             vertical_sign(g, c, rng, &sub, uw * 0.4, fh + 0.5, (h - fh - 1.0).max(2.0));
         }
         grime(g, c, rng, &sub, fh, h, 2.0);
         // Roof tanks and dishes, a billboard on one unit.
         let roof_p = front.at(t, -d * 0.5);
         if rng.random_bool(0.5) {
-            water_tank(g, f, roof_p + Vec2::new(0.0, 1.0), h, 0.9, 1.6, if rng.random_bool(0.5) { crate::palette::RUST } else { mul(pal.steel, 0.8) });
+            let (s, col) = if rng.random_bool(0.5) { (Rust, pal.rust) } else { (Metal, mul(pal.steel, 0.8)) };
+            water_tank(g, f, roof_p + Vec2::new(0.0, 1.0), h, 0.9, 1.6, s, col);
         }
         if rng.random_bool(0.4) {
             dish(g, f, roof_p + Vec2::new(uw * 0.3, 0.0), h, 0.7, pal.steel);
@@ -133,7 +134,7 @@ pub fn market_hall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 continue;
             }
             let p = row.at(t, 0.0);
-            if c.inside(p) {
+            if c.inside_local(p) {
                 stall(g, c, rng, &row, t, 0.0);
             }
         }
@@ -141,7 +142,7 @@ pub fn market_hall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         for k in 0..n {
             let t = -(hi.x - lo.x) * 0.5 + (k as f32 + 0.5) * (hi.x - lo.x) / n as f32;
             let p = row.at(t, -2.4);
-            if c.inside(p) {
+            if c.inside_local(p) {
                 f.bx(g, Matte, p.x, h - 0.6, p.y, Vec3::new(0.03, 1.2, 0.03), DARK);
                 f.bx(g, Glow, p.x, h - 1.3, p.y, Vec3::new(0.5, 0.2, 0.5), mul(pal.lamp, 0.9));
             }
@@ -154,7 +155,7 @@ pub fn market_hall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Crates and a delivery van outside.
     let side = front.at(front.len * 0.42, -2.0);
-    if c.inside(side) {
+    if c.inside_local(side) {
         for k in 0..3 {
             f.bx(g, Wood, side.x, 0.4 + k as f32 * 0.8, side.y, Vec3::new(1.0, 0.8, 1.0), pal.wood);
         }
@@ -219,7 +220,7 @@ pub fn podium_office(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     bollards(g, c, &front, 5, 1.6);
     for k in 0..2 {
         let p = front.at((k as f32 - 0.5) * front.len * 0.6, -1.4);
-        if c.inside(p) {
+        if c.inside_local(p) {
             tree(g, f, p, 3.5, 3.0, pal.bark, pal.foliage);
         }
     }
@@ -308,7 +309,7 @@ pub fn twist_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let spire_base = offset_poly(&prev, inradius(&prev) * 0.6);
     loft(g, f, Matte, &spire_base, &scale_poly(&spire_base, 0.05), y + 0.6, y + 12.0, pal.steel);
     g.part(Glow).boxed(f.at2(poly_center(&prev), y + 12.2), Vec3::splat(0.5), 0.0, rgba(pal.aviation_light));
-    extrude(g, f, Glow, &offset_poly(&prev, -0.05), y - 0.6, y, mul(c.style.window_colors[0], 0.9));
+    extrude(g, f, Glow, &offset_poly(&prev, -0.05), y - 0.6, y, mul(c.style.window_color(0), 0.9));
     let front = c.front_face(&c.poly);
     entrance(g, c, rng, &front, 0.0, 3.5, podium_h * 0.8);
     bollards(g, c, &front, 5, 1.6);
@@ -366,7 +367,7 @@ pub fn cantilever_mall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             // LED strip along the box edges
             let strip = mul(pick(rng, &pal.led_colors), 0.28);
             for face in c.faces(&plate) {
-                face.bx(g, f, Glow, 0.0, y + h - 0.15, 0.04, Vec3::new(face.len * 0.98, 0.07, 0.04), strip);
+                face.decal(g, f, Glow, 0.0, y + h - 0.15, 0.04, face.len * 0.98, 0.07, strip);
             }
         }
         // Columns under corners that overhang the box below.
@@ -374,7 +375,7 @@ pub fn cantilever_mall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             for p in &plate {
                 let inset = *p + (poly_center(&plate) - *p).normalize_or_zero() * 0.8;
                 if !nd_sim::zoning::point_in_polygon(inset, &below) {
-                    let base_y = if c.inside(inset) { 0.0 } else { y };
+                    let base_y = if c.inside_local(inset) { 0.0 } else { y };
                     f.bx(g, Matte, inset.x, (base_y + y) * 0.5, inset.y, Vec3::new(0.5, y - base_y, 0.5), mul(pal.steel, 0.8));
                 }
             }

@@ -1,11 +1,17 @@
 //! The parts toolkit every style is assembled from: footprint helpers,
 //! facades, roofs, site furniture and props. Everything is placed in parcel
 //! coordinates through the [`Frame`], except the `*_world` variants used by
-//! the street generator.
+//! the street generator (and by parks and rail, which lay out from world
+//! polygons and pass [`Frame::world`]).
+//!
+//! Flat detail that is only ever seen from one side (panes, frames, signs,
+//! stains, painted lines) is a [`decal`]: one quad lifted a few centimetres
+//! off its wall, not a closed box. A box spends twelve triangles where two
+//! do the job, and a tower has thousands of these.
 
 use super::{Ctx, Face, Frame};
 use crate::mesh::MeshData;
-use crate::palette::{RUST, RUST_STAIN};
+use crate::palette::Palette;
 use crate::surface::{Geometry, Surface};
 use glam::{Vec2, Vec3};
 use nd_sim::zoning::{point_in_polygon, polygon_area, polygon_centroid};
@@ -14,7 +20,15 @@ use rand::Rng;
 
 use Surface::*;
 
-// ── colours ──────────────────────────────────────────────────────────────────
+// ── colours and chance ───────────────────────────────────────────────────────
+
+/// `random_bool` with the probability clamped: rule files and wear
+/// arithmetic can produce chances a little over one, and `random_bool`
+/// panics on them.
+pub fn coin(rng: &mut impl Rng, p: f32) -> bool {
+    let p = if p.is_finite() { p.clamp(0.0, 1.0) } else { 0.0 };
+    rng.random_bool(p as f64)
+}
 
 pub fn rgba(c: [f32; 3]) -> [f32; 4] {
     [c[0], c[1], c[2], 1.0]
@@ -212,12 +226,12 @@ pub fn fit_inside(c: &Ctx, poly: &[Vec2]) -> Vec<Vec2> {
         return p;
     }
     let centre = poly_center(&p);
-    if !c.inside(centre) {
+    if !c.inside_local(centre) {
         let anchor = interior_anchor(&c.lot_poly);
         p = shift_poly(&p, anchor - centre);
     }
     for _ in 0..24 {
-        if p.iter().all(|v| c.inside(*v)) {
+        if p.iter().all(|v| c.inside_local(*v)) {
             break;
         }
         p = scale_poly(&p, 0.9);
@@ -272,6 +286,29 @@ pub fn ground(g: &mut Geometry, f: &Frame, s: Surface, poly: &[Vec2], y: f32, co
     g.part(s).ground_polygon(&world, y, rgba(color));
 }
 
+/// The parcel inset by `inset`, floored with `s` at ground level: the yard
+/// nearly every industrial, transport and civic style starts from.
+pub fn yard(g: &mut Geometry, c: &Ctx, inset: f32, s: Surface, color: [f32; 3]) -> Vec<Vec2> {
+    let poly = offset_poly(&c.lot_poly, inset);
+    ground(g, &c.frame, s, &poly, 0.03, color);
+    poly
+}
+
+/// One quad on a face: `w` along it, `h` high, centred `t` from the middle
+/// and `d` proud of the wall, facing the way the face does. Two triangles,
+/// four vertices, for every pane, frame, sign letter, LED cell and stain
+/// that a closed box used to spend twelve on.
+#[allow(clippy::too_many_arguments)]
+pub fn decal(g: &mut Geometry, f: &Frame, s: Surface, face: &Face, t: f32, y: f32, d: f32, w: f32, h: f32, color: [f32; 3]) {
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    let centre = f.at2(face.at(t, d), y);
+    let along = f.dir3(face.tangent);
+    let out = f.dir3(face.out);
+    g.part(s).decal(centre, along, Vec3::Y, w, h, out, rgba(color));
+}
+
 /// Low wall along every edge of a footprint, on the inside of the edge.
 pub fn parapet(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32, h: f32, thick: f32, s: Surface, color: [f32; 3]) {
     for face in c.faces(poly) {
@@ -307,7 +344,7 @@ pub fn plinth(g: &mut Geometry, c: &Ctx, poly: &[Vec2], steps: usize, rise: f32,
     for k in 0..steps {
         let p = offset_poly(poly, -(tread * (steps - k) as f32));
         // Steps that would spill over the lot edge are dropped.
-        let p = if p.iter().all(|q| c.inside(*q)) { p } else { fit_inside(c, &p) };
+        let p = if p.iter().all(|q| c.inside_local(*q)) { p } else { fit_inside(c, &p) };
         extrude(g, &c.frame, s, &p, 0.0, rise * (k + 1) as f32, color);
     }
 }
@@ -359,17 +396,17 @@ pub fn windows(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0: f
         let y = y0 + k as f32 * fh + spec.sill + spec.h * 0.5;
         for i in 0..count {
             let t = -usable * 0.5 + (i as f32 + 0.5) * step;
-            face.bx(g, f, Matte, t, y, 0.03, Vec3::new(w + 0.24, spec.h + 0.24, 0.10), spec.frame);
+            face.decal(g, f, Matte, t, y, 0.03, w + 0.24, spec.h + 0.24, spec.frame);
             let r: f32 = rng.random();
             if r < spec.boarded {
-                face.bx(g, f, Wood, t, y, 0.08, Vec3::new(w, spec.h, 0.06), c.palette.plywood);
-            } else if rng.random_bool(spec.lit as f64) {
+                face.decal(g, f, Wood, t, y, 0.05, w, spec.h, c.palette.plywood);
+            } else if coin(rng, spec.lit) {
                 let wc = pick(rng, &c.style.window_colors);
-                face.bx(g, f, Glow, t, y, 0.08, Vec3::new(w, spec.h, 0.05), mul(wc, rng.random_range(0.55..1.0)));
+                face.decal(g, f, Glow, t, y, 0.05, w, spec.h, mul(wc, rng.random_range(0.55..1.0)));
             } else {
-                face.bx(g, f, Glass, t, y, 0.08, Vec3::new(w, spec.h, 0.05), c.palette.glass_dark);
+                face.decal(g, f, Glass, t, y, 0.05, w, spec.h, c.palette.glass_dark);
             }
-            if rng.random_bool(spec.ac as f64) {
+            if coin(rng, spec.ac) {
                 ac_unit(g, c, face, t + w * 0.25, y - spec.h * 0.5 - 0.35, 0.32);
             }
         }
@@ -385,15 +422,15 @@ pub fn band_windows(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, 
     let seg = len / segs as f32;
     for k in 0..floors {
         let y = y0 + k as f32 * fh + fh * 0.55;
-        face.bx(g, f, Glass, 0.0, y, 0.02, Vec3::new(len, fh * 0.46, 0.08), c.palette.glass_dark);
+        face.decal(g, f, Glass, 0.0, y, 0.03, len, fh * 0.46, c.palette.glass_dark);
         face.bx(g, f, Matte, 0.0, y - fh * 0.26, 0.05, Vec3::new(len, 0.12, 0.12), c.style.trim_color);
         for i in 0..segs {
-            if !rng.random_bool(lit as f64) {
+            if !coin(rng, lit) {
                 continue;
             }
             let t = -len * 0.5 + (i as f32 + 0.5) * seg;
             let wc = pick(rng, &c.style.window_colors);
-            face.bx(g, f, Glow, t, y, 0.07, Vec3::new(seg * 0.9, fh * 0.38, 0.04), mul(wc, rng.random_range(0.5..0.95)));
+            face.decal(g, f, Glow, t, y, 0.05, seg * 0.9, fh * 0.38, mul(wc, rng.random_range(0.5..0.95)));
         }
     }
 }
@@ -409,12 +446,12 @@ pub fn curtain_lights(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec
         for k in 0..floors {
             let y = y0 + k as f32 * fh + fh * 0.5;
             for i in 0..segs {
-                if !rng.random_bool(lit as f64) {
+                if !coin(rng, lit) {
                     continue;
                 }
                 let t = -face.len * 0.5 + (i as f32 + 0.5) * seg;
                 let wc = pick(rng, &c.style.window_colors);
-                face.bx(g, f, Glow, t, y, 0.05, Vec3::new(seg * 0.85, fh * 0.42, 0.04), mul(wc, rng.random_range(0.35..0.8)));
+                face.decal(g, f, Glow, t, y, 0.05, seg * 0.85, fh * 0.42, mul(wc, rng.random_range(0.35..0.8)));
             }
         }
     }
@@ -429,22 +466,22 @@ pub fn storefront(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0
     let unit = len / units as f32;
     for i in 0..units {
         let t = -len * 0.5 + (i as f32 + 0.5) * unit;
-        let shuttered = rng.random_bool((c.wear * 0.7) as f64);
+        let shuttered = coin(rng, c.wear * 0.7);
         if shuttered {
-            face.bx(g, f, Metal, t, y0 + h * 0.45, 0.06, Vec3::new(unit * 0.9, h * 0.9, 0.08), mul(pick(rng, &c.palette.metal_paint), 0.8));
+            face.decal(g, f, Metal, t, y0 + h * 0.45, 0.06, unit * 0.9, h * 0.9, mul(pick(rng, &c.palette.metal_paint), 0.8));
             grime(g, c, rng, face, y0, y0 + h, 2.0);
         } else {
-            face.bx(g, f, Glass, t, y0 + h * 0.45, 0.04, Vec3::new(unit * 0.9, h * 0.8, 0.06), c.palette.glass_dark);
-            if rng.random_bool((0.5 + 0.4 * c.lit_chance()) as f64) {
+            face.decal(g, f, Glass, t, y0 + h * 0.45, 0.04, unit * 0.9, h * 0.8, c.palette.glass_dark);
+            if coin(rng, 0.5 + 0.4 * c.lit_chance()) {
                 let wc = pick(rng, &c.palette.glow_colors);
-                face.bx(g, f, Glow, t, y0 + h * 0.45, 0.07, Vec3::new(unit * 0.86, h * 0.72, 0.03), mul(wc, 0.6));
+                face.decal(g, f, Glow, t, y0 + h * 0.45, 0.06, unit * 0.86, h * 0.72, mul(wc, 0.6));
             }
             // door
-            face.bx(g, f, Matte, t + unit * 0.3, y0 + 1.1, 0.09, Vec3::new(1.0, 2.2, 0.06), DARK);
+            face.decal(g, f, Matte, t + unit * 0.3, y0 + 1.1, 0.08, 1.0, 2.2, DARK);
         }
         // fascia and sign
         face.bx(g, f, Matte, t, y0 + h * 0.93, 0.12, Vec3::new(unit * 0.96, h * 0.14, 0.2), mul(c.style.trim_color, 0.8));
-        if rng.random_bool(c.rules.sign_chance as f64) {
+        if coin(rng, c.rules.sign_chance) {
             sign_board(g, c, rng, face, t, y0 + h * 0.93, unit * 0.7, h * 0.1);
         }
         if rng.random_bool(0.35) {
@@ -456,7 +493,7 @@ pub fn storefront(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0
 /// Roll-up door with a lit lamp above it.
 pub fn roller_door(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, w: f32, h: f32, color: [f32; 3]) {
     let f = &c.frame;
-    face.bx(g, f, Metal, t, h * 0.5, 0.05, Vec3::new(w, h, 0.08), color);
+    face.decal(g, f, Metal, t, h * 0.5, 0.05, w, h, color);
     face.bx(g, f, Matte, t, h + 0.15, 0.08, Vec3::new(w + 0.4, 0.3, 0.14), CHARCOAL);
     face.bx(g, f, Glow, t, h + 0.5, 0.25, Vec3::new(0.5, 0.18, 0.3), c.palette.street_lamp);
 }
@@ -465,10 +502,10 @@ pub fn roller_door(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, w: f32, h: f3
 pub fn entrance(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32, w: f32, h: f32) {
     let f = &c.frame;
     face.bx(g, f, Matte, t, h * 0.5, -0.3, Vec3::new(w + 0.6, h, 0.8), DARK);
-    face.bx(g, f, Glass, t, h * 0.5, -0.5, Vec3::new(w, h * 0.95, 0.06), c.palette.glass_dark);
-    let lit = rng.random_bool((0.6 + 0.4 * c.lit_chance()) as f64);
+    face.decal(g, f, Glass, t, h * 0.5, 0.12, w, h * 0.95, c.palette.glass_dark);
+    let lit = coin(rng, 0.6 + 0.4 * c.lit_chance());
     if lit {
-        face.bx(g, f, Glow, t, h * 0.5, -0.45, Vec3::new(w * 0.9, h * 0.85, 0.03), mul(pick(rng, &c.style.window_colors), 0.7));
+        face.decal(g, f, Glow, t, h * 0.5, 0.14, w * 0.9, h * 0.85, mul(pick(rng, &c.style.window_colors), 0.7));
     }
     canopy(g, c, face, t, h + 0.3, w + 1.6, 2.0, mul(c.style.trim_color, 0.9));
     face.bx(g, f, Matte, t, 0.08, 1.0, Vec3::new(w + 1.2, 0.16, 2.2), mul(c.palette.paving, 1.1));
@@ -500,11 +537,11 @@ pub fn sign_board(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t:
     let letters = ((w / (h * 0.8)).floor() as i32).clamp(2, 12);
     let lw = w / letters as f32;
     for i in 0..letters {
-        if rng.random_bool(0.15 + 0.5 * c.wear as f64) && i % 3 == 1 {
+        if coin(rng, 0.15 + 0.5 * c.wear) && i % 3 == 1 {
             continue; // dead letters
         }
         let lt = t - w * 0.5 + (i as f32 + 0.5) * lw;
-        face.bx(g, f, Glow, lt, y, 0.24, Vec3::new(lw * 0.7, h * 0.7, 0.05), mul(sc, k));
+        face.decal(g, f, Glow, lt, y, 0.23, lw * 0.7, h * 0.7, mul(sc, k));
     }
 }
 
@@ -519,11 +556,11 @@ pub fn vertical_sign(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face,
     }
     let cells = (h / (w * 0.9)).floor().max(1.0) as i32;
     for i in 0..cells {
-        if rng.random_bool((c.wear * 0.4) as f64) {
+        if coin(rng, c.wear * 0.4) {
             continue;
         }
-        let y = y0 + h * 0.5 - h * 0.5 + (i as f32 + 0.5) * (h / cells as f32);
-        face.bx(g, f, Glow, t, y, 0.97, Vec3::new(w * 0.7, (h / cells as f32) * 0.7, 0.05), mul(sc, 0.9));
+        let y = y0 + (i as f32 + 0.5) * (h / cells as f32);
+        face.decal(g, f, Glow, t, y, 0.96, w * 0.7, (h / cells as f32) * 0.7, mul(sc, 0.9));
     }
 }
 
@@ -540,13 +577,13 @@ pub fn led_screen(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t:
     let ch = h / rows as f32;
     for i in 0..cols {
         for j in 0..rows {
-            if rng.random_bool((c.wear * 0.5) as f64) {
+            if coin(rng, c.wear * 0.5) {
                 continue;
             }
             let tt = ((i as f32 / cols as f32 + j as f32 / rows as f32) * 0.5 + rng.random_range(-0.2..0.2)).clamp(0.0, 1.0);
             let col = mix(a, b, tt);
             let k = rng.random_range(0.6..1.1);
-            face.bx(g, f, Glow, t - w * 0.5 + (i as f32 + 0.5) * cw, y - h * 0.5 + (j as f32 + 0.5) * ch, 0.37, Vec3::new(cw * 0.96, ch * 0.96, 0.05), mul(col, k));
+            face.decal(g, f, Glow, t - w * 0.5 + (i as f32 + 0.5) * cw, y - h * 0.5 + (j as f32 + 0.5) * ch, 0.37, cw * 0.96, ch * 0.96, mul(col, k));
         }
     }
 }
@@ -569,7 +606,7 @@ pub fn grime(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0: f32
     for _ in 0..n {
         let t = rng.random_range(-face.len * 0.45..face.len * 0.45);
         let sh = rng.random_range(0.8..(y1 - y0).max(1.0));
-        face.bx(g, f, Rust, t, y1 - sh * 0.5, 0.02, Vec3::new(rng.random_range(0.3..1.2), sh, 0.03), RUST_STAIN);
+        face.decal(g, f, Rust, t, y1 - sh * 0.5, 0.02, rng.random_range(0.3..1.2), sh, c.palette.rust_stain);
     }
     // A run-down building gets tagged at street level whatever its style.
     if c.wear > 0.5 && y0 < 2.5 {
@@ -584,8 +621,8 @@ pub fn downpipes(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y_t
     for i in 0..n {
         let t = -face.len * 0.5 + 0.6 + i as f32 * (face.len - 1.2) / n.max(1) as f32;
         face.bx(g, f, Metal, t, y_top * 0.5, 0.12, Vec3::new(0.14, y_top, 0.14), mul(c.style.trim_color, 0.7));
-        if rng.random_bool(c.wear as f64) {
-            face.bx(g, f, Rust, t, y_top * 0.3, 0.03, Vec3::new(0.5, y_top * 0.4, 0.03), RUST_STAIN);
+        if coin(rng, c.wear) {
+            face.decal(g, f, Rust, t, y_top * 0.3, 0.03, 0.5, y_top * 0.4, c.palette.rust_stain);
         }
     }
 }
@@ -622,16 +659,22 @@ pub fn fire_escape(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t
 pub fn balcony(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, w: f32, depth: f32, slab: [f32; 3], rail: [f32; 3]) {
     let f = &c.frame;
     face.bx(g, f, Concrete, t, y, depth * 0.5, Vec3::new(w, 0.22, depth), slab);
-    face.bx(g, f, Matte, t, y + 0.6, depth - 0.05, Vec3::new(w, 1.0, 0.05), rail);
+    // Rail panels are decals: the front faces the street, each side faces
+    // along the wall. Nobody stands on the balcony to see their backs, and a
+    // tower has hundreds of them.
+    face.decal(g, f, Matte, t, y + 0.6, depth - 0.05, w, 1.0, rail);
+    let along = f.dir3(face.tangent);
+    let out = f.dir3(face.out);
     for side in [-1.0f32, 1.0] {
-        face.bx(g, f, Matte, t + side * (w * 0.5 - 0.03), y + 0.6, depth * 0.5, Vec3::new(0.05, 1.0, depth), rail);
+        let centre = f.at2(face.at(t + side * (w * 0.5 - 0.03), depth * 0.5), y + 0.6);
+        g.part(Matte).decal(centre, out, Vec3::Y, depth, 1.0, along * side, rgba(rail));
     }
 }
 
 pub fn ac_unit(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, d: f32) {
     let f = &c.frame;
     face.bx(g, f, Metal, t, y, d, Vec3::new(0.8, 0.6, 0.35), mul(c.palette.steel, 0.9));
-    face.bx(g, f, Matte, t, y, d + 0.19, Vec3::new(0.5, 0.5, 0.03), DARK);
+    face.decal(g, f, Matte, t, y, d + 0.18, 0.5, 0.5, DARK);
     face.bx(g, f, Matte, t, y - 0.33, d * 0.6, Vec3::new(0.7, 0.05, 0.6), CHARCOAL);
 }
 
@@ -663,7 +706,10 @@ pub fn roof_gear(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], y
                 f.bx(g, Metal, p.x, y + s * 0.45, p.y, Vec3::new(s * 1.3, s * 0.9, s), mul(c.palette.steel, 0.85));
                 f.bx(g, Matte, p.x, y + s * 0.92, p.y, Vec3::new(s * 1.1, 0.04, s * 0.8), DARK);
             }
-            2 => water_tank(g, f, p, y, rng.random_range(0.9..1.4), rng.random_range(1.6..2.6), if rng.random_bool(0.5) { RUST } else { mul(c.palette.steel, 0.8) }),
+            2 => {
+                let (s, col) = if rng.random_bool(0.5) { (Rust, c.palette.rust) } else { (Metal, mul(c.palette.steel, 0.8)) };
+                water_tank(g, f, p, y, rng.random_range(0.9..1.4), rng.random_range(1.6..2.6), s, col)
+            }
             3 => vent_stack(g, f, p, y, rng.random_range(0.25..0.45), rng.random_range(1.2..3.0), mul(c.palette.steel, 0.7)),
             4 => dish(g, f, p, y, rng.random_range(0.5..1.1), c.palette.steel),
             5 => antenna_mast(g, c, p, y, rng.random_range(4.0..10.0)),
@@ -677,13 +723,16 @@ pub fn roof_gear(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], y
     }
 }
 
-pub fn water_tank(g: &mut Geometry, f: &Frame, p: Vec2, y: f32, r: f32, h: f32, color: [f32; 3]) {
+/// Rooftop tank on four legs. `s` is the drum's surface (rusted or painted
+/// steel), passed explicitly rather than guessed from the colour.
+#[allow(clippy::too_many_arguments)]
+pub fn water_tank(g: &mut Geometry, f: &Frame, p: Vec2, y: f32, r: f32, h: f32, s: Surface, color: [f32; 3]) {
     let w = f.to_world(p.x, p.y);
     let legs = 1.0;
     for (du, dv) in [(-0.6f32, -0.6f32), (0.6, -0.6), (0.6, 0.6), (-0.6, 0.6)] {
         f.bx(g, Matte, p.x + du * r, y + legs * 0.5, p.y + dv * r, Vec3::new(0.12, legs, 0.12), CHARCOAL);
     }
-    g.part(if color == RUST { Rust } else { Metal }).cylinder(w, r, r, y + legs, y + legs + h, 12, rgba(color));
+    g.part(s).cylinder(w, r, r, y + legs, y + legs + h, 12, rgba(color));
     g.part(Metal).cylinder(w, r, r * 0.3, y + legs + h, y + legs + h + 0.5, 12, rgba(mul(color, 0.8)));
 }
 
@@ -715,15 +764,11 @@ pub fn solar_array(g: &mut Geometry, f: &Frame, p: Vec2, y: f32, w: f32, d: f32,
 pub fn helipad(g: &mut Geometry, c: &Ctx, p: Vec2, y: f32, r: f32) {
     let f = &c.frame;
     let w = f.to_world(p.x, p.y);
-    g.part(Concrete).cylinder(w, r, r, y, y + 0.3, 16, rgba(mul(pick_first(&c.palette.concrete), 0.8)));
+    g.part(Concrete).cylinder(w, r, r, y, y + 0.3, 16, rgba(mul(c.palette.concrete(0), 0.8)));
     g.part(Glow).frustum(&MeshData::ngon(w, r * 0.92, 16, 0.0, y + 0.31), &MeshData::ngon(w, r * 0.92, 16, 0.0, y + 0.36), rgba(mul(c.palette.lamp, 0.4)));
     f.bx(g, Glow, p.x, y + 0.4, p.y, Vec3::new(r * 0.9, 0.08, 0.3), mul(c.palette.lamp, 0.9));
     f.bx(g, Glow, p.x - r * 0.35, y + 0.4, p.y, Vec3::new(0.3, 0.08, r * 0.8), mul(c.palette.lamp, 0.9));
     f.bx(g, Glow, p.x + r * 0.35, y + 0.4, p.y, Vec3::new(0.3, 0.08, r * 0.8), mul(c.palette.lamp, 0.9));
-}
-
-fn pick_first(v: &[[f32; 3]]) -> [f32; 3] {
-    v.first().copied().unwrap_or([0.5, 0.5, 0.5])
 }
 
 /// Big HVAC / chiller unit with fan rings on top.
@@ -749,11 +794,75 @@ pub fn tree(g: &mut Geometry, f: &Frame, p: Vec2, h: f32, canopy: f32, bark: [f3
     tree_world(g, f.to_world(p.x, p.y), h, canopy, bark, leaf);
 }
 
+/// The one tree family. `Round` is the street and garden tree; the others
+/// come from parks and open ground.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TreeKind {
+    /// Trunk with a two-tier faceted canopy.
+    Round,
+    /// Three stacked cones.
+    Conifer,
+    /// Leaning trunk with a crown of fronds.
+    Palm,
+    /// Bare tapering trunk with a few branches, no canopy.
+    Dead,
+}
+
+/// A round tree on the ground at a world point.
 pub fn tree_world(g: &mut Geometry, w: Vec2, h: f32, canopy: f32, bark: [f32; 3], leaf: [f32; 3]) {
-    g.part(Wood).cylinder(w, 0.22, 0.16, 0.0, h, 7, rgba(bark));
-    let c = g.part(Foliage);
-    c.frustum(&MeshData::ngon(w, canopy * 0.5, 7, 0.0, h), &MeshData::ngon(w, canopy * 0.2, 7, 0.4, h + canopy * 0.8), rgba(leaf));
-    c.frustum(&MeshData::ngon(w, canopy * 0.35, 7, 0.3, h - canopy * 0.3), &MeshData::ngon(w, canopy * 0.5, 7, 0.0, h), rgba(mul(leaf, 0.85)));
+    tree_kind(g, w, 0.0, TreeKind::Round, h, canopy, bark, leaf);
+}
+
+/// Any tree, standing on ground at height `y` at a world point. Branch and
+/// lean directions come from the position so no RNG is consumed: callers
+/// that place thousands of trees keep their streams stable.
+#[allow(clippy::too_many_arguments)]
+pub fn tree_kind(g: &mut Geometry, w: Vec2, y: f32, kind: TreeKind, h: f32, canopy: f32, bark: [f32; 3], leaf: [f32; 3]) {
+    use std::f32::consts::TAU;
+    match kind {
+        TreeKind::Round => {
+            g.part(Wood).cylinder(w, 0.22, 0.16, y, y + h, 7, rgba(bark));
+            let c = g.part(Foliage);
+            c.frustum(&MeshData::ngon(w, canopy * 0.5, 7, 0.0, y + h), &MeshData::ngon(w, canopy * 0.2, 7, 0.4, y + h + canopy * 0.8), rgba(leaf));
+            c.frustum(&MeshData::ngon(w, canopy * 0.35, 7, 0.3, y + h - canopy * 0.3), &MeshData::ngon(w, canopy * 0.5, 7, 0.0, y + h), rgba(mul(leaf, 0.85)));
+        }
+        TreeKind::Conifer => {
+            g.part(Wood).cylinder(w, 0.22, 0.12, y, y + h * 0.3, 6, rgba(bark));
+            for k in 0..3 {
+                let y0 = y + h * (0.25 + 0.22 * k as f32);
+                let rr = canopy * (1.0 - 0.22 * k as f32);
+                g.part(Foliage).frustum(&MeshData::ngon(w, rr, 8, 0.3 * k as f32, y0), &MeshData::ngon(w, rr * 0.12, 8, 0.3 * k as f32, y0 + h * 0.32), rgba(mul(leaf, 1.0 - 0.06 * k as f32)));
+            }
+        }
+        TreeKind::Palm => {
+            let lean = Vec2::new(w.y * 0.013, w.x * 0.011).normalize_or_zero() * 0.9;
+            let top = Vec3::new(w.x + lean.x, y + h, w.y + lean.y);
+            let mid = Vec3::new(w.x + lean.x * 0.5, y + h * 0.55, w.y + lean.y * 0.5);
+            g.part(Wood).beam(Vec3::new(w.x, y, w.y), mid, 0.34, rgba(bark));
+            g.part(Wood).beam(mid, top, 0.26, rgba(bark));
+            for k in 0..7 {
+                let a = k as f32 / 7.0 * TAU;
+                let dir = Vec3::new(a.cos(), 0.35, a.sin()).normalize();
+                let m = top + dir * 1.6;
+                let tip = m + Vec3::new(dir.x, -0.5, dir.z).normalize() * 1.8;
+                g.part(Foliage).beam(top, m, 0.5, rgba(leaf));
+                g.part(Foliage).beam(m, tip, 0.32, rgba(mul(leaf, 0.9)));
+            }
+            g.part(Foliage).cylinder(Vec2::new(top.x, top.z), 0.5, 0.5, y + h - 0.4, y + h + 0.3, 6, rgba(mul(leaf, 0.8)));
+        }
+        TreeKind::Dead => {
+            let wood = g.part(Wood);
+            wood.cylinder(w, 0.18, 0.07, y - 0.1, y + h, 5, rgba(bark));
+            let n = 2 + ((w.x * 0.37 + w.y * 0.61).abs() as i32 % 2);
+            for k in 0..n {
+                let a = k as f32 * 2.1 + w.x * 0.37 + w.y * 0.13;
+                let len = (h * 0.3).clamp(0.8, 1.8);
+                let from = Vec3::new(w.x, y + h * (0.55 + 0.12 * k as f32), w.y);
+                let to = from + Vec3::new(a.cos() * len, len * 0.7, a.sin() * len);
+                wood.beam(from, to, 0.08, rgba(bark));
+            }
+        }
+    }
 }
 
 pub fn lamp_post(g: &mut Geometry, f: &Frame, p: Vec2, h: f32, glow: [f32; 3]) {
@@ -806,13 +915,20 @@ pub fn fence(g: &mut Geometry, c: &Ctx, a: Vec2, b: Vec2, h: f32, barbed: bool) 
         let y = h * (0.25 + 0.35 * k as f32);
         face.bx(g, f, Matte, 0.0, y, 0.0, Vec3::new(len, 0.04, 0.04), color);
     }
-    // mesh panel: thin, dark, slightly translucent-looking grey
-    face.bx(g, f, Matte, 0.0, h * 0.5, 0.0, Vec3::new(len, h * 0.96, 0.015), [0.28, 0.29, 0.30]);
+    // mesh panel: thin, dark, slightly translucent-looking grey; a box, not
+    // a decal, because a fence is seen from both sides
+    face.bx(g, f, Matte, 0.0, h * 0.5, 0.0, Vec3::new(len, h * 0.96, 0.015), c.palette.fence_mesh);
     if barbed {
         let wa = f.at2(a, h + 0.2);
         let wb = f.at2(b, h + 0.2);
-        g.part(Rust).tube(wa, wb, 0.12, 5, rgba(RUST));
+        g.part(Rust).tube(wa, wb, 0.12, 5, rgba(c.palette.rust));
     }
+}
+
+/// Fence round a yard with the gate on the face that looks at the road:
+/// the perimeter every depot, plant and compound shares.
+pub fn fence_lot(g: &mut Geometry, c: &Ctx, poly: &[Vec2], h: f32, barbed: bool) {
+    fence_poly(g, c, poly, h, c.front_face_index(poly), barbed);
 }
 
 /// Fence around a polygon, leaving one face open as a gate.
@@ -897,14 +1013,21 @@ pub fn container_unit(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f32, v: 
         place(g, Matte, lu * (len * 0.5 - 0.1), yc, lv * (wid * 0.5 - 0.1), Vec3::new(0.2, h * 1.01, 0.2), mul(color, 0.6));
     }
     let door = if rng.random_bool(0.5) { -1.0 } else { 1.0 };
-    place(g, Matte, door * (len * 0.5 + 0.02), yc, 0.0, Vec3::new(0.04, h * 0.92, wid * 0.92), mul(color, 0.55));
+    // The door end and rust patches face one way: decals on the unit's sides.
+    let long_axis = Vec2::new(co, s);
+    let across = Vec2::new(-s, co);
+    let end_c = Vec2::new(u, v) + long_axis * (door * len * 0.5);
+    let end = Face::new(end_c - across * (wid * 0.5), end_c + across * (wid * 0.5), long_axis * door);
+    end.decal(g, f, Matte, 0.0, yc, 0.02, wid * 0.92, h * 0.92, mul(color, 0.55));
     for k in 0..2 {
         place(g, Matte, door * (len * 0.5 + 0.05), yc, (k as f32 - 0.5) * wid * 0.5, Vec3::new(0.06, h * 0.7, 0.08), mul(c.palette.steel, 0.6));
     }
     // rust by wear
     for _ in 0..((c.wear * 3.0) as i32) {
         let side = if rng.random_bool(0.5) { -1.0 } else { 1.0 };
-        place(g, Rust, rng.random_range(-len * 0.4..len * 0.4), yc + rng.random_range(-h * 0.3..h * 0.3), side * (wid * 0.5 + 0.03), Vec3::new(rng.random_range(0.4..1.5), rng.random_range(0.3..1.2), 0.03), RUST_STAIN);
+        let mid = Vec2::new(u, v) + across * (side * wid * 0.5);
+        let long = Face::new(mid - long_axis * (len * 0.5), mid + long_axis * (len * 0.5), across * side);
+        long.decal(g, f, Rust, rng.random_range(-len * 0.4..len * 0.4), yc + rng.random_range(-h * 0.3..h * 0.3), 0.02, rng.random_range(0.4..1.5), rng.random_range(0.3..1.2), c.palette.rust_stain);
     }
 }
 
@@ -917,25 +1040,30 @@ pub enum Vehicle {
     Bus,
 }
 
-pub fn vehicle(g: &mut Geometry, f: &Frame, rng: &mut impl Rng, p: Vec2, yaw: f32, kind: Vehicle, color: [f32; 3]) {
+/// A vehicle standing on a surface at height `y` (a deck, the ground),
+/// facing `yaw` relative to the frame. Parking decks, depots and yards all
+/// draw their cars through here.
+#[allow(clippy::too_many_arguments)]
+pub fn vehicle(g: &mut Geometry, f: &Frame, pal: &Palette, rng: &mut impl Rng, p: Vec2, y: f32, yaw: f32, kind: Vehicle, color: [f32; 3]) {
     let w = f.to_world(p.x, p.y);
     let a = f.yaw() + yaw;
-    let m = |g: &mut Geometry, s: Surface, dx: f32, y: f32, dz: f32, size: Vec3, col: [f32; 3]| {
+    let m = |g: &mut Geometry, s: Surface, dx: f32, dy: f32, dz: f32, size: Vec3, col: [f32; 3]| {
         let (sn, cs) = a.sin_cos();
-        let q = Vec3::new(w.x + dx * cs - dz * sn, y, w.y + dx * sn + dz * cs);
+        let q = Vec3::new(w.x + dx * cs - dz * sn, y + dy, w.y + dx * sn + dz * cs);
         g.part(s).boxed(q, size, a, rgba(col));
     };
+    let glass = pal.car_glass;
     match kind {
         Vehicle::Car => {
             m(g, Metal, 0.0, 0.7, 0.0, Vec3::new(4.2, 0.9, 1.85), color);
-            m(g, Glass, -0.3, 1.4, 0.0, Vec3::new(2.2, 0.6, 1.6), [0.12, 0.15, 0.18]);
+            m(g, Glass, -0.3, 1.4, 0.0, Vec3::new(2.2, 0.6, 1.6), glass);
             for (dx, dz) in [(-1.4f32, -0.95f32), (1.4, -0.95), (-1.4, 0.95), (1.4, 0.95)] {
                 m(g, Matte, dx, 0.33, dz, Vec3::new(0.66, 0.66, 0.22), DARK);
             }
         }
         Vehicle::Van => {
             m(g, Metal, 0.0, 1.2, 0.0, Vec3::new(5.2, 1.9, 2.0), color);
-            m(g, Glass, 2.1, 1.7, 0.0, Vec3::new(0.9, 0.7, 1.9), [0.12, 0.15, 0.18]);
+            m(g, Glass, 2.1, 1.7, 0.0, Vec3::new(0.9, 0.7, 1.9), glass);
             for (dx, dz) in [(-1.6f32, -1.0f32), (1.6, -1.0), (-1.6, 1.0), (1.6, 1.0)] {
                 m(g, Matte, dx, 0.38, dz, Vec3::new(0.75, 0.75, 0.25), DARK);
             }
@@ -943,7 +1071,7 @@ pub fn vehicle(g: &mut Geometry, f: &Frame, rng: &mut impl Rng, p: Vec2, yaw: f3
         Vehicle::Truck => {
             m(g, Metal, -1.5, 1.6, 0.0, Vec3::new(7.0, 2.6, 2.4), color);
             m(g, Metal, 3.2, 1.3, 0.0, Vec3::new(2.2, 2.2, 2.3), mul(pick(rng, &[[0.6, 0.6, 0.62], [0.2, 0.25, 0.4], [0.5, 0.12, 0.1]]), 1.0));
-            m(g, Glass, 4.2, 1.8, 0.0, Vec3::new(0.3, 0.8, 2.1), [0.12, 0.15, 0.18]);
+            m(g, Glass, 4.2, 1.8, 0.0, Vec3::new(0.3, 0.8, 2.1), glass);
             for dx in [-3.5f32, -2.3, 2.6] {
                 for dz in [-1.1f32, 1.1] {
                     m(g, Matte, dx, 0.5, dz, Vec3::new(1.0, 1.0, 0.35), DARK);
@@ -952,8 +1080,8 @@ pub fn vehicle(g: &mut Geometry, f: &Frame, rng: &mut impl Rng, p: Vec2, yaw: f3
         }
         Vehicle::Bus => {
             m(g, Metal, 0.0, 1.6, 0.0, Vec3::new(11.5, 3.0, 2.5), color);
-            m(g, Glass, 0.0, 2.2, 0.0, Vec3::new(11.0, 0.9, 2.56), [0.12, 0.15, 0.18]);
-            m(g, Glass, 5.6, 1.9, 0.0, Vec3::new(0.4, 1.6, 2.3), [0.12, 0.15, 0.18]);
+            m(g, Glass, 0.0, 2.2, 0.0, Vec3::new(11.0, 0.9, 2.56), glass);
+            m(g, Glass, 5.6, 1.9, 0.0, Vec3::new(0.4, 1.6, 2.3), glass);
             for dx in [-3.8f32, 3.6] {
                 for dz in [-1.15f32, 1.15] {
                     m(g, Matte, dx, 0.5, dz, Vec3::new(1.0, 1.0, 0.3), DARK);
@@ -962,7 +1090,7 @@ pub fn vehicle(g: &mut Geometry, f: &Frame, rng: &mut impl Rng, p: Vec2, yaw: f3
         }
         Vehicle::Wreck => {
             m(g, Rust, 0.0, 0.4, 0.0, Vec3::new(4.0, 0.8, 1.8), mul(color, 0.6));
-            m(g, Rust, -0.3, 0.95, 0.0, Vec3::new(2.0, 0.4, 1.5), RUST);
+            m(g, Rust, -0.3, 0.95, 0.0, Vec3::new(2.0, 0.4, 1.5), pal.rust);
             if rng.random_bool(0.5) {
                 m(g, Matte, 1.3, 0.3, 0.95, Vec3::new(0.66, 0.6, 0.22), DARK);
             }
@@ -981,7 +1109,7 @@ pub fn scrap_pile(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, r: f32
         let size = Vec3::new(rng.random_range(0.5..2.2), rng.random_range(0.3..1.2), rng.random_range(0.5..2.0));
         let y = (1.0 - d / r) * h * rng.random_range(0.3..1.0);
         let (s, col) = match rng.random_range(0..4) {
-            0 => (Rust, RUST),
+            0 => (Rust, c.palette.rust),
             1 => (Metal, pick(rng, &c.palette.container_colors)),
             2 => (Tarp, pick(rng, &c.palette.tarp_colors)),
             _ => (Matte, DARK),
@@ -1013,9 +1141,9 @@ pub fn stall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32,
     }
 }
 
-pub fn drum_fire(g: &mut Geometry, f: &Frame, p: Vec2) {
+pub fn drum_fire(g: &mut Geometry, f: &Frame, pal: &Palette, p: Vec2) {
     let w = f.to_world(p.x, p.y);
-    g.part(Rust).cylinder(w, 0.3, 0.3, 0.0, 0.9, 10, rgba(RUST));
+    g.part(Rust).cylinder(w, 0.3, 0.3, 0.0, 0.9, 10, rgba(pal.rust));
     g.part(Glow).boxed(Vec3::new(w.x, 1.0, w.y), Vec3::new(0.3, 0.25, 0.3), 0.0, rgba([2.0, 0.9, 0.3]));
 }
 
@@ -1034,7 +1162,7 @@ pub fn string_lights(g: &mut Geometry, f: &Frame, a: Vec3, b: Vec3, n: i32, colo
 /// Outdoor steelwork rusts once a building is run down: the surface and
 /// colour for stairs, ladders and fire escapes.
 pub fn outdoor_steel(c: &Ctx, color: [f32; 3]) -> (Surface, [f32; 3]) {
-    if c.wear > 0.4 { (Rust, mix(color, RUST, 0.55)) } else { (Metal, color) }
+    if c.wear > 0.4 { (Rust, mix(color, c.palette.rust, 0.55)) } else { (Metal, color) }
 }
 
 /// External zigzag stair up the side of a pile. Rusted when the lot is worn.
@@ -1087,7 +1215,7 @@ pub fn pool(g: &mut Geometry, c: &Ctx, cu: f32, cv: f32, w: f32, d: f32) {
 /// Concrete jersey barrier in front of a face.
 pub fn barrier(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, d: f32, w: f32) {
     let f = &c.frame;
-    let col = mul(pick_first(&c.palette.concrete), 0.9);
+    let col = mul(c.palette.concrete(0), 0.9);
     face.bx(g, f, Concrete, t, 0.25, d, Vec3::new(w, 0.5, 0.7), col);
     face.bx(g, f, Concrete, t, 0.7, d, Vec3::new(w, 0.4, 0.35), col);
 }
@@ -1103,7 +1231,7 @@ pub fn floodlight(g: &mut Geometry, c: &Ctx, p: Vec2, h: f32) {
 /// Gantry crane spanning across the lot at `v`, running along u.
 pub fn gantry_crane(g: &mut Geometry, c: &Ctx, u: f32, v0: f32, v1: f32, h: f32) {
     let f = &c.frame;
-    let steel = mul(c.palette.metal_paint[0], 1.1);
+    let steel = mul(c.palette.metal_paint(0), 1.1);
     for v in [v0, v1] {
         for du in [-1.6f32, 1.6] {
             f.bx(g, Matte, u + du, h * 0.5, v, Vec3::new(0.4, h, 0.4), steel);
@@ -1130,11 +1258,11 @@ pub fn graffiti(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0: 
 }
 
 /// Spray colours: dimmed LED hues, awning paints, chalk white and black.
-fn spray_colour(rng: &mut impl Rng, pal: &crate::palette::Palette) -> [f32; 3] {
+fn spray_colour(rng: &mut impl Rng, pal: &Palette) -> [f32; 3] {
     match rng.random_range(0..7) {
         0..=2 => mul(pick(rng, &pal.led_colors), 0.32),
         3 | 4 => mul(pick(rng, &pal.awning_colors), 1.25),
-        5 => [0.82, 0.82, 0.76],
+        5 => pal.chalk,
         _ => DARK,
     }
 }
@@ -1142,7 +1270,7 @@ fn spray_colour(rng: &mut impl Rng, pal: &crate::palette::Palette) -> [f32; 3] {
 /// World-space graffiti on the wall from `a` to `b`; the right-hand side of
 /// the a→b direction is the painted side, as with [`Face::from_edge`].
 #[allow(clippy::too_many_arguments)]
-pub fn graffiti_world(g: &mut Geometry, rng: &mut impl Rng, a: Vec2, b: Vec2, y0: f32, y1: f32, amount: f32, wear: f32, pal: &crate::palette::Palette) {
+pub fn graffiti_world(g: &mut Geometry, rng: &mut impl Rng, a: Vec2, b: Vec2, y0: f32, y1: f32, amount: f32, wear: f32, pal: &Palette) {
     let len = a.distance(b);
     let span = y1 - y0;
     if len < 2.5 || span < 0.8 {
@@ -1150,7 +1278,8 @@ pub fn graffiti_world(g: &mut Geometry, rng: &mut impl Rng, a: Vec2, b: Vec2, y0
     }
     let tangent = (b - a) / len;
     let out = Vec2::new(tangent.y, -tangent.x);
-    let yaw = tangent.y.atan2(tangent.x);
+    let along3 = Vec3::new(tangent.x, 0.0, tangent.y);
+    let out3 = Vec3::new(out.x, 0.0, out.y);
     let mid = (a + b) * 0.5;
     let pieces = ((len / 7.0) * amount * (0.4 + wear) * rng.random_range(0.6..1.4)).round().clamp(0.0, 6.0) as i32;
     for _ in 0..pieces {
@@ -1162,10 +1291,11 @@ pub fn graffiti_world(g: &mut Geometry, rng: &mut impl Rng, a: Vec2, b: Vec2, y0
         let top = (span - h - 0.2).clamp(0.31, 2.4);
         let yc = y0 + h * 0.5 + rng.random_range(0.3..top);
         let col = spray_colour(rng, pal);
-        let outline = if rng.random_bool(0.6) { DARK } else { [0.82, 0.82, 0.76] };
+        let outline = if rng.random_bool(0.6) { DARK } else { pal.chalk };
+        // Every stroke is a decal: paint has no back.
         let place = |g: &mut Geometry, dt: f32, y: f32, d: f32, size: Vec3, c: [f32; 3]| {
             let p = mid + tangent * (t + dt) + out * d;
-            g.part(Matte).boxed(Vec3::new(p.x, y, p.y), size, yaw, rgba(c));
+            g.part(Matte).decal(Vec3::new(p.x, y, p.y), along3, Vec3::Y, size.x, size.y, out3, rgba(c));
         };
         match rng.random_range(0..5) {
             0 | 1 => {
@@ -1235,15 +1365,62 @@ pub fn scrub_world(g: &mut Geometry, rng: &mut impl Rng, p: Vec2, y: f32, r: f32
     f.frustum(&m, &t, rgba(mul(color, 1.1)));
 }
 
-/// A dead tree: a tapering trunk with a few bare branches and no canopy.
-pub fn dry_tree_world(g: &mut Geometry, rng: &mut impl Rng, p: Vec2, y: f32, h: f32, bark: [f32; 3]) {
-    let w = g.part(Wood);
-    w.cylinder(p, 0.16, 0.07, y - 0.1, y + h, 5, rgba(bark));
-    for _ in 0..rng.random_range(2..4) {
-        let a = rng.random_range(0.0..std::f32::consts::TAU);
-        let len = rng.random_range(0.8..1.8);
-        let from = Vec3::new(p.x, y + h * rng.random_range(0.55..0.9), p.y);
-        let to = from + Vec3::new(a.cos() * len, len * 0.7, a.sin() * len);
-        w.beam(from, to, 0.07, rgba(bark));
+// ── sampling and scatter ─────────────────────────────────────────────────────
+
+/// Random point inside a polygon at least `margin` from its edges, if one
+/// turns up in a couple of dozen tries. The one rejection sampler behind
+/// `Ctx::random_inside`, vacant lots, sites and yards.
+pub fn random_in_poly(rng: &mut impl Rng, poly: &[Vec2], margin: f32) -> Option<Vec2> {
+    let inner = if margin > 0.0 { offset_poly(poly, margin) } else { poly.to_vec() };
+    if inner.len() < 3 {
+        return None;
+    }
+    let (lo, hi) = bounds(&inner);
+    if hi.x - lo.x < 0.2 || hi.y - lo.y < 0.2 {
+        return None;
+    }
+    for _ in 0..24 {
+        let p = Vec2::new(rng.random_range(lo.x..=hi.x), rng.random_range(lo.y..=hi.y));
+        if point_in_polygon(p, &inner) {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Tufts of dry weeds scattered over a lot-local polygon.
+pub fn weeds(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], n: i32) {
+    let f = &c.frame;
+    let (lo, hi) = bounds(poly);
+    for _ in 0..n {
+        let p = Vec2::new(rng.random_range(lo.x..=hi.x), rng.random_range(lo.y..=hi.y));
+        if !point_in_polygon(p, poly) {
+            continue;
+        }
+        let s = rng.random_range(0.4..1.1);
+        f.bx_yaw(g, Foliage, p.x, s * 0.3, p.y, Vec3::new(s, s * 0.6, s * 0.8), mul(c.palette.foliage_dry, rng.random_range(0.7..1.1)), rng.random_range(0.0..1.5));
+    }
+}
+
+// ── railway ──────────────────────────────────────────────────────────────────
+
+/// Single track in world coordinates: ballast `ballast_w` wide, a raised
+/// bed, sleepers every 0.7 m and two rails. The main line and yard sidings
+/// are drawn by the same hand.
+pub fn railway_track(g: &mut Geometry, pal: &Palette, pts: &[Vec2], ballast_w: f32) {
+    if pts.len() < 2 {
+        return;
+    }
+    g.part(Dirt).path_strip(pts, 0.0, ballast_w, 0.04, rgba(mul(pal.gravel, 0.85)));
+    g.part(Dirt).path_strip(pts, 0.0, 3.0, 0.1, rgba(pal.gravel));
+    let len = crate::mesh::path_length(pts);
+    let mut s = 0.35;
+    while s < len {
+        let (p, d) = crate::mesh::point_along(pts, s);
+        g.part(Wood).boxed(Vec3::new(p.x, 0.17, p.y), Vec3::new(0.24, 0.14, 2.5), d.y.atan2(d.x), rgba(mul(pal.wood, 0.55)));
+        s += 0.7;
+    }
+    for side in [-1.0f32, 1.0] {
+        g.part(Metal).path_box(pts, side * 0.72, 0.08, 0.24, 0.38, rgba(mul(pal.steel, 0.75)));
     }
 }

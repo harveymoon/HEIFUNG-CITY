@@ -5,7 +5,6 @@
 use super::parts::*;
 use super::{Ctx, Face};
 use crate::mesh::MeshData;
-use crate::palette::RUST;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use rand::seq::IndexedRandom;
@@ -29,7 +28,6 @@ struct Unit {
     h: f32,
     level: i32,
     y0: f32,
-    trailer: bool,
     color: [f32; 3],
 }
 
@@ -91,14 +89,14 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Laid in 2 m pieces so they stop at the edge of odd-shaped lots.
     let mut v = lo.y + 1.0;
     while v < hi.y {
-        if c.inside(Vec2::new(-1.1, v)) && c.inside(Vec2::new(1.1, v)) {
+        if c.inside_local(Vec2::new(-1.1, v)) && c.inside_local(Vec2::new(1.1, v)) {
             f.bx(g, Paving, 0.0, 0.04, v, Vec3::new(2.2, 0.02, 2.0), mul(pal.paving, 0.8));
         }
         v += 2.0;
     }
     let mut u = lo.x + 1.0;
     while u < hi.x {
-        if c.inside(Vec2::new(u, -1.1)) && c.inside(Vec2::new(u, 1.1)) {
+        if c.inside_local(Vec2::new(u, -1.1)) && c.inside_local(Vec2::new(u, 1.1)) {
             f.bx(g, Paving, u, 0.04, 0.0, Vec3::new(2.0, 0.02, 2.2), mul(pal.paving, 0.8));
         }
         u += 2.0;
@@ -132,9 +130,9 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 (support.u + off.x, support.v + off.y, support.top())
             };
             let color = if trailer { mul([0.68, 0.66, 0.60], rng.random_range(0.6..0.95)) } else { pick(rng, &pal.container_colors) };
-            let cand = Unit { u, v, yaw, len, wid, h, level, y0, trailer, color };
+            let cand = Unit { u, v, yaw, len, wid, h, level, y0, color };
             // Stay inside the parcel (an overhang of a metre or so is fine).
-            if cand.corners().iter().any(|p| !c.inside(*p) && distance_to_boundary(*p, &c.lot_poly) > 1.2) {
+            if cand.corners().iter().any(|p| !c.inside_local(*p) && distance_to_boundary(*p, &c.lot_poly) > 1.2) {
                 continue;
             }
             // Keep the alleys clear: a cross through the middle of the pile
@@ -186,12 +184,12 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             f.bx_yaw(g, s, p.x, y, p.y, size, color, unit.yaw);
         };
         let side = if rng.random_bool(0.5) { -1.0 } else { 1.0 };
-        if rng.random_bool(lit_chance as f64) {
+        if coin(rng, lit_chance) {
             let wc = if rng.random_bool(0.3) { [0.5, 0.75, 1.1] } else { pick(rng, &c.style.window_colors) };
             place(g, Matte, rng.random_range(-unit.len * 0.3..unit.len * 0.3), yc + 0.3, side * (unit.wid * 0.5 + 0.03), Vec3::new(1.1, 0.9, 0.08), DARK);
             place(g, Glow, 0.0, yc + 0.3, side * (unit.wid * 0.5 + 0.06), Vec3::new(0.9, 0.7, 0.05), mul(wc, 0.9));
         }
-        if rng.random_bool((0.25 + 0.4 * c.wear) as f64) {
+        if coin(rng, 0.25 + 0.4 * c.wear) {
             place(g, Wood, rng.random_range(-unit.len * 0.3..unit.len * 0.3), yc + rng.random_range(-0.5..0.5), -side * (unit.wid * 0.5 + 0.05), Vec3::new(rng.random_range(0.6..1.4), rng.random_range(0.6..1.2), 0.05), pal.plywood);
         }
         if rng.random_bool(0.25) {
@@ -209,11 +207,11 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 dish(g, f, p, unit.top(), 0.7, pal.steel);
             }
             if rng.random_bool(0.35) {
-                place(g, Metal, rng.random_range(-unit.len * 0.35..unit.len * 0.35), unit.top() + 0.45, rng.random_range(-0.6..0.6), Vec3::new(0.9, 0.9, 0.9), if rng.random_bool(0.5) { RUST } else { [0.2, 0.3, 0.6] });
+                place(g, Metal, rng.random_range(-unit.len * 0.35..unit.len * 0.35), unit.top() + 0.45, rng.random_range(-0.6..0.6), Vec3::new(0.9, 0.9, 0.9), if rng.random_bool(0.5) { c.palette.rust } else { [0.2, 0.3, 0.6] });
             }
         }
         if rng.random_bool(0.25) {
-            place(g, Metal, rng.random_range(-unit.len * 0.3..unit.len * 0.3), yc - 0.6, side * (unit.wid * 0.5 + 0.35), Vec3::new(0.8, 0.5, 0.6), if rng.random_bool(0.4) { RUST } else { [0.5, 0.5, 0.5] });
+            place(g, Metal, rng.random_range(-unit.len * 0.3..unit.len * 0.3), yc - 0.6, side * (unit.wid * 0.5 + 0.35), Vec3::new(0.8, 0.5, 0.6), if rng.random_bool(0.4) { c.palette.rust } else { [0.5, 0.5, 0.5] });
         }
     }
 
@@ -227,7 +225,7 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             let base = units.iter().filter(|o| o.level < unit.level && o.contains(inset)).map(|o| o.top()).fold(0.0, f32::max);
             let h = unit.y0 - base;
             if h > 0.3 {
-                f.bx(g, if rng.random_bool(0.4) { Rust } else { Matte }, inset.x, base + h * 0.5, inset.y, Vec3::new(0.22, h, 0.22), if rng.random_bool(0.4) { RUST } else { steel });
+                f.bx(g, if rng.random_bool(0.4) { Rust } else { Matte }, inset.x, base + h * 0.5, inset.y, Vec3::new(0.22, h, 0.22), if rng.random_bool(0.4) { c.palette.rust } else { steel });
             }
         }
     }
@@ -260,7 +258,7 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         // Against a unit on the lot's edge, wherever the lot actually is.
         let sv = rng.random_range((lo.y + hi.y) * 0.5 - 3.0..(lo.y + hi.y) * 0.5 + 3.0);
         let mut su = lo.x + 1.4;
-        while su < hi.x - 2.0 && !(c.inside(Vec2::new(su - 1.0, sv - 2.0)) && c.inside(Vec2::new(su + 2.5, sv + 2.0)) && c.inside(Vec2::new(su - 1.0, sv + 2.0)) && c.inside(Vec2::new(su + 2.5, sv - 2.0))) {
+        while su < hi.x - 2.0 && !(c.inside_local(Vec2::new(su - 1.0, sv - 2.0)) && c.inside_local(Vec2::new(su + 2.5, sv + 2.0)) && c.inside_local(Vec2::new(su - 1.0, sv + 2.0)) && c.inside_local(Vec2::new(su + 2.5, sv - 2.0))) {
             su += 1.0;
         }
         if su < hi.x - 2.0 {
@@ -272,7 +270,7 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let mut p = Vec2::new(hi.x - 1.0, lo.y + 0.8);
         let anchor = interior_anchor(&c.lot_poly);
         for _ in 0..8 {
-            if c.inside(p) {
+            if c.inside_local(p) {
                 break;
             }
             p = p.lerp(anchor, 0.25);
@@ -314,14 +312,14 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Street level: a drum fire and junk.
     let front = c.front_face(&c.lot_poly);
     if rng.random_bool(0.5) {
-        drum_fire(g, f, front.at(rng.random_range(-front.len * 0.3..front.len * 0.3), -1.6));
+        drum_fire(g, f, pal, front.at(rng.random_range(-front.len * 0.3..front.len * 0.3), -1.6));
     }
     if rng.random_bool(0.4) {
         let p = front.at(rng.random_range(-front.len * 0.3..front.len * 0.3), -4.0);
-        if c.inside(p) {
+        if c.inside_local(p) {
             let yaw = front.yaw() + rng.random_range(-0.3..0.3);
             let col = pick(rng, &pal.car_colors);
-            vehicle(g, f, rng, p, yaw, Vehicle::Wreck, col);
+            vehicle(g, f, pal, rng, p, 0.0, yaw, Vehicle::Wreck, col);
         }
     }
 }
@@ -378,7 +376,7 @@ pub fn tenement(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     if hi.x - lo.x > 6.0 {
         for k in 0..2 {
             let v = lo.y + (hi.y - lo.y) * (0.3 + 0.4 * k as f32);
-            if !c.inside(Vec2::new(lo.x + 1.0, v)) || !c.inside(Vec2::new(hi.x - 1.0, v)) {
+            if !c.inside_local(Vec2::new(lo.x + 1.0, v)) || !c.inside_local(Vec2::new(hi.x - 1.0, v)) {
                 continue;
             }
             let a = f.at(lo.x + 1.0, h + 2.0, v);
@@ -395,7 +393,7 @@ pub fn tenement(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     if rng.random_bool(0.4) {
         let p = Vec2::new((lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5);
         let bw = (hi.x - lo.x).min(9.0);
-        if c.inside(p - Vec2::new(bw * 0.5, 0.0)) && c.inside(p + Vec2::new(bw * 0.5, 0.0)) {
+        if c.inside_local(p - Vec2::new(bw * 0.5, 0.0)) && c.inside_local(p + Vec2::new(bw * 0.5, 0.0)) {
             billboard(g, c, rng, p, 0.0, h, bw, 3.0);
         }
     }
@@ -474,7 +472,7 @@ pub fn brutalist_block(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, monumental
     let top = y;
     let (tpoly, _, _) = slabs.last().unwrap().clone();
     roof_gear(g, c, rng, &tpoly, top, 0.8 + c.style.clutter);
-    if rng.random_bool(c.rules.roof_antenna_chance as f64) {
+    if coin(rng, c.rules.roof_antenna_chance) {
         antenna_mast(g, c, poly_center(&tpoly), top, rng.random_range(4.0..10.0));
     }
     if advert {
@@ -520,13 +518,13 @@ pub fn balcony_slab(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 let t = -face.len * 0.5 + (i as f32 + 0.5) * step;
                 balcony(g, c, &face, t, y, step * 0.86, 1.5, slab, rail);
                 // door and window behind
-                face.bx(g, f, Matte, t, y + 1.2, 0.03, Vec3::new(2.2, 2.3, 0.08), c.style.trim_color);
-                if rng.random_bool(c.lit_chance() as f64) {
-                    face.bx(g, f, Glow, t, y + 1.2, 0.07, Vec3::new(2.0, 2.1, 0.04), mul(pick(rng, &c.style.window_colors), 0.8));
+                face.decal(g, f, Matte, t, y + 1.2, 0.03, 2.2, 2.3, c.style.trim_color);
+                if coin(rng, c.lit_chance()) {
+                    face.decal(g, f, Glow, t, y + 1.2, 0.05, 2.0, 2.1, mul(pick(rng, &c.style.window_colors), 0.8));
                 } else {
-                    face.bx(g, f, Glass, t, y + 1.2, 0.07, Vec3::new(2.0, 2.1, 0.04), pal.glass_dark);
+                    face.decal(g, f, Glass, t, y + 1.2, 0.05, 2.0, 2.1, pal.glass_dark);
                 }
-                if rng.random_bool((c.style.clutter * 0.5) as f64) {
+                if coin(rng, c.style.clutter * 0.5) {
                     face.bx(g, f, Tarp, t + step * 0.2, y + 0.9, 1.0, Vec3::new(0.6, 0.5, 0.6), pick(rng, &pal.tarp_colors));
                 }
             }
@@ -620,7 +618,7 @@ pub fn crystal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let podium_h = fh * 1.2;
     extrude(g, f, Stone, &c.poly, 0.0, podium_h, mul(pal.stone, 1.4));
     let front = c.front_face(&c.poly);
-    front.bx(g, f, Glow, 0.0, podium_h * 0.5, 0.05, Vec3::new(front.len * 0.8, podium_h * 0.5, 0.05), mul(c.style.window_colors[0], 0.8));
+    front.decal(g, f, Glow, 0.0, podium_h * 0.5, 0.05, front.len * 0.8, podium_h * 0.5, mul(c.style.window_color(0), 0.8));
     let pc = poly_center(&c.poly);
 
     for s in 0..shards {
@@ -641,7 +639,7 @@ pub fn crystal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         shard_centers.push((center, top_center, h));
         let floors_here = (h / fh) as i32;
         for k in 1..floors_here {
-            if !rng.random_bool(lit_chance as f64) {
+            if !coin(rng, lit_chance) {
                 continue;
             }
             let t0 = k as f32 / floors_here as f32;
@@ -677,7 +675,7 @@ pub fn crystal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let p1 = b1.lerp(t1, (y - podium_h) / h1);
         let mid = (p0 + p1) * 0.5;
         let d = p1 - p0;
-        g.part(Glass).boxed(Vec3::new(mid.x, y, mid.y), Vec3::new(d.length() + 2.0, 2.2, 2.5), d.y.atan2(d.x), rgba(pal.glass[0]));
+        g.part(Glass).boxed(Vec3::new(mid.x, y, mid.y), Vec3::new(d.length() + 2.0, 2.2, 2.5), d.y.atan2(d.x), rgba(pal.glass(0)));
         g.part(Matte).boxed(Vec3::new(mid.x, y - 1.2, mid.y), Vec3::new(d.length() + 2.0, 0.3, 2.6), d.y.atan2(d.x), rgba(pal.steel));
     }
     for k in 0..4 {
@@ -737,7 +735,7 @@ pub fn fortress(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         g.part(Stone).frustum(&MeshData::ngon(center, 2.6, 8, 0.0, th), &MeshData::ngon(center, 0.6, 8, 0.0, th + 2.5), rgba(mul(stone, 0.8)));
         let dir = (pc - *p).normalize_or_zero();
         for k in 0..3 {
-            if rng.random_bool(lit_chance as f64) {
+            if coin(rng, lit_chance) {
                 let wc = pick(rng, &c.style.window_colors);
                 let wy = wall_h + 1.5 + k as f32 * 1.6;
                 let radius = 2.6 - 0.4 * (wy / th).clamp(0.0, 1.0);
@@ -751,11 +749,11 @@ pub fn fortress(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let keep = fit_inside(c, &shift_poly(&scale_poly(&poly, 0.42), Vec2::new(0.0, inradius(&poly) * 0.25)));
     loft(g, f, Stone, &keep, &scale_poly(&keep, 0.72), 0.0, keep_h, mul(stone, 1.15));
     loft(g, f, Stone, &scale_poly(&keep, 0.8), &scale_poly(&keep, 0.5), keep_h, keep_h + 3.0, mul(stone, 0.9));
-    extrude(g, f, Glow, &scale_poly(&keep, 0.73), keep_h - 1.2, keep_h - 0.4, mul(c.style.window_colors[0], 0.9));
+    extrude(g, f, Glow, &scale_poly(&keep, 0.73), keep_h - 1.2, keep_h - 0.4, mul(c.style.window_color(0), 0.9));
     let fl = (keep_h / c.fh()) as i32;
     for face in c.faces(&keep) {
         for k in 1..fl {
-            if !rng.random_bool(lit_chance as f64) {
+            if !coin(rng, lit_chance) {
                 continue;
             }
             let t = k as f32 / fl as f32;
@@ -771,9 +769,9 @@ pub fn fortress(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     extrude(g, f, Stone, &annex, 0.0, 8.0, mul(stone, 1.05));
     curtain_lights(g, c, rng, &annex, 0.0, 2, 4.0);
     let garden = Vec2::new(inradius(&poly) * 0.5, -inradius(&poly) * 0.35);
-    if c.inside(garden) {
+    if c.inside_local(garden) {
         pool(g, c, garden.x, garden.y, 6.0, 3.5);
-        if c.inside(garden + Vec2::new(8.5, 2.0)) && c.inside(garden + Vec2::new(0.5, 2.0)) && c.inside(garden + Vec2::new(4.5, 6.0)) && c.inside(garden + Vec2::new(4.5, -2.0)) {
+        if c.inside_local(garden + Vec2::new(8.5, 2.0)) && c.inside_local(garden + Vec2::new(0.5, 2.0)) && c.inside_local(garden + Vec2::new(4.5, 6.0)) && c.inside_local(garden + Vec2::new(4.5, -2.0)) {
             tree(g, f, garden + Vec2::new(4.5, 2.0), 5.0, 4.0, pal.bark, pal.foliage);
         }
     }
@@ -818,9 +816,7 @@ pub fn garden_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             }
             if rng.random_bool(0.25) && face.len > 5.0 {
                 let p = face.at(rng.random_range(-face.len * 0.3..face.len * 0.3), -1.4);
-                let w = f.to_world(p.x, p.y);
-                g.part(Wood).cylinder(w, 0.15, 0.1, y0 + 0.35, y0 + 2.6, 6, rgba(pal.bark));
-                g.part(Foliage).frustum(&MeshData::ngon(w, 1.3, 7, 0.0, y0 + 2.6), &MeshData::ngon(w, 0.4, 7, 0.3, y0 + 4.2), rgba(pal.foliage));
+                tree_kind(g, f.to_world(p.x, p.y), y0 + 0.35, TreeKind::Round, 2.2, 1.9, pal.bark, pal.foliage);
             }
         }
         prev = plate;
@@ -831,8 +827,7 @@ pub fn garden_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     if roof.len() >= 3 && inradius(&roof) > 3.0 {
         pool(g, c, poly_center(&roof).x, poly_center(&roof).y, inradius(&roof) * 0.8, inradius(&roof) * 0.5);
         let w = f.to_world(poly_center(&roof).x + inradius(&roof) * 0.6, poly_center(&roof).y);
-        g.part(Foliage).frustum(&MeshData::ngon(w, 1.6, 7, 0.0, top + 2.0), &MeshData::ngon(w, 0.4, 7, 0.3, top + 4.5), rgba(pal.foliage));
-        g.part(Wood).cylinder(w, 0.18, 0.12, top + 0.35, top + 2.2, 6, rgba(pal.bark));
+        tree_kind(g, w, top + 0.35, TreeKind::Round, 1.9, 2.6, pal.bark, pal.foliage);
     }
     antenna_mast(g, c, poly_center(&prev), top + 0.35, 4.0);
     let front = c.front_face(&base);
@@ -847,8 +842,7 @@ pub fn garden_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
 pub fn villas(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
-    let poly = offset_poly(&c.lot_poly, 0.6);
-    ground(g, f, Foliage, &poly, 0.03, mul(pal.foliage, 0.8));
+    let poly = yard(g, c, 0.6, Foliage, mul(pal.foliage, 0.8));
     // Hedge and a gate along the parcel edge.
     let front = c.front_face(&poly);
     for face in c.faces(&poly) {
@@ -912,15 +906,15 @@ pub fn villas(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         entrance(g, c, rng, &hf, 0.0, 1.4, 2.4);
         if rng.random_bool(0.6) {
             let pp = p + Vec2::new(0.0, d * 0.5 + 4.0);
-            if c.inside(pp + Vec2::new(4.0, 2.5)) && c.inside(pp - Vec2::new(4.0, 2.5)) {
+            if c.inside_local(pp + Vec2::new(4.0, 2.5)) && c.inside_local(pp - Vec2::new(4.0, 2.5)) {
                 pool(g, c, pp.x, pp.y, 7.0, 3.5);
             }
         }
         if rng.random_bool(0.6) {
             let pp = p + Vec2::new(-w * 0.5 - 3.0, -1.0);
-            if c.inside(pp) {
+            if c.inside_local(pp) {
                 let col = pick(rng, &pal.car_colors);
-                vehicle(g, f, rng, pp, yaw + std::f32::consts::FRAC_PI_2, Vehicle::Car, col);
+                vehicle(g, f, pal, rng, pp, 0.0, yaw + std::f32::consts::FRAC_PI_2, Vehicle::Car, col);
             }
         }
     }
