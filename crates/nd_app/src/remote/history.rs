@@ -119,7 +119,7 @@ impl History {
         let e = &w.economy;
         let n = w.citizens.len().max(1) as f64;
         let mood: f64 = w.citizens.values().map(|c| c.mood as f64).sum::<f64>() / n;
-        let households = w.citizens.values().filter(|c| c.home.is_some()).count();
+        let households = w.households.len();
         let (mut open, mut closed, mut built, mut sites) = (0u32, 0u32, 0u32, 0u32);
         for b in w.buildings.values() {
             if b.construction.is_some() {
