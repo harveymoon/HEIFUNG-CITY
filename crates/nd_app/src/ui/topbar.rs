@@ -9,8 +9,13 @@ use super::{help, neon, UiCtx, GOLD, WARN};
 use crate::camera::CameraMode;
 use crate::sim::SPEEDS;
 
+/// Width the Walk/Orbit pair needs at the right edge.
+const CAMERA_WIDTH: f32 = 96.0;
+
 pub fn show(ui: &mut egui::Ui, p: &mut UiCtx) {
-    ui.horizontal(|ui| {
+    // Wrapped, so a narrow window moves the tail of the row onto a second
+    // line instead of drawing the camera switch over the window toggles.
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         ui.label(egui::RichText::new("DISTRICT 2040").color(GOLD).strong().size(15.0));
         ui.separator();
@@ -22,7 +27,14 @@ pub fn show(ui: &mut egui::Ui, p: &mut UiCtx) {
         // The camera switch hugs the right edge whatever the window width.
         // The row is sized to fit 1270 points; the fixed slots above keep
         // it from growing as figures change.
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| camera(ui, p));
+        // When the row has no room left for it, it simply follows the
+        // toggles (and wraps) rather than overlapping them.
+        if ui.available_width() >= CAMERA_WIDTH {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| camera(ui, p));
+        } else {
+            ui.separator();
+            camera(ui, p);
+        }
     });
 }
 
