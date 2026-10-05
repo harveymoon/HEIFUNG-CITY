@@ -1152,7 +1152,7 @@ impl Traffic {
         let ids: Vec<CarId> = self.cars.keys().collect();
         for id in ids {
             let c = &self.cars[id];
-            if c.hold > 0.0 {
+            if c.hold > 0.0 || c.entering {
                 continue;
             }
             let lane = &self.net.lanes[c.route[c.idx] as usize];
