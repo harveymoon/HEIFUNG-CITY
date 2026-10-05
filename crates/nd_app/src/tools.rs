@@ -130,7 +130,7 @@ impl EffectivePlan {
     /// Bring the cache up to date with `world` (a clone only when the plan changed).
     pub fn sync(&mut self, world: &World) -> &Plan {
         if self.key != Some(world.plan_version) {
-            self.plan = world.effective_plan();
+            self.plan = world.effective_plan().clone();
             self.key = Some(world.plan_version);
         }
         &self.plan
