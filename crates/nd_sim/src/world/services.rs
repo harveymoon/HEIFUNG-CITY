@@ -362,7 +362,35 @@ impl World {
 
     // ── the hourly roll ────────────────────────────────────────────────────
 
+    /// Services hire: each with open jobs takes up to two people an hour,
+    /// the jobless first, else someone on a lower wage elsewhere (a public
+    /// job pays well), so a fully employed town still staffs its stations.
+    fn recruit_staff(&mut self) {
+        let posts: Vec<(BuildingId, f32)> = self.buildings.iter().filter(|(_, b)| b.service.is_some() && b.construction.is_none() && !b.is_derelict() && b.free_jobs() > 0).map(|(id, b)| (id, b.wage())).collect();
+        for (bid, wage) in posts {
+            for _ in 0..2 {
+                if self.buildings[bid].free_jobs() == 0 {
+                    break;
+                }
+                let jobless = self.citizens.iter().find(|(_, c)| c.work.is_none() && c.can_work()).map(|(id, _)| id);
+                let poach = || {
+                    self.citizens
+                        .iter()
+                        .filter(|(_, c)| c.can_work())
+                        .filter_map(|(id, c)| c.work.and_then(|w| self.buildings.get(w)).filter(|w| !w.is_special() && w.construction.is_none() && w.wage() < wage).map(|_| id))
+                        .next()
+                };
+                let Some(cid) = jobless.or_else(poach) else { break };
+                if let Some(old) = self.citizens[cid].work.and_then(|w| self.buildings.get_mut(w)) {
+                    old.workers.retain(|x| *x != cid);
+                }
+                self.assign_job(cid, bid);
+            }
+        }
+    }
+
     pub(super) fn hourly_services(&mut self) {
+        self.recruit_staff();
         if !self.config.emergencies {
             let tick = self.clock.tick;
             let citizens = &self.citizens;
@@ -1458,8 +1486,8 @@ mod tests {
         let folk = people(&mut w, 30);
         let big = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Civic && l.usable() && l.car_access()).max_by(|a, b| a.1.area().total_cmp(&b.1.area())).map(|(id, l)| (id, l.area())).unwrap();
         // A stadium needs room: a small lot is refused with the reason.
-        let small = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Civic && l.usable() && l.area() < ServiceKind::Stadium.min_area(Tier::Low)).map(|(id, _)| id).next().unwrap();
-        assert!(w.build_service(small, ServiceKind::Stadium, Tier::Low).unwrap_err().contains("too small"));
+        let small = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Civic && l.usable() && l.car_access() && l.area() < ServiceKind::Stadium.min_area(Tier::High)).map(|(id, _)| id).next().unwrap();
+        assert!(w.build_service(small, ServiceKind::Stadium, Tier::High).unwrap_err().contains("too small"));
         assert!(big.1 >= ServiceKind::Stadium.min_area(Tier::Low), "largest civic lot {:.0}", big.1);
         let stadium = w.build_service(big.0, ServiceKind::Stadium, Tier::Low).unwrap();
         let school = w.build_service(civic_lot(&w, 0.0), ServiceKind::School, Tier::Mid).unwrap();

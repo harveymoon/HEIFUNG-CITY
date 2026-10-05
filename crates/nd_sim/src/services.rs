@@ -286,7 +286,7 @@ impl ServiceKind {
     pub fn min_area(self, tier: Tier) -> f32 {
         let base = match self {
             ServiceKind::Monument => 250.0,
-            ServiceKind::Stadium => 1600.0,
+            ServiceKind::Stadium => 900.0,
             ServiceKind::Dispatch => 250.0,
             _ => 400.0,
         };
