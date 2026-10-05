@@ -1,4 +1,4 @@
-# Neon District: design from the drawing board
+# District 2040: design from the drawing board
 
 A procedural cyberpunk city builder that we keep tinkering with. This document is the
 living design doc. `IDEAS.md` next to it is the backlog where new ideas land first.
@@ -79,8 +79,21 @@ Citizens are rendered from their simulated positions every frame.
 - **Citizens**: immigrate when homes are free, take jobs when available, and move
   along roads between home, work, shops and nightlife. Each has a personality seed,
   a memory stream and a current thought.
-- **Economy**: demand per land use derived from unhoused people, unemployment and
-  population. Deliberately simple; it is the first system we expect to replace.
+- **Land value**: a 32 m grid summing road access, parks, civic and commercial
+  amenities, industrial and nightlife nuisances, traffic noise, vacant lots and the
+  tier of neighbouring homes, blurred once. Recomputed every two sim hours.
+- **Tiers and rent**: buildings are low, middle or high tier. New construction takes
+  the tier the land value supports (pulled down when people are waiting for something
+  affordable). Full buildings on rising land upgrade; buildings on falling land decay.
+  Cheap buildings wear out faster. Rent is tier base × land value × condition.
+- **Class and migration**: a job pays a wage set by its building's land use and tier,
+  times a personal skill factor. Income puts a citizen in a class. Newcomers take the
+  best home they can afford (rent at most half their income) and are turned away if
+  there is none. Three days of rent stress sends people looking for somewhere cheaper,
+  or out of town once their savings are gone; the comfortable move up a tier.
+- **Economy**: demand per land use from unhoused people, unemployment and population,
+  plus inequality stats: Gini of incomes, class counts, rents per tier, displaced,
+  emigrated and priced-out counters.
 
 ## Minds and the LLM plan
 
@@ -109,8 +122,10 @@ trait MindProvider {
 - Y-up world. Sim `(x, y)` maps to world `(x, 0, y)`.
 - Terrain: flat basin for the city, procedural hills around it.
 - Buildings: two meshes each. A lit mesh with vertex colors for walls and roofs, and
-  an unlit mesh with HDR vertex colors for windows, signs and strips. Bloom turns the
-  HDR colors into glow.
+  an unlit mesh with mildly HDR vertex colors for windows, signs and lamps. Bloom is
+  kept low; the look is worn near-future, not neon. Tier and condition drive the
+  grammar: stains, boarded windows and rusted units on cheap and derelict buildings,
+  glass and mullions on expensive ones.
 - Roads: flat dark strips with emissive lane markers.
 - Citizens: small emissive markers that move along the roads.
 
@@ -120,6 +135,8 @@ trait MindProvider {
   rule-based minds, inspect panel, save/load, hot-reloaded palette and rules, day/night.
 - v0.5 (done): projects with undo/redo and control-point editing, lanes, generated
   junctions with signals, car-following traffic, vehicles.
+- v0.6 (done): land value, three building tiers, rents, wages, class, displacement,
+  the worn 2040 look.
 - v1: household economy with resources and a market, districts and names, demand that
   reacts to prices, ambient through-traffic, lane changing, smooth arc roads.
 - v2: LLM spotlight citizens with real backends, dialogue, gossip.

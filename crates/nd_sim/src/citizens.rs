@@ -1,4 +1,4 @@
-use crate::buildings::BuildingId;
+use crate::buildings::{BuildingId, Tier};
 use crate::traffic::CarId;
 use crate::zoning::LandUse;
 use glam::Vec2;
@@ -89,6 +89,11 @@ pub struct Citizen {
     pub inside: Option<BuildingId>,
     /// Satisfaction in `0..1`; feeds the economy and future happiness systems.
     pub mood: f32,
+    /// Daily income from work (or gig money when unemployed).
+    pub income: f32,
+    pub savings: f32,
+    /// Consecutive days where rent ate too much of the income.
+    pub rent_stress_days: u8,
 }
 
 impl Citizen {
@@ -97,6 +102,10 @@ impl Citizen {
         if self.memories.len() > MAX_MEMORIES {
             self.memories.remove(0);
         }
+    }
+
+    pub fn class(&self) -> Tier {
+        Tier::for_income(self.income)
     }
 
     pub fn is_visible(&self) -> bool {

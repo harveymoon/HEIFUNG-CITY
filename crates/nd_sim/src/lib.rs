@@ -9,6 +9,7 @@ pub mod citizens;
 pub mod clock;
 pub mod economy;
 pub mod events;
+pub mod land_value;
 pub mod mind;
 pub mod names;
 pub mod plan;
@@ -17,7 +18,8 @@ pub mod traffic;
 pub mod world;
 pub mod zoning;
 
-pub use buildings::{Building, BuildingId};
+pub use buildings::{Building, BuildingId, Tier};
+pub use land_value::LandValue;
 pub use citizens::{Activity, Citizen, CitizenId, Memory, Purpose};
 pub use clock::SimClock;
 pub use economy::Economy;

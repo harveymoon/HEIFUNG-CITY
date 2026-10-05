@@ -1,6 +1,6 @@
-# Neon District
+# District 2040 (working title Neon District)
 
-A procedural cyberpunk city builder built to be tinkered with. Rust, Bevy 0.19, egui.
+A procedural near-future city builder built to be tinkered with: worn, realistic 2040 rather than neon. Rust, Bevy 0.19, egui.
 The simulation is engine-independent and deterministic; the renderer is a thin layer on top.
 
 ```
@@ -29,8 +29,10 @@ links Bevy dynamically for quicker iteration.
 - Traffic: cars follow lanes, queue, and obey the signals at junctions with three or more roads.
 - Space pauses, `-`/`=` change speed. Camera: right-drag rotate, middle-drag or shift-drag pan,
   wheel zoom, WASD/QE.
-- Buildings appear on vacant lots when demand is high. People move in when homes are free, take
-  jobs, and commute. Save and Load use `saves/city.ron`.
+- Buildings appear on vacant lots when demand is high, in the tier the land value supports. People
+  move in when they can afford a home, take jobs, commute, and move or leave when rent bites.
+  `V` toggles the land value overlay; the panel shows class counts, rents and the Gini index.
+  Save and Load use `saves/city.ron`.
 
 ## Tinkering
 

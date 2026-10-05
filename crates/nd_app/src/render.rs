@@ -31,6 +31,14 @@ struct PreviewTag;
 #[derive(Component)]
 struct SignalTag(LaneId);
 #[derive(Component)]
+struct OverlayTag;
+
+/// Toggleable data layers drawn over the ground.
+#[derive(Resource, Default)]
+pub struct Overlays {
+    pub land_value: bool,
+}
+#[derive(Component)]
 pub struct BuildingTag(pub BuildingId);
 #[derive(Component)]
 pub struct CitizenTag(pub CitizenId);
@@ -52,6 +60,7 @@ struct Materials {
     signal_green: Handle<StandardMaterial>,
     signal_red: Handle<StandardMaterial>,
     signal_mesh: Handle<Mesh>,
+    overlay: Handle<StandardMaterial>,
 }
 
 #[derive(Resource, Default)]
@@ -63,15 +72,17 @@ struct RenderState {
     buildings: HashMap<BuildingId, [Entity; 2]>,
     citizens: HashMap<CitizenId, Entity>,
     cars: HashMap<CarId, [Entity; 2]>,
+    overlay_version: u64,
+    overlay_shown: bool,
 }
 
 pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<RenderState>().add_systems(Startup, setup).add_systems(
+        app.init_resource::<RenderState>().init_resource::<Overlays>().add_systems(Startup, setup).add_systems(
             Update,
-            (sync_terrain, sync_roads, sync_signals, sync_preview, sync_lots, sync_buildings, sync_citizens, sync_cars, update_daylight)
+            (sync_terrain, sync_roads, sync_signals, sync_preview, sync_lots, sync_overlay, sync_buildings, sync_citizens, sync_cars, update_daylight)
                 .chain()
                 .in_set(SimSet::Sync),
         );
@@ -127,6 +138,7 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         }
         meshes.add(to_mesh(&m))
     };
+    let overlay = materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, alpha_mode: AlphaMode::Blend, ..default() });
     let signal_green = materials.add(unlit(pal.signal_green));
     let signal_red = materials.add(unlit(pal.signal_red));
     let signal_mesh = {
@@ -148,6 +160,7 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         signal_green,
         signal_red,
         signal_mesh,
+        overlay,
     });
 
     commands.insert_resource(GlobalAmbientLight { color: Color::linear_rgb(0.35, 0.45, 0.9), brightness: 70.0, ..default() });
@@ -200,9 +213,11 @@ fn road_meshes(sim: &Sim, assets: &GameAssets) -> (MeshData, MeshData) {
     let mut asphalt = MeshData::default();
     let mut glow = MeshData::default();
     let asphalt_c = rgba(pal.asphalt);
-    let edge_c = scale(pal.lane_marker, 0.45);
-    let centre_c = rgba(pal.lane_marker);
+    let edge_c = rgba(pal.lane_marker);
+    let centre_c = rgba(pal.centre_line);
     let divider_c = rgba(pal.lane_divider);
+    let pole_c = [0.16, 0.16, 0.17, 1.0];
+    let lamp_c = rgba(pal.street_lamp);
 
     for (sid, seg) in roads.alive_segments() {
         let (a, b) = roads.segment_points(sid);
@@ -219,6 +234,19 @@ fn road_meshes(sim: &Sim, assets: &GameAssets) -> (MeshData, MeshData) {
         let centre_offset = (seg.lanes_fwd as f32 - seg.lanes_bwd as f32) * 0.5 * LANE_WIDTH;
         // Boundary k sits at offset (k - lanes_bwd) * LANE_WIDTH from the centreline shifted so the
         // road is symmetric about the segment line.
+        // Street lamps every 28 m, alternating sides.
+        let len = a.distance(b);
+        let mut t = 14.0;
+        let mut side = 1.0;
+        while t < len - 6.0 {
+            let p = a + d * t + right * side * (hw + 0.7);
+            asphalt.boxed(bevy::math::Vec3::new(p.x, 3.5, p.y), bevy::math::Vec3::new(0.22, 7.0, 0.22), 0.0, pole_c);
+            let arm = p - right * side * 1.2;
+            asphalt.boxed(bevy::math::Vec3::new((p.x + arm.x) * 0.5, 7.0, (p.y + arm.y) * 0.5), bevy::math::Vec3::new(1.3, 0.12, 0.12), -d.y.atan2(d.x) + std::f32::consts::FRAC_PI_2, pole_c);
+            glow.boxed(bevy::math::Vec3::new(arm.x, 6.9, arm.y), bevy::math::Vec3::new(0.5, 0.18, 0.35), 0.0, lamp_c);
+            t += 28.0;
+            side = -side;
+        }
         for k in 1..seg.lanes() as u32 {
             let off = (k as f32 - total * 0.5) * LANE_WIDTH;
             let p = right * off;
@@ -249,7 +277,7 @@ fn road_meshes(sim: &Sim, assets: &GameAssets) -> (MeshData, MeshData) {
             // Faint crosswalk-style ring so junctions read from above.
             let mut ring = poly.clone();
             ring.push(poly[0]);
-            glow.ground_strip(&ring, 0.3, 0.085, scale(pal.lane_marker, 0.25));
+            glow.ground_strip(&ring, 0.3, 0.085, scale(pal.lane_marker, 0.6));
         }
     }
     (asphalt, glow)
@@ -417,7 +445,7 @@ fn sync_lots(
 fn spawn_building(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, sim: &Sim, assets: &GameAssets, id: BuildingId) -> Option<[Entity; 2]> {
     let b = sim.world.buildings.get(id)?;
     let lot = sim.world.lots.get(b.lot)?;
-    let geo = generate_building(lot, b.land_use, b.floors, b.seed, &assets.rules, &assets.palette);
+    let geo = generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette);
     let solid = commands.spawn((Mesh3d(meshes.add(to_mesh(&geo.solid))), MeshMaterial3d(mats.solid.clone()), Transform::IDENTITY, BuildingTag(id))).id();
     let glow = commands.spawn((Mesh3d(meshes.add(to_mesh(&geo.glow))), MeshMaterial3d(mats.glow.clone()), Transform::IDENTITY, BuildingTag(id))).id();
     Some([solid, glow])
@@ -445,11 +473,26 @@ fn sync_buildings(
             }
         }
     } else {
+        let changed: Vec<BuildingId> = sim
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                SimEvent::BuildingChanged(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        for id in changed {
+            if let Some(ents) = state.buildings.remove(&id) {
+                for e in ents {
+                    commands.entity(e).despawn();
+                }
+            }
+        }
         let new_ids: Vec<BuildingId> = sim
             .events
             .iter()
             .filter_map(|e| match e {
-                SimEvent::BuildingBuilt(id) => Some(*id),
+                SimEvent::BuildingBuilt(id) | SimEvent::BuildingChanged(id) => Some(*id),
                 _ => None,
             })
             .collect();
@@ -571,6 +614,47 @@ fn sync_cars(
             }
         }
     }
+}
+
+/// Land value heat map over the ground. Toggled with V.
+fn sync_overlay(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    sim: Res<Sim>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut overlays: ResMut<Overlays>,
+    mut state: ResMut<RenderState>,
+    existing: Query<Entity, With<OverlayTag>>,
+) {
+    if keys.just_pressed(KeyCode::KeyV) {
+        overlays.land_value = !overlays.land_value;
+    }
+    let lv = &sim.world.land_value;
+    if overlays.land_value == state.overlay_shown && lv.version == state.overlay_version && !assets.palette_changed {
+        return;
+    }
+    state.overlay_shown = overlays.land_value;
+    state.overlay_version = lv.version;
+    despawn_all(&mut commands, &existing);
+    if !overlays.land_value {
+        return;
+    }
+    let pal = &assets.palette;
+    let mut mesh = MeshData::default();
+    let half = lv.cell * 0.5;
+    for iy in 0..lv.n {
+        for ix in 0..lv.n {
+            let v = lv.values[iy * lv.n + ix];
+            let c = lv.cell_center(ix, iy);
+            let t = ((v - 0.15) / 0.7).clamp(0.0, 1.0);
+            let col = lerp3(pal.overlay_low, pal.overlay_high, t);
+            let poly = [SVec2::new(c.x - half, c.y - half), SVec2::new(c.x + half, c.y - half), SVec2::new(c.x + half, c.y + half), SVec2::new(c.x - half, c.y + half)];
+            mesh.ground_polygon(&poly, 0.3, [col[0], col[1], col[2], 0.42]);
+        }
+    }
+    commands.spawn((Mesh3d(meshes.add(to_mesh(&mesh))), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, OverlayTag));
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {

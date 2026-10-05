@@ -8,6 +8,8 @@ pub enum SimEvent {
     RoadsChanged,
     LotsChanged,
     BuildingBuilt(BuildingId),
+    /// Tier or condition changed enough to look different.
+    BuildingChanged(BuildingId),
     BuildingRemoved(BuildingId, LotId),
     CitizenArrived(CitizenId),
     CitizenLeft(CitizenId),

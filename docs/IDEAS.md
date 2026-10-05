@@ -17,7 +17,9 @@ Add freely. Move items into `DESIGN.md` when they get scheduled.
 - Parking: cars that are not driving sit somewhere.
 - Power and data grids as utilities; brownouts dim the neon.
 - Crime and police presence as a per-district pressure.
-- Rent, wages and a credit economy; gentrification pressure between districts.
+- Landlords and property: who owns the towers, speculation, rent control as a policy lever.
+- Districts with names computed from land value and land use clusters; district-level stats.
+- Services (clinics, schools, transit stops) as land value amenities you place.
 - Corporations as actors that build their own towers and lobby you.
 - Health system: implants, clinics, black-market ripperdocs.
 

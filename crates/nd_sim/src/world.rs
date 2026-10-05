@@ -1,8 +1,9 @@
-use crate::buildings::{Building, BuildingId};
+use crate::buildings::{Building, BuildingId, Tier};
 use crate::citizens::{Activity, Citizen, CitizenId, Purpose};
 use crate::clock::SimClock;
 use crate::economy::Economy;
 use crate::events::SimEvent;
+use crate::land_value::{LandValue, LandValueBuilder};
 use crate::mind::{Decision, Intent, MindContext, MindProvider};
 use crate::names;
 use crate::plan::{preview, Gesture, GestureId, Plan, PlanPreview, Project};
@@ -71,6 +72,7 @@ pub struct World {
     pub citizens: SlotMap<CitizenId, Citizen>,
     pub traffic: Traffic,
     pub economy: Economy,
+    pub land_value: LandValue,
     #[serde(skip)]
     pub events: Vec<SimEvent>,
     next_seed: u64,
@@ -78,7 +80,9 @@ pub struct World {
 
 impl World {
     pub fn new(config: WorldConfig) -> Self {
+        let land_value = LandValue::new(config.half_extent + 200.0, 32.0);
         Self {
+            land_value,
             rng: SimRng::seed_from_u64(config.seed),
             config,
             clock: SimClock::starting_at(0, 7, 0),
@@ -331,6 +335,7 @@ impl World {
                 }
                 if c.work == Some(bid) {
                     c.work = None;
+                    c.income = 40.0;
                 }
             }
         }
@@ -380,6 +385,10 @@ impl World {
         let tick = self.clock.tick;
         if self.clock.minute_of_day() == 0 {
             self.events.push(SimEvent::NewDay(self.clock.day()));
+            self.daily_update();
+        }
+        if tick % 120 == 0 {
+            self.update_land_value();
         }
         if tick % 10 == 0 {
             self.update_economy();
@@ -430,7 +439,207 @@ impl World {
         e.homes_free = self.buildings.values().map(|b| b.free_homes() as u32).sum();
         e.jobs_total = self.buildings.values().map(|b| b.jobs as u32).sum();
         e.jobs_free = self.buildings.values().map(|b| b.free_jobs() as u32).sum();
+        let mut tier_counts = [0u32; 3];
+        let mut rent_sum = [0.0f32; 3];
+        for b in self.buildings.values().filter(|b| b.land_use == LandUse::Residential) {
+            tier_counts[b.tier.index()] += 1;
+            rent_sum[b.tier.index()] += b.rent;
+        }
+        e.tier_counts = tier_counts;
+        for i in 0..3 {
+            e.avg_rent[i] = if tier_counts[i] > 0 { rent_sum[i] / tier_counts[i] as f32 } else { 0.0 };
+        }
+        let mut class_counts = [0u32; 3];
+        let mut incomes: Vec<f32> = Vec::with_capacity(self.citizens.len());
+        for c in self.citizens.values() {
+            class_counts[c.class().index()] += 1;
+            incomes.push(c.income);
+        }
+        e.class_counts = class_counts;
+        e.gini = Economy::gini(&mut incomes);
+        e.avg_land_value = self.land_value.average();
         e.recompute();
+    }
+
+    /// Sum accessibility, amenities, nuisances, traffic and neighbours into the
+    /// land value grid, then refresh the rent of every building.
+    fn update_land_value(&mut self) {
+        let mut b = LandValueBuilder::new(&self.land_value);
+        for (sid, seg) in self.roads.alive_segments() {
+            let (a, bp) = self.roads.segment_points(sid);
+            let len = a.distance(bp);
+            let steps = (len / 24.0).ceil().max(1.0) as usize;
+            let w = if seg.lanes() >= 4 { 0.04 } else { 0.025 };
+            for i in 0..=steps {
+                b.splat(a.lerp(bp, i as f32 / steps as f32), 110.0, w);
+            }
+        }
+        for bld in self.buildings.values() {
+            let Some(lot) = self.lots.get(bld.lot) else { continue };
+            let c = lot.center;
+            match bld.land_use {
+                LandUse::Park => b.splat(c, 180.0, 0.35),
+                LandUse::Civic => b.splat(c, 200.0, 0.2),
+                LandUse::Commercial => b.splat(c, 120.0, 0.08),
+                LandUse::Entertainment => {
+                    b.splat(c, 110.0, 0.06);
+                    b.splat(c, 50.0, -0.08);
+                }
+                LandUse::Industrial => b.splat(c, 220.0, -0.3),
+                LandUse::Residential => match bld.tier {
+                    Tier::High => b.splat(c, 130.0, 0.12),
+                    Tier::Low => b.splat(c, 130.0, -0.07),
+                    Tier::Mid => {}
+                },
+            }
+            if bld.is_derelict() {
+                b.splat(c, 100.0, -0.12);
+            }
+        }
+        for lot in self.lots.values() {
+            if lot.building.is_none() {
+                b.splat(lot.center, 60.0, -0.03);
+            }
+        }
+        for car in self.traffic.cars.values() {
+            b.splat(car.pos, 45.0, -0.004);
+        }
+        b.finish(0.2, &mut self.land_value);
+        let lv = &self.land_value;
+        for bld in self.buildings.values_mut() {
+            if let Some(lot) = self.lots.get(bld.lot) {
+                bld.update_rent(lv.at(lot.center));
+            }
+        }
+    }
+
+    /// Once a sim day: buildings wear, upgrade or decay; citizens pay rent and
+    /// react to it.
+    fn daily_update(&mut self) {
+        let ids: Vec<BuildingId> = self.buildings.keys().collect();
+        for bid in ids {
+            let (lu, tier, value, derelict_before, full) = {
+                let b = &self.buildings[bid];
+                let full = if b.land_use == LandUse::Residential { b.homes > 0 && b.free_homes() == 0 } else { b.jobs > 0 && b.free_jobs() == 0 };
+                (b.land_use, b.tier, b.land_value, b.is_derelict(), full)
+            };
+            let decay = match tier {
+                Tier::Low => 0.02,
+                Tier::Mid => 0.008,
+                Tier::High => 0.002,
+            };
+            {
+                let b = &mut self.buildings[bid];
+                b.condition = (b.condition - decay + if full { 0.006 } else { 0.0 }).clamp(0.05, 1.0);
+            }
+            let target = Tier::for_land_value(value);
+            let mut changed = false;
+            if lu != LandUse::Park {
+                if target > tier && full && self.rng.random::<f32>() < 0.15 {
+                    let b = &mut self.buildings[bid];
+                    b.tier = tier.up();
+                    b.condition = 1.0;
+                    changed = true;
+                } else if target < tier && self.rng.random::<f32>() < 0.06 {
+                    let b = &mut self.buildings[bid];
+                    b.tier = tier.down();
+                    b.condition = (b.condition * 0.8).max(0.2);
+                    changed = true;
+                }
+            }
+            let derelict_after = self.buildings[bid].is_derelict();
+            if changed || derelict_before != derelict_after {
+                let seed = self.fresh_seed();
+                let b = &mut self.buildings[bid];
+                b.seed = seed;
+                b.recompute_capacity();
+                b.update_rent(value);
+                self.events.push(SimEvent::BuildingChanged(bid));
+            }
+        }
+        let cids: Vec<CitizenId> = self.citizens.keys().collect();
+        for cid in cids {
+            self.daily_citizen(cid);
+        }
+    }
+
+    fn daily_citizen(&mut self, cid: CitizenId) {
+        let (income, home) = {
+            let c = &self.citizens[cid];
+            (c.income, c.home)
+        };
+        let rent = home.and_then(|h| self.buildings.get(h)).map(|b| b.rent).unwrap_or(0.0);
+        let (stress, class, savings) = {
+            let c = &mut self.citizens[cid];
+            c.savings += income - rent - 20.0;
+            let stressed = rent > income * 0.5;
+            c.rent_stress_days = if stressed { c.rent_stress_days.saturating_add(1) } else { 0 };
+            c.mood = (c.mood + if stressed { -0.05 } else { 0.01 }).clamp(0.0, 1.0);
+            (c.rent_stress_days, c.class(), c.savings)
+        };
+        if stress >= 3 {
+            let cheaper = self.pick_building(|b| b.land_use == LandUse::Residential && b.free_homes() > 0 && b.rent <= income * 0.45);
+            match cheaper {
+                Some(new_home) if Some(new_home) != home => {
+                    self.move_home(cid, new_home, "Rent got too steep. Moved to {}.");
+                    self.economy.displaced_total += 1;
+                }
+                _ => {
+                    if savings < -60.0 {
+                        self.emigrate(cid);
+                    }
+                }
+            }
+            return;
+        }
+        if savings > 300.0 && self.rng.random::<f32>() < 0.2 {
+            let current_tier = home.and_then(|h| self.buildings.get(h)).map(|b| b.tier);
+            if let Some(ct) = current_tier {
+                if ct < class {
+                    let better = self.pick_building(|b| b.land_use == LandUse::Residential && b.tier > ct && b.free_homes() > 0 && b.rent <= income * 0.45);
+                    if let Some(new_home) = better {
+                        self.move_home(cid, new_home, "Moving up to {}.");
+                    }
+                }
+            }
+        }
+    }
+
+    fn move_home(&mut self, cid: CitizenId, new_home: BuildingId, template: &str) {
+        let tick = self.clock.tick;
+        if let Some(old) = self.citizens[cid].home {
+            if let Some(b) = self.buildings.get_mut(old) {
+                b.residents.retain(|&c| c != cid);
+            }
+        }
+        self.buildings[new_home].residents.push(cid);
+        let name = self.buildings[new_home].name.clone();
+        let c = &mut self.citizens[cid];
+        c.home = Some(new_home);
+        c.rent_stress_days = 0;
+        c.remember(tick, template.replace("{}", &name));
+        if matches!(c.activity, Activity::AtHome) {
+            c.next_decision_tick = tick + 1;
+        }
+    }
+
+    fn emigrate(&mut self, cid: CitizenId) {
+        let Some(c) = self.citizens.remove(cid) else { return };
+        if let Some(h) = c.home {
+            if let Some(b) = self.buildings.get_mut(h) {
+                b.residents.retain(|&x| x != cid);
+            }
+        }
+        if let Some(w) = c.work {
+            if let Some(b) = self.buildings.get_mut(w) {
+                b.workers.retain(|&x| x != cid);
+            }
+        }
+        if let Activity::Driving { car, .. } = c.activity {
+            self.traffic.remove_car(car);
+        }
+        self.economy.emigrated_total += 1;
+        self.events.push(SimEvent::CitizenLeft(cid));
     }
 
     fn develop(&mut self) {
@@ -459,17 +668,30 @@ impl World {
 
     pub fn build_on(&mut self, lot_id: LotId) {
         let lu = self.lots[lot_id].land_use;
-        let floors = match lu {
-            LandUse::Residential => self.rng.random_range(2..=9),
-            LandUse::Commercial => self.rng.random_range(2..=12),
+        let value = self.land_value.at(self.lots[lot_id].center);
+        let mut tier = Tier::for_land_value(value);
+        // People waiting for somewhere affordable pull new housing down a tier.
+        if lu == LandUse::Residential && self.economy.waiting_immigrants > 6 && tier > Tier::Low && self.rng.random_bool(0.5) {
+            tier = tier.down();
+        }
+        let base: u8 = match lu {
+            LandUse::Residential => self.rng.random_range(2..=7),
+            LandUse::Commercial => self.rng.random_range(2..=8),
             LandUse::Industrial => self.rng.random_range(1..=3),
-            LandUse::Entertainment => self.rng.random_range(2..=6),
+            LandUse::Entertainment => self.rng.random_range(2..=5),
             LandUse::Civic => self.rng.random_range(2..=5),
             LandUse::Park => 0,
         };
+        let floors = match (lu, tier) {
+            (LandUse::Park, _) => 0,
+            (LandUse::Industrial, _) => base,
+            (_, Tier::High) => (base as f32 * 1.8) as u8 + 2,
+            (_, Tier::Mid) => base + 1,
+            (_, Tier::Low) => base.max(1),
+        };
         let seed = self.fresh_seed();
         let name = names::building_name(&mut self.rng, lu);
-        let b = Building::new(lot_id, lu, floors, seed, name, self.clock.tick);
+        let b = Building::new(lot_id, lu, floors, tier, seed, name, self.clock.tick, value);
         let id = self.buildings.insert(b);
         self.lots[lot_id].building = Some(id);
         self.events.push(SimEvent::BuildingBuilt(id));
@@ -499,7 +721,25 @@ impl World {
         let Some(entry) = self.entry_node() else { return };
         let n = self.rng.random_range(1..=3).min(free_homes);
         for _ in 0..n {
-            let Some(home) = self.pick_building(|b| b.free_homes() > 0) else { break };
+            // Income first: a job if one is open, gig money otherwise. Then a
+            // home they can afford, the best tier available.
+            let job = self.pick_building(|b| b.free_jobs() > 0);
+            // Personal skill factor spreads incomes within a job.
+            let skill: f32 = self.rng.random_range(0.75..1.35);
+            let income = job.and_then(|j| self.buildings.get(j)).map(|b| b.wage() * skill).unwrap_or(40.0 * skill);
+            let affordable: Vec<(BuildingId, Tier)> = self
+                .buildings
+                .iter()
+                .filter(|(_, b)| b.land_use == LandUse::Residential && b.free_homes() > 0 && b.rent <= income * 0.5)
+                .map(|(id, b)| (id, b.tier))
+                .collect();
+            let Some(best_tier) = affordable.iter().map(|(_, t)| *t).max() else {
+                self.economy.priced_out_total += 1;
+                self.economy.waiting_immigrants = (self.economy.waiting_immigrants + 1).min(60);
+                break;
+            };
+            let choices: Vec<BuildingId> = affordable.iter().filter(|(_, t)| *t == best_tier).map(|(id, _)| *id).collect();
+            let Some(&home) = choices.choose(&mut self.rng) else { break };
             let seed = self.fresh_seed();
             let name = names::citizen_name(&mut self.rng);
             let tick = self.clock.tick;
@@ -519,13 +759,16 @@ impl World {
                 arrived_tick: tick,
                 inside: None,
                 mood: 0.6,
+                income,
+                savings: self.rng.random_range(20.0..120.0),
+                rent_stress_days: 0,
             };
             citizen.remember(tick, format!("Rolled into Neon District on day {} at {}.", self.clock.day() + 1, self.clock.format_hhmm()));
             let id = self.citizens.insert(citizen);
             self.buildings[home].residents.push(id);
             let home_name = self.buildings[home].name.clone();
             self.citizens[id].remember(tick, format!("Moved into {home_name}."));
-            if let Some(job) = self.pick_building(|b| b.free_jobs() > 0) {
+            if let Some(job) = job {
                 self.assign_job(id, job);
             }
             self.economy.waiting_immigrants = self.economy.waiting_immigrants.saturating_sub(1);
@@ -536,6 +779,8 @@ impl World {
 
     fn assign_job(&mut self, id: CitizenId, job: BuildingId) {
         self.citizens[id].work = Some(job);
+        let skill = 0.75 + (self.citizens[id].seed % 1000) as f32 / 1000.0 * 0.6;
+        self.citizens[id].income = self.buildings[job].wage() * skill;
         self.buildings[job].workers.push(id);
         let name = self.buildings[job].name.clone();
         let tick = self.clock.tick;

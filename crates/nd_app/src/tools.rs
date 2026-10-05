@@ -308,7 +308,7 @@ fn pick(sim: &Sim, p: SVec2) -> Selection {
 }
 
 fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>) {
-    let cyan = Color::linear_rgb(0.0, 2.5, 3.0);
+    let cyan = Color::linear_rgb(1.4, 1.6, 1.8);
     let red = Color::linear_rgb(3.0, 0.2, 0.4);
     let white = Color::linear_rgb(3.0, 3.0, 3.0);
     let lift = |p: SVec2| Vec3::new(p.x, 0.8, p.y);

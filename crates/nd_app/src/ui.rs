@@ -6,6 +6,7 @@ use nd_minds::Personality;
 use nd_sim::LandUse;
 
 use crate::assets::GameAssets;
+use crate::render::Overlays;
 use crate::sim::{Sim, SPEEDS};
 use crate::tools::{Selection, Tool, ToolState};
 
@@ -26,12 +27,12 @@ impl Plugin for UiPlugin {
 }
 
 fn neon(ui: &mut egui::Ui, text: &str) {
-    ui.label(egui::RichText::new(text).color(egui::Color32::from_rgb(0, 229, 255)).strong());
+    ui.label(egui::RichText::new(text).color(egui::Color32::from_rgb(230, 225, 210)).strong());
 }
 
 fn section(ui: &mut egui::Ui, text: &str) {
     ui.add_space(2.0);
-    ui.label(egui::RichText::new(text).small().strong().color(egui::Color32::from_rgb(255, 0, 170)));
+    ui.label(egui::RichText::new(text).small().strong().color(egui::Color32::from_rgb(235, 180, 90)));
 }
 
 fn zone_color32(c: [f32; 3]) -> egui::Color32 {
@@ -44,6 +45,7 @@ fn side_panel(
     mut tools: ResMut<ToolState>,
     mut selection: ResMut<Selection>,
     mut flags: ResMut<UiFlags>,
+    mut overlays: ResMut<Overlays>,
     assets: Res<GameAssets>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
@@ -57,7 +59,7 @@ fn side_panel(
     egui::Panel::left("neon_panel").default_size(340.0).show(&mut root, |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(4.0);
-            ui.heading(egui::RichText::new("NEON DISTRICT").color(egui::Color32::from_rgb(255, 0, 170)).size(22.0));
+            ui.heading(egui::RichText::new("DISTRICT 2040").color(egui::Color32::from_rgb(235, 180, 90)).size(22.0));
             ui.label(egui::RichText::new(format!("minds: {} · backend: {}", nd_sim::MindProvider::name(&sim.minds), sim.minds.backend_name())).small().weak());
             ui.separator();
 
@@ -187,6 +189,18 @@ fn side_panel(
                 sim.world.traffic.net.lanes.len(),
                 sim.world.traffic.net.intersections.iter().filter(|i| i.signalized).count()
             ));
+            ui.separator();
+            section(ui, "LAND & CLASS");
+            ui.checkbox(&mut overlays.land_value, "Land value overlay [V]");
+            ui.label(format!(
+                "land value avg {:.2}   gini {:.2}   displaced {}   left town {}   priced out {}",
+                e.avg_land_value, e.gini, e.displaced_total, e.emigrated_total, e.priced_out_total
+            ));
+            ui.label(format!(
+                "housing  low {} · middle {} · high {}     rents {:.0} / {:.0} / {:.0}",
+                e.tier_counts[0], e.tier_counts[1], e.tier_counts[2], e.avg_rent[0], e.avg_rent[1], e.avg_rent[2]
+            ));
+            ui.label(format!("people   low {} · middle {} · high {}", e.class_counts[0], e.class_counts[1], e.class_counts[2]));
             ui.label(egui::RichText::new("demand").small().weak());
             for lu in LandUse::ALL {
                 let col = zone_color32(assets.palette.zone_color(lu));
@@ -212,8 +226,10 @@ fn side_panel(
                     let work = c.work.and_then(|h| sim.world.buildings.get(h)).map(|b| b.name.as_str()).unwrap_or("unemployed");
                     ui.label(format!("{}  ·  home: {home}  ·  work: {work}", c.activity.label()));
                     ui.label(format!("mood {:.0}%  ·  arrived day {}", c.mood * 100.0, c.arrived_tick / 1440 + 1));
+                    let rent = c.home.and_then(|h| sim.world.buildings.get(h)).map(|b| b.rent).unwrap_or(0.0);
+                    ui.label(format!("{} class  ·  income {:.0}/day  ·  rent {:.0}/day  ·  savings {:.0}{}", c.class().label(), c.income, rent, c.savings, if c.rent_stress_days > 0 { format!("  ·  rent stress {}d", c.rent_stress_days) } else { String::new() }));
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new(format!("“{}”", c.thought)).italics().color(egui::Color32::from_rgb(255, 120, 200)));
+                    ui.label(egui::RichText::new(format!("“{}”", c.thought)).italics().color(egui::Color32::from_rgb(220, 190, 140)));
                     ui.add_space(4.0);
                     let mut spotlight = c.spotlight;
                     if ui.checkbox(&mut spotlight, "Spotlight: route this citizen through the LLM mind").changed() {
@@ -234,7 +250,8 @@ fn side_panel(
                         return;
                     };
                     neon(ui, &b.name);
-                    ui.label(format!("{}  ·  {} floors  ·  built day {}", b.land_use.label(), b.floors, b.built_tick / 1440 + 1));
+                    ui.label(format!("{}  ·  {} tier  ·  {} floors  ·  built day {}", b.land_use.label(), b.tier.label(), b.floors, b.built_tick / 1440 + 1));
+                    ui.label(format!("land value {:.2}  ·  rent {:.0}/day  ·  wage {:.0}/day  ·  condition {:.0}%{}", b.land_value, b.rent, b.wage(), b.condition * 100.0, if b.is_derelict() { "  ·  DERELICT" } else { "" }));
                     ui.label(format!("residents {}/{}  ·  workers {}/{}  ·  visitors {}", b.residents.len(), b.homes, b.workers.len(), b.jobs, b.visitors));
                     ui.label(egui::RichText::new("people here").small().weak());
                     let names: Vec<String> = b
@@ -289,9 +306,9 @@ fn style(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
     visuals.panel_fill = egui::Color32::from_rgba_unmultiplied(8, 10, 20, 235);
     visuals.window_fill = egui::Color32::from_rgba_unmultiplied(8, 10, 20, 235);
-    visuals.selection.bg_fill = egui::Color32::from_rgb(0, 120, 140);
-    visuals.hyperlink_color = egui::Color32::from_rgb(0, 229, 255);
-    visuals.widgets.active.bg_fill = egui::Color32::from_rgb(0, 150, 170);
-    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(20, 60, 80);
+    visuals.selection.bg_fill = egui::Color32::from_rgb(120, 85, 30);
+    visuals.hyperlink_color = egui::Color32::from_rgb(235, 180, 90);
+    visuals.widgets.active.bg_fill = egui::Color32::from_rgb(150, 105, 40);
+    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(70, 55, 35);
     ctx.set_visuals(visuals);
 }

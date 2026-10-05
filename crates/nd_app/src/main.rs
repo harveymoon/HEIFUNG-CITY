@@ -13,10 +13,10 @@ use bevy::window::WindowResolution;
 
 fn main() {
     App::new()
-        .insert_resource(ClearColor(Color::linear_rgb(0.012, 0.010, 0.030)))
+        .insert_resource(ClearColor(Color::linear_rgb(0.02, 0.018, 0.028)))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "Neon District".into(),
+                title: "District 2040".into(),
                 resolution: WindowResolution::new(1600, 900),
                 ..default()
             }),

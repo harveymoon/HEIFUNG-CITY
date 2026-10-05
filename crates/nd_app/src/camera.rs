@@ -39,10 +39,10 @@ fn spawn_camera(mut commands: Commands) {
         Camera3d::default(),
         Hdr,
         Tonemapping::TonyMcMapface,
-        Bloom { intensity: 0.14, low_frequency_boost: 0.5, ..default() },
+        Bloom { intensity: 0.08, low_frequency_boost: 0.4, ..default() },
         DistanceFog {
             color: Color::linear_rgb(0.03, 0.02, 0.07),
-            falloff: FogFalloff::Linear { start: 900.0, end: 3200.0 },
+            falloff: FogFalloff::Linear { start: 500.0, end: 2600.0 },
             ..default()
         },
         OrbitCamera { target: Vec3::ZERO, yaw: 0.7, pitch: 0.85, distance: 520.0 },

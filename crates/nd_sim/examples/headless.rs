@@ -19,7 +19,8 @@ fn main() {
     world.add_zone(block(-240.0, -240.0), LandUse::Residential);
     world.add_zone(block(0.0, -240.0), LandUse::Commercial);
     world.add_zone(block(-240.0, 0.0), LandUse::Industrial);
-    world.add_zone(block(0.0, 0.0), LandUse::Entertainment);
+    world.add_zone(block(0.0, 0.0), LandUse::Residential);
+    world.add_zone(vec![Vec2::new(-120.0, -60.0), Vec2::new(-10.0, -60.0), Vec2::new(-10.0, -10.0), Vec2::new(-120.0, -10.0)], LandUse::Park);
 
     println!("lots: {}", world.lots.len());
     let mut minds = IdleMind;
@@ -31,7 +32,7 @@ fn main() {
         }
         let e = &world.economy;
         println!(
-            "day {:>2}: pop {:>4}  buildings {:>3}  peak cars {:>3}  homes {}/{}  jobs {}/{}  demand R{:.2} C{:.2} I{:.2} E{:.2}",
+            "day {:>2}: pop {:>4} bld {:>3} cars {:>3} | homes {}/{} jobs {}/{} | tiers L{} M{} H{} | class L{} M{} H{} | rent {:.0}/{:.0}/{:.0} | gini {:.2} lv {:.2} | moved {} left {} priced-out {}",
             day + 1,
             world.citizens.len(),
             world.buildings.len(),
@@ -40,14 +41,24 @@ fn main() {
             e.homes_total,
             e.jobs_total - e.jobs_free,
             e.jobs_total,
-            e.demand_for(LandUse::Residential),
-            e.demand_for(LandUse::Commercial),
-            e.demand_for(LandUse::Industrial),
-            e.demand_for(LandUse::Entertainment),
+            e.tier_counts[0],
+            e.tier_counts[1],
+            e.tier_counts[2],
+            e.class_counts[0],
+            e.class_counts[1],
+            e.class_counts[2],
+            e.avg_rent[0],
+            e.avg_rent[1],
+            e.avg_rent[2],
+            e.gini,
+            e.avg_land_value,
+            e.displaced_total,
+            e.emigrated_total,
+            e.priced_out_total,
         );
     }
     if let Some((_, c)) = world.citizens.iter().next() {
-        println!("\n{} ({}):", c.name, c.activity.label());
+        println!("\n{} ({}, income {:.0}/day, savings {:.0}):", c.name, c.activity.label(), c.income, c.savings);
         for m in &c.memories {
             println!("  - {}", m.text);
         }

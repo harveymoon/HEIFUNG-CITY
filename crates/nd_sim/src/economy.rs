@@ -15,6 +15,21 @@ pub struct Economy {
     pub jobs_free: u32,
     /// People who want to move in but found no home yet.
     pub waiting_immigrants: u32,
+    /// Residential buildings per tier.
+    pub tier_counts: [u32; 3],
+    /// Citizens per income class.
+    pub class_counts: [u32; 3],
+    /// Average daily rent per residential tier.
+    pub avg_rent: [f32; 3],
+    /// Income inequality, 0 = equal, 1 = one person has everything.
+    pub gini: f32,
+    pub avg_land_value: f32,
+    /// Citizens forced to move by rent, cumulative.
+    pub displaced_total: u32,
+    /// Citizens who gave up and left the city, cumulative.
+    pub emigrated_total: u32,
+    /// Immigrants turned away because nothing was affordable, cumulative.
+    pub priced_out_total: u32,
 }
 
 impl Economy {
@@ -39,5 +54,20 @@ impl Economy {
         d[LandUse::Civic.index()] = (0.1 + (pop / 150.0)).min(1.0);
         d[LandUse::Park.index()] = 0.5;
         self.demand = d;
+    }
+
+    /// Gini coefficient of a list of incomes.
+    pub fn gini(incomes: &mut Vec<f32>) -> f32 {
+        if incomes.len() < 2 {
+            return 0.0;
+        }
+        incomes.sort_by(|a, b| a.total_cmp(b));
+        let n = incomes.len() as f32;
+        let total: f32 = incomes.iter().sum();
+        if total <= 0.0 {
+            return 0.0;
+        }
+        let weighted: f32 = incomes.iter().enumerate().map(|(i, &x)| (i as f32 + 1.0) * x).sum();
+        ((2.0 * weighted) / (n * total) - (n + 1.0) / n).clamp(0.0, 1.0)
     }
 }

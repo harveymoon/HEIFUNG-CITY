@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+/// Rust tone used by the building grammar for units and stains.
+pub const RUST: [f32; 3] = [0.42, 0.22, 0.12];
+pub const RUST_STAIN: [f32; 3] = [0.30, 0.16, 0.09];
+
 /// World colours. Loaded from `assets/palette.ron` and hot-reloaded. Values are
 /// linear RGB; glow colours are meant to exceed 1.0 so bloom picks them up.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -35,63 +39,74 @@ pub struct Palette {
     pub signal_green: [f32; 3],
     pub signal_red: [f32; 3],
     pub lane_divider: [f32; 3],
+    pub centre_line: [f32; 3],
+    pub street_lamp: [f32; 3],
+    pub lamp: [f32; 3],
+    pub sign_colors: Vec<[f32; 3]>,
+    pub aviation_light: [f32; 3],
+    pub rust: [f32; 3],
+    pub foliage: [f32; 3],
+    pub overlay_low: [f32; 3],
+    pub overlay_high: [f32; 3],
 }
 
 impl Default for Palette {
     fn default() -> Self {
         Self {
-            sky: [0.012, 0.010, 0.030],
-            fog: [0.03, 0.02, 0.07],
-            moon: [0.45, 0.55, 1.0],
-            sky_day: [0.30, 0.42, 0.62],
-            fog_day: [0.38, 0.45, 0.58],
-            sun: [1.0, 0.95, 0.85],
-            sun_low: [1.0, 0.45, 0.25],
-            sky_dusk: [0.35, 0.10, 0.30],
-            ground: [0.035, 0.030, 0.060],
-            ground_variation: [0.015, 0.018, 0.030],
-            hills: [0.040, 0.050, 0.075],
-            asphalt: [0.018, 0.018, 0.026],
-            lane_marker: [0.0, 2.0, 2.4],
-            curb: [0.10, 0.10, 0.14],
-            lot_vacant: [0.045, 0.040, 0.070],
+            sky: [0.020, 0.018, 0.028],
+            fog: [0.05, 0.045, 0.06],
+            moon: [0.5, 0.55, 0.75],
+            sky_day: [0.42, 0.44, 0.46],
+            fog_day: [0.48, 0.47, 0.45],
+            sun: [1.0, 0.93, 0.82],
+            sun_low: [1.0, 0.55, 0.3],
+            sky_dusk: [0.38, 0.22, 0.18],
+            ground: [0.060, 0.058, 0.052],
+            ground_variation: [0.025, 0.022, 0.018],
+            hills: [0.070, 0.075, 0.070],
+            asphalt: [0.030, 0.030, 0.032],
+            lane_marker: [0.38, 0.39, 0.36],
+            curb: [0.13, 0.13, 0.13],
+            lot_vacant: [0.075, 0.070, 0.060],
             zone_colors: [
-                [1.0, 0.0, 0.55],  // residential magenta
-                [1.0, 0.35, 0.0],  // commercial orange
-                [0.55, 1.0, 0.0],  // industrial acid
-                [0.6, 0.1, 1.0],   // entertainment violet
-                [0.1, 0.4, 1.0],   // civic blue
-                [0.0, 1.0, 0.5],   // park green
+                [0.95, 0.50, 0.35], // residential terracotta
+                [0.95, 0.75, 0.25], // commercial amber
+                [0.60, 0.65, 0.30], // industrial olive
+                [0.75, 0.40, 0.80], // entertainment mauve
+                [0.40, 0.60, 0.90], // civic steel blue
+                [0.35, 0.80, 0.45], // park green
             ],
-            glow_colors: vec![
-                [0.0, 2.6, 3.2],
-                [3.2, 0.0, 1.6],
-                [3.2, 1.0, 0.0],
-                [1.6, 0.2, 3.2],
-                [0.0, 3.2, 1.3],
-                [3.2, 2.6, 0.0],
-            ],
-            window_warm: [1.5, 1.05, 0.45],
-            window_cold: [0.45, 1.25, 1.7],
-            citizen: [0.5, 3.0, 4.0],
-            citizen_spotlight: [6.0, 1.0, 4.0],
-            preview: [0.0, 1.6, 2.0],
-            preview_remove: [2.5, 0.15, 0.4],
+            glow_colors: vec![[1.3, 0.85, 0.45], [1.0, 1.05, 1.2], [1.2, 0.5, 0.35], [0.6, 0.9, 1.1]],
+            window_warm: [1.2, 0.85, 0.5],
+            window_cold: [0.8, 0.95, 1.15],
+            citizen: [0.9, 1.4, 1.6],
+            citizen_spotlight: [2.5, 1.2, 0.6],
+            preview: [0.5, 1.4, 1.8],
+            preview_remove: [2.0, 0.3, 0.3],
             car_colors: vec![
-                [0.06, 0.06, 0.08],
-                [0.10, 0.11, 0.15],
-                [0.75, 0.78, 0.85],
-                [0.85, 0.65, 0.05],
-                [0.08, 0.80, 0.95],
-                [0.95, 0.05, 0.55],
-                [0.75, 0.05, 0.10],
-                [0.35, 0.10, 0.85],
+                [0.06, 0.06, 0.07],
+                [0.14, 0.15, 0.17],
+                [0.70, 0.72, 0.75],
+                [0.80, 0.60, 0.10],
+                [0.20, 0.30, 0.45],
+                [0.50, 0.12, 0.12],
+                [0.35, 0.38, 0.32],
+                [0.55, 0.55, 0.58],
             ],
-            headlight: [3.5, 3.5, 3.0],
-            taillight: [3.0, 0.15, 0.2],
-            signal_green: [0.1, 3.0, 0.6],
-            signal_red: [3.0, 0.2, 0.3],
-            lane_divider: [0.0, 0.9, 1.1],
+            headlight: [2.8, 2.8, 2.5],
+            taillight: [2.2, 0.15, 0.15],
+            signal_green: [0.2, 2.2, 0.5],
+            signal_red: [2.4, 0.2, 0.2],
+            lane_divider: [0.30, 0.31, 0.28],
+            centre_line: [0.55, 0.45, 0.15],
+            street_lamp: [1.6, 1.2, 0.7],
+            lamp: [1.4, 1.1, 0.7],
+            sign_colors: vec![[1.4, 0.9, 0.4], [1.1, 1.15, 1.3], [1.3, 0.45, 0.35], [0.6, 1.0, 1.2], [1.2, 0.5, 0.9]],
+            aviation_light: [2.0, 0.2, 0.15],
+            rust: RUST,
+            foliage: [0.22, 0.34, 0.18],
+            overlay_low: [0.1, 0.25, 0.7],
+            overlay_high: [1.0, 0.6, 0.1],
         }
     }
 }
