@@ -536,6 +536,10 @@ impl World {
         self.step_transit();
         self.step_rail();
         self.step_citizens(minds);
+        // Every system that moves people has run: lay the breadcrumbs.
+        for c in self.citizens.values_mut() {
+            c.push_trail();
+        }
     }
 
     fn step_traffic(&mut self) {
@@ -1393,6 +1397,7 @@ impl World {
                 satiety: 0.7,
                 groceries: 2.0,
                 hungry_days: 0,
+                trail: Vec::new(),
             };
             citizen.remember(tick, format!("Rolled into Neon District on day {} at {}.", self.clock.day() + 1, self.clock.format_hhmm()));
             if let Some(s) = by_train {

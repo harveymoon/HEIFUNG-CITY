@@ -3,10 +3,12 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use nd_minds::Personality;
-use nd_sim::{LandUse, Resource};
+use nd_sim::citizens::TravelMode;
+use nd_sim::zoning::{point_in_polygon, polygon_area};
+use nd_sim::{CitizenId, LandUse, Resource, Tier};
 
 use crate::assets::GameAssets;
-use crate::camera::CameraMode;
+use crate::camera::{CameraMode, Cursor, OrbitCamera};
 use crate::render::{Lighting, Overlays, RenderStats};
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use crate::sim::{Sim, SPEEDS};
@@ -52,6 +54,8 @@ fn side_panel(
     mut overlays: ResMut<Overlays>,
     mut lighting: ResMut<Lighting>,
     mut mode: ResMut<CameraMode>,
+    cursor: Res<Cursor>,
+    mut cams: Query<&mut OrbitCamera>,
     assets: Res<GameAssets>,
     stats: Res<RenderStats>,
     diagnostics: Res<DiagnosticsStore>,
@@ -270,7 +274,7 @@ fn side_panel(
                     ui.label(egui::RichText::new("Click a road or zone to mark it for removal.").small().weak());
                 }
                 Tool::Inspect => {
-                    ui.label(egui::RichText::new("Click a glowing citizen, a car, or a building.").small().weak());
+                    ui.label(egui::RichText::new("Click a glowing citizen, a car, or a building. Hover a parcel for a quick read-out; a selected person opens the person pane, where the star keeps them in FAVOURITES.").small().weak());
                 }
                 Tool::Transit => {
                     use crate::tools::TransitMode;
@@ -418,6 +422,7 @@ fn side_panel(
             section(ui, "LAND & CLASS");
             ui.checkbox(&mut overlays.land_value, "Land value overlay [V]");
             ui.checkbox(&mut overlays.paths, "Pedestrian network overlay [P]");
+            ui.checkbox(&mut overlays.zoning, "Zoning outlines [O]");
             ui.label(format!(
                 "land value avg {:.2}   gini {:.2}   displaced {}   left town {}   priced out {}",
                 e.avg_land_value, e.gini, e.displaced_total, e.emigrated_total, e.priced_out_total
@@ -552,8 +557,72 @@ fn side_panel(
                         ui.label(egui::RichText::new(n).small());
                     }
                 }
+                Selection::Car(id) => {
+                    let Some(car) = sim.world.traffic.cars.get(id) else {
+                        *selection = Selection::None;
+                        return;
+                    };
+                    if let Some(bus) = &car.bus {
+                        let line = sim.world.transit.routes.get(bus.route).map(|r| r.name.clone()).unwrap_or_else(|| "a line that was removed".into());
+                        neon(ui, &format!("Bus on {line}"));
+                        let going = if bus.to_depot || bus.next_stop == usize::MAX { "heading back to the depot".to_string() } else { format!("next stop {}", bus.next_stop + 1) };
+                        ui.label(format!("{} passenger{}  ·  {going}  ·  {:.0} km/h{}", bus.passengers.len(), if bus.passengers.len() == 1 { "" } else { "s" }, car.v * 3.6, if car.hold > 0.0 { "  ·  at a stop" } else { "" }));
+                        ui.label(egui::RichText::new("on board").small().weak());
+                        for n in bus.passengers.iter().filter_map(|&p| sim.world.citizens.get(p)).map(|c| c.name.clone()).take(12) {
+                            ui.label(egui::RichText::new(n).small());
+                        }
+                    } else if let Some(cargo) = &car.cargo {
+                        neon(ui, "Delivery truck");
+                        let name = |b| sim.world.buildings.get(b).map(|b| b.name.as_str()).unwrap_or("out of town");
+                        ui.label(format!("{:.0} {} from {} to {}  ·  worth {:.0}  ·  {:.0} km/h", cargo.amount, cargo.resource.label(), name(cargo.from), name(cargo.to), cargo.price, car.v * 3.6));
+                    } else {
+                        neon(ui, "Car");
+                        ui.label(format!("{:.0} km/h  ·  nobody we know at the wheel", car.v * 3.6));
+                    }
+                }
             }
             ui.separator();
+
+            // Favourites: starred people, with a button to select and one to
+            // fly the camera to them. Anyone who left town drops off the list.
+            tools.favorites.retain(|id| sim.world.citizens.contains_key(*id));
+            if !tools.favorites.is_empty() {
+                section(ui, "FAVOURITES");
+                let mut pick: Option<CitizenId> = None;
+                let mut jump: Option<nd_sim::Vec2> = None;
+                let mut drop: Option<CitizenId> = None;
+                for &id in &tools.favorites {
+                    let Some(c) = sim.world.citizens.get(id) else { continue };
+                    ui.horizontal(|ui| {
+                        let sel = *selection == Selection::Citizen(id);
+                        if ui.selectable_label(sel, &c.name).clicked() {
+                            pick = Some(id);
+                        }
+                        ui.label(egui::RichText::new(c.activity.label()).small().weak());
+                        if ui.small_button("go").on_hover_text("Select and fly the camera to them").clicked() {
+                            pick = Some(id);
+                            jump = Some(c.pos);
+                        }
+                        if ui.small_button("★").on_hover_text("Remove from favourites").clicked() {
+                            drop = Some(id);
+                        }
+                    });
+                }
+                if let Some(id) = pick {
+                    *selection = Selection::Citizen(id);
+                }
+                if let Some(id) = drop {
+                    tools.favorites.retain(|f| *f != id);
+                }
+                if let Some(p) = jump {
+                    for mut cam in &mut cams {
+                        cam.target = Vec3::new(p.x, 0.0, p.y);
+                        cam.distance = cam.distance.min(70.0);
+                        cam.pitch = 0.7;
+                    }
+                }
+                ui.separator();
+            }
 
             // Save / load / assets.
             ui.horizontal(|ui| {
@@ -585,11 +654,139 @@ fn side_panel(
         });
     });
 
+    person_pane(ctx, &mut sim, &mut tools, &mut selection);
+    if tools.tool == Tool::Inspect && *mode == CameraMode::Orbit {
+        hover_card(ctx, &sim, &cursor);
+    }
+
     // The panel lives on the background layer, which egui's own hit test
-    // ignores, so check its rectangle directly as well.
+    // ignores, so check its rectangle directly as well. Windows (the person
+    // pane) are ordinary interactable layers that egui's test does catch;
+    // the hover card is not interactable, so it never swallows a click.
     let over_panel = ctx.pointer_latest_pos().map_or(false, |p| panel.response.rect.contains(p));
     flags.pointer_over_ui = over_panel || ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input();
     Ok(())
+}
+
+/// A draggable window on the selected citizen: who they are, what they are
+/// doing, where they are going, and everything they remember. The star keeps
+/// them in the FAVOURITES list; closing the pane deselects them.
+fn person_pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection) {
+    let Selection::Citizen(id) = *selection else { return };
+    let Some(c) = sim.world.citizens.get(id) else { return };
+    let name_of = |b: Option<nd_sim::BuildingId>| b.and_then(|b| sim.world.buildings.get(b)).map(|b| b.name.clone());
+    let home = name_of(c.home).unwrap_or_else(|| "none".into());
+    let work = name_of(c.work).unwrap_or_else(|| "unemployed".into());
+    let via_transit = name_of(c.transit.map(|t| t.target));
+    let destination = match &c.activity {
+        nd_sim::Activity::Traveling { to, .. } | nd_sim::Activity::Driving { to, .. } => name_of(*to).or(via_transit),
+        nd_sim::Activity::Waiting { .. } | nd_sim::Activity::Riding { .. } | nd_sim::Activity::OnTrain { .. } => via_transit,
+        _ => None,
+    };
+    let rent = c.home.and_then(|h| sim.world.buildings.get(h)).map_or(0.0, |b| b.rent);
+    let is_fav = tools.favorites.contains(&id);
+    let was_spotlight = c.spotlight;
+    let mut spotlight = c.spotlight;
+    let mut toggle_fav = false;
+    let mut open = true;
+    egui::Window::new(egui::RichText::new(&c.name).color(egui::Color32::from_rgb(230, 225, 210)).strong())
+        .id(egui::Id::new("person_pane"))
+        .open(&mut open)
+        .default_pos(egui::pos2(ctx.viewport_rect().right() - 372.0, 24.0))
+        .default_width(340.0)
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                let star = if is_fav { "★ favourite" } else { "☆ favourite" };
+                if ui.selectable_label(is_fav, star).on_hover_text("Keep this person in the FAVOURITES list in the side panel").clicked() {
+                    toggle_fav = true;
+                }
+                ui.label(egui::RichText::new(Personality::from_seed(c.seed).summary()).small().weak());
+            });
+            ui.separator();
+            let how = if c.mode == TravelMode::Bike && c.activity.is_traveling() { "  ·  by bike" } else { "" };
+            ui.label(format!("{}{how}", c.activity.label()));
+            ui.label(format!("destination: {}", destination.as_deref().unwrap_or("none")));
+            ui.label(format!("mood {:.0}%  ·  satiety {:.0}%  ·  {} class", c.mood * 100.0, c.satiety * 100.0, c.class().label()));
+            ui.label(format!("income {:.0}/day  ·  rent {:.0}/day  ·  savings {:.0}", c.income, rent, c.savings));
+            ui.label(format!("home: {home}"));
+            ui.label(format!("work: {work}"));
+            ui.label(format!("{}  ·  {}", if c.owns_car { "owns a car" } else { "no car" }, if c.owns_bike { "owns a bike" } else { "no bike" }));
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(format!("“{}”", c.thought)).italics().color(egui::Color32::from_rgb(220, 190, 140)));
+            ui.checkbox(&mut spotlight, "Spotlight: route through the LLM mind");
+            ui.separator();
+            ui.label(egui::RichText::new(format!("memories, newest first ({})", c.memories.len())).small().weak());
+            egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                for m in c.memories.iter().rev() {
+                    ui.label(egui::RichText::new(format!("d{} {:02}:{:02}  {}", m.tick / 1440 + 1, (m.tick % 1440) / 60, m.tick % 60, m.text)).small());
+                }
+            });
+        });
+    if toggle_fav {
+        if is_fav {
+            tools.favorites.retain(|f| *f != id);
+        } else {
+            tools.favorites.push(id);
+        }
+    }
+    if spotlight != was_spotlight {
+        if let Some(c) = sim.world.citizens.get_mut(id) {
+            c.spotlight = spotlight;
+        }
+    }
+    if !open {
+        *selection = Selection::None;
+    }
+}
+
+/// A read-out of the parcel under the cursor, beside the pointer. The area
+/// is not interactable, so egui never counts the pointer as over it and the
+/// click still reaches the Inspect tool.
+fn hover_card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
+    let (Some(ground), Some(pointer)) = (cursor.ground, ctx.pointer_latest_pos()) else { return };
+    let w = &sim.world;
+    let Some((_, lot)) = w.lots.iter().find(|(_, l)| point_in_polygon(ground, &l.polygon)) else { return };
+    let building = lot.building.and_then(|b| w.buildings.get(b));
+    let value = w.land_value.at(lot.center);
+    let zone = w.zones.get(lot.zone).map_or_else(|| "no zone".to_string(), |z| format!("{} zone of {:.0} m²", z.land_use.label(), polygon_area(&z.polygon).abs()));
+    let small = |t: String| egui::RichText::new(t).small();
+
+    // Keep the card on screen: flip to the other side of the pointer near the edges.
+    let size = egui::vec2(300.0, if building.is_some() { 120.0 } else { 80.0 });
+    let view = ctx.viewport_rect();
+    let mut at = pointer + egui::vec2(18.0, 18.0);
+    if at.x + size.x > view.right() {
+        at.x = pointer.x - 18.0 - size.x;
+    }
+    if at.y + size.y > view.bottom() {
+        at.y = pointer.y - 18.0 - size.y;
+    }
+    egui::Area::new(egui::Id::new("lot_hover_card")).order(egui::Order::Tooltip).interactable(false).fixed_pos(at).show(ctx, |ui| {
+        egui::Frame::popup(ui.style()).show(ui, |ui| {
+            ui.set_max_width(size.x);
+            match building {
+                Some(b) => {
+                    neon(ui, &b.name);
+                    ui.label(small(format!("{}  ·  {} tier  ·  {} floors{}", b.land_use.label(), b.tier.label(), b.floors, if b.is_derelict() { "  ·  derelict" } else { "" })));
+                    ui.label(small(format!("homes {}/{}  ·  jobs {}/{}", b.residents.len(), b.homes, b.workers.len(), b.jobs)));
+                    if let Some(bz) = &b.business {
+                        ui.label(small(format!("{}{}", bz.kind.label(), if bz.closed { "  (closed)" } else { "" })));
+                    }
+                }
+                None => neon(ui, if lot.landlocked { "Unusable ground" } else if lot.park.is_some() { "Park" } else { "Vacant lot" }),
+            }
+            ui.label(small(format!("{}  ·  {zone}", lot.land_use.label())));
+            ui.label(small(format!(
+                "lot {:.0} m²  ·  land value {:.2} ({} tier land){}{}",
+                lot.area(),
+                value,
+                Tier::for_land_value(value).label(),
+                if lot.landlocked { "  ·  landlocked" } else { "" },
+                if lot.park.is_some() { "  ·  park" } else { "" }
+            )));
+        });
+    });
 }
 
 fn style(ctx: &egui::Context) {

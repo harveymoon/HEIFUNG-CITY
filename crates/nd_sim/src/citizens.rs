@@ -106,6 +106,13 @@ pub struct Memory {
 }
 
 pub const MAX_MEMORIES: usize = 24;
+/// Points kept in the breadcrumb trail drawn behind a selected citizen.
+pub const MAX_TRAIL: usize = 300;
+/// A citizen moved at least this far since the last point to earn another.
+pub const TRAIL_STEP: f32 = 0.5;
+/// A jump longer than this (arriving by train, a respawn) is not a walk:
+/// the trail starts over rather than drawing a line across the map.
+const TRAIL_BREAK: f32 = 150.0;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Citizen {
@@ -154,9 +161,31 @@ pub struct Citizen {
     pub groceries: f32,
     /// Days without a proper meal.
     pub hungry_days: u8,
+    /// Where the citizen has been lately, oldest first, for drawing the
+    /// route so far. Rebuilt as they move; never saved.
+    #[serde(skip)]
+    pub trail: Vec<Vec2>,
 }
 
 impl Citizen {
+    /// Record the current position if the citizen has moved on since the
+    /// last point. Called once per tick after every system has moved people.
+    pub fn push_trail(&mut self) {
+        if let Some(&last) = self.trail.last() {
+            let d = last.distance(self.pos);
+            if d < TRAIL_STEP {
+                return;
+            }
+            if d > TRAIL_BREAK {
+                self.trail.clear();
+            }
+        }
+        self.trail.push(self.pos);
+        if self.trail.len() > MAX_TRAIL {
+            self.trail.remove(0);
+        }
+    }
+
     pub fn remember(&mut self, tick: u64, text: impl Into<String>) {
         self.memories.push(Memory { tick, text: text.into() });
         if self.memories.len() > MAX_MEMORIES {
@@ -170,5 +199,71 @@ impl Citizen {
 
     pub fn is_visible(&self) -> bool {
         matches!(self.activity, Activity::Traveling { .. } | Activity::Idle | Activity::Sitting { .. } | Activity::Waiting { .. })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn citizen_at(pos: Vec2) -> Citizen {
+        Citizen {
+            name: "Test".into(),
+            seed: 1,
+            home: None,
+            work: None,
+            pos,
+            heading: 0.0,
+            prev_pos: pos,
+            prev_heading: 0.0,
+            mode: TravelMode::Walk,
+            owns_car: false,
+            owns_bike: false,
+            parked_at: None,
+            transit: None,
+            activity: Activity::Idle,
+            memories: Vec::new(),
+            thought: String::new(),
+            spotlight: false,
+            next_decision_tick: 0,
+            arrived_tick: 0,
+            inside: None,
+            mood: 0.5,
+            income: 0.0,
+            savings: 0.0,
+            rent_stress_days: 0,
+            satiety: 1.0,
+            groceries: 0.0,
+            hungry_days: 0,
+            trail: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn trail_records_movement_only() {
+        let mut c = citizen_at(Vec2::ZERO);
+        c.push_trail();
+        c.push_trail();
+        assert_eq!(c.trail.len(), 1, "standing still adds nothing after the first point");
+        c.pos = Vec2::new(0.2, 0.0);
+        c.push_trail();
+        assert_eq!(c.trail.len(), 1, "a shuffle under half a metre is not a step");
+        c.pos = Vec2::new(1.0, 0.0);
+        c.push_trail();
+        assert_eq!(c.trail.len(), 2);
+    }
+
+    #[test]
+    fn trail_is_capped_and_breaks_on_a_jump() {
+        let mut c = citizen_at(Vec2::ZERO);
+        for i in 0..(MAX_TRAIL + 50) {
+            c.pos = Vec2::new(i as f32, 0.0);
+            c.push_trail();
+        }
+        assert_eq!(c.trail.len(), MAX_TRAIL);
+        assert_eq!(c.trail[0], Vec2::new(50.0, 0.0), "the oldest points are dropped first");
+        c.pos = Vec2::new(5000.0, 0.0);
+        c.push_trail();
+        assert_eq!(c.trail, vec![Vec2::new(5000.0, 0.0)], "a teleport starts a fresh trail");
     }
 }
