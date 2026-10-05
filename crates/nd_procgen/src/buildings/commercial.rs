@@ -315,9 +315,9 @@ pub fn twist_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         y += fh;
     }
     extrude(g, f, Panel, &prev, y, y + 0.6, mul(pal.steel, 0.8));
-    let spire_base = offset_poly(&prev, inradius(&prev) * 0.6);
-    loft(g, f, Matte, &spire_base, &scale_poly(&spire_base, 0.05), y + 0.6, y + 12.0, pal.steel);
-    g.part(Glow).boxed(f.at2(poly_center(&prev), y + 12.2), Vec3::splat(0.5), 0.0, rgba(pal.aviation_light));
+    // A cut glass crown, not a needle.
+    let top = super::kit::crystal_crown(g, c, rng, &prev, y + 0.6, glass);
+    g.part(Glow).boxed(f.at2(poly_center(&prev), top + 0.3), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
     extrude(g, f, Glow, &offset_poly(&prev, -0.05), y - 0.6, y, mul(c.style.window_color(0), 0.9));
     let front = c.front_face(&c.poly);
     entrance(g, c, rng, &front, 0.0, 3.5, podium_h * 0.8);

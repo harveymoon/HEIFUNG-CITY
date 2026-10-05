@@ -99,7 +99,9 @@ fn sample(surface: Surface, u: f32, v: f32, px: i32, py: i32) -> Sample {
         Surface::Plaster => {
             let g = fbm(u, v, 6, 4, 11);
             let crack_field = fbm(u, v, 3, 3, 13);
-            let crack = if (crack_field - 0.5).abs() < 0.006 { 0.55 } else { 1.0 };
+            // Hairlines only where a second field allows, so the contour
+            // breaks into short cracks instead of closed loops.
+            let crack = if (crack_field - 0.5).abs() < 0.004 && fbm(u, v, 5, 2, 19) > 0.55 { 0.6 } else { 1.0 };
             let blotch = fbm(u, v, 2, 2, 17);
             let value = (0.84 + 0.12 * g) * crack * (0.94 + 0.08 * blotch);
             Sample { value, tint: 0.0, height: g * 0.2 + if crack < 1.0 { -0.8 } else { 0.0 } }
@@ -304,13 +306,15 @@ fn grit(surface: Surface, s: Sample, u: f32, v: f32, px: i32, py: i32, wear: f32
         value *= 1.0 - 0.28 * dr;
         height -= 0.15 * dr;
     }
-    // Cracks: two crossing hairline fields, wider with wear.
-    let w = 0.004 + 0.010 * wear;
-    let c1 = crack_line(fbm(u, v, 3, 4, 431), w);
-    let c2 = crack_line(fbm(u, v, 5, 3, 433), w * 0.7);
-    let crack = c1.max(c2);
-    value *= 1.0 - 0.45 * crack;
-    height -= 1.2 * crack;
+    // Cracks: hairlines along a noise contour, broken into short runs by a
+    // second field so they read as cracks, not a marbled map.
+    let w = 0.002 + 0.004 * wear;
+    let mask = fbm(u, v, 4, 2, 437) > 0.56;
+    let c1 = if mask { crack_line(fbm(u, v, 6, 3, 431), w) } else { 0.0 };
+    let c2 = if !mask { crack_line(fbm(u, v, 8, 2, 433), w * 0.7) * 0.6 } else { 0.0 };
+    let crack = c1.max(c2) * wear;
+    value *= 1.0 - 0.35 * crack;
+    height -= 1.0 * crack;
     match surface {
         Surface::Panel | Surface::Metal | Surface::Plaster => {
             // Worn paint: blotches where the topcoat has gone, a lighter,

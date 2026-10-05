@@ -85,16 +85,16 @@ pub fn traits(style: Style) -> (Family, f32) {
         Style::HillsideSteps => (Walkup, 0.7),
         Style::Brutalist => (Slab, 0.4),
         Style::BalconySlab => (Slab, 0.7),
-        Style::TwinSlab => (Slab, 1.2),
+        Style::TwinSlab => (Slab, 0.9),
         Style::PencilTower => (Slab, 0.6),
-        Style::Crystal => (Spire, -1.6),
+        Style::Crystal => (Spire, -2.0),
         Style::GardenTower => (Spire, -0.8),
         Style::SlabTower => (Spire, -0.8),
-        Style::TwistTower => (Spire, -1.6),
+        Style::TwistTower => (Spire, -2.0),
         Style::CantileverMall => (Spire, -1.0),
-        Style::Megastructure => (Spire, -1.8),
+        Style::Megastructure => (Spire, -2.2),
         Style::GlassTerraces => (Spire, -1.0),
-        Style::Fortress => (Luxury, -1.4),
+        Style::Fortress => (Luxury, -1.8),
         Style::Villas => (Luxury, 0.5),
         Style::Shophouse => (Retail, 0.8),
         Style::MarketHall => (Retail, -0.4),
@@ -186,7 +186,7 @@ pub fn neighbour_factor(style: Style, near: &[Neighbour]) -> f32 {
         .collect();
     terms.sort_by(f32::total_cmp);
     let score: f32 = terms.iter().sum();
-    (score * 0.9).exp().clamp(0.04, 12.0)
+    (score * 1.3).exp().clamp(0.03, 12.0)
 }
 
 /// How well a style suits the site's height and frontage. Towers need

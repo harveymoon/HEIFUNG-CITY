@@ -1260,7 +1260,9 @@ pub fn string_lights(g: &mut Geometry, f: &Frame, a: Vec3, b: Vec3, n: i32, colo
 /// Outdoor steelwork rusts once a building is run down: the surface and
 /// colour for stairs, ladders and fire escapes.
 pub fn outdoor_steel(c: &Ctx, color: [f32; 3]) -> (Surface, [f32; 3]) {
-    if c.wear > 0.4 { (Rust, mix(color, c.palette.rust, 0.55)) } else { (Metal, color) }
+    // Cheap buildings let it go sooner.
+    let threshold = if c.tier == nd_sim::Tier::Low { 0.2 } else { 0.4 };
+    if c.wear > threshold { (Rust, mix(color, c.palette.rust, 0.55)) } else { (Metal, color) }
 }
 
 /// External zigzag stair up the side of a pile. Rusted when the lot is worn.

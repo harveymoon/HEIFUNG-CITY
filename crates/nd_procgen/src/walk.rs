@@ -308,17 +308,19 @@ fn food_cart(g: &mut Geometry, pal: &Palette, rng: &mut impl Rng, p: Vec2, yaw: 
     }
 }
 
-/// Steam: crossed pale quads rising and widening, unlit so they read at
-/// night against the dark.
+/// Steam: a few thin, faint wisps curling up, unlit so they read as a
+/// haze at night. Solid puffs looked like white boxes; wisps do not.
 fn steam(g: &mut Geometry, at: Vec3, r: f32, puffs: i32) {
     for k in 0..puffs {
         let t = k as f32;
-        let c = at + Vec3::Y * (0.3 + t * 0.55);
-        let w = r * (1.6 + t * 0.9);
-        let col = rgba(mul([0.42, 0.44, 0.47], 1.0 - 0.22 * t));
+        let a = t * 2.1;
+        let off = Vec3::new(a.cos(), 0.0, a.sin()) * r * 0.5;
+        let c = at + off + Vec3::Y * (0.5 + t * 0.35);
+        let h = 0.9 + 0.3 * t;
+        let col = rgba(mul([0.16, 0.17, 0.19], 1.0 - 0.15 * t));
         for (along, out) in [(Vec3::X, Vec3::Z), (Vec3::Z, -Vec3::X)] {
-            g.part(Glow).decal(c, along, Vec3::Y, w, w * 0.8, out, col);
-            g.part(Glow).decal(c, -along, Vec3::Y, w, w * 0.8, -out, col);
+            g.part(Glow).decal(c, along, Vec3::Y, 0.12 + 0.05 * t, h, out, col);
+            g.part(Glow).decal(c, -along, Vec3::Y, 0.12 + 0.05 * t, h, -out, col);
         }
     }
 }
@@ -397,7 +399,7 @@ fn scooter(g: &mut Geometry, pal: &Palette, rng: &mut impl Rng, p: Vec2, yaw: f3
     }
     g.part(Matte).boxed(base + dir * 0.55 + Vec3::Y * 0.95, Vec3::new(0.08, 0.55, 0.08), yaw, rgba(CHARCOAL));
     g.part(Matte).boxed(base + dir * 0.55 + Vec3::Y * 1.2, Vec3::new(0.06, 0.06, 0.6), yaw, rgba(CHARCOAL));
-    g.part(Glow).boxed(base + dir * 0.66 + Vec3::Y * 0.85, Vec3::new(0.05, 0.12, 0.16), yaw, rgba(mul(pal.headlight, 0.4)));
+    g.part(Glow).boxed(base + dir * 0.62 + Vec3::Y * 0.8, Vec3::new(0.03, 0.07, 0.09), yaw, rgba(mul(pal.headlight, 0.12)));
 }
 
 /// Pavement clutter by how well off the street is: bags, boxes and crates,
