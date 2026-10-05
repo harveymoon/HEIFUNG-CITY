@@ -104,9 +104,13 @@ fn control_camera(
 ) {
     let Ok((mut cam, mut tf, mut proj, mut fog)) = q.single_mut() else { return };
     let dt = time.delta_secs();
+    // egui uses Tab for focus traversal and takes typed keys while a text
+    // field has focus, so the one-shot keys stand down then. Escape always
+    // works: it is how you get off the pavement.
+    let key = |k: KeyCode| !flags.keyboard_captured && keys.just_pressed(k);
 
     // Tab toggles walk mode; Escape leaves it.
-    if keys.just_pressed(KeyCode::Tab) || (keys.just_pressed(KeyCode::Escape) && *mode == CameraMode::Walk) {
+    if key(KeyCode::Tab) || (keys.just_pressed(KeyCode::Escape) && *mode == CameraMode::Walk) {
         *mode = if *mode == CameraMode::Walk { CameraMode::Orbit } else { CameraMode::Walk };
     }
     if *mode != walk.last_mode {
@@ -190,7 +194,7 @@ fn control_camera(
     }
 
     // F6: focus the busiest junction, close enough to watch the driving.
-    if keys.just_pressed(KeyCode::F6) {
+    if key(KeyCode::F6) {
         let roads = &sim.world.roads;
         let cars: Vec<Vec2> = sim.world.traffic.cars.values().map(|c| c.pos).collect();
         let mut best: Option<(usize, Vec2)> = None;
@@ -211,8 +215,8 @@ fn control_camera(
         }
     }
     // F7 / F8 / F9: jump to a random low, middle or high tier building.
-    for (key, tier) in [(KeyCode::F7, Tier::Low), (KeyCode::F8, Tier::Mid), (KeyCode::F9, Tier::High)] {
-        if keys.just_pressed(key) {
+    for (k, tier) in [(KeyCode::F7, Tier::Low), (KeyCode::F8, Tier::Mid), (KeyCode::F9, Tier::High)] {
+        if key(k) {
             let candidates: Vec<_> = sim.world.buildings.values().filter(|b| b.tier == tier && b.land_use != nd_sim::LandUse::Park).filter_map(|b| sim.world.lots.get(b.lot)).map(|l| l.center).collect();
             if let Some(c) = candidates.choose(&mut rand::rng()) {
                 cam.target = Vec3::new(c.x, 0.0, c.y);
@@ -223,7 +227,7 @@ fn control_camera(
     }
 
     // F12: jump to a random park.
-    if keys.just_pressed(KeyCode::F12) {
+    if key(KeyCode::F12) {
         let candidates: Vec<_> = sim.world.lots.values().filter(|l| l.park.is_some()).map(|l| l.center).collect();
         if let Some(c) = candidates.choose(&mut rand::rng()) {
             cam.target = Vec3::new(c.x, 0.0, c.y);
@@ -232,7 +236,7 @@ fn control_camera(
         }
     }
     // F5: jump to a station or freight yard.
-    if keys.just_pressed(KeyCode::F5) {
+    if key(KeyCode::F5) {
         let candidates: Vec<_> = sim.world.buildings.values().filter(|b| b.rail.is_some()).filter_map(|b| sim.world.lots.get(b.lot)).map(|l| l.center).collect();
         if let Some(c) = candidates.choose(&mut rand::rng()) {
             cam.target = Vec3::new(c.x, 0.0, c.y);
@@ -241,7 +245,7 @@ fn control_camera(
         }
     }
     // F11: jump to a random power plant.
-    if keys.just_pressed(KeyCode::F11) {
+    if key(KeyCode::F11) {
         let candidates: Vec<_> = sim.world.buildings.values().filter(|b| b.plant.is_some()).filter_map(|b| sim.world.lots.get(b.lot)).map(|l| l.center).collect();
         if let Some(c) = candidates.choose(&mut rand::rng()) {
             cam.target = Vec3::new(c.x, 0.0, c.y);
