@@ -135,6 +135,7 @@ impl World {
     }
 
     fn rebuild_walk(&mut self) {
+        crate::park::plan_parks(&mut self.lots, &self.land_value);
         self.walk = WalkGraph::build(&self.roads, &self.lots, &self.land_value, self.walk.version + 1);
     }
 
@@ -1366,8 +1367,44 @@ impl World {
             Activity::Traveling { to, purpose, .. } | Activity::Driving { to, purpose, .. } => (*to, *purpose),
             _ => return,
         };
+        // A park is not a building to go inside: walk its paths to a bench.
+        if let (Purpose::Visit(LandUse::Park), Some(b)) = (purpose, to) {
+            let lot = self.buildings.get(b).map(|bld| bld.lot);
+            let pick = self.rng.random_range(0..64usize);
+            if let Some(bench) = lot.and_then(|l| self.walk.bench_in(l, pick)) {
+                let here = self.citizens[id].pos;
+                let path = match self.walk.route(here, bench.0) {
+                    Some((pts, nodes)) => {
+                        self.count_footfall(&nodes);
+                        pts
+                    }
+                    None => vec![bench.0],
+                };
+                let c = &mut self.citizens[id];
+                c.mode = TravelMode::Walk;
+                c.activity = Activity::Traveling { to: Some(b), purpose: Purpose::Sit, path, idx: 0 };
+                return;
+            }
+        }
         let c = &mut self.citizens[id];
         match (purpose, to) {
+            (Purpose::Sit, Some(b)) => {
+                let lot = self.buildings.get(b).map(|bld| bld.lot);
+                let facing = lot.and_then(|l| self.lots.get(l)).and_then(|l| l.park.as_ref()).and_then(|p| p.benches.iter().min_by(|x, y| x.0.distance(c.pos).total_cmp(&y.0.distance(c.pos)))).map(|b| b.1);
+                c.activity = Activity::Sitting { at: c.pos, park: b };
+                c.inside = None;
+                if let Some(h) = facing {
+                    c.heading = h;
+                    c.prev_heading = h;
+                }
+                c.prev_pos = c.pos;
+                if let Some(bld) = self.buildings.get_mut(b) {
+                    bld.visitors += 1;
+                    let name = bld.name.clone();
+                    c.remember(tick, format!("Sat on a bench in {name}."));
+                    c.mood = (c.mood + 0.08).min(1.0);
+                }
+            }
             (Purpose::Home, Some(b)) => {
                 c.activity = Activity::AtHome;
                 c.inside = Some(b);
@@ -1797,6 +1834,12 @@ impl World {
 
     fn leave_building(&mut self, id: CitizenId) -> Option<Vec2> {
         self.release_parking(id);
+        if let Activity::Sitting { park, .. } = self.citizens[id].activity {
+            if let Some(b) = self.buildings.get_mut(park) {
+                b.visitors = b.visitors.saturating_sub(1);
+            }
+            self.citizens[id].activity = Activity::Idle;
+        }
         let c = &mut self.citizens[id];
         let inside = c.inside.take()?;
         if matches!(c.activity, Activity::Visiting(_)) {
@@ -1866,10 +1909,12 @@ impl World {
             c.activity = Activity::Idle;
             return;
         };
-        let mode = if owns_bike && (park_ride || dist >= self.config.bike_threshold) { TravelMode::Bike } else { TravelMode::Walk };
+        let seated = matches!(self.citizens[id].activity, Activity::Sitting { .. });
+        let mode = if owns_bike && !seated && (park_ride || dist >= self.config.bike_threshold) { TravelMode::Bike } else { TravelMode::Walk };
+        let walk_from = if self.citizens[id].inside.is_some() { from_pt } else { self.citizens[id].pos };
         let exit_pos = self.leave_building(id);
         let mut path = match mode {
-            TravelMode::Walk => match self.walk.route(from_pt, entrance) {
+            TravelMode::Walk => match self.walk.route(walk_from, entrance) {
                 Some((pts, walk_nodes)) => {
                     self.count_footfall(&walk_nodes);
                     pts
@@ -2198,6 +2243,50 @@ mod tests {
         w.park_car(c);
         assert_eq!(w.economy.parking_street_today, street0 + 1);
         assert!(w.citizens[c].parked_at.is_none());
+    }
+
+    #[test]
+    fn park_visits_end_on_a_bench_and_people_leave_on_foot() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 120.0), LandUse::Park);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Residential);
+        let park_lot = w.lots.iter().find(|(_, l)| l.usable() && l.land_use == LandUse::Park).map(|(id, _)| id).expect("a park lot");
+        assert!(w.lots[park_lot].park.is_some(), "the park is planned");
+        assert!(!w.walk.benches.is_empty(), "benches are in the walk graph");
+        let home_lot = w.lots.iter().find(|(_, l)| l.usable() && l.land_use == LandUse::Residential).map(|(id, _)| id).unwrap();
+        w.build_on(home_lot);
+        w.build_on(park_lot);
+        let park = w.lots[park_lot].building.expect("park building");
+        let home = w.lots[home_lot].building.unwrap();
+        let mut minds = IdleMind;
+        for _ in 0..(8 * 60) {
+            w.tick(&mut minds);
+        }
+        let c = w.citizens.keys().next().expect("someone arrived");
+        w.citizens[c].inside = Some(home);
+        w.citizens[c].activity = Activity::AtHome;
+        w.citizens[c].owns_bike = false;
+        w.travel_to(c, Some(park), Purpose::Visit(LandUse::Park));
+        let mut sat = false;
+        for _ in 0..1200 {
+            w.tick(&mut minds);
+            if matches!(w.citizens[c].activity, Activity::Sitting { .. }) {
+                sat = true;
+                break;
+            }
+        }
+        assert!(sat, "the visitor ends up on a bench: {:?}", w.citizens[c].activity.label());
+        let at = w.citizens[c].pos;
+        assert!(w.lots[park_lot].park.as_ref().unwrap().benches.iter().any(|(b, _)| b.distance(at) < 0.5), "sitting on a planned bench");
+        assert!(w.citizens[c].is_visible() && w.citizens[c].inside.is_none());
+        assert_eq!(w.buildings[park].visitors, 1);
+        // Leaving: on foot from the bench, no jump.
+        w.travel_to(c, Some(home), Purpose::Home);
+        assert_eq!(w.buildings[park].visitors, 0);
+        assert!(w.citizens[c].pos.distance(at) < 0.5, "starts from the bench");
+        assert_eq!(w.citizens[c].mode, TravelMode::Walk);
+        assert!(matches!(w.citizens[c].activity, Activity::Traveling { .. }));
     }
 
     #[test]

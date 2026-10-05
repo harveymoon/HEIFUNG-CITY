@@ -103,7 +103,7 @@ fn side_panel(
             if *mode == CameraMode::Walk {
                 ui.label(egui::RichText::new("Mouse to look, WASD to walk, Shift to run, Tab or Esc to return.").small().weak());
             } else {
-                ui.label(egui::RichText::new("Right-drag rotate · middle-drag or shift-drag pan · wheel or [ ] zoom · WASD/QE · F6 busiest junction · F7/F8/F9 jump to a low/middle/high tier building · F11 to a power plant").small().weak());
+                ui.label(egui::RichText::new("Right-drag rotate · middle-drag or shift-drag pan · wheel or [ ] zoom · WASD/QE · F6 busiest junction · F7/F8/F9 jump to a low/middle/high tier building · F11 to a power plant · F12 to a park").small().weak());
             }
             ui.separator();
 
@@ -424,6 +424,14 @@ fn side_panel(
                     ui.label(format!("residents {}/{}  ·  workers {}/{}  ·  visitors {}", b.residents.len(), b.homes, b.workers.len(), b.jobs, b.visitors));
                     if let Some(lot) = sim.world.lots.get(b.lot) {
                         ui.label(format!("foot traffic today {}  ·  this hour {}{}", lot.footfall_today, lot.footfall_hour, if lot.car_access() { "" } else { "  ·  on a footpath: cars stop at the street, residents park nearby" }));
+                        if let Some(park) = &lot.park {
+                            let features: Vec<&str> = park.features.iter().map(|f| f.kind.label()).collect();
+                            ui.label(format!("park: {} benches, {} paths, {} entrances{}; part of a {}-lot park of {:.0} m²", park.benches.len(), park.paths.len(), park.entrances.len(), if features.is_empty() { String::new() } else { format!(", {}", features.join(", ")) }, park.cluster_lots, park.cluster_area));
+                            let sitting = sim.world.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Sitting { park: p, .. } if Some(p) == lot.building)).count();
+                            if sitting > 0 {
+                                ui.label(format!("{sitting} sitting on the benches"));
+                            }
+                        }
                     }
                     if let Some(kind) = b.plant {
                         ui.label(format!("{}: {:.0} MW nameplate, {:.0}% available now, {:.0}/day upkeep", kind.label(), kind.capacity_mw(), kind.availability(&sim.world.weather, sim.world.clock.day_fraction()) * 100.0, kind.upkeep_per_day()));

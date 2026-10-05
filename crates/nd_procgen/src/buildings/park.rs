@@ -1,179 +1,862 @@
-//! Open ground: scrub lots full of junk, planted gardens, paved plazas.
+//! Parks, built from the sim's plan for the lot: its paths, benches and
+//! features are placed by `nd_sim::park`, which looks at the whole
+//! connected park; this file gives them a look that follows the land.
+//!
+//! Cheap land: bare dirt, weeds, a court with a bent hoop, a broken bench,
+//! a drum fire. Middle: lawn, paved paths, a playground, a pond, a kiosk.
+//! Dear land: a manicured park with a lake, a fountain, a bandstand, rides,
+//! formal avenues and railings.
 
 use super::parts::*;
-use super::Ctx;
+use super::{Ctx, Face, Frame};
+use crate::mesh::MeshData;
+use crate::palette::Palette;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
+use nd_sim::park::{distance_to_boundary as edge_distance, ParkFeature, ParkFeatureSlot, ParkLayout};
+use nd_sim::Tier;
 use rand::Rng;
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 pub fn scrub_lot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
-    let f = &c.frame;
-    let pal = c.palette;
-    let poly = offset_poly(&c.lot_poly, 0.3);
-    ground(g, f, Dirt, &poly, 0.03, mul(pal.dirt, 0.9));
-    super::industrial::weeds(g, c, rng, &poly, 30);
-    // Dead trees, a wreck, junk, a graffiti wall, a broken fence.
-    for _ in 0..rng.random_range(1..4) {
-        if let Some(p) = c.random_inside(rng, 2.0) {
-            let w = f.to_world(p.x, p.y);
-            let h = rng.random_range(3.0..6.0);
-            g.part(Wood).cylinder(w, 0.25, 0.1, 0.0, h, 6, rgba(mul(pal.bark, 0.8)));
-            for k in 0..3 {
-                let a = k as f32 * 2.1 + rng.random_range(0.0..1.0);
-                let dir = Vec3::new(a.cos(), 0.8, a.sin()).normalize();
-                g.part(Wood).beam(Vec3::new(w.x, h * 0.7, w.y), Vec3::new(w.x, h * 0.7, w.y) + dir * rng.random_range(1.5..3.0), 0.12, rgba(mul(pal.bark, 0.8)));
-            }
-        }
-    }
-    if let Some(p) = c.random_inside(rng, 3.0) {
-        let yaw = rng.random_range(0.0..3.0);
-        let col = pick(rng, &pal.car_colors);
-        vehicle(g, f, rng, p, yaw, Vehicle::Wreck, col);
-    }
-    if let Some(p) = c.random_inside(rng, 3.0) {
-        scrap_pile(g, c, rng, p, 1.8, 1.2);
-    }
-    let front = c.front_face(&poly);
-    let faces = c.faces(&poly);
-    for (i, face) in faces.iter().enumerate() {
-        if face.is_front {
-            continue;
-        }
-        if i % 2 == 0 {
-            // concrete wall with tags
-            face.bx(g, f, Concrete, 0.0, 1.1, -0.2, Vec3::new(face.len, 2.2, 0.3), mul(pick(rng, &pal.concrete), 0.8));
-            for _ in 0..rng.random_range(1..4) {
-                let t = rng.random_range(-face.len * 0.4..face.len * 0.4);
-                face.bx(g, f, Matte, t, rng.random_range(0.8..1.6), -0.03, Vec3::new(rng.random_range(1.0..3.0), rng.random_range(0.5..1.2), 0.03), pick(rng, &pal.awning_colors));
-            }
-        } else {
-            fence(g, c, face.a, face.at(-face.len * 0.15, 0.0), 2.0, false);
-            fence(g, c, face.at(face.len * 0.2, 0.0), face.b, 2.0, false);
-        }
-    }
-    drum_fire(g, f, front.at(rng.random_range(-front.len * 0.3..front.len * 0.3), -2.5));
-    lamp_post(g, f, front.at(-front.len * 0.4, -1.0), 5.0, mul(pal.street_lamp, 0.5));
-    // mattress and a shopping trolley
-    if let Some(p) = c.random_inside(rng, 2.0) {
-        f.bx_yaw(g, Tarp, p.x, 0.12, p.y, Vec3::new(1.9, 0.24, 1.3), [0.55, 0.52, 0.45], rng.random_range(0.0..3.0));
-    }
+    park(g, c, rng, Tier::Low);
 }
 
 pub fn garden(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
-    let f = &c.frame;
-    let pal = c.palette;
-    let poly = offset_poly(&c.lot_poly, 0.3);
-    ground(g, f, Foliage, &poly, 0.03, mul(pal.foliage, 0.85));
-    // Path from the front gate to the centre and across.
-    let front = c.front_face(&poly);
-    let center = poly_center(&poly);
-    let gate = front.at(0.0, 0.0);
-    let path_dir = (center - gate).normalize_or_zero();
-    let len = gate.distance(center) * 1.8;
-    let pc = gate + path_dir * len * 0.5;
-    f.bx_yaw(g, Paving, pc.x, 0.05, pc.y, Vec3::new(len, 0.06, 2.0), pal.paving, path_dir.y.atan2(path_dir.x));
-    let cross = Vec2::new(-path_dir.y, path_dir.x);
-    let cl = inradius(&poly) * 1.4;
-    f.bx_yaw(g, Paving, center.x, 0.05, center.y, Vec3::new(cl, 0.06, 2.0), pal.paving, cross.y.atan2(cross.x));
-    // Trees, benches, lamps, hedges on the edges, a pond and a playground.
-    for _ in 0..rng.random_range(5..11) {
-        if let Some(p) = c.random_inside(rng, 2.0) {
-            if (p - gate).dot(cross).abs() > 2.0 || (p - gate).dot(path_dir) < 0.0 {
-                tree(g, f, p, rng.random_range(3.0..6.5), rng.random_range(3.0..5.5), pal.bark, mul(pal.foliage, rng.random_range(0.8..1.2)));
-            }
-        }
-    }
-    for k in 0..4 {
-        let a = k as f32 / 4.0 * std::f32::consts::TAU + 0.4;
-        let p = center + Vec2::new(a.cos(), a.sin()) * 3.0;
-        if c.inside(p) {
-            bench_world(g, f.to_world(p.x, p.y), f.yaw() + a + std::f32::consts::FRAC_PI_2, pal.wood, CHARCOAL);
-        }
-        let lp = center + Vec2::new(a.cos(), a.sin()) * (inradius(&poly) * 0.6);
-        if c.inside(lp) {
-            lamp_post(g, f, lp, 3.5, pal.lamp);
-        }
-    }
-    for face in c.faces(&poly) {
-        if face.is_front {
-            for s in [-1.0f32, 1.0] {
-                if face.len > 6.0 {
-                    hedge(g, c, face.at(s * 1.6, 0.0), face.at(s * face.len * 0.5, 0.0), 1.2, 0.8, pal.foliage);
-                }
-            }
-        } else {
-            hedge(g, c, face.a, face.b, 1.4, 0.8, pal.foliage);
-        }
-    }
-    let pond = center + cross * (inradius(&poly) * 0.45);
-    if c.inside(pond) && pond.distance(center) > 4.0 {
-        pool(g, c, pond.x, pond.y, 5.0, 3.5);
-    }
-    let play = center - cross * (inradius(&poly) * 0.45);
-    if c.inside(play) && play.distance(center) > 4.0 {
-        let col = pick(rng, &pal.awning_colors);
-        f.bx(g, Matte, play.x, 1.4, play.y, Vec3::new(0.12, 2.8, 0.12), col);
-        f.bx(g, Matte, play.x + 2.4, 1.4, play.y, Vec3::new(0.12, 2.8, 0.12), col);
-        f.bx(g, Matte, play.x + 1.2, 2.8, play.y, Vec3::new(2.6, 0.12, 0.12), col);
-        for k in 0..2 {
-            f.bx(g, Matte, play.x + 0.8 + k as f32 * 0.8, 0.5, play.y, Vec3::new(0.4, 0.08, 0.3), DARK);
-            f.bx(g, Matte, play.x + 0.8 + k as f32 * 0.8, 1.6, play.y, Vec3::new(0.03, 2.3, 0.03), DARK);
-        }
-        f.bx_yaw(g, Metal, play.x + 1.0, 0.9, play.y + 3.0, Vec3::new(3.0, 0.2, 0.8), col, 0.0);
-    }
-    f.bx(g, Metal, gate.x, 0.6, gate.y - 0.5, Vec3::new(0.1, 1.2, 0.1), CHARCOAL);
+    park(g, c, rng, Tier::Mid);
 }
 
 pub fn plaza(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    park(g, c, rng, Tier::High);
+}
+
+/// Everything a park needs to know while it is being drawn.
+struct Park<'a> {
+    layout: &'a ParkLayout,
+    tier: Tier,
+    /// Lot outline in world coordinates.
+    lot: Vec<Vec2>,
+    path_width: f32,
+}
+
+impl Park<'_> {
+    fn inside(&self, w: Vec2, margin: f32) -> bool {
+        nd_sim::zoning::point_in_polygon(w, &self.lot) && edge_distance(w, &self.lot) >= margin
+    }
+
+    /// Distance from a point to the nearest path centreline.
+    fn path_distance(&self, w: Vec2) -> f32 {
+        let mut best = f32::MAX;
+        for path in &self.layout.paths {
+            for s in path.windows(2) {
+                best = best.min(w.distance(project(w, s[0], s[1])));
+            }
+        }
+        best
+    }
+
+    fn clear_of_features(&self, w: Vec2, margin: f32) -> bool {
+        self.layout.features.iter().all(|f| f.pos.distance(w) >= f.radius + margin)
+    }
+
+    fn clear_of_benches(&self, w: Vec2, margin: f32) -> bool {
+        self.layout.benches.iter().all(|(b, _)| b.distance(w) >= margin)
+    }
+}
+
+fn project(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
+    let ab = b - a;
+    let l2 = ab.length_squared();
+    if l2 < 1e-6 {
+        return a;
+    }
+    a + ab * ((p - a).dot(ab) / l2).clamp(0.0, 1.0)
+}
+
+/// An identity frame: world helpers that take a frame get world coordinates.
+fn world_frame() -> Frame {
+    Frame { center: Vec2::ZERO, along: Vec2::X, inward: Vec2::Y, width: 1.0, depth: 1.0 }
+}
+
+fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
+    let Some(layout) = c.park.as_ref() else { return };
     let f = &c.frame;
     let pal = c.palette;
-    let poly = offset_poly(&c.lot_poly, 0.3);
-    ground(g, f, Paving, &poly, 0.04, mul(pal.paving, 1.15));
-    let center = poly_center(&poly);
-    let r = inradius(&poly);
-    // Fountain with jets, a sculpture, planters with hedges and trees in a grid.
-    pool(g, c, center.x, center.y, (r * 0.5).min(8.0), (r * 0.5).min(8.0));
-    for k in 0..5 {
-        let a = k as f32 / 5.0 * std::f32::consts::TAU;
-        let p = center + Vec2::new(a.cos(), a.sin()) * (r * 0.18).min(2.8);
-        f.bx(g, Glow, p.x, 1.0, p.y, Vec3::new(0.2, 1.6, 0.2), mul(pal.water, 1.6));
-    }
-    let sc = center + Vec2::new(r * 0.55, 0.0);
-    if c.inside(sc) {
-        let base = ngon(sc.x, sc.y, 1.2, 4, 0.4);
-        extrude(g, f, Stone, &base, 0.0, 1.0, mul(pal.stone, 1.6));
-        loft(g, f, Panel, &scale_poly(&base, 0.6), &shift_poly(&scale_poly(&base, 0.2), Vec2::new(1.5, 0.8)), 1.0, 7.0, mul(pal.steel, 1.1));
-        f.bx(g, Glow, sc.x, 0.06, sc.y - 1.8, Vec3::new(1.2, 0.06, 0.4), mul(pal.lamp, 0.9));
-    }
-    let (lo, hi) = bounds(&offset_poly(&poly, 2.0));
-    let mut v = lo.y + 1.5;
-    while v < hi.y {
-        let mut u = lo.x + 1.5;
-        while u < hi.x {
-            let p = Vec2::new(u, v);
-            if c.inside(p) && p.distance(center) > (r * 0.5).min(8.0) * 0.8 + 2.5 && p.distance(sc) > 3.0 {
-                f.bx(g, Concrete, p.x, 0.3, p.y, Vec3::new(2.2, 0.6, 2.2), mul(pick(rng, &pal.concrete), 1.1));
-                tree(g, f, p, 3.0, 3.2, pal.bark, pal.foliage);
-                f.bx(g, Glow, p.x + 0.9, 0.62, p.y, Vec3::new(0.3, 0.05, 0.3), mul(pal.lamp, 0.7));
-                if rng.random_bool(0.5) {
-                    bench_world(g, f.to_world(p.x, p.y + 1.6), f.yaw(), pal.wood, CHARCOAL);
+    let lot: Vec<Vec2> = c.lot_poly.iter().map(|p| f.to_world(p.x, p.y)).collect();
+    let park = Park {
+        layout,
+        tier,
+        lot,
+        path_width: match tier {
+            Tier::Low => 1.6,
+            Tier::Mid => 2.0,
+            Tier::High => 2.4,
+        },
+    };
+    let inner = offset_poly(&c.lot_poly, 0.3);
+
+    // ── ground ───────────────────────────────────────────────────────────
+    match tier {
+        Tier::Low => {
+            ground(g, f, Dirt, &inner, 0.03, mul(pal.dirt, 0.92));
+            // Patches of dry grass and bare scrapes.
+            for _ in 0..rng.random_range(6..14) {
+                if let Some(p) = c.random_inside(rng, 2.0) {
+                    let blob = ngon(p.x, p.y, rng.random_range(1.5..4.0), 7, rng.random_range(0.0..TAU));
+                    ground(g, f, Foliage, &blob, 0.04, mul(pal.foliage_dry, rng.random_range(0.8..1.1)));
                 }
             }
-            u += 7.0;
+            super::industrial::weeds(g, c, rng, &inner, 24);
         }
-        v += 7.0;
+        Tier::Mid => ground(g, f, Foliage, &inner, 0.03, mul(pal.foliage, 0.9)),
+        Tier::High => {
+            ground(g, f, Foliage, &inner, 0.03, mul(pal.foliage, 1.05));
+            // A paved forecourt just inside the gate.
+            let front = c.front_face(&inner);
+            if front.len > 6.0 {
+                front.bx(g, f, Paving, 0.0, 0.04, -1.2, Vec3::new((front.len * 0.6).min(14.0), 0.04, 2.4), mul(pal.paving, 1.15));
+            }
+        }
     }
-    let front = c.front_face(&poly);
+
+    // ── paths ────────────────────────────────────────────────────────────
+    let (surface, color, y) = match tier {
+        Tier::Low => (Dirt, mul(pal.dirt, 0.72), 0.05),
+        Tier::Mid => (Paving, pal.paving, 0.06),
+        Tier::High => (Paving, mul(pal.paving, 1.18), 0.06),
+    };
+    for path in &layout.paths {
+        if path.len() < 2 {
+            continue;
+        }
+        g.part(surface).path_strip(path, 0.0, park.path_width, y, rgba(color));
+        if tier == Tier::High {
+            for side in [-1.0f32, 1.0] {
+                g.part(Stone).path_strip(path, side * (park.path_width * 0.5 + 0.1), 0.2, y + 0.04, rgba(mul(pal.stone, 1.3)));
+            }
+        }
+    }
+    // Lamps and bins along the paths.
+    if tier != Tier::Low {
+        let lamp_gap = if tier == Tier::High { 13.0 } else { 16.0 };
+        let mut s_lamp = lamp_gap * 0.4;
+        let mut s_bin = 11.0;
+        let mut side = 1.0f32;
+        for path in &layout.paths {
+            for seg in path.windows(2) {
+                let (a, b) = (seg[0], seg[1]);
+                let len = a.distance(b);
+                if len < 1e-3 {
+                    continue;
+                }
+                let d = (b - a) / len;
+                let right = Vec2::new(-d.y, d.x);
+                while s_lamp < len {
+                    let w = a + d * s_lamp + right * side * (park.path_width * 0.5 + 0.7);
+                    if park.inside(w, 0.6) && park.clear_of_features(w, 0.5) && park.clear_of_benches(w, 1.2) {
+                        lamp_post_world(g, w, if tier == Tier::High { 4.0 } else { 3.4 }, pal.lamp);
+                    }
+                    side = -side;
+                    s_lamp += lamp_gap;
+                }
+                s_lamp -= len;
+                while s_bin < len {
+                    let w = a + d * s_bin - right * side * (park.path_width * 0.5 + 0.5);
+                    if park.inside(w, 0.5) && park.clear_of_features(w, 0.5) && park.clear_of_benches(w, 1.0) {
+                        bin_world(g, w, mul(pal.steel, 0.5));
+                    }
+                    s_bin += 27.0;
+                }
+                s_bin -= len;
+            }
+        }
+    } else if let (Some(gate), Some(path)) = (layout.entrances.first(), layout.paths.first()) {
+        let dir = (path.get(1).copied().unwrap_or(*gate) - *gate).normalize_or_zero();
+        let w = *gate + dir * 1.5 + dir.perp() * 1.6;
+        if park.inside(w, 0.3) {
+            lamp_post_world(g, w, 4.5, mul(pal.street_lamp, 0.4));
+        }
+    }
+
+    // ── benches ──────────────────────────────────────────────────────────
+    for (i, (w, facing)) in layout.benches.iter().enumerate() {
+        let yaw = facing + FRAC_PI_2;
+        if tier == Tier::Low && (i + c.seed as usize) % 3 == 0 {
+            broken_bench(g, *w, yaw, pal.plywood, CHARCOAL);
+        } else {
+            let wood = if tier == Tier::High { mul(pal.wood, 1.1) } else { pal.wood };
+            bench_world(g, *w, yaw, wood, CHARCOAL);
+        }
+        if tier == Tier::Low && rng.random_bool(0.5) {
+            // Litter.
+            for _ in 0..rng.random_range(1..4) {
+                let p = *w + Vec2::new(rng.random_range(-1.5..1.5), rng.random_range(-1.5..1.5));
+                g.part(Tarp).boxed(Vec3::new(p.x, 0.06, p.y), Vec3::new(0.3, 0.12, 0.2), rng.random_range(0.0..TAU), rgba(pick(rng, &pal.tarp_colors)));
+            }
+        }
+    }
+    if tier == Tier::Low {
+        if let Some((w, facing)) = layout.benches.first() {
+            let p = *w + Vec2::from_angle(*facing) * 2.0;
+            if park.inside(p, 0.8) {
+                drum_fire(g, f, f.to_local(p));
+            }
+        }
+    }
+
+    // ── features ─────────────────────────────────────────────────────────
+    for slot in &layout.features {
+        feature(g, rng, &park, slot, pal);
+    }
+
+    // ── trees ────────────────────────────────────────────────────────────
+    trees(g, rng, &park, pal);
+
+    // ── edges and the gate ───────────────────────────────────────────────
+    let faces = c.faces(&inner);
+    let front = c.front_face(&inner);
+    // Every entrance (the street gate and the gaps to neighbouring park
+    // lots) gets an opening in whatever lines the edge.
+    let gaps: Vec<Vec2> = layout.entrances.iter().map(|e| f.to_local(*e)).collect();
+    match tier {
+        Tier::Low => {
+            // Bits of chain-link, a tagged wall.
+            for (i, face) in faces.iter().enumerate() {
+                if face.is_front || face.len < 5.0 {
+                    continue;
+                }
+                if i % 2 == 0 {
+                    fence(g, c, face.a, face.at(-face.len * 0.2, 0.0), 1.8, false);
+                } else {
+                    face.bx(g, f, Concrete, 0.0, 0.9, -0.2, Vec3::new(face.len * 0.8, 1.8, 0.3), mul(pick(rng, &pal.concrete), 0.8));
+                    for _ in 0..rng.random_range(1..4) {
+                        let t = rng.random_range(-face.len * 0.35..face.len * 0.35);
+                        face.bx(g, f, Matte, t, rng.random_range(0.6..1.4), -0.03, Vec3::new(rng.random_range(1.0..3.0), rng.random_range(0.5..1.0), 0.03), pick(rng, &pal.awning_colors));
+                    }
+                }
+            }
+        }
+        Tier::Mid => {
+            for face in &faces {
+                if face.len < 3.0 {
+                    continue;
+                }
+                for (t0, t1) in edge_runs(face, &gaps, 2.0) {
+                    hedge(g, c, face.at(t0, 0.0), face.at(t1, 0.0), if face.is_front { 1.1 } else { 1.3 }, 0.8, pal.foliage);
+                }
+            }
+            for s in [-1.0f32, 1.0] {
+                let p = front.at(s * 1.9, -0.2);
+                f.bx(g, Stone, p.x, 0.7, p.y, Vec3::new(0.5, 1.4, 0.5), mul(pal.stone, 1.2));
+            }
+        }
+        Tier::High => {
+            for face in &faces {
+                if face.len < 3.0 {
+                    continue;
+                }
+                for (t0, t1) in edge_runs(face, &gaps, 2.2) {
+                    railing(g, c, face, t0, t1);
+                }
+            }
+            for s in [-1.0f32, 1.0] {
+                let p = front.at(s * 2.4, -0.3);
+                f.bx(g, Stone, p.x, 1.0, p.y, Vec3::new(0.7, 2.0, 0.7), mul(pal.stone, 1.5));
+                f.bx(g, Glow, p.x, 2.15, p.y, Vec3::new(0.3, 0.3, 0.3), mul(pal.lamp, 0.8));
+            }
+            // A sign with the park's name by the gate.
+            sign_board(g, c, rng, &front, -front.len * 0.3, 1.6, (front.len * 0.25).min(4.0), 0.6);
+        }
+    }
+}
+
+/// The stretches of a face (as offsets from its middle) that are not an
+/// opening: every gap point near the face cuts out `half` metres each way.
+fn edge_runs(face: &Face, gaps: &[Vec2], half: f32) -> Vec<(f32, f32)> {
+    let mut runs = vec![(-face.len * 0.5, face.len * 0.5)];
+    for gp in gaps {
+        let rel = *gp - face.mid();
+        let t = rel.dot(face.tangent);
+        let off = rel.dot(face.out).abs();
+        if off > 3.0 || t.abs() > face.len * 0.5 + 1.0 {
+            continue;
+        }
+        let mut next = Vec::new();
+        for (a, b) in runs {
+            if t - half > a {
+                next.push((a, (t - half).min(b)));
+            }
+            if t + half < b {
+                next.push(((t + half).max(a), b));
+            }
+        }
+        runs = next;
+    }
+    runs.into_iter().filter(|(a, b)| b - a > 1.0).collect()
+}
+
+/// Iron railing along a face between two offsets along it.
+fn railing(g: &mut Geometry, c: &Ctx, face: &Face, t0: f32, t1: f32) {
+    let f = &c.frame;
+    let (t0, t1) = (t0.min(t1), t0.max(t1));
+    if t1 - t0 < 1.0 {
+        return;
+    }
+    let dark = [0.08, 0.08, 0.09];
+    let n = ((t1 - t0) / 2.4).ceil().max(1.0) as i32;
+    for k in 0..=n {
+        let t = t0 + (t1 - t0) * k as f32 / n as f32;
+        let p = face.at(t, -0.2);
+        f.bx(g, Matte, p.x, 0.6, p.y, Vec3::new(0.1, 1.2, 0.1), dark);
+    }
+    let mid = (t0 + t1) * 0.5;
+    face.bx(g, f, Matte, mid, 1.15, -0.2, Vec3::new(t1 - t0, 0.05, 0.05), dark);
+    face.bx(g, f, Matte, mid, 0.35, -0.2, Vec3::new(t1 - t0, 0.05, 0.05), dark);
+}
+
+fn broken_bench(g: &mut Geometry, w: Vec2, yaw: f32, wood: [f32; 3], metal: [f32; 3]) {
+    let (s, co) = yaw.sin_cos();
+    // Seat slats, one gone; one leg; no back.
+    g.part(Wood).boxed(Vec3::new(w.x, 0.42, w.y), Vec3::new(1.8, 0.06, 0.22), yaw, rgba(mul(wood, 0.8)));
+    let o = Vec2::new(co, s) * 0.8;
+    g.part(Matte).boxed(Vec3::new(w.x + o.x, 0.22, w.y + o.y), Vec3::new(0.08, 0.44, 0.5), yaw, rgba(metal));
+    g.part(Matte).boxed(Vec3::new(w.x - o.x, 0.12, w.y - o.y), Vec3::new(0.08, 0.24, 0.5), yaw + 0.5, rgba(metal));
+}
+
+// ── trees ────────────────────────────────────────────────────────────────────
+
+fn trees(g: &mut Geometry, rng: &mut impl Rng, park: &Park, pal: &Palette) {
+    let area = nd_sim::zoning::polygon_area(&park.lot).abs();
+    let (spacing, cap): (f32, usize) = match park.tier {
+        Tier::Low => (13.0, 3 + (area / 1500.0) as usize),
+        Tier::Mid => (7.0, (area / 55.0) as usize + 2),
+        Tier::High => (7.5, (area / 65.0) as usize + 2),
+    };
+    let mut placed: Vec<(Vec2, f32)> = Vec::new();
+    // Formal avenues: trees flanking the paths on dear land.
+    if park.tier == Tier::High {
+        for path in &park.layout.paths {
+            for seg in path.windows(2) {
+                let (a, b) = (seg[0], seg[1]);
+                let len = a.distance(b);
+                if len < 10.0 {
+                    continue;
+                }
+                let d = (b - a) / len;
+                let right = Vec2::new(-d.y, d.x);
+                let mut s = 5.0;
+                while s < len - 4.0 {
+                    for side in [-1.0f32, 1.0] {
+                        let w = a + d * s + right * side * (park.path_width * 0.5 + 2.4);
+                        if park.inside(w, 2.6) && park.clear_of_features(w, 1.5) && park.clear_of_benches(w, 1.6) && placed.iter().all(|(p, _)| p.distance(w) > 5.0) && park.path_distance(w) > park.path_width * 0.5 + 1.6 {
+                            tree_world(g, w, 5.5, 2.4, pal.bark, mul(pal.foliage, 0.95));
+                            placed.push((w, 2.4));
+                        }
+                    }
+                    s += 7.5;
+                }
+            }
+        }
+    }
+    // Then fill the lawns from a jittered, shuffled grid.
+    let (lo, hi) = bounds(&park.lot);
+    let step = 3.0;
+    let mut candidates: Vec<Vec2> = Vec::new();
+    let mut v = lo.y + 1.0;
+    while v < hi.y {
+        let mut u = lo.x + 1.0;
+        while u < hi.x {
+            candidates.push(Vec2::new(u + rng.random_range(-1.2..1.2), v + rng.random_range(-1.2..1.2)));
+            u += step;
+        }
+        v += step;
+    }
+    for i in (1..candidates.len()).rev() {
+        let j = rng.random_range(0..=i);
+        candidates.swap(i, j);
+    }
+    let mut count = 0;
+    for w in candidates {
+        if count >= cap {
+            break;
+        }
+        let (kind, h, canopy) = match park.tier {
+            Tier::Low => {
+                if rng.random_bool(0.6) {
+                    (0, rng.random_range(3.5..6.0), 1.2)
+                } else {
+                    (1, rng.random_range(2.5..4.0), rng.random_range(1.6..2.4))
+                }
+            }
+            Tier::Mid => (1, rng.random_range(4.0..7.5), rng.random_range(2.6..4.2)),
+            Tier::High => match rng.random_range(0..4) {
+                0 => (2, rng.random_range(6.0..9.0), rng.random_range(2.0..2.8)),
+                1 => (3, rng.random_range(6.0..8.5), 2.6),
+                _ => (1, rng.random_range(5.0..8.0), rng.random_range(3.0..4.5)),
+            },
+        };
+        if !park.inside(w, canopy + 0.4) || park.path_distance(w) < park.path_width * 0.5 + canopy * 0.6 + 0.6 || !park.clear_of_features(w, canopy * 0.5 + 1.0) || !park.clear_of_benches(w, 1.4) {
+            continue;
+        }
+        if placed.iter().any(|(p, pc)| p.distance(w) < spacing.min(canopy + pc + 1.0).max(spacing * 0.6)) {
+            continue;
+        }
+        match kind {
+            0 => dead_tree(g, w, h, mul(pal.bark, 0.8)),
+            2 => conifer(g, w, h, canopy, pal.bark, mul(pal.foliage, 0.7)),
+            3 => palm(g, w, h, pal.bark, mul(pal.foliage, 1.1)),
+            _ => tree_world(g, w, h, canopy, pal.bark, mul(pal.foliage, rng.random_range(0.8..1.15))),
+        }
+        placed.push((w, canopy));
+        count += 1;
+    }
+}
+
+fn dead_tree(g: &mut Geometry, w: Vec2, h: f32, bark: [f32; 3]) {
+    g.part(Wood).cylinder(w, 0.22, 0.08, 0.0, h, 6, rgba(bark));
     for k in 0..3 {
-        lamp_post(g, f, front.at(-front.len * 0.35 + k as f32 * front.len * 0.35, -1.5), 6.0, pal.lamp);
+        let a = k as f32 * 2.1 + w.x * 0.37;
+        let dir = Vec3::new(a.cos(), 0.9, a.sin()).normalize();
+        let from = Vec3::new(w.x, h * (0.55 + 0.12 * k as f32), w.y);
+        g.part(Wood).beam(from, from + dir * (h * 0.35), 0.1, rgba(bark));
     }
-    // Kiosk: glass box with a lit interior.
-    let kp = front.at(front.len * 0.38, -3.5);
-    if c.inside(kp) {
-        let kb = rect(kp.x, kp.y, 1.5, 1.2);
-        extrude(g, f, Glass, &kb, 0.0, 2.8, pick(rng, &pal.glass));
-        extrude(g, f, Glow, &scale_poly(&kb, 0.8), 0.9, 2.2, mul(pal.window_warm, 0.6));
-        extrude(g, f, Panel, &offset_poly(&kb, -0.2), 2.8, 3.1, mul(pal.steel, 0.9));
+}
+
+fn conifer(g: &mut Geometry, w: Vec2, h: f32, r: f32, bark: [f32; 3], leaf: [f32; 3]) {
+    g.part(Wood).cylinder(w, 0.22, 0.12, 0.0, h * 0.3, 6, rgba(bark));
+    for k in 0..3 {
+        let y0 = h * (0.25 + 0.22 * k as f32);
+        let rr = r * (1.0 - 0.22 * k as f32);
+        g.part(Foliage).frustum(&MeshData::ngon(w, rr, 8, 0.3 * k as f32, y0), &MeshData::ngon(w, rr * 0.12, 8, 0.3 * k as f32, y0 + h * 0.32), rgba(mul(leaf, 1.0 - 0.06 * k as f32)));
     }
-    bollards(g, c, &front, 6, -0.8);
+}
+
+fn palm(g: &mut Geometry, w: Vec2, h: f32, bark: [f32; 3], leaf: [f32; 3]) {
+    let lean = Vec2::new(w.y * 0.013, w.x * 0.011).normalize_or_zero() * 0.9;
+    let top = Vec3::new(w.x + lean.x, h, w.y + lean.y);
+    g.part(Wood).beam(Vec3::new(w.x, 0.0, w.y), Vec3::new(w.x + lean.x * 0.5, h * 0.55, w.y + lean.y * 0.5), 0.34, rgba(bark));
+    g.part(Wood).beam(Vec3::new(w.x + lean.x * 0.5, h * 0.55, w.y + lean.y * 0.5), top, 0.26, rgba(bark));
+    for k in 0..7 {
+        let a = k as f32 / 7.0 * TAU;
+        let dir = Vec3::new(a.cos(), 0.35, a.sin()).normalize();
+        let mid = top + dir * 1.6;
+        let tip = mid + Vec3::new(dir.x, -0.5, dir.z).normalize() * 1.8;
+        g.part(Foliage).beam(top, mid, 0.5, rgba(leaf));
+        g.part(Foliage).beam(mid, tip, 0.32, rgba(mul(leaf, 0.9)));
+    }
+    g.part(Foliage).cylinder(Vec2::new(top.x, top.z), 0.5, 0.5, h - 0.4, h + 0.3, 6, rgba(mul(leaf, 0.8)));
+}
+
+// ── features ─────────────────────────────────────────────────────────────────
+
+fn feature(g: &mut Geometry, rng: &mut impl Rng, park: &Park, s: &ParkFeatureSlot, pal: &Palette) {
+    let (w, r, yaw) = (s.pos, s.radius, s.heading);
+    match s.kind {
+        ParkFeature::Court => court(g, rng, w, r, yaw, park.tier, pal),
+        ParkFeature::Skatepark => skatepark(g, w, r, yaw, pal),
+        ParkFeature::Playground => playground(g, rng, w, r, yaw, park.tier, pal),
+        ParkFeature::Pond => water(g, rng, w, r, park.tier, pal, false),
+        ParkFeature::Lake => water(g, rng, w, r, park.tier, pal, true),
+        ParkFeature::Fountain => fountain(g, w, r, pal),
+        ParkFeature::Bandstand => bandstand(g, w, r, yaw, pal),
+        ParkFeature::Carousel => carousel(g, rng, w, r, pal),
+        ParkFeature::FerrisWheel => ferris_wheel(g, w, r, yaw, pal),
+        ParkFeature::Kiosk => kiosk(g, rng, w, r, yaw, pal),
+        ParkFeature::FlowerBed => flower_bed(g, rng, w, r, pal),
+        ParkFeature::Statue => statue(g, w, r, yaw, pal),
+        ParkFeature::DogRun => dog_run(g, w, r, yaw, pal),
+        ParkFeature::Lawn => g.part(Foliage).ground_polygon(&circle(w, r, 16, 0.0), 0.045, rgba(mul(pal.foliage, 1.15))),
+    }
+}
+
+fn circle(w: Vec2, r: f32, n: usize, rot: f32) -> Vec<Vec2> {
+    (0..n).map(|i| w + Vec2::from_angle(rot + i as f32 / n as f32 * TAU) * r).collect()
+}
+
+/// A rectangle's corners in world space, `hw` along the heading and `hd` across.
+fn rect_world(w: Vec2, hw: f32, hd: f32, yaw: f32) -> [Vec2; 4] {
+    let d = Vec2::from_angle(yaw);
+    let n = d.perp();
+    [w - d * hw - n * hd, w + d * hw - n * hd, w + d * hw + n * hd, w - d * hw + n * hd]
+}
+
+fn rail(g: &mut Geometry, a: Vec2, b: Vec2, y: f32, thick: f32, color: [f32; 3]) {
+    g.part(Matte).beam(Vec3::new(a.x, y, a.y), Vec3::new(b.x, y, b.y), thick, rgba(color));
+}
+
+fn court(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, yaw: f32, tier: Tier, pal: &Palette) {
+    let (hw, hd) = (r * 0.92, r * 0.55);
+    let worn = if tier == Tier::Low { 0.8 } else { 1.0 };
+    g.part(Asphalt).boxed(Vec3::new(w.x, 0.03, w.y), Vec3::new(hw * 2.0, 0.06, hd * 2.0), yaw, rgba(mul(pal.asphalt, 1.35 * worn)));
+    let line = mul(pal.lane_marker, 0.8 * worn);
+    let d = Vec2::from_angle(yaw);
+    let n = d.perp();
+    for s in [-1.0f32, 1.0] {
+        g.part(Matte).boxed(Vec3::new(w.x + n.x * hd * s * 0.97, 0.07, w.y + n.y * hd * s * 0.97), Vec3::new(hw * 1.94, 0.01, 0.08), yaw, rgba(line));
+        g.part(Matte).boxed(Vec3::new(w.x + d.x * hw * s * 0.97, 0.07, w.y + d.y * hw * s * 0.97), Vec3::new(0.08, 0.01, hd * 1.94), yaw, rgba(line));
+    }
+    g.part(Matte).boxed(Vec3::new(w.x, 0.07, w.y), Vec3::new(0.08, 0.01, hd * 1.94), yaw, rgba(line));
+    g.part(Matte).cylinder(w, 1.8, 1.8, 0.065, 0.075, 16, rgba(line));
+    for s in [-1.0f32, 1.0] {
+        let base = w + d * (hw * s - 0.9 * s);
+        let post = base + d * s * 0.9;
+        g.part(Matte).cylinder(post, 0.07, 0.07, 0.0, 3.3, 8, rgba(mul(pal.steel, 0.6)));
+        let bent = tier == Tier::Low && s > 0.0;
+        if bent {
+            // Hoop gone, backboard hanging.
+            g.part(Panel).boxed(Vec3::new(base.x, 2.8, base.y), Vec3::new(0.05, 1.0, 1.4), yaw + 0.4, rgba(mul(pal.plywood, 0.7)));
+            continue;
+        }
+        g.part(Panel).boxed(Vec3::new(base.x, 3.2, base.y), Vec3::new(0.05, 1.05, 1.8), yaw, rgba([0.85, 0.85, 0.88]));
+        let ring = base - d * s * 0.5;
+        g.part(Matte).cylinder(ring, 0.45, 0.45, 3.02, 3.06, 12, rgba([0.95, 0.4, 0.1]));
+    }
+    if tier == Tier::Low {
+        for _ in 0..rng.random_range(3..7) {
+            let p = w + d * rng.random_range(-hw * 0.9..hw * 0.9) + n * rng.random_range(-hd * 0.9..hd * 0.9);
+            g.part(Matte).boxed(Vec3::new(p.x, 0.065, p.y), Vec3::new(rng.random_range(1.0..3.0), 0.01, 0.08), rng.random_range(0.0..TAU), rgba([0.05, 0.05, 0.05]));
+        }
+    }
+}
+
+fn skatepark(g: &mut Geometry, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
+    let (hw, hd) = (r * 0.9, r * 0.6);
+    let concrete = mul(pal.concrete[0], 1.1);
+    g.part(Concrete).boxed(Vec3::new(w.x, 0.05, w.y), Vec3::new(hw * 2.0, 0.1, hd * 2.0), yaw, rgba(concrete));
+    let d = Vec2::from_angle(yaw);
+    let n = d.perp();
+    // Quarter pipes at both ends, a box and a rail in the middle.
+    for s in [-1.0f32, 1.0] {
+        let back = w + d * (hw - 0.2) * s;
+        let front = w + d * (hw - 3.0) * s;
+        let b0 = Vec3::new(front.x - n.x * hd * 0.8, 0.1, front.y - n.y * hd * 0.8);
+        let b1 = Vec3::new(front.x + n.x * hd * 0.8, 0.1, front.y + n.y * hd * 0.8);
+        let t0 = Vec3::new(back.x - n.x * hd * 0.8, 0.1, back.y - n.y * hd * 0.8);
+        let t1 = Vec3::new(back.x + n.x * hd * 0.8, 0.1, back.y + n.y * hd * 0.8);
+        g.part(Concrete).frustum(&[b0, b1, b1 + Vec3::Y * 0.05, b0 + Vec3::Y * 0.05], &[t0, t1, t1 + Vec3::Y * 1.8, t0 + Vec3::Y * 1.8], rgba(mul(concrete, 0.95)));
+        g.part(Matte).beam(t0 + Vec3::Y * 1.8, t1 + Vec3::Y * 1.8, 0.08, rgba(mul(pal.steel, 0.8)));
+    }
+    g.part(Concrete).boxed(Vec3::new(w.x, 0.4, w.y), Vec3::new(3.0, 0.6, 1.2), yaw, rgba(mul(concrete, 0.9)));
+    let ra = w + n * hd * 0.5 - d * 2.5;
+    let rb = w + n * hd * 0.5 + d * 2.5;
+    rail(g, ra, rb, 0.55, 0.06, mul(pal.steel, 0.8));
+    for p in [ra, rb] {
+        g.part(Matte).boxed(Vec3::new(p.x, 0.27, p.y), Vec3::new(0.06, 0.55, 0.06), 0.0, rgba(mul(pal.steel, 0.8)));
+    }
+}
+
+fn playground(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, yaw: f32, tier: Tier, pal: &Palette) {
+    let d = Vec2::from_angle(yaw);
+    let n = d.perp();
+    let bright = pick(rng, &pal.awning_colors);
+    let bright2 = pick(rng, &pal.awning_colors);
+    // Soft surface and a low fence with a gap on the path side.
+    g.part(Matte).cylinder(w, r, r, 0.0, 0.06, 20, rgba(if tier == Tier::High { [0.55, 0.25, 0.2] } else { [0.72, 0.6, 0.42] }));
+    for k in 0..18 {
+        let a = k as f32 / 18.0 * TAU;
+        let rel = (a - yaw).rem_euclid(TAU);
+        if rel < 0.5 || rel > TAU - 0.5 {
+            continue;
+        }
+        let p = w + Vec2::from_angle(a) * (r - 0.3);
+        g.part(Wood).boxed(Vec3::new(p.x, 0.4, p.y), Vec3::new(0.1, 0.8, 0.1), a, rgba(pal.wood));
+        let rel2 = (a + TAU / 18.0 - yaw).rem_euclid(TAU);
+        if rel2 > 0.5 && rel2 < TAU - 0.5 {
+            let q = w + Vec2::from_angle(a + TAU / 18.0) * (r - 0.3);
+            rail(g, p, q, 0.7, 0.06, pal.wood);
+        }
+    }
+    // Swings: an A-frame with two seats.
+    let sc = w - d * (r * 0.45);
+    let (sa, sb) = (sc - n * 1.8, sc + n * 1.8);
+    for p in [sa, sb] {
+        for side in [-0.7f32, 0.7] {
+            let foot = p + d * side;
+            g.part(Matte).beam(Vec3::new(foot.x, 0.0, foot.y), Vec3::new(p.x, 2.6, p.y), 0.09, rgba(bright));
+        }
+    }
+    g.part(Matte).beam(Vec3::new(sa.x, 2.6, sa.y), Vec3::new(sb.x, 2.6, sb.y), 0.09, rgba(bright));
+    for k in [-0.9f32, 0.9] {
+        let p = sc + n * k;
+        for side in [-0.25f32, 0.25] {
+            let q = p + n * side;
+            g.part(Matte).beam(Vec3::new(q.x, 2.55, q.y), Vec3::new(q.x, 0.55, q.y), 0.02, rgba([0.3, 0.3, 0.3]));
+        }
+        g.part(Matte).boxed(Vec3::new(p.x, 0.5, p.y), Vec3::new(0.3, 0.05, 0.5), yaw, rgba(DARK));
+    }
+    // Slide: a ladder up to a platform and a sloped chute down.
+    let top = w + d * (r * 0.4) + n * (r * 0.25);
+    let foot = top + d * 3.0;
+    for side in [-0.4f32, 0.4] {
+        let p = top + n * side;
+        g.part(Matte).boxed(Vec3::new(p.x, 1.0, p.y), Vec3::new(0.08, 2.0, 0.08), yaw, rgba(bright2));
+    }
+    g.part(Panel).boxed(Vec3::new(top.x, 2.0, top.y), Vec3::new(1.0, 0.08, 1.0), yaw, rgba(bright2));
+    g.part(Metal).slab(Vec3::new(top.x, 2.0, top.y), Vec3::new(foot.x, 0.3, foot.y), 0.8, 0.08, rgba([0.75, 0.76, 0.78]));
+    for k in 0..4 {
+        let p = top - d * 0.5;
+        g.part(Matte).boxed(Vec3::new(p.x, 0.4 + k as f32 * 0.45, p.y), Vec3::new(0.05, 0.05, 0.7), yaw, rgba(bright2));
+    }
+    // Climbing frame, seesaw, spring riders, a sandpit.
+    let cf = w + d * (r * 0.4) - n * (r * 0.3);
+    for (dx, dz) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+        let p = cf + d * dx + n * dz;
+        g.part(Matte).boxed(Vec3::new(p.x, 1.1, p.y), Vec3::new(0.07, 2.2, 0.07), yaw, rgba(bright));
+    }
+    for y in [1.0f32, 2.2] {
+        for s in [-1.0f32, 1.0] {
+            rail(g, cf + d * s - n, cf + d * s + n, y, 0.06, bright);
+            rail(g, cf - d + n * s, cf + d + n * s, y, 0.06, bright);
+        }
+    }
+    let ss = w - n * (r * 0.55);
+    g.part(Matte).boxed(Vec3::new(ss.x, 0.3, ss.y), Vec3::new(0.3, 0.6, 0.3), yaw, rgba(DARK));
+    g.part(Wood).slab(Vec3::new(ss.x - d.x * 1.5, 0.2, ss.y - d.y * 1.5), Vec3::new(ss.x + d.x * 1.5, 0.95, ss.y + d.y * 1.5), 0.3, 0.06, rgba(bright2));
+    for k in [-1.0f32, 1.0] {
+        let p = w + n * (r * 0.55) + d * k * 1.2;
+        g.part(Matte).cylinder(p, 0.12, 0.12, 0.0, 0.45, 6, rgba(mul(pal.steel, 0.7)));
+        g.part(Matte).boxed(Vec3::new(p.x, 0.65, p.y), Vec3::new(0.8, 0.35, 0.35), yaw + k, rgba(pick(rng, &pal.awning_colors)));
+    }
+    if r > 5.0 {
+        let sp = w + d * (r * 0.1) + n * (r * 0.55);
+        g.part(Dirt).boxed(Vec3::new(sp.x, 0.08, sp.y), Vec3::new(2.4, 0.16, 2.4), yaw, rgba([0.8, 0.72, 0.52]));
+    }
+}
+
+fn water(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, tier: Tier, pal: &Palette, lake: bool) {
+    let n = if lake { 18 } else { 12 };
+    let radii: Vec<f32> = (0..n).map(|_| r * rng.random_range(0.78..1.0)).collect();
+    let rot = rng.random_range(0.0..TAU);
+    let shape = |k: f32| -> Vec<Vec2> { (0..n).map(|i| w + Vec2::from_angle(rot + i as f32 / n as f32 * TAU) * (radii[i] * k)).collect() };
+    let rim = shape(1.0);
+    let water_poly = shape(0.93);
+    if tier == Tier::Low {
+        g.part(Dirt).ground_polygon(&rim, 0.06, rgba(mul(pal.dirt, 0.6)));
+    } else {
+        g.part(Stone).ground_polygon(&rim, 0.08, rgba(mul(pal.stone, 1.25)));
+    }
+    g.part(Glow).ground_polygon(&water_poly, 0.1, rgba(mul(pal.water, if tier == Tier::High { 0.8 } else { 0.65 })));
+    // Reeds and lily pads.
+    for i in 0..n {
+        if rng.random_bool(0.45) {
+            let p = w + Vec2::from_angle(rot + i as f32 / n as f32 * TAU) * (radii[i] * 0.88);
+            for _ in 0..3 {
+                let q = p + Vec2::new(rng.random_range(-0.4..0.4), rng.random_range(-0.4..0.4));
+                g.part(Foliage).boxed(Vec3::new(q.x, 0.6, q.y), Vec3::new(0.06, 1.2, 0.06), 0.0, rgba(mul(pal.foliage_dry, 1.1)));
+            }
+        }
+    }
+    for _ in 0..(if lake { 8 } else { 4 }) {
+        let p = w + Vec2::from_angle(rng.random_range(0.0..TAU)) * (r * rng.random_range(0.2..0.7));
+        g.part(Foliage).cylinder(p, 0.35, 0.35, 0.1, 0.13, 7, rgba(mul(pal.foliage, 0.9)));
+    }
+    if lake {
+        // Jetty with a boat tied up, and an island with a tree.
+        let a = rot + 0.3;
+        let edge = w + Vec2::from_angle(a) * (r * 0.95);
+        let end = w + Vec2::from_angle(a) * (r * 0.45);
+        g.part(Wood).slab(Vec3::new(edge.x, 0.5, edge.y), Vec3::new(end.x, 0.5, end.y), 1.4, 0.12, rgba(pal.wood));
+        for t in [0.2f32, 0.6, 1.0] {
+            let p = edge.lerp(end, t);
+            for s in [-0.6f32, 0.6] {
+                let q = p + Vec2::from_angle(a).perp() * s;
+                g.part(Wood).cylinder(q, 0.08, 0.08, 0.0, 0.7, 6, rgba(mul(pal.wood, 0.8)));
+            }
+        }
+        let boat = end + Vec2::from_angle(a).perp() * 1.5;
+        g.part(Wood).boxed(Vec3::new(boat.x, 0.25, boat.y), Vec3::new(1.1, 0.35, 3.0), a, rgba(mul(pick(rng, &pal.awning_colors), 0.9)));
+        let island = w + Vec2::from_angle(a + PI) * (r * 0.45);
+        g.part(Dirt).cylinder(island, 2.2, 2.2, 0.1, 0.28, 10, rgba(pal.dirt));
+        tree_world(g, island, 5.0, 2.6, pal.bark, pal.foliage);
+    }
+}
+
+fn fountain(g: &mut Geometry, w: Vec2, r: f32, pal: &Palette) {
+    let stone = mul(pal.stone, 1.4);
+    g.part(Paving).ground_polygon(&circle(w, r + 1.6, 20, 0.0), 0.045, rgba(mul(pal.paving, 1.2)));
+    g.part(Stone).cylinder(w, r, r, 0.0, 0.7, 20, rgba(stone));
+    g.part(Glow).cylinder(w, r - 0.35, r - 0.35, 0.7, 0.74, 20, rgba(mul(pal.water, 0.8)));
+    g.part(Stone).cylinder(w, r * 0.38, r * 0.32, 0.7, 1.7, 12, rgba(stone));
+    g.part(Glow).cylinder(w, r * 0.3, r * 0.3, 1.7, 1.74, 12, rgba(mul(pal.water, 0.9)));
+    g.part(Stone).cylinder(w, r * 0.16, r * 0.12, 1.7, 2.5, 10, rgba(stone));
+    let jet = mul(pal.water, 1.5);
+    g.part(Glow).boxed(Vec3::new(w.x, 3.2, w.y), Vec3::new(0.14, 1.6, 0.14), 0.0, rgba(jet));
+    for k in 0..6 {
+        let p = w + Vec2::from_angle(k as f32 / 6.0 * TAU) * (r * 0.6);
+        g.part(Glow).boxed(Vec3::new(p.x, 1.3, p.y), Vec3::new(0.08, 1.2, 0.08), 0.0, rgba(jet));
+    }
+}
+
+fn bandstand(g: &mut Geometry, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
+    let stone = mul(pal.stone, 1.3);
+    g.part(Stone).cylinder(w, r, r, 0.0, 0.8, 8, rgba(stone));
+    // Steps on the path side.
+    let step = w + Vec2::from_angle(yaw) * (r + 0.4);
+    g.part(Stone).boxed(Vec3::new(step.x, 0.2, step.y), Vec3::new(2.4, 0.4, 1.2), yaw, rgba(stone));
+    let mut cols: Vec<Vec3> = Vec::new();
+    for k in 0..8 {
+        let p = w + Vec2::from_angle(k as f32 / 8.0 * TAU + yaw + PI / 8.0) * (r * 0.85);
+        g.part(Panel).cylinder(p, 0.14, 0.12, 0.8, 4.0, 8, rgba([0.9, 0.9, 0.86]));
+        cols.push(Vec3::new(p.x, 4.0, p.y));
+    }
+    let wf = world_frame();
+    for k in 0..8 {
+        let (a, b) = (cols[k], cols[(k + 1) % 8]);
+        if k != 3 {
+            g.part(Matte).beam(Vec3::new(a.x, 1.7, a.z), Vec3::new(b.x, 1.7, b.z), 0.05, rgba([0.2, 0.2, 0.22]));
+        }
+        string_lights(g, &wf, a - Vec3::Y * 0.3, b - Vec3::Y * 0.3, 6, mul(pal.window_warm, 1.2));
+    }
+    g.part(Metal).frustum(&MeshData::ngon(w, r * 1.08, 8, yaw + PI / 8.0, 4.0), &MeshData::ngon(w, 0.3, 8, yaw + PI / 8.0, 6.2), rgba(mul(pal.metal_paint[0], 0.9)));
+    g.part(Glow).boxed(Vec3::new(w.x, 6.5, w.y), Vec3::new(0.3, 0.6, 0.3), 0.0, rgba(mul(pal.lamp, 0.9)));
+}
+
+fn carousel(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, pal: &Palette) {
+    let a = pick(rng, &pal.awning_colors);
+    let b = pick(rng, &pal.awning_colors);
+    g.part(Paving).ground_polygon(&circle(w, r + 1.2, 16, 0.0), 0.045, rgba(mul(pal.paving, 1.1)));
+    g.part(Wood).cylinder(w, r, r, 0.0, 0.5, 16, rgba(mul(pal.wood, 1.1)));
+    g.part(Metal).cylinder(w, 0.45, 0.45, 0.5, 4.6, 10, rgba(pal.metal_paint[0]));
+    // Striped canopy from alternating wedges.
+    for k in 0..12 {
+        let a0 = k as f32 / 12.0 * TAU;
+        let a1 = (k + 1) as f32 / 12.0 * TAU;
+        let bottom = [Vec3::new(w.x, 4.6, w.y), Vec3::new(w.x + a0.cos() * r * 1.1, 4.6, w.y + a0.sin() * r * 1.1), Vec3::new(w.x + a1.cos() * r * 1.1, 4.6, w.y + a1.sin() * r * 1.1)];
+        let top = [Vec3::new(w.x, 6.6, w.y), Vec3::new(w.x + a0.cos() * 0.3, 6.6, w.y + a0.sin() * 0.3), Vec3::new(w.x + a1.cos() * 0.3, 6.6, w.y + a1.sin() * 0.3)];
+        g.part(Tarp).frustum(&bottom, &top, rgba(if k % 2 == 0 { a } else { b }));
+        let p = w + Vec2::from_angle(a0) * (r * 1.08);
+        g.part(Glow).boxed(Vec3::new(p.x, 4.5, p.y), Vec3::new(0.2, 0.2, 0.2), 0.0, rgba(mul(pal.window_warm, 1.3)));
+    }
+    for k in 0..8 {
+        let ang = k as f32 / 8.0 * TAU;
+        let p = w + Vec2::from_angle(ang) * (r * 0.68);
+        g.part(Metal).cylinder(p, 0.04, 0.04, 0.5, 4.6, 6, rgba([0.9, 0.85, 0.5]));
+        let y = 1.4 + 0.4 * ((k % 2) as f32);
+        g.part(Matte).boxed(Vec3::new(p.x, y, p.y), Vec3::new(1.3, 0.55, 0.4), ang + FRAC_PI_2, rgba(pick(rng, &pal.awning_colors)));
+        let head = p + Vec2::from_angle(ang + FRAC_PI_2) * 0.75;
+        g.part(Matte).boxed(Vec3::new(head.x, y + 0.45, head.y), Vec3::new(0.45, 0.4, 0.3), ang + FRAC_PI_2, rgba([0.9, 0.9, 0.88]));
+    }
+}
+
+fn ferris_wheel(g: &mut Geometry, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
+    let rw = r * 0.85;
+    let hub_y = rw + 2.5;
+    let d = Vec2::from_angle(yaw);
+    let n = d.perp();
+    let steel = pal.metal_paint[1 % pal.metal_paint.len()];
+    g.part(Concrete).boxed(Vec3::new(w.x, 0.1, w.y), Vec3::new(rw * 1.2, 0.2, 6.0), yaw, rgba(mul(pal.concrete[0], 1.1)));
+    let hub = Vec3::new(w.x, hub_y, w.y);
+    let n3 = Vec3::new(n.x, 0.0, n.y);
+    for side in [-1.0f32, 1.0] {
+        for along in [-0.35f32, 0.35] {
+            let foot = w + n * side * 2.4 + d * rw * along;
+            g.part(Metal).beam(Vec3::new(foot.x, 0.0, foot.y), hub + n3 * side, 0.3, rgba(steel));
+        }
+    }
+    g.part(Metal).tube(hub - n3 * 1.2, hub + n3 * 1.2, 0.3, 8, rgba(steel));
+    let spokes = 16;
+    let rim: Vec<Vec3> = (0..spokes)
+        .map(|k| {
+            let a = k as f32 / spokes as f32 * TAU;
+            hub + Vec3::new(d.x * a.cos() * rw, a.sin() * rw, d.y * a.cos() * rw)
+        })
+        .collect();
+    for k in 0..spokes {
+        let (a, b) = (rim[k], rim[(k + 1) % spokes]);
+        for side in [-0.6f32, 0.6] {
+            let o = n3 * side;
+            g.part(Metal).tube(a + o, b + o, 0.09, 6, rgba(steel));
+            g.part(Metal).tube(hub + o, a + o, 0.06, 5, rgba(mul(steel, 0.9)));
+        }
+        // Gondola hanging from the rim.
+        let gp = a - Vec3::Y * 0.9;
+        g.part(Matte).boxed(gp, Vec3::new(1.3, 1.1, 1.0), yaw, rgba(pal.awning_colors[k % pal.awning_colors.len()]));
+        g.part(Glow).boxed(a, Vec3::new(0.22, 0.22, 0.22), 0.0, rgba(mul(pal.window_warm, 1.4)));
+    }
+    // Ticket booth.
+    let booth = w + n * 4.5 + d * rw * 0.5;
+    g.part(Panel).boxed(Vec3::new(booth.x, 1.2, booth.y), Vec3::new(2.0, 2.4, 1.6), yaw, rgba(mul(pal.panel[0], 0.9)));
+    g.part(Glow).boxed(Vec3::new(booth.x, 1.4, booth.y) - n3 * 0.81, Vec3::new(1.2, 0.6, 0.04), yaw, rgba(mul(pal.window_warm, 0.8)));
+}
+
+fn kiosk(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
+    let d = Vec2::from_angle(yaw);
+    let n = d.perp();
+    g.part(Paving).ground_polygon(&circle(w, r + 1.0, 14, 0.0), 0.045, rgba(mul(pal.paving, 1.05)));
+    let k = w - d * (r * 0.35);
+    g.part(Glass).boxed(Vec3::new(k.x, 1.4, k.y), Vec3::new(3.0, 2.8, 2.4), yaw, rgba(pick(rng, &pal.glass)));
+    g.part(Glow).boxed(Vec3::new(k.x, 1.5, k.y), Vec3::new(2.4, 1.3, 1.9), yaw, rgba(mul(pal.window_warm, 0.6)));
+    g.part(Panel).boxed(Vec3::new(k.x, 2.95, k.y), Vec3::new(3.4, 0.3, 2.8), yaw, rgba(mul(pal.steel, 0.9)));
+    g.part(Matte).boxed(Vec3::new(k.x, 2.55, k.y) + Vec3::new(d.x, 0.0, d.y) * 1.52, Vec3::new(0.05, 0.5, 2.0), yaw, rgba(pick(rng, &pal.led_colors)));
+    // Café tables with stools and a parasol each.
+    for (i, (du, dv)) in [(0.5f32, -1.1f32), (0.5, 1.1), (0.95, 0.0)].iter().enumerate() {
+        let t = w + d * (r * du) + n * (r * dv);
+        g.part(Metal).cylinder(t, 0.05, 0.05, 0.0, 0.75, 6, rgba(mul(pal.steel, 0.7)));
+        g.part(Metal).cylinder(t, 0.5, 0.5, 0.75, 0.8, 10, rgba(mul(pal.steel, 0.8)));
+        for s in 0..3 {
+            let p = t + Vec2::from_angle(s as f32 / 3.0 * TAU + i as f32) * 0.8;
+            g.part(Metal).cylinder(p, 0.18, 0.18, 0.42, 0.47, 8, rgba(mul(pal.steel, 0.75)));
+            g.part(Metal).cylinder(p, 0.03, 0.03, 0.0, 0.42, 5, rgba(mul(pal.steel, 0.6)));
+        }
+        g.part(Metal).cylinder(t, 0.03, 0.03, 0.8, 2.4, 5, rgba(mul(pal.steel, 0.6)));
+        g.part(Tarp).frustum(&MeshData::ngon(t, 1.2, 8, 0.0, 2.1), &MeshData::ngon(t, 0.05, 8, 0.0, 2.5), rgba(pick(rng, &pal.awning_colors)));
+    }
+}
+
+fn flower_bed(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, pal: &Palette) {
+    g.part(Stone).cylinder(w, r, r, 0.0, 0.35, 12, rgba(mul(pal.stone, 1.3)));
+    g.part(Dirt).cylinder(w, r - 0.2, r - 0.2, 0.35, 0.42, 12, rgba(mul(pal.dirt, 0.8)));
+    g.part(Foliage).cylinder(w, r - 0.35, r - 0.35, 0.42, 0.62, 12, rgba(mul(pal.foliage, 0.95)));
+    let colors: Vec<[f32; 3]> = pal.awning_colors.iter().chain(pal.led_colors.iter()).copied().collect();
+    for _ in 0..(r * 6.0) as i32 {
+        let p = w + Vec2::from_angle(rng.random_range(0.0..TAU)) * rng.random_range(0.0..r - 0.5);
+        g.part(Matte).boxed(Vec3::new(p.x, 0.72, p.y), Vec3::new(0.22, 0.2, 0.22), rng.random_range(0.0..TAU), rgba(mul(pick(rng, &colors), 1.2)));
+    }
+}
+
+fn statue(g: &mut Geometry, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
+    let stone = mul(pal.stone, 1.5);
+    g.part(Paving).ground_polygon(&circle(w, r + 1.0, 12, 0.0), 0.045, rgba(mul(pal.paving, 1.15)));
+    g.part(Stone).boxed(Vec3::new(w.x, 0.7, w.y), Vec3::new(1.6, 1.4, 1.6), yaw, rgba(stone));
+    g.part(Stone).boxed(Vec3::new(w.x, 1.5, w.y), Vec3::new(1.2, 0.2, 1.2), yaw, rgba(mul(stone, 1.05)));
+    let bronze = [0.35, 0.3, 0.2];
+    g.part(Metal).frustum(&MeshData::ngon(w, 0.45, 8, yaw, 1.6), &MeshData::ngon(w, 0.3, 8, yaw, 3.3), rgba(bronze));
+    g.part(Metal).cylinder(w, 0.22, 0.2, 3.3, 3.75, 8, rgba(bronze));
+    let arm = w + Vec2::from_angle(yaw) * 0.5;
+    g.part(Metal).beam(Vec3::new(w.x, 3.0, w.y), Vec3::new(arm.x, 3.4, arm.y), 0.16, rgba(bronze));
+    let up = w - Vec2::from_angle(yaw) * 1.0;
+    g.part(Glow).boxed(Vec3::new(up.x, 0.08, up.y), Vec3::new(0.4, 0.06, 0.4), 0.0, rgba(mul(pal.lamp, 0.8)));
+}
+
+fn dog_run(g: &mut Geometry, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
+    let corners = rect_world(w, r * 0.9, r * 0.6, yaw);
+    g.part(Dirt).ground_polygon(&corners, 0.04, rgba(mul(pal.dirt, 1.05)));
+    let dark = [0.12, 0.12, 0.13];
+    for i in 0..4 {
+        let (a, b) = (corners[i], corners[(i + 1) % 4]);
+        let len = a.distance(b);
+        let n = (len / 2.5).ceil().max(1.0) as i32;
+        for k in 0..=n {
+            let p = a.lerp(b, k as f32 / n as f32);
+            g.part(Matte).boxed(Vec3::new(p.x, 0.6, p.y), Vec3::new(0.07, 1.2, 0.07), yaw, rgba(dark));
+        }
+        // A gate gap in the path-side fence.
+        if i == 1 {
+            rail(g, a, a.lerp(b, 0.4), 1.1, 0.04, dark);
+            rail(g, a.lerp(b, 0.6), b, 1.1, 0.04, dark);
+        } else {
+            rail(g, a, b, 1.1, 0.04, dark);
+        }
+        rail(g, a, b, 0.5, 0.04, dark);
+    }
+    let d = Vec2::from_angle(yaw);
+    let n = d.perp();
+    for k in [-0.4f32, 0.4] {
+        let p = w + d * (r * k);
+        rail(g, p - n * 0.8, p + n * 0.8, 0.45, 0.05, mul(pal.wood, 1.1));
+    }
+    let tunnel = w + n * (r * 0.3);
+    g.part(Matte).tube(Vec3::new(tunnel.x - d.x * 1.5, 0.45, tunnel.y - d.y * 1.5), Vec3::new(tunnel.x + d.x * 1.5, 0.45, tunnel.y + d.y * 1.5), 0.45, 10, rgba(mul(pal.awning_colors[0], 0.9)));
+    let bowl = w - n * (r * 0.4);
+    g.part(Metal).cylinder(bowl, 0.25, 0.25, 0.0, 0.12, 8, rgba(mul(pal.steel, 0.9)));
 }

@@ -13,6 +13,7 @@ pub mod land_value;
 pub mod market;
 pub mod mind;
 pub mod names;
+pub mod park;
 pub mod plan;
 pub mod power;
 pub mod roads;
@@ -34,6 +35,7 @@ pub use roads::{NodeId, RoadNetwork, Segment, SegmentId};
 pub use traffic::{Car, CarId, Cargo, LaneId, Traffic};
 pub use walk::WalkGraph;
 pub use power::{PowerPlantKind, PowerStats, Weather};
+pub use park::{ParkFeature, ParkLayout};
 pub use world::{World, WorldConfig};
 pub use zoning::{LandUse, Lot, LotId, Zone, ZoneId};
 

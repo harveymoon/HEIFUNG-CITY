@@ -504,7 +504,7 @@ fn sync_lots(
 fn spawn_building(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, sim: &Sim, assets: &GameAssets, id: BuildingId) -> Option<(Vec<Entity>, usize)> {
     let b = sim.world.buildings.get(id)?;
     let lot = sim.world.lots.get(b.lot)?;
-    let extras = Extras { parking: b.parking_visual(), plant: b.plant, powered: b.powered };
+    let extras = Extras { parking: b.parking_visual(), plant: b.plant, powered: b.powered, park: lot.park.as_ref() };
     let geo = generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras);
     let tris = geo.triangle_count();
     Some((spawn_geometry(commands, meshes, mats, &geo, BuildingTag(id)), tris))
@@ -614,8 +614,10 @@ fn sync_citizens(
             *vis = Visibility::Visible;
             let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
             let heading = lerp_angle(c.prev_heading, c.heading, f);
-            tf.translation = Vec3::new(pos.x, 0.16, pos.y);
+            let seated = matches!(c.activity, nd_sim::Activity::Sitting { .. });
+            tf.translation = Vec3::new(pos.x, if seated { 0.02 } else { 0.16 }, pos.y);
             tf.rotation = Quat::from_rotation_y(-heading);
+            tf.scale = if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE };
             let cycling = c.mode == nd_sim::citizens::TravelMode::Bike && c.activity.is_traveling();
             let wanted_mesh = if cycling { &mats.bike_mesh } else { &mats.citizen_mesh };
             if mesh.0 != *wanted_mesh {

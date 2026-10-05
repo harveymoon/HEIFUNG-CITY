@@ -142,6 +142,25 @@ Citizens are rendered from their simulated positions every frame.
   end at the nearest street, the last stretch is walked over the pedestrian network,
   and the car is parked at a nearby parking business for a fee (or circles, which pulls
   a lot into existence). Shops and industry still need a street.
+- **Parks** (`nd_sim::park`): a park is every park parcel that touches another, so a
+  zone cut by a street or a footpath is still one park, and park parcels may line a
+  footpath like homes do. The planner works per connected park: each lot gets a hub
+  deep inside it, spokes from the hub to its street gate and to every gap it shares
+  with a neighbouring park lot (so paths run lot to lot), a loop on big dead-end lots,
+  spurs to its features, bends around them, and benches every 9 to 24 m along the paths
+  plus a half-ring facing the water or the stage. Features come from a budget by the
+  park's total area and the land value around it, handed out largest first to the lot
+  with the least feature area per square metre that has room: cheap land gets a court
+  and maybe a skate park and nothing else; the middle gets playgrounds, a pond, a kiosk,
+  flower beds, a dog run; dear land gets a lake with a jetty, a fountain, a bandstand, a
+  carousel, a ferris wheel, a statue and formal avenues. The plan lives on the lot
+  (`Lot::park`) and is rebuilt with the lots.
+  Park paths and benches are part of the pedestrian network: path vertices are nodes,
+  entrances join the lot loop, benches hang off the nearest path node, and park edges
+  cost 8% less than pavement, so walkers cut through parks on the way elsewhere. A park
+  visit no longer vanishes into a building: the visitor walks the paths to a bench and
+  sits (`Activity::Sitting`, drawn seated, visible, facing the path or the water),
+  then walks off the bench when the next decision comes.
 - **Power** (`nd_sim::power`): the city runs on electricity and the player supplies it.
   Every building draws megawatts by land use, floors and tier (industry most, homes
   least, high tiers more); plants draw none. Four kinds of plant go on vacant lots with
@@ -257,6 +276,18 @@ trait MindProvider {
   turbine blades) checks the polygon first. A test generates every style on about
   six hundred lots cut by straight, diagonal and curved roads and fails if any vertex
   is more than 4 m outside its lot, below ground, or absurdly tall.
+- Parks are drawn from the sim's plan (`buildings/park.rs`): the ground, path surface,
+  bench condition, fence or hedge or railing and the tree mix follow the tier (dirt and
+  weeds, dead trees, a broken bench and a drum fire on cheap land; lawn, hedges and
+  broadleaf trees in the middle; forecourt, railings, gate piers, avenues of trees,
+  conifers and palms on dear land). Trees are sampled on a shuffled jittered grid and
+  kept off the paths, the features, the benches and the lot edge, so they fit any parcel
+  shape. Each feature has its own drawer: court with hoops (one bent on cheap land),
+  skate park with quarter pipes, playground with swings, slide, climbing frame, seesaw,
+  spring riders and sandpit, pond or lake with reeds, lily pads, jetty, boat and island,
+  fountain with jets, bandstand with string lights, striped carousel with horses, ferris
+  wheel with gondolas and a ticket booth, kiosk with café tables and parasols, flower
+  beds, statue, dog run.
 - Power plants have their own styles: a coal station with a boiler hall, two stacks with
   plumes, a coal pile and conveyor and a transformer yard; rows of tilted panels on posts;
   white turbines with nacelles and three blades; a containment dome, hyperbolic cooling
@@ -279,6 +310,8 @@ trait MindProvider {
   and exports, hunger and shopping, business closures.
 - v0.8 (done): polygonal parcels, 35 architectural styles per land use and tier from a
   parts toolkit, textured surfaces with normal maps, street furniture, walk mode.
+- v0.13 (done): parks planned over connected parcels: paths lot to lot, benches people
+  sit on, features by land value (courts to ferris wheels), adaptive trees, parks on paths.
 - v0.12 (done): electricity: four plant kinds placed by the player, weather-dependent
   renewables, rationing by tier, brownouts that dim buildings and sour moods, a treasury.
 - v0.11 (done): pedestrian network through blocks with footfall and walk-in trade.

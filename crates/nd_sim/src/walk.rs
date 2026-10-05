@@ -33,6 +33,8 @@ pub struct WalkEdge {
     pub len: f32,
     /// Inside a lot (alley, setback, gate) rather than on a public street.
     pub interior: bool,
+    /// A park path: pleasant, so routes prefer it a little.
+    pub park: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -40,6 +42,8 @@ pub struct WalkGraph {
     pub nodes: Vec<WalkNode>,
     pub adj: Vec<Vec<WalkEdge>>,
     pub version: u64,
+    /// Park benches: node, lot, and the direction a sitter faces.
+    pub benches: Vec<(u32, LotId, f32)>,
 }
 
 /// Can people walk through this lot to the next one?
@@ -60,12 +64,16 @@ impl WalkGraph {
     }
 
     fn link(&mut self, a: u32, b: u32, interior: bool) {
+        self.link_kind(a, b, interior, false);
+    }
+
+    fn link_kind(&mut self, a: u32, b: u32, interior: bool, park: bool) {
         if a == b {
             return;
         }
         let len = self.nodes[a as usize].pos.distance(self.nodes[b as usize].pos).max(0.05);
-        self.adj[a as usize].push(WalkEdge { to: b, len, interior });
-        self.adj[b as usize].push(WalkEdge { to: a, len, interior });
+        self.adj[a as usize].push(WalkEdge { to: b, len, interior, park });
+        self.adj[b as usize].push(WalkEdge { to: a, len, interior, park });
     }
 
     pub fn build(roads: &RoadNetwork, lots: &SlotMap<LotId, Lot>, land_value: &LandValue, version: u64) -> Self {
@@ -282,7 +290,59 @@ impl WalkGraph {
         for (a, b) in gated {
             g.link(a, b, true);
         }
+
+        // ── parks ────────────────────────────────────────────────────────
+        // Park paths are public: every path vertex is a node, each path's
+        // first point (an entrance) joins the lot loop, and benches hang
+        // off the nearest path node so people can walk to them and sit.
+        let loop_mids: HashMap<LotId, Vec<u32>> = loops.iter().map(|l| (l.lot, l.mids.clone())).collect();
+        for (lid, lot) in lots.iter() {
+            let Some(park) = &lot.park else { continue };
+            let mut path_nodes: Vec<u32> = Vec::new();
+            for path in &park.paths {
+                let mut prev: Option<u32> = None;
+                for p in path {
+                    // Reuse a node already at this spot (the hub is shared).
+                    let n = match path_nodes.iter().copied().find(|&n| g.nodes[n as usize].pos.distance(*p) < 0.3) {
+                        Some(n) => n,
+                        None => {
+                            let n = g.add_node(*p, Some(lid));
+                            path_nodes.push(n);
+                            n
+                        }
+                    };
+                    if let Some(pv) = prev {
+                        g.link_kind(pv, n, true, true);
+                    }
+                    prev = Some(n);
+                }
+                if let (Some(&first), Some(mids)) = (path.first(), loop_mids.get(&lid)) {
+                    let entrance = path_nodes.iter().copied().find(|&n| g.nodes[n as usize].pos.distance(first) < 0.3);
+                    let nearest = mids.iter().copied().min_by(|&a, &b| g.nodes[a as usize].pos.distance(first).total_cmp(&g.nodes[b as usize].pos.distance(first)));
+                    if let (Some(e), Some(m)) = (entrance, nearest) {
+                        g.link_kind(e, m, true, true);
+                    }
+                }
+            }
+            for (pos, facing) in &park.benches {
+                let n = g.add_node(*pos, Some(lid));
+                if let Some(&near) = path_nodes.iter().min_by(|&&a, &&b| g.nodes[a as usize].pos.distance(*pos).total_cmp(&g.nodes[b as usize].pos.distance(*pos))) {
+                    g.link_kind(n, near, true, true);
+                }
+                g.benches.push((n, lid, *facing));
+            }
+        }
         g
+    }
+
+    /// A bench in a lot, as a position and facing; `pick` chooses which.
+    pub fn bench_in(&self, lot: LotId, pick: usize) -> Option<(Vec2, f32)> {
+        let here: Vec<(Vec2, f32)> = self.benches.iter().filter(|(_, l, _)| *l == lot).map(|(n, _, f)| (self.nodes[*n as usize].pos, *f)).collect();
+        if here.is_empty() {
+            None
+        } else {
+            Some(here[pick % here.len()])
+        }
     }
 
     pub fn nearest(&self, p: Vec2, max_dist: f32) -> Option<u32> {
@@ -325,7 +385,7 @@ impl WalkGraph {
             }
             let du = dist[u as usize];
             for e in &self.adj[u as usize] {
-                let cost = e.len * if e.interior { 1.15 } else { 1.0 };
+                let cost = e.len * if e.park { 0.92 } else if e.interior { 1.15 } else { 1.0 };
                 let nd = du + cost;
                 if nd < dist[e.to as usize] {
                     dist[e.to as usize] = nd;

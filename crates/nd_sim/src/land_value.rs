@@ -21,6 +21,12 @@ impl LandValue {
         Self { cell, half, n, values: vec![0.3; n * n], version: 0 }
     }
 
+    /// Set every cell (tests and scenarios).
+    pub fn fill(&mut self, v: f32) {
+        self.values.iter_mut().for_each(|x| *x = v);
+        self.version += 1;
+    }
+
     fn coords(&self, p: Vec2) -> (i32, i32) {
         (((p.x + self.half) / self.cell).floor() as i32, ((p.y + self.half) / self.cell).floor() as i32)
     }

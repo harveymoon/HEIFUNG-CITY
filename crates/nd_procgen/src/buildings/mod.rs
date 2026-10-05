@@ -22,6 +22,7 @@ use crate::surface::{Geometry, Surface};
 use glam::{Vec2, Vec3};
 use nd_sim::rng_for;
 use nd_sim::zoning::{point_in_polygon, polygon_area};
+use nd_sim::park::ParkLayout;
 use nd_sim::power::PowerPlantKind;
 use nd_sim::{LandUse, Lot, Tier};
 use rand::Rng;
@@ -499,19 +500,22 @@ pub struct Ctx<'a> {
     pub parking: Option<f32>,
     /// Share of the building's electricity demand met: dark windows when low.
     pub powered: f32,
+    /// For parks: the sim's plan of paths, benches and features.
+    pub park: Option<ParkLayout>,
 }
 
 /// Per-building state that changes the look beyond style and condition.
 #[derive(Clone, Copy, Debug)]
-pub struct Extras {
+pub struct Extras<'a> {
     pub parking: Option<f32>,
     pub plant: Option<PowerPlantKind>,
     pub powered: f32,
+    pub park: Option<&'a ParkLayout>,
 }
 
-impl Default for Extras {
+impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0 }
+        Self { parking: None, plant: None, powered: 1.0, park: None }
     }
 }
 
@@ -677,6 +681,7 @@ fn generate_styled_extras(
         seed,
         parking,
         powered: extras.powered,
+        park: if land_use == LandUse::Park || matches!(style, Style::ScrubLot | Style::Garden | Style::Plaza) { Some(extras.park.cloned().unwrap_or_else(|| nd_sim::park::plan_single(lot, tier))) } else { None },
     };
     match style {
         Style::Stacks => residential::stacks(&mut g, &ctx, &mut rng),

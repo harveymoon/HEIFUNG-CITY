@@ -57,13 +57,18 @@ links Bevy dynamically for quicker iteration.
   When drivers keep circling, a parking lot opens nearby (surface lot on cheap land, multi-storey car
   park in the middle) and charges per visit; its bays fill visibly as spaces are taken. The City
   panel shows spaces, lots, drivers circling and fees.
+- **Parks**: park zones may line footpaths. Every park parcel that touches another is one park:
+  paths run from lot to lot, features are spread over the lots by area, and every lot gets benches.
+  Cheap land gets a bare lot with a court; the middle gets playgrounds, a pond and a kiosk; dear land
+  gets a lake, a fountain, a bandstand, a carousel and a ferris wheel. Park paths are part of the
+  walking network, so people cut through parks, and a visit ends on a bench, sitting, in the open.
 - **Power**: buildings need electricity. The Power tool (`6`) places a coal plant, solar farm, wind
   farm or nuclear plant on a vacant lot, paid from the treasury. Coal is cheap and steady but hangs a
   toxic haze over the district and drags land value down; solar and wind are clean but follow the sun,
   cloud and wind; nuclear is enormous and expensive. The regional grid sells a little power to cover
   gaps; beyond that the rich are served first and cheap districts go dark: windows out, shops
   producing less, residents complaining. The City panel shows supply, demand, weather and treasury;
-  the inspector flags UNDERPOWERED buildings. `F11` jumps the camera to a plant.
+  the inspector flags UNDERPOWERED buildings. `F11` jumps the camera to a plant, `F12` to a park.
 - `Tab` walks the street: first-person on the pavement nearest the camera target, mouse to look,
   WASD to walk, Shift to run, Tab or Esc to return. Tools are off while walking.
 - Each land use has its own architecture per tier: junkyards and rusted sheds on cheap industrial

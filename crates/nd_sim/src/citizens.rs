@@ -16,6 +16,8 @@ pub enum Purpose {
     Visit(LandUse),
     Shop(crate::market::Resource),
     Wander,
+    /// Walking to a park bench.
+    Sit,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -39,6 +41,11 @@ pub enum Activity {
         to: Option<BuildingId>,
         purpose: Purpose,
     },
+    /// On a park bench, in the open.
+    Sitting {
+        at: Vec2,
+        park: BuildingId,
+    },
 }
 
 impl Activity {
@@ -49,12 +56,14 @@ impl Activity {
             Activity::Working => "working",
             Activity::Visiting(_) => "out",
             Activity::Idle => "loitering",
+            Activity::Sitting { .. } => "sitting in the park",
             Activity::Traveling { purpose, .. } | Activity::Driving { purpose, .. } => match purpose {
                 Purpose::Home => "heading home",
                 Purpose::Work => "commuting",
                 Purpose::Visit(_) => "going out",
                 Purpose::Shop(_) => "shopping",
                 Purpose::Wander => "wandering",
+                Purpose::Sit => "heading for a bench",
             },
         }
     }
@@ -139,6 +148,6 @@ impl Citizen {
     }
 
     pub fn is_visible(&self) -> bool {
-        matches!(self.activity, Activity::Traveling { .. } | Activity::Idle)
+        matches!(self.activity, Activity::Traveling { .. } | Activity::Idle | Activity::Sitting { .. })
     }
 }

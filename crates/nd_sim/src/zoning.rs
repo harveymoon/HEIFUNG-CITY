@@ -61,6 +61,11 @@ impl LandUse {
     }
 
     /// Typical frontage along the road, in metres.
+    /// Homes and parks may line a footpath; everything else needs a street.
+    pub fn fronts_paths(self) -> bool {
+        matches!(self, LandUse::Residential | LandUse::Park)
+    }
+
     pub fn lot_width(self) -> f32 {
         match self {
             LandUse::Residential => 14.0,
@@ -133,6 +138,9 @@ pub struct Lot {
     pub car_segment: Option<SegmentId>,
     #[serde(default)]
     pub car_point: Vec2,
+    /// This lot's share of a park: paths, benches and features.
+    #[serde(default)]
+    pub park: Option<crate::park::ParkLayout>,
 }
 
 impl Lot {
@@ -664,7 +672,7 @@ fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
         let a = pts[(i + n - 1) % n];
         let b = pts[i];
         let d = (b - a).normalize_or_zero();
-        let on_road = edge_on_road(roads, a, b, lu == LandUse::Residential).is_some();
+        let on_road = edge_on_road(roads, a, b, lu.fronts_paths()).is_some();
         let normal = if on_road { d } else { Vec2::new(-d.y, d.x) };
         let pieces = cut(&poly, b, normal);
         if pieces.len() >= 2 {
@@ -677,7 +685,7 @@ fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
 
     let lw = lu.lot_width();
     let ld = lu.lot_depth();
-    let allow = lu == LandUse::Residential;
+    let allow = lu.fronts_paths();
     let runs = frontage_runs(&pts, roads, allow);
     let Some((chain, chain_len)) = runs.first().cloned() else {
         out.push(pts);
@@ -805,7 +813,7 @@ fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
 
 /// Does a parcel have a usable road edge?
 fn fronted(poly: &[Vec2], lu: LandUse, roads: &RoadNetwork) -> bool {
-    let (fi, road) = frontage_edge(poly, roads, lu == LandUse::Residential);
+    let (fi, road) = frontage_edge(poly, roads, lu.fronts_paths());
     let n = poly.len();
     road.is_some() && poly[fi].distance(poly[(fi + 1) % n]) >= MIN_FRONTAGE.min(lu.lot_width() * 0.45)
 }
@@ -855,7 +863,7 @@ fn merge_backland(mut parcels: Vec<Vec<Vec2>>, lu: LandUse, roads: &RoadNetwork)
                 if shared < 3.0 || reflex_vertex(&up, 0.6).is_some() {
                     continue;
                 }
-                let (fi, _) = frontage_edge(&up, roads, lu == LandUse::Residential);
+                let (fi, _) = frontage_edge(&up, roads, lu.fronts_paths());
                 let m = up.len();
                 let along = (up[(fi + 1) % m] - up[fi]).normalize_or_zero();
                 let inward = Vec2::new(-along.y, along.x);
@@ -968,7 +976,7 @@ pub fn generate_lots(
         }
         let area = polygon_area(&poly);
         let compact = area / perimeter(&poly).powi(2);
-        let (fi, road) = frontage_edge(&poly, roads, lu == LandUse::Residential);
+        let (fi, road) = frontage_edge(&poly, roads, lu.fronts_paths());
         let n = poly.len();
         let fa = poly[fi];
         let fb = poly[(fi + 1) % n];
@@ -1027,6 +1035,7 @@ pub fn generate_lots(
             footfall_hour: 0,
             car_segment,
             car_point,
+            park: None,
         };
         created.push(lots.insert(lot));
     }
