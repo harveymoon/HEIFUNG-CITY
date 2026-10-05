@@ -16,6 +16,7 @@ pub mod names;
 pub mod park;
 pub mod plan;
 pub mod power;
+pub mod rail;
 pub mod roads;
 pub mod traffic;
 pub mod transit;
@@ -38,6 +39,7 @@ pub use walk::WalkGraph;
 pub use power::{PowerPlantKind, PowerStats, Weather};
 pub use park::{ParkFeature, ParkLayout};
 pub use transit::{BusRoute, BusStop, RouteId, Transit, TransitStats};
+pub use rail::{Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
 pub use world::{World, WorldConfig};
 pub use zoning::{LandUse, Lot, LotId, Zone, ZoneId};
 

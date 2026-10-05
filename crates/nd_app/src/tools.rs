@@ -21,6 +21,7 @@ pub enum Tool {
     Bulldoze,
     Power,
     Transit,
+    Rail,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -57,11 +58,14 @@ pub struct ToolState {
     pub stop_drag: Option<(nd_sim::RouteId, usize)>,
     /// Draw the lines whatever tool is active.
     pub show_routes: bool,
+    /// Rail tool: station or freight yard.
+    pub rail_kind: nd_sim::RailFacility,
 }
 
 /// Road presets in the spirit of Cities Skylines' road menu: (label, forward, backward, kind).
-pub const ROAD_PRESETS: [(&str, u8, u8, RoadKind); 7] = [
+pub const ROAD_PRESETS: [(&str, u8, u8, RoadKind); 8] = [
     ("Path", 0, 0, RoadKind::Path),
+    ("Rail", 0, 0, RoadKind::Rail),
     ("Lane", 1, 1, RoadKind::Street),
     ("Street", 2, 2, RoadKind::Street),
     ("Avenue", 3, 3, RoadKind::Street),
@@ -72,8 +76,8 @@ pub const ROAD_PRESETS: [(&str, u8, u8, RoadKind); 7] = [
 
 impl ToolState {
     /// Where a road end dropped at `p` would snap to.
-    pub fn road_snap(sim: &Sim, p: SVec2) -> (SVec2, bool) {
-        sim.world.roads.snap_point(p, POINT_PICK_RADIUS)
+    pub fn road_snap(sim: &Sim, p: SVec2, kind: RoadKind) -> (SVec2, bool) {
+        sim.world.roads.snap_point_kind(p, POINT_PICK_RADIUS, kind)
     }
 }
 
@@ -98,6 +102,7 @@ impl Default for ToolState {
             hover_stop: None,
             stop_drag: None,
             show_routes: false,
+            rail_kind: nd_sim::RailFacility::Station,
         }
     }
 }
@@ -144,7 +149,7 @@ fn nearest_gesture(plan: &Plan, p: SVec2) -> Option<(GestureId, usize)> {
     for (id, g) in &plan.gestures {
         match g {
             Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind } => {
-                let hw = if *kind == RoadKind::Path { 4.0 } else { (*lanes_fwd + *lanes_bwd) as f32 * nd_sim::roads::LANE_WIDTH * 0.5 + 3.0 };
+                let hw = if *kind != RoadKind::Street { 4.0 } else { (*lanes_fwd + *lanes_bwd) as f32 * nd_sim::roads::LANE_WIDTH * 0.5 + 3.0 };
                 let built = g.road_polyline();
                 for (i, w) in built.windows(2).enumerate() {
                     let (_, q) = project_on_segment(p, w[0], w[1]);
@@ -204,6 +209,7 @@ fn tool_input(
         (KeyCode::Digit5, KeyCode::KeyB, Tool::Bulldoze),
         (KeyCode::Digit6, KeyCode::KeyN, Tool::Power),
         (KeyCode::Digit7, KeyCode::KeyT, Tool::Transit),
+        (KeyCode::Digit8, KeyCode::KeyY, Tool::Rail),
     ];
     for (a, b, tool) in picks {
         if (keys.just_pressed(a) || (keys.just_pressed(b) && !ctrl)) && !(tool == Tool::Zone && ctrl) {
@@ -260,7 +266,7 @@ fn tool_input(
         Tool::Road => {
             if click {
                 if let Some(p) = ground {
-                    let (p, snapped) = ToolState::road_snap(&sim, p);
+                    let (p, snapped) = ToolState::road_snap(&sim, p, tools.kind);
                     tools.points.push(p);
                     if snapped {
                         tools.status = "Snapped to the road: a junction forms there.".into();
@@ -270,10 +276,10 @@ fn tool_input(
             if finish {
                 if tools.points.len() >= 2 {
                     let kind = tools.kind;
-                    let (lf, lb) = if kind == RoadKind::Path { (0, 0) } else { (tools.lanes_fwd, tools.lanes_bwd) };
+                    let (lf, lb) = if kind != RoadKind::Street { (0, 0) } else { (tools.lanes_fwd, tools.lanes_bwd) };
                     let g = Gesture::Road { points: tools.points.clone(), lanes_fwd: lf, lanes_bwd: lb, curved: tools.curved && tools.points.len() >= 3, kind };
                     sim.world.add_gesture(g);
-                    tools.status = format!("{} {} added to project ({} points). Ctrl+Enter implements.", if tools.curved { "Curved" } else { "Straight" }, if kind == RoadKind::Path { "path" } else { "road" }, tools.points.len());
+                    tools.status = format!("{} {} added to project ({} points). Ctrl+Enter implements.", if tools.curved { "Curved" } else { "Straight" }, match kind { RoadKind::Path => "path", RoadKind::Rail => "track", RoadKind::Street => "road" }, tools.points.len());
                 }
                 tools.points.clear();
             }
@@ -448,6 +454,26 @@ fn tool_input(
                 }
             }
         },
+        Tool::Rail => {
+            if click {
+                if let Some(p) = ground {
+                    let lot = sim.world.lots.iter().find(|(_, l)| point_in_polygon(p, &l.polygon)).map(|(id, _)| id);
+                    match lot {
+                        Some(lot) => {
+                            let kind = tools.rail_kind;
+                            tools.status = match sim.world.build_rail(lot, kind) {
+                                Ok(id) => {
+                                    *selection = Selection::Building(id);
+                                    format!("{} built. Trains call from the next headway.", kind.label())
+                                }
+                                Err(e) => format!("Cannot build: {e}."),
+                            };
+                        }
+                        None => tools.status = "Click a vacant lot beside the track.".into(),
+                    }
+                }
+            }
+        }
         Tool::Power => {
             if click {
                 if let Some(p) = ground {
@@ -537,7 +563,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
         Tool::Road | Tool::Zone => {
             let mut ctrl: Vec<SVec2> = tools.points.clone();
             if let Some(c) = cursor.ground {
-                let (c, snapped) = if tools.tool == Tool::Road { ToolState::road_snap(&sim, c) } else { (c, false) };
+                let (c, snapped) = if tools.tool == Tool::Road { ToolState::road_snap(&sim, c, tools.kind) } else { (c, false) };
                 gizmos.circle(Isometry3d::new(lift(c), flat), if snapped { 4.5 } else { 3.0 }, if snapped { white } else { cyan });
                 ctrl.push(c);
             }
@@ -596,6 +622,31 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                         pts.push(pts[0]);
                         gizmos.linestrip(pts, if ok { Color::linear_rgb(0.3, 2.5, 0.6) } else { red });
                     }
+                }
+            }
+        }
+        Tool::Rail => {
+            if let Some(c) = cursor.ground {
+                if let Some((_, lot)) = sim.world.lots.iter().find(|(_, l)| point_in_polygon(c, &l.polygon)) {
+                    let k = tools.rail_kind;
+                    let near_track = nd_sim::RailLink::beside(&sim.world.roads, &lot.polygon, lot.center, k, 10.0).is_some();
+                    let land_ok = match k {
+                        nd_sim::RailFacility::Station => lot.land_use != LandUse::Park,
+                        nd_sim::RailFacility::FreightYard => lot.land_use == LandUse::Industrial,
+                    };
+                    let ok = lot.building.is_none() && !lot.landlocked && near_track && land_ok;
+                    let mut pts: Vec<Vec3> = lot.polygon.iter().map(|&p| lift(p)).collect();
+                    if pts.len() >= 3 {
+                        pts.push(pts[0]);
+                        gizmos.linestrip(pts, if ok { Color::linear_rgb(0.3, 2.5, 0.6) } else { red });
+                    }
+                }
+            }
+            // The railway itself, so branches are easy to see while placing.
+            for (sid, seg) in sim.world.roads.alive_segments() {
+                if seg.is_rail() {
+                    let (a, b) = sim.world.roads.segment_points(sid);
+                    gizmos.line(lift(a), lift(b), Color::linear_rgb(1.6, 1.2, 0.3));
                 }
             }
         }

@@ -202,13 +202,18 @@ impl Transit {
     }
 }
 
-/// A citizen's bus trip in progress: walk to `board`, ride to `alight`,
-/// then carry on to the destination.
+/// The ride in the middle of a trip.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum TransitLeg {
+    Bus { route: RouteId, board: usize, alight: usize },
+    Rail { board: crate::buildings::BuildingId, alight: crate::buildings::BuildingId },
+}
+
+/// A citizen's transit trip in progress: walk to the stop or station,
+/// wait, ride, then carry on to the destination.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct TransitTrip {
-    pub route: RouteId,
-    pub board: usize,
-    pub alight: usize,
+    pub leg: TransitLeg,
     pub target: crate::buildings::BuildingId,
     pub purpose: crate::citizens::Purpose,
     /// Tick the wait began (0 until the rider reaches the stop).

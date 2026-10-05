@@ -14,7 +14,7 @@ use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::land_value::LandValue;
 use nd_sim::rng_for;
-use nd_sim::roads::{RoadKind, RoadNetwork, SegmentId, LANE_WIDTH, PATH_HALF_WIDTH, SHOULDER};
+use nd_sim::roads::{RoadKind, RoadNetwork, SegmentId, LANE_WIDTH, PATH_HALF_WIDTH, RAIL_HALF_WIDTH, SHOULDER};
 use nd_sim::traffic::{LaneId, LaneKind, LaneNetwork};
 use nd_sim::zoning::SIDEWALK;
 use nd_sim::NodeId;
@@ -183,6 +183,10 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             footpath(&mut g, pal, roads, &run, &mut rng);
             continue;
         }
+        if run.kind == RoadKind::Rail {
+            railway(&mut g, pal, &run);
+            continue;
+        }
         // Carriageway and markings run the whole way; the junction pads overlap the ends.
         g.part(Asphalt).path_strip(pts, 0.0, hw * 2.0, ASPHALT_Y, asphalt_c);
         g.part(Glow).path_strip(pts, hw - SHOULDER * 0.5, 0.18, MARK_Y, edge_c);
@@ -315,7 +319,12 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
     // Junction pads, crossings and stop lines (bends need none).
     for (i, node) in roads.nodes.iter().enumerate() {
         let alive: Vec<_> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).count_and_list();
-        let paths_here = node.segments.iter().filter(|&&s| roads.segment(s).alive && !roads.segment(s).is_street()).count();
+        let paths_here = node.segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).kind == RoadKind::Path).count();
+        let rails_here: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_rail()).collect();
+        if !alive.is_empty() && !rails_here.is_empty() {
+            level_crossing(&mut g, pal, roads, node.pos, &alive, &rails_here);
+            continue;
+        }
         if alive.len() == 2 && paths_here > 0 {
             // A path crossing a street: zebra across the carriageway.
             let sid = alive[0];
@@ -396,6 +405,56 @@ impl<I: Iterator<Item = SegmentId>> CountAndList for I {}
 
 /// A path for walkers and bikes: paving with edge stones, low lamps, the odd
 /// bench and bin, and bollards where it meets a street so cars stay out.
+/// Single track: ballast, sleepers, two rails.
+fn railway(g: &mut Geometry, pal: &Palette, run: &Run) {
+    let pts = &run.points;
+    g.part(Dirt).path_strip(pts, 0.0, RAIL_HALF_WIDTH * 2.0, 0.04, rgba(mul(pal.gravel, 0.85)));
+    g.part(Dirt).path_strip(pts, 0.0, 3.0, 0.1, rgba(mul(pal.gravel, 1.0)));
+    let len = path_length(pts);
+    let mut s = 0.35;
+    while s < len {
+        let (p, d) = point_along(pts, s);
+        g.part(Wood).boxed(Vec3::new(p.x, 0.17, p.y), Vec3::new(0.24, 0.14, 2.5), d.y.atan2(d.x), rgba(mul(pal.wood, 0.55)));
+        s += 0.7;
+    }
+    for side in [-1.0f32, 1.0] {
+        g.part(Metal).path_box(pts, side * 0.72, 0.08, 0.24, 0.38, rgba(mul(pal.steel, 0.75)));
+    }
+}
+
+/// Where track crosses a street: planks between the rails over the
+/// carriageway, crossbuck signs and barrier posts on both sides.
+fn level_crossing(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, at: Vec2, streets: &[SegmentId], rails: &[SegmentId]) {
+    let Some(&street) = streets.first() else { return };
+    let Some(&rail) = rails.first() else { return };
+    let (sa, sb) = roads.segment_points(street);
+    let sd = (sb - sa).normalize_or_zero();
+    let s_right = Vec2::new(-sd.y, sd.x);
+    let (ra, rb) = roads.segment_points(rail);
+    let rd = (ra - rb).normalize_or_zero();
+    let hw = roads.segment(street).half_width();
+    // Planks either side of each rail, the length of the carriageway.
+    for off in [-1.2f32, 0.0, 1.2] {
+        let a = at + rd * (hw + 0.5) + Vec2::new(-rd.y, rd.x) * off;
+        let b = at - rd * (hw + 0.5) + Vec2::new(-rd.y, rd.x) * off;
+        g.part(Wood).ground_strip(&[a, b], 0.9, 0.2, rgba(mul(pal.wood, 0.5)));
+    }
+    // Signs and posts where the pavement meets the track.
+    for side in [-1.0f32, 1.0] {
+        for s2 in [-1.0f32, 1.0] {
+            let p = at + sd * side * (RAIL_HALF_WIDTH + 1.6) + s_right * s2 * (hw + SIDEWALK * 0.4);
+            g.part(Matte).boxed(Vec3::new(p.x, 1.6, p.y), Vec3::new(0.1, 3.2, 0.1), 0.0, rgba(mul(pal.steel, 0.6)));
+            let yaw = sd.y.atan2(sd.x);
+            g.part(Matte).boxed(Vec3::new(p.x, 3.0, p.y), Vec3::new(1.2, 0.18, 0.04), yaw + 0.6, rgba([0.95, 0.95, 0.9]));
+            g.part(Matte).boxed(Vec3::new(p.x, 3.0, p.y), Vec3::new(1.2, 0.18, 0.04), yaw - 0.6, rgba([0.95, 0.95, 0.9]));
+            g.part(Glow).boxed(Vec3::new(p.x, 2.4, p.y), Vec3::new(0.22, 0.22, 0.1), yaw, rgba([2.2, 0.3, 0.2]));
+            // Barrier arm, raised.
+            g.part(Matte).boxed(Vec3::new(p.x, 2.2, p.y), Vec3::new(0.12, 2.8, 0.12), 0.0, rgba([0.9, 0.9, 0.9]));
+            g.part(Matte).boxed(Vec3::new(p.x, 2.6, p.y), Vec3::new(0.14, 0.4, 0.14), 0.0, rgba([0.9, 0.2, 0.15]));
+        }
+    }
+}
+
 fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run: &Run, rng: &mut impl Rng) {
     // Where the path meets a street, stop at the back of that street's
     // pavement and flare out onto it, instead of running under the kerb.

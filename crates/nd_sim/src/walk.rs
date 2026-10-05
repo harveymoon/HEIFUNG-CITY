@@ -121,6 +121,7 @@ impl WalkGraph {
                         street_nodes.push(nb);
                     }
                 }
+                RoadKind::Rail => {}
                 RoadKind::Path => {
                     // Homes may line a path: a node opposite each of them.
                     let mut stops: Vec<(f32, LotId)> = lots

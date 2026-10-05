@@ -103,7 +103,7 @@ fn side_panel(
             if *mode == CameraMode::Walk {
                 ui.label(egui::RichText::new("Mouse to look, WASD to walk, Shift to run, Tab or Esc to return.").small().weak());
             } else {
-                ui.label(egui::RichText::new("Right-drag rotate · middle-drag or shift-drag pan · wheel or [ ] zoom · WASD/QE · F6 busiest junction · F7/F8/F9 jump to a low/middle/high tier building · F11 to a power plant · F12 to a park").small().weak());
+                ui.label(egui::RichText::new("Right-drag rotate · middle-drag or shift-drag pan · wheel or [ ] zoom · WASD/QE · F6 busiest junction · F7/F8/F9 jump to a low/middle/high tier building · F11 to a power plant · F12 to a park · F5 to a station or yard").small().weak());
             }
             ui.separator();
 
@@ -165,6 +165,7 @@ fn side_panel(
                     (Tool::Bulldoze, "Bulldoze [5]"),
                     (Tool::Power, "Power [6]"),
                     (Tool::Transit, "Buses [7]"),
+                    (Tool::Rail, "Rail [8]"),
                 ] {
                     if ui.selectable_label(tools.tool == tool, label).clicked() {
                         tools.tool = tool;
@@ -177,7 +178,7 @@ fn side_panel(
                 Tool::Road => {
                     ui.horizontal_wrapped(|ui| {
                         for (label, f, b, k) in ROAD_PRESETS {
-                            let on = tools.kind == k && (k == RoadKind::Path || (tools.lanes_fwd == f && tools.lanes_bwd == b));
+                            let on = tools.kind == k && (k != RoadKind::Street || (tools.lanes_fwd == f && tools.lanes_bwd == b));
                             if ui.selectable_label(on, label).clicked() {
                                 tools.kind = k;
                                 if k == RoadKind::Street {
@@ -189,6 +190,8 @@ fn side_panel(
                     });
                     if tools.kind == RoadKind::Path {
                         ui.label(egui::RichText::new("Path: 3 m wide, for walkers and bikes only. Cars never use it; it joins streets at junctions and crosses them with a zebra.").small().weak());
+                    } else if tools.kind == RoadKind::Rail {
+                        ui.label(egui::RichText::new("Rail: single track. Ends snap to other track only, so branch off the trunk line that already crosses the map; crossing a street makes a level crossing. Stations and freight yards go on lots beside the track (Rail tool).").small().weak());
                     } else {
                         ui.add(egui::Slider::new(&mut tools.lanes_fwd, 0..=4).text("lanes forward"));
                         ui.add(egui::Slider::new(&mut tools.lanes_bwd, 0..=4).text("lanes backward"));
@@ -227,7 +230,7 @@ fn side_panel(
                                 let mut changed = false;
                                 ui.horizontal_wrapped(|ui| {
                                     for (label, pf, pb, pk) in ROAD_PRESETS {
-                                        let on = k == pk && (pk == RoadKind::Path || (f == pf && b == pb));
+                                        let on = k == pk && (pk != RoadKind::Street || (f == pf && b == pb));
                                         if ui.selectable_label(on, label).clicked() {
                                             k = pk;
                                             f = pf;
@@ -324,6 +327,22 @@ fn side_panel(
                             ui.label(egui::RichText::new("Click a vacant lot by a street (not homes or parks). Buses park here overnight and leave at 05:30; each bus costs its upkeep per day and riders pay a fare.").small().weak());
                         }
                     }
+                }
+                Tool::Rail => {
+                    ui.horizontal(|ui| {
+                        for (k, label) in [(nd_sim::RailFacility::Station, "Passenger station"), (nd_sim::RailFacility::FreightYard, "Freight yard")] {
+                            if ui.selectable_label(tools.rail_kind == k, label).clicked() {
+                                tools.rail_kind = k;
+                            }
+                        }
+                    });
+                    let r = &sim.world.rail.stats;
+                    ui.label(egui::RichText::new(match tools.rail_kind {
+                        nd_sim::RailFacility::Station => format!("Any vacant lot but a park, within {:.0} m of track; it keeps its street frontage, so it has a road entrance. {:.0} to build, {:.0}/day. People take the train between stations for trips over {:.0} m, and newcomers arrive by it.", nd_sim::rail::STATION_REACH, nd_sim::rail::STATION_COST, nd_sim::rail::STATION_UPKEEP_PER_DAY, nd_sim::rail::RAIL_TRIP_MIN),
+                        nd_sim::RailFacility::FreightYard => format!("Industrial land of {:.0} m² or more within {:.0} m of track, with a street for the lorries. {:.0} to build, {:.0}/day. Imports then come by rail at {:.0}% of the price and exports earn {:.0}% more.", nd_sim::rail::YARD_MIN_AREA, nd_sim::rail::STATION_REACH, nd_sim::rail::YARD_COST, nd_sim::rail::YARD_UPKEEP_PER_DAY, nd_sim::rail::RAIL_IMPORT_FACTOR * 100.0, (nd_sim::rail::RAIL_EXPORT_BONUS - 1.0) * 100.0),
+                    }).small().weak());
+                    ui.label(egui::RichText::new("Track is laid with the Road tool's Rail preset; a trunk line already crosses the map to the south. Trains run from one end of the line to the other, calling at every station in turn.").small().weak());
+                    ui.label(egui::RichText::new(format!("{} station{} · {} yard{} · {} train{} out · next passenger train in {} min · {} waiting · {} riding · {} riders today · fares {:.0} · {:.0} units of freight in today, {:.0} waiting at yards · upkeep {:.0}/day", r.stations, if r.stations == 1 { "" } else { "s" }, r.yards, if r.yards == 1 { "" } else { "s" }, r.trains, if r.trains == 1 { "" } else { "s" }, r.next_passenger_in, r.waiting, r.riding, r.riders_today, r.fares_today, r.freight_in_today, r.freight_waiting, r.upkeep_today)).small().weak());
                 }
                 Tool::Power => {
                     ui.horizontal_wrapped(|ui| {
@@ -489,6 +508,12 @@ fn side_panel(
                                 ui.label(format!("{sitting} sitting on the benches"));
                             }
                         }
+                    }
+                    if let Some(link) = &b.rail {
+                        match link.kind {
+                            nd_sim::RailFacility::Station => ui.label(format!("railway station: platform {:.0} m, {} trains today, {} riders today across the line", link.platform[0].distance(link.platform[1]), sim.world.rail.stats.passenger_trains_today, sim.world.rail.stats.riders_today)),
+                            nd_sim::RailFacility::FreightYard => ui.label(format!("freight yard: {} orders ({:.0} units) waiting for the next train, {:.0} units of exports on the apron", b.rail_inbound.len(), b.rail_inbound.iter().map(|c| c.amount).sum::<f32>(), b.rail_outbound)),
+                        };
                     }
                     if b.depot {
                         let out = sim.world.traffic.cars.values().filter(|c| c.bus.as_ref().is_some_and(|x| x.depot == id)).count();

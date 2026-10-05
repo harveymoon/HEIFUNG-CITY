@@ -130,6 +130,15 @@ pub struct Building {
     /// A bus depot placed by the player.
     #[serde(default)]
     pub depot: bool,
+    /// A station or freight yard on the railway.
+    #[serde(default)]
+    pub rail: Option<crate::rail::RailLink>,
+    /// Goods ordered by rail, waiting for the next freight train (yards).
+    #[serde(default)]
+    pub rail_inbound: Vec<crate::traffic::Cargo>,
+    /// Export units waiting on the apron (yards).
+    #[serde(default)]
+    pub rail_outbound: f32,
 }
 
 fn one() -> f32 {
@@ -162,6 +171,9 @@ impl Building {
             powered: 1.0,
             unpowered_hours_today: 0,
             depot: false,
+            rail: None,
+            rail_inbound: Vec::new(),
+            rail_outbound: 0.0,
         };
         b.recompute_capacity();
         b.update_rent(land_value);
@@ -186,7 +198,7 @@ impl Building {
     }
 
     pub fn recompute_capacity(&mut self) {
-        if self.is_parking() || self.plant.is_some() || self.depot {
+        if self.is_parking() || self.plant.is_some() || self.depot || self.rail.is_some() {
             return;
         }
         let f = self.floors as u16;

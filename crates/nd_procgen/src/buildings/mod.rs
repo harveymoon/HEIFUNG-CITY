@@ -15,6 +15,7 @@ mod park;
 mod parking;
 pub mod parts;
 mod power;
+mod rail;
 pub mod transit;
 mod residential;
 
@@ -24,6 +25,7 @@ use glam::{Vec2, Vec3};
 use nd_sim::rng_for;
 use nd_sim::zoning::{point_in_polygon, polygon_area};
 use nd_sim::park::ParkLayout;
+use nd_sim::rail::{RailFacility, RailLink};
 use nd_sim::power::PowerPlantKind;
 use nd_sim::{LandUse, Lot, Tier};
 use rand::Rng;
@@ -111,10 +113,12 @@ pub enum Style {
     PowerNuclear,
     // transit
     BusDepot,
+    Station,
+    FreightYard,
 }
 
 impl Style {
-    pub const ALL: [Style; 42] = [
+    pub const ALL: [Style; 44] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -157,6 +161,8 @@ impl Style {
         Style::PowerWind,
         Style::PowerNuclear,
         Style::BusDepot,
+        Style::Station,
+        Style::FreightYard,
     ];
 
     pub fn label(self) -> &'static str {
@@ -203,6 +209,8 @@ impl Style {
             Style::PowerWind => "wind farm",
             Style::PowerNuclear => "nuclear plant",
             Style::BusDepot => "bus depot",
+            Style::Station => "railway station",
+            Style::FreightYard => "freight yard",
         }
     }
 }
@@ -507,6 +515,8 @@ pub struct Ctx<'a> {
     pub powered: f32,
     /// For parks: the sim's plan of paths, benches and features.
     pub park: Option<ParkLayout>,
+    /// For stations and yards: the track and platform beside the lot.
+    pub rail: Option<RailLink>,
 }
 
 /// Per-building state that changes the look beyond style and condition.
@@ -518,11 +528,12 @@ pub struct Extras<'a> {
     pub park: Option<&'a ParkLayout>,
     /// A bus depot.
     pub depot: bool,
+    pub rail: Option<&'a RailLink>,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None }
     }
 }
 
@@ -619,6 +630,8 @@ pub fn generate_building(
     let mut rng = rng_for(seed, 11);
     let style = match (extras.plant, extras.parking) {
         _ if extras.depot => Style::BusDepot,
+        _ if extras.rail.is_some_and(|r| r.kind == RailFacility::Station) => Style::Station,
+        _ if extras.rail.is_some_and(|r| r.kind == RailFacility::FreightYard) => Style::FreightYard,
         (Some(PowerPlantKind::Coal), _) => Style::PowerCoal,
         (Some(PowerPlantKind::Solar), _) => Style::PowerSolar,
         (Some(PowerPlantKind::Wind), _) => Style::PowerWind,
@@ -689,6 +702,7 @@ fn generate_styled_extras(
         seed,
         parking,
         powered: extras.powered,
+        rail: extras.rail.cloned().or_else(|| matches!(style, Style::Station | Style::FreightYard).then(|| back_edge_link(lot, if style == Style::Station { RailFacility::Station } else { RailFacility::FreightYard }))),
         park: if land_use == LandUse::Park || matches!(style, Style::ScrubLot | Style::Garden | Style::Plaza) { Some(extras.park.cloned().unwrap_or_else(|| nd_sim::park::plan_single(lot, tier))) } else { None },
     };
     match style {
@@ -734,8 +748,23 @@ fn generate_styled_extras(
         Style::PowerWind => power::wind(&mut g, &ctx, &mut rng),
         Style::PowerNuclear => power::nuclear(&mut g, &ctx, &mut rng),
         Style::BusDepot => transit::bus_depot(&mut g, &ctx, &mut rng),
+        Style::Station => rail::station(&mut g, &ctx, &mut rng),
+        Style::FreightYard => rail::freight_yard(&mut g, &ctx, &mut rng),
     }
     g
+}
+
+/// A stand-in track along the back of a lot, for previews and tests of the
+/// station and yard styles when no railway is near.
+fn back_edge_link(lot: &Lot, kind: RailFacility) -> RailLink {
+    let a = lot.corners[3];
+    let b = lot.corners[2];
+    let d = (b - a).normalize_or_zero();
+    let out = Vec2::new(-d.y, d.x);
+    let back = (a + b) * 0.5 + lot.front_dir * -4.0;
+    let half = (a.distance(b) * 0.45).min(40.0);
+    let _ = out;
+    RailLink { kind, segment: nd_sim::SegmentId(0), platform: [back - d * half, back + d * half], side: 1.0 }
 }
 
 #[cfg(test)]
@@ -844,7 +873,9 @@ mod tests {
                                 top = top.max(p[1]);
                             }
                         }
-                        if over > 4.0 || top > (60.0 + floors as f32 * 5.0).max(90.0) || low < -2.0 {
+                        // Stations and yards reach out to the track beside the lot by design.
+                        let allow = if matches!(style, Style::Station | Style::FreightYard) { 60.0 } else { 4.0 };
+                        if over > allow || top > (60.0 + floors as f32 * 5.0).max(90.0) || low < -2.0 {
                             let (plo, phi) = parts::bounds(&frame_poly(&frame, lot));
                             worst.push((over.max(-low), format!("{style:?} {lu:?} lot {li} ({} verts, span {span:.0}, local {:.0}..{:.0} x {:.0}..{:.0}) overshoots {over:.1} m, top {top:.0} m, low {low:.1}, floors {floors}: {culprit}", lot.polygon.len(), plo.x, phi.x, plo.y, phi.y)));
                         }

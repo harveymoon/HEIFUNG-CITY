@@ -161,6 +161,27 @@ Citizens are rendered from their simulated positions every frame.
   visit no longer vanishes into a building: the visitor walks the paths to a bench and
   sits (`Activity::Sitting`, drawn seated, visible, facing the path or the water),
   then walks off the bench when the next decision comes.
+- **Railway** (`RoadKind::Rail`, `nd_sim::rail`): track is a third kind of way in the road
+  network, single track 4.8 m wide. A trunk line crosses the map 480 m south of the
+  centre from the start; the player lays branches off it with the Road tool's Rail
+  preset. Track ends snap only to track and road ends never snap to track; a track
+  crossing a street shares a node, which renders as a level crossing. Track cuts a
+  corridor out of parcels but never fronts them, carries no lanes or pavements, and
+  walkers' and drivers' searches ignore it. Stations (any land but parks) and freight
+  yards (industrial land, 800 m² or more) are placed on vacant lots within 24 m of
+  track; the lot keeps its street frontage, so every station has a road entrance, and
+  the platform or apron is laid along the track on the lot's side (`RailLink`).
+  Trains run west to east from one end of the line to the other, calling at every
+  facility in order; a dead-end spur is run to the last platform and back. Branches
+  have no passing loops, so one train holds the branch at a time: others wait at the
+  switch, and no new train is dispatched while one is waiting. Passenger trains come
+  every two hours of clock from 05:00 to 23:00 when a station exists; freight trains
+  every three hours when a yard has goods waiting, or six regardless. Trains are not
+  saved; they are back on the next headway. People take the train for trips over 500 m
+  between two stations within 240 m of each end (`TransitLeg::Rail`), pay a fare, and
+  newcomers mostly arrive by train when a station exists. With a freight yard, imports
+  come by rail at 80% of the price and wait at the yard for the next train, which hands
+  them to lorries; exports earn 20% more. Stations lift land value, yards lower it.
 - **Buses** (`nd_sim::transit`): the player draws lines and places a depot; without a
   depot no bus runs. A line is a loop of stops on streets; a click snaps to the nearest
   street and the stop sits on the kerb of the side clicked, so buses driving that way
@@ -295,6 +316,15 @@ trait MindProvider {
   turbine blades) checks the polygon first. A test generates every style on about
   six hundred lots cut by straight, diagonal and curved roads and fails if any vertex
   is more than 4 m outside its lot, below ground, or absurdly tall.
+- Track (`street.rs`): ballast, sleepers every 0.7 m, two rails; level crossings get planks
+  over the carriageway, crossbuck signs, lights and raised barrier arms. Stations
+  (`buildings/rail.rs`): brick hall with an arched glass front, canopy, clock and name
+  board at the road; a 70 m platform along the track with a canopy on posts, a yellow
+  line, benches and name boards; a ramp between them; a taxi rank and bike racks in the
+  forecourt. Freight yards: warehouse with roller doors, a 90 m apron, a gantry crane
+  spanning apron and track, container stacks, a forklift, lorries at the doors, fence,
+  gate barrier, floodlights, weighbridge. Trains are drawn by the app as a locomotive and
+  coaches or wagons placed along the route and blended between ticks.
 - Bus depots (`buildings/transit.rs`): a shed with roller doors, bus bays with parked
   buses, a fuel island, a wash arch, an office and a barrier at the gate. Bus stops are
   drawn by the app from the lines (pole, sign, kerb mark, shelter), so the random street
@@ -334,6 +364,8 @@ trait MindProvider {
   and exports, hunger and shopping, business closures.
 - v0.8 (done): polygonal parcels, 35 architectural styles per land use and tier from a
   parts toolkit, textured surfaces with normal maps, street furniture, walk mode.
+- v0.15 (done): railway: trunk line and branches, level crossings, stations and freight
+  yards beside the track, passenger and freight trains on headways, rail riders, rail freight.
 - v0.14 (done): buses: lines drawn as loops of kerb-side stops, depots that dispatch and
   house them, riders who walk to a stop, wait, ride and pay.
 - v0.13 (done): parks planned over connected parcels: paths lot to lot, benches people

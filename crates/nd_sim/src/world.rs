@@ -15,7 +15,8 @@ use crate::walk::WalkGraph;
 use crate::power::{demand_mw, PowerPlantKind, Weather, GRID_IMPORT_MW, GRID_IMPORT_PRICE};
 use crate::traffic::{Bus, CarId};
 use std::collections::HashMap;
-use crate::transit::{self, BusStop, RouteId, Transit, TransitTrip};
+use crate::transit::{self, BusStop, RouteId, Transit, TransitLeg, TransitTrip};
+use crate::rail::{self, Rail, RailFacility, RailLink, Train, TrainId, TrainKind};
 use crate::citizens::TravelMode;
 use crate::roads::RoadKind;
 use crate::zoning::{generate_lots, LandUse, Lot, LotId, Zone, ZoneId};
@@ -25,6 +26,8 @@ use rand::seq::IndexedRandom;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
+
+pub use crate::rail::TRUNK_Y;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorldConfig {
@@ -104,6 +107,8 @@ pub struct World {
     pub weather: Weather,
     #[serde(default)]
     pub transit: Transit,
+    #[serde(default)]
+    pub rail: Rail,
     pub economy: Economy,
     pub land_value: LandValue,
     #[serde(skip)]
@@ -116,7 +121,8 @@ impl World {
         let land_value = LandValue::new(config.half_extent + 200.0, 32.0);
         let mut economy = Economy::default();
         economy.treasury = 60_000.0;
-        Self {
+        let half = config.half_extent;
+        let mut w = Self {
             land_value,
             rng: SimRng::seed_from_u64(config.seed),
             config,
@@ -134,10 +140,24 @@ impl World {
             walk: WalkGraph::default(),
             weather: Weather::default(),
             transit: Transit::default(),
+            rail: Rail::default(),
             economy,
             events: Vec::new(),
             next_seed: 1,
-        }
+        };
+        // The trunk line: a railway already crosses the map south of the
+        // centre. Branches, stations and yards hang off it.
+        w.add_rail(&[Vec2::new(-half - 100.0, TRUNK_Y), Vec2::new(half + 100.0, TRUNK_Y)]);
+        w
+    }
+
+    /// Convenience for scripts and tests: lay track right away.
+    pub fn add_rail(&mut self, points: &[Vec2]) -> GestureId {
+        let had_project = self.project.take();
+        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Rail });
+        self.implement();
+        self.project = had_project;
+        id
     }
 
     fn rebuild_walk(&mut self) {
@@ -163,6 +183,12 @@ impl World {
             self.strand_car(car);
         }
         self.transit.refresh_legs(&self.traffic.net);
+        let on_trains: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::OnTrain { .. })).map(|(id, _)| id).collect();
+        for id in on_trains {
+            let pos = self.citizens[id].pos;
+            self.citizens[id].transit = None;
+            self.strand_driver(id, pos);
+        }
         self.plan_version += 1;
         self.events.push(SimEvent::PlanChanged);
     }
@@ -319,7 +345,7 @@ impl World {
             let (fwd, bwd) = match kind {
                 RoadKind::Street if fwd == 0 && bwd == 0 => (1, 1),
                 RoadKind::Street => (fwd, bwd),
-                RoadKind::Path => (0, 0),
+                RoadKind::Path | RoadKind::Rail => (0, 0),
             };
             roads.add_polyline_kind(&points, fwd, bwd, kind);
         }
@@ -490,6 +516,7 @@ impl World {
         }
         self.step_traffic();
         self.step_transit();
+        self.step_rail();
         self.step_citizens(minds);
     }
 
@@ -606,6 +633,12 @@ impl World {
                     b.splat(c, r, w);
                 }
             }
+            if let Some(link) = &bld.rail {
+                match link.kind {
+                    RailFacility::Station => b.splat(c, 220.0, 0.25),
+                    RailFacility::FreightYard => b.splat(c, 160.0, -0.12),
+                }
+            }
         }
         for lot in self.lots.values() {
             if lot.building.is_none() {
@@ -643,6 +676,17 @@ impl World {
         let transit_upkeep = bus_days * transit::BUS_UPKEEP_PER_DAY + depots * transit::DEPOT_UPKEEP_PER_DAY;
         self.economy.treasury -= transit_upkeep;
         self.economy.transit.upkeep_today = transit_upkeep;
+        let stations = self.buildings.values().filter(|b| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::Station)).count() as f32;
+        let yards = self.buildings.values().filter(|b| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::FreightYard)).count() as f32;
+        let rail_upkeep = stations * rail::STATION_UPKEEP_PER_DAY + yards * rail::YARD_UPKEEP_PER_DAY;
+        self.economy.treasury -= rail_upkeep;
+        let rs = &mut self.rail.stats;
+        rs.upkeep_today = rail_upkeep;
+        rs.riders_today = 0;
+        rs.fares_today = 0.0;
+        rs.passenger_trains_today = 0;
+        rs.freight_trains_today = 0;
+        rs.freight_in_today = 0.0;
         self.economy.transit.riders_today = 0;
         self.economy.transit.fares_today = 0.0;
         for r in self.transit.routes.values_mut() {
@@ -895,7 +939,11 @@ impl World {
                 }
             }
         }
-        // Exports: surplus outputs leave town at a discount.
+        // Exports: surplus outputs leave town at a discount, less of one
+        // when a freight yard ships them by rail.
+        let yards: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::FreightYard) && !b.is_derelict()).map(|(id, _)| id).collect();
+        let export_bonus = if yards.is_empty() { 1.0 } else { rail::RAIL_EXPORT_BONUS };
+        let mut shipped = 0.0f32;
         for &bid in &ids {
             let b = &mut self.buildings[bid];
             let jobs = b.jobs;
@@ -912,12 +960,16 @@ impl World {
                 if have > keep * 1.2 {
                     let surplus = have - keep;
                     bz.take(*r, surplus);
-                    let income = surplus * r.base_price() * EXPORT_DISCOUNT;
+                    let income = surplus * r.base_price() * EXPORT_DISCOUNT * export_bonus;
+                    shipped += surplus;
                     bz.money += income;
                     bz.revenue_today += income;
                     self.economy.market.exports_today += income;
                 }
             }
+        }
+        if let Some(&y) = yards.first() {
+            self.buildings[y].rail_outbound += shipped;
         }
         // Statistics.
         let mut sums: std::collections::BTreeMap<Resource, (f32, u32, f32)> = std::collections::BTreeMap::new();
@@ -983,6 +1035,18 @@ impl World {
         let cargo = Cargo { from: to, to, resource, amount, price };
         if let Some(bz) = self.buildings.get_mut(to).and_then(|b| b.business.as_mut()) {
             *bz.inbound.entry(resource).or_insert(0.0) += amount;
+        }
+        // With a freight yard in town the goods come by rail, cheaper and
+        // later: the order waits at the yard for the next train.
+        if let Some(yard) = self.nearest_yard(to) {
+            let refund = price * (1.0 - rail::RAIL_IMPORT_FACTOR);
+            if let Some(bz) = self.buildings.get_mut(to).and_then(|b| b.business.as_mut()) {
+                bz.money += refund;
+                bz.spend_today -= refund;
+            }
+            self.economy.market.imports_today -= refund;
+            self.buildings[yard].rail_inbound.push(Cargo { from: yard, to, resource, amount, price: price * rail::RAIL_IMPORT_FACTOR });
+            return;
         }
         if self.truck_count() >= crate::market::MAX_TRUCKS {
             self.deliver(cargo);
@@ -1270,7 +1334,12 @@ impl World {
             let seed = self.fresh_seed();
             let name = names::citizen_name(&mut self.rng);
             let tick = self.clock.tick;
-            let pos = self.roads.node(entry).pos;
+            let stations: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::Station)).map(|(id, _)| id).collect();
+            let by_train = if !stations.is_empty() && self.rng.random_bool(0.6) { stations.choose(&mut self.rng).copied() } else { None };
+            let pos = match by_train.and_then(|s| self.building_entrance(s)) {
+                Some(p) => p,
+                None => self.roads.node(entry).pos,
+            };
             let (car_chance, bike_chance) = match Tier::for_income(income) {
                 Tier::Low => (0.12, 0.6),
                 Tier::Mid => (0.6, 0.35),
@@ -1308,6 +1377,9 @@ impl World {
                 hungry_days: 0,
             };
             citizen.remember(tick, format!("Rolled into Neon District on day {} at {}.", self.clock.day() + 1, self.clock.format_hhmm()));
+            if let Some(s) = by_train {
+                citizen.remember(tick, format!("Stepped off the train at {}.", self.buildings[s].name));
+            }
             let id = self.citizens.insert(citizen);
             self.buildings[home].residents.push(id);
             let home_name = self.buildings[home].name.clone();
@@ -1734,6 +1806,398 @@ impl World {
         }
     }
 
+    // ── trains ───────────────────────────────────────────────────────────────
+
+    fn facilities(&self, kind: RailFacility) -> Vec<BuildingId> {
+        self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == kind) && !b.is_derelict()).map(|(id, _)| id).collect()
+    }
+
+    fn nearest_yard(&self, to: BuildingId) -> Option<BuildingId> {
+        let p = self.building_entrance(to)?;
+        self.facilities(RailFacility::FreightYard).into_iter().filter_map(|y| self.building_entrance(y).map(|q| (y, q.distance(p)))).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(y, _)| y)
+    }
+
+    /// Put a station (any land but parks) or a freight yard (industrial
+    /// land) on a vacant lot that comes within reach of the track. The lot
+    /// fronts a street, so the building has its road connection too.
+    pub fn build_rail(&mut self, lot_id: LotId, kind: RailFacility) -> Result<BuildingId, String> {
+        let lot = self.lots.get(lot_id).ok_or("no such lot")?;
+        if lot.building.is_some() {
+            return Err("that lot is taken".into());
+        }
+        if lot.landlocked {
+            return Err("that land has no road access".into());
+        }
+        let (cost, jobs, length, min_area) = match kind {
+            RailFacility::Station => (rail::STATION_COST, rail::STATION_JOBS, rail::STATION_PLATFORM, 300.0),
+            RailFacility::FreightYard => (rail::YARD_COST, rail::YARD_JOBS, rail::YARD_APRON, rail::YARD_MIN_AREA),
+        };
+        match kind {
+            RailFacility::Station if lot.land_use == LandUse::Park => return Err("not in a park".into()),
+            RailFacility::FreightYard if lot.land_use != LandUse::Industrial => return Err("a freight yard needs industrial land".into()),
+            _ => {}
+        }
+        if lot.area() < min_area {
+            return Err(format!("too small: a {} needs {:.0} m²", kind.label(), min_area));
+        }
+        let link = RailLink::beside(&self.roads, &lot.polygon, lot.center, kind, length).ok_or_else(|| format!("no track within {:.0} m of that lot", rail::STATION_REACH))?;
+        if self.economy.treasury < cost {
+            return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), cost));
+        }
+        let lu = lot.land_use;
+        let value = self.land_value.at(lot.center);
+        self.economy.treasury -= cost;
+        let seed = self.fresh_seed();
+        let name = match kind {
+            RailFacility::Station => format!("{} Station", names::building_name(&mut self.rng, LandUse::Civic).split(' ').next().unwrap_or("Central")),
+            RailFacility::FreightYard => format!("Yard {}", self.rng.random_range(1..30)),
+        };
+        let mut b = Building::new(lot_id, lu, 1, Tier::Mid, seed, name, self.clock.tick, value);
+        b.rail = Some(link);
+        b.homes = 0;
+        b.jobs = jobs;
+        b.business = None;
+        b.parking_capacity = if kind == RailFacility::Station { 12 } else { 4 };
+        let id = self.buildings.insert(b);
+        self.lots[lot_id].building = Some(id);
+        self.events.push(SimEvent::BuildingBuilt(id));
+        Ok(id)
+    }
+
+    /// Stations within reach of both ends of a long walk: (board, alight,
+    /// where to walk to).
+    fn plan_rail_trip(&self, from: Vec2, to: Vec2) -> Option<(BuildingId, BuildingId, Vec2)> {
+        if from.distance(to) < rail::RAIL_TRIP_MIN {
+            return None;
+        }
+        let stations: Vec<(BuildingId, Vec2)> = self.facilities(RailFacility::Station).into_iter().filter_map(|s| self.building_entrance(s).map(|p| (s, p))).collect();
+        if stations.len() < 2 {
+            return None;
+        }
+        let near = |p: Vec2| stations.iter().map(|(id, q)| (*id, *q, q.distance(p))).filter(|(_, _, d)| *d <= rail::RAIL_REACH).min_by(|a, b| a.2.total_cmp(&b.2));
+        let (a, pa, da) = near(from)?;
+        let (b, _, db) = near(to)?;
+        if a == b || da + db + 200.0 > from.distance(to) {
+            return None;
+        }
+        Some((a, b, pa))
+    }
+
+    /// Walk to a stop or station and wait there for the ride.
+    fn walk_to_transit(&mut self, id: CitizenId, stop: Vec2, leg: TransitLeg, target: BuildingId, purpose: Purpose) {
+        let exit_pos = self.leave_building(id);
+        let start = exit_pos.unwrap_or(self.citizens[id].pos);
+        let mut path = match self.walk.route(start, stop) {
+            Some((pts, nodes)) => {
+                self.count_footfall(&nodes);
+                pts
+            }
+            None => vec![start],
+        };
+        path.push(stop);
+        let tick = self.clock.tick;
+        let c = &mut self.citizens[id];
+        if let Some(p) = exit_pos {
+            c.pos = p;
+            c.prev_pos = p;
+        }
+        c.mode = TravelMode::Walk;
+        c.transit = Some(TransitTrip { leg, target, purpose, since: tick });
+        c.activity = Activity::Traveling { to: Some(target), purpose: Purpose::ToStop, path, idx: 0 };
+    }
+
+    /// The route a train takes from the west end of the line to the east,
+    /// calling at each facility in turn, and where along it each one lies.
+    fn plan_train_route(&self, facilities: &[BuildingId]) -> Option<(Vec<NodeId>, Vec<Vec2>, Vec<(BuildingId, f32)>)> {
+        let leaves = self.roads.rail_leaf_nodes();
+        let entry = leaves.iter().copied().min_by(|a, b| self.roads.node(*a).pos.x.total_cmp(&self.roads.node(*b).pos.x))?;
+        let exit = leaves.iter().copied().max_by(|a, b| self.roads.node(*a).pos.x.total_cmp(&self.roads.node(*b).pos.x)).unwrap_or(entry);
+        let mut order: Vec<(BuildingId, SegmentId)> = facilities.iter().filter_map(|&f| self.buildings[f].rail.as_ref().map(|l| (f, l.segment))).filter(|(_, s)| self.roads.segment(*s).alive && self.roads.segment(*s).is_rail()).collect();
+        order.sort_by(|a, b| self.buildings[a.0].rail.as_ref().unwrap().centre().x.total_cmp(&self.buildings[b.0].rail.as_ref().unwrap().centre().x));
+        // Points the train drives through: node positions, plus the platform
+        // of the last call, where a train on a dead-end spur turns round
+        // instead of running on to the end of the track.
+        let mut poly: Vec<Vec2> = vec![self.roads.node(entry).pos];
+        let mut nodes = vec![entry];
+        let mut cur = entry;
+        let push_path = |poly: &mut Vec<Vec2>, nodes: &mut Vec<NodeId>, path: Vec<NodeId>, roads: &RoadNetwork| {
+            for n in path.into_iter().skip(1) {
+                let p = roads.node(n).pos;
+                if poly.last().is_none_or(|q: &Vec2| q.distance(p) > 0.1) {
+                    poly.push(p);
+                }
+                nodes.push(n);
+            }
+        };
+        let last = order.len().saturating_sub(1);
+        for (i, (f, seg)) in order.iter().enumerate() {
+            let s = self.roads.segment(*seg);
+            let pa = self.roads.node(s.a).pos;
+            let pb = self.roads.node(s.b).pos;
+            let here = self.roads.node(cur).pos;
+            let (first, second) = if here.distance(pa) <= here.distance(pb) { (s.a, s.b) } else { (s.b, s.a) };
+            if let Some(path) = self.roads.rail_path(cur, first) {
+                push_path(&mut poly, &mut nodes, path, &self.roads);
+                cur = first;
+            }
+            let centre = self.buildings[*f].rail.as_ref().unwrap().centre();
+            let (_, on_track) = crate::roads::project_on_segment(centre, pa, pb);
+            let spur_end = self.roads.neighbors(second).count() <= 1;
+            if i == last && spur_end {
+                // Run to the platform and come back the same way.
+                poly.push(on_track);
+            } else if let Some(path) = self.roads.rail_path(cur, second) {
+                push_path(&mut poly, &mut nodes, path, &self.roads);
+                cur = second;
+            }
+        }
+        let home = if exit != cur { exit } else { entry };
+        if let Some(path) = self.roads.rail_path(cur, home) {
+            let first_back = self.roads.node(cur).pos;
+            if poly.last().is_none_or(|q: &Vec2| q.distance(first_back) > 0.1) {
+                poly.push(first_back);
+            }
+            push_path(&mut poly, &mut nodes, path, &self.roads);
+        }
+        if poly.len() < 2 {
+            return None;
+        }
+        let mut stops: Vec<(BuildingId, f32)> = Vec::new();
+        for (f, _) in &order {
+            let c = self.buildings[*f].rail.as_ref().unwrap().centre();
+            if let Some((s, d)) = rail::project_on_poly(&poly, c) {
+                if d < 8.0 {
+                    stops.push((*f, s));
+                }
+            }
+        }
+        stops.sort_by(|a, b| a.1.total_cmp(&b.1));
+        Some((nodes, poly, stops))
+    }
+
+    fn spawn_train(&mut self, kind: TrainKind, facilities: &[BuildingId]) -> bool {
+        let Some((nodes, poly, stops)) = self.plan_train_route(facilities) else { return false };
+        if stops.is_empty() {
+            return false;
+        }
+        let waiting: usize = facilities.iter().map(|f| self.buildings[*f].rail_inbound.len()).sum();
+        let (cars, speed) = match kind {
+            TrainKind::Passenger => (4, rail::PASSENGER_SPEED),
+            TrainKind::Freight => ((5 + waiting / 3).min(10) as u8, rail::FREIGHT_SPEED),
+        };
+        let color = self.rng.random_range(0..8u8);
+        // Where the route leaves the trunk and where it is back on it.
+        // The hold point is the last trunk point before the track leaves
+        // the trunk (the switch); the branch is clear again once the train
+        // is back on a trunk point.
+        let mut branch: Option<(f32, f32)> = None;
+        let mut acc = 0.0;
+        let mut prev_acc = 0.0;
+        let mut off = false;
+        for (i, p) in poly.iter().enumerate() {
+            if i > 0 {
+                acc += poly[i - 1].distance(*p);
+            }
+            let on_trunk = (p.y - TRUNK_Y).abs() < 1.0;
+            if !on_trunk && !off {
+                off = true;
+                branch = Some(match branch {
+                    None => (prev_acc - 12.0, acc + 12.0),
+                    Some((a, _)) => (a, acc + 12.0),
+                });
+            } else if !on_trunk {
+                if let Some((a, _)) = branch {
+                    branch = Some((a, acc + 12.0));
+                }
+            } else if off {
+                off = false;
+                if let Some((a, _)) = branch {
+                    branch = Some((a, acc + 12.0));
+                }
+            }
+            prev_acc = acc;
+        }
+        self.rail.trains.insert(Train { kind, cars, nodes, poly, s: 0.0, prev_s: 0.0, speed, stops, next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo: Vec::new(), color, held: false, branch });
+        true
+    }
+
+    /// Dispatch on the headway, move every train, call at stops.
+    fn step_rail(&mut self) {
+        let tick = self.clock.tick;
+        let minute = self.clock.minute_of_day() as u32;
+        let seconds = self.config.traffic_seconds_per_tick;
+        let stations = self.facilities(RailFacility::Station);
+        let yards = self.facilities(RailFacility::FreightYard);
+        let queued = self.rail.trains.values().any(|t| t.held && t.branch.is_some_and(|(a, _)| t.s <= a + 0.5));
+        let room = self.rail.trains.len() < rail::MAX_TRAINS && !queued;
+        if room && Rail::in_service(minute) && !stations.is_empty() && tick.saturating_sub(self.rail.last_passenger_tick) >= rail::PASSENGER_HEADWAY {
+            if self.spawn_train(TrainKind::Passenger, &stations) {
+                self.rail.stats.passenger_trains_today += 1;
+            }
+            self.rail.last_passenger_tick = tick;
+        }
+        let freight_waiting = yards.iter().any(|y| !self.buildings[*y].rail_inbound.is_empty() || self.buildings[*y].rail_outbound > 0.0);
+        let since_freight = tick.saturating_sub(self.rail.last_freight_tick);
+        if room && !yards.is_empty() && since_freight >= rail::FREIGHT_HEADWAY && (freight_waiting || since_freight >= rail::FREIGHT_HEADWAY * 2) {
+            if self.spawn_train(TrainKind::Freight, &yards) {
+                self.rail.stats.freight_trains_today += 1;
+            }
+            self.rail.last_freight_tick = tick;
+        }
+        let ids: Vec<TrainId> = self.rail.trains.keys().collect();
+        for id in ids {
+            let blocked = self.rail.blocked(id);
+            let branch_busy = self.rail.trains.iter().any(|(oid, o)| oid != id && o.on_branch());
+            let arrived = {
+                let t = &mut self.rail.trains[id];
+                t.prev_s = t.s;
+                if t.dwell > 0.0 {
+                    t.dwell -= seconds;
+                    if t.dwell <= 0.0 {
+                        t.next_stop += 1;
+                    }
+                    continue;
+                }
+                if blocked {
+                    t.held = true;
+                    continue;
+                }
+                t.held = false;
+                let target = if t.next_stop < t.stops.len() { t.stops[t.next_stop].1 } else { t.total() };
+                // Hold at the junction while another train is on the branch.
+                let mut limit = target;
+                if let Some((bin, _)) = t.branch {
+                    if t.s <= bin + 0.5 && branch_busy {
+                        limit = limit.min(bin);
+                        t.held = true;
+                    }
+                }
+                t.s = (t.s + t.speed * seconds).min(limit);
+                if t.s >= target - 0.01 {
+                    if t.next_stop < t.stops.len() { Some(true) } else { Some(false) }
+                } else {
+                    None
+                }
+            };
+            match arrived {
+                Some(true) => self.train_arrived(id),
+                Some(false) => {
+                    let t = self.rail.trains.remove(id).unwrap();
+                    let pos = t.head();
+                    for p in t.passengers {
+                        if let Some(c) = self.citizens.get_mut(p) {
+                            c.transit = None;
+                        }
+                        self.strand_driver(p, pos);
+                    }
+                }
+                None => {}
+            }
+        }
+        // Riders ride along.
+        let heads: Vec<(Vec<CitizenId>, Vec2, f32)> = self.rail.trains.values().map(|t| (t.passengers.clone(), t.head(), t.vehicle_pose(0).1)).collect();
+        for (ps, pos, heading) in heads {
+            for p in ps {
+                if let Some(c) = self.citizens.get_mut(p) {
+                    c.pos = pos;
+                    c.prev_pos = pos;
+                    c.heading = heading;
+                }
+            }
+        }
+        let s = &mut self.rail.stats;
+        s.trains = self.rail.trains.len() as u32;
+        s.stations = stations.len() as u32;
+        s.yards = yards.len() as u32;
+        s.waiting = self.citizens.values().filter(|c| matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_some_and(|t| matches!(t.leg, TransitLeg::Rail { .. }))).count() as u32;
+        s.riding = self.citizens.values().filter(|c| matches!(c.activity, Activity::OnTrain { .. })).count() as u32;
+        s.freight_waiting = yards.iter().map(|y| self.buildings[*y].rail_inbound.iter().map(|c| c.amount).sum::<f32>()).sum();
+        s.next_passenger_in = if stations.is_empty() { 0 } else { rail::PASSENGER_HEADWAY.saturating_sub(tick.saturating_sub(self.rail.last_passenger_tick)) as u32 };
+    }
+
+    /// A train stands at a station or yard: people off and on, goods off.
+    fn train_arrived(&mut self, id: TrainId) {
+        let tick = self.clock.tick;
+        let (at, kind) = {
+            let t = &mut self.rail.trains[id];
+            t.dwell = rail::DWELL_SECONDS;
+            (t.stops[t.next_stop].0, t.kind)
+        };
+        match kind {
+            TrainKind::Passenger => {
+                let entrance = self.building_entrance(at).unwrap_or(self.rail.trains[id].head());
+                let passengers = self.rail.trains[id].passengers.clone();
+                let mut keep: Vec<CitizenId> = Vec::new();
+                for p in passengers {
+                    let off = self.citizens.get(p).and_then(|c| c.transit).is_none_or(|t| !matches!(t.leg, TransitLeg::Rail { alight, .. } if alight != at));
+                    if !off {
+                        keep.push(p);
+                        continue;
+                    }
+                    let Some(trip) = self.citizens.get_mut(p).and_then(|c| {
+                        c.pos = entrance;
+                        c.prev_pos = entrance;
+                        c.activity = Activity::Idle;
+                        c.transit.take()
+                    }) else {
+                        continue;
+                    };
+                    self.travel_to_opts(p, Some(trip.target), trip.purpose, true);
+                }
+                let boarding: Vec<CitizenId> = self
+                    .citizens
+                    .iter()
+                    .filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_some_and(|t| matches!(t.leg, TransitLeg::Rail { board, .. } if board == at)))
+                    .map(|(id, _)| id)
+                    .take(rail::TRAIN_CAPACITY.saturating_sub(keep.len()))
+                    .collect();
+                let name = self.buildings[at].name.clone();
+                for p in boarding {
+                    let c = &mut self.citizens[p];
+                    c.activity = Activity::OnTrain { train: id };
+                    c.savings -= rail::RAIL_FARE;
+                    c.remember(tick, format!("Took the train from {name}."));
+                    keep.push(p);
+                    self.economy.treasury += rail::RAIL_FARE;
+                    self.rail.stats.fares_today += rail::RAIL_FARE;
+                    self.rail.stats.riders_today += 1;
+                }
+                self.buildings[at].visitors = self.buildings[at].visitors.saturating_add(1);
+                self.rail.trains[id].passengers = keep;
+            }
+            TrainKind::Freight => {
+                let queued = std::mem::take(&mut self.buildings[at].rail_inbound);
+                self.buildings[at].rail_outbound = 0.0;
+                for cargo in queued {
+                    self.rail.stats.freight_in_today += cargo.amount;
+                    self.truck_from(at, cargo);
+                }
+            }
+        }
+    }
+
+    /// A truck from a yard to the buyer; delivered on the spot when there
+    /// is no road route or no trucks to spare.
+    fn truck_from(&mut self, from: BuildingId, cargo: Cargo) {
+        if self.truck_count() >= crate::market::MAX_TRUCKS {
+            self.deliver(cargo);
+            return;
+        }
+        let route = (|| {
+            let fl = self.building_lot(from)?;
+            let (fs, fp) = (fl.car_segment?, fl.car_point);
+            let tl = self.building_lot(cargo.to)?;
+            let (ts, tp) = (tl.car_segment?, tl.car_point);
+            self.traffic.net.find_route(fs, fp, ts, tp)
+        })();
+        match route {
+            Some((route, s0, s1)) => {
+                self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, 6);
+            }
+            None => self.deliver(cargo),
+        }
+    }
+
     // ── buses ────────────────────────────────────────────────────────────────
 
     /// Place a bus depot on a vacant lot with street access.
@@ -1829,7 +2293,7 @@ impl World {
                 self.strand_car(car);
             }
         }
-        let riders: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.transit.is_some_and(|t| t.route == route)).map(|(id, _)| id).collect();
+        let riders: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.transit.is_some_and(|t| matches!(t.leg, TransitLeg::Bus { route: r, .. } if r == route))).map(|(id, _)| id).collect();
         for id in riders {
             self.citizens[id].transit = None;
             if matches!(self.citizens[id].activity, Activity::Waiting { .. }) {
@@ -1945,7 +2409,7 @@ impl World {
         };
         // Off.
         let mut passengers = bus.passengers.clone();
-        let alighting: Vec<CitizenId> = passengers.iter().copied().filter(|p| self.citizens.get(*p).and_then(|c| c.transit).is_none_or(|t| t.alight == stop_idx || t.route != bus.route)).collect();
+        let alighting: Vec<CitizenId> = passengers.iter().copied().filter(|p| self.citizens.get(*p).and_then(|c| c.transit).is_none_or(|t| match t.leg { TransitLeg::Bus { route, alight, .. } => alight == stop_idx || route != bus.route, _ => true })).collect();
         passengers.retain(|p| !alighting.contains(p));
         for p in alighting {
             let Some(trip) = self.citizens.get_mut(p).and_then(|c| {
@@ -1962,7 +2426,7 @@ impl World {
         let boarding: Vec<CitizenId> = self
             .citizens
             .iter()
-            .filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_some_and(|t| t.route == bus.route && t.board == stop_idx))
+            .filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_some_and(|t| matches!(t.leg, TransitLeg::Bus { route, board, .. } if route == bus.route && board == stop_idx)))
             .map(|(id, _)| id)
             .take(transit::BUS_CAPACITY.saturating_sub(passengers.len()))
             .collect();
@@ -2253,6 +2717,13 @@ impl World {
         let mode = if owns_bike && !seated && (park_ride || dist >= self.config.bike_threshold) { TravelMode::Bike } else { TravelMode::Walk };
         let walk_from = if self.citizens[id].inside.is_some() { from_pt } else { self.citizens[id].pos };
 
+        // The train, for long trips on foot between two stations.
+        if allow_bus && mode == TravelMode::Walk && Rail::in_service(self.clock.minute_of_day() as u32) {
+            if let Some((board, alight, stop)) = self.plan_rail_trip(walk_from, entrance) {
+                self.walk_to_transit(id, stop, TransitLeg::Rail { board, alight }, target, purpose);
+                return;
+            }
+        }
         // The bus, for long trips on foot when a line serves both ends and
         // a depot has buses out. Walk to the stop first.
         if allow_bus && mode == TravelMode::Walk && self.economy.transit.buses > 0 {
@@ -2275,7 +2746,7 @@ impl World {
                     c.prev_pos = p;
                 }
                 c.mode = TravelMode::Walk;
-                c.transit = Some(TransitTrip { route, board, alight, target, purpose, since: tick });
+                c.transit = Some(TransitTrip { leg: TransitLeg::Bus { route, board, alight }, target, purpose, since: tick });
                 c.activity = Activity::Traveling { to: Some(target), purpose: Purpose::ToStop, path, idx: 0 };
                 return;
             }
@@ -2331,6 +2802,7 @@ impl World {
                 (RoadKind::Street, TravelMode::Bike) => seg.map_or(5.0, |s| s.half_width()) - crate::roads::SHOULDER * 0.5,
                 (RoadKind::Path, TravelMode::Walk) => 0.6,
                 (RoadKind::Path, TravelMode::Bike) => -0.5,
+                (RoadKind::Rail, _) => 0.0,
             };
             let off = right * offset;
             out.push(a + off);
@@ -2463,7 +2935,7 @@ mod tests {
         w.set_gesture(id, Gesture::Road { points: vec![Vec2::new(320.0, -300.0), Vec2::new(320.0, 300.0)], lanes_fwd: 2, lanes_bwd: 2, curved: false, kind: RoadKind::Street }, true);
         w.implement();
         assert!(!w.has_project());
-        assert_eq!(w.master.gestures.len(), 3);
+        assert_eq!(w.master.gestures.len(), 4, "two roads, a zone and the trunk line");
         assert!(w.buildings.contains_key(building), "building on an untouched lot survives a rebuild");
         assert!(w.roads.alive_segments().count() >= 3);
         assert!(!w.traffic.net.intersections.is_empty());
@@ -2764,6 +3236,115 @@ mod tests {
         // Round trip keeps the depot.
         let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
         assert!(back.buildings[depot].depot);
+    }
+
+    #[test]
+    fn trains_call_at_stations_and_yards_bring_freight() {
+        use crate::rail::{RailFacility, TrainKind};
+        let mut w = World::new(WorldConfig::default());
+        assert!(w.roads.alive_segments().any(|(_, s)| s.is_rail()), "the trunk line is there from the start");
+        w.economy.treasury = 200_000.0;
+        // A branch off the trunk, north then east, and a street beside it.
+        w.add_rail(&[Vec2::new(0.0, TRUNK_Y), Vec2::new(0.0, -60.0), Vec2::new(900.0, -60.0)]);
+        assert!(w.roads.alive_segments().filter(|(_, s)| s.is_rail()).count() >= 4, "the branch split the trunk and joined it");
+        w.add_road(&[Vec2::new(-100.0, 0.0), Vec2::new(1000.0, 0.0)], 1, 1);
+        let strip = |x0: f32, x1: f32| vec![Vec2::new(x0, -56.0), Vec2::new(x1, -56.0), Vec2::new(x1, -10.0), Vec2::new(x0, -10.0)];
+        w.add_zone(strip(10.0, 190.0), LandUse::Commercial);
+        w.add_zone(strip(300.0, 520.0), LandUse::Industrial);
+        w.add_zone(strip(610.0, 790.0), LandUse::Commercial);
+        w.add_zone(vec![Vec2::new(10.0, 10.0), Vec2::new(190.0, 10.0), Vec2::new(190.0, 90.0), Vec2::new(10.0, 90.0)], LandUse::Residential);
+        let lot_near = |w: &World, p: Vec2, lu: LandUse| w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none() && l.land_use == lu).min_by(|a, b| a.1.center.distance(p).total_cmp(&b.1.center.distance(p))).map(|(id, _)| id).unwrap();
+        let far = lot_near(&w, Vec2::new(150.0, 80.0), LandUse::Residential);
+        assert!(w.build_rail(far, RailFacility::Station).is_err(), "no track near that lot");
+        let a_lot = lot_near(&w, Vec2::new(60.0, -32.0), LandUse::Commercial);
+        let station_a = w.build_rail(a_lot, RailFacility::Station).unwrap_or_else(|e| panic!("station A: {e}; lot {:?}", w.lots[a_lot].polygon));
+        let b_lot = lot_near(&w, Vec2::new(700.0, -32.0), LandUse::Commercial);
+        let station_b = w.build_rail(b_lot, RailFacility::Station).expect("station B");
+        let y_lot = w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none() && l.land_use == LandUse::Industrial && l.area() >= crate::rail::YARD_MIN_AREA).map(|(id, _)| id).next().expect("yard lot");
+        assert!(w.build_rail(a_lot, RailFacility::FreightYard).is_err(), "taken");
+        let yard = w.build_rail(y_lot, RailFacility::FreightYard).expect("yard");
+        let link = w.buildings[station_a].rail.as_ref().unwrap();
+        assert!((link.centre().y - (-60.0)).abs() < 6.0 && link.centre().y > -60.0, "platform lies along the branch on the lot's side: {:?}", link.centre());
+        // A passenger train comes within the headway and calls at both stations.
+        let mut minds = IdleMind;
+        let mut saw_train = false;
+        let mut dwelt_at_a = false;
+        for _ in 0..600 {
+            w.tick(&mut minds);
+            for t in w.rail.trains.values() {
+                if t.kind == TrainKind::Passenger {
+                    saw_train = true;
+                    assert_eq!(t.stops.len(), 2, "both stations are on the route");
+                    if t.dwell > 0.0 && t.stops[t.next_stop.min(1)].0 == station_a {
+                        dwelt_at_a = true;
+                    }
+                }
+            }
+        }
+        assert!(saw_train && dwelt_at_a, "train {saw_train} dwelt {dwelt_at_a}");
+        assert!(w.rail.stats.passenger_trains_today >= 1);
+        // A rider from a home by station A to a shop by station B.
+        let home_lot = lot_near(&w, Vec2::new(100.0, 40.0), LandUse::Residential);
+        w.build_on(home_lot);
+        let shop_lot = lot_near(&w, Vec2::new(760.0, -32.0), LandUse::Commercial);
+        w.build_on(shop_lot);
+        let home = w.lots[home_lot].building.unwrap();
+        let shop = w.lots[shop_lot].building.unwrap();
+        for _ in 0..(4 * 60) {
+            w.tick(&mut minds);
+        }
+        while !(7 * 60..=14 * 60).contains(&(w.clock.minute_of_day() as u32)) {
+            w.tick(&mut minds);
+        }
+        let c = w.citizens.keys().next().expect("someone arrived");
+        {
+            let cz = &mut w.citizens[c];
+            cz.inside = Some(home);
+            cz.activity = Activity::AtHome;
+            cz.owns_bike = false;
+            cz.owns_car = false;
+            cz.savings = 50.0;
+        }
+        w.travel_to(c, Some(shop), Purpose::Shop(Resource::Goods));
+        assert!(matches!(w.citizens[c].transit.map(|t| t.leg), Some(crate::transit::TransitLeg::Rail { board, alight }) if board == station_a && alight == station_b), "plans a rail leg: {:?}", w.citizens[c].transit);
+        let (mut waited, mut rode, mut arrived) = (false, false, false);
+        for _ in 0..1500 {
+            w.tick(&mut minds);
+            match w.citizens[c].activity {
+                Activity::Waiting { .. } => waited = true,
+                Activity::OnTrain { .. } => rode = true,
+                _ => {}
+            }
+            if w.citizens[c].inside == Some(shop) {
+                arrived = true;
+                break;
+            }
+        }
+        assert!(waited && rode && arrived, "waited {waited} rode {rode} arrived {arrived}: {}", w.citizens[c].activity.label());
+        assert!(w.citizens[c].savings < 50.0 && w.rail.stats.riders_today >= 1);
+        // Freight: an import goes to the yard, the buyer saves a fifth, and
+        // the next freight train brings it in.
+        let buyer = w.buildings.iter().find(|(_, b)| b.land_use == LandUse::Industrial && b.business.is_some()).map(|(id, _)| id).expect("an industrial business");
+        let money0 = w.buildings[buyer].business.as_ref().unwrap().money;
+        let queued0 = w.buildings[yard].rail_inbound.len();
+        w.import(buyer, Resource::Parts, 10.0, 100.0);
+        assert_eq!(w.buildings[yard].rail_inbound.len(), queued0 + 1, "the order waits at the yard");
+        assert!((w.buildings[buyer].business.as_ref().unwrap().money - money0 - 20.0).abs() < 0.01, "rail import refunds a fifth");
+        let mut freight_seen = false;
+        for _ in 0..900 {
+            w.tick(&mut minds);
+            if w.rail.trains.values().any(|t| t.kind == TrainKind::Freight) {
+                freight_seen = true;
+            }
+            if w.buildings[yard].rail_inbound.is_empty() && freight_seen {
+                break;
+            }
+        }
+        assert!(freight_seen && w.buildings[yard].rail_inbound.is_empty(), "freight train {freight_seen}, waiting {}", w.buildings[yard].rail_inbound.len());
+        assert!(w.rail.stats.freight_in_today >= 10.0);
+        // Round trip keeps the facilities; trains come back on the headway.
+        let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+        assert!(back.buildings[station_a].rail.is_some() && back.buildings[yard].rail.is_some());
     }
 
     #[test]

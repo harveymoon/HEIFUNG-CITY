@@ -33,9 +33,13 @@ pub enum RoadKind {
     #[default]
     Street,
     Path,
+    /// A railway: trains only, single track.
+    Rail,
 }
 
 /// Half the width of a path, in metres.
+/// Half the corridor of a single track: ballast shoulder to ballast shoulder.
+pub const RAIL_HALF_WIDTH: f32 = 2.4;
 pub const PATH_HALF_WIDTH: f32 = 1.6;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -60,10 +64,15 @@ impl Segment {
         self.kind == RoadKind::Street
     }
 
+    pub fn is_rail(&self) -> bool {
+        self.kind == RoadKind::Rail
+    }
+
     pub fn half_width(&self) -> f32 {
         match self.kind {
             RoadKind::Street => self.lanes() as f32 * LANE_WIDTH * 0.5 + SHOULDER,
             RoadKind::Path => PATH_HALF_WIDTH,
+            RoadKind::Rail => RAIL_HALF_WIDTH,
         }
     }
 }
@@ -124,11 +133,11 @@ impl RoadNetwork {
     /// Node for a road end: an existing node nearby, else a new node on the
     /// nearest road within `radius` (splitting it into a junction), else a
     /// fresh node at `p`.
-    fn end_node(&mut self, p: Vec2, radius: f32) -> NodeId {
-        if let Some(id) = self.node_near(p, SNAP_RADIUS) {
+    fn end_node(&mut self, p: Vec2, radius: f32, kind: RoadKind) -> NodeId {
+        if let Some(id) = self.node_near_kind(p, SNAP_RADIUS, kind) {
             return id;
         }
-        if let Some((sid, _t, q)) = self.nearest_on_network(p) {
+        if let Some((sid, _t, q)) = self.nearest_of_kind(p, kind) {
             if q.distance(p) <= radius {
                 if let Some(id) = self.node_near(q, SNAP_RADIUS) {
                     return id;
@@ -146,15 +155,67 @@ impl RoadNetwork {
     /// Where a road end dropped at `p` would land: a node, a point on a road,
     /// or `p` itself. Used by the tools to show the snap before committing.
     pub fn snap_point(&self, p: Vec2, radius: f32) -> (Vec2, bool) {
-        if let Some(id) = self.node_near(p, radius) {
+        self.snap_point_kind(p, radius, RoadKind::Street)
+    }
+
+    /// Track ends join track; road and path ends join roads and paths.
+    pub fn snap_point_kind(&self, p: Vec2, radius: f32, kind: RoadKind) -> (Vec2, bool) {
+        if let Some(id) = self.node_near_kind(p, radius, kind) {
             return (self.node(id).pos, true);
         }
-        if let Some((sid, _, q)) = self.nearest_on_network(p) {
+        if let Some((sid, _, q)) = self.nearest_of_kind(p, kind) {
             if q.distance(p) <= self.segment(sid).half_width() + radius {
                 return (q, true);
             }
         }
         (p, false)
+    }
+
+    /// Whether ways of two kinds may share an end node.
+    pub fn joins(a: RoadKind, b: RoadKind) -> bool {
+        (a == RoadKind::Rail) == (b == RoadKind::Rail)
+    }
+
+    /// Nearest node within `radius` that carries a way `kind` can join
+    /// (a node with no ways yet joins anything).
+    fn node_near_kind(&self, p: Vec2, radius: f32, kind: RoadKind) -> Option<NodeId> {
+        let mut best: Option<(f32, NodeId)> = None;
+        for (i, n) in self.nodes.iter().enumerate() {
+            let d = n.pos.distance(p);
+            if d > radius {
+                continue;
+            }
+            let alive: Vec<_> = n.segments.iter().filter(|&&s| self.segment(s).alive).collect();
+            if !alive.is_empty() && !alive.iter().any(|&&s| Self::joins(self.segment(s).kind, kind)) {
+                continue;
+            }
+            if best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, NodeId(i as u32)));
+            }
+        }
+        best.map(|(_, id)| id)
+    }
+
+    /// Closest point on any alive way that `kind` can join.
+    pub fn nearest_of_kind(&self, p: Vec2, kind: RoadKind) -> Option<(SegmentId, f32, Vec2)> {
+        let mut best: Option<(f32, SegmentId, f32, Vec2)> = None;
+        for (sid, seg) in self.alive_segments() {
+            if !Self::joins(seg.kind, kind) {
+                continue;
+            }
+            let (p0, p1) = self.segment_points(sid);
+            let (t, q) = project_on_segment(p, p0, p1);
+            let d = p.distance(q);
+            if best.is_none_or(|(bd, ..)| d < bd) {
+                best = Some((d, sid, t, q));
+            }
+        }
+        best.map(|(_, sid, t, q)| (sid, t, q))
+    }
+
+    /// Closest point on the railway.
+    pub fn nearest_rail(&self, p: Vec2) -> Option<(SegmentId, f32, Vec2)> {
+        self.nearest_of_kind(p, RoadKind::Rail)
     }
 
     fn find_link(&self, a: NodeId, b: NodeId) -> Option<SegmentId> {
@@ -206,8 +267,8 @@ impl RoadNetwork {
             }
             // Road ends snap onto whatever road they were dropped near so a
             // T-junction forms; interior points only split roads they cross.
-            let a = if i == 0 { self.end_node(w[0], END_SNAP_RADIUS) } else { self.get_or_add_node(w[0]) };
-            let b = if i + 1 == last { self.end_node(w[1], END_SNAP_RADIUS) } else { self.get_or_add_node(w[1]) };
+            let a = if i == 0 { self.end_node(w[0], END_SNAP_RADIUS, kind) } else { self.get_or_add_node(w[0]) };
+            let b = if i + 1 == last { self.end_node(w[1], END_SNAP_RADIUS, kind) } else { self.get_or_add_node(w[1]) };
             out.extend(self.add_segment_between(a, b, lanes_fwd, lanes_bwd, kind));
         }
         if !out.is_empty() {
@@ -271,10 +332,13 @@ impl RoadNetwork {
         best.map(|(_, sid, t, q)| (sid, t, q))
     }
 
-    /// Closest point on any alive segment.
+    /// Closest point on any alive street or path (never the railway).
     pub fn nearest_on_network(&self, p: Vec2) -> Option<(SegmentId, f32, Vec2)> {
         let mut best: Option<(f32, SegmentId, f32, Vec2)> = None;
-        for (sid, _) in self.alive_segments() {
+        for (sid, seg) in self.alive_segments() {
+            if seg.is_rail() {
+                continue;
+            }
             let (p0, p1) = self.segment_points(sid);
             let (t, q) = project_on_segment(p, p0, p1);
             let d = p.distance(q);
@@ -305,18 +369,39 @@ impl RoadNetwork {
         })
     }
 
-    /// Nodes with a single segment: the city's entrances and dead ends.
+    /// Nodes with a single street or path: the city's entrances and dead ends.
     pub fn leaf_nodes(&self) -> Vec<NodeId> {
+        self.leaf_nodes_where(|s| !s.is_rail())
+    }
+
+    /// Ends of the railway: where trains enter and leave.
+    pub fn rail_leaf_nodes(&self) -> Vec<NodeId> {
+        self.leaf_nodes_where(|s| s.is_rail())
+    }
+
+    fn leaf_nodes_where(&self, keep: impl Fn(&Segment) -> bool) -> Vec<NodeId> {
         self.nodes
             .iter()
             .enumerate()
-            .filter(|(_, n)| n.segments.iter().filter(|&&s| self.segment(s).alive).count() == 1)
+            .filter(|(_, n)| {
+                let mine: Vec<_> = n.segments.iter().filter(|&&s| self.segment(s).alive && keep(self.segment(s))).collect();
+                mine.len() == 1 && n.segments.iter().filter(|&&s| self.segment(s).alive).count() == 1
+            })
             .map(|(i, _)| NodeId(i as u32))
             .collect()
     }
 
-    /// A* over nodes. Returns the node sequence including both ends.
+    /// A* over street and path nodes. Returns the node sequence including both ends.
     pub fn path(&self, from: NodeId, to: NodeId) -> Option<Vec<NodeId>> {
+        self.path_where(from, to, |s| !s.is_rail())
+    }
+
+    /// A* along the railway only.
+    pub fn rail_path(&self, from: NodeId, to: NodeId) -> Option<Vec<NodeId>> {
+        self.path_where(from, to, |s| s.is_rail())
+    }
+
+    pub fn path_where(&self, from: NodeId, to: NodeId, keep: impl Fn(&Segment) -> bool) -> Option<Vec<NodeId>> {
         if from == to {
             return Some(vec![from]);
         }
@@ -339,7 +424,10 @@ impl RoadNetwork {
                 return Some(path);
             }
             let gn = g[&node];
-            for (next, _) in self.neighbors(node) {
+            for (next, sid) in self.neighbors(node) {
+                if !keep(self.segment(sid)) {
+                    continue;
+                }
                 let cost = gn + self.node(node).pos.distance(self.node(next).pos);
                 if g.get(&next).map_or(true, |&old| cost < old) {
                     g.insert(next, cost);

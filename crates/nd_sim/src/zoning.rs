@@ -401,7 +401,7 @@ fn corridor_edge(seg: &crate::roads::Segment) -> f32 {
 fn nearest_road(roads: &RoadNetwork, p: Vec2, allow_paths: bool) -> Option<(SegmentId, f32, f32)> {
     let mut best: Option<(SegmentId, f32, f32)> = None;
     for (sid, seg) in roads.alive_segments() {
-        if !seg.is_street() && !allow_paths {
+        if seg.is_rail() || (!seg.is_street() && !allow_paths) {
             continue;
         }
         let (a, b) = roads.segment_points(sid);

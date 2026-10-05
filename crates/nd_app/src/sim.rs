@@ -56,6 +56,12 @@ impl Sim {
         let cell = |cx: f32, cy: f32| {
             vec![SVec2::new(cx - 65.0, cy - 65.0), SVec2::new(cx + 65.0, cy - 65.0), SVec2::new(cx + 65.0, cy + 65.0), SVec2::new(cx - 65.0, cy + 65.0)]
         };
+        // A row south of the grid, one lot deep, backing onto the railway
+        // branch: a freight yard and a station.
+        for (x, lu) in [(-210.0, LandUse::Industrial), (70.0, LandUse::Commercial)] {
+            let (x0, x1) = (x - 65.0, x + 65.0);
+            self.world.add_gesture(Gesture::Zone { polygon: vec![SVec2::new(x0, -340.0), SVec2::new(x1, -340.0), SVec2::new(x1, -285.0), SVec2::new(x0, -285.0)], land_use: lu });
+        }
         let plan = [
             (-210.0, -210.0, LandUse::Industrial), (-70.0, -210.0, LandUse::Industrial), (70.0, -210.0, LandUse::Residential), (210.0, -210.0, LandUse::Residential),
             (-210.0, -70.0, LandUse::Commercial), (-70.0, -70.0, LandUse::Entertainment), (70.0, -70.0, LandUse::Commercial), (210.0, -70.0, LandUse::Residential),
@@ -65,7 +71,26 @@ impl Sim {
         for (x, y, lu) in plan {
             self.world.add_gesture(Gesture::Zone { polygon: cell(x, y), land_use: lu });
         }
+        // A branch off the trunk line, running behind the southern row.
+        self.world.add_gesture(Gesture::Road { points: vec![SVec2::new(-300.0, nd_sim::rail::TRUNK_Y), SVec2::new(-300.0, -348.0), SVec2::new(150.0, -348.0)], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: nd_sim::roads::RoadKind::Rail });
         self.world.implement();
+        // The demo has the money for its showpieces.
+        self.world.economy.treasury = self.world.economy.treasury.max(150_000.0);
+        if self.world.buildings.values().all(|b| b.rail.is_none()) {
+            use nd_sim::RailFacility;
+            for (kind, lu) in [(RailFacility::FreightYard, LandUse::Industrial), (RailFacility::Station, LandUse::Commercial)] {
+                let lot = self
+                    .world
+                    .lots
+                    .iter()
+                    .filter(|(_, l)| l.usable() && l.land_use == lu && l.building.is_none() && l.center.y < -285.0)
+                    .max_by(|a, b| a.1.area().total_cmp(&b.1.area()))
+                    .map(|(id, _)| id);
+                if let Some(lot) = lot {
+                    let _ = self.world.build_rail(lot, kind);
+                }
+            }
+        }
         // A coal plant to start with: cheap power and a haze over the industrial corner.
         if self.world.buildings.values().any(|b| b.plant.is_some()) {
             return;

@@ -56,6 +56,10 @@ pub enum Activity {
     Riding {
         bus: CarId,
     },
+    /// On a train.
+    OnTrain {
+        train: crate::rail::TrainId,
+    },
 }
 
 impl Activity {
@@ -69,6 +73,7 @@ impl Activity {
             Activity::Sitting { .. } => "sitting in the park",
             Activity::Waiting { .. } => "waiting for the bus",
             Activity::Riding { .. } => "on the bus",
+            Activity::OnTrain { .. } => "on the train",
             Activity::Traveling { purpose, .. } | Activity::Driving { purpose, .. } => match purpose {
                 Purpose::Home => "heading home",
                 Purpose::Work => "commuting",
@@ -82,7 +87,7 @@ impl Activity {
     }
 
     pub fn is_traveling(&self) -> bool {
-        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. })
+        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. })
     }
 }
 

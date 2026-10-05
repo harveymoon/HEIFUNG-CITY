@@ -46,6 +46,8 @@ struct PathsTag;
 struct HazeTag;
 #[derive(Component, Clone)]
 struct TransitTag;
+#[derive(Component)]
+struct TrainTag(nd_sim::TrainId);
 
 /// Toggleable data layers drawn over the ground.
 #[derive(Resource, Default)]
@@ -89,6 +91,9 @@ struct Materials {
     car_body_mesh: Handle<Mesh>,
     truck_body_mesh: Handle<Mesh>,
     bus_body_mesh: Handle<Mesh>,
+    loco_mesh: Handle<Mesh>,
+    coach_mesh: Handle<Mesh>,
+    wagon_mesh: Handle<Mesh>,
     car_lights_mesh: Handle<Mesh>,
     signal_green: Handle<StandardMaterial>,
     signal_red: Handle<StandardMaterial>,
@@ -120,6 +125,7 @@ struct RenderState {
     paths_shown: bool,
     haze_signature: usize,
     transit_version: u64,
+    trains: HashMap<nd_sim::TrainId, Vec<Entity>>,
 }
 
 /// Renderer statistics shown in the UI.
@@ -136,7 +142,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RenderState>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_systems(Startup, setup).add_systems(
             Update,
-            (sync_terrain, sync_roads, sync_signals, sync_preview, sync_lots, sync_overlay, sync_paths, sync_haze, sync_transit, sync_buildings, sync_citizens, sync_cars, update_daylight)
+            (sync_terrain, sync_roads, sync_signals, sync_preview, sync_lots, sync_overlay, sync_paths, sync_haze, sync_transit, sync_buildings, sync_citizens, sync_cars, sync_trains, update_daylight)
                 .chain()
                 .in_set(SimSet::Sync),
         );
@@ -288,6 +294,38 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         wheels(&mut m, &[-3.8, 3.6], 1.15, 0.5);
         meshes.add(to_mesh(&m, true))
     };
+    let rail_wheels = |m: &mut MeshData, len: f32| {
+        for x in [-len * 0.35, len * 0.35] {
+            for s in [-1.0f32, 1.0] {
+                m.boxed(Vec3::new(x, 0.5, s * 0.75), Vec3::new(2.6, 0.7, 0.3), 0.0, [0.1, 0.1, 0.1, 1.0]);
+            }
+        }
+    };
+    let loco_mesh = {
+        let mut m = MeshData::default();
+        m.boxed(Vec3::new(0.0, 2.1, 0.0), Vec3::new(17.4, 2.6, 2.8), 0.0, [1.0, 1.0, 1.0, 1.0]);
+        m.boxed(Vec3::new(5.5, 3.7, 0.0), Vec3::new(5.0, 0.8, 2.6), 0.0, [0.2, 0.22, 0.25, 1.0]);
+        m.boxed(Vec3::new(7.5, 2.6, 0.0), Vec3::new(1.2, 1.4, 2.5), 0.0, [0.14, 0.17, 0.2, 1.0]);
+        m.boxed(Vec3::new(8.8, 1.1, 0.0), Vec3::new(0.6, 0.6, 2.4), 0.0, [0.9, 0.2, 0.1, 1.0]);
+        m.boxed(Vec3::new(-2.0, 3.6, 0.0), Vec3::new(9.0, 0.5, 2.0), 0.0, [0.3, 0.3, 0.32, 1.0]);
+        rail_wheels(&mut m, 17.0);
+        meshes.add(to_mesh(&m, true))
+    };
+    let coach_mesh = {
+        let mut m = MeshData::default();
+        m.boxed(Vec3::new(0.0, 2.1, 0.0), Vec3::new(18.4, 2.6, 2.8), 0.0, [1.0, 1.0, 1.0, 1.0]);
+        m.boxed(Vec3::new(0.0, 2.6, 0.0), Vec3::new(17.8, 0.9, 2.86), 0.0, [0.14, 0.17, 0.2, 1.0]);
+        m.boxed(Vec3::new(0.0, 3.5, 0.0), Vec3::new(18.0, 0.3, 2.4), 0.0, [0.5, 0.5, 0.52, 1.0]);
+        rail_wheels(&mut m, 18.0);
+        meshes.add(to_mesh(&m, true))
+    };
+    let wagon_mesh = {
+        let mut m = MeshData::default();
+        m.boxed(Vec3::new(0.0, 1.0, 0.0), Vec3::new(13.6, 0.5, 2.7), 0.0, [0.2, 0.2, 0.22, 1.0]);
+        m.boxed(Vec3::new(0.0, 2.55, 0.0), Vec3::new(12.2, 2.6, 2.44), 0.0, [1.0, 1.0, 1.0, 1.0]);
+        rail_wheels(&mut m, 13.0);
+        meshes.add(to_mesh(&m, true))
+    };
     let car_lights_mesh = {
         let mut m = MeshData::default();
         for z in [-0.6, 0.6] {
@@ -315,6 +353,9 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         car_body_mesh,
         truck_body_mesh,
         bus_body_mesh,
+        loco_mesh,
+        coach_mesh,
+        wagon_mesh,
         car_lights_mesh,
         signal_green,
         signal_red,
@@ -441,12 +482,12 @@ fn sync_preview(
     let pal = &assets.palette;
     let mut glow = MeshData::default();
     for (_, pts, fwd, bwd, kind) in &pv.planned_roads {
-        let w = if *kind == nd_sim::roads::RoadKind::Path { nd_sim::roads::PATH_HALF_WIDTH * 2.0 } else { (*fwd + *bwd) as f32 * LANE_WIDTH + SHOULDER * 2.0 };
+        let w = preview_width(*kind, *fwd, *bwd);
         glow.ground_strip(pts, w, 0.22, scale(pal.preview, 0.35));
         glow.ground_strip(pts, 0.5, 0.23, rgba(pal.preview));
     }
     for (_, pts, fwd, bwd, kind) in &pv.removed_roads {
-        let w = if *kind == nd_sim::roads::RoadKind::Path { nd_sim::roads::PATH_HALF_WIDTH * 2.0 } else { (*fwd + *bwd) as f32 * LANE_WIDTH + SHOULDER * 2.0 };
+        let w = preview_width(*kind, *fwd, *bwd);
         glow.ground_strip(pts, w, 0.22, scale(pal.preview_remove, 0.35));
         dashes(&mut glow, pts[0], *pts.last().unwrap(), 0.6, 0.23, 4.0, 3.0, rgba(pal.preview_remove));
     }
@@ -529,7 +570,7 @@ fn sync_lots(
 fn spawn_building(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, sim: &Sim, assets: &GameAssets, id: BuildingId) -> Option<(Vec<Entity>, usize)> {
     let b = sim.world.buildings.get(id)?;
     let lot = sim.world.lots.get(b.lot)?;
-    let extras = Extras { parking: b.parking_visual(), plant: b.plant, powered: b.powered, park: lot.park.as_ref(), depot: b.depot };
+    let extras = Extras { parking: b.parking_visual(), plant: b.plant, powered: b.powered, park: lot.park.as_ref(), depot: b.depot, rail: b.rail.as_ref() };
     let geo = generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras);
     let tris = geo.triangle_count();
     Some((spawn_geometry(commands, meshes, mats, &geo, BuildingTag(id)), tris))
@@ -798,6 +839,54 @@ fn sync_paths(
     }
 }
 
+/// Trains: a locomotive and its coaches or wagons, each a body in the
+/// train's colour, placed along the route and blended between ticks.
+fn sync_trains(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    mats: Res<Materials>,
+    mut state: ResMut<RenderState>,
+    mut q: Query<&mut Transform, With<TrainTag>>,
+) {
+    let rail = &sim.world.rail;
+    for (id, train) in rail.trains.iter() {
+        if !state.trains.contains_key(&id) {
+            let mut ents = Vec::new();
+            for k in 0..=(train.cars as usize) {
+                let mesh = match (k, train.kind) {
+                    (0, _) => mats.loco_mesh.clone(),
+                    (_, nd_sim::TrainKind::Passenger) => mats.coach_mesh.clone(),
+                    (_, nd_sim::TrainKind::Freight) => mats.wagon_mesh.clone(),
+                };
+                let colour = if k == 0 || train.kind == nd_sim::TrainKind::Passenger { train.color as usize } else { (train.color as usize + k * 3) % mats.car_bodies.len().max(1) };
+                let mat = mats.car_bodies[colour % mats.car_bodies.len().max(1)].clone();
+                ents.push(commands.spawn((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, TrainTag(id))).id());
+            }
+            state.trains.insert(id, ents);
+        }
+    }
+    let gone: Vec<nd_sim::TrainId> = state.trains.keys().copied().filter(|id| !rail.trains.contains_key(*id)).collect();
+    for id in gone {
+        if let Some(ents) = state.trains.remove(&id) {
+            for e in ents {
+                commands.entity(e).despawn();
+            }
+        }
+    }
+    let f = sim.frac();
+    for (id, ents) in state.trains.iter() {
+        let Some(train) = rail.trains.get(*id) else { continue };
+        let s = train.prev_s + (train.s - train.prev_s) * f;
+        for (k, e) in ents.iter().enumerate() {
+            if let Ok(mut tf) = q.get_mut(*e) {
+                let (p, heading) = train.vehicle_pose_at(k, s);
+                tf.translation = Vec3::new(p.x, 0.3, p.y);
+                tf.rotation = Quat::from_rotation_y(-heading);
+            }
+        }
+    }
+}
+
 /// Bus stops: a pole, a sign, a kerb mark and a shelter at every stop of
 /// every line, redrawn when a line is edited.
 fn sync_transit(
@@ -875,6 +964,14 @@ fn sync_haze(
         }
     }
     commands.spawn((Mesh3d(meshes.add(to_mesh(&mesh, false))), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, HazeTag));
+}
+
+fn preview_width(kind: nd_sim::roads::RoadKind, fwd: u8, bwd: u8) -> f32 {
+    match kind {
+        nd_sim::roads::RoadKind::Path => nd_sim::roads::PATH_HALF_WIDTH * 2.0,
+        nd_sim::roads::RoadKind::Rail => nd_sim::roads::RAIL_HALF_WIDTH * 2.0,
+        nd_sim::roads::RoadKind::Street => (fwd + bwd) as f32 * LANE_WIDTH + SHOULDER * 2.0,
+    }
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
