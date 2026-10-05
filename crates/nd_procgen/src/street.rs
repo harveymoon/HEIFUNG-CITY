@@ -393,7 +393,34 @@ impl<I: Iterator<Item = SegmentId>> CountAndList for I {}
 /// A path for walkers and bikes: paving with edge stones, low lamps, the odd
 /// bench and bin, and bollards where it meets a street so cars stay out.
 fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run: &Run, rng: &mut impl Rng) {
-    let pts = &run.points;
+    // Where the path meets a street, stop at the back of that street's
+    // pavement and flare out onto it, instead of running under the kerb.
+    let mut points = run.points.clone();
+    for (end, node) in [(true, run.start_node), (false, run.end_node)] {
+        if roads.street_degree(node) == 0 || points.len() < 2 {
+            continue;
+        }
+        let widest = roads.node(node).segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).is_street()).map(|&s| roads.segment(s).half_width()).fold(0.0, f32::max);
+        let back = widest + SIDEWALK;
+        let (a, b) = if end { (points[1], points[0]) } else { (points[points.len() - 2], points[points.len() - 1]) };
+        let len = a.distance(b);
+        if len <= back + 1.0 {
+            continue;
+        }
+        let d = (b - a) / len;
+        let stop = b - d * back;
+        if end {
+            points[0] = stop;
+        } else {
+            let n = points.len();
+            points[n - 1] = stop;
+        }
+        // A small apron onto the pavement.
+        let right = Vec2::new(-d.y, d.x);
+        let apron = [stop + right * (PATH_HALF_WIDTH + 1.2), stop + right * (PATH_HALF_WIDTH + 1.2) + d * 1.6, stop - right * (PATH_HALF_WIDTH + 1.2) + d * 1.6, stop - right * (PATH_HALF_WIDTH + 1.2)];
+        g.part(Paving).ground_polygon(&apron, ASPHALT_Y + 0.02, rgba(mul(pal.paving, 1.05)));
+    }
+    let pts = &points;
     let w = PATH_HALF_WIDTH * 2.0;
     g.part(Paving).path_strip(pts, 0.0, w, ASPHALT_Y + 0.02, rgba(mul(pal.paving, 1.05)));
     g.part(Concrete).path_box(pts, PATH_HALF_WIDTH + 0.1, 0.2, 0.0, 0.08, rgba(pal.curb));
