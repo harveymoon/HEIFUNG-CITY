@@ -1,0 +1,14 @@
+[package]
+name = "nd_procgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Procedural generators (terrain, buildings, names) for Neon District"
+
+[dependencies]
+nd_sim = { workspace = true }
+serde = { workspace = true }
+glam = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+noise = { workspace = true }

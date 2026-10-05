@@ -1,0 +1,25 @@
+[package]
+name = "nd_app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Neon District: Bevy front end"
+
+[[bin]]
+name = "neon_district"
+path = "src/main.rs"
+
+[dependencies]
+bevy = "0.19.1"
+bevy_egui = "0.42"
+nd_sim = { workspace = true }
+nd_procgen = { workspace = true }
+nd_minds = { workspace = true }
+glam = { workspace = true }
+rand = { workspace = true }
+ron = { workspace = true }
+serde = { workspace = true }
+
+[features]
+# `cargo run --features fast-dev` links Bevy dynamically for quicker rebuilds.
+fast-dev = ["bevy/dynamic_linking"]

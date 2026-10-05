@@ -1,0 +1,114 @@
+# Neon District: design from the drawing board
+
+A procedural cyberpunk city builder that we keep tinkering with. This document is the
+living design doc. `IDEAS.md` next to it is the backlog where new ideas land first.
+
+## Pillars
+
+1. **Everything procedural.** Terrain, lots, buildings, names, citizens, their
+   personalities, signage, even the ads. Data files in `assets/` drive the generators
+   and hot-reload while the game runs.
+2. **A city that is alive at street level.** Citizens are individuals with homes,
+   jobs, schedules and moods. You can click on anyone and read what they are thinking.
+3. **Minds are pluggable.** Every citizen is driven by a `Mind`. Today that is a cheap
+   rule-based mind with templated thoughts. The same interface takes an LLM-backed mind
+   for "spotlight" citizens. The simulation never waits on a model.
+4. **Deterministic, headless simulation.** The sim crate has no engine dependency. Same
+   seed, same inputs, same city. It runs in tests, in a CLI, or under Bevy.
+5. **Cheap to change.** Each system lives in its own crate with a small interface, so
+   replacing traffic, the economy or the renderer never means rewriting the rest.
+
+## Lessons taken from Citybound
+
+Kept:
+- Rust for the simulation, data-driven building grammar, planning tools that draw
+  roads as polylines and zones as polygons, the "inspect anything" window, a flat
+  stylised look that reads well from far away.
+
+Changed:
+- No custom actor framework or code generator. Plain structs and an ECS only at the
+  engine edge.
+- The simulation ticks on its own fixed clock. Rendering frame rate never drives it.
+- Saves are serde snapshots, not memory dumps. A crash costs seconds, not the city.
+- Real renderer with HDR and bloom so neon actually glows.
+- Maintained 2026 toolchain: stable Rust, Bevy 0.19, egui.
+
+## Architecture
+
+```
+crates/
+  nd_sim      engine-independent simulation (roads, zoning, lots, buildings,
+              citizens, economy, clock, save/load, Mind trait)
+  nd_procgen  generators: terrain, building geometry, names, palettes
+  nd_minds    Mind implementations: RuleBasedMind, LlmMind (+ backend trait)
+  nd_app      Bevy app: rendering, camera, planning tools, egui UI, hot reload
+assets/
+  palette.ron           world and glow colors
+  rules/buildings.ron   building grammar per land use
+docs/
+  DESIGN.md, IDEAS.md
+```
+
+Data flow per frame: `nd_app` steps `nd_sim::World` N times according to sim speed,
+drains `SimEvent`s, and creates or updates Bevy entities for anything that changed.
+Citizens are rendered from their simulated positions every frame.
+
+## Simulation model (v0)
+
+- **Clock**: one tick is one simulated minute. 1440 ticks per day.
+- **Roads**: a node/segment graph. New polylines snap to existing nodes and split
+  segments they cross, so grids and intersections work. Pathfinding is A* over nodes.
+- **Zones**: polygons with a land use (Residential, Commercial, Industrial,
+  Entertainment, Civic, Park). Lots are carved along every road segment that runs
+  through a zone.
+- **Buildings**: a vacant lot develops when demand for its land use is high. Floors
+  and capacity (homes or jobs) depend on land use and a seed. Geometry is generated
+  from the seed, so a save stays small.
+- **Citizens**: immigrate when homes are free, take jobs when available, and move
+  along roads between home, work, shops and nightlife. Each has a personality seed,
+  a memory stream and a current thought.
+- **Economy**: demand per land use derived from unhoused people, unemployment and
+  population. Deliberately simple; it is the first system we expect to replace.
+
+## Minds and the LLM plan
+
+```
+trait MindProvider {
+    fn decide(&mut self, ctx: &MindContext) -> Option<Decision>;
+    fn poll(&mut self) -> Vec<(CitizenId, Decision)>;   // async results
+}
+```
+
+- `RuleBasedMind` answers instantly for everyone. It produces a `Decision { intent,
+  thought }`. The thought string is the exact slot an LLM fills later.
+- `LlmMind` wraps a `MindBackend` (anything that can take a prompt and answer later).
+  Only citizens marked *spotlight* (the ones you inspect, or notable ones) get LLM
+  calls. Requests are batched and asynchronous; until an answer arrives the
+  rule-based decision stands in. Answers are structured (intent + thought + optional
+  new memory) so the game can act on them safely.
+- Memory stream per citizen, in the style of generative agents: arrivals, job
+  changes, places visited, notable events. Prompts include the last few memories,
+  the personality, the time of day and the city's state.
+- Later: dialogue when you click a citizen, citizen-to-citizen gossip that
+  propagates memories, LLM-authored shop names and ads, district reputations.
+
+## Rendering
+
+- Y-up world. Sim `(x, y)` maps to world `(x, 0, y)`.
+- Terrain: flat basin for the city, procedural hills around it.
+- Buildings: two meshes each. A lit mesh with vertex colors for walls and roofs, and
+  an unlit mesh with HDR vertex colors for windows, signs and strips. Bloom turns the
+  HDR colors into glow.
+- Roads: flat dark strips with emissive lane markers.
+- Citizens: small emissive markers that move along the roads.
+
+## Roadmap
+
+- v0 (this repo): roads, zones, lots, procedural buildings, immigration, schedules,
+  rule-based minds, inspect panel, save/load, hot-reloaded palette and rules.
+- v1: lane-based traffic with vehicles, districts and names, money, demand that
+  reacts to prices, a day/night cycle that changes behaviour.
+- v2: LLM spotlight citizens with real backends, dialogue, gossip.
+- v3: faction and corporate layer, events, story generation.
+
+See `IDEAS.md` for everything that has not been scheduled.

@@ -1,0 +1,38 @@
+//! Engine-independent simulation for Neon District.
+//!
+//! One tick is one simulated minute. The [`World`] owns every system and is
+//! fully serialisable, so saves are plain snapshots and the same seed with the
+//! same inputs reproduces the same city.
+
+pub mod buildings;
+pub mod citizens;
+pub mod clock;
+pub mod economy;
+pub mod events;
+pub mod mind;
+pub mod names;
+pub mod roads;
+pub mod world;
+pub mod zoning;
+
+pub use buildings::{Building, BuildingId};
+pub use citizens::{Activity, Citizen, CitizenId, Memory, Purpose};
+pub use clock::SimClock;
+pub use economy::Economy;
+pub use events::SimEvent;
+pub use mind::{Decision, Intent, MindContext, MindProvider};
+pub use roads::{NodeId, RoadNetwork, Segment, SegmentId};
+pub use world::{World, WorldConfig};
+pub use zoning::{LandUse, Lot, LotId, Zone, ZoneId};
+
+pub use glam::Vec2;
+
+/// Deterministic random number generator used everywhere in the simulation.
+pub type SimRng = rand_chacha::ChaCha8Rng;
+
+/// Build a seeded RNG for a sub-system or an entity, so that generators stay
+/// deterministic regardless of the order other systems consume randomness.
+pub fn rng_for(seed: u64, salt: u64) -> SimRng {
+    use rand::SeedableRng;
+    SimRng::seed_from_u64(seed ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15))
+}

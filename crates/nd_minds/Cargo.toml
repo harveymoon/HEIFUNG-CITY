@@ -1,0 +1,12 @@
+[package]
+name = "nd_minds"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Citizen minds for Neon District: rule-based now, LLM-backed later"
+
+[dependencies]
+nd_sim = { workspace = true }
+serde = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
