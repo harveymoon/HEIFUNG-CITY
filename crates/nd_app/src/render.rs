@@ -667,6 +667,23 @@ fn sync_buildings(
                 commands.entity(e).despawn();
             }
         }
+        if sim.full_rebuild {
+            // Slotmap keys are reused by a loaded world, so an old car mesh
+            // could stand in for a new bus; start the movers from scratch.
+            for (_, e) in state.citizens.drain() {
+                commands.entity(e).despawn();
+            }
+            for (_, ents) in state.cars.drain() {
+                for e in ents {
+                    commands.entity(e).despawn();
+                }
+            }
+            for (_, ents) in state.trains.drain() {
+                for e in ents {
+                    commands.entity(e).despawn();
+                }
+            }
+        }
         stats.building_triangles = 0;
         let ids: Vec<BuildingId> = sim.world.buildings.keys().collect();
         for id in ids {
@@ -854,7 +871,7 @@ fn sync_overlay(
         overlays.land_value = !overlays.land_value;
     }
     let lv = &sim.world.land_value;
-    if overlays.land_value == state.overlay_shown && lv.version == state.overlay_version && !assets.palette_changed {
+    if overlays.land_value == state.overlay_shown && lv.version == state.overlay_version && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
     state.overlay_shown = overlays.land_value;
@@ -895,7 +912,7 @@ fn sync_paths(
         overlays.paths = !overlays.paths;
     }
     let walk = &sim.world.walk;
-    if overlays.paths == state.paths_shown && walk.version == state.paths_version {
+    if overlays.paths == state.paths_shown && walk.version == state.paths_version && !sim.full_rebuild {
         return;
     }
     state.paths_shown = overlays.paths;
@@ -974,7 +991,7 @@ fn sync_transit(
     existing: Query<Entity, With<TransitTag>>,
 ) {
     let w = &sim.world;
-    if w.transit.version == state.transit_version && !existing.is_empty() == !w.transit.routes.is_empty() && !assets.palette_changed {
+    if w.transit.version == state.transit_version && existing.is_empty() == w.transit.routes.is_empty() && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
     state.transit_version = w.transit.version;

@@ -2,6 +2,7 @@
 //! bulldoze gestures, inspect things. Undo/redo/implement live here too.
 
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 use nd_sim::roads::project_on_segment;
 use nd_sim::zoning::point_in_polygon;
 use nd_sim::plan::sample_curve;
@@ -55,6 +56,10 @@ pub struct ToolState {
     /// The line being drawn or edited.
     pub route_sel: Option<nd_sim::RouteId>,
     pub hover_stop: Option<(nd_sim::RouteId, usize)>,
+    /// Where the right button went down (window pixels); a right *click*
+    /// (released within a few pixels) finishes a gesture, a right drag only
+    /// orbits the camera. None when it went down over the UI.
+    pub right_press: Option<Vec2>,
     pub stop_drag: Option<(nd_sim::RouteId, usize)>,
     /// Draw the lines whatever tool is active.
     pub show_routes: bool,
@@ -93,6 +98,7 @@ impl Default for ToolState {
             points: Vec::new(),
             status: String::new(),
             drag: None,
+            right_press: None,
             hover_point: None,
             hover_gesture: None,
             curved: false,
@@ -192,6 +198,7 @@ fn nearest_gesture(plan: &Plan, p: SVec2) -> Option<(GestureId, usize)> {
 fn tool_input(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
+    window: Query<&Window, With<PrimaryWindow>>,
     cursor: Res<Cursor>,
     flags: Res<UiFlags>,
     mode: Res<CameraMode>,
@@ -207,18 +214,21 @@ fn tool_input(
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 
     // Tool hotkeys.
+    // Digits always; letters as aliases where they do not clash with the
+    // camera (Q/E yaw, WASD pan) — so Edit has no letter.
     let picks = [
-        (KeyCode::Digit1, KeyCode::KeyI, Tool::Inspect),
-        (KeyCode::Digit2, KeyCode::KeyR, Tool::Road),
-        (KeyCode::Digit3, KeyCode::KeyZ, Tool::Zone),
-        (KeyCode::Digit4, KeyCode::KeyE, Tool::Edit),
-        (KeyCode::Digit5, KeyCode::KeyB, Tool::Bulldoze),
-        (KeyCode::Digit6, KeyCode::KeyN, Tool::Power),
-        (KeyCode::Digit7, KeyCode::KeyT, Tool::Transit),
-        (KeyCode::Digit8, KeyCode::KeyY, Tool::Rail),
+        (KeyCode::Digit1, Some(KeyCode::KeyI), Tool::Inspect),
+        (KeyCode::Digit2, Some(KeyCode::KeyR), Tool::Road),
+        (KeyCode::Digit3, Some(KeyCode::KeyZ), Tool::Zone),
+        (KeyCode::Digit4, None, Tool::Edit),
+        (KeyCode::Digit5, Some(KeyCode::KeyB), Tool::Bulldoze),
+        (KeyCode::Digit6, Some(KeyCode::KeyN), Tool::Power),
+        (KeyCode::Digit7, Some(KeyCode::KeyT), Tool::Transit),
+        (KeyCode::Digit8, Some(KeyCode::KeyY), Tool::Rail),
     ];
     for (a, b, tool) in picks {
-        if (keys.just_pressed(a) || (keys.just_pressed(b) && !ctrl)) && !(tool == Tool::Zone && ctrl) {
+        let alias = b.is_some_and(|b| keys.just_pressed(b) && !ctrl);
+        if (keys.just_pressed(a) || alias) && !(tool == Tool::Zone && ctrl) {
             tools.tool = tool;
             tools.points.clear();
             tools.drag = None;
@@ -263,7 +273,16 @@ fn tool_input(
         tools.status = "Project implemented".into();
     }
 
-    let finish = (keys.just_pressed(KeyCode::Enter) && !ctrl) || buttons.just_pressed(MouseButton::Right);
+    let pointer = window.single().ok().and_then(|w| w.cursor_position());
+    if buttons.just_pressed(MouseButton::Right) {
+        tools.right_press = if flags.pointer_over_ui { None } else { pointer };
+    }
+    let right_click = buttons.just_released(MouseButton::Right)
+        && match (tools.right_press.take(), pointer) {
+            (Some(down), Some(up)) => down.distance(up) < 6.0,
+            _ => false,
+        };
+    let finish = (keys.just_pressed(KeyCode::Enter) && !ctrl) || right_click;
     let click = buttons.just_pressed(MouseButton::Left) && !shift && !flags.pointer_over_ui;
     let shift_click = buttons.just_pressed(MouseButton::Left) && shift && !flags.pointer_over_ui;
     let ground = cursor.ground;
@@ -663,21 +682,19 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 gizmos.line(lift(sa), lift(sb), if road_fused { white } else { cyan });
             }
             // Connectors of placed pieces that still want joining.
-            for b in sim.world.buildings.values() {
-                if let (Some(link), Some(f)) = (&b.rail, sim.world.facilities.values().find(|f| f.building.is_some())) {
-                    let _ = f;
-                    if !link.rail_connected || !link.road_connected {
-                        if let Some(fac) = sim.world.facilities.values().find(|x| x.building == Some(sim.world.buildings.iter().find(|(_, bb)| std::ptr::eq(*bb, b)).map(|(id, _)| id).unwrap_or_default())) {
-                            if !link.rail_connected {
-                                let [a, bb] = fac.rail_line();
-                                gizmos.line(lift(a) + Vec3::Y, lift(bb) + Vec3::Y, red);
-                            }
-                            if !link.road_connected {
-                                let [a, bb] = fac.road_line();
-                                gizmos.line(lift(a) + Vec3::Y, lift(bb) + Vec3::Y, red);
-                            }
-                        }
-                    }
+            for (id, b) in sim.world.buildings.iter() {
+                let Some(link) = &b.rail else { continue };
+                if link.rail_connected && link.road_connected {
+                    continue;
+                }
+                let Some(fac) = sim.world.facilities.values().find(|x| x.building == Some(id)) else { continue };
+                if !link.rail_connected {
+                    let [a, bb] = fac.rail_line();
+                    gizmos.line(lift(a) + Vec3::Y, lift(bb) + Vec3::Y, red);
+                }
+                if !link.road_connected {
+                    let [a, bb] = fac.road_line();
+                    gizmos.line(lift(a) + Vec3::Y, lift(bb) + Vec3::Y, red);
                 }
             }
             // The railway itself, so branches are easy to see while placing.

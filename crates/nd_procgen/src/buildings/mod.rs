@@ -809,6 +809,8 @@ mod tests {
                         for (s, m) in g.iter() {
                             assert_eq!(m.positions.len(), m.uvs.len(), "{style:?} {s:?} uv count");
                             assert!(m.positions.iter().all(|p| p.iter().all(|v| v.is_finite())), "{style:?} {s:?} has NaN");
+                            assert!(m.normals.iter().all(|p| p.iter().all(|v| v.is_finite())), "{style:?} {s:?} has NaN normals");
+                            assert!(m.uvs.iter().all(|p| p.iter().all(|v| v.is_finite())), "{style:?} {s:?} has NaN uvs");
                             assert!(m.indices.iter().all(|&i| (i as usize) < m.positions.len()), "{style:?} {s:?} bad index");
                         }
                     }

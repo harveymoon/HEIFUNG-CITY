@@ -408,19 +408,6 @@ trait MindProvider {
   and exports, hunger and shopping, business closures.
 - v0.8 (done): polygonal parcels, 35 architectural styles per land use and tier from a
   parts toolkit, textured surfaces with normal maps, street furniture, walk mode.
-- v0.16 (done): construction over time, eminent domain, redevelopment and density heights,
-  vacant-land dressing and open-ground nature, graffiti and street grit, inspect UX.
-- v0.15 (done): railway: trunk line and branches, level crossings, stations and freight
-  yards beside the track, passenger and freight trains on headways, rail riders, rail freight.
-- v0.14 (done): buses: lines drawn as loops of kerb-side stops, depots that dispatch and
-  house them, riders who walk to a stop, wait, ride and pay.
-- v0.13 (done): parks planned over connected parcels: paths lot to lot, benches people
-  sit on, features by land value (courts to ferris wheels), adaptive trees, parks on paths.
-- v0.12 (done): electricity: four plant kinds placed by the player, weather-dependent
-  renewables, rationing by tier, brownouts that dim buildings and sour moods, a treasury.
-- v0.11 (done): pedestrian network through blocks with footfall and walk-in trade.
-- v0.10 (done): parking as a business with capacity, fees and shortage-driven
-  construction; occupancy shown in the geometry; scale audit (metres everywhere).
 - v0.9 (done): road tool in the spirit of Cities Skylines: ends snap to any point on a
   road and split it into a junction, curved roads (centripetal Catmull-Rom through the
   control points, built as 7 m pieces whose bends keep road speed), lane presets and
@@ -432,3 +419,19 @@ trait MindProvider {
 - v3: faction and corporate layer, events, story generation.
 
 See `IDEAS.md` for everything that has not been scheduled.
+- v0.10 (done): parking as a business with capacity, fees and shortage-driven
+  construction; occupancy shown in the geometry; scale audit (metres everywhere).
+- v0.11 (done): pedestrian network through blocks with footfall and walk-in trade.
+- v0.12 (done): electricity: four plant kinds placed by the player, weather-dependent
+  renewables, rationing by tier, brownouts that dim buildings and sour moods, a treasury.
+- v0.13 (done): parks planned over connected parcels: paths lot to lot, benches people
+  sit on, features by land value (courts to ferris wheels), adaptive trees, parks on paths.
+- v0.14 (done): buses: lines drawn as loops of kerb-side stops, depots that dispatch and
+  house them, riders who walk to a stop, wait, ride and pay.
+- v0.15 (done): railway: trunk line and branches, level crossings, stations and freight
+  yards beside the track, passenger and freight trains on headways, rail riders, rail freight.
+- v0.16 (done): construction over time, eminent domain, redevelopment and density heights,
+  vacant-land dressing and open-ground nature, graffiti and street grit, inspect UX.
+- v0.17 (done): whole-project code review (docs/REVIEW.md) and the first batch of fixes
+  from it: long frontages parcel, roads join junctions they pass through, no stale rail
+  segment panic, no lost truck cargo, no NaN geometry, egui focus and right-drag input fixes.

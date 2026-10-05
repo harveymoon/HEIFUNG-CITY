@@ -15,12 +15,10 @@ Add freely. Move items into `DESIGN.md` when they get scheduled.
 - Lane changing and turn-lane choice; smarter signal timing (actuated, green waves).
 - Elevated roads and bridges for proper grade-separated ramps; angle and grid snapping guides while drawing.
 - Turn lanes and priority rules (main road has right of way over a ramp).
-- Parking: cars that are not driving sit somewhere.
 - Power and data grids as utilities; brownouts dim the neon.
 - Crime and police presence as a per-district pressure.
 - Price-sensitive demand: citizens pick cheaper shops, businesses undercut each other.
 - Supply contracts and loyalty between businesses; delivery schedules instead of hourly checks.
-- Warehouses and a freight terminal at the city edge; rail freight.
 - Landlords and property: who owns the towers, speculation, rent control as a policy lever.
 - Districts with names computed from land value and land use clusters; district-level stats.
 - Services (clinics, schools, transit stops) as land value amenities you place.
@@ -36,8 +34,6 @@ Add freely. Move items into `DESIGN.md` when they get scheduled.
 - Factions and gangs with territories.
 
 ## Player tools
-- Projects with undo and an implement step, like Citybound's planning mode.
-- Bulldoze, upgrade roads, one-way streets.
 - Zoning overlays showing demand, happiness, crime.
 - Time-lapse recording of a city's growth.
 - Photo mode with filters.

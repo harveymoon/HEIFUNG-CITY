@@ -94,6 +94,12 @@ impl RoadNetwork {
         &self.segments[id.0 as usize]
     }
 
+    /// A segment by id, or None when the id is from another network (ids
+    /// are renumbered by every rebuild) or the segment is gone.
+    pub fn try_segment(&self, id: SegmentId) -> Option<&Segment> {
+        self.segments.get(id.0 as usize).filter(|s| s.alive)
+    }
+
     pub fn segment_points(&self, id: SegmentId) -> (Vec2, Vec2) {
         let s = self.segment(id);
         (self.node(s.a).pos, self.node(s.b).pos)
@@ -130,6 +136,16 @@ impl RoadNetwork {
         NodeId((self.nodes.len() - 1) as u32)
     }
 
+    /// Node for an interior vertex: only a node its kind can join, so a
+    /// street vertex passing near the track does not become a crossing.
+    fn get_or_add_node_kind(&mut self, p: Vec2, kind: RoadKind) -> NodeId {
+        if let Some(id) = self.node_near_kind(p, SNAP_RADIUS, kind) {
+            return id;
+        }
+        self.nodes.push(Node { pos: p, segments: Vec::new() });
+        NodeId((self.nodes.len() - 1) as u32)
+    }
+
     /// Node for a road end: an existing node nearby, else a new node on the
     /// nearest road within `radius` (splitting it into a junction), else a
     /// fresh node at `p`.
@@ -139,7 +155,7 @@ impl RoadNetwork {
         }
         if let Some((sid, _t, q)) = self.nearest_of_kind(p, kind) {
             if q.distance(p) <= radius {
-                if let Some(id) = self.node_near(q, SNAP_RADIUS) {
+                if let Some(id) = self.node_near_kind(q, SNAP_RADIUS, kind) {
                     return id;
                 }
                 self.nodes.push(Node { pos: q, segments: Vec::new() });
@@ -267,8 +283,8 @@ impl RoadNetwork {
             }
             // Road ends snap onto whatever road they were dropped near so a
             // T-junction forms; interior points only split roads they cross.
-            let a = if i == 0 { self.end_node(w[0], END_SNAP_RADIUS, kind) } else { self.get_or_add_node(w[0]) };
-            let b = if i + 1 == last { self.end_node(w[1], END_SNAP_RADIUS, kind) } else { self.get_or_add_node(w[1]) };
+            let a = if i == 0 { self.end_node(w[0], END_SNAP_RADIUS, kind) } else { self.get_or_add_node_kind(w[0], kind) };
+            let b = if i + 1 == last { self.end_node(w[1], END_SNAP_RADIUS, kind) } else { self.get_or_add_node_kind(w[1], kind) };
             out.extend(self.add_segment_between(a, b, lanes_fwd, lanes_bwd, kind));
         }
         if !out.is_empty() {
@@ -299,6 +315,28 @@ impl RoadNetwork {
                     self.split_segment(SegmentId(i as u32), n);
                 }
                 cuts.push((t, n));
+            }
+        }
+        // Crossings exactly at an existing node are skipped above (the
+        // parametric test excludes the ends), so a way drawn through a
+        // junction, or over a vertex of another way, joins it here.
+        let len = pa.distance(pb);
+        if len > SNAP_RADIUS * 2.0 {
+            for i in 0..self.nodes.len() {
+                let id = NodeId(i as u32);
+                if id == a || id == b || cuts.iter().any(|c| c.1 == id) {
+                    continue;
+                }
+                let n = &self.nodes[i];
+                let alive: Vec<SegmentId> = n.segments.iter().copied().filter(|&s| self.segments[s.0 as usize].alive).collect();
+                if alive.is_empty() || !alive.iter().any(|&s| Self::joins(self.segments[s.0 as usize].kind, kind)) {
+                    continue;
+                }
+                let (t, q) = project_on_segment(n.pos, pa, pb);
+                let margin = SNAP_RADIUS / len;
+                if t > margin && t < 1.0 - margin && q.distance(n.pos) <= SNAP_RADIUS {
+                    cuts.push((t, id));
+                }
             }
         }
         cuts.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(Ordering::Equal));
@@ -495,6 +533,38 @@ pub fn project_on_segment(p: Vec2, a: Vec2, b: Vec2) -> (f32, Vec2) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_road_drawn_through_a_junction_joins_it() {
+        let mut net = RoadNetwork::default();
+        net.add_polyline(&[Vec2::new(-100.0, 0.0), Vec2::new(100.0, 0.0)], 1, 1);
+        net.add_polyline(&[Vec2::new(0.0, -100.0), Vec2::new(0.0, 100.0)], 1, 1);
+        let origin = net.node_near(Vec2::ZERO, 1.0).unwrap();
+        assert_eq!(net.node(origin).segments.len(), 4);
+        net.add_polyline(&[Vec2::new(-100.0, -100.0), Vec2::new(100.0, 100.0)], 1, 1);
+        assert_eq!(net.node(origin).segments.len(), 6, "the diagonal passes through the junction");
+        let from = net.node_near(Vec2::new(100.0, 100.0), 1.0).unwrap();
+        let to = net.node_near(Vec2::new(100.0, 0.0), 1.0).unwrap();
+        assert!(net.path(from, to).is_some());
+        // Through the bend of a polyline too.
+        let mut net = RoadNetwork::default();
+        net.add_polyline(&[Vec2::new(-100.0, 0.0), Vec2::ZERO, Vec2::new(100.0, 40.0)], 1, 1);
+        net.add_polyline(&[Vec2::new(0.0, -100.0), Vec2::new(0.0, 100.0)], 1, 1);
+        let bend = net.node_near(Vec2::ZERO, 1.0).unwrap();
+        assert_eq!(net.node(bend).segments.len(), 4);
+    }
+
+    #[test]
+    fn a_street_vertex_near_the_track_does_not_make_a_crossing() {
+        let mut net = RoadNetwork::default();
+        net.add_polyline_kind(&[Vec2::new(-100.0, 0.0), Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], 0, 0, RoadKind::Rail);
+        // A street bending 4 m from the track's middle node, never crossing it.
+        net.add_polyline(&[Vec2::new(-100.0, 40.0), Vec2::new(0.0, 4.0), Vec2::new(100.0, 40.0)], 1, 1);
+        let rail_mid = net.node_near(Vec2::ZERO, 1.0).unwrap();
+        assert!(net.node(rail_mid).segments.iter().all(|&s| net.segment(s).is_rail()), "no street joins the rail node");
+        let street_mid = net.node_near(Vec2::new(0.0, 4.0), 1.0).unwrap();
+        assert_ne!(rail_mid, street_mid);
+    }
 
     #[test]
     fn crossing_roads_make_an_intersection_node() {

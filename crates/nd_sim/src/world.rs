@@ -497,6 +497,12 @@ impl World {
     /// the car was and decides again.
     /// A car taken off the road: its driver, or a bus's riders, stand there.
     fn strand_car(&mut self, car: crate::traffic::Car) {
+        // A truck taken off the road still delivers: the buyer already counts
+        // the load as inbound and would never reorder it otherwise.
+        if let Some(cargo) = car.cargo {
+            self.deliver(cargo);
+            return;
+        }
         if let Some(bus) = &car.bus {
             for &p in &bus.passengers {
                 if let Some(c) = self.citizens.get_mut(p) {
@@ -866,7 +872,7 @@ impl World {
                     }
                 }
                 changed = true;
-            } else if lu != LandUse::Park {
+            } else if lu != LandUse::Park && !special {
                 if target > tier && full && self.rng.random::<f32>() < 0.15 {
                     let b = &mut self.buildings[bid];
                     b.tier = tier.up();
@@ -907,7 +913,6 @@ impl World {
                 continue;
             }
             let revenue = self.buildings[bid].business.as_ref().map_or(0.0, |z| z.revenue_today);
-            self.economy.tax_today += revenue * 0.05;
             let (wage_bill, workers, publicly_funded, kind) = {
                 let b = &self.buildings[bid];
                 let Some(bz) = &b.business else { continue };
@@ -923,6 +928,7 @@ impl World {
                 }
                 continue;
             }
+            self.economy.tax_today += revenue * 0.05;
             if !publicly_funded {
                 bz.money -= wage_bill;
                 bz.spend_today += wage_bill;
@@ -1461,6 +1467,17 @@ impl World {
     }
 
     fn emigrate(&mut self, cid: CitizenId) {
+        if !self.citizens.contains_key(cid) {
+            return;
+        }
+        self.release_parking(cid);
+        let visiting = match self.citizens[cid].activity {
+            Activity::Visiting(b) | Activity::Sitting { park: b, .. } => Some(b),
+            _ => None,
+        };
+        if let Some(b) = visiting.and_then(|b| self.buildings.get_mut(b)) {
+            b.visitors = b.visitors.saturating_sub(1);
+        }
         let Some(c) = self.citizens.remove(cid) else { return };
         if let Some(h) = c.home {
             if let Some(b) = self.buildings.get_mut(h) {
@@ -1765,6 +1782,18 @@ impl World {
             Activity::Traveling { to, purpose, .. } | Activity::Driving { to, purpose, .. } => (*to, *purpose),
             _ => return,
         };
+        // The destination may have been demolished on the way.
+        if let Some(b) = to {
+            if !self.buildings.contains_key(b) {
+                let c = &mut self.citizens[id];
+                c.activity = Activity::Idle;
+                c.inside = None;
+                c.transit = None;
+                c.thought = "It's gone. There's nothing here any more.".to_string();
+                c.next_decision_tick = tick + 1;
+                return;
+            }
+        }
         // A park is not a building to go inside: walk its paths to a bench.
         if let (Purpose::Visit(LandUse::Park), Some(b)) = (purpose, to) {
             let lot = self.buildings.get(b).map(|bld| bld.lot);
@@ -2179,33 +2208,34 @@ impl World {
         let city_node: Option<NodeId> = self.lots.values().find(|l| l.zone != ZoneId::default() && l.usable()).map(|l| l.access_node);
         let ids: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.rail.is_some()).map(|(id, _)| id).collect();
         for id in ids {
-            let (rail_ok, road_ok) = {
-                let b = &self.buildings[id];
-                let link = b.rail.as_ref().unwrap();
-                let seg_ok = self.roads.segment(link.segment).alive && self.roads.segment(link.segment).is_rail();
-                let node = self.roads.segment(link.segment).a;
-                let rail_ok = seg_ok && trunk_ends.iter().any(|&l| self.roads.rail_path(node, l).is_some_and(|p| p.len() > 1));
-                let road_ok = match (self.lots.get(b.lot), city_node) {
-                    (Some(l), Some(c)) => self.roads.path(l.access_node, c).is_some(),
-                    _ => false,
-                };
-                (rail_ok, road_ok)
-            };
-            // The track beside the facility may have been split or re-laid.
+            // The track beside the facility may have been split, re-laid or
+            // removed, and segment ids are renumbered by every rebuild, so
+            // find it afresh before asking whether it reaches the trunk.
             let lot_poly = self.lots.get(self.buildings[id].lot).map(|l| (l.polygon.clone(), l.center, l.front_edge));
-            if let Some((poly, center, front)) = lot_poly {
-                let kind = self.buildings[id].rail.as_ref().unwrap().kind;
-                let length = if kind == RailFacility::Station { rail::STATION_PLATFORM } else { rail::YARD_APRON };
-                if let Some(mut fresh) = RailLink::beside(&self.roads, &poly, center, front, kind, length) {
-                    fresh.rail_connected = rail_ok;
-                    fresh.road_connected = road_ok;
-                    self.buildings[id].rail = Some(fresh);
-                    continue;
-                }
+            let kind = self.buildings[id].rail.as_ref().unwrap().kind;
+            let length = if kind == RailFacility::Station { rail::STATION_PLATFORM } else { rail::YARD_APRON };
+            let fresh = lot_poly.and_then(|(poly, center, front)| RailLink::beside(&self.roads, &poly, center, front, kind, length));
+            let segment = fresh.as_ref().map(|f| f.segment).or_else(|| {
+                let old = self.buildings[id].rail.as_ref().unwrap().segment;
+                self.roads.try_segment(old).filter(|s| s.is_rail()).map(|_| old)
+            });
+            let rail_ok = segment.is_some_and(|sid| {
+                let node = self.roads.segment(sid).a;
+                trunk_ends.iter().any(|&l| self.roads.rail_path(node, l).is_some_and(|p| p.len() > 1))
+            });
+            let road_ok = match (self.lots.get(self.buildings[id].lot), city_node) {
+                (Some(l), Some(c)) => self.roads.path(l.access_node, c).is_some(),
+                _ => false,
+            };
+            if let Some(mut fresh) = fresh {
+                fresh.rail_connected = rail_ok;
+                fresh.road_connected = road_ok;
+                self.buildings[id].rail = Some(fresh);
+            } else {
+                let link = self.buildings[id].rail.as_mut().unwrap();
+                link.rail_connected = rail_ok;
+                link.road_connected = road_ok;
             }
-            let link = self.buildings[id].rail.as_mut().unwrap();
-            link.rail_connected = rail_ok;
-            link.road_connected = road_ok;
         }
     }
 
@@ -2653,6 +2683,30 @@ impl World {
                 }
             }
         }
+        // Riders' trips shift with the stops; a trip through the removed
+        // stop is cancelled and the rider decides again.
+        let tick = self.clock.tick;
+        for c in self.citizens.values_mut() {
+            let Some(t) = c.transit.as_mut() else { continue };
+            let TransitLeg::Bus { route: r, board, alight } = &mut t.leg else { continue };
+            if *r != route {
+                continue;
+            }
+            if *board == idx || *alight == idx {
+                c.transit = None;
+                if matches!(c.activity, Activity::Waiting { .. }) {
+                    c.activity = Activity::Idle;
+                    c.next_decision_tick = tick + 1;
+                }
+                continue;
+            }
+            if *board > idx {
+                *board -= 1;
+            }
+            if *alight > idx {
+                *alight -= 1;
+            }
+        }
         if empty {
             self.remove_bus_route(route);
         } else {
@@ -3086,6 +3140,9 @@ impl World {
 
         // Otherwise walk along the node graph.
         let Some(nodes) = self.roads.path(from_node, to_node) else {
+            if let Some(exit) = self.leave_building(id) {
+                self.citizens[id].pos = exit;
+            }
             let c = &mut self.citizens[id];
             c.thought = "No way through. The grid doesn't connect.".to_string();
             c.activity = Activity::Idle;
@@ -4272,5 +4329,28 @@ mod tests {
             let depot = w.build_depot(l).expect("depot");
             assert!(w.buildings[depot].construction.is_none() && w.buildings[depot].jobs == transit::DEPOT_JOBS);
         }
+    }
+
+    #[test]
+    fn bulldozing_the_track_under_a_station_disconnects_it_without_panicking() {
+        use crate::rail::RailFacility;
+        let mut w = World::new(WorldConfig::default());
+        w.economy.treasury = 200_000.0;
+        let branch = w.add_rail(&[Vec2::new(-200.0, TRUNK_Y), Vec2::new(-100.0, -400.0), Vec2::new(-40.0, -300.0), Vec2::new(0.0, -200.0), Vec2::new(0.0, -60.0), Vec2::new(900.0, -60.0)]);
+        w.add_road(&[Vec2::new(-100.0, 0.0), Vec2::new(1000.0, 0.0)], 1, 1);
+        w.add_zone(vec![Vec2::new(150.0, 10.0), Vec2::new(330.0, 10.0), Vec2::new(330.0, 90.0), Vec2::new(150.0, 90.0)], LandUse::Residential);
+        let station = w.place_rail_facility(RailFacility::Station, Vec2::new(240.0, -45.0)).expect("station");
+        assert!(w.buildings[station].rail.as_ref().unwrap().rail_connected);
+        // Segment ids are renumbered by the rebuild; the old one must not be trusted.
+        w.start_project();
+        w.remove_gesture(branch);
+        w.implement();
+        let link = w.buildings.get(station).and_then(|b| b.rail.clone());
+        assert!(link.as_ref().is_some_and(|l| !l.rail_connected), "the station stands but is off the railway: {link:?}");
+        let mut minds = crate::mind::IdleMind;
+        for _ in 0..600 {
+            w.tick(&mut minds);
+        }
+        assert!(w.rail.trains.values().all(|t| t.stops.iter().all(|(s, _)| w.buildings.contains_key(*s))), "no train aims at a vanished stop");
     }
 }

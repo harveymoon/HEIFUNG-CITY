@@ -199,15 +199,16 @@ pub fn nuclear(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let concrete = mul(pal.concrete[0], 1.15);
     // Containment: a cylinder with a dome.
     let cc = Vec2::new(lo.x + (hi.x - lo.x) * 0.3, lo.y + (hi.y - lo.y) * 0.6);
-    let r = ((hi.x - lo.x).min(hi.y - lo.y) * 0.16).clamp(6.0, 14.0);
-    if c.inside(cc) {
+    let r = ((hi.x - lo.x).min(hi.y - lo.y) * 0.16).clamp(6.0, 14.0).min(distance_to_boundary(cc, &yard) - 0.5);
+    if r >= 2.5 && c.inside(cc) {
         let w = f.to_world(cc.x, cc.y);
         g.part(Concrete).cylinder(w, r, r, 0.0, r * 1.8, 20, rgba(concrete));
         let mut prev = MeshData::ngon(w, r, 20, 0.0, r * 1.8);
         for k in 1..=5 {
             let t = k as f32 / 5.0;
             let a = t * std::f32::consts::FRAC_PI_2;
-            let ring = MeshData::ngon(w, r * a.cos(), 20, 0.0, r * 1.8 + r * 0.9 * a.sin());
+            // The last ring keeps a small radius so no side quad collapses.
+            let ring = MeshData::ngon(w, (r * a.cos()).max(r * 0.05), 20, 0.0, r * 1.8 + r * 0.9 * a.sin());
             g.part(Concrete).frustum(&prev, &ring, rgba(mul(concrete, 1.0 - 0.05 * k as f32)));
             prev = ring;
         }

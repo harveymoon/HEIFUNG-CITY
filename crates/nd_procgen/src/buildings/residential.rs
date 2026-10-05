@@ -817,7 +817,6 @@ pub fn garden_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 face.bx(g, f, Foliage, 0.0, y0 + 0.7, -0.6, Vec3::new(face.len * 0.8, 0.7, 0.8), mul(pal.foliage, rng.random_range(0.8..1.2)));
             }
             if rng.random_bool(0.25) && face.len > 5.0 {
-                tree(g, f, face.at(rng.random_range(-face.len * 0.3..face.len * 0.3), -1.3) , 0.0, 0.0, pal.bark, pal.foliage);
                 let p = face.at(rng.random_range(-face.len * 0.3..face.len * 0.3), -1.4);
                 let w = f.to_world(p.x, p.y);
                 g.part(Wood).cylinder(w, 0.15, 0.1, y0 + 0.35, y0 + 2.6, 6, rgba(pal.bark));
@@ -831,7 +830,6 @@ pub fn garden_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let roof = offset_poly(&prev, 1.0);
     if roof.len() >= 3 && inradius(&roof) > 3.0 {
         pool(g, c, poly_center(&roof).x, poly_center(&roof).y, inradius(&roof) * 0.8, inradius(&roof) * 0.5);
-        tree(g, f, poly_center(&roof) + Vec2::new(inradius(&roof) * 0.6, 0.0), 0.0, 0.0, pal.bark, pal.foliage);
         let w = f.to_world(poly_center(&roof).x + inradius(&roof) * 0.6, poly_center(&roof).y);
         g.part(Foliage).frustum(&MeshData::ngon(w, 1.6, 7, 0.0, top + 2.0), &MeshData::ngon(w, 0.4, 7, 0.3, top + 4.5), rgba(pal.foliage));
         g.part(Wood).cylinder(w, 0.18, 0.12, top + 0.35, top + 2.2, 6, rgba(pal.bark));

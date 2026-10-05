@@ -680,6 +680,16 @@ fn side_panel(
     // the hover card is not interactable, so it never swallows a click.
     let over_panel = ctx.pointer_latest_pos().map_or(false, |p| panel.response.rect.contains(p));
     flags.pointer_over_ui = over_panel || ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input();
+    // egui keeps keyboard focus on the last clicked widget and re-clicks it
+    // on Space or Enter, so a Space to pause would also toggle the last
+    // checkbox. Nothing here takes typed input, so drop the focus each frame.
+    // (When text fields arrive, skip this while one of them has focus and
+    // gate the hotkeys on `ctx.wants_keyboard_input()` instead.)
+    ctx.memory_mut(|m| {
+        if let Some(id) = m.focused() {
+            m.surrender_focus(id);
+        }
+    });
     Ok(())
 }
 

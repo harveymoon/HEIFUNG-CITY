@@ -16,10 +16,13 @@ pub struct MeshData {
 /// Texture basis for a face: `u` runs horizontally, `v` runs up the wall (or
 /// along -Z on horizontal faces), both in world metres.
 fn uv_basis(n: Vec3) -> (Vec3, Vec3) {
-    if n.y.abs() > 0.99 {
+    if n.y.abs() > 0.99 || n.length_squared() < 0.5 {
         (Vec3::X, Vec3::NEG_Z)
     } else {
-        let u = Vec3::Y.cross(n).normalize();
+        let u = Vec3::Y.cross(n).normalize_or_zero();
+        if u == Vec3::ZERO {
+            return (Vec3::X, Vec3::NEG_Z);
+        }
         (u, n.cross(u))
     }
 }
@@ -49,6 +52,10 @@ impl MeshData {
     /// front). Normal is computed from the corners.
     pub fn quad(&mut self, corners: [Vec3; 4], color: [f32; 4]) {
         let n = (corners[1] - corners[0]).cross(corners[3] - corners[0]).normalize_or_zero();
+        if n == Vec3::ZERO {
+            // Degenerate (zero-area) quad: nothing to draw, and its UVs would be NaN.
+            return;
+        }
         let basis = uv_basis(n);
         let base = self.positions.len() as u32;
         for c in corners {
@@ -152,6 +159,9 @@ impl MeshData {
     /// Triangle with the normal flipped, if needed, to face `outward`.
     pub fn tri_facing(&mut self, a: Vec3, b: Vec3, c: Vec3, outward: Vec3, color: [f32; 4]) {
         let n = (b - a).cross(c - a).normalize_or_zero();
+        if n == Vec3::ZERO {
+            return;
+        }
         let (b, c, n) = if n.dot(outward) < 0.0 { (c, b, -n) } else { (b, c, n) };
         let basis = uv_basis(n);
         let base = self.positions.len() as u32;
@@ -186,10 +196,14 @@ impl MeshData {
         }
         let top_c = top.iter().fold(Vec3::ZERO, |a, p| a + *p) / n as f32;
         let bot_c = bottom.iter().fold(Vec3::ZERO, |a, p| a + *p) / n as f32;
+        // Each cap faces away from the solid, whichever way it lies: a
+        // horizontal pipe's ends, a descending ramp's, a vertical column's.
+        let top_out = if (top_c - centroid).length_squared() > 1e-6 { top_c - centroid } else { Vec3::Y };
+        let bot_out = if (bot_c - centroid).length_squared() > 1e-6 { bot_c - centroid } else { Vec3::NEG_Y };
         for i in 0..n {
             let j = (i + 1) % n;
-            self.tri_facing(top_c, top[i], top[j], Vec3::Y, color);
-            self.tri_facing(bot_c, bottom[i], bottom[j], Vec3::NEG_Y, color);
+            self.tri_facing(top_c, top[i], top[j], top_out, color);
+            self.tri_facing(bot_c, bottom[i], bottom[j], bot_out, color);
         }
     }
 

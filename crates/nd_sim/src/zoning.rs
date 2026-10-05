@@ -832,6 +832,17 @@ fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
     // Already a strip along its frontage: cut across at lot width. A cut
     // that would leave a sliver is moved along the road and retried.
     if chain_len > lw * 1.7 && area > lw * ld * 0.9 {
+        // A long run is halved first, so the recursion stays shallow and
+        // the remainder of every cut is itself a well-formed strip.
+        if chain_len > lw * 8.0 {
+            let pieces = cut_along_run(&poly, &pts, &chain, chain_len * rng.random_range(0.45..0.55), rng);
+            if pieces.len() >= 2 && pieces.iter().all(|p| area_f(p) >= MIN_AREA) {
+                for piece in pieces {
+                    subdivide(piece, lu, roads, rng, depth + 1, out);
+                }
+                return;
+            }
+        }
         // Walk along the frontage until the piece cut off is about a lot's
         // area; at a block corner this turns the narrow tip into a corner lot
         // rather than a sliver. Stop at the middle so the rest stays sliceable.
@@ -841,10 +852,14 @@ fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
             let pieces = cut_along_run(&poly, &pts, &chain, s, rng);
             if pieces.len() >= 2 {
                 let small = pieces.iter().map(|p| area_f(&p)).fold(f32::MAX, f32::min);
+                // Compactness is asked only of pieces that are final: a
+                // remainder still several lots long is cut again and may
+                // be as thin as a row of lots is.
                 let compact_ok = pieces.iter().all(|p| {
                     let q = from_geo(p);
                     let a = area_f(&p);
-                    a < MIN_AREA * 0.5 || a / perimeter(&q).powi(2) >= MIN_COMPACTNESS * 0.9
+                    let more_to_cut = a >= lw * ld * 2.5 && frontage_runs(&q, roads, allow).first().is_some_and(|(_, l)| *l >= lw * 2.0);
+                    a < MIN_AREA * 0.5 || more_to_cut || a / perimeter(&q).powi(2) >= MIN_COMPACTNESS * 0.9
                 });
                 let frontage_ok = pieces.iter().all(|p| {
                     let q = from_geo(p);
@@ -1194,6 +1209,30 @@ mod tests {
         }
         // Parcels well inside the arch, away from any road, are landlocked.
         assert!(lots.values().any(|l| l.landlocked), "deep land without frontage is marked unusable");
+    }
+
+    #[test]
+    fn long_frontages_parcel_all_the_way_along() {
+        // A single-sided frontage of 400 m and 1200 m used to parcel into
+        // nothing: no cut passed the compactness test of its remainder.
+        for &len in &[400.0f32, 1200.0] {
+            let mut roads = RoadNetwork::default();
+            roads.add_polyline(&[Vec2::new(-len, 0.0), Vec2::new(len, 0.0)], 1, 1);
+            for lu in [LandUse::Residential, LandUse::Commercial, LandUse::Industrial, LandUse::Entertainment, LandUse::Civic, LandUse::Park] {
+                let half = len * 0.5;
+                let zone = Zone {
+                    polygon: vec![Vec2::new(-half, 10.0), Vec2::new(half, 10.0), Vec2::new(half, 70.0), Vec2::new(-half, 70.0)],
+                    land_use: lu,
+                };
+                let mut lots = SlotMap::with_key();
+                generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[]);
+                let n = usable(&lots).len();
+                let expect = (len / lu.lot_width() * 0.5) as usize;
+                assert!(n >= expect, "{lu:?} on {len} m: {n} usable lots, expected at least {expect}");
+                let spread = usable(&lots).iter().map(|l| l.center.x).fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)));
+                assert!(spread.1 - spread.0 > len * 0.8, "{lu:?} on {len} m: lots cover only {:.0}..{:.0}", spread.0, spread.1);
+            }
+        }
     }
 
     #[test]

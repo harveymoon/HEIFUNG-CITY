@@ -32,7 +32,10 @@ links Bevy dynamically for quicker iteration.
   citizen through the LLM mind (a mock backend today).
 - Traffic: cars follow lanes, queue, and obey the signals at junctions with three or more roads.
 - Space pauses, `-`/`=` change speed. Camera: right-drag rotate, middle-drag or shift-drag pan,
-  wheel zoom, WASD/QE.
+  wheel zoom, WASD/QE. Tools by digit `1`–`8` (letters `I R Z B N T Y` also work), `O` toggles
+  zoning outlines, `V` land value, `P` the pedestrian network, `G` seeds a demo district, `F5`–`F12`
+  jump the camera (busiest junction, tiers, parks, plants, stations), Backspace drops the last
+  point or stop.
 - Every shop, plant and venue is a business with stock, cash and prices. Grocers need produce, flour,
   meat and dairy; mills need grain; assembly plants need parts. Businesses buy from the cheapest
   supplier (trucks drive the goods over) or import at a markup. Citizens get hungry, shop, and
