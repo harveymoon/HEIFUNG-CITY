@@ -141,6 +141,12 @@ pub fn offset_poly(poly: &[Vec2], inset: f32) -> Vec<Vec2> {
             return scaled();
         }
     }
+    // Two source vertices a few centimetres apart collapse onto each other
+    // once offset; a zero-length face would then pass for the front face.
+    let out = clean_poly(&out, 0.05);
+    if out.len() < 3 {
+        return scaled();
+    }
     let area = polygon_area(&out);
     let ok = if inset > 0.0 { area > 1.0 && area < polygon_area(poly) } else { area >= polygon_area(poly) && area < polygon_area(poly) * 4.0 + 50.0 * limit };
     if !ok {
@@ -219,24 +225,58 @@ pub fn ngon(cu: f32, cv: f32, r: f32, sides: usize, rot: f32) -> Vec<Vec2> {
 /// Keep a lot-local polygon inside the parcel. A polygon whose centre is off
 /// the lot (odd lots are triangles and slivers, and generators lay things out
 /// in the lot's bounding box) is first moved onto it, then the polygon is
-/// scaled about its centre until every vertex is inside.
+/// scaled about its centre until every vertex, and three points along every
+/// edge, is inside. The edge points matter on concave lots, where an edge
+/// between two inside vertices can still cut across a notch.
 pub fn fit_inside(c: &Ctx, poly: &[Vec2]) -> Vec<Vec2> {
     let mut p = poly.to_vec();
     if p.len() < 3 {
         return p;
     }
+    let anchor = interior_anchor(&c.lot_poly);
     let centre = poly_center(&p);
     if !c.inside_local(centre) {
-        let anchor = interior_anchor(&c.lot_poly);
         p = shift_poly(&p, anchor - centre);
     }
-    for _ in 0..24 {
-        if p.iter().all(|v| c.inside_local(*v)) {
+    for _ in 0..30 {
+        if poly_inside(c, &p) {
             break;
         }
+        // Shrink, and edge towards the deep interior: a polygon centred a
+        // hand's breadth inside a slanted edge never fits by shrinking alone.
         p = scale_poly(&p, 0.9);
+        let d = anchor - poly_center(&p);
+        p = shift_poly(&p, d * 0.15);
     }
     p
+}
+
+/// Whether a lot-local polygon lies on the parcel: its vertices and points
+/// every metre and a half along each edge, close enough that a diagonal lot
+/// edge cannot slip between two samples by more than a few centimetres.
+pub fn poly_inside(c: &Ctx, poly: &[Vec2]) -> bool {
+    let n = poly.len();
+    (0..n).all(|i| {
+        let (a, b) = (poly[i], poly[(i + 1) % n]);
+        let steps = (a.distance(b) / 1.5).ceil().max(1.0) as i32;
+        (0..steps).all(|k| c.inside_local(a.lerp(b, k as f32 / steps as f32)))
+    })
+}
+
+/// Drop consecutive vertices closer than `eps`. Lot outlines from the
+/// zoner sometimes repeat a vertex, which gives offset_poly a zero-length
+/// edge and a mitre pointing nowhere.
+pub fn clean_poly(poly: &[Vec2], eps: f32) -> Vec<Vec2> {
+    let mut out: Vec<Vec2> = Vec::with_capacity(poly.len());
+    for p in poly {
+        if out.last().is_none_or(|q| q.distance(*p) > eps) {
+            out.push(*p);
+        }
+    }
+    while out.len() > 1 && out[0].distance(out[out.len() - 1]) <= eps {
+        out.pop();
+    }
+    out
 }
 
 /// A point well inside a polygon: the centroid when it is inside, else the
@@ -508,11 +548,20 @@ pub fn entrance(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f
         face.decal(g, f, Glow, t, h * 0.5, 0.14, w * 0.9, h * 0.85, mul(pick(rng, &c.style.window_colors), 0.7));
     }
     canopy(g, c, face, t, h + 0.3, w + 1.6, 2.0, mul(c.style.trim_color, 0.9));
-    face.bx(g, f, Matte, t, 0.08, 1.0, Vec3::new(w + 1.2, 0.16, 2.2), mul(c.palette.paving, 1.1));
+    // Doorstep paving, as deep as the forecourt allows.
+    let step = (2.2f32).min(c.reach_out(face) - 0.2);
+    if step > 0.4 {
+        face.bx(g, f, Matte, t, 0.08, step * 0.5, Vec3::new(w + 1.2, 0.16, step), mul(c.palette.paving, 1.1));
+    }
 }
 
+/// Canopy over a face, `depth` out from it but never past the lot edge.
 pub fn canopy(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, w: f32, depth: f32, color: [f32; 3]) {
     let f = &c.frame;
+    let depth = depth.min(c.reach_out(face) - 0.2);
+    if depth < 0.5 {
+        return;
+    }
     face.bx(g, f, Panel, t, y, depth * 0.5, Vec3::new(w, 0.25, depth), color);
     face.bx(g, f, Glow, t, y - 0.16, depth * 0.5, Vec3::new(w * 0.5, 0.06, depth * 0.3), mul(c.palette.lamp, 0.8));
 }
@@ -675,7 +724,6 @@ pub fn ac_unit(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, d: f32) {
     let f = &c.frame;
     face.bx(g, f, Metal, t, y, d, Vec3::new(0.8, 0.6, 0.35), mul(c.palette.steel, 0.9));
     face.decal(g, f, Matte, t, y, d + 0.18, 0.5, 0.5, DARK);
-    face.bx(g, f, Matte, t, y - 0.33, d * 0.6, Vec3::new(0.7, 0.05, 0.6), CHARCOAL);
 }
 
 // ── roofs ────────────────────────────────────────────────────────────────────
@@ -869,6 +917,14 @@ pub fn lamp_post(g: &mut Geometry, f: &Frame, p: Vec2, h: f32, glow: [f32; 3]) {
     lamp_post_world(g, f.to_world(p.x, p.y), h, glow);
 }
 
+/// Lamp post on the lot, skipped when the point is off it or so close to
+/// the edge that the lantern hangs over the street.
+pub fn lamp_post_in(g: &mut Geometry, c: &Ctx, p: Vec2, h: f32, glow: [f32; 3]) {
+    if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 0.35 {
+        lamp_post(g, &c.frame, p, h, glow);
+    }
+}
+
 pub fn lamp_post_world(g: &mut Geometry, w: Vec2, h: f32, glow: [f32; 3]) {
     g.part(Matte).cylinder(w, 0.12, 0.08, 0.0, h, 8, rgba(CHARCOAL));
     g.part(Matte).boxed(Vec3::new(w.x, h + 0.15, w.y), Vec3::new(0.6, 0.3, 0.6), 0.0, rgba(CHARCOAL));
@@ -951,8 +1007,14 @@ pub fn fence_poly(g: &mut Geometry, c: &Ctx, poly: &[Vec2], h: f32, skip_face: O
     }
 }
 
+/// Bollards `d` out from a face, pulled back to the lot edge when the
+/// forecourt is shallower than asked for.
 pub fn bollards(g: &mut Geometry, c: &Ctx, face: &Face, n: i32, d: f32) {
     let f = &c.frame;
+    let d = d.min(c.reach_out(face) - 0.4);
+    if d < -c.fd {
+        return;
+    }
     for i in 0..n {
         let t = -face.len * 0.4 + i as f32 * (face.len * 0.8 / (n - 1).max(1) as f32);
         face.bx(g, f, Matte, t, 0.45, d, Vec3::new(0.25, 0.9, 0.25), mul(c.palette.steel, 0.7));
@@ -1040,6 +1102,30 @@ pub enum Vehicle {
     Bus,
 }
 
+impl Vehicle {
+    /// Footprint: half-length and half-width, plus how far its centre sits
+    /// ahead of the anchor point.
+    fn footprint(self) -> (f32, f32, f32) {
+        match self {
+            Vehicle::Car => (2.1, 0.95, 0.0),
+            Vehicle::Van => (2.6, 1.0, 0.0),
+            Vehicle::Truck => (4.9, 1.2, -0.3),
+            Vehicle::Wreck => (2.0, 0.9, 0.0),
+            Vehicle::Bus => (5.75, 1.25, 0.0),
+        }
+    }
+}
+
+/// Whether a vehicle at `p` facing `yaw` (relative to the frame) stands
+/// wholly on the lot. Checking only the centre parked lorries in the road.
+pub fn vehicle_fits(c: &Ctx, p: Vec2, yaw: f32, kind: Vehicle) -> bool {
+    let (hl, hw, ahead) = kind.footprint();
+    let d = Vec2::new(yaw.cos(), yaw.sin());
+    let n = Vec2::new(-d.y, d.x);
+    let centre = p + d * ahead;
+    [centre + d * hl + n * hw, centre + d * hl - n * hw, centre - d * hl + n * hw, centre - d * hl - n * hw, centre].iter().all(|q| c.inside_local(*q))
+}
+
 /// A vehicle standing on a surface at height `y` (a deck, the ground),
 /// facing `yaw` relative to the frame. Parking decks, depots and yards all
 /// draw their cars through here.
@@ -1114,10 +1200,18 @@ pub fn scrap_pile(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, r: f32
             2 => (Tarp, pick(rng, &c.palette.tarp_colors)),
             _ => (Matte, DARK),
         };
+        // Pieces near the edge of the heap can stick out past the fence.
+        if !c.inside_local(q) || distance_to_boundary(q, &c.lot_poly) < size.x.max(size.z) * 0.75 {
+            continue;
+        }
         f.bx_yaw(g, s, q.x, y + size.y * 0.5, q.y, size, mul(col, 0.8), rng.random_range(0.0..3.0));
     }
     // tyre stack
-    let w = f.to_world(p.x + r * 0.6, p.y);
+    let tp = p + Vec2::new(r * 0.6, 0.0);
+    if !c.inside_local(tp) || distance_to_boundary(tp, &c.lot_poly) < 0.6 {
+        return;
+    }
+    let w = f.to_world(tp.x, tp.y);
     for k in 0..rng.random_range(2..6) {
         g.part(Matte).cylinder(w, 0.45, 0.45, k as f32 * 0.25, k as f32 * 0.25 + 0.22, 10, rgba(DARK));
     }
@@ -1126,6 +1220,10 @@ pub fn scrap_pile(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, r: f32
 /// Market stall against a face: tarp roof, counter, a sign strip.
 pub fn stall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32, d: f32) {
     let f = &c.frame;
+    // The tarp roof is 4.2 by 2.2: the whole stall has to fit on the lot.
+    if [(-2.1f32, -1.1f32), (2.1, -1.1), (2.1, 1.1), (-2.1, 1.1)].iter().any(|(dt, dd)| !c.inside_local(face.at(t + dt, d + dd))) {
+        return;
+    }
     let tc = mul(pick(rng, &c.palette.tarp_colors), 0.9);
     face.bx(g, f, Tarp, t, 2.4, d, Vec3::new(4.2, 0.1, 2.2), tc);
     face.bx(g, f, Wood, t, 0.5, d, Vec3::new(3.6, 1.0, 1.2), c.palette.wood);
@@ -1135,9 +1233,9 @@ pub fn stall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32,
     }
     let sc = pick(rng, &c.palette.sign_colors);
     face.bx(g, f, Glow, t, 2.1, d + 1.1, Vec3::new(3.0, 0.3, 0.06), mul(sc, 0.9 - 0.5 * c.wear));
-    // goods
-    for i in 0..4 {
-        face.bx(g, f, Tarp, t - 1.4 + i as f32 * 0.9, 1.2, d, Vec3::new(0.6, 0.4, 0.6), pick(rng, &c.palette.awning_colors));
+    // goods: two crates of produce on the counter
+    for i in 0..2 {
+        face.bx(g, f, Tarp, t - 0.9 + i as f32 * 1.8, 1.2, d, Vec3::new(1.4, 0.4, 0.6), pick(rng, &c.palette.awning_colors));
     }
 }
 
@@ -1215,14 +1313,21 @@ pub fn pool(g: &mut Geometry, c: &Ctx, cu: f32, cv: f32, w: f32, d: f32) {
 /// Concrete jersey barrier in front of a face.
 pub fn barrier(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, d: f32, w: f32) {
     let f = &c.frame;
+    let d = d.min(c.reach_out(face) - 0.6);
+    if !c.inside_local(face.at(t, d)) {
+        return;
+    }
     let col = mul(c.palette.concrete(0), 0.9);
     face.bx(g, f, Concrete, t, 0.25, d, Vec3::new(w, 0.5, 0.7), col);
     face.bx(g, f, Concrete, t, 0.7, d, Vec3::new(w, 0.4, 0.35), col);
 }
 
-/// Floodlight mast.
+/// Floodlight mast, skipped when its head would hang over the lot edge.
 pub fn floodlight(g: &mut Geometry, c: &Ctx, p: Vec2, h: f32) {
     let f = &c.frame;
+    if !c.inside_local(p) || distance_to_boundary(p, &c.lot_poly) < 0.9 {
+        return;
+    }
     f.bx(g, Matte, p.x, h * 0.5, p.y, Vec3::new(0.3, h, 0.3), mul(c.palette.steel, 0.6));
     f.bx(g, Matte, p.x, h + 0.2, p.y, Vec3::new(1.6, 0.4, 0.5), CHARCOAL);
     f.bx(g, Glow, p.x, h + 0.2, p.y - 0.28, Vec3::new(1.4, 0.3, 0.06), mul(c.palette.street_lamp, 1.3));
@@ -1381,7 +1486,10 @@ pub fn random_in_poly(rng: &mut impl Rng, poly: &[Vec2], margin: f32) -> Option<
     }
     for _ in 0..24 {
         let p = Vec2::new(rng.random_range(lo.x..=hi.x), rng.random_range(lo.y..=hi.y));
-        if point_in_polygon(p, &inner) {
+        // offset_poly falls back to scaling when the margin is near the
+        // inradius, which does not keep the margin on a long thin lot, so
+        // the distance is checked as well.
+        if point_in_polygon(p, &inner) && (margin <= 0.0 || distance_to_boundary(p, poly) >= margin) {
             return Some(p);
         }
     }

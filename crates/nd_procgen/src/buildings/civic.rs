@@ -57,7 +57,7 @@ pub fn precinct(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     fence_lot(g, c, &yard, 2.6, true);
     for k in 0..3 {
         let p = Vec2::new(-c.fw * 0.35 + k as f32 * 3.0, c.fd * 0.5 + 3.0);
-        if c.inside_local(p) && !nd_sim::zoning::point_in_polygon(p, poly) {
+        if vehicle_fits(c, p, std::f32::consts::FRAC_PI_2, Vehicle::Van) && !nd_sim::zoning::point_in_polygon(p, poly) {
             vehicle(g, f, pal, rng, p, 0.0, std::f32::consts::FRAC_PI_2, Vehicle::Van, [0.08, 0.1, 0.16]);
         }
     }
@@ -82,7 +82,10 @@ pub fn ministry(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let fore = [front.at(-front.len * 0.5, 0.0), front.at(front.len * 0.5, 0.0), front.at(front.len * 0.5, -3.5), front.at(-front.len * 0.5, -3.5)];
     ground(g, f, Paving, &fore, 0.06, mul(pal.paving, 1.15));
     for k in 0..2 {
-        bench_world(g, f.to_world(front.at((k as f32 - 0.5) * front.len * 0.6, -2.5).x, front.at((k as f32 - 0.5) * front.len * 0.6, -2.5).y), f.yaw(), pal.wood, CHARCOAL);
+        let p = front.at((k as f32 - 0.5) * front.len * 0.6, -2.5);
+        if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.0 {
+            bench_world(g, f.to_world(p.x, p.y), f.yaw(), pal.wood, CHARCOAL);
+        }
     }
 }
 
@@ -138,7 +141,7 @@ pub fn library(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     sign_board(g, c, rng, &front, -front.len * 0.3, base_h - 1.0, (front.len * 0.3).min(8.0), 0.8);
     for k in 0..2 {
         let p = front.at((k as f32 - 0.5) * front.len * 0.7, -2.5);
-        if c.inside_local(p) {
+        if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.9 {
             tree(g, f, p, 4.0, 3.5, pal.bark, pal.foliage);
             bench_world(g, f.to_world(p.x + 2.0, p.y), f.yaw(), pal.wood, CHARCOAL);
         }
@@ -172,17 +175,22 @@ pub fn courthouse(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Colonnade across the front, pediment above.
     let front = c.front_face(&body);
+    // The porch is as deep as the forecourt allows.
+    let porch = (3.8f32).min(c.reach_out(&front) - 0.4).max(1.0);
     let cols = ((front.len / 3.2) as i32).clamp(3, 9);
     for k in 0..cols {
         let t = -front.len * 0.5 + 1.6 + k as f32 * (front.len - 3.2) / (cols - 1).max(1) as f32;
-        let p = front.at(t, 1.8);
+        let p = front.at(t, (porch - 2.0).max(0.8));
+        if !c.inside_local(p) {
+            continue;
+        }
         let w = f.to_world(p.x, p.y);
         g.part(Stone).cylinder(w, 0.55, 0.5, 1.0, 1.0 + h - 1.2, 10, rgba(stone));
         g.part(Stone).boxed(Vec3::new(w.x, 1.0 + h - 1.0, w.y), Vec3::new(1.3, 0.5, 1.3), f.yaw(), rgba(mul(stone, 1.1)));
     }
-    front.bx(g, f, Stone, 0.0, 1.0 + h - 0.3, 1.8, Vec3::new(front.len, 1.2, 3.8), mul(stone, 1.1));
-    front.bx(g, f, Stone, 0.0, 1.0 + h + 1.2, 1.8, Vec3::new(front.len * 0.7, 1.8, 3.4), mul(stone, 1.05));
-    front.decal(g, f, Glow, 0.0, 1.0 + h + 1.2, 3.52, front.len * 0.5, 0.6, mul([1.2, 1.2, 1.1], 0.5));
+    front.bx(g, f, Stone, 0.0, 1.0 + h - 0.3, porch * 0.5 - 0.1, Vec3::new(front.len, 1.2, porch), mul(stone, 1.1));
+    front.bx(g, f, Stone, 0.0, 1.0 + h + 1.2, porch * 0.5 - 0.1, Vec3::new(front.len * 0.7, 1.8, porch - 0.4), mul(stone, 1.05));
+    front.decal(g, f, Glow, 0.0, 1.0 + h + 1.2, porch - 0.28, front.len * 0.5, 0.6, mul([1.2, 1.2, 1.1], 0.5));
     windows(g, c, rng, &front, 1.0, floors, fh, &spec);
     entrance(g, c, rng, &front, 0.0, 4.0, fh * 1.4);
     // Dome.
@@ -199,7 +207,7 @@ pub fn courthouse(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let pf = c.front_face(poly);
     for k in 0..4 {
         let t = -pf.len * 0.45 + k as f32 * pf.len * 0.3;
-        lamp_post(g, f, pf.at(t, -1.0), 4.0, pal.lamp);
+        lamp_post_in(g, c, pf.at(t, -1.0), 4.0, pal.lamp);
     }
     for s in [-1.0f32, 1.0] {
         let p = pf.at(s * pf.len * 0.3, -3.0);
@@ -257,7 +265,7 @@ pub fn monument(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let mut u = lo.x + 2.0;
         while u < hi.x {
             let p = Vec2::new(u, v);
-            if c.inside_local(p) && p.distance(center) > r * 3.6 + 2.0 && (pp.distance(p) > pw * 0.6 + 2.5) {
+            if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.6 && p.distance(center) > r * 3.6 + 2.0 && (pp.distance(p) > pw * 0.6 + 2.5) {
                 tree(g, f, p, 3.5, 3.0, pal.bark, pal.foliage);
                 if rng.random_bool(0.4) {
                     bench_world(g, f.to_world(p.x + 1.5, p.y), f.yaw(), pal.wood, CHARCOAL);
@@ -268,6 +276,6 @@ pub fn monument(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         v += 8.0;
     }
     for k in 0..3 {
-        lamp_post(g, f, front.at(-front.len * 0.35 + k as f32 * front.len * 0.35, -1.5), 4.5, pal.lamp);
+        lamp_post_in(g, c, front.at(-front.len * 0.35 + k as f32 * front.len * 0.35, -1.5), 4.5, pal.lamp);
     }
 }

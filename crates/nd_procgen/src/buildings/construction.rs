@@ -289,6 +289,10 @@ fn scaffolding(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], top
     let f = &c.frame;
     let lift = 2.0;
     let lifts = (top / lift).floor().max(1.0) as i32;
+    // Decks, transoms and rails only on the lifts being worked; below them
+    // the scaffold is bare tube, which is what a tall site looks like and
+    // keeps a thirty-floor shell from costing more than the building.
+    let worked = 6;
     let d_in = 0.35;
     let d_out = 1.25;
     for face in c.faces(poly) {
@@ -306,9 +310,12 @@ fn scaffolding(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], top
             for d in [d_in, d_out] {
                 face.bx(g, f, Metal, t, top * 0.5, d, Vec3::new(0.09, top, 0.09), steel);
             }
-            // Transoms between the two standards.
-            for l in 1..=lifts {
-                face.bx(g, f, Metal, t, l as f32 * lift, (d_in + d_out) * 0.5, Vec3::new(0.07, 0.07, d_out - d_in), steel);
+            // Transoms between the two standards, every other bay, on the
+            // working lifts.
+            if k % 2 == 0 {
+                for l in (lifts - worked + 1).max(1)..=lifts {
+                    face.bx(g, f, Metal, t, l as f32 * lift, (d_in + d_out) * 0.5, Vec3::new(0.07, 0.07, d_out - d_in), steel);
+                }
             }
         }
         for l in 1..=lifts {
@@ -316,15 +323,23 @@ fn scaffolding(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], top
             for d in [d_in, d_out] {
                 face.bx(g, f, Metal, 0.0, y, d, Vec3::new(face.len, 0.07, 0.07), steel);
             }
-            // Planks, a few missing; toe board and guard rail outside.
-            let planks = bays * 2;
-            let pw = face.len / planks as f32;
-            for k in 0..planks {
-                if rng.random_bool(0.12) {
-                    continue;
+            if l <= lifts - worked {
+                continue; // bare tube below the working lifts
+            }
+            // The plank deck: one run per lift with one or two planks
+            // missing, drawn as the runs between the gaps rather than a box
+            // per plank (a tall site has hundreds of lifts of planking).
+            let pw = step * 0.5;
+            let gaps = rng.random_range(0..=2);
+            let mut cuts: Vec<f32> = (0..gaps).map(|_| rng.random_range(-face.len * 0.45..face.len * 0.45)).collect();
+            cuts.sort_by(|a, b| a.total_cmp(b));
+            let mut start = -face.len * 0.5;
+            for cut in cuts.iter().chain(std::iter::once(&(face.len * 0.5 + pw))) {
+                let end = (cut - pw * 0.5).min(face.len * 0.5);
+                if end - start > 0.3 {
+                    face.bx(g, f, Wood, (start + end) * 0.5, y + 0.06, (d_in + d_out) * 0.5, Vec3::new(end - start, 0.05, d_out - d_in), mul(c.palette.wood, rng.random_range(0.85..1.1)));
                 }
-                let t = -face.len * 0.5 + (k as f32 + 0.5) * pw;
-                face.bx(g, f, Wood, t, y + 0.06, (d_in + d_out) * 0.5, Vec3::new(pw - 0.04, 0.05, d_out - d_in), mul(c.palette.wood, rng.random_range(0.85..1.1)));
+                start = cut + pw * 0.5;
             }
             face.bx(g, f, Metal, 0.0, y + 1.0, d_out, Vec3::new(face.len, 0.06, 0.06), steel);
             face.bx(g, f, Wood, 0.0, y + 0.18, d_out - 0.04, Vec3::new(face.len, 0.2, 0.03), mul(c.palette.wood, 0.9));
@@ -421,7 +436,8 @@ fn tower_crane(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], bui
     f.bx(g, Matte, trolley.x, hook_y - 0.3, trolley.y, Vec3::new(0.5, 0.7, 0.3), DARK);
     if rng.random_bool(0.7) {
         let load = hook_y - 1.6;
-        if rng.random_bool(0.5) {
+        // A swinging steel bundle is 3.6 m long: only where it clears the fence.
+        if rng.random_bool(0.5) && poly_inside(c, &rect_yaw(trolley.x, trolley.y, 1.9, 0.6, angle + 0.4)) {
             f.bx_yaw(g, Metal, trolley.x, load, trolley.y, Vec3::new(3.6, 0.5, 1.0), mul(c.palette.steel, 0.8), angle + 0.4);
         } else {
             f.bx_yaw(g, Concrete, trolley.x, load, trolley.y, Vec3::new(1.4, 1.2, 1.2), mul(c.palette.concrete(0), 0.9), angle);

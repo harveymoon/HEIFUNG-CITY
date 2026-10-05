@@ -65,17 +65,23 @@ pub fn station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         g.part(Panel).boxed(Vec3::new(p.x, 3.2, p.y), Vec3::new(2.4, 0.5, 0.06), along.y.atan2(along.x), rgba([0.1, 0.2, 0.5]));
         g.part(Glow).boxed(Vec3::new(p.x, 3.2, p.y), Vec3::new(2.2, 0.3, 0.07), along.y.atan2(along.x), rgba([1.3, 1.3, 1.2]));
     }
-    // Path from the hall to the platform, ramped up.
+    // Path from the hall to the platform, ramped up. It leaves the lot at
+    // the lot's point nearest the platform, not in a straight line that
+    // might cut across a neighbour.
     let hc = poly_center(&hall);
     let hw = f.to_world(hc.x, hc.y);
     let pc = link.centre() + out * 2.8;
-    g.part(Paving).path_strip(&[hw, pc], 0.0, 3.0, 0.05, rgba(mul(pal.paving, 1.2)));
-    g.part(Concrete).slab(Vec3::new(pc.x + (hw.x - pc.x) * 0.25, 0.05, pc.y + (hw.y - pc.y) * 0.25), Vec3::new(pc.x, 0.95, pc.y), 3.0, 0.15, rgba(concrete));
+    let exit_l = clamp_into(&c.lot_poly, f.to_local(pc));
+    // Step in from the edge so the 3 m path does not spill sideways.
+    let exit_l = exit_l + (hc - exit_l).normalize_or_zero() * 1.6;
+    let exit = f.to_world(exit_l.x, exit_l.y);
+    g.part(Paving).path_strip(&[hw, exit, pc], 0.0, 3.0, 0.05, rgba(mul(pal.paving, 1.2)));
+    g.part(Concrete).slab(Vec3::new(exit.x, 0.05, exit.y), Vec3::new(pc.x, 0.95, pc.y), 3.0, 0.15, rgba(concrete));
     // Forecourt: taxi rank, bike racks, bins, bollards, a lamp.
     let gate = c.front_face(&offset_poly(&c.lot_poly, 0.3));
     for s in [-1.0f32, 1.0] {
         let p = gate.at(s * gate.len * 0.3, -4.0);
-        if c.inside_local(p) {
+        if vehicle_fits(c, p, 0.0, Vehicle::Car) {
             let col = pick(rng, &pal.car_colors);
             vehicle(g, f, pal, rng, p, 0.0, 0.0, Vehicle::Car, col);
         }
@@ -144,7 +150,10 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         railway_track(g, pal, &pts, 4.4);
     }
     let apron_in = main + 4.6 * sidings as f32 + 3.4;
-    let apron_w = 9.0;
+    // The apron ends inside the lot: its far edge is the lot's extent
+    // across the track, measured from the platform line.
+    let lot_across = c.lot_poly.iter().map(|p| (f.to_world(p.x, p.y) - pa).dot(out)).fold(f32::MIN, f32::max);
+    let apron_w = (lot_across - 0.6 - apron_in).clamp(3.0, 9.0);
     g.part(Concrete).path_box(&[pa + out * (apron_in + apron_w * 0.5), pb + out * (apron_in + apron_w * 0.5)], 0.0, apron_w, 0.0, 0.3, rgba(mul(pal.concrete(0), 1.1)));
     g.part(Glow).path_strip(&[pa + out * (apron_in + 0.3), pb + out * (apron_in + 0.3)], 0.0, 0.12, 0.32, rgba(pal.platform_line));
     // Gantry: legs on the apron and beyond the main line, beam over everything.
@@ -172,7 +181,7 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for k in 0..n {
         let p = pa.lerp(pb, (k as f32 + 0.5) / n as f32) + out * (apron_in + apron_w + 1.8);
         let lp = f.to_local(p);
-        if !c.inside_local(lp) {
+        if !poly_inside(c, &rect_yaw(lp.x, lp.y, 3.1, 1.3, along.y.atan2(along.x) - f.yaw())) {
             continue;
         }
         let stack = rng.random_range(1..=3);
@@ -183,14 +192,14 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Forklift and lorries at the doors.
     let fp = pa.lerp(pb, 0.5) + out * (apron_in + apron_w + 5.5);
-    if c.inside_local(f.to_local(fp)) {
-        let yaw = rng.random_range(0.0..3.0);
+    let yaw = rng.random_range(0.0..3.0);
+    if vehicle_fits(c, f.to_local(fp), yaw, Vehicle::Van) {
         vehicle(g, f, pal, rng, f.to_local(fp), 0.0, yaw, Vehicle::Van, [0.9, 0.7, 0.1]);
     }
     let front = c.front_face(&shed);
     for s in [-1.0f32, 1.0] {
         let p = front.at(s * front.len * 0.25, 5.5);
-        if c.inside_local(p) {
+        if vehicle_fits(c, p, FRAC_PI_2, Vehicle::Truck) {
             let col = pick(rng, &pal.car_colors);
             vehicle(g, f, pal, rng, p, 0.0, FRAC_PI_2, Vehicle::Truck, col);
         }
@@ -205,7 +214,7 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
     let wb = gate.at(-gate.len * 0.2, -5.0);
-    if c.inside_local(wb) {
+    if poly_inside(c, &rect(wb.x, wb.y, 1.6, 4.6)) {
         f.bx(g, Metal, wb.x, 0.08, wb.y, Vec3::new(3.0, 0.16, 9.0), mul(pal.steel, 0.5));
     }
 }

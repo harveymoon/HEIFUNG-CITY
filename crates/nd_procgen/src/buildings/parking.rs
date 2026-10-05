@@ -76,6 +76,9 @@ fn fill_bays(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, bays: &[(Vec2, f32)]
 fn gate(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, front: &Face, y: f32) {
     let f = &c.frame;
     let t = -front.len * 0.3;
+    if !c.inside_local(front.at(t - 3.1, -0.7)) || !c.inside_local(front.at(t - 1.3, -2.5)) {
+        return;
+    }
     front.bx(g, f, Panel, t - 2.2, y + 1.3, -1.6, Vec3::new(1.8, 2.6, 1.8), mul(pick(rng, &c.palette.panel), 0.95));
     front.decal(g, f, Glow, t - 2.2, y + 1.6, -0.68, 1.2, 0.8, mul(c.style.window_color(0), 0.7));
     front.bx(g, f, Matte, t, y + 0.5, -1.0, Vec3::new(0.3, 1.0, 0.3), CHARCOAL);
@@ -89,7 +92,6 @@ fn gate(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, front: &Face, y: f32) {
 
 /// Surface lot: asphalt, painted bays, a booth, a barrier, lamps and a fence.
 pub fn parking_lot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
-    let f = &c.frame;
     let pal = c.palette;
     let occupancy = c.parking.unwrap_or(0.3);
     let yard = yard(g, c, 0.4, Asphalt, mul(pal.asphalt, 1.2 + 0.4 * c.wear));
@@ -103,10 +105,10 @@ pub fn parking_lot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         fence(g, c, face.a, face.b, 1.8, false);
         if i % 2 == 0 && face.len > 10.0 {
-            lamp_post(g, f, face.at(0.0, -1.2), 7.0, pal.street_lamp);
+            lamp_post_in(g, c, face.at(0.0, -1.2), 7.0, pal.street_lamp);
         }
     }
-    lamp_post(g, f, front.at(front.len * 0.1, -1.4), 7.0, pal.street_lamp);
+    lamp_post_in(g, c, front.at(front.len * 0.1, -1.4), 7.0, pal.street_lamp);
     if c.wear > 0.4 {
         weeds(g, c, rng, &yard, 6);
     }
@@ -154,10 +156,16 @@ pub fn car_park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Ramp: a sloped slab along the back face, one storey per run.
     let back = c.faces(poly).into_iter().filter(|x| !x.is_front).max_by(|a, b| a.len.total_cmp(&b.len));
     if let Some(back) = back {
-        for k in 0..floors {
+        // Shorten the run until the 5 m wide slab is on the lot (a wedge
+        // narrows behind its back face).
+        let mut run = back.len * 0.4;
+        while run > 4.0 && ![-run, run].iter().all(|t| c.inside_local(back.at(*t, -1.0)) && c.inside_local(back.at(*t, -6.0))) {
+            run -= 1.0;
+        }
+        for k in 0..floors.min(if run > 4.0 { floors } else { 0 }) {
             let y0 = k as f32 * fh;
-            let a = f.at2(back.at(-back.len * 0.4, -3.5), y0 + 0.2);
-            let b = f.at2(back.at(back.len * 0.4, -3.5), y0 + fh + 0.2);
+            let a = f.at2(back.at(-run, -3.5), y0 + 0.2);
+            let b = f.at2(back.at(run, -3.5), y0 + fh + 0.2);
             let (a, b) = if k % 2 == 0 { (a, b) } else { (Vec3::new(b.x, a.y, b.z), Vec3::new(a.x, b.y, a.z)) };
             g.part(Concrete).slab(a, b, 5.0, 0.4, rgba(mul(concrete, 0.9)));
         }

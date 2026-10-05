@@ -106,7 +106,8 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
             // Patches of dry grass and bare scrapes.
             for _ in 0..rng.random_range(6..14) {
                 if let Some(p) = c.random_inside(rng, 2.0) {
-                    let blob = ngon(p.x, p.y, rng.random_range(1.5..4.0), 7, rng.random_range(0.0..TAU));
+                    let r = rng.random_range(1.5f32..4.0).min(distance_to_boundary(p, &c.lot_poly) - 0.3);
+                    let blob = ngon(p.x, p.y, r, 7, rng.random_range(0.0..TAU));
                     ground(g, f, Foliage, &blob, 0.04, mul(pal.foliage_dry, rng.random_range(0.8..1.1)));
                 }
             }
@@ -403,7 +404,14 @@ fn trees(g: &mut Geometry, rng: &mut impl Rng, park: &Park, pal: &Palette) {
                 _ => (1, rng.random_range(5.0..8.0), rng.random_range(3.0..4.5)),
             },
         };
-        if !park.inside_world(w, canopy + 0.4) || park.path_distance(w) < park.path_width * 0.5 + canopy * 0.6 + 0.6 || !park.clear_of_features(w, canopy * 0.5 + 1.0) || !park.clear_of_benches(w, 1.4) {
+        // Room each kind needs to the lot edge: a palm's fronds reach 3.4 m.
+        let reach = match kind {
+            0 => 1.6,
+            2 => canopy + 0.4,
+            3 => 3.6,
+            _ => canopy * 0.5 + 0.6,
+        };
+        if !park.inside_world(w, reach) || park.path_distance(w) < park.path_width * 0.5 + canopy * 0.6 + 0.6 || !park.clear_of_features(w, canopy * 0.5 + 1.0) || !park.clear_of_benches(w, 1.4) {
             continue;
         }
         if placed.iter().any(|(p, pc)| p.distance(w) < spacing.min(canopy + pc + 1.0).max(spacing * 0.6)) {

@@ -40,15 +40,16 @@ pub fn coal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             }
             p = p.lerp(hc, 0.3);
         }
-        if !c.inside_local(p) || distance_to_boundary(p, &c.lot_poly) < 3.0 {
+        if !c.inside_local(p) || distance_to_boundary(p, &c.lot_poly) < 5.0 {
             continue;
         }
         chimney(g, f, p, 2.2, h, 42.0, mul(pal.concrete(0), 0.7), pal.aviation_light);
         let w = f.to_world(p.x, p.y);
+        // The plume stays within the 5 m the stack was given from the edge.
         for s in 0..5 {
             let y = h + 42.0 + 2.0 + s as f32 * 3.5;
-            let drift = s as f32 * 0.7;
-            g.part(Matte).cylinder(w + Vec2::new(drift, drift * 0.4), 2.0 + s as f32 * 0.5, 2.3 + s as f32 * 0.5, y, y + 3.0, 8, rgba([0.32, 0.30, 0.28]));
+            let drift = s as f32 * 0.4;
+            g.part(Matte).cylinder(w + Vec2::new(drift, drift * 0.4), 1.6 + s as f32 * 0.3, 1.8 + s as f32 * 0.3, y, y + 3.0, 8, rgba([0.32, 0.30, 0.28]));
         }
     }
     // Coal pile, conveyor up to the boiler hall, rail-side hopper.
@@ -68,7 +69,7 @@ pub fn coal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Transformer yard: fenced, insulators, bus bars.
     let ty = Vec2::new(hi.x - 7.0, lo.y + 6.0);
-    if c.inside_local(ty + Vec2::new(5.0, 4.0)) && c.inside_local(ty - Vec2::new(5.0, 4.0)) {
+    if poly_inside(c, &rect(ty.x, ty.y, 5.3, 4.3)) {
         let pen = rect(ty.x, ty.y, 5.0, 4.0);
         ground(g, f, Dirt, &pen, 0.05, pal.gravel);
         fence_poly(g, c, &pen, 2.0, None, true);
@@ -125,7 +126,10 @@ pub fn solar(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     if c.inside_local(cab) {
         let cb = fit_inside(c, &rect(cab.x, cab.y, 2.5, 1.8));
         extrude(g, f, Panel, &cb, 0.0, 2.8, mul(pick(rng, &pal.panel), 0.9));
-        f.bx(g, Metal, cab.x + 4.0, 1.0, cab.y, Vec3::new(1.4, 2.0, 1.0), mul(pal.metal_paint(1), 0.9));
+        let tx = cab + Vec2::new(4.0, 0.0);
+        if c.inside_local(tx) && distance_to_boundary(tx, &c.lot_poly) > 0.9 {
+            f.bx(g, Metal, tx.x, 1.0, tx.y, Vec3::new(1.4, 2.0, 1.0), mul(pal.metal_paint(1), 0.9));
+        }
     }
     fence_lot(g, c, &yard, 2.0, false);
     sign_board(g, c, rng, &front, -front.len * 0.3, 2.6, (front.len * 0.3).min(6.0), 0.6);
@@ -143,12 +147,12 @@ pub fn wind(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for k in 0..n {
         let u = if n == 1 { (lo.x + hi.x) * 0.5 } else { lo.x + (k as f32 + 0.5) * (hi.x - lo.x) / n as f32 };
         let p = Vec2::new(u, (lo.y + hi.y) * 0.5 + rng.random_range(-3.0..3.0));
-        if !nd_sim::zoning::point_in_polygon(p, &inner) {
+        if !nd_sim::zoning::point_in_polygon(p, &inner) || !c.inside_local(p) || distance_to_boundary(p, &c.lot_poly) < 4.5 {
             continue;
         }
         let w = f.to_world(p.x, p.y);
         // Blades must clear the lot edge, so small lots get small turbines.
-        let clearance = distance_to_boundary(p, &yard) + 2.0;
+        let clearance = distance_to_boundary(p, &c.lot_poly) - 1.5;
         let hub = rng.random_range(38.0f32..52.0).min(clearance / 0.48).max(14.0);
         g.part(Concrete).cylinder(w, 3.0, 3.0, 0.0, 0.6, 12, rgba(mul(pal.concrete(0), 1.1)));
         g.part(Panel).cylinder(w, 1.6, 0.9, 0.6, hub, 12, rgba(white));
@@ -239,7 +243,7 @@ pub fn nuclear(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Switchyard, double fence, floodlights, gatehouse.
     let sy = Vec2::new(hi.x - 8.0, hi.y - 7.0);
-    if c.inside_local(sy + Vec2::new(6.0, 5.0)) && c.inside_local(sy - Vec2::new(6.0, 5.0)) {
+    if poly_inside(c, &rect(sy.x, sy.y, 6.3, 5.3)) {
         let pen = rect(sy.x, sy.y, 6.0, 5.0);
         ground(g, f, Dirt, &pen, 0.05, pal.gravel);
         fence_poly(g, c, &pen, 2.2, None, true);

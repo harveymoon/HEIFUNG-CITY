@@ -65,7 +65,9 @@ pub fn junkyard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             let kind = if rng.random_bool(0.75) { Vehicle::Wreck } else { Vehicle::Van };
             let yaw = rng.random_range(0.0..std::f32::consts::TAU);
             let col = pick(rng, &pal.car_colors);
-            vehicle(g, f, pal, rng, p, 0.0, yaw, kind, col);
+            if vehicle_fits(c, p, yaw, kind) {
+                vehicle(g, f, pal, rng, p, 0.0, yaw, kind, col);
+            }
         }
     }
     // Stacked crushed cars: flat boxes.
@@ -76,7 +78,7 @@ pub fn junkyard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Office: a container by the gate with a lit window and a sign.
     let office = front.at(front.len * 0.3, -4.5);
-    if c.inside_local(office) {
+    if poly_inside(c, &rect(office.x, office.y, 3.2, 1.4)) {
         let col = pick(rng, &pal.container_colors);
         container_unit(g, c, rng, office.x, office.y, 0.0, 6.05, 2.44, 2.6, 0.0, col);
         // The container's road side, facing the road.
@@ -170,7 +172,7 @@ pub fn rusty_warehouse(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
     let van = front.at(front.len * 0.4, 3.5);
-    if c.inside_local(van) && rng.random_bool(0.6) {
+    if vehicle_fits(c, van, front.yaw() + std::f32::consts::FRAC_PI_2, Vehicle::Van) && rng.random_bool(0.6) {
         let col = pick(rng, &pal.car_colors);
         vehicle(g, f, pal, rng, van, 0.0, front.yaw() + std::f32::consts::FRAC_PI_2, Vehicle::Van, col);
     }
@@ -236,7 +238,15 @@ pub fn factory(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let t = -front.len * 0.5 + (k as f32 + 0.5) * (front.len / doors as f32);
         roller_door(g, c, &front, t, 4.0, 4.4, mul(pal.steel, 0.6));
     }
-    front.bx(g, f, Concrete, 0.0, 0.6, 1.5, Vec3::new(front.len * 0.85, 1.2, 3.0), mul(wall, 0.8));
+    // Loading dock: as deep as the forecourt allows, shortened until it fits.
+    let dock_d = (3.0f32).min(c.reach_out(&front) - 0.3);
+    let mut dock_half = front.len * 0.425;
+    while dock_half > 2.0 && !(c.inside_local(front.at(-dock_half, dock_d)) && c.inside_local(front.at(dock_half, dock_d))) {
+        dock_half -= 0.5;
+    }
+    if dock_d > 0.8 && dock_half > 2.0 {
+        front.bx(g, f, Concrete, 0.0, 0.6, dock_d * 0.5, Vec3::new(dock_half * 2.0, 1.2, dock_d), mul(wall, 0.8));
+    }
     for face in c.faces(poly) {
         if face.len > 5.0 {
             band_windows(g, c, rng, &face, 1.5, 1, 4.0);
@@ -253,7 +263,7 @@ pub fn factory(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     if let Some(back) = back {
         for k in 0..rng.random_range(0..3) {
             let p = back.at(-back.len * 0.3 + k as f32 * back.len * 0.3, 2.5);
-            if c.inside_local(p) {
+            if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 2.2 {
                 let (s, col) = if rng.random_bool(0.5) { (Rust, pal.rust) } else { (Metal, pick(rng, &pal.metal_paint)) };
             tank_vertical(g, f, p, 1.8, 0.0, rng.random_range(4.0..8.0), s, col);
             }
@@ -286,7 +296,7 @@ pub fn factory(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         let t = -front.len * 0.5 + (k as f32 + 0.5) * (front.len / doors as f32);
         let p = front.at(t, 7.5);
-        if c.inside_local(p) {
+        if vehicle_fits(c, p, front.yaw() + std::f32::consts::FRAC_PI_2, Vehicle::Truck) {
             let col = pick(rng, &pal.car_colors);
             vehicle(g, f, pal, rng, p, 0.0, front.yaw() + std::f32::consts::FRAC_PI_2, Vehicle::Truck, col);
         }
@@ -326,7 +336,7 @@ pub fn tank_farm(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         tries += 1;
         let p = Vec2::new(rng.random_range(lo.x..=hi.x), rng.random_range(lo.y..=hi.y));
         let rr = r * rng.random_range(0.7..1.0);
-        if !nd_sim::zoning::point_in_polygon(p, &offset_poly(&bund, rr + 0.5)) {
+        if !nd_sim::zoning::point_in_polygon(p, &offset_poly(&bund, rr + 0.5)) || distance_to_boundary(p, &c.lot_poly) < rr + 1.2 {
             continue;
         }
         if tanks.iter().any(|(q, qr)| q.distance(p) < rr + qr + 1.5) {
@@ -343,10 +353,16 @@ pub fn tank_farm(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for w in tanks.windows(2) {
         let (a, ra) = w[0];
         let (b, _) = w[1];
-        pipe_run(g, f, &[Vec3::new(a.x, 1.2, a.y + ra), Vec3::new(a.x, 1.2, (a.y + b.y) * 0.5), Vec3::new(b.x, 1.2, (a.y + b.y) * 0.5), Vec3::new(b.x, 1.2, b.y)], 0.22, mul(pal.steel, 0.8));
+        // Dog-leg between the tanks when the elbows are on the lot, else straight.
+        let (e1, e2) = (Vec2::new(a.x, (a.y + b.y) * 0.5), Vec2::new(b.x, (a.y + b.y) * 0.5));
+        if c.inside_local(e1) && c.inside_local(e2) && distance_to_boundary(e1, &c.lot_poly) > 0.5 && distance_to_boundary(e2, &c.lot_poly) > 0.5 {
+            pipe_run(g, f, &[Vec3::new(a.x, 1.2, a.y + ra), Vec3::new(e1.x, 1.2, e1.y), Vec3::new(e2.x, 1.2, e2.y), Vec3::new(b.x, 1.2, b.y)], 0.22, mul(pal.steel, 0.8));
+        } else {
+            pipe_run(g, f, &[Vec3::new(a.x, 1.2, a.y), Vec3::new(b.x, 1.2, b.y)], 0.22, mul(pal.steel, 0.8));
+        }
     }
     let manifold = front.at(front.len * 0.3, 4.0);
-    if c.inside_local(manifold) {
+    if poly_inside(c, &rect(manifold.x + 1.2, manifold.y + 0.5, 1.8, 0.8)) {
         for k in 0..4 {
             let p = manifold + Vec2::new(k as f32 * 0.8, 0.0);
             f.bx(g, Metal, p.x, 0.8, p.y, Vec3::new(0.3, 1.6, 0.3), mul(pal.steel, 0.8));
@@ -419,7 +435,7 @@ pub fn datacenter(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for r in 0..rows {
         for col in 0..cols {
             let p = Vec2::new(lo.x + (col as f32 + 0.5) * (hi.x - lo.x) / cols as f32, lo.y + (r as f32 + 0.5) * (hi.y - lo.y) / rows as f32);
-            if nd_sim::zoning::point_in_polygon(p, &offset_poly(&hall, 2.5)) {
+            if nd_sim::zoning::point_in_polygon(p, &offset_poly(&hall, 2.5)) && distance_to_boundary(p, &hall) > 2.2 {
                 chiller(g, c, p, h, 4.0, 2.0, 0.0, mul(pal.steel, 0.9));
             }
         }
@@ -435,7 +451,7 @@ pub fn datacenter(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Generator yard beside the hall.
     let front = c.front_face(&c.lot_poly);
     let gen_p = Vec2::new(lo.x - 5.0, (lo.y + hi.y) * 0.5);
-    if c.inside_local(gen_p + Vec2::new(-2.5, 4.0)) && c.inside_local(gen_p + Vec2::new(-2.5, -4.0)) {
+    if poly_inside(c, &rect(gen_p.x, gen_p.y + 1.0, 3.4, 7.2)) && poly_inside(c, &rect(gen_p.x, gen_p.y + 8.0, 1.3, 3.2)) {
         for k in 0..3 {
             let p = gen_p + Vec2::new(0.0, (k as f32 - 1.0) * 3.4);
             f.bx(g, Metal, p.x, 1.3, p.y, Vec3::new(4.5, 2.6, 2.2), mul(pick(rng, &pal.metal_paint), 1.0));
@@ -454,8 +470,10 @@ pub fn datacenter(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         extrude(g, f, Panel, &house, 0.0, 3.0, mul(panel, 0.9));
         curtain_lights(g, c, rng, &house, 1.0, 1, 1.6);
         let hf = c.front_face(&house);
-        hf.bx(g, f, Matte, 2.6, 0.5, 0.0, Vec3::new(0.2, 1.0, 0.2), pal.steel);
-        hf.bx(g, f, Matte, 2.6, 1.0, -1.5, Vec3::new(0.1, 0.1, 3.2), [0.8, 0.1, 0.1]);
+        if c.inside_local(hf.at(2.6, 0.0)) && c.inside_local(hf.at(2.6, -3.2)) {
+            hf.bx(g, f, Matte, 2.6, 0.5, 0.0, Vec3::new(0.2, 1.0, 0.2), pal.steel);
+            hf.bx(g, f, Matte, 2.6, 1.0, -1.5, Vec3::new(0.1, 0.1, 3.2), mul(pal.warning_light, 0.4));
+        }
     }
     bollards(g, c, &front, 6, -1.4);
     for p in [front.at(-front.len * 0.42, -1.5), front.at(front.len * 0.42, -1.5)] {
@@ -495,7 +513,7 @@ pub fn depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             f.bx(g, Matte, dock.at(t, 0.3).x, 1.1, dock.at(t, 0.3).y, Vec3::new(1.2, 0.5, 0.4), DARK);
             if rng.random_bool(0.5) {
                 let p = dock.at(t, 6.0);
-                if c.inside_local(p) {
+                if vehicle_fits(c, p, dock.yaw() + std::f32::consts::FRAC_PI_2, Vehicle::Truck) {
                     let col = pick(rng, &pal.car_colors);
                     vehicle(g, f, pal, rng, p, 0.0, dock.yaw() + std::f32::consts::FRAC_PI_2, Vehicle::Truck, col);
                 }
@@ -558,6 +576,8 @@ pub fn depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for k in 0..3 {
         let t = -front.len * 0.3 + k as f32 * front.len * 0.3;
         let p = front.at(t, -5.0);
-        f.flat(g, Glow, p.x, 0.06, p.y, 0.15, 8.0, front.yaw(), mul(pal.lane_marker, 0.5));
+        if c.inside_local(front.at(t, -1.0)) && c.inside_local(front.at(t, -9.0)) {
+            f.flat(g, Glow, p.x, 0.06, p.y, 0.15, 8.0, front.yaw(), mul(pal.lane_marker, 0.5));
+        }
     }
 }

@@ -44,7 +44,7 @@ pub fn bus_depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for k in 0..n {
         let u = lo.x + w * 0.05 + (k as f32 + 0.5) * bay_w;
         let p = Vec2::new(u, bay_v);
-        if !c.inside_local(p + Vec2::new(0.0, 6.5)) || !c.inside_local(p - Vec2::new(0.0, 6.5)) {
+        if [Vec2::new(0.0, 6.5), Vec2::new(0.0, -6.5), Vec2::new(-bay_w * 0.5, 6.5), Vec2::new(-bay_w * 0.5, -6.5)].iter().any(|o| !c.inside_local(p + *o)) || !vehicle_fits(c, p, std::f32::consts::FRAC_PI_2, Vehicle::Bus) {
             continue;
         }
         f.flat(g, Matte, u - bay_w * 0.5, 0.05, bay_v, 0.12, 13.0, 0.0, mul(pal.lane_marker, 0.7));
@@ -55,7 +55,7 @@ pub fn bus_depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Fuel island and wash arch by one side, office by the gate.
     let fuel = Vec2::new(hi.x - 6.0, lo.y + d * 0.5);
-    if c.inside_local(fuel + Vec2::new(3.0, 3.0)) && c.inside_local(fuel - Vec2::new(3.0, 3.0)) {
+    if [Vec2::new(3.0, 4.8), Vec2::new(-3.0, 4.8), Vec2::new(3.0, -4.8), Vec2::new(-3.0, -4.8)].iter().all(|o| c.inside_local(fuel + *o)) {
         f.bx(g, Concrete, fuel.x, 0.1, fuel.y, Vec3::new(2.0, 0.2, 7.0), mul(pal.concrete(0), 1.1));
         for k in 0..2 {
             f.bx(g, Metal, fuel.x, 0.9, fuel.y - 2.0 + k as f32 * 4.0, Vec3::new(0.8, 1.6, 0.6), mul(pal.metal_paint(1), 0.9));
@@ -67,7 +67,7 @@ pub fn bus_depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         f.bx(g, Glow, fuel.x, 4.7, fuel.y, Vec3::new(4.0, 0.05, 8.0), mul(pal.lamp, 0.8));
     }
     let wash = Vec2::new(lo.x + 5.0, lo.y + d * 0.5);
-    if c.inside_local(wash + Vec2::new(2.5, 7.0)) && c.inside_local(wash - Vec2::new(2.5, 7.0)) {
+    if [Vec2::new(2.5, 3.5), Vec2::new(-2.5, 3.5), Vec2::new(2.5, -3.5), Vec2::new(-2.5, -3.5)].iter().all(|o| c.inside_local(wash + *o)) {
         for s in [-1.0f32, 1.0] {
             f.bx(g, Metal, wash.x + s * 2.0, 2.2, wash.y, Vec3::new(0.3, 4.4, 6.0), mul(pal.metal_paint(2), 0.9));
         }
