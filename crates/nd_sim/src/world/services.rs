@@ -74,8 +74,11 @@ impl World {
             return None;
         }
         let Some(lot) = self.lots.get(lot_id) else { return Some("no such lot".into()) };
-        if lot.building.is_some() {
-            return Some("that lot is taken".into());
+        // Whatever grew there is bought out; another civic structure is not.
+        if let Some(b) = lot.building.and_then(|b| self.buildings.get(b)) {
+            if Self::is_civic_structure(b) {
+                return Some(format!("{} stands there; bulldoze it first", b.name));
+            }
         }
         if lot.landlocked {
             return Some("that land has no road access".into());
@@ -105,6 +108,7 @@ impl World {
         if let Some(problem) = self.placement_problem(what, lot_id) {
             return Err(problem);
         }
+        self.take_over_lot(lot_id, kind.tier_label(tier))?;
         self.economy.debit(Flow::Construction, what.cost());
         let n = self.rng.random_range(0..1000u32);
         let name = kind.name(tier, n);
@@ -1225,6 +1229,23 @@ mod tests {
     }
 
     #[test]
+    fn a_service_on_a_built_lot_buys_it_out_but_not_another_service() {
+        let mut w = town();
+        let folk = people(&mut w, 3);
+        let shop = building_at(&mut w, -250.0);
+        let lot = w.buildings[shop].lot;
+        staff(&mut w, shop, &folk[..1], false);
+        let school = w.build_service(lot, ServiceKind::School, Tier::Mid).expect("the city takes the lot");
+        assert!(!w.buildings.contains_key(shop), "the shop was pulled down");
+        assert_eq!(w.lots[lot].building, Some(school));
+        assert_ne!(w.citizens[folk[0]].work, Some(shop), "its staff were laid off");
+        assert!(w.drain_events().iter().any(|e| matches!(e, SimEvent::Expropriated(b, l) if *b == shop && *l == lot)));
+        let err = w.build_service(lot, ServiceKind::Police, Tier::Low).unwrap_err();
+        assert!(err.contains("bulldoze it first"), "{err}");
+        assert!(w.buildings.contains_key(school));
+    }
+
+    #[test]
     fn coverage_follows_road_distance_and_tier() {
         let mut w = town();
         let lot = civic_lot(&w, -560.0);
@@ -1356,17 +1377,12 @@ mod tests {
     #[test]
     fn services_cost_upkeep_and_stadiums_draw_a_paying_crowd() {
         let mut w = town();
-        w.add_zone(square(-690.0, 60.0, 600.0, 55.0), LandUse::Entertainment);
         let folk = people(&mut w, 30);
-        let big = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Entertainment && l.usable() && l.car_access()).max_by(|a, b| a.1.area().total_cmp(&b.1.area())).map(|(id, l)| (id, l.area())).unwrap();
-        // Lots here are smaller than a stadium needs: the refusal says so.
-        let low_need = ServiceKind::Stadium.min_area(Tier::Low);
-        eprintln!("STADIUM LOT {:.0} need {low_need:.0}", big.1);
-        if big.1 < low_need {
-            let err = w.build_service(big.0, ServiceKind::Stadium, Tier::Low).unwrap_err();
-            assert!(err.contains("too small"), "{err}");
-            return;
-        }
+        let big = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Civic && l.usable() && l.car_access()).max_by(|a, b| a.1.area().total_cmp(&b.1.area())).map(|(id, l)| (id, l.area())).unwrap();
+        // A stadium needs room: a small lot is refused with the reason.
+        let small = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Civic && l.usable() && l.area() < ServiceKind::Stadium.min_area(Tier::Low)).map(|(id, _)| id).next().unwrap();
+        assert!(w.build_service(small, ServiceKind::Stadium, Tier::Low).unwrap_err().contains("too small"));
+        assert!(big.1 >= ServiceKind::Stadium.min_area(Tier::Low), "largest civic lot {:.0}", big.1);
         let stadium = w.build_service(big.0, ServiceKind::Stadium, Tier::Low).unwrap();
         let school = w.build_service(civic_lot(&w, 0.0), ServiceKind::School, Tier::Mid).unwrap();
         let _ = school;
