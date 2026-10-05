@@ -26,6 +26,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use crate::assets::GameAssets;
+use crate::ui::UiFlags;
 use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
 
@@ -753,8 +754,9 @@ fn sync_lots(
     mut overlays: ResMut<Overlays>,
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<LotsTag>>,
+    flags: Res<UiFlags>,
 ) {
-    if keys.just_pressed(KeyCode::KeyO) {
+    if keys.just_pressed(KeyCode::KeyO) && !flags.keyboard_captured {
         overlays.zoning = !overlays.zoning;
     }
     let w = &sim.world;
@@ -1198,8 +1200,9 @@ fn sync_overlay(
     mut overlays: ResMut<Overlays>,
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<OverlayTag>>,
+    flags: Res<UiFlags>,
 ) {
-    if keys.just_pressed(KeyCode::KeyV) {
+    if keys.just_pressed(KeyCode::KeyV) && !flags.keyboard_captured {
         overlays.land_value = !overlays.land_value;
     }
     let lv = &sim.world.land_value;
@@ -1239,8 +1242,9 @@ fn sync_paths(
     mut overlays: ResMut<Overlays>,
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<PathsTag>>,
+    flags: Res<UiFlags>,
 ) {
-    if keys.just_pressed(KeyCode::KeyP) {
+    if keys.just_pressed(KeyCode::KeyP) && !flags.keyboard_captured {
         overlays.paths = !overlays.paths;
     }
     let walk = &sim.world.walk;
