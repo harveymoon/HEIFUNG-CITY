@@ -93,6 +93,24 @@ pub fn station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let _ = lot_w;
 }
 
+/// A siding: ballast, sleepers, rails, like the main line.
+fn track(g: &mut Geometry, pal: &crate::palette::Palette, pts: &[Vec2]) {
+    if pts.len() < 2 {
+        return;
+    }
+    g.part(Dirt).path_strip(pts, 0.0, 4.4, 0.04, rgba(mul(pal.gravel, 0.85)));
+    let len: f32 = pts.windows(2).map(|w| w[0].distance(w[1])).sum();
+    let mut s = 0.35;
+    while s < len {
+        let (p, d) = nd_sim::rail::point_along(pts, s);
+        g.part(Wood).boxed(Vec3::new(p.x, 0.17, p.y), Vec3::new(0.24, 0.14, 2.5), d.y.atan2(d.x), rgba(mul(pal.wood, 0.55)));
+        s += 0.7;
+    }
+    for side in [-1.0f32, 1.0] {
+        g.part(Metal).path_box(pts, side * 0.72, 0.08, 0.24, 0.38, rgba(mul(pal.steel, 0.75)));
+    }
+}
+
 pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
@@ -120,19 +138,37 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     sign_board(g, c, rng, &c.front_face(&shed), 0.0, h - 1.3, 8.0, 0.9);
     roof_gear(g, c, rng, &shed, h, 0.2);
-    // Apron along the track with a gantry crane, containers and a forklift.
+    // Sidings fan off the main line beside the apron, as many as the yard
+    // is long for, under a gantry that spans them all.
     let [pa, pb] = link.platform;
     let along = link.along();
     let out = Vec2::new(-along.y, along.x) * link.side;
     let length = pa.distance(pb);
-    g.part(Concrete).path_box(&[pa + out * 4.0, pb + out * 4.0], 0.0, 9.0, 0.0, 0.3, rgba(mul(pal.concrete[0], 1.1)));
-    g.part(Glow).path_strip(&[pa + out * 0.4, pb + out * 0.4], 0.0, 0.12, 0.32, rgba([1.4, 1.2, 0.2]));
-    // Gantry: legs on the apron and across the track, beam over both.
+    // The platform line sits 3.8 m off the track centre; sidings every 4.6 m.
+    let main = -(nd_sim::roads::RAIL_HALF_WIDTH + 1.4);
+    let sidings = if length > 80.0 { 3 } else { 2 };
+    for k in 1..=sidings {
+        let off = main + 4.6 * k as f32;
+        let a0 = pa - along * (26.0 + 8.0 * k as f32) + out * main;
+        let a1 = pa - along * 6.0 + out * (main + (off - main) * 0.55);
+        let b1 = pb + along * 6.0 + out * (main + (off - main) * 0.55);
+        let b0 = pb + along * (26.0 + 8.0 * k as f32) + out * main;
+        let ctrl = [a0, a1, pa + out * off, pb + out * off, b1, b0];
+        let pts = nd_sim::plan::sample_curve(&ctrl);
+        track(g, pal, &pts);
+    }
+    let apron_in = main + 4.6 * sidings as f32 + 3.4;
+    let apron_w = 9.0;
+    g.part(Concrete).path_box(&[pa + out * (apron_in + apron_w * 0.5), pb + out * (apron_in + apron_w * 0.5)], 0.0, apron_w, 0.0, 0.3, rgba(mul(pal.concrete[0], 1.1)));
+    g.part(Glow).path_strip(&[pa + out * (apron_in + 0.3), pb + out * (apron_in + 0.3)], 0.0, 0.12, 0.32, rgba([1.4, 1.2, 0.2]));
+    // Gantry: legs on the apron and beyond the main line, beam over everything.
     let steel = mul(pal.metal_paint[0], 1.1);
+    let far_off = main - 3.0;
+    let near_off = apron_in + apron_w - 0.6;
     for t in [0.25f32, 0.75] {
         let p = pa.lerp(pb, t);
-        let near = p + out * 7.5;
-        let far = p - out * 3.4;
+        let near = p + out * near_off;
+        let far = p + out * far_off;
         for q in [near, far] {
             g.part(Metal).boxed(Vec3::new(q.x, 4.0, q.y), Vec3::new(0.5, 8.0, 0.5), 0.0, rgba(steel));
         }
@@ -141,13 +177,14 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         g.part(Matte).boxed(Vec3::new(hook.x, 7.4, hook.y), Vec3::new(1.4, 1.0, 1.4), 0.0, rgba(CHARCOAL));
         g.part(Matte).boxed(Vec3::new(hook.x, 5.5, hook.y), Vec3::new(0.05, 3.0, 0.05), 0.0, rgba(DARK));
     }
-    g.part(Metal).beam(Vec3::new(pa.x + out.x * 7.5, 8.4, pa.y + out.y * 7.5), Vec3::new(pb.x + out.x * 7.5, 8.4, pb.y + out.y * 7.5), 0.4, rgba(steel));
-    g.part(Metal).beam(Vec3::new(pa.x - out.x * 3.4, 8.4, pa.y - out.y * 3.4), Vec3::new(pb.x - out.x * 3.4, 8.4, pb.y - out.y * 3.4), 0.4, rgba(steel));
-    g.part(Glow).boxed(Vec3::new(pa.x + out.x * 7.5, 8.9, pa.y + out.y * 7.5), Vec3::splat(0.35), 0.0, rgba(pal.aviation_light));
-    // Container stacks between the apron and the shed.
+    for off in [near_off, far_off] {
+        g.part(Metal).beam(Vec3::new(pa.x + out.x * off, 8.4, pa.y + out.y * off), Vec3::new(pb.x + out.x * off, 8.4, pb.y + out.y * off), 0.4, rgba(steel));
+    }
+    g.part(Glow).boxed(Vec3::new(pa.x + out.x * near_off, 8.9, pa.y + out.y * near_off), Vec3::splat(0.35), 0.0, rgba(pal.aviation_light));
+    // Container stacks on the apron's far edge, towards the shed.
     let n = ((length / 7.0) as i32).clamp(1, 10);
     for k in 0..n {
-        let p = pa.lerp(pb, (k as f32 + 0.5) / n as f32) + out * 10.5;
+        let p = pa.lerp(pb, (k as f32 + 0.5) / n as f32) + out * (apron_in + apron_w + 1.8);
         let lp = f.to_local(p);
         if !c.inside(lp) {
             continue;
@@ -159,7 +196,7 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
     // Forklift and lorries at the doors.
-    let fp = pa.lerp(pb, 0.5) + out * 14.0;
+    let fp = pa.lerp(pb, 0.5) + out * (apron_in + apron_w + 5.5);
     if c.inside(f.to_local(fp)) {
         let yaw = rng.random_range(0.0..3.0);
         vehicle(g, f, rng, f.to_local(fp), yaw, Vehicle::Van, [0.9, 0.7, 0.1]);

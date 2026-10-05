@@ -874,7 +874,7 @@ mod tests {
                             }
                         }
                         // Stations and yards reach out to the track beside the lot by design.
-                        let allow = if matches!(style, Style::Station | Style::FreightYard) { 60.0 } else { 4.0 };
+                        let allow = match style { Style::FreightYard => 90.0, Style::Station => 60.0, _ => 4.0 };
                         if over > allow || top > (60.0 + floors as f32 * 5.0).max(90.0) || low < -2.0 {
                             let (plo, phi) = parts::bounds(&frame_poly(&frame, lot));
                             worst.push((over.max(-low), format!("{style:?} {lu:?} lot {li} ({} verts, span {span:.0}, local {:.0}..{:.0} x {:.0}..{:.0}) overshoots {over:.1} m, top {top:.0} m, low {low:.1}, floors {floors}: {culprit}", lot.polygon.len(), plo.x, phi.x, plo.y, phi.y)));

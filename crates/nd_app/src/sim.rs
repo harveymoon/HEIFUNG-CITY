@@ -58,9 +58,9 @@ impl Sim {
         };
         // A row south of the grid, one lot deep, backing onto the railway
         // branch: a freight yard and a station.
-        for (x, lu) in [(-210.0, LandUse::Industrial), (70.0, LandUse::Commercial)] {
+        for (x, lu, back) in [(-210.0, LandUse::Industrial, -340.0), (70.0, LandUse::Commercial, -316.0)] {
             let (x0, x1) = (x - 65.0, x + 65.0);
-            self.world.add_gesture(Gesture::Zone { polygon: vec![SVec2::new(x0, -340.0), SVec2::new(x1, -340.0), SVec2::new(x1, -285.0), SVec2::new(x0, -285.0)], land_use: lu });
+            self.world.add_gesture(Gesture::Zone { polygon: vec![SVec2::new(x0, back), SVec2::new(x1, back), SVec2::new(x1, -285.0), SVec2::new(x0, -285.0)], land_use: lu });
         }
         let plan = [
             (-210.0, -210.0, LandUse::Industrial), (-70.0, -210.0, LandUse::Industrial), (70.0, -210.0, LandUse::Residential), (210.0, -210.0, LandUse::Residential),
@@ -71,8 +71,8 @@ impl Sim {
         for (x, y, lu) in plan {
             self.world.add_gesture(Gesture::Zone { polygon: cell(x, y), land_use: lu });
         }
-        // A branch off the trunk line, running behind the southern row.
-        self.world.add_gesture(Gesture::Road { points: vec![SVec2::new(-300.0, nd_sim::rail::TRUNK_Y), SVec2::new(-300.0, -348.0), SVec2::new(150.0, -348.0)], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: nd_sim::roads::RoadKind::Rail });
+        // A branch off the trunk line (a turnout, eased into curves when built), running behind the southern row.
+        self.world.add_gesture(Gesture::Road { points: vec![SVec2::new(-420.0, nd_sim::rail::TRUNK_Y), SVec2::new(-330.0, -410.0), SVec2::new(-280.0, -348.0), SVec2::new(-110.0, -348.0), SVec2::new(-70.0, -324.0), SVec2::new(150.0, -324.0)], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: nd_sim::roads::RoadKind::Rail });
         self.world.implement();
         // The demo has the money for its showpieces.
         self.world.economy.treasury = self.world.economy.treasury.max(150_000.0);

@@ -342,6 +342,8 @@ impl World {
         // Roads.
         let mut roads = RoadNetwork::default();
         for (_, points, fwd, bwd, kind) in self.master.roads() {
+            // Track is eased into smooth curves and tangential switches.
+            let points = if kind == RoadKind::Rail { rail::smooth_track(&points, &roads) } else { points };
             let (fwd, bwd) = match kind {
                 RoadKind::Street if fwd == 0 && bwd == 0 => (1, 1),
                 RoadKind::Street => (fwd, bwd),
@@ -1840,7 +1842,7 @@ impl World {
         if lot.area() < min_area {
             return Err(format!("too small: a {} needs {:.0} m²", kind.label(), min_area));
         }
-        let link = RailLink::beside(&self.roads, &lot.polygon, lot.center, kind, length).ok_or_else(|| format!("no track within {:.0} m of that lot", rail::STATION_REACH))?;
+        let link = RailLink::beside(&self.roads, &lot.polygon, lot.center, lot.front_edge, kind, length).ok_or_else(|| format!("no track within {:.0} m of that lot running along its street", rail::STATION_REACH))?;
         if self.economy.treasury < cost {
             return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), cost));
         }
@@ -2364,7 +2366,7 @@ impl World {
         let tired: Vec<CitizenId> = self
             .citizens
             .iter()
-            .filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_some_and(|t| t.since > 0 && tick.saturating_sub(t.since) > transit::WAIT_GIVE_UP))
+            .filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_some_and(|t| t.since > 0 && tick.saturating_sub(t.since) > if matches!(t.leg, TransitLeg::Rail { .. }) { transit::WAIT_GIVE_UP * 2 } else { transit::WAIT_GIVE_UP }))
             .map(|(id, _)| id)
             .collect();
         for id in tired {
@@ -3244,21 +3246,32 @@ mod tests {
         let mut w = World::new(WorldConfig::default());
         assert!(w.roads.alive_segments().any(|(_, s)| s.is_rail()), "the trunk line is there from the start");
         w.economy.treasury = 200_000.0;
-        // A branch off the trunk, north then east, and a street beside it.
-        w.add_rail(&[Vec2::new(0.0, TRUNK_Y), Vec2::new(0.0, -60.0), Vec2::new(900.0, -60.0)]);
+        // A branch off the trunk, curving north then running east, and a
+        // street beside it. The drawn corner is square; the built track is not.
+        w.add_rail(&[Vec2::new(-200.0, TRUNK_Y), Vec2::new(-100.0, -400.0), Vec2::new(-40.0, -300.0), Vec2::new(0.0, -200.0), Vec2::new(0.0, -60.0), Vec2::new(900.0, -60.0)]);
         assert!(w.roads.alive_segments().filter(|(_, s)| s.is_rail()).count() >= 4, "the branch split the trunk and joined it");
+        {
+            let branch: Vec<Vec2> = w.master.roads().filter(|(_, _, _, _, k)| *k == RoadKind::Rail).map(|(_, pts, ..)| pts).find(|p| p.len() > 2).unwrap();
+            let built = crate::rail::smooth_track(&branch, &w.roads);
+            assert!(crate::rail::sharpest_turn(&built) < 0.6, "no sharp bends on the built track: {:.2} rad", crate::rail::sharpest_turn(&built));
+            let first_leg = (built[1] - built[0]).normalize_or_zero();
+            assert!(first_leg.y.abs() < 0.35, "the branch leaves the trunk along it, not square off it: {first_leg:?}");
+        }
         w.add_road(&[Vec2::new(-100.0, 0.0), Vec2::new(1000.0, 0.0)], 1, 1);
+        // Side streets make junctions, and junctions make crossings for walkers.
+        w.add_road(&[Vec2::new(120.0, 0.0), Vec2::new(120.0, 120.0)], 1, 1);
+        w.add_road(&[Vec2::new(600.0, 0.0), Vec2::new(600.0, 120.0)], 1, 1);
         let strip = |x0: f32, x1: f32| vec![Vec2::new(x0, -56.0), Vec2::new(x1, -56.0), Vec2::new(x1, -10.0), Vec2::new(x0, -10.0)];
-        w.add_zone(strip(10.0, 190.0), LandUse::Commercial);
-        w.add_zone(strip(300.0, 520.0), LandUse::Industrial);
-        w.add_zone(strip(610.0, 790.0), LandUse::Commercial);
-        w.add_zone(vec![Vec2::new(10.0, 10.0), Vec2::new(190.0, 10.0), Vec2::new(190.0, 90.0), Vec2::new(10.0, 90.0)], LandUse::Residential);
+        w.add_zone(strip(150.0, 330.0), LandUse::Commercial);
+        w.add_zone(strip(350.0, 570.0), LandUse::Industrial);
+        w.add_zone(strip(650.0, 830.0), LandUse::Commercial);
+        w.add_zone(vec![Vec2::new(150.0, 10.0), Vec2::new(330.0, 10.0), Vec2::new(330.0, 90.0), Vec2::new(150.0, 90.0)], LandUse::Residential);
         let lot_near = |w: &World, p: Vec2, lu: LandUse| w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none() && l.land_use == lu).min_by(|a, b| a.1.center.distance(p).total_cmp(&b.1.center.distance(p))).map(|(id, _)| id).unwrap();
-        let far = lot_near(&w, Vec2::new(150.0, 80.0), LandUse::Residential);
+        let far = lot_near(&w, Vec2::new(240.0, 80.0), LandUse::Residential);
         assert!(w.build_rail(far, RailFacility::Station).is_err(), "no track near that lot");
-        let a_lot = lot_near(&w, Vec2::new(60.0, -32.0), LandUse::Commercial);
+        let a_lot = lot_near(&w, Vec2::new(200.0, -32.0), LandUse::Commercial);
         let station_a = w.build_rail(a_lot, RailFacility::Station).unwrap_or_else(|e| panic!("station A: {e}; lot {:?}", w.lots[a_lot].polygon));
-        let b_lot = lot_near(&w, Vec2::new(700.0, -32.0), LandUse::Commercial);
+        let b_lot = lot_near(&w, Vec2::new(740.0, -32.0), LandUse::Commercial);
         let station_b = w.build_rail(b_lot, RailFacility::Station).expect("station B");
         let y_lot = w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none() && l.land_use == LandUse::Industrial && l.area() >= crate::rail::YARD_MIN_AREA).map(|(id, _)| id).next().expect("yard lot");
         assert!(w.build_rail(a_lot, RailFacility::FreightYard).is_err(), "taken");
@@ -3284,9 +3297,9 @@ mod tests {
         assert!(saw_train && dwelt_at_a, "train {saw_train} dwelt {dwelt_at_a}");
         assert!(w.rail.stats.passenger_trains_today >= 1);
         // A rider from a home by station A to a shop by station B.
-        let home_lot = lot_near(&w, Vec2::new(100.0, 40.0), LandUse::Residential);
+        let home_lot = lot_near(&w, Vec2::new(200.0, 40.0), LandUse::Residential);
         w.build_on(home_lot);
-        let shop_lot = lot_near(&w, Vec2::new(760.0, -32.0), LandUse::Commercial);
+        let shop_lot = lot_near(&w, Vec2::new(810.0, -32.0), LandUse::Commercial);
         w.build_on(shop_lot);
         let home = w.lots[home_lot].building.unwrap();
         let shop = w.lots[shop_lot].building.unwrap();

@@ -629,7 +629,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             if let Some(c) = cursor.ground {
                 if let Some((_, lot)) = sim.world.lots.iter().find(|(_, l)| point_in_polygon(c, &l.polygon)) {
                     let k = tools.rail_kind;
-                    let near_track = nd_sim::RailLink::beside(&sim.world.roads, &lot.polygon, lot.center, k, 10.0).is_some();
+                    let near_track = nd_sim::RailLink::beside(&sim.world.roads, &lot.polygon, lot.center, lot.front_edge, k, 10.0).is_some();
                     let land_ok = match k {
                         nd_sim::RailFacility::Station => lot.land_use != LandUse::Park,
                         nd_sim::RailFacility::FreightYard => lot.land_use == LandUse::Industrial,
