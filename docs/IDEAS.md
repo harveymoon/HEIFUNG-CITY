@@ -11,7 +11,10 @@ Add freely. Move items into `DESIGN.md` when they get scheduled.
 - Ruins and squats in zones that lose demand.
 
 ## Simulation
-- Lane-level microtraffic with vehicles, queues at intersections, traffic lights.
+- Ambient through-traffic from the city edges so streets feel busy even in a small town.
+- Lane changing and turn-lane choice; smarter signal timing (actuated, green waves).
+- Smooth arc roads instead of polylines; one-way streets; road upgrades in place.
+- Parking: cars that are not driving sit somewhere.
 - Power and data grids as utilities; brownouts dim the neon.
 - Crime and police presence as a per-district pressure.
 - Rent, wages and a credit economy; gentrification pressure between districts.

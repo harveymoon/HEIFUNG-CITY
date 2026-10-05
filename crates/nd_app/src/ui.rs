@@ -1,4 +1,4 @@
-//! egui side panel: clock, speed, tools, stats, inspector, save/load.
+//! egui side panel: clock, speed, project, tools, stats, inspector, save/load.
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
@@ -29,6 +29,15 @@ fn neon(ui: &mut egui::Ui, text: &str) {
     ui.label(egui::RichText::new(text).color(egui::Color32::from_rgb(0, 229, 255)).strong());
 }
 
+fn section(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(2.0);
+    ui.label(egui::RichText::new(text).small().strong().color(egui::Color32::from_rgb(255, 0, 170)));
+}
+
+fn zone_color32(c: [f32; 3]) -> egui::Color32 {
+    egui::Color32::from_rgb((c[0].min(1.0) * 255.0) as u8, (c[1].min(1.0) * 255.0) as u8, (c[2].min(1.0) * 255.0) as u8)
+}
+
 fn side_panel(
     mut contexts: EguiContexts,
     mut sim: ResMut<Sim>,
@@ -45,7 +54,7 @@ fn side_panel(
         egui::UiBuilder::new().layer_id(egui::LayerId::background()).max_rect(ctx.viewport_rect()),
     );
 
-    egui::Panel::left("neon_panel").default_size(330.0).show(&mut root, |ui| {
+    egui::Panel::left("neon_panel").default_size(340.0).show(&mut root, |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(4.0);
             ui.heading(egui::RichText::new("NEON DISTRICT").color(egui::Color32::from_rgb(255, 0, 170)).size(22.0));
@@ -70,36 +79,79 @@ fn side_panel(
             });
             ui.separator();
 
+            // Project.
+            section(ui, "PROJECT");
+            if let Some(p) = &sim.world.project {
+                let steps = p.steps.len();
+                let redo = p.redo.len();
+                ui.label(format!("{steps} pending step{}{}", if steps == 1 { "" } else { "s" }, if redo > 0 { format!(", {redo} redoable") } else { String::new() }));
+                ui.horizontal(|ui| {
+                    if ui.button("Implement  [Ctrl+Enter]").clicked() {
+                        sim.world.implement();
+                        tools.points.clear();
+                        tools.status = "Project implemented".into();
+                    }
+                    if ui.button("Undo").clicked() {
+                        sim.world.undo();
+                    }
+                    if ui.button("Redo").clicked() {
+                        sim.world.redo();
+                    }
+                    if ui.button("Discard").clicked() {
+                        sim.world.discard_project();
+                        tools.points.clear();
+                    }
+                });
+            } else {
+                ui.label(egui::RichText::new("No pending project. Drawing or bulldozing starts one.").weak().small());
+            }
+            ui.separator();
+
             // Tools.
-            ui.label(egui::RichText::new("TOOLS").small().strong());
-            ui.horizontal(|ui| {
-                for (tool, label) in [(Tool::Inspect, "Inspect [1]"), (Tool::Road, "Road [2]"), (Tool::Zone, "Zone [3]")] {
+            section(ui, "TOOLS");
+            ui.horizontal_wrapped(|ui| {
+                for (tool, label) in [
+                    (Tool::Inspect, "Inspect [1]"),
+                    (Tool::Road, "Road [2]"),
+                    (Tool::Zone, "Zone [3]"),
+                    (Tool::Edit, "Edit [4]"),
+                    (Tool::Bulldoze, "Bulldoze [5]"),
+                ] {
                     if ui.selectable_label(tools.tool == tool, label).clicked() {
                         tools.tool = tool;
                         tools.points.clear();
+                        tools.drag = None;
                     }
                 }
             });
             match tools.tool {
                 Tool::Road => {
-                    ui.add(egui::Slider::new(&mut tools.lanes, 1..=6).text("lanes"));
-                    ui.label(egui::RichText::new("Click to place nodes, Enter or right-click to build, Backspace undoes a node.").small().weak());
+                    ui.add(egui::Slider::new(&mut tools.lanes_fwd, 0..=3).text("lanes forward"));
+                    ui.add(egui::Slider::new(&mut tools.lanes_bwd, 0..=3).text("lanes backward"));
+                    if tools.lanes_fwd + tools.lanes_bwd == 0 {
+                        tools.lanes_fwd = 1;
+                    }
+                    ui.label(egui::RichText::new("Click to place nodes (snaps to existing nodes), Enter or right-click to add to the project, Backspace undoes a node.").small().weak());
                 }
                 Tool::Zone => {
                     ui.horizontal_wrapped(|ui| {
                         for lu in LandUse::ALL {
-                            let c = assets.palette.zone_color(lu);
-                            let col = egui::Color32::from_rgb((c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8);
-                            let text = egui::RichText::new(lu.label()).color(col);
+                            let text = egui::RichText::new(lu.label()).color(zone_color32(assets.palette.zone_color(lu)));
                             if ui.selectable_label(tools.land_use == lu, text).clicked() {
                                 tools.land_use = lu;
                             }
                         }
                     });
-                    ui.label(egui::RichText::new("Click polygon corners around a road, Enter or right-click to zone.").small().weak());
+                    ui.label(egui::RichText::new("Click polygon corners around a road, Enter or right-click to add to the project.").small().weak());
+                }
+                Tool::Edit => {
+                    ui.label(egui::RichText::new("Drag a control point to move it. Shift-click a road or zone edge to insert a point. Delete removes the hovered point.").small().weak());
+                }
+                Tool::Bulldoze => {
+                    ui.label(egui::RichText::new("Click a road or zone to mark it for removal.").small().weak());
                 }
                 Tool::Inspect => {
-                    ui.label(egui::RichText::new("Click a glowing citizen or a building.").small().weak());
+                    ui.label(egui::RichText::new("Click a glowing citizen, a car, or a building.").small().weak());
                 }
             }
             if !tools.status.is_empty() {
@@ -113,7 +165,7 @@ fn side_panel(
 
             // Stats.
             let e = &sim.world.economy;
-            ui.label(egui::RichText::new("CITY").small().strong());
+            section(ui, "CITY");
             ui.label(format!(
                 "population {}   buildings {}   lots {} ({} vacant)",
                 sim.world.citizens.len(),
@@ -129,16 +181,21 @@ fn side_panel(
                 e.jobs_total,
                 e.waiting_immigrants
             ));
+            ui.label(format!(
+                "cars on the road {}   lanes {}   intersections {}",
+                sim.world.traffic.cars.len(),
+                sim.world.traffic.net.lanes.len(),
+                sim.world.traffic.net.intersections.iter().filter(|i| i.signalized).count()
+            ));
             ui.label(egui::RichText::new("demand").small().weak());
             for lu in LandUse::ALL {
-                let c = assets.palette.zone_color(lu);
-                let col = egui::Color32::from_rgb((c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8);
+                let col = zone_color32(assets.palette.zone_color(lu));
                 ui.add(egui::ProgressBar::new(e.demand_for(lu)).text(lu.label()).fill(col.gamma_multiply(0.7)).desired_height(12.0));
             }
             ui.separator();
 
             // Inspector.
-            ui.label(egui::RichText::new("INSPECTOR").small().strong());
+            section(ui, "INSPECTOR");
             match *selection {
                 Selection::None => {
                     ui.label(egui::RichText::new("Nothing selected.").weak());

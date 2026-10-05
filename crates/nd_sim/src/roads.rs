@@ -28,14 +28,20 @@ pub struct Node {
 pub struct Segment {
     pub a: NodeId,
     pub b: NodeId,
-    /// Lanes in both directions combined.
-    pub lanes: u8,
+    /// Lanes running a -> b.
+    pub lanes_fwd: u8,
+    /// Lanes running b -> a.
+    pub lanes_bwd: u8,
     pub alive: bool,
 }
 
 impl Segment {
+    pub fn lanes(&self) -> u8 {
+        self.lanes_fwd + self.lanes_bwd
+    }
+
     pub fn half_width(&self) -> f32 {
-        self.lanes as f32 * LANE_WIDTH * 0.5 + SHOULDER
+        self.lanes() as f32 * LANE_WIDTH * 0.5 + SHOULDER
     }
 }
 
@@ -99,11 +105,11 @@ impl RoadNetwork {
         })
     }
 
-    fn link(&mut self, a: NodeId, b: NodeId, lanes: u8) -> SegmentId {
+    fn link(&mut self, a: NodeId, b: NodeId, lanes_fwd: u8, lanes_bwd: u8) -> SegmentId {
         if let Some(existing) = self.find_link(a, b) {
             return existing;
         }
-        self.segments.push(Segment { a, b, lanes, alive: true });
+        self.segments.push(Segment { a, b, lanes_fwd, lanes_bwd, alive: true });
         let id = SegmentId((self.segments.len() - 1) as u32);
         self.nodes[a.0 as usize].segments.push(id);
         self.nodes[b.0 as usize].segments.push(id);
@@ -116,19 +122,19 @@ impl RoadNetwork {
         for n in [s.a, s.b] {
             self.nodes[n.0 as usize].segments.retain(|&x| x != sid);
         }
-        self.link(s.a, at, s.lanes);
-        self.link(at, s.b, s.lanes);
+        self.link(s.a, at, s.lanes_fwd, s.lanes_bwd);
+        self.link(at, s.b, s.lanes_fwd, s.lanes_bwd);
     }
 
     /// Add a road along `points`. Crossing existing segments splits them so
     /// intersections become real nodes. Returns the created segments.
-    pub fn add_polyline(&mut self, points: &[Vec2], lanes: u8) -> Vec<SegmentId> {
+    pub fn add_polyline(&mut self, points: &[Vec2], lanes_fwd: u8, lanes_bwd: u8) -> Vec<SegmentId> {
         let mut out = Vec::new();
         for w in points.windows(2) {
             if w[0].distance(w[1]) < 0.5 {
                 continue;
             }
-            out.extend(self.add_segment(w[0], w[1], lanes));
+            out.extend(self.add_segment(w[0], w[1], lanes_fwd, lanes_bwd));
         }
         if !out.is_empty() {
             self.version += 1;
@@ -136,7 +142,7 @@ impl RoadNetwork {
         out
     }
 
-    fn add_segment(&mut self, pa: Vec2, pb: Vec2, lanes: u8) -> Vec<SegmentId> {
+    fn add_segment(&mut self, pa: Vec2, pb: Vec2, lanes_fwd: u8, lanes_bwd: u8) -> Vec<SegmentId> {
         let a = self.get_or_add_node(pa);
         let b = self.get_or_add_node(pb);
         if a == b {
@@ -173,7 +179,7 @@ impl RoadNetwork {
         if *chain.last().unwrap() != b {
             chain.push(b);
         }
-        chain.windows(2).map(|w| self.link(w[0], w[1], lanes)).collect()
+        chain.windows(2).map(|w| self.link(w[0], w[1], lanes_fwd, lanes_bwd)).collect()
     }
 
     /// Closest point on any alive segment.
@@ -316,8 +322,8 @@ mod tests {
     #[test]
     fn crossing_roads_make_an_intersection_node() {
         let mut net = RoadNetwork::default();
-        net.add_polyline(&[Vec2::new(-100.0, 0.0), Vec2::new(100.0, 0.0)], 2);
-        net.add_polyline(&[Vec2::new(0.0, -100.0), Vec2::new(0.0, 100.0)], 2);
+        net.add_polyline(&[Vec2::new(-100.0, 0.0), Vec2::new(100.0, 0.0)], 1, 1);
+        net.add_polyline(&[Vec2::new(0.0, -100.0), Vec2::new(0.0, 100.0)], 1, 1);
         assert_eq!(net.nodes.len(), 5);
         assert_eq!(net.alive_segments().count(), 4);
         let from = net.node_near(Vec2::new(-100.0, 0.0), 1.0).unwrap();
@@ -331,8 +337,8 @@ mod tests {
         let mut net = RoadNetwork::default();
         for i in -2..=2 {
             let c = i as f32 * 100.0;
-            net.add_polyline(&[Vec2::new(-200.0, c), Vec2::new(200.0, c)], 2);
-            net.add_polyline(&[Vec2::new(c, -200.0), Vec2::new(c, 200.0)], 2);
+            net.add_polyline(&[Vec2::new(-200.0, c), Vec2::new(200.0, c)], 1, 1);
+            net.add_polyline(&[Vec2::new(c, -200.0), Vec2::new(c, 200.0)], 1, 1);
         }
         let a = net.node_near(Vec2::new(-200.0, -200.0), 1.0).unwrap();
         let b = net.node_near(Vec2::new(200.0, 200.0), 1.0).unwrap();

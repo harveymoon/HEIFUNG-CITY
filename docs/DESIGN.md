@@ -56,8 +56,20 @@ Citizens are rendered from their simulated positions every frame.
 ## Simulation model (v0)
 
 - **Clock**: one tick is one simulated minute. 1440 ticks per day.
-- **Roads**: a node/segment graph. New polylines snap to existing nodes and split
-  segments they cross, so grids and intersections work. Pathfinding is A* over nodes.
+- **Planning**: roads and zones are *gestures*. The master plan is what is built; a
+  project is a stack of deltas on top of it with undo and redo. Control points of any
+  gesture can be dragged, inserted or deleted; bulldozing marks a gesture for removal.
+  Implementing applies the deltas and rebuilds roads, zones, lots and lanes. Buildings
+  whose lot survives the rebuild are kept, the rest are demolished.
+- **Roads**: a node/segment graph with per-direction lane counts. New polylines snap to
+  existing nodes and split segments they cross. Walking uses A* over nodes.
+- **Lanes and traffic**: every segment becomes offset lanes per direction, shortened at
+  junctions. Each junction gets connector lanes from every incoming lane to every
+  outgoing lane (U-turns only at dead ends); junctions with three or more approaches
+  run a fixed-cycle signal that gives one approach green at a time. Cars path over the
+  lane graph with A*, follow the intelligent driver model, queue behind each other and
+  stop at red lights. Traffic physics runs ten seconds per sim minute so trips stay on
+  screen.
 - **Zones**: polygons with a land use (Residential, Commercial, Industrial,
   Entertainment, Civic, Park). Lots are carved along every road segment that runs
   through a zone.
@@ -104,10 +116,12 @@ trait MindProvider {
 
 ## Roadmap
 
-- v0 (this repo): roads, zones, lots, procedural buildings, immigration, schedules,
-  rule-based minds, inspect panel, save/load, hot-reloaded palette and rules.
-- v1: lane-based traffic with vehicles, districts and names, money, demand that
-  reacts to prices, a day/night cycle that changes behaviour.
+- v0 (done): roads, zones, lots, procedural buildings, immigration, schedules,
+  rule-based minds, inspect panel, save/load, hot-reloaded palette and rules, day/night.
+- v0.5 (done): projects with undo/redo and control-point editing, lanes, generated
+  junctions with signals, car-following traffic, vehicles.
+- v1: household economy with resources and a market, districts and names, demand that
+  reacts to prices, ambient through-traffic, lane changing, smooth arc roads.
 - v2: LLM spotlight citizens with real backends, dialogue, gossip.
 - v3: faction and corporate layer, events, story generation.
 

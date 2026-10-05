@@ -14,12 +14,18 @@ links Bevy dynamically for quicker iteration.
 
 ## Playing
 
-- **Road tool [2]**: click nodes, Enter or right-click to build. Roads snap to existing nodes and
-  split anything they cross.
-- **Zone tool [3]**: pick a land use, click polygon corners around a road, Enter to zone. Lots are
+- Everything you draw goes into a **project**. `Ctrl+Enter` implements it, `Ctrl+Z` / `Ctrl+Y`
+  undo and redo, Discard throws it away. Planned roads show as holograms, removals in red.
+- **Road tool [2]**: pick lanes per direction, click nodes, Enter or right-click to add. Roads snap
+  to existing nodes and split anything they cross.
+- **Zone tool [3]**: pick a land use, click polygon corners around a road, Enter to add. Lots are
   carved along every road inside the zone.
-- **Inspect [1]**: click a glowing citizen to read their personality, memories and current thought.
-  Tick *Spotlight* to route them through the LLM mind (a mock backend today).
+- **Edit [4]**: drag control points of any road or zone, shift-click an edge to insert a point,
+  Delete to remove the hovered point. Changing a built road rebuilds it on implement.
+- **Bulldoze [5]**: click a road or zone to mark it for removal.
+- **Inspect [1]**: click a glowing citizen, a car, or a building. Tick *Spotlight* to route a
+  citizen through the LLM mind (a mock backend today).
+- Traffic: cars follow lanes, queue, and obey the signals at junctions with three or more roads.
 - Space pauses, `-`/`=` change speed. Camera: right-drag rotate, middle-drag or shift-drag pan,
   wheel zoom, WASD/QE.
 - Buildings appear on vacant lots when demand is high. People move in when homes are free, take

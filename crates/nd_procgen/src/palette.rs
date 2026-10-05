@@ -28,6 +28,13 @@ pub struct Palette {
     pub citizen: [f32; 3],
     pub citizen_spotlight: [f32; 3],
     pub preview: [f32; 3],
+    pub preview_remove: [f32; 3],
+    pub car_colors: Vec<[f32; 3]>,
+    pub headlight: [f32; 3],
+    pub taillight: [f32; 3],
+    pub signal_green: [f32; 3],
+    pub signal_red: [f32; 3],
+    pub lane_divider: [f32; 3],
 }
 
 impl Default for Palette {
@@ -68,7 +75,23 @@ impl Default for Palette {
             window_cold: [0.45, 1.25, 1.7],
             citizen: [0.5, 3.0, 4.0],
             citizen_spotlight: [6.0, 1.0, 4.0],
-            preview: [0.0, 2.5, 3.0],
+            preview: [0.0, 1.6, 2.0],
+            preview_remove: [2.5, 0.15, 0.4],
+            car_colors: vec![
+                [0.06, 0.06, 0.08],
+                [0.10, 0.11, 0.15],
+                [0.75, 0.78, 0.85],
+                [0.85, 0.65, 0.05],
+                [0.08, 0.80, 0.95],
+                [0.95, 0.05, 0.55],
+                [0.75, 0.05, 0.10],
+                [0.35, 0.10, 0.85],
+            ],
+            headlight: [3.5, 3.5, 3.0],
+            taillight: [3.0, 0.15, 0.2],
+            signal_green: [0.1, 3.0, 0.6],
+            signal_red: [3.0, 0.2, 0.3],
+            lane_divider: [0.0, 0.9, 1.1],
         }
     }
 }

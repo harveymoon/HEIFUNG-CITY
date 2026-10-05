@@ -1,4 +1,5 @@
 use crate::buildings::BuildingId;
+use crate::traffic::CarId;
 use crate::zoning::LandUse;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,12 @@ pub enum Activity {
         path: Vec<Vec2>,
         idx: usize,
     },
+    /// In a car on the lane network.
+    Driving {
+        car: CarId,
+        to: Option<BuildingId>,
+        purpose: Purpose,
+    },
 }
 
 impl Activity {
@@ -41,7 +48,7 @@ impl Activity {
             Activity::Working => "working",
             Activity::Visiting(_) => "out",
             Activity::Idle => "loitering",
-            Activity::Traveling { purpose, .. } => match purpose {
+            Activity::Traveling { purpose, .. } | Activity::Driving { purpose, .. } => match purpose {
                 Purpose::Home => "heading home",
                 Purpose::Work => "commuting",
                 Purpose::Visit(_) => "going out",
@@ -51,7 +58,7 @@ impl Activity {
     }
 
     pub fn is_traveling(&self) -> bool {
-        matches!(self, Activity::Traveling { .. })
+        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. })
     }
 }
 

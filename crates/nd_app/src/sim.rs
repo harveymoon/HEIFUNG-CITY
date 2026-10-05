@@ -6,7 +6,7 @@ use nd_minds::{HybridMind, MockBackend};
 use nd_sim::{SimEvent, Vec2 as SVec2, World, WorldConfig};
 
 /// Sim minutes per real second for each speed step.
-pub const SPEEDS: [(&str, f32); 5] = [("1×", 2.0), ("4×", 8.0), ("16×", 32.0), ("64×", 128.0), ("256×", 512.0)];
+pub const SPEEDS: [(&str, f32); 5] = [("1×", 1.0), ("4×", 4.0), ("16×", 16.0), ("64×", 64.0), ("256×", 256.0)];
 const MAX_TICKS_PER_FRAME: u32 = 400;
 
 #[derive(Resource)]
@@ -27,8 +27,8 @@ impl Sim {
     pub fn new() -> Self {
         let mut world = World::new(WorldConfig::default());
         // Two starter avenues so the city has entrances from day one.
-        world.add_road(&[SVec2::new(-700.0, 0.0), SVec2::new(700.0, 0.0)], 4);
-        world.add_road(&[SVec2::new(0.0, -700.0), SVec2::new(0.0, 700.0)], 4);
+        world.add_road(&[SVec2::new(-700.0, 0.0), SVec2::new(700.0, 0.0)], 2, 2);
+        world.add_road(&[SVec2::new(0.0, -700.0), SVec2::new(0.0, 700.0)], 2, 2);
         world.drain_events();
         Self {
             world,
@@ -44,11 +44,12 @@ impl Sim {
 
     /// Lay out a small grid with mixed zoning around the starter avenues.
     pub fn seed_demo_district(&mut self) {
-        use nd_sim::LandUse;
+        use nd_sim::{Gesture, LandUse};
+        self.world.start_project();
         for i in -2..=2 {
             let c = i as f32 * 140.0;
-            self.world.add_road(&[SVec2::new(-280.0, c), SVec2::new(280.0, c)], 2);
-            self.world.add_road(&[SVec2::new(c, -280.0), SVec2::new(c, 280.0)], 2);
+            self.world.add_gesture(Gesture::Road { points: vec![SVec2::new(-280.0, c), SVec2::new(280.0, c)], lanes_fwd: 1, lanes_bwd: 1 });
+            self.world.add_gesture(Gesture::Road { points: vec![SVec2::new(c, -280.0), SVec2::new(c, 280.0)], lanes_fwd: 1, lanes_bwd: 1 });
         }
         let cell = |cx: f32, cy: f32| {
             vec![SVec2::new(cx - 65.0, cy - 65.0), SVec2::new(cx + 65.0, cy - 65.0), SVec2::new(cx + 65.0, cy + 65.0), SVec2::new(cx - 65.0, cy + 65.0)]
@@ -60,7 +61,17 @@ impl Sim {
             (-210.0, 210.0, LandUse::Residential), (-70.0, 210.0, LandUse::Residential), (70.0, 210.0, LandUse::Entertainment), (210.0, 210.0, LandUse::Residential),
         ];
         for (x, y, lu) in plan {
-            self.world.add_zone(cell(x, y), lu);
+            self.world.add_gesture(Gesture::Zone { polygon: cell(x, y), land_use: lu });
+        }
+        self.world.implement();
+    }
+
+    /// Fraction of the way from the last tick to the next, for interpolation.
+    pub fn frac(&self) -> f32 {
+        if self.paused {
+            1.0
+        } else {
+            self.accumulator.clamp(0.0, 1.0)
         }
     }
 

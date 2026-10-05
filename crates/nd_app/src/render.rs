@@ -1,15 +1,17 @@
 //! Turns simulation state into Bevy entities. Static geometry (terrain, roads,
-//! lots, zones) is rebuilt as whole meshes when it changes; buildings get two
-//! entities each (lit body + unlit glow); citizens are small glowing markers
-//! moved every frame.
+//! lots, zones, project preview) is rebuilt as whole meshes when it changes;
+//! buildings get two entities each (lit body + unlit glow); citizens and cars
+//! are small glowing markers moved every frame.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::light::GlobalAmbientLight;
-use bevy::pbr::DistanceFog;
 use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::pbr::DistanceFog;
 use bevy::prelude::*;
 use nd_procgen::{build_terrain, generate_building, MeshData, TerrainConfig};
-use nd_sim::{BuildingId, CitizenId, SimEvent, Vec2 as SVec2};
+use nd_sim::roads::{LANE_WIDTH, SHOULDER};
+use nd_sim::traffic::LaneId;
+use nd_sim::{BuildingId, CarId, CitizenId, SimEvent, Vec2 as SVec2};
 use std::collections::HashMap;
 
 use crate::assets::GameAssets;
@@ -25,9 +27,15 @@ struct RoadsTag;
 #[derive(Component)]
 struct LotsTag;
 #[derive(Component)]
+struct PreviewTag;
+#[derive(Component)]
+struct SignalTag(LaneId);
+#[derive(Component)]
 pub struct BuildingTag(pub BuildingId);
 #[derive(Component)]
 pub struct CitizenTag(pub CitizenId);
+#[derive(Component)]
+pub struct CarTag(pub CarId);
 
 #[derive(Resource)]
 struct Materials {
@@ -38,23 +46,35 @@ struct Materials {
     citizen_spotlight: Handle<StandardMaterial>,
     citizen_selected: Handle<StandardMaterial>,
     citizen_mesh: Handle<Mesh>,
+    car_bodies: Vec<Handle<StandardMaterial>>,
+    car_body_mesh: Handle<Mesh>,
+    car_lights_mesh: Handle<Mesh>,
+    signal_green: Handle<StandardMaterial>,
+    signal_red: Handle<StandardMaterial>,
+    signal_mesh: Handle<Mesh>,
 }
 
 #[derive(Resource, Default)]
 struct RenderState {
     roads_version: u64,
-    lots_signature: (usize, usize, usize),
+    lanes_version: u64,
+    plan_version: u64,
+    lots_signature: (usize, usize, usize, u64),
     buildings: HashMap<BuildingId, [Entity; 2]>,
     citizens: HashMap<CitizenId, Entity>,
+    cars: HashMap<CarId, [Entity; 2]>,
 }
 
 pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<RenderState>()
-            .add_systems(Startup, setup)
-            .add_systems(Update, (sync_terrain, sync_roads, sync_lots, sync_buildings, sync_citizens, update_daylight).chain().in_set(SimSet::Sync));
+        app.init_resource::<RenderState>().add_systems(Startup, setup).add_systems(
+            Update,
+            (sync_terrain, sync_roads, sync_signals, sync_preview, sync_lots, sync_buildings, sync_citizens, sync_cars, update_daylight)
+                .chain()
+                .in_set(SimSet::Sync),
+        );
     }
 }
 
@@ -66,22 +86,69 @@ pub fn to_mesh(data: &MeshData) -> Mesh {
         .with_inserted_indices(Indices::U32(data.indices.clone()))
 }
 
+fn rgba(c: [f32; 3]) -> [f32; 4] {
+    [c[0], c[1], c[2], 1.0]
+}
+
+fn scale(c: [f32; 3], k: f32) -> [f32; 4] {
+    [c[0] * k, c[1] * k, c[2] * k, 1.0]
+}
+
 fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>, mut meshes: ResMut<Assets<Mesh>>, assets: Res<GameAssets>) {
     let pal = &assets.palette;
+    let unlit = |c: [f32; 3]| StandardMaterial { base_color: Color::linear_rgb(c[0], c[1], c[2]), unlit: true, ..default() };
     let solid = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, metallic: 0.15, ..default() });
     let glow = materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, ..default() });
     let ground = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 1.0, ..default() });
-    let c = pal.citizen;
-    let citizen = materials.add(StandardMaterial { base_color: Color::linear_rgb(c[0], c[1], c[2]), unlit: true, ..default() });
-    let s = pal.citizen_spotlight;
-    let citizen_spotlight = materials.add(StandardMaterial { base_color: Color::linear_rgb(s[0], s[1], s[2]), unlit: true, ..default() });
-    let citizen_selected = materials.add(StandardMaterial { base_color: Color::linear_rgb(8.0, 8.0, 8.0), unlit: true, ..default() });
+    let citizen = materials.add(unlit(pal.citizen));
+    let citizen_spotlight = materials.add(unlit(pal.citizen_spotlight));
+    let citizen_selected = materials.add(unlit([8.0, 8.0, 8.0]));
     let citizen_mesh = {
         let mut m = MeshData::default();
         m.boxed(Vec3::new(0.0, 1.0, 0.0), Vec3::new(1.0, 2.0, 1.0), 0.0, [1.0, 1.0, 1.0, 1.0]);
         meshes.add(to_mesh(&m))
     };
-    commands.insert_resource(Materials { solid, glow, ground, citizen, citizen_spotlight, citizen_selected, citizen_mesh });
+    let car_bodies = pal
+        .car_colors
+        .iter()
+        .map(|&c| materials.add(StandardMaterial { base_color: Color::linear_rgb(c[0], c[1], c[2]), perceptual_roughness: 0.4, metallic: 0.6, ..default() }))
+        .collect();
+    let car_body_mesh = {
+        let mut m = MeshData::default();
+        m.boxed(Vec3::new(0.0, 0.7, 0.0), Vec3::new(4.2, 1.0, 1.9), 0.0, [1.0, 1.0, 1.0, 1.0]);
+        m.boxed(Vec3::new(-0.3, 1.45, 0.0), Vec3::new(2.2, 0.6, 1.6), 0.0, [0.6, 0.6, 0.7, 1.0]);
+        meshes.add(to_mesh(&m))
+    };
+    let car_lights_mesh = {
+        let mut m = MeshData::default();
+        for z in [-0.6, 0.6] {
+            m.boxed(Vec3::new(2.1, 0.7, z), Vec3::new(0.15, 0.3, 0.4), 0.0, rgba(pal.headlight));
+            m.boxed(Vec3::new(-2.1, 0.75, z), Vec3::new(0.15, 0.25, 0.4), 0.0, rgba(pal.taillight));
+        }
+        meshes.add(to_mesh(&m))
+    };
+    let signal_green = materials.add(unlit(pal.signal_green));
+    let signal_red = materials.add(unlit(pal.signal_red));
+    let signal_mesh = {
+        let mut m = MeshData::default();
+        m.boxed(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.35, 0.12, LANE_WIDTH * 0.8), 0.0, [1.0, 1.0, 1.0, 1.0]);
+        meshes.add(to_mesh(&m))
+    };
+    commands.insert_resource(Materials {
+        solid,
+        glow,
+        ground,
+        citizen,
+        citizen_spotlight,
+        citizen_selected,
+        citizen_mesh,
+        car_bodies,
+        car_body_mesh,
+        car_lights_mesh,
+        signal_green,
+        signal_red,
+        signal_mesh,
+    });
 
     commands.insert_resource(GlobalAmbientLight { color: Color::linear_rgb(0.35, 0.45, 0.9), brightness: 70.0, ..default() });
     commands.spawn((
@@ -89,6 +156,12 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         Transform::from_xyz(300.0, 500.0, -200.0).looking_at(Vec3::ZERO, Vec3::Y),
         SunTag,
     ));
+}
+
+fn despawn_all<T: Component>(commands: &mut Commands, q: &Query<Entity, With<T>>) {
+    for e in q.iter() {
+        commands.entity(e).despawn();
+    }
 }
 
 fn sync_terrain(
@@ -101,55 +174,83 @@ fn sync_terrain(
     if !existing.is_empty() && !assets.palette_changed {
         return;
     }
-    for e in &existing {
-        commands.entity(e).despawn();
-    }
+    despawn_all(&mut commands, &existing);
     let data = build_terrain(&TerrainConfig::default(), &assets.palette);
     commands.spawn((Mesh3d(meshes.add(to_mesh(&data))), MeshMaterial3d(mats.ground.clone()), Transform::IDENTITY, TerrainTag));
+}
+
+/// Dashed strip along a line.
+fn dashes(mesh: &mut MeshData, a: SVec2, b: SVec2, width: f32, y: f32, dash: f32, gap: f32, color: [f32; 4]) {
+    let len = a.distance(b);
+    if len < 0.5 {
+        return;
+    }
+    let d = (b - a) / len;
+    let mut t = gap * 0.5;
+    while t + dash <= len {
+        mesh.ground_strip(&[a + d * t, a + d * (t + dash)], width, y, color);
+        t += dash + gap;
+    }
 }
 
 fn road_meshes(sim: &Sim, assets: &GameAssets) -> (MeshData, MeshData) {
     let pal = &assets.palette;
     let roads = &sim.world.roads;
+    let net = &sim.world.traffic.net;
     let mut asphalt = MeshData::default();
     let mut glow = MeshData::default();
-    let asphalt_c = [pal.asphalt[0], pal.asphalt[1], pal.asphalt[2], 1.0];
-    let marker_c = [pal.lane_marker[0], pal.lane_marker[1], pal.lane_marker[2], 1.0];
-    let dim_marker = [pal.lane_marker[0] * 0.45, pal.lane_marker[1] * 0.45, pal.lane_marker[2] * 0.45, 1.0];
+    let asphalt_c = rgba(pal.asphalt);
+    let edge_c = scale(pal.lane_marker, 0.45);
+    let centre_c = rgba(pal.lane_marker);
+    let divider_c = rgba(pal.lane_divider);
 
     for (sid, seg) in roads.alive_segments() {
         let (a, b) = roads.segment_points(sid);
         let hw = seg.half_width();
         asphalt.ground_strip(&[a, b], hw * 2.0, 0.05, asphalt_c);
-        // Glowing edge lines.
         let d = (b - a).normalize_or_zero();
-        let n = SVec2::new(-d.y, d.x) * (hw - 0.6);
-        glow.ground_strip(&[a + n, b + n], 0.25, 0.09, dim_marker);
-        glow.ground_strip(&[a - n, b - n], 0.25, 0.09, dim_marker);
-        // Dashed centre line.
-        if seg.lanes >= 2 {
-            let len = a.distance(b);
-            let mut t = 2.0;
-            while t + 2.5 < len {
-                glow.ground_strip(&[a + d * t, a + d * (t + 2.5)], 0.3, 0.09, marker_c);
-                t += 6.0;
+        let right = SVec2::new(d.y, -d.x);
+        // Edge lines just inside the shoulder.
+        let e = right * (hw - SHOULDER * 0.5);
+        glow.ground_strip(&[a + e, b + e], 0.22, 0.09, edge_c);
+        glow.ground_strip(&[a - e, b - e], 0.22, 0.09, edge_c);
+        // Lane boundaries, measured from the centreline: fwd lanes on the right.
+        let total = seg.lanes() as f32;
+        let centre_offset = (seg.lanes_fwd as f32 - seg.lanes_bwd as f32) * 0.5 * LANE_WIDTH;
+        // Boundary k sits at offset (k - lanes_bwd) * LANE_WIDTH from the centreline shifted so the
+        // road is symmetric about the segment line.
+        for k in 1..seg.lanes() as u32 {
+            let off = (k as f32 - total * 0.5) * LANE_WIDTH;
+            let p = right * off;
+            let is_centre = seg.lanes_fwd > 0 && seg.lanes_bwd > 0 && (off - (-centre_offset)).abs() < 0.01;
+            if is_centre {
+                glow.ground_strip(&[a + p + right * 0.2, b + p + right * 0.2], 0.16, 0.09, centre_c);
+                glow.ground_strip(&[a + p - right * 0.2, b + p - right * 0.2], 0.16, 0.09, centre_c);
+            } else {
+                dashes(&mut glow, a + p, b + p, 0.18, 0.09, 3.0, 4.0, divider_c);
             }
         }
     }
     // Intersection pads hide the seams where segments meet.
-    for node in &roads.nodes {
-        let alive: Vec<_> = node.segments.iter().filter(|&&s| roads.segment(s).alive).collect();
-        if alive.len() < 2 {
+    for (i, node) in roads.nodes.iter().enumerate() {
+        let alive = node.segments.iter().filter(|&&s| roads.segment(s).alive).count();
+        if alive == 0 {
             continue;
         }
-        let r = alive.iter().map(|&&s| roads.segment(s).half_width()).fold(0.0, f32::max);
-        let poly: Vec<SVec2> = (0..16)
-            .map(|i| {
-                let a = i as f32 / 16.0 * std::f32::consts::TAU;
+        let r = net.node_radius.get(i).copied().unwrap_or(4.0) + 0.3;
+        let poly: Vec<SVec2> = (0..20)
+            .map(|k| {
+                let a = k as f32 / 20.0 * std::f32::consts::TAU;
                 node.pos + SVec2::new(a.cos(), a.sin()) * r
             })
             .collect();
         asphalt.ground_polygon(&poly, 0.06, asphalt_c);
+        if alive >= 3 {
+            // Faint crosswalk-style ring so junctions read from above.
+            let mut ring = poly.clone();
+            ring.push(poly[0]);
+            glow.ground_strip(&ring, 0.3, 0.085, scale(pal.lane_marker, 0.25));
+        }
     }
     (asphalt, glow)
 }
@@ -168,15 +269,103 @@ fn sync_roads(
         return;
     }
     state.roads_version = version;
-    for e in &existing {
-        commands.entity(e).despawn();
-    }
+    despawn_all(&mut commands, &existing);
     let (asphalt, glow) = road_meshes(&sim, &assets);
     if !asphalt.is_empty() {
         commands.spawn((Mesh3d(meshes.add(to_mesh(&asphalt))), MeshMaterial3d(mats.solid.clone()), Transform::IDENTITY, RoadsTag));
     }
     if !glow.is_empty() {
         commands.spawn((Mesh3d(meshes.add(to_mesh(&glow))), MeshMaterial3d(mats.glow.clone()), Transform::IDENTITY, RoadsTag));
+    }
+}
+
+/// A glowing stop bar at the end of every lane feeding a signalised junction,
+/// coloured by whether that lane currently has a green connector.
+fn sync_signals(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    mats: Res<Materials>,
+    mut state: ResMut<RenderState>,
+    existing: Query<Entity, With<SignalTag>>,
+    mut q: Query<(&SignalTag, &mut MeshMaterial3d<StandardMaterial>)>,
+) {
+    let net = &sim.world.traffic.net;
+    if net.version != state.lanes_version || sim.full_rebuild {
+        state.lanes_version = net.version;
+        despawn_all(&mut commands, &existing);
+        for inter in &net.intersections {
+            if !inter.signalized {
+                continue;
+            }
+            let mut seen = std::collections::HashSet::new();
+            for &(conn, _) in &inter.connectors {
+                for (lid, lane) in net.lanes.iter().enumerate() {
+                    if lane.next.contains(&conn) && !lane.is_connector() && seen.insert(lid) {
+                        let (p, d) = lane.point_at(lane.length - 0.6);
+                        let heading = d.y.atan2(d.x);
+                        commands.spawn((
+                            Mesh3d(mats.signal_mesh.clone()),
+                            MeshMaterial3d(mats.signal_red.clone()),
+                            Transform::from_xyz(p.x, 0.0, p.y).with_rotation(Quat::from_rotation_y(-heading)),
+                            SignalTag(lid as LaneId),
+                        ));
+                    }
+                }
+            }
+        }
+        return;
+    }
+    for (tag, mut mat) in &mut q {
+        let Some(lane) = net.lanes.get(tag.0 as usize) else { continue };
+        let green = lane.next.iter().any(|&n| net.lanes[n as usize].green);
+        let wanted = if green { &mats.signal_green } else { &mats.signal_red };
+        if mat.0 != *wanted {
+            mat.0 = wanted.clone();
+        }
+    }
+}
+
+fn sync_preview(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut state: ResMut<RenderState>,
+    existing: Query<Entity, With<PreviewTag>>,
+) {
+    if sim.world.plan_version == state.plan_version && !assets.palette_changed && !sim.full_rebuild {
+        return;
+    }
+    state.plan_version = sim.world.plan_version;
+    despawn_all(&mut commands, &existing);
+    let pv = sim.world.preview();
+    let pal = &assets.palette;
+    let mut glow = MeshData::default();
+    for (_, pts, fwd, bwd) in &pv.planned_roads {
+        let w = (*fwd + *bwd) as f32 * LANE_WIDTH + SHOULDER * 2.0;
+        glow.ground_strip(pts, w, 0.12, scale(pal.preview, 0.35));
+        glow.ground_strip(pts, 0.5, 0.13, rgba(pal.preview));
+    }
+    for (_, pts, fwd, bwd) in &pv.removed_roads {
+        let w = (*fwd + *bwd) as f32 * LANE_WIDTH + SHOULDER * 2.0;
+        glow.ground_strip(pts, w, 0.12, scale(pal.preview_remove, 0.35));
+        dashes(&mut glow, pts[0], *pts.last().unwrap(), 0.6, 0.13, 4.0, 3.0, rgba(pal.preview_remove));
+    }
+    for (_, poly, lu) in &pv.planned_zones {
+        let c = pal.zone_color(*lu);
+        let mut outline = poly.clone();
+        outline.push(poly[0]);
+        glow.ground_strip(&outline, 0.8, 0.12, scale(c, 1.3));
+        glow.ground_polygon(poly, 0.045, scale(c, 0.12));
+    }
+    for (_, poly) in &pv.removed_zones {
+        let mut outline = poly.clone();
+        outline.push(poly[0]);
+        glow.ground_strip(&outline, 0.8, 0.12, rgba(pal.preview_remove));
+    }
+    if !glow.is_empty() {
+        commands.spawn((Mesh3d(meshes.add(to_mesh(&glow))), MeshMaterial3d(mats.glow.clone()), Transform::IDENTITY, PreviewTag));
     }
 }
 
@@ -191,14 +380,12 @@ fn sync_lots(
 ) {
     let w = &sim.world;
     let vacant = w.lots.values().filter(|l| l.building.is_none()).count();
-    let signature = (w.lots.len(), vacant, w.zones.len());
+    let signature = (w.lots.len(), vacant, w.zones.len(), w.roads.version);
     if signature == state.lots_signature && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
     state.lots_signature = signature;
-    for e in &existing {
-        commands.entity(e).despawn();
-    }
+    despawn_all(&mut commands, &existing);
     let pal = &assets.palette;
     let mut glow = MeshData::default();
     let mut fill = MeshData::default();
@@ -206,17 +393,17 @@ fn sync_lots(
         let c = pal.zone_color(zone.land_use);
         let mut outline = zone.polygon.clone();
         outline.push(zone.polygon[0]);
-        glow.ground_strip(&outline, 0.6, 0.04, [c[0] * 1.2, c[1] * 1.2, c[2] * 1.2, 1.0]);
+        glow.ground_strip(&outline, 0.6, 0.04, scale(c, 1.2));
     }
     for lot in w.lots.values() {
         let c = pal.zone_color(lot.land_use);
         if lot.building.is_none() {
             let mut outline = lot.corners.to_vec();
             outline.push(lot.corners[0]);
-            glow.ground_strip(&outline, 0.25, 0.035, [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5, 1.0]);
+            glow.ground_strip(&outline, 0.25, 0.035, scale(c, 0.5));
             fill.ground_polygon(&lot.corners, 0.02, [c[0] * 0.08 + pal.lot_vacant[0], c[1] * 0.08 + pal.lot_vacant[1], c[2] * 0.08 + pal.lot_vacant[2], 1.0]);
         } else {
-            fill.ground_polygon(&lot.corners, 0.02, [pal.curb[0], pal.curb[1], pal.curb[2], 1.0]);
+            fill.ground_polygon(&lot.corners, 0.02, rgba(pal.curb));
         }
     }
     if !fill.is_empty() {
@@ -231,12 +418,8 @@ fn spawn_building(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Mat
     let b = sim.world.buildings.get(id)?;
     let lot = sim.world.lots.get(b.lot)?;
     let geo = generate_building(lot, b.land_use, b.floors, b.seed, &assets.rules, &assets.palette);
-    let solid = commands
-        .spawn((Mesh3d(meshes.add(to_mesh(&geo.solid))), MeshMaterial3d(mats.solid.clone()), Transform::IDENTITY, BuildingTag(id)))
-        .id();
-    let glow = commands
-        .spawn((Mesh3d(meshes.add(to_mesh(&geo.glow))), MeshMaterial3d(mats.glow.clone()), Transform::IDENTITY, BuildingTag(id)))
-        .id();
+    let solid = commands.spawn((Mesh3d(meshes.add(to_mesh(&geo.solid))), MeshMaterial3d(mats.solid.clone()), Transform::IDENTITY, BuildingTag(id))).id();
+    let glow = commands.spawn((Mesh3d(meshes.add(to_mesh(&geo.glow))), MeshMaterial3d(mats.glow.clone()), Transform::IDENTITY, BuildingTag(id))).id();
     Some([solid, glow])
 }
 
@@ -278,6 +461,14 @@ fn sync_buildings(
                 state.buildings.insert(id, ents);
             }
         }
+        let gone: Vec<BuildingId> = state.buildings.keys().copied().filter(|id| !sim.world.buildings.contains_key(*id)).collect();
+        for id in gone {
+            if let Some(ents) = state.buildings.remove(&id) {
+                for e in ents {
+                    commands.entity(e).despawn();
+                }
+            }
+        }
     }
     // Clear the full-rebuild flag last so every sync system saw it this frame.
     if sim.full_rebuild {
@@ -294,7 +485,6 @@ fn sync_citizens(
     mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), With<CitizenTag>>,
 ) {
     let w = &sim.world;
-    // Spawn markers for new citizens.
     for (id, _) in w.citizens.iter() {
         if !state.citizens.contains_key(&id) {
             let e = commands
@@ -303,14 +493,12 @@ fn sync_citizens(
             state.citizens.insert(id, e);
         }
     }
-    // Remove markers for citizens that left.
     let gone: Vec<CitizenId> = state.citizens.keys().copied().filter(|id| !w.citizens.contains_key(*id)).collect();
     for id in gone {
         if let Some(e) = state.citizens.remove(&id) {
             commands.entity(e).despawn();
         }
     }
-    // Update positions.
     for (id, &e) in state.citizens.iter() {
         let Some(c) = w.citizens.get(*id) else { continue };
         let Ok((mut tf, mut vis, mut mat)) = q.get_mut(e) else { continue };
@@ -330,6 +518,57 @@ fn sync_citizens(
         };
         if mat.0 != *wanted {
             mat.0 = wanted.clone();
+        }
+    }
+}
+
+fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
+    let mut d = b - a;
+    while d > std::f32::consts::PI {
+        d -= std::f32::consts::TAU;
+    }
+    while d < -std::f32::consts::PI {
+        d += std::f32::consts::TAU;
+    }
+    a + d * t
+}
+
+fn sync_cars(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    mats: Res<Materials>,
+    selection: Res<Selection>,
+    mut state: ResMut<RenderState>,
+    mut q: Query<&mut Transform, With<CarTag>>,
+) {
+    let traffic = &sim.world.traffic;
+    for (id, car) in traffic.cars.iter() {
+        if !state.cars.contains_key(&id) {
+            let body_mat = mats.car_bodies[car.color as usize % mats.car_bodies.len().max(1)].clone();
+            let body = commands.spawn((Mesh3d(mats.car_body_mesh.clone()), MeshMaterial3d(body_mat), Transform::IDENTITY, CarTag(id))).id();
+            let lights = commands.spawn((Mesh3d(mats.car_lights_mesh.clone()), MeshMaterial3d(mats.glow.clone()), Transform::IDENTITY, CarTag(id))).id();
+            state.cars.insert(id, [body, lights]);
+        }
+    }
+    let gone: Vec<CarId> = state.cars.keys().copied().filter(|id| !traffic.cars.contains_key(*id)).collect();
+    for id in gone {
+        if let Some(ents) = state.cars.remove(&id) {
+            for e in ents {
+                commands.entity(e).despawn();
+            }
+        }
+    }
+    let f = sim.frac();
+    for (id, ents) in state.cars.iter() {
+        let Some(car) = traffic.cars.get(*id) else { continue };
+        let pos = car.prev_pos.lerp(car.pos, f);
+        let heading = lerp_angle(car.prev_heading, car.heading, f);
+        let selected = *selection == Selection::Citizen(car.citizen);
+        for e in ents {
+            if let Ok(mut tf) = q.get_mut(*e) {
+                tf.translation = Vec3::new(pos.x, if selected { 0.4 } else { 0.0 }, pos.y);
+                tf.rotation = Quat::from_rotation_y(-heading);
+            }
         }
     }
 }
@@ -356,7 +595,6 @@ fn update_daylight(
 ) {
     let pal = &assets.palette;
     let t = sim.world.clock.day_fraction();
-    // Elevation peaks at noon (t = 0.5) and bottoms out at midnight.
     let elev = ((t - 0.25) * std::f32::consts::TAU).sin();
     let daylight = smoothstep(-0.12, 0.30, elev);
     let low_sun = 1.0 - smoothstep(0.05, 0.45, elev.abs());
@@ -388,7 +626,6 @@ fn update_daylight(
     let amb = lerp3([0.35, 0.45, 0.9], [0.8, 0.85, 1.0], daylight);
     ambient.color = Color::linear_rgb(amb[0], amb[1], amb[2]);
 
-    // Neon fades during the day.
     let glow_k = 1.0 - 0.7 * daylight;
     if let Some(mut m) = materials.get_mut(&mats.glow) {
         m.base_color = Color::linear_rgb(glow_k, glow_k, glow_k);

@@ -5,7 +5,9 @@ use crate::economy::Economy;
 use crate::events::SimEvent;
 use crate::mind::{Decision, Intent, MindContext, MindProvider};
 use crate::names;
-use crate::roads::{NodeId, RoadNetwork};
+use crate::plan::{preview, Gesture, GestureId, Plan, PlanPreview, Project};
+use crate::roads::{NodeId, RoadNetwork, SegmentId};
+use crate::traffic::Traffic;
 use crate::zoning::{generate_lots, LandUse, Lot, LotId, Zone, ZoneId};
 use crate::SimRng;
 use glam::Vec2;
@@ -19,9 +21,14 @@ pub struct WorldConfig {
     pub seed: u64,
     /// Half-size of the buildable square, in metres.
     pub half_extent: f32,
-    /// Metres per tick (minute).
+    /// Metres per tick (minute) when walking.
     pub walk_speed: f32,
-    pub drive_speed: f32,
+    /// Trips at least this long (straight line) are driven, shorter ones walked.
+    pub drive_threshold: f32,
+    /// Seconds of vehicle physics simulated per tick. Smaller than 60 keeps
+    /// trips on screen for several sim minutes, as city builders usually do.
+    pub traffic_seconds_per_tick: f32,
+    pub traffic_substeps: usize,
     pub immigration_interval: u64,
     pub development_interval: u64,
     /// Upper bound on buildings started per development interval.
@@ -33,8 +40,10 @@ impl Default for WorldConfig {
         Self {
             seed: 7,
             half_extent: 900.0,
-            walk_speed: 80.0,
-            drive_speed: 450.0,
+            walk_speed: 50.0,
+            drive_threshold: 60.0,
+            traffic_seconds_per_tick: 10.0,
+            traffic_substeps: 10,
             immigration_interval: 30,
             development_interval: 20,
             max_builds_per_interval: 2,
@@ -48,11 +57,19 @@ pub struct World {
     pub clock: SimClock,
     #[serde(with = "rng_serde")]
     rng: SimRng,
+    /// What is built.
+    pub master: Plan,
+    /// Pending changes, if any.
+    pub project: Option<Project>,
+    next_gesture: u64,
+    /// Bumped whenever master or project changes.
+    pub plan_version: u64,
     pub roads: RoadNetwork,
     pub zones: SlotMap<ZoneId, Zone>,
     pub lots: SlotMap<LotId, Lot>,
     pub buildings: SlotMap<BuildingId, Building>,
     pub citizens: SlotMap<CitizenId, Citizen>,
+    pub traffic: Traffic,
     pub economy: Economy,
     #[serde(skip)]
     pub events: Vec<SimEvent>,
@@ -65,11 +82,16 @@ impl World {
             rng: SimRng::seed_from_u64(config.seed),
             config,
             clock: SimClock::starting_at(0, 7, 0),
+            master: Plan::default(),
+            project: None,
+            next_gesture: 1,
+            plan_version: 0,
             roads: RoadNetwork::default(),
             zones: SlotMap::with_key(),
             lots: SlotMap::with_key(),
             buildings: SlotMap::with_key(),
             citizens: SlotMap::with_key(),
+            traffic: Traffic::default(),
             economy: Economy::default(),
             events: Vec::new(),
             next_seed: 1,
@@ -81,7 +103,19 @@ impl World {
     }
 
     pub fn from_ron(text: &str) -> Result<Self, ron::error::SpannedError> {
-        ron::from_str(text)
+        let mut w: World = ron::from_str(text)?;
+        w.after_load();
+        Ok(w)
+    }
+
+    /// Rebuild derived state that is not serialised.
+    fn after_load(&mut self) {
+        self.traffic.rebuild(&self.roads);
+        for (_, car) in self.traffic.reattach_cars() {
+            self.strand_driver(car.citizen, car.pos);
+        }
+        self.plan_version += 1;
+        self.events.push(SimEvent::PlanChanged);
     }
 
     fn fresh_seed(&mut self) -> u64 {
@@ -93,36 +127,214 @@ impl World {
         std::mem::take(&mut self.events)
     }
 
-    // ── player actions ───────────────────────────────────────────────────────
+    // ── planning ─────────────────────────────────────────────────────────────
 
-    pub fn add_road(&mut self, points: &[Vec2], lanes: u8) {
-        let created = self.roads.add_polyline(points, lanes);
-        if created.is_empty() {
-            return;
-        }
-        self.events.push(SimEvent::RoadsChanged);
-        self.regenerate_lots();
+    pub fn has_project(&self) -> bool {
+        self.project.is_some()
     }
 
-    pub fn add_zone(&mut self, polygon: Vec<Vec2>, land_use: LandUse) -> Option<ZoneId> {
+    pub fn start_project(&mut self) {
+        if self.project.is_none() {
+            self.project = Some(Project::default());
+            self.plan_version += 1;
+        }
+    }
+
+    pub fn discard_project(&mut self) {
+        if self.project.take().is_some() {
+            self.plan_version += 1;
+        }
+    }
+
+    fn project_mut(&mut self) -> &mut Project {
+        self.start_project();
+        self.plan_version += 1;
+        self.project.as_mut().unwrap()
+    }
+
+    pub fn add_gesture(&mut self, gesture: Gesture) -> GestureId {
+        let id = GestureId(self.next_gesture);
+        self.next_gesture += 1;
+        self.project_mut().push(id, Some(gesture));
+        id
+    }
+
+    /// Replace a gesture in the project. With `commit == false` the last step
+    /// is amended instead of a new one being recorded (continuous drags).
+    pub fn set_gesture(&mut self, id: GestureId, gesture: Gesture, commit: bool) {
+        let p = self.project_mut();
+        if commit {
+            p.push(id, Some(gesture));
+        } else {
+            p.amend(id, Some(gesture));
+        }
+    }
+
+    pub fn remove_gesture(&mut self, id: GestureId) {
+        self.project_mut().push(id, None);
+    }
+
+    pub fn undo(&mut self) -> bool {
+        let ok = self.project.as_mut().map_or(false, |p| p.undo());
+        if ok {
+            self.plan_version += 1;
+        }
+        ok
+    }
+
+    pub fn redo(&mut self) -> bool {
+        let ok = self.project.as_mut().map_or(false, |p| p.redo());
+        if ok {
+            self.plan_version += 1;
+        }
+        ok
+    }
+
+    pub fn effective_plan(&self) -> Plan {
+        match &self.project {
+            Some(p) => p.apply_to(&self.master),
+            None => self.master.clone(),
+        }
+    }
+
+    pub fn gesture(&self, id: GestureId) -> Option<Gesture> {
+        self.effective_plan().gestures.get(&id).cloned()
+    }
+
+    pub fn preview(&self) -> PlanPreview {
+        match &self.project {
+            Some(p) => preview(&self.master, p),
+            None => PlanPreview::default(),
+        }
+    }
+
+    /// Apply the project to the master plan and rebuild roads, zones, lots and
+    /// lanes. Buildings whose lot survives are kept; the rest are demolished.
+    pub fn implement(&mut self) {
+        let Some(project) = self.project.take() else { return };
+        if project.is_empty() {
+            self.plan_version += 1;
+            return;
+        }
+        self.master = project.apply_to(&self.master);
+        self.rebuild_from_master();
+    }
+
+    /// Convenience for scripts and tests: build a road right away.
+    pub fn add_road(&mut self, points: &[Vec2], lanes_fwd: u8, lanes_bwd: u8) -> GestureId {
+        let had_project = self.project.take();
+        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd, lanes_bwd });
+        self.implement();
+        self.project = had_project;
+        id
+    }
+
+    /// Convenience for scripts and tests: zone right away.
+    pub fn add_zone(&mut self, polygon: Vec<Vec2>, land_use: LandUse) -> Option<GestureId> {
         if polygon.len() < 3 {
             return None;
         }
-        let id = self.zones.insert(Zone { polygon, land_use });
-        self.regenerate_lots();
+        let had_project = self.project.take();
+        let id = self.add_gesture(Gesture::Zone { polygon, land_use });
+        self.implement();
+        self.project = had_project;
         Some(id)
     }
 
-    fn regenerate_lots(&mut self) {
-        let mut any = false;
-        let ids: Vec<ZoneId> = self.zones.keys().collect();
-        for zid in ids {
-            let zone = self.zones[zid].clone();
-            let created = generate_lots(zid, &zone, &self.roads, &mut self.lots);
-            any |= !created.is_empty();
+    fn rebuild_from_master(&mut self) {
+        self.plan_version += 1;
+
+        // Roads.
+        let mut roads = RoadNetwork::default();
+        for (_, points, fwd, bwd) in self.master.roads() {
+            let (fwd, bwd) = if fwd == 0 && bwd == 0 { (1, 1) } else { (fwd, bwd) };
+            roads.add_polyline(points, fwd, bwd);
         }
-        if any {
-            self.events.push(SimEvent::LotsChanged);
+        roads.version = self.roads.version + 1;
+        self.roads = roads;
+
+        // Zones.
+        self.zones.clear();
+        for (_, polygon, land_use) in self.master.zones() {
+            self.zones.insert(Zone { polygon: polygon.to_vec(), land_use });
+        }
+
+        // Lots: regenerate, then match old lots with buildings to new ones.
+        let old_lots = std::mem::replace(&mut self.lots, SlotMap::with_key());
+        let zone_ids: Vec<ZoneId> = self.zones.keys().collect();
+        for zid in zone_ids {
+            let zone = self.zones[zid].clone();
+            generate_lots(zid, &zone, &self.roads, &mut self.lots);
+        }
+        let mut demolish: Vec<BuildingId> = Vec::new();
+        for (_, old) in old_lots.iter() {
+            let Some(bid) = old.building else { continue };
+            let found = self
+                .lots
+                .iter()
+                .filter(|(_, l)| l.building.is_none() && l.land_use == old.land_use)
+                .map(|(id, l)| (id, l.center.distance(old.center)))
+                .filter(|(_, d)| *d < 4.0)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(id, _)| id);
+            match found {
+                Some(new_lot) => {
+                    self.lots[new_lot].building = Some(bid);
+                    if let Some(b) = self.buildings.get_mut(bid) {
+                        b.lot = new_lot;
+                    }
+                }
+                None => demolish.push(bid),
+            }
+        }
+        for bid in demolish {
+            self.demolish(bid);
+        }
+
+        // Lanes and cars.
+        self.traffic.rebuild(&self.roads);
+        for (_, car) in self.traffic.clear_cars() {
+            self.strand_driver(car.citizen, car.pos);
+        }
+
+        self.events.push(SimEvent::RoadsChanged);
+        self.events.push(SimEvent::LotsChanged);
+        self.events.push(SimEvent::PlanChanged);
+    }
+
+    fn demolish(&mut self, bid: BuildingId) {
+        let Some(b) = self.buildings.remove(bid) else { return };
+        let tick = self.clock.tick;
+        let center = self.lots.get(b.lot).map(|l| l.center).unwrap_or(Vec2::ZERO);
+        for cid in b.residents.iter().chain(b.workers.iter()).copied() {
+            if let Some(c) = self.citizens.get_mut(cid) {
+                if c.home == Some(bid) {
+                    c.home = None;
+                    c.remember(tick, format!("{} was demolished. Homeless again.", b.name));
+                }
+                if c.work == Some(bid) {
+                    c.work = None;
+                }
+            }
+        }
+        let inside: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.inside == Some(bid)).map(|(id, _)| id).collect();
+        for cid in inside {
+            let c = &mut self.citizens[cid];
+            c.inside = None;
+            c.pos = center;
+            c.activity = Activity::Idle;
+        }
+        self.events.push(SimEvent::BuildingRemoved(bid, b.lot));
+    }
+
+    /// A driver whose car vanished (network rebuilt, bad save) stands where
+    /// the car was and decides again.
+    fn strand_driver(&mut self, cid: CitizenId, pos: Vec2) {
+        if let Some(c) = self.citizens.get_mut(cid) {
+            c.pos = pos;
+            c.inside = None;
+            c.activity = Activity::Idle;
+            c.next_decision_tick = self.clock.tick + 1;
         }
     }
 
@@ -169,7 +381,27 @@ impl World {
                 self.apply_decision(id, decision);
             }
         }
+        self.step_traffic();
         self.step_citizens(minds);
+    }
+
+    fn step_traffic(&mut self) {
+        let arrived = self.traffic.step(self.config.traffic_seconds_per_tick, self.config.traffic_substeps);
+        for car_id in arrived {
+            let Some(car) = self.traffic.remove_car(car_id) else { continue };
+            if let Some(c) = self.citizens.get_mut(car.citizen) {
+                c.pos = car.pos;
+                c.heading = car.heading;
+                self.arrive(car.citizen);
+            }
+        }
+        // Keep citizen positions in sync with their cars for inspection.
+        for car in self.traffic.cars.values() {
+            if let Some(c) = self.citizens.get_mut(car.citizen) {
+                c.pos = car.pos;
+                c.heading = car.heading;
+            }
+        }
     }
 
     fn update_economy(&mut self) {
@@ -185,12 +417,7 @@ impl World {
     }
 
     fn develop(&mut self) {
-        let vacant: Vec<LotId> = self
-            .lots
-            .iter()
-            .filter(|(_, l)| l.building.is_none())
-            .map(|(id, _)| id)
-            .collect();
+        let vacant: Vec<LotId> = self.lots.iter().filter(|(_, l)| l.building.is_none()).map(|(id, _)| id).collect();
         if vacant.is_empty() {
             return;
         }
@@ -213,7 +440,7 @@ impl World {
         }
     }
 
-    fn build_on(&mut self, lot_id: LotId) {
+    pub fn build_on(&mut self, lot_id: LotId) {
         let lu = self.lots[lot_id].land_use;
         let floors = match lu {
             LandUse::Residential => self.rng.random_range(2..=9),
@@ -236,16 +463,13 @@ impl World {
         if leaves.is_empty() {
             return None;
         }
-        let far: Vec<NodeId> = {
-            let max = leaves.iter().map(|&n| self.roads.node(n).pos.length()).fold(0.0, f32::max);
-            leaves.iter().copied().filter(|&n| self.roads.node(n).pos.length() >= max * 0.6).collect()
-        };
+        let max = leaves.iter().map(|&n| self.roads.node(n).pos.length()).fold(0.0, f32::max);
+        let far: Vec<NodeId> = leaves.iter().copied().filter(|&n| self.roads.node(n).pos.length() >= max * 0.6).collect();
         far.choose(&mut self.rng).copied()
     }
 
     fn pick_building<F: Fn(&Building) -> bool>(&mut self, pred: F) -> Option<BuildingId> {
-        let candidates: Vec<BuildingId> =
-            self.buildings.iter().filter(|(_, b)| pred(b)).map(|(id, _)| id).collect();
+        let candidates: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| pred(b)).map(|(id, _)| id).collect();
         candidates.choose(&mut self.rng).copied()
     }
 
@@ -279,10 +503,7 @@ impl World {
                 inside: None,
                 mood: 0.6,
             };
-            citizen.remember(
-                tick,
-                format!("Rolled into Neon District on day {} at {}.", self.clock.day() + 1, self.clock.format_hhmm()),
-            );
+            citizen.remember(tick, format!("Rolled into Neon District on day {} at {}.", self.clock.day() + 1, self.clock.format_hhmm()));
             let id = self.citizens.insert(citizen);
             self.buildings[home].residents.push(id);
             let home_name = self.buildings[home].name.clone();
@@ -305,8 +526,7 @@ impl World {
     }
 
     fn job_search(&mut self) {
-        let jobless: Vec<CitizenId> =
-            self.citizens.iter().filter(|(_, c)| c.work.is_none()).map(|(id, _)| id).collect();
+        let jobless: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.work.is_none()).map(|(id, _)| id).collect();
         for id in jobless {
             let Some(job) = self.pick_building(|b| b.free_jobs() > 0) else { break };
             self.assign_job(id, job);
@@ -320,15 +540,11 @@ impl World {
         let ids: Vec<CitizenId> = self.citizens.keys().collect();
 
         for id in ids {
-            // Movement.
+            // Walking.
             let arrived = {
                 let c = &mut self.citizens[id];
-                if let Activity::Traveling { path, idx, purpose, .. } = &mut c.activity {
-                    let speed = match purpose {
-                        Purpose::Home | Purpose::Work => self.config.drive_speed,
-                        _ => self.config.walk_speed,
-                    };
-                    let mut remaining = speed;
+                if let Activity::Traveling { path, idx, .. } = &mut c.activity {
+                    let mut remaining = self.config.walk_speed;
                     while remaining > 0.0 && *idx < path.len() {
                         let target = path[*idx];
                         let d = c.pos.distance(target);
@@ -385,7 +601,7 @@ impl World {
     fn arrive(&mut self, id: CitizenId) {
         let tick = self.clock.tick;
         let (to, purpose) = match &self.citizens[id].activity {
-            Activity::Traveling { to, purpose, .. } => (*to, *purpose),
+            Activity::Traveling { to, purpose, .. } | Activity::Driving { to, purpose, .. } => (*to, *purpose),
             _ => return,
         };
         let c = &mut self.citizens[id];
@@ -449,16 +665,14 @@ impl World {
                 }
             }
             Intent::Visit(lu) => {
-                let target = self.pick_building(|b| b.land_use == lu && b.floors > 0 || b.land_use == lu && lu == LandUse::Park);
+                let target = self.pick_building(|b| b.land_use == lu);
                 if let Some(b) = target {
                     if inside != Some(b) {
                         self.travel_to(id, Some(b), Purpose::Visit(lu));
                     }
                 }
             }
-            Intent::Wander => {
-                self.wander(id);
-            }
+            Intent::Wander => self.wander(id),
         }
     }
 
@@ -473,24 +687,45 @@ impl World {
         self.building_entrance(inside)
     }
 
-    fn start_node_for(&self, id: CitizenId) -> Option<NodeId> {
+    /// Where a citizen currently touches the road network: segment, point, node.
+    fn origin_for(&self, id: CitizenId) -> Option<(SegmentId, Vec2, NodeId)> {
         let c = &self.citizens[id];
         if let Some(b) = c.inside {
-            return self.building_lot(b).map(|l| l.access_node);
+            let lot = self.building_lot(b)?;
+            let entrance = lot.corners[0].lerp(lot.corners[1], 0.5);
+            return Some((lot.front_segment, entrance, lot.access_node));
         }
-        self.roads.nearest_on_network(c.pos).map(|(sid, t, _)| self.roads.nearest_endpoint(sid, t))
+        let (sid, t, q) = self.roads.nearest_on_network(c.pos)?;
+        Some((sid, q, self.roads.nearest_endpoint(sid, t)))
     }
 
     fn travel_to(&mut self, id: CitizenId, target: Option<BuildingId>, purpose: Purpose) {
         let Some(target) = target else { return };
-        let Some(start) = self.start_node_for(id) else {
+        let Some((from_seg, from_pt, from_node)) = self.origin_for(id) else {
             self.citizens[id].activity = Activity::Idle;
             return;
         };
         let Some(lot) = self.building_lot(target) else { return };
-        let end = lot.access_node;
+        let (to_seg, to_node) = (lot.front_segment, lot.access_node);
         let entrance = lot.corners[0].lerp(lot.corners[1], 0.5);
-        let Some(nodes) = self.roads.path(start, end) else {
+
+        // Drive when it is far enough and a lane route exists.
+        if from_pt.distance(entrance) >= self.config.drive_threshold {
+            if let Some((route, s0, s1)) = self.traffic.net.find_route(from_seg, from_pt, to_seg, entrance) {
+                let exit_pos = self.leave_building(id);
+                let color = self.rng.random_range(0..8u8);
+                let car = self.traffic.spawn_car(id, route, s0, s1, color);
+                let c = &mut self.citizens[id];
+                if let Some(p) = exit_pos {
+                    c.pos = p;
+                }
+                c.activity = Activity::Driving { car, to: Some(target), purpose };
+                return;
+            }
+        }
+
+        // Otherwise walk along the node graph.
+        let Some(nodes) = self.roads.path(from_node, to_node) else {
             let c = &mut self.citizens[id];
             c.thought = "No way through. The grid doesn't connect.".to_string();
             c.activity = Activity::Idle;
@@ -507,7 +742,7 @@ impl World {
     }
 
     fn wander(&mut self, id: CitizenId) {
-        let Some(start) = self.start_node_for(id) else { return };
+        let Some((_, _, start)) = self.origin_for(id) else { return };
         if self.roads.nodes.is_empty() {
             return;
         }
@@ -522,7 +757,6 @@ impl World {
         c.activity = Activity::Traveling { to: None, purpose: Purpose::Wander, path, idx: 0 };
     }
 }
-
 
 /// RON cannot encode the RNG's 128-bit counter, so persist it as seed + position.
 mod rng_serde {
@@ -557,28 +791,71 @@ mod tests {
     use super::*;
     use crate::mind::IdleMind;
 
+    fn square(x0: f32, y0: f32, size: f32) -> Vec<Vec2> {
+        vec![Vec2::new(x0, y0), Vec2::new(x0 + size, y0), Vec2::new(x0 + size, y0 + size), Vec2::new(x0, y0 + size)]
+    }
+
     #[test]
-    fn city_grows_from_roads_and_zones() {
+    fn city_grows_and_round_trips_through_ron() {
         let mut w = World::new(WorldConfig::default());
-        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 2);
-        w.add_road(&[Vec2::new(0.0, -400.0), Vec2::new(0.0, 400.0)], 2);
-        w.add_zone(
-            vec![Vec2::new(10.0, 10.0), Vec2::new(200.0, 10.0), Vec2::new(200.0, 200.0), Vec2::new(10.0, 200.0)],
-            LandUse::Residential,
-        );
-        w.add_zone(
-            vec![Vec2::new(-200.0, 10.0), Vec2::new(-10.0, 10.0), Vec2::new(-10.0, 200.0), Vec2::new(-200.0, 200.0)],
-            LandUse::Commercial,
-        );
-        assert!(!w.lots.is_empty(), "lots should be carved along the roads");
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_road(&[Vec2::new(0.0, -400.0), Vec2::new(0.0, 400.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
+        assert!(!w.lots.is_empty());
         let mut minds = IdleMind;
         for _ in 0..(24 * 60) {
             w.tick(&mut minds);
         }
-        assert!(!w.buildings.is_empty(), "buildings should develop within a day");
-        assert!(!w.citizens.is_empty(), "citizens should immigrate once homes exist");
+        assert!(!w.buildings.is_empty());
+        assert!(!w.citizens.is_empty());
         let text = w.to_ron().unwrap();
         let back = World::from_ron(&text).unwrap();
         assert_eq!(back.citizens.len(), w.citizens.len());
+        assert_eq!(back.traffic.net.lanes.len(), w.traffic.net.lanes.len());
+    }
+
+    #[test]
+    fn projects_undo_redo_and_keep_buildings_on_implement() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        let lot = w.lots.keys().next().unwrap();
+        w.build_on(lot);
+        let building = w.lots[lot].building.unwrap();
+
+        let id = w.add_gesture(Gesture::Road { points: vec![Vec2::new(300.0, -300.0), Vec2::new(300.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1 });
+        assert_eq!(w.preview().planned_roads.len(), 1);
+        assert!(w.undo());
+        assert_eq!(w.preview().planned_roads.len(), 0);
+        assert!(w.redo());
+        w.set_gesture(id, Gesture::Road { points: vec![Vec2::new(320.0, -300.0), Vec2::new(320.0, 300.0)], lanes_fwd: 2, lanes_bwd: 2 }, true);
+        w.implement();
+        assert!(!w.has_project());
+        assert_eq!(w.master.gestures.len(), 3);
+        assert!(w.buildings.contains_key(building), "building on an untouched lot survives a rebuild");
+        assert!(w.roads.alive_segments().count() >= 3);
+        assert!(!w.traffic.net.intersections.is_empty());
+    }
+
+    #[test]
+    fn citizens_drive_between_buildings() {
+        let mut w = World::new(WorldConfig::default());
+        for i in -1..=1 {
+            let c = i as f32 * 200.0;
+            w.add_road(&[Vec2::new(-500.0, c), Vec2::new(500.0, c)], 1, 1);
+            w.add_road(&[Vec2::new(c, -500.0), Vec2::new(c, 500.0)], 1, 1);
+        }
+        w.add_zone(square(-190.0, -190.0, 180.0), LandUse::Residential);
+        w.add_zone(square(10.0, 10.0, 180.0), LandUse::Commercial);
+        let mut minds = IdleMind;
+        let mut saw_car = false;
+        for _ in 0..(2 * 24 * 60) {
+            w.tick(&mut minds);
+            if !w.traffic.cars.is_empty() {
+                saw_car = true;
+            }
+        }
+        assert!(saw_car, "commuters should have driven at some point");
     }
 }

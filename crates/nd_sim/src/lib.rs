@@ -11,7 +11,9 @@ pub mod economy;
 pub mod events;
 pub mod mind;
 pub mod names;
+pub mod plan;
 pub mod roads;
+pub mod traffic;
 pub mod world;
 pub mod zoning;
 
@@ -21,7 +23,9 @@ pub use clock::SimClock;
 pub use economy::Economy;
 pub use events::SimEvent;
 pub use mind::{Decision, Intent, MindContext, MindProvider};
+pub use plan::{Gesture, GestureId, Plan, PlanPreview, Project};
 pub use roads::{NodeId, RoadNetwork, Segment, SegmentId};
+pub use traffic::{Car, CarId, LaneId, Traffic};
 pub use world::{World, WorldConfig};
 pub use zoning::{LandUse, Lot, LotId, Zone, ZoneId};
 

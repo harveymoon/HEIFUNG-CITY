@@ -13,4 +13,6 @@ pub enum SimEvent {
     CitizenLeft(CitizenId),
     NewThought(CitizenId),
     NewDay(u64),
+    /// The master plan changed (implemented or loaded).
+    PlanChanged,
 }
