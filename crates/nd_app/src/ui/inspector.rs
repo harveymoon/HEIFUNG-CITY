@@ -56,7 +56,10 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 return;
             };
             neon(ui, &b.name);
-            let style = assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11));
+            let style = match b.service {
+                Some(s) => nd_procgen::buildings::Style::for_service(s.kind),
+                None => assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11)),
+            };
             if let Some(c) = &b.construction {
                 ui.label(format!("{}  ·  {} tier  ·  {}  ·  {} floors  ·  started day {}", b.land_use.label(), b.tier.label(), style.label(), b.floors, b.built_tick / 1440 + 1));
                 let (homes, jobs) = b.planned_capacity();
@@ -67,6 +70,25 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 ui.label(format!("{} of {} deliveries in  ·  {:.1} days of work in all  ·  site crew {}/{}  ·  will have {} homes and {} jobs", c.deliveries, nd_sim::Construction::DELIVERIES, c.days, b.workers.len(), b.jobs, homes, jobs));
             } else {
                 ui.label(format!("{}  ·  {} tier  ·  {}  ·  {} floors  ·  built day {}", b.land_use.label(), b.tier.label(), style.label(), b.floors, b.built_tick / 1440 + 1));
+            }
+            // [services] What the service does here: its units, beds and reach.
+            if let Some(s) = b.service {
+                let w = &sim.world;
+                let units: Vec<&nd_sim::Unit> = w.services.units.values().filter(|u| u.station == id).collect();
+                let mut line = format!("{}  ·  {:.0}/day", s.kind.tier_label(s.tier), s.kind.upkeep_per_day(s.tier));
+                if s.kind.radius(s.tier) > 0.0 {
+                    line += &format!("  ·  covers {:.0} m by road", s.kind.radius(s.tier));
+                }
+                if !units.is_empty() {
+                    line += &format!("  ·  {} {}s, {} crewed, {} out", units.len(), units[0].kind.label(), w.crewed_units(id), units.iter().filter(|u| u.busy()).count());
+                }
+                if s.kind == nd_sim::ServiceKind::Health {
+                    line += &format!("  ·  beds {}/{}", w.services.admissions.iter().filter(|a| a.hospital == id).count(), s.kind.capacity(s.tier));
+                }
+                ui.label(egui::RichText::new(line).color(egui::Color32::from_rgb(120, 200, 255)));
+            }
+            if sim.world.services.is_burning(id) {
+                ui.label(egui::RichText::new("ON FIRE").color(egui::Color32::from_rgb(255, 110, 60)));
             }
             ui.label(format!("land value {:.2}  ·  rent {:.0}/day  ·  wage {:.0}/day  ·  condition {:.0}%{}", b.land_value, b.rent, b.wage(), b.condition * 100.0, if b.is_derelict() { "  ·  DERELICT" } else { "" }));
             ui.label(format!("homes {}/{} ({} residents)  ·  workers {}/{}  ·  visitors {}", b.households.len(), b.homes, b.residents.len(), b.workers.len(), b.jobs, b.visitors));

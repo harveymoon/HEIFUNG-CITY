@@ -1021,7 +1021,10 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(v) = field(cmd, "building") {
         let id = key_from(v)?;
         let b = w.buildings.get(id).ok_or("no such building")?;
-        let style = ctx.assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11)).label();
+        let style = match b.service {
+            Some(s) => nd_procgen::buildings::Style::for_service(s.kind).label(),
+            None => ctx.assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11)).label(),
+        };
         return Ok(json!({ "building": building_detail(w, id, b, style) }));
     }
     if let Some(v) = field(cmd, "lot") {
