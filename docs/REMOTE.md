@@ -74,6 +74,22 @@ step also floods the event ring (see `events`).
 
 Relative paths are relative to the game's working directory (the repo root under `cargo run`).
 
+### Landscape and new games
+
+| Command | Fields | Reply |
+| --- | --- | --- |
+| `new_game` | `preset` river_valley (default) / islands / coast / delta / plains / flat, `seed`, `water` 0..1, `relief` 0..1 (height variation), `branching` 0..1, `islands` 0..8, `highway` bool; omitted levers take the preset's | throws the city away and starts on the landscape; tools and selection reset. Reply as `landscape` |
+| `landscape` | | preset and levers, `rivers` (kind river/stream, width, current_mps, hydro_ok, source, mouth, length), `lakes`, `sea`, `hot_spots`, `highway` (entries, exits, through_cars), `bridges` (count, metres, on the highway), `ports`, `ships`, `port_stats` |
+| `terrain_at` | `x`, `y` | `natural_height`, `ground_height` (graded under roads and lots), `surface_height` (bridge decks included), `slope`, `water` (kind, current, width, flow), `nearest_shore`, `hot_spot`, `lot`, `power_sites` (hydro/tidal/geothermal ok or why not, for the lot there), `docks` (whether a shipping port or ferry terminal would go there, or why not) |
+| `grant` | `amount` (default 100000) | dev: adds money to the treasury |
+
+```json
+{"cmd": "new_game", "preset": "delta", "seed": 12, "water": 0.7, "branching": 0.9}
+{"cmd": "terrain_at", "x": -420, "y": 100}
+```
+
+`window {name: "new_game"}` opens the New Game window (preset list, levers, mini-map).
+
 ### Planning: roads, zones, the project
 
 Like the tools, new gestures go into the pending **project** and change nothing until it is
@@ -101,8 +117,14 @@ Reply: `gesture_id`, `implemented`, `project` (`steps`, `redo`), `plan_version`.
 
 - `station`, `freight_yard`: rail pieces, placed anywhere (`World::place_rail_facility`); the reply
   message says whether track and street are joined.
-- `depot`, `parking`, `coal`, `solar`, `wind`, `nuclear`: on the lot under the point, or the nearest
-  vacant lot within 80 m (`build_depot`, `build_parking`, `build_power`).
+- `depot`, `parking`, `coal`, `solar`, `wind`, `nuclear`, `hydro`, `tidal`, `geothermal`: on the lot
+  under the point, or the nearest vacant lot within 80 m (`build_depot`, `build_parking`,
+  `build_power`). Hydro needs a lot within 30 m of a river or stream running at 0.8 m/s or more,
+  tidal a lot on the sea shore, geothermal a lot over a hot spot (`terrain_at` says which apply).
+- `shipping_port` (or `port`), `ferry_terminal` (or `ferry`): at the water's edge within 90 m of the
+  point (`World::place_port`). Ports need a river at least 40 m wide or the sea; ferries any water
+  16 m or wider. Each builds a pier and, unless a street is already along its landward side, a
+  street stub to join to the city.
 
 Reply: `building` id, `message`, `row`, `treasury`; or the sim's reason as `error`.
 

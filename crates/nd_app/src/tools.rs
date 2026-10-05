@@ -99,6 +99,8 @@ pub struct ToolState {
     pub show_routes: bool,
     /// Rail tool: station or freight yard.
     pub rail_kind: nd_sim::RailFacility,
+    /// Rail tool: a dock instead of a station or yard.
+    pub dock: Option<nd_sim::PortKind>,
     /// People starred in the person pane; listed in the People window.
     pub favorites: Vec<CitizenId>,
 }
@@ -145,6 +147,7 @@ impl Default for ToolState {
             stop_drag: None,
             show_routes: false,
             rail_kind: nd_sim::RailFacility::Station,
+            dock: None,
             favorites: Vec::new(),
         }
     }
@@ -545,7 +548,19 @@ pub(crate) fn tool_input(
             }
         },
         Tool::Rail => {
-            if click {
+            if let (true, Some(p), Some(dock)) = (click, ground, tools.dock) {
+                tools.status = match sim.world.place_port(dock, p) {
+                    Ok(id) => {
+                        *selection = Selection::Building(id);
+                        match sim.world.ports.port_of(id) {
+                            Some(port) if port.works() => format!("{} built with its pier. Ships call from the next sailing.", dock.label()),
+                            Some(port) if !port.road_connected => format!("{} built with its pier. Join its street stub to the city's roads and it opens.", dock.label()),
+                            _ => format!("{} built, but no ship can reach it from off the map.", dock.label()),
+                        }
+                    }
+                    Err(e) => format!("Cannot build: {e}."),
+                };
+            } else if click {
                 if let Some(p) = ground {
                     let kind = tools.rail_kind;
                     tools.status = match sim.world.place_rail_facility(kind, p) {
@@ -637,7 +652,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
     let cyan = Color::linear_rgb(1.4, 1.6, 1.8);
     let red = Color::linear_rgb(3.0, 0.2, 0.4);
     let white = Color::linear_rgb(3.0, 3.0, 3.0);
-    let lift = |p: SVec2| Vec3::new(p.x, 0.8, p.y);
+    let lift = |p: SVec2| Vec3::new(p.x, 0.8 + sim.world.surface_height(p), p.y);
     let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
 
     // Bus lines: the lane path of every leg in the line's colour, stops as
@@ -733,6 +748,31 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                         gizmos.linestrip(pts, if ok { Color::linear_rgb(0.3, 2.5, 0.6) } else { red });
                     }
                 }
+            }
+        }
+        Tool::Rail if tools.dock.is_some() => {
+            // The dock as it would land: footprint, pier, and its street side.
+            if let (Some(c), Some(kind)) = (cursor.ground, tools.dock) {
+                match sim.world.plan_port(kind, c) {
+                    Ok(port) => {
+                        let ok = Color::linear_rgb(0.3, 2.5, 0.6);
+                        let mut pts: Vec<Vec3> = port.footprint().iter().map(|&p| lift(p)).collect();
+                        pts.push(pts[0]);
+                        gizmos.linestrip(pts, ok);
+                        let [a, b] = port.pier;
+                        gizmos.line(lift(a), lift(b), white);
+                        gizmos.line(lift(b), lift(port.berth), cyan);
+                        let [sa, sb] = port.road_line();
+                        gizmos.line(lift(sa), lift(sb), cyan);
+                    }
+                    Err(_) => {
+                        gizmos.circle(Isometry3d::new(lift(c), flat), 12.0, red);
+                    }
+                }
+            }
+            for port in sim.world.ports.ports.values().filter(|p| !p.works()) {
+                let [a, b] = port.road_line();
+                gizmos.line(lift(a) + Vec3::Y, lift(b) + Vec3::Y, red);
             }
         }
         Tool::Rail => {

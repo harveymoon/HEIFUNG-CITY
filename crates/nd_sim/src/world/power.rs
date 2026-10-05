@@ -24,6 +24,7 @@ impl World {
         if lot.area() < kind.min_area() {
             return Err(format!("too small: a {} needs {:.0} m²", kind.label(), kind.min_area()));
         }
+        self.power_site(lot_id, kind)?;
         if self.economy.treasury < kind.build_cost() {
             return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), kind.build_cost()));
         }
@@ -34,10 +35,40 @@ impl World {
             PowerPlantKind::Solar => "Sunfield",
             PowerPlantKind::Wind => "Westerly",
             PowerPlantKind::Nuclear => "Calder",
+            PowerPlantKind::Hydro => "Millrace",
+            PowerPlantKind::Tidal => "Tiderace",
+            PowerPlantKind::Geothermal => "Hotwell",
         }, self.rng.random_range(1..9));
         let id = self.place_special(lot_id, name, kind.jobs(), kind.jobs() / 2, |b| b.plant = Some(kind));
         self.allocate_power();
         Ok(id)
+    }
+
+    /// Can a plant of `kind` stand on this lot? `Ok` carries the share of
+    /// nameplate the site supports: hydro scales with the current, geothermal
+    /// with the hot spot's heat, everything else 1. The Buildings tool calls
+    /// this to show where the water and hot-ground plants may go.
+    pub fn power_site(&self, lot_id: LotId, kind: PowerPlantKind) -> Result<f32, String> {
+        use crate::power::PlantSite;
+        let lot = self.lots.get(lot_id).ok_or("no such lot")?;
+        match kind.site() {
+            PlantSite::Anywhere => Ok(1.0),
+            PlantSite::River => {
+                let (_, current, _) = self.landscape.river_beside(&lot.polygon, 30.0).ok_or("a hydro plant needs a river or stream beside the lot")?;
+                if current < crate::landscape::MIN_HYDRO_CURRENT {
+                    return Err(format!("the water here is too slow ({current:.1} m/s); hydro needs {:.1} m/s", crate::landscape::MIN_HYDRO_CURRENT));
+                }
+                Ok((current / 1.6).clamp(0.5, 1.4))
+            }
+            PlantSite::Coast => {
+                if self.landscape.on_coast(&lot.polygon, 40.0) {
+                    Ok(1.0)
+                } else {
+                    Err("a tidal plant must stand on the sea shore".into())
+                }
+            }
+            PlantSite::HotSpot => self.landscape.hot_spot_at(lot.center).map(|h| h.heat).ok_or_else(|| "no hot ground under this lot: look for the steaming vents".to_string()),
+        }
     }
 
     /// Share the hour's supply out: plants first, then what the regional
@@ -50,7 +81,8 @@ impl World {
         for b in self.buildings.values() {
             if let Some(kind) = b.plant {
                 if !b.is_derelict() {
-                    supply += kind.capacity_mw() * kind.availability(&self.weather, day);
+                    let site = self.power_site(b.lot, kind).unwrap_or(0.0);
+                    supply += kind.capacity_mw() * kind.availability(&self.weather, day) * site;
                     plants += 1;
                 }
             }
