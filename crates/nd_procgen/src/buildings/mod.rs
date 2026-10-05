@@ -764,7 +764,7 @@ fn back_edge_link(lot: &Lot, kind: RailFacility) -> RailLink {
     let back = (a + b) * 0.5 + lot.front_dir * -4.0;
     let half = (a.distance(b) * 0.45).min(40.0);
     let _ = out;
-    RailLink { kind, segment: nd_sim::SegmentId(0), platform: [back - d * half, back + d * half], side: 1.0 }
+    RailLink { kind, segment: nd_sim::SegmentId(0), platform: [back - d * half, back + d * half], side: 1.0, rail_connected: true, road_connected: true }
 }
 
 #[cfg(test)]

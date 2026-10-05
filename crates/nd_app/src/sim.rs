@@ -56,12 +56,6 @@ impl Sim {
         let cell = |cx: f32, cy: f32| {
             vec![SVec2::new(cx - 65.0, cy - 65.0), SVec2::new(cx + 65.0, cy - 65.0), SVec2::new(cx + 65.0, cy + 65.0), SVec2::new(cx - 65.0, cy + 65.0)]
         };
-        // A row south of the grid, one lot deep, backing onto the railway
-        // branch: a freight yard and a station.
-        for (x, lu, back) in [(-210.0, LandUse::Industrial, -340.0), (70.0, LandUse::Commercial, -316.0)] {
-            let (x0, x1) = (x - 65.0, x + 65.0);
-            self.world.add_gesture(Gesture::Zone { polygon: vec![SVec2::new(x0, back), SVec2::new(x1, back), SVec2::new(x1, -285.0), SVec2::new(x0, -285.0)], land_use: lu });
-        }
         let plan = [
             (-210.0, -210.0, LandUse::Industrial), (-70.0, -210.0, LandUse::Industrial), (70.0, -210.0, LandUse::Residential), (210.0, -210.0, LandUse::Residential),
             (-210.0, -70.0, LandUse::Commercial), (-70.0, -70.0, LandUse::Entertainment), (70.0, -70.0, LandUse::Commercial), (210.0, -70.0, LandUse::Residential),
@@ -76,20 +70,12 @@ impl Sim {
         self.world.implement();
         // The demo has the money for its showpieces.
         self.world.economy.treasury = self.world.economy.treasury.max(150_000.0);
-        if self.world.buildings.values().all(|b| b.rail.is_none()) {
+        // A freight yard and a station set down beside the branch; their
+        // street sides land on the southern avenue, so both open at once.
+        if self.world.facilities.is_empty() {
             use nd_sim::RailFacility;
-            for (kind, lu) in [(RailFacility::FreightYard, LandUse::Industrial), (RailFacility::Station, LandUse::Commercial)] {
-                let lot = self
-                    .world
-                    .lots
-                    .iter()
-                    .filter(|(_, l)| l.usable() && l.land_use == lu && l.building.is_none() && l.center.y < -285.0)
-                    .max_by(|a, b| a.1.area().total_cmp(&b.1.area()))
-                    .map(|(id, _)| id);
-                if let Some(lot) = lot {
-                    let _ = self.world.build_rail(lot, kind);
-                }
-            }
+            let _ = self.world.place_rail_facility(RailFacility::FreightYard, SVec2::new(-200.0, -330.0));
+            let _ = self.world.place_rail_facility(RailFacility::Station, SVec2::new(80.0, -310.0));
         }
         // A coal plant to start with: cheap power and a haze over the industrial corner.
         if self.world.buildings.values().any(|b| b.plant.is_some()) {

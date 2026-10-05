@@ -167,10 +167,21 @@ Citizens are rendered from their simulated positions every frame.
   preset. Track ends snap only to track and road ends never snap to track; a track
   crossing a street shares a node, which renders as a level crossing. Track cuts a
   corridor out of parcels but never fronts them, carries no lanes or pavements, and
-  walkers' and drivers' searches ignore it. Stations (any land but parks) and freight
-  yards (industrial land, 800 m² or more) are placed on vacant lots within 24 m of
-  track; the lot keeps its street frontage, so every station has a road entrance, and
-  the platform or apron is laid along the track on the lot's side (`RailLink`).
+  walkers' and drivers' searches ignore it. Stations and freight yards are pieces
+  (`rail::Facility`), as in Cities Skylines: a footprint with a stretch of track along
+  one side and a stretch of street along the other. They go anywhere, with no zone or
+  lot needed. Set down within 40 m of track the piece aligns to it and fuses its rail
+  side onto it; set down by a street it fuses its road side; otherwise connector stubs
+  (a 1+1 street, a length of track, each reaching 24 m past the footprint) are laid as
+  plan gestures so roads and track can be snapped onto their ends. The footprint
+  becomes a lot of its own (zoned lots under it give way) so the building, trains,
+  riders and lorries work as for any lot; the platform or apron is laid along the rail
+  side (`RailLink`). Nothing runs until the rail side reaches an end of the railway and
+  the street side reaches the city's roads (`RailLink::works`), recomputed on every
+  rebuild; unjoined connectors show red in the Rail tool and the inspector says which
+  side is missing. Track drawn by the player is eased when built: ends joining existing
+  track leave or arrive along it through a 60 m turnout, corners are rounded to a 120 m
+  radius, long legs stay straight, so there are no right angles or square forks.
   Trains run west to east from one end of the line to the other, calling at every
   facility in order; a dead-end spur is run to the last platform and back. Branches
   have no passing loops, so one train holds the branch at a time: others wait at the

@@ -14,6 +14,7 @@ use slotmap::{new_key_type, SlotMap};
 
 new_key_type! {
     pub struct TrainId;
+    pub struct FacilityId;
 }
 
 /// Where the trunk railway runs, in metres south of the centre.
@@ -27,6 +28,17 @@ pub const SWITCH_LEAD: f32 = 60.0;
 pub const EASE_TURN: f32 = 0.35;
 /// How far off parallel to the street a platform may lie (radians).
 pub const PLATFORM_SKEW: f32 = 0.6;
+/// Track or street this close to a placed facility is what it fuses to.
+pub const FUSE_RAIL: f32 = 40.0;
+pub const FUSE_ROAD: f32 = 40.0;
+/// A fused road must lie this close to the facility's road edge.
+pub const ROAD_EDGE_FUSE: f32 = 14.0;
+/// From the footprint edge to the track centreline.
+pub const RAIL_GAP: f32 = 6.0;
+/// From the footprint edge to a 1+1 street's centreline (lane, shoulder, pavement).
+pub const ROAD_GAP: f32 = 7.6;
+/// Connector stubs reach this far past the footprint at each end.
+pub const STUB_LEAD: f32 = 24.0;
 /// At most this many trains out at once.
 pub const MAX_TRAINS: usize = 6;
 /// How close to the track a lot must come to host a station or yard.
@@ -90,6 +102,137 @@ pub struct RailLink {
     pub platform: [Vec2; 2],
     /// +1 or -1: which side of the track (relative to its a->b direction).
     pub side: f32,
+    /// Whether the track beside it reaches the rest of the railway, and the
+    /// building's street reaches the city. Nothing runs until both do.
+    #[serde(default)]
+    pub rail_connected: bool,
+    #[serde(default)]
+    pub road_connected: bool,
+}
+
+impl RailLink {
+    pub fn works(&self) -> bool {
+        self.rail_connected && self.road_connected
+    }
+}
+
+/// A station or yard placed as a piece, Cities Skylines style: a stretch of
+/// track along one side, a stretch of street along the other. Set down
+/// beside existing track or street it fuses to them; otherwise the stubs
+/// are laid for the player to join up.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Facility {
+    pub kind: RailFacility,
+    pub center: Vec2,
+    /// Unit direction of the track side; the rail lies on `perp(along)`.
+    pub along: Vec2,
+    pub building: Option<BuildingId>,
+    #[serde(default)]
+    pub lot: Option<crate::zoning::LotId>,
+}
+
+impl Facility {
+    /// Footprint along the track and across, in metres.
+    pub fn size(kind: RailFacility) -> (f32, f32) {
+        match kind {
+            RailFacility::Station => (64.0, 28.0),
+            RailFacility::FreightYard => (110.0, 56.0),
+        }
+    }
+
+    /// Towards the rail side.
+    pub fn inward(&self) -> Vec2 {
+        Vec2::new(-self.along.y, self.along.x)
+    }
+
+    /// Corners as the lot code expects them: front-left, front-right,
+    /// back-right, back-left, with the street side as the front.
+    pub fn corners(&self) -> [Vec2; 4] {
+        let (w, d) = Self::size(self.kind);
+        let a = self.along;
+        let n = self.inward();
+        let c = self.center;
+        [c - a * (w * 0.5) - n * (d * 0.5), c + a * (w * 0.5) - n * (d * 0.5), c + a * (w * 0.5) + n * (d * 0.5), c - a * (w * 0.5) + n * (d * 0.5)]
+    }
+
+    pub fn footprint(&self) -> Vec<Vec2> {
+        self.corners().to_vec()
+    }
+
+    /// Centreline of the track stub along the rail side.
+    pub fn rail_line(&self) -> [Vec2; 2] {
+        let (w, d) = Self::size(self.kind);
+        let off = self.inward() * (d * 0.5 + RAIL_GAP);
+        [self.center + off - self.along * (w * 0.5 + STUB_LEAD), self.center + off + self.along * (w * 0.5 + STUB_LEAD)]
+    }
+
+    /// Centreline of the street stub along the road side.
+    pub fn road_line(&self) -> [Vec2; 2] {
+        let (w, d) = Self::size(self.kind);
+        let off = -self.inward() * (d * 0.5 + ROAD_GAP);
+        [self.center + off - self.along * (w * 0.5 + STUB_LEAD), self.center + off + self.along * (w * 0.5 + STUB_LEAD)]
+    }
+
+    /// Midpoint of the street-side edge: the building's entrance.
+    pub fn front_mid(&self) -> Vec2 {
+        let (_, d) = Self::size(self.kind);
+        self.center - self.inward() * (d * 0.5)
+    }
+
+    pub fn rail_mid(&self) -> Vec2 {
+        let (_, d) = Self::size(self.kind);
+        self.center + self.inward() * (d * 0.5)
+    }
+
+    /// Where a facility of `kind` would go for a click at `p`: aligned and
+    /// shifted onto track within reach, else onto a street, else free.
+    /// Returns the facility and whether the rail and road sides fuse to
+    /// something already there.
+    pub fn plan(kind: RailFacility, p: Vec2, roads: &RoadNetwork) -> (Facility, bool, bool) {
+        let (_, d) = Self::size(kind);
+        let mut f = Facility { kind, center: p, along: Vec2::X, building: None, lot: None };
+        let mut rail_fused = false;
+        let mut road_fused = false;
+        if let Some((sid, _, q)) = roads.nearest_rail(p).filter(|(_, _, q)| q.distance(p) <= FUSE_RAIL) {
+            let (a, b) = roads.segment_points(sid);
+            let dir = (b - a).normalize_or_zero();
+            let n = Vec2::new(-dir.y, dir.x);
+            // The rail lies on the inward side: pick `along` so inward points
+            // from the track towards the click side's opposite... the
+            // building sits on the click's side of the track, rail inward.
+            let side = if (p - q).dot(n) >= 0.0 { 1.0 } else { -1.0 };
+            // inward must point from the building to the track: -side * n.
+            let inward = -n * side;
+            f.along = Vec2::new(inward.y, -inward.x);
+            f.center = q + n * side * (d * 0.5 + RAIL_GAP);
+            rail_fused = true;
+        } else if let Some((sid, _, q)) = roads.nearest_street(p).filter(|(_, _, q)| q.distance(p) <= FUSE_ROAD) {
+            let (a, b) = roads.segment_points(sid);
+            let dir = (b - a).normalize_or_zero();
+            let n = Vec2::new(-dir.y, dir.x);
+            let side = if (p - q).dot(n) >= 0.0 { 1.0 } else { -1.0 };
+            // The street is on the outward (front) side: inward points away from it.
+            let inward = n * side;
+            f.along = Vec2::new(inward.y, -inward.x);
+            let hw = roads.segment(sid).half_width();
+            f.center = q + n * side * (hw + crate::zoning::SIDEWALK + d * 0.5);
+            road_fused = true;
+        } else if let Some((sid, _, _)) = roads.nearest_street(p).filter(|(_, _, q)| q.distance(p) <= 160.0) {
+            // Free-standing, but square to the nearest street for tidiness.
+            let (a, b) = roads.segment_points(sid);
+            f.along = (b - a).normalize_or_zero();
+        }
+        if rail_fused {
+            // A street already along the road side counts too.
+            let mid = f.front_mid() - f.inward() * ROAD_GAP;
+            if let Some((_, _, q)) = roads.nearest_street(mid) {
+                if q.distance(mid) <= ROAD_EDGE_FUSE {
+                    road_fused = true;
+                }
+            }
+        }
+        (f, rail_fused, road_fused)
+    }
 }
 
 impl RailLink {
@@ -126,7 +269,7 @@ impl RailLink {
         let mid_t = t.clamp(half / seg_len, 1.0 - half / seg_len);
         let mid = a + (b - a) * mid_t;
         let off = right * side * (RAIL_HALF_WIDTH + 1.4);
-        Some(RailLink { kind, segment, platform: [mid - d * half + off, mid + d * half + off], side })
+        Some(RailLink { kind, segment, platform: [mid - d * half + off, mid + d * half + off], side, rail_connected: false, road_connected: false })
     }
 
     pub fn centre(&self) -> Vec2 {

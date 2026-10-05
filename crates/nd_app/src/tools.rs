@@ -457,20 +457,20 @@ fn tool_input(
         Tool::Rail => {
             if click {
                 if let Some(p) = ground {
-                    let lot = sim.world.lots.iter().find(|(_, l)| point_in_polygon(p, &l.polygon)).map(|(id, _)| id);
-                    match lot {
-                        Some(lot) => {
-                            let kind = tools.rail_kind;
-                            tools.status = match sim.world.build_rail(lot, kind) {
-                                Ok(id) => {
-                                    *selection = Selection::Building(id);
-                                    format!("{} built. Trains call from the next headway.", kind.label())
-                                }
-                                Err(e) => format!("Cannot build: {e}."),
-                            };
+                    let kind = tools.rail_kind;
+                    tools.status = match sim.world.place_rail_facility(kind, p) {
+                        Ok(id) => {
+                            *selection = Selection::Building(id);
+                            let link = sim.world.buildings[id].rail.clone().unwrap();
+                            match (link.rail_connected, link.road_connected) {
+                                (true, true) => format!("{} placed and connected. Trains call from the next headway.", kind.label()),
+                                (true, false) => format!("{} placed on the track. Join a road to its street stub and it opens.", kind.label()),
+                                (false, true) => format!("{} placed by the street. Lay track onto its rail stub and it opens.", kind.label()),
+                                (false, false) => format!("{} placed. Lay track to its rail stub and a road to its street stub.", kind.label()),
+                            }
                         }
-                        None => tools.status = "Click a vacant lot beside the track.".into(),
-                    }
+                        Err(e) => format!("Cannot build: {e}."),
+                    };
                 }
             }
         }
@@ -627,18 +627,34 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
         }
         Tool::Rail => {
             if let Some(c) = cursor.ground {
-                if let Some((_, lot)) = sim.world.lots.iter().find(|(_, l)| point_in_polygon(c, &l.polygon)) {
-                    let k = tools.rail_kind;
-                    let near_track = nd_sim::RailLink::beside(&sim.world.roads, &lot.polygon, lot.center, lot.front_edge, k, 10.0).is_some();
-                    let land_ok = match k {
-                        nd_sim::RailFacility::Station => lot.land_use != LandUse::Park,
-                        nd_sim::RailFacility::FreightYard => lot.land_use == LandUse::Industrial,
-                    };
-                    let ok = lot.building.is_none() && !lot.landlocked && near_track && land_ok;
-                    let mut pts: Vec<Vec3> = lot.polygon.iter().map(|&p| lift(p)).collect();
-                    if pts.len() >= 3 {
-                        pts.push(pts[0]);
-                        gizmos.linestrip(pts, if ok { Color::linear_rgb(0.3, 2.5, 0.6) } else { red });
+                // The piece as it would land: footprint, track side, street side.
+                let (f, rail_fused, road_fused) = nd_sim::Facility::plan(tools.rail_kind, c, &sim.world.roads);
+                let fp = f.footprint();
+                let blocked = sim.world.buildings.values().any(|b| sim.world.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp)));
+                let col = if blocked { red } else { Color::linear_rgb(0.3, 2.5, 0.6) };
+                let mut pts: Vec<Vec3> = fp.iter().map(|&p| lift(p)).collect();
+                pts.push(pts[0]);
+                gizmos.linestrip(pts, col);
+                let [ra, rb] = f.rail_line();
+                gizmos.line(lift(ra), lift(rb), if rail_fused { white } else { Color::linear_rgb(1.6, 1.2, 0.3) });
+                let [sa, sb] = f.road_line();
+                gizmos.line(lift(sa), lift(sb), if road_fused { white } else { cyan });
+            }
+            // Connectors of placed pieces that still want joining.
+            for b in sim.world.buildings.values() {
+                if let (Some(link), Some(f)) = (&b.rail, sim.world.facilities.values().find(|f| f.building.is_some())) {
+                    let _ = f;
+                    if !link.rail_connected || !link.road_connected {
+                        if let Some(fac) = sim.world.facilities.values().find(|x| x.building == Some(sim.world.buildings.iter().find(|(_, bb)| std::ptr::eq(*bb, b)).map(|(id, _)| id).unwrap_or_default())) {
+                            if !link.rail_connected {
+                                let [a, bb] = fac.rail_line();
+                                gizmos.line(lift(a) + Vec3::Y, lift(bb) + Vec3::Y, red);
+                            }
+                            if !link.road_connected {
+                                let [a, bb] = fac.road_line();
+                                gizmos.line(lift(a) + Vec3::Y, lift(bb) + Vec3::Y, red);
+                            }
+                        }
                     }
                 }
             }

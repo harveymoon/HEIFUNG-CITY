@@ -63,9 +63,11 @@ links Bevy dynamically for quicker iteration.
   gets a lake, a fountain, a bandstand, a carousel and a ferris wheel. Park paths are part of the
   walking network, so people cut through parks, and a visit ends on a bench, sitting, in the open.
 - **Rail [8]**: a trunk line already crosses the map to the south. Lay branches with the Road tool's
-  Rail preset (track snaps only to track; crossing a street makes a level crossing), then place a
-  passenger station on any vacant lot by the track, or a freight yard on industrial land by it. Both
-  keep their street entrance. Passenger trains call every two hours and people ride between stations
+  Rail preset (track snaps only to track, forks leave tangentially, corners are rounded; crossing a
+  street makes a level crossing). Stations and freight yards are pieces with track along one side and
+  a street along the other: drop them anywhere, even in open country. Beside track or a street they
+  fuse to it; otherwise join track and road to the stubs they lay out. Nothing runs until both sides
+  are connected. Passenger trains call every two hours and people ride between stations
   for long trips; freight trains bring imports to the yard at a discount and lorries take them on.
   `F5` jumps the camera to a station or yard.
 - **Buses [7]**: draw a line by clicking streets round a loop (the side you click is the kerb the bus

@@ -16,7 +16,8 @@ use crate::power::{demand_mw, PowerPlantKind, Weather, GRID_IMPORT_MW, GRID_IMPO
 use crate::traffic::{Bus, CarId};
 use std::collections::HashMap;
 use crate::transit::{self, BusStop, RouteId, Transit, TransitLeg, TransitTrip};
-use crate::rail::{self, Rail, RailFacility, RailLink, Train, TrainId, TrainKind};
+use crate::rail::{self, Facility, FacilityId, Rail, RailFacility, RailLink, Train, TrainId, TrainKind};
+use crate::zoning::point_in_polygon;
 use crate::citizens::TravelMode;
 use crate::roads::RoadKind;
 use crate::zoning::{generate_lots, LandUse, Lot, LotId, Zone, ZoneId};
@@ -109,6 +110,9 @@ pub struct World {
     pub transit: Transit,
     #[serde(default)]
     pub rail: Rail,
+    /// Stations and yards placed as pieces, with their own lots.
+    #[serde(default)]
+    pub facilities: SlotMap<FacilityId, Facility>,
     pub economy: Economy,
     pub land_value: LandValue,
     #[serde(skip)]
@@ -141,6 +145,7 @@ impl World {
             weather: Weather::default(),
             transit: Transit::default(),
             rail: Rail::default(),
+            facilities: SlotMap::with_key(),
             economy,
             events: Vec::new(),
             next_seed: 1,
@@ -373,6 +378,16 @@ impl World {
             generate_lots(zid, &zone, &self.roads, &mut self.lots, &covering);
             covering.push(zone);
         }
+        // Facilities: their footprints are lots of their own, and zoned lots
+        // under them give way.
+        let footprints: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).collect();
+        self.lots.retain(|_, l| !footprints.iter().any(|fp| point_in_polygon(l.center, fp)));
+        let fids: Vec<FacilityId> = self.facilities.keys().collect();
+        for fid in fids {
+            let lot = self.facility_lot(fid);
+            let id = self.lots.insert(lot);
+            self.facilities[fid].lot = Some(id);
+        }
         let mut demolish: Vec<BuildingId> = Vec::new();
         for (_, old) in old_lots.iter() {
             let Some(bid) = old.building else { continue };
@@ -408,6 +423,7 @@ impl World {
             route.stops = route.stops.iter().filter_map(|s| BusStop::snap(&self.roads, s.pos)).collect();
         }
         self.transit.refresh_legs(&self.traffic.net);
+        self.refresh_rail_links();
         self.rebuild_walk();
 
         self.events.push(SimEvent::RoadsChanged);
@@ -1811,7 +1827,7 @@ impl World {
     // ── trains ───────────────────────────────────────────────────────────────
 
     fn facilities(&self, kind: RailFacility) -> Vec<BuildingId> {
-        self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == kind) && !b.is_derelict()).map(|(id, _)| id).collect()
+        self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == kind && l.works()) && !b.is_derelict()).map(|(id, _)| id).collect()
     }
 
     fn nearest_yard(&self, to: BuildingId) -> Option<BuildingId> {
@@ -1819,36 +1835,134 @@ impl World {
         self.facilities(RailFacility::FreightYard).into_iter().filter_map(|y| self.building_entrance(y).map(|q| (y, q.distance(p)))).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(y, _)| y)
     }
 
-    /// Put a station (any land but parks) or a freight yard (industrial
-    /// land) on a vacant lot that comes within reach of the track. The lot
-    /// fronts a street, so the building has its road connection too.
-    pub fn build_rail(&mut self, lot_id: LotId, kind: RailFacility) -> Result<BuildingId, String> {
-        let lot = self.lots.get(lot_id).ok_or("no such lot")?;
-        if lot.building.is_some() {
-            return Err("that lot is taken".into());
-        }
-        if lot.landlocked {
-            return Err("that land has no road access".into());
-        }
-        let (cost, jobs, length, min_area) = match kind {
-            RailFacility::Station => (rail::STATION_COST, rail::STATION_JOBS, rail::STATION_PLATFORM, 300.0),
-            RailFacility::FreightYard => (rail::YARD_COST, rail::YARD_JOBS, rail::YARD_APRON, rail::YARD_MIN_AREA),
+    /// Set down a station or freight yard at `p`: it fuses to track or
+    /// street within reach, lays connector stubs for whatever is missing,
+    /// and gets a lot and a building of its own. It runs once both stubs
+    /// are joined to the networks.
+    pub fn place_rail_facility(&mut self, kind: RailFacility, p: Vec2) -> Result<BuildingId, String> {
+        let (facility, rail_fused, road_fused) = Facility::plan(kind, p, &self.roads);
+        let cost = match kind {
+            RailFacility::Station => rail::STATION_COST,
+            RailFacility::FreightYard => rail::YARD_COST,
         };
-        match kind {
-            RailFacility::Station if lot.land_use == LandUse::Park => return Err("not in a park".into()),
-            RailFacility::FreightYard if lot.land_use != LandUse::Industrial => return Err("a freight yard needs industrial land".into()),
-            _ => {}
-        }
-        if lot.area() < min_area {
-            return Err(format!("too small: a {} needs {:.0} m²", kind.label(), min_area));
-        }
-        let link = RailLink::beside(&self.roads, &lot.polygon, lot.center, lot.front_edge, kind, length).ok_or_else(|| format!("no track within {:.0} m of that lot running along its street", rail::STATION_REACH))?;
         if self.economy.treasury < cost {
             return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), cost));
         }
+        let fp = facility.footprint();
+        if self.buildings.values().any(|b| self.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp) || fp.iter().any(|c| point_in_polygon(*c, &l.polygon)))) {
+            return Err("something is built there".into());
+        }
+        if self.facilities.values().any(|f| f.center.distance(facility.center) < Facility::size(kind).0 * 0.9) {
+            return Err("too close to another station or yard".into());
+        }
+        self.economy.treasury -= cost;
+        let fid = self.facilities.insert(facility.clone());
+        // Connector stubs become part of the plan, so they survive rebuilds
+        // and roads and track can be snapped onto their ends.
+        let had_project = self.project.take();
+        if !rail_fused {
+            let [a, b] = facility.rail_line();
+            self.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Rail });
+        }
+        if !road_fused {
+            let [a, b] = facility.road_line();
+            self.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street });
+        }
+        if self.project.is_some() {
+            self.implement();
+        } else {
+            self.rebuild_from_master();
+        }
+        self.project = had_project;
+        let lot_id = self.facilities[fid].lot.ok_or("the facility lost its lot")?;
+        let id = self.attach_rail_building(lot_id, kind)?;
+        self.facilities[fid].building = Some(id);
+        self.refresh_rail_links();
+        Ok(id)
+    }
+
+    /// The lot a facility stands on: its footprint, fronting its street.
+    fn facility_lot(&self, fid: FacilityId) -> Lot {
+        let f = &self.facilities[fid];
+        let corners = f.corners();
+        let front_mid = f.front_mid();
+        let probe = front_mid - f.inward() * rail::ROAD_GAP;
+        let (front_segment, front_t, car_point) = match self.roads.nearest_street(probe) {
+            Some((sid, t, q)) => (sid, t, q),
+            None => (SegmentId(0), 0.5, probe),
+        };
+        Lot {
+            zone: ZoneId::default(),
+            land_use: if f.kind == RailFacility::Station { LandUse::Civic } else { LandUse::Industrial },
+            polygon: corners.to_vec(),
+            corners,
+            front_edge: [corners[0], corners[1]],
+            center: f.center,
+            front_dir: -f.inward(),
+            front_segment,
+            front_t,
+            access_node: self.roads.nearest_endpoint(front_segment, front_t),
+            // Left empty: the rebuild matches the old lot's building onto it.
+            building: None,
+            landlocked: false,
+            footfall_today: 0,
+            footfall_hour: 0,
+            car_segment: Some(front_segment),
+            car_point,
+            park: None,
+        }
+    }
+
+    /// Recompute whether each station and yard reaches the railway and the
+    /// city's roads.
+    fn refresh_rail_links(&mut self) {
+        // The railway proper is reached when a trunk end is: a facility's
+        // own stub has ends too, and they do not count. The roads are
+        // reached when some zoned lot's street is.
+        let trunk_ends: Vec<NodeId> = self.roads.rail_leaf_nodes().into_iter().filter(|&n| (self.roads.node(n).pos.y - TRUNK_Y).abs() < 1.0).collect();
+        let city_node: Option<NodeId> = self.lots.values().find(|l| l.zone != ZoneId::default() && l.usable()).map(|l| l.access_node);
+        let ids: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.rail.is_some()).map(|(id, _)| id).collect();
+        for id in ids {
+            let (rail_ok, road_ok) = {
+                let b = &self.buildings[id];
+                let link = b.rail.as_ref().unwrap();
+                let seg_ok = self.roads.segment(link.segment).alive && self.roads.segment(link.segment).is_rail();
+                let node = self.roads.segment(link.segment).a;
+                let rail_ok = seg_ok && trunk_ends.iter().any(|&l| self.roads.rail_path(node, l).is_some_and(|p| p.len() > 1));
+                let road_ok = match (self.lots.get(b.lot), city_node) {
+                    (Some(l), Some(c)) => self.roads.path(l.access_node, c).is_some(),
+                    _ => false,
+                };
+                (rail_ok, road_ok)
+            };
+            // The track beside the facility may have been split or re-laid.
+            let lot_poly = self.lots.get(self.buildings[id].lot).map(|l| (l.polygon.clone(), l.center, l.front_edge));
+            if let Some((poly, center, front)) = lot_poly {
+                let kind = self.buildings[id].rail.as_ref().unwrap().kind;
+                let length = if kind == RailFacility::Station { rail::STATION_PLATFORM } else { rail::YARD_APRON };
+                if let Some(mut fresh) = RailLink::beside(&self.roads, &poly, center, front, kind, length) {
+                    fresh.rail_connected = rail_ok;
+                    fresh.road_connected = road_ok;
+                    self.buildings[id].rail = Some(fresh);
+                    continue;
+                }
+            }
+            let link = self.buildings[id].rail.as_mut().unwrap();
+            link.rail_connected = rail_ok;
+            link.road_connected = road_ok;
+        }
+    }
+
+    /// The building on a facility's lot.
+    fn attach_rail_building(&mut self, lot_id: LotId, kind: RailFacility) -> Result<BuildingId, String> {
+        let lot = self.lots.get(lot_id).ok_or("no such lot")?;
+        let (jobs, length) = match kind {
+            RailFacility::Station => (rail::STATION_JOBS, rail::STATION_PLATFORM),
+            RailFacility::FreightYard => (rail::YARD_JOBS, rail::YARD_APRON),
+        };
+        let link = RailLink::beside(&self.roads, &lot.polygon, lot.center, lot.front_edge, kind, length).ok_or("the track stub did not get laid")?;
         let lu = lot.land_use;
         let value = self.land_value.at(lot.center);
-        self.economy.treasury -= cost;
         let seed = self.fresh_seed();
         let name = match kind {
             RailFacility::Station => format!("{} Station", names::building_name(&mut self.rng, LandUse::Civic).split(' ').next().unwrap_or("Central")),
@@ -3242,7 +3356,7 @@ mod tests {
 
     #[test]
     fn trains_call_at_stations_and_yards_bring_freight() {
-        use crate::rail::{RailFacility, TrainKind};
+        use crate::rail::{Facility, RailFacility, TrainKind};
         let mut w = World::new(WorldConfig::default());
         assert!(w.roads.alive_segments().any(|(_, s)| s.is_rail()), "the trunk line is there from the start");
         w.economy.treasury = 200_000.0;
@@ -3258,26 +3372,49 @@ mod tests {
             assert!(first_leg.y.abs() < 0.35, "the branch leaves the trunk along it, not square off it: {first_leg:?}");
         }
         w.add_road(&[Vec2::new(-100.0, 0.0), Vec2::new(1000.0, 0.0)], 1, 1);
-        // Side streets make junctions, and junctions make crossings for walkers.
         w.add_road(&[Vec2::new(120.0, 0.0), Vec2::new(120.0, 120.0)], 1, 1);
         w.add_road(&[Vec2::new(600.0, 0.0), Vec2::new(600.0, 120.0)], 1, 1);
-        let strip = |x0: f32, x1: f32| vec![Vec2::new(x0, -56.0), Vec2::new(x1, -56.0), Vec2::new(x1, -10.0), Vec2::new(x0, -10.0)];
-        w.add_zone(strip(150.0, 330.0), LandUse::Commercial);
-        w.add_zone(strip(350.0, 570.0), LandUse::Industrial);
-        w.add_zone(strip(650.0, 830.0), LandUse::Commercial);
         w.add_zone(vec![Vec2::new(150.0, 10.0), Vec2::new(330.0, 10.0), Vec2::new(330.0, 90.0), Vec2::new(150.0, 90.0)], LandUse::Residential);
+        w.add_zone(vec![Vec2::new(650.0, 10.0), Vec2::new(830.0, 10.0), Vec2::new(830.0, 90.0), Vec2::new(650.0, 90.0)], LandUse::Commercial);
+        w.add_zone(vec![Vec2::new(350.0, 10.0), Vec2::new(570.0, 10.0), Vec2::new(570.0, 130.0), Vec2::new(350.0, 130.0)], LandUse::Industrial);
+        // A station set down beside the branch fuses to it; its street stub
+        // is 26 m short of the main street, so it is not connected yet.
+        let (plan, rail_fused, road_fused) = Facility::plan(RailFacility::Station, Vec2::new(240.0, -45.0), &w.roads);
+        assert!(rail_fused && !road_fused, "fuses to the track only: rail {rail_fused} road {road_fused}");
+        assert!((plan.center.y - (-40.0)).abs() < 0.5 && plan.along.x.abs() > 0.99, "sits along the track with its rail side on it: {:?} {:?}", plan.center, plan.along);
+        let station_a = w.place_rail_facility(RailFacility::Station, Vec2::new(240.0, -45.0)).expect("station A");
+        let la = w.buildings[station_a].rail.clone().unwrap();
+        assert!(la.rail_connected && !la.road_connected, "track yes, road not yet: {la:?}");
+        assert!(w.lots.get(w.buildings[station_a].lot).is_some_and(|l| l.front_dir.y > 0.9), "the lot fronts its street stub to the north");
+        assert!(w.roads.alive_segments().any(|(_, s)| s.is_street() && w.roads.node(s.a).pos.y > -20.0 && w.roads.node(s.a).pos.y < -17.0), "a street stub was laid along the road side");
+        // Joining the stub to the main street connects it.
+        let stub_end = w.facilities.values().next().unwrap().road_line()[1];
+        w.add_road(&[stub_end, Vec2::new(stub_end.x, 0.0)], 1, 1);
+        let la = w.buildings[station_a].rail.clone().unwrap();
+        assert!(la.works(), "connected once the stub meets the street: {la:?}");
+        // Station B the same way, and a freight yard; both get their roads.
+        let station_b = w.place_rail_facility(RailFacility::Station, Vec2::new(740.0, -45.0)).expect("station B");
+        let end_b = w.facilities.values().find(|f| f.building == Some(station_b)).unwrap().road_line()[1];
+        w.add_road(&[end_b, Vec2::new(end_b.x, 0.0)], 1, 1);
+        assert!(w.place_rail_facility(RailFacility::Station, Vec2::new(760.0, -45.0)).is_err(), "too close to station B");
+        let yard = w.place_rail_facility(RailFacility::FreightYard, Vec2::new(460.0, -50.0)).expect("yard");
+        let end_y = w.facilities.values().find(|f| f.building == Some(yard)).unwrap().road_line()[1];
+        w.add_road(&[end_y, Vec2::new(end_y.x, 0.0)], 1, 1);
+        assert!(w.buildings[yard].rail.as_ref().unwrap().works());
+        assert!(w.buildings[station_b].rail.as_ref().unwrap().works());
+        // A free-standing yard far from everything lays both stubs and runs nothing.
+        let lone = w.place_rail_facility(RailFacility::FreightYard, Vec2::new(-600.0, 300.0)).expect("lone yard");
+        let ll = w.buildings[lone].rail.as_ref().unwrap();
+        assert!(!ll.rail_connected && !ll.road_connected, "a yard in a field waits for track and road");
+        assert!(w.facilities.values().filter(|f| f.lot.is_some()).count() == 4);
+        // A rider from a home by station A to a shop by station B.
         let lot_near = |w: &World, p: Vec2, lu: LandUse| w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none() && l.land_use == lu).min_by(|a, b| a.1.center.distance(p).total_cmp(&b.1.center.distance(p))).map(|(id, _)| id).unwrap();
-        let far = lot_near(&w, Vec2::new(240.0, 80.0), LandUse::Residential);
-        assert!(w.build_rail(far, RailFacility::Station).is_err(), "no track near that lot");
-        let a_lot = lot_near(&w, Vec2::new(200.0, -32.0), LandUse::Commercial);
-        let station_a = w.build_rail(a_lot, RailFacility::Station).unwrap_or_else(|e| panic!("station A: {e}; lot {:?}", w.lots[a_lot].polygon));
-        let b_lot = lot_near(&w, Vec2::new(740.0, -32.0), LandUse::Commercial);
-        let station_b = w.build_rail(b_lot, RailFacility::Station).expect("station B");
-        let y_lot = w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none() && l.land_use == LandUse::Industrial && l.area() >= crate::rail::YARD_MIN_AREA).map(|(id, _)| id).next().expect("yard lot");
-        assert!(w.build_rail(a_lot, RailFacility::FreightYard).is_err(), "taken");
-        let yard = w.build_rail(y_lot, RailFacility::FreightYard).expect("yard");
-        let link = w.buildings[station_a].rail.as_ref().unwrap();
-        assert!((link.centre().y - (-60.0)).abs() < 6.0 && link.centre().y > -60.0, "platform lies along the branch on the lot's side: {:?}", link.centre());
+        let home_lot = lot_near(&w, Vec2::new(240.0, 40.0), LandUse::Residential);
+        w.build_on(home_lot);
+        let shop_lot = lot_near(&w, Vec2::new(815.0, 40.0), LandUse::Commercial);
+        w.build_on(shop_lot);
+        let home = w.lots[home_lot].building.unwrap();
+        let shop = w.lots[shop_lot].building.unwrap();
         // A passenger train comes within the headway and calls at both stations.
         let mut minds = IdleMind;
         let mut saw_train = false;
@@ -3287,7 +3424,7 @@ mod tests {
             for t in w.rail.trains.values() {
                 if t.kind == TrainKind::Passenger {
                     saw_train = true;
-                    assert_eq!(t.stops.len(), 2, "both stations are on the route");
+                    assert_eq!(t.stops.len(), 2, "both connected stations are on the route, the lone yard is not");
                     if t.dwell > 0.0 && t.stops[t.next_stop.min(1)].0 == station_a {
                         dwelt_at_a = true;
                     }
@@ -3296,13 +3433,6 @@ mod tests {
         }
         assert!(saw_train && dwelt_at_a, "train {saw_train} dwelt {dwelt_at_a}");
         assert!(w.rail.stats.passenger_trains_today >= 1);
-        // A rider from a home by station A to a shop by station B.
-        let home_lot = lot_near(&w, Vec2::new(200.0, 40.0), LandUse::Residential);
-        w.build_on(home_lot);
-        let shop_lot = lot_near(&w, Vec2::new(810.0, -32.0), LandUse::Commercial);
-        w.build_on(shop_lot);
-        let home = w.lots[home_lot].building.unwrap();
-        let shop = w.lots[shop_lot].building.unwrap();
         for _ in 0..(4 * 60) {
             w.tick(&mut minds);
         }
@@ -3335,13 +3465,15 @@ mod tests {
         }
         assert!(waited && rode && arrived, "waited {waited} rode {rode} arrived {arrived}: {}", w.citizens[c].activity.label());
         assert!(w.citizens[c].savings < 50.0 && w.rail.stats.riders_today >= 1);
-        // Freight: an import goes to the yard, the buyer saves a fifth, and
-        // the next freight train brings it in.
-        let buyer = w.buildings.iter().find(|(_, b)| b.land_use == LandUse::Industrial && b.business.is_some()).map(|(id, _)| id).expect("an industrial business");
+        // Freight: an import goes to the connected yard, the buyer saves a
+        // fifth, and the next freight train brings it in.
+        let buyer = shop;
+        assert!(w.buildings[buyer].business.is_some(), "the shop is a business that imports");
         let money0 = w.buildings[buyer].business.as_ref().unwrap().money;
         let queued0 = w.buildings[yard].rail_inbound.len();
         w.import(buyer, Resource::Parts, 10.0, 100.0);
         assert_eq!(w.buildings[yard].rail_inbound.len(), queued0 + 1, "the order waits at the yard");
+        assert!(w.buildings[lone].rail_inbound.is_empty(), "the unconnected yard gets nothing");
         assert!((w.buildings[buyer].business.as_ref().unwrap().money - money0 - 20.0).abs() < 0.01, "rail import refunds a fifth");
         let mut freight_seen = false;
         for _ in 0..900 {
@@ -3355,9 +3487,10 @@ mod tests {
         }
         assert!(freight_seen && w.buildings[yard].rail_inbound.is_empty(), "freight train {freight_seen}, waiting {}", w.buildings[yard].rail_inbound.len());
         assert!(w.rail.stats.freight_in_today >= 10.0);
-        // Round trip keeps the facilities; trains come back on the headway.
+        // Round trip keeps the facilities and their lots.
         let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
         assert!(back.buildings[station_a].rail.is_some() && back.buildings[yard].rail.is_some());
+        assert_eq!(back.facilities.len(), 4);
     }
 
     #[test]
