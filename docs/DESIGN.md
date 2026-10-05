@@ -251,6 +251,30 @@ Citizens are rendered from their simulated positions every frame.
   deals, imports, exports, meals sold, hungry citizens, closures, and the average
   price and stock of every resource.
 
+- **Landscape** (`nd_sim::landscape`, `world/water.rs`): generated from a seed and
+  `LandscapeParams` (preset river valley / islands / coast / delta / plains / flat; water, relief,
+  branching, islands, highway). Features are saved with the world (old saves load flat): rivers and
+  streams are centrelines with a width and a current (streams faster), lakes are outlines, the sea is
+  an outline with islands as holes, hot spots are discs with a heat. Heights come from a 10 m raster of
+  base hills carved by the signed distance to water (bed below the waterline, a flat strip then a
+  slope of about one in ten up the banks); the basin centre stays dry. Road polylines are split at
+  every waterline so a bridge is exactly the span; bridge segments are flagged, their ends set at deck
+  height (water + 7 m) and every node raised until no segment is steeper than its grade (street 7%,
+  rail 3%, path 10%); new bridge metres are charged on implement. `Ground` is a 4 m raster of the built
+  ground: terrain blended into each road's profile within 22 m and flattened to a pad under every lot
+  (the street's height at the frontage). The renderer draws the terrain from it, lifts flat-datum meshes
+  onto it, raises buildings to their pad and movers to `surface_height` (decks over water). Water cuts
+  parcels (`zoning::generate_lots_wet`); lots steeper than 0.2 are unusable. A one-way street of three
+  or more lanes is a highway: 25 m/s, no frontage, grade-separated (crossings make no junction, only
+  dropped ends join, so ramps merge with priority to the mainline). Two carriageways cross the map at
+  y = 420 from the start; through cars enter at the map edge and leave at the far one. Docks
+  (`nd_sim::ports`) stand on the shore with a pier and a street stub, take over grown lots, and work
+  once their street reaches the city: freighters route by water (river centrelines, tributaries
+  joining, mouths opening on the sea) from off the map to the berth and back, landing imports for
+  lorries; ferries run terminal to terminal or out to elsewhere with fares. Hydro (river current at
+  least 0.8 m/s, output scales with current), tidal (sea shore, two tides a day) and geothermal (hot
+  spot, scales with heat) plants extend `PowerPlantKind`.
+
 ## Minds and the LLM plan
 
 ```

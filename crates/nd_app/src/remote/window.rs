@@ -17,6 +17,8 @@ pub struct WindowRequests {
     queue: Vec<(Info, Option<bool>)>,
     /// Titles of the windows open at the end of the last egui pass.
     pub open: Vec<&'static str>,
+    /// The New Game window (not an `Info` window).
+    pub new_game: Option<bool>,
 }
 
 pub fn info_of(name: &str) -> Result<Info, String> {
@@ -48,6 +50,9 @@ impl WindowRequests {
 
 pub fn apply_window_requests(mut contexts: EguiContexts, mut req: ResMut<WindowRequests>) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
+    if let Some(open) = req.new_game.take() {
+        crate::ui::newgame::set_open(ctx, open);
+    }
     for (info, open) in std::mem::take(&mut req.queue) {
         let open = open.unwrap_or(!info.is_open(ctx));
         info.set_open(ctx, open);

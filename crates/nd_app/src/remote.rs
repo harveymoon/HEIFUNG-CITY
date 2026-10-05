@@ -360,12 +360,18 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             *ctx.selection = Selection::None;
             ctx.eplan.invalidate();
             ctx.follow.0 = None;
-            ctx.tools.status = format!("New city on a {} landscape", ctx.sim.world.landscape.params.preset.label().to_lowercase());
+            ctx.tools.status = format!("New city: {} landscape", ctx.sim.world.landscape.params.preset.label());
             ctx.history.reset(&ctx.sim.world, "new game");
             Ok(land::summary(&ctx.sim.world))
         }
         "terrain_at" => Ok(land::terrain_at(&ctx.sim.world, req_point(cmd)?)),
         "landscape" => Ok(land::summary(&ctx.sim.world)),
+        "grant" => {
+            // Dev: money for trying things out.
+            let amount = opt_f32(cmd, "amount")?.unwrap_or(100_000.0);
+            ctx.sim.world.economy.treasury += amount;
+            Ok(json!({ "treasury": round(ctx.sim.world.economy.treasury) }))
+        }
         "list_saves" => Ok(list_saves()),
         "plan" => Ok(plan(ctx)),
         "add_road" => add_road(cmd, ctx),
@@ -509,6 +515,11 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(v)
         }
         "export" => export(cmd, ctx),
+        "window" if req_str(cmd, "name").is_ok_and(|n| n.trim().eq_ignore_ascii_case("new_game") || n.trim().eq_ignore_ascii_case("new game")) => {
+            let open = opt_bool(cmd, "open")?.unwrap_or(true);
+            ctx.windows.new_game = Some(open);
+            Ok(json!({ "window": "new game", "open": open }))
+        }
         "window" => {
             let info = window::info_of(req_str(cmd, "name")?)?;
             let (open, list) = ctx.windows.request(info, opt_bool(cmd, "open")?);
@@ -1004,7 +1015,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(v) = field(cmd, "building") {
         let id = key_from(v)?;
         let b = w.buildings.get(id).ok_or("no such building")?;
-        let style = ctx.assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11)).label();
+        let style = b.port.map(|k| k.label()).or(b.plant.map(|k| k.label())).unwrap_or(ctx.assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11)).label());
         return Ok(json!({ "building": building_detail(w, id, b, style) }));
     }
     if let Some(v) = field(cmd, "lot") {
@@ -1384,6 +1395,7 @@ fn help() -> Value {
             "place": { "kind": "station|freight_yard|depot|parking|coal|solar|wind|nuclear|hydro|tidal|geothermal|shipping_port|ferry_terminal", "x": "f", "y": "f", "note": "hydro beside a river or stream with a current >= 0.8 m/s, tidal on the sea shore, geothermal over a hot spot; docks at the water's edge (they build a pier and a street stub)" },
             "new_game": { "preset": "river_valley|islands|coast|delta|plains|flat (default river_valley)", "seed": "u64", "water": "0..1", "relief": "0..1 height variation", "branching": "0..1", "islands": "0..8", "highway": "bool", "note": "throws the city away; omitted levers take the preset's" },
             "terrain_at": { "x": "f", "y": "f", "returns": "natural/ground/surface heights, slope, water (kind, current, width), nearest shore, hot spot, power sites and dock placement for the lot there" },
+            "grant": { "amount": "money added to the treasury (dev), default 100000" },
             "landscape": { "returns": "preset and levers, rivers (width, current, hydro_ok), lakes, sea, hot spots, highway ends and through cars, bridges, docks, ships" },
             "bus": { "action": "new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses" },
             "find": { "what": "citizens|buildings|lots|cars|trains|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },

@@ -131,7 +131,7 @@ fn start(p: &mut UiCtx, params: LandscapeParams) {
     *p.tools = crate::tools::ToolState::default();
     *p.selection = crate::tools::Selection::None;
     p.plan.invalidate();
-    p.flags.message = format!("New city on a {} landscape", label.to_lowercase());
+    p.flags.message = format!("New city: {label} landscape");
 }
 
 /// Draw the mini-map for the current levers when they changed: water blue,
@@ -163,7 +163,7 @@ pub fn preview_image(params: &LandscapeParams) -> (egui::ColorImage, String) {
                 }
             } else if land.hot_spot_at(p).is_some_and(|h| h.pos.distance(p) < h.radius) {
                 [220, 190, 60]
-            } else if params.highway && ((p.y - nd_sim::landscape::HIGHWAY_Y).abs() < 14.0) && p.x.abs() < 1000.0 {
+            } else if params.highway && ((p.y - nd_sim::landscape::HIGHWAY_Y).abs() < 14.0) {
                 [235, 180, 90]
             } else if (p.y - nd_sim::rail::TRUNK_Y).abs() < 8.0 && p.x.abs() < 1000.0 {
                 [150, 150, 160]

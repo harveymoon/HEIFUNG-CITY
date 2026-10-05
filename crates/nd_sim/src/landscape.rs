@@ -1063,23 +1063,39 @@ impl WaterGraph {
         best.map(|(_, i)| i)
     }
 
-    /// Breadth of Dijkstra from `start` until `goal(node)`.
+    /// Dijkstra from `start` until `goal(node)`. Distances are exact (a
+    /// rounded key once let a zero-length edge point two nodes at each other
+    /// and the path never ended).
     fn search(&self, start: usize, goal: impl Fn(usize) -> bool) -> Option<Vec<usize>> {
+        #[derive(PartialEq)]
+        struct Item(f32, usize);
+        impl Eq for Item {}
+        impl PartialOrd for Item {
+            fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(o))
+            }
+        }
+        impl Ord for Item {
+            fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+                o.0.total_cmp(&self.0).then(o.1.cmp(&self.1))
+            }
+        }
         let n = self.nodes.len();
         let mut dist = vec![f32::INFINITY; n];
         let mut prev = vec![usize::MAX; n];
+        let mut done = vec![false; n];
         let mut heap = std::collections::BinaryHeap::new();
         dist[start] = 0.0;
-        heap.push((std::cmp::Reverse(0u32), start));
-        while let Some((std::cmp::Reverse(dq), u)) = heap.pop() {
-            let du = dq as f32 / 16.0;
-            if du > dist[u] + 1e-3 {
+        heap.push(Item(0.0, start));
+        while let Some(Item(du, u)) = heap.pop() {
+            if done[u] {
                 continue;
             }
+            done[u] = true;
             if goal(u) {
                 let mut path = vec![u];
                 let mut c = u;
-                while prev[c] != usize::MAX {
+                while prev[c] != usize::MAX && path.len() <= n {
                     c = prev[c];
                     path.push(c);
                 }
@@ -1088,10 +1104,10 @@ impl WaterGraph {
             }
             for &v in &self.adj[u] {
                 let nd = du + self.nodes[u].distance(self.nodes[v]);
-                if nd < dist[v] {
+                if !done[v] && nd < dist[v] {
                     dist[v] = nd;
                     prev[v] = u;
-                    heap.push((std::cmp::Reverse((nd * 16.0) as u32), v));
+                    heap.push(Item(nd, v));
                 }
             }
         }
@@ -1355,6 +1371,28 @@ mod tests {
         assert!(delta.rivers.len() >= 3, "channels fan out");
         let flat = Landscape::new(&LandscapeParams::flat());
         assert!(flat.is_flat() && flat.height(Vec2::new(100.0, 50.0)) == 0.0);
+    }
+
+    #[test]
+    fn water_routes_always_end() {
+        // Junctions, delta channels and duplicate points make zero-length
+        // edges; every route must still come back, and be short.
+        for preset in [LandscapePreset::Delta, LandscapePreset::RiverValley, LandscapePreset::Coast, LandscapePreset::Islands, LandscapePreset::Plains] {
+            for seed in 1..8 {
+                let l = Landscape::new(&LandscapeParams { branching: 0.9, ..LandscapeParams::preset(preset, seed) });
+                let probes: Vec<Vec2> = l.rivers.iter().flat_map(|r| r.points.iter().step_by(9).copied()).collect();
+                for (k, p) in probes.iter().enumerate() {
+                    if let Some(r) = l.water_route(*p, None) {
+                        assert!(r.len() < 2000, "{preset:?}/{seed}: {} points", r.len());
+                    }
+                    if let Some(q) = probes.get(k * 7 % probes.len()) {
+                        if let Some(r) = l.water_route(*p, Some(*q)) {
+                            assert!(r.len() < 2000);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

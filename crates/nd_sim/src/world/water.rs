@@ -219,7 +219,8 @@ impl World {
     /// drives on the right, so the eastbound carriageway is the north one.
     pub fn lay_highway(&mut self) -> [GestureId; 2] {
         let had_project = self.project.take();
-        let x = self.config.half_extent + 100.0;
+        // Edge to edge of the drawn land: traffic comes from off the map.
+        let x = crate::landscape::LAND_HALF - 40.0;
         let east = self.add_gesture(Gesture::Road { points: vec![Vec2::new(-x, HIGHWAY_Y + HIGHWAY_HALF_GAP), Vec2::new(x, HIGHWAY_Y + HIGHWAY_HALF_GAP)], lanes_fwd: HIGHWAY_LANES, lanes_bwd: 0, curved: false, kind: RoadKind::Street });
         let west = self.add_gesture(Gesture::Road { points: vec![Vec2::new(x, HIGHWAY_Y - HIGHWAY_HALF_GAP), Vec2::new(-x, HIGHWAY_Y - HIGHWAY_HALF_GAP)], lanes_fwd: HIGHWAY_LANES, lanes_bwd: 0, curved: false, kind: RoadKind::Street });
         self.implement();

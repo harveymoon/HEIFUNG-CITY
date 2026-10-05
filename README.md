@@ -105,6 +105,19 @@ links Bevy dynamically for quicker iteration.
   casinos. Parcels follow the roads, so corner and diagonal lots get odd-shaped buildings. The
   inspector names a building's style.
   Save and Load use `saves/city.ron`.
+- **Landscape**: **New game…** in the top bar picks a landscape (river valley, islands, coast, delta,
+  plains, or the old flat map) with levers for water, height variation, river branching, islands and
+  the seed, and a mini-map of the result. Rivers and streams carry a current (streams run faster),
+  lakes and the sea are still; the middle of the map is always dry land. Roads follow the ground at
+  gentle grades and bridge water on decks (60 per metre of new bridge); lots never sit on water or on
+  ground too steep to level, and buildings stand on levelled pads. A three-lane highway crosses the
+  map from the start with through traffic from elsewhere; it passes over streets without junctions,
+  so join it with the Ramp preset (a one-way lane dropped onto a carriageway merges without lights).
+- **Docks** (Rail tool [8], Shipping port / Ferry terminal): set down at the water's edge, they build a
+  pier and a street stub. Freighters bring imports at 70% of the price (exports earn 25% more) and
+  hand them to lorries; ferries sail to every other terminal on connected water, or out to elsewhere,
+  carrying fare-paying riders. **Hydro** (beside flowing water), **tidal** (sea shore) and
+  **geothermal** (yellow ground with steaming vents) plants join the power list.
 - **Remote control**: the game serves a JSON API on `http://127.0.0.1:4817` (`ND_REMOTE_PORT`,
   `ND_REMOTE=0` to disable) for scripts and AI assistants to build, inspect, move the camera and take
   screenshots; `tools/mcp/nd_mcp.py` wraps it as an MCP server. See `docs/REMOTE.md`.

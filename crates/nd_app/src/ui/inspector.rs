@@ -56,9 +56,11 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 return;
             };
             neon(ui, &b.name);
-            let style = assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11));
+            let picked = assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11)).label();
+            // Docks and plants are drawn in their own style, not the land use's.
+            let style_label = b.port.map(|k| k.label()).or(b.plant.map(|k| k.label())).unwrap_or(picked);
             if let Some(c) = &b.construction {
-                ui.label(format!("{}  ·  {} tier  ·  {}  ·  {} floors  ·  started day {}", b.land_use.label(), b.tier.label(), style.label(), b.floors, b.built_tick / 1440 + 1));
+                ui.label(format!("{}  ·  {} tier  ·  {}  ·  {} floors  ·  started day {}", b.land_use.label(), b.tier.label(), style_label, b.floors, b.built_tick / 1440 + 1));
                 let (homes, jobs) = b.planned_capacity();
                 let days_left = c.days_left();
                 let left = if days_left < 1.0 { format!("{:.0} hours left", (days_left * 24.0).ceil().max(1.0)) } else { format!("{:.1} days left", days_left) };
@@ -66,7 +68,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 ui.label(egui::RichText::new(format!("UNDER CONSTRUCTION, {:.0}%, {left}{status}", c.progress * 100.0)).color(egui::Color32::from_rgb(255, 200, 90)));
                 ui.label(format!("{} of {} deliveries in  ·  {:.1} days of work in all  ·  site crew {}/{}  ·  will have {} homes and {} jobs", c.deliveries, nd_sim::Construction::DELIVERIES, c.days, b.workers.len(), b.jobs, homes, jobs));
             } else {
-                ui.label(format!("{}  ·  {} tier  ·  {}  ·  {} floors  ·  built day {}", b.land_use.label(), b.tier.label(), style.label(), b.floors, b.built_tick / 1440 + 1));
+                ui.label(format!("{}  ·  {} tier  ·  {}  ·  {} floors  ·  built day {}", b.land_use.label(), b.tier.label(), style_label, b.floors, b.built_tick / 1440 + 1));
             }
             ui.label(format!("land value {:.2}  ·  rent {:.0}/day  ·  wage {:.0}/day  ·  condition {:.0}%{}", b.land_value, b.rent, b.wage(), b.condition * 100.0, if b.is_derelict() { "  ·  DERELICT" } else { "" }));
             ui.label(format!("homes {}/{} ({} residents)  ·  workers {}/{}  ·  visitors {}", b.households.len(), b.homes, b.residents.len(), b.workers.len(), b.jobs, b.visitors));

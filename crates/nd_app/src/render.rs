@@ -618,6 +618,10 @@ fn sync_scatter(
         })
         .collect();
     let clear = |p: SVec2| {
+        // Nothing grows in the water or on the wet sand.
+        if !w.landscape.is_flat() && w.landscape.water_distance(p) < 6.0 {
+            return false;
+        }
         if zones.iter().any(|(lo, hi, poly)| p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y && nd_sim::zoning::point_in_polygon(p, poly)) {
             return false;
         }
