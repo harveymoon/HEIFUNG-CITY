@@ -383,6 +383,9 @@ the time spent on the main thread inside the frame; best and worst of five calls
 
 ## Services and emergencies
 
+`incident {kind, building | citizen}` starts one by hand (fire, crime or medical) for testing; reply
+`incident` (its id, as in the report and the events).
+
 Events in the log (`events`): `IncidentStarted`, `EmergencyCall`, `UnitDispatched`, `UnitOnScene`,
 `IncidentResolved` (each with `incident`, `type` fire / crime / medical, `building`, `outcome`),
 `FireSpread`, `BurnedDown`, `StadiumEvent`. Building rows carry `service` (`"fire:mid"`) and

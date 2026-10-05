@@ -414,6 +414,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(v)
         }
         "place" => place(cmd, ctx),
+        "incident" => incident(cmd, ctx),
         "bus" => bus(cmd, ctx),
         "find" => find(cmd, ctx),
         "inspect" => inspect(cmd, ctx),
@@ -759,6 +760,34 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     ctx.tools.status = note.clone();
     let b = ctx.sim.world.buildings.get(id).map(|b| building_row(&ctx.sim.world, id, b)).unwrap_or(Value::Null);
     Ok(json!({ "building": key_str(id), "message": note, "row": b, "treasury": round(ctx.sim.world.economy.treasury) }))
+}
+
+/// Start an emergency by hand, for testing and demos: `kind` fire / crime
+/// / medical at a `building` (medical picks someone inside it, or `citizen`).
+fn incident(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let kind = req_str(cmd, "kind")?.trim().to_ascii_lowercase();
+    let w = &mut ctx.sim.world;
+    let id = match kind.as_str() {
+        "fire" | "crime" => {
+            let b = key_from(field(cmd, "building").ok_or("building is required")?)?;
+            if !w.buildings.contains_key(b) {
+                return Err("no such building".into());
+            }
+            if kind == "fire" { w.start_fire(b) } else { w.start_crime(b) }.ok_or("cannot start that here (already burning, a site, a park or a station)")?
+        }
+        "medical" | "sick" => {
+            let c = match field(cmd, "citizen") {
+                Some(v) => key_from(v)?,
+                None => {
+                    let b: nd_sim::BuildingId = key_from(field(cmd, "building").ok_or("citizen or building is required")?)?;
+                    w.citizens.iter().find(|(_, c)| c.inside == Some(b)).map(|(id, _)| id).ok_or("nobody is inside that building")?
+                }
+            };
+            w.fall_ill(c).ok_or("that citizen is not indoors or is already a patient")?
+        }
+        _ => return Err(format!("unknown incident kind {kind:?}; fire, crime or medical")),
+    };
+    Ok(json!({ "incident": id }))
 }
 
 // ── buses ───────────────────────────────────────────────────────────────────
@@ -1384,7 +1413,8 @@ fn help() -> Value {
             "add_zone": { "polygon": "[[x,y],...] (3+)", "land_use": "residential|commercial|industrial|entertainment|civic|park", "implement": "bool" },
             "bulldoze": { "gesture_id": "int", "implement": "bool" },
             "project": { "action": "start|implement|undo|redo|discard" },
-            "place": { "kind": "station|freight_yard|depot|parking|coal|solar|wind|nuclear", "x": "f", "y": "f" },
+            "place": { "kind": "station|freight_yard|depot|parking|coal|solar|wind|nuclear|police|fire|hospital|clinic|school|dispatch|monument|stadium (services: tier or kind:tier)", "tier": "low|mid|high", "x": "f", "y": "f" },
+            "incident": { "kind": "fire|crime|medical", "building": "id", "citizen": "id (medical)" },
             "bus": { "action": "new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses" },
             "find": { "what": "citizens|buildings|lots|cars|trains|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
             "inspect": { "citizen|building|lot|car|train|route": "id", "gesture": "int; with no id, the current selection" },
