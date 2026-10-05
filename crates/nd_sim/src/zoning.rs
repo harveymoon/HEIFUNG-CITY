@@ -208,6 +208,63 @@ pub fn polygon_area(poly: &[Vec2]) -> f32 {
     a * 0.5
 }
 
+/// Distance from `p` to the outline of `poly`.
+pub fn distance_to_outline(p: Vec2, poly: &[Vec2]) -> f32 {
+    let n = poly.len();
+    let mut best = f32::INFINITY;
+    for i in 0..n {
+        let a = poly[i];
+        let b = poly[(i + 1) % n];
+        let ab = b - a;
+        let len2 = ab.length_squared();
+        let t = if len2 > 1e-9 { ((p - a).dot(ab) / len2).clamp(0.0, 1.0) } else { 0.0 };
+        best = best.min(p.distance(a + ab * t));
+    }
+    best
+}
+
+/// Has a parcel changed shape? True when the areas differ by more than
+/// `area_tol` (a fraction of the larger) or a vertex of either outline lies
+/// more than `dist_tol` metres from the other outline.
+pub fn outlines_differ(a: &[Vec2], b: &[Vec2], area_tol: f32, dist_tol: f32) -> bool {
+    let (area_a, area_b) = (polygon_area(a).abs(), polygon_area(b).abs());
+    if (area_a - area_b).abs() > area_tol * area_a.max(area_b).max(1e-3) {
+        return true;
+    }
+    a.iter().any(|&p| distance_to_outline(p, b) > dist_tol) || b.iter().any(|&p| distance_to_outline(p, a) > dist_tol)
+}
+
+fn segments_cross(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> bool {
+    let d1 = (b - a).perp_dot(c - a);
+    let d2 = (b - a).perp_dot(d - a);
+    let d3 = (d - c).perp_dot(a - c);
+    let d4 = (d - c).perp_dot(b - c);
+    d1 * d2 < 0.0 && d3 * d4 < 0.0
+}
+
+/// Do two simple polygons share ground (a vertex of one inside the other, or
+/// crossing edges)? Outlines that merely touch do not count.
+pub fn polygons_overlap(a: &[Vec2], b: &[Vec2]) -> bool {
+    if a.len() < 3 || b.len() < 3 {
+        return false;
+    }
+    if a.iter().any(|&p| point_in_polygon(p, b)) || b.iter().any(|&p| point_in_polygon(p, a)) {
+        return true;
+    }
+    if point_in_polygon(polygon_centroid(a), b) || point_in_polygon(polygon_centroid(b), a) {
+        return true;
+    }
+    for i in 0..a.len() {
+        let (p, q) = (a[i], a[(i + 1) % a.len()]);
+        for j in 0..b.len() {
+            if segments_cross(p, q, b[j], b[(j + 1) % b.len()]) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub fn polygon_centroid(poly: &[Vec2]) -> Vec2 {
     let a = polygon_area(poly);
     if a.abs() < 1e-3 {

@@ -108,6 +108,10 @@ pub struct Building {
     pub rent: f32,
     /// Land value at the lot when last evaluated.
     pub land_value: f32,
+    /// Consecutive days a low-tier building has stood on high-value land;
+    /// three in a row and it is redeveloped at the land's tier.
+    #[serde(default)]
+    pub high_land_days: u8,
     /// The business operating here, for non-residential buildings.
     pub business: Option<Business>,
     /// Car spaces: integrated into towers, a few under middle-tier blocks,
@@ -163,6 +167,7 @@ impl Building {
             condition: 1.0,
             rent: 0.0,
             land_value,
+            high_land_days: 0,
             business: None,
             parking_capacity: 0,
             parking_used: 0,
