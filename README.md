@@ -34,7 +34,7 @@ links Bevy dynamically for quicker iteration.
 - Space pauses, `-`/`=` change speed. Camera: right-drag rotate, middle-drag or shift-drag pan,
   wheel zoom, WASD/QE, `Tab` walks the street (Esc returns). Tools by digit `1`–`8` (letters
   `I R Z B N T Y` also work), `O` toggles zoning outlines, `V` land value, `P` the pedestrian
-  network, `Ctrl+Shift+G` seeds a demo district on an empty map (the panel button adds it to any
+  network, `G` seeds a demo district on an empty map (the panel button adds it to any
   map), `F5`–`F12` jump the camera (`F5` station or yard, `F6` busiest junction, `F7`–`F9` tiers,
   `F11` plant, `F12` park), Backspace drops the last point or stop, Delete removes the hovered one,
   Esc clears points and the selection. Hotkeys stand down while a panel text field has focus.

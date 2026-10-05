@@ -159,13 +159,13 @@ impl PanelCtx<'_> {
     }
 
     /// The demo seed. The button is the deliberate path and works on any
-    /// map; the hotkey (Ctrl+Shift+G, in `sim_hotkeys`) only on an empty one.
+    /// map; the hotkey (G, in `sim_hotkeys`) only on an empty one.
     fn seed(&mut self, ui: &mut egui::Ui) {
         if *self.mode == CameraMode::Walk {
             return;
         }
         let has_buildings = !self.sim.world.buildings.is_empty();
-        let label = if has_buildings { "Seed demo district anyway" } else { "Seed demo district [Ctrl+Shift+G]" };
+        let label = if has_buildings { "Seed demo district anyway" } else { "Seed demo district [G]" };
         let button = ui.button(label);
         if has_buildings {
             hint(ui, help::SEED_EXISTING);

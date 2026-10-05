@@ -189,11 +189,12 @@ fn sim_hotkeys(keys: Res<ButtonInput<KeyCode>>, mut flags: ResMut<UiFlags>, mode
     if keys.just_pressed(KeyCode::Minus) || keys.just_pressed(KeyCode::NumpadSubtract) {
         sim.speed_index = sim.speed_index.saturating_sub(1);
     }
-    // Seeding is irreversible (it implements straight away), so it takes a
-    // deliberate chord, only on an empty map, and never from the pavement.
+    // Seeding is irreversible (it implements straight away), so the key only
+    // works on an empty map and never from the pavement; a city with
+    // buildings needs the panel button. (No modifier chord: Ctrl+Shift+G is
+    // taken by the system.)
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
-    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
-    if ctrl && shift && keys.just_pressed(KeyCode::KeyG) && *mode == CameraMode::Orbit {
+    if !ctrl && keys.just_pressed(KeyCode::KeyG) && *mode == CameraMode::Orbit {
         if sim.can_seed_by_hotkey() {
             sim.seed_demo_district();
             flags.message = "Demo district laid out around the centre".into();
