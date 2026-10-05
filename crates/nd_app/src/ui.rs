@@ -142,7 +142,7 @@ fn side_panel(
                             }
                         }
                     });
-                    ui.label(egui::RichText::new("Click polygon corners around a road, Enter or right-click to add to the project.").small().weak());
+                    ui.label(egui::RichText::new("Click polygon corners around a road, Enter or right-click to add to the project. Ctrl-click inside an existing zone to repaint it with the selected land use. Zones drawn over older ones take the ground.").small().weak());
                 }
                 Tool::Edit => {
                     ui.label(egui::RichText::new("Drag a control point to move it. Shift-click a road or zone edge to insert a point. Delete removes the hovered point.").small().weak());

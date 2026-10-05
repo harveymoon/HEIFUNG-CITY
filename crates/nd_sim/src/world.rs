@@ -174,6 +174,17 @@ impl World {
         self.project_mut().push(id, None);
     }
 
+    /// Change the land use of a zone gesture in place.
+    pub fn repaint_zone(&mut self, id: GestureId, land_use: LandUse) -> bool {
+        match self.gesture(id) {
+            Some(Gesture::Zone { polygon, .. }) => {
+                self.set_gesture(id, Gesture::Zone { polygon, land_use }, true);
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub fn undo(&mut self) -> bool {
         let ok = self.project.as_mut().map_or(false, |p| p.undo());
         if ok {
@@ -253,18 +264,24 @@ impl World {
         roads.version = self.roads.version + 1;
         self.roads = roads;
 
-        // Zones.
+        // Zones, newest first so a zone drawn over an older one takes the ground.
+        // SlotMap reuses freed slots, so iteration order is not insertion order;
+        // keep the ids in the order we need them.
         self.zones.clear();
-        for (_, polygon, land_use) in self.master.zones() {
-            self.zones.insert(Zone { polygon: polygon.to_vec(), land_use });
-        }
+        let zones: Vec<_> = self.master.zones().collect();
+        let zone_ids: Vec<ZoneId> = zones
+            .into_iter()
+            .rev()
+            .map(|(_, polygon, land_use)| self.zones.insert(Zone { polygon: polygon.to_vec(), land_use }))
+            .collect();
 
         // Lots: regenerate, then match old lots with buildings to new ones.
         let old_lots = std::mem::replace(&mut self.lots, SlotMap::with_key());
-        let zone_ids: Vec<ZoneId> = self.zones.keys().collect();
+        let mut covering: Vec<Zone> = Vec::new();
         for zid in zone_ids {
             let zone = self.zones[zid].clone();
-            generate_lots(zid, &zone, &self.roads, &mut self.lots);
+            generate_lots(zid, &zone, &self.roads, &mut self.lots, &covering);
+            covering.push(zone);
         }
         let mut demolish: Vec<BuildingId> = Vec::new();
         for (_, old) in old_lots.iter() {
@@ -272,7 +289,7 @@ impl World {
             let found = self
                 .lots
                 .iter()
-                .filter(|(_, l)| l.building.is_none() && l.land_use == old.land_use)
+                .filter(|(_, l)| l.building.is_none())
                 .map(|(id, l)| (id, l.center.distance(old.center)))
                 .filter(|(_, d)| *d < 4.0)
                 .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -836,6 +853,24 @@ mod tests {
         assert!(w.buildings.contains_key(building), "building on an untouched lot survives a rebuild");
         assert!(w.roads.alive_segments().count() >= 3);
         assert!(!w.traffic.net.intersections.is_empty());
+    }
+
+    #[test]
+    fn newest_zone_wins_and_repaint_changes_lots() {
+        use crate::zoning::point_in_polygon;
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        let tri = vec![Vec2::new(-180.0, 10.0), Vec2::new(250.0, 10.0), Vec2::new(-180.0, 250.0)];
+        let first = w.add_zone(tri.clone(), LandUse::Entertainment).unwrap();
+        assert!(w.lots.values().all(|l| l.land_use == LandUse::Entertainment));
+        // Drawing a commercial zone over it repaints the ground.
+        w.add_zone(tri.clone(), LandUse::Commercial);
+        assert!(w.lots.values().filter(|l| point_in_polygon(l.center, &tri)).all(|l| l.land_use == LandUse::Commercial));
+        // Repainting the original gesture and implementing also works.
+        assert!(w.repaint_zone(first, LandUse::Park));
+        w.implement();
+        // The newer commercial zone still sits on top of the repainted one.
+        assert!(w.lots.values().filter(|l| point_in_polygon(l.center, &tri)).all(|l| l.land_use == LandUse::Commercial));
     }
 
     #[test]

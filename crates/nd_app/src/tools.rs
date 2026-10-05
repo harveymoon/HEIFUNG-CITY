@@ -187,7 +187,18 @@ fn tool_input(
             }
         }
         Tool::Zone => {
-            if click {
+            let plan = sim.world.effective_plan();
+            tools.hover_gesture = ground.and_then(|p| nearest_gesture(&plan, p)).and_then(|(id, _)| match plan.gestures.get(&id) {
+                Some(Gesture::Zone { .. }) => Some(id),
+                _ => None,
+            });
+            if click && ctrl {
+                if let Some(id) = tools.hover_gesture {
+                    if sim.world.repaint_zone(id, tools.land_use) {
+                        tools.status = format!("Zone repainted as {}. Ctrl+Enter implements.", tools.land_use.label());
+                    }
+                }
+            } else if click {
                 if let Some(p) = ground {
                     tools.points.push(p);
                 }

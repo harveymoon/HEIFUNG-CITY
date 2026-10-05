@@ -19,7 +19,8 @@ links Bevy dynamically for quicker iteration.
 - **Road tool [2]**: pick lanes per direction, click nodes, Enter or right-click to add. Roads snap
   to existing nodes and split anything they cross.
 - **Zone tool [3]**: pick a land use, click polygon corners around a road, Enter to add. Lots are
-  carved along every road inside the zone.
+  carved along every road inside the zone. Ctrl-click inside a zone to repaint it; a zone drawn
+  over an older one takes the ground.
 - **Edit [4]**: drag control points of any road or zone, shift-click an edge to insert a point,
   Delete to remove the hovered point. Changing a built road rebuilds it on implement.
 - **Bulldoze [5]**: click a road or zone to mark it for removal.

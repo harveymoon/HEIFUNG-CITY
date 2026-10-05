@@ -138,12 +138,15 @@ pub fn polygon_area(poly: &[Vec2]) -> f32 {
 }
 
 /// Carve lots along every road segment that runs through `zone`, skipping
-/// space already claimed by `existing` lots. New lots are appended to `lots`.
+/// space already claimed by existing lots and any point covered by one of the
+/// `covering` zones (zones drawn later, which take precedence). New lots are
+/// appended to `lots`.
 pub fn generate_lots(
     zone_id: ZoneId,
     zone: &Zone,
     roads: &RoadNetwork,
     lots: &mut SlotMap<LotId, Lot>,
+    covering: &[Zone],
 ) -> Vec<LotId> {
     let lu = zone.land_use;
     let (w, d) = (lu.lot_width(), lu.lot_depth());
@@ -182,7 +185,7 @@ pub fn generate_lots(
                 let bl = fl + n * d;
                 let center = (fl + fr + br + bl) * 0.25;
                 let inside = zone.contains(center) && zone.contains(bl) && zone.contains(br);
-                if !inside {
+                if !inside || covering.iter().any(|z| z.contains(center)) {
                     continue;
                 }
                 let candidate = Lot {
