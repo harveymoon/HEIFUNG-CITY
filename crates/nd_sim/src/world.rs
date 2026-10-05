@@ -471,7 +471,9 @@ impl World {
                 c.pos = car.pos;
                 c.heading = car.heading;
                 self.park_car(car.citizen);
-                self.arrive(car.citizen);
+                if !self.walk_last_leg(car.citizen) {
+                    self.arrive(car.citizen);
+                }
             }
         }
         // Keep citizen positions in sync with their cars for inspection.
@@ -1131,6 +1133,9 @@ impl World {
         let seed = self.fresh_seed();
         let name = names::building_name(&mut self.rng, lu);
         let mut b = Building::new(lot_id, lu, floors, tier, seed, name, self.clock.tick, value);
+        if !self.lots[lot_id].car_access() {
+            b.parking_capacity = 0;
+        }
         if let Some(kind) = BusinessKind::candidates(lu).choose(&mut self.rng) {
             let jobs = b.jobs;
             b.business = Some(Business::new(*kind, jobs));
@@ -1566,6 +1571,33 @@ impl World {
         }
     }
 
+    /// A driver whose destination lines a footpath leaves the car at the
+    /// street and walks the rest. Returns false when there is nothing to walk.
+    fn walk_last_leg(&mut self, id: CitizenId) -> bool {
+        let (to, purpose) = match &self.citizens[id].activity {
+            Activity::Driving { to: Some(b), purpose, .. } => (*b, *purpose),
+            _ => return false,
+        };
+        let Some(lot) = self.building_lot(to) else { return false };
+        if lot.car_access() {
+            return false;
+        }
+        let entrance = lot.entrance();
+        let here = self.citizens[id].pos;
+        let mut path = match self.walk.route(here, entrance) {
+            Some((pts, nodes)) => {
+                self.count_footfall(&nodes);
+                pts
+            }
+            None => vec![here],
+        };
+        path.push(entrance);
+        let c = &mut self.citizens[id];
+        c.mode = TravelMode::Walk;
+        c.activity = Activity::Traveling { to: Some(to), purpose, path, idx: 0 };
+        true
+    }
+
     fn release_parking(&mut self, id: CitizenId) {
         let Some(bid) = self.citizens[id].parked_at.take() else { return };
         let Some(b) = self.buildings.get_mut(bid) else { return };
@@ -1646,6 +1678,13 @@ impl World {
         let Some(lot) = self.building_lot(target) else { return };
         let (to_seg, to_node) = (lot.front_segment, lot.access_node);
         let entrance = lot.entrance();
+        // Where a car can get to: the lot itself, or the nearest street for
+        // homes that line a footpath.
+        let car_to = lot.car_segment.map(|s| (s, lot.car_point));
+        let car_from = match self.citizens[id].inside.and_then(|b| self.building_lot(b)) {
+            Some(l) => l.car_segment.map(|s| (s, l.car_point)),
+            None => self.roads.nearest_street(from_pt).map(|(s, _, q)| (s, q)),
+        };
 
         let dist = from_pt.distance(entrance);
         let (owns_car, owns_bike) = {
@@ -1655,19 +1694,20 @@ impl World {
         // Park outings on a bike are a pleasure, not a commute: bike owners ride.
         let park_ride = owns_bike && matches!(purpose, Purpose::Visit(LandUse::Park));
         // Drive when the citizen has a car, it is far enough and a lane route exists.
-        if owns_car && !park_ride && dist >= self.config.drive_threshold {
-            if let Some((route, s0, s1)) = self.traffic.net.find_route(from_seg, from_pt, to_seg, entrance) {
+        if let (true, false, true, Some((cf_seg, cf_pt)), Some((ct_seg, ct_pt))) = (owns_car, park_ride, dist >= self.config.drive_threshold, car_from, car_to) {
+            if let Some((route, s0, s1)) = self.traffic.net.find_route(cf_seg, cf_pt, ct_seg, ct_pt) {
                 let exit_pos = self.leave_building(id);
                 let color = self.rng.random_range(0..8u8);
                 let car = self.traffic.spawn_car(id, None, route, s0, s1, color);
                 let c = &mut self.citizens[id];
-                if let Some(p) = exit_pos {
-                    c.pos = p;
-                }
+                // The short walk from a path-side home to the car is skipped.
+                c.pos = if cf_pt.distance(from_pt) > 2.0 { cf_pt } else { exit_pos.unwrap_or(c.pos) };
+                c.prev_pos = c.pos;
                 c.activity = Activity::Driving { car, to: Some(target), purpose };
                 return;
             }
         }
+        let _ = (from_seg, to_seg);
 
         // Otherwise walk along the node graph.
         let Some(nodes) = self.roads.path(from_node, to_node) else {

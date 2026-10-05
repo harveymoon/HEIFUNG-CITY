@@ -254,6 +254,23 @@ impl RoadNetwork {
         chain.windows(2).map(|w| self.link(w[0], w[1], lanes_fwd, lanes_bwd, kind)).collect()
     }
 
+    /// Closest point on any alive street (paths excluded): where a car can be.
+    pub fn nearest_street(&self, p: Vec2) -> Option<(SegmentId, f32, Vec2)> {
+        let mut best: Option<(f32, SegmentId, f32, Vec2)> = None;
+        for (sid, seg) in self.alive_segments() {
+            if !seg.is_street() {
+                continue;
+            }
+            let (p0, p1) = self.segment_points(sid);
+            let (t, q) = project_on_segment(p, p0, p1);
+            let d = p.distance(q);
+            if best.map_or(true, |(bd, ..)| d < bd) {
+                best = Some((d, sid, t, q));
+            }
+        }
+        best.map(|(_, sid, t, q)| (sid, t, q))
+    }
+
     /// Closest point on any alive segment.
     pub fn nearest_on_network(&self, p: Vec2) -> Option<(SegmentId, f32, Vec2)> {
         let mut best: Option<(f32, SegmentId, f32, Vec2)> = None;

@@ -137,6 +137,11 @@ Citizens are rendered from their simulated positions every frame.
   passes (`Lot::footfall_*`), and each hour 6% of the people who passed a grocer,
   bakery or gadget shop buy something off the shelf: walk-in trade that rewards shops
   where the feet are. The P overlay draws the in-block network.
+- **Homes on paths**: in a residential zone a path counts as frontage, so houses and
+  blocks line footpaths. Such lots have no car access: a resident's car trips start and
+  end at the nearest street, the last stretch is walked over the pedestrian network,
+  and the car is parked at a nearby parking business for a fee (or circles, which pulls
+  a lot into existence). Shops and industry still need a street.
 - **Economy stats**: demand per land use, Gini of incomes, class counts, rents per
   tier, displaced, emigrated and priced-out counters, plus market stats: businesses,
   deals, imports, exports, meals sold, hungry citizens, closures, and the average

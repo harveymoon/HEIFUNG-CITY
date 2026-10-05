@@ -127,6 +127,12 @@ pub struct Lot {
     pub footfall_today: u32,
     #[serde(default)]
     pub footfall_hour: u32,
+    /// The street a car can reach this lot from and where it stops. Lots
+    /// that line a path have no car access; residents park nearby.
+    #[serde(default)]
+    pub car_segment: Option<SegmentId>,
+    #[serde(default)]
+    pub car_point: Vec2,
 }
 
 impl Lot {
@@ -155,6 +161,11 @@ impl Lot {
 
     pub fn usable(&self) -> bool {
         !self.landlocked
+    }
+
+    /// Does the lot front a street (as opposed to a footpath)?
+    pub fn car_access(&self) -> bool {
+        self.car_segment == Some(self.front_segment)
     }
 }
 
@@ -372,12 +383,17 @@ fn chain_corridor(pts: &[Vec2], hw: f32, ext_start: bool, ext_end: bool) -> Opti
     Some(to_geo(&ring))
 }
 
-/// Distance from a point to the nearest street centreline, with that
-/// segment. Paths never count as frontage.
-fn nearest_road(roads: &RoadNetwork, p: Vec2) -> Option<(SegmentId, f32, f32)> {
+/// Corridor edge distance of a road: where parcels start.
+fn corridor_edge(seg: &crate::roads::Segment) -> f32 {
+    if seg.is_street() { seg.half_width() + SIDEWALK } else { seg.half_width() + 1.0 }
+}
+
+/// Distance from a point to the nearest road centreline, with that
+/// segment. Paths count only when `allow_paths` (homes may line a path).
+fn nearest_road(roads: &RoadNetwork, p: Vec2, allow_paths: bool) -> Option<(SegmentId, f32, f32)> {
     let mut best: Option<(SegmentId, f32, f32)> = None;
     for (sid, seg) in roads.alive_segments() {
-        if !seg.is_street() {
+        if !seg.is_street() && !allow_paths {
             continue;
         }
         let (a, b) = roads.segment_points(sid);
@@ -392,19 +408,19 @@ fn nearest_road(roads: &RoadNetwork, p: Vec2) -> Option<(SegmentId, f32, f32)> {
 
 /// Is this edge lying along a road's pavement line? Returns the segment and
 /// the parameter of the edge midpoint on it.
-fn edge_on_road(roads: &RoadNetwork, a: Vec2, b: Vec2) -> Option<(SegmentId, f32)> {
+fn edge_on_road(roads: &RoadNetwork, a: Vec2, b: Vec2, allow_paths: bool) -> Option<(SegmentId, f32)> {
     let len = a.distance(b);
     if len < 1.0 {
         return None;
     }
     let mid = (a + b) * 0.5;
-    let (sid, t, dist) = nearest_road(roads, mid)?;
+    let (sid, t, dist) = nearest_road(roads, mid, allow_paths)?;
     let seg = roads.segment(sid);
     let (p0, p1) = roads.segment_points(sid);
     let rd = (p1 - p0).normalize_or_zero();
     let ed = (b - a) / len;
     let parallel = rd.dot(ed).abs() > 0.8;
-    let on_line = (dist - seg.half_width() - SIDEWALK).abs() < 2.5;
+    let on_line = (dist - corridor_edge(seg)).abs() < 2.5;
     if parallel && on_line {
         Some((sid, t))
     } else {
@@ -413,7 +429,7 @@ fn edge_on_road(roads: &RoadNetwork, a: Vec2, b: Vec2) -> Option<(SegmentId, f32
 }
 
 /// Index of the longest edge that lies along a road, else the longest edge.
-fn frontage_edge(poly: &[Vec2], roads: &RoadNetwork) -> (usize, Option<(SegmentId, f32)>) {
+fn frontage_edge(poly: &[Vec2], roads: &RoadNetwork, allow_paths: bool) -> (usize, Option<(SegmentId, f32)>) {
     let n = poly.len();
     let mut best_road: Option<(f32, usize, (SegmentId, f32))> = None;
     let mut best_any: (f32, usize) = (0.0, 0);
@@ -424,7 +440,7 @@ fn frontage_edge(poly: &[Vec2], roads: &RoadNetwork) -> (usize, Option<(SegmentI
         if len > best_any.0 {
             best_any = (len, i);
         }
-        if let Some(hit) = edge_on_road(roads, a, b) {
+        if let Some(hit) = edge_on_road(roads, a, b, allow_paths) {
             if best_road.map_or(true, |(l, _, _)| len > l) {
                 best_road = Some((len, i, hit));
             }
@@ -467,9 +483,9 @@ fn reflex_vertex(poly: &[Vec2], min_turn: f32) -> Option<(usize, f32)> {
 /// first. Cuts are placed along a run, perpendicular to the local road, so
 /// straight frontages get regular lots, curves get radial ones, and corners
 /// are never cut right at the corner.
-fn frontage_runs(poly: &[Vec2], roads: &RoadNetwork) -> Vec<(Vec<usize>, f32)> {
+fn frontage_runs(poly: &[Vec2], roads: &RoadNetwork, allow_paths: bool) -> Vec<(Vec<usize>, f32)> {
     let n = poly.len();
-    let on: Vec<bool> = (0..n).map(|i| edge_on_road(roads, poly[i], poly[(i + 1) % n]).is_some()).collect();
+    let on: Vec<bool> = (0..n).map(|i| edge_on_road(roads, poly[i], poly[(i + 1) % n], allow_paths).is_some()).collect();
     if !on.iter().any(|&b| b) {
         return Vec::new();
     }
@@ -648,7 +664,7 @@ fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
         let a = pts[(i + n - 1) % n];
         let b = pts[i];
         let d = (b - a).normalize_or_zero();
-        let on_road = edge_on_road(roads, a, b).is_some();
+        let on_road = edge_on_road(roads, a, b, lu == LandUse::Residential).is_some();
         let normal = if on_road { d } else { Vec2::new(-d.y, d.x) };
         let pieces = cut(&poly, b, normal);
         if pieces.len() >= 2 {
@@ -661,7 +677,8 @@ fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
 
     let lw = lu.lot_width();
     let ld = lu.lot_depth();
-    let runs = frontage_runs(&pts, roads);
+    let allow = lu == LandUse::Residential;
+    let runs = frontage_runs(&pts, roads, allow);
     let Some((chain, chain_len)) = runs.first().cloned() else {
         out.push(pts);
         return;
@@ -766,11 +783,11 @@ fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
                 });
                 let frontage_ok = pieces.iter().all(|p| {
                     let q = from_geo(p);
-                    area_f(&p) < MIN_AREA * 0.5 || frontage_runs(&q, roads).first().map_or(false, |(_, l)| *l >= lw * 0.55)
+                    area_f(&p) < MIN_AREA * 0.5 || frontage_runs(&q, roads, allow).first().map_or(false, |(_, l)| *l >= lw * 0.55)
                 });
                 let wide_enough = pieces.iter().all(|p| {
                     let q = from_geo(p);
-                    area_f(&p) < MIN_AREA * 0.5 || frontage_runs(&q, roads).first().map_or(false, |(_, l)| *l >= lw * 0.8)
+                    area_f(&p) < MIN_AREA * 0.5 || frontage_runs(&q, roads, allow).first().map_or(false, |(_, l)| *l >= lw * 0.8)
                 });
                 if (small >= target * 0.75 || (small >= MIN_AREA * 1.6 && wide_enough)) && compact_ok && frontage_ok {
                     for piece in pieces {
@@ -788,7 +805,7 @@ fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
 
 /// Does a parcel have a usable road edge?
 fn fronted(poly: &[Vec2], lu: LandUse, roads: &RoadNetwork) -> bool {
-    let (fi, road) = frontage_edge(poly, roads);
+    let (fi, road) = frontage_edge(poly, roads, lu == LandUse::Residential);
     let n = poly.len();
     road.is_some() && poly[fi].distance(poly[(fi + 1) % n]) >= MIN_FRONTAGE.min(lu.lot_width() * 0.45)
 }
@@ -838,7 +855,7 @@ fn merge_backland(mut parcels: Vec<Vec<Vec2>>, lu: LandUse, roads: &RoadNetwork)
                 if shared < 3.0 || reflex_vertex(&up, 0.6).is_some() {
                     continue;
                 }
-                let (fi, _) = frontage_edge(&up, roads);
+                let (fi, _) = frontage_edge(&up, roads, lu == LandUse::Residential);
                 let m = up.len();
                 let along = (up[(fi + 1) % m] - up[fi]).normalize_or_zero();
                 let inward = Vec2::new(-along.y, along.x);
@@ -951,7 +968,7 @@ pub fn generate_lots(
         }
         let area = polygon_area(&poly);
         let compact = area / perimeter(&poly).powi(2);
-        let (fi, road) = frontage_edge(&poly, roads);
+        let (fi, road) = frontage_edge(&poly, roads, lu == LandUse::Residential);
         let n = poly.len();
         let fa = poly[fi];
         let fb = poly[(fi + 1) % n];
@@ -978,10 +995,20 @@ pub fn generate_lots(
         }
         let (sid, t) = match road {
             Some(hit) => hit,
-            None => match nearest_road(roads, center) {
+            None => match nearest_road(roads, center, true) {
                 Some((s, t, _)) => (s, t),
                 None => continue,
             },
+        };
+        let fronts_street = roads.segment(sid).is_street();
+        let entrance = fa.lerp(fb, 0.5);
+        let (car_segment, car_point) = if fronts_street {
+            (Some(sid), entrance)
+        } else {
+            match roads.nearest_street(entrance) {
+                Some((cs, _, q)) if q.distance(entrance) < 260.0 => (Some(cs), q),
+                _ => (None, entrance),
+            }
         };
         let lot = Lot {
             zone: zone_id,
@@ -998,6 +1025,8 @@ pub fn generate_lots(
             landlocked,
             footfall_today: 0,
             footfall_hour: 0,
+            car_segment,
+            car_point,
         };
         created.push(lots.insert(lot));
     }
@@ -1042,7 +1071,7 @@ mod tests {
         }
         for lot in &good {
             let mid = lot.entrance();
-            let (_, _, d) = nearest_road(&roads, mid).unwrap();
+            let (_, _, d) = nearest_road(&roads, mid, false).unwrap();
             assert!((d - 5.75 - SIDEWALK).abs() < 2.6, "usable parcels front a road, got {d}");
         }
         let total: f32 = lots.values().map(|l| l.area()).sum();
@@ -1119,13 +1148,25 @@ mod tests {
     }
 
     #[test]
-    fn paths_cut_lots_but_give_no_frontage() {
+    fn homes_line_paths_but_shops_do_not() {
         let mut roads = RoadNetwork::default();
         roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
         roads.add_polyline_kind(&[Vec2::new(-300.0, 80.0), Vec2::new(300.0, 80.0)], 0, 0, crate::roads::RoadKind::Path);
-        let zone = Zone {
+        // Homes: lots front the path too, without car access, and know the nearest street.
+        let homes = Zone {
             polygon: vec![Vec2::new(-80.0, 10.0), Vec2::new(80.0, 10.0), Vec2::new(80.0, 150.0), Vec2::new(-80.0, 150.0)],
             land_use: LandUse::Residential,
+        };
+        let mut lots = SlotMap::with_key();
+        generate_lots(ZoneId::default(), &homes, &roads, &mut lots, &[]);
+        let on_path: Vec<&Lot> = lots.values().filter(|l| l.usable() && !l.car_access()).collect();
+        assert!(!on_path.is_empty(), "homes line the path");
+        assert!(on_path.iter().all(|l| l.car_segment.is_some() && (l.car_point.y).abs() < 1.0), "their car point is on the street");
+        assert!(lots.values().filter(|l| l.usable()).any(|l| l.center.y > 90.0), "land beyond the path is used");
+        // Shops: the path is not frontage.
+        let zone = Zone {
+            polygon: vec![Vec2::new(-80.0, 10.0), Vec2::new(80.0, 10.0), Vec2::new(80.0, 150.0), Vec2::new(-80.0, 150.0)],
+            land_use: LandUse::Commercial,
         };
         let mut lots = SlotMap::with_key();
         generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[]);

@@ -43,7 +43,8 @@ links Bevy dynamically for quicker iteration.
   `F7`/`F8`/`F9` jump the camera to a random low, middle or high tier building; `[` and `]` zoom.
 - **Paths**: the Path preset draws a 3 m way for walkers and bikes only. Cars never route over it, it
   joins streets at junctions without signals, and where it crosses a street mid-block it gets a zebra.
-  Paths do not create building frontage; they are for parks and shortcuts.
+  Homes may line a path (shops and industry may not); residents of such homes leave the car at the
+  nearest street and park in a lot nearby.
 - **Getting around**: everyone walks at human pace, bike owners cycle trips over 40 m on the road
   shoulder or down paths, car owners drive trips over 60 m. Ownership follows class: most poor
   citizens have a bike and no car, the well-off have both and take bike rides to parks. Figures

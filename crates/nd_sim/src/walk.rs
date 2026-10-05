@@ -114,9 +114,25 @@ impl WalkGraph {
                     }
                 }
                 RoadKind::Path => {
+                    // Homes may line a path: a node opposite each of them.
+                    let mut stops: Vec<(f32, LotId)> = lots
+                        .iter()
+                        .filter(|(_, l)| l.front_segment == sid && !l.landlocked)
+                        .map(|(id, l)| (l.front_t.clamp(0.02, 0.98), id))
+                        .collect();
+                    stops.sort_by(|x, y| x.0.total_cmp(&y.0));
                     let na = g.add_node(a, None);
+                    let mut prev = na;
+                    for (t, lid) in stops {
+                        let n = g.add_node(a + d * (t * len), None);
+                        g.nodes[n as usize].near.push(lid);
+                        g.link(prev, n, false);
+                        front_nodes.insert(lid, n);
+                        street_nodes.push(n);
+                        prev = n;
+                    }
                     let nb = g.add_node(b, None);
-                    g.link(na, nb, false);
+                    g.link(prev, nb, false);
                     ends[seg.a.0 as usize].push((na, sid, 0));
                     ends[seg.b.0 as usize].push((nb, sid, 0));
                     street_nodes.push(na);
