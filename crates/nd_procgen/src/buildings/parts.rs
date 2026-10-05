@@ -65,9 +65,13 @@ pub fn inradius(poly: &[Vec2]) -> f32 {
         .fold(f32::MAX, f32::min)
 }
 
-/// Offset a convex counter-clockwise polygon inward (positive) or outward
-/// (negative). Falls back to scaling about the centroid when the offset
-/// collapses an edge.
+/// Offset a counter-clockwise polygon inward (positive) or outward (negative).
+/// Lots are concave and have sharp and near-straight corners, so the mitre at
+/// each vertex is limited to 2.5 times the offset (a bevel beyond that), and
+/// an inward offset drops any vertex that ends up outside the original polygon
+/// or closer to its boundary than half the offset (a pinched spike). When too
+/// little survives, or the offset is near the inradius, the polygon is scaled
+/// about its centroid instead.
 pub fn offset_poly(poly: &[Vec2], inset: f32) -> Vec<Vec2> {
     let n = poly.len();
     if n < 3 {
@@ -76,6 +80,15 @@ pub fn offset_poly(poly: &[Vec2], inset: f32) -> Vec<Vec2> {
     if inset.abs() < 1e-4 {
         return poly.to_vec();
     }
+    let scaled = || {
+        let r = poly_radius(poly).max(1e-3);
+        let k = ((r - inset) / r).clamp(0.1, 2.0);
+        scale_poly(poly, k)
+    };
+    if inset > 0.0 && inset > inradius(poly) * 0.85 {
+        return scaled();
+    }
+    let limit = inset.abs() * 2.5;
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
         let p0 = poly[(i + n - 1) % n];
@@ -85,24 +98,71 @@ pub fn offset_poly(poly: &[Vec2], inset: f32) -> Vec<Vec2> {
         let d2 = (p2 - p1).normalize_or_zero();
         let n1 = Vec2::new(-d1.y, d1.x) * inset;
         let n2 = Vec2::new(-d2.y, d2.x) * inset;
-        // Intersection of the two shifted lines.
+        // Intersection of the two shifted lines, limited to the mitre length.
         let a = p0 + n1;
         let b = p1 + n2;
         let denom = d1.perp_dot(d2);
-        if denom.abs() < 1e-4 {
-            out.push(p1 + (n1 + n2) * 0.5);
+        let q = if denom.abs() < 1e-4 {
+            p1 + (n1 + n2) * 0.5
         } else {
             let t = (b - a).perp_dot(d2) / denom;
-            out.push(a + d1 * t);
+            a + d1 * t
+        };
+        let d = q - p1;
+        let len = d.length();
+        let q = if len > limit && len > 1e-6 {
+            let dir = (n1 + n2).normalize_or_zero();
+            if dir == Vec2::ZERO { p1 + d * (limit / len) } else { p1 + dir * limit }
+        } else {
+            q
+        };
+        if !q.x.is_finite() || !q.y.is_finite() {
+            return scaled();
+        }
+        out.push(q);
+    }
+    if inset > 0.0 {
+        out.retain(|q| point_in_polygon(*q, poly) && distance_to_boundary(*q, poly) >= inset * 0.5);
+        if out.len() < 3 {
+            return scaled();
         }
     }
     let area = polygon_area(&out);
-    if area <= 1.0 || out.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || area > polygon_area(poly) * 1.5 && inset > 0.0 {
-        let r = poly_radius(poly).max(1e-3);
-        let k = ((r - inset) / r).clamp(0.1, 2.0);
-        return scale_poly(poly, k);
+    let ok = if inset > 0.0 { area > 1.0 && area < polygon_area(poly) } else { area >= polygon_area(poly) && area < polygon_area(poly) * 4.0 + 50.0 * limit };
+    if !ok {
+        return scaled();
     }
     out
+}
+
+/// Pull a point back inside a polygon along the line to the polygon's
+/// anchor point (a bisection, so it ends just inside the edge).
+pub fn clamp_into(poly: &[Vec2], p: Vec2) -> Vec2 {
+    if point_in_polygon(p, poly) {
+        return p;
+    }
+    let a = interior_anchor(poly);
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    for _ in 0..14 {
+        let mid = (lo + hi) * 0.5;
+        if point_in_polygon(a.lerp(p, mid), poly) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    a.lerp(p, (lo - 0.02).max(0.0))
+}
+
+/// Distance from a point to the nearest edge of a polygon.
+pub fn distance_to_boundary(p: Vec2, poly: &[Vec2]) -> f32 {
+    let n = poly.len();
+    (0..n)
+        .map(|i| {
+            let (_, q) = nd_sim::roads::project_on_segment(p, poly[i], poly[(i + 1) % n]);
+            p.distance(q)
+        })
+        .fold(f32::MAX, f32::min)
 }
 
 pub fn scale_poly(poly: &[Vec2], k: f32) -> Vec<Vec2> {
@@ -142,17 +202,52 @@ pub fn ngon(cu: f32, cv: f32, r: f32, sides: usize, rot: f32) -> Vec<Vec2> {
         .collect()
 }
 
-/// Clip a lot-local polygon so it stays inside the parcel: the polygon is
+/// Keep a lot-local polygon inside the parcel. A polygon whose centre is off
+/// the lot (odd lots are triangles and slivers, and generators lay things out
+/// in the lot's bounding box) is first moved onto it, then the polygon is
 /// scaled about its centre until every vertex is inside.
 pub fn fit_inside(c: &Ctx, poly: &[Vec2]) -> Vec<Vec2> {
     let mut p = poly.to_vec();
-    for _ in 0..12 {
+    if p.len() < 3 {
+        return p;
+    }
+    let centre = poly_center(&p);
+    if !c.inside(centre) {
+        let anchor = interior_anchor(&c.lot_poly);
+        p = shift_poly(&p, anchor - centre);
+    }
+    for _ in 0..24 {
         if p.iter().all(|v| c.inside(*v)) {
             break;
         }
         p = scale_poly(&p, 0.9);
     }
     p
+}
+
+/// A point well inside a polygon: the centroid when it is inside, else the
+/// deepest point among samples between the centroid and the edge midpoints.
+pub fn interior_anchor(poly: &[Vec2]) -> Vec2 {
+    let c = poly_center(poly);
+    if point_in_polygon(c, poly) {
+        return c;
+    }
+    let n = poly.len();
+    let mut best = (f32::MIN, c);
+    for i in 0..n {
+        let m = (poly[i] + poly[(i + 1) % n]) * 0.5;
+        for k in 1..8 {
+            let t = k as f32 / 8.0;
+            let p = m.lerp(c, t);
+            if point_in_polygon(p, poly) {
+                let d = distance_to_boundary(p, poly);
+                if d > best.0 {
+                    best = (d, p);
+                }
+            }
+        }
+    }
+    best.1
 }
 
 // ── solids ───────────────────────────────────────────────────────────────────
@@ -211,6 +306,8 @@ pub fn pilotis(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y0: f32, y1: f32, spaci
 pub fn plinth(g: &mut Geometry, c: &Ctx, poly: &[Vec2], steps: usize, rise: f32, tread: f32, s: Surface, color: [f32; 3]) {
     for k in 0..steps {
         let p = offset_poly(poly, -(tread * (steps - k) as f32));
+        // Steps that would spill over the lot edge are dropped.
+        let p = if p.iter().all(|q| c.inside(*q)) { p } else { fit_inside(c, &p) };
         extrude(g, &c.frame, s, &p, 0.0, rise * (k + 1) as f32, color);
     }
 }

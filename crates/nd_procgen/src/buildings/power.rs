@@ -33,23 +33,31 @@ pub fn coal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     super::industrial::weeds(g, c, rng, &yard, 4);
     // Two tall stacks with a glowing top and a plume.
     for k in 0..2 {
-        let p = Vec2::new(lo.x + (hi.x - lo.x) * (0.3 + 0.4 * k as f32), hi.y - 6.0);
-        if !c.inside(p) {
+        let mut p = Vec2::new(lo.x + (hi.x - lo.x) * (0.3 + 0.4 * k as f32), hi.y - 6.0);
+        let hc = poly_center(&hall);
+        for _ in 0..6 {
+            if c.inside(p) && distance_to_boundary(p, &c.lot_poly) >= 5.0 {
+                break;
+            }
+            p = p.lerp(hc, 0.3);
+        }
+        if !c.inside(p) || distance_to_boundary(p, &c.lot_poly) < 3.0 {
             continue;
         }
         chimney(g, f, p, 2.2, h, 42.0, mul(pal.concrete[0], 0.7), pal.aviation_light);
         let w = f.to_world(p.x, p.y);
         for s in 0..5 {
             let y = h + 42.0 + 2.0 + s as f32 * 3.5;
-            let drift = s as f32 * 1.6;
-            g.part(Matte).cylinder(w + Vec2::new(drift, drift * 0.4), 2.0 + s as f32 * 1.1, 2.4 + s as f32 * 1.1, y, y + 3.0, 8, rgba([0.32, 0.30, 0.28]));
+            let drift = s as f32 * 0.7;
+            g.part(Matte).cylinder(w + Vec2::new(drift, drift * 0.4), 2.0 + s as f32 * 0.5, 2.3 + s as f32 * 0.5, y, y + 3.0, 8, rgba([0.32, 0.30, 0.28]));
         }
     }
     // Coal pile, conveyor up to the boiler hall, rail-side hopper.
     let pile = Vec2::new(lo.x + (hi.x - lo.x) * 0.2, lo.y + (hi.y - lo.y) * 0.45);
-    if c.inside(pile) {
+    let pile_r = if c.inside(pile) { (distance_to_boundary(pile, &c.lot_poly) - 0.5).min(7.0) } else { 0.0 };
+    if pile_r >= 3.0 {
         let w = f.to_world(pile.x, pile.y);
-        g.part(Matte).frustum(&MeshData::ngon(w, 7.0, 10, 0.0, 0.0), &MeshData::ngon(w, 2.0, 10, 0.3, 5.0), rgba([0.07, 0.07, 0.07]));
+        g.part(Matte).frustum(&MeshData::ngon(w, pile_r, 10, 0.0, 0.0), &MeshData::ngon(w, pile_r * 0.3, 10, 0.3, pile_r * 0.7), rgba([0.07, 0.07, 0.07]));
         let a = f.at(pile.x, 5.0, pile.y);
         let hc = poly_center(&hall);
         let b = f.at(hc.x, h + 1.0, hc.y);
@@ -146,7 +154,9 @@ pub fn wind(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             continue;
         }
         let w = f.to_world(p.x, p.y);
-        let hub = rng.random_range(38.0..52.0);
+        // Blades must clear the lot edge, so small lots get small turbines.
+        let clearance = distance_to_boundary(p, &yard) + 2.0;
+        let hub = rng.random_range(38.0f32..52.0).min(clearance / 0.48).max(14.0);
         g.part(Concrete).cylinder(w, 3.0, 3.0, 0.0, 0.6, 12, rgba(mul(pal.concrete[0], 1.1)));
         g.part(Panel).cylinder(w, 1.6, 0.9, 0.6, hub, 12, rgba(white));
         // Nacelle facing the wind (the frame's inward direction) and three blades.
@@ -156,7 +166,7 @@ pub fn wind(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let nose = Vec3::new(w.x - 2.4 * s * 0.0 + 2.3 * (-s), hub + 0.2, w.y + 2.3 * co);
         let axis = Vec3::new(-s, 0.0, co);
         let phase = rng.random_range(0.0..std::f32::consts::TAU);
-        let blade_len = hub * 0.48;
+        let blade_len = (hub * 0.48).min(clearance);
         for b in 0..3 {
             let a = phase + b as f32 * std::f32::consts::TAU / 3.0;
             // Blade direction in the rotor plane (perpendicular to axis).
@@ -220,7 +230,10 @@ pub fn nuclear(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             continue;
         }
         let w = f.to_world(p.x, p.y);
-        let rb = r * 0.75;
+        let rb = (r * 0.75).min(distance_to_boundary(p, &yard) - 1.5);
+        if rb < 2.5 {
+            continue;
+        }
         let profile = [(0.0f32, 1.0f32), (0.3, 0.78), (0.6, 0.62), (0.8, 0.6), (1.0, 0.68)];
         let th = rb * 3.6;
         for seg in profile.windows(2) {
@@ -230,7 +243,7 @@ pub fn nuclear(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         for s in 0..4 {
             let y = th + 1.0 + s as f32 * 4.0;
-            g.part(Matte).cylinder(w + Vec2::new(s as f32 * 1.2, 0.0), rb * 0.5 + s as f32 * 1.4, rb * 0.55 + s as f32 * 1.4, y, y + 3.5, 10, rgba([0.9, 0.9, 0.92]));
+            g.part(Matte).cylinder(w + Vec2::new(s as f32 * 0.5, 0.0), rb * 0.5 + s as f32 * 0.4, rb * 0.55 + s as f32 * 0.4, y, y + 3.5, 10, rgba([0.9, 0.9, 0.92]));
         }
     }
     // Switchyard, double fence, floodlights, gatehouse.

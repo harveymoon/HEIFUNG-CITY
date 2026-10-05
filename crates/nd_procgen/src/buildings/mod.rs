@@ -532,6 +532,30 @@ impl Ctx<'_> {
         point_in_polygon(p, &self.lot_poly)
     }
 
+    /// Distance from the middle of a face, outward, to the lot boundary: the
+    /// room a canopy, porch or forecourt has before it spills onto the street.
+    pub fn reach_out(&self, face: &Face) -> f32 {
+        let o = face.mid();
+        let d = face.out;
+        let n = self.lot_poly.len();
+        let mut best = f32::MAX;
+        for i in 0..n {
+            let a = self.lot_poly[i];
+            let b = self.lot_poly[(i + 1) % n];
+            let e = b - a;
+            let denom = d.perp_dot(e);
+            if denom.abs() < 1e-6 {
+                continue;
+            }
+            let t = (a - o).perp_dot(e) / denom;
+            let u = (a - o).perp_dot(d) / denom;
+            if t >= 0.0 && (0.0..=1.0).contains(&u) {
+                best = best.min(t);
+            }
+        }
+        if best == f32::MAX { 0.0 } else { best }
+    }
+
     /// Faces of a lot-local polygon.
     pub fn faces(&self, poly: &[Vec2]) -> Vec<Face> {
         let n = poly.len();
@@ -740,6 +764,92 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Lots from a zone cut by straight, diagonal and curved roads.
+    fn many_lots(lu: LandUse) -> Vec<Lot> {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-400.0, -40.0), Vec2::new(400.0, -40.0)], 1, 1);
+        roads.add_polyline(&[Vec2::new(-120.0, -300.0), Vec2::new(60.0, 300.0)], 1, 1);
+        roads.add_polyline(&[Vec2::new(-400.0, 200.0), Vec2::new(400.0, 200.0)], 1, 1);
+        let curve: Vec<Vec2> = (0..=20).map(|i| {
+            let t = i as f32 / 20.0;
+            Vec2::new(-300.0 + 600.0 * t, 80.0 + 60.0 * (t * std::f32::consts::TAU).sin())
+        }).collect();
+        roads.add_polyline(&curve, 1, 1);
+        let zone = Zone { polygon: vec![Vec2::new(-300.0, -20.0), Vec2::new(300.0, -20.0), Vec2::new(300.0, 180.0), Vec2::new(-300.0, 180.0)], land_use: lu };
+        let mut lots = SlotMap::with_key();
+        generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[]);
+        lots.values().filter(|l| l.usable()).cloned().collect()
+    }
+
+    fn frame_poly(f: &Frame, lot: &Lot) -> Vec<Vec2> {
+        lot.polygon.iter().map(|p| f.to_local(*p)).collect()
+    }
+
+    /// Nothing a building generates may reach far beyond its own lot.
+    #[test]
+    fn geometry_stays_near_its_lot() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let mut worst: Vec<(f32, String)> = Vec::new();
+        for lu in LandUse::ALL {
+            let lots = many_lots(lu);
+            assert!(lots.len() > 10, "{lu:?}: {} lots", lots.len());
+            for (li, lot) in lots.iter().enumerate() {
+                let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+                for p in &lot.polygon {
+                    lo = lo.min(*p);
+                    hi = hi.max(*p);
+                }
+                let span = (hi - lo).max_element();
+                for style in Style::ALL {
+                    for (seed, floors, tier) in [(1u64, 2u8, Tier::Low), (7, 9, Tier::Mid), (13, 30, Tier::High)] {
+                        let g = generate_styled(lot, lu, floors, tier, 0.6, seed + li as u64, style, &rules, &pal);
+                        let mut over = 0.0f32;
+                        let mut top = 0.0f32;
+                        let mut low = 0.0f32;
+                        let mut culprit = String::new();
+                        let frame = Frame::from_lot(lot);
+                        for (surface, m) in g.iter() {
+                            for p in &m.positions {
+                                let q = Vec2::new(p[0], p[2]);
+                                let d = (lo - q).max(q - hi).max_element();
+                                if d > over {
+                                    over = d;
+                                    let l = frame.to_local(q);
+                                    culprit = format!("{surface:?} at local ({:.1}, {:.1}) y {:.1}", l.x, l.y, p[1]);
+                                }
+                                if p[1] < low {
+                                    low = p[1];
+                                    if over <= 4.0 {
+                                        let l = frame.to_local(q);
+                                        culprit = format!("{surface:?} at local ({:.1}, {:.1}) y {:.1}", l.x, l.y, p[1]);
+                                    }
+                                }
+                                top = top.max(p[1]);
+                            }
+                        }
+                        if over > 4.0 || top > (60.0 + floors as f32 * 5.0).max(90.0) || low < -2.0 {
+                            let (plo, phi) = parts::bounds(&frame_poly(&frame, lot));
+                            worst.push((over.max(-low), format!("{style:?} {lu:?} lot {li} ({} verts, span {span:.0}, local {:.0}..{:.0} x {:.0}..{:.0}) overshoots {over:.1} m, top {top:.0} m, low {low:.1}, floors {floors}: {culprit}", lot.polygon.len(), plo.x, phi.x, plo.y, phi.y)));
+                        }
+                    }
+                }
+            }
+        }
+        worst.sort_by(|a, b| b.0.total_cmp(&a.0));
+        // One line per style: its worst case and how many lots it fails on.
+        let mut seen: Vec<String> = Vec::new();
+        for (_, w) in &worst {
+            let style = w.split(' ').next().unwrap().to_string();
+            if !seen.contains(&style) {
+                let n = worst.iter().filter(|x| x.1.starts_with(&format!("{style} "))).count();
+                eprintln!("{n:4} x {w}");
+                seen.push(style);
+            }
+        }
+        assert!(worst.is_empty(), "{} style/lot combinations reach beyond their lot", worst.len());
     }
 
     #[test]

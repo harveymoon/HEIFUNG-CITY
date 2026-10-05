@@ -26,7 +26,7 @@ fn gable_roof(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32, ridge: f32, colo
     let f = &c.frame;
     let front = c.front_face(poly);
     let axis = front.out;
-    let top = squash(poly, axis, 0.04);
+    let top: Vec<Vec2> = squash(poly, axis, 0.04).into_iter().map(|p| clamp_into(poly, p)).collect();
     loft(g, f, Metal, &offset_poly(poly, -0.4), &top, y, y + ridge, color);
 }
 
@@ -76,7 +76,7 @@ pub fn junkyard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Gate sign on the fence line.
     sign_board(g, c, rng, &front, -front.len * 0.25, 2.9, (front.len * 0.3).min(6.0), 0.7);
     // Crane claw on a small gantry over the biggest pile.
-    if c.fw > 18.0 && c.fd > 14.0 {
+    if c.fw > 18.0 && c.fd > 14.0 && [Vec2::new(-6.0, -c.fd * 0.2), Vec2::new(6.0, -c.fd * 0.2), Vec2::new(-6.0, c.fd * 0.25), Vec2::new(6.0, c.fd * 0.25)].iter().all(|p| c.inside(*p)) {
         gantry_crane(g, c, 0.0, -c.fd * 0.2, c.fd * 0.25, 7.0);
     }
     for k in 0..2 {
@@ -426,8 +426,14 @@ pub fn datacenter(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             }
         }
     }
-    antenna_mast(g, c, Vec2::new(hi.x - 1.0, hi.y - 1.0), h, 8.0);
-    dish(g, f, Vec2::new(lo.x + 1.0, hi.y - 1.0), h, 1.4, pal.steel);
+    let hc = poly_center(&hall);
+    let roof = offset_poly(&hall, 2.0);
+    let mast_p = roof.iter().copied().max_by(|a, b| (a.y + a.x * 0.3).total_cmp(&(b.y + b.x * 0.3))).unwrap_or(hc);
+    let dish_p = roof.iter().copied().max_by(|a, b| (a.y - a.x * 0.3).total_cmp(&(b.y - b.x * 0.3))).unwrap_or(hc);
+    antenna_mast(g, c, mast_p.lerp(hc, 0.1), h, 8.0);
+    if dish_p.distance(mast_p) > 3.0 {
+        dish(g, f, dish_p.lerp(hc, 0.1), h, 1.4, pal.steel);
+    }
     // Generator yard beside the hall.
     let front = c.front_face(&c.lot_poly);
     let gen_p = Vec2::new(lo.x - 5.0, (lo.y + hi.y) * 0.5);

@@ -252,6 +252,22 @@ impl MeshData {
     }
 
     /// Thin square-section bar between two points in space (wires, braces).
+    /// A flat slab from `a` to `b`, `width` across (horizontal) and `thick`
+    /// deep, sitting on the a-b line: a ramp or a bridge deck.
+    pub fn slab(&mut self, a: Vec3, b: Vec3, width: f32, thick: f32, color: [f32; 4]) {
+        let d = b - a;
+        let flat = Vec3::new(d.x, 0.0, d.z);
+        if flat.length() < 1e-3 {
+            return;
+        }
+        let side = flat.normalize().cross(Vec3::Y) * width * 0.5;
+        let up = side.cross(d.normalize()).normalize();
+        let up = if up.y < 0.0 { -up } else { up } * thick;
+        let c = [a + side, a - side, a - side - up, a + side - up];
+        let e = [b + side, b - side, b - side - up, b + side - up];
+        self.frustum(&c, &e, color);
+    }
+
     pub fn beam(&mut self, a: Vec3, b: Vec3, thickness: f32, color: [f32; 4]) {
         let d = b - a;
         let len = d.length();

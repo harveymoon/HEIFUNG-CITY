@@ -20,6 +20,19 @@ pub fn shack_bar(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for i in 0..n {
         let (w, d, h) = if i == 0 { (rng.random_range(7.0..11.0), rng.random_range(5.0..7.0), rng.random_range(3.4..4.4)) } else { (rng.random_range(3.5..6.0), rng.random_range(3.0..5.0), rng.random_range(2.6..3.6)) };
         let p = if i == 0 { front.at(0.0, -d * 0.5 - 2.5) } else { match c.random_inside(rng, 3.5) { Some(p) => p, None => continue } };
+        let (mut w, mut d) = (w, d);
+        let mut fits = false;
+        for _ in 0..8 {
+            if rect(p.x, p.y, w * 0.5 + 0.8, d * 0.5 + 0.9).iter().all(|q| c.inside(*q)) {
+                fits = true;
+                break;
+            }
+            w *= 0.85;
+            d *= 0.85;
+        }
+        if !fits || w < 2.5 {
+            continue;
+        }
         if shacks.iter().any(|(q, qw, qd, _)| (q.x - p.x).abs() < (qw + w) * 0.5 + 0.8 && (q.y - p.y).abs() < (qd + d) * 0.5 + 0.8) {
             continue;
         }
@@ -219,11 +232,14 @@ pub fn casino(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     sign_board(g, c, rng, &c.front_face(&crown), 0.0, podium_h + th - 2.5, (c.front_face(&crown).len * 0.8).min(16.0), 2.0);
     antenna_mast(g, c, poly_center(&tower), podium_h + th + 2.4, 6.0);
     // Porte-cochère, fountain, palms and limos.
-    front.bx(g, f, Panel, 0.0, podium_h * 0.5 + 0.5, 4.5, Vec3::new(front.len * 0.5, 0.5, 9.0), dark);
-    front.bx(g, f, Glow, 0.0, podium_h * 0.5 + 0.22, 4.5, Vec3::new(front.len * 0.46, 0.04, 8.6), mul(pal.window_warm, 0.9));
-    for s in [-1.0f32, 1.0] {
-        for d in [1.5f32, 7.5] {
-            front.bx(g, f, Matte, s * front.len * 0.24, podium_h * 0.25 + 0.25, d, Vec3::new(0.5, podium_h * 0.5 + 0.5, 0.5), mul(pal.steel, 0.9));
+    let reach = (c.reach_out(&front) - 0.5).min(9.0);
+    if reach > 2.5 {
+        front.bx(g, f, Panel, 0.0, podium_h * 0.5 + 0.5, reach * 0.5, Vec3::new(front.len * 0.5, 0.5, reach), dark);
+        front.bx(g, f, Glow, 0.0, podium_h * 0.5 + 0.22, reach * 0.5, Vec3::new(front.len * 0.46, 0.04, reach - 0.4), mul(pal.window_warm, 0.9));
+        for s in [-1.0f32, 1.0] {
+            for d in [1.0, reach - 1.0] {
+                front.bx(g, f, Matte, s * front.len * 0.24, podium_h * 0.25 + 0.25, d, Vec3::new(0.5, podium_h * 0.5 + 0.5, 0.5), mul(pal.steel, 0.9));
+            }
         }
     }
     entrance(g, c, rng, &front, 0.0, 5.0, podium_h * 0.6);
@@ -241,7 +257,7 @@ pub fn casino(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             vehicle(g, f, rng, front.at(s * front.len * 0.2, -3.0), front.yaw(), Vehicle::Car, [0.05, 0.05, 0.06]);
         }
     }
-    bollards(g, c, &front, 8, 10.0);
+    bollards(g, c, &front, 8, (reach + 1.0).max(1.0));
 }
 
 pub fn arena(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {

@@ -172,7 +172,7 @@ pub fn car_park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             let a = f.at2(back.at(-back.len * 0.4, -3.5), y0 + 0.2);
             let b = f.at2(back.at(back.len * 0.4, -3.5), y0 + fh + 0.2);
             let (a, b) = if k % 2 == 0 { (a, b) } else { (Vec3::new(b.x, a.y, b.z), Vec3::new(a.x, b.y, a.z)) };
-            g.part(Concrete).beam(a, b, 5.0, rgba(mul(concrete, 0.9)));
+            g.part(Concrete).slab(a, b, 5.0, 0.4, rgba(mul(concrete, 0.9)));
         }
     }
     // Stair and lift core, P sign, barrier at the entrance.

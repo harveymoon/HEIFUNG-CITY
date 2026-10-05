@@ -248,6 +248,15 @@ trait MindProvider {
   own a car and/or a bike by class (poor: 12% car, 60% bike; middle: 60% / 35%; rich: 92% / 35%)
   and buy or sell them as savings allow. Walkers use the middle of the pavement, bikes the road
   shoulder, both the centre of a path; bike owners ride to parks for pleasure.
+- Every part of a building stays on its lot. Lots are concave, triangular, slivered
+  and skewed, so the toolkit is defensive: `offset_poly` limits mitres to 2.5 times
+  the offset and drops inward-offset vertices that leave the polygon, `fit_inside`
+  moves a shape onto the lot before shrinking it, `clamp_into` pulls a point back
+  inside, `reach_out` measures the room a face has before the street, and anything
+  laid out in the lot's bounding box (alleys, stairs, poles, masts, cranes, piles,
+  turbine blades) checks the polygon first. A test generates every style on about
+  six hundred lots cut by straight, diagonal and curved roads and fails if any vertex
+  is more than 4 m outside its lot, below ground, or absurdly tall.
 - Power plants have their own styles: a coal station with a boiler hall, two stacks with
   plumes, a coal pile and conveyor and a transformer yard; rows of tilted panels on posts;
   white turbines with nacelles and three blades; a containment dome, hyperbolic cooling

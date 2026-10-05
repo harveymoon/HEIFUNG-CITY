@@ -294,7 +294,7 @@ pub fn twist_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let mut y = podium_h;
     for k in 0..floors {
         let t = (k + 1) as f32 / floors as f32;
-        let plate = rotate_poly(&scale_poly(&base, 1.0 - (1.0 - taper) * t), total_twist * t);
+        let plate = fit_inside(c, &rotate_poly(&scale_poly(&base, 1.0 - (1.0 - taper) * t), total_twist * t));
         loft(g, f, Glass, &prev, &plate, y, y + fh, glass);
         // floor plate edge
         loft(g, f, Panel, &offset_poly(&prev, -0.12), &offset_poly(&plate, -0.12), y + fh - 0.25, y + fh, mul(pick(rng, &pal.panel), 0.8));

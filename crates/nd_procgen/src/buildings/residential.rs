@@ -88,8 +88,21 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
 
     ground(g, f, Dirt, &c.lot_poly, 0.03, pal.dirt);
     // Alleys: trodden paving through the middle of the lot both ways.
-    f.bx(g, Paving, 0.0, 0.04, 0.0, Vec3::new(2.2, 0.02, (hi.y - lo.y) * 0.98), mul(pal.paving, 0.8));
-    f.bx(g, Paving, 0.0, 0.04, 0.0, Vec3::new((hi.x - lo.x) * 0.98, 0.02, 2.2), mul(pal.paving, 0.8));
+    // Laid in 2 m pieces so they stop at the edge of odd-shaped lots.
+    let mut v = lo.y + 1.0;
+    while v < hi.y {
+        if c.inside(Vec2::new(-1.1, v)) && c.inside(Vec2::new(1.1, v)) {
+            f.bx(g, Paving, 0.0, 0.04, v, Vec3::new(2.2, 0.02, 2.0), mul(pal.paving, 0.8));
+        }
+        v += 2.0;
+    }
+    let mut u = lo.x + 1.0;
+    while u < hi.x {
+        if c.inside(Vec2::new(u, -1.1)) && c.inside(Vec2::new(u, 1.1)) {
+            f.bx(g, Paving, u, 0.04, 0.0, Vec3::new(2.0, 0.02, 2.2), mul(pal.paving, 0.8));
+        }
+        u += 2.0;
+    }
 
     let mut units: Vec<Unit> = Vec::new();
     let ground_target = ((area / 40.0) as i32).clamp(2, 10);
@@ -120,8 +133,8 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             };
             let color = if trailer { mul([0.68, 0.66, 0.60], rng.random_range(0.6..0.95)) } else { pick(rng, &pal.container_colors) };
             let cand = Unit { u, v, yaw, len, wid, h, level, y0, trailer, color };
-            // Stay inside the parcel (a little overhang at the back is fine).
-            if cand.corners().iter().any(|p| !c.inside(*p) && p.y < hi.y - 1.5) {
+            // Stay inside the parcel (an overhang of a metre or so is fine).
+            if cand.corners().iter().any(|p| !c.inside(*p) && distance_to_boundary(*p, &c.lot_poly) > 1.2) {
                 continue;
             }
             // Keep the alleys clear: a cross through the middle of the pile
@@ -237,12 +250,28 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Stair up one side.
     let top_level = units.iter().map(|x| x.level).max().unwrap_or(0);
     if top_level >= 1 {
-        let su = lo.x + 1.4;
+        // Against a unit on the lot's edge, wherever the lot actually is.
         let sv = rng.random_range((lo.y + hi.y) * 0.5 - 3.0..(lo.y + hi.y) * 0.5 + 3.0);
-        stair_zigzag(g, f, su, sv, top_level, 2.6, 3.4, steel);
+        let mut su = lo.x + 1.4;
+        while su < hi.x - 2.0 && !(c.inside(Vec2::new(su - 1.0, sv - 2.0)) && c.inside(Vec2::new(su + 2.5, sv + 2.0)) && c.inside(Vec2::new(su - 1.0, sv + 2.0)) && c.inside(Vec2::new(su + 2.5, sv - 2.0))) {
+            su += 1.0;
+        }
+        if su < hi.x - 2.0 {
+            stair_zigzag(g, f, su, sv, top_level, 2.6, 3.4, steel);
+        }
     }
     // Utility pole and wires that reach real units.
-    let pole = Vec2::new(hi.x - 1.0, lo.y + 0.8);
+    let pole = {
+        let mut p = Vec2::new(hi.x - 1.0, lo.y + 0.8);
+        let anchor = interior_anchor(&c.lot_poly);
+        for _ in 0..8 {
+            if c.inside(p) {
+                break;
+            }
+            p = p.lerp(anchor, 0.25);
+        }
+        p
+    };
     let pole_h = 9.0;
     f.bx(g, Wood, pole.x, pole_h * 0.5, pole.y, Vec3::new(0.3, pole_h, 0.3), pal.bark);
     f.bx(g, Wood, pole.x, pole_h - 0.6, pole.y, Vec3::new(1.8, 0.12, 0.12), pal.bark);
@@ -341,6 +370,9 @@ pub fn tenement(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     if hi.x - lo.x > 6.0 {
         for k in 0..2 {
             let v = lo.y + (hi.y - lo.y) * (0.3 + 0.4 * k as f32);
+            if !c.inside(Vec2::new(lo.x + 1.0, v)) || !c.inside(Vec2::new(hi.x - 1.0, v)) {
+                continue;
+            }
             let a = f.at(lo.x + 1.0, h + 2.0, v);
             let b = f.at(hi.x - 1.0, h + 2.0, v);
             f.bx(g, Matte, lo.x + 1.0, h + 1.0, v, Vec3::new(0.08, 2.0, 0.08), CHARCOAL);
@@ -354,7 +386,10 @@ pub fn tenement(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     if rng.random_bool(0.4) {
         let p = Vec2::new((lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5);
-        billboard(g, c, rng, p, 0.0, h, (hi.x - lo.x).min(9.0), 3.0);
+        let bw = (hi.x - lo.x).min(9.0);
+        if c.inside(p - Vec2::new(bw * 0.5, 0.0)) && c.inside(p + Vec2::new(bw * 0.5, 0.0)) {
+            billboard(g, c, rng, p, 0.0, h, bw, 3.0);
+        }
     }
 }
 
@@ -730,7 +765,9 @@ pub fn fortress(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let garden = Vec2::new(inradius(&poly) * 0.5, -inradius(&poly) * 0.35);
     if c.inside(garden) {
         pool(g, c, garden.x, garden.y, 6.0, 3.5);
-        tree(g, f, garden + Vec2::new(4.5, 2.0), 5.0, 4.0, pal.bark, pal.foliage);
+        if c.inside(garden + Vec2::new(8.5, 2.0)) && c.inside(garden + Vec2::new(0.5, 2.0)) && c.inside(garden + Vec2::new(4.5, 6.0)) && c.inside(garden + Vec2::new(4.5, -2.0)) {
+            tree(g, f, garden + Vec2::new(4.5, 2.0), 5.0, 4.0, pal.bark, pal.foliage);
+        }
     }
     for face in &faces {
         if face.len > 8.0 {
@@ -756,6 +793,7 @@ pub fn garden_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let y0 = k as f32 * fh;
         let plate = rotate_poly(&offset_poly(&base, step * k as f32), twist * k as f32);
         let plate = if plate.len() == base.len() { plate } else { scale_poly(&base, 1.0 - 0.6 * k as f32 / floors as f32) };
+        let plate = fit_inside(c, &plate);
         // floor slab proud of the glass, glass walls set back
         extrude(g, f, Concrete, &plate, y0, y0 + 0.35, white);
         let glass_poly = offset_poly(&plate, 1.6);
