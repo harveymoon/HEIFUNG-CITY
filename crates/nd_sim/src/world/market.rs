@@ -357,7 +357,10 @@ impl World {
     /// Import from outside: by rail through the nearest working yard when
     /// there is one, else a truck from the city edge.
     pub(super) fn import(&mut self, to: BuildingId, resource: Resource, amount: f32, price: f32) {
-        let cargo = Cargo { from: to, to, resource, amount, price };
+        // Out of town: no seller in the city, so a null `from` (it used to
+        // be the buyer itself, which read as a truck driving from a shop to
+        // the same shop).
+        let cargo = Cargo { from: BuildingId::default(), to, resource, amount, price };
         self.note_inbound(to, resource, amount);
         // With a freight yard in town the goods come by rail, cheaper and
         // later: the order waits at the yard for the next train. Building

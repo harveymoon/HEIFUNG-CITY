@@ -65,11 +65,20 @@ Citizens are rendered from their simulated positions every frame.
 - **Roads**: a node/segment graph with per-direction lane counts. New polylines snap to
   existing nodes and split segments they cross. Walking uses A* over nodes.
 - **Lanes and traffic**: every segment becomes offset lanes per direction, shortened at
-  junctions. Each junction gets connector lanes from every incoming lane to every
-  outgoing lane (U-turns only at dead ends); junctions with three or more approaches
-  run a fixed-cycle signal that gives one approach green at a time. Cars path over the
-  lane graph with A*, follow the intelligent driver model, queue behind each other and
-  stop at red lights. Traffic physics runs 1.5 seconds per sim minute so a car at 50 km/h
+  junctions. Each junction gets connector lanes with lane discipline on multi-lane
+  approaches: only the leftmost lane turns left, only the rightmost turns right, every
+  lane goes straight on lane for lane (U-turns only at dead ends). Junctions with three
+  or more approaches run an actuated signal: opposite approaches share a green (left
+  turns yield to oncoming traffic), a green with nobody left to serve is cut after 5 s
+  when another approach waits, and phases nobody waits for are skipped. Cars path over
+  the lane graph with A* (lane changes are steps between parallel lanes; every vehicle
+  on a lane adds to its cost, so routes spread out), follow the intelligent driver
+  model, queue behind each other and stop at red lights. They move into the lane their
+  next turn needs as soon as the gap is IDM-safe for them and the follower there, drift
+  across over a few seconds, and overtake buses at stops and slower trucks when a
+  parallel lane is free. New cars pull out of the kerb only into a gap (the next driver
+  lets them in after 15 s); a car stalled 40 s before a full exit, or 10 s at a lane
+  change it cannot make, takes another way, which breaks gridlock rings. Traffic physics runs 1.5 seconds per sim minute so a car at 50 km/h
   moves at a believable pace on screen at 1x; trips therefore take sim-time tens of
   minutes, the usual city-builder compromise. Right-hand traffic; lane sets are centred
   on the road; junction curves stay inside the junction; cars refuse to enter a

@@ -1694,3 +1694,28 @@ fn job_seekers_staff_the_food_shops_first_and_arrivals_scale_with_open_homes() {
     let many = w.arrivals(2_000);
     assert!(many >= 1 && many <= 12);
 }
+
+#[test]
+fn imported_parts_come_from_out_of_town_not_from_the_site_itself() {
+    let mut w = World::new(WorldConfig::default());
+    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    w.add_zone(square(10.0, 10.0, 190.0), LandUse::Commercial);
+    let lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Commercial);
+    // Nobody in town sells parts: the developer imports them by truck.
+    w.build_on(lot);
+    let site = w.lots[lot].building.unwrap();
+    let truck = w.traffic.cars.iter().find(|(_, c)| c.cargo.is_some_and(|k| k.to == site)).map(|(id, _)| id).expect("a parts truck on the road");
+    let cargo = w.traffic.cars[truck].cargo.unwrap();
+    assert_ne!(cargo.from, cargo.to, "an import does not claim to come from the buyer");
+    assert!(w.buildings.get(cargo.from).is_none(), "it comes from out of town");
+    assert_eq!(cargo.price, 0.0, "the developer paid for site parts up front");
+    let mut minds = IdleMind;
+    for _ in 0..120 {
+        w.tick(&mut minds);
+        if !w.traffic.cars.contains_key(truck) {
+            break;
+        }
+    }
+    assert!(!w.traffic.cars.contains_key(truck), "the truck drove in from the edge and arrived");
+    assert!(w.buildings[site].construction.as_ref().is_some_and(|c| c.deliveries >= 1), "the parts reached the site");
+}
