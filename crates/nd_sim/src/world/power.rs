@@ -1,0 +1,119 @@
+//! Power: plants and the allocation of supply to buildings.
+
+use super::*;
+
+impl World {
+    /// Place a power plant on a vacant lot, paying from the treasury.
+    pub fn build_power(&mut self, lot_id: LotId, kind: PowerPlantKind) -> Result<BuildingId, String> {
+        let lot = self.lots.get(lot_id).ok_or("no such lot")?;
+        if lot.building.is_some() {
+            return Err("that lot is taken".into());
+        }
+        if lot.landlocked {
+            return Err("that land has no road access".into());
+        }
+        if self.under_facility(lot.center) {
+            return Err("that ground belongs to a station or yard".into());
+        }
+        if !kind.allowed_on(lot.land_use) {
+            return Err(format!("a {} cannot go on {} land", kind.label(), lot.land_use.label().to_lowercase()));
+        }
+        if lot.area() < kind.min_area() {
+            return Err(format!("too small: a {} needs {:.0} m²", kind.label(), kind.min_area()));
+        }
+        if self.economy.treasury < kind.build_cost() {
+            return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), kind.build_cost()));
+        }
+        self.economy.debit(Flow::Construction, kind.build_cost());
+        let name = format!("{} {}", match kind {
+            PowerPlantKind::Coal => "Blackridge",
+            PowerPlantKind::Solar => "Sunfield",
+            PowerPlantKind::Wind => "Westerly",
+            PowerPlantKind::Nuclear => "Calder",
+        }, self.rng.random_range(1..9));
+        let id = self.place_special(lot_id, name, kind.jobs(), kind.jobs() / 2, |b| b.plant = Some(kind));
+        self.allocate_power();
+        Ok(id)
+    }
+
+    /// Share the hour's supply out: plants first, then what the regional
+    /// grid will sell; the rich are served first, so cheap districts brown
+    /// out first. Buildings whose power state changes are redrawn.
+    pub(super) fn allocate_power(&mut self) {
+        let day = self.clock.day_fraction();
+        let mut supply: f32 = 0.0;
+        let mut plants = 0;
+        for b in self.buildings.values() {
+            if let Some(kind) = b.plant {
+                if !b.is_derelict() {
+                    supply += kind.capacity_mw() * kind.availability(&self.weather, day);
+                    plants += 1;
+                }
+            }
+        }
+        let demand: f32 = self.buildings.values().map(demand_mw).sum::<f32>() + 0.0; // sum of nothing is -0.0
+        let shortfall = (demand - supply).max(0.0);
+        let imported = shortfall.min(GRID_IMPORT_MW);
+        self.economy.power.import_cost_today += imported * GRID_IMPORT_PRICE;
+        let mut remaining = supply + imported;
+        let mut order: Vec<(BuildingId, f32)> = self.buildings.iter().map(|(id, b)| (id, demand_mw(b))).collect();
+        order.sort_by(|a, b| {
+            let ta = self.buildings[a.0].tier;
+            let tb = self.buildings[b.0].tier;
+            tb.cmp(&ta).then(b.1.total_cmp(&a.1))
+        });
+        let mut unpowered = 0;
+        let mut changed = Vec::new();
+        for (id, need) in order {
+            let b = &mut self.buildings[id];
+            let powered = if need <= 0.0 {
+                1.0
+            } else if remaining >= need {
+                remaining -= need;
+                1.0
+            } else {
+                let p = remaining / need;
+                remaining = 0.0;
+                p
+            };
+            let before = (b.powered * 2.0).round();
+            b.powered = powered;
+            if powered < 0.6 {
+                b.unpowered_hours_today = b.unpowered_hours_today.saturating_add(1);
+                unpowered += 1;
+            }
+            if (powered * 2.0).round() != before {
+                changed.push(id);
+            }
+        }
+        for id in changed {
+            self.events.push(SimEvent::BuildingChanged(id));
+        }
+        let p = &mut self.economy.power;
+        p.supply_mw = supply;
+        p.demand_mw = demand;
+        p.imported_mw = imported;
+        p.served = if demand > 0.0 { ((supply + imported) / demand).min(1.0) } else { 1.0 };
+        p.plants = plants;
+        p.unpowered_buildings = unpowered;
+        if p.served < 0.98 {
+            p.brownout_hours_today += 1;
+        }
+        // People in the dark notice.
+        let tick = self.clock.tick;
+        let ids: Vec<CitizenId> = self.citizens.keys().collect();
+        for cid in ids {
+            let Some(inside) = self.citizens[cid].inside else { continue };
+            let powered = self.buildings.get(inside).map_or(1.0, |b| b.powered);
+            if powered < 0.6 {
+                let name = self.buildings[inside].name.clone();
+                let c = &mut self.citizens[cid];
+                c.mood = (c.mood - 0.012).max(0.0);
+                if self.rng.random_bool(0.04) {
+                    c.thought = "The power is out again.".to_string();
+                    c.remember(tick, format!("Sat in the dark at {name}. No power."));
+                }
+            }
+        }
+    }
+}
