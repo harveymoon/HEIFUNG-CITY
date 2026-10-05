@@ -116,6 +116,17 @@ Citizens are rendered from their simulated positions every frame.
   Deep in debt for five days means closure: workers laid off, the building goes
   derelict, and after a week it is demolished so the lot can be reused. Offices
   and civic buildings are publicly funded.
+- **Parking**: every car trip ends in a space. Towers (high tier) bring their own
+  spaces for about half their homes and jobs, middle-tier blocks a quarter, cheap
+  buildings none. Drivers use the destination's spaces, else pay at the nearest
+  parking business within 180 m with room (a fee by tier and land value that goes to
+  the business), else leave the car on the street, lose a little mood, and are counted
+  as a shortage. When the day's shortage outruns free spaces, development opens a
+  parking lot on a vacant lot: a surface lot where land is cheap (about one space
+  per 28 m², two jobs), a multi-storey car park on middle land (three to five decks).
+  It is the cheapest business in town and lives or dies on fees. Parking lots render
+  their occupancy: cars fill the painted bays of a surface lot and the edges and roof
+  of a car park in proportion to the spaces in use.
 - **Economy stats**: demand per land use, Gini of incomes, class counts, rents per
   tier, displaced, emigrated and priced-out counters, plus market stats: businesses,
   deals, imports, exports, meals sold, hungry citizens, closures, and the average
@@ -217,6 +228,8 @@ trait MindProvider {
   and exports, hunger and shopping, business closures.
 - v0.8 (done): polygonal parcels, 35 architectural styles per land use and tier from a
   parts toolkit, textured surfaces with normal maps, street furniture, walk mode.
+- v0.10 (done): parking as a business with capacity, fees and shortage-driven
+  construction; occupancy shown in the geometry; scale audit (metres everywhere).
 - v0.9 (done): road tool in the spirit of Cities Skylines: ends snap to any point on a
   road and split it into a junction, curved roads (centripetal Catmull-Rom through the
   control points, built as 7 m pieces whose bends keep road speed), lane presets and

@@ -459,6 +459,7 @@ impl World {
             if let Some(c) = self.citizens.get_mut(car.citizen) {
                 c.pos = car.pos;
                 c.heading = car.heading;
+                self.park_car(car.citizen);
                 self.arrive(car.citizen);
             }
         }
@@ -480,6 +481,9 @@ impl World {
         e.homes_free = self.buildings.values().map(|b| b.free_homes() as u32).sum();
         e.jobs_total = self.buildings.values().map(|b| b.jobs as u32).sum();
         e.jobs_free = self.buildings.values().map(|b| b.free_jobs() as u32).sum();
+        e.parking_capacity = self.buildings.values().map(|b| b.parking_capacity as u32).sum();
+        e.parking_used = self.buildings.values().map(|b| b.parking_used as u32).sum();
+        e.parking_lots = self.buildings.values().filter(|b| b.is_parking()).count() as u32;
         let mut tier_counts = [0u32; 3];
         let mut rent_sum = [0.0f32; 3];
         for b in self.buildings.values().filter(|b| b.land_use == LandUse::Residential) {
@@ -557,6 +561,8 @@ impl World {
     /// Once a sim day: buildings wear, upgrade or decay; citizens pay rent and
     /// react to it.
     fn daily_update(&mut self) {
+        self.economy.parking_street_today = 0;
+        self.economy.parking_fees_today = 0.0;
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         for bid in ids {
             let (lu, tier, value, derelict_before, full) = {
@@ -1002,6 +1008,32 @@ impl World {
         }
         let mut built = 0;
         let start = self.rng.random_range(0..vacant.len());
+        // Parking follows the drivers who could not find a space: once a few
+        // are circling, someone opens a lot nearby.
+        if self.economy.parking_street_today >= 4 && self.rng.random_bool(0.6) {
+            if let Some(at) = self.economy.parking_shortage_at {
+                // The vacant lot nearest the trouble spot, on land that is not
+                // precious and not a park or civic site.
+                let mut candidates: Vec<(f32, LotId)> = vacant
+                    .iter()
+                    .copied()
+                    .filter(|&l| !matches!(self.lots[l].land_use, LandUse::Park | LandUse::Civic))
+                    .filter(|&l| Tier::for_land_value(self.land_value.at(self.lots[l].center)) != Tier::High)
+                    .map(|l| (self.lots[l].center.distance(at), l))
+                    .collect();
+                candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
+                for (d, lot_id) in candidates.into_iter().take(6) {
+                    if d > 220.0 {
+                        break;
+                    }
+                    if self.build_parking(lot_id).is_some() {
+                        self.economy.parking_street_today = self.economy.parking_street_today.saturating_sub(8);
+                        built += 1;
+                        break;
+                    }
+                }
+            }
+        }
         for i in 0..vacant.len() {
             if built >= self.config.max_builds_per_interval {
                 break;
@@ -1123,6 +1155,7 @@ impl World {
                 mode: TravelMode::Walk,
                 owns_car,
                 owns_bike,
+                parked_at: None,
                 activity: Activity::Idle,
                 memories: Vec::new(),
                 thought: "New city. New me.".to_string(),
@@ -1417,7 +1450,120 @@ impl World {
         }
     }
 
+    /// A driver has pulled up at their destination: use the building's own
+    /// spaces, else pay at the nearest parking lot with room, else leave the
+    /// car on the street and note the shortage.
+    fn park_car(&mut self, id: CitizenId) {
+        let dest = match &self.citizens[id].activity {
+            Activity::Driving { to: Some(b), .. } => *b,
+            _ => return,
+        };
+        let tick = self.clock.tick;
+        if let Some(b) = self.buildings.get_mut(dest) {
+            if b.parking_free() > 0 {
+                b.parking_used += 1;
+                self.citizens[id].parked_at = Some(dest);
+                return;
+            }
+        }
+        let Some(center) = self.building_lot(dest).map(|l| l.center) else { return };
+        let best = self
+            .buildings
+            .iter()
+            .filter(|(_, b)| b.is_parking() && b.parking_free() > 0 && !b.business.as_ref().map_or(true, |z| z.closed))
+            .filter_map(|(bid, b)| self.lots.get(b.lot).map(|l| (bid, l.center.distance(center))))
+            .filter(|(_, d)| *d < 180.0)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(bid, _)| bid);
+        match best {
+            Some(bid) => {
+                let (fee, name, step_before) = {
+                    let b = &mut self.buildings[bid];
+                    let before = b.parking_used * 8 / b.parking_capacity.max(1);
+                    b.parking_used += 1;
+                    (b.parking_price, b.name.clone(), before)
+                };
+                let step_after = {
+                    let b = &self.buildings[bid];
+                    b.parking_used * 8 / b.parking_capacity.max(1)
+                };
+                if step_after != step_before {
+                    self.events.push(SimEvent::BuildingChanged(bid));
+                }
+                if let Some(bz) = self.buildings[bid].business.as_mut() {
+                    bz.money += fee;
+                    bz.revenue_today += fee;
+                    bz.deals += 1;
+                }
+                self.economy.parking_fees_today += fee;
+                let c = &mut self.citizens[id];
+                c.savings -= fee;
+                c.parked_at = Some(bid);
+                if self.rng.random_bool(0.05) {
+                    c.remember(tick, format!("Paid {fee:.0} to park at {name}."));
+                }
+            }
+            None => {
+                self.economy.parking_street_today += 1;
+                self.economy.parking_shortage_at = Some(center);
+                let c = &mut self.citizens[id];
+                c.mood = (c.mood - 0.02).max(0.0);
+                if self.rng.random_bool(0.08) {
+                    c.remember(tick, "Circled for ages. Nowhere to park.");
+                }
+            }
+        }
+    }
+
+    fn release_parking(&mut self, id: CitizenId) {
+        let Some(bid) = self.citizens[id].parked_at.take() else { return };
+        let Some(b) = self.buildings.get_mut(bid) else { return };
+        let before = b.parking_used * 8 / b.parking_capacity.max(1);
+        b.parking_used = b.parking_used.saturating_sub(1);
+        let after = b.parking_used * 8 / b.parking_capacity.max(1);
+        if b.is_parking() && before != after {
+            self.events.push(SimEvent::BuildingChanged(bid));
+        }
+    }
+
+    /// Open a parking business on a vacant lot: a surface lot where land is
+    /// cheap, a multi-storey car park in the middle. The cheapest business
+    /// there is: two to four jobs and a little float.
+    pub fn build_parking(&mut self, lot_id: LotId) -> Option<BuildingId> {
+        let lot = self.lots.get(lot_id)?;
+        if lot.building.is_some() || lot.landlocked {
+            return None;
+        }
+        let lu = lot.land_use;
+        let area = lot.area();
+        let center = lot.center;
+        let value = self.land_value.at(center);
+        let tier = Tier::for_land_value(value).min(Tier::Mid);
+        let floors: u8 = if tier == Tier::Mid && area > 500.0 { self.rng.random_range(3..=5) } else { 0 };
+        let capacity = if floors == 0 { (area / 28.0) as u16 } else { ((area / 32.0) as u16) * floors as u16 };
+        if capacity < 4 {
+            return None;
+        }
+        let seed = self.fresh_seed();
+        let name = if floors == 0 { format!("Lot {}", self.rng.random_range(1..99)) } else { format!("ParkHaus {}", self.rng.random_range(1..40)) };
+        let mut b = Building::new(lot_id, lu, floors.max(1), tier, seed, name, self.clock.tick, value);
+        let jobs = if floors == 0 { 2 } else { 4 };
+        b.homes = 0;
+        b.jobs = jobs;
+        b.floors = floors;
+        let mut bz = Business::new(BusinessKind::Parking, jobs);
+        bz.money = 80.0;
+        b.business = Some(bz);
+        b.parking_capacity = capacity;
+        b.parking_price = 3.0 * tier.wage_multiplier() * (0.6 + value);
+        let id = self.buildings.insert(b);
+        self.lots[lot_id].building = Some(id);
+        self.events.push(SimEvent::BuildingBuilt(id));
+        Some(id)
+    }
+
     fn leave_building(&mut self, id: CitizenId) -> Option<Vec2> {
+        self.release_parking(id);
         let c = &mut self.citizens[id];
         let inside = c.inside.take()?;
         if matches!(c.activity, Activity::Visiting(_)) {
@@ -1727,5 +1873,52 @@ mod tests {
         assert!((cz.prev_pos.distance(before)) < 0.01, "previous pose is kept for interpolation");
         let moved = cz.pos.distance(before);
         assert!((moved - w.config.bike_speed).abs() < 0.5, "cycled {moved} m in a tick");
+    }
+
+    #[test]
+    fn parking_lots_fill_charge_and_release() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Commercial);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Residential);
+        let lots: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Commercial).map(|(id, _)| id).collect();
+        assert!(lots.len() >= 2);
+        // A shop next to a parking lot.
+        w.build_on(lots[0]);
+        let shop = w.lots[lots[0]].building.unwrap();
+        let lot = w.build_parking(lots[1]).expect("parking lot opens");
+        let cap = w.buildings[lot].parking_capacity;
+        assert!(cap >= 4 && w.buildings[lot].is_parking() && w.buildings[lot].jobs == 2);
+        assert!(w.buildings[lot].parking_price > 0.0);
+        // Low-tier shops have no spaces of their own, so a driver pays at the lot.
+        let mut minds = IdleMind;
+        for _ in 0..(12 * 60) {
+            w.tick(&mut minds);
+        }
+        let c = w.citizens.keys().next().expect("someone arrived");
+        w.buildings[shop].parking_capacity = 0;
+        {
+            let cz = &mut w.citizens[c];
+            cz.savings = 100.0;
+            cz.activity = Activity::Driving { car: w.traffic.cars.keys().next().unwrap_or_default(), to: Some(shop), purpose: Purpose::Shop(Resource::Goods) };
+        }
+        let before_money = w.buildings[lot].business.as_ref().unwrap().money;
+        let used0 = w.buildings[lot].parking_used;
+        w.park_car(c);
+        assert_eq!(w.buildings[lot].parking_used, used0 + 1);
+        assert_eq!(w.citizens[c].parked_at, Some(lot));
+        assert!(w.citizens[c].savings < 100.0, "the driver paid");
+        assert!(w.buildings[lot].business.as_ref().unwrap().money > before_money, "the lot earned");
+        // Leaving frees the space.
+        w.citizens[c].inside = Some(shop);
+        w.leave_building(c);
+        assert_eq!(w.buildings[lot].parking_used, used0);
+        // With the lot full, drivers circle and the shortage is counted.
+        w.buildings[lot].parking_used = cap;
+        let street0 = w.economy.parking_street_today;
+        w.citizens[c].activity = Activity::Driving { car: w.traffic.cars.keys().next().unwrap_or_default(), to: Some(shop), purpose: Purpose::Shop(Resource::Goods) };
+        w.park_car(c);
+        assert_eq!(w.economy.parking_street_today, street0 + 1);
+        assert!(w.citizens[c].parked_at.is_none());
     }
 }

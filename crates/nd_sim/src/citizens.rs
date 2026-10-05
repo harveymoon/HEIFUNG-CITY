@@ -99,6 +99,9 @@ pub struct Citizen {
     pub owns_car: bool,
     #[serde(default)]
     pub owns_bike: bool,
+    /// Where the car is parked while the citizen is inside somewhere.
+    #[serde(default)]
+    pub parked_at: Option<BuildingId>,
     pub activity: Activity,
     pub memories: Vec<Memory>,
     pub thought: String,

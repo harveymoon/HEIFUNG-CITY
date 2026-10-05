@@ -48,6 +48,10 @@ links Bevy dynamically for quicker iteration.
   shoulder or down paths, car owners drive trips over 60 m. Ownership follows class: most poor
   citizens have a bike and no car, the well-off have both and take bike rides to parks. Figures
   move smoothly between ticks; one sim minute shows 1.5 seconds of motion, the same scale as traffic.
+- **Parking**: drivers need a space. Towers have their own, middle blocks a few, cheap buildings none.
+  When drivers keep circling, a parking lot opens nearby (surface lot on cheap land, multi-storey car
+  park in the middle) and charges per visit; its bays fill visibly as spaces are taken. The City
+  panel shows spaces, lots, drivers circling and fees.
 - `Tab` walks the street: first-person on the pavement nearest the camera target, mouse to look,
   WASD to walk, Shift to run, Tab or Esc to return. Tools are off while walking.
 - Each land use has its own architecture per tier: junkyards and rusted sheds on cheap industrial

@@ -92,6 +92,8 @@ pub enum BusinessKind {
     GadgetShop,
     Venue,
     Office,
+    /// Sells parking by the visit; no goods.
+    Parking,
 }
 
 /// What a business turns into what, per filled job per hour.
@@ -116,6 +118,7 @@ impl BusinessKind {
             BusinessKind::GadgetShop => "gadget shop",
             BusinessKind::Venue => "venue",
             BusinessKind::Office => "office",
+            BusinessKind::Parking => "parking",
         }
     }
 
@@ -136,6 +139,7 @@ impl BusinessKind {
             BusinessKind::GadgetShop => Recipe { inputs: &[(Resource::Electronics, 0.5)], outputs: &[(Resource::Goods, 0.5)] },
             BusinessKind::Venue => Recipe { inputs: &[(Resource::Groceries, 0.3)], outputs: &[] },
             BusinessKind::Office => Recipe { inputs: &[], outputs: &[] },
+            BusinessKind::Parking => Recipe { inputs: &[], outputs: &[] },
         }
     }
 
@@ -177,6 +181,8 @@ pub struct Business {
 }
 
 impl Business {
+    pub const PARKING_KIND: BusinessKind = BusinessKind::Parking;
+
     pub fn new(kind: BusinessKind, jobs: u16) -> Self {
         Self {
             kind,

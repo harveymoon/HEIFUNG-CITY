@@ -12,6 +12,7 @@ mod commercial;
 mod entertainment;
 mod industrial;
 mod park;
+mod parking;
 pub mod parts;
 mod residential;
 
@@ -96,10 +97,13 @@ pub enum Style {
     ScrubLot,
     Garden,
     Plaza,
+    // parking businesses
+    ParkingLot,
+    CarPark,
 }
 
 impl Style {
-    pub const ALL: [Style; 35] = [
+    pub const ALL: [Style; 37] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -135,6 +139,8 @@ impl Style {
         Style::ScrubLot,
         Style::Garden,
         Style::Plaza,
+        Style::ParkingLot,
+        Style::CarPark,
     ];
 
     pub fn label(self) -> &'static str {
@@ -174,6 +180,8 @@ impl Style {
             Style::ScrubLot => "scrub lot",
             Style::Garden => "garden",
             Style::Plaza => "plaza",
+            Style::ParkingLot => "parking lot",
+            Style::CarPark => "car park",
         }
     }
 }
@@ -471,6 +479,9 @@ pub struct Ctx<'a> {
     pub lot_poly: Vec<Vec2>,
     /// Buildable footprint: the parcel inset by the land use's setback.
     pub poly: Vec<Vec2>,
+    pub seed: u64,
+    /// For parking lots: share of bays holding a car.
+    pub parking: Option<f32>,
 }
 
 impl Ctx<'_> {
@@ -537,10 +548,15 @@ pub fn generate_building(
     seed: u64,
     rules: &BuildingRules,
     palette: &Palette,
+    parking: Option<f32>,
 ) -> Geometry {
     let mut rng = rng_for(seed, 11);
-    let style = rules.pick_style(land_use, tier, &mut rng);
-    generate_styled(lot, land_use, floors, tier, condition, seed, style, rules, palette)
+    let style = match parking {
+        Some(_) if tier == Tier::Low || floors < 2 => Style::ParkingLot,
+        Some(_) => Style::CarPark,
+        None => rules.pick_style(land_use, tier, &mut rng),
+    };
+    generate_styled_parking(lot, land_use, floors, tier, condition, seed, style, rules, palette, parking)
 }
 
 /// Generate a specific style; used by the tests and the style browser.
@@ -555,6 +571,22 @@ pub fn generate_styled(
     style: Style,
     rules: &BuildingRules,
     palette: &Palette,
+) -> Geometry {
+    generate_styled_parking(lot, land_use, floors, tier, condition, seed, style, rules, palette, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_styled_parking(
+    lot: &Lot,
+    land_use: LandUse,
+    floors: u8,
+    tier: Tier,
+    condition: f32,
+    seed: u64,
+    style: Style,
+    rules: &BuildingRules,
+    palette: &Palette,
+    parking: Option<f32>,
 ) -> Geometry {
     let mut g = Geometry::default();
     let mut rng = rng_for(seed, 13);
@@ -582,6 +614,8 @@ pub fn generate_styled(
         wear: (1.0 - condition).clamp(0.0, 1.0),
         lot_poly,
         poly,
+        seed,
+        parking,
     };
     match style {
         Style::Stacks => residential::stacks(&mut g, &ctx, &mut rng),
@@ -619,6 +653,8 @@ pub fn generate_styled(
         Style::ScrubLot => park::scrub_lot(&mut g, &ctx, &mut rng),
         Style::Garden => park::garden(&mut g, &ctx, &mut rng),
         Style::Plaza => park::plaza(&mut g, &ctx, &mut rng),
+        Style::ParkingLot => parking::parking_lot(&mut g, &ctx, &mut rng),
+        Style::CarPark => parking::car_park(&mut g, &ctx, &mut rng),
     }
     g
 }

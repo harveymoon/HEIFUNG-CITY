@@ -110,6 +110,15 @@ pub struct Building {
     pub land_value: f32,
     /// The business operating here, for non-residential buildings.
     pub business: Option<Business>,
+    /// Car spaces: integrated into towers, a few under middle-tier blocks,
+    /// the whole point of a parking lot.
+    #[serde(default)]
+    pub parking_capacity: u16,
+    #[serde(default)]
+    pub parking_used: u16,
+    /// Fee per visit for paying customers (parking businesses).
+    #[serde(default)]
+    pub parking_price: f32,
 }
 
 impl Building {
@@ -131,13 +140,36 @@ impl Building {
             rent: 0.0,
             land_value,
             business: None,
+            parking_capacity: 0,
+            parking_used: 0,
+            parking_price: 0.0,
         };
         b.recompute_capacity();
         b.update_rent(land_value);
         b
     }
 
+    pub fn is_parking(&self) -> bool {
+        self.business.as_ref().map_or(false, |b| b.kind == Business::PARKING_KIND)
+    }
+
+    pub fn parking_free(&self) -> u16 {
+        self.parking_capacity.saturating_sub(self.parking_used)
+    }
+
+    /// Share of spaces in use, for parking lots whose look should show it.
+    pub fn parking_visual(&self) -> Option<f32> {
+        if self.is_parking() && self.parking_capacity > 0 {
+            Some(self.parking_used as f32 / self.parking_capacity as f32)
+        } else {
+            None
+        }
+    }
+
     pub fn recompute_capacity(&mut self) {
+        if self.is_parking() {
+            return;
+        }
         let f = self.floors as u16;
         let (homes, jobs) = match self.land_use {
             LandUse::Residential => {
@@ -156,6 +188,12 @@ impl Building {
         };
         self.homes = homes;
         self.jobs = jobs;
+        // Towers bring their own parking; middle blocks squeeze in a few spaces.
+        self.parking_capacity = match self.tier {
+            Tier::High => (homes + jobs) / 2 + 2,
+            Tier::Mid => (homes + jobs) / 4,
+            Tier::Low => 0,
+        };
     }
 
     pub fn update_rent(&mut self, land_value: f32) {

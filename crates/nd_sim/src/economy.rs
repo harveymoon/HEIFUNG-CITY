@@ -31,6 +31,20 @@ pub struct Economy {
     /// Immigrants turned away because nothing was affordable, cumulative.
     pub priced_out_total: u32,
     pub market: crate::market::MarketStats,
+    #[serde(default)]
+    pub parking_capacity: u32,
+    #[serde(default)]
+    pub parking_used: u32,
+    #[serde(default)]
+    pub parking_lots: u32,
+    /// Drivers who found no space today and left the car on the street.
+    #[serde(default)]
+    pub parking_street_today: u32,
+    #[serde(default)]
+    pub parking_fees_today: f32,
+    /// Where the last driver gave up looking for a space.
+    #[serde(default)]
+    pub parking_shortage_at: Option<glam::Vec2>,
 }
 
 impl Economy {

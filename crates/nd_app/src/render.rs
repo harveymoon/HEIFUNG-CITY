@@ -495,7 +495,7 @@ fn sync_lots(
 fn spawn_building(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, sim: &Sim, assets: &GameAssets, id: BuildingId) -> Option<(Vec<Entity>, usize)> {
     let b = sim.world.buildings.get(id)?;
     let lot = sim.world.lots.get(b.lot)?;
-    let geo = generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette);
+    let geo = generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, b.parking_visual());
     let tris = geo.triangle_count();
     Some((spawn_geometry(commands, meshes, mats, &geo, BuildingTag(id)), tris))
 }

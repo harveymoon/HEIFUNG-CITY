@@ -57,6 +57,7 @@ fn main() {
             e.emigrated_total,
             e.priced_out_total,
         );
+        println!("         parking: {}/{} spaces in {} lots, circling {} , fees {:.0}", e.parking_used, e.parking_capacity, e.parking_lots, e.parking_street_today, e.parking_fees_today);
         let m = &e.market;
         println!(
             "         market: businesses {} deals {} imports {:.0} exports {:.0} meals {} hungry {} closed {} | groceries {:.1} ({:.0}) produce {:.1} flour {:.1} electronics {:.1}",
