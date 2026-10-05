@@ -237,6 +237,22 @@ fn log_events(sim: Res<Sim>, flags: Res<UiFlags>, tools: Res<ToolState>, mut log
             SimEvent::BusinessClosed(b) => json!({ "kind": "BusinessClosed", "building": key_str(*b), "name": building_name(w, Some(*b)) }),
             SimEvent::CitizenArrived(c) => json!({ "kind": "CitizenArrived", "citizen": key_str(*c), "name": w.citizens.get(*c).map(|x| x.name.as_str()) }),
             SimEvent::CitizenLeft(c) => json!({ "kind": "CitizenLeft", "citizen": key_str(*c) }),
+            SimEvent::IncidentStarted(i) | SimEvent::EmergencyCall(i) | SimEvent::UnitDispatched(i) | SimEvent::UnitOnScene(i) | SimEvent::IncidentResolved(i) => {
+                let kind = match e {
+                    SimEvent::IncidentStarted(_) => "IncidentStarted",
+                    SimEvent::EmergencyCall(_) => "EmergencyCall",
+                    SimEvent::UnitDispatched(_) => "UnitDispatched",
+                    SimEvent::UnitOnScene(_) => "UnitOnScene",
+                    _ => "IncidentResolved",
+                };
+                match w.services.incident(*i) {
+                    Some(inc) => json!({ "kind": kind, "incident": i, "type": inc.kind.label(), "building": key_str(inc.building), "name": building_name(w, Some(inc.building)), "outcome": inc.outcome.map(|o| o.label()) }),
+                    None => json!({ "kind": kind, "incident": i }),
+                }
+            }
+            SimEvent::FireSpread(b) => json!({ "kind": "FireSpread", "building": key_str(*b), "name": building_name(w, Some(*b)) }),
+            SimEvent::BurnedDown(b, l) => json!({ "kind": "BurnedDown", "building": key_str(*b), "lot": key_str(*l) }),
+            SimEvent::StadiumEvent(b) => json!({ "kind": "StadiumEvent", "building": key_str(*b), "name": building_name(w, Some(*b)) }),
             SimEvent::NewThought(c) => {
                 let cit = w.citizens.get(*c);
                 json!({ "kind": "NewThought", "citizen": key_str(*c), "name": cit.map(|x| x.name.as_str()), "thought": cit.map(|x| x.thought.as_str()) })

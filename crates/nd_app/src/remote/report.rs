@@ -155,7 +155,7 @@ pub fn report(w: &World, sections: &[String]) -> Result<Value, String> {
     Ok(Value::Object(out))
 }
 
-fn ledger_map(values: &[f32; 9]) -> Value {
+fn ledger_map(values: &[f32]) -> Value {
     let mut m = Map::new();
     for f in Flow::ALL {
         let x = values[f.index()];

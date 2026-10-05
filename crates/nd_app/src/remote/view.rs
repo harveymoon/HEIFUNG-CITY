@@ -117,16 +117,6 @@ pub fn road_kind_of(s: &str) -> Result<RoadKind, String> {
     }
 }
 
-pub fn plant_of(s: &str) -> Option<PowerPlantKind> {
-    match s.trim().to_ascii_lowercase().as_str() {
-        "coal" => Some(PowerPlantKind::Coal),
-        "solar" => Some(PowerPlantKind::Solar),
-        "wind" => Some(PowerPlantKind::Wind),
-        "nuclear" => Some(PowerPlantKind::Nuclear),
-        _ => None,
-    }
-}
-
 pub fn tool_of(s: &str) -> Result<Tool, String> {
     match s.trim().to_ascii_lowercase().as_str() {
         "inspect" => Ok(Tool::Inspect),

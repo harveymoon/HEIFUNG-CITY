@@ -17,7 +17,7 @@ use bevy::pbr::DistanceFog;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use nd_procgen::street::{generate_street, signal_posts, StreetInput};
-use nd_procgen::{build_terrain, bus_stops, generate_building, generate_texture, generate_vacant, mip_chain, scatter_nature, Extras, Geometry, MeshData, Surface, TerrainConfig};
+use nd_procgen::{build_terrain, bus_stops, generate_building, generate_texture, generate_vacant, mip_chain, scatter_nature, Extras, Geometry, MeshData, StyleBook, Surface, TerrainConfig};
 use nd_sim::roads::{LANE_WIDTH, SHOULDER};
 use nd_sim::traffic::LaneId;
 use nd_sim::{BuildingId, CarId, CitizenId, LotId, SimEvent, Vec2 as SVec2, World};
@@ -193,6 +193,16 @@ struct RenderState {
     glow_key: Option<i32>,
 }
 
+/// Every building's resolved style and the older neighbours it was picked
+/// against, so styles cluster or contrast with what stands nearby (see
+/// `nd_procgen::buildings::adjacency`).
+#[derive(Resource, Default)]
+struct BuildingStyles(StyleBook);
+
+/// Street-level props drawn only around the walker (`nd_procgen::walk`).
+#[derive(Component, Clone)]
+struct WalkDetailTag;
+
 /// Renderer statistics shown in the UI.
 #[derive(Resource, Default)]
 pub struct RenderStats {
@@ -206,9 +216,9 @@ pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<RenderState>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_systems(Startup, setup).add_systems(
+        app.init_resource::<RenderState>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().init_resource::<BuildingStyles>().add_systems(Startup, setup).add_systems(
             Update,
-            (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_haze, sync_transit, sync_buildings, sync_citizens, sync_cars, sync_trains, update_daylight)
+            (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_haze, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_trains, update_daylight)
                 .chain()
                 .in_set(SimSet::Sync),
         );
@@ -936,7 +946,7 @@ fn sync_vacant(
 }
 
 /// Generate one building's geometry into the chunk's merged geometry.
-fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, id: BuildingId) -> Option<()> {
+fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<()> {
     let b = world.buildings.get(id)?;
     let lot = world.lots.get(b.lot)?;
     let extras = Extras {
@@ -947,6 +957,8 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, id: B
         depot: b.depot,
         rail: b.rail.as_ref(),
         construction: b.construction.as_ref().map(|c| c.progress),
+        neighbours: styles.neighbours(id),
+        service: b.service.map(|s| s.kind),
     };
     geo.append(&generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras));
     Some(())
@@ -972,8 +984,12 @@ fn sync_buildings(
     mats: Res<Materials>,
     mut state: ResMut<RenderState>,
     mut stats: ResMut<RenderStats>,
+    mut styles: ResMut<BuildingStyles>,
 ) {
     let rebuild_all = sim.full_rebuild || assets.rules_changed || assets.palette_changed;
+    if sim.full_rebuild || assets.rules_changed {
+        styles.0.clear();
+    }
     let mut dirty: HashSet<ChunkKey> = HashSet::new();
     if rebuild_all {
         for (_, chunk) in state.chunks.drain() {
@@ -1037,6 +1053,7 @@ fn sync_buildings(
     }
     let touched = !dirty.is_empty();
     if touched {
+        styles.0.refresh(&sim.world, &assets.rules);
         // Bucket every building once; only the dirty cells are regenerated.
         let mut members: HashMap<ChunkKey, Vec<BuildingId>> = HashMap::new();
         for id in sim.world.buildings.keys() {
@@ -1055,7 +1072,7 @@ fn sync_buildings(
             let Some(ids) = members.remove(&k) else { continue };
             let mut geo = Geometry::default();
             for &id in &ids {
-                if append_building(&mut geo, &sim.world, &assets, id).is_some() {
+                if append_building(&mut geo, &sim.world, &assets, &styles.0, id).is_some() {
                     state.building_chunks.insert(id, k);
                 }
             }
@@ -1071,6 +1088,40 @@ fn sync_buildings(
     if sim.full_rebuild {
         sim.full_rebuild = false;
     }
+}
+
+/// Walk mode only: street-level detail (signs, carts, vending machines,
+/// steam, cables, puddles, scooters, clutter, cracks) within
+/// `WALK_RADIUS` of the walker, redrawn after `WALK_REDRAW` metres.
+#[allow(clippy::too_many_arguments)]
+fn sync_walk_detail(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mode: Res<crate::camera::CameraMode>,
+    walk: Res<crate::camera::WalkState>,
+    mut drawn: Local<Option<(SVec2, u64, usize)>>,
+    existing: Query<Entity, With<WalkDetailTag>>,
+) {
+    if *mode != crate::camera::CameraMode::Walk {
+        if drawn.take().is_some() {
+            despawn_all(&mut commands, &existing);
+        }
+        return;
+    }
+    let here = SVec2::new(walk.pos.x, walk.pos.z);
+    let key = (sim.world.roads.version, sim.world.buildings.len());
+    if let Some((at, rv, nb)) = *drawn {
+        if at.distance(here) < nd_procgen::WALK_REDRAW && (rv, nb) == key && !assets.palette_changed && !sim.full_rebuild {
+            return;
+        }
+    }
+    despawn_all(&mut commands, &existing);
+    let geo = nd_procgen::walk_detail(&sim.world, &assets.palette, here, nd_procgen::WALK_RADIUS);
+    spawn_geometry(&mut commands, &mut meshes, &mats, &geo, WalkDetailTag);
+    *drawn = Some((here, key.0, key.1));
 }
 
 fn sync_citizens(

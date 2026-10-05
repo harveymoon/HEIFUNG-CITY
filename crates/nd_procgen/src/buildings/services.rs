@@ -366,37 +366,48 @@ pub fn landmark(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             }
         }
         Tier::Mid => {
-            let r = (room * 0.22).clamp(1.2, 3.5);
-            extrude(g, f, Stone, &ngon(center.x, center.y, r * 2.2, 8, 0.2), 0.0, 1.0, stone);
-            let base = ngon(center.x, center.y, r, 4, 0.0);
-            let h = 18.0 + r * 6.0;
-            loft(g, f, Stone, &base, &scale_poly(&base, 0.45), 1.0, 1.0 + h, stone);
-            loft(g, f, Stone, &scale_poly(&base, 0.45), &scale_poly(&base, 0.01), 1.0 + h, 3.0 + h, mul(stone, 1.1));
-            for k in 0..4 {
-                let a = k as f32 / 4.0 * TAU + 0.4;
-                let p = center + Vec2::new(a.cos(), a.sin()) * r * 2.6;
-                if c.inside_local(p) {
-                    f.bx(g, Glow, p.x, 0.15, p.y, Vec3::new(0.6, 0.2, 0.6), mul(pal.lamp, 1.2));
-                }
+            // A triumphal arch across the plaza, facing the road, with a
+            // statue group on a plinth under it.
+            let w = (room * 1.2).clamp(4.0, 22.0);
+            let pier = (w * 0.18).max(1.4);
+            let h = (w * 0.75).clamp(7.0, 16.0);
+            let dpt = (w * 0.22).max(2.0);
+            for sgn in [-1.0f32, 1.0] {
+                let px = center.x + sgn * (w * 0.5 - pier * 0.5);
+                f.bx(g, Stone, px, h * 0.5, center.y, Vec3::new(pier, h, dpt), stone);
+                f.bx(g, Glow, px, h * 0.35, center.y - dpt * 0.5 - 0.05, Vec3::new(pier * 0.4, h * 0.4, 0.06), mul(pal.lamp, 0.5));
+            }
+            f.bx(g, Stone, center.x, h + 1.2, center.y, Vec3::new(w, 2.4, dpt + 0.4), mul(stone, 1.05));
+            f.bx(g, Stone, center.x, h + 2.7, center.y, Vec3::new(w * 0.7, 0.6, dpt * 0.8), stone);
+            f.bx(g, Glow, center.x, h + 1.2, center.y - dpt * 0.5 - 0.25, Vec3::new(w * 0.6, 0.4, 0.06), mul(pal.window_cold, 0.9));
+            // Statue group: three bronze figures on a low plinth.
+            f.bx(g, Stone, center.x, 0.4, center.y, Vec3::new(w * 0.35, 0.8, dpt * 0.8), stone);
+            for k in 0..3 {
+                let x = center.x + (k as f32 - 1.0) * w * 0.09;
+                let tall = if k == 1 { 2.2 } else { 1.8 };
+                f.bx(g, Metal, x, 0.8 + tall * 0.5, center.y, Vec3::new(0.5, tall, 0.4), pal.bronze);
+                f.bx(g, Metal, x, 0.8 + tall + 0.2, center.y, Vec3::new(0.35, 0.35, 0.35), pal.bronze);
             }
         }
         Tier::High => {
-            // A twisted glass spire of stacked, rotating rings with neon seams.
-            let r = (room * 0.35).clamp(2.0, 9.0);
-            let h = 70.0;
-            extrude(g, f, Stone, &ngon(center.x, center.y, r * 1.3, 12, 0.0), 0.0, 1.2, stone);
-            let rings = 10;
-            for k in 0..rings {
-                let t0 = k as f32 / rings as f32;
-                let t1 = (k + 1) as f32 / rings as f32;
-                let r0 = r * (1.0 - 0.8 * t0);
-                let r1 = r * (1.0 - 0.8 * t1);
-                let b = ngon(center.x, center.y, r0, 6, t0 * 1.2);
-                let tp = ngon(center.x, center.y, r1, 6, t1 * 1.2);
-                loft(g, f, Glass, &b, &tp, 1.2 + t0 * h, 1.2 + t1 * h, mul(pick(rng, &pal.glass), 1.1));
-                extrude(g, f, Glow, &ngon(center.x, center.y, r1 + 0.1, 6, t1 * 1.2), 1.2 + t1 * h - 0.25, 1.2 + t1 * h, mul(pick(rng, &pal.led_colors), 0.8));
+            // A faceted glass sculpture: a broad crystal on a stepped base,
+            // wider than it is tall, under a lit crown ring.
+            let r = (room * 0.45).clamp(1.5, 14.0);
+            extrude(g, f, Stone, &ngon(center.x, center.y, r * 1.25, 8, 0.2), 0.0, 1.0, stone);
+            extrude(g, f, Stone, &ngon(center.x, center.y, r * 1.1, 8, 0.2), 1.0, 2.0, mul(stone, 1.05));
+            let girdle = ngon(center.x, center.y, r, 8, 0.0);
+            let waist = r * 0.9;
+            let glass = mul(pick(rng, &pal.glass), 1.2);
+            loft(g, f, Glass, &ngon(center.x, center.y, r * 0.55, 8, 0.39), &girdle, 2.0, 2.0 + waist * 0.6, glass);
+            loft(g, f, Glass, &girdle, &ngon(center.x, center.y, r * 0.45, 8, 0.39), 2.0 + waist * 0.6, 2.0 + waist * 1.1, mul(glass, 1.1));
+            let top = 2.0 + waist * 1.1;
+            // Crown: a ring of glowing facets and a halo.
+            for k in 0..8 {
+                let a = k as f32 / 8.0 * TAU + 0.39;
+                let p = center + Vec2::new(a.cos(), a.sin()) * r * 0.45;
+                f.bx(g, Glow, p.x, top + 0.6, p.y, Vec3::new(0.5, 1.2, 0.5), mul(pick(rng, &pal.led_colors), 1.0));
             }
-            f.bx(g, Glow, center.x, h + 2.5, center.y, Vec3::new(0.3, 3.0, 0.3), pal.aviation_light);
+            extrude(g, f, Glow, &ngon(center.x, center.y, r * 1.02, 8, 0.0), 2.0 + waist * 0.6 - 0.15, 2.0 + waist * 0.6 + 0.15, mul(pal.window_cold, 1.1));
         }
     }
     // Benches and lamps round the plaza edge.

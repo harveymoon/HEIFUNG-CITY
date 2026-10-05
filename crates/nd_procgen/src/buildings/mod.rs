@@ -7,11 +7,14 @@
 //! depots. Footprints follow the parcel polygon: a triangular corner lot gets
 //! a triangular building.
 
+pub mod adjacency;
 mod civic;
 mod commercial;
 mod construction;
+mod dense;
 mod entertainment;
 mod industrial;
+pub mod kit;
 mod park;
 mod parking;
 pub mod parts;
@@ -19,6 +22,10 @@ mod power;
 mod rail;
 pub mod transit;
 mod residential;
+mod towers;
+mod works;
+
+pub use adjacency::{Neighbour, StyleBook};
 mod services;
 
 use crate::palette::Palette;
@@ -117,6 +124,33 @@ pub enum Style {
     BusDepot,
     Station,
     FreightYard,
+    // -- variety: Hong Kong, Akira and Ghost-in-the-Shell forms. Added as
+    // one block at the end so `ALL` keeps its order. --
+    /// Kowloon walled block: abutting slabs of mismatched height, cages,
+    /// AC units and an antenna forest.
+    WalledCity,
+    /// Hong Kong pencil tower on a shop podium.
+    PencilTower,
+    /// Shanghai twin slabs with crowned tops and a link bridge.
+    TwinSlab,
+    /// Akira megastructure: a heavy base, several towers, sky bridges.
+    Megastructure,
+    /// Ghost-in-the-Shell stack of offset glass boxes with planted terraces.
+    GlassTerraces,
+    /// Capsule hotel: pods plugged into a concrete core.
+    CapsuleHotel,
+    /// Terraced housing stepping up from the street like a hillside.
+    HillsideSteps,
+    /// Covered night market arcade with stalls, lanterns and string lights.
+    NightMarket,
+    /// Karaoke / pachinko tower wrapped in signs and screens.
+    NeonTower,
+    /// Row of garage workshops and chop shops.
+    Workshops,
+    /// Hong Kong flatted factory: stacked industrial floors and a goods lift.
+    FlattedFactory,
+    /// Clean semiconductor fab: white boxes, exhaust stacks and pipe racks.
+    FabPlant,
     // city services and attractions (buildings/services.rs), placed by the player
     PoliceStation,
     FireStation,
@@ -133,7 +167,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 51] = [
+    pub const ALL: [Style; 63] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -178,6 +212,18 @@ impl Style {
         Style::BusDepot,
         Style::Station,
         Style::FreightYard,
+        Style::WalledCity,
+        Style::PencilTower,
+        Style::TwinSlab,
+        Style::Megastructure,
+        Style::GlassTerraces,
+        Style::CapsuleHotel,
+        Style::HillsideSteps,
+        Style::NightMarket,
+        Style::NeonTower,
+        Style::Workshops,
+        Style::FlattedFactory,
+        Style::FabPlant,
         Style::PoliceStation,
         Style::FireStation,
         Style::Hospital,
@@ -209,7 +255,7 @@ impl Style {
             Style::BalconySlab => "balcony slab",
             Style::Courtyard => "courtyard block",
             Style::Crystal => "crystal tower",
-            Style::Fortress => "fortress compound",
+            Style::Fortress => "glass castle",
             Style::GardenTower => "garden tower",
             Style::Villas => "villa cluster",
             Style::Shophouse => "shophouses",
@@ -247,6 +293,18 @@ impl Style {
             Style::BusDepot => "bus depot",
             Style::Station => "railway station",
             Style::FreightYard => "freight yard",
+            Style::WalledCity => "walled block",
+            Style::PencilTower => "pencil tower",
+            Style::TwinSlab => "twin slabs",
+            Style::Megastructure => "megastructure",
+            Style::GlassTerraces => "glass terraces",
+            Style::CapsuleHotel => "capsule hotel",
+            Style::HillsideSteps => "stepped terraces",
+            Style::NightMarket => "night market",
+            Style::NeonTower => "neon tower",
+            Style::Workshops => "workshops",
+            Style::FlattedFactory => "flatted factory",
+            Style::FabPlant => "fab plant",
             Style::PoliceStation => "police station",
             Style::FireStation => "fire station",
             Style::Hospital => "hospital",
@@ -346,22 +404,51 @@ impl BuildingRules {
         &self.tiers[tier.index()]
     }
 
+    /// The weighted options for a land use and tier: the rules file's
+    /// entries plus the built-in weights of any style the file never
+    /// mentions, so styles added after a rules file was written still turn
+    /// up (give a style weight 0 in the file to switch it off).
+    pub fn options(&self, lu: LandUse, tier: Tier) -> Vec<StyleWeight> {
+        let mut out: Vec<StyleWeight> = self.styles.iter().filter(|s| s.land_use == lu && s.tier == tier && s.weight > 0.0 && s.weight.is_finite()).cloned().collect();
+        for d in default_style_weights() {
+            if d.land_use == lu && d.tier == tier && !self.styles.iter().any(|s| s.style == d.style) {
+                out.push(d.clone());
+            }
+        }
+        out
+    }
+
     /// Weighted pick among the styles listed for this land use and tier.
     pub fn pick_style(&self, lu: LandUse, tier: Tier, rng: &mut impl Rng) -> Style {
-        let options: Vec<&StyleWeight> = self.styles.iter().filter(|s| s.land_use == lu && s.tier == tier && s.weight > 0.0).collect();
-        let total: f32 = options.iter().map(|s| s.weight).sum();
-        if options.is_empty() || total <= 0.0 {
+        self.pick_style_near(lu, tier, &adjacency::Site::default(), &[], rng)
+    }
+
+    /// Weighted pick that also weighs how each option suits the site
+    /// (floors, frontage) and the styles already standing within
+    /// [`adjacency::RADIUS`]: some styles cluster, spires want to differ
+    /// from their neighbours. One random draw, like `pick_style`.
+    pub fn pick_style_near(&self, lu: LandUse, tier: Tier, site: &adjacency::Site, near: &[Neighbour], rng: &mut impl Rng) -> Style {
+        let options = self.options(lu, tier);
+        let weights: Vec<f32> = options.iter().map(|o| o.weight * adjacency::site_fit(o.style, site) * adjacency::neighbour_factor(o.style, near)).collect();
+        let total: f32 = weights.iter().sum();
+        if options.is_empty() || total.is_nan() || total <= 0.0 {
             return default_style(lu, tier);
         }
         let mut r = rng.random_range(0.0..total);
-        for o in &options {
-            if r < o.weight {
+        for (o, w) in options.iter().zip(&weights) {
+            if r < *w {
                 return o.style;
             }
-            r -= o.weight;
+            r -= w;
         }
         options.last().unwrap().style
     }
+}
+
+/// The built-in style weights, built once.
+fn default_style_weights() -> &'static [StyleWeight] {
+    static W: std::sync::OnceLock<Vec<StyleWeight>> = std::sync::OnceLock::new();
+    W.get_or_init(|| BuildingRules::default().styles)
 }
 
 fn default_style(lu: LandUse, tier: Tier) -> Style {
@@ -474,6 +561,33 @@ impl Default for BuildingRules {
                 w(Park, Low, Style::ScrubLot, 1.0),
                 w(Park, Mid, Style::Garden, 1.0),
                 w(Park, High, Style::Plaza, 1.0),
+                // variety block
+                w(Residential, Low, Style::WalledCity, 0.4),
+                w(Residential, Low, Style::CapsuleHotel, 0.1),
+                w(Residential, Mid, Style::PencilTower, 0.3),
+                w(Residential, Mid, Style::TwinSlab, 0.3),
+                w(Residential, Mid, Style::HillsideSteps, 0.2),
+                w(Residential, High, Style::PencilTower, 0.15),
+                w(Residential, High, Style::TwinSlab, 0.2),
+                w(Residential, High, Style::GlassTerraces, 0.2),
+                w(Residential, High, Style::Megastructure, 0.12),
+                w(Residential, High, Style::HillsideSteps, 0.1),
+                w(Commercial, Low, Style::NightMarket, 0.25),
+                w(Commercial, Low, Style::CapsuleHotel, 0.15),
+                w(Commercial, Low, Style::WalledCity, 0.15),
+                w(Commercial, Mid, Style::PencilTower, 0.25),
+                w(Commercial, Mid, Style::CapsuleHotel, 0.15),
+                w(Commercial, Mid, Style::GlassTerraces, 0.15),
+                w(Commercial, Mid, Style::NeonTower, 0.15),
+                w(Commercial, High, Style::Megastructure, 0.2),
+                w(Commercial, High, Style::GlassTerraces, 0.25),
+                w(Industrial, Low, Style::Workshops, 0.45),
+                w(Industrial, Mid, Style::FlattedFactory, 0.45),
+                w(Industrial, High, Style::FabPlant, 0.45),
+                w(Entertainment, Low, Style::NightMarket, 0.7),
+                w(Entertainment, Mid, Style::NeonTower, 0.5),
+                w(Entertainment, High, Style::NeonTower, 0.3),
+                w(Entertainment, High, Style::Megastructure, 0.15),
             ],
         }
     }
@@ -680,13 +794,16 @@ pub struct Extras<'a> {
     /// Still being built: progress in `0..1`. The site is drawn instead of
     /// the finished style.
     pub construction: Option<f32>,
+    /// Styles of the buildings already standing nearby (see
+    /// [`StyleBook`]); the style pick clusters or contrasts with them.
+    pub neighbours: &'a [Neighbour],
     /// A city service or attraction: its own style, at the placed tier.
     pub service: Option<nd_sim::services::ServiceKind>,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, construction: None, service: None }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, construction: None, neighbours: &[], service: None }
     }
 }
 
@@ -775,8 +892,18 @@ pub fn generate_building(
     palette: &Palette,
     extras: &Extras,
 ) -> Geometry {
+    let style = choose_style(lot, land_use, floors, tier, seed, rules, extras);
+    generate_styled_extras(lot, land_use, floors, tier, condition, seed, style, rules, palette, extras)
+}
+
+/// The style `generate_building` draws for these inputs: forced by the
+/// extras for plants, car parks, depots and rail, otherwise picked by weight,
+/// site and neighbours. The [`StyleBook`] calls this too, so the style it
+/// records for a building is the one that is drawn.
+#[allow(clippy::too_many_arguments)]
+pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: u64, rules: &BuildingRules, extras: &Extras) -> Style {
     let mut rng = rng_for(seed, 11);
-    let style = match (extras.plant, extras.parking) {
+    match (extras.plant, extras.parking) {
         _ if extras.service.is_some() => Style::for_service(extras.service.unwrap()),
         _ if extras.depot => Style::BusDepot,
         _ if extras.rail.is_some_and(|r| r.kind == RailFacility::Station) => Style::Station,
@@ -787,9 +914,8 @@ pub fn generate_building(
         (Some(PowerPlantKind::Nuclear), _) => Style::PowerNuclear,
         (None, Some(_)) if tier == Tier::Low || floors < 2 => Style::ParkingLot,
         (None, Some(_)) => Style::CarPark,
-        (None, None) => rules.pick_style(land_use, tier, &mut rng),
-    };
-    generate_styled_extras(lot, land_use, floors, tier, condition, seed, style, rules, palette, extras)
+        (None, None) => rules.pick_style_near(land_use, tier, &adjacency::Site { floors, frontage: lot.width() }, extras.neighbours, &mut rng),
+    }
 }
 
 /// Generate a specific style; used by the tests and the style browser.
@@ -856,6 +982,9 @@ fn generate_styled_extras(
     };
     if let Some(progress) = extras.construction {
         construction::construction_site(&mut g, &ctx, &mut rng, progress);
+        if weathered(tier, ctx.wear) {
+            g.weather();
+        }
         return g;
     }
     match style {
@@ -865,7 +994,7 @@ fn generate_styled_extras(
         Style::BalconySlab => residential::balcony_slab(&mut g, &ctx, &mut rng),
         Style::Courtyard => residential::courtyard(&mut g, &ctx, &mut rng),
         Style::Crystal => residential::crystal(&mut g, &ctx, &mut rng),
-        Style::Fortress => residential::fortress(&mut g, &ctx, &mut rng),
+        Style::Fortress => towers::glass_castle(&mut g, &ctx, &mut rng),
         Style::GardenTower => residential::garden_tower(&mut g, &ctx, &mut rng),
         Style::Villas => residential::villas(&mut g, &ctx, &mut rng),
         Style::Shophouse => commercial::shophouse(&mut g, &ctx, &mut rng),
@@ -903,6 +1032,18 @@ fn generate_styled_extras(
         Style::BusDepot => transit::bus_depot(&mut g, &ctx, &mut rng),
         Style::Station => rail::station(&mut g, &ctx, &mut rng),
         Style::FreightYard => rail::freight_yard(&mut g, &ctx, &mut rng),
+        Style::WalledCity => dense::walled_city(&mut g, &ctx, &mut rng),
+        Style::PencilTower => towers::pencil_tower(&mut g, &ctx, &mut rng),
+        Style::TwinSlab => towers::twin_slab(&mut g, &ctx, &mut rng),
+        Style::Megastructure => towers::megastructure(&mut g, &ctx, &mut rng),
+        Style::GlassTerraces => towers::glass_terraces(&mut g, &ctx, &mut rng),
+        Style::CapsuleHotel => dense::capsule_hotel(&mut g, &ctx, &mut rng),
+        Style::HillsideSteps => dense::hillside_steps(&mut g, &ctx, &mut rng),
+        Style::NightMarket => dense::night_market(&mut g, &ctx, &mut rng),
+        Style::NeonTower => dense::neon_tower(&mut g, &ctx, &mut rng),
+        Style::Workshops => works::workshops(&mut g, &ctx, &mut rng),
+        Style::FlattedFactory => works::flatted_factory(&mut g, &ctx, &mut rng),
+        Style::FabPlant => works::fab_plant(&mut g, &ctx, &mut rng),
         Style::PoliceStation => services::police_station(&mut g, &ctx, &mut rng),
         Style::FireStation => services::fire_station(&mut g, &ctx, &mut rng),
         Style::Hospital => services::hospital(&mut g, &ctx, &mut rng),
@@ -911,7 +1052,20 @@ fn generate_styled_extras(
         Style::Landmark => services::landmark(&mut g, &ctx, &mut rng),
         Style::Stadium => services::stadium(&mut g, &ctx, &mut rng),
     }
+    if weathered(tier, ctx.wear) {
+        g.weather();
+    }
     g
+}
+
+/// Whether a building is drawn with the weathered materials: everything
+/// cheap (low land value builds low tier), and anything left to decay.
+pub fn weathered(tier: Tier, wear: f32) -> bool {
+    match tier {
+        Tier::Low => true,
+        Tier::Mid => wear > 0.45,
+        Tier::High => wear > 0.7,
+    }
 }
 
 /// A stand-in track along the back of a lot, for previews and tests of the
@@ -1130,15 +1284,52 @@ mod tests {
         assert!(worst.is_empty(), "{} style/lot combinations reach beyond their lot or budget", worst.len());
     }
 
+    /// The variety styles change form with height: a tall site draws a
+    /// taller building than a low one, and the glass castle ends in
+    /// crystals, not a needle (its top is broad).
+    #[test]
+    fn styles_change_form_with_height() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let lots = many_lots(LandUse::Residential);
+        let lot = lots.iter().max_by(|a, b| polygon_area(&a.polygon).abs().total_cmp(&polygon_area(&b.polygon).abs())).unwrap();
+        let top = |g: &Geometry| g.iter().filter(|(s, _)| *s != Surface::Glow && *s != Surface::Matte).flat_map(|(_, m)| m.positions.iter().map(|p| p[1])).fold(0.0f32, f32::max);
+        for style in [Style::WalledCity, Style::PencilTower, Style::TwinSlab, Style::Megastructure, Style::GlassTerraces, Style::CapsuleHotel, Style::HillsideSteps, Style::NeonTower, Style::Fortress] {
+            let low = generate_styled(lot, LandUse::Residential, 3, Tier::Mid, 0.8, 9, style, &rules, &pal);
+            let high = generate_styled(lot, LandUse::Residential, 16, Tier::Mid, 0.8, 9, style, &rules, &pal);
+            assert!(top(&high) > top(&low) * 1.6, "{style:?}: 16 floors ({:.0} m) should rise well above 3 ({:.0} m)", top(&high), top(&low));
+        }
+        // No spire: within the top 15% of the glass castle's height there is
+        // still a crystal at least a few metres across.
+        let g = generate_styled(lot, LandUse::Residential, 16, Tier::High, 1.0, 4, Style::Fortress, &rules, &pal);
+        let h = top(&g);
+        let crown: Vec<Vec2> = g.get(Surface::Glass).positions.iter().filter(|p| p[1] > h * 0.85).map(|p| Vec2::new(p[0], p[2])).collect();
+        let (lo, hi) = parts::bounds(&crown);
+        assert!((hi - lo).min_element() > 3.0, "the glass castle should not taper to a point: crown {:?}", hi - lo);
+    }
+
+    /// Cheap buildings use the weathered materials, smart ones do not.
+    #[test]
+    fn low_value_buildings_are_weathered() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let lots = many_lots(LandUse::Residential);
+        let worn = |g: &Geometry| g.iter().filter(|(s, _)| s.is_worn()).count();
+        let low = generate_styled(&lots[0], LandUse::Residential, 4, Tier::Low, 0.5, 3, Style::Tenement, &rules, &pal);
+        let high = generate_styled(&lots[0], LandUse::Residential, 4, Tier::High, 1.0, 3, Style::Tenement, &rules, &pal);
+        assert!(worn(&low) > 0 && low.get(Surface::Brick).is_empty(), "a low-tier tenement should be weathered brick");
+        assert_eq!(worn(&high), 0, "a well-kept high-tier building stays clean");
+    }
+
     #[test]
     fn style_weights_respect_land_use_and_tier() {
         let rules = BuildingRules::default();
         let mut rng = rng_for(1, 2);
         for _ in 0..50 {
             let s = rules.pick_style(LandUse::Industrial, Tier::Low, &mut rng);
-            assert!(matches!(s, Style::Junkyard | Style::RustyWarehouse));
+            assert!(matches!(s, Style::Junkyard | Style::RustyWarehouse | Style::Workshops));
             let s = rules.pick_style(LandUse::Industrial, Tier::High, &mut rng);
-            assert!(matches!(s, Style::Datacenter | Style::Depot));
+            assert!(matches!(s, Style::Datacenter | Style::Depot | Style::FabPlant));
         }
     }
 
