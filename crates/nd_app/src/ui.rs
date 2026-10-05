@@ -271,11 +271,12 @@ fn side_panel(
             let e = &sim.world.economy;
             section(ui, "CITY");
             ui.label(format!(
-                "population {}   buildings {}   lots {} ({} vacant)",
+                "population {}   buildings {}   lots {} ({} vacant, {} unusable)",
                 sim.world.citizens.len(),
                 sim.world.buildings.len(),
                 sim.world.lots.len(),
-                sim.world.lots.values().filter(|l| l.building.is_none()).count()
+                sim.world.lots.values().filter(|l| l.building.is_none() && l.usable()).count(),
+                sim.world.lots.values().filter(|l| l.landlocked).count()
             ));
             ui.label(format!(
                 "homes {}/{}   jobs {}/{}   waiting to move in {}",

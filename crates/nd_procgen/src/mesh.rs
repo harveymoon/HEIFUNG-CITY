@@ -267,6 +267,39 @@ impl MeshData {
         self.frustum(&c, &e, color);
     }
 
+    /// Flat strip along a polyline with mitred joins, shifted sideways by
+    /// `offset` (positive = right of travel). Continuous through bends.
+    pub fn path_strip(&mut self, points: &[Vec2], offset: f32, width: f32, y: f32, color: [f32; 4]) {
+        let l = offset_path(points, offset - width * 0.5);
+        let r = offset_path(points, offset + width * 0.5);
+        for i in 0..l.len().saturating_sub(1) {
+            self.ground_polygon(&[l[i], l[i + 1], r[i + 1], r[i]], y, color);
+        }
+    }
+
+    /// Raised strip along a polyline with mitred joins (kerbs, pavements).
+    pub fn path_box(&mut self, points: &[Vec2], offset: f32, width: f32, y0: f32, y1: f32, color: [f32; 4]) {
+        let l = offset_path(points, offset - width * 0.5);
+        let r = offset_path(points, offset + width * 0.5);
+        let lo = |p: Vec2| Vec3::new(p.x, y0, p.y);
+        let hi = |p: Vec2| Vec3::new(p.x, y1, p.y);
+        let n = l.len();
+        if n < 2 {
+            return;
+        }
+        for i in 0..n - 1 {
+            self.quad_facing([hi(l[i]), hi(l[i + 1]), hi(r[i + 1]), hi(r[i])], Vec3::Y, color);
+            let d = (points.get(i + 1).copied().unwrap_or(points[i]) - points[i]).normalize_or_zero();
+            let out_l = Vec3::new(d.y, 0.0, -d.x);
+            self.quad_facing([lo(l[i]), lo(l[i + 1]), hi(l[i + 1]), hi(l[i])], out_l, color);
+            self.quad_facing([lo(r[i]), lo(r[i + 1]), hi(r[i + 1]), hi(r[i])], -out_l, color);
+        }
+        let d0 = (points[1] - points[0]).normalize_or_zero();
+        let d1 = (points[n - 1] - points[n - 2]).normalize_or_zero();
+        self.quad_facing([lo(l[0]), lo(r[0]), hi(r[0]), hi(l[0])], Vec3::new(-d0.x, 0.0, -d0.y), color);
+        self.quad_facing([lo(l[n - 1]), lo(r[n - 1]), hi(r[n - 1]), hi(l[n - 1])], Vec3::new(d1.x, 0.0, d1.y), color);
+    }
+
     /// A wire that sags under its own weight between two anchors.
     pub fn wire(&mut self, a: Vec3, b: Vec3, sag: f32, thickness: f32, color: [f32; 4]) {
         let segs = 6;
@@ -277,5 +310,51 @@ impl MeshData {
             self.beam(prev, p, thickness, color);
             prev = p;
         }
+    }
+}
+
+/// Polyline shifted sideways by `offset` (positive = right of travel) with
+/// mitred corners, limited so sharp bends do not spike.
+pub fn offset_path(points: &[Vec2], offset: f32) -> Vec<Vec2> {
+    let n = points.len();
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let d_in = if i > 0 { (points[i] - points[i - 1]).normalize_or_zero() } else { Vec2::ZERO };
+        let d_out = if i + 1 < n { (points[i + 1] - points[i]).normalize_or_zero() } else { Vec2::ZERO };
+        let d_in = if d_in == Vec2::ZERO { d_out } else { d_in };
+        let d_out = if d_out == Vec2::ZERO { d_in } else { d_out };
+        let n_in = Vec2::new(-d_in.y, d_in.x);
+        let n_out = Vec2::new(-d_out.y, d_out.x);
+        let m = (n_in + n_out).normalize_or_zero();
+        let (m, scale) = if m == Vec2::ZERO { (n_in, 1.0) } else { (m, (1.0 / m.dot(n_in).max(1e-3)).min(2.0)) };
+        out.push(points[i] + m * offset * scale);
+    }
+    out
+}
+
+/// Total length of a polyline.
+pub fn path_length(points: &[Vec2]) -> f32 {
+    points.windows(2).map(|w| w[0].distance(w[1])).sum()
+}
+
+/// Point and direction at arc length `s` along a polyline.
+pub fn point_along(points: &[Vec2], s: f32) -> (Vec2, Vec2) {
+    let mut acc = 0.0;
+    for w in points.windows(2) {
+        let len = w[0].distance(w[1]);
+        if len < 1e-4 {
+            continue;
+        }
+        if s <= acc + len {
+            let t = ((s - acc) / len).clamp(0.0, 1.0);
+            return (w[0].lerp(w[1], t), (w[1] - w[0]) / len);
+        }
+        acc += len;
+    }
+    let n = points.len();
+    if n >= 2 {
+        (points[n - 1], (points[n - 1] - points[n - 2]).normalize_or_zero())
+    } else {
+        (points.first().copied().unwrap_or(Vec2::ZERO), Vec2::X)
     }
 }

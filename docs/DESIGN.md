@@ -155,11 +155,16 @@ trait MindProvider {
   wall, vertical up it), so brick courses line up across a facade and nothing has to
   be unwrapped. Vertex colours set the hue; the textures are grey. Glow stays unlit
   with mildly HDR vertex colours and low bloom.
-- Parcels: a zone is cut into blocks by the road corridors that cross it, and each
-  block is sliced along its frontage into parcels of the land use's size, with jitter
-  and occasional angled cuts, plus a back row on deep blocks. Parcels keep their exact
-  outline, so lots on a diagonal road are trapezoids and corner lots are triangles.
-  Buildings extrude the parcel polygon, so footprints are rarely plain rectangles.
+- Parcels: the road corridors are subtracted from a zone with polygon booleans
+  (`geo`), so a curved road removes exactly its own strip. Each block is sliced along
+  its longest run of road-facing edges, perpendicular to the local road direction
+  (radial parcels around bends), with jitter and occasional angled cuts, plus a back
+  row on deep blocks; sharp inward corners get one straight cut. A parcel is usable
+  only if an edge of at least six metres lies along a road and its shape is compact;
+  anything else (block cores, slivers, land behind other lots) is kept as landlocked,
+  unusable ground that nothing is ever built on. Parcels keep their exact outline, so
+  lots on a diagonal road are trapezoids and corner lots are triangles, and buildings
+  extrude the parcel polygon.
 - Architecture: every (land use, tier) pair has its own family of styles, picked by
   weight from `assets/rules/buildings.ron`, assembled from a shared parts toolkit
   (`nd_procgen::buildings::parts`: facades, windows, storefronts, signs, LED screens,
@@ -176,7 +181,9 @@ trait MindProvider {
   - Park: scrub lots, gardens, plazas.
   Everything is attached to a surface: roof gear uses the roof footprint, columns hold
   up overhangs, wires run from poles to real units, jacks prop unsupported corners.
-- Streets (`nd_procgen::street`): asphalt with lane markings, kerbs and paved
+- Streets (`nd_procgen::street`): roads are drawn as runs, chains of segments joined
+  at plain bends, with one continuous mitred carriageway and pavement per run so a
+  curved road is one road rather than a string of pieces; asphalt with lane markings, kerbs and paved
   pavements, zebra crossings and stop lines at junctions, signal posts with an arm
   and one head per lane, lamps, bins, benches, bus shelters, vending kiosks, bollards
   at the corners, utility poles with sagging wires on cheap streets, trees in planters

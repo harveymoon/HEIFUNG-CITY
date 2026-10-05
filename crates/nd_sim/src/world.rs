@@ -295,7 +295,7 @@ impl World {
             let found = self
                 .lots
                 .iter()
-                .filter(|(_, l)| l.building.is_none())
+                .filter(|(_, l)| l.building.is_none() && l.usable())
                 .map(|(id, l)| (id, if l.contains(old.center) { 0.0 } else { l.center.distance(old.center) }))
                 .filter(|(_, d)| *d < 6.0)
                 .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -946,7 +946,7 @@ impl World {
     }
 
     fn develop(&mut self) {
-        let vacant: Vec<LotId> = self.lots.iter().filter(|(_, l)| l.building.is_none()).map(|(id, _)| id).collect();
+        let vacant: Vec<LotId> = self.lots.iter().filter(|(_, l)| l.building.is_none() && l.usable()).map(|(id, _)| id).collect();
         if vacant.is_empty() {
             return;
         }
@@ -970,6 +970,9 @@ impl World {
     }
 
     pub fn build_on(&mut self, lot_id: LotId) {
+        if self.lots.get(lot_id).map_or(true, |l| l.landlocked) {
+            return;
+        }
         let lu = self.lots[lot_id].land_use;
         let value = self.land_value.at(self.lots[lot_id].center);
         let mut tier = Tier::for_land_value(value);
@@ -1519,7 +1522,7 @@ mod tests {
         let mut w = World::new(WorldConfig::default());
         w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
         w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
-        let lot = w.lots.keys().next().unwrap();
+        let lot = w.lots.iter().find(|(_, l)| l.usable()).map(|(id, _)| id).unwrap();
         w.build_on(lot);
         let building = w.lots[lot].building.unwrap();
 

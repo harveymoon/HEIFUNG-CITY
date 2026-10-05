@@ -1,12 +1,15 @@
 //! Zones (land-use polygons) and the parcels carved out of them.
 //!
-//! A zone is cut into blocks by the road corridors that cross it, and each
-//! block is sliced into parcels along its frontage. Parcels keep their exact
-//! outline, so lots on a diagonal road or a tapering block are trapezoids and
-//! triangles rather than rectangles, and buildings follow those shapes.
+//! The road corridors are subtracted from a zone with real polygon booleans,
+//! so a curved road removes exactly its own strip and nothing else. Each
+//! remaining block is sliced along its road frontage into parcels of the
+//! land use's size. A parcel is usable only when one of its edges lies along
+//! a road; land with no road access is kept as unusable ground, and slivers
+//! are never built on.
 
 use crate::buildings::BuildingId;
 use crate::roads::{project_on_segment, NodeId, RoadNetwork, SegmentId};
+use geo::{Area, BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use glam::Vec2;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -16,6 +19,11 @@ use slotmap::{new_key_type, SlotMap};
 pub const SIDEWALK: f32 = 3.2;
 /// Parcels smaller than this are dropped as slivers.
 const MIN_AREA: f32 = 60.0;
+/// Area over squared perimeter below which a parcel is a sliver (a square is
+/// 0.0625, an equilateral triangle 0.048, a 1:4 strip 0.04).
+const MIN_COMPACTNESS: f32 = 0.030;
+/// Shortest edge that counts as road frontage.
+const MIN_FRONTAGE: f32 = 6.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LandUse {
@@ -110,6 +118,10 @@ pub struct Lot {
     /// Road node citizens use to enter and leave the lot.
     pub access_node: NodeId,
     pub building: Option<BuildingId>,
+    /// No edge touches a road, or the shape is a sliver: nothing can be
+    /// built here.
+    #[serde(default)]
+    pub landlocked: bool,
 }
 
 impl Lot {
@@ -134,6 +146,10 @@ impl Lot {
     /// Where people step off the pavement onto the lot.
     pub fn entrance(&self) -> Vec2 {
         self.front_edge[0].lerp(self.front_edge[1], 0.5)
+    }
+
+    pub fn usable(&self) -> bool {
+        !self.landlocked
     }
 }
 
@@ -183,7 +199,7 @@ pub fn polygon_centroid(poly: &[Vec2]) -> Vec2 {
     c / (6.0 * a)
 }
 
-/// Keep the part of `poly` where `(p - origin) . normal >= 0`.
+/// Keep the part of a convex `poly` where `(p - origin) . normal >= 0`.
 pub fn clip_halfplane(poly: &[Vec2], origin: Vec2, normal: Vec2) -> Vec<Vec2> {
     let n = poly.len();
     let mut out: Vec<Vec2> = Vec::with_capacity(n + 2);
@@ -223,39 +239,37 @@ fn extents(poly: &[Vec2], axis: Vec2) -> (f32, f32) {
     poly.iter().map(|p| p.dot(axis)).fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)))
 }
 
-/// Remove the corridor of one road from a set of blocks, splitting any block
-/// the road crosses. Pieces beyond the road's ends stay joined to the block.
-fn cut_by_road(blocks: Vec<Vec<Vec2>>, a: Vec2, b: Vec2, hw: f32) -> Vec<Vec<Vec2>> {
-    let len = a.distance(b);
-    if len < 1.0 {
-        return blocks;
+// ── geo bridges ──────────────────────────────────────────────────────────────
+
+fn to_geo(poly: &[Vec2]) -> Polygon<f32> {
+    let coords: Vec<Coord<f32>> = poly.iter().map(|p| Coord { x: p.x, y: p.y }).collect();
+    Polygon::new(LineString::from(coords), vec![])
+}
+
+/// Exterior ring as a counter-clockwise polygon without the closing point.
+fn from_geo(p: &Polygon<f32>) -> Vec<Vec2> {
+    let mut pts: Vec<Vec2> = p.exterior().0.iter().map(|c| Vec2::new(c.x, c.y)).collect();
+    if pts.len() > 1 && pts[0].distance(*pts.last().unwrap()) < 1e-3 {
+        pts.pop();
     }
-    let d = (b - a) / len;
-    let n = Vec2::new(-d.y, d.x);
-    let mut out = Vec::new();
-    for p in blocks {
-        let (n0, n1) = extents(&p, n);
-        let an = a.dot(n);
-        let (d0, d1) = extents(&p, d);
-        let ad = a.dot(d);
-        // Entirely beside the corridor, or entirely before/after the segment.
-        if n0 > an + hw || n1 < an - hw || d1 < ad - hw || d0 > ad + len + hw {
-            out.push(p);
-            continue;
-        }
-        let mut pieces = Vec::new();
-        pieces.push(clip_halfplane(&p, a + n * hw, n));
-        pieces.push(clip_halfplane(&p, a - n * hw, -n));
-        let strip = clip_halfplane(&clip_halfplane(&p, a - n * hw, n), a + n * hw, -n);
-        pieces.push(clip_halfplane(&strip, a - d * hw, -d));
-        pieces.push(clip_halfplane(&strip, b + d * hw, d));
-        for piece in pieces {
-            if piece.len() >= 3 && polygon_area(&piece).abs() > 4.0 {
-                out.push(piece);
-            }
-        }
-    }
-    out
+    ccw(&dedupe(pts))
+}
+
+/// Half-plane `(p - origin) . normal >= 0` as a very large polygon.
+fn halfplane(origin: Vec2, normal: Vec2) -> Polygon<f32> {
+    let t = Vec2::new(-normal.y, normal.x);
+    let big = 20_000.0;
+    to_geo(&[origin - t * big, origin + t * big, origin + t * big + normal * big, origin - t * big + normal * big])
+}
+
+/// Rectangle around a road segment, extended by `hw` past each end so the
+/// strips of a bend overlap and junction corners get cleared.
+fn corridor(a: Vec2, b: Vec2, hw: f32) -> Polygon<f32> {
+    let d = (b - a).normalize_or_zero();
+    let n = Vec2::new(-d.y, d.x) * hw;
+    let a = a - d * hw;
+    let b = b + d * hw;
+    to_geo(&[a + n, b + n, b - n, a - n])
 }
 
 /// Distance from a point to the nearest road centreline, with that segment.
@@ -272,107 +286,223 @@ fn nearest_road(roads: &RoadNetwork, p: Vec2) -> Option<(SegmentId, f32, f32)> {
     best
 }
 
-/// The polygon edge that faces a road: the one whose midpoint is nearest a
-/// carriageway edge. Returns (edge index, segment, t, distance to centreline).
-fn frontage(poly: &[Vec2], roads: &RoadNetwork) -> Option<(usize, SegmentId, f32, f32)> {
+/// Is this edge lying along a road's pavement line? Returns the segment and
+/// the parameter of the edge midpoint on it.
+fn edge_on_road(roads: &RoadNetwork, a: Vec2, b: Vec2) -> Option<(SegmentId, f32)> {
+    let len = a.distance(b);
+    if len < 1.0 {
+        return None;
+    }
+    let mid = (a + b) * 0.5;
+    let (sid, t, dist) = nearest_road(roads, mid)?;
+    let seg = roads.segment(sid);
+    let (p0, p1) = roads.segment_points(sid);
+    let rd = (p1 - p0).normalize_or_zero();
+    let ed = (b - a) / len;
+    let parallel = rd.dot(ed).abs() > 0.8;
+    let on_line = (dist - seg.half_width() - SIDEWALK).abs() < 2.5;
+    if parallel && on_line {
+        Some((sid, t))
+    } else {
+        None
+    }
+}
+
+/// Index of the longest edge that lies along a road, else the longest edge.
+fn frontage_edge(poly: &[Vec2], roads: &RoadNetwork) -> (usize, Option<(SegmentId, f32)>) {
     let n = poly.len();
-    let mut best: Option<(usize, SegmentId, f32, f32)> = None;
+    let mut best_road: Option<(f32, usize, (SegmentId, f32))> = None;
+    let mut best_any: (f32, usize) = (0.0, 0);
     for i in 0..n {
         let a = poly[i];
         let b = poly[(i + 1) % n];
-        if a.distance(b) < 2.0 {
+        let len = a.distance(b);
+        if len > best_any.0 {
+            best_any = (len, i);
+        }
+        if let Some(hit) = edge_on_road(roads, a, b) {
+            if best_road.map_or(true, |(l, _, _)| len > l) {
+                best_road = Some((len, i, hit));
+            }
+        }
+    }
+    match best_road {
+        Some((_, i, hit)) => (i, Some(hit)),
+        None => (best_any.1, None),
+    }
+}
+
+/// Sharpest reflex (inward-pointing) corner of a counter-clockwise polygon
+/// and its turning angle in radians. Gentle concavity along a curved road
+/// is tolerated; only corners sharper than `min_turn` count.
+fn reflex_vertex(poly: &[Vec2], min_turn: f32) -> Option<(usize, f32)> {
+    let n = poly.len();
+    let mut best: Option<(usize, f32)> = None;
+    for i in 0..n {
+        let a = poly[(i + n - 1) % n];
+        let b = poly[i];
+        let c = poly[(i + 1) % n];
+        let d1 = (b - a).normalize_or_zero();
+        let d2 = (c - b).normalize_or_zero();
+        let cross = d1.perp_dot(d2);
+        if cross >= 0.0 {
             continue;
         }
-        let mid = (a + b) * 0.5;
-        let Some((sid, t, dist)) = nearest_road(roads, mid) else { continue };
-        // Prefer long edges that sit right on the pavement line.
-        let hw = roads.segment(sid).half_width();
-        let score = (dist - hw - SIDEWALK).abs() - a.distance(b) * 0.05;
-        if best.map_or(true, |(bi, _, _, _)| {
-            let (ba, bb) = (poly[bi], poly[(bi + 1) % n]);
-            let bmid = (ba + bb) * 0.5;
-            let bdist = nearest_road(roads, bmid).map(|x| x.2).unwrap_or(f32::MAX);
-            let bhw = roads.segment(best.unwrap().1).half_width();
-            score < (bdist - bhw - SIDEWALK).abs() - ba.distance(bb) * 0.05
-        }) {
-            best = Some((i, sid, t, dist));
+        let turn = cross.abs().clamp(0.0, 1.0).asin();
+        let turn = if d1.dot(d2) < 0.0 { std::f32::consts::PI - turn } else { turn };
+        if turn > min_turn && best.map_or(true, |(_, t)| turn > t) {
+            best = Some((i, turn));
         }
     }
     best
 }
 
+/// Longest run of consecutive edges that lie along roads: (edge indices,
+/// total length). Cuts are placed along this chain, perpendicular to the
+/// local road direction, so curved frontages get radial parcels.
+fn frontage_chain(poly: &[Vec2], roads: &RoadNetwork) -> Option<(Vec<usize>, f32)> {
+    let n = poly.len();
+    let on: Vec<bool> = (0..n).map(|i| edge_on_road(roads, poly[i], poly[(i + 1) % n]).is_some()).collect();
+    if !on.iter().any(|&b| b) {
+        return None;
+    }
+    // Start after a gap so a chain that wraps around is read in one piece.
+    let start = (0..n).find(|&i| !on[i]).map(|i| (i + 1) % n).unwrap_or(0);
+    let mut best: Option<(Vec<usize>, f32)> = None;
+    let mut cur: Vec<usize> = Vec::new();
+    let mut cur_len = 0.0;
+    for k in 0..=n {
+        let i = (start + k) % n;
+        if k < n && on[i] {
+            cur.push(i);
+            cur_len += poly[i].distance(poly[(i + 1) % n]);
+        } else {
+            if !cur.is_empty() && best.as_ref().map_or(true, |(_, l)| cur_len > *l) {
+                best = Some((cur.clone(), cur_len));
+            }
+            cur.clear();
+            cur_len = 0.0;
+        }
+    }
+    best
+}
+
+/// Cut a polygon by a line, returning the pieces on both sides.
+fn cut(poly: &Polygon<f32>, origin: Vec2, normal: Vec2) -> Vec<Polygon<f32>> {
+    let mut out = Vec::new();
+    for hp in [halfplane(origin, normal), halfplane(origin, -normal)] {
+        let piece: MultiPolygon<f32> = poly.intersection(&hp);
+        for p in piece.0 {
+            if p.unsigned_area() > 1.0 {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
 /// Slice a block into parcels of roughly the land use's size. Cuts run
-/// perpendicular to the frontage with some jitter, occasionally at an angle,
-/// and deep blocks get a back row.
-fn subdivide(poly: Vec<Vec2>, lu: LandUse, roads: &RoadNetwork, rng: &mut impl Rng, depth: u32, out: &mut Vec<Vec<Vec2>>) {
-    let area = polygon_area(&poly).abs();
-    if poly.len() < 3 || area < MIN_AREA {
+/// perpendicular to the road frontage with some jitter, occasionally at an
+/// angle, deep blocks get a back row, and concave pieces are cut straight at
+/// their reflex corner so every parcel ends up convex.
+fn subdivide(poly: Polygon<f32>, lu: LandUse, roads: &RoadNetwork, rng: &mut impl Rng, depth: u32, out: &mut Vec<Vec<Vec2>>) {
+    let area = poly.unsigned_area();
+    if area < MIN_AREA || depth > 40 {
         return;
     }
+    let pts = from_geo(&poly);
+    if pts.len() < 3 {
+        return;
+    }
+    // Holes (a block wrapped around a loop road) cannot be parcels: cut
+    // straight through the hole so the pieces are simple.
+    if let Some(hole) = poly.interiors().first() {
+        if let Some(c) = hole.0.first() {
+            let origin = Vec2::new(c.x, c.y);
+            for piece in cut(&poly, origin, Vec2::X) {
+                subdivide(piece, lu, roads, rng, depth + 1, out);
+            }
+            return;
+        }
+    }
+    // Sharp inward corners get one straight cut: across the road if the
+    // corner sits on a road edge, else along the edge that leads into it.
+    if let Some((i, _)) = reflex_vertex(&pts, 0.6) {
+        let n = pts.len();
+        let a = pts[(i + n - 1) % n];
+        let b = pts[i];
+        let d = (b - a).normalize_or_zero();
+        let on_road = edge_on_road(roads, a, b).is_some();
+        let normal = if on_road { d } else { Vec2::new(-d.y, d.x) };
+        let pieces = cut(&poly, b, normal);
+        if pieces.len() >= 2 {
+            for piece in pieces {
+                subdivide(piece, lu, roads, rng, depth + 1, out);
+            }
+            return;
+        }
+    }
+
     let lw = lu.lot_width();
     let ld = lu.lot_depth();
-    let n = poly.len();
-    let (along, inward) = match frontage(&poly, roads) {
-        Some((i, _, _, _)) => {
-            let d = (poly[(i + 1) % n] - poly[i]).normalize_or_zero();
-            (d, Vec2::new(-d.y, d.x))
-        }
-        None => {
-            let (mut best, mut best_len) = (0, 0.0);
-            for i in 0..n {
-                let l = poly[i].distance(poly[(i + 1) % n]);
-                if l > best_len {
-                    best = i;
-                    best_len = l;
-                }
-            }
-            let d = (poly[(best + 1) % n] - poly[best]).normalize_or_zero();
-            (d, Vec2::new(-d.y, d.x))
-        }
+    let n = pts.len();
+    let Some((chain, chain_len)) = frontage_chain(&pts, roads) else {
+        // No road frontage at all: one piece of unusable ground.
+        out.push(pts);
+        return;
     };
+    // Slice along the frontage, perpendicular to the local road direction.
+    if chain_len > lw * 1.7 && area > lw * ld * 1.3 {
+        let mut s = lw * rng.random_range(0.85..1.35);
+        if chain_len - s < lw * 0.8 {
+            s = chain_len * 0.5;
+        }
+        let mut acc = 0.0;
+        for &i in &chain {
+            let a = pts[i];
+            let b = pts[(i + 1) % n];
+            let len = a.distance(b);
+            if acc + len >= s {
+                let q = a.lerp(b, ((s - acc) / len).clamp(0.05, 0.95));
+                let d = (b - a) / len;
+                let angle: f32 = if rng.random_bool(0.15) { rng.random_range(-0.2..0.2) } else { 0.0 };
+                let (sn, co) = angle.sin_cos();
+                let normal = Vec2::new(d.x * co - d.y * sn, d.x * sn + d.y * co);
+                let pieces = cut(&poly, q, normal);
+                if pieces.len() >= 2 {
+                    for piece in pieces {
+                        subdivide(piece, lu, roads, rng, depth + 1, out);
+                    }
+                    return;
+                }
+                break;
+            }
+            acc += len;
+        }
+    }
+    // Depth: a back row behind the frontage parcels.
+    let longest = chain.iter().copied().max_by(|&a, &b| pts[a].distance(pts[(a + 1) % n]).total_cmp(&pts[b].distance(pts[(b + 1) % n]))).unwrap_or(chain[0]);
+    let along = (pts[(longest + 1) % n] - pts[longest]).normalize_or_zero();
     if along == Vec2::ZERO {
+        out.push(pts);
         return;
     }
-    let (u0, u1) = extents(&poly, along);
-    let (v0, v1) = extents(&poly, inward);
-    let width = u1 - u0;
+    let inward = Vec2::new(-along.y, along.x);
+    let (u0, u1) = extents(&pts, along);
+    let (v0, v1) = extents(&pts, inward);
     let dep = v1 - v0;
-    let too_deep = depth >= 14;
-
-    if !too_deep && width > lw * 1.7 && area > lw * ld * 1.3 {
-        // Slice one parcel off the end of the block.
-        let mut cut = u0 + lw * rng.random_range(0.85..1.35);
-        if u1 - cut < lw * 0.8 {
-            cut = (u0 + u1) * 0.5;
-        }
-        let angle: f32 = if rng.random_bool(0.18) { rng.random_range(-0.22..0.22) } else { 0.0 };
-        let (s, c) = angle.sin_cos();
-        let normal = Vec2::new(along.x * c - along.y * s, along.x * s + along.y * c);
-        let origin = along * cut + inward * ((v0 + v1) * 0.5);
-        let left = clip_halfplane(&poly, origin, -normal);
-        let right = clip_halfplane(&poly, origin, normal);
-        if left.len() >= 3 && right.len() >= 3 {
-            subdivide(left, lu, roads, rng, depth + 1, out);
-            subdivide(right, lu, roads, rng, depth + 1, out);
+    if dep > ld * 1.9 {
+        let c = v0 + ld * rng.random_range(0.95..1.25);
+        let origin = along * ((u0 + u1) * 0.5) + inward * c;
+        let pieces = cut(&poly, origin, inward);
+        if pieces.len() >= 2 {
+            for piece in pieces {
+                subdivide(piece, lu, roads, rng, depth + 1, out);
+            }
             return;
         }
     }
-    if !too_deep && dep > ld * 1.9 {
-        // A back row behind the frontage parcels.
-        let cut = v0 + ld * rng.random_range(0.95..1.25);
-        let origin = along * ((u0 + u1) * 0.5) + inward * cut;
-        let front = clip_halfplane(&poly, origin, -inward);
-        let back = clip_halfplane(&poly, origin, inward);
-        if front.len() >= 3 && back.len() >= 3 {
-            subdivide(front, lu, roads, rng, depth + 1, out);
-            subdivide(back, lu, roads, rng, depth + 1, out);
-            return;
-        }
-    }
-    if width < 8.0 || dep < 8.0 {
-        return;
-    }
-    out.push(poly);
+    out.push(pts);
 }
 
 fn polygon_seed(poly: &[Vec2]) -> u64 {
@@ -386,10 +516,16 @@ fn polygon_seed(poly: &[Vec2]) -> u64 {
     h
 }
 
-/// Carve `zone` into parcels: cut out every road corridor, split the
-/// remaining blocks along their frontages, and drop parcels whose centre is
-/// covered by one of the `covering` zones (drawn later, so they win) or by an
-/// existing lot. New lots are appended to `lots`.
+fn perimeter(poly: &[Vec2]) -> f32 {
+    let n = poly.len();
+    (0..n).map(|i| poly[i].distance(poly[(i + 1) % n])).sum()
+}
+
+/// Carve `zone` into parcels: subtract every road corridor, slice the blocks
+/// along their frontages, and keep parcels whose centre is not covered by one
+/// of the `covering` zones (drawn later, so they win) or an existing lot.
+/// Parcels with no road frontage or a sliver shape are kept as landlocked,
+/// unusable ground. New lots are appended to `lots`.
 pub fn generate_lots(
     zone_id: ZoneId,
     zone: &Zone,
@@ -403,22 +539,40 @@ pub fn generate_lots(
         return created;
     }
     let mut rng = crate::rng_for(polygon_seed(&zone.polygon), 5);
+    let zone_poly = to_geo(&ccw(&zone.polygon));
+    let (zlo, zhi) = zone.polygon.iter().fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
 
-    // Blocks: the zone minus every road corridor.
-    let mut blocks = vec![ccw(&zone.polygon)];
+    // Blocks: the zone minus every nearby road corridor.
+    let mut corridors: Option<MultiPolygon<f32>> = None;
     for (sid, seg) in roads.alive_segments() {
         let (a, b) = roads.segment_points(sid);
-        blocks = cut_by_road(blocks, a, b, seg.half_width() + SIDEWALK);
+        let hw = seg.half_width() + SIDEWALK;
+        let lo = a.min(b) - Vec2::splat(hw * 2.0);
+        let hi = a.max(b) + Vec2::splat(hw * 2.0);
+        if hi.x < zlo.x || hi.y < zlo.y || lo.x > zhi.x || lo.y > zhi.y {
+            continue;
+        }
+        let c = corridor(a, b, hw);
+        corridors = Some(match corridors {
+            None => MultiPolygon(vec![c]),
+            Some(m) => m.union(&c),
+        });
     }
+    let blocks: MultiPolygon<f32> = match &corridors {
+        Some(m) => zone_poly.difference(m),
+        None => MultiPolygon(vec![zone_poly]),
+    };
 
-    // Parcels.
     let mut parcels: Vec<Vec<Vec2>> = Vec::new();
-    for block in blocks {
+    for block in blocks.0 {
         subdivide(block, lu, roads, &mut rng, 0, &mut parcels);
     }
 
     for poly in parcels {
         let poly = ccw(&poly);
+        if poly.len() < 3 {
+            continue;
+        }
         let center = polygon_centroid(&poly);
         if covering.iter().any(|z| z.contains(center)) {
             continue;
@@ -426,7 +580,9 @@ pub fn generate_lots(
         if lots.values().any(|l| l.contains(center) || point_in_polygon(l.center, &poly)) {
             continue;
         }
-        let Some((fi, sid, t, _)) = frontage(&poly, roads) else { continue };
+        let area = polygon_area(&poly);
+        let compact = area / perimeter(&poly).powi(2);
+        let (fi, road) = frontage_edge(&poly, roads);
         let n = poly.len();
         let fa = poly[fi];
         let fb = poly[(fi + 1) % n];
@@ -443,6 +599,16 @@ pub fn generate_lots(
             along * u1 + inward * v1,
             along * u0 + inward * v1,
         ];
+        let has_frontage = road.is_some() && fa.distance(fb) >= MIN_FRONTAGE.min(lu.lot_width() * 0.45);
+        let sharp = reflex_vertex(&poly, 0.6).is_some();
+        let landlocked = !has_frontage || sharp || compact < MIN_COMPACTNESS || (u1 - u0) < 8.0 || (v1 - v0) < 8.0;
+        let (sid, t) = match road {
+            Some(hit) => hit,
+            None => match nearest_road(roads, center) {
+                Some((s, t, _)) => (s, t),
+                None => continue,
+            },
+        };
         let lot = Lot {
             zone: zone_id,
             land_use: lu,
@@ -455,6 +621,7 @@ pub fn generate_lots(
             front_t: t,
             access_node: roads.nearest_endpoint(sid, t),
             building: None,
+            landlocked,
         };
         created.push(lots.insert(lot));
     }
@@ -472,6 +639,10 @@ mod tests {
         r
     }
 
+    fn usable(lots: &SlotMap<LotId, Lot>) -> Vec<&Lot> {
+        lots.values().filter(|l| l.usable()).collect()
+    }
+
     #[test]
     fn zone_straddling_roads_splits_into_blocks_and_parcels() {
         let roads = roads_cross();
@@ -480,18 +651,19 @@ mod tests {
             land_use: LandUse::Residential,
         };
         let mut lots = SlotMap::with_key();
-        let ids = generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[]);
-        assert!(ids.len() >= 8, "got {} parcels", ids.len());
+        generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[]);
+        let good = usable(&lots);
+        assert!(good.len() >= 8, "got {} usable parcels", good.len());
         for lot in lots.values() {
-            // No parcel sits on the carriageway.
             assert!(lot.center.x.abs() > 5.0 && lot.center.y.abs() > 5.0, "parcel on road at {:?}", lot.center);
-            assert!(lot.area() >= MIN_AREA);
-            assert!(lot.contains(lot.center) || lot.polygon.len() >= 3);
             assert!(polygon_area(&lot.polygon) > 0.0, "parcels are counter-clockwise");
-            let e = lot.entrance();
-            assert!(zone.contains(e) || (e.x.abs() < 101.0 && e.y.abs() < 81.0));
+            assert!(reflex_vertex(&lot.polygon, 0.6).is_none(), "parcels have no sharp inward corners");
         }
-        // Parcels together cover most of the zone minus roads.
+        for lot in &good {
+            let mid = lot.entrance();
+            let (_, _, d) = nearest_road(&roads, mid).unwrap();
+            assert!((d - 5.75 - SIDEWALK).abs() < 2.6, "usable parcels front a road, got {d}");
+        }
         let total: f32 = lots.values().map(|l| l.area()).sum();
         assert!(total > 200.0 * 160.0 * 0.6, "coverage {total}");
     }
@@ -506,7 +678,7 @@ mod tests {
         };
         let mut lots = SlotMap::with_key();
         generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[]);
-        assert!(!lots.is_empty());
+        assert!(!usable(&lots).is_empty());
         let non_rect = lots.values().filter(|l| l.polygon.len() != 4).count();
         assert!(non_rect > 0, "expected triangles or pentagons where the diagonal road meets the zone edge");
     }
@@ -522,5 +694,45 @@ mod tests {
         let mut lots = SlotMap::with_key();
         let ids = generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[cover]);
         assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn curved_road_cuts_only_its_own_strip_and_leaves_no_slivers() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+        let curve = crate::plan::sample_curve(&[Vec2::new(-120.0, 0.0), Vec2::new(-20.0, 120.0), Vec2::new(120.0, 0.0)]);
+        roads.add_polyline(&curve, 1, 1);
+        let zone = Zone {
+            polygon: vec![Vec2::new(-200.0, 10.0), Vec2::new(200.0, 10.0), Vec2::new(200.0, 200.0), Vec2::new(-200.0, 200.0)],
+            land_use: LandUse::Residential,
+        };
+        let mut lots = SlotMap::with_key();
+        generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[]);
+        let good = usable(&lots);
+        assert!(good.len() >= 12, "got {} usable parcels", good.len());
+        for lot in &good {
+            let compact = lot.area() / perimeter(&lot.polygon).powi(2);
+            assert!(compact >= MIN_COMPACTNESS, "sliver parcel with compactness {compact}");
+            assert!(lot.front_edge[0].distance(lot.front_edge[1]) >= 5.0);
+        }
+        // Parcels well inside the arch, away from any road, are landlocked.
+        assert!(lots.values().any(|l| l.landlocked), "deep land without frontage is marked unusable");
+    }
+
+    #[test]
+    fn land_without_road_access_is_unusable() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+        // A deep zone with a road only on its south side.
+        let zone = Zone {
+            polygon: vec![Vec2::new(-80.0, 10.0), Vec2::new(80.0, 10.0), Vec2::new(80.0, 130.0), Vec2::new(-80.0, 130.0)],
+            land_use: LandUse::Residential,
+        };
+        let mut lots = SlotMap::with_key();
+        generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[]);
+        let front = usable(&lots);
+        assert!(!front.is_empty());
+        assert!(front.iter().all(|l| l.center.y < 60.0), "only the first row fronts the road");
+        assert!(lots.values().any(|l| l.landlocked && l.center.y > 60.0), "back land is landlocked");
     }
 }

@@ -457,7 +457,10 @@ fn sync_lots(
     }
     for lot in w.lots.values() {
         let c = pal.zone_color(lot.land_use);
-        if lot.building.is_none() {
+        if lot.landlocked {
+            // Unusable ground: plain earth, no outline.
+            fill.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15));
+        } else if lot.building.is_none() {
             let mut outline = lot.polygon.clone();
             outline.push(lot.polygon[0]);
             glow.ground_strip(&outline, 0.22, 0.035, scale(c, 0.45));
