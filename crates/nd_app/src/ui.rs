@@ -6,7 +6,7 @@ use nd_minds::Personality;
 use nd_sim::{LandUse, Resource};
 
 use crate::assets::GameAssets;
-use crate::render::Overlays;
+use crate::render::{Lighting, Overlays};
 use crate::sim::{Sim, SPEEDS};
 use crate::tools::{Selection, Tool, ToolState};
 
@@ -46,6 +46,7 @@ fn side_panel(
     mut selection: ResMut<Selection>,
     mut flags: ResMut<UiFlags>,
     mut overlays: ResMut<Overlays>,
+    mut lighting: ResMut<Lighting>,
     assets: Res<GameAssets>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
@@ -79,6 +80,25 @@ fn side_panel(
                     }
                 }
             });
+            ui.separator();
+
+            // Lighting.
+            section(ui, "LIGHTING");
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut lighting.follow_clock, "Follow the clock");
+                if !lighting.follow_clock {
+                    ui.add(egui::Slider::new(&mut lighting.hour, 0.0..=24.0).text("hour").fixed_decimals(1));
+                }
+            });
+            if !lighting.follow_clock {
+                ui.horizontal(|ui| {
+                    for (label, h) in [("dawn", 6.5), ("noon", 12.5), ("dusk", 18.5), ("night", 23.0)] {
+                        if ui.small_button(label).clicked() {
+                            lighting.hour = h;
+                        }
+                    }
+                });
+            }
             ui.separator();
 
             // Project.

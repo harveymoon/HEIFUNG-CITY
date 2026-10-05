@@ -38,6 +38,21 @@ struct OverlayTag;
 pub struct Overlays {
     pub land_value: bool,
 }
+
+/// Sun and sky control. By default the lighting follows the sim clock; the
+/// player can pin the time of day instead.
+#[derive(Resource)]
+pub struct Lighting {
+    pub follow_clock: bool,
+    /// Hour of day used when not following the clock, 0..24.
+    pub hour: f32,
+}
+
+impl Default for Lighting {
+    fn default() -> Self {
+        Self { follow_clock: true, hour: 14.0 }
+    }
+}
 #[derive(Component)]
 pub struct BuildingTag(pub BuildingId);
 #[derive(Component)]
@@ -81,7 +96,7 @@ pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<RenderState>().init_resource::<Overlays>().add_systems(Startup, setup).add_systems(
+        app.init_resource::<RenderState>().init_resource::<Overlays>().init_resource::<Lighting>().add_systems(Startup, setup).add_systems(
             Update,
             (sync_terrain, sync_roads, sync_signals, sync_preview, sync_lots, sync_overlay, sync_buildings, sync_citizens, sync_cars, update_daylight)
                 .chain()
@@ -677,6 +692,7 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 /// Sun, ambient light, sky, fog and glow strength follow the sim clock.
 fn update_daylight(
     sim: Res<Sim>,
+    lighting: Res<Lighting>,
     assets: Res<GameAssets>,
     mats: Res<Materials>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -686,7 +702,7 @@ fn update_daylight(
     mut fog: Query<&mut DistanceFog>,
 ) {
     let pal = &assets.palette;
-    let t = sim.world.clock.day_fraction();
+    let t = if lighting.follow_clock { sim.world.clock.day_fraction() } else { (lighting.hour / 24.0).rem_euclid(1.0) };
     let elev = ((t - 0.25) * std::f32::consts::TAU).sin();
     let daylight = smoothstep(-0.12, 0.30, elev);
     let low_sun = 1.0 - smoothstep(0.05, 0.45, elev.abs());
