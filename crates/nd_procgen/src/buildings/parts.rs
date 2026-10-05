@@ -571,6 +571,10 @@ pub fn grime(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0: f32
         let sh = rng.random_range(0.8..(y1 - y0).max(1.0));
         face.bx(g, f, Rust, t, y1 - sh * 0.5, 0.02, Vec3::new(rng.random_range(0.3..1.2), sh, 0.03), RUST_STAIN);
     }
+    // A run-down building gets tagged at street level whatever its style.
+    if c.wear > 0.5 && y0 < 2.5 {
+        graffiti(g, c, rng, face, y0, (y0 + 3.0).min(y1), (amount * 0.5).clamp(0.6, 2.5));
+    }
 }
 
 /// Vertical downpipes with a rust patch where they leak.
@@ -591,24 +595,27 @@ pub fn downpipes(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y_t
 pub fn fire_escape(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32, y0: f32, floors: i32, fh: f32) {
     let f = &c.frame;
     let steel = mul(c.palette.steel, 0.4 + 0.2 * rng.random::<f32>());
+    // Rusted through once the building is run down.
+    let (s, steel) = outdoor_steel(c, steel);
+    let rail = if s == Rust { Rust } else { Matte };
     let w = 4.0;
     let d = 1.1;
     for k in 1..floors {
         let y = y0 + k as f32 * fh;
-        face.bx(g, f, Metal, t, y, d * 0.5, Vec3::new(w, 0.08, d), steel);
-        face.bx(g, f, Matte, t, y + 0.5, d - 0.03, Vec3::new(w, 0.04, 0.04), steel);
-        face.bx(g, f, Matte, t, y + 1.0, d - 0.03, Vec3::new(w, 0.04, 0.04), steel);
+        face.bx(g, f, s, t, y, d * 0.5, Vec3::new(w, 0.08, d), steel);
+        face.bx(g, f, rail, t, y + 0.5, d - 0.03, Vec3::new(w, 0.04, 0.04), steel);
+        face.bx(g, f, rail, t, y + 1.0, d - 0.03, Vec3::new(w, 0.04, 0.04), steel);
         for side in [-1.0f32, 1.0] {
-            face.bx(g, f, Matte, t + side * w * 0.5, y + 0.5, d - 0.03, Vec3::new(0.05, 1.0, 0.05), steel);
+            face.bx(g, f, rail, t + side * w * 0.5, y + 0.5, d - 0.03, Vec3::new(0.05, 1.0, 0.05), steel);
         }
         // stair run to the floor below, alternating direction
         let dir = if k % 2 == 0 { 1.0 } else { -1.0 };
         let a = f.at2(face.at(t - dir * w * 0.45, d * 0.5), y);
         let b = f.at2(face.at(t + dir * w * 0.45, d * 0.5), y - fh + 0.1);
-        g.part(Metal).beam(a, b, 0.5, rgba(steel));
+        g.part(s).beam(a, b, 0.5, rgba(steel));
     }
     // ladder down from the first landing
-    face.bx(g, f, Matte, t + w * 0.4, y0 + fh * 0.6, d * 0.5, Vec3::new(0.5, fh * 0.9, 0.05), steel);
+    face.bx(g, f, rail, t + w * 0.4, y0 + fh * 0.6, d * 0.5, Vec3::new(0.5, fh * 0.9, 0.05), steel);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1024,34 +1031,45 @@ pub fn string_lights(g: &mut Geometry, f: &Frame, a: Vec3, b: Vec3, n: i32, colo
     }
 }
 
-/// External zigzag stair up the side of a pile.
+/// Outdoor steelwork rusts once a building is run down: the surface and
+/// colour for stairs, ladders and fire escapes.
+pub fn outdoor_steel(c: &Ctx, color: [f32; 3]) -> (Surface, [f32; 3]) {
+    if c.wear > 0.4 { (Rust, mix(color, RUST, 0.55)) } else { (Metal, color) }
+}
+
+/// External zigzag stair up the side of a pile. Rusted when the lot is worn.
 #[allow(clippy::too_many_arguments)]
-pub fn stair_zigzag(g: &mut Geometry, f: &Frame, u: f32, v: f32, levels: i32, rise: f32, run: f32, color: [f32; 3]) {
+pub fn stair_zigzag(g: &mut Geometry, c: &Ctx, u: f32, v: f32, levels: i32, rise: f32, run: f32, color: [f32; 3]) {
+    let f = &c.frame;
+    let (s, color) = outdoor_steel(c, color);
+    let rail = if s == Rust { Rust } else { Matte };
     let mut y = 0.0;
     for l in 0..levels {
         let steps = 8;
         let dir = if l % 2 == 0 { 1.0 } else { -1.0 };
-        for s in 0..steps {
-            let t = (s as f32 + 0.5) / steps as f32;
-            f.bx(g, Metal, u, y + t * rise, v + dir * (t * run - run * 0.5), Vec3::new(0.9, 0.16, 0.42), color);
+        for st in 0..steps {
+            let t = (st as f32 + 0.5) / steps as f32;
+            f.bx(g, s, u, y + t * rise, v + dir * (t * run - run * 0.5), Vec3::new(0.9, 0.16, 0.42), color);
         }
-        f.bx(g, Matte, u - 0.5, y + rise * 0.5 + 0.5, v, Vec3::new(0.06, rise + 1.0, run), color);
-        f.bx(g, Metal, u, y + rise + 0.08, v + dir * run * 0.5, Vec3::new(1.0, 0.16, 1.0), color);
+        f.bx(g, rail, u - 0.5, y + rise * 0.5 + 0.5, v, Vec3::new(0.06, rise + 1.0, run), color);
+        f.bx(g, s, u, y + rise + 0.08, v + dir * run * 0.5, Vec3::new(1.0, 0.16, 1.0), color);
         y += rise;
     }
-    f.bx(g, Matte, u, y * 0.5, v + run * 0.55, Vec3::new(0.15, y, 0.15), color);
-    f.bx(g, Matte, u, y * 0.5, v - run * 0.55, Vec3::new(0.15, y, 0.15), color);
+    f.bx(g, rail, u, y * 0.5, v + run * 0.55, Vec3::new(0.15, y, 0.15), color);
+    f.bx(g, rail, u, y * 0.5, v - run * 0.55, Vec3::new(0.15, y, 0.15), color);
 }
 
 pub fn ladder(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y0: f32, y1: f32, color: [f32; 3]) {
     let f = &c.frame;
+    let (s, color) = outdoor_steel(c, color);
+    let s = if s == Rust { Rust } else { Matte };
     let h = y1 - y0;
     for side in [-0.25f32, 0.25] {
-        face.bx(g, f, Matte, t + side, y0 + h * 0.5, 0.2, Vec3::new(0.05, h, 0.05), color);
+        face.bx(g, f, s, t + side, y0 + h * 0.5, 0.2, Vec3::new(0.05, h, 0.05), color);
     }
     let rungs = (h / 0.3) as i32;
     for k in 0..rungs {
-        face.bx(g, f, Matte, t, y0 + (k as f32 + 0.5) * 0.3, 0.2, Vec3::new(0.5, 0.04, 0.04), color);
+        face.bx(g, f, s, t, y0 + (k as f32 + 0.5) * 0.3, 0.2, Vec3::new(0.5, 0.04, 0.04), color);
     }
 }
 
@@ -1097,4 +1115,135 @@ pub fn gantry_crane(g: &mut Geometry, c: &Ctx, u: f32, v0: f32, v1: f32, h: f32)
     f.bx(g, Matte, u, h - 0.3, (v0 + v1) * 0.4, Vec3::new(1.6, 0.6, 2.0), CHARCOAL);
     f.bx(g, Matte, u, h * 0.6, (v0 + v1) * 0.4, Vec3::new(0.05, h * 0.5, 0.05), DARK);
     f.bx(g, Glow, u, h + 1.1, v0, Vec3::new(0.3, 0.3, 0.3), c.palette.aviation_light);
+}
+
+// ── graffiti ─────────────────────────────────────────────────────────────────
+
+/// Spray paint on a face between two heights: bubble-letter pieces with an
+/// outline, quick tag strokes and the odd throw-up with drips, all thin
+/// boxes a few centimetres proud of the wall at arm's reach. `amount` scales
+/// how much of the face is covered; wear adds more.
+pub fn graffiti(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0: f32, y1: f32, amount: f32) {
+    let a = c.frame.to_world(face.a.x, face.a.y);
+    let b = c.frame.to_world(face.b.x, face.b.y);
+    graffiti_world(g, rng, a, b, y0, y1, amount, c.wear, c.palette);
+}
+
+/// Spray colours: dimmed LED hues, awning paints, chalk white and black.
+fn spray_colour(rng: &mut impl Rng, pal: &crate::palette::Palette) -> [f32; 3] {
+    match rng.random_range(0..7) {
+        0..=2 => mul(pick(rng, &pal.led_colors), 0.32),
+        3 | 4 => mul(pick(rng, &pal.awning_colors), 1.25),
+        5 => [0.82, 0.82, 0.76],
+        _ => DARK,
+    }
+}
+
+/// World-space graffiti on the wall from `a` to `b`; the right-hand side of
+/// the a→b direction is the painted side, as with [`Face::from_edge`].
+#[allow(clippy::too_many_arguments)]
+pub fn graffiti_world(g: &mut Geometry, rng: &mut impl Rng, a: Vec2, b: Vec2, y0: f32, y1: f32, amount: f32, wear: f32, pal: &crate::palette::Palette) {
+    let len = a.distance(b);
+    let span = y1 - y0;
+    if len < 2.5 || span < 0.8 {
+        return;
+    }
+    let tangent = (b - a) / len;
+    let out = Vec2::new(tangent.y, -tangent.x);
+    let yaw = tangent.y.atan2(tangent.x);
+    let mid = (a + b) * 0.5;
+    let pieces = ((len / 7.0) * amount * (0.4 + wear) * rng.random_range(0.6..1.4)).round().clamp(0.0, 6.0) as i32;
+    for _ in 0..pieces {
+        let w = rng.random_range(1.4f32..3.6).min(len * 0.8);
+        let h = rng.random_range(0.6f32..1.3).min(span * 0.8);
+        let room = len * 0.5 - w * 0.5 - 0.3;
+        let t = if room > 0.05 { rng.random_range(-room..room) } else { 0.0 };
+        // Painted from the ground: the piece sits between knee and head height.
+        let top = (span - h - 0.2).clamp(0.31, 2.4);
+        let yc = y0 + h * 0.5 + rng.random_range(0.3..top);
+        let col = spray_colour(rng, pal);
+        let outline = if rng.random_bool(0.6) { DARK } else { [0.82, 0.82, 0.76] };
+        let place = |g: &mut Geometry, dt: f32, y: f32, d: f32, size: Vec3, c: [f32; 3]| {
+            let p = mid + tangent * (t + dt) + out * d;
+            g.part(Matte).boxed(Vec3::new(p.x, y, p.y), size, yaw, rgba(c));
+        };
+        match rng.random_range(0..5) {
+            0 | 1 => {
+                // Bubble letters: fat blocks in two colours with an outline behind.
+                let n = ((w / 0.65) as i32).clamp(2, 6);
+                let lw = w / n as f32;
+                let second = spray_colour(rng, pal);
+                for i in 0..n {
+                    let lt = -w * 0.5 + (i as f32 + 0.5) * lw;
+                    let lh = h * rng.random_range(0.7..1.0);
+                    let dy = rng.random_range(-0.08..0.08);
+                    place(g, lt, yc + dy, 0.02, Vec3::new(lw * 0.98, lh + 0.14, 0.015), outline);
+                    place(g, lt, yc + dy, 0.035, Vec3::new(lw * 0.8, lh, 0.015), if i % 2 == 0 { col } else { second });
+                }
+            }
+            2 | 3 => {
+                // Tag: a few quick strokes and a flick or two.
+                for _ in 0..rng.random_range(3..6) {
+                    let sw = rng.random_range(0.5..w);
+                    let slack = (w - sw) * 0.5;
+                    let st = if slack > 0.01 { rng.random_range(-slack..slack) } else { 0.0 };
+                    let sy = yc + rng.random_range(-h * 0.45..h * 0.45);
+                    place(g, st, sy, 0.03, Vec3::new(sw, rng.random_range(0.07..0.16), 0.012), col);
+                }
+                for _ in 0..rng.random_range(1..3) {
+                    let st = rng.random_range(-w * 0.45..w * 0.45);
+                    place(g, st, yc, 0.03, Vec3::new(rng.random_range(0.07..0.14), h * rng.random_range(0.5..1.0), 0.012), col);
+                }
+            }
+            _ => {
+                // Throw-up: one filled block with an outline and drips below.
+                place(g, 0.0, yc, 0.02, Vec3::new(w + 0.16, h + 0.16, 0.015), outline);
+                place(g, 0.0, yc, 0.035, Vec3::new(w, h, 0.015), col);
+                let under = yc - h * 0.5;
+                for _ in 0..rng.random_range(1..4) {
+                    let dt = rng.random_range(-w * 0.45..w * 0.45);
+                    let dl = rng.random_range(0.2f32..0.7).min(under - y0 - 0.05).max(0.05);
+                    place(g, dt, under - dl * 0.5, 0.03, Vec3::new(0.05, dl, 0.012), col);
+                }
+            }
+        }
+    }
+}
+
+// ── open ground ──────────────────────────────────────────────────────────────
+
+/// A boulder: a faceted lump sunk a little into the ground at height `y`.
+pub fn rock_world(g: &mut Geometry, rng: &mut impl Rng, p: Vec2, y: f32, r: f32, color: [f32; 3]) {
+    let sides = rng.random_range(5..8);
+    let rot = rng.random_range(0.0..std::f32::consts::TAU);
+    let h = r * rng.random_range(0.5..1.0);
+    let shift = Vec2::new(rng.random_range(-0.3..0.3), rng.random_range(-0.3..0.3)) * r;
+    let bottom = MeshData::ngon(p, r, sides, rot, y - r * 0.25);
+    let top = MeshData::ngon(p + shift, r * rng.random_range(0.35..0.6), sides, rot + 0.4, y + h);
+    g.part(Stone).frustum(&bottom, &top, rgba(color));
+}
+
+/// A low bush: two stacked frusta that read as a rounded clump.
+pub fn scrub_world(g: &mut Geometry, rng: &mut impl Rng, p: Vec2, y: f32, r: f32, color: [f32; 3]) {
+    let rot = rng.random_range(0.0..std::f32::consts::TAU);
+    let h = r * rng.random_range(0.6..1.1);
+    let b = MeshData::ngon(p, r * 0.45, 6, rot, y);
+    let m = MeshData::ngon(p, r, 6, rot + 0.3, y + h * 0.55);
+    let t = MeshData::ngon(p, r * 0.35, 6, rot + 0.6, y + h);
+    let f = g.part(Foliage);
+    f.frustum(&b, &m, rgba(color));
+    f.frustum(&m, &t, rgba(mul(color, 1.1)));
+}
+
+/// A dead tree: a tapering trunk with a few bare branches and no canopy.
+pub fn dry_tree_world(g: &mut Geometry, rng: &mut impl Rng, p: Vec2, y: f32, h: f32, bark: [f32; 3]) {
+    let w = g.part(Wood);
+    w.cylinder(p, 0.16, 0.07, y - 0.1, y + h, 5, rgba(bark));
+    for _ in 0..rng.random_range(2..4) {
+        let a = rng.random_range(0.0..std::f32::consts::TAU);
+        let len = rng.random_range(0.8..1.8);
+        let from = Vec3::new(p.x, y + h * rng.random_range(0.55..0.9), p.y);
+        let to = from + Vec3::new(a.cos() * len, len * 0.7, a.sin() * len);
+        w.beam(from, to, 0.07, rgba(bark));
+    }
 }
