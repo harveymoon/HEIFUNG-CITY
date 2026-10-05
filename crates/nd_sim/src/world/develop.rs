@@ -8,7 +8,21 @@ impl World {
         let e = &mut self.economy;
         e.population = self.citizens.len() as u32;
         e.unhoused = self.citizens.values().filter(|c| c.home.is_none()).count() as u32;
-        e.unemployed = self.citizens.values().filter(|c| c.work.is_none()).count() as u32;
+        // Children and retirees are not looking for work.
+        e.unemployed = self.citizens.values().filter(|c| c.work.is_none() && c.can_work()).count() as u32;
+        e.households = self.households.len() as u32;
+        e.household_sizes = [0; 6];
+        let mut stressed = 0;
+        for (hid, h) in self.households.iter() {
+            e.household_sizes[h.size().min(5)] += 1;
+            let rent = h.home.and_then(|b| self.buildings.get(b)).map(|b| b.rent);
+            let income: f32 = h.members.iter().filter_map(|m| self.citizens.get(*m)).map(|c| c.income).sum();
+            if rent.is_some_and(|r| r > income * super::trips::RENT_STRESS_SHARE) {
+                stressed += 1;
+            }
+            let _ = hid;
+        }
+        e.rent_stressed_households = stressed;
         e.homes_total = self.buildings.values().map(|b| b.homes as u32).sum();
         e.homes_free = self.buildings.values().map(|b| b.free_homes() as u32).sum();
         e.jobs_total = self.buildings.values().map(|b| b.jobs as u32).sum();
@@ -35,7 +49,8 @@ impl World {
         }
         let mut class_counts = [0u32; 3];
         let mut incomes: Vec<f32> = Vec::with_capacity(self.citizens.len());
-        for c in self.citizens.values() {
+        // Classes and inequality are about earners: children have no income.
+        for c in self.citizens.values().filter(|c| c.stage() != crate::citizens::LifeStage::Child) {
             class_counts[c.class().index()] += 1;
             incomes.push(c.income);
         }
@@ -301,10 +316,16 @@ impl World {
                 self.events.push(SimEvent::BuildingChanged(bid));
             }
         }
-        let cids: Vec<CitizenId> = self.citizens.keys().collect();
-        for cid in cids {
-            self.daily_citizen(cid);
+        self.daily_citizens();
+        let hids: Vec<crate::citizens::HouseholdId> = self.households.keys().collect();
+        for hid in hids {
+            self.daily_household(hid);
         }
+        // Unmet demand for each tier of housing fades over a few days.
+        for d in self.economy.housing_demand_by_tier.iter_mut() {
+            *d *= 0.6;
+        }
+        self.economy.roll_population(self.citizens.len() as u32);
         self.daily_businesses();
         // Conditions moved: a station or yard may have gone derelict.
         self.refresh_facility_cache();
@@ -360,6 +381,29 @@ impl World {
         }
     }
 
+    /// The tier of new housing on land that supports `land_tier`. People
+    /// who found nothing they could afford (`housing_demand_by_tier`) pull
+    /// it down to the tier the most of them could pay for, more often the
+    /// more of them there are; a queue of newcomers pulls it down one tier.
+    pub(super) fn residential_tier(&mut self, land_tier: Tier) -> Tier {
+        let mut tier = land_tier;
+        if tier == Tier::Low {
+            return tier;
+        }
+        let d = self.economy.housing_demand_by_tier;
+        let want = Tier::ALL.into_iter().filter(|t| *t < tier).max_by(|a, b| d[a.index()].total_cmp(&d[b.index()]));
+        let pressure = d[..tier.index()].iter().sum::<f32>();
+        if let Some(want) = want {
+            if pressure > 3.0 && self.rng.random_bool((pressure / 12.0).clamp(0.3, 0.85) as f64) {
+                tier = want;
+            }
+        }
+        if tier > Tier::Low && self.economy.waiting_immigrants > 6 && self.rng.random_bool(0.5) {
+            tier = tier.down();
+        }
+        tier
+    }
+
     pub fn build_on(&mut self, lot_id: LotId) {
         let Some(lot) = self.lots.get(lot_id) else { return };
         if lot.landlocked || lot.building.is_some() || self.under_facility(lot.center) {
@@ -368,9 +412,8 @@ impl World {
         let lu = self.lots[lot_id].land_use;
         let value = self.land_value.at(self.lots[lot_id].center);
         let mut tier = Tier::for_land_value(value);
-        // People waiting for somewhere affordable pull new housing down a tier.
-        if lu == LandUse::Residential && self.economy.waiting_immigrants > 6 && tier > Tier::Low && self.rng.random_bool(0.5) {
-            tier = tier.down();
+        if lu == LandUse::Residential {
+            tier = self.residential_tier(tier);
         }
         let floors = self.pick_floors(lot_id, lu, tier);
         let seed = self.fresh_seed();

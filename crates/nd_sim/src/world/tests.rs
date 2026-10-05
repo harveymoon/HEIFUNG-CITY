@@ -1727,3 +1727,290 @@ fn the_city_buys_out_grown_buildings_for_its_own_structures_but_not_each_other()
     let err = w.build_depot(lot).expect_err("a depot never replaces a plant");
     assert!(err.contains("bulldoze"), "{err}");
 }
+
+// ── households, opening hours, sleep, food and rent (feat/people) ──────────
+
+/// A street of finished homes with a grocer at the end; ticks until a few
+/// households have moved in.
+fn family_street() -> (World, BuildingId) {
+    use crate::market::{Business, BusinessKind};
+    let mut w = flat_world();
+    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+    w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
+    for x in [40.0, 100.0, 160.0] {
+        let lot = lot_near(&w, Vec2::new(x, 20.0), LandUse::Residential);
+        w.build_on(lot);
+    }
+    let shop_lot = lot_near(&w, Vec2::new(-100.0, 20.0), LandUse::Commercial);
+    w.build_on(shop_lot);
+    finish_all(&mut w);
+    let shop = w.lots[shop_lot].building.unwrap();
+    let jobs = w.buildings[shop].jobs;
+    w.buildings[shop].business = Some(Business::new(BusinessKind::Grocery, jobs));
+    w.buildings[shop].business.as_mut().unwrap().add(Resource::Groceries, 200.0);
+    let mut minds = IdleMind;
+    for _ in 0..900 {
+        if w.households.len() >= 4 {
+            break;
+        }
+        w.tick(&mut minds);
+    }
+    assert!(w.households.len() >= 2, "households moved in");
+    (w, shop)
+}
+
+#[test]
+fn households_arrive_together_share_a_home_and_only_adults_work() {
+    let (mut w, _) = family_street();
+    for (hid, hh) in w.households.iter() {
+        assert!((1..=5).contains(&hh.size()), "one to five members");
+        let home = hh.home.expect("housed");
+        assert!(w.buildings[home].households.contains(&hid), "the home lists its household");
+        for &m in &hh.members {
+            let c = &w.citizens[m];
+            assert_eq!(c.household, Some(hid));
+            assert_eq!(c.home, Some(home), "everyone lives at the household's home");
+            assert!(w.buildings[home].residents.contains(&m));
+            match c.stage() {
+                crate::citizens::LifeStage::Child => assert!(c.work.is_none() && c.income == 0.0, "children neither work nor earn"),
+                crate::citizens::LifeStage::Retiree => assert!(c.work.is_none() && c.income == crate::citizens::PENSION),
+                crate::citizens::LifeStage::Adult => assert!(c.income > 0.0),
+            }
+        }
+    }
+    // A home holds one household, however many people that is.
+    for b in w.buildings.values() {
+        assert!(b.households.len() <= b.homes as usize);
+        assert_eq!(b.free_homes() as usize, b.homes as usize - b.households.len());
+    }
+    // Arrivals come as singles, couples and families: children always with
+    // a grown-up, every size from one to five.
+    let mut sizes = [0u32; 6];
+    for _ in 0..400 {
+        let ages = w.household_ages();
+        assert!((1..=5).contains(&ages.len()));
+        assert!(ages.iter().any(|&a| a >= crate::citizens::ADULT_AGE), "nobody arrives without a grown-up: {ages:?}");
+        sizes[ages.len()] += 1;
+    }
+    assert!(sizes[1..].iter().all(|&n| n > 0), "{sizes:?}");
+    // The job search passes children by.
+    let kid = w.citizens.iter().find(|(_, c)| c.stage() == crate::citizens::LifeStage::Child).map(|(id, _)| id);
+    if let Some(kid) = kid {
+        w.job_search();
+        assert!(w.citizens[kid].work.is_none());
+    }
+    w.update_economy();
+    let e = &w.economy;
+    assert_eq!(e.households as usize, w.households.len());
+    assert_eq!(e.household_sizes.iter().sum::<u32>() as usize, w.households.len(), "the size histogram counts every household");
+}
+
+#[test]
+fn groceries_and_rent_come_out_of_the_household_purse() {
+    let (mut w, shop) = family_street();
+    let hid = w.households.keys().next().unwrap();
+    let shopper = w.households[hid].members[0];
+    w.households[hid].money = 500.0;
+    w.households[hid].groceries = 0.0;
+    w.citizens[shopper].savings = 7.0;
+    let target = w.households[hid].pantry_target();
+    w.buy(shopper, shop, Resource::Groceries);
+    let hh = &w.households[hid];
+    assert!(hh.groceries >= target.min(15.0).floor() - 0.01, "a shop for the whole household: {} of {target}", hh.groceries);
+    assert!(hh.money < 500.0, "paid from the shared purse");
+    assert_eq!(w.citizens[shopper].savings, 7.0, "not from the shopper's pocket");
+    for &m in &hh.members {
+        assert_eq!(w.citizens[m].groceries, hh.groceries, "every member sees the pantry");
+    }
+    // The day's books: incomes in, rent and living costs out, pockets pooled
+    // and handed out again.
+    let rent = w.buildings[w.households[hid].home.unwrap()].rent;
+    let income = w.household_income(hid);
+    let members = w.households[hid].members.clone();
+    let living: f32 = members.iter().map(|m| if w.citizens[*m].stage() == crate::citizens::LifeStage::Child { 10.0 } else { 20.0 }).sum();
+    let pockets: f32 = members.iter().map(|m| w.citizens[*m].savings).sum();
+    let before = w.households[hid].money + pockets;
+    w.daily_household(hid);
+    let pockets_after: f32 = members.iter().map(|m| w.citizens[*m].savings).sum();
+    let after = w.households[hid].money + pockets_after;
+    assert!((after - (before + income - rent - living)).abs() < 1.0, "money is conserved: {before} + {income} - {rent} - {living} != {after}");
+    assert!(members.iter().all(|m| w.citizens[*m].savings <= crate::citizens::POCKET_MONEY + 0.01));
+}
+
+#[test]
+fn old_saves_get_one_household_per_citizen() {
+    let (mut w, _) = family_street();
+    let people = w.citizens.len();
+    // What a save from before households looks like once loaded: nobody
+    // belongs to a household and no building lists any.
+    w.households.clear();
+    for c in w.citizens.values_mut() {
+        c.household = None;
+        c.savings = 55.0;
+    }
+    for b in w.buildings.values_mut() {
+        b.households.clear();
+    }
+    let text = w.to_ron().unwrap();
+    let back = World::from_ron(&text).expect("loads");
+    assert_eq!(back.households.len(), people, "one household per citizen");
+    for (cid, c) in back.citizens.iter() {
+        let hid = c.household.expect("everyone belongs somewhere");
+        let hh = &back.households[hid];
+        assert_eq!(hh.members, vec![cid]);
+        assert_eq!(hh.home, c.home);
+        assert_eq!(hh.money, 55.0, "their savings became the purse");
+        if let Some(home) = c.home {
+            assert!(back.buildings[home].households.contains(&hid));
+        }
+    }
+    // And a save with households round-trips them.
+    let again = World::from_ron(&back.to_ron().unwrap()).unwrap();
+    assert_eq!(again.households.len(), back.households.len());
+}
+
+#[test]
+fn shops_keep_hours_and_turn_people_away_when_shut_or_full() {
+    let (mut w, shop) = family_street();
+    let at = w.building_entrance(shop).unwrap();
+    let c = w.citizens.keys().next().unwrap();
+    let day = w.clock.day();
+    w.clock = SimClock::starting_at(day, 23, 0);
+    assert_eq!(w.best_shop(Resource::Groceries, at), None, "grocers shut at 22:00");
+    w.clock = SimClock::starting_at(day, 10, 0);
+    assert_eq!(w.best_shop(Resource::Groceries, at), Some(shop));
+    let cap = w.buildings[shop].customer_capacity();
+    assert!(cap >= 8 && cap < u16::MAX);
+    w.buildings[shop].visitors = cap;
+    assert_eq!(w.best_shop(Resource::Groceries, at), None, "a full shop is skipped");
+    // Arriving at a full shop: remembered, and off somewhere else.
+    let go = |w: &mut World| {
+        w.citizens[c].inside = None;
+        w.citizens[c].activity = Activity::Traveling { to: Some(shop), purpose: Purpose::Shop(Resource::Groceries), path: vec![at], idx: 1 };
+        w.arrive(c);
+    };
+    go(&mut w);
+    assert!(matches!(w.citizens[c].activity, Activity::Idle));
+    assert!(w.citizens[c].memories.last().unwrap().text.contains("packed"));
+    // Arriving after closing time.
+    w.buildings[shop].visitors = 0;
+    w.clock = SimClock::starting_at(day, 22, 30);
+    go(&mut w);
+    assert!(matches!(w.citizens[c].activity, Activity::Idle));
+    assert!(w.citizens[c].memories.last().unwrap().text.contains("was shut when I got there"), "{:?}", w.citizens[c].memories.last());
+    assert!(w.economy.market.turned_away_today >= 2);
+    // Open, with room: in they go.
+    w.clock = SimClock::starting_at(day, 9, 0);
+    go(&mut w);
+    assert_eq!(w.citizens[c].inside, Some(shop));
+    // Shifts follow the hours: the grocer's day is split in two.
+    let b = &w.buildings[shop];
+    let (early, late) = (b.shift_for(0), b.shift_for(1));
+    assert_eq!((early.open, late.close), (7, 22));
+    assert_eq!(early.close, late.open);
+}
+
+#[test]
+fn sleep_restores_at_home_and_exhaustion_costs_output_and_mood() {
+    let (mut w, shop) = family_street();
+    let ids: Vec<CitizenId> = w.citizens.keys().take(2).collect();
+    let (sleeper, worker) = (ids[0], ids.get(1).copied().unwrap_or(ids[0]));
+    let day = w.clock.day();
+    w.clock = SimClock::starting_at(day, 23, 0);
+    {
+        let c = &mut w.citizens[sleeper];
+        c.inside = c.home;
+        c.activity = Activity::AtHome;
+        c.wakefulness = 0.1;
+    }
+    w.sleep_and_eat();
+    assert!(w.citizens[sleeper].asleep, "at home at night: asleep");
+    let w1 = w.citizens[sleeper].wakefulness;
+    assert!(w1 > 0.1);
+    for _ in 0..7 {
+        w.sleep_and_eat();
+    }
+    assert!(w.citizens[sleeper].wakefulness > 0.9, "a night's sleep restores");
+    w.clock = SimClock::starting_at(day + 1, 8, 0);
+    w.sleep_and_eat();
+    assert!(!w.citizens[sleeper].asleep, "rested and it is day: awake");
+    // Working exhausted: half a shift's output and a worse mood.
+    if worker != sleeper {
+        {
+            let c = &mut w.citizens[worker];
+            c.work = Some(shop);
+            c.inside = Some(shop);
+            c.activity = Activity::Working;
+            c.wakefulness = 0.05;
+        }
+        let mood = w.citizens[worker].mood;
+        let tired = w.sleep_and_eat();
+        assert_eq!(tired.get(&shop), Some(&1));
+        assert!(w.citizens[worker].mood < mood);
+        assert!(w.citizens[worker].productivity() < 1.0);
+    }
+    // Hungry away from home: the packed meal.
+    let c = &mut w.citizens[sleeper];
+    c.inside = None;
+    c.activity = Activity::Idle;
+    c.satiety = 0.3;
+    c.packed_meal = 1.0;
+    w.sleep_and_eat();
+    assert!(w.citizens[sleeper].satiety > 0.6 && w.citizens[sleeper].packed_meal == 0.0);
+}
+
+#[test]
+fn rent_stressed_households_move_somewhere_cheaper_before_leaving() {
+    let (mut w, _) = family_street();
+    let homes: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.land_use == LandUse::Residential).map(|(id, _)| id).collect();
+    assert!(homes.len() >= 2);
+    let hid = w.households.keys().next().unwrap();
+    let home = w.households[hid].home.unwrap();
+    let cheap = *homes.iter().find(|&&h| h != home).unwrap();
+    for &m in &w.households[hid].members.clone() {
+        let c = &mut w.citizens[m];
+        c.income = if c.stage() == crate::citizens::LifeStage::Adult { 50.0 } else { 0.0 };
+    }
+    let income = w.household_income(hid);
+    for &h in &homes {
+        w.buildings[h].rent = income * 0.8;
+    }
+    w.buildings[cheap].rent = income * 0.2;
+    w.buildings[cheap].homes = w.buildings[cheap].households.len() as u16 + 2;
+    w.households[hid].money = -500.0;
+    w.households[hid].moved_day = u64::MAX;
+    let displaced = w.economy.displaced_total;
+    w.daily_household(hid);
+    assert!(w.households.contains_key(hid), "nobody left: there was somewhere cheaper");
+    assert_eq!(w.households[hid].home, Some(cheap));
+    assert!(w.buildings[cheap].households.contains(&hid) && !w.buildings[home].households.contains(&hid));
+    assert!(w.economy.displaced_total > displaced);
+    let m = w.households[hid].members[0];
+    assert!(w.citizens[m].memories.last().unwrap().text.contains("Rent got too steep"));
+    // Choosing a home: the best tier at most 35% of income where possible.
+    w.buildings[cheap].rent = income * 0.3;
+    w.buildings[home].rent = income * 0.45;
+    let picks: Vec<Option<BuildingId>> = (0..10).map(|_| w.choose_home(income, None)).collect();
+    assert!(picks.iter().all(|p| p.is_none_or(|b| w.buildings[b].rent <= income * 0.35)), "an affordable home first");
+    // With nothing cheaper anywhere and the money gone, the household leaves.
+    for &h in &homes {
+        w.buildings[h].rent = income * 0.9;
+    }
+    w.households[hid].rent_stress_days = 5;
+    w.households[hid].money = -5000.0;
+    w.households[hid].moved_day = u64::MAX;
+    w.daily_household(hid);
+    assert!(!w.households.contains_key(hid), "out of town at last");
+}
+
+#[test]
+fn low_income_demand_builds_low_tier_homes() {
+    let mut w = World::new(WorldConfig::default());
+    let picks = |w: &mut World| (0..200).filter(|_| w.residential_tier(Tier::High) == Tier::Low).count();
+    assert_eq!(picks(&mut w), 0, "no demand: the land's tier");
+    w.economy.housing_demand_by_tier = [20.0, 0.0, 0.0];
+    let low = picks(&mut w);
+    assert!(low > 120, "low-income demand pulls dear land down to cheap housing ({low}/200)");
+    assert_eq!(w.residential_tier(Tier::Low), Tier::Low);
+}

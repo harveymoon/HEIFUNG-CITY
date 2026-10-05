@@ -1,5 +1,6 @@
 use crate::citizens::CitizenId;
-use crate::market::Business;
+use crate::citizens::HouseholdId;
+use crate::market::{Business, Hours};
 use crate::zoning::{LandUse, LotId};
 use serde::{Deserialize, Serialize};
 use slotmap::new_key_type;
@@ -157,7 +158,11 @@ pub struct Building {
     pub name: String,
     pub homes: u16,
     pub jobs: u16,
+    /// Everyone living here, of every household.
     pub residents: Vec<CitizenId>,
+    /// The households living here, one per home.
+    #[serde(default)]
+    pub households: Vec<HouseholdId>,
     pub workers: Vec<CitizenId>,
     /// Citizens currently inside who neither live nor work here.
     pub visitors: u16,
@@ -230,6 +235,7 @@ impl Building {
             homes: 0,
             jobs: 0,
             residents: Vec::new(),
+            households: Vec::new(),
             workers: Vec::new(),
             visitors: 0,
             built_tick,
@@ -347,8 +353,46 @@ impl Building {
         base * self.tier.wage_multiplier()
     }
 
+    /// Homes not taken by a household.
     pub fn free_homes(&self) -> u16 {
-        self.homes.saturating_sub(self.residents.len() as u16)
+        self.homes.saturating_sub(self.households.len() as u16)
+    }
+
+    /// When the doors are open: the business's hours, round the clock for
+    /// everything else (parks, plants, homes).
+    pub fn opening_hours(&self) -> Hours {
+        self.business.as_ref().map_or(Hours::ALWAYS, |z| z.kind.hours())
+    }
+
+    /// Hours a worker with `seed` works here. Building sites work days.
+    pub fn shift_for(&self, seed: u64) -> Hours {
+        if self.construction.is_some() {
+            return Hours::new(7, 17);
+        }
+        match &self.business {
+            Some(z) => z.kind.hours().shift(seed),
+            None => Hours::new(8, 17),
+        }
+    }
+
+    /// Customers it can serve at once; unlimited for places without a door
+    /// count (parks, offices).
+    pub fn customer_capacity(&self) -> u16 {
+        match self.business.as_ref().and_then(|z| z.kind.customers_per_job()) {
+            Some(per) => (self.jobs * per).max(8),
+            None => u16::MAX,
+        }
+    }
+
+    /// Built, not derelict or shut down, and with room inside.
+    pub fn takes_customers(&self) -> bool {
+        self.construction.is_none() && !self.is_derelict() && self.business.as_ref().is_none_or(|z| !z.closed) && self.visitors < self.customer_capacity()
+    }
+
+    /// Open to a customer at `hour`: `takes_customers` and inside its
+    /// opening hours.
+    pub fn serves_at(&self, hour: u8) -> bool {
+        self.takes_customers() && self.opening_hours().contains(hour)
     }
 
     pub fn free_jobs(&self) -> u16 {

@@ -10,7 +10,7 @@
 use crate::buildings::parts::{bench_world, bin_world, bollard_world, lamp_post_world, mul, pick, railway_track, rgba, tree_world, CHARCOAL, DARK};
 use crate::mesh::{offset_path, path_length, point_along};
 use crate::palette::Palette;
-use crate::surface::{Geometry, Surface::*};
+use crate::surface::{Geometry, Surface, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::land_value::LandValue;
 use nd_sim::rng_for;
@@ -169,8 +169,22 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
     let paving_c = rgba(pal.paving);
     let kerb_c = rgba(pal.curb);
     let node_r = |n: NodeId| net.node_radius.get(n.0 as usize).copied().unwrap_or(4.0);
+    // Where a neglected run started in each weathered surface's mesh: its
+    // carriageway, kerbs and slabs move onto the worn materials once drawn.
+    let mut worn_from: Option<Vec<(Surface, usize, usize)>> = None;
+    let weather_tail = |g: &mut Geometry, marks: Vec<(Surface, usize, usize)>| {
+        for (s, v, i) in marks {
+            if let Some(w) = s.worn() {
+                let tail = g.part(s).take_from(v, i);
+                g.part(w).append(&tail);
+            }
+        }
+    };
 
     for run in build_runs(roads) {
+        if let Some(marks) = worn_from.take() {
+            weather_tail(&mut g, marks);
+        }
         let seg = roads.segment(run.first);
         let hw = seg.half_width();
         let total = run.lanes_fwd as f32 + run.lanes_bwd as f32;
@@ -191,6 +205,9 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         // slabs and litter. The land value in the middle of the run decides.
         let lv_mid = inp.land_value.at(point_along(pts, path_length(pts) * 0.5).0);
         let grit = lv_mid < 0.35;
+        if grit {
+            worn_from = Some([Asphalt, Paving, Concrete].iter().map(|s| (*s, g.get(*s).positions.len(), g.get(*s).indices.len())).collect());
+        }
         let fade = |c: [f32; 4]| if grit { [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5, c[3]] } else { c };
         // Carriageway and markings run the whole way; the junction pads overlap the ends.
         g.part(Asphalt).path_strip(pts, 0.0, hw * 2.0, ASPHALT_Y, asphalt_c);
@@ -322,6 +339,10 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
                 }
             }
         }
+    }
+
+    if let Some(marks) = worn_from.take() {
+        weather_tail(&mut g, marks);
     }
 
     // Junction pads, crossings and stop lines (bends need none).
@@ -735,6 +756,14 @@ mod tests {
         }
         let b = generate_street(&inp);
         assert!(a == b, "the same network drew two different streets");
+        // Land value zero everywhere: the runs are drawn worn. Well-off: clean.
+        assert!(!a.get(WornAsphalt).is_empty() && !a.get(WornPaving).is_empty(), "cheap streets use the worn materials");
+        let mut rich = LandValue::new(400.0, 50.0);
+        for v in &mut rich.values {
+            *v = 0.9;
+        }
+        let r = generate_street(&StreetInput { land_value: &rich, ..inp });
+        assert!(r.get(WornAsphalt).is_empty() && r.get(WornPaving).is_empty(), "smart streets stay clean");
         let posts = signal_posts(&net);
         assert!(!posts.is_empty(), "the four-way junctions should be signalised");
         assert!(posts.windows(2).all(|w| w[0].lane < w[1].lane), "signal posts come in lane order");

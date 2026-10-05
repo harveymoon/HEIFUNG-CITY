@@ -67,6 +67,8 @@ fn main() {
         let book: Vec<String> = e.ledger.yesterday_sorted().iter().map(|(f, x)| format!("{} {:+.0}", f.label(), x)).collect();
         println!("         treasury: {}", if book.is_empty() { "no flows".to_string() } else { book.join(", ") });
         println!("         parking: {}/{} spaces in {} lots, circling {} , fees {:.0}", e.parking_used, e.parking_capacity, e.parking_lots, e.parking_street_today, e.parking_fees_today);
+        let starving = world.citizens.values().filter(|c| c.hungry_days >= 2).count();
+        println!("         people: households {} sizes {:?} | hungry {} starving {} | rent-stressed households {} | asleep {} | turned away {} grocery imports {:.0}", e.households, &e.household_sizes[1..], e.market.hungry, starving, e.rent_stressed_households, world.citizens.values().filter(|c| c.asleep).count(), e.market.turned_away_today, e.market.grocery_imports_today);
         let m = &e.market;
         println!(
             "         market: businesses {} deals {} imports {:.0} exports {:.0} meals {} hungry {} closed {} | groceries {:.1} ({:.0}) produce {:.1} flour {:.1} electronics {:.1}",

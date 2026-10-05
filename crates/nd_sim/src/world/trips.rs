@@ -2,104 +2,255 @@
 //! journeys (`travel_to`, `arrive`, `wander`) and footfall.
 
 use super::*;
+use crate::citizens::{Household, HouseholdId, LifeStage, GROCERIES_PER_PERSON_DAY, PENSION, POCKET_MONEY};
 
-/// Most newcomers in one arrival, however empty the town.
+/// Most households in one arrival, however empty the town.
 const MAX_ARRIVALS: u32 = 12;
+/// Households look for homes whose rent is at most this share of income.
+pub const AFFORDABLE_SHARE: f32 = 0.35;
+/// Rent over this share of income is stress: they move somewhere cheaper,
+/// or leave once the money is gone.
+pub const RENT_STRESS_SHARE: f32 = 0.5;
 
 impl World {
+    pub(super) fn daily_citizens(&mut self) {
+        let cids: Vec<CitizenId> = self.citizens.keys().collect();
+        for cid in cids {
+            self.daily_citizen(cid);
+        }
+    }
+
+    /// Once a day, per citizen: tax on the day's income, hunger days and
+    /// what they do to mood. Four hungry days and they leave. Children left
+    /// without a grown-up keep the home until the rent runs them out of
+    /// money (`daily_household`), which is soon.
     pub(super) fn daily_citizen(&mut self, cid: CitizenId) {
-        let (income, home) = {
-            let c = &self.citizens[cid];
-            (c.income, c.home)
-        };
-        let rent = home.and_then(|h| self.buildings.get(h)).map(|b| b.rent).unwrap_or(0.0);
         let tick = self.clock.tick;
-        let (stress, class, savings) = {
-            let c = &mut self.citizens[cid];
-            c.savings += income - rent - 20.0;
-            self.economy.tax_today += income * 0.12;
-            self.economy.credit(Flow::IncomeTax, income * 0.12);
-            // Wheels: a bike is cheap and first; a car needs a middle income and
-            // savings; the poor sell a car they cannot keep.
-            if !c.owns_bike && c.savings > 60.0 && self.rng.random_bool(0.08) {
-                c.owns_bike = true;
-                c.savings -= 45.0;
-                c.remember(tick, "Bought a bike. The city just got smaller.");
-            }
-            if !c.owns_car && c.class() != Tier::Low && c.savings > 400.0 && self.rng.random_bool(0.04) {
-                c.owns_car = true;
-                c.savings -= 300.0;
-                c.remember(tick, "Bought a car.");
-            }
-            if c.owns_car && c.class() == Tier::Low && c.savings < -100.0 {
-                c.owns_car = false;
-                c.savings += 150.0;
-                c.remember(tick, "Sold the car. Couldn't afford to keep it.");
-            }
-            let stressed = rent > income * 0.5;
-            c.rent_stress_days = if stressed { c.rent_stress_days.saturating_add(1) } else { 0 };
-            c.mood = (c.mood + if stressed { -0.05 } else { 0.01 }).clamp(0.0, 1.0);
-            (c.rent_stress_days, c.class(), c.savings)
-        };
-        {
-            let c = &mut self.citizens[cid];
-            if c.satiety < 0.25 {
-                c.hungry_days = c.hungry_days.saturating_add(1);
-                c.mood = (c.mood - 0.1).max(0.0);
-            } else {
-                c.hungry_days = 0;
-            }
-            if c.hungry_days >= 4 {
-                let tick = self.clock.tick;
-                c.remember(tick, "Couldn't keep myself fed here. Leaving.".to_string());
-                self.emigrate(cid);
-                return;
+        let Some(c) = self.citizens.get_mut(cid) else { return };
+        self.economy.tax_today += c.income * 0.12;
+        self.economy.credit(Flow::IncomeTax, c.income * 0.12);
+        if c.satiety < 0.25 {
+            c.hungry_days = c.hungry_days.saturating_add(1);
+            c.mood = (c.mood - 0.1).max(0.0);
+        } else {
+            c.hungry_days = 0;
+        }
+        if c.hungry_days < 4 {
+            return;
+        }
+        c.remember(tick, "Couldn't keep myself fed here. Leaving.".to_string());
+        self.emigrate(cid);
+    }
+
+    /// Everyone's daily earnings: wages, gig money or a pension.
+    pub fn household_income(&self, hid: HouseholdId) -> f32 {
+        self.households.get(hid).map_or(0.0, |h| h.members.iter().filter_map(|m| self.citizens.get(*m)).map(|c| c.income).sum())
+    }
+
+    /// Rent of the household's home over its income (infinite with no
+    /// income), or `None` when it has no home.
+    pub fn household_rent_share(&self, hid: HouseholdId) -> Option<f32> {
+        let rent = self.households.get(hid)?.home.and_then(|b| self.buildings.get(b))?.rent;
+        let income = self.household_income(hid);
+        Some(if income > 0.0 { rent / income } else { f32::INFINITY })
+    }
+
+    /// The rent share of the household a citizen belongs to.
+    pub fn rent_share_of(&self, cid: CitizenId) -> Option<f32> {
+        self.household_rent_share(self.citizens.get(cid)?.household?)
+    }
+
+    /// Once a day, per household: earnings in, rent and living costs out,
+    /// pocket money for the grown-ups, wheels, rent stress and moving.
+    pub(super) fn daily_household(&mut self, hid: HouseholdId) {
+        let tick = self.clock.tick;
+        let today = self.clock.day();
+        let Some(hh) = self.households.get(hid) else { return };
+        let members: Vec<CitizenId> = hh.members.iter().copied().filter(|m| self.citizens.contains_key(*m)).collect();
+        if members.is_empty() {
+            self.remove_household(hid);
+            return;
+        }
+        let home = hh.home.filter(|h| self.buildings.contains_key(*h));
+        let rent = home.map(|h| self.buildings[h].rent).unwrap_or(0.0);
+        let income = self.household_income(hid);
+        let living: f32 = members.iter().map(|m| if self.citizens[*m].stage() == LifeStage::Child { 10.0 } else { 20.0 }).sum();
+        // Pockets come back to the shared purse (with any debts run up on
+        // them), then the grown-ups draw pocket money again if there is some.
+        let mut money = self.households[hid].money + income - rent - living;
+        for &m in &members {
+            money += std::mem::take(&mut self.citizens[m].savings);
+        }
+        let grown: Vec<CitizenId> = members.iter().copied().filter(|m| self.citizens[*m].stage() != LifeStage::Child).collect();
+        if money > 0.0 {
+            let pocket = (money * 0.5 / grown.len().max(1) as f32).min(POCKET_MONEY);
+            for &m in &grown {
+                self.citizens[m].savings = pocket;
+                money -= pocket;
             }
         }
-        if stress >= 3 {
-            let cheaper = self.pick_building(|b| b.land_use == LandUse::Residential && b.free_homes() > 0 && b.rent <= income * 0.45);
-            match cheaper {
-                Some(new_home) if Some(new_home) != home => {
-                    self.move_home(cid, new_home, "Rent got too steep. Moved to {}.");
-                    self.economy.displaced_total += 1;
+        // Wheels: a bike is cheap and first; a car needs a middle income and
+        // money in the bank; the poor sell a car they cannot keep.
+        for &m in &grown {
+            let c = &mut self.citizens[m];
+            if !c.owns_bike && money > 60.0 && self.rng.random_bool(0.08) {
+                c.owns_bike = true;
+                money -= 45.0;
+                c.remember(tick, "Bought a bike. The city just got smaller.");
+            }
+            if !c.owns_car && c.class() != Tier::Low && money > 400.0 && self.rng.random_bool(0.04) {
+                c.owns_car = true;
+                money -= 300.0;
+                c.remember(tick, "Bought a car.");
+            }
+            if c.owns_car && c.class() == Tier::Low && money < -100.0 {
+                c.owns_car = false;
+                money += 150.0;
+                c.remember(tick, "Sold the car. Couldn't afford to keep it.");
+            }
+        }
+        let stressed = home.is_some() && rent > income * RENT_STRESS_SHARE;
+        let stress = {
+            let hh = &mut self.households[hid];
+            hh.members = members.clone();
+            hh.home = home;
+            hh.money = money;
+            hh.rent_stress_days = if stressed { hh.rent_stress_days.saturating_add(1) } else { 0 };
+            hh.rent_stress_days
+        };
+        for &m in &members {
+            let c = &mut self.citizens[m];
+            c.rent_stress_days = stress;
+            c.mood = (c.mood + if stressed { -0.05 } else { 0.01 }).clamp(0.0, 1.0);
+        }
+        if self.households[hid].moved_day == today && home.is_some() {
+            return;
+        }
+        // Somewhere to live for those who lost theirs.
+        let Some(home) = home else {
+            match self.choose_home(income, None) {
+                Some(b) => self.move_household(hid, b, "Found a place at {}."),
+                None => self.economy.housing_demand_by_tier[Self::tier_affordable(income).index()] += 1.0,
+            }
+            return;
+        };
+        // Stressed: somewhere cheaper first, leaving town only when there is
+        // nowhere cheaper and the money has run out.
+        if stressed {
+            match self.choose_home(income, Some((home, rent))) {
+                Some(b) => {
+                    self.move_household(hid, b, "Rent got too steep. Moved to {}.");
+                    self.economy.displaced_total += members.len() as u32;
                 }
-                _ => {
-                    if savings < -60.0 {
-                        self.emigrate(cid);
+                None => {
+                    self.economy.housing_demand_by_tier[Self::tier_affordable(income).index()] += 1.0;
+                    if stress >= 3 && money < -60.0 * members.len() as f32 {
+                        for &m in &members {
+                            self.citizens[m].remember(tick, "Couldn't make the rent anywhere in town. Leaving.");
+                        }
+                        self.emigrate_household(hid);
                     }
                 }
             }
             return;
         }
-        if savings > 300.0 && self.rng.random::<f32>() < 0.2 {
-            let current_tier = home.and_then(|h| self.buildings.get(h)).map(|b| b.tier);
-            if let Some(ct) = current_tier {
-                if ct < class {
-                    let better = self.pick_building(|b| b.land_use == LandUse::Residential && b.tier > ct && b.free_homes() > 0 && b.rent <= income * 0.45);
-                    if let Some(new_home) = better {
-                        self.move_home(cid, new_home, "Moving up to {}.");
+        // Burdened but not yet stressed: take a cheaper place when one is free.
+        if rent > income * AFFORDABLE_SHARE {
+            if self.rng.random::<f32>() < 0.25 {
+                if let Some(b) = self.choose_home(income, Some((home, rent))) {
+                    if self.buildings[b].rent <= income * AFFORDABLE_SHARE {
+                        self.move_household(hid, b, "Found somewhere cheaper: {}.");
                     }
+                }
+            }
+            return;
+        }
+        // The comfortable move up a tier.
+        if money > 300.0 && self.rng.random::<f32>() < 0.2 {
+            let ct = self.buildings[home].tier;
+            if ct < Self::tier_affordable(income) {
+                let better = self.pick_building(|b| b.land_use == LandUse::Residential && b.construction.is_none() && b.tier > ct && b.free_homes() > 0 && b.rent <= income * AFFORDABLE_SHARE);
+                if let Some(new_home) = better {
+                    self.move_household(hid, new_home, "Moving up to {}.");
                 }
             }
         }
     }
 
-    pub(super) fn move_home(&mut self, cid: CitizenId, new_home: BuildingId, template: &str) {
+    /// The tier whose ordinary rent fits in `AFFORDABLE_SHARE` of `income`.
+    pub(super) fn tier_affordable(income: f32) -> Tier {
+        let budget = income * AFFORDABLE_SHARE;
+        if budget >= Tier::High.base_rent() {
+            Tier::High
+        } else if budget >= Tier::Mid.base_rent() {
+            Tier::Mid
+        } else {
+            Tier::Low
+        }
+    }
+
+    /// A free home for a household earning `income`: the best tier whose
+    /// rent is at most `AFFORDABLE_SHARE` of it (any building of that tier),
+    /// failing that the cheapest one under `RENT_STRESS_SHARE`. With
+    /// `cheaper_than`, only homes elsewhere with a lower rent count.
+    pub(super) fn choose_home(&mut self, income: f32, cheaper_than: Option<(BuildingId, f32)>) -> Option<BuildingId> {
+        let candidates: Vec<(BuildingId, Tier, f32)> = self
+            .buildings
+            .iter()
+            .filter(|(id, b)| b.land_use == LandUse::Residential && b.construction.is_none() && b.free_homes() > 0 && cheaper_than.is_none_or(|(h, r)| *id != h && b.rent < r * 0.95))
+            .filter(|(_, b)| b.rent <= income * RENT_STRESS_SHARE)
+            .map(|(id, b)| (id, b.tier, b.rent))
+            .collect();
+        let comfortable: Vec<(BuildingId, Tier)> = candidates.iter().filter(|(_, _, r)| *r <= income * AFFORDABLE_SHARE).map(|(id, t, _)| (*id, *t)).collect();
+        if let Some(best) = comfortable.iter().map(|(_, t)| *t).max() {
+            let choices: Vec<BuildingId> = comfortable.iter().filter(|(_, t)| *t == best).map(|(id, _)| *id).collect();
+            return choices.choose(&mut self.rng).copied();
+        }
+        candidates.iter().min_by(|a, b| a.2.total_cmp(&b.2)).map(|(id, _, _)| *id)
+    }
+
+    /// Move a whole household into `new_home`.
+    pub(super) fn move_household(&mut self, hid: HouseholdId, new_home: BuildingId, template: &str) {
         let tick = self.clock.tick;
-        if let Some(old) = self.citizens[cid].home {
-            if let Some(b) = self.buildings.get_mut(old) {
-                b.residents.retain(|&c| c != cid);
+        let Some(hh) = self.households.get_mut(hid) else { return };
+        let old = hh.home.replace(new_home);
+        hh.rent_stress_days = 0;
+        hh.moved_day = self.clock.day();
+        let members = hh.members.clone();
+        if let Some(b) = old.and_then(|o| self.buildings.get_mut(o)) {
+            b.households.retain(|&h| h != hid);
+            b.residents.retain(|c| !members.contains(c));
+        }
+        let b = &mut self.buildings[new_home];
+        b.households.push(hid);
+        b.residents.extend(members.iter().copied());
+        let name = b.name.clone();
+        for m in members {
+            let Some(c) = self.citizens.get_mut(m) else { continue };
+            c.home = Some(new_home);
+            c.rent_stress_days = 0;
+            c.remember(tick, template.replace("{}", &name));
+            if matches!(c.activity, Activity::AtHome) {
+                c.next_decision_tick = tick + 1;
             }
         }
-        self.buildings[new_home].residents.push(cid);
-        let name = self.buildings[new_home].name.clone();
-        let c = &mut self.citizens[cid];
-        c.home = Some(new_home);
-        c.rent_stress_days = 0;
-        c.remember(tick, template.replace("{}", &name));
-        if matches!(c.activity, Activity::AtHome) {
-            c.next_decision_tick = tick + 1;
+    }
+
+    pub(super) fn remove_household(&mut self, hid: HouseholdId) {
+        if let Some(hh) = self.households.remove(hid) {
+            if let Some(b) = hh.home.and_then(|h| self.buildings.get_mut(h)) {
+                b.households.retain(|&h| h != hid);
+            }
         }
+    }
+
+    /// The whole household leaves town.
+    pub(super) fn emigrate_household(&mut self, hid: HouseholdId) {
+        let members = self.households.get(hid).map(|h| h.members.clone()).unwrap_or_default();
+        for m in members {
+            self.emigrate(m);
+        }
+        self.remove_household(hid);
     }
 
     pub(super) fn emigrate(&mut self, cid: CitizenId) {
@@ -125,11 +276,67 @@ impl World {
                 b.workers.retain(|&x| x != cid);
             }
         }
+        if let Some(hid) = c.household {
+            let empty = self.households.get_mut(hid).is_some_and(|h| {
+                h.members.retain(|&m| m != cid);
+                h.members.is_empty()
+            });
+            if empty {
+                self.remove_household(hid);
+            }
+        }
         if let Activity::Driving { car, .. } = c.activity {
             self.traffic.remove_car(car);
         }
         self.economy.emigrated_total += 1;
         self.events.push(SimEvent::CitizenLeft(cid));
+    }
+
+    /// Households whose home was pulled down lose it here, and every
+    /// member's `home` follows the household's. Also refreshes the pantry
+    /// mirror (`Citizen::groceries`) on each member.
+    pub(super) fn sync_households(&mut self) {
+        for (hid, hh) in self.households.iter_mut() {
+            if hh.home.is_some_and(|b| !self.buildings.get(b).is_some_and(|b| b.households.contains(&hid))) {
+                hh.home = None;
+            }
+            for &m in &hh.members {
+                if let Some(c) = self.citizens.get_mut(m) {
+                    c.home = hh.home;
+                    c.groceries = hh.groceries;
+                }
+            }
+        }
+    }
+
+    /// Saves from before households: everyone becomes a household of one,
+    /// with their savings as the purse and their groceries as the pantry.
+    /// Also repairs citizens whose household went missing.
+    pub(super) fn migrate_households(&mut self) {
+        let ids: Vec<CitizenId> = self.citizens.keys().collect();
+        for cid in ids {
+            let ok = self.citizens[cid].household.is_some_and(|h| self.households.get(h).is_some_and(|hh| hh.members.contains(&cid)));
+            if ok {
+                continue;
+            }
+            let c = &mut self.citizens[cid];
+            let home = c.home;
+            let hh = Household { members: vec![cid], home, money: std::mem::take(&mut c.savings), groceries: c.groceries, rent_stress_days: c.rent_stress_days, moved_day: 0 };
+            let hid = self.households.insert(hh);
+            self.citizens[cid].household = Some(hid);
+        }
+        // A building lists exactly the households that live there.
+        for b in self.buildings.values_mut() {
+            b.households.retain(|h| self.households.contains_key(*h));
+        }
+        let homes: Vec<(HouseholdId, Option<BuildingId>)> = self.households.iter().map(|(id, h)| (id, h.home)).collect();
+        for (hid, home) in homes {
+            if let Some(b) = home.and_then(|h| self.buildings.get_mut(h)) {
+                if !b.households.contains(&hid) {
+                    b.households.push(hid);
+                }
+            }
+        }
     }
 
     pub(super) fn entry_node(&mut self) -> Option<NodeId> {
@@ -148,30 +355,92 @@ impl World {
     }
 
     /// An open job for someone arriving or looking: the least-staffed
-    /// employer first, and food sellers (grocers, bakeries) ahead of the
-    /// rest, so a growing town staffs its shops before its sites and plants
-    /// and nobody goes hungry beside full warehouses. Ties are broken at
-    /// random so the same firm is not always picked.
-    pub(super) fn pick_job(&mut self) -> Option<BuildingId> {
-        let food = |b: &Building| b.business.as_ref().is_some_and(|z| z.sells(Resource::Groceries) || z.sells(Resource::BakedGoods));
+    /// employer first, food sellers (grocers, bakeries) well ahead of the
+    /// rest and the farms, vats and mills that feed them next, so a growing
+    /// town staffs its food chain before its sites and plants and nobody
+    /// goes hungry beside full warehouses. `taken` are jobs already promised
+    /// to others in the same household. Ties are broken at random so the
+    /// same firm is not always picked.
+    pub(super) fn pick_job_except(&mut self, taken: &[BuildingId]) -> Option<BuildingId> {
+        // Upstream food businesses (farms, vats, mills) jump the queue only
+        // while their output is short (under a day of it in stock): a farm
+        // sitting on unsold grain needs no more hands.
+        let bonus = |b: &Building| match b.business.as_ref() {
+            Some(z) if z.closed => 0.0,
+            Some(z) if z.sells(Resource::Groceries) || z.sells(Resource::BakedGoods) => 0.5,
+            Some(z) if z.kind.is_food() => {
+                let day = z.hourly_capacity(b.jobs, 1.0) * 24.0;
+                if z.kind.recipe().outputs.iter().any(|(r, per)| z.stock_of(*r) < per * day) { 0.3 } else { 0.0 }
+            }
+            _ => 0.0,
+        };
         let scored: Vec<(f32, BuildingId)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.free_jobs() > 0)
-            .map(|(id, b)| (b.staffing() - if food(b) { 0.5 } else { 0.0 }, id))
+            .filter(|(id, b)| b.free_jobs() as usize > taken.iter().filter(|t| *t == id).count())
+            .map(|(id, b)| (b.staffing() - bonus(b), id))
             .collect();
         let best = scored.iter().map(|(s, _)| *s).fold(f32::INFINITY, f32::min);
         let near_best: Vec<BuildingId> = scored.iter().filter(|(s, _)| *s <= best + 0.1).map(|(_, id)| *id).collect();
         near_best.choose(&mut self.rng).copied()
     }
 
-    /// Newcomers per arrival: one to three, plus more while homes and jobs
+    pub(super) fn pick_job(&mut self) -> Option<BuildingId> {
+        self.pick_job_except(&[])
+    }
+
+    /// Households per arrival: one to three, plus more while homes and jobs
     /// stand open, so the town fills about as fast as it is built (a fixed
     /// trickle left a thousand homes empty and the shops unstaffed).
     pub(super) fn arrivals(&mut self, free_homes: u32) -> u32 {
         let free_jobs: u32 = self.buildings.values().map(|b| b.free_jobs() as u32).sum();
         let pull = free_homes.min(free_jobs + 10) / 40;
         (self.rng.random_range(1..=3) + pull).min(MAX_ARRIVALS).min(free_homes)
+    }
+
+    /// The ages of a household arriving: singles, couples, retired
+    /// couples, single parents and families with up to three children,
+    /// sometimes with a grandparent.
+    pub(super) fn household_ages(&mut self) -> Vec<u8> {
+        let rng = &mut self.rng;
+        let roll: f32 = rng.random();
+        let size = if roll < 0.34 {
+            1
+        } else if roll < 0.64 {
+            2
+        } else if roll < 0.80 {
+            3
+        } else if roll < 0.93 {
+            4
+        } else {
+            5
+        };
+        let adult = |rng: &mut SimRng| rng.random_range(19..60u8);
+        let retiree = |rng: &mut SimRng| rng.random_range(67..88u8);
+        let child = |rng: &mut SimRng| rng.random_range(0..17u8);
+        match size {
+            1 => vec![if rng.random_bool(0.15) { retiree(rng) } else { adult(rng) }],
+            2 => {
+                let r: f32 = rng.random();
+                if r < 0.15 {
+                    vec![retiree(rng), retiree(rng)]
+                } else if r < 0.25 {
+                    vec![rng.random_range(24..50u8), child(rng)]
+                } else {
+                    vec![adult(rng), adult(rng)]
+                }
+            }
+            n => {
+                let mut ages = vec![rng.random_range(24..50u8), rng.random_range(24..50u8)];
+                for _ in 2..n {
+                    ages.push(child(rng));
+                }
+                if n >= 4 && rng.random_bool(0.2) {
+                    ages[n - 1] = retiree(rng);
+                }
+                ages
+            }
+        }
     }
 
     pub(super) fn immigrate(&mut self) {
@@ -183,84 +452,123 @@ impl World {
         let Some(entry) = self.entry_node() else { return };
         let n = self.arrivals(free_homes);
         for _ in 0..n {
-            // Income first: a job if one is open, gig money otherwise. Then a
-            // home they can afford, the best tier available.
-            let job = self.pick_job();
-            let seed = self.fresh_seed();
-            let skill = Self::skill_of(seed);
-            let income = job.and_then(|j| self.buildings.get(j)).map(|b| b.wage() * skill).unwrap_or(GIG_INCOME * skill);
-            let affordable: Vec<(BuildingId, Tier)> = self
-                .buildings
-                .iter()
-                .filter(|(_, b)| b.land_use == LandUse::Residential && b.free_homes() > 0 && b.rent <= income * 0.5)
-                .map(|(id, b)| (id, b.tier))
-                .collect();
-            let Some(best_tier) = affordable.iter().map(|(_, t)| *t).max() else {
+            // Income first: a job for each adult if one is open, gig money
+            // otherwise, pensions for the retired. Then a home they can
+            // afford, the best tier available.
+            let ages = self.household_ages();
+            let mut people: Vec<(u8, u64, Option<BuildingId>, f32)> = Vec::with_capacity(ages.len());
+            let mut taken: Vec<BuildingId> = Vec::new();
+            for age in ages {
+                let seed = self.fresh_seed();
+                let skill = Self::skill_of(seed);
+                let (job, income) = match LifeStage::of_age(age) {
+                    LifeStage::Child => (None, 0.0),
+                    LifeStage::Retiree => (None, PENSION),
+                    LifeStage::Adult => {
+                        let job = self.pick_job_except(&taken);
+                        taken.extend(job);
+                        (job, job.and_then(|j| self.buildings.get(j)).map(|b| b.wage() * skill).unwrap_or(GIG_INCOME * skill))
+                    }
+                };
+                people.push((age, seed, job, income));
+            }
+            let income: f32 = people.iter().map(|p| p.3).sum();
+            let Some(home) = self.choose_home(income, None) else {
                 self.economy.priced_out_total += 1;
                 self.economy.waiting_immigrants = (self.economy.waiting_immigrants + 1).min(60);
+                self.economy.housing_demand_by_tier[Self::tier_affordable(income).index()] += 1.0;
                 break;
             };
-            let choices: Vec<BuildingId> = affordable.iter().filter(|(_, t)| *t == best_tier).map(|(id, _)| *id).collect();
-            let Some(&home) = choices.choose(&mut self.rng) else { break };
-            let name = names::citizen_name(&mut self.rng);
             let tick = self.clock.tick;
             let by_train = if !self.stations.is_empty() && self.rng.random_bool(0.6) { self.stations.choose(&mut self.rng).copied() } else { None };
             let pos = match by_train.and_then(|s| self.building_entrance(s)) {
                 Some(p) => p,
                 None => self.roads.node(entry).pos,
             };
-            let (car_chance, bike_chance) = match Tier::for_income(income) {
+            let earners = people.iter().filter(|p| p.3 > 0.0).count().max(1) as f32;
+            let (car_chance, bike_chance) = match Tier::for_income(income / earners) {
                 Tier::Low => (0.12, 0.6),
                 Tier::Mid => (0.6, 0.35),
                 Tier::High => (0.92, 0.35),
             };
-            let owns_car = self.rng.random_bool(car_chance);
-            let owns_bike = self.rng.random_bool(bike_chance);
-            let mut citizen = Citizen {
-                name,
-                seed,
+            // A few days of groceries in the boot, and some money.
+            let size = people.len() as f32;
+            let money = self.rng.random_range(40.0..160.0) * size.sqrt();
+            let hid = self.households.insert(Household {
+                members: Vec::new(),
                 home: Some(home),
-                work: None,
-                pos,
-                heading: 0.0,
-                prev_pos: pos,
-                prev_heading: 0.0,
-                mode: TravelMode::Walk,
-                owns_car,
-                owns_bike,
-                parked_at: None,
-                transit: None,
-                activity: Activity::Idle,
-                memories: Vec::new(),
-                thought: "New city. New me.".to_string(),
-                spotlight: false,
-                next_decision_tick: tick + self.rng.random_range(5..30),
-                arrived_tick: tick,
-                inside: None,
-                mood: 0.6,
-                income,
-                savings: self.rng.random_range(20.0..120.0),
+                money,
+                groceries: size * GROCERIES_PER_PERSON_DAY * 3.0,
                 rent_stress_days: 0,
-                satiety: 0.7,
-                groceries: 2.0,
-                hungry_days: 0,
-                trail: Vec::new(),
-                pending_footfall: Vec::new(),
-            };
-            citizen.remember(tick, format!("Rolled into Neon District on day {} at {}.", self.clock.day() + 1, self.clock.format_hhmm()));
-            if let Some(s) = by_train {
-                citizen.remember(tick, format!("Stepped off the train at {}.", self.buildings[s].name));
-            }
-            let id = self.citizens.insert(citizen);
-            self.buildings[home].residents.push(id);
+                moved_day: self.clock.day(),
+            });
+            self.buildings[home].households.push(hid);
             let home_name = self.buildings[home].name.clone();
-            self.citizens[id].remember(tick, format!("Moved into {home_name}."));
-            if let Some(job) = job {
-                self.assign_job(id, job);
+            let family = names::family_name(&mut self.rng);
+            for (age, seed, job, income) in people {
+                let stage = LifeStage::of_age(age);
+                let name = names::member_name(&mut self.rng, &family);
+                let owns_car = stage != LifeStage::Child && self.rng.random_bool(car_chance);
+                let owns_bike = self.rng.random_bool(bike_chance);
+                let savings = if stage == LifeStage::Child { 0.0 } else { self.rng.random_range(10.0..40.0) };
+                let next_decision_tick = tick + self.rng.random_range(5..30);
+                let mut citizen = Citizen {
+                    name,
+                    seed,
+                    home: Some(home),
+                    work: None,
+                    pos,
+                    heading: 0.0,
+                    prev_pos: pos,
+                    prev_heading: 0.0,
+                    mode: TravelMode::Walk,
+                    owns_car,
+                    owns_bike,
+                    parked_at: None,
+                    transit: None,
+                    activity: Activity::Idle,
+                    memories: Vec::new(),
+                    thought: "New city. New me.".to_string(),
+                    spotlight: false,
+                    next_decision_tick,
+                    arrived_tick: tick,
+                    inside: None,
+                    mood: 0.6,
+                    income,
+                    savings,
+                    rent_stress_days: 0,
+                    satiety: 0.8,
+                    groceries: 0.0,
+                    hungry_days: 0,
+                    trail: Vec::new(),
+                    pending_footfall: Vec::new(),
+                    household: Some(hid),
+                    age,
+                    wakefulness: 0.9,
+                    asleep: false,
+                    packed_meal: 1.0,
+                };
+                citizen.remember(tick, format!("Rolled into Neon District on day {} at {}.", self.clock.day() + 1, self.clock.format_hhmm()));
+                if let Some(s) = by_train {
+                    citizen.remember(tick, format!("Stepped off the train at {}.", self.buildings[s].name));
+                }
+                citizen.remember(tick, format!("Moved into {home_name}."));
+                let id = self.citizens.insert(citizen);
+                self.households[hid].members.push(id);
+                self.buildings[home].residents.push(id);
+                if let Some(job) = job {
+                    if self.buildings.get(job).is_some_and(|b| b.free_jobs() > 0) {
+                        self.assign_job(id, job);
+                    }
+                }
+                self.travel_to(id, Some(home), Purpose::Home);
+                self.events.push(SimEvent::CitizenArrived(id));
+            }
+            let groceries = self.households[hid].groceries;
+            for &m in &self.households[hid].members {
+                self.citizens[m].groceries = groceries;
             }
             self.economy.waiting_immigrants = self.economy.waiting_immigrants.saturating_sub(1);
-            self.travel_to(id, Some(home), Purpose::Home);
-            self.events.push(SimEvent::CitizenArrived(id));
         }
     }
 
@@ -274,8 +582,9 @@ impl World {
         self.citizens[id].remember(tick, format!("Got hired at {name}."));
     }
 
+    /// Adults without a job take an open one, food chain first.
     pub(super) fn job_search(&mut self) {
-        let jobless: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.work.is_none()).map(|(id, _)| id).collect();
+        let jobless: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.work.is_none() && c.can_work()).map(|(id, _)| id).collect();
         for id in jobless {
             let Some(job) = self.pick_job() else { break };
             self.assign_job(id, job);
@@ -289,6 +598,7 @@ impl World {
         let population = self.citizens.len() as u32;
         let groceries_for_sale = self.groceries_for_sale;
         let meals_for_sale = self.meals_for_sale;
+        let hour = self.clock.hour() as u8;
         let ids: Vec<CitizenId> = self.citizens.keys().collect();
 
         for id in ids {
@@ -330,6 +640,8 @@ impl World {
             }
             let decision = {
                 let c = &self.citizens[id];
+                let hh = c.household.and_then(|h| self.households.get(h));
+                let on_shift = c.work.and_then(|w| self.buildings.get(w)).is_some_and(|b| b.business.as_ref().is_none_or(|z| !z.closed) && b.shift_for(c.seed).contains(hour));
                 let ctx = MindContext {
                     id,
                     citizen: c,
@@ -344,6 +656,13 @@ impl World {
                     groceries: c.groceries,
                     groceries_for_sale,
                     meals_for_sale,
+                    stage: c.stage(),
+                    wakefulness: c.wakefulness,
+                    asleep: c.asleep,
+                    at_home: c.home.is_some() && c.inside == c.home,
+                    on_shift,
+                    household_size: hh.map_or(1, |h| h.size()),
+                    pantry_low: hh.is_some_and(|h| h.groceries < h.pantry_target() * 0.5),
                 };
                 minds.decide(&ctx)
             };
@@ -394,6 +713,33 @@ impl World {
                 let c = &mut self.citizens[id];
                 c.mode = TravelMode::Walk;
                 c.activity = Activity::Traveling { to: Some(b), purpose: Purpose::Sit, path, idx: 0 };
+                return;
+            }
+        }
+        // Shops may have shut, or filled up, on the way; a place to go out
+        // to may have closed down or be packed (it lets late-comers in
+        // after hours: last orders).
+        if let (Purpose::Visit(_) | Purpose::Shop(_), Some(b)) = (purpose, to) {
+            let hour = self.clock.hour() as u8;
+            let bld = &self.buildings[b];
+            let hours_ok = matches!(purpose, Purpose::Visit(_)) || bld.opening_hours().contains(hour);
+            if !hours_ok || !bld.takes_customers() {
+                let open = bld.opening_hours();
+                let shut = !hours_ok || bld.business.as_ref().is_some_and(|z| z.closed) || bld.is_derelict() || bld.construction.is_some();
+                let name = bld.name.clone();
+                let c = &mut self.citizens[id];
+                if shut {
+                    c.remember(tick, format!("{name} was shut when I got there (open {})." , open.label()));
+                    c.thought = "Shut. Should have checked the hours.".to_string();
+                } else {
+                    c.remember(tick, format!("{name} was packed. Couldn't get in."));
+                    c.thought = "Packed to the doors. Another time.".to_string();
+                }
+                c.mood = (c.mood - 0.03).max(0.0);
+                c.activity = Activity::Idle;
+                c.inside = None;
+                c.next_decision_tick = tick + 3;
+                self.economy.market.turned_away_today += 1;
                 return;
             }
         }
@@ -456,6 +802,11 @@ impl World {
                         c.savings -= cover;
                         bz.money += cover;
                         bz.revenue_today += cover;
+                        // The kitchen feeds the hungry from its groceries.
+                        if c.satiety < 0.7 && bz.take(Resource::Groceries, 0.5) > 0.0 {
+                            c.satiety = (c.satiety + 0.45).min(1.0);
+                            self.economy.market.meals_sold_today += 1;
+                        }
                     }
                 }
             }
@@ -512,7 +863,10 @@ impl World {
             Intent::Visit(lu) => {
                 // Somewhere that is open: not a site, not a shut business,
                 // not a derelict shell.
-                let target = self.pick_building(|b| b.land_use == lu && b.construction.is_none() && !b.is_derelict() && b.business.as_ref().map_or(true, |z| !z.closed));
+                // Somewhere that is open now and has room: not a site, not a
+                // shut business, not a derelict shell, not packed.
+                let hour = self.clock.hour() as u8;
+                let target = self.pick_building(|b| b.land_use == lu && b.serves_at(hour));
                 if let Some(b) = target {
                     if inside != Some(b) {
                         self.travel_to(id, Some(b), Purpose::Visit(lu));
@@ -576,6 +930,9 @@ impl World {
     pub(super) fn travel_to_impl(&mut self, id: CitizenId, target: Option<BuildingId>, purpose: Purpose, allow_bus: bool, fresh: bool) {
         let Some(target) = target else { return };
         self.citizens[id].transit = None;
+        if fresh && purpose != Purpose::Home {
+            self.pack_meal(id);
+        }
         if fresh {
             self.citizens[id].pending_footfall.clear();
         }
@@ -668,6 +1025,23 @@ impl World {
         }
         c.mode = mode;
         c.activity = Activity::Traveling { to: Some(target), purpose, path, idx: 0 };
+    }
+
+    /// Someone leaving home takes a meal from the pantry for later, if the
+    /// pantry has one to spare.
+    pub(super) fn pack_meal(&mut self, id: CitizenId) {
+        let c = &self.citizens[id];
+        if c.packed_meal >= 1.0 || c.home.is_none() || c.inside != c.home {
+            return;
+        }
+        let Some(hh) = c.household.and_then(|h| self.households.get_mut(h)) else { return };
+        if hh.groceries >= 1.0 {
+            hh.groceries -= 1.0;
+            let left = hh.groceries;
+            let c = &mut self.citizens[id];
+            c.packed_meal += 1.0;
+            c.groceries = left;
+        }
     }
 
     /// Remember which lots a journey on foot will pass; they are counted

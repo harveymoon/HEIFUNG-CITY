@@ -3,7 +3,8 @@
 //! backend and falls back to the rules while an answer is pending.
 
 use nd_sim::mind::{Decision, Intent, MindContext, MindProvider};
-use nd_sim::{CitizenId, LandUse, Resource, SimRng};
+use nd_sim::citizens::{EXHAUSTED, TIRED};
+use nd_sim::{CitizenId, LandUse, LifeStage, Resource, SimRng};
 use rand::seq::IndexedRandom;
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -106,6 +107,15 @@ const HUNGRY_THOUGHTS: &[&str] = &[
 ];
 const LUNCH_THOUGHTS: &[&str] = &["Grabbing a bite.", "Synth-bun and a coffee.", "Lunch break. Finally."];
 const GOODS_THOUGHTS: &[&str] = &["Credits burning a hole. New optics?", "Treat yourself. The feed says so."];
+const TIRED_THOUGHTS: &[&str] = &[
+    "Dead on my feet. Bed.",
+    "Eyes won't stay open. Home.",
+    "Running on fumes. Need to crash.",
+];
+const DINNER_THOUGHTS: &[&str] = &["Dinner's waiting at home.", "Something in the pantry with my name on it.", "Home to eat."];
+const PANTRY_THOUGHTS: &[&str] = &["Stocking up for the family.", "Pantry's getting thin. Big shop.", "Feeding a household is a full-time job."];
+const KID_THOUGHTS: &[&str] = &["Nothing to do. Bored.", "Wish there was a school round here.", "Gonna go see the trees."];
+const RETIREE_THOUGHTS: &[&str] = &["Slow morning. My right, at my age.", "A walk does the knees good.", "Seen this city change a lot."];
 const NO_HOME_THOUGHTS: &[&str] = &[
     "No place to crash yet. Keep moving.",
     "Someone's gotta have a free bunk.",
@@ -128,19 +138,71 @@ impl MindProvider for RuleBasedMind {
             return decide(Intent::Wander, t);
         }
 
-        // Food comes before everything but sleep.
+        // Asleep: nothing to decide until morning.
+        if ctx.asleep {
+            return decide(Intent::Stay, String::new());
+        }
+        // Sleep comes first: the tired go home, unless mid-shift and not
+        // yet exhausted (they finish the shift, badly).
+        if ctx.wakefulness < TIRED && !(ctx.on_shift && ctx.wakefulness >= EXHAUSTED * 0.5) {
+            if ctx.at_home {
+                return decide(Intent::Stay, String::new());
+            }
+            let t = self.pick(TIRED_THOUGHTS);
+            return decide(Intent::GoHome, t);
+        }
+
+        // Food next: an empty pantry means a shop; a hungry stomach with
+        // food at home means dinner at home.
+        let grown = ctx.stage != LifeStage::Child;
         let hungry = ctx.satiety < 0.45 && ctx.groceries < 1.0;
-        if hungry && ctx.groceries_for_sale && !clock.is_night() && self.rng.random_bool(0.8) {
+        if hungry && grown && ctx.groceries_for_sale && !clock.is_night() && self.rng.random_bool(0.8) {
             let t = self.pick(HUNGRY_THOUGHTS);
             return decide(Intent::Shop(Resource::Groceries), t);
         }
-        if (12..14).contains(&clock.hour()) && ctx.satiety < 0.6 && ctx.meals_for_sale && self.rng.random_bool((0.3 + p.hedonism * 0.4) as f64) {
+        if ctx.satiety < 0.4 && ctx.groceries >= 1.0 && !ctx.at_home && !ctx.on_shift {
+            // The sociable eat out: venues feed their guests.
+            let p_out = (p.hedonism * 0.5 + p.sociability * 0.3) * 0.8;
+            if grown && clock.is_evening() && clock.hour() >= 18 && ctx.available[LandUse::Entertainment.index()] && self.rng.random::<f32>() < p_out {
+                return decide(Intent::Visit(LandUse::Entertainment), "Dinner out tonight.".to_string());
+            }
+            let t = self.pick(DINNER_THOUGHTS);
+            return decide(Intent::GoHome, t);
+        }
+        if !ctx.at_home && (12..14).contains(&clock.hour()) && ctx.satiety < 0.6 && ctx.meals_for_sale && self.rng.random_bool((0.3 + p.hedonism * 0.4) as f64) {
             let t = self.pick(LUNCH_THOUGHTS);
             return decide(Intent::Shop(Resource::BakedGoods), t);
         }
+        // Someone has to keep the pantry full for the whole household.
+        if grown && ctx.pantry_low && !ctx.on_shift && ctx.groceries_for_sale && (7..21).contains(&clock.hour()) && self.rng.random_bool(0.5) {
+            let t = self.pick(PANTRY_THOUGHTS);
+            return decide(Intent::Shop(Resource::Groceries), t);
+        }
+
+        // Shifts follow the workplace's opening hours.
+        if ctx.on_shift {
+            let t = self.pick(WORK_THOUGHTS);
+            return decide(Intent::GoWork, t);
+        }
+
+        // Children and retirees have their days to themselves. (Schools
+        // would go here: `Citizen::goes_to_school` marks who would attend.)
+        if ctx.stage != LifeStage::Adult && !clock.is_night() && !clock.is_evening() && clock.hour() >= 8 {
+            let roll: f32 = self.rng.random();
+            if roll < 0.25 && ctx.available[LandUse::Park.index()] {
+                let t = self.pick(if ctx.stage == LifeStage::Child { KID_THOUGHTS } else { RETIREE_THOUGHTS });
+                return decide(Intent::Visit(LandUse::Park), t);
+            }
+            if roll < 0.35 && ctx.stage == LifeStage::Retiree {
+                let t = self.pick(RETIREE_THOUGHTS);
+                return decide(Intent::Wander, t);
+            }
+            let t = self.pick(if ctx.stage == LifeStage::Child { KID_THOUGHTS } else { HOME_THOUGHTS });
+            return decide(Intent::GoHome, t);
+        }
 
         if clock.is_night() {
-            if p.hedonism > 0.75 && ctx.available[LandUse::Entertainment.index()] && self.rng.random_bool(0.25) {
+            if grown && p.hedonism > 0.75 && ctx.wakefulness > 0.25 && ctx.available[LandUse::Entertainment.index()] && self.rng.random_bool(0.25) {
                 let t = self.pick(PARTY_THOUGHTS);
                 return decide(Intent::Visit(LandUse::Entertainment), t);
             }
@@ -149,10 +211,6 @@ impl MindProvider for RuleBasedMind {
         }
 
         if clock.is_work_hours() {
-            if ctx.has_work {
-                let t = self.pick(WORK_THOUGHTS);
-                return decide(Intent::GoWork, t);
-            }
             if self.rng.random_bool((0.3 + p.curiosity * 0.4) as f64) {
                 let t = self.pick(WANDER_THOUGHTS);
                 return decide(Intent::Wander, t);
@@ -166,7 +224,7 @@ impl MindProvider for RuleBasedMind {
             let p_party = (p.hedonism * 0.5 + p.sociability * 0.3) * 0.8;
             let p_shop = 0.25;
             let p_park = p.caution * 0.2;
-            if roll < p_party && ctx.available[LandUse::Entertainment.index()] {
+            if roll < p_party && grown && ctx.available[LandUse::Entertainment.index()] {
                 let t = self.pick(PARTY_THOUGHTS);
                 return decide(Intent::Visit(LandUse::Entertainment), t);
             }
@@ -369,5 +427,143 @@ impl MindProvider for HybridMind {
 
     fn name(&self) -> &'static str {
         "hybrid"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nd_sim::citizens::{Activity, Citizen, TravelMode};
+    use nd_sim::{SimClock, Vec2};
+
+    fn person(age: u8) -> Citizen {
+        Citizen {
+            name: "Test".into(),
+            seed: 3,
+            home: None,
+            work: None,
+            pos: Vec2::ZERO,
+            heading: 0.0,
+            prev_pos: Vec2::ZERO,
+            prev_heading: 0.0,
+            mode: TravelMode::Walk,
+            owns_car: false,
+            owns_bike: false,
+            parked_at: None,
+            transit: None,
+            activity: Activity::Idle,
+            memories: Vec::new(),
+            thought: String::new(),
+            spotlight: false,
+            next_decision_tick: 0,
+            arrived_tick: 0,
+            inside: None,
+            mood: 0.5,
+            income: 80.0,
+            savings: 20.0,
+            rent_stress_days: 0,
+            satiety: 0.9,
+            groceries: 5.0,
+            hungry_days: 0,
+            trail: Vec::new(),
+            pending_footfall: Vec::new(),
+            household: None,
+            age,
+            wakefulness: 0.8,
+            asleep: false,
+            packed_meal: 0.0,
+        }
+    }
+
+    struct Case {
+        hour: u64,
+        stage_age: u8,
+        wakefulness: f32,
+        asleep: bool,
+        at_home: bool,
+        on_shift: bool,
+        satiety: f32,
+        groceries: f32,
+        pantry_low: bool,
+    }
+
+    impl Default for Case {
+        fn default() -> Self {
+            Self { hour: 10, stage_age: 35, wakefulness: 0.8, asleep: false, at_home: false, on_shift: false, satiety: 0.9, groceries: 5.0, pantry_low: false }
+        }
+    }
+
+    /// The intents the mind picks for a case over many rolls.
+    fn intents(case: Case) -> Vec<Intent> {
+        let mut c = person(case.stage_age);
+        c.wakefulness = case.wakefulness;
+        c.asleep = case.asleep;
+        c.satiety = case.satiety;
+        c.groceries = case.groceries;
+        let clock = SimClock::starting_at(2, case.hour, 0);
+        let mut mind = RuleBasedMind::default();
+        (0..60)
+            .filter_map(|_| {
+                let ctx = MindContext {
+                    id: CitizenId::default(),
+                    citizen: &c,
+                    clock: &clock,
+                    has_home: true,
+                    has_work: true,
+                    home_name: Some("Home"),
+                    work_name: Some("Work"),
+                    available: [true; 6],
+                    population: 100,
+                    satiety: case.satiety,
+                    groceries: case.groceries,
+                    groceries_for_sale: true,
+                    meals_for_sale: true,
+                    stage: c.stage(),
+                    wakefulness: case.wakefulness,
+                    asleep: case.asleep,
+                    at_home: case.at_home,
+                    on_shift: case.on_shift,
+                    household_size: 3,
+                    pantry_low: case.pantry_low,
+                };
+                mind.decide(&ctx).map(|d| d.intent)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_asleep_stay_asleep_and_the_tired_go_home() {
+        assert!(intents(Case { hour: 2, asleep: true, at_home: true, ..Default::default() }).iter().all(|i| *i == Intent::Stay));
+        assert!(intents(Case { hour: 19, wakefulness: 0.1, ..Default::default() }).iter().all(|i| *i == Intent::GoHome), "tired out: home to bed");
+        assert!(intents(Case { hour: 15, wakefulness: 0.1, on_shift: true, ..Default::default() }).iter().all(|i| *i == Intent::GoWork), "tired mid-shift: finish it");
+        assert!(intents(Case { hour: 15, wakefulness: 0.01, on_shift: true, ..Default::default() }).iter().all(|i| *i == Intent::GoHome), "exhausted: even the shift waits");
+    }
+
+    #[test]
+    fn shifts_follow_the_workplace_not_the_clock() {
+        assert!(intents(Case { hour: 20, on_shift: true, ..Default::default() }).iter().all(|i| *i == Intent::GoWork), "an evening shift at a venue");
+        assert!(intents(Case { hour: 10, on_shift: false, ..Default::default() }).iter().all(|i| *i != Intent::GoWork), "off shift in office hours");
+    }
+
+    #[test]
+    fn food_comes_home_and_someone_fills_the_pantry() {
+        let dinner = intents(Case { hour: 19, satiety: 0.3, groceries: 4.0, ..Default::default() });
+        assert!(dinner.iter().all(|i| matches!(i, Intent::GoHome | Intent::Visit(LandUse::Entertainment))), "hungry with food at home: dinner, at home or out");
+        assert!(dinner.contains(&Intent::GoHome));
+        let empty = intents(Case { hour: 11, satiety: 0.3, groceries: 0.0, ..Default::default() });
+        assert!(empty.iter().filter(|i| **i == Intent::Shop(Resource::Groceries)).count() > 30);
+        let pantry = intents(Case { hour: 16, pantry_low: true, ..Default::default() });
+        assert!(pantry.iter().any(|i| *i == Intent::Shop(Resource::Groceries)), "a low pantry sends a grown-up shopping");
+        let kid = intents(Case { hour: 16, stage_age: 9, pantry_low: true, satiety: 0.3, groceries: 0.0, ..Default::default() });
+        assert!(kid.iter().all(|i| *i != Intent::Shop(Resource::Groceries)), "children do not do the shopping");
+    }
+
+    #[test]
+    fn children_and_retirees_never_go_to_work() {
+        for age in [8, 75] {
+            let days = intents(Case { hour: 10, stage_age: age, ..Default::default() });
+            assert!(days.iter().all(|i| *i != Intent::GoWork));
+            assert!(days.iter().all(|i| *i != Intent::Visit(LandUse::Entertainment)) || age > 17);
+        }
     }
 }

@@ -40,10 +40,21 @@ pub enum Surface {
     Matte,
     /// Unlit emissive: windows, signs, lamps, screens.
     Glow,
+    // Weathered variants of the everyday surfaces: the same texture with
+    // stains, cracks, rust streaks and worn paint baked in. Cheap and
+    // run-down buildings and streets are moved onto these by
+    // [`Geometry::weather`], so grit is a material, not extra triangles.
+    WornConcrete,
+    WornPlaster,
+    WornBrick,
+    WornPanel,
+    WornMetal,
+    WornPaving,
+    WornAsphalt,
 }
 
 impl Surface {
-    pub const ALL: [Surface; 16] = [
+    pub const ALL: [Surface; 23] = [
         Surface::Concrete,
         Surface::Plaster,
         Surface::Brick,
@@ -60,7 +71,40 @@ impl Surface {
         Surface::Foliage,
         Surface::Matte,
         Surface::Glow,
+        Surface::WornConcrete,
+        Surface::WornPlaster,
+        Surface::WornBrick,
+        Surface::WornPanel,
+        Surface::WornMetal,
+        Surface::WornPaving,
+        Surface::WornAsphalt,
     ];
+
+    /// The surfaces that have a weathered variant, paired with it.
+    pub const WEATHERED: [(Surface, Surface); 7] = [
+        (Surface::Concrete, Surface::WornConcrete),
+        (Surface::Plaster, Surface::WornPlaster),
+        (Surface::Brick, Surface::WornBrick),
+        (Surface::Panel, Surface::WornPanel),
+        (Surface::Metal, Surface::WornMetal),
+        (Surface::Paving, Surface::WornPaving),
+        (Surface::Asphalt, Surface::WornAsphalt),
+    ];
+
+    /// The clean surface a weathered one is made from (itself otherwise):
+    /// tiling, roughness and bump follow the base material.
+    pub fn base(self) -> Surface {
+        Surface::WEATHERED.iter().find(|(_, w)| *w == self).map(|(b, _)| *b).unwrap_or(self)
+    }
+
+    /// The weathered variant of a surface, if it has one.
+    pub fn worn(self) -> Option<Surface> {
+        Surface::WEATHERED.iter().find(|(b, _)| *b == self).map(|(_, w)| *w)
+    }
+
+    pub fn is_worn(self) -> bool {
+        self.base() != self
+    }
 
     pub fn index(self) -> usize {
         self as usize
@@ -68,7 +112,7 @@ impl Surface {
 
     /// Metres covered by one texture repeat.
     pub fn tile(self) -> f32 {
-        match self {
+        match self.base() {
             Surface::Concrete => 3.0,
             Surface::Plaster => 3.0,
             Surface::Brick => 1.0,
@@ -85,10 +129,14 @@ impl Surface {
             Surface::Foliage => 1.0,
             Surface::Matte => 1.0,
             Surface::Glow => 1.0,
+            _ => 1.0,
         }
     }
 
     pub fn roughness(self) -> f32 {
+        if self.is_worn() {
+            return (self.base().roughness() + 0.08).min(1.0);
+        }
         match self {
             Surface::Glass => 0.12,
             Surface::Metal => 0.45,
@@ -104,6 +152,9 @@ impl Surface {
     }
 
     pub fn metallic(self) -> f32 {
+        if self.is_worn() {
+            return self.base().metallic() * 0.7;
+        }
         match self {
             Surface::Metal => 0.75,
             Surface::Panel => 0.5,
@@ -116,6 +167,9 @@ impl Surface {
 
     /// Strength of the generated normal map.
     pub fn bump(self) -> f32 {
+        if self.is_worn() {
+            return self.base().bump() * 1.25;
+        }
         match self {
             Surface::Brick => 1.6,
             Surface::Stone => 2.0,
@@ -133,6 +187,7 @@ impl Surface {
             Surface::Glass => 0.3,
             Surface::Matte => 0.2,
             Surface::Glow => 0.0,
+            _ => 0.5,
         }
     }
 
@@ -169,6 +224,15 @@ impl Geometry {
     pub fn append(&mut self, other: &Geometry) {
         for (a, b) in self.parts.iter_mut().zip(other.parts.iter()) {
             a.append(b);
+        }
+    }
+
+    /// Move every surface that has a weathered variant onto it: the whole
+    /// building or street reads as run down without a single extra triangle.
+    pub fn weather(&mut self) {
+        for (base, worn) in Surface::WEATHERED {
+            let m = std::mem::take(&mut self.parts[base.index()]);
+            self.parts[worn.index()].append(&m);
         }
     }
 
