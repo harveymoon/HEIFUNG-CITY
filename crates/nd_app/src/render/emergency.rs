@@ -19,6 +19,8 @@ pub(super) struct EmergencyAssets {
     light_a: [Handle<StandardMaterial>; 3],
     light_b: [Handle<StandardMaterial>; 3],
     flame: Handle<Mesh>,
+    /// Unlit, so flames read in daylight too (the shared glow dims by day).
+    flame_mat: Handle<StandardMaterial>,
     smoke: Handle<Mesh>,
     rubble: Handle<Mesh>,
 }
@@ -81,7 +83,7 @@ fn make_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateria
     };
     let bar = |meshes: &mut Assets<Mesh>, x: f32, y: f32, side: f32| {
         let mut m = MeshData::default();
-        m.boxed(Vec3::new(x, y, side * 0.45), Vec3::new(0.35, 0.22, 0.7), 0.0, white);
+        m.boxed(Vec3::new(x, y, side * 0.5), Vec3::new(0.6, 0.35, 0.95), 0.0, white);
         meshes.add(super::shared_mesh(&m, false))
     };
     let bars = [
@@ -120,7 +122,7 @@ fn make_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateria
                     drift + SVec2::new(a.cos(), a.sin()) * r
                 })
                 .collect();
-            m.ground_polygon(&poly, y, [0.08, 0.08, 0.09, 0.3 - k as f32 * 0.04]);
+            m.ground_polygon(&poly, y, [0.06, 0.06, 0.07, 0.5 - k as f32 * 0.06]);
         }
         meshes.add(super::shared_mesh(&m, false))
     };
@@ -133,7 +135,8 @@ fn make_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateria
         m.boxed(Vec3::new(0.0, 0.02, 0.0), Vec3::new(1.4, 0.04, 1.4), 0.0, [0.07, 0.07, 0.07, 1.0]);
         meshes.add(super::shared_mesh(&m, true))
     };
-    EmergencyAssets { bodies: [engine, police, ambulance], bars, paint, light_a, light_b, flame, smoke, rubble }
+    let flame_mat = materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, ..default() });
+    EmergencyAssets { bodies: [engine, police, ambulance], bars, paint, light_a, light_b, flame, flame_mat, smoke, rubble }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -245,23 +248,23 @@ pub(super) fn sync_emergency(
         let Some(b) = w.buildings.get(bid) else { continue };
         let Some(lot) = w.lots.get(b.lot) else { continue };
         let ents = *es.fires.entry(bid).or_insert_with(|| {
-            let fl = commands.spawn((Mesh3d(a.flame.clone()), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, EmergencyTag)).id();
+            let fl = commands.spawn((Mesh3d(a.flame.clone()), MeshMaterial3d(a.flame_mat.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, EmergencyTag)).id();
             let sm = commands.spawn((Mesh3d(a.smoke.clone()), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, EmergencyTag)).id();
             [fl, sm]
         });
-        let height = (b.floors.max(1) as f32 * 3.6).min(120.0);
+        let height = (b.floors.max(1) as f32 * 3.2).min(120.0);
         let size = (lot.area().sqrt() * 0.55).clamp(5.0, 30.0);
         let seed = phase_of(bid) * 10.0;
         let flicker = 0.8 + 0.25 * (t * 9.0 + seed).sin() + 0.12 * (t * 23.0 + seed * 2.0).sin();
         let k = intensity.clamp(0.1, 1.0);
         if let Ok((mut tf, _)) = q.get_mut(ents[0]) {
             tf.translation = Vec3::new(lot.center.x, height, lot.center.y);
-            tf.scale = Vec3::new(size * (0.5 + 0.5 * k), size * 0.6 * k * flicker, size * (0.5 + 0.5 * k));
+            tf.scale = Vec3::new(size * (0.6 + 0.5 * k), size * (0.35 + 0.8 * k) * flicker, size * (0.6 + 0.5 * k));
             tf.rotation = Quat::from_rotation_y(t * 0.3 + seed);
         }
         if let Ok((mut tf, _)) = q.get_mut(ents[1]) {
-            tf.translation = Vec3::new(lot.center.x, height + size * 0.3, lot.center.y);
-            tf.scale = Vec3::splat(size * (0.6 + 1.2 * k));
+            tf.translation = Vec3::new(lot.center.x, height + size * 0.2, lot.center.y);
+            tf.scale = Vec3::new(size * (0.8 + 1.0 * k), size * (1.2 + 1.5 * k), size * (0.8 + 1.0 * k));
         }
     }
 

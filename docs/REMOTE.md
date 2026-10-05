@@ -1,4 +1,4 @@
-# Remote control API
+﻿# Remote control API
 
 The game runs a small HTTP JSON API on localhost so scripts, tests and AI assistants can drive
 and inspect it without synthetic keystrokes or clicks. `tools/mcp/nd_mcp.py` wraps it as an MCP
@@ -35,7 +35,7 @@ the replies back. So:
   save and load of the same city.
 - Plan gestures (roads and zones as drawn) have plain integer ids (`gesture_id`).
 - Positions are **`[x, y]` in sim metres** on the ground plane (the renderer's x and z). The starter
-  avenues run along x = 0 and y = 0; the map spans about ±1000 m; the rail trunk is at y = -480.
+  avenues run along x = 0 and y = 0; the map spans about Â±1000 m; the rail trunk is at y = -480.
 - Times: a tick is one sim minute; `day` is 1-based.
 
 ## Commands
@@ -49,7 +49,7 @@ Every example is the POST body; the reply always carries `"ok"`.
 | `help` | | every command and its fields |
 | `status` | | clock, paused, speed, effective_speed, population, buildings, under_construction, lots, homes/jobs, treasury, ledger_yesterday, power, weather, land, market, demand, traffic, transit, rail, render (fps, ticks_per_frame, triangles), camera, tool, selection, project, overlays, lighting, message, tool_status, event_seq, favourites, `windows_open`, `alerts_top` (the first 5 of `report`'s alerts) |
 | `pause` | `paused` bool (omit to toggle) | `paused` |
-| `speed` | `index` 0..4 (1×, 4×, 16×, 64×, 256×) or `value` (sim minutes per real second, snapped) | `speed_index`, `speed`, `label` |
+| `speed` | `index` 0..4 (1Ã—, 4Ã—, 16Ã—, 64Ã—, 256Ã—) or `value` (sim minutes per real second, snapped) | `speed_index`, `speed`, `label` |
 | `step` | `ticks` (default 1, max 100000) | `clock`, `took_ms` |
 
 `step` runs the ticks immediately, on the main thread, even while paused (the same `World::tick`
@@ -199,7 +199,7 @@ Reply: the pose (`mode`, `target`, `distance`, `yaw`, `pitch`, `eye`), and `foll
 `save_to_disk`) and replies at once with the absolute `path` (default
 `<working dir>/screenshots/shot-<unix seconds>.png`). **The file is written a frame or two later**,
 when the GPU copy lands: poll for it (the MCP tool waits up to 5 s). It captures the whole window,
-UI panel included, at the window's size (a full-HD window makes a 2–5 MB PNG). PNG only. A
+UI panel included, at the window's size (a full-HD window makes a 2â€“5 MB PNG). PNG only. A
 minimised window renders nothing and produces no file.
 
 ### Events
@@ -254,12 +254,12 @@ construction_waiting_for_materials, stuck_vehicles, derelict_buildings,
 vacant_lots_with_high_demand, high_unemployment, treasury_losing_money, parking_shortage,
 scarce_resources, fires_burning, no_police_coverage, no_fire_coverage, no_health_coverage,
 no_school_coverage (residential buildings outside a service's road reach, once there are 10+),
-slow_emergency_response (average over 20 minutes from call to arrival), no_dispatcher (calls go to
+slow_emergency_response (average over 45 minutes from call to arrival), no_dispatcher (calls go to
 the regional line). The thresholds are named constants at the top of `remote/report.rs`: hungry =
 satiety < 0.3; starving = 2+ hungry days (the sim sends people away at 4); a food seller is
 understaffed below 50 %; unpowered = under 60 % of demand met; rent stress = rent over 50 % of
-income; stuck = slower than 0.5 m/s on a trip older than 900 s; high demand ≥ 0.6; unemployment
-≥ 15 %; scarce = average price ≥ 1.3 × base.
+income; stuck = slower than 0.5 m/s on a trip older than 900 s; high demand â‰¥ 0.6; unemployment
+â‰¥ 15 %; scarce = average price â‰¥ 1.3 Ã— base.
 
 Trimmed real reply (day 10 of the demo district):
 
