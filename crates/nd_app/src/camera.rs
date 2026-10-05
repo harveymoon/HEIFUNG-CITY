@@ -66,6 +66,28 @@ fn control_camera(
     let Ok((mut cam, mut tf)) = q.single_mut() else { return };
     let dt = time.delta_secs();
 
+    // F6: focus the busiest junction, close enough to watch the driving.
+    if keys.just_pressed(KeyCode::F6) {
+        let roads = &sim.world.roads;
+        let cars: Vec<Vec2> = sim.world.traffic.cars.values().map(|c| c.pos).collect();
+        let mut best: Option<(usize, Vec2)> = None;
+        for (i, node) in roads.nodes.iter().enumerate() {
+            let alive = node.segments.iter().filter(|&&s| roads.segment(s).alive).count();
+            if alive < 3 {
+                continue;
+            }
+            let n = cars.iter().filter(|p| p.distance(node.pos) < 60.0).count();
+            if best.map_or(true, |(bn, _)| n > bn) {
+                best = Some((n, node.pos));
+            }
+            let _ = i;
+        }
+        if let Some((_, p)) = best {
+            cam.target = Vec3::new(p.x, 0.0, p.y);
+            cam.distance = 75.0;
+            cam.pitch = 0.75;
+        }
+    }
     // F7 / F8 / F9: jump to a random low, middle or high tier building.
     for (key, tier) in [(KeyCode::F7, Tier::Low), (KeyCode::F8, Tier::Mid), (KeyCode::F9, Tier::High)] {
         if keys.just_pressed(key) {

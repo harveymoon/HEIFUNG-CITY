@@ -322,7 +322,7 @@ fn side_panel(
                 ui.label(egui::RichText::new(err).small().color(egui::Color32::from_rgb(255, 60, 90)));
             }
             ui.label(egui::RichText::new("assets/palette.ron and assets/rules/buildings.ron hot-reload while running.").small().weak());
-            ui.label(egui::RichText::new("Camera: right-drag rotate · middle-drag or shift-drag pan · wheel or [ ] zoom · WASD/QE · F7/F8/F9 jump to a low/middle/high tier building").small().weak());
+            ui.label(egui::RichText::new("Camera: right-drag rotate · middle-drag or shift-drag pan · wheel or [ ] zoom · WASD/QE · F6 busiest junction · F7/F8/F9 jump to a low/middle/high tier building").small().weak());
             ui.label(egui::RichText::new(format!("{} ticks/frame", sim.ticks_last_frame)).small().weak());
         });
     });

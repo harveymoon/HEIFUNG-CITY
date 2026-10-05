@@ -68,8 +68,12 @@ Citizens are rendered from their simulated positions every frame.
   outgoing lane (U-turns only at dead ends); junctions with three or more approaches
   run a fixed-cycle signal that gives one approach green at a time. Cars path over the
   lane graph with A*, follow the intelligent driver model, queue behind each other and
-  stop at red lights. Traffic physics runs ten seconds per sim minute so trips stay on
-  screen.
+  stop at red lights. Traffic physics runs 1.5 seconds per sim minute so a car at 50 km/h
+  moves at a believable pace on screen at 1x; trips therefore take sim-time tens of
+  minutes, the usual city-builder compromise. Right-hand traffic; lane sets are centred
+  on the road; junction curves stay inside the junction; cars refuse to enter a
+  junction whose exit lane is full; stalled trips time out. Pedestrians walk on the
+  right-hand pavement.
 - **Zones**: polygons with a land use (Residential, Commercial, Industrial,
   Entertainment, Civic, Park). Lots are carved along every road segment that runs
   through a zone.

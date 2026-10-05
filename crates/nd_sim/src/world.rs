@@ -43,10 +43,10 @@ impl Default for WorldConfig {
         Self {
             seed: 7,
             half_extent: 900.0,
-            walk_speed: 50.0,
+            walk_speed: 2.4,
             drive_threshold: 60.0,
-            traffic_seconds_per_tick: 10.0,
-            traffic_substeps: 10,
+            traffic_seconds_per_tick: 1.5,
+            traffic_substeps: 3,
             immigration_interval: 30,
             development_interval: 20,
             max_builds_per_interval: 2,
@@ -1405,13 +1405,38 @@ impl World {
             return;
         };
         let exit_pos = self.leave_building(id);
+        let mut path = self.pavement_path(&nodes);
+        path.push(entrance);
         let c = &mut self.citizens[id];
         if let Some(p) = exit_pos {
             c.pos = p;
         }
-        let mut path: Vec<Vec2> = nodes.iter().map(|&n| self.roads.node(n).pos).collect();
-        path.push(entrance);
         c.activity = Activity::Traveling { to: Some(target), purpose, path, idx: 0 };
+    }
+
+    /// Walking route along the right-hand pavement of each leg instead of
+    /// down the middle of the road.
+    fn pavement_path(&self, nodes: &[NodeId]) -> Vec<Vec2> {
+        if nodes.len() < 2 {
+            return nodes.iter().map(|&n| self.roads.node(n).pos).collect();
+        }
+        let mut out = Vec::with_capacity(nodes.len() * 2);
+        for w in nodes.windows(2) {
+            let a = self.roads.node(w[0]).pos;
+            let b = self.roads.node(w[1]).pos;
+            let d = (b - a).normalize_or_zero();
+            let right = Vec2::new(-d.y, d.x);
+            let hw = self
+                .roads
+                .neighbors(w[0])
+                .find(|(n, _)| *n == w[1])
+                .map(|(_, sid)| self.roads.segment(sid).half_width())
+                .unwrap_or(5.0);
+            let off = right * (hw + 1.0);
+            out.push(a + off);
+            out.push(b + off);
+        }
+        out
     }
 
     fn wander(&mut self, id: CitizenId) {
@@ -1422,11 +1447,11 @@ impl World {
         let end = NodeId(self.rng.random_range(0..self.roads.nodes.len() as u32));
         let Some(nodes) = self.roads.path(start, end) else { return };
         let exit_pos = self.leave_building(id);
+        let path = self.pavement_path(&nodes);
         let c = &mut self.citizens[id];
         if let Some(p) = exit_pos {
             c.pos = p;
         }
-        let path: Vec<Vec2> = nodes.iter().map(|&n| self.roads.node(n).pos).collect();
         c.activity = Activity::Traveling { to: None, purpose: Purpose::Wander, path, idx: 0 };
     }
 }

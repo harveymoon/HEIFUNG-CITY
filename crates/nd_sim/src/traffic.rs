@@ -22,8 +22,8 @@ new_key_type! {
 pub type LaneId = u32;
 
 pub const CAR_LENGTH: f32 = 4.5;
-const ROAD_SPEED: f32 = 14.0;
-const CONNECTOR_SPEED: f32 = 7.0;
+const ROAD_SPEED: f32 = 13.0;
+const CONNECTOR_SPEED: f32 = 6.0;
 const IDM_ACCEL: f32 = 1.4;
 const IDM_BRAKE: f32 = 2.0;
 const IDM_MIN_GAP: f32 = 2.0;
@@ -197,8 +197,11 @@ fn connector_curve(p_in: Vec2, d_in: Vec2, p_out: Vec2, d_out: Vec2, radius: f32
         let qp = p_out - p_in;
         let t = qp.perp_dot(d_out) / denom;
         let u = qp.perp_dot(d_in) / denom;
-        let limit = radius * 3.0 + 5.0;
-        if t > 0.0 && u > 0.0 && t < limit && u < limit {
+        // Keep the control point inside the junction so turns never swing
+        // out over the kerb, even at shallow angles.
+        let limit = radius * 1.3 + 1.0;
+        if t > 0.0 && u > 0.0 {
+            let t = t.min(limit);
             control = p_in + d_in * t;
         }
     }
@@ -244,17 +247,22 @@ impl LaneNetwork {
             }
             let p0 = pa + dir * ra;
             let p1 = pb - dir * rb;
-            // Right-hand traffic: forward lanes sit to the right of the direction of travel.
-            let right = Vec2::new(dir.y, -dir.x);
+            // Right-hand traffic. The sim plane maps to world XZ with y up, so the
+            // right of a car heading `dir` is (-dir.y, dir.x). The whole lane set is
+            // centred on the segment line: backward lanes on the left half, forward
+            // lanes on the right half, boundary k at (k - total/2) lane widths.
+            let right = Vec2::new(-dir.y, dir.x);
+            let total = seg.lanes() as f32;
+            let left_edge = -total * 0.5 * LANE_WIDTH;
             let mut ids = Vec::new();
             for i in 0..seg.lanes_fwd {
-                let off = right * ((i as f32 + 0.5) * LANE_WIDTH);
+                let off = right * (left_edge + (seg.lanes_bwd as f32 + i as f32 + 0.5) * LANE_WIDTH);
                 let id = self.lanes.len() as LaneId;
                 self.lanes.push(Lane::new(vec![p0 + off, p1 + off], LaneKind::Road { segment: sid, forward: true, index: i }, seg.b, ROAD_SPEED));
                 ids.push(id);
             }
             for j in 0..seg.lanes_bwd {
-                let off = -right * ((j as f32 + 0.5) * LANE_WIDTH);
+                let off = right * (left_edge + (seg.lanes_bwd as f32 - j as f32 - 0.5) * LANE_WIDTH);
                 let id = self.lanes.len() as LaneId;
                 self.lanes.push(Lane::new(vec![p1 + off, p0 + off], LaneKind::Road { segment: sid, forward: false, index: j }, seg.a, ROAD_SPEED));
                 ids.push(id);
@@ -619,6 +627,31 @@ mod tests {
         // Centre: 4 incoming lanes x 3 outgoing (no U-turn) = 12; dead ends: 4 U-turns.
         assert_eq!(connectors, 16);
         assert!(t.net.intersections.iter().any(|i| i.signalized));
+    }
+
+    #[test]
+    fn lanes_keep_right_and_turns_stay_inside_junctions() {
+        let roads = cross();
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        // Eastbound lane (a -> b with +x direction) must sit on the +y side in
+        // sim coordinates, which is the driver's right once y maps to world z.
+        for lane in t.net.lanes.iter().filter(|l| !l.is_connector()) {
+            let d = (lane.end() - lane.start()).normalize_or_zero();
+            let mid = (lane.start() + lane.end()) * 0.5;
+            // Perpendicular offset of the lane from the segment centreline.
+            let centre_offset = if d.x.abs() > 0.5 { mid.y } else { mid.x };
+            let right = Vec2::new(-d.y, d.x);
+            let side = if d.x.abs() > 0.5 { right.y } else { right.x };
+            assert!(centre_offset * side > 0.0, "lane {:?} is on the left of its direction", lane.kind);
+        }
+        for lane in t.net.lanes.iter().filter(|l| l.is_connector()) {
+            let node = roads.node(lane.end_node).pos;
+            let r = t.net.node_radius[lane.end_node.0 as usize];
+            for p in &lane.points {
+                assert!(p.distance(node) <= r * 1.6 + 0.5, "connector swings {:.1} m out of a {:.1} m junction", p.distance(node), r);
+            }
+        }
     }
 
     #[test]

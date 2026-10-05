@@ -232,16 +232,15 @@ fn road_meshes(sim: &Sim, assets: &GameAssets) -> (MeshData, MeshData) {
         let hw = seg.half_width();
         asphalt.ground_strip(&[a, b], hw * 2.0, 0.05, asphalt_c);
         let d = (b - a).normalize_or_zero();
-        let right = SVec2::new(d.y, -d.x);
+        let right = SVec2::new(-d.y, d.x);
         // Edge lines just inside the shoulder.
         let e = right * (hw - SHOULDER * 0.5);
         glow.ground_strip(&[a + e, b + e], 0.22, 0.09, edge_c);
         glow.ground_strip(&[a - e, b - e], 0.22, 0.09, edge_c);
         // Lane boundaries, measured from the centreline: fwd lanes on the right.
         let total = seg.lanes() as f32;
-        let centre_offset = (seg.lanes_fwd as f32 - seg.lanes_bwd as f32) * 0.5 * LANE_WIDTH;
-        // Boundary k sits at offset (k - lanes_bwd) * LANE_WIDTH from the centreline shifted so the
-        // road is symmetric about the segment line.
+        // Boundary k sits at (k - total/2) lane widths to the right of the segment line;
+        // boundary `lanes_bwd` separates the two directions.
         // Street lamps every 28 m, alternating sides.
         let len = a.distance(b);
         let mut t = 14.0;
@@ -258,7 +257,7 @@ fn road_meshes(sim: &Sim, assets: &GameAssets) -> (MeshData, MeshData) {
         for k in 1..seg.lanes() as u32 {
             let off = (k as f32 - total * 0.5) * LANE_WIDTH;
             let p = right * off;
-            let is_centre = seg.lanes_fwd > 0 && seg.lanes_bwd > 0 && (off - (-centre_offset)).abs() < 0.01;
+            let is_centre = seg.lanes_fwd > 0 && seg.lanes_bwd > 0 && k == seg.lanes_bwd as u32;
             if is_centre {
                 glow.ground_strip(&[a + p + right * 0.2, b + p + right * 0.2], 0.16, 0.09, centre_c);
                 glow.ground_strip(&[a + p - right * 0.2, b + p - right * 0.2], 0.16, 0.09, centre_c);
