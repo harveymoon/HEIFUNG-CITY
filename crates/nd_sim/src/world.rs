@@ -1,10 +1,10 @@
 use crate::buildings::{Building, BuildingId, Construction, Tier};
 use crate::citizens::{Activity, Citizen, CitizenId, Purpose};
 use crate::clock::SimClock;
-use crate::economy::Economy;
+use crate::economy::{Economy, Flow, GIG_INCOME, OVERDRAFT};
 use crate::events::SimEvent;
 use crate::land_value::{LandValue, LandValueBuilder};
-use crate::market::{best_seller, Business, BusinessKind, Resource, EXPORT_DISCOUNT, IMPORT_MARKUP};
+use crate::market::{Business, BusinessKind, Resource, EXPORT_DISCOUNT, HAULAGE, IMPORT_MARKUP};
 use crate::traffic::Cargo;
 use crate::mind::{Decision, Intent, MindContext, MindProvider};
 use crate::names;
@@ -41,25 +41,40 @@ pub const REDEVELOP_DAYS: u8 = 3;
 /// Buildings within this distance count towards a lot's local density.
 pub const DENSITY_RADIUS: f32 = 150.0;
 
+/// Walking and cycling speeds in metres per second; the per-tick values in
+/// `WorldConfig` are derived from these through `traffic_seconds_per_tick`.
+pub const WALK_MPS: f32 = 1.4;
+pub const BIKE_MPS: f32 = 4.5;
+/// Save format version written into every snapshot. Bump it when a load
+/// needs migration; `World::after_load` upgrades older saves.
+pub const SAVE_VERSION: u32 = 1;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct WorldConfig {
     pub seed: u64,
     /// Half-size of the buildable square, in metres.
     pub half_extent: f32,
-    /// Metres per tick (minute) when walking.
-    /// Metres walked per tick. Movement shows `traffic_seconds_per_tick` of
-    /// real motion per sim minute, so this is 1.4 m/s times that.
+    /// Metres walked per tick. Derived: `WALK_MPS` seconds of walking per
+    /// tick, see `metres_per_tick`; recomputed on load, never set by hand.
     pub walk_speed: f32,
-    #[serde(default = "default_bike_speed")]
+    /// Metres cycled per tick, derived like `walk_speed`.
     pub bike_speed: f32,
     /// Trips at least this long are cycled when the citizen owns a bike.
-    #[serde(default = "default_bike_threshold")]
     pub bike_threshold: f32,
     /// Trips at least this long (straight line) are driven, shorter ones walked.
     pub drive_threshold: f32,
-    /// Seconds of vehicle physics simulated per tick. Smaller than 60 keeps
-    /// trips on screen for several sim minutes, as city builders usually do.
+    /// Seconds of real motion simulated per tick, for everything that moves:
+    /// cars, buses, trains, walkers and cyclists. A tick is a clock minute,
+    /// so 60 would be real time. That makes a 500 m walk six ticks and every
+    /// trip a blink; 1.5 (the old value) made the same walk four hours of
+    /// clock, so people left for work and arrived at closing time and
+    /// hunger was driven by walking. The compromise is 4: a 300 m commute
+    /// takes a quarter of an hour of clock, a kilometre across town by bus
+    /// well under an hour, and vehicles look about four times real speed at
+    /// 1x, which reads as a city builder rather than a stopwatch.
     pub traffic_seconds_per_tick: f32,
+    /// Physics substeps per tick; keeps each car step near half a second.
     pub traffic_substeps: usize,
     pub immigration_interval: u64,
     pub development_interval: u64,
@@ -67,34 +82,71 @@ pub struct WorldConfig {
     pub max_builds_per_interval: usize,
 }
 
-fn default_bike_speed() -> f32 {
-    4.5 * 1.5
-}
+impl WorldConfig {
+    /// Metres something moving at `mps` covers in one tick.
+    pub fn metres_per_tick(&self, mps: f32) -> f32 {
+        mps * self.traffic_seconds_per_tick
+    }
 
-fn default_bike_threshold() -> f32 {
-    40.0
+    /// Recompute the speeds that follow from `traffic_seconds_per_tick`.
+    pub fn derive_speeds(&mut self) {
+        self.walk_speed = self.metres_per_tick(WALK_MPS);
+        self.bike_speed = self.metres_per_tick(BIKE_MPS);
+    }
 }
 
 impl Default for WorldConfig {
     fn default() -> Self {
-        Self {
+        let mut c = Self {
             seed: 7,
             half_extent: 900.0,
-            walk_speed: 1.4 * 1.5,
-            bike_speed: default_bike_speed(),
-            bike_threshold: default_bike_threshold(),
+            walk_speed: 0.0,
+            bike_speed: 0.0,
+            bike_threshold: 40.0,
             drive_threshold: 60.0,
-            traffic_seconds_per_tick: 1.5,
-            traffic_substeps: 3,
+            traffic_seconds_per_tick: 4.0,
+            traffic_substeps: 8,
             immigration_interval: 30,
             development_interval: 20,
             max_builds_per_interval: 2,
-        }
+        };
+        c.derive_speeds();
+        c
     }
 }
 
+/// A land value recomputation in progress, spread over a few ticks so one
+/// tick does not carry the whole grid. Cloning a world mid-update drops the
+/// partial work: the next cycle starts afresh and the grid merely stays a
+/// little older for two hours.
+#[derive(Default)]
+struct LandValueWork {
+    builder: Option<LandValueBuilder>,
+}
+
+impl Clone for LandValueWork {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl std::fmt::Debug for LandValueWork {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "LandValueWork({})", if self.builder.is_some() { "pending" } else { "idle" })
+    }
+}
+
+/// Where in the two-hour cycle the land value strips run. They sit away
+/// from the hourly tick (0) and the development ticks so no single tick
+/// does everything.
+const LAND_VALUE_PHASE: u64 = 20;
+const LAND_VALUE_STRIPS: u64 = 5;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct World {
+    /// `SAVE_VERSION` at the time of saving; older saves are migrated on load.
+    #[serde(default)]
+    pub version: u32,
     pub config: WorldConfig,
     pub clock: SimClock,
     #[serde(with = "rng_serde")]
@@ -106,6 +158,10 @@ pub struct World {
     next_gesture: u64,
     /// Bumped whenever master or project changes.
     pub plan_version: u64,
+    /// The project applied to the master, for the `plan_version` it was
+    /// built at; refreshed whenever the plan changes, so reads are free.
+    #[serde(skip)]
+    plan_cache: Option<(u64, Plan)>,
     pub roads: RoadNetwork,
     pub zones: SlotMap<ZoneId, Zone>,
     pub lots: SlotMap<LotId, Lot>,
@@ -127,17 +183,44 @@ pub struct World {
     pub economy: Economy,
     pub land_value: LandValue,
     #[serde(skip)]
+    land_value_work: LandValueWork,
+    #[serde(skip)]
     pub events: Vec<SimEvent>,
     next_seed: u64,
+    /// Connected component of each road node over street and path
+    /// segments (index = node id), rebuilt with the roads.
+    #[serde(skip)]
+    road_component: Vec<u32>,
+    /// Working stations and yards (connected and not derelict), refreshed
+    /// when links, buildings or conditions change.
+    #[serde(skip)]
+    stations: Vec<BuildingId>,
+    #[serde(skip)]
+    yards: Vec<BuildingId>,
+    /// Businesses selling each resource, with their lot centres, for the
+    /// hour `seller_index_hour` was built in.
+    #[serde(skip)]
+    seller_index: HashMap<Resource, Vec<(BuildingId, Vec2)>>,
+    #[serde(skip)]
+    seller_index_hour: Option<u64>,
+    /// Statistics read every tick but recomputed every ten.
+    #[serde(skip)]
+    available: [bool; 6],
+    #[serde(skip)]
+    groceries_for_sale: bool,
+    #[serde(skip)]
+    meals_for_sale: bool,
 }
 
 impl World {
-    pub fn new(config: WorldConfig) -> Self {
+    pub fn new(mut config: WorldConfig) -> Self {
+        config.derive_speeds();
         let land_value = LandValue::new(config.half_extent + 200.0, 32.0);
         let mut economy = Economy::default();
         economy.treasury = 60_000.0;
         let half = config.half_extent;
         let mut w = Self {
+            version: SAVE_VERSION,
             land_value,
             rng: SimRng::seed_from_u64(config.seed),
             config,
@@ -146,6 +229,7 @@ impl World {
             project: None,
             next_gesture: 1,
             plan_version: 0,
+            plan_cache: None,
             roads: RoadNetwork::default(),
             zones: SlotMap::with_key(),
             lots: SlotMap::with_key(),
@@ -158,9 +242,19 @@ impl World {
             rail: Rail::default(),
             facilities: SlotMap::with_key(),
             economy,
+            land_value_work: LandValueWork::default(),
             events: Vec::new(),
             next_seed: 1,
+            road_component: Vec::new(),
+            stations: Vec::new(),
+            yards: Vec::new(),
+            seller_index: HashMap::new(),
+            seller_index_hour: None,
+            available: [false; 6],
+            groceries_for_sale: false,
+            meals_for_sale: false,
         };
+        w.plan_changed();
         // The trunk line: a railway already crosses the map south of the
         // centre. Branches, stations and yards hang off it.
         w.add_rail(&[Vec2::new(-half - 100.0, TRUNK_Y), Vec2::new(half + 100.0, TRUNK_Y)]);
@@ -191,10 +285,23 @@ impl World {
         Ok(w)
     }
 
-    /// Rebuild derived state that is not serialised.
+    /// Rebuild derived state that is not serialised, and make a save from
+    /// any earlier version safe to run.
     fn after_load(&mut self) {
+        // Speeds follow the time scale, so a save from before a retune
+        // walks at today's pace.
+        self.config.derive_speeds();
+        self.validate();
+        self.version = SAVE_VERSION;
+        self.rebuild_road_components();
         self.traffic.rebuild(&self.roads);
-        self.rebuild_walk();
+        // Park layouts are saved with their lots (the benches people sit on
+        // must survive a load), so they are only planned again when a save
+        // from before parks were serialised has park lots without one.
+        if self.lots.values().any(|l| l.land_use == LandUse::Park && l.polygon.len() >= 3 && l.park.is_none()) {
+            crate::park::plan_parks(&mut self.lots, &self.land_value);
+        }
+        self.walk = WalkGraph::build(&self.roads, &self.lots, &self.land_value, self.walk.version + 1);
         for (_, car) in self.traffic.reattach_cars() {
             self.strand_car(car);
         }
@@ -205,8 +312,79 @@ impl World {
             self.citizens[id].transit = None;
             self.strand_driver(id, pos);
         }
-        self.plan_version += 1;
+        self.refresh_facility_cache();
+        self.update_economy();
+        self.plan_changed();
         self.events.push(SimEvent::PlanChanged);
+    }
+
+    /// Drop every reference to something that is not there: a hand-edited
+    /// or truncated save must never index a missing building or citizen.
+    fn validate(&mut self) {
+        let tick = self.clock.tick;
+        // Lots and buildings must agree about who stands where.
+        for l in self.lots.values_mut() {
+            if l.building.is_some_and(|b| !self.buildings.contains_key(b)) {
+                l.building = None;
+            }
+        }
+        let building_ids: std::collections::HashSet<BuildingId> = self.buildings.keys().collect();
+        for b in self.buildings.values_mut() {
+            b.residents.retain(|c| self.citizens.contains_key(*c));
+            b.workers.retain(|c| self.citizens.contains_key(*c));
+            b.rail_inbound.retain(|c| building_ids.contains(&c.to));
+        }
+        for f in self.facilities.values_mut() {
+            if f.building.is_some_and(|b| !self.buildings.contains_key(b)) {
+                f.building = None;
+            }
+            if f.lot.is_some_and(|l| !self.lots.contains_key(l)) {
+                f.lot = None;
+            }
+        }
+        let buildings = &self.buildings;
+        let routes = &self.transit.routes;
+        for c in self.citizens.values_mut() {
+            let mut lost = false;
+            for slot in [&mut c.home, &mut c.work, &mut c.inside, &mut c.parked_at] {
+                if slot.is_some_and(|b| !buildings.contains_key(b)) {
+                    *slot = None;
+                    lost = true;
+                }
+            }
+            let trip_ok = match c.transit.map(|t| t.leg) {
+                None => true,
+                Some(TransitLeg::Bus { route, board, alight }) => routes.get(route).is_some_and(|r| board < r.stops.len() && alight < r.stops.len()),
+                Some(TransitLeg::Rail { board, alight }) => buildings.contains_key(board) && buildings.contains_key(alight),
+            } && c.transit.is_none_or(|t| buildings.contains_key(t.target));
+            if !trip_ok {
+                c.transit = None;
+                lost = true;
+            }
+            let target_gone = match &c.activity {
+                Activity::Visiting(b) | Activity::Sitting { park: b, .. } => !buildings.contains_key(*b),
+                Activity::Traveling { to: Some(b), .. } | Activity::Driving { to: Some(b), .. } => !buildings.contains_key(*b),
+                Activity::AtHome => c.home.is_none(),
+                Activity::Working => c.work.is_none(),
+                Activity::Waiting { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } => c.transit.is_none(),
+                _ => false,
+            };
+            if lost || target_gone {
+                c.activity = Activity::Idle;
+                c.inside = None;
+                c.next_decision_tick = tick + 1;
+            }
+        }
+        // Vehicles whose ends no longer exist, and riders who do not.
+        let cars: Vec<CarId> = self.traffic.cars.iter().filter(|(_, car)| car.cargo.is_some_and(|c| !buildings.contains_key(c.to)) || car.bus.as_ref().is_some_and(|b| !routes.contains_key(b.route))).map(|(id, _)| id).collect();
+        for id in cars {
+            self.traffic.remove_car(id);
+        }
+        for car in self.traffic.cars.values_mut() {
+            if let Some(bus) = car.bus.as_mut() {
+                bus.passengers.retain(|p| self.citizens.contains_key(*p));
+            }
+        }
     }
 
     fn fresh_seed(&mut self) -> u64 {
@@ -224,45 +402,53 @@ impl World {
         self.project.is_some()
     }
 
+    /// Every change to master or project goes through here: the version
+    /// moves and the effective plan is rebuilt once, so the tools can read
+    /// it as often as they like.
+    fn plan_changed(&mut self) {
+        self.plan_version += 1;
+        let plan = match &self.project {
+            Some(p) => p.apply_to(&self.master),
+            None => self.master.clone(),
+        };
+        self.plan_cache = Some((self.plan_version, plan));
+    }
+
     pub fn start_project(&mut self) {
         if self.project.is_none() {
             self.project = Some(Project::default());
-            self.plan_version += 1;
+            self.plan_changed();
         }
     }
 
     pub fn discard_project(&mut self) {
         if self.project.take().is_some() {
-            self.plan_version += 1;
+            self.plan_changed();
         }
     }
 
-    fn project_mut(&mut self) -> &mut Project {
+    /// Edit the project (starting one if need be), then refresh the plan.
+    fn edit_project(&mut self, f: impl FnOnce(&mut Project)) {
         self.start_project();
-        self.plan_version += 1;
-        self.project.as_mut().unwrap()
+        f(self.project.as_mut().unwrap());
+        self.plan_changed();
     }
 
     pub fn add_gesture(&mut self, gesture: Gesture) -> GestureId {
         let id = GestureId(self.next_gesture);
         self.next_gesture += 1;
-        self.project_mut().push(id, Some(gesture));
+        self.edit_project(|p| p.push(id, Some(gesture)));
         id
     }
 
     /// Replace a gesture in the project. With `commit == false` the last step
     /// is amended instead of a new one being recorded (continuous drags).
     pub fn set_gesture(&mut self, id: GestureId, gesture: Gesture, commit: bool) {
-        let p = self.project_mut();
-        if commit {
-            p.push(id, Some(gesture));
-        } else {
-            p.amend(id, Some(gesture));
-        }
+        self.edit_project(|p| if commit { p.push(id, Some(gesture)) } else { p.amend(id, Some(gesture)) });
     }
 
     pub fn remove_gesture(&mut self, id: GestureId) {
-        self.project_mut().push(id, None);
+        self.edit_project(|p| p.push(id, None));
     }
 
     /// Change the land use of a zone gesture in place.
@@ -279,7 +465,7 @@ impl World {
     pub fn undo(&mut self) -> bool {
         let ok = self.project.as_mut().map_or(false, |p| p.undo());
         if ok {
-            self.plan_version += 1;
+            self.plan_changed();
         }
         ok
     }
@@ -287,15 +473,19 @@ impl World {
     pub fn redo(&mut self) -> bool {
         let ok = self.project.as_mut().map_or(false, |p| p.redo());
         if ok {
-            self.plan_version += 1;
+            self.plan_changed();
         }
         ok
     }
 
-    pub fn effective_plan(&self) -> Plan {
-        match &self.project {
-            Some(p) => p.apply_to(&self.master),
-            None => self.master.clone(),
+    /// The master plan with the project applied, as of `plan_version`.
+    /// Borrowed, not cloned: it is cached by `plan_changed`.
+    pub fn effective_plan(&self) -> &Plan {
+        match &self.plan_cache {
+            Some((v, p)) if *v == self.plan_version => p,
+            // Every mutation refreshes the cache; a miss means `plan_version`
+            // was bumped from outside, and the master is the honest fallback.
+            _ => &self.master,
         }
     }
 
@@ -315,7 +505,7 @@ impl World {
     pub fn implement(&mut self) {
         let Some(project) = self.project.take() else { return };
         if project.is_empty() {
-            self.plan_version += 1;
+            self.plan_changed();
             return;
         }
         self.master = project.apply_to(&self.master);
@@ -353,7 +543,7 @@ impl World {
     }
 
     fn rebuild_from_master(&mut self) {
-        self.plan_version += 1;
+        self.plan_changed();
 
         // Roads.
         let mut roads = RoadNetwork::default();
@@ -369,6 +559,7 @@ impl World {
         }
         roads.version = self.roads.version + 1;
         self.roads = roads;
+        self.rebuild_road_components();
 
         // Zones, newest first so a zone drawn over an older one takes the ground.
         // SlotMap reuses freed slots, so iteration order is not insertion order;
@@ -397,17 +588,21 @@ impl World {
         self.lots.retain(|_, l| !footprints.iter().any(|fp| point_in_polygon(l.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.98), &l.polygon)));
         let fids: Vec<FacilityId> = self.facilities.keys().collect();
         for fid in fids {
-            let lot = self.facility_lot(fid);
-            let id = self.lots.insert(lot);
-            self.facilities[fid].lot = Some(id);
+            // A facility with no street anywhere to front gets no lot this
+            // time round; its building goes with the old lot below.
+            self.facilities[fid].lot = self.facility_lot(fid).map(|lot| self.lots.insert(lot));
         }
+        // Match old lots to new ones through a coarse grid of the new lots'
+        // bounding boxes, so a rebuild costs lots × neighbours, not lots².
+        let grid = LotGrid::new(&self.lots);
         // (building, where it stood, pulled down for the works?)
         let mut demolish: Vec<(BuildingId, Vec2, bool)> = Vec::new();
         for (_, old) in old_lots.iter() {
             let Some(bid) = old.building else { continue };
-            let found = self
-                .lots
-                .iter()
+            let found = grid
+                .near(old.center, 6.0)
+                .into_iter()
+                .map(|id| (id, &self.lots[id]))
                 .filter(|(_, l)| l.building.is_none() && l.usable())
                 .map(|(id, l)| (id, if l.contains(old.center) { 0.0 } else { l.center.distance(old.center) }))
                 .filter(|(_, d)| *d < 6.0)
@@ -445,6 +640,10 @@ impl World {
         for (_, car) in self.traffic.clear_cars() {
             self.strand_car(car);
         }
+        // Trains ran on track that may be gone or re-laid, and their stops
+        // and node ids are stale either way: everyone gets off where the
+        // train stands and the next headway brings fresh ones.
+        self.clear_trains();
         // Bus stops follow the streets they sat on, or go.
         for route in self.transit.routes.values_mut() {
             route.stops = route.stops.iter().filter_map(|s| BusStop::snap(&self.roads, s.pos)).collect();
@@ -458,6 +657,51 @@ impl World {
         self.events.push(SimEvent::PlanChanged);
     }
 
+    /// Union-find over the alive street and path segments: two nodes share
+    /// a component when a walker or car can get from one to the other.
+    fn rebuild_road_components(&mut self) {
+        let n = self.roads.nodes.len();
+        let mut parent: Vec<u32> = (0..n as u32).collect();
+        fn find(parent: &mut [u32], mut x: u32) -> u32 {
+            while parent[x as usize] != x {
+                let p = parent[x as usize];
+                parent[x as usize] = parent[p as usize];
+                x = p;
+            }
+            x
+        }
+        for (_, seg) in self.roads.alive_segments() {
+            if seg.is_rail() {
+                continue;
+            }
+            let (a, b) = (find(&mut parent, seg.a.0), find(&mut parent, seg.b.0));
+            if a != b {
+                parent[a as usize] = b;
+            }
+        }
+        self.road_component = (0..n as u32).map(|i| find(&mut parent, i)).collect();
+    }
+
+    /// Component id of a road node, if the node exists.
+    fn road_component(&self, n: NodeId) -> Option<u32> {
+        self.road_component.get(n.0 as usize).copied()
+    }
+
+    /// Take every train off the line; its passengers stand where it was
+    /// and decide again.
+    fn clear_trains(&mut self) {
+        let trains: Vec<Train> = self.rail.trains.drain().map(|(_, t)| t).collect();
+        for t in trains {
+            let pos = t.head();
+            for p in t.passengers {
+                if let Some(c) = self.citizens.get_mut(p) {
+                    c.transit = None;
+                }
+                self.strand_driver(p, pos);
+            }
+        }
+    }
+
     fn demolish(&mut self, bid: BuildingId) {
         self.demolish_with(bid, None, None);
     }
@@ -468,7 +712,7 @@ impl World {
         let Some(b) = self.buildings.remove(bid) else { return };
         let tick = self.clock.tick;
         let center = self.lots.get(b.lot).map(|l| l.center).or(at).unwrap_or(Vec2::ZERO);
-        for cid in b.residents.iter().chain(b.workers.iter()).copied() {
+        for cid in b.residents.iter().copied() {
             if let Some(c) = self.citizens.get_mut(cid) {
                 if c.home == Some(bid) {
                     c.home = None;
@@ -477,10 +721,11 @@ impl World {
                         None => c.remember(tick, format!("{} was demolished. Homeless again.", b.name)),
                     }
                 }
-                if c.work == Some(bid) {
-                    c.work = None;
-                    c.income = 40.0;
-                }
+            }
+        }
+        for cid in b.workers.iter().copied() {
+            if self.citizens.get(cid).is_some_and(|c| c.work == Some(bid)) {
+                self.lay_off(cid, None);
             }
         }
         let inside: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.inside == Some(bid)).map(|(id, _)| id).collect();
@@ -490,11 +735,35 @@ impl World {
             c.pos = center;
             c.activity = Activity::Idle;
         }
+        if b.rail.is_some() {
+            for f in self.facilities.values_mut() {
+                if f.building == Some(bid) {
+                    f.building = None;
+                }
+            }
+            self.refresh_facility_cache();
+        }
         self.events.push(SimEvent::BuildingRemoved(bid, b.lot));
     }
 
-    /// A driver whose car vanished (network rebuilt, bad save) stands where
-    /// the car was and decides again.
+    /// Someone loses their job: back to gig money, with a note if there is
+    /// a story to it.
+    fn lay_off(&mut self, cid: CitizenId, memory: Option<String>) {
+        let tick = self.clock.tick;
+        if let Some(c) = self.citizens.get_mut(cid) {
+            c.work = None;
+            c.income = GIG_INCOME;
+            if let Some(m) = memory {
+                c.remember(tick, m);
+            }
+        }
+    }
+
+    /// Personal skill factor, fixed per person, spreading incomes within a job.
+    fn skill_of(seed: u64) -> f32 {
+        0.75 + (seed % 1000) as f32 / 1000.0 * 0.6
+    }
+
     /// A car taken off the road: its driver, or a bus's riders, stand there.
     fn strand_car(&mut self, car: crate::traffic::Car) {
         // A truck taken off the road still delivers: the buyer already counts
@@ -515,11 +784,14 @@ impl World {
         }
     }
 
+    /// Whoever was in a vehicle that vanished (network rebuilt, bad save)
+    /// stands where it was and decides again.
     fn strand_driver(&mut self, cid: CitizenId, pos: Vec2) {
         if let Some(c) = self.citizens.get_mut(cid) {
             c.pos = pos;
             c.inside = None;
             c.activity = Activity::Idle;
+            c.pending_footfall.clear();
             c.next_decision_tick = self.clock.tick + 1;
         }
     }
@@ -600,23 +872,29 @@ impl World {
             self.events.push(SimEvent::NewDay(self.clock.day()));
             self.daily_update();
         }
+        // Periodic work is staggered so no tick carries more than one heavy
+        // job: the hour starts at :00, sites advance at :30, land value runs
+        // in strips from :20, development and immigration sit between.
         if tick % 60 == 0 {
             self.hourly_economy();
+        }
+        if tick % 60 == 30 {
             self.step_construction();
         }
-        if tick % 120 == 0 {
-            self.update_land_value();
+        let lv = tick % 120;
+        if (LAND_VALUE_PHASE..LAND_VALUE_PHASE + LAND_VALUE_STRIPS).contains(&lv) {
+            self.update_land_value_strip((lv - LAND_VALUE_PHASE) as u8);
         }
-        if tick % 10 == 0 {
+        if tick % 10 == 7 {
             self.update_economy();
         }
-        if tick % self.config.development_interval == 0 {
+        if (tick + 5) % self.config.development_interval == 0 {
             self.develop();
         }
-        if tick % self.config.immigration_interval == 0 {
+        if (tick + 15) % self.config.immigration_interval == 0 {
             self.immigrate();
         }
-        if tick % 120 == 0 {
+        if tick % 120 == 90 {
             self.job_search();
         }
         for (id, decision) in minds.poll() {
@@ -712,23 +990,109 @@ impl World {
         e.gini = Economy::gini(&mut incomes);
         e.avg_land_value = self.land_value.average();
         e.recompute();
+        // Transit and rail counts, and what minds may ask for: read every
+        // tick, so they are tallied here rather than in each step.
+        let (mut bus_wait, mut rail_wait, mut riding, mut on_train) = (0u32, 0u32, 0u32, 0u32);
+        for c in self.citizens.values() {
+            match c.activity {
+                Activity::Waiting { .. } => {
+                    if c.transit.is_some_and(|t| matches!(t.leg, TransitLeg::Rail { .. })) {
+                        rail_wait += 1;
+                    } else {
+                        bus_wait += 1;
+                    }
+                }
+                Activity::Riding { .. } => riding += 1,
+                Activity::OnTrain { .. } => on_train += 1,
+                _ => {}
+            }
+        }
+        let depots = self.buildings.values().filter(|b| b.depot && !b.is_derelict()).count() as u32;
+        let t = &mut self.economy.transit;
+        t.buses = self.traffic.cars.values().filter(|c| c.bus.is_some()).count() as u32;
+        t.depots = depots;
+        t.depot_capacity = depots * transit::DEPOT_CAPACITY;
+        t.waiting = bus_wait + rail_wait;
+        t.riding = riding;
+        self.transit.stats = t.clone();
+        let r = &mut self.rail.stats;
+        r.waiting = rail_wait;
+        r.riding = on_train;
+        r.trains = self.rail.trains.len() as u32;
+        r.stations = self.stations.len() as u32;
+        r.yards = self.yards.len() as u32;
+        r.freight_waiting = self.yards.iter().filter_map(|y| self.buildings.get(*y)).map(|b| b.rail_inbound.iter().map(|c| c.amount).sum::<f32>()).sum();
+        self.available = self.available_land_uses();
+        self.groceries_for_sale = self.retail_available(Resource::Groceries);
+        self.meals_for_sale = self.retail_available(Resource::BakedGoods);
     }
 
     /// Sum accessibility, amenities, nuisances, traffic and neighbours into the
-    /// land value grid, then refresh the rent of every building.
-    fn update_land_value(&mut self) {
-        let mut b = LandValueBuilder::new(&self.land_value);
-        for (sid, seg) in self.roads.alive_segments() {
-            let (a, bp) = self.roads.segment_points(sid);
-            let len = a.distance(bp);
-            let steps = (len / 24.0).ceil().max(1.0) as usize;
-            let w = if seg.lanes() >= 4 { 0.04 } else { 0.025 };
-            for i in 0..=steps {
-                b.splat(a.lerp(bp, i as f32 / steps as f32), 110.0, w);
+    /// land value grid, then refresh the rent of every building. Done in
+    /// `LAND_VALUE_STRIPS` strips on consecutive ticks: roads, then the
+    /// buildings in two halves, then lots and cars, then the blur and the
+    /// rents. Buildings a strip boundary falls between are seen by exactly
+    /// one strip, in slot order, so the result does not depend on timing.
+    fn update_land_value_strip(&mut self, strip: u8) {
+        if strip == 0 {
+            self.land_value_work.builder = Some(LandValueBuilder::new(&self.land_value));
+        }
+        let Some(mut b) = self.land_value_work.builder.take() else { return };
+        match strip {
+            0 => {
+                for (sid, seg) in self.roads.alive_segments() {
+                    let (a, bp) = self.roads.segment_points(sid);
+                    let len = a.distance(bp);
+                    let steps = (len / 24.0).ceil().max(1.0) as usize;
+                    let w = if seg.lanes() >= 4 { 0.04 } else { 0.025 };
+                    for i in 0..=steps {
+                        b.splat(a.lerp(bp, i as f32 / steps as f32), 110.0, w);
+                    }
+                }
+            }
+            1 | 2 => {
+                let n = self.buildings.len();
+                let half = n.div_ceil(2);
+                let range = if strip == 1 { 0..half } else { half..n };
+                for bld in self.buildings.values().skip(range.start).take(range.end - range.start) {
+                    Self::splat_building(&mut b, bld, &self.lots);
+                }
+            }
+            3 => {
+                for lot in self.lots.values() {
+                    if lot.building.is_none() {
+                        b.splat(lot.center, 60.0, -0.03);
+                    }
+                }
+                for car in self.traffic.cars.values() {
+                    b.splat(car.pos, 45.0, -0.004);
+                }
+            }
+            _ => {
+                b.finish(0.25, &mut self.land_value);
+                let lv = &self.land_value;
+                for bld in self.buildings.values_mut() {
+                    if let Some(lot) = self.lots.get(bld.lot) {
+                        bld.update_rent(lv.at(lot.center));
+                    }
+                }
+                return;
             }
         }
-        for bld in self.buildings.values() {
-            let Some(lot) = self.lots.get(bld.lot) else { continue };
+        self.land_value_work.builder = Some(b);
+    }
+
+    /// Run every strip at once, for tests and scripts that need the grid now.
+    pub fn update_land_value(&mut self) {
+        for strip in 0..LAND_VALUE_STRIPS as u8 {
+            self.update_land_value_strip(strip);
+        }
+    }
+
+    /// One building's pull on the land around it.
+    fn splat_building(b: &mut LandValueBuilder, bld: &Building, lots: &SlotMap<LotId, Lot>) {
+        {
+            let Some(lot) = lots.get(bld.lot) else { return };
             let c = lot.center;
             match bld.land_use {
                 LandUse::Park => b.splat(c, 180.0, 0.35),
@@ -761,29 +1125,17 @@ impl World {
                 }
             }
         }
-        for lot in self.lots.values() {
-            if lot.building.is_none() {
-                b.splat(lot.center, 60.0, -0.03);
-            }
-        }
-        for car in self.traffic.cars.values() {
-            b.splat(car.pos, 45.0, -0.004);
-        }
-        b.finish(0.25, &mut self.land_value);
-        let lv = &self.land_value;
-        for bld in self.buildings.values_mut() {
-            if let Some(lot) = self.lots.get(bld.lot) {
-                bld.update_rent(lv.at(lot.center));
-            }
-        }
     }
 
     /// Once a sim day: buildings wear, upgrade or decay; citizens pay rent and
     /// react to it.
     fn daily_update(&mut self) {
-        // Treasury: yesterday's taxes in, plant upkeep and imported power out.
+        // Treasury: yesterday's taxes came in as they were earned; plant
+        // upkeep and imported power are settled now, then the books close.
         let upkeep: f32 = self.buildings.values().filter_map(|b| b.plant).map(|k| k.upkeep_per_day()).sum();
-        self.economy.treasury += self.economy.tax_today - upkeep - self.economy.power.import_cost_today;
+        self.economy.debit(Flow::PlantUpkeep, upkeep);
+        let grid = self.economy.power.import_cost_today;
+        self.economy.debit(Flow::GridImport, grid);
         self.economy.power.upkeep_today = upkeep;
         self.economy.tax_today = 0.0;
         self.economy.power.import_cost_today = 0.0;
@@ -795,12 +1147,13 @@ impl World {
         let bus_days = self.traffic.cars.values().filter(|c| c.bus.is_some()).count() as f32;
         let depots = self.buildings.values().filter(|b| b.depot).count() as f32;
         let transit_upkeep = bus_days * transit::BUS_UPKEEP_PER_DAY + depots * transit::DEPOT_UPKEEP_PER_DAY;
-        self.economy.treasury -= transit_upkeep;
+        self.economy.debit(Flow::TransitUpkeep, transit_upkeep);
         self.economy.transit.upkeep_today = transit_upkeep;
         let stations = self.buildings.values().filter(|b| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::Station)).count() as f32;
         let yards = self.buildings.values().filter(|b| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::FreightYard)).count() as f32;
         let rail_upkeep = stations * rail::STATION_UPKEEP_PER_DAY + yards * rail::YARD_UPKEEP_PER_DAY;
-        self.economy.treasury -= rail_upkeep;
+        self.economy.debit(Flow::RailUpkeep, rail_upkeep);
+        self.economy.ledger.roll();
         let rs = &mut self.rail.stats;
         rs.upkeep_today = rail_upkeep;
         rs.riders_today = 0;
@@ -900,12 +1253,13 @@ impl World {
             self.daily_citizen(cid);
         }
         self.daily_businesses();
+        // Conditions moved: a station or yard may have gone derelict.
+        self.refresh_facility_cache();
     }
 
     /// Businesses pay wages; those that cannot for several days close, and
     /// closed buildings are demolished after a week so the lot can be reused.
     fn daily_businesses(&mut self) {
-        let tick = self.clock.tick;
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         let mut demolish = Vec::new();
         for bid in ids {
@@ -922,6 +1276,10 @@ impl World {
             let b = &mut self.buildings[bid];
             let bz = b.business.as_mut().unwrap();
             if bz.closed {
+                // A shut business takes nothing and owes no tax; whatever
+                // the inspector still showed from its last day is cleared.
+                bz.revenue_today = 0.0;
+                bz.spend_today = 0.0;
                 bz.broke_days = bz.broke_days.saturating_add(1);
                 if bz.broke_days > 7 {
                     demolish.push(bid);
@@ -929,6 +1287,7 @@ impl World {
                 continue;
             }
             self.economy.tax_today += revenue * 0.05;
+            self.economy.credit(Flow::BusinessTax, revenue * 0.05);
             if !publicly_funded {
                 bz.money -= wage_bill;
                 bz.spend_today += wage_bill;
@@ -948,10 +1307,8 @@ impl World {
                 let name = b.name.clone();
                 let _ = kind;
                 for w in workers {
+                    self.lay_off(w, Some(format!("{name} shut down. Out of a job.")));
                     if let Some(c) = self.citizens.get_mut(w) {
-                        c.work = None;
-                        c.income = 40.0;
-                        c.remember(tick, format!("{name} shut down. Out of a job."));
                         c.mood = (c.mood - 0.15).max(0.0);
                     }
                 }
@@ -1037,6 +1394,7 @@ impl World {
             l.footfall_hour = 0;
         }
         // Restocking: find the cheapest delivered supplier or import.
+        self.refresh_seller_index();
         for &bid in &ids {
             let (kind, jobs, needs, at, closed) = {
                 let b = &self.buildings[bid];
@@ -1064,14 +1422,7 @@ impl World {
             }
             for (r, amount) in needs {
                 let amount = amount.min(400.0);
-                let seller = {
-                    let sellers = self.buildings.iter().filter(|(id, b)| *id != bid && b.construction.is_none()).filter_map(|(id, b)| {
-                        let bz = b.business.as_ref()?;
-                        let lot = self.lots.get(b.lot)?;
-                        Some((id, bz, b.jobs, lot.center))
-                    });
-                    best_seller(sellers, r, at, amount)
-                };
+                let seller = self.best_seller(r, at, amount, bid);
                 match seller {
                     Some((seller_id, price)) => {
                         let got = self.buildings[seller_id].business.as_mut().unwrap().take(r, amount);
@@ -1141,6 +1492,7 @@ impl World {
         if let Some(&y) = yards.first() {
             self.buildings[y].rail_outbound += shipped;
         }
+        self.drain_stranded_rail_imports();
         // Statistics.
         let mut sums: std::collections::BTreeMap<Resource, (f32, u32, f32)> = std::collections::BTreeMap::new();
         let mut businesses = 0;
@@ -1169,70 +1521,151 @@ impl World {
         let _ = tick;
     }
 
+    /// Goods waiting at a yard no freight train will reach go by truck:
+    /// the yard lost its track or its street, or no freight has run for two
+    /// headways (the dispatcher is stuck, say at `MAX_TRAINS`).
+    fn drain_stranded_rail_imports(&mut self) {
+        let tick = self.clock.tick;
+        let stuck = tick.saturating_sub(self.rail.last_freight_tick) >= rail::FREIGHT_HEADWAY * 2;
+        let yards: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| !b.rail_inbound.is_empty() && b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::FreightYard)).map(|(id, _)| id).collect();
+        for y in yards {
+            let works = self.buildings[y].rail.as_ref().is_some_and(|l| l.works()) && !self.buildings[y].is_derelict();
+            if works && !stuck {
+                continue;
+            }
+            let queued = std::mem::take(&mut self.buildings[y].rail_inbound);
+            for cargo in queued {
+                self.dispatch_truck(TruckOrigin::Building(y), cargo, 6);
+            }
+        }
+    }
+
+    /// Who sells what this hour, with their lot centres. Built once an hour
+    /// so each buyer's search is a walk over the sellers of one resource,
+    /// not over every building; prices and stock are still read live.
+    fn refresh_seller_index(&mut self) {
+        let hour = self.clock.tick / 60;
+        if self.seller_index_hour == Some(hour) {
+            return;
+        }
+        self.seller_index_hour = Some(hour);
+        self.seller_index.clear();
+        for (id, b) in self.buildings.iter() {
+            if b.construction.is_some() {
+                continue;
+            }
+            let Some(bz) = &b.business else { continue };
+            if bz.closed {
+                continue;
+            }
+            let Some(lot) = self.lots.get(b.lot) else { continue };
+            for (r, _) in bz.kind.recipe().outputs {
+                self.seller_index.entry(*r).or_default().push((id, lot.center));
+            }
+        }
+    }
+
+    /// Best local seller of `r` for a buyer at `at` (other than `buyer`):
+    /// cheapest delivered price among those holding at least half the lot.
+    fn best_seller(&mut self, r: Resource, at: Vec2, amount: f32, buyer: BuildingId) -> Option<(BuildingId, f32)> {
+        self.refresh_seller_index();
+        let mut best: Option<(BuildingId, f32)> = None;
+        for &(id, pos) in self.seller_index.get(&r).map(|v| v.as_slice()).unwrap_or(&[]) {
+            if id == buyer {
+                continue;
+            }
+            let Some(b) = self.buildings.get(id) else { continue };
+            let Some(bz) = &b.business else { continue };
+            if bz.closed || b.construction.is_some() || bz.stock_of(r) < amount * 0.5 {
+                continue;
+            }
+            let price = bz.sell_price(r, b.jobs) + HAULAGE * pos.distance(at) * r.base_price();
+            if best.map_or(true, |(_, p)| price < p) {
+                best = Some((id, price));
+            }
+        }
+        best
+    }
+
     /// Send a truck from one business to another; deliver instantly when no
     /// road route exists.
     fn ship(&mut self, from: BuildingId, to: BuildingId, resource: Resource, amount: f32, price: f32) {
         let cargo = Cargo { from, to, resource, amount, price };
-        if let Some(bz) = self.buildings.get_mut(to).and_then(|b| b.business.as_mut()) {
-            *bz.inbound.entry(resource).or_insert(0.0) += amount;
-        }
-        if self.truck_count() >= crate::market::MAX_TRUCKS {
-            self.deliver(cargo);
-            return;
-        }
-        let route = (|| {
-            let fl = self.building_lot(from)?;
-            let tl = self.building_lot(to)?;
-            let fp = fl.entrance();
-            let tp = tl.entrance();
-            self.traffic.net.find_route(fl.front_segment, fp, tl.front_segment, tp)
-        })();
-        match route {
-            Some((route, s0, s1)) => {
-                let color = 7;
-                self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, color);
-            }
-            None => self.deliver(cargo),
-        }
+        self.note_inbound(to, resource, amount);
+        self.dispatch_truck(TruckOrigin::Building(from), cargo, 7);
     }
 
-    /// Import from outside: a truck enters at the city edge.
     fn truck_count(&self) -> usize {
         self.traffic.cars.values().filter(|c| c.cargo.is_some()).count()
     }
 
-    fn import(&mut self, to: BuildingId, resource: Resource, amount: f32, price: f32) {
-        let cargo = Cargo { from: to, to, resource, amount, price };
+    /// The buyer counts a load as on its way so it does not reorder.
+    fn note_inbound(&mut self, to: BuildingId, resource: Resource, amount: f32) {
         if let Some(bz) = self.buildings.get_mut(to).and_then(|b| b.business.as_mut()) {
             *bz.inbound.entry(resource).or_insert(0.0) += amount;
         }
+    }
+
+    /// Import from outside: by rail through the nearest working yard when
+    /// there is one, else a truck from the city edge.
+    fn import(&mut self, to: BuildingId, resource: Resource, amount: f32, price: f32) {
+        let cargo = Cargo { from: to, to, resource, amount, price };
+        self.note_inbound(to, resource, amount);
         // With a freight yard in town the goods come by rail, cheaper and
-        // later: the order waits at the yard for the next train.
-        if let Some(yard) = self.nearest_yard(to) {
-            let refund = price * (1.0 - rail::RAIL_IMPORT_FACTOR);
-            if let Some(bz) = self.buildings.get_mut(to).and_then(|b| b.business.as_mut()) {
-                bz.money += refund;
-                bz.spend_today -= refund;
+        // later: the order waits at the yard for the next train. Building
+        // sites are the exception: a quarter of the work waiting hours for
+        // each load would quadruple build times, so their parts come by
+        // the developer's own trucks.
+        let site = self.buildings.get(to).is_some_and(|b| b.construction.is_some());
+        if !site {
+            if let Some(yard) = self.nearest_yard(to) {
+                let refund = price * (1.0 - rail::RAIL_IMPORT_FACTOR);
+                if let Some(bz) = self.buildings.get_mut(to).and_then(|b| b.business.as_mut()) {
+                    bz.money += refund;
+                    bz.spend_today -= refund;
+                }
+                self.economy.market.imports_today -= refund;
+                self.buildings[yard].rail_inbound.push(Cargo { from: yard, to, resource, amount, price: price * rail::RAIL_IMPORT_FACTOR });
+                return;
             }
-            self.economy.market.imports_today -= refund;
-            self.buildings[yard].rail_inbound.push(Cargo { from: yard, to, resource, amount, price: price * rail::RAIL_IMPORT_FACTOR });
-            return;
         }
+        self.dispatch_truck(TruckOrigin::CityEdge, cargo, 6);
+    }
+
+    /// Where a truck can pull up at a building: its street, or for a lot
+    /// that lines a footpath, the nearest street it was given.
+    fn truck_stop(&self, b: BuildingId) -> Option<(SegmentId, Vec2)> {
+        let lot = self.building_lot(b)?;
+        Some(match lot.car_segment {
+            Some(s) => (s, lot.car_point),
+            None => (lot.front_segment, lot.entrance()),
+        })
+    }
+
+    /// Put a truck on the road with `cargo`, from a building or the city
+    /// edge. Delivered on the spot when there is no route or the road is
+    /// full of trucks already: the buyer counts the load as inbound.
+    fn dispatch_truck(&mut self, origin: TruckOrigin, cargo: Cargo, color: u8) {
         if self.truck_count() >= crate::market::MAX_TRUCKS {
             self.deliver(cargo);
             return;
         }
         let route = (|| {
-            let entry = self.entry_node_const()?;
-            let node = self.roads.node(entry);
-            let seg = *node.segments.iter().find(|&&s| self.roads.segment(s).alive)?;
-            let tl = self.building_lot(to)?;
-            let tp = tl.entrance();
-            self.traffic.net.find_route(seg, node.pos, tl.front_segment, tp)
+            let (from_seg, from_pt) = match origin {
+                TruckOrigin::Building(b) => self.truck_stop(b)?,
+                TruckOrigin::CityEdge => {
+                    let entry = self.entry_node_const()?;
+                    let node = self.roads.node(entry);
+                    let seg = *node.segments.iter().find(|&&s| self.roads.segment(s).alive)?;
+                    (seg, node.pos)
+                }
+            };
+            let (to_seg, to_pt) = self.truck_stop(cargo.to)?;
+            self.traffic.net.find_route(from_seg, from_pt, to_seg, to_pt)
         })();
         match route {
             Some((route, s0, s1)) => {
-                self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, 6);
+                self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, color);
             }
             None => self.deliver(cargo),
         }
@@ -1308,14 +1741,7 @@ impl World {
         if let Some(c) = self.buildings[bid].construction.as_mut() {
             c.ordered = true;
         }
-        let seller = {
-            let sellers = self.buildings.iter().filter(|(id, b)| *id != bid && b.construction.is_none()).filter_map(|(id, b)| {
-                let bz = b.business.as_ref()?;
-                let lot = self.lots.get(b.lot)?;
-                Some((id, bz, b.jobs, lot.center))
-            });
-            best_seller(sellers, resource, at, amount)
-        };
+        let seller = self.best_seller(resource, at, amount, bid);
         if let Some((seller_id, price)) = seller {
             let got = self.buildings[seller_id].business.as_mut().unwrap().take(resource, amount);
             if got > 0.0 {
@@ -1355,12 +1781,10 @@ impl World {
         b.built_tick = tick;
         let name = b.name.clone();
         for cid in crew {
-            let Some(c) = self.citizens.get_mut(cid) else { continue };
-            if c.work == Some(bid) {
-                c.work = None;
-                c.income = 40.0;
-                c.remember(tick, format!("Topped out {name}. Crew's laid off; looking for the next site."));
+            if self.citizens.get(cid).is_some_and(|c| c.work == Some(bid)) {
+                self.lay_off(cid, Some(format!("Topped out {name}. Crew's laid off; looking for the next site.")));
             }
+            let Some(c) = self.citizens.get_mut(cid) else { continue };
             if c.inside == Some(bid) {
                 c.inside = None;
                 c.pos = entrance;
@@ -1383,6 +1807,7 @@ impl World {
             let c = &mut self.citizens[cid];
             c.savings += income - rent - 20.0;
             self.economy.tax_today += income * 0.12;
+            self.economy.credit(Flow::IncomeTax, income * 0.12);
             // Wheels: a bike is cheap and first; a car needs a middle income and
             // savings; the poor sell a car they cannot keep.
             if !c.owns_bike && c.savings > 60.0 && self.rng.random_bool(0.08) {
@@ -1605,9 +2030,9 @@ impl World {
             // Income first: a job if one is open, gig money otherwise. Then a
             // home they can afford, the best tier available.
             let job = self.pick_building(|b| b.free_jobs() > 0);
-            // Personal skill factor spreads incomes within a job.
-            let skill: f32 = self.rng.random_range(0.75..1.35);
-            let income = job.and_then(|j| self.buildings.get(j)).map(|b| b.wage() * skill).unwrap_or(40.0 * skill);
+            let seed = self.fresh_seed();
+            let skill = Self::skill_of(seed);
+            let income = job.and_then(|j| self.buildings.get(j)).map(|b| b.wage() * skill).unwrap_or(GIG_INCOME * skill);
             let affordable: Vec<(BuildingId, Tier)> = self
                 .buildings
                 .iter()
@@ -1621,11 +2046,9 @@ impl World {
             };
             let choices: Vec<BuildingId> = affordable.iter().filter(|(_, t)| *t == best_tier).map(|(id, _)| *id).collect();
             let Some(&home) = choices.choose(&mut self.rng) else { break };
-            let seed = self.fresh_seed();
             let name = names::citizen_name(&mut self.rng);
             let tick = self.clock.tick;
-            let stations: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::Station)).map(|(id, _)| id).collect();
-            let by_train = if !stations.is_empty() && self.rng.random_bool(0.6) { stations.choose(&mut self.rng).copied() } else { None };
+            let by_train = if !self.stations.is_empty() && self.rng.random_bool(0.6) { self.stations.choose(&mut self.rng).copied() } else { None };
             let pos = match by_train.and_then(|s| self.building_entrance(s)) {
                 Some(p) => p,
                 None => self.roads.node(entry).pos,
@@ -1666,6 +2089,7 @@ impl World {
                 groceries: 2.0,
                 hungry_days: 0,
                 trail: Vec::new(),
+                pending_footfall: Vec::new(),
             };
             citizen.remember(tick, format!("Rolled into Neon District on day {} at {}.", self.clock.day() + 1, self.clock.format_hhmm()));
             if let Some(s) = by_train {
@@ -1686,7 +2110,7 @@ impl World {
 
     fn assign_job(&mut self, id: CitizenId, job: BuildingId) {
         self.citizens[id].work = Some(job);
-        let skill = 0.75 + (self.citizens[id].seed % 1000) as f32 / 1000.0 * 0.6;
+        let skill = Self::skill_of(self.citizens[id].seed);
         self.citizens[id].income = self.buildings[job].wage() * skill;
         self.buildings[job].workers.push(id);
         let name = self.buildings[job].name.clone();
@@ -1704,10 +2128,11 @@ impl World {
 
     fn step_citizens(&mut self, minds: &mut dyn MindProvider) {
         let tick = self.clock.tick;
-        let available = self.available_land_uses();
+        // Tallied by `update_economy`, not every tick.
+        let available = self.available;
         let population = self.citizens.len() as u32;
-        let groceries_for_sale = self.retail_available(Resource::Groceries);
-        let meals_for_sale = self.retail_available(Resource::BakedGoods);
+        let groceries_for_sale = self.groceries_for_sale;
+        let meals_for_sale = self.meals_for_sale;
         let ids: Vec<CitizenId> = self.citizens.keys().collect();
 
         for id in ids {
@@ -1789,10 +2214,16 @@ impl World {
                 c.activity = Activity::Idle;
                 c.inside = None;
                 c.transit = None;
+                c.pending_footfall.clear();
                 c.thought = "It's gone. There's nothing here any more.".to_string();
                 c.next_decision_tick = tick + 1;
                 return;
             }
+        }
+        // The journey is over (a stop is a pause in it): the shops along
+        // the way count the passer-by now.
+        if purpose != Purpose::ToStop {
+            self.settle_footfall(id);
         }
         // A park is not a building to go inside: walk its paths to a bench.
         if let (Purpose::Visit(LandUse::Park), Some(b)) = (purpose, to) {
@@ -1801,10 +2232,7 @@ impl World {
             if let Some(bench) = lot.and_then(|l| self.walk.bench_in(l, pick)) {
                 let here = self.citizens[id].pos;
                 let path = match self.walk.route(here, bench.0) {
-                    Some((pts, nodes)) => {
-                        self.count_footfall(&nodes);
-                        pts
-                    }
+                    Some((pts, _)) => pts,
                     None => vec![bench.0],
                 };
                 let c = &mut self.citizens[id];
@@ -1850,6 +2278,17 @@ impl World {
                 c.inside = Some(b);
             }
             (Purpose::Visit(_), Some(b)) => {
+                // Venues charge at the door, and turn away anyone whose
+                // savings are already through the floor.
+                let cover = self.buildings.get(b).and_then(|bld| bld.business.as_ref()).filter(|bz| bz.kind == BusinessKind::Venue && !bz.closed).map(|_| VENUE_COVER);
+                if cover.is_some_and(|cover| c.savings - cover < OVERDRAFT) {
+                    c.activity = Activity::Idle;
+                    c.inside = None;
+                    c.mood = (c.mood - 0.04).max(0.0);
+                    c.thought = "Turned away at the door. Skint.".to_string();
+                    c.next_decision_tick = tick + 10 + self.rng.random_range(0..20);
+                    return;
+                }
                 c.activity = Activity::Visiting(b);
                 c.inside = Some(b);
                 if let Some(bld) = self.buildings.get_mut(b) {
@@ -1857,14 +2296,10 @@ impl World {
                     let name = bld.name.clone();
                     c.remember(tick, format!("Spent the evening at {name}."));
                     c.mood = (c.mood + 0.05).min(1.0);
-                    // Venues charge at the door.
-                    if let Some(bz) = bld.business.as_mut() {
-                        if bz.kind == BusinessKind::Venue {
-                            let cover = 15.0;
-                            c.savings -= cover;
-                            bz.money += cover;
-                            bz.revenue_today += cover;
-                        }
+                    if let (Some(cover), Some(bz)) = (cover, bld.business.as_mut()) {
+                        c.savings -= cover;
+                        bz.money += cover;
+                        bz.revenue_today += cover;
                     }
                 }
             }
@@ -1919,7 +2354,9 @@ impl World {
                 }
             }
             Intent::Visit(lu) => {
-                let target = self.pick_building(|b| b.land_use == lu && b.construction.is_none());
+                // Somewhere that is open: not a site, not a shut business,
+                // not a derelict shell.
+                let target = self.pick_building(|b| b.land_use == lu && b.construction.is_none() && !b.is_derelict() && b.business.as_ref().map_or(true, |z| !z.closed));
                 if let Some(b) = target {
                     if inside != Some(b) {
                         self.travel_to(id, Some(b), Purpose::Visit(lu));
@@ -1969,13 +2406,21 @@ impl World {
         let jobs = b.jobs;
         let name = b.name.clone();
         let Some(bz) = b.business.as_mut() else { return };
-        let want = match r {
+        let want: f32 = match r {
             Resource::Groceries => 3.0,
             _ => 1.0,
         };
         let price = bz.sell_price(r, jobs);
-        let got = bz.take(r, want);
         let c = &mut self.citizens[cid];
+        // Buy what the overdraft allows, whole units; nothing if not even one.
+        let affordable = ((c.savings - OVERDRAFT) / price).floor();
+        if affordable < 1.0 {
+            c.remember(tick, format!("Couldn't afford anything at {name}."));
+            c.thought = "Skint. Can't even afford the basics.".to_string();
+            c.mood = (c.mood - 0.06).max(0.0);
+            return;
+        }
+        let got = bz.take(r, want.min(affordable));
         if got <= 0.0 {
             c.remember(tick, format!("Shelves were empty at {name}."));
             c.mood = (c.mood - 0.05).max(0.0);
@@ -2085,10 +2530,7 @@ impl World {
         let entrance = lot.entrance();
         let here = self.citizens[id].pos;
         let mut path = match self.walk.route(here, entrance) {
-            Some((pts, nodes)) => {
-                self.count_footfall(&nodes);
-                pts
-            }
+            Some((pts, _)) => pts,
             None => vec![here],
         };
         path.push(entrance);
@@ -2111,13 +2553,21 @@ impl World {
 
     // ── trains ───────────────────────────────────────────────────────────────
 
+    /// Stations and yards that run: connected both ways and standing.
     fn facilities(&self, kind: RailFacility) -> Vec<BuildingId> {
         self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == kind && l.works()) && !b.is_derelict()).map(|(id, _)| id).collect()
     }
 
+    /// Recompute the working station and yard lists. Called when links,
+    /// rail buildings or conditions change; everything else reads the lists.
+    fn refresh_facility_cache(&mut self) {
+        self.stations = self.facilities(RailFacility::Station);
+        self.yards = self.facilities(RailFacility::FreightYard);
+    }
+
     fn nearest_yard(&self, to: BuildingId) -> Option<BuildingId> {
         let p = self.building_entrance(to)?;
-        self.facilities(RailFacility::FreightYard).into_iter().filter_map(|y| self.building_entrance(y).map(|q| (y, q.distance(p)))).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(y, _)| y)
+        self.yards.iter().copied().filter_map(|y| self.building_entrance(y).map(|q| (y, q.distance(p)))).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(y, _)| y)
     }
 
     /// Set down a station or freight yard at `p`: it fuses to track or
@@ -2140,7 +2590,7 @@ impl World {
         if self.facilities.values().any(|f| f.center.distance(facility.center) < Facility::size(kind).0 * 0.9) {
             return Err("too close to another station or yard".into());
         }
-        self.economy.treasury -= cost;
+        self.economy.debit(Flow::Construction, cost);
         let fid = self.facilities.insert(facility.clone());
         // Connector stubs become part of the plan, so they survive rebuilds
         // and roads and track can be snapped onto their ends.
@@ -2166,17 +2616,17 @@ impl World {
         Ok(id)
     }
 
-    /// The lot a facility stands on: its footprint, fronting its street.
-    fn facility_lot(&self, fid: FacilityId) -> Lot {
+    /// The lot a facility stands on: its footprint, fronting the nearest
+    /// street (normally its own stub). `None` when the city has no street
+    /// at all: a lot needs a frontage, and inventing one on the railway
+    /// trunk put stations' entrances a kilometre away.
+    fn facility_lot(&self, fid: FacilityId) -> Option<Lot> {
         let f = &self.facilities[fid];
         let corners = f.corners();
         let front_mid = f.front_mid();
         let probe = front_mid - f.inward() * rail::ROAD_GAP;
-        let (front_segment, front_t, car_point) = match self.roads.nearest_street(probe) {
-            Some((sid, t, q)) => (sid, t, q),
-            None => (SegmentId(0), 0.5, probe),
-        };
-        Lot {
+        let (front_segment, front_t, car_point) = self.roads.nearest_street(probe)?;
+        Some(Lot {
             zone: ZoneId::default(),
             land_use: if f.kind == RailFacility::Station { LandUse::Civic } else { LandUse::Industrial },
             polygon: corners.to_vec(),
@@ -2195,7 +2645,7 @@ impl World {
             car_segment: Some(front_segment),
             car_point,
             park: None,
-        }
+        })
     }
 
     /// Recompute whether each station and yard reaches the railway and the
@@ -2203,9 +2653,10 @@ impl World {
     fn refresh_rail_links(&mut self) {
         // The railway proper is reached when a trunk end is: a facility's
         // own stub has ends too, and they do not count. The roads are
-        // reached when some zoned lot's street is.
+        // reached when the facility's street shares a component with a
+        // zoned lot's street: there is a city at the other end of it.
         let trunk_ends: Vec<NodeId> = self.roads.rail_leaf_nodes().into_iter().filter(|&n| (self.roads.node(n).pos.y - TRUNK_Y).abs() < 1.0).collect();
-        let city_node: Option<NodeId> = self.lots.values().find(|l| l.zone != ZoneId::default() && l.usable()).map(|l| l.access_node);
+        let city: std::collections::HashSet<u32> = self.lots.values().filter(|l| l.zone != ZoneId::default() && l.usable()).filter_map(|l| self.road_component(l.access_node)).collect();
         let ids: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.rail.is_some()).map(|(id, _)| id).collect();
         for id in ids {
             // The track beside the facility may have been split, re-laid or
@@ -2223,10 +2674,7 @@ impl World {
                 let node = self.roads.segment(sid).a;
                 trunk_ends.iter().any(|&l| self.roads.rail_path(node, l).is_some_and(|p| p.len() > 1))
             });
-            let road_ok = match (self.lots.get(self.buildings[id].lot), city_node) {
-                (Some(l), Some(c)) => self.roads.path(l.access_node, c).is_some(),
-                _ => false,
-            };
+            let road_ok = self.lots.get(self.buildings[id].lot).and_then(|l| self.road_component(l.access_node)).is_some_and(|c| city.contains(&c));
             if let Some(mut fresh) = fresh {
                 fresh.rail_connected = rail_ok;
                 fresh.road_connected = road_ok;
@@ -2236,6 +2684,14 @@ impl World {
                 link.rail_connected = rail_ok;
                 link.road_connected = road_ok;
             }
+        }
+        let had_yards = !self.yards.is_empty();
+        self.refresh_facility_cache();
+        // The freight timetable starts when the first yard opens; otherwise
+        // the stranded-goods drain would see "no train for two headways"
+        // before the first one has had its chance.
+        if !had_yards && !self.yards.is_empty() {
+            self.rail.last_freight_tick = self.clock.tick;
         }
     }
 
@@ -2247,23 +2703,31 @@ impl World {
             RailFacility::FreightYard => (rail::YARD_JOBS, rail::YARD_APRON),
         };
         let link = RailLink::beside(&self.roads, &lot.polygon, lot.center, lot.front_edge, kind, length).ok_or("the track stub did not get laid")?;
-        let lu = lot.land_use;
-        let value = self.land_value.at(lot.center);
-        let seed = self.fresh_seed();
         let name = match kind {
             RailFacility::Station => format!("{} Station", names::building_name(&mut self.rng, LandUse::Civic).split(' ').next().unwrap_or("Central")),
             RailFacility::FreightYard => format!("Yard {}", self.rng.random_range(1..30)),
         };
+        let parking = if kind == RailFacility::Station { 12 } else { 4 };
+        Ok(self.place_special(lot_id, name, jobs, parking, |b| b.rail = Some(link)))
+    }
+
+    /// A building the player places finished: one floor, middle tier, no
+    /// homes, `jobs` jobs, no business unless `setup` adds one. Plants,
+    /// depots, stations, yards and car parks all start here.
+    fn place_special(&mut self, lot_id: LotId, name: String, jobs: u16, parking: u16, setup: impl FnOnce(&mut Building)) -> BuildingId {
+        let lot = &self.lots[lot_id];
+        let (lu, value) = (lot.land_use, self.land_value.at(lot.center));
+        let seed = self.fresh_seed();
         let mut b = Building::new(lot_id, lu, 1, Tier::Mid, seed, name, self.clock.tick, value);
-        b.rail = Some(link);
         b.homes = 0;
         b.jobs = jobs;
         b.business = None;
-        b.parking_capacity = if kind == RailFacility::Station { 12 } else { 4 };
+        b.parking_capacity = parking;
+        setup(&mut b);
         let id = self.buildings.insert(b);
         self.lots[lot_id].building = Some(id);
         self.events.push(SimEvent::BuildingBuilt(id));
-        Ok(id)
+        id
     }
 
     /// Stations within reach of both ends of a long walk: (board, alight,
@@ -2272,7 +2736,7 @@ impl World {
         if from.distance(to) < rail::RAIL_TRIP_MIN {
             return None;
         }
-        let stations: Vec<(BuildingId, Vec2)> = self.facilities(RailFacility::Station).into_iter().filter_map(|s| self.building_entrance(s).map(|p| (s, p))).collect();
+        let stations: Vec<(BuildingId, Vec2)> = self.stations.iter().copied().filter_map(|s| self.building_entrance(s).map(|p| (s, p))).collect();
         if stations.len() < 2 {
             return None;
         }
@@ -2285,13 +2749,17 @@ impl World {
         Some((a, b, pa))
     }
 
-    /// Walk to a stop or station and wait there for the ride.
-    fn walk_to_transit(&mut self, id: CitizenId, stop: Vec2, leg: TransitLeg, target: BuildingId, purpose: Purpose) {
+    /// Walk to a stop or station and wait there for the ride. `count` says
+    /// whether this is the start of a journey (its footfall is noted) or
+    /// the continuation of one.
+    fn walk_to_transit(&mut self, id: CitizenId, stop: Vec2, leg: TransitLeg, target: BuildingId, purpose: Purpose, count: bool) {
         let exit_pos = self.leave_building(id);
         let start = exit_pos.unwrap_or(self.citizens[id].pos);
         let mut path = match self.walk.route(start, stop) {
             Some((pts, nodes)) => {
-                self.count_footfall(&nodes);
+                if count {
+                    self.note_footfall(id, &nodes);
+                }
                 pts
             }
             None => vec![start],
@@ -2314,8 +2782,8 @@ impl World {
         let leaves = self.roads.rail_leaf_nodes();
         let entry = leaves.iter().copied().min_by(|a, b| self.roads.node(*a).pos.x.total_cmp(&self.roads.node(*b).pos.x))?;
         let exit = leaves.iter().copied().max_by(|a, b| self.roads.node(*a).pos.x.total_cmp(&self.roads.node(*b).pos.x)).unwrap_or(entry);
-        let mut order: Vec<(BuildingId, SegmentId)> = facilities.iter().filter_map(|&f| self.buildings[f].rail.as_ref().map(|l| (f, l.segment))).filter(|(_, s)| self.roads.segment(*s).alive && self.roads.segment(*s).is_rail()).collect();
-        order.sort_by(|a, b| self.buildings[a.0].rail.as_ref().unwrap().centre().x.total_cmp(&self.buildings[b.0].rail.as_ref().unwrap().centre().x));
+        let mut order: Vec<(BuildingId, SegmentId, Vec2)> = facilities.iter().filter_map(|&f| self.buildings.get(f)?.rail.as_ref().map(|l| (f, l.segment, l.centre()))).filter(|(_, s, _)| self.roads.try_segment(*s).is_some_and(|s| s.alive && s.is_rail())).collect();
+        order.sort_by(|a, b| a.2.x.total_cmp(&b.2.x));
         // Points the train drives through: node positions, plus the platform
         // of the last call, where a train on a dead-end spur turns round
         // instead of running on to the end of the track.
@@ -2332,7 +2800,7 @@ impl World {
             }
         };
         let last = order.len().saturating_sub(1);
-        for (i, (f, seg)) in order.iter().enumerate() {
+        for (i, (_, seg, centre)) in order.iter().enumerate() {
             let s = self.roads.segment(*seg);
             let pa = self.roads.node(s.a).pos;
             let pb = self.roads.node(s.b).pos;
@@ -2342,8 +2810,7 @@ impl World {
                 push_path(&mut poly, &mut nodes, path, &self.roads);
                 cur = first;
             }
-            let centre = self.buildings[*f].rail.as_ref().unwrap().centre();
-            let (_, on_track) = crate::roads::project_on_segment(centre, pa, pb);
+            let (_, on_track) = crate::roads::project_on_segment(*centre, pa, pb);
             let spur_end = self.roads.neighbors(second).count() <= 1;
             if i == last && spur_end {
                 // Run to the platform and come back the same way.
@@ -2365,9 +2832,8 @@ impl World {
             return None;
         }
         let mut stops: Vec<(BuildingId, f32)> = Vec::new();
-        for (f, _) in &order {
-            let c = self.buildings[*f].rail.as_ref().unwrap().centre();
-            if let Some((s, d)) = rail::project_on_poly(&poly, c) {
+        for (f, _, c) in &order {
+            if let Some((s, d)) = rail::project_on_poly(&poly, *c) {
                 if d < 8.0 {
                     stops.push((*f, s));
                 }
@@ -2382,7 +2848,7 @@ impl World {
         if stops.is_empty() {
             return false;
         }
-        let waiting: usize = facilities.iter().map(|f| self.buildings[*f].rail_inbound.len()).sum();
+        let waiting: usize = facilities.iter().filter_map(|f| self.buildings.get(*f)).map(|b| b.rail_inbound.len()).sum();
         let (cars, speed) = match kind {
             TrainKind::Passenger => (4, rail::PASSENGER_SPEED),
             TrainKind::Freight => ((5 + waiting / 3).min(10) as u8, rail::FREIGHT_SPEED),
@@ -2428,19 +2894,19 @@ impl World {
         let tick = self.clock.tick;
         let minute = self.clock.minute_of_day() as u32;
         let seconds = self.config.traffic_seconds_per_tick;
-        let stations = self.facilities(RailFacility::Station);
-        let yards = self.facilities(RailFacility::FreightYard);
         let queued = self.rail.trains.values().any(|t| t.held && t.branch.is_some_and(|(a, _)| t.s <= a + 0.5));
         let room = self.rail.trains.len() < rail::MAX_TRAINS && !queued;
-        if room && Rail::in_service(minute) && !stations.is_empty() && tick.saturating_sub(self.rail.last_passenger_tick) >= rail::PASSENGER_HEADWAY {
+        if room && Rail::in_service(minute) && !self.stations.is_empty() && tick.saturating_sub(self.rail.last_passenger_tick) >= rail::PASSENGER_HEADWAY {
+            let stations = self.stations.clone();
             if self.spawn_train(TrainKind::Passenger, &stations) {
                 self.rail.stats.passenger_trains_today += 1;
             }
             self.rail.last_passenger_tick = tick;
         }
-        let freight_waiting = yards.iter().any(|y| !self.buildings[*y].rail_inbound.is_empty() || self.buildings[*y].rail_outbound > 0.0);
+        let freight_waiting = self.yards.iter().filter_map(|y| self.buildings.get(*y)).any(|b| !b.rail_inbound.is_empty() || b.rail_outbound > 0.0);
         let since_freight = tick.saturating_sub(self.rail.last_freight_tick);
-        if room && !yards.is_empty() && since_freight >= rail::FREIGHT_HEADWAY && (freight_waiting || since_freight >= rail::FREIGHT_HEADWAY * 2) {
+        if room && !self.yards.is_empty() && since_freight >= rail::FREIGHT_HEADWAY && (freight_waiting || since_freight >= rail::FREIGHT_HEADWAY * 2) {
+            let yards = self.yards.clone();
             if self.spawn_train(TrainKind::Freight, &yards) {
                 self.rail.stats.freight_trains_today += 1;
             }
@@ -2450,6 +2916,10 @@ impl World {
         for id in ids {
             let blocked = self.rail.blocked(id);
             let branch_busy = self.rail.trains.iter().any(|(oid, o)| oid != id && o.on_branch());
+            // A stop whose station or yard was pulled down is passed.
+            while self.rail.trains[id].next_stop < self.rail.trains[id].stops.len() && !self.buildings.contains_key(self.rail.trains[id].stops[self.rail.trains[id].next_stop].0) {
+                self.rail.trains[id].next_stop += 1;
+            }
             let arrived = {
                 let t = &mut self.rail.trains[id];
                 t.prev_s = t.s;
@@ -2507,14 +2977,10 @@ impl World {
                 }
             }
         }
-        let s = &mut self.rail.stats;
-        s.trains = self.rail.trains.len() as u32;
-        s.stations = stations.len() as u32;
-        s.yards = yards.len() as u32;
-        s.waiting = self.citizens.values().filter(|c| matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_some_and(|t| matches!(t.leg, TransitLeg::Rail { .. }))).count() as u32;
-        s.riding = self.citizens.values().filter(|c| matches!(c.activity, Activity::OnTrain { .. })).count() as u32;
-        s.freight_waiting = yards.iter().map(|y| self.buildings[*y].rail_inbound.iter().map(|c| c.amount).sum::<f32>()).sum();
-        s.next_passenger_in = if stations.is_empty() { 0 } else { rail::PASSENGER_HEADWAY.saturating_sub(tick.saturating_sub(self.rail.last_passenger_tick)) as u32 };
+        // The counts are tallied in `update_economy`; only the countdown is
+        // worth keeping to the minute.
+        self.rail.stats.trains = self.rail.trains.len() as u32;
+        self.rail.stats.next_passenger_in = if self.stations.is_empty() { 0 } else { rail::PASSENGER_HEADWAY.saturating_sub(tick.saturating_sub(self.rail.last_passenger_tick)) as u32 };
     }
 
     /// A train stands at a station or yard: people off and on, goods off.
@@ -2525,6 +2991,7 @@ impl World {
             t.dwell = rail::DWELL_SECONDS;
             (t.stops[t.next_stop].0, t.kind)
         };
+        let _ = tick;
         match kind {
             TrainKind::Passenger => {
                 let entrance = self.building_entrance(at).unwrap_or(self.rail.trains[id].head());
@@ -2544,60 +3011,46 @@ impl World {
                     }) else {
                         continue;
                     };
-                    self.travel_to_opts(p, Some(trip.target), trip.purpose, true);
+                    self.travel_to_impl(p, Some(trip.target), trip.purpose, true, false);
                 }
-                let boarding: Vec<CitizenId> = self
-                    .citizens
-                    .iter()
-                    .filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_some_and(|t| matches!(t.leg, TransitLeg::Rail { board, .. } if board == at)))
-                    .map(|(id, _)| id)
-                    .take(rail::TRAIN_CAPACITY.saturating_sub(keep.len()))
-                    .collect();
-                let name = self.buildings[at].name.clone();
+                let name = self.buildings.get(at).map(|b| b.name.clone()).unwrap_or_default();
+                let boarding = self.board_waiting(|leg| matches!(leg, TransitLeg::Rail { board, .. } if *board == at), rail::TRAIN_CAPACITY.saturating_sub(keep.len()), rail::RAIL_FARE, Flow::RailFares, &format!("Took the train from {name}."));
                 for p in boarding {
-                    let c = &mut self.citizens[p];
-                    c.activity = Activity::OnTrain { train: id };
-                    c.savings -= rail::RAIL_FARE;
-                    c.remember(tick, format!("Took the train from {name}."));
+                    self.citizens[p].activity = Activity::OnTrain { train: id };
                     keep.push(p);
-                    self.economy.treasury += rail::RAIL_FARE;
                     self.rail.stats.fares_today += rail::RAIL_FARE;
                     self.rail.stats.riders_today += 1;
                 }
-                self.buildings[at].visitors = self.buildings[at].visitors.saturating_add(1);
+                if let Some(b) = self.buildings.get_mut(at) {
+                    b.visitors = b.visitors.saturating_add(1);
+                }
                 self.rail.trains[id].passengers = keep;
             }
             TrainKind::Freight => {
-                let queued = std::mem::take(&mut self.buildings[at].rail_inbound);
-                self.buildings[at].rail_outbound = 0.0;
+                let Some(b) = self.buildings.get_mut(at) else { return };
+                let queued = std::mem::take(&mut b.rail_inbound);
+                b.rail_outbound = 0.0;
                 for cargo in queued {
                     self.rail.stats.freight_in_today += cargo.amount;
-                    self.truck_from(at, cargo);
+                    self.dispatch_truck(TruckOrigin::Building(at), cargo, 6);
                 }
             }
         }
     }
 
-    /// A truck from a yard to the buyer; delivered on the spot when there
-    /// is no road route or no trucks to spare.
-    fn truck_from(&mut self, from: BuildingId, cargo: Cargo) {
-        if self.truck_count() >= crate::market::MAX_TRUCKS {
-            self.deliver(cargo);
-            return;
+    /// People waiting at a stop or station whose leg `pred` accepts board,
+    /// up to `capacity`: each pays `fare` into the treasury under `flow`
+    /// and remembers `memory`. The caller seats them in its vehicle.
+    fn board_waiting(&mut self, pred: impl Fn(&TransitLeg) -> bool, capacity: usize, fare: f32, flow: Flow, memory: &str) -> Vec<CitizenId> {
+        let tick = self.clock.tick;
+        let boarding: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.as_ref().is_some_and(|t| pred(&t.leg))).map(|(id, _)| id).take(capacity).collect();
+        for &p in &boarding {
+            let c = &mut self.citizens[p];
+            c.savings -= fare;
+            c.remember(tick, memory.to_string());
+            self.economy.credit(flow, fare);
         }
-        let route = (|| {
-            let fl = self.building_lot(from)?;
-            let (fs, fp) = (fl.car_segment?, fl.car_point);
-            let tl = self.building_lot(cargo.to)?;
-            let (ts, tp) = (tl.car_segment?, tl.car_point);
-            self.traffic.net.find_route(fs, fp, ts, tp)
-        })();
-        match route {
-            Some((route, s0, s1)) => {
-                self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, 6);
-            }
-            None => self.deliver(cargo),
-        }
+        boarding
     }
 
     // ── buses ────────────────────────────────────────────────────────────────
@@ -2623,21 +3076,9 @@ impl World {
         if self.economy.treasury < transit::DEPOT_COST {
             return Err(format!("the treasury has {:.0}; a depot costs {:.0}", self.economy.treasury, transit::DEPOT_COST));
         }
-        let lu = lot.land_use;
-        let value = self.land_value.at(lot.center);
-        self.economy.treasury -= transit::DEPOT_COST;
-        let seed = self.fresh_seed();
+        self.economy.debit(Flow::Construction, transit::DEPOT_COST);
         let name = format!("Depot {}", self.rng.random_range(1..20));
-        let mut b = Building::new(lot_id, lu, 1, Tier::Mid, seed, name, self.clock.tick, value);
-        b.depot = true;
-        b.homes = 0;
-        b.jobs = transit::DEPOT_JOBS;
-        b.business = None;
-        b.parking_capacity = 0;
-        let id = self.buildings.insert(b);
-        self.lots[lot_id].building = Some(id);
-        self.events.push(SimEvent::BuildingBuilt(id));
-        Ok(id)
+        Ok(self.place_special(lot_id, name, transit::DEPOT_JOBS, 0, |b| b.depot = true))
     }
 
     pub fn add_bus_route(&mut self) -> RouteId {
@@ -2746,7 +3187,6 @@ impl World {
         let tick = self.clock.tick;
         let minute = self.clock.minute_of_day();
         let in_service = Transit::in_service(minute as u32);
-        let depots: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.depot && !b.is_derelict()).map(|(id, _)| id).collect();
         // Buses out per line, and per depot.
         let mut running: HashMap<RouteId, u32> = HashMap::new();
         let mut at_depot: HashMap<BuildingId, u32> = HashMap::new();
@@ -2763,6 +3203,7 @@ impl World {
             if let Some(route) = want {
                 // The depot with room nearest the first stop.
                 let first = self.transit.routes[route].stops[0];
+                let depots: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.depot && !b.is_derelict()).map(|(id, _)| id).collect();
                 let depot = depots
                     .iter()
                     .copied()
@@ -2789,26 +3230,21 @@ impl World {
                 }
             }
         }
-        // Riders who gave up.
-        let tired: Vec<CitizenId> = self
-            .citizens
-            .iter()
-            .filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_some_and(|t| t.since > 0 && tick.saturating_sub(t.since) > if matches!(t.leg, TransitLeg::Rail { .. }) { transit::WAIT_GIVE_UP * 2 } else { transit::WAIT_GIVE_UP }))
-            .map(|(id, _)| id)
-            .collect();
-        for id in tired {
-            let Some(trip) = self.citizens[id].transit.take() else { continue };
-            self.citizens[id].thought = "No bus is coming. Walking it.".to_string();
-            self.travel_to_opts(id, Some(trip.target), trip.purpose, false);
+        // Riders who gave up: checked every ten ticks, since the limit is
+        // hours and the scan is everyone.
+        if tick % 10 == 0 {
+            let tired: Vec<CitizenId> = self
+                .citizens
+                .iter()
+                .filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_some_and(|t| t.since > 0 && tick.saturating_sub(t.since) > if matches!(t.leg, TransitLeg::Rail { .. }) { transit::WAIT_GIVE_UP * 2 } else { transit::WAIT_GIVE_UP }))
+                .map(|(id, _)| id)
+                .collect();
+            for id in tired {
+                let Some(trip) = self.citizens[id].transit.take() else { continue };
+                self.citizens[id].thought = "No bus is coming. Walking it.".to_string();
+                self.travel_to_impl(id, Some(trip.target), trip.purpose, false, false);
+            }
         }
-        // The count.
-        let s = &mut self.economy.transit;
-        s.buses = self.traffic.cars.values().filter(|c| c.bus.is_some()).count() as u32;
-        s.depots = depots.len() as u32;
-        s.depot_capacity = depots.len() as u32 * transit::DEPOT_CAPACITY;
-        s.waiting = self.citizens.values().filter(|c| matches!(c.activity, Activity::Waiting { .. })).count() as u32;
-        s.riding = self.citizens.values().filter(|c| matches!(c.activity, Activity::Riding { .. })).count() as u32;
-        self.transit.stats = s.clone();
     }
 
     /// A bus reached the end of a leg: a stop, or the depot.
@@ -2849,23 +3285,15 @@ impl World {
             }) else {
                 continue;
             };
-            self.travel_to_opts(p, Some(trip.target), trip.purpose, false);
+            self.travel_to_impl(p, Some(trip.target), trip.purpose, false, false);
         }
         // On, up to the capacity.
-        let boarding: Vec<CitizenId> = self
-            .citizens
-            .iter()
-            .filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_some_and(|t| matches!(t.leg, TransitLeg::Bus { route, board, .. } if route == bus.route && board == stop_idx)))
-            .map(|(id, _)| id)
-            .take(transit::BUS_CAPACITY.saturating_sub(passengers.len()))
-            .collect();
+        let _ = tick;
+        let memory = format!("Caught the {} bus.", self.transit.routes[bus.route].name);
+        let boarding = self.board_waiting(|leg| matches!(leg, TransitLeg::Bus { route, board, .. } if *route == bus.route && *board == stop_idx), transit::BUS_CAPACITY.saturating_sub(passengers.len()), fare, Flow::BusFares, &memory);
         for p in boarding {
-            let c = &mut self.citizens[p];
-            c.activity = Activity::Riding { bus: car_id };
-            c.savings -= fare;
-            c.remember(tick, format!("Caught the {} bus.", self.transit.routes[bus.route].name));
+            self.citizens[p].activity = Activity::Riding { bus: car_id };
             passengers.push(p);
-            self.economy.treasury += fare;
             self.economy.transit.fares_today += fare;
             self.economy.transit.riders_today += 1;
             self.transit.routes[bus.route].riders_today += 1;
@@ -2919,26 +3347,14 @@ impl World {
         if self.economy.treasury < kind.build_cost() {
             return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), kind.build_cost()));
         }
-        let lu = lot.land_use;
-        let center = lot.center;
-        let value = self.land_value.at(center);
-        self.economy.treasury -= kind.build_cost();
-        let seed = self.fresh_seed();
+        self.economy.debit(Flow::Construction, kind.build_cost());
         let name = format!("{} {}", match kind {
             PowerPlantKind::Coal => "Blackridge",
             PowerPlantKind::Solar => "Sunfield",
             PowerPlantKind::Wind => "Westerly",
             PowerPlantKind::Nuclear => "Calder",
         }, self.rng.random_range(1..9));
-        let mut b = Building::new(lot_id, lu, 1, Tier::Mid, seed, name, self.clock.tick, value);
-        b.plant = Some(kind);
-        b.homes = 0;
-        b.jobs = kind.jobs();
-        b.business = None;
-        b.parking_capacity = kind.jobs() / 2;
-        let id = self.buildings.insert(b);
-        self.lots[lot_id].building = Some(id);
-        self.events.push(SimEvent::BuildingBuilt(id));
+        let id = self.place_special(lot_id, name, kind.jobs(), kind.jobs() / 2, |b| b.plant = Some(kind));
         self.allocate_power();
         Ok(id)
     }
@@ -3032,32 +3448,25 @@ impl World {
         if lot.building.is_some() || lot.landlocked || self.under_facility(lot.center) {
             return None;
         }
-        let lu = lot.land_use;
         let area = lot.area();
-        let center = lot.center;
-        let value = self.land_value.at(center);
+        let value = self.land_value.at(lot.center);
         let tier = Tier::for_land_value(value).min(Tier::Mid);
         let floors: u8 = if tier == Tier::Mid && area > 500.0 { self.rng.random_range(3..=5) } else { 0 };
         let capacity = if floors == 0 { (area / 28.0) as u16 } else { ((area / 32.0) as u16) * floors as u16 };
         if capacity < 4 {
             return None;
         }
-        let seed = self.fresh_seed();
         let name = if floors == 0 { format!("Lot {}", self.rng.random_range(1..99)) } else { format!("ParkHaus {}", self.rng.random_range(1..40)) };
-        let mut b = Building::new(lot_id, lu, floors.max(1), tier, seed, name, self.clock.tick, value);
         let jobs = if floors == 0 { 2 } else { 4 };
-        b.homes = 0;
-        b.jobs = jobs;
-        b.floors = floors;
         let mut bz = Business::new(BusinessKind::Parking, jobs);
         bz.money = 80.0;
-        b.business = Some(bz);
-        b.parking_capacity = capacity;
-        b.parking_price = 3.0 * tier.wage_multiplier() * (0.6 + value);
-        let id = self.buildings.insert(b);
-        self.lots[lot_id].building = Some(id);
-        self.events.push(SimEvent::BuildingBuilt(id));
-        Some(id)
+        Some(self.place_special(lot_id, name, jobs, capacity, |b| {
+            // A surface lot is no building at all; a ParkHaus is a cheap one.
+            b.tier = tier;
+            b.floors = floors;
+            b.business = Some(bz);
+            b.parking_price = 3.0 * tier.wage_multiplier() * (0.6 + value);
+        }))
     }
 
     fn leave_building(&mut self, id: CitizenId) -> Option<Vec2> {
@@ -3094,12 +3503,18 @@ impl World {
     }
 
     fn travel_to(&mut self, id: CitizenId, target: Option<BuildingId>, purpose: Purpose) {
-        self.travel_to_opts(id, target, purpose, true);
+        self.travel_to_impl(id, target, purpose, true, true);
     }
 
-    fn travel_to_opts(&mut self, id: CitizenId, target: Option<BuildingId>, purpose: Purpose, allow_bus: bool) {
+    /// Start a journey: on foot, by bike, by car, or by bus or train with a
+    /// walk at each end. `fresh` is false for the legs after a ride, so a
+    /// journey's footfall is noted once, for the leg that began it.
+    fn travel_to_impl(&mut self, id: CitizenId, target: Option<BuildingId>, purpose: Purpose, allow_bus: bool, fresh: bool) {
         let Some(target) = target else { return };
         self.citizens[id].transit = None;
+        if fresh {
+            self.citizens[id].pending_footfall.clear();
+        }
         let Some((from_seg, from_pt, from_node)) = self.origin_for(id) else {
             self.citizens[id].activity = Activity::Idle;
             return;
@@ -3155,7 +3570,7 @@ impl World {
         // The train, for long trips on foot between two stations.
         if allow_bus && mode == TravelMode::Walk && Rail::in_service(self.clock.minute_of_day() as u32) {
             if let Some((board, alight, stop)) = self.plan_rail_trip(walk_from, entrance) {
-                self.walk_to_transit(id, stop, TransitLeg::Rail { board, alight }, target, purpose);
+                self.walk_to_transit(id, stop, TransitLeg::Rail { board, alight }, target, purpose, fresh);
                 return;
             }
         }
@@ -3164,25 +3579,7 @@ impl World {
         if allow_bus && mode == TravelMode::Walk && self.economy.transit.buses > 0 {
             if let Some((route, board, alight)) = self.transit.plan_trip(walk_from, entrance) {
                 let stop = self.transit.routes[route].stops[board].pos;
-                let exit_pos = self.leave_building(id);
-                let start = exit_pos.unwrap_or(walk_from);
-                let mut path = match self.walk.route(start, stop) {
-                    Some((pts, nodes)) => {
-                        self.count_footfall(&nodes);
-                        pts
-                    }
-                    None => vec![start],
-                };
-                path.push(stop);
-                let tick = self.clock.tick;
-                let c = &mut self.citizens[id];
-                if let Some(p) = exit_pos {
-                    c.pos = p;
-                    c.prev_pos = p;
-                }
-                c.mode = TravelMode::Walk;
-                c.transit = Some(TransitTrip { leg: TransitLeg::Bus { route, board, alight }, target, purpose, since: tick });
-                c.activity = Activity::Traveling { to: Some(target), purpose: Purpose::ToStop, path, idx: 0 };
+                self.walk_to_transit(id, stop, TransitLeg::Bus { route, board, alight }, target, purpose, fresh);
                 return;
             }
         }
@@ -3190,7 +3587,9 @@ impl World {
         let mut path = match mode {
             TravelMode::Walk => match self.walk.route(walk_from, entrance) {
                 Some((pts, walk_nodes)) => {
-                    self.count_footfall(&walk_nodes);
+                    if fresh {
+                        self.note_footfall(id, &walk_nodes);
+                    }
                     pts
                 }
                 None => self.route_path(&nodes, mode),
@@ -3207,10 +3606,25 @@ impl World {
         c.activity = Activity::Traveling { to: Some(target), purpose, path, idx: 0 };
     }
 
-    /// Everyone on foot who passes a lot is a potential customer.
-    fn count_footfall(&mut self, walk_nodes: &[u32]) {
+    /// Remember which lots a journey on foot will pass; they are counted
+    /// when the walker gets there.
+    fn note_footfall(&mut self, id: CitizenId, walk_nodes: &[u32]) {
+        let lots = self.walk.lots_passed(walk_nodes);
+        if let Some(c) = self.citizens.get_mut(id) {
+            c.pending_footfall = lots;
+        }
+    }
+
+    /// Everyone on foot who passes a lot is a potential customer: credit
+    /// the lots of the journey just completed, once.
+    fn settle_footfall(&mut self, id: CitizenId) {
+        let Some(c) = self.citizens.get_mut(id) else { return };
+        let lots = std::mem::take(&mut c.pending_footfall);
+        if lots.is_empty() {
+            return;
+        }
         self.economy.walk_trips_today += 1;
-        for lid in self.walk.lots_passed(walk_nodes) {
+        for lid in lots {
             if let Some(l) = self.lots.get_mut(lid) {
                 l.footfall_today += 1;
                 l.footfall_hour += 1;
@@ -3273,7 +3687,7 @@ impl World {
         };
         let path = match walk_route {
             Some((pts, walk_nodes)) => {
-                self.count_footfall(&walk_nodes);
+                self.note_footfall(id, &walk_nodes);
                 self.leave_building(id);
                 pts
             }
@@ -3284,18 +3698,71 @@ impl World {
                 self.route_path(&nodes, mode)
             }
         };
-        let exit_pos: Option<Vec2> = None;
         let c = &mut self.citizens[id];
-        if let Some(p) = exit_pos {
-            c.pos = p;
-            c.prev_pos = p;
-        }
         c.mode = mode;
         c.activity = Activity::Traveling { to: None, purpose: Purpose::Wander, path, idx: 0 };
     }
 }
 
-/// RON cannot encode the RNG's 128-bit counter, so persist it as seed + position.
+/// Cover charge at a venue's door.
+const VENUE_COVER: f32 = 15.0;
+
+/// Where a truck sets off from.
+#[derive(Clone, Copy, Debug)]
+enum TruckOrigin {
+    Building(BuildingId),
+    /// The far end of a road leaving the map: an import.
+    CityEdge,
+}
+
+/// Lots bucketed by the cells their bounding boxes cover, so "which new
+/// lots could contain or sit within a few metres of this point" is a look
+/// at a handful of cells rather than every lot.
+struct LotGrid {
+    cell: f32,
+    cells: HashMap<(i32, i32), Vec<LotId>>,
+}
+
+impl LotGrid {
+    fn new(lots: &SlotMap<LotId, Lot>) -> Self {
+        let cell = 64.0;
+        let mut cells: HashMap<(i32, i32), Vec<LotId>> = HashMap::new();
+        for (id, l) in lots.iter() {
+            let (mut lo, mut hi) = (l.center, l.center);
+            for p in &l.polygon {
+                lo = lo.min(*p);
+                hi = hi.max(*p);
+            }
+            let (x0, y0) = ((lo.x / cell).floor() as i32, (lo.y / cell).floor() as i32);
+            let (x1, y1) = ((hi.x / cell).floor() as i32, (hi.y / cell).floor() as i32);
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    cells.entry((x, y)).or_default().push(id);
+                }
+            }
+        }
+        Self { cell, cells }
+    }
+
+    /// Lots whose bounding box comes within `radius` of `p`, in id order so
+    /// ties resolve the way a scan of the map would.
+    fn near(&self, p: Vec2, radius: f32) -> Vec<LotId> {
+        let (x0, y0) = (((p.x - radius) / self.cell).floor() as i32, ((p.y - radius) / self.cell).floor() as i32);
+        let (x1, y1) = (((p.x + radius) / self.cell).floor() as i32, ((p.y + radius) / self.cell).floor() as i32);
+        let mut out: Vec<LotId> = Vec::new();
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                if let Some(v) = self.cells.get(&(x, y)) {
+                    out.extend_from_slice(v);
+                }
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+}
+
 /// A polygon scaled about its centroid, to test overlap without counting
 /// outlines that merely touch.
 fn shrink_about_centroid(poly: &[Vec2], factor: f32) -> Vec<Vec2> {
@@ -3303,6 +3770,7 @@ fn shrink_about_centroid(poly: &[Vec2], factor: f32) -> Vec<Vec2> {
     poly.iter().map(|&p| c + (p - c) * factor).collect()
 }
 
+/// RON cannot encode the RNG's 128-bit counter, so persist it as seed + position.
 mod rng_serde {
     use crate::SimRng;
     use rand::SeedableRng;
@@ -4053,9 +4521,17 @@ mod tests {
         let rent0 = w.buildings[bid].rent;
         // Tenants move in while the land is cheap. The grid is recomputed
         // every two hours, so the scenario value is pinned before each tick.
+        // Nobody here eats (IdleMind), so satiety is pinned: the test is
+        // about rent driving people out, not hunger.
+        let fed = |w: &mut World| {
+            for c in w.citizens.values_mut() {
+                c.satiety = 1.0;
+            }
+        };
         let mut minds = IdleMind;
         for _ in 0..600 {
             w.land_value.fill(0.1);
+            fed(&mut w);
             w.tick(&mut minds);
         }
         let residents = w.buildings[bid].residents.clone();
@@ -4064,6 +4540,7 @@ mod tests {
         // The land becomes dear. Three days of that and the building is rebuilt.
         for _ in 0..(REDEVELOP_DAYS as usize + 1) * 1440 {
             w.land_value.fill(0.95);
+            fed(&mut w);
             w.tick(&mut minds);
         }
         let b = &w.buildings[bid];
@@ -4077,8 +4554,10 @@ mod tests {
         assert!(!priced_out.is_empty(), "somebody is priced out by {rent:.0}/day");
         for _ in 0..5 * 1440 {
             w.land_value.fill(0.95);
+            fed(&mut w);
             w.tick(&mut minds);
         }
+        assert!(w.citizens.values().all(|c| c.hungry_days == 0), "nobody is starving: what follows is about rent");
         for cid in &priced_out {
             assert!(w.citizens.get(*cid).map_or(true, |c| c.home != Some(bid)), "a priced-out tenant is still there");
         }
@@ -4352,5 +4831,634 @@ mod tests {
             w.tick(&mut minds);
         }
         assert!(w.rail.trains.values().all(|t| t.stops.iter().all(|(s, _)| w.buildings.contains_key(*s))), "no train aims at a vanished stop");
+    }
+
+    // ── review follow-ups ────────────────────────────────────────────────────
+
+    /// The rail scenario of `trains_call_at_stations_and_yards_bring_freight`
+    /// up to the point where trains run: branch, street, zones, two
+    /// connected stations and a connected yard.
+    fn rail_city() -> (World, GestureId, BuildingId, BuildingId, BuildingId) {
+        use crate::rail::RailFacility;
+        let mut w = World::new(WorldConfig::default());
+        w.economy.treasury = 200_000.0;
+        let branch = w.add_rail(&[Vec2::new(-200.0, TRUNK_Y), Vec2::new(-100.0, -400.0), Vec2::new(-40.0, -300.0), Vec2::new(0.0, -200.0), Vec2::new(0.0, -60.0), Vec2::new(900.0, -60.0)]);
+        w.add_road(&[Vec2::new(-100.0, 0.0), Vec2::new(1000.0, 0.0)], 1, 1);
+        w.add_zone(vec![Vec2::new(150.0, 10.0), Vec2::new(330.0, 10.0), Vec2::new(330.0, 90.0), Vec2::new(150.0, 90.0)], LandUse::Residential);
+        w.add_zone(vec![Vec2::new(650.0, 10.0), Vec2::new(830.0, 10.0), Vec2::new(830.0, 90.0), Vec2::new(650.0, 90.0)], LandUse::Commercial);
+        let place = |w: &mut World, kind, p| {
+            let id = w.place_rail_facility(kind, p).expect("facility");
+            let end = w.facilities.values().find(|f| f.building == Some(id)).unwrap().road_line()[1];
+            w.add_road(&[end, Vec2::new(end.x, 0.0)], 1, 1);
+            assert!(w.buildings[id].rail.as_ref().unwrap().works(), "{:?}", w.buildings[id].rail);
+            id
+        };
+        let a = place(&mut w, RailFacility::Station, Vec2::new(240.0, -45.0));
+        let b = place(&mut w, RailFacility::Station, Vec2::new(740.0, -45.0));
+        let yard = place(&mut w, RailFacility::FreightYard, Vec2::new(460.0, -50.0));
+        (w, branch, a, b, yard)
+    }
+
+    #[test]
+    fn bulldozing_the_branch_takes_the_trains_off_and_strands_riders_sanely() {
+        use crate::rail::TrainKind;
+        let (mut w, branch, station_a, station_b, _) = rail_city();
+        let home_lot = lot_near(&w, Vec2::new(240.0, 40.0), LandUse::Residential);
+        w.build_on(home_lot);
+        let home = w.lots[home_lot].building.unwrap();
+        w.finish_construction(home);
+        let mut minds = IdleMind;
+        for _ in 0..600 {
+            if !w.citizens.is_empty() {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let rider = w.citizens.keys().next().expect("someone moved in");
+        // Let a passenger train get well onto the branch.
+        let mut train = None;
+        for _ in 0..600 {
+            w.tick(&mut minds);
+            if let Some((id, t)) = w.rail.trains.iter().find(|(_, t)| t.kind == TrainKind::Passenger && t.on_branch()) {
+                train = Some((id, t.head()));
+                break;
+            }
+        }
+        let (train, head) = train.expect("a train on the branch");
+        // Someone is aboard, bound for station B.
+        w.rail.trains[train].passengers.push(rider);
+        w.citizens[rider].activity = Activity::OnTrain { train };
+        w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Rail { board: station_a, alight: station_b }, target: home, purpose: Purpose::Home, since: 0 });
+        w.start_project();
+        w.remove_gesture(branch);
+        w.implement();
+        assert!(w.rail.trains.is_empty(), "every train came off with the rebuild");
+        let c = &w.citizens[rider];
+        assert!(matches!(c.activity, Activity::Idle) && c.transit.is_none(), "the rider stands where the train was: {}", c.activity.label());
+        assert!(c.pos.distance(head) < 1.0 && c.pos.is_finite());
+        assert!(!w.buildings[station_a].rail.as_ref().unwrap().rail_connected, "the stations are off the railway");
+        for _ in 0..600 {
+            w.tick(&mut minds);
+            for t in w.rail.trains.values() {
+                assert!(t.stops.iter().all(|(s, _)| w.buildings.contains_key(*s)), "no train aims at a vanished stop");
+                for p in &t.poly {
+                    let (_, _, q) = w.roads.nearest_rail(*p).expect("track exists");
+                    assert!(q.distance(*p) < 3.0, "a train's route leaves the track at {p:?}");
+                }
+            }
+        }
+        assert!(w.citizens.values().all(|c| !matches!(c.activity, Activity::OnTrain { .. }) || w.rail.trains.values().any(|t| t.passengers.contains(&rider))));
+    }
+
+    #[test]
+    fn imports_stranded_at_a_disconnected_yard_go_by_truck_and_sites_never_wait() {
+        let (mut w, branch, _, _, yard) = rail_city();
+        let shop_lot = lot_near(&w, Vec2::new(815.0, 40.0), LandUse::Commercial);
+        w.build_on(shop_lot);
+        let shop = w.lots[shop_lot].building.unwrap();
+        w.finish_construction(shop);
+        // A site's parts never queue for a train.
+        let queued0 = w.buildings[yard].rail_inbound.len();
+        let site_lot = lot_near(&w, Vec2::new(700.0, 40.0), LandUse::Commercial);
+        w.build_on(site_lot);
+        assert_eq!(w.buildings[yard].rail_inbound.len(), queued0, "construction parts came by truck");
+        // A shop's order does, and it is stranded when the branch goes.
+        w.import(shop, Resource::Parts, 10.0, 100.0);
+        assert_eq!(w.buildings[yard].rail_inbound.len(), queued0 + 1);
+        let stock0 = w.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Parts);
+        w.start_project();
+        w.remove_gesture(branch);
+        w.implement();
+        assert!(!w.buildings[yard].rail.as_ref().unwrap().works());
+        let mut minds = IdleMind;
+        for _ in 0..60 {
+            w.tick(&mut minds);
+        }
+        assert!(w.buildings[yard].rail_inbound.is_empty(), "the stranded order left the yard within the hour");
+        let delivered = w.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Parts) > stock0;
+        let on_the_road = w.traffic.cars.values().any(|c| c.cargo.is_some_and(|k| k.to == shop && k.resource == Resource::Parts));
+        assert!(delivered || on_the_road, "the parts are on a truck or on the shelf");
+        // A working yard whose trains stopped coming is drained too.
+        let (mut w, _, _, _, yard) = rail_city();
+        let shop_lot = lot_near(&w, Vec2::new(815.0, 40.0), LandUse::Commercial);
+        w.build_on(shop_lot);
+        let shop = w.lots[shop_lot].building.unwrap();
+        w.finish_construction(shop);
+        while w.clock.tick % 60 != 59 {
+            w.tick(&mut minds);
+        }
+        w.import(shop, Resource::Parts, 10.0, 100.0);
+        assert_eq!(w.buildings[yard].rail_inbound.len(), 1);
+        w.rail.last_freight_tick = 0;
+        w.tick(&mut minds);
+        assert!(w.buildings[yard].rail_inbound.is_empty(), "two headways without a freight train and the goods go by road");
+    }
+
+    #[test]
+    fn a_short_commute_at_eight_arrives_before_nine() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
+        let home_lot = lot_near(&w, Vec2::new(150.0, 20.0), LandUse::Residential);
+        let work_lot = lot_near(&w, Vec2::new(-150.0, 20.0), LandUse::Commercial);
+        w.build_on(home_lot);
+        w.build_on(work_lot);
+        let home = w.lots[home_lot].building.unwrap();
+        let work = w.lots[work_lot].building.unwrap();
+        w.finish_construction(home);
+        w.finish_construction(work);
+        let apart = w.lots[home_lot].entrance().distance(w.lots[work_lot].entrance());
+        assert!((250.0..=350.0).contains(&apart), "home and work are {apart:.0} m apart");
+        assert!((w.config.walk_speed - w.config.metres_per_tick(WALK_MPS)).abs() < 1e-6);
+        assert!((w.config.bike_speed - BIKE_MPS * w.config.traffic_seconds_per_tick).abs() < 1e-6);
+        let mut minds = IdleMind;
+        for _ in 0..600 {
+            if !w.citizens.is_empty() {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let c = w.citizens.keys().next().expect("someone moved in");
+        {
+            let cz = &mut w.citizens[c];
+            cz.inside = Some(home);
+            cz.activity = Activity::AtHome;
+            cz.owns_bike = false;
+            cz.owns_car = false;
+            cz.work = Some(work);
+        }
+        w.clock.tick = (w.clock.day() + 1) * crate::clock::MINUTES_PER_DAY + 8 * 60;
+        w.travel_to(c, Some(work), Purpose::Work);
+        assert_eq!(w.citizens[c].mode, TravelMode::Walk);
+        for _ in 0..120 {
+            if w.citizens[c].inside == Some(work) {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        assert_eq!(w.citizens[c].inside, Some(work), "arrived: {}", w.citizens[c].activity.label());
+        assert!(w.clock.minute_of_day() < 9 * 60, "clocked in at {}", w.clock.format_hhmm());
+    }
+
+    #[test]
+    fn a_station_is_road_connected_only_through_a_zoned_island() {
+        use crate::rail::RailFacility;
+        let mut w = World::new(WorldConfig::default());
+        w.economy.treasury = 500_000.0;
+        // Island A: the town. Island B: a street with homes, not joined to
+        // A. Island C: a street in a field.
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        w.add_road(&[Vec2::new(200.0, 600.0), Vec2::new(1000.0, 600.0)], 1, 1);
+        w.add_zone(square(300.0, 610.0, 150.0), LandUse::Residential);
+        w.add_road(&[Vec2::new(-900.0, 700.0), Vec2::new(-500.0, 700.0)], 1, 1);
+        let on_b = w.place_rail_facility(RailFacility::Station, Vec2::new(700.0, 560.0)).expect("station on island B");
+        let on_c = w.place_rail_facility(RailFacility::Station, Vec2::new(-700.0, 660.0)).expect("station on island C");
+        let town_lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Residential);
+        let b_lot = w.buildings[on_b].lot;
+        assert!(w.roads.path(w.lots[b_lot].access_node, w.lots[town_lot].access_node).is_none(), "islands A and B are separate");
+        assert!(w.buildings[on_b].rail.as_ref().unwrap().road_connected, "a street with homes on it is a city, whichever lot the map lists first");
+        assert!(!w.buildings[on_c].rail.as_ref().unwrap().road_connected, "a street in a field is not");
+        // Joining C to A connects it.
+        w.add_road(&[Vec2::new(-500.0, 700.0), Vec2::new(-400.0, 0.0)], 1, 1);
+        assert!(w.buildings[on_c].rail.as_ref().unwrap().road_connected);
+    }
+
+    #[test]
+    fn a_save_with_dangling_ids_and_missing_fields_loads_cleanly() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
+        let mut minds = IdleMind;
+        for _ in 0..(10 * 60) {
+            w.tick(&mut minds);
+        }
+        finish_all(&mut w);
+        for _ in 0..120 {
+            w.tick(&mut minds);
+        }
+        let c = w.citizens.keys().next().expect("someone moved in");
+        // An id nothing points at any more.
+        let ghost = {
+            let any = w.buildings.values().next().unwrap().clone();
+            let id = w.buildings.insert(any);
+            w.buildings.remove(id);
+            id
+        };
+        {
+            let cz = &mut w.citizens[c];
+            cz.home = Some(ghost);
+            cz.work = Some(ghost);
+            cz.inside = Some(ghost);
+            cz.parked_at = Some(ghost);
+            cz.activity = Activity::Visiting(ghost);
+            cz.transit = Some(TransitTrip { leg: TransitLeg::Rail { board: ghost, alight: ghost }, target: ghost, purpose: Purpose::Home, since: 0 });
+        }
+        let lot = w.lots.keys().next().unwrap();
+        w.lots[lot].building = Some(ghost);
+        let text = w.to_ron().unwrap();
+        assert!(text.contains("version: 1"));
+        // An older save: no version, and a config field that did not exist yet.
+        let text = text.replacen("version: 1,", "", 1);
+        let text = {
+            let start = text.find("bike_threshold:").unwrap();
+            let end = start + text[start..].find('\n').unwrap() + 1;
+            format!("{}{}", &text[..start], &text[end..])
+        };
+        let mut back = World::from_ron(&text).expect("loads");
+        assert_eq!(back.version, SAVE_VERSION);
+        assert_eq!(back.config.bike_threshold, WorldConfig::default().bike_threshold, "a missing field takes its default");
+        let cz = &back.citizens[c];
+        assert!(cz.home.is_none() && cz.work.is_none() && cz.inside.is_none() && cz.parked_at.is_none() && cz.transit.is_none());
+        assert!(matches!(cz.activity, Activity::Idle));
+        assert!(back.lots[lot].building.is_none());
+        for _ in 0..200 {
+            back.tick(&mut minds);
+        }
+    }
+
+    #[test]
+    fn the_overdraft_floor_refuses_purchases_and_doors_and_the_ledger_balances() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Commercial);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Entertainment);
+        w.add_zone(square(-400.0, 10.0, 190.0), LandUse::Residential);
+        let shop_lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Commercial);
+        let venue_lot = lot_near(&w, Vec2::new(-100.0, 20.0), LandUse::Entertainment);
+        let home_lot = lot_near(&w, Vec2::new(-300.0, 20.0), LandUse::Residential);
+        w.build_on(shop_lot);
+        w.build_on(venue_lot);
+        w.build_on(home_lot);
+        let shop = w.lots[shop_lot].building.unwrap();
+        let venue = w.lots[venue_lot].building.unwrap();
+        finish_all(&mut w);
+        w.buildings[shop].business = Some(Business::new(BusinessKind::GadgetShop, 4));
+        w.buildings[shop].business.as_mut().unwrap().add(Resource::Goods, 5.0);
+        assert_eq!(w.buildings[venue].business.as_ref().unwrap().kind, BusinessKind::Venue);
+        let mut minds = IdleMind;
+        for _ in 0..600 {
+            if !w.citizens.is_empty() {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let c = w.citizens.keys().next().expect("someone moved in");
+        // Skint: the shop sells nothing and the door is shut.
+        w.citizens[c].savings = OVERDRAFT + 1.0;
+        let mood0 = w.citizens[c].mood;
+        w.buy(c, shop, Resource::Goods);
+        assert_eq!(w.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Goods), 5.0, "nothing sold");
+        assert!(w.citizens[c].mood < mood0 && w.citizens[c].thought.contains("Skint"));
+        let entrance = w.building_entrance(venue).unwrap();
+        w.citizens[c].activity = Activity::Traveling { to: Some(venue), purpose: Purpose::Visit(LandUse::Entertainment), path: vec![entrance], idx: 1 };
+        w.arrive(c);
+        assert!(w.citizens[c].inside.is_none() && matches!(w.citizens[c].activity, Activity::Idle), "turned away");
+        assert!(w.citizens[c].savings >= OVERDRAFT);
+        // Flush: served and charged.
+        w.citizens[c].savings = 100.0;
+        w.citizens[c].activity = Activity::Traveling { to: Some(venue), purpose: Purpose::Visit(LandUse::Entertainment), path: vec![entrance], idx: 1 };
+        w.arrive(c);
+        assert_eq!(w.citizens[c].inside, Some(venue));
+        assert!((w.citizens[c].savings - (100.0 - VENUE_COVER)).abs() < 0.01);
+        w.citizens[c].inside = None;
+        w.citizens[c].activity = Activity::Idle;
+        w.buy(c, shop, Resource::Goods);
+        assert_eq!(w.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Goods), 4.0);
+        // A shut venue is not somewhere to go out to.
+        w.buildings[venue].business.as_mut().unwrap().closed = true;
+        w.apply_decision(c, Decision { intent: Intent::Visit(LandUse::Entertainment), thought: String::new(), memory: None });
+        assert!(matches!(w.citizens[c].activity, Activity::Idle), "nobody heads for a closed venue");
+        // The ledger: every treasury move is booked, so the day's flows sum
+        // to the day's change.
+        let before = w.economy.treasury;
+        let today0 = w.economy.ledger.today;
+        let ind = lot_near(&w, Vec2::new(-350.0, 20.0), LandUse::Residential);
+        w.lots[ind].land_use = LandUse::Industrial;
+        w.build_power(ind, PowerPlantKind::Solar).expect("plant");
+        assert!(w.economy.ledger.today_of(Flow::Construction) < 0.0);
+        let booked: f32 = (0..9).map(|i| w.economy.ledger.today[i] - today0[i]).sum();
+        assert!((w.economy.treasury - before - booked).abs() < 0.01, "treasury moved {} but the books say {}", w.economy.treasury - before, booked);
+    }
+
+    #[test]
+    fn same_seed_and_script_give_identical_saves() {
+        fn run() -> String {
+            let mut w = World::new(WorldConfig { seed: 11, ..WorldConfig::default() });
+            for i in -1..=1 {
+                let c = i as f32 * 200.0;
+                w.add_road(&[Vec2::new(-500.0, c), Vec2::new(500.0, c)], 1, 1);
+                w.add_road(&[Vec2::new(c, -500.0), Vec2::new(c, 500.0)], 1, 1);
+            }
+            w.add_zone(square(-190.0, -190.0, 180.0), LandUse::Residential);
+            w.add_zone(square(10.0, 10.0, 180.0), LandUse::Commercial);
+            w.add_zone(square(-190.0, 10.0, 180.0), LandUse::Industrial);
+            w.add_zone(square(10.0, -190.0, 60.0), LandUse::Park);
+            let mut minds = IdleMind;
+            for _ in 0..(36 * 60) {
+                w.tick(&mut minds);
+            }
+            finish_all(&mut w);
+            for _ in 0..(6 * 60) {
+                w.tick(&mut minds);
+            }
+            assert!(!w.citizens.is_empty() && !w.traffic.cars.is_empty(), "something happened");
+            w.to_ron().unwrap()
+        }
+        let (a, b) = (run(), run());
+        assert!(a == b, "two runs of the same script diverged");
+    }
+
+    /// A block with a bus line, a depot and a bus out on the loop.
+    fn bus_city() -> (World, RouteId) {
+        use crate::transit;
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_road(&[Vec2::new(-400.0, 140.0), Vec2::new(400.0, 140.0)], 1, 1);
+        w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(-300.0, 140.0)], 1, 1);
+        w.add_road(&[Vec2::new(300.0, 0.0), Vec2::new(300.0, 140.0)], 1, 1);
+        w.add_zone(vec![Vec2::new(-390.0, 10.0), Vec2::new(-310.0, 10.0), Vec2::new(-310.0, 130.0), Vec2::new(-390.0, 130.0)], LandUse::Residential);
+        w.add_zone(vec![Vec2::new(310.0, 10.0), Vec2::new(390.0, 10.0), Vec2::new(390.0, 130.0), Vec2::new(310.0, 130.0)], LandUse::Commercial);
+        w.add_zone(vec![Vec2::new(-100.0, -150.0), Vec2::new(100.0, -150.0), Vec2::new(100.0, -10.0), Vec2::new(-100.0, -10.0)], LandUse::Industrial);
+        let route = w.add_bus_route();
+        for p in [Vec2::new(-200.0, 4.0), Vec2::new(200.0, 4.0), Vec2::new(296.0, 70.0), Vec2::new(200.0, 136.0), Vec2::new(-200.0, 136.0), Vec2::new(-296.0, 70.0)] {
+            w.add_bus_stop(route, p).expect("stop snaps to the street");
+        }
+        let depot_lot = w.lots.iter().find(|(_, l)| l.usable() && l.building.is_none() && l.land_use == LandUse::Industrial && l.area() >= transit::DEPOT_MIN_AREA).map(|(id, _)| id).expect("industrial lot");
+        w.build_depot(depot_lot).expect("depot built");
+        (w, route)
+    }
+
+    #[test]
+    fn a_save_mid_journey_keeps_trucks_buses_and_riders() {
+        let (mut w, route) = bus_city();
+        let home_lot = lot_near(&w, Vec2::new(-350.0, 70.0), LandUse::Residential);
+        let shop_lot = lot_near(&w, Vec2::new(350.0, 70.0), LandUse::Commercial);
+        w.build_on(home_lot);
+        w.build_on(shop_lot);
+        finish_all(&mut w);
+        let mut minds = IdleMind;
+        // Run until a bus is out and people have moved in; sites order
+        // trucks of their own as the city grows.
+        for _ in 0..(12 * 60) {
+            w.tick(&mut minds);
+        }
+        let bus = w.traffic.cars.iter().find(|(_, c)| c.bus.is_some()).map(|(id, _)| id).expect("a bus is out");
+        let riders: Vec<CitizenId> = w.citizens.keys().take(3).collect();
+        assert!(!riders.is_empty(), "someone moved in");
+        for &r in &riders {
+            w.traffic.cars[bus].bus.as_mut().unwrap().passengers.push(r);
+            let c = &mut w.citizens[r];
+            c.inside = None;
+            c.activity = Activity::Riding { bus };
+            c.transit = Some(TransitTrip { leg: TransitLeg::Bus { route, board: 0, alight: 3 }, target: w.lots[shop_lot].building.unwrap(), purpose: Purpose::Shop(Resource::Goods), since: 0 });
+        }
+        // A truck on the road too.
+        let shop = w.lots[shop_lot].building.unwrap();
+        w.import(shop, Resource::Goods, 3.0, 10.0);
+        let trucks = w.traffic.cars.values().filter(|c| c.cargo.is_some()).count();
+        let cars = w.traffic.cars.len();
+        let riding = w.citizens.values().filter(|c| matches!(c.activity, Activity::Riding { .. })).count();
+        assert!(trucks >= 1 && riding == riders.len(), "trucks {trucks} riding {riding}");
+        let mut back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+        assert_eq!(back.traffic.cars.len(), cars, "every car reattached to its lane");
+        assert_eq!(back.traffic.cars.values().filter(|c| c.cargo.is_some()).count(), trucks);
+        assert_eq!(back.traffic.cars[bus].bus.as_ref().unwrap().passengers.len(), riders.len());
+        assert_eq!(back.citizens.values().filter(|c| matches!(c.activity, Activity::Riding { .. })).count(), riding);
+        for _ in 0..200 {
+            back.tick(&mut minds);
+        }
+        assert!(back.citizens.values().all(|c| c.pos.is_finite()));
+    }
+
+    #[test]
+    fn a_business_that_cannot_pay_closes_goes_derelict_and_is_demolished() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Commercial);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Residential);
+        let shop_lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Commercial);
+        let home_lot = lot_near(&w, Vec2::new(-100.0, 20.0), LandUse::Residential);
+        w.build_on(shop_lot);
+        w.build_on(home_lot);
+        let shop = w.lots[shop_lot].building.unwrap();
+        finish_all(&mut w);
+        w.buildings[shop].business = Some(Business::new(BusinessKind::Bakery, w.buildings[shop].jobs));
+        let mut minds = IdleMind;
+        for _ in 0..600 {
+            if !w.citizens.is_empty() {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let worker = w.citizens.keys().next().expect("someone moved in");
+        if w.citizens[worker].work != Some(shop) {
+            if let Some(old) = w.citizens[worker].work {
+                w.buildings[old].workers.retain(|&c| c != worker);
+            }
+            w.citizens[worker].work = None;
+            w.assign_job(worker, shop);
+        }
+        w.buildings[shop].business.as_mut().unwrap().money = -1000.0;
+        w.drain_events();
+        for day in 0..5 {
+            assert!(!w.buildings[shop].business.as_ref().unwrap().closed, "still open on day {day}");
+            w.daily_businesses();
+        }
+        let b = &w.buildings[shop];
+        assert!(b.business.as_ref().unwrap().closed, "five broke days and it shuts");
+        assert!(b.is_derelict(), "a shut shop is a derelict shell: condition {}", b.condition);
+        assert!(b.workers.is_empty());
+        assert_eq!(w.citizens[worker].work, None);
+        assert_eq!(w.citizens[worker].income, GIG_INCOME);
+        assert!(w.citizens[worker].memories.iter().any(|m| m.text.contains("shut down")));
+        assert!(w.drain_events().iter().any(|e| matches!(e, SimEvent::BusinessClosed(x) if *x == shop)));
+        assert_eq!(w.economy.market.closed_total, 1);
+        for _ in 0..7 {
+            w.daily_businesses();
+            assert!(w.buildings.contains_key(shop), "a week of grace");
+        }
+        w.daily_businesses();
+        assert!(!w.buildings.contains_key(shop), "then the lot is cleared");
+        assert!(w.lots[shop_lot].building.is_none() || !w.buildings.contains_key(w.lots[shop_lot].building.unwrap()));
+    }
+
+    #[test]
+    fn four_hungry_days_and_a_citizen_leaves() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        let home_lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Residential);
+        w.build_on(home_lot);
+        let home = w.lots[home_lot].building.unwrap();
+        w.finish_construction(home);
+        let mut minds = IdleMind;
+        for _ in 0..600 {
+            if !w.citizens.is_empty() {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let c = w.citizens.keys().next().expect("someone moved in");
+        assert!(w.buildings[home].residents.contains(&c));
+        w.citizens[c].satiety = 0.0;
+        w.citizens[c].savings = 1000.0;
+        for day in 0..3 {
+            w.daily_citizen(c);
+            assert!(w.citizens.contains_key(c), "still here after {} hungry days", day + 1);
+            assert_eq!(w.citizens[c].hungry_days, day + 1);
+        }
+        w.daily_citizen(c);
+        assert!(!w.citizens.contains_key(c), "gone on the fourth");
+        assert!(!w.buildings[home].residents.contains(&c));
+        assert_eq!(w.economy.emigrated_total, 1);
+        assert!(w.drain_events().iter().any(|e| matches!(e, SimEvent::CitizenLeft(x) if *x == c)));
+    }
+
+    #[test]
+    fn job_search_fills_open_jobs_with_the_fixed_skill_formula() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
+        let home_lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Residential);
+        w.build_on(home_lot);
+        w.finish_construction(w.lots[home_lot].building.unwrap());
+        let mut minds = IdleMind;
+        for _ in 0..600 {
+            if !w.citizens.is_empty() {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let c = w.citizens.keys().next().expect("someone moved in");
+        if let Some(old) = w.citizens[c].work {
+            w.buildings[old].workers.retain(|&x| x != c);
+        }
+        w.lay_off(c, None);
+        assert_eq!((w.citizens[c].work, w.citizens[c].income), (None, GIG_INCOME));
+        // No jobs anywhere: nothing happens.
+        for b in w.buildings.values_mut() {
+            b.jobs = 0;
+        }
+        w.job_search();
+        assert_eq!(w.citizens[c].work, None);
+        // One opening, and it is filled at the wage times the person's skill.
+        let shop_lot = lot_near(&w, Vec2::new(-100.0, 20.0), LandUse::Commercial);
+        w.build_on(shop_lot);
+        let shop = w.lots[shop_lot].building.unwrap();
+        w.finish_construction(shop);
+        w.buildings[shop].jobs = 1;
+        w.job_search();
+        assert_eq!(w.citizens[c].work, Some(shop));
+        assert!(w.buildings[shop].workers.contains(&c));
+        let expected = w.buildings[shop].wage() * World::skill_of(w.citizens[c].seed);
+        assert!((w.citizens[c].income - expected).abs() < 0.01);
+        assert_eq!(w.buildings[shop].free_jobs(), 0);
+    }
+
+    #[test]
+    fn gini_is_zero_when_equal_and_near_one_when_one_has_everything() {
+        assert_eq!(Economy::gini(&mut vec![]), 0.0);
+        assert_eq!(Economy::gini(&mut vec![50.0]), 0.0);
+        assert!(Economy::gini(&mut vec![40.0, 40.0, 40.0, 40.0]).abs() < 1e-6);
+        let g = Economy::gini(&mut vec![0.0, 0.0, 0.0, 100.0]);
+        assert!((g - 0.75).abs() < 1e-6, "(n-1)/n for a single earner: {g}");
+        let mut unsorted = vec![100.0, 0.0, 0.0, 0.0];
+        assert!((Economy::gini(&mut unsorted) - 0.75).abs() < 1e-6, "order does not matter");
+        assert!(Economy::gini(&mut vec![10.0, 20.0, 30.0, 40.0]) < g);
+        assert_eq!(Economy::gini(&mut vec![0.0, 0.0]), 0.0, "no income, no inequality");
+    }
+
+    #[test]
+    fn removing_a_bus_stop_shifts_riders_and_buses_and_cancels_trips_through_it() {
+        let (mut w, route) = bus_city();
+        let home_lot = lot_near(&w, Vec2::new(-350.0, 70.0), LandUse::Residential);
+        w.build_on(home_lot);
+        finish_all(&mut w);
+        let mut minds = IdleMind;
+        for _ in 0..600 {
+            if !w.citizens.is_empty() {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let shop = w.buildings.keys().next().unwrap();
+        let ids: Vec<CitizenId> = w.citizens.keys().collect();
+        let (a, b) = (ids[0], *ids.get(1).unwrap_or(&ids[0]));
+        let trip = |board, alight| Some(TransitTrip { leg: TransitLeg::Bus { route, board, alight }, target: shop, purpose: Purpose::Shop(Resource::Goods), since: 0 });
+        w.citizens[a].transit = trip(1, 4);
+        w.citizens[a].activity = Activity::Waiting { at: Vec2::ZERO };
+        if b != a {
+            w.citizens[b].transit = trip(2, 5);
+            w.citizens[b].activity = Activity::Waiting { at: Vec2::ZERO };
+        }
+        // A bus between stops 1 and 3, heading for 3.
+        let stops = w.transit.routes[route].stops.clone();
+        let (lanes, s0, s1) = w.traffic.net.find_route(stops[1].segment, stops[1].pos, stops[3].segment, stops[3].pos).expect("route");
+        let car = w.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, 0);
+        let depot = w.buildings.iter().find(|(_, b)| b.depot).map(|(id, _)| id).unwrap();
+        w.traffic.cars[car].bus = Some(Bus { route, next_stop: 3, passengers: Vec::new(), to_depot: false, depot });
+        w.remove_bus_stop(route, 2);
+        assert_eq!(w.transit.routes[route].stops.len(), 5);
+        assert_eq!(w.traffic.cars[car].bus.as_ref().unwrap().next_stop, 2, "the bus's next stop moved down one");
+        assert_eq!(w.citizens[a].transit.map(|t| t.leg), Some(TransitLeg::Bus { route, board: 1, alight: 3 }), "indices past the gap shift");
+        if b != a {
+            assert!(w.citizens[b].transit.is_none() && matches!(w.citizens[b].activity, Activity::Idle), "a trip through the removed stop is cancelled");
+        }
+        // Removing a stop before the bus's target does not touch a bus heading home.
+        w.traffic.cars[car].bus.as_mut().unwrap().next_stop = usize::MAX;
+        w.remove_bus_stop(route, 0);
+        assert_eq!(w.traffic.cars[car].bus.as_ref().unwrap().next_stop, usize::MAX);
+        assert_eq!(w.citizens[a].transit.map(|t| t.leg), Some(TransitLeg::Bus { route, board: 0, alight: 2 }));
+    }
+
+    #[test]
+    fn brownouts_cut_production() {
+        let mut w = World::new(WorldConfig::default());
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Industrial);
+        w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Residential);
+        let ind: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial).map(|(id, _)| id).collect();
+        let res: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Residential).map(|(id, _)| id).collect();
+        for &l in ind.iter().chain(res.iter()) {
+            w.build_on(l);
+        }
+        finish_all(&mut w);
+        // A fully staffed grain farm (no inputs, so output depends on power alone).
+        let farm = w.lots[ind[0]].building.unwrap();
+        {
+            let b = &mut w.buildings[farm];
+            b.tier = Tier::Low;
+            b.jobs = 8;
+            b.business = Some(Business::new(BusinessKind::GrainFarm, 8));
+            b.workers = vec![CitizenId::default(); 8];
+        }
+        let full = w.buildings[farm].business.clone().unwrap().produce(8, 1.0);
+        assert!(full > 0.0);
+        // Lights on: an hour makes the full amount.
+        let stock0 = w.buildings[farm].business.as_ref().unwrap().stock_of(Resource::Grain);
+        w.hourly_economy();
+        assert!(w.buildings[farm].powered >= 0.999, "powered {}", w.buildings[farm].powered);
+        let made_lit = w.buildings[farm].business.as_ref().unwrap().stock_of(Resource::Grain) - stock0;
+        assert!((made_lit - full).abs() < 1e-3, "lit: {made_lit} vs {full}");
+        // Towers everywhere: demand outruns the grid and the cheap farm is
+        // served last, so it makes less.
+        for b in w.buildings.values_mut() {
+            if b.lot != ind[0] {
+                b.floors = 30;
+                b.tier = Tier::High;
+            }
+        }
+        let stock1 = w.buildings[farm].business.as_ref().unwrap().stock_of(Resource::Grain);
+        w.hourly_economy();
+        let p = w.buildings[farm].powered;
+        assert!(p < 0.9, "the farm is browned out: {p}");
+        assert!(w.economy.power.brownout_hours_today >= 1);
+        let made_dark = w.buildings[farm].business.as_ref().unwrap().stock_of(Resource::Grain) - stock1;
+        assert!(made_dark < made_lit * 0.9, "dark: {made_dark} vs lit {made_lit}");
+        assert!((made_dark - full * p).abs() < 1e-3, "output scales with power: {made_dark} vs {}", full * p);
     }
 }

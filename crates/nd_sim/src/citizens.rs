@@ -1,6 +1,6 @@
 use crate::buildings::{BuildingId, Tier};
 use crate::traffic::CarId;
-use crate::zoning::LandUse;
+use crate::zoning::{LandUse, LotId};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use slotmap::new_key_type;
@@ -165,6 +165,11 @@ pub struct Citizen {
     /// route so far. Rebuilt as they move; never saved.
     #[serde(skip)]
     pub trail: Vec<Vec2>,
+    /// Lots the current journey walks past, counted as footfall once the
+    /// journey ends (not when it is planned, so abandoned trips count for
+    /// nothing, and not per leg of a bus or train trip).
+    #[serde(default)]
+    pub pending_footfall: Vec<LotId>,
 }
 
 impl Citizen {
@@ -236,6 +241,7 @@ mod tests {
             groceries: 0.0,
             hungry_days: 0,
             trail: Vec::new(),
+            pending_footfall: Vec::new(),
         }
     }
 
