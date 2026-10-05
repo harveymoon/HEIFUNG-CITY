@@ -8,7 +8,10 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
+use crate::sim::Sim;
 use crate::ui::UiFlags;
+use nd_sim::Tier;
+use rand::seq::IndexedRandom;
 
 #[derive(Component)]
 pub struct OrbitCamera {
@@ -57,10 +60,23 @@ fn control_camera(
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
     flags: Res<UiFlags>,
+    sim: Res<Sim>,
     mut q: Query<(&mut OrbitCamera, &mut Transform)>,
 ) {
     let Ok((mut cam, mut tf)) = q.single_mut() else { return };
     let dt = time.delta_secs();
+
+    // F7 / F8 / F9: jump to a random low, middle or high tier building.
+    for (key, tier) in [(KeyCode::F7, Tier::Low), (KeyCode::F8, Tier::Mid), (KeyCode::F9, Tier::High)] {
+        if keys.just_pressed(key) {
+            let candidates: Vec<_> = sim.world.buildings.values().filter(|b| b.tier == tier && b.land_use != nd_sim::LandUse::Park).filter_map(|b| sim.world.lots.get(b.lot)).map(|l| l.center).collect();
+            if let Some(c) = candidates.choose(&mut rand::rng()) {
+                cam.target = Vec3::new(c.x, 0.0, c.y);
+                cam.distance = 110.0;
+                cam.pitch = 0.55;
+            }
+        }
+    }
 
     // Rotate with the right mouse button, pan with the middle button or shift+left.
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
@@ -106,6 +122,12 @@ fn control_camera(
         let forward = Vec3::new(-s, 0.0, -c);
         let speed = cam.distance * 0.9 * dt;
         cam.target += (right * pan.x + forward * pan.y) * speed;
+    }
+    if keys.pressed(KeyCode::BracketLeft) {
+        cam.distance = (cam.distance * (1.0 - 1.5 * dt)).max(25.0);
+    }
+    if keys.pressed(KeyCode::BracketRight) {
+        cam.distance = (cam.distance * (1.0 + 1.5 * dt)).min(2500.0);
     }
     if keys.pressed(KeyCode::KeyQ) {
         cam.yaw += 1.2 * dt;

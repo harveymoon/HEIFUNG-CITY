@@ -38,6 +38,13 @@ Add freely. Move items into `DESIGN.md` when they get scheduled.
 - Time-lapse recording of a city's growth.
 - Photo mode with filters.
 
+## Architecture
+- More Stacks variety: buses and RVs as units, external stair towers, hanging laundry, graffiti.
+- Brutalist variants: megastructure blocks spanning two lots, elevated walkways between them.
+- Crystal variants: twisted towers, cantilevered crowns, holographic crests for corporations.
+- Fortress variants: moats, helipads, private gardens, drone pads.
+- Signage that names the actual business inside (text on LED screens).
+
 ## Rendering
 - Instanced rendering for windows and citizens once counts get large.
 - Screen-space reflections on wet ground.

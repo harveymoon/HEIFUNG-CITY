@@ -90,4 +90,72 @@ impl MeshData {
             self.ground_polygon(&[a, b, c, e], y, color);
         }
     }
+
+    /// Triangle with the normal flipped, if needed, to face `outward`.
+    pub fn tri_facing(&mut self, a: Vec3, b: Vec3, c: Vec3, outward: Vec3, color: [f32; 4]) {
+        let n = (b - a).cross(c - a).normalize_or_zero();
+        let (b, c, n) = if n.dot(outward) < 0.0 { (c, b, -n) } else { (b, c, n) };
+        let base = self.positions.len() as u32;
+        for p in [a, b, c] {
+            self.positions.push(p.to_array());
+            self.normals.push(n.to_array());
+            self.colors.push(color);
+        }
+        self.indices.extend_from_slice(&[base, base + 1, base + 2]);
+    }
+
+    /// Quad whose normal is made to face `outward`.
+    pub fn quad_facing(&mut self, corners: [Vec3; 4], outward: Vec3, color: [f32; 4]) {
+        let n = (corners[1] - corners[0]).cross(corners[3] - corners[0]).normalize_or_zero();
+        if n.dot(outward) < 0.0 {
+            self.quad([corners[0], corners[3], corners[2], corners[1]], color);
+        } else {
+            self.quad(corners, color);
+        }
+    }
+
+    /// Solid between two polygons with the same vertex count (a tapered or
+    /// leaning tower when `top` is a scaled, shifted copy of `bottom`).
+    pub fn frustum(&mut self, bottom: &[Vec3], top: &[Vec3], color: [f32; 4]) {
+        let n = bottom.len().min(top.len());
+        if n < 3 {
+            return;
+        }
+        let centroid = (bottom.iter().chain(top.iter()).fold(Vec3::ZERO, |acc, p| acc + *p)) / (2 * n) as f32;
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let mid = (bottom[i] + bottom[j] + top[j] + top[i]) * 0.25;
+            self.quad_facing([bottom[i], bottom[j], top[j], top[i]], mid - centroid, color);
+        }
+        let top_c = top.iter().fold(Vec3::ZERO, |a, p| a + *p) / n as f32;
+        let bot_c = bottom.iter().fold(Vec3::ZERO, |a, p| a + *p) / n as f32;
+        for i in 0..n {
+            let j = (i + 1) % n;
+            self.tri_facing(top_c, top[i], top[j], Vec3::Y, color);
+            self.tri_facing(bot_c, bottom[i], bottom[j], Vec3::NEG_Y, color);
+        }
+    }
+
+    /// Regular polygon in the XZ plane at height `y`.
+    pub fn ngon(center: Vec2, radius: f32, sides: usize, rotation: f32, y: f32) -> Vec<Vec3> {
+        (0..sides)
+            .map(|i| {
+                let a = rotation + i as f32 / sides as f32 * std::f32::consts::TAU;
+                Vec3::new(center.x + a.cos() * radius, y, center.y + a.sin() * radius)
+            })
+            .collect()
+    }
+
+    /// Rectangle corners in the XZ plane, rotated by `yaw`, at height `y`.
+    pub fn rect(center: Vec2, half_w: f32, half_d: f32, yaw: f32, y: f32) -> Vec<Vec3> {
+        let (s, c) = yaw.sin_cos();
+        [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .iter()
+            .map(|(u, v)| {
+                let x = u * half_w;
+                let z = v * half_d;
+                Vec3::new(center.x + x * c - z * s, y, center.y + x * s + z * c)
+            })
+            .collect()
+    }
 }

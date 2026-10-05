@@ -122,10 +122,26 @@ trait MindProvider {
 - Y-up world. Sim `(x, y)` maps to world `(x, 0, y)`.
 - Terrain: flat basin for the city, procedural hills around it.
 - Buildings: two meshes each. A lit mesh with vertex colors for walls and roofs, and
-  an unlit mesh with mildly HDR vertex colors for windows, signs and lamps. Bloom is
-  kept low; the look is worn near-future, not neon. Tier and condition drive the
-  grammar: stains, boarded windows and rusted units on cheap and derelict buildings,
-  glass and mullions on expensive ones.
+  an unlit mesh with mildly HDR vertex colors for windows, signs, lamps and LED
+  screens. Bloom is kept low; the look is worn near-future, not neon.
+- Architecture by tier, each a separate generator in `nd_procgen::buildings`:
+  - Low: the Stacks. A rusted steel scaffold with a deck per level, up to ten levels
+    of shipping containers and old trailers, cantilevers, walkways with railings and
+    bare bulbs, ladders, tarps hanging off the sides, cables strung to the neighbours,
+    plywood patches, dishes, rust streaks. Market stalls at street level on commercial
+    lots. Grime scales with the building's condition.
+  - Middle: brutalist concrete. Stacked slabs with alternating overhangs, floor plates,
+    recessed window bands with lit segments, vertical fins, mechanical penthouses, and
+    LED advert screens on the facade and roof (always on shops and venues). Civic
+    buildings use the same grammar on pilotis over a stepped plaza.
+  - High: crystal towers (one to three faceted, tapered, leaning glass shards on a
+    podium with lit floor bands, spires and skybridges) or, for some homes, fortress
+    compounds (crenellated walls, octagonal corner towers, a gatehouse, a tapered keep
+    with slit windows, an annex and a garden).
+  - Industrial lots get sheds with saw-tooth roof lights, roll-up doors, chimneys, tanks
+    and pipes regardless of tier.
+  Everything is attached to a surface: roof gear uses the top slab's footprint, lamps
+  sit on poles, windows follow tapers.
 - Roads: flat dark strips with emissive lane markers.
 - Citizens: small emissive markers that move along the roads.
 

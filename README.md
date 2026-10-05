@@ -32,6 +32,7 @@ links Bevy dynamically for quicker iteration.
 - Buildings appear on vacant lots when demand is high, in the tier the land value supports. People
   move in when they can afford a home, take jobs, commute, and move or leave when rent bites.
   `V` toggles the land value overlay; the panel shows class counts, rents and the Gini index.
+  `F7`/`F8`/`F9` jump the camera to a random low, middle or high tier building; `[` and `]` zoom.
   Save and Load use `saves/city.ron`.
 
 ## Tinkering
