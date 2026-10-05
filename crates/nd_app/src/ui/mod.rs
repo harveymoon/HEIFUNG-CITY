@@ -28,6 +28,8 @@ use crate::sim::{Sim, SimSet};
 use crate::tools::{EffectivePlan, Selection, Tool, ToolState};
 
 pub use saves::{load_now, save_now, Saves, LATEST};
+/// For the remote API's `window` command.
+pub use windows::Info;
 
 /// What the UI wants the rest of the app to know about input this frame.
 #[derive(Resource, Default)]

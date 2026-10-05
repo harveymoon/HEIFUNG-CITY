@@ -60,6 +60,43 @@ def obj(props, required=()):
 
 TOOLS = [
     {
+        "name": "report",
+        "description": "Use report first to review the whole city in one call: overview (population, homes, jobs, treasury, demand), people (class, activity, employment, housing, income/savings/mood distributions, rent burden, hunger, commute modes, top reasons from recent memories), economy (ledger, businesses by kind with staffing and stock vs target, resources supply vs demand and scarcity, most/least profitable businesses), land (lots and buildings by land use and tier, rents, land value), services (power plants, bus routes, rail facilities, parking, traffic) and alerts: a ranked list of concrete problems, each with a count, a location [x, y], example ids for inspect and a hint. Pass sections to get only some.",
+        "inputSchema": obj({"sections": {"type": "array", "items": {"type": "string", "enum": ["overview", "people", "economy", "land", "services", "alerts"]}, "description": "default: all"}}),
+    },
+    {
+        "name": "map",
+        "description": "Use map for WHERE: the city cut into square cells (default 100 m, at most 400 cells). layer=summary gives a table of every non-empty cell (residents, homes, jobs, jobs filled, businesses, land value, hungry, vacant lots, unpowered, cars, dominant land use). A single layer (population, land_value, jobs, hunger, vacancy, power, traffic) gives its value grid and an ASCII heat map (' .:-=+*#%@', rows from the smallest y at the top), returned also as a separate text block. Cell (col,row) centre = [x0+(col+0.5)*cell_m, y0+(row+0.5)*cell_m].",
+        "inputSchema": obj({
+            "layer": {"type": "string", "enum": ["summary", "population", "land_value", "jobs", "hunger", "vacancy", "power", "traffic"]},
+            "cell_m": {"type": "number", "minimum": 25, "description": "cell size in metres (default 100; grown if the grid would exceed 400 cells)"},
+        }),
+    },
+    {
+        "name": "history",
+        "description": "Use history for TRENDS: daily series (population, households, treasury, net ledger, taxes, gini, land value, mood, hungry, unemployed, unhoused, businesses open/closed, buildings, sites, power, transit/rail riders, emigrated/displaced totals) for up to 365 days, and an hourly series of the last 48 hours (cars on the road, hungry, treasury, ...), with a first/last/change/min/max summary per key. Kept by the running game, not in saves: it restarts at app start and on load.",
+        "inputSchema": obj({"keys": {"type": "array", "items": {"type": "string"}, "description": "series to return (default all)"}, "days": {"type": "integer", "minimum": 1, "description": "only the last n days"}}),
+    },
+    {
+        "name": "list",
+        "description": "Use list for TABLES: every row of one kind with consistent columns, sortable and filterable, e.g. the least staffed businesses or the citizens with the highest rent share. what=businesses|buildings|citizens|lots|routes|plants|facilities; sort=column, desc; filter={column: substring | value | {min, max}}; fields=[columns] (id always kept); offset, limit (default 50, max 1000). Row ids go into inspect/select/camera.",
+        "inputSchema": obj({
+            "what": {"type": "string", "enum": ["businesses", "buildings", "citizens", "lots", "routes", "plants", "facilities"]},
+            "sort": {"type": "string"}, "desc": {"type": "boolean"}, "filter": {"type": "object"},
+            "fields": {"type": "array", "items": {"type": "string"}}, "offset": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+        }, ["what"]),
+    },
+    {
+        "name": "export",
+        "description": "Write the whole review (report, summary map, history, and every row of every list) to one JSON file for offline analysis; default <game dir>/exports/city-<unix>.json. Returns the path and size in bytes.",
+        "inputSchema": obj({"path": {"type": "string"}}),
+    },
+    {
+        "name": "window",
+        "description": "Open, close or toggle one of the game's info windows (what the player sees): city, economy, market, people, power, transit, land, saves, help, dev. open omitted toggles. Returns the windows now open. Useful before a screenshot.",
+        "inputSchema": obj({"name": {"type": "string", "enum": ["city", "economy", "market", "people", "power", "transit", "land", "saves", "help", "dev"]}, "open": {"type": "boolean"}}, ["name"]),
+    },
+    {
         "name": "status",
         "description": "City overview: clock, pause/speed, population, buildings, treasury, power, transit, rail, fps, camera pose, active tool, selection, status messages.",
         "inputSchema": obj({}),
@@ -202,6 +239,23 @@ def run_tool(name, args):
     """Returns (reply dict, extra content blocks)."""
     if name == "status":
         return call_game({"cmd": "status"}), []
+    if name == "report":
+        return call_game({"cmd": "report", **pick(args, "sections")}), []
+    if name == "map":
+        reply = call_game({"cmd": "map", **pick(args, "layer", "cell_m")})
+        extra = []
+        if reply.get("ok") and reply.get("ascii_text"):
+            # The heat map as plain text, readable as is; the JSON keeps the numbers.
+            extra.append({"type": "text", "text": reply.pop("ascii_text")})
+        return reply, extra
+    if name == "history":
+        return call_game({"cmd": "history", **pick(args, "keys", "days")}), []
+    if name == "list":
+        return call_game({"cmd": "list", **pick(args, "what", "sort", "desc", "filter", "fields", "offset", "limit")}), []
+    if name == "export":
+        return call_game({"cmd": "export", **pick(args, "path")}, timeout=30.0), []
+    if name == "window":
+        return call_game({"cmd": "window", **pick(args, "name", "open")}), []
     if name == "control":
         a = args.get("action")
         if a in ("pause", "resume", "toggle"):
@@ -321,7 +375,7 @@ def handle(msg):
             "protocolVersion": version,
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": SERVER_INFO,
-            "instructions": "Drive the running District 2040 game. Start with `status`; ids are \"idx:version\" strings from find/status; positions are [x, y] sim metres (the map spans about -1000..1000). Build with `build` (pending until implemented), then `control step` to let time pass.",
+            "instructions": "Drive the running District 2040 game. Start with `status`; to review how the city is doing call `report` first (ranked alerts with locations and ids), then `map` (where), `history` (trends), `list` (tables) and `inspect` (one thing); ids are \"idx:version\" strings from find/status; positions are [x, y] sim metres (the map spans about -1000..1000). Build with `build` (pending until implemented), then `control step` to let time pass.",
         }
     if method == "ping":
         return {}

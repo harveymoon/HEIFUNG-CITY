@@ -21,7 +21,13 @@ claude mcp add --scope user neon-district -e ND_REMOTE_PORT=4900 -- python C:\CO
 
 | Tool | Wraps |
 | --- | --- |
-| `status` | `status` |
+| `report` | `report`: the one-call city review (use first) |
+| `map` | `map`: grid of cells; a single layer also comes back as an ASCII heat map text block |
+| `history` | `history`: daily and hourly series with trend summaries |
+| `list` | `list`: sortable, filterable tables |
+| `export` | `export`: everything above to one JSON file |
+| `window` | `window`: open/close/toggle the game's info windows |
+| `status` | `status` (now also `alerts_top`, `windows_open`) |
 | `control` | `pause` / `speed` / `step` (`action`: pause, resume, toggle, speed, step) |
 | `build` | `add_road`, `add_zone`, `bulldoze`, `project` (`project_action`), `plan` |
 | `place` | `place` (station, freight_yard, depot, parking, coal, solar, wind, nuclear) |

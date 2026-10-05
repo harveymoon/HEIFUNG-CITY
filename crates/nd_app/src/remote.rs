@@ -14,7 +14,12 @@
 //! `ND_REMOTE=0` disables the server; `ND_REMOTE_PORT` picks the port
 //! (default 4817). It binds 127.0.0.1 only: the API has no authentication.
 
+mod history;
+mod list;
+mod map;
+mod report;
 mod view;
+mod window;
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -37,7 +42,9 @@ use crate::render::{Lighting, Overlays, RenderStats};
 use crate::sim::{Sim, SimSet, SPEEDS};
 use crate::tools::{EffectivePlan, Selection, Tool, ToolState, TransitMode, ROAD_PRESETS};
 use crate::ui::{load_now, save_now, Saves, UiFlags};
+use history::History;
 use view::*;
+use window::WindowRequests;
 
 const DEFAULT_PORT: u16 = 4817;
 /// How long the HTTP thread waits for the main thread to answer. A frame
@@ -73,8 +80,11 @@ impl Plugin for RemotePlugin {
         app.insert_resource(Inbox(Mutex::new(rx)))
             .init_resource::<EventLog>()
             .init_resource::<Follow>()
+            .init_resource::<History>()
+            .init_resource::<WindowRequests>()
             .add_systems(Update, remote_commands.in_set(SimSet::Input).before(crate::tools::tool_input))
-            .add_systems(Update, (log_events, follow_target).in_set(SimSet::Sync));
+            .add_systems(Update, (log_events, follow_target, record_history).in_set(SimSet::Sync))
+            .add_systems(bevy_egui::EguiPrimaryContextPass, window::apply_window_requests);
     }
 }
 
@@ -179,6 +189,8 @@ struct Ctx<'w, 's> {
     walk: ResMut<'w, WalkState>,
     follow: ResMut<'w, Follow>,
     log: ResMut<'w, EventLog>,
+    history: ResMut<'w, History>,
+    windows: ResMut<'w, WindowRequests>,
     cams: Query<'w, 's, &'static mut OrbitCamera>,
     stats: Res<'w, RenderStats>,
     assets: Res<'w, GameAssets>,
@@ -244,6 +256,12 @@ fn log_events(sim: Res<Sim>, flags: Res<UiFlags>, tools: Res<ToolState>, mut log
     }
 }
 
+/// Sample the city into the history rings when an hour or a day turns
+/// (cheap otherwise: a few integer compares and four counters copied).
+fn record_history(sim: Res<Sim>, mut history: ResMut<History>) {
+    history.observe(&sim.world);
+}
+
 /// Keep the orbit target on the followed citizen or car; drop the follow
 /// when they are gone.
 fn follow_target(sim: Res<Sim>, mut follow: ResMut<Follow>, mut cams: Query<&mut OrbitCamera>) {
@@ -303,7 +321,17 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 return Err(format!("ticks must be at most {MAX_STEP}"));
             }
             let start = std::time::Instant::now();
-            ctx.sim.step_ticks(n as u32);
+            // Hour by hour, each chunk ending at minute 59, so history sees
+            // every hour and reads the day's counters before midnight
+            // resets them, however many days one request covers.
+            let mut left = n;
+            while left > 0 {
+                let r = ctx.sim.world.clock.tick % 60;
+                let chunk = left.min(if r < 59 { 59 - r } else { 60 });
+                ctx.sim.step_ticks(chunk as u32);
+                ctx.history.observe(&ctx.sim.world);
+                left -= chunk;
+            }
             Ok(json!({ "ticks": n, "clock": clock(&ctx.sim), "took_ms": start.elapsed().as_millis() as u64 }))
         }
         "seed_demo" => {
@@ -314,14 +342,15 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "save" => save(cmd, ctx),
         "load" => {
             let path = PathBuf::from(req_str(cmd, "path")?);
-            let Ctx { sim, tools, selection, eplan, flags, saves, follow, .. } = ctx;
+            let Ctx { sim, tools, selection, eplan, flags, saves, follow, .. } = &mut *ctx;
             load_now(&path, sim, tools, selection, eplan, flags);
             saves.mark_dirty();
             follow.0 = None;
             if flags.message.starts_with("load failed") {
                 return Err(flags.message.clone());
             }
-            Ok(json!({ "message": flags.message, "clock": clock(sim), "paused": sim.paused }))
+            ctx.history.reset(&ctx.sim.world, "city loaded");
+            Ok(json!({ "message": ctx.flags.message, "clock": clock(&ctx.sim), "paused": ctx.sim.paused }))
         }
         "list_saves" => Ok(list_saves()),
         "plan" => Ok(plan(ctx)),
@@ -430,6 +459,47 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let thoughts: Vec<Value> = w.citizens.iter().filter(|(_, c)| !c.thought.is_empty()).take(limit).map(|(id, c)| json!({ "citizen": key_str(id), "name": c.name, "thought": c.thought })).collect();
             Ok(json!({ "memories": memories, "thoughts": thoughts }))
         }
+        "report" => {
+            let start = std::time::Instant::now();
+            let sections = opt_strings(cmd, "sections")?.unwrap_or_default();
+            let mut v = report::report(&ctx.sim.world, &sections)?;
+            v["clock"] = clock(&ctx.sim);
+            v["took_ms"] = json!(ms(start));
+            Ok(v)
+        }
+        "map" => {
+            let start = std::time::Instant::now();
+            let layer = opt_str(cmd, "layer")?.unwrap_or("summary");
+            let mut v = map::map(&ctx.sim.world, opt_f32(cmd, "cell_m")?, layer)?;
+            v["took_ms"] = json!(ms(start));
+            Ok(v)
+        }
+        "history" => {
+            let keys = opt_strings(cmd, "keys")?;
+            let days = opt_u64(cmd, "days")?.map(|d| d as usize);
+            ctx.history.to_json(keys.as_deref(), days)
+        }
+        "list" => {
+            let start = std::time::Instant::now();
+            let args = list::ListArgs {
+                what: req_str(cmd, "what")?,
+                sort: opt_str(cmd, "sort")?,
+                desc: opt_bool(cmd, "desc")?.unwrap_or(false),
+                filter: field(cmd, "filter"),
+                fields: opt_strings(cmd, "fields")?,
+                offset: opt_u64(cmd, "offset")?.unwrap_or(0) as usize,
+                limit: (opt_u64(cmd, "limit")?.unwrap_or(list::DEFAULT_LIMIT as u64) as usize).min(list::MAX_LIMIT),
+            };
+            let mut v = list::list(&ctx.sim.world, &args)?;
+            v["took_ms"] = json!(ms(start));
+            Ok(v)
+        }
+        "export" => export(cmd, ctx),
+        "window" => {
+            let info = window::info_of(req_str(cmd, "name")?)?;
+            let (open, list) = ctx.windows.request(info, opt_bool(cmd, "open")?);
+            Ok(json!({ "window": info.title().to_ascii_lowercase(), "open": open, "windows_open": list }))
+        }
         other => Err(format!("unknown command {other:?}; try {{\"cmd\": \"help\"}}")),
     }
 }
@@ -489,7 +559,7 @@ fn status(ctx: &Ctx) -> Value {
     let sites = w.buildings.values().filter(|b| b.construction.is_some()).count();
     let fps = ctx.diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
     let ledger: serde_json::Map<String, Value> = e.ledger.yesterday_sorted().into_iter().map(|(f, x)| (f.label().to_string(), json!(round(x)))).collect();
-    json!({
+    let mut v = json!({
         "clock": clock(sim), "paused": sim.paused, "speed_index": sim.speed_index, "speed": sim.speed(), "speed_label": SPEEDS[sim.speed_index].0,
         "effective_speed": round(sim.effective_speed), "ticks_last_frame": sim.ticks_last_frame,
         "population": w.citizens.len(), "buildings": w.buildings.len() - sites, "under_construction": sites,
@@ -511,7 +581,12 @@ fn status(ctx: &Ctx) -> Value {
         "lighting": { "follow_clock": ctx.lighting.follow_clock, "hour": round(ctx.lighting.hour) },
         "message": ctx.flags.message, "tool_status": ctx.tools.status, "event_seq": ctx.log.seq,
         "favourites": ctx.tools.favorites.iter().map(|&f| key_str(f)).collect::<Vec<_>>(),
-    })
+    });
+    // Added after the literal: one `json!` this size hits the macro recursion limit.
+    v["windows_open"] = json!(ctx.windows.open_names());
+    v["alerts_top"] = report::alerts_json(&report::alerts(w), 5);
+    v["review_hint"] = json!("for a whole-city review call report (then map, history, list)");
+    v
 }
 
 // ── saves ───────────────────────────────────────────────────────────────────
@@ -1205,11 +1280,66 @@ fn screenshot(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     Ok(json!({ "path": path.to_string_lossy().replace('\\', "/"), "note": "written a frame or two later; poll for the file" }))
 }
 
+// ── review: export ──────────────────────────────────────────────────────────
+
+/// Milliseconds since `start`, to two decimals.
+fn ms(start: std::time::Instant) -> f64 {
+    (start.elapsed().as_secs_f64() * 100_000.0).round() / 100.0
+}
+
+/// An optional array of strings, e.g. `sections`, `keys`, `fields`.
+fn opt_strings(cmd: &Value, name: &str) -> Result<Option<Vec<String>>, String> {
+    match field(cmd, name) {
+        None => Ok(None),
+        Some(Value::Array(a)) => a.iter().map(|v| v.as_str().map(str::to_string).ok_or_else(|| format!("{name:?} must be an array of strings"))).collect::<Result<Vec<_>, _>>().map(Some),
+        Some(Value::String(s)) => Ok(Some(vec![s.clone()])),
+        Some(_) => Err(format!("{name:?} must be an array of strings")),
+    }
+}
+
+/// `export {path?}`: everything the review commands know, in one JSON file
+/// for offline analysis: the full report, the summary map, history, and
+/// every building, business, citizen, route, plant and rail facility as
+/// `list` rows. Default `exports/city-<unix>.json` under the working
+/// directory (the repo root under `cargo run`; `/exports` is git-ignored).
+fn export(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let start = std::time::Instant::now();
+    let path = match opt_str(cmd, "path")? {
+        Some(p) => PathBuf::from(p),
+        None => {
+            let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            PathBuf::from("exports").join(format!("city-{secs}.json"))
+        }
+    };
+    let path = if path.is_absolute() { path } else { std::env::current_dir().map_err(|e| e.to_string())?.join(path) };
+    let w = &ctx.sim.world;
+    let mut tables = serde_json::Map::new();
+    for what in list::WHATS {
+        tables.insert(what.to_string(), json!(list::rows(w, what)?));
+    }
+    let doc = json!({
+        "format": "district-2040 city export v1",
+        "exported_unix": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()),
+        "clock": clock(&ctx.sim),
+        "report": report::report(w, &[])?,
+        "map_summary": map::map(w, None, "summary").unwrap_or(Value::Null),
+        "history": ctx.history.to_json(None, None)?,
+        "tables": tables,
+    });
+    let text = serde_json::to_string(&doc).map_err(|e| e.to_string())?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    }
+    std::fs::write(&path, &text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    Ok(json!({ "path": path.to_string_lossy().replace('\\', "/"), "bytes": text.len(), "took_ms": ms(start) }))
+}
+
 // ── help ────────────────────────────────────────────────────────────────────
 
 fn help() -> Value {
-    json!({
+    let mut v = json!({
         "transport": "POST http://127.0.0.1:4817/cmd with JSON {\"cmd\": name, ...fields}; GET /status. Replies {ok: true, ...} or {ok: false, error} with HTTP 400.",
+        "start_here": "to review the city: status -> report (all sections, ranked alerts) -> map {layer: hunger|land_value|...} for where -> history for trends -> list for tables -> inspect ids",
         "ids": "slotmap ids are \"idx:version\" strings (citizen, building, lot, car, train, route); gesture ids are plain integers. Positions are [x, y] sim metres.",
         "commands": {
             "help": {},
@@ -1240,5 +1370,19 @@ fn help() -> Value {
             "events": { "since": "seq", "limit": "default 500" },
             "thoughts": { "limit": "default 50" }
         }
-    })
+    });
+    // The review commands, added separately: one `json!` this size hits the
+    // macro recursion limit.
+    let review = json!({
+        "report": { "sections": "optional subset of overview, people, economy, land, services, alerts (default all): the one-call city review" },
+        "map": { "cell_m": "cell size in metres, default 100 (grown to keep at most 400 cells)", "layer": "summary (table of cells) | population | land_value | jobs | hunger | vacancy | power | traffic (grid + ASCII heat map)" },
+        "history": { "keys": "optional daily/hourly series names (default all)", "days": "last n days (default all kept, up to 365)" },
+        "list": { "what": "businesses|buildings|citizens|lots|routes|plants|facilities", "sort": "column", "desc": "bool", "filter": "{column: substring | value | {min, max}}", "fields": "[columns] (id always kept)", "offset": "default 0", "limit": "default 50, max 1000" },
+        "export": { "path": "optional; default exports/city-<unix>.json: report + map + history + every row of every list" },
+        "window": { "name": "city|economy|market|people|power|transit|land|saves|help|dev", "open": "bool, omitted toggles" }
+    });
+    if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), review.as_object()) {
+        c.extend(r.clone());
+    }
+    v
 }
