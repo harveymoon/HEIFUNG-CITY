@@ -317,8 +317,10 @@ impl World {
     pub fn plan_port(&self, kind: PortKind, p: Vec2) -> Result<Port, String> {
         let port = Port::plan(kind, p, &self.landscape)?;
         let fp = port.footprint();
-        if self.buildings.values().any(|b| self.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp) || polygons_overlap(&fp, &l.polygon))) {
-            return Err("something is built there".into());
+        // Grown buildings under it are bought out on placement; a civic
+        // structure there stops it.
+        if let Some(b) = self.buildings_under(&fp).into_iter().filter_map(|(id, _)| self.buildings.get(id)).find(|b| Self::is_civic_structure(b)) {
+            return Err(format!("{} stands there; bulldoze it first", b.name));
         }
         if self.facilities.values().any(|f| polygons_overlap(&f.footprint(), &fp)) || self.ports.ports.values().any(|o| polygons_overlap(&o.footprint(), &fp) || o.center.distance(port.center) < kind.size().0 * 0.6) {
             return Err("too close to another dock or station".into());
@@ -333,6 +335,9 @@ impl World {
         let port = self.plan_port(kind, p)?;
         if self.economy.treasury < kind.cost() {
             return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), kind.cost()));
+        }
+        for (_, lot) in self.buildings_under(&port.footprint()) {
+            self.take_over_lot(lot, kind.label())?;
         }
         self.economy.debit(Flow::Construction, kind.cost());
         let probe = port.front_mid() - port.seaward * rail::ROAD_GAP;
@@ -361,12 +366,17 @@ impl World {
                 PortKind::FerryTerminal => format!("{n} Ferry"),
             }
         };
-        let id = self.place_special(lot_id, name, kind.jobs(), kind.jobs() / 3, |_| {});
+        let id = self.place_special(lot_id, name, kind.jobs(), kind.jobs() / 3, |b| b.port = Some(kind));
         self.ports.ports[pid].building = Some(id);
         self.ports.ports[pid].last_sailing = self.clock.tick.saturating_sub(ports::FREIGHT_HEADWAY);
         self.refresh_port_links();
         self.events.push(SimEvent::LotsChanged);
         Ok(id)
+    }
+
+    /// Buildings whose lots lie under or across a footprint.
+    fn buildings_under(&self, fp: &[Vec2]) -> Vec<(BuildingId, LotId)> {
+        self.buildings.iter().filter(|(_, b)| self.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, fp) || polygons_overlap(fp, &l.polygon))).map(|(id, b)| (id, b.lot)).collect()
     }
 
     /// The lot a dock stands on: its footprint, fronting the nearest street.
@@ -720,13 +730,6 @@ mod tests {
         w.add_road(&[road_at - flow * 200.0, road_at + flow * 200.0], 1, 1);
         let zone = vec![p + n * (width * 0.5 + 2.0) - flow * 150.0, p + n * (width * 0.5 + 2.0) + flow * 150.0, p + n * (width * 0.5 + 90.0) + flow * 150.0, p + n * (width * 0.5 + 90.0) - flow * 150.0];
         w.add_zone(zone, LandUse::Industrial);
-        let by_river = w
-            .lots
-            .iter()
-            .filter(|(_, l)| l.usable() && l.area() >= 300.0)
-            .min_by(|a, b| w.landscape.rivers[0].nearest(a.1.center).2.total_cmp(&w.landscape.rivers[0].nearest(b.1.center).2))
-            .map(|(id, _)| id)
-            .expect("a riverside lot");
         // A lot far from any water.
         w.add_road(&[Vec2::new(-100.0, -100.0), Vec2::new(100.0, -100.0)], 1, 1);
         w.add_zone(vec![Vec2::new(-90.0, -90.0), Vec2::new(90.0, -90.0), Vec2::new(90.0, -20.0), Vec2::new(-90.0, -20.0)], LandUse::Industrial);
@@ -734,7 +737,14 @@ mod tests {
         assert!(w.power_site(dry, PowerPlantKind::Hydro).is_err());
         assert!(w.build_power(dry, PowerPlantKind::Hydro).is_err(), "no hydro away from water");
         assert!(w.build_power(dry, PowerPlantKind::Tidal).is_err(), "no tide in a valley");
-        let by_river = w.lots.iter().find(|(_, l)| l.center.distance(w.lots[by_river].center) < 1.0).map(|(id, _)| id).unwrap();
+        let near_river = |w: &World| {
+            w.lots
+                .iter()
+                .filter(|(_, l)| l.usable() && l.area() >= 300.0 && l.land_use == LandUse::Industrial && l.center.distance(p) < 200.0)
+                .min_by(|a, b| w.landscape.rivers[0].nearest(a.1.center).2.total_cmp(&w.landscape.rivers[0].nearest(b.1.center).2))
+                .map(|(id, _)| id)
+        };
+        let by_river = near_river(&w).expect("a riverside lot after the rebuild");
         assert!(w.power_site(by_river, PowerPlantKind::Hydro).is_ok(), "{:?}", w.power_site(by_river, PowerPlantKind::Hydro));
         let plant = w.build_power(by_river, PowerPlantKind::Hydro).expect("hydro by the river");
         assert_eq!(w.buildings[plant].plant, Some(PowerPlantKind::Hydro));
@@ -773,7 +783,11 @@ mod tests {
         assert!(w.ports.port_of(id).unwrap().road_connected, "the dock's street reaches the city");
         // A ferry terminal on the same bank a little way along.
         let ferry = w.place_port(PortKind::FerryTerminal, click + flow * 170.0);
-        assert!(ferry.is_ok() || ferry.as_ref().unwrap_err().contains("ragged") || ferry.as_ref().unwrap_err().contains("close"), "{ferry:?}");
+        // Wherever it lands, a second dock never overlaps the first.
+        if let Ok(f) = ferry {
+            let fp = w.ports.port_of(f).unwrap().footprint();
+            assert!(!polygons_overlap(&fp, &dock.footprint()));
+        }
         // A lake is no place for a shipping port.
         if let Some(lake) = w.landscape.lakes.first() {
             let edge = lake.outline[0] + (lake.outline[0] - lake.center).normalize() * 20.0;

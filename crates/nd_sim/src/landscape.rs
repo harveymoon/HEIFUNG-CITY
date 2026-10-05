@@ -35,7 +35,7 @@ pub const OUTER_HILLS: f32 = 160.0;
 /// The middle of the map stays dry so a new city always has room to start.
 pub const CLEAR_RADIUS: f32 = 240.0;
 /// Steepest ground a lot may be built on (rise over run across the lot).
-pub const MAX_LOT_SLOPE: f32 = 0.16;
+pub const MAX_LOT_SLOPE: f32 = 0.2;
 /// Slowest water a hydro plant can use, in metres per second.
 pub const MIN_HYDRO_CURRENT: f32 = 0.8;
 /// Height of a bridge deck above the water.
@@ -870,8 +870,11 @@ impl Landscape {
         if d < 0.0 {
             return WATER_LEVEL - 1.2 - (-d).min(10.0) * 0.35;
         }
-        let reach = (25.0 + 0.5 * (base - BANK_HEIGHT)).clamp(25.0, BANK_REACH);
-        BANK_HEIGHT + (base - BANK_HEIGHT).max(0.0) * smoothstep(0.0, reach, d)
+        // A flat strip along the water, then a slope no steeper than about
+        // one in ten up to the hills.
+        let rise = (base - BANK_HEIGHT).max(0.0);
+        let reach = (50.0 + 3.0 * rise).clamp(50.0, BANK_REACH - 20.0);
+        BANK_HEIGHT + rise * smoothstep(18.0, 18.0 + reach, d)
     }
 
     fn sample(&self, grid: impl Fn(&Raster) -> &Vec<f32>, p: Vec2) -> f32 {

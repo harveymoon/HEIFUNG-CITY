@@ -187,10 +187,22 @@ impl Port {
         let seaward = shore.seaward;
         let along = Vec2::new(seaward.y, -seaward.x);
         let (_, d) = kind.size();
-        let center = shore.point - seaward * (d * 0.5 + SETBACK);
+        // Set back far enough that the whole yard is on dry land where the
+        // bank curves away under its corners.
+        let mut center = shore.point - seaward * (d * 0.5 + SETBACK);
+        for k in 0..12 {
+            let c = shore.point - seaward * (d * 0.5 + SETBACK + k as f32 * 4.0);
+            let (w2, d2) = (kind.size().0 * 0.5, d * 0.5);
+            let corners = [c - along * w2 - seaward * d2, c + along * w2 - seaward * d2, c + along * w2 + seaward * d2, c - along * w2 + seaward * d2];
+            center = c;
+            if !corners.iter().any(|q| land.is_water(*q)) {
+                break;
+            }
+        }
+        let back = (shore.point - center).dot(seaward) - d * 0.5;
         let (len, _) = kind.pier();
         let reach = if w.width.is_finite() { (w.width * 0.38).min(len) } else { len };
-        let root = shore.point - seaward * 2.0;
+        let root = shore.point - seaward * (back + 1.0);
         let tip = shore.point + seaward * reach;
         let berth = shore.point + seaward * (reach + if kind == PortKind::ShippingPort { 9.0 } else { 5.0 }).min(if w.width.is_finite() { w.width * 0.5 } else { f32::MAX });
         let port = Port { kind, center, along, seaward, pier: [root, tip], berth, water: w.kind, building: None, lot: None, road_connected: false, reaches_elsewhere: false, last_sailing: 0 };
