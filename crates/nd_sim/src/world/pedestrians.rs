@@ -22,6 +22,9 @@ const CELL: f32 = 2.0;
 const HOLD_DEPTH: f32 = CROSSWALK_HALF * 2.0 + 0.6;
 /// Waiting walkers stand in rows of this many at the kerb.
 const ROW: u32 = 3;
+/// [services] Walkers on a crossing with lights and sirens coming hurry clear
+/// at this many times their pace.
+const SIREN_HURRY: f32 = 2.5;
 
 /// Scratch for one tick of walking.
 pub(super) struct Feet {
@@ -143,6 +146,12 @@ impl World {
         self.traffic.peds.stop_lines = stop_lines;
     }
 
+    /// [services] A siren vehicle is coming up to crossing `cr`: walkers
+    /// keep off it and those on it hurry clear.
+    fn siren_at_crossing(&self, cr: u32) -> bool {
+        self.peds.crossings.get(cr as usize).is_some_and(|info| info.lanes.iter().any(|&(l, s)| self.traffic.siren_near(l, s)))
+    }
+
     /// Seconds before the first moving vehicle reaches crossing `cr`.
     fn crossing_gap(&self, cr: u32) -> f32 {
         let Some(info) = self.peds.crossings.get(cr as usize) else { return f32::INFINITY };
@@ -239,6 +248,7 @@ impl World {
         let mut heading = self.citizens[id].heading;
         let mut dir = Vec2::from_angle(heading);
         let mut budget = speed;
+        let mut hurried = false;
         let mut wait_at: Option<(u32, Vec2, Vec2)> = None;
         let mut leg_start = if *idx > 0 { path[*idx - 1] } else { w.base };
         let mut guard = 0;
@@ -259,7 +269,9 @@ impl World {
                                     tick
                                 }
                             };
-                            match self.may_cross(id, &w, cr, since, late) {
+                            // Lights and sirens coming: everyone stays on the kerb.
+                            let cross = if self.siren_at_crossing(cr) { None } else { self.may_cross(id, &w, cr, since, late) };
+                            match cross {
                                 Some(against) => {
                                     w.crossing = Some((cr, *idx));
                                     w.waiting = None;
@@ -276,6 +288,11 @@ impl World {
                                 }
                             }
                         }
+                    }
+                    // On the crossing with a siren coming: hurry clear.
+                    if self.siren_at_crossing(cr) && !hurried {
+                        budget *= SIREN_HURRY;
+                        hurried = true;
                     }
                     feet.occupied.push((cr, id));
                     if let Some((k, ap)) = self.peds.crossings.get(cr as usize).and_then(|i| i.signal) {
@@ -324,8 +341,9 @@ impl World {
                 if let Some(x) = feet.calls.get_mut(k as usize).and_then(|v| v.get_mut(ap as usize)) {
                     *x = true;
                 }
-            } else if crossing.lawful() {
-                // About to step onto a zebra: drivers give way.
+            } else if crossing.lawful() && !self.siren_at_crossing(cr) {
+                // About to step onto a zebra: drivers give way (but not to
+                // someone standing back for lights and sirens).
                 feet.occupied.push((cr, id));
             }
             kerb + u * (0.9 - 0.7 * row) + v * col * 0.75

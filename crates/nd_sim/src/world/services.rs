@@ -405,6 +405,20 @@ impl World {
             Some(id) => id,
             None => self.open_incident(IncidentKind::Crash, near, None, at_fault, delay),
         };
+        let work = if at_fault.is_some() {
+            CRASH_WORK_ARREST
+        } else if !injured.is_empty() {
+            CRASH_WORK
+        } else {
+            CRASH_WORK_CLEAR
+        };
+        if let Some(i) = self.services.incident_mut(id) {
+            // A joined scene takes as long as its longest case.
+            i.work_left = if joined.is_some() { i.work_left.max(work) } else { work };
+            if joined.is_some() && i.suspect.is_none() {
+                i.suspect = at_fault;
+            }
+        }
         let names: Vec<(CitizenId, String, &str)> = drivers
             .iter()
             .map(|&c| (c, if Some(c) == at_fault { "driver at fault" } else { "driver" }))
@@ -2513,5 +2527,30 @@ mod tests {
         let (a, _) = w.report_crash(here, near, &folk[5..6], &[], None, None).unwrap();
         let (b, _) = w.report_crash(here + Vec2::new(20.0, 0.0), near, &folk[7..8], &[], None, None).unwrap();
         assert_eq!(a, b, "a second crash at the same spot joins the open scene");
+    }
+
+    #[test]
+    fn crash_scenes_take_as_long_as_the_case_and_a_crash_wave_saturates_the_police() {
+        let (mut w, _, folk) = one_car_town();
+        let spots: Vec<BuildingId> = [-300.0, -150.0, 0.0, 150.0, 300.0, 450.0].iter().map(|&x| building_at(&mut w, x)).collect();
+        // A written-off car alone: a short clear-up; someone hurt: longer; a drunk to arrest: longest.
+        let (clear, _) = w.report_crash(Vec2::new(-300.0, 0.0), spots[0], &folk[4..5], &[], None, None).unwrap();
+        let (hurt, _) = w.report_crash(Vec2::new(-150.0, 0.0), spots[1], &folk[5..6], &folk[5..6], None, None).unwrap();
+        let (drunk, _) = w.report_crash(Vec2::new(0.0, 0.0), spots[2], &folk[6..7], &[], Some(folk[6]), None).unwrap();
+        let work = |w: &World, id: u32| w.services.incident(id).unwrap().work_left;
+        assert_eq!((work(&w, clear), work(&w, hurt), work(&w, drunk)), (CRASH_WORK_CLEAR, CRASH_WORK, CRASH_WORK_ARREST));
+        // A wave of crashes for the one car: every unit busy past the alert threshold.
+        let mut k = 0;
+        for t in 0..(SATURATED_ALERT_MIN as usize + 60) {
+            if t % 15 == 0 {
+                let x = [150.0, 300.0, 450.0][k % 3];
+                w.report_crash(Vec2::new(x, 0.0), spots[3 + k % 3], &folk[7..8], &folk[7..8], None, None);
+                k += 1;
+            }
+            run_until(&mut w, 1, |_| false);
+        }
+        let k = IncidentKind::Crash.slot();
+        assert!(w.services.stats.saturated_min_today[k] >= SATURATED_ALERT_MIN, "saturated {} min", w.services.stats.saturated_min_today[k]);
+        assert!(w.services.stats.queue_max_today[k] >= 2);
     }
 }

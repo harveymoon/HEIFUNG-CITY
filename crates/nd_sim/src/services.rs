@@ -75,8 +75,15 @@ pub const DISPATCH_REGIONAL: u64 = 20;
 /// Ticks of work on scene: a crime, a patient (fires burn until out).
 pub const CRIME_WORK: f32 = 25.0;
 pub const MEDICAL_WORK: f32 = 12.0;
-/// [driving] Ticks the police spend clearing a crash scene.
+/// [driving] Ticks the police spend at a crash scene, by the case: someone
+/// hurt (statements, the scene kept while the paramedics work); a driver to
+/// arrest (drunk or through a red light: a test, the paperwork); or only a
+/// written-off car in the road to clear for the tow truck. A crash with
+/// nobody hurt and every car still drivable is never a call: the drivers
+/// swap details and go (`World::handle_crash`).
 pub const CRASH_WORK: f32 = 20.0;
+pub const CRASH_WORK_ARREST: f32 = 25.0;
+pub const CRASH_WORK_CLEAR: f32 = 10.0;
 /// A crash this close to an open crash scene joins it rather than opening
 /// a call of its own.
 pub const CRASH_SCENE_JOIN: f32 = 60.0;

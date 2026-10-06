@@ -33,6 +33,11 @@ const PED_BRAKE: f32 = 5.0;
 pub const CONFLICT_SPEED: f32 = 3.0;
 /// How far ahead (metres) a driver looks for someone on a crossing.
 const PED_LOOKAHEAD: f32 = 60.0;
+/// [services] Walkers hear and see lights and sirens this far up the road
+/// (along the lanes leading to the crossing) and keep the crossing clear.
+pub const SIREN_WARNING: f32 = 90.0;
+/// Past this far beyond the start of a crossing a vehicle is over it.
+const HOLD_DEPTH_MAX: f32 = 8.0;
 
 /// A stop point on a lane in front of a crossing.
 #[derive(Clone, Copy, Debug)]
@@ -207,6 +212,31 @@ impl Traffic {
     /// routes that lead onto it; 0 when one is on it. Standing vehicles
     /// (at a red, giving way) do not count. Lights and sirens count as four
     /// times nearer: walkers keep out of their way.
+    /// [services] A vehicle with lights and sirens on `lane` short of the
+    /// crossing at `s`, or on the lanes leading to it, within
+    /// `SIREN_WARNING` metres (one already over the crossing does not count).
+    pub fn siren_near(&self, lane: LaneId, s: f32) -> bool {
+        let Some(l) = self.net.lanes.get(lane as usize) else { return false };
+        if l.cars.iter().any(|&c| self.cars[c].siren && self.cars[c].s <= s + HOLD_DEPTH_MAX && s - self.cars[c].s < SIREN_WARNING) {
+            return true;
+        }
+        let mut frontier: Vec<(LaneId, f32)> = l.prev.iter().map(|&p| (p, s)).collect();
+        for _ in 0..3 {
+            let mut next = Vec::new();
+            for (p, ahead) in frontier {
+                let pl = &self.net.lanes[p as usize];
+                if pl.cars.iter().any(|&c| self.cars[c].siren && pl.length - self.cars[c].s + ahead < SIREN_WARNING) {
+                    return true;
+                }
+                if pl.length + ahead < SIREN_WARNING {
+                    next.extend(pl.prev.iter().map(|&q| (q, pl.length + ahead)));
+                }
+            }
+            frontier = next;
+        }
+        false
+    }
+
     pub fn time_to_crossing(&self, lane: LaneId, s: f32, depth: f32) -> f32 {
         let siren = |c: &Car| if c.siren { 0.25 } else { 1.0 };
         let mut best = f32::INFINITY;
