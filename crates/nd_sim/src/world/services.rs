@@ -66,6 +66,9 @@ impl World {
         if let Placeable::Dock(k) = what {
             return self.place_port(k, p);
         }
+        if let Placeable::Toll(_) = what {
+            return Err("a toll booth goes on a road, not a lot (World::place_toll)".into());
+        }
         let lot = self.lots.iter().find(|(_, l)| point_in_polygon(p, &l.polygon)).map(|(id, _)| id).ok_or("click a vacant lot")?;
         self.place_on_lot(what, lot)
     }
@@ -86,6 +89,7 @@ impl World {
             }
             Placeable::ParkingLot(size) => self.build_city_parking(lot, size),
             Placeable::MetroStation => self.build_metro_station(lot),
+            Placeable::Toll(_) => Err("a toll booth goes on a road, not a lot (World::place_toll)".into()),
         }
     }
 
@@ -93,6 +97,9 @@ impl World {
     pub fn placement_problem(&self, what: Placeable, lot_id: LotId) -> Option<String> {
         if matches!(what, Placeable::Rail(_) | Placeable::Dock(_)) {
             return None;
+        }
+        if matches!(what, Placeable::Toll(_)) {
+            return Some("a toll booth goes on a road".into());
         }
         let Some(lot) = self.lots.get(lot_id) else { return Some("no such lot".into()) };
         // Whatever grew there is bought out; another civic structure is not.

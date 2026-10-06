@@ -168,6 +168,30 @@ pub struct Lane {
     pub red_for: f32,
     /// [driving] Connectors closed by a street takeover: nobody enters.
     pub blocked: bool,
+    /// [tolls] A toll booth across this lane, set by the world after every
+    /// rebuild (`World::apply_tolls`).
+    pub toll: Option<LaneToll>,
+}
+
+/// [tolls] A toll booth on a lane: where along it, what it charges and how
+/// slowly vehicles pass it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LaneToll {
+    /// `crate::tolls::TollBooth::id`.
+    pub booth: u32,
+    /// Distance along the lane of the booth line.
+    pub s: f32,
+    pub price: f32,
+    /// Speed through the booth, m/s.
+    pub speed: f32,
+}
+
+/// [tolls] A vehicle drove through a booth this tick; the world charges it.
+#[derive(Clone, Copy, Debug)]
+pub struct TollPass {
+    pub car: CarId,
+    pub booth: u32,
+    pub price: f32,
 }
 
 impl Lane {
@@ -177,7 +201,7 @@ impl Lane {
             cum.push(cum.last().unwrap() + w[0].distance(w[1]));
         }
         let length = *cum.last().unwrap();
-        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX, red_for: 0.0, blocked: false }
+        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX, red_for: 0.0, blocked: false, toll: None }
     }
 
     pub fn is_connector(&self) -> bool {
@@ -308,6 +332,8 @@ pub struct LaneNetwork {
     pub arrows_version: u64,
     /// Roundabout lanes and junctions (see `apply_roundabouts`).
     pub rings: RingLanes,
+    /// [tolls] Some lane has a toll booth (skips the toll checks when none does).
+    pub tolls: bool,
 }
 
 /// Arrow bit for a connector's turn.
@@ -485,6 +511,13 @@ pub struct Car {
     /// going to be sold, a truck going back to base (`world/cars.rs`).
     #[serde(default)]
     pub errand: crate::vehicle::Errand,
+    /// [tolls] The booth whose lanes the car is on (0: none), and whether
+    /// it has paid there. Reset once it is on an untolled lane, so passing
+    /// the same booth on a later trip pays again.
+    #[serde(default)]
+    pub toll_booth: u32,
+    #[serde(default)]
+    pub toll_paid: bool,
 }
 
 /// Why a car is not driving freely.
@@ -899,6 +932,10 @@ pub struct Traffic {
     /// (`traffic/crosswalk.rs`).
     #[serde(skip)]
     pub peds: PedTraffic,
+    /// [tolls] Vehicles that drove through a toll booth since the world
+    /// last drained them.
+    #[serde(skip)]
+    pub toll_passes: Vec<TollPass>,
 }
 
 /// Arrows for the lanes (leftmost first) of `segment` arriving at `node`.
@@ -1445,7 +1482,8 @@ impl LaneNetwork {
             }
             let gl = g[&lane];
             let here = &self.lanes[lane as usize];
-            let ahead = here.next.iter().filter(|&&n| self.lanes[n as usize].permitted).map(|&n| (n, self.lanes[n as usize].length + self.rings.penalty(n)));
+            // [tolls] A toll counts as the detour a driver would take to avoid it.
+            let ahead = here.next.iter().filter(|&&n| self.lanes[n as usize].permitted).map(|&n| (n, self.lanes[n as usize].length + self.rings.penalty(n) + self.toll_penalty(n)));
             let beside = [here.left, here.right].into_iter().flatten().map(|n| (n, LANE_CHANGE_COST));
             for (next, step) in ahead.chain(beside) {
                 if next == start || Some(next) == avoid_lane || Some((lane, next)) == avoid_step {
@@ -1465,6 +1503,22 @@ impl LaneNetwork {
             }
         }
         None
+    }
+
+    /// [tolls] Routing cost of the toll on a lane, in metres.
+    pub fn toll_penalty(&self, lane: LaneId) -> f32 {
+        if !self.tolls {
+            return 0.0;
+        }
+        self.lanes.get(lane as usize).and_then(|l| l.toll).map_or(0.0, |t| t.price * crate::tolls::TOLL_AVERSION_M)
+    }
+
+    /// [tolls] Clear every lane's toll (before the world sets them again).
+    pub fn clear_tolls(&mut self) {
+        for l in &mut self.lanes {
+            l.toll = None;
+        }
+        self.tolls = false;
     }
 
     /// Metres left to drive on `route` from `s` along its first lane.
@@ -1565,7 +1619,7 @@ impl Traffic {
         let lane = route[0];
         let (pos, dir) = self.net.lanes[lane as usize].point_at(s_start);
         let heading = dir.y.atan2(dir.x);
-        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, blocked_by: None, replans: 0, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), owned: None, errand: Default::default(), drive: DriveState::default() });
+        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, blocked_by: None, replans: 0, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), owned: None, errand: Default::default(), drive: DriveState::default(), toll_booth: 0, toll_paid: false });
         self.pull_out(id);
         id
     }
@@ -2513,7 +2567,14 @@ impl Traffic {
                     // only after their reaction time.
                     let reaction = car.drive.profile.reaction;
                     let seen = if reaction > 0.0 { car.drive.seen_lead_v + (lead_v - car.drive.seen_lead_v) * (dt / reaction).min(1.0) } else { lead_v };
-                    accs.push(Step { by, id: cid, acc: car.idm(car.desired_speed(lane.speed_limit), gap, car.v - seen), why, left_wait, seen, run });
+                    // [tolls] Slow through a toll booth on the way.
+                    let mut v0 = car.desired_speed(lane.speed_limit);
+                    if self.net.tolls && !car.siren {
+                        if let Some(cap) = self.toll_cap(car) {
+                            v0 = v0.min(cap);
+                        }
+                    }
+                    accs.push(Step { by, id: cid, acc: car.idm(v0, gap, car.v - seen), why, left_wait, seen, run });
                 }
             }
             for st in accs {
@@ -2669,7 +2730,20 @@ impl Traffic {
                     self.entered(lane_id, next, cid);
                     self.insert_sorted(next, cid);
                     self.entered_red(next, cid);
+                    // [tolls] Came onto a tolled lane from behind: it will
+                    // pay once past the booth line (even if already past it
+                    // after this substep's hop).
+                    if let Some(t) = self.net.lanes[next as usize].toll {
+                        let c = &mut self.cars[cid];
+                        if c.toll_booth != t.booth {
+                            c.toll_booth = t.booth;
+                            c.toll_paid = false;
+                        }
+                    }
                 }
+            }
+            if self.net.tolls {
+                self.toll_gates();
             }
             // A car that drew level with the turner it passes goes ahead of
             // it in the lane's order.
@@ -2695,6 +2769,69 @@ impl Traffic {
             self.adapt_arrows();
         }
         arrived
+    }
+
+    // ── [tolls] booths ──────────────────────────────────────────────────────
+
+    /// The speed a car may do for the toll booth ahead of it on its route,
+    /// if one is within `APPROACH_M`: the booth speed at the line (and just
+    /// past it), rising gently with the distance before it so drivers brake
+    /// in good time rather than at the last moment.
+    fn toll_cap(&self, car: &Car) -> Option<f32> {
+        use crate::tolls::{APPROACH_M, EXIT_M};
+        let mut acc = -car.s;
+        let mut prev: Option<LaneId> = None;
+        for &l in car.route.iter().skip(car.idx) {
+            let lane = self.net.lanes.get(l as usize)?;
+            if let Some(p) = prev {
+                // A lane change: the lane beside covers the same stretch.
+                if self.net.lanes[p as usize].is_beside(l) {
+                    acc -= self.net.lanes[p as usize].length;
+                }
+            }
+            if let Some(t) = lane.toll {
+                let d = acc + t.s;
+                if (-EXIT_M..=APPROACH_M).contains(&d) {
+                    return Some(t.speed + d.max(0.0) * 0.3);
+                }
+            }
+            acc += lane.length;
+            if acc > APPROACH_M {
+                return None;
+            }
+            prev = Some(l);
+        }
+        None
+    }
+
+    /// Cars past a booth line they came to from behind pay (the world is
+    /// told through `toll_passes`); cars on an untolled lane forget the
+    /// last booth. A car that started on a tolled lane beyond the line (out
+    /// of a kerb space past the booth) owes nothing.
+    fn toll_gates(&mut self) {
+        for (cid, c) in self.cars.iter_mut() {
+            if c.entering || c.idx >= c.route.len() {
+                continue;
+            }
+            let Some(lane) = self.net.lanes.get(c.route[c.idx] as usize) else { continue };
+            match lane.toll {
+                Some(t) => {
+                    if c.toll_booth != t.booth {
+                        // Joined this booth's lanes from the kerb: owes the
+                        // toll only if it is still before the line.
+                        c.toll_booth = t.booth;
+                        c.toll_paid = c.s >= t.s;
+                    } else if !c.toll_paid && c.s >= t.s {
+                        c.toll_paid = true;
+                        self.toll_passes.push(TollPass { car: cid, booth: t.booth, price: t.price });
+                    }
+                }
+                None => {
+                    c.toll_booth = 0;
+                    c.toll_paid = false;
+                }
+            }
+        }
     }
 
     // ── [driving] crashes, stunts and where cars are drawn ─────────────────

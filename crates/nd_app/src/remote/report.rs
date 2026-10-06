@@ -503,6 +503,9 @@ fn economy(w: &World) -> Value {
             "note": "each flow broken into what made it (building, bus line, income class, land use or a named item); not_itemised is what the row holds beyond its items",
         },
         "tax_today": round(e.tax_today),
+        // [tax] [tolls] The schedule by line and the toll booths.
+        "taxes": super::taxes::schedule(w),
+        "tolls": super::taxes::tolls_summary(w),
         "upkeep_today": { "power_plants": round(e.power.upkeep_today), "transit": round(e.transit.upkeep_today), "rail": round(w.rail.stats.upkeep_today), "grid_import_cost": round(e.power.import_cost_today) },
         "trade_today": {
             "imports_value": round(e.market.imports_today), "exports_value": round(e.market.exports_today), "building_materials_imported": round(e.materials_today),

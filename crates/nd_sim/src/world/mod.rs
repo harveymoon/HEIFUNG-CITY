@@ -63,6 +63,9 @@ mod edge_tests;
 mod concerns_tests;
 #[cfg(test)]
 mod tests;
+mod taxes;
+pub use taxes::TaxRow;
+mod tolls;
 mod trains;
 mod tourism;
 mod trips;
@@ -412,6 +415,9 @@ pub struct World {
     /// [subway] Metro lines and their trains (`world/subway.rs`).
     #[serde(default)]
     pub subway: crate::subway::Subway,
+    /// [tolls] Toll booths on the roads (`world/tolls.rs`).
+    #[serde(default)]
+    pub tolls: crate::tolls::Tolls,
 }
 
 impl World {
@@ -483,6 +489,7 @@ impl World {
             districts: Default::default(),
             tourism: Default::default(),
             subway: Default::default(),
+            tolls: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -530,6 +537,7 @@ impl World {
         self.rebuild_road_components();
         self.rebuild_ground();
         self.traffic.rebuild(&self.roads);
+        self.apply_tolls();
         // Park layouts are saved with their lots (the benches people sit on
         // must survive a load), so they are only planned again when a save
         // from before parks were serialised has park lots without one.
@@ -820,6 +828,8 @@ impl World {
 
     fn step_traffic(&mut self) {
         let arrived = self.traffic.step(self.config.traffic_seconds_per_tick, self.config.traffic_substeps);
+        // [tolls] Before anyone arriving is taken off the road.
+        self.settle_tolls();
         for car_id in arrived {
             // Fire engines, police cars and ambulances: services handle them.
             if self.services.unit_of_car(car_id).is_some() {

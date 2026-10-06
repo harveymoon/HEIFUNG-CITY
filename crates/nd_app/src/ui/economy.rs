@@ -44,6 +44,9 @@ pub fn flow_color(f: Flow) -> Color32 {
         Flow::TouristTax => Color32::from_rgb(255, 140, 220),
         Flow::SubwayFares => Color32::from_rgb(90, 210, 255),
         Flow::SubwayUpkeep => Color32::from_rgb(200, 60, 200),
+        Flow::ImportDuty => Color32::from_rgb(190, 230, 90),
+        Flow::Tolls => Color32::from_rgb(250, 190, 60),
+        Flow::TollUpkeep => Color32::from_rgb(180, 110, 70),
     }
 }
 
@@ -67,6 +70,9 @@ pub fn flow_note(f: Flow) -> &'static str {
         Flow::TouristTax => "12% on every hotel night visitors pay, by hotel.",
         Flow::SubwayFares => "Metro fares as riders board, by station.",
         Flow::SubwayUpkeep => "Each metro station and its tunnels, and every train run, paid at midnight.",
+        Flow::ImportDuty => "The duty on every import from outside (the rate is in the Taxes window).",
+        Flow::Tolls => "Tolls paid at the city's toll booths and plazas.",
+        Flow::TollUpkeep => "Staff and upkeep of each toll booth and plaza, paid at midnight.",
     }
 }
 

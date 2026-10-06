@@ -790,6 +790,7 @@ impl World {
 
         // Lanes and cars.
         self.traffic.rebuild(&self.roads);
+        self.apply_tolls();
         for (_, car) in self.traffic.clear_cars() {
             // Through traffic carries on along the highway.
             if Self::is_through_car(&car) && self.resume_through_car(&car) {

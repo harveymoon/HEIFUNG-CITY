@@ -266,6 +266,10 @@ pub struct Commute {
     pub last_mode: Option<TripMode>,
     /// Ticks of the last trip.
     pub last_minutes: u32,
+    /// [tolls] Tolls paid on the trip under way, and what a car trip has
+    /// cost in tolls lately (a running average the mode choice weighs).
+    pub toll: f32,
+    pub toll_avg: f32,
 }
 
 impl Commute {
@@ -290,6 +294,7 @@ impl Commute {
             *t *= 0.7;
         }
         self.parking_pain *= 0.8;
+        self.toll_avg *= 0.9;
     }
 
     pub fn pain_of(&self, mode: TripMode) -> f32 {

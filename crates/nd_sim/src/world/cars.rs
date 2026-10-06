@@ -1314,6 +1314,7 @@ impl World {
         c.commute.searched = 0.0;
         c.commute.search_since = 0;
         c.commute.fee = 0.0;
+        c.commute.toll = 0.0;
         c.commute.drive_since = 0;
         c.commute.drive_minutes = 0.0;
         c.commute.walk_after = 0.0;
@@ -1363,7 +1364,10 @@ impl World {
                 let walk_back = (c.commute.walk_after - 80.0).max(0.0) / 200.0;
                 let parking = search + fee + walk_back;
                 c.commute.parking_pain += (parking - c.commute.parking_pain) * 0.4;
-                jam + parking
+                // [tolls] Tolls hurt like a fee, and are expected next time.
+                let toll = c.commute.toll;
+                c.commute.toll_avg += (toll - c.commute.toll_avg) * 0.4;
+                jam + parking + toll / 6.0
             }
         };
         c.commute.feel(mode, pain);
@@ -1383,7 +1387,7 @@ impl World {
     }
 }
 
-fn id_hash(id: CitizenId) -> u64 {
+pub(super) fn id_hash(id: CitizenId) -> u64 {
     slotmap::Key::data(&id).as_ffi()
 }
 

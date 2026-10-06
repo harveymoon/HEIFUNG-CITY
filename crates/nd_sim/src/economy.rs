@@ -11,9 +11,11 @@ pub const GIG_INCOME: f32 = 40.0;
 /// A named source or sink of treasury money.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Flow {
-    /// 12% of every citizen's daily income.
+    /// A share of every citizen's daily income, by the tier of their home
+    /// (`crate::tax`; 12% as standard).
     IncomeTax,
-    /// 5% of every open business's daily revenue.
+    /// A share of every open business's daily revenue, by its kind
+    /// (`crate::tax`; 5% as standard).
     BusinessTax,
     BusFares,
     RailFares,
@@ -40,13 +42,19 @@ pub enum Flow {
     SubwayFares,
     /// [subway] Metro stations, tunnels and train runs.
     SubwayUpkeep,
+    /// [tax] Duty on goods imported from outside.
+    ImportDuty,
+    /// [tolls] Tolls paid at the city's toll booths.
+    Tolls,
+    /// [tolls] Staff and upkeep of the toll booths.
+    TollUpkeep,
 }
 
 /// Number of `Flow`s; the ledger's row length.
-pub const FLOWS: usize = 16;
+pub const FLOWS: usize = 19;
 
 impl Flow {
-    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep];
+    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -66,6 +74,9 @@ impl Flow {
             Flow::TouristTax => "tourist tax",
             Flow::SubwayFares => "subway fares",
             Flow::SubwayUpkeep => "subway upkeep",
+            Flow::ImportDuty => "import duty",
+            Flow::Tolls => "road tolls",
+            Flow::TollUpkeep => "toll booth upkeep",
         }
     }
 
@@ -305,6 +316,10 @@ pub struct Economy {
     /// the expanded info windows (`history.rs`). Bounded rings.
     #[serde(default)]
     pub history: crate::history::History,
+    /// [tax] The tax schedule per land use and sub-type, the import duty,
+    /// and what each line brought in. Old saves load at the standard rates.
+    #[serde(default)]
+    pub taxes: crate::tax::TaxBook,
 }
 
 fn default_treasury() -> f32 {
@@ -423,6 +438,14 @@ impl Economy {
         d[LandUse::Entertainment.index()] = ((0.1 + entertainment_pressure * 0.8) * venue_room).min(1.0);
         d[LandUse::Civic.index()] = (0.1 + (pop / 150.0)).min(1.0);
         d[LandUse::Park.index()] = 0.5;
+        // [tax] A land use taxed over the standard is less wanted, one let
+        // off is wanted more (1 at the standard rates: no change).
+        for lu in [LandUse::Residential, LandUse::Commercial, LandUse::Industrial, LandUse::Entertainment] {
+            let pull = self.taxes.land_use_pull(lu);
+            if pull != 1.0 {
+                d[lu.index()] = (d[lu.index()] * pull).min(1.0);
+            }
+        }
         self.demand = d;
     }
 

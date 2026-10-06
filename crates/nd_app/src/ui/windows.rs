@@ -19,6 +19,8 @@ use crate::camera::CameraMode;
 pub enum Info {
     City,
     Economy,
+    /// [tax] Rates per land use and sub-type, import duty, toll booths (ui/taxes.rs).
+    Taxes,
     Market,
     People,
     Power,
@@ -34,12 +36,13 @@ pub enum Info {
 }
 
 impl Info {
-    pub const ALL: [Info; 12] = [Info::City, Info::Economy, Info::Market, Info::People, Info::Power, Info::Transit, Info::Emergencies, Info::Land, Info::Districts, Info::Saves, Info::Help, Info::Dev];
+    pub const ALL: [Info; 13] = [Info::City, Info::Economy, Info::Taxes, Info::Market, Info::People, Info::Power, Info::Transit, Info::Emergencies, Info::Land, Info::Districts, Info::Saves, Info::Help, Info::Dev];
 
     pub fn title(self) -> &'static str {
         match self {
             Info::City => "City",
             Info::Economy => "Economy",
+            Info::Taxes => "Taxes",
             Info::Market => "Market",
             Info::People => "People",
             Info::Power => "Power",
@@ -59,6 +62,7 @@ impl Info {
             Info::People => 420.0,
             Info::Help => 440.0,
             Info::Emergencies => 480.0,
+            Info::Taxes => 470.0,
             Info::Dev => 300.0,
             _ => 380.0,
         }
@@ -152,6 +156,7 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, info: Info, big: bool) {
         (Info::Help, _) => help_window(ui),
         (Info::Dev, _) => dev(ui, p),
         (Info::Districts, _) => super::districts::window(ui, p),
+        (Info::Taxes, _) => super::taxes::window(ui, p),
     }
 }
 

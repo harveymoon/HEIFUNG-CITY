@@ -440,6 +440,19 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         Placeable::Dock(_) => {}
         Placeable::MetroStation => line += &format!(". An entrance on its plaza, the platform underground; join stations into lines with the Buses tool's Metro mode (tunnel {:.0}/m). Lifts land value round it.", nd_sim::subway::TUNNEL_COST_PER_M),
         Placeable::ParkingLot(s) => line += &format!(", {} spaces. Run by the city: drivers pay {:.1} a visit to the treasury (set the fee in the inspector or with the API).", s.capacity(), s.default_price()),
+        // [tolls]
+        Placeable::Toll(s) => {
+            line += &format!(
+                ". Click a road: it sits across the carriageway (both ways) on a straight run of {:.0} m or more. Every car pays {:.1} (lorries double, buses and emergencies free) and slows to {:.0} km/h through it; drivers weigh the toll and some take another way. Set prices in the Taxes window.",
+                s.clearance() * 2.0 + 2.0,
+                s.default_price(),
+                s.speed() * 3.6
+            );
+            let t = &sim.world.tolls;
+            if !t.booths.is_empty() {
+                line += &format!(" {} booths: {} cars paid today, {:.0} taken.", t.booths.len(), t.paid_today, t.revenue_today());
+            }
+        }
     }
     hint(ui, &line);
     if let Placeable::Dock(k) = what {

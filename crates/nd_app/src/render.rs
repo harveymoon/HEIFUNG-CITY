@@ -110,6 +110,9 @@ struct PathsTag;
 struct HazeTag;
 #[derive(Component, Clone)]
 struct TransitTag;
+/// [tolls] Toll booth meshes, set on the road's height by `lift_spawned`.
+#[derive(Component, Clone)]
+struct TollTag;
 /// Marker only: which train an entity belongs to is tracked in
 /// [`RenderState::trains`], so the tag carries no id.
 #[derive(Component)]
@@ -349,6 +352,8 @@ struct RenderState {
     paths_version: u64,
     paths_shown: bool,
     transit_version: u64,
+    /// [tolls] `Tolls::version` the booths were last drawn for (+1, so 0 is "never").
+    toll_version: u64,
     trains: HashMap<nd_sim::TrainId, Vec<Entity>>,
     /// Quantised sun elevation the lighting was last written for.
     daylight_key: Option<i32>,
@@ -394,6 +399,7 @@ impl Plugin for RenderPlugin {
                 .in_set(SimSet::Sync),
         );
         app.add_systems(Update, sync_lane_arrows.in_set(SimSet::Sync).after(sync_signals).before(lift_spawned));
+        app.add_systems(Update, sync_tolls.in_set(SimSet::Sync).after(sync_roads).before(lift_spawned));
         app.add_systems(Update, sync_ring_preview.in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
         app.add_systems(Update, (holo::sync_draw_hologram, holo::sync_plan_holograms).in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
         app.add_systems(Update, holo::apply_depth.in_set(SimSet::Sync).after(lift_movers));
@@ -2487,6 +2493,58 @@ fn sync_transit(
     spawn_geometry(&mut commands, &mut meshes, &mats, &geo, TransitTag);
 }
 
+/// [tolls] Toll booths and plazas across the roads, redrawn when a booth
+/// is placed, removed or repriced, or the roads are rebuilt.
+fn sync_tolls(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut state: ResMut<RenderState>,
+    existing: Query<Entity, With<TollTag>>,
+) {
+    let w = &sim.world;
+    let version = w.tolls.version + 1;
+    if version == state.toll_version && !assets.palette_changed && !sim.full_rebuild {
+        return;
+    }
+    state.toll_version = version;
+    despawn_all(&mut commands, &existing);
+    let draws: Vec<nd_procgen::TollDraw> = w
+        .tolls
+        .booths
+        .iter()
+        .filter_map(|b| {
+            let sid = b.segment?;
+            let seg = w.roads.try_segment(sid)?;
+            // How far the plaza may spread either side before it would lie
+            // on another road (a highway's other carriageway, a street
+            // alongside): walk out across the road until one is underfoot.
+            let right = SVec2::new(-b.dir.y, b.dir.x);
+            let room = [-1.0f32, 1.0].map(|side| {
+                let mut d = seg.half_width();
+                while d < 30.0 {
+                    let p = b.pos + right * side * d;
+                    if let Some((other, _, q)) = w.roads.nearest_where(p, |s| !s.is_rail() && !s.tunnel) {
+                        if other != sid && q.distance(p) < w.roads.segment(other).half_width() + 0.3 {
+                            return (d - 0.3).max(seg.half_width());
+                        }
+                    }
+                    d += 0.5;
+                }
+                30.0
+            });
+            Some(nd_procgen::TollDraw { pos: b.pos, dir: b.dir, lanes: seg.lanes(), half_width: seg.half_width(), plaza: b.size == nd_sim::tolls::TollSize::Plaza, id: b.id, room })
+        })
+        .collect();
+    if draws.is_empty() {
+        return;
+    }
+    let geo = nd_procgen::toll_booths(&draws, &assets.palette);
+    spawn_geometry(&mut commands, &mut meshes, &mats, &geo, TollTag);
+}
+
 fn preview_width(kind: nd_sim::roads::RoadKind, fwd: u8, bwd: u8) -> f32 {
     match kind {
         nd_sim::roads::RoadKind::Path => nd_sim::roads::PATH_HALF_WIDTH * 2.0,
@@ -2724,7 +2782,7 @@ fn lift_spawned(
     sim: Res<Sim>,
     mut meshes: ResMut<Assets<Mesh>>,
     q: Query<&Mesh3d, Or<(Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>, Added<RingPreviewTag>)>>,
-    arrows: Query<&Mesh3d, Added<LaneArrowsTag>>,
+    arrows: Query<&Mesh3d, Or<(Added<LaneArrowsTag>, Added<TollTag>)>>,
     mut signals: Query<&mut Transform, Added<SignalTag>>,
 ) {
     let w = &sim.world;

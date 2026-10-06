@@ -140,6 +140,11 @@ Reply: `gesture_id`, `implemented`, `project` (`id`, `name`, `steps`, `redo`), `
   street stub to join to the city.
 - `depot`, `parking`, `coal`, `solar`, `wind`, `nuclear`: on the lot under the point, or the nearest
   vacant lot within 80 m (`build_depot`, `build_parking`, `build_power`).
+- `toll_booth` (also `toll`), `toll_plaza` (also `plaza`): across the road at the point
+  (`World::place_toll`), not on a lot: the nearest street or highway piece within 15 m that has a
+  straight run either side (booth 18 m, plaza 50 m between junctions or bends; a click near a
+  junction slides along to fit), at least 40 m from another booth. Cost 4,000 / 15,000, upkeep 60 /
+  200 a day. Reply: `toll` (the booth id, an integer), `message`, `row` (as in `tolls`), `treasury`.
 - `vertiport` (also `skyport`, `drone_pad`) with `tier` low / mid / high: the air taxi base (`nd_sim::air`), on any
   lot but parks; works once the old building on the lot is cleared.
 - Services and attractions: `police`, `fire`, `hospital` (`clinic` is a low-tier hospital), `school`, `jail`,
@@ -156,6 +161,48 @@ Reply: `building` id, `message`, `row`, `treasury`; or the sim's reason as `erro
 {"cmd": "place", "kind": "solar", "x": -210, "y": -210}
 {"cmd": "place", "kind": "fire", "tier": "high", "x": 120, "y": 40}
 {"cmd": "place", "kind": "dispatch:low", "x": -80, "y": 40}
+```
+
+### Taxes and tolls
+
+`taxes {}` reads the tax schedule; the same reply comes back from every setting form below.
+
+| Field | Meaning |
+| --- | --- |
+| `set` | `{line: rate, ...}`: `line` is a key (`residential_low`, `residential_mid`, `residential_high`, `grocery`, `bakery`, `gadget_shop`, `parking`, `nightlife_low`, `nightlife_mid`, `nightlife_high`, `farming`, `oil`, `refinery`, `manufacturing`, `logistics`, `fishing`, `tech`; industry kinds also by their `industry` names) or a land use (`residential`, `commercial`, `entertainment`, `industrial`) to set its whole group. A rate is a share (`0.2`) or a percentage (`20`, `"20%"`) |
+| `category` + `rate` | one line |
+| `import_duty` | share added to the price of imports, 0..1 |
+| `reset` | `true`: every rate back to the standard, no duty |
+
+Reply: `lines` (per line: `key`, `label`, `land_use`, `rate`, `default`, `max` (0.40 income, 0.30
+business), `pull` (1 at the standard rate; below 1 the line is taxed over it and grows less),
+`buildings`, `homes`/`jobs`, `residents`/`workers`, `today` (the last midnight's collection),
+`yesterday`, `recent_per_day` (running average)), `by_land_use` {buildings, today, yesterday, pull},
+`import_duty`, `duty_today`, `duty_yesterday`, `standard`, `tax_today`, `changed`.
+
+Taxes are collected at midnight: incomes at the rate of the home's tier (12% standard), business
+takings at the rate of the business's line (5% standard; offices and the city's own car parks stay at
+5%). The standard rates change nothing; only the difference reaches purses (a household taxed at 20%
+pays the extra 8% of its income each day, a farm at 0% keeps its 5%). See `nd_sim::tax` for what
+each rate pulls on. The same schedule is in `report {sections: ["economy"]}` under `taxes`.
+
+```json
+{"cmd": "taxes", "set": {"oil": 0.2, "farming": 0, "residential_high": 25}}
+{"cmd": "taxes", "import_duty": 0.3}
+{"cmd": "taxes", "reset": true}
+```
+
+`tolls {}` lists the booths: `booths` (id, name, size `toll_booth`/`toll_plaza`, pos, price,
+truck_price, lanes, highway, segment, cars/revenue today, yesterday and total, upkeep_per_day),
+`paid_today`, `free_today` (buses, emergency vehicles), `trucks_today`, `revenue_today`,
+`upkeep_per_day`, the ledger's `road tolls` today and yesterday. `{action: "price", id, price}` sets a
+booth's toll (0..50 per car; lorries pay double), `{action: "remove", id}` takes it away (no refund),
+`{action: "inspect", id}` returns one row; `at: [x, y]` picks the booth within 30 m instead of `id`.
+Booths go with their road when it is bulldozed. The Bulldoze tool removes a booth clicked within 8 m.
+
+```json
+{"cmd": "place", "kind": "toll_plaza", "x": 0, "y": 420}
+{"cmd": "tolls", "action": "price", "id": 1, "price": 4}
 ```
 
 ### Industry sub-zones
@@ -273,7 +320,7 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
 | `overlay` | `layer` (land_value, traffic, traffic_types, people, pollution, paths, zoning, districts, or a land survey layer, below) with `on` (bool; omitted toggles); or any of the first names as bools; `land` a land survey layer key or `none`. Reply: every layer and whether it is on, plus `land` (the survey layer shown, or null) (also in `status.overlays`) |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
 | `heat_vision` (alias `heat`) | `on` (bool; omitted toggles). Drone heat vision: buildings, ground and roads go near-black, people, vehicles, fires and drones glow by temperature (lights and engines white-hot), with motion blur, scanlines, noise, a vignette and a reticle. Same as key H and the top bar's Heat button. Reply `heat_vision`; also `status.lighting.heat_vision` |
-| `window` | `name` city / economy / market / people / power / transit / emergencies / land / districts / saves / help / dev, `open` (omit to toggle), `expanded` (bool: the large view with charts over time and the drill-downs; `true` also opens the window, and only one window is expanded at a time, so expanding one puts the other back to compact; saves, help and dev have none). Reply `open`, `expanded` (the expanded window's name or null), `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it; `status.window_expanded` names the expanded window |
+| `window` | `name` city / economy / taxes / market / people / power / transit / emergencies / land / districts / saves / help / dev, `open` (omit to toggle), `expanded` (bool: the large view with charts over time and the drill-downs; `true` also opens the window, and only one window is expanded at a time, so expanding one puts the other back to compact; saves, help and dev have none). Reply `open`, `expanded` (the expanded window's name or null), `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it; `status.window_expanded` names the expanded window |
 
 Land survey layers (one at a time, K in the game; the Land window's "Land and resources" picker;
 `nd_sim::survey`): a coloured ground wash over the buildable square.

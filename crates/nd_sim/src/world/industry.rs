@@ -196,7 +196,15 @@ impl World {
         let site = self.industry_site(lot_id)?;
         let forced = self.industry_bias_at(self.lots[lot_id].center).flatten();
         let roll = self.rng.random::<f32>();
-        let kind = forced.unwrap_or_else(|| industry::pick(&industry::weights(&site), roll));
+        // [tax] Each sub-zone's draw is scaled by how its tax line pulls,
+        // and under an import duty by whether it makes what the town imports.
+        let mut weights = industry::weights(&site);
+        if !self.economy.taxes.is_standard() || self.economy.taxes.import_duty > 0.0 {
+            for k in IndustryKind::ALL {
+                weights[k.index()] *= self.economy.taxes.pull(crate::tax::TaxCategory::of_industry(k)) * self.economy.taxes.import_substitution(k);
+            }
+        }
+        let kind = forced.unwrap_or_else(|| industry::pick(&weights, roll));
         let roll = self.rng.random::<f32>();
         industry::pick_business(&industry::business_weights(kind, &site), roll)
     }
