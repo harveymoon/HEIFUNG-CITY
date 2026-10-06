@@ -200,6 +200,11 @@ pub struct CitizenTag;
 #[derive(Component)]
 pub struct CarTag;
 
+/// A mover that sets its own height (cars, from the road they are on);
+/// `lift_movers` leaves it alone.
+#[derive(Component)]
+pub struct SelfLifted;
+
 #[derive(Resource)]
 struct Materials {
     /// One material per [`Surface`], indexed by `Surface::index()`.
@@ -1515,11 +1520,11 @@ fn sync_cars(
             let model = car_model(car);
             let v = vr.variant(&mut meshes, &model);
             let finish = vr.finish[model.class as usize].clone();
-            let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), Transform::IDENTITY, NotShadowCaster, CarTag)).id();
-            let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag)).id();
+            let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), Transform::IDENTITY, NotShadowCaster, CarTag, SelfLifted)).id();
+            let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted)).id();
             state.cars.insert(id, [body, lights]);
             if let Some(fx) = v.fx {
-                let e = commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag)).id();
+                let e = commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted)).id();
                 vr.car_fx.insert(id, e);
             }
             if model.body == nd_sim::BodyType::AkiraBike {
@@ -1556,9 +1561,12 @@ fn sync_cars(
         // truck with nobody to inspect, as the vehicle itself.
         let selected = *selection == Selection::Citizen(car.citizen) || *selection == Selection::Car(*id);
         let fx = vr.car_fx.get(id).copied();
+        // Lifted here from the road the car is on, not by `lift_movers`:
+        // under the highway's decks position alone would put it up top.
+        let lift = sim.world.car_height(car);
         for e in ents.iter().copied().chain(fx) {
             if let Ok(mut tf) = q.get_mut(e) {
-                tf.translation = Vec3::new(pos.x, 0.05 + if selected { 0.4 } else { 0.0 }, pos.y);
+                tf.translation = Vec3::new(pos.x, lift + 0.05 + if selected { 0.4 } else { 0.0 }, pos.y);
                 tf.rotation = Quat::from_rotation_y(-heading);
             }
         }
@@ -2060,7 +2068,7 @@ fn lift_spawned(
 
 /// Raise movers onto the ground after their poses are written.
 #[allow(clippy::type_complexity)]
-fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>), Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>>) {
+fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>) {
     let w = &sim.world;
     if w.landscape.is_flat() {
         return;

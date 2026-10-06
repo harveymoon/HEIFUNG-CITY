@@ -1327,6 +1327,9 @@ pub struct Ground {
     pub decks: Vec<(Vec2, Vec2, f32, f32, f32)>,
     /// Ways passing over the highway or under it.
     pub underpasses: Vec<Underpass>,
+    /// How many of `decks` are water bridges; the rest are underpass decks
+    /// carrying the highway over a street.
+    pub bridge_decks: usize,
 }
 
 impl std::fmt::Debug for Ground {
@@ -1352,9 +1355,11 @@ impl Ground {
             })
             .collect();
         if land.is_flat() {
-            return Ground { half, n: 0, h: Vec::new(), pads, decks, underpasses: Vec::new() };
+            let bridge_decks = decks.len();
+            return Ground { half, n: 0, h: Vec::new(), pads, decks, underpasses: Vec::new(), bridge_decks };
         }
         let underpasses = find_underpasses(land, roads, node_z);
+        let bridge_decks = decks.len();
         for u in &underpasses {
             // The upper way's deck spans the cut and a cell beyond it.
             let reach = (u.cut_half_width + GROUND_CELL) / u.sin_angle();
@@ -1455,12 +1460,23 @@ impl Ground {
                 h[k] = h[k] * (1.0 - w[k]) + t * w[k];
             }
         }
-        Ground { half, n, h, pads, decks, underpasses }
+        Ground { half, n, h, pads, decks, underpasses, bridge_decks }
     }
 
     /// Height of a bridge deck at `p`, if `p` is on one.
     pub fn deck_at(&self, p: Vec2) -> Option<f32> {
-        for &(a, b, hw, za, zb) in &self.decks {
+        self.deck_in(&self.decks, p)
+    }
+
+    /// Height of a water bridge at `p`, ignoring the underpass decks that
+    /// carry the highway over streets: what drives along the street below
+    /// stays down in its cutting.
+    pub fn bridge_at(&self, p: Vec2) -> Option<f32> {
+        self.deck_in(&self.decks[..self.bridge_decks.min(self.decks.len())], p)
+    }
+
+    fn deck_in(&self, decks: &[(Vec2, Vec2, f32, f32, f32)], p: Vec2) -> Option<f32> {
+        for &(a, b, hw, za, zb) in decks {
             if p.x < a.x.min(b.x) - hw || p.x > a.x.max(b.x) + hw || p.y < a.y.min(b.y) - hw || p.y > a.y.max(b.y) + hw {
                 continue;
             }
