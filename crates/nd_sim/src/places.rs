@@ -400,11 +400,12 @@ pub fn rate(t: &Taste, ch: &PlaceCharacter, friends: usize, came_with: bool, rng
     // Errands are lighter experiences than nights out.
     let weight = if night { 1.0 } else if park { 0.7 } else { 0.5 };
     let roll = |rng: &mut dyn rand::RngCore, p: f32| -> bool { rng.random::<f32>() < p.clamp(0.0, 1.0) };
-    let rowdy = if matches!(ch.vibe, Vibe::DiveBar | Vibe::Club) { 0.04 } else { 0.0 };
-    if (night || park) && roll(rng, 0.015 + 0.16 * (1.0 - ch.safety) + 0.06 * (1.0 - ch.polish) + rowdy) {
+    let rowdy = if matches!(ch.vibe, Vibe::DiveBar | Vibe::Club) { 0.02 } else { 0.0 };
+    let fight = if park { 0.4 } else { 1.0 } * (0.008 + 0.12 * (1.0 - ch.safety) + 0.025 * (1.0 - ch.polish) + rowdy);
+    if (night || park) && roll(rng, fight) {
         events.push(VisitEvent::Fight);
     }
-    if !park && roll(rng, 0.03 + 0.12 * (1.0 - ch.polish)) {
+    if !park && roll(rng, 0.02 + 0.08 * (1.0 - ch.polish)) {
         events.push(VisitEvent::RudeStaff);
     }
     if !park && t.cheap > 0.2 && roll(rng, 0.45 * (ch.price - 0.4).max(0.0) * t.cheap) {
