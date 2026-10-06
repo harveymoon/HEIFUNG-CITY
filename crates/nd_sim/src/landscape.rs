@@ -1417,6 +1417,9 @@ impl Ground {
                 continue;
             }
             let foot = seg.viaduct;
+            // A road the player sank (a cutting, a portal ramp) is held by
+            // retaining walls: the ground comes down to it within metres.
+            let walled = roads.node(seg.a).level < 0.0 || roads.node(seg.b).level < 0.0;
             let (a, b) = (roads.node(seg.a).pos, roads.node(seg.b).pos);
             let (za, zb) = (node_z.get(seg.a.0 as usize).copied().unwrap_or(0.0), node_z.get(seg.b.0 as usize).copied().unwrap_or(0.0));
             let core = corridor_half_width(seg);
@@ -1431,7 +1434,7 @@ impl Ground {
                     (za + (zb - za) * t - land.height(a.lerp(b, t))).abs()
                 })
                 .fold(0.0f32, f32::max);
-            let falloff_for = embankment_falloff;
+            let falloff_for = |rise: f32| if walled { 3.0 } else { embankment_falloff(rise) };
             let reach = if foot { core + GROUND_FALLOFF } else { core + falloff_for(lift + 1.0) };
             // Where this way passes over another, the ground under it is the
             // other's.

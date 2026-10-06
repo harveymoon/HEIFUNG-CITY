@@ -342,7 +342,13 @@ impl World {
         if let Some(z) = self.ground.deck_at(p) {
             return z;
         }
-        self.ground_height(p).max(if self.landscape.is_flat() { f32::MIN } else { WATER_LEVEL })
+        self.ground_or_water(p)
+    }
+
+    /// The built ground, or the water's surface where there is water.
+    fn ground_or_water(&self, p: Vec2) -> f32 {
+        let g = self.ground_height(p);
+        if !self.landscape.is_flat() && self.landscape.is_water(p) { g.max(WATER_LEVEL) } else { g }
     }
 
     /// The surface at `p` nearest the height `hint`: the ground or any deck
@@ -352,7 +358,7 @@ impl World {
         if !self.relief {
             return 0.0;
         }
-        let ground = self.ground_height(p).max(if self.landscape.is_flat() { f32::MIN } else { WATER_LEVEL });
+        let ground = self.ground_or_water(p);
         self.ground.decks_at(p).into_iter().fold(ground, |best, z| if (z - hint).abs() < (best - hint).abs() { z } else { best })
     }
 

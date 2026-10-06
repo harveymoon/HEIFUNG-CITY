@@ -84,12 +84,12 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
     });
     // The level the next point goes down at.
     ui.horizontal(|ui| {
-        if ui.small_button("\u{25BC}").on_hover_text("Lower [Page Down]").clicked() {
+        if ui.small_button("lower").on_hover_text("Lower [Page Down]").clicked() {
             tools.step_elevation(false);
         }
         let text = egui::RichText::new(format!("Level: {}", crate::tools::elevation_label(tools.elevation))).strong();
         ui.label(text).on_hover_text("Page Up / Page Down step the level 2 m. Roads 4.5 m or more above or below another pass over or under it without a junction; a raised road stands on a viaduct, one 5 m or more down runs in a tunnel.");
-        if ui.small_button("\u{25B2}").on_hover_text("Raise [Page Up]").clicked() {
+        if ui.small_button("raise").on_hover_text("Raise [Page Up]").clicked() {
             tools.step_elevation(true);
         }
         if tools.elevation != 0.0 && !tools.tunnel && ui.small_button("ground").clicked() {
@@ -97,7 +97,7 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
         }
     });
     for w in &tools.grade_warnings {
-        ui.label(egui::RichText::new(format!("\u{26A0} {w}")).color(WARN).small());
+        ui.label(egui::RichText::new(format!("! {w}")).color(WARN).small());
     }
     match tools.kind {
         RoadKind::Path => hint(ui, help::ROAD_PATH),

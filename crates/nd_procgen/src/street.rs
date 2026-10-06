@@ -326,7 +326,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             // no street furniture.
             let wall = rgba(mul(pal.concrete(0), 0.7));
             for side in [-1.0f32, 1.0] {
-                g.part(Concrete).path_box(pts, side * (hw + SIDEWALK + 0.2), 0.4, 0.0, 5.6, wall);
+                g.part(Concrete).path_box(&walk, side * (hw + SIDEWALK + 0.2), 0.4, 0.0, 5.6, wall);
             }
             g.part(Glow).path_box(&walk, 0.0, 0.25, 5.3, 5.4, rgba(mul(pal.street_lamp, 0.9)));
             continue;

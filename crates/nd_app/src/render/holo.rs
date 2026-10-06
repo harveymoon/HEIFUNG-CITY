@@ -230,7 +230,7 @@ pub fn apply_depth(
     }
     if under {
         let w = &sim.world;
-        let faint = Color::linear_rgba(0.35, 0.45, 0.6, 0.35);
+        let faint = Color::linear_rgba(0.55, 0.7, 0.95, 0.8);
         let z = |n: nd_sim::NodeId| w.road_z.get(n.0 as usize).copied().unwrap_or(0.0);
         for (sid, s) in w.roads.alive_segments() {
             if s.tunnel || s.is_rail() {

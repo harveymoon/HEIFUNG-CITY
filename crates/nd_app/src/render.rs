@@ -2488,23 +2488,44 @@ fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res
 fn lift_spawned(
     sim: Res<Sim>,
     mut meshes: ResMut<Assets<Mesh>>,
-    q: Query<&Mesh3d, Or<(Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>, Added<LaneArrowsTag>, Added<RingPreviewTag>)>>,
+    q: Query<&Mesh3d, Or<(Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>, Added<RingPreviewTag>)>>,
+    arrows: Query<&Mesh3d, Added<LaneArrowsTag>>,
     mut signals: Query<&mut Transform, Added<SignalTag>>,
 ) {
     let w = &sim.world;
     if !w.relief {
         return;
     }
+    // Lane arrows and signal lamps belong to a road: they go at its height
+    // (a tunnel junction's lamps stay in the tunnel).
+    let on_road = |p: SVec2| match w.roads.nearest_where(p, |s| !s.is_rail()) {
+        Some((sid, t, q)) if q.distance(p) < 25.0 => w.road_height(sid, t),
+        _ => w.surface_height(p),
+    };
+    for m in &arrows {
+        let Some(mut mesh) = meshes.get_mut(&m.0) else { continue };
+        if let Some(bevy::mesh::VertexAttributeValues::Float32x3(pos)) = mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
+            for p in pos.iter_mut() {
+                p[1] += on_road(SVec2::new(p[0], p[2]));
+            }
+        }
+    }
+    // Lots, parks, overlays and the like lie on the ground: under a viaduct
+    // they stay down (over the water, a bridge deck is the nearest surface).
+    let lie = |p: SVec2| {
+        let g = w.ground_height(p);
+        w.surface_height_near(p, g)
+    };
     for m in &q {
         let Some(mut mesh) = meshes.get_mut(&m.0) else { continue };
         if let Some(bevy::mesh::VertexAttributeValues::Float32x3(pos)) = mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
             for p in pos.iter_mut() {
-                p[1] += w.surface_height(SVec2::new(p[0], p[2]));
+                p[1] += lie(SVec2::new(p[0], p[2]));
             }
         }
     }
     for mut tf in &mut signals {
-        tf.translation.y += w.surface_height(SVec2::new(tf.translation.x, tf.translation.z));
+        tf.translation.y += on_road(SVec2::new(tf.translation.x, tf.translation.z));
     }
 }
 
