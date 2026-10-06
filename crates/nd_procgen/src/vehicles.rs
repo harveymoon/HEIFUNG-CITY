@@ -113,6 +113,8 @@ pub fn body_length(b: BodyType) -> f32 {
         BodyType::AkiraBike => 2.9,
         BodyType::Scooter => 1.7,
         BodyType::DeliveryBot => 0.8,
+        BodyType::AirTaxi => 6.8,
+        BodyType::Helicopter => 11.2,
     }
 }
 
@@ -122,7 +124,7 @@ pub fn variant_key(m: &VehicleModel) -> VehicleModel {
     let mut k = *m;
     k.wear = k.wear.min(2);
     k.paint %= PAINTS;
-    if k.body == BodyType::DeliveryBot || k.body == BodyType::AkiraBike {
+    if k.body == BodyType::DeliveryBot || k.body == BodyType::AkiraBike || k.body.flies() {
         k.tuned = false;
     }
     k
@@ -304,6 +306,8 @@ fn build(m: &VehicleModel, paint: [f32; 3], detail: bool) -> VehicleMesh {
         BodyType::Motorcycle | BodyType::Scooter => bike(&mut b, col),
         BodyType::AkiraBike => akira(&mut b),
         BodyType::DeliveryBot => bot(&mut b, col),
+        BodyType::AirTaxi => air_taxi(&mut b, col),
+        BodyType::Helicopter => helicopter(&mut b, col),
     }
     if let Some((_, accent, sign)) = livery {
         livery_marks(&mut b, accent, sign);
@@ -761,6 +765,95 @@ fn bot(b: &mut B, col: [f32; 3]) {
     b.lamp(-0.425, 0.32, 0.0, 0.3, 0.04, -1.0, TAIL);
     b.lit_sides(0.0, 0.47, hw, 0.6, 0.03, accent);
     b.fx.quad_facing([Vec3::new(-0.5, 0.05, -0.38), Vec3::new(0.5, 0.05, -0.38), Vec3::new(0.5, 0.05, 0.38), Vec3::new(-0.5, 0.05, 0.38)], Vec3::Y, c4(mul(accent, 0.5)));
+}
+
+// ── aircraft ────────────────────────────────────────────────────────────────
+
+const NAV_RED: [f32; 3] = [2.8, 0.1, 0.08];
+const NAV_GREEN: [f32; 3] = [0.1, 2.6, 0.5];
+const STROBE: [f32; 3] = [3.0, 3.0, 3.0];
+
+/// Four-fan eVTOL taxi: a teardrop cabin with a wraparound canopy, two
+/// skids, arms out to four ducted fans with lit rims, nav lights (red one
+/// side, green the other, a white strobe aft) and a glow underneath at
+/// night. Drawn on its skids; the renderer lifts it.
+fn air_taxi(b: &mut B, col: [f32; 3]) {
+    let hw = 0.8;
+    let accent = NEON[b.m.paint as usize % NEON.len()];
+    b.ext(&[(-1.7, 0.55), (1.3, 0.55), (1.9, 0.95), (1.75, 1.35), (0.6, 1.85), (-1.1, 1.8), (-1.75, 1.2)], hw, col);
+    // Canopy: glass across the front and down both sides.
+    slope_quad(&mut b.body, (1.75, 1.35), (0.6, 1.85), hw * 0.85, GLASS);
+    b.sides(0.2, 1.4, hw, 1.9, 0.5, GLASS);
+    b.lit_sides(-0.2, 0.85, hw, 2.6, 0.06, accent);
+    // Skids on struts.
+    for z in [-0.7f32, 0.7] {
+        b.bx((0.0, 0.04, z), (2.8, 0.08, 0.1), TRIM);
+        for x in [-0.8f32, 0.8] {
+            b.bx((x, 0.3, z * 0.9), (0.08, 0.5, 0.08), TRIM);
+        }
+    }
+    // Arms to the fans, fans in ducts.
+    for (x, z) in [(2.25f32, 2.1f32), (2.25, -2.1), (-2.25, 2.1), (-2.25, -2.1)] {
+        let mid = (x * 0.5, 1.55, z * 0.5);
+        let len = (x * x + z * z).sqrt();
+        b.body.boxed(Vec3::new(mid.0, mid.1, mid.2), Vec3::new(len, 0.12, 0.18), z.atan2(x), c4(mul(col, 0.7)));
+        b.body.cylinder(Vec2::new(x, z), 0.95, 0.95, 1.45, 1.75, 10, c4(mul(col, 0.8)));
+        b.body.cylinder(Vec2::new(x, z), 0.85, 0.85, 1.56, 1.6, 10, c4([0.05, 0.05, 0.06]));
+        b.lights.boxed(Vec3::new(x + 0.95 * x.signum() * 0.7, 1.75, z + 0.95 * z.signum() * 0.7), Vec3::splat(0.1), 0.0, c4(accent));
+    }
+    // Nav lights and a landing lamp.
+    b.lights.boxed(Vec3::new(0.0, 1.2, -hw - 0.03), Vec3::new(0.25, 0.1, 0.06), 0.0, c4(NAV_RED));
+    b.lights.boxed(Vec3::new(0.0, 1.2, hw + 0.03), Vec3::new(0.25, 0.1, 0.06), 0.0, c4(NAV_GREEN));
+    b.lights.boxed(Vec3::new(-1.78, 1.3, 0.0), Vec3::new(0.06, 0.12, 0.12), 0.0, c4(STROBE));
+    b.lamp(1.92, 0.95, 0.0, 0.5, 0.12, 1.0, HEAD);
+    b.fx.quad_facing([Vec3::new(-1.6, 0.5, -1.0), Vec3::new(1.4, 0.5, -1.0), Vec3::new(1.4, 0.5, 1.0), Vec3::new(-1.6, 0.5, 1.0)], -Vec3::Y, c4(mul(accent, 0.6)));
+}
+
+/// A light helicopter: cabin, tail boom, fin and tail rotor, skids, nav
+/// lights. The main rotor is [`rotor_mesh`], spun by the renderer.
+fn helicopter(b: &mut B, col: [f32; 3]) {
+    let hw = 0.95;
+    b.ext(&[(-1.2, 0.55), (1.9, 0.55), (2.7, 1.1), (2.5, 1.9), (1.2, 2.5), (-1.4, 2.35), (-2.0, 1.5)], hw, col);
+    slope_quad(&mut b.body, (2.5, 1.9), (1.2, 2.5), hw * 0.85, GLASS);
+    b.sides(1.2, 1.6, hw, 1.6, 0.7, GLASS);
+    b.sides(-0.6, 1.6, hw, 0.9, 0.7, GLASS);
+    // A stripe: red for an air ambulance (white paint), white for the police.
+    let stripe = if b.m.paint == 3 { [0.8, 0.05, 0.04] } else { [0.85, 0.85, 0.85] };
+    b.sides(0.2, 1.05, hw, 3.4, 0.22, stripe);
+    // Tail boom, fin, tail rotor.
+    b.bx((-3.6, 1.95, 0.0), (3.4, 0.38, 0.32), col);
+    b.bx((-5.15, 2.55, 0.0), (0.7, 1.3, 0.1), col);
+    b.body.pipe(Vec2::new(-5.15, 0.2), Vec2::Y, 0.06, 0.6, 2.6, 8, c4([0.08, 0.08, 0.09]));
+    // Mast and hub (the blades turn apart).
+    b.body.cylinder(Vec2::ZERO, 0.22, 0.18, 2.4, 3.0, 8, c4(TRIM));
+    // Skids.
+    for z in [-0.85f32, 0.85] {
+        b.bx((0.3, 0.04, z), (3.4, 0.08, 0.1), TRIM);
+        for x in [-0.6f32, 1.2] {
+            b.bx((x, 0.32, z * 0.85), (0.08, 0.55, 0.08), TRIM);
+        }
+    }
+    // Searchlight under the nose (police), nav lights, strobe on the fin.
+    b.bx((2.1, 0.45, 0.0), (0.4, 0.3, 0.4), [0.1, 0.1, 0.11]);
+    b.lamp(2.32, 0.45, 0.0, 0.3, 0.3, 1.0, HEAD);
+    b.lights.boxed(Vec3::new(0.2, 1.3, -hw - 0.03), Vec3::new(0.25, 0.1, 0.06), 0.0, c4(NAV_RED));
+    b.lights.boxed(Vec3::new(0.2, 1.3, hw + 0.03), Vec3::new(0.25, 0.1, 0.06), 0.0, c4(NAV_GREEN));
+    b.lights.boxed(Vec3::new(-5.15, 3.25, 0.0), Vec3::splat(0.14), 0.0, c4(STROBE));
+    b.lights.boxed(Vec3::new(-0.4, 2.45, 0.0), Vec3::new(0.3, 0.1, 0.2), 0.0, c4(NAV_RED));
+}
+
+/// A helicopter's main rotor in its own frame (hub at the origin, blades
+/// in the horizontal plane), for the renderer to spin about Y: four
+/// blades and a hub.
+pub fn rotor_mesh() -> MeshData {
+    let mut m = MeshData::default();
+    for k in 0..4 {
+        let a = k as f32 * std::f32::consts::FRAC_PI_2;
+        let (s, c) = a.sin_cos();
+        m.boxed(Vec3::new(c * 2.5, 0.0, s * 2.5), Vec3::new(4.9, 0.05, 0.28), a, c4([0.06, 0.06, 0.07]));
+    }
+    m.boxed(Vec3::ZERO, Vec3::new(0.5, 0.2, 0.5), 0.0, c4(TRIM));
+    m
 }
 
 // ── fleet liveries ──────────────────────────────────────────────────────────

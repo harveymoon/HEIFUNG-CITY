@@ -53,10 +53,14 @@ pub enum BodyType {
     Scooter,
     /// Six-wheeled pavement robot with a flag.
     DeliveryBot,
+    /// Four ducted-fan eVTOL drone taxi (`crate::air`).
+    AirTaxi,
+    /// Air ambulance or police helicopter; the main rotor spins apart.
+    Helicopter,
 }
 
 impl BodyType {
-    pub const ALL: [BodyType; 17] = [
+    pub const ALL: [BodyType; 19] = [
         BodyType::Hatchback,
         BodyType::Sedan,
         BodyType::Coupe,
@@ -74,6 +78,8 @@ impl BodyType {
         BodyType::AkiraBike,
         BodyType::Scooter,
         BodyType::DeliveryBot,
+        BodyType::AirTaxi,
+        BodyType::Helicopter,
     ];
 
     pub fn two_wheeler(self) -> bool {
@@ -82,6 +88,10 @@ impl BodyType {
 
     pub fn is_bus(self) -> bool {
         matches!(self, BodyType::BubbleBus | BodyType::ArticulatedBus)
+    }
+
+    pub fn flies(self) -> bool {
+        matches!(self, BodyType::AirTaxi | BodyType::Helicopter)
     }
 
     pub fn is_truck(self) -> bool {
@@ -107,6 +117,8 @@ impl BodyType {
             BodyType::AkiraBike => "akira_bike",
             BodyType::Scooter => "scooter",
             BodyType::DeliveryBot => "delivery_bot",
+            BodyType::AirTaxi => "air_taxi",
+            BodyType::Helicopter => "helicopter",
         }
     }
 }
