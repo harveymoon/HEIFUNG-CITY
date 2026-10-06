@@ -122,15 +122,38 @@ impl PowerPlantKind {
         }
     }
 
-    /// Effect on land value around the plant: (radius, weight).
+    /// Effect on land value around the plant: (radius, weight). Every
+    /// plant costs its neighbours something: coal most and furthest (smoke
+    /// and ash), nuclear next (what people fear more than what it does),
+    /// geothermal (the smell of sulphur), then hydro, wind and tidal
+    /// (noise, the view), and solar least. The penalty is a nuisance (see
+    /// [`crate::land_value::LandValue::for_use`]): homes feel it most,
+    /// industry hardly at all.
     pub fn pollution(self) -> (f32, f32) {
         match self {
-            PowerPlantKind::Coal => (300.0, -0.35),
-            PowerPlantKind::Solar => (0.0, 0.0),
-            PowerPlantKind::Wind => (120.0, -0.04),
-            PowerPlantKind::Nuclear => (200.0, -0.10),
-            PowerPlantKind::Hydro | PowerPlantKind::Tidal => (0.0, 0.0),
-            PowerPlantKind::Geothermal => (150.0, -0.05),
+            PowerPlantKind::Coal => (360.0, -0.40),
+            PowerPlantKind::Nuclear => (260.0, -0.18),
+            PowerPlantKind::Geothermal => (180.0, -0.09),
+            PowerPlantKind::Hydro => (130.0, -0.05),
+            PowerPlantKind::Wind => (130.0, -0.045),
+            PowerPlantKind::Tidal => (120.0, -0.045),
+            PowerPlantKind::Solar => (90.0, -0.03),
+        }
+    }
+
+    /// How much land value the plant takes overall: weight times the area
+    /// of its cone. Used to order the plants for the UI and tests.
+    pub fn pollution_load(self) -> f32 {
+        let (r, w) = self.pollution();
+        -w * r * r
+    }
+
+    /// Ash and spills on the ground around the plant per working hour:
+    /// (radius, contamination). Coal only.
+    pub fn ground_spill(self) -> Option<(f32, f32)> {
+        match self {
+            PowerPlantKind::Coal => Some((120.0, 0.003)),
+            _ => None,
         }
     }
 

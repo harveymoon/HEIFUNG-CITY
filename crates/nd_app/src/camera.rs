@@ -101,6 +101,7 @@ fn control_camera(
     mut walk: ResMut<WalkState>,
     mut q: Query<(&mut OrbitCamera, &mut Transform, &mut Projection, &mut DistanceFog)>,
     mut cursors: Query<&mut CursorOptions, With<PrimaryWindow>>,
+    tools: Res<crate::tools::ToolState>,
 ) {
     let Ok((mut cam, mut tf, mut proj, mut fog)) = q.single_mut() else { return };
     let dt = time.delta_secs();
@@ -257,7 +258,8 @@ fn control_camera(
 
     // Rotate with the right mouse button, pan with the middle button or shift+left.
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
-    if buttons.pressed(MouseButton::Right) {
+    // The zone brush and marquee erase with a right-drag: no orbit then.
+    if buttons.pressed(MouseButton::Right) && !tools.captures_right_drag() {
         cam.yaw -= motion.delta.x * 0.005;
         cam.pitch = (cam.pitch + motion.delta.y * 0.005).clamp(0.08, 1.5);
     } else if buttons.pressed(MouseButton::Middle) || (shift && buttons.pressed(MouseButton::Left)) {

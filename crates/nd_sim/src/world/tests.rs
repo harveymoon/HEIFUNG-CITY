@@ -84,8 +84,11 @@ fn newest_zone_wins_and_repaint_changes_lots() {
     // Repainting the original gesture and implementing also works.
     assert!(w.repaint_zone(first, LandUse::Park));
     w.implement();
-    // The newer commercial zone still sits on top of the repainted one.
-    assert!(w.lots.values().filter(|l| point_in_polygon(l.center, &tri)).all(|l| l.land_use == LandUse::Commercial));
+    // The newer commercial zone still sits on top of the repainted one
+    // wherever shops may go; the backland a shop cannot use (no street)
+    // refuses the commercial zone and stays park, which goes anywhere.
+    assert!(w.lots.values().filter(|l| point_in_polygon(l.center, &tri) && l.usable()).all(|l| l.land_use == LandUse::Commercial));
+    assert!(w.lots.values().filter(|l| point_in_polygon(l.center, &tri) && !l.usable()).all(|l| l.land_use == LandUse::Park));
 }
 
 #[test]
@@ -637,9 +640,13 @@ fn road_works_pull_down_the_buildings_whose_parcels_change() {
     assert!(outlines_differ(&old_outline, &w.lots[new_lot].polygon, EXPROPRIATE_AREA_TOL, EXPROPRIATE_DIST_TOL));
 
     // A footpath drawn through a built lot removes that building too.
-    let far_center = w.lots[far_lot].center;
+    // (Lot ids change with every rebuild: find the building's lot afresh.)
+    let far_center = w.lots[w.buildings[far].lot].center;
     w.add_path(&[Vec2::new(far_center.x, 380.0), Vec2::new(far_center.x, 620.0)]);
-    assert!(!w.buildings.contains_key(far), "a path through the lot takes the building");
+    assert!(w.buildings.get(far).is_none_or(|b| b.being_demolished()), "a path through the lot takes the building");
+    if w.buildings.contains_key(far) {
+        w.finish_demolition(far);
+    }
     assert!(w.lots.values().all(|l| l.building != Some(far)));
 }
 
@@ -1352,7 +1359,9 @@ fn the_overdraft_floor_refuses_purchases_and_doors_and_the_ledger_balances() {
     // to the day's change.
     let before = w.economy.treasury;
     let today0 = w.economy.ledger.today;
-    let ind = lot_near(&w, Vec2::new(-350.0, 20.0), LandUse::Residential);
+    // A home lot big enough for a solar farm (parcels are cut at a home's
+    // size, so not every one is).
+    let ind = w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none() && l.land_use == LandUse::Residential && l.area() >= PowerPlantKind::Solar.min_area()).min_by(|a, b| a.1.center.distance(Vec2::new(-350.0, 20.0)).total_cmp(&b.1.center.distance(Vec2::new(-350.0, 20.0)))).map(|(id, _)| id).expect("a big enough home lot");
     w.lots[ind].land_use = LandUse::Industrial;
     w.build_power(ind, PowerPlantKind::Solar).expect("plant");
     assert!(w.economy.ledger.today_of(Flow::Construction) < 0.0);
@@ -2045,6 +2054,248 @@ fn low_income_demand_builds_low_tier_homes() {
     let low = picks(&mut w);
     assert!(low > 120, "low-income demand pulls dear land down to cheap housing ({low}/200)");
     assert_eq!(w.residential_tier(Tier::Low), Tier::Low);
+}
+
+
+// ── planning: projects, pre-cut parcels, the zone brush ─────────────────
+
+fn street(x0: f32, y0: f32, x1: f32, y1: f32) -> Gesture {
+    Gesture::Road { points: vec![Vec2::new(x0, y0), Vec2::new(x1, y1)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street }
+}
+
+#[test]
+fn several_projects_keep_their_own_history_and_implement_in_turn() {
+    let mut w = flat_world();
+    let main_road = w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    // Project A: a new street and a widened main road.
+    let a = w.new_project(Some("Docks"));
+    let a_street = w.add_gesture(street(100.0, -300.0, 100.0, 300.0));
+    w.set_gesture(main_road, Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 2, lanes_bwd: 2, curved: false, kind: RoadKind::Street }, true);
+    // Project B: another street, and the main road changed differently.
+    let b = w.new_project(None);
+    assert_ne!(a, b);
+    assert_eq!(w.project.as_ref().unwrap().id, b, "a new project becomes the active one");
+    let b_street = w.add_gesture(street(-100.0, -300.0, -100.0, 300.0));
+    w.set_gesture(main_road, Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 3, lanes_bwd: 3, curved: false, kind: RoadKind::Street }, true);
+    let list = w.projects();
+    assert_eq!(list.len(), 2);
+    assert_eq!(list.iter().find(|i| i.id == a).unwrap().name, "Docks");
+    assert!(list.iter().all(|i| i.conflicts.iter().any(|(g, _)| *g == main_road)), "both touch the main road: {list:?}");
+    // The active plan is B's; A is previewed dim.
+    assert!(w.gesture(b_street).is_some() && w.gesture(a_street).is_none());
+    let dim = w.inactive_previews();
+    assert_eq!(dim.len(), 1);
+    assert_eq!(dim[0].id, a);
+    assert_eq!(dim[0].preview.planned_roads.len(), 2, "A's new street and its widened road");
+    // Undo in B leaves A alone.
+    assert!(w.undo() && w.undo());
+    assert_eq!(w.project.as_ref().unwrap().steps.len(), 0);
+    assert_eq!(w.projects().iter().find(|i| i.id == a).unwrap().steps, 2);
+    assert!(w.redo() && w.redo());
+    // Undo by id works on a parked project too, and redo brings it back.
+    assert!(w.undo_project(a));
+    assert_eq!(w.projects().iter().find(|i| i.id == a).unwrap().steps, 1);
+    assert!(w.redo_project(a));
+    // Switch back to A: its plan is the effective one now.
+    assert!(w.switch_project(a));
+    assert!(w.gesture(a_street).is_some() && w.gesture(b_street).is_none());
+    assert!(w.rename_project(b, "Westside"));
+    // Implement A first, then B: B's version of the shared road wins, and
+    // the conflict is reported.
+    let warn_a = w.implement_project(a).unwrap();
+    assert!(warn_a.iter().any(|m| m.contains("Westside")), "{warn_a:?}");
+    assert!(w.master.gestures.contains_key(&a_street));
+    assert_eq!(w.projects().len(), 1, "A is gone, B still pending");
+    assert!(!w.has_project(), "B was parked when A became active");
+    let warn_b = w.implement_project(b).unwrap();
+    assert!(warn_b.is_empty(), "nothing left to conflict with: {warn_b:?}");
+    match &w.master.gestures[&main_road] {
+        Gesture::Road { lanes_fwd, .. } => assert_eq!(*lanes_fwd, 3, "implemented later, B's road is built"),
+        g => panic!("{g:?}"),
+    }
+    assert!(w.master.gestures.contains_key(&b_street));
+    assert!(w.projects().is_empty());
+    // Park and delete.
+    let c = w.new_project(Some("Scrap"));
+    w.add_gesture(street(0.0, 100.0, 0.0, 300.0));
+    assert!(w.park_project() && !w.has_project());
+    assert!(w.delete_project(c) && w.projects().is_empty());
+}
+
+#[test]
+fn projects_survive_a_save_and_an_old_single_project_is_named() {
+    let mut w = flat_world();
+    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    let a = w.new_project(Some("North"));
+    w.add_gesture(street(100.0, 0.0, 100.0, 300.0));
+    let b = w.new_project(Some("South"));
+    w.add_gesture(street(-100.0, 0.0, -100.0, -300.0));
+    let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+    let list = back.projects();
+    assert_eq!(list.iter().map(|i| (i.id, i.name.as_str(), i.steps, i.active)).collect::<Vec<_>>(), vec![(a, "North", 1, false), (b, "South", 1, true)]);
+    // A save from before named projects: one project, no id or name, and
+    // none of the new fields.
+    let mut old = flat_world();
+    old.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    old.add_gesture(street(100.0, 0.0, 100.0, 300.0));
+    old.project.as_mut().unwrap().id = 0;
+    old.project.as_mut().unwrap().name.clear();
+    let text = old.to_ron().unwrap();
+    let text: String = text.lines().filter(|l| !l.trim_start().starts_with("parked_projects:") && !l.trim_start().starts_with("next_project:") && !l.trim_start().starts_with("parcel_lots:")).collect::<Vec<_>>().join("\n");
+    let back = World::from_ron(&text).unwrap();
+    let p = back.project.as_ref().expect("the pending project survives");
+    assert!(p.id > 0 && p.name == "Project 1" && p.steps.len() == 1, "{} {:?}", p.id, p.name);
+    assert!(back.parked_projects.is_empty());
+}
+
+#[test]
+fn parcels_are_cut_along_a_fresh_road_with_no_zone() {
+    let mut w = flat_world();
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    let along: Vec<&crate::zoning::Parcel> = w.parcels.parcels.iter().filter(|p| p.center.x.abs() < 280.0 && p.center.y.abs() < 40.0).collect();
+    let north = along.iter().filter(|p| p.center.y > 0.0 && p.street_frontage).count();
+    let south = along.iter().filter(|p| p.center.y < 0.0 && p.street_frontage).count();
+    assert!(north >= 25 && south >= 25, "a row of parcels on each side: {north} / {south}");
+    assert!(w.parcels.parcels.iter().all(|p| p.land_use.is_none() && p.lot.is_none()), "nothing is zoned");
+    assert!(w.lots.values().all(|l| !w.zones.contains_key(l.zone)), "no zoned lots before zoning");
+    assert!(w.parcels.parcels.iter().any(|p| p.landlocked()), "land behind the row is backland");
+    assert!(w.planned_zoning().iter().all(|z| z.is_none()));
+    // Keys are unique and find their parcel.
+    for (i, p) in w.parcels.parcels.iter().enumerate() {
+        assert_eq!(w.parcels.find(&p.key), Some(i));
+    }
+}
+
+#[test]
+fn a_zone_polygon_maps_onto_the_parcels_whose_centre_it_holds() {
+    let mut w = flat_world();
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    w.add_path(&[Vec2::new(-300.0, 80.0), Vec2::new(300.0, 80.0)]);
+    let poly = square(-100.0, 5.0, 200.0);
+    w.add_zone(poly.clone(), LandUse::Commercial);
+    for (i, p) in w.parcels.parcels.iter().enumerate() {
+        let inside = crate::zoning::point_in_polygon(p.center, &poly);
+        let expect = inside && p.accepts(LandUse::Commercial);
+        assert_eq!(p.land_use == Some(LandUse::Commercial), expect, "parcel {i} at {:?}", p.center);
+        assert_eq!(w.planned_zoning()[i], p.land_use);
+    }
+    // Shops need a street: the parcels fronting only the path stay unzoned.
+    assert!(w.parcels.parcels.iter().any(|p| crate::zoning::point_in_polygon(p.center, &poly) && p.path_frontage && !p.street_frontage && p.land_use.is_none()));
+    let lots: Vec<&Lot> = w.lots.values().filter(|l| l.land_use == LandUse::Commercial).collect();
+    assert!(lots.len() >= 10 && lots.iter().all(|l| l.usable() && l.car_access()), "{} commercial lots", lots.len());
+    assert!(lots.iter().all(|l| w.zones.contains_key(l.zone)), "lots belong to the zone");
+    // Homes do line the path.
+    w.add_zone(poly.clone(), LandUse::Residential);
+    assert!(w.lots.values().any(|l| l.land_use == LandUse::Residential && !l.car_access() && l.usable()), "homes front the footpath");
+}
+
+#[test]
+fn the_brush_paints_only_parcels_that_take_the_use_and_one_stroke_is_one_undo() {
+    let mut w = flat_world();
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    w.add_path(&[Vec2::new(-300.0, 80.0), Vec2::new(300.0, 80.0)]);
+    // One stroke from the street row up across the path row.
+    let mut stroke = None;
+    let mut seen: Vec<usize> = Vec::new();
+    for k in 0..12 {
+        let at = Vec2::new(-60.0 + k as f32 * 10.0, 10.0 + k as f32 * 7.0);
+        let ids = w.parcels.in_circle(at, 12.0);
+        seen.extend(&ids);
+        stroke = w.paint_parcels(&ids, Some(LandUse::Commercial), stroke).0;
+    }
+    let stroke = stroke.expect("something was painted");
+    assert_eq!(w.project.as_ref().unwrap().steps.len(), 1, "the whole stroke is one step");
+    seen.sort();
+    seen.dedup();
+    let planned = w.planned_zoning().to_vec();
+    let mut refused = 0;
+    for &i in &seen {
+        let p = &w.parcels.parcels[i];
+        if p.accepts(LandUse::Commercial) {
+            assert_eq!(planned[i], Some(LandUse::Commercial));
+        } else {
+            refused += 1;
+            assert_eq!(planned[i], None, "parcel {i} refuses shops: {:?}", p.refusal(LandUse::Commercial));
+        }
+    }
+    assert!(refused > 0, "path-fronting parcels and backland refuse shops");
+    // Parks go anywhere.
+    assert!(seen.iter().all(|&i| w.parcels.parcels[i].accepts(LandUse::Park)));
+    // Undo takes the stroke back whole, redo restores it.
+    assert!(w.undo());
+    assert!(w.planned_zoning().iter().all(|z| z.is_none()));
+    assert!(w.gesture(stroke).is_none());
+    assert!(w.redo());
+    w.implement();
+    assert!(w.lots.values().filter(|l| l.land_use == LandUse::Commercial).count() >= 2);
+    // Industry joins parcels into bigger lots and takes the backland behind.
+    let ids = w.parcels.in_polygon(&square(100.0, -100.0, 160.0));
+    w.paint_parcels(&ids, Some(LandUse::Industrial), None);
+    assert!(ids.iter().any(|&i| w.parcels.parcels[i].landlocked() && w.planned_zoning()[i] == Some(LandUse::Industrial)), "works yards take the backland");
+    w.implement();
+    let ind: Vec<&Lot> = w.lots.values().filter(|l| l.land_use == LandUse::Industrial && l.usable()).collect();
+    assert!(!ind.is_empty());
+    let mean = ind.iter().map(|l| l.area()).sum::<f32>() / ind.len() as f32;
+    let parcel_mean = ids.iter().map(|&i| w.parcels.parcels[i].area).sum::<f32>() / ids.len() as f32;
+    assert!(mean > parcel_mean * 1.5, "industrial lots are joined parcels: mean {mean:.0} m² vs parcels {parcel_mean:.0}");
+    // Erasing unzones.
+    let (_, n) = w.paint_parcels(&ids, None, None);
+    assert!(n > 0);
+    w.implement();
+    assert!(w.lots.values().all(|l| l.land_use != LandUse::Industrial));
+}
+
+#[test]
+fn painted_parcels_keep_their_zone_through_rebuilds() {
+    let mut w = flat_world();
+    let road = w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    let ids = w.parcels.in_circle(Vec2::new(150.0, 15.0), 30.0);
+    let (_, n) = w.paint_parcels(&ids, Some(LandUse::Residential), None);
+    assert!(n >= 3);
+    w.implement();
+    let homes: Vec<(crate::zoning::ParcelKey, Vec2)> = w.parcels.parcels.iter().filter(|p| p.land_use == Some(LandUse::Residential)).map(|p| (p.key, p.center)).collect();
+    assert!(homes.len() >= 3);
+    let lot = w.lots.iter().find(|(_, l)| l.land_use == LandUse::Residential && l.usable()).map(|(id, _)| id).unwrap();
+    w.build_on(lot);
+    let b = w.lots[lot].building.unwrap();
+    // Road works far away: lot ids change, the parcels and keys do not.
+    w.add_road(&[Vec2::new(-300.0, -300.0), Vec2::new(-300.0, 300.0)], 2, 2);
+    for (k, c) in &homes {
+        let i = w.parcels.find(k).expect("the key still names a parcel");
+        assert_eq!(w.parcels.parcels[i].key, *k, "same parcel, same key");
+        assert!(w.parcels.parcels[i].center.distance(*c) < 0.01);
+        assert_eq!(w.parcels.parcels[i].land_use, Some(LandUse::Residential));
+    }
+    assert!(w.buildings.contains_key(b), "an untouched parcel keeps its building");
+    // The road widened under them reshapes the parcels: the keys are found
+    // again by their old centres and the zone carries over, while the
+    // building whose parcel changed shape is pulled down.
+    w.set_gesture(road, Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 3, lanes_bwd: 3, curved: false, kind: RoadKind::Street }, true);
+    w.implement();
+    assert!(!w.buildings.contains_key(b), "eminent domain still applies");
+    let still = homes.iter().filter(|(k, _)| w.parcels.find(k).is_some_and(|i| w.parcels.parcels[i].land_use == Some(LandUse::Residential))).count();
+    assert!(still * 10 >= homes.len() * 7, "most painted parcels are still homes after the widening: {still} of {}", homes.len());
+}
+
+#[test]
+fn an_industrial_sub_zone_rides_on_the_stroke_and_one_undo_takes_both() {
+    let mut w = flat_world();
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    let poly = square(-100.0, 5.0, 100.0);
+    let zone = w.add_zone_gesture(poly.clone(), LandUse::Industrial, Some("logistics"));
+    let step = &w.project.as_ref().unwrap().steps[0];
+    assert_eq!(w.project.as_ref().unwrap().steps.len(), 1, "zone and sub-zone are one step");
+    assert!(step.contains_key(&zone) && step.values().flatten().any(|g| matches!(g, Gesture::ParcelZone { industry: Some(k), .. } if k == "logistics")));
+    assert!(w.undo() && w.effective_plan().gestures.len() == w.master.gestures.len());
+    assert!(w.redo());
+    // Repainting industrial land with a sub-zone repaints it even though
+    // the land use is unchanged.
+    w.implement();
+    let ids = w.parcels.in_polygon(&poly);
+    let (_, n) = w.paint_parcels_with(&ids, Some(LandUse::Industrial), Some("tech"), None);
+    assert!(n > 0);
+    let (_, n) = w.paint_parcels(&ids, Some(LandUse::Industrial), None);
+    assert_eq!(n, 0, "without a sub-zone, already industrial parcels are left alone");
 }
 
 /// A street of homes facing a grocer, every household short of food and

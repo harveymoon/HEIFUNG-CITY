@@ -90,10 +90,13 @@ Relative paths are relative to the game's working directory (the repo root under
 
 `window {name: "new_game"}` opens the New Game window (preset list, levers, mini-map).
 
-### Planning: roads, zones, the project
+### Planning: roads, zones, parcels, projects
 
-Like the tools, new gestures go into the pending **project** and change nothing until it is
+Like the tools, new gestures go into the active **project** and change nothing until it is
 implemented. Pass `"implement": true` to implement straight away, or send `project` later.
+Several named projects can be pending; the active one is edited, the others are previewed dim.
+Parcels exist along every road before anything is zoned; zoning (a polygon, or `paint`) gives
+them a land use.
 
 | Command | Fields |
 | --- | --- |
@@ -101,15 +104,20 @@ implemented. Pass `"implement": true` to implement straight away, or send `proje
 | `add_road` | `points` `[[x,y],...]` (2+), `kind` street (default) / path / rail, `lanes_fwd`, `lanes_bwd` (0..4, default 1/1, streets only), `curved`, `snap` (default true: ends snap to the network like the Road tool), `implement` |
 | `add_zone` | `polygon` `[[x,y],...]` (3+), `land_use` residential / commercial / industrial / entertainment / civic / park, `implement` |
 | `bulldoze` | `gesture_id`, `implement` |
-| `project` | `action`: start / implement / undo / redo / discard |
+| `paint` | `land_use` (or `none` to unzone), then `at` `[x,y]` + `radius` (the brush), `rect` `[[x0,y0],[x1,y1]]` (the marquee) or `polygon`; `industry` (industrial only: auto / farming / oil / refinery / manufacturing / logistics / fishing / tech), `implement`. Reply: `painted`, `touched`, `refused` (`[{parcel, center, why}]`), `gesture_id` |
+| `project` | `action`: list / new / switch / rename / delete / park / start / implement / undo / redo / discard; `id` (default the active project) or `name` to pick one; `name` for new and rename. Reply: `projects` (`id`, `name`, `active`, `steps`, `redo`, `conflicts` `[{gesture, project}]`, `shared_parcels`), `warnings` from the last implement |
+| `find` `{what: "parcels"}` | per parcel: `index`, `center`, `area`, `land_use` (built), `planned`, `landlocked`, `street`, `rough`, `accepts`, `lot`; filter `land_use`, `zoned`, `landlocked` |
 
 ```json
 {"cmd": "add_road", "points": [[300, -200], [300, 200]], "lanes_fwd": 2, "lanes_bwd": 2}
 {"cmd": "add_zone", "polygon": [[310, -60], [400, -60], [400, 60], [310, 60]], "land_use": "residential"}
 {"cmd": "project", "action": "implement"}
+{"cmd": "project", "action": "new", "name": "Harbour"}
+{"cmd": "paint", "land_use": "industrial", "industry": "logistics", "rect": [[300, 10], [420, 60]]}
+{"cmd": "project", "action": "switch", "id": 1}
 ```
 
-Reply: `gesture_id`, `implemented`, `project` (`steps`, `redo`), `plan_version`.
+Reply: `gesture_id`, `implemented`, `project` (`id`, `name`, `steps`, `redo`), `projects`, `plan_version`.
 
 ### Placing buildings
 
@@ -141,6 +149,26 @@ Reply: `building` id, `message`, `row`, `treasury`; or the sim's reason as `erro
 {"cmd": "place", "kind": "solar", "x": -210, "y": -210}
 {"cmd": "place", "kind": "fire", "tier": "high", "x": 120, "y": 40}
 {"cmd": "place", "kind": "dispatch:low", "x": -80, "y": 40}
+```
+
+### Industry sub-zones
+
+`industry {lot | pos | polygon, kind}` sets the player's industry bias (`World::set_industry_bias`):
+`kind` is `farming`, `oil`, `refinery`, `manufacturing`, `logistics`, `fishing`, `tech`, or `none`
+(hand the area back to the ground over an older bias). `lot` is a lot id, `pos: [x, y]` the lot
+under the point, `polygon: [[x, y], ...]` an area (the bias belongs to the ground, so it survives
+the lots being recut). New industrial buildings there take that kind; standing industry of another
+kind retools on the spot. Reply: `kind`, `retooled` (buildings changed), `biases`.
+
+Without `kind` it is a query of the lot: `ground` {soil, fertility, oil, rock, sand, water},
+`contamination`, `land_value`, `near` {port, yard, highway, depot (0..1), fleet_lot}, `neighbours`
+([kind, metres] of industry within 160 m), `bias`, `chance` (share of each kind a new building
+would draw) and `building` (the kind standing there).
+
+```json
+{"cmd": "industry", "pos": [-210, -210], "kind": "farming"}
+{"cmd": "industry", "polygon": [[-280, -280], [-140, -280], [-140, -140], [-280, -140]], "kind": "none"}
+{"cmd": "industry", "pos": [-210, -210]}
 ```
 
 ### Buses
@@ -203,7 +231,7 @@ with none, the current selection. The detail matches what the inspector and the 
 | --- | --- |
 | `select` | `citizen` / `building` / `car` id, or `at: [x, y]` (picks like a click), or nothing to clear |
 | `favourite` | `citizen`, `on` (omit to toggle) |
-| `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture` |
+| `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry` (zone, industrial: auto / farming / oil / ...), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture` |
 | `overlay` | `layer` (land_value, traffic, traffic_types, people, pollution, paths, zoning) with `on` (bool; omitted toggles); or any of those names as bools. Reply: every layer and whether it is on (also in `status.overlays`) |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
 | `window` | `name` city / economy / market / people / power / transit / land / saves / help / dev, `open` (omit to toggle). Reply `open`, `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it |
@@ -261,15 +289,16 @@ Each reply carries `took_ms`; see the timings measured on a real city at the end
 
 ### report
 
-`{"cmd": "report", "sections": ["overview", "alerts"]}` (default: all six).
+`{"cmd": "report", "sections": ["overview", "alerts"]}` (default: all seven).
 
 | Section | Fields |
 | --- | --- |
 | `overview` | day, time, population, households_housed, homes {total, free, being_built}, jobs {total, filled, free, being_built}, buildings {built, under_construction, derelict, vacant_lots, unusable_lots, lots_total}, treasury, net_yesterday, net_today_so_far, land_value_avg, gini, demand_by_land_use (0..1), headline_alerts |
-| `people` | by_class, by_activity, employment {employed, employed_in_businesses, employed_on_building_sites, unemployed_on_gig_income, unemployment_share, jobs_free}, housing {housed, unhoused, waiting_immigrants, homes_free}, income_per_day and savings (distributions; savings also in_overdraft, at_overdraft_floor), rent_burden {over_30pct_of_income, over_50pct_of_income, their shares, rent_stressed_now, rent_to_income distribution}, mood (distribution 0..1), hunger {hungry_now, mean_satiety, no_groceries_at_home, hungry_days histogram 0..4+}, commute_modes_now (walk/bike/car/bus/train counts and shares of the people travelling now; owns_car_share, owns_bike_share), moves (displaced, emigrated, priced-out totals), recent_memory_reasons (memories of the last 2 days grouped by their fixed text, e.g. "Rent got too steep", "Couldn't afford anything at") |
+| `people` | by_class, by_activity, employment {employed, employed_in_businesses, employed_on_building_sites, unemployed_on_gig_income, unemployment_share (of everyone), jobs_free, working_age_adults, unemployed_adults, adult_unemployment_share}, housing {housed, unhoused, waiting_immigrants, homes_free}, income_per_day and savings (distributions; savings also in_overdraft, at_overdraft_floor), rent_burden {over_30pct_of_income, over_50pct_of_income, their shares, rent_stressed_now, rent_to_income distribution}, mood (distribution 0..1), hunger {hungry_now, mean_satiety, no_groceries_at_home, hungry_days histogram 0..4+}, commute_modes_now (walk/bike/car/bus/train counts and shares of the people travelling now; owns_car_share, owns_bike_share), moves (displaced, emigrated, priced-out totals), recent_memory_reasons (memories of the last 2 days grouped by their fixed text, e.g. "Rent got too steep", "Couldn't afford anything at") |
 | `economy` | treasury, ledger {today_so_far and yesterday by flow, nets}, tax_today, upkeep_today, trade_today {imports_value, exports_value, building_materials_imported, deals, meals_sold, walk_in_sales, parking_fees}, businesses {total, open, closed_ever, by_kind: count, open, closed, mean_staffing, mean_money, revenue and spend totals, inputs (stock, target, fill), outputs (stock, mean_price)}, resources (town_stock, avg_price, price_vs_base, local_sellers_open, local_supply_per_day, business_demand_per_day, scarce), most_profitable_today and least_profitable_today (10 each, with ids) |
 | `land` | lots_by_land_use {vacant, built, under_construction, unusable, total, area_m2}, buildings_by_land_use_and_tier, special_buildings, floors_histogram, rents_by_tier {buildings, homes, residents, occupancy, rent_per_home_day_avg, min, max}, land_value {avg_grid, lots distribution, tier_cuts}, parks {lots, area_m2} |
 | `services` | emergency {coverage_pct_of_homes {police, fire, health, school}, incidents_today {fire, crime, medical}, resolved_today, unanswered_today, arrests_today, avg_response_min (call to arrival, today or else yesterday), units, units_busy, fires_burning, burned_down_total, waiting_for_ambulance, in_hospital, dispatch {dispatcher_on_duty, minutes_to_dispatch}, stadium_crowd_today, tickets_today, stadium_events_tonight, upkeep_per_day, education_wage_bonus_today, stations: id, kind, tier, workers, radius_m, units, units_crewed, units_busy, beds_used, capacity; active_incidents: id, kind, stage, building, minutes_since_start, intensity, unit, dispatcher; recent (last 10 resolved with outcome and response_min)}, power {supply, demand and imported MW, served_share, unpowered_buildings, brownout_hours_today, weather, plants: id, kind, capacity_mw, available_mw, output_mw_est, upkeep, pollution}, transit {routes: id, stops, buses_wanted, buses_running, riders_today, waiting, length_m, broken_legs, runnable; totals}, rail {facilities: id, kind, rail_connected, road_connected, works, waiting_passengers, freight units; trains by kind; riders, freight}, parking {capacity, used, occupancy, parked_on_street_today, last_shortage_at}, traffic {vehicles, cars, trucks, buses, mean_speed_kmh_moving, stopped, stuck, waiting_at_kerb, gridlocks, left_turn_wait_mean_s, left_turn_wait_max_s (over the last 500 left turns), left_turns_measured, protected_left_arrows_now, passing_left_turners_now, lane_use_set_by_player, lanes, intersections, signals} |
+| `industry` | by_kind (farming, oil, refinery, manufacturing, logistics, fishing, tech): buildings, open, jobs, mean_staffing, profit_today, nuisance {radius_m, weight}, fouls_ground; contamination {cells, cells_over_0_3, max, total, cell_m}; fleet {truck_and_bus_lots, bays, trucks_parked, trucks_on_road, returning_empty}; biases {count, newest_first}; plant_land_value (each plant kind's radius, weight, load, ash) |
 | `alerts` | the ranked list below |
 
 A distribution is `{count, mean, median, p10, p90, min, max, histogram: {edges (bins + 1), counts}}`
@@ -292,7 +321,7 @@ understaffed below 50 %; unpowered = under 60 % of demand met; rent stress = ren
 income; stuck = in traffic and standing still for 180 s (not a bus at a stop, not at a red light;
 cars waiting at the kerb to pull out are counted apart, and gridlock rings are listed with the
 junctions they pass through); high demand ≥ 0.6; unemployment
-≥ 15 %; scarce = average price ≥ 1.3 × base.
+≥ 15 % of working-age adults (children and retirees are not counted); scarce = average price ≥ 1.3 × base.
 
 Trimmed real reply (day 10 of the demo district):
 
@@ -320,7 +349,8 @@ the top; col 0 the smallest x, at the left.
   center, residents (counted at their home), homes, jobs, jobs_filled, businesses, land_value (lot
   average), hungry, vacant_lots, unpowered, cars (now), land_use (dominant by lot area).
 - One of `population`, `people` (citizens where they are now, indoors at their building: the
-  People map layer's data), `land_value`, `jobs`, `hunger`, `vacancy`, `power`, `traffic`: `unit`,
+  People map layer's data), `land_value`, `jobs`, `hunger`, `vacancy`, `power`, `traffic`, `fertility`,
+  `oil`, `contamination` (the ground at each cell centre, 0..1), `industry` (industrial buildings): `unit`,
   `max`, `total`, `grid` (rows of numbers), `ascii` (one string per row, one character per cell
   from `" .:-=+*#%@"` scaled to the layer's max; any non-zero value shows at least `.`), `legend`
   (the value range of each character) and `ascii_text` (framed, with each row's y):

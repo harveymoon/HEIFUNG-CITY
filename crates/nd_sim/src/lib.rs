@@ -11,6 +11,8 @@ pub mod clock;
 pub mod economy;
 pub mod events;
 pub mod geom;
+pub mod ground;
+pub mod industry;
 pub mod land_value;
 pub mod landscape;
 pub mod market;
@@ -47,13 +49,15 @@ pub use vehicle::{BodyType, Livery, VehicleClass, VehicleModel};
 pub use bots::{BotId, Bots, DeliveryBot};
 pub use power::{PlantSite, PowerPlantKind, PowerStats, Weather};
 pub use landscape::{Landscape, LandscapeParams, LandscapePreset, WaterKind};
+pub use ground::{Contamination, GroundSample, Soil};
+pub use industry::{IndustryKind, IndustrySite};
 pub use ports::{Port, PortId, PortKind, Ports, Ship, ShipKind};
 pub use park::{ParkFeature, ParkLayout};
 pub use transit::{BusRoute, BusStop, RouteId, Transit, TransitStats};
 pub use rail::{Facility, FacilityId, Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
 pub use services::{BuildCategory, Incident, IncidentKind, Placeable, ServiceKind, ServiceSite, Services, ServiceStats, Unit, UnitId, UnitKind};
 pub use world::{World, WorldConfig};
-pub use zoning::{LandUse, Lot, LotId, Zone, ZoneId};
+pub use zoning::{LandUse, Lot, LotId, Parcel, ParcelKey, ParcelMap, Zone, ZoneId};
 
 pub use glam::Vec2;
 
