@@ -110,19 +110,13 @@ fn make_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateria
         }
         meshes.add(super::shared_mesh(&m, false))
     };
+    // Smoke: a leaning column of translucent puffs, widening as it rises.
     let smoke = {
         let mut m = MeshData::default();
-        for k in 0..6 {
-            let y = 0.4 + k as f32 * 0.9;
-            let r = 0.35 + k as f32 * 0.22;
-            let drift = SVec2::new(0.25, 0.1) * k as f32;
-            let poly: Vec<SVec2> = (0..12)
-                .map(|i| {
-                    let a = i as f32 / 12.0 * std::f32::consts::TAU;
-                    drift + SVec2::new(a.cos(), a.sin()) * r
-                })
-                .collect();
-            m.ground_polygon(&poly, y, [0.06, 0.06, 0.07, 0.5 - k as f32 * 0.06]);
+        for k in 0..8 {
+            let t = k as f32;
+            let r = 0.3 + t * 0.12;
+            m.boxed(Vec3::new(0.18 * t, 0.3 + t * 0.55, 0.08 * t), Vec3::new(r * 2.0, r * 1.4, r * 2.0), t * 0.6, [0.07, 0.07, 0.08, (0.42 - t * 0.04).max(0.08)]);
         }
         meshes.add(super::shared_mesh(&m, false))
     };
@@ -146,6 +140,7 @@ pub(super) fn sync_emergency(
     mut materials: ResMut<Assets<StandardMaterial>>,
     sim: Res<Sim>,
     mats: Res<Materials>,
+    game: Res<GameAssets>,
     state: Res<RenderState>,
     time: Res<Time>,
     mut assets: Local<Option<EmergencyAssets>>,
@@ -252,7 +247,9 @@ pub(super) fn sync_emergency(
             let sm = commands.spawn((Mesh3d(a.smoke.clone()), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, EmergencyTag, Grounded)).id();
             [fl, sm]
         });
-        let height = (b.floors.max(1) as f32 * 3.2).min(120.0);
+        // The roof as the building generator stacks it: floors at the land
+        // use's storey height.
+        let height = (b.floors.max(1) as f32 * game.rules.for_land_use(b.land_use).floor_height).min(160.0);
         let size = (lot.area().sqrt() * 0.55).clamp(5.0, 30.0);
         let seed = phase_of(bid) * 10.0;
         let flicker = 0.8 + 0.25 * (t * 9.0 + seed).sin() + 0.12 * (t * 23.0 + seed * 2.0).sin();
@@ -264,7 +261,7 @@ pub(super) fn sync_emergency(
         }
         if let Ok((mut tf, _)) = q.get_mut(ents[1]) {
             tf.translation = Vec3::new(lot.center.x, height + size * 0.2, lot.center.y);
-            tf.scale = Vec3::new(size * (0.8 + 1.0 * k), size * (1.2 + 1.5 * k), size * (0.8 + 1.0 * k));
+            tf.scale = Vec3::new(size * (0.5 + 0.6 * k), size * (0.5 + 0.8 * k), size * (0.5 + 0.6 * k));
         }
     }
 
