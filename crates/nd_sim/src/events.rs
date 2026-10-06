@@ -39,4 +39,8 @@ pub enum SimEvent {
     BurnedDown(BuildingId, LotId),
     /// A stadium is hosting a game tonight.
     StadiumEvent(BuildingId),
+    /// Police arrested someone over an incident.
+    Arrested(u32, CitizenId),
+    /// Someone left custody: sentence served, or let go early (no jail).
+    Released(CitizenId),
 }

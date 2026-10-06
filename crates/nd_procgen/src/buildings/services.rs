@@ -530,3 +530,65 @@ pub fn stadium(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
 }
+
+/// A jail: cell blocks inside a high wall with watchtowers at the corners
+/// and floodlights over an exercise yard; the penitentiary gets more blocks.
+pub fn prison(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let _yard = yard(g, c, 0.4, Concrete, mul(pal.concrete(0), 0.8));
+    let wall = offset_poly(&c.lot_poly, 0.8);
+    let grey = mul(pick(rng, &pal.concrete), 0.7);
+    // The wall: thin slabs along every edge, a lit strip on top.
+    let wh = tier_pick(c, [3.5, 5.0, 6.5]);
+    for face in c.faces(&wall) {
+        if face.len < 1.0 {
+            continue;
+        }
+        face.bx(g, f, Concrete, 0.0, wh * 0.5, -0.3, Vec3::new(face.len, wh, 0.5), grey);
+        face.bx(g, f, Glow, 0.0, wh + 0.05, -0.3, Vec3::new(face.len * 0.98, 0.08, 0.1), mul(pal.street_lamp, 0.6));
+    }
+    // Cell blocks: one, two or three slabs side by side.
+    let blocks = tier_pick(c, [1, 2, 3]);
+    let floors = tier_pick(c, [1, 2, 3]);
+    let (lo, hi) = bounds(&c.poly);
+    let (w, d) = (hi.x - lo.x, hi.y - lo.y);
+    for k in 0..blocks {
+        let cu = lo.x + w * (k as f32 + 0.5) / blocks as f32;
+        let b = fit_inside(c, &rect(cu, lo.y + d * 0.42, w * 0.4 / blocks as f32, d * 0.24));
+        if b.len() < 3 || inradius(&b) < 1.0 {
+            continue;
+        }
+        let h = floors as f32 * c.fh();
+        extrude(g, f, Concrete, &b, 0.0, h, mul(grey, 1.15));
+        parapet(g, c, &b, h, 0.8, 0.3, Concrete, grey);
+        for face in c.faces(&b) {
+            if face.len > 3.0 {
+                // Slit windows, barred.
+                let n = (face.len / 2.2) as i32;
+                for i in 0..n.max(1) {
+                    let t = -face.len * 0.5 + (i as f32 + 0.5) * face.len / n.max(1) as f32;
+                    for fl in 0..floors {
+                        face.decal(g, f, Glow, t, fl as f32 * c.fh() + c.fh() * 0.6, 0.05, 0.25, 0.9, mul(pal.window_cold, 0.25 + 0.3 * c.lit_chance()));
+                    }
+                }
+            }
+        }
+    }
+    // Watchtowers at the corners of the wall and floodlights on the yard.
+    for p in wall.iter() {
+        let inset = *p + (poly_center(&wall) - *p).normalize_or_zero() * 1.6;
+        if !c.inside_local(inset) || distance_to_boundary(inset, &c.lot_poly) < 1.0 {
+            continue;
+        }
+        let th = wh + 4.0;
+        f.bx(g, Concrete, inset.x, th * 0.5, inset.y, Vec3::new(1.6, th, 1.6), grey);
+        f.bx(g, Glass, inset.x, th + 0.8, inset.y, Vec3::new(2.0, 1.6, 2.0), pal.glass_dark);
+        f.bx(g, Metal, inset.x, th + 1.7, inset.y, Vec3::new(2.4, 0.2, 2.4), mul(pal.steel, 0.7));
+        f.bx(g, Glow, inset.x, th + 0.9, inset.y, Vec3::new(2.05, 0.15, 2.05), mul(pal.street_lamp, 1.2));
+    }
+    let front = c.front_face(&wall);
+    f.bx(g, Metal, front.at(0.0, -0.3).x, 2.0, front.at(0.0, -0.3).y, Vec3::new(4.0, 4.0, 0.6), mul(pal.steel, 0.5));
+    sign(g, c, &front, wh + 1.0, 6.0, mul(pal.window_cold, 0.6));
+    floodlight(g, c, poly_center(&c.poly) + Vec2::new(0.0, d * 0.3), wh + 3.0);
+}

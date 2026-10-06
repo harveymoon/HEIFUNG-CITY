@@ -100,10 +100,18 @@ pub const SCHOOL_MINUTE: u64 = 7 * 60 + 30;
 /// A hospital stay, billed to the patient's household; what it cannot pay
 /// the city covers.
 pub const HOSPITAL_BILL: f32 = 60.0;
+/// Days in jail for an arrest, a range; without a jail with room the suspect
+/// is held at the police station this many hours and let go early.
+pub const SENTENCE_DAYS: (u64, u64) = (2, 5);
+pub const HELD_HOURS: u64 = 6;
+/// With no crewed station of the kind but a dispatcher to ask, a unit from
+/// out of town comes: this many minutes after dispatch, for a fee.
+pub const OUT_OF_TOWN_TRAVEL: u64 = 45;
+pub const OUT_OF_TOWN_FEE: [f32; 3] = [1_500.0, 600.0, 800.0];
 /// Rubble stays on a burned lot this many ticks before it can be rebuilt.
 pub const RUBBLE_TICKS: u64 = 2 * 1440;
-/// Resolved incidents kept for the record.
-pub const KEEP_RESOLVED: usize = 60;
+/// Resolved incidents kept for the record (the Emergencies window's history).
+pub const KEEP_RESOLVED: usize = 500;
 
 // ── what can be placed ─────────────────────────────────────────────────────
 
@@ -117,10 +125,12 @@ pub enum ServiceKind {
     Dispatch,
     Monument,
     Stadium,
+    /// A jail: arrested suspects serve their sentence here.
+    Jail,
 }
 
 impl ServiceKind {
-    pub const ALL: [ServiceKind; 7] = [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch, ServiceKind::Monument, ServiceKind::Stadium];
+    pub const ALL: [ServiceKind; 8] = [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch, ServiceKind::Monument, ServiceKind::Stadium, ServiceKind::Jail];
     /// The four that cover the city by road distance, in coverage-index order.
     pub const COVERING: [ServiceKind; 4] = [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School];
 
@@ -134,6 +144,7 @@ impl ServiceKind {
             ServiceKind::Dispatch => "dispatch",
             ServiceKind::Monument => "monument",
             ServiceKind::Stadium => "stadium",
+            ServiceKind::Jail => "jail",
         }
     }
 
@@ -146,6 +157,7 @@ impl ServiceKind {
             "dispatch" | "911" => Some(ServiceKind::Dispatch),
             "monument" => Some(ServiceKind::Monument),
             "stadium" => Some(ServiceKind::Stadium),
+            "jail" | "prison" => Some(ServiceKind::Jail),
             _ => None,
         }
     }
@@ -159,6 +171,7 @@ impl ServiceKind {
             ServiceKind::Dispatch => "911 dispatch centre",
             ServiceKind::Monument => "monument",
             ServiceKind::Stadium => "stadium",
+            ServiceKind::Jail => "jail",
         }
     }
 
@@ -172,6 +185,7 @@ impl ServiceKind {
             ServiceKind::Dispatch => ["dispatch office", "dispatch centre", "emergency operations centre"],
             ServiceKind::Monument => ["memorial", "monument", "landmark tower"],
             ServiceKind::Stadium => ["sports ground", "stadium", "mega-arena"],
+            ServiceKind::Jail => ["lock-up", "jail", "penitentiary"],
         };
         names[tier.index()]
     }
@@ -181,7 +195,7 @@ impl ServiceKind {
     pub fn hours(self) -> crate::market::Hours {
         use crate::market::Hours;
         match self {
-            ServiceKind::Police | ServiceKind::Fire | ServiceKind::Health | ServiceKind::Dispatch | ServiceKind::Monument => Hours::ALWAYS,
+            ServiceKind::Police | ServiceKind::Fire | ServiceKind::Health | ServiceKind::Dispatch | ServiceKind::Monument | ServiceKind::Jail => Hours::ALWAYS,
             ServiceKind::School => Hours::new(8, 16),
             ServiceKind::Stadium => Hours::new(12, 0),
         }
@@ -220,6 +234,7 @@ impl ServiceKind {
             ServiceKind::Dispatch => 8_000.0,
             ServiceKind::Monument => 15_000.0,
             ServiceKind::Stadium => 45_000.0,
+            ServiceKind::Jail => 16_000.0,
         };
         base * [0.5, 1.0, 2.2][tier.index()]
     }
@@ -233,6 +248,7 @@ impl ServiceKind {
             ServiceKind::Dispatch => 200.0,
             ServiceKind::Monument => 80.0,
             ServiceKind::Stadium => 700.0,
+            ServiceKind::Jail => 420.0,
         };
         base * [0.6, 1.0, 1.8][tier.index()]
     }
@@ -246,6 +262,7 @@ impl ServiceKind {
             ServiceKind::Dispatch => 6,
             ServiceKind::Monument => 2,
             ServiceKind::Stadium => 20,
+            ServiceKind::Jail => 10,
         };
         match tier {
             Tier::Low => base.div_ceil(2),
@@ -279,6 +296,7 @@ impl ServiceKind {
         match self {
             ServiceKind::Health => [6, 24, 70][tier.index()],
             ServiceKind::Stadium => [120, 320, 800][tier.index()],
+            ServiceKind::Jail => [12, 40, 120][tier.index()],
             ServiceKind::School => [80, 240, 600][tier.index()],
             _ => 0,
         }
@@ -288,6 +306,7 @@ impl ServiceKind {
         let base = match self {
             ServiceKind::Monument => 250.0,
             ServiceKind::Stadium => 900.0,
+            ServiceKind::Jail => 450.0,
             ServiceKind::Dispatch => 250.0,
             _ => 400.0,
         };
@@ -298,6 +317,7 @@ impl ServiceKind {
         match self {
             ServiceKind::Monument => lu != LandUse::Industrial,
             ServiceKind::Stadium => matches!(lu, LandUse::Entertainment | LandUse::Civic | LandUse::Commercial),
+            ServiceKind::Jail => matches!(lu, LandUse::Civic | LandUse::Industrial),
             ServiceKind::Fire => lu != LandUse::Park,
             _ => lu != LandUse::Park && lu != LandUse::Industrial,
         }
@@ -316,6 +336,8 @@ impl ServiceKind {
             ServiceKind::Dispatch => (150.0, 0.02),
             ServiceKind::Monument => (220.0 * k, 0.18 * k),
             ServiceKind::Stadium => (320.0 * k, 0.10 * k),
+            // Nobody wants to live by the jail.
+            ServiceKind::Jail => (200.0 * k, -0.08 * k),
         }
     }
 
@@ -330,6 +352,7 @@ impl ServiceKind {
             ServiceKind::Dispatch => format!("{place} 911 {}", ["Office", "Dispatch", "Operations"][tier.index()]),
             ServiceKind::Monument => format!("{} of {place}", ["Memorial", "Monument", "Spire"][tier.index()]),
             ServiceKind::Stadium => format!("{place} {}", ["Grounds", "Stadium", "Mega-Arena"][tier.index()]),
+            ServiceKind::Jail => format!("{place} {}", ["Lock-up", "County Jail", "Penitentiary"][tier.index()]),
         }
     }
 }
@@ -394,7 +417,7 @@ impl BuildCategory {
     pub fn items(self) -> Vec<Placeable> {
         match self {
             BuildCategory::Power => PowerPlantKind::ALL.iter().map(|&k| Placeable::Plant(k)).collect(),
-            BuildCategory::Services => [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch].iter().map(|&k| Placeable::Service(k, Tier::Mid)).collect(),
+            BuildCategory::Services => [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch, ServiceKind::Jail].iter().map(|&k| Placeable::Service(k, Tier::Mid)).collect(),
             BuildCategory::Transit => vec![Placeable::BusDepot],
             BuildCategory::Rail => vec![Placeable::Rail(RailFacility::Station), Placeable::Rail(RailFacility::FreightYard)],
             BuildCategory::Water => PortKind::ALL.iter().map(|&k| Placeable::Dock(k)).collect(),
@@ -449,6 +472,7 @@ impl Placeable {
                 ServiceKind::Dispatch => "911 Dispatch",
                 ServiceKind::Monument => "Monument",
                 ServiceKind::Stadium => "Stadium",
+                ServiceKind::Jail => "Jail",
             },
             Placeable::BusDepot => "Bus depot",
             Placeable::Rail(RailFacility::Station) => "Passenger station",
@@ -631,6 +655,51 @@ impl IncidentKind {
     }
 }
 
+/// What kind of crime (`World::report_crime`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CrimeKind {
+    #[default]
+    Robbery,
+    Theft,
+    Assault,
+    Vandalism,
+}
+
+impl CrimeKind {
+    pub const ALL: [CrimeKind; 4] = [CrimeKind::Robbery, CrimeKind::Theft, CrimeKind::Assault, CrimeKind::Vandalism];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            CrimeKind::Robbery => "robbery",
+            CrimeKind::Theft => "theft",
+            CrimeKind::Assault => "assault",
+            CrimeKind::Vandalism => "vandalism",
+        }
+    }
+}
+
+/// Someone involved in an incident, named as they were at the time.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Involved {
+    pub citizen: CitizenId,
+    pub name: String,
+    /// caller, dispatcher, victim, suspect, patient, resident
+    pub role: String,
+    /// Where they ended up: a hospital, a jail, the station, home.
+    #[serde(default)]
+    pub taken_to: Option<String>,
+}
+
+/// Fire damage to one building.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Damage {
+    pub building: BuildingId,
+    pub name: String,
+    /// Condition lost, 0..1.
+    pub lost: f32,
+    pub destroyed: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Stage {
     /// Happening; nobody has called yet.
@@ -722,6 +791,30 @@ pub struct Incident {
     /// Ticks of work left on scene (crimes, patients).
     pub work_left: f32,
     pub outcome: Option<Outcome>,
+    // ── the record, for the Emergencies window and the API ──
+    /// Name of the building at the time.
+    #[serde(default)]
+    pub place: String,
+    /// Crimes: what kind.
+    #[serde(default)]
+    pub crime: Option<CrimeKind>,
+    /// Answered by a unit from out of town (slow, billed).
+    #[serde(default)]
+    pub outside: bool,
+    /// When the out-of-town unit gets there.
+    #[serde(default)]
+    pub arrive_at: Option<u64>,
+    /// Fee paid for out-of-town help.
+    #[serde(default)]
+    pub fee: f32,
+    /// The unit's call sign and station ("Engine 2, Eastgate Fire HQ").
+    #[serde(default)]
+    pub unit_name: Option<String>,
+    #[serde(default)]
+    pub people: Vec<Involved>,
+    /// Fires: every building it burned (spread fires have their own incident too).
+    #[serde(default)]
+    pub damage: Vec<Damage>,
 }
 
 impl Incident {
@@ -732,6 +825,37 @@ impl Incident {
     /// Minutes from the call to the unit arriving.
     pub fn response_ticks(&self) -> Option<u64> {
         Some(self.arrived?.saturating_sub(self.reported?))
+    }
+
+    /// Minutes from dispatch to arrival, and from arrival to the end.
+    pub fn travel_ticks(&self) -> Option<u64> {
+        Some(self.arrived?.saturating_sub(self.dispatched?))
+    }
+
+    pub fn work_ticks(&self) -> Option<u64> {
+        Some(self.resolved?.saturating_sub(self.arrived?))
+    }
+
+    /// What it was, in a word or two ("fire", "robbery", "medical").
+    pub fn title(&self) -> &'static str {
+        match (self.kind, self.crime) {
+            (IncidentKind::Crime, Some(c)) => c.label(),
+            (k, _) => k.label(),
+        }
+    }
+
+    /// Note someone involved (once per role).
+    pub fn involve(&mut self, citizen: CitizenId, name: &str, role: &str) {
+        if !self.people.iter().any(|p| p.citizen == citizen && p.role == role) {
+            self.people.push(Involved { citizen, name: name.to_string(), role: role.to_string(), taken_to: None });
+        }
+    }
+
+    /// Where someone involved was taken.
+    pub fn taken(&mut self, citizen: CitizenId, to: &str) {
+        for p in self.people.iter_mut().filter(|p| p.citizen == citizen) {
+            p.taken_to = Some(to.to_string());
+        }
     }
 }
 
@@ -786,6 +910,16 @@ impl Unit {
     }
 }
 
+/// Someone in custody until `until`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Custody {
+    pub citizen: CitizenId,
+    /// The jail, or the police station holding them.
+    pub at: BuildingId,
+    pub jailed: bool,
+    pub until: u64,
+}
+
 /// A patient in a hospital bed.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Admission {
@@ -796,6 +930,7 @@ pub struct Admission {
 
 /// Figures for the panel, the report and the alerts.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ServiceStats {
     /// Share of homes covered, per covering kind (police, fire, health, school).
     pub coverage: [f32; 4],
@@ -817,6 +952,11 @@ pub struct ServiceStats {
     pub tickets_today: f32,
     pub stadium_crowd_today: u32,
     pub dispatchers_on_shift: u32,
+    pub jailed: u32,
+    pub held_at_stations: u32,
+    pub released_early_total: u32,
+    pub out_of_town_calls_today: u32,
+    pub out_of_town_fees_today: f32,
     /// Children who went to school today.
     pub pupils_today: u32,
     /// Hospital bills paid by households today, and what the city covered.
@@ -846,6 +986,10 @@ pub struct Services {
     pub incidents: Vec<Incident>,
     pub next_id: u32,
     pub admissions: Vec<Admission>,
+    /// People in custody: held at a police station or serving time in a jail.
+    pub custody: Vec<Custody>,
+    /// Arrests per citizen, ever: the criminal record.
+    pub record: Vec<(CitizenId, u32)>,
     /// Burned lots: rubble until the tick, nothing built before.
     pub rubble: Vec<(LotId, Vec2, u64)>,
     /// Stadiums hosting an event today.
@@ -890,6 +1034,27 @@ impl Services {
 
     pub fn is_burning(&self, b: BuildingId) -> bool {
         self.active().any(|i| i.kind == IncidentKind::Fire && i.building == b)
+    }
+
+    /// Arrests on a citizen's record.
+    pub fn arrests_of(&self, c: CitizenId) -> u32 {
+        self.record.iter().find(|r| r.0 == c).map_or(0, |r| r.1)
+    }
+
+    /// People serving time in each jail: (jail, inmates).
+    pub fn jail_occupancy(&self) -> Vec<(BuildingId, u32)> {
+        let mut out: Vec<(BuildingId, u32)> = Vec::new();
+        for c in self.custody.iter().filter(|c| c.jailed) {
+            match out.iter_mut().find(|o| o.0 == c.at) {
+                Some(o) => o.1 += 1,
+                None => out.push((c.at, 1)),
+            }
+        }
+        out
+    }
+
+    pub fn in_custody(&self, c: CitizenId) -> bool {
+        self.custody.iter().any(|x| x.citizen == c)
     }
 
     pub fn is_rubble(&self, lot: LotId) -> bool {

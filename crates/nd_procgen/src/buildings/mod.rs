@@ -166,6 +166,7 @@ pub enum Style {
     DispatchCenter,
     Landmark,
     Stadium,
+    Prison,
 }
 
 impl Style {
@@ -174,7 +175,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 68] = [
+    pub const ALL: [Style; 69] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -243,6 +244,7 @@ impl Style {
         Style::DispatchCenter,
         Style::Landmark,
         Style::Stadium,
+        Style::Prison,
     ];
 
     /// The style a placed service or attraction is drawn in.
@@ -256,6 +258,7 @@ impl Style {
             K::Dispatch => Style::DispatchCenter,
             K::Monument => Style::Landmark,
             K::Stadium => Style::Stadium,
+            K::Jail => Style::Prison,
         }
     }
 
@@ -329,6 +332,7 @@ impl Style {
             Style::DispatchCenter => "911 dispatch centre",
             Style::Landmark => "landmark",
             Style::Stadium => "stadium",
+            Style::Prison => "jail",
         }
     }
 }
@@ -1080,6 +1084,7 @@ fn generate_styled_extras(
         Style::DispatchCenter => services::dispatch_center(&mut g, &ctx, &mut rng),
         Style::Landmark => services::landmark(&mut g, &ctx, &mut rng),
         Style::Stadium => services::stadium(&mut g, &ctx, &mut rng),
+        Style::Prison => services::prison(&mut g, &ctx, &mut rng),
     }
     if weathered(tier, ctx.wear) {
         g.weather();

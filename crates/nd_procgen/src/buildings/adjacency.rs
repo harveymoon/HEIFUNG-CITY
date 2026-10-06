@@ -126,6 +126,7 @@ pub fn traits(style: Style) -> (Family, f32) {
         // should not repeat next door.
         Style::PoliceStation | Style::FireStation | Style::Hospital | Style::School | Style::DispatchCenter => (Special, 0.0),
         Style::Landmark | Style::Stadium => (Special, -1.5),
+        Style::Prison => (Special, -1.0),
         _ => (Special, 0.0),
     }
 }
