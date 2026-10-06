@@ -29,6 +29,8 @@ mod works;
 
 pub use adjacency::{Neighbour, StyleBook};
 mod services;
+/// [society] The trash depot.
+mod sanitation;
 pub use parts::WINDOW_LIGHT_MARK;
 pub use power::{coal_stacks, wind_rotor, wind_turbines, Turbine, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};
 
@@ -184,6 +186,8 @@ pub enum Style {
     FishProcessing,
     /// Marked bays with parked lorries and buses, a fuel island.
     TruckLot,
+    // [society] placed by the player; kept last so `ALL` keeps its order.
+    TrashDepot,
     // air transport, placed by the player (buildings/air.rs)
     Vertiport,
 }
@@ -194,7 +198,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 76] = [
+    pub const ALL: [Style; 77] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -270,6 +274,7 @@ impl Style {
         Style::ContainerYard,
         Style::FishProcessing,
         Style::TruckLot,
+        Style::TrashDepot,
         Style::Vertiport,
     ];
 
@@ -291,6 +296,7 @@ impl Style {
             K::Monument => Style::Landmark,
             K::Stadium => Style::Stadium,
             K::Jail => Style::Prison,
+            K::TrashDepot => Style::TrashDepot,
             K::Vertiport => Style::Vertiport,
         }
     }
@@ -372,6 +378,7 @@ impl Style {
             Style::ContainerYard => "container yard",
             Style::FishProcessing => "fish processing",
             Style::TruckLot => "truck and bus lot",
+            Style::TrashDepot => "trash depot",
             Style::Vertiport => "vertiport",
         }
     }
@@ -1220,6 +1227,7 @@ fn generate_styled_extras(
         Style::ContainerYard => industrial::container_yard(&mut g, &ctx, &mut rng),
         Style::FishProcessing => industrial::fish_processing(&mut g, &ctx, &mut rng),
         Style::TruckLot => industrial::truck_lot(&mut g, &ctx, &mut rng),
+        Style::TrashDepot => sanitation::trash_depot(&mut g, &ctx, &mut rng),
         Style::Vertiport => air::vertiport(&mut g, &ctx, &mut rng),
     }
     if extras.rooftop_pad && style.pad_capable() && g.pads.is_empty() {

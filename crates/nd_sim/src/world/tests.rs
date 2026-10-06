@@ -2042,7 +2042,8 @@ fn rent_stressed_households_move_somewhere_cheaper_before_leaving() {
     w.households[hid].money = -5000.0;
     w.households[hid].moved_day = u64::MAX;
     w.daily_household(hid);
-    assert!(!w.households.contains_key(hid), "out of town at last");
+    // [society] ... or onto the street, when there is cheap ground to camp on.
+    assert!(!w.households.contains_key(hid) || w.households[hid].home.is_none(), "out of town (or on the street) at last");
 }
 
 #[test]

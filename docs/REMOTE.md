@@ -466,3 +466,21 @@ Events in the log (`events`): `IncidentStarted`, `EmergencyCall`, `UnitDispatche
 `FireSpread`, `BurnedDown`, `StadiumEvent`, `Arrested` (incident, citizen), `Released` (citizen). Building rows carry `service` (`"fire:mid"`) and
 `burning`. Emergency vehicles are cars in `find {what: "cars"}`; the units behind them are in
 `report {sections: ["services"]}` under `emergency.stations` and `emergency.active_incidents`.
+
+## Crime, homelessness and trash
+
+`report {sections: ["society"]}`: `criminals`, `crimes_today` (theft, burglary, assault, murder,
+vandalism, total), `arrests` (total), `reoffend_rate` (released offenders who struck again),
+`homeless` (people), `camps`, `rvs`, `trash` {produced, collected_city, collected_private (kg today,
+plus `_yesterday`), overflowing_buildings, stored_kg, covered_buildings, stops_today,
+complaints_yesterday, trucks {city, private, on_road}, depots, private_hauler {company, clients,
+revenue}}, and the details under `crime` (hot spots, custody, releases, reformed, stolen) and
+`street` (camp and RV lists, evictions, rehoused, outreach). Alerts: `crime_hotspot`, `no_jail`
+(5+ criminals and no jail), `growing_camps`, `overflowing_trash`. Map layers `crime` (heat),
+`homeless` (people in camps and vehicles), `trash` (summed overflow).
+
+`society {action}`: `report` (default) returns the section; `evict {building}` puts its households
+on the street (camps form on cheap land); `offend {citizen, building?, kind?}` makes a citizen a
+criminal and has them strike; `trash {kg, building?}` adds trash to bins. `place {kind:
+"trash_depot"}` (also `trash`, `garbage`) puts down a depot (industrial or civic land, a street out
+front). Garbage trucks are cars in `find {what: "cars"}` with a garbage truck body.

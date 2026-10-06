@@ -155,7 +155,17 @@ impl World {
     /// Towers of the high tier on very dear land get a rooftop pad; they
     /// keep it while the land stays dear. Each change redraws the tower.
     pub fn refresh_rooftops(&mut self) {
-        let mut next: Vec<BuildingId> = Vec::new();
+        // Demand: rich adults living in each building, who would fly.
+        let mut rich: HashMap<BuildingId, f32> = HashMap::new();
+        for c in self.citizens.values() {
+            if c.class() == Tier::High && c.stage() != crate::citizens::LifeStage::Child {
+                if let Some(h) = c.home {
+                    *rich.entry(h).or_default() += 1.0;
+                }
+            }
+        }
+        let homes: Vec<(Vec2, f32)> = rich.iter().filter_map(|(b, n)| self.building_lot(*b).map(|l| (l.center, *n))).collect();
+        let mut towers: Vec<(BuildingId, f32, bool)> = Vec::new();
         for (id, b) in self.buildings.iter() {
             let tower = matches!(b.land_use, LandUse::Residential | LandUse::Commercial)
                 && b.tier == Tier::High
@@ -175,10 +185,20 @@ impl World {
             let Some(lot) = self.lots.get(b.lot) else { continue };
             let value = self.land_value.at(lot.center);
             let had = self.air.rooftops.contains(&id);
-            if value >= air::ROOFTOP_LAND_VALUE || (had && value >= air::ROOFTOP_KEEP) {
-                next.push(id);
-            }
+            let dear = value >= air::ROOFTOP_LAND_VALUE || (had && value >= air::ROOFTOP_KEEP);
+            // Its own rich residents count in full, the neighbours' at half.
+            let own = rich.get(&id).copied().unwrap_or(0.0);
+            let near: f32 = homes.iter().filter(|(p, _)| p.distance(lot.center) <= air::ROOFTOP_DEMAND_REACH).map(|(_, n)| *n).sum::<f32>() - own;
+            let demand = own + 0.5 * near;
+            towers.push((id, if dear { demand } else { -1.0 }, had));
         }
+        // Rare: the richest towers only, about one in nine, a pad once
+        // granted kept while demand holds at 60% of the bar.
+        let cap = ((towers.len() as f32 / air::ROOFTOP_TOWERS_PER_PAD).round() as usize).max(2);
+        let mut ranked: Vec<(BuildingId, f32, bool)> = towers.into_iter().filter(|(_, d, had)| *d >= air::ROOFTOP_DEMAND * if *had { 0.6 } else { 1.0 }).map(|(id, d, had)| (id, if had { d * 1.25 } else { d }, had)).collect();
+        ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        let mut next: Vec<BuildingId> = ranked.into_iter().take(cap).map(|t| t.0).collect();
+        next.sort();
         if next == self.air.rooftops {
             return;
         }
@@ -1118,8 +1138,13 @@ mod tests {
             bld.floors = 12;
         }
         w.land_value.fill(0.9);
+        for b in [home, office] {
+            for _ in 0..9 {
+                resident(&mut w, b, 300.0);
+            }
+        }
         w.refresh_rooftops();
-        assert!(w.air.has_rooftop(home) && w.air.has_rooftop(office), "dear towers grow pads");
+        assert!(w.air.has_rooftop(home) && w.air.has_rooftop(office), "dear towers full of the rich grow pads");
         vertiport(&mut w, 0.0, Tier::Mid);
         let rich = resident(&mut w, home, 260.0);
         (w, rich, home, office)
@@ -1219,6 +1244,13 @@ mod tests {
         w.buildings[low].floors = 3;
         w.buildings[mid].tier = Tier::Mid;
         w.buildings[mid].floors = 14;
+        w.land_value.fill(0.9);
+        w.refresh_rooftops();
+        assert!(w.air.rooftops.is_empty(), "dear land but nobody rich to fly: no pads");
+        for _ in 0..9 {
+            resident(&mut w, tower, 300.0);
+            resident(&mut w, mid, 300.0);
+        }
         w.land_value.fill(0.6);
         w.refresh_rooftops();
         assert!(w.air.rooftops.is_empty(), "ordinary land: no pads");
@@ -1235,6 +1267,26 @@ mod tests {
         w.land_value.fill(0.5);
         w.refresh_rooftops();
         assert!(w.air.rooftops.is_empty() && w.air.pad(tower).is_none());
+        // Rare: twenty dear towers with rich tenants share about two pads,
+        // and the richest get them.
+        w.land_value.fill(0.9);
+        let mut towers = Vec::new();
+        for k in 0..20 {
+            let Some(lot) = w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none() && l.land_use == LandUse::Residential).map(|(id, _)| id).next() else { break };
+            w.build_on(lot);
+            let b = w.lots[lot].building.unwrap();
+            w.finish_construction(b);
+            w.buildings[b].tier = Tier::High;
+            w.buildings[b].floors = 12;
+            for _ in 0..(2 + k) {
+                resident(&mut w, b, 300.0);
+            }
+            towers.push(b);
+        }
+        w.refresh_rooftops();
+        let n = w.air.rooftops.len();
+        assert!((1..=4).contains(&n), "{n} pads on {} towers", towers.len() + 1);
+        assert!(w.air.rooftops.iter().all(|b| towers.iter().position(|t| t == b).is_none_or(|k| k >= towers.len() / 2)), "pads go to the richer towers");
     }
 
     #[test]

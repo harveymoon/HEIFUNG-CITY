@@ -64,7 +64,7 @@ pub const MEMORY_WINDOW_TICKS: u64 = 2 * 1440;
 /// Example ids carried by each alert.
 const ALERT_EXAMPLES: usize = 5;
 
-pub const SECTIONS: &[&str] = &["overview", "people", "economy", "land", "services", "industry", "alerts"];
+pub const SECTIONS: &[&str] = &["overview", "people", "economy", "land", "services", "industry", "society", "alerts"];
 
 const KINDS: [BusinessKind; 19] = BusinessKind::ALL;
 
@@ -149,6 +149,10 @@ pub fn report(w: &World, sections: &[String]) -> Result<Value, String> {
     }
     if want("services") {
         out.insert("services".into(), services(w));
+    }
+    // [society] crime, the street and the bins.
+    if want("society") {
+        out.insert("society".into(), super::society::society(w));
     }
     if want("industry") {
         out.insert("industry".into(), industry(w));
@@ -828,11 +832,11 @@ pub struct Alert {
 }
 
 impl Alert {
-    fn new(kind: &'static str, severity: u8, hint: &'static str) -> Self {
+    pub(super) fn new(kind: &'static str, severity: u8, hint: &'static str) -> Self {
         Self { kind, severity, count: 0, message: String::new(), hint, points: Vec::new(), examples: Vec::new() }
     }
 
-    fn add(&mut self, id: String, at: Option<SVec2>) {
+    pub(super) fn add(&mut self, id: String, at: Option<SVec2>) {
         self.count += 1;
         if let Some(p) = at {
             self.points.push(p);
@@ -1087,6 +1091,8 @@ pub fn alerts(w: &World) -> Vec<Alert> {
         out.push(a);
     }
     out.extend(uncovered);
+    // [society] hot spots, no jail, camps, overflowing bins.
+    out.extend(super::society::alerts(w));
     out.retain(|a| a.count > 0);
     out.sort_by(|a, b| b.score().total_cmp(&a.score()));
     out

@@ -170,7 +170,10 @@ impl World {
                         for &m in &members {
                             self.citizens[m].remember(tick, "Couldn't make the rent anywhere in town. Leaving.");
                         }
-                        self.emigrate_household(hid);
+                        // [society] Most stay on the street if there is cheap ground to camp on.
+                        if !self.become_homeless(hid) {
+                            self.emigrate_household(hid);
+                        }
                     }
                 }
             }

@@ -77,6 +77,11 @@ pub const SERVICE_END: u32 = 2 * 60;
 pub const ROOFTOP_LAND_VALUE: f32 = 0.8;
 pub const ROOFTOP_KEEP: f32 = 0.72;
 pub const ROOFTOP_MIN_FLOORS: u8 = 9;
+/// Rich adults (own residents in full, neighbours within reach at half)
+/// a tower needs before it grows a pad; and roughly how many towers share one.
+pub const ROOFTOP_DEMAND: f32 = 8.0;
+pub const ROOFTOP_DEMAND_REACH: f32 = 150.0;
+pub const ROOFTOP_TOWERS_PER_PAD: f32 = 9.0;
 /// A patient this far (straight line) from the nearest hospital is flown,
 /// if critical.
 pub const AMBULANCE_MIN_DIST: f32 = 500.0;
