@@ -358,8 +358,16 @@ impl World {
         self.refresh_facility_cache();
     }
 
+    /// A park standing on a lot since rezoned for something else: it stays
+    /// until development wants the ground, then it is cleared.
+    pub(super) fn rezoned_park(&self, lot: &Lot) -> Option<BuildingId> {
+        let b = lot.building?;
+        let bld = self.buildings.get(b)?;
+        (bld.land_use == LandUse::Park && lot.land_use != LandUse::Park && bld.construction.is_none() && bld.demolition.is_none()).then_some(b)
+    }
+
     pub(super) fn develop(&mut self) {
-        let vacant: Vec<LotId> = self.lots.iter().filter(|(_, l)| l.building.is_none() && l.usable()).map(|(id, _)| id).collect();
+        let vacant: Vec<LotId> = self.lots.iter().filter(|(_, l)| (l.building.is_none() || self.rezoned_park(l).is_some()) && l.usable()).map(|(id, _)| id).collect();
         if vacant.is_empty() {
             return;
         }
@@ -539,6 +547,15 @@ impl World {
     }
 
     pub fn build_on(&mut self, lot_id: LotId) {
+        let Some(lot) = self.lots.get(lot_id) else { return };
+        // A park on ground rezoned for building goes when building begins.
+        if let Some(park) = self.rezoned_park(lot) {
+            self.vacate(park, Some("The park was cleared for new building after a rezoning.".to_string()), None);
+            self.buildings.remove(park);
+            self.lots[lot_id].building = None;
+            self.lots[lot_id].park = None;
+            self.events.push(SimEvent::BuildingRemoved(park, lot_id));
+        }
         let Some(lot) = self.lots.get(lot_id) else { return };
         if lot.landlocked || lot.building.is_some() || self.under_facility(lot.center) || self.services.is_rubble(lot_id) {
             return;

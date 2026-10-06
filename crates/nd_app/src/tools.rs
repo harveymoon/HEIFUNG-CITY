@@ -307,7 +307,7 @@ fn paint_step(sim: &mut Sim, tools: &mut ToolState, ids: &[usize]) {
     let lu = tools.paint_use(stroke.erase);
     if let Some(lu) = lu {
         for &i in ids {
-            if let Some(why) = sim.world.parcels.parcels.get(i).and_then(|p| p.refusal(lu)) {
+            if let Some(why) = sim.world.parcel_refusal(i, Some(lu)) {
                 stroke.refused.insert(i, why);
             }
         }
@@ -1002,7 +1002,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 for &i in ids.iter().take(400) {
                     let Some(p) = parcels.parcels.get(i) else { continue };
                     let col = match lu {
-                        Some(l) if p.accepts(l) => ok,
+                        Some(l) if sim.world.parcel_refusal(i, Some(l)).is_none() => ok,
                         Some(_) => red,
                         None => erase_col,
                     };

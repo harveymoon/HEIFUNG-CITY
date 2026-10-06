@@ -693,7 +693,7 @@ fn paint(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         return Err("give at (+ radius), rect or polygon".into());
     };
     let refused: Vec<Value> = match land_use {
-        Some(lu) => ids.iter().filter_map(|&i| w.parcels.parcels[i].refusal(lu).map(|why| json!({ "parcel": i, "center": v2(w.parcels.parcels[i].center), "why": why }))).collect(),
+        Some(lu) => ids.iter().filter_map(|&i| w.parcel_refusal(i, Some(lu)).map(|why| json!({ "parcel": i, "center": v2(w.parcels.parcels[i].center), "why": why }))).collect(),
         None => Vec::new(),
     };
     let industry = match opt_str(cmd, "industry")? {

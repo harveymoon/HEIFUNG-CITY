@@ -2387,3 +2387,56 @@ fn owners_drive_what_their_income_and_age_buy_and_saves_keep_it() {
         assert_eq!(back.traffic.cars[id].model, car.model);
     }
 }
+
+#[test]
+fn rezoning_never_touches_city_structures_and_frees_parks_for_building() {
+    let mut w = flat_world();
+    w.config.emergencies = false;
+    w.economy.treasury = 500_000.0;
+    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Industrial);
+    w.add_zone(square(10.0, 10.0, 190.0), LandUse::Park);
+    // A plant on the industrial land.
+    let plant_lot = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Industrial && l.usable()).max_by(|a, b| a.1.area().total_cmp(&b.1.area())).map(|(id, _)| id).unwrap();
+    let plant = w.build_power(plant_lot, PowerPlantKind::Solar).expect("plant");
+    let plant_at = w.lots[plant_lot].center;
+    // Painting homes over it is refused, with a reason, and a polygon zone
+    // drawn over it changes nothing there.
+    let under: Vec<usize> = w.parcels.in_circle(plant_at, 3.0);
+    assert!(!under.is_empty());
+    assert!(under.iter().all(|&i| w.parcel_refusal(i, Some(LandUse::Residential)).is_some_and(|why| why.contains("bulldoze"))));
+    let (_, painted) = w.paint_parcels(&under, Some(LandUse::Residential), None);
+    assert_eq!(painted, 0, "nothing under the plant takes the paint");
+    w.start_project();
+    w.add_zone_gesture(square(-200.0, 10.0, 190.0), LandUse::Residential, None);
+    w.implement();
+    assert!(w.buildings.contains_key(plant), "the plant survives a rezoning of its block");
+    assert!(w.buildings[plant].plant.is_some());
+    // A park, rezoned for homes: it stays until building begins, then goes.
+    let park_lot = w.lots.iter().find(|(_, l)| l.land_use == LandUse::Park && l.usable()).map(|(id, _)| id).unwrap();
+    w.build_on(park_lot);
+    finish_all(&mut w);
+    let park = w.lots[park_lot].building.expect("a park was laid out");
+    let park_at = w.lots[park_lot].center;
+    let ids = w.parcels.in_circle(park_at, 3.0);
+    w.paint_parcels(&ids, Some(LandUse::Residential), None);
+    w.implement();
+    let lot = w.lots.iter().find(|(_, l)| l.contains(park_at)).map(|(id, _)| id).unwrap();
+    assert_eq!(w.lots[lot].land_use, LandUse::Residential);
+    assert_eq!(w.lots[lot].building, Some(park), "the park stands until building begins");
+    w.build_on(lot);
+    assert!(!w.buildings.contains_key(park), "building began: the park is cleared");
+    let site = w.lots[lot].building.expect("a building site");
+    assert_eq!(w.buildings[site].land_use, LandUse::Residential);
+    // Unzoning a park leaves it standing.
+    let other = w.lots.iter().find(|(_, l)| l.land_use == LandUse::Park && l.usable() && l.building.is_none()).map(|(id, _)| id).unwrap();
+    w.build_on(other);
+    finish_all(&mut w);
+    let park2 = w.lots[other].building.unwrap();
+    let at2 = w.lots[other].center;
+    let ids = w.parcels.in_circle(at2, 3.0);
+    w.paint_parcels(&ids, None, None);
+    w.implement();
+    assert!(w.buildings.contains_key(park2), "an unzoned park stays");
+}
+

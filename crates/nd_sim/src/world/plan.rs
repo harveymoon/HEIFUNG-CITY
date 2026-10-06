@@ -300,10 +300,11 @@ impl World {
         for &i in ids {
             let Some(p) = self.parcels.parcels.get(i) else { continue };
             let now = planned.get(i).copied().flatten();
-            let wanted = match land_use {
-                Some(lu) => p.accepts(lu) && (now != Some(lu) || industry.is_some()),
-                None => now.is_some(),
-            };
+            let wanted = self.parcel_refusal(i, land_use).is_none()
+                && match land_use {
+                    Some(lu) => now != Some(lu) || industry.is_some(),
+                    None => now.is_some(),
+                };
             if wanted {
                 keys.push(p.key);
             }
@@ -341,7 +342,7 @@ impl World {
         self.next_gesture += 1;
         let mut changes = vec![(zone, Some(Gesture::Zone { polygon: polygon.clone(), land_use }))];
         if let (LandUse::Industrial, Some(ind)) = (land_use, industry) {
-            let mut keys: Vec<ParcelKey> = self.parcels.in_polygon(&polygon).into_iter().filter(|&i| self.parcels.parcels[i].accepts(land_use)).map(|i| self.parcels.parcels[i].key).collect();
+            let mut keys: Vec<ParcelKey> = self.parcels.in_polygon(&polygon).into_iter().filter(|&i| self.parcel_refusal(i, Some(land_use)).is_none()).map(|i| self.parcels.parcels[i].key).collect();
             keys.sort();
             if !keys.is_empty() {
                 let id = GestureId(self.next_gesture);
@@ -456,11 +457,27 @@ impl World {
     /// Parcels from the roads, zoning from the master plan, a lot for every
     /// zoned parcel (or run of joined parcels). Zone polygons keep their
     /// zone; painted lots get a zone of their own outline.
-    fn build_lots_from_parcels(&mut self) {
+    /// `pins` are lots under city structures: their parcels keep that use
+    /// whatever is planned. `parks` are lots with a park: their parcels
+    /// stay park only where the plan leaves them unzoned (a park rezoned
+    /// for building is left for development to clear).
+    fn build_lots_from_parcels(&mut self, pins: &[(Vec<Vec2>, LandUse)], parks: &[Vec<Vec2>]) {
         let parcels = self.cut_parcels();
         self.parcels = ParcelMap::new(parcels, self.parcels.version + 1);
         self.zones.clear();
-        let zoning = parcel_zoning(&self.parcels, &self.master);
+        let mut zoning = parcel_zoning(&self.parcels, &self.master);
+        // Ground under the city's own structures keeps the use it had,
+        // whatever zoning was painted or drawn over it since: those parcels
+        // change only once the structure is bulldozed.
+        for (i, z) in zoning.iter_mut().enumerate() {
+            let c = self.parcels.parcels[i].center;
+            if let Some((_, lu)) = pins.iter().find(|(poly, _)| point_in_polygon(c, poly)) {
+                let gid = z.map_or(GestureId(u64::MAX), |(_, g)| g);
+                *z = Some((*lu, gid));
+            } else if z.is_none() && parks.iter().any(|poly| point_in_polygon(c, poly)) {
+                *z = Some((LandUse::Park, GestureId(u64::MAX)));
+            }
+        }
         // Zones newest first, as they always were listed.
         let zones: Vec<(GestureId, Vec<Vec2>, LandUse)> = self.master.zones().map(|(id, p, lu)| (id, p.to_vec(), lu)).collect();
         let mut zone_of: HashMap<GestureId, ZoneId> = HashMap::new();
@@ -675,7 +692,17 @@ impl World {
         let old_lots = std::mem::replace(&mut self.lots, SlotMap::with_key());
         let lenient = !self.parcel_lots;
         self.parcel_lots = true;
-        self.build_lots_from_parcels();
+        let pins: Vec<(Vec<Vec2>, LandUse)> = old_lots
+            .values()
+            .filter(|l| l.building.and_then(|b| self.buildings.get(b)).is_some_and(Self::is_civic_structure))
+            .map(|l| (l.polygon.clone(), l.land_use))
+            .collect();
+        let parks: Vec<Vec<Vec2>> = old_lots
+            .values()
+            .filter(|l| l.building.and_then(|b| self.buildings.get(b)).is_some_and(|b| b.land_use == LandUse::Park))
+            .map(|l| l.polygon.clone())
+            .collect();
+        self.build_lots_from_parcels(&pins, &parks);
         // Lots on ground too steep to level are left as rough land.
         self.grade_lots();
         // Facilities: their footprints are lots of their own, and zoned lots
@@ -713,7 +740,11 @@ impl World {
             match found {
                 // Eminent domain: a parcel reshaped by road or path works
                 // cannot keep its building, even if a lot is still there.
-                Some(new_lot) if !lenient && outlines_differ(&old.polygon, &self.lots[new_lot].polygon, EXPROPRIATE_AREA_TOL, EXPROPRIATE_DIST_TOL) => {
+                Some(new_lot)
+                    if !lenient
+                        && !self.buildings.get(bid).is_some_and(Self::is_civic_structure)
+                        && outlines_differ(&old.polygon, &self.lots[new_lot].polygon, EXPROPRIATE_AREA_TOL, EXPROPRIATE_DIST_TOL) =>
+                {
                     demolish.push((bid, old.center, true));
                 }
                 Some(new_lot) => {
@@ -814,6 +845,27 @@ impl World {
     /// Is this one of the city's own structures (a plant, depot, station
     /// or yard)? Those are never taken over by another placement; the player
     /// bulldozes them first.
+    /// A parcel under one of the city's own structures (or a station or
+    /// yard footprint): its zoning cannot change until the structure goes.
+    pub fn parcel_holds_civic(&self, i: usize) -> bool {
+        let Some(p) = self.parcels.parcels.get(i) else { return false };
+        if self.under_facility(p.center) {
+            return true;
+        }
+        self.lots.values().any(|l| l.contains(p.center) && l.building.and_then(|b| self.buildings.get(b)).is_some_and(Self::is_civic_structure))
+    }
+
+    /// Why parcel `i` cannot be zoned `lu` (or unzoned, with None): a city
+    /// structure standing on it, then the parcel's own rules
+    /// (`Parcel::refusal`).
+    pub fn parcel_refusal(&self, i: usize, lu: Option<LandUse>) -> Option<&'static str> {
+        let p = self.parcels.parcels.get(i)?;
+        if self.parcel_holds_civic(i) {
+            return Some("a city building stands here: bulldoze it first");
+        }
+        lu.and_then(|lu| p.refusal(lu))
+    }
+
     pub(super) fn is_civic_structure(b: &Building) -> bool {
         b.plant.is_some() || b.depot || b.rail.is_some() || b.port.is_some() || b.service.is_some()
     }
