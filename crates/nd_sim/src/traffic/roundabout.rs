@@ -440,7 +440,7 @@ mod tests {
                 }
             }
             for id in t.step(2.0, 4) {
-                if t.cars[id].age < TRIP_TIMEOUT {
+                if t.cars[id].age < super::REPLAN_AFTER {
                     arrived += 1;
                     trip += t.cars[id].age;
                 }

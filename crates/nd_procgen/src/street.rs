@@ -467,13 +467,17 @@ fn roundabout_island(g: &mut Geometry, pal: &Palette, ring: &nd_sim::roads::Ring
         }
     }
     if ri >= 9.0 {
-        // A plinth, steps and an obelisk with a lit tip.
-        g.part(Paving).ground_polygon(&circle(3.2, 20), KERB_H + 0.05, rgba(mul(pal.paving, 1.2)));
-        g.part(Stone).boxed(Vec3::new(c.x, KERB_H + 0.35, c.y), Vec3::new(3.0, 0.6, 3.0), 0.0, rgba(mul(pal.stone, 1.1)));
-        g.part(Stone).boxed(Vec3::new(c.x, KERB_H + 0.95, c.y), Vec3::new(2.0, 0.6, 2.0), 0.0, rgba(mul(pal.stone, 1.2)));
-        let h = 6.0 + ri * 0.25;
-        g.part(Stone).cylinder(c, 0.75, 0.25, KERB_H + 1.25, KERB_H + 1.25 + h, 4, rgba(mul(pal.stone, 1.3)));
-        g.part(Glow).cylinder(c, 0.25, 0.0, KERB_H + 1.25 + h, KERB_H + 1.85 + h, 4, rgba(mul(pal.led(0), 0.8)));
+        // A paved round with a low, broad sculpture: three leaning stone
+        // fins around a lit disc (no spires or obelisks in this city).
+        g.part(Paving).ground_polygon(&circle(3.6, 20), KERB_H + 0.05, rgba(mul(pal.paving, 1.2)));
+        g.part(Stone).boxed(Vec3::new(c.x, KERB_H + 0.3, c.y), Vec3::new(3.4, 0.5, 3.4), 0.3, rgba(mul(pal.stone, 1.1)));
+        g.part(Glow).ground_polygon(&circle(1.1, 16), KERB_H + 0.57, rgba(mul(pal.led(0), 0.7)));
+        let fin_h = 1.6 + ri * 0.06;
+        for k in 0..3 {
+            let a = k as f32 / 3.0 * TAU + 0.5;
+            let p = c + Vec2::from_angle(a) * 1.4;
+            g.part(Stone).boxed(Vec3::new(p.x, KERB_H + 0.55 + fin_h * 0.5, p.y), Vec3::new(2.2, fin_h, 0.35), a + 0.6, rgba(mul(pal.stone, 1.25)));
+        }
     } else {
         tree_world(g, c, rng.random_range(5.0..7.0), rng.random_range(2.8..3.8), pal.bark, mul(pal.foliage, 1.05));
         for k in 0..5 {
