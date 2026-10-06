@@ -64,5 +64,6 @@ pub fn service_note(k: nd_sim::ServiceKind) -> &'static str {
         K::Monument => "Lifts land value around it; people come to look.",
         K::Stadium => "Hosts games some evenings: crowds come, tickets pay into the treasury.",
         K::Jail => "Arrested suspects serve days here; without one they are held a few hours at a police station and let go early.",
+        K::Vertiport => "Base for the air taxi company's drones: the rich fly between vertiports and rooftop pads, above the traffic. Noisy neighbours.",
     }
 }

@@ -254,6 +254,9 @@ fn activity(w: &World, c: &Citizen) -> Value {
         Activity::OnTrain { train } => {
             m.insert("train".into(), json!(key_str(*train)));
         }
+        Activity::Flying { drone } => {
+            m.insert("drone".into(), json!(key_str(*drone)));
+        }
         Activity::Arriving | Activity::AtHome | Activity::Working | Activity::Idle | Activity::Waiting { .. } => {}
     }
     if let Some(t) = &c.transit {
@@ -549,4 +552,63 @@ pub fn tier_key(t: nd_sim::Tier) -> &'static str {
         nd_sim::Tier::Mid => "mid",
         nd_sim::Tier::High => "high",
     }
+}
+
+// ── air ─────────────────────────────────────────────────────────────────────
+
+/// One drone or helicopter, for `inspect {drone}` and `find {what: "drones"}`.
+pub fn drone_detail(w: &World, id: nd_sim::air::DroneId) -> Option<Value> {
+    let d = w.air.drones.get(id)?;
+    let job = match d.job {
+        nd_sim::air::Job::Taxi { rider, from, to, aboard } => json!({ "kind": "taxi", "rider": key_str(rider), "rider_name": w.citizens.get(rider).map(|c| c.name.clone()), "from": key_str(from), "from_name": building_name(w, Some(from)), "to": key_str(to), "to_name": building_name(w, Some(to)), "aboard": aboard }),
+        nd_sim::air::Job::Medic { incident, patient, hospital, aboard, .. } => json!({ "kind": "medic", "incident": incident, "patient": key_str(patient), "hospital": opt_key(hospital), "hospital_name": building_name(w, hospital), "aboard": aboard }),
+        nd_sim::air::Job::Patrol { incident } => json!({ "kind": "patrol", "incident": incident }),
+        nd_sim::air::Job::Home => json!({ "kind": "home" }),
+        nd_sim::air::Job::Idle => json!({ "kind": "idle" }),
+    };
+    Some(json!({
+        "id": key_str(id), "craft": d.craft.label(), "call_sign": format!("{} {}", d.craft.call_sign(), d.number),
+        "base": key_str(d.base), "base_name": building_name(w, Some(d.base)),
+        "pos": v2(d.pos), "altitude_m": round(d.alt), "heading": round(d.heading),
+        "phase": d.phase.label(), "doing": d.job.label(), "job": job,
+        "dest": opt_key(d.dest), "dest_name": building_name(w, d.dest), "goal": v2(d.goal),
+        "on_pad": opt_key(d.at), "slot": d.slot, "battery": round(d.battery.max(0.0)),
+        "flights_today": d.flights_today, "km_today": round(d.km_today), "flights_total": d.flights_total,
+    }))
+}
+
+/// `report.services.air`: pads, the fleet, today's flights, riders, fares, noise.
+pub fn air_report(w: &World) -> Value {
+    use nd_sim::air::{Craft, PadKind, Phase};
+    let a = &w.air;
+    let pads_of = |k: PadKind| a.pads.iter().filter(|p| p.kind == k).count();
+    let vertiports: Vec<Value> = a
+        .pads
+        .iter()
+        .filter(|p| p.kind == PadKind::Vertiport)
+        .map(|p| json!({ "id": key_str(p.building), "name": building_name(w, Some(p.building)), "slots": p.slots, "slots_used": a.slots_used(p.building), "drones_based": a.drones.values().filter(|d| d.base == p.building).count(), "pos": v2(p.pos) }))
+        .collect();
+    let craft = |c: Craft| a.drones.values().filter(|d| d.craft == c).count();
+    let airborne = a.drones.values().filter(|d| d.phase.airborne()).count();
+    let holding = a.drones.values().filter(|d| d.phase == Phase::Holding).count();
+    let waiting = w.citizens.values().filter(|c| matches!(c.activity, Activity::Waiting { .. }) && matches!(c.transit.map(|t| t.leg), Some(nd_sim::transit::TransitLeg::Air { .. }))).count();
+    let flying = w.citizens.values().filter(|c| matches!(c.activity, Activity::Flying { .. })).count();
+    let mean_battery = {
+        let t: Vec<f32> = a.drones.values().filter(|d| d.craft == Craft::Taxi).map(|d| d.battery).collect();
+        if t.is_empty() { Value::Null } else { json!(round(t.iter().sum::<f32>() / t.len() as f32)) }
+    };
+    let (noise_max, noise_cells) = (a.noise.values().fold(0.0f32, |m, n| m.max(*n)), a.noise.len());
+    let s = &a.stats;
+    json!({
+        "vertiports": vertiports,
+        "pads": { "vertiports": pads_of(PadKind::Vertiport), "rooftop": pads_of(PadKind::Rooftop), "hospital": pads_of(PadKind::Hospital), "fire": pads_of(PadKind::Fire), "police": pads_of(PadKind::Police) },
+        "rooftop_pads": a.rooftops.iter().map(|b| json!({ "id": key_str(*b), "name": building_name(w, Some(*b)) })).collect::<Vec<_>>(),
+        "drones": { "taxis": craft(Craft::Taxi), "air_ambulances": craft(Craft::AirAmbulance), "police_helicopters": craft(Craft::PoliceHeli), "airborne": airborne, "holding": holding, "mean_taxi_battery": mean_battery },
+        "flights_today": s.flights_today, "riders_today": s.riders_today, "fares_today": round(s.fares_today),
+        "flights_yesterday": s.flights_yesterday, "riders_yesterday": s.riders_yesterday, "fares_yesterday": round(s.fares_yesterday), "riders_total": s.riders_total,
+        "waiting_for_drone": waiting, "in_the_air": flying, "gave_up_today": s.gave_up_today, "holds_today": s.holds_today,
+        "medic_flights_today": s.medic_flights_today, "medic_flights_total": s.medic_flights_total, "police_flights_today": s.police_flights_today,
+        "company": { "name": a.company.name, "money": round(a.company.money), "revenue_today": round(a.company.revenue_today), "revenue_yesterday": round(a.company.revenue_yesterday), "costs_per_day": round(a.company.costs_today) },
+        "noise": { "cells": noise_cells, "max": round(noise_max), "max_land_value_penalty": round(nd_sim::air::noise_penalty(noise_max)), "grumbles_today": s.grumbles_today },
+    })
 }

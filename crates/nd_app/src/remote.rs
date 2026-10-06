@@ -902,7 +902,7 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         other => {
             let tier = opt_str(cmd, "tier")?.map(|t| nd_sim::services::parse_tier(t).ok_or_else(|| format!("unknown tier {t:?}; low, mid or high"))).transpose()?;
-            let what = nd_sim::Placeable::parse(other, tier).ok_or_else(|| format!("unknown kind {other:?}; one of station, freight_yard, depot, parking, coal, solar, wind, nuclear, police, fire, hospital (clinic), school, dispatch, monument, stadium (services take tier low|mid|high or a :tier suffix)"))?;
+            let what = nd_sim::Placeable::parse(other, tier).ok_or_else(|| format!("unknown kind {other:?}; one of station, freight_yard, depot, parking, coal, solar, wind, nuclear, police, fire, hospital (clinic), school, dispatch, monument, stadium, vertiport (services take tier low|mid|high or a :tier suffix)"))?;
             let lot = lot_near(w, p).ok_or("no lot there: aim at a lot")?;
             let id = w.place_on_lot(what, lot)?;
             (id, format!("{} built for {:.0}; {:.0}/day", what.label(), what.cost(), what.upkeep()))
@@ -1169,6 +1169,17 @@ fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
             }
         }
+        "drones" | "drone" | "aircraft" => {
+            let f_kind = str_filter(filter, "kind");
+            for (id, d) in w.air.drones.iter() {
+                if !contains(d.craft.label(), &f_kind) {
+                    continue;
+                }
+                if let (Some(dist), Some(row)) = (within(d.pos), view::drone_detail(w, id)) {
+                    rows.push((dist, row));
+                }
+            }
+        }
         "routes" | "route" | "lines" => {
             for (id, r) in w.transit.routes.iter() {
                 let d = near.map_or(0.0, |n| r.stops.iter().map(|s| s.pos.distance(n)).fold(f32::INFINITY, f32::min));
@@ -1289,6 +1300,10 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(v) = field(cmd, "junction") {
         let k = view::junction_near(w, vec2_of(v)?).ok_or("no junctions")?;
         return Ok(json!({ "junction": view::junction_detail(w, k) }));
+    }
+    if let Some(v) = field(cmd, "drone") {
+        let id: nd_sim::air::DroneId = key_from(v)?;
+        return Ok(json!({ "drone": view::drone_detail(w, id).ok_or("no such drone")? }));
     }
     if let Some(v) = field(cmd, "train") {
         let id = key_from(v)?;
