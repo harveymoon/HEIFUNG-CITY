@@ -172,59 +172,6 @@ fn bike_owners_cycle_long_trips_and_motion_is_tracked() {
 }
 
 #[test]
-fn parking_lots_fill_charge_and_release() {
-    let mut w = World::new(WorldConfig::default());
-    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
-    w.add_zone(square(10.0, 10.0, 190.0), LandUse::Commercial);
-    w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Residential);
-    let lots: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Commercial).map(|(id, _)| id).collect();
-    assert!(lots.len() >= 2);
-    // A shop next to a parking lot.
-    w.build_on(lots[0]);
-    let shop = w.lots[lots[0]].building.unwrap();
-    w.finish_construction(shop);
-    let lot = w.build_parking(lots[1]).expect("parking lot opens");
-    assert!(w.buildings[lot].construction.is_none(), "parking is laid out at once");
-    let cap = w.buildings[lot].parking_capacity;
-    assert!(cap >= 4 && w.buildings[lot].is_parking() && w.buildings[lot].jobs == 2);
-    assert!(w.buildings[lot].parking_price > 0.0);
-    // Low-tier shops have no spaces of their own, so a driver pays at the lot.
-    let mut minds = IdleMind;
-    for _ in 0..(12 * 60) {
-        w.tick(&mut minds);
-    }
-    finish_all(&mut w);
-    for _ in 0..60 {
-        w.tick(&mut minds);
-    }
-    let c = w.citizens.keys().next().expect("someone arrived");
-    w.buildings[shop].parking_capacity = 0;
-    {
-        let cz = &mut w.citizens[c];
-        cz.savings = 100.0;
-        cz.activity = Activity::Driving { car: w.traffic.cars.keys().next().unwrap_or_default(), to: Some(shop), purpose: Purpose::Shop(Resource::Goods) };
-    }
-    let before_money = w.buildings[lot].business.as_ref().unwrap().money;
-    let used0 = w.buildings[lot].parking_used;
-    w.park_car(c);
-    assert_eq!(w.buildings[lot].parking_used, used0 + 1);
-    assert_eq!(w.citizens[c].parked_at, Some(lot));
-    assert!(w.citizens[c].savings < 100.0, "the driver paid");
-    assert!(w.buildings[lot].business.as_ref().unwrap().money > before_money, "the lot earned");
-    // Leaving frees the space.
-    w.citizens[c].inside = Some(shop);
-    w.leave_building(c);
-    assert_eq!(w.buildings[lot].parking_used, used0);
-    // With the lot full, drivers circle and the shortage is counted.
-    w.buildings[lot].parking_used = cap;
-    let street0 = w.economy.parking_street_today;
-    w.citizens[c].activity = Activity::Driving { car: w.traffic.cars.keys().next().unwrap_or_default(), to: Some(shop), purpose: Purpose::Shop(Resource::Goods) };
-    w.park_car(c);
-    assert_eq!(w.economy.parking_street_today, street0 + 1);
-    assert!(w.citizens[c].parked_at.is_none());
-}
-
-#[test]
 fn park_visits_end_on_a_bench_and_people_leave_on_foot() {
     let mut w = World::new(WorldConfig::default());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);

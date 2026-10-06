@@ -252,7 +252,9 @@ impl World {
 
     /// Is this car passing through from elsewhere to elsewhere?
     pub fn is_through_car(car: &crate::traffic::Car) -> bool {
-        car.citizen == CitizenId::default() && car.cargo.is_none() && car.bus.is_none()
+        // [carlife] Not a private car driven by the dealer or leaving town,
+        // nor a van or lorry on its way back to base.
+        car.citizen == CitizenId::default() && car.cargo.is_none() && car.bus.is_none() && car.owned.is_none() && car.errand == crate::vehicle::Errand::Trip
     }
 
     pub fn through_cars(&self) -> usize {

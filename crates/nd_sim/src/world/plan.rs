@@ -270,6 +270,8 @@ impl World {
         for (_, car) in self.traffic.clear_cars() {
             self.strand_car(car);
         }
+        // [carlife] Parked cars on streets that changed find a kerb again.
+        self.refresh_kerbs();
         // Trains ran on track that may be gone or re-laid, and their stops
         // and node ids are stale either way: everyone gets off where the
         // train stands and the next headway brings fresh ones.
@@ -435,11 +437,30 @@ impl World {
 
     /// A car taken off the road: its driver, or a bus's riders, stand there.
     pub(super) fn strand_car(&mut self, car: crate::traffic::Car) {
+        use crate::vehicle::{CarEvent, Errand};
         // A truck taken off the road still delivers: the buyer already counts
         // the load as inbound and would never reorder it otherwise.
         if let Some(cargo) = car.cargo {
             self.deliver(cargo);
+        }
+        // [carlife] Trucks and vans are back at their base; private cars
+        // park where they stood (cars on their way to be sold or out of
+        // town are gone, as they were about to be).
+        match car.errand {
+            Errand::Haul { base: Some(b) } | Errand::Return(b) if self.buildings.contains_key(b) => {
+                *self.vehicles.fleet_parked.entry(b).or_insert(0) += 1;
+            }
+            _ => {}
+        }
+        if car.cargo.is_some() {
             return;
+        }
+        if let Some(vid) = car.owned.filter(|v| self.vehicles.cars.contains_key(*v)) {
+            match car.errand {
+                Errand::Sale(_) => self.drop_car(vid, CarEvent::Sold),
+                Errand::Leave => self.drop_car(vid, CarEvent::Emigrated),
+                _ => self.park_stranded(vid, car.pos),
+            }
         }
         if let Some(bus) = &car.bus {
             for &p in &bus.passengers {

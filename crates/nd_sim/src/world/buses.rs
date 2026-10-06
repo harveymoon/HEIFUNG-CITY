@@ -195,6 +195,8 @@ impl World {
             for id in tired {
                 let Some(trip) = self.citizens[id].transit.take() else { continue };
                 self.citizens[id].thought = "No bus is coming. Walking it.".to_string();
+                // [carlife] Remembered when choosing how to travel next time.
+                self.transit_failed(id);
                 self.travel_to_impl(id, Some(trip.target), trip.purpose, false, false);
             }
         }

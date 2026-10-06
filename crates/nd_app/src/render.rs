@@ -317,6 +317,8 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, sync_lane_arrows.in_set(SimSet::Sync).after(sync_signals).before(lift_spawned));
         app.add_systems(Update, (turbines::sync_turbines, haze::sync_haze, layers::sync_layers, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
+        // [carlife] Cars parked at the kerb, after the cars on the road.
+        app.init_resource::<ParkedRender>().add_systems(Update, sync_parked_cars.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // Emergency vehicles, fires and rubble, after the cars they hide.
         app.add_systems(Update, emergency::sync_emergency.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
     }
@@ -1508,16 +1510,23 @@ fn sync_cars(
         }
     }
     let traffic = &sim.world.traffic;
+    let f = sim.frac();
     for (id, car) in traffic.cars.iter() {
         if !state.cars.contains_key(&id) {
             let model = car_model(car);
             let v = vr.variant(&mut meshes, &model);
             let finish = vr.finish[model.class as usize].clone();
-            let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), Transform::IDENTITY, NotShadowCaster, CarTag)).id();
-            let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag)).id();
+            // [carlife] Spawned where the car is. Entities spawned through
+            // `Commands` are not in this frame's query below, so a car
+            // spawned at the identity transform was drawn for one frame at
+            // the world origin: the centre of the main junction, flashing
+            // each time a car joined the road.
+            let pose = car_pose(car, f, false);
+            let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, CarTag)).id();
+            let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), pose, NotShadowCaster, NotShadowReceiver, CarTag)).id();
             state.cars.insert(id, [body, lights]);
             if let Some(fx) = v.fx {
-                let e = commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag)).id();
+                let e = commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), pose, NotShadowCaster, NotShadowReceiver, CarTag)).id();
                 vr.car_fx.insert(id, e);
             }
             if model.body == nd_sim::BodyType::AkiraBike {
@@ -1545,7 +1554,6 @@ fn sync_cars(
             meshes.remove(&h);
         }
     }
-    let f = sim.frac();
     for (id, ents) in state.cars.iter() {
         let Some(car) = traffic.cars.get(*id) else { continue };
         let pos = car.prev_pos.lerp(car.pos, f);
@@ -1590,6 +1598,61 @@ fn sync_cars(
     }
 }
 
+/// [carlife] Where a car on the road is drawn this frame.
+fn car_pose(car: &nd_sim::Car, f: f32, selected: bool) -> Transform {
+    let pos = car.prev_pos.lerp(car.pos, f);
+    let heading = lerp_angle(car.prev_heading, car.heading, f);
+    Transform::from_translation(Vec3::new(pos.x, 0.05 + if selected { 0.4 } else { 0.0 }, pos.y)).with_rotation(Quat::from_rotation_y(-heading))
+}
+
+/// [carlife] Parked cars drawn at the kerb: every private car standing on a
+/// street (in a kerb slot, or squeezed in with no space) is a body mesh at
+/// its spot. Cars in a building's spaces are out of sight in its garage; a
+/// parking lot shows its occupancy itself.
+#[derive(Resource, Default)]
+struct ParkedRender {
+    /// Tick and car count last drawn for.
+    key: Option<(u64, usize)>,
+    cars: HashMap<nd_sim::VehicleId, ((i32, i32), Entity)>,
+}
+
+#[derive(Component)]
+struct ParkedTag;
+
+#[allow(clippy::too_many_arguments)]
+fn sync_parked_cars(mut commands: Commands, sim: Res<Sim>, mut pr: ResMut<ParkedRender>, mut vr: ResMut<VehicleRender>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    let w = &sim.world;
+    let key = (w.clock.tick, w.vehicles.cars.len());
+    if pr.key == Some(key) && !sim.full_rebuild {
+        return;
+    }
+    pr.key = Some(key);
+    vr.ensure_materials(&mut materials);
+    let mut seen: std::collections::HashSet<nd_sim::VehicleId> = std::collections::HashSet::new();
+    for (vid, car) in w.vehicles.cars.iter() {
+        let Some(spot) = car.spot().filter(|s| s.kind.on_street()) else { continue };
+        seen.insert(vid);
+        let at = ((spot.pos.x * 10.0) as i32, (spot.pos.y * 10.0) as i32);
+        if pr.cars.get(&vid).is_some_and(|(k, _)| *k == at) {
+            continue;
+        }
+        if let Some((_, e)) = pr.cars.remove(&vid) {
+            commands.entity(e).despawn();
+        }
+        let v = vr.variant(&mut meshes, &car.model);
+        let finish = vr.finish[car.model.class as usize].clone();
+        let pose = Transform::from_translation(Vec3::new(spot.pos.x, 0.05, spot.pos.y)).with_rotation(Quat::from_rotation_y(-spot.heading));
+        let e = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, ParkedTag, Grounded)).id();
+        pr.cars.insert(vid, (at, e));
+    }
+    let gone: Vec<nd_sim::VehicleId> = pr.cars.keys().copied().filter(|id| !seen.contains(id)).collect();
+    for id in gone {
+        if let Some((_, e)) = pr.cars.remove(&id) {
+            commands.entity(e).despawn();
+        }
+    }
+}
+
 /// Pavement delivery robots: a small generated mesh per shop livery,
 /// interpolated between ticks like walkers.
 #[allow(clippy::too_many_arguments)]
@@ -1611,12 +1674,14 @@ fn sync_bots(
         let livery = w.buildings.get(bot.shop).and_then(|b| b.business.as_ref()).map_or(nd_sim::Livery::None, |bz| nd_sim::Livery::for_business(bz.kind));
         let model = nd_sim::VehicleModel { body: nd_sim::BodyType::DeliveryBot, livery, ..Default::default() };
         let v = vr.variant(&mut meshes, &model);
+        // [carlife] Spawned where it is, not at the origin (see `sync_cars`).
+        let pose = Transform::from_translation(Vec3::new(bot.pos.x, 0.16, bot.pos.y)).with_rotation(Quat::from_rotation_y(-bot.heading));
         let mut ents = vec![
-            commands.spawn((Mesh3d(v.body), MeshMaterial3d(vr.finish[1].clone()), Transform::IDENTITY, NotShadowCaster, BotTag, Grounded)).id(),
-            commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, BotTag, Grounded)).id(),
+            commands.spawn((Mesh3d(v.body), MeshMaterial3d(vr.finish[1].clone()), pose, NotShadowCaster, BotTag, Grounded)).id(),
+            commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), pose, NotShadowCaster, NotShadowReceiver, BotTag, Grounded)).id(),
         ];
         if let (Some(fx), Some(mat)) = (v.fx, vr.fx.clone()) {
-            ents.push(commands.spawn((Mesh3d(fx), MeshMaterial3d(mat), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, BotTag, Grounded)).id());
+            ents.push(commands.spawn((Mesh3d(fx), MeshMaterial3d(mat), pose, NotShadowCaster, NotShadowReceiver, BotTag, Grounded)).id());
         }
         vr.bots.insert(id, ents);
     }

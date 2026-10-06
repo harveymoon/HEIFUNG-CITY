@@ -42,7 +42,7 @@ pub use plan::{Gesture, GestureId, Plan, PlanPreview, Project};
 pub use roads::{NodeId, RoadNetwork, Segment, SegmentId};
 pub use traffic::{Car, CarId, Cargo, LaneId, Traffic};
 pub use walk::WalkGraph;
-pub use vehicle::{BodyType, Livery, VehicleClass, VehicleModel};
+pub use vehicle::{BodyType, CarEvent, CarPlace, Errand, Livery, OwnedCar, ParkKind, ParkSpot, VehicleClass, VehicleId, VehicleModel, Vehicles};
 pub use bots::{BotId, Bots, DeliveryBot};
 pub use power::{PlantSite, PowerPlantKind, PowerStats, Weather};
 pub use landscape::{Landscape, LandscapeParams, LandscapePreset, WaterKind};

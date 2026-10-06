@@ -563,6 +563,11 @@ impl World {
                 let id = self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, color);
                 let mut rng = crate::vehicle::model_rng(self.clock.tick, slotmap::Key::data(&id).as_ffi());
                 self.traffic.cars[id].model = crate::vehicle::VehicleModel::for_cargo(cargo.resource, seller, to_site, long_haul, &mut rng);
+                // [carlife] The lorry belongs to the sender and goes back there.
+                self.truck_dispatched(id, match origin {
+                    TruckOrigin::Building(b) => Some(b),
+                    TruckOrigin::CityEdge => None,
+                });
             }
             None => self.deliver(cargo),
         }
