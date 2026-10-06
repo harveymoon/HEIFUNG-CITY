@@ -368,3 +368,41 @@ fn a_ramp_climbing_to_a_raised_highway_stands_on_piers() {
     assert!(!raised.is_empty(), "the high part of the ramp is a viaduct");
     assert!(w.roads.alive_segments().filter(|(_, s)| !s.is_highway()).any(|(_, s)| !s.viaduct), "its foot is on the ground");
 }
+
+#[test]
+fn the_highway_follows_the_land_and_its_carriageways_stay_side_by_side() {
+    let mut w = World::new(WorldConfig::default());
+    // The demo's link: a street joined to the westbound carriageway by ramps.
+    w.add_road(&[Vec2::new(0.0, 100.0), Vec2::new(0.0, crate::landscape::HIGHWAY_Y - 200.0)], 1, 1);
+    w.link_to_highway(Vec2::new(0.0, crate::landscape::HIGHWAY_Y - 200.0));
+    let hy = crate::landscape::HIGHWAY_Y;
+    let half = crate::landscape::HIGHWAY_HALF_GAP;
+    let at = |y: f32, x: f32| {
+        let p = Vec2::new(x, y);
+        let (sid, t, q) = w.roads.nearest_where(p, |s| s.is_highway()).unwrap();
+        assert!(q.distance(p) < 1.0, "a carriageway at {p}");
+        (w.road_height(sid, t), w.roads.segment(sid).bridge)
+    };
+    let mut worst: (f32, f32) = (0.0, 0.0);
+    let edge = crate::landscape::LAND_HALF - 60.0;
+    let mut x = -edge;
+    while x < edge {
+        let ((ze, be), (zw, bw)) = (at(hy + half, x), at(hy - half, x));
+        let near_bridge = (-60..=60).step_by(20).any(|dx| { let (_, b1) = at(hy + half, x + dx as f32); let (_, b2) = at(hy - half, x + dx as f32); b1 || b2 });
+        if !(be || bw || near_bridge) {
+            let land = w.landscape.height(Vec2::new(x, hy)).max(crate::landscape::BANK_HEIGHT);
+            let pair = (ze - zw).abs();
+            let off = (ze - land).abs().max((zw - land).abs());
+            // Flyovers over the ramps' street aside (within 120 m of x = 0).
+            // Within the basin: the outer hills rise faster than any road.
+            if x.abs() > 120.0 && x.abs() < crate::landscape::BASIN_RADIUS && off > worst.1 {
+                worst = (x, off);
+            }
+            assert!(pair < 2.5 || x.abs() <= 120.0, "carriageways {ze:.1} / {zw:.1} at x = {x}");
+        }
+        x += 20.0;
+    }
+    assert!(worst.1 < 8.0, "the highway strays {:.1} m from the land at x = {}", worst.1, worst.0);
+    let ((ze, _), (zw, _)) = (at(hy + half, -120.0), at(hy - half, -120.0));
+    assert!((ze - zw).abs() < 3.0, "at x = -120: {ze} / {zw}");
+}
