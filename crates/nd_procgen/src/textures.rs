@@ -359,11 +359,23 @@ fn grit(surface: Surface, s: Sample, u: f32, v: f32, px: i32, py: i32, wear: f32
     let mask = fbm(u, v, 4, 2, 437) > 0.56;
     let c1 = if mask { crack_line(fbm(u, v, 6, 3, 431), w) } else { 0.0 };
     let c2 = if !mask { crack_line(fbm(u, v, 8, 2, 433), w * 0.7) * 0.6 } else { 0.0 };
-    let crack = c1.max(c2) * wear;
+    // Steel sheet does not crack like render: no hairlines on containers.
+    let crack = if surface == Surface::Container { 0.0 } else { c1.max(c2) * wear };
     value *= 1.0 - 0.35 * crack;
     height -= 1.0 * crack;
     match surface {
-        Surface::Panel | Surface::Metal | Surface::Plaster | Surface::Container => {
+        Surface::Container => {
+            // Paint chipped down to rust in small, scattered spots, clustered
+            // where a broad mask allows (not primer blotches all over).
+            let chip = fbm(u, v, 48, 2, 443);
+            let cluster = fbm(u, v, 3, 2, 449);
+            if cluster > 0.52 && chip > 0.8 - 0.04 * wear {
+                value *= 0.8;
+                tint += 0.1;
+                height -= 0.2;
+            }
+        }
+        Surface::Panel | Surface::Metal | Surface::Plaster => {
             // Worn paint: blotches where the topcoat has gone, a lighter,
             // cooler primer showing through.
             let chip = fbm(u, v, 8, 3, 443);
