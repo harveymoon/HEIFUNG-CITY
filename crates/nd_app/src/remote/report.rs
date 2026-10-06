@@ -734,6 +734,12 @@ fn services(w: &World) -> Value {
             "waiting_at_kerb": kerb, "gridlocks": w.traffic.gridlocks().len(),
             "lanes": w.traffic.net.lanes.len(), "intersections": w.traffic.net.intersections.len(), "signals": w.traffic.net.intersections.iter().filter(|i| i.signalized).count(),
             "walk_trips_today": e.walk_trips_today,
+            "pedestrians": {
+                "waiting_at_crossings": w.peds.waiting_now, "jaywalkers_today": w.peds.jaywalkers_today, "near_misses_today": w.peds.near_misses_today, "ped_collisions_today": w.peds.collisions_today,
+                "walking_now": w.citizens.values().filter(|c| c.mode == nd_sim::citizens::TravelMode::Walk && matches!(c.activity, nd_sim::Activity::Traveling { .. })).count(),
+                "walk_lights_on_now": w.traffic.peds.walk.iter().flatten().filter(|&&x| x).count(),
+                "jaywalks_total": w.peds.jaywalks_total, "near_misses_total": w.peds.near_misses_total, "ped_collisions_total": w.peds.collisions_total,
+            },
             "left_turn_wait_mean_s": round(w.traffic.left_wait_stats().0), "left_turn_wait_max_s": round(w.traffic.left_wait_stats().1),
             "left_turns_measured": w.traffic.left_wait_stats().2, "protected_left_arrows_now": w.traffic.net.intersections.iter().filter(|i| i.timer < i.arrow).count(),
             "passing_left_turners_now": w.traffic.cars.values().filter(|c| c.passing).count(), "lane_use_set_by_player": w.traffic.lane_use.len(),

@@ -32,6 +32,7 @@ mod driving;
 mod industry;
 mod market;
 mod parking;
+mod pedestrians;
 mod plan;
 mod places;
 #[cfg(test)]
@@ -346,6 +347,10 @@ pub struct World {
     /// [driving] Crashes, wrecks, tow trucks and street takeovers.
     #[serde(default)]
     pub driving: Driving,
+    /// [pedestrians] Walkers' state and the day's jaywalking, near misses
+    /// and people hit (`world/pedestrians.rs`).
+    #[serde(default)]
+    pub peds: crate::pedestrians::Pedestrians,
     /// [society] Crime, homelessness and trash (`world/society.rs`).
     #[serde(default)]
     pub society: crate::society::Society,
@@ -425,6 +430,7 @@ impl World {
             bridge_metres: 0.0,
             bots: Default::default(),
             driving: Driving::default(),
+            peds: Default::default(),
             society: Default::default(),
             vehicles: Default::default(),
             air: Default::default(),

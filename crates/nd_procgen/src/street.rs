@@ -37,6 +37,22 @@ pub struct SignalPost {
     pub heading: f32,
 }
 
+/// [pedestrians] A walk / don't walk lamp at one end of a signalised
+/// crosswalk, facing the people at the other end: the renderer colours it
+/// from `Traffic::peds` (`walk_shown(inter, approach)`).
+pub struct PedSignalPost {
+    pub inter: usize,
+    pub approach: usize,
+    /// Foot of the pole, at the kerb.
+    pub pole: Vec2,
+    pub lamp: Vec3,
+    /// Direction the lamp faces (over the street), as an angle.
+    pub heading: f32,
+}
+
+/// Height of a pedestrian signal head.
+const PED_HEAD_Y: f32 = 2.55;
+
 const KERB_H: f32 = 0.16;
 const ASPHALT_Y: f32 = 0.05;
 const MARK_Y: f32 = 0.085;
@@ -422,6 +438,37 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         }
     }
 
+    // [pedestrians] Mid-block zebras on long blocks, with a beacon post at
+    // each kerb.
+    for (sid, t) in nd_sim::walk::midblock_crossings(roads) {
+        let seg = roads.segment(sid);
+        let (a, b) = roads.segment_points(sid);
+        let d = (b - a).normalize_or_zero();
+        let right = Vec2::new(-d.y, d.x);
+        let hw = seg.half_width();
+        let at = a.lerp(b, t);
+        let (c0, c1) = (at - d * nd_sim::walk::CROSSWALK_HALF, at + d * nd_sim::walk::CROSSWALK_HALF);
+        let mut s = -hw + SHOULDER + 0.4;
+        while s < hw - SHOULDER - 0.2 {
+            g.part(Glow).ground_strip(&[c0 + right * s, c1 + right * s], 0.5, MARK_Y + 0.002, rgba(mul(pal.lane_marker, 0.9)));
+            s += 1.0;
+        }
+        for side in [-1.0f32, 1.0] {
+            let p = at + right * side * (hw + 0.45) + d * (nd_sim::walk::CROSSWALK_HALF + 0.3);
+            g.part(Matte).cylinder(p, 0.06, 0.05, 0.0, 2.6, 6, rgba(CHARCOAL));
+            g.part(Glow).boxed(Vec3::new(p.x, 2.75, p.y), Vec3::splat(0.3), 0.0, rgba([1.0, 0.62, 0.15]));
+        }
+    }
+
+    // [pedestrians] Walk / don't walk heads on signalised crosswalks: a
+    // short pole at each kerb with a head facing across.
+    for post in ped_signal_posts(roads, net) {
+        g.part(Matte).cylinder(post.pole, 0.07, 0.06, 0.0, PED_HEAD_Y + 0.4, 6, rgba(CHARCOAL));
+        let f = Vec2::from_angle(post.heading);
+        let head = Vec3::new(post.pole.x + f.x * 0.12, PED_HEAD_Y, post.pole.y + f.y * 0.12);
+        g.part(Matte).boxed(head, Vec3::new(0.34, 0.62, 0.34), 0.0, rgba(DARK));
+    }
+
     // Signal posts: pole at the kerb, arm over the approach, one head per lane.
     for post in signal_groups(net) {
         let base = post.pole;
@@ -743,6 +790,40 @@ fn signal_groups(net: &LaneNetwork) -> Vec<SignalGroup> {
         let leftmost = lanes.iter().min_by_key(|(i, _, _)| *i).unwrap();
         let pole = rightmost.1 + right * (LANE_WIDTH * 0.5 + SHOULDER + 0.45);
         out.push(SignalGroup { pole, leftmost: leftmost.1 - right * (LANE_WIDTH * 0.2), heads: lanes.iter().map(|(_, p, _)| *p).collect(), heading: d.y.atan2(d.x) });
+    }
+    out
+}
+
+/// [pedestrians] Walk lamps for every arm of every signalised junction
+/// (none across a highway), two per crosswalk, in junction and arm order.
+/// The crosswalk sits where `nd_sim::walk` puts it, so the lamps stand at
+/// the kerbs walkers wait at.
+pub fn ped_signal_posts(roads: &RoadNetwork, net: &LaneNetwork) -> Vec<PedSignalPost> {
+    let mut out = Vec::new();
+    for (k, inter) in net.intersections.iter().enumerate() {
+        if !inter.signalized || roads.nodes.len() <= inter.node.0 as usize {
+            continue;
+        }
+        let node = roads.node(inter.node);
+        let arms: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).collect();
+        for (ap, &sid) in arms.iter().enumerate() {
+            let seg = roads.segment(sid);
+            if seg.is_highway() {
+                continue;
+            }
+            let (a, b) = roads.segment_points(sid);
+            let away = (if seg.a == inter.node { b - a } else { a - b }).normalize_or_zero();
+            let side = Vec2::new(-away.y, away.x);
+            let mid = node.pos + away * nd_sim::walk::crosswalk_setback(roads, inter.node, sid);
+            let hw = seg.half_width();
+            for sgn in [-1.0f32, 1.0] {
+                // Just outside the zebra, on the kerb, facing the far kerb.
+                let pole = mid + side * sgn * (hw + 0.35) + away * (nd_sim::walk::CROSSWALK_HALF + 0.35);
+                let facing = -side * sgn;
+                let lamp = Vec3::new(pole.x + facing.x * 0.3, PED_HEAD_Y, pole.y + facing.y * 0.3);
+                out.push(PedSignalPost { inter: k, approach: ap, pole, lamp, heading: facing.y.atan2(facing.x) });
+            }
+        }
     }
     out
 }

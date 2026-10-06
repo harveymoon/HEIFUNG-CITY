@@ -328,6 +328,27 @@ Citizens are rendered from their simulated positions every frame.
   passes (`Lot::footfall_*`), and each hour 6% of the people who passed a grocer,
   bakery or gadget shop buy something off the shelf: walk-in trade that rewards shops
   where the feet are. The P overlay draws the in-block network.
+- **Pedestrians and the rules of the road** (`nd_sim::pedestrians`, `world/pedestrians.rs`,
+  `traffic/crosswalk.rs`): streets are crossed only at crossings. Every arm of a junction of
+  three or more streets has a crosswalk where its zebra is painted (pavements meet round the
+  corners, never through the junction); a footpath over a street and every ~120 m of a block
+  longer than 170 m get a zebra; a dead end is crossed at its end. At a signalised junction
+  the crosswalk across an arm shows walk while the traffic parallel to it has the green (not
+  during a protected left arrow, and not in the last 4 s of a green that is about to end);
+  walkers wait at the kerb in a small cluster facing the street, call the walk phase (so it
+  is never skipped or cut while someone is crossing) and step out after a look. Cars stop at
+  the stop line before the zebra on red; turning cars give way to anyone on the crosswalk they
+  turn over, and at a zebra drivers stop for anyone on it or about to step onto it, if they can
+  stop at 5 m/s². Jaywalking: the rebellious (low caution, high hedonism), the drunk and the
+  late for a started shift sometimes cross against the light, or plan a route straight over
+  mid-block between opposite lot fronts, when the gap in traffic looks big enough (drink makes
+  it look bigger); the cautious, the old and children never do. A car that drives over an
+  occupied crossing at speed is a near miss or, faster and unluckier, someone hit: the car
+  stops, a witness calls 911 and an ambulance comes (`report_crash`). On the pavement people
+  keep 0.35-0.75 m right of the centre line, fall in behind someone slower or standing, step
+  aside for anyone else within 0.75 m (0.5 m in a crowd), using a 2 m grid of walkers per
+  tick. `report.traffic.pedestrians` counts walkers waiting, jaywalkers, near misses and
+  collisions today.
 - **Homes on paths**: in a residential zone a path counts as frontage, so houses and
   blocks line footpaths. Such lots have no car access: a resident's car trips start and
   end at the nearest street, the last stretch is walked over the pedestrian network,
@@ -720,7 +741,7 @@ trait MindProvider {
 - Mobility: one sim minute shows `traffic_seconds_per_tick` (1.5 s) of motion for everyone, so
   walking is 1.4 m/s, cycling 4.5 m/s and driving the lane speed limit on the same clock. Citizens
   own a car and/or a bike by class (poor: 12% car, 60% bike; middle: 60% / 35%; rich: 92% / 35%)
-  and buy or sell them as savings allow. Walkers use the middle of the pavement, bikes the road
+  and buy or sell them as savings allow. Walkers keep right of the pavement's middle, bikes the road
   shoulder, both the centre of a path; bike owners ride to parks for pleasure.
 - Who drives what (`nd_sim::vehicle`): the model is chosen at purchase from income, age and the
   personality's hedonism. The poor run beat-up cheap cars, scooters and old motorcycles (they can
