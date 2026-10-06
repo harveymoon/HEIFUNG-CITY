@@ -129,11 +129,12 @@ impl World {
             self.strand_flyer(c, d.pos);
         }
         if let Job::Medic { incident, .. } = d.job {
-            if let Some(i) = self.services.incident_mut(incident) {
-                if matches!(i.stage, Stage::Dispatched | Stage::Transporting) {
-                    i.stage = Stage::Reported;
-                    i.dispatch_at = Some(self.clock.tick);
-                }
+            // [services] On scene too: the air crew's work never runs down
+            // (`work_left` is f32::MAX while they have it), so a patient left
+            // OnScene was pinned for ever. Back in the queue with the ground
+            // crew's time (`requeue`).
+            if self.services.incident(incident).is_some_and(|i| matches!(i.stage, Stage::Dispatched | Stage::OnScene | Stage::Transporting)) {
+                self.requeue(incident);
             }
         }
     }

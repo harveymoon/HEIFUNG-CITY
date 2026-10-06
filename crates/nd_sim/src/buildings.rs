@@ -377,10 +377,12 @@ impl Building {
         self.business.as_ref().map_or(false, |b| b.kind == Business::PARKING_KIND)
     }
 
-    /// Placed by the player: a plant, depot, station, yard, service or
+    /// Placed by the player: a plant, depot, station, yard, dock, service or
     /// attraction. Never upgraded, redeveloped or counted towards density.
+    /// (A dock was missing here: the daily market update retiered shipping
+    /// ports and recomputed their jobs as an ordinary industrial building.)
     pub fn is_special(&self) -> bool {
-        self.plant.is_some() || self.depot || self.rail.is_some() || self.service.is_some() || self.metro
+        self.plant.is_some() || self.depot || self.rail.is_some() || self.port.is_some() || self.service.is_some() || self.metro
     }
 
     pub fn parking_free(&self) -> u16 {

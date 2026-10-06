@@ -57,6 +57,14 @@ pub const ENGINE_RATE: f32 = 0.012;
 pub const FIRE_DAMAGE: f32 = 0.0012;
 /// At or below this condition a burning building is gone.
 pub const BURNED_DOWN: f32 = 0.08;
+/// [services] Condition the city restores on one of its own structures
+/// (stations, plants, depots, docks...) per day while it is damaged: a
+/// gutted station is back in service in about a day and a half (past the
+/// derelict line) and fully repaired in under four.
+pub const REPAIR_PER_DAY: f32 = 0.25;
+/// [services] What repairs cost: this share of the structure's build price
+/// for the whole of its condition (a gutted hospital about half its price).
+pub const REPAIR_SHARE: f32 = 0.5;
 /// Fires above this intensity can jump to buildings this close (lot
 /// centres), checked every `SPREAD_EVERY` ticks with `SPREAD_CHANCE` x
 /// intensity per neighbour.
@@ -908,6 +916,9 @@ pub enum Outcome {
     Gone,
     /// [driving] Crash scene cleared, wrecks towed.
     Cleared,
+    /// [services] A civic structure burned out: it stands, out of service,
+    /// until the city has repaired it (civic buildings never burn down).
+    Gutted,
 }
 
 impl Outcome {
@@ -923,6 +934,7 @@ impl Outcome {
             Outcome::Recovered => "recovered without help",
             Outcome::Gone => "gone",
             Outcome::Cleared => "scene cleared",
+            Outcome::Gutted => "gutted, under repair",
         }
     }
 }
@@ -1086,6 +1098,10 @@ pub struct Unit {
     /// On patrol, parked on a beat: when it moves on.
     #[serde(default)]
     pub patrol_until: u64,
+    /// [services] Its station is gone: it is driving off the map, where it
+    /// leaves the world (it takes no calls any more).
+    #[serde(default)]
+    pub leaving: bool,
 }
 
 impl Unit {

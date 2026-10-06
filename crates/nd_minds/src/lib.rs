@@ -388,9 +388,16 @@ pub struct HybridMind {
     rules: RuleBasedMind,
     backend: Box<dyn MindBackend>,
     pending: HashMap<RequestId, CitizenId>,
-    in_flight: HashMap<CitizenId, RequestId>,
+    /// Each spotlight citizen's open request and the tick it was asked.
+    in_flight: HashMap<CitizenId, (RequestId, u64)>,
     next_request: RequestId,
 }
+
+/// Ticks after which an unanswered request is given up and the citizen may
+/// be asked about again (a backend that drops a request would otherwise
+/// silence that citizen for good). Its answer, if it still comes, is
+/// dropped.
+pub const REQUEST_TTL: u64 = 240;
 
 impl HybridMind {
     pub fn new(backend: Box<dyn MindBackend>) -> Self {
@@ -450,11 +457,18 @@ impl HybridMind {
 impl MindProvider for HybridMind {
     fn decide(&mut self, ctx: &MindContext) -> Option<Decision> {
         let base = self.rules.decide(ctx);
+        let now = ctx.clock.tick;
+        if let Some(&(old, asked)) = self.in_flight.get(&ctx.id) {
+            if now.saturating_sub(asked) > REQUEST_TTL {
+                self.pending.remove(&old);
+                self.in_flight.remove(&ctx.id);
+            }
+        }
         if ctx.citizen.spotlight && !self.in_flight.contains_key(&ctx.id) {
             let id = self.next_request;
             self.next_request += 1;
             self.pending.insert(id, ctx.id);
-            self.in_flight.insert(ctx.id, id);
+            self.in_flight.insert(ctx.id, (id, now));
             self.backend.submit(id, Self::build_prompt(ctx));
         }
         base
@@ -464,11 +478,20 @@ impl MindProvider for HybridMind {
         let mut out = Vec::new();
         for (req, answer) in self.backend.poll() {
             let Some(citizen) = self.pending.remove(&req) else { continue };
-            self.in_flight.remove(&citizen);
+            if self.in_flight.get(&citizen).is_some_and(|f| f.0 == req) {
+                self.in_flight.remove(&citizen);
+            }
             let intent = Self::parse_intent(&answer.intent).unwrap_or(Intent::Stay);
             out.push((citizen, Decision { intent, thought: answer.thought, memory: answer.memory }));
         }
         out
+    }
+
+    /// Request ids keep counting up, so answers to anything asked before
+    /// the reset find no pending entry and are dropped.
+    fn reset(&mut self) {
+        self.pending.clear();
+        self.in_flight.clear();
     }
 
     fn name(&self) -> &'static str {

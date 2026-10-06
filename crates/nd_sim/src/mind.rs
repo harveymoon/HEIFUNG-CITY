@@ -77,6 +77,11 @@ pub trait MindProvider {
         Vec::new()
     }
 
+    /// The world was replaced (a save loaded, a new game): forget every
+    /// request still out, so a late answer about a citizen of the old world
+    /// is not applied to whoever reuses that id in the new one.
+    fn reset(&mut self) {}
+
     fn name(&self) -> &'static str;
 }
 

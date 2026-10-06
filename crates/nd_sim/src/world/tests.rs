@@ -328,7 +328,30 @@ fn buses_need_a_depot_run_a_loop_and_carry_riders() {
     assert_eq!(w.transit.routes[route].buses, 2);
     w.remove_bus_route(route);
     assert!(w.transit.routes.is_empty());
+    // [services] Its buses let their riders off and drive home to the
+    // depot (they used to vanish where they stood), then are gone.
+    let out: Vec<CarId> = w.traffic.cars.iter().filter(|(_, c)| c.bus.is_some()).map(|(id, _)| id).collect();
+    for &b in &out {
+        let bus = w.traffic.cars[b].bus.as_ref().unwrap();
+        assert!(bus.passengers.is_empty() && bus.to_depot && bus.next_stop == usize::MAX && bus.depot == depot, "heading home empty");
+    }
+    let depot_at = w.building_lot(depot).unwrap().car_point;
+    let mut last: std::collections::HashMap<CarId, Vec2> = std::collections::HashMap::new();
+    for _ in 0..600 {
+        for &b in &out {
+            if let Some(c) = w.traffic.cars.get(b) {
+                last.insert(b, c.pos);
+            }
+        }
+        w.tick(&mut minds);
+        if w.traffic.cars.values().all(|c| c.bus.is_none()) {
+            break;
+        }
+    }
     assert_eq!(w.traffic.cars.values().filter(|c| c.bus.is_some()).count(), 0);
+    for (b, p) in &last {
+        assert!(p.distance(depot_at) < 40.0, "bus {b:?} left the road at its depot, not at {p}");
+    }
     // Round trip keeps the depot.
     let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
     assert!(back.buildings[depot].depot);
