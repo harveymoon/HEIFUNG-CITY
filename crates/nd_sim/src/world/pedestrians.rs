@@ -57,6 +57,7 @@ impl World {
     /// Before the walkers move: the day's counts, crossings matched to the
     /// lane network, last tick's conflicts, and the spatial grid.
     pub(super) fn feet_begin(&mut self) -> Feet {
+        crate::prof_scope!("feet_begin");
         if self.clock.minute_of_day() == 0 {
             let p = &mut self.peds;
             p.jaywalkers_today = 0;
@@ -80,6 +81,7 @@ impl World {
     /// After the walkers moved: the crossings in use become stop points for
     /// drivers, and the walk calls go to the signals.
     pub(super) fn feet_end(&mut self, feet: Feet) {
+        crate::prof_scope!("feet_end");
         let mut occ = feet.occupied;
         occ.sort();
         occ.dedup();
@@ -210,6 +212,7 @@ impl World {
     /// One tick of walking for `id` (on foot, `Activity::Traveling`): true
     /// once the path is done.
     pub(super) fn step_walker(&mut self, id: CitizenId, feet: &mut Feet) -> bool {
+        crate::prof_scope!("step_walker");
         let tick = self.clock.tick;
         let speed = self.config.walk_speed;
         let (seed, start) = {

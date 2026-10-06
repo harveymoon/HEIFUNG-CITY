@@ -528,6 +528,7 @@ impl World {
     /// and remembers `memory`. The caller seats them in its vehicle. The
     /// fares are itemised under `item` (the bus line, the station).
     pub(super) fn board_waiting(&mut self, pred: impl Fn(&TransitLeg) -> bool, capacity: usize, fare: f32, flow: Flow, item: Item, memory: &str) -> Vec<CitizenId> {
+        crate::prof_scope!("board_waiting");
         let tick = self.clock.tick;
         let boarding: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.as_ref().is_some_and(|t| pred(&t.leg))).map(|(id, _)| id).take(capacity).collect();
         for &p in &boarding {

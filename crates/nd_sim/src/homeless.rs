@@ -368,6 +368,8 @@ impl World {
     // ── the hourly round ───────────────────────────────────────────────────
 
     pub(crate) fn hourly_homeless(&mut self) {
+
+        crate::prof_scope!("hourly_homeless");
         let tick = self.clock.tick;
         let hour = self.clock.hour();
         // Who is on the street: every household without a home that has
@@ -490,6 +492,8 @@ impl World {
     // ── midnight ───────────────────────────────────────────────────────────
 
     pub(crate) fn daily_homeless(&mut self) {
+
+        crate::prof_scope!("daily_homeless");
         let tick = self.clock.tick;
         let day = tick / 1440;
         let list: Vec<(HouseholdId, u64)> = self.society.homeless.since.clone();

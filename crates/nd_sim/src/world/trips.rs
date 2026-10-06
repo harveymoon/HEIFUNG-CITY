@@ -821,6 +821,8 @@ impl World {
     }
 
     pub(super) fn arrive(&mut self, id: CitizenId) {
+
+        crate::prof_scope!("arrive");
         let tick = self.clock.tick;
         let (to, purpose) = match &self.citizens[id].activity {
             Activity::Traveling { to, purpose, .. } | Activity::Driving { to, purpose, .. } => (*to, *purpose),
@@ -1099,6 +1101,7 @@ impl World {
     }
 
     pub(super) fn travel_to(&mut self, id: CitizenId, target: Option<BuildingId>, purpose: Purpose) {
+        crate::prof_scope!("travel_to");
         self.travel_to_impl(id, target, purpose, true, true);
     }
 

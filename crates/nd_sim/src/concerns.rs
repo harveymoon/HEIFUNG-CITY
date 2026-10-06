@@ -490,6 +490,7 @@ impl World {
 
     /// Every tick, cheap: sample happiness at midnight and on the hour.
     pub(crate) fn step_concerns(&mut self) {
+        crate::prof_scope!("step_concerns");
         let tick = self.clock.tick;
         if tick % 60 != 0 {
             return;

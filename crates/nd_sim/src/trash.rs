@@ -312,6 +312,7 @@ impl World {
 
     /// Bins fill; coverage and the hauler's client list are refreshed; rats.
     pub(crate) fn hourly_trash(&mut self) {
+        crate::prof_scope!("hourly_trash");
         let depots = self.trash_depots();
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         let mut produced = 0.0;
@@ -644,6 +645,7 @@ impl World {
 
     /// Complaints, the hauler's fees, and the day's counters.
     pub(crate) fn daily_trash(&mut self) {
+        crate::prof_scope!("daily_trash");
         let tick = self.clock.tick;
         // Overflowing bins: the residents complain, the block smells.
         let over: Vec<(BuildingId, f32)> = self.society.trash.bins.iter().filter(|(_, b)| b.overflow() > 0.0).map(|(id, b)| (*id, b.overflow())).collect();

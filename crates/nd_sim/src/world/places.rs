@@ -115,6 +115,7 @@ impl World {
     /// new; `explore` looks only at unknown places near by first ("looking
     /// for a drink"). Open places with room only, never a sworn-off one.
     pub(super) fn choose_place(&mut self, id: CitizenId, lu: LandUse, explore: bool) -> Option<BuildingId> {
+        crate::prof_scope!("choose_place");
         let hour = self.clock.hour() as u8;
         let tick = self.clock.tick;
         let here = self.citizens.get(id)?.pos;
@@ -317,6 +318,7 @@ impl World {
 
     /// Rate a visit just begun at `b` (a venue, shop or park).
     pub(super) fn rate_visit(&mut self, id: CitizenId, b: BuildingId) {
+        crate::prof_scope!("rate_visit");
         let tick = self.clock.tick;
         let Some(bld) = self.buildings.get(b) else { return };
         if !places::is_place(bld) {
@@ -428,6 +430,7 @@ impl World {
     /// Midnight: forget places that are gone, count each place's regulars
     /// and sworn-off customers, start the day's tallies.
     pub(super) fn daily_places(&mut self) {
+        crate::prof_scope!("daily_places");
         let buildings = &self.buildings;
         let alive = |b: BuildingId| buildings.get(b).is_some_and(places::is_place);
         for c in self.citizens.values_mut() {

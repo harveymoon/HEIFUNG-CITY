@@ -88,6 +88,7 @@ impl World {
     /// One delivery round: a few shops take an order each, by robot on rich
     /// streets, by van elsewhere. Called every [`ROUND_TICKS`].
     pub fn dispatch_deliveries(&mut self) {
+        crate::prof_scope!("dispatch_deliveries");
         let hour = self.clock.hour() as u8;
         if !(8..22).contains(&hour) {
             return;

@@ -37,6 +37,8 @@ pub mod places;
 pub mod plan;
 pub mod ports;
 pub mod power;
+/// Section timings for perf probes (`profile` feature only).
+pub mod prof;
 pub mod rail;
 pub mod roads;
 pub mod services;

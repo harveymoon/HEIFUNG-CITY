@@ -333,6 +333,8 @@ impl World {
     // ── the hourly round ───────────────────────────────────────────────────
 
     pub(crate) fn hourly_crime(&mut self) {
+
+        crate::prof_scope!("hourly_crime");
         self.track_custody();
         self.recruit_offenders();
         self.commit_offences();
@@ -340,6 +342,7 @@ impl World {
 
     /// Watch the services' custody record: arrests, sentences, releases.
     fn track_custody(&mut self) {
+        crate::prof_scope!("track_custody");
         let tick = self.clock.tick;
         let mut reform: Vec<usize> = Vec::new();
         for k in 0..self.society.crime.offenders.len() {
@@ -397,6 +400,8 @@ impl World {
     }
 
     pub(crate) fn recruit_offenders(&mut self) {
+
+        crate::prof_scope!("recruit_offenders");
         let adults = self.citizens.values().filter(|c| c.stage() == LifeStage::Adult).count();
         let cap = (adults as f32 * MAX_SHARE).ceil() as usize;
         let ids: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.stage() == LifeStage::Adult && !matches!(c.activity, Activity::Arriving)).map(|(id, _)| id).collect();
@@ -419,6 +424,8 @@ impl World {
     }
 
     fn commit_offences(&mut self) {
+
+        crate::prof_scope!("commit_offences");
         let hour = self.clock.hour();
         let night = !(6..21).contains(&hour);
         let active: Vec<(CitizenId, f32)> = self.society.crime.active().map(|o| (o.citizen, o.boldness)).collect();
@@ -648,6 +655,8 @@ impl World {
     // ── midnight ───────────────────────────────────────────────────────────
 
     pub(crate) fn daily_crime(&mut self) {
+
+        crate::prof_scope!("daily_crime");
         let tick = self.clock.tick;
         // Some give it up: a job helps, a decent wage more.
         let mut gone: Vec<usize> = Vec::new();

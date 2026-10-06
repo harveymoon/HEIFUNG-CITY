@@ -760,90 +760,90 @@ impl World {
             // The day's counters, read before anything below resets them.
             let record = self.open_day_record();
             // Services settle their upkeep before the books close.
-            self.daily_services();
+            crate::prof!("daily_services", self.daily_services());
             // [subway] Upkeep before the books close.
-            self.daily_subway();
+            crate::prof!("daily_subway", self.daily_subway());
             // [society] crime, the street and the bins settle their day.
-            self.daily_society();
-            self.daily_update();
-            self.daily_vehicles();
-            self.industry_daily();
-            self.daily_places();
+            crate::prof!("daily_society", self.daily_society());
+            crate::prof!("daily_update", self.daily_update());
+            crate::prof!("daily_vehicles", self.daily_vehicles());
+            crate::prof!("industry_daily", self.industry_daily());
+            crate::prof!("daily_places", self.daily_places());
             // [districts] facelifts; [tourism] hotel nights and the books.
-            self.daily_districts();
-            self.daily_tourism();
-            self.close_day_record(record);
+            crate::prof!("daily_districts", self.daily_districts());
+            crate::prof!("daily_tourism", self.daily_tourism());
+            crate::prof!("close_day_record", self.close_day_record(record));
         }
         // Periodic work is staggered so no tick carries more than one heavy
         // job: the hour starts at :00, sites advance at :30, land value runs
         // in strips from :20, development and immigration sit between.
         if tick % 60 == 0 {
-            self.hourly_economy();
-            self.industry_hourly();
-            self.record_hour();
+            crate::prof!("hourly_economy", self.hourly_economy());
+            crate::prof!("industry_hourly", self.industry_hourly());
+            crate::prof!("record_hour", self.record_hour());
         }
         if tick % 60 == 30 {
-            self.step_construction();
+            crate::prof!("step_construction", self.step_construction());
         }
         let lv = tick % 120;
         if (LAND_VALUE_PHASE..LAND_VALUE_PHASE + LAND_VALUE_STRIPS).contains(&lv) {
-            self.update_land_value_strip((lv - LAND_VALUE_PHASE) as u8);
+            crate::prof!("update_land_value_strip", self.update_land_value_strip((lv - LAND_VALUE_PHASE) as u8));
         }
         if tick % 10 == 7 {
-            self.update_economy();
+            crate::prof!("update_economy", self.update_economy());
         }
         if (tick + 5) % self.config.development_interval == 0 {
-            self.develop();
+            crate::prof!("develop", self.develop());
         }
         if (tick + 15) % self.config.immigration_interval == 0 {
-            self.immigrate();
+            crate::prof!("immigrate", self.immigrate());
         }
         if tick % 120 == 90 {
-            self.job_search();
+            crate::prof!("job_search", self.job_search());
         }
         // Fires, crimes and illness roll hourly at :50, clear of the rest.
         if tick % 60 == 50 {
-            self.hourly_services();
+            crate::prof!("hourly_services", self.hourly_services());
         }
         // [society] Bins, camps and crime at :40.
         if tick % 60 == 40 {
-            self.hourly_society();
+            crate::prof!("hourly_society", self.hourly_society());
         }
         if tick % 60 == 45 {
-            self.hourly_vehicles();
+            crate::prof!("hourly_vehicles", self.hourly_vehicles());
         }
         for (id, decision) in minds.poll() {
             if self.citizens.contains_key(id) {
-                self.apply_decision(id, decision);
+                crate::prof!("apply_decision", self.apply_decision(id, decision));
             }
         }
-        self.step_traffic();
-        self.step_air();
-        self.step_taxis();
-        self.step_driving();
-        self.step_enforcement();
-        self.step_services();
+        crate::prof!("step_traffic", self.step_traffic());
+        crate::prof!("step_air", self.step_air());
+        crate::prof!("step_taxis", self.step_taxis());
+        crate::prof!("step_driving", self.step_driving());
+        crate::prof!("step_enforcement", self.step_enforcement());
+        crate::prof!("step_services", self.step_services());
         // [society] Trash trucks.
-        self.step_society();
-        self.step_through_traffic();
-        self.step_transit();
-        self.step_rail();
-        self.step_subway();
-        self.step_ships();
-        self.step_cargo_hubs();
+        crate::prof!("step_society", self.step_society());
+        crate::prof!("step_through_traffic", self.step_through_traffic());
+        crate::prof!("step_transit", self.step_transit());
+        crate::prof!("step_rail", self.step_rail());
+        crate::prof!("step_subway", self.step_subway());
+        crate::prof!("step_ships", self.step_ships());
+        crate::prof!("step_cargo_hubs", self.step_cargo_hubs());
         if self.clock.minute_of_day() == 0 {
             self.bots.delivered_today = 0;
             self.bots.van_orders_today = 0;
         }
         if tick % crate::bots::ROUND_TICKS == 11 {
-            self.dispatch_deliveries();
+            crate::prof!("dispatch_deliveries", self.dispatch_deliveries());
         }
-        self.step_bots();
+        crate::prof!("step_bots", self.step_bots());
         // [tourism] Arrivals on the hour, visitors' days, departures.
-        self.step_tourism();
-        self.step_citizens(minds);
+        crate::prof!("step_tourism", self.step_tourism());
+        crate::prof!("step_citizens", self.step_citizens(minds));
         // [concerns] Happiness on the hour and at midnight.
-        self.step_concerns();
+        crate::prof!("step_concerns", self.step_concerns());
         // Every system that moves people has run: lay the breadcrumbs.
         for c in self.citizens.values_mut() {
             c.push_trail();

@@ -238,6 +238,7 @@ impl World {
     /// Once a sim day: buildings wear, upgrade or decay; citizens pay rent and
     /// react to it.
     pub(super) fn daily_update(&mut self) {
+        crate::prof_scope!("daily_update");
         // Treasury: yesterday's taxes came in as they were earned; plant
         // upkeep and imported power are settled now, then the books close.
         // Each plant is its own line in the itemised ledger.
