@@ -40,6 +40,7 @@ fn service_floors(kind: ServiceKind, tier: Tier) -> u8 {
         ServiceKind::Stadium => [1, 2, 3],
         ServiceKind::Jail => [1, 2, 3],
         ServiceKind::TrashDepot => [1, 1, 2],
+        ServiceKind::Vertiport => [1, 2, 4],
     };
     f[tier.index()]
 }
@@ -289,6 +290,7 @@ impl World {
             IncidentKind::Fire => 0.0,
             IncidentKind::Crime => CRIME_WORK,
             IncidentKind::Medical => MEDICAL_WORK,
+            IncidentKind::Crash => CRASH_WORK,
         };
         self.services.incidents.push(Incident {
             id,
@@ -319,8 +321,11 @@ impl World {
             unit_name: None,
             people: Vec::new(),
             damage: Vec::new(),
+            on_road: false,
         });
-        self.services.stats.incidents_today[kind.index()] += 1;
+        if let Some(n) = self.services.stats.incidents_today.get_mut(kind.index()) {
+            *n += 1;
+        }
         self.events.push(SimEvent::IncidentStarted(id));
         id
     }
@@ -364,6 +369,46 @@ impl World {
             }
         }
         Some(id)
+    }
+
+    /// [driving] A bad crash on the road at `at`: the police come to clear
+    /// it (and arrest `at_fault`, if given, when they can), and every one of
+    /// `injured` waits there for an ambulance. `near` names the place.
+    /// `caller` is whoever saw it and calls 911. Returns the crash incident
+    /// and the medical ones.
+    pub fn report_crash(&mut self, at: Vec2, near: BuildingId, drivers: &[CitizenId], injured: &[CitizenId], at_fault: Option<CitizenId>, caller: Option<CitizenId>) -> Option<(u32, Vec<u32>)> {
+        if !self.buildings.contains_key(near) {
+            return None;
+        }
+        let delay = self.srng().random_range(1..5);
+        let id = self.open_incident(IncidentKind::Crash, near, None, at_fault, delay);
+        let names: Vec<(CitizenId, String, &str)> = drivers
+            .iter()
+            .map(|&c| (c, if Some(c) == at_fault { "driver at fault" } else { "driver" }))
+            .chain(injured.iter().map(|&c| (c, "injured")))
+            .filter_map(|(c, role)| self.citizens.get(c).map(|x| (c, x.name.clone(), role)))
+            .collect();
+        if let Some(i) = self.services.incident_mut(id) {
+            i.pos = at;
+            i.on_road = true;
+            i.caller = caller;
+            for (c, n, role) in names {
+                i.involve(c, &n, role);
+            }
+        }
+        let mut medical = Vec::new();
+        for &p in injured {
+            let Some(name) = self.citizens.get(p).map(|c| c.name.clone()) else { continue };
+            let m = self.open_incident(IncidentKind::Medical, near, Some(p), None, delay);
+            if let Some(i) = self.services.incident_mut(m) {
+                i.pos = at;
+                i.on_road = true;
+                i.caller = caller;
+                i.involve(p, &name, "patient");
+            }
+            medical.push(m);
+        }
+        Some((id, medical))
     }
 
     /// A crime at a building: a victim from whoever is there, a suspect
@@ -616,8 +661,7 @@ impl World {
         let out = self.units_out();
         let mut n = [0; 3];
         for u in self.services.units.values().filter(|u| self.unit_available(u, &out)) {
-            let k = IncidentKind::ALL.iter().position(|k| k.unit() == u.kind).unwrap_or(0);
-            n[k] += 1;
+            n[u.kind as usize] += 1;
         }
         n
     }
@@ -664,7 +708,7 @@ impl World {
         let mut free = self.free_units();
         let mut queued = [0u32; 3];
         for (prio, reported, id, kind) in queue {
-            let k = kind.index();
+            let k = kind.slot();
             let first = self.services.incident(id).and_then(|i| i.dispatch_at) == Some(tick);
             // A call no free unit could reach is retried every five minutes.
             let retry = first || tick % 5 == 0 || !self.services.route_failed.contains_key(&id);
@@ -675,7 +719,15 @@ impl World {
                     continue;
                 }
                 if free[k] > 0 {
+                    // Free units, but no road from any of them: a crash on
+                    // the highway beyond the city's streets, a cut-off block.
+                    // The next town's (or the highway patrol's) units take it.
                     self.services.route_failed.insert(id, tick);
+                    if self.services.incident(id).and_then(|i| i.dispatcher).is_some() {
+                        self.services.stats.unreachable_today += 1;
+                        self.send_from_out_of_town(id, MUTUAL_AID_TRAVEL, true);
+                        continue;
+                    }
                 }
             }
             if free[k] == 0 && prio == 0 && kind == IncidentKind::Crime && self.divert_for(id) {
@@ -744,7 +796,9 @@ impl World {
     /// Where a unit pulls up for an incident.
     fn incident_access(&self, id: u32) -> Option<(SegmentId, Vec2)> {
         let inc = self.services.incident(id)?;
-        self.building_lot(inc.building).and_then(|l| self.lot_access(l)).or_else(|| self.roads.nearest_street(inc.pos).map(|(s, _, q)| (s, q)))
+        // Street incidents (crashes, the hurt in them, takeovers): at the spot.
+        let on_street = if inc.on_road { self.roads.nearest_street(inc.pos).map(|(s, _, q)| (s, q)) } else { None };
+        on_street.or_else(|| self.building_lot(inc.building).and_then(|l| self.lot_access(l))).or_else(|| self.roads.nearest_street(inc.pos).map(|(s, _, q)| (s, q)))
     }
 
     /// Take a unit's car off the road, leaving the unit where the car was.
@@ -957,7 +1011,7 @@ impl World {
     fn step_incident(&mut self, id: u32) {
         let tick = self.clock.tick;
         let Some(inc) = self.services.incident(id).cloned() else { return };
-        if !self.buildings.contains_key(inc.building) {
+        if !inc.on_road && !self.buildings.contains_key(inc.building) {
             self.resolve(id, Outcome::Gone);
             return;
         }
@@ -967,7 +1021,8 @@ impl World {
         // A patient who is no longer where they fell ill (left town, the
         // building came down) is not waiting any more.
         if inc.kind == IncidentKind::Medical && matches!(inc.stage, Stage::Unreported | Stage::Reported | Stage::Dispatched | Stage::OnScene) {
-            let here = inc.citizen.and_then(|c| self.citizens.get(c)).is_some_and(|c| c.inside == Some(inc.building));
+            // [driving] Hurt on the road: still out there, not taken anywhere.
+            let here = inc.citizen.and_then(|c| self.citizens.get(c)).is_some_and(|c| if inc.on_road { c.inside.is_none() && !c.activity.is_traveling() } else { c.inside == Some(inc.building) });
             if !here {
                 self.resolve(id, Outcome::Gone);
                 return;
@@ -985,12 +1040,12 @@ impl World {
                 let since = tick.saturating_sub(inc.reported.unwrap_or(tick));
                 // (Dispatch itself runs over the whole queue: `dispatch_queue`.)
                 let give_up = match inc.kind {
-                    IncidentKind::Crime if since > CRIME_GIVE_UP => Some(Outcome::Unsolved),
+                    IncidentKind::Crime | IncidentKind::Crash if since > CRIME_GIVE_UP => Some(Outcome::Unsolved),
                     IncidentKind::Medical if since > MEDICAL_GIVE_UP => Some(Outcome::Recovered),
                     _ => None,
                 };
                 if let Some(o) = give_up {
-                    let k = inc.kind.index();
+                    let k = inc.kind.slot();
                     let city_has = self.services.units.values().any(|u| u.kind == inc.kind.unit() && self.crewed_units(u.station) > 0);
                     let free = self.free_units()[k];
                     let why = &mut self.services.stats.unanswered_why_today[k];
@@ -1134,7 +1189,12 @@ impl World {
         let bname = self.buildings.get(inc.building).map(|b| b.name.clone()).unwrap_or_default();
         // The caller: someone inside, else someone who lives or works there.
         let inside: Vec<CitizenId> = self.citizens.iter().filter(|(cid, c)| c.inside == Some(inc.building) && Some(*cid) != inc.citizen && Some(*cid) != inc.suspect).map(|(cid, _)| cid).collect();
-        let caller = inside.choose(self.srng()).copied().or_else(|| self.buildings.get(inc.building).and_then(|b| b.residents.first().or(b.workers.first()).copied())).or(if inc.kind == IncidentKind::Crime { inc.citizen } else { None });
+        let caller = if inc.on_road {
+            // [driving] Whoever saw it from the street.
+            inc.caller
+        } else {
+            inside.choose(self.srng()).copied().or_else(|| self.buildings.get(inc.building).and_then(|b| b.residents.first().or(b.workers.first()).copied())).or(if inc.kind == IncidentKind::Crime { inc.citizen } else { None })
+        };
         let (dispatcher, delay) = self.dispatcher();
         {
             let i = self.services.incident_mut(id).unwrap();
@@ -1152,8 +1212,10 @@ impl World {
         }
         let what = match inc.kind {
             IncidentKind::Fire => format!("smoke pouring out of {bname}"),
-            IncidentKind::Crime => format!("a robbery at {bname}"),
+            IncidentKind::Crime => format!("a {} at {bname}", inc.crime.map_or("robbery", |c| c.label())),
+            IncidentKind::Medical if inc.on_road => format!("{} hurt in a crash by {bname}", inc.citizen.and_then(|c| self.citizens.get(c)).map_or("someone".to_string(), |c| c.name.clone())),
             IncidentKind::Medical => format!("{} collapsed at {bname}", inc.citizen.and_then(|c| self.citizens.get(c)).map_or("someone".to_string(), |c| c.name.clone())),
+            IncidentKind::Crash => format!("a bad crash by {bname}"),
         };
         if let Some(c) = caller.and_then(|c| self.citizens.get_mut(c)) {
             c.remember(tick, format!("Called 911: {what}."));
@@ -1222,7 +1284,7 @@ impl World {
         let tick = self.clock.tick;
         let Some(inc) = self.services.incident(id).cloned() else { return };
         let uk = inc.kind.unit();
-        let fee = OUT_OF_TOWN_FEE[inc.kind.index()];
+        let fee = OUT_OF_TOWN_FEE[inc.kind.slot()];
         self.economy.debit(Flow::ServiceUpkeep, fee);
         self.services.stats.out_of_town_calls_today += 1;
         self.services.stats.out_of_town_fees_today += fee;
@@ -1317,7 +1379,7 @@ impl World {
 
     /// A unit (city or out of town) got there: the clock on the response
     /// stops and the people involved see it arrive.
-    fn on_scene(&mut self, id: u32) {
+    pub(super) fn on_scene(&mut self, id: u32) {
         let tick = self.clock.tick;
         let (kind, bid, response) = {
             let i = self.services.incident_mut(id).unwrap();
@@ -1328,16 +1390,18 @@ impl World {
         if let Some(r) = response {
             self.services.stats.response_ticks_today += r;
             self.services.stats.responses_today += 1;
-            self.services.stats.response_min_today[kind.index()].push(r.min(u16::MAX as u64) as u16);
+            self.services.stats.response_min_today[kind.slot()].push(r.min(u16::MAX as u64) as u16);
         }
         let bname = self.buildings.get(bid).map(|b| b.name.clone()).unwrap_or_default();
         let note = match kind {
             IncidentKind::Fire => format!("The fire brigade arrived at {bname}, sirens going."),
             IncidentKind::Crime => format!("The police showed up at {bname}."),
             IncidentKind::Medical => format!("Paramedics came for me at {bname}."),
+            IncidentKind::Crash => format!("The police came to the crash by {bname}."),
         };
         let who: Vec<CitizenId> = match kind {
             IncidentKind::Medical => self.services.incident(id).and_then(|i| i.citizen).into_iter().collect(),
+            IncidentKind::Crash => self.services.incident(id).map(|i| i.people.iter().map(|p| p.citizen).collect()).unwrap_or_default(),
             _ => self.buildings.get(bid).map(|b| b.residents.iter().chain(b.workers.iter()).copied().collect()).unwrap_or_default(),
         };
         for cid in who {
@@ -1433,10 +1497,27 @@ impl World {
                 }
             }
             IncidentKind::Fire => {}
+            IncidentKind::Crash => {
+                // A drunk or a red-light runner who is not in an ambulance
+                // may be taken in; the wrecks are towed (`World::step_driving`).
+                let suspect = inc.suspect.filter(|&s| self.citizens.contains_key(s) && !self.is_patient(s) && !self.services.in_custody(s));
+                if suspect.is_some() && self.srng().random::<f32>() < DUI_ARREST {
+                    let s = suspect.unwrap();
+                    let c = &mut self.citizens[s];
+                    c.remember(tick, "Arrested at the scene of my crash.");
+                    c.mood = (c.mood - 0.2).max(0.0);
+                    c.thought = "Should never have got behind the wheel.".to_string();
+                    self.services.stats.arrests_today += 1;
+                    self.take_into_custody(id, s);
+                    self.resolve(id, Outcome::Arrest);
+                } else {
+                    self.resolve(id, Outcome::Cleared);
+                }
+            }
         }
     }
 
-    fn treat_on_site(&mut self, id: u32) {
+    pub(super) fn treat_on_site(&mut self, id: u32) {
         let tick = self.clock.tick;
         if let Some(c) = self.services.incident(id).and_then(|i| i.citizen).and_then(|c| self.citizens.get_mut(c)) {
             c.remember(tick, "Patched up by paramedics where I fell. No bed free anywhere.");
@@ -1473,7 +1554,7 @@ impl World {
     }
 
     /// A patient into a hospital bed; the household is billed.
-    fn admit(&mut self, id: u32, p: CitizenId, h: BuildingId) {
+    pub(super) fn admit(&mut self, id: u32, p: CitizenId, h: BuildingId) {
         let tick = self.clock.tick;
         {
             {
@@ -1514,7 +1595,7 @@ impl World {
 
     /// An arrested suspect goes to a jail with room for a sentence, or is
     /// held at the nearest police station for a few hours and let go.
-    fn take_into_custody(&mut self, id: u32, s: CitizenId) {
+    pub(super) fn take_into_custody(&mut self, id: u32, s: CitizenId) {
         let tick = self.clock.tick;
         if !self.citizens.contains_key(s) {
             return;
@@ -1604,7 +1685,7 @@ impl World {
     }
 
     /// Close an incident. The unit on scene, if any, heads home.
-    fn resolve(&mut self, id: u32, outcome: Outcome) {
+    pub(super) fn resolve(&mut self, id: u32, outcome: Outcome) {
         let tick = self.clock.tick;
         let Some(inc) = self.services.incident_mut(id) else { return };
         if !inc.active() {
@@ -1614,7 +1695,9 @@ impl World {
         inc.resolved = Some(tick);
         inc.outcome = Some(outcome);
         let (kind, unit, citizen, bid, answered) = (inc.kind, inc.unit, inc.citizen, inc.building, inc.arrived.is_some());
-        self.services.stats.resolved_today[kind.index()] += 1;
+        if let Some(n) = self.services.stats.resolved_today.get_mut(kind.index()) {
+            *n += 1;
+        }
         if !answered && !matches!(outcome, Outcome::Gone) {
             self.services.stats.unanswered_today += 1;
         }
@@ -1777,6 +1860,7 @@ impl World {
         st.unanswered_why_today = Default::default();
         st.mutual_aid_today = 0;
         st.diverted_today = 0;
+        st.unreachable_today = 0;
         st.out_of_town_fees_today = 0.0;
         st.bills_paid_today = 0.0;
         st.bills_covered_today = 0.0;

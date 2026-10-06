@@ -51,6 +51,26 @@ impl Personality {
     }
 }
 
+/// [carlife] What the commute has been like, when it has been bad: the
+/// sim's `Commute` memory (and it is the sim that changes how they travel).
+pub fn commute_thought(c: &nd_sim::Citizen) -> Option<&'static str> {
+    use nd_sim::citizens::TripMode;
+    let p = &c.commute;
+    if c.car.is_some() && p.parking_pain > 1.0 {
+        return Some("Another morning circling for a parking space. Maybe the bike.");
+    }
+    if p.pain_of(TripMode::Car) > 1.5 {
+        return Some("Traffic again. There has to be a better way in.");
+    }
+    if p.pain_of(TripMode::Bus).max(p.pain_of(TripMode::Train)) > 1.5 {
+        return Some("If the bus shows up at all. I should get a car.");
+    }
+    if p.pain_of(TripMode::Walk) > 1.5 && !c.owns_bike {
+        return Some("It's a long walk in. A bike would change everything.");
+    }
+    None
+}
+
 // ── rule-based mind ──────────────────────────────────────────────────────────
 
 pub struct RuleBasedMind {
@@ -181,7 +201,7 @@ impl MindProvider for RuleBasedMind {
 
         // Shifts follow the workplace's opening hours.
         if ctx.on_shift {
-            let t = self.pick(WORK_THOUGHTS);
+            let t = commute_thought(ctx.citizen).map(str::to_string).unwrap_or_else(|| self.pick(WORK_THOUGHTS));
             return decide(Intent::GoWork, t);
         }
 
@@ -449,6 +469,7 @@ mod tests {
             mode: TravelMode::Walk,
             owns_car: false,
             owns_bike: false,
+            vehicle: None,
             parked_at: None,
             transit: None,
             activity: Activity::Idle,
@@ -472,6 +493,10 @@ mod tests {
             wakefulness: 0.8,
             asleep: false,
             packed_meal: 0.0,
+            drunk: 0.0,
+            car: None,
+            to_car: None,
+            commute: Default::default(),
         }
     }
 

@@ -134,7 +134,9 @@ fn run(services: bool) -> Day8 {
             assert!(stressed < 0.05, "{label} day 8: {:.1}% rent-stressed", stressed * 100.0);
         }
     }
-    // Day 8's calls, up to half an hour before midnight: one the caller
+    // Day 8's calls, up to half an hour before midnight (police calls
+    // include road crashes; those on the highway beyond the city's streets
+    // go to the next town's units): one the caller
     // abandoned before help could come (the patient left, the building came
     // down) is not counted against the services.
     let (day8, end) = (7 * 1440, 8 * 1440 - 30);
@@ -143,7 +145,7 @@ fn run(services: bool) -> Day8 {
         if i.arrived.is_none() && i.outcome == Some(Outcome::Gone) {
             continue;
         }
-        let r = &mut response[i.kind.index()];
+        let r = &mut response[i.kind.slot()];
         r.0 += 1;
         if let Some(t) = i.response_ticks() {
             r.1 += (t <= 30) as usize;

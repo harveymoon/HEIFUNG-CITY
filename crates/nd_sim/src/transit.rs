@@ -324,6 +324,8 @@ mod tests {
 pub enum TransitLeg {
     Bus { route: RouteId, board: usize, alight: usize },
     Rail { board: crate::buildings::BuildingId, alight: crate::buildings::BuildingId },
+    /// A drone taxi from one pad to another (`crate::air`).
+    Air { from: crate::buildings::BuildingId, to: crate::buildings::BuildingId },
 }
 
 /// A citizen's transit trip in progress: walk to the stop or station,

@@ -345,6 +345,11 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         weather_tail(&mut g, marks);
     }
 
+    // Roundabouts: the planted island in the middle of every ring.
+    for (k, ring) in roads.rings.iter().enumerate() {
+        roundabout_island(&mut g, pal, ring, inp.seed ^ (k as u64 + 1).wrapping_mul(0x9E37_79B9));
+    }
+
     // Junction pads, crossings and stop lines (bends need none).
     for (i, node) in roads.nodes.iter().enumerate() {
         let alive: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).collect();
@@ -385,6 +390,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         if alive.len() < 3 {
             continue;
         }
+        let on_ring = roads.ring_of_node(NodeId(i as u32)).is_some();
         for sid in alive {
             let seg = roads.segment(sid);
             let (a, b) = roads.segment_points(sid);
@@ -392,6 +398,14 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             let d = (far - node.pos).normalize_or_zero();
             let right = Vec2::new(-d.y, d.x);
             let hw = seg.half_width();
+            if on_ring {
+                // No crossing on the ring itself; arms get theirs set back
+                // past a splitter island, and a give-way line at the mouth.
+                if roads.ring_of_segment(sid).is_none() {
+                    roundabout_arm(&mut g, pal, node.pos, d, r, seg, seg.a.0 as usize == i);
+                }
+                continue;
+            }
             let c0 = node.pos + d * (r + 0.8);
             let c1 = node.pos + d * (r + 3.2);
             let mut s = -hw + SHOULDER + 0.4;
@@ -423,6 +437,92 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         }
     }
     g
+}
+
+/// The central island of a roundabout: a kerbed lawn a little above the
+/// road, a ring of trees, and in the middle a small monument on big rings
+/// or a clump of shrubs and a tree on small ones.
+fn roundabout_island(g: &mut Geometry, pal: &Palette, ring: &nd_sim::roads::Ring, seed: u64) {
+    use std::f32::consts::TAU;
+    let mut rng = rng_for(seed, 11);
+    let c = ring.center;
+    let ri = ring.island_radius();
+    let circle = |r: f32, n: usize| -> Vec<Vec2> { (0..n).map(|k| c + Vec2::from_angle(k as f32 / n as f32 * TAU) * r).collect() };
+    let mut edge = circle(ri, 40);
+    edge.push(edge[0]);
+    g.part(Concrete).path_box(&edge, 0.0, 0.35, 0.0, KERB_H + 0.04, rgba(pal.curb));
+    g.part(Foliage).ground_polygon(&circle(ri - 0.15, 40), KERB_H + 0.02, rgba(mul(pal.foliage, 1.15)));
+    // A band of darker planting just inside the kerb.
+    let band: Vec<Vec2> = circle(ri - 1.2, 40);
+    let mut band_loop = band.clone();
+    band_loop.push(band[0]);
+    g.part(Foliage).path_strip(&band_loop, 0.0, 1.4, KERB_H + 0.03, rgba(mul(pal.foliage, 0.8)));
+    if ri > 5.0 {
+        let n = ((TAU * ri * 0.7 / 7.0) as usize).clamp(3, 18);
+        let off = rng.random_range(0.0..TAU);
+        for k in 0..n {
+            let a = off + k as f32 / n as f32 * TAU;
+            let p = c + Vec2::from_angle(a) * ri * 0.7;
+            tree_world(g, p, rng.random_range(4.0..6.5), rng.random_range(2.4..3.6), pal.bark, mul(pal.foliage, rng.random_range(0.85..1.15)));
+        }
+    }
+    if ri >= 9.0 {
+        // A paved round with a low, broad sculpture: three leaning stone
+        // fins around a lit disc (no spires or obelisks in this city).
+        g.part(Paving).ground_polygon(&circle(3.6, 20), KERB_H + 0.05, rgba(mul(pal.paving, 1.2)));
+        g.part(Stone).boxed(Vec3::new(c.x, KERB_H + 0.3, c.y), Vec3::new(3.4, 0.5, 3.4), 0.3, rgba(mul(pal.stone, 1.1)));
+        g.part(Glow).ground_polygon(&circle(1.1, 16), KERB_H + 0.57, rgba(mul(pal.led(0), 0.7)));
+        let fin_h = 1.6 + ri * 0.06;
+        for k in 0..3 {
+            let a = k as f32 / 3.0 * TAU + 0.5;
+            let p = c + Vec2::from_angle(a) * 1.4;
+            g.part(Stone).boxed(Vec3::new(p.x, KERB_H + 0.55 + fin_h * 0.5, p.y), Vec3::new(2.2, fin_h, 0.35), a + 0.6, rgba(mul(pal.stone, 1.25)));
+        }
+    } else {
+        tree_world(g, c, rng.random_range(5.0..7.0), rng.random_range(2.8..3.8), pal.bark, mul(pal.foliage, 1.05));
+        for k in 0..5 {
+            let p = c + Vec2::from_angle(k as f32 / 5.0 * TAU + 0.4) * (ri * 0.45).min(2.5);
+            g.part(Foliage).cylinder(p, 0.7, 0.4, KERB_H, KERB_H + 0.8, 7, rgba(mul(pal.foliage, rng.random_range(0.7..0.95))));
+        }
+    }
+}
+
+/// Where an arm meets a roundabout: a splitter island down the middle of a
+/// two-way arm, a zebra set back from the ring across it (with a refuge in
+/// the island), and a dashed give-way line across the lanes going in.
+fn roundabout_arm(g: &mut Geometry, pal: &Palette, at: Vec2, d: Vec2, r: f32, seg: &nd_sim::Segment, from_a: bool) {
+    let right = Vec2::new(-d.y, d.x);
+    let hw = seg.half_width();
+    let (outgoing, incoming) = if from_a { (seg.lanes_fwd, seg.lanes_bwd) } else { (seg.lanes_bwd, seg.lanes_fwd) };
+    let total = (outgoing + incoming) as f32;
+    // The boundary between the directions, as a lateral offset (right of
+    // `d` positive): lanes going out keep right, lanes coming in are left.
+    let divide = (incoming as f32 - total * 0.5) * LANE_WIDTH;
+    let (z0, z1) = (r + 5.0, r + 7.4);
+    if outgoing > 0 && incoming > 0 {
+        for (s0, s1, w0) in [(r + 0.9, z0 - 0.3, 0.5), (z1 + 0.3, r + 12.0, 0.9)] {
+            let a = at + d * s0 + right * divide;
+            let b = at + d * s1 + right * divide;
+            g.part(Concrete).path_box(&[a, b], 0.0, w0, 0.0, KERB_H, rgba(pal.curb));
+            g.part(Glow).path_strip(&[a - d * 0.6, b + d * 0.6], 0.0, w0 + 0.5, MARK_Y, rgba(mul(pal.lane_marker, 0.5)));
+        }
+    }
+    let mut s = -hw + SHOULDER + 0.4;
+    while s < hw - SHOULDER - 0.2 {
+        if (s - divide).abs() > 0.6 || outgoing == 0 || incoming == 0 {
+            g.part(Glow).ground_strip(&[at + d * z0 + right * s, at + d * z1 + right * s], 0.5, MARK_Y + 0.002, rgba(mul(pal.lane_marker, 0.9)));
+        }
+        s += 1.0;
+    }
+    if incoming > 0 {
+        let (l0, l1) = (-(hw - SHOULDER), divide);
+        let mut x = l0 + 0.3;
+        while x + 0.6 < l1 {
+            let p = at + d * (r + 0.9) + right * x;
+            g.part(Glow).ground_strip(&[p, p + right * 0.6], 0.35, MARK_Y + 0.003, rgba(mul(pal.lane_marker, 1.1)));
+            x += 1.1;
+        }
+    }
 }
 
 /// Neglect on a cheap street: potholes as dark patches on the carriageway,
@@ -768,6 +868,40 @@ mod tests {
         assert!(!posts.is_empty(), "the four-way junctions should be signalised");
         assert!(posts.windows(2).all(|w| w[0].lane < w[1].lane), "signal posts come in lane order");
         assert!(posts.iter().all(|p| p.lamp.is_finite()));
+    }
+
+    #[test]
+    fn a_roundabout_gets_an_island_and_no_signals() {
+        use nd_sim::plan::{Gesture, GestureId, Plan};
+        let mut plan = Plan::default();
+        plan.gestures.insert(GestureId(1), Gesture::Road { points: vec![Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street });
+        plan.gestures.insert(GestureId(2), Gesture::Road { points: vec![Vec2::new(0.0, -200.0), Vec2::new(0.0, 200.0)], lanes_fwd: 2, lanes_bwd: 2, curved: false, kind: RoadKind::Street });
+        let lv = LandValue::new(400.0, 50.0);
+        let pal = Palette::default();
+        let mut tris = Vec::new();
+        for g in [None, Some(Gesture::Roundabout { center: Vec2::ZERO, radius: 30.0, lanes: 2 })] {
+            let mut plan = plan.clone();
+            if let Some(g) = g {
+                plan.gestures.insert(GestureId(3), g);
+            }
+            let (built, rings) = plan.built_roads();
+            let mut roads = RoadNetwork::default();
+            roads.rings = rings;
+            for (_, pts, f, b, k) in built {
+                roads.add_polyline_kind(&pts, f, b, k);
+            }
+            let mut net = LaneNetwork::default();
+            net.rebuild(&roads);
+            let geo = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 9 });
+            for (s, m) in geo.iter() {
+                assert!(m.positions.iter().all(|p| p.iter().all(|v| v.is_finite()) && p[1] < 20.0), "{s:?}");
+            }
+            tris.push((geo.get(Foliage).indices.len(), geo.get(Stone).indices.len(), signal_posts(&net).len()));
+        }
+        let (plain, ring) = (tris[0], tris[1]);
+        assert!(plain.2 > 0 && ring.2 == 0, "the signals went with the junction: {plain:?} {ring:?}");
+        assert!(ring.0 > plain.0, "a planted island");
+        assert!(ring.1 > plain.1, "and a monument on a ring this big");
     }
 }
 

@@ -168,6 +168,17 @@ pub struct ToolState {
     /// Zone tool, industrial land: the sub-zone painting sets (a key of
     /// `nd_sim::world::INDUSTRY_CHOICES`; "auto" lets the ground decide).
     pub industry: &'static str,
+    /// Road tool: stamp roundabouts instead of drawing roads.
+    pub roundabout: bool,
+    /// Roundabout radius (centre to the middle of the ring road), metres.
+    pub ring_radius: f32,
+    /// Roundabout ring lanes, 1 or 2.
+    pub ring_lanes: u8,
+    /// Where the roundabout would go (snapped), while the pointer is on the map.
+    pub ring_hover: Option<SVec2>,
+    /// A centre set by the remote API (`tool {ring_at}`) that stands in
+    /// for the pointer until the mouse is used.
+    pub ring_pin: Option<SVec2>,
 }
 
 /// Road presets in the spirit of Cities Skylines' road menu: (label, forward, backward, kind).
@@ -237,11 +248,30 @@ impl Default for ToolState {
             hover_parcel: None,
             rename: None,
             industry: "auto",
+            roundabout: false,
+            ring_radius: 20.0,
+            ring_lanes: 1,
+            ring_hover: None,
+            ring_pin: None,
         }
     }
 }
 
 impl ToolState {
+    /// The roundabout the Road tool would stamp where the pointer is.
+    pub fn ring_preview(&self) -> Option<nd_sim::roads::Ring> {
+        if self.tool != Tool::Road || !self.roundabout {
+            return None;
+        }
+        self.ring_hover.map(|c| nd_sim::roads::Ring::new(c, self.ring_radius, self.ring_lanes))
+    }
+
+    /// Does the mouse wheel belong to the tool (Ctrl+wheel sizes the
+    /// roundabout) rather than the camera?
+    pub fn captures_wheel(&self, ctrl: bool) -> bool {
+        ctrl && self.tool == Tool::Road && self.roundabout
+    }
+
     /// Does the active tool use right-drags itself (the zone brush erases
     /// with them), so the camera must not orbit?
     pub fn captures_right_drag(&self) -> bool {
@@ -408,6 +438,13 @@ fn nearest_gesture(plan: &Plan, p: SVec2) -> Option<(GestureId, usize)> {
             }
             // Paint strokes have no shape to pick: undo or the eraser takes them back.
             Gesture::ParcelZone { .. } => {}
+            Gesture::Roundabout { center, radius, lanes } => {
+                let ring = nd_sim::roads::Ring::new(*center, *radius, *lanes);
+                let d = (p.distance(ring.center) - ring.radius).abs();
+                if d < ring.half_width() + 2.0 && best.map_or(true, |b| d < b.0) {
+                    best = Some((d, *id, 0));
+                }
+            }
         }
     }
     best.map(|(_, id, i)| (id, i))
@@ -425,6 +462,7 @@ pub(crate) fn tool_input(
     mut sim: ResMut<Sim>,
     mut eplan: ResMut<EffectivePlan>,
     cams: Query<&OrbitCamera>,
+    scroll: Res<bevy::input::mouse::AccumulatedMouseScroll>,
 ) {
     if *mode == CameraMode::Walk {
         tools.drag = None;
@@ -458,6 +496,7 @@ pub(crate) fn tool_input(
         let alias = b.is_some_and(|b| key(b) && !ctrl);
         if (key(a) || alias) && !(tool == Tool::Zone && ctrl) {
             tools.tool = tool;
+            tools.ring_pin = None;
             tools.points.clear();
             tools.drag = None;
             tools.stroke = None;
@@ -521,6 +560,33 @@ pub(crate) fn tool_input(
     let ground = cursor.ground;
 
     match tools.tool {
+        Tool::Road if tools.roundabout => {
+            // The pointer takes over from a centre the remote API pinned.
+            if click || right_down || buttons.just_pressed(MouseButton::Middle) {
+                tools.ring_pin = None;
+            }
+            tools.ring_hover = tools.ring_pin.or(if flags.pointer_over_ui { None } else { ground }).map(|p| sim.world.roundabout_snap(p));
+            // Ctrl+wheel sizes it (the camera leaves the wheel alone then).
+            if ctrl && !flags.pointer_over_ui {
+                let lines = match scroll.unit {
+                    bevy::input::mouse::MouseScrollUnit::Line => scroll.delta.y,
+                    bevy::input::mouse::MouseScrollUnit::Pixel => scroll.delta.y / 60.0,
+                };
+                if lines != 0.0 {
+                    tools.ring_radius = (tools.ring_radius + lines * 2.0).clamp(nd_sim::roads::RING_MIN_RADIUS, nd_sim::roads::RING_MAX_RADIUS);
+                    tools.status = format!("Roundabout {:.0} m across.", tools.ring_radius * 2.0);
+                }
+            }
+            if click {
+                if let Some(c) = tools.ring_hover {
+                    let (r, lanes) = (tools.ring_radius, tools.ring_lanes);
+                    tools.status = match sim.world.add_roundabout(c, r, lanes) {
+                        Ok(_) => format!("Roundabout {:.0} m across stamped into the project: roads crossing it are cut and joined, buildings in red come down. Ctrl+Z undoes, Ctrl+Enter implements.", r * 2.0),
+                        Err(e) => format!("No roundabout: {e}."),
+                    };
+                }
+            }
+        }
         Tool::Road => {
             if click {
                 if let Some(p) = ground {
@@ -608,9 +674,7 @@ pub(crate) fn tool_input(
             if let Some((id, idx)) = tools.drag {
                 if let (Some(p), Some(mut g)) = (ground, plan.gestures.get(&id).cloned()) {
                     if idx < g.points().len() {
-                        if let Some(pts) = g.points_mut() {
-                            pts[idx] = p;
-                        }
+                        g.move_point(idx, p);
                         let release = !buttons.pressed(MouseButton::Left);
                         sim.world.set_gesture(id, g, release);
                         if release {
@@ -920,6 +984,14 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 }
             }
         }
+        // The roundabout itself is drawn by the renderer (`sync_ring_preview`);
+        // here only a ring of the outer edge, lifted onto the ground.
+        Tool::Road if tools.roundabout => {
+            if let Some(r) = tools.ring_preview() {
+                gizmos.circle(Isometry3d::new(lift(r.center), flat), r.radius + r.half_width(), cyan);
+                gizmos.circle(Isometry3d::new(lift(r.center), flat), 1.2, white);
+            }
+        }
         Tool::Road | Tool::Zone => {
             let mut ctrl: Vec<SVec2> = tools.points.clone();
             if let Some(c) = cursor.ground {
@@ -1062,7 +1134,7 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
         Selection::Building(b) => lot_outline(gizmos, w, b, 1.6, gold),
         Selection::Car(id) => {
             let Some(car) = w.traffic.cars.get(id) else { return };
-            let p = blend(car.prev_pos, car.pos);
+            let p = car.pose_at(f).0;
             gizmos.circle(Isometry3d::new(at(p, 0.5), flat), if car.bus.is_some() { 7.5 } else { 4.0 }, gold);
             car_route(gizmos, w, car, route);
             if let Some(cargo) = &car.cargo {
@@ -1093,14 +1165,22 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
                 Activity::Driving { car, to, .. } => {
                     destination = to.or(destination);
                     if let Some(car) = w.traffic.cars.get(*car) {
-                        let p = blend(car.prev_pos, car.pos);
+                        let p = car.pose_at(f).0;
                         gizmos.circle(Isometry3d::new(at(p, 0.5), flat), 4.0, gold);
                         car_route(gizmos, w, car, route);
                     }
                 }
+                Activity::Flying { drone } => {
+                    if let Some(d) = w.air.drones.get(*drone) {
+                        let p = blend(d.prev_pos, d.pos);
+                        let alt = d.prev_alt + (d.alt - d.prev_alt) * f;
+                        gizmos.circle(Isometry3d::new(at(p, alt), flat), 6.0, gold);
+                        gizmos.line(at(p, alt), at(d.goal, d.goal_alt + 1.0), route);
+                    }
+                }
                 Activity::Riding { bus } => {
                     if let Some(bus) = w.traffic.cars.get(*bus) {
-                        let p = blend(bus.prev_pos, bus.pos);
+                        let p = bus.pose_at(f).0;
                         gizmos.circle(Isometry3d::new(at(p, 0.5), flat), 7.5, gold);
                         car_route(gizmos, w, bus, route);
                     }

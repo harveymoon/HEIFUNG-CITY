@@ -248,7 +248,7 @@ pub(super) fn sync_layers(
     for (e, mk, mut tf) in &mut markers {
         match w.traffic.cars.get(mk.0) {
             Some(car) => {
-                let p = car.prev_pos.lerp(car.pos, f);
+                let p = car.pose_at(f).0;
                 tf.translation = Vec3::new(p.x, 0.0, p.y);
                 tf.rotation = Quat::from_rotation_y(-car.heading);
                 have.insert(mk.0);
@@ -261,7 +261,7 @@ pub(super) fn sync_layers(
             continue;
         }
         let k = vehicle_class(car).index();
-        let p = car.prev_pos.lerp(car.pos, f);
+        let p = car.pose_at(f).0;
         commands.spawn((
             Mesh3d(marker_assets.meshes[k].clone()),
             MeshMaterial3d(marker_assets.materials[k].clone()),

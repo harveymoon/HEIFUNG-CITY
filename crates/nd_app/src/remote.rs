@@ -257,6 +257,12 @@ fn log_events(sim: Res<Sim>, flags: Res<UiFlags>, tools: Res<ToolState>, mut log
             SimEvent::BurnedDown(b, l) => json!({ "kind": "BurnedDown", "building": key_str(*b), "lot": key_str(*l) }),
             SimEvent::Arrested(i, c) => json!({ "kind": "Arrested", "incident": i, "citizen": key_str(*c), "name": w.citizens.get(*c).map(|x| x.name.as_str()) }),
             SimEvent::Released(c) => json!({ "kind": "Released", "citizen": key_str(*c), "name": w.citizens.get(*c).map(|x| x.name.as_str()) }),
+            SimEvent::Crash(id) => {
+                let r = w.driving.recent.iter().find(|r| r.id == *id);
+                json!({ "kind": "Crash", "crash": id, "pos": r.map(|r| [r.pos.x, r.pos.y]), "cause": r.map(|r| r.cause.label()), "severity": r.map(|r| r.severity), "injured": r.map(|r| r.injured.len()), "place": r.map(|r| r.place.clone()), "incident": r.and_then(|r| r.incident) })
+            }
+            SimEvent::Takeover(id) => json!({ "kind": "Takeover", "takeover": id, "place": w.takeover().map(|t| t.place.clone()) }),
+            SimEvent::TakeoverOver(id) => json!({ "kind": "TakeoverOver", "takeover": id }),
             SimEvent::StadiumEvent(b) => json!({ "kind": "StadiumEvent", "building": key_str(*b), "name": building_name(w, Some(*b)) }),
             SimEvent::NewThought(c) => {
                 let cit = w.citizens.get(*c);
@@ -395,6 +401,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "list_saves" => Ok(list_saves()),
         "plan" => Ok(plan(ctx)),
         "add_road" => add_road(cmd, ctx),
+        "add_roundabout" => add_roundabout(cmd, ctx),
         "add_zone" => add_zone(cmd, ctx),
         "paint" => paint(cmd, ctx),
         "bulldoze" => {
@@ -841,6 +848,42 @@ fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     Ok(v)
 }
 
+/// `add_roundabout {center, radius | diameter, lanes, implement?}`: stamp a
+/// roundabout into the project as the Road tool does (the centre snaps onto
+/// a junction or street). Reply: what it cuts and joins and the buildings
+/// it would take, besides the project state.
+fn add_roundabout(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let center = view::opt_vec2(cmd, "center")?.map_or_else(|| view::req_point(cmd), Ok)?;
+    let radius = match (opt_f32(cmd, "radius")?, opt_f32(cmd, "diameter")?) {
+        (Some(r), _) => r,
+        (None, Some(d)) => d * 0.5,
+        (None, None) => ctx.tools.ring_radius,
+    };
+    let lanes = opt_u64(cmd, "lanes")?.map_or(ctx.tools.ring_lanes, |n| n as u8);
+    if !(1..=2).contains(&lanes) {
+        return Err("a roundabout has 1 or 2 ring lanes".into());
+    }
+    let id = ctx.sim.world.add_roundabout(center, radius, lanes)?;
+    let ring = ctx.sim.world.gesture(id).and_then(|g| g.ring()).ok_or("roundabout not in the plan")?;
+    let fx = nd_sim::plan::ring_effect(ctx.sim.world.effective_plan(), ring);
+    let takes: Vec<Value> = ctx.sim.world.roundabout_takes(ring).into_iter().filter_map(|l| ctx.sim.world.lots.get(l).and_then(|x| x.building)).map(|b| json!(view::key_str(b))).collect();
+    let implemented = opt_bool(cmd, "implement")?.unwrap_or(false);
+    if implemented {
+        ctx.sim.world.implement();
+    }
+    ctx.tools.status = format!("Roundabout {:.0} m across added by remote{}", ring.radius * 2.0, if implemented { " and implemented" } else { " (pending)" });
+    let mut v = project_state(ctx);
+    v["gesture_id"] = json!(id.0);
+    v["implemented"] = json!(implemented);
+    v["roundabout"] = json!({
+        "center": [ring.center.x, ring.center.y], "radius": ring.radius, "diameter": ring.radius * 2.0, "lanes": ring.lanes,
+        "joins": fx.joins.iter().map(|p| json!([p.x, p.y])).collect::<Vec<_>>(),
+        "cuts_roads": fx.cut_roads.iter().map(|g| g.0).collect::<Vec<_>>(),
+        "takes_buildings": takes,
+    });
+    Ok(v)
+}
+
 fn add_zone(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let polygon = req_points(cmd, "polygon")?;
     if polygon.len() < 3 {
@@ -905,7 +948,7 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         other => {
             let tier = opt_str(cmd, "tier")?.map(|t| nd_sim::services::parse_tier(t).ok_or_else(|| format!("unknown tier {t:?}; low, mid or high"))).transpose()?;
-            let what = nd_sim::Placeable::parse(other, tier).ok_or_else(|| format!("unknown kind {other:?}; one of station, freight_yard, depot, parking, coal, solar, wind, nuclear, police, fire, hospital (clinic), school, dispatch, monument, stadium (services take tier low|mid|high or a :tier suffix)"))?;
+            let what = nd_sim::Placeable::parse(other, tier).ok_or_else(|| format!("unknown kind {other:?}; one of station, freight_yard, depot, parking, coal, solar, wind, nuclear, police, fire, hospital (clinic), school, dispatch, monument, stadium, vertiport (services take tier low|mid|high or a :tier suffix)"))?;
             let lot = lot_near(w, p).ok_or("no lot there: aim at a lot")?;
             let id = w.place_on_lot(what, lot)?;
             (id, format!("{} built for {:.0}; {:.0}/day", what.label(), what.cost(), what.upkeep()))
@@ -940,7 +983,30 @@ fn incident(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             };
             w.fall_ill(c).ok_or("that citizen is not indoors or is already a patient")?
         }
-        _ => return Err(format!("unknown incident kind {kind:?}; fire, crime or medical")),
+        // [driving] A crash: the car given (or the nearest to `at`) crashes
+        // at `speed` m/s (25: written off). Processed on the next tick.
+        "crash" => {
+            let car: nd_sim::CarId = match field(cmd, "car") {
+                Some(v) => key_from(v)?,
+                None => {
+                    let at = cmd.get("at").and_then(|v| v.as_array()).and_then(|a| Some(nd_sim::Vec2::new(a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32))).unwrap_or(nd_sim::Vec2::ZERO);
+                    w.traffic.cars.iter().filter(|(_, c)| !c.siren && c.bus.is_none() && !c.in_stunt() && !c.crashed()).min_by(|a, b| a.1.pos.distance(at).total_cmp(&b.1.pos.distance(at))).map(|(id, _)| id).ok_or("no car on the road")?
+                }
+            };
+            if !w.traffic.cars.contains_key(car) {
+                return Err("no such car".into());
+            }
+            let speed = cmd.get("speed").and_then(|v| v.as_f64()).unwrap_or(25.0) as f32;
+            w.traffic.crash(vec![car], nd_sim::traffic::CrashCause::OffRoad, speed);
+            return Ok(json!({ "car": key_str(car), "crash": w.traffic.next_crash - 1 }));
+        }
+        // [driving] A street takeover at the junction nearest `at`.
+        "takeover" => {
+            let at = cmd.get("at").and_then(|v| v.as_array()).and_then(|a| Some(nd_sim::Vec2::new(a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32)));
+            let id = w.start_takeover(at)?;
+            return Ok(json!({ "takeover": id }));
+        }
+        _ => return Err(format!("unknown incident kind {kind:?}; fire, crime, medical, crash or takeover")),
     };
     Ok(json!({ "incident": id }))
 }
@@ -1172,6 +1238,17 @@ fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
             }
         }
+        "drones" | "drone" | "aircraft" => {
+            let f_kind = str_filter(filter, "kind");
+            for (id, d) in w.air.drones.iter() {
+                if !contains(d.craft.label(), &f_kind) {
+                    continue;
+                }
+                if let (Some(dist), Some(row)) = (within(d.pos), view::drone_detail(w, id)) {
+                    rows.push((dist, row));
+                }
+            }
+        }
         "routes" | "route" | "lines" => {
             for (id, r) in w.transit.routes.iter() {
                 let d = near.map_or(0.0, |n| r.stops.iter().map(|s| s.pos.distance(n)).fold(f32::INFINITY, f32::min));
@@ -1293,6 +1370,10 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         let k = view::junction_near(w, vec2_of(v)?).ok_or("no junctions")?;
         return Ok(json!({ "junction": view::junction_detail(w, k) }));
     }
+    if let Some(v) = field(cmd, "drone") {
+        let id: nd_sim::air::DroneId = key_from(v)?;
+        return Ok(json!({ "drone": view::drone_detail(w, id).ok_or("no such drone")? }));
+    }
     if let Some(v) = field(cmd, "train") {
         let id = key_from(v)?;
         let t = w.rail.trains.get(id).ok_or("no such train")?;
@@ -1374,7 +1455,22 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             t.drag = None;
         }
     }
-    if let Some(preset) = opt_str(cmd, "preset")? {
+    if let Some(at) = view::opt_vec2(cmd, "ring_at")? {
+        t.ring_pin = Some(at);
+        t.ring_hover = Some(at);
+    }
+    if let Some(d) = opt_f32(cmd, "diameter")? {
+        t.ring_radius = (d * 0.5).clamp(nd_sim::roads::RING_MIN_RADIUS, nd_sim::roads::RING_MAX_RADIUS);
+    }
+    if let Some(n) = opt_u64(cmd, "ring_lanes")? {
+        t.ring_lanes = (n as u8).clamp(1, 2);
+    }
+    if let Some(preset) = opt_str(cmd, "preset").ok().flatten().filter(|p| p.eq_ignore_ascii_case("roundabout")) {
+        let _ = preset;
+        t.tool = Tool::Road;
+        t.roundabout = true;
+    } else if let Some(preset) = opt_str(cmd, "preset")? {
+        t.roundabout = false;
         let (_, f, b, k) = ROAD_PRESETS.iter().find(|(l, ..)| l.eq_ignore_ascii_case(preset)).ok_or_else(|| format!("unknown preset {preset:?}; one of {}", ROAD_PRESETS.iter().map(|p| p.0).collect::<Vec<_>>().join(", ")))?;
         t.kind = *k;
         if *k == RoadKind::Street {
@@ -1689,6 +1785,7 @@ fn help() -> Value {
             "load": { "path": "a .ron save" },
             "list_saves": {},
             "plan": {},
+            "add_roundabout": { "center": "[x,y] (snaps onto a junction within 12 m or a street within 6 m)", "radius": "m to the ring centreline, 12..40 (or diameter 24..80)", "lanes": "1|2 ring lanes", "implement": "bool", "returns": "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state" },
             "add_road": { "points": "[[x,y],...] (2+)", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true", "implement": "bool, default false (pending in the project)" },
             "add_zone": { "polygon": "[[x,y],...] (3+)", "land_use": "residential|commercial|industrial|entertainment|civic|park", "implement": "bool" },
             "bulldoze": { "gesture_id": "int", "implement": "bool" },
@@ -1732,7 +1829,7 @@ fn help() -> Value {
     v["commands"]["society"] = json!({ "action": "report (default)|evict|offend|trash", "building": "id (evict: its households go on the street; offend: the target; trash: one building's bins)", "citizen": "id (offend)", "kind": "theft|burglary|assault|murder|vandalism (offend, with building)", "kg": "trash to add, default 100" });
     // Planning: several projects, and painting parcels.
     let planning = json!({
-        "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway", "kind": "sub-mode of the active tool", "mode": "zone tool: polygon|brush|marquee", "radius": "zone brush radius m", "unzone": "bool", "industry": "zone tool sub-zone for industrial land: auto|farming|oil|...", "land_use": "(or none: the brush unzones)", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
+        "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway|Roundabout", "diameter": "roundabout 24..80 m", "ring_lanes": "roundabout 1|2", "ring_at": "[x,y]: show the roundabout preview there as if hovered (until the mouse is used)", "kind": "sub-mode of the active tool", "mode": "zone tool: polygon|brush|marquee", "radius": "zone brush radius m", "unzone": "bool", "industry": "zone tool sub-zone for industrial land: auto|farming|oil|...", "land_use": "(or none: the brush unzones)", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
         "project": { "action": "list|new|switch|rename|delete|park|start|implement|undo|redo|discard", "id": "project id (default: the active one)", "name": "for new/rename, or to pick a project by name", "note": "several named projects; the active one is edited, the rest previewed dim; implement builds one at a time, the later one wins where two change the same gesture or parcel (warnings in the reply)" },
         "paint": { "land_use": "residential|...|park, or none to unzone", "at": "[x,y] brush centre", "radius": "m (default the tool's)", "industry": "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech, the sub-zone set on implement", "rect": "[[x0,y0],[x1,y1]] marquee", "polygon": "[[x,y],...]", "implement": "bool", "note": "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step" }
     });

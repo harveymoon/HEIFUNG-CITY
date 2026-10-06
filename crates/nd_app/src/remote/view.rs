@@ -218,6 +218,7 @@ pub fn gesture(id: GestureId, g: &Gesture) -> Value {
         }),
         Gesture::Zone { polygon, land_use } => json!({ "id": id.0, "kind": "zone", "land_use": land_use.label(), "points": points(polygon), "area": round(polygon_area(polygon).abs()) }),
         Gesture::ParcelZone { parcels, land_use, industry } => json!({ "id": id.0, "kind": "parcel_zone", "land_use": land_use.map_or("unzoned", |l| l.label()), "parcels": parcels.len(), "industry": industry }),
+        Gesture::Roundabout { center, radius, lanes } => json!({ "id": id.0, "kind": "roundabout", "center": [center.x, center.y], "radius": radius, "diameter": radius * 2.0, "lanes": lanes, "points": points(std::slice::from_ref(center)) }),
     }
 }
 
@@ -254,6 +255,9 @@ fn activity(w: &World, c: &Citizen) -> Value {
         Activity::OnTrain { train } => {
             m.insert("train".into(), json!(key_str(*train)));
         }
+        Activity::Flying { drone } => {
+            m.insert("drone".into(), json!(key_str(*drone)));
+        }
         Activity::Arriving | Activity::AtHome | Activity::Working | Activity::Idle | Activity::Waiting { .. } => {}
     }
     if let Some(t) = &c.transit {
@@ -289,6 +293,12 @@ pub fn citizen_detail(w: &World, id: CitizenId, c: &Citizen, favourite: bool) ->
             "id": key_str(h), "members": hh.members.iter().map(|m| key_str(*m)).collect::<Vec<_>>(), "money": round(hh.money),
             "groceries": round(hh.groceries), "income": round(w.household_income(h)), "rent_share": w.household_rent_share(h).filter(|s| s.is_finite()).map(round),
         }))),
+        "vehicles": citizen_vehicles(w, c),
+        "commute": {
+            "pain": nd_sim::citizens::TripMode::ALL.iter().map(|m| (m.key().to_string(), json!({ "pain": round(c.commute.pain_of(*m)), "recent_trips": round(c.commute.trips[m.index()]) }))).collect::<serde_json::Map<String, Value>>(),
+            "parking_pain": round(c.commute.parking_pain), "trip_mode_now": c.commute.mode.map(|m| m.key()),
+            "last_trip": { "mode": c.commute.last_mode.map(|m| m.key()), "minutes": c.commute.last_minutes, "pain": round(c.commute.last_pain) },
+        },
         "thought": c.thought, "spotlight": c.spotlight, "favourite": favourite,
         "memories": c.memories.iter().rev().map(|m| { let mut t = tick_time(m.tick); t["text"] = json!(m.text); t }).collect::<Vec<_>>(),
     })
@@ -459,6 +469,17 @@ pub fn car_traffic(w: &World, c: &Car) -> Value {
         "lane_arrows": if lane.arrows != 0 { Value::String(arrows_label(lane.arrows)) } else { Value::Null },
         "next_turn": next_turn, "left_turn_wait_s": round(c.turn_wait), "yielding_s": round(c.yielded),
         "passing_on_shoulder": c.passing, "lateral_offset_m": round(c.lateral), "entering": c.entering,
+        // [driving]
+        "driver": ({
+            let p = &c.drive.profile;
+            json!({ "style": p.label(), "speed_factor": round(p.speed), "headway_s": round(p.headway), "accel": round(p.accel), "reaction_s": round(p.reaction),
+                "signal_compliance": round(p.compliance), "aggression": round(p.aggression), "skill": round(p.skill), "drunkenness": round(p.drunk), "ignores_signals": p.ignores_signals })
+        }),
+        "driver_drunkenness_now": w.citizens.get(c.citizen).map(|x| round(x.drunk)),
+        "weave_m": round(c.drive.weave), "running_red": c.drive.running.is_some(),
+        "crash": c.drive.crash.map(|s| json!({ "crash": s.id, "wrecked": s.wrecked, "hold_s": if s.wrecked { Value::Null } else { json!(round(s.hold)) } })),
+        "takeover": c.drive.gang.map(|g| json!({ "takeover": g.takeover, "phase": format!("{:?}", g.phase).to_lowercase() })),
+        "stunt": c.drive.stunt.map(|s| if s.is_donut() { "donut" } else { "ring" }),
     })
 }
 
@@ -549,4 +570,75 @@ pub fn tier_key(t: nd_sim::Tier) -> &'static str {
         nd_sim::Tier::Mid => "mid",
         nd_sim::Tier::High => "high",
     }
+}
+
+/// [carlife] A citizen's wheels: the bike, and the car with where it is.
+pub fn citizen_vehicles(w: &World, c: &Citizen) -> Value {
+    let car = c.car.and_then(|vid| w.vehicles.cars.get(vid).map(|car| (vid, car))).map(|(vid, car)| {
+        let place = match car.place {
+            nd_sim::CarPlace::Parked(s) => json!({ "parked": s.kind.label(), "building": s.building.map(key_str), "building_name": building_name(w, s.building), "pos": v2(s.pos), "since_tick": s.since }),
+            nd_sim::CarPlace::Driving(cid) => json!({ "driving": key_str(cid), "errand": format!("{:?}", w.traffic.cars.get(cid).map(|t| t.errand)) }),
+        };
+        json!({ "id": key_str(vid), "body": car.model.body.label(), "class": format!("{:?}", car.model.class), "price": round(car.model.price()), "place": place })
+    });
+    json!({ "bike": c.owns_bike, "car": car })
+}
+
+// ── air ─────────────────────────────────────────────────────────────────────
+
+/// One drone or helicopter, for `inspect {drone}` and `find {what: "drones"}`.
+pub fn drone_detail(w: &World, id: nd_sim::air::DroneId) -> Option<Value> {
+    let d = w.air.drones.get(id)?;
+    let job = match d.job {
+        nd_sim::air::Job::Taxi { rider, from, to, aboard } => json!({ "kind": "taxi", "rider": key_str(rider), "rider_name": w.citizens.get(rider).map(|c| c.name.clone()), "from": key_str(from), "from_name": building_name(w, Some(from)), "to": key_str(to), "to_name": building_name(w, Some(to)), "aboard": aboard }),
+        nd_sim::air::Job::Medic { incident, patient, hospital, aboard, .. } => json!({ "kind": "medic", "incident": incident, "patient": key_str(patient), "hospital": opt_key(hospital), "hospital_name": building_name(w, hospital), "aboard": aboard }),
+        nd_sim::air::Job::Patrol { incident } => json!({ "kind": "patrol", "incident": incident }),
+        nd_sim::air::Job::Home => json!({ "kind": "home" }),
+        nd_sim::air::Job::Idle => json!({ "kind": "idle" }),
+    };
+    Some(json!({
+        "id": key_str(id), "craft": d.craft.label(), "call_sign": format!("{} {}", d.craft.call_sign(), d.number),
+        "base": key_str(d.base), "base_name": building_name(w, Some(d.base)),
+        "pos": v2(d.pos), "altitude_m": round(d.alt), "heading": round(d.heading),
+        "phase": d.phase.label(), "doing": d.job.label(), "job": job,
+        "dest": opt_key(d.dest), "dest_name": building_name(w, d.dest), "goal": v2(d.goal),
+        "on_pad": opt_key(d.at), "slot": d.slot, "battery": round(d.battery.max(0.0)),
+        "flights_today": d.flights_today, "km_today": round(d.km_today), "flights_total": d.flights_total,
+    }))
+}
+
+/// `report.services.air`: pads, the fleet, today's flights, riders, fares, noise.
+pub fn air_report(w: &World) -> Value {
+    use nd_sim::air::{Craft, PadKind, Phase};
+    let a = &w.air;
+    let pads_of = |k: PadKind| a.pads.iter().filter(|p| p.kind == k).count();
+    let vertiports: Vec<Value> = a
+        .pads
+        .iter()
+        .filter(|p| p.kind == PadKind::Vertiport)
+        .map(|p| json!({ "id": key_str(p.building), "name": building_name(w, Some(p.building)), "slots": p.slots, "slots_used": a.slots_used(p.building), "drones_based": a.drones.values().filter(|d| d.base == p.building).count(), "pos": v2(p.pos) }))
+        .collect();
+    let craft = |c: Craft| a.drones.values().filter(|d| d.craft == c).count();
+    let airborne = a.drones.values().filter(|d| d.phase.airborne()).count();
+    let holding = a.drones.values().filter(|d| d.phase == Phase::Holding).count();
+    let waiting = w.citizens.values().filter(|c| matches!(c.activity, Activity::Waiting { .. }) && matches!(c.transit.map(|t| t.leg), Some(nd_sim::transit::TransitLeg::Air { .. }))).count();
+    let flying = w.citizens.values().filter(|c| matches!(c.activity, Activity::Flying { .. })).count();
+    let mean_battery = {
+        let t: Vec<f32> = a.drones.values().filter(|d| d.craft == Craft::Taxi).map(|d| d.battery).collect();
+        if t.is_empty() { Value::Null } else { json!(round(t.iter().sum::<f32>() / t.len() as f32)) }
+    };
+    let (noise_max, noise_cells) = (a.noise.values().fold(0.0f32, |m, n| m.max(*n)), a.noise.len());
+    let s = &a.stats;
+    json!({
+        "vertiports": vertiports,
+        "pads": { "vertiports": pads_of(PadKind::Vertiport), "rooftop": pads_of(PadKind::Rooftop), "hospital": pads_of(PadKind::Hospital), "fire": pads_of(PadKind::Fire), "police": pads_of(PadKind::Police) },
+        "rooftop_pads": a.rooftops.iter().map(|b| json!({ "id": key_str(*b), "name": building_name(w, Some(*b)) })).collect::<Vec<_>>(),
+        "drones": { "taxis": craft(Craft::Taxi), "air_ambulances": craft(Craft::AirAmbulance), "police_helicopters": craft(Craft::PoliceHeli), "airborne": airborne, "holding": holding, "mean_taxi_battery": mean_battery },
+        "flights_today": s.flights_today, "riders_today": s.riders_today, "fares_today": round(s.fares_today),
+        "flights_yesterday": s.flights_yesterday, "riders_yesterday": s.riders_yesterday, "fares_yesterday": round(s.fares_yesterday), "riders_total": s.riders_total,
+        "waiting_for_drone": waiting, "in_the_air": flying, "gave_up_today": s.gave_up_today, "holds_today": s.holds_today,
+        "medic_flights_today": s.medic_flights_today, "medic_flights_total": s.medic_flights_total, "police_flights_today": s.police_flights_today,
+        "company": { "name": a.company.name, "money": round(a.company.money), "revenue_today": round(a.company.revenue_today), "revenue_yesterday": round(a.company.revenue_yesterday), "costs_per_day": round(a.company.costs_today) },
+        "noise": { "cells": noise_cells, "max": round(noise_max), "max_land_value_penalty": round(nd_sim::air::noise_penalty(noise_max)), "grumbles_today": s.grumbles_today },
+    })
 }

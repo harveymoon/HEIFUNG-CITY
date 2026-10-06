@@ -99,8 +99,47 @@ Citizens are rendered from their simulated positions every frame.
   moves at a believable pace on screen at 1x; trips therefore take sim-time tens of
   minutes, the usual city-builder compromise. Right-hand traffic; lane sets are centred
   on the road; junction curves stay inside the junction; cars refuse to enter a
-  junction whose exit lane is full; stalled trips time out. Pedestrians walk on the
+  junction whose exit lane is full; a vehicle 30 traffic minutes on one route replans from where it stands, and nothing is ever taken off the road for being slow: jams are part of the city and drivers feel them. Pedestrians walk on the
   right-hand pavement.
+- **Roundabouts** (`Gesture::Roundabout { center, radius, lanes }`, Road tool preset): a
+  one-way ring of 1 or 2 lanes, 24 to 80 m across, traffic keeping the island on its left
+  (anticlockwise on screen). The gesture is stamped over the plan and never edits road
+  gestures: at rebuild `Plan::built_roads` cuts every street and path out of the circle
+  (`roads::layout_rings`), lays the ring first with a vertex at every place a road
+  crossed or ended on it, and the arms snap onto those vertices; a junction inside goes,
+  signals and all. So undo, bulldoze or a radius change in the Edit tool just rebuild.
+  Highways pass over, track is not cut, a ring overlapping an older one is refused. The
+  island is never parcelled; buildings on ground the ring takes come down as for any road
+  works. In the lane network (`traffic/roundabout.rs`) ring lanes run at 7 m/s, nothing
+  is signalised, arms may only turn right onto the ring and ring lanes continue or leave
+  from the outer lane. Entries give way with gap acceptance: a car about to reach the
+  line goes unless a ring vehicle that will pass the entry (not leave by it) is in the
+  junction or arrives less than 3 s after it, looking up to 45 m back round the ring;
+  ring traffic never yields and only follows a car merged ahead. Passing an exit in the
+  outer lane of a two-lane ring costs routing a little, so the first and second exits
+  keep outside and later ones go round on the inside. Hovering the tool shows the ring,
+  the road it takes up, the joins and the lots it would take (red); clicking stamps it
+  into the active project.
+- **Driving** (`traffic.rs` `DriverProfile`, `world/driving.rs`, `takeover.rs`): turns follow a
+  circular arc tangent to both lanes (the fillet of their corner), long vehicles swing wide, and
+  cars are drawn along the poses of every physics substep (`Car::pose_at`) rather than a straight
+  blend across a 4 s tick, so nothing cuts corners. Each driver gets a profile from age,
+  personality (caution, hedonism) and drunkenness: desired speed, IDM headway and acceleration,
+  reaction lag, signal compliance (late ambers, reds), lane-change eagerness, skill (weave). The
+  old drive slower with slower reactions; rebellious youth faster, closer, through late ambers.
+  Citizens drink at venues (hedonists only), sober up over hours; rebellious drunks who own a car
+  drive anyway (`citizens::wants_to_drive_drunk`) and weave over the lines. Crashes: running
+  into the car ahead (profiled drivers cannot brake harder than 8 m/s per s), red lights run into
+  green cross traffic, drunks running off the road, weaving sideswipes, misjudged gaps. Minor
+  ones stop both cars a minute or three; bad ones (closing speed) write cars off and may hurt
+  people: a witness calls 911, a `Crash` incident brings the police (who may arrest a drunk or
+  red-light driver) and each injured person gets an on-road `Medical` incident and an ambulance;
+  once the scene clears a tow truck hauls the wreck to the nearest industrial yard. Street
+  takeovers: on ~30 % of nights (with a crew) at 22:00 a meet is planned; rebellious young locals
+  drive over, outsiders roll in off the highway as a pack ignoring lights, the junction is closed,
+  cars ring it and the flashiest spin donuts in tyre smoke, a crowd walks over, a neighbour calls
+  the police; police on scene break it up (some arrests, cars impounded), else it ends after
+  45-80 minutes and everyone leaves in convoy.
 - **Parcels and zones**: parcels are cut along every street and path as soon as it is
   built, zoned or not (`zoning::generate_parcels`, the land within 60 m of the
   corridors), at a home's lot size; land behind the rows is backland. Zoning gives
@@ -206,17 +245,41 @@ Citizens are rendered from their simulated positions every frame.
   Deep in debt for five days means closure: workers laid off, the building goes
   derelict, and after a week it is demolished so the lot can be reused. Offices
   and civic buildings are publicly funded.
-- **Parking**: every car trip ends in a space. Towers (high tier) bring their own
-  spaces for about half their homes and jobs, middle-tier blocks a quarter, cheap
-  buildings none. Drivers use the destination's spaces, else pay at the nearest
-  parking business within 180 m with room (a fee by tier and land value that goes to
-  the business), else leave the car on the street, lose a little mood, and are counted
-  as a shortage. When the day's shortage outruns free spaces, development opens a
-  parking lot on a vacant lot: a surface lot where land is cheap (about one space
-  per 28 m², two jobs), a multi-storey car park on middle land (three to five decks).
-  It is the cheapest business in town and lives or dies on fees. Parking lots render
-  their occupancy: cars fill the painted bays of a surface lot and the edges and roof
-  of a car park in proportion to the spaces in use.
+- **Cars** (`world/cars.rs`, `vehicle::Vehicles`): every private car is a record with a place:
+  parked (the owner's home spaces, a building's garage, a parking business, a kerb slot, or squeezed
+  onto the street when nothing was free) or on the road. A car comes into the city only with a
+  household driving in (off a highway carriageway at the map edge, or the road at the city's edge),
+  or when bought (at a dealer, the nearest goods or gadget shop, and delivered home by its driver; or
+  out of town, driven in from the edge); it leaves only when sold (driven to the dealer), scrapped, or
+  driven out of town by an emigrating owner. A trip by car starts at the car: the driver walks to it
+  (within 320 m) and it pulls out of its kerb slot into a gap. At the far end it uses the
+  destination's own spaces; else the driver weighs the nearest free kerb slots and parking lots by
+  the drive there (by the route it would really take), the walk back and the fee; with nothing in
+  sight it circles the streets around (counted as circling, the signal development opens lots on),
+  and after four tries parks anywhere on the street. Kerbs: one slot per 6.5 m on both sides of
+  streets, none within 12 m of a junction, none on highways, bridges, avenues (clearways) or streets
+  fronted by shops and nightlife (loading). A car keeps its space until it drives off, so a lot's
+  occupancy is the cars standing in it, overnight too. Cars parked at a building that goes are moved
+  to the street. Lorries return to their business or a truck lot (`world/industry`); delivery vans
+  to their shop.
+- **How people travel** (`World::mode_options`, `choose_mode`): per trip each citizen weighs walking,
+  their bike, the bus, the train and their car (when parked nearby) in minute-equivalents: time
+  (weighed by ambition), money (fares, fuel, the expected fee; weighed by income), comfort (long
+  walks tire, more so for children and the old; cycling worries the cautious; the unsociable mind
+  the crowd; a car is a comfortable seat, most of all to hedonists) and remembered pain, with a
+  little daily whim. Pain (`Commute`, bad half-hours per trip, fading daily) comes from long walks
+  and rides, slow transit and hours-long waits, jams, the hunt for a space, fees and the walk back
+  from the car. Habits follow once a day: long walks buy a bike at a shop, parking misery or endless
+  jams sell the car when there is another way, transit that keeps failing (or walks and rides too
+  long) buys one if the household can afford it; memories record each. The report counts trips by
+  mode per day.
+- **Parking businesses**: when the day's circling outruns free spaces, development opens a
+  parking lot on a vacant lot near the last driver who could not find a space: a surface lot where
+  land is cheap (about one space per 28 m², two jobs), a multi-storey car park on middle land
+  (three to five decks). It is the cheapest business in town and lives or dies on fees (a fee by
+  tier and land value per car parked). Towers (high tier) bring their own spaces for about half
+  their homes and jobs, middle-tier blocks a quarter, cheap buildings none. Parking lots render
+  their occupancy; cars at the kerb are drawn there.
 - **Pedestrian network** (`nd_sim::walk`): a second graph for people on foot. Pavements
   on both sides of every street, path centres, a crossing hub at every junction, a
   walkable setback loop inset into every usable lot with its front joined to the
@@ -390,6 +453,24 @@ Citizens are rendered from their simulated positions every frame.
   taken, unit and whether it came from out of town, fee, fire damage per building), the last 500
   resolved ones on file, shown live in the Emergencies window and by the `incidents` API command.
   Services draw from their own random stream so the rest of the simulation is not perturbed.
+- **Air** (`nd_sim::air`, `world/air.rs`): the rich fly. Vertiports are placed under Transit (drone pad /
+  vertiport / skyport: 2 / 4 / 6 landing slots, decks at 0.4 / 7 / 15 m); rooftop pads are rare: a high-tier
+  tower of 9+ floors on land worth 0.8+ qualifies when 8+ rich adults would fly from it (its own in full,
+  those within 150 m at half), and only the most-demanded towers get one, about one per nine towers
+  (5 of 67 on the demo at day 12); kept at 60% of the bar and land down to 0.72; redrawn with a helideck
+  on stilts, styles limited to deck-capable towers. The air taxi company keeps one eVTOL drone per vertiport slot but one. A
+  rich adult on a trip of 400 m or more flies when a taxi pad is within 170 m of both ends, the fare (20 + 16/km,
+  15% levy to the treasury) is in the purse and the flight beats a city drive (`consider_air`, the only hook in
+  the mode choice): walk to the pad, wait, the nearest drone with the charge for the job comes, climb to 150 m,
+  fly straight at 45 m/s, land, walk on. A pad takes as many aircraft as it has slots; the rest circle and land
+  first come first served. Batteries drain per km and per metre climbed and charge on the stand at base; riders
+  with no drone after 40 minutes drive. High-tier hospitals and the fire HQ keep an air ambulance: a critical
+  patient (65+ or one in three) over 500 m from any hospital is flown, landing on the roof pad or in the street,
+  10 minutes of work, then to the nearest hospital with a bed, helipad first. The police HQ helicopter circles
+  crime scenes at night with a searchlight. Flying is logged on a 64 m noise grid (halved nightly) that feeds the
+  land value nuisance layer, vertiports are a nuisance too, and people on the street who are not rich grumble
+  (a memory, a little mood, once a day). The renderer lands aircraft on the decks the buildings drew
+  (`Geometry::pads`).
 - **Crime, the street and the bins** (`nd_sim::{crime, homeless, trash}`, hooked in from
   `world/society.rs`, their own random stream). *Crime*: every hour each adult may turn, by class
   (poor 1, middle 0.22, rich 0.04), being jobless (x2.5) or homeless (x1.6), hunger, unhappiness,
@@ -744,3 +825,5 @@ See `IDEAS.md` for everything that has not been scheduled.
 - v0.17 (done): whole-project code review (docs/REVIEW.md) and the first batch of fixes
   from it: long frontages parcel, roads join junctions they pass through, no stale rail
   segment panic, no lost truck cargo, no NaN geometry, egui focus and right-drag input fixes.
+- Roundabouts: a Road tool preset that stamps a give-way ring over roads and junctions,
+  with a live preview of what it cuts, joins and takes.

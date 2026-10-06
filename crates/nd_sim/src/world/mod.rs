@@ -8,7 +8,10 @@
 //! - `market`: businesses, restocking, trucks, imports/exports, shopping
 //! - `construction`: building sites
 //! - `trips`: citizens' days, (im/e)migration, jobs, journeys, footfall
-//! - `parking`: car parks and parking on arrival
+//! - `cars`: private cars as things with a place (parked or driving),
+//!   parking and the search for a space, buying and selling, trucks and
+//!   vans going back to base
+//! - `parking`: parking businesses
 //! - `buses`: depots, routes, stops and the bus loop
 //! - `trains`: stations, yards, rail links and trains
 //! - `power`: plants and power allocation
@@ -20,9 +23,12 @@
 //!   the highway and its through traffic, ports, ferries and ships
 //! - `tests`: the world-level tests
 
+mod air;
 mod buses;
+mod cars;
 mod construction;
 mod develop;
+mod driving;
 mod industry;
 mod market;
 mod parking;
@@ -32,6 +38,8 @@ pub use plan::{ProjectInfo, ProjectPreview};
 mod power;
 mod services;
 mod society;
+#[cfg(test)]
+mod car_tests;
 #[cfg(test)]
 mod tests;
 mod trains;
@@ -69,6 +77,7 @@ use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
 pub use crate::rail::TRUNK_Y;
+pub use driving::{CrashRecord, Driving, Tow, Wreck};
 pub use industry::{is_return_trip, return_cargo, IndustryArea};
 use crate::landscape::{Ground, Landscape, LandscapeParams};
 use crate::ports::Ports;
@@ -315,9 +324,20 @@ pub struct World {
     /// Pavement delivery robots and the day's home-delivery counts.
     #[serde(default)]
     pub bots: crate::bots::Bots,
+    /// [driving] Crashes, wrecks, tow trucks and street takeovers.
+    #[serde(default)]
+    pub driving: Driving,
     /// [society] Crime, homelessness and trash (`world/society.rs`).
     #[serde(default)]
     pub society: crate::society::Society,
+    /// [carlife] Every private car and where it is; trucks parked at
+    /// their businesses; buying, selling and trip counts (`world/cars.rs`).
+    #[serde(default)]
+    pub vehicles: crate::vehicle::Vehicles,
+    /// Drone taxis, air ambulances, police helicopters and their pads
+    /// (`world/air.rs`).
+    #[serde(default)]
+    pub air: crate::air::Air,
     /// What industry has done to the ground (oil spills, ash): saved,
     /// spreads and fades daily. Old saves load clean.
     #[serde(default)]
@@ -382,7 +402,10 @@ impl World {
             ground: Ground::default(),
             bridge_metres: 0.0,
             bots: Default::default(),
+            driving: Driving::default(),
             society: Default::default(),
+            vehicles: Default::default(),
+            air: Default::default(),
             contamination: crate::ground::Contamination::new(half + 200.0, crate::ground::CONTAMINATION_CELL),
             industry_bias: Vec::new(),
         };
@@ -440,6 +463,7 @@ impl World {
         for (_, car) in self.traffic.reattach_cars() {
             self.strand_car(car);
         }
+        self.vehicles_after_load();
         self.transit.refresh_legs(&self.traffic.net);
         let on_trains: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::OnTrain { .. })).map(|(id, _)| id).collect();
         for id in on_trains {
@@ -510,6 +534,7 @@ impl World {
                 None => true,
                 Some(TransitLeg::Bus { route, board, alight }) => routes.get(route).is_some_and(|r| board < r.stops.len() && alight < r.stops.len()),
                 Some(TransitLeg::Rail { board, alight }) => buildings.contains_key(board) && buildings.contains_key(alight),
+                Some(TransitLeg::Air { from, to }) => buildings.contains_key(from) && buildings.contains_key(to),
             } && c.transit.is_none_or(|t| buildings.contains_key(t.target));
             if !trip_ok {
                 c.transit = None;
@@ -521,6 +546,7 @@ impl World {
                 Activity::AtHome => c.home.is_none(),
                 Activity::Working => c.work.is_none(),
                 Activity::Waiting { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } => c.transit.is_none(),
+                Activity::Flying { drone } => !self.air.drones.contains_key(*drone),
                 _ => false,
             };
             if lost || target_gone {
@@ -625,6 +651,7 @@ impl World {
             // [society] crime, the street and the bins settle their day.
             self.daily_society();
             self.daily_update();
+            self.daily_vehicles();
             self.industry_daily();
         }
         // Periodic work is staggered so no tick carries more than one heavy
@@ -661,12 +688,17 @@ impl World {
         if tick % 60 == 40 {
             self.hourly_society();
         }
+        if tick % 60 == 45 {
+            self.hourly_vehicles();
+        }
         for (id, decision) in minds.poll() {
             if self.citizens.contains_key(id) {
                 self.apply_decision(id, decision);
             }
         }
         self.step_traffic();
+        self.step_air();
+        self.step_driving();
         self.step_services();
         // [society] Trash trucks.
         self.step_society();
@@ -705,23 +737,28 @@ impl World {
             if self.society_car_arrived(car_id) {
                 continue;
             }
-            let Some(car) = self.traffic.remove_car(car_id) else { continue };
+            let Some(car) = self.traffic.cars.get(car_id) else { continue };
+            // Lorries deliver and head back to a truck lot, their business
+            // or out of town (`world/industry`).
             if let Some(cargo) = car.cargo {
-                self.truck_arrived(cargo, car.model);
+                let model = car.model;
+                self.traffic.remove_car(car_id);
+                self.truck_arrived(cargo, model);
                 continue;
             }
-            if let Some(c) = self.citizens.get_mut(car.citizen) {
-                c.pos = car.pos;
-                c.heading = car.heading;
-                self.park_car(car.citizen);
-                if !self.walk_last_leg(car.citizen) {
-                    self.arrive(car.citizen);
-                }
+            // [carlife] Private cars park (or go on looking), trucks and
+            // vans head back to base, cars sold or emigrating leave.
+            if self.vehicle_arrived(car_id) {
+                continue;
             }
+            // Through traffic at the far edge of the map: gone on its way.
+            self.traffic.remove_car(car_id);
         }
         // Keep citizen positions in sync with their cars for inspection.
-        for car in self.traffic.cars.values() {
-            if let Some(c) = self.citizens.get_mut(car.citizen) {
+        for (cid, car) in self.traffic.cars.iter() {
+            // [carlife] Only someone actually in it (not a driver who got
+            // out while it was taken elsewhere).
+            if let Some(c) = self.citizens.get_mut(car.citizen).filter(|c| matches!(c.activity, Activity::Driving { car, .. } if car == cid)) {
                 c.pos = car.pos;
                 c.heading = car.heading;
             }

@@ -43,4 +43,9 @@ pub enum SimEvent {
     Arrested(u32, CitizenId),
     /// Someone left custody: sentence served, or let go early (no jail).
     Released(CitizenId),
+    /// [driving] A crash (`World::driving.recent` id).
+    Crash(u32),
+    /// [driving] A street takeover started gathering, and one ended.
+    Takeover(u32),
+    TakeoverOver(u32),
 }

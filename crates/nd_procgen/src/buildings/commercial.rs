@@ -276,8 +276,11 @@ pub fn slab_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for p in &poly {
         g.part(Glow).boxed(f.at2(*p, y + 0.3), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
     }
-    antenna_mast(g, c, poly_center(&poly), y + 2.5, 9.0);
-    if rng.random_bool(0.5) {
+    // With a helipad on top the mast stands at the edge, not through the pad.
+    let pad = rng.random_bool(0.5);
+    let mast = if pad && !poly.is_empty() { poly_center(&poly).lerp(poly[0], 0.85) } else { poly_center(&poly) };
+    antenna_mast(g, c, mast, y + 2.5, 9.0);
+    if pad {
         helipad(g, c, poly_center(&poly), y + 2.5, (inradius(&poly) * 0.6).clamp(2.0, 6.0));
     }
     let front = c.front_face(&base);

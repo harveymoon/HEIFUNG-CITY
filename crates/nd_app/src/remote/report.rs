@@ -318,7 +318,12 @@ fn people(w: &World) -> Value {
             Activity::Driving { .. } => Some("car"),
             Activity::Riding { .. } => Some("bus"),
             Activity::OnTrain { .. } => Some("train"),
-            Activity::Waiting { .. } => Some(if matches!(c.transit.map(|t| t.leg), Some(TransitLeg::Rail { .. })) { "train" } else { "bus" }),
+            Activity::Waiting { .. } => Some(match c.transit.map(|t| t.leg) {
+                Some(TransitLeg::Rail { .. }) => "train",
+                Some(TransitLeg::Air { .. }) => "air",
+                _ => "bus",
+            }),
+            Activity::Flying { .. } => Some("air"),
             Activity::Traveling { .. } => Some(if c.mode == TravelMode::Bike { "bike" } else { "walk" }),
             _ => None,
         };
@@ -632,7 +637,7 @@ fn services(w: &World) -> Value {
             match c.transit.map(|t| t.leg) {
                 Some(TransitLeg::Bus { route, .. }) => *route_waiting.entry(key_str(route)).or_default() += 1,
                 Some(TransitLeg::Rail { board, .. }) => *station_waiting.entry(board).or_default() += 1,
-                None => {}
+                Some(TransitLeg::Air { .. }) | None => {}
             }
         }
     }
@@ -697,7 +702,7 @@ fn services(w: &World) -> Value {
     }
     let t = &e.transit;
     let r = &w.rail.stats;
-    json!({
+    let mut out = json!({
         "emergency": emergency(w),
         "power": {
             "supply_mw": round(p.supply_mw), "demand_mw": round(p.demand_mw), "imported_mw": round(p.imported_mw), "served_share": round(p.served),
@@ -716,6 +721,7 @@ fn services(w: &World) -> Value {
             "freight_trains_today": r.freight_trains_today, "freight_in_today": round(r.freight_in_today), "freight_waiting": round(r.freight_waiting),
             "next_passenger_in_ticks": r.next_passenger_in,
         },
+        "air": crate::remote::view::air_report(w),
         "parking": {
             "capacity": e.parking_capacity, "used": e.parking_used, "occupancy": share(e.parking_used as usize, e.parking_capacity as usize), "parking_lots": e.parking_lots,
             "parked_on_street_today": e.parking_street_today, "fees_today": round(e.parking_fees_today), "last_shortage_at": e.parking_shortage_at.map(v2),
@@ -730,13 +736,19 @@ fn services(w: &World) -> Value {
             "left_turns_measured": w.traffic.left_wait_stats().2, "protected_left_arrows_now": w.traffic.net.intersections.iter().filter(|i| i.timer < i.arrow).count(),
             "passing_left_turners_now": w.traffic.cars.values().filter(|c| c.passing).count(), "lane_use_set_by_player": w.traffic.lane_use.len(),
             "models": nd_sim::bots::fleet_counts(w),
+            "private_cars": car_life(w),
         },
         "bots": {
             "active": w.bots.bots.len(), "delivering": w.bots.bots.values().filter(|b| !b.returning).count(), "delivered_today": w.bots.delivered_today,
             "vans_on_road": nd_sim::Bots::vans(w), "van_orders_today": w.bots.van_orders_today,
             "rule": format!("shops deliver to homes within {} m; by pavement robot where shop and home both have land value >= {}, else by van", nd_sim::bots::DELIVERY_RANGE, nd_sim::bots::BOT_LAND_VALUE),
         },
-    })
+    });
+    // [driving] Crashes, drink and takeovers, in the traffic section.
+    if let (Some(t), Value::Object(d)) = (out.get_mut("traffic").and_then(|t| t.as_object_mut()), driving_json(w)) {
+        t.extend(d);
+    }
+    out
 }
 
 /// City services and emergencies: coverage, stations and their units,
@@ -804,7 +816,7 @@ fn emergency(w: &World) -> Value {
         "all_units_busy_min_today": per_kind(&|k| json!(st.saturated_min_today[k])),
         "all_units_busy_now_min": per_kind(&|k| st.saturated_since[k].map_or(Value::Null, |t| json!(tick.saturating_sub(t)))),
         "unanswered_why_today": per_kind(&|k| { let u = &st.unanswered_why_today[k]; json!({ "all_units_busy": u.all_units_busy, "no_route": u.no_route, "no_station": u.no_station }) }),
-        "mutual_aid_today": st.mutual_aid_today, "diverted_today": st.diverted_today, "units_on_patrol": st.on_patrol,
+        "mutual_aid_today": st.mutual_aid_today, "unreachable_today": st.unreachable_today, "diverted_today": st.diverted_today, "units_on_patrol": st.on_patrol,
         "stadium_crowd_today": st.stadium_crowd_today, "tickets_today": round(st.tickets_today), "stadium_events_tonight": s.events_today.len(),
         "upkeep_per_day": round(st.upkeep_today), "education_wage_bonus_today": round(st.education_bonus_today), "pupils_today": st.pupils_today,
         "jailed": st.jailed, "held_at_stations": st.held_at_stations, "released_early_total": st.released_early_total,
@@ -852,11 +864,11 @@ fn saturated_alerts(w: &World) -> Vec<Alert> {
         a.message = format!("all {crewed} {label}s busy for {span} today (up to {waited} calls waiting at once, {gave_up} unanswered calls today because every unit was out): {fix}");
         out.push(a);
     }
-    let no_route: u32 = st.unanswered_why_today.iter().map(|u| u.no_route).sum();
+    let no_route: u32 = st.unanswered_why_today.iter().map(|u| u.no_route).sum::<u32>() + st.unreachable_today;
     if no_route > 0 {
-        let mut a = Alert::new("emergency_calls_unreachable", 2, "a free unit had no road to the call: check for cut-off streets between the station and the calls");
+        let mut a = Alert::new("emergency_calls_unreachable", 2, "a free unit had no road to the call (a highway with no ramp to the city's streets, a cut-off block): calls there go to the next town, slowly and for a fee; connect the roads");
         a.count = no_route as usize;
-        a.message = format!("{} calls today went unanswered although a unit was free: no road led there", a.count);
+        a.message = format!("{} calls today had no road from any free unit of ours: handed to the next town", a.count);
         out.push(a);
     }
     out
@@ -1218,5 +1230,84 @@ fn industry(w: &World) -> Value {
         "biases": { "count": w.industry_bias.len(), "newest_first": biases },
         "plant_land_value": plants,
         "land_value_note": "plants and heavy industry are nuisances: homes feel 125% of them, shops 85%, industry 30%; working industry lifts land below 0.35 by up to 0.1",
+    })
+}
+
+/// [driving] Crashes, drunk drivers and street takeovers for `report.traffic`.
+fn driving_json(w: &World) -> Value {
+    json!({
+            "crashes_today": w.driving.crashes_today, "injuries_today": w.driving.injuries_today, "drunk_drivers_now": w.drunk_drivers_now(),
+            "drunk_trips_today": w.driving.drunk_trips_today, "red_lights_run_today": w.driving.red_runs_today, "crashes_total": w.driving.crashes_total,
+            "wrecks_on_road": w.driving.wrecks.len(), "tow_trucks_now": w.driving.tows.len(), "towed_total": w.driving.towed_total,
+            "drivers_by_style": ({
+                let mut m = serde_json::Map::new();
+                for c in w.traffic.cars.values() {
+                    let k = c.drive.profile.label();
+                    let n = m.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+                    m.insert(k.to_string(), json!(n + 1));
+                }
+                Value::Object(m)
+            }),
+            "recent_crashes": w.driving.recent.iter().rev().take(5).map(|r| json!({ "id": r.id, "tick": r.tick, "pos": [r.pos.x, r.pos.y], "place": r.place, "cause": r.cause.label(), "severity": round(r.severity), "injured": r.injured.len(), "drunk": r.drunk, "incident": r.incident })).collect::<Vec<_>>(),
+            "takeovers": {
+                "active": w.takeover().is_some(),
+                "location": w.takeover().map(|t| json!([t.centre.x, t.centre.y])),
+                "place": w.takeover().map(|t| t.place.clone()),
+                "stage": w.takeover().map(|t| t.stage.label()),
+                "participants": w.takeover().map_or(0, |t| t.participants()),
+                "residents": w.takeover().map_or(0, |t| t.residents.len()),
+                "outsiders": w.takeover().map_or(0, |t| t.outsiders),
+                "in_show": w.takeover().map_or(0, |t| t.cars.iter().filter(|&&c| w.traffic.cars.get(c).is_some_and(|c| c.in_stunt())).count()),
+                "crowd": w.takeover_crowd_now(),
+                "incident": w.takeover().and_then(|t| t.incident),
+                "planned_tick": w.driving.takeovers.planned,
+                "total": w.driving.takeovers.total,
+                "last": w.driving.takeovers.history.last().map(|r| json!({ "id": r.id, "place": r.place, "participants": r.participants, "crowd": r.crowd, "arrests": r.arrests, "police": r.police, "started": r.started, "ended": r.ended })),
+            }
+    })
+}
+
+/// [carlife] Private cars and how people travel: where the cars are,
+/// purchases and sales, the parking search, trip shares by mode and the
+/// pain each mode has caused lately.
+pub fn car_life(w: &World) -> Value {
+    use nd_sim::citizens::TripMode;
+    use nd_sim::ParkKind;
+    let v = &w.vehicles;
+    let st = &v.stats;
+    let (parked, driving, searching) = v.counts(&w.traffic);
+    let mut by_kind: BTreeMap<&str, u32> = BTreeMap::new();
+    for car in v.cars.values() {
+        if let Some(s) = car.spot() {
+            *by_kind.entry(s.kind.label()).or_default() += 1;
+        }
+    }
+    let (kerb_total, kerb_used) = w.kerb_occupancy();
+    let shares = |t: &[u32]| -> Value {
+        let n: u32 = TripMode::ALL.iter().map(|m| t[m.index()]).sum();
+        let m: Map<String, Value> = TripMode::ALL.iter().map(|m| (m.key().to_string(), json!({ "trips": t[m.index()], "share": share(t[m.index()] as usize, n as usize) }))).collect();
+        json!({ "trips": n, "modes": m })
+    };
+    // Pain among those who used the mode lately (bad half-hours per trip).
+    let mut pain: Map<String, Value> = Map::new();
+    for m in TripMode::ALL {
+        let users: Vec<f32> = w.citizens.values().filter(|c| c.commute.trips[m.index()] > 0.3).map(|c| c.commute.pain_of(m)).collect();
+        let mean = if users.is_empty() { 0.0 } else { users.iter().sum::<f32>() / users.len() as f32 };
+        pain.insert(m.key().to_string(), json!({ "users": users.len(), "mean": r3(mean) }));
+    }
+    let drivers: Vec<f32> = w.citizens.values().filter(|c| c.car.is_some()).map(|c| c.commute.parking_pain).collect();
+    let parking_pain = if drivers.is_empty() { 0.0 } else { drivers.iter().sum::<f32>() / drivers.len() as f32 };
+    let _ = ParkKind::Kerb;
+    json!({
+        "cars": v.cars.len(), "cars_parked": parked, "cars_driving": driving, "cars_searching": searching,
+        "parked_by_place": by_kind, "kerb_slots": { "total": kerb_total, "used": kerb_used, "occupancy": share(kerb_used as usize, kerb_total as usize) },
+        "created_total": st.created_total, "destroyed_total": st.destroyed_total, "events_total": st.events_total,
+        "bought_today": st.bought_today, "sold_today": st.sold_today, "bikes_bought_today": st.bikes_bought_today, "bikes_sold_today": st.bikes_sold_today,
+        "circled_today": st.circled_today, "search_minutes_today": round(st.search_seconds_today / w.config.traffic_seconds_per_tick),
+        "parked_today": { "home_or_building": st.parked_today[0], "lot": st.parked_today[1], "kerb": st.parked_today[2], "no_space": st.parked_today[3] },
+        "mode_shares_today": shares(&st.trips_today), "mode_shares_yesterday": shares(&st.trips_yesterday),
+        "commute_pain": pain, "parking_pain_mean_of_owners": r3(parking_pain),
+        "fleet_parked_at_businesses": v.fleet_parked.values().map(|n| *n as u32).sum::<u32>(), "fleet_bought_total": st.fleet_bought_total, "fleet_returned_today": st.fleet_returned_today,
+        "rule": "cars come only with arriving households or purchases and leave only when sold, scrapped or driven out of town; trips are never timed out",
     })
 }

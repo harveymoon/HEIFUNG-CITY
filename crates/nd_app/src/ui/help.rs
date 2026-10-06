@@ -28,6 +28,8 @@ pub fn tool_hint(tool: Tool) -> &'static str {
     TOOL_HINTS.iter().find(|(t, _)| *t == tool).map_or("", |(_, h)| h)
 }
 
+/// The Road tool's roundabout preset.
+pub const ROAD_ROUNDABOUT: &str = "Hover to see the roundabout land: the ring, where roads are cut back and joined (dots), the road it takes up (dashed red) and the buildings that would come down (red lots). Click to stamp it into the project; it snaps onto a junction (whose signals go) or a road. Ctrl+wheel or the slider sizes it, 24 to 80 m across. Traffic goes round anticlockwise; entering cars give way to the ring, on two lanes later exits keep to the inside. Ctrl+Z undoes, Ctrl+Enter builds.";
 pub const ROAD_PATH: &str = "Path: 3 m wide, for walkers and bikes only. Cars never use it; it joins streets at junctions and crosses them with a zebra.";
 pub const ROAD_RAIL: &str = "Rail: single track. Ends snap to other track only, so branch off the trunk line that already crosses the map; crossing a street makes a level crossing. Stations and freight yards go on lots beside the track (Rail tool).";
 pub const ZONE_BRUSH: &str = "Parcels are cut along every road already; drag over them to give them the selected use (right-drag erases to unzoned). Only parcels the use may go on take it: parks anywhere, homes on a street or path, the rest on a street. One stroke is one undo.";
@@ -65,5 +67,6 @@ pub fn service_note(k: nd_sim::ServiceKind) -> &'static str {
         K::Stadium => "Hosts games some evenings: crowds come, tickets pay into the treasury.",
         K::Jail => "Arrested suspects serve days here; without one they are held a few hours at a police station and let go early.",
         K::TrashDepot => "Garbage trucks (two crew each) empty the bins of every building within its radius, 06:00 to 18:00. Without one only the rich pay a private hauler; everyone else's trash overflows onto the pavement.",
+        K::Vertiport => "Base for the air taxi company's drones: the rich fly between vertiports and rooftop pads, above the traffic. Noisy neighbours.",
     }
 }

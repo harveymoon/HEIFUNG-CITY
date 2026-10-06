@@ -31,10 +31,12 @@ use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
 
 /// Emergency vehicles, fires and rubble (render/emergency.rs).
+mod air;
 mod emergency;
 mod haze;
 mod layers;
 mod lights;
+mod stunts;
 /// [society] Camps, RVs and overflowing bins.
 mod society;
 mod turbines;
@@ -72,6 +74,9 @@ struct ParkTag;
 struct VacantTag;
 #[derive(Component)]
 struct PreviewTag;
+/// The Road tool's roundabout under the pointer: what stamping it would do.
+#[derive(Component)]
+struct RingPreviewTag;
 #[derive(Component)]
 struct SignalTag(LaneId);
 /// Lane arrows at junction approaches (follow `LaneNetwork::arrows_version`).
@@ -211,6 +216,14 @@ pub struct CarTag;
 #[derive(Component)]
 pub struct SelfLifted;
 
+/// Where a mover is spawned before its first pose: far below the map.
+/// Spawns go through `Commands`, so the frame's pose systems cannot see the
+/// new entity yet; spawned at `Transform::IDENTITY` it would flash for a
+/// frame at the world origin (the centre of the main junction).
+pub(crate) fn offstage() -> Transform {
+    Transform::from_xyz(0.0, -10_000.0, 0.0)
+}
+
 #[derive(Resource)]
 struct Materials {
     /// One material per [`Surface`], indexed by `Surface::index()`.
@@ -328,12 +341,19 @@ impl Plugin for RenderPlugin {
                 .in_set(SimSet::Sync),
         );
         app.add_systems(Update, sync_lane_arrows.in_set(SimSet::Sync).after(sync_signals).before(lift_spawned));
+        app.add_systems(Update, sync_ring_preview.in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
         app.add_systems(Update, (turbines::sync_turbines, haze::sync_haze, layers::sync_layers, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
+        // [carlife] Cars parked at the kerb, after the cars on the road.
+        app.init_resource::<ParkedRender>().add_systems(Update, sync_parked_cars.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // Emergency vehicles, fires and rubble, after the cars they hide.
         app.add_systems(Update, emergency::sync_emergency.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
+        // [driving] Tyre smoke, skid marks, wrecks and tows.
+        app.add_systems(Update, stunts::sync_stunts.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // [society] Skid row and the trash.
         app.init_resource::<society::SocietyRender>().add_systems(Update, society::sync_society.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
+        // Drone taxis and helicopters, after the buildings whose pads they land on.
+        app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
     }
 }
 
@@ -959,9 +979,98 @@ fn sync_preview(
         outline.push(poly[0]);
         glow.ground_strip(&outline, 0.8, 0.22, rgba(pal.preview_remove));
     }
+    for (_, fx) in &pv.planned_rings {
+        draw_ring_effect(&mut glow, pal, fx, 1.0);
+    }
+    for (_, ring) in &pv.removed_rings {
+        let road = ring.polyline(&[]).0;
+        let wd = ring.half_width() * 2.0;
+        glow.ground_strip(&road, wd, 0.22, scale(pal.preview_remove, 0.35));
+        for w in road.windows(2).step_by(2) {
+            dashes(&mut glow, w[0], w[1], 0.6, 0.23, 4.0, 3.0, rgba(pal.preview_remove));
+        }
+    }
     if !glow.is_empty() {
         spawn_glow(&mut commands, &mut meshes, &mats, &glow, PreviewTag);
     }
+}
+
+/// A roundabout as a hologram: the ring road with its direction of travel,
+/// the island, where the arms join, and the parts of roads it takes up
+/// (dashed red). `k` dims it for a parked project.
+fn draw_ring_effect(glow: &mut MeshData, pal: &nd_procgen::Palette, fx: &nd_sim::plan::RingEffect, k: f32) {
+    let Some(ring) = fx.ring else { return };
+    let tint = if fx.blocked { pal.preview_remove } else { pal.preview };
+    let wd = ring.half_width() * 2.0;
+    glow.ground_strip(&fx.road, wd, 0.22, scale(tint, 0.35 * k));
+    glow.ground_strip(&fx.road, 0.5, 0.23, scale(tint, k));
+    // Chevrons round the ring show the way traffic turns.
+    let n = fx.road.len().saturating_sub(1).max(1);
+    for (i, w) in fx.road.windows(2).enumerate() {
+        if i % 2 == 1 && n > 4 {
+            continue;
+        }
+        let mid = (w[0] + w[1]) * 0.5;
+        let d = (w[1] - w[0]).normalize_or_zero();
+        let side = SVec2::new(-d.y, d.x);
+        let tip = mid + d * 1.6;
+        for s in [-1.0f32, 1.0] {
+            glow.ground_strip(&[mid - d * 0.6 + side * s * 1.4, tip], 0.45, 0.235, scale(tint, 1.2 * k));
+        }
+    }
+    let island: Vec<SVec2> = (0..32).map(|i| ring.center + SVec2::from_angle(i as f32 / 32.0 * std::f32::consts::TAU) * ring.island_radius()).collect();
+    glow.ground_polygon(&island, 0.2, scale([0.35, 0.8, 0.45], 0.25 * k));
+    for (i, cut) in fx.cut.iter().enumerate() {
+        let wd = fx.cut_widths.get(i).copied().unwrap_or(6.0);
+        glow.ground_strip(cut, wd, 0.225, scale(pal.preview_remove, 0.18 * k));
+        for w in cut.windows(2) {
+            dashes(glow, w[0], w[1], 0.6, 0.24, 4.0, 3.0, scale(pal.preview_remove, k));
+        }
+    }
+    for &j in &fx.joins {
+        let dot: Vec<SVec2> = (0..12).map(|i| j + SVec2::from_angle(i as f32 / 12.0 * std::f32::consts::TAU) * 1.6).collect();
+        glow.ground_polygon(&dot, 0.24, scale(tint, 1.4 * k));
+    }
+}
+
+/// The Road tool's roundabout under the pointer, as Cities: Skylines
+/// shows a road before it is built: the ring, where existing roads are cut
+/// back and joined, and the lots whose buildings would be taken (red).
+/// Rebuilt only when the ring or the plan changes.
+#[allow(clippy::too_many_arguments)]
+fn sync_ring_preview(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    tools: Res<crate::tools::ToolState>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut last: Local<Option<(i64, i64, i64, u8, u64, u64)>>,
+    existing: Query<Entity, With<RingPreviewTag>>,
+) {
+    let w = &sim.world;
+    let ring = tools.ring_preview();
+    let key = ring.map(|r| ((r.center.x * 4.0).round() as i64, (r.center.y * 4.0).round() as i64, (r.radius * 4.0).round() as i64, r.lanes, w.plan_version, w.lots.len() as u64 ^ w.roads.version << 20));
+    if key == *last && !assets.palette_changed {
+        return;
+    }
+    *last = key;
+    despawn_all(&mut commands, &existing);
+    let Some(ring) = ring else { return };
+    let pal = &assets.palette;
+    let mut glow = MeshData::default();
+    let fx = nd_sim::plan::ring_effect(w.effective_plan(), ring);
+    draw_ring_effect(&mut glow, pal, &fx, 1.0);
+    if !fx.blocked {
+        for lot in w.roundabout_takes(ring) {
+            let Some(l) = w.lots.get(lot) else { continue };
+            let mut outline = l.polygon.clone();
+            outline.push(l.polygon[0]);
+            glow.ground_polygon(&l.polygon, 0.2, scale(pal.preview_remove, 0.3));
+            glow.ground_strip(&outline, 0.7, 0.24, scale(pal.preview_remove, 1.3));
+        }
+    }
+    spawn_glow(&mut commands, &mut meshes, &mats, &glow, RingPreviewTag);
 }
 
 /// Park land is a park as soon as it is planned, built or not, and park
@@ -1210,6 +1319,7 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         dynamic_lights: true,
         business: b.business.as_ref().map(|z| z.kind),
         fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
+        rooftop_pad: world.air.has_rooftop(id),
     };
     let mut g = match &b.demolition {
         // Coming down: what stood there (which, during a redevelopment or a
@@ -1596,16 +1706,23 @@ fn sync_cars(
         }
     }
     let traffic = &sim.world.traffic;
+    let f = sim.frac();
     for (id, car) in traffic.cars.iter() {
         if !state.cars.contains_key(&id) {
             let model = car_model(car);
             let v = vr.variant(&mut meshes, &model);
             let finish = vr.finish[model.class as usize].clone();
-            let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), Transform::IDENTITY, NotShadowCaster, CarTag, SelfLifted)).id();
-            let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted)).id();
+            // [carlife] Spawned where the car is. Entities spawned through
+            // `Commands` are not in this frame's query below, so a car
+            // spawned at the identity transform was drawn for one frame at
+            // the world origin: the centre of the main junction, flashing
+            // each time a car joined the road.
+            let pose = car_pose(car, f, sim.world.car_height(car));
+            let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, CarTag, SelfLifted)).id();
+            let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), pose, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted)).id();
             state.cars.insert(id, [body, lights]);
             if let Some(fx) = v.fx {
-                let e = commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted)).id();
+                let e = commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), pose, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted)).id();
                 vr.car_fx.insert(id, e);
             }
             if model.body == nd_sim::BodyType::AkiraBike {
@@ -1633,11 +1750,10 @@ fn sync_cars(
             meshes.remove(&h);
         }
     }
-    let f = sim.frac();
     for (id, ents) in state.cars.iter() {
         let Some(car) = traffic.cars.get(*id) else { continue };
-        let pos = car.prev_pos.lerp(car.pos, f);
-        let heading = lerp_angle(car.prev_heading, car.heading, f);
+        // [driving] Along the substep poses, not a chord across the turn.
+        let (pos, heading) = car.pose_at(f);
         // Lifted when selected, whether through its driver or, for a bus or
         // truck with nobody to inspect, as the vehicle itself.
         let selected = *selection == Selection::Citizen(car.citizen) || *selection == Selection::Car(*id);
@@ -1658,8 +1774,7 @@ fn sync_cars(
         let ids: Vec<CarId> = vr.trails.keys().copied().collect();
         for id in ids {
             let Some(car) = traffic.cars.get(id) else { continue };
-            let pos = car.prev_pos.lerp(car.pos, f);
-            let heading = lerp_angle(car.prev_heading, car.heading, f);
+            let (pos, heading) = car.pose_at(f);
             let tail = pos - SVec2::new(heading.cos(), heading.sin()) * 1.4;
             let p = Vec3::new(tail.x, 0.05 + w.surface_height(tail), tail.y);
             let Some((_, h, pts)) = vr.trails.get_mut(&id) else { continue };
@@ -1677,6 +1792,61 @@ fn sync_cars(
             if let Some(mut m) = meshes.get_mut(&*h) {
                 *m = shared_mesh(&mesh, false);
             }
+        }
+    }
+}
+
+/// [carlife] Where a car on the road is drawn this frame, `lift` above datum.
+fn car_pose(car: &nd_sim::Car, f: f32, lift: f32) -> Transform {
+    let pos = car.prev_pos.lerp(car.pos, f);
+    let heading = lerp_angle(car.prev_heading, car.heading, f);
+    Transform::from_translation(Vec3::new(pos.x, lift + 0.05, pos.y)).with_rotation(Quat::from_rotation_y(-heading))
+}
+
+/// [carlife] Parked cars drawn at the kerb: every private car standing on a
+/// street (in a kerb slot, or squeezed in with no space) is a body mesh at
+/// its spot. Cars in a building's spaces are out of sight in its garage; a
+/// parking lot shows its occupancy itself.
+#[derive(Resource, Default)]
+struct ParkedRender {
+    /// Tick and car count last drawn for.
+    key: Option<(u64, usize)>,
+    cars: HashMap<nd_sim::VehicleId, ((i32, i32), Entity)>,
+}
+
+#[derive(Component)]
+struct ParkedTag;
+
+#[allow(clippy::too_many_arguments)]
+fn sync_parked_cars(mut commands: Commands, sim: Res<Sim>, mut pr: ResMut<ParkedRender>, mut vr: ResMut<VehicleRender>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    let w = &sim.world;
+    let key = (w.clock.tick, w.vehicles.cars.len());
+    if pr.key == Some(key) && !sim.full_rebuild {
+        return;
+    }
+    pr.key = Some(key);
+    vr.ensure_materials(&mut materials);
+    let mut seen: std::collections::HashSet<nd_sim::VehicleId> = std::collections::HashSet::new();
+    for (vid, car) in w.vehicles.cars.iter() {
+        let Some(spot) = car.spot().filter(|s| s.kind.on_street()) else { continue };
+        seen.insert(vid);
+        let at = ((spot.pos.x * 10.0) as i32, (spot.pos.y * 10.0) as i32);
+        if pr.cars.get(&vid).is_some_and(|(k, _)| *k == at) {
+            continue;
+        }
+        if let Some((_, e)) = pr.cars.remove(&vid) {
+            commands.entity(e).despawn();
+        }
+        let v = vr.variant(&mut meshes, &car.model);
+        let finish = vr.finish[car.model.class as usize].clone();
+        let pose = Transform::from_translation(Vec3::new(spot.pos.x, 0.05, spot.pos.y)).with_rotation(Quat::from_rotation_y(-spot.heading));
+        let e = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, ParkedTag, Grounded)).id();
+        pr.cars.insert(vid, (at, e));
+    }
+    let gone: Vec<nd_sim::VehicleId> = pr.cars.keys().copied().filter(|id| !seen.contains(id)).collect();
+    for id in gone {
+        if let Some((_, e)) = pr.cars.remove(&id) {
+            commands.entity(e).despawn();
         }
     }
 }
@@ -1702,12 +1872,14 @@ fn sync_bots(
         let livery = w.buildings.get(bot.shop).and_then(|b| b.business.as_ref()).map_or(nd_sim::Livery::None, |bz| nd_sim::Livery::for_business(bz.kind));
         let model = nd_sim::VehicleModel { body: nd_sim::BodyType::DeliveryBot, livery, ..Default::default() };
         let v = vr.variant(&mut meshes, &model);
+        // [carlife] Spawned where it is, not at the origin (see `sync_cars`).
+        let pose = Transform::from_translation(Vec3::new(bot.pos.x, 0.16, bot.pos.y)).with_rotation(Quat::from_rotation_y(-bot.heading));
         let mut ents = vec![
-            commands.spawn((Mesh3d(v.body), MeshMaterial3d(vr.finish[1].clone()), Transform::IDENTITY, NotShadowCaster, BotTag, Grounded)).id(),
-            commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, BotTag, Grounded)).id(),
+            commands.spawn((Mesh3d(v.body), MeshMaterial3d(vr.finish[1].clone()), pose, NotShadowCaster, BotTag, Grounded)).id(),
+            commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), pose, NotShadowCaster, NotShadowReceiver, BotTag, Grounded)).id(),
         ];
         if let (Some(fx), Some(mat)) = (v.fx, vr.fx.clone()) {
-            ents.push(commands.spawn((Mesh3d(fx), MeshMaterial3d(mat), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, BotTag, Grounded)).id());
+            ents.push(commands.spawn((Mesh3d(fx), MeshMaterial3d(mat), pose, NotShadowCaster, NotShadowReceiver, BotTag, Grounded)).id());
         }
         vr.bots.insert(id, ents);
     }
@@ -2127,7 +2299,7 @@ fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res
 fn lift_spawned(
     sim: Res<Sim>,
     mut meshes: ResMut<Assets<Mesh>>,
-    q: Query<&Mesh3d, Or<(Added<RoadsTag>, Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>, Added<LaneArrowsTag>)>>,
+    q: Query<&Mesh3d, Or<(Added<RoadsTag>, Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>, Added<LaneArrowsTag>, Added<RingPreviewTag>)>>,
     mut signals: Query<&mut Transform, Added<SignalTag>>,
 ) {
     let w = &sim.world;

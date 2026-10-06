@@ -139,6 +139,10 @@ pub enum Activity {
     OnTrain {
         train: crate::rail::TrainId,
     },
+    /// In a drone taxi or an air ambulance (`crate::air`).
+    Flying {
+        drone: crate::air::DroneId,
+    },
 }
 
 impl Activity {
@@ -153,6 +157,7 @@ impl Activity {
             Activity::Waiting { .. } => "waiting for the bus",
             Activity::Riding { .. } => "on the bus",
             Activity::OnTrain { .. } => "on the train",
+            Activity::Flying { .. } => "in the air",
             Activity::Traveling { purpose, .. } | Activity::Driving { purpose, .. } => match purpose {
                 Purpose::Home => "heading home",
                 Purpose::Work => "commuting",
@@ -166,7 +171,7 @@ impl Activity {
     }
 
     pub fn is_traveling(&self) -> bool {
-        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. })
+        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } | Activity::Flying { .. })
     }
 }
 
@@ -176,6 +181,119 @@ pub enum TravelMode {
     #[default]
     Walk,
     Bike,
+}
+
+/// How a whole trip is made, as the citizen chose it (`World::choose_mode`).
+/// The index is stable: it addresses `Commute::pain` and the daily counts
+/// (`vehicle::CarStats::trips_today`), which have room for more modes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TripMode {
+    #[default]
+    Walk,
+    Bike,
+    Bus,
+    Train,
+    Car,
+}
+
+impl TripMode {
+    pub const ALL: [TripMode; 5] = [TripMode::Walk, TripMode::Bike, TripMode::Bus, TripMode::Train, TripMode::Car];
+
+    pub fn index(self) -> usize {
+        match self {
+            TripMode::Walk => 0,
+            TripMode::Bike => 1,
+            TripMode::Bus => 2,
+            TripMode::Train => 3,
+            TripMode::Car => 4,
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            TripMode::Walk => "walk",
+            TripMode::Bike => "bike",
+            TripMode::Bus => "bus",
+            TripMode::Train => "train",
+            TripMode::Car => "car",
+        }
+    }
+}
+
+/// Slots in `Commute::pain` (more than there are modes, so new ones fit).
+pub const PAIN_SLOTS: usize = crate::vehicle::MODE_SLOTS;
+
+/// What travelling has been like lately: the pain each mode has caused
+/// (an average over recent trips, in "bad half-hours", fading day by day),
+/// the misery of finding a space, and the trip under way. The mode choice
+/// weighs it; the daily habits (buy a bike, sell the car) act on it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Commute {
+    pub pain: [f32; PAIN_SLOTS],
+    /// Recent trips per mode (fading), so a mode never tried has no memory.
+    pub trips: [f32; PAIN_SLOTS],
+    /// Searching for a space and paying for it, on the same scale.
+    pub parking_pain: f32,
+    /// The trip under way: its mode and the tick it began.
+    pub mode: Option<TripMode>,
+    pub started: u64,
+    /// Straight-line metres of the trip under way.
+    pub distance: f32,
+    /// Traffic seconds spent looking for a space on this trip.
+    pub searched: f32,
+    /// Tick the driver began looking for a space (0: not looking).
+    pub search_since: u64,
+    /// Tick the car pulled out (0: not driving yet), and the minutes the
+    /// drive took, once parked.
+    pub drive_since: u64,
+    pub drive_minutes: f32,
+    /// Metres walked from where the car was left to the door.
+    pub walk_after: f32,
+    /// Parking paid on this trip.
+    pub fee: f32,
+    /// The last pain felt and on which mode, for the inspector.
+    pub last_pain: f32,
+    pub last_mode: Option<TripMode>,
+    /// Ticks of the last trip.
+    pub last_minutes: u32,
+}
+
+impl Commute {
+    /// Fold one trip's pain into the memory of its mode.
+    pub fn feel(&mut self, mode: TripMode, pain: f32) {
+        let i = mode.index();
+        let seen = self.trips[i];
+        // The first trips teach the most; after that, a running average.
+        let k = if seen < 1.0 { 0.6 } else { 0.3 };
+        self.pain[i] += (pain - self.pain[i]) * k;
+        self.trips[i] += 1.0;
+        self.last_pain = pain;
+        self.last_mode = Some(mode);
+    }
+
+    /// A day passes: memories fade a little.
+    pub fn fade(&mut self) {
+        for p in &mut self.pain {
+            *p *= 0.85;
+        }
+        for t in &mut self.trips {
+            *t *= 0.7;
+        }
+        self.parking_pain *= 0.8;
+    }
+
+    pub fn pain_of(&self, mode: TripMode) -> f32 {
+        self.pain[mode.index()]
+    }
+}
+
+/// On the way to the parked car, then driving from it to `to`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct ToCar {
+    pub car: crate::vehicle::VehicleId,
+    pub to: BuildingId,
+    pub purpose: Purpose,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -270,6 +388,47 @@ pub struct Citizen {
     /// hungry away from home.
     #[serde(default)]
     pub packed_meal: f32,
+    /// [driving] Drunkenness `0..1`: rises with drinks at a venue (faster
+    /// for hedonists), wears off over a few hours (`World::step_driving`).
+    #[serde(default)]
+    pub drunk: f32,
+    /// [carlife] The car this citizen owns, in `World::vehicles` (where it
+    /// is parked or that it is on the road). `owns_car` mirrors it.
+    #[serde(default)]
+    pub car: Option<crate::vehicle::VehicleId>,
+    /// [carlife] Walking to the parked car to drive somewhere.
+    #[serde(default)]
+    pub to_car: Option<ToCar>,
+    /// [carlife] How travelling has felt lately, per mode.
+    #[serde(default)]
+    pub commute: Commute,
+}
+
+/// [driving] Drunk enough that driving is a bad idea.
+pub const DRUNK: f32 = 0.35;
+/// Rebelliousness at which a drunk drives anyway.
+pub const REBEL: f32 = 0.55;
+
+/// The personality traits that matter behind the wheel, `(caution,
+/// hedonism)`, as `nd_minds::Personality` derives them from the seed (the
+/// fourth and third draws).
+pub fn driver_traits(seed: u64) -> (f32, f32) {
+    use rand::{Rng, SeedableRng};
+    let mut rng = crate::SimRng::seed_from_u64(seed);
+    let t: [f32; 5] = [rng.random(), rng.random(), rng.random(), rng.random(), rng.random()];
+    (t[3], t[2])
+}
+
+/// How little someone cares for rules, `0..1`: careless and pleasure-seeking.
+pub fn rebelliousness(caution: f32, hedonism: f32) -> f32 {
+    (0.55 * (1.0 - caution) + 0.45 * hedonism).clamp(0.0, 1.0)
+}
+
+/// [driving] Hook for mode choice: a drunk who owns a car and is
+/// rebellious enough drives home anyway. A drunk who is not leaves the car.
+pub fn wants_to_drive_drunk(c: &Citizen) -> bool {
+    let (caution, hedonism) = driver_traits(c.seed);
+    c.owns_car && c.drunk >= DRUNK && rebelliousness(caution, hedonism) >= REBEL
 }
 
 fn default_age() -> u8 {
@@ -389,6 +548,18 @@ mod tests {
             wakefulness: 1.0,
             asleep: false,
             packed_meal: 0.0,
+            drunk: 0.0,
+            car: None,
+            to_car: None,
+            commute: Default::default(),
+        }
+    }
+
+    #[test]
+    fn driver_traits_match_the_personality() {
+        for seed in [3u64, 77, 123_456] {
+            let p = nd_minds::Personality::from_seed(seed);
+            assert_eq!(driver_traits(seed), (p.caution, p.hedonism));
         }
     }
 

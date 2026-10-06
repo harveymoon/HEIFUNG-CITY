@@ -387,7 +387,51 @@ impl World {
         }
         let footprints: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect();
         parcels.retain(|p| !footprints.iter().any(|fp| point_in_polygon(p.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.98), &p.polygon)));
+        // A roundabout's central island is planting, never a lot.
+        parcels.retain(|p| !self.roads.rings.iter().any(|r| p.center.distance(r.center) < r.radius));
         parcels
+    }
+
+    /// Stamp a roundabout into the active project (one undo step). The
+    /// centre snaps onto a junction or road within a few metres; radius and
+    /// lanes are brought within limits. Errors if another roundabout
+    /// already takes the ground.
+    pub fn add_roundabout(&mut self, center: Vec2, radius: f32, lanes: u8) -> Result<GestureId, String> {
+        let center = self.roundabout_snap(center);
+        let ring = crate::roads::Ring::new(center, radius, lanes);
+        if crate::plan::ring_effect(self.effective_plan(), ring).blocked {
+            return Err("another roundabout already takes this ground".into());
+        }
+        Ok(self.add_gesture(Gesture::Roundabout { center: ring.center, radius: ring.radius, lanes: ring.lanes }))
+    }
+
+    /// Where a roundabout centre dropped at `p` lands: on a junction within
+    /// 12 m (that junction becomes the roundabout), else on a street within
+    /// 6 m, else `p`.
+    pub fn roundabout_snap(&self, p: Vec2) -> Vec2 {
+        let junction = self.roads.nodes.iter().enumerate().filter(|(i, n)| n.pos.distance(p) < 12.0 && self.roads.street_degree(NodeId(*i as u32)) >= 3).min_by(|a, b| a.1.pos.distance(p).total_cmp(&b.1.pos.distance(p)));
+        if let Some((_, n)) = junction {
+            return n.pos;
+        }
+        match self.roads.nearest_street(p) {
+            Some((_, _, q)) if q.distance(p) < 6.0 => q,
+            _ => p,
+        }
+    }
+
+    /// Lots with a building that a roundabout here would take (their
+    /// ground comes within the ring road and its pavement): demolished on
+    /// implement, as for any road works.
+    pub fn roundabout_takes(&self, ring: crate::roads::Ring) -> Vec<LotId> {
+        let reach = ring.outer_radius();
+        let grid = LotGrid::new(&self.lots);
+        grid.near(ring.center, reach)
+            .into_iter()
+            .filter(|&id| {
+                let l = &self.lots[id];
+                l.building.is_some() && (l.contains(ring.center) || crate::geom::distance_to_outline(ring.center, &l.polygon) < reach)
+            })
+            .collect()
     }
 
     /// Cut the parcels again and tie each to the saved lot holding its
@@ -602,7 +646,11 @@ impl World {
 
         // Roads.
         let mut roads = RoadNetwork::default();
-        for (_, points, fwd, bwd, kind) in self.master.roads() {
+        // Roundabouts cut the roads entering them and join them to their
+        // rings; the rings go down first so the arms snap onto them.
+        let (built, rings) = self.master.built_roads();
+        roads.rings = rings;
+        for (_, points, fwd, bwd, kind) in built {
             // Track is eased into smooth curves and tangential switches.
             let points = if kind == RoadKind::Rail { rail::smooth_track(&points, &roads) } else { points };
             // Breaks at every waterline, so a bridge is exactly the span.
@@ -698,6 +746,8 @@ impl World {
         for (_, car) in self.traffic.clear_cars() {
             self.strand_car(car);
         }
+        // [carlife] Parked cars on streets that changed find a kerb again.
+        self.refresh_kerbs();
         // Trains ran on track that may be gone or re-laid, and their stops
         // and node ids are stale either way: everyone gets off where the
         // train stands and the next headway brings fresh ones.
@@ -863,11 +913,30 @@ impl World {
 
     /// A car taken off the road: its driver, or a bus's riders, stand there.
     pub(super) fn strand_car(&mut self, car: crate::traffic::Car) {
+        use crate::vehicle::{CarEvent, Errand};
         // A truck taken off the road still delivers: the buyer already counts
         // the load as inbound and would never reorder it otherwise.
         if let Some(cargo) = car.cargo {
             self.deliver(cargo);
+        }
+        // [carlife] Trucks and vans are back at their base; private cars
+        // park where they stood (cars on their way to be sold or out of
+        // town are gone, as they were about to be).
+        match car.errand {
+            Errand::Haul { base: Some(b) } | Errand::Return(b) if self.buildings.contains_key(b) => {
+                *self.vehicles.fleet_parked.entry(b).or_insert(0) += 1;
+            }
+            _ => {}
+        }
+        if car.cargo.is_some() {
             return;
+        }
+        if let Some(vid) = car.owned.filter(|v| self.vehicles.cars.contains_key(*v)) {
+            match car.errand {
+                Errand::Sale(_) => self.drop_car(vid, CarEvent::Sold),
+                Errand::Leave => self.drop_car(vid, CarEvent::Emigrated),
+                _ => self.park_stranded(vid, car.pos),
+            }
         }
         if let Some(bus) = &car.bus {
             for &p in &bus.passengers {
@@ -948,3 +1017,7 @@ fn shrink_about_centroid(poly: &[Vec2], factor: f32) -> Vec<Vec2> {
     let c = crate::zoning::polygon_centroid(poly);
     poly.iter().map(|&p| c + (p - c) * factor).collect()
 }
+
+#[cfg(test)]
+#[path = "roundabout_tests.rs"]
+mod roundabout_tests;
