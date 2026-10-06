@@ -13,6 +13,8 @@ mod civic;
 mod commercial;
 mod construction;
 mod dense;
+/// [districts] District looks: style menus and palettes, hotels.
+pub mod district;
 mod entertainment;
 mod industrial;
 pub mod kit;
@@ -905,11 +907,14 @@ pub struct Extras<'a> {
     pub business: Option<nd_sim::BusinessKind>,
     /// A truck and bus lot: share of its bays in use.
     pub fleet: f32,
+    /// [districts] The district architecture the building was put up in:
+    /// its own style menu and palette.
+    pub look: Option<nd_sim::districts::Look>,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None }
     }
 }
 
@@ -1029,6 +1034,14 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         (Some(PowerPlantKind::Geothermal), _) => Style::PowerGeothermal,
         (None, Some(_)) if tier == Tier::Low || floors < 2 => Style::ParkingLot,
         (None, Some(_)) => Style::CarPark,
+        // [districts] A district's look, then hotels, before the land use's menu.
+        (None, None) if !extras.rooftop_pad && extras.look.is_some_and(|l| district::look_styles(l, land_use, tier).is_some()) => {
+            let menu = district::look_styles(extras.look.unwrap(), land_use, tier).unwrap();
+            district::pick(menu, &adjacency::Site { floors, frontage: lot.width() }, extras.neighbours, &mut rng)
+        }
+        (None, None) if !extras.rooftop_pad && extras.business == Some(nd_sim::BusinessKind::Hotel) => {
+            district::pick(district::hotel_styles(tier), &adjacency::Site { floors, frontage: lot.width() }, extras.neighbours, &mut rng)
+        }
         (None, None) if extras.business.is_some_and(|k| industry_styles(k, tier).is_some()) => {
             let options = industry_styles(extras.business.unwrap(), tier).unwrap();
             pick_industry_style(options, extras.neighbours, &mut rng)
@@ -1134,12 +1147,18 @@ fn generate_styled_extras(
         lot_poly.reverse();
     }
     let poly = parts::offset_poly(&lot_poly, r.inset);
+    // [districts] A look re-tints the walls, windows and signs.
+    let tinted = extras.look.filter(|_| extras.service.is_none() && extras.plant.is_none()).map(|l| district::apply(l, rules.style(tier), r, palette));
+    let (r, tier_style, palette) = match &tinted {
+        Some((ts, lr, p)) => (lr, ts, p),
+        None => (r, rules.style(tier), palette),
+    };
     let ctx = Ctx {
         fw: (frame.width - 2.0 * r.inset).max(4.0),
         fd: (frame.depth - 2.0 * r.inset).max(4.0),
         frame,
         rules: r,
-        style: rules.style(tier),
+        style: tier_style,
         palette,
         land_use,
         tier,

@@ -12,6 +12,8 @@ pub mod clock;
 /// [concerns] Complaints by category and city happiness over time.
 pub mod concerns;
 pub mod crime;
+/// [districts] Named districts with specialisations and the Historic freeze.
+pub mod districts;
 pub mod economy;
 pub mod enforcement;
 pub mod events;
@@ -39,6 +41,8 @@ pub mod services;
 pub mod takeover;
 pub mod society;
 pub mod survey;
+/// [tourism] Visitors, attractions and hotels.
+pub mod tourism;
 pub mod traffic;
 pub mod transit;
 pub mod trash;

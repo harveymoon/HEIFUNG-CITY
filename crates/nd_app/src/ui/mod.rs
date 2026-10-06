@@ -10,6 +10,8 @@
 mod concerns;
 mod detail;
 mod economy;
+/// [districts] The District tool's pane and the Districts window.
+mod districts;
 mod emergencies;
 mod help;
 mod hover;

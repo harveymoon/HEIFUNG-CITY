@@ -32,6 +32,8 @@ use crate::tools::Selection;
 
 /// Emergency vehicles, fires and rubble (render/emergency.rs).
 mod air;
+/// [districts] The district layer; [tourism] visitors on foot.
+mod districts;
 mod emergency;
 mod far;
 mod haze;
@@ -133,18 +135,20 @@ pub struct Overlays {
     /// geothermal, ...) or where each industry would do best. One at a time:
     /// two washes over each other would read as neither.
     pub land: Option<nd_sim::survey::LandLayer>,
+    /// [districts] District areas, borders and names.
+    pub districts: bool,
 }
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None }
+        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false }
     }
 }
 
 impl Overlays {
     /// Every layer: API name, label, hotkey. The API's `overlay {layer, on}`
     /// and the Land window's Layers section both go through this list.
-    pub const LAYERS: [(&'static str, &'static str, &'static str); 7] = [
+    pub const LAYERS: [(&'static str, &'static str, &'static str); 8] = [
         ("land_value", "Land value", "V"),
         ("traffic", "Traffic load", ""),
         ("traffic_types", "Traffic types", ""),
@@ -152,6 +156,7 @@ impl Overlays {
         ("pollution", "Pollution and noise", ""),
         ("paths", "Pedestrian network", "P"),
         ("zoning", "Zoning layer", "O"),
+        ("districts", "Districts", ""),
     ];
     /// The heat-map style layers the L key steps through, one at a time.
     pub const CYCLE: [&'static str; 5] = ["land_value", "traffic", "traffic_types", "people", "pollution"];
@@ -166,6 +171,7 @@ impl Overlays {
             "traffic_types" => &mut self.traffic_types,
             "people" => &mut self.people,
             "pollution" => &mut self.pollution,
+            "districts" => &mut self.districts,
             _ => return None,
         })
     }
@@ -180,6 +186,7 @@ impl Overlays {
             "traffic_types" => self.traffic_types,
             "people" => self.people,
             "pollution" => self.pollution,
+            "districts" => self.districts,
             _ => return None,
         })
     }
@@ -406,6 +413,9 @@ impl Plugin for RenderPlugin {
         // Tower cranes slewing on building sites.
         app.add_systems(Update, animate_cranes.after(sync_buildings).in_set(SimSet::Sync));
         app.add_plugins(heat::HeatPlugin);
+        // [districts] The district layer; [tourism] visitors on foot, after
+        // the citizens whose figure cache they share.
+        app.init_resource::<districts::DistrictRender>().add_systems(Update, (districts::sync_district_layer, districts::sync_tourists.after(sync_citizens).before(lift_movers)).in_set(SimSet::Sync));
     }
 }
 
@@ -1484,13 +1494,14 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         business: b.business.as_ref().map(|z| z.kind),
         fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
         rooftop_pad: world.air.has_rooftop(id),
+        look: b.look,
     };
     let mut g = match &b.demolition {
         // Coming down: what stood there (which, during a redevelopment or a
         // civic take-over, is not what the building's own fields describe),
         // cut down to what is left, with the demolition site around it.
         Some(d) => {
-            let extras = Extras { powered: b.powered, park: lot.park.as_ref(), demolition: Some(d.progress), neighbours: styles.neighbours(id), animated_cranes: true, ..Extras::default() };
+            let extras = Extras { powered: b.powered, park: lot.park.as_ref(), demolition: Some(d.progress), neighbours: styles.neighbours(id), animated_cranes: true, look: d.look, ..Extras::default() };
             generate_building(lot, d.land_use, d.floors, d.tier, d.condition, d.seed, &assets.rules, &assets.palette, &extras)
         }
         None => generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras),

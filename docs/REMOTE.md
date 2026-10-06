@@ -241,11 +241,11 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
 | --- | --- |
 | `select` | `citizen` / `building` / `car` id, or `at: [x, y]` (picks like a click), or nothing to clear |
 | `favourite` | `citizen`, `on` (omit to toggle) |
-| `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway, Roundabout), `diameter` and `ring_lanes` (roundabout), `ring_at` `[x,y]` (show the roundabout preview there as if hovered, until the mouse is used), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry` (zone, industrial: auto / farming / oil / ...), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture`, `elevation` (the Road tool's level for the next point, m), `depth` (underground / ground / sky: the view layer; the Tunnel preset switches to underground, other presets back), `draw` `[[x,y,level?],...]` (the road being drawn, as if clicked, so its hologram shows), `cursor` `[x,y]` (where the pointer stands for that hologram until the mouse is used). The reply's tool state has `elevation`, `elevation_label`, `point_levels`, `tunnel`, `depth`, `grade_warnings` |
-| `overlay` | `layer` (land_value, traffic, traffic_types, people, pollution, paths, zoning, or a land survey layer, below) with `on` (bool; omitted toggles); or any of the first names as bools; `land` a land survey layer key or `none`. Reply: every layer and whether it is on, plus `land` (the survey layer shown, or null) (also in `status.overlays`) |
+| `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail, district), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway, Roundabout), `diameter` and `ring_lanes` (roundabout), `ring_at` `[x,y]` (show the roundabout preview there as if hovered, until the mouse is used), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry` (zone, industrial: auto / farming / oil / ...), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture`, `elevation` (the Road tool's level for the next point, m), `depth` (underground / ground / sky: the view layer; the Tunnel preset switches to underground, other presets back), `draw` `[[x,y,level?],...]` (the road being drawn, as if clicked, so its hologram shows), `cursor` `[x,y]` (where the pointer stands for that hologram until the mouse is used). The reply's tool state has `elevation`, `elevation_label`, `point_levels`, `tunnel`, `depth`, `grade_warnings` |
+| `overlay` | `layer` (land_value, traffic, traffic_types, people, pollution, paths, zoning, districts, or a land survey layer, below) with `on` (bool; omitted toggles); or any of the first names as bools; `land` a land survey layer key or `none`. Reply: every layer and whether it is on, plus `land` (the survey layer shown, or null) (also in `status.overlays`) |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
 | `heat_vision` (alias `heat`) | `on` (bool; omitted toggles). Drone heat vision: buildings, ground and roads go near-black, people, vehicles, fires and drones glow by temperature (lights and engines white-hot), with motion blur, scanlines, noise, a vignette and a reticle. Same as key H and the top bar's Heat button. Reply `heat_vision`; also `status.lighting.heat_vision` |
-| `window` | `name` city / economy / market / people / power / transit / emergencies / land / saves / help / dev, `open` (omit to toggle), `expanded` (bool: the large view with charts over time and the drill-downs; `true` also opens the window, and only one window is expanded at a time, so expanding one puts the other back to compact; saves, help and dev have none). Reply `open`, `expanded` (the expanded window's name or null), `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it; `status.window_expanded` names the expanded window |
+| `window` | `name` city / economy / market / people / power / transit / emergencies / land / districts / saves / help / dev, `open` (omit to toggle), `expanded` (bool: the large view with charts over time and the drill-downs; `true` also opens the window, and only one window is expanded at a time, so expanding one puts the other back to compact; saves, help and dev have none). Reply `open`, `expanded` (the expanded window's name or null), `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it; `status.window_expanded` names the expanded window |
 
 Land survey layers (one at a time, K in the game; the Land window's "Land and resources" picker;
 `nd_sim::survey`): a coloured ground wash over the buildable square.
@@ -530,6 +530,42 @@ Events in the log (`events`): `IncidentStarted`, `EmergencyCall`, `UnitDispatche
 `FireSpread`, `BurnedDown`, `StadiumEvent`, `Arrested` (incident, citizen), `Released` (citizen). Building rows carry `service` (`"fire:mid"`) and
 `burning`. Emergency vehicles are cars in `find {what: "cars"}`; the units behind them are in
 `report {sections: ["services"]}` under `emergency.stations` and `emergency.active_incidents`.
+
+## Districts and tourism
+
+`district {action, ...}` (also `districts`):
+
+| action | fields | reply |
+| --- | --- | --- |
+| `list` (default) | | `districts`: id, name, policy, residential, commercial, industry, historic, landmark, area_m2, centroid, lots, vacant_lots, buildings, under_construction, by_land_use, by_tier, in_look (buildings already in the district's look), homes, residents, jobs, workers, businesses_open, hotels, beds, tourists_staying, land_value_avg, rent_avg, attraction |
+| `create` | `name` optional (generated otherwise) | `id`, `name` |
+| `paint` | `id` (or `district`: id or name; none starts a new district, `new_name`), then `at` `[x,y]` + `radius` (default 40), `polygon`, or `rect` `[[x0,y0],[x1,y1]]`; `erase` | `id`, `cells_changed` (16 m cells) |
+| `erase` | `at` + `radius`, `polygon` or `rect` | `cells_changed` |
+| `set` | `id` / `district`; any of `residential` kowloon / suburban / eco / none, `commercial` neon_strip / tech_campus / night_market / tourist / none, `industry` farming / oil / refinery / manufacturing / logistics / fishing / tech / none, `historic` bool, `rename` | `id`, `name`, `policy` |
+| `remove` | `id` / `district` | `removed` |
+| `at` | `at` `[x,y]` | the district there |
+| `select` | `id` / `district` (none clears) | the District tool's selected district |
+| `layer` | `on` (omit to toggle) | |
+
+Every reply carries `layer_on`; painting turns the layer on. `overlay {layer: "districts"}` toggles it
+too, and `tool {name: "district"}` picks the tool. Building `inspect` carries `look` (the district
+architecture it was built in) and `district`.
+
+```json
+{"cmd": "district", "action": "paint", "rect": [[-200, -150], [0, 150]], "new_name": "Lantern Row"}
+{"cmd": "district", "action": "set", "district": "Lantern Row", "commercial": "neon_strip", "residential": "kowloon"}
+{"cmd": "district", "action": "set", "id": 2, "historic": true}
+```
+
+`tourism {action?, limit?}` (also `tourists`): `attractiveness`, `demand_per_day`, `ways_in` (road,
+rail, ferry, air), `tourists` (in town), `visible` (out on the street), `hotel_demand`, `today`
+{arrivals, arrivals_by_mode, departures, turned_away, nights, sights_visited, spend, spend_hotels,
+spend_shops, spend_venues, tourist_tax}, `yesterday`, `totals`, `ledger_tourist_tax`, `hotels` (id,
+name, tier, beds, guests, money, revenue_today, district, pos), `attractions` (kind, name, score, pos,
+building; strongest first) and `tourist_list` (`limit`, default 20: id, pos, activity, visible, class,
+via, hotel, money, spent, sights, arrived_day, leaves_day, going_to). `action: "refresh"` re-reads
+the attractions now instead of on the two-hour cycle. `status` carries a `tourism` summary and the
+number of `districts`; the ledger has a `tourist tax` row.
 
 ## Crime, homelessness and trash
 

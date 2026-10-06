@@ -24,6 +24,8 @@ pub const SKIN_STEPS: u8 = 10;
 /// Triangle budget for a standing figure (a rider has a bike as well).
 pub const MAX_TRIS: usize = 150;
 pub const MAX_RIDER_TRIS: usize = 190;
+/// A tourist carries a backpack and a camera as well.
+pub const MAX_TOURIST_TRIS: usize = 180;
 
 /// Everything a figure's mesh depends on, quantised.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -41,6 +43,8 @@ pub struct PersonKey {
     pub wear: u8,
     /// On a bike.
     pub ride: bool,
+    /// [tourism] A visitor: a backpack and a camera on the strap.
+    pub tourist: bool,
 }
 
 /// The silhouette part of a key: the same shape in other colours.
@@ -77,7 +81,13 @@ pub fn person_key(look: &Appearance, age: u8, class: Tier, ride: bool) -> Person
             }
         },
         ride,
+        tourist: false,
     }
+}
+
+/// [tourism] A visitor's figure: their look with a backpack and camera.
+pub fn tourist_key(look: &Appearance, age: u8, class: Tier) -> PersonKey {
+    PersonKey { tourist: true, ..person_key(look, age, class, false) }
 }
 
 // â”€â”€ the emissive palette â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -276,6 +286,18 @@ pub fn person_mesh(k: &PersonKey) -> MeshData {
             Outfit::Coat => b.part(Vec3::new(-td * 0.56 - 0.012, top - 0.07, -tw * 0.52 - 0.012), Vec3::new(td * 0.56 + 0.012, top + 0.02, tw * 0.52 + 0.012), trim, trim_cell, false),
         }
         head(&mut b, k, Vec3::new(0.0, top + 0.03, 0.0), head_scale, skin);
+        if k.tourist {
+            // A daypack on the back in the accent colour with a reflective
+            // band that catches the night, and a dark camera at the chest.
+            // Daypacks come in loud outdoor colours whatever the wearer's
+            // taste: that is what marks a visitor from above.
+            const PACKS: [[f32; 3]; 5] = [[0.95, 0.35, 0.04], [0.95, 0.75, 0.05], [0.05, 0.6, 0.85], [0.85, 0.08, 0.1], [0.2, 0.75, 0.25]];
+            let pack = PACKS[(k.fav[0] as usize + k.skin as usize) % PACKS.len()];
+            let back = -td / 2.0;
+            b.part(Vec3::new(back - 0.2, 0.9, -0.15 * bw), Vec3::new(back, 1.4, 0.15 * bw), pack, 0, true);
+            b.part(Vec3::new(back - 0.21, 1.12, -0.152 * bw), Vec3::new(back - 0.19, 1.17, 0.152 * bw), trim, trim_cell, false);
+            b.part(Vec3::new(td / 2.0, 1.08, -0.06), Vec3::new(td / 2.0 + 0.08, 1.17, 0.06), [0.03, 0.03, 0.035], 0, false);
+        }
     } else {
         // The bike: wheels, frame and bars.
         let dark = [0.03, 0.03, 0.035];
@@ -387,9 +409,9 @@ mod tests {
         for style in 0..HairStyle::ALL.len() as u8 {
             for outfit in 0..Outfit::ALL.len() as u8 {
                 for build in 0..3 {
-                    for (child, ride) in [(false, false), (true, false), (false, true), (true, true)] {
+                    for (child, ride, tourist) in [(false, false, false), (true, false, false), (false, true, false), (true, true, false), (false, false, true)] {
                         for (hair, fav, wear) in [(0u8, [0u8, 8u8], 0u8), (7, [10, 11], 1), (8 + 4, [5, 3], 2)] {
-                            out.push(PersonKey { style, outfit, build, child, skin: (style * 3 + outfit) % SKIN_STEPS, hair, fav, wear, ride });
+                            out.push(PersonKey { style, outfit, build, child, skin: (style * 3 + outfit) % SKIN_STEPS, hair, fav, wear, ride, tourist });
                         }
                     }
                 }
@@ -403,7 +425,7 @@ mod tests {
         for k in every_key() {
             let m = person_mesh(&k);
             let tris = m.indices.len() / 3;
-            let budget = if k.ride { MAX_RIDER_TRIS } else { MAX_TRIS };
+            let budget = if k.ride { MAX_RIDER_TRIS } else if k.tourist { MAX_TOURIST_TRIS } else { MAX_TRIS };
             assert!(tris > 20 && tris <= budget, "{k:?}: {tris} triangles");
             assert_eq!(m.uvs.len(), m.positions.len());
             assert_eq!(m.colors.len(), m.positions.len());
@@ -421,7 +443,7 @@ mod tests {
 
     #[test]
     fn the_figure_matches_the_old_one_in_size() {
-        let k = PersonKey { style: 0, outfit: 0, build: 1, child: false, skin: 3, hair: 0, fav: [0, 1], wear: 1, ride: false };
+        let k = PersonKey { style: 0, outfit: 0, build: 1, child: false, skin: 3, hair: 0, fav: [0, 1], wear: 1, ride: false, tourist: false };
         let m = person_mesh(&k);
         let top = m.positions.iter().map(|p| p[1]).fold(0.0, f32::max);
         // The old box figure stood 1.75 m (plus the 0.16 m lift).
@@ -434,7 +456,7 @@ mod tests {
         assert_eq!(pal.len(), EMISSIVE_CELLS);
         assert_eq!(pal[0], [0.0; 3]);
         assert!(pal.iter().flatten().all(|v| v.is_finite() && *v >= 0.0 && *v <= 1.0));
-        let k = PersonKey { style: 0, outfit: 1, build: 1, child: false, skin: 3, hair: 0, fav: [8, 0], wear: 1, ride: false };
+        let k = PersonKey { style: 0, outfit: 1, build: 1, child: false, skin: 3, hair: 0, fav: [8, 0], wear: 1, ride: false, tourist: false };
         let m = person_mesh(&k);
         let lit = m.uvs.iter().filter(|uv| (uv[0] * EMISSIVE_CELLS as f32) as usize == bright_cell(0)).count();
         let dark = m.uvs.iter().filter(|uv| (uv[0] * EMISSIVE_CELLS as f32) as usize == 0).count();
@@ -462,7 +484,7 @@ mod tests {
 
     #[test]
     fn the_figure_cache_stays_bounded() {
-        let key = |i: u32| PersonKey { style: (i % 7) as u8, outfit: (i % 6) as u8, build: (i % 3) as u8, child: false, skin: ((i / 484) % 10) as u8, hair: (i % 8) as u8, fav: [(i % 22) as u8, ((i / 22) % 22) as u8], wear: 1, ride: false };
+        let key = |i: u32| PersonKey { style: (i % 7) as u8, outfit: (i % 6) as u8, build: (i % 3) as u8, child: false, skin: ((i / 484) % 10) as u8, hair: (i % 8) as u8, fav: [(i % 22) as u8, ((i / 22) % 22) as u8], wear: 1, ride: false, tourist: false };
         let cap = 64;
         let mut c: FigureCache<u32> = FigureCache::new(cap);
         let mut n = 0u32;

@@ -26,11 +26,14 @@ pub enum Tool {
     Buildings,
     Transit,
     Rail,
+    /// [districts] Paint named districts and set their policies
+    /// (`crate::district_tool`).
+    District,
 }
 
 impl Tool {
-    /// Toolbar order, which is also the digit hotkey order (1 to 8).
-    pub const ALL: [Tool; 8] = [Tool::Inspect, Tool::Road, Tool::Zone, Tool::Edit, Tool::Bulldoze, Tool::Buildings, Tool::Transit, Tool::Rail];
+    /// Toolbar order, which is also the digit hotkey order (1 to 9).
+    pub const ALL: [Tool; 9] = [Tool::Inspect, Tool::Road, Tool::Zone, Tool::Edit, Tool::Bulldoze, Tool::Buildings, Tool::Transit, Tool::Rail, Tool::District];
 
     /// The name on the toolbar button.
     pub fn label(self) -> &'static str {
@@ -43,6 +46,7 @@ impl Tool {
             Tool::Buildings => "Buildings",
             Tool::Transit => "Buses",
             Tool::Rail => "Rail",
+            Tool::District => "Districts",
         }
     }
 
@@ -58,6 +62,7 @@ impl Tool {
             Tool::Buildings => "6 / N",
             Tool::Transit => "7 / T",
             Tool::Rail => "8 / Y",
+            Tool::District => "9",
         }
     }
 }
@@ -251,6 +256,9 @@ pub struct ToolState {
     /// A point set by the remote API (`tool {cursor}`) that stands in for
     /// the pointer in the road preview until the mouse moves.
     pub cursor_pin: Option<SVec2>,
+    /// [districts] The District tool: the district painted, brush or
+    /// polygon, the polygon's points (`crate::district_tool`).
+    pub district: crate::district_tool::DistrictTool,
 }
 
 /// Road presets in the spirit of Cities Skylines' road menu: (label, forward, backward, kind).
@@ -363,6 +371,7 @@ impl ToolState {
 impl Default for ToolState {
     fn default() -> Self {
         Self {
+            district: Default::default(),
             tool: Tool::Road,
             lanes_fwd: 1,
             lanes_bwd: 1,
@@ -645,6 +654,7 @@ pub(crate) fn tool_input(
         (KeyCode::Digit6, Some(KeyCode::KeyN), Tool::Buildings),
         (KeyCode::Digit7, Some(KeyCode::KeyT), Tool::Transit),
         (KeyCode::Digit8, Some(KeyCode::KeyY), Tool::Rail),
+        (KeyCode::Digit9, None, Tool::District),
     ];
     for (a, b, tool) in picks {
         let alias = b.is_some_and(|b| key(b) && !ctrl);
@@ -901,6 +911,8 @@ pub(crate) fn tool_input(
                 }
             }
         }
+        // [districts] input in `district_tool::district_input`
+        Tool::District => {}
         Tool::Bulldoze => {
             tools.hover_gesture = ground.and_then(|p| nearest_gesture(plan, p)).map(|(id, _)| id);
             if click {
@@ -1358,6 +1370,8 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
         }
         Tool::Transit => {}
         Tool::Inspect => {}
+        // [districts] drawn by `district_tool::district_gizmos`
+        Tool::District => {}
     }
 }
 

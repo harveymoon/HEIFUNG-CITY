@@ -41,6 +41,7 @@ pub fn flow_color(f: Flow) -> Color32 {
         Flow::RailUpkeep => Color32::from_rgb(170, 100, 210),
         Flow::Construction => Color32::from_rgb(150, 150, 165),
         Flow::ServiceUpkeep => Color32::from_rgb(235, 70, 80),
+        Flow::TouristTax => Color32::from_rgb(255, 140, 220),
     }
 }
 
@@ -61,6 +62,7 @@ pub fn flow_note(f: Flow) -> &'static str {
         Flow::RailUpkeep => "Each station and freight yard, paid at midnight.",
         Flow::Construction => "One-off costs of what the city builds: plants, services, depots, stations, ports, car parks, bridges.",
         Flow::ServiceUpkeep => "Each police, fire, health, school, dispatch, jail, trash, vertiport, monument and stadium building; the city's car parks; help called from the next town when ours were busy; less hospital bills the patients paid.",
+        Flow::TouristTax => "12% on every hotel night visitors pay, by hotel.",
     }
 }
 

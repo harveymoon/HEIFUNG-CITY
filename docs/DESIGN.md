@@ -575,6 +575,46 @@ Citizens are rendered from their simulated positions every frame.
   19 offenders and about 10 offences a day, 103 of ~350 buildings overflowing, the hauler with 88
   clients; with a police station, jail, dispatch and depot, 11 offenders, 5 arrests, nothing
   overflowing.
+- **Districts** (`nd_sim::districts`, `world/districts.rs`, the District tool 9): named areas painted
+  over the map with a brush or a polygon, as in Cities: Skylines, on a 16 m raster of district ids
+  (saved run-length encoded). Painting applies at once, outside projects: it moves no road, lot or
+  zone. Each district has policies: homes Kowloon stacks / Suburban / Eco, shops Neon strip / Tech
+  campus / Night market / Tourist quarter, an industry sub-zone (an industry bias that follows the
+  district's cells, under any drawn bias) and Historic. A new home or shop in a district takes its
+  `Look`, saved on the building: the look sets the tier (the stacks stay cheap whatever the land, a
+  campus builds a step up, suburbs never slums, market stalls a step down), the height (Kowloon may
+  overshoot the density cap by four floors, suburbs three floors at most, night markets two) and the
+  trades favoured among the ones the market can carry (gadget shops on a strip, offices on a campus,
+  grocers and bakers in a market, hotels in a tourist quarter). Standing buildings are refitted to the
+  district's look a quarter a day; industry retools the same way. Historic freezes the tier (no
+  upgrade, no decay of tier, no redevelopment) and is never refitted. Eco, historic and campus
+  buildings lift the land value round them. The look is drawn by `nd_procgen::buildings::district`:
+  its own style menu per land use and tier (weighed by site and neighbours, so adjacency families
+  keep working inside a district) and a re-tint of walls, trim, windows, sign/LED/awning colours and
+  sign density: the strip is dark walls under pink and cyan signs, the campus white and glass, the
+  market brick under red lanterns, the old town brick and amber. The Districts layer washes each
+  district's cells in its colour with a bright border and its name and policy over the map; the
+  Districts window lists every district's figures (area, buildings by tier, homes and residents,
+  jobs, land value, rent, hotels and beds, visitors staying, pull) with the policy editor.
+- **Tourism** (`nd_sim::tourism`, `world/tourism.rs`): attractions are re-read every two hours:
+  monuments and stadiums by tier, mid and high tier parks by area, open venues, landmark districts
+  (historic, neon strip, night market, tourist quarter, with 3+ buildings) and the waterfront (built
+  lots within 70 m of water). Their pull sums to the city's attractiveness; visitors per day follow it
+  (diminishing past 60 points) times the ways in that work (road off the map 1, rail 0.45, ferry
+  0.3, air 0.15). They arrive on the hour 08:00-21:00 by road (set down at the hotel door), rail (at
+  a station), ferry (a terminal) or air (a vertiport, the well-off only), class backpacker / visitor /
+  well off, and need a bed: a hotel of their kind if they can. Hotels (`BusinessKind::Hotel`,
+  capsule 12 beds a floor, rooms 8, suites 6; 18 / 45 / 110 a night) open on commercial land when
+  visitors are turned away (smoothed demand of 4 a day; a tourist quarter first, else the vacant lot
+  nearest the sights), whatever the general commercial demand. A visitor stays 1-4 nights; by day they
+  walk (or take a taxi past 1.1 km) to sights, weighed by pull and distance, stand and take photos,
+  shop in gadget shops and bakeries (more on a strip or in a market), go to venues after dark, and are
+  back at the hotel by 22:00; their footsteps count as footfall for the shops they pass. At midnight
+  each pays the night to the hotel plus a 12% tourist tax to the treasury (ledger "tourist tax"). On
+  the last day they leave the way they came. Visitors are not citizens: no home, job, rent or mind;
+  they are drawn with the citizens' figure generator with a daypack and a camera. All of it rolls on
+  its own seeded streams. The Districts window and the `tourism` API show attractiveness, demand,
+  arrivals by mode, beds, the turned away, spending by hotels / shops / venues and the tax.
 - **Economy stats**: demand per land use, Gini of incomes, class counts, rents per
   tier, displaced, emigrated and priced-out counters, plus market stats: businesses,
   deals, imports, exports, meals sold, hungry citizens, closures, and the average

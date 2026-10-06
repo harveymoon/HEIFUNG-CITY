@@ -29,10 +29,12 @@ pub enum Info {
     Saves,
     Help,
     Dev,
+    /// [districts] Districts, their policies and figures; tourism.
+    Districts,
 }
 
 impl Info {
-    pub const ALL: [Info; 11] = [Info::City, Info::Economy, Info::Market, Info::People, Info::Power, Info::Transit, Info::Emergencies, Info::Land, Info::Saves, Info::Help, Info::Dev];
+    pub const ALL: [Info; 12] = [Info::City, Info::Economy, Info::Market, Info::People, Info::Power, Info::Transit, Info::Emergencies, Info::Land, Info::Districts, Info::Saves, Info::Help, Info::Dev];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -47,6 +49,7 @@ impl Info {
             Info::Saves => "Saves",
             Info::Help => "Help",
             Info::Dev => "Dev",
+            Info::Districts => "Districts",
         }
     }
 
@@ -148,6 +151,7 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, info: Info, big: bool) {
         (Info::Saves, _) => saves::panel(ui, p.sim, p.tools, p.selection, p.plan, p.saves, p.flags),
         (Info::Help, _) => help_window(ui),
         (Info::Dev, _) => dev(ui, p),
+        (Info::Districts, _) => super::districts::window(ui, p),
     }
 }
 

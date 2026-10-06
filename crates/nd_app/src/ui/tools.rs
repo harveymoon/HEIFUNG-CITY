@@ -21,6 +21,7 @@ pub fn sub_pane(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &
         Tool::Transit => transit(ui, sim, tools),
         Tool::Rail => rail(ui, sim, tools),
         Tool::Buildings => buildings(ui, sim, tools),
+        Tool::District => super::districts::sub_pane(ui, sim, tools),
     }
 }
 

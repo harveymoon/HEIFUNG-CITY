@@ -178,6 +178,10 @@ pub struct Demolition {
     /// (zone bulldozed); it goes with the rubble.
     #[serde(default)]
     pub own_lot: bool,
+    /// [districts] The old building's district look, so it comes down
+    /// looking as it stood.
+    #[serde(default)]
+    pub look: Option<crate::districts::Look>,
 }
 
 impl Demolition {
@@ -210,6 +214,7 @@ impl Demolition {
             condition: b.condition,
             clear_lot,
             own_lot: false,
+            look: b.look,
         }
     }
 
@@ -307,6 +312,10 @@ pub struct Building {
     /// system that skips building sites skips it too.
     #[serde(default)]
     pub demolition: Option<Demolition>,
+    /// [districts] The district architecture it was built or refitted in
+    /// (`crate::districts::Look`); `None` draws the land use's own menu.
+    #[serde(default)]
+    pub look: Option<crate::districts::Look>,
 }
 
 fn one() -> f32 {
@@ -351,6 +360,7 @@ impl Building {
             construction: None,
             service: None,
             demolition: None,
+            look: None,
         };
         b.recompute_capacity();
         b.update_rent(land_value);
