@@ -35,6 +35,8 @@ claude mcp add --scope user neon-district -e ND_REMOTE_PORT=4900 -- python C:\CO
 | `find` | `find` |
 | `inspect` | `inspect` |
 | `select` | `select` (+ `favourite`) |
+| `selected` | `selected`: the player's selection in full (a car's stop reason, jam chain to the head, trip and anger, lanes) |
+| `flags` | `flags` (`since`, `clear`), or `flag` (`note`) with `create: true`: the player's "Flag for Claude" bookmarks (F8) |
 | `camera` | `camera` |
 | `view` | `overlay`, `lighting`, `tool` |
 | `screenshot` | `screenshot`, then waits up to 5 s for the file and attaches the PNG as an image block (`include_image: false` to skip; files over `ND_MCP_MAX_IMAGE_BYTES`, default 5 MB, are not attached) |

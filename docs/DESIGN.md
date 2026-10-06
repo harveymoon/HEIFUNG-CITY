@@ -145,6 +145,24 @@ Citizens are rendered from their simulated positions every frame.
   cars ring it and the flashiest spin donuts in tyre smoke, a crowd walks over, a neighbour calls
   the police; police on scene break it up (some arrests, cars impounded), else it ends after
   45-80 minutes and everyone leaves in convoy.
+- **Road rage and trip time** (`traffic::road_rage`, `World::step_rage`): every drive is timed
+  from the tick it appears, against the minutes its route should take in free flow (90 % of each
+  lane's limit plus 10 s per junction). A private driver running far over (from about 1.4 to 3.4
+  times the expected minutes plus five, by patience and temper from their personality) grows
+  angry over the next stretch; anger is laid over the calm profile (`DriverProfile::angry`:
+  shorter headway, harder acceleration, eager lane changes, ambers run, a little less skill, so a
+  slightly higher crash risk) and angry cars blink a red ring. It only builds during the trip,
+  goes with the car on arrival and adds to that trip's pain (and a memory). Professionals and
+  takeover packs keep their heads.
+- **Why is it standing there** (`traffic/why.rs`): `Traffic::stop_reason` turns the step's coarse
+  `Car::wait` and `blocked_by` into a plain reason naming the vehicle responsible (queued behind,
+  red light, people on a crossing, giving way, turning left against oncoming traffic, exit full,
+  lane change, at the kerb, bus stop, unloading, crash, takeover), derived read-only on demand;
+  `Traffic::jam_chain` follows it to the head of the queue (or round a gridlock ring). The
+  inspector shows both and draws the chain; `unexplained` would be a bug. A car that cannot make
+  the last lane change of a route at a carriageway's end off the map leaves in its own lane after
+  a few seconds (`drop_dead_end_changes`): the highway's lanes used to funnel into one at the map
+  edge and queue for minutes.
 - **Parcels and zones**: parcels are cut along every street and path as soon as it is
   built, zoned or not (`zoning::generate_parcels`, the land within 60 m of the
   corridors), at a home's lot size; land behind the rows is backland. Zoning gives

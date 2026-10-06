@@ -239,12 +239,56 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
 
 | Command | Fields |
 | --- | --- |
-| `select` | `citizen` / `building` / `car` id, or `at: [x, y]` (picks like a click), or nothing to clear |
+| `select` | `citizen` / `building` / `car` / `vehicle` (a parked car) id, or `at: [x, y]` (picks like a click), or nothing to clear |
+| `selected` | full detail of the player's selection (see below) |
+| `flags` / `flag` | the player's "Flag for Claude" bookmarks (see below) |
 | `favourite` | `citizen`, `on` (omit to toggle) |
 | `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway, Roundabout), `diameter` and `ring_lanes` (roundabout), `ring_at` `[x,y]` (show the roundabout preview there as if hovered, until the mouse is used), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry` (zone, industrial: auto / farming / oil / ...), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture`, `elevation` (the Road tool's level for the next point, m), `depth` (underground / ground / sky: the view layer; the Tunnel preset switches to underground, other presets back), `draw` `[[x,y,level?],...]` (the road being drawn, as if clicked, so its hologram shows), `cursor` `[x,y]` (where the pointer stands for that hologram until the mouse is used). The reply's tool state has `elevation`, `elevation_label`, `point_levels`, `tunnel`, `depth`, `grade_warnings` |
 | `overlay` | `layer` (land_value, traffic, traffic_types, people, pollution, paths, zoning) with `on` (bool; omitted toggles); or any of those names as bools. Reply: every layer and whether it is on (also in `status.overlays`) |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
 | `window` | `name` city / economy / market / people / power / transit / land / saves / help / dev, `open` (omit to toggle). Reply `open`, `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it |
+
+### What the player has selected, and flags
+
+`selected` returns everything about the player's current selection in one reply, as `inspect` gives
+it: `kind`, `id`, `selection` (kind, id, label), `detail`, `bus_line` (the line picked in the Transit
+window, with its buses) and `clock`. So when the player says "this car", ask `selected`.
+
+- **car**: `car_detail` (below), including `why`, `jam`, `trip` and `lanes`.
+- **citizen**: as `inspect {citizen}`, plus `driving_car` (the car's full detail) while they drive.
+- **building**, **parked_car**: as `inspect {building}` / `inspect {vehicle}`.
+
+A car's detail (`inspect {car}`, `selected`) carries:
+
+- `label`: "Mara Voss's hatchback", "bus on Line 2", "delivery truck", "a sedan passing through".
+- `why`: `reason` (moving, queued, letting_out, red_light, pedestrians, give_way, turning_left,
+  roundabout, exit_full, lane_change, at_kerb, bus_stop, unloading, arriving, crashed, takeover,
+  in_show, unexplained), `text` (plain language, naming the vehicle responsible), `by` and
+  `by_label` (that vehicle: select it to follow the queue), `good_reason` (false only for
+  `unexplained`: a car standing for no reason the sim knows, a bug worth reporting), `stalled_s`.
+- `jam`: who it waits for, back to the head of the queue (`Traffic::jam_chain`): `length`,
+  `cycle` (a gridlock ring), `head`, `head_label`, `head_reason` (a `why`) and `chain` (each car's id,
+  label, reason, speed, pos, stalled_s; at most 60).
+- `trip`: `elapsed_min` on the road vs `expected_min` (from the route at departure, free flow plus
+  a little per junction), `over_ratio`, `can_rage` (private drivers), `anger` and `anger_peak`
+  (0..1), `patience`, `temper`.
+- `lanes`: `lane` (id, road segment and index, or junction node and turn), `s_m`, `s_end_m`,
+  `route_idx`, `route_len`, `ahead` (the next 12 lanes), `route_lanes` (ids from here), `ends_at`,
+  `entering_from_kerb`, `blocked_by`.
+
+**Flag for Claude.** In game, F8 (or the "Flag for Claude" button in the inspector and the person
+pane) opens a note box; saving records the selection (or, with nothing selected, where the camera
+looks) with the note. `flags {since?, clear?}` lists them: `id`, `tick`, `time`, `unix`, `note`,
+`selection`, `look_at`, `snapshot` (the `selected` reply when flagged: a stuck car may have moved on
+since) and `now` (its live detail, or null once it is gone). `flag {note}` flags the current
+selection from the API. Flags live in the running game and are also appended to
+`flags/claude_flags.jsonl` under its working directory.
+
+```json
+{"cmd": "selected"}
+{"cmd": "flags", "since": 3}
+{"cmd": "flag", "note": "this one has not moved for ages"}
+```
 
 ### Camera
 
@@ -494,6 +538,12 @@ starts a street takeover at the junction nearest `at`.
 red_lights_run_today, crashes_total, wrecks_on_road, tow_trucks_now, towed_total, drivers_by_style,
 recent_crashes (cause, severity, injured, drunk, incident), takeovers {active, location, place,
 stage, participants, residents, outsiders, in_show, crowd, incident, planned_tick, total, last}.
+Road rage: a private driver on the road far longer than the route should take
+(`traffic::road_rage`: from about 1.4 to 3.4 times the expected minutes plus five, by patience and
+temper) gets angry; anger is laid over their profile (`DriverProfile::angry`: shorter headway,
+harder acceleration, more lane changes and overtaking, fewer stops at ambers, a little less skill),
+builds over the trip, leaves with the car on arrival and adds to that trip's pain (a memory "Lost my
+temper in traffic"). `report.traffic` adds `angry_drivers_now` and `road_rage_today`.
 A car's `inspect` `traffic` carries `driver` (style, speed_factor, headway_s, reaction_s,
 signal_compliance, aggression, skill, drunkenness), driver_drunkenness_now, weave_m, running_red,
 crash, takeover and stunt. Events: `Crash`, `Takeover`, `TakeoverOver`.

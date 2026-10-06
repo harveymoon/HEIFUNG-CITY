@@ -221,7 +221,7 @@ pub fn selection(w: &World, sel: Selection) -> Value {
         Selection::None => Value::Null,
         Selection::Citizen(id) => json!({ "kind": "citizen", "id": key_str(id), "name": w.citizens.get(id).map(|c| c.name.as_str()) }),
         Selection::Building(id) => json!({ "kind": "building", "id": key_str(id), "name": w.buildings.get(id).map(|b| b.name.as_str()) }),
-        Selection::Car(id) => json!({ "kind": "car", "id": key_str(id) }),
+        Selection::Car(id) => json!({ "kind": "car", "id": key_str(id), "label": w.car_label(id), "why": w.traffic.cars.contains_key(id).then(|| w.traffic.stop_reason(id).text(|c| w.car_label(c))) }),
         Selection::Parked(id) => json!({ "kind": "parked_car", "id": key_str(id) }),
     }
 }
@@ -508,7 +508,73 @@ pub fn car_detail(w: &World, id: CarId, c: &Car) -> Value {
         m["patrol"] = json!({ "office": key_str(office), "office_name": building_name(w, Some(office)) });
     }
     m["traffic"] = car_traffic(w, c);
+    m["label"] = json!(w.car_label(id));
+    m["why"] = stop_reason_json(w, id);
+    m["jam"] = jam_json(w, id);
+    m["trip"] = trip_json(w, id, c);
+    m["lanes"] = lanes_json(w, c);
     m
+}
+
+/// Why a vehicle is held up: `reason` (a key), `text` (plain language,
+/// naming the vehicle responsible), and that vehicle's id and label.
+pub fn stop_reason_json(w: &World, id: CarId) -> Value {
+    let r = w.traffic.stop_reason(id);
+    let by = r.by();
+    json!({
+        "reason": r.key(), "text": r.text(|c| w.car_label(c)), "good_reason": r.is_good(),
+        "by": by.map(key_str), "by_label": by.map(|b| w.car_label(b)),
+        "stalled_s": w.traffic.cars.get(id).map(|c| round(c.stalled)),
+    })
+}
+
+/// The queue in front of a vehicle back to its head (`Traffic::jam_chain`):
+/// each car's id, label, reason and speed, the head's reason, and whether
+/// it is a gridlock ring.
+pub fn jam_json(w: &World, id: CarId) -> Value {
+    let chain = w.traffic.jam_chain(id);
+    let head = chain.head();
+    let rows: Vec<Value> = chain.cars.iter().take(60).map(|&c| {
+        let car = &w.traffic.cars[c];
+        json!({ "id": key_str(c), "label": w.car_label(c), "reason": w.traffic.stop_reason(c).key(), "speed_kmh": round(car.v * 3.6), "pos": v2(car.pos), "stalled_s": round(car.stalled) })
+    }).collect();
+    json!({
+        "length": chain.cars.len(), "cycle": chain.cycle,
+        "head": head.map(key_str), "head_label": head.map(|h| w.car_label(h)),
+        "head_reason": head.map(|h| stop_reason_json(w, h)),
+        "chain": rows, "chain_truncated": chain.cars.len() > 60,
+    })
+}
+
+/// [rage] The drive so far against what it should take, and the driver's
+/// temper.
+pub fn trip_json(w: &World, id: CarId, c: &Car) -> Value {
+    let d = &c.drive;
+    let (elapsed, expected) = w.car_trip_minutes(id).unwrap_or((0.0, 0.0));
+    json!({
+        "timed": expected > 0.0, "started_tick": d.trip_start, "elapsed_min": round(elapsed), "expected_min": round(expected),
+        "over_ratio": if expected > 0.0 { json!(round(elapsed / expected)) } else { Value::Null },
+        "can_rage": d.calm.is_some(), "anger": round(d.anger), "anger_peak": round(d.anger_peak), "patience": round(d.patience), "temper": round(d.temper),
+        "angry_profile": d.anger > 0.0,
+    })
+}
+
+/// Where on the lane graph a vehicle is: its lane, how far along, the
+/// lanes ahead on its route and where the route ends.
+pub fn lanes_json(w: &World, c: &Car) -> Value {
+    let net = &w.traffic.net;
+    let lane_kind = |l: u32| net.lanes.get(l as usize).map(|x| match x.kind {
+        nd_sim::traffic::LaneKind::Road { segment, forward, index } => json!({ "lane": l, "road": segment.0, "forward": forward, "index": index, "length_m": round(x.length), "cars": x.cars.len() }),
+        nd_sim::traffic::LaneKind::Connector { node, .. } => json!({ "lane": l, "junction_node": node.0, "turn": x.turn, "green": x.green, "length_m": round(x.length), "cars": x.cars.len() }),
+    });
+    let here = c.route.get(c.idx).copied();
+    json!({
+        "lane": here.and_then(lane_kind), "s_m": round(c.s), "s_end_m": round(c.s_end), "route_idx": c.idx, "route_len": c.route.len(),
+        "ahead": c.route.iter().skip(c.idx + 1).take(12).filter_map(|&l| lane_kind(l)).collect::<Vec<_>>(),
+        "route_lanes": c.route.iter().skip(c.idx).take(200).collect::<Vec<_>>(),
+        "ends_at": c.route.last().and_then(|&l| net.lanes.get(l as usize)).map(|l| v2(l.point_at(c.s_end.min(l.length)).0)),
+        "entering_from_kerb": c.entering, "lateral_m": round(c.lateral), "blocked_by": c.blocked_by.map(key_str),
+    })
 }
 
 /// Why a vehicle drives as it does: what holds it, its lane's arrows, its

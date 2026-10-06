@@ -1105,6 +1105,20 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
     let lift = |p: SVec2| Vec3::new(p.x, 0.8 + sim.world.surface_height(p), p.y);
     let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
 
+    // [rage] Drivers who have lost their temper flash and lean on the horn:
+    // a red ring blinking over the car, faster the angrier they are.
+    {
+        let f = sim.frac();
+        let t = time.elapsed_secs();
+        for (id, car) in sim.world.traffic.cars.iter().filter(|(_, c)| c.drive.anger >= 0.5) {
+            let phase = (slotmap::Key::data(&id).as_ffi() % 97) as f32 * 0.13;
+            if ((t * (3.0 + 5.0 * car.drive.anger) + phase) as i64) % 2 == 0 {
+                let (p, _) = car.pose_at(f);
+                gizmos.circle(Isometry3d::new(Vec3::new(p.x, sim.world.car_height(car) + 2.4, p.y), flat), 1.1 + car.drive.anger, Color::linear_rgb(4.0, 0.3, 0.15));
+            }
+        }
+    }
+
     // Bus lines: the lane path of every leg in the line's colour, stops as
     // rings, broken legs red. With the Buses tool or the toggle every line
     // shows; otherwise only a selected one (picked in the Transit window,
@@ -1394,6 +1408,30 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
             });
             if let Some(b) = to {
                 lot_outline(gizmos, w, b, 1.2, dest);
+            }
+            // Who it waits for, back to the head of the jam: a red line from
+            // car to car and a box round the head (red for a car standing
+            // for no reason the sim knows, orange otherwise).
+            let chain = w.traffic.jam_chain(id);
+            if chain.cars.len() >= 2 {
+                let jam = Color::linear_rgb(3.0, 0.35, 0.25);
+                let pts: Vec<Vec3> = chain.cars.iter().filter_map(|&c| w.traffic.cars.get(c)).map(|c| {
+                    let p = c.pose_at(f).0;
+                    Vec3::new(p.x, w.car_height(c) + 1.6, p.y)
+                }).collect();
+                gizmos.linestrip(pts, jam);
+                for &c in &chain.cars[1..chain.cars.len() - 1] {
+                    if let Some(x) = w.traffic.cars.get(c) {
+                        let (p, h) = x.pose_at(f);
+                        vehicle_outline(gizmos, p, h, x.length() + 0.3, 2.3, w.car_height(x) + 0.3, Color::linear_rgb(1.4, 0.25, 0.2));
+                    }
+                }
+                if let Some(head) = chain.head().and_then(|h| w.traffic.cars.get(h).map(|x| (h, x))) {
+                    let (p, h) = head.1.pose_at(f);
+                    let bad = !w.traffic.stop_reason(head.0).is_good();
+                    let col = if bad { Color::linear_rgb(4.0, 0.2, 0.2) } else { Color::linear_rgb(3.4, 1.4, 0.2) };
+                    vehicle_outline(gizmos, p, h, head.1.length() + 1.0, 3.0, w.car_height(head.1) + 0.6, col);
+                }
             }
         }
         Selection::Parked(vid) => {
