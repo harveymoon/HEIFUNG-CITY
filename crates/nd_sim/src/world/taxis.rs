@@ -54,7 +54,7 @@ impl World {
     /// with a few cabs to start. `None` when the lot will not do.
     pub fn build_taxi_company(&mut self, lot_id: LotId, name: String) -> Option<BuildingId> {
         let lot = self.lots.get(lot_id)?;
-        if lot.building.is_some() || lot.landlocked || lot.car_segment.is_none() || self.under_facility(lot.center) || lot.area() < 300.0 {
+        if lot.building.is_some() || lot.landlocked || lot.car_segment.is_none() || self.under_facility(lot.center) || lot.area() < taxi::YARD_MIN_AREA {
             return None;
         }
         let jobs = taxi::COMPANY_JOBS;
@@ -104,7 +104,7 @@ impl World {
         let mut candidates: Vec<(f32, LotId)> = vacant
             .iter()
             .copied()
-            .filter(|&l| self.lots.get(l).is_some_and(|lot| matches!(lot.land_use, LandUse::Commercial | LandUse::Industrial) && lot.car_segment.is_some() && lot.area() >= 300.0))
+            .filter(|&l| self.lots.get(l).is_some_and(|lot| matches!(lot.land_use, LandUse::Commercial | LandUse::Industrial) && lot.car_segment.is_some() && lot.area() >= taxi::YARD_MIN_AREA))
             .map(|l| {
                 let lot = &self.lots[l];
                 // Commercial land is where a cab firm belongs; industrial will do.

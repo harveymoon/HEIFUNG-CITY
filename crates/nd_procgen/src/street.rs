@@ -1337,31 +1337,32 @@ pub fn lane_arrows(net: &LaneNetwork, pal: &Palette) -> Geometry {
 pub fn lane_arrow(m: &mut crate::mesh::MeshData, front: Vec2, d: Vec2, arrows: u8, y: f32, c: [f32; 4]) {
     use nd_sim::traffic::{LEFT, RIGHT, STRAIGHT};
     let right = Vec2::new(-d.y, d.x);
-    // The shaft runs 3.4 m to the fork; turns leave the fork 1.6 m before the front.
-    let fork = front - d * 2.0;
-    let start = fork - d * 3.4;
     let shaft = 0.4;
-    m.ground_strip(&[start, fork], shaft, y, c);
-    let head = |m: &mut crate::mesh::MeshData, base: Vec2, dir: Vec2| {
+    let straight = arrows & STRAIGHT != 0;
+    let head = |m: &mut crate::mesh::MeshData, base: Vec2, dir: Vec2, len: f32, half: f32| {
         let side = Vec2::new(-dir.y, dir.x);
-        m.ground_polygon(&[base + side * 0.6, base + dir * 1.2, base - side * 0.6], y, c);
+        m.ground_polygon(&[base + side * half, base + dir * len, base - side * half], y, c);
     };
-    if arrows & STRAIGHT != 0 {
-        m.ground_strip(&[fork - d * 0.1, front - d * 1.15], shaft, y, c);
-        head(m, front - d * 1.2, d);
+    // The shaft: up to the straight head, or ending where the turns leave.
+    let start = front - d * 5.4;
+    let end = if straight { front - d * 1.15 } else { front - d * 2.3 };
+    m.ground_strip(&[start, end], shaft, y, c);
+    if straight {
+        head(m, front - d * 1.2, d, 1.2, 0.6);
     }
     for (bit, sgn) in [(LEFT, -1.0f32), (RIGHT, 1.0)] {
         if arrows & bit == 0 {
             continue;
         }
-        // Up from the fork, bend out to the side, head pointing sideways
-        // and a little forward so it reads as a turn, not a lane change.
-        let out = (right * sgn * 0.9 + d * 0.45).normalize_or_zero();
-        let bend = fork + d * 0.6;
-        let base = bend + right * sgn * 0.35 + d * 0.15;
-        m.ground_strip(&[fork - d * 0.1, bend + d * 0.15], shaft, y, c);
-        m.ground_strip(&[bend, base], shaft, y, c);
-        head(m, base - out * 0.05, out);
+        // A branch off the shaft well behind the straight head, sweeping out
+        // to the side and ending in a head that points across the lane
+        // (and a little ahead): a turn, apart from the straight arrow.
+        let side = right * sgn;
+        let j = if straight { front - d * 3.6 } else { front - d * 2.5 };
+        let elbow = j + d * 0.55 + side * 0.4;
+        m.ground_strip(&[j - d * 0.1, elbow], shaft, y, c);
+        let dir = (side + d * 0.2).normalize_or_zero();
+        head(m, elbow - dir * 0.05, dir, 1.05, 0.5);
     }
 }
 

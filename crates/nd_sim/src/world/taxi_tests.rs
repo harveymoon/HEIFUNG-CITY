@@ -46,7 +46,7 @@ fn town() -> (World, BuildingId) {
 
 /// A vacant lot for the taxi yard, near the middle.
 fn yard_lot(w: &World) -> LotId {
-    w.lots.iter().filter(|(_, l)| l.building.is_none() && l.usable() && l.land_use == LandUse::Commercial && l.car_segment.is_some() && l.area() >= 300.0).min_by(|a, b| a.1.center.length().total_cmp(&b.1.center.length())).map(|(id, _)| id).expect("a vacant commercial lot")
+    w.lots.iter().filter(|(_, l)| l.building.is_none() && l.usable() && l.land_use == LandUse::Commercial && l.car_segment.is_some() && l.area() >= taxi::YARD_MIN_AREA).min_by(|a, b| a.1.center.length().total_cmp(&b.1.center.length())).map(|(id, _)| id).expect("a vacant commercial lot")
 }
 
 /// A grown-up at home with money and no car or bike.

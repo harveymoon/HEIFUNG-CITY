@@ -53,7 +53,7 @@ pub(super) fn sync_taxis(mut commands: Commands, sim: Res<Sim>, mats: Res<Materi
             let back = -lot.front_dir;
             let heading = { let a = SVec2::new(-back.y, back.x); a.y.atan2(a.x) };
             for (k, (id, model)) in cabs.iter().skip(bays.len()).enumerate() {
-                let p = lot.entrance() + back * (7.0 + 3.0 * k as f32);
+                let p = lot.entrance() + back * (9.0 + 3.2 * k as f32);
                 want.push((*id, p, heading, *model));
             }
         }

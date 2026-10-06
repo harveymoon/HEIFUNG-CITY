@@ -555,17 +555,20 @@ Citizens are rendered from their simulated positions every frame.
 - **Taxis** (`nd_sim::taxi`, `world/taxis.rs`): a taxi company is a commercial business
   (`BusinessKind::TaxiCompany`) nobody plans. Every trip that chose another way although a cab
   would have beaten it by 10% (priced with an 8-minute wait, as if a company existed) is demand
-  nobody served (`Taxis::latent_today`); once a day's count reaches 10 (10 more per company in
-  town), development opens a company on the vacant commercial lot (industrial at a pinch) nearest
-  where those trips began, founded by the adult with the most savings living within 1.2 km, who
-  puts in 60% of them (up to 1,500) and remembers it ("<Surname> Cabs"). It starts with 3 cabs in
+  nobody served: near a company (within 1.65 km) it is a rider that company missed, elsewhere it
+  counts towards a new company (`Taxis::latent_today`). Once a day's count reaches 10 (10 more per
+  company in town, and at most one company per 1,500 people), development opens a company on the
+  vacant commercial lot (industrial at a pinch) nearest where those trips began, founded by the
+  adult with the most savings and household money (a kilometre away counts as 200 less), who puts
+  in 40% of it (up to 1,500) and remembers it ("<Surname> Cabs"). It starts with 3 cabs in
   a yard drawn as a surface lot with a lit TAXI sign, 6 staff, and lives on fares. Every cab is a
   record with a place, like a private car: in its yard, queued at a rank, stopped at a kerb, or
   on the road as a car of the traffic model (`Errand::Taxi`); one taken off the road by road works
   goes back to its yard, and the cabs of a company that closes are sold and driven off the map.
   Mode choice gains `TripMode::Taxi` for trips of 250 m or more (not children, not walks in the
-  park): the walk to the kerb, the wait (the nearest free cab on duty within 2.4 km at 9 m/s, or
-  14 min plus 3 per queued rider when all are busy), the ride, the fare (4 + 3.5/km of road, about
+  park): the walk to the kerb, the wait (the nearest free cab on duty within 1.1 km at 9 m/s, once
+  the riders already waiting have taken the free cabs; else 8 min plus 15 per queued rider per cab on
+  duty; over 30 minutes and the rider does not hail, which counts as demand), the ride, the fare (4 + 3.5/km of road, about
   1.3 times the straight line, paid by the household to the company; the purse must hold twice
   it), and comfort: being driven (more for hedonists and the old), at night (22:00 to 05:00, when
   the buses stop) and above all drunk; with a cab to be had, a drunk who would drive anyway weighs
@@ -578,8 +581,10 @@ Citizens are rendered from their simulated positions every frame.
   each: station forecourts, the six busiest open venues, its own gate), else goes home. The rota
   puts a share of each fleet on duty by the hour (all from 20:00 to 03:00, 80% in the evening rush,
   half by day, 30% at dawn); off-duty cabs park in the yard. At midnight a company with 3 or more
-  missed riders and the money buys a cab (420, up to 14); one whose cabs gave under 1.5 rides each
-  and missed nobody sells one. Transit window and `report.transit.taxis`.
+  missed riders and the money buys one cab per 8 missed (420 each, up to 4 a night and 20 in all);
+  one whose cabs gave under 1.5 rides each and missed nobody sells one. A rider who has booked
+  makes no other plans until the cab comes or they give up. On the demo city (day 24) one company
+  ran 11 cabs, about 120 rides a day, 2 to 3% of trips, most of its trade in the evening and night. Transit window and `report.transit.taxis`.
 - **Cargo hubs** (`nd_sim::cargo_hub`, `world/cargo_hubs.rs`): a freight terminal the player places
   (Buildings, Rail: 9,000, 140/day, 24 jobs, on a lot of 900 m² or more with a street, not homes or
   parks), run by the city. Businesses within 1.8 km of a working hub import through it

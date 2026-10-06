@@ -59,6 +59,8 @@ pub const MISSED_PER_CAB: u32 = 8;
 pub const PEOPLE_PER_COMPANY: usize = 1500;
 /// Cabs that wait at one rank, nose to tail.
 pub const RANK_SLOTS: usize = 4;
+/// Smallest lot a taxi yard opens on: room for a row of bays.
+pub const YARD_MIN_AREA: f32 = 450.0;
 /// Staff of a company: dispatchers and drivers on the rota.
 pub const COMPANY_JOBS: u16 = 6;
 /// Trips that would have gone by cab, with none to be had, in a day before
