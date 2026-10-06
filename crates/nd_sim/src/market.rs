@@ -425,6 +425,18 @@ pub struct Business {
     /// The lorries parked here, longest first: whose they are and since when.
     #[serde(default)]
     pub fleet_log: Vec<ParkedLorry>,
+    /// The last [`Business::BOOK_DAYS`] days' books, oldest first: what it
+    /// took and what it paid out each day (wages, inputs, extra tax), for
+    /// the inspector's cash-flow sparkline. Written when the day closes.
+    #[serde(default)]
+    pub books: Vec<DayBook>,
+}
+
+/// One closed day of a business's books.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct DayBook {
+    pub revenue: f32,
+    pub spend: f32,
 }
 
 /// A lorry parked at a truck and bus lot.
@@ -454,7 +466,20 @@ impl Business {
             days_open: 0,
             fleet_trucks: 0,
             fleet_log: Vec::new(),
+            books: Vec::new(),
         }
+    }
+
+    /// Days of books kept: a month is enough to read a trend, and the list
+    /// stays small in the save.
+    pub const BOOK_DAYS: usize = 30;
+
+    /// Close a day's books into the bounded history.
+    pub fn close_books(&mut self, revenue: f32, spend: f32) {
+        if self.books.len() >= Self::BOOK_DAYS {
+            self.books.remove(0);
+        }
+        self.books.push(DayBook { revenue, spend });
     }
 
     pub fn inbound_of(&self, r: Resource) -> f32 {
@@ -597,6 +622,19 @@ pub struct MarketStats {
 
 #[cfg(test)]
 mod tests {
+
+    /// [inspector] The books keep a bounded month, oldest first.
+    #[test]
+    fn books_keep_the_last_month() {
+        let mut b = Business::new(BusinessKind::Grocery, 4);
+        for d in 0..(Business::BOOK_DAYS + 5) {
+            b.close_books(d as f32, 1.0);
+        }
+        assert_eq!(b.books.len(), Business::BOOK_DAYS);
+        assert_eq!(b.books[0].revenue, 5.0);
+        assert_eq!(b.books.last().unwrap().revenue, (Business::BOOK_DAYS + 4) as f32);
+    }
+
     use super::*;
 
     #[test]

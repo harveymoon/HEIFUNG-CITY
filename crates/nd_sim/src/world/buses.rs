@@ -46,6 +46,10 @@ impl World {
         }
         r.stops.push(stop);
         let idx = r.stops.len() - 1;
+        // The old last stop now drives to the new one, not round to the first.
+        if idx > 0 {
+            r.stops[idx - 1].stats.forget_leg();
+        }
         self.transit.refresh_legs(&self.traffic.net);
         Ok(idx)
     }
@@ -56,9 +60,43 @@ impl World {
         if idx >= r.stops.len() {
             return false;
         }
+        // The stop keeps its ridership; the legs into and out of it are new.
+        let stats = r.stops[idx].stats;
         r.stops[idx] = stop;
+        r.stops[idx].stats = stats;
+        let n = r.stops.len();
+        r.stops[idx].stats.forget_leg();
+        r.stops[(idx + n - 1) % n].stats.forget_leg();
         self.transit.refresh_legs(&self.traffic.net);
         true
+    }
+
+    /// Rename a bus line. Blank names are refused.
+    pub fn rename_bus_route(&mut self, route: RouteId, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("a line needs a name".into());
+        }
+        let r = self.transit.routes.get_mut(route).ok_or("no such line")?;
+        r.name = name.chars().take(40).collect();
+        self.transit.version += 1;
+        Ok(())
+    }
+
+    /// Recolour a bus line, buses on the road included, so the line and
+    /// its fleet keep matching. `color` indexes the vehicle palette.
+    pub fn recolour_bus_route(&mut self, route: RouteId, color: u8) -> Result<(), String> {
+        let r = self.transit.routes.get_mut(route).ok_or("no such line")?;
+        r.color = color % crate::vehicle::PAINTS;
+        let c = r.color;
+        for car in self.traffic.cars.values_mut() {
+            if car.bus.as_ref().is_some_and(|b| b.route == route) {
+                car.color = c;
+                car.model.paint = c;
+            }
+        }
+        self.transit.version += 1;
+        Ok(())
     }
 
     /// Remove a stop; a line with no stops left is removed too.
@@ -66,8 +104,18 @@ impl World {
         let Some(r) = self.transit.routes.get_mut(route) else { return };
         if idx < r.stops.len() {
             r.stops.remove(idx);
+            // The stop before now drives straight on to the one after.
+            let n = r.stops.len();
+            if n > 0 {
+                r.stops[(idx + n - 1) % n].stats.forget_leg();
+            }
         }
         let empty = r.stops.is_empty();
+        // Leg timings in flight refer to the old numbering: drop them.
+        let on_line: Vec<CarId> = self.traffic.cars.iter().filter(|(_, c)| c.bus.as_ref().is_some_and(|b| b.route == route)).map(|(id, _)| id).collect();
+        for id in on_line {
+            self.transit.departures.remove(&id);
+        }
         // Buses heading past the removed stop re-aim at what is now there.
         for car in self.traffic.cars.values_mut() {
             if let Some(bus) = car.bus.as_mut() {
@@ -111,6 +159,7 @@ impl World {
         self.transit.routes.remove(route);
         let buses: Vec<CarId> = self.traffic.cars.iter().filter(|(_, c)| c.bus.as_ref().is_some_and(|b| b.route == route)).map(|(id, _)| id).collect();
         for id in buses {
+            self.transit.departures.remove(&id);
             if let Some(car) = self.traffic.remove_car(id) {
                 self.strand_car(car);
             }
@@ -211,6 +260,7 @@ impl World {
             (car.bus.clone().unwrap(), car.pos)
         };
         let gone = |w: &mut World, car_id: CarId| {
+            w.transit.departures.remove(&car_id);
             if let Some(car) = w.traffic.remove_car(car_id) {
                 w.strand_car(car);
             }
@@ -232,6 +282,18 @@ impl World {
         let mut passengers = bus.passengers.clone();
         let alighting: Vec<CitizenId> = passengers.iter().copied().filter(|p| self.citizens.get(*p).and_then(|c| c.transit).is_none_or(|t| match t.leg { TransitLeg::Bus { route, alight, .. } => alight == stop_idx || route != bus.route, _ => true })).collect();
         passengers.retain(|p| !alighting.contains(p));
+        // [lines] Count the stop's riders off, and time the leg that brought
+        // the bus here if it came straight from the stop before.
+        {
+            let r = &mut self.transit.routes[bus.route];
+            r.stops[stop_idx].stats.off_today += alighting.len() as u32;
+            if let Some((prev, t0)) = self.transit.departures.get(&car_id).copied() {
+                if prev < n && (prev + 1) % n == stop_idx && tick > t0 {
+                    r.stops[prev].stats.time_leg((tick - t0) as f32);
+                }
+            }
+            self.transit.departures.insert(car_id, (stop_idx, tick));
+        }
         for p in alighting {
             let Some(trip) = self.citizens.get_mut(p).and_then(|c| {
                 c.pos = here.pos;
@@ -244,7 +306,6 @@ impl World {
             self.travel_to_impl(p, Some(trip.target), trip.purpose, false, false);
         }
         // On, up to the capacity.
-        let _ = tick;
         let memory = format!("Caught the {} bus.", self.transit.routes[bus.route].name);
         let boarding = self.board_waiting(|leg| matches!(leg, TransitLeg::Bus { route, board, .. } if *route == bus.route && *board == stop_idx), transit::BUS_CAPACITY.saturating_sub(passengers.len()), fare, Flow::BusFares, Item::Route(bus.route), &memory);
         for p in boarding {
@@ -253,6 +314,7 @@ impl World {
             self.economy.transit.fares_today += fare;
             self.economy.transit.riders_today += 1;
             self.transit.routes[bus.route].riders_today += 1;
+            self.transit.routes[bus.route].stops[stop_idx].stats.on_today += 1;
         }
         // On to the next stop, or home.
         let (next_idx, to_seg, to_pos) = if bus.to_depot {

@@ -701,6 +701,22 @@ impl DriverProfile {
         (1.0 - self.skill) * 0.35 + self.drunk * 1.3 + if self.ignores_signals { 0.45 } else { 0.0 }
     }
 
+    /// Where the driver sits between slow (`-1`) and reckless (`1`), `0`
+    /// an ordinary driver: desired speed, eagerness to overtake, how
+    /// readily they stop for an amber, and how close they follow, each
+    /// measured from a by-the-book driver and averaged. The inspector's
+    /// slow–normal–reckless slider. Drink pushes it up through those.
+    pub fn boldness(&self) -> f32 {
+        if !self.assigned {
+            return 0.0;
+        }
+        let speed = (self.speed - 1.0) / 0.3;
+        let aggression = (self.aggression - 0.45) / 0.55;
+        let ambers = (0.85 - self.compliance) / 0.65;
+        let tailgating = (1.5 - self.headway) / 0.9;
+        ((speed + aggression + ambers + tailgating) / 4.0).clamp(-1.0, 1.0)
+    }
+
     pub fn label(&self) -> &'static str {
         if !self.assigned {
             "unassigned"
@@ -3601,6 +3617,22 @@ fn step_stunt(st: &mut Stunt, pos: Vec2, heading: f32, dt: f32) -> (Vec2, f32) {
 
 #[cfg(test)]
 mod tests {
+
+    /// [inspector] The slow–normal–reckless reading of a driver.
+    #[test]
+    fn boldness_runs_from_slow_to_reckless() {
+        let ordinary = DriverProfile::for_driver(40, 0.5, 0.3, 0.0, 0.5, 0.0).boldness();
+        let careful_old = DriverProfile::for_driver(85, 0.95, 0.05, 0.0, 0.5, 0.0).boldness();
+        let rebel = DriverProfile::for_driver(21, 0.05, 0.95, 0.0, 0.5, 0.0).boldness();
+        let drunk_rebel = DriverProfile::for_driver(21, 0.05, 0.95, 1.0, 0.5, 0.0).boldness();
+        assert!(ordinary.abs() < 0.25, "ordinary {ordinary}");
+        assert!(careful_old < -0.25, "careful pensioner {careful_old}");
+        assert!(rebel > 0.45, "rebel {rebel}");
+        assert!(drunk_rebel >= rebel);
+        assert!(DriverProfile::professional(0.0).boldness().abs() < 0.25);
+        assert_eq!(DriverProfile::default().boldness(), 0.0, "unassigned reads as normal");
+        assert!(DriverProfile::for_driver(40, 0.5, 0.3, 0.0, 0.5, 0.0).angry(1.0).boldness() > ordinary, "anger shows");
+    }
     use super::*;
 
     fn cross() -> RoadNetwork {
