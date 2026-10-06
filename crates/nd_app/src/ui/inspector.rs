@@ -45,6 +45,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             citizen_summary(ui, &sim.world, &sim.world.citizens[id]);
             ui.add_space(4.0);
             spotlight_toggle(ui, &mut sim.world, id, "Spotlight: route this citizen through the LLM mind");
+            super::places::citizen_places(ui, &sim.world, id);
             hint(ui, "memories");
             for m in sim.world.citizens[id].memories.iter().rev().take(8) {
                 memory_line(ui, m);
@@ -137,6 +138,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                     ui.label(egui::RichText::new(format!("sells {}: {:.0} in stock at {:.1}", r.label(), bz.stock_of(*r), bz.sell_price(*r, b.jobs))).small());
                 }
             }
+            super::places::building_place(ui, &sim.world, id);
             hint(ui, "people here");
             let names: Vec<&str> = b.residents.iter().chain(b.workers.iter()).filter_map(|&cid| sim.world.citizens.get(cid).map(|c| c.name.as_str())).take(10).collect();
             for n in names {

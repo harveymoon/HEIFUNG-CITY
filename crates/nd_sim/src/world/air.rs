@@ -1054,6 +1054,7 @@ mod tests {
             transit: None,
             activity: Activity::AtHome,
             memories: Vec::new(),
+            places: Default::default(),
             thought: String::new(),
             spotlight: false,
             next_decision_tick: u64::MAX / 2,

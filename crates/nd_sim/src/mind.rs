@@ -16,6 +16,9 @@ pub enum Intent {
     /// Buy a retail resource at the nearest well-stocked shop.
     Shop(crate::market::Resource),
     Wander,
+    /// [places] Head out to find somewhere new of this use near by
+    /// ("looking for a drink"); wanders when there is nowhere new.
+    Explore(LandUse),
 }
 
 #[derive(Clone, Debug)]
@@ -59,6 +62,10 @@ pub struct MindContext<'a> {
     pub household_size: usize,
     /// The household pantry is under half its target: someone should shop.
     pub pantry_low: bool,
+    /// [places] A regular spot for a night out that is open now.
+    pub regular_spot: Option<&'a str>,
+    /// [places] Places for a night out known (and not sworn off).
+    pub places_known: usize,
 }
 
 pub trait MindProvider {

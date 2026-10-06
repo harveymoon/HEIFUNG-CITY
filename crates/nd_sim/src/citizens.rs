@@ -342,6 +342,10 @@ pub struct Citizen {
     pub transit: Option<crate::transit::TransitTrip>,
     pub activity: Activity,
     pub memories: Vec<Memory>,
+    /// [places] The venues, shops and parks this citizen knows, how each
+    /// went, and the people met at their regular haunts.
+    #[serde(default)]
+    pub places: crate::places::PlaceBook,
     pub thought: String,
     /// Spotlight citizens may be driven by an expensive mind (an LLM).
     pub spotlight: bool,
@@ -539,6 +543,7 @@ mod tests {
             transit: None,
             activity: Activity::Idle,
             memories: Vec::new(),
+            places: Default::default(),
             thought: String::new(),
             spotlight: false,
             next_decision_tick: 0,

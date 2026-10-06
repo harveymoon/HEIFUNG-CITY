@@ -142,7 +142,9 @@ pub fn report(w: &World, sections: &[String]) -> Result<Value, String> {
         out.insert("people".into(), people(w));
     }
     if want("economy") {
-        out.insert("economy".into(), economy(w));
+        let mut e = economy(w);
+        e["venues"] = super::places::venue_ratings(w);
+        out.insert("economy".into(), e);
     }
     if want("land") {
         out.insert("land".into(), land(w));
