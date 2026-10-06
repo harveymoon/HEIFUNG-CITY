@@ -5,10 +5,17 @@
 //!
 //! [tourism] Visitors on foot, drawn with the citizens' figure generator
 //! and cache (`render/people.rs`) as a tourist figure: their look with a
-//! daypack and a camera.
+//! daypack and a camera. They keep a small figure cache of their own:
+//! the citizens' cache is often full of the looks on the street, and a
+//! visitor borrowing a citizen's figure would lose the daypack that marks
+//! them out.
+
+/// Visitor figures kept at most; beyond it they borrow a visitor figure of
+/// the same silhouette.
+const TOURIST_FIGURES: usize = 192;
 
 use super::*;
-use nd_procgen::people::tourist_key;
+use nd_procgen::people::{person_mesh, tourist_key, FigureCache, PersonKey};
 use nd_sim::districts::{DistrictGrid, CELL, COLORS, HALF};
 use nd_sim::tourism::TouristId;
 
@@ -18,11 +25,18 @@ pub(super) struct DistrictLayerTag;
 #[derive(Component)]
 pub(super) struct TouristTag;
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub(super) struct DistrictRender {
     /// Districts version and colour signature the layer was built for.
     shown: Option<(u64, u64)>,
     tourists: HashMap<TouristId, Entity>,
+    figures: FigureCache<Handle<Mesh>>,
+}
+
+impl Default for DistrictRender {
+    fn default() -> Self {
+        Self { shown: None, tourists: HashMap::new(), figures: FigureCache::new(TOURIST_FIGURES) }
+    }
 }
 
 /// The fills (one quad per run of cells in a row) and borders of every
@@ -112,6 +126,7 @@ pub(super) fn sync_tourists(
         }
     }
     let f = sim.frac();
+    state.figures.begin_frame();
     for (id, t) in w.tourism.tourists.iter() {
         let Some(&e) = state.tourists.get(&id) else {
             let e = commands.spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(look_mat.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, Grounded, TouristTag)).id();
@@ -133,7 +148,7 @@ pub(super) fn sync_tourists(
         tf.translation = Vec3::new(pos.x, 0.16, pos.y);
         tf.rotation = Quat::from_rotation_y(-lerp_angle(t.prev_heading, t.heading, f));
         tf.scale = Vec3::splat(look.stature(t.age));
-        let wanted = people.mesh_for(key, &mut meshes).unwrap_or_else(|| mats.citizen_mesh.clone());
+        let wanted: Handle<Mesh> = state.figures.get_or_build(key, |k: &PersonKey| meshes.add(shared_mesh(&person_mesh(k), false))).unwrap_or_else(|| mats.citizen_mesh.clone());
         if mesh.0 != wanted {
             mesh.0 = wanted;
         }

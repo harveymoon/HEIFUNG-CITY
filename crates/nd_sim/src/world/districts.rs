@@ -160,7 +160,7 @@ impl World {
         // builds them twice as eagerly.
         let need = crate::tourism::HOTEL_DEMAND_TO_BUILD * if tourist_quarter { 0.5 } else { 1.0 };
         let hotel_cover_ok = self.economy.cover_of(BusinessKind::Hotel).is_none_or(|c| c >= 0.85);
-        if demand >= need && hotels_building < 1 + (demand / 40.0) as usize && hotel_cover_ok {
+        if demand >= need && hotels_building < 1 + (demand / 25.0) as usize && hotel_cover_ok {
             return Some(BusinessKind::Hotel);
         }
         let look = look?;

@@ -312,22 +312,26 @@ impl World {
     /// nearest the sights), whatever the general commercial demand says:
     /// the visitors are the demand.
     fn open_hotels(&mut self) {
-        if self.tourism.hotel_demand < tm::HOTEL_DEMAND_TO_BUILD {
+        // Smoothed demand, or today's queue at the door while there is no
+        // bed at all: the first hotel should not wait for midnight's books.
+        let no_beds = self.hotels().iter().all(|h| h.1 == 0);
+        let demand = self.tourism.hotel_demand.max(if no_beds { self.tourism.stats.turned_away_today as f32 } else { 0.0 });
+        if demand < tm::HOTEL_DEMAND_TO_BUILD {
             return;
         }
         let building = self.buildings.values().filter(|b| b.construction.is_some() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Hotel)).count();
-        if building >= 1 + (self.tourism.hotel_demand / 40.0) as usize {
+        if building >= 1 + (demand / 25.0) as usize {
             return;
         }
         if self.economy.cover_of(BusinessKind::Hotel).is_some_and(|c| c < 0.85) {
             return;
         }
         let mut rng = crate::rng_for(self.config.seed ^ SALT ^ 0x407E1, self.clock.tick);
-        if !rng.random_bool(0.35) {
+        if !rng.random_bool(0.5) {
             return;
         }
         let sights: Vec<(Vec2, f32)> = self.tourism.attractions.iter().map(|a| (a.pos, a.score)).collect();
-        let best = self
+        let mut lots: Vec<(LotId, f32)> = self
             .lots
             .iter()
             .filter(|(_, l)| l.land_use == LandUse::Commercial && l.building.is_none() && l.usable() && !l.landlocked)
@@ -337,10 +341,18 @@ impl World {
                 let pull: f32 = sights.iter().map(|(p, s)| s / (1.0 + p.distance(l.center) / 300.0)).sum();
                 (id, pull + if quarter { 1000.0 } else { 0.0 })
             })
-            .max_by(|a, b| a.1.total_cmp(&b.1).then_with(|| lot_order(b.0).cmp(&lot_order(a.0))));
-        if let Some((lot, _)) = best {
+            .collect();
+        lots.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| lot_order(a.0).cmp(&lot_order(b.0))));
+        // The best lot may refuse (rubble still on it, say): try the next.
+        let before = self.tourism.hotel_demand;
+        self.tourism.hotel_demand = demand;
+        for (lot, _) in lots.into_iter().take(8) {
             self.build_on(lot);
+            if self.lots.get(lot).is_some_and(|l| l.building.is_some()) {
+                break;
+            }
         }
+        self.tourism.hotel_demand = before;
     }
 
     // ── on foot ───────────────────────────────────────────────────────────
