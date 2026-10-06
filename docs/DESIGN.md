@@ -467,7 +467,7 @@ trait MindProvider {
   18 camera-facing puffs with a soft generated texture that rise, drift downwind (the wind
   direction veers slowly over days, the distance grows with wind), swell and fade over 36 s;
   14 wide, flat puffs of brown smog lie downwind at 7 to 30 m, which is what the street sees.
-  Alpha comes from a palette of twelve steps per kind (plume at most 0.42, smog 0.16), so the
+  Alpha comes from a palette of twelve steps per kind (plume at most 0.85, smog 0.38, both scaled by puff age and a soft texture), so the
   city reads through from above; the colour darkens at night; nothing casts or receives
   shadows. Thickness follows the plant's output: staffing times the grid's draw on supply.
 - Window lights follow occupancy (`render/lights.rs`, `nd_procgen::lights`). In the app every

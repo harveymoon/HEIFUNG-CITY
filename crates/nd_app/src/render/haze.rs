@@ -27,9 +27,13 @@ const PLUME_LIFE: f32 = 36.0;
 /// Alpha steps the puff materials come in.
 const ALPHA_STEPS: usize = 12;
 /// Most opaque a plume puff gets (at full output, just out of the stack).
-const PLUME_ALPHA: f32 = 0.42;
+const PLUME_ALPHA: f32 = 0.85;
+/// Plume colour: light ash, so it stands off the dusty ground below.
+const PLUME_RGB: [f32; 3] = [0.62, 0.60, 0.58];
 /// Most opaque a smog puff gets.
-const SMOG_ALPHA: f32 = 0.16;
+const SMOG_ALPHA: f32 = 0.38;
+/// Smog colour: a dirty brown.
+const SMOG_RGB: [f32; 3] = [0.36, 0.27, 0.17];
 
 #[derive(Component)]
 pub(super) struct Puff {
@@ -113,7 +117,7 @@ pub(super) fn sync_haze(
     if state.quad.is_none() {
         state.quad = Some(meshes.add(Rectangle::new(1.0, 1.0)));
         let tex = images.add(puff_image());
-        for (rgb, top) in [([0.40f32, 0.36, 0.32], PLUME_ALPHA), ([0.46, 0.34, 0.21], SMOG_ALPHA)] {
+        for (rgb, top) in [(PLUME_RGB, PLUME_ALPHA), (SMOG_RGB, SMOG_ALPHA)] {
             for k in 0..ALPHA_STEPS {
                 let a = top * (k + 1) as f32 / ALPHA_STEPS as f32;
                 state.materials.push(materials.add(StandardMaterial {
@@ -137,7 +141,7 @@ pub(super) fn sync_haze(
     if state.light_key != Some(light_key) {
         state.light_key = Some(light_key);
         for (i, h) in state.materials.iter().enumerate() {
-            let (rgb, top) = if i < ALPHA_STEPS { ([0.40f32, 0.36, 0.32], PLUME_ALPHA) } else { ([0.46, 0.34, 0.21], SMOG_ALPHA) };
+            let (rgb, top) = if i < ALPHA_STEPS { (PLUME_RGB, PLUME_ALPHA) } else { (SMOG_RGB, SMOG_ALPHA) };
             let a = top * ((i % ALPHA_STEPS) + 1) as f32 / ALPHA_STEPS as f32;
             if let Some(mut m) = materials.get_mut(h) {
                 m.base_color = Color::linear_rgba(rgb[0] * light, rgb[1] * light * 0.97, rgb[2] * light * 0.92, a);
