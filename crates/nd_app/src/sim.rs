@@ -267,7 +267,10 @@ fn step_sim(time: Res<Time>, mut sim: ResMut<Sim>) {
     let dt = time.delta_secs();
     if !sim.paused && dt > 0.0 {
         let ratio = ticks as f32 / (dt * sim.speed());
-        let k = 1.0 - (-dt / 0.5).exp();
+        // Averaged over a few ticks' worth of time: at 1x a tick comes only
+        // every few seconds, and a half-second window read as 0%.
+        let tau = (3.0 / sim.speed()).max(0.5);
+        let k = 1.0 - (-dt / tau).exp();
         sim.effective_speed += (ratio - sim.effective_speed) * k;
     }
     let events = sim.world.drain_events();
