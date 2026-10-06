@@ -36,6 +36,9 @@ mod emergency;
 mod haze;
 mod layers;
 mod lights;
+/// [looks] Citizens drawn with their own look.
+mod people;
+pub use people::MESH_CAP as PEOPLE_MESH_CAP;
 mod stunts;
 /// [society] Camps, RVs and overflowing bins.
 mod society;
@@ -228,6 +231,7 @@ pub(crate) fn offstage() -> Transform {
 struct Materials {
     /// One material per [`Surface`], indexed by `Surface::index()`.
     surfaces: Vec<Handle<StandardMaterial>>,
+    /// The plain citizen tint from before looks (`ND_PLAIN_PEOPLE=1`).
     citizen: Handle<StandardMaterial>,
     citizen_spotlight: Handle<StandardMaterial>,
     citizen_selected: Handle<StandardMaterial>,
@@ -328,12 +332,20 @@ pub struct RenderStats {
     pub building_entities: usize,
     pub street_triangles: usize,
     pub building_triangles: usize,
+    /// [looks] Figure meshes cached, people outdoors, distinct looks among
+    /// them, figures built over the run and borrowed this frame.
+    pub people_meshes: usize,
+    pub people_visible: usize,
+    pub people_looks_visible: usize,
+    pub people_built: usize,
+    pub people_borrowed: usize,
 }
 
 pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<people::PeopleRender>();
         app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().init_resource::<BuildingStyles>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_systems(Startup, (lights::add_shader, setup)).add_systems(
             Update,
             (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)
@@ -354,6 +366,7 @@ impl Plugin for RenderPlugin {
         app.init_resource::<society::SocietyRender>().add_systems(Update, society::sync_society.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
         // Drone taxis and helicopters, after the buildings whose pads they land on.
         app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
+        app.add_systems(Update, check_car_bodies.after(lift_movers).in_set(SimSet::Sync));
     }
 }
 
@@ -377,6 +390,26 @@ fn shared_mesh(data: &MeshData, tangents: bool) -> Mesh {
 }
 
 fn mesh_with_usage(data: &MeshData, tangents: bool, usage: RenderAssetUsages) -> Mesh {
+    // Bevy's mesh allocator skips allocating a mesh with no vertices but
+    // still copies its (empty) data, which logs "Use-after-free: attempted
+    // to copy element data for an unallocated key" every time such a mesh
+    // is extracted. An empty mesh becomes one zero-area triangle instead.
+    let placeholder;
+    let data = if data.positions.is_empty() || data.indices.is_empty() {
+        let mut m = MeshData::default();
+        for _ in 0..3 {
+            m.positions.push([0.0, 0.0, 0.0]);
+            m.normals.push([0.0, 1.0, 0.0]);
+            m.colors.push([0.0, 0.0, 0.0, 1.0]);
+            m.uvs.push([0.0, 0.0]);
+            m.tangents.push([1.0, 0.0, 0.0, 1.0]);
+        }
+        m.indices.extend_from_slice(&[0, 1, 2]);
+        placeholder = m;
+        &placeholder
+    } else {
+        data
+    };
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, usage)
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, data.positions.clone())
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, data.normals.clone())
@@ -996,7 +1029,7 @@ fn sync_preview(
 }
 
 /// A roundabout as a hologram: the ring road with its direction of travel,
-/// the island, where the arms join, and the parts of roads it takes up
+/// its inner kerb (the middle is open land), where the arms join, and the parts of roads it takes up
 /// (dashed red). `k` dims it for a parked project.
 fn draw_ring_effect(glow: &mut MeshData, pal: &nd_procgen::Palette, fx: &nd_sim::plan::RingEffect, k: f32) {
     let Some(ring) = fx.ring else { return };
@@ -1018,8 +1051,10 @@ fn draw_ring_effect(glow: &mut MeshData, pal: &nd_procgen::Palette, fx: &nd_sim:
             glow.ground_strip(&[mid - d * 0.6 + side * s * 1.4, tip], 0.45, 0.235, scale(tint, 1.2 * k));
         }
     }
-    let island: Vec<SVec2> = (0..32).map(|i| ring.center + SVec2::from_angle(i as f32 / 32.0 * std::f32::consts::TAU) * ring.island_radius()).collect();
-    glow.ground_polygon(&island, 0.2, scale([0.35, 0.8, 0.45], 0.25 * k));
+    // The middle stays open land: only its inner kerb is outlined.
+    let mut kerb: Vec<SVec2> = (0..=64).map(|i| ring.center + SVec2::from_angle(i as f32 / 64.0 * std::f32::consts::TAU) * ring.inner_radius()).collect();
+    kerb.dedup();
+    glow.ground_strip(&kerb, 0.3, 0.21, scale(tint, 0.6 * k));
     for (i, cut) in fx.cut.iter().enumerate() {
         let wd = fx.cut_widths.get(i).copied().unwrap_or(6.0);
         glow.ground_strip(cut, wd, 0.225, scale(pal.preview_remove, 0.18 * k));
@@ -1498,20 +1533,33 @@ fn sync_walk_detail(
     *drawn = Some((here, key.0, key.1));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sync_citizens(
     mut commands: Commands,
     sim: Res<Sim>,
     mats: Res<Materials>,
     selection: Res<Selection>,
+    lighting: Res<Lighting>,
     mut state: ResMut<RenderState>,
+    mut people: ResMut<people::PeopleRender>,
+    mut stats: ResMut<RenderStats>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    camera: Query<&GlobalTransform, With<Camera3d>>,
     mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d), With<CitizenTag>>,
 ) {
     let w = &sim.world;
     let f = sim.frac();
+    let plain = people::plain();
+    // [looks] One lit material for every figure; its trim glows at night.
+    let look_mat = people.material(&mut materials, &mut images);
+    people.set_night(night_strength(&sim, &lighting), &mut materials);
+    people.cache.begin_frame();
     for (id, _) in w.citizens.iter() {
         if !state.citizens.contains_key(&id) {
             let e = commands
-                .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(mats.citizen.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CitizenTag))
+                .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(look_mat.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CitizenTag))
                 .id();
             state.citizens.insert(id, e);
         }
@@ -1522,36 +1570,75 @@ fn sync_citizens(
             commands.entity(e).despawn();
         }
     }
+    // Everyone outdoors and their look, first, so no look on screen this
+    // frame is evicted to make room for another.
+    // Nearest the camera first: they claim figures before the distant.
+    let eye = camera.iter().next().map_or(Vec3::ZERO, |t| t.translation());
+    let mut outdoors: Vec<(CitizenId, Entity, nd_procgen::people::PersonKey, f32, f32)> = state
+        .citizens
+        .iter()
+        .filter_map(|(id, &e)| w.citizens.get(*id).filter(|c| c.is_visible()).map(|c| (*id, e, people::figure_of(c), c.pos.distance_squared(SVec2::new(eye.x, eye.z)))))
+        .map(|(id, e, (k, s), d)| (id, e, k, s, d))
+        .collect();
+    outdoors.sort_by(|a, b| a.4.total_cmp(&b.4));
+    let mut protected: HashSet<nd_procgen::people::PersonKey> = HashSet::new();
+    for o in &outdoors {
+        if protected.len() >= people::MESH_CAP {
+            break;
+        }
+        if protected.insert(o.2) {
+            people.cache.touch(&o.2);
+        }
+    }
+    let mut looks: HashSet<nd_procgen::people::PersonKey> = HashSet::new();
+    for &(id, e, key, stature, _) in &outdoors {
+        let Some(c) = w.citizens.get(id) else { continue };
+        let Ok((mut tf, mut vis, _, mut mesh)) = q.get_mut(e) else { continue };
+        *vis = Visibility::Visible;
+        let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
+        let heading = lerp_angle(c.prev_heading, c.heading, f);
+        let seated = matches!(c.activity, nd_sim::Activity::Sitting { .. });
+        tf.translation = Vec3::new(pos.x, if seated { 0.02 } else { 0.16 }, pos.y);
+        tf.rotation = Quat::from_rotation_y(-heading);
+        tf.scale = if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE } * stature;
+        looks.insert(key);
+        let fallback = || if key.ride { mats.bike_mesh.clone() } else { mats.citizen_mesh.clone() };
+        let wanted_mesh = if plain { fallback() } else { people.mesh_for(key, &mut meshes).unwrap_or_else(fallback) };
+        if plain {
+            tf.scale = if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE };
+        }
+        if mesh.0 != wanted_mesh {
+            mesh.0 = wanted_mesh;
+        }
+    }
     for (id, &e) in state.citizens.iter() {
         let Some(c) = w.citizens.get(*id) else { continue };
-        let Ok((mut tf, mut vis, mut mat, mut mesh)) = q.get_mut(e) else { continue };
-        if c.is_visible() {
-            *vis = Visibility::Visible;
-            let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
-            let heading = lerp_angle(c.prev_heading, c.heading, f);
-            let seated = matches!(c.activity, nd_sim::Activity::Sitting { .. });
-            tf.translation = Vec3::new(pos.x, if seated { 0.02 } else { 0.16 }, pos.y);
-            tf.rotation = Quat::from_rotation_y(-heading);
-            tf.scale = if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE };
-            let cycling = c.mode == nd_sim::citizens::TravelMode::Bike && c.activity.is_traveling();
-            let wanted_mesh = if cycling { &mats.bike_mesh } else { &mats.citizen_mesh };
-            if mesh.0 != *wanted_mesh {
-                mesh.0 = wanted_mesh.clone();
-            }
-        } else {
+        let Ok((_, mut vis, mut mat, mut mesh)) = q.get_mut(e) else { continue };
+        if !c.is_visible() {
             *vis = Visibility::Hidden;
+            // Indoors: let go of the figure so the cache can drop it.
+            if mesh.0 != mats.citizen_mesh {
+                mesh.0 = mats.citizen_mesh.clone();
+            }
         }
         let wanted = if *selection == Selection::Citizen(*id) {
             &mats.citizen_selected
         } else if c.spotlight {
             &mats.citizen_spotlight
-        } else {
+        } else if plain {
             &mats.citizen
+        } else {
+            &look_mat
         };
         if mat.0 != *wanted {
             mat.0 = wanted.clone();
         }
     }
+    stats.people_meshes = people.cache.len();
+    stats.people_visible = outdoors.len();
+    stats.people_looks_visible = looks.len();
+    stats.people_built = people.cache.built;
+    stats.people_borrowed = people.cache.borrowed;
 }
 
 fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
@@ -1593,6 +1680,9 @@ struct VehicleRender {
     night_key: Option<i32>,
     car_fx: HashMap<CarId, Entity>,
     trails: HashMap<CarId, (Entity, Handle<Mesh>, std::collections::VecDeque<Vec3>)>,
+    /// Trail entities and meshes not in use, hidden, for the next Akira
+    /// bike: trail meshes are never removed from `Assets<Mesh>`.
+    spare_trails: Vec<(Entity, Handle<Mesh>)>,
     bots: HashMap<nd_sim::BotId, Vec<Entity>>,
 }
 
@@ -1649,23 +1739,25 @@ fn night_strength(sim: &Sim, lighting: &Lighting) -> f32 {
 const TRAIL_POINTS: usize = 28;
 
 /// A light-trail ribbon through `pts` (oldest first): two red streaks at
-/// tail-lamp height fading out behind the bike.
+/// tail-lamp height fading out behind the bike. Always the same size
+/// (`TRAIL_POINTS - 1` segments of two double-sided quads), so rewriting it
+/// every frame never changes its allocation; segments not yet laid down
+/// are zero-area and black.
 fn trail_mesh(pts: &std::collections::VecDeque<Vec3>) -> MeshData {
     let mut m = MeshData::default();
     let n = pts.len();
-    for i in 1..n {
-        let (a, b) = (pts[i - 1], pts[i]);
+    let last = pts.back().copied().unwrap_or(Vec3::ZERO);
+    for i in 1..TRAIL_POINTS {
+        let (a, b) = if i < n { (pts[i - 1], pts[i]) } else { (last, last) };
         let d = b - a;
-        if d.length_squared() < 1e-4 {
-            continue;
-        }
-        let side = Vec3::new(-d.z, 0.0, d.x).normalize_or_zero() * 0.12;
-        let fade = |k: usize| (k as f32 / n as f32).powf(1.5);
+        let live = i < n && d.length_squared() >= 1e-4;
+        let side = if live { Vec3::new(-d.z, 0.0, d.x).normalize_or_zero() * 0.12 } else { Vec3::ZERO };
+        let fade = |k: usize| if live { (k as f32 / n as f32).powf(1.5) } else { 0.0 };
         let ca = [2.6 * fade(i - 1), 0.12 * fade(i - 1), 0.08 * fade(i - 1), 1.0];
         let cb = [2.6 * fade(i), 0.12 * fade(i), 0.08 * fade(i), 1.0];
-        for s in [1.0f32, -1.0] {
-            let o = side * s;
-            let (y0, y1) = (0.62f32, 0.78f32);
+        let (y0, y1) = if live { (0.62f32, 0.78f32) } else { (0.0, 0.0) };
+        for sgn in [1.0f32, -1.0] {
+            let o = side * sgn;
             let base = m.positions.len() as u32;
             for (p, c) in [(a + o + Vec3::Y * y0, ca), (b + o + Vec3::Y * y0, cb), (b + o + Vec3::Y * y1, cb), (a + o + Vec3::Y * y1, ca)] {
                 m.positions.push(p.to_array());
@@ -1678,6 +1770,12 @@ fn trail_mesh(pts: &std::collections::VecDeque<Vec3>) -> MeshData {
         }
     }
     m
+}
+
+/// Write a trail into its mesh in place: same attribute lengths each time.
+fn write_trail(mesh: &mut Mesh, data: &MeshData) {
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, data.positions.clone());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, data.colors.clone());
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1709,6 +1807,14 @@ fn sync_cars(
     let f = sim.frac();
     for (id, car) in traffic.cars.iter() {
         if !state.cars.contains_key(&id) {
+            // Left over from entities a full rebuild drained.
+            if let Some(e) = vr.car_fx.remove(&id) {
+                commands.entity(e).despawn();
+            }
+            if let Some((e, h, _)) = vr.trails.remove(&id) {
+                commands.entity(e).insert(Visibility::Hidden);
+                vr.spare_trails.push((e, h));
+            }
             let model = car_model(car);
             let v = vr.variant(&mut meshes, &model);
             let finish = vr.finish[model.class as usize].clone();
@@ -1726,8 +1832,20 @@ fn sync_cars(
                 vr.car_fx.insert(id, e);
             }
             if model.body == nd_sim::BodyType::AkiraBike {
-                let h = meshes.add(shared_mesh(&MeshData::default(), false));
-                let e = commands.spawn((Mesh3d(h.clone()), MeshMaterial3d(fx_mat.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, bevy::camera::visibility::NoFrustumCulling)).id();
+                let (e, h) = match vr.spare_trails.pop() {
+                    Some((e, h)) => {
+                        if let Some(mut m) = meshes.get_mut(&h) {
+                            write_trail(&mut m, &trail_mesh(&std::collections::VecDeque::new()));
+                        }
+                        commands.entity(e).insert(Visibility::Inherited);
+                        (e, h)
+                    }
+                    None => {
+                        let h = meshes.add(shared_mesh(&trail_mesh(&std::collections::VecDeque::new()), false));
+                        let e = commands.spawn((Mesh3d(h.clone()), MeshMaterial3d(fx_mat.clone()), Transform::IDENTITY, Visibility::Inherited, NotShadowCaster, NotShadowReceiver, bevy::camera::visibility::NoFrustumCulling)).id();
+                        (e, h)
+                    }
+                };
                 vr.trails.insert(id, (e, h, std::collections::VecDeque::new()));
             }
         }
@@ -1740,14 +1858,20 @@ fn sync_cars(
             }
         }
     }
-    let gone_fx: Vec<CarId> = vr.car_fx.keys().chain(vr.trails.keys()).copied().filter(|id| !traffic.cars.contains_key(*id)).collect();
+    // Underglow and trails of cars no longer drawn: gone from the road, or
+    // their entities drained by a full rebuild (a loaded world reuses car
+    // ids, so a stale entry would leave a glow pad standing in the street).
+    let gone_fx: Vec<CarId> = vr.car_fx.keys().chain(vr.trails.keys()).copied().filter(|id| !traffic.cars.contains_key(*id) || !state.cars.contains_key(id)).collect();
     for id in gone_fx {
         if let Some(e) = vr.car_fx.remove(&id) {
             commands.entity(e).despawn();
         }
         if let Some((e, h, _)) = vr.trails.remove(&id) {
-            commands.entity(e).despawn();
-            meshes.remove(&h);
+            // Kept for the next bike: removing a mesh asset while an entity
+            // still draws it is how the renderer ends up copying into freed
+            // slab space.
+            commands.entity(e).insert(Visibility::Hidden);
+            vr.spare_trails.push((e, h));
         }
     }
     for (id, ents) in state.cars.iter() {
@@ -1790,9 +1914,59 @@ fn sync_cars(
             }
             let mesh = trail_mesh(pts);
             if let Some(mut m) = meshes.get_mut(&*h) {
-                *m = shared_mesh(&mesh, false);
+                write_trail(&mut m, &mesh);
             }
         }
+    }
+}
+
+/// A watchdog for the moving cars: every few seconds, every car on the road
+/// must have a body entity, visible unless an emergency unit stands in for
+/// it, holding a loaded, non-empty mesh, within a few metres of the car.
+/// Anything else is logged with an example, since a car without a body is
+/// otherwise only noticed by eye.
+#[allow(clippy::type_complexity)]
+fn check_car_bodies(
+    sim: Res<Sim>,
+    state: Res<RenderState>,
+    meshes: Res<Assets<Mesh>>,
+    time: Res<Time>,
+    mut next: Local<f32>,
+    q: Query<(&Visibility, &Mesh3d, &Transform), With<CarTag>>,
+) {
+    let now = time.elapsed_secs();
+    if now < *next {
+        return;
+    }
+    *next = now + 5.0;
+    let w = &sim.world;
+    let units: std::collections::HashSet<CarId> = w.services.units.values().filter_map(|u| u.car).collect();
+    let (mut missing, mut hidden, mut no_mesh, mut far) = (0, 0, 0, 0);
+    let mut example = None;
+    for (id, car) in w.traffic.cars.iter() {
+        let Some(ents) = state.cars.get(&id) else { continue };
+        let bad = match q.get(ents[0]) {
+            Err(_) => {
+                missing += 1;
+                true
+            }
+            Ok((vis, mesh, tf)) => {
+                let h = *vis == Visibility::Hidden && !units.contains(&id);
+                let m = meshes.get(&mesh.0).is_none_or(|m| m.count_vertices() < 4);
+                let (p, _) = car.pose_at(sim.frac());
+                let f = SVec2::new(tf.translation.x, tf.translation.z).distance(p) > 20.0;
+                hidden += h as usize;
+                no_mesh += m as usize;
+                far += f as usize;
+                h || m || f
+            }
+        };
+        if bad && example.is_none() {
+            example = Some(id);
+        }
+    }
+    if let Some(id) = example {
+        warn!("car bodies: {missing} missing, {hidden} hidden, {no_mesh} without a mesh, {far} away from their car, of {} on the road (e.g. {id:?})", w.traffic.cars.len());
     }
 }
 

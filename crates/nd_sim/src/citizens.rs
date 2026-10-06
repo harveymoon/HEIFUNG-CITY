@@ -406,6 +406,11 @@ pub struct Citizen {
     /// [carlife] How travelling has felt lately, per mode.
     #[serde(default)]
     pub commute: Commute,
+    /// [looks] What they look like, chosen on arrival with their family
+    /// (`looks::family_looks`). `None` only on saves from before looks,
+    /// filled on load.
+    #[serde(default)]
+    pub look: Option<crate::looks::Appearance>,
 }
 
 /// [driving] Drunk enough that driving is a bad idea.
@@ -472,6 +477,11 @@ impl Citizen {
         if self.memories.len() > MAX_MEMORIES {
             self.memories.remove(0);
         }
+    }
+
+    /// [looks] Their look; one from the seed alone if none was given yet.
+    pub fn appearance(&self) -> crate::looks::Appearance {
+        self.look.unwrap_or_else(|| crate::looks::Appearance::of_seed(self.seed, self.age, self.class()))
     }
 
     pub fn class(&self) -> Tier {
@@ -557,6 +567,7 @@ mod tests {
             car: None,
             to_car: None,
             commute: Default::default(),
+            look: None,
         }
     }
 

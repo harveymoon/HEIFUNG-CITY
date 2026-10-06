@@ -345,9 +345,9 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         weather_tail(&mut g, marks);
     }
 
-    // Roundabouts: the planted island in the middle of every ring.
-    for (k, ring) in roads.rings.iter().enumerate() {
-        roundabout_island(&mut g, pal, ring, inp.seed ^ (k as u64 + 1).wrapping_mul(0x9E37_79B9));
+    // Roundabouts: a mountable apron inside the ring lanes; the middle is open land.
+    for ring in &roads.rings {
+        roundabout_apron(&mut g, pal, ring);
     }
 
     // Junction pads, crossings and stop lines (bends need none).
@@ -439,52 +439,16 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
     g
 }
 
-/// The central island of a roundabout: a kerbed lawn a little above the
-/// road, a ring of trees, and in the middle a small monument on big rings
-/// or a clump of shrubs and a tree on small ones.
-fn roundabout_island(g: &mut Geometry, pal: &Palette, ring: &nd_sim::roads::Ring, seed: u64) {
+/// The inner edge of a roundabout: a low, mountable cobbled apron on the
+/// shoulder inside the ring lanes, for long vehicles to cut over. The
+/// ground inside the ring is left open, as land like any other.
+fn roundabout_apron(g: &mut Geometry, pal: &Palette, ring: &nd_sim::roads::Ring) {
     use std::f32::consts::TAU;
-    let mut rng = rng_for(seed, 11);
-    let c = ring.center;
-    let ri = ring.island_radius();
-    let circle = |r: f32, n: usize| -> Vec<Vec2> { (0..n).map(|k| c + Vec2::from_angle(k as f32 / n as f32 * TAU) * r).collect() };
-    let mut edge = circle(ri, 40);
+    let r = ring.radius - ring.lanes as f32 * LANE_WIDTH * 0.5 - SHOULDER * 0.5;
+    let n = ((TAU * r / 3.0) as usize).clamp(24, 256);
+    let mut edge: Vec<Vec2> = (0..n).map(|k| ring.center + Vec2::from_angle(k as f32 / n as f32 * TAU) * r).collect();
     edge.push(edge[0]);
-    g.part(Concrete).path_box(&edge, 0.0, 0.35, 0.0, KERB_H + 0.04, rgba(pal.curb));
-    g.part(Foliage).ground_polygon(&circle(ri - 0.15, 40), KERB_H + 0.02, rgba(mul(pal.foliage, 1.15)));
-    // A band of darker planting just inside the kerb.
-    let band: Vec<Vec2> = circle(ri - 1.2, 40);
-    let mut band_loop = band.clone();
-    band_loop.push(band[0]);
-    g.part(Foliage).path_strip(&band_loop, 0.0, 1.4, KERB_H + 0.03, rgba(mul(pal.foliage, 0.8)));
-    if ri > 5.0 {
-        let n = ((TAU * ri * 0.7 / 7.0) as usize).clamp(3, 18);
-        let off = rng.random_range(0.0..TAU);
-        for k in 0..n {
-            let a = off + k as f32 / n as f32 * TAU;
-            let p = c + Vec2::from_angle(a) * ri * 0.7;
-            tree_world(g, p, rng.random_range(4.0..6.5), rng.random_range(2.4..3.6), pal.bark, mul(pal.foliage, rng.random_range(0.85..1.15)));
-        }
-    }
-    if ri >= 9.0 {
-        // A paved round with a low, broad sculpture: three leaning stone
-        // fins around a lit disc (no spires or obelisks in this city).
-        g.part(Paving).ground_polygon(&circle(3.6, 20), KERB_H + 0.05, rgba(mul(pal.paving, 1.2)));
-        g.part(Stone).boxed(Vec3::new(c.x, KERB_H + 0.3, c.y), Vec3::new(3.4, 0.5, 3.4), 0.3, rgba(mul(pal.stone, 1.1)));
-        g.part(Glow).ground_polygon(&circle(1.1, 16), KERB_H + 0.57, rgba(mul(pal.led(0), 0.7)));
-        let fin_h = 1.6 + ri * 0.06;
-        for k in 0..3 {
-            let a = k as f32 / 3.0 * TAU + 0.5;
-            let p = c + Vec2::from_angle(a) * 1.4;
-            g.part(Stone).boxed(Vec3::new(p.x, KERB_H + 0.55 + fin_h * 0.5, p.y), Vec3::new(2.2, fin_h, 0.35), a + 0.6, rgba(mul(pal.stone, 1.25)));
-        }
-    } else {
-        tree_world(g, c, rng.random_range(5.0..7.0), rng.random_range(2.8..3.8), pal.bark, mul(pal.foliage, 1.05));
-        for k in 0..5 {
-            let p = c + Vec2::from_angle(k as f32 / 5.0 * TAU + 0.4) * (ri * 0.45).min(2.5);
-            g.part(Foliage).cylinder(p, 0.7, 0.4, KERB_H, KERB_H + 0.8, 7, rgba(mul(pal.foliage, rng.random_range(0.7..0.95))));
-        }
-    }
+    g.part(Paving).path_box(&edge, 0.0, SHOULDER - 0.2, 0.0, ASPHALT_Y + 0.06, rgba(mul(pal.paving, 0.85)));
 }
 
 /// Where an arm meets a roundabout: a splitter island down the middle of a
@@ -871,7 +835,7 @@ mod tests {
     }
 
     #[test]
-    fn a_roundabout_gets_an_island_and_no_signals() {
+    fn a_roundabout_leaves_its_middle_open_and_has_no_signals() {
         use nd_sim::plan::{Gesture, GestureId, Plan};
         let mut plan = Plan::default();
         plan.gestures.insert(GestureId(1), Gesture::Road { points: vec![Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street });
@@ -900,8 +864,7 @@ mod tests {
         }
         let (plain, ring) = (tris[0], tris[1]);
         assert!(plain.2 > 0 && ring.2 == 0, "the signals went with the junction: {plain:?} {ring:?}");
-        assert!(ring.0 > plain.0, "a planted island");
-        assert!(ring.1 > plain.1, "and a monument on a ring this big");
+        assert_eq!(ring.1, plain.1, "no sculpture: the middle is open land");
     }
 }
 

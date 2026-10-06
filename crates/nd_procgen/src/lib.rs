@@ -6,6 +6,8 @@ pub mod lights;
 pub mod mesh;
 pub mod overlay;
 pub mod palette;
+/// [looks] Low-poly people from a citizen's look.
+pub mod people;
 /// [society] Camps, RVs and overflowing trash.
 pub mod society;
 pub mod street;

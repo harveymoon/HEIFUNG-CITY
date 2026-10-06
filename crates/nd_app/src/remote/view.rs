@@ -207,6 +207,7 @@ pub fn selection(w: &World, sel: Selection) -> Value {
         Selection::Citizen(id) => json!({ "kind": "citizen", "id": key_str(id), "name": w.citizens.get(id).map(|c| c.name.as_str()) }),
         Selection::Building(id) => json!({ "kind": "building", "id": key_str(id), "name": w.buildings.get(id).map(|b| b.name.as_str()) }),
         Selection::Car(id) => json!({ "kind": "car", "id": key_str(id) }),
+        Selection::Parked(id) => json!({ "kind": "parked_car", "id": key_str(id) }),
     }
 }
 
@@ -277,7 +278,7 @@ pub fn citizen_row(w: &World, id: CitizenId, c: &Citizen) -> Value {
 
 pub fn citizen_detail(w: &World, id: CitizenId, c: &Citizen, favourite: bool) -> Value {
     let rent = c.home.and_then(|h| w.buildings.get(h)).map_or(0.0, |b| b.rent);
-    json!({
+    let mut v = json!({
         "id": key_str(id), "name": c.name, "personality": Personality::from_seed(c.seed).summary(),
         "activity": activity(w, c), "pos": v2(c.pos), "heading": round(c.heading), "visible": c.is_visible(),
         "mode": if c.mode == TravelMode::Bike { "bike" } else { "walk" },
@@ -301,6 +302,23 @@ pub fn citizen_detail(w: &World, id: CitizenId, c: &Citizen, favourite: bool) ->
         },
         "thought": c.thought, "spotlight": c.spotlight, "favourite": favourite,
         "memories": c.memories.iter().rev().map(|m| { let mut t = tick_time(m.tick); t["text"] = json!(m.text); t }).collect::<Vec<_>>(),
+    });
+    v["appearance"] = appearance(c);
+    v
+}
+
+/// [looks] What the citizen looks like, as stored and as described.
+pub fn appearance(c: &Citizen) -> Value {
+    use nd_sim::looks::COLORS;
+    let a = c.appearance();
+    let colour = |i: u8| COLORS.get(i as usize).map(|s| json!({ "name": s.name, "srgb": s.srgb, "neon": s.neon }));
+    json!({
+        "description": a.describe(c.age, c.class()),
+        "skin": { "tone": round(a.genes.skin), "label": a.skin_label(), "srgb": nd_sim::looks::skin_srgb(a.genes.skin) },
+        "hair": { "style": format!("{:?}", a.style).to_lowercase(), "texture": a.genes.texture.label(), "natural": a.genes.hair.label(), "shown": a.shown_hair(c.age).label(), "srgb": a.shown_hair(c.age).srgb(), "greys_at": a.grey_at },
+        "build": a.build.label(), "height": round(a.height), "stature_now": round(a.stature(c.age)),
+        "favourite_colours": [colour(a.fav[0]), colour(a.fav[1])],
+        "outfit": a.outfit.label(), "saved": c.look.is_some(),
     })
 }
 
@@ -403,14 +421,25 @@ pub fn lot_detail(w: &World, id: LotId, l: &Lot) -> Value {
 // ── vehicles ────────────────────────────────────────────────────────────────
 
 pub fn car_kind(w: &World, c: &Car) -> &'static str {
+    use nd_sim::vehicle::Errand;
     if c.bus.is_some() {
         "bus"
+    } else if c.siren {
+        "emergency"
     } else if c.cargo.is_some() {
         "truck"
     } else if w.citizens.contains_key(c.citizen) {
         "car"
     } else {
-        "unknown"
+        match c.errand {
+            // [carlife] A work van out on (or back from) a job, empty.
+            Errand::Haul { .. } | Errand::Return(_) => "van",
+            // A private car moving without its owner aboard: to or from a
+            // dealer, parking itself, leaving town.
+            _ if c.owned.is_some() => "car",
+            // Through traffic crossing the map.
+            _ => "through",
+        }
     }
 }
 

@@ -1044,6 +1044,7 @@ mod tests {
             mode: TravelMode::Walk,
             car: None,
             commute: Default::default(),
+            look: None,
             to_car: None,
             drunk: Default::default(),
             owns_car: true,
