@@ -4,6 +4,7 @@
 //! fully serialisable, so saves are plain snapshots and the same seed with the
 //! same inputs reproduces the same city.
 
+pub mod bots;
 pub mod buildings;
 pub mod citizens;
 pub mod clock;
@@ -23,13 +24,15 @@ pub mod ports;
 pub mod power;
 pub mod rail;
 pub mod roads;
+pub mod services;
 pub mod traffic;
 pub mod transit;
+pub mod vehicle;
 pub mod walk;
 pub mod world;
 pub mod zoning;
 
-pub use buildings::{Building, BuildingId, Construction, Tier};
+pub use buildings::{Building, BuildingId, Construction, Demolition, Tier};
 pub use land_value::LandValue;
 pub use market::{Business, BusinessKind, Hours, MarketStats, Resource};
 pub use citizens::{Activity, Citizen, CitizenId, Household, HouseholdId, LifeStage, Memory, Purpose};
@@ -41,6 +44,8 @@ pub use plan::{Gesture, GestureId, Plan, PlanPreview, Project};
 pub use roads::{NodeId, RoadNetwork, Segment, SegmentId};
 pub use traffic::{Car, CarId, Cargo, LaneId, Traffic};
 pub use walk::WalkGraph;
+pub use vehicle::{BodyType, Livery, VehicleClass, VehicleModel};
+pub use bots::{BotId, Bots, DeliveryBot};
 pub use power::{PlantSite, PowerPlantKind, PowerStats, Weather};
 pub use landscape::{Landscape, LandscapeParams, LandscapePreset, WaterKind};
 pub use ground::{Contamination, GroundSample, Soil};
@@ -49,6 +54,7 @@ pub use ports::{Port, PortId, PortKind, Ports, Ship, ShipKind};
 pub use park::{ParkFeature, ParkLayout};
 pub use transit::{BusRoute, BusStop, RouteId, Transit, TransitStats};
 pub use rail::{Facility, FacilityId, Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
+pub use services::{BuildCategory, Incident, IncidentKind, Placeable, ServiceKind, ServiceSite, Services, ServiceStats, Unit, UnitId, UnitKind};
 pub use world::{World, WorldConfig};
 pub use zoning::{LandUse, Lot, LotId, Zone, ZoneId};
 

@@ -4,11 +4,13 @@
 
 use bevy_egui::egui;
 
-use super::{help, hint, section, UiCtx, GOLD, IVORY};
+use super::{help, hint, icons, section, UiCtx, GOLD, IVORY};
 use crate::tools::Tool;
 
 /// Width and height of a tool button; big enough for a mouse at 2560 wide.
-const BUTTON: egui::Vec2 = egui::vec2(92.0, 44.0);
+const BUTTON: egui::Vec2 = egui::vec2(116.0, 44.0);
+/// Side of the icon at the left of a tool button.
+const ICON: f32 = 26.0;
 /// The sub-pane never grows past this, so the hint text wraps into a
 /// readable column rather than one line across a wide monitor.
 const SUB_PANE_MAX_WIDTH: f32 = 900.0;
@@ -51,7 +53,7 @@ fn sub_pane(ui: &mut egui::Ui, p: &mut UiCtx) {
         });
 }
 
-/// A painted two-line button: the tool's name over its hotkey. egui's
+/// A painted button: the tool's icon, then its name over its hotkey. egui's
 /// button lays its atoms out in a row, so the two sizes are drawn by hand.
 fn tool_button(ui: &mut egui::Ui, tool: Tool, active: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(BUTTON, egui::Sense::click());
@@ -67,8 +69,11 @@ fn tool_button(ui: &mut egui::Ui, tool: Tool, active: bool) -> egui::Response {
     let painter = ui.painter();
     painter.rect_filled(rect, 4.0, fill);
     painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0, stroke), egui::StrokeKind::Inside);
-    painter.text(rect.center() - egui::vec2(0.0, 6.0), egui::Align2::CENTER_CENTER, tool.label(), egui::FontId::proportional(15.0), text);
-    painter.text(rect.center() + egui::vec2(0.0, 11.0), egui::Align2::CENTER_CENTER, tool.hotkey(), egui::FontId::proportional(10.0), egui::Color32::from_rgb(170, 160, 140));
+    let icon = egui::Rect::from_center_size(egui::pos2(rect.left() + 8.0 + ICON * 0.5, rect.center().y), egui::vec2(ICON, ICON));
+    icons::tool(painter, icon, tool, if active { egui::Color32::WHITE } else { GOLD });
+    let mid = egui::pos2((icon.right() + rect.right()) * 0.5, rect.center().y);
+    painter.text(mid - egui::vec2(0.0, 6.0), egui::Align2::CENTER_CENTER, tool.label(), egui::FontId::proportional(15.0), text);
+    painter.text(mid + egui::vec2(0.0, 11.0), egui::Align2::CENTER_CENTER, tool.hotkey(), egui::FontId::proportional(10.0), egui::Color32::from_rgb(170, 160, 140));
     resp.on_hover_text(help::tool_hint(tool))
 }
 

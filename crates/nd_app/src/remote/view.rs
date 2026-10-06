@@ -117,19 +117,6 @@ pub fn road_kind_of(s: &str) -> Result<RoadKind, String> {
     }
 }
 
-pub fn plant_of(s: &str) -> Option<PowerPlantKind> {
-    match s.trim().to_ascii_lowercase().as_str() {
-        "coal" => Some(PowerPlantKind::Coal),
-        "solar" => Some(PowerPlantKind::Solar),
-        "wind" => Some(PowerPlantKind::Wind),
-        "nuclear" => Some(PowerPlantKind::Nuclear),
-        "hydro" => Some(PowerPlantKind::Hydro),
-        "tidal" => Some(PowerPlantKind::Tidal),
-        "geothermal" => Some(PowerPlantKind::Geothermal),
-        _ => None,
-    }
-}
-
 pub fn tool_of(s: &str) -> Result<Tool, String> {
     match s.trim().to_ascii_lowercase().as_str() {
         "inspect" => Ok(Tool::Inspect),
@@ -137,10 +124,10 @@ pub fn tool_of(s: &str) -> Result<Tool, String> {
         "zone" => Ok(Tool::Zone),
         "edit" => Ok(Tool::Edit),
         "bulldoze" => Ok(Tool::Bulldoze),
-        "power" => Ok(Tool::Power),
+        "buildings" | "building" | "power" | "services" => Ok(Tool::Buildings),
         "transit" | "bus" | "buses" => Ok(Tool::Transit),
         "rail" => Ok(Tool::Rail),
-        _ => Err(format!("unknown tool {s:?}; one of inspect, road, zone, edit, bulldoze, power, transit, rail")),
+        _ => Err(format!("unknown tool {s:?}; one of inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail")),
     }
 }
 
@@ -151,7 +138,7 @@ pub fn tool_name(t: Tool) -> &'static str {
         Tool::Zone => "zone",
         Tool::Edit => "edit",
         Tool::Bulldoze => "bulldoze",
-        Tool::Power => "power",
+        Tool::Buildings => "buildings",
         Tool::Transit => "transit",
         Tool::Rail => "rail",
     }
@@ -313,15 +300,25 @@ pub fn building_row(w: &World, id: BuildingId, b: &Building) -> Value {
         "id": key_str(id), "name": b.name, "land_use": b.land_use.label(), "tier": b.tier.label(), "floors": b.floors,
         "pos": w.lots.get(b.lot).map_or(Value::Null, |l| v2(l.center)), "lot": key_str(b.lot),
         "homes": b.homes, "residents": b.residents.len(), "jobs": b.jobs, "workers": b.workers.len(),
-        "under_construction": b.construction.is_some(),
+        "under_construction": b.construction.is_some() && !b.being_demolished(), "being_demolished": b.demolition.is_some(),
         "business": b.business.as_ref().map(|z| z.kind.label()), "plant": b.plant.map(plant_name),
         "depot": b.depot, "rail": b.rail.as_ref().map(|r| rail_name(r.kind)), "derelict": b.is_derelict(),
+        "service": b.service.map(|s| format!("{}:{}", s.kind.key(), tier_key(s.tier))), "burning": w.services.is_burning(id),
     })
 }
 
 pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> Value {
     let lot = w.lots.get(b.lot);
-    let construction = b.construction.as_ref().map(|c| {
+    let demolition = b.demolition.as_ref().map(|d| {
+        json!({
+            "progress": round(d.progress), "days_left": round(d.days_left()), "days": round(d.days),
+            "loads_hauled": d.loads, "loads_total": nd_sim::Demolition::loads_for(d.floors),
+            "floors": d.floors, "tier": d.tier.label(), "land_use": d.land_use.label(),
+            "crew": b.workers.len(), "crew_wanted": b.jobs,
+            "then": if d.clear_lot { "vacant lot" } else if b.construction.is_some() { "construction of the new building" } else { "the structure that took the lot over" },
+        })
+    });
+    let construction = b.construction.as_ref().filter(|_| !b.being_demolished()).map(|c| {
         let (homes, jobs) = b.planned_capacity();
         json!({
             "progress": round(c.progress), "days_left": round(c.days_left()), "days": round(c.days),
@@ -357,6 +354,7 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         "id": key_str(id), "name": b.name, "land_use": b.land_use.label(), "tier": b.tier.label(), "style": style, "floors": b.floors,
         "lot": key_str(b.lot), "pos": lot.map_or(Value::Null, |l| v2(l.center)), "built_day": b.built_tick / 1440 + 1,
         "under_construction": construction,
+        "demolition": demolition,
         "land_value": round(b.land_value), "rent": round(b.rent), "wage": round(b.wage()), "condition": round(b.condition), "derelict": b.is_derelict(),
         "homes": b.homes, "jobs": b.jobs, "visitors": b.visitors,
         "residents": people(&b.residents), "workers": people(&b.workers),
@@ -409,6 +407,7 @@ pub fn car_row(w: &World, id: CarId, c: &Car) -> Value {
     let kind = car_kind(w, c);
     let mut m = json!({
         "id": key_str(id), "kind": kind, "pos": v2(c.pos), "heading": round(c.heading), "speed_kmh": round(c.v * 3.6), "at_stop": c.hold > 0.0,
+        "model": { "body": c.model.body.label(), "class": format!("{:?}", c.model.class).to_lowercase(), "wear": c.model.wear, "tuned": c.model.tuned, "livery": format!("{:?}", c.model.livery).to_lowercase() },
     });
     if kind == "car" {
         m["citizen"] = json!(key_str(c.citizen));
@@ -434,7 +433,81 @@ pub fn car_detail(w: &World, id: CarId, c: &Car) -> Value {
         m["passenger_list"] = json!(bus.passengers.iter().filter_map(|&p| w.citizens.get(p).map(|x| json!({ "id": key_str(p), "name": x.name }))).collect::<Vec<_>>());
     }
     m["route_lanes_left"] = json!(c.route.len().saturating_sub(c.idx));
+    m["traffic"] = car_traffic(w, c);
     m
+}
+
+/// Why a vehicle drives as it does: what holds it, its lane's arrows, its
+/// next turn and how long it has waited for a left turn.
+pub fn car_traffic(w: &World, c: &Car) -> Value {
+    use nd_sim::traffic::arrows_label;
+    let net = &w.traffic.net;
+    let lane = &net.lanes[c.route[c.idx] as usize];
+    let next = c.route.get(c.idx + 1).map(|&n| &net.lanes[n as usize]);
+    let next_turn = match next {
+        Some(n) if n.is_connector() && !lane.is_connector() => match n.turn {
+            t if t < 0 => "left",
+            0 => "straight",
+            _ => "right",
+        },
+        Some(n) if lane.is_beside(c.route[c.idx + 1]) && n.length > 0.0 => "lane change",
+        _ => "none",
+    };
+    json!({
+        "wait": format!("{:?}", c.wait).to_lowercase(), "stalled_s": round(c.stalled), "in_junction": lane.is_connector(),
+        "lane_arrows": if lane.arrows != 0 { Value::String(arrows_label(lane.arrows)) } else { Value::Null },
+        "next_turn": next_turn, "left_turn_wait_s": round(c.turn_wait), "yielding_s": round(c.yielded),
+        "passing_on_shoulder": c.passing, "lateral_offset_m": round(c.lateral), "entering": c.entering,
+    })
+}
+
+/// A junction: its signal, every arriving street's lane arrows and the
+/// waits of the left turns made there.
+pub fn junction_detail(w: &World, k: usize) -> Value {
+    use nd_sim::traffic::arrows_label;
+    let net = &w.traffic.net;
+    let inter = &net.intersections[k];
+    let node = w.roads.node(inter.node);
+    let approaches: Vec<Value> = net
+        .approaches
+        .iter()
+        .filter(|a| a.node == inter.node)
+        .map(|a| {
+            let (p, q) = w.roads.segment_points(a.segment);
+            let far = if p.distance(node.pos) > q.distance(node.pos) { p } else { q };
+            let total: f32 = a.counts.iter().sum();
+            json!({
+                "segment": a.segment.0, "from": v2(node.pos + (far - node.pos).normalize_or_zero() * 30.0),
+                "lanes": a.arrows.iter().map(|&x| arrows_label(x)).collect::<Vec<_>>(), "offered": arrows_label(a.exits), "set_by_player": a.fixed,
+                "recent_turn_share": if total > 0.0 { json!({ "left": round(a.counts[0] / total), "straight": round(a.counts[1] / total), "right": round(a.counts[2] / total) }) } else { Value::Null },
+                "queued": a.lanes.iter().map(|&l| net.lanes[l as usize].cars.len()).sum::<usize>(),
+            })
+        })
+        .collect();
+    let group = inter.phases.get(inter.phase);
+    json!({
+        "node": inter.node.0, "pos": v2(node.pos), "streets": inter.approaches, "signalized": inter.signalized,
+        "signal": if inter.signalized { json!({
+            "phases": inter.phases, "green_approaches": group, "timer_s": round(inter.timer),
+            "protected_left_arrow_s": round(inter.arrow), "arrow_now": inter.timer < inter.arrow,
+        }) } else { Value::Null },
+        "approaches": approaches,
+        "left_turns": inter.left_turns,
+        "left_turn_wait_mean_s": round(if inter.left_turns > 0 { inter.left_wait_sum / inter.left_turns as f32 } else { 0.0 }),
+        "left_turn_wait_max_s": round(inter.left_wait_max),
+    })
+}
+
+/// The junction (three or more streets) nearest a point.
+pub fn junction_near(w: &World, p: SVec2) -> Option<usize> {
+    w.traffic
+        .net
+        .intersections
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| i.approaches >= 3)
+        .min_by(|a, b| w.roads.node(a.1.node).pos.distance(p).total_cmp(&w.roads.node(b.1.node).pos.distance(p)))
+        .map(|(k, _)| k)
 }
 
 pub fn train_row(w: &World, id: TrainId, t: &Train) -> Value {
@@ -454,4 +527,25 @@ pub fn route_row(id: RouteId, r: &nd_sim::BusRoute) -> Value {
         "stops": r.stops.iter().map(|s| json!({ "pos": v2(s.pos), "segment": s.segment.0 })).collect::<Vec<_>>(),
         "broken_legs": r.broken, "legs": r.legs.len(),
     })
+}
+
+/// The remote-API name of something the Buildings tool places: a plant
+/// name, `depot`, `station`, `freight_yard`, or `<service>:<tier>`.
+pub fn placeable_key(p: nd_sim::Placeable) -> String {
+    match p {
+        nd_sim::Placeable::Plant(k) => plant_name(k).to_string(),
+        nd_sim::Placeable::Service(k, t) => format!("{}:{}", k.key(), tier_key(t)),
+        nd_sim::Placeable::BusDepot => "depot".to_string(),
+        nd_sim::Placeable::Rail(f) => rail_name(f).to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::ShippingPort) => "shipping_port".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::FerryTerminal) => "ferry_terminal".to_string(),
+    }
+}
+
+pub fn tier_key(t: nd_sim::Tier) -> &'static str {
+    match t {
+        nd_sim::Tier::Low => "low",
+        nd_sim::Tier::Mid => "mid",
+        nd_sim::Tier::High => "high",
+    }
 }

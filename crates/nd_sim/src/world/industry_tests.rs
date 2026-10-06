@@ -236,7 +236,7 @@ fn idle_trucks_park_at_a_fleet_lot_and_go_out_from_it() {
     let buyer = make(&mut w, lots[lots.len() - 1], BusinessKind::Mill);
     assert!(w.fleet_capacity(fleet) >= 4);
     // A delivery lands: the lorry heads for the fleet lot instead of vanishing.
-    w.truck_arrived(Cargo { from: seller, to: buyer, resource: Resource::Grain, amount: 5.0, price: 9.0 });
+    w.truck_arrived(Cargo { from: seller, to: buyer, resource: Resource::Grain, amount: 5.0, price: 9.0 }, Default::default());
     assert_eq!(w.buildings[buyer].business.as_ref().unwrap().stock_of(Resource::Grain), 5.0, "delivered first");
     let (a, b) = (w.truck_stop(buyer).unwrap(), w.truck_stop(fleet).unwrap());
     assert_eq!(w.fleet_parked(fleet), 0, "not parked on the spot: {a:?} {b:?} {:?} {}", w.traffic.net.find_route(a.0, a.1, b.0, b.1), w.traffic.net.lanes.len());
@@ -258,8 +258,22 @@ fn idle_trucks_park_at_a_fleet_lot_and_go_out_from_it() {
     let cap = w.fleet_capacity(fleet);
     w.buildings[fleet].business.as_mut().unwrap().fleet_trucks = cap;
     assert!(w.fleet_lot_with_room(w.lots[lots[1]].center, FLEET_REACH).is_none());
-    w.truck_arrived(Cargo { from: seller, to: buyer, resource: Resource::Grain, amount: 1.0, price: 2.0 });
+    w.truck_arrived(Cargo { from: seller, to: buyer, resource: Resource::Grain, amount: 1.0, price: 2.0 }, Default::default());
     assert!(w.traffic.cars.values().any(|c| c.cargo.as_ref().is_some_and(|k| is_return_trip(k) && k.to == seller)), "home to the farm");
+    // An import's lorry with no lot room and no business in town leaves by the edge: never vanishes.
+    let before = w.traffic.cars.len();
+    w.truck_arrived(Cargo { from: BuildingId::default(), to: buyer, resource: Resource::Grain, amount: 1.0, price: 2.0 }, Default::default());
+    assert_eq!(w.traffic.cars.len(), before + 1, "the lorry drives on");
+    assert!(w.traffic.cars.values().any(|c| c.cargo.as_ref().is_some_and(|k| is_return_trip(k) && k.to == BuildingId::default())), "out of town");
+    // Lorries parked since yesterday go home at night, oldest first.
+    w.buildings[fleet].business.as_mut().unwrap().fleet_trucks = 0;
+    w.buildings[fleet].business.as_mut().unwrap().fleet_log.clear();
+    assert!(w.park_truck(fleet, seller, Default::default()));
+    w.clock.tick += FLEET_NIGHT_HOME_AFTER + 1;
+    let before = w.traffic.cars.len();
+    w.send_parked_lorries_home();
+    assert_eq!(w.fleet_parked(fleet), 0, "sent home");
+    assert_eq!(w.traffic.cars.len(), before + 1);
     // A depot next door can overflow its buses into the lot.
     w.economy.treasury = 100_000.0;
     let depot = w.build_depot(lots[2]).unwrap();

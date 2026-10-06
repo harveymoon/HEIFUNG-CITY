@@ -558,7 +558,13 @@ impl World {
         })();
         match route {
             Some((route, s0, s1)) => {
-                self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, color);
+                // The lorry by the goods and the seller's trade, in its livery.
+                let seller = self.buildings.get(cargo.from).and_then(|b| b.business.as_ref()).map(|bz| bz.kind);
+                let to_site = self.buildings.get(cargo.to).is_some_and(|b| b.construction.is_some());
+                let long_haul = matches!(origin, TruckOrigin::CityEdge) || seller.is_none();
+                let id = self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, color);
+                let mut rng = crate::vehicle::model_rng(self.clock.tick, slotmap::Key::data(&id).as_ffi());
+                self.traffic.cars[id].model = crate::vehicle::VehicleModel::for_cargo(cargo.resource, seller, to_site, long_haul, &mut rng);
             }
             None => self.deliver(cargo),
         }

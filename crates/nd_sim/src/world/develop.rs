@@ -196,6 +196,11 @@ impl World {
                     RailFacility::FreightYard => b.splat(c, 160.0, -0.12),
                 }
             }
+            // Services reassure, landmarks draw (`services::ServiceKind::land_value`).
+            if let Some(s) = bld.service {
+                let (r, w) = s.kind.land_value(s.tier);
+                b.splat(c, r, w);
+            }
         }
     }
 
@@ -247,7 +252,6 @@ impl World {
         for l in self.lots.values_mut() {
             l.footfall_today = 0;
         }
-        let tick = self.clock.tick;
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         for bid in ids {
             if self.buildings[bid].construction.is_some() {
@@ -258,7 +262,7 @@ impl World {
                 let full = if b.land_use == LandUse::Residential { b.homes > 0 && b.free_homes() == 0 } else { b.jobs > 0 && b.free_jobs() == 0 };
                 // [industry] land value as the land use feels it
                 let value = if self.lots.contains_key(b.lot) { self.lot_value(b.lot) } else { b.land_value };
-                let special = b.is_parking() || b.plant.is_some() || b.depot || b.rail.is_some();
+                let special = b.is_parking() || b.is_special();
                 (b.land_use, b.tier, value, b.is_derelict(), full, special)
             };
             let decay = match tier {
@@ -283,22 +287,12 @@ impl World {
                 false
             };
             if redevelop {
+                // Torn down and built again: tenants out now, a demolition
+                // site, then a building site, then the new building.
                 let lot = self.buildings[bid].lot;
                 let floors = self.pick_floors(lot, lu, target);
-                let b = &mut self.buildings[bid];
-                b.high_land_days = 0;
-                b.tier = target;
-                b.floors = floors.max(1);
-                b.condition = 1.0;
-                b.built_tick = tick;
-                let name = b.name.clone();
-                let residents = b.residents.clone();
-                for cid in residents {
-                    if let Some(c) = self.citizens.get_mut(cid) {
-                        c.remember(tick, format!("{name} was torn down and rebuilt for richer tenants. The rent went up with it."));
-                    }
-                }
-                changed = true;
+                self.redevelop(bid, target, floors.max(1), value);
+                continue;
             } else if lu != LandUse::Park && !special {
                 if target > tier && full && self.rng.random::<f32>() < 0.15 {
                     let b = &mut self.buildings[bid];
@@ -412,7 +406,7 @@ impl World {
 
     pub fn build_on(&mut self, lot_id: LotId) {
         let Some(lot) = self.lots.get(lot_id) else { return };
-        if lot.landlocked || lot.building.is_some() || self.under_facility(lot.center) {
+        if lot.landlocked || lot.building.is_some() || self.under_facility(lot.center) || self.services.is_rubble(lot_id) {
             return;
         }
         let lu = self.lots[lot_id].land_use;

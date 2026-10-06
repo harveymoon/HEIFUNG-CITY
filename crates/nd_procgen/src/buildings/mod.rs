@@ -27,6 +27,9 @@ mod towers;
 mod works;
 
 pub use adjacency::{Neighbour, StyleBook};
+mod services;
+pub use parts::WINDOW_LIGHT_MARK;
+pub use power::{coal_stacks, wind_rotor, wind_turbines, Turbine, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};
 
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface};
@@ -157,6 +160,15 @@ pub enum Style {
     PowerGeothermal,
     ShippingPort,
     FerryTerminal,
+    // city services and attractions (buildings/services.rs), placed by the player
+    PoliceStation,
+    FireStation,
+    Hospital,
+    School,
+    DispatchCenter,
+    Landmark,
+    Stadium,
+    Prison,
     // -- industry sub-zones (`nd_sim::industry`): forced by the business on
     // the lot, never drawn from the land use's menu. One block at the end. --
     /// Fields in rows, a barn, silos and a greenhouse.
@@ -179,7 +191,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 67] = [
+    pub const ALL: [Style; 75] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -241,6 +253,14 @@ impl Style {
         Style::PowerGeothermal,
         Style::ShippingPort,
         Style::FerryTerminal,
+        Style::PoliceStation,
+        Style::FireStation,
+        Style::Hospital,
+        Style::School,
+        Style::DispatchCenter,
+        Style::Landmark,
+        Style::Stadium,
+        Style::Prison,
         Style::Farmstead,
         Style::OilField,
         Style::Refinery,
@@ -248,6 +268,21 @@ impl Style {
         Style::FishProcessing,
         Style::TruckLot,
     ];
+
+    /// The style a placed service or attraction is drawn in.
+    pub fn for_service(kind: nd_sim::services::ServiceKind) -> Style {
+        use nd_sim::services::ServiceKind as K;
+        match kind {
+            K::Police => Style::PoliceStation,
+            K::Fire => Style::FireStation,
+            K::Health => Style::Hospital,
+            K::School => Style::School,
+            K::Dispatch => Style::DispatchCenter,
+            K::Monument => Style::Landmark,
+            K::Stadium => Style::Stadium,
+            K::Jail => Style::Prison,
+        }
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -312,6 +347,14 @@ impl Style {
             Style::PowerGeothermal => "geothermal plant",
             Style::ShippingPort => "shipping port",
             Style::FerryTerminal => "ferry terminal",
+            Style::PoliceStation => "police station",
+            Style::FireStation => "fire station",
+            Style::Hospital => "hospital",
+            Style::School => "school",
+            Style::DispatchCenter => "911 dispatch centre",
+            Style::Landmark => "landmark",
+            Style::Stadium => "stadium",
+            Style::Prison => "jail",
             Style::Farmstead => "farm",
             Style::OilField => "oil field",
             Style::Refinery => "refinery",
@@ -785,6 +828,12 @@ pub struct Ctx<'a> {
     pub park: Option<ParkLayout>,
     /// For stations and yards: the track and platform beside the lot.
     pub rail: Option<RailLink>,
+    /// Wind farm rotors are left out for the renderer to spin.
+    pub animated_rotors: bool,
+    /// Window lights are switched by the renderer from occupancy: nearly
+    /// every window is drawn as a marked light over its glass (see
+    /// `parts::window_light`), and `lit_chance` ignores power.
+    pub dynamic_lights: bool,
 }
 
 /// Per-building state that changes the look beyond style and condition.
@@ -802,9 +851,20 @@ pub struct Extras<'a> {
     /// Still being built: progress in `0..1`. The site is drawn instead of
     /// the finished style.
     pub construction: Option<f32>,
+    /// Coming down: progress in `0..1`. The building (as described by the
+    /// other arguments) is drawn cut down to what is left, with the
+    /// demolition site around it.
+    pub demolition: Option<f32>,
     /// Styles of the buildings already standing nearby (see
     /// [`StyleBook`]); the style pick clusters or contrasts with them.
     pub neighbours: &'a [Neighbour],
+    /// A city service or attraction: its own style, at the placed tier.
+    pub service: Option<nd_sim::services::ServiceKind>,
+    /// Leave wind farm rotors out: the renderer draws and spins them.
+    pub animated_rotors: bool,
+    /// Draw window lights for the renderer to switch by occupancy (see
+    /// [`Ctx::dynamic_lights`]).
+    pub dynamic_lights: bool,
     /// The business on the lot: industry sub-zones have their own looks.
     pub business: Option<nd_sim::BusinessKind>,
     /// A truck and bus lot: share of its bays in use.
@@ -813,7 +873,7 @@ pub struct Extras<'a> {
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, neighbours: &[], business: None, fleet: 0.5 }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, dynamic_lights: false, business: None, fleet: 0.5 }
     }
 }
 
@@ -828,6 +888,10 @@ impl Ctx<'_> {
 
     /// Chance a window is lit, clamped so rule files cannot push it past 1.
     pub fn lit_chance(&self) -> f32 {
+        if self.dynamic_lights {
+            // Most windows can light; which ones do is the renderer's call.
+            return (0.92 * (1.0 - 0.3 * self.wear)).clamp(0.0, 1.0);
+        }
         (self.style.lit_chance * (1.0 - 0.8 * self.wear) * self.powered.clamp(0.08, 1.0)).clamp(0.0, 1.0)
     }
 
@@ -914,6 +978,7 @@ pub fn generate_building(
 pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: u64, rules: &BuildingRules, extras: &Extras) -> Style {
     let mut rng = rng_for(seed, 11);
     match (extras.plant, extras.parking) {
+        _ if extras.service.is_some() => Style::for_service(extras.service.unwrap()),
         _ if extras.depot => Style::BusDepot,
         _ if extras.port == Some(nd_sim::ports::PortKind::ShippingPort) => Style::ShippingPort,
         _ if extras.port == Some(nd_sim::ports::PortKind::FerryTerminal) => Style::FerryTerminal,
@@ -1036,7 +1101,14 @@ fn generate_styled_extras(
         powered: extras.powered,
         rail: extras.rail.cloned().or_else(|| matches!(style, Style::Station | Style::FreightYard).then(|| back_edge_link(lot, if style == Style::Station { RailFacility::Station } else { RailFacility::FreightYard }))),
         park: if land_use == LandUse::Park || matches!(style, Style::ScrubLot | Style::Garden | Style::Plaza) { Some(extras.park.cloned().unwrap_or_else(|| nd_sim::park::plan_single(lot, tier))) } else { None },
+        animated_rotors: extras.animated_rotors,
+        dynamic_lights: extras.dynamic_lights,
     };
+    if let Some(progress) = extras.demolition {
+        let mut g = generate_styled_extras(lot, land_use, floors, tier, condition, seed, style, rules, palette, &Extras { demolition: None, construction: None, ..*extras });
+        construction::demolition_site(&mut g, &ctx, &mut rng, progress);
+        return g;
+    }
     if let Some(progress) = extras.construction {
         construction::construction_site(&mut g, &ctx, &mut rng, progress);
         if weathered(tier, ctx.wear) {
@@ -1106,6 +1178,14 @@ fn generate_styled_extras(
         Style::PowerGeothermal => waterworks::geothermal(&mut g, &ctx, &mut rng),
         Style::ShippingPort => waterworks::shipping_port(&mut g, &ctx, &mut rng),
         Style::FerryTerminal => waterworks::ferry_terminal(&mut g, &ctx, &mut rng),
+        Style::PoliceStation => services::police_station(&mut g, &ctx, &mut rng),
+        Style::FireStation => services::fire_station(&mut g, &ctx, &mut rng),
+        Style::Hospital => services::hospital(&mut g, &ctx, &mut rng),
+        Style::School => services::school(&mut g, &ctx, &mut rng),
+        Style::DispatchCenter => services::dispatch_center(&mut g, &ctx, &mut rng),
+        Style::Landmark => services::landmark(&mut g, &ctx, &mut rng),
+        Style::Stadium => services::stadium(&mut g, &ctx, &mut rng),
+        Style::Prison => services::prison(&mut g, &ctx, &mut rng),
         Style::Farmstead => industrial::farmstead(&mut g, &ctx, &mut rng),
         Style::OilField => industrial::oil_field(&mut g, &ctx, &mut rng),
         Style::Refinery => industrial::refinery(&mut g, &ctx, &mut rng),
@@ -1298,6 +1378,59 @@ mod tests {
         assert!(worst.is_empty(), "{} sites leave their lot or budget:\n{}", worst.len(), worst.join("\n"));
     }
 
+    /// Demolition sites at every stage stay on their lot, are well formed,
+    /// and come down: by the end nothing taller than the rubble is left.
+    #[test]
+    fn demolition_sites_stay_on_their_lot() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let mut worst: Vec<String> = Vec::new();
+        for lu in LandUse::ALL {
+            let lots = many_lots(lu);
+            for (li, lot) in lots.iter().enumerate() {
+                for (seed, floors, tier) in [(1u64, 2u8, Tier::Low), (7, 9, Tier::Mid), (13, 30, Tier::High)] {
+                    for progress in [0.0f32, 0.05, 0.2, 0.45, 0.7, 0.85, 0.99, 1.0] {
+                        let extras = Extras { demolition: Some(progress), ..Extras::default() };
+                        let g = generate_building(lot, lu, floors, tier, 1.0, seed + li as u64, &rules, &pal, &extras);
+                        let what = format!("demolition at {progress} on {lu:?} lot {li} floors {floors}");
+                        assert!(g.triangle_count() > 0, "{what} drew nothing");
+                        check_mesh(&g, &what);
+                        let (over, top, low, culprit) = extent(&g, lot, None);
+                        if over > 1.0 || top > (60.0 + floors as f32 * 5.0).max(90.0) || low < -0.3 || g.triangle_count() > budget(floors, lot) * 2 {
+                            worst.push(format!("{what}: overshoots {over:.1} m, top {top:.0} m, low {low:.1}, {} tris: {culprit}", g.triangle_count()));
+                        }
+                        // Machines and cranes come and go, but once the
+                        // structure is down only the site is left.
+                        if progress >= 0.85 && top > 8.0 {
+                            worst.push(format!("{what}: still {top:.1} m tall after the structure came down"));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(worst.is_empty(), "{} demolition sites misbehave:
+{}", worst.len(), worst.join("
+"));
+    }
+
+    /// A building cut part way down keeps no triangle above the cut, and
+    /// what is below is untouched.
+    #[test]
+    fn clipping_drops_everything_above_the_cut() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let lot = &many_lots(LandUse::Commercial)[0];
+        let mut g = generate_building(lot, LandUse::Commercial, 9, Tier::Mid, 1.0, 7, &rules, &pal, &Extras::default());
+        let below = |g: &Geometry, y: f32| g.iter().flat_map(|(_, m)| m.indices.chunks_exact(3).filter(move |t| t.iter().all(|&i| m.positions[i as usize][1] <= y)).map(|_| ()).collect::<Vec<_>>()).count();
+        let low_before = below(&g, 5.0);
+        let points = construction::clip_above(&mut g, 12.0);
+        assert!(!points.is_empty(), "walls were cut");
+        let top = g.iter().flat_map(|(_, m)| m.positions.iter().map(|p| p[1])).fold(0.0f32, f32::max);
+        assert!(top <= 12.0 + 1e-3, "nothing above the cut: {top}");
+        assert_eq!(below(&g, 5.0), low_before, "the lower floors are untouched");
+        check_mesh(&g, "clipped building");
+    }
+
     /// Nothing a building generates may reach beyond its own lot outline
     /// (a short way for canopies and kerbside clutter), dig into the
     /// ground, or blow its triangle budget.
@@ -1482,6 +1615,17 @@ mod tests {
             check_mesh(g, "powered");
             assert!(extent(g, lot, None).0 <= 1.0);
         }
+        // Occupancy lighting: nearly every window becomes a marked light over
+        // glass, ranked so the renderer can switch them by share.
+        let dynamic = generate_building(lot, LandUse::Residential, 8, Tier::Mid, 0.9, 5, &rules, &pal, &Extras { dynamic_lights: true, ..Extras::default() });
+        check_mesh(&dynamic, "dynamic lights");
+        let marks: Vec<f32> = dynamic.get(Surface::Glow).colors.iter().map(|c| c[3]).filter(|a| *a >= WINDOW_LIGHT_MARK).collect();
+        assert!(marks.len() >= 4 * lit(&bright) / 6, "most windows are switchable lights: {} marked vertices", marks.len());
+        assert!(marks.iter().all(|a| *a < WINDOW_LIGHT_MARK + 1.0), "ranks stay in 0..1");
+        let ranks: std::collections::HashSet<u32> = marks.iter().map(|a| ((a - WINDOW_LIGHT_MARK) * 1000.0) as u32).collect();
+        assert!(ranks.len() > 10, "windows get spread-out ranks, got {}", ranks.len());
+        assert!(dynamic.get(Surface::Glass).positions.len() > bright.get(Surface::Glass).positions.len(), "glass behind every switchable light");
+        assert!(dynamic.get(Surface::Glow).colors.iter().any(|c| c[3] == 1.0) || dynamic.get(Surface::Glow).colors.iter().all(|c| c[3] >= WINDOW_LIGHT_MARK), "other glow untouched");
         // Parking: a full lot has more car than an empty one.
         let empty = generate_building(lot, LandUse::Commercial, 1, Tier::Low, 0.8, 5, &rules, &pal, &Extras { parking: Some(0.0), ..Extras::default() });
         let full = generate_building(lot, LandUse::Commercial, 1, Tier::Low, 0.8, 5, &rules, &pal, &Extras { parking: Some(1.0), ..Extras::default() });
@@ -1491,6 +1635,15 @@ mod tests {
             check_mesh(g, "parking");
             let (over, _, low, culprit) = extent(g, lot, None);
             assert!(over <= 1.0 && low >= -0.3, "parking leaves its lot: {over:.1} m / {low:.1}: {culprit}");
+        }
+        // Services and attractions, every tier, drawn through their extras.
+        for kind in nd_sim::services::ServiceKind::ALL {
+            for tier in Tier::ALL {
+                let g = generate_building(lot, LandUse::Civic, 1, tier, 0.9, 9, &rules, &pal, &Extras { service: Some(kind), ..Extras::default() });
+                check_mesh(&g, "service");
+                let (over, _, low, culprit) = extent(&g, lot, None);
+                assert!(g.triangle_count() > 50 && over <= 1.0 && low >= -0.3, "{kind:?} {tier:?}: {over:.1} m / {low:.1}: {culprit}");
+            }
         }
         // Depot.
         let depot = generate_building(lot, LandUse::Civic, 2, Tier::Mid, 0.8, 5, &rules, &pal, &Extras { depot: true, ..Extras::default() });

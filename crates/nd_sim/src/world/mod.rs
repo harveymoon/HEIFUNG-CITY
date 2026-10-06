@@ -12,6 +12,8 @@
 //! - `buses`: depots, routes, stops and the bus loop
 //! - `trains`: stations, yards, rail links and trains
 //! - `power`: plants and power allocation
+//! - `services`: police, fire, health, schools, dispatch, attractions,
+//!   emergencies and the vehicles that answer them
 //! - `industry`: industry sub-zones and the player's bias, the ground
 //!   industry fouls, logistics fees, truck and bus lots
 //! - `water`: the landscape hooks: road heights, bridges, the built ground,
@@ -26,6 +28,7 @@ mod market;
 mod parking;
 mod plan;
 mod power;
+mod services;
 #[cfg(test)]
 mod tests;
 mod trains;
@@ -63,7 +66,7 @@ use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
 pub use crate::rail::TRUNK_Y;
-pub use industry::{is_return_trip, IndustryArea};
+pub use industry::{is_return_trip, return_cargo, IndustryArea};
 use crate::landscape::{Ground, Landscape, LandscapeParams};
 use crate::ports::Ports;
 
@@ -117,6 +120,10 @@ pub struct WorldConfig {
     pub development_interval: u64,
     /// Upper bound on buildings started per development interval.
     pub max_builds_per_interval: usize,
+    /// Fires, crimes and illness roll every hour (`world/services.rs`).
+    /// Tests about other systems turn it off so a random fire cannot take
+    /// their building away.
+    pub emergencies: bool,
     /// The landscape a new world is generated with. After a load this
     /// mirrors `World::landscape.params`.
     pub landscape: LandscapeParams,
@@ -149,6 +156,7 @@ impl Default for WorldConfig {
             immigration_interval: 30,
             development_interval: 20,
             max_builds_per_interval: 2,
+            emergencies: true,
             landscape: LandscapeParams::default(),
         };
         c.derive_speeds();
@@ -226,6 +234,9 @@ pub struct World {
     #[serde(default)]
     pub facilities: SlotMap<FacilityId, Facility>,
     pub economy: Economy,
+    /// City services, emergencies and their vehicles (`world/services.rs`).
+    #[serde(default)]
+    pub services: crate::services::Services,
     pub land_value: LandValue,
     #[serde(skip)]
     land_value_work: LandValueWork,
@@ -271,6 +282,9 @@ pub struct World {
     /// Metres of bridge already paid for.
     #[serde(default)]
     pub bridge_metres: f32,
+    /// Pavement delivery robots and the day's home-delivery counts.
+    #[serde(default)]
+    pub bots: crate::bots::Bots,
     /// What industry has done to the ground (oil spills, ash): saved,
     /// spreads and fades daily. Old saves load clean.
     #[serde(default)]
@@ -311,6 +325,7 @@ impl World {
             rail: Rail::default(),
             facilities: SlotMap::with_key(),
             economy,
+            services: crate::services::Services::default(),
             land_value_work: LandValueWork::default(),
             events: Vec::new(),
             next_seed: 1,
@@ -327,6 +342,7 @@ impl World {
             road_z: Vec::new(),
             ground: Ground::default(),
             bridge_metres: 0.0,
+            bots: Default::default(),
             contamination: crate::ground::Contamination::new(half + 200.0, crate::ground::CONTAMINATION_CELL),
             industry_bias: Vec::new(),
         };
@@ -471,7 +487,7 @@ impl World {
             }
         }
         // Vehicles whose ends no longer exist, and riders who do not.
-        let cars: Vec<CarId> = self.traffic.cars.iter().filter(|(_, car)| car.cargo.is_some_and(|c| !buildings.contains_key(c.to)) || car.bus.as_ref().is_some_and(|b| !routes.contains_key(b.route))).map(|(id, _)| id).collect();
+        let cars: Vec<CarId> = self.traffic.cars.iter().filter(|(_, car)| car.cargo.is_some_and(|c| !buildings.contains_key(c.to) && !(industry::is_return_trip(&c) && c.to == BuildingId::default())) || car.bus.as_ref().is_some_and(|b| !routes.contains_key(b.route))).map(|(id, _)| id).collect();
         for id in cars {
             self.traffic.remove_car(id);
         }
@@ -516,7 +532,7 @@ impl World {
         let near_floors: u32 = self
             .buildings
             .values()
-            .filter(|b| b.lot != lot_id && b.land_use != LandUse::Park && !b.is_parking() && b.plant.is_none() && !b.depot && b.rail.is_none())
+            .filter(|b| b.lot != lot_id && b.land_use != LandUse::Park && !b.is_parking() && b.plant.is_none() && !b.depot && b.rail.is_none() && b.service.is_none())
             .filter_map(|b| self.lots.get(b.lot).map(|l| (b.floors as u32, l.center)))
             .filter(|(_, c)| c.distance(center) <= DENSITY_RADIUS)
             .map(|(f, _)| f)
@@ -561,6 +577,8 @@ impl World {
         let tick = self.clock.tick;
         if self.clock.minute_of_day() == 0 {
             self.events.push(SimEvent::NewDay(self.clock.day()));
+            // Services settle their upkeep before the books close.
+            self.daily_services();
             self.daily_update();
             self.industry_daily();
         }
@@ -590,16 +608,29 @@ impl World {
         if tick % 120 == 90 {
             self.job_search();
         }
+        // Fires, crimes and illness roll hourly at :50, clear of the rest.
+        if tick % 60 == 50 {
+            self.hourly_services();
+        }
         for (id, decision) in minds.poll() {
             if self.citizens.contains_key(id) {
                 self.apply_decision(id, decision);
             }
         }
         self.step_traffic();
+        self.step_services();
         self.step_through_traffic();
         self.step_transit();
         self.step_rail();
         self.step_ships();
+        if self.clock.minute_of_day() == 0 {
+            self.bots.delivered_today = 0;
+            self.bots.van_orders_today = 0;
+        }
+        if tick % crate::bots::ROUND_TICKS == 11 {
+            self.dispatch_deliveries();
+        }
+        self.step_bots();
         self.step_citizens(minds);
         // Every system that moves people has run: lay the breadcrumbs.
         for c in self.citizens.values_mut() {
@@ -610,13 +641,18 @@ impl World {
     fn step_traffic(&mut self) {
         let arrived = self.traffic.step(self.config.traffic_seconds_per_tick, self.config.traffic_substeps);
         for car_id in arrived {
+            // Fire engines, police cars and ambulances: services handle them.
+            if self.services.unit_of_car(car_id).is_some() {
+                self.unit_car_arrived(car_id);
+                continue;
+            }
             if self.traffic.cars.get(car_id).is_some_and(|c| c.bus.is_some()) {
                 self.bus_arrived(car_id);
                 continue;
             }
             let Some(car) = self.traffic.remove_car(car_id) else { continue };
             if let Some(cargo) = car.cargo {
-                self.truck_arrived(cargo);
+                self.truck_arrived(cargo, car.model);
                 continue;
             }
             if let Some(c) = self.citizens.get_mut(car.citizen) {

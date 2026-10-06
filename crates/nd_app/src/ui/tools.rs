@@ -3,10 +3,10 @@
 
 use bevy_egui::egui;
 use nd_sim::roads::RoadKind;
-use nd_sim::{Gesture, LandUse, PowerPlantKind, RailFacility};
+use nd_sim::{BuildCategory, Gesture, LandUse, Placeable, RailFacility, ServiceKind, Tier};
 
 use super::help;
-use super::{hint, section, zone_color32, WARN};
+use super::{hint, icons, section, zone_color32, WARN};
 use crate::assets::GameAssets;
 use crate::sim::Sim;
 use crate::tools::{EffectivePlan, Tool, ToolState, TransitMode, ROAD_PRESETS};
@@ -20,7 +20,7 @@ pub fn sub_pane(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &
         Tool::Inspect => hint(ui, help::tool_hint(Tool::Inspect)),
         Tool::Transit => transit(ui, sim, tools),
         Tool::Rail => rail(ui, sim, tools),
-        Tool::Power => power(ui, tools),
+        Tool::Buildings => buildings(ui, sim, tools),
     }
 }
 
@@ -28,7 +28,7 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
     ui.horizontal_wrapped(|ui| {
         for (label, f, b, k) in ROAD_PRESETS {
             let on = tools.kind == k && (k != RoadKind::Street || (tools.lanes_fwd == f && tools.lanes_bwd == b));
-            if ui.selectable_label(on, label).clicked() {
+            if icons::selectable(ui, on, label, |p, r, c| icons::road(p, r, k, f, b, c)).on_hover_text(preset_hint(label)).clicked() {
                 tools.kind = k;
                 if k == RoadKind::Street {
                     tools.lanes_fwd = f;
@@ -65,8 +65,9 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
 fn zone(ui: &mut egui::Ui, tools: &mut ToolState, assets: &GameAssets) {
     ui.horizontal_wrapped(|ui| {
         for lu in LandUse::ALL {
-            let text = egui::RichText::new(lu.label()).color(zone_color32(assets.palette.zone_color(lu)));
-            if ui.selectable_label(tools.land_use == lu, text).clicked() {
+            let colour = zone_color32(assets.palette.zone_color(lu));
+            let text = egui::RichText::new(lu.label()).color(colour);
+            if icons::selectable(ui, tools.land_use == lu, text, |p, r, _| icons::land_use(p, r, lu, colour)).clicked() {
                 tools.land_use = lu;
             }
         }
@@ -85,7 +86,7 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
             ui.horizontal_wrapped(|ui| {
                 for (label, pf, pb, pk) in ROAD_PRESETS {
                     let on = k == pk && (pk != RoadKind::Street || (f == pf && b == pb));
-                    if ui.selectable_label(on, label).clicked() {
+                    if icons::selectable(ui, on, label, |p, r, c| icons::road(p, r, pk, pf, pb, c)).on_hover_text(preset_hint(label)).clicked() {
                         k = pk;
                         f = pf;
                         b = pb;
@@ -188,23 +189,8 @@ fn rail(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
                 tools.dock = None;
             }
         }
-        ui.separator();
-        for (k, label) in [(nd_sim::PortKind::ShippingPort, "Shipping port"), (nd_sim::PortKind::FerryTerminal, "Ferry terminal")] {
-            if ui.selectable_label(tools.dock == Some(k), label).clicked() {
-                tools.dock = Some(k);
-            }
-        }
     });
-    if let Some(k) = tools.dock {
-        let (w, d) = k.size();
-        let s = &sim.world.ports.stats;
-        hint(ui, &match k {
-            nd_sim::PortKind::ShippingPort => format!("A container port, {w:.0} by {d:.0} m, on a river at least {:.0} m wide or on the sea; it builds a pier out into the water and a street along its landward side. {:.0} to build, {:.0}/day. Imports come by ship at {:.0}% of the price, exports earn {:.0}% more.", k.min_width(), k.cost(), k.upkeep_per_day(), nd_sim::ports::SHIP_IMPORT_FACTOR * 100.0, (nd_sim::ports::SHIP_EXPORT_BONUS - 1.0) * 100.0),
-            nd_sim::PortKind::FerryTerminal => format!("A ferry terminal, {w:.0} by {d:.0} m, on any water; ferries run to every other terminal on connected water, or out to elsewhere. {:.0} to build, {:.0}/day, fare {:.0}.", k.cost(), k.upkeep_per_day(), nd_sim::ports::FERRY_FARE),
-        });
-        hint(ui, &format!("{} port{} · {} terminal{} · {} ship{} out · {} loads landed today, {} waiting · {} ferry riders today, fares {:.0}", s.ports, if s.ports == 1 { "" } else { "s" }, s.terminals, if s.terminals == 1 { "" } else { "s" }, s.ships_out, if s.ships_out == 1 { "" } else { "s" }, s.freight_landed_today, s.waiting_cargo, s.ferry_riders_today, s.ferry_fares_today));
-        return;
-    }
+    tools.dock = None;
     let r = &sim.world.rail.stats;
     let (w, d) = nd_sim::Facility::size(tools.rail_kind);
     hint(ui, &match tools.rail_kind {
@@ -215,17 +201,102 @@ fn rail(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
     hint(ui, &format!("{} station{} · {} yard{} · {} train{} out · next passenger train in {} min · {} waiting · {} riding · {} riders today · fares {:.0} · {:.0} units of freight in today, {:.0} waiting at yards · upkeep {:.0}/day", r.stations, if r.stations == 1 { "" } else { "s" }, r.yards, if r.yards == 1 { "" } else { "s" }, r.trains, if r.trains == 1 { "" } else { "s" }, r.next_passenger_in, r.waiting, r.riding, r.riders_today, r.fares_today, r.freight_in_today, r.freight_waiting, r.upkeep_today));
 }
 
-fn power(ui: &mut egui::Ui, tools: &mut ToolState) {
-    ui.horizontal_wrapped(|ui| {
-        for k in PowerPlantKind::ALL {
-            if ui.selectable_label(tools.power_kind == k, format!("{} {:.0} MW", k.label(), k.capacity_mw())).clicked() {
-                tools.power_kind = k;
+/// The Buildings tool: a row of sub-categories, the items in the open one,
+/// a tier picker for services and attractions, and what it costs and does.
+fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
+    ui.horizontal(|ui| {
+        for cat in BuildCategory::ALL {
+            if ui.selectable_label(tools.build_cat == cat, cat.label()).clicked() && tools.build_cat != cat {
+                tools.build_cat = cat;
+                if let Some(first) = cat.items().first() {
+                    tools.build = *first;
+                }
             }
         }
     });
-    let k = tools.power_kind;
-    hint(ui, &format!("costs {:.0} to build, {:.0}/day to run, {} jobs{}", k.build_cost(), k.upkeep_per_day(), k.jobs(), help::power_note(k)));
-    hint(ui, help::tool_hint(Tool::Power));
+    ui.horizontal_wrapped(|ui| {
+        for item in tools.build_cat.items() {
+            let on = std::mem::discriminant(&tools.build) == std::mem::discriminant(&item) && tools.build.with_tier(Tier::Mid) == item.with_tier(Tier::Mid);
+            let text = match item {
+                Placeable::Plant(k) => format!("{} {:.0} MW", k.label(), k.capacity_mw()),
+                other => other.menu_label().to_string(),
+            };
+            if ui.selectable_label(on, text).clicked() {
+                tools.build = item;
+            }
+        }
+        if tools.build.has_tiers() {
+            ui.separator();
+            for t in Tier::ALL {
+                if ui.selectable_label(tools.build_tier == t, tools.build.with_tier(t).label()).clicked() {
+                    tools.build_tier = t;
+                }
+            }
+        }
+    });
+    let what = tools.build_item();
+    let mut line = format!("{} · costs {:.0} to build, {:.0}/day to run, {} jobs", what.label(), what.cost(), what.upkeep(), what.jobs());
+    if what.min_area() > 0.0 {
+        line += &format!(", needs {:.0} m²", what.min_area());
+    }
+    match what {
+        Placeable::Plant(k) => {
+            line += help::power_note(k);
+            line += &format!(" Goes {}.", k.site_hint());
+        }
+        Placeable::Service(k, t) => {
+            if k.radius(t) > 0.0 {
+                line += &format!(", covers {:.0} m by road", k.radius(t));
+            }
+            if k.units(t) > 0 {
+                line += &format!(", {} {}{}", k.units(t), k.unit_kind().map_or("", |u| u.label()), if k.units(t) == 1 { "" } else { "s" });
+            }
+            let cap = k.capacity(t);
+            if cap > 0 {
+                line += &format!(", {cap} {}", match k { ServiceKind::Health => "beds", ServiceKind::Stadium => "seats", ServiceKind::Jail => "cells", _ => "places" });
+            }
+            line += ". ";
+            line += help::service_note(k);
+        }
+        Placeable::BusDepot => line += &format!(". {}", help::TRANSIT_DEPOT),
+        Placeable::Rail(_) => line += ". Set beside track or a street it fuses to them; otherwise it lays stubs to join (see the Rail tool).",
+        Placeable::Dock(_) => {}
+    }
+    hint(ui, &line);
+    if let Placeable::Dock(k) = what {
+        dock_hint(ui, sim, k);
+    }
+    if tools.build_cat == BuildCategory::Services {
+        let s = &sim.world.services.stats;
+        hint(ui, &format!("Coverage of homes: police {:.0}% · fire {:.0}% · health {:.0}% · schools {:.0}% · {} incidents today · avg response {:.0} min · {}/{} units out · {} fires burning", s.coverage[0] * 100.0, s.coverage[1] * 100.0, s.coverage[2] * 100.0, s.coverage[3] * 100.0, s.incidents_today.iter().sum::<u32>(), s.avg_response(), s.units_busy, s.units, s.fires_burning));
+    }
+    hint(ui, help::tool_hint(Tool::Buildings));
+}
+
+/// What a dock is and how the docks are doing (moved here from the Rail tool).
+fn dock_hint(ui: &mut egui::Ui, sim: &mut Sim, k: nd_sim::PortKind) {
+        let (w, d) = k.size();
+        let s = &sim.world.ports.stats;
+        hint(ui, &match k {
+            nd_sim::PortKind::ShippingPort => format!("A container port, {w:.0} by {d:.0} m, on a river at least {:.0} m wide or on the sea; it builds a pier out into the water and a street along its landward side. {:.0} to build, {:.0}/day. Imports come by ship at {:.0}% of the price, exports earn {:.0}% more.", k.min_width(), k.cost(), k.upkeep_per_day(), nd_sim::ports::SHIP_IMPORT_FACTOR * 100.0, (nd_sim::ports::SHIP_EXPORT_BONUS - 1.0) * 100.0),
+            nd_sim::PortKind::FerryTerminal => format!("A ferry terminal, {w:.0} by {d:.0} m, on any water; ferries run to every other terminal on connected water, or out to elsewhere. {:.0} to build, {:.0}/day, fare {:.0}.", k.cost(), k.upkeep_per_day(), nd_sim::ports::FERRY_FARE),
+        });
+        hint(ui, &format!("{} port{} · {} terminal{} · {} ship{} out · {} loads landed today, {} waiting · {} ferry riders today, fares {:.0}", s.ports, if s.ports == 1 { "" } else { "s" }, s.terminals, if s.terminals == 1 { "" } else { "s" }, s.ships_out, if s.ships_out == 1 { "" } else { "s" }, s.freight_landed_today, s.waiting_cargo, s.ferry_riders_today, s.ferry_fares_today));
+}
+
+/// Tooltip for a road preset button.
+fn preset_hint(label: &str) -> &'static str {
+    match label {
+        "Path" => "Footpath: walkers and bikes only",
+        "Rail" => "Railway track: trains only, never fronts lots",
+        "Lane" => "One lane each way",
+        "Street" => "Two lanes each way",
+        "Avenue" => "Three lanes each way",
+        "One-way" => "Two lanes, one direction",
+        "Ramp" => "One lane, one direction: slip roads onto a highway",
+        "Highway" => "Four lanes one way: 25 m/s, no frontage, grade-separated",
+        _ => "",
+    }
 }
 
 /// Colour for a figure that should worry the player.

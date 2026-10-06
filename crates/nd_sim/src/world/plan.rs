@@ -337,7 +337,7 @@ impl World {
     /// or yard)? Those are never taken over by another placement; the player
     /// bulldozes them first.
     pub(super) fn is_civic_structure(b: &Building) -> bool {
-        b.plant.is_some() || b.depot || b.rail.is_some() || b.port.is_some()
+        b.plant.is_some() || b.depot || b.rail.is_some() || b.port.is_some() || b.service.is_some()
     }
 
     /// The city takes a lot for one of its own structures: whatever grew
@@ -370,7 +370,15 @@ impl World {
     /// Take a building down. `at` is where it stood when its lot is already
     /// gone; `memory` replaces the residents' default note about it.
     pub(super) fn demolish_with(&mut self, bid: BuildingId, at: Option<Vec2>, memory: Option<&str>) {
+        // Nothing vanishes: it becomes a demolition site and is cleared over
+        // the next days (see `construction.rs`), unless it must go at once.
+        if self.begin_demolition(bid, at, memory) {
+            return;
+        }
         let Some(b) = self.buildings.remove(bid) else { return };
+        if at.is_none() && self.lots.get(b.lot).is_some_and(|l| l.building == Some(bid)) {
+            self.lots[b.lot].building = None;
+        }
         let tick = self.clock.tick;
         let center = self.lots.get(b.lot).map(|l| l.center).or(at).unwrap_or(Vec2::ZERO);
         for cid in b.residents.iter().copied() {

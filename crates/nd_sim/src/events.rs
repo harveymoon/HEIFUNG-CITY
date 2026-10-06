@@ -22,4 +22,25 @@ pub enum SimEvent {
     PlanChanged,
     /// A business shut down (building stays, goes derelict).
     BusinessClosed(BuildingId),
+    // ── services and emergencies (`nd_sim::services`); the u32 is the incident id
+    /// A fire caught, a crime happened, someone fell ill.
+    IncidentStarted(u32),
+    /// Somebody called 911 about it.
+    EmergencyCall(u32),
+    /// A dispatcher sent a unit.
+    UnitDispatched(u32),
+    /// The unit got there.
+    UnitOnScene(u32),
+    /// Fire out, arrest made, patient admitted, or given up on.
+    IncidentResolved(u32),
+    /// A fire jumped to this building.
+    FireSpread(BuildingId),
+    /// A fire destroyed the building (a `BuildingRemoved` follows).
+    BurnedDown(BuildingId, LotId),
+    /// A stadium is hosting a game tonight.
+    StadiumEvent(BuildingId),
+    /// Police arrested someone over an incident.
+    Arrested(u32, CitizenId),
+    /// Someone left custody: sentence served, or let go early (no jail).
+    Released(CitizenId),
 }

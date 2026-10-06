@@ -174,6 +174,8 @@ pub struct IndustrySite {
     pub neighbours: Vec<(IndustryKind, f32)>,
     /// A truck and bus lot within reach already.
     pub fleet_lot_near: bool,
+    /// Working oil wells within reach of a refinery here.
+    pub crude_wells: u32,
 }
 
 /// Industry further than this does not count as a neighbour.
@@ -230,7 +232,9 @@ pub fn weights(site: &IndustrySite) -> [f32; 7] {
     w[OilExtraction.index()] = 9.0 * smoothstep(0.25, 0.6, g.oil);
     // Refineries are rare without wells nearby.
     let wells_near = site.neighbours.iter().filter(|(k, _)| *k == OilExtraction).count() as f32;
-    w[Refinery.index()] = 0.04 + 0.6 * g.oil + 0.4 * wells_near.min(3.0) + 0.25 * site.port;
+    // A refinery on imported crude loses money, so none is built without
+    // wells in reach or a shipping port to land crude.
+    w[Refinery.index()] = if site.crude_wells == 0 && site.port <= 0.0 { 0.0 } else { 0.04 + 0.6 * g.oil + 0.4 * wells_near.min(3.0) + 0.25 * site.port };
     w[Manufacturing.index()] = 0.45;
     w[Logistics.index()] = 0.25 + 2.0 * site.port + 1.2 * site.yard + 0.8 * site.highway + 0.6 * site.depot;
     // Fishing needs the water, and a port helps.
@@ -361,6 +365,9 @@ mod tests {
         assert!(matches!(f, IndustryKind::Logistics | IndustryKind::Fishing), "{f:?}");
         assert!(share(&port, IndustryKind::Logistics) + share(&port, IndustryKind::Fishing) > 0.6);
         assert_eq!(weights(&plain)[IndustryKind::Fishing.index()], 0.0, "no water, no fishing");
+        assert_eq!(weights(&plain)[IndustryKind::Refinery.index()], 0.0, "no crude in reach, no refinery");
+        let fed = IndustrySite { crude_wells: 2, ..plain.clone() };
+        assert!(weights(&fed)[IndustryKind::Refinery.index()] > 0.0);
         let dear = IndustrySite { land_value: 0.85, ..plain.clone() };
         assert!(share(&dear, IndustryKind::Tech) > share(&plain, IndustryKind::Tech) * 2.0);
     }

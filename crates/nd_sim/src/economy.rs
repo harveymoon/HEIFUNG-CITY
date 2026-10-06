@@ -26,10 +26,17 @@ pub enum Flow {
     RailUpkeep,
     /// Plants, depots, stations and yards placed by the player.
     Construction,
+    /// Police, fire, health, schools, dispatch and attractions.
+    ServiceUpkeep,
+    /// Stadium tickets.
+    Tickets,
 }
 
+/// Number of `Flow`s; the ledger's row length.
+pub const FLOWS: usize = 11;
+
 impl Flow {
-    pub const ALL: [Flow; 9] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction];
+    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -42,6 +49,8 @@ impl Flow {
             Flow::TransitUpkeep => "transit upkeep",
             Flow::RailUpkeep => "rail upkeep",
             Flow::Construction => "construction",
+            Flow::ServiceUpkeep => "service upkeep",
+            Flow::Tickets => "tickets",
         }
     }
 
@@ -54,8 +63,34 @@ impl Flow {
 /// today so far and for the whole of yesterday. Positive is income.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Ledger {
-    pub today: [f32; 9],
-    pub yesterday: [f32; 9],
+    #[serde(deserialize_with = "ledger_row")]
+    pub today: [f32; FLOWS],
+    #[serde(deserialize_with = "ledger_row")]
+    pub yesterday: [f32; FLOWS],
+}
+
+/// A ledger row from a save, which may predate the newer flows: shorter
+/// rows are padded with zeros.
+fn ledger_row<'de, D: serde::Deserializer<'de>>(d: D) -> Result<[f32; FLOWS], D::Error> {
+    struct Row;
+    impl<'de> serde::de::Visitor<'de> for Row {
+        type Value = [f32; FLOWS];
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "up to {FLOWS} numbers")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut out = [0.0; FLOWS];
+            let mut i = 0;
+            while let Some(x) = seq.next_element::<f32>()? {
+                if i < FLOWS {
+                    out[i] = x;
+                }
+                i += 1;
+            }
+            Ok(out)
+        }
+    }
+    d.deserialize_tuple(FLOWS, Row)
 }
 
 impl Ledger {
@@ -70,7 +105,7 @@ impl Ledger {
     /// Close the day's books.
     pub fn roll(&mut self) {
         self.yesterday = self.today;
-        self.today = [0.0; 9];
+        self.today = [0.0; FLOWS];
     }
 
     /// Yesterday's entries, largest first, for a report.
@@ -262,5 +297,15 @@ mod tests {
         assert!((e.food_order_factor() - 1.5).abs() < 1e-4);
         e.roll_population(500);
         assert_eq!(e.food_order_factor(), 1.0, "shrinking never orders less than today");
+    }
+
+    #[test]
+    fn a_ledger_saved_before_the_service_flows_loads_padded() {
+        let old = "(today: (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0), yesterday: (9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0))";
+        let l: Ledger = ron::from_str(old).unwrap();
+        assert_eq!(l.today_of(Flow::Construction), 9.0);
+        assert_eq!(l.today_of(Flow::ServiceUpkeep), 0.0);
+        let back: Ledger = ron::from_str(&ron::to_string(&l).unwrap()).unwrap();
+        assert_eq!(back.yesterday, l.yesterday);
     }
 }

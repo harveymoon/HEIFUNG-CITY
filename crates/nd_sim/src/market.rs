@@ -367,6 +367,19 @@ pub struct Business {
     /// A truck and bus lot: lorries parked here between jobs.
     #[serde(default)]
     pub fleet_trucks: u16,
+    /// The lorries parked here, longest first: whose they are and since when.
+    #[serde(default)]
+    pub fleet_log: Vec<ParkedLorry>,
+}
+
+/// A lorry parked at a truck and bus lot.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ParkedLorry {
+    /// The business it works for (null when unknown).
+    pub home: BuildingId,
+    pub since: u64,
+    #[serde(default)]
+    pub model: crate::vehicle::VehicleModel,
 }
 
 impl Business {
@@ -384,6 +397,7 @@ impl Business {
             closed: false,
             inbound: BTreeMap::new(),
             fleet_trucks: 0,
+            fleet_log: Vec::new(),
         }
     }
 

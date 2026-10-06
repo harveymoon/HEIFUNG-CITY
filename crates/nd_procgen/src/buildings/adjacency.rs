@@ -125,6 +125,12 @@ pub fn traits(style: Style) -> (Family, f32) {
         Style::PowerHydro | Style::PowerTidal | Style::PowerGeothermal => (Special, 0.0),
         Style::ShippingPort => (Heavy, -0.5),
         Style::FerryTerminal => (Special, 0.0),
+        // City services and attractions are placed by the player, never
+        // picked by weight: neutral neighbours, and a landmark or stadium
+        // should not repeat next door.
+        Style::PoliceStation | Style::FireStation | Style::Hospital | Style::School | Style::DispatchCenter => (Special, 0.0),
+        Style::Landmark | Style::Stadium => (Special, -1.5),
+        Style::Prison => (Special, -1.0),
         // Industry sub-zones: farms spread in big patches, oil and
         // refineries are heavy, yards and lots line up together.
         Style::Farmstead => (Farm, 0.9),

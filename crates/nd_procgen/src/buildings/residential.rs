@@ -187,7 +187,7 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         if coin(rng, lit_chance) {
             let wc = if rng.random_bool(0.3) { [0.5, 0.75, 1.1] } else { pick(rng, &c.style.window_colors) };
             place(g, Matte, rng.random_range(-unit.len * 0.3..unit.len * 0.3), yc + 0.3, side * (unit.wid * 0.5 + 0.03), Vec3::new(1.1, 0.9, 0.08), DARK);
-            place(g, Glow, 0.0, yc + 0.3, side * (unit.wid * 0.5 + 0.06), Vec3::new(0.9, 0.7, 0.05), mul(wc, 0.9));
+            window_light(g, c, |g| place(g, Glow, 0.0, yc + 0.3, side * (unit.wid * 0.5 + 0.06), Vec3::new(0.9, 0.7, 0.05), mul(wc, 0.9)));
         }
         if coin(rng, 0.25 + 0.4 * c.wear) {
             place(g, Wood, rng.random_range(-unit.len * 0.3..unit.len * 0.3), yc + rng.random_range(-0.5..0.5), -side * (unit.wid * 0.5 + 0.05), Vec3::new(rng.random_range(0.6..1.4), rng.random_range(0.6..1.2), 0.05), pal.plywood);
@@ -533,7 +533,8 @@ pub fn balcony_slab(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 // door and window behind
                 face.decal(g, f, Matte, t, y + 1.2, 0.03, 2.2, 2.3, c.style.trim_color);
                 if coin(rng, c.lit_chance()) {
-                    face.decal(g, f, Glow, t, y + 1.2, 0.05, 2.0, 2.1, mul(pick(rng, &c.style.window_colors), 0.8));
+                    let col = mul(pick(rng, &c.style.window_colors), 0.8);
+                    window_light(g, c, |g| face.decal(g, f, Glow, t, y + 1.2, 0.05, 2.0, 2.1, col));
                 } else {
                     face.decal(g, f, Glass, t, y + 1.2, 0.05, 2.0, 2.1, pal.glass_dark);
                 }
@@ -677,7 +678,8 @@ pub fn crystal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                     .collect()
             };
             let wc = pick(rng, &c.style.window_colors);
-            g.part(Glow).frustum(&ring(t0), &ring(t1), rgba(mul(wc, rng.random_range(0.5..0.9))));
+            let col = rgba(mul(wc, rng.random_range(0.5..0.9)));
+            window_light(g, c, |g| g.part(Glow).frustum(&ring(t0), &ring(t1), col));
         }
         let crown = top.iter().fold(Vec3::ZERO, |a, p| a + *p) / top.len() as f32;
         if main {

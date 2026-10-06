@@ -18,17 +18,21 @@ use super::*;
 use crate::ground::{self, GroundSample};
 use crate::industry::{self, IndustryBias, IndustryKind, IndustrySite};
 use crate::ports::PortKind;
+use crate::vehicle::VehicleModel;
 
 /// A truck that has delivered parks at a truck and bus lot with room
 /// within this distance, else drives back to the business it came from.
 pub const FLEET_REACH: f32 = 700.0;
-/// ... if that business is within this distance; otherwise it is gone.
-pub const RETURN_REACH: f32 = 1500.0;
+/// Lorries parked this many ticks (18 hours) go home at night.
+pub const FLEET_NIGHT_HOME_AFTER: u64 = 18 * 60;
 /// A business within this distance of a lot with parked trucks sends its
 /// loads out in one of those trucks.
-pub const FLEET_SHARE_REACH: f32 = 320.0;
+pub const FLEET_SHARE_REACH: f32 = 800.0;
 /// Ground per truck bay, square metres.
 pub const FLEET_BAY_M2: f32 = 90.0;
+/// Oil wells within this distance supply a refinery; without any (or a
+/// shipping port for crude by sea) no refinery is developed.
+pub const CRUDE_REACH: f32 = 1200.0;
 /// A bus depot may park its overflow at truck and bus lots this close.
 pub const DEPOT_OVERFLOW_REACH: f32 = 450.0;
 /// Handling fees a container yard or fleet lot earns per filled job-hour.
@@ -51,9 +55,17 @@ fn near(d: f32, full: f32, none: f32) -> f32 {
     1.0 - ((d - full) / (none - full)).clamp(0.0, 1.0)
 }
 
-/// An empty truck on its way to park: it carries nothing to its own lot.
+/// An empty lorry on its way to park, home or out of town: no load, no
+/// price, and fuel as the marker (rubble trucks also run empty, as parts).
+/// `from` is the lorry's home business, `to` where it is going (null: out
+/// of town by the edge).
 pub fn is_return_trip(c: &Cargo) -> bool {
-    c.amount == 0.0 && c.price == 0.0 && c.from == c.to
+    c.amount == 0.0 && c.price == 0.0 && c.resource == Resource::Fuel
+}
+
+/// The cargo of an empty lorry going from wherever it is to `to`.
+pub fn return_cargo(home: BuildingId, to: BuildingId) -> Cargo {
+    Cargo { from: home, to, resource: Resource::Fuel, amount: 0.0, price: 0.0 }
 }
 
 impl World {
@@ -165,6 +177,7 @@ impl World {
         let highway = near(hw, 30.0, 200.0);
         let mut neighbours = Vec::new();
         let mut fleet_lot_near = false;
+        let mut crude_wells = 0u32;
         for b in self.buildings.values() {
             if b.lot == lot_id {
                 continue;
@@ -177,6 +190,9 @@ impl World {
                 (None, Some(PowerPlantKind::Coal)) | (None, Some(PowerPlantKind::Nuclear)) => Some(IndustryKind::Refinery),
                 _ => None,
             };
+            if b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::OilWell && !z.closed) && d < CRUDE_REACH {
+                crude_wells += 1;
+            }
             if b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::FleetLot) && d < 300.0 {
                 fleet_lot_near = true;
             }
@@ -197,6 +213,7 @@ impl World {
             depot,
             neighbours,
             fleet_lot_near,
+            crude_wells,
         })
     }
 
@@ -263,6 +280,9 @@ impl World {
     pub(super) fn industry_hourly(&mut self) {
         let ports: Vec<Vec2> = self.ports.working(PortKind::ShippingPort).into_iter().filter_map(|b| self.building_lot(b).map(|l| l.center)).collect();
         let yards: Vec<Vec2> = self.yards.iter().filter_map(|b| self.building_lot(*b).map(|l| l.center)).collect();
+        if self.clock.hour() == 22 {
+            self.send_parked_lorries_home();
+        }
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         for id in ids {
             let b = &self.buildings[id];
@@ -392,22 +412,46 @@ impl World {
             .sum()
     }
 
-    fn park_truck(&mut self, lot_building: BuildingId) {
+    /// A lorry pulls into a truck and bus lot; its home and the time are
+    /// logged so the longest-parked go home at night. Returns false when
+    /// the lot is not a lot or is full.
+    fn park_truck(&mut self, lot_building: BuildingId, home: BuildingId, model: VehicleModel) -> bool {
         let cap = self.fleet_capacity(lot_building);
-        let Some(bz) = self.buildings.get_mut(lot_building).and_then(|b| b.business.as_mut()) else { return };
+        let tick = self.clock.tick;
+        let Some(bz) = self.buildings.get_mut(lot_building).and_then(|b| b.business.as_mut()) else { return false };
         if bz.kind != BusinessKind::FleetLot || bz.fleet_trucks >= cap {
-            return;
+            return false;
         }
         let before = fleet_bucket(bz.fleet_trucks, cap);
         bz.fleet_trucks += 1;
+        bz.fleet_log.push(crate::market::ParkedLorry { home, since: tick, model });
         if fleet_bucket(bz.fleet_trucks, cap) != before {
             self.events.push(SimEvent::BuildingChanged(lot_building));
         }
+        true
+    }
+
+    /// Take one lorry off a lot (the longest parked), if it has any.
+    fn unpark_truck(&mut self, lot_building: BuildingId) -> Option<crate::market::ParkedLorry> {
+        let cap = self.fleet_capacity(lot_building);
+        let bz = self.buildings.get_mut(lot_building)?.business.as_mut()?;
+        if bz.fleet_trucks == 0 {
+            return None;
+        }
+        let before = fleet_bucket(bz.fleet_trucks, cap);
+        bz.fleet_trucks -= 1;
+        // Saves from before the log have lorries without one.
+        let lorry = if bz.fleet_log.is_empty() { crate::market::ParkedLorry { home: BuildingId::default(), since: 0, model: VehicleModel::default() } } else { bz.fleet_log.remove(0) };
+        if fleet_bucket(bz.fleet_trucks, cap) != before {
+            self.events.push(SimEvent::BuildingChanged(lot_building));
+        }
+        Some(lorry)
     }
 
     /// Where a truck carrying a load from `from` sets off: a truck and bus
-    /// lot near the seller with a lorry parked takes the job (the lorry
-    /// leaves the lot), else the seller's own yard.
+    /// lot within `FLEET_SHARE_REACH` of the seller with a lorry parked takes
+    /// the job (the longest-parked lorry leaves the lot), else the seller's
+    /// own yard.
     pub(super) fn fleet_origin(&mut self, from: BuildingId) -> BuildingId {
         if self.truck_count() >= crate::market::MAX_TRUCKS {
             return from;
@@ -422,58 +466,110 @@ impl World {
             .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
             .map(|(id, _)| id);
         let Some(lot) = lot else { return from };
-        let cap = self.fleet_capacity(lot);
-        let bz = self.buildings[lot].business.as_mut().unwrap();
-        let before = fleet_bucket(bz.fleet_trucks, cap);
-        bz.fleet_trucks -= 1;
-        if fleet_bucket(bz.fleet_trucks, cap) != before {
-            self.events.push(SimEvent::BuildingChanged(lot));
-        }
+        self.unpark_truck(lot);
         lot
     }
 
-    /// A truck reached the end of its trip: an empty one parks (or is home
-    /// and done); a loaded one delivers and then heads for a truck lot with
-    /// room nearby, else back to the business that sent it.
-    pub(super) fn truck_arrived(&mut self, cargo: Cargo) {
+    /// At night, lorries parked a long time (`FLEET_NIGHT_HOME_AFTER`) go
+    /// home to their business, oldest first, so a lot never silts up.
+    pub(super) fn send_parked_lorries_home(&mut self) {
+        let tick = self.clock.tick;
+        let lots: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::FleetLot && z.fleet_trucks > 0)).map(|(id, _)| id).collect();
+        for lot in lots {
+            loop {
+                let Some(oldest) = self.buildings[lot].business.as_ref().and_then(|z| z.fleet_log.first().copied()) else { break };
+                if tick.saturating_sub(oldest.since) < FLEET_NIGHT_HOME_AFTER {
+                    break;
+                }
+                let home_ok = self.buildings.get(oldest.home).is_some_and(|h| h.construction.is_none() && !h.is_derelict());
+                if !home_ok {
+                    // Its business is gone: the lorry stays until a job comes.
+                    break;
+                }
+                self.unpark_truck(lot);
+                let cargo = return_cargo(oldest.home, oldest.home);
+                if !self.drive_empty(lot, cargo, oldest.model) {
+                    // No road home: it stays parked after all.
+                    self.park_truck(lot, oldest.home, oldest.model);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// A truck reached the end of its trip. An empty one parks at its lot
+    /// (or is home, back in its business's yard, or has left town); a
+    /// loaded one delivers and then heads for a truck lot, its business, or
+    /// out of town. No lorry ever just vanishes.
+    pub(super) fn truck_arrived(&mut self, cargo: Cargo, model: VehicleModel) {
         if is_return_trip(&cargo) {
-            self.park_truck(cargo.to);
+            if self.park_truck(cargo.to, cargo.from, model) {
+                return;
+            }
+            // Arrived at a full lot: home, or another lot, or away.
+            if self.fleet_capacity(cargo.to) > 0 {
+                self.send_truck_back(cargo.to, cargo.from, cargo.resource, model);
+            }
             return;
         }
         let at = cargo.to;
         let home = cargo.from;
         let resource = cargo.resource;
         self.deliver(cargo);
-        self.send_truck_back(at, home, resource);
+        self.send_truck_back(at, home, resource, model);
     }
 
-    fn send_truck_back(&mut self, at: BuildingId, home: BuildingId, resource: Resource) {
-        if self.truck_count() >= crate::market::MAX_TRUCKS {
-            return;
-        }
-        let Some(pos) = self.building_lot(at).map(|l| l.center) else { return };
-        let dest = self.fleet_lot_with_room(pos, FLEET_REACH).or_else(|| {
-            let h = self.buildings.get(home)?;
-            let ok = home != at && h.construction.is_none() && !h.is_derelict() && self.lots.get(h.lot).is_some_and(|l| l.center.distance(pos) <= RETURN_REACH);
-            ok.then_some(home)
-        });
-        let Some(dest) = dest else { return };
-        if dest == at {
-            self.park_truck(dest);
-            return;
-        }
+    /// Put an empty lorry on the road from `at` to `cargo.to` (or to the
+    /// city edge when `cargo.to` is null). False when there is no route.
+    fn drive_empty(&mut self, at: BuildingId, cargo: Cargo, model: VehicleModel) -> bool {
         let route = (|| {
             let (a_seg, a_pt) = self.truck_stop(at)?;
-            let (b_seg, b_pt) = self.truck_stop(dest)?;
+            let (b_seg, b_pt) = if self.buildings.contains_key(cargo.to) {
+                self.truck_stop(cargo.to)?
+            } else {
+                let exit = self.entry_node_const()?;
+                let node = self.roads.node(exit);
+                (*node.segments.iter().find(|&&s| self.roads.segment(s).alive)?, node.pos)
+            };
             self.traffic.net.find_route(a_seg, a_pt, b_seg, b_pt)
         })();
         match route {
             Some((lanes, s0, s1)) if !lanes.is_empty() => {
-                let cargo = Cargo { from: dest, to: dest, resource, amount: 0.0, price: 0.0 };
-                self.traffic.spawn_car(CitizenId::default(), Some(cargo), lanes, s0, s1, 7);
+                let id = self.traffic.spawn_car(CitizenId::default(), Some(cargo), lanes, s0, s1, 7);
+                self.traffic.cars[id].model = model;
+                true
             }
-            // No road: a lorry for a lot next door simply rolls in.
-            _ => self.park_truck(dest),
+            _ => false,
+        }
+    }
+
+    /// Where an empty lorry goes after a delivery at `at`: a truck lot with
+    /// room within `FLEET_REACH`, else its business wherever it is, else the
+    /// nearest lot with room at any distance, else out of town by the edge.
+    fn send_truck_back(&mut self, at: BuildingId, home: BuildingId, resource: Resource, model: VehicleModel) {
+        let Some(pos) = self.building_lot(at).map(|l| l.center) else { return };
+        let home_ok = home != at && self.buildings.get(home).is_some_and(|h| h.construction.is_none() && !h.is_derelict());
+        let dest = self
+            .fleet_lot_with_room(pos, FLEET_REACH)
+            .or_else(|| home_ok.then_some(home))
+            .or_else(|| self.fleet_lot_with_room(pos, f32::INFINITY))
+            .unwrap_or_default();
+        if dest == at {
+            self.park_truck(dest, home, model);
+            return;
+        }
+        let _ = resource;
+        let cargo = return_cargo(home, dest);
+        if self.drive_empty(at, cargo, model) {
+            return;
+        }
+        // No road there. A lot or business next door simply takes it in;
+        // otherwise try the town edge.
+        if self.buildings.contains_key(dest) {
+            if !self.park_truck(dest, home, model) && dest != home {
+                let out = return_cargo(home, BuildingId::default());
+                self.drive_empty(at, out, model);
+            }
         }
     }
 }
