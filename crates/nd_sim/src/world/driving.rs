@@ -421,9 +421,14 @@ impl World {
         // leave the same way.
         let (entries, exits) = self.highway_ends();
         let leaves = self.city_leaves();
-        let far = |w: &World, ns: Vec<NodeId>| ns.into_iter().max_by(|a, b| w.roads.node(*a).pos.distance(centre).total_cmp(&w.roads.node(*b).pos.distance(centre)).then(a.0.cmp(&b.0)));
-        let entry = far(self, entries.iter().map(|e| e.0).collect()).or_else(|| far(self, leaves.clone()));
-        let exit = far(self, exits.iter().map(|e| e.0).collect()).or(entry);
+        // The farthest road end with a way in to (or out from) the junction.
+        let far = |w: &World, ns: Vec<NodeId>, inbound: bool| {
+            let mut ns: Vec<NodeId> = ns.into_iter().filter(|&n| w.reaches(n, node, inbound)).collect();
+            ns.sort_by(|a, b| w.roads.node(*b).pos.distance(centre).total_cmp(&w.roads.node(*a).pos.distance(centre)).then(a.0.cmp(&b.0)));
+            ns.first().copied()
+        };
+        let entry = far(self, entries.iter().map(|e| e.0).collect(), true).or_else(|| far(self, leaves.clone(), true));
+        let exit = far(self, exits.iter().map(|e| e.0).collect(), false).or_else(|| far(self, leaves.clone(), false)).or(entry);
         let outsiders = if entry.is_some() { rng.random_range(takeover::OUTSIDERS.0..=takeover::OUTSIDERS.1) } else { 0 };
         let mut t = Takeover {
             id,
@@ -466,6 +471,24 @@ impl World {
         self.driving.takeovers.total += 1;
         self.events.push(SimEvent::Takeover(id));
         Ok(id)
+    }
+
+    /// Can a car drive from road end `end` to the junction at `node` (or
+    /// from the junction out to the end, `inbound` false)?
+    fn reaches(&self, end: NodeId, node: NodeId, inbound: bool) -> bool {
+        let net = &self.traffic.net;
+        let Some(inter) = net.node_intersection.get(node.0 as usize).and_then(|&i| net.intersections.get(i)) else { return false };
+        let at = self.roads.node(end).pos;
+        let lanes: Vec<crate::traffic::LaneId> = self.roads.node(end).segments.iter().filter_map(|s| net.segment_lanes.get(s)).flatten().copied().collect();
+        let starts_here = |l: crate::traffic::LaneId| net.lanes[l as usize].start().distance(at) < net.lanes[l as usize].end().distance(at);
+        let Some(&(junction_lane, _)) = inter.incoming.first() else { return false };
+        if inbound {
+            lanes.iter().filter(|&&l| starts_here(l)).any(|&l| net.route_lanes(l, 0.5, junction_lane, net.lanes[junction_lane as usize].length * 0.5).is_some())
+        } else {
+            let Some(&(c, _)) = inter.connectors.first() else { return false };
+            let out = net.lanes[c as usize].next[0];
+            lanes.iter().filter(|&&l| !starts_here(l)).any(|&l| net.route_lanes(out, 0.5, l, net.lanes[l as usize].length * 0.5).is_some())
+        }
     }
 
     /// An incoming lane of the meet junction to aim a car at: the approach
@@ -842,5 +865,206 @@ impl World {
     /// Spectators standing round the ring right now.
     pub fn takeover_crowd_now(&self) -> usize {
         self.takeover().map_or(0, |t| t.crowd.iter().filter(|&&c| self.citizens.get(c).is_some_and(|c| matches!(c.activity, Activity::Idle) && c.pos.distance(t.centre) < t.radius + 20.0)).count())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::buildings::Tier;
+    use crate::mind::IdleMind;
+    use crate::services::{IncidentKind, ServiceKind, UnitKind, UnitState};
+
+    fn square(x0: f32, y0: f32, w: f32, h: f32) -> Vec<Vec2> {
+        vec![Vec2::new(x0, y0), Vec2::new(x0 + w, y0), Vec2::new(x0 + w, y0 + h), Vec2::new(x0, y0 + h)]
+    }
+
+    /// Two avenues joined by cross streets, civic land between them and
+    /// homes to the south; a side street makes (0, 0) a four-way junction.
+    fn town(seed: u64) -> World {
+        let mut w = World::new(WorldConfig { seed, emergencies: false, ..WorldConfig::default() });
+        w.economy.treasury = 1_000_000.0;
+        w.add_road(&[Vec2::new(-700.0, 0.0), Vec2::new(700.0, 0.0)], 1, 1);
+        w.add_road(&[Vec2::new(-700.0, 120.0), Vec2::new(700.0, 120.0)], 1, 1);
+        for x in [-600.0, -300.0, 0.0, 300.0, 600.0] {
+            w.add_road(&[Vec2::new(x, 0.0), Vec2::new(x, 120.0)], 1, 1);
+        }
+        w.add_road(&[Vec2::new(0.0, -200.0), Vec2::new(0.0, 0.0)], 1, 1);
+        w.add_zone(square(-690.0, 8.0, 1380.0, 50.0), LandUse::Civic);
+        w.add_zone(square(-690.0, -60.0, 680.0, 52.0), LandUse::Residential);
+        w.add_zone(square(10.0, -60.0, 680.0, 52.0), LandUse::Residential);
+        let lots: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Residential && l.usable()).map(|(id, _)| id).take(10).collect();
+        for l in lots {
+            w.build_on(l);
+            if let Some(b) = w.lots[l].building {
+                w.finish_construction(b);
+            }
+        }
+        for _ in 0..40 {
+            if w.citizens.len() >= 16 {
+                break;
+            }
+            w.immigrate();
+        }
+        w
+    }
+
+    fn civic_lot(w: &World, x: f32) -> LotId {
+        w.lots
+            .iter()
+            .filter(|(_, l)| l.land_use == LandUse::Civic && l.usable() && l.building.is_none() && l.car_access() && l.area() >= 420.0 && l.car_point.y.abs() < 12.0)
+            .min_by(|a, b| (a.1.center.x - x).abs().total_cmp(&(b.1.center.x - x).abs()))
+            .map(|(id, _)| id)
+            .expect("a civic lot")
+    }
+
+    /// A crewed station of `kind` near `x`, staffed by `who`.
+    fn station(w: &mut World, kind: ServiceKind, x: f32, who: &[CitizenId]) -> BuildingId {
+        let b = w.build_service(civic_lot(w, x), kind, Tier::Mid).unwrap();
+        for &c in who {
+            if let Some(old) = w.citizens[c].work {
+                w.buildings[old].workers.retain(|x| *x != c);
+            }
+            w.citizens[c].work = Some(b);
+            w.buildings[b].workers.push(c);
+        }
+        b
+    }
+
+    fn tick(w: &mut World, n: usize, mut stop: impl FnMut(&World) -> bool) -> bool {
+        let mut minds = IdleMind;
+        for _ in 0..n {
+            if stop(w) {
+                return true;
+            }
+            w.tick(&mut minds);
+        }
+        stop(w)
+    }
+
+    #[test]
+    fn a_bad_crash_is_called_in_and_the_hurt_go_to_hospital() {
+        let mut w = town(7);
+        let folk: Vec<CitizenId> = w.citizens.keys().collect();
+        assert!(folk.len() >= 12);
+        station(&mut w, ServiceKind::Police, -450.0, &folk[0..4]);
+        let hospital = station(&mut w, ServiceKind::Health, 450.0, &folk[4..8]);
+        let rider = folk[10];
+        // A motorcyclist heading east on the avenue.
+        let seg = w.roads.nearest_street(Vec2::new(-200.0, 0.0)).unwrap().0;
+        let to = w.roads.nearest_street(Vec2::new(250.0, 0.0)).unwrap().0;
+        let (route, s0, s1) = w.traffic.net.find_route(seg, Vec2::new(-200.0, 1.75), to, Vec2::new(250.0, 1.75)).unwrap();
+        let car = w.traffic.spawn_car(rider, None, route, s0, s1, 0);
+        w.traffic.cars[car].model = VehicleModel::new(VehicleClass::Mid, BodyType::Motorcycle);
+        w.leave_building(rider);
+        w.citizens[rider].activity = Activity::Driving { car, to: None, purpose: Purpose::Wander };
+        w.citizens[rider].owns_car = true;
+        tick(&mut w, 3, |_| false);
+        assert!(w.traffic.cars[car].drive.profile.assigned, "the rider got a profile");
+        w.traffic.crash(vec![car], CrashCause::OffRoad, 30.0);
+        tick(&mut w, 1, |_| false);
+        let rec = w.driving.recent.last().expect("crash recorded").clone();
+        assert_eq!(rec.injured, vec![rider], "a bad spill at speed hurts the rider");
+        assert_eq!(w.driving.crashes_today, 1);
+        assert_eq!(w.driving.injuries_today, 1);
+        let crash = w.services.incident(rec.incident.unwrap()).unwrap();
+        assert_eq!(crash.kind, IncidentKind::Crash);
+        assert!(crash.on_road && crash.pos.distance(rec.pos) < 1.0);
+        assert!(!w.citizens[rider].owns_car, "the bike is written off");
+        let medical = w.services.incidents.iter().find(|i| i.kind == IncidentKind::Medical && i.citizen == Some(rider)).expect("a medical call").id;
+        // An ambulance goes, the rider ends up in a hospital bed.
+        let sent = tick(&mut w, 200, |w| w.services.units.values().any(|u| u.kind == UnitKind::Ambulance && u.incident == Some(medical) && u.state != UnitState::Idle));
+        assert!(sent, "an ambulance was dispatched");
+        let admitted = tick(&mut w, 400, |w| matches!(w.citizens[rider].activity, Activity::Visiting(b) if b == hospital));
+        assert!(admitted, "taken to hospital: {:?}", w.services.incident(medical).map(|i| i.stage));
+        // The police clear the scene and the wreck is towed, not deleted.
+        let towed = tick(&mut w, 400, |w| !w.traffic.cars.contains_key(car) && (w.driving.towed_total > 0 || !w.driving.tows.is_empty()));
+        assert!(towed, "wreck towed");
+        assert!(!w.services.incident(rec.incident.unwrap()).unwrap().active());
+    }
+
+    /// A seed whose personality makes a takeover regular.
+    fn rebel_seed(from: u64) -> u64 {
+        (from..from + 5000)
+            .find(|&s| {
+                let (c, h) = driver_traits(s);
+                rebelliousness(c, h) > 0.8
+            })
+            .unwrap()
+    }
+
+    fn node_at(w: &World, at: Vec2) -> usize {
+        w.roads.nodes.iter().position(|n| n.pos.distance(at) < 0.5).unwrap()
+    }
+
+    /// A takeover at (0, 0) with police in town. Returns its record, the
+    /// cars in the show, the donut cars and whether the junction was shut.
+    fn takeover_night(seed: u64) -> (takeover::Record, usize, usize, bool) {
+        let mut w = town(seed);
+        let folk: Vec<CitizenId> = w.citizens.keys().collect();
+        station(&mut w, ServiceKind::Police, -450.0, &folk[0..4]);
+        let mut s = 1;
+        for &c in &folk[8..12] {
+            s = rebel_seed(s + 1);
+            let p = &mut w.citizens[c];
+            p.seed = s;
+            p.age = 23;
+            p.owns_car = true;
+            p.vehicle = Some(VehicleModel { tuned: true, ..VehicleModel::new(VehicleClass::Expensive, BodyType::Coupe) });
+            p.next_decision_tick = u64::MAX / 2;
+            if let Some(h) = p.home {
+                p.inside = Some(h);
+                p.activity = Activity::AtHome;
+            }
+        }
+        let id = w.start_takeover(Some(Vec2::ZERO)).expect("starts");
+        assert!(w.takeover().is_some_and(|t| t.id == id && t.residents.len() == 4));
+        let show = tick(&mut w, 300, |w| w.takeover().is_some_and(|t| t.stage == Stage::Show));
+        assert!(show, "the crews gathered and the show began");
+        let t = w.takeover().unwrap().clone();
+        let inter = &w.traffic.net.intersections[w.traffic.net.node_intersection[t.node.0 as usize]];
+        let blocked = inter.connectors.iter().all(|&(l, _)| w.traffic.net.lanes[l as usize].blocked);
+        let stunts = t.cars.iter().filter(|&&c| w.traffic.cars[c].in_stunt()).count();
+        let donuts = t.cars.iter().filter(|&&c| w.traffic.cars[c].drive.stunt.is_some_and(|s| s.is_donut())).count();
+        assert!(stunts >= 3 && donuts >= 1, "{stunts} in the show, {donuts} spinning");
+        let over = tick(&mut w, 600, |w| w.takeover().is_none());
+        assert!(over, "it ended");
+        let rec = w.driving.takeovers.history.last().unwrap().clone();
+        let inter = &w.traffic.net.intersections[w.traffic.net.node_intersection[node_at(&w, rec.centre)]];
+        assert!(inter.connectors.iter().all(|&(l, _)| !w.traffic.net.lanes[l as usize].blocked), "the junction reopened");
+        assert!(w.traffic.cars.values().all(|c| !c.in_stunt()), "everyone back on the lanes");
+        (rec, stunts, donuts, blocked)
+    }
+
+    #[test]
+    fn a_takeover_holds_a_junction_and_breaks_up_when_the_police_arrive() {
+        let (rec, stunts, _, blocked) = takeover_night(11);
+        assert!(blocked, "the junction was closed to traffic during the show");
+        assert!(rec.police, "the police broke it up");
+        assert!(rec.residents == 4 && rec.outsiders >= takeover::OUTSIDERS.0, "{} locals, {} outsiders", rec.residents, rec.outsiders);
+        assert!(rec.participants >= stunts);
+        // Deterministic.
+        let (again, s2, _, _) = takeover_night(11);
+        assert_eq!((rec.ended, rec.participants, rec.crowd, rec.arrests), (again.ended, again.participants, again.crowd, again.arrests));
+        assert_eq!(stunts, s2);
+    }
+
+    #[test]
+    fn drink_rises_at_a_venue_and_wears_off() {
+        let mut w = town(3);
+        let c = w.citizens.keys().next().unwrap();
+        w.citizens[c].seed = rebel_seed(1);
+        w.citizens[c].age = 30;
+        let venue = w.buildings.keys().next().unwrap();
+        w.buildings[venue].land_use = LandUse::Entertainment;
+        w.citizens[c].activity = Activity::Visiting(venue);
+        w.step_drink(120);
+        let drunk = w.citizens[c].drunk;
+        assert!(drunk >= DRUNK, "two hours at the bar: {drunk}");
+        w.citizens[c].owns_car = true;
+        assert!(crate::citizens::wants_to_drive_drunk(&w.citizens[c]), "a rebel drives anyway");
+        w.citizens[c].activity = Activity::Idle;
+        w.step_drink(600);
+        assert_eq!(w.citizens[c].drunk, 0.0, "sober by morning");
     }
 }
