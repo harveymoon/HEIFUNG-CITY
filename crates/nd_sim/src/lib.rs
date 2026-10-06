@@ -9,6 +9,8 @@ pub mod bots;
 pub mod buildings;
 pub mod citizens;
 pub mod clock;
+/// [concerns] Complaints by category and city happiness over time.
+pub mod concerns;
 pub mod crime;
 pub mod economy;
 pub mod events;

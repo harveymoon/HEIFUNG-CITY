@@ -940,6 +940,7 @@ impl World {
             self.air.stats.grumbles_today += 1;
             let x = &mut self.citizens[c];
             x.remember(tick, line.to_string());
+            self.concerns.heard(c, x, crate::concerns::Concern::Noise, 0.2);
             x.thought = "Bloody drones.".to_string();
             x.mood = (x.mood - 0.02).max(0.0);
         }

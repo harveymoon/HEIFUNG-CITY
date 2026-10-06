@@ -233,6 +233,7 @@ impl World {
             c.mood = (c.mood - 0.15).max(0.0);
             c.thought = "Everything we own fits in a cart now.".to_string();
             c.remember(tick, template.replace("{}", &name));
+            self.concerns.heard(m, c, crate::concerns::Concern::Displacement, 0.8);
             if matches!(c.activity, Activity::AtHome) {
                 c.activity = Activity::Idle;
             }
@@ -515,6 +516,7 @@ impl World {
                 for m in &members {
                     if let Some(c) = self.citizens.get_mut(*m) {
                         c.remember(tick, "Nothing for us here. Hitching out.");
+                        self.concerns.heard(*m, c, crate::concerns::Concern::Housing, 0.8);
                     }
                 }
                 self.society.homeless.stats.left_town_total += members.len() as u32;

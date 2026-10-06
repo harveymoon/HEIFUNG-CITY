@@ -344,6 +344,7 @@ impl World {
         for cid in people {
             if let Some(c) = self.citizens.get_mut(cid) {
                 c.remember(tick, format!("{name} caught fire."));
+                self.concerns.heard(cid, c, crate::concerns::Concern::Safety, 0.6);
                 c.mood = (c.mood - 0.08).max(0.0);
             }
         }
@@ -428,6 +429,7 @@ impl World {
         let tick = self.clock.tick;
         if let Some(v) = victim.and_then(|v| self.citizens.get_mut(v)) {
             v.remember(tick, format!("Got robbed at {name}."));
+            self.concerns.heard(victim.unwrap_or_default(), v, crate::concerns::Concern::Safety, 0.6);
             v.mood = (v.mood - 0.1).max(0.0);
             v.thought = "Somebody just robbed me.".to_string();
         }
@@ -1405,9 +1407,21 @@ impl World {
             IncidentKind::Crash => self.services.incident(id).map(|i| i.people.iter().map(|p| p.citizen).collect()).unwrap_or_default(),
             _ => self.buildings.get(bid).map(|b| b.residents.iter().chain(b.workers.iter()).copied().collect()).unwrap_or_default(),
         };
-        for cid in who {
+        // [concerns] Help that took this long is a grievance.
+        let slow = response.filter(|r| *r >= crate::concerns::SLOW_RESPONSE_TICKS).map(|r| {
+            let unit = match kind {
+                IncidentKind::Fire => "the fire brigade",
+                IncidentKind::Medical => "the ambulance",
+                _ => "the police",
+            };
+            format!("Took {r} minutes for {unit} to get to {bname}.")
+        });
+        for (i, cid) in who.into_iter().enumerate() {
             if let Some(c) = self.citizens.get_mut(cid) {
                 c.remember(tick, note.clone());
+                if let Some(text) = slow.as_ref().filter(|_| i < 8) {
+                    self.concerns.said(tick, cid, c, crate::concerns::Concern::Services, 0.5, text.clone());
+                }
             }
         }
         self.events.push(SimEvent::UnitOnScene(id));
@@ -1523,6 +1537,11 @@ impl World {
         if let Some(c) = self.services.incident(id).and_then(|i| i.citizen).and_then(|c| self.citizens.get_mut(c)) {
             c.remember(tick, "Patched up by paramedics where I fell. No bed free anywhere.");
             c.next_decision_tick = tick + 60;
+        }
+        if let Some(cid) = self.services.incident(id).and_then(|i| i.citizen) {
+            if let Some(c) = self.citizens.get(cid) {
+                self.concerns.heard(cid, c, crate::concerns::Concern::Services, 0.5);
+            }
         }
         self.resolve(id, Outcome::TreatedOnSite);
     }
@@ -1706,12 +1725,14 @@ impl World {
             Outcome::Unsolved => {
                 if let Some(c) = citizen.and_then(|c| self.citizens.get_mut(c)) {
                     c.remember(tick, "Nobody came about the robbery. Nobody ever does.");
+                    self.concerns.heard(citizen.unwrap_or_default(), c, crate::concerns::Concern::Services, 0.6);
                     c.mood = (c.mood - 0.08).max(0.0);
                 }
             }
             Outcome::Recovered => {
                 if let Some(c) = citizen.and_then(|c| self.citizens.get_mut(c)) {
                     c.remember(tick, "Waited hours for an ambulance that never came. Pulled through on my own.");
+                    self.concerns.heard(citizen.unwrap_or_default(), c, crate::concerns::Concern::Services, 0.8);
                     c.mood = (c.mood - 0.15).max(0.0);
                     c.next_decision_tick = tick + 30;
                 }

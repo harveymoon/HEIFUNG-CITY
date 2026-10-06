@@ -145,6 +145,8 @@ impl World {
                 let name = self.buildings[inside].name.clone();
                 let c = &mut self.citizens[cid];
                 c.mood = (c.mood - 0.012).max(0.0);
+                // [concerns] Every dark hour counts (once a day each).
+                self.concerns.said(tick, cid, c, crate::concerns::Concern::Power, 0.4, format!("Sat in the dark at {name}. No power."));
                 if self.rng.random_bool(0.04) {
                     c.thought = "The power is out again.".to_string();
                     c.remember(tick, format!("Sat in the dark at {name}. No power."));

@@ -46,6 +46,8 @@ mod car_tests;
 #[cfg(test)]
 mod edge_tests;
 #[cfg(test)]
+mod concerns_tests;
+#[cfg(test)]
 mod tests;
 mod trains;
 mod trips;
@@ -367,6 +369,9 @@ pub struct World {
     /// [places] Venue, shop and park reputations (`world/places.rs`).
     #[serde(default)]
     pub places: crate::places::Places,
+    /// [concerns] What people complain about, and city happiness, by day.
+    #[serde(default)]
+    pub concerns: crate::concerns::Concerns,
 }
 
 impl World {
@@ -431,6 +436,7 @@ impl World {
             contamination: crate::ground::Contamination::new(half + 200.0, crate::ground::CONTAMINATION_CELL),
             industry_bias: Vec::new(),
             places: Default::default(),
+            concerns: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -741,6 +747,8 @@ impl World {
         }
         self.step_bots();
         self.step_citizens(minds);
+        // [concerns] Happiness on the hour and at midnight.
+        self.step_concerns();
         // Every system that moves people has run: lay the breadcrumbs.
         for c in self.citizens.values_mut() {
             c.push_trail();

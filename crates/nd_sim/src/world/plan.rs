@@ -928,6 +928,7 @@ impl World {
                         Some(m) => c.remember(tick, m.to_string()),
                         None => c.remember(tick, format!("{} was demolished. Homeless again.", b.name)),
                     }
+                    self.concerns.heard(cid, c, crate::concerns::Concern::Displacement, 0.8);
                 }
             }
         }
@@ -962,7 +963,10 @@ impl World {
             c.work = None;
             c.income = GIG_INCOME;
             if let Some(m) = memory {
+                // [concerns] A shop going under hurts; a site crew moving on is routine.
+                let s = if m.contains("shut down") { 0.6 } else { 0.15 };
                 c.remember(tick, m);
+                self.concerns.heard(cid, c, crate::concerns::Concern::Jobs, s);
             }
         }
     }
