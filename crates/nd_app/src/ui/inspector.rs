@@ -79,7 +79,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 let units: Vec<&nd_sim::Unit> = w.services.units.values().filter(|u| u.station == id).collect();
                 let mut line = format!("{}  ·  {:.0}/day", s.kind.tier_label(s.tier), s.kind.upkeep_per_day(s.tier));
                 if s.kind.radius(s.tier) > 0.0 {
-                    line += &format!("  ·  covers {:.0} m by road", s.kind.radius(s.tier));
+                    line += &format!("  ·  covers {:.0} m {}", s.kind.radius(s.tier), if s.kind == nd_sim::ServiceKind::TrashDepot { "around" } else { "by road" });
                 }
                 if !units.is_empty() {
                     line += &format!("  ·  {} {}s, {} crewed, {} out", units.len(), units[0].kind.label(), w.crewed_units(id), units.iter().filter(|u| u.busy()).count());

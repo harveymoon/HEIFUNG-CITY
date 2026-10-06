@@ -301,7 +301,7 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         }
         Placeable::Service(k, t) => {
             if k.radius(t) > 0.0 {
-                line += &format!(", covers {:.0} m by road", k.radius(t));
+                line += &format!(", covers {:.0} m {}", k.radius(t), if k == nd_sim::ServiceKind::TrashDepot { "around" } else { "by road" });
             }
             if k.units(t) > 0 {
                 line += &format!(", {} {}{}", k.units(t), k.unit_kind().map_or("", |u| u.label()), if k.units(t) == 1 { "" } else { "s" });
