@@ -200,33 +200,65 @@ pub fn sync_plan_holograms(
     }
 }
 
+/// Marks an entity the depth view hid, so leaving Underground shows again
+/// only what the depth view itself hid.
+#[derive(Component)]
+pub struct DepthHidden;
+
 /// Show the layer the view is set to. Underground hides the surface
 /// (terrain, water, buildings, lots, ground roads, walkers, cars above the
 /// ground) and draws the ground roads as faint outlines over the tunnels.
+///
+/// Many surface entities have their own owner deciding whether they show:
+/// a citizen indoors is hidden by `sync_citizens` (its entity keeps the
+/// plain stand-in figure at the last place it was seen), the generic car
+/// under an emergency unit by `sync_emergency`, a faded smog puff by
+/// `sync_haze`. This system runs after all of them, so it must never
+/// *show* anything it did not hide itself: it used to set every surface
+/// entity to `Inherited` each frame above ground, which brought every
+/// citizen indoors back as a frozen, white, unclickable old-style figure.
+/// So it hides (and marks) what it must underground, and above ground
+/// only restores what it marked.
 #[allow(clippy::type_complexity)]
 pub fn apply_depth(
+    mut commands: Commands,
     tools: Res<ToolState>,
     sim: Res<Sim>,
     mut gizmos: Gizmos,
-    mut surface: Query<&mut Visibility, (Or<(With<TerrainTag>, With<BuildingTag>, With<LotsTag>, With<ScatterTag>, With<ParkTag>, With<VacantTag>, With<RoadsTag>, With<WaterTag>, With<LaneArrowsTag>, With<PathsTag>, With<WalkDetailTag>, With<SignalTag>, With<CitizenTag>, With<HazeTag>)>, Without<TunnelTag>, Without<CarTag>)>,
+    mut surface: Query<(Entity, &mut Visibility, Has<DepthHidden>, Has<CitizenTag>), (Or<(With<TerrainTag>, With<BuildingTag>, With<LotsTag>, With<ScatterTag>, With<ParkTag>, With<VacantTag>, With<RoadsTag>, With<WaterTag>, With<LaneArrowsTag>, With<PathsTag>, With<WalkDetailTag>, With<SignalTag>, With<CitizenTag>, With<HazeTag>)>, Without<TunnelTag>, Without<CarTag>)>,
     mut tunnels: Query<&mut Visibility, (With<TunnelTag>, Without<CarTag>)>,
-    mut cars: Query<(&Transform, &mut Visibility), (With<CarTag>, Without<TunnelTag>)>,
+    mut cars: Query<(Entity, &Transform, &mut Visibility, Has<DepthHidden>), (With<CarTag>, Without<TunnelTag>)>,
 ) {
     let under = tools.depth == Depth::Underground;
-    let show = |v: &mut Visibility, on: bool| {
-        let want = if on { Visibility::Inherited } else { Visibility::Hidden };
+    // Hide (and mark) or restore (only if marked); `restore` false leaves
+    // the entity to its owner, which sets it every frame anyway.
+    let mut apply = |e: Entity, v: &mut Visibility, marked: bool, on: bool, restore: bool| {
+        if !on {
+            if *v != Visibility::Hidden {
+                *v = Visibility::Hidden;
+                if !marked {
+                    commands.entity(e).try_insert(DepthHidden);
+                }
+            }
+        } else if marked {
+            if restore {
+                *v = Visibility::Inherited;
+            }
+            commands.entity(e).try_remove::<DepthHidden>();
+        }
+    };
+    for (e, mut v, marked, citizen) in &mut surface {
+        // Citizens: `sync_citizens` sets every one, every frame.
+        apply(e, &mut v, marked, !under, !citizen);
+    }
+    for mut v in &mut tunnels {
+        let want = if under { Visibility::Inherited } else { Visibility::Hidden };
         if *v != want {
             *v = want;
         }
-    };
-    for mut v in &mut surface {
-        show(&mut v, !under);
     }
-    for mut v in &mut tunnels {
-        show(&mut v, under);
-    }
-    for (tf, mut v) in &mut cars {
-        show(&mut v, !under || tf.translation.y < -2.5);
+    for (e, tf, mut v, marked) in &mut cars {
+        apply(e, &mut v, marked, !under || tf.translation.y < -2.5, true);
     }
     if under {
         let w = &sim.world;
