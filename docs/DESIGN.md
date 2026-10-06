@@ -99,7 +99,7 @@ Citizens are rendered from their simulated positions every frame.
   moves at a believable pace on screen at 1x; trips therefore take sim-time tens of
   minutes, the usual city-builder compromise. Right-hand traffic; lane sets are centred
   on the road; junction curves stay inside the junction; cars refuse to enter a
-  junction whose exit lane is full; stalled trips time out. Pedestrians walk on the
+  junction whose exit lane is full; a vehicle 30 traffic minutes on one route replans from where it stands, and nothing is ever taken off the road for being slow: jams are part of the city and drivers feel them. Pedestrians walk on the
   right-hand pavement.
 - **Driving** (`traffic.rs` `DriverProfile`, `world/driving.rs`, `takeover.rs`): turns follow a
   circular arc tangent to both lanes (the fillet of their corner), long vehicles swing wide, and
@@ -226,17 +226,41 @@ Citizens are rendered from their simulated positions every frame.
   Deep in debt for five days means closure: workers laid off, the building goes
   derelict, and after a week it is demolished so the lot can be reused. Offices
   and civic buildings are publicly funded.
-- **Parking**: every car trip ends in a space. Towers (high tier) bring their own
-  spaces for about half their homes and jobs, middle-tier blocks a quarter, cheap
-  buildings none. Drivers use the destination's spaces, else pay at the nearest
-  parking business within 180 m with room (a fee by tier and land value that goes to
-  the business), else leave the car on the street, lose a little mood, and are counted
-  as a shortage. When the day's shortage outruns free spaces, development opens a
-  parking lot on a vacant lot: a surface lot where land is cheap (about one space
-  per 28 m², two jobs), a multi-storey car park on middle land (three to five decks).
-  It is the cheapest business in town and lives or dies on fees. Parking lots render
-  their occupancy: cars fill the painted bays of a surface lot and the edges and roof
-  of a car park in proportion to the spaces in use.
+- **Cars** (`world/cars.rs`, `vehicle::Vehicles`): every private car is a record with a place:
+  parked (the owner's home spaces, a building's garage, a parking business, a kerb slot, or squeezed
+  onto the street when nothing was free) or on the road. A car comes into the city only with a
+  household driving in (off a highway carriageway at the map edge, or the road at the city's edge),
+  or when bought (at a dealer, the nearest goods or gadget shop, and delivered home by its driver; or
+  out of town, driven in from the edge); it leaves only when sold (driven to the dealer), scrapped, or
+  driven out of town by an emigrating owner. A trip by car starts at the car: the driver walks to it
+  (within 320 m) and it pulls out of its kerb slot into a gap. At the far end it uses the
+  destination's own spaces; else the driver weighs the nearest free kerb slots and parking lots by
+  the drive there (by the route it would really take), the walk back and the fee; with nothing in
+  sight it circles the streets around (counted as circling, the signal development opens lots on),
+  and after four tries parks anywhere on the street. Kerbs: one slot per 6.5 m on both sides of
+  streets, none within 12 m of a junction, none on highways, bridges, avenues (clearways) or streets
+  fronted by shops and nightlife (loading). A car keeps its space until it drives off, so a lot's
+  occupancy is the cars standing in it, overnight too. Cars parked at a building that goes are moved
+  to the street. Lorries return to their business or a truck lot (`world/industry`); delivery vans
+  to their shop.
+- **How people travel** (`World::mode_options`, `choose_mode`): per trip each citizen weighs walking,
+  their bike, the bus, the train and their car (when parked nearby) in minute-equivalents: time
+  (weighed by ambition), money (fares, fuel, the expected fee; weighed by income), comfort (long
+  walks tire, more so for children and the old; cycling worries the cautious; the unsociable mind
+  the crowd; a car is a comfortable seat, most of all to hedonists) and remembered pain, with a
+  little daily whim. Pain (`Commute`, bad half-hours per trip, fading daily) comes from long walks
+  and rides, slow transit and hours-long waits, jams, the hunt for a space, fees and the walk back
+  from the car. Habits follow once a day: long walks buy a bike at a shop, parking misery or endless
+  jams sell the car when there is another way, transit that keeps failing (or walks and rides too
+  long) buys one if the household can afford it; memories record each. The report counts trips by
+  mode per day.
+- **Parking businesses**: when the day's circling outruns free spaces, development opens a
+  parking lot on a vacant lot near the last driver who could not find a space: a surface lot where
+  land is cheap (about one space per 28 m², two jobs), a multi-storey car park on middle land
+  (three to five decks). It is the cheapest business in town and lives or dies on fees (a fee by
+  tier and land value per car parked). Towers (high tier) bring their own spaces for about half
+  their homes and jobs, middle-tier blocks a quarter, cheap buildings none. Parking lots render
+  their occupancy; cars at the kerb are drawn there.
 - **Pedestrian network** (`nd_sim::walk`): a second graph for people on foot. Pavements
   on both sides of every street, path centres, a crossing hub at every junction, a
   walkable setback loop inset into every usable lot with its front joined to the
@@ -410,6 +434,35 @@ Citizens are rendered from their simulated positions every frame.
   taken, unit and whether it came from out of town, fee, fire damage per building), the last 500
   resolved ones on file, shown live in the Emergencies window and by the `incidents` API command.
   Services draw from their own random stream so the rest of the simulation is not perturbed.
+- **Crime, the street and the bins** (`nd_sim::{crime, homeless, trash}`, hooked in from
+  `world/society.rs`, their own random stream). *Crime*: every hour each adult may turn, by class
+  (poor 1, middle 0.22, rich 0.04), being jobless (x2.5) or homeless (x1.6), hunger, unhappiness,
+  cheap land at home (nothing from land value 0.7 up), police coverage at home (cut by up to 80%),
+  personality (boldness from the seed), youth and the offenders living within 140 m (+60% each, up
+  to x4: crime spreads through a poor district nobody polices); at most 8% of adults offend. An
+  active offender strikes about a third of the time a day (twice as often at night, less under
+  coverage) at a building within 260 m: theft from a business (6% of its cash up to 80, two units of
+  stock), burglary (a quarter of a household's money up to 100), assault (the victim falls ill
+  through the medical hook; 6% are murders) or vandalism (condition). Every offence goes to
+  `report_crime`; the services arrest. A jail term ends a career at 20% + 8% a day served, an early
+  release from a police cell at 5% (and emboldens); released offenders who strike again make the
+  reoffending rate. Offences leave decaying heat at hot spots, which take land value off the block
+  and frighten the neighbours (mood; rich households near heat 4+ leave). *Homelessness*: a
+  household evicted with nowhere cheaper and no money stays on the street 70% of the time if any
+  land is cheap (value < 0.36): camps of up to six households on cheap pavements, vacant lots and
+  unzoned parcels, or (with a car) an RV or van at the kerb; they eat charity meals, walk back to
+  the camp at night, are housed again by the ordinary daily search when something affordable is
+  free, by outreach from a clinic or police post nearby, or give up after ten days. Camps lower land
+  value and are drawn only on cheap land. *Trash*: people throw out 1.5/1.8/2.4 kg a day by class,
+  workers 0.6 to 2.8 kg by land use; bins hold three days. A staffed trash depot (Buildings >
+  Services, radius 560/800/1120 m, 2/4/7 trucks of two crew) sends garbage trucks (cars of the
+  traffic model, 9 t, a few minutes a stop) 06:00-18:00 to the fullest covered bins, unloading at
+  the depot. Outside its reach rich buildings pay a private hauler (1.5 a household a day) whose
+  trucks come in from the map edge and drive the trash out of town; everyone else's bins overflow:
+  bags on the pavement, complaints and mood, land value, and rats (illness). Demo, day 8: bare,
+  19 offenders and about 10 offences a day, 103 of ~350 buildings overflowing, the hauler with 88
+  clients; with a police station, jail, dispatch and depot, 11 offenders, 5 arrests, nothing
+  overflowing.
 - **Economy stats**: demand per land use, Gini of incomes, class counts, rents per
   tier, displaced, emigrated and priced-out counters, plus market stats: businesses,
   deals, imports, exports, meals sold, hungry citizens, closures, and the average

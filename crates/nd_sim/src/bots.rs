@@ -150,6 +150,8 @@ impl World {
                 let Some((route, s0, s1)) = self.traffic.net.find_route(fs, fp, ts, tp) else { continue };
                 let id = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, 0);
                 self.traffic.cars[id].model = VehicleModel::delivery(kind, &mut rng);
+                // [carlife] The van drives back to the shop afterwards.
+                self.truck_dispatched(id, Some(shop));
                 vans += 1;
                 self.bots.van_orders_today += 1;
             }

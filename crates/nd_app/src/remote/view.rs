@@ -289,6 +289,12 @@ pub fn citizen_detail(w: &World, id: CitizenId, c: &Citizen, favourite: bool) ->
             "id": key_str(h), "members": hh.members.iter().map(|m| key_str(*m)).collect::<Vec<_>>(), "money": round(hh.money),
             "groceries": round(hh.groceries), "income": round(w.household_income(h)), "rent_share": w.household_rent_share(h).filter(|s| s.is_finite()).map(round),
         }))),
+        "vehicles": citizen_vehicles(w, c),
+        "commute": {
+            "pain": nd_sim::citizens::TripMode::ALL.iter().map(|m| (m.key().to_string(), json!({ "pain": round(c.commute.pain_of(*m)), "recent_trips": round(c.commute.trips[m.index()]) }))).collect::<serde_json::Map<String, Value>>(),
+            "parking_pain": round(c.commute.parking_pain), "trip_mode_now": c.commute.mode.map(|m| m.key()),
+            "last_trip": { "mode": c.commute.last_mode.map(|m| m.key()), "minutes": c.commute.last_minutes, "pain": round(c.commute.last_pain) },
+        },
         "thought": c.thought, "spotlight": c.spotlight, "favourite": favourite,
         "memories": c.memories.iter().rev().map(|m| { let mut t = tick_time(m.tick); t["text"] = json!(m.text); t }).collect::<Vec<_>>(),
     })
@@ -560,4 +566,16 @@ pub fn tier_key(t: nd_sim::Tier) -> &'static str {
         nd_sim::Tier::Mid => "mid",
         nd_sim::Tier::High => "high",
     }
+}
+
+/// [carlife] A citizen's wheels: the bike, and the car with where it is.
+pub fn citizen_vehicles(w: &World, c: &Citizen) -> Value {
+    let car = c.car.and_then(|vid| w.vehicles.cars.get(vid).map(|car| (vid, car))).map(|(vid, car)| {
+        let place = match car.place {
+            nd_sim::CarPlace::Parked(s) => json!({ "parked": s.kind.label(), "building": s.building.map(key_str), "building_name": building_name(w, s.building), "pos": v2(s.pos), "since_tick": s.since }),
+            nd_sim::CarPlace::Driving(cid) => json!({ "driving": key_str(cid), "errand": format!("{:?}", w.traffic.cars.get(cid).map(|t| t.errand)) }),
+        };
+        json!({ "id": key_str(vid), "body": car.model.body.label(), "class": format!("{:?}", car.model.class), "price": round(car.model.price()), "place": place })
+    });
+    json!({ "bike": c.owns_bike, "car": car })
 }

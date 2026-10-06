@@ -352,6 +352,273 @@ impl VehicleModel {
     }
 }
 
+// ── ownership: every private car is a thing with a place ─────────────────
+
+slotmap::new_key_type! {
+    /// A privately owned car (or motorcycle, scooter) in the city.
+    pub struct VehicleId;
+}
+
+/// What kind of space a parked car occupies.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ParkKind {
+    /// A space of the owner's home building.
+    #[default]
+    Home,
+    /// A space of the building the driver went to (a tower's garage).
+    Building,
+    /// A paid space at a parking business.
+    Lot,
+    /// A kerb slot on a street, free.
+    Kerb,
+    /// Squeezed onto the street with no legal space left (counted as a
+    /// shortage); it still has a place, just not a good one.
+    Overflow,
+    /// On a dealer's forecourt.
+    Dealer,
+}
+
+impl ParkKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            ParkKind::Home => "home",
+            ParkKind::Building => "building",
+            ParkKind::Lot => "parking lot",
+            ParkKind::Kerb => "kerb",
+            ParkKind::Overflow => "street (no space)",
+            ParkKind::Dealer => "dealer",
+        }
+    }
+
+    /// Occupies one of a building's `parking_capacity` spaces.
+    pub fn uses_building(self) -> bool {
+        matches!(self, ParkKind::Home | ParkKind::Building | ParkKind::Lot)
+    }
+
+    /// Stands on a street (drawn at the kerb).
+    pub fn on_street(self) -> bool {
+        matches!(self, ParkKind::Kerb | ParkKind::Overflow)
+    }
+}
+
+/// Where a parked car stands. `pos`/`heading` are where it is drawn; a car
+/// on a street also holds `slot` on `segment` (`side` 0 is the kerb to the
+/// right of a→b, 1 the other kerb).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ParkSpot {
+    pub kind: ParkKind,
+    #[serde(default)]
+    pub building: Option<crate::buildings::BuildingId>,
+    #[serde(default)]
+    pub segment: Option<crate::roads::SegmentId>,
+    #[serde(default)]
+    pub side: u8,
+    #[serde(default)]
+    pub slot: u16,
+    pub pos: glam::Vec2,
+    pub heading: f32,
+    /// Tick it was parked.
+    #[serde(default)]
+    pub since: u64,
+}
+
+/// Where a private car is: parked somewhere, or on the road.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum CarPlace {
+    Parked(ParkSpot),
+    Driving(crate::traffic::CarId),
+}
+
+/// A private car: who owns it, what it is, and where it is right now.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OwnedCar {
+    pub owner: crate::citizens::CitizenId,
+    pub model: VehicleModel,
+    pub place: CarPlace,
+    #[serde(default)]
+    pub color: u8,
+    /// Tick it came into the city (arrived with its household or bought).
+    #[serde(default)]
+    pub since: u64,
+}
+
+impl OwnedCar {
+    pub fn spot(&self) -> Option<&ParkSpot> {
+        match &self.place {
+            CarPlace::Parked(s) => Some(s),
+            CarPlace::Driving(_) => None,
+        }
+    }
+}
+
+/// What a vehicle on the road is doing beyond driving its route. The
+/// lifecycle (`world/cars.rs`) reads it when the vehicle arrives.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum Errand {
+    /// An ordinary trip: a private car to its owner's destination, or a
+    /// through car to the far edge of the map.
+    #[default]
+    Trip,
+    /// A private car looking for a space: `tries` places checked so far.
+    Search { tries: u8 },
+    /// Heading for a parking business it means to use.
+    ToLot(crate::buildings::BuildingId),
+    /// Heading for a free kerb slot it saw.
+    ToKerb,
+    /// Driven to `dealer` to be sold there (a null dealer: sold out of
+    /// town, driven off the map).
+    Sale(crate::buildings::BuildingId),
+    /// Delivered from the dealer to the new owner's home.
+    Deliver,
+    /// Leaving town for good with its emigrating owner.
+    Leave,
+    /// A truck or van out on a job; afterwards it returns to `base` (the
+    /// business that keeps it), or leaves town when `None`.
+    Haul { base: Option<crate::buildings::BuildingId> },
+    /// A truck or van driving back to the business it belongs to.
+    Return(crate::buildings::BuildingId),
+}
+
+/// Why a private car came into or left the city: the only ways it can.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CarEvent {
+    /// Drove in with a household moving to town.
+    ArrivedWithHousehold,
+    /// Bought at a dealer in town.
+    Bought,
+    /// Bought out of town and driven in from the map edge.
+    BoughtOutOfTown,
+    /// Given a place on loading a save from before cars were persistent.
+    Migrated,
+    /// Sold to a dealer.
+    Sold,
+    /// Scrapped (worth nothing).
+    Scrapped,
+    /// Driven out of town by an emigrating owner.
+    Emigrated,
+}
+
+impl CarEvent {
+    pub fn creates(self) -> bool {
+        matches!(self, CarEvent::ArrivedWithHousehold | CarEvent::Bought | CarEvent::BoughtOutOfTown | CarEvent::Migrated)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            CarEvent::ArrivedWithHousehold => "arrived_with_household",
+            CarEvent::Bought => "bought",
+            CarEvent::BoughtOutOfTown => "bought_out_of_town",
+            CarEvent::Migrated => "migrated",
+            CarEvent::Sold => "sold",
+            CarEvent::Scrapped => "scrapped",
+            CarEvent::Emigrated => "emigrated",
+        }
+    }
+}
+
+/// Trip modes counted per day, indexed by `citizens::TripMode::index`
+/// (room for modes added later, such as air taxis).
+pub const MODE_SLOTS: usize = 8;
+
+/// Counts the lifecycle and the mode choice keep, today and in total.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CarStats {
+    /// Private cars created and destroyed since the city began.
+    pub created_total: u32,
+    pub destroyed_total: u32,
+    /// The same by event (`CarEvent::label`).
+    pub events_total: std::collections::BTreeMap<String, u32>,
+    pub bought_today: u32,
+    pub sold_today: u32,
+    pub bikes_bought_today: u32,
+    pub bikes_sold_today: u32,
+    /// Trips begun today and yesterday, by mode.
+    pub trips_today: [u32; MODE_SLOTS],
+    pub trips_yesterday: [u32; MODE_SLOTS],
+    /// Drivers who had to look beyond their destination for a space.
+    pub circled_today: u32,
+    /// Traffic seconds spent looking for a space today.
+    pub search_seconds_today: f32,
+    /// Where arriving cars parked today: [home/building, lot, kerb, overflow].
+    pub parked_today: [u32; 4],
+    /// Trucks and vans bought by businesses (none was parked at base).
+    pub fleet_bought_total: u32,
+    /// Trucks and vans back at their base today.
+    pub fleet_returned_today: u32,
+}
+
+/// Every private car in the city, the trucks and vans parked at their
+/// businesses, and the counts.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Vehicles {
+    pub cars: slotmap::SlotMap<VehicleId, OwnedCar>,
+    /// Trucks and vans parked at the business that owns them.
+    #[serde(default)]
+    pub fleet_parked: std::collections::BTreeMap<crate::buildings::BuildingId, u16>,
+    #[serde(default)]
+    pub stats: CarStats,
+    /// Kerb slots taken, per street segment: (side, slot) → car. Rebuilt
+    /// from `cars` after a load or a road rebuild.
+    #[serde(skip)]
+    pub kerbs: std::collections::HashMap<crate::roads::SegmentId, std::collections::HashMap<(u8, u16), VehicleId>>,
+    /// Streets with no kerb parking (shopping streets keep their kerbs for
+    /// loading), and the (plan version, roads version) they were found for.
+    #[serde(skip)]
+    pub no_kerb: (Option<(u64, u64)>, std::collections::HashSet<crate::roads::SegmentId>),
+}
+
+impl Vehicles {
+    pub fn note(&mut self, e: CarEvent) {
+        *self.stats.events_total.entry(e.label().to_string()).or_insert(0) += 1;
+        if e.creates() {
+            self.stats.created_total += 1;
+        } else {
+            self.stats.destroyed_total += 1;
+        }
+    }
+
+    /// Rebuild the kerb index from where cars stand.
+    pub fn reindex_kerbs(&mut self) {
+        self.kerbs.clear();
+        for (id, car) in &self.cars {
+            if let Some(s) = car.spot().filter(|s| s.kind.on_street()) {
+                if let Some(seg) = s.segment {
+                    self.kerbs.entry(seg).or_default().insert((s.side, s.slot), id);
+                }
+            }
+        }
+    }
+
+    /// Private cars parked, driving, and driving while looking for a space.
+    pub fn counts(&self, traffic: &crate::traffic::Traffic) -> (usize, usize, usize) {
+        let (mut parked, mut driving, mut searching) = (0, 0, 0);
+        for car in self.cars.values() {
+            match car.place {
+                CarPlace::Parked(_) => parked += 1,
+                CarPlace::Driving(cid) => {
+                    driving += 1;
+                    if traffic.cars.get(cid).is_some_and(|c| matches!(c.errand, Errand::Search { .. } | Errand::ToKerb | Errand::ToLot(_))) {
+                        searching += 1;
+                    }
+                }
+            }
+        }
+        (parked, driving, searching)
+    }
+}
+
+/// The five traits of `nd_minds::Personality` (sociability, ambition,
+/// hedonism, caution, curiosity), drawn from the seed the same way, for
+/// choices the sim makes itself (how to travel).
+pub fn traits_of(seed: u64) -> [f32; 5] {
+    let mut rng = SimRng::seed_from_u64(seed);
+    [rng.random(), rng.random(), rng.random(), rng.random(), rng.random()]
+}
+
+/// What a bike costs at a shop.
+pub const BIKE_PRICE: f32 = 45.0;
+
 #[cfg(test)]
 mod tests {
     use super::*;

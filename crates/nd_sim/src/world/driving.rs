@@ -12,7 +12,7 @@ use crate::citizens::{driver_traits, rebelliousness, DRUNK};
 use crate::services::{CrimeKind, Outcome, Stage as IncidentStage};
 use crate::takeover::{self, Stage, Takeover, Takeovers};
 
-use crate::traffic::{CrashCause, CrashReport, DriverProfile, GangPhase, GangRole, StuntKind, BAD_CRASH};
+use crate::traffic::{CrashCause, CrashReport, DriverProfile, GangPhase, GangRole, LaneKind, StuntKind, BAD_CRASH};
 use crate::vehicle::{BodyType, Livery, VehicleClass, VehicleModel};
 
 /// Drunkenness gained per tick at a venue (times `hedonism - 0.3`: the
@@ -221,8 +221,13 @@ impl World {
                 if !wrecked {
                     continue;
                 }
-                let (pos, heading, model) = (car.pos, car.heading, car.model);
+                let (pos, heading, model, owned) = (car.pos, car.heading, car.model, car.owned);
                 self.traffic.cars[c].citizen = CitizenId::default();
+                // [carlife] Written off: scrapped (the tow truck hauls it to the yard).
+                self.traffic.cars[c].owned = None;
+                if let Some(vid) = owned {
+                    self.drop_car(vid, crate::vehicle::CarEvent::Scrapped);
+                }
                 self.driving.wrecks.push(Wreck { car: c, crash: r.id, incident: None, since: tick });
                 if let Some(p) = self.citizens.get_mut(driver) {
                     // Out of the car, standing (or lying) by it.
@@ -230,9 +235,6 @@ impl World {
                     p.inside = None;
                     p.pos = pos + Vec2::new(-heading.sin(), heading.cos()) * 2.2;
                     p.prev_pos = p.pos;
-                    p.owns_car = false;
-                    p.vehicle = None;
-                    p.parked_at = None;
                     p.mood = (p.mood - 0.15).max(0.0);
                     p.next_decision_tick = tick + if hurt { crate::services::MEDICAL_GIVE_UP + 120 } else { 30 };
                     p.thought = if hurt { "Everything hurts. Where's the ambulance?".to_string() } else { "The car's totalled.".to_string() };
@@ -344,7 +346,7 @@ impl World {
         let mut out: Vec<(CitizenId, f32)> = self
             .citizens
             .iter()
-            .filter(|(id, c)| (17..=36).contains(&c.age) && c.owns_car && !self.services.in_custody(*id) && !self.is_patient(*id))
+            .filter(|(id, c)| (17..=36).contains(&c.age) && c.owns_car && c.car.is_some() && !self.services.in_custody(*id) && !self.is_patient(*id))
             .filter(|(_, c)| matches!(c.activity, Activity::AtHome | Activity::Visiting(_) | Activity::Idle))
             .filter_map(|(id, c)| {
                 let (caution, hedonism) = driver_traits(c.seed);
@@ -505,26 +507,23 @@ impl World {
     /// Put a local in their car, bound for the meet.
     fn drive_to_meet(&mut self, cid: CitizenId, t: &Takeover) -> Option<CarId> {
         let c = self.citizens.get(cid)?;
-        let from = match c.inside.and_then(|b| self.building_lot(b)) {
-            Some(l) => l.car_segment.map(|s| (s, l.car_point)),
-            None => self.roads.nearest_street(c.pos).map(|(s, _, q)| (s, q)),
-        }?;
-        let (start, s0, _) = self.traffic.net.nearest_lane_on(from.0, from.1)?;
-        let (goal, s1) = self.meet_lane(t, from.1, t.cars.len())?;
-        let (route, s0, s1) = self.traffic.net.route_lanes(start, s0, goal, s1)?;
+        let here = c.inside.and_then(|b| self.building_entrance(b)).unwrap_or(c.pos);
         let home = c.home;
-        let exit = self.leave_building(cid);
-        let car = self.traffic.spawn_car(cid, None, route, s0, s1, 0);
-        let model = {
-            let c = &mut self.citizens[cid];
-            *c.vehicle.get_or_insert_with(|| VehicleModel::fallback(c.seed, c.income, c.age))
-        };
+        // [carlife] Their own car, where it is parked.
+        let (vid, at) = self.car_ready(cid, here)?;
+        let (goal, s1) = self.meet_lane(t, at, t.cars.len())?;
+        let LaneKind::Road { segment, .. } = self.traffic.net.lanes[goal as usize].kind else { return None };
+        let to_pt = self.traffic.net.lanes[goal as usize].point_at(s1).0;
+        let car = self.drive_from_spot(vid, segment, to_pt, cid, crate::vehicle::Errand::Trip)?;
+        self.leave_building(cid);
         let tc = &mut self.traffic.cars[car];
-        tc.model = model;
         tc.drive.gang = Some(GangRole { takeover: t.id, phase: GangPhase::Joining });
+        let (pos, model) = (tc.pos, tc.model);
         let c = &mut self.citizens[cid];
-        c.pos = exit.unwrap_or(from.1);
-        c.prev_pos = c.pos;
+        c.pos = pos;
+        c.prev_pos = pos;
+        c.vehicle = Some(model);
+        c.to_car = None;
         c.activity = Activity::Driving { car, to: home, purpose: Purpose::Wander };
         Some(car)
     }
@@ -729,16 +728,17 @@ impl World {
             if !self.traffic.cars.get(car).is_some_and(|c| c.in_stunt()) || rng.random::<f32>() >= takeover::ARREST_CHANCE {
                 continue;
             }
-            // The car is impounded: towed like a wreck.
+            // The car is impounded: towed like a wreck (and gone for good).
             self.traffic.cars[car].citizen = CitizenId::default();
+            if let Some(vid) = self.traffic.cars[car].owned.take() {
+                self.drop_car(vid, crate::vehicle::CarEvent::Scrapped);
+            }
             t.cars.retain(|&c| c != car);
             self.tow(car);
             let place = t.place.clone();
             let c = &mut self.citizens[cid];
             c.activity = Activity::Idle;
             c.inside = None;
-            c.owns_car = false;
-            c.vehicle = None;
             c.remember(tick, format!("Busted at the takeover at {place}. They impounded my ride."));
             c.thought = "Busted.".to_string();
             c.mood = (c.mood - 0.2).max(0.0);
@@ -788,6 +788,9 @@ impl World {
                     None => {
                         // Nowhere to drive: towed off like a wreck.
                         self.traffic.cars[car].citizen = CitizenId::default();
+                        if let Some(vid) = self.traffic.cars[car].owned.take() {
+                            self.drop_car(vid, crate::vehicle::CarEvent::Scrapped);
+                        }
                         self.tow(car);
                         if let Some(p) = self.citizens.get_mut(driver) {
                             p.activity = Activity::Idle;
@@ -950,15 +953,20 @@ mod tests {
         station(&mut w, ServiceKind::Police, -450.0, &folk[0..4]);
         let hospital = station(&mut w, ServiceKind::Health, 450.0, &folk[4..8]);
         let rider = folk[10];
-        // A motorcyclist heading east on the avenue.
-        let seg = w.roads.nearest_street(Vec2::new(-200.0, 0.0)).unwrap().0;
+        // A motorcyclist heading east on the avenue, on their own bike.
+        let near = w.citizens[rider].home.and_then(|h| w.building_entrance(h)).unwrap();
+        let vid = w.give_car_parked(rider, near);
+        w.vehicles.cars[vid].model = VehicleModel::new(VehicleClass::Mid, BodyType::Motorcycle);
         let to = w.roads.nearest_street(Vec2::new(250.0, 0.0)).unwrap().0;
-        let (route, s0, s1) = w.traffic.net.find_route(seg, Vec2::new(-200.0, 1.75), to, Vec2::new(250.0, 1.75)).unwrap();
-        let car = w.traffic.spawn_car(rider, None, route, s0, s1, 0);
-        w.traffic.cars[car].model = VehicleModel::new(VehicleClass::Mid, BodyType::Motorcycle);
+        let car = w.drive_from_spot(vid, to, Vec2::new(250.0, 1.75), rider, crate::vehicle::Errand::Trip).expect("a route");
         w.leave_building(rider);
         w.citizens[rider].activity = Activity::Driving { car, to: None, purpose: Purpose::Wander };
-        w.citizens[rider].owns_car = true;
+        for _ in 0..30 {
+            tick(&mut w, 1, |_| false);
+            if w.traffic.cars[car].v > 8.0 {
+                break;
+            }
+        }
         tick(&mut w, 3, |_| false);
         assert!(w.traffic.cars[car].drive.profile.assigned, "the rider got a profile");
         w.traffic.crash(vec![car], CrashCause::OffRoad, 30.0);
@@ -970,7 +978,7 @@ mod tests {
         let crash = w.services.incident(rec.incident.unwrap()).unwrap();
         assert_eq!(crash.kind, IncidentKind::Crash);
         assert!(crash.on_road && crash.pos.distance(rec.pos) < 1.0);
-        assert!(!w.citizens[rider].owns_car, "the bike is written off");
+        assert!(!w.citizens[rider].owns_car && w.citizens[rider].car.is_none() && !w.vehicles.cars.contains_key(vid), "the bike is written off (scrapped)");
         let medical = w.services.incidents.iter().find(|i| i.kind == IncidentKind::Medical && i.citizen == Some(rider)).expect("a medical call").id;
         // An ambulance goes, the rider ends up in a hospital bed.
         let sent = tick(&mut w, 200, |w| w.services.units.values().any(|u| u.kind == UnitKind::Ambulance && u.incident == Some(medical) && u.state != UnitState::Idle));
@@ -1009,13 +1017,14 @@ mod tests {
             let p = &mut w.citizens[c];
             p.seed = s;
             p.age = 23;
-            p.owns_car = true;
-            p.vehicle = Some(VehicleModel { tuned: true, ..VehicleModel::new(VehicleClass::Expensive, BodyType::Coupe) });
             p.next_decision_tick = u64::MAX / 2;
             if let Some(h) = p.home {
                 p.inside = Some(h);
                 p.activity = Activity::AtHome;
             }
+            let near = w.citizens[c].home.and_then(|h| w.building_entrance(h)).unwrap();
+            let vid = w.give_car_parked(c, near);
+            w.vehicles.cars[vid].model = VehicleModel { tuned: true, ..VehicleModel::new(VehicleClass::Expensive, BodyType::Coupe) };
         }
         let id = w.start_takeover(Some(Vec2::ZERO)).expect("starts");
         assert!(w.takeover().is_some_and(|t| t.id == id && t.residents.len() == 4));

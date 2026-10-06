@@ -110,7 +110,9 @@ const TRUCK_SPEED_FACTOR: f32 = 0.85;
 const SIREN_SPEED_FACTOR: f32 = 1.25;
 const SIREN_CLEAR: f32 = 40.0;
 const SIREN_PULL_ASIDE: f32 = 1.6;
-const TRIP_TIMEOUT: f32 = 1800.0;
+/// [carlife] A vehicle this long on one route (traffic seconds) looks for
+/// another way from where it stands; it is never taken off the road.
+const REPLAN_AFTER: f32 = 1800.0;
 
 #[derive(Clone, Debug)]
 pub enum LaneKind {
@@ -401,7 +403,8 @@ pub struct Car {
     pub prev_pos: Vec2,
     pub prev_heading: f32,
     pub color: u8,
-    /// Seconds spent on the trip; stalled trips time out.
+    /// Seconds since the route was last planned; a very long one is
+    /// replanned from where the car stands (never removed).
     #[serde(default)]
     pub age: f32,
     /// A bus on a line.
@@ -449,6 +452,13 @@ pub struct Car {
     /// driver profile, crash, takeover role, stunt, weave.
     #[serde(default)]
     pub drive: DriveState,
+    /// [carlife] The private car this is (`World::vehicles`), if any.
+    #[serde(default)]
+    pub owned: Option<crate::vehicle::VehicleId>,
+    /// [carlife] What it is doing beyond its route: looking for a space,
+    /// going to be sold, a truck going back to base (`world/cars.rs`).
+    #[serde(default)]
+    pub errand: crate::vehicle::Errand,
 }
 
 /// Why a car is not driving freely.
@@ -1521,7 +1531,7 @@ impl Traffic {
         let lane = route[0];
         let (pos, dir) = self.net.lanes[lane as usize].point_at(s_start);
         let heading = dir.y.atan2(dir.x);
-        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), drive: DriveState::default() });
+        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), owned: None, errand: Default::default(), drive: DriveState::default() });
         self.pull_out(id);
         id
     }
@@ -1604,6 +1614,47 @@ impl Traffic {
         let car = &mut self.cars[id];
         car.route = route;
         car.idx = 0;
+        car.age = 0.0;
+        true
+    }
+
+    /// [carlife] Send a car from where it stands to a new goal (`goal` lane
+    /// at `s_end`), keeping its place in its lane: a driver going on to a
+    /// parking space, a truck heading back to base. False when there is no
+    /// way from here (the car keeps its old route).
+    pub fn redirect(&mut self, id: CarId, goal: LaneId, s_end: f32) -> bool {
+        match self.route_from_here(id, goal, s_end) {
+            Some(route) => self.follow(id, route, s_end),
+            None => false,
+        }
+    }
+
+    /// [carlife] The route a car would take from where it stands to `goal`
+    /// at `s_end`, beginning with its own lane.
+    pub fn route_from_here(&self, id: CarId, goal: LaneId, s_end: f32) -> Option<Vec<LaneId>> {
+        let c = self.cars.get(id)?;
+        self.net.route_lanes(c.route[c.idx], c.s, goal, s_end).map(|r| r.0)
+    }
+
+    /// [carlife] Metres a car would drive on `route` (from where it stands
+    /// on the first lane to `s_end` on the last).
+    pub fn route_metres(&self, id: CarId, route: &[LaneId], s_end: f32) -> f32 {
+        let s = self.cars.get(id).map_or(0.0, |c| c.s);
+        let full = self.net.route_length(route, s);
+        let last = route.last().map_or(0.0, |&l| self.net.lanes[l as usize].length);
+        (full - (last - s_end).max(0.0)).max(0.0)
+    }
+
+    /// [carlife] Follow `route` (from `route_from_here`) from where the car
+    /// stands; false if it does not start on the car's lane.
+    pub fn follow(&mut self, id: CarId, route: Vec<LaneId>, s_end: f32) -> bool {
+        let Some(car) = self.cars.get_mut(id) else { return false };
+        if route.first() != Some(&car.route[car.idx]) {
+            return false;
+        }
+        car.route = route;
+        car.idx = 0;
+        car.s_end = s_end;
         car.age = 0.0;
         true
     }
@@ -2320,14 +2371,14 @@ impl Traffic {
                     let lane_id = c.route[c.idx];
                     (lane_id, c.idx, self.net.lanes[lane_id as usize].length, c.s, c.s_end)
                 };
-                if self.cars[cid].age > TRIP_TIMEOUT {
-                    if self.cars[cid].bus.is_some() && self.replan_from_here(cid) {
-                        continue;
+                // [carlife] A trip this long is stuck somewhere: look for
+                // another way from where it stands. Nobody is taken off
+                // the road; a jam is part of the city and its drivers feel it.
+                if self.cars[cid].age > REPLAN_AFTER {
+                    self.cars[cid].age = 0.0;
+                    if !self.cars[cid].entering && self.cars[cid].idx + 1 < self.cars[cid].route.len() {
+                        self.replan_from_here(cid);
                     }
-                    if !arrived.contains(&cid) {
-                        arrived.push(cid);
-                    }
-                    continue;
                 }
                 if self.cars[cid].entering {
                     continue;
@@ -2891,7 +2942,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stalled_bus_is_replanned_instead_of_teleported() {
+    fn a_stalled_vehicle_is_replanned_never_removed() {
         let roads = cross();
         let mut t = Traffic::default();
         t.rebuild(&roads);
@@ -2903,11 +2954,12 @@ mod tests {
         t.cars[bus].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 1, passengers: Vec::new(), to_depot: false, depot: BuildingId::default() });
         let car = t.spawn_car(CitizenId::default(), None, route, s0 + 20.0, s1, 0);
         // Both have been out far too long; neither has moved.
-        t.cars[bus].age = TRIP_TIMEOUT + 1.0;
-        t.cars[car].age = TRIP_TIMEOUT + 1.0;
+        t.cars[bus].age = REPLAN_AFTER + 1.0;
+        t.cars[car].age = REPLAN_AFTER + 1.0;
         let arrived = t.step(1.0, 1);
-        assert!(arrived.contains(&car), "a private car gives up where it stands");
-        assert!(!arrived.contains(&bus), "the bus does not");
+        assert!(!arrived.contains(&car) && t.cars.contains_key(car), "[carlife] a private car never gives up and vanishes");
+        assert!(t.cars[car].age < 2.0, "it looked for another way");
+        assert!(!arrived.contains(&bus), "nor does the bus");
         let b = &t.cars[bus];
         assert!(b.age < 2.0, "its clock restarted");
         assert_eq!(b.idx, 0);
@@ -2915,13 +2967,14 @@ mod tests {
         assert!((b.s_end - s1).abs() < 1e-4);
         assert!(t.net.lanes[b.route[0] as usize].cars.contains(&bus), "and still on its lane");
         // A bus whose stop is behind it on its own lane cannot be replanned
-        // (lanes are one way) and times out like a car.
+        // (lanes are one way): it is already past it, nothing more.
         let east = roads.nearest_street(Vec2::new(150.0, 0.0)).unwrap().0;
         let (lane, s, _) = t.net.nearest_lane_on(east, Vec2::new(150.0, 2.0)).unwrap();
         let stuck = t.spawn_car(CitizenId::default(), None, vec![lane], s, s - 20.0, 0);
         t.cars[stuck].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 1, passengers: Vec::new(), to_depot: false, depot: BuildingId::default() });
-        t.cars[stuck].age = TRIP_TIMEOUT + 1.0;
-        assert!(t.step(1.0, 1).contains(&stuck));
+        t.cars[stuck].age = REPLAN_AFTER + 1.0;
+        t.step(1.0, 1);
+        assert!(t.cars.contains_key(stuck), "past its stop it arrives where it stands; nothing is deleted");
     }
 
     #[test]
@@ -3009,7 +3062,7 @@ mod tests {
                 used.push(c.route[c.idx]);
             }
             if arrived.contains(&car) {
-                return (used, lateral, c.age < TRIP_TIMEOUT);
+                return (used, lateral, c.age < REPLAN_AFTER);
             }
         }
         (used, lateral, false)
@@ -3092,7 +3145,7 @@ mod tests {
                 }
             }
             for id in t.step(2.0, 4) {
-                if t.cars[id].age < TRIP_TIMEOUT {
+                if t.cars[id].age < REPLAN_AFTER {
                     on_time += 1;
                 }
                 order.push(id);
@@ -3158,7 +3211,7 @@ mod tests {
         let mut on_time = 0;
         for _ in 0..1200 {
             for id in t.step(2.0, 4) {
-                on_time += (t.cars[id].age < TRIP_TIMEOUT) as usize;
+                on_time += (t.cars[id].age < REPLAN_AFTER) as usize;
                 t.remove_car(id);
             }
             if t.cars.is_empty() {

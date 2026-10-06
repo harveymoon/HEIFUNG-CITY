@@ -64,7 +64,7 @@ pub const MEMORY_WINDOW_TICKS: u64 = 2 * 1440;
 /// Example ids carried by each alert.
 const ALERT_EXAMPLES: usize = 5;
 
-pub const SECTIONS: &[&str] = &["overview", "people", "economy", "land", "services", "industry", "alerts"];
+pub const SECTIONS: &[&str] = &["overview", "people", "economy", "land", "services", "industry", "society", "alerts"];
 
 const KINDS: [BusinessKind; 19] = BusinessKind::ALL;
 
@@ -149,6 +149,10 @@ pub fn report(w: &World, sections: &[String]) -> Result<Value, String> {
     }
     if want("services") {
         out.insert("services".into(), services(w));
+    }
+    // [society] crime, the street and the bins.
+    if want("society") {
+        out.insert("society".into(), super::society::society(w));
     }
     if want("industry") {
         out.insert("industry".into(), industry(w));
@@ -726,6 +730,7 @@ fn services(w: &World) -> Value {
             "left_turns_measured": w.traffic.left_wait_stats().2, "protected_left_arrows_now": w.traffic.net.intersections.iter().filter(|i| i.timer < i.arrow).count(),
             "passing_left_turners_now": w.traffic.cars.values().filter(|c| c.passing).count(), "lane_use_set_by_player": w.traffic.lane_use.len(),
             "models": nd_sim::bots::fleet_counts(w),
+            "private_cars": car_life(w),
         },
         "bots": {
             "active": w.bots.bots.len(), "delivering": w.bots.bots.values().filter(|b| !b.returning).count(), "delivered_today": w.bots.delivered_today,
@@ -827,11 +832,11 @@ pub struct Alert {
 }
 
 impl Alert {
-    fn new(kind: &'static str, severity: u8, hint: &'static str) -> Self {
+    pub(super) fn new(kind: &'static str, severity: u8, hint: &'static str) -> Self {
         Self { kind, severity, count: 0, message: String::new(), hint, points: Vec::new(), examples: Vec::new() }
     }
 
-    fn add(&mut self, id: String, at: Option<SVec2>) {
+    pub(super) fn add(&mut self, id: String, at: Option<SVec2>) {
         self.count += 1;
         if let Some(p) = at {
             self.points.push(p);
@@ -1086,6 +1091,8 @@ pub fn alerts(w: &World) -> Vec<Alert> {
         out.push(a);
     }
     out.extend(uncovered);
+    // [society] hot spots, no jail, camps, overflowing bins.
+    out.extend(super::society::alerts(w));
     out.retain(|a| a.count > 0);
     out.sort_by(|a, b| b.score().total_cmp(&a.score()));
     out
@@ -1185,5 +1192,50 @@ fn driving_json(w: &World) -> Value {
                 "total": w.driving.takeovers.total,
                 "last": w.driving.takeovers.history.last().map(|r| json!({ "id": r.id, "place": r.place, "participants": r.participants, "crowd": r.crowd, "arrests": r.arrests, "police": r.police, "started": r.started, "ended": r.ended })),
             }
+    })
+}
+
+/// [carlife] Private cars and how people travel: where the cars are,
+/// purchases and sales, the parking search, trip shares by mode and the
+/// pain each mode has caused lately.
+pub fn car_life(w: &World) -> Value {
+    use nd_sim::citizens::TripMode;
+    use nd_sim::ParkKind;
+    let v = &w.vehicles;
+    let st = &v.stats;
+    let (parked, driving, searching) = v.counts(&w.traffic);
+    let mut by_kind: BTreeMap<&str, u32> = BTreeMap::new();
+    for car in v.cars.values() {
+        if let Some(s) = car.spot() {
+            *by_kind.entry(s.kind.label()).or_default() += 1;
+        }
+    }
+    let (kerb_total, kerb_used) = w.kerb_occupancy();
+    let shares = |t: &[u32]| -> Value {
+        let n: u32 = TripMode::ALL.iter().map(|m| t[m.index()]).sum();
+        let m: Map<String, Value> = TripMode::ALL.iter().map(|m| (m.key().to_string(), json!({ "trips": t[m.index()], "share": share(t[m.index()] as usize, n as usize) }))).collect();
+        json!({ "trips": n, "modes": m })
+    };
+    // Pain among those who used the mode lately (bad half-hours per trip).
+    let mut pain: Map<String, Value> = Map::new();
+    for m in TripMode::ALL {
+        let users: Vec<f32> = w.citizens.values().filter(|c| c.commute.trips[m.index()] > 0.3).map(|c| c.commute.pain_of(m)).collect();
+        let mean = if users.is_empty() { 0.0 } else { users.iter().sum::<f32>() / users.len() as f32 };
+        pain.insert(m.key().to_string(), json!({ "users": users.len(), "mean": r3(mean) }));
+    }
+    let drivers: Vec<f32> = w.citizens.values().filter(|c| c.car.is_some()).map(|c| c.commute.parking_pain).collect();
+    let parking_pain = if drivers.is_empty() { 0.0 } else { drivers.iter().sum::<f32>() / drivers.len() as f32 };
+    let _ = ParkKind::Kerb;
+    json!({
+        "cars": v.cars.len(), "cars_parked": parked, "cars_driving": driving, "cars_searching": searching,
+        "parked_by_place": by_kind, "kerb_slots": { "total": kerb_total, "used": kerb_used, "occupancy": share(kerb_used as usize, kerb_total as usize) },
+        "created_total": st.created_total, "destroyed_total": st.destroyed_total, "events_total": st.events_total,
+        "bought_today": st.bought_today, "sold_today": st.sold_today, "bikes_bought_today": st.bikes_bought_today, "bikes_sold_today": st.bikes_sold_today,
+        "circled_today": st.circled_today, "search_minutes_today": round(st.search_seconds_today / w.config.traffic_seconds_per_tick),
+        "parked_today": { "home_or_building": st.parked_today[0], "lot": st.parked_today[1], "kerb": st.parked_today[2], "no_space": st.parked_today[3] },
+        "mode_shares_today": shares(&st.trips_today), "mode_shares_yesterday": shares(&st.trips_yesterday),
+        "commute_pain": pain, "parking_pain_mean_of_owners": r3(parking_pain),
+        "fleet_parked_at_businesses": v.fleet_parked.values().map(|n| *n as u32).sum::<u32>(), "fleet_bought_total": st.fleet_bought_total, "fleet_returned_today": st.fleet_returned_today,
+        "rule": "cars come only with arriving households or purchases and leave only when sold, scrapped or driven out of town; trips are never timed out",
     })
 }
