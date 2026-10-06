@@ -620,12 +620,15 @@ fn road_works_pull_down_the_buildings_whose_parcels_change() {
     // Widen the road to 3+3: every parcel along it loses a strip.
     w.set_gesture(road, Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 3, lanes_bwd: 3, curved: false, kind: RoadKind::Street }, true);
     w.implement();
-    assert!(!w.buildings.contains_key(fronting), "the building fronting the widened road is gone");
+    // It comes down over the next day or so, on what is left of its parcel.
+    assert!(w.buildings.get(fronting).is_some_and(|b| b.being_demolished()), "the building fronting the widened road is coming down");
     assert!(w.buildings.contains_key(far), "a building on an untouched lot stays");
-    assert!(w.lots.values().all(|l| l.building != Some(fronting)));
     let events = w.drain_events();
     assert!(events.iter().any(|e| matches!(e, SimEvent::Expropriated(b, _) if *b == fronting)), "an expropriation event was raised: {events:?}");
-    assert!(events.iter().any(|e| matches!(e, SimEvent::BuildingRemoved(b, _) if *b == fronting)));
+    w.finish_demolition(fronting);
+    assert!(!w.buildings.contains_key(fronting), "then it is gone");
+    assert!(w.lots.values().all(|l| l.building != Some(fronting)));
+    assert!(w.drain_events().iter().any(|e| matches!(e, SimEvent::BuildingRemoved(b, _) if *b == fronting)));
     let c = &w.citizens[resident];
     assert_eq!(c.home, None);
     assert!(c.memories.iter().any(|m| m.text.contains("pulled down for the road works")), "{:?}", c.memories);
@@ -762,19 +765,19 @@ fn cheap_buildings_on_dear_land_are_redeveloped_and_price_people_out() {
     assert!(b.rent > rent0 * 2.0, "rent rose from {rent0:.0} to {:.0}", b.rent);
     assert!(b.residents.iter().all(|c| residents.contains(c)), "no one new moved in yet");
     assert!(w.citizens.values().any(|c| c.memories.iter().any(|m| m.text.contains("rebuilt for richer tenants"))));
-    // The old tenants cannot pay the new rent and move on.
-    let rent = w.buildings[bid].rent;
-    let priced_out: Vec<CitizenId> = w.buildings[bid].residents.iter().copied().filter(|&c| w.citizens[c].income * 0.5 < rent).collect();
-    assert!(!priced_out.is_empty(), "somebody is priced out by {rent:.0}/day");
+    // Torn down, not refitted: the old tenants left when the wrecking crew
+    // came, and the new building opens at the new rent.
+    for cid in &residents {
+        assert!(w.citizens.get(*cid).map_or(true, |c| c.home != Some(bid)), "an old tenant is still there");
+    }
     for _ in 0..5 * 1440 {
         w.land_value.fill(0.95);
         fed(&mut w);
         w.tick(&mut minds);
     }
     assert!(w.citizens.values().all(|c| c.hungry_days == 0), "nobody is starving: what follows is about rent");
-    for cid in &priced_out {
-        assert!(w.citizens.get(*cid).map_or(true, |c| c.home != Some(bid)), "a priced-out tenant is still there");
-    }
+    let b = &w.buildings[bid];
+    assert!(b.construction.is_none() && b.demolition.is_none(), "the new building opened");
     assert!(w.economy.displaced_total + w.economy.emigrated_total > 0);
 }
 
@@ -1495,7 +1498,9 @@ fn a_business_that_cannot_pay_closes_goes_derelict_and_is_demolished() {
         assert!(w.buildings.contains_key(shop), "a week of grace");
     }
     w.daily_businesses();
-    assert!(!w.buildings.contains_key(shop), "then the lot is cleared");
+    assert!(w.buildings[shop].being_demolished(), "then it is pulled down");
+    w.finish_demolition(shop);
+    assert!(!w.buildings.contains_key(shop), "and the lot is cleared");
     assert!(w.lots[shop_lot].building.is_none() || !w.buildings.contains_key(w.lots[shop_lot].building.unwrap()));
 }
 

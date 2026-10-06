@@ -1007,10 +1007,20 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         rail: b.rail.as_ref(),
         port: b.port,
         construction: b.construction.as_ref().map(|c| c.progress),
+        demolition: None,
         neighbours: styles.neighbours(id),
         service: b.service.map(|s| s.kind),
     };
-    let mut g = generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras);
+    let mut g = match &b.demolition {
+        // Coming down: what stood there (which, during a redevelopment or a
+        // civic take-over, is not what the building's own fields describe),
+        // cut down to what is left, with the demolition site around it.
+        Some(d) => {
+            let extras = Extras { powered: b.powered, park: lot.park.as_ref(), demolition: Some(d.progress), neighbours: styles.neighbours(id), ..Extras::default() };
+            generate_building(lot, d.land_use, d.floors, d.tier, d.condition, d.seed, &assets.rules, &assets.palette, &extras)
+        }
+        None => generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras),
+    };
     // Every building stands on its lot's levelled pad.
     nd_procgen::terrain::raise_geometry(&mut g, world.lot_pad(b.lot));
     geo.append(&g);

@@ -187,6 +187,8 @@ impl World {
         b.business = None;
         b.parking_capacity = parking;
         setup(&mut b);
+        // What the city took the lot over from is cleared first.
+        b.demolition = self.take_clearing(lot_id);
         let id = self.buildings.insert(b);
         self.lots[lot_id].building = Some(id);
         self.events.push(SimEvent::BuildingBuilt(id));

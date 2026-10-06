@@ -191,6 +191,32 @@ Citizens are rendered from their simulated positions every frame.
   complete at once. Housing and job pressure are damped by what is already under
   construction. Sites are drawn as hoarding, raft, shell to the last full floor, scaffold,
   a tower crane from six floors, pallets, cabin, mixer and hi-vis workers.
+- **Demolition** (`buildings::Demolition`): nothing vanishes either. Whatever pulls a
+  building down (a bulldozed zone, road works, a shop shut for a week, a take-over, a
+  redevelopment) turns it into a demolition site: residents, households and staff leave
+  at once, and a wrecking crew (2 + floors/3 jobs) takes it down over (0.9 + 0.1 × floors)
+  days, clamped to 1–3. A pure demolition also carries a placeholder `Construction`, so
+  every system that skips building sites skips it, and nothing can be built on the lot
+  until it is clear. Dump trucks leave as the rubble piles up (2 + floors/3 loads, at most
+  10, spread evenly, the last before hand-over), as real trucks on the roads to the
+  nearest freight yard or off the map's edge; the work does not wait for them. When the
+  zone itself was erased the site keeps a parcel of the usual size where the building
+  stood, removed with the rubble; when a road now runs over the spot, or another building
+  holds it, the building is cleared at once (a demolition site already there takes on
+  its rubble). Car parks, plants, depots, stations, yards and docks appear at once and
+  go at once, as do sites still at groundworks.
+  Redevelopment is demolition then construction: the building keeps its id, its fields
+  describe the successor, the `Demolition` keeps the old look; materials are ordered only
+  when the lot is clear. A civic structure placed over a grown building works from the
+  moment it is placed (specials always have) and inherits the clearing: its lot shows the
+  old building coming down, and the structure appears when the rubble is gone. (Making
+  the structure wait would mean gating plants, depots, stations and docks on a state they
+  never had; showing the clearing first gives the same picture without that.) Sites are
+  drawn as the real building cut down from the top (triangles above the working level are
+  dropped, those across it clipped), a raw broken slab with rebar on what is left,
+  hoarding, a high-reach excavator with a crusher at the cut (a small machine on the roof
+  and a tower crane above 26 m), rubble heaps that grow and are carted away, a dump truck
+  at the gate and the crew; the last fifth is bare earth and the last heaps.
 - **Eminent domain**: when a parcel changes shape under a building on a rebuild (area off by
   more than 12% or an outline point moved more than 3 m) the building is pulled down and
   residents remember why (`SimEvent::Expropriated`). Specials own their ground: zoned lots

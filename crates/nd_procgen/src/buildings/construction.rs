@@ -8,7 +8,7 @@ use super::parts::*;
 use super::{Ctx, Face};
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
-use nd_sim::zoning::point_in_polygon;
+use nd_sim::zoning::{point_in_polygon, polygon_area};
 use nd_sim::LandUse;
 use rand::Rng;
 
@@ -554,3 +554,397 @@ fn worker(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, y: f32) {
     f.bx_yaw(g, Matte, p.x, y + 1.7, p.y, Vec3::new(0.3, 0.14, 0.32), c.palette.helmet, yaw);
 }
 
+// â”€â”€ demolition â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+/// Share of the job spent on the structure itself; the rest is the last of
+/// the rubble and the slab being broken out.
+const WRECK_END: f32 = 0.8;
+/// Share spent putting the hoarding up and stripping out before the
+/// machines start on the structure.
+const STRIP_OUT: f32 = 0.08;
+/// Above this the excavator cannot reach the cut: a small machine works on
+/// the top slab and a tower crane lowers it down.
+const HIGH_REACH: f32 = 26.0;
+
+/// A demolition site at `progress` in `0..1`. `g` holds the building as it
+/// stood: it is cut down from the top as the work goes on (triangles above
+/// the working level are dropped, those across it are clipped), and the
+/// site is drawn around what is left: hoarding with a gate, the broken top
+/// slab with rebar, a high-reach excavator (or a small one on the roof and
+/// a tower crane for tall jobs), rubble heaps, a dump truck being loaded
+/// and the crew. After the structure is down the heaps are cleared until
+/// bare earth is left.
+pub fn demolition_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: f32) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let s = progress.clamp(0.0, 1.0);
+    let top = g.parts.iter().flat_map(|m| m.positions.iter().map(|p| p[1])).fold(0.0f32, f32::max);
+    let wreck = ((s - STRIP_OUT) / (WRECK_END - STRIP_OUT)).clamp(0.0, 1.0);
+    let cut = top * (1.0 - wreck);
+    let cut_points = if wreck > 0.0 { clip_above(g, cut) } else { Vec::new() };
+    let concrete = mul(pick(rng, &pal.concrete), 0.8);
+    let poly = &c.poly;
+
+    if s >= WRECK_END {
+        // The structure is down: broken ground where it stood.
+        ground(g, f, Dirt, &c.lot_poly, 0.02, pal.dirt);
+    }
+
+    // Hoarding with a gate on the street side, and a sign.
+    let hoard = {
+        let h = offset_poly(&c.lot_poly, 0.3);
+        if h.len() >= 3 { h } else { c.lot_poly.clone() }
+    };
+    let faces = c.faces(&hoard);
+    let front_i = faces
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| (a.out.dot(Vec2::new(0.0, -1.0)) * a.len).total_cmp(&(b.out.dot(Vec2::new(0.0, -1.0)) * b.len)))
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    for (i, face) in faces.iter().enumerate() {
+        hoarding(g, c, rng, face, if i == front_i { Some((face.len * 0.5).min(6.0)) } else { None });
+    }
+    let front = faces[front_i];
+    if front.len > 8.0 {
+        sign_board(g, c, rng, &front, -front.len * 0.3, HOARDING_H * 0.55, (front.len * 0.25).min(4.0), 1.1);
+    }
+    for k in [0usize, hoard.len() / 2] {
+        let corner = hoard[k % hoard.len()];
+        let p = corner.lerp(poly_center(&hoard), 0.08);
+        if c.inside_local(p) {
+            floodlight(g, c, p, 6.5);
+        }
+    }
+
+    // The broken top: a raw slab over what the cut left, rubble on it and
+    // rebar sticking up round its edge.
+    let hull: Vec<Vec2> = convex_hull(&cut_points.iter().map(|p| f.to_local(*p)).collect::<Vec<_>>());
+    let hull = if hull.len() >= 3 && polygon_area(&hull).abs() > 6.0 && poly_inside(c, &hull) { hull } else { Vec::new() };
+    if cut > 0.6 && !hull.is_empty() {
+        extrude(g, f, Concrete, &offset_poly(&hull, 0.1), (cut - 0.3).max(0.0), cut, mul(concrete, 0.75));
+        for face in c.faces(&hull) {
+            if face.len < 1.5 {
+                continue;
+            }
+            let n = (face.len / 1.2) as i32;
+            for k in 0..n {
+                let t = -face.len * 0.5 + (k as f32 + 0.5) * (face.len / n.max(1) as f32);
+                let h = rng.random_range(0.4..1.3);
+                face.bx(g, f, Rust, t, cut + h * 0.5, -0.3, Vec3::new(0.05, h, 0.05), pal.rust);
+            }
+        }
+        for _ in 0..rng.random_range(2..5) {
+            if let Some(p) = random_in_poly(rng, &hull, 1.0) {
+                let r = rng.random_range(0.6..1.4);
+                let bottom = ngon(p.x, p.y, r, 7, rng.random_range(0.0..1.0));
+                if polygon_inside(&bottom, &hull) {
+                    loft(g, f, Concrete, &bottom, &ngon(p.x, p.y, r * 0.3, 7, 0.3), cut, cut + r * 0.5, mul(concrete, 0.9));
+                }
+            }
+        }
+    }
+
+    // Site clutter stays inside the fence and, while the structure stands,
+    // off its footprint.
+    let standing = s < WRECK_END;
+    let keep_out = if standing { offset_poly(poly, -1.0) } else { Vec::new() };
+    let clear = |p: Vec2| c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.4 && !(keep_out.len() >= 3 && point_in_polygon(p, &keep_out));
+
+    // The machine.
+    if s > STRIP_OUT * 0.5 && s < 0.98 {
+        // A small excavator on the top slab, turned so it and its arm
+        // stay on the slab.
+        let on_roof = |g: &mut Geometry, rng: &mut _| -> bool {
+            if hull.is_empty() || cut < 3.0 {
+                return false;
+            }
+            let p = poly_center(&hull);
+            let inner = offset_poly(&hull, 1.0);
+            if inner.len() < 3 {
+                return false;
+            }
+            let yaw0 = rng_angle(rng);
+            let on_slab = |yaw: f32| {
+                let (d, n) = (Vec2::new(yaw.cos(), yaw.sin()), Vec2::new(-yaw.sin(), yaw.cos()));
+                [d * 5.6, d * -2.6, n * 1.8, n * -1.8, d * 2.6 + n * 1.8, d * 2.6 - n * 1.8, d * -2.6 + n * 1.8, d * -2.6 - n * 1.8].iter().all(|o| point_in_polygon(p + *o, &inner))
+            };
+            match (0..8).map(|k| yaw0 + k as f32 * std::f32::consts::FRAC_PI_4).find(|&y| on_slab(y)) {
+                Some(yaw) => {
+                    excavator(g, c, rng, p, cut, yaw, None);
+                    true
+                }
+                None => false,
+            }
+        };
+        if cut > HIGH_REACH && !hull.is_empty() {
+            // Tall job: the machine works on the roof, a tower crane lowers
+            // the pieces.
+            on_roof(g, rng);
+            tower_crane(g, c, rng, poly, cut, top);
+        } else if standing {
+            // A high-reach excavator on the ground facing the building, its
+            // arm at the cut; on a lot with no room beside the building, a
+            // small machine on the roof instead.
+            let target_y = (cut + 0.6).max(1.6);
+            let mut spot: Option<(Vec2, Vec2, f32)> = None;
+            'faces: for face in c.faces(poly) {
+                let yaw = (-face.out).y.atan2(-face.out.x);
+                for d in [5.5f32, 4.5, 3.6] {
+                    let p = face.at(0.0, d);
+                    if fits(c, p, yaw, &clear) {
+                        spot = Some((p, face.mid(), yaw));
+                        break 'faces;
+                    }
+                }
+            }
+            match spot {
+                Some((p, target, yaw)) => excavator(g, c, rng, p, 0.0, yaw, Some((target, target_y))),
+                None => {
+                    on_roof(g, rng);
+                }
+            }
+        } else if let Some(p) = random_in_poly(rng, poly, 3.0) {
+            // Loading out the last heaps from where the building was.
+            let yaw = rng_angle(rng);
+            let tip = p + Vec2::new(yaw.cos(), yaw.sin()) * 5.6;
+            if fits(c, p, yaw, &clear) && clear(tip) && distance_to_boundary(tip, &c.lot_poly) > 0.6 {
+                excavator(g, c, rng, p, 0.0, yaw, None);
+            }
+        }
+    }
+
+    // Rubble heaps: growing while the structure comes down, carted away after.
+    let heaps = if standing { (1.0 + wreck * 5.0).round() as i32 } else { (6.0 * (1.0 - (s - WRECK_END) / (1.0 - WRECK_END))).round() as i32 };
+    for _ in 0..heaps {
+        let at = if standing { c.random_inside(rng, 2.0) } else { random_in_poly(rng, poly, 1.0).or_else(|| c.random_inside(rng, 2.0)) };
+        let Some(p) = at else { continue };
+        if !clear(p) {
+            continue;
+        }
+        let r = rng.random_range(1.4..2.8) * (0.6 + 0.4 * wreck);
+        rubble_heap(g, c, rng, p, r, concrete);
+    }
+
+    // A dump truck by the gate being loaded.
+    let truck_at = front.at(front.len * 0.22, -5.2);
+    let side = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
+    let truck_yaw = front.yaw() + std::f32::consts::FRAC_PI_2 * side;
+    let (axis, across) = (Vec2::new(truck_yaw.cos(), truck_yaw.sin()), front.tangent);
+    let truck_room = [axis * 4.3, axis * -4.3, across * 1.4, across * -1.4, axis * 4.3 + across * 1.3, axis * -4.3 - across * 1.3].iter().all(|o| clear(truck_at + *o));
+    if s > STRIP_OUT && s < 0.97 && clear(truck_at) && truck_room {
+        dump_truck(g, c, rng, truck_at, truck_yaw, concrete);
+    }
+    let cabin_at = front.at(-front.len * 0.32, -3.6);
+    let cabin_room = [front.tangent * 3.3, front.tangent * -3.3, front.out * 1.4, front.out * -1.6].iter().all(|o| clear(cabin_at + *o));
+    if clear(cabin_at) && cabin_room {
+        site_cabin(g, c, rng, cabin_at, front.yaw());
+    }
+
+    // The crew, one of them on a hose keeping the dust down.
+    if (0.03..=0.97).contains(&s) {
+        let n = 2 + (c.floors as usize / 8).min(3);
+        for _ in 0..n {
+            if let Some(p) = c.random_inside(rng, 1.5) {
+                if clear(p) {
+                    worker(g, c, rng, p, 0.04);
+                }
+            }
+        }
+    }
+}
+
+/// Drop everything above `cut` from the geometry; triangles crossing it are
+/// clipped at it. Returns the world (x, z) points where walls were cut.
+pub fn clip_above(g: &mut Geometry, cut: f32) -> Vec<Vec2> {
+    let mut points = Vec::new();
+    for m in g.parts.iter_mut() {
+        if m.is_empty() {
+            continue;
+        }
+        let old = std::mem::take(m);
+        let mut remap: Vec<u32> = vec![u32::MAX; old.positions.len()];
+        let mut keep = |m: &mut crate::mesh::MeshData, i: u32| -> u32 {
+            let k = i as usize;
+            if remap[k] == u32::MAX {
+                remap[k] = m.positions.len() as u32;
+                m.positions.push(old.positions[k]);
+                m.normals.push(old.normals[k]);
+                m.colors.push(old.colors[k]);
+                m.uvs.push(old.uvs[k]);
+                m.tangents.push(old.tangents[k]);
+            }
+            remap[k]
+        };
+        for tri in old.indices.chunks_exact(3) {
+            let ys = [old.positions[tri[0] as usize][1], old.positions[tri[1] as usize][1], old.positions[tri[2] as usize][1]];
+            if ys.iter().all(|&y| y <= cut) {
+                for &i in tri {
+                    let n = keep(m, i);
+                    m.indices.push(n);
+                }
+                continue;
+            }
+            if ys.iter().all(|&y| y > cut) {
+                continue;
+            }
+            // Sutherlandâ€“Hodgman against the plane y = cut, keeping below.
+            let mut out: Vec<u32> = Vec::with_capacity(4);
+            for k in 0..3 {
+                let (a, b) = (tri[k], tri[(k + 1) % 3]);
+                let (ya, yb) = (ys[k], ys[(k + 1) % 3]);
+                if ya <= cut {
+                    out.push(keep(m, a));
+                }
+                if (ya <= cut) != (yb <= cut) {
+                    let t = (cut - ya) / (yb - ya);
+                    let (ia, ib) = (a as usize, b as usize);
+                    let lerp3 = |p: [f32; 3], q: [f32; 3]| [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t];
+                    let lerp4 = |p: [f32; 4], q: [f32; 4]| [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t, p[3] + (q[3] - p[3]) * t];
+                    let pos = lerp3(old.positions[ia], old.positions[ib]);
+                    points.push(Vec2::new(pos[0], pos[2]));
+                    m.positions.push(pos);
+                    m.normals.push(lerp3(old.normals[ia], old.normals[ib]));
+                    m.colors.push(lerp4(old.colors[ia], old.colors[ib]));
+                    let (ua, ub) = (old.uvs[ia], old.uvs[ib]);
+                    m.uvs.push([ua[0] + (ub[0] - ua[0]) * t, ua[1] + (ub[1] - ua[1]) * t]);
+                    m.tangents.push(lerp4(old.tangents[ia], old.tangents[ib]));
+                    out.push(m.positions.len() as u32 - 1);
+                }
+            }
+            for k in 1..out.len().saturating_sub(1) {
+                m.indices.extend_from_slice(&[out[0], out[k], out[k + 1]]);
+            }
+        }
+    }
+    points
+}
+
+/// Convex hull, counter-clockwise (Andrew's monotone chain).
+fn convex_hull(points: &[Vec2]) -> Vec<Vec2> {
+    let mut p: Vec<Vec2> = points.to_vec();
+    p.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    p.dedup_by(|a, b| a.distance_squared(*b) < 1e-4);
+    if p.len() < 3 {
+        return p;
+    }
+    let cross = |o: Vec2, a: Vec2, b: Vec2| (a - o).perp_dot(b - o);
+    let mut hull: Vec<Vec2> = Vec::with_capacity(p.len() * 2);
+    for pass in 0..2 {
+        let start = hull.len();
+        let iter: Box<dyn Iterator<Item = &Vec2>> = if pass == 0 { Box::new(p.iter()) } else { Box::new(p.iter().rev()) };
+        for &q in iter {
+            while hull.len() >= start + 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], q) <= 0.0 {
+                hull.pop();
+            }
+            hull.push(q);
+        }
+        hull.pop();
+    }
+    hull
+}
+
+fn polygon_inside(inner: &[Vec2], outer: &[Vec2]) -> bool {
+    inner.iter().all(|p| point_in_polygon(*p, outer))
+}
+
+fn rng_angle(rng: &mut impl Rng) -> f32 {
+    rng.random_range(0.0..std::f32::consts::TAU)
+}
+
+/// Room for an excavator's body (tracks 4.6 Ã— 3.0 m, turning) at `p`.
+fn fits(c: &Ctx, p: Vec2, yaw: f32, clear: &impl Fn(Vec2) -> bool) -> bool {
+    let d = Vec2::new(yaw.cos(), yaw.sin());
+    let n = Vec2::new(-d.y, d.x);
+    // Corners, sides and the bucket's reach, all clear of the fence.
+    let pts = [d * 2.6 + n * 1.8, d * 2.6 - n * 1.8, -d * 2.6 + n * 1.8, -d * 2.6 - n * 1.8, n * 1.8, -n * 1.8, -d * 2.6, d * 2.6];
+    clear(p) && pts.iter().all(|o| c.inside_local(p + *o) && distance_to_boundary(p + *o, &c.lot_poly) > 0.4)
+}
+
+/// A tracked excavator at `p`, standing at height `y`, facing `yaw`
+/// (lot-local). With `reach`, a long demolition arm runs from the cab to
+/// that point and height, ending in a crusher; without, a short digging arm.
+fn excavator(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, y: f32, yaw: f32, reach: Option<(Vec2, f32)>) {
+    let f = &c.frame;
+    let body = c.palette.crane;
+    let dark = mul(c.palette.steel, 0.4);
+    let d = Vec2::new(yaw.cos(), yaw.sin());
+    let n = Vec2::new(-d.y, d.x);
+    // Tracks, turntable, house with counterweight, cab.
+    for side in [-1.0f32, 1.0] {
+        let q = p + n * side * 1.15;
+        f.bx_yaw(g, Matte, q.x, y + 0.45, q.y, Vec3::new(4.4, 0.9, 0.7), dark, yaw);
+    }
+    f.bx_yaw(g, Metal, p.x, y + 1.0, p.y, Vec3::new(1.6, 0.25, 1.6), dark, yaw);
+    f.bx_yaw(g, Matte, p.x, y + 1.7, p.y, Vec3::new(3.0, 1.2, 2.5), body, yaw);
+    let back = p - d * 1.6;
+    f.bx_yaw(g, Matte, back.x, y + 1.6, back.y, Vec3::new(0.6, 1.0, 2.4), mul(body, 0.8), yaw);
+    let cab = p + d * 0.7 + n * 0.75;
+    f.bx_yaw(g, Matte, cab.x, y + 2.9, cab.y, Vec3::new(1.2, 1.4, 0.95), body, yaw);
+    f.bx_yaw(g, Glass, cab.x + d.x * 0.4, y + 3.0, cab.y + d.y * 0.4, Vec3::new(0.5, 1.0, 0.9), c.palette.glass_dark, yaw);
+    let pivot = f.at2(p + d * 1.2 - n * 0.4, y + 2.1);
+    let steel = rgba(mul(body, 0.95));
+    match reach {
+        Some((target, ty)) => {
+            // Stop the crusher just short of the wall.
+            let to = target - (target - p).normalize_or_zero() * 0.8;
+            let tip = f.at2(to, ty);
+            let span = (tip - pivot).length();
+            let elbow = pivot.lerp(tip, 0.45) + Vec3::Y * (span * 0.28).max(1.5);
+            g.part(Matte).tube(pivot, elbow, 0.32, 6, steel);
+            g.part(Matte).tube(elbow, tip, 0.24, 6, steel);
+            g.part(Matte).tube(pivot + Vec3::Y * 0.3, elbow - (elbow - pivot).normalize_or_zero() * 2.0, 0.09, 5, rgba(c.palette.steel));
+            // Crusher jaws.
+            g.part(Metal).boxed(tip - Vec3::Y * 0.4, Vec3::new(0.7, 1.1, 0.5), f.yaw() + yaw, rgba(dark));
+            g.part(Metal).boxed(tip - Vec3::Y * 0.9 + f.dir3(d) * 0.2, Vec3::new(0.25, 0.6, 0.45), f.yaw() + yaw + 0.4, rgba(dark));
+        }
+        None => {
+            let elbow = pivot + f.dir3(d) * 2.6 + Vec3::Y * 1.6;
+            let tip = pivot + f.dir3(d) * 4.0 - Vec3::Y * 1.2;
+            g.part(Matte).tube(pivot, elbow, 0.2, 6, steel);
+            g.part(Matte).tube(elbow, tip, 0.16, 6, steel);
+            let bucket = if rng.random_bool(0.5) { 0.5 } else { 0.7 };
+            g.part(Metal).boxed(tip, Vec3::new(0.7, bucket, 0.8), f.yaw() + yaw, rgba(dark));
+        }
+    }
+}
+
+/// A heap of broken concrete, brick and bent steel.
+fn rubble_heap(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, r: f32, concrete: [f32; 3]) {
+    let f = &c.frame;
+    let rot = rng.random_range(0.0..1.0);
+    let bottom = fit_inside(c, &ngon(p.x, p.y, r, 8, rot));
+    if bottom.len() < 3 {
+        return;
+    }
+    let cen = poly_center(&bottom);
+    let col = mix(concrete, pick(rng, &c.palette.brick), rng.random_range(0.0..0.5));
+    loft(g, f, Concrete, &bottom, &ngon(cen.x, cen.y, r * 0.3, 8, rot + 0.2), 0.0, r * 0.5, col);
+    for _ in 0..3 {
+        let q = cen + Vec2::new(rng.random_range(-0.5..0.5), rng.random_range(-0.5..0.5)) * r;
+        if point_in_polygon(q, &bottom) {
+            let yaw = rng.random_range(0.0..std::f32::consts::TAU);
+            f.bx_yaw(g, Concrete, q.x, r * 0.35, q.y, Vec3::new(0.9, 0.35, 0.6), mul(concrete, 1.1), yaw);
+        }
+    }
+    if rng.random_bool(0.6) {
+        let a = f.at2(cen, r * 0.3);
+        let b = f.at2(cen + Vec2::new(rng.random_range(-0.6..0.6), rng.random_range(-0.6..0.6)) * r, r * 0.5 + 0.8);
+        g.part(Rust).tube(a, b, 0.03, 4, rgba(c.palette.rust));
+    }
+}
+
+/// A tipper lorry with its body heaped with rubble.
+fn dump_truck(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f32, concrete: [f32; 3]) {
+    let f = &c.frame;
+    let col = pick(rng, &[[0.85, 0.55, 0.1], [0.75, 0.2, 0.1], [0.3, 0.35, 0.4]]);
+    vehicle(g, f, c.palette, rng, p, 0.0, yaw, Vehicle::Truck, col);
+    let w = f.to_world(p.x, p.y);
+    let a = f.yaw() + yaw;
+    let (sn, cs) = a.sin_cos();
+    let at = |dx: f32, y: f32| Vec3::new(w.x + dx * cs, y, w.y + dx * sn);
+    // Steel tipper body over the bed, and the load showing over its sides.
+    g.part(Metal).boxed(at(-1.8, 2.3), Vec3::new(4.2, 1.2, 2.3), a, rgba(mul(col, 0.8)));
+    g.part(Concrete).boxed(at(-1.8, 3.0), Vec3::new(3.8, 0.4, 2.0), a, rgba(concrete));
+    g.part(Concrete).boxed(at(-2.2, 3.3), Vec3::new(1.6, 0.4, 1.2), a + 0.3, rgba(mul(concrete, 0.9)));
+}

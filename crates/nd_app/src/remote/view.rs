@@ -300,7 +300,7 @@ pub fn building_row(w: &World, id: BuildingId, b: &Building) -> Value {
         "id": key_str(id), "name": b.name, "land_use": b.land_use.label(), "tier": b.tier.label(), "floors": b.floors,
         "pos": w.lots.get(b.lot).map_or(Value::Null, |l| v2(l.center)), "lot": key_str(b.lot),
         "homes": b.homes, "residents": b.residents.len(), "jobs": b.jobs, "workers": b.workers.len(),
-        "under_construction": b.construction.is_some(),
+        "under_construction": b.construction.is_some() && !b.being_demolished(), "being_demolished": b.demolition.is_some(),
         "business": b.business.as_ref().map(|z| z.kind.label()), "plant": b.plant.map(plant_name),
         "depot": b.depot, "rail": b.rail.as_ref().map(|r| rail_name(r.kind)), "derelict": b.is_derelict(),
         "service": b.service.map(|s| format!("{}:{}", s.kind.key(), tier_key(s.tier))), "burning": w.services.is_burning(id),
@@ -309,7 +309,16 @@ pub fn building_row(w: &World, id: BuildingId, b: &Building) -> Value {
 
 pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> Value {
     let lot = w.lots.get(b.lot);
-    let construction = b.construction.as_ref().map(|c| {
+    let demolition = b.demolition.as_ref().map(|d| {
+        json!({
+            "progress": round(d.progress), "days_left": round(d.days_left()), "days": round(d.days),
+            "loads_hauled": d.loads, "loads_total": nd_sim::Demolition::loads_for(d.floors),
+            "floors": d.floors, "tier": d.tier.label(), "land_use": d.land_use.label(),
+            "crew": b.workers.len(), "crew_wanted": b.jobs,
+            "then": if d.clear_lot { "vacant lot" } else if b.construction.is_some() { "construction of the new building" } else { "the structure that took the lot over" },
+        })
+    });
+    let construction = b.construction.as_ref().filter(|_| !b.being_demolished()).map(|c| {
         let (homes, jobs) = b.planned_capacity();
         json!({
             "progress": round(c.progress), "days_left": round(c.days_left()), "days": round(c.days),
@@ -345,6 +354,7 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         "id": key_str(id), "name": b.name, "land_use": b.land_use.label(), "tier": b.tier.label(), "style": style, "floors": b.floors,
         "lot": key_str(b.lot), "pos": lot.map_or(Value::Null, |l| v2(l.center)), "built_day": b.built_tick / 1440 + 1,
         "under_construction": construction,
+        "demolition": demolition,
         "land_value": round(b.land_value), "rent": round(b.rent), "wage": round(b.wage()), "condition": round(b.condition), "derelict": b.is_derelict(),
         "homes": b.homes, "jobs": b.jobs, "visitors": b.visitors,
         "residents": people(&b.residents), "workers": people(&b.workers),
