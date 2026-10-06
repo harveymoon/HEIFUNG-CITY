@@ -716,6 +716,14 @@ trait MindProvider {
   arenas avoid repeating a neighbour. The renderer keeps a `StyleBook` that resolves
   styles in build order (a building sees only older neighbours), so the result does not
   depend on drawing order and a building keeps its look when a newer neighbour arrives.
+- Ramps (`roads::is_ramp_spec`: one-way streets narrower than a highway): an end dropped on a
+  highway gets a lead point `RAMP_LEAD` (40 m) before a merge or after a diverge, beside the
+  carriageway (`roads::ease_ramp_ends`), so the ramp joins nearly tangent; the join is drawn as a
+  taper filled to the carriageway edge with edge lines and a chevron-hatched gore, no junction pad,
+  crossings or stop lines (`street::ramp_gore`). Every one-way road (ramps, highways, one-way
+  streets) has an arrow painted in each lane every 45 m (`street::travel_arrows`), in the
+  holograms too. A ramp that has to stand 2.5 m or more above the land after easing (climbing to
+  the highway's embankment or a deck) is made a viaduct, so it stands on columns, not earth.
 - Road holograms (`nd_procgen::preview::road_preview`, `render/holo.rs`): the road being drawn
   and every pending project's roads are drawn with the street generator itself (carriageway, lane
   lines, kerbs, pavements), at their planned heights with viaduct decks and columns and tunnel
