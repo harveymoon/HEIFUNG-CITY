@@ -387,7 +387,51 @@ impl World {
         }
         let footprints: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect();
         parcels.retain(|p| !footprints.iter().any(|fp| point_in_polygon(p.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.98), &p.polygon)));
+        // A roundabout's central island is planting, never a lot.
+        parcels.retain(|p| !self.roads.rings.iter().any(|r| p.center.distance(r.center) < r.radius));
         parcels
+    }
+
+    /// Stamp a roundabout into the active project (one undo step). The
+    /// centre snaps onto a junction or road within a few metres; radius and
+    /// lanes are brought within limits. Errors if another roundabout
+    /// already takes the ground.
+    pub fn add_roundabout(&mut self, center: Vec2, radius: f32, lanes: u8) -> Result<GestureId, String> {
+        let center = self.roundabout_snap(center);
+        let ring = crate::roads::Ring::new(center, radius, lanes);
+        if crate::plan::ring_effect(self.effective_plan(), ring).blocked {
+            return Err("another roundabout already takes this ground".into());
+        }
+        Ok(self.add_gesture(Gesture::Roundabout { center: ring.center, radius: ring.radius, lanes: ring.lanes }))
+    }
+
+    /// Where a roundabout centre dropped at `p` lands: on a junction within
+    /// 12 m (that junction becomes the roundabout), else on a street within
+    /// 6 m, else `p`.
+    pub fn roundabout_snap(&self, p: Vec2) -> Vec2 {
+        let junction = self.roads.nodes.iter().enumerate().filter(|(i, n)| n.pos.distance(p) < 12.0 && self.roads.street_degree(NodeId(*i as u32)) >= 3).min_by(|a, b| a.1.pos.distance(p).total_cmp(&b.1.pos.distance(p)));
+        if let Some((_, n)) = junction {
+            return n.pos;
+        }
+        match self.roads.nearest_street(p) {
+            Some((_, _, q)) if q.distance(p) < 6.0 => q,
+            _ => p,
+        }
+    }
+
+    /// Lots with a building that a roundabout here would take (their
+    /// ground comes within the ring road and its pavement): demolished on
+    /// implement, as for any road works.
+    pub fn roundabout_takes(&self, ring: crate::roads::Ring) -> Vec<LotId> {
+        let reach = ring.outer_radius();
+        let grid = LotGrid::new(&self.lots);
+        grid.near(ring.center, reach)
+            .into_iter()
+            .filter(|&id| {
+                let l = &self.lots[id];
+                l.building.is_some() && (l.contains(ring.center) || crate::geom::distance_to_outline(ring.center, &l.polygon) < reach)
+            })
+            .collect()
     }
 
     /// Cut the parcels again and tie each to the saved lot holding its
@@ -602,7 +646,11 @@ impl World {
 
         // Roads.
         let mut roads = RoadNetwork::default();
-        for (_, points, fwd, bwd, kind) in self.master.roads() {
+        // Roundabouts cut the roads entering them and join them to their
+        // rings; the rings go down first so the arms snap onto them.
+        let (built, rings) = self.master.built_roads();
+        roads.rings = rings;
+        for (_, points, fwd, bwd, kind) in built {
             // Track is eased into smooth curves and tangential switches.
             let points = if kind == RoadKind::Rail { rail::smooth_track(&points, &roads) } else { points };
             // Breaks at every waterline, so a bridge is exactly the span.
@@ -969,3 +1017,7 @@ fn shrink_about_centroid(poly: &[Vec2], factor: f32) -> Vec<Vec2> {
     let c = crate::zoning::polygon_centroid(poly);
     poly.iter().map(|&p| c + (p - c) * factor).collect()
 }
+
+#[cfg(test)]
+#[path = "roundabout_tests.rs"]
+mod roundabout_tests;

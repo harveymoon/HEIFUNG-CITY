@@ -73,6 +73,9 @@ struct ParkTag;
 struct VacantTag;
 #[derive(Component)]
 struct PreviewTag;
+/// The Road tool's roundabout under the pointer: what stamping it would do.
+#[derive(Component)]
+struct RingPreviewTag;
 #[derive(Component)]
 struct SignalTag(LaneId);
 /// Lane arrows at junction approaches (follow `LaneNetwork::arrows_version`).
@@ -337,6 +340,7 @@ impl Plugin for RenderPlugin {
                 .in_set(SimSet::Sync),
         );
         app.add_systems(Update, sync_lane_arrows.in_set(SimSet::Sync).after(sync_signals).before(lift_spawned));
+        app.add_systems(Update, sync_ring_preview.in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
         app.add_systems(Update, (turbines::sync_turbines, haze::sync_haze, layers::sync_layers, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
         // [carlife] Cars parked at the kerb, after the cars on the road.
@@ -972,9 +976,98 @@ fn sync_preview(
         outline.push(poly[0]);
         glow.ground_strip(&outline, 0.8, 0.22, rgba(pal.preview_remove));
     }
+    for (_, fx) in &pv.planned_rings {
+        draw_ring_effect(&mut glow, pal, fx, 1.0);
+    }
+    for (_, ring) in &pv.removed_rings {
+        let road = ring.polyline(&[]).0;
+        let wd = ring.half_width() * 2.0;
+        glow.ground_strip(&road, wd, 0.22, scale(pal.preview_remove, 0.35));
+        for w in road.windows(2).step_by(2) {
+            dashes(&mut glow, w[0], w[1], 0.6, 0.23, 4.0, 3.0, rgba(pal.preview_remove));
+        }
+    }
     if !glow.is_empty() {
         spawn_glow(&mut commands, &mut meshes, &mats, &glow, PreviewTag);
     }
+}
+
+/// A roundabout as a hologram: the ring road with its direction of travel,
+/// the island, where the arms join, and the parts of roads it takes up
+/// (dashed red). `k` dims it for a parked project.
+fn draw_ring_effect(glow: &mut MeshData, pal: &nd_procgen::Palette, fx: &nd_sim::plan::RingEffect, k: f32) {
+    let Some(ring) = fx.ring else { return };
+    let tint = if fx.blocked { pal.preview_remove } else { pal.preview };
+    let wd = ring.half_width() * 2.0;
+    glow.ground_strip(&fx.road, wd, 0.22, scale(tint, 0.35 * k));
+    glow.ground_strip(&fx.road, 0.5, 0.23, scale(tint, k));
+    // Chevrons round the ring show the way traffic turns.
+    let n = fx.road.len().saturating_sub(1).max(1);
+    for (i, w) in fx.road.windows(2).enumerate() {
+        if i % 2 == 1 && n > 4 {
+            continue;
+        }
+        let mid = (w[0] + w[1]) * 0.5;
+        let d = (w[1] - w[0]).normalize_or_zero();
+        let side = SVec2::new(-d.y, d.x);
+        let tip = mid + d * 1.6;
+        for s in [-1.0f32, 1.0] {
+            glow.ground_strip(&[mid - d * 0.6 + side * s * 1.4, tip], 0.45, 0.235, scale(tint, 1.2 * k));
+        }
+    }
+    let island: Vec<SVec2> = (0..32).map(|i| ring.center + SVec2::from_angle(i as f32 / 32.0 * std::f32::consts::TAU) * ring.island_radius()).collect();
+    glow.ground_polygon(&island, 0.2, scale([0.35, 0.8, 0.45], 0.25 * k));
+    for (i, cut) in fx.cut.iter().enumerate() {
+        let wd = fx.cut_widths.get(i).copied().unwrap_or(6.0);
+        glow.ground_strip(cut, wd, 0.225, scale(pal.preview_remove, 0.18 * k));
+        for w in cut.windows(2) {
+            dashes(glow, w[0], w[1], 0.6, 0.24, 4.0, 3.0, scale(pal.preview_remove, k));
+        }
+    }
+    for &j in &fx.joins {
+        let dot: Vec<SVec2> = (0..12).map(|i| j + SVec2::from_angle(i as f32 / 12.0 * std::f32::consts::TAU) * 1.6).collect();
+        glow.ground_polygon(&dot, 0.24, scale(tint, 1.4 * k));
+    }
+}
+
+/// The Road tool's roundabout under the pointer, as Cities: Skylines
+/// shows a road before it is built: the ring, where existing roads are cut
+/// back and joined, and the lots whose buildings would be taken (red).
+/// Rebuilt only when the ring or the plan changes.
+#[allow(clippy::too_many_arguments)]
+fn sync_ring_preview(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    tools: Res<crate::tools::ToolState>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut last: Local<Option<(i64, i64, i64, u8, u64, u64)>>,
+    existing: Query<Entity, With<RingPreviewTag>>,
+) {
+    let w = &sim.world;
+    let ring = tools.ring_preview();
+    let key = ring.map(|r| ((r.center.x * 4.0).round() as i64, (r.center.y * 4.0).round() as i64, (r.radius * 4.0).round() as i64, r.lanes, w.plan_version, w.lots.len() as u64 ^ w.roads.version << 20));
+    if key == *last && !assets.palette_changed {
+        return;
+    }
+    *last = key;
+    despawn_all(&mut commands, &existing);
+    let Some(ring) = ring else { return };
+    let pal = &assets.palette;
+    let mut glow = MeshData::default();
+    let fx = nd_sim::plan::ring_effect(w.effective_plan(), ring);
+    draw_ring_effect(&mut glow, pal, &fx, 1.0);
+    if !fx.blocked {
+        for lot in w.roundabout_takes(ring) {
+            let Some(l) = w.lots.get(lot) else { continue };
+            let mut outline = l.polygon.clone();
+            outline.push(l.polygon[0]);
+            glow.ground_polygon(&l.polygon, 0.2, scale(pal.preview_remove, 0.3));
+            glow.ground_strip(&outline, 0.7, 0.24, scale(pal.preview_remove, 1.3));
+        }
+    }
+    spawn_glow(&mut commands, &mut meshes, &mats, &glow, RingPreviewTag);
 }
 
 /// Park land is a park as soon as it is planned, built or not, and park
@@ -2204,7 +2297,7 @@ fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res
 fn lift_spawned(
     sim: Res<Sim>,
     mut meshes: ResMut<Assets<Mesh>>,
-    q: Query<&Mesh3d, Or<(Added<RoadsTag>, Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>, Added<LaneArrowsTag>)>>,
+    q: Query<&Mesh3d, Or<(Added<RoadsTag>, Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>, Added<LaneArrowsTag>, Added<RingPreviewTag>)>>,
     mut signals: Query<&mut Transform, Added<SignalTag>>,
 ) {
     let w = &sim.world;
