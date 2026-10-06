@@ -177,9 +177,14 @@ fn demand(w: &World) -> Value {
 
 fn overview(w: &World, alerts: &[Alert]) -> Value {
     let e = &w.economy;
-    let (mut built, mut sites, mut derelict) = (0, 0, 0);
+    let (mut built, mut sites, mut derelict, mut demolishing) = (0, 0, 0, 0);
     for b in w.buildings.values() {
-        if b.construction.is_some() {
+        if b.demolition.is_some() {
+            demolishing += 1;
+        }
+        if b.being_demolished() {
+            // Counted above only.
+        } else if b.construction.is_some() {
             sites += 1;
         } else {
             built += 1;
@@ -196,7 +201,7 @@ fn overview(w: &World, alerts: &[Alert]) -> Value {
         "population": w.citizens.len(), "households": w.households.len(), "households_housed": housed,
         "homes": { "total": e.homes_total, "free": e.homes_free, "being_built": e.homes_building },
         "jobs": { "total": e.jobs_total, "filled": e.jobs_total - e.jobs_free.min(e.jobs_total), "free": e.jobs_free, "being_built": e.jobs_building },
-        "buildings": { "built": built, "under_construction": sites, "derelict": derelict, "vacant_lots": vacant, "unusable_lots": unusable, "lots_total": w.lots.len() },
+        "buildings": { "built": built, "under_construction": sites, "being_demolished": demolishing, "derelict": derelict, "vacant_lots": vacant, "unusable_lots": unusable, "lots_total": w.lots.len() },
         "treasury": round(e.treasury),
         "net_yesterday": round(e.ledger.yesterday.iter().sum()), "net_today_so_far": round(e.ledger.today.iter().sum()),
         "land_value_avg": round(e.avg_land_value), "gini": round(e.gini),
@@ -847,7 +852,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
             if b.is_derelict() {
                 derelict.add(k.clone(), at);
             }
-        } else if b.construction.as_ref().is_some_and(|c| c.waiting_for_materials()) {
+        } else if b.demolition.is_none() && b.construction.as_ref().is_some_and(|c| c.waiting_for_materials()) {
             sites.add(k.clone(), at);
         }
         if b.powered < UNPOWERED_BELOW && nd_sim::power::demand_mw(b) > 0.0 {

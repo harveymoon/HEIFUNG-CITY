@@ -146,6 +146,90 @@ impl Construction {
     }
 }
 
+/// A building coming down. Residents and staff are gone the moment it
+/// starts; a crew works the structure from the top down over 1–3 days,
+/// dump trucks haul the rubble away, and the lot is left clear (or, when
+/// the building is being replaced, its successor's construction starts).
+/// The look of what is being pulled down is kept here, because during a
+/// redevelopment the building's own fields already describe its successor.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Demolition {
+    /// Share of the work done, `0..1`.
+    pub progress: f32,
+    /// Total time in days.
+    pub days: f32,
+    /// Truckloads of rubble hauled away so far.
+    #[serde(default)]
+    pub loads: u8,
+    /// What is coming down: floors, tier, land use, seed and condition of
+    /// the old building, for the renderer.
+    pub floors: u8,
+    pub tier: Tier,
+    pub land_use: LandUse,
+    pub seed: u64,
+    #[serde(default = "one")]
+    pub condition: f32,
+    /// Nothing follows: the building is removed and the lot left vacant
+    /// when the work is done. False when a successor waits (redevelopment,
+    /// or a civic structure that took the lot over).
+    #[serde(default)]
+    pub clear_lot: bool,
+    /// The lot was made for the site because the parcel itself was erased
+    /// (zone bulldozed); it goes with the rubble.
+    #[serde(default)]
+    pub own_lot: bool,
+}
+
+impl Demolition {
+    /// Time to pull down a building of this height: one day for a house,
+    /// three for a tower.
+    pub fn days_for(floors: u8) -> f32 {
+        (0.9 + floors as f32 * 0.1).clamp(1.0, 3.0)
+    }
+
+    /// Dump-truck loads of rubble a building of this height makes.
+    pub fn loads_for(floors: u8) -> u8 {
+        (2 + floors / 3).min(10)
+    }
+
+    /// Crew pulling a building of this height down.
+    pub fn crew(floors: u8) -> u16 {
+        2 + floors as u16 / 3
+    }
+
+    /// Start pulling down `b` as it stands now.
+    pub fn of(b: &Building, clear_lot: bool) -> Self {
+        Self {
+            progress: 0.0,
+            days: Self::days_for(b.floors),
+            loads: 0,
+            floors: b.floors.max(1),
+            tier: b.tier,
+            land_use: b.land_use,
+            seed: b.seed,
+            condition: b.condition,
+            clear_lot,
+            own_lot: false,
+        }
+    }
+
+    /// Progress made in one sim hour.
+    pub fn hourly_step(&self) -> f32 {
+        1.0 / (self.days.max(0.05) * 24.0)
+    }
+
+    pub fn days_left(&self) -> f32 {
+        ((1.0 - self.progress) * self.days).max(0.0)
+    }
+
+    /// Loads that should have left by now: spread evenly over the work,
+    /// the last one before the lot is handed over.
+    pub fn loads_due(&self) -> u8 {
+        let n = Self::loads_for(self.floors);
+        ((self.progress * (n as f32 + 1.0)).floor() as u8).min(n)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Building {
     pub lot: LotId,
@@ -214,6 +298,11 @@ pub struct Building {
     /// A shipping port or ferry terminal.
     #[serde(default)]
     pub port: Option<crate::ports::PortKind>,
+    /// Being pulled down (see [`Demolition`]). A building that is only
+    /// coming down also carries a `construction` placeholder, so every
+    /// system that skips building sites skips it too.
+    #[serde(default)]
+    pub demolition: Option<Demolition>,
 }
 
 fn one() -> f32 {
@@ -256,6 +345,7 @@ impl Building {
             rail_outbound: 0.0,
             port: None,
             construction: None,
+            demolition: None,
         };
         b.recompute_capacity();
         b.update_rent(land_value);
@@ -283,7 +373,19 @@ impl Building {
         self.construction.is_some()
     }
 
+    /// Coming down, with nothing to follow on the lot.
+    pub fn being_demolished(&self) -> bool {
+        self.demolition.as_ref().is_some_and(|d| d.clear_lot)
+    }
+
     pub fn recompute_capacity(&mut self) {
+        if let Some(d) = self.demolition.as_ref().filter(|_| self.construction.is_some()) {
+            // A demolition site: the only work is the wrecking crew's.
+            self.homes = 0;
+            self.jobs = Demolition::crew(d.floors);
+            self.parking_capacity = 0;
+            return;
+        }
         if self.construction.is_some() {
             // A building site: nobody lives here yet, and the only work is
             // for the crew putting it up.
@@ -323,11 +425,15 @@ impl Building {
 
     /// Homes and jobs the building will have once construction is over.
     pub fn planned_capacity(&self) -> (u16, u16) {
+        if self.being_demolished() {
+            return (0, 0);
+        }
         if self.construction.is_none() {
             return (self.homes, self.jobs);
         }
         let mut done = self.clone();
         done.construction = None;
+        done.demolition = None;
         done.recompute_capacity();
         (done.homes, done.jobs)
     }

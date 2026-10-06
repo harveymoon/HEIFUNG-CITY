@@ -242,7 +242,6 @@ impl World {
         for l in self.lots.values_mut() {
             l.footfall_today = 0;
         }
-        let tick = self.clock.tick;
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         for bid in ids {
             if self.buildings[bid].construction.is_some() {
@@ -277,22 +276,12 @@ impl World {
                 false
             };
             if redevelop {
+                // Torn down and built again: tenants out now, a demolition
+                // site, then a building site, then the new building.
                 let lot = self.buildings[bid].lot;
                 let floors = self.pick_floors(lot, lu, target);
-                let b = &mut self.buildings[bid];
-                b.high_land_days = 0;
-                b.tier = target;
-                b.floors = floors.max(1);
-                b.condition = 1.0;
-                b.built_tick = tick;
-                let name = b.name.clone();
-                let residents = b.residents.clone();
-                for cid in residents {
-                    if let Some(c) = self.citizens.get_mut(cid) {
-                        c.remember(tick, format!("{name} was torn down and rebuilt for richer tenants. The rent went up with it."));
-                    }
-                }
-                changed = true;
+                self.redevelop(bid, target, floors.max(1), value);
+                continue;
             } else if lu != LandUse::Park && !special {
                 if target > tier && full && self.rng.random::<f32>() < 0.15 {
                     let b = &mut self.buildings[bid];

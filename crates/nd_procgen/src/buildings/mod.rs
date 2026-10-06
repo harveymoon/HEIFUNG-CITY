@@ -776,6 +776,10 @@ pub struct Extras<'a> {
     /// Still being built: progress in `0..1`. The site is drawn instead of
     /// the finished style.
     pub construction: Option<f32>,
+    /// Coming down: progress in `0..1`. The building (as described by the
+    /// other arguments) is drawn cut down to what is left, with the
+    /// demolition site around it.
+    pub demolition: Option<f32>,
     /// Styles of the buildings already standing nearby (see
     /// [`StyleBook`]); the style pick clusters or contrasts with them.
     pub neighbours: &'a [Neighbour],
@@ -783,7 +787,7 @@ pub struct Extras<'a> {
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, neighbours: &[] }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[] }
     }
 }
 
@@ -964,6 +968,11 @@ fn generate_styled_extras(
         rail: extras.rail.cloned().or_else(|| matches!(style, Style::Station | Style::FreightYard).then(|| back_edge_link(lot, if style == Style::Station { RailFacility::Station } else { RailFacility::FreightYard }))),
         park: if land_use == LandUse::Park || matches!(style, Style::ScrubLot | Style::Garden | Style::Plaza) { Some(extras.park.cloned().unwrap_or_else(|| nd_sim::park::plan_single(lot, tier))) } else { None },
     };
+    if let Some(progress) = extras.demolition {
+        let mut g = generate_styled_extras(lot, land_use, floors, tier, condition, seed, style, rules, palette, &Extras { demolition: None, construction: None, ..*extras });
+        construction::demolition_site(&mut g, &ctx, &mut rng, progress);
+        return g;
+    }
     if let Some(progress) = extras.construction {
         construction::construction_site(&mut g, &ctx, &mut rng, progress);
         if weathered(tier, ctx.wear) {
@@ -1217,6 +1226,59 @@ mod tests {
             }
         }
         assert!(worst.is_empty(), "{} sites leave their lot or budget:\n{}", worst.len(), worst.join("\n"));
+    }
+
+    /// Demolition sites at every stage stay on their lot, are well formed,
+    /// and come down: by the end nothing taller than the rubble is left.
+    #[test]
+    fn demolition_sites_stay_on_their_lot() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let mut worst: Vec<String> = Vec::new();
+        for lu in LandUse::ALL {
+            let lots = many_lots(lu);
+            for (li, lot) in lots.iter().enumerate() {
+                for (seed, floors, tier) in [(1u64, 2u8, Tier::Low), (7, 9, Tier::Mid), (13, 30, Tier::High)] {
+                    for progress in [0.0f32, 0.05, 0.2, 0.45, 0.7, 0.85, 0.99, 1.0] {
+                        let extras = Extras { demolition: Some(progress), ..Extras::default() };
+                        let g = generate_building(lot, lu, floors, tier, 1.0, seed + li as u64, &rules, &pal, &extras);
+                        let what = format!("demolition at {progress} on {lu:?} lot {li} floors {floors}");
+                        assert!(g.triangle_count() > 0, "{what} drew nothing");
+                        check_mesh(&g, &what);
+                        let (over, top, low, culprit) = extent(&g, lot, None);
+                        if over > 1.0 || top > (60.0 + floors as f32 * 5.0).max(90.0) || low < -0.3 || g.triangle_count() > budget(floors, lot) * 2 {
+                            worst.push(format!("{what}: overshoots {over:.1} m, top {top:.0} m, low {low:.1}, {} tris: {culprit}", g.triangle_count()));
+                        }
+                        // Machines and cranes come and go, but once the
+                        // structure is down only the site is left.
+                        if progress >= 0.85 && top > 8.0 {
+                            worst.push(format!("{what}: still {top:.1} m tall after the structure came down"));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(worst.is_empty(), "{} demolition sites misbehave:
+{}", worst.len(), worst.join("
+"));
+    }
+
+    /// A building cut part way down keeps no triangle above the cut, and
+    /// what is below is untouched.
+    #[test]
+    fn clipping_drops_everything_above_the_cut() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let lot = &many_lots(LandUse::Commercial)[0];
+        let mut g = generate_building(lot, LandUse::Commercial, 9, Tier::Mid, 1.0, 7, &rules, &pal, &Extras::default());
+        let below = |g: &Geometry, y: f32| g.iter().flat_map(|(_, m)| m.indices.chunks_exact(3).filter(move |t| t.iter().all(|&i| m.positions[i as usize][1] <= y)).map(|_| ()).collect::<Vec<_>>()).count();
+        let low_before = below(&g, 5.0);
+        let points = construction::clip_above(&mut g, 12.0);
+        assert!(!points.is_empty(), "walls were cut");
+        let top = g.iter().flat_map(|(_, m)| m.positions.iter().map(|p| p[1])).fold(0.0f32, f32::max);
+        assert!(top <= 12.0 + 1e-3, "nothing above the cut: {top}");
+        assert_eq!(below(&g, 5.0), low_before, "the lower floors are untouched");
+        check_mesh(&g, "clipped building");
     }
 
     /// Nothing a building generates may reach beyond its own lot outline
