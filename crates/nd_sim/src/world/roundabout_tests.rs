@@ -116,7 +116,7 @@ fn roads_crossing_or_ending_in_the_circle_are_joined_or_trimmed() {
     // A second ring on top of the first is refused; limits hold.
     assert!(w.add_roundabout(Vec2::new(30.0, 0.0), 20.0, 1).is_err());
     let id = w.add_roundabout(Vec2::new(500.0, 500.0), 900.0, 7).unwrap();
-    assert_eq!(w.gesture(id), Some(Gesture::Roundabout { center: Vec2::new(500.0, 500.0), radius: crate::roads::RING_MAX_RADIUS, lanes: 2 }));
+    assert_eq!(w.gesture(id), Some(Gesture::Roundabout { center: Vec2::new(500.0, 500.0), radius: crate::roads::RING_MAX_RADIUS, lanes: crate::roads::RING_MAX_LANES }));
 }
 
 #[test]

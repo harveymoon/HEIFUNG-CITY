@@ -1898,7 +1898,7 @@ fn sync_cars(
             // spawned at the identity transform was drawn for one frame at
             // the world origin: the centre of the main junction, flashing
             // each time a car joined the road.
-            let pose = car_pose(car, f, sim.world.car_height(car));
+            let pose = car_pose(car, f, &sim.world);
             let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, CarTag, SelfLifted)).id();
             let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), pose, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted)).id();
             state.cars.insert(id, [body, lights]);
@@ -1959,7 +1959,9 @@ fn sync_cars(
         let fx = vr.car_fx.get(id).copied();
         // Lifted here from the road the car is on, not by `lift_movers`:
         // under the highway's decks position alone would put it up top.
-        let lift = sim.world.car_height(car);
+        // At the height of the road where it is drawn, not where it ends
+        // the tick.
+        let lift = sim.world.car_height_at(car, pos);
         for e in ents.iter().copied().chain(fx) {
             if let Ok(mut tf) = q.get_mut(e) {
                 tf.translation = Vec3::new(pos.x, lift + 0.05 + if selected { 0.4 } else { 0.0 }, pos.y);
@@ -2045,10 +2047,11 @@ fn check_car_bodies(
     }
 }
 
-/// [carlife] Where a car on the road is drawn this frame, `lift` above datum.
-fn car_pose(car: &nd_sim::Car, f: f32, lift: f32) -> Transform {
-    let pos = car.prev_pos.lerp(car.pos, f);
-    let heading = lerp_angle(car.prev_heading, car.heading, f);
+/// [carlife] Where a car on the road is drawn this frame: the same pose
+/// and height the per-frame update gives it (`sync_cars`).
+fn car_pose(car: &nd_sim::Car, f: f32, w: &nd_sim::World) -> Transform {
+    let (pos, heading) = car.pose_at(f);
+    let lift = w.car_height_at(car, pos);
     Transform::from_translation(Vec3::new(pos.x, lift + 0.05, pos.y)).with_rotation(Quat::from_rotation_y(-heading))
 }
 

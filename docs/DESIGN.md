@@ -102,7 +102,7 @@ Citizens are rendered from their simulated positions every frame.
   junction whose exit lane is full; a vehicle 30 traffic minutes on one route replans from where it stands, and nothing is ever taken off the road for being slow: jams are part of the city and drivers feel them. Pedestrians walk on the
   right-hand pavement.
 - **Roundabouts** (`Gesture::Roundabout { center, radius, lanes }`, Road tool preset): a
-  one-way ring of 1 or 2 lanes, 24 to 240 m across, traffic keeping the middle on its left
+  one-way ring of 1 to 3 lanes, 24 to 240 m across, traffic keeping the middle on its left
   (anticlockwise on screen). The gesture is stamped over the plan and never edits road
   gestures: at rebuild `Plan::built_roads` cuts the streets and paths *older than the ring*
   out of the circle (`roads::layout_rings`, by gesture order), so the old junction goes,
@@ -115,14 +115,19 @@ Citizens are rendered from their simulated positions every frame.
   clears the outer one's by a lane and a pavement (partial overlaps are refused).
   Buildings under the ring road come down as for any road works. In the lane network
   (`traffic/roundabout.rs`) ring lanes run at `Ring::speed` (sqrt(2 r), 7 to 13 m/s), nothing
-  is signalised, arms may only turn right onto the ring and ring lanes continue or leave
-  from the outer lane. Entries give way with gap acceptance: a car about to reach the
+  is signalised. Arms on the outer perimeter turn right onto the ring (into its outer
+  lanes) and are left from the outer lane; arms joining from the open middle (roads
+  inside the ring) turn left onto it, into the inner lane, and are left from the inner
+  lane; every ring lane continues. Ring pieces are flagged `Segment::ring`, so a
+  three-lane ring is never taken for a highway carriageway (one-way, three lanes). Entries give way with gap acceptance: a car about to reach the
   line goes unless a ring vehicle that will pass the entry (not leave by it) is in the
   junction or arrives less than 3 s after it, looking back round the ring as far as a ring
   car covers in 9 s (at least 45 m);
-  ring traffic never yields and only follows a car merged ahead. Passing an exit in the
-  outer lane of a two-lane ring costs routing a little, so the first and second exits
-  keep outside and later ones go round on the inside. Hovering the tool shows the ring,
+  ring traffic never yields and only follows a car merged ahead. Passing an arm in a
+  lane on that arm's side costs routing a little, the more lanes in from the side the
+  more (`RING_OUTER_THROUGH` per lane), so the first exits keep to the outside and later
+  ones go round further in, changing back out between junctions; ring arrows are fixed
+  (the adaptive junction arrows leave ring nodes alone). Hovering the tool shows the ring,
   the road it takes up, the joins and the lots under the ring road (red); clicking stamps it
   into the active project.
 - **Driving** (`traffic.rs` `DriverProfile`, `world/driving.rs`, `takeover.rs`): turns follow a
@@ -761,6 +766,23 @@ trait MindProvider {
   streets) has an arrow painted in each lane every 45 m (`street::travel_arrows`), in the
   holograms too. A ramp that has to stand 2.5 m or more above the land after easing (climbing to
   the highway's embankment or a deck) is made a viaduct, so it stands on columns, not earth.
+  Slip roads proper are flagged `Segment::ramp` (`RoadNetwork::classify`, after every laying
+  and on load): one-way, non-ring streets reached from a highway node through plain bends and
+  ramp forks/merges (nodes of at most three one-way streets), up to the first two-way street;
+  a one-way street in town is never one. Like the highway (`Segment::is_motorway`) they front
+  no parcels, take no kerb parking, have hard shoulders instead of pavements and carry no walk
+  graph edges, so nobody walks them. Their lanes ease their limit (`Lane::speed_limit` at the
+  start to `Lane::limit_end`, `LaneNetwork::ramp_profiles`) from highway speed at the
+  carriageway to street speed where they meet the town, a smoothstep over the ramp's whole
+  length through its pieces and connectors, capped on bends at sqrt(3 r). Drivers read the
+  limits on their route up to 220 m ahead and brake for a lower one at 1.5 m/s²
+  (`Traffic::limit_ahead`); the car-following model's free-road term brakes at most 3 m/s²
+  (`FREE_BRAKE`), where plain IDM stopped a 25 m/s car dead on a 6 m/s connector. A car
+  covers as many short lanes (curve pieces, connectors) as a physics step takes it rather
+  than one per step, which made it stand at each short piece's end and then spring ahead.
+  Cars are drawn at the height of the road under their drawn position
+  (`World::car_height_at`), not where they end the tick, so they no longer hop a step on
+  every grade.
 - Road holograms (`nd_procgen::preview::road_preview`, `render/holo.rs`): the road being drawn
   and every pending project's roads are drawn with the street generator itself (carriageway, lane
   lines, kerbs, pavements), at their planned heights with viaduct decks and columns and tunnel

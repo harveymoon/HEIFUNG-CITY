@@ -257,7 +257,7 @@ impl World {
         let ramps: Vec<SegmentId> = self
             .roads
             .alive_segments()
-            .filter(|(_, s)| !s.bridge && !s.tunnel && crate::roads::is_ramp_spec(s.kind, s.lanes_fwd, s.lanes_bwd))
+            .filter(|(_, s)| !s.bridge && !s.tunnel && s.ramp)
             .filter(|(_, s)| [s.a, s.b].iter().any(|&n| z[n.0 as usize] - (land.height(self.roads.node(n).pos).max(floor)) >= crate::roads::VIADUCT_LEVEL))
             .map(|(id, _)| id)
             .collect();
@@ -415,25 +415,44 @@ impl World {
     /// a junction, the way it turns onto), so traffic on a viaduct stays up
     /// and traffic under it stays down whatever passes over where.
     pub fn car_height(&self, car: &crate::traffic::Car) -> f32 {
+        self.car_height_at(car, car.pos)
+    }
+
+    /// The height of the road under a car drawn at `p` somewhere along the
+    /// last tick: the road of whichever lane it was on there (the lanes it
+    /// passed this tick, and the one ahead), the nearest that `p` lies on.
+    /// The renderer interpolates the car's position through the tick, so
+    /// its height must follow that position: lifting it to where it ends
+    /// the tick (`car_height`) made cars hop up or down a step every tick
+    /// on a grade and float or sink by metres on the highway's hills.
+    pub fn car_height_at(&self, car: &crate::traffic::Car, p: Vec2) -> f32 {
         if !self.relief {
             return 0.0;
         }
-        let p = car.pos;
         let lanes = &self.traffic.net.lanes;
         let segment_of = |lane: crate::traffic::LaneId| match lanes.get(lane as usize).map(|l| &l.kind) {
             Some(crate::traffic::LaneKind::Road { segment, .. }) => Some(*segment),
             _ => None,
         };
-        let here = car.route.get(car.idx).copied();
-        let seg = here.and_then(segment_of).or_else(|| {
-            here.and_then(|l| lanes.get(l as usize)).and_then(|l| l.next.first().copied()).and_then(segment_of)
-        });
-        if let Some((sid, s)) = seg.and_then(|sid| self.roads.try_segment(sid).map(|s| (sid, s))) {
+        // Lanes the car may have been on during the tick: a few back from
+        // where it is, and the lane after a connector (a connector has no
+        // segment of its own).
+        let lo = car.idx.saturating_sub(4);
+        let hi = (car.idx + 1).min(car.route.len().saturating_sub(1));
+        let mut best: Option<(f32, f32)> = None;
+        for k in (lo..=hi.max(lo)).rev() {
+            let Some(&lane) = car.route.get(k) else { continue };
+            let seg = segment_of(lane).or_else(|| lanes.get(lane as usize).and_then(|l| l.next.first().copied()).and_then(segment_of));
+            let Some((sid, s)) = seg.and_then(|sid| self.roads.try_segment(sid).map(|s| (sid, s))) else { continue };
             let (a, b) = self.roads.segment_points(sid);
             let (t, q) = crate::geom::project_on_segment(p, a, b);
-            if q.distance(p) <= s.half_width() + 8.0 {
-                return self.road_height(sid, t);
+            let d = q.distance(p);
+            if d <= s.half_width() + 8.0 && best.is_none_or(|(bd, _)| d < bd - 0.01) {
+                best = Some((d, self.road_height(sid, t)));
             }
+        }
+        if let Some((_, h)) = best {
+            return h;
         }
         self.surface_height_near(p, self.ground_height(p))
     }

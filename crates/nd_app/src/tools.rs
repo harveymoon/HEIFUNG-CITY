@@ -228,7 +228,7 @@ pub struct ToolState {
     pub roundabout: bool,
     /// Roundabout radius (centre to the middle of the ring road), metres.
     pub ring_radius: f32,
-    /// Roundabout ring lanes, 1 or 2.
+    /// Roundabout ring lanes, 1 to 3 (`roads::RING_MAX_LANES`).
     pub ring_lanes: u8,
     /// Where the roundabout would go (snapped), while the pointer is on the map.
     pub ring_hover: Option<SVec2>,

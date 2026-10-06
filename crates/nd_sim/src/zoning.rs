@@ -423,7 +423,7 @@ fn corridor_edge(seg: &crate::roads::Segment) -> f32 {
 /// segment. Paths count only when `allow_paths` (homes may line a path).
 fn nearest_road(roads: &RoadNetwork, p: Vec2, allow_paths: bool) -> Option<(SegmentId, f32, f32)> {
     // Highways and bridges front nothing: no driveway joins either.
-    let (sid, t, q) = roads.nearest_where(p, |seg| !seg.is_rail() && !seg.is_highway() && !seg.bridge && !seg.tunnel && (seg.is_street() || allow_paths))?;
+    let (sid, t, q) = roads.nearest_where(p, |seg| !seg.is_rail() && !seg.is_motorway() && !seg.bridge && !seg.tunnel && (seg.is_street() || allow_paths))?;
     Some((sid, t, p.distance(q)))
 }
 
@@ -1350,8 +1350,9 @@ pub fn generate_parcels(roads: &RoadNetwork, water: &WaterMask, clip: Option<(Ve
             corridors.push(c);
         }
         let seg = roads.segment(sid);
-        // Highways and track front nothing, so no parcels hang off them.
-        if seg.is_rail() || seg.is_highway() {
+        // Highways, their slip roads and track front nothing, so no
+        // parcels hang off them.
+        if seg.is_rail() || seg.is_motorway() {
             continue;
         }
         let r = hw + PARCEL_REACH;

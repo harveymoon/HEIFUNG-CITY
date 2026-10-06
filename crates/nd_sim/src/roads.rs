@@ -222,6 +222,21 @@ pub struct Segment {
     /// pavements, and leaves whatever stands above it alone.
     #[serde(default)]
     pub tunnel: bool,
+    /// A piece of a roundabout's ring (`RoadNetwork::rings`). A ring is a
+    /// one-way street of up to three lanes, so without this a three-lane
+    /// ring would pass for a highway carriageway (grade-separated, fast,
+    /// fronting nothing). Set as the ring is laid and on load
+    /// (`RoadNetwork::classify`).
+    #[serde(default)]
+    pub ring: bool,
+    /// A highway slip road (`RoadNetwork::classify`): a one-way street
+    /// joined to a highway carriageway, up to where it meets a two-way
+    /// street. Like the highway it fronts nothing (no parcels, no kerb
+    /// parking), has hard shoulders instead of pavements and nobody walks
+    /// on it; its lanes ease their speed from the highway's to the
+    /// street's along its length (`traffic::LaneNetwork::ramp_profiles`).
+    #[serde(default)]
+    pub ramp: bool,
 }
 
 impl Segment {
@@ -241,7 +256,13 @@ impl Segment {
     /// fast, fronts no lots, and is grade-separated: other ways cross it
     /// without a junction unless an end is dropped on it (a ramp).
     pub fn is_highway(&self) -> bool {
-        is_highway_spec(self.kind, self.lanes_fwd, self.lanes_bwd)
+        !self.ring && is_highway_spec(self.kind, self.lanes_fwd, self.lanes_bwd)
+    }
+
+    /// A highway carriageway or one of its slip roads: fast road that
+    /// fronts nothing and has no pavements.
+    pub fn is_motorway(&self) -> bool {
+        self.ramp || self.is_highway()
     }
 
     pub fn half_width(&self) -> f32 {
@@ -268,6 +289,10 @@ pub struct RoadNetwork {
     /// their ring pieces are one-way streets on the circle.
     #[serde(default)]
     pub rings: Vec<Ring>,
+    /// Set while a ring's own polyline is being laid, so its pieces are
+    /// flagged `ring` and never treated as a highway while they are cut in.
+    #[serde(skip)]
+    laying_ring: bool,
 }
 
 impl RoadNetwork {
@@ -524,7 +549,7 @@ impl RoadNetwork {
             return existing;
         }
         self.index.take();
-        self.segments.push(Segment { a, b, lanes_fwd, lanes_bwd, alive: true, kind, bridge: false, viaduct: false, tunnel: false });
+        self.segments.push(Segment { a, b, lanes_fwd, lanes_bwd, alive: true, kind, bridge: false, viaduct: false, tunnel: false, ring: self.laying_ring, ramp: false });
         let id = SegmentId((self.segments.len() - 1) as u32);
         self.nodes[a.0 as usize].segments.push(id);
         self.nodes[b.0 as usize].segments.push(id);
@@ -544,6 +569,8 @@ impl RoadNetwork {
             self.segments[id.0 as usize].bridge = s.bridge;
             self.segments[id.0 as usize].viaduct = s.viaduct;
             self.segments[id.0 as usize].tunnel = s.tunnel;
+            self.segments[id.0 as usize].ring = s.ring;
+            self.segments[id.0 as usize].ramp = s.ramp;
         }
     }
 
@@ -566,7 +593,8 @@ impl RoadNetwork {
     pub fn add_polyline_levels(&mut self, points: &[Vec2], levels: &[f32], lanes_fwd: u8, lanes_bwd: u8, kind: RoadKind) -> Vec<SegmentId> {
         let mut out = Vec::new();
         let last = points.len().saturating_sub(1);
-        let highway = is_highway_spec(kind, lanes_fwd, lanes_bwd);
+        self.laying_ring = self.is_ring_way(points, lanes_fwd, lanes_bwd, kind);
+        let highway = is_highway_spec(kind, lanes_fwd, lanes_bwd) && !self.laying_ring;
         let level = |i: usize| levels.get(i).copied().filter(|l| l.is_finite()).unwrap_or(0.0);
         for (i, w) in points.windows(2).enumerate() {
             if w[0].distance(w[1]) < 0.5 {
@@ -578,10 +606,55 @@ impl RoadNetwork {
             let b = if i + 1 == last { self.end_node(w[1], END_SNAP_RADIUS, kind, level(i + 1), &out) } else { self.get_or_add_node_kind(w[1], kind, level(i + 1), highway) };
             out.extend(self.add_segment_between(a, b, lanes_fwd, lanes_bwd, kind));
         }
+        self.laying_ring = false;
         if !out.is_empty() {
             self.version += 1;
+            self.classify();
         }
         out
+    }
+
+    /// Is this polyline a roundabout's ring: a one-way street with every
+    /// point on the circle of one of `rings` with its lane count?
+    pub fn is_ring_way(&self, points: &[Vec2], lanes_fwd: u8, lanes_bwd: u8, kind: RoadKind) -> bool {
+        kind == RoadKind::Street && lanes_bwd == 0 && lanes_fwd > 0 && points.len() >= 3 && self.rings.iter().any(|r| r.lanes == lanes_fwd && points.iter().all(|&p| r.on_circle(p)))
+    }
+
+    /// Set the derived flags of every piece: `ring` for the pieces of a
+    /// roundabout, `ramp` for highway slip roads. A slip road is found from
+    /// the highway outwards: a one-way street (not a ring, not a highway)
+    /// leaving a node on a highway, followed through plain bends and
+    /// ramp forks and merges (nodes where only one-way streets meet, three
+    /// at most) until it reaches a two-way street, a ring or another
+    /// highway. So a one-way street in town is never a ramp, nor is a
+    /// one-way couplet that happens to start at a slip road's end.
+    pub fn classify(&mut self) {
+        for i in 0..self.segments.len() {
+            let ring = self.ring_of_segment(SegmentId(i as u32)).is_some();
+            self.segments[i].ring = ring;
+            self.segments[i].ramp = false;
+        }
+        let one_way = |s: &Segment| s.alive && s.is_street() && !s.ring && !s.is_highway() && (s.lanes_fwd == 0) != (s.lanes_bwd == 0);
+        let mut stack: Vec<SegmentId> = Vec::new();
+        for n in &self.nodes {
+            if n.segments.iter().any(|&s| self.segments[s.0 as usize].alive && self.segments[s.0 as usize].is_highway()) {
+                stack.extend(n.segments.iter().copied().filter(|&s| one_way(&self.segments[s.0 as usize])));
+            }
+        }
+        while let Some(sid) = stack.pop() {
+            if self.segments[sid.0 as usize].ramp {
+                continue;
+            }
+            self.segments[sid.0 as usize].ramp = true;
+            let (a, b) = (self.segments[sid.0 as usize].a, self.segments[sid.0 as usize].b);
+            for n in [a, b] {
+                let alive: Vec<SegmentId> = self.nodes[n.0 as usize].segments.iter().copied().filter(|&s| self.segments[s.0 as usize].alive && self.segments[s.0 as usize].is_street()).collect();
+                if alive.len() > 3 || !alive.iter().all(|&s| one_way(&self.segments[s.0 as usize])) {
+                    continue;
+                }
+                stack.extend(alive.into_iter().filter(|&s| !self.segments[s.0 as usize].ramp));
+            }
+        }
     }
 
     fn add_segment_between(&mut self, a: NodeId, b: NodeId, lanes_fwd: u8, lanes_bwd: u8, kind: RoadKind) -> Vec<SegmentId> {
@@ -598,7 +671,7 @@ impl RoadNetwork {
         // candidates are fixed before splitting starts, in ascending id
         // order, so the junction nodes come out as a full scan makes them.
         let candidates = self.grid().in_box(pa.min(pb), pa.max(pb));
-        let highway = is_highway_spec(kind, lanes_fwd, lanes_bwd);
+        let highway = is_highway_spec(kind, lanes_fwd, lanes_bwd) && !self.laying_ring;
         for i in candidates {
             let s = self.segments[i as usize].clone();
             if !s.alive || s.a == a || s.a == b || s.b == a || s.b == b {
@@ -846,6 +919,8 @@ impl RoadNetwork {
 /// 24 to 240 m across.
 pub const RING_MIN_RADIUS: f32 = 12.0;
 pub const RING_MAX_RADIUS: f32 = 120.0;
+/// Most lanes a roundabout's ring may have.
+pub const RING_MAX_LANES: u8 = 3;
 /// Two arms whose joins on the circle are closer than this share one node.
 const RING_JOIN_MERGE: f32 = 8.0;
 /// Target length of a ring piece between joins.
@@ -867,7 +942,7 @@ pub struct Ring {
 impl Ring {
     /// A ring with its radius and lanes brought within limits.
     pub fn new(center: Vec2, radius: f32, lanes: u8) -> Self {
-        Self { center, radius: radius.clamp(RING_MIN_RADIUS, RING_MAX_RADIUS), lanes: lanes.clamp(1, 2) }
+        Self { center, radius: radius.clamp(RING_MIN_RADIUS, RING_MAX_RADIUS), lanes: lanes.clamp(1, RING_MAX_LANES) }
     }
 
     pub fn half_width(&self) -> f32 {
