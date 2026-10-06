@@ -91,8 +91,12 @@ fn run(services: bool) -> Day8 {
                 if minute % 90 == 17 && !occupied.is_empty() {
                     world.start_crime(occupied[next(occupied.len())]);
                 }
-                if minute % 360 == 200 && !occupied.is_empty() {
-                    world.start_fire(occupied[next(occupied.len())]);
+                // Only what can burn: start_fire turns down parks, stations
+                // and anything already alight, and a refused pick left the
+                // day short of drill fires.
+                let flammable: Vec<_> = occupied.iter().copied().filter(|&b| world.buildings.get(b).is_some_and(|b| b.land_use != nd_sim::LandUse::Park && b.rail.is_none())).collect();
+                if minute % 360 == 200 && !flammable.is_empty() {
+                    world.start_fire(flammable[next(flammable.len())]);
                 }
                 if minute % 90 == 62 {
                     let indoors: Vec<_> = world.citizens.iter().filter(|(_, c)| c.inside.is_some_and(|b| world.buildings.get(b).is_some_and(|b| b.service.is_none()))).map(|(id, _)| id).collect();

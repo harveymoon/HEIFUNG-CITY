@@ -309,13 +309,10 @@ impl World {
     fn tow(&mut self, car: CarId) {
         let Some(c) = self.traffic.cars.get(car) else { return };
         let (lane, s, model, pos) = (c.route[c.idx], c.s, c.model, c.pos);
-        let yard = self
-            .buildings
-            .iter()
-            .filter(|(_, b)| b.land_use == LandUse::Industrial && b.construction.is_none())
-            .filter_map(|(id, b)| self.lots.get(b.lot).filter(|l| l.car_segment.is_some()).map(|l| (id, l.center.distance(pos))))
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(id, _)| id);
+        // [parking] The city's tow companies haul wrecks too; with none in
+        // town, one from out of town takes it off the map.
+        let yard = self.tow_company_near(pos);
+        self.enforcement.stats.wrecks_towed_total += 1;
         let goal = yard.and_then(|y| self.building_lot(y)).and_then(|l| l.car_segment.map(|s| (s, l.car_point))).or_else(|| {
             // No yard: off the map, to the nearest road end.
             let leaves = self.city_leaves();

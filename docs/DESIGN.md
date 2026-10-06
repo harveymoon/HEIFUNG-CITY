@@ -311,6 +311,22 @@ Citizens are rendered from their simulated positions every frame.
   another is far cheaper. A sociable citizen may bring a free household member or coworker along (5% + 20% x sociability per outing); a regular spot adds 6% to the evening's pull.
   Regulars stand an extra round (20% on the tab; drinks cost 0.9/1.0/1.4x by tier). All draws are
   seeded by citizen and tick, so replays repeat.
+- **Parking rules, towing and city lots** (`crate::enforcement`, `world/enforcement.rs`): every
+  street car stands in a kerb slot of its own (a driver who finds nothing legal takes a free slot on
+  a street where parking is banned, or keeps circling; never on top of another car). Kerb parking is
+  limited to 2 hours on every street (`Vehicles::kerb_rules` overrides per street); residents within
+  150 m of home hold a permit. A parking enforcement office (Services, three tiers) sends officers,
+  two a car, round the streets within its reach from 07:00 to 21:00: a car over its limit gets a 35
+  ticket (household to treasury, ledger "parking fines"); an hour later, or at once if parked where
+  parking is banned, the tow truck is called. Tow companies are businesses on industrial land
+  (logistics); the nearest with a truck free sends one, which hooks the car where it stands and
+  carries it to its pound (drawn on the truck as wrecks are). With none in town a company from out
+  of town comes in from the edge 45 minutes later and charges 180 instead of 80. The owner pays the
+  fee plus 15 a day and goes to fetch the car (a pound out of town delivers it), or after three days
+  it is auctioned and driven away. Crash wrecks go to the same companies. The player places parking
+  lots the city runs (Buildings, Transit): small (12 spaces), large (30) or a multi-storey car park
+  (120), on any lot with a street; the fee (default 2-3, `parking_price`) goes to the treasury
+  (ledger "city parking fees"), attendants and upkeep are the city's.
 - **Parking businesses**: when the day's circling outruns free spaces, development opens a
   parking lot on a vacant lot near the last driver who could not find a space: a surface lot where
   land is cheap (about one space per 28 m², two jobs), a multi-storey car park on middle land

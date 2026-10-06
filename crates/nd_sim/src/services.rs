@@ -158,10 +158,14 @@ pub enum ServiceKind {
     /// Drone taxi pad, vertiport or skyport (`crate::air`): placed under
     /// Transit, at the end so saved kinds keep their order.
     Vertiport,
+    /// [parking] Parking enforcement office: officers in small cars patrol
+    /// the streets within reach, ticket overstayers and call the tow truck
+    /// (`crate::enforcement`).
+    ParkingEnforcement,
 }
 
 impl ServiceKind {
-    pub const ALL: [ServiceKind; 10] = [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch, ServiceKind::Monument, ServiceKind::Stadium, ServiceKind::Jail, ServiceKind::TrashDepot, ServiceKind::Vertiport];
+    pub const ALL: [ServiceKind; 11] = [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch, ServiceKind::Monument, ServiceKind::Stadium, ServiceKind::Jail, ServiceKind::TrashDepot, ServiceKind::Vertiport, ServiceKind::ParkingEnforcement];
     /// The four that cover the city by road distance, in coverage-index order.
     pub const COVERING: [ServiceKind; 4] = [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School];
 
@@ -178,6 +182,7 @@ impl ServiceKind {
             ServiceKind::Jail => "jail",
             ServiceKind::TrashDepot => "trash_depot",
             ServiceKind::Vertiport => "vertiport",
+            ServiceKind::ParkingEnforcement => "parking_enforcement",
         }
     }
 
@@ -193,6 +198,7 @@ impl ServiceKind {
             "jail" | "prison" => Some(ServiceKind::Jail),
             "trash_depot" | "trash" | "garbage" | "sanitation" => Some(ServiceKind::TrashDepot),
             "vertiport" | "skyport" | "drone_pad" | "dronepad" | "vertipad" => Some(ServiceKind::Vertiport),
+            "parking_enforcement" | "parking_office" | "parking_police" | "traffic_wardens" => Some(ServiceKind::ParkingEnforcement),
             _ => None,
         }
     }
@@ -209,6 +215,7 @@ impl ServiceKind {
             ServiceKind::Jail => "jail",
             ServiceKind::TrashDepot => "trash depot",
             ServiceKind::Vertiport => "vertiport",
+            ServiceKind::ParkingEnforcement => "parking enforcement office",
         }
     }
 
@@ -225,6 +232,7 @@ impl ServiceKind {
             ServiceKind::Jail => ["lock-up", "jail", "penitentiary"],
             ServiceKind::TrashDepot => ["transfer yard", "trash depot", "waste management centre"],
             ServiceKind::Vertiport => ["drone pad", "vertiport", "skyport"],
+            ServiceKind::ParkingEnforcement => ["parking warden post", "parking enforcement office", "parking authority"],
         };
         names[tier.index()]
     }
@@ -238,6 +246,7 @@ impl ServiceKind {
             ServiceKind::School => Hours::new(8, 16),
             ServiceKind::Stadium => Hours::new(12, 0),
             ServiceKind::TrashDepot => Hours::new(6, 18),
+            ServiceKind::ParkingEnforcement => Hours::new(7, 21),
         }
     }
 
@@ -277,6 +286,7 @@ impl ServiceKind {
             ServiceKind::Jail => 16_000.0,
             ServiceKind::TrashDepot => 9_000.0,
             ServiceKind::Vertiport => 20_000.0,
+            ServiceKind::ParkingEnforcement => 6_000.0,
         };
         base * [0.5, 1.0, 2.2][tier.index()]
     }
@@ -293,6 +303,7 @@ impl ServiceKind {
             ServiceKind::Jail => 420.0,
             ServiceKind::TrashDepot => 260.0,
             ServiceKind::Vertiport => 260.0,
+            ServiceKind::ParkingEnforcement => 150.0,
         };
         base * [0.6, 1.0, 1.8][tier.index()]
     }
@@ -310,6 +321,8 @@ impl ServiceKind {
             // Two crew a truck (`trash::TRUCKS` per tier) and the yard.
             ServiceKind::TrashDepot => 10,
             ServiceKind::Vertiport => 8,
+            // Two officers a car (`enforcement_cars`).
+            ServiceKind::ParkingEnforcement => 6,
         };
         match tier {
             Tier::Low => base.div_ceil(2),
@@ -327,6 +340,8 @@ impl ServiceKind {
             ServiceKind::School => 500.0,
             // Straight-line reach of its trucks (`crate::trash`), not road coverage.
             ServiceKind::TrashDepot => 800.0,
+            // Straight-line reach of its patrols.
+            ServiceKind::ParkingEnforcement => 700.0,
             _ => return 0.0,
         };
         base * [0.7, 1.0, 1.4][tier.index()]
@@ -359,6 +374,7 @@ impl ServiceKind {
             ServiceKind::Dispatch => 250.0,
             ServiceKind::TrashDepot => 500.0,
             ServiceKind::Vertiport => 350.0,
+            ServiceKind::ParkingEnforcement => 200.0,
             _ => 400.0,
         };
         base * [0.75, 1.0, 1.6][tier.index()]
@@ -369,7 +385,7 @@ impl ServiceKind {
             ServiceKind::Monument => lu != LandUse::Industrial,
             ServiceKind::Stadium => matches!(lu, LandUse::Entertainment | LandUse::Civic | LandUse::Commercial),
             ServiceKind::Jail | ServiceKind::TrashDepot => matches!(lu, LandUse::Civic | LandUse::Industrial),
-            ServiceKind::Fire | ServiceKind::Vertiport => lu != LandUse::Park,
+            ServiceKind::Fire | ServiceKind::Vertiport | ServiceKind::ParkingEnforcement => lu != LandUse::Park,
             _ => lu != LandUse::Park && lu != LandUse::Industrial,
         }
     }
@@ -393,6 +409,7 @@ impl ServiceKind {
             ServiceKind::TrashDepot => (220.0 * k, -0.06 * k),
             // Rotor noise: the neighbours pay for the rich commuting overhead.
             ServiceKind::Vertiport => (160.0 * k, -0.04 * k),
+            ServiceKind::ParkingEnforcement => (0.0, 0.0),
         }
     }
 
@@ -410,6 +427,7 @@ impl ServiceKind {
             ServiceKind::Jail => format!("{place} {}", ["Lock-up", "County Jail", "Penitentiary"][tier.index()]),
             ServiceKind::TrashDepot => format!("{place} {}", ["Transfer Yard", "Sanitation Depot", "Waste Management"][tier.index()]),
             ServiceKind::Vertiport => format!("{place} {}", ["Drone Pad", "Vertiport", "Skyport"][tier.index()]),
+            ServiceKind::ParkingEnforcement => format!("{place} {}", ["Warden Post", "Parking Enforcement", "Parking Authority"][tier.index()]),
         }
     }
 }
@@ -430,6 +448,8 @@ pub enum Placeable {
     Rail(RailFacility),
     /// A shipping port or ferry terminal at the water's edge.
     Dock(PortKind),
+    /// [parking] A parking lot the city runs, in three sizes.
+    ParkingLot(crate::enforcement::LotSize),
 }
 
 /// The Buildings tool's sub-categories.
@@ -474,8 +494,12 @@ impl BuildCategory {
     pub fn items(self) -> Vec<Placeable> {
         match self {
             BuildCategory::Power => PowerPlantKind::ALL.iter().map(|&k| Placeable::Plant(k)).collect(),
-            BuildCategory::Services => [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch, ServiceKind::Jail, ServiceKind::TrashDepot].iter().map(|&k| Placeable::Service(k, Tier::Mid)).collect(),
-            BuildCategory::Transit => vec![Placeable::BusDepot, Placeable::Service(ServiceKind::Vertiport, Tier::Mid)],
+            BuildCategory::Services => [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch, ServiceKind::Jail, ServiceKind::TrashDepot, ServiceKind::ParkingEnforcement].iter().map(|&k| Placeable::Service(k, Tier::Mid)).collect(),
+            BuildCategory::Transit => {
+                let mut v = vec![Placeable::BusDepot, Placeable::Service(ServiceKind::Vertiport, Tier::Mid)];
+                v.extend(crate::enforcement::LotSize::ALL.iter().map(|&s| Placeable::ParkingLot(s)));
+                v
+            }
             BuildCategory::Rail => vec![Placeable::Rail(RailFacility::Station), Placeable::Rail(RailFacility::FreightYard)],
             BuildCategory::Water => PortKind::ALL.iter().map(|&k| Placeable::Dock(k)).collect(),
             BuildCategory::Attractions => vec![Placeable::Service(ServiceKind::Monument, Tier::Mid), Placeable::Service(ServiceKind::Stadium, Tier::Mid)],
@@ -493,6 +517,7 @@ impl Placeable {
             Placeable::BusDepot => BuildCategory::Transit,
             Placeable::Rail(_) => BuildCategory::Rail,
             Placeable::Dock(_) => BuildCategory::Water,
+            Placeable::ParkingLot(_) => BuildCategory::Transit,
         }
     }
 
@@ -515,6 +540,7 @@ impl Placeable {
             Placeable::BusDepot => "bus depot".into(),
             Placeable::Rail(f) => f.label().to_lowercase(),
             Placeable::Dock(k) => k.label().to_string(),
+            Placeable::ParkingLot(s) => s.label().to_string(),
         }
     }
 
@@ -533,7 +559,9 @@ impl Placeable {
                 ServiceKind::Jail => "Jail",
                 ServiceKind::TrashDepot => "Trash depot",
                 ServiceKind::Vertiport => "Vertiport",
+                ServiceKind::ParkingEnforcement => "Parking enforcement",
             },
+            Placeable::ParkingLot(s) => s.menu_label(),
             Placeable::BusDepot => "Bus depot",
             Placeable::Rail(RailFacility::Station) => "Passenger station",
             Placeable::Rail(RailFacility::FreightYard) => "Freight yard",
@@ -550,6 +578,7 @@ impl Placeable {
             Placeable::Rail(RailFacility::Station) => crate::rail::STATION_COST,
             Placeable::Rail(RailFacility::FreightYard) => crate::rail::YARD_COST,
             Placeable::Dock(k) => k.cost(),
+            Placeable::ParkingLot(s) => s.cost(),
         }
     }
 
@@ -561,6 +590,7 @@ impl Placeable {
             Placeable::Rail(RailFacility::Station) => crate::rail::STATION_UPKEEP_PER_DAY,
             Placeable::Rail(RailFacility::FreightYard) => crate::rail::YARD_UPKEEP_PER_DAY,
             Placeable::Dock(k) => k.upkeep_per_day(),
+            Placeable::ParkingLot(s) => s.upkeep_per_day(),
         }
     }
 
@@ -572,6 +602,7 @@ impl Placeable {
             Placeable::Rail(RailFacility::Station) => crate::rail::STATION_JOBS,
             Placeable::Rail(RailFacility::FreightYard) => crate::rail::YARD_JOBS,
             Placeable::Dock(k) => k.jobs(),
+            Placeable::ParkingLot(s) => s.jobs(),
         }
     }
 
@@ -590,6 +621,7 @@ impl Placeable {
             Placeable::Service(k, t) => k.min_area(t),
             Placeable::BusDepot => crate::transit::DEPOT_MIN_AREA,
             Placeable::Rail(_) | Placeable::Dock(_) => 0.0,
+            Placeable::ParkingLot(s) => s.min_area(),
         }
     }
 
@@ -600,6 +632,8 @@ impl Placeable {
             Placeable::Service(k, _) => k.allowed_on(lu),
             Placeable::BusDepot => !matches!(lu, LandUse::Residential | LandUse::Park),
             Placeable::Rail(_) | Placeable::Dock(_) => true,
+            // Any road-adjacent lot but a park.
+            Placeable::ParkingLot(_) => lu != LandUse::Park,
         }
     }
 
@@ -627,6 +661,7 @@ impl Placeable {
             "station" => Some(Placeable::Rail(RailFacility::Station)),
             "freight_yard" | "yard" => Some(Placeable::Rail(RailFacility::FreightYard)),
             "clinic" => Some(Placeable::Service(ServiceKind::Health, tier.unwrap_or(Tier::Low))),
+            other if crate::enforcement::LotSize::from_key(other).is_some() => crate::enforcement::LotSize::from_key(other).map(Placeable::ParkingLot),
             other => ServiceKind::from_key(other).map(|k| Placeable::Service(k, tier.unwrap_or(Tier::Mid))),
         }
     }
@@ -1275,7 +1310,7 @@ mod tests {
             if k.coverage_index().is_some() {
                 assert!(l.radius() < m.radius() && m.radius() < h.radius(), "{k:?} radius");
                 assert!(l.radius() > COVERAGE_FADE, "{k:?} low tier must cover something fully");
-            } else if k != ServiceKind::TrashDepot {
+            } else if k != ServiceKind::TrashDepot && k != ServiceKind::ParkingEnforcement {
                 assert_eq!(m.radius(), 0.0);
             }
             if k.unit_kind().is_some() {

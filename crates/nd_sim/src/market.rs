@@ -128,6 +128,9 @@ pub enum BusinessKind {
     Fishery,
     /// Fish processing: fish in, food (counted as meat) out.
     FishPlant,
+    /// [parking] Tow company: tow trucks and a pound for towed cars; lives
+    /// on tow and release fees (`crate::enforcement`).
+    TowYard,
 }
 
 /// Opening hours on the clock, `open..close`; a close earlier than the open
@@ -201,7 +204,7 @@ pub struct Recipe {
 }
 
 impl BusinessKind {
-    pub const COUNT: usize = 19;
+    pub const COUNT: usize = 20;
     /// Every kind, in `index` order.
     pub const ALL: [BusinessKind; Self::COUNT] = [
         BusinessKind::VertFarm,
@@ -223,6 +226,7 @@ impl BusinessKind {
         BusinessKind::FleetLot,
         BusinessKind::Fishery,
         BusinessKind::FishPlant,
+        BusinessKind::TowYard,
     ];
 
     pub fn index(self) -> usize {
@@ -250,6 +254,7 @@ impl BusinessKind {
             BusinessKind::FleetLot => "truck and bus lot",
             BusinessKind::Fishery => "fishery",
             BusinessKind::FishPlant => "fish processing plant",
+            BusinessKind::TowYard => "tow company",
         }
     }
 
@@ -286,6 +291,7 @@ impl BusinessKind {
             BusinessKind::FleetLot => Recipe { inputs: &[(Resource::Fuel, 0.1)], outputs: &[] },
             BusinessKind::Fishery => Recipe { inputs: &[], outputs: &[(Resource::Fish, 2.5)] },
             BusinessKind::FishPlant => Recipe { inputs: &[(Resource::Fish, 1.5)], outputs: &[(Resource::Meat, 1.0)] },
+            BusinessKind::TowYard => Recipe { inputs: &[], outputs: &[] },
         }
     }
 
@@ -308,6 +314,7 @@ impl BusinessKind {
                 BusinessKind::FleetLot,
                 BusinessKind::Fishery,
                 BusinessKind::FishPlant,
+                BusinessKind::TowYard,
             ],
             LandUse::Commercial => &[BusinessKind::Grocery, BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::GadgetShop, BusinessKind::Office],
             LandUse::Entertainment => &[BusinessKind::Venue],
@@ -324,7 +331,7 @@ impl BusinessKind {
             BusinessKind::GadgetShop => Hours::new(9, 20),
             BusinessKind::Venue => Hours::new(18, 3),
             BusinessKind::Office => Hours::new(8, 18),
-            BusinessKind::Parking | BusinessKind::FleetLot | BusinessKind::ContainerYard | BusinessKind::OilWell => Hours::ALWAYS,
+            BusinessKind::Parking | BusinessKind::FleetLot | BusinessKind::ContainerYard | BusinessKind::OilWell | BusinessKind::TowYard => Hours::ALWAYS,
             BusinessKind::Fishery => Hours::new(4, 16),
             BusinessKind::Refinery | BusinessKind::FishPlant => Hours::new(6, 22),
             // Plants run two shifts.

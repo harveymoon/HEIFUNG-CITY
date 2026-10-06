@@ -41,6 +41,7 @@ fn service_floors(kind: ServiceKind, tier: Tier) -> u8 {
         ServiceKind::Jail => [1, 2, 3],
         ServiceKind::TrashDepot => [1, 1, 2],
         ServiceKind::Vertiport => [1, 2, 4],
+        ServiceKind::ParkingEnforcement => [1, 1, 2],
     };
     f[tier.index()]
 }
@@ -83,6 +84,7 @@ impl World {
                 let c = self.lots.get(lot).ok_or("no such lot")?.center;
                 self.place_port(k, c)
             }
+            Placeable::ParkingLot(size) => self.build_city_parking(lot, size),
         }
     }
 
@@ -115,7 +117,7 @@ impl World {
                 return Some(e);
             }
         }
-        let needs_street = matches!(what, Placeable::BusDepot) || matches!(what, Placeable::Service(k, _) if k.unit_kind().is_some() || k == ServiceKind::Stadium || k == ServiceKind::TrashDepot);
+        let needs_street = matches!(what, Placeable::BusDepot | Placeable::ParkingLot(_)) || matches!(what, Placeable::Service(k, _) if k.unit_kind().is_some() || k == ServiceKind::Stadium || k == ServiceKind::TrashDepot || k == ServiceKind::ParkingEnforcement);
         if needs_street && !lot.car_access() {
             return Some(format!("a {} needs a street out front", what.label()));
         }

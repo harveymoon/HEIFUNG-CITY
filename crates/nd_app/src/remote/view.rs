@@ -405,7 +405,15 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         "residents": people(&b.residents), "workers": people(&b.workers),
         "footfall_today": lot.map(|l| l.footfall_today), "footfall_hour": lot.map(|l| l.footfall_hour), "car_access": lot.map(|l| l.car_access()),
         "powered": round(b.powered), "demand_mw": round(nd_sim::power::demand_mw(b)), "unpowered_hours_today": b.unpowered_hours_today,
-        "parking": if b.parking_capacity > 0 { json!({ "capacity": b.parking_capacity, "used": b.parking_used, "price": round(b.parking_price), "public": b.is_parking() }) } else { Value::Null },
+        "parking": if b.parking_capacity > 0 { json!({ "capacity": b.parking_capacity, "used": b.parking_used, "occupancy": round(b.parking_used as f32 / b.parking_capacity.max(1) as f32), "price": round(b.parking_price), "public": b.is_parking(), "city_run": w.vehicles.city_lots.get(&id).map(|l| l.size.key()) }) } else { Value::Null },
+        "parking_office": b.service.filter(|s| s.kind == nd_sim::ServiceKind::ParkingEnforcement).map(|s| json!({
+            "officers": b.workers.len(), "patrol_cars_now": w.enforcement.patrols.iter().filter(|p| p.office == id).count(), "patrol_cars_wanted": w.enforcement_cars(id),
+            "radius_m": s.kind.radius(s.tier), "patrol_cars": w.enforcement.patrols.iter().filter(|p| p.office == id).map(|p| key_str(p.car)).collect::<Vec<_>>(),
+        })),
+        "tow_company": b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::TowYard).map(|_| json!({
+            "trucks": w.tow_trucks(id), "jobs_open": w.enforcement.jobs.iter().filter(|j| j.company == Some(id)).count(),
+            "pound": w.vehicles.cars.iter().filter(|(_, c)| c.spot().is_some_and(|s| s.kind == nd_sim::ParkKind::Pound && s.building == Some(id))).map(|(v, c)| json!({ "vehicle": key_str(v), "owner": key_str(c.owner), "release_fee": round(c.spot().map_or(0.0, |s| w.release_fee(s))) })).collect::<Vec<_>>(),
+        })),
         "plant": plant, "depot": b.depot, "rail": rail, "business": business, "park": park,
     })
 }
@@ -489,6 +497,16 @@ pub fn car_detail(w: &World, id: CarId, c: &Car) -> Value {
         m["passenger_list"] = json!(bus.passengers.iter().filter_map(|&p| w.citizens.get(p).map(|x| json!({ "id": key_str(p), "name": x.name }))).collect::<Vec<_>>());
     }
     m["route_lanes_left"] = json!(c.route.len().saturating_sub(c.idx));
+    m["errand"] = json!(format!("{:?}", c.errand));
+    // [parking] A tow truck: the job, and the car it is fetching or carrying.
+    if let nd_sim::Errand::Tow(job) = c.errand {
+        if let Some(j) = w.enforcement.job(job) {
+            m["tow"] = json!({ "job": j.id, "state": format!("{:?}", j.state), "reason": j.reason.label(), "vehicle": key_str(j.car), "company": j.company.map(key_str), "company_name": building_name(w, j.company), "out_of_town": j.company.is_none() });
+        }
+    }
+    if let nd_sim::Errand::Patrol(office) = c.errand {
+        m["patrol"] = json!({ "office": key_str(office), "office_name": building_name(w, Some(office)) });
+    }
     m["traffic"] = car_traffic(w, c);
     m
 }
@@ -606,6 +624,7 @@ pub fn placeable_key(p: nd_sim::Placeable) -> String {
         nd_sim::Placeable::Rail(f) => rail_name(f).to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::ShippingPort) => "shipping_port".to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::FerryTerminal) => "ferry_terminal".to_string(),
+        nd_sim::Placeable::ParkingLot(s) => s.key().to_string(),
     }
 }
 
@@ -621,7 +640,7 @@ pub fn tier_key(t: nd_sim::Tier) -> &'static str {
 pub fn citizen_vehicles(w: &World, c: &Citizen) -> Value {
     let car = c.car.and_then(|vid| w.vehicles.cars.get(vid).map(|car| (vid, car))).map(|(vid, car)| {
         let place = match car.place {
-            nd_sim::CarPlace::Parked(s) => json!({ "parked": s.kind.label(), "building": s.building.map(key_str), "building_name": building_name(w, s.building), "pos": v2(s.pos), "since_tick": s.since }),
+            nd_sim::CarPlace::Parked(s) => vehicle_spot(w, vid, &s),
             nd_sim::CarPlace::Driving(cid) => json!({ "driving": key_str(cid), "errand": format!("{:?}", w.traffic.cars.get(cid).map(|t| t.errand)) }),
         };
         json!({ "id": key_str(vid), "body": car.model.body.label(), "class": format!("{:?}", car.model.class), "price": round(car.model.price()), "place": place })
@@ -686,4 +705,31 @@ pub fn air_report(w: &World) -> Value {
         "company": { "name": a.company.name, "money": round(a.company.money), "revenue_today": round(a.company.revenue_today), "revenue_yesterday": round(a.company.revenue_yesterday), "costs_per_day": round(a.company.costs_today) },
         "noise": { "cells": noise_cells, "max": round(noise_max), "max_land_value_penalty": round(nd_sim::air::noise_penalty(noise_max)), "grumbles_today": s.grumbles_today },
     })
+}
+
+/// [parking] Where a parked car is, with its ticket, limit and the pound.
+pub fn vehicle_spot(w: &World, vid: nd_sim::VehicleId, s: &nd_sim::ParkSpot) -> Value {
+    let mut v = json!({ "parked": s.kind.label(), "building": s.building.map(key_str), "building_name": building_name(w, s.building), "pos": v2(s.pos), "since_tick": s.since, "minutes_here": w.clock.tick.saturating_sub(s.since) });
+    if s.kind.on_street() {
+        v["limit_min"] = json!(w.kerb_limit(vid));
+        v["illegal"] = json!(w.parked_illegally(s));
+        v["ticketed_tick"] = if s.ticketed > 0 { json!(s.ticketed) } else { Value::Null };
+    }
+    if s.kind == nd_sim::ParkKind::Pound {
+        v["impounded"] = json!({ "pound": s.building.map(key_str), "out_of_town": s.building.is_none(), "release_fee": round(w.release_fee(s)), "auction_in_min": (s.since + nd_sim::enforcement::AUCTION_AFTER).saturating_sub(w.clock.tick) });
+    }
+    if let Some(j) = w.enforcement.job_for(vid) {
+        v["tow_job"] = json!({ "job": j.id, "state": format!("{:?}", j.state), "reason": j.reason.label(), "truck": j.truck.map(key_str) });
+    }
+    v
+}
+
+/// [parking] A private car by its record id: owner, model and place.
+pub fn vehicle_detail(w: &World, vid: nd_sim::VehicleId) -> Option<Value> {
+    let car = w.vehicles.cars.get(vid)?;
+    let place = match car.place {
+        nd_sim::CarPlace::Parked(s) => vehicle_spot(w, vid, &s),
+        nd_sim::CarPlace::Driving(cid) => json!({ "driving": key_str(cid), "errand": format!("{:?}", w.traffic.cars.get(cid).map(|t| t.errand)) }),
+    };
+    Some(json!({ "id": key_str(vid), "owner": key_str(car.owner), "owner_name": w.citizens.get(car.owner).map(|c| c.name.clone()), "body": car.model.body.label(), "class": format!("{:?}", car.model.class), "price": round(car.model.price()), "place": place }))
 }

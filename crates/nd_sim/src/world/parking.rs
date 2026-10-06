@@ -5,6 +5,35 @@
 use super::*;
 
 impl World {
+    /// [parking] Put down a parking lot the city runs (the Buildings tool,
+    /// Transit): on any lot with a street, buying out what grew there; its
+    /// size sets the spaces and the look, the fee starts at the default
+    /// (`set_parking_price` changes it) and goes to the treasury.
+    pub fn build_city_parking(&mut self, lot_id: LotId, size: crate::enforcement::LotSize) -> Result<BuildingId, String> {
+        let what = crate::services::Placeable::ParkingLot(size);
+        if let Some(problem) = self.placement_problem(what, lot_id) {
+            return Err(problem);
+        }
+        self.take_over_lot(lot_id, size.label())?;
+        self.economy.debit(Flow::Construction, size.cost());
+        let n = self.fresh_seed() % 90 + 1;
+        let name = match size {
+            crate::enforcement::LotSize::Small => format!("City Lot {n}"),
+            crate::enforcement::LotSize::Large => format!("City Parking {n}"),
+            crate::enforcement::LotSize::MultiStorey => format!("City Car Park {n}"),
+        };
+        let price = size.default_price();
+        let bz = Business::new(BusinessKind::Parking, size.jobs());
+        let id = self.place_special(lot_id, name, size.jobs(), size.capacity(), |b| {
+            b.tier = Tier::Mid;
+            b.floors = size.floors();
+            b.business = Some(bz);
+            b.parking_price = price;
+        });
+        self.vehicles.city_lots.insert(id, crate::enforcement::CityLot { size, price });
+        Ok(id)
+    }
+
     /// Open a parking business on a vacant lot: a surface lot where land is
     /// cheap, a multi-storey car park in the middle. The cheapest business
     /// there is: two to four jobs and a little float.

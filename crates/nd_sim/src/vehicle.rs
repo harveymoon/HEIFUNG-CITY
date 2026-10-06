@@ -388,6 +388,12 @@ pub enum ParkKind {
     Overflow,
     /// On a dealer's forecourt.
     Dealer,
+    /// [parking] Hooked onto a tow truck, on its way to the pound (`pos`
+    /// follows the truck).
+    Hooked,
+    /// [parking] In a tow company's pound (`building`; none: a company out
+    /// of town), waiting for its owner to pay `fee` and fetch it.
+    Pound,
 }
 
 impl ParkKind {
@@ -397,8 +403,10 @@ impl ParkKind {
             ParkKind::Building => "building",
             ParkKind::Lot => "parking lot",
             ParkKind::Kerb => "kerb",
-            ParkKind::Overflow => "street (no space)",
+            ParkKind::Overflow => "street (illegally)",
             ParkKind::Dealer => "dealer",
+            ParkKind::Hooked => "on a tow truck",
+            ParkKind::Pound => "impounded",
         }
     }
 
@@ -432,6 +440,12 @@ pub struct ParkSpot {
     /// Tick it was parked.
     #[serde(default)]
     pub since: u64,
+    /// [parking] Tick a parking ticket was left on it here (0: none).
+    #[serde(default)]
+    pub ticketed: u64,
+    /// [parking] In the pound: the tow fee owed (storage is added daily).
+    #[serde(default)]
+    pub fee: f32,
 }
 
 /// Where a private car is: parked somewhere, or on the road.
@@ -489,6 +503,10 @@ pub enum Errand {
     Haul { base: Option<crate::buildings::BuildingId> },
     /// A truck or van driving back to the business it belongs to.
     Return(crate::buildings::BuildingId),
+    /// [parking] A parking enforcement car on its rounds from an office.
+    Patrol(crate::buildings::BuildingId),
+    /// [parking] A tow truck on job `n` (`crate::enforcement::TowJob`).
+    Tow(u32),
 }
 
 /// Why a private car came into or left the city: the only ways it can.
@@ -578,6 +596,15 @@ pub struct Vehicles {
     /// loading), and the (plan version, roads version) they were found for.
     #[serde(skip)]
     pub no_kerb: (Option<(u64, u64)>, std::collections::HashSet<crate::roads::SegmentId>),
+    /// [parking] Per-street kerb time limits in minutes, overriding the
+    /// default `enforcement::KERB_LIMIT` (0: no limit). The hook for
+    /// per-street rules.
+    #[serde(default)]
+    pub kerb_rules: std::collections::BTreeMap<crate::roads::SegmentId, u16>,
+    /// [parking] Parking lots the city placed and runs, with their size and
+    /// price.
+    #[serde(default)]
+    pub city_lots: std::collections::BTreeMap<crate::buildings::BuildingId, crate::enforcement::CityLot>,
 }
 
 impl Vehicles {

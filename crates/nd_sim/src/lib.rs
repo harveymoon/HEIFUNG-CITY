@@ -13,6 +13,7 @@ pub mod clock;
 pub mod concerns;
 pub mod crime;
 pub mod economy;
+pub mod enforcement;
 pub mod events;
 pub mod geom;
 pub mod homeless;
