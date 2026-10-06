@@ -31,6 +31,11 @@ pub enum Gesture {
         /// Street with car lanes, or a path for walkers and bikes.
         #[serde(default)]
         kind: RoadKind,
+        /// Height above the ground at each control point, metres (positive
+        /// on a viaduct, negative in a cutting); missing points are at
+        /// grade, so roads from before elevation load as they were.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        elevation: Vec<f32>,
     },
     Zone { polygon: Vec<Vec2>, land_use: LandUse },
     /// Parcels painted with the zone brush or marquee: each parcel named by
@@ -90,7 +95,123 @@ pub fn sample_curve(pts: &[Vec2]) -> Vec<Vec2> {
     out
 }
 
+/// Levels along [`sample_curve`]`(pts)`: each sample takes the level of its
+/// span's ends, blended by how far along the span it is (the spline passes
+/// through every control point, so control points keep theirs).
+pub fn sample_curve_levels(pts: &[Vec2], levels: &[f32]) -> Vec<f32> {
+    let lv = |i: usize| levels.get(i).copied().unwrap_or(0.0);
+    if pts.len() < 3 {
+        return (0..pts.len()).map(lv).collect();
+    }
+    let mut out = vec![lv(0)];
+    for i in 0..pts.len() - 1 {
+        let steps = ((pts[i].distance(pts[i + 1]) / CURVE_STEP).ceil() as usize).max(1);
+        for k in 1..=steps {
+            let f = k as f32 / steps as f32;
+            out.push(lv(i) + (lv(i + 1) - lv(i)) * f);
+        }
+    }
+    out
+}
+
+/// Levels for `dst`, a polyline laid along `src` (split at the water, cut
+/// back by a roundabout, eased into track curves): each point takes the
+/// level of the nearest place on `src`, searched forward from the last
+/// match so a road crossing itself keeps its order.
+pub fn carry_levels(src: &[Vec2], levels: &[f32], dst: &[Vec2]) -> Vec<f32> {
+    if levels.iter().all(|l| *l == 0.0) || src.len() < 2 {
+        return vec![levels.first().copied().unwrap_or(0.0); dst.len()];
+    }
+    let lv = |i: usize| levels.get(i).copied().unwrap_or(0.0);
+    let mut cursor = 0usize;
+    dst.iter()
+        .map(|&p| {
+            let mut best = (f32::INFINITY, cursor, 0.0f32);
+            for j in cursor..src.len() - 1 {
+                let (t, q) = crate::geom::project_on_segment(p, src[j], src[j + 1]);
+                let d = q.distance(p);
+                if d + 1e-3 < best.0 {
+                    best = (d, j, t);
+                }
+            }
+            cursor = best.1;
+            lv(best.1) + (lv(best.1 + 1) - lv(best.1)) * best.2
+        })
+        .collect()
+}
+
 impl Gesture {
+    /// Level of control point `i` of a road (0 for anything else).
+    pub fn level(&self, i: usize) -> f32 {
+        match self {
+            Gesture::Road { elevation, .. } => elevation.get(i).copied().unwrap_or(0.0),
+            _ => 0.0,
+        }
+    }
+
+    /// Does any control point leave the ground?
+    pub fn is_elevated(&self) -> bool {
+        matches!(self, Gesture::Road { elevation, .. } if elevation.iter().any(|l| *l != 0.0))
+    }
+
+    /// Levels of the built polyline, one per point of `road_polyline`.
+    pub fn road_levels(&self) -> Vec<f32> {
+        match self {
+            Gesture::Road { points, curved: true, elevation, .. } => sample_curve_levels(points, elevation),
+            Gesture::Road { points, elevation, .. } => (0..points.len()).map(|i| elevation.get(i).copied().unwrap_or(0.0)).collect(),
+            _ => vec![0.0; self.road_polyline().len()],
+        }
+    }
+
+    /// Insert a control point (a road's level there is blended from its
+    /// neighbours), keeping the levels in step with the points.
+    pub fn insert_point(&mut self, idx: usize, p: Vec2) {
+        if let Gesture::Road { points, elevation, .. } = self {
+            if elevation.iter().any(|l| *l != 0.0) {
+                elevation.resize(points.len(), 0.0);
+                let a = if idx > 0 { elevation.get(idx - 1).copied() } else { None };
+                let b = elevation.get(idx).copied();
+                let l = match (a, b) {
+                    (Some(a), Some(b)) => (a + b) * 0.5,
+                    (Some(x), None) | (None, Some(x)) => x,
+                    (None, None) => 0.0,
+                };
+                elevation.insert(idx.min(elevation.len()), l);
+            }
+        }
+        if let Some(pts) = self.points_mut() {
+            let i = idx.min(pts.len());
+            pts.insert(i, p);
+        }
+    }
+
+    /// Remove a control point and its level.
+    pub fn remove_point(&mut self, idx: usize) {
+        if let Gesture::Road { elevation, .. } = self {
+            if idx < elevation.len() {
+                elevation.remove(idx);
+            }
+        }
+        if let Some(pts) = self.points_mut() {
+            if idx < pts.len() {
+                pts.remove(idx);
+            }
+        }
+    }
+
+    /// Set a road control point's level (no-op for other gestures).
+    pub fn set_level(&mut self, idx: usize, level: f32) {
+        if let Gesture::Road { points, elevation, .. } = self {
+            if idx < points.len() {
+                elevation.resize(points.len(), 0.0);
+                elevation[idx] = level;
+                if elevation.iter().all(|l| *l == 0.0) {
+                    elevation.clear();
+                }
+            }
+        }
+    }
+
     /// The polyline a road is actually built from: the control points, or the
     /// sampled spline for curved roads.
     pub fn road_polyline(&self) -> Vec<Vec2> {
@@ -204,7 +325,7 @@ pub fn ring_effect(plan: &Plan, ring: Ring) -> RingEffect {
         return RingEffect { ring: Some(ring), road: ring.polyline(&[]).0, blocked: true, ..Default::default() };
     }
     let rings = [ring];
-    let roads: Vec<(GestureId, Vec<Vec2>, bool, f32)> = plan.roads().map(|(id, pts, f, b, k)| (id, pts, ring_cuts(k, f, b), crate::roads::Segment { a: crate::roads::NodeId(0), b: crate::roads::NodeId(0), lanes_fwd: f, lanes_bwd: b, alive: true, kind: k, bridge: false }.half_width() * 2.0)).collect();
+    let roads: Vec<(GestureId, Vec<Vec2>, bool, f32)> = plan.roads().map(|(id, pts, f, b, k)| (id, pts, ring_cuts(k, f, b), crate::roads::Segment { a: crate::roads::NodeId(0), b: crate::roads::NodeId(0), lanes_fwd: f, lanes_bwd: b, alive: true, kind: k, bridge: false, viaduct: false }.half_width() * 2.0)).collect();
     let input: Vec<(Vec<Vec2>, bool)> = roads.iter().map(|(_, p, c, _)| (p.clone(), *c && near_ring(p, &ring))).collect();
     let layout = crate::roads::layout_rings(&rings, &input);
     let mut out = RingEffect { ring: Some(ring), ..Default::default() };
@@ -256,6 +377,35 @@ impl Plan {
     /// the arms snap onto their vertices; a ring overlapping an older one
     /// is not built.
     pub fn built_roads(&self) -> (Vec<(GestureId, Vec<Vec2>, u8, u8, RoadKind)>, Vec<Ring>) {
+        let (roads, rings) = self.built_roads_levels();
+        (roads.into_iter().map(|(id, pts, _, f, b, k)| (id, pts, f, b, k)).collect(), rings)
+    }
+
+    /// [`Plan::built_roads`] with the level of every built point.
+    #[allow(clippy::type_complexity)]
+    pub fn built_roads_levels(&self) -> (Vec<(GestureId, Vec<Vec2>, Vec<f32>, u8, u8, RoadKind)>, Vec<Ring>) {
+        let levels: BTreeMap<GestureId, Vec<f32>> = self.gestures.iter().filter(|(_, g)| g.is_elevated()).map(|(id, g)| (*id, g.road_levels())).collect();
+        let level_of = |id: GestureId, src: &[Vec2], pts: &[Vec2]| match levels.get(&id) {
+            Some(l) if src.len() == pts.len() && src == pts => l.clone(),
+            Some(l) => carry_levels(src, l, pts),
+            None => vec![0.0; pts.len()],
+        };
+        let (roads, rings) = self.built_roads_flat();
+        let sources: BTreeMap<GestureId, Vec<Vec2>> = self.roads().map(|(id, pts, ..)| (id, pts)).collect();
+        let out = roads
+            .into_iter()
+            .map(|(id, pts, f, b, k)| {
+                let l = match sources.get(&id) {
+                    Some(src) => level_of(id, src, &pts),
+                    None => vec![0.0; pts.len()],
+                };
+                (id, pts, l, f, b, k)
+            })
+            .collect();
+        (out, rings)
+    }
+
+    fn built_roads_flat(&self) -> (Vec<(GestureId, Vec<Vec2>, u8, u8, RoadKind)>, Vec<Ring>) {
         let rings: Vec<Ring> = self.roundabouts().map(|(_, r)| r).collect();
         let roads: Vec<(GestureId, Vec<Vec2>, u8, u8, RoadKind)> = self.roads().collect();
         if rings.is_empty() {
@@ -450,6 +600,9 @@ pub fn parcel_zoning(parcels: &ParcelMap, plan: &Plan) -> ParcelZoning {
 pub struct PlanPreview {
     /// Roads that will exist after implementing and differ from master.
     pub planned_roads: Vec<(GestureId, Vec<Vec2>, u8, u8, RoadKind)>,
+    /// The level of every point of each planned road, in step with
+    /// `planned_roads`.
+    pub planned_levels: Vec<Vec<f32>>,
     /// Master roads that will be removed or replaced.
     pub removed_roads: Vec<(GestureId, Vec<Vec2>, u8, u8, RoadKind)>,
     pub planned_zones: Vec<(GestureId, Vec<Vec2>, LandUse)>,
@@ -477,7 +630,10 @@ pub fn preview(master: &Plan, project: &Project) -> PlanPreview {
             continue;
         }
         match g {
-            Gesture::Road { lanes_fwd, lanes_bwd, kind, .. } => out.planned_roads.push((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd, *kind)),
+            Gesture::Road { lanes_fwd, lanes_bwd, kind, .. } => {
+                out.planned_roads.push((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd, *kind));
+                out.planned_levels.push(g.road_levels());
+            }
             Gesture::Zone { polygon, land_use } => out.planned_zones.push((*id, polygon.clone(), *land_use)),
             Gesture::ParcelZone { .. } => out.parcel_strokes += 1,
             Gesture::Roundabout { .. } => {
@@ -507,7 +663,7 @@ mod tests {
     use super::*;
 
     fn road(x: f32) -> Gesture {
-        Gesture::Road { points: vec![Vec2::new(x, 0.0), Vec2::new(x, 100.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street }
+        Gesture::Road { points: vec![Vec2::new(x, 0.0), Vec2::new(x, 100.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() }
     }
 
     #[test]
@@ -590,7 +746,7 @@ mod tests {
         assert!(curve.windows(2).all(|w| w[1].x >= w[0].x - 1e-3), "monotonic along the line");
         assert!(curve.last().unwrap().distance(line[3]) < 1e-3);
         // The Edit tool's handles sit on the built road.
-        let g = Gesture::Road { points: pts.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: true, kind: RoadKind::Street };
+        let g = Gesture::Road { points: pts.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: true, kind: RoadKind::Street, elevation: Vec::new() };
         assert!(g.road_polyline().len() > pts.len());
         assert_eq!(g.min_points(), 2);
         assert_eq!(Gesture::Zone { polygon: Vec::new(), land_use: LandUse::Park }.min_points(), 3);

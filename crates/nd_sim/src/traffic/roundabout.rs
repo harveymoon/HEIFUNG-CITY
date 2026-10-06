@@ -292,7 +292,7 @@ mod tests {
     /// roundabout stamped on the junction when `ring` is given.
     fn city(arm_lanes: u8, ring: Option<(f32, u8)>) -> RoadNetwork {
         let mut plan = Plan::default();
-        let road = |a: Vec2, b: Vec2| Gesture::Road { points: vec![a, b], lanes_fwd: arm_lanes, lanes_bwd: arm_lanes, curved: false, kind: RoadKind::Street };
+        let road = |a: Vec2, b: Vec2| Gesture::Road { points: vec![a, b], lanes_fwd: arm_lanes, lanes_bwd: arm_lanes, curved: false, kind: RoadKind::Street, elevation: Vec::new() };
         plan.gestures.insert(GestureId(1), road(Vec2::new(-320.0, 0.0), Vec2::new(320.0, 0.0)));
         plan.gestures.insert(GestureId(2), road(Vec2::new(0.0, -320.0), Vec2::new(0.0, 320.0)));
         if let Some((radius, lanes)) = ring {

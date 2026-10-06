@@ -809,7 +809,10 @@ fn sync_roads(
     state.roads_version = version;
     despawn_all(&mut commands, &existing);
     let w = &sim.world;
-    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed });
+    // Each run is set on its own height profile here (a viaduct over a
+    // street, the street under it), so the roads are not lifted again.
+    let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
+    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights });
     stats.street_triangles = geo.triangle_count();
     for (s, data) in geo.iter() {
         let mut e = commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, RoadsTag));
@@ -2202,6 +2205,7 @@ fn landscape_signature(w: &World) -> u64 {
     w.ports.ports.len().hash(&mut h);
     w.buildings.values().filter(|b| b.plant.is_some()).count().hash(&mut h);
     w.landscape.is_flat().hash(&mut h);
+    w.relief.hash(&mut h);
     h.finish()
 }
 
@@ -2230,6 +2234,12 @@ fn sync_landscape(
     despawn_all(&mut commands, &water);
     despawn_all(&mut commands, &works);
     if w.landscape.is_flat() {
+        // No terrain or water to draw, but viaducts and flyovers the
+        // player built stand on the flat ground.
+        if w.relief {
+            let geo = nd_procgen::terrain::waterworks(w, &assets.palette);
+            spawn_geometry(&mut commands, &mut meshes, &mats, &geo, WaterworksTag);
+        }
         return;
     }
     despawn_all(&mut commands, &terrain);
@@ -2299,11 +2309,11 @@ fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res
 fn lift_spawned(
     sim: Res<Sim>,
     mut meshes: ResMut<Assets<Mesh>>,
-    q: Query<&Mesh3d, Or<(Added<RoadsTag>, Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>, Added<LaneArrowsTag>, Added<RingPreviewTag>)>>,
+    q: Query<&Mesh3d, Or<(Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>, Added<LaneArrowsTag>, Added<RingPreviewTag>)>>,
     mut signals: Query<&mut Transform, Added<SignalTag>>,
 ) {
     let w = &sim.world;
-    if w.landscape.is_flat() {
+    if !w.relief {
         return;
     }
     for m in &q {
@@ -2323,7 +2333,7 @@ fn lift_spawned(
 #[allow(clippy::type_complexity)]
 fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>) {
     let w = &sim.world;
-    if w.landscape.is_flat() {
+    if !w.relief {
         return;
     }
     for (e, mut tf, lifted) in &mut q {
@@ -2332,7 +2342,12 @@ fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut
             Some(l) if tf.translation.y == l.after => tf.translation.y - l.lift,
             _ => tf.translation.y,
         };
-        let lift = w.surface_height(SVec2::new(tf.translation.x, tf.translation.z));
+        // Keep to the level it was on: under a viaduct or on it.
+        let at = SVec2::new(tf.translation.x, tf.translation.z);
+        let lift = match &lifted {
+            Some(l) => w.surface_height_near(at, l.lift),
+            None => w.surface_height_near(at, w.ground_height(at)),
+        };
         tf.translation.y = base + lift;
         let after = tf.translation.y;
         match lifted {

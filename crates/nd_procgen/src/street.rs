@@ -27,6 +27,10 @@ pub struct StreetInput<'a> {
     pub land_value: &'a LandValue,
     pub palette: &'a Palette,
     pub seed: u64,
+    /// Height of every road node (`World::road_z`); empty for a flat city.
+    /// Each run is set on its own profile, so a viaduct is drawn at its
+    /// height and the street under it at the ground's, whatever overlaps.
+    pub heights: &'a [f32],
 }
 
 /// Where a signal lamp hangs over the end of a lane, for the renderer to
@@ -44,6 +48,8 @@ const MARK_Y: f32 = 0.085;
 /// A chain of segments drawn as one road.
 struct Run {
     points: Vec<Vec2>,
+    /// The road node at each point.
+    nodes: Vec<NodeId>,
     first: SegmentId,
     lanes_fwd: u8,
     lanes_bwd: u8,
@@ -109,6 +115,7 @@ fn build_runs(roads: &RoadNetwork) -> Vec<Run> {
         }
         // Walk forwards collecting points.
         let mut points = vec![roads.node(start_node).pos];
+        let mut nodes = vec![start_node];
         let mut node = start_node;
         let mut cur = start_seg;
         let (_, run_f, run_b) = oriented(roads, cur, node);
@@ -117,13 +124,14 @@ fn build_runs(roads: &RoadNetwork) -> Vec<Run> {
             used.insert(cur.0);
             let (far, _, _) = oriented(roads, cur, node);
             points.push(roads.node(far).pos);
+            nodes.push(far);
             node = far;
             match continuation(roads, node, cur, run_f, run_b) {
                 Some(next) if !used.contains(&next.0) => cur = next,
                 _ => break,
             }
         }
-        runs.push(Run { points, first, lanes_fwd: run_f, lanes_bwd: run_b, kind: roads.segment(first).kind, start_node, end_node: node });
+        runs.push(Run { points, nodes, first, lanes_fwd: run_f, lanes_bwd: run_b, kind: roads.segment(first).kind, start_node, end_node: node });
     }
     runs
 }
@@ -144,6 +152,38 @@ fn trim(points: &[Vec2], start: f32, end: f32) -> Vec<Vec2> {
     }
     out.push(point_along(points, total - end).0);
     out
+}
+
+/// Vertex counts of every part: where the next piece of drawing starts.
+fn marks(g: &Geometry) -> Vec<usize> {
+    g.parts.iter().map(|m| m.positions.len()).collect()
+}
+
+/// Raise every vertex drawn since `from` by `h` of its (x, z).
+fn lift_since(g: &mut Geometry, from: &[usize], h: impl Fn(Vec2) -> f32) {
+    for (k, m) in g.parts.iter_mut().enumerate() {
+        let start = from.get(k).copied().unwrap_or(0);
+        for p in m.positions.iter_mut().skip(start) {
+            p[1] += h(Vec2::new(p[0], p[2]));
+        }
+    }
+}
+
+/// Height along a run at the point of it nearest `p`, from the heights of
+/// its nodes.
+pub fn profile_height(points: &[Vec2], z: &[f32], p: Vec2) -> f32 {
+    if points.len() < 2 || z.len() != points.len() {
+        return z.first().copied().unwrap_or(0.0);
+    }
+    let mut best = (f32::INFINITY, 0.0f32);
+    for (i, w) in points.windows(2).enumerate() {
+        let (t, q) = nd_sim::roads::project_on_segment(p, w[0], w[1]);
+        let d = q.distance_squared(p);
+        if d < best.0 {
+            best = (d, z[i] + (z[i + 1] - z[i]) * t);
+        }
+    }
+    best.1
 }
 
 fn dashes_along(mesh: &mut crate::mesh::MeshData, path: &[Vec2], width: f32, y: f32, dash: f32, gap: f32, color: [f32; 4]) {
@@ -181,9 +221,25 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         }
     };
 
+    let heights = inp.heights;
+    let node_z = |n: NodeId| heights.get(n.0 as usize).copied().unwrap_or(0.0);
+    // The run drawn last and where its drawing began, to set it on its
+    // profile once it is complete (runs end at several `continue`s).
+    let mut drawn: Option<(Vec<usize>, Vec<Vec2>, Vec<f32>)> = None;
+    let finish_run = |g: &mut Geometry, drawn: &mut Option<(Vec<usize>, Vec<Vec2>, Vec<f32>)>| {
+        if let Some((from, pts, z)) = drawn.take() {
+            if z.iter().any(|h| *h != 0.0) {
+                lift_since(g, &from, |p| profile_height(&pts, &z, p));
+            }
+        }
+    };
     for run in build_runs(roads) {
+        finish_run(&mut g, &mut drawn);
         if let Some(marks) = worn_from.take() {
             weather_tail(&mut g, marks);
+        }
+        if !heights.is_empty() {
+            drawn = Some((marks(&g), run.points.clone(), run.nodes.iter().map(|&n| node_z(n)).collect()));
         }
         let seg = roads.segment(run.first);
         let hw = seg.half_width();
@@ -341,17 +397,35 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         }
     }
 
+    finish_run(&mut g, &mut drawn);
     if let Some(marks) = worn_from.take() {
         weather_tail(&mut g, marks);
     }
 
-    // Roundabouts: the planted island in the middle of every ring.
+    // Roundabouts: the planted island in the middle of every ring, at the
+    // height of the ring's nodes.
     for (k, ring) in roads.rings.iter().enumerate() {
+        let from = marks(&g);
         roundabout_island(&mut g, pal, ring, inp.seed ^ (k as u64 + 1).wrapping_mul(0x9E37_79B9));
+        if !heights.is_empty() {
+            let on: Vec<f32> = roads.nodes.iter().enumerate().filter(|(_, n)| ring.on_circle(n.pos)).map(|(i, _)| node_z(NodeId(i as u32))).collect();
+            let z = if on.is_empty() { 0.0 } else { on.iter().sum::<f32>() / on.len() as f32 };
+            lift_since(&mut g, &from, |_| z);
+        }
     }
 
-    // Junction pads, crossings and stop lines (bends need none).
+    // Junction pads, crossings and stop lines (bends need none), each at
+    // its node's height.
+    let mut node_from: Option<(Vec<usize>, f32)> = None;
     for (i, node) in roads.nodes.iter().enumerate() {
+        if let Some((from, z)) = node_from.take() {
+            if z != 0.0 {
+                lift_since(&mut g, &from, |_| z);
+            }
+        }
+        if !heights.is_empty() {
+            node_from = Some((marks(&g), node_z(NodeId(i as u32))));
+        }
         let alive: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).collect();
         let paths_here = node.segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).kind == RoadKind::Path).count();
         let rails_here: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_rail()).collect();
@@ -422,8 +496,15 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         }
     }
 
+    if let Some((from, z)) = node_from.take() {
+        if z != 0.0 {
+            lift_since(&mut g, &from, |_| z);
+        }
+    }
+
     // Signal posts: pole at the kerb, arm over the approach, one head per lane.
     for post in signal_groups(net) {
+        let from = marks(&g);
         let base = post.pole;
         let pole_h = 5.6;
         g.part(Matte).cylinder(base, 0.16, 0.12, 0.0, pole_h, 8, rgba(CHARCOAL));
@@ -434,6 +515,14 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             let head = Vec3::new(lamp.x, 4.75, lamp.y);
             g.part(Matte).boxed(head, Vec3::new(0.35, 1.1, 0.4), -post.heading, rgba(DARK));
             g.part(Matte).beam(Vec3::new(lamp.x, pole_h - 0.2, lamp.y), head + Vec3::Y * 0.55, 0.08, rgba(CHARCOAL));
+        }
+        if !heights.is_empty() {
+            // At the height of the junction it stands at.
+            let near = roads.nodes.iter().enumerate().min_by(|a, b| a.1.pos.distance_squared(base).total_cmp(&b.1.pos.distance_squared(base)));
+            if let Some((i, _)) = near {
+                let z = node_z(NodeId(i as u32));
+                lift_since(&mut g, &from, |_| z);
+            }
         }
     }
     g
@@ -842,7 +931,7 @@ mod tests {
         let (roads, net) = network();
         let lv = LandValue::new(400.0, 50.0);
         let pal = Palette::default();
-        let inp = StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 5 };
+        let inp = StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 5, heights: &[] };
         let a = generate_street(&inp);
         assert!(a.triangle_count() > 1000, "{} triangles is not a street network", a.triangle_count());
         for (s, m) in a.iter() {
@@ -874,8 +963,8 @@ mod tests {
     fn a_roundabout_gets_an_island_and_no_signals() {
         use nd_sim::plan::{Gesture, GestureId, Plan};
         let mut plan = Plan::default();
-        plan.gestures.insert(GestureId(1), Gesture::Road { points: vec![Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street });
-        plan.gestures.insert(GestureId(2), Gesture::Road { points: vec![Vec2::new(0.0, -200.0), Vec2::new(0.0, 200.0)], lanes_fwd: 2, lanes_bwd: 2, curved: false, kind: RoadKind::Street });
+        plan.gestures.insert(GestureId(1), Gesture::Road { points: vec![Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        plan.gestures.insert(GestureId(2), Gesture::Road { points: vec![Vec2::new(0.0, -200.0), Vec2::new(0.0, 200.0)], lanes_fwd: 2, lanes_bwd: 2, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
         let lv = LandValue::new(400.0, 50.0);
         let pal = Palette::default();
         let mut tris = Vec::new();
@@ -892,7 +981,7 @@ mod tests {
             }
             let mut net = LaneNetwork::default();
             net.rebuild(&roads);
-            let geo = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 9 });
+            let geo = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 9, heights: &[] });
             for (s, m) in geo.iter() {
                 assert!(m.positions.iter().all(|p| p.iter().all(|v| v.is_finite()) && p[1] < 20.0), "{s:?}");
             }

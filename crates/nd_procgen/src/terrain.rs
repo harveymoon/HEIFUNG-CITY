@@ -323,14 +323,19 @@ fn underpasses(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32;
         let reach = (opening + 4.0) / s;
         let (a, b) = (u.at - u.over_dir * reach, u.at + u.over_dir * reach);
         let a3 = Vec3::new(a.x, u.over_z_at(-reach) - 0.05, a.y);
+        let m3 = Vec3::new(u.at.x, u.over_z - 0.05, u.at.y);
         let b3 = Vec3::new(b.x, u.over_z_at(reach) - 0.05, b.y);
         let hw = u.over_half_width + 0.4;
-        g.part(Surface::Concrete).slab(a3, b3, hw * 2.0, 1.4, rgba(concrete));
         let side = Vec2::new(-u.over_dir.y, u.over_dir.x) * (hw - 0.2);
-        for sgn in [1.0f32, -1.0] {
-            let off = Vec3::new(side.x * sgn, 0.0, side.y * sgn);
-            g.part(Surface::Metal).beam(a3 + off + Vec3::Y * 1.0, b3 + off + Vec3::Y * 1.0, 0.15, rgba(steel));
-            g.part(Surface::Concrete).slab(a3 + off + Vec3::Y * 0.45, b3 + off + Vec3::Y * 0.45, 0.35, 0.5, rgba(mul(concrete, 0.9)));
+        // Two halves meeting over the crossing: it may be the crest of a
+        // way lifted over the other.
+        for (p0, p1) in [(a3, m3), (m3, b3)] {
+            g.part(Surface::Concrete).slab(p0, p1, hw * 2.0, 1.4, rgba(concrete));
+            for sgn in [1.0f32, -1.0] {
+                let off = Vec3::new(side.x * sgn, 0.0, side.y * sgn);
+                g.part(Surface::Metal).beam(p0 + off + Vec3::Y * 1.0, p1 + off + Vec3::Y * 1.0, 0.15, rgba(steel));
+                g.part(Surface::Concrete).slab(p0 + off + Vec3::Y * 0.45, p1 + off + Vec3::Y * 0.45, 0.35, 0.5, rgba(mul(concrete, 0.9)));
+            }
         }
         // Abutment and wing walls along the lower way, their tops following
         // the embankment beyond them down to its toe.
@@ -379,6 +384,65 @@ fn underpasses(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32;
     }
 }
 
+/// Roads the player raised off the ground: a deck the width of the road
+/// and its pavements under the street mesh, parapets and rails, and a
+/// column on a footing every 24 m or so wherever the deck stands clear of
+/// the ground (a ramp runs down onto it at the end).
+pub fn viaducts(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32; 3]) {
+    use glam::Vec3;
+    let roads = &world.roads;
+    for (sid, seg) in roads.alive_segments() {
+        if !seg.viaduct {
+            continue;
+        }
+        let (a, b) = roads.segment_points(sid);
+        let za = world.road_z.get(seg.a.0 as usize).copied().unwrap_or(0.0);
+        let zb = world.road_z.get(seg.b.0 as usize).copied().unwrap_or(0.0);
+        viaduct_span(g, a, b, za, zb, seg.half_width() + if seg.is_street() { nd_sim::zoning::SIDEWALK } else { 0.6 }, &|p| world.ground_height(p), concrete, steel, true);
+    }
+}
+
+/// One span of viaduct deck from `a` at height `za` to `b` at `zb`,
+/// `hw` either side of the centreline, standing on `ground`. Shared with
+/// the plan preview.
+#[allow(clippy::too_many_arguments)]
+pub fn viaduct_span(g: &mut Geometry, a: Vec2, b: Vec2, za: f32, zb: f32, hw: f32, ground: &dyn Fn(Vec2) -> f32, concrete: [f32; 3], steel: [f32; 3], parapets: bool) {
+    use glam::Vec3;
+    let len = a.distance(b);
+    if len < 0.3 {
+        return;
+    }
+    let dir = (b - a) / len;
+    let a3 = Vec3::new(a.x, za - 0.02, a.y);
+    let b3 = Vec3::new(b.x, zb - 0.02, b.y);
+    g.part(Surface::Concrete).slab(a3, b3, hw * 2.0, 1.2, rgba(concrete));
+    if parapets {
+        let side = Vec2::new(-dir.y, dir.x) * (hw - 0.2);
+        for s in [1.0f32, -1.0] {
+            let off = Vec3::new(side.x * s, 0.0, side.y * s);
+            g.part(Surface::Metal).beam(a3 + off + Vec3::Y * 1.05, b3 + off + Vec3::Y * 1.05, 0.12, rgba(steel));
+            g.part(Surface::Concrete).slab(a3 + off + Vec3::Y * 0.5, b3 + off + Vec3::Y * 0.5, 0.3, 0.55, rgba(mul(concrete, 0.9)));
+        }
+    }
+    // Columns where the deck stands clear of the ground, one at each end
+    // too unless the end is near the ground (a ramp foot).
+    let spans = (len / 24.0).ceil().max(1.0) as i32;
+    let yaw = dir.y.atan2(dir.x);
+    for k in 0..=spans {
+        let t = k as f32 / spans as f32;
+        let p = a.lerp(b, t);
+        let top = za + (zb - za) * t - 1.2;
+        let foot = ground(p);
+        if top - foot < 1.0 {
+            continue;
+        }
+        let w = (hw * 0.35).clamp(1.2, 3.0);
+        g.part(Surface::Concrete).boxed(Vec3::new(p.x, (top + foot) * 0.5, p.y), Vec3::new(1.6, top - foot, w), -yaw, rgba(mul(concrete, 0.8)));
+        // A crosshead under the deck.
+        g.part(Surface::Concrete).boxed(Vec3::new(p.x, top - 0.35, p.y), Vec3::new(1.9, 0.7, hw * 1.7), -yaw, rgba(mul(concrete, 0.85)));
+    }
+}
+
 /// Everything built in or over the water, and the hot ground: bridge decks
 /// with railings and piers, dock piers with piles, bollards and the crane
 /// boom, weirs where hydro plants take their water, tidal turbine
@@ -387,14 +451,20 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
     use glam::Vec3;
     let mut g = Geometry::default();
     let land = &world.landscape;
-    if land.is_flat() {
-        return g;
-    }
     let concrete = mul(palette.concrete(0), 0.85);
     let steel = mul(palette.steel, 0.8);
+    if land.is_flat() {
+        // The flat map has no water: only what the player built up.
+        if world.relief {
+            viaducts(world, &mut g, concrete, steel);
+            underpasses(world, &mut g, concrete, steel);
+        }
+        return g;
+    }
+    viaducts(world, &mut g, concrete, steel);
     let roads = &world.roads;
     for (sid, seg) in roads.alive_segments() {
-        if !seg.bridge {
+        if !seg.bridge || seg.viaduct {
             continue;
         }
         let (a, b) = roads.segment_points(sid);

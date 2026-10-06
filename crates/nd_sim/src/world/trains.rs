@@ -60,11 +60,11 @@ impl World {
         let had_project = self.project.take();
         if !rail_fused {
             let [a, b] = facility.rail_line();
-            self.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Rail });
+            self.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Rail, elevation: Vec::new() });
         }
         if !road_fused {
             let [a, b] = facility.road_line();
-            self.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street });
+            self.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
         }
         if self.project.is_some() {
             self.implement();

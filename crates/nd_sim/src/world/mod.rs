@@ -41,6 +41,8 @@ mod society;
 #[cfg(test)]
 mod car_tests;
 #[cfg(test)]
+mod elevation_tests;
+#[cfg(test)]
 mod tests;
 mod trains;
 mod trips;
@@ -315,6 +317,11 @@ pub struct World {
     /// eased to gentle grades and lifted onto bridge decks over water.
     #[serde(skip)]
     pub road_z: Vec<f32>,
+    /// Anything stands off the flat datum: a landscape, a road above or
+    /// below the ground, or a deck. False on the old flat map with every
+    /// way at grade, where heights are all zero.
+    #[serde(skip)]
+    pub relief: bool,
     /// The ground as built, for drawing and for setting things on it.
     #[serde(skip)]
     pub ground: Ground,
@@ -399,6 +406,7 @@ impl World {
             landscape: Landscape::default(),
             ports: Ports::default(),
             road_z: Vec::new(),
+            relief: false,
             ground: Ground::default(),
             bridge_metres: 0.0,
             bots: Default::default(),

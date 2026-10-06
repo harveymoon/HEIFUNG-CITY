@@ -836,7 +836,7 @@ fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
     }
     let curved = opt_bool(cmd, "curved")?.unwrap_or(false) && pts.len() >= 3;
-    let id = ctx.sim.world.add_gesture(Gesture::Road { points: pts, lanes_fwd: lf, lanes_bwd: lb, curved, kind });
+    let id = ctx.sim.world.add_gesture(Gesture::Road { points: pts, lanes_fwd: lf, lanes_bwd: lb, curved, kind, elevation: Vec::new() });
     let implemented = opt_bool(cmd, "implement")?.unwrap_or(false);
     if implemented {
         ctx.sim.world.implement();
