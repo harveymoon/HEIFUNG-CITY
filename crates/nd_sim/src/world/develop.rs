@@ -6,6 +6,9 @@ use super::*;
 /// Takings over costs a kind of business must have shown before more of
 /// it are built (1 is break-even).
 const COVER_TO_EXPAND: f32 = 1.05;
+/// A kind of business whose shelves hold more than this many days of what
+/// it makes is not selling it all: no more of it are built.
+const MARKET_FULL_DAYS: f32 = 0.75;
 /// Largest building a kind of business new to the town is tried in.
 const TRIAL_MAX_JOBS: u16 = 20;
 
@@ -406,8 +409,9 @@ impl World {
     /// - offices, which are publicly funded and take on the jobless;
     /// - any other kind with no business of it yet and none being built (a
     ///   first one to try the market), or whose businesses in town have paid
-    ///   their way of late (`Economy::business_cover`) and are not already
-    ///   adding one more for every few open. A first one is tried only in a
+    ///   their way of late (`Economy::business_cover`), are selling what
+    ///   they make (`MARKET_FULL_DAYS`) and are not already adding one more
+    ///   for every few open. A first one is tried only in a
     ///   building of at most `TRIAL_MAX_JOBS` jobs (`jobs_here`, when known):
     ///   a tower full of bakers is no way to find out whether the town eats
     ///   more bread.
@@ -417,6 +421,9 @@ impl World {
             return None;
         }
         let (mut open, mut sites, mut jobs) = ([0u32; BusinessKind::COUNT], [0u32; BusinessKind::COUNT], [0u32; BusinessKind::COUNT]);
+        // Output on the shelves of each kind, against a day of what they
+        // make at full staff: over most of a day and the market is full.
+        let (mut stock, mut day) = ([0.0f32; BusinessKind::COUNT], [0.0f32; BusinessKind::COUNT]);
         for b in self.buildings.values() {
             let Some(z) = &b.business else { continue };
             if z.closed {
@@ -429,8 +436,13 @@ impl World {
             } else {
                 open[i] += 1;
                 jobs[i] += b.jobs as u32;
+                if let Some((r, per)) = z.kind.recipe().outputs.first() {
+                    stock[i] += z.stock_of(*r);
+                    day[i] += per * b.jobs as f32 * crate::market::JOB_RATE * 24.0;
+                }
             }
         }
+        let room = |i: usize| day[i] <= 0.0 || stock[i] < day[i] * MARKET_FULL_DAYS;
         let grocery_jobs_needed = self.grocery_jobs_needed();
         let mut out: Vec<BusinessKind> = Vec::new();
         for &kind in candidates {
@@ -439,7 +451,7 @@ impl World {
                 BusinessKind::Office => true,
                 BusinessKind::Grocery if (jobs[i] as f32) < grocery_jobs_needed && self.economy.cover_of(kind).is_none_or(|c| c >= 0.85) => true,
                 _ if open[i] == 0 => sites[i] == 0 && jobs_here.is_none_or(|j| j <= TRIAL_MAX_JOBS),
-                _ => self.economy.cover_of(kind).is_some_and(|c| c >= COVER_TO_EXPAND) && sites[i] <= open[i] / 4,
+                _ => self.economy.cover_of(kind).is_some_and(|c| c >= COVER_TO_EXPAND) && room(i) && sites[i] <= open[i] / 4,
             };
             if ok && !out.contains(&kind) {
                 out.push(kind);

@@ -217,9 +217,9 @@ impl BusinessKind {
             // the mill added too little to what it bought to pay its wages.
             BusinessKind::Mill => Recipe { inputs: &[(Resource::Grain, 6.0)], outputs: &[(Resource::Flour, 6.0)] },
             BusinessKind::Fab => Recipe { inputs: &[], outputs: &[(Resource::Parts, 1.0)] },
-            // Two parts (18 at base) make 0.6 electronics (27); at 0.4 the
+            // Two parts (18 at base) make 0.8 electronics (36); at 0.4 the
             // plant added nothing to what it bought and could never pay wages.
-            BusinessKind::Assembly => Recipe { inputs: &[(Resource::Parts, 2.0)], outputs: &[(Resource::Electronics, 0.6)] },
+            BusinessKind::Assembly => Recipe { inputs: &[(Resource::Parts, 2.0)], outputs: &[(Resource::Electronics, 0.8)] },
             // Shops pay town wages, so what a job adds to its inputs at base
             // price covers its share of them: a grocer's job adds about 80 a day
             // against 54, a baker's about 59, a gadget seller's about 84.

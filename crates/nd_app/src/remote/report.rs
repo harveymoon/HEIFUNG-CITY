@@ -341,6 +341,9 @@ fn people(w: &World) -> Value {
         "employment": {
             "employed": employed, "employed_in_businesses": in_business, "employed_on_building_sites": on_sites,
             "unemployed_on_gig_income": n - employed, "unemployment_share": share(n - employed, n), "jobs_free": e.jobs_free,
+            // Children and retirees do not look for work; these count adults of working age.
+            "working_age_adults": e.working_age, "unemployed_adults": e.unemployed,
+            "adult_unemployment_share": share(e.unemployed as usize, e.working_age as usize),
         },
         "housing": { "housed": housed, "unhoused": n - housed, "waiting_immigrants": e.waiting_immigrants, "homes_free": e.homes_free },
         "households": households(w),
