@@ -114,6 +114,62 @@ pub enum TransitMode {
     Depot,
 }
 
+/// Which layer of the city the view and the tools work on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Depth {
+    /// Tunnels: the surface hidden, ground roads as faint outlines.
+    Underground,
+    #[default]
+    Ground,
+    /// Routes in the air (a placeholder for now).
+    Sky,
+}
+
+impl Depth {
+    pub const ALL: [Depth; 3] = [Depth::Underground, Depth::Ground, Depth::Sky];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Depth::Underground => "Underground",
+            Depth::Ground => "Ground",
+            Depth::Sky => "Sky",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Depth> {
+        Depth::ALL.iter().copied().find(|d| d.label().eq_ignore_ascii_case(s.trim()))
+    }
+
+    /// The next layer for the cycle key.
+    pub fn next(self) -> Depth {
+        match self {
+            Depth::Underground => Depth::Ground,
+            Depth::Ground => Depth::Sky,
+            Depth::Sky => Depth::Underground,
+        }
+    }
+}
+
+/// Elevation steps of the Road tool (Page Up / Page Down), metres.
+pub const ELEVATION_STEP: f32 = 2.0;
+pub const ELEVATION_MIN: f32 = -20.0;
+pub const ELEVATION_MAX: f32 = 24.0;
+
+/// How the sub-pane names a level.
+pub fn elevation_label(level: f32) -> String {
+    if level == 0.0 {
+        "ground".into()
+    } else if level >= nd_sim::roads::VIADUCT_LEVEL {
+        format!("+{level:.0} m viaduct")
+    } else if level > 0.0 {
+        format!("+{level:.0} m embankment")
+    } else if level <= nd_sim::roads::TUNNEL_LEVEL {
+        format!("\u{2212}{:.0} m tunnel", -level)
+    } else {
+        format!("\u{2212}{:.0} m cutting", -level)
+    }
+}
+
 #[derive(Resource)]
 pub struct ToolState {
     pub tool: Tool,
@@ -179,6 +235,22 @@ pub struct ToolState {
     /// A centre set by the remote API (`tool {ring_at}`) that stands in
     /// for the pointer until the mouse is used.
     pub ring_pin: Option<SVec2>,
+    /// Road tool: the level the next point is placed at, metres above the
+    /// ground (Page Up / Page Down step it).
+    pub elevation: f32,
+    /// The level of each of `points` (kept in step by `push_point`).
+    pub point_levels: Vec<f32>,
+    /// Road tool: drawing tunnels (deep, joined only to tunnels; portals
+    /// where they climb to the ground).
+    pub tunnel: bool,
+    /// The layer the view shows and the tools work on.
+    pub depth: Depth,
+    /// What is wrong with the road being drawn (too steep, crossing at an
+    /// awkward height), refreshed with its preview.
+    pub grade_warnings: Vec<String>,
+    /// A point set by the remote API (`tool {cursor}`) that stands in for
+    /// the pointer in the road preview until the mouse moves.
+    pub cursor_pin: Option<SVec2>,
 }
 
 /// Road presets in the spirit of Cities Skylines' road menu: (label, forward, backward, kind).
@@ -211,6 +283,80 @@ impl ToolState {
     /// Where a road end dropped at `p` would snap to.
     pub fn road_snap(sim: &Sim, p: SVec2, kind: RoadKind) -> (SVec2, bool) {
         sim.world.roads.snap_point_kind(p, POINT_PICK_RADIUS, kind)
+    }
+
+    /// Where a point placed at `p` at `level` lands, and its level: it snaps
+    /// onto a road only at about the same level (a viaduct passes over the
+    /// street under it), unless `any` (the first point: a ramp or a portal
+    /// starts on whatever road it is put on, at that road's level).
+    pub fn road_snap_level(sim: &Sim, p: SVec2, kind: RoadKind, level: f32, any: bool) -> (SVec2, bool, f32) {
+        let roads = &sim.world.roads;
+        let (q, snapped) = roads.snap_point_kind(p, POINT_PICK_RADIUS, kind);
+        if !snapped {
+            return (p, false, level);
+        }
+        let at = roads.snap_level(p, POINT_PICK_RADIUS, kind).unwrap_or(0.0);
+        if any || (at - level).abs() < nd_sim::roads::GRADE_SEPARATION {
+            (q, true, at)
+        } else {
+            (p, false, level)
+        }
+    }
+
+    /// Add a point of the road being drawn with its level.
+    pub fn push_point(&mut self, p: SVec2, level: f32) {
+        self.point_levels.resize(self.points.len(), self.elevation);
+        self.points.push(p);
+        self.point_levels.push(level);
+    }
+
+    /// The levels of `points`, one each.
+    pub fn levels(&self) -> Vec<f32> {
+        let mut l = self.point_levels.clone();
+        l.resize(self.points.len(), self.elevation);
+        l
+    }
+
+    /// Pick a road preset by label (or "Tunnel"): its kind and lanes, and
+    /// the depth it is built at; the view follows (tunnels underground,
+    /// everything else on the ground).
+    pub fn pick_preset(&mut self, label: &str) -> bool {
+        if label.eq_ignore_ascii_case("tunnel") {
+            self.roundabout = false;
+            self.kind = RoadKind::Street;
+            if !self.tunnel && (self.lanes_fwd + self.lanes_bwd == 0 || self.kind != RoadKind::Street) {
+                self.lanes_fwd = 2;
+                self.lanes_bwd = 2;
+            }
+            self.tunnel = true;
+            if self.elevation > nd_sim::roads::TUNNEL_LEVEL {
+                self.elevation = nd_sim::roads::TUNNEL_DEPTH;
+            }
+            self.depth = Depth::Underground;
+            return true;
+        }
+        let Some((_, f, b, k)) = ROAD_PRESETS.iter().find(|(l, ..)| l.eq_ignore_ascii_case(label)) else { return false };
+        self.roundabout = false;
+        self.kind = *k;
+        if *k == RoadKind::Street {
+            self.lanes_fwd = *f;
+            self.lanes_bwd = *b;
+        }
+        if self.tunnel {
+            self.tunnel = false;
+            self.elevation = 0.0;
+        }
+        if self.depth == Depth::Underground {
+            self.depth = Depth::Ground;
+        }
+        true
+    }
+
+    /// Step the drawing level (tunnels stay deep).
+    pub fn step_elevation(&mut self, up: bool) {
+        let max = if self.tunnel { 0.0 } else { ELEVATION_MAX };
+        let e = self.elevation + if up { ELEVATION_STEP } else { -ELEVATION_STEP };
+        self.elevation = e.clamp(ELEVATION_MIN, max);
     }
 }
 
@@ -253,6 +399,12 @@ impl Default for ToolState {
             ring_lanes: 1,
             ring_hover: None,
             ring_pin: None,
+            elevation: 0.0,
+            point_levels: Vec::new(),
+            tunnel: false,
+            depth: Depth::Ground,
+            grade_warnings: Vec::new(),
+            cursor_pin: None,
         }
     }
 }
@@ -408,7 +560,7 @@ fn nearest_gesture(plan: &Plan, p: SVec2) -> Option<(GestureId, usize)> {
     let mut best: Option<(f32, GestureId, usize)> = None;
     for (id, g) in &plan.gestures {
         match g {
-            Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind } => {
+            Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind, .. } => {
                 let hw = if *kind != RoadKind::Street { 4.0 } else { (*lanes_fwd + *lanes_bwd) as f32 * nd_sim::roads::LANE_WIDTH * 0.5 + 3.0 };
                 let built = g.road_polyline();
                 for (i, w) in built.windows(2).enumerate() {
@@ -517,6 +669,18 @@ pub(crate) fn tool_input(
     }
     if map_key(KeyCode::Backspace) && matches!(tools.tool, Tool::Road | Tool::Zone) {
         tools.points.pop();
+        let n = tools.points.len();
+        tools.point_levels.truncate(n);
+    }
+    // Depth view: cycles Underground -> Ground -> Sky.
+    if key(KeyCode::KeyU) && !ctrl {
+        tools.depth = tools.depth.next();
+        tools.status = format!("{} view.", tools.depth.label());
+    }
+    // Road level, as in Cities: Skylines: Page Up raises, Page Down lowers.
+    if tools.tool == Tool::Road && !tools.roundabout && (key(KeyCode::PageUp) || key(KeyCode::PageDown)) {
+        tools.step_elevation(key(KeyCode::PageUp));
+        tools.status = format!("Drawing at {}.", elevation_label(tools.elevation));
     }
     if map_key(KeyCode::Backspace) && tools.tool == Tool::Transit {
         if let Some(r) = tools.route_sel {
@@ -593,12 +757,16 @@ pub(crate) fn tool_input(
             }
         }
         Tool::Road => {
+            if ground.is_some() && (click || buttons.just_pressed(MouseButton::Middle)) {
+                tools.cursor_pin = None;
+            }
             if click {
                 if let Some(p) = ground {
-                    let (p, snapped) = ToolState::road_snap(&sim, p, tools.kind);
-                    tools.points.push(p);
+                    let first = tools.points.is_empty();
+                    let (p, snapped, level) = ToolState::road_snap_level(&sim, p, tools.kind, tools.elevation, first);
+                    tools.push_point(p, level);
                     if snapped {
-                        tools.status = "Snapped to the road: a junction forms there.".into();
+                        tools.status = format!("Snapped to the road at {}: a junction forms there.", elevation_label(level));
                     }
                 }
             }
@@ -606,11 +774,15 @@ pub(crate) fn tool_input(
                 if tools.points.len() >= 2 {
                     let kind = tools.kind;
                     let (lf, lb) = if kind != RoadKind::Street { (0, 0) } else { (tools.lanes_fwd, tools.lanes_bwd) };
-                    let g = Gesture::Road { points: tools.points.clone(), lanes_fwd: lf, lanes_bwd: lb, curved: tools.curved && tools.points.len() >= 3, kind, elevation: Vec::new() };
+                    let levels = tools.levels();
+                    let elevation = if levels.iter().any(|l| *l != 0.0) { levels } else { Vec::new() };
+                    let g = Gesture::Road { points: tools.points.clone(), lanes_fwd: lf, lanes_bwd: lb, curved: tools.curved && tools.points.len() >= 3, kind, elevation };
                     sim.world.add_gesture(g);
-                    tools.status = format!("{} {} added to project ({} points). Ctrl+Enter implements.", if tools.curved { "Curved" } else { "Straight" }, match kind { RoadKind::Path => "path", RoadKind::Rail => "track", RoadKind::Street => "road" }, tools.points.len());
+                    let warn = if tools.grade_warnings.is_empty() { String::new() } else { format!(" Warning: {}.", tools.grade_warnings.join("; ")) };
+                    tools.status = format!("{} {} added to project ({} points). Ctrl+Enter implements.{warn}", if tools.curved { "Curved" } else { "Straight" }, match kind { RoadKind::Path => "path", RoadKind::Rail => "track", RoadKind::Street if tools.tunnel => "tunnel", RoadKind::Street => "road" }, tools.points.len());
                 }
                 tools.points.clear();
+                tools.point_levels.clear();
             }
         }
         Tool::Zone => {
@@ -706,8 +878,8 @@ pub(crate) fn tool_input(
                 if let (Some(p), Some((id, seg))) = (ground, ground.and_then(|p| nearest_gesture(plan, p))) {
                     if let Some(mut g) = plan.gestures.get(&id).cloned() {
                         let at = (seg + 1).min(g.points().len());
-                        if let Some(pts) = g.points_mut() {
-                            pts.insert(at, p);
+                        if g.points_mut().is_some() {
+                            g.insert_point(at, p);
                             sim.world.set_gesture(id, g, true);
                             tools.status = "Control point inserted".into();
                         }
@@ -718,9 +890,7 @@ pub(crate) fn tool_input(
                 if let Some((id, idx)) = tools.hover_point {
                     if let Some(mut g) = plan.gestures.get(&id).cloned() {
                         if g.points().len() > g.min_points() {
-                            if let Some(pts) = g.points_mut() {
-                                pts.remove(idx);
-                            }
+                            g.remove_point(idx);
                             sim.world.set_gesture(id, g, true);
                             tools.status = "Control point removed".into();
                         } else {
@@ -1040,6 +1210,34 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             if let Some(r) = tools.ring_preview() {
                 gizmos.circle(Isometry3d::new(lift(r.center), flat), r.radius + r.half_width(), cyan);
                 gizmos.circle(Isometry3d::new(lift(r.center), flat), 1.2, white);
+            }
+        }
+        Tool::Road if !tools.roundabout => {
+            // The road itself is a hologram (render/holo.rs); here only the
+            // control points, each at its level with a stalk to the ground.
+            let at = |p: SVec2, level: f32| Vec3::new(p.x, sim.world.ground_height(p).max(if sim.world.landscape.is_flat() { 0.0 } else { nd_sim::landscape::WATER_LEVEL }) + level + 0.8, p.y);
+            let levels = tools.levels();
+            let mut ctrl: Vec<SVec2> = tools.points.clone();
+            if let Some(c) = tools.cursor_pin.or(cursor.ground) {
+                let (c, snapped, level) = ToolState::road_snap_level(&sim, c, tools.kind, tools.elevation, tools.points.is_empty());
+                let top = at(c, level);
+                gizmos.circle(Isometry3d::new(top, flat), if snapped { 4.5 } else { 3.0 }, if snapped { white } else { cyan });
+                if level != 0.0 {
+                    gizmos.line(at(c, 0.0), top, cyan);
+                }
+                ctrl.push(c);
+            }
+            for (i, &p) in tools.points.iter().enumerate() {
+                let l = levels.get(i).copied().unwrap_or(0.0);
+                gizmos.circle(Isometry3d::new(at(p, l), flat), 2.0, cyan);
+                if l != 0.0 {
+                    gizmos.line(at(p, 0.0), at(p, l), cyan);
+                }
+            }
+            if tools.curved && ctrl.len() >= 3 {
+                let mut l = levels.clone();
+                l.resize(ctrl.len(), tools.elevation);
+                gizmos.linestrip(ctrl.iter().zip(&l).map(|(&p, &l)| at(p, l)).collect::<Vec<_>>(), Color::linear_rgb(0.3, 0.4, 0.5));
             }
         }
         Tool::Road | Tool::Zone => {

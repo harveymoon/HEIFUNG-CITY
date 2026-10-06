@@ -34,6 +34,8 @@ use crate::tools::Selection;
 mod air;
 mod emergency;
 mod haze;
+/// Planned roads as holograms of the real thing; the depth view.
+mod holo;
 mod layers;
 mod lights;
 /// [looks] Citizens drawn with their own look.
@@ -354,6 +356,8 @@ impl Plugin for RenderPlugin {
         );
         app.add_systems(Update, sync_lane_arrows.in_set(SimSet::Sync).after(sync_signals).before(lift_spawned));
         app.add_systems(Update, sync_ring_preview.in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
+        app.add_systems(Update, (holo::sync_draw_hologram, holo::sync_plan_holograms).in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
+        app.add_systems(Update, holo::apply_depth.in_set(SimSet::Sync).after(lift_movers));
         app.add_systems(Update, (turbines::sync_turbines, haze::sync_haze, layers::sync_layers, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
         // [carlife] Cars parked at the kerb, after the cars on the road.
@@ -698,7 +702,7 @@ fn setup(
     ));
 }
 
-fn despawn_all<T: Component>(commands: &mut Commands, q: &Query<Entity, With<T>>) {
+fn despawn_all<F: bevy::ecs::query::QueryFilter>(commands: &mut Commands, q: &Query<Entity, F>) {
     for e in q.iter() {
         commands.entity(e).despawn();
     }
@@ -833,7 +837,7 @@ fn sync_roads(
     mats: Res<Materials>,
     mut state: ResMut<RenderState>,
     mut stats: ResMut<RenderStats>,
-    existing: Query<Entity, With<RoadsTag>>,
+    existing: Query<Entity, Or<(With<RoadsTag>, With<holo::TunnelTag>)>>,
 ) {
     let version = sim.world.roads.version;
     if version == state.roads_version && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
@@ -845,12 +849,20 @@ fn sync_roads(
     // Each run is set on its own height profile here (a viaduct over a
     // street, the street under it), so the roads are not lifted again.
     let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
-    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights });
+    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, layer: nd_procgen::street::StreetLayer::Surface });
     stats.street_triangles = geo.triangle_count();
     for (s, data) in geo.iter() {
         let mut e = commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, RoadsTag));
         if s.is_glow() {
             e.insert((NotShadowCaster, NotShadowReceiver));
+        }
+    }
+    // The tunnels on their own, shown in the underground view.
+    if w.roads.alive_segments().any(|(_, s)| s.tunnel) {
+        let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, layer: nd_procgen::street::StreetLayer::Underground });
+        stats.street_triangles += geo.triangle_count();
+        for (s, data) in geo.iter() {
+            commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, holo::TunnelTag, Visibility::Hidden, NotShadowCaster));
         }
     }
 }
@@ -971,11 +983,7 @@ fn sync_preview(
     if overlays.projects {
         for other in w.inactive_previews() {
             let dim = 0.35;
-            for (_, pts, fwd, bwd, kind) in &other.preview.planned_roads {
-                let wd = preview_width(*kind, *fwd, *bwd);
-                glow.ground_strip(pts, wd, 0.2, scale(pal.preview, 0.35 * dim));
-                glow.ground_strip(pts, 0.4, 0.21, scale(pal.preview, dim));
-            }
+            // Their planned roads are holograms (`holo::sync_plan_holograms`).
             for (_, pts, _, _, _) in &other.preview.removed_roads {
                 dashes(&mut glow, pts[0], *pts.last().unwrap(), 0.5, 0.21, 4.0, 3.0, scale(pal.preview_remove, dim));
             }
@@ -993,11 +1001,8 @@ fn sync_preview(
             }
         }
     }
-    for (_, pts, fwd, bwd, kind) in &pv.planned_roads {
-        let w = preview_width(*kind, *fwd, *bwd);
-        glow.ground_strip(pts, w, 0.22, scale(pal.preview, 0.35));
-        glow.ground_strip(pts, 0.5, 0.23, rgba(pal.preview));
-    }
+    // Planned roads are drawn as holograms of the real road
+    // (`holo::sync_plan_holograms`).
     for (_, pts, fwd, bwd, kind) in &pv.removed_roads {
         let w = preview_width(*kind, *fwd, *bwd);
         glow.ground_strip(pts, w, 0.22, scale(pal.preview_remove, 0.35));

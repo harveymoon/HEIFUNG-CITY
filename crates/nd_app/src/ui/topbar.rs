@@ -24,6 +24,9 @@ pub fn show(ui: &mut egui::Ui, p: &mut UiCtx) {
         treasury_and_population(ui, p);
         ui.separator();
         window_toggles(ui);
+        ui.separator();
+        // The layer the view shows: Underground, Ground, Sky [U].
+        super::tools::depth_switch(ui, p.tools);
         // The camera switch hugs the right edge whatever the window width.
         // The row is sized to fit 1270 points; the fixed slots above keep
         // it from growing as figures change.
