@@ -43,6 +43,19 @@ fn vnoise(x: f32, y: f32, period: i32, seed: u32) -> f32 {
     top + (bot - top) * fy
 }
 
+/// Value noise with separate wrapping periods across and up: stretched
+/// features (drips, runs) that still tile seamlessly.
+fn vnoise2(x: f32, y: f32, px: i32, py: i32, seed: u32) -> f32 {
+    let xi = x.floor() as i32;
+    let yi = y.floor() as i32;
+    let fx = smooth(x - xi as f32);
+    let fy = smooth(y - yi as f32);
+    let w = |ix: i32, iy: i32| hash(ix.rem_euclid(px), iy.rem_euclid(py), seed);
+    let top = w(xi, yi) + (w(xi + 1, yi) - w(xi, yi)) * fx;
+    let bot = w(xi, yi + 1) + (w(xi + 1, yi + 1) - w(xi, yi + 1)) * fx;
+    top + (bot - top) * fy
+}
+
 /// Fractal noise in 0..1 over a unit tile, seamless.
 fn fbm(u: f32, v: f32, base_period: i32, octaves: u32, seed: u32) -> f32 {
     let mut sum = 0.0;
@@ -182,6 +195,40 @@ fn sample(surface: Surface, u: f32, v: f32, px: i32, py: i32) -> Sample {
             let value = shade * (0.9 + 0.1 * streak) * (0.97 + 0.05 * g);
             Sample { value, tint: 0.0, height: rib * 0.8 }
         }
+        Surface::Container => {
+            // 5.6 m tile: 20 trapezoidal corrugations at the ISO pitch of
+            // 0.28 m (outer flat, slope, inner flat, slope). Everything else
+            // is low frequency over the whole tile: paint mottling a metre
+            // or two across, runs of grime down the valleys, the odd
+            // panel ripple, so no pattern repeats within one 6 m unit.
+            const RIBS: f32 = 20.0;
+            let x = (u * RIBS).fract();
+            let (prof, slope) = if x < 0.3 {
+                (1.0, false)
+            } else if x < 0.48 {
+                (1.0 - smooth((x - 0.3) / 0.18), true)
+            } else if x < 0.8 {
+                (0.0, false)
+            } else if x < 0.98 {
+                (smooth((x - 0.8) / 0.18), true)
+            } else {
+                (1.0, false)
+            };
+            // Baked occlusion: inner flats a touch darker than the outer
+            // faces, the slopes darker still.
+            let shade = 0.9 + 0.08 * prof - if slope { 0.05 } else { 0.0 };
+            let mottle = fbm(u, v, 3, 4, 601);
+            let blot = fbm(u, v, 2, 3, 613);
+            // Grime runs down the valleys: per-rib strength, stretched up the wall.
+            let rib = (u * RIBS).floor() as i32;
+            let run = vnoise2(u * RIBS, v * 3.0, RIBS as i32, 3, 607) * hash(rib.rem_euclid(RIBS as i32), 0, 609);
+            let run_dark = 1.0 - 0.12 * ((run - 0.25) * 2.0).clamp(0.0, 1.0) * (1.0 - 0.6 * prof);
+            // Panel ripple: shallow waves in the sheet that catch the light.
+            let ripple = fbm(u, v, 6, 2, 617);
+            let g = grain(px, py, 619);
+            let value = shade * (0.86 + 0.16 * mottle) * (0.95 + 0.08 * blot) * run_dark * (0.97 + 0.05 * g);
+            Sample { value: value.min(1.0), tint: 0.03 * (blot - 0.5), height: prof * 1.0 + 0.5 * ripple }
+        }
         Surface::Rust => {
             let blotch = fbm(u, v, 3, 5, 71);
             let fine = fbm(u, v, 24, 2, 73);
@@ -312,10 +359,22 @@ fn grit(surface: Surface, s: Sample, u: f32, v: f32, px: i32, py: i32, wear: f32
     let mask = fbm(u, v, 4, 2, 437) > 0.56;
     let c1 = if mask { crack_line(fbm(u, v, 6, 3, 431), w) } else { 0.0 };
     let c2 = if !mask { crack_line(fbm(u, v, 8, 2, 433), w * 0.7) * 0.6 } else { 0.0 };
-    let crack = c1.max(c2) * wear;
+    // Steel sheet does not crack like render: no hairlines on containers.
+    let crack = if surface == Surface::Container { 0.0 } else { c1.max(c2) * wear };
     value *= 1.0 - 0.35 * crack;
     height -= 1.0 * crack;
     match surface {
+        Surface::Container => {
+            // Paint chipped down to rust in small, scattered spots, clustered
+            // where a broad mask allows (not primer blotches all over).
+            let chip = fbm(u, v, 48, 2, 443);
+            let cluster = fbm(u, v, 3, 2, 449);
+            if cluster > 0.52 && chip > 0.8 - 0.04 * wear {
+                value *= 0.8;
+                tint += 0.1;
+                height -= 0.2;
+            }
+        }
         Surface::Panel | Surface::Metal | Surface::Plaster => {
             // Worn paint: blotches where the topcoat has gone, a lighter,
             // cooler primer showing through.
@@ -328,7 +387,7 @@ fn grit(surface: Surface, s: Sample, u: f32, v: f32, px: i32, py: i32, wear: f32
         }
         _ => {}
     }
-    if matches!(surface, Surface::Metal | Surface::Panel) {
+    if matches!(surface, Surface::Metal | Surface::Panel | Surface::Container) {
         // Rust bleeding down from fixings in vertical runs.
         let run = fbm(u * 10.0, v * 0.6, 10, 2, 457);
         let r = ((run - 0.62) * 5.0).clamp(0.0, 1.0) * wear;

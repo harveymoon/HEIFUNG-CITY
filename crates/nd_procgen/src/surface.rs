@@ -51,10 +51,15 @@ pub enum Surface {
     WornMetal,
     WornPaving,
     WornAsphalt,
+    /// Shipping-container sheet: trapezoidal corrugation at the ISO pitch
+    /// (about 0.28 m) on a large tile, so the paint's mottling does not
+    /// repeat across one unit. Last in the enum so older indices stay put.
+    Container,
+    WornContainer,
 }
 
 impl Surface {
-    pub const ALL: [Surface; 23] = [
+    pub const ALL: [Surface; 25] = [
         Surface::Concrete,
         Surface::Plaster,
         Surface::Brick,
@@ -78,10 +83,12 @@ impl Surface {
         Surface::WornMetal,
         Surface::WornPaving,
         Surface::WornAsphalt,
+        Surface::Container,
+        Surface::WornContainer,
     ];
 
     /// The surfaces that have a weathered variant, paired with it.
-    pub const WEATHERED: [(Surface, Surface); 7] = [
+    pub const WEATHERED: [(Surface, Surface); 8] = [
         (Surface::Concrete, Surface::WornConcrete),
         (Surface::Plaster, Surface::WornPlaster),
         (Surface::Brick, Surface::WornBrick),
@@ -89,6 +96,7 @@ impl Surface {
         (Surface::Metal, Surface::WornMetal),
         (Surface::Paving, Surface::WornPaving),
         (Surface::Asphalt, Surface::WornAsphalt),
+        (Surface::Container, Surface::WornContainer),
     ];
 
     /// The clean surface a weathered one is made from (itself otherwise):
@@ -129,6 +137,8 @@ impl Surface {
             Surface::Foliage => 1.0,
             Surface::Matte => 1.0,
             Surface::Glow => 1.0,
+            // 20 corrugations of 0.28 m.
+            Surface::Container => 5.6,
             _ => 1.0,
         }
     }
@@ -140,6 +150,7 @@ impl Surface {
         match self {
             Surface::Glass => 0.12,
             Surface::Metal => 0.45,
+            Surface::Container => 0.55,
             Surface::Panel => 0.5,
             Surface::Tarp => 0.55,
             Surface::Matte => 0.7,
@@ -157,6 +168,7 @@ impl Surface {
         }
         match self {
             Surface::Metal => 0.75,
+            Surface::Container => 0.45,
             Surface::Panel => 0.5,
             Surface::Rust => 0.35,
             Surface::Glass => 0.3,
@@ -174,6 +186,7 @@ impl Surface {
             Surface::Brick => 1.6,
             Surface::Stone => 2.0,
             Surface::Metal => 1.4,
+            Surface::Container => 1.5,
             Surface::Rust => 1.2,
             Surface::Wood => 1.0,
             Surface::Paving => 1.2,
@@ -189,6 +202,12 @@ impl Surface {
             Surface::Glow => 0.0,
             _ => 0.5,
         }
+    }
+
+    /// Texels across one tile. The container sheet spreads its tile over
+    /// 5.6 m, so it gets twice the usual resolution to keep ~90 px a metre.
+    pub fn texels(self, default: usize) -> usize {
+        if self.base() == Surface::Container { default * 2 } else { default }
     }
 
     pub fn is_glow(self) -> bool {

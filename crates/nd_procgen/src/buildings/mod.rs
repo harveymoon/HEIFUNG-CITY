@@ -1807,4 +1807,148 @@ mod tests {
             }
         }
     }
+
+    /// A bare context on a lot, for driving one part generator directly.
+    fn ctx_on<'a>(lot: &Lot, rules: &'a BuildingRules, pal: &'a Palette, tier: Tier, wear: f32) -> Ctx<'a> {
+        let frame = Frame::from_lot(lot);
+        let r = rules.for_land_use(LandUse::Residential);
+        let mut lot_poly: Vec<Vec2> = lot.polygon.iter().map(|p| frame.to_local(*p)).collect();
+        if polygon_area(&lot_poly) < 0.0 {
+            lot_poly.reverse();
+        }
+        let poly = parts::offset_poly(&lot_poly, r.inset);
+        Ctx {
+            fw: frame.width,
+            fd: frame.depth,
+            frame,
+            rules: r,
+            style: rules.style(tier),
+            palette: pal,
+            land_use: LandUse::Residential,
+            tier,
+            floors: 3,
+            wear,
+            lot_poly,
+            poly,
+            seed: 1,
+            parking: None,
+            powered: 1.0,
+            park: None,
+            rail: None,
+            animated_rotors: false,
+            dynamic_lights: false,
+        }
+    }
+
+    /// Triangles per shipping container and per Stacks building, printed
+    /// for the record (run with --nocapture). Every unit stays within its
+    /// budget, worn places spend more of it on rust and dents.
+    #[test]
+    fn container_triangle_counts() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let lots = many_lots(LandUse::Residential);
+        let mut counts = Vec::new();
+        let mut by_wear = Vec::new();
+        for (i, (wear, tier)) in [(0.0f32, Tier::High), (0.3, Tier::Mid), (0.6, Tier::Low), (1.0, Tier::Low)].iter().enumerate() {
+            let c = ctx_on(&lots[0], &rules, &pal, *tier, *wear);
+            let mut rng = rng_for(5, i as u64);
+            let mut sum = 0;
+            for k in 0..60 {
+                let mut g = Geometry::default();
+                parts::container_unit(&mut g, &c, &mut rng, 0.0, 0.0, 0.0, if k % 3 == 0 { 12.1 } else { 6.05 }, 2.44, 2.6, (k % 3) as f32 * 2.6, pal.container(k));
+                check_mesh(&g, "container");
+                assert!(g.triangle_count() <= parts::CONTAINER_TRIS, "a container spent {} triangles", g.triangle_count());
+                counts.push(g.triangle_count());
+                sum += g.triangle_count();
+            }
+            by_wear.push(sum);
+        }
+        assert!(by_wear[3] > by_wear[0], "worn containers should carry more rust and dents: {by_wear:?}");
+        let (lo, hi) = (*counts.iter().min().unwrap(), *counts.iter().max().unwrap());
+        let avg = counts.iter().sum::<usize>() as f32 / counts.len() as f32;
+        let stacks: Vec<usize> = lots.iter().take(40).enumerate().map(|(li, lot)| generate_styled(lot, LandUse::Residential, 3, Tier::Low, 0.5, 11 + li as u64, Style::Stacks, &rules, &pal).triangle_count()).collect();
+        let savg = stacks.iter().sum::<usize>() as f32 / stacks.len() as f32;
+        eprintln!("container tris: min {lo} avg {avg:.1} max {hi}; Stacks building avg {savg:.0} (max {})", stacks.iter().max().unwrap());
+    }
+
+    /// Units painted from the same palette entry come out different (paint
+    /// jitter, fading, livery, wear), and the same seed draws the same unit.
+    #[test]
+    fn containers_vary_per_unit_deterministically() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let lots = many_lots(LandUse::Residential);
+        let c = ctx_on(&lots[0], &rules, &pal, Tier::Low, 0.5);
+        let draw = |seed: u64| {
+            let mut g = Geometry::default();
+            let mut rng = rng_for(seed, 77);
+            parts::container_unit(&mut g, &c, &mut rng, 0.0, 0.0, 0.0, 6.05, 2.44, 2.6, 0.0, pal.container(0));
+            g
+        };
+        let mut paints: Vec<[u32; 3]> = Vec::new();
+        let mut shapes: Vec<usize> = Vec::new();
+        for seed in 0..40 {
+            let g = draw(seed);
+            assert!(g == draw(seed), "seed {seed} draws a different container twice");
+            let sheet = g.get(Surface::Container);
+            // The first sheet vertex carries the unit's body paint.
+            let p = sheet.colors[0];
+            let key = [(p[0] * 1000.0) as u32, (p[1] * 1000.0) as u32, (p[2] * 1000.0) as u32];
+            if !paints.contains(&key) {
+                paints.push(key);
+            }
+            if !shapes.contains(&g.triangle_count()) {
+                shapes.push(g.triangle_count());
+            }
+            // Walls, roof and the decals painted on them all use the sheet.
+            assert!(sheet.indices.len() / 3 >= 10, "the corrugated sheet covers walls, ends and roof");
+        }
+        assert!(paints.len() >= 35, "only {} distinct paints in 40 units", paints.len());
+        assert!(shapes.len() >= 3, "livery and wear should vary the details: {shapes:?}");
+    }
+
+    /// A prop is an I-beam: two flanges and a web (two faces each, 12 rust
+    /// triangles), 0.2 m square in plan around its point, on a base plate
+    /// and a concrete pad on the ground, under a cap plate at the top.
+    #[test]
+    fn supports_are_ibeams_and_stay_put() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let lots = many_lots(LandUse::Residential);
+        let c = ctx_on(&lots[0], &rules, &pal, Tier::Low, 0.5);
+        let mut rng = rng_for(3, 3);
+        let p = Vec2::new(1.0, -2.0);
+        for (base, on_ground) in [(0.0f32, true), (2.6, false)] {
+            let mut g = Geometry::default();
+            parts::ibeam_support(&mut g, &c, &mut rng, p, 0.4, base, base + 2.6, on_ground);
+            check_mesh(&g, "prop");
+            let steel = g.get(Surface::Rust);
+            assert_eq!(steel.indices.len() / 3, 12, "two flanges and a web, two faces each");
+            let w = c.frame.to_world(p.x, p.y);
+            let half = parts::IBEAM_FLANGE * 0.5 * std::f32::consts::SQRT_2 + 1e-3;
+            assert!(steel.positions.iter().all(|q| Vec2::new(q[0], q[2]).distance(w) <= half), "the beam stays within its section");
+            // The web is thinner than the flanges: some rust vertices sit
+            // close to the beam's axis plane, others out at the flange tips.
+            let a = c.frame.yaw() + 0.4;
+            let axis = Vec2::new(a.cos(), a.sin());
+            let xs: Vec<f32> = steel.positions.iter().map(|q| (Vec2::new(q[0], q[2]) - w).dot(axis).abs()).collect();
+            assert!(xs.iter().any(|x| *x < 0.02) && xs.iter().any(|x| *x > 0.09), "an I section: {xs:?}");
+            assert_eq!(!g.get(Surface::Concrete).is_empty(), on_ground, "a pad only on the ground");
+            let all = g.iter().flat_map(|(_, m)| m.positions.iter()).map(|q| q[1]);
+            let (lo, hi) = all.fold((f32::MAX, f32::MIN), |(lo, hi), y| (lo.min(y), hi.max(y)));
+            assert!(lo >= base - 1e-3 && hi <= base + 2.6 + 1e-3, "the prop fills the gap and no more: {lo}..{hi}");
+            assert!(g.iter().flat_map(|(_, m)| m.positions.iter()).all(|q| Vec2::new(q[0], q[2]).distance(w) <= 0.45), "plates and pad stay round the prop");
+        }
+        // Stacks draw them, on their lots.
+        let mut props = 0;
+        for (li, lot) in lots.iter().take(30).enumerate() {
+            let g = generate_styled(lot, LandUse::Residential, 4, Tier::Low, 0.4, 21 + li as u64, Style::Stacks, &rules, &pal);
+            props += g.get(Surface::Rust).indices.len() / 3;
+            for q in &g.get(Surface::Rust).positions {
+                assert!(outside_by(Vec2::new(q[0], q[2]), lot) <= 1.0 && q[1] >= -0.01, "lot {li}: a prop outside its lot at {q:?}");
+            }
+        }
+        assert!(props >= 20 * 5, "stacks should stand on I-beam props ({props} rust triangles)");
+    }
 }
