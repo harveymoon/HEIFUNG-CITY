@@ -451,12 +451,48 @@ trait MindProvider {
   fountain with jets, bandstand with string lights, striped carousel with horses, ferris
   wheel with gondolas and a ticket booth, kiosk with café tables and parasols, flower
   beds, statue, dog run.
-- Power plants have their own styles: a coal station with a boiler hall, two stacks with
-  plumes, a coal pile and conveyor and a transformer yard; rows of tilted panels on posts;
-  white turbines with nacelles and three blades; a containment dome, hyperbolic cooling
-  towers with steam and a double fence. Coal plants get a haze: stacked translucent brown
-  discs on the overlay material that read as a dome from above and murk from the street.
-  Underpowered buildings light fewer windows (`Ctx::lit_chance` scales with `powered`).
+- Power plants have their own styles: a coal station with a boiler hall, two stacks, a
+  coal pile and conveyor and a transformer yard; rows of tilted panels on posts; a wind farm
+  of helical vertical-axis turbines; a containment dome, hyperbolic cooling towers with steam
+  and a double fence.
+- Wind farms (`buildings/power.rs`): turbines of one size (18 m gunmetal mast, 11 m rotor of
+  three graphite blades twisted a third of a turn, 3 m radius) in staggered rows 15 m apart,
+  as many as fit with 2 m between every blade tip and the lot edge (`wind_sites`, tested for
+  count growing with area and containment). The generator draws masts only
+  (`Extras::animated_rotors`); the app puts a rotor entity on each mast (`wind_turbines` gives
+  the same sites) and turns it about the vertical: still below wind 0.15, 0.6 to 4.2 rad/s
+  above, easing up and down, stopped while paused. A red cap light and cyan tip lights trace
+  the spin at night.
+- Coal smoke (`render/haze.rs`): no geometry in the plant. Each stack (`coal_stacks`) emits
+  18 camera-facing puffs with a soft generated texture that rise, drift downwind (the wind
+  direction veers slowly over days, the distance grows with wind), swell and fade over 36 s;
+  14 wide, flat puffs of brown smog lie downwind at 7 to 30 m, which is what the street sees.
+  Alpha comes from a palette of twelve steps per kind (plume at most 0.42, smog 0.16), so the
+  city reads through from above; the colour darkens at night; nothing casts or receives
+  shadows. Thickness follows the plant's output: staffing times the grid's draw on supply.
+- Window lights follow occupancy (`render/lights.rs`, `nd_procgen::lights`). In the app every
+  window light is generated (`Extras::dynamic_lights`, about 92% of windows) through
+  `parts::window_light`, which ranks it by a hash of its position and lays dark glass just
+  behind it. When chunks are built, the rank and the building's slot go into the glow
+  vertices' UVs, and chunk glow is drawn with a material extension that reads the building's
+  lit share from a 256 by 256 one-byte texture and discards windows ranked above it. Four
+  times a sim hour the app counts who is in every building (awake or asleep at home, staff)
+  and writes `lit_share`: homes light a room per awake household in, fewer by day, a night
+  light when asleep, dark when out; workplaces light with the staff in and customers while
+  open, security lights when closed; buildings without homes or jobs stay lit; all of it
+  scaled by the power share. No mesh is rebuilt.
+- Map layers (`render/layers.rs`, ramps and heat grid in `nd_procgen::overlay`): land value
+  (V), traffic load (a ribbon per lane from cars per metre and speed against the limit, green
+  to magenta), traffic types (a disc under every vehicle: cars cyan, trucks orange, buses
+  green; emergency red once the sim has them), people (a heat map of everyone where they
+  are, indoors at their building), pollution and noise (plants by pollution radius,
+  industry, nightlife, traffic), the pedestrian network (P) and zoning outlines (O). L steps
+  through the heat layers one at a time; the Land window's Layers section ticks any set; a
+  legend at the bottom right shows the key of every layer that is on. The `overlay` API and
+  `map {layer: "people"}` read the same data.
+- Toolbar and sub-pane icons (`ui/icons.rs`) are painted with egui shapes: one per tool, a
+  lane plan per road preset (lane arrows, centre line, rails, path paving, ramp curve), a
+  glyph per land use in its zone colour.
 - Paths (`RoadKind::Path`): 3.2 m ways with no car lanes, drawn as paving with edge stones,
   low lamps, benches and bollards where they meet a street; they cut parcels but give no
   frontage, and a path crossing a street mid-block gets a zebra.

@@ -13,6 +13,8 @@ pub mod newgame;
 mod people;
 mod person;
 mod saves;
+mod icons;
+mod legend;
 mod toolbar;
 mod tools;
 mod topbar;
@@ -157,6 +159,7 @@ fn side_panel(
 
     flags.panel_rects = vec![top_rect, bottom_rect];
     toast(ctx, &mut flags, bottom_rect.height());
+    legend::show(ctx, &overlays, &assets, content);
     if let Some(p) = fly_to {
         for mut cam in &mut cams {
             cam.target = Vec3::new(p.x, 0.0, p.y);

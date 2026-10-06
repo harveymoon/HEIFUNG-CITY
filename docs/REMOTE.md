@@ -186,7 +186,7 @@ with none, the current selection. The detail matches what the inspector and the 
 | `select` | `citizen` / `building` / `car` id, or `at: [x, y]` (picks like a click), or nothing to clear |
 | `favourite` | `citizen`, `on` (omit to toggle) |
 | `tool` | `name` (inspect, road, zone, edit, bulldoze, power, transit, rail), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway), `kind` (the active tool's sub-mode: road kind, plant, station / freight_yard, route / depot, land use), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture` |
-| `overlay` | `land_value`, `paths`, `zoning` (bools) |
+| `overlay` | `layer` (land_value, traffic, traffic_types, people, pollution, paths, zoning) with `on` (bool; omitted toggles); or any of those names as bools. Reply: every layer and whether it is on (also in `status.overlays`) |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
 | `window` | `name` city / economy / market / people / power / transit / land / saves / help / dev, `open` (omit to toggle). Reply `open`, `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it |
 
@@ -298,7 +298,8 @@ the top; col 0 the smallest x, at the left.
 - `layer: "summary"` (default): `columns` and `cells`, one row per non-empty cell: col, row,
   center, residents (counted at their home), homes, jobs, jobs_filled, businesses, land_value (lot
   average), hungry, vacant_lots, unpowered, cars (now), land_use (dominant by lot area).
-- One of `population`, `land_value`, `jobs`, `hunger`, `vacancy`, `power`, `traffic`: `unit`,
+- One of `population`, `people` (citizens where they are now, indoors at their building: the
+  People map layer's data), `land_value`, `jobs`, `hunger`, `vacancy`, `power`, `traffic`: `unit`,
   `max`, `total`, `grid` (rows of numbers), `ascii` (one string per row, one character per cell
   from `" .:-=+*#%@"` scaled to the layer's max; any non-zero value shows at least `.`), `legend`
   (the value range of each character) and `ascii_text` (framed, with each row's y):

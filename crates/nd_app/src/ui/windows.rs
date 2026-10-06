@@ -253,10 +253,14 @@ fn transit(ui: &mut egui::Ui, p: &mut UiCtx) {
 /// Overlays, land value and class mix, and the lighting controls: the
 /// window about how the ground reads.
 fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
-    section(ui, "OVERLAYS");
-    ui.checkbox(&mut p.overlays.land_value, "Land value [V]");
-    ui.checkbox(&mut p.overlays.paths, "Pedestrian network [P]");
-    ui.checkbox(&mut p.overlays.zoning, "Zoning outlines [O]");
+    section(ui, "LAYERS");
+    hint(ui, "L steps through the map layers one at a time; tick several to stack them.");
+    for (name, label, key) in crate::render::Overlays::LAYERS {
+        let text = if key.is_empty() { label.to_string() } else { format!("{label} [{key}]") };
+        if let Some(flag) = p.overlays.flag(name) {
+            ui.checkbox(flag, text);
+        }
+    }
     ui.checkbox(&mut p.tools.show_routes, "Bus lines whatever the tool");
     let e = &p.sim.world.economy;
     section(ui, "LAND VALUE");

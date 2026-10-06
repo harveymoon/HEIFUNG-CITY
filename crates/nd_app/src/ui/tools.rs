@@ -6,7 +6,7 @@ use nd_sim::roads::RoadKind;
 use nd_sim::{Gesture, LandUse, PowerPlantKind, RailFacility};
 
 use super::help;
-use super::{hint, section, zone_color32, WARN};
+use super::{hint, icons, section, zone_color32, WARN};
 use crate::assets::GameAssets;
 use crate::sim::Sim;
 use crate::tools::{EffectivePlan, Tool, ToolState, TransitMode, ROAD_PRESETS};
@@ -28,7 +28,7 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
     ui.horizontal_wrapped(|ui| {
         for (label, f, b, k) in ROAD_PRESETS {
             let on = tools.kind == k && (k != RoadKind::Street || (tools.lanes_fwd == f && tools.lanes_bwd == b));
-            if ui.selectable_label(on, label).clicked() {
+            if icons::selectable(ui, on, label, |p, r, c| icons::road(p, r, k, f, b, c)).on_hover_text(preset_hint(label)).clicked() {
                 tools.kind = k;
                 if k == RoadKind::Street {
                     tools.lanes_fwd = f;
@@ -65,8 +65,9 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
 fn zone(ui: &mut egui::Ui, tools: &mut ToolState, assets: &GameAssets) {
     ui.horizontal_wrapped(|ui| {
         for lu in LandUse::ALL {
-            let text = egui::RichText::new(lu.label()).color(zone_color32(assets.palette.zone_color(lu)));
-            if ui.selectable_label(tools.land_use == lu, text).clicked() {
+            let colour = zone_color32(assets.palette.zone_color(lu));
+            let text = egui::RichText::new(lu.label()).color(colour);
+            if icons::selectable(ui, tools.land_use == lu, text, |p, r, _| icons::land_use(p, r, lu, colour)).clicked() {
                 tools.land_use = lu;
             }
         }
@@ -85,7 +86,7 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
             ui.horizontal_wrapped(|ui| {
                 for (label, pf, pb, pk) in ROAD_PRESETS {
                     let on = k == pk && (pk != RoadKind::Street || (f == pf && b == pb));
-                    if ui.selectable_label(on, label).clicked() {
+                    if icons::selectable(ui, on, label, |p, r, c| icons::road(p, r, pk, pf, pb, c)).on_hover_text(preset_hint(label)).clicked() {
                         k = pk;
                         f = pf;
                         b = pb;
@@ -226,6 +227,21 @@ fn power(ui: &mut egui::Ui, tools: &mut ToolState) {
     let k = tools.power_kind;
     hint(ui, &format!("costs {:.0} to build, {:.0}/day to run, {} jobs{}", k.build_cost(), k.upkeep_per_day(), k.jobs(), help::power_note(k)));
     hint(ui, help::tool_hint(Tool::Power));
+}
+
+/// Tooltip for a road preset button.
+fn preset_hint(label: &str) -> &'static str {
+    match label {
+        "Path" => "Footpath: walkers and bikes only",
+        "Rail" => "Railway track: trains only, never fronts lots",
+        "Lane" => "One lane each way",
+        "Street" => "Two lanes each way",
+        "Avenue" => "Three lanes each way",
+        "One-way" => "Two lanes, one direction",
+        "Ramp" => "One lane, one direction: slip roads onto a highway",
+        "Highway" => "Four lanes one way: 25 m/s, no frontage, grade-separated",
+        _ => "",
+    }
 }
 
 /// Colour for a figure that should worry the player.

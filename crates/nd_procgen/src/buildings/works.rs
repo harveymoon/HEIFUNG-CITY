@@ -146,7 +146,8 @@ pub fn flatted_factory(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 face.decal(g, f, Glass, 0.0, y + fh * 0.58, 0.03, face.len * 0.9, fh * 0.42, pal.glass_dark);
                 if coin(rng, c.lit_chance() * 1.2) {
                     let span = face.len * rng.random_range(0.2..0.6);
-                    face.decal(g, f, Glow, rng.random_range(-(face.len * 0.45 - span * 0.5)..=(face.len * 0.45 - span * 0.5)), y + fh * 0.58, 0.05, span, fh * 0.34, mul([1.1, 1.15, 1.2], 0.75));
+                    let t = rng.random_range(-(face.len * 0.45 - span * 0.5)..=(face.len * 0.45 - span * 0.5));
+                    window_light(g, c, |g| face.decal(g, f, Glow, t, y + fh * 0.58, 0.05, span, fh * 0.34, mul([1.1, 1.15, 1.2], 0.75)));
                 }
                 face.decal(g, f, Panel, 0.0, y + fh * 0.18, 0.03, face.len, 0.3, mul(c.style.trim_color, 1.1));
             }
@@ -223,7 +224,7 @@ pub fn fab_plant(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             // Thin window slot at the office level only: cleanrooms are blind.
             face.decal(g, f, Glass, 0.0, 3.2, 0.03, face.len * 0.85, 0.9, pal.glass_dark);
             if coin(rng, c.lit_chance() + 0.3) {
-                face.decal(g, f, Glow, 0.0, 3.2, 0.05, face.len * 0.6, 0.6, mul([1.0, 1.1, 1.25], 0.8));
+                window_light(g, c, |g| face.decal(g, f, Glow, 0.0, 3.2, 0.05, face.len * 0.6, 0.6, mul([1.0, 1.1, 1.25], 0.8)));
             }
         }
     }

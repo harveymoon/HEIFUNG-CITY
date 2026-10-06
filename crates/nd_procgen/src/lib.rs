@@ -2,7 +2,9 @@
 //! be unit-tested and rendered by any engine.
 
 pub mod buildings;
+pub mod lights;
 pub mod mesh;
+pub mod overlay;
 pub mod palette;
 pub mod street;
 pub mod surface;
@@ -12,7 +14,7 @@ pub mod vacant;
 pub mod walk;
 
 pub use buildings::transit::bus_stops;
-pub use buildings::{generate_building, BuildingRules, Extras, LandUseRules, Neighbour, Style, StyleBook};
+pub use buildings::{coal_stacks, generate_building, wind_rotor, wind_turbines, BuildingRules, Extras, LandUseRules, Neighbour, Style, StyleBook, Turbine, WINDOW_LIGHT_MARK};
 pub use mesh::MeshData;
 pub use palette::Palette;
 pub use surface::{Geometry, Surface};

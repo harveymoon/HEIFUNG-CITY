@@ -30,6 +30,50 @@ pub fn coin(rng: &mut impl Rng, p: f32) -> bool {
     rng.random_bool(p as f64)
 }
 
+/// Vertex alpha at or above this marks a window light in the Glow mesh; the
+/// fraction above it is the window's rank in `0..1`. The renderer lights a
+/// building's windows whose rank is below its lit share and swaps the mark
+/// for that share's lookup (opaque glow ignores alpha anyway).
+pub const WINDOW_LIGHT_MARK: f32 = 2.0;
+
+/// Draw a window light with `emit` (which adds Glow). With
+/// [`Ctx::dynamic_lights`] the new glow vertices are marked with
+/// [`WINDOW_LIGHT_MARK`] plus a rank hashed from their position, and a
+/// copy in dark glass is laid just behind them, so the window still reads as
+/// glazing when the renderer switches the light off. Without it this is
+/// just `emit`.
+pub fn window_light(g: &mut Geometry, c: &Ctx, emit: impl FnOnce(&mut Geometry)) {
+    let (vstart, istart) = (g.get(Glow).positions.len(), g.get(Glow).indices.len());
+    emit(g);
+    if !c.dynamic_lights {
+        return;
+    }
+    let m = g.part(Glow);
+    if m.positions.len() == vstart {
+        return;
+    }
+    let p = m.positions[vstart];
+    let h = (p[0].to_bits() ^ p[1].to_bits().rotate_left(11) ^ p[2].to_bits().rotate_left(22)).wrapping_mul(0x9E37_79B1);
+    let rank = ((h >> 8) as f32 / (1u32 << 24) as f32).min(0.999);
+    for col in &mut m.colors[vstart..] {
+        col[3] = WINDOW_LIGHT_MARK + rank;
+    }
+    let mut glass = MeshData {
+        positions: m.positions[vstart..].to_vec(),
+        normals: m.normals[vstart..].to_vec(),
+        colors: vec![rgba(c.palette.glass_dark); m.positions.len() - vstart],
+        uvs: m.uvs[vstart..].to_vec(),
+        tangents: m.tangents[vstart..].to_vec(),
+        indices: m.indices[istart..].iter().map(|i| i - vstart as u32).collect(),
+    };
+    for (pos, n) in glass.positions.iter_mut().zip(&glass.normals) {
+        for k in 0..3 {
+            pos[k] -= n[k] * 0.02;
+        }
+    }
+    g.part(Glass).append(&glass);
+}
+
 pub fn rgba(c: [f32; 3]) -> [f32; 4] {
     [c[0], c[1], c[2], 1.0]
 }
@@ -442,7 +486,8 @@ pub fn windows(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0: f
                 face.decal(g, f, Wood, t, y, 0.05, w, spec.h, c.palette.plywood);
             } else if coin(rng, spec.lit) {
                 let wc = pick(rng, &c.style.window_colors);
-                face.decal(g, f, Glow, t, y, 0.05, w, spec.h, mul(wc, rng.random_range(0.55..1.0)));
+                let col = mul(wc, rng.random_range(0.55..1.0));
+                window_light(g, c, |g| face.decal(g, f, Glow, t, y, 0.05, w, spec.h, col));
             } else {
                 face.decal(g, f, Glass, t, y, 0.05, w, spec.h, c.palette.glass_dark);
             }
@@ -470,7 +515,8 @@ pub fn band_windows(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, 
             }
             let t = -len * 0.5 + (i as f32 + 0.5) * seg;
             let wc = pick(rng, &c.style.window_colors);
-            face.decal(g, f, Glow, t, y, 0.05, seg * 0.9, fh * 0.38, mul(wc, rng.random_range(0.5..0.95)));
+            let col = mul(wc, rng.random_range(0.5..0.95));
+            window_light(g, c, |g| face.decal(g, f, Glow, t, y, 0.05, seg * 0.9, fh * 0.38, col));
         }
     }
 }
@@ -491,7 +537,8 @@ pub fn curtain_lights(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec
                 }
                 let t = -face.len * 0.5 + (i as f32 + 0.5) * seg;
                 let wc = pick(rng, &c.style.window_colors);
-                face.decal(g, f, Glow, t, y, 0.05, seg * 0.85, fh * 0.42, mul(wc, rng.random_range(0.35..0.8)));
+                let col = mul(wc, rng.random_range(0.35..0.8));
+                window_light(g, c, |g| face.decal(g, f, Glow, t, y, 0.05, seg * 0.85, fh * 0.42, col));
             }
         }
     }
@@ -514,7 +561,7 @@ pub fn storefront(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0
             face.decal(g, f, Glass, t, y0 + h * 0.45, 0.04, unit * 0.9, h * 0.8, c.palette.glass_dark);
             if coin(rng, 0.5 + 0.4 * c.lit_chance()) {
                 let wc = pick(rng, &c.palette.glow_colors);
-                face.decal(g, f, Glow, t, y0 + h * 0.45, 0.06, unit * 0.86, h * 0.72, mul(wc, 0.6));
+                window_light(g, c, |g| face.decal(g, f, Glow, t, y0 + h * 0.45, 0.06, unit * 0.86, h * 0.72, mul(wc, 0.6)));
             }
             // door
             face.decal(g, f, Matte, t + unit * 0.3, y0 + 1.1, 0.08, 1.0, 2.2, DARK);
@@ -545,7 +592,8 @@ pub fn entrance(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f
     face.decal(g, f, Glass, t, h * 0.5, 0.12, w, h * 0.95, c.palette.glass_dark);
     let lit = coin(rng, 0.6 + 0.4 * c.lit_chance());
     if lit {
-        face.decal(g, f, Glow, t, h * 0.5, 0.14, w * 0.9, h * 0.85, mul(pick(rng, &c.style.window_colors), 0.7));
+        let col = mul(pick(rng, &c.style.window_colors), 0.7);
+        window_light(g, c, |g| face.decal(g, f, Glow, t, h * 0.5, 0.14, w * 0.9, h * 0.85, col));
     }
     canopy(g, c, face, t, h + 0.3, w + 1.6, 2.0, mul(c.style.trim_color, 0.9));
     // Doorstep paving, as deep as the forecourt allows.

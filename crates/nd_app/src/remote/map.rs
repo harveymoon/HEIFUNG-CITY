@@ -22,7 +22,7 @@ pub const MAX_CELLS: usize = 400;
 const MIN_CELL_M: f32 = 25.0;
 /// Heat map characters, empty to hottest.
 const RAMP: &[u8] = b" .:-=+*#%@";
-pub const LAYERS: &[&str] = &["summary", "population", "land_value", "jobs", "hunger", "vacancy", "power", "traffic"];
+pub const LAYERS: &[&str] = &["summary", "population", "people", "land_value", "jobs", "hunger", "vacancy", "power", "traffic"];
 
 #[derive(Default, Clone)]
 struct Cell {
@@ -37,6 +37,9 @@ struct Cell {
     vacant_lots: u32,
     unpowered: u32,
     cars: u32,
+    /// Citizens here right now (inside a building: at its lot), the same
+    /// count the People map layer draws.
+    people: u32,
     lu_area: [f32; 6],
 }
 
@@ -46,12 +49,13 @@ impl Cell {
     }
 
     fn empty(&self) -> bool {
-        self.lots == 0 && self.residents == 0 && self.cars == 0 && self.hungry == 0
+        self.lots == 0 && self.residents == 0 && self.cars == 0 && self.hungry == 0 && self.people == 0
     }
 
     fn layer(&self, layer: &str) -> f32 {
         match layer {
             "population" => self.residents as f32,
+            "people" => self.people as f32,
             "land_value" => self.land_value(),
             "jobs" => self.jobs as f32,
             "hunger" => self.hungry as f32,
@@ -149,6 +153,15 @@ fn build(w: &World, cell_m: f32) -> Result<Grid, String> {
             c.cars += 1;
         }
     }
+    for cz in w.citizens.values() {
+        if matches!(cz.activity, nd_sim::Activity::Arriving) {
+            continue;
+        }
+        let p = cz.inside.and_then(|b| w.buildings.get(b)).and_then(|b| w.lots.get(b.lot)).map_or(cz.pos, |l| l.center);
+        if let Some(c) = g.at(p) {
+            c.people += 1;
+        }
+    }
     Ok(g)
 }
 
@@ -225,6 +238,7 @@ pub fn map(w: &World, cell_m: Option<f32>, layer: &str) -> Result<Value, String>
     text.push_str(&format!("+{}+\n x {:.0} .. {:.0} left to right\n", "-".repeat(g.cols), g.origin.x, x1));
     out["unit"] = json!(match layer {
         "population" => "residents (by home)",
+        "people" => "citizens where they are now (inside: at the building)",
         "land_value" => "average land value of the cell's lots, 0..1",
         "jobs" => "jobs in finished buildings",
         "hunger" => "hungry residents (satiety < 0.3)",

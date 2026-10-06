@@ -30,6 +30,12 @@ use crate::ui::UiFlags;
 use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
 
+mod haze;
+mod layers;
+mod lights;
+mod turbines;
+
+
 /// Side of the square cells that buildings and vacant-lot dressing are
 /// batched into. Wide enough that a few hundred buildings become a few dozen
 /// meshes per surface, small enough that one changed building regenerates a
@@ -68,6 +74,9 @@ struct SignalTag(LaneId);
 struct OverlayTag;
 #[derive(Component)]
 struct PathsTag;
+/// No longer spawned: coal smoke is drawn by `haze` as moving puffs. Kept
+/// because `lift_spawned` still lists it.
+#[allow(dead_code)]
 #[derive(Component)]
 struct HazeTag;
 #[derive(Component, Clone)]
@@ -85,11 +94,78 @@ pub struct Overlays {
     pub paths: bool,
     /// Zone outline glows and vacant-lot outlines. The ground fills stay.
     pub zoning: bool,
+    /// Load per lane: fullness and speed, green to red.
+    pub traffic: bool,
+    /// A coloured disc under every vehicle by type.
+    pub traffic_types: bool,
+    /// Where people are right now, as a heat map.
+    pub people: bool,
+    /// Pollution and noise from plants, industry, nightlife and traffic.
+    pub pollution: bool,
 }
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true }
+        Self { land_value: false, paths: false, zoning: true, traffic: false, traffic_types: false, people: false, pollution: false }
+    }
+}
+
+impl Overlays {
+    /// Every layer: API name, label, hotkey. The API's `overlay {layer, on}`
+    /// and the Land window's Layers section both go through this list.
+    pub const LAYERS: [(&'static str, &'static str, &'static str); 7] = [
+        ("land_value", "Land value", "V"),
+        ("traffic", "Traffic load", ""),
+        ("traffic_types", "Traffic types", ""),
+        ("people", "People", ""),
+        ("pollution", "Pollution and noise", ""),
+        ("paths", "Pedestrian network", "P"),
+        ("zoning", "Zoning outlines", "O"),
+    ];
+    /// The heat-map style layers the L key steps through, one at a time.
+    pub const CYCLE: [&'static str; 5] = ["land_value", "traffic", "traffic_types", "people", "pollution"];
+
+    pub fn flag(&mut self, layer: &str) -> Option<&mut bool> {
+        Some(match layer {
+            "land_value" => &mut self.land_value,
+            "paths" => &mut self.paths,
+            "zoning" => &mut self.zoning,
+            "traffic" => &mut self.traffic,
+            "traffic_types" => &mut self.traffic_types,
+            "people" => &mut self.people,
+            "pollution" => &mut self.pollution,
+            _ => return None,
+        })
+    }
+
+    pub fn get(&self, layer: &str) -> Option<bool> {
+        Some(match layer {
+            "land_value" => self.land_value,
+            "paths" => self.paths,
+            "zoning" => self.zoning,
+            "traffic" => self.traffic,
+            "traffic_types" => self.traffic_types,
+            "people" => self.people,
+            "pollution" => self.pollution,
+            _ => return None,
+        })
+    }
+
+    /// Step to the next of the [`Overlays::CYCLE`] layers, alone; after the
+    /// last, none.
+    pub fn cycle(&mut self) {
+        let current = Self::CYCLE.iter().rposition(|l| self.get(l) == Some(true));
+        for l in Self::CYCLE {
+            if let Some(f) = self.flag(l) {
+                *f = false;
+            }
+        }
+        let next = current.map_or(0, |i| i + 1);
+        if let Some(l) = Self::CYCLE.get(next) {
+            if let Some(f) = self.flag(l) {
+                *f = true;
+            }
+        }
     }
 }
 
@@ -140,6 +216,11 @@ struct Materials {
     signal_red: Handle<StandardMaterial>,
     signal_mesh: Handle<Mesh>,
     overlay: Handle<StandardMaterial>,
+    /// Building glow: the glow material with window lights switched by
+    /// occupancy (see `lights`).
+    windows: Handle<lights::WindowMaterial>,
+    /// The lit share of every building, one texel each.
+    lit: Handle<Image>,
 }
 
 impl Materials {
@@ -184,7 +265,6 @@ struct RenderState {
     overlay_shown: bool,
     paths_version: u64,
     paths_shown: bool,
-    haze_signature: usize,
     transit_version: u64,
     trains: HashMap<nd_sim::TrainId, Vec<Entity>>,
     /// Quantised sun elevation the lighting was last written for.
@@ -216,12 +296,13 @@ pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<RenderState>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().init_resource::<BuildingStyles>().add_systems(Startup, setup).add_systems(
+        app.init_resource::<RenderState>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().init_resource::<BuildingStyles>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_systems(Startup, (lights::add_shader, setup)).add_systems(
             Update,
-            (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_haze, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_trains, update_daylight)
+            (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_trains, update_daylight)
                 .chain()
                 .in_set(SimSet::Sync),
         );
+        app.add_systems(Update, (turbines::sync_turbines, haze::sync_haze, layers::sync_layers, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
     }
 }
@@ -286,6 +367,22 @@ fn spawn_geometry<T: Component + Clone>(commands: &mut Commands, meshes: &mut As
     out
 }
 
+/// Building chunk meshes: like [`spawn_geometry`], but the Glow surface
+/// uses the window-lights material so lights follow occupancy.
+fn spawn_building_geometry(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, geo: &Geometry) -> Vec<Entity> {
+    let mut out = Vec::new();
+    for (s, data) in geo.iter() {
+        let mesh = Mesh3d(meshes.add(to_mesh(data, !s.is_glow())));
+        let e = if s.is_glow() {
+            commands.spawn((mesh, MeshMaterial3d(mats.windows.clone()), Transform::IDENTITY, BuildingTag, NotShadowCaster, NotShadowReceiver)).id()
+        } else {
+            commands.spawn((mesh, MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, BuildingTag)).id()
+        };
+        out.push(e);
+    }
+    out
+}
+
 /// Spawn a glow-surface mesh: unlit, no shadows either way.
 fn spawn_glow<T: Component>(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, data: &MeshData, tag: T) {
     commands.spawn((Mesh3d(meshes.add(to_mesh(data, false))), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, tag));
@@ -339,7 +436,14 @@ fn tiling_image(size: usize, rgba: &[u8], srgb: bool) -> Image {
     img
 }
 
-fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>, mut meshes: ResMut<Assets<Mesh>>, mut images: ResMut<Assets<Image>>, assets: Res<GameAssets>) {
+fn setup(
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut window_materials: ResMut<Assets<lights::WindowMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    assets: Res<GameAssets>,
+) {
     let pal = &assets.palette;
     let unlit = |c: [f32; 3]| StandardMaterial { base_color: Color::linear_rgb(c[0], c[1], c[2]), unlit: true, ..default() };
 
@@ -467,6 +571,11 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         meshes.add(shared_mesh(&m, false))
     };
     let overlay = materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, alpha_mode: AlphaMode::Blend, ..default() });
+    let lit = images.add(lights::lit_image());
+    let windows = window_materials.add(lights::WindowMaterial {
+        base: StandardMaterial { base_color: Color::WHITE, unlit: true, ..default() },
+        extension: lights::WindowLights { lit: lit.clone() },
+    });
     let signal_green = materials.add(unlit(pal.signal_green));
     let signal_red = materials.add(unlit(pal.signal_red));
     let signal_mesh = {
@@ -493,6 +602,8 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         signal_red,
         signal_mesh,
         overlay,
+        windows,
+        lit,
     });
 
     commands.insert_resource(GlobalAmbientLight { color: Color::linear_rgb(0.35, 0.45, 0.9), brightness: 70.0, ..default() });
@@ -971,8 +1082,11 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         port: b.port,
         construction: b.construction.as_ref().map(|c| c.progress),
         neighbours: styles.neighbours(id),
+        animated_rotors: true,
+        dynamic_lights: true,
     };
     let mut g = generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras);
+    lights::tag_windows(&mut g, lights::slot_of(id));
     // Every building stands on its lot's levelled pad.
     nd_procgen::terrain::raise_geometry(&mut g, world.lot_pad(b.lot));
     geo.append(&g);
@@ -1091,7 +1205,7 @@ fn sync_buildings(
                     state.building_chunks.insert(id, k);
                 }
             }
-            let entities = spawn_geometry(&mut commands, &mut meshes, &mats, &geo, BuildingTag);
+            let entities = spawn_building_geometry(&mut commands, &mut meshes, &mats, &geo);
             state.chunks.insert(k, ChunkMeshes { entities, triangles: geo.triangle_count() });
         }
     }
@@ -1422,44 +1536,6 @@ fn sync_transit(
     spawn_geometry(&mut commands, &mut meshes, &mats, &geo, TransitTag);
 }
 
-/// Brown haze over coal plants: stacked translucent layers that read as a
-/// dome from above and as murk from the street.
-fn sync_haze(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    sim: Res<Sim>,
-    mats: Res<Materials>,
-    mut state: ResMut<RenderState>,
-    existing: Query<Entity, With<HazeTag>>,
-) {
-    let w = &sim.world;
-    let coal: Vec<SVec2> = w.buildings.values().filter(|b| b.plant.map_or(false, |k| k.makes_haze())).filter_map(|b| w.lots.get(b.lot).map(|l| l.center)).collect();
-    let signature = coal.iter().fold(coal.len(), |acc, c| acc ^ ((c.x * 7.0 + c.y * 13.0) as i64 as usize));
-    if signature == state.haze_signature {
-        return;
-    }
-    state.haze_signature = signature;
-    despawn_all(&mut commands, &existing);
-    if coal.is_empty() {
-        return;
-    }
-    let mut mesh = MeshData::default();
-    for c in coal {
-        // Four thin layers, light enough that the ground still reads through;
-        // the plume drifts the upper layers a little downwind.
-        for (k, (h, r)) in [(22.0f32, 95.0f32), (42.0, 135.0), (66.0, 165.0), (92.0, 185.0)].iter().enumerate() {
-            let drift = SVec2::new(18.0, 8.0) * k as f32;
-            let poly: Vec<SVec2> = (0..28).map(|i| {
-                let a = i as f32 / 28.0 * std::f32::consts::TAU;
-                c + drift + SVec2::new(a.cos(), a.sin()) * *r
-            }).collect();
-            let alpha = 0.075 - k as f32 * 0.012;
-            mesh.ground_polygon(&poly, *h, [0.52, 0.40, 0.27, alpha]);
-        }
-    }
-    spawn_overlay(&mut commands, &mut meshes, &mats, &mesh, HazeTag);
-}
-
 fn preview_width(kind: nd_sim::roads::RoadKind, fwd: u8, bwd: u8) -> f32 {
     match kind {
         nd_sim::roads::RoadKind::Path => nd_sim::roads::PATH_HALF_WIDTH * 2.0,
@@ -1490,6 +1566,7 @@ fn update_daylight(
     mats: Res<Materials>,
     mut state: ResMut<RenderState>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut window_materials: ResMut<Assets<lights::WindowMaterial>>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut clear: ResMut<ClearColor>,
     mut sun: Query<(&mut DirectionalLight, &mut Transform), With<SunTag>>,
@@ -1542,6 +1619,9 @@ fn update_daylight(
         let glow_k = glow_key as f32 / 64.0;
         if let Some(mut m) = materials.get_mut(&mats.glow()) {
             m.base_color = Color::linear_rgb(glow_k, glow_k, glow_k);
+        }
+        if let Some(mut m) = window_materials.get_mut(&mats.windows) {
+            m.base.base_color = Color::linear_rgb(glow_k, glow_k, glow_k);
         }
     }
 }
