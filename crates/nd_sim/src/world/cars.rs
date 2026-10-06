@@ -358,7 +358,9 @@ impl World {
 
     /// The citizen's car, if it is parked within reach of `near`.
     pub(super) fn car_ready(&self, id: CitizenId, near: Vec2) -> Option<(VehicleId, Vec2)> {
-        let vid = self.citizens.get(id)?.car?;
+        // `owns_car` mirrors `car`; a test or a tool clearing it means "no car".
+        let c = self.citizens.get(id).filter(|c| c.owns_car)?;
+        let vid = c.car?;
         let spot = self.vehicles.cars.get(vid)?.spot()?;
         (spot.kind != ParkKind::Dealer && spot.pos.distance(near) <= CAR_REACH).then_some((vid, spot.pos))
     }
@@ -557,7 +559,7 @@ impl World {
         self.look_for_space(car_id, vid, driver, target, tries);
     }
 
-    fn lot_open(&self, b: BuildingId) -> bool {
+    pub(super) fn lot_open(&self, b: BuildingId) -> bool {
         self.buildings.get(b).is_some_and(|bld| bld.is_parking() && bld.parking_free() > 0 && bld.business.as_ref().is_some_and(|z| !z.closed))
     }
 
@@ -628,10 +630,12 @@ impl World {
                 return;
             }
         }
-        // Nothing free in sight: drive round the block and look again.
+        // Nothing free in sight (or no way to it from here: lanes never
+        // lead back onto the one the car is on): drive round the block
+        // and look again.
         if tries < MAX_TRIES {
             let r = SEARCH_RADIUS;
-            let mut segs: Vec<SegmentId> = self.roads.segments_in_box(target - Vec2::splat(r), target + Vec2::splat(r)).filter(|&s| self.kerb_slots(s) > 0).collect();
+            let mut segs: Vec<SegmentId> = self.roads.segments_in_box(target - Vec2::splat(r), target + Vec2::splat(r)).filter(|&s| self.roads.try_segment(s).is_some_and(|g| g.is_street() && !g.is_highway() && g.lanes() > 0)).collect();
             segs.sort_by_key(|s| s.0);
             if tries == 0 {
                 self.vehicles.stats.circled_today += 1;

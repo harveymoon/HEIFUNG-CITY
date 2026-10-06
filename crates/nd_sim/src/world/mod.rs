@@ -718,8 +718,10 @@ impl World {
             self.traffic.remove_car(car_id);
         }
         // Keep citizen positions in sync with their cars for inspection.
-        for car in self.traffic.cars.values() {
-            if let Some(c) = self.citizens.get_mut(car.citizen) {
+        for (cid, car) in self.traffic.cars.iter() {
+            // [carlife] Only someone actually in it (not a driver who got
+            // out while it was taken elsewhere).
+            if let Some(c) = self.citizens.get_mut(car.citizen).filter(|c| matches!(c.activity, Activity::Driving { car, .. } if car == cid)) {
                 c.pos = car.pos;
                 c.heading = car.heading;
             }

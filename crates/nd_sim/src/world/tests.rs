@@ -1818,6 +1818,14 @@ fn groceries_and_rent_come_out_of_the_household_purse() {
     let members = w.households[hid].members.clone();
     let living: f32 = members.iter().map(|m| if w.citizens[*m].stage() == crate::citizens::LifeStage::Child { 10.0 } else { 20.0 }).sum();
     let pockets: f32 = members.iter().map(|m| w.citizens[*m].savings).sum();
+    // [carlife] Nobody buys wheels today: they have them.
+    for &m in &members {
+        w.citizens[m].owns_bike = true;
+        if w.citizens[m].car.is_none() && w.citizens[m].stage() != crate::citizens::LifeStage::Child {
+            let at = w.citizens[m].pos;
+            w.give_car_parked(m, at);
+        }
+    }
     let before = w.households[hid].money + pockets;
     w.daily_household(hid);
     let pockets_after: f32 = members.iter().map(|m| w.citizens[*m].savings).sum();

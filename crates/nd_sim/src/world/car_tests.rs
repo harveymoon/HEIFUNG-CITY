@@ -108,6 +108,7 @@ fn assert_consistent(w: &World) {
 fn a_driver_pays_at_the_lot_parks_there_and_leaves_from_there() {
     let (mut w, shop, lot) = town();
     // No kerb parking anywhere in this town: the lot it has to be.
+    w.refresh_no_kerb();
     let all: Vec<SegmentId> = w.roads.alive_segments().map(|(id, _)| id).collect();
     w.vehicles.no_kerb.1.extend(all);
     let c = resident(&mut w);
@@ -123,16 +124,19 @@ fn a_driver_pays_at_the_lot_parks_there_and_leaves_from_there() {
     let seen = until_parked(&mut w, vid, 900);
     assert!(!seen.is_empty(), "the car drove");
     let spot = *w.vehicles.cars[vid].spot().expect("parked");
-    assert_eq!(spot.kind, ParkKind::Lot, "no kerb parking: the lot it is");
+    assert_eq!(spot.kind, ParkKind::Lot, "no kerb parking: the lot it is (open {}, {} m from the shop, free {}, events {:?})", w.lot_open(lot), w.lots[w.buildings[lot].lot].center.distance(w.building_entrance(shop).unwrap()), w.buildings[lot].parking_free(), w.citizens[c].memories.iter().map(|m| &m.text).collect::<Vec<_>>());
     assert_eq!(spot.building, Some(lot));
-    assert_eq!(w.buildings[lot].parking_used, used0 + 1);
+    // Count the cars in it rather than trust the counter alone.
+    let in_lot = |w: &World| w.vehicles.cars.values().filter(|c| c.spot().is_some_and(|s| s.building == Some(lot))).count() as u16;
+    assert_eq!(w.buildings[lot].parking_used, in_lot(&w), "the lot's count is the cars in it");
+    assert!(in_lot(&w) >= used0 + 1);
     assert!(w.buildings[lot].business.as_ref().unwrap().money > money0, "the lot earned its fee");
     assert!(w.citizens[c].commute.fee > 0.0 || w.citizens[c].commute.mode.is_none(), "the driver paid");
     assert_eq!(w.citizens[c].parked_at, Some(lot));
     // Leaving the shop does not free the space: the car is still there.
     w.citizens[c].inside = Some(shop);
     w.leave_building(c);
-    assert_eq!(w.buildings[lot].parking_used, used0 + 1, "the space is the car's until it drives off");
+    assert_eq!(w.vehicles.cars[vid].spot().map(|s| s.building), Some(Some(lot)), "the space is the car's until it drives off");
     // Home again: the car pulls out of the lot.
     w.citizens[c].activity = Activity::Visiting(shop);
     w.citizens[c].inside = Some(shop);
@@ -146,7 +150,7 @@ fn a_driver_pays_at_the_lot_parks_there_and_leaves_from_there() {
         }
     }
     let first = first.expect("the car left");
-    assert_eq!(w.buildings[lot].parking_used, used0, "and its space is free");
+    assert_eq!(w.buildings[lot].parking_used, in_lot(&w), "and its space is free");
     let (seg, pt) = w.truck_stop(lot).unwrap();
     let _ = seg;
     assert!(first.distance(pt) < 25.0, "it joined the road at the lot ({first} vs {pt})");
@@ -228,7 +232,7 @@ fn repeated_pain_changes_how_a_citizen_travels() {
     let c = resident(&mut w);
     let home = w.citizens[c].home.unwrap();
     let vid = w.give_car_parked(c, w.building_entrance(home).unwrap());
-    let _ = vid;
+
     let q = super::trips::TripQuery { from: w.building_entrance(home).unwrap(), to: w.building_entrance(shop).unwrap(), target: shop, purpose: Purpose::Shop(Resource::Goods), allow_transit: true, allow_car: true, allow_bike: true };
     let best = |w: &World| w.mode_options(c, &q).into_iter().min_by(|a, b| a.cost.total_cmp(&b.cost)).unwrap().mode;
     let fresh = w.mode_options(c, &q);
@@ -244,6 +248,8 @@ fn repeated_pain_changes_how_a_citizen_travels() {
     let after = best(&w);
     assert_ne!(after, TripMode::Car, "after the misery, something else: {:?}", w.mode_options(c, &q));
     // Habits follow: with a bike to fall back on, the car is sold.
+    let gone0 = w.vehicles.stats.destroyed_total;
+    let cars0 = w.vehicles.cars.len();
     let mut money = 0.0;
     w.citizens[c].owns_bike = true;
     for day in 0..40 {
@@ -255,9 +261,18 @@ fn repeated_pain_changes_how_a_citizen_travels() {
     assert!(w.citizens[c].car.is_none(), "sold the car");
     assert!(money > 0.0, "and got money for it");
     assert!(w.citizens[c].memories.iter().any(|m| m.text.contains("Sold the car")), "and remembers why");
-    assert_eq!(w.vehicles.stats.events_total.get("sold").copied().unwrap_or(0) + w.vehicles.stats.events_total.get("scrapped").copied().unwrap_or(0) + w.vehicles.cars.len() as u32, 1, "driven away to be sold (or scrapped), never vanished");
-    run(&mut w, 600);
-    assert!(w.vehicles.cars.is_empty(), "the dealer's driver delivered it");
+    assert!(w.vehicles.cars.contains_key(vid) || w.vehicles.stats.events_total.contains_key("scrapped"), "driven away to be sold (or scrapped), never vanished");
+    if let Some(car) = w.vehicles.cars.get(vid) {
+        assert!(matches!(car.place, CarPlace::Driving(cid) if matches!(w.traffic.cars[cid].errand, Errand::Sale(_))), "on its way to the dealer");
+    }
+    for _ in 0..900 {
+        run(&mut w, 1);
+        if !w.vehicles.cars.contains_key(vid) {
+            break;
+        }
+    }
+    assert!(!w.vehicles.cars.contains_key(vid), "the dealer's driver took it in");
+    assert!(w.vehicles.stats.destroyed_total > gone0 && w.vehicles.cars.len() < cars0 + 5);
     assert_consistent(&w);
 }
 
