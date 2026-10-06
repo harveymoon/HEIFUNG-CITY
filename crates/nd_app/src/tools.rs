@@ -578,7 +578,7 @@ pub(crate) fn tool_input(
                     bevy::input::mouse::MouseScrollUnit::Pixel => scroll.delta.y / 60.0,
                 };
                 if lines != 0.0 {
-                    tools.ring_radius = (tools.ring_radius + lines * 2.0).clamp(nd_sim::roads::RING_MIN_RADIUS, nd_sim::roads::RING_MAX_RADIUS);
+                    tools.ring_radius = (tools.ring_radius + lines * (tools.ring_radius * 0.08).max(2.0)).clamp(nd_sim::roads::RING_MIN_RADIUS, nd_sim::roads::RING_MAX_RADIUS);
                     tools.status = format!("Roundabout {:.0} m across.", tools.ring_radius * 2.0);
                 }
             }
