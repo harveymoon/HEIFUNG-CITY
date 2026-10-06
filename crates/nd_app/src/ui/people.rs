@@ -1,5 +1,6 @@
 //! The People window: who lives here, by class and housing tier, who was
-//! pushed out, the income-inequality graph, and the favourites list.
+//! pushed out, the income-inequality graph, and the favourites list; and,
+//! on its second tab, what people complain about (`ui/concerns.rs`).
 
 use bevy::prelude::*;
 use bevy_egui::egui;
@@ -11,7 +12,7 @@ use crate::tools::Selection;
 
 /// Colours for the three classes: rust for low, gold for middle, cyan for
 /// high, so the histogram reads like the tier colours on the map.
-fn tier_color(t: Tier) -> egui::Color32 {
+pub(super) fn tier_color(t: Tier) -> egui::Color32 {
     match t {
         Tier::Low => egui::Color32::from_rgb(210, 95, 70),
         Tier::Mid => GOLD,
@@ -19,7 +20,39 @@ fn tier_color(t: Tier) -> egui::Color32 {
     }
 }
 
+/// [concerns] The window's tabs; which is showing lives in egui memory.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Tab {
+    #[default]
+    Overview,
+    Concerns,
+}
+
+fn tab_id() -> egui::Id {
+    egui::Id::new("people_window_tab")
+}
+
+/// Show a tab (for the remote API's `window {name: "people", tab}`).
+pub fn set_tab(ctx: &egui::Context, tab: Tab) {
+    ctx.data_mut(|d| d.insert_temp(tab_id(), tab));
+}
+
 pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
+    let ctx = ui.ctx().clone();
+    let mut tab: Tab = ctx.data(|d| d.get_temp(tab_id())).unwrap_or_default();
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut tab, Tab::Overview, "Overview");
+        ui.selectable_value(&mut tab, Tab::Concerns, "Complaints & concerns");
+    });
+    set_tab(&ctx, tab);
+    ui.separator();
+    match tab {
+        Tab::Overview => overview(ui, p),
+        Tab::Concerns => super::concerns::tab(ui, p),
+    }
+}
+
+fn overview(ui: &mut egui::Ui, p: &mut UiCtx) {
     let e = &p.sim.world.economy;
     section(ui, "POPULATION");
     ui.horizontal(|ui| {

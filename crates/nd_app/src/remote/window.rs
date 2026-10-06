@@ -19,6 +19,8 @@ pub struct WindowRequests {
     pub open: Vec<&'static str>,
     /// The New Game window (not an `Info` window).
     pub new_game: Option<bool>,
+    /// [concerns] A People window tab to show.
+    pub people_tab: Option<crate::ui::people::Tab>,
 }
 
 pub fn info_of(name: &str) -> Result<Info, String> {
@@ -52,6 +54,9 @@ pub fn apply_window_requests(mut contexts: EguiContexts, mut req: ResMut<WindowR
     let Ok(ctx) = contexts.ctx_mut() else { return };
     if let Some(open) = req.new_game.take() {
         crate::ui::newgame::set_open(ctx, open);
+    }
+    if let Some(tab) = req.people_tab.take() {
+        crate::ui::people::set_tab(ctx, tab);
     }
     for (info, open) in std::mem::take(&mut req.queue) {
         let open = open.unwrap_or(!info.is_open(ctx));

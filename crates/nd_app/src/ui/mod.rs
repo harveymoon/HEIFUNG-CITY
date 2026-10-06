@@ -6,12 +6,14 @@
 //! input flags the rest of the app reads, and the frame skeleton; each piece
 //! of the HUD lives in its own module.
 
+/// [concerns] The People window's complaints tab.
+mod concerns;
 mod emergencies;
 mod help;
 mod hover;
 mod inspector;
 pub mod newgame;
-mod people;
+pub mod people;
 mod person;
 mod places;
 mod saves;

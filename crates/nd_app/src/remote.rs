@@ -14,6 +14,8 @@
 //! `ND_REMOTE=0` disables the server; `ND_REMOTE_PORT` picks the port
 //! (default 4817). It binds 127.0.0.1 only: the API has no authentication.
 
+/// [concerns] complaints by category and city happiness.
+mod concerns;
 mod history;
 mod land;
 mod list;
@@ -424,6 +426,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "incident" => incident(cmd, ctx),
         "incidents" => incidents(cmd, ctx),
         "society" => society::command(cmd, &mut ctx.sim.world),
+        "concerns" => concerns::command(cmd, &ctx.sim.world),
         "bus" => bus(cmd, ctx),
         "find" => find(cmd, ctx),
         "inspect" => inspect(cmd, ctx),
@@ -537,6 +540,14 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         "window" => {
             let info = window::info_of(req_str(cmd, "name")?)?;
+            // [concerns] The People window's tabs.
+            if let Some(tab) = opt_str(cmd, "tab")? {
+                ctx.windows.people_tab = Some(match tab.trim().to_ascii_lowercase().as_str() {
+                    "overview" => crate::ui::people::Tab::Overview,
+                    "concerns" | "complaints" => crate::ui::people::Tab::Concerns,
+                    other => return Err(format!("unknown tab {other:?}; people has overview, concerns")),
+                });
+            }
             let (open, list) = ctx.windows.request(info, opt_bool(cmd, "open")?);
             Ok(json!({ "window": info.title().to_ascii_lowercase(), "open": open, "windows_open": list }))
         }
@@ -1828,7 +1839,8 @@ fn help() -> Value {
         "history": { "keys": "optional daily/hourly series names (default all)", "days": "last n days (default all kept, up to 365)" },
         "list": { "what": "businesses|buildings|citizens|lots|routes|plants|facilities", "sort": "column", "desc": "bool", "filter": "{column: substring | value | {min, max}}", "fields": "[columns] (id always kept)", "offset": "default 0", "limit": "default 50, max 1000" },
         "export": { "path": "optional; default exports/city-<unix>.json: report + map + history + every row of every list" },
-        "window": { "name": "city|economy|market|people|power|transit|land|saves|help|dev", "open": "bool, omitted toggles" }
+        "window": { "name": "city|economy|market|people|power|transit|land|saves|help|dev", "open": "bool, omitted toggles", "tab": "people only: overview|concerns" },
+        "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" }
     });
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), review.as_object()) {
         c.extend(r.clone());
