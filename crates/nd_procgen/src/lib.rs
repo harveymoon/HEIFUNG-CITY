@@ -20,7 +20,7 @@ pub mod vacant;
 pub mod walk;
 
 pub use buildings::transit::bus_stops;
-pub use buildings::{coal_stacks, generate_building, wind_rotor, wind_turbines, BuildingRules, Extras, LandUseRules, Neighbour, Style, StyleBook, Turbine, WINDOW_LIGHT_MARK};
+pub use buildings::{coal_stacks, generate_building, wind_rotor, wind_turbines, BuildingRules, PlantField, CraneRig, crane_slew, Extras, LandUseRules, Neighbour, Style, StyleBook, Turbine, WINDOW_LIGHT_MARK};
 pub use mesh::MeshData;
 pub use palette::Palette;
 pub use surface::{Geometry, Surface};

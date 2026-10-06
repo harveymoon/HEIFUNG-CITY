@@ -918,6 +918,20 @@ trait MindProvider {
 - Paths (`RoadKind::Path`): 3.2 m ways with no car lanes, drawn as paving with edge stones,
   low lamps, benches and bollards where they meet a street; they cut parcels but give no
   frontage, and a path crossing a street mid-block gets a zebra.
+- Drone heat vision (`render/heat.rs`; H, the top bar's Heat button, API `heat_vision`): every
+  mesh's material is swapped for a cached stand-in, cold surfaces dim and unlit, people,
+  vehicles, drones and fires emitting flat at their temperature (lights and engines hottest,
+  parked cars lukewarm); a `FullscreenMaterial` pass after motion blur and before bloom maps
+  brightness through a teal-magenta-white thermal palette with scanlines, noise, a vignette
+  and a reticle, and Bevy's `MotionBlur` smears what moves. Off puts every original back.
+- Plant fields: touching solar or wind plants (`World::plant_cluster`, parcels sharing 4 m+
+  of boundary) are drawn as one installation (`nd_procgen::PlantField`): each parcel lays its
+  panel rows or turbine grid out in the anchor parcel's frame against the whole field's
+  outline, no fence or margin on the seams; a plant coming or going redraws the chunks round it.
+- Tower cranes: paint per site (orange, red, yellow, white), some with an LED billboard on the
+  counter-jib; the head (`Geometry::cranes`) is its own entity that slews towards a new
+  heading every lift (`crane_slew` of `SimClock::work_minutes`), so cranes work 8:00 to 17:00
+  and stand still overnight and while paused, at a capped on-screen rate at any speed.
 
 ## Roadmap
 

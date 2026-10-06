@@ -32,7 +32,8 @@ mod services;
 /// [society] The trash depot.
 mod sanitation;
 pub use parts::WINDOW_LIGHT_MARK;
-pub use power::{coal_stacks, wind_rotor, wind_turbines, Turbine, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};
+pub use construction::{crane_paint, crane_slew, CraneRig, CRANE_LIFT_MINUTES, CRANE_SLEW_RANGE};
+pub use power::{coal_stacks, wind_rotor, wind_turbines, PlantField, Turbine, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};
 
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface};
@@ -851,6 +852,12 @@ pub struct Ctx<'a> {
     pub rail: Option<RailLink>,
     /// Wind farm rotors are left out for the renderer to spin.
     pub animated_rotors: bool,
+    /// A solar or wind plant whose parcel is one of several touching ones:
+    /// drawn as part of the whole field (see [`PlantField`]).
+    pub field: Option<&'a PlantField>,
+    /// Tower crane heads are left out of the mesh and handed over in
+    /// `Geometry::cranes` for the renderer to slew (see [`CraneRig`]).
+    pub animated_cranes: bool,
     /// Window lights are switched by the renderer from occupancy: nearly
     /// every window is drawn as a marked light over its glass (see
     /// `parts::window_light`), and `lit_chance` ignores power.
@@ -883,6 +890,11 @@ pub struct Extras<'a> {
     pub service: Option<nd_sim::services::ServiceKind>,
     /// Leave wind farm rotors out: the renderer draws and spins them.
     pub animated_rotors: bool,
+    /// A solar or wind plant drawn as part of a field of touching parcels.
+    pub field: Option<&'a PlantField>,
+    /// Hand tower crane heads over in `Geometry::cranes` instead of
+    /// drawing them, for the renderer to slew (see [`Ctx::animated_cranes`]).
+    pub animated_cranes: bool,
     /// Draw window lights for the renderer to switch by occupancy (see
     /// [`Ctx::dynamic_lights`]).
     pub dynamic_lights: bool,
@@ -897,7 +909,7 @@ pub struct Extras<'a> {
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false }
     }
 }
 
@@ -1141,6 +1153,8 @@ fn generate_styled_extras(
         rail: extras.rail.cloned().or_else(|| matches!(style, Style::Station | Style::FreightYard).then(|| back_edge_link(lot, if style == Style::Station { RailFacility::Station } else { RailFacility::FreightYard }))),
         park: if land_use == LandUse::Park || matches!(style, Style::ScrubLot | Style::Garden | Style::Plaza) { Some(extras.park.cloned().unwrap_or_else(|| nd_sim::park::plan_single(lot, tier))) } else { None },
         animated_rotors: extras.animated_rotors,
+        field: extras.field,
+        animated_cranes: extras.animated_cranes,
         dynamic_lights: extras.dynamic_lights,
     };
     if let Some(progress) = extras.demolition {
@@ -1313,6 +1327,123 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// Two touching solar parcels drawn as one field: rows run across the
+    /// seam, no panel is drawn twice, and the pair holds at least as many
+    /// panels as the two lone plants did. Two touching wind farms share one
+    /// turbine grid that keeps its spacing across the seam.
+    #[test]
+    fn touching_plants_are_drawn_as_one_field() {
+        use nd_sim::geom::shared_boundary;
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let zone = vec![Vec2::new(-100.0, -20.0), Vec2::new(100.0, -20.0), Vec2::new(100.0, 120.0), Vec2::new(-100.0, 120.0)];
+        let all = lots(zone, LandUse::Industrial);
+        let (a, b) = all
+            .iter()
+            .enumerate()
+            .find_map(|(i, a)| all.iter().skip(i + 1).find(|b| shared_boundary(&a.polygon, &b.polygon) >= 10.0 && a.area() > 600.0 && b.area() > 600.0).map(|b| (a, b)))
+            .expect("two touching parcels");
+        let pair = [a, b];
+        let fields: Vec<PlantField> = (0..2).map(|i| PlantField::new(&pair, i, 7).unwrap()).collect();
+        assert!(PlantField::new(&pair[..1], 0, 7).is_none(), "a field of one is a lone plant");
+        let panels = |g: &Geometry| -> Vec<Vec3> {
+            let m = g.get(Surface::Glass);
+            m.positions.chunks(4).map(|q| q.iter().fold(Vec3::ZERO, |s, p| s + Vec3::from(*p)) / 4.0).collect()
+        };
+        let draw = |lot: &Lot, kind: PowerPlantKind, field: Option<&PlantField>| {
+            let extras = Extras { plant: Some(kind), animated_rotors: true, field, ..Extras::default() };
+            generate_building(lot, LandUse::Industrial, 1, Tier::Mid, 1.0, 11, &rules, &pal, &extras)
+        };
+        let lone: usize = pair.iter().map(|l| panels(&draw(l, PowerPlantKind::Solar, None)).len()).sum();
+        let merged: Vec<Vec3> = (0..2).flat_map(|i| {
+            let g = draw(pair[i], PowerPlantKind::Solar, Some(&fields[i]));
+            check_mesh(&g, "solar field");
+            panels(&g)
+        }).collect();
+        assert!(merged.len() >= lone, "a field holds {} panels, the two plants alone {lone}", merged.len());
+        for (i, p) in merged.iter().enumerate() {
+            assert!(merged[i + 1..].iter().all(|q| q.distance(*p) > 1.0), "panel at {p} drawn twice");
+        }
+        // Some panel row crosses the seam: panels on both sides within a
+        // pitch of it, on the same row line.
+        let seam_mid = {
+            let n = a.polygon.len();
+            (0..n).map(|k| (a.polygon[k], a.polygon[(k + 1) % n])).find(|(p, q)| fields[0].is_seam(*p, *q)).map(|(p, q)| (p + q) * 0.5).expect("a seam")
+        };
+        assert!(merged.iter().filter(|p| Vec2::new(p.x, p.z).distance(seam_mid) < 40.0).count() >= 4, "panels run up to the seam");
+
+        let sites: Vec<Turbine> = (0..2).flat_map(|i| wind_turbines(pair[i], 5, Some(&fields[i]))).collect();
+        let lone_sites: usize = pair.iter().map(|l| wind_turbines(l, 5, None).len()).sum();
+        assert!(sites.len() >= lone_sites, "field {} turbines, alone {lone_sites}", sites.len());
+        for (i, t) in sites.iter().enumerate() {
+            assert!(pair.iter().any(|l| nd_sim::zoning::point_in_polygon(t.pos, &l.polygon)));
+            for u in &sites[i + 1..] {
+                assert!(t.pos.distance(u.pos) >= power::TURBINE_SPACING * 0.95, "turbines {} apart", t.pos.distance(u.pos));
+            }
+        }
+        // The generator draws a mast for every turbine the renderer spins.
+        for i in 0..2 {
+            let g = draw(pair[i], PowerPlantKind::Wind, Some(&fields[i]));
+            check_mesh(&g, "wind field");
+        }
+    }
+
+    /// A tall job's tower crane: its head goes to the renderer when asked
+    /// (and is missing from the site's mesh), paints vary from site to
+    /// site, some carry a lit billboard, and the slew is a pure function of
+    /// working time.
+    #[test]
+    fn tower_cranes_hand_their_heads_over_and_vary_by_site() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let zone = vec![Vec2::new(-100.0, -20.0), Vec2::new(100.0, -20.0), Vec2::new(100.0, 120.0), Vec2::new(-100.0, 120.0)];
+        let all = lots(zone, LandUse::Commercial);
+        let lot = all.iter().max_by(|a, b| a.area().total_cmp(&b.area())).unwrap();
+        let mut paints = Vec::new();
+        let (mut with_ad, mut without_ad) = (0, 0);
+        for seed in 0..40u64 {
+            let site = |animated_cranes| generate_building(lot, LandUse::Commercial, 12, Tier::High, 1.0, seed, &rules, &pal, &Extras { construction: Some(0.5), animated_cranes, ..Extras::default() });
+            let whole = site(false);
+            let mast_only = site(true);
+            assert!(whole.cranes.is_empty());
+            let rigs = &mast_only.cranes;
+            assert_eq!(rigs.len(), 1, "one crane on a twelve-storey job");
+            let rig = &rigs[0];
+            check_mesh(&rig.head, "crane head");
+            // A slewing crane carries a full counter-jib (a still one keeps
+            // it inside the fence), so the head is at least what was there.
+            assert!(mast_only.triangle_count() + rig.head.triangle_count() >= whole.triangle_count(), "the head is moved out, nothing lost");
+            assert!(rig.head.iter().flat_map(|(_, m)| m.positions.iter()).all(|p| Vec2::new(p[0], p[2]).length() < 60.0), "head drawn about the mast: {:?}", rig.head.iter().flat_map(|(_, m)| m.positions.iter()).map(|p| Vec2::new(p[0], p[2]).length()).fold(0.0f32, f32::max));
+            assert!(nd_sim::zoning::point_in_polygon(rig.pos, &lot.polygon), "the mast stands on the site");
+            let p = crane_paint(seed);
+            if !paints.contains(&p) {
+                paints.push(p);
+            }
+            // The billboard is the only glow besides the two aviation lights.
+            if rig.head.get(Surface::Glow).positions.len() > 2 * 24 {
+                with_ad += 1;
+            } else {
+                without_ad += 1;
+            }
+        }
+        assert!(paints.len() >= 3, "crane paints {paints:?}");
+        assert!(with_ad > 0 && without_ad > 0, "{with_ad} cranes with a billboard, {without_ad} without");
+        // The slew: deterministic, bounded, one heading per lift.
+        for seed in [1u64, 2, 99] {
+            let mut headings = Vec::new();
+            for m in 0..400u64 {
+                let a = crane_slew(seed, m);
+                assert_eq!(a, crane_slew(seed, m));
+                assert!(a.abs() <= CRANE_SLEW_RANGE);
+                assert_eq!(a, crane_slew(seed, m - m % CRANE_LIFT_MINUTES), "steady through a lift");
+                if !headings.contains(&a) {
+                    headings.push(a);
+                }
+            }
+            assert!(headings.len() > 20, "a new heading for most lifts");
         }
     }
 
@@ -1840,6 +1971,8 @@ mod tests {
             park: None,
             rail: None,
             animated_rotors: false,
+            field: None,
+            animated_cranes: false,
             dynamic_lights: false,
         }
     }

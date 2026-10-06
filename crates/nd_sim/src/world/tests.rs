@@ -2487,3 +2487,39 @@ fn a_save_from_before_looks_gets_the_looks_it_would_have_had() {
         assert_eq!((got.style, got.dye, got.fav, got.build), (look.style, look.dye, look.fav, look.build));
     }
 }
+
+#[test]
+fn touching_solar_and_wind_plants_form_one_field() {
+    use crate::geom::shared_boundary;
+    let mut w = World::new(WorldConfig::test_town());
+    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    w.add_zone(square(10.0, 10.0, 190.0), LandUse::Industrial);
+    w.economy.treasury = 10_000_000.0;
+    let big: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.area() >= PowerPlantKind::Wind.min_area()).map(|(id, _)| id).collect();
+    // A chain of three parcels, each touching the next along a side.
+    let touch = |w: &World, a: LotId, b: LotId| shared_boundary(&w.lots[a].polygon, &w.lots[b].polygon) >= 4.0;
+    let chain = big.iter().find_map(|&a| {
+        big.iter().filter(|&&b| b != a && touch(&w, a, b)).find_map(|&b| big.iter().find(|&&c| c != a && c != b && touch(&w, b, c) && !touch(&w, a, c)).map(|&c| (a, b, c)))
+    });
+    let (a, b, c) = chain.expect("three parcels in a row");
+    let pa = w.build_power(a, PowerPlantKind::Solar).unwrap();
+    let pb = w.build_power(b, PowerPlantKind::Solar).unwrap();
+    for id in [pa, pb] {
+        w.buildings[id].demolition = None;
+    }
+    let mut both = vec![a, b];
+    both.sort();
+    assert_eq!(w.plant_cluster(pa), both);
+    assert_eq!(w.plant_cluster(pb), both, "every member sees the same field, anchor first");
+    // A wind farm next door is a different field.
+    let pc = w.build_power(c, PowerPlantKind::Wind).unwrap();
+    w.buildings[pc].demolition = None;
+    assert_eq!(w.plant_cluster(pc), vec![c]);
+    assert_eq!(w.plant_cluster(pa), both);
+    // Turned into solar it joins through b, though it never touches a.
+    w.buildings[pc].plant = Some(PowerPlantKind::Solar);
+    assert_eq!(w.plant_cluster(pa).len(), 3);
+    // A site still being cleared is not part of the field yet.
+    w.buildings[pc].demolition = Some(crate::buildings::Demolition { progress: 0.5, days: 1.0, loads: 0, floors: 1, tier: Tier::Low, land_use: LandUse::Industrial, seed: 1, condition: 1.0, clear_lot: false, own_lot: false });
+    assert_eq!(w.plant_cluster(pa), both);
+}

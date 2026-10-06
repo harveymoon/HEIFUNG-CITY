@@ -7,7 +7,7 @@
 use bevy::prelude::*;
 use nd_procgen::{wind_rotor, wind_turbines, Surface};
 use nd_sim::power::PowerPlantKind;
-use nd_sim::BuildingId;
+use nd_sim::{BuildingId, SimEvent};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
@@ -30,6 +30,9 @@ pub(super) struct TurbineState {
     meshes: Vec<(Surface, Handle<Mesh>)>,
     angle: f32,
     omega: f32,
+    /// The farms standing when the rotors were last placed: a farm coming
+    /// or going can rearrange the fields next to it.
+    farms_seen: Vec<BuildingId>,
 }
 
 /// Angular speed of the rotors in radians per second for a wind in `0..1`:
@@ -64,14 +67,15 @@ pub(super) fn sync_turbines(
             }
         }
     }
-    // Which farms stand, and where their rotors go.
-    let mut seen: Vec<BuildingId> = Vec::new();
-    for (id, b) in w.buildings.iter() {
-        if b.plant != Some(PowerPlantKind::Wind) || b.construction.is_some() {
-            continue;
-        }
-        let Some(lot) = w.lots.get(b.lot) else { continue };
-        seen.push(id);
+    // Which farms stand, and where their rotors go. Touching farms are laid
+    // out as one field, so the placement is only rechecked when buildings
+    // came, changed or went (the field search walks every building).
+    let seen: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.plant == Some(PowerPlantKind::Wind) && b.construction.is_none() && w.lots.contains_key(b.lot)).map(|(id, _)| id).collect();
+    let recheck = sim.full_rebuild || seen != state.farms_seen || sim.events.iter().any(|e| matches!(e, SimEvent::BuildingBuilt(_) | SimEvent::BuildingChanged(_)));
+    for &id in seen.iter().filter(|_| recheck) {
+        let b = &w.buildings[id];
+        let lot = &w.lots[b.lot];
+        let field = if b.demolition.is_none() { super::plant_field(w, id) } else { None };
         let pad = w.lot_pad(b.lot);
         let mut h = std::collections::hash_map::DefaultHasher::new();
         b.seed.hash(&mut h);
@@ -79,6 +83,12 @@ pub(super) fn sync_turbines(
         for p in &lot.polygon {
             p.x.to_bits().hash(&mut h);
             p.y.to_bits().hash(&mut h);
+        }
+        for l in w.plant_cluster(id) {
+            for p in &w.lots[l].polygon {
+                p.x.to_bits().hash(&mut h);
+                p.y.to_bits().hash(&mut h);
+            }
         }
         let key = h.finish();
         if state.farms.get(&id).is_some_and(|(k, _)| *k == key) {
@@ -90,7 +100,7 @@ pub(super) fn sync_turbines(
             }
         }
         let mut ents = Vec::new();
-        for t in wind_turbines(lot, b.seed) {
+        for t in wind_turbines(lot, b.seed, field.as_ref()) {
             let tf = Transform::from_xyz(t.pos.x, pad + t.hub, t.pos.y).with_rotation(Quat::from_rotation_y(-(state.angle + t.phase)));
             for (s, mesh) in &state.meshes {
                 let mut e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mats.surface(*s)), tf, TurbineRotor { phase: t.phase }));
@@ -103,6 +113,7 @@ pub(super) fn sync_turbines(
         state.farms.insert(id, (key, ents));
     }
     let gone: Vec<BuildingId> = state.farms.keys().copied().filter(|id| !seen.contains(id)).collect();
+    state.farms_seen = seen;
     for id in gone {
         if let Some((_, ents)) = state.farms.remove(&id) {
             for e in ents {

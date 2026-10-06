@@ -145,6 +145,28 @@ pub fn perimeter(poly: &[Vec2]) -> f32 {
     (0..n).map(|i| poly[i].distance(poly[(i + 1) % n])).sum()
 }
 
+/// Length of boundary two closed polygons share: summed over every pair of
+/// edges that run along each other (collinear within [`COLLINEAR_TOL`]).
+/// Neighbouring parcels cut from one block share whole edges; parcels on
+/// opposite sides of a street share none, the street being wider than the
+/// tolerance.
+pub fn shared_boundary(a: &[Vec2], b: &[Vec2]) -> f32 {
+    let (na, nb) = (a.len(), b.len());
+    if na < 2 || nb < 2 || !boxes_overlap(bounds(a), bounds(b), COLLINEAR_TOL) {
+        return 0.0;
+    }
+    let mut total = 0.0;
+    for i in 0..na {
+        let (p, q) = (a[i], a[(i + 1) % na]);
+        for j in 0..nb {
+            if let Some((lo, hi)) = shared_stretch(p, q, b[j], b[(j + 1) % nb]) {
+                total += hi - lo;
+            }
+        }
+    }
+    total
+}
+
 /// Axis-aligned bounds `(lo, hi)` of a point set. An empty set gives an
 /// inverted box (`lo` is `MAX`, `hi` is `MIN`), which overlaps nothing.
 pub fn bounds(pts: &[Vec2]) -> (Vec2, Vec2) {
@@ -419,6 +441,25 @@ impl Grid {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_boundary_counts_touching_edges_only() {
+        let sq = |x: f32, y: f32, w: f32, h: f32| vec![Vec2::new(x, y), Vec2::new(x + w, y), Vec2::new(x + w, y + h), Vec2::new(x, y + h)];
+        // Side by side: the whole 20 m side is shared, whichever way round.
+        let a = sq(0.0, 0.0, 30.0, 20.0);
+        let b = sq(30.0, 0.0, 25.0, 20.0);
+        assert!((shared_boundary(&a, &b) - 20.0).abs() < 1e-3);
+        assert!((shared_boundary(&b, &a) - 20.0).abs() < 1e-3);
+        // Offset half a side along: half shared.
+        let c = sq(30.0, 10.0, 25.0, 20.0);
+        assert!((shared_boundary(&a, &c) - 10.0).abs() < 1e-3);
+        // Across a 12 m street: nothing shared.
+        let d = sq(42.0, 0.0, 25.0, 20.0);
+        assert_eq!(shared_boundary(&a, &d), 0.0);
+        // Touching at a corner only: nothing shared.
+        let e = sq(30.0, 20.0, 10.0, 10.0);
+        assert!(shared_boundary(&a, &e) < 1e-3);
+    }
 
     #[test]
     fn projection_and_arc_length_helpers_agree() {

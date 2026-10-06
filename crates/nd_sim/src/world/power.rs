@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// Boundary two plant parcels must share to be drawn as one field, metres:
+/// more than a corner, less than any real parcel side.
+pub const PLANT_MERGE_MIN_SHARED: f32 = 4.0;
+
 impl World {
     /// Place a power plant on a lot, paying from the treasury. Whatever grew
     /// there is bought out and pulled down: the city outranks the market.
@@ -153,5 +157,36 @@ impl World {
                 }
             }
         }
+    }
+
+    /// The lots of the plant field `id` belongs to: `id`'s own lot plus every
+    /// finished plant of the same kind reachable through parcels that share
+    /// at least [`PLANT_MERGE_MIN_SHARED`] of boundary, sorted by lot id (so
+    /// the first is the same for every member: the field's anchor). Only
+    /// kinds that [merge](PowerPlantKind::merges_with_neighbours) form
+    /// fields; for anything else, a site under construction or demolition,
+    /// or a plant with no neighbour, the result is just its own lot (empty
+    /// for a building that does not exist).
+    pub fn plant_cluster(&self, id: BuildingId) -> Vec<LotId> {
+        let Some(b) = self.buildings.get(id) else { return Vec::new() };
+        let finished = |b: &Building| b.construction.is_none() && b.demolition.is_none();
+        let kind = match b.plant {
+            Some(k) if k.merges_with_neighbours() && finished(b) => k,
+            _ => return vec![b.lot],
+        };
+        let candidates: Vec<LotId> = self.buildings.values().filter(|o| o.plant == Some(kind) && finished(o) && self.lots.contains_key(o.lot)).map(|o| o.lot).collect();
+        let mut field = vec![b.lot];
+        let mut next = 0;
+        while next < field.len() {
+            let here = &self.lots[field[next]].polygon;
+            next += 1;
+            for &l in &candidates {
+                if !field.contains(&l) && crate::geom::shared_boundary(here, &self.lots[l].polygon) >= PLANT_MERGE_MIN_SHARED {
+                    field.push(l);
+                }
+            }
+        }
+        field.sort();
+        field
     }
 }

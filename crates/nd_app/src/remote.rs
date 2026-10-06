@@ -483,7 +483,12 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             if let Some(b) = opt_bool(cmd, "follow_clock")? {
                 l.follow_clock = b;
             }
-            Ok(json!({ "follow_clock": l.follow_clock, "hour": l.hour }))
+            Ok(json!({ "follow_clock": l.follow_clock, "hour": l.hour, "heat_vision": l.heat }))
+        }
+        "heat_vision" | "heat" => {
+            let l = &mut ctx.lighting;
+            l.heat = opt_bool(cmd, "on")?.unwrap_or(!l.heat);
+            Ok(json!({ "heat_vision": l.heat }))
         }
         "screenshot" => screenshot(cmd, ctx),
         "events" => {
@@ -768,7 +773,7 @@ fn status(ctx: &Ctx) -> Value {
         "render": { "fps": round(fps as f32), "ticks_per_frame": sim.ticks_last_frame, "triangles": ctx.stats.street_triangles + ctx.stats.building_triangles, "building_meshes": ctx.stats.building_entities },
         "camera": camera_pose(ctx), "tool": tool_state(&ctx.tools), "selection": selection(w, *ctx.selection),
         "project": project_state(ctx)["project"], "overlays": overlays_json(&ctx.overlays),
-        "lighting": { "follow_clock": ctx.lighting.follow_clock, "hour": round(ctx.lighting.hour) },
+        "lighting": { "follow_clock": ctx.lighting.follow_clock, "hour": round(ctx.lighting.hour), "heat_vision": ctx.lighting.heat },
         "message": ctx.flags.message, "tool_status": ctx.tools.status, "event_seq": ctx.log.seq,
         "favourites": ctx.tools.favorites.iter().map(|&f| key_str(f)).collect::<Vec<_>>(),
     });
@@ -1902,6 +1907,7 @@ fn help() -> Value {
             "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
             "overlay": { "layer": "land_value|traffic|traffic_types|people|pollution|paths|zoning", "on": "bool, omitted toggles", "<layer name>": "bool (older form, any number at once)" },
             "lighting": { "follow_clock": "bool", "hour": "0..24 (also unpins from the clock)" },
+            "heat_vision": { "on": "bool, omitted toggles: the drone thermal camera view (also key H)" },
             "screenshot": { "path": "optional .png; default screenshots/shot-<unix>.png; written a frame or two later" },
             "events": { "since": "seq", "limit": "default 500" },
             "thoughts": { "limit": "default 50" }
