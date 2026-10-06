@@ -207,6 +207,7 @@ pub fn selection(w: &World, sel: Selection) -> Value {
         Selection::Citizen(id) => json!({ "kind": "citizen", "id": key_str(id), "name": w.citizens.get(id).map(|c| c.name.as_str()) }),
         Selection::Building(id) => json!({ "kind": "building", "id": key_str(id), "name": w.buildings.get(id).map(|b| b.name.as_str()) }),
         Selection::Car(id) => json!({ "kind": "car", "id": key_str(id) }),
+        Selection::Parked(id) => json!({ "kind": "parked_car", "id": key_str(id) }),
     }
 }
 

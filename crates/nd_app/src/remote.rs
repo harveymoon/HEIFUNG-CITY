@@ -301,6 +301,7 @@ fn follow_target(sim: Res<Sim>, mut follow: ResMut<Follow>, mut cams: Query<&mut
             _ => c.pos,
         }),
         Selection::Car(id) => w.traffic.cars.get(id).map(|c| c.pos),
+        Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|c| c.spot()).map(|s| s.pos),
         Selection::Building(id) => w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map(|l| l.center),
         Selection::None => None,
     };
@@ -1404,6 +1405,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Citizen(id) => inspect(&json!({ "citizen": key_str(id) }), ctx),
         Selection::Building(id) => inspect(&json!({ "building": key_str(id) }), ctx),
         Selection::Car(id) => inspect(&json!({ "car": key_str(id) }), ctx),
+        Selection::Parked(_) => Err("a parked car: inspect its owner (find citizens) instead".into()),
         Selection::None => Err("inspect needs one of citizen, building, lot, car, train, route, gesture (an id), or a selection".into()),
     }
 }
@@ -1429,8 +1431,8 @@ fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         Selection::Car(id)
     } else if let Some(p) = opt_vec2(cmd, "at")? {
-        // Pick like a click: use the same radii the Inspect tool does.
-        pick_at(w, p)
+        // Pick exactly as a click with the Inspect tool does.
+        crate::tools::pick(&*ctx.sim, p)
     } else {
         Selection::None
     };
@@ -1438,20 +1440,6 @@ fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     Ok(json!({ "selection": selection(w, sel) }))
 }
 
-/// The Inspect tool's pick, in miniature: a visible person, then a vehicle
-/// (a driven car selects its driver), then the building whose lot holds the
-/// point.
-fn pick_at(w: &nd_sim::World, p: SVec2) -> Selection {
-    let person = w.citizens.iter().filter(|(_, c)| c.is_visible()).map(|(id, c)| (c.pos.distance(p), id)).filter(|(d, _)| *d < 7.0).min_by(|a, b| a.0.total_cmp(&b.0));
-    if let Some((_, id)) = person {
-        return Selection::Citizen(id);
-    }
-    let car = w.traffic.cars.iter().map(|(id, c)| (c.pos.distance(p), id, c)).filter(|(d, _, c)| *d < if c.bus.is_some() { 8.0 } else { 5.0 }).min_by(|a, b| a.0.total_cmp(&b.0));
-    if let Some((_, id, car)) = car {
-        return if car.bus.is_none() && w.citizens.contains_key(car.citizen) { Selection::Citizen(car.citizen) } else { Selection::Car(id) };
-    }
-    w.lots.values().find(|l| l.building.is_some() && point_in_polygon(p, &l.polygon)).and_then(|l| l.building).map_or(Selection::None, Selection::Building)
-}
 
 // ── tool / camera ───────────────────────────────────────────────────────────
 
@@ -1658,6 +1646,7 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let p = match sel {
                 Selection::Citizen(id) => w.citizens.get(id).map(|c| c.pos),
                 Selection::Car(id) => w.traffic.cars.get(id).map(|c| c.pos),
+        Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|c| c.spot()).map(|s| s.pos),
                 Selection::Building(id) => w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map(|l| l.center),
                 Selection::None => None,
             };

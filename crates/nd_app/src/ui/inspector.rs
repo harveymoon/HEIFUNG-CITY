@@ -13,7 +13,7 @@ use crate::tools::Selection;
 /// The inspector window on a selected building or car, on the right where
 /// the person pane opens too. Closing it deselects.
 pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
-    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_)) {
+    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_)) {
         return;
     }
     let mut open = true;
@@ -162,8 +162,43 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 let name = |b| sim.world.buildings.get(b).map(|b| b.name.as_str()).unwrap_or("out of town");
                 ui.label(format!("{:.0} {} from {} to {}  ·  worth {:.0}  ·  {:.0} km/h", cargo.amount, cargo.resource.label(), name(cargo.from), name(cargo.to), cargo.price, car.v * 3.6));
             } else {
-                neon(ui, "Car");
-                ui.label(format!("{:.0} km/h  ·  nobody we know at the wheel", car.v * 3.6));
+                neon(ui, &format!("Car  ·  {}", car.model.body.label().replace('_', " ")));
+                let driver = sim.world.citizens.get(car.citizen).map(|c| (car.citizen, c.name.clone(), c.activity.clone()));
+                match driver {
+                    Some((cid, name, activity)) => {
+                        let going = match activity {
+                            nd_sim::Activity::Driving { to: Some(b), .. } => sim.world.buildings.get(b).map(|b| format!("  ·  to {}", b.name)).unwrap_or_default(),
+                            _ => String::new(),
+                        };
+                        ui.label(format!("{:.0} km/h{going}", car.v * 3.6));
+                        if ui.button(format!("Driver: {name}")).clicked() {
+                            *selection = Selection::Citizen(cid);
+                        }
+                    }
+                    None => {
+                        ui.label(format!("{:.0} km/h  ·  nobody we know at the wheel", car.v * 3.6));
+                    }
+                }
+            }
+        }
+        Selection::Parked(vid) => {
+            let Some(owned) = sim.world.vehicles.cars.get(vid) else {
+                *selection = Selection::None;
+                return;
+            };
+            let Some(spot) = owned.spot().copied() else {
+                *selection = Selection::None;
+                return;
+            };
+            neon(ui, &format!("Parked {}", owned.model.body.label().replace('_', " ")));
+            let place = spot.building.and_then(|b| sim.world.buildings.get(b)).map(|b| format!(" at {}", b.name)).unwrap_or_default();
+            let hours = sim.world.clock.tick.saturating_sub(spot.since) / 60;
+            ui.label(format!("{}{place}  ·  parked {hours} h", spot.kind.label()));
+            let owner = owned.owner;
+            if let Some(name) = sim.world.citizens.get(owner).map(|c| c.name.clone()) {
+                if ui.button(format!("Owner: {name}")).clicked() {
+                    *selection = Selection::Citizen(owner);
+                }
             }
         }
     }
