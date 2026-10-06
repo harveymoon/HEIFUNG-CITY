@@ -24,38 +24,38 @@ pub fn citizen_summary(ui: &mut egui::Ui, w: &World, c: &Citizen) {
         _ => None,
     };
     let rent = c.home.and_then(|h| w.buildings.get(h)).map_or(0.0, |b| b.rent);
-    let how = if c.mode == TravelMode::Bike && c.activity.is_traveling() { "  Â·  by bike" } else { "" };
+    let how = if c.mode == TravelMode::Bike && c.activity.is_traveling() { "  ·  by bike" } else { "" };
 
     ui.label(egui::RichText::new(Personality::from_seed(c.seed).summary()).small());
     look_line(ui, c);
     ui.label(match destination {
-        Some(d) => format!("{}{how}  Â·  to {d}", c.activity.label()),
+        Some(d) => format!("{}{how}  ·  to {d}", c.activity.label()),
         None => format!("{}{how}", c.activity.label()),
     });
-    ui.label(format!("home: {home}  Â·  work: {work}"));
+    ui.label(format!("home: {home}  ·  work: {work}"));
     ui.label(format!(
-        "mood {:.0}%  Â·  satiety {:.0}%  Â·  {} class  Â·  arrived day {}",
+        "mood {:.0}%  ·  satiety {:.0}%  ·  {} class  ·  arrived day {}",
         c.mood * 100.0,
         c.satiety * 100.0,
         c.class().label(),
         c.arrived_tick / 1440 + 1
     ));
     ui.label(format!(
-        "income {:.0}/day  Â·  rent {:.0}/day  Â·  savings {:.0}{}",
+        "income {:.0}/day  ·  rent {:.0}/day  ·  savings {:.0}{}",
         c.income,
         rent,
         c.savings,
-        if c.rent_stress_days > 0 { format!("  Â·  rent stress {}d", c.rent_stress_days) } else { String::new() }
+        if c.rent_stress_days > 0 { format!("  ·  rent stress {}d", c.rent_stress_days) } else { String::new() }
     ));
     ui.label(format!(
-        "meals at home {:.0}{}  Â·  {}  Â·  {}",
+        "meals at home {:.0}{}  ·  {}  ·  {}",
         c.groceries,
-        if c.hungry_days > 0 { format!("  Â·  hungry {}d", c.hungry_days) } else { String::new() },
+        if c.hungry_days > 0 { format!("  ·  hungry {}d", c.hungry_days) } else { String::new() },
         if c.owns_car { "owns a car" } else { "no car" },
         if c.owns_bike { "owns a bike" } else { "no bike" }
     ));
     ui.add_space(4.0);
-    ui.label(egui::RichText::new(format!("â€œ{}â€", c.thought)).italics().color(egui::Color32::from_rgb(220, 190, 140)));
+    ui.label(egui::RichText::new(format!("“{}”", c.thought)).italics().color(egui::Color32::from_rgb(220, 190, 140)));
 }
 
 /// [looks] A small painted figure in their colours beside a line saying
@@ -136,7 +136,7 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
         .constrain_to(content)
         .resizable(false)
         .show(ctx, |ui| {
-            let star = if is_fav { "â˜… favourite" } else { "â˜† favourite" };
+            let star = if is_fav { "★ favourite" } else { "☆ favourite" };
             ui.horizontal(|ui| {
                 if ui.selectable_label(is_fav, star).on_hover_text("Keep this person in the favourites list of the People window").clicked() {
                     toggle_fav = true;

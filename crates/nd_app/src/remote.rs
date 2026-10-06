@@ -18,6 +18,9 @@
 mod concerns;
 /// [districts] [tourism] `district` and `tourism`.
 mod districts;
+/// Request checks (Host, Origin, content type, body size) and the folders
+/// file commands may use.
+mod guard;
 mod history;
 mod land;
 mod list;
@@ -36,9 +39,11 @@ mod view;
 mod window;
 
 use std::collections::VecDeque;
+use std::io::Read;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
@@ -66,6 +71,9 @@ const DEFAULT_PORT: u16 = 4817;
 /// normally takes milliseconds; a long `step` or a stalled window can take
 /// longer, and the caller gets a 504 rather than hanging forever.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long to wait for a command the main thread has already started
+/// (a `step` of many days can run for a minute).
+const LONG_REPLY_TIMEOUT: Duration = Duration::from_secs(300);
 /// Events kept for `events {since}`; at 256× a busy city makes hundreds a
 /// second, so a poll every few seconds still sees everything.
 const EVENT_RING: usize = 2000;
@@ -85,7 +93,7 @@ impl Plugin for RemotePlugin {
         match tiny_http::Server::http(("127.0.0.1", port)) {
             Ok(server) => {
                 info!("remote API listening on http://127.0.0.1:{port}  (POST /cmd, GET /status)");
-                std::thread::Builder::new().name("nd-remote-http".into()).spawn(move || serve(server, tx)).expect("spawn remote http thread");
+                std::thread::Builder::new().name("nd-remote-http".into()).spawn(move || serve(server, tx, port)).expect("spawn remote http thread");
             }
             Err(e) => {
                 warn!("remote API could not bind 127.0.0.1:{port}: {e}; set ND_REMOTE_PORT or ND_REMOTE=0");
@@ -99,15 +107,23 @@ impl Plugin for RemotePlugin {
             .init_resource::<WindowRequests>()
             .add_systems(Update, remote_commands.in_set(SimSet::Input).before(crate::tools::tool_input))
             .add_systems(Update, (log_events, follow_target, record_history).in_set(SimSet::Sync))
-            .add_systems(bevy_egui::EguiPrimaryContextPass, window::apply_window_requests);
+            // Before the panel draws, so a request shows the same frame.
+            .add_systems(bevy_egui::EguiPrimaryContextPass, window::apply_window_requests.before(crate::ui::side_panel));
     }
 }
 
-/// One parked request: the parsed command and where the reply goes.
+/// One parked request: the parsed command, where the reply goes, and
+/// whether it is still wanted ([`QUEUED`] until the main thread takes it,
+/// [`CANCELLED`] if the HTTP side gave up first).
 struct Pending {
     cmd: Value,
     reply: Sender<Reply>,
+    state: Arc<AtomicU8>,
 }
+
+const QUEUED: u8 = 0;
+const TAKEN: u8 = 1;
+const CANCELLED: u8 = 2;
 
 struct Reply {
     status: u16,
@@ -143,47 +159,96 @@ impl EventLog {
 }
 
 /// `camera {follow: id}` keeps the orbit target on a moving thing until the
-/// next camera command.
+/// next camera command. The second field is the `Sim::generation` the
+/// target belongs to.
 #[derive(Resource, Default)]
-struct Follow(Option<Selection>);
+struct Follow(Option<Selection>, u64);
 
 // ── HTTP thread ─────────────────────────────────────────────────────────────
 
-fn serve(server: tiny_http::Server, tx: Sender<Pending>) {
-    for mut req in server.incoming_requests() {
-        // Owned copies: reading the body borrows the request mutably.
-        let method = req.method().as_str().to_string();
-        let url = req.url().split('?').next().unwrap_or("").to_string();
-        let cmd = match (method.as_str(), url.as_str()) {
-            ("GET", "/status") | ("GET", "/status/") => Ok(json!({ "cmd": "status" })),
-            ("GET", "/help") => Ok(json!({ "cmd": "help" })),
-            ("POST", "/cmd") | ("POST", "/cmd/") | ("POST", "/") => {
-                let mut body = String::new();
-                match req.as_reader().read_to_string(&mut body) {
-                    Ok(_) => serde_json::from_str::<Value>(&body).map_err(|e| (400, format!("body is not JSON: {e}"))),
-                    Err(e) => Err((400, format!("could not read body: {e}"))),
-                }
-            }
-            _ => Err((404, "use POST /cmd with a JSON body {\"cmd\": ...}, or GET /status".to_string())),
-        };
-        let reply = match cmd {
-            Err((status, error)) => Reply { status, body: json!({ "ok": false, "error": error }) },
-            Ok(cmd) => {
-                let (reply_tx, reply_rx) = mpsc::channel();
-                if tx.send(Pending { cmd, reply: reply_tx }).is_err() {
-                    // The app is shutting down; the receiver is gone.
-                    return;
-                }
-                match reply_rx.recv_timeout(REPLY_TIMEOUT) {
-                    Ok(r) => r,
-                    Err(_) => Reply { status: 504, body: json!({ "ok": false, "error": "the game did not answer in time (frame stalled or window closing)" }) },
-                }
-            }
-        };
-        let text = reply.body.to_string();
-        let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).expect("static header");
-        let _ = req.respond(tiny_http::Response::from_string(text).with_status_code(reply.status).with_header(header));
+fn serve(server: tiny_http::Server, tx: Sender<Pending>, port: u16) {
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    for req in server.incoming_requests() {
+        // One thread per request, so a client that trickles its body holds
+        // up only itself; capped, so a flood is answered 503 at once.
+        if in_flight.fetch_add(1, Ordering::SeqCst) >= guard::MAX_IN_FLIGHT {
+            in_flight.fetch_sub(1, Ordering::SeqCst);
+            respond(req, Reply { status: 503, body: json!({ "ok": false, "error": "too many requests at once; retry" }) });
+            continue;
+        }
+        let tx = tx.clone();
+        let count = in_flight.clone();
+        let spawned = std::thread::Builder::new().name("nd-remote-req".into()).spawn(move || {
+            handle(req, &tx, port);
+            count.fetch_sub(1, Ordering::SeqCst);
+        });
+        if spawned.is_err() {
+            in_flight.fetch_sub(1, Ordering::SeqCst);
+        }
     }
+}
+
+fn respond(req: tiny_http::Request, reply: Reply) {
+    let text = reply.body.to_string();
+    let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).expect("static header");
+    let _ = req.respond(tiny_http::Response::from_string(text).with_status_code(reply.status).with_header(header));
+}
+
+/// One request, on its own thread: check who is asking (before reading the
+/// body), read a bounded body, queue the command and wait for its reply.
+fn handle(mut req: tiny_http::Request, tx: &Sender<Pending>, port: u16) {
+    // Owned copies: reading the body borrows the request mutably.
+    let method = req.method().as_str().to_string();
+    let url = req.url().split('?').next().unwrap_or("").to_string();
+    let headers: Vec<(String, String)> = req.headers().iter().map(|h| (h.field.as_str().as_str().to_string(), h.value.as_str().to_string())).collect();
+    if let Err((status, error)) = guard::check_headers(&method, &headers, port) {
+        return respond(req, Reply { status, body: json!({ "ok": false, "error": error }) });
+    }
+    let cmd = match (method.as_str(), url.as_str()) {
+        ("GET", "/status") | ("GET", "/status/") => Ok(json!({ "cmd": "status" })),
+        ("GET", "/help") => Ok(json!({ "cmd": "help" })),
+        ("POST", "/cmd") | ("POST", "/cmd/") | ("POST", "/") => read_body(&mut req),
+        _ => Err((404, "use POST /cmd with a JSON body {\"cmd\": ...}, or GET /status".to_string())),
+    };
+    let reply = match cmd {
+        Err((status, error)) => Reply { status, body: json!({ "ok": false, "error": error }) },
+        Ok(cmd) => {
+            let (reply_tx, reply_rx) = mpsc::channel();
+            let state = Arc::new(AtomicU8::new(QUEUED));
+            if tx.send(Pending { cmd, reply: reply_tx, state: state.clone() }).is_err() {
+                // The app is shutting down; the receiver is gone.
+                return;
+            }
+            match reply_rx.recv_timeout(REPLY_TIMEOUT) {
+                Ok(r) => r,
+                // Not started yet: withdraw it, so the caller can retry
+                // without the command running twice.
+                Err(_) if state.compare_exchange(QUEUED, CANCELLED, Ordering::SeqCst, Ordering::SeqCst).is_ok() => {
+                    Reply { status: 504, body: json!({ "ok": false, "error": "the game did not answer in time (frame stalled or window closing); the command was withdrawn and did not run" }) }
+                }
+                // Already running (a long `step`): its answer is coming.
+                Err(_) => match reply_rx.recv_timeout(LONG_REPLY_TIMEOUT) {
+                    Ok(r) => r,
+                    Err(_) => Reply { status: 504, body: json!({ "ok": false, "error": "the command started but did not finish in time; it may still take effect" }) },
+                },
+            }
+        }
+    };
+    respond(req, reply);
+}
+
+/// The body as JSON, at most [`guard::MAX_BODY`] bytes.
+fn read_body(req: &mut tiny_http::Request) -> Result<Value, (u16, String)> {
+    let too_big = || (413, format!("body larger than {} bytes", guard::MAX_BODY));
+    if req.body_length().is_some_and(|n| n > guard::MAX_BODY) {
+        return Err(too_big());
+    }
+    let mut body = Vec::new();
+    req.as_reader().take(guard::MAX_BODY as u64 + 1).read_to_end(&mut body).map_err(|e| (400, format!("could not read body: {e}")))?;
+    if body.len() > guard::MAX_BODY {
+        return Err(too_big());
+    }
+    serde_json::from_slice::<Value>(&body).map_err(|e| (400, format!("body is not JSON: {e}")))
 }
 
 // ── main-thread systems ─────────────────────────────────────────────────────
@@ -221,6 +286,11 @@ fn remote_commands(inbox: Res<Inbox>, mut ctx: Ctx) {
         Err(_) => return,
     };
     for p in batch {
+        // Withdrawn after a 504: running it now would surprise a client
+        // that was told it did not run.
+        if p.state.compare_exchange(QUEUED, TAKEN, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+            continue;
+        }
         let reply = match execute(&p.cmd, &mut ctx) {
             Ok(mut body) => {
                 if body.get("ok").is_none() {
@@ -299,12 +369,17 @@ fn log_events(sim: Res<Sim>, flags: Res<UiFlags>, tools: Res<ToolState>, mut log
 /// Sample the city into the history rings when an hour or a day turns
 /// (cheap otherwise: a few integer compares and four counters copied).
 fn record_history(sim: Res<Sim>, mut history: ResMut<History>) {
+    history.follow_city(sim.generation, &sim.world, "city replaced");
     history.observe(&sim.world);
 }
 
 /// Keep the orbit target on the followed citizen or car; drop the follow
 /// when they are gone.
 fn follow_target(sim: Res<Sim>, mut follow: ResMut<Follow>, mut cams: Query<&mut OrbitCamera>) {
+    // A loaded city reuses ids: the followed one would be someone else.
+    if follow.1 != sim.generation {
+        *follow = Follow(None, sim.generation);
+    }
     let Some(sel) = follow.0 else { return };
     let w = &sim.world;
     // Where the car is drawn this frame, not where it ends the tick: the
@@ -385,7 +460,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         "save" => save(cmd, ctx),
         "load" => {
-            let path = PathBuf::from(req_str(cmd, "path")?);
+            let path = allowed_path(req_str(cmd, "path")?, "ron", false)?;
             let Ctx { sim, tools, selection, eplan, flags, saves, follow, .. } = &mut *ctx;
             load_now(&path, sim, tools, selection, eplan, flags);
             saves.mark_dirty();
@@ -393,7 +468,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             if flags.message.starts_with("load failed") {
                 return Err(flags.message.clone());
             }
-            ctx.history.reset(&ctx.sim.world, "city loaded");
+            ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "city loaded");
             Ok(json!({ "message": ctx.flags.message, "clock": clock(&ctx.sim), "paused": ctx.sim.paused }))
         }
         "new_game" => {
@@ -404,7 +479,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             ctx.eplan.invalidate();
             ctx.follow.0 = None;
             ctx.tools.status = format!("New city: {} landscape", ctx.sim.world.landscape.params.preset.label());
-            ctx.history.reset(&ctx.sim.world, "new game");
+            ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "new game");
             Ok(land::summary(&ctx.sim.world))
         }
         "terrain_at" => Ok(land::terrain_at(&ctx.sim.world, req_point(cmd)?)),
@@ -874,11 +949,13 @@ fn status(ctx: &Ctx) -> Value {
 
 fn save(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     match opt_str(cmd, "path")? {
-        Some(path) => {
-            ctx.sim.save(path)?;
+        Some(raw) => {
+            let path = allowed_path(raw, "ron", true)?;
+            let shown = path.to_string_lossy().replace('\\', "/");
+            ctx.sim.save(&path)?;
             ctx.saves.mark_dirty();
-            ctx.flags.message = format!("saved {path}");
-            Ok(json!({ "path": absolute(path) }))
+            ctx.flags.message = format!("saved {shown}");
+            Ok(json!({ "path": shown }))
         }
         None => {
             let Ctx { sim, saves, flags, .. } = ctx;
@@ -906,6 +983,20 @@ fn list_saves() -> Value {
         .unwrap_or_default();
     rows.sort_by(|a, b| b.0.cmp(&a.0));
     json!({ "saves": rows.into_iter().map(|(_, v)| v).collect::<Vec<_>>(), "latest": crate::ui::LATEST })
+}
+
+/// A path a file command may use (see `guard::confine`): inside saves/,
+/// screenshots/ or exports/ under the working directory, or the temp
+/// folder, ending in `.ext`. `write` makes its folder.
+fn allowed_path(raw: &str, ext: &str, write: bool) -> Result<PathBuf, String> {
+    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+    let path = guard::confine(raw, ext, &cwd, &std::env::temp_dir())?;
+    if write {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        }
+    }
+    Ok(path)
 }
 
 fn absolute(path: &str) -> String {
@@ -940,12 +1031,15 @@ fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         return Err("a road needs at least two points".into());
     }
     let kind = opt_str(cmd, "kind")?.map(road_kind_of).transpose()?.unwrap_or(RoadKind::Street);
-    let (lf, lb) = if kind == RoadKind::Street { (opt_u64(cmd, "lanes_fwd")?.unwrap_or(1) as u8, opt_u64(cmd, "lanes_bwd")?.unwrap_or(1) as u8) } else { (0, 0) };
-    if kind == RoadKind::Street && lf + lb == 0 {
-        return Err("a street needs at least one lane".into());
-    }
+    // Range-checked as u64 before narrowing: `as u8` wrapped 257 to 1, and
+    // a u8 sum of 200 + 100 overflowed (a panic in a dev build).
+    let (lf, lb) = if kind == RoadKind::Street { (opt_u64(cmd, "lanes_fwd")?.unwrap_or(1), opt_u64(cmd, "lanes_bwd")?.unwrap_or(1)) } else { (0, 0) };
     if lf > 4 || lb > 4 {
         return Err("lanes are 0..4 per direction".into());
+    }
+    let (lf, lb) = (lf as u8, lb as u8);
+    if kind == RoadKind::Street && lf + lb == 0 {
+        return Err("a street needs at least one lane".into());
     }
     // Snap the ends to the network like the Road tool does, so the road
     // joins existing roads instead of stopping a metre short of them.
@@ -989,7 +1083,7 @@ fn add_roundabout(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         (None, Some(d)) => d * 0.5,
         (None, None) => ctx.tools.ring_radius,
     };
-    let lanes = opt_u64(cmd, "lanes")?.map_or(ctx.tools.ring_lanes, |n| n as u8);
+    let lanes = opt_u64(cmd, "lanes")?.map_or(ctx.tools.ring_lanes, |n| u8::try_from(n).unwrap_or(u8::MAX));
     if !(1..=nd_sim::roads::RING_MAX_LANES).contains(&lanes) {
         return Err("a roundabout has 1, 2 or 3 ring lanes".into());
     }
@@ -1654,7 +1748,7 @@ pub fn selected_detail(w: &nd_sim::World, sel: Selection, route_sel: Option<nd_s
 /// `flags {since?, clear?}`: the player's "Flag for Claude" bookmarks, each
 /// with its snapshot and the selection's live detail now.
 fn flags_cmd(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
-    let since = opt_u64(cmd, "since")?.unwrap_or(0) as u32;
+    let since = opt_u64(cmd, "since")?.unwrap_or(0).min(u32::MAX as u64) as u32;
     let w = &ctx.sim.world;
     let rows: Vec<Value> = ctx
         .claude
@@ -1731,7 +1825,7 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         t.ring_radius = (d * 0.5).clamp(nd_sim::roads::RING_MIN_RADIUS, nd_sim::roads::RING_MAX_RADIUS);
     }
     if let Some(n) = opt_u64(cmd, "ring_lanes")? {
-        t.ring_lanes = (n as u8).clamp(1, nd_sim::roads::RING_MAX_LANES);
+        t.ring_lanes = (n.min(u8::MAX as u64) as u8).clamp(1, nd_sim::roads::RING_MAX_LANES);
     }
     if let Some(preset) = opt_str(cmd, "preset").ok().flatten().filter(|p| p.eq_ignore_ascii_case("roundabout")) {
         let _ = preset;
@@ -1980,28 +2074,18 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
     }
     ctx.follow.0 = follow;
+    ctx.follow.1 = ctx.sim.generation;
     Ok(json!({ "camera": camera_pose(ctx), "following": follow.map(|s| selection(&ctx.sim.world, s)) }))
 }
 
 // ── screenshot ──────────────────────────────────────────────────────────────
 
 fn screenshot(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
-    let path = match opt_str(cmd, "path")? {
-        Some(p) => PathBuf::from(p),
-        None => {
-            let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            PathBuf::from("screenshots").join(format!("shot-{secs}.png"))
-        }
-    };
-    let path = if path.is_absolute() { path } else { std::env::current_dir().map_err(|e| e.to_string())?.join(path) };
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let default = format!("screenshots/shot-{secs}.png");
     // PNG only: Bevy's `jpeg` image feature is not enabled in this build,
     // and the failure would surface only as a log line, not as a reply.
-    if path.extension().is_none_or(|e| !e.eq_ignore_ascii_case("png")) {
-        return Err("screenshot path must end in .png".into());
-    }
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    }
+    let path = allowed_path(opt_str(cmd, "path")?.unwrap_or(&default), "png", true)?;
     // The capture runs in the render graph and the file is written by the
     // observer when the GPU copy lands, a frame or two from now; the reply
     // only promises the path.
@@ -2033,14 +2117,9 @@ fn opt_strings(cmd: &Value, name: &str) -> Result<Option<Vec<String>>, String> {
 /// directory (the repo root under `cargo run`; `/exports` is git-ignored).
 fn export(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let start = std::time::Instant::now();
-    let path = match opt_str(cmd, "path")? {
-        Some(p) => PathBuf::from(p),
-        None => {
-            let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            PathBuf::from("exports").join(format!("city-{secs}.json"))
-        }
-    };
-    let path = if path.is_absolute() { path } else { std::env::current_dir().map_err(|e| e.to_string())?.join(path) };
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let default = format!("exports/city-{secs}.json");
+    let path = allowed_path(opt_str(cmd, "path")?.unwrap_or(&default), "json", true)?;
     let w = &ctx.sim.world;
     let mut tables = serde_json::Map::new();
     for what in list::WHATS {
@@ -2056,10 +2135,7 @@ fn export(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "tables": tables,
     });
     let text = serde_json::to_string(&doc).map_err(|e| e.to_string())?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    }
-    std::fs::write(&path, &text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    crate::sim::write_atomic(&path, text.as_bytes()).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(json!({ "path": path.to_string_lossy().replace('\\', "/"), "bytes": text.len(), "took_ms": ms(start) }))
 }
 
@@ -2067,7 +2143,7 @@ fn export(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
 
 fn help() -> Value {
     let mut v = json!({
-        "transport": "POST http://127.0.0.1:4817/cmd with JSON {\"cmd\": name, ...fields}; GET /status. Replies {ok: true, ...} or {ok: false, error} with HTTP 400.",
+        "transport": "POST http://127.0.0.1:<port>/cmd (default port 4817) with JSON {\"cmd\": name, ...fields} and Content-Type: application/json (or the header X-ND-Remote: 1); GET /status, GET /help. Replies {ok: true, ...} or {ok: false, error} with HTTP 400. Requests from web pages (an Origin or Sec-Fetch-Site header from another site, a foreign Host) get 403; bodies over 1 MB 413; a 504 means the command was withdrawn unrun. See docs/REMOTE.md.",
         "start_here": "to review the city: status -> report (all sections, ranked alerts) -> map {layer: hunger|land_value|...} for where -> history for trends -> list for tables -> inspect ids",
         "ids": "slotmap ids are \"idx:version\" strings (citizen, building, lot, car, train, route); gesture ids are plain integers. Positions are [x, y] sim metres.",
         "commands": {
@@ -2077,8 +2153,8 @@ fn help() -> Value {
             "speed": { "index": "0..5", "value": "multiple of real time for what moves (1 = people walk at their true pace; the clock runs 15x faster than that), snapped to the nearest step" },
             "step": { "ticks": "advance n sim minutes now, even while paused (default 1, max 100000)" },
             "seed_demo": {},
-            "save": { "path": "optional; default writes saves/city.ron and a dated slot" },
-            "load": { "path": "a .ron save" },
+            "save": { "path": "optional .ron (see files); default writes saves/city.ron and a dated slot" },
+            "load": { "path": "a .ron save (see files)" },
             "list_saves": {},
             "plan": {},
             "add_roundabout": { "center": "[x,y] (snaps onto a junction within 12 m or a street within 6 m)", "radius": "m to the ring centreline, 12..120 (or diameter 24..240)", "lanes": "1|2|3 ring lanes", "implement": "bool", "returns": "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state" },
@@ -2091,23 +2167,26 @@ fn help() -> Value {
             "terrain_at": { "x": "f", "y": "f", "returns": "natural/ground/surface heights, slope, water (kind, current, width), nearest shore, hot spot, power sites and dock placement for the lot there, survey (every land layer's value 0..1 there: resources, and the chance of each industry kind)" },
             "grant": { "amount": "money added to the treasury (dev), default 100000" },
             "landscape": { "returns": "preset and levers, rivers (width, current, hydro_ok), lakes, sea, hot spots, highway ends and through cars, bridges, docks, ships" },
-            "incident": { "kind": "fire|crime|medical", "building": "id", "citizen": "id (medical)" },
+            "incident": { "kind": "fire|crime|medical|crash|takeover", "building": "id (fire, crime; medical without citizen)", "citizen": "id (medical)", "car": "id (crash; default the car nearest at)", "at": "[x,y] (crash, takeover: the junction nearest)", "speed": "m/s (crash, default 25 = written off)" },
             "incidents": { "active": "bool (only those under way)", "limit": "default 50, newest first", "kind": "fire|crime|medical" },
             "bus": { "action": "new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses" },
-            "find": { "what": "citizens|buildings|lots|parcels|cars|trains|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
-            "inspect": { "citizen|building|lot|car|train|route": "id", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "[x,y]: the road piece nearest a point, as segment" },
+            "find": { "what": "citizens|buildings|lots|parcels|cars|trains|drones|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
+            "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "[x,y]: the road piece nearest a point, as segment" },
             "lane_use": { "junction": "[x,y]", "approach": "[x,y] on the arriving street", "lanes": "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default" },
             "select": { "citizen|building|car|vehicle": "id (vehicle: a parked car)", "at": "[x,y] picks like a click; nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
             "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
-            "overlay": { "layer": "land_value|traffic|traffic_types|people|pollution|paths|zoning, or a land survey layer (one at a time): farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech", "on": "bool, omitted toggles", "land": "a land survey layer key, or none", "<layer name>": "bool (older form, any number at once)" },
+            "overlay": { "layer": "land_value|traffic|traffic_types|people|pollution|paths|zoning|districts, or a land survey layer (one at a time): farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech", "on": "bool, omitted toggles", "land": "a land survey layer key, or none", "<layer name>": "bool (older form, any number at once)" },
             "lighting": { "follow_clock": "bool", "hour": "0..24 (also unpins from the clock)" },
             "heat_vision": { "on": "bool, omitted toggles: the drone thermal camera view (also key H)" },
-            "screenshot": { "path": "optional .png; default screenshots/shot-<unix>.png; written a frame or two later" },
+            "screenshot": { "path": "optional .png (see files); default screenshots/shot-<unix>.png; written a frame or two later" },
             "events": { "since": "seq", "limit": "default 500" },
             "thoughts": { "limit": "default 50" }
         }
     });
+    // Kept out of the literal above: it is at the json! recursion limit.
+    v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
+    v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite" });
     // The review commands, added separately: one `json!` this size hits the
     // macro recursion limit.
     let review = json!({
@@ -2118,7 +2197,7 @@ fn help() -> Value {
         "list": { "what": "businesses|buildings|citizens|lots|routes|plants|facilities", "sort": "column", "desc": "bool", "filter": "{column: substring | value | {min, max}}", "fields": "[columns] (id always kept)", "offset": "default 0", "limit": "default 50, max 1000" },
         "taxes": { "set": "{line: rate, ...} where line is a key (residential_low|residential_mid|residential_high|grocery|bakery|gadget_shop|parking|nightlife_low|nightlife_mid|nightlife_high|farming|oil|refinery|manufacturing|logistics|fishing|tech) or a land use for its whole group; rate 0.2 or 20 (= 20%)", "category": "one line (with rate)", "import_duty": "share of import prices (0..1)", "reset": "bool: back to the standard rates", "returns": "every line: rate, default, pull, buildings, homes/jobs, today, yesterday, recent_per_day; by_land_use; duty" },
         "tolls": { "action": "list (default) | price | remove | inspect", "id": "booth id (or at: [x,y])", "price": "toll per car (lorries pay double)", "returns": "booths with cars and revenue today/yesterday/total, paid/free today, upkeep" },
-        "export": { "path": "optional; default exports/city-<unix>.json: report + map + history + every row of every list" },
+        "export": { "path": "optional .json (see files); default exports/city-<unix>.json: report + map + history + every row of every list" },
         "window": { "name": "city|economy|taxes|market|people|power|transit|emergencies|land|districts|saves|help|dev", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns" },
         "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" }
     });
@@ -2134,6 +2213,7 @@ fn help() -> Value {
     // The player's selection and flags (added here: the big literal above
     // is at the json! macro's recursion limit).
     v["commands"]["selected"] = json!({ "": "full detail of what the player has selected: a car with why (reason, text, by), jam (chain to the head of the queue, head_reason, cycle), trip (elapsed_min, expected_min, anger), lanes, driver, cargo; a citizen (and driving_car); a building; a parked car; the bus line picked (bus_line)" });
+    v["commands"]["parking_price"] = json!({ "building": "id of a parking lot the city runs", "price": "the fee, 0..50", "returns": "building, price (as set, clamped)" });
     v["commands"]["flags"] = json!({ "since": "flag id: only newer ones", "clear": "bool: empty the list after reading" });
     v["commands"]["flag"] = json!({ "note": "text: flag the current selection, as F8 does in game" });
     v["commands"]["society"] = json!({ "action": "report (default)|evict|offend|trash", "building": "id (evict: its households go on the street; offend: the target; trash: one building's bins)", "citizen": "id (offend)", "kind": "theft|burglary|assault|murder|vandalism (offend, with building)", "kg": "trash to add, default 100" });

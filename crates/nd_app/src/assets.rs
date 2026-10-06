@@ -27,7 +27,10 @@ pub struct GameAssetsPlugin;
 
 impl Plugin for GameAssetsPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(GameAssets::load()).add_systems(Update, poll_assets);
+        // Before the sim and the renderers: the change flags it sets (and
+        // clears) hold for one whole frame of `SimSet::Sync`, so no
+        // renderer misses a hot reload by running before it.
+        app.insert_resource(GameAssets::load()).add_systems(Update, poll_assets.before(crate::sim::SimSet::Input));
     }
 }
 

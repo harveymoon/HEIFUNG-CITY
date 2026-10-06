@@ -225,7 +225,7 @@ pub fn apply_depth(
     tools: Res<ToolState>,
     sim: Res<Sim>,
     mut gizmos: Gizmos,
-    mut surface: Query<(Entity, &mut Visibility, Has<DepthHidden>, Has<CitizenTag>), (Or<(With<TerrainTag>, With<BuildingTag>, With<LotsTag>, With<ScatterTag>, With<ParkTag>, With<VacantTag>, With<RoadsTag>, With<WaterTag>, With<LaneArrowsTag>, With<PathsTag>, With<WalkDetailTag>, With<SignalTag>, With<CitizenTag>, With<HazeTag>)>, Without<TunnelTag>, Without<CarTag>)>,
+    mut surface: Query<(Entity, &mut Visibility, Has<DepthHidden>, Has<CitizenTag>), (Or<(With<TerrainTag>, With<BuildingTag>, With<LotsTag>, With<ScatterTag>, With<ParkTag>, With<VacantTag>, With<RoadsTag>, With<WaterTag>, With<LaneArrowsTag>, With<PathsTag>, With<WalkDetailTag>, With<SignalTag>, With<CitizenTag>)>, Without<TunnelTag>, Without<CarTag>)>,
     mut tunnels: Query<&mut Visibility, (With<TunnelTag>, Without<CarTag>)>,
     mut cars: Query<(Entity, &Transform, &mut Visibility, Has<DepthHidden>), (With<CarTag>, Without<TunnelTag>)>,
 ) {

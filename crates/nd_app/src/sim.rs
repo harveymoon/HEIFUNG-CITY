@@ -1,6 +1,8 @@
 //! Owns the simulation and steps it on a fixed sim clock that is independent
 //! of the frame rate.
 
+use std::path::Path;
+
 use bevy::prelude::*;
 use nd_minds::{HybridMind, MockBackend};
 use nd_sim::{SimEvent, Vec2 as SVec2, World, WorldConfig};
@@ -33,6 +35,10 @@ pub struct Sim {
     pub events: Vec<SimEvent>,
     /// Set by load; render systems rebuild everything.
     pub full_rebuild: bool,
+    /// Counts loads and new games, so state outside the sim (the remote
+    /// API's follow and history) can tell the city was replaced, whoever
+    /// replaced it.
+    pub generation: u64,
     pub ticks_last_frame: u32,
     /// Ticks actually run per second of sim time asked for, smoothed over
     /// about half a second: 1.0 means the sim keeps up with the chosen
@@ -51,6 +57,7 @@ impl Sim {
             accumulator: 0.0,
             events: Vec::new(),
             full_rebuild: true,
+            generation: 0,
             ticks_last_frame: 0,
             effective_speed: 1.0,
         }
@@ -76,7 +83,7 @@ impl Sim {
         nd_sim::MindProvider::reset(&mut self.minds);
         self.events.clear();
         self.accumulator = 0.0;
-        self.full_rebuild = true;
+        self.city_replaced();
     }
 
     /// The demo district is laid out blind over the centre of the map, so
@@ -183,22 +190,60 @@ impl Sim {
         }
     }
 
-    pub fn save(&self, path: &str) -> Result<(), String> {
-        let text = self.world.to_ron().map_err(|e| e.to_string())?;
-        if let Some(dir) = std::path::Path::new(path).parent() {
-            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        }
-        std::fs::write(path, text).map_err(|e| e.to_string())
+    /// Write the world as RON, atomically (see [`write_atomic`]).
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), String> {
+        save_world(&self.world, path.as_ref())
     }
 
     pub fn load(&mut self, path: &str) -> Result<(), String> {
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         self.world = World::from_ron(&text).map_err(|e| e.to_string())?;
-        // Answers still out are about the old city's citizens.
-        nd_sim::MindProvider::reset(&mut self.minds);
-        self.full_rebuild = true;
+        self.city_replaced();
         Ok(())
     }
+
+    /// A different city now runs: renderers rebuild, and anything keyed by
+    /// the old world's ids starts over. The minds' pending answers name
+    /// old citizens whose keys the new world reuses, so they go too (the
+    /// same backend `new` starts with).
+    fn city_replaced(&mut self) {
+        self.full_rebuild = true;
+        self.generation += 1;
+        self.minds = HybridMind::new(Box::new(MockBackend::default()));
+    }
+}
+
+/// Serialise `world` to `path`, atomically.
+pub fn save_world(world: &World, path: &Path) -> Result<(), String> {
+    let text = world.to_ron().map_err(|e| e.to_string())?;
+    write_atomic(path, text.as_bytes()).map_err(|e| e.to_string())
+}
+
+/// Write `bytes` to a temporary file beside `path`, flush it to disk, then
+/// rename it over `path`: a crash or a full disk mid-write leaves the old
+/// file whole instead of a truncated one. (`rename` replaces an existing
+/// file on Windows too.) The temporary name ends in `.tmp`, so save
+/// listings, which look for `.ron`, never show it.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir)?;
+    }
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = path.with_file_name(format!("{name}.{}-{}.tmp", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+    let result = (|| {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 pub struct SimPlugin;

@@ -117,7 +117,7 @@ pub struct UiCtx<'a> {
 /// out one side panel and now lays out the bars and the windows, but it is
 /// still the single system the rest of the app knows the UI by.
 #[allow(clippy::too_many_arguments)]
-fn side_panel(
+pub(crate) fn side_panel(
     mut contexts: EguiContexts,
     mut styled: Local<bool>,
     mut sim: ResMut<Sim>,

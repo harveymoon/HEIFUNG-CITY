@@ -89,6 +89,16 @@ pub(super) fn sync_air(
 ) {
     let w = &sim.world;
     let st = &mut state.0;
+    if sim.full_rebuild {
+        // A loaded world reuses drone and building ids: drop every craft and
+        // every cached pad drawing.
+        for (_, c) in st.craft.drain() {
+            for e in [Some(c.body), Some(c.lights), c.fx, Some(c.strobe), c.rotor, c.beam.map(|b| b.0), c.beam.map(|b| b.1)].into_iter().flatten() {
+                commands.entity(e).despawn();
+            }
+        }
+        st.pads.clear();
+    }
     if w.air.drones.is_empty() && st.craft.is_empty() {
         return;
     }

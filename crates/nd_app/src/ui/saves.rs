@@ -29,11 +29,14 @@ pub struct Saves {
     dirty: bool,
     /// A load the player clicked that still needs confirming.
     pending_load: Option<PathBuf>,
+    /// The autosave being written on a worker thread: the day and how long
+    /// the write took, or why it failed.
+    autosave: Option<std::thread::JoinHandle<Result<(u64, f64), String>>>,
 }
 
 impl Default for Saves {
     fn default() -> Self {
-        Self { slots: Vec::new(), dirty: true, pending_load: None }
+        Self { slots: Vec::new(), dirty: true, pending_load: None, autosave: None }
     }
 }
 
@@ -198,13 +201,43 @@ pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, selection:
 
 /// Autosave when the sim rolls over to a new day. Runs in `SimSet::Sync`,
 /// where `Sim::events` holds this frame's events for every reader.
+///
+/// The frame pays only for a copy of the world; serialising it to RON (the
+/// slow part, hundreds of milliseconds for a big city) and writing it
+/// happen on a worker thread, and the write is atomic. One autosave at a
+/// time: a day that turns while the last one is still writing (1024x on a
+/// slow disk) is skipped, and the next day catches up.
 pub fn autosave(sim: Res<Sim>, mut saves: ResMut<Saves>, mut flags: ResMut<UiFlags>) {
+    if saves.autosave.as_ref().is_some_and(|j| j.is_finished()) {
+        let job = saves.autosave.take().expect("checked above");
+        saves.dirty = true;
+        flags.message = match job.join() {
+            Ok(Ok((day, ms))) => {
+                debug!("autosave of day {day} written in {ms:.0} ms off the main thread");
+                format!("autosaved day {day} to {AUTOSAVE}")
+            }
+            Ok(Err(e)) => format!("autosave failed: {e}"),
+            Err(_) => "autosave failed: the writer thread panicked".into(),
+        };
+    }
     if !sim.events.iter().any(|e| matches!(e, SimEvent::NewDay(_))) {
         return;
     }
-    saves.dirty = true;
-    flags.message = match sim.save(AUTOSAVE) {
-        Ok(()) => format!("autosaved day {} to {AUTOSAVE}", sim.world.clock.day() + 1),
-        Err(e) => format!("autosave failed: {e}"),
-    };
+    if saves.autosave.is_some() {
+        warn!("autosave skipped: the previous one is still being written");
+        return;
+    }
+    let start = std::time::Instant::now();
+    let world = sim.world.clone();
+    let hitch = start.elapsed().as_secs_f64() * 1000.0;
+    debug!("autosave: world copied in {hitch:.1} ms on the main thread");
+    let day = world.clock.day() + 1;
+    let job = std::thread::Builder::new().name("nd-autosave".into()).spawn(move || {
+        let t = std::time::Instant::now();
+        crate::sim::save_world(&world, Path::new(AUTOSAVE)).map(|()| (day, t.elapsed().as_secs_f64() * 1000.0))
+    });
+    match job {
+        Ok(j) => saves.autosave = Some(j),
+        Err(e) => flags.message = format!("autosave failed: {e}"),
+    }
 }

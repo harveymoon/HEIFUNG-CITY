@@ -1,4 +1,4 @@
-﻿# Remote control API
+# Remote control API
 
 The game runs a small HTTP JSON API on localhost so scripts, tests and AI assistants can drive
 and inspect it without synthetic keystrokes or clicks. `tools/mcp/nd_mcp.py` wraps it as an MCP
@@ -6,13 +6,75 @@ server (see [`tools/mcp/README.md`](../tools/mcp/README.md)). The code is `crate
 
 ## Transport
 
-- `POST http://127.0.0.1:4817/cmd` with a JSON body `{"cmd": "<name>", ...fields}`.
+- `POST http://127.0.0.1:4817/cmd` with a JSON body `{"cmd": "<name>", ...fields}` and
+  `Content-Type: application/json` (see [Who may call](#who-may-call) for the alternatives).
 - `GET /status` and `GET /help` as shortcuts for `{"cmd":"status"}` and `{"cmd":"help"}`.
-- Replies are JSON: `{"ok": true, ...}` with HTTP 200, or `{"ok": false, "error": "..."}` with HTTP 400
-  (unknown command, bad or missing field, the sim refusing, e.g. "not enough money"). 404 for other
-  paths; 504 if the game did not answer within 5 s.
+- Replies are JSON: `{"ok": true, ...}` with HTTP 200, or `{"ok": false, "error": "..."}` with:
+  - 400: unknown command, bad or missing field, the sim refusing (e.g. "not enough money");
+  - 403: the request came from a web page or named a foreign host (below);
+  - 404: another path;
+  - 413: a body over 1 MB;
+  - 415: a POST without an accepted content type (below);
+  - 503: 16 requests already in progress;
+  - 504: the game did not take the command within 5 s (frame stalled, window closing). The command
+    is **withdrawn and does not run**, so retrying is safe. A command the game had already started
+    (a long `step`) is waited for, up to 5 minutes.
 - Environment: `ND_REMOTE_PORT` picks the port (default 4817); `ND_REMOTE=0` disables the server.
   If the port is taken the game logs a warning and runs without the API.
+
+```sh
+curl http://127.0.0.1:4817/status
+curl -d '{"cmd":"step","ticks":200}' http://127.0.0.1:4817/cmd
+curl -H "Content-Type: application/json" -d '{"cmd":"pause"}' http://127.0.0.1:4817/cmd
+```
+
+### Who may call
+
+The server binds 127.0.0.1 and has no authentication. Binding to localhost does not keep web pages
+out: any page in a browser can send a "simple" POST to `http://127.0.0.1:4817` without a CORS
+preflight, and DNS rebinding lets it read the replies too. Without checks, a page could save or
+export over any file, or load and wipe the running city. So the server checks every request before
+reading its body (`crates/nd_app/src/remote/guard.rs`):
+
+- **`Host`**, when sent, must be `127.0.0.1:<port>` or `localhost:<port>`. A rebinding attack
+  carries the attacker's host name and is refused (403).
+- **`Origin`**: any `Origin` header is refused (403), `null` included, unless it is the server
+  itself (`http://127.0.0.1:<port>` or `http://localhost:<port>`). Browsers send `Origin` on every
+  cross-site POST.
+- **`Sec-Fetch-Site`**, when sent, must be `same-origin` or `none`. A URL typed into the address
+  bar sends `none`, so `GET /status` still opens in a browser.
+- **POST content type**:
+  - `application/json` is always accepted. A page cannot send it without a preflight, and the
+    server never grants one.
+  - Any request carrying the header `X-ND-Remote` (any value) is accepted. This header is also
+    preflighted.
+  - `application/x-www-form-urlencoded` (what plain `curl -d` sends), `text/plain` and no content
+    type at all are accepted **only from clients that send no browser headers** (no `Origin`, no
+    `Sec-Fetch-*`).
+  - Anything else gets 415.
+
+The MCP bridge sends `application/json` and `X-ND-Remote: 1`. `curl`, Python `urllib` and
+`requests` work as shown above.
+
+**Files.** `save`, `load`, `export` and `screenshot` take paths only inside these folders:
+
+- `saves/`, `screenshots/` and `exports/` under the game's working directory (the repo root under
+  `cargo run`). Any command may use any of the three, and their subfolders.
+- The OS temp folder (`%TEMP%` on Windows, usually `/tmp` elsewhere).
+
+A relative path is taken from the working directory (`saves/test.ron`). These are refused:
+
+- paths with `..`;
+- network and device paths (`\\server\share`, `//host/...`);
+- other folders (`city.ron` at the top level, `C:/Users/...`);
+- the wrong extension. `save` and `load` need `.ron`, `export` needs `.json` and `screenshot`
+  needs `.png`.
+
+Folders are resolved through symlinks and junctions before the check. Missing folders are
+created.
+
+**Limits.** Bodies are capped at 1 MB. Each request is served on its own thread, at most 16 at a
+time, so a client that sends its body slowly holds up only itself.
 
 ### How it runs
 
@@ -35,7 +97,7 @@ the replies back. So:
   save and load of the same city.
 - Plan gestures (roads and zones as drawn) have plain integer ids (`gesture_id`).
 - Positions are **`[x, y]` in sim metres** on the ground plane (the renderer's x and z). The starter
-  avenues run along x = 0 and y = 0; the map spans about Â±1000 m; the rail trunk is at y = -480.
+  avenues run along x = 0 and y = 0; the map spans about ±1000 m; the rail trunk is at y = -480.
 - Times: a tick is one sim minute; `day` is 1-based.
 
 ## Commands
@@ -49,13 +111,14 @@ Every example is the POST body; the reply always carries `"ok"`.
 | `help` | | every command and its fields |
 | `status` | | clock, paused, speed, effective_speed, population, buildings, under_construction, lots, homes/jobs, treasury, ledger_yesterday, power, weather, land, market, demand, traffic, transit, rail, render (fps, ticks_per_frame, triangles), camera, tool, selection, project, overlays, lighting, message, tool_status, event_seq, favourites, `windows_open`, `alerts_top` (the first 5 of `report`'s alerts) |
 | `pause` | `paused` bool (omit to toggle) | `paused` |
-| `speed` | `index` 0..4 (1Ã—, 4Ã—, 16Ã—, 64Ã—, 256Ã—) or `value` (sim minutes per real second, snapped) | `speed_index`, `speed`, `label` |
+| `speed` | `index` 0..5 (1×, 4×, 16×, 64×, 256×, 1024×), or `value`: a multiple of real time for what moves, snapped to the nearest step on a log scale. At 1× people walk at their true pace; the clock runs 15× faster than that | `speed_index`, `speed`, `ticks_per_second`, `label` |
 | `step` | `ticks` (default 1, max 100000) | `clock`, `took_ms` |
 
 `step` runs the ticks immediately, on the main thread, even while paused (the same `World::tick`
 the frame loop uses), and stalls the frame for as long as it takes: a young city runs thousands of
-ticks a second, a big one far fewer, so keep each request well inside the 5 s reply timeout. A big
-step also floods the event ring (see `events`).
+ticks a second, a big one far fewer. A step that has started is waited for (up to 5 minutes), but
+the frame freezes meanwhile, so prefer several shorter steps. A big step also floods the event
+ring (see `events`).
 
 ```json
 {"cmd": "pause", "paused": true}
@@ -68,17 +131,23 @@ step also floods the event ring (see `events`).
 | Command | Fields | Reply |
 | --- | --- | --- |
 | `seed_demo` | | lays out and implements the demo district (works on any map) |
-| `save` | `path` optional | without a path: `saves/city.ron` plus a dated slot, like the Save button; with one: just that file. Reply `path` (absolute) |
-| `load` | `path` | as the Load button: tools and selection reset, the city comes up paused |
+| `save` | `path` optional (`.ron`) | without a path: `saves/city.ron` plus a dated slot, like the Save button; with one: just that file. Reply `path` (absolute) |
+| `load` | `path` (`.ron`) | as the Load button: tools, selection and the camera follow reset, the city comes up paused |
 | `list_saves` | | `saves`: path, modified_unix, bytes, newest first |
 
-Relative paths are relative to the game's working directory (the repo root under `cargo run`).
+Paths are limited to `saves/`, `screenshots/`, `exports/` and the temp folder (see
+[Who may call](#who-may-call)). Relative ones are taken from the game's working directory (the
+repo root under `cargo run`).
+
+Every save is written to a temporary file and renamed over the target, so a crash mid-write
+leaves the old file whole. The daily autosave (`saves/autosave.ron`) copies the world on the
+main thread, then serialises and writes it on a worker thread.
 
 ### Landscape and new games
 
 | Command | Fields | Reply |
 | --- | --- | --- |
-| `new_game` | `preset` river_valley (default) / islands / coast / delta / plains / flat, `seed`, `water` 0..1, `relief` 0..1 (height variation), `branching` 0..1, `islands` 0..8, `highway` bool; omitted levers take the preset's | throws the city away and starts on the landscape; tools and selection reset. Reply as `landscape` |
+| `new_game` | `preset` river_valley (default) / islands / coast / delta / plains / flat, `seed`, `water` 0..1, `relief` 0..1 (height variation), `branching` 0..1, `islands` 0..8 (`highway` is ignored: every new game has the highway and the trunk line); omitted levers take the preset's | throws the city away and starts on the landscape; tools and selection reset. Reply as `landscape` |
 | `landscape` | | preset and levers, `rivers` (kind river/stream, width, current_mps, hydro_ok, source, mouth, length), `lakes`, `sea`, `hot_spots`, `highway` (entries, exits, through_cars), `bridges` (count, metres, on the highway), `ports`, `ships`, `port_stats` |
 | `terrain_at` | `x`, `y` | `natural_height`, `ground_height` (graded under roads and lots), `surface_height` (bridge decks included), `slope`, `water` (kind, current, width, flow), `nearest_shore`, `hot_spot`, `lot`, `power_sites` (hydro/tidal/geothermal ok or why not, for the lot there), `docks` (whether a shipping port or ferry terminal would go there, or why not), `survey` (every land survey layer's value 0..1 there) |
 | `grant` | `amount` (default 100000) | dev: adds money to the treasury |
@@ -130,8 +199,6 @@ Reply: `gesture_id`, `implemented`, `project` (`id`, `name`, `steps`, `redo`), `
 - `metro_station` (also `metro`, `subway_station`): a metro entrance on the lot under the point
   (`World::build_metro_station`); stations need 160 m between them. Join them with `subway {action:
   "line"}`.
-- `station`, `freight_yard`: rail pieces, placed anywhere (`World::place_rail_facility`); the reply
-  message says whether track and street are joined.
 - `cargo_hub` (or `hub`): a freight terminal on the lot under the point (`World::build_cargo_hub`,
   see DESIGN.md, Cargo hubs); `inspect` of it has `taxis_and_freight.cargo_hub` (loads by stage,
   the semi on its way, lorry bays, the yard or port on its siding).
@@ -143,8 +210,6 @@ Reply: `gesture_id`, `implemented`, `project` (`id`, `name`, `steps`, `redo`), `
   point (`World::place_port`). Ports need a river at least 40 m wide or the sea; ferries any water
   16 m or wider. Each builds a pier and, unless a street is already along its landward side, a
   street stub to join to the city.
-- `depot`, `parking`, `coal`, `solar`, `wind`, `nuclear`: on the lot under the point, or the nearest
-  vacant lot within 80 m (`build_depot`, `build_parking`, `build_power`).
 - `toll_booth` (also `toll`), `toll_plaza` (also `plaza`): across the road at the point
   (`World::place_toll`), not on a lot: the nearest street or highway piece within 15 m that has a
   straight run either side (booth 18 m, plaza 50 m between junctions or bends; a click near a
@@ -323,7 +388,7 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
 | `selected` | full detail of the player's selection (see below) |
 | `flags` / `flag` | the player's "Flag for Claude" bookmarks (see below) |
 | `favourite` | `citizen`, `on` (omit to toggle) |
-| `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail, district), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway, Roundabout), `diameter` and `ring_lanes` (roundabout), `ring_at` `[x,y]` (show the roundabout preview there as if hovered, until the mouse is used), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry` (zone, industrial: auto / farming / oil / ...), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture`, `elevation` (the Road tool's level for the next point, m), `depth` (underground / ground / sky: the view layer; the Tunnel preset switches to underground, other presets back), `draw` `[[x,y,level?],...]` (the road being drawn, as if clicked, so its hologram shows), `cursor` `[x,y]` (where the pointer stands for that hologram until the mouse is used). The reply's tool state has `elevation`, `elevation_label`, `point_levels`, `tunnel`, `depth`, `grade_warnings` |
+| `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail, district), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway, Tunnel, Roundabout), `diameter` and `ring_lanes` (roundabout), `ring_at` `[x,y]` (show the roundabout preview there as if hovered, until the mouse is used), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry` (zone, industrial: auto / farming / oil / ...), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture`, `elevation` (the Road tool's level for the next point, m), `depth` (underground / ground / sky: the view layer; the Tunnel preset switches to underground, other presets back), `draw` `[[x,y,level?],...]` (the road being drawn, as if clicked, so its hologram shows), `cursor` `[x,y]` (where the pointer stands for that hologram until the mouse is used). The reply's tool state has `elevation`, `elevation_label`, `point_levels`, `tunnel`, `depth`, `grade_warnings` |
 | `overlay` | `layer` (land_value, traffic, traffic_types, people, pollution, paths, zoning, districts, or a land survey layer, below) with `on` (bool; omitted toggles); or any of the first names as bools; `land` a land survey layer key or `none`. Reply: every layer and whether it is on, plus `land` (the survey layer shown, or null) (also in `status.overlays`) |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
 | `heat_vision` (alias `heat`) | `on` (bool; omitted toggles). Drone heat vision: buildings, ground and roads go near-black, people, vehicles, fires and drones glow by temperature (lights and engines white-hot), with motion blur, scanlines, noise, a vignette and a reticle. Same as key H and the top bar's Heat button. Reply `heat_vision`; also `status.lighting.heat_vision` |
@@ -415,18 +480,27 @@ Reply: the pose (`mode`, `target`, `distance`, `yaw`, `pitch`, `eye`), and `foll
 
 `screenshot {path?}`: queues a capture of the window (`Screenshot::primary_window()` with
 `save_to_disk`) and replies at once with the absolute `path` (default
-`<working dir>/screenshots/shot-<unix seconds>.png`). **The file is written a frame or two later**,
+`<working dir>/screenshots/shot-<unix seconds>.png`). A given path must end in `.png` and lie in
+the allowed folders (see [Who may call](#who-may-call)). **The file is written a frame or two later**,
 when the GPU copy lands: poll for it (the MCP tool waits up to 5 s). It captures the whole window,
-UI panel included, at the window's size (a full-HD window makes a 2â€“5 MB PNG). PNG only. A
+UI panel included, at the window's size (a full-HD window makes a 2–5 MB PNG). PNG only. A
 minimised window renders nothing and produces no file.
 
 ### Events
 
 `events {since?, limit?}`: a ring buffer of the last 2000 events, each with a running `seq` and the
-`tick`. Kinds: `BuildingBuilt`, `BuildingChanged`, `BuildingRemoved`, `Expropriated`,
-`BusinessClosed`, `CitizenArrived`, `CitizenLeft`, `NewThought` (with the thought text), `NewDay`,
-`RoadsChanged`, `LotsChanged`, `PlanChanged`, plus `Message` and `ToolStatus` whenever the status
-lines change. Poll with `since` = the last `seq` you saw; `dropped: true` means events fell out of the
+`tick`. Kinds:
+
+- city: `NewDay`, `RoadsChanged`, `LotsChanged`, `PlanChanged`;
+- buildings: `BuildingBuilt`, `BuildingChanged`, `BuildingRemoved`, `Expropriated`, `BusinessClosed`,
+  `StadiumEvent`;
+- people: `CitizenArrived`, `CitizenLeft`, `NewThought` (with the thought text);
+- emergencies: `IncidentStarted`, `EmergencyCall`, `UnitDispatched`, `UnitOnScene`,
+  `IncidentResolved` (each with `incident`, `type`, `building`, `name`, `outcome`), `FireSpread`,
+  `BurnedDown`, `Arrested` (incident, citizen), `Released` (citizen);
+- driving: `Crash` (crash id, pos, cause, severity, injured, place, incident), `Takeover`,
+  `TakeoverOver`;
+- the UI: `Message` and `ToolStatus` whenever the status lines change. Poll with `since` = the last `seq` you saw; `dropped: true` means events fell out of the
 ring in between. `thoughts {limit?}`: the newest memories across all citizens, and current thoughts.
 
 ## Reviewing the city
@@ -457,7 +531,7 @@ Each reply carries `took_ms`; see the timings measured on a real city at the end
 | `people` | by_class, by_activity, employment {employed, employed_in_businesses, employed_on_building_sites, unemployed_on_gig_income, unemployment_share (of everyone), jobs_free, working_age_adults, unemployed_adults, adult_unemployment_share}, housing {housed, unhoused, waiting_immigrants, homes_free}, income_per_day and savings (distributions; savings also in_overdraft, at_overdraft_floor), rent_burden {over_30pct_of_income, over_50pct_of_income, their shares, rent_stressed_now, rent_to_income distribution}, mood (distribution 0..1), hunger {hungry_now, mean_satiety, no_groceries_at_home, hungry_days histogram 0..4+}, commute_modes_now (walk/bike/car/bus/train counts and shares of the people travelling now; owns_car_share, owns_bike_share), moves (displaced, emigrated, priced-out totals), recent_memory_reasons (memories of the last 2 days grouped by their fixed text, e.g. "Rent got too steep", "Couldn't afford anything at") |
 | `economy` | treasury, ledger {today_so_far and yesterday by flow, nets}, ledger_items {yesterday, today_so_far: per flow {total, items: [{building + name / route + name / class / land_use / name, amount, postings}], not_itemised}} (the Economy window's drill-down: service upkeep by station, clinic and car park, transit upkeep by depot and the bus fleet, plant upkeep by plant, fares by line and station, income tax by class, business tax by land use), tax_today, upkeep_today, trade_today {imports_value, exports_value, building_materials_imported, deals, meals_sold, walk_in_sales, parking_fees}, businesses {total, open, closed_ever, by_kind: count, open, closed, mean_staffing, mean_money, revenue and spend totals, inputs (stock, target, fill), outputs (stock, mean_price)}, resources (town_stock, avg_price, price_vs_base, local_sellers_open, local_supply_per_day, business_demand_per_day, scarce), most_profitable_today and least_profitable_today (10 each, with ids) |
 | `land` | lots_by_land_use {vacant, built, under_construction, unusable, total, area_m2}, buildings_by_land_use_and_tier, special_buildings, floors_histogram, rents_by_tier {buildings, homes, residents, occupancy, rent_per_home_day_avg, min, max}, land_value {avg_grid, lots distribution, tier_cuts}, parks {lots, area_m2} |
-| `services` | emergency {coverage_pct_of_homes {police, fire, health, school}, incidents_today {fire, crime, medical}, resolved_today, unanswered_today, arrests_today, avg_response_min (call to arrival, today or else yesterday), response {fire, crime, medical: answered, median_min, p90_min, within_30_min_pct, of (today or yesterday)}, queued {fire, crime, medical} (calls past their dispatch time waiting for a unit), queue_max_today, all_units_busy_min_today, all_units_busy_now_min (null when a unit is free), unanswered_why_today {per kind: all_units_busy, no_route, no_station}, mutual_aid_today, unreachable_today, diverted_today, units_on_patrol (crashes count with police in the per-kind figures), units, units_busy (on a call: responding, on scene, transporting), fires_burning, burned_down_total, waiting_for_ambulance, in_hospital, dispatch {dispatcher_on_duty, minutes_to_dispatch}, stadium_crowd_today, tickets_today, stadium_events_tonight, upkeep_per_day, education_wage_bonus_today, stations: id, kind, tier, workers, radius_m, units, units_crewed, units_busy, units_on_patrol, beds_used, capacity; active_incidents: id, kind, stage, building, minutes_since_start, intensity, unit, dispatcher; recent (last 10 resolved with outcome and response_min)}, power {supply, demand and imported MW, served_share, unpowered_buildings, brownout_hours_today, weather, plants: id, kind, capacity_mw, available_mw, output_mw_est, upkeep, pollution}, transit {routes: id, stops, buses_wanted, buses_running, riders_today, waiting, length_m, broken_legs, runnable; totals}, subway {stations, lines, trains, tunnel_m, waiting, riding, riders_today, riders_yesterday, fares_today, fares_yesterday, upkeep_yesterday, runs_today, fare, in_service, line_list (line rows as for the `subway` command), station_list (station rows)}, rail {facilities: id, kind, rail_connected, road_connected, works, waiting_passengers, freight units; trains by kind; riders, freight}, air {vertiports, pads {vertiports, rooftop, hospital, fire, police}, rooftop_pads, drones {taxis, air_ambulances, police_helicopters, airborne, holding, mean_taxi_battery}, flights_today, riders_today, fares_today and yesterday's, waiting_for_drone, in_the_air, gave_up_today, holds_today, medic_flights_today/total, police_flights_today, company {money, revenue}, noise {cells, max, max_land_value_penalty, grumbles_today}}, parking {capacity, used, occupancy, parked_on_street_today, last_shortage_at, enforcement {rule, offices: id, name, tier, officers, patrol_cars_now, patrol_cars_wanted, radius_m; patrol_cars_now, coverage {kerb_slots, within_patrol_reach, share}, tickets_today, fines_today, tickets_total, fines_total, on_street_now {over_limit, ticketed}, tows_today, tows_out_of_town_today, tows_total, tows_out_of_town_total, tow_jobs_open, tow_trucks_on_road, wrecks_towed_total, pound {cars, in_town, out_of_town, released_today, release_fees_today, released_total, auctioned_today, auctioned_total}, tow_companies: id, name, staff, trucks, in_pound, money; city_lots: id, name, size, capacity, used, occupancy, price; city_lot_fees_today, parked_by_place}}, traffic {vehicles, cars, trucks, buses, mean_speed_kmh_moving, stopped, stuck, waiting_at_kerb, gridlocks, left_turn_wait_mean_s, left_turn_wait_max_s (over the last 500 left turns), left_turns_measured, protected_left_arrows_now, passing_left_turners_now, lane_use_set_by_player, lanes, intersections, signals, private_cars {cars, cars_parked, cars_driving, cars_searching (on the road looking for a space), parked_by_place (home, building, parking lot, kerb, street (no space), dealer), kerb_slots {total, used, occupancy}, created_total, destroyed_total, events_total (arrived_with_household, bought, bought_out_of_town, sold, scrapped, emigrated: the only ways a car comes or goes), bought_today, sold_today, bikes_bought_today, bikes_sold_today, circled_today, search_minutes_today, parked_today {home_or_building, lot, kerb, no_space}, mode_shares_today and mode_shares_yesterday {trips, modes {walk, bike, bus, train, car: trips, share}}, commute_pain {per mode: users (who used it lately), mean (bad half-hours per trip)}, parking_pain_mean_of_owners, fleet_parked_at_businesses, fleet_bought_total, fleet_returned_today}}; taxis {companies: id, name, fleet, cabs (id, number, place yard/rank/kerb/road, job, on_duty, rider, car, rank, pos), rides_today, missed_today, money; cabs, on_duty, in_yard, at_ranks, at_kerb, on_road, carrying, to_pickup, riders_waiting, rides_today/yesterday, fares_today/yesterday, mean_wait_min_today, mean_ride_m_today, drunk_rides_today, night_rides_today, gave_up_today/yesterday, unserved_demand_today/yesterday, companies_founded_total, cabs_bought_total, cabs_sold_total}, cargo_hubs {hubs: id, name, works, units {waiting_for_semi, on_semi, inbound_rail_or_sea, in_shed, exports_gathered}, loads, semi_on_the_way, lorry_bays, lorries_parked, siding_yard, quay_port; received_today, forwarded_today, semis_in_today, semis_out_today, long_haul_trips_saved_today/yesterday/total, handling_fees_today}, air {vertiports, pads {vertiports, rooftop, hospital, fire, police}, rooftop_pads, drones {taxis, air_ambulances, police_helicopters, airborne, holding, mean_taxi_battery}, flights_today, riders_today, fares_today and yesterday's, waiting_for_drone, in_the_air, gave_up_today, holds_today, medic_flights_today/total, police_flights_today, company {money, revenue}, noise {cells, max, max_land_value_penalty, grumbles_today}}, parking {capacity, used, occupancy, parked_on_street_today, last_shortage_at, enforcement {rule, offices: id, name, tier, officers, patrol_cars_now, patrol_cars_wanted, radius_m; patrol_cars_now, coverage {kerb_slots, within_patrol_reach, share}, tickets_today, fines_today, tickets_total, fines_total, on_street_now {over_limit, ticketed}, tows_today, tows_out_of_town_today, tows_total, tows_out_of_town_total, tow_jobs_open, tow_trucks_on_road, wrecks_towed_total, pound {cars, in_town, out_of_town, released_today, release_fees_today, released_total, auctioned_today, auctioned_total}, tow_companies: id, name, staff, trucks, in_pound, money; city_lots: id, name, size, capacity, used, occupancy, price; city_lot_fees_today, parked_by_place}}, traffic {vehicles, cars, trucks, buses, mean_speed_kmh_moving, stopped, stuck, waiting_at_kerb, gridlocks, left_turn_wait_mean_s, left_turn_wait_max_s (over the last 500 left turns), left_turns_measured, protected_left_arrows_now, passing_left_turners_now, lane_use_set_by_player, lanes, intersections, signals, private_cars {cars, cars_parked, cars_driving, cars_searching (on the road looking for a space), parked_by_place (home, building, parking lot, kerb, street (no space), dealer), kerb_slots {total, used, occupancy}, created_total, destroyed_total, events_total (arrived_with_household, bought, bought_out_of_town, sold, scrapped, emigrated: the only ways a car comes or goes), bought_today, sold_today, bikes_bought_today, bikes_sold_today, circled_today, search_minutes_today, parked_today {home_or_building, lot, kerb, no_space}, mode_shares_today and mode_shares_yesterday {trips, modes {walk, bike, bus, train, car, taxi: trips, share}}, commute_pain {per mode: users (who used it lately), mean (bad half-hours per trip)}, parking_pain_mean_of_owners, fleet_parked_at_businesses, fleet_bought_total, fleet_returned_today}} |
+| `services` | emergency {coverage_pct_of_homes {police, fire, health, school}, incidents_today {fire, crime, medical}, resolved_today, unanswered_today, arrests_today, avg_response_min (call to arrival, today or else yesterday), response {fire, crime, medical: answered, median_min, p90_min, within_30_min_pct, of (today or yesterday)}, queued {fire, crime, medical} (calls past their dispatch time waiting for a unit), queue_max_today, all_units_busy_min_today, all_units_busy_now_min (null when a unit is free), unanswered_why_today {per kind: all_units_busy, no_route, no_station}, mutual_aid_today, unreachable_today, diverted_today, units_on_patrol (crashes count with police in the per-kind figures), units, units_busy (on a call: responding, on scene, transporting), fires_burning, burned_down_total, waiting_for_ambulance, in_hospital, dispatch {dispatcher_on_duty, minutes_to_dispatch}, stadium_crowd_today, tickets_today, stadium_events_tonight, upkeep_per_day, education_wage_bonus_today, stations: id, kind, tier, workers, radius_m, units, units_crewed, units_busy, units_on_patrol, beds_used, capacity; active_incidents: id, kind, stage, building, minutes_since_start, intensity, unit, dispatcher; recent (last 10 resolved with outcome and response_min)}, power {supply, demand and imported MW, served_share, unpowered_buildings, brownout_hours_today, weather, plants: id, kind, capacity_mw, available_mw, output_mw_est, upkeep, pollution}, transit {routes: id, stops, buses_wanted, buses_running, riders_today, waiting, length_m, broken_legs, runnable; totals}, subway {stations, lines, trains, tunnel_m, waiting, riding, riders_today, riders_yesterday, fares_today, fares_yesterday, upkeep_yesterday, runs_today, fare, in_service, line_list (line rows as for the `subway` command), station_list (station rows)}, rail {facilities: id, kind, rail_connected, road_connected, works, waiting_passengers, freight units; trains by kind; riders, freight}, taxis {companies: id, name, fleet, cabs (id, number, place yard/rank/kerb/road, job, on_duty, rider, car, rank, pos), rides_today, missed_today, money; cabs, on_duty, in_yard, at_ranks, at_kerb, on_road, carrying, to_pickup, riders_waiting, rides_today/yesterday, fares_today/yesterday, mean_wait_min_today, mean_ride_m_today, drunk_rides_today, night_rides_today, gave_up_today/yesterday, unserved_demand_today/yesterday, companies_founded_total, cabs_bought_total, cabs_sold_total}, cargo_hubs {hubs: id, name, works, units {waiting_for_semi, on_semi, inbound_rail_or_sea, in_shed, exports_gathered}, loads, semi_on_the_way, lorry_bays, lorries_parked, siding_yard, quay_port; received_today, forwarded_today, semis_in_today, semis_out_today, long_haul_trips_saved_today/yesterday/total, handling_fees_today}, air {vertiports, pads {vertiports, rooftop, hospital, fire, police}, rooftop_pads, drones {taxis, air_ambulances, police_helicopters, airborne, holding, mean_taxi_battery}, flights_today, riders_today, fares_today and yesterday's, waiting_for_drone, in_the_air, gave_up_today, holds_today, medic_flights_today/total, police_flights_today, company {money, revenue}, noise {cells, max, max_land_value_penalty, grumbles_today}}, parking {capacity, used, occupancy, parked_on_street_today, last_shortage_at, enforcement {rule, offices: id, name, tier, officers, patrol_cars_now, patrol_cars_wanted, radius_m; patrol_cars_now, coverage {kerb_slots, within_patrol_reach, share}, tickets_today, fines_today, tickets_total, fines_total, on_street_now {over_limit, ticketed}, tows_today, tows_out_of_town_today, tows_total, tows_out_of_town_total, tow_jobs_open, tow_trucks_on_road, wrecks_towed_total, pound {cars, in_town, out_of_town, released_today, release_fees_today, released_total, auctioned_today, auctioned_total}, tow_companies: id, name, staff, trucks, in_pound, money; city_lots: id, name, size, capacity, used, occupancy, price; city_lot_fees_today, parked_by_place}}, traffic {vehicles, cars, trucks, buses, mean_speed_kmh_moving, stopped, stuck, waiting_at_kerb, gridlocks, left_turn_wait_mean_s, left_turn_wait_max_s (over the last 500 left turns), left_turns_measured, protected_left_arrows_now, passing_left_turners_now, lane_use_set_by_player, lanes, intersections, signals, private_cars {cars, cars_parked, cars_driving, cars_searching (on the road looking for a space), parked_by_place (home, building, parking lot, kerb, street (no space), dealer), kerb_slots {total, used, occupancy}, created_total, destroyed_total, events_total (arrived_with_household, bought, bought_out_of_town, sold, scrapped, emigrated: the only ways a car comes or goes), bought_today, sold_today, bikes_bought_today, bikes_sold_today, circled_today, search_minutes_today, parked_today {home_or_building, lot, kerb, no_space}, mode_shares_today and mode_shares_yesterday {trips, modes {walk, bike, bus, train, car, taxi: trips, share}}, commute_pain {per mode: users (who used it lately), mean (bad half-hours per trip)}, parking_pain_mean_of_owners, fleet_parked_at_businesses, fleet_bought_total, fleet_returned_today}} |
 | `industry` | by_kind (farming, oil, refinery, manufacturing, logistics, fishing, tech): buildings, open, jobs, mean_staffing, profit_today, nuisance {radius_m, weight}, fouls_ground; contamination {cells, cells_over_0_3, max, total, cell_m}; fleet {truck_and_bus_lots, bays, trucks_parked, trucks_on_road, returning_empty}; biases {count, newest_first}; plant_land_value (each plant kind's radius, weight, load, ash) |
 | `alerts` | the ranked list below |
 | `history` | only when asked for by name: the sim's own history (`nd_sim::history`, kept in the save, unlike the `history` command's app-side rings) as columns, oldest first. `days` (the last `history_days`, default 30, max 365): day, treasury (after midnight upkeep), net, income, spending, `ledger.<flow>` for every flow, `income_tax.<low/mid/high>`, `business_tax.<land use>`, population, households, working_age, employed, unemployed, unhoused, waiting_immigrants, `classes.<class>`, homes, homes_filled, jobs, jobs_filled, buildings, sites, avg_land_value, gini, `avg_rent.<tier>`, `demand.<land use>`, businesses, imports, exports, materials, deals, `supply_mwh.<plant kind>`, demand_mwh, imported_mwh, peak_demand_mw, brownout_hours, bus_riders, rail_riders, ferry_riders, air_riders, `route_riders.<line name>`, `incidents.<fire/crime/medical>`, `resolved.<kind>`, unanswered, out_of_town_calls, avg_response_min. `hours` (the last 72): day, hour, treasury, population, supply_mw, `supply_mw.<plant kind>`, demand_mw, imported_mw, served, bus_waiting, bus_riding, rail_riding, cars. Also `days_kept` |
@@ -537,8 +611,9 @@ hunger (max 45.00 per 100 m cell; ' ' = 0)
 ### history
 
 `{"cmd": "history", "keys": ["population", "hungry"], "days": 30}`. Two rings kept **by the
-running app, not in saves**: they start empty when the game starts and start over on every load
-(the `load` command, or the clock going backwards or jumping more than two days at once).
+running app, not in saves**. They start empty when the game starts. They start over whenever the
+city is replaced (a load or a new game, from the API or the UI), and when the clock goes backwards
+or jumps more than two days at once.
 
 - `daily` (up to 365 days): day, population, households, homes_total, jobs_total, jobs_filled,
   treasury, net_yesterday, tax_yesterday, gini, avg_land_value, mean_mood, hungry, unemployed,
@@ -581,10 +656,11 @@ numeric range, anything else by equality. Sorting puts nulls last; `id` is alway
 
 ### export
 
-`{"cmd": "export", "path": "optional.json"}` writes `report` (all sections), `map_summary`,
+`{"cmd": "export", "path": "exports/optional.json"}` writes `report` (all sections), `map_summary`,
 `history` and `tables` (every row of every `list` kind) as one JSON document, by default to
-`<working dir>/exports/city-<unix>.json` (`/exports` is git-ignored). Reply: `path`, `bytes`,
-`took_ms`.
+`<working dir>/exports/city-<unix>.json` (`/exports` is git-ignored). A given path must end in
+`.json` and lie in the allowed folders (see [Who may call](#who-may-call)). The file is written
+atomically. Reply: `path`, `bytes`, `took_ms`.
 
 ### Timings
 
@@ -602,10 +678,11 @@ the time spent on the main thread inside the frame; best and worst of five calls
 
 ## Caveats
 
-- **Localhost only**, no authentication: anything on the machine can drive the game. Do not
-  forward the port. Set `ND_REMOTE=0` to turn it off.
-- One frame of latency per request; the HTTP thread gives up after 5 s (HTTP 504), e.g. while the
-  window is minimised and frames stall.
+- **Localhost only**, no authentication: any program on the machine can drive the game. Web pages
+  cannot (see [Who may call](#who-may-call)). Do not forward the port. Set `ND_REMOTE=0` to turn
+  it off.
+- One frame of latency per request. A command not taken within 5 s is withdrawn (HTTP 504), e.g.
+  while the window is minimised and frames stall.
 - Remote edits go through the same `World` calls as the tools, so they behave identically,
   including undo within a project, costs and refusals.
 - `load` replaces the city: all ids from before are invalid.
@@ -636,7 +713,8 @@ patients before the queue runs. Round-the-clock posts keep all three shifts mann
 night crews keep night hours.
 
 `incident {kind, building | citizen}` starts one by hand (fire, crime or medical) for testing; reply
-`incident` (its id, as in the report and the events).
+`incident` (its id, as in the report and the events). `incidents {kind}` filters by fire, crime or
+medical (crash victims are medical incidents).
 `incident {kind: "crash", car? | at?: [x, y], speed? (m/s, default 25 = written off)}` crashes a car
 (the next tick turns it into injuries and 911 calls); `incident {kind: "takeover", at?: [x, y]}`
 starts a street takeover at the junction nearest `at`.
@@ -660,6 +738,29 @@ Events in the log (`events`): `IncidentStarted`, `EmergencyCall`, `UnitDispatche
 `FireSpread`, `BurnedDown`, `StadiumEvent`, `Arrested` (incident, citizen), `Released` (citizen). Building rows carry `service` (`"fire:mid"`) and
 `burning`. Emergency vehicles are cars in `find {what: "cars"}`; the units behind them are in
 `report {sections: ["services"]}` under `emergency.stations` and `emergency.active_incidents`.
+
+## Concerns and happiness
+
+`concerns {days?, concern?, quotes?}`: what people complain about. Each person counts once a day
+per concern. Fields:
+
+- `days`: the window for the daily counts and happiness, default 30.
+- `concern`: only one of housing, food, jobs, safety, trash, noise, commute, parking, power,
+  services, nightlife, displacement, other.
+- `quotes`: recent quotes per concern, default 5.
+
+Reply:
+
+- `concerns`, ranked by people this week. Each has `concern`, `label`, `this_week`, `last_week`,
+  `today`, `all_time`, `trend`, `direction` (rising / falling / steady), `mean_severity`, `where`
+  {at, complaints, near, building} (the hot spot), `quotes` (citizen, name, text, day, severity,
+  building, at) and `daily` (counts over `days`).
+- `categories` (key, label, about).
+- `happiness_now`, `happiness_daily` and `happiness_hourly` (48 h). Each sample has day, tick,
+  people, mean, unhappy_share, happy_share and by_class.
+
+`report.people.concerns` has the top six concerns. The `top_concern` alert names the leading one.
+`window {name: "people", tab: "concerns"}` shows them in game.
 
 ## Districts and tourism
 
