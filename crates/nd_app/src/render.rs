@@ -30,6 +30,9 @@ use crate::ui::UiFlags;
 use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
 
+/// Emergency vehicles, fires and rubble (render/emergency.rs).
+mod emergency;
+
 /// Side of the square cells that buildings and vacant-lot dressing are
 /// batched into. Wide enough that a few hundred buildings become a few dozen
 /// meshes per surface, small enough that one changed building regenerates a
@@ -228,6 +231,8 @@ impl Plugin for RenderPlugin {
         );
         app.add_systems(Update, sync_lane_arrows.in_set(SimSet::Sync).after(sync_signals).before(lift_spawned));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
+        // Emergency vehicles, fires and rubble, after the cars they hide.
+        app.add_systems(Update, emergency::sync_emergency.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
     }
 }
 
@@ -997,6 +1002,7 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         port: b.port,
         construction: b.construction.as_ref().map(|c| c.progress),
         neighbours: styles.neighbours(id),
+        service: b.service.map(|s| s.kind),
     };
     let mut g = generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras);
     // Every building stands on its lot's levelled pad.

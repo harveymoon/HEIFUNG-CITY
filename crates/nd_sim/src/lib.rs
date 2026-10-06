@@ -21,6 +21,7 @@ pub mod ports;
 pub mod power;
 pub mod rail;
 pub mod roads;
+pub mod services;
 pub mod traffic;
 pub mod transit;
 pub mod walk;
@@ -45,6 +46,7 @@ pub use ports::{Port, PortId, PortKind, Ports, Ship, ShipKind};
 pub use park::{ParkFeature, ParkLayout};
 pub use transit::{BusRoute, BusStop, RouteId, Transit, TransitStats};
 pub use rail::{Facility, FacilityId, Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
+pub use services::{BuildCategory, Incident, IncidentKind, Placeable, ServiceKind, ServiceSite, Services, ServiceStats, Unit, UnitId, UnitKind};
 pub use world::{World, WorldConfig};
 pub use zoning::{LandUse, Lot, LotId, Zone, ZoneId};
 

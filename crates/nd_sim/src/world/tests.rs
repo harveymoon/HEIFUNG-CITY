@@ -721,7 +721,9 @@ fn stations_and_yards_never_share_ground_with_other_buildings() {
 
 #[test]
 fn cheap_buildings_on_dear_land_are_redeveloped_and_price_people_out() {
+    // No random fires here: the test is about rent, not a blaze. (services)
     let mut w = flat_world();
+    w.config.emergencies = false;
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
     w.land_value.fill(0.1);

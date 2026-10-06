@@ -27,6 +27,7 @@ mod towers;
 mod works;
 
 pub use adjacency::{Neighbour, StyleBook};
+mod services;
 
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface};
@@ -157,6 +158,15 @@ pub enum Style {
     PowerGeothermal,
     ShippingPort,
     FerryTerminal,
+    // city services and attractions (buildings/services.rs), placed by the player
+    PoliceStation,
+    FireStation,
+    Hospital,
+    School,
+    DispatchCenter,
+    Landmark,
+    Stadium,
+    Prison,
 }
 
 impl Style {
@@ -165,7 +175,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 61] = [
+    pub const ALL: [Style; 69] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -227,7 +237,30 @@ impl Style {
         Style::PowerGeothermal,
         Style::ShippingPort,
         Style::FerryTerminal,
+        Style::PoliceStation,
+        Style::FireStation,
+        Style::Hospital,
+        Style::School,
+        Style::DispatchCenter,
+        Style::Landmark,
+        Style::Stadium,
+        Style::Prison,
     ];
+
+    /// The style a placed service or attraction is drawn in.
+    pub fn for_service(kind: nd_sim::services::ServiceKind) -> Style {
+        use nd_sim::services::ServiceKind as K;
+        match kind {
+            K::Police => Style::PoliceStation,
+            K::Fire => Style::FireStation,
+            K::Health => Style::Hospital,
+            K::School => Style::School,
+            K::Dispatch => Style::DispatchCenter,
+            K::Monument => Style::Landmark,
+            K::Stadium => Style::Stadium,
+            K::Jail => Style::Prison,
+        }
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -292,6 +325,14 @@ impl Style {
             Style::PowerGeothermal => "geothermal plant",
             Style::ShippingPort => "shipping port",
             Style::FerryTerminal => "ferry terminal",
+            Style::PoliceStation => "police station",
+            Style::FireStation => "fire station",
+            Style::Hospital => "hospital",
+            Style::School => "school",
+            Style::DispatchCenter => "911 dispatch centre",
+            Style::Landmark => "landmark",
+            Style::Stadium => "stadium",
+            Style::Prison => "jail",
         }
     }
 }
@@ -779,11 +820,13 @@ pub struct Extras<'a> {
     /// Styles of the buildings already standing nearby (see
     /// [`StyleBook`]); the style pick clusters or contrasts with them.
     pub neighbours: &'a [Neighbour],
+    /// A city service or attraction: its own style, at the placed tier.
+    pub service: Option<nd_sim::services::ServiceKind>,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, neighbours: &[] }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, neighbours: &[], service: None }
     }
 }
 
@@ -884,6 +927,7 @@ pub fn generate_building(
 pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: u64, rules: &BuildingRules, extras: &Extras) -> Style {
     let mut rng = rng_for(seed, 11);
     match (extras.plant, extras.parking) {
+        _ if extras.service.is_some() => Style::for_service(extras.service.unwrap()),
         _ if extras.depot => Style::BusDepot,
         _ if extras.port == Some(nd_sim::ports::PortKind::ShippingPort) => Style::ShippingPort,
         _ if extras.port == Some(nd_sim::ports::PortKind::FerryTerminal) => Style::FerryTerminal,
@@ -1033,6 +1077,14 @@ fn generate_styled_extras(
         Style::PowerGeothermal => waterworks::geothermal(&mut g, &ctx, &mut rng),
         Style::ShippingPort => waterworks::shipping_port(&mut g, &ctx, &mut rng),
         Style::FerryTerminal => waterworks::ferry_terminal(&mut g, &ctx, &mut rng),
+        Style::PoliceStation => services::police_station(&mut g, &ctx, &mut rng),
+        Style::FireStation => services::fire_station(&mut g, &ctx, &mut rng),
+        Style::Hospital => services::hospital(&mut g, &ctx, &mut rng),
+        Style::School => services::school(&mut g, &ctx, &mut rng),
+        Style::DispatchCenter => services::dispatch_center(&mut g, &ctx, &mut rng),
+        Style::Landmark => services::landmark(&mut g, &ctx, &mut rng),
+        Style::Stadium => services::stadium(&mut g, &ctx, &mut rng),
+        Style::Prison => services::prison(&mut g, &ctx, &mut rng),
     }
     if weathered(tier, ctx.wear) {
         g.weather();
@@ -1398,6 +1450,15 @@ mod tests {
             check_mesh(g, "parking");
             let (over, _, low, culprit) = extent(g, lot, None);
             assert!(over <= 1.0 && low >= -0.3, "parking leaves its lot: {over:.1} m / {low:.1}: {culprit}");
+        }
+        // Services and attractions, every tier, drawn through their extras.
+        for kind in nd_sim::services::ServiceKind::ALL {
+            for tier in Tier::ALL {
+                let g = generate_building(lot, LandUse::Civic, 1, tier, 0.9, 9, &rules, &pal, &Extras { service: Some(kind), ..Extras::default() });
+                check_mesh(&g, "service");
+                let (over, _, low, culprit) = extent(&g, lot, None);
+                assert!(g.triangle_count() > 50 && over <= 1.0 && low >= -0.3, "{kind:?} {tier:?}: {over:.1} m / {low:.1}: {culprit}");
+            }
         }
         // Depot.
         let depot = generate_building(lot, LandUse::Civic, 2, Tier::Mid, 0.8, 5, &rules, &pal, &Extras { depot: true, ..Extras::default() });

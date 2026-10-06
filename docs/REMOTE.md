@@ -1,4 +1,4 @@
-# Remote control API
+﻿# Remote control API
 
 The game runs a small HTTP JSON API on localhost so scripts, tests and AI assistants can drive
 and inspect it without synthetic keystrokes or clicks. `tools/mcp/nd_mcp.py` wraps it as an MCP
@@ -35,7 +35,7 @@ the replies back. So:
   save and load of the same city.
 - Plan gestures (roads and zones as drawn) have plain integer ids (`gesture_id`).
 - Positions are **`[x, y]` in sim metres** on the ground plane (the renderer's x and z). The starter
-  avenues run along x = 0 and y = 0; the map spans about ±1000 m; the rail trunk is at y = -480.
+  avenues run along x = 0 and y = 0; the map spans about Â±1000 m; the rail trunk is at y = -480.
 - Times: a tick is one sim minute; `day` is 1-based.
 
 ## Commands
@@ -49,7 +49,7 @@ Every example is the POST body; the reply always carries `"ok"`.
 | `help` | | every command and its fields |
 | `status` | | clock, paused, speed, effective_speed, population, buildings, under_construction, lots, homes/jobs, treasury, ledger_yesterday, power, weather, land, market, demand, traffic, transit, rail, render (fps, ticks_per_frame, triangles), camera, tool, selection, project, overlays, lighting, message, tool_status, event_seq, favourites, `windows_open`, `alerts_top` (the first 5 of `report`'s alerts) |
 | `pause` | `paused` bool (omit to toggle) | `paused` |
-| `speed` | `index` 0..4 (1×, 4×, 16×, 64×, 256×) or `value` (sim minutes per real second, snapped) | `speed_index`, `speed`, `label` |
+| `speed` | `index` 0..4 (1Ã—, 4Ã—, 16Ã—, 64Ã—, 256Ã—) or `value` (sim minutes per real second, snapped) | `speed_index`, `speed`, `label` |
 | `step` | `ticks` (default 1, max 100000) | `clock`, `took_ms` |
 
 `step` runs the ticks immediately, on the main thread, even while paused (the same `World::tick`
@@ -125,11 +125,22 @@ Reply: `gesture_id`, `implemented`, `project` (`steps`, `redo`), `plan_version`.
   point (`World::place_port`). Ports need a river at least 40 m wide or the sea; ferries any water
   16 m or wider. Each builds a pier and, unless a street is already along its landward side, a
   street stub to join to the city.
+- `depot`, `parking`, `coal`, `solar`, `wind`, `nuclear`: on the lot under the point, or the nearest
+  vacant lot within 80 m (`build_depot`, `build_parking`, `build_power`).
+- Services and attractions: `police`, `fire`, `hospital` (`clinic` is a low-tier hospital), `school`, `jail`,
+  `dispatch`, `monument`, `stadium`, with `tier` low / mid / high (default mid) or a suffix
+  (`"fire:high"`), on the lot under the point (`World::place_on_lot`, `build_service`). Whatever grew
+  on the lot is bought out and pulled down; another civic building refuses ("bulldoze it first").
+  Refusals name the reason: land use, lot area, no street out front (police, fire, health, stadium),
+  treasury. Costs, upkeep, jobs, coverage radius, vehicles and capacity per tier are in
+  `nd_sim::services::ServiceKind`.
 
 Reply: `building` id, `message`, `row`, `treasury`; or the sim's reason as `error`.
 
 ```json
 {"cmd": "place", "kind": "solar", "x": -210, "y": -210}
+{"cmd": "place", "kind": "fire", "tier": "high", "x": 120, "y": 40}
+{"cmd": "place", "kind": "dispatch:low", "x": -80, "y": 40}
 ```
 
 ### Buses
@@ -192,7 +203,7 @@ with none, the current selection. The detail matches what the inspector and the 
 | --- | --- |
 | `select` | `citizen` / `building` / `car` id, or `at: [x, y]` (picks like a click), or nothing to clear |
 | `favourite` | `citizen`, `on` (omit to toggle) |
-| `tool` | `name` (inspect, road, zone, edit, bulldoze, power, transit, rail), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway), `kind` (the active tool's sub-mode: road kind, plant, station / freight_yard, route / depot, land use), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture` |
+| `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture` |
 | `overlay` | `land_value`, `paths`, `zoning` (bools) |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
 | `window` | `name` city / economy / market / people / power / transit / land / saves / help / dev, `open` (omit to toggle). Reply `open`, `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it |
@@ -219,7 +230,7 @@ Reply: the pose (`mode`, `target`, `distance`, `yaw`, `pitch`, `eye`), and `foll
 `save_to_disk`) and replies at once with the absolute `path` (default
 `<working dir>/screenshots/shot-<unix seconds>.png`). **The file is written a frame or two later**,
 when the GPU copy lands: poll for it (the MCP tool waits up to 5 s). It captures the whole window,
-UI panel included, at the window's size (a full-HD window makes a 2–5 MB PNG). PNG only. A
+UI panel included, at the window's size (a full-HD window makes a 2â€“5 MB PNG). PNG only. A
 minimised window renders nothing and produces no file.
 
 ### Events
@@ -258,7 +269,7 @@ Each reply carries `took_ms`; see the timings measured on a real city at the end
 | `people` | by_class, by_activity, employment {employed, employed_in_businesses, employed_on_building_sites, unemployed_on_gig_income, unemployment_share, jobs_free}, housing {housed, unhoused, waiting_immigrants, homes_free}, income_per_day and savings (distributions; savings also in_overdraft, at_overdraft_floor), rent_burden {over_30pct_of_income, over_50pct_of_income, their shares, rent_stressed_now, rent_to_income distribution}, mood (distribution 0..1), hunger {hungry_now, mean_satiety, no_groceries_at_home, hungry_days histogram 0..4+}, commute_modes_now (walk/bike/car/bus/train counts and shares of the people travelling now; owns_car_share, owns_bike_share), moves (displaced, emigrated, priced-out totals), recent_memory_reasons (memories of the last 2 days grouped by their fixed text, e.g. "Rent got too steep", "Couldn't afford anything at") |
 | `economy` | treasury, ledger {today_so_far and yesterday by flow, nets}, tax_today, upkeep_today, trade_today {imports_value, exports_value, building_materials_imported, deals, meals_sold, walk_in_sales, parking_fees}, businesses {total, open, closed_ever, by_kind: count, open, closed, mean_staffing, mean_money, revenue and spend totals, inputs (stock, target, fill), outputs (stock, mean_price)}, resources (town_stock, avg_price, price_vs_base, local_sellers_open, local_supply_per_day, business_demand_per_day, scarce), most_profitable_today and least_profitable_today (10 each, with ids) |
 | `land` | lots_by_land_use {vacant, built, under_construction, unusable, total, area_m2}, buildings_by_land_use_and_tier, special_buildings, floors_histogram, rents_by_tier {buildings, homes, residents, occupancy, rent_per_home_day_avg, min, max}, land_value {avg_grid, lots distribution, tier_cuts}, parks {lots, area_m2} |
-| `services` | power {supply, demand and imported MW, served_share, unpowered_buildings, brownout_hours_today, weather, plants: id, kind, capacity_mw, available_mw, output_mw_est, upkeep, pollution}, transit {routes: id, stops, buses_wanted, buses_running, riders_today, waiting, length_m, broken_legs, runnable; totals}, rail {facilities: id, kind, rail_connected, road_connected, works, waiting_passengers, freight units; trains by kind; riders, freight}, parking {capacity, used, occupancy, parked_on_street_today, last_shortage_at}, traffic {vehicles, cars, trucks, buses, mean_speed_kmh_moving, stopped, stuck, waiting_at_kerb, gridlocks, left_turn_wait_mean_s, left_turn_wait_max_s (over the last 500 left turns), left_turns_measured, protected_left_arrows_now, passing_left_turners_now, lane_use_set_by_player, lanes, intersections, signals} |
+| `services` | emergency {coverage_pct_of_homes {police, fire, health, school}, incidents_today {fire, crime, medical}, resolved_today, unanswered_today, arrests_today, avg_response_min (call to arrival, today or else yesterday), units, units_busy, fires_burning, burned_down_total, waiting_for_ambulance, in_hospital, dispatch {dispatcher_on_duty, minutes_to_dispatch}, stadium_crowd_today, tickets_today, stadium_events_tonight, upkeep_per_day, education_wage_bonus_today, stations: id, kind, tier, workers, radius_m, units, units_crewed, units_busy, beds_used, capacity; active_incidents: id, kind, stage, building, minutes_since_start, intensity, unit, dispatcher; recent (last 10 resolved with outcome and response_min)}, power {supply, demand and imported MW, served_share, unpowered_buildings, brownout_hours_today, weather, plants: id, kind, capacity_mw, available_mw, output_mw_est, upkeep, pollution}, transit {routes: id, stops, buses_wanted, buses_running, riders_today, waiting, length_m, broken_legs, runnable; totals}, rail {facilities: id, kind, rail_connected, road_connected, works, waiting_passengers, freight units; trains by kind; riders, freight}, parking {capacity, used, occupancy, parked_on_street_today, last_shortage_at}, traffic {vehicles, cars, trucks, buses, mean_speed_kmh_moving, stopped, stuck, waiting_at_kerb, gridlocks, left_turn_wait_mean_s, left_turn_wait_max_s (over the last 500 left turns), left_turns_measured, protected_left_arrows_now, passing_left_turners_now, lane_use_set_by_player, lanes, intersections, signals} |
 | `alerts` | the ranked list below |
 
 A distribution is `{count, mean, median, p10, p90, min, max, histogram: {edges (bins + 1), counts}}`
@@ -272,7 +283,10 @@ food_sellers_understaffed, food_sellers_empty, closed_businesses, broke_business
 unpowered_buildings, overcrowded_homes, rail_facility_not_connected, bus_route_broken,
 construction_waiting_for_materials, stuck_vehicles, derelict_buildings,
 vacant_lots_with_high_demand, high_unemployment, treasury_losing_money, parking_shortage,
-scarce_resources. The thresholds are named constants at the top of `remote/report.rs`: hungry =
+scarce_resources, fires_burning, no_police_coverage, no_fire_coverage, no_health_coverage,
+no_school_coverage (residential buildings outside a service's road reach, once there are 10+),
+slow_emergency_response (average over 45 minutes from call to arrival), no_dispatcher (calls go to
+the regional line). The thresholds are named constants at the top of `remote/report.rs`: hungry =
 satiety < 0.3; starving = 2+ hungry days (the sim sends people away at 4); a food seller is
 understaffed below 50 %; unpowered = under 60 % of demand met; rent stress = rent over 50 % of
 income; stuck = in traffic and standing still for 180 s (not a bus at a stop, not at a red light;
@@ -399,3 +413,23 @@ the time spent on the main thread inside the frame; best and worst of five calls
 - Remote edits go through the same `World` calls as the tools, so they behave identically,
   including undo within a project, costs and refusals.
 - `load` replaces the city: all ids from before are invalid.
+
+## Services and emergencies
+
+`incidents {active?, limit?, kind?}` returns the record, newest first (up to 500 kept): id, kind,
+title (fire, robbery, theft, assault, vandalism, medical), stage, outcome, place, pos, the ticks it
+started / was called in / dispatched / arrived / resolved, call_to_dispatch_min, dispatch_to_scene_min,
+on_scene_min, call_to_arrival_min, unit ("Engine 2, Eastgate Fire HQ" or "fire engine from out of
+town"), out_of_town, fee, people (citizen, name, role caller / dispatcher / victim / suspect /
+patient, taken_to), damage (building, name, condition_lost, destroyed); plus jail_occupancy,
+held_at_stations, released_early_total and today's out-of-town calls and fees. The Emergencies
+window (`window {name: "emergencies"}`) shows the same, live.
+
+`incident {kind, building | citizen}` starts one by hand (fire, crime or medical) for testing; reply
+`incident` (its id, as in the report and the events).
+
+Events in the log (`events`): `IncidentStarted`, `EmergencyCall`, `UnitDispatched`, `UnitOnScene`,
+`IncidentResolved` (each with `incident`, `type` fire / crime / medical, `building`, `outcome`),
+`FireSpread`, `BurnedDown`, `StadiumEvent`, `Arrested` (incident, citizen), `Released` (citizen). Building rows carry `service` (`"fire:mid"`) and
+`burning`. Emergency vehicles are cars in `find {what: "cars"}`; the units behind them are in
+`report {sections: ["services"]}` under `emergency.stations` and `emergency.active_incidents`.

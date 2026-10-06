@@ -91,7 +91,23 @@ links Bevy dynamically for quicker iteration.
   sub-pane sets buses per line; the Transit window shows lines, riders and fares for buses and rail. Place a depot (Depot mode) on a vacant lot by a street: no depot, no buses.
   Buses leave at 05:30, dwell at every stop, and go home at 23:30. People without a bike ride when a
   line serves both ends of a long trip; they wait at the stop, pay a fare, and walk the last leg.
-- **Power**: buildings need electricity. The Power tool (`6`) places a coal plant, solar farm, wind
+- **Buildings [6]**: one tool for everything the city places, by sub-category: Power (coal, solar,
+  wind, nuclear), Services (police, fire, health, education, 911 dispatch, each in three tiers),
+  Transit (bus depot), Rail (station, freight yard) and Attractions (monument, stadium). The preview
+  outlines the lot green or red and rings the coverage radius; whatever grew on the lot is bought out.
+- **Services and emergencies**: police, fire and health stations cover the homes within their road
+  radius and run vehicles. Fires break out (cheap, worn, industrial buildings most), crimes happen
+  (low land value, unemployment, night) and people fall ill (age, hunger); someone calls 911, a
+  dispatcher at a dispatch centre sends the nearest free unit (slow without one on shift), the fire
+  engine, police car or ambulance drives there with lights flashing, works on scene and returns; the
+  sick go to a hospital bed. Fires nobody fights spread and burn buildings down to rubble. Coverage
+  cuts the risks and lifts land value; schools raise the wages of workers living near them; stadiums
+  host games some evenings (crowds, tickets); monuments lift the land around them. Jails hold the
+  arrested for days (without one they are let go after a few hours). With no station of the right
+  kind, a dispatcher calls in help from out of town: slow and billed. The **Emergencies** window lists
+  every call live and on record: who called, the dispatcher, the unit, times from dispatch to scene
+  and on scene, the people involved and where they were taken, and fire damage.
+- **Power**: buildings need electricity. The Buildings tool's Power category places a coal plant, solar farm, wind
   farm or nuclear plant on a vacant lot, paid from the treasury. Coal is cheap and steady but hangs a
   toxic haze over the district and drags land value down; solar and wind are clean but follow the sun,
   cloud and wind; nuclear is enormous and expensive. The regional grid sells a little power to cover

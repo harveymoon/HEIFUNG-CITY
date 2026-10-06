@@ -214,6 +214,10 @@ pub struct Building {
     /// A shipping port or ferry terminal.
     #[serde(default)]
     pub port: Option<crate::ports::PortKind>,
+    /// A police, fire, health, school or dispatch building, or an
+    /// attraction, placed by the player (`nd_sim::services`).
+    #[serde(default)]
+    pub service: Option<crate::services::ServiceSite>,
 }
 
 fn one() -> f32 {
@@ -256,6 +260,7 @@ impl Building {
             rail_outbound: 0.0,
             port: None,
             construction: None,
+            service: None,
         };
         b.recompute_capacity();
         b.update_rent(land_value);
@@ -264,6 +269,12 @@ impl Building {
 
     pub fn is_parking(&self) -> bool {
         self.business.as_ref().map_or(false, |b| b.kind == Business::PARKING_KIND)
+    }
+
+    /// Placed by the player: a plant, depot, station, yard, service or
+    /// attraction. Never upgraded, redeveloped or counted towards density.
+    pub fn is_special(&self) -> bool {
+        self.plant.is_some() || self.depot || self.rail.is_some() || self.service.is_some()
     }
 
     pub fn parking_free(&self) -> u16 {
@@ -292,7 +303,7 @@ impl Building {
             self.parking_capacity = 0;
             return;
         }
-        if self.is_parking() || self.plant.is_some() || self.depot || self.rail.is_some() {
+        if self.is_parking() || self.is_special() {
             return;
         }
         let f = self.floors as u16;
@@ -361,6 +372,9 @@ impl Building {
     /// When the doors are open: the business's hours, round the clock for
     /// everything else (parks, plants, homes).
     pub fn opening_hours(&self) -> Hours {
+        if let Some(s) = self.service {
+            return s.kind.hours();
+        }
         self.business.as_ref().map_or(Hours::ALWAYS, |z| z.kind.hours())
     }
 
@@ -368,6 +382,10 @@ impl Building {
     pub fn shift_for(&self, seed: u64) -> Hours {
         if self.construction.is_some() {
             return Hours::new(7, 17);
+        }
+        // Stations, hospitals and dispatch run 24 h in three shifts.
+        if let Some(s) = self.service {
+            return s.kind.hours().shift(seed);
         }
         match &self.business {
             Some(z) => z.kind.hours().shift(seed),

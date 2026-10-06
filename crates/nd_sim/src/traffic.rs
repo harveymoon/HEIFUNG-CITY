@@ -105,6 +105,11 @@ const TRUCK_SPEED_FACTOR: f32 = 0.85;
 /// Trips older than this (traffic seconds) end where the car stands. A bus
 /// is never ended this way (its riders would be teleported with it): it is
 /// re-planned from where it stands instead.
+/// [services] Emergency vehicles drive this much over the limit; cars this
+/// far ahead of one on its lane pull this far to the right.
+const SIREN_SPEED_FACTOR: f32 = 1.25;
+const SIREN_CLEAR: f32 = 40.0;
+const SIREN_PULL_ASIDE: f32 = 1.6;
 const TRIP_TIMEOUT: f32 = 1800.0;
 
 #[derive(Clone, Debug)]
@@ -428,6 +433,10 @@ pub struct Car {
     /// Of those, seconds at the stop line yielding to oncoming traffic.
     #[serde(default)]
     pub yielded: f32,
+    /// [services] An emergency vehicle with lights and sirens: it runs red
+    /// lights and passes queues, and the cars ahead of it pull aside.
+    #[serde(default)]
+    pub siren: bool,
 }
 
 /// Why a car is not driving freely.
@@ -460,6 +469,9 @@ impl Car {
 
     /// Desired speed on a lane with this limit.
     fn desired_speed(&self, limit: f32) -> f32 {
+        if self.siren {
+            return limit * SIREN_SPEED_FACTOR;
+        }
         if self.cargo.is_some() { limit * TRUCK_SPEED_FACTOR } else { limit }
     }
 
@@ -1123,7 +1135,7 @@ impl Traffic {
         let lane = route[0];
         let (pos, dir) = self.net.lanes[lane as usize].point_at(s_start);
         let heading = dir.y.atan2(dir.x);
-        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, passing: false, turn_wait: 0.0, yielded: 0.0 });
+        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false });
         self.pull_out(id);
         id
     }
@@ -1714,6 +1726,26 @@ impl Traffic {
 
     /// Advance all cars by `seconds` in `substeps` steps. Returns cars that
     /// reached their destination (they stay in `cars` until removed).
+    /// [services] Cars a little ahead of an emergency vehicle on its lane
+    /// pull to the right and slow to a crawl so it can pass.
+    fn yield_to_sirens(&mut self) {
+        let mut pull: Vec<CarId> = Vec::new();
+        for lane in &self.net.lanes {
+            for (k, &cid) in lane.cars.iter().enumerate() {
+                if !self.cars[cid].siren {
+                    continue;
+                }
+                let s = self.cars[cid].s;
+                pull.extend(lane.cars[k + 1..].iter().copied().filter(|&o| !self.cars[o].siren && self.cars[o].s - s < SIREN_CLEAR));
+            }
+        }
+        for id in pull {
+            let c = &mut self.cars[id];
+            c.lateral = c.lateral.max(SIREN_PULL_ASIDE);
+            c.v = c.v.min(2.0);
+        }
+    }
+
     pub fn step(&mut self, seconds: f32, substeps: usize) -> Vec<CarId> {
         let dt = seconds / substeps.max(1) as f32;
         for car in self.cars.values_mut() {
@@ -1755,6 +1787,10 @@ impl Traffic {
                     if car.passing && matches!(why, Wait::Signal | Wait::ExitFull | Wait::Yield) {
                         // On the shoulder: stop short of the crossing.
                         gap -= CROSSING_SETBACK;
+                    }
+                    // [services] Lights and sirens: no leader, no red light.
+                    if car.siren {
+                        (gap, lead_v, why) = (LOOKAHEAD * 2.0, ROAD_SPEED, Wait::Free);
                     }
                     if pending {
                         // Stop at the end of the lane until the change is made.
@@ -1815,6 +1851,8 @@ impl Traffic {
                     car.lateral -= car.lateral.signum() * car.lateral.abs().min(rate);
                 }
             }
+
+            self.yield_to_sirens();
 
             let waiting: Vec<CarId> = self.cars.iter().filter(|(_, c)| c.entering).map(|(id, _)| id).collect();
             for id in waiting {

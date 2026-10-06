@@ -6,6 +6,7 @@
 //! input flags the rest of the app reads, and the frame skeleton; each piece
 //! of the HUD lives in its own module.
 
+mod emergencies;
 mod help;
 mod hover;
 mod inspector;
