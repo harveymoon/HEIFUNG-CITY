@@ -308,7 +308,7 @@ Citizens are rendered from their simulated positions every frame.
   impression (fit) and word of mouth (`Reputation::pull`: rating, sworn-off customers); a softmax
   over the pool, with curiosity deciding between known and new; `Intent::Explore` (rule mind:
   "looking for a drink") looks at unknown places near by. Groceries: the habitual shop unless
-  another is far cheaper. A sociable citizen may bring a free household member or coworker along.
+  another is far cheaper. A sociable citizen may bring a free household member or coworker along (5% + 20% x sociability per outing); a regular spot adds 6% to the evening's pull.
   Regulars stand an extra round (20% on the tab; drinks cost 0.9/1.0/1.4x by tier). All draws are
   seeded by citizen and tick, so replays repeat.
 - **Parking businesses**: when the day's circling outruns free spaces, development opens a

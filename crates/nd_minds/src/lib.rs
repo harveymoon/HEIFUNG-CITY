@@ -245,9 +245,7 @@ impl MindProvider for RuleBasedMind {
         }
 
         if clock.is_night() {
-            // Regulars drift back to their spot even on a quiet night.
-            let habit = if ctx.regular_spot.is_some() { 0.1 } else { 0.0 };
-            if grown && ctx.wakefulness > 0.25 && ctx.available[LandUse::Entertainment.index()] && (p.hedonism > 0.75 && self.rng.random_bool(0.25) || self.rng.random::<f32>() < habit) {
+            if grown && p.hedonism > 0.75 && ctx.wakefulness > 0.25 && ctx.available[LandUse::Entertainment.index()] && self.rng.random_bool(0.25) {
                 return self.night_out(ctx, &p);
             }
             let t = self.pick(NIGHT_THOUGHTS);
@@ -266,7 +264,7 @@ impl MindProvider for RuleBasedMind {
         if clock.is_evening() {
             let roll: f32 = self.rng.random();
             // [places] Having a regular spot is a reason to go out.
-            let habit = if ctx.regular_spot.is_some() { 0.12 } else { 0.0 };
+            let habit = if ctx.regular_spot.is_some() { 0.06 } else { 0.0 };
             let p_party = (p.hedonism * 0.5 + p.sociability * 0.3) * 0.8 + habit;
             let p_shop = 0.25;
             let p_park = p.caution * 0.2;

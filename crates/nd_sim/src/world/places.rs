@@ -273,7 +273,7 @@ impl World {
         let Some(c) = self.citizens.get(id) else { return };
         let sociability = places::traits(c.seed)[0];
         let mut rng = crate::rng_for(c.seed ^ tick.wrapping_mul(0x9E37), 0xC0_4A11);
-        if rng.random::<f32>() >= 0.1 + 0.35 * sociability {
+        if rng.random::<f32>() >= 0.05 + 0.2 * sociability {
             return;
         }
         let name = c.name.clone();
