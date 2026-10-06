@@ -1128,60 +1128,22 @@ pub fn vehicle_fits(c: &Ctx, p: Vec2, yaw: f32, kind: Vehicle) -> bool {
 
 /// A vehicle standing on a surface at height `y` (a deck, the ground),
 /// facing `yaw` relative to the frame. Parking decks, depots and yards all
-/// draw their cars through here.
+/// draw their cars through here; the generator is `crate::vehicles`.
 #[allow(clippy::too_many_arguments)]
 pub fn vehicle(g: &mut Geometry, f: &Frame, pal: &Palette, rng: &mut impl Rng, p: Vec2, y: f32, yaw: f32, kind: Vehicle, color: [f32; 3]) {
-    let w = f.to_world(p.x, p.y);
-    let a = f.yaw() + yaw;
-    let m = |g: &mut Geometry, s: Surface, dx: f32, dy: f32, dz: f32, size: Vec3, col: [f32; 3]| {
-        let (sn, cs) = a.sin_cos();
-        let q = Vec3::new(w.x + dx * cs - dz * sn, y + dy, w.y + dx * sn + dz * cs);
-        g.part(s).boxed(q, size, a, rgba(col));
+    use crate::vehicles::Parked;
+    let kind = match kind {
+        Vehicle::Car => Parked::Car,
+        Vehicle::Van => Parked::Van,
+        Vehicle::Truck => Parked::Truck,
+        Vehicle::Wreck => Parked::Wreck,
+        Vehicle::Bus => Parked::Bus,
     };
-    let glass = pal.car_glass;
-    match kind {
-        Vehicle::Car => {
-            m(g, Metal, 0.0, 0.7, 0.0, Vec3::new(4.2, 0.9, 1.85), color);
-            m(g, Glass, -0.3, 1.4, 0.0, Vec3::new(2.2, 0.6, 1.6), glass);
-            for (dx, dz) in [(-1.4f32, -0.95f32), (1.4, -0.95), (-1.4, 0.95), (1.4, 0.95)] {
-                m(g, Matte, dx, 0.33, dz, Vec3::new(0.66, 0.66, 0.22), DARK);
-            }
-        }
-        Vehicle::Van => {
-            m(g, Metal, 0.0, 1.2, 0.0, Vec3::new(5.2, 1.9, 2.0), color);
-            m(g, Glass, 2.1, 1.7, 0.0, Vec3::new(0.9, 0.7, 1.9), glass);
-            for (dx, dz) in [(-1.6f32, -1.0f32), (1.6, -1.0), (-1.6, 1.0), (1.6, 1.0)] {
-                m(g, Matte, dx, 0.38, dz, Vec3::new(0.75, 0.75, 0.25), DARK);
-            }
-        }
-        Vehicle::Truck => {
-            m(g, Metal, -1.5, 1.6, 0.0, Vec3::new(7.0, 2.6, 2.4), color);
-            m(g, Metal, 3.2, 1.3, 0.0, Vec3::new(2.2, 2.2, 2.3), mul(pick(rng, &[[0.6, 0.6, 0.62], [0.2, 0.25, 0.4], [0.5, 0.12, 0.1]]), 1.0));
-            m(g, Glass, 4.2, 1.8, 0.0, Vec3::new(0.3, 0.8, 2.1), glass);
-            for dx in [-3.5f32, -2.3, 2.6] {
-                for dz in [-1.1f32, 1.1] {
-                    m(g, Matte, dx, 0.5, dz, Vec3::new(1.0, 1.0, 0.35), DARK);
-                }
-            }
-        }
-        Vehicle::Bus => {
-            m(g, Metal, 0.0, 1.6, 0.0, Vec3::new(11.5, 3.0, 2.5), color);
-            m(g, Glass, 0.0, 2.2, 0.0, Vec3::new(11.0, 0.9, 2.56), glass);
-            m(g, Glass, 5.6, 1.9, 0.0, Vec3::new(0.4, 1.6, 2.3), glass);
-            for dx in [-3.8f32, 3.6] {
-                for dz in [-1.15f32, 1.15] {
-                    m(g, Matte, dx, 0.5, dz, Vec3::new(1.0, 1.0, 0.3), DARK);
-                }
-            }
-        }
-        Vehicle::Wreck => {
-            m(g, Rust, 0.0, 0.4, 0.0, Vec3::new(4.0, 0.8, 1.8), mul(color, 0.6));
-            m(g, Rust, -0.3, 0.95, 0.0, Vec3::new(2.0, 0.4, 1.5), pal.rust);
-            if rng.random_bool(0.5) {
-                m(g, Matte, 1.3, 0.3, 0.95, Vec3::new(0.66, 0.6, 0.22), DARK);
-            }
-        }
-    }
+    // Trucks sat a little behind their anchor (see the footprint).
+    let back = if kind == Parked::Truck { -0.3 } else { 0.0 };
+    let a = f.yaw() + yaw;
+    let w = f.to_world(p.x, p.y) + Vec2::new(a.cos(), a.sin()) * back;
+    crate::vehicles::draw_parked(g, pal, rng, w, y, a, kind, color);
 }
 
 /// Heap of scrap: tyres, sheet, drums and a car on top sometimes.

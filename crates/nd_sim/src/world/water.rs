@@ -286,7 +286,8 @@ impl World {
             let s0 = s0.min(1.0);
             let Some((route, s0, s1)) = self.traffic.net.route_lanes(start_lane, s0, goal, s1) else { continue };
             let color = self.rng.random_range(0..8);
-            self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, color);
+            let id = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, color);
+            self.traffic.cars[id].model = crate::vehicle::VehicleModel::through(&mut crate::vehicle::model_rng(self.clock.tick, slotmap::Key::data(&id).as_ffi()));
             live += 1;
         }
     }

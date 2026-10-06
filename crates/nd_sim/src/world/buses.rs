@@ -168,6 +168,7 @@ impl World {
                         if let Some((lanes, s0, s1)) = self.traffic.net.find_route(seg, pt, first.segment, first.pos) {
                             let color = self.transit.routes[route].color;
                             let id = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, color);
+                            self.traffic.cars[id].model = crate::vehicle::VehicleModel::bus(color, &mut crate::vehicle::model_rng(tick, slotmap::Key::data(&id).as_ffi()));
                             self.traffic.cars[id].bus = Some(Bus { route, next_stop: 0, passengers: Vec::new(), to_depot: false, depot });
                             self.transit.last_dispatch_tick = tick;
                         }

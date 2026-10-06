@@ -267,6 +267,9 @@ pub struct World {
     /// Metres of bridge already paid for.
     #[serde(default)]
     pub bridge_metres: f32,
+    /// Pavement delivery robots and the day's home-delivery counts.
+    #[serde(default)]
+    pub bots: crate::bots::Bots,
 }
 
 impl World {
@@ -316,6 +319,7 @@ impl World {
             road_z: Vec::new(),
             ground: Ground::default(),
             bridge_metres: 0.0,
+            bots: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -585,6 +589,14 @@ impl World {
         self.step_transit();
         self.step_rail();
         self.step_ships();
+        if self.clock.minute_of_day() == 0 {
+            self.bots.delivered_today = 0;
+            self.bots.van_orders_today = 0;
+        }
+        if tick % crate::bots::ROUND_TICKS == 11 {
+            self.dispatch_deliveries();
+        }
+        self.step_bots();
         self.step_citizens(minds);
         // Every system that moves people has run: lay the breadcrumbs.
         for c in self.citizens.values_mut() {

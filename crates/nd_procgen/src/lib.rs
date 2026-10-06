@@ -8,6 +8,7 @@ pub mod street;
 pub mod surface;
 pub mod terrain;
 pub mod textures;
+pub mod vehicles;
 pub mod vacant;
 pub mod walk;
 
@@ -19,4 +20,5 @@ pub use surface::{Geometry, Surface};
 pub use terrain::{build_terrain, scatter_nature, terrain_height, TerrainConfig};
 pub use textures::{generate as generate_texture, mip_chain, Texture};
 pub use vacant::generate_vacant;
+pub use vehicles::{vehicle_mesh, VehicleMesh};
 pub use walk::{walk_detail, WALK_RADIUS, WALK_REDRAW};

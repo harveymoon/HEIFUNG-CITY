@@ -714,6 +714,12 @@ fn services(w: &World) -> Value {
             "waiting_at_kerb": kerb, "gridlocks": w.traffic.gridlocks().len(),
             "lanes": w.traffic.net.lanes.len(), "intersections": w.traffic.net.intersections.len(), "signals": w.traffic.net.intersections.iter().filter(|i| i.signalized).count(),
             "walk_trips_today": e.walk_trips_today,
+            "models": nd_sim::bots::fleet_counts(w),
+        },
+        "bots": {
+            "active": w.bots.bots.len(), "delivering": w.bots.bots.values().filter(|b| !b.returning).count(), "delivered_today": w.bots.delivered_today,
+            "vans_on_road": nd_sim::Bots::vans(w), "van_orders_today": w.bots.van_orders_today,
+            "rule": format!("shops deliver to homes within {} m; by pavement robot where shop and home both have land value >= {}, else by van", nd_sim::bots::DELIVERY_RANGE, nd_sim::bots::BOT_LAND_VALUE),
         },
     })
 }

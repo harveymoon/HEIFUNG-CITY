@@ -397,11 +397,40 @@ trait MindProvider {
   the HUD shows fps, meshes and triangles.
 - Citizens: small figures that walk the pavements, or ride a bike mesh when cycling; positions
   are interpolated between ticks from the previous pose so nothing jumps. Cars and trucks have wheels.
+- Vehicles (`nd_procgen::vehicles`): one parametric generator draws every road vehicle from a
+  `nd_sim::VehicleModel` (body, class, wear, tuned, livery, paint): hatchback, sedan, coupe, SUV,
+  pickup, faceted cyber-truck, box van, delivery van, panel truck, semi with a container, garbage
+  truck, a rounded driverless bubble bus (glass band all round, lidar puck, no cab) and an
+  articulated one, motorcycle, scooter, a long low red Akira bike, and the six-wheeled pavement
+  delivery robot. Bodies are side silhouettes extruded across with a narrower glass greenhouse;
+  class bends them (cheap: taller, boxy, black bumpers, rust, a primer door, a dead headlamp;
+  expensive: lower, raked, chrome, full-width light bars), tuning adds a spoiler, wide wheels, neon
+  side strips and underglow, and a fleet livery (pizza, parcels, grocery, construction, utility,
+  transit) repaints it with a stripe, a lit sign panel and a beacon. Each variant is under 600
+  triangles and built once into three meshes (lit body, glow lamps, additive night fx) that the
+  renderer caches per variant; underglow and the Akira bikes' ribbon light trails only show after
+  dark. Parked vehicles in building dressing use the same generator at low detail.
 - Mobility: one sim minute shows `traffic_seconds_per_tick` (1.5 s) of motion for everyone, so
   walking is 1.4 m/s, cycling 4.5 m/s and driving the lane speed limit on the same clock. Citizens
   own a car and/or a bike by class (poor: 12% car, 60% bike; middle: 60% / 35%; rich: 92% / 35%)
   and buy or sell them as savings allow. Walkers use the middle of the pavement, bikes the road
   shoulder, both the centre of a path; bike owners ride to parks for pleasure.
+- Who drives what (`nd_sim::vehicle`): the model is chosen at purchase from income, age and the
+  personality's hedonism. The poor run beat-up cheap cars, scooters and old motorcycles (they can
+  buy one with less in the bank, and sell it when broke); the middle hatchbacks, saloons, SUVs and
+  pickups, the young often a motorcycle; the rich coupes, SUVs and cyber-trucks, trading in an old
+  wreck. Young rich hedonists tune theirs or ride an Akira bike. Motorcycles and scooters are
+  driven in the car lanes like cars. Lorries follow their cargo (groceries and goods in delivery
+  vans, chilled food and electronics in box vans, farm goods in panel trucks, imports and parts on
+  semis, building materials in construction-liveried trucks) and wear the seller's livery; buses
+  are bubble pods, a quarter articulated; through traffic mixes cars, semis, parcel vans and
+  garbage trucks.
+- Home deliveries (`nd_sim::bots`): every quarter hour from 08:00 to 22:00 a few grocers,
+  bakeries and gadget shops sell an order to a household within 450 m that can pay (groceries
+  only to a short pantry). Where the shop and the home both have land value 0.6 or more, a
+  pavement robot carries it along the walk graph at 1.1 m/s, to the door and back (at most 40);
+  elsewhere the shop's liveried van or the bakery's scooter drives it (at most 10 on the road).
+  The sale is settled on dispatch. The report shows the robots under `bots`.
 - Every part of a building stays on its lot. Lots are concave, triangular, slivered
   and skewed, so the toolkit is defensive: `offset_poly` limits mitres to 2.5 times
   the offset and drops inward-offset vertices that leave the polygon, `fit_inside`
