@@ -404,14 +404,25 @@ pub fn lot_detail(w: &World, id: LotId, l: &Lot) -> Value {
 // ── vehicles ────────────────────────────────────────────────────────────────
 
 pub fn car_kind(w: &World, c: &Car) -> &'static str {
+    use nd_sim::vehicle::Errand;
     if c.bus.is_some() {
         "bus"
+    } else if c.siren {
+        "emergency"
     } else if c.cargo.is_some() {
         "truck"
     } else if w.citizens.contains_key(c.citizen) {
         "car"
     } else {
-        "unknown"
+        match c.errand {
+            // [carlife] A work van out on (or back from) a job, empty.
+            Errand::Haul { .. } | Errand::Return(_) => "van",
+            // A private car moving without its owner aboard: to or from a
+            // dealer, parking itself, leaving town.
+            _ if c.owned.is_some() => "car",
+            // Through traffic crossing the map.
+            _ => "through",
+        }
     }
 }
 
