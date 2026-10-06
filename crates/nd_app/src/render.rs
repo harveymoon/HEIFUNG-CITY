@@ -534,10 +534,11 @@ fn setup(
     const TEX: usize = 256;
     let mut surfaces = Vec::with_capacity(Surface::ALL.len());
     for s in Surface::ALL {
-        let mat = match generate_texture(s, TEX) {
+        let size = s.texels(TEX);
+        let mat = match generate_texture(s, size) {
             Some(tex) => {
-                let color = images.add(tiling_image(TEX, &tex.color, true));
-                let normal = images.add(tiling_image(TEX, &tex.normal, false));
+                let color = images.add(tiling_image(size, &tex.color, true));
+                let normal = images.add(tiling_image(size, &tex.normal, false));
                 StandardMaterial {
                     base_color: Color::WHITE,
                     base_color_texture: Some(color),

@@ -62,6 +62,8 @@ pub struct Palette {
     pub overlay_low: [f32; 3],
     pub overlay_high: [f32; 3],
     pub container_colors: Vec<[f32; 3]>,
+    /// Shipping-line liveries painted on containers: bands and logo blocks.
+    pub container_marks: Vec<[f32; 3]>,
     pub tarp_colors: Vec<[f32; 3]>,
     pub led_colors: Vec<[f32; 3]>,
     pub concrete: Vec<[f32; 3]>,
@@ -164,16 +166,33 @@ impl Default for Palette {
             bark: [0.20, 0.16, 0.12],
             overlay_low: [0.1, 0.25, 0.7],
             overlay_high: [1.0, 0.6, 0.1],
+            // Shipping-line paints: reds, blues, greens, greys, oranges.
+            // Faded and sun-bleached versions are derived per unit.
             container_colors: vec![
-                [0.48, 0.20, 0.14],
-                [0.22, 0.32, 0.44],
-                [0.24, 0.36, 0.26],
-                [0.62, 0.38, 0.16],
-                [0.40, 0.40, 0.40],
-                [0.58, 0.56, 0.50],
-                [0.44, 0.38, 0.18],
-                [0.34, 0.22, 0.30],
-                [0.26, 0.26, 0.28],
+                [0.46, 0.1, 0.07], // carmine
+                [0.36, 0.09, 0.07], // oxide red
+                [0.52, 0.17, 0.08], // brick red
+                [0.06, 0.16, 0.36], // navy
+                [0.12, 0.3, 0.52], // line blue
+                [0.24, 0.42, 0.56], // steel blue
+                [0.1, 0.26, 0.14], // green
+                [0.22, 0.34, 0.2], // sage
+                [0.06, 0.22, 0.22], // teal
+                [0.34, 0.35, 0.36], // grey
+                [0.56, 0.57, 0.56], // light grey
+                [0.66, 0.64, 0.58], // cream
+                [0.7, 0.28, 0.05], // orange
+                [0.62, 0.44, 0.07], // mustard
+                [0.42, 0.25, 0.12], // brown
+            ],
+            container_marks: vec![
+                [0.8, 0.8, 0.78], // white
+                [0.72, 0.66, 0.5], // cream
+                [0.05, 0.08, 0.18], // navy
+                [0.75, 0.55, 0.08], // yellow
+                [0.5, 0.08, 0.06], // red
+                [0.04, 0.04, 0.05], // black
+                [0.08, 0.35, 0.38], // teal
             ],
             tarp_colors: vec![[0.12, 0.34, 0.72], [0.45, 0.45, 0.43], [0.62, 0.34, 0.12], [0.55, 0.12, 0.10]],
             led_colors: vec![[2.4, 0.3, 0.9], [0.3, 1.8, 2.6], [2.6, 1.8, 0.3], [0.5, 2.4, 0.8], [2.4, 0.5, 0.4], [1.8, 1.9, 2.4]],
@@ -226,11 +245,12 @@ impl Palette {
     /// accessors always have something to choose from. Call after loading.
     pub fn validate(&mut self) {
         let d = Palette::default();
-        let lists: [(&mut Vec<[f32; 3]>, Vec<[f32; 3]>); 11] = [
+        let lists: [(&mut Vec<[f32; 3]>, Vec<[f32; 3]>); 12] = [
             (&mut self.glow_colors, d.glow_colors),
             (&mut self.car_colors, d.car_colors),
             (&mut self.sign_colors, d.sign_colors),
             (&mut self.container_colors, d.container_colors),
+            (&mut self.container_marks, d.container_marks),
             (&mut self.tarp_colors, d.tarp_colors),
             (&mut self.led_colors, d.led_colors),
             (&mut self.concrete, d.concrete),
@@ -290,6 +310,9 @@ impl Palette {
     }
     pub fn container(&self, i: usize) -> [f32; 3] {
         at(&self.container_colors, i)
+    }
+    pub fn container_mark(&self, i: usize) -> [f32; 3] {
+        at(&self.container_marks, i)
     }
 }
 
