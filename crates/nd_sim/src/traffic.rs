@@ -2,9 +2,14 @@
 //! intersections with connector lanes and signal phases, lane-graph
 //! pathfinding, and car-following (intelligent driver model) microtraffic.
 //!
-//! Multi-lane roads have turn lanes: at a junction only the leftmost lane
-//! turns left and only the rightmost turns right (every lane may go
-//! straight). Routes include lane changes as steps between parallel lanes
+//! Junction approaches carry lane arrows (`Lane::arrows`, a mask of
+//! `LEFT | STRAIGHT | RIGHT`): by default a two-lane approach has a left-only
+//! lane and a straight-and-right lane, wider ones a left lane (two when left
+//! demand is high), straight lanes and a straight-and-right lane; a quiet
+//! left becomes a shared left-and-straight lane. The defaults follow the
+//! turning counts and can be overridden per approach (`Traffic::lane_use`).
+//! Connectors exist for every movement and are `permitted` by the arrows,
+//! so arrows change without renumbering lanes. Routes include lane changes as steps between parallel lanes
 //! of a segment, so a car moves to the lane its next turn needs as early as
 //! a gap allows. A change is taken only when it is safe by the IDM for the
 //! car and for the follower in the target lane; the car then belongs to
@@ -18,12 +23,12 @@
 use crate::buildings::BuildingId;
 use crate::citizens::CitizenId;
 use crate::market::Resource;
-use crate::roads::{project_on_segment, NodeId, RoadNetwork, SegmentId, LANE_WIDTH};
+use crate::roads::{project_on_segment, NodeId, RoadNetwork, SegmentId, LANE_WIDTH, SHOULDER};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use slotmap::{new_key_type, SlotMap};
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 
 new_key_type! {
     pub struct CarId;
@@ -44,6 +49,31 @@ const IDM_HEADWAY: f32 = 1.2;
 const GREEN_SECONDS: f32 = 14.0;
 const CLEARANCE_SECONDS: f32 = 3.0;
 const LOOKAHEAD: f32 = 90.0;
+/// Lane arrow bits.
+pub const LEFT: u8 = 1;
+pub const STRAIGHT: u8 = 2;
+pub const RIGHT: u8 = 4;
+/// A protected left arrow at the start of a green: its length, and how long
+/// it runs at least before it ends for want of left turners.
+const ARROW_SECONDS: f32 = 7.0;
+const ARROW_MIN: f32 = 3.0;
+/// A left turner that has yielded to oncoming traffic this long at the head
+/// of its lane gets an arrow next time; a queue of left turners in a lane
+/// of their own gets one once its head has yielded `LEFT_YIELDING`.
+const LEFT_STARVED: f32 = 20.0;
+const LEFT_YIELDING: f32 = 6.0;
+/// How often (traffic seconds) default lane arrows are revised from the
+/// turning counts.
+const ADAPT_SECONDS: f32 = 600.0;
+/// Passing a waiting left turner on the right: only below this speed, on
+/// the shoulder, with a car this wide, stopping this far short of the lane
+/// end so the crossing stays clear.
+const PASS_MAX_SPEED: f32 = 8.0;
+const CAR_WIDTH: f32 = 1.8;
+const PASS_LATERAL_SPEED: f32 = 1.4;
+const CROSSING_SETBACK: f32 = 3.0;
+/// Left turn waits remembered for the report.
+const LEFT_WAIT_WINDOW: usize = 500;
 /// Shortest green before an actuated signal may cut to a waiting approach.
 const MIN_GREEN: f32 = 5.0;
 /// A car this close to the stop line (or in the junction) asks for a green.
@@ -102,6 +132,14 @@ pub struct Lane {
     pub prev: Vec<LaneId>,
     /// For connectors: -1 a left turn, 1 a right turn, 0 straight on.
     pub turn: i8,
+    /// For road lanes ending at a junction: the movements allowed from it
+    /// (`LEFT | STRAIGHT | RIGHT`); 0 elsewhere.
+    pub arrows: u8,
+    /// For connectors: the arrows of the lane feeding it allow this turn.
+    /// Routes only use permitted connectors; a car already routed keeps going.
+    pub permitted: bool,
+    /// Index into `LaneNetwork::approaches` for road lanes ending at a junction.
+    pub approach: u32,
 }
 
 impl Lane {
@@ -111,7 +149,7 @@ impl Lane {
             cum.push(cum.last().unwrap() + w[0].distance(w[1]));
         }
         let length = *cum.last().unwrap();
-        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, end_node, left: None, right: None, prev: Vec::new(), turn: 0 }
+        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX }
     }
 
     pub fn is_connector(&self) -> bool {
@@ -198,11 +236,34 @@ pub struct Intersection {
     pub phase: usize,
     /// The approach straight across, per approach, if it feeds the junction.
     pub opposite: Vec<Option<usize>>,
+    /// Seconds of protected left arrow at the start of the current green
+    /// (0 for none): only left turns go, oncoming traffic has red.
+    pub arrow: f32,
+    /// Left turns made here and the time their drivers stood waiting.
+    pub left_turns: u32,
+    pub left_wait_sum: f32,
+    pub left_wait_max: f32,
     pub timer: f32,
     pub connectors: Vec<(LaneId, usize)>,
     /// Road lanes ending here, with their approach index.
     pub incoming: Vec<(LaneId, usize)>,
     pub signalized: bool,
+}
+
+/// The lanes of one street arriving at a junction, with their arrows.
+#[derive(Clone, Debug)]
+pub struct Approach {
+    pub node: NodeId,
+    pub segment: SegmentId,
+    /// Leftmost first.
+    pub lanes: Vec<LaneId>,
+    /// Movements this junction offers from here.
+    pub exits: u8,
+    pub arrows: Vec<u8>,
+    /// Set by the player (`Traffic::lane_use`): not revised from demand.
+    pub fixed: bool,
+    /// Recent left, straight and right turns, decaying.
+    pub counts: [f32; 3],
 }
 
 #[derive(Clone, Debug, Default)]
@@ -213,7 +274,94 @@ pub struct LaneNetwork {
     pub node_radius: Vec<f32>,
     /// Index into `intersections` per node, `usize::MAX` for none.
     pub node_intersection: Vec<usize>,
+    pub approaches: Vec<Approach>,
     pub version: u64,
+    /// Bumped whenever lane arrows change (for drawing them).
+    pub arrows_version: u64,
+}
+
+/// Arrow bit for a connector's turn.
+pub fn turn_bit(turn: i8) -> u8 {
+    match turn {
+        t if t < 0 => LEFT,
+        0 => STRAIGHT,
+        _ => RIGHT,
+    }
+}
+
+/// "L", "S+R", "L+S+R" ...
+pub fn arrows_label(a: u8) -> String {
+    let parts: Vec<&str> = [(LEFT, "L"), (STRAIGHT, "S"), (RIGHT, "R")].iter().filter(|(b, _)| a & b != 0).map(|(_, n)| *n).collect();
+    if parts.is_empty() { "-".into() } else { parts.join("+") }
+}
+
+/// Parse "L", "S+R", "LS", "left+straight" ... into arrow bits.
+pub fn parse_arrows(text: &str) -> Option<u8> {
+    let mut a = 0;
+    for part in text.split(['+', ',', ' ', '|']).filter(|p| !p.is_empty()) {
+        let p = part.to_ascii_lowercase();
+        match p.as_str() {
+            "l" | "left" => a |= LEFT,
+            "s" | "straight" | "t" | "through" => a |= STRAIGHT,
+            "r" | "right" => a |= RIGHT,
+            _ if p.chars().all(|c| "lsr".contains(c)) => {
+                for c in p.chars() {
+                    a |= match c { 'l' => LEFT, 's' => STRAIGHT, _ => RIGHT };
+                }
+            }
+            _ => return None,
+        }
+    }
+    (a != 0).then_some(a)
+}
+
+/// Default arrows for an approach of `n` lanes offering `exits`, given the
+/// share of recent traffic turning left (None before any is counted) and
+/// the arrows it has now (for hysteresis).
+pub fn default_arrows(n: usize, exits: u8, left_share: Option<f32>, now: Option<&[u8]>) -> Vec<u8> {
+    if n <= 1 || exits.count_ones() <= 1 {
+        return vec![exits; n];
+    }
+    let shared_now = now.is_some_and(|a| a.len() == 2 && a[0] & STRAIGHT != 0);
+    let dual_now = now.is_some_and(|a| a.len() >= 3 && a[1] & LEFT != 0);
+    // Before anything is counted: the plain default (a left-only lane on a
+    // two-lane approach, one left lane on wider ones).
+    let share = left_share.unwrap_or(0.35);
+    let quiet_left = if shared_now { share < 0.4 } else { share < 0.3 };
+    let busy_left = if dual_now { share > 0.3 } else { share > 0.4 };
+    let mut a: Vec<u8> = match n {
+        2 if quiet_left => vec![LEFT | STRAIGHT, STRAIGHT | RIGHT],
+        2 => vec![LEFT, STRAIGHT | RIGHT],
+        3 if busy_left => vec![LEFT, LEFT | STRAIGHT, STRAIGHT | RIGHT],
+        _ => {
+            let mut v = vec![STRAIGHT; n];
+            v[0] = LEFT;
+            if busy_left && n >= 4 {
+                v[1] = LEFT;
+            }
+            v[n - 1] = STRAIGHT | RIGHT;
+            v
+        }
+    };
+    // Fit to the exits there are: a lane left with nothing takes the side
+    // it is on; every exit is reachable from some lane.
+    for (i, x) in a.iter_mut().enumerate() {
+        *x &= exits;
+        if *x == 0 {
+            let side = if exits & STRAIGHT != 0 { STRAIGHT } else if i < n / 2 { LEFT } else { RIGHT };
+            *x = if exits & side != 0 { side } else { exits };
+        }
+    }
+    if exits & LEFT != 0 && a.iter().all(|x| x & LEFT == 0) {
+        a[0] |= LEFT;
+    }
+    if exits & RIGHT != 0 && a.iter().all(|x| x & RIGHT == 0) {
+        a[n - 1] |= RIGHT;
+    }
+    if exits & STRAIGHT != 0 && a.iter().all(|x| x & STRAIGHT == 0) {
+        a[n - 1] |= STRAIGHT;
+    }
+    a
 }
 
 /// Freight carried by a truck between two businesses.
@@ -270,6 +418,16 @@ pub struct Car {
     /// yet in the lane's list, so nobody queues behind it.
     #[serde(default)]
     pub entering: bool,
+    /// Squeezing past a left turner waiting at the head of a one-lane
+    /// approach, on the shoulder to its right.
+    #[serde(default)]
+    pub passing: bool,
+    /// Seconds stood waiting before the left turn ahead (reset once made).
+    #[serde(default)]
+    pub turn_wait: f32,
+    /// Of those, seconds at the stop line yielding to oncoming traffic.
+    #[serde(default)]
+    pub yielded: f32,
 }
 
 /// Why a car is not driving freely.
@@ -340,6 +498,39 @@ pub struct Traffic {
     #[serde(skip)]
     pub net: LaneNetwork,
     pub cars: SlotMap<CarId, Car>,
+    /// Lane arrows set by the player, per approach; reapplied whenever the
+    /// lane network is rebuilt (a rule whose lane count no longer matches is
+    /// ignored).
+    #[serde(default)]
+    pub lane_use: Vec<LaneUseRule>,
+    /// The most recent left turns' waits, seconds.
+    #[serde(skip)]
+    pub left_waits: VecDeque<f32>,
+    #[serde(skip)]
+    adapt_clock: f32,
+}
+
+/// Arrows for the lanes (leftmost first) of `segment` arriving at `node`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LaneUseRule {
+    pub segment: SegmentId,
+    pub node: NodeId,
+    pub arrows: Vec<u8>,
+}
+
+/// What a signal knows about one approach of its junction.
+#[derive(Clone, Debug, Default)]
+pub struct SignalDemand {
+    /// Someone at (or near) the stop line.
+    pub any: Vec<bool>,
+    /// Left turners near the stop line.
+    pub left_queue: Vec<u8>,
+    /// A left turner at the head of its lane has waited `LEFT_STARVED`.
+    pub left_starved: Vec<bool>,
+    /// The approach has a left-only lane.
+    pub dedicated: Vec<bool>,
+    /// The left turner at the head has been yielding to oncoming traffic.
+    pub left_yielding: Vec<bool>,
 }
 
 fn quad_bezier(p0: Vec2, c: Vec2, p1: Vec2, samples: usize) -> Vec<Vec2> {
@@ -384,7 +575,9 @@ impl LaneNetwork {
         self.intersections.clear();
         self.segment_lanes.clear();
         self.node_intersection = vec![usize::MAX; roads.nodes.len()];
+        self.approaches.clear();
         self.version += 1;
+        self.arrows_version += 1;
 
         // Intersection radius per node: enough to fit the widest road.
         self.node_radius = roads
@@ -510,28 +703,16 @@ impl LaneNetwork {
                 }
                 exits.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
                 let turn = |angle: f32| if approaches.len() <= 2 || angle.abs() < 0.5 { 0 } else if angle < 0.0 { -1 } else { 1 };
-                // Lane discipline: the leftmost lane turns left, the rightmost
-                // right, every lane goes straight; a lane left with nothing
-                // takes the exit in its share of the fan.
-                let mut allowed: Vec<SegmentId> = exits
-                    .iter()
-                    .filter(|&&(_, a)| n <= 1 || match turn(a) { -1 => i == 0, 1 => i + 1 == n, _ => true })
-                    .map(|&(s, _)| s)
-                    .collect();
-                if allowed.is_empty() && !exits.is_empty() {
-                    let k = (i * (exits.len() - 1) + (n - 1) / 2) / (n - 1).max(1);
-                    allowed.push(exits[k.min(exits.len() - 1)].0);
-                }
+                // A connector for every movement into one lane of each exit:
+                // a left turn keeps its place counted from the left, a right
+                // turn from the right, straight on fans n lanes over m. The
+                // lane arrows then permit some of them.
                 for &(out, out_seg) in &outgoing {
                     let Some(&(_, angle)) = exits.iter().find(|&&(s, _)| s == out_seg) else { continue };
-                    if !allowed.contains(&out_seg) {
-                        continue;
-                    }
                     let (j, m) = (lane_index(&self.lanes[out as usize]), width(&outgoing, out_seg));
                     let ok = match turn(angle) {
-                        -1 => j == 0,
-                        1 => j + 1 == m,
-                        // Straight on, lane for lane: n lanes fan out over m.
+                        -1 => j == i.min(m - 1),
+                        1 => j == m - 1 - (n - 1 - i).min(m - 1),
                         _ => {
                             let lo = i * m / n.max(1);
                             let hi = ((i + 1) * m).div_ceil(n.max(1)).saturating_sub(1).max(lo);
@@ -543,6 +724,25 @@ impl LaneNetwork {
                         self.lanes[id as usize].turn = turn(angle);
                         connectors.push((id, approach));
                     }
+                }
+            }
+            // Lane arrows for every street arriving at a real junction (not
+            // highway ramps: merges and diverges keep every lane open).
+            if approaches.len() >= 3 && !approaches.iter().any(|&s| roads.segment(s).is_highway()) {
+                for &sid in &approaches {
+                    let mut lanes: Vec<LaneId> = incoming.iter().filter(|&&(_, s)| s == sid).map(|&(l, _)| l).collect();
+                    if lanes.is_empty() {
+                        continue;
+                    }
+                    lanes.sort_by_key(|&l| lane_index(&self.lanes[l as usize]));
+                    let exits = lanes.iter().flat_map(|&l| self.lanes[l as usize].next.iter()).fold(0u8, |acc, &c| acc | turn_bit(self.lanes[c as usize].turn));
+                    let arrows = default_arrows(lanes.len(), exits, None, None);
+                    let idx = self.approaches.len() as u32;
+                    for &l in &lanes {
+                        self.lanes[l as usize].approach = idx;
+                    }
+                    self.approaches.push(Approach { node: nid, segment: sid, lanes, exits, arrows: Vec::new(), fixed: false, counts: [0.0; 3] });
+                    self.set_arrows(idx as usize, arrows);
                 }
             }
             let two_way = approaches.iter().filter(|&&s| roads.segment(s).lanes_fwd > 0 && roads.segment(s).lanes_bwd > 0).count();
@@ -584,7 +784,7 @@ impl LaneNetwork {
             self.node_intersection.resize(roads.nodes.len().max(self.node_intersection.len()), usize::MAX);
             self.node_intersection[ni] = self.intersections.len();
             let incoming = incoming.iter().map(|&(l, s)| (l, approaches.iter().position(|&a| a == s).unwrap_or(0))).collect();
-            self.intersections.push(Intersection { node: nid, radius, approaches: approaches.len(), phases, phase: 0, opposite, timer: 0.0, connectors, incoming, signalized });
+            self.intersections.push(Intersection { node: nid, radius, approaches: approaches.len(), phases, phase: 0, opposite, arrow: 0.0, left_turns: 0, left_wait_sum: 0.0, left_wait_max: 0.0, timer: 0.0, connectors, incoming, signalized });
         }
         let _ = road_lane_count;
         for id in 0..self.lanes.len() {
@@ -616,11 +816,38 @@ impl LaneNetwork {
         id
     }
 
+    /// Give an approach new lane arrows: its lanes' `arrows` and which of
+    /// their connectors are permitted.
+    pub fn set_arrows(&mut self, approach: usize, arrows: Vec<u8>) {
+        let Some(ap) = self.approaches.get_mut(approach) else { return };
+        if ap.arrows == arrows {
+            return;
+        }
+        ap.arrows = arrows.clone();
+        let lanes = ap.lanes.clone();
+        for (k, &l) in lanes.iter().enumerate() {
+            let a = arrows.get(k).copied().unwrap_or(0);
+            self.lanes[l as usize].arrows = a;
+            for c in self.lanes[l as usize].next.clone() {
+                let bit = turn_bit(self.lanes[c as usize].turn);
+                self.lanes[c as usize].permitted = a & bit != 0;
+            }
+        }
+        self.arrows_version += 1;
+    }
+
     fn apply_signals(&mut self) {
         for inter in &self.intersections {
             let group = inter.phases.get(inter.phase);
             for &(lane, approach) in &inter.connectors {
-                self.lanes[lane as usize].green = !inter.signalized || (group.is_some_and(|g| g.contains(&approach)) && inter.timer < GREEN_SECONDS);
+                let mine = group.is_some_and(|g| g.contains(&approach));
+                let open = if inter.timer < inter.arrow {
+                    // Protected arrow: left turns only.
+                    self.lanes[lane as usize].turn < 0
+                } else {
+                    inter.timer < inter.arrow + GREEN_SECONDS
+                };
+                self.lanes[lane as usize].green = !inter.signalized || (mine && open);
             }
         }
     }
@@ -637,35 +864,50 @@ impl LaneNetwork {
     /// approach is waiting, a green is held while only its own approach
     /// wants it, and phases nobody waits for are skipped. Without demand
     /// anywhere the plain fixed cycle runs.
-    fn step_signals(&mut self, dt: f32, demand: Option<&[Vec<bool>]>) {
+    fn step_signals(&mut self, dt: f32, demand: Option<&[SignalDemand]>) {
         for (k, inter) in self.intersections.iter_mut().enumerate() {
             if !inter.signalized || inter.phases.is_empty() {
                 continue;
             }
             inter.timer += dt;
-            let d = demand.and_then(|d| d.get(k)).filter(|d| d.len() >= inter.approaches);
+            let d = demand.and_then(|d| d.get(k)).filter(|d| d.any.len() >= inter.approaches);
             if let Some(d) = d {
-                let wants = |g: &Vec<usize>| g.iter().any(|&ap| d[ap]);
+                let wants = |g: &Vec<usize>| g.iter().any(|&ap| d.any[ap]);
                 let mine = wants(&inter.phases[inter.phase]);
                 let others = inter.phases.iter().enumerate().any(|(k, g)| k != inter.phase && wants(g));
-                if inter.timer < GREEN_SECONDS {
-                    if inter.timer >= MIN_GREEN && !mine && others {
-                        inter.timer = GREEN_SECONDS;
-                    } else if mine && !others && inter.timer > GREEN_SECONDS - 1.0 {
-                        inter.timer = GREEN_SECONDS - 1.0;
+                // The arrow ends early once nobody is left to turn.
+                if inter.timer < inter.arrow && inter.timer >= ARROW_MIN && inter.phases[inter.phase].iter().all(|&ap| d.left_queue[ap] == 0) {
+                    inter.arrow = inter.timer;
+                }
+                let green_end = inter.arrow + GREEN_SECONDS;
+                // A left turner starving in an endless oncoming stream: end
+                // this green so the next one can open with an arrow.
+                let starving = inter.phases[inter.phase].iter().any(|&ap| d.left_starved[ap]);
+                if inter.timer >= inter.arrow && inter.timer < green_end {
+                    if inter.timer >= inter.arrow + MIN_GREEN && ((!mine && others) || starving) {
+                        inter.timer = green_end;
+                    } else if mine && !others && inter.timer > green_end - 1.0 {
+                        inter.timer = green_end - 1.0;
                     }
                 }
             }
-            if inter.timer >= GREEN_SECONDS + CLEARANCE_SECONDS {
+            if inter.timer >= inter.arrow + GREEN_SECONDS + CLEARANCE_SECONDS {
                 inter.timer = 0.0;
                 let n = inter.phases.len();
                 let mut next = (inter.phase + 1) % n;
                 if let Some(d) = d {
-                    if let Some(step) = (1..=n).find(|&st| inter.phases[(inter.phase + st) % n].iter().any(|&ap| d[ap])) {
+                    if let Some(step) = (1..=n).find(|&st| inter.phases[(inter.phase + st) % n].iter().any(|&ap| d.any[ap])) {
                         next = (inter.phase + step) % n;
                     }
                 }
                 inter.phase = next;
+                // A protected left where opposed lefts queue in a lane of
+                // their own, or a left turner has waited too long.
+                let g = &inter.phases[next];
+                inter.arrow = match d {
+                    Some(d) if g.len() > 1 && g.iter().any(|&ap| (d.dedicated[ap] && d.left_queue[ap] >= 3 && d.left_yielding[ap]) || d.left_starved[ap]) => ARROW_SECONDS,
+                    _ => 0.0,
+                };
             }
         }
         self.apply_signals();
@@ -762,7 +1004,7 @@ impl LaneNetwork {
             }
             let gl = g[&lane];
             let here = &self.lanes[lane as usize];
-            let ahead = here.next.iter().map(|&n| (n, self.lanes[n as usize].length));
+            let ahead = here.next.iter().filter(|&&n| self.lanes[n as usize].permitted).map(|&n| (n, self.lanes[n as usize].length));
             let beside = [here.left, here.right].into_iter().flatten().map(|n| (n, LANE_CHANGE_COST));
             for (next, step) in ahead.chain(beside) {
                 if next == start || Some(next) == avoid_lane || Some((lane, next)) == avoid_step {
@@ -831,6 +1073,12 @@ fn idm(v: f32, v0: f32, gap: f32, dv: f32) -> f32 {
 impl Traffic {
     pub fn rebuild(&mut self, roads: &RoadNetwork) {
         self.net.rebuild(roads);
+        for r in self.lane_use.clone() {
+            if let Some(ai) = self.net.approaches.iter().position(|a| a.segment == r.segment && a.node == r.node && a.lanes.len() == r.arrows.len()) {
+                self.net.approaches[ai].fixed = true;
+                self.net.set_arrows(ai, r.arrows.clone());
+            }
+        }
     }
 
     /// Drop every car; used when the road network changes shape.
@@ -875,7 +1123,7 @@ impl Traffic {
         let lane = route[0];
         let (pos, dir) = self.net.lanes[lane as usize].point_at(s_start);
         let heading = dir.y.atan2(dir.x);
-        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false });
+        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, passing: false, turn_wait: 0.0, yielded: 0.0 });
         self.pull_out(id);
         id
     }
@@ -1061,23 +1309,136 @@ impl Traffic {
 
     /// Per signalised intersection and approach: is a car waiting at (or
     /// close to) the stop line?
-    fn signal_demand(&self) -> Vec<Vec<bool>> {
+    fn signal_demand(&self) -> Vec<SignalDemand> {
         self.net
             .intersections
             .iter()
             .map(|inter| {
-                let mut d = vec![false; if inter.signalized { inter.approaches } else { 0 }];
+                let n = if inter.signalized { inter.approaches } else { 0 };
+                let mut d = SignalDemand { any: vec![false; n], left_queue: vec![0; n], left_starved: vec![false; n], dedicated: vec![false; n], left_yielding: vec![false; n] };
                 if inter.signalized {
                     for &(lid, ap) in &inter.incoming {
                         let lane = &self.net.lanes[lid as usize];
+                        if lane.arrows == LEFT {
+                            d.dedicated[ap] = true;
+                        }
                         if lane.cars.last().is_some_and(|&c| self.cars[c].s > lane.length - DEMAND_REACH) {
-                            d[ap] = true;
+                            d.any[ap] = true;
+                        }
+                        // Left turners count only behind a head that could
+                        // actually go: an arrow is wasted on a full exit.
+                        let head_can_turn = lane.cars.last().is_some_and(|&h| {
+                            let car = &self.cars[h];
+                            self.next_turn(car) == Some(-1) && match (car.route.get(car.idx + 1), car.route.get(car.idx + 2)) {
+                                (Some(&conn), Some(&exit)) => !self.exit_blocked(&self.net.lanes[conn as usize], exit, true),
+                                _ => false,
+                            }
+                        });
+                        if head_can_turn {
+                            for (k, &c) in lane.cars.iter().enumerate().rev() {
+                                let car = &self.cars[c];
+                                if car.s < lane.length - DEMAND_REACH {
+                                    break;
+                                }
+                                if self.next_turn(car) == Some(-1) {
+                                    d.left_queue[ap] = d.left_queue[ap].saturating_add(1);
+                                    if k + 1 == lane.cars.len() {
+                                        d.left_starved[ap] |= car.yielded > LEFT_STARVED;
+                                        d.left_yielding[ap] |= car.yielded > LEFT_YIELDING;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
                 d
             })
             .collect()
+    }
+
+    /// The turn of the connector a car on a road lane takes next, if any.
+    fn next_turn(&self, car: &Car) -> Option<i8> {
+        let here = &self.net.lanes[car.route[car.idx] as usize];
+        if here.is_connector() {
+            return None;
+        }
+        let next = &self.net.lanes[*car.route.get(car.idx + 1)? as usize];
+        next.is_connector().then_some(next.turn)
+    }
+
+    /// A left turner at the head of its lane, close to the stop line and
+    /// slow: someone the car behind may pass on the right.
+    fn waiting_left(&self, lane: &Lane, id: CarId) -> bool {
+        let c = &self.cars[id];
+        lane.cars.last() == Some(&id) && c.v < 3.0 && lane.length - c.s < 25.0 && self.next_turn(c) == Some(-1)
+    }
+
+    /// How far right of its lane centre a car can squeeze past another on
+    /// this lane without touching the kerb, if there is room at all.
+    fn pass_offset(lane: &Lane) -> Option<f32> {
+        let room = LANE_WIDTH * 0.5 + SHOULDER - CAR_WIDTH * 0.5 - 0.15;
+        let need = CAR_WIDTH + 0.25;
+        (lane.right.is_none() && room >= need).then_some(need)
+    }
+
+    /// Mean and maximum of the recent left turn waits, and how many.
+    pub fn left_wait_stats(&self) -> (f32, f32, usize) {
+        let n = self.left_waits.len();
+        if n == 0 {
+            return (0.0, 0.0, 0);
+        }
+        (self.left_waits.iter().sum::<f32>() / n as f32, self.left_waits.iter().copied().fold(0.0, f32::max), n)
+    }
+
+    /// Set (or with `None` clear) the player's arrows for the lanes of
+    /// `segment` arriving at `node`, leftmost first.
+    pub fn set_lane_use(&mut self, segment: SegmentId, node: NodeId, arrows: Option<Vec<u8>>) -> Result<(), String> {
+        let Some(ai) = self.net.approaches.iter().position(|a| a.segment == segment && a.node == node) else {
+            return Err("that street does not arrive at a junction there".into());
+        };
+        self.lane_use.retain(|r| !(r.segment == segment && r.node == node));
+        match arrows {
+            Some(a) => {
+                let ap = &self.net.approaches[ai];
+                if a.len() != ap.lanes.len() {
+                    return Err(format!("the approach has {} lanes, {} arrows given", ap.lanes.len(), a.len()));
+                }
+                if a.iter().any(|&x| x & ap.exits == 0) {
+                    return Err("every lane needs a movement the junction offers".into());
+                }
+                if a.iter().fold(0, |acc, &x| acc | x) & ap.exits != ap.exits {
+                    return Err("some exit would be reachable from no lane".into());
+                }
+                let a: Vec<u8> = a.iter().map(|&x| x & ap.exits).collect();
+                self.lane_use.push(LaneUseRule { segment, node, arrows: a.clone() });
+                self.net.approaches[ai].fixed = true;
+                self.net.set_arrows(ai, a);
+            }
+            None => {
+                let ap = &self.net.approaches[ai];
+                let a = default_arrows(ap.lanes.len(), ap.exits, None, None);
+                self.net.approaches[ai].fixed = false;
+                self.net.set_arrows(ai, a);
+            }
+        }
+        Ok(())
+    }
+
+    /// Revise the default arrows of approaches the player has not set from
+    /// their recent turning counts.
+    fn adapt_arrows(&mut self) {
+        for ai in 0..self.net.approaches.len() {
+            let ap = &self.net.approaches[ai];
+            let total: f32 = ap.counts.iter().sum();
+            if !ap.fixed && total >= 20.0 {
+                let a = default_arrows(ap.lanes.len(), ap.exits, Some(ap.counts[0] / total), Some(&ap.arrows));
+                self.net.set_arrows(ai, a);
+            }
+            let ap = &mut self.net.approaches[ai];
+            for c in &mut ap.counts {
+                *c *= 0.5;
+            }
+        }
     }
 
     /// Leader on `lane` ahead of position `s` and the follower behind it
@@ -1168,7 +1529,25 @@ impl Traffic {
                 continue;
             }
             let lane = &self.net.lanes[c.route[c.idx] as usize];
-            if lane.is_connector() || (lane.left.is_none() && lane.right.is_none()) {
+            if lane.is_connector() {
+                continue;
+            }
+            if lane.left.is_none() && lane.right.is_none() {
+                // One lane: squeeze past a waiting left turner on the right.
+                let k = lane.cars.iter().position(|&o| o == id);
+                let lead = k.and_then(|k| lane.cars.get(k + 1)).copied();
+                if c.passing {
+                    if !lead.is_some_and(|l| self.next_turn(&self.cars[l]) == Some(-1)) {
+                        self.cars[id].passing = false;
+                    }
+                } else if let (Some(l), Some(_)) = (lead, Self::pass_offset(lane)) {
+                    let gap = self.cars[l].s - c.s - self.cars[l].length();
+                    let through = self.next_turn(c).is_some_and(|t| t >= 0) && self.net.lanes[c.route[c.idx + 1] as usize].permitted;
+                    let at_junction = self.net.node_intersection.get(lane.end_node.0 as usize).and_then(|&i| self.net.intersections.get(i)).is_some_and(|i| i.approaches >= 3);
+                    if c.bus.is_none() && through && at_junction && c.v < PASS_MAX_SPEED && gap < 30.0 && c.s < lane.length - CROSSING_SETBACK - 6.0 && self.waiting_left(lane, l) {
+                        self.cars[id].passing = true;
+                    }
+                }
                 continue;
             }
             if let Some(target) = c.change_pending(&self.net) {
@@ -1178,7 +1557,7 @@ impl Traffic {
                 }
                 continue;
             }
-            if c.cooldown > 0.0 || lane.length - c.s < 30.0 || (c.idx + 1 == c.route.len() && c.s_end - c.s < 40.0) {
+            if c.cooldown > 0.0 || lane.length - c.s < 12.0 || (c.idx + 1 == c.route.len() && c.s_end - c.s < 40.0) {
                 continue;
             }
             // Held up by a vehicle that is slow on its own account?
@@ -1187,7 +1566,9 @@ impl Traffic {
             let l = &self.cars[lead];
             let gap = l.s - c.s - l.length();
             let v0 = c.desired_speed(lane.speed_limit);
-            let slow = l.hold > 0.0 || (l.wait == Wait::Free && l.v < 0.9 * v0);
+            // A bus at a stop, a slower truck, or a left turner about to wait
+            // for a gap in the oncoming traffic.
+            let slow = l.hold > 0.0 || (l.wait == Wait::Free && l.v < 0.9 * v0) || (self.waiting_left(lane, lead) && self.next_turn(c) != Some(-1));
             if gap > 35.0 || !slow {
                 continue;
             }
@@ -1206,6 +1587,36 @@ impl Traffic {
                 self.change_lane(id, target, Some(route));
                 break;
             }
+        }
+    }
+
+    /// Bookkeeping as a car moves from `from` onto `to`: turning counts for
+    /// the approach's arrows, and the wait before a left turn.
+    fn entered(&mut self, from: LaneId, to: LaneId, id: CarId) {
+        let (ap, turn) = (self.net.lanes[from as usize].approach, self.net.lanes[to as usize].turn);
+        if !self.net.lanes[to as usize].is_connector() {
+            return;
+        }
+        if let Some(a) = self.net.approaches.get_mut(ap as usize) {
+            a.counts[(turn + 1) as usize] += 1.0;
+            // counts are [left, straight, right]
+        }
+        if turn < 0 {
+            let wait = std::mem::take(&mut self.cars[id].turn_wait);
+            self.cars[id].yielded = 0.0;
+            let node = self.net.lanes[to as usize].end_node;
+            if let Some(inter) = self.net.node_intersection.get(node.0 as usize).copied().and_then(|i| self.net.intersections.get_mut(i)) {
+                inter.left_turns += 1;
+                inter.left_wait_sum += wait;
+                inter.left_wait_max = inter.left_wait_max.max(wait);
+            }
+            self.left_waits.push_back(wait);
+            if self.left_waits.len() > LEFT_WAIT_WINDOW {
+                self.left_waits.pop_front();
+            }
+        } else {
+            self.cars[id].turn_wait = 0.0;
+            self.cars[id].yielded = 0.0;
         }
     }
 
@@ -1320,21 +1731,31 @@ impl Traffic {
             for c in self.cars.values().filter(|c| c.entering && c.stalled > COURTESY_AFTER) {
                 claims.entry(c.route[c.idx]).or_default().push(c.s);
             }
-            let mut accs: Vec<(CarId, f32, Wait)> = Vec::with_capacity(self.cars.len());
+            let mut accs: Vec<(CarId, f32, Wait, bool)> = Vec::with_capacity(self.cars.len());
             for (lane_id, lane) in self.net.lanes.iter().enumerate() {
                 let lane_claims = claims.get(&(lane_id as LaneId));
                 for (k, &cid) in lane.cars.iter().enumerate() {
                     let car = &self.cars[cid];
                     if car.hold > 0.0 {
-                        accs.push((cid, -1000.0, Wait::Dwell));
+                        accs.push((cid, -1000.0, Wait::Dwell, false));
                         continue;
                     }
                     let pending = car.change_pending(&self.net).is_some();
-                    let (mut gap, mut lead_v, mut why) = match lane.cars.get(k + 1) {
+                    // Passing a left turner: once out on the shoulder, the
+                    // turner is no longer in the way.
+                    let beside = car.passing
+                        && Self::pass_offset(lane).is_some_and(|o| car.lateral >= 0.8 * o)
+                        && lane.cars.get(k + 1).is_some_and(|&l| self.next_turn(&self.cars[l]) == Some(-1));
+                    let lead = lane.cars.get(if beside { k + 2 } else { k + 1 });
+                    let (mut gap, mut lead_v, mut why) = match lead {
                         Some(&lead) => (self.cars[lead].s - car.s - self.cars[lead].length(), self.cars[lead].v, Wait::Leader),
                         None if pending => (LOOKAHEAD * 2.0, ROAD_SPEED, Wait::Free),
                         None => self.lookahead(car, lane),
                     };
+                    if car.passing && matches!(why, Wait::Signal | Wait::ExitFull | Wait::Yield) {
+                        // On the shoulder: stop short of the crossing.
+                        gap -= CROSSING_SETBACK;
+                    }
                     if pending {
                         // Stop at the end of the lane until the change is made.
                         let to_end = lane.length - car.s - 1.0 + IDM_MIN_GAP;
@@ -1360,12 +1781,19 @@ impl Traffic {
                     if why == Wait::Leader && gap > 50.0 {
                         why = Wait::Free;
                     }
-                    accs.push((cid, idm(car.v, car.desired_speed(lane.speed_limit), gap, car.v - lead_v), why));
+                    let left_wait = car.v < 0.5 && self.next_turn(car) == Some(-1);
+                    accs.push((cid, idm(car.v, car.desired_speed(lane.speed_limit), gap, car.v - lead_v), why, left_wait));
                 }
             }
-            for (cid, acc, why) in accs {
+            for (cid, acc, why, left_wait) in accs {
                 let car = &mut self.cars[cid];
                 car.wait = why;
+                if left_wait {
+                    car.turn_wait += dt;
+                    if why == Wait::Yield {
+                        car.yielded += dt;
+                    }
+                }
                 car.cooldown = (car.cooldown - dt).max(0.0);
                 if car.hold > 0.0 {
                     car.hold -= dt;
@@ -1376,7 +1804,13 @@ impl Traffic {
                 car.v = (car.v + acc * dt).max(0.0);
                 car.s += car.v * dt;
                 car.stalled = if car.v < 0.5 { car.stalled + dt } else { 0.0 };
-                if car.lateral != 0.0 {
+                if car.passing {
+                    // Out onto the shoulder (the offset was checked against
+                    // the kerb when the pass began).
+                    let target = CAR_WIDTH + 0.25;
+                    let rate = PASS_LATERAL_SPEED * (car.v / 3.0).clamp(0.5, 1.0) * dt;
+                    car.lateral = (car.lateral + rate).min(target.max(car.lateral));
+                } else if car.lateral != 0.0 {
                     let rate = LC_LATERAL_SPEED * (car.v / 3.0).clamp(0.3, 1.0) * dt;
                     car.lateral -= car.lateral.signum() * car.lateral.abs().min(rate);
                 }
@@ -1434,13 +1868,32 @@ impl Traffic {
                         let c = &mut self.cars[cid];
                         c.s -= len;
                         c.idx += 1;
+                        c.passing = false;
                         c.route[c.idx]
                     };
+                    self.entered(lane_id, next, cid);
                     self.insert_sorted(next, cid);
+                }
+            }
+            // A car that drew level with the turner it passes goes ahead of
+            // it in the lane's order.
+            let passers: Vec<CarId> = self.cars.iter().filter(|(_, c)| c.passing).map(|(id, _)| id).collect();
+            for id in passers {
+                let lane = self.cars[id].route[self.cars[id].idx];
+                let cars = &mut self.net.lanes[lane as usize].cars;
+                if let Some(k) = cars.iter().position(|&c| c == id) {
+                    if k + 1 < cars.len() && self.cars[cars[k + 1]].s < self.cars[id].s {
+                        cars.swap(k, k + 1);
+                    }
                 }
             }
         }
         self.reroute_stalled();
+        self.adapt_clock += seconds;
+        if self.adapt_clock >= ADAPT_SECONDS {
+            self.adapt_clock = 0.0;
+            self.adapt_arrows();
+        }
         for car in self.cars.values_mut() {
             let lane = &self.net.lanes[car.route[car.idx] as usize];
             let (p, d) = lane.point_at(car.s);
@@ -1748,9 +2201,12 @@ mod tests {
         let (inner, outer) = (lane_of(&t, west, Vec2::X, 0), lane_of(&t, west, Vec2::X, 1));
         // Lane discipline at the junction: the outer (right) lane never
         // turns left, the inner (left) lane never turns right; both go on.
-        let turns = |l: LaneId| t.net.lanes[l as usize].next.iter().map(|&c| t.net.lanes[c as usize].turn).collect::<Vec<i8>>();
+        let turns = |l: LaneId| t.net.lanes[l as usize].next.iter().filter(|&&c| t.net.lanes[c as usize].permitted).map(|&c| t.net.lanes[c as usize].turn).collect::<Vec<i8>>();
+        // The default two-lane approach: a left-only lane and a straight-and-right lane.
+        assert_eq!(t.net.lanes[inner as usize].arrows, LEFT);
+        assert_eq!(t.net.lanes[outer as usize].arrows, STRAIGHT | RIGHT);
         assert!(!turns(outer).contains(&-1) && turns(outer).contains(&1) && turns(outer).contains(&0), "{:?}", turns(outer));
-        assert!(!turns(inner).contains(&1) && turns(inner).contains(&-1) && turns(inner).contains(&0), "{:?}", turns(inner));
+        assert_eq!(turns(inner), vec![-1], "the inner lane only turns left");
 
         // A left turn (east to south: -y is the driver's left here) from the outer lane.
         let south = roads.nearest_street(Vec2::new(0.0, -200.0)).unwrap().0;
@@ -1886,5 +2342,185 @@ mod tests {
             }
         }
         assert_eq!(on_time, cars.len(), "the ring was broken by drivers taking another way, nobody timed out");
+    }
+
+    /// One-lane streets crossing at a signal, long enough for queues.
+    fn street_cross() -> RoadNetwork {
+        let mut net = RoadNetwork::default();
+        net.add_polyline(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        net.add_polyline(&[Vec2::new(0.0, -400.0), Vec2::new(0.0, 400.0)], 1, 1);
+        net
+    }
+
+    /// Spawn a car between two points (each on the lane it should use).
+    fn send(t: &mut Traffic, roads: &RoadNetwork, from: Vec2, to: Vec2) -> CarId {
+        let (fs, _, _) = roads.nearest_street(from).unwrap();
+        let (ts, _, _) = roads.nearest_street(to).unwrap();
+        let (route, s0, s1) = t.net.find_route(fs, from, ts, to).expect("route");
+        t.spawn_car(CitizenId::default(), None, route, s0, s1, 0)
+    }
+
+    /// Forty seconds of the westbound stream (and cross traffic) first, so
+    /// the oncoming lane is busy when the left turner arrives.
+    fn warm_up(t: &mut Traffic, roads: &RoadNetwork, cross: bool) {
+        let w = LANE_WIDTH;
+        for tick in 0..40 {
+            if tick % 2 == 0 {
+                send(t, roads, Vec2::new(300.0, -0.5 * w), Vec2::new(-300.0, -0.5 * w));
+            }
+            if cross && tick % 6 == 0 {
+                send(t, roads, Vec2::new(-0.5 * w, -300.0), Vec2::new(-0.5 * w, 300.0));
+            }
+            for id in t.step(1.0, 4) {
+                t.remove_car(id);
+            }
+        }
+    }
+
+    /// An eastbound left turner waits for a gap in a constant westbound
+    /// stream; the straight-on car behind it pulls onto the shoulder,
+    /// passes and merges back. Returns a trace for the determinism check.
+    fn pass_scene() -> Vec<(f32, f32)> {
+        let roads = street_cross();
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let w = LANE_WIDTH;
+        let east_in = roads.nearest_street(Vec2::new(-200.0, 0.0)).unwrap().0;
+        let lane = lane_of(&t, east_in, Vec2::X, 0);
+        let room = Traffic::pass_offset(&t.net.lanes[lane as usize]).expect("a shoulder to pass on");
+        assert!(room + CAR_WIDTH * 0.5 <= LANE_WIDTH * 0.5 + SHOULDER, "stays off the kerb");
+        warm_up(&mut t, &roads, false);
+        let turner = send(&mut t, &roads, Vec2::new(-60.0, 0.5 * w), Vec2::new(0.5 * w, -150.0));
+        let follower = send(&mut t, &roads, Vec2::new(-100.0, 0.5 * w), Vec2::new(150.0, 0.5 * w));
+        let mut trace = Vec::new();
+        let (mut passed_while_waiting, mut max_lateral, mut was_passing): (bool, f32, bool) = (false, 0.0, false);
+        for tick in 0..300 {
+            // The oncoming stream that keeps the turner waiting.
+            if tick % 2 == 0 {
+                send(&mut t, &roads, Vec2::new(300.0, -0.5 * w), Vec2::new(-300.0, -0.5 * w));
+            }
+            for id in t.step(1.0, 4) {
+                if id != follower && id != turner {
+                    t.remove_car(id);
+                }
+            }
+            let Some(f) = t.cars.get(follower) else { break };
+            was_passing |= f.passing;
+            max_lateral = max_lateral.max(f.lateral);
+            let on_lane = f.route[f.idx] == lane;
+            if on_lane && f.v < 0.5 && f.passing {
+                assert!(f.s <= t.net.lanes[lane as usize].length - CROSSING_SETBACK + 0.5, "waits short of the crossing ({:.1})", f.s);
+            }
+            let tc = &t.cars[turner];
+            if !on_lane && f.idx > 0 && tc.route[tc.idx] == lane {
+                passed_while_waiting = true;
+            }
+            trace.push((f.pos.x, f.pos.y));
+            if f.idx >= 2 && f.lateral.abs() < 0.05 {
+                break;
+            }
+        }
+        assert!(was_passing, "the follower pulled out to pass");
+        assert!(max_lateral >= CAR_WIDTH && max_lateral <= room + 0.01, "onto the shoulder, not the kerb: {max_lateral:.2}");
+        assert!(passed_while_waiting, "it got by while the turner was still waiting");
+        let f = &t.cars[follower];
+        assert!(f.idx >= 2 && f.lateral.abs() < 0.05, "and merged back into its lane");
+        trace
+    }
+
+    #[test]
+    fn a_car_passes_a_waiting_left_turner_on_the_right() {
+        let a = pass_scene();
+        assert_eq!(a, pass_scene(), "deterministic");
+    }
+
+    #[test]
+    fn lane_arrows_default_from_demand_and_can_be_set() {
+        let roads = avenue_cross();
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let w = LANE_WIDTH;
+        let west = roads.nearest_street(Vec2::new(-200.0, 0.0)).unwrap().0;
+        let (inner, outer) = (lane_of(&t, west, Vec2::X, 0), lane_of(&t, west, Vec2::X, 1));
+        let node = t.net.lanes[outer as usize].end_node;
+        // The shared straight-and-right lane takes both movements without a change.
+        for to in [Vec2::new(300.0, 1.5 * w), Vec2::new(-0.5 * w, 150.0)] {
+            let (route, _, _) = t.net.find_route(west, Vec2::new(-300.0, 1.5 * w), roads.nearest_street(to).unwrap().0, to).unwrap();
+            assert_eq!(route[0], outer);
+            assert!(!t.net.lanes[outer as usize].is_beside(route[1]), "no lane change from the straight-and-right lane: {route:?}");
+        }
+        // Straight on from the left-only lane moves over first.
+        let (route, _, _) = t.net.find_route(west, Vec2::new(-300.0, 0.5 * w), roads.nearest_street(Vec2::new(300.0, 0.0)).unwrap().0, Vec2::new(300.0, 1.5 * w)).unwrap();
+        assert_eq!(&route[..2], &[inner, outer]);
+
+        // The player makes it left-and-straight plus right only.
+        assert!(t.set_lane_use(west, node, Some(vec![LEFT, LEFT])).is_err(), "nothing would go straight or right");
+        assert!(t.set_lane_use(west, node, Some(vec![LEFT])).is_err(), "two lanes need two arrows");
+        t.set_lane_use(west, node, Some(vec![LEFT | STRAIGHT, RIGHT])).unwrap();
+        let permitted = |l: LaneId| t.net.lanes[l as usize].next.iter().filter(|&&c| t.net.lanes[c as usize].permitted).map(|&c| t.net.lanes[c as usize].turn).collect::<Vec<i8>>();
+        assert_eq!(permitted(outer), vec![1]);
+        assert!(permitted(inner).contains(&0) && permitted(inner).contains(&-1));
+        // It survives a rebuild of the network and can be cleared.
+        t.rebuild(&roads);
+        assert_eq!(t.net.lanes[inner as usize].arrows, LEFT | STRAIGHT);
+        t.set_lane_use(west, node, None).unwrap();
+        assert_eq!(t.net.lanes[inner as usize].arrows, LEFT);
+
+        // Demand: a quiet left shares its lane with straight traffic, a
+        // busy one on a wide avenue gets two lanes.
+        let all = LEFT | STRAIGHT | RIGHT;
+        assert_eq!(default_arrows(2, all, Some(0.1), None), vec![LEFT | STRAIGHT, STRAIGHT | RIGHT]);
+        assert_eq!(default_arrows(2, all, Some(0.5), None), vec![LEFT, STRAIGHT | RIGHT]);
+        assert_eq!(default_arrows(4, all, Some(0.5), None), vec![LEFT, LEFT, STRAIGHT, STRAIGHT | RIGHT]);
+        assert_eq!(default_arrows(4, all, Some(0.1), None), vec![LEFT, STRAIGHT, STRAIGHT, STRAIGHT | RIGHT]);
+        assert_eq!(default_arrows(2, LEFT | RIGHT, None, None), vec![LEFT, RIGHT], "a T junction");
+        // Counted traffic revises the default.
+        let ai = t.net.lanes[outer as usize].approach as usize;
+        t.net.approaches[ai].counts = [2.0, 40.0, 8.0];
+        t.adapt_arrows();
+        assert_eq!(t.net.lanes[inner as usize].arrows, LEFT | STRAIGHT, "few lefts: the left lane is shared");
+    }
+
+    #[test]
+    fn a_protected_left_arrow_ends_starvation() {
+        let roads = street_cross();
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let w = LANE_WIDTH;
+        warm_up(&mut t, &roads, false);
+        let turner = send(&mut t, &roads, Vec2::new(-40.0, 0.5 * w), Vec2::new(0.5 * w, -150.0));
+        let node = t.net.lanes[t.cars[turner].route[0] as usize].end_node;
+        let inter = t.net.node_intersection[node.0 as usize];
+        let mut arrows_seen = 0;
+        let mut turned_at = None;
+        for tick in 0..600 {
+            // Constant oncoming traffic and nobody on the cross street: the
+            // green never has to end, the case that used to starve lefts.
+            if tick % 2 == 0 {
+                send(&mut t, &roads, Vec2::new(300.0, -0.5 * w), Vec2::new(-300.0, -0.5 * w));
+            }
+            for id in t.step(1.0, 4) {
+                if id != turner {
+                    t.remove_car(id);
+                }
+            }
+            let i = &t.net.intersections[inter];
+            if i.arrow > 0.0 && i.timer < i.arrow {
+                arrows_seen += 1;
+            }
+            let c = &t.cars[turner];
+            let c = &t.cars[turner];
+            if t.net.lanes[c.route[c.idx] as usize].is_connector() && turned_at.is_none() {
+                turned_at = Some(tick);
+                break;
+            }
+        }
+        let turned_at = turned_at.expect("the left turner got through");
+        assert!(arrows_seen > 0, "on a protected arrow");
+        assert!(turned_at < 60, "soon after starving, not at the trip timeout ({turned_at}s)");
+        let (mean, max, n) = t.left_wait_stats();
+        assert_eq!(n, 1);
+        assert!(mean > 0.0 && max == mean);
+        assert!(t.net.intersections[inter].left_turns == 1 && t.net.intersections[inter].left_wait_max > 0.0);
     }
 }

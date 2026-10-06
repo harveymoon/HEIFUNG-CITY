@@ -714,6 +714,9 @@ fn services(w: &World) -> Value {
             "waiting_at_kerb": kerb, "gridlocks": w.traffic.gridlocks().len(),
             "lanes": w.traffic.net.lanes.len(), "intersections": w.traffic.net.intersections.len(), "signals": w.traffic.net.intersections.iter().filter(|i| i.signalized).count(),
             "walk_trips_today": e.walk_trips_today,
+            "left_turn_wait_mean_s": round(w.traffic.left_wait_stats().0), "left_turn_wait_max_s": round(w.traffic.left_wait_stats().1),
+            "left_turns_measured": w.traffic.left_wait_stats().2, "protected_left_arrows_now": w.traffic.net.intersections.iter().filter(|i| i.timer < i.arrow).count(),
+            "passing_left_turners_now": w.traffic.cars.values().filter(|c| c.passing).count(), "lane_use_set_by_player": w.traffic.lane_use.len(),
         },
     })
 }

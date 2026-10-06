@@ -421,6 +421,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "bus" => bus(cmd, ctx),
         "find" => find(cmd, ctx),
         "inspect" => inspect(cmd, ctx),
+        "lane_use" => lane_use(cmd, ctx),
         "select" => select(cmd, ctx),
         "favourite" | "favorite" => {
             let id = key_from(field(cmd, "citizen").ok_or("missing citizen id")?)?;
@@ -1005,6 +1006,41 @@ fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     Ok(json!({ "what": what, "total": total, "returned": rows.len(), "rows": rows }))
 }
 
+/// Set or reset the lane arrows of one street arriving at a junction.
+fn lane_use(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let at = opt_vec2(cmd, "junction")?.ok_or("missing field \"junction\": [x, y]")?;
+    let w = &mut ctx.sim.world;
+    let k = view::junction_near(w, at).ok_or("no junctions")?;
+    let node = w.traffic.net.intersections[k].node;
+    let from = opt_vec2(cmd, "approach")?.ok_or("missing field \"approach\": [x, y] on the arriving street")?;
+    let segment = w
+        .traffic
+        .net
+        .approaches
+        .iter()
+        .filter(|a| a.node == node)
+        .min_by(|a, b| {
+            let d = |s| {
+                let (p, q) = w.roads.segment_points(s);
+                nd_sim::roads::project_on_segment(from, p, q).1.distance(from)
+            };
+            d(a.segment).total_cmp(&d(b.segment))
+        })
+        .map(|a| a.segment)
+        .ok_or("no street arrives at that junction")?;
+    let arrows = match field(cmd, "lanes") {
+        Some(Value::String(s)) if s == "reset" || s == "default" => None,
+        Some(Value::Array(a)) => Some(
+            a.iter()
+                .map(|x| x.as_str().and_then(nd_sim::traffic::parse_arrows).ok_or_else(|| format!("lane arrows like \"L\", \"S+R\", \"L+S\", got {x}")))
+                .collect::<Result<Vec<u8>, String>>()?,
+        ),
+        _ => return Err("field \"lanes\": [\"L\", \"S+R\", ...] leftmost first, or \"reset\"".into()),
+    };
+    w.traffic.set_lane_use(segment, node, arrows)?;
+    Ok(json!({ "junction": view::junction_detail(w, k) }))
+}
+
 fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let w = &ctx.sim.world;
     if let Some(v) = field(cmd, "citizen") {
@@ -1027,6 +1063,10 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         let id = key_from(v)?;
         let c = w.traffic.cars.get(id).ok_or("no such car")?;
         return Ok(json!({ "car": car_detail(w, id, c) }));
+    }
+    if let Some(v) = field(cmd, "junction") {
+        let k = view::junction_near(w, vec2_of(v)?).ok_or("no junctions")?;
+        return Ok(json!({ "junction": view::junction_detail(w, k) }));
     }
     if let Some(v) = field(cmd, "train") {
         let id = key_from(v)?;
@@ -1399,7 +1439,8 @@ fn help() -> Value {
             "landscape": { "returns": "preset and levers, rivers (width, current, hydro_ok), lakes, sea, hot spots, highway ends and through cars, bridges, docks, ships" },
             "bus": { "action": "new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses" },
             "find": { "what": "citizens|buildings|lots|cars|trains|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
-            "inspect": { "citizen|building|lot|car|train|route": "id", "gesture": "int; with no id, the current selection" },
+            "inspect": { "citizen|building|lot|car|train|route": "id", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits" },
+            "lane_use": { "junction": "[x,y]", "approach": "[x,y] on the arriving street", "lanes": "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default" },
             "select": { "citizen|building|car": "id", "at": "[x,y] picks like a click; nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
             "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway", "kind": "sub-mode of the active tool", "land_use": "", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
