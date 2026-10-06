@@ -145,6 +145,11 @@ pub struct Lane {
     pub permitted: bool,
     /// Index into `LaneNetwork::approaches` for road lanes ending at a junction.
     pub approach: u32,
+    /// [driving] Connectors: seconds since the light went red (0 on green),
+    /// for drivers deciding whether to run a late amber.
+    pub red_for: f32,
+    /// [driving] Connectors closed by a street takeover: nobody enters.
+    pub blocked: bool,
 }
 
 impl Lane {
@@ -154,7 +159,7 @@ impl Lane {
             cum.push(cum.last().unwrap() + w[0].distance(w[1]));
         }
         let length = *cum.last().unwrap();
-        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX }
+        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX, red_for: 0.0, blocked: false }
     }
 
     pub fn is_connector(&self) -> bool {
@@ -440,6 +445,10 @@ pub struct Car {
     /// What it looks like (body, class, wear, livery); drawing only.
     #[serde(default)]
     pub model: crate::vehicle::VehicleModel,
+    /// [driving] Who is at the wheel and what has happened to the car:
+    /// driver profile, crash, takeover role, stunt, weave.
+    #[serde(default)]
+    pub drive: DriveState,
 }
 
 /// Why a car is not driving freely.
@@ -463,6 +472,308 @@ pub enum Wait {
     Entering,
     /// Pulling up at the destination.
     Arriving,
+    /// [driving] Stopped after a crash.
+    Crashed,
+    /// [driving] The junction ahead is blocked (a street takeover).
+    Blocked,
+}
+
+// ── [driving] drivers, crashes, takeovers ───────────────────────────────────
+
+/// How a driver drives: chosen from age, personality and drunkenness when
+/// the car sets off (`World::step_driving`). The default, unassigned
+/// profile drives exactly like the plain model: no lag, no weave, no
+/// crashes, every light obeyed.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DriverProfile {
+    pub assigned: bool,
+    /// Desired speed as a share of the limit.
+    pub speed: f32,
+    /// IDM time headway (s) and acceleration (m/s per s).
+    pub headway: f32,
+    pub accel: f32,
+    /// Seconds to notice the car ahead changing speed.
+    pub reaction: f32,
+    /// `0..1`: how readily the driver stops for an amber or a red.
+    pub compliance: f32,
+    /// `0..1`: how eagerly they change lanes and overtake (0.5 is the plain model).
+    pub aggression: f32,
+    /// `0..1`: lane keeping and judgement. Low skill wanders and misjudges.
+    pub skill: f32,
+    /// `0..1`, copied from the driver when the trip started.
+    pub drunk: f32,
+    /// A takeover pack: lights mean nothing.
+    pub ignores_signals: bool,
+    /// Stable phase for the weave, so cars do not wander in step.
+    pub phase: f32,
+}
+
+impl Default for DriverProfile {
+    fn default() -> Self {
+        Self { assigned: false, speed: 1.0, headway: IDM_HEADWAY, accel: IDM_ACCEL, reaction: 0.0, compliance: 1.0, aggression: 0.5, skill: 1.0, drunk: 0.0, ignores_signals: false, phase: 0.0 }
+    }
+}
+
+impl DriverProfile {
+    /// A private driver. `caution` and `hedonism` are personality traits
+    /// (`nd_minds::Personality`), `knack` a natural talent `0..1`.
+    /// Rebellious (careless, pleasure-seeking) drivers go faster, closer and
+    /// through late ambers; the old drive slower with slower reactions;
+    /// the young are quick but inexperienced; drink makes everything worse.
+    pub fn for_driver(age: u8, caution: f32, hedonism: f32, drunk: f32, knack: f32, phase: f32) -> Self {
+        let r = crate::citizens::rebelliousness(caution, hedonism);
+        let age = age as f32;
+        let old = ((age - 65.0) / 20.0).clamp(0.0, 1.0);
+        let young = ((25.0 - age) / 7.0).clamp(0.0, 1.0);
+        let d = drunk.clamp(0.0, 1.0);
+        Self {
+            assigned: true,
+            speed: (0.9 + 0.22 * r + 0.06 * young - 0.22 * old + 0.1 * d).clamp(0.7, 1.3),
+            headway: (1.7 - 1.0 * r - 0.2 * young + 0.6 * old - 0.3 * d).clamp(0.6, 2.4),
+            accel: (1.1 + 0.8 * r - 0.4 * old).clamp(0.8, 2.2),
+            reaction: 0.6 + 0.7 * old + 1.6 * d,
+            compliance: (1.0 - 0.55 * r * r - 0.1 * young - 0.5 * d).clamp(0.2, 1.0),
+            aggression: (0.25 + 0.7 * r + 0.1 * young).clamp(0.0, 1.0),
+            skill: (0.6 + 0.35 * knack + 0.1 * (1.0 - young) - 0.25 * old - 0.6 * d).clamp(0.05, 1.0),
+            drunk: d,
+            ignores_signals: false,
+            phase,
+        }
+    }
+
+    /// Bus, truck and emergency drivers: steady and by the book.
+    pub fn professional(phase: f32) -> Self {
+        Self { assigned: true, speed: 1.0, headway: 1.4, accel: 1.3, reaction: 0.6, compliance: 0.98, aggression: 0.4, skill: 0.95, drunk: 0.0, ignores_signals: false, phase }
+    }
+
+    /// A takeover crew member in the pack: fast, close, weaving, no lights.
+    pub fn pack(mut self) -> Self {
+        self.speed = self.speed.max(1.3);
+        self.headway = self.headway.min(0.6);
+        self.accel = self.accel.max(2.2);
+        self.aggression = 1.0;
+        self.compliance = 0.0;
+        self.ignores_signals = true;
+        self.skill = self.skill.max(0.7);
+        self
+    }
+
+    /// Sideways wander (m) around the lane centre.
+    pub fn weave_amplitude(&self) -> f32 {
+        if !self.assigned {
+            return 0.0;
+        }
+        (1.0 - self.skill) * 0.35 + self.drunk * 1.3 + if self.ignores_signals { 0.45 } else { 0.0 }
+    }
+
+    pub fn label(&self) -> &'static str {
+        if !self.assigned {
+            "unassigned"
+        } else if self.ignores_signals {
+            "takeover crew"
+        } else if self.drunk >= 0.35 {
+            "drunk"
+        } else if self.aggression > 0.72 {
+            "reckless"
+        } else if self.speed < 0.86 {
+            "slow and careful"
+        } else if self.skill < 0.55 {
+            "sloppy"
+        } else {
+            "ordinary"
+        }
+    }
+}
+
+/// A car stopped by a crash.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct CrashState {
+    /// `CrashReport::id`.
+    pub id: u32,
+    /// Seconds before a minor crash drives on.
+    pub hold: f32,
+    /// Written off: stays until the scene is cleared and it is towed.
+    pub wrecked: bool,
+}
+
+/// Where a takeover car is in the night.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GangPhase {
+    /// Driving in to the meet.
+    Joining,
+    /// In the show at the junction (a stunt).
+    Show,
+    /// Leaving in convoy.
+    Leaving,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct GangRole {
+    pub takeover: u32,
+    pub phase: GangPhase,
+}
+
+/// What a car in a takeover show does, off the lanes.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum StuntKind {
+    /// Parked in the ring, nose to `face`, blocking the junction.
+    Ring { at: Vec2, face: f32 },
+    /// Spinning round `centre` with the tail out; `dir` +1 or -1.
+    Donut { centre: Vec2, radius: f32, dir: f32 },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Stunt {
+    pub kind: StuntKind,
+    /// Angle round a donut.
+    pub angle: f32,
+    /// Reached its spot.
+    pub settled: bool,
+}
+
+impl Stunt {
+    pub fn is_donut(&self) -> bool {
+        matches!(self.kind, StuntKind::Donut { .. })
+    }
+}
+
+/// [driving] Per-car state of the driving model.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DriveState {
+    pub profile: DriverProfile,
+    pub crash: Option<CrashState>,
+    pub gang: Option<GangRole>,
+    pub stunt: Option<Stunt>,
+    /// Sideways wander (m, + right) drawn on top of `lateral`.
+    pub weave: f32,
+    /// Leader speed as the driver perceives it (lags by the reaction time).
+    pub seen_lead_v: f32,
+    /// Committed to running the red on this connector.
+    pub running: Option<LaneId>,
+    /// Poses at the end of every physics substep of the last tick, the
+    /// tick's start first, for drawing the car along its real path.
+    #[serde(skip)]
+    pub poses: Vec<(Vec2, f32)>,
+}
+
+/// Why two cars (or one) crashed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CrashCause {
+    /// Into the back of the car ahead.
+    RearEnd,
+    /// Ran a red into cross traffic.
+    RedLight,
+    /// Weaved off the road (into a pole, the kerb, a parked car).
+    OffRoad,
+    /// Drifted over the line into the car alongside.
+    Sideswipe,
+}
+
+impl CrashCause {
+    pub fn label(self) -> &'static str {
+        match self {
+            CrashCause::RearEnd => "rear-end",
+            CrashCause::RedLight => "ran a red light",
+            CrashCause::OffRoad => "ran off the road",
+            CrashCause::Sideswipe => "sideswipe",
+        }
+    }
+}
+
+/// A crash the traffic model decided on this tick, for the world to turn
+/// into injuries, 911 calls and tow trucks.
+#[derive(Clone, Debug)]
+pub struct CrashReport {
+    pub id: u32,
+    /// The car at fault first.
+    pub cars: Vec<CarId>,
+    pub pos: Vec2,
+    /// Closing speed, m/s.
+    pub speed: f32,
+    pub cause: CrashCause,
+    /// `0..1`; from `BAD_CRASH` up cars are written off and people may be hurt.
+    pub severity: f32,
+}
+
+/// Severity at which a crash writes cars off and may hurt people.
+pub const BAD_CRASH: f32 = 0.4;
+/// Hardest a profiled driver can brake (m/s per s): physics, not choice.
+const MAX_BRAKE: f32 = 8.0;
+/// Seconds of a red that are still amber.
+const AMBER: f32 = 2.0;
+/// Closing speed (m/s) below which touching bumpers is no crash.
+const BUMP_SPEED: f32 = 1.5;
+
+/// Angle `a` to `b` by `t`, the short way round.
+pub fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
+    let mut d = (b - a) % std::f32::consts::TAU;
+    if d > std::f32::consts::PI {
+        d -= std::f32::consts::TAU;
+    } else if d < -std::f32::consts::PI {
+        d += std::f32::consts::TAU;
+    }
+    a + d * t
+}
+
+impl Car {
+    /// Where to draw the car a fraction `f` of the way through the last
+    /// tick. A tick is several seconds of driving (`traffic_seconds_per_tick`),
+    /// so a straight line from the old pose to the new one cuts every
+    /// corner by metres; this follows the poses recorded at each physics
+    /// substep instead, with a cubic tangent to the car's heading between
+    /// them, so a car turning at a junction is drawn on its arc.
+    pub fn pose_at(&self, f: f32) -> (Vec2, f32) {
+        let poses = &self.drive.poses;
+        let n = poses.len();
+        if n < 2 {
+            return (self.prev_pos.lerp(self.pos, f), lerp_angle(self.prev_heading, self.heading, f));
+        }
+        let x = f.clamp(0.0, 1.0) * (n - 1) as f32;
+        let k = (x.floor() as usize).min(n - 2);
+        let t = x - k as f32;
+        let ((p0, h0), (p1, h1)) = (poses[k], poses[k + 1]);
+        let d = p0.distance(p1);
+        let heading = lerp_angle(h0, h1, t);
+        if d > 30.0 {
+            return (p1, h1);
+        }
+        let (m0, m1) = (Vec2::new(h0.cos(), h0.sin()) * d, Vec2::new(h1.cos(), h1.sin()) * d);
+        let chord = (p1 - p0) / d.max(1e-4);
+        // Hermite only where the car moves the way it points (not a donut,
+        // not reversing out of a ring).
+        if d < 0.05 || self.drive.stunt.is_some() || m0.dot(chord) < 0.5 * d || m1.dot(chord) < 0.5 * d {
+            return (p0.lerp(p1, t), heading);
+        }
+        let (t2, t3) = (t * t, t * t * t);
+        let p = p0 * (2.0 * t3 - 3.0 * t2 + 1.0) + m0 * (t3 - 2.0 * t2 + t) + p1 * (-2.0 * t3 + 3.0 * t2) + m1 * (t3 - t2);
+        (p, heading)
+    }
+
+    /// How far (m) a long vehicle swings out at the middle of a turn.
+    fn swing(&self) -> f32 {
+        use crate::vehicle::BodyType as B;
+        if self.bus.is_some() {
+            return 1.0;
+        }
+        match self.model.body {
+            B::Semi | B::ArticulatedBus => 1.1,
+            B::BubbleBus => 1.0,
+            B::GarbageTruck | B::PanelTruck | B::BoxVan => 0.6,
+            _ => 0.0,
+        }
+    }
+
+    /// Stopped by a crash (minor or written off).
+    pub fn crashed(&self) -> bool {
+        self.drive.crash.is_some()
+    }
+
+    /// Off the lanes, in a takeover show.
+    pub fn in_stunt(&self) -> bool {
+        self.drive.stunt.is_some()
+    }
 }
 
 impl Car {
@@ -475,7 +786,14 @@ impl Car {
         if self.siren {
             return limit * SIREN_SPEED_FACTOR;
         }
-        if self.cargo.is_some() { limit * TRUCK_SPEED_FACTOR } else { limit }
+        let base = if self.cargo.is_some() { limit * TRUCK_SPEED_FACTOR } else { limit };
+        base * self.drive.profile.speed
+    }
+
+    /// IDM acceleration with this driver's headway and acceleration.
+    fn idm(&self, v0: f32, gap: f32, dv: f32) -> f32 {
+        let p = &self.drive.profile;
+        idm_with(self.v, v0, gap, dv, p.headway, p.accel)
     }
 
     /// The route asks for a change into the lane beside this one next.
@@ -523,6 +841,17 @@ pub struct Traffic {
     pub left_waits: VecDeque<f32>,
     #[serde(skip)]
     adapt_clock: f32,
+    /// [driving] Crashes decided since the world last drained them.
+    #[serde(skip)]
+    pub crashes: Vec<CrashReport>,
+    #[serde(default)]
+    pub next_crash: u32,
+    /// [driving] The traffic model's random stream (crashes only).
+    #[serde(default)]
+    pub rng: u64,
+    /// [driving] Red lights run (counted by the world per day).
+    #[serde(default)]
+    pub red_runs: u32,
 }
 
 /// Arrows for the lanes (leftmost first) of `segment` arriving at `node`.
@@ -548,40 +877,89 @@ pub struct SignalDemand {
     pub left_yielding: Vec<bool>,
 }
 
-fn quad_bezier(p0: Vec2, c: Vec2, p1: Vec2, samples: usize) -> Vec<Vec2> {
+/// A cubic leaving `p0` along `d0` and arriving at `p1` along `d1`, with
+/// handles `h` long: tangent at both ends, so no kink where it meets the lanes.
+fn cubic_join(p0: Vec2, d0: Vec2, p1: Vec2, d1: Vec2, h: f32, samples: usize) -> Vec<Vec2> {
+    let (c0, c1) = (p0 + d0 * h, p1 - d1 * h);
     (0..=samples)
         .map(|i| {
             let t = i as f32 / samples as f32;
             let u = 1.0 - t;
-            p0 * (u * u) + c * (2.0 * u * t) + p1 * (t * t)
+            p0 * (u * u * u) + c0 * (3.0 * u * u * t) + c1 * (3.0 * u * t * t) + p1 * (t * t * t)
         })
         .collect()
 }
 
+/// Largest angle (radians) between two points of a turning connector's arc.
+const ARC_STEP: f32 = 0.14;
+
 /// Curve joining the end of one lane to the start of another inside an
-/// intersection. Uses the intersection of the two lane directions as the
-/// bezier control point when it is sensible, so through-connectors stay
-/// straight and turns bend.
+/// intersection: the path a driver takes, staying in lane.
+///
+/// A turn runs straight on along the arriving lane, round a circular arc
+/// tangent to both lanes (the fillet of the corner where the two lane
+/// lines meet, as tight as the shorter leg allows) and straight out along
+/// the exit lane, sampled every 8 degrees. Lanes that do not meet inside
+/// the junction (a shallow bend, a dead-end U-turn, lanes side by side)
+/// get a cubic tangent to both. Straight through stays a straight line.
+///
+/// The corner is `p_in + d_in * a` = `p_out - d_out * b`; for a real turn
+/// both `a` and `b` are positive. (The old code tested the second
+/// parameter for being positive with the opposite sign, so every turn fell
+/// back to the chord's midpoint as its control point: a straight diagonal
+/// across the corner, which is what read as cars cutting corners.)
 fn connector_curve(p_in: Vec2, d_in: Vec2, p_out: Vec2, d_out: Vec2, radius: f32) -> Vec<Vec2> {
-    if p_in.distance(p_out) < 0.5 {
+    let dist = p_in.distance(p_out);
+    if dist < 0.5 {
         return vec![p_in, p_out];
     }
+    let cos = d_in.dot(d_out).clamp(-1.0, 1.0);
+    if cos > 0.98 {
+        // Straight on: a line when the lanes line up, else a gentle S.
+        if (p_out - p_in).normalize_or_zero().dot(d_in) > 0.999 {
+            return vec![p_in, p_out];
+        }
+        return cubic_join(p_in, d_in, p_out, d_out, dist * 0.4, 8);
+    }
     let denom = d_in.perp_dot(d_out);
-    let mut control = (p_in + p_out) * 0.5;
     if denom.abs() > 1e-3 {
         let qp = p_out - p_in;
-        let t = qp.perp_dot(d_out) / denom;
-        let u = qp.perp_dot(d_in) / denom;
-        // Keep the control point inside the junction so turns never swing
-        // out over the kerb, even at shallow angles.
+        let a = qp.perp_dot(d_out) / denom;
+        let b = -qp.perp_dot(d_in) / denom;
+        // Keep the corner inside the junction so turns never swing out over
+        // the kerb, even at shallow angles.
         let limit = radius * 1.3 + 1.0;
-        if t > 0.0 && u > 0.0 {
-            let t = t.min(limit);
-            control = p_in + d_in * t;
+        if a > 0.05 && b > 0.05 && a <= limit && b <= limit {
+            let corner = p_in + d_in * a;
+            let theta = cos.acos();
+            let leg = a.min(b);
+            let r = leg / (theta * 0.5).tan();
+            let (t1, t2) = (corner - d_in * leg, corner + d_out * leg);
+            let side = denom.signum();
+            let centre = t1 + Vec2::new(-d_in.y, d_in.x) * side * r;
+            let (v1, v2) = (t1 - centre, t2 - centre);
+            let sweep = v1.perp_dot(v2).atan2(v1.dot(v2));
+            let n = ((sweep.abs() / ARC_STEP).ceil() as usize).max(2);
+            let mut pts = vec![p_in];
+            for i in 0..=n {
+                let ang = sweep * i as f32 / n as f32;
+                let (sn, cs) = ang.sin_cos();
+                let p = centre + Vec2::new(v1.x * cs - v1.y * sn, v1.x * sn + v1.y * cs);
+                if pts.last().is_none_or(|q: &Vec2| q.distance(p) > 0.05) {
+                    pts.push(p);
+                }
+            }
+            if pts.last().is_none_or(|q| q.distance(p_out) > 0.05) {
+                pts.push(p_out);
+            } else if let Some(l) = pts.last_mut() {
+                *l = p_out;
+            }
+            return pts;
         }
     }
-    let straight = d_in.dot(d_out) > 0.98;
-    quad_bezier(p_in, control, p_out, if straight { 1 } else { 6 })
+    // A U-turn or a bend whose lanes meet outside the junction.
+    let h = if cos < -0.9 { (dist * 0.7).max(2.0) } else { dist * 0.4 };
+    cubic_join(p_in, d_in, p_out, d_out, h, 12)
 }
 
 impl LaneNetwork {
@@ -1079,10 +1457,11 @@ impl Ord for Open {
     }
 }
 
-fn idm(v: f32, v0: f32, gap: f32, dv: f32) -> f32 {
+/// The intelligent driver model with a driver's own headway and acceleration.
+fn idm_with(v: f32, v0: f32, gap: f32, dv: f32, headway: f32, accel: f32) -> f32 {
     let gap = gap.max(0.1);
-    let s_star = IDM_MIN_GAP + (v * IDM_HEADWAY + v * dv / (2.0 * (IDM_ACCEL * IDM_BRAKE).sqrt())).max(0.0);
-    IDM_ACCEL * (1.0 - (v / v0).powi(4) - (s_star / gap).powi(2))
+    let s_star = IDM_MIN_GAP + (v * headway + v * dv / (2.0 * (accel * IDM_BRAKE).sqrt())).max(0.0);
+    accel * (1.0 - (v / v0.max(0.1)).powi(4) - (s_star / gap).powi(2))
 }
 
 impl Traffic {
@@ -1119,7 +1498,7 @@ impl Traffic {
         for lane in &mut self.net.lanes {
             lane.cars.clear();
         }
-        let ids: Vec<CarId> = self.cars.keys().filter(|&id| !self.cars[id].entering).collect();
+        let ids: Vec<CarId> = self.cars.keys().filter(|&id| !self.cars[id].entering && !self.cars[id].in_stunt()).collect();
         for id in ids {
             let lane = self.cars[id].route[self.cars[id].idx];
             self.insert_sorted(lane, id);
@@ -1138,7 +1517,7 @@ impl Traffic {
         let lane = route[0];
         let (pos, dir) = self.net.lanes[lane as usize].point_at(s_start);
         let heading = dir.y.atan2(dir.x);
-        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default() });
+        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), drive: DriveState::default() });
         self.pull_out(id);
         id
     }
@@ -1249,19 +1628,29 @@ impl Traffic {
 
     /// Gap, leader speed and the reason for a car with no leader on its
     /// own lane: look down the route for the next car or a red light.
-    fn lookahead(&self, car: &Car, lane: &Lane) -> (f32, f32, Wait) {
+    fn lookahead(&self, car: &Car, lane: &Lane) -> (f32, f32, Wait, Option<LaneId>) {
         let mut dist = lane.length - car.s;
         let route = &car.route;
         let mut prev = route[car.idx];
+        let mut run = None;
         for (k, &next) in route.iter().enumerate().skip(car.idx + 1).take(4) {
             if self.net.lanes[prev as usize].is_beside(next) {
                 // A lane change further on; the car deals with it there.
                 break;
             }
             let nl = &self.net.lanes[next as usize];
+            if nl.is_connector() && nl.blocked {
+                // [driving] A takeover holds the junction.
+                return (dist - 1.0 + IDM_MIN_GAP, 0.0, Wait::Blocked, None);
+            }
             if nl.is_connector() && !nl.green {
-                // Stop line just before the lane ends; the min gap keeps the nose clear.
-                return (dist - 1.0 + IDM_MIN_GAP, 0.0, Wait::Signal);
+                // [driving] Late ambers and reds, by temperament.
+                if car.drive.running == Some(next) || (run.is_none() && Self::runs_red(car, nl, dist)) {
+                    run = Some(next);
+                } else {
+                    // Stop line just before the lane ends; the min gap keeps the nose clear.
+                    return (dist - 1.0 + IDM_MIN_GAP, 0.0, Wait::Signal, None);
+                }
             }
             // Do not enter a junction unless the exit lane has room: this is
             // what keeps a saturated grid from locking up.
@@ -1269,26 +1658,27 @@ impl Traffic {
                 if let LaneKind::Connector { node, approach } = nl.kind {
                     if let Some(inter) = self.net.node_intersection.get(node.0 as usize).and_then(|&i| self.net.intersections.get(i)) {
                         // Merging traffic yields; the highway mainline does not.
-                        if !inter.signalized && inter.approaches >= 3 && lane.speed_limit <= ROAD_SPEED {
+                        let barging = run.is_some() || car.drive.profile.ignores_signals;
+                        if !barging && !inter.signalized && inter.approaches >= 3 && lane.speed_limit <= ROAD_SPEED {
                             let busy = inter.connectors.iter().any(|&(lid, ap)| ap != approach && !self.net.lanes[lid as usize].cars.is_empty());
                             if busy {
-                                return (dist - 1.0 + IDM_MIN_GAP, 0.0, Wait::Yield);
+                                return (dist - 1.0 + IDM_MIN_GAP, 0.0, Wait::Yield, None);
                             }
                         }
-                        if inter.signalized && nl.turn < 0 && self.oncoming(inter, approach) {
-                            return (dist - 1.0 + IDM_MIN_GAP, 0.0, Wait::Yield);
+                        if !barging && inter.signalized && nl.turn < 0 && self.oncoming(inter, approach) {
+                            return (dist - 1.0 + IDM_MIN_GAP, 0.0, Wait::Yield, None);
                         }
                     }
                 }
                 if let Some(&exit) = route.get(k + 1) {
                     if self.exit_blocked(nl, exit, self.at_junction(nl)) {
-                        return (dist - 1.0 + IDM_MIN_GAP, 0.0, Wait::ExitFull);
+                        return (dist - 1.0 + IDM_MIN_GAP, 0.0, Wait::ExitFull, None);
                     }
                 }
             }
             if let Some(&first) = nl.cars.first() {
                 let lead = &self.cars[first];
-                return (dist + lead.s - lead.length(), lead.v, Wait::Leader);
+                return (dist + lead.s - lead.length(), lead.v, Wait::Leader, run);
             }
             dist += nl.length;
             if dist > LOOKAHEAD {
@@ -1296,7 +1686,7 @@ impl Traffic {
             }
             prev = next;
         }
-        (LOOKAHEAD * 2.0, ROAD_SPEED, Wait::Free)
+        (LOOKAHEAD * 2.0, ROAD_SPEED, Wait::Free, run)
     }
 
     /// A left turn on a shared green yields to oncoming traffic going
@@ -1492,9 +1882,9 @@ impl Traffic {
                 if gap < IDM_MIN_GAP * 0.5 {
                     return None;
                 }
-                idm(c.v, c.desired_speed(tl.speed_limit), gap, c.v - self.cars[l].v)
+                c.idm(c.desired_speed(tl.speed_limit), gap, c.v - self.cars[l].v)
             }
-            None => idm(c.v, c.desired_speed(tl.speed_limit), tl.length - s + LOOKAHEAD, 0.0),
+            None => c.idm(c.desired_speed(tl.speed_limit), tl.length - s + LOOKAHEAD, 0.0),
         };
         if acc < -brake {
             return None;
@@ -1504,7 +1894,7 @@ impl Traffic {
             if gap < IDM_MIN_GAP * 0.5 {
                 return None;
             }
-            if idm(fc.v, fc.desired_speed(tl.speed_limit), gap, fc.v - c.v) < -brake {
+            if fc.idm(fc.desired_speed(tl.speed_limit), gap, fc.v - c.v) < -brake {
                 return None;
             }
         }
@@ -1528,7 +1918,8 @@ impl Traffic {
         }
         c.s = c.s.min(len);
         c.lateral = (c.lateral + shift).clamp(-1.5 * LANE_WIDTH, 1.5 * LANE_WIDTH);
-        c.cooldown = LC_COOLDOWN;
+        // [driving] Eager drivers change again sooner.
+        c.cooldown = LC_COOLDOWN * (1.5 - c.drive.profile.aggression).max(0.3);
         self.insert_sorted(target, id);
     }
 
@@ -1540,13 +1931,16 @@ impl Traffic {
         let ids: Vec<CarId> = self.cars.keys().collect();
         for id in ids {
             let c = &self.cars[id];
-            if c.hold > 0.0 || c.entering {
+            if c.hold > 0.0 || c.entering || c.crashed() || c.in_stunt() {
                 continue;
             }
             let lane = &self.net.lanes[c.route[c.idx] as usize];
             if lane.is_connector() {
                 continue;
             }
+            // [driving] How eagerly this driver changes lanes.
+            let aggr = c.drive.profile.aggression;
+            let safe_brake = LC_SAFE_BRAKE + 2.0 * (aggr - 0.5).max(0.0);
             if lane.left.is_none() && lane.right.is_none() {
                 // One lane: squeeze past a waiting left turner on the right.
                 let k = lane.cars.iter().position(|&o| o == id);
@@ -1567,7 +1961,7 @@ impl Traffic {
             }
             if let Some(target) = c.change_pending(&self.net) {
                 let forced = lane.length - c.s < 8.0 && c.v < 1.0;
-                if self.change_ok(id, target, if forced { LC_FORCED_BRAKE } else { LC_SAFE_BRAKE }).is_some() {
+                if self.change_ok(id, target, if forced { LC_FORCED_BRAKE.max(safe_brake) } else { safe_brake }).is_some() {
                     self.change_lane(id, target, None);
                 }
                 continue;
@@ -1583,16 +1977,19 @@ impl Traffic {
             let v0 = c.desired_speed(lane.speed_limit);
             // A bus at a stop, a slower truck, or a left turner about to wait
             // for a gap in the oncoming traffic.
-            let slow = l.hold > 0.0 || (l.wait == Wait::Free && l.v < 0.9 * v0) || (self.waiting_left(lane, lead) && self.next_turn(c) != Some(-1));
-            if gap > 35.0 || !slow {
+            // [driving] A crashed car is in the way too; an aggressive driver
+            // weaves past anyone a little slower than they would like.
+            let slow = l.hold > 0.0 || l.crashed() || (l.wait == Wait::Free && l.v < 0.9 * v0) || (aggr > 0.7 && l.v < 0.95 * v0) || (self.waiting_left(lane, lead) && self.next_turn(c) != Some(-1));
+            if gap > 35.0 + 40.0 * (aggr - 0.5).max(0.0) || !slow {
                 continue;
             }
-            let acc_here = idm(c.v, v0, gap, c.v - l.v);
+            let acc_here = c.idm(v0, gap, c.v - l.v);
+            let gain = OVERTAKE_GAIN * ((1.2 - aggr) / 0.7).max(0.15);
             let (goal, s_end, s) = (*c.route.last().unwrap(), c.s_end, c.s);
             let old_len = self.net.route_length(&c.route[c.idx..], s);
             for target in [lane.left, lane.right].into_iter().flatten() {
-                let Some(acc) = self.change_ok(id, target, LC_SAFE_BRAKE) else { continue };
-                if acc - acc_here < OVERTAKE_GAIN {
+                let Some(acc) = self.change_ok(id, target, safe_brake) else { continue };
+                if acc - acc_here < gain {
                     continue;
                 }
                 let Some((route, _, _)) = self.net.route_lanes(target, s, goal, s_end) else { continue };
@@ -1755,24 +2152,33 @@ impl Traffic {
             car.prev_pos = car.pos;
             car.prev_heading = car.heading;
             car.age += seconds;
+            car.drive.poses.clear();
+            car.drive.poses.push((car.pos, car.heading));
         }
         let mut arrived = Vec::new();
         for _ in 0..substeps {
             let demand = self.signal_demand();
             self.net.step_signals(dt, Some(&demand));
+            for lane in self.net.lanes.iter_mut().filter(|l| l.is_connector()) {
+                lane.red_for = if lane.green { 0.0 } else { lane.red_for + dt };
+            }
 
             // Kerb positions where a car has waited long enough to be let in.
             let mut claims: HashMap<LaneId, Vec<f32>> = HashMap::new();
             for c in self.cars.values().filter(|c| c.entering && c.stalled > COURTESY_AFTER) {
                 claims.entry(c.route[c.idx]).or_default().push(c.s);
             }
-            let mut accs: Vec<(CarId, f32, Wait, bool)> = Vec::with_capacity(self.cars.len());
+            let mut accs: Vec<Step> = Vec::with_capacity(self.cars.len());
             for (lane_id, lane) in self.net.lanes.iter().enumerate() {
                 let lane_claims = claims.get(&(lane_id as LaneId));
                 for (k, &cid) in lane.cars.iter().enumerate() {
                     let car = &self.cars[cid];
                     if car.hold > 0.0 {
-                        accs.push((cid, -1000.0, Wait::Dwell, false));
+                        accs.push(Step { id: cid, acc: -1000.0, why: Wait::Dwell, left_wait: false, seen: 0.0, run: None });
+                        continue;
+                    }
+                    if car.crashed() {
+                        accs.push(Step { id: cid, acc: -1000.0, why: Wait::Crashed, left_wait: false, seen: 0.0, run: None });
                         continue;
                     }
                     let pending = car.change_pending(&self.net).is_some();
@@ -1782,10 +2188,15 @@ impl Traffic {
                         && Self::pass_offset(lane).is_some_and(|o| car.lateral >= 0.8 * o)
                         && lane.cars.get(k + 1).is_some_and(|&l| self.next_turn(&self.cars[l]) == Some(-1));
                     let lead = lane.cars.get(if beside { k + 2 } else { k + 1 });
+                    let mut run = None;
                     let (mut gap, mut lead_v, mut why) = match lead {
                         Some(&lead) => (self.cars[lead].s - car.s - self.cars[lead].length(), self.cars[lead].v, Wait::Leader),
                         None if pending => (LOOKAHEAD * 2.0, ROAD_SPEED, Wait::Free),
-                        None => self.lookahead(car, lane),
+                        None => {
+                            let (g, v, w, r) = self.lookahead(car, lane);
+                            run = r;
+                            (g, v, w)
+                        }
                     };
                     if car.passing && matches!(why, Wait::Signal | Wait::ExitFull | Wait::Yield) {
                         // On the shoulder: stop short of the crossing.
@@ -1821,28 +2232,53 @@ impl Traffic {
                         why = Wait::Free;
                     }
                     let left_wait = car.v < 0.5 && self.next_turn(car) == Some(-1);
-                    accs.push((cid, idm(car.v, car.desired_speed(lane.speed_limit), gap, car.v - lead_v), why, left_wait));
+                    // [driving] The driver sees the car ahead change speed
+                    // only after their reaction time.
+                    let reaction = car.drive.profile.reaction;
+                    let seen = if reaction > 0.0 { car.drive.seen_lead_v + (lead_v - car.drive.seen_lead_v) * (dt / reaction).min(1.0) } else { lead_v };
+                    accs.push(Step { id: cid, acc: car.idm(car.desired_speed(lane.speed_limit), gap, car.v - seen), why, left_wait, seen, run });
                 }
             }
-            for (cid, acc, why, left_wait) in accs {
-                let car = &mut self.cars[cid];
-                car.wait = why;
-                if left_wait {
+            for st in accs {
+                let car = &mut self.cars[st.id];
+                car.wait = st.why;
+                car.drive.seen_lead_v = st.seen;
+                if st.run.is_some() {
+                    car.drive.running = st.run;
+                }
+                if st.left_wait {
                     car.turn_wait += dt;
-                    if why == Wait::Yield {
+                    if st.why == Wait::Yield {
                         car.yielded += dt;
                     }
                 }
                 car.cooldown = (car.cooldown - dt).max(0.0);
+                if let Some(cr) = car.drive.crash.as_mut() {
+                    car.v = 0.0;
+                    car.stalled = 0.0;
+                    if !cr.wrecked {
+                        cr.hold -= dt;
+                        if cr.hold <= 0.0 {
+                            car.drive.crash = None;
+                        }
+                    }
+                    continue;
+                }
                 if car.hold > 0.0 {
                     car.hold -= dt;
                     car.v = 0.0;
                     car.stalled = 0.0;
                     continue;
                 }
+                // [driving] A real driver cannot brake infinitely hard.
+                let acc = if car.drive.profile.assigned { st.acc.max(-MAX_BRAKE) } else { st.acc };
                 car.v = (car.v + acc * dt).max(0.0);
                 car.s += car.v * dt;
                 car.stalled = if car.v < 0.5 { car.stalled + dt } else { 0.0 };
+                if car.v < 0.3 {
+                    // Stopped after all: the next light is a new decision.
+                    car.drive.running = None;
+                }
                 if car.passing {
                     // Out onto the shoulder (the offset was checked against
                     // the kerb when the pass began).
@@ -1870,6 +2306,11 @@ impl Traffic {
 
             let ids: Vec<CarId> = self.cars.keys().collect();
             for cid in ids {
+                if self.cars[cid].in_stunt() {
+                    // [driving] In a takeover show, off the lanes.
+                    self.cars[cid].age = 0.0;
+                    continue;
+                }
                 let (lane_id, idx, len, s, s_end) = {
                     let c = &self.cars[cid];
                     let lane_id = c.route[c.idx];
@@ -1892,6 +2333,10 @@ impl Traffic {
                         let c = &mut self.cars[cid];
                         c.s = s_end.min(len);
                         c.v = 0.0;
+                        // [driving] A takeover car waits at the meet for the show.
+                        if c.drive.gang.is_some_and(|g| g.phase == GangPhase::Joining) {
+                            continue;
+                        }
                         if !arrived.contains(&cid) {
                             arrived.push(cid);
                         }
@@ -1914,6 +2359,7 @@ impl Traffic {
                     };
                     self.entered(lane_id, next, cid);
                     self.insert_sorted(next, cid);
+                    self.entered_red(next, cid);
                 }
             }
             // A car that drew level with the turner it passes goes ahead of
@@ -1928,6 +2374,9 @@ impl Traffic {
                     }
                 }
             }
+            self.collisions();
+            self.hazards(dt);
+            self.place_cars(dt);
         }
         self.reroute_stalled();
         self.adapt_clock += seconds;
@@ -1935,19 +2384,339 @@ impl Traffic {
             self.adapt_clock = 0.0;
             self.adapt_arrows();
         }
+        arrived
+    }
+
+    // ── [driving] crashes, stunts and where cars are drawn ─────────────────
+
+    /// The next number from the traffic model's own random stream
+    /// (splitmix64), `0..1`. Only profiled drivers draw from it.
+    fn roll(&mut self) -> f32 {
+        self.rng = self.rng.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.rng;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        (z >> 40) as f32 / (1u64 << 24) as f32
+    }
+
+    /// Would this driver go through the red on `nl`, `dist` metres ahead?
+    /// Anyone too close to stop goes through a fresh amber; the less a
+    /// driver cares for the rules, the later into the red they keep going;
+    /// a takeover pack never stops.
+    fn runs_red(car: &Car, nl: &Lane, dist: f32) -> bool {
+        let p = &car.drive.profile;
+        if !p.assigned || car.siren {
+            return false;
+        }
+        if p.ignores_signals {
+            return true;
+        }
+        let to_line = (dist - 1.0).max(0.1);
+        let cannot_stop = car.v * car.v > 2.0 * 3.5 * to_line;
+        // Only a decision taken in the last couple of seconds before the line.
+        dist < car.v * 2.0 + 2.0 && ((nl.red_for < AMBER && cannot_stop && car.v > 3.0) || (car.v > 5.0 && nl.red_for < (1.0 - p.compliance) * 8.0))
+    }
+
+    /// A car just drove onto connector `conn`. On a red, cross traffic in
+    /// the junction may hit it.
+    fn entered_red(&mut self, conn: LaneId, id: CarId) {
+        let lane = &self.net.lanes[conn as usize];
+        // Into the junction past the amber (the first `AMBER` seconds of red
+        // are clearance: going through then is legal, the cross street still
+        // has red).
+        let ran = lane.is_connector() && !lane.green && lane.red_for > AMBER && !self.cars[id].siren;
+        self.cars[id].drive.running = None;
+        if !ran || !self.cars[id].drive.profile.assigned {
+            return;
+        }
+        self.red_runs += 1;
+        let LaneKind::Connector { node, approach } = lane.kind else { return };
+        let Some(inter) = self.net.node_intersection.get(node.0 as usize).and_then(|&i| self.net.intersections.get(i)) else { return };
+        let here = self.cars[id].pos;
+        let other = inter
+            .connectors
+            .iter()
+            .filter(|&&(l, ap)| ap != approach && self.net.lanes[l as usize].green)
+            .flat_map(|&(l, _)| self.net.lanes[l as usize].cars.iter().copied())
+            .filter(|&o| o != id && self.cars[o].v > 2.0 && !self.cars[o].crashed())
+            .min_by(|&a, &b| self.cars[a].pos.distance(here).total_cmp(&self.cars[b].pos.distance(here)));
+        let Some(other) = other else { return };
+        let p = &self.cars[id].drive.profile;
+        let chance = 0.12 + 0.35 * p.drunk + 0.2 * (1.0 - p.skill);
+        if self.roll() < chance {
+            let speed = (self.cars[id].v + self.cars[other].v) * 0.7;
+            self.crash(vec![id, other], CrashCause::RedLight, speed);
+        }
+    }
+
+    /// Cars that ran into the one ahead on their lane: a crash when they
+    /// closed fast, else they just stop touching. Only profiled drivers can
+    /// get there at all (they cannot brake harder than `MAX_BRAKE`).
+    fn collisions(&mut self) {
+        let mut hits: Vec<(CarId, CarId, f32)> = Vec::new();
+        let mut bumps: Vec<(CarId, f32, f32)> = Vec::new();
+        for lane in &self.net.lanes {
+            for w in lane.cars.windows(2) {
+                let (f, l) = (&self.cars[w[0]], &self.cars[w[1]]);
+                if !f.drive.profile.assigned || f.passing || f.siren || f.crashed() || f.lateral.abs() > 1.0 {
+                    continue;
+                }
+                let gap = l.s - l.length() - f.s;
+                if gap >= 0.0 {
+                    continue;
+                }
+                let dv = f.v - l.v;
+                if dv > BUMP_SPEED {
+                    hits.push((w[0], w[1], dv));
+                } else {
+                    bumps.push((w[0], (l.s - l.length() - 0.1).max(0.0), l.v));
+                }
+            }
+        }
+        for (f, s, v) in bumps {
+            let c = &mut self.cars[f];
+            c.s = s.min(c.s);
+            c.v = c.v.min(v);
+        }
+        for (f, l, dv) in hits {
+            if self.cars[f].crashed() {
+                continue;
+            }
+            self.crash(vec![f, l], CrashCause::RearEnd, dv);
+        }
+    }
+
+    /// Chance mishaps: a drunk running off the road, a weaving car
+    /// swiping the one alongside.
+    fn hazards(&mut self, dt: f32) {
+        let ids: Vec<CarId> = self.cars.iter().filter(|(_, c)| c.drive.profile.assigned && !c.crashed() && !c.in_stunt() && !c.entering && c.v > 6.0).map(|(id, _)| id).collect();
+        for id in ids {
+            if self.cars[id].crashed() {
+                continue;
+            }
+            let (drunk, v, weave) = {
+                let c = &self.cars[id];
+                (c.drive.profile.drunk, c.v, c.drive.weave)
+            };
+            if drunk > 0.05 && self.roll() < 0.0012 * drunk * drunk * (v / 10.0) * dt {
+                self.crash(vec![id], CrashCause::OffRoad, v);
+                continue;
+            }
+            // Misjudging the gap to the car ahead: the less skill, the likelier.
+            let (skill, lead) = {
+                let c = &self.cars[id];
+                let lane = &self.net.lanes[c.route[c.idx] as usize];
+                let k = lane.cars.iter().position(|&o| o == id);
+                (c.drive.profile.skill, k.and_then(|k| lane.cars.get(k + 1)).copied())
+            };
+            if let Some(l) = lead {
+                let (lc, c) = (&self.cars[l], &self.cars[id]);
+                let gap = lc.s - lc.length() - c.s;
+                let dv = c.v - lc.v;
+                if dv > 2.0 && gap < c.v * 0.8 && !lc.in_stunt() && self.roll() < 0.05 * (1.0 - skill) * (1.0 - skill) * dt {
+                    self.crash(vec![id, l], CrashCause::RearEnd, dv);
+                    continue;
+                }
+            }
+            if weave.abs() > 0.9 {
+                let c = &self.cars[id];
+                let lane = &self.net.lanes[c.route[c.idx] as usize];
+                let side = if weave > 0.0 { lane.right } else { lane.left };
+                let s = c.s;
+                let along = side.and_then(|l| self.net.lanes[l as usize].cars.iter().copied().find(|&o| (self.cars[o].s - s).abs() < 4.5 && !self.cars[o].crashed()));
+                if let Some(o) = along {
+                    if self.roll() < 0.6 * dt {
+                        let speed = (v - self.cars[o].v).abs().max(4.0);
+                        self.crash(vec![id, o], CrashCause::Sideswipe, speed);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Stop the cars and file the crash for the world.
+    pub fn crash(&mut self, cars: Vec<CarId>, cause: CrashCause, speed: f32) {
+        let id = self.next_crash;
+        self.next_crash += 1;
+        let drunk = cars.iter().map(|&c| self.cars[c].drive.profile.drunk).fold(0.0, f32::max);
+        let luck = 0.7 + 0.6 * self.roll();
+        let severity = (speed / 16.0 * (1.0 + 0.3 * drunk) * luck).clamp(0.05, 1.0);
+        let wrecked = severity >= BAD_CRASH;
+        let pos = self.cars[cars[0]].pos;
+        for &c in &cars {
+            let car = &mut self.cars[c];
+            if car.crashed() {
+                continue;
+            }
+            car.v = 0.0;
+            car.passing = false;
+            car.drive.running = None;
+            car.drive.crash = Some(CrashState { id, hold: if wrecked { f32::MAX } else { 60.0 + 150.0 * severity }, wrecked });
+        }
+        self.crashes.push(CrashReport { id, cars, pos, speed, cause, severity });
+    }
+
+    /// Write a crashed car off (`wrecked`) or let it drive on (`None`).
+    pub fn clear_crash(&mut self, id: CarId) {
+        if let Some(c) = self.cars.get_mut(id) {
+            c.drive.crash = None;
+        }
+    }
+
+    /// Close (or reopen) every movement through the junction at `node`.
+    pub fn set_blocked(&mut self, node: NodeId, on: bool) {
+        let Some(&i) = self.net.node_intersection.get(node.0 as usize) else { return };
+        let Some(inter) = self.net.intersections.get(i) else { return };
+        let conns: Vec<LaneId> = inter.connectors.iter().map(|&(l, _)| l).collect();
+        for l in conns {
+            self.net.lanes[l as usize].blocked = on;
+        }
+    }
+
+    /// Take a car off the lanes into a takeover show.
+    pub fn begin_stunt(&mut self, id: CarId, kind: StuntKind) {
+        let Some(c) = self.cars.get(id) else { return };
+        let lane = c.route[c.idx];
+        self.net.lanes[lane as usize].cars.retain(|&o| o != id);
+        let c = &mut self.cars[id];
+        let angle = match kind {
+            StuntKind::Donut { centre, .. } => {
+                let d = c.pos - centre;
+                d.y.atan2(d.x)
+            }
+            StuntKind::Ring { .. } => 0.0,
+        };
+        c.drive.stunt = Some(Stunt { kind, angle, settled: false });
+        if let Some(g) = c.drive.gang.as_mut() {
+            g.phase = GangPhase::Show;
+        }
+        c.entering = false;
+        c.passing = false;
+        c.lateral = 0.0;
+        c.wait = Wait::Free;
+    }
+
+    /// Back onto the lanes from a stunt, on a new route; waits at the
+    /// kerb like a new car until there is a gap.
+    pub fn end_stunt(&mut self, id: CarId, route: Vec<LaneId>, s0: f32, s_end: f32) {
+        let Some(c) = self.cars.get_mut(id) else { return };
+        if route.is_empty() {
+            return;
+        }
+        c.drive.stunt = None;
+        if let Some(g) = c.drive.gang.as_mut() {
+            g.phase = GangPhase::Leaving;
+        }
+        c.route = route;
+        c.idx = 0;
+        c.s = s0;
+        c.s_end = s_end;
+        c.age = 0.0;
+        c.v = 0.0;
+        c.entering = false;
+        c.stalled = 0.0;
+        self.pull_out(id);
+    }
+
+    /// Positions and headings after a substep: lane, lane-change drift,
+    /// weave, long vehicles swinging wide, stunts. Records the pose for
+    /// drawing (`Car::pose_at`).
+    fn place_cars(&mut self, dt: f32) {
         for car in self.cars.values_mut() {
+            if let Some(mut st) = car.drive.stunt {
+                let (pos, heading) = step_stunt(&mut st, car.pos, car.heading, dt);
+                car.drive.stunt = Some(st);
+                car.pos = pos;
+                car.heading = heading;
+                car.v = if st.is_donut() && st.settled { 6.0 } else { car.v };
+                car.drive.poses.push((pos, heading));
+                continue;
+            }
             let lane = &self.net.lanes[car.route[car.idx] as usize];
             let (p, d) = lane.point_at(car.s);
             let right = Vec2::new(-d.y, d.x);
-            car.pos = p + right * car.lateral;
+            // A wandering driver: a slow drift and a quicker twitch.
+            let amp = car.drive.profile.weave_amplitude();
+            let weave = if amp > 0.0 && car.v > 1.0 && !car.crashed() {
+                let t = car.age * 0.45 + car.drive.profile.phase * 37.0;
+                amp * (0.75 * (t * 0.9).sin() + 0.25 * (t * 2.3 + 1.7).sin())
+            } else {
+                car.drive.weave * (1.0 - dt).max(0.0)
+            };
+            car.drive.weave = weave;
+            let mut side = car.lateral + weave;
+            if lane.is_connector() && lane.turn != 0 {
+                let swing = car.swing();
+                if swing > 0.0 {
+                    let k = (car.s / lane.length.max(0.1)).clamp(0.0, 1.0);
+                    side -= lane.turn as f32 * swing * (k * std::f32::consts::PI).sin();
+                }
+            }
+            car.pos = p + right * side;
             let mut heading = d.y.atan2(d.x);
             if car.lateral.abs() > 0.05 && car.v > 0.5 {
                 // Nose turned toward the lane it is drifting into.
                 heading += (-car.lateral.signum() * LC_LATERAL_SPEED).atan2(car.v.max(2.0));
             }
+            if amp > 0.0 && car.v > 1.0 {
+                let t = car.age * 0.45 + car.drive.profile.phase * 37.0;
+                let dw = amp * 0.45 * (0.75 * 0.9 * (t * 0.9).cos() + 0.25 * 2.3 * (t * 2.3 + 1.7).cos());
+                heading += dw.atan2(car.v.max(2.0));
+            }
             car.heading = heading;
+            car.drive.poses.push((car.pos, heading));
         }
-        arrived
+    }
+}
+
+/// One car's physics for a substep, worked out before any car moves.
+struct Step {
+    id: CarId,
+    acc: f32,
+    why: Wait,
+    left_wait: bool,
+    /// The leader's speed as the driver now perceives it.
+    seen: f32,
+    /// Committed to running this red.
+    run: Option<LaneId>,
+}
+
+/// Rolling to a ring spot or spinning a donut. Returns the new pose.
+fn step_stunt(st: &mut Stunt, pos: Vec2, heading: f32, dt: f32) -> (Vec2, f32) {
+    let drive_to = |target: Vec2, pos: Vec2, heading: f32, speed: f32| -> (Vec2, f32, bool) {
+        let d = target - pos;
+        let len = d.length();
+        if len < 0.3 {
+            return (target, heading, true);
+        }
+        let step = (speed * dt).min(len);
+        let dir = d / len;
+        let want = dir.y.atan2(dir.x);
+        (pos + dir * step, lerp_angle(heading, want, (dt * 3.0).min(1.0)), false)
+    };
+    match st.kind {
+        StuntKind::Ring { at, face } => {
+            if !st.settled {
+                let (p, h, done) = drive_to(at, pos, heading, 5.0);
+                st.settled = done;
+                return (p, h);
+            }
+            (at, lerp_angle(heading, face, (dt * 1.5).min(1.0)))
+        }
+        StuntKind::Donut { centre, radius, dir } => {
+            let on = centre + Vec2::new(st.angle.cos(), st.angle.sin()) * radius;
+            if !st.settled {
+                let (p, h, done) = drive_to(on, pos, heading, 6.0);
+                st.settled = done || p.distance(on) < 0.6;
+                return (p, h);
+            }
+            // Round the circle with the tail flung out: the nose points
+            // inside the direction of travel.
+            st.angle += dir * 2.4 * dt;
+            let p = centre + Vec2::new(st.angle.cos(), st.angle.sin()) * radius;
+            (p, st.angle + dir * (std::f32::consts::FRAC_PI_2 + 0.85))
+        }
     }
 }
 
@@ -2101,7 +2870,7 @@ mod tests {
         t.cars[bus].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 0, passengers: Vec::new(), to_depot: false, depot: BuildingId::default() });
         let car = t.spawn_car(CitizenId::default(), None, route.clone(), s0, s1, 0);
         let lane = &t.net.lanes[route[0] as usize];
-        let (gap, lead_v, _) = t.lookahead(&t.cars[car], lane);
+        let (gap, lead_v, _, _) = t.lookahead(&t.cars[car], lane);
         let expected = (lane.length - s0) + t.net.lanes[route[1] as usize].length + 6.0 - BUS_LENGTH;
         assert!((gap - expected).abs() < 1e-3, "gap {gap} vs {expected}: the bus is {BUS_LENGTH} m, not a car");
         assert_eq!(lead_v, 0.0);
@@ -2562,5 +3331,264 @@ mod tests {
         assert_eq!(n, 1);
         assert!(mean > 0.0 && max == mean);
         assert!(t.net.intersections[inter].left_turns == 1 && t.net.intersections[inter].left_wait_max > 0.0);
+    }
+
+    // ── [driving] ───────────────────────────────────────────────────────────
+
+    /// Distance from `p` to the nearest lane of `route`.
+    fn off_route(t: &Traffic, route: &[LaneId], p: Vec2) -> f32 {
+        route.iter().map(|&l| t.net.lanes[l as usize].project(p).1).fold(f32::MAX, f32::min)
+    }
+
+    /// Drive one car through a turn at the game's tick (4 s in 8 substeps),
+    /// sampling where it is drawn 16 times a tick. Returns the largest
+    /// distance from the lane centre line of the drawn pose and of the old
+    /// straight-line blend, and whether it arrived.
+    fn turn_drawn(t: &mut Traffic, car: CarId) -> (f32, f32, bool) {
+        let route = t.cars[car].route.clone();
+        let (mut drawn, mut blend): (f32, f32) = (0.0, 0.0);
+        for _ in 0..200 {
+            let arrived = t.step(4.0, 8);
+            let c = &t.cars[car];
+            for k in 0..=16 {
+                let f = k as f32 / 16.0;
+                drawn = drawn.max(off_route(t, &route, c.pose_at(f).0));
+                blend = blend.max(off_route(t, &route, c.prev_pos.lerp(c.pos, f)));
+            }
+            if arrived.contains(&car) {
+                return (drawn, blend, true);
+            }
+        }
+        (drawn, blend, false)
+    }
+
+    #[test]
+    fn turning_connectors_follow_an_arc_inside_the_junction() {
+        let roads = avenue_cross();
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let mut turns = 0;
+        for lane in t.net.lanes.iter().filter(|l| l.is_connector() && l.turn != 0) {
+            let (a, b) = (lane.start(), lane.end());
+            let chord = a.distance(b);
+            // The middle of the curve bows well away from the chord: no
+            // more straight diagonals across the corner.
+            let mid = lane.point_at(lane.length * 0.5).0;
+            let (_, q) = project_on_segment(mid, a, b);
+            assert!(mid.distance(q) > 0.15 * chord, "turn {:?} is nearly a straight chord ({:.2} m off a {:.1} m chord)", lane.kind, mid.distance(q), chord);
+            // Tangent to both lanes: no kink where it joins them.
+            let into = t.net.lanes[lane.prev[0] as usize].end_dir();
+            let out = t.net.lanes[lane.next[0] as usize].start_dir();
+            assert!(lane.start_dir().dot(into) > 0.99 && lane.end_dir().dot(out) > 0.99, "connector meets its lanes at an angle");
+            turns += 1;
+        }
+        assert!(turns >= 8);
+    }
+
+    #[test]
+    fn turning_cars_stay_in_their_lane_through_a_junction() {
+        let roads = avenue_cross();
+        let w = LANE_WIDTH;
+        // In-lane: the car's sides stay inside the lane's 3.5 m band.
+        let in_lane = (LANE_WIDTH - CAR_WIDTH) * 0.5;
+        // Right turn (west arm to north arm), left turn (east arm to north arm) and a bus.
+        let cases = [
+            (Vec2::new(-300.0, 1.5 * w), Vec2::new(-0.5 * w, 150.0), false),
+            (Vec2::new(300.0, -0.5 * w), Vec2::new(-0.5 * w, 150.0), false),
+            (Vec2::new(-300.0, 1.5 * w), Vec2::new(-0.5 * w, 150.0), true),
+        ];
+        let mut bus_swing = 0.0;
+        for (from, to, bus) in cases {
+            let mut t = Traffic::default();
+            t.rebuild(&roads);
+            let car = send(&mut t, &roads, from, to);
+            if bus {
+                t.cars[car].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 0, passengers: Vec::new(), to_depot: false, depot: BuildingId::default() });
+            }
+            let (drawn, blend, arrived) = turn_drawn(&mut t, car);
+            assert!(arrived, "the car got through");
+            if bus {
+                bus_swing = drawn;
+                assert!(drawn > 0.5 && drawn < 1.3, "a bus swings wide through the turn, within reason: {drawn:.2} m");
+                continue;
+            }
+            assert!(drawn < in_lane, "drawn {drawn:.2} m off the lane centre (limit {in_lane:.2})");
+            // The old drawing (a straight blend over a 4 s tick) cut the corner by metres.
+            assert!(blend > 1.5, "the straight blend should cut the corner: {blend:.2}");
+        }
+        assert!(bus_swing > 0.0);
+    }
+
+    /// A lone car's cruising speed and its gap behind a slow leader.
+    fn cruise(profile: DriverProfile) -> (f32, f32) {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-1500.0, 0.0), Vec2::new(1500.0, 0.0)], 1, 1);
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let seg = roads.nearest_street(Vec2::ZERO).unwrap().0;
+        let lane = lane_of(&t, seg, Vec2::X, 0);
+        let car = t.spawn_car(CitizenId::default(), None, vec![lane], 10.0, 2900.0, 0);
+        t.cars[car].drive.profile = profile;
+        for _ in 0..40 {
+            t.step(1.0, 4);
+        }
+        let speed = t.cars[car].v;
+        // A leader at 8 m/s ahead: the steady gap behind it.
+        let lead = t.spawn_car(CitizenId::default(), None, vec![lane], t.cars[car].s + 60.0, 2950.0, 0);
+        t.cars[lead].v = 8.0;
+        t.cars[lead].drive.profile = DriverProfile { speed: 8.0 / ROAD_SPEED, ..DriverProfile::default() };
+        for _ in 0..90 {
+            t.step(1.0, 4);
+        }
+        (speed, t.cars[lead].s - t.cars[lead].length() - t.cars[car].s)
+    }
+
+    #[test]
+    fn driver_profiles_change_speed_and_following_distance() {
+        let old = DriverProfile::for_driver(82, 0.9, 0.2, 0.0, 0.5, 0.1);
+        let ordinary = DriverProfile::for_driver(40, 0.5, 0.5, 0.0, 0.5, 0.2);
+        let reckless = DriverProfile::for_driver(20, 0.05, 0.95, 0.0, 0.5, 0.3);
+        let (v_old, gap_old) = cruise(old);
+        let (v_ord, gap_ord) = cruise(ordinary);
+        let (v_rec, gap_rec) = cruise(reckless);
+        assert!(v_old < 0.85 * ROAD_SPEED, "the old drive slowly: {v_old:.1}");
+        assert!(v_rec > 1.12 * ROAD_SPEED, "reckless youth over the limit: {v_rec:.1}");
+        assert!(v_old < v_ord && v_ord < v_rec, "{v_old:.1} {v_ord:.1} {v_rec:.1}");
+        assert!(gap_rec < gap_ord && gap_ord < gap_old, "closer behind the leader the more reckless: {gap_rec:.1} {gap_ord:.1} {gap_old:.1}");
+        assert!(reckless.compliance < ordinary.compliance && ordinary.compliance < 1.0);
+        assert!(old.reaction > ordinary.reaction && reckless.aggression > ordinary.aggression);
+        // The unassigned default drives the plain model.
+        assert!(!DriverProfile::default().assigned && DriverProfile::default().weave_amplitude() == 0.0);
+    }
+
+    /// Ten minutes of a stream of drivers (all drunk or all sober) through a
+    /// signal on one-lane streets, with cross traffic. Crashed cars are
+    /// cleared away at once so one crash does not cause the next. Returns
+    /// (crashes, cars, largest weave, red lights run).
+    fn drink_trial(drunk: f32, seed: u64) -> (usize, usize, f32, u32) {
+        let roads = street_cross();
+        let mut t = Traffic::default();
+        t.rng = seed;
+        t.rebuild(&roads);
+        let w = LANE_WIDTH;
+        let (mut crashes, mut cars, mut weave) = (0, 0, 0.0f32);
+        for tick in 0..300 {
+            if tick % 2 == 0 {
+                let c = send(&mut t, &roads, Vec2::new(-350.0, 0.5 * w), Vec2::new(350.0, 0.5 * w));
+                let k = (tick as f32 * 0.618).fract();
+                t.cars[c].drive.profile = DriverProfile::for_driver(30, 0.5, 0.5, drunk, k, k);
+                cars += 1;
+            }
+            if tick % 5 == 0 {
+                let c = send(&mut t, &roads, Vec2::new(-0.5 * w, -350.0), Vec2::new(-0.5 * w, 350.0));
+                t.cars[c].drive.profile = DriverProfile::for_driver(45, 0.6, 0.4, 0.0, 0.6, 0.5);
+            }
+            for id in t.step(2.0, 4) {
+                t.remove_car(id);
+            }
+            for c in t.cars.values() {
+                if c.drive.profile.drunk == drunk {
+                    weave = weave.max(c.drive.weave.abs());
+                }
+            }
+            for r in std::mem::take(&mut t.crashes) {
+                crashes += 1;
+                for c in r.cars {
+                    t.remove_car(c);
+                }
+            }
+        }
+        (crashes, cars, weave, t.red_runs)
+    }
+
+    #[test]
+    fn drunk_drivers_swerve_more_and_crash_more_often() {
+        let (mut drunk_crashes, mut sober_crashes) = (0, 0);
+        let (mut drunk_weave, mut sober_weave) = (0.0f32, 0.0f32);
+        for seed in 1..=4 {
+            let (c, _, wv, _) = drink_trial(0.85, seed);
+            drunk_crashes += c;
+            drunk_weave = drunk_weave.max(wv);
+            let (c, _, wv, _) = drink_trial(0.0, seed);
+            sober_crashes += c;
+            sober_weave = sober_weave.max(wv);
+        }
+        assert!(drunk_weave > 0.9 && sober_weave < 0.25, "drunks drift over the lines: {drunk_weave:.2} vs {sober_weave:.2}");
+        assert!(drunk_crashes >= 3 * sober_crashes.max(1), "drunk {drunk_crashes} crashes vs sober {sober_crashes}");
+        // Seeded: the same night twice.
+        assert_eq!(drink_trial(0.85, 3), drink_trial(0.85, 3));
+    }
+
+    #[test]
+    fn a_crash_stops_both_cars_and_a_minor_one_clears() {
+        let roads = street_cross();
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let w = LANE_WIDTH;
+        let a = send(&mut t, &roads, Vec2::new(-300.0, 0.5 * w), Vec2::new(-100.0, 0.5 * w));
+        let b = send(&mut t, &roads, Vec2::new(-280.0, 0.5 * w), Vec2::new(-100.0, 0.5 * w));
+        for _ in 0..5 {
+            t.step(1.0, 4);
+        }
+        t.crash(vec![a, b], CrashCause::RearEnd, 3.0);
+        let r = t.crashes.pop().expect("filed");
+        assert!(r.severity < BAD_CRASH, "a slow bump is minor");
+        let follower = send(&mut t, &roads, Vec2::new(-340.0, 0.5 * w), Vec2::new(-100.0, 0.5 * w));
+        for _ in 0..20 {
+            t.step(1.0, 4);
+        }
+        assert!(t.cars[a].crashed() && t.cars[a].v == 0.0 && t.cars[b].v == 0.0);
+        assert_eq!(t.cars[follower].wait, Wait::Leader, "traffic backs up behind");
+        for _ in 0..200 {
+            t.step(1.0, 4);
+        }
+        assert!(!t.cars.get(a).is_some_and(|c| c.crashed()), "a minor crash drives on after a while");
+        // A bad one is written off and stays.
+        let c = send(&mut t, &roads, Vec2::new(-300.0, -0.5 * w + w), Vec2::new(-100.0, 0.5 * w));
+        t.crash(vec![c], CrashCause::OffRoad, 25.0);
+        assert!(t.crashes.pop().unwrap().severity >= BAD_CRASH);
+        for _ in 0..400 {
+            t.step(1.0, 4);
+        }
+        assert!(t.cars[c].drive.crash.is_some_and(|s| s.wrecked));
+    }
+
+    #[test]
+    fn a_blocked_junction_holds_traffic_and_stunts_leave_the_lanes() {
+        let roads = street_cross();
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let w = LANE_WIDTH;
+        let node = t.net.intersections.iter().find(|i| roads.node(i.node).pos.length() < 1.0).unwrap().node;
+        t.set_blocked(node, true);
+        let car = send(&mut t, &roads, Vec2::new(-200.0, 0.5 * w), Vec2::new(200.0, 0.5 * w));
+        for _ in 0..60 {
+            t.step(2.0, 4);
+        }
+        let c = &t.cars[car];
+        assert_eq!(c.idx, 0, "never entered the junction");
+        assert_eq!(c.wait, Wait::Blocked);
+        // Into a donut: off the lane, spinning on the spot.
+        t.begin_stunt(car, StuntKind::Donut { centre: Vec2::new(0.0, 0.0), radius: 2.4, dir: 1.0 });
+        assert!(t.net.lanes.iter().all(|l| !l.cars.contains(&car)));
+        let mut headings = Vec::new();
+        for _ in 0..30 {
+            t.step(2.0, 4);
+            headings.push(t.cars[car].heading);
+        }
+        let c = &t.cars[car];
+        assert!(c.pos.length() < 3.0, "spinning in the junction: {:?}", c.pos);
+        assert!(headings.windows(2).any(|h| (h[1] - h[0]).abs() > 0.5), "it turns");
+        t.set_blocked(node, false);
+        let (route, s0, s1) = t.net.find_route(roads.nearest_street(Vec2::new(100.0, 0.0)).unwrap().0, Vec2::new(5.0, 0.5 * w), roads.nearest_street(Vec2::new(200.0, 0.0)).unwrap().0, Vec2::new(200.0, 0.5 * w)).unwrap();
+        t.end_stunt(car, route, s0, s1);
+        let mut arrived = false;
+        for _ in 0..100 {
+            if t.step(2.0, 4).contains(&car) {
+                arrived = true;
+                break;
+            }
+        }
+        assert!(arrived, "back on the lanes and away");
     }
 }

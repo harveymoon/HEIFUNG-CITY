@@ -20,6 +20,7 @@ fn kind_color(k: IncidentKind) -> egui::Color32 {
         IncidentKind::Fire => FIRE,
         IncidentKind::Crime => CRIME,
         IncidentKind::Medical => MEDICAL,
+        IncidentKind::Crash => FIRE,
     }
 }
 

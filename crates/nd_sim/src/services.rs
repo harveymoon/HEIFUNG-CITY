@@ -75,6 +75,11 @@ pub const DISPATCH_REGIONAL: u64 = 20;
 /// Ticks of work on scene: a crime, a patient (fires burn until out).
 pub const CRIME_WORK: f32 = 25.0;
 pub const MEDICAL_WORK: f32 = 12.0;
+/// [driving] Ticks the police spend clearing a crash scene.
+pub const CRASH_WORK: f32 = 20.0;
+/// [driving] Chance the police arrest a driver at fault who was drunk or
+/// ran a red, once they are on scene.
+pub const DUI_ARREST: f32 = 0.6;
 /// Chance an arrest is made when the police get there, quick or slow (a
 /// response over `QUICK_RESPONSE` ticks after the crime).
 pub const ARREST_QUICK: f32 = 0.75;
@@ -621,6 +626,9 @@ pub enum IncidentKind {
     Fire,
     Crime,
     Medical,
+    /// [driving] A bad road crash: the police clear the scene (the hurt
+    /// get a `Medical` incident of their own, on the road).
+    Crash,
 }
 
 impl IncidentKind {
@@ -635,13 +643,14 @@ impl IncidentKind {
             IncidentKind::Fire => "fire",
             IncidentKind::Crime => "crime",
             IncidentKind::Medical => "medical",
+            IncidentKind::Crash => "crash",
         }
     }
 
     pub fn unit(self) -> UnitKind {
         match self {
             IncidentKind::Fire => UnitKind::FireEngine,
-            IncidentKind::Crime => UnitKind::PoliceCar,
+            IncidentKind::Crime | IncidentKind::Crash => UnitKind::PoliceCar,
             IncidentKind::Medical => UnitKind::Ambulance,
         }
     }
@@ -651,6 +660,7 @@ impl IncidentKind {
             IncidentKind::Fire => ServiceKind::Fire,
             IncidentKind::Crime => ServiceKind::Police,
             IncidentKind::Medical => ServiceKind::Health,
+            IncidentKind::Crash => ServiceKind::Police,
         }
     }
 }
@@ -663,6 +673,8 @@ pub enum CrimeKind {
     Theft,
     Assault,
     Vandalism,
+    /// [driving] A street takeover: an intersection held for donuts.
+    StreetTakeover,
 }
 
 impl CrimeKind {
@@ -674,6 +686,7 @@ impl CrimeKind {
             CrimeKind::Theft => "theft",
             CrimeKind::Assault => "assault",
             CrimeKind::Vandalism => "vandalism",
+            CrimeKind::StreetTakeover => "street takeover",
         }
     }
 }
@@ -745,6 +758,8 @@ pub enum Outcome {
     Recovered,
     /// The building or person is gone.
     Gone,
+    /// [driving] Crash scene cleared, wrecks towed.
+    Cleared,
 }
 
 impl Outcome {
@@ -759,6 +774,7 @@ impl Outcome {
             Outcome::TreatedOnSite => "treated on site",
             Outcome::Recovered => "recovered without help",
             Outcome::Gone => "gone",
+            Outcome::Cleared => "scene cleared",
         }
     }
 }
@@ -815,6 +831,10 @@ pub struct Incident {
     /// Fires: every building it burned (spread fires have their own incident too).
     #[serde(default)]
     pub damage: Vec<Damage>,
+    /// [driving] Out on the street at `pos` (a crash, someone hurt in
+    /// one, a takeover), not inside `building`, which only names the place.
+    #[serde(default)]
+    pub on_road: bool,
 }
 
 impl Incident {

@@ -21,6 +21,7 @@
 mod buses;
 mod construction;
 mod develop;
+mod driving;
 mod market;
 mod parking;
 mod plan;
@@ -63,6 +64,7 @@ use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
 pub use crate::rail::TRUNK_Y;
+pub use driving::{CrashRecord, Driving, Tow, Wreck};
 use crate::landscape::{Ground, Landscape, LandscapeParams};
 use crate::ports::Ports;
 
@@ -281,6 +283,9 @@ pub struct World {
     /// Pavement delivery robots and the day's home-delivery counts.
     #[serde(default)]
     pub bots: crate::bots::Bots,
+    /// [driving] Crashes, wrecks, tow trucks and street takeovers.
+    #[serde(default)]
+    pub driving: Driving,
 }
 
 impl World {
@@ -332,6 +337,7 @@ impl World {
             ground: Ground::default(),
             bridge_metres: 0.0,
             bots: Default::default(),
+            driving: Driving::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -603,6 +609,7 @@ impl World {
             }
         }
         self.step_traffic();
+        self.step_driving();
         self.step_services();
         self.step_through_traffic();
         self.step_transit();

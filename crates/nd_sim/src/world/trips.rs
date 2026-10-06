@@ -568,6 +568,7 @@ impl World {
                     wakefulness: 0.9,
                     asleep: false,
                     packed_meal: 1.0,
+                    drunk: 0.0,
                 };
                 citizen.remember(tick, format!("Rolled into Neon District on day {} at {}.", self.clock.day() + 1, self.clock.format_hhmm()));
                 if let Some(s) = by_train {
@@ -973,14 +974,17 @@ impl World {
         };
 
         let dist = from_pt.distance(entrance);
-        let (owns_car, owns_bike) = {
+        let (owns_car, owns_bike, drunk_drive) = {
             let c = &self.citizens[id];
-            (c.owns_car, c.owns_bike)
+            // [driving] A drunk leaves the car unless rebellious enough to
+            // drive anyway, and then drives even a short way.
+            let drunk_drive = crate::citizens::wants_to_drive_drunk(c);
+            (c.owns_car && (c.drunk < crate::citizens::DRUNK || drunk_drive), c.owns_bike, drunk_drive)
         };
         // Park outings on a bike are a pleasure, not a commute: bike owners ride.
         let park_ride = owns_bike && matches!(purpose, Purpose::Visit(LandUse::Park));
         // Drive when the citizen has a car, it is far enough and a lane route exists.
-        if let (true, false, true, Some((cf_seg, cf_pt)), Some((ct_seg, ct_pt))) = (owns_car, park_ride, dist >= self.config.drive_threshold, car_from, car_to) {
+        if let (true, false, true, Some((cf_seg, cf_pt)), Some((ct_seg, ct_pt))) = (owns_car, park_ride, dist >= self.config.drive_threshold || drunk_drive, car_from, car_to) {
             if let Some((route, s0, s1)) = self.traffic.net.find_route(cf_seg, cf_pt, ct_seg, ct_pt) {
                 let exit_pos = self.leave_building(id);
                 let color = self.rng.random_range(0..8u8);

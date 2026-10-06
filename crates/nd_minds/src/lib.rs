@@ -449,6 +449,7 @@ mod tests {
             mode: TravelMode::Walk,
             owns_car: false,
             owns_bike: false,
+            vehicle: None,
             parked_at: None,
             transit: None,
             activity: Activity::Idle,
@@ -472,6 +473,7 @@ mod tests {
             wakefulness: 0.8,
             asleep: false,
             packed_meal: 0.0,
+            drunk: 0.0,
         }
     }
 
