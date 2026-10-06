@@ -28,6 +28,8 @@ mod works;
 
 pub use adjacency::{Neighbour, StyleBook};
 mod services;
+/// [society] The trash depot.
+mod sanitation;
 pub use parts::WINDOW_LIGHT_MARK;
 pub use power::{coal_stacks, wind_rotor, wind_turbines, Turbine, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};
 
@@ -169,6 +171,8 @@ pub enum Style {
     Landmark,
     Stadium,
     Prison,
+    // [society] placed by the player; kept last so `ALL` keeps its order.
+    TrashDepot,
 }
 
 impl Style {
@@ -177,7 +181,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 69] = [
+    pub const ALL: [Style; 70] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -247,6 +251,7 @@ impl Style {
         Style::Landmark,
         Style::Stadium,
         Style::Prison,
+        Style::TrashDepot,
     ];
 
     /// The style a placed service or attraction is drawn in.
@@ -261,6 +266,7 @@ impl Style {
             K::Monument => Style::Landmark,
             K::Stadium => Style::Stadium,
             K::Jail => Style::Prison,
+            K::TrashDepot => Style::TrashDepot,
         }
     }
 
@@ -335,6 +341,7 @@ impl Style {
             Style::Landmark => "landmark",
             Style::Stadium => "stadium",
             Style::Prison => "jail",
+            Style::TrashDepot => "trash depot",
         }
     }
 }
@@ -1113,6 +1120,7 @@ fn generate_styled_extras(
         Style::Landmark => services::landmark(&mut g, &ctx, &mut rng),
         Style::Stadium => services::stadium(&mut g, &ctx, &mut rng),
         Style::Prison => services::prison(&mut g, &ctx, &mut rng),
+        Style::TrashDepot => sanitation::trash_depot(&mut g, &ctx, &mut rng),
     }
     if weathered(tier, ctx.wear) {
         g.weather();

@@ -134,6 +134,8 @@ impl World {
                 for car in self.traffic.cars.values() {
                     b.splat(car.pos, 45.0, -0.004);
                 }
+                // [society] Crime hot spots, camps and overflowing bins.
+                self.splat_society(&mut b);
             }
             _ => {
                 b.finish(0.25, &mut self.land_value);

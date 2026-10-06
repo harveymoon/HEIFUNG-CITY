@@ -22,7 +22,7 @@ pub const MAX_CELLS: usize = 400;
 const MIN_CELL_M: f32 = 25.0;
 /// Heat map characters, empty to hottest.
 const RAMP: &[u8] = b" .:-=+*#%@";
-pub const LAYERS: &[&str] = &["summary", "population", "people", "land_value", "jobs", "hunger", "vacancy", "power", "traffic"];
+pub const LAYERS: &[&str] = &["summary", "population", "people", "land_value", "jobs", "hunger", "vacancy", "power", "traffic", "crime", "homeless", "trash"];
 
 #[derive(Default, Clone)]
 struct Cell {
@@ -41,6 +41,10 @@ struct Cell {
     /// count the People map layer draws.
     people: u32,
     lu_area: [f32; 6],
+    /// [society] crime heat, people on the street, overflow of the bins.
+    crime: f32,
+    homeless: u32,
+    trash: f32,
 }
 
 impl Cell {
@@ -62,6 +66,9 @@ impl Cell {
             "vacancy" => self.vacant_lots as f32,
             "power" => self.unpowered as f32,
             "traffic" => self.cars as f32,
+            "crime" => self.crime,
+            "homeless" => self.homeless as f32,
+            "trash" => self.trash,
             _ => 0.0,
         }
     }
@@ -162,6 +169,34 @@ fn build(w: &World, cell_m: f32) -> Result<Grid, String> {
             c.people += 1;
         }
     }
+    // [society]
+    let s = &w.society;
+    for h in &s.crime.hotspots {
+        if let Some(c) = g.at(h.pos) {
+            c.crime += h.heat;
+        }
+    }
+    for camp in &s.homeless.camps {
+        if let Some(c) = g.at(camp.pos) {
+            c.homeless += camp.people as u32;
+        }
+    }
+    for rv in &s.homeless.rvs {
+        let n = w.households.get(rv.household).map_or(1, |h| h.members.len()) as u32;
+        if let Some(c) = g.at(rv.pos) {
+            c.homeless += n;
+        }
+    }
+    for (id, bin) in &s.trash.bins {
+        let o = bin.overflow();
+        if o <= 0.0 {
+            continue;
+        }
+        let Some(p) = w.buildings.get(*id).and_then(|b| w.lots.get(b.lot)).map(|l| l.center) else { continue };
+        if let Some(c) = g.at(p) {
+            c.trash += o;
+        }
+    }
     Ok(g)
 }
 
@@ -244,6 +279,9 @@ pub fn map(w: &World, cell_m: Option<f32>, layer: &str) -> Result<Value, String>
         "hunger" => "hungry residents (satiety < 0.3)",
         "vacancy" => "vacant buildable lots",
         "power" => "buildings below 60% power",
+        "crime" => "crime heat (offences, decaying by a quarter a day)",
+        "homeless" => "people living in camps and vehicles",
+        "trash" => "overflow of the bins, summed (1 = a building's bins full twice over)",
         _ => "vehicles on the road now",
     });
     out["max"] = json!(round(max));

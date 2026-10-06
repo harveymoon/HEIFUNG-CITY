@@ -19,6 +19,8 @@ mod land;
 mod list;
 mod map;
 mod report;
+/// [society] crime, homelessness and trash.
+mod society;
 mod view;
 mod window;
 
@@ -438,6 +440,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "place" => place(cmd, ctx),
         "incident" => incident(cmd, ctx),
         "incidents" => incidents(cmd, ctx),
+        "society" => society::command(cmd, &mut ctx.sim.world),
         "bus" => bus(cmd, ctx),
         "find" => find(cmd, ctx),
         "inspect" => inspect(cmd, ctx),
@@ -1544,7 +1547,7 @@ fn help() -> Value {
             "add_zone": { "polygon": "[[x,y],...] (3+)", "land_use": "residential|commercial|industrial|entertainment|civic|park", "implement": "bool" },
             "bulldoze": { "gesture_id": "int", "implement": "bool" },
             "project": { "action": "start|implement|undo|redo|discard" },
-            "place": { "kind": "station|freight_yard|depot|parking|coal|solar|wind|nuclear|hydro|tidal|geothermal|shipping_port|ferry_terminal|police|fire|hospital|clinic|school|dispatch|monument|stadium (services: tier or kind:tier)", "tier": "low|mid|high", "x": "f", "y": "f", "note": "hydro beside a river or stream with a current >= 0.8 m/s, tidal on the sea shore, geothermal over a hot spot; docks at the water's edge (they build a pier and a street stub)" },
+            "place": { "kind": "station|freight_yard|depot|parking|coal|solar|wind|nuclear|hydro|tidal|geothermal|shipping_port|ferry_terminal|police|fire|hospital|clinic|school|dispatch|monument|stadium|jail|trash_depot (services: tier or kind:tier)", "tier": "low|mid|high", "x": "f", "y": "f", "note": "hydro beside a river or stream with a current >= 0.8 m/s, tidal on the sea shore, geothermal over a hot spot; docks at the water's edge (they build a pier and a street stub)" },
             "new_game": { "preset": "river_valley|islands|coast|delta|plains|flat (default river_valley)", "seed": "u64", "water": "0..1", "relief": "0..1 height variation", "branching": "0..1", "islands": "0..8", "highway": "bool", "note": "throws the city away; omitted levers take the preset's" },
             "terrain_at": { "x": "f", "y": "f", "returns": "natural/ground/surface heights, slope, water (kind, current, width), nearest shore, hot spot, power sites and dock placement for the lot there" },
             "grant": { "amount": "money added to the treasury (dev), default 100000" },
@@ -1569,8 +1572,8 @@ fn help() -> Value {
     // The review commands, added separately: one `json!` this size hits the
     // macro recursion limit.
     let review = json!({
-        "report": { "sections": "optional subset of overview, people, economy, land, services, alerts (default all): the one-call city review" },
-        "map": { "cell_m": "cell size in metres, default 100 (grown to keep at most 400 cells)", "layer": "summary (table of cells) | population | land_value | jobs | hunger | vacancy | power | traffic (grid + ASCII heat map)" },
+        "report": { "sections": "optional subset of overview, people, economy, land, services, society, alerts (default all): the one-call city review" },
+        "map": { "cell_m": "cell size in metres, default 100 (grown to keep at most 400 cells)", "layer": "summary (table of cells) | population | land_value | jobs | hunger | vacancy | power | traffic | crime | homeless | trash (grid + ASCII heat map)" },
         "history": { "keys": "optional daily/hourly series names (default all)", "days": "last n days (default all kept, up to 365)" },
         "list": { "what": "businesses|buildings|citizens|lots|routes|plants|facilities", "sort": "column", "desc": "bool", "filter": "{column: substring | value | {min, max}}", "fields": "[columns] (id always kept)", "offset": "default 0", "limit": "default 50, max 1000" },
         "export": { "path": "optional; default exports/city-<unix>.json: report + map + history + every row of every list" },
@@ -1579,6 +1582,8 @@ fn help() -> Value {
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), review.as_object()) {
         c.extend(r.clone());
     }
+    // [society]
+    v["commands"]["society"] = json!({ "action": "report (default)|evict|offend|trash", "building": "id (evict: its households go on the street; offend: the target; trash: one building's bins)", "citizen": "id (offend)", "kind": "theft|burglary|assault|murder|vandalism (offend, with building)", "kg": "trash to add, default 100" });
     v
 }
 

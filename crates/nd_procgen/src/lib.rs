@@ -6,6 +6,8 @@ pub mod lights;
 pub mod mesh;
 pub mod overlay;
 pub mod palette;
+/// [society] Camps, RVs and overflowing trash.
+pub mod society;
 pub mod street;
 pub mod surface;
 pub mod terrain;

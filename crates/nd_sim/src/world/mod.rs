@@ -26,6 +26,7 @@ mod parking;
 mod plan;
 mod power;
 mod services;
+mod society;
 #[cfg(test)]
 mod tests;
 mod trains;
@@ -123,6 +124,9 @@ pub struct WorldConfig {
     /// The landscape a new world is generated with. After a load this
     /// mirrors `World::landscape.params`.
     pub landscape: LandscapeParams,
+    /// [society] Crime, homelessness and trash (`world/society.rs`). Tests
+    /// about other systems may turn them off.
+    pub society: bool,
 }
 
 impl WorldConfig {
@@ -154,6 +158,7 @@ impl Default for WorldConfig {
             max_builds_per_interval: 2,
             emergencies: true,
             landscape: LandscapeParams::default(),
+            society: true,
         };
         c.derive_speeds();
         c
@@ -281,6 +286,9 @@ pub struct World {
     /// Pavement delivery robots and the day's home-delivery counts.
     #[serde(default)]
     pub bots: crate::bots::Bots,
+    /// [society] Crime, homelessness and trash (`world/society.rs`).
+    #[serde(default)]
+    pub society: crate::society::Society,
 }
 
 impl World {
@@ -332,6 +340,7 @@ impl World {
             ground: Ground::default(),
             bridge_metres: 0.0,
             bots: Default::default(),
+            society: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -566,6 +575,8 @@ impl World {
             self.events.push(SimEvent::NewDay(self.clock.day()));
             // Services settle their upkeep before the books close.
             self.daily_services();
+            // [society] crime, the street and the bins settle their day.
+            self.daily_society();
             self.daily_update();
         }
         // Periodic work is staggered so no tick carries more than one heavy
@@ -597,6 +608,10 @@ impl World {
         if tick % 60 == 50 {
             self.hourly_services();
         }
+        // [society] Bins, camps and crime at :40.
+        if tick % 60 == 40 {
+            self.hourly_society();
+        }
         for (id, decision) in minds.poll() {
             if self.citizens.contains_key(id) {
                 self.apply_decision(id, decision);
@@ -604,6 +619,8 @@ impl World {
         }
         self.step_traffic();
         self.step_services();
+        // [society] Trash trucks.
+        self.step_society();
         self.step_through_traffic();
         self.step_transit();
         self.step_rail();
@@ -633,6 +650,10 @@ impl World {
             }
             if self.traffic.cars.get(car_id).is_some_and(|c| c.bus.is_some()) {
                 self.bus_arrived(car_id);
+                continue;
+            }
+            // [society] Garbage trucks.
+            if self.society_car_arrived(car_id) {
                 continue;
             }
             let Some(car) = self.traffic.remove_car(car_id) else { continue };

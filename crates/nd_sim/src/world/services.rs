@@ -39,6 +39,7 @@ fn service_floors(kind: ServiceKind, tier: Tier) -> u8 {
         ServiceKind::Monument => [1, 1, 1],
         ServiceKind::Stadium => [1, 2, 3],
         ServiceKind::Jail => [1, 2, 3],
+        ServiceKind::TrashDepot => [1, 1, 2],
     };
     f[tier.index()]
 }
@@ -113,7 +114,7 @@ impl World {
                 return Some(e);
             }
         }
-        let needs_street = matches!(what, Placeable::BusDepot) || matches!(what, Placeable::Service(k, _) if k.unit_kind().is_some() || k == ServiceKind::Stadium);
+        let needs_street = matches!(what, Placeable::BusDepot) || matches!(what, Placeable::Service(k, _) if k.unit_kind().is_some() || k == ServiceKind::Stadium || k == ServiceKind::TrashDepot);
         if needs_street && !lot.car_access() {
             return Some(format!("a {} needs a street out front", what.label()));
         }
