@@ -43,6 +43,9 @@ pub fn power_note(k: PowerPlantKind) -> &'static str {
         PowerPlantKind::Solar => ". Any vacant lot. Clean, but only by day and dimmed by cloud.",
         PowerPlantKind::Wind => ". Any vacant lot. Clean; output follows the wind.",
         PowerPlantKind::Nuclear => ". Industrial land only. Enormous, steady, expensive, and the neighbours are nervous.",
+        PowerPlantKind::Hydro => ". On a lot beside a river or stream with a current of 0.8 m/s or more; output follows the current. A weir is built across the water.",
+        PowerPlantKind::Tidal => ". On the sea shore. Clean; output rises and falls with the two tides a day.",
+        PowerPlantKind::Geothermal => ". Over a geothermal hot spot (yellow ground, steaming vents). Steady; output follows the heat.",
     }
 }
 

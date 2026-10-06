@@ -14,6 +14,8 @@
 //! - `power`: plants and power allocation
 //! - `services`: police, fire, health, schools, dispatch, attractions,
 //!   emergencies and the vehicles that answer them
+//! - `water`: the landscape hooks: road heights, bridges, the built ground,
+//!   the highway and its through traffic, ports, ferries and ships
 //! - `tests`: the world-level tests
 
 mod buses;
@@ -28,6 +30,7 @@ mod services;
 mod tests;
 mod trains;
 mod trips;
+mod water;
 
 use crate::buildings::{Building, BuildingId, Construction, Tier};
 use crate::citizens::{Activity, Citizen, CitizenId, Household, HouseholdId, Purpose};
@@ -51,7 +54,7 @@ use crate::rail::{self, Facility, FacilityId, Rail, RailFacility, RailLink, Trai
 use crate::zoning::{outlines_differ, point_in_polygon, polygons_overlap};
 use crate::citizens::TravelMode;
 use crate::roads::RoadKind;
-use crate::zoning::{generate_lots, LandUse, Lot, LotId, Zone, ZoneId};
+use crate::zoning::{LandUse, Lot, LotId, Zone, ZoneId};
 use crate::SimRng;
 use glam::Vec2;
 use rand::seq::IndexedRandom;
@@ -60,6 +63,8 @@ use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
 pub use crate::rail::TRUNK_Y;
+use crate::landscape::{Ground, Landscape, LandscapeParams};
+use crate::ports::Ports;
 
 /// A parcel that loses or gains more than this share of its area under a
 /// building is treated as a new parcel: the building goes.
@@ -115,6 +120,9 @@ pub struct WorldConfig {
     /// Tests about other systems turn it off so a random fire cannot take
     /// their building away.
     pub emergencies: bool,
+    /// The landscape a new world is generated with. After a load this
+    /// mirrors `World::landscape.params`.
+    pub landscape: LandscapeParams,
 }
 
 impl WorldConfig {
@@ -145,6 +153,7 @@ impl Default for WorldConfig {
             development_interval: 20,
             max_builds_per_interval: 2,
             emergencies: true,
+            landscape: LandscapeParams::default(),
         };
         c.derive_speeds();
         c
@@ -253,6 +262,22 @@ pub struct World {
     groceries_for_sale: bool,
     #[serde(skip)]
     meals_for_sale: bool,
+    /// Heightfield, rivers, lakes, sea and hot spots. Old saves load flat.
+    #[serde(default)]
+    pub landscape: Landscape,
+    /// Shipping ports, ferry terminals and the ships between them.
+    #[serde(default)]
+    pub ports: Ports,
+    /// Height of every road node (index = node id): the terrain under it,
+    /// eased to gentle grades and lifted onto bridge decks over water.
+    #[serde(skip)]
+    pub road_z: Vec<f32>,
+    /// The ground as built, for drawing and for setting things on it.
+    #[serde(skip)]
+    pub ground: Ground,
+    /// Metres of bridge already paid for.
+    #[serde(default)]
+    pub bridge_metres: f32,
 }
 
 impl World {
@@ -298,11 +323,23 @@ impl World {
             available: [false; 6],
             groceries_for_sale: false,
             meals_for_sale: false,
+            landscape: Landscape::default(),
+            ports: Ports::default(),
+            road_z: Vec::new(),
+            ground: Ground::default(),
+            bridge_metres: 0.0,
         };
+        w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
         // The trunk line: a railway already crosses the map south of the
         // centre. Branches, stations and yards hang off it.
         w.add_rail(&[Vec2::new(-half - 100.0, TRUNK_Y), Vec2::new(half + 100.0, TRUNK_Y)]);
+        if w.config.landscape.highway {
+            w.lay_highway();
+        }
+        // The starting bridges come with the map.
+        w.economy.treasury = 60_000.0;
+        w.economy.ledger = Default::default();
         w
     }
 
@@ -327,12 +364,14 @@ impl World {
         // Speeds follow the time scale, so a save from before a retune
         // walks at today's pace.
         self.config.derive_speeds();
+        self.config.landscape = self.landscape.params.clone();
         self.validate();
         // [people] Saves from before households: one per citizen. Detected
         // per citizen (no household), so no version bump is needed.
         self.migrate_households();
         self.version = SAVE_VERSION;
         self.rebuild_road_components();
+        self.rebuild_ground();
         self.traffic.rebuild(&self.roads);
         // Park layouts are saved with their lots (the benches people sit on
         // must survive a load), so they are only planned again when a save
@@ -561,8 +600,10 @@ impl World {
         }
         self.step_traffic();
         self.step_services();
+        self.step_through_traffic();
         self.step_transit();
         self.step_rail();
+        self.step_ships();
         self.step_citizens(minds);
         // Every system that moves people has run: lay the breadcrumbs.
         for c in self.citizens.values_mut() {

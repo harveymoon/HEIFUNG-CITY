@@ -43,6 +43,14 @@ fn service_floors(kind: ServiceKind, tier: Tier) -> u8 {
 }
 
 impl World {
+    /// The services' own random stream, so fires, crimes and illness never
+    /// shift what the other systems draw. Not saved: a loaded world reseeds
+    /// it from the seed and the clock.
+    fn srng(&mut self) -> &mut crate::SimRng {
+        let (seed, tick) = (self.config.seed, self.clock.tick);
+        self.services.rng.get_or_insert_with(|| crate::rng_for(seed ^ 0x5E7_1CE5, tick))
+    }
+
     // ── placing ────────────────────────────────────────────────────────────
 
     /// Put down anything the Buildings tool offers at `p`: a rail piece
@@ -50,6 +58,9 @@ impl World {
     pub fn place_building(&mut self, what: Placeable, p: Vec2) -> Result<BuildingId, String> {
         if let Placeable::Rail(f) = what {
             return self.place_rail_facility(f, p);
+        }
+        if let Placeable::Dock(k) = what {
+            return self.place_port(k, p);
         }
         let lot = self.lots.iter().find(|(_, l)| point_in_polygon(p, &l.polygon)).map(|(id, _)| id).ok_or("click a vacant lot")?;
         self.place_on_lot(what, lot)
@@ -65,12 +76,16 @@ impl World {
                 let c = self.lots.get(lot).ok_or("no such lot")?.center;
                 self.place_rail_facility(f, c)
             }
+            Placeable::Dock(k) => {
+                let c = self.lots.get(lot).ok_or("no such lot")?.center;
+                self.place_port(k, c)
+            }
         }
     }
 
     /// Why `what` cannot go on `lot`, for the placement preview; None if it can.
     pub fn placement_problem(&self, what: Placeable, lot_id: LotId) -> Option<String> {
-        if matches!(what, Placeable::Rail(_)) {
+        if matches!(what, Placeable::Rail(_) | Placeable::Dock(_)) {
             return None;
         }
         let Some(lot) = self.lots.get(lot_id) else { return Some("no such lot".into()) };
@@ -92,6 +107,11 @@ impl World {
         if lot.area() < what.min_area() {
             return Some(format!("too small: a {} needs {:.0} m² (this lot is {:.0})", what.label(), what.min_area(), lot.area()));
         }
+        if let Placeable::Plant(k) = what {
+            if let Err(e) = self.power_site(lot_id, k) {
+                return Some(e);
+            }
+        }
         let needs_street = matches!(what, Placeable::BusDepot) || matches!(what, Placeable::Service(k, _) if k.unit_kind().is_some() || k == ServiceKind::Stadium);
         if needs_street && !lot.car_access() {
             return Some(format!("a {} needs a street out front", what.label()));
@@ -110,7 +130,7 @@ impl World {
         }
         self.take_over_lot(lot_id, kind.tier_label(tier))?;
         self.economy.debit(Flow::Construction, what.cost());
-        let n = self.rng.random_range(0..1000u32);
+        let n = self.srng().random_range(0..1000u32);
         let name = kind.name(tier, n);
         let floors = service_floors(kind, tier);
         let parking = match kind {
@@ -304,7 +324,7 @@ impl World {
         let occupied = !b.residents.is_empty() || !b.workers.is_empty() || b.visitors > 0;
         let name = b.name.clone();
         let people: Vec<CitizenId> = b.residents.iter().chain(b.workers.iter()).copied().collect();
-        let delay = if occupied { self.rng.random_range(2..8) } else { self.rng.random_range(10..40) };
+        let delay = if occupied { self.srng().random_range(2..8) } else { self.srng().random_range(10..40) };
         let tick = self.clock.tick;
         for cid in people {
             if let Some(c) = self.citizens.get_mut(cid) {
@@ -326,16 +346,16 @@ impl World {
         let regulars: Vec<CitizenId> = b.residents.iter().chain(b.workers.iter()).copied().collect();
         let present: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.inside == Some(bid)).map(|(id, _)| id).collect();
         let pool: Vec<CitizenId> = if present.is_empty() { regulars } else { present };
-        let victim = pool.choose(&mut self.rng).copied();
+        let victim = pool.choose(self.srng()).copied();
         let suspects: Vec<CitizenId> = self.citizens.iter().filter(|(id, c)| c.work.is_none() && c.mood < 0.5 && Some(*id) != victim).map(|(id, _)| id).collect();
-        let suspect = if self.rng.random_bool(0.7) { suspects.choose(&mut self.rng).copied() } else { None };
+        let suspect = if self.srng().random_bool(0.7) { suspects.choose(self.srng()).copied() } else { None };
         let tick = self.clock.tick;
         if let Some(v) = victim.and_then(|v| self.citizens.get_mut(v)) {
             v.remember(tick, format!("Got robbed at {name}."));
             v.mood = (v.mood - 0.1).max(0.0);
             v.thought = "Somebody just robbed me.".to_string();
         }
-        let delay = self.rng.random_range(3..20);
+        let delay = self.srng().random_range(3..20);
         Some(self.open_incident(IncidentKind::Crime, bid, victim, suspect, delay))
     }
 
@@ -347,7 +367,7 @@ impl World {
             return None;
         }
         let tick = self.clock.tick;
-        let delay = self.rng.random_range(1..6);
+        let delay = self.srng().random_range(1..6);
         let c = &mut self.citizens[cid];
         c.thought = "I don't feel well at all.".to_string();
         c.next_decision_tick = c.next_decision_tick.max(tick + MEDICAL_GIVE_UP + 120);
@@ -423,10 +443,10 @@ impl World {
                 _ => 1.0,
             };
             let p_crime = CRIME_RISK * (1.0 + 3.0 * unemployment) * (1.4 - lv).max(0.3) * if night { 1.6 } else { 1.0 } * lu_crime * (1.0 - CRIME_COVER_CUT * self.services.coverage_of(lot, ServiceKind::Police));
-            if self.rng.random::<f32>() < p_fire {
+            if self.srng().random::<f32>() < p_fire {
                 self.start_fire(bid);
             }
-            if occupied && self.rng.random::<f32>() < p_crime {
+            if occupied && self.srng().random::<f32>() < p_crime {
                 self.start_crime(bid);
             }
         }
@@ -443,7 +463,7 @@ impl World {
             let home_lot = c.home.and_then(|h| self.buildings.get(h)).or_else(|| self.buildings.get(inside)).map(|b| b.lot);
             let cov = home_lot.map_or(0.0, |l| self.services.coverage_of(l, ServiceKind::Health));
             let p = SICK_RISK * frailty * (1.0 + 4.0 * hunger) * (1.0 - SICK_COVER_CUT * cov);
-            if self.rng.random::<f32>() < p && !self.is_patient(cid) {
+            if self.srng().random::<f32>() < p && !self.is_patient(cid) {
                 self.fall_ill(cid);
             }
         }
@@ -657,7 +677,7 @@ impl World {
                 let touches = |l: &Lot| l.center.distance(here) <= SPREAD_RADIUS || (l.center.distance(here) < 150.0 && l.polygon.iter().any(|p| poly.iter().any(|q| q.distance(*p) < SPREAD_GAP)));
                 let near: Vec<BuildingId> = self.buildings.iter().filter(|(nid, nb)| *nid != bid && self.lots.get(nb.lot).is_some_and(touches)).map(|(nid, _)| nid).collect();
                 for nb in near {
-                    if self.rng.random::<f32>() < SPREAD_CHANCE * intensity {
+                    if self.srng().random::<f32>() < SPREAD_CHANCE * intensity {
                         if let Some(new) = self.start_fire(nb) {
                             // The neighbours see it coming: a quick call.
                             if let Some(i) = self.services.incident_mut(new) {
@@ -722,7 +742,7 @@ impl World {
         let bname = self.buildings.get(inc.building).map(|b| b.name.clone()).unwrap_or_default();
         // The caller: someone inside, else someone who lives or works there.
         let inside: Vec<CitizenId> = self.citizens.iter().filter(|(cid, c)| c.inside == Some(inc.building) && Some(*cid) != inc.citizen && Some(*cid) != inc.suspect).map(|(cid, _)| cid).collect();
-        let caller = inside.choose(&mut self.rng).copied().or_else(|| self.buildings.get(inc.building).and_then(|b| b.residents.first().or(b.workers.first()).copied())).or(if inc.kind == IncidentKind::Crime { inc.citizen } else { None });
+        let caller = inside.choose(self.srng()).copied().or_else(|| self.buildings.get(inc.building).and_then(|b| b.residents.first().or(b.workers.first()).copied())).or(if inc.kind == IncidentKind::Crime { inc.citizen } else { None });
         let (dispatcher, delay) = self.dispatcher();
         {
             let i = self.services.incident_mut(id).unwrap();
@@ -771,6 +791,7 @@ impl World {
             let Some(from) = self.building_lot(station).and_then(|l| self.lot_access(l)) else { continue };
             let Some((lanes, s0, s1)) = self.traffic.net.find_route(from.0, from.1, to.0, to.1) else { continue };
             let car = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, 0);
+            self.traffic.cars[car].siren = true;
             self.services.by_car.insert(car, uid);
             let (call, number) = {
                 let u = &mut self.services.units[uid];
@@ -852,11 +873,12 @@ impl World {
     }
 
     /// Drive a car for `uid` from where it stands to `to`. False if no road.
-    fn drive_unit(&mut self, uid: UnitId, to: (SegmentId, Vec2)) -> bool {
+    fn drive_unit(&mut self, uid: UnitId, to: (SegmentId, Vec2), siren: bool) -> bool {
         let from = self.services.units[uid].pos;
         let Some((seg, _, q)) = self.roads.nearest_street(from) else { return false };
         let Some((lanes, s0, s1)) = self.traffic.net.find_route(seg, q, to.0, to.1) else { return false };
         let car = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, 0);
+        self.traffic.cars[car].siren = siren;
         self.services.by_car.insert(car, uid);
         self.services.units[uid].car = Some(car);
         true
@@ -870,7 +892,7 @@ impl World {
         let station = u.station;
         let to = self.building_lot(station).and_then(|l| self.lot_access(l));
         match to {
-            Some(to) if self.drive_unit(uid, to) => self.services.units[uid].state = UnitState::Returning,
+            Some(to) if self.drive_unit(uid, to, false) => self.services.units[uid].state = UnitState::Returning,
             _ => self.park_at_station(uid),
         }
     }
@@ -882,7 +904,7 @@ impl World {
         match inc.kind {
             IncidentKind::Crime => {
                 let quick = inc.arrived.unwrap_or(tick).saturating_sub(inc.started) <= QUICK_RESPONSE;
-                let caught = inc.suspect.is_some() && self.rng.random::<f32>() < if quick { ARREST_QUICK } else { ARREST_SLOW };
+                let caught = inc.suspect.is_some() && self.srng().random::<f32>() < if quick { ARREST_QUICK } else { ARREST_SLOW };
                 let bname = self.buildings.get(inc.building).map(|b| b.name.clone()).unwrap_or_default();
                 if caught {
                     if let Some(s) = inc.suspect.and_then(|s| self.citizens.get_mut(s)) {
@@ -905,7 +927,7 @@ impl World {
                 match (hospital, uid) {
                     (Some(h), Some(uid)) => {
                         let to = self.building_lot(h).and_then(|l| self.lot_access(l));
-                        if to.is_some_and(|to| self.drive_unit(uid, to)) {
+                        if to.is_some_and(|to| self.drive_unit(uid, to, true)) {
                             let u = &mut self.services.units[uid];
                             u.state = UnitState::Transporting;
                             u.hospital = Some(h);
@@ -954,7 +976,7 @@ impl World {
             (Some(id), Some(h), Some(p)) if self.buildings.contains_key(h) && self.citizens.contains_key(p) => {
                 self.leave_building(p);
                 let entrance = self.building_entrance(h).unwrap_or(self.services.units[uid].pos);
-                let hours = self.rng.random_range(STAY_HOURS.0..=STAY_HOURS.1);
+                let hours = self.srng().random_range(STAY_HOURS.0..=STAY_HOURS.1);
                 let until = tick + hours * 60;
                 let hname = self.buildings[h].name.clone();
                 self.buildings[h].visitors += 1;
@@ -1094,8 +1116,8 @@ impl World {
                 .map(|(id, _)| id)
                 .filter(|id| !self.is_patient(*id))
                 .collect();
-            fans.shuffle(&mut self.rng);
-            let take = ((seats as f32 * self.rng.random_range(0.5..0.95)) as usize).min(fans.len());
+            fans.shuffle(self.srng());
+            let take = ((seats as f32 * self.srng().random_range(0.5..0.95)) as usize).min(fans.len());
             for &cid in &fans[..take] {
                 let c = &mut self.citizens[cid];
                 c.savings -= TICKET_PRICE;
@@ -1131,7 +1153,7 @@ impl World {
         let stadiums: Vec<(BuildingId, Tier)> = self.buildings.iter().filter_map(|(id, b)| b.service.filter(|s| s.kind == ServiceKind::Stadium).map(|s| (id, s.tier))).collect();
         let mut tonight = Vec::new();
         for (id, tier) in stadiums {
-            if self.rng.random_bool(EVENT_CHANCE[tier.index()]) {
+            if self.srng().random_bool(EVENT_CHANCE[tier.index()]) {
                 tonight.push(id);
             }
         }

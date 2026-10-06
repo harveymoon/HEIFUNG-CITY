@@ -211,6 +211,9 @@ pub struct Building {
     /// Still being built: no homes, no permanent jobs, a site crew instead.
     #[serde(default)]
     pub construction: Option<Construction>,
+    /// A shipping port or ferry terminal.
+    #[serde(default)]
+    pub port: Option<crate::ports::PortKind>,
     /// A police, fire, health, school or dispatch building, or an
     /// attraction, placed by the player (`nd_sim::services`).
     #[serde(default)]
@@ -255,6 +258,7 @@ impl Building {
             rail: None,
             rail_inbound: Vec::new(),
             rail_outbound: 0.0,
+            port: None,
             construction: None,
             service: None,
         };

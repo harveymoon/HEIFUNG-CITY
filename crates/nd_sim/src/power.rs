@@ -14,10 +14,52 @@ pub enum PowerPlantKind {
     Solar,
     Wind,
     Nuclear,
+    /// Run-of-river turbines on a river or stream with a current.
+    Hydro,
+    /// Turbines in the tide race, on the sea shore.
+    Tidal,
+    /// Wells into the hot ground at a geothermal hot spot.
+    Geothermal,
+}
+
+/// Where a kind of plant may stand, beyond its land use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlantSite {
+    Anywhere,
+    /// Beside a river or stream whose current reaches `MIN_HYDRO_CURRENT`.
+    River,
+    /// On the sea shore.
+    Coast,
+    /// Over a geothermal hot spot.
+    HotSpot,
 }
 
 impl PowerPlantKind {
-    pub const ALL: [PowerPlantKind; 4] = [PowerPlantKind::Coal, PowerPlantKind::Solar, PowerPlantKind::Wind, PowerPlantKind::Nuclear];
+    pub const ALL: [PowerPlantKind; 7] = [PowerPlantKind::Coal, PowerPlantKind::Solar, PowerPlantKind::Wind, PowerPlantKind::Nuclear, PowerPlantKind::Hydro, PowerPlantKind::Tidal, PowerPlantKind::Geothermal];
+
+    /// The ground a plant needs: hydro a river with a current, tidal the
+    /// sea, geothermal a hot spot; the rest go anywhere their land use allows.
+    pub fn site(self) -> PlantSite {
+        match self {
+            PowerPlantKind::Hydro => PlantSite::River,
+            PowerPlantKind::Tidal => PlantSite::Coast,
+            PowerPlantKind::Geothermal => PlantSite::HotSpot,
+            _ => PlantSite::Anywhere,
+        }
+    }
+
+    /// A short note on where the plant may go, for tool tips.
+    pub fn site_hint(self) -> &'static str {
+        match self.site() {
+            PlantSite::River => "on a lot beside a river or stream with a current",
+            PlantSite::Coast => "on a lot on the sea shore",
+            PlantSite::HotSpot => "over a geothermal hot spot (steaming vents)",
+            PlantSite::Anywhere => match self {
+                PowerPlantKind::Coal | PowerPlantKind::Nuclear => "on industrial land",
+                _ => "on any land but parks and civic",
+            },
+        }
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -25,6 +67,9 @@ impl PowerPlantKind {
             PowerPlantKind::Solar => "solar farm",
             PowerPlantKind::Wind => "wind farm",
             PowerPlantKind::Nuclear => "nuclear plant",
+            PowerPlantKind::Hydro => "hydro plant",
+            PowerPlantKind::Tidal => "tidal plant",
+            PowerPlantKind::Geothermal => "geothermal plant",
         }
     }
 
@@ -35,6 +80,9 @@ impl PowerPlantKind {
             PowerPlantKind::Solar => 25.0,
             PowerPlantKind::Wind => 40.0,
             PowerPlantKind::Nuclear => 400.0,
+            PowerPlantKind::Hydro => 70.0,
+            PowerPlantKind::Tidal => 60.0,
+            PowerPlantKind::Geothermal => 90.0,
         }
     }
 
@@ -44,6 +92,9 @@ impl PowerPlantKind {
             PowerPlantKind::Solar => 8_000.0,
             PowerPlantKind::Wind => 10_000.0,
             PowerPlantKind::Nuclear => 150_000.0,
+            PowerPlantKind::Hydro => 40_000.0,
+            PowerPlantKind::Tidal => 55_000.0,
+            PowerPlantKind::Geothermal => 50_000.0,
         }
     }
 
@@ -53,6 +104,9 @@ impl PowerPlantKind {
             PowerPlantKind::Solar => 60.0,
             PowerPlantKind::Wind => 90.0,
             PowerPlantKind::Nuclear => 2_500.0,
+            PowerPlantKind::Hydro => 220.0,
+            PowerPlantKind::Tidal => 320.0,
+            PowerPlantKind::Geothermal => 380.0,
         }
     }
 
@@ -62,6 +116,9 @@ impl PowerPlantKind {
             PowerPlantKind::Solar => 3,
             PowerPlantKind::Wind => 4,
             PowerPlantKind::Nuclear => 60,
+            PowerPlantKind::Hydro => 10,
+            PowerPlantKind::Tidal => 8,
+            PowerPlantKind::Geothermal => 16,
         }
     }
 
@@ -72,6 +129,8 @@ impl PowerPlantKind {
             PowerPlantKind::Solar => (0.0, 0.0),
             PowerPlantKind::Wind => (120.0, -0.04),
             PowerPlantKind::Nuclear => (200.0, -0.10),
+            PowerPlantKind::Hydro | PowerPlantKind::Tidal => (0.0, 0.0),
+            PowerPlantKind::Geothermal => (150.0, -0.05),
         }
     }
 
@@ -86,6 +145,8 @@ impl PowerPlantKind {
             PowerPlantKind::Solar => 300.0,
             PowerPlantKind::Wind => 400.0,
             PowerPlantKind::Nuclear => 900.0,
+            PowerPlantKind::Hydro | PowerPlantKind::Tidal => 300.0,
+            PowerPlantKind::Geothermal => 400.0,
         }
     }
 
@@ -93,13 +154,17 @@ impl PowerPlantKind {
         match self {
             PowerPlantKind::Coal | PowerPlantKind::Nuclear => lu == LandUse::Industrial,
             PowerPlantKind::Solar | PowerPlantKind::Wind => lu != LandUse::Park && lu != LandUse::Civic,
+            // The site rule does the work for these.
+            PowerPlantKind::Hydro | PowerPlantKind::Tidal | PowerPlantKind::Geothermal => lu != LandUse::Park,
         }
     }
 
     /// Share of nameplate output right now.
     pub fn availability(self, weather: &Weather, day_fraction: f32) -> f32 {
         match self {
-            PowerPlantKind::Coal | PowerPlantKind::Nuclear => 1.0,
+            PowerPlantKind::Coal | PowerPlantKind::Nuclear | PowerPlantKind::Hydro | PowerPlantKind::Geothermal => 1.0,
+            // Two tides a day; the race runs on the flood and the ebb.
+            PowerPlantKind::Tidal => 0.2 + 0.8 * (day_fraction * 2.0 * std::f32::consts::TAU).sin().abs(),
             PowerPlantKind::Solar => {
                 let elev = ((day_fraction - 0.25) * std::f32::consts::TAU).sin().max(0.0);
                 elev * (1.0 - 0.75 * weather.cloud)

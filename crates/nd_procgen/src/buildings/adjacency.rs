@@ -116,6 +116,11 @@ pub fn traits(style: Style) -> (Family, f32) {
         Style::Datacenter => (Tech, 0.3),
         Style::Depot => (Tech, 0.3),
         Style::FabPlant => (Tech, -0.3),
+        // Water and hot-ground plants and docks: the city's own, neutral;
+        // a container port sits with heavy industry.
+        Style::PowerHydro | Style::PowerTidal | Style::PowerGeothermal => (Special, 0.0),
+        Style::ShippingPort => (Heavy, -0.5),
+        Style::FerryTerminal => (Special, 0.0),
         // City services and attractions are placed by the player, never
         // picked by weight: neutral neighbours, and a landmark or stadium
         // should not repeat next door.

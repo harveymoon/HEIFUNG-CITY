@@ -158,6 +158,9 @@ pub fn plant_name(k: PowerPlantKind) -> &'static str {
         PowerPlantKind::Solar => "solar",
         PowerPlantKind::Wind => "wind",
         PowerPlantKind::Nuclear => "nuclear",
+        PowerPlantKind::Hydro => "hydro",
+        PowerPlantKind::Tidal => "tidal",
+        PowerPlantKind::Geothermal => "geothermal",
     }
 }
 
@@ -449,6 +452,8 @@ pub fn placeable_key(p: nd_sim::Placeable) -> String {
         nd_sim::Placeable::Service(k, t) => format!("{}:{}", k.key(), tier_key(t)),
         nd_sim::Placeable::BusDepot => "depot".to_string(),
         nd_sim::Placeable::Rail(f) => rail_name(f).to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::ShippingPort) => "shipping_port".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::FerryTerminal) => "ferry_terminal".to_string(),
     }
 }
 

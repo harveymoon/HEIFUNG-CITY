@@ -183,11 +183,13 @@ fn route_row(ui: &mut egui::Ui, tools: &mut ToolState, id: nd_sim::RouteId, r: &
 fn rail(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
     ui.horizontal(|ui| {
         for (k, label) in [(RailFacility::Station, "Passenger station"), (RailFacility::FreightYard, "Freight yard")] {
-            if ui.selectable_label(tools.rail_kind == k, label).clicked() {
+            if ui.selectable_label(tools.dock.is_none() && tools.rail_kind == k, label).clicked() {
                 tools.rail_kind = k;
+                tools.dock = None;
             }
         }
     });
+    tools.dock = None;
     let r = &sim.world.rail.stats;
     let (w, d) = nd_sim::Facility::size(tools.rail_kind);
     hint(ui, &match tools.rail_kind {
@@ -237,7 +239,10 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         line += &format!(", needs {:.0} m²", what.min_area());
     }
     match what {
-        Placeable::Plant(k) => line += help::power_note(k),
+        Placeable::Plant(k) => {
+            line += help::power_note(k);
+            line += &format!(" Goes {}.", k.site_hint());
+        }
         Placeable::Service(k, t) => {
             if k.radius(t) > 0.0 {
                 line += &format!(", covers {:.0} m by road", k.radius(t));
@@ -254,13 +259,28 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         }
         Placeable::BusDepot => line += &format!(". {}", help::TRANSIT_DEPOT),
         Placeable::Rail(_) => line += ". Set beside track or a street it fuses to them; otherwise it lays stubs to join (see the Rail tool).",
+        Placeable::Dock(_) => {}
     }
     hint(ui, &line);
+    if let Placeable::Dock(k) = what {
+        dock_hint(ui, sim, k);
+    }
     if tools.build_cat == BuildCategory::Services {
         let s = &sim.world.services.stats;
         hint(ui, &format!("Coverage of homes: police {:.0}% · fire {:.0}% · health {:.0}% · schools {:.0}% · {} incidents today · avg response {:.0} min · {}/{} units out · {} fires burning", s.coverage[0] * 100.0, s.coverage[1] * 100.0, s.coverage[2] * 100.0, s.coverage[3] * 100.0, s.incidents_today.iter().sum::<u32>(), s.avg_response(), s.units_busy, s.units, s.fires_burning));
     }
     hint(ui, help::tool_hint(Tool::Buildings));
+}
+
+/// What a dock is and how the docks are doing (moved here from the Rail tool).
+fn dock_hint(ui: &mut egui::Ui, sim: &mut Sim, k: nd_sim::PortKind) {
+        let (w, d) = k.size();
+        let s = &sim.world.ports.stats;
+        hint(ui, &match k {
+            nd_sim::PortKind::ShippingPort => format!("A container port, {w:.0} by {d:.0} m, on a river at least {:.0} m wide or on the sea; it builds a pier out into the water and a street along its landward side. {:.0} to build, {:.0}/day. Imports come by ship at {:.0}% of the price, exports earn {:.0}% more.", k.min_width(), k.cost(), k.upkeep_per_day(), nd_sim::ports::SHIP_IMPORT_FACTOR * 100.0, (nd_sim::ports::SHIP_EXPORT_BONUS - 1.0) * 100.0),
+            nd_sim::PortKind::FerryTerminal => format!("A ferry terminal, {w:.0} by {d:.0} m, on any water; ferries run to every other terminal on connected water, or out to elsewhere. {:.0} to build, {:.0}/day, fare {:.0}.", k.cost(), k.upkeep_per_day(), nd_sim::ports::FERRY_FARE),
+        });
+        hint(ui, &format!("{} port{} · {} terminal{} · {} ship{} out · {} loads landed today, {} waiting · {} ferry riders today, fares {:.0}", s.ports, if s.ports == 1 { "" } else { "s" }, s.terminals, if s.terminals == 1 { "" } else { "s" }, s.ships_out, if s.ships_out == 1 { "" } else { "s" }, s.freight_landed_today, s.waiting_cargo, s.ferry_riders_today, s.ferry_fares_today));
 }
 
 /// Colour for a figure that should worry the player.

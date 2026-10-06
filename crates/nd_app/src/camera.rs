@@ -185,7 +185,8 @@ fn control_camera(
         let limit = sim.world.config.half_extent + 150.0;
         walk.pos.x = walk.pos.x.clamp(-limit, limit);
         walk.pos.z = walk.pos.z.clamp(-limit, limit);
-        walk.pos.y = EYE_HEIGHT;
+        // Eyes above whatever is underfoot: hills, bridge decks.
+        walk.pos.y = EYE_HEIGHT + sim.world.surface_height(Vec2::new(walk.pos.x, walk.pos.z));
         let (sp, cp) = walk.pitch.sin_cos();
         let look = Vec3::new(sy * cp, sp, cy * cp);
         tf.translation = walk.pos;
@@ -315,6 +316,9 @@ fn control_camera(
     let (sy, cy) = cam.yaw.sin_cos();
     let (sp, cp) = cam.pitch.sin_cos();
     let offset = Vec3::new(sy * cp, sp, cy * cp) * cam.distance;
+    // The orbit centre rides on the ground, eased so hills do not jolt it.
+    let ground = sim.world.surface_height(Vec2::new(cam.target.x, cam.target.z));
+    cam.target.y += (ground - cam.target.y) * (dt * 6.0).min(1.0);
     tf.translation = cam.target + offset;
     tf.look_at(cam.target, Vec3::Y);
 }
@@ -324,6 +328,7 @@ fn project_cursor(
     cameras: Query<(&Camera, &GlobalTransform), With<OrbitCamera>>,
     mode: Res<CameraMode>,
     flags: Res<UiFlags>,
+    sim: Res<Sim>,
     mut cursor: ResMut<Cursor>,
 ) {
     cursor.ground = None;
@@ -339,6 +344,20 @@ fn project_cursor(
         return;
     }
     let t = -ray.origin.y / dir.y;
-    let hit = ray.origin + dir * t;
+    let mut hit = ray.origin + dir * t;
+    // On a landscape, walk the ray onto the ground: re-intersect at the
+    // height found under the last guess until it settles.
+    if !sim.world.landscape.is_flat() {
+        for _ in 0..6 {
+            let h = sim.world.surface_height(Vec2::new(hit.x, hit.z));
+            let t = (h - ray.origin.y) / dir.y;
+            let next = ray.origin + dir * t;
+            let settled = next.distance(hit) < 0.2;
+            hit = next;
+            if settled {
+                break;
+            }
+        }
+    }
     cursor.ground = Some(Vec2::new(hit.x, hit.z));
 }

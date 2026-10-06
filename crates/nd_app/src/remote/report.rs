@@ -44,10 +44,15 @@ pub const UNPOWERED_BELOW: f32 = 0.6;
 /// stress, the sim's trigger for moving out.
 pub const RENT_BURDEN_SHARE: f32 = 0.3;
 pub const RENT_STRESS_SHARE: f32 = 0.5;
-/// A vehicle slower than this (m/s) on a trip older than `STUCK_AGE_S`
-/// seconds of sim motion is stuck; the sim gives up on trips at 1800 s.
+/// A vehicle slower than this (m/s) counts as stopped.
 pub const STUCK_SPEED: f32 = 0.5;
-pub const STUCK_AGE_S: f32 = 900.0;
+/// A vehicle in traffic that has stood still for this many seconds of sim
+/// motion (`Car::stalled`) is stuck. A bus dwelling at a stop is not
+/// counted (its clock stays at zero) and neither is the head of a queue at
+/// a red light (no light is red this long); a car waiting at the kerb for
+/// a gap is reported apart. The sim reroutes such vehicles after 40 s and
+/// gives up on trips at 1800 s.
+pub const STUCK_STALL_S: f32 = 180.0;
 /// Demand (0..1) at which vacant lots of that land use are worth flagging.
 pub const HIGH_DEMAND: f32 = 0.6;
 /// Unemployment share that makes an alert.
@@ -621,7 +626,7 @@ fn services(w: &World) -> Value {
         }
     }
     let mut buses_on_route: BTreeMap<String, u32> = BTreeMap::new();
-    let (mut cars, mut trucks, mut buses, mut stopped, mut stuck) = (0, 0, 0, 0, 0);
+    let (mut cars, mut trucks, mut buses, mut stopped, mut stuck, mut kerb) = (0, 0, 0, 0, 0, 0);
     let mut speed_sum = 0.0f32;
     let mut moving = 0;
     for c in w.traffic.cars.values() {
@@ -635,8 +640,10 @@ fn services(w: &World) -> Value {
         }
         if c.v < STUCK_SPEED {
             stopped += 1;
-            if c.age > STUCK_AGE_S && c.hold <= 0.0 {
+            if is_stuck(c) {
                 stuck += 1;
+            } else if c.entering && c.stalled > STUCK_STALL_S {
+                kerb += 1;
             }
         } else {
             moving += 1;
@@ -704,7 +711,8 @@ fn services(w: &World) -> Value {
         },
         "traffic": {
             "vehicles": w.traffic.cars.len(), "cars": cars, "trucks": trucks, "buses": buses, "mean_speed_kmh_moving": if moving > 0 { round(speed_sum / moving as f32 * 3.6) } else { 0.0 },
-            "stopped": stopped, "stuck": stuck, "stuck_rule": format!("slower than {STUCK_SPEED} m/s on a trip older than {STUCK_AGE_S} s"),
+            "stopped": stopped, "stuck": stuck, "stuck_rule": format!("in traffic and standing still for {STUCK_STALL_S} s or more (not a bus at a stop, not at a red light)"),
+            "waiting_at_kerb": kerb, "gridlocks": w.traffic.gridlocks().len(),
             "lanes": w.traffic.net.lanes.len(), "intersections": w.traffic.net.intersections.len(), "signals": w.traffic.net.intersections.iter().filter(|i| i.signalized).count(),
             "walk_trips_today": e.walk_trips_today,
         },
@@ -824,6 +832,12 @@ impl Alert {
     }
 }
 
+/// In traffic, standing still for minutes, not dwelling at a stop, not at
+/// a red light and not still waiting at the kerb to set off.
+fn is_stuck(c: &nd_sim::Car) -> bool {
+    c.stalled > STUCK_STALL_S && c.hold <= 0.0 && !c.entering && c.wait != nd_sim::traffic::Wait::Signal
+}
+
 pub fn alerts_json(alerts: &[Alert], limit: usize) -> Value {
     Value::Array(alerts.iter().take(limit).enumerate().map(|(i, a)| a.to_json(i + 1)).collect())
 }
@@ -844,7 +858,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     let mut rail_broken = Alert::new("rail_facility_not_connected", 3, "a station or yard needs both its rail stub joined to the track and its street stub joined to a road");
     let mut route_broken = Alert::new("bus_route_broken", 2, "a leg of the line has no road between its stops, or it has fewer than two stops; move or remove stops");
     let mut sites = Alert::new("construction_waiting_for_materials", 1, "sites wait for parts deliveries each quarter; many waiting means parts are short (economy.resources parts)");
-    let mut stuck = Alert::new("stuck_vehicles", 2, "vehicles not moving for a long time: look for a missing connection or gridlock at the location");
+    let mut stuck = Alert::new("stuck_vehicles", 2, "vehicles standing still for minutes: a gridlock ring (listed with its junctions) or a street over capacity; add lanes, another route or transit there");
     let mut derelict = Alert::new("derelict_buildings", 1, "condition below 0.3; they are redeveloped or demolished in time");
     let mut vacant_demand = Alert::new("vacant_lots_with_high_demand", 1, "demand is high but lots stand empty: they may lack road access or the area may be unattractive");
     for (id, c) in w.citizens.iter() {
@@ -914,10 +928,19 @@ pub fn alerts(w: &World) -> Vec<Alert> {
             route_broken.add(key_str(id), r.stops.first().map(|s| s.pos));
         }
     }
+    let gridlocks = w.traffic.gridlocks();
+    let mut kerb = 0;
     for (id, c) in w.traffic.cars.iter() {
-        if c.v < STUCK_SPEED && c.age > STUCK_AGE_S && c.hold <= 0.0 {
+        if is_stuck(c) {
             stuck.add(key_str(id), Some(c.pos));
+        } else if c.entering && c.stalled > STUCK_STALL_S {
+            kerb += 1;
         }
+    }
+    if !gridlocks.is_empty() {
+        stuck.severity = 3;
+        // Point the alert at the gridlocks rather than at the queues.
+        stuck.points = gridlocks.iter().flat_map(|g| g.points.iter().copied()).collect();
     }
     let high: Vec<LandUse> = LandUse::ALL.iter().copied().filter(|&lu| lu != LandUse::Park && e.demand_for(lu) >= HIGH_DEMAND).collect();
     for (id, l) in w.lots.iter() {
@@ -940,7 +963,18 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     rail_broken.message = format!("{} stations/yards do not work: {} lack a track connection, {} a street connection", rail_broken.count, rail_missing.0, rail_missing.1);
     route_broken.message = format!("{} bus lines cannot run", route_broken.count);
     sites.message = format!("{} building sites are waiting for materials", sites.count);
-    stuck.message = format!("{} vehicles look stuck", stuck.count);
+    stuck.message = format!("{} vehicles have stood still for {STUCK_STALL_S:.0}+ s in traffic; {kerb} more wait at the kerb to pull out", stuck.count);
+    if !gridlocks.is_empty() {
+        let rings: Vec<String> = gridlocks
+            .iter()
+            .take(4)
+            .map(|g| {
+                let at: Vec<String> = g.points.iter().map(|p| format!("({:.0}, {:.0})", p.x, p.y)).collect();
+                format!("{} vehicles through {}", g.vehicles, at.join(" "))
+            })
+            .collect();
+        stuck.message += &format!("; {} gridlock(s): {}", gridlocks.len(), rings.join("; "));
+    }
     derelict.message = format!("{} buildings are derelict", derelict.count);
     vacant_demand.message = format!("{} vacant lots of high-demand land use ({}) stand empty", vacant_demand.count, high.iter().map(|lu| lu_key(*lu)).collect::<Vec<_>>().join(", "));
 

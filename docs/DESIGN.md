@@ -65,11 +65,20 @@ Citizens are rendered from their simulated positions every frame.
 - **Roads**: a node/segment graph with per-direction lane counts. New polylines snap to
   existing nodes and split segments they cross. Walking uses A* over nodes.
 - **Lanes and traffic**: every segment becomes offset lanes per direction, shortened at
-  junctions. Each junction gets connector lanes from every incoming lane to every
-  outgoing lane (U-turns only at dead ends); junctions with three or more approaches
-  run a fixed-cycle signal that gives one approach green at a time. Cars path over the
-  lane graph with A*, follow the intelligent driver model, queue behind each other and
-  stop at red lights. Traffic physics runs 1.5 seconds per sim minute so a car at 50 km/h
+  junctions. Each junction gets connector lanes with lane discipline on multi-lane
+  approaches: only the leftmost lane turns left, only the rightmost turns right, every
+  lane goes straight on lane for lane (U-turns only at dead ends). Junctions with three
+  or more approaches run an actuated signal: opposite approaches share a green (left
+  turns yield to oncoming traffic), a green with nobody left to serve is cut after 5 s
+  when another approach waits, and phases nobody waits for are skipped. Cars path over
+  the lane graph with A* (lane changes are steps between parallel lanes; every vehicle
+  on a lane adds to its cost, so routes spread out), follow the intelligent driver
+  model, queue behind each other and stop at red lights. They move into the lane their
+  next turn needs as soon as the gap is IDM-safe for them and the follower there, drift
+  across over a few seconds, and overtake buses at stops and slower trucks when a
+  parallel lane is free. New cars pull out of the kerb only into a gap (the next driver
+  lets them in after 15 s); a car stalled 40 s before a full exit, or 10 s at a lane
+  change it cannot make, takes another way, which breaks gridlock rings. Traffic physics runs 1.5 seconds per sim minute so a car at 50 km/h
   moves at a believable pace on screen at 1x; trips therefore take sim-time tens of
   minutes, the usual city-builder compromise. Right-hand traffic; lane sets are centred
   on the road; junction curves stay inside the junction; cars refuse to enter a
@@ -268,6 +277,30 @@ Citizens are rendered from their simulated positions every frame.
   tier, displaced, emigrated and priced-out counters, plus market stats: businesses,
   deals, imports, exports, meals sold, hungry citizens, closures, and the average
   price and stock of every resource.
+
+- **Landscape** (`nd_sim::landscape`, `world/water.rs`): generated from a seed and
+  `LandscapeParams` (preset river valley / islands / coast / delta / plains / flat; water, relief,
+  branching, islands, highway). Features are saved with the world (old saves load flat): rivers and
+  streams are centrelines with a width and a current (streams faster), lakes are outlines, the sea is
+  an outline with islands as holes, hot spots are discs with a heat. Heights come from a 10 m raster of
+  base hills carved by the signed distance to water (bed below the waterline, a flat strip then a
+  slope of about one in ten up the banks); the basin centre stays dry. Road polylines are split at
+  every waterline so a bridge is exactly the span; bridge segments are flagged, their ends set at deck
+  height (water + 7 m) and every node raised until no segment is steeper than its grade (street 7%,
+  rail 3%, path 10%); new bridge metres are charged on implement. `Ground` is a 4 m raster of the built
+  ground: terrain blended into each road's profile within 22 m and flattened to a pad under every lot
+  (the street's height at the frontage). The renderer draws the terrain from it, lifts flat-datum meshes
+  onto it, raises buildings to their pad and movers to `surface_height` (decks over water). Water cuts
+  parcels (`zoning::generate_lots_wet`); lots steeper than 0.2 are unusable. A one-way street of three
+  or more lanes is a highway: 25 m/s, no frontage, grade-separated (crossings make no junction, only
+  dropped ends join, so ramps merge with priority to the mainline). Two carriageways cross the map at
+  y = 420 from the start; through cars enter at the map edge and leave at the far one. Docks
+  (`nd_sim::ports`) stand on the shore with a pier and a street stub, take over grown lots, and work
+  once their street reaches the city: freighters route by water (river centrelines, tributaries
+  joining, mouths opening on the sea) from off the map to the berth and back, landing imports for
+  lorries; ferries run terminal to terminal or out to elsewhere with fares. Hydro (river current at
+  least 0.8 m/s, output scales with current), tidal (sea shore, two tides a day) and geothermal (hot
+  spot, scales with heat) plants extend `PowerPlantKind`.
 
 ## Minds and the LLM plan
 

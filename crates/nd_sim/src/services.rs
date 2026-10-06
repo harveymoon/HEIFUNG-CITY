@@ -15,6 +15,7 @@
 
 use crate::buildings::{BuildingId, Tier};
 use crate::citizens::CitizenId;
+use crate::ports::PortKind;
 use crate::power::PowerPlantKind;
 use crate::rail::RailFacility;
 use crate::traffic::CarId;
@@ -347,6 +348,8 @@ pub enum Placeable {
     Service(ServiceKind, Tier),
     BusDepot,
     Rail(RailFacility),
+    /// A shipping port or ferry terminal at the water's edge.
+    Dock(PortKind),
 }
 
 /// The Buildings tool's sub-categories.
@@ -357,11 +360,12 @@ pub enum BuildCategory {
     Services,
     Transit,
     Rail,
+    Water,
     Attractions,
 }
 
 impl BuildCategory {
-    pub const ALL: [BuildCategory; 5] = [BuildCategory::Power, BuildCategory::Services, BuildCategory::Transit, BuildCategory::Rail, BuildCategory::Attractions];
+    pub const ALL: [BuildCategory; 6] = [BuildCategory::Power, BuildCategory::Services, BuildCategory::Transit, BuildCategory::Rail, BuildCategory::Water, BuildCategory::Attractions];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -369,6 +373,7 @@ impl BuildCategory {
             BuildCategory::Services => "Services",
             BuildCategory::Transit => "Transit",
             BuildCategory::Rail => "Rail",
+            BuildCategory::Water => "Water",
             BuildCategory::Attractions => "Attractions",
         }
     }
@@ -379,6 +384,7 @@ impl BuildCategory {
             BuildCategory::Services => "services",
             BuildCategory::Transit => "transit",
             BuildCategory::Rail => "rail",
+            BuildCategory::Water => "water",
             BuildCategory::Attractions => "attractions",
         }
     }
@@ -391,6 +397,7 @@ impl BuildCategory {
             BuildCategory::Services => [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch].iter().map(|&k| Placeable::Service(k, Tier::Mid)).collect(),
             BuildCategory::Transit => vec![Placeable::BusDepot],
             BuildCategory::Rail => vec![Placeable::Rail(RailFacility::Station), Placeable::Rail(RailFacility::FreightYard)],
+            BuildCategory::Water => PortKind::ALL.iter().map(|&k| Placeable::Dock(k)).collect(),
             BuildCategory::Attractions => vec![Placeable::Service(ServiceKind::Monument, Tier::Mid), Placeable::Service(ServiceKind::Stadium, Tier::Mid)],
         }
     }
@@ -404,6 +411,7 @@ impl Placeable {
             Placeable::Service(..) => BuildCategory::Services,
             Placeable::BusDepot => BuildCategory::Transit,
             Placeable::Rail(_) => BuildCategory::Rail,
+            Placeable::Dock(_) => BuildCategory::Water,
         }
     }
 
@@ -425,6 +433,7 @@ impl Placeable {
             Placeable::Service(k, t) => k.tier_label(t).to_string(),
             Placeable::BusDepot => "bus depot".into(),
             Placeable::Rail(f) => f.label().to_lowercase(),
+            Placeable::Dock(k) => k.label().to_string(),
         }
     }
 
@@ -444,6 +453,8 @@ impl Placeable {
             Placeable::BusDepot => "Bus depot",
             Placeable::Rail(RailFacility::Station) => "Passenger station",
             Placeable::Rail(RailFacility::FreightYard) => "Freight yard",
+            Placeable::Dock(PortKind::ShippingPort) => "Shipping port",
+            Placeable::Dock(PortKind::FerryTerminal) => "Ferry terminal",
         }
     }
 
@@ -454,6 +465,7 @@ impl Placeable {
             Placeable::BusDepot => crate::transit::DEPOT_COST,
             Placeable::Rail(RailFacility::Station) => crate::rail::STATION_COST,
             Placeable::Rail(RailFacility::FreightYard) => crate::rail::YARD_COST,
+            Placeable::Dock(k) => k.cost(),
         }
     }
 
@@ -464,6 +476,7 @@ impl Placeable {
             Placeable::BusDepot => crate::transit::DEPOT_UPKEEP_PER_DAY,
             Placeable::Rail(RailFacility::Station) => crate::rail::STATION_UPKEEP_PER_DAY,
             Placeable::Rail(RailFacility::FreightYard) => crate::rail::YARD_UPKEEP_PER_DAY,
+            Placeable::Dock(k) => k.upkeep_per_day(),
         }
     }
 
@@ -474,6 +487,7 @@ impl Placeable {
             Placeable::BusDepot => crate::transit::DEPOT_JOBS,
             Placeable::Rail(RailFacility::Station) => crate::rail::STATION_JOBS,
             Placeable::Rail(RailFacility::FreightYard) => crate::rail::YARD_JOBS,
+            Placeable::Dock(k) => k.jobs(),
         }
     }
 
@@ -491,7 +505,7 @@ impl Placeable {
             Placeable::Plant(k) => k.min_area(),
             Placeable::Service(k, t) => k.min_area(t),
             Placeable::BusDepot => crate::transit::DEPOT_MIN_AREA,
-            Placeable::Rail(_) => 0.0,
+            Placeable::Rail(_) | Placeable::Dock(_) => 0.0,
         }
     }
 
@@ -501,7 +515,7 @@ impl Placeable {
             Placeable::Plant(k) => k.allowed_on(lu),
             Placeable::Service(k, _) => k.allowed_on(lu),
             Placeable::BusDepot => !matches!(lu, LandUse::Residential | LandUse::Park),
-            Placeable::Rail(_) => true,
+            Placeable::Rail(_) | Placeable::Dock(_) => true,
         }
     }
 
@@ -520,6 +534,11 @@ impl Placeable {
             "solar" => Some(Placeable::Plant(PowerPlantKind::Solar)),
             "wind" => Some(Placeable::Plant(PowerPlantKind::Wind)),
             "nuclear" => Some(Placeable::Plant(PowerPlantKind::Nuclear)),
+            "hydro" => Some(Placeable::Plant(PowerPlantKind::Hydro)),
+            "tidal" => Some(Placeable::Plant(PowerPlantKind::Tidal)),
+            "geothermal" => Some(Placeable::Plant(PowerPlantKind::Geothermal)),
+            "shipping_port" | "port" => Some(Placeable::Dock(PortKind::ShippingPort)),
+            "ferry_terminal" | "ferry" => Some(Placeable::Dock(PortKind::FerryTerminal)),
             "depot" | "bus_depot" => Some(Placeable::BusDepot),
             "station" => Some(Placeable::Rail(RailFacility::Station)),
             "freight_yard" | "yard" => Some(Placeable::Rail(RailFacility::FreightYard)),
@@ -841,6 +860,9 @@ pub struct Services {
     /// Unit by the car it drives, rebuilt as units move.
     #[serde(skip)]
     pub by_car: HashMap<CarId, UnitId>,
+    /// The services' own random stream (see `World::srng`).
+    #[serde(skip)]
+    pub rng: Option<crate::SimRng>,
 }
 
 impl Services {
@@ -907,6 +929,7 @@ mod tests {
         }
         assert!(seen.contains(&Placeable::BusDepot));
         assert!(seen.contains(&Placeable::Rail(RailFacility::Station)) && seen.contains(&Placeable::Rail(RailFacility::FreightYard)));
+        assert!(seen.contains(&Placeable::Dock(PortKind::ShippingPort)) && seen.contains(&Placeable::Dock(PortKind::FerryTerminal)), "docks live under Water");
         assert_eq!(BuildCategory::Attractions.items().len(), 2);
     }
 
@@ -943,6 +966,8 @@ mod tests {
         assert_eq!(Placeable::parse("Stadium/LOW", None), Some(Placeable::Service(ServiceKind::Stadium, Tier::Low)));
         assert_eq!(Placeable::parse("solar", Some(Tier::High)), Some(Placeable::Plant(PowerPlantKind::Solar)));
         assert_eq!(Placeable::parse("yard", None), Some(Placeable::Rail(RailFacility::FreightYard)));
+        assert_eq!(Placeable::parse("geothermal", None), Some(Placeable::Plant(PowerPlantKind::Geothermal)));
+        assert_eq!(Placeable::parse("ferry", None), Some(Placeable::Dock(PortKind::FerryTerminal)));
         assert_eq!(Placeable::parse("castle", None), None);
     }
 }

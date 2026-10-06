@@ -191,9 +191,9 @@ pub(super) fn sync_emergency(
         let shown = u.car.is_some_and(|c| w.traffic.cars.contains_key(c)) || u.state == UnitState::OnScene;
         if shown && !es.units.contains_key(&uid) {
             let k = kind_index(u.kind);
-            let body = commands.spawn((Mesh3d(a.bodies[k].clone()), MeshMaterial3d(a.paint[k].clone()), Transform::IDENTITY, NotShadowCaster, EmergencyTag)).id();
-            let la = commands.spawn((Mesh3d(a.bars[k][0].clone()), MeshMaterial3d(a.light_a[k].clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, EmergencyTag)).id();
-            let lb = commands.spawn((Mesh3d(a.bars[k][1].clone()), MeshMaterial3d(a.light_b[k].clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, EmergencyTag)).id();
+            let body = commands.spawn((Mesh3d(a.bodies[k].clone()), MeshMaterial3d(a.paint[k].clone()), Transform::IDENTITY, NotShadowCaster, EmergencyTag, Grounded)).id();
+            let la = commands.spawn((Mesh3d(a.bars[k][0].clone()), MeshMaterial3d(a.light_a[k].clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, EmergencyTag, Grounded)).id();
+            let lb = commands.spawn((Mesh3d(a.bars[k][1].clone()), MeshMaterial3d(a.light_b[k].clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, EmergencyTag, Grounded)).id();
             es.units.insert(uid, [body, la, lb]);
         }
         if !shown {
@@ -248,8 +248,8 @@ pub(super) fn sync_emergency(
         let Some(b) = w.buildings.get(bid) else { continue };
         let Some(lot) = w.lots.get(b.lot) else { continue };
         let ents = *es.fires.entry(bid).or_insert_with(|| {
-            let fl = commands.spawn((Mesh3d(a.flame.clone()), MeshMaterial3d(a.flame_mat.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, EmergencyTag)).id();
-            let sm = commands.spawn((Mesh3d(a.smoke.clone()), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, EmergencyTag)).id();
+            let fl = commands.spawn((Mesh3d(a.flame.clone()), MeshMaterial3d(a.flame_mat.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, EmergencyTag, Grounded)).id();
+            let sm = commands.spawn((Mesh3d(a.smoke.clone()), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, EmergencyTag, Grounded)).id();
             [fl, sm]
         });
         let height = (b.floors.max(1) as f32 * 3.2).min(120.0);
@@ -282,7 +282,7 @@ pub(super) fn sync_emergency(
             continue;
         }
         let size = w.lots.get(lid).map_or(8.0, |l| (l.area().sqrt() * 0.7).clamp(4.0, 30.0));
-        let e = commands.spawn((Mesh3d(a.rubble.clone()), MeshMaterial3d(mats.surface(Surface::Concrete)), Transform::from_translation(Vec3::new(at.x, 0.0, at.y)).with_scale(Vec3::new(size, size * 0.4, size)), EmergencyTag)).id();
+        let e = commands.spawn((Mesh3d(a.rubble.clone()), MeshMaterial3d(mats.surface(Surface::Concrete)), Transform::from_translation(Vec3::new(at.x, 0.0, at.y)).with_scale(Vec3::new(size, size * 0.4, size)), EmergencyTag, Grounded)).id();
         es.rubble.insert(lid, e);
     }
 }

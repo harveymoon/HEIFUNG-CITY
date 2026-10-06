@@ -74,6 +74,22 @@ step also floods the event ring (see `events`).
 
 Relative paths are relative to the game's working directory (the repo root under `cargo run`).
 
+### Landscape and new games
+
+| Command | Fields | Reply |
+| --- | --- | --- |
+| `new_game` | `preset` river_valley (default) / islands / coast / delta / plains / flat, `seed`, `water` 0..1, `relief` 0..1 (height variation), `branching` 0..1, `islands` 0..8, `highway` bool; omitted levers take the preset's | throws the city away and starts on the landscape; tools and selection reset. Reply as `landscape` |
+| `landscape` | | preset and levers, `rivers` (kind river/stream, width, current_mps, hydro_ok, source, mouth, length), `lakes`, `sea`, `hot_spots`, `highway` (entries, exits, through_cars), `bridges` (count, metres, on the highway), `ports`, `ships`, `port_stats` |
+| `terrain_at` | `x`, `y` | `natural_height`, `ground_height` (graded under roads and lots), `surface_height` (bridge decks included), `slope`, `water` (kind, current, width, flow), `nearest_shore`, `hot_spot`, `lot`, `power_sites` (hydro/tidal/geothermal ok or why not, for the lot there), `docks` (whether a shipping port or ferry terminal would go there, or why not) |
+| `grant` | `amount` (default 100000) | dev: adds money to the treasury |
+
+```json
+{"cmd": "new_game", "preset": "delta", "seed": 12, "water": 0.7, "branching": 0.9}
+{"cmd": "terrain_at", "x": -420, "y": 100}
+```
+
+`window {name: "new_game"}` opens the New Game window (preset list, levers, mini-map).
+
 ### Planning: roads, zones, the project
 
 Like the tools, new gestures go into the pending **project** and change nothing until it is
@@ -101,6 +117,14 @@ Reply: `gesture_id`, `implemented`, `project` (`steps`, `redo`), `plan_version`.
 
 - `station`, `freight_yard`: rail pieces, placed anywhere (`World::place_rail_facility`); the reply
   message says whether track and street are joined.
+- `depot`, `parking`, `coal`, `solar`, `wind`, `nuclear`, `hydro`, `tidal`, `geothermal`: on the lot
+  under the point, or the nearest vacant lot within 80 m (`build_depot`, `build_parking`,
+  `build_power`). Hydro needs a lot within 30 m of a river or stream running at 0.8 m/s or more,
+  tidal a lot on the sea shore, geothermal a lot over a hot spot (`terrain_at` says which apply).
+- `shipping_port` (or `port`), `ferry_terminal` (or `ferry`): at the water's edge within 90 m of the
+  point (`World::place_port`). Ports need a river at least 40 m wide or the sea; ferries any water
+  16 m or wider. Each builds a pier and, unless a street is already along its landward side, a
+  street stub to join to the city.
 - `depot`, `parking`, `coal`, `solar`, `wind`, `nuclear`: on the lot under the point, or the nearest
   vacant lot within 80 m (`build_depot`, `build_parking`, `build_power`).
 - Services and attractions: `police`, `fire`, `hospital` (`clinic` is a low-tier hospital), `school`,
@@ -238,7 +262,7 @@ Each reply carries `took_ms`; see the timings measured on a real city at the end
 | `people` | by_class, by_activity, employment {employed, employed_in_businesses, employed_on_building_sites, unemployed_on_gig_income, unemployment_share, jobs_free}, housing {housed, unhoused, waiting_immigrants, homes_free}, income_per_day and savings (distributions; savings also in_overdraft, at_overdraft_floor), rent_burden {over_30pct_of_income, over_50pct_of_income, their shares, rent_stressed_now, rent_to_income distribution}, mood (distribution 0..1), hunger {hungry_now, mean_satiety, no_groceries_at_home, hungry_days histogram 0..4+}, commute_modes_now (walk/bike/car/bus/train counts and shares of the people travelling now; owns_car_share, owns_bike_share), moves (displaced, emigrated, priced-out totals), recent_memory_reasons (memories of the last 2 days grouped by their fixed text, e.g. "Rent got too steep", "Couldn't afford anything at") |
 | `economy` | treasury, ledger {today_so_far and yesterday by flow, nets}, tax_today, upkeep_today, trade_today {imports_value, exports_value, building_materials_imported, deals, meals_sold, walk_in_sales, parking_fees}, businesses {total, open, closed_ever, by_kind: count, open, closed, mean_staffing, mean_money, revenue and spend totals, inputs (stock, target, fill), outputs (stock, mean_price)}, resources (town_stock, avg_price, price_vs_base, local_sellers_open, local_supply_per_day, business_demand_per_day, scarce), most_profitable_today and least_profitable_today (10 each, with ids) |
 | `land` | lots_by_land_use {vacant, built, under_construction, unusable, total, area_m2}, buildings_by_land_use_and_tier, special_buildings, floors_histogram, rents_by_tier {buildings, homes, residents, occupancy, rent_per_home_day_avg, min, max}, land_value {avg_grid, lots distribution, tier_cuts}, parks {lots, area_m2} |
-| `services` | emergency {coverage_pct_of_homes {police, fire, health, school}, incidents_today {fire, crime, medical}, resolved_today, unanswered_today, arrests_today, avg_response_min (call to arrival, today or else yesterday), units, units_busy, fires_burning, burned_down_total, waiting_for_ambulance, in_hospital, dispatch {dispatcher_on_duty, minutes_to_dispatch}, stadium_crowd_today, tickets_today, stadium_events_tonight, upkeep_per_day, education_wage_bonus_today, stations: id, kind, tier, workers, radius_m, units, units_crewed, units_busy, beds_used, capacity; active_incidents: id, kind, stage, building, minutes_since_start, intensity, unit, dispatcher; recent (last 10 resolved with outcome and response_min)}, power {supply, demand and imported MW, served_share, unpowered_buildings, brownout_hours_today, weather, plants: id, kind, capacity_mw, available_mw, output_mw_est, upkeep, pollution}, transit {routes: id, stops, buses_wanted, buses_running, riders_today, waiting, length_m, broken_legs, runnable; totals}, rail {facilities: id, kind, rail_connected, road_connected, works, waiting_passengers, freight units; trains by kind; riders, freight}, parking {capacity, used, occupancy, parked_on_street_today, last_shortage_at}, traffic {vehicles, cars, trucks, buses, mean_speed_kmh_moving, stopped, stuck, lanes, intersections, signals} |
+| `services` | emergency {coverage_pct_of_homes {police, fire, health, school}, incidents_today {fire, crime, medical}, resolved_today, unanswered_today, arrests_today, avg_response_min (call to arrival, today or else yesterday), units, units_busy, fires_burning, burned_down_total, waiting_for_ambulance, in_hospital, dispatch {dispatcher_on_duty, minutes_to_dispatch}, stadium_crowd_today, tickets_today, stadium_events_tonight, upkeep_per_day, education_wage_bonus_today, stations: id, kind, tier, workers, radius_m, units, units_crewed, units_busy, beds_used, capacity; active_incidents: id, kind, stage, building, minutes_since_start, intensity, unit, dispatcher; recent (last 10 resolved with outcome and response_min)}, power {supply, demand and imported MW, served_share, unpowered_buildings, brownout_hours_today, weather, plants: id, kind, capacity_mw, available_mw, output_mw_est, upkeep, pollution}, transit {routes: id, stops, buses_wanted, buses_running, riders_today, waiting, length_m, broken_legs, runnable; totals}, rail {facilities: id, kind, rail_connected, road_connected, works, waiting_passengers, freight units; trains by kind; riders, freight}, parking {capacity, used, occupancy, parked_on_street_today, last_shortage_at}, traffic {vehicles, cars, trucks, buses, mean_speed_kmh_moving, stopped, stuck, waiting_at_kerb, gridlocks, lanes, intersections, signals} |
 | `alerts` | the ranked list below |
 
 A distribution is `{count, mean, median, p10, p90, min, max, histogram: {edges (bins + 1), counts}}`
@@ -258,8 +282,10 @@ slow_emergency_response (average over 45 minutes from call to arrival), no_dispa
 the regional line). The thresholds are named constants at the top of `remote/report.rs`: hungry =
 satiety < 0.3; starving = 2+ hungry days (the sim sends people away at 4); a food seller is
 understaffed below 50 %; unpowered = under 60 % of demand met; rent stress = rent over 50 % of
-income; stuck = slower than 0.5 m/s on a trip older than 900 s; high demand â‰¥ 0.6; unemployment
-â‰¥ 15 %; scarce = average price â‰¥ 1.3 Ã— base.
+income; stuck = in traffic and standing still for 180 s (not a bus at a stop, not at a red light;
+cars waiting at the kerb to pull out are counted apart, and gridlock rings are listed with the
+junctions they pass through); high demand ≥ 0.6; unemployment
+≥ 15 %; scarce = average price ≥ 1.3 × base.
 
 Trimmed real reply (day 10 of the demo district):
 

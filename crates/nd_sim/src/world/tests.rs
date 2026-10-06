@@ -17,6 +17,12 @@ fn finish_all(w: &mut World) {
     }
 }
 
+/// The old flat map with no river or highway, for tests that count
+/// gestures or depend on the exact random stream of a dry town.
+fn flat_world() -> World {
+    World::new(WorldConfig { landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::default() })
+}
+
 #[test]
 fn city_grows_and_round_trips_through_ron() {
     let mut w = World::new(WorldConfig::default());
@@ -43,7 +49,7 @@ fn city_grows_and_round_trips_through_ron() {
 
 #[test]
 fn projects_undo_redo_and_keep_buildings_on_implement() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = flat_world();
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
     let lot = w.lots.iter().find(|(_, l)| l.usable()).map(|(id, _)| id).unwrap();
@@ -588,7 +594,7 @@ fn lot_near(w: &World, p: Vec2, lu: LandUse) -> LotId {
 
 #[test]
 fn road_works_pull_down_the_buildings_whose_parcels_change() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = flat_world();
     let road = w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_road(&[Vec2::new(-400.0, 400.0), Vec2::new(400.0, 400.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
@@ -716,7 +722,8 @@ fn stations_and_yards_never_share_ground_with_other_buildings() {
 #[test]
 fn cheap_buildings_on_dear_land_are_redeveloped_and_price_people_out() {
     // No random fires here: the test is about rent, not a blaze. (services)
-    let mut w = World::new(WorldConfig { emergencies: false, ..WorldConfig::default() });
+    let mut w = flat_world();
+    w.config.emergencies = false;
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
     w.land_value.fill(0.1);
@@ -1702,6 +1709,31 @@ fn job_seekers_staff_the_food_shops_first_and_arrivals_scale_with_open_homes() {
 }
 
 #[test]
+fn imported_parts_come_from_out_of_town_not_from_the_site_itself() {
+    let mut w = World::new(WorldConfig::default());
+    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    w.add_zone(square(10.0, 10.0, 190.0), LandUse::Commercial);
+    let lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Commercial);
+    // Nobody in town sells parts: the developer imports them by truck.
+    w.build_on(lot);
+    let site = w.lots[lot].building.unwrap();
+    let truck = w.traffic.cars.iter().find(|(_, c)| c.cargo.is_some_and(|k| k.to == site)).map(|(id, _)| id).expect("a parts truck on the road");
+    let cargo = w.traffic.cars[truck].cargo.unwrap();
+    assert_ne!(cargo.from, cargo.to, "an import does not claim to come from the buyer");
+    assert!(w.buildings.get(cargo.from).is_none(), "it comes from out of town");
+    assert_eq!(cargo.price, 0.0, "the developer paid for site parts up front");
+    let mut minds = IdleMind;
+    for _ in 0..120 {
+        w.tick(&mut minds);
+        if !w.traffic.cars.contains_key(truck) {
+            break;
+        }
+    }
+    assert!(!w.traffic.cars.contains_key(truck), "the truck drove in from the edge and arrived");
+    assert!(w.buildings[site].construction.as_ref().is_some_and(|c| c.deliveries >= 1), "the parts reached the site");
+}
+
+#[test]
 fn the_city_buys_out_grown_buildings_for_its_own_structures_but_not_each_other() {
     let mut w = World::new(WorldConfig::default());
     w.economy.treasury = 500_000.0;
@@ -1729,7 +1761,7 @@ fn the_city_buys_out_grown_buildings_for_its_own_structures_but_not_each_other()
 /// households have moved in.
 fn family_street() -> (World, BuildingId) {
     use crate::market::{Business, BusinessKind};
-    let mut w = World::new(WorldConfig::default());
+    let mut w = flat_world();
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
     w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
