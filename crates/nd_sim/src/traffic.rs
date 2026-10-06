@@ -124,6 +124,8 @@ const TRUCK_SPEED_FACTOR: f32 = 0.85;
 const SIREN_SPEED_FACTOR: f32 = 1.25;
 const SIREN_CLEAR: f32 = 40.0;
 const SIREN_PULL_ASIDE: f32 = 1.6;
+/// How hard a car pulling aside for a siren brakes (m/s per s).
+const SIREN_YIELD_BRAKE: f32 = 3.0;
 /// [carlife] A vehicle this long on one route (traffic seconds) looks for
 /// another way from where it stands; it is never taken off the road.
 const REPLAN_AFTER: f32 = 1800.0;
@@ -2350,7 +2352,7 @@ impl Traffic {
     /// reached their destination (they stay in `cars` until removed).
     /// [services] Cars a little ahead of an emergency vehicle on its lane
     /// pull to the right and slow to a crawl so it can pass.
-    fn yield_to_sirens(&mut self) {
+    fn yield_to_sirens(&mut self, dt: f32) {
         let mut pull: Vec<CarId> = Vec::new();
         for lane in &self.net.lanes {
             for (k, &cid) in lane.cars.iter().enumerate() {
@@ -2364,7 +2366,11 @@ impl Traffic {
         for id in pull {
             let c = &mut self.cars[id];
             c.lateral = c.lateral.max(SIREN_PULL_ASIDE);
-            c.v = c.v.min(2.0);
+            // Slow to a crawl as a driver would, braking firmly but not
+            // stopping dead: a car snapped from 13 to 2 m/s was run into by
+            // the one behind once the siren had passed (most of the demo's
+            // rear-end crashes, and their police calls).
+            c.v = c.v.min((c.v - SIREN_YIELD_BRAKE * dt).max(2.0));
         }
     }
 
@@ -2543,7 +2549,7 @@ impl Traffic {
                 }
             }
 
-            self.yield_to_sirens();
+            self.yield_to_sirens(dt);
 
             let waiting: Vec<CarId> = self.cars.iter().filter(|(_, c)| c.entering).map(|(id, _)| id).collect();
             for id in waiting {
@@ -2712,7 +2718,10 @@ impl Traffic {
         for lane in &self.net.lanes {
             for w in lane.cars.windows(2) {
                 let (f, l) = (&self.cars[w[0]], &self.cars[w[1]]);
-                if !f.drive.profile.assigned || f.passing || f.siren || f.crashed() || f.lateral.abs() > 1.0 {
+                // [services] Nor into a car pulled onto the shoulder for a
+                // siren: the one behind (often tailgating the siren as it
+                // came through) squeezes past or settles behind it.
+                if !f.drive.profile.assigned || f.passing || f.siren || f.crashed() || f.lateral.abs() > 1.0 || l.lateral >= SIREN_PULL_ASIDE * 0.9 {
                     continue;
                 }
                 let gap = l.s - l.length() - f.s;
