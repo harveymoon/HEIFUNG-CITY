@@ -106,16 +106,16 @@ impl World {
         let mut z: Vec<f32> = self.roads.nodes.iter().map(|nd| land.height(nd.pos.clamp(Vec2::splat(-edge), Vec2::splat(edge))).max(if land.is_flat() { 0.0 } else { crate::landscape::BANK_HEIGHT })).collect();
         if !land.is_flat() {
             // Bridge ends stand at deck height; the approaches ramp up to them.
+            let mut least = vec![f32::NEG_INFINITY; n];
             for (_, seg) in self.roads.alive_segments() {
                 if seg.bridge {
                     let deck = WATER_LEVEL + BRIDGE_CLEARANCE;
                     for k in [seg.a.0 as usize, seg.b.0 as usize] {
                         z[k] = z[k].max(deck);
+                        least[k] = deck;
                     }
                 }
             }
-            // Raise the low end of anything steeper than its grade, until
-            // nothing is (fill and embankment, never a cut below the land).
             let segs: Vec<(usize, usize, f32, f32)> = self
                 .roads
                 .alive_segments()
@@ -129,6 +129,28 @@ impl World {
                     (s.a.0 as usize, s.b.0 as usize, a.distance(b), grade)
                 })
                 .collect();
+            // First lower the high end of anything steeper than its grade
+            // (a cutting), never below a deck: a way climbing to the hills at
+            // the map edge cuts into them, rather than carrying the basin up
+            // on an embankment as high as the hills.
+            for _ in 0..200 {
+                let mut changed = false;
+                for &(a, b, len, grade) in &segs {
+                    let max = len * grade;
+                    if z[a] > z[b] + max + 1e-3 && z[a] > least[a] + 1e-3 {
+                        z[a] = (z[b] + max).max(least[a]);
+                        changed = true;
+                    } else if z[b] > z[a] + max + 1e-3 && z[b] > least[b] + 1e-3 {
+                        z[b] = (z[a] + max).max(least[b]);
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+            // Then raise the low end of anything still steeper than its
+            // grade (the approaches to a deck), until nothing is.
             for _ in 0..60 {
                 let mut changed = false;
                 for &(a, b, len, grade) in &segs {
