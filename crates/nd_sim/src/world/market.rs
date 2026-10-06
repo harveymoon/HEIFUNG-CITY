@@ -361,7 +361,9 @@ impl World {
             }
             if c.asleep {
                 c.wakefulness = (c.wakefulness + 0.12).min(1.0);
-                if c.wakefulness >= 0.95 && (!night || night_duty) {
+                // A night crew due on shift gets up rested enough, not fully
+                // slept (at 0.94 one more hour in bed made the desk an hour late).
+                if (c.wakefulness >= 0.95 && !night) || (night_duty && c.wakefulness >= 0.6) {
                     c.asleep = false;
                     c.next_decision_tick = c.next_decision_tick.min(tick + 1);
                 }

@@ -1174,7 +1174,9 @@ impl World {
         // The bus and the train, for longer trips: the walk to the stop,
         // the wait, the ride, the fare; the unsociable mind the crowd.
         let crowd = 6.0 - 6.0 * sociable;
-        if q.allow_transit && self.economy.transit.buses > 0 {
+        // Only while the buses run: at night a rider would stand at the
+        // stop until morning (or give up hours later).
+        if q.allow_transit && self.economy.transit.buses > 0 && crate::transit::Transit::in_service(self.clock.minute_of_day() as u32) {
             if let Some((route, board, alight)) = self.transit.plan_trip(q.from, q.to) {
                 let r = &self.transit.routes[route];
                 let (s0, s1) = (r.stops[board].pos, r.stops[alight].pos);

@@ -383,8 +383,28 @@ impl World {
         if !self.buildings.contains_key(near) {
             return None;
         }
+        // Out past the edge of the map (the highway runs on for kilometres)
+        // a crash is the next town's business: their police and ambulances
+        // take it, and it is never a call of ours. The hurt are patched up
+        // and go on; the wreck is towed in its own time.
+        if at.x.abs().max(at.y.abs()) > crate::landscape::MAP_EDGE {
+            let tick = self.clock.tick;
+            for &p in injured {
+                if let Some(c) = self.citizens.get_mut(p) {
+                    c.remember(tick, "Crashed out past the city. The next town's paramedics patched me up.");
+                    c.next_decision_tick = c.next_decision_tick.min(tick + 60);
+                }
+            }
+            return None;
+        }
+        // A crash where a crash scene is already open (the same junction, a
+        // pile-up) joins that scene: one police car clears both wrecks.
+        let joined = self.services.active().filter(|i| i.kind == IncidentKind::Crash && i.pos.distance(at) < CRASH_SCENE_JOIN).map(|i| i.id).next();
         let delay = self.srng().random_range(1..5);
-        let id = self.open_incident(IncidentKind::Crash, near, None, at_fault, delay);
+        let id = match joined {
+            Some(id) => id,
+            None => self.open_incident(IncidentKind::Crash, near, None, at_fault, delay),
+        };
         let names: Vec<(CitizenId, String, &str)> = drivers
             .iter()
             .map(|&c| (c, if Some(c) == at_fault { "driver at fault" } else { "driver" }))
@@ -392,9 +412,11 @@ impl World {
             .filter_map(|(c, role)| self.citizens.get(c).map(|x| (c, x.name.clone(), role)))
             .collect();
         if let Some(i) = self.services.incident_mut(id) {
-            i.pos = at;
-            i.on_road = true;
-            i.caller = caller;
+            if joined.is_none() {
+                i.pos = at;
+                i.on_road = true;
+                i.caller = caller;
+            }
             for (c, n, role) in names {
                 i.involve(c, &n, role);
             }
@@ -2478,5 +2500,18 @@ mod tests {
         assert_eq!(i.arrive_at, Some(i.dispatched.unwrap() + MUTUAL_AID_TRAVEL));
         assert!(w.economy.treasury < before, "billed");
         assert_eq!(w.services.stats.mutual_aid_today, 1);
+    }
+
+    #[test]
+    fn crashes_past_the_map_edge_are_the_next_towns_and_a_pile_up_is_one_scene() {
+        let (mut w, _, folk) = one_car_town();
+        let near = building_at(&mut w, 150.0);
+        let far = Vec2::new(crate::landscape::MAP_EDGE + 500.0, 0.0);
+        assert!(w.report_crash(far, near, &folk[5..6], &folk[6..7], None, None).is_none(), "out past the edge: not a call of ours");
+        assert!(w.services.incidents.is_empty());
+        let here = Vec2::new(150.0, 0.0);
+        let (a, _) = w.report_crash(here, near, &folk[5..6], &[], None, None).unwrap();
+        let (b, _) = w.report_crash(here + Vec2::new(20.0, 0.0), near, &folk[7..8], &[], None, None).unwrap();
+        assert_eq!(a, b, "a second crash at the same spot joins the open scene");
     }
 }
