@@ -132,3 +132,25 @@ fn nobody_moves_in_until_the_town_is_joined_to_the_highway_and_traffic_comes_and
     assert!(!w.citizens.is_empty(), "people move in by the highway once the town is joined to it");
     assert!(newcomer_cars > 0, "newcomers drove in along the highway from out of sight");
 }
+
+/// Routes off the map end on one lane of the last carriageway, and the
+/// traffic step lets a car finish in the lane beside it rather than stop
+/// at the very edge to change lanes; an empty lorry leaving town that ends
+/// up there has still reached the edge and goes, rather than standing at
+/// the kerb stranded (they piled up at the map's edge in a player's save).
+#[test]
+fn an_empty_lorry_leaving_in_any_lane_of_the_last_carriageway_leaves() {
+    let mut w = real_world(LandscapePreset::Plains);
+    let lanes = &w.traffic.net.lanes;
+    let (lane, s_end) = w
+        .edge_exits(Vec2::ZERO)
+        .into_iter()
+        .find(|&(l, _)| lanes[l as usize].next.is_empty() && lanes[l as usize].left.or(lanes[l as usize].right).is_some())
+        .expect("a carriageway of two lanes or more leaving the map");
+    let beside = lanes[lane as usize].left.or(lanes[lane as usize].right).unwrap();
+    assert!(lanes[beside as usize].next.is_empty(), "it leads nowhere too");
+    let cargo = crate::world::industry::return_cargo(BuildingId::default(), BuildingId::default());
+    let id = w.traffic.spawn_car(CitizenId::default(), Some(cargo), vec![beside], s_end - 1.0, s_end, 3);
+    w.lorry_arrived(id);
+    assert!(!w.traffic.cars.contains_key(id), "it left the map");
+}

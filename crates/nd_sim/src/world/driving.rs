@@ -65,6 +65,8 @@ pub struct Driving {
     pub injuries_today: u32,
     pub red_runs_today: u32,
     pub drunk_trips_today: u32,
+    /// [rage] Drivers who lost their temper (anger past a half) today.
+    pub road_rage_today: u32,
     pub crashes_total: u32,
     pub towed_total: u32,
     pub wrecks: Vec<Wreck>,
@@ -90,12 +92,14 @@ impl World {
             d.injuries_today = 0;
             d.red_runs_today = 0;
             d.drunk_trips_today = 0;
+            d.road_rage_today = 0;
         }
         self.driving.red_runs_today += std::mem::take(&mut self.traffic.red_runs);
         if tick % 5 == 0 {
             self.step_drink(5);
         }
         self.assign_drivers();
+        self.step_rage();
         let crashes = std::mem::take(&mut self.traffic.crashes);
         for c in crashes {
             self.handle_crash(c);
@@ -154,6 +158,97 @@ impl World {
             car.drive.profile = if gang { profile.pack() } else { profile };
             car.drive.seen_lead_v = car.v;
         }
+    }
+
+    /// [rage] Time every drive from the tick it appears (expected minutes
+    /// from its route at departure), and let drivers stuck far longer than
+    /// that lose their temper: anger (`traffic::road_rage`, by patience and
+    /// temper) is laid over their calm profile, so they tailgate, floor it,
+    /// switch lanes and run ambers. It only builds during a trip and goes
+    /// with the car when it arrives (into the trip's pain: `end_trip`).
+    /// Professionals and takeover packs keep their heads.
+    pub(super) fn step_rage(&mut self) {
+        let tick = self.clock.tick;
+        let secs = self.config.traffic_seconds_per_tick.max(0.1);
+        let ids: Vec<CarId> = self.traffic.cars.keys().collect();
+        for id in ids {
+            let car = &self.traffic.cars[id];
+            if !car.drive.profile.assigned {
+                continue;
+            }
+            if car.drive.expected_min <= 0.0 {
+                let expected = car.expected_seconds(&self.traffic.net) / secs;
+                let pro = car.siren || car.bus.is_some() || car.cargo.is_some() || car.drive.gang.is_some() || self.services.unit_of_car(id).is_some() || !matches!(car.errand, crate::vehicle::Errand::Trip | crate::vehicle::Errand::Search { .. } | crate::vehicle::Errand::ToLot(_) | crate::vehicle::Errand::ToKerb | crate::vehicle::Errand::Leave);
+                let (patience, temper) = match self.citizens.get(car.citizen) {
+                    Some(c) => {
+                        let (caution, hedonism) = driver_traits(c.seed);
+                        (crate::citizens::patience(c.seed), rebelliousness(caution, hedonism))
+                    }
+                    None => (car_hash(id, 8), rebelliousness(car_hash(id, 3), car_hash(id, 4))),
+                };
+                let car = &mut self.traffic.cars[id];
+                car.drive.trip_start = tick;
+                car.drive.expected_min = expected.max(1.0);
+                car.drive.patience = patience;
+                car.drive.temper = temper;
+                car.drive.calm = (!pro).then_some(car.drive.profile);
+                continue;
+            }
+            let Some(calm) = car.drive.calm else { continue };
+            if car.crashed() || car.drive.gang.is_some() {
+                continue;
+            }
+            let elapsed = tick.saturating_sub(car.drive.trip_start) as f32;
+            let target = crate::traffic::road_rage(elapsed, car.drive.expected_min, car.drive.patience, car.drive.temper);
+            // Anger builds over a few minutes rather than in one jump.
+            let anger = if target > car.drive.anger { (car.drive.anger + 0.1).min(target) } else { car.drive.anger };
+            if anger != car.drive.anger {
+                let car = &mut self.traffic.cars[id];
+                if car.drive.anger < 0.5 && anger >= 0.5 {
+                    self.driving.road_rage_today += 1;
+                }
+                car.drive.anger = anger;
+                car.drive.anger_peak = car.drive.anger_peak.max(anger);
+                car.drive.profile = calm.angry(anger);
+            }
+        }
+    }
+
+    /// [rage] The drive under way: minutes so far and minutes it should
+    /// have taken (judged from the route when it set off). `None` before
+    /// the first tick has timed it.
+    pub fn car_trip_minutes(&self, id: CarId) -> Option<(f32, f32)> {
+        let c = self.traffic.cars.get(id)?;
+        (c.drive.expected_min > 0.0).then(|| (self.clock.tick.saturating_sub(c.drive.trip_start) as f32, c.drive.expected_min))
+    }
+
+    /// A vehicle in a few words, for the inspector and the remote API:
+    /// "Mara Voss's hatchback", "bus on Line 2", "delivery truck".
+    pub fn car_label(&self, id: CarId) -> String {
+        let Some(c) = self.traffic.cars.get(id) else { return "a vehicle that has gone".into() };
+        if let Some(bus) = &c.bus {
+            return match self.transit.routes.get(bus.route) {
+                Some(r) => format!("bus on {}", r.name),
+                None => "a bus".into(),
+            };
+        }
+        if c.cargo.is_some() {
+            return "delivery truck".into();
+        }
+        let body = c.model.body.label().replace('_', " ");
+        match self.citizens.get(c.citizen) {
+            Some(p) => format!("{}'s {body}", p.name),
+            None if c.siren || self.services.unit_of_car(id).is_some() => format!("emergency {body}"),
+            None => {
+                let an = if body.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
+                format!("{an} {body} passing through")
+            }
+        }
+    }
+
+    /// Drivers seething in traffic right now (anger at least a half).
+    pub fn angry_drivers_now(&self) -> usize {
+        self.traffic.cars.values().filter(|c| c.drive.anger >= 0.5).count()
     }
 
     /// Drunk drivers on the road right now.
@@ -329,6 +424,9 @@ impl World {
         let t = &mut self.traffic.cars[truck];
         t.model = VehicleModel { class: VehicleClass::Mid, body: BodyType::Pickup, wear: 1, tuned: false, livery: Livery::Utility, paint: 3 };
         t.drive.profile = DriverProfile::professional(car_hash(truck, 1));
+        // [rage] Timed, but a tow driver keeps their head (no calm profile).
+        t.drive.trip_start = self.clock.tick;
+        t.drive.expected_min = (t.expected_seconds(&self.traffic.net) / self.config.traffic_seconds_per_tick.max(0.1)).max(1.0);
         self.driving.tows.push(Tow { truck, model, yard });
     }
 
@@ -944,6 +1042,49 @@ mod tests {
             w.tick(&mut minds);
         }
         stop(w)
+    }
+
+    /// A drive long overdue: the driver's anger at `extra` times the
+    /// expected time, and their profile then.
+    fn overdue_drive(seed: u64) -> Option<(CarId, f32, f32, DriverProfile, DriverProfile, u32)> {
+        let mut w = town(seed);
+        let found = tick(&mut w, 3000, |w| w.traffic.cars.values().any(|c| c.drive.calm.is_some() && w.citizens.contains_key(c.citizen)));
+        if !found {
+            return None;
+        }
+        let id = w.traffic.cars.iter().find(|(_, c)| c.drive.calm.is_some() && w.citizens.contains_key(c.citizen)).map(|(id, _)| id)?;
+        let expected = w.traffic.cars[id].drive.expected_min;
+        assert!(expected >= 1.0, "timed from its route: {expected}");
+        // Pretend it has been on the road five times as long as it should.
+        let back = (expected * 5.0 + 20.0) as u64;
+        w.traffic.cars[id].drive.trip_start = w.clock.tick.saturating_sub(back);
+        let mut minds = IdleMind;
+        for _ in 0..12 {
+            if !w.traffic.cars.contains_key(id) {
+                return None;
+            }
+            w.tick(&mut minds);
+        }
+        let c = w.traffic.cars.get(id)?;
+        Some((id, c.drive.anger, c.drive.anger_peak, c.drive.calm.unwrap(), c.drive.profile, w.driving.road_rage_today))
+    }
+
+    #[test]
+    fn a_driver_stuck_far_too_long_loses_their_temper_the_same_way_every_run() {
+        let mut checked = 0;
+        for seed in [3u64, 5, 9, 11] {
+            let Some(a) = overdue_drive(seed) else { continue };
+            let b = overdue_drive(seed).expect("same seed, same run");
+            assert_eq!((a.0, a.1, a.2, a.4), (b.0, b.1, b.2, b.4), "deterministic");
+            let (_, anger, peak, calm, now, raged) = a;
+            assert!(anger > 0.1 && peak >= anger, "angry after five times the expected time: {anger}");
+            assert!(now.headway < calm.headway && now.aggression > calm.aggression, "drives worse: {now:?} vs {calm:?}");
+            if anger >= 0.5 {
+                assert!(raged >= 1);
+            }
+            checked += 1;
+        }
+        assert!(checked >= 1, "no private drive found in any town");
     }
 
     #[test]

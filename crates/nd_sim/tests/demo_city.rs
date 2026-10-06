@@ -138,7 +138,14 @@ fn demo_city_stays_fed_housed_and_employed_through_fast_growth() {
             // Homes and jobs grow in balance, and the businesses the town
             // grows are ones its market can carry.
             assert!(unemployment < 0.08, "day 8: {:.1}% of working-age adults out of work", unemployment * 100.0);
-            assert!(broke_share < 0.05, "day 8: {broke} of {open} businesses broke");
+            // 8%, not 5%: until the highway's map-edge lane funnel was fixed
+            // (`Traffic::drop_dead_end_changes`), lorries queuing there kept
+            // the road near `MAX_TRUCKS`, past which deliveries are instant,
+            // and that hidden crutch kept businesses stocked. Over 24 seeds
+            // the share at day 8 averaged 5.7% before the fix (only 10 of 24
+            // under 5%) and 7.1% after, spread 1% to 12% either way: one
+            // business more or less moves it by more than a point.
+            assert!(broke_share < 0.08, "day 8: {broke} of {open} businesses broke");
         }
     }
     assert!(peak > 1000, "the demo grows into a town ({peak})");
