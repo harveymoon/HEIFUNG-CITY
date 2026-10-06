@@ -11,6 +11,7 @@ pub mod citizens;
 pub mod clock;
 pub mod crime;
 pub mod economy;
+pub mod enforcement;
 pub mod events;
 pub mod geom;
 pub mod homeless;

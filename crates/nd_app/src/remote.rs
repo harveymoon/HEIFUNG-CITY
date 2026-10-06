@@ -428,6 +428,13 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "find" => find(cmd, ctx),
         "inspect" => inspect(cmd, ctx),
         "lane_use" => lane_use(cmd, ctx),
+        "parking_price" => {
+            // [parking] The fee at a lot the city runs.
+            let id = key_from(field(cmd, "building").ok_or("missing building id")?)?;
+            let price = opt_f32(cmd, "price")?.ok_or("missing price")?;
+            let set = ctx.sim.world.set_parking_price(id, price)?;
+            Ok(json!({ "building": key_str(id), "price": set }))
+        }
         "select" => select(cmd, ctx),
         "favourite" | "favorite" => {
             let id = key_from(field(cmd, "citizen").ok_or("missing citizen id")?)?;
@@ -1386,6 +1393,10 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         let c = w.traffic.cars.get(id).ok_or("no such car")?;
         return Ok(json!({ "car": car_detail(w, id, c) }));
     }
+    if let Some(v) = field(cmd, "vehicle") {
+        let id = key_from(v)?;
+        return Ok(json!({ "vehicle": view::vehicle_detail(w, id).ok_or("no such vehicle")? }));
+    }
     if let Some(v) = field(cmd, "junction") {
         let k = view::junction_near(w, vec2_of(v)?).ok_or("no junctions")?;
         return Ok(json!({ "junction": view::junction_detail(w, k) }));
@@ -1414,7 +1425,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Citizen(id) => inspect(&json!({ "citizen": key_str(id) }), ctx),
         Selection::Building(id) => inspect(&json!({ "building": key_str(id) }), ctx),
         Selection::Car(id) => inspect(&json!({ "car": key_str(id) }), ctx),
-        Selection::Parked(_) => Err("a parked car: inspect its owner (find citizens) instead".into()),
+        Selection::Parked(id) => inspect(&json!({ "vehicle": key_str(id) }), ctx),
         Selection::None => Err("inspect needs one of citizen, building, lot, car, train, route, gesture (an id), or a selection".into()),
     }
 }

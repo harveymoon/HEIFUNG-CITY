@@ -193,3 +193,43 @@ fn demo_city_cars_only_come_and_go_by_their_events() {
     assert!(s.created_total > 50, "households drive in with their cars");
     assert!(peak_parked > 50, "and park them");
 }
+
+/// [parking] Every hour of five demo days, no two cars parked on the street
+/// stand within 4.5 m of each other (each has a kerb slot of its own); with
+/// a parking enforcement office and a tow company working from day two,
+/// tickets are written, cars are towed and fetched, and none is lost.
+#[test]
+fn demo_city_parked_cars_never_overlap_and_towing_keeps_every_car() {
+    use nd_sim::{BusinessKind, CarPlace, Placeable, ServiceKind, Tier};
+    let mut world = demo_world();
+    let mut minds = RuleBasedMind::default();
+    let mut worst = f32::INFINITY;
+    for t in 0..5 * 1440u32 {
+        world.tick(&mut minds);
+        if t == 1440 {
+            let free = |w: &World, lu: LandUse| w.lots.iter().filter(|(_, l)| l.usable() && l.car_access() && l.land_use == lu && l.area() > 460.0).map(|(id, _)| id).next();
+            if let Some(lot) = free(&world, LandUse::Commercial) {
+                world.place_on_lot(Placeable::Service(ServiceKind::ParkingEnforcement, Tier::Mid), lot).expect("office");
+            }
+            if let Some(lot) = free(&world, LandUse::Residential) {
+                world.place_on_lot(Placeable::ParkingLot(nd_sim::enforcement::LotSize::MultiStorey), lot).expect("city car park");
+            }
+        }
+        if t % 60 != 59 {
+            continue;
+        }
+        let spots: Vec<(nd_sim::VehicleId, nd_sim::ParkSpot)> = world.vehicles.cars.iter().filter_map(|(id, c)| match c.place { CarPlace::Parked(s) if s.kind.on_street() => Some((id, s)), _ => None }).collect();
+        for i in 0..spots.len() {
+            for j in i + 1..spots.len() {
+                let d = spots[i].1.pos.distance(spots[j].1.pos);
+                worst = worst.min(d);
+                assert!(d >= 4.5, "day {} {}: cars {:?} and {:?} parked {d:.2} m apart", world.clock.day() + 1, world.clock.format_hhmm(), spots[i], spots[j]);
+            }
+        }
+        let v = &world.vehicles;
+        assert_eq!(v.cars.len() as i64, v.stats.created_total as i64 - v.stats.destroyed_total as i64, "no car lost: {:?}", v.stats.events_total);
+    }
+    let e = &world.enforcement.stats;
+    let yards = world.buildings.values().filter(|b| b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::TowYard)).count();
+    println!("closest street-parked pair {worst:.2} m | tickets {} fines {:.0} tows {} (out of town {}) released {} auctioned {} | tow companies {yards} | city lots {}", e.tickets_total, e.fines_total, e.tows_total, e.tows_out_of_town_total, e.released_total, e.auctioned_total, world.vehicles.city_lots.len());
+}

@@ -298,6 +298,8 @@ impl Style {
             K::Jail => Style::Prison,
             K::TrashDepot => Style::TrashDepot,
             K::Vertiport => Style::Vertiport,
+            // [parking] A parking enforcement office: a small station.
+            K::ParkingEnforcement => Style::PoliceStation,
         }
     }
 
@@ -1048,6 +1050,8 @@ pub fn industry_styles(kind: nd_sim::BusinessKind, tier: Tier) -> Option<&'stati
         B::Refinery => &[(Style::Refinery, 0.8), (Style::TankFarm, 0.2)],
         B::ContainerYard => &[(Style::ContainerYard, 0.7), (Style::Depot, 0.3)],
         B::FleetLot => &[(Style::TruckLot, 1.0)],
+        // [parking] A tow company: its trucks and the pound.
+        B::TowYard => &[(Style::TruckLot, 1.0)],
         B::Fishery | B::FishPlant => &[(Style::FishProcessing, 1.0)],
         B::Assembly => match tier {
             Tier::Low => &[(Style::FlattedFactory, 0.6), (Style::Workshops, 0.4)],

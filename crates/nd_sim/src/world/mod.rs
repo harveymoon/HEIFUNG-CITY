@@ -26,6 +26,7 @@
 mod air;
 mod buses;
 mod cars;
+mod enforcement;
 mod construction;
 mod develop;
 mod driving;
@@ -43,6 +44,8 @@ mod services;
 mod society;
 #[cfg(test)]
 mod car_tests;
+#[cfg(test)]
+mod parking_tests;
 #[cfg(test)]
 mod edge_tests;
 #[cfg(test)]
@@ -353,6 +356,10 @@ pub struct World {
     /// their businesses; buying, selling and trip counts (`world/cars.rs`).
     #[serde(default)]
     pub vehicles: crate::vehicle::Vehicles,
+    /// [parking] Parking officers on patrol, tow jobs, fines and the pound
+    /// (`world/enforcement.rs`).
+    #[serde(default)]
+    pub enforcement: crate::enforcement::Enforcement,
     /// Drone taxis, air ambulances, police helicopters and their pads
     /// (`world/air.rs`).
     #[serde(default)]
@@ -427,6 +434,7 @@ impl World {
             driving: Driving::default(),
             society: Default::default(),
             vehicles: Default::default(),
+            enforcement: Default::default(),
             air: Default::default(),
             contamination: crate::ground::Contamination::new(half + 200.0, crate::ground::CONTAMINATION_CELL),
             industry_bias: Vec::new(),
@@ -725,6 +733,7 @@ impl World {
         self.step_traffic();
         self.step_air();
         self.step_driving();
+        self.step_enforcement();
         self.step_services();
         // [society] Trash trucks.
         self.step_society();

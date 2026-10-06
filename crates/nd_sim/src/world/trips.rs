@@ -749,7 +749,9 @@ impl World {
         };
         // [carlife] Reached the parked car: drive on from here. If it
         // cannot get there after all, go on some other way.
-        if matches!(self.citizens[id].activity, Activity::Traveling { .. }) {
+        // [parking] Only where the car is (a pound trip may pass a bus stop).
+        let at_car = self.citizens[id].to_car.and_then(|tc| self.vehicles.cars.get(tc.car)).and_then(|c| c.spot()).is_none_or(|s| s.pos.distance(self.citizens[id].pos) < 60.0 || s.kind != crate::vehicle::ParkKind::Pound);
+        if at_car && matches!(self.citizens[id].activity, Activity::Traveling { .. }) {
             if let Some(tc) = self.citizens[id].to_car.take() {
                 if !self.start_drive(id, tc.car, tc.to, tc.purpose) {
                     self.travel_with(id, Some(tc.to), tc.purpose, true, false, false);

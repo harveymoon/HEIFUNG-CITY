@@ -66,7 +66,7 @@ const ALERT_EXAMPLES: usize = 5;
 
 pub const SECTIONS: &[&str] = &["overview", "people", "economy", "land", "services", "industry", "society", "alerts"];
 
-const KINDS: [BusinessKind; 19] = BusinessKind::ALL;
+const KINDS: [BusinessKind; BusinessKind::COUNT] = BusinessKind::ALL;
 
 pub fn lu_key(lu: LandUse) -> String {
     lu.label().to_ascii_lowercase()
@@ -727,6 +727,7 @@ fn services(w: &World) -> Value {
         "parking": {
             "capacity": e.parking_capacity, "used": e.parking_used, "occupancy": share(e.parking_used as usize, e.parking_capacity as usize), "parking_lots": e.parking_lots,
             "parked_on_street_today": e.parking_street_today, "fees_today": round(e.parking_fees_today), "last_shortage_at": e.parking_shortage_at.map(v2),
+            "enforcement": parking_enforcement(w),
         },
         "traffic": {
             "vehicles": w.traffic.cars.len(), "cars": cars, "trucks": trucks, "buses": buses, "mean_speed_kmh_moving": if moving > 0 { round(speed_sum / moving as f32 * 3.6) } else { 0.0 },
@@ -1311,5 +1312,80 @@ pub fn car_life(w: &World) -> Value {
         "commute_pain": pain, "parking_pain_mean_of_owners": r3(parking_pain),
         "fleet_parked_at_businesses": v.fleet_parked.values().map(|n| *n as u32).sum::<u32>(), "fleet_bought_total": st.fleet_bought_total, "fleet_returned_today": st.fleet_returned_today,
         "rule": "cars come only with arriving households or purchases and leave only when sold, scrapped or driven out of town; trips are never timed out",
+    })
+}
+
+/// [parking] Kerb rules, the officers, fines, tows, the pound and the lots
+/// the city runs.
+pub fn parking_enforcement(w: &World) -> Value {
+    use nd_sim::enforcement::*;
+    let s = &w.enforcement.stats;
+    let offices: Vec<Value> = w
+        .enforcement_offices()
+        .into_iter()
+        .filter_map(|id| w.buildings.get(id).map(|b| (id, b)))
+        .map(|(id, b)| {
+            let tier = b.service.map(|s| s.tier).unwrap_or(Tier::Mid);
+            json!({
+                "id": key_str(id), "name": b.name, "tier": tier_key(tier), "officers": b.workers.len(), "jobs": b.jobs,
+                "patrol_cars_now": w.enforcement.patrols.iter().filter(|p| p.office == id).count(), "patrol_cars_wanted": w.enforcement_cars(id),
+                "radius_m": nd_sim::ServiceKind::ParkingEnforcement.radius(tier), "pos": building_pos(w, b).map_or(Value::Null, v2),
+            })
+        })
+        .collect();
+    // Share of legal kerb slots within an office's reach.
+    let reach: Vec<(SVec2, f32)> = w.enforcement_offices().into_iter().filter_map(|id| w.buildings.get(id).and_then(|b| Some((building_pos(w, b)?, b.service?.kind.radius(b.service?.tier))))).collect();
+    let (mut slots, mut covered) = (0u32, 0u32);
+    for (sid, seg) in w.roads.alive_segments() {
+        let n = w.kerb_slot_count(sid) as u32 * ((seg.lanes_fwd > 0) as u32 + (seg.lanes_bwd > 0) as u32);
+        if n == 0 {
+            continue;
+        }
+        let (a, b) = w.roads.segment_points(sid);
+        let mid = a.lerp(b, 0.5);
+        slots += n;
+        if reach.iter().any(|(p, r)| p.distance(mid) <= *r) {
+            covered += n;
+        }
+    }
+    let mut kinds: BTreeMap<&str, u32> = BTreeMap::new();
+    let (mut impounded, mut in_town, mut over_limit, mut ticketed) = (0, 0, 0, 0);
+    let tick = w.clock.tick;
+    for (vid, car) in w.vehicles.cars.iter() {
+        let Some(sp) = car.spot() else { continue };
+        *kinds.entry(sp.kind.label()).or_default() += 1;
+        if sp.kind == nd_sim::ParkKind::Pound {
+            impounded += 1;
+            in_town += sp.building.is_some() as u32;
+        }
+        if sp.kind.on_street() {
+            over_limit += w.kerb_limit(vid).is_some_and(|l| tick >= sp.since + l) as u32;
+            ticketed += (sp.ticketed > 0) as u32;
+        }
+    }
+    let companies: Vec<Value> = w
+        .buildings
+        .iter()
+        .filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::TowYard))
+        .map(|(id, b)| json!({ "id": key_str(id), "name": b.name, "staff": b.workers.len(), "trucks": w.tow_trucks(id), "in_pound": w.vehicles.cars.values().filter(|c| c.spot().is_some_and(|s| s.kind == nd_sim::ParkKind::Pound && s.building == Some(id))).count(), "money": round(b.business.as_ref().map_or(0.0, |z| z.money)) }))
+        .collect();
+    let city_lots: Vec<Value> = w
+        .vehicles
+        .city_lots
+        .iter()
+        .filter_map(|(id, l)| w.buildings.get(*id).map(|b| json!({ "id": key_str(*id), "name": b.name, "size": l.size.key(), "capacity": b.parking_capacity, "used": b.parking_used, "occupancy": share(b.parking_used as usize, b.parking_capacity as usize), "price": round(l.price) })))
+        .collect();
+    json!({
+        "rule": format!("kerb parking {KERB_LIMIT} min on every street (per-street overrides: {}); residents within {PERMIT_RADIUS:.0} m of home exempt; a ticket ({FINE:.0}) over the limit, the tow truck {GRACE} min later or at once for illegal parking; release fee {TOW_FEE:.0} in town, {OUT_OF_TOWN_TOW_FEE:.0} out of town, plus {STORAGE_PER_DAY:.0} a day; auction after {} days", w.vehicles.kerb_rules.len(), AUCTION_AFTER / 1440),
+        "offices": offices, "patrol_cars_now": w.enforcement.patrols.len(),
+        "coverage": { "kerb_slots": slots, "within_patrol_reach": covered, "share": share(covered as usize, slots as usize) },
+        "tickets_today": s.tickets_today, "fines_today": round(s.fines_today), "tickets_total": s.tickets_total, "fines_total": round(s.fines_total),
+        "on_street_now": { "over_limit": over_limit, "ticketed": ticketed },
+        "tows_today": s.tows_today, "tows_out_of_town_today": s.tows_out_of_town_today, "tows_total": s.tows_total, "tows_out_of_town_total": s.tows_out_of_town_total,
+        "tow_jobs_open": w.enforcement.jobs.len(), "tow_trucks_on_road": w.enforcement.jobs.iter().filter(|j| j.truck.is_some()).count(), "wrecks_towed_total": s.wrecks_towed_total,
+        "pound": { "cars": impounded, "in_town": in_town, "out_of_town": impounded - in_town, "released_today": s.released_today, "release_fees_today": round(s.release_fees_today), "released_total": s.released_total, "auctioned_today": s.auctioned_today, "auctioned_total": s.auctioned_total },
+        "tow_companies": companies,
+        "city_lots": city_lots, "city_lot_fees_today": round(s.city_lot_fees_today),
+        "parked_by_place": kinds,
     })
 }

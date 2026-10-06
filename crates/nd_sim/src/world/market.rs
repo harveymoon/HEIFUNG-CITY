@@ -19,7 +19,8 @@ impl World {
             let (wage_bill, workers, publicly_funded, kind) = {
                 let b = &self.buildings[bid];
                 let Some(bz) = &b.business else { continue };
-                let publicly_funded = matches!(bz.kind, BusinessKind::Office) || b.land_use == LandUse::Civic;
+                // [parking] Lots the city runs are paid for by the city.
+                let publicly_funded = matches!(bz.kind, BusinessKind::Office) || b.land_use == LandUse::Civic || self.vehicles.city_lots.contains_key(&bid);
                 (b.workers.len() as f32 * b.wage() * 0.6, b.workers.clone(), publicly_funded, bz.kind)
             };
             let b = &mut self.buildings[bid];

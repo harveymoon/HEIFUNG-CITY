@@ -196,6 +196,11 @@ impl World {
         found.into_iter().take(n).map(|(_, k)| k).collect()
     }
 
+    /// [parking] Legal kerb slots along one side of a street (for the API).
+    pub fn kerb_slot_count(&self, sid: SegmentId) -> u16 {
+        self.kerb_slots(sid)
+    }
+
     /// Kerb slots in the city and how many are taken.
     pub fn kerb_occupancy(&self) -> (u32, u32) {
         let total: u32 = self.roads.alive_segments().map(|(sid, s)| self.kerb_slots(sid) as u32 * (s.lanes_fwd > 0) as u32 + self.kerb_slots(sid) as u32 * (s.lanes_bwd > 0) as u32).sum();
@@ -257,15 +262,15 @@ impl World {
     }
 
     /// A spot in a building's spaces (home, garage, lot, forecourt).
-    fn building_spot(&self, kind: ParkKind, b: BuildingId) -> Option<ParkSpot> {
+    pub(super) fn building_spot(&self, kind: ParkKind, b: BuildingId) -> Option<ParkSpot> {
         let lot = self.building_lot(b)?;
         let pos = if lot.car_segment.is_some() { lot.car_point } else { lot.entrance() };
-        Some(ParkSpot { kind, building: Some(b), segment: lot.car_segment, side: 0, slot: 0, pos, heading: 0.0, since: self.clock.tick })
+        Some(ParkSpot { kind, building: Some(b), segment: lot.car_segment, side: 0, slot: 0, pos, heading: 0.0, since: self.clock.tick, ..Default::default() })
     }
 
     /// A kerb slot as a parking spot: legal, or `Overflow` (parked where
     /// it is not allowed) when the street bans parking.
-    fn kerb_spot(&self, k: KerbSlot) -> ParkSpot {
+    pub(super) fn kerb_spot(&self, k: KerbSlot) -> ParkSpot {
         let kind = if self.kerb_allowed(k.segment) { ParkKind::Kerb } else { ParkKind::Overflow };
         ParkSpot { kind, building: None, segment: Some(k.segment), side: k.side, slot: k.slot, pos: k.pos, heading: k.heading, since: self.clock.tick, ..Default::default() }
     }
@@ -301,7 +306,7 @@ impl World {
     // ── driving off ─────────────────────────────────────────────────────
 
     /// Where a parked car joins the road: its street and the point beside it.
-    fn spot_exit(&self, spot: &ParkSpot) -> Option<(SegmentId, Vec2)> {
+    pub(super) fn spot_exit(&self, spot: &ParkSpot) -> Option<(SegmentId, Vec2)> {
         if spot.kind.on_street() {
             if let Some(s) = spot.segment.filter(|s| self.kerb_allowed(*s)) {
                 return Some((s, spot.pos));
@@ -317,12 +322,27 @@ impl World {
     pub(super) fn drive_from_spot(&mut self, vid: VehicleId, to_seg: SegmentId, to_pt: Vec2, driver: CitizenId, errand: Errand) -> Option<CarId> {
         let spot = *self.vehicles.cars.get(vid)?.spot()?;
         let (fseg, fpt) = self.spot_exit(&spot)?;
-        let (route, s0, s1) = self.traffic.net.find_route(fseg, fpt, to_seg, to_pt)?;
+        let (route, s0, s1) = self.route_any_lane(fseg, fpt, to_seg, to_pt)?;
         self.launch(vid, spot, route, s0, s1, driver, errand)
     }
 
+    /// [parking] A route from a point beside a street: from the nearest
+    /// lane, else from any lane of the street (pulling out the other way:
+    /// the goal may lie behind on the near lane with no turning place).
+    pub(super) fn route_any_lane(&self, fseg: SegmentId, fpt: Vec2, to_seg: SegmentId, to_pt: Vec2) -> Option<(Vec<LaneId>, f32, f32)> {
+        if let Some(r) = self.traffic.net.find_route(fseg, fpt, to_seg, to_pt) {
+            return Some(r);
+        }
+        let (goal, s_end, _) = self.traffic.net.nearest_lane_on(to_seg, to_pt)?;
+        let lanes = self.traffic.net.segment_lanes.get(&fseg)?.clone();
+        lanes.into_iter().find_map(|l| {
+            let (s, _) = self.traffic.net.lanes[l as usize].project(fpt);
+            self.traffic.net.route_lanes(l, s, goal, s_end)
+        })
+    }
+
     /// Drive a parked car off the map (sold out of town, emigrating).
-    fn drive_out_of_town(&mut self, vid: VehicleId, errand: Errand) -> Option<CarId> {
+    pub(super) fn drive_out_of_town(&mut self, vid: VehicleId, errand: Errand) -> Option<CarId> {
         let spot = *self.vehicles.cars.get(vid)?.spot()?;
         let (fseg, fpt) = self.spot_exit(&spot)?;
         let (start, s0, _) = self.traffic.net.nearest_lane_on(fseg, fpt)?;
@@ -330,7 +350,7 @@ impl World {
         self.launch(vid, spot, route, s0, s1, CitizenId::default(), errand)
     }
 
-    fn launch(&mut self, vid: VehicleId, spot: ParkSpot, route: Vec<LaneId>, s0: f32, s1: f32, driver: CitizenId, errand: Errand) -> Option<CarId> {
+    pub(super) fn launch(&mut self, vid: VehicleId, spot: ParkSpot, route: Vec<LaneId>, s0: f32, s1: f32, driver: CitizenId, errand: Errand) -> Option<CarId> {
         self.unpark(vid);
         let (model, color) = {
             let c = &self.vehicles.cars[vid];
@@ -353,7 +373,7 @@ impl World {
     /// Exits off the map for a car near `from`, nearest first: highway
     /// carriageways leaving the map, then road ends at the city's edge.
     /// Each is a lane and where on it the car is gone.
-    fn edge_exits(&self, from: Vec2) -> Vec<(LaneId, f32)> {
+    pub(super) fn edge_exits(&self, from: Vec2) -> Vec<(LaneId, f32)> {
         let (_, mut ends) = self.highway_ends();
         let near = |a: &(NodeId, SegmentId), b: &(NodeId, SegmentId)| self.roads.node(a.0).pos.distance(from).total_cmp(&self.roads.node(b.0).pos.distance(from));
         ends.sort_by(near);
@@ -378,7 +398,7 @@ impl World {
     }
 
     /// Send a car on the road off the map by the first exit it can reach.
-    fn redirect_out(&mut self, car: CarId) -> bool {
+    pub(super) fn redirect_out(&mut self, car: CarId) -> bool {
         let pos = self.traffic.cars[car].pos;
         self.edge_exits(pos).into_iter().any(|(goal, s_end)| self.traffic.redirect(car, goal, s_end))
     }
@@ -417,7 +437,7 @@ impl World {
         let c = self.citizens.get(id).filter(|c| c.owns_car)?;
         let vid = c.car?;
         let spot = self.vehicles.cars.get(vid)?.spot()?;
-        (spot.kind != ParkKind::Dealer && spot.pos.distance(near) <= CAR_REACH).then_some((vid, spot.pos))
+        (!matches!(spot.kind, ParkKind::Dealer | ParkKind::Hooked | ParkKind::Pound) && spot.pos.distance(near) <= CAR_REACH).then_some((vid, spot.pos))
     }
 
     /// Get in and drive to `target`. False when the car cannot get there
@@ -425,7 +445,15 @@ impl World {
     pub(super) fn start_drive(&mut self, id: CitizenId, vid: VehicleId, target: BuildingId, purpose: Purpose) -> bool {
         let Some(lot) = self.building_lot(target) else { return false };
         let Some((ct_seg, ct_pt)) = lot.car_segment.map(|s| (s, lot.car_point)) else { return false };
+        let spot = self.vehicles.cars.get(vid).and_then(|c| c.spot().copied());
+        if spot.is_some_and(|s| s.kind == ParkKind::Hooked) {
+            return false;
+        }
         let Some(car) = self.drive_from_spot(vid, ct_seg, ct_pt, id, Errand::Trip) else { return false };
+        // [parking] Fetching it from the pound: pay to get it out.
+        if let Some(s) = spot.filter(|s| s.kind == ParkKind::Pound) {
+            self.pay_release(id, s);
+        }
         self.leave_building(id);
         let (pos, heading, model) = {
             let c = &self.traffic.cars[car];
@@ -492,6 +520,14 @@ impl World {
                 if let Some(vid) = owned {
                     self.drop_car(vid, if errand == Errand::Leave { CarEvent::Emigrated } else { CarEvent::Sold });
                 }
+                true
+            }
+            Errand::Patrol(office) => {
+                self.patrol_arrived(car_id, office);
+                true
+            }
+            Errand::Tow(job) => {
+                self.tow_truck_arrived(car_id, job);
                 true
             }
             Errand::Deliver | Errand::Trip | Errand::Search { .. } | Errand::ToLot(_) | Errand::ToKerb => {
@@ -754,13 +790,20 @@ impl World {
     }
 
     /// Pay a parking business for a space.
-    fn pay_lot(&mut self, driver: CitizenId, b: BuildingId) {
+    pub(super) fn pay_lot(&mut self, driver: CitizenId, b: BuildingId) {
         let tick = self.clock.tick;
         let (fee, name) = {
             let bld = &self.buildings[b];
             (bld.parking_price, bld.name.clone())
         };
-        if let Some(bz) = self.buildings[b].business.as_mut() {
+        if self.vehicles.city_lots.contains_key(&b) {
+            // [parking] A lot the city runs: the fee goes to the treasury.
+            self.economy.credit(Flow::ParkingFees, fee);
+            self.enforcement.stats.city_lot_fees_today += fee;
+            if let Some(bz) = self.buildings[b].business.as_mut() {
+                bz.deals += 1;
+            }
+        } else if let Some(bz) = self.buildings[b].business.as_mut() {
             bz.money += fee;
             bz.revenue_today += fee;
             bz.deals += 1;
@@ -782,7 +825,7 @@ impl World {
         let Some(car) = self.traffic.remove_car(car_id) else { return };
         self.park_at(vid, spot);
         let slot = match spot.kind {
-            ParkKind::Home | ParkKind::Building | ParkKind::Dealer => 0,
+            ParkKind::Home | ParkKind::Building | ParkKind::Dealer | ParkKind::Hooked | ParkKind::Pound => 0,
             ParkKind::Lot => 1,
             ParkKind::Kerb => 2,
             ParkKind::Overflow => 3,
@@ -855,7 +898,7 @@ impl World {
 
     // ── coming and going ────────────────────────────────────────────────
 
-    fn new_car(&mut self, owner: CitizenId, model: VehicleModel, place: CarPlace, event: CarEvent) -> VehicleId {
+    pub(super) fn new_car(&mut self, owner: CitizenId, model: VehicleModel, place: CarPlace, event: CarEvent) -> VehicleId {
         let color = self.rng.random_range(0..8u8);
         let vid = self.vehicles.cars.insert(OwnedCar { owner, model, place, color, since: self.clock.tick });
         self.vehicles.note(event);
@@ -971,7 +1014,7 @@ impl World {
     }
 
     /// Drive a car waiting on a dealer's forecourt to its owner's home.
-    fn deliver_car(&mut self, vid: VehicleId) {
+    pub(super) fn deliver_car(&mut self, vid: VehicleId) {
         let Some(owner) = self.vehicles.cars.get(vid).map(|c| c.owner) else { return };
         let Some(home) = self.citizens.get(owner).and_then(|c| c.home) else { return };
         let Some(lot) = self.building_lot(home) else { return };
@@ -986,6 +1029,10 @@ impl World {
         let vid = self.citizens.get(id)?.car?;
         let car = self.vehicles.cars.get(vid)?;
         let spot = *car.spot()?;
+        // [parking] Not while it is on a tow truck or in the pound.
+        if matches!(spot.kind, ParkKind::Hooked | ParkKind::Pound) {
+            return None;
+        }
         let worth = (car.model.price() * 0.5).min(400.0);
         let tick = self.clock.tick;
         let dealer = self.dealer_near(spot.pos);
@@ -1019,6 +1066,11 @@ impl World {
         let Some(vid) = self.citizens.get(id).and_then(|c| c.car) else { return };
         let Some(car) = self.vehicles.cars.get(vid) else { return };
         match car.place {
+            // [parking] On a tow truck or in a pound out of town: left
+            // behind, it leaves the record with its owner.
+            CarPlace::Parked(s) if s.kind == ParkKind::Hooked || (s.kind == ParkKind::Pound && s.building.is_none()) => {
+                self.drop_car(vid, CarEvent::Emigrated);
+            }
             CarPlace::Parked(_) => {
                 if self.drive_out_of_town(vid, Errand::Leave).is_none() {
                     // No road out: the car leaves the record with its owner.
@@ -1232,6 +1284,7 @@ impl World {
 
     /// Midnight: yesterday's counts, memories fade.
     pub(super) fn daily_vehicles(&mut self) {
+        self.daily_city_lots();
         let s = &mut self.vehicles.stats;
         s.trips_yesterday = s.trips_today;
         s.trips_today = Default::default();

@@ -90,7 +90,7 @@ impl IndustryKind {
             IndustryKind::OilExtraction => &[BusinessKind::OilWell],
             IndustryKind::Refinery => &[BusinessKind::Refinery],
             IndustryKind::Manufacturing => &[BusinessKind::Fab],
-            IndustryKind::Logistics => &[BusinessKind::ContainerYard, BusinessKind::FleetLot],
+            IndustryKind::Logistics => &[BusinessKind::ContainerYard, BusinessKind::FleetLot, BusinessKind::TowYard],
             IndustryKind::Fishing => &[BusinessKind::Fishery, BusinessKind::FishPlant],
             IndustryKind::Tech => &[BusinessKind::Assembly],
         }
@@ -303,7 +303,8 @@ pub fn business_weights(kind: IndustryKind, site: &IndustrySite) -> Vec<(Busines
         }
         IndustryKind::Logistics => {
             let fleet = if site.fleet_lot_near { 0.15 } else { 0.5 + 1.5 * site.depot + 0.8 * site.port.max(site.yard) };
-            vec![(BusinessKind::ContainerYard, 1.0 + 1.0 * site.port + 0.6 * site.yard + 0.4 * site.highway), (BusinessKind::FleetLot, fleet)]
+            // [parking] A tow company now and then: towing pays wherever cars are.
+            vec![(BusinessKind::ContainerYard, 1.0 + 1.0 * site.port + 0.6 * site.yard + 0.4 * site.highway), (BusinessKind::FleetLot, fleet), (BusinessKind::TowYard, 0.4)]
         }
         IndustryKind::Fishing => {
             let processors = site.neighbours.iter().filter(|(k, _)| *k == IndustryKind::Fishing).count() as f32;

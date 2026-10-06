@@ -343,7 +343,7 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         }
         Placeable::Service(k, t) => {
             if k.radius(t) > 0.0 {
-                line += &format!(", covers {:.0} m {}", k.radius(t), if k == nd_sim::ServiceKind::TrashDepot { "around" } else { "by road" });
+                line += &format!(", covers {:.0} m {}", k.radius(t), if matches!(k, nd_sim::ServiceKind::TrashDepot | nd_sim::ServiceKind::ParkingEnforcement) { "around" } else { "by road" });
             }
             if k.units(t) > 0 {
                 line += &format!(", {} {}{}", k.units(t), k.unit_kind().map_or("", |u| u.label()), if k.units(t) == 1 { "" } else { "s" });
@@ -358,6 +358,7 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         Placeable::BusDepot => line += &format!(". {}", help::TRANSIT_DEPOT),
         Placeable::Rail(_) => line += ". Set beside track or a street it fuses to them; otherwise it lays stubs to join (see the Rail tool).",
         Placeable::Dock(_) => {}
+        Placeable::ParkingLot(s) => line += &format!(", {} spaces. Run by the city: drivers pay {:.1} a visit to the treasury (set the fee in the inspector or with the API).", s.capacity(), s.default_price()),
     }
     hint(ui, &line);
     if let Placeable::Dock(k) = what {
