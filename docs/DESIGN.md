@@ -101,6 +101,19 @@ Citizens are rendered from their simulated positions every frame.
 - **Buildings**: a vacant lot develops when demand for its land use is high. Floors
   and capacity (homes or jobs) depend on land use and a seed. Geometry is generated
   from the seed, so a save stays small.
+- **Homes and jobs in balance**: demand counts working-age adults only (children and
+  retirees neither work nor look for work). The job gap (adults the empty and coming homes
+  will bring, at the town's adults per household, against permanent and coming jobs) and
+  adult unemployment pull commercial and industrial land; joblessness and a coming job
+  shortage hold back the residential trickle (people already waiting for a home still pull).
+  With no job free and over 5% of adults out of work, households mostly stop arriving.
+- **Which business opens**: a new commercial, industrial or entertainment building opens as
+  what the market can carry, not a random kind. Each kind has a cover (takings over wages
+  and inputs, smoothed daily, first day skipped); more of a kind are built only while its
+  cover is at least 1.05 and its shelves hold under 0.75 days of output. Grocers are built to
+  the town's need (two thirds of everyone's groceries); a kind new to town is tried once, in a
+  building of at most 20 jobs; offices (publicly funded) take the rest. A building
+  redeveloped while its business loses money reopens as what the market wants.
 - **Citizens**: immigrate when homes are free, take jobs when available, and move
   along roads between home, work, shops and nightlife. Each has a personality seed,
   a memory stream and a current thought.
@@ -340,7 +353,13 @@ Citizens are rendered from their simulated positions every frame.
   onto it, raises buildings to their pad and movers to `surface_height` (decks over water). Water cuts
   parcels (`zoning::generate_lots_wet`); lots steeper than 0.2 are unusable. A one-way street of three
   or more lanes is a highway: 25 m/s, no frontage, grade-separated (crossings make no junction, only
-  dropped ends join, so ramps merge with priority to the mainline). Two carriageways cross the map at
+  dropped ends join, so ramps merge with priority to the mainline). Embankments and cuttings
+  slope no steeper than 1 in 2.5 (the blend to the terrain widens with the height, up to 160 m).
+  Where any other way crosses the highway 4.5 m or more above or below it, the lower way runs
+  through an underpass (`landscape::Underpass`): the ground is cut to its level for the width
+  of its corridor plus 8 m along the whole embankment, the upper way crosses on a short deck
+  (a registered deck, so its traffic stays up), and abutment and wing walls with coping
+  follow the embankment down either side. Two carriageways cross the map at
   y = 420 from the start; through cars enter at the map edge and leave at the far one. Docks
   (`nd_sim::ports`) stand on the shore with a pier and a street stub, take over grown lots, and work
   once their street reaches the city: freighters route by water (river centrelines, tributaries
