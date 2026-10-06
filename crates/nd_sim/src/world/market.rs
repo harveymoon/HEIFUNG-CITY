@@ -340,16 +340,27 @@ impl World {
         let hour = self.clock.hour();
         let night = !(6..22).contains(&hour);
         let mut exhausted: HashMap<BuildingId, u16> = HashMap::new();
+        let buildings = &self.buildings;
         for c in self.citizens.values_mut() {
             let at_home = c.home.is_some() && c.inside == c.home && matches!(c.activity, Activity::AtHome);
+            // [services] Night crews at round-the-clock emergency posts
+            // (police, fire, ambulance, 911, jail) keep a night worker's
+            // hours: up for a shift that is on or about to start, a sleep
+            // in the day before it. Without this nightfall sent them to bed
+            // like everyone else and the 911 desk stood empty until morning.
+            let shift = c.work.and_then(|w| buildings.get(w)).filter(|b| b.service.is_some_and(|s| s.kind.hours().always())).map(|b| b.shift_for(c.seed));
+            let duty_in = |k: u32| shift.is_some_and(|sh| sh.contains(((hour as u32 + k) % 24) as u8));
+            let night_duty = night && (duty_in(0) || duty_in(1));
+            let night_worker = shift.is_some_and(|sh| sh.contains(2));
+            let day_sleep = night_worker && !night && !duty_in(0) && (1..=10).any(duty_in) && c.wakefulness < 0.75;
             if !at_home {
                 c.asleep = false;
-            } else if !c.asleep && (night || c.wakefulness < crate::citizens::TIRED) {
+            } else if !c.asleep && (night || c.wakefulness < crate::citizens::TIRED || day_sleep) && !(night_duty && c.wakefulness >= crate::citizens::TIRED) {
                 c.asleep = true;
             }
             if c.asleep {
                 c.wakefulness = (c.wakefulness + 0.12).min(1.0);
-                if c.wakefulness >= 0.95 && !night {
+                if c.wakefulness >= 0.95 && (!night || night_duty) {
                     c.asleep = false;
                     c.next_decision_tick = c.next_decision_tick.min(tick + 1);
                 }

@@ -1547,7 +1547,8 @@ impl Traffic {
     /// waits at the kerb and tries again every step.
     fn pull_out(&mut self, id: CarId) -> bool {
         let lane = self.cars[id].route[self.cars[id].idx];
-        let room = self.change_ok(id, lane, LC_SAFE_BRAKE).is_some();
+        // [services] Lights and sirens pull straight out; traffic yields.
+        let room = self.cars[id].siren || self.change_ok(id, lane, LC_SAFE_BRAKE).is_some();
         let kerb = self.net.lanes[lane as usize].right.is_none();
         let c = &mut self.cars[id];
         if room {
