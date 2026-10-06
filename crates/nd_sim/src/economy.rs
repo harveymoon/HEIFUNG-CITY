@@ -159,6 +159,35 @@ fn ledger_row<'de, D: serde::Deserializer<'de>>(d: D) -> Result<[f32; FLOWS], D:
     d.deserialize_tuple(FLOWS, Row)
 }
 
+/// A fixed-size array saved when the enum it is indexed by was shorter
+/// (new business kinds since): missing entries take their default, extra
+/// ones are dropped, so older saves keep loading.
+pub(crate) fn padded<'de, D, T, const N: usize>(d: D) -> Result<[T; N], D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de> + Default + Copy,
+{
+    struct Pad<T, const N: usize>(std::marker::PhantomData<T>);
+    impl<'de, T: serde::Deserialize<'de> + Default + Copy, const N: usize> serde::de::Visitor<'de> for Pad<T, N> {
+        type Value = [T; N];
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "up to {N} values")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut out = [T::default(); N];
+            let mut i = 0;
+            while let Some(x) = seq.next_element::<T>()? {
+                if i < N {
+                    out[i] = x;
+                }
+                i += 1;
+            }
+            Ok(out)
+        }
+    }
+    d.deserialize_tuple(N, Pad::<T, N>(std::marker::PhantomData))
+}
+
 impl Ledger {
     pub fn today_of(&self, f: Flow) -> f32 {
         self.today[f.index()]
@@ -308,9 +337,9 @@ pub struct Economy {
     /// How well each kind of business pays its way (`BusinessKind::index`):
     /// takings over costs (wages and inputs), smoothed over a few days; 1 is
     /// break-even. Only kinds marked in `business_cover_seen` have a reading.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "padded")]
     pub business_cover: [f32; crate::market::BusinessKind::COUNT],
-    #[serde(default)]
+    #[serde(default, deserialize_with = "padded")]
     pub business_cover_seen: [bool; crate::market::BusinessKind::COUNT],
     /// Daily and hourly records of the headline numbers, for the charts in
     /// the expanded info windows (`history.rs`). Bounded rings.
@@ -490,5 +519,22 @@ mod tests {
         assert_eq!(l.today_of(Flow::ServiceUpkeep), 0.0);
         let back: Ledger = ron::from_str(&ron::to_string(&l).unwrap()).unwrap();
         assert_eq!(back.yesterday, l.yesterday);
+    }
+}
+
+#[cfg(test)]
+mod padded_tests {
+    #[derive(serde::Deserialize)]
+    struct Saved {
+        #[serde(deserialize_with = "super::padded")]
+        cover: [f32; 4],
+    }
+
+    #[test]
+    fn arrays_saved_before_new_kinds_load_padded() {
+        let short: Saved = ron::from_str("(cover: (0.5, 0.25))").unwrap();
+        assert_eq!(short.cover, [0.5, 0.25, 0.0, 0.0]);
+        let long: Saved = ron::from_str("(cover: (1.0, 2.0, 3.0, 4.0, 5.0))").unwrap();
+        assert_eq!(long.cover, [1.0, 2.0, 3.0, 4.0]);
     }
 }

@@ -2520,6 +2520,6 @@ fn touching_solar_and_wind_plants_form_one_field() {
     w.buildings[pc].plant = Some(PowerPlantKind::Solar);
     assert_eq!(w.plant_cluster(pa).len(), 3);
     // A site still being cleared is not part of the field yet.
-    w.buildings[pc].demolition = Some(crate::buildings::Demolition { progress: 0.5, days: 1.0, loads: 0, floors: 1, tier: Tier::Low, land_use: LandUse::Industrial, seed: 1, condition: 1.0, clear_lot: false, own_lot: false });
+    w.buildings[pc].demolition = Some(crate::buildings::Demolition { progress: 0.5, days: 1.0, loads: 0, floors: 1, tier: Tier::Low, land_use: LandUse::Industrial, seed: 1, condition: 1.0, clear_lot: false, own_lot: false, look: None });
     assert_eq!(w.plant_cluster(pa), both);
 }

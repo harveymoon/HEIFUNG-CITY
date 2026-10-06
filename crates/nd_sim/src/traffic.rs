@@ -66,6 +66,9 @@ const RAMP_LATERAL: f32 = 3.0;
 const IDM_ACCEL: f32 = 1.4;
 const IDM_BRAKE: f32 = 2.0;
 const IDM_MIN_GAP: f32 = 2.0;
+/// Metres a car would have to be shoved back past the start of its lane
+/// beyond which it stands on the car ahead (a pile), not just close behind.
+const PILE_OVERLAP: f32 = 2.5;
 const IDM_HEADWAY: f32 = 1.2;
 const GREEN_SECONDS: f32 = 14.0;
 const CLEARANCE_SECONDS: f32 = 3.0;
@@ -3090,6 +3093,49 @@ impl Traffic {
 
     // ── [driving] crashes, stunts and where cars are drawn ─────────────────
 
+    /// Take car `f` out of its lane to wait at the side and pull back in
+    /// when there is room, like a car leaving a space.
+    fn pull_aside_from_pile(&mut self, f: CarId) -> bool {
+        let lane = self.cars[f].route[self.cars[f].idx];
+        self.net.lanes[lane as usize].cars.retain(|&o| o != f);
+        let kerb = self.net.lanes[lane as usize].right.is_none();
+        let c = &mut self.cars[f];
+        c.s = 0.0;
+        c.v = 0.0;
+        c.entering = true;
+        c.wait = Wait::Entering;
+        c.blocked_by = None;
+        if kerb {
+            c.lateral = LANE_WIDTH * 0.6;
+        }
+        true
+    }
+
+    /// Put car `f` back `-s` metres before the start of its lane, on the
+    /// lane behind it (the one it came from, else the longest that feeds
+    /// it), moving at most `v`. False when no lane leads into this one.
+    fn back_a_lane(&mut self, f: CarId, s: f32, v: f32) -> bool {
+        let (lane, idx) = (self.cars[f].route[self.cars[f].idx], self.cars[f].idx);
+        let came = idx.checked_sub(1).map(|i| self.cars[f].route[i]).filter(|p| self.net.lanes[lane as usize].prev.contains(p));
+        let Some(prev) = came.or_else(|| {
+            self.net.lanes[lane as usize].prev.iter().copied().max_by(|a, b| self.net.lanes[*a as usize].length.total_cmp(&self.net.lanes[*b as usize].length).then(a.cmp(b)))
+        }) else {
+            return false;
+        };
+        self.net.lanes[lane as usize].cars.retain(|&o| o != f);
+        let len = self.net.lanes[prev as usize].length;
+        let c = &mut self.cars[f];
+        if came.is_some() {
+            c.idx -= 1;
+        } else {
+            c.route.insert(idx, prev);
+        }
+        c.s = (len + s).max(0.0);
+        c.v = c.v.min(v);
+        self.insert_sorted(prev, f);
+        true
+    }
+
     /// The next number from the traffic model's own random stream
     /// (splitmix64), `0..1`. Only profiled drivers draw from it.
     fn roll(&mut self) -> f32 {
@@ -3177,32 +3223,28 @@ impl Traffic {
                 if dv > BUMP_SPEED && settled {
                     hits.push((w[0], w[1], dv));
                 } else {
-                    bumps.push((w[0], (l.s - l.length() - 0.1).max(0.0), l.v));
+                    bumps.push((w[0], l.s - l.length() - 0.1, l.v));
                 }
             }
         }
         for (f, s, v) in bumps {
-            // Squeezed back past the start of its lane (a pile left by an
-            // older build, or a merge with no room behind): it cannot stand
-            // on the car ahead, so it pulls aside off the lane and rejoins
-            // when there is room, like a car leaving a space.
-            let lane = self.cars[f].route[self.cars[f].idx];
-            if s <= 0.0 && self.cars[f].s < self.cars[f].length() {
-                self.net.lanes[lane as usize].cars.retain(|&o| o != f);
-                let kerb = self.net.lanes[lane as usize].right.is_none();
-                let c = &mut self.cars[f];
-                c.s = 0.0;
-                c.v = 0.0;
-                c.entering = true;
-                c.wait = Wait::Entering;
-                c.blocked_by = None;
-                if kerb {
-                    c.lateral = LANE_WIDTH * 0.6;
-                }
+            // Squeezed back past the start of its lane (a merge with no room
+            // behind, or a pile left by an older build): it cannot stand on
+            // the car ahead, so it goes back onto the end of the lane behind
+            // it, still in traffic. Clamped at the lane start instead, cars
+            // piled up there on each other and rings of short pieces locked.
+            // Squeezed a little (a merge): back onto the lane behind, still in
+            // traffic. Standing right on another car (a pile): out of the
+            // lane, rejoining when there is room, so a jam full of them
+            // thins out instead of packing solid again.
+            if s < -PILE_OVERLAP && self.pull_aside_from_pile(f) {
+                continue;
+            }
+            if s < 0.0 && self.back_a_lane(f, s, v) {
                 continue;
             }
             let c = &mut self.cars[f];
-            c.s = s.min(c.s);
+            c.s = s.max(0.0).min(c.s);
             c.v = c.v.min(v);
         }
         for (f, l, dv) in hits {
