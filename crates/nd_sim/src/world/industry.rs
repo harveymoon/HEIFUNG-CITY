@@ -516,7 +516,7 @@ impl World {
     /// route ends on the exit lane, or on another lane of that carriageway
     /// that leads nowhere (`Traffic::drop_dead_end_changes` lets a car
     /// finish in its own lane rather than change lanes at the very edge).
-    fn at_map_edge(&self, car_id: CarId) -> bool {
+    pub(super) fn at_map_edge(&self, car_id: CarId) -> bool {
         let Some(c) = self.traffic.cars.get(car_id) else { return true };
         let Some(&last) = c.route.last() else { return true };
         let lanes = &self.traffic.net.lanes;

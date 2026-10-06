@@ -321,7 +321,11 @@ impl World {
                 Tier::Mid => 0.008,
                 Tier::High => 0.002,
             };
-            {
+            // [services] The city's own structures do not wear out: their
+            // daily upkeep is their maintenance. (They decayed to derelict
+            // in weeks, out of service but still charged, and nothing ever
+            // repaired them.) Fire damage is mended by `repair_civic`.
+            if !Self::is_civic_structure(&self.buildings[bid]) {
                 let b = &mut self.buildings[bid];
                 b.condition = (b.condition - decay + if full { 0.006 } else { 0.0 }).clamp(0.05, 1.0);
             }

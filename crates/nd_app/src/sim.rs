@@ -72,6 +72,8 @@ impl Sim {
     /// Throw the city away and start again on a new landscape.
     pub fn new_game(&mut self, landscape: nd_sim::LandscapeParams) {
         self.world = Self::fresh_world(landscape);
+        // Answers still out are about the old city's citizens.
+        nd_sim::MindProvider::reset(&mut self.minds);
         self.events.clear();
         self.accumulator = 0.0;
         self.full_rebuild = true;
@@ -192,6 +194,8 @@ impl Sim {
     pub fn load(&mut self, path: &str) -> Result<(), String> {
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         self.world = World::from_ron(&text).map_err(|e| e.to_string())?;
+        // Answers still out are about the old city's citizens.
+        nd_sim::MindProvider::reset(&mut self.minds);
         self.full_rebuild = true;
         Ok(())
     }

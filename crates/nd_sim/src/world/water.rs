@@ -536,11 +536,14 @@ impl World {
         (entries, exits)
     }
 
-    /// Is this car passing through from elsewhere to elsewhere?
+    /// Is this car passing through from elsewhere to elsewhere? Only cars
+    /// made as through traffic carry `Errand::Through`: a test on "no
+    /// driver, no owner, no cargo" also caught fire engines, tow and garbage
+    /// trucks and takeover outsiders, which then ate the through-traffic cap
+    /// and were re-spawned as through cars on a rebuild while their own
+    /// system recovered them too (a duplicate).
     pub fn is_through_car(car: &crate::traffic::Car) -> bool {
-        // [carlife] Not a private car driven by the dealer or leaving town,
-        // nor a van or lorry on its way back to base.
-        car.citizen == CitizenId::default() && car.cargo.is_none() && car.bus.is_none() && car.owned.is_none() && car.errand == crate::vehicle::Errand::Trip
+        car.errand == crate::vehicle::Errand::Through && car.cargo.is_none() && car.bus.is_none()
     }
 
     pub fn through_cars(&self) -> usize {
@@ -576,6 +579,7 @@ impl World {
             let color = self.rng.random_range(0..8);
             let id = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, color);
             self.traffic.cars[id].model = crate::vehicle::VehicleModel::through(&mut crate::vehicle::model_rng(self.clock.tick, slotmap::Key::data(&id).as_ffi()));
+            self.traffic.cars[id].errand = crate::vehicle::Errand::Through;
             live += 1;
         }
     }
@@ -604,6 +608,7 @@ impl World {
                 let id = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, car.color);
                 let c = &mut self.traffic.cars[id];
                 c.model = car.model;
+                c.errand = crate::vehicle::Errand::Through;
                 c.v = car.v;
                 c.prev_pos = car.prev_pos;
                 c.prev_heading = car.prev_heading;

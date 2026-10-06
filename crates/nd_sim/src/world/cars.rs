@@ -30,6 +30,9 @@ use crate::vehicle::{CarEvent, CarPlace, Errand, OwnedCar, ParkKind, ParkSpot, V
 pub(super) const CAR_REACH: f32 = 320.0;
 /// No kerb parking this close to either end of a street (the junction).
 const KERB_MARGIN: f32 = 12.0;
+/// [services] Seconds a vehicle with no road off the map waits at the kerb
+/// before it looks for one again (`retire_vehicle`).
+pub(super) const RETIRE_RETRY_SECONDS: f32 = 300.0;
 /// Length of a kerb slot.
 const KERB_PITCH: f32 = 6.5;
 /// How far from the destination a driver will park at a kerb.
@@ -403,6 +406,55 @@ impl World {
         self.edge_exits(pos).into_iter().any(|(goal, s_end)| self.traffic.redirect(car, goal, s_end))
     }
 
+    /// [services] A city vehicle with nowhere left to go in town (its
+    /// station, office, depot or line is gone, or no road leads back to
+    /// it) drives off the map by the nearest exit it can reach, as
+    /// `Errand::Out`, and leaves the world there (`out_arrived`). With no
+    /// road out from where it stands it pulls in and tries again in a
+    /// while. Vehicles only ever leave the world at the map edge or into a
+    /// parking place or base: deleting one mid-street made fire engines,
+    /// buses and tow trucks blink out in front of the player.
+    pub(super) fn retire_vehicle(&mut self, car: CarId) {
+        let Some(c) = self.traffic.cars.get_mut(car) else { return };
+        c.siren = false;
+        c.errand = Errand::Out;
+        if !self.redirect_out(car) {
+            self.traffic.pull_in(car, RETIRE_RETRY_SECONDS);
+        }
+    }
+
+    /// [services] An `Errand::Out` vehicle at the end of its route: gone
+    /// at the map edge, else (a vehicle that could not route out and held)
+    /// it tries again from here.
+    pub(super) fn out_arrived(&mut self, car: CarId) {
+        if self.at_map_edge(car) {
+            self.traffic.remove_car(car);
+        } else {
+            self.retire_vehicle(car);
+        }
+    }
+
+    /// [services] Has `car` stopped where a route to `pt` on `seg` ends (the
+    /// lane `nearest_lane_on` gives for it, at that place), or within
+    /// `reach` metres of `pt`? Asked before a vehicle is taken off the road
+    /// "at" a base, so one re-aimed elsewhere drives on instead.
+    pub(super) fn car_at_stop(&self, car: CarId, seg: SegmentId, pt: Vec2, reach: f32) -> bool {
+        let Some(c) = self.traffic.cars.get(car) else { return true };
+        if c.pos.distance(pt) < reach {
+            return true;
+        }
+        self.traffic.net.nearest_lane_on(seg, pt).is_some_and(|(goal, s_end, _)| c.route.last() == Some(&goal) && (c.s - s_end).abs() < 3.0)
+    }
+
+    /// [services] A route off the map for a vehicle standing at `from` (a
+    /// unit parked on scene, a truck at a kerb): from the street beside it
+    /// to the nearest exit it can reach.
+    pub(super) fn route_out_from(&self, from: Vec2) -> Option<(Vec<LaneId>, f32, f32)> {
+        let (seg, _, q) = self.roads.nearest_street(from)?;
+        let (start, s0, _) = self.traffic.net.nearest_lane_on(seg, q)?;
+        self.edge_exits(from).into_iter().find_map(|(goal, s_end)| self.traffic.net.route_lanes(start, s0, goal, s_end))
+    }
+
     /// A route onto the map from out of town to `to` on `to_seg`: in on a
     /// highway carriageway entering the map when one leads there, else
     /// along a road from the city's edge.
@@ -532,6 +584,15 @@ impl World {
                 self.cab_arrived(car_id, cab);
                 true
             }
+            Errand::Out => {
+                self.out_arrived(car_id);
+                true
+            }
+            // Its route ends at a highway exit off the map.
+            Errand::Through => {
+                self.traffic.remove_car(car_id);
+                true
+            }
             Errand::Deliver | Errand::Trip | Errand::Search { .. } | Errand::ToLot(_) | Errand::ToKerb => {
                 if owned.is_some() || self.citizens.contains_key(citizen) {
                     self.private_arrived(car_id);
@@ -544,7 +605,8 @@ impl World {
     }
 
     /// A truck or van done with its job drives back to `base`, or out of
-    /// town. With nowhere to go it is parked at base (or gone) at once.
+    /// town. With no road to either it holds at the kerb and tries again
+    /// (`retire_vehicle`): it no longer vanishes where it stands.
     fn send_back(&mut self, car_id: CarId, base: Option<BuildingId>) {
         if let Some(b) = base.filter(|b| self.buildings.contains_key(*b)) {
             if let Some((seg, pt)) = self.truck_stop(b) {
@@ -556,15 +618,12 @@ impl World {
                     }
                 }
             }
-            self.traffic.remove_car(car_id);
-            *self.vehicles.fleet_parked.entry(b).or_insert(0) += 1;
-            return;
         }
         if self.redirect_out(car_id) {
             self.traffic.cars[car_id].errand = Errand::Leave;
             return;
         }
-        self.traffic.remove_car(car_id);
+        self.retire_vehicle(car_id);
     }
 
     /// The business a truck or van belongs to and returns to: the sender,

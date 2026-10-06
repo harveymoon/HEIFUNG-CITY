@@ -422,7 +422,11 @@ impl World {
                 let n = count.entry(d).or_default();
                 *n += 1;
                 let crewed = alive.iter().find(|a| a.0 == d).map_or(0, |a| a.1);
-                if *n > crewed && t.car.is_none() && matches!(t.state, TruckState::Idle) {
+                // [services] Parked at a depot that still stands: into the
+                // shed. A truck whose depot is gone drives off the map
+                // instead (`truck_home`), not vanish where it stands.
+                let home = self.buildings.contains_key(d);
+                if home && *n > crewed && t.car.is_none() && matches!(t.state, TruckState::Idle) {
                     drop.push(id);
                 }
             }
@@ -501,6 +505,13 @@ impl World {
             (t.pos, t.hauler, t.number)
         };
         let route = self.roads.nearest_street(from).and_then(|(seg, _, q)| self.traffic.net.find_route(seg, q, to.0, to.1));
+        // [services] Leaving town with no road there yet: it waits where it
+        // stands and tries again (`next_job`), rather than "arriving" at the
+        // edge, which took it out of the world on the spot.
+        if state == TruckState::Leaving && route.is_none() && from.distance(to.1) > 8.0 {
+            self.society.trash.trucks[id].state = TruckState::Idle;
+            return;
+        }
         let t = &mut self.society.trash.trucks[id];
         t.state = state;
         t.dest = to.1;
@@ -522,6 +533,13 @@ impl World {
     fn next_job(&mut self, id: TruckId) {
         let Some(t) = self.society.trash.trucks.get(id) else { return };
         let hauler = t.hauler;
+        // [services] A city truck whose depot is gone has no round to run.
+        if let Hauler::City(d) = hauler {
+            if !self.buildings.contains_key(d) {
+                self.truck_home(id);
+                return;
+            }
+        }
         let on = match hauler {
             Hauler::City(_) => self.in_shift(SHIFT),
             Hauler::Private => self.in_shift(PRIVATE_SHIFT),
@@ -552,19 +570,28 @@ impl World {
                         t.wait = UNLOAD_TICKS;
                     }
                     Some(_) => self.society.trash.trucks[id].state = TruckState::Idle,
-                    None => {
-                        self.society.trash.trucks.remove(id);
-                    }
+                    // [services] The depot is gone: off the map with the
+                    // load, as the private hauler's trucks go (it used to
+                    // vanish at the kerb).
+                    None => self.truck_leaves(id),
                 }
             }
-            Hauler::Private => {
-                let edge = self.trash_edge().and_then(|p| self.roads.nearest_street(p).map(|(s, _, q)| (s, q)));
-                match edge {
-                    Some(k) => self.drive_truck(id, k, TruckState::Leaving),
-                    None => {
-                        self.society.trash.trucks.remove(id);
-                    }
-                }
+            Hauler::Private => self.truck_leaves(id),
+        }
+    }
+
+    /// [services] A truck with no depot in town drives to the edge of town
+    /// and is gone there. Only with no road end at all to drive to is it
+    /// taken away where it stands (`drive_truck` sets it there at once when
+    /// no road leads from it).
+    fn truck_leaves(&mut self, id: TruckId) {
+        let edge = self.trash_edge().and_then(|p| self.roads.nearest_street(p).map(|(s, _, q)| (s, q)));
+        match edge {
+            Some(k) => self.drive_truck(id, k, TruckState::Leaving),
+            // No road end anywhere: the network is gone (nothing left to
+            // drive to or from); unavoidable.
+            None => {
+                self.society.trash.trucks.remove(id);
             }
         }
     }

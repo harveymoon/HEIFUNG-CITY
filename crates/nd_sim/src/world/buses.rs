@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// [services] How near its depot's driveway a bus going home must stand to
+/// be in (metres): farther, it drives there first.
+const DEPOT_REACH: f32 = 25.0;
+
 impl World {
     /// Place a bus depot on a lot with street access. Whatever grew there
     /// is bought out and pulled down, as for every civic structure.
@@ -109,11 +113,10 @@ impl World {
 
     pub fn remove_bus_route(&mut self, route: RouteId) {
         self.transit.routes.remove(route);
+        // Its buses let their riders off where they are and go home.
         let buses: Vec<CarId> = self.traffic.cars.iter().filter(|(_, c)| c.bus.as_ref().is_some_and(|b| b.route == route)).map(|(id, _)| id).collect();
         for id in buses {
-            if let Some(car) = self.traffic.remove_car(id) {
-                self.strand_car(car);
-            }
+            self.bus_home(id);
         }
         let riders: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.transit.is_some_and(|t| matches!(t.leg, TransitLeg::Bus { route: r, .. } if r == route))).map(|(id, _)| id).collect();
         for id in riders {
@@ -203,6 +206,48 @@ impl World {
         }
     }
 
+    /// [services] Riders get off where the bus stands and decide again.
+    fn bus_set_down(&mut self, car_id: CarId) {
+        let Some(car) = self.traffic.cars.get_mut(car_id) else { return };
+        let pos = car.pos;
+        let riders = car.bus.as_mut().map(|b| std::mem::take(&mut b.passengers)).unwrap_or_default();
+        for p in riders {
+            if let Some(c) = self.citizens.get_mut(p) {
+                c.transit = None;
+            }
+            self.strand_driver(p, pos);
+        }
+    }
+
+    /// [services] A bus with no line left to run (the line was removed, the
+    /// next stop cannot be reached, the depot went): its riders get off,
+    /// then it drives to its depot, else the nearest other one, else off
+    /// the map. Buses used to vanish where they stood.
+    pub(super) fn bus_home(&mut self, car_id: CarId) {
+        self.bus_set_down(car_id);
+        let Some(car) = self.traffic.cars.get(car_id) else { return };
+        let pos = car.pos;
+        let own = car.bus.as_ref().map(|b| b.depot).filter(|d| self.buildings.get(*d).is_some_and(|b| b.depot));
+        let mut others: Vec<(f32, BuildingId)> = self.buildings.iter().filter(|(id, b)| b.depot && !b.is_derelict() && Some(*id) != own).filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (l.car_point.distance(pos), id))).collect();
+        others.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let depots: Vec<BuildingId> = own.into_iter().chain(others.into_iter().map(|d| d.1)).collect();
+        for d in depots {
+            let Some((seg, pt)) = self.building_lot(d).and_then(|l| l.car_segment.map(|s| (s, l.car_point))) else { continue };
+            let Some((goal, s_end, _)) = self.traffic.net.nearest_lane_on(seg, pt) else { continue };
+            if self.traffic.redirect(car_id, goal, s_end) {
+                if let Some(b) = self.traffic.cars[car_id].bus.as_mut() {
+                    b.depot = d;
+                    b.to_depot = true;
+                    b.next_stop = usize::MAX;
+                }
+                return;
+            }
+        }
+        // No depot it can reach: off the map, as a plain vehicle.
+        self.traffic.cars[car_id].bus = None;
+        self.retire_vehicle(car_id);
+    }
+
     /// A bus reached the end of a leg: a stop, or the depot.
     pub(super) fn bus_arrived(&mut self, car_id: CarId) {
         let tick = self.clock.tick;
@@ -210,14 +255,20 @@ impl World {
             let car = &self.traffic.cars[car_id];
             (car.bus.clone().unwrap(), car.pos)
         };
-        let gone = |w: &mut World, car_id: CarId| {
-            if let Some(car) = w.traffic.remove_car(car_id) {
-                w.strand_car(car);
-            }
-        };
+        let gone = |w: &mut World, car_id: CarId| w.bus_home(car_id);
         if bus.next_stop == usize::MAX {
-            // Home at the depot.
-            gone(self, car_id);
+            // Home at the depot (when that is where it stands: a bus
+            // re-aimed at its depot on load or the depot gone meanwhile
+            // finds one).
+            let stop = self.building_lot(bus.depot).filter(|_| self.buildings.get(bus.depot).is_some_and(|b| b.depot)).and_then(|l| l.car_segment.map(|s| (s, l.car_point)));
+            let home = stop.is_some_and(|(seg, p)| self.car_at_stop(car_id, seg, p, DEPOT_REACH));
+            if home {
+                if let Some(car) = self.traffic.remove_car(car_id) {
+                    self.strand_car(car);
+                }
+            } else {
+                self.bus_home(car_id);
+            }
             return;
         }
         let stop_idx = bus.next_stop;
