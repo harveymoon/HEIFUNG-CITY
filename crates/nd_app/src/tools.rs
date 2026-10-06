@@ -578,7 +578,7 @@ pub(crate) fn tool_input(
                     bevy::input::mouse::MouseScrollUnit::Pixel => scroll.delta.y / 60.0,
                 };
                 if lines != 0.0 {
-                    tools.ring_radius = (tools.ring_radius + lines * 2.0).clamp(nd_sim::roads::RING_MIN_RADIUS, nd_sim::roads::RING_MAX_RADIUS);
+                    tools.ring_radius = (tools.ring_radius + lines * (tools.ring_radius * 0.08).max(2.0)).clamp(nd_sim::roads::RING_MIN_RADIUS, nd_sim::roads::RING_MAX_RADIUS);
                     tools.status = format!("Roundabout {:.0} m across.", tools.ring_radius * 2.0);
                 }
             }
@@ -1175,7 +1175,8 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
     let route = Color::linear_rgb(0.5, 2.6, 3.2);
     let trail = Color::linear_rgb(0.18, 0.55, 0.75);
     let dest = Color::linear_rgb(2.8, 1.0, 3.0);
-    let at = |p: SVec2, y: f32| Vec3::new(p.x, y, p.y);
+    // Heights are above the ground there, so lines never sink into hills.
+    let at = |p: SVec2, y: f32| Vec3::new(p.x, y + w.surface_height(p), p.y);
     // The same blend as the renderer, so the ring sits under the figure.
     let blend = |a: SVec2, b: SVec2| if a.distance(b) < 30.0 { a.lerp(b, f) } else { b };
 
@@ -1218,15 +1219,19 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
                     let mut pts = vec![at(here, 1.0)];
                     pts.extend(path.iter().skip(*idx).map(|&q| at(q, 1.0)));
                     if pts.len() >= 2 {
+                        gizmos.linestrip(pts.iter().map(|p| *p + Vec3::Y * 0.4), route);
                         gizmos.linestrip(pts, route);
                     }
-                    gizmos.circle(Isometry3d::new(at(here, 0.4), flat), 1.6, gold);
+                    person_outline(gizmos, at(here, 0.0), gold);
                 }
                 Activity::Driving { car, to, .. } => {
                     destination = to.or(destination);
                     if let Some(car) = w.traffic.cars.get(*car) {
-                        let p = car.pose_at(f).0;
-                        gizmos.circle(Isometry3d::new(at(p, 0.5), flat), 4.0, gold);
+                        // At the wheel: the car's outline and its route, as a
+                        // selected car shows.
+                        let (p, heading) = car.pose_at(f);
+                        let width = if car.bus.is_some() || car.cargo.is_some() { 2.7 } else { 2.1 };
+                        vehicle_outline(gizmos, p, heading, car.length() + 0.6, width + 0.5, w.car_height(car) + 0.35, gold);
                         car_route(gizmos, w, car, route);
                     }
                 }
@@ -1263,10 +1268,10 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
                     }
                 }
                 Activity::Waiting { at: q } => {
-                    gizmos.circle(Isometry3d::new(at(*q, 0.4), flat), 1.6, gold);
+                    person_outline(gizmos, at(*q, 0.0), gold);
                 }
                 Activity::Idle | Activity::Sitting { .. } => {
-                    gizmos.circle(Isometry3d::new(at(here, 0.4), flat), 1.6, gold);
+                    person_outline(gizmos, at(here, 0.0), gold);
                 }
                 Activity::AtHome | Activity::Working | Activity::Visiting(_) | Activity::Arriving => {
                     // Indoors: show the building they are in.
@@ -1277,8 +1282,25 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
             }
             if let Some(b) = destination {
                 lot_outline(gizmos, w, b, 1.2, dest);
+                // A thin line from where they are to where they are going,
+                // so the goal reads even when the route turns away from it.
+                if let Some(goal) = w.buildings.get(b).and_then(|b| w.lots.get(b.lot)).map(|l| l.center) {
+                    let faint = Color::linear_rgb(1.2, 0.4, 1.3);
+                    gizmos.line(at(here, 3.0), at(goal, 3.0), faint);
+                }
             }
         }
+    }
+}
+
+/// An upright box round a person standing at `base` (ground level).
+fn person_outline(gizmos: &mut Gizmos, base: Vec3, col: Color) {
+    let (r, h) = (0.7, 2.2);
+    let ring = |y: f32| [Vec3::new(-r, y, -r), Vec3::new(r, y, -r), Vec3::new(r, y, r), Vec3::new(-r, y, r), Vec3::new(-r, y, -r)].map(|v| v + base);
+    gizmos.linestrip(ring(0.05), col);
+    gizmos.linestrip(ring(h), col);
+    for (x, z) in [(-r, -r), (r, -r), (r, r), (-r, r)] {
+        gizmos.line(base + Vec3::new(x, 0.05, z), base + Vec3::new(x, h, z), col);
     }
 }
 
@@ -1313,7 +1335,7 @@ fn car_route(gizmos: &mut Gizmos, w: &nd_sim::World, car: &nd_sim::Car, col: Col
     if car.idx >= car.route.len() || car.route.iter().any(|&l| l as usize >= net.lanes.len()) {
         return;
     }
-    let pts: Vec<Vec3> = net.polyline(&car.route[car.idx..], car.s, car.s_end).iter().map(|&q| Vec3::new(q.x, 1.0, q.y)).collect();
+    let pts: Vec<Vec3> = net.polyline(&car.route[car.idx..], car.s, car.s_end).iter().map(|&q| Vec3::new(q.x, 1.0 + w.surface_height(q), q.y)).collect();
     if pts.len() >= 2 {
         gizmos.linestrip(pts, col);
     }

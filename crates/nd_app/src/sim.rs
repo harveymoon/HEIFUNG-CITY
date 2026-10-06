@@ -9,7 +9,15 @@ use crate::camera::CameraMode;
 use crate::ui::UiFlags;
 
 /// Sim minutes per real second for each speed step.
-pub const SPEEDS: [(&str, f32); 5] = [("1×", 1.0), ("4×", 4.0), ("16×", 16.0), ("64×", 64.0), ("256×", 256.0)];
+/// Game speeds as multiples of real time for what you see move: at 1×
+/// people walk and cars drive at their true speed (one tick, a clock
+/// minute, shows `traffic_seconds_per_tick` of motion, so 1× is a tick
+/// every few real seconds). The clock itself runs faster than real life
+/// by 60 / traffic_seconds_per_tick (15× today): that is what lets a day's
+/// commute fit in a believable stretch of it.
+pub const SPEEDS: [(&str, f32); 6] = [("1×", 1.0), ("4×", 4.0), ("16×", 16.0), ("64×", 64.0), ("256×", 256.0), ("1024×", 1024.0)];
+/// The speed a new game starts at (16×: the pace the game always had).
+pub const DEFAULT_SPEED: usize = 2;
 const MAX_TICKS_PER_FRAME: u32 = 400;
 /// Real time the sim may consume per frame before it yields to rendering.
 const TICK_BUDGET: std::time::Duration = std::time::Duration::from_millis(12);
@@ -38,7 +46,7 @@ impl Sim {
         Self {
             world,
             minds: HybridMind::new(Box::new(MockBackend::default())),
-            speed_index: 1,
+            speed_index: DEFAULT_SPEED,
             paused: false,
             accumulator: 0.0,
             events: Vec::new(),
@@ -158,8 +166,10 @@ impl Sim {
         }
     }
 
+    /// Ticks per real second at the chosen speed: the real-time multiple
+    /// over the seconds of motion one tick shows.
     pub fn speed(&self) -> f32 {
-        SPEEDS[self.speed_index].1
+        SPEEDS[self.speed_index].1 / self.world.config.traffic_seconds_per_tick.max(0.1)
     }
 
     /// Advance the world `n` ticks right now, paused or not: the remote API's
@@ -263,7 +273,10 @@ fn step_sim(time: Res<Time>, mut sim: ResMut<Sim>) {
     let dt = time.delta_secs();
     if !sim.paused && dt > 0.0 {
         let ratio = ticks as f32 / (dt * sim.speed());
-        let k = 1.0 - (-dt / 0.5).exp();
+        // Averaged over a few ticks' worth of time: at 1x a tick comes only
+        // every few seconds, and a half-second window read as 0%.
+        let tau = (3.0 / sim.speed()).max(0.5);
+        let k = 1.0 - (-dt / tau).exp();
         sim.effective_speed += (ratio - sim.effective_speed) * k;
     }
     let events = sim.world.drain_events();

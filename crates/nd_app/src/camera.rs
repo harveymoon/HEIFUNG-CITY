@@ -47,8 +47,9 @@ impl Default for WalkState {
 }
 
 const EYE_HEIGHT: f32 = 1.7;
-const WALK_SPEED: f32 = 2.4;
-const RUN_SPEED: f32 = 7.5;
+/// Walk mode moves in real time: a person's stroll and, with Shift, a jog.
+const WALK_SPEED: f32 = 1.5;
+const RUN_SPEED: f32 = 5.0;
 const LOOK_SPEED: f32 = 0.0022;
 const ORBIT_FOV: f32 = 0.785;
 const WALK_FOV: f32 = 1.2;

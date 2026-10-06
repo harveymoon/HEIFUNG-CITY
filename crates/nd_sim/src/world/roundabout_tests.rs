@@ -70,8 +70,9 @@ fn a_roundabout_stamped_on_a_four_way_replaces_it_and_undo_brings_it_back() {
     };
     let (r, ..) = route(Vec2::new(200.0, -1.75), Vec2::new(-1.75, 200.0)).expect("east to north by car");
     assert!(r.iter().any(|l| net.rings.circulating.contains(l)), "round the ring");
-    // Nothing is zoned or built on the island.
-    assert!(w.parcels.parcels.iter().all(|p| p.center.length() > 20.0));
+    // No parcel sits on the ring road itself.
+    let ring = w.roads.rings[0];
+    assert!(w.parcels.parcels.iter().all(|p| p.center.length() < ring.inner_radius() + 0.5 || p.center.length() > ring.outer_radius() - 0.5));
 
     // Bulldozing the roundabout in a new project brings the crossroads,
     // and its signal, back.
@@ -152,6 +153,74 @@ fn buildings_in_the_way_are_taken() {
         let at = old.iter().find(|o| o.0 == *b).map(|o| o.1);
         assert!(w.buildings.get(*b).is_some_and(|x| !x.being_demolished()), "a building well away stays: {b:?} at {at:?}");
     }
-    // No lot is left inside the ring.
-    assert!(w.lots.values().all(|l| l.center.length() > ring.outer_radius() - 1.0), "lots clear of the ring road");
+    // No lot is left under the ring road.
+    assert!(w.lots.values().all(|l| l.center.length() > ring.outer_radius() - 1.0 || l.center.length() < ring.inner_radius() + 1.0), "lots clear of the ring road");
+}
+
+#[test]
+fn a_large_ring_leaves_its_middle_open_for_parcels_and_new_roads() {
+    let mut w = crossroads();
+    let id = w.add_roundabout(Vec2::ZERO, 1000.0, 1).unwrap();
+    assert_eq!(w.gesture(id), Some(Gesture::Roundabout { center: Vec2::ZERO, radius: crate::roads::RING_MAX_RADIUS, lanes: 1 }), "240 m across at most");
+    // Undo and redo the stamp.
+    assert!(w.undo());
+    assert!(w.effective_plan().roundabouts().next().is_none());
+    assert!(w.redo());
+    assert!(w.effective_plan().roundabouts().next().is_some());
+    w.discard_project();
+    let ring = Ring::new(Vec2::ZERO, 100.0, 1);
+    w.add_roundabout(Vec2::ZERO, 100.0, 1).unwrap();
+    w.implement();
+    assert_eq!(w.roads.rings, vec![ring]);
+    // The old crossroads inside is cut out.
+    assert!(w.roads.node_near(Vec2::ZERO, 20.0).is_none(), "the old junction went");
+    // Usable parcels inside, along the inner edge of the ring.
+    let inside: Vec<usize> = (0..w.parcels.len()).filter(|&i| w.parcels.parcels[i].center.length() < ring.inner_radius()).collect();
+    assert!(inside.len() >= 10, "{} parcels inside", inside.len());
+    assert!(inside.iter().any(|&i| w.parcels.parcels[i].accepts(LandUse::Residential)), "the inside can be zoned");
+    // Zone and build there.
+    w.add_zone(vec![Vec2::new(-80.0, -80.0), Vec2::new(80.0, -80.0), Vec2::new(80.0, 80.0), Vec2::new(-80.0, 80.0)], LandUse::Residential);
+    let lots: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.center.length() < ring.inner_radius()).map(|(id, _)| id).collect();
+    assert!(!lots.is_empty(), "lots inside the ring");
+    w.build_on(lots[0]);
+    assert!(w.lots[lots[0]].building.is_some(), "and a building on one");
+    // A road drawn inside afterwards is kept and joins the ring at both ends.
+    let road = w.add_road(&[Vec2::new(0.0, -100.0), Vec2::new(0.0, 100.0)], 1, 1);
+    assert_eq!(w.roads.rings.len(), 1);
+    let joins: Vec<NodeId> = [Vec2::new(0.0, -100.0), Vec2::new(0.0, 100.0)].iter().map(|&p| w.roads.node_near(p, 1.0).expect("a join on the ring")).collect();
+    for n in &joins {
+        assert!(w.roads.ring_of_node(*n).is_some(), "joined to the ring");
+        let rn = &w.traffic.net.rings.nodes[n];
+        assert!(rn.entries.len() >= 2 && rn.exits.len() >= 2, "give-way entries and exits from inside and outside: {} {}", rn.entries.len(), rn.exits.len());
+    }
+    assert!(w.roads.nearest_street(Vec2::new(3.0, 0.0)).is_some_and(|(_, _, q)| q.distance(Vec2::ZERO) < 1.0), "the new road runs through the middle");
+    let net = &w.traffic.net;
+    let (fs, _, _) = w.roads.nearest_street(Vec2::new(-1.75, 0.0)).unwrap();
+    let (ts, _, _) = w.roads.nearest_street(Vec2::new(250.0, -1.75)).unwrap();
+    assert!(net.find_route(fs, Vec2::new(-1.75, 0.0), ts, Vec2::new(250.0, -1.75)).is_some(), "from inside out to an arm");
+    // Bulldozing it gives the ground back as before.
+    w.remove_gesture(road);
+    w.implement();
+    assert!(w.roads.nearest_street(Vec2::ZERO).is_some_and(|(_, _, q)| q.length() > 80.0));
+}
+
+#[test]
+fn rings_nest_with_room_between_and_partial_overlaps_are_refused() {
+    let mut w = crossroads();
+    w.add_roundabout(Vec2::ZERO, 110.0, 2).unwrap();
+    w.implement();
+    // Concentric but too close, and half over the edge: refused.
+    assert!(w.add_roundabout(Vec2::ZERO, 104.0, 1).is_err());
+    assert!(w.add_roundabout(Vec2::new(95.0, 0.0), 20.0, 1).is_err());
+    // Well inside: fine, and joined to the outer ring by a new road.
+    w.add_roundabout(Vec2::new(10.0, 0.0), 30.0, 1).unwrap();
+    w.implement();
+    assert_eq!(w.roads.rings.len(), 2);
+    w.add_road(&[Vec2::new(40.0, 0.0), Vec2::new(110.0, 0.0)], 1, 1);
+    let inner = w.roads.node_near(Vec2::new(40.0, 0.0), 1.0).unwrap();
+    let outer = w.roads.node_near(Vec2::new(110.0, 0.0), 1.0).unwrap();
+    assert_eq!(w.roads.ring_of_node(inner), Some(1));
+    assert_eq!(w.roads.ring_of_node(outer), Some(0));
+    let far = w.roads.node_near(Vec2::new(300.0, 0.0), 1.0).unwrap();
+    assert!(w.roads.path(far, inner).is_some(), "out on the avenue to the inner ring");
 }

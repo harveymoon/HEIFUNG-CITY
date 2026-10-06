@@ -374,3 +374,18 @@ fn trucks_go_back_to_the_business_that_sent_them() {
     assert!(!w.traffic.cars.contains_key(id), "and got there");
     assert_eq!(w.vehicles.fleet_parked.get(&shop).copied().unwrap_or(0), parked0 + 1, "parked at the shop");
 }
+
+#[test]
+fn nobody_parks_on_a_roundabout_ring() {
+    let mut w = World::new(WorldConfig { landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::default() });
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    w.add_road(&[Vec2::new(0.0, -300.0), Vec2::new(0.0, 300.0)], 1, 1);
+    w.add_roundabout(Vec2::ZERO, 30.0, 1).expect("ring");
+    w.implement();
+    let ring: Vec<SegmentId> = w.roads.alive_segments().map(|(id, _)| id).filter(|&id| w.on_ring(id)).collect();
+    assert!(ring.len() >= 4, "the ring's segments are recognised ({})", ring.len());
+    assert!(ring.iter().all(|&id| !w.kerb_allowed(id) && w.kerb_slots(id) == 0), "no kerb parking on the ring");
+    // Arms keep their kerbs.
+    assert!(w.roads.alive_segments().any(|(id, s)| s.is_street() && !w.on_ring(id) && w.kerb_allowed(id)));
+}
+

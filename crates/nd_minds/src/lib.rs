@@ -497,6 +497,7 @@ mod tests {
             car: None,
             to_car: None,
             commute: Default::default(),
+            look: None,
         }
     }
 

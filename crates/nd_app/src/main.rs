@@ -19,6 +19,8 @@ fn main() {
             primary_window: Some(Window {
                 title: "District 2040".into(),
                 resolution: WindowResolution::new(1600, 900),
+                // `ND_NO_VSYNC=1` for measuring frame rates.
+                present_mode: if std::env::var("ND_NO_VSYNC").is_ok_and(|v| v == "1") { bevy::window::PresentMode::AutoNoVsync } else { bevy::window::PresentMode::AutoVsync },
                 ..default()
             }),
             ..default()
