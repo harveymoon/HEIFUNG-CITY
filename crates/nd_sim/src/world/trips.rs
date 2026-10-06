@@ -318,6 +318,7 @@ impl World {
             let hid = self.households.insert(hh);
             self.citizens[cid].household = Some(hid);
         }
+        self.migrate_looks();
         // A building lists exactly the households that live there.
         for b in self.buildings.values_mut() {
             b.households.retain(|h| self.households.contains_key(*h));
@@ -328,6 +329,36 @@ impl World {
                 if !b.households.contains(&hid) {
                     b.households.push(hid);
                 }
+            }
+        }
+    }
+
+    /// [looks] Saves from before looks: each household's members get the
+    /// looks they would have been given on arrival (children resembling
+    /// their parents). Members who already have one keep it.
+    pub(super) fn migrate_looks(&mut self) {
+        let mut fill: Vec<(CitizenId, crate::looks::Appearance)> = Vec::new();
+        for hh in self.households.values() {
+            let members: Vec<CitizenId> = hh.members.iter().copied().filter(|m| self.citizens.contains_key(*m)).collect();
+            if members.iter().all(|m| self.citizens[*m].look.is_some()) {
+                continue;
+            }
+            let earners = members.iter().filter(|m| self.citizens[**m].income > 0.0).count().max(1) as f32;
+            let income: f32 = members.iter().map(|m| self.citizens[*m].income).sum();
+            let ids: Vec<(u64, u8)> = members.iter().map(|m| (self.citizens[*m].seed, self.citizens[*m].age)).collect();
+            let looks = crate::looks::family_looks(&ids, Tier::for_income(income / earners));
+            fill.extend(members.into_iter().zip(looks));
+        }
+        for (id, look) in fill {
+            let c = &mut self.citizens[id];
+            if c.look.is_none() {
+                c.look = Some(look);
+            }
+        }
+        // Anyone still without (no household): their own look.
+        for c in self.citizens.values_mut() {
+            if c.look.is_none() {
+                c.look = Some(c.appearance());
             }
         }
     }
@@ -503,7 +534,11 @@ impl World {
             self.buildings[home].households.push(hid);
             let home_name = self.buildings[home].name.clone();
             let family = names::family_name(&mut self.rng);
-            for (age, seed, job, income) in people {
+            // [looks] Drawn from the seeds alone, so the world's dice roll
+            // exactly as before.
+            let class = Tier::for_income(income / earners);
+            let looks = crate::looks::family_looks(&people.iter().map(|p| (p.1, p.0)).collect::<Vec<_>>(), class);
+            for ((age, seed, job, income), look) in people.into_iter().zip(looks) {
                 let stage = LifeStage::of_age(age);
                 let name = names::member_name(&mut self.rng, &family);
                 let owns_car = stage != LifeStage::Child && self.rng.random_bool(car_chance);
@@ -551,6 +586,7 @@ impl World {
                     car: None,
                     to_car: None,
                     commute: Default::default(),
+                    look: Some(look),
                 };
                 citizen.remember(tick, format!("Rolled into Neon District on day {} at {}.", self.clock.day() + 1, self.clock.format_hhmm()));
                 if let Some(s) = by_train {
