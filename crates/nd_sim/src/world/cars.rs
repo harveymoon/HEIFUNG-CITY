@@ -40,6 +40,8 @@ const LOT_WALK: f32 = 180.0;
 const SEARCH_RADIUS: f32 = 240.0;
 /// Places checked before parking anywhere at all.
 const MAX_TRIES: u8 = 4;
+/// [parking] Rounds after which the driver takes any free slot at all.
+const GIVE_UP: u8 = 10;
 /// Walking the last stretch from the car below this is just getting out.
 const GET_OUT: f32 = 20.0;
 
@@ -97,6 +99,21 @@ impl World {
         if !self.kerb_allowed(sid) {
             return 0;
         }
+        self.slot_count(sid)
+    }
+
+    /// [parking] Can a car physically stand along this street, legal or
+    /// not: every street but highways, bridges and roundabout rings (where
+    /// a parked car would sit in the traffic).
+    pub(super) fn kerb_physical(&self, sid: SegmentId) -> bool {
+        self.roads.try_segment(sid).is_some_and(|s| s.alive && s.is_street() && !s.is_highway() && !s.bridge && s.lanes() > 0) && !self.on_ring(sid)
+    }
+
+    /// Slots along one side of a street, legal or not.
+    pub(super) fn slot_count(&self, sid: SegmentId) -> u16 {
+        if !self.kerb_physical(sid) {
+            return 0;
+        }
         let (a, b) = self.roads.segment_points(sid);
         ((a.distance(b) - 2.0 * KERB_MARGIN) / KERB_PITCH).floor().max(0.0) as u16
     }
@@ -131,10 +148,27 @@ impl World {
     /// Up to `n` free kerb slots within `r` of `q`, nearest first, at most
     /// one per side of a street (the nearest there).
     pub(super) fn free_kerbs_near(&self, q: Vec2, r: f32, n: usize) -> Vec<KerbSlot> {
+        self.free_slots_near(q, r, n, true)
+    }
+
+    /// [parking] Free slots on streets where parking is banned (shop
+    /// fronts, clearways): a driver who found nothing legal stops there, in
+    /// a slot of its own, and risks the ticket and the tow truck.
+    pub(super) fn free_illegal_slots_near(&self, q: Vec2, r: f32, n: usize) -> Vec<KerbSlot> {
+        self.free_slots_near(q, r, n, false)
+    }
+
+    /// Free slots, legal (`legal`) or on streets where parking is banned,
+    /// within `r` of `q`, nearest first, one per side of a street. Both
+    /// kinds share the kerb index, so no two cars ever stand in one slot.
+    fn free_slots_near(&self, q: Vec2, r: f32, n: usize, legal: bool) -> Vec<KerbSlot> {
         let mut found: Vec<(f32, KerbSlot)> = Vec::new();
         let segs: Vec<SegmentId> = self.roads.segments_in_box(q - Vec2::splat(r), q + Vec2::splat(r)).collect();
         for sid in segs {
-            let count = self.kerb_slots(sid);
+            if self.kerb_allowed(sid) != legal {
+                continue;
+            }
+            let count = self.slot_count(sid);
             if count == 0 {
                 continue;
             }
@@ -229,21 +263,25 @@ impl World {
         Some(ParkSpot { kind, building: Some(b), segment: lot.car_segment, side: 0, slot: 0, pos, heading: 0.0, since: self.clock.tick })
     }
 
+    /// A kerb slot as a parking spot: legal, or `Overflow` (parked where
+    /// it is not allowed) when the street bans parking.
     fn kerb_spot(&self, k: KerbSlot) -> ParkSpot {
-        ParkSpot { kind: ParkKind::Kerb, building: None, segment: Some(k.segment), side: k.side, slot: k.slot, pos: k.pos, heading: k.heading, since: self.clock.tick }
+        let kind = if self.kerb_allowed(k.segment) { ParkKind::Kerb } else { ParkKind::Overflow };
+        ParkSpot { kind, building: None, segment: Some(k.segment), side: k.side, slot: k.slot, pos: k.pos, heading: k.heading, since: self.clock.tick, ..Default::default() }
     }
 
-    /// Squeezed onto the street at `p`: no slot, but a place all the same.
+    /// [parking] Nowhere legal: the nearest free slot on a street where
+    /// parking is banned, else a legal one further off. Always a slot of
+    /// its own (it used to be the nearest kerb point, so cars that gave up
+    /// near the same place stood on top of each other).
     fn overflow_spot(&self, p: Vec2) -> Option<ParkSpot> {
-        let (sid, t, _) = self.roads.nearest_street(p)?;
-        let (a, b) = self.roads.segment_points(sid);
-        let len = a.distance(b);
-        let d = (b - a).normalize_or_zero();
-        // The kerb on the side of the street the car is on.
-        let side = if (p - a).perp_dot(d) > 0.0 { 0u8 } else { 1u8 };
-        let along = if side == 0 { t * len } else { (1.0 - t) * len };
-        let (pos, heading) = self.kerb_pose(sid, side, along);
-        Some(ParkSpot { kind: ParkKind::Overflow, building: None, segment: Some(sid), side, slot: u16::MAX, pos, heading, since: self.clock.tick })
+        let k = self
+            .free_illegal_slots_near(p, KERB_WALK, 1)
+            .into_iter()
+            .next()
+            .or_else(|| self.free_kerbs_near(p, 700.0, 1).into_iter().next())
+            .or_else(|| self.free_illegal_slots_near(p, 700.0, 1).into_iter().next())?;
+        Some(self.kerb_spot(k))
     }
 
     /// The best place to leave a car near `p` with nobody to pay: the
@@ -567,7 +605,7 @@ impl World {
             }
         }
         if errand == Errand::ToKerb {
-            if let Some(k) = self.free_kerb_near(pos, 16.0) {
+            if let Some(k) = self.free_kerb_near(pos, 16.0).or_else(|| self.free_illegal_slots_near(pos, 16.0, 1).into_iter().next()) {
                 let spot = self.kerb_spot(k);
                 self.finish_park(car_id, vid, spot, target, tries);
                 return;
@@ -608,8 +646,16 @@ impl World {
         let drive = 9.0 * self.config.traffic_seconds_per_tick;
         let money_w = self.money_weight(driver);
         let mut options: Vec<(f32, Vec<LaneId>, f32, Errand, Option<KerbSlot>)> = Vec::new();
-        for k in self.free_kerbs_near(target, KERB_WALK, 5) {
-            let walk_min = k.pos.distance(target) / walk;
+        // After a few fruitless rounds the driver looks further, and at
+        // slots where parking is banned (a fine, maybe the tow truck).
+        let desperate = tries >= MAX_TRIES;
+        let reach = if desperate { KERB_WALK * 2.0 } else { KERB_WALK };
+        let mut slots: Vec<(KerbSlot, f32)> = self.free_kerbs_near(target, reach, 5).into_iter().map(|k| (k, 0.0)).collect();
+        if desperate {
+            slots.extend(self.free_illegal_slots_near(target, KERB_WALK, 3).into_iter().map(|k| (k, 12.0)));
+        }
+        for (k, risk) in slots {
+            let walk_min = k.pos.distance(target) / walk + risk;
             if k.pos.distance(pos) < 14.0 {
                 // Right here: pull in.
                 options.push((walk_min, Vec::new(), 0.0, Errand::ToKerb, Some(k)));
@@ -650,8 +696,8 @@ impl World {
         // Nothing free in sight (or no way to it from here: lanes never
         // lead back onto the one the car is on): drive round the block
         // and look again.
-        if tries < MAX_TRIES {
-            let r = SEARCH_RADIUS;
+        if tries < GIVE_UP {
+            let r = if desperate { SEARCH_RADIUS * 2.0 } else { SEARCH_RADIUS };
             let mut segs: Vec<SegmentId> = self.roads.segments_in_box(target - Vec2::splat(r), target + Vec2::splat(r)).filter(|&s| self.roads.try_segment(s).is_some_and(|g| g.is_street() && !g.is_highway() && g.lanes() > 0)).collect();
             segs.sort_by_key(|s| s.0);
             if tries == 0 {
@@ -682,10 +728,27 @@ impl World {
         match self.overflow_spot(pos) {
             Some(spot) => self.finish_park(car_id, vid, spot, target, tries.max(1)),
             None => {
-                // No street at all (cannot happen for a car on a lane);
-                // keep it where it is, parked in place.
-                let spot = ParkSpot { kind: ParkKind::Overflow, building: None, segment: None, side: 0, slot: u16::MAX, pos, heading: self.traffic.cars[car_id].heading, since: self.clock.tick };
-                self.finish_park(car_id, vid, spot, target, tries.max(1));
+                // Not one free slot within reach: keep driving round.
+                if let Some(c) = self.traffic.cars.get_mut(car_id) {
+                    c.errand = Errand::Search { tries: MAX_TRIES };
+                }
+                self.circle(car_id, target);
+            }
+        }
+    }
+
+    /// [parking] Drive round the block towards some street near `target`.
+    fn circle(&mut self, car_id: CarId, target: Vec2) {
+        let r = SEARCH_RADIUS * 2.0;
+        let mut segs: Vec<SegmentId> = self.roads.segments_in_box(target - Vec2::splat(r), target + Vec2::splat(r)).filter(|&s| self.roads.try_segment(s).is_some_and(|g| g.is_street() && !g.is_highway() && g.lanes() > 0)).collect();
+        segs.sort_by_key(|s| s.0);
+        for _ in 0..6 {
+            let Some(&sid) = segs.choose(&mut self.rng) else { break };
+            let (a, b) = self.roads.segment_points(sid);
+            if let Some((goal, s_end, _)) = self.traffic.net.nearest_lane_on(sid, a.lerp(b, 0.5)) {
+                if self.traffic.redirect(car_id, goal, s_end) {
+                    return;
+                }
             }
         }
     }
@@ -1039,11 +1102,10 @@ impl World {
 
     /// Does a car on the street still stand where its slot is?
     fn street_spot_valid(&self, s: &ParkSpot) -> bool {
-        let Some(seg) = s.segment.filter(|seg| self.kerb_allowed(*seg)) else { return false };
-        if s.slot == u16::MAX {
-            return true;
-        }
-        s.slot < self.kerb_slots(seg) && self.kerb_sides(seg)[s.side.min(1) as usize] && self.slot_pose(seg, s.side, s.slot).0.distance(s.pos) < 1.0
+        // [parking] Slot-less spots (saves from before every street car had
+        // a slot of its own) are re-found too.
+        let Some(seg) = s.segment.filter(|seg| self.kerb_physical(*seg)) else { return false };
+        s.slot != u16::MAX && s.slot < self.slot_count(seg) && self.kerb_sides(seg)[s.side.min(1) as usize] && self.slot_pose(seg, s.side, s.slot).0.distance(s.pos) < 1.0
     }
 
     /// After a load: give saves from before persistent cars a car for every
@@ -1127,6 +1189,9 @@ impl World {
         for c in self.citizens.values_mut() {
             c.owns_car = c.car.is_some();
         }
+        // [parking] Street cars from older saves without a slot of their
+        // own (stacked on one point) get one now.
+        self.refresh_kerbs();
     }
 
     /// Hourly: cars parked at a building that has gone are moved to the
