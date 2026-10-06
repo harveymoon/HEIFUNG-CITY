@@ -554,7 +554,7 @@ fn worker(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, y: f32) {
     f.bx_yaw(g, Matte, p.x, y + 1.7, p.y, Vec3::new(0.3, 0.14, 0.32), c.palette.helmet, yaw);
 }
 
-// ── demolition ──────────────────────────────────────────────────────────
+// â”€â”€ demolition â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Share of the job spent on the structure itself; the rest is the last of
 /// the rubble and the slab being broken out.
@@ -653,52 +653,63 @@ pub fn demolition_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: 
 
     // The machine.
     if s > STRIP_OUT * 0.5 && s < 0.98 {
-        if cut > HIGH_REACH && !hull.is_empty() {
-            // Tall job: a small excavator on the top slab, a tower crane
-            // lowering the pieces.
+        // A small excavator on the top slab, turned so it and its arm
+        // stay on the slab.
+        let on_roof = |g: &mut Geometry, rng: &mut _| -> bool {
+            if hull.is_empty() || cut < 3.0 {
+                return false;
+            }
             let p = poly_center(&hull);
             let inner = offset_poly(&hull, 1.0);
-            let yaw0 = rng.random_range(0.0..std::f32::consts::TAU);
-            // Turned so the machine and its arm stay on the slab.
+            if inner.len() < 3 {
+                return false;
+            }
+            let yaw0 = rng_angle(rng);
             let on_slab = |yaw: f32| {
                 let (d, n) = (Vec2::new(yaw.cos(), yaw.sin()), Vec2::new(-yaw.sin(), yaw.cos()));
-                [d * 5.6, d * -2.6, n * 1.8, n * -1.8, d * 2.6 + n * 1.8, d * 2.6 - n * 1.8, d * -2.6 + n * 1.8, d * -2.6 - n * 1.8].iter().all(|o| inner.len() >= 3 && point_in_polygon(p + *o, &inner))
+                [d * 5.6, d * -2.6, n * 1.8, n * -1.8, d * 2.6 + n * 1.8, d * 2.6 - n * 1.8, d * -2.6 + n * 1.8, d * -2.6 - n * 1.8].iter().all(|o| point_in_polygon(p + *o, &inner))
             };
-            if let Some(yaw) = (0..8).map(|k| yaw0 + k as f32 * std::f32::consts::FRAC_PI_4).find(|&y| on_slab(y)) {
-                excavator(g, c, rng, p, cut, yaw, None);
+            match (0..8).map(|k| yaw0 + k as f32 * std::f32::consts::FRAC_PI_4).find(|&y| on_slab(y)) {
+                Some(yaw) => {
+                    excavator(g, c, rng, p, cut, yaw, None);
+                    true
+                }
+                None => false,
             }
+        };
+        if cut > HIGH_REACH && !hull.is_empty() {
+            // Tall job: the machine works on the roof, a tower crane lowers
+            // the pieces.
+            on_roof(g, rng);
             tower_crane(g, c, rng, poly, cut, top);
-        } else {
-            // A high-reach excavator on the ground, its arm at the cut.
+        } else if standing {
+            // A high-reach excavator on the ground facing the building, its
+            // arm at the cut; on a lot with no room beside the building, a
+            // small machine on the roof instead.
             let target_y = (cut + 0.6).max(1.6);
-            let mut spot: Option<(Vec2, Vec2)> = None;
-            for face in c.faces(poly) {
+            let mut spot: Option<(Vec2, Vec2, f32)> = None;
+            'faces: for face in c.faces(poly) {
+                let yaw = (-face.out).y.atan2(-face.out.x);
                 for d in [5.5f32, 4.5, 3.6] {
                     let p = face.at(0.0, d);
-                    if fits(c, p, face.yaw(), &clear) {
-                        spot = Some((p, face.mid()));
-                        break;
-                    }
-                }
-                if spot.is_some() {
-                    break;
-                }
-            }
-            if !standing {
-                // Loading out the last heaps from where the building was.
-                if let Some(p) = random_in_poly(rng, poly, 3.0) {
-                    let yaw = rng.random_range(0.0..std::f32::consts::TAU);
-                    // A digging arm, not the long reach.
                     if fits(c, p, yaw, &clear) {
-                        excavator(g, c, rng, p, 0.0, yaw, None);
+                        spot = Some((p, face.mid(), yaw));
+                        break 'faces;
                     }
                 }
-                spot = None;
             }
-            if let Some((p, target)) = spot {
-                let d = target - p;
-                let yaw = d.y.atan2(d.x);
-                excavator(g, c, rng, p, 0.0, yaw, Some((target, target_y)));
+            match spot {
+                Some((p, target, yaw)) => excavator(g, c, rng, p, 0.0, yaw, Some((target, target_y))),
+                None => {
+                    on_roof(g, rng);
+                }
+            }
+        } else if let Some(p) = random_in_poly(rng, poly, 3.0) {
+            // Loading out the last heaps from where the building was.
+            let yaw = rng_angle(rng);
+            let tip = p + Vec2::new(yaw.cos(), yaw.sin()) * 5.6;
+            if fits(c, p, yaw, &clear) && clear(tip) && distance_to_boundary(tip, &c.lot_poly) > 0.6 {
+                excavator(g, c, rng, p, 0.0, yaw, None);
             }
         }
     }
@@ -777,7 +788,7 @@ pub fn clip_above(g: &mut Geometry, cut: f32) -> Vec<Vec2> {
             if ys.iter().all(|&y| y > cut) {
                 continue;
             }
-            // Sutherland–Hodgman against the plane y = cut, keeping below.
+            // Sutherlandâ€“Hodgman against the plane y = cut, keeping below.
             let mut out: Vec<u32> = Vec::with_capacity(4);
             for k in 0..3 {
                 let (a, b) = (tri[k], tri[(k + 1) % 3]);
@@ -837,12 +848,16 @@ fn polygon_inside(inner: &[Vec2], outer: &[Vec2]) -> bool {
     inner.iter().all(|p| point_in_polygon(*p, outer))
 }
 
-/// Room for an excavator (tracks 4.6 × 3.0 m, turning) at `p`.
+fn rng_angle(rng: &mut impl Rng) -> f32 {
+    rng.random_range(0.0..std::f32::consts::TAU)
+}
+
+/// Room for an excavator's body (tracks 4.6 Ã— 3.0 m, turning) at `p`.
 fn fits(c: &Ctx, p: Vec2, yaw: f32, clear: &impl Fn(Vec2) -> bool) -> bool {
     let d = Vec2::new(yaw.cos(), yaw.sin());
     let n = Vec2::new(-d.y, d.x);
     // Corners, sides and the bucket's reach, all clear of the fence.
-    let pts = [d * 2.6 + n * 1.8, d * 2.6 - n * 1.8, -d * 2.6 + n * 1.8, -d * 2.6 - n * 1.8, n * 1.8, -n * 1.8, -d * 2.6, d * 5.6];
+    let pts = [d * 2.6 + n * 1.8, d * 2.6 - n * 1.8, -d * 2.6 + n * 1.8, -d * 2.6 - n * 1.8, n * 1.8, -n * 1.8, -d * 2.6, d * 2.6];
     clear(p) && pts.iter().all(|o| c.inside_local(p + *o) && distance_to_boundary(p + *o, &c.lot_poly) > 0.4)
 }
 
