@@ -299,7 +299,11 @@ impl World {
                 self.redevelop(bid, target, floors.max(1), value);
                 continue;
             } else if lu != LandUse::Park && !special {
-                if target > tier && full && self.rng.random::<f32>() < 0.15 {
+                // A one-step upgrade in place (refit, tenants stay). A cheap
+                // building on dear land two tiers up is not refitted: it
+                // waits for the redevelopment above, which re-lets it.
+                let refit = target > tier && !(tier == Tier::Low && target == Tier::High);
+                if refit && full && self.rng.random::<f32>() < 0.15 {
                     let b = &mut self.buildings[bid];
                     b.tier = tier.up();
                     b.condition = 1.0;
