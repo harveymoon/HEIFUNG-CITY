@@ -24,6 +24,30 @@ fn kind_color(k: IncidentKind) -> egui::Color32 {
     }
 }
 
+fn charts(ui: &mut egui::Ui, p: &mut UiCtx) {
+    use super::pane::{self, Series};
+    let span = pane::span_picker(ui, super::Info::Emergencies);
+    let days = pane::days(&p.sim.world.economy.history, if span == pane::Span::Hours { pane::Span::Week } else { span });
+    let labels = pane::day_labels(&days);
+    section(ui, "CALLS PER DAY");
+    let series = [
+        Series::new("fire", FIRE, pane::col(&days, |d| d.incidents[0] as f32)),
+        Series::new("crime", CRIME, pane::col(&days, |d| d.incidents[1] as f32)),
+        Series::new("medical", MEDICAL, pane::col(&days, |d| d.incidents[2] as f32)),
+    ];
+    pane::stacked_bars(ui, &labels, &series, 110.0, false, None, &|x| format!("{x:.0}"));
+    pane::legend(ui, &series.iter().map(|s| (s.name.as_str(), s.color)).collect::<Vec<_>>());
+    section(ui, "RESPONSE");
+    let series = [
+        Series::new("avg minutes to arrive", egui::Color32::from_rgb(235, 180, 90), pane::col(&days, |d| d.avg_response_min)),
+        Series::new("unanswered", egui::Color32::from_rgb(255, 90, 90), pane::col(&days, |d| d.unanswered as f32)),
+        Series::new("help from the next town", egui::Color32::from_rgb(200, 120, 230), pane::col(&days, |d| d.out_of_town_calls as f32)),
+    ];
+    pane::line_chart(ui, &labels, &series, 100.0, &|x| format!("{x:.0}"));
+    pane::legend(ui, &series.iter().map(|s| (s.name.as_str(), s.color)).collect::<Vec<_>>());
+    hint(ui, "The out-of-town fees are itemised under service upkeep in the Economy window.");
+}
+
 /// "day 3 14:05" for a tick.
 pub fn when(tick: u64) -> String {
     format!("day {} {:02}:{:02}", tick / 1440 + 1, (tick % 1440) / 60, tick % 60)
@@ -41,7 +65,13 @@ enum Filter {
     Kind(IncidentKind),
 }
 
-pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
+/// `big` is the expanded view: calls and response times over the days
+/// above the live list and the record.
+pub fn window(ui: &mut egui::Ui, p: &mut UiCtx, big: bool) {
+    if big {
+        charts(ui, p);
+        ui.separator();
+    }
     let w = &p.sim.world;
     let s = &w.services;
     let st = &s.stats;

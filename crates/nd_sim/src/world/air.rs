@@ -803,7 +803,7 @@ impl World {
             c.inside = None;
             c.remember(tick, format!("Took a drone taxi to {to_name}. {fare:.0} well spent."));
         }
-        self.economy.credit(Flow::BusinessTax, fare * air::LEVY);
+        self.economy.credit_item(Flow::BusinessTax, fare * air::LEVY, Item::Named("air taxi levy".into()));
         let a = &mut self.air;
         a.company.revenue_today += fare * (1.0 - air::LEVY);
         a.stats.riders_today += 1;

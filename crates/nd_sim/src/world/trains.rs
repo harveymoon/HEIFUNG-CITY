@@ -53,7 +53,7 @@ impl World {
         for (_, lot) in under {
             self.take_over_lot(lot, kind.label())?;
         }
-        self.economy.debit(Flow::Construction, cost);
+        self.economy.debit_item(Flow::Construction, cost, Item::Named(kind.label().to_string()));
         let fid = self.facilities.insert(facility.clone());
         // Connector stubs become part of the plan, so they survive rebuilds
         // and roads and track can be snapped onto their ends.
@@ -479,7 +479,7 @@ impl World {
                     self.travel_to_impl(p, Some(trip.target), trip.purpose, true, false);
                 }
                 let name = self.buildings.get(at).map(|b| b.name.clone()).unwrap_or_default();
-                let boarding = self.board_waiting(|leg| matches!(leg, TransitLeg::Rail { board, .. } if *board == at), rail::TRAIN_CAPACITY.saturating_sub(keep.len()), rail::RAIL_FARE, Flow::RailFares, &format!("Took the train from {name}."));
+                let boarding = self.board_waiting(|leg| matches!(leg, TransitLeg::Rail { board, .. } if *board == at), rail::TRAIN_CAPACITY.saturating_sub(keep.len()), rail::RAIL_FARE, Flow::RailFares, Item::Building(at), &format!("Took the train from {name}."));
                 for p in boarding {
                     self.citizens[p].activity = Activity::OnTrain { train: id };
                     keep.push(p);
@@ -505,15 +505,16 @@ impl World {
 
     /// People waiting at a stop or station whose leg `pred` accepts board,
     /// up to `capacity`: each pays `fare` into the treasury under `flow`
-    /// and remembers `memory`. The caller seats them in its vehicle.
-    pub(super) fn board_waiting(&mut self, pred: impl Fn(&TransitLeg) -> bool, capacity: usize, fare: f32, flow: Flow, memory: &str) -> Vec<CitizenId> {
+    /// and remembers `memory`. The caller seats them in its vehicle. The
+    /// fares are itemised under `item` (the bus line, the station).
+    pub(super) fn board_waiting(&mut self, pred: impl Fn(&TransitLeg) -> bool, capacity: usize, fare: f32, flow: Flow, item: Item, memory: &str) -> Vec<CitizenId> {
         let tick = self.clock.tick;
         let boarding: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.as_ref().is_some_and(|t| pred(&t.leg))).map(|(id, _)| id).take(capacity).collect();
         for &p in &boarding {
             let c = &mut self.citizens[p];
             c.savings -= fare;
             c.remember(tick, memory.to_string());
-            self.economy.credit(flow, fare);
+            self.economy.credit_item(flow, fare, item.clone());
         }
         boarding
     }

@@ -797,7 +797,7 @@ impl World {
         };
         if self.vehicles.city_lots.contains_key(&b) {
             // [parking] A lot the city runs: the fee goes to the treasury.
-            self.economy.credit(Flow::ParkingFees, fee);
+            self.economy.credit_item(Flow::ParkingFees, fee, Item::Building(b));
             self.enforcement.stats.city_lot_fees_today += fee;
             if let Some(bz) = self.buildings[b].business.as_mut() {
                 bz.deals += 1;

@@ -61,6 +61,24 @@ impl PowerPlantKind {
         }
     }
 
+    /// Position in `ALL`: the slot in per-kind arrays.
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The kind's name without "plant" or "farm", for chart legends.
+    pub fn short(self) -> &'static str {
+        match self {
+            PowerPlantKind::Coal => "coal",
+            PowerPlantKind::Solar => "solar",
+            PowerPlantKind::Wind => "wind",
+            PowerPlantKind::Nuclear => "nuclear",
+            PowerPlantKind::Hydro => "hydro",
+            PowerPlantKind::Tidal => "tidal",
+            PowerPlantKind::Geothermal => "geothermal",
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             PowerPlantKind::Coal => "coal plant",
@@ -242,6 +260,10 @@ pub struct PowerStats {
     pub imported_mw: f32,
     pub import_cost_today: f32,
     pub upkeep_today: f32,
+    /// This hour's supply by kind of plant (`PowerPlantKind::index`), for
+    /// the Power window's chart of where the megawatts come from.
+    #[serde(default)]
+    pub supply_by_kind: [f32; 7],
 }
 
 /// Power the regional grid will sell the city, in megawatts, and its price

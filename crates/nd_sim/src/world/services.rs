@@ -134,7 +134,7 @@ impl World {
             return Err(problem);
         }
         self.take_over_lot(lot_id, kind.tier_label(tier))?;
-        self.economy.debit(Flow::Construction, what.cost());
+        self.economy.debit_item(Flow::Construction, what.cost(), Item::Named(kind.tier_label(tier).to_string()));
         let n = self.srng().random_range(0..1000u32);
         let name = kind.name(tier, n);
         let floors = service_floors(kind, tier);
@@ -1326,7 +1326,7 @@ impl World {
         let Some(inc) = self.services.incident(id).cloned() else { return };
         let uk = inc.kind.unit();
         let fee = OUT_OF_TOWN_FEE[inc.kind.slot()];
-        self.economy.debit(Flow::ServiceUpkeep, fee);
+        self.economy.debit_item(Flow::ServiceUpkeep, fee, Item::Named(format!("{} from the next town", uk.label())));
         self.services.stats.out_of_town_calls_today += 1;
         self.services.stats.out_of_town_fees_today += fee;
         if let Some(d) = inc.dispatcher.and_then(|d| self.citizens.get_mut(d)) {
@@ -1640,7 +1640,7 @@ impl World {
                     }
                     None => 0.0,
                 };
-                self.economy.credit(Flow::ServiceUpkeep, paid);
+                self.economy.credit_item(Flow::ServiceUpkeep, paid, Item::Named("hospital bills paid by patients".into()));
                 self.services.stats.bills_paid_today += paid;
                 self.services.stats.bills_covered_today += HOSPITAL_BILL - paid;
                 if let Some(i) = self.services.incident_mut(id) {
@@ -1866,7 +1866,7 @@ impl World {
                 c.savings -= TICKET_PRICE;
                 c.remember(tick, format!("Got a ticket for tonight's game at {name}."));
                 c.thought = "Game night!".to_string();
-                self.economy.credit(Flow::Tickets, TICKET_PRICE);
+                self.economy.credit_item(Flow::Tickets, TICKET_PRICE, Item::Building(sid));
                 self.services.stats.tickets_today += TICKET_PRICE;
                 self.travel_to(cid, Some(sid), Purpose::Visit(lu));
             }
@@ -1878,8 +1878,11 @@ impl World {
     /// Midnight: upkeep, the schooling wage bonus, tonight's games, and the
     /// day's counters roll over. Runs before `daily_update` closes the books.
     pub(super) fn daily_services(&mut self) {
-        let upkeep: f32 = self.buildings.values().filter_map(|b| b.service).map(|s| s.kind.upkeep_per_day(s.tier)).sum();
-        self.economy.debit(Flow::ServiceUpkeep, upkeep);
+        let sites: Vec<(BuildingId, f32)> = self.buildings.iter().filter_map(|(id, b)| b.service.map(|s| (id, s.kind.upkeep_per_day(s.tier)))).collect();
+        let upkeep: f32 = sites.iter().map(|(_, x)| x).sum();
+        for (id, x) in sites {
+            self.economy.debit_item(Flow::ServiceUpkeep, x, Item::Building(id));
+        }
         // Workers living near a school earn more: night classes, a trade.
         let mut bonus = 0.0;
         let cids: Vec<CitizenId> = self.citizens.keys().collect();

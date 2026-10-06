@@ -37,7 +37,8 @@ impl World {
                 continue;
             }
             self.economy.tax_today += revenue * 0.05;
-            self.economy.credit(Flow::BusinessTax, revenue * 0.05);
+            let lu = b.land_use;
+            self.economy.credit_item(Flow::BusinessTax, revenue * 0.05, Item::LandUse(lu));
             if !publicly_funded {
                 bz.money -= wage_bill;
                 bz.spend_today += wage_bill;

@@ -28,7 +28,7 @@ impl World {
             return Err(format!("the treasury has {:.0}; a depot costs {:.0}", self.economy.treasury, transit::DEPOT_COST));
         }
         self.take_over_lot(lot_id, "bus depot")?;
-        self.economy.debit(Flow::Construction, transit::DEPOT_COST);
+        self.economy.debit_item(Flow::Construction, transit::DEPOT_COST, Item::Named("bus depot".into()));
         let name = format!("Depot {}", self.rng.random_range(1..20));
         Ok(self.place_special(lot_id, name, transit::DEPOT_JOBS, 0, |b| b.depot = true))
     }
@@ -246,7 +246,7 @@ impl World {
         // On, up to the capacity.
         let _ = tick;
         let memory = format!("Caught the {} bus.", self.transit.routes[bus.route].name);
-        let boarding = self.board_waiting(|leg| matches!(leg, TransitLeg::Bus { route, board, .. } if *route == bus.route && *board == stop_idx), transit::BUS_CAPACITY.saturating_sub(passengers.len()), fare, Flow::BusFares, &memory);
+        let boarding = self.board_waiting(|leg| matches!(leg, TransitLeg::Bus { route, board, .. } if *route == bus.route && *board == stop_idx), transit::BUS_CAPACITY.saturating_sub(passengers.len()), fare, Flow::BusFares, Item::Route(bus.route), &memory);
         for p in boarding {
             self.citizens[p].activity = Activity::Riding { bus: car_id };
             passengers.push(p);

@@ -29,7 +29,7 @@ impl World {
             return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), kind.build_cost()));
         }
         self.take_over_lot(lot_id, kind.label())?;
-        self.economy.debit(Flow::Construction, kind.build_cost());
+        self.economy.debit_item(Flow::Construction, kind.build_cost(), Item::Named(kind.label().to_string()));
         let name = format!("{} {}", match kind {
             PowerPlantKind::Coal => "Blackridge",
             PowerPlantKind::Solar => "Sunfield",
@@ -71,22 +71,36 @@ impl World {
         }
     }
 
+    /// What a plant puts on the grid this hour: nameplate, times what the
+    /// weather and the hour allow, times what its site supports. Zero for
+    /// a derelict plant or any other building.
+    pub fn plant_output_mw(&self, b: &Building) -> f32 {
+        let Some(kind) = b.plant else { return 0.0 };
+        if b.is_derelict() {
+            return 0.0;
+        }
+        let site = self.power_site(b.lot, kind).unwrap_or(0.0);
+        kind.capacity_mw() * kind.availability(&self.weather, self.clock.day_fraction()) * site
+    }
+
     /// Share the hour's supply out: plants first, then what the regional
     /// grid will sell; the rich are served first, so cheap districts brown
     /// out first. Buildings whose power state changes are redrawn.
     pub(super) fn allocate_power(&mut self) {
-        let day = self.clock.day_fraction();
         let mut supply: f32 = 0.0;
         let mut plants = 0;
+        let mut by_kind = [0.0f32; 7];
         for b in self.buildings.values() {
             if let Some(kind) = b.plant {
                 if !b.is_derelict() {
-                    let site = self.power_site(b.lot, kind).unwrap_or(0.0);
-                    supply += kind.capacity_mw() * kind.availability(&self.weather, day) * site;
+                    let mw = self.plant_output_mw(b);
+                    supply += mw;
+                    by_kind[kind.index()] += mw;
                     plants += 1;
                 }
             }
         }
+        self.economy.power.supply_by_kind = by_kind;
         let demand: f32 = self.buildings.values().map(demand_mw).sum::<f32>() + 0.0; // sum of nothing is -0.0
         let shortfall = (demand - supply).max(0.0);
         let imported = shortfall.min(GRID_IMPORT_MW);

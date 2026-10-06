@@ -8,11 +8,14 @@
 
 /// [concerns] The People window's complaints tab.
 mod concerns;
+mod detail;
+mod economy;
 mod emergencies;
 mod help;
 mod hover;
 mod inspector;
 pub mod newgame;
+pub mod pane;
 pub mod people;
 mod person;
 mod places;
