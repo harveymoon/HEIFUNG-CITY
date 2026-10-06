@@ -770,6 +770,8 @@ fn emergency(w: &World) -> Value {
         "dispatch": { "dispatcher_on_duty": dispatcher.map(key_str), "minutes_to_dispatch": delay },
         "stadium_crowd_today": st.stadium_crowd_today, "tickets_today": round(st.tickets_today), "stadium_events_tonight": s.events_today.len(),
         "upkeep_per_day": round(st.upkeep_today), "education_wage_bonus_today": round(st.education_bonus_today), "pupils_today": st.pupils_today,
+        "jailed": st.jailed, "held_at_stations": st.held_at_stations, "released_early_total": st.released_early_total,
+        "out_of_town_calls_today": st.out_of_town_calls_today, "out_of_town_fees_today": round(st.out_of_town_fees_today),
         "hospital_bills_paid_today": round(st.bills_paid_today), "hospital_bills_covered_by_city_today": round(st.bills_covered_today),
         "stations": stations, "active_incidents": active, "recent": recent,
     })

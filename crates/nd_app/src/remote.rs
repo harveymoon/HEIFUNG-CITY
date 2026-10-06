@@ -253,6 +253,8 @@ fn log_events(sim: Res<Sim>, flags: Res<UiFlags>, tools: Res<ToolState>, mut log
             }
             SimEvent::FireSpread(b) => json!({ "kind": "FireSpread", "building": key_str(*b), "name": building_name(w, Some(*b)) }),
             SimEvent::BurnedDown(b, l) => json!({ "kind": "BurnedDown", "building": key_str(*b), "lot": key_str(*l) }),
+            SimEvent::Arrested(i, c) => json!({ "kind": "Arrested", "incident": i, "citizen": key_str(*c), "name": w.citizens.get(*c).map(|x| x.name.as_str()) }),
+            SimEvent::Released(c) => json!({ "kind": "Released", "citizen": key_str(*c), "name": w.citizens.get(*c).map(|x| x.name.as_str()) }),
             SimEvent::StadiumEvent(b) => json!({ "kind": "StadiumEvent", "building": key_str(*b), "name": building_name(w, Some(*b)) }),
             SimEvent::NewThought(c) => {
                 let cit = w.citizens.get(*c);
@@ -435,6 +437,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         "place" => place(cmd, ctx),
         "incident" => incident(cmd, ctx),
+        "incidents" => incidents(cmd, ctx),
         "bus" => bus(cmd, ctx),
         "find" => find(cmd, ctx),
         "inspect" => inspect(cmd, ctx),
@@ -824,6 +827,47 @@ fn incident(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         _ => return Err(format!("unknown incident kind {kind:?}; fire, crime or medical")),
     };
     Ok(json!({ "incident": id }))
+}
+
+/// The incident record: `active` (only those under way), `limit` (newest
+/// first, default 50), `kind` fire / crime / medical.
+fn incidents(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let w = &ctx.sim.world;
+    let only_active = opt_bool(cmd, "active")?.unwrap_or(false);
+    let limit = opt_u64(cmd, "limit")?.unwrap_or(50) as usize;
+    let kind = opt_str(cmd, "kind")?.map(|k| k.to_ascii_lowercase());
+    let rows: Vec<Value> = w
+        .services
+        .incidents
+        .iter()
+        .rev()
+        .filter(|i| !only_active || i.active())
+        .filter(|i| kind.as_deref().is_none_or(|k| i.kind.label() == k))
+        .take(limit)
+        .map(|i| incident_row(w, i))
+        .collect();
+    let s = &w.services.stats;
+    Ok(json!({
+        "returned": rows.len(), "total_on_record": w.services.incidents.len(), "active": w.services.active().count(),
+        "jail_occupancy": w.services.jail_occupancy().iter().map(|(b, n)| json!({ "jail": key_str(*b), "name": building_name(w, Some(*b)), "inmates": n })).collect::<Vec<_>>(),
+        "held_at_stations": s.held_at_stations, "released_early_total": s.released_early_total,
+        "out_of_town_calls_today": s.out_of_town_calls_today, "out_of_town_fees_today": round(s.out_of_town_fees_today),
+        "incidents": rows,
+    }))
+}
+
+fn incident_row(w: &nd_sim::World, i: &nd_sim::Incident) -> Value {
+    json!({
+        "id": i.id, "kind": i.kind.label(), "title": i.title(), "stage": i.stage.label(), "outcome": i.outcome.map(|o| o.label()),
+        "building": key_str(i.building), "place": i.place, "pos": v2(i.pos),
+        "started": i.started, "called": i.reported, "dispatched": i.dispatched, "arrived": i.arrived, "resolved": i.resolved,
+        "call_to_dispatch_min": i.dispatched.zip(i.reported).map(|(a, b)| a.saturating_sub(b)), "dispatch_to_scene_min": i.travel_ticks(),
+        "on_scene_min": i.work_ticks(), "call_to_arrival_min": i.response_ticks(),
+        "unit": i.unit_name, "out_of_town": i.outside, "fee": round(i.fee), "intensity": round(i.intensity),
+        "people": i.people.iter().map(|p| json!({ "citizen": key_str(p.citizen), "name": p.name, "role": p.role, "taken_to": p.taken_to })).collect::<Vec<_>>(),
+        "damage": i.damage.iter().map(|d| json!({ "building": key_str(d.building), "name": d.name, "condition_lost": round(d.lost), "destroyed": d.destroyed })).collect::<Vec<_>>(),
+        "still_burning": i.active() && i.kind == nd_sim::IncidentKind::Fire && w.services.is_burning(i.building),
+    })
 }
 
 // ── buses ───────────────────────────────────────────────────────────────────
@@ -1458,6 +1502,7 @@ fn help() -> Value {
             "grant": { "amount": "money added to the treasury (dev), default 100000" },
             "landscape": { "returns": "preset and levers, rivers (width, current, hydro_ok), lakes, sea, hot spots, highway ends and through cars, bridges, docks, ships" },
             "incident": { "kind": "fire|crime|medical", "building": "id", "citizen": "id (medical)" },
+            "incidents": { "active": "bool (only those under way)", "limit": "default 50, newest first", "kind": "fire|crime|medical" },
             "bus": { "action": "new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses" },
             "find": { "what": "citizens|buildings|lots|cars|trains|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
             "inspect": { "citizen|building|lot|car|train|route": "id", "gesture": "int; with no id, the current selection" },

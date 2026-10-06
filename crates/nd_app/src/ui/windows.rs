@@ -23,6 +23,8 @@ pub enum Info {
     People,
     Power,
     Transit,
+    /// 911 calls, live and on record (ui/emergencies.rs).
+    Emergencies,
     Land,
     Saves,
     Help,
@@ -30,7 +32,7 @@ pub enum Info {
 }
 
 impl Info {
-    pub const ALL: [Info; 10] = [Info::City, Info::Economy, Info::Market, Info::People, Info::Power, Info::Transit, Info::Land, Info::Saves, Info::Help, Info::Dev];
+    pub const ALL: [Info; 11] = [Info::City, Info::Economy, Info::Market, Info::People, Info::Power, Info::Transit, Info::Emergencies, Info::Land, Info::Saves, Info::Help, Info::Dev];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -40,6 +42,7 @@ impl Info {
             Info::People => "People",
             Info::Power => "Power",
             Info::Transit => "Transit",
+            Info::Emergencies => "Emergencies",
             Info::Land => "Land",
             Info::Saves => "Saves",
             Info::Help => "Help",
@@ -52,6 +55,7 @@ impl Info {
         match self {
             Info::People => 420.0,
             Info::Help => 440.0,
+            Info::Emergencies => 480.0,
             Info::Dev => 300.0,
             _ => 380.0,
         }
@@ -94,6 +98,7 @@ pub fn show_all(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
                 Info::People => people::window(ui, p),
                 Info::Power => power(ui, p),
                 Info::Transit => transit(ui, p),
+                Info::Emergencies => super::emergencies::window(ui, p),
                 Info::Land => land(ui, p),
                 Info::Saves => saves::panel(ui, p.sim, p.tools, p.selection, p.plan, p.saves, p.flags),
                 Info::Help => help_window(ui),

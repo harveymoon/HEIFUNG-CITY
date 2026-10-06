@@ -102,7 +102,11 @@ links Bevy dynamically for quicker iteration.
   engine, police car or ambulance drives there with lights flashing, works on scene and returns; the
   sick go to a hospital bed. Fires nobody fights spread and burn buildings down to rubble. Coverage
   cuts the risks and lifts land value; schools raise the wages of workers living near them; stadiums
-  host games some evenings (crowds, tickets); monuments lift the land around them.
+  host games some evenings (crowds, tickets); monuments lift the land around them. Jails hold the
+  arrested for days (without one they are let go after a few hours). With no station of the right
+  kind, a dispatcher calls in help from out of town: slow and billed. The **Emergencies** window lists
+  every call live and on record: who called, the dispatcher, the unit, times from dispatch to scene
+  and on scene, the people involved and where they were taken, and fire damage.
 - **Power**: buildings need electricity. The Buildings tool's Power category places a coal plant, solar farm, wind
   farm or nuclear plant on a vacant lot, paid from the treasury. Coal is cheap and steady but hangs a
   toxic haze over the district and drags land value down; solar and wind are clean but follow the sun,

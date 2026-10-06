@@ -252,7 +252,7 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
             }
             let cap = k.capacity(t);
             if cap > 0 {
-                line += &format!(", {cap} {}", match k { ServiceKind::Health => "beds", ServiceKind::Stadium => "seats", _ => "places" });
+                line += &format!(", {cap} {}", match k { ServiceKind::Health => "beds", ServiceKind::Stadium => "seats", ServiceKind::Jail => "cells", _ => "places" });
             }
             line += ". ";
             line += help::service_note(k);

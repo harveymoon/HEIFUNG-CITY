@@ -273,6 +273,16 @@ Citizens are rendered from their simulated positions every frame.
   leaving rubble for two days. Workers near a school earn up to 12 % more; school-age children whose home a school covers go there at 07:30 until it closes at 16:00. Stations, hospitals and dispatch work three round-the-clock shifts; the sick are weighted by age (small children and the old most); a hospital stay bills the household 60, the city covering what it cannot pay. Stadiums host a game on
   30-60 % of evenings; fans within 1.6 km buy a ticket and go. Upkeep is booked at midnight under
   `service upkeep`, tickets under `tickets`. A placed special buys out whatever grew on its lot.
+  With no crewed station of the kind but a dispatcher at a dispatch centre, a unit comes from out of
+  town 45 minutes after dispatch and is billed (fire 1500, police 600, ambulance 800); with no
+  dispatcher nobody asks. Arrests go to the nearest jail with room for 2-5 days; without one the
+  suspect is held at a police station for 6 hours and let go early (`released_early_total`), so the
+  same people offend again. `World::report_crime(kind, at, suspect, victim)` is the hook for crimes
+  decided elsewhere; `Services::arrests_of`, `jail_occupancy`, `SimEvent::Arrested/Released` report
+  back. Every incident keeps a record (place, crime kind, people and their roles and where they were
+  taken, unit and whether it came from out of town, fee, fire damage per building), the last 500
+  resolved ones on file, shown live in the Emergencies window and by the `incidents` API command.
+  Services draw from their own random stream so the rest of the simulation is not perturbed.
 - **Economy stats**: demand per land use, Gini of incomes, class counts, rents per
   tier, displaced, emigrated and priced-out counters, plus market stats: businesses,
   deals, imports, exports, meals sold, hungry citizens, closures, and the average

@@ -60,5 +60,6 @@ pub fn service_note(k: nd_sim::ServiceKind) -> &'static str {
         K::Dispatch => "Its staff answer 911: with a dispatcher at the desk units go out in minutes, without one calls go to the slow regional line.",
         K::Monument => "Lifts land value around it; people come to look.",
         K::Stadium => "Hosts games some evenings: crowds come, tickets pay into the treasury.",
+        K::Jail => "Arrested suspects serve days here; without one they are held a few hours at a police station and let go early.",
     }
 }

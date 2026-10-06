@@ -127,7 +127,7 @@ Reply: `gesture_id`, `implemented`, `project` (`steps`, `redo`), `plan_version`.
   street stub to join to the city.
 - `depot`, `parking`, `coal`, `solar`, `wind`, `nuclear`: on the lot under the point, or the nearest
   vacant lot within 80 m (`build_depot`, `build_parking`, `build_power`).
-- Services and attractions: `police`, `fire`, `hospital` (`clinic` is a low-tier hospital), `school`,
+- Services and attractions: `police`, `fire`, `hospital` (`clinic` is a low-tier hospital), `school`, `jail`,
   `dispatch`, `monument`, `stadium`, with `tier` low / mid / high (default mid) or a suffix
   (`"fire:high"`), on the lot under the point (`World::place_on_lot`, `build_service`). Whatever grew
   on the lot is bought out and pulled down; another civic building refuses ("bulldoze it first").
@@ -409,11 +409,20 @@ the time spent on the main thread inside the frame; best and worst of five calls
 
 ## Services and emergencies
 
+`incidents {active?, limit?, kind?}` returns the record, newest first (up to 500 kept): id, kind,
+title (fire, robbery, theft, assault, vandalism, medical), stage, outcome, place, pos, the ticks it
+started / was called in / dispatched / arrived / resolved, call_to_dispatch_min, dispatch_to_scene_min,
+on_scene_min, call_to_arrival_min, unit ("Engine 2, Eastgate Fire HQ" or "fire engine from out of
+town"), out_of_town, fee, people (citizen, name, role caller / dispatcher / victim / suspect /
+patient, taken_to), damage (building, name, condition_lost, destroyed); plus jail_occupancy,
+held_at_stations, released_early_total and today's out-of-town calls and fees. The Emergencies
+window (`window {name: "emergencies"}`) shows the same, live.
+
 `incident {kind, building | citizen}` starts one by hand (fire, crime or medical) for testing; reply
 `incident` (its id, as in the report and the events).
 
 Events in the log (`events`): `IncidentStarted`, `EmergencyCall`, `UnitDispatched`, `UnitOnScene`,
 `IncidentResolved` (each with `incident`, `type` fire / crime / medical, `building`, `outcome`),
-`FireSpread`, `BurnedDown`, `StadiumEvent`. Building rows carry `service` (`"fire:mid"`) and
+`FireSpread`, `BurnedDown`, `StadiumEvent`, `Arrested` (incident, citizen), `Released` (citizen). Building rows carry `service` (`"fire:mid"`) and
 `burning`. Emergency vehicles are cars in `find {what: "cars"}`; the units behind them are in
 `report {sections: ["services"]}` under `emergency.stations` and `emergency.active_incidents`.
