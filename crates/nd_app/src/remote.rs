@@ -393,6 +393,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "list_saves" => Ok(list_saves()),
         "plan" => Ok(plan(ctx)),
         "add_road" => add_road(cmd, ctx),
+        "add_roundabout" => add_roundabout(cmd, ctx),
         "add_zone" => add_zone(cmd, ctx),
         "paint" => paint(cmd, ctx),
         "bulldoze" => {
@@ -835,6 +836,42 @@ fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let mut v = project_state(ctx);
     v["gesture_id"] = json!(id.0);
     v["implemented"] = json!(implemented);
+    Ok(v)
+}
+
+/// `add_roundabout {center, radius | diameter, lanes, implement?}`: stamp a
+/// roundabout into the project as the Road tool does (the centre snaps onto
+/// a junction or street). Reply: what it cuts and joins and the buildings
+/// it would take, besides the project state.
+fn add_roundabout(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let center = view::opt_vec2(cmd, "center")?.map_or_else(|| view::req_point(cmd), Ok)?;
+    let radius = match (opt_f32(cmd, "radius")?, opt_f32(cmd, "diameter")?) {
+        (Some(r), _) => r,
+        (None, Some(d)) => d * 0.5,
+        (None, None) => ctx.tools.ring_radius,
+    };
+    let lanes = opt_u64(cmd, "lanes")?.map_or(ctx.tools.ring_lanes, |n| n as u8);
+    if !(1..=2).contains(&lanes) {
+        return Err("a roundabout has 1 or 2 ring lanes".into());
+    }
+    let id = ctx.sim.world.add_roundabout(center, radius, lanes)?;
+    let ring = ctx.sim.world.gesture(id).and_then(|g| g.ring()).ok_or("roundabout not in the plan")?;
+    let fx = nd_sim::plan::ring_effect(ctx.sim.world.effective_plan(), ring);
+    let takes: Vec<Value> = ctx.sim.world.roundabout_takes(ring).into_iter().filter_map(|l| ctx.sim.world.lots.get(l).and_then(|x| x.building)).map(|b| json!(view::key_str(b))).collect();
+    let implemented = opt_bool(cmd, "implement")?.unwrap_or(false);
+    if implemented {
+        ctx.sim.world.implement();
+    }
+    ctx.tools.status = format!("Roundabout {:.0} m across added by remote{}", ring.radius * 2.0, if implemented { " and implemented" } else { " (pending)" });
+    let mut v = project_state(ctx);
+    v["gesture_id"] = json!(id.0);
+    v["implemented"] = json!(implemented);
+    v["roundabout"] = json!({
+        "center": [ring.center.x, ring.center.y], "radius": ring.radius, "diameter": ring.radius * 2.0, "lanes": ring.lanes,
+        "joins": fx.joins.iter().map(|p| json!([p.x, p.y])).collect::<Vec<_>>(),
+        "cuts_roads": fx.cut_roads.iter().map(|g| g.0).collect::<Vec<_>>(),
+        "takes_buildings": takes,
+    });
     Ok(v)
 }
 
@@ -1371,7 +1408,22 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             t.drag = None;
         }
     }
-    if let Some(preset) = opt_str(cmd, "preset")? {
+    if let Some(at) = view::opt_vec2(cmd, "ring_at")? {
+        t.ring_pin = Some(at);
+        t.ring_hover = Some(at);
+    }
+    if let Some(d) = opt_f32(cmd, "diameter")? {
+        t.ring_radius = (d * 0.5).clamp(nd_sim::roads::RING_MIN_RADIUS, nd_sim::roads::RING_MAX_RADIUS);
+    }
+    if let Some(n) = opt_u64(cmd, "ring_lanes")? {
+        t.ring_lanes = (n as u8).clamp(1, 2);
+    }
+    if let Some(preset) = opt_str(cmd, "preset").ok().flatten().filter(|p| p.eq_ignore_ascii_case("roundabout")) {
+        let _ = preset;
+        t.tool = Tool::Road;
+        t.roundabout = true;
+    } else if let Some(preset) = opt_str(cmd, "preset")? {
+        t.roundabout = false;
         let (_, f, b, k) = ROAD_PRESETS.iter().find(|(l, ..)| l.eq_ignore_ascii_case(preset)).ok_or_else(|| format!("unknown preset {preset:?}; one of {}", ROAD_PRESETS.iter().map(|p| p.0).collect::<Vec<_>>().join(", ")))?;
         t.kind = *k;
         if *k == RoadKind::Street {
@@ -1686,6 +1738,7 @@ fn help() -> Value {
             "load": { "path": "a .ron save" },
             "list_saves": {},
             "plan": {},
+            "add_roundabout": { "center": "[x,y] (snaps onto a junction within 12 m or a street within 6 m)", "radius": "m to the ring centreline, 12..40 (or diameter 24..80)", "lanes": "1|2 ring lanes", "implement": "bool", "returns": "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state" },
             "add_road": { "points": "[[x,y],...] (2+)", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true", "implement": "bool, default false (pending in the project)" },
             "add_zone": { "polygon": "[[x,y],...] (3+)", "land_use": "residential|commercial|industrial|entertainment|civic|park", "implement": "bool" },
             "bulldoze": { "gesture_id": "int", "implement": "bool" },
@@ -1726,7 +1779,7 @@ fn help() -> Value {
     }
     // Planning: several projects, and painting parcels.
     let planning = json!({
-        "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway", "kind": "sub-mode of the active tool", "mode": "zone tool: polygon|brush|marquee", "radius": "zone brush radius m", "unzone": "bool", "industry": "zone tool sub-zone for industrial land: auto|farming|oil|...", "land_use": "(or none: the brush unzones)", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
+        "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway|Roundabout", "diameter": "roundabout 24..80 m", "ring_lanes": "roundabout 1|2", "ring_at": "[x,y]: show the roundabout preview there as if hovered (until the mouse is used)", "kind": "sub-mode of the active tool", "mode": "zone tool: polygon|brush|marquee", "radius": "zone brush radius m", "unzone": "bool", "industry": "zone tool sub-zone for industrial land: auto|farming|oil|...", "land_use": "(or none: the brush unzones)", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
         "project": { "action": "list|new|switch|rename|delete|park|start|implement|undo|redo|discard", "id": "project id (default: the active one)", "name": "for new/rename, or to pick a project by name", "note": "several named projects; the active one is edited, the rest previewed dim; implement builds one at a time, the later one wins where two change the same gesture or parcel (warnings in the reply)" },
         "paint": { "land_use": "residential|...|park, or none to unzone", "at": "[x,y] brush centre", "radius": "m (default the tool's)", "industry": "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech, the sub-zone set on implement", "rect": "[[x0,y0],[x1,y1]] marquee", "polygon": "[[x,y],...]", "implement": "bool", "note": "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step" }
     });

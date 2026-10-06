@@ -27,8 +27,9 @@ pub fn sub_pane(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &
 fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
     ui.horizontal_wrapped(|ui| {
         for (label, f, b, k) in ROAD_PRESETS {
-            let on = tools.kind == k && (k != RoadKind::Street || (tools.lanes_fwd == f && tools.lanes_bwd == b));
+            let on = !tools.roundabout && tools.kind == k && (k != RoadKind::Street || (tools.lanes_fwd == f && tools.lanes_bwd == b));
             if icons::selectable(ui, on, label, |p, r, c| icons::road(p, r, k, f, b, c)).on_hover_text(preset_hint(label)).clicked() {
+                tools.roundabout = false;
                 tools.kind = k;
                 if k == RoadKind::Street {
                     tools.lanes_fwd = f;
@@ -36,7 +37,27 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
                 }
             }
         }
+        if icons::selectable(ui, tools.roundabout, "Roundabout", |p, r, c| icons::roundabout(p, r, c)).on_hover_text(preset_hint("Roundabout")).clicked() {
+            tools.roundabout = true;
+            tools.points.clear();
+        }
     });
+    if tools.roundabout {
+        ui.horizontal(|ui| {
+            let mut d = tools.ring_radius * 2.0;
+            if ui.add(egui::Slider::new(&mut d, nd_sim::roads::RING_MIN_RADIUS * 2.0..=nd_sim::roads::RING_MAX_RADIUS * 2.0).step_by(2.0).suffix(" m").text("across [Ctrl+wheel]")).changed() {
+                tools.ring_radius = d * 0.5;
+            }
+            ui.separator();
+            for n in [1u8, 2] {
+                if ui.selectable_label(tools.ring_lanes == n, format!("{n} lane{}", if n == 1 { "" } else { "s" })).clicked() {
+                    tools.ring_lanes = n;
+                }
+            }
+        });
+        hint(ui, help::ROAD_ROUNDABOUT);
+        return;
+    }
     // Lanes and curvature share a row so the bar stays shallow.
     ui.horizontal(|ui| {
         if tools.kind == RoadKind::Street {
@@ -167,6 +188,27 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
                 }
                 sim.world.set_gesture(id, Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved: c, kind: k }, true);
                 tools.status = "Road changed. Ctrl+Enter implements; buildings along it stay.".into();
+            }
+        }
+        Some(Gesture::Roundabout { center, radius, lanes }) => {
+            section(ui, "ROUNDABOUT");
+            let (mut d, mut n) = (radius * 2.0, lanes);
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                changed |= ui.add(egui::Slider::new(&mut d, nd_sim::roads::RING_MIN_RADIUS * 2.0..=nd_sim::roads::RING_MAX_RADIUS * 2.0).step_by(2.0).suffix(" m").text("across")).changed();
+                for k in [1u8, 2] {
+                    if ui.selectable_label(n == k, format!("{k} lane{}", if k == 1 { "" } else { "s" })).clicked() && n != k {
+                        n = k;
+                        changed = true;
+                    }
+                }
+                if ui.button("Deselect").clicked() {
+                    tools.selected_gesture = None;
+                }
+            });
+            if changed {
+                sim.world.set_gesture(id, Gesture::Roundabout { center, radius: d * 0.5, lanes: n }, true);
+                tools.status = "Roundabout changed. Ctrl+Enter implements.".into();
             }
         }
         Some(_) => hint(ui, help::EDIT_ZONE_SELECTED),
@@ -350,6 +392,7 @@ fn preset_hint(label: &str) -> &'static str {
         "One-way" => "Two lanes, one direction",
         "Ramp" => "One lane, one direction: slip roads onto a highway",
         "Highway" => "Four lanes one way: 25 m/s, no frontage, grade-separated",
+        "Roundabout" => "A one-way ring with give-way entries: click to stamp it over roads and junctions",
         _ => "",
     }
 }

@@ -10,7 +10,7 @@
 //! [`parcel_zoning`] folds the plan's zone gestures over the parcels, oldest
 //! first, so the newest gesture that covers a parcel decides it.
 
-use crate::roads::RoadKind;
+use crate::roads::{RoadKind, Ring};
 use crate::zoning::{LandUse, ParcelKey, ParcelMap};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
@@ -45,6 +45,12 @@ pub enum Gesture {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         industry: Option<String>,
     },
+    /// A roundabout stamped over the roads: a one-way ring of `lanes`
+    /// lanes, `radius` from the centre to the middle of the ring road.
+    /// Built, it cuts every street and path that enters the circle and
+    /// joins them to the ring (`roads::layout_rings`); the road gestures
+    /// themselves are untouched, so undoing the stamp restores them.
+    Roundabout { center: Vec2, radius: f32, lanes: u8 },
 }
 
 /// Spacing of the straight pieces a curved road is built from, in metres.
@@ -93,29 +99,59 @@ impl Gesture {
             Gesture::Road { points, .. } => points.clone(),
             Gesture::Zone { polygon, .. } => polygon.clone(),
             Gesture::ParcelZone { .. } => Vec::new(),
+            Gesture::Roundabout { center, radius, lanes } => Ring::new(*center, *radius, *lanes).polyline(&[]).0,
         }
     }
 
-    /// Control points: a road's or a zone's corners. Painted parcels have none.
+    /// Control points: a road's or a zone's corners, a roundabout's centre.
+    /// Painted parcels have none.
     pub fn points(&self) -> &[Vec2] {
         match self {
             Gesture::Road { points, .. } => points,
             Gesture::Zone { polygon, .. } => polygon,
             Gesture::ParcelZone { .. } => &[],
+            Gesture::Roundabout { center, .. } => std::slice::from_ref(center),
         }
     }
 
-    /// The control points to edit, if the gesture has any.
+    /// The control points to edit, if the gesture has a list of them (a
+    /// roundabout's one centre is moved with [`Gesture::move_point`]).
     pub fn points_mut(&mut self) -> Option<&mut Vec<Vec2>> {
         match self {
             Gesture::Road { points, .. } => Some(points),
             Gesture::Zone { polygon, .. } => Some(polygon),
-            Gesture::ParcelZone { .. } => None,
+            Gesture::ParcelZone { .. } | Gesture::Roundabout { .. } => None,
+        }
+    }
+
+    /// Move control point `idx` to `p`. False if there is no such point.
+    pub fn move_point(&mut self, idx: usize, p: Vec2) -> bool {
+        if let Gesture::Roundabout { center, .. } = self {
+            if idx == 0 {
+                *center = p;
+                return true;
+            }
+            return false;
+        }
+        match self.points_mut().and_then(|pts| pts.get_mut(idx)) {
+            Some(q) => {
+                *q = p;
+                true
+            }
+            None => false,
         }
     }
 
     pub fn is_road(&self) -> bool {
-        matches!(self, Gesture::Road { .. })
+        matches!(self, Gesture::Road { .. } | Gesture::Roundabout { .. })
+    }
+
+    /// The roundabout, within limits, if this is one.
+    pub fn ring(&self) -> Option<Ring> {
+        match self {
+            Gesture::Roundabout { center, radius, lanes } => Some(Ring::new(*center, *radius, *lanes)),
+            _ => None,
+        }
     }
 
     /// Minimum number of points for the gesture to be valid.
@@ -124,8 +160,73 @@ impl Gesture {
             Gesture::Road { .. } => 2,
             Gesture::Zone { .. } => 3,
             Gesture::ParcelZone { .. } => 0,
+            Gesture::Roundabout { .. } => 1,
         }
     }
+}
+
+/// What a roundabout does to the roads around it, for previews: the ring
+/// road, the parts of roads it takes up and where the remaining roads join
+/// it, laid over `plan` (the ring itself need not be in it).
+#[derive(Clone, Debug, Default)]
+pub struct RingEffect {
+    pub ring: Option<Ring>,
+    /// The ring road, closed, in the direction of travel.
+    pub road: Vec<Vec2>,
+    /// Road (and path) parts inside the circle that the works remove.
+    pub cut: Vec<Vec<Vec2>>,
+    /// Width of each cut road, metres.
+    pub cut_widths: Vec<f32>,
+    /// Where arms join the ring.
+    pub joins: Vec<Vec2>,
+    /// Gesture ids of the roads it cuts.
+    pub cut_roads: Vec<GestureId>,
+    /// Another roundabout already takes this ground.
+    pub blocked: bool,
+}
+
+/// May a ring cut this road and join it? Streets (not highways, which pass
+/// over) and paths; never the railway.
+pub fn ring_cuts(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> bool {
+    match kind {
+        RoadKind::Street => !crate::roads::is_highway_spec(kind, lanes_fwd, lanes_bwd),
+        RoadKind::Path => true,
+        RoadKind::Rail => false,
+    }
+}
+
+/// The effect of stamping `ring` onto `plan`, laid out exactly as the
+/// rebuild will lay it (other roundabouts in the plan come first; one this
+/// ring would overlap blocks it).
+pub fn ring_effect(plan: &Plan, ring: Ring) -> RingEffect {
+    let blocked = plan.roundabouts().any(|(_, r)| r.overlaps(&ring) && r != ring);
+    if blocked {
+        return RingEffect { ring: Some(ring), road: ring.polyline(&[]).0, blocked: true, ..Default::default() };
+    }
+    let rings = [ring];
+    let roads: Vec<(GestureId, Vec<Vec2>, bool, f32)> = plan.roads().map(|(id, pts, f, b, k)| (id, pts, ring_cuts(k, f, b), crate::roads::Segment { a: crate::roads::NodeId(0), b: crate::roads::NodeId(0), lanes_fwd: f, lanes_bwd: b, alive: true, kind: k, bridge: false }.half_width() * 2.0)).collect();
+    let input: Vec<(Vec<Vec2>, bool)> = roads.iter().map(|(_, p, c, _)| (p.clone(), *c && near_ring(p, &ring))).collect();
+    let layout = crate::roads::layout_rings(&rings, &input);
+    let mut out = RingEffect { ring: Some(ring), ..Default::default() };
+    if let Some((_, poly, joins)) = layout.rings.iter().find(|(r, ..)| *r == ring) {
+        out.road = poly.clone();
+        out.joins = joins.clone();
+    }
+    for (i, pts) in layout.cut {
+        out.cut.push(pts);
+        out.cut_widths.push(roads[i].3);
+        if !out.cut_roads.contains(&roads[i].0) {
+            out.cut_roads.push(roads[i].0);
+        }
+    }
+    out
+}
+
+/// Could a road come inside this ring at all (its box reaches the circle)?
+fn near_ring(pts: &[Vec2], ring: &Ring) -> bool {
+    let (lo, hi) = crate::geom::bounds(pts);
+    let q = ring.center.clamp(lo, hi);
+    q.distance(ring.center) < ring.radius
 }
 
 /// A set of gestures. The master plan is one of these; so is the effective
@@ -142,6 +243,36 @@ impl Plan {
             Gesture::Road { lanes_fwd, lanes_bwd, kind, .. } => Some((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd, *kind)),
             _ => None,
         })
+    }
+
+    /// Every roundabout, oldest first, within limits.
+    pub fn roundabouts(&self) -> impl Iterator<Item = (GestureId, Ring)> + '_ {
+        self.gestures.iter().filter_map(|(id, g)| g.ring().map(|r| (*id, r)))
+    }
+
+    /// The roads as built: every road polyline with the parts inside a
+    /// roundabout cut away, its ends there joined to the ring, then the
+    /// rings themselves (closed one-way polylines). The rings come first so
+    /// the arms snap onto their vertices; a ring overlapping an older one
+    /// is not built.
+    pub fn built_roads(&self) -> (Vec<(GestureId, Vec<Vec2>, u8, u8, RoadKind)>, Vec<Ring>) {
+        let rings: Vec<Ring> = self.roundabouts().map(|(_, r)| r).collect();
+        let roads: Vec<(GestureId, Vec<Vec2>, u8, u8, RoadKind)> = self.roads().collect();
+        if rings.is_empty() {
+            return (roads, Vec::new());
+        }
+        let input: Vec<(Vec<Vec2>, bool)> = roads.iter().map(|(_, p, f, b, k)| (p.clone(), ring_cuts(*k, *f, *b))).collect();
+        let layout = crate::roads::layout_rings(&rings, &input);
+        let ids: Vec<GestureId> = self.roundabouts().filter(|(_, r)| layout.rings.iter().any(|(x, ..)| x == r)).map(|(id, _)| id).collect();
+        let mut out: Vec<(GestureId, Vec<Vec2>, u8, u8, RoadKind)> = Vec::new();
+        for ((ring, poly, _), id) in layout.rings.iter().zip(ids) {
+            out.push((id, poly.clone(), ring.lanes, 0, RoadKind::Street));
+        }
+        for (i, pts) in layout.kept {
+            let (id, _, f, b, k) = &roads[i];
+            out.push((*id, pts, *f, *b, *k));
+        }
+        (out, layout.rings.iter().map(|(r, ..)| *r).collect())
     }
 
     pub fn zones(&self) -> impl Iterator<Item = (GestureId, &[Vec2], LandUse)> {
@@ -308,7 +439,7 @@ pub fn parcel_zoning(parcels: &ParcelMap, plan: &Plan) -> ParcelZoning {
                     }
                 }
             }
-            Gesture::Road { .. } => {}
+            Gesture::Road { .. } | Gesture::Roundabout { .. } => {}
         }
     }
     out
@@ -328,6 +459,10 @@ pub struct PlanPreview {
     pub parcel_strokes: usize,
     /// Every control point of every road or zone in the effective plan.
     pub control_points: Vec<(GestureId, usize, Vec2)>,
+    /// Roundabouts added or changed, with what they do to the roads.
+    pub planned_rings: Vec<(GestureId, RingEffect)>,
+    /// Built roundabouts that will be removed or replaced.
+    pub removed_rings: Vec<(GestureId, Ring)>,
 }
 
 pub fn preview(master: &Plan, project: &Project) -> PlanPreview {
@@ -345,6 +480,11 @@ pub fn preview(master: &Plan, project: &Project) -> PlanPreview {
             Gesture::Road { lanes_fwd, lanes_bwd, kind, .. } => out.planned_roads.push((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd, *kind)),
             Gesture::Zone { polygon, land_use } => out.planned_zones.push((*id, polygon.clone(), *land_use)),
             Gesture::ParcelZone { .. } => out.parcel_strokes += 1,
+            Gesture::Roundabout { .. } => {
+                if let Some(r) = g.ring() {
+                    out.planned_rings.push((*id, ring_effect(&effective, r)));
+                }
+            }
         }
     }
     for (id, g) in &master.gestures {
@@ -356,6 +496,7 @@ pub fn preview(master: &Plan, project: &Project) -> PlanPreview {
             Gesture::Road { lanes_fwd, lanes_bwd, kind, .. } => out.removed_roads.push((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd, *kind)),
             Gesture::Zone { polygon, .. } => out.removed_zones.push((*id, polygon.clone())),
             Gesture::ParcelZone { .. } => out.parcel_strokes += 1,
+            Gesture::Roundabout { .. } => out.removed_rings.extend(g.ring().map(|r| (*id, r))),
         }
     }
     out

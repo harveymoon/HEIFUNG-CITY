@@ -101,6 +101,25 @@ Citizens are rendered from their simulated positions every frame.
   on the road; junction curves stay inside the junction; cars refuse to enter a
   junction whose exit lane is full; stalled trips time out. Pedestrians walk on the
   right-hand pavement.
+- **Roundabouts** (`Gesture::Roundabout { center, radius, lanes }`, Road tool preset): a
+  one-way ring of 1 or 2 lanes, 24 to 80 m across, traffic keeping the island on its left
+  (anticlockwise on screen). The gesture is stamped over the plan and never edits road
+  gestures: at rebuild `Plan::built_roads` cuts every street and path out of the circle
+  (`roads::layout_rings`), lays the ring first with a vertex at every place a road
+  crossed or ended on it, and the arms snap onto those vertices; a junction inside goes,
+  signals and all. So undo, bulldoze or a radius change in the Edit tool just rebuild.
+  Highways pass over, track is not cut, a ring overlapping an older one is refused. The
+  island is never parcelled; buildings on ground the ring takes come down as for any road
+  works. In the lane network (`traffic/roundabout.rs`) ring lanes run at 7 m/s, nothing
+  is signalised, arms may only turn right onto the ring and ring lanes continue or leave
+  from the outer lane. Entries give way with gap acceptance: a car about to reach the
+  line goes unless a ring vehicle that will pass the entry (not leave by it) is in the
+  junction or arrives less than 3 s after it, looking up to 45 m back round the ring;
+  ring traffic never yields and only follows a car merged ahead. Passing an exit in the
+  outer lane of a two-lane ring costs routing a little, so the first and second exits
+  keep outside and later ones go round on the inside. Hovering the tool shows the ring,
+  the road it takes up, the joins and the lots it would take (red); clicking stamps it
+  into the active project.
 - **Parcels and zones**: parcels are cut along every street and path as soon as it is
   built, zoned or not (`zoning::generate_parcels`, the land within 60 m of the
   corridors), at a home's lot size; land behind the rows is backland. Zoning gives
@@ -715,3 +734,5 @@ See `IDEAS.md` for everything that has not been scheduled.
 - v0.17 (done): whole-project code review (docs/REVIEW.md) and the first batch of fixes
   from it: long frontages parcel, roads join junctions they pass through, no stale rail
   segment panic, no lost truck cargo, no NaN geometry, egui focus and right-drag input fixes.
+- Roundabouts: a Road tool preset that stamps a give-way ring over roads and junctions,
+  with a live preview of what it cuts, joins and takes.

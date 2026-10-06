@@ -271,7 +271,9 @@ fn control_camera(
         cam.target -= forward * motion.delta.y * k;
     }
 
-    if !flags.pointer_over_ui {
+    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    // Ctrl+wheel sizes the Road tool's roundabout instead of zooming.
+    if !flags.pointer_over_ui && !tools.captures_wheel(ctrl) {
         let lines = match scroll.unit {
             MouseScrollUnit::Line => scroll.delta.y,
             MouseScrollUnit::Pixel => scroll.delta.y / 60.0,

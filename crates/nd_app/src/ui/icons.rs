@@ -172,6 +172,33 @@ pub fn road(painter: &Painter, rect: Rect, kind: RoadKind, fwd: u8, bwd: u8, col
 
 /// A small arrowhead at (x, y) pointing up (`dir < 0`) or down; `dir`'s
 /// size tilts it for ramps.
+/// A roundabout seen from above: four arms, the ring with a dashed lane
+/// line, a green island, and an arrow showing the way round (anticlockwise
+/// on screen).
+pub fn roundabout(painter: &Painter, rect: Rect, color: Color32) {
+    let f = Frame::new(rect);
+    let c = f.p(0.5, 0.5);
+    let arm = Stroke::new(f.s(0.2), ASPHALT);
+    for (x, y) in [(0.5, 0.0), (1.0, 0.5), (0.5, 1.0), (0.0, 0.5)] {
+        painter.add(f.line(&[(0.5, 0.5), (x, y)], arm));
+    }
+    painter.circle_stroke(c, f.s(0.3), Stroke::new(f.s(0.17), ASPHALT));
+    for k in 0..8 {
+        let a0 = k as f32 / 8.0 * std::f32::consts::TAU;
+        let a1 = a0 + 0.35;
+        let p = |a: f32| egui::pos2(c.x + a.cos() * f.s(0.3), c.y + a.sin() * f.s(0.3));
+        painter.line_segment([p(a0), p(a1)], Stroke::new(1.0, MARKING.gamma_multiply(0.7)));
+    }
+    painter.circle_filled(c, f.s(0.18), Color32::from_rgb(70, 140, 80));
+    painter.circle_filled(c, f.s(0.06), Color32::from_rgb(40, 95, 50));
+    // Anticlockwise on screen: along the top edge from right to left.
+    let a = -std::f32::consts::FRAC_PI_2 - 0.15;
+    let tip = egui::pos2(c.x + a.cos() * f.s(0.3), c.y + a.sin() * f.s(0.3));
+    let d = egui::vec2(-1.0, -0.15).normalized() * f.s(0.12);
+    let n = egui::vec2(-d.y, d.x);
+    painter.add(Shape::convex_polygon(vec![tip + d, tip - d * 0.4 + n * 0.8, tip - d * 0.4 - n * 0.8], color, Stroke::NONE));
+}
+
 fn arrow(painter: &Painter, f: &Frame, x: f32, y: f32, dir: f32, color: Color32) {
     let d = dir.signum() * 0.09;
     let tilt = if dir.abs() < 1.0 { 0.06 } else { 0.0 };

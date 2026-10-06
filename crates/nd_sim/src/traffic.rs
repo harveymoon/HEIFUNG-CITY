@@ -30,6 +30,9 @@ use slotmap::{new_key_type, SlotMap};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 
+mod roundabout;
+pub use roundabout::{RingLanes, RingNode, RING_CRITICAL_GAP, RING_SPEED};
+
 new_key_type! {
     pub struct CarId;
 }
@@ -283,6 +286,8 @@ pub struct LaneNetwork {
     pub version: u64,
     /// Bumped whenever lane arrows change (for drawing them).
     pub arrows_version: u64,
+    /// Roundabout lanes and junctions (see `apply_roundabouts`).
+    pub rings: RingLanes,
 }
 
 /// Arrow bit for a connector's turn.
@@ -808,6 +813,7 @@ impl LaneNetwork {
                 self.lanes[next].prev.push(id as LaneId);
             }
         }
+        self.apply_roundabouts(roads);
         self.apply_signals();
     }
 
@@ -1019,7 +1025,7 @@ impl LaneNetwork {
             }
             let gl = g[&lane];
             let here = &self.lanes[lane as usize];
-            let ahead = here.next.iter().filter(|&&n| self.lanes[n as usize].permitted).map(|&n| (n, self.lanes[n as usize].length));
+            let ahead = here.next.iter().filter(|&&n| self.lanes[n as usize].permitted).map(|&n| (n, self.lanes[n as usize].length + self.rings.penalty(n)));
             let beside = [here.left, here.right].into_iter().flatten().map(|n| (n, LANE_CHANGE_COST));
             for (next, step) in ahead.chain(beside) {
                 if next == start || Some(next) == avoid_lane || Some((lane, next)) == avoid_step {
@@ -1253,6 +1259,7 @@ impl Traffic {
         let mut dist = lane.length - car.s;
         let route = &car.route;
         let mut prev = route[car.idx];
+        let mut ring_go = false;
         for (k, &next) in route.iter().enumerate().skip(car.idx + 1).take(4) {
             if self.net.lanes[prev as usize].is_beside(next) {
                 // A lane change further on; the car deals with it there.
@@ -1267,9 +1274,17 @@ impl Traffic {
             // what keeps a saturated grid from locking up.
             if nl.is_connector() && !lane.is_connector() && k == car.idx + 1 {
                 if let LaneKind::Connector { node, approach } = nl.kind {
+                    // Roundabouts: entries give way to the ring, the ring has priority.
+                    let ring = self.net.rings.nodes.contains_key(&node);
+                    if ring {
+                        match self.ring_wait(car, next, dist) {
+                            roundabout::RingCall::Wait(gap, v, why) => return (gap, v, why),
+                            roundabout::RingCall::Go => ring_go = true,
+                        }
+                    }
                     if let Some(inter) = self.net.node_intersection.get(node.0 as usize).and_then(|&i| self.net.intersections.get(i)) {
                         // Merging traffic yields; the highway mainline does not.
-                        if !inter.signalized && inter.approaches >= 3 && lane.speed_limit <= ROAD_SPEED {
+                        if !ring && !inter.signalized && inter.approaches >= 3 && lane.speed_limit <= ROAD_SPEED {
                             let busy = inter.connectors.iter().any(|&(lid, ap)| ap != approach && !self.net.lanes[lid as usize].cars.is_empty());
                             if busy {
                                 return (dist - 1.0 + IDM_MIN_GAP, 0.0, Wait::Yield);
@@ -1280,7 +1295,7 @@ impl Traffic {
                         }
                     }
                 }
-                if let Some(&exit) = route.get(k + 1) {
+                if let Some(&exit) = route.get(k + 1).filter(|_| !ring_go) {
                     if self.exit_blocked(nl, exit, self.at_junction(nl)) {
                         return (dist - 1.0 + IDM_MIN_GAP, 0.0, Wait::ExitFull);
                     }
