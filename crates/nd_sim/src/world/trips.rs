@@ -973,6 +973,13 @@ impl World {
         };
 
         let dist = from_pt.distance(entrance);
+        // The rich fly (`world/air.rs`): a drone taxi when pads serve both ends.
+        if allow_bus {
+            if let Some(plan) = self.consider_air(id, target, purpose, from_pt, entrance) {
+                self.start_air_trip(id, plan, target, purpose, fresh);
+                return;
+            }
+        }
         let (owns_car, owns_bike) = {
             let c = &self.citizens[id];
             (c.owns_car, c.owns_bike)

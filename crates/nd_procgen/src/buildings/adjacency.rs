@@ -127,6 +127,9 @@ pub fn traits(style: Style) -> (Family, f32) {
         Style::PoliceStation | Style::FireStation | Style::Hospital | Style::School | Style::DispatchCenter => (Special, 0.0),
         Style::Landmark | Style::Stadium => (Special, -1.5),
         Style::Prison => (Special, -1.0),
+        // A vertiport serves the towers: an office-district neighbour that
+        // should not repeat next door.
+        Style::Vertiport => (Office, -1.2),
         _ => (Special, 0.0),
     }
 }
@@ -290,11 +293,12 @@ impl StyleBook {
     /// forget removed ones. Cheap when nothing changed.
     pub fn refresh(&mut self, world: &World, rules: &BuildingRules) {
         self.entries.retain(|id, _| world.buildings.contains_key(*id));
-        let key_of = |b: &nd_sim::Building| (b.seed, b.land_use, b.tier, b.floors, role(b));
+        // A rooftop pad picks a pad-capable style, so it is part of the key.
+        let key_of = |id: BuildingId, b: &nd_sim::Building| (b.seed, b.land_use, b.tier, b.floors, role(b) + if world.air.has_rooftop(id) { 8 } else { 0 });
         let mut pending: Vec<BuildingId> = world
             .buildings
             .iter()
-            .filter(|(id, b)| self.entries.get(id).is_none_or(|e| e.key != key_of(b)))
+            .filter(|(id, b)| self.entries.get(id).is_none_or(|e| e.key != key_of(*id, b)))
             .map(|(id, _)| id)
             .collect();
         if pending.is_empty() {
@@ -340,10 +344,13 @@ impl StyleBook {
                 depot: b.depot,
                 rail: b.rail.as_ref(),
                 neighbours: &near,
+                rooftop_pad: world.air.has_rooftop(id),
+                // Placed services (a vertiport among them) are their own style.
+                service: b.service.map(|s| s.kind),
                 ..Extras::default()
             };
             let style = choose_style(lot, b.land_use, b.floors, b.tier, b.seed, rules, &extras);
-            self.entries.insert(id, Entry { key: key_of(b), style, neighbours: near });
+            self.entries.insert(id, Entry { key: key_of(id, b), style, neighbours: near });
         }
     }
 }

@@ -18,6 +18,7 @@
 //!   the highway and its through traffic, ports, ferries and ships
 //! - `tests`: the world-level tests
 
+mod air;
 mod buses;
 mod construction;
 mod develop;
@@ -281,6 +282,10 @@ pub struct World {
     /// Pavement delivery robots and the day's home-delivery counts.
     #[serde(default)]
     pub bots: crate::bots::Bots,
+    /// Drone taxis, air ambulances, police helicopters and their pads
+    /// (`world/air.rs`).
+    #[serde(default)]
+    pub air: crate::air::Air,
 }
 
 impl World {
@@ -332,6 +337,7 @@ impl World {
             ground: Ground::default(),
             bridge_metres: 0.0,
             bots: Default::default(),
+            air: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -454,6 +460,7 @@ impl World {
                 None => true,
                 Some(TransitLeg::Bus { route, board, alight }) => routes.get(route).is_some_and(|r| board < r.stops.len() && alight < r.stops.len()),
                 Some(TransitLeg::Rail { board, alight }) => buildings.contains_key(board) && buildings.contains_key(alight),
+                Some(TransitLeg::Air { from, to }) => buildings.contains_key(from) && buildings.contains_key(to),
             } && c.transit.is_none_or(|t| buildings.contains_key(t.target));
             if !trip_ok {
                 c.transit = None;
@@ -465,6 +472,7 @@ impl World {
                 Activity::AtHome => c.home.is_none(),
                 Activity::Working => c.work.is_none(),
                 Activity::Waiting { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } => c.transit.is_none(),
+                Activity::Flying { drone } => !self.air.drones.contains_key(*drone),
                 _ => false,
             };
             if lost || target_gone {
@@ -603,6 +611,7 @@ impl World {
             }
         }
         self.step_traffic();
+        self.step_air();
         self.step_services();
         self.step_through_traffic();
         self.step_transit();

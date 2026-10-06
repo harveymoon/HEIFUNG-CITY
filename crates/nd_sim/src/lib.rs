@@ -4,6 +4,7 @@
 //! fully serialisable, so saves are plain snapshots and the same seed with the
 //! same inputs reproduces the same city.
 
+pub mod air;
 pub mod bots;
 pub mod buildings;
 pub mod citizens;

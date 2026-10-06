@@ -200,11 +200,15 @@ impl Surface {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Geometry {
     pub parts: Vec<MeshData>,
+    /// Landing pads drawn (helipads, rooftop decks, vertiport pads): the
+    /// centre of each deck's top, world coordinates. The renderer lands
+    /// aircraft on them.
+    pub pads: Vec<glam::Vec3>,
 }
 
 impl Default for Geometry {
     fn default() -> Self {
-        Self { parts: (0..Surface::ALL.len()).map(|_| MeshData::default()).collect() }
+        Self { parts: (0..Surface::ALL.len()).map(|_| MeshData::default()).collect(), pads: Vec::new() }
     }
 }
 
@@ -225,6 +229,7 @@ impl Geometry {
         for (a, b) in self.parts.iter_mut().zip(other.parts.iter()) {
             a.append(b);
         }
+        self.pads.extend_from_slice(&other.pads);
     }
 
     /// Move every surface that has a weathered variant onto it: the whole

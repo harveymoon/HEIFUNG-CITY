@@ -8,6 +8,7 @@
 //! a triangular building.
 
 pub mod adjacency;
+pub mod air;
 mod civic;
 mod commercial;
 mod construction;
@@ -169,6 +170,8 @@ pub enum Style {
     Landmark,
     Stadium,
     Prison,
+    // air transport, placed by the player (buildings/air.rs)
+    Vertiport,
 }
 
 impl Style {
@@ -177,7 +180,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 69] = [
+    pub const ALL: [Style; 70] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -247,7 +250,14 @@ impl Style {
         Style::Landmark,
         Style::Stadium,
         Style::Prison,
+        Style::Vertiport,
     ];
+
+    /// High-tier towers that take a rooftop helideck when the sim gives the
+    /// building a pad (`buildings::air::rooftop_deck` finds the roof).
+    pub fn pad_capable(self) -> bool {
+        matches!(self, Style::Crystal | Style::Fortress | Style::GardenTower | Style::PencilTower | Style::TwinSlab | Style::GlassTerraces | Style::Megastructure | Style::SlabTower | Style::TwistTower)
+    }
 
     /// The style a placed service or attraction is drawn in.
     pub fn for_service(kind: nd_sim::services::ServiceKind) -> Style {
@@ -261,6 +271,7 @@ impl Style {
             K::Monument => Style::Landmark,
             K::Stadium => Style::Stadium,
             K::Jail => Style::Prison,
+            K::Vertiport => Style::Vertiport,
         }
     }
 
@@ -335,6 +346,7 @@ impl Style {
             Style::Landmark => "landmark",
             Style::Stadium => "stadium",
             Style::Prison => "jail",
+            Style::Vertiport => "vertiport",
         }
     }
 }
@@ -839,11 +851,14 @@ pub struct Extras<'a> {
     /// Draw window lights for the renderer to switch by occupancy (see
     /// [`Ctx::dynamic_lights`]).
     pub dynamic_lights: bool,
+    /// The sim gave this tower a rooftop pad (`nd_sim::air`): a pad-capable
+    /// style is picked and a helideck drawn on its roof.
+    pub rooftop_pad: bool,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, dynamic_lights: false }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, dynamic_lights: false, rooftop_pad: false }
     }
 }
 
@@ -963,7 +978,20 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         (Some(PowerPlantKind::Geothermal), _) => Style::PowerGeothermal,
         (None, Some(_)) if tier == Tier::Low || floors < 2 => Style::ParkingLot,
         (None, Some(_)) => Style::CarPark,
-        (None, None) => rules.pick_style_near(land_use, tier, &adjacency::Site { floors, frontage: lot.width() }, extras.neighbours, &mut rng),
+        (None, None) => {
+            let site = adjacency::Site { floors, frontage: lot.width() };
+            let mut style = rules.pick_style_near(land_use, tier, &site, extras.neighbours, &mut rng);
+            // A tower with a pad is one that can carry a helideck.
+            let mut tries = 0;
+            while extras.rooftop_pad && !style.pad_capable() && tries < 12 {
+                style = rules.pick_style_near(land_use, tier, &site, extras.neighbours, &mut rng);
+                tries += 1;
+            }
+            if extras.rooftop_pad && !style.pad_capable() {
+                style = if land_use == LandUse::Commercial { Style::SlabTower } else { Style::Crystal };
+            }
+            style
+        }
     }
 }
 
@@ -1113,6 +1141,10 @@ fn generate_styled_extras(
         Style::Landmark => services::landmark(&mut g, &ctx, &mut rng),
         Style::Stadium => services::stadium(&mut g, &ctx, &mut rng),
         Style::Prison => services::prison(&mut g, &ctx, &mut rng),
+        Style::Vertiport => air::vertiport(&mut g, &ctx, &mut rng),
+    }
+    if extras.rooftop_pad && style.pad_capable() && g.pads.is_empty() {
+        air::rooftop_deck(&mut g, &ctx);
     }
     if weathered(tier, ctx.wear) {
         g.weather();
@@ -1397,6 +1429,69 @@ mod tests {
             }
         }
         assert!(worst.is_empty(), "{} style/lot combinations reach beyond their lot or budget", worst.len());
+    }
+
+    /// A tower the sim gives a rooftop pad draws a helideck on its highest
+    /// roof, clear of everything on it, without leaving its lot or budget;
+    /// an unflagged tower draws none, and a flagged one always picks a
+    /// style that can carry a deck.
+    #[test]
+    fn rooftop_pads_sit_on_tower_roofs_and_stay_on_the_lot() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let (mut tried, mut drawn) = (0usize, 0usize);
+        let mut misses: Vec<String> = Vec::new();
+        let mut bad: Vec<String> = Vec::new();
+        for lu in [LandUse::Residential, LandUse::Commercial] {
+            let lots = many_lots(lu);
+            for (li, lot) in lots.iter().enumerate().take(36) {
+                for style in Style::ALL.into_iter().filter(|s| s.pad_capable()) {
+                    let floors = 14u8;
+                    let seed = 3 + li as u64;
+                    let plain = generate_styled(lot, lu, floors, Tier::High, 1.0, seed, style, &rules, &pal);
+                    // Some towers carry a helipad of their own (corporate slabs).
+                    let built_in = plain.pads.len();
+                    let padded = generate_styled_extras(lot, lu, floors, Tier::High, 1.0, seed, style, &rules, &pal, &Extras { rooftop_pad: true, ..Extras::default() });
+                    check_mesh(&padded, "rooftop pad");
+                    tried += 1;
+                    let (over, top, low, culprit) = extent(&padded, lot, None);
+                    if over > 1.0 || low < -0.3 || top > (60.0 + floors as f32 * 5.0).max(90.0) || padded.triangle_count() > budget(floors, lot) {
+                        bad.push(format!("{style:?} lot {li}: over {over:.1} top {top:.0} low {low:.1} tris {}: {culprit}", padded.triangle_count()));
+                    }
+                    assert!(padded.pads.len() <= built_in + 1, "{style:?}: one deck at most");
+                    let Some(p) = padded.pads.last().copied() else {
+                        misses.push(format!("{style:?} lot {li}"));
+                        continue;
+                    };
+                    drawn += 1;
+                    assert!(p.y > 8.0, "{style:?} lot {li}: the deck is up on a roof ({:.1} m)", p.y);
+                    let through = plain.iter().flat_map(|(_, m)| m.positions.iter()).filter(|q| Vec2::new(q[0], q[2]).distance(Vec2::new(p.x, p.z)) < 2.5 && q[1] > p.y + 0.3).count();
+                    assert_eq!(through, 0, "{style:?} lot {li}: the tower rises through its deck at {:.1} m", p.y);
+                }
+            }
+        }
+        assert!(bad.is_empty(), "{} rooftop pads leave their lot or budget:
+{}", bad.len(), bad.join("
+"));
+        eprintln!("rooftop decks: {drawn} of {tried}; no room on {}", misses.len());
+        assert!(drawn * 10 >= tried * 8, "{drawn} of {tried} towers drew a deck; missed {misses:?}");
+        // The pick: a flagged tower always gets a deck-carrying style.
+        let lots = many_lots(LandUse::Residential);
+        for (li, lot) in lots.iter().enumerate().take(30) {
+            for lu in [LandUse::Residential, LandUse::Commercial] {
+                let s = choose_style(lot, lu, 14, Tier::High, 50 + li as u64, &rules, &Extras { rooftop_pad: true, ..Extras::default() });
+                assert!(s.pad_capable(), "{lu:?} lot {li} picked {s:?}");
+            }
+        }
+        // Vertiports draw a pad per slot where the lot has room, at the deck height.
+        for tier in Tier::ALL {
+            let lot = &lots[0];
+            let g = generate_building(lot, LandUse::Civic, 1, tier, 1.0, 5, &rules, &pal, &Extras { service: Some(nd_sim::ServiceKind::Vertiport), ..Extras::default() });
+            assert!(!g.pads.is_empty(), "{tier:?} vertiport has pads");
+            assert!(g.pads.len() <= nd_sim::air::vertiport_slots(tier) as usize);
+            let deck = nd_sim::air::vertiport_deck(tier);
+            assert!(g.pads.iter().all(|p| (p.y - deck).abs() < 0.6), "{tier:?} pads at the deck height {deck}: {:?}", g.pads);
+        }
     }
 
     /// The variety styles change form with height: a tall site draws a

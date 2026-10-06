@@ -127,10 +127,13 @@ pub enum ServiceKind {
     Stadium,
     /// A jail: arrested suspects serve their sentence here.
     Jail,
+    /// Drone taxi pad, vertiport or skyport (`crate::air`): placed under
+    /// Transit, at the end so saved kinds keep their order.
+    Vertiport,
 }
 
 impl ServiceKind {
-    pub const ALL: [ServiceKind; 8] = [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch, ServiceKind::Monument, ServiceKind::Stadium, ServiceKind::Jail];
+    pub const ALL: [ServiceKind; 9] = [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch, ServiceKind::Monument, ServiceKind::Stadium, ServiceKind::Jail, ServiceKind::Vertiport];
     /// The four that cover the city by road distance, in coverage-index order.
     pub const COVERING: [ServiceKind; 4] = [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School];
 
@@ -145,6 +148,7 @@ impl ServiceKind {
             ServiceKind::Monument => "monument",
             ServiceKind::Stadium => "stadium",
             ServiceKind::Jail => "jail",
+            ServiceKind::Vertiport => "vertiport",
         }
     }
 
@@ -158,6 +162,7 @@ impl ServiceKind {
             "monument" => Some(ServiceKind::Monument),
             "stadium" => Some(ServiceKind::Stadium),
             "jail" | "prison" => Some(ServiceKind::Jail),
+            "vertiport" | "skyport" | "drone_pad" | "dronepad" | "vertipad" => Some(ServiceKind::Vertiport),
             _ => None,
         }
     }
@@ -172,6 +177,7 @@ impl ServiceKind {
             ServiceKind::Monument => "monument",
             ServiceKind::Stadium => "stadium",
             ServiceKind::Jail => "jail",
+            ServiceKind::Vertiport => "vertiport",
         }
     }
 
@@ -186,6 +192,7 @@ impl ServiceKind {
             ServiceKind::Monument => ["memorial", "monument", "landmark tower"],
             ServiceKind::Stadium => ["sports ground", "stadium", "mega-arena"],
             ServiceKind::Jail => ["lock-up", "jail", "penitentiary"],
+            ServiceKind::Vertiport => ["drone pad", "vertiport", "skyport"],
         };
         names[tier.index()]
     }
@@ -195,7 +202,7 @@ impl ServiceKind {
     pub fn hours(self) -> crate::market::Hours {
         use crate::market::Hours;
         match self {
-            ServiceKind::Police | ServiceKind::Fire | ServiceKind::Health | ServiceKind::Dispatch | ServiceKind::Monument | ServiceKind::Jail => Hours::ALWAYS,
+            ServiceKind::Police | ServiceKind::Fire | ServiceKind::Health | ServiceKind::Dispatch | ServiceKind::Monument | ServiceKind::Jail | ServiceKind::Vertiport => Hours::ALWAYS,
             ServiceKind::School => Hours::new(8, 16),
             ServiceKind::Stadium => Hours::new(12, 0),
         }
@@ -235,6 +242,7 @@ impl ServiceKind {
             ServiceKind::Monument => 15_000.0,
             ServiceKind::Stadium => 45_000.0,
             ServiceKind::Jail => 16_000.0,
+            ServiceKind::Vertiport => 20_000.0,
         };
         base * [0.5, 1.0, 2.2][tier.index()]
     }
@@ -249,6 +257,7 @@ impl ServiceKind {
             ServiceKind::Monument => 80.0,
             ServiceKind::Stadium => 700.0,
             ServiceKind::Jail => 420.0,
+            ServiceKind::Vertiport => 260.0,
         };
         base * [0.6, 1.0, 1.8][tier.index()]
     }
@@ -263,6 +272,7 @@ impl ServiceKind {
             ServiceKind::Monument => 2,
             ServiceKind::Stadium => 20,
             ServiceKind::Jail => 10,
+            ServiceKind::Vertiport => 8,
         };
         match tier {
             Tier::Low => base.div_ceil(2),
@@ -308,6 +318,7 @@ impl ServiceKind {
             ServiceKind::Stadium => 900.0,
             ServiceKind::Jail => 450.0,
             ServiceKind::Dispatch => 250.0,
+            ServiceKind::Vertiport => 350.0,
             _ => 400.0,
         };
         base * [0.75, 1.0, 1.6][tier.index()]
@@ -318,7 +329,7 @@ impl ServiceKind {
             ServiceKind::Monument => lu != LandUse::Industrial,
             ServiceKind::Stadium => matches!(lu, LandUse::Entertainment | LandUse::Civic | LandUse::Commercial),
             ServiceKind::Jail => matches!(lu, LandUse::Civic | LandUse::Industrial),
-            ServiceKind::Fire => lu != LandUse::Park,
+            ServiceKind::Fire | ServiceKind::Vertiport => lu != LandUse::Park,
             _ => lu != LandUse::Park && lu != LandUse::Industrial,
         }
     }
@@ -338,6 +349,8 @@ impl ServiceKind {
             ServiceKind::Stadium => (320.0 * k, 0.10 * k),
             // Nobody wants to live by the jail.
             ServiceKind::Jail => (200.0 * k, -0.08 * k),
+            // Rotor noise: the neighbours pay for the rich commuting overhead.
+            ServiceKind::Vertiport => (160.0 * k, -0.04 * k),
         }
     }
 
@@ -353,6 +366,7 @@ impl ServiceKind {
             ServiceKind::Monument => format!("{} of {place}", ["Memorial", "Monument", "Spire"][tier.index()]),
             ServiceKind::Stadium => format!("{place} {}", ["Grounds", "Stadium", "Mega-Arena"][tier.index()]),
             ServiceKind::Jail => format!("{place} {}", ["Lock-up", "County Jail", "Penitentiary"][tier.index()]),
+            ServiceKind::Vertiport => format!("{place} {}", ["Drone Pad", "Vertiport", "Skyport"][tier.index()]),
         }
     }
 }
@@ -418,7 +432,7 @@ impl BuildCategory {
         match self {
             BuildCategory::Power => PowerPlantKind::ALL.iter().map(|&k| Placeable::Plant(k)).collect(),
             BuildCategory::Services => [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch, ServiceKind::Jail].iter().map(|&k| Placeable::Service(k, Tier::Mid)).collect(),
-            BuildCategory::Transit => vec![Placeable::BusDepot],
+            BuildCategory::Transit => vec![Placeable::BusDepot, Placeable::Service(ServiceKind::Vertiport, Tier::Mid)],
             BuildCategory::Rail => vec![Placeable::Rail(RailFacility::Station), Placeable::Rail(RailFacility::FreightYard)],
             BuildCategory::Water => PortKind::ALL.iter().map(|&k| Placeable::Dock(k)).collect(),
             BuildCategory::Attractions => vec![Placeable::Service(ServiceKind::Monument, Tier::Mid), Placeable::Service(ServiceKind::Stadium, Tier::Mid)],
@@ -431,6 +445,7 @@ impl Placeable {
         match self {
             Placeable::Plant(_) => BuildCategory::Power,
             Placeable::Service(k, _) if k.is_attraction() => BuildCategory::Attractions,
+            Placeable::Service(ServiceKind::Vertiport, _) => BuildCategory::Transit,
             Placeable::Service(..) => BuildCategory::Services,
             Placeable::BusDepot => BuildCategory::Transit,
             Placeable::Rail(_) => BuildCategory::Rail,
@@ -473,6 +488,7 @@ impl Placeable {
                 ServiceKind::Monument => "Monument",
                 ServiceKind::Stadium => "Stadium",
                 ServiceKind::Jail => "Jail",
+                ServiceKind::Vertiport => "Vertiport",
             },
             Placeable::BusDepot => "Bus depot",
             Placeable::Rail(RailFacility::Station) => "Passenger station",
@@ -1133,6 +1149,9 @@ mod tests {
         assert_eq!(Placeable::parse("yard", None), Some(Placeable::Rail(RailFacility::FreightYard)));
         assert_eq!(Placeable::parse("geothermal", None), Some(Placeable::Plant(PowerPlantKind::Geothermal)));
         assert_eq!(Placeable::parse("ferry", None), Some(Placeable::Dock(PortKind::FerryTerminal)));
+        assert_eq!(Placeable::parse("vertiport", None), Some(Placeable::Service(ServiceKind::Vertiport, Tier::Mid)));
+        assert_eq!(Placeable::parse("skyport:high", None), Some(Placeable::Service(ServiceKind::Vertiport, Tier::High)));
+        assert_eq!(Placeable::Service(ServiceKind::Vertiport, Tier::Low).category(), BuildCategory::Transit);
         assert_eq!(Placeable::parse("castle", None), None);
     }
 }

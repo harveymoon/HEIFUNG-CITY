@@ -185,6 +185,9 @@ pub fn raise_geometry(geo: &mut Geometry, dy: f32) {
             p[1] += dy;
         }
     }
+    for p in geo.pads.iter_mut() {
+        p.y += dy;
+    }
 }
 
 /// The ground mesh for a world with a landscape: the built ground (roads
