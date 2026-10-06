@@ -16,6 +16,8 @@
 
 /// [concerns] complaints by category and city happiness.
 mod concerns;
+/// [districts] [tourism] `district` and `tourism`.
+mod districts;
 mod history;
 mod land;
 mod list;
@@ -426,6 +428,8 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "incident" => incident(cmd, ctx),
         "incidents" => incidents(cmd, ctx),
         "society" => society::command(cmd, &mut ctx.sim.world),
+        "district" | "districts" => districts::district(cmd, &mut ctx.sim.world, &mut ctx.overlays, &mut ctx.tools),
+        "tourism" | "tourists" => districts::tourism(cmd, &mut ctx.sim.world),
         "concerns" => concerns::command(cmd, &ctx.sim.world),
         "bus" => bus(cmd, ctx),
         "find" => find(cmd, ctx),
@@ -595,7 +599,7 @@ fn camera_pose(ctx: &Ctx) -> Value {
 
 fn tool_state(t: &ToolState) -> Value {
     json!({
-        "name": tool_name(t.tool), "road_kind": road_kind_name(t.kind), "lanes_fwd": t.lanes_fwd, "lanes_bwd": t.lanes_bwd, "curved": t.curved,
+        "name": tool_name(t.tool), "district": { "selected": t.district.selected, "mode": format!("{:?}", t.district.mode).to_lowercase(), "radius": t.district.radius, "erase": t.district.erase, "points": t.district.points.len() }, "road_kind": road_kind_name(t.kind), "lanes_fwd": t.lanes_fwd, "lanes_bwd": t.lanes_bwd, "curved": t.curved,
         "land_use": t.land_use.label(), "zone_mode": t.zone_mode.label(), "brush_radius": t.brush_radius, "unzone": t.unzone, "industry": t.industry, "building": placeable_key(t.build_item()), "building_category": t.build_cat.key(), "rail_kind": rail_name(t.rail_kind),
         "transit_mode": transit_mode_name(t.transit_mode), "route": opt_key(t.route_sel), "show_routes": t.show_routes,
         "pending_points": t.points.len(), "selected_gesture": t.selected_gesture.map(|g| g.0), "status": t.status,
@@ -778,6 +782,10 @@ fn status(ctx: &Ctx) -> Value {
     let st = &ctx.stats;
     v["render"]["people"] = json!({ "meshes": st.people_meshes, "mesh_cap": crate::render::PEOPLE_MESH_CAP, "visible": st.people_visible, "distinct_looks_visible": st.people_looks_visible, "built_total": st.people_built, "borrowed": st.people_borrowed, "materials": 1 });
     v["alerts_top"] = report::alerts_json(&report::alerts(w), 5);
+    // [districts] [tourism]
+    let ts = &w.tourism;
+    v["districts"] = json!(w.districts.list.len());
+    v["tourism"] = json!({ "tourists": ts.count(), "attractiveness": round(ts.attractiveness), "arrivals_today": ts.stats.arrivals_today, "turned_away_today": ts.stats.turned_away_today, "spend_today": round(ts.stats.spend_today()), "tourist_tax_yesterday": round(ts.stats.tax_yesterday), "hotels": w.hotels().len() });
     v["review_hint"] = json!("for a whole-city review call report (then map, history, list)");
     v
 }
@@ -1612,6 +1620,13 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 Some(m) => t.zone_mode = m,
                 None => t.land_use = land_use_of(kind)?,
             },
+            Tool::District => {
+                t.district.mode = match kind.to_ascii_lowercase().as_str() {
+                    "brush" => crate::district_tool::DistrictMode::Brush,
+                    "polygon" => crate::district_tool::DistrictMode::Polygon,
+                    _ => return Err("district kind is brush or polygon".into()),
+                };
+            }
             Tool::Inspect | Tool::Bulldoze => return Err("this tool has no kind".into()),
         }
     }
@@ -1916,12 +1931,15 @@ fn help() -> Value {
         "history": { "keys": "optional daily/hourly series names (default all)", "days": "last n days (default all kept, up to 365)" },
         "list": { "what": "businesses|buildings|citizens|lots|routes|plants|facilities", "sort": "column", "desc": "bool", "filter": "{column: substring | value | {min, max}}", "fields": "[columns] (id always kept)", "offset": "default 0", "limit": "default 50, max 1000" },
         "export": { "path": "optional; default exports/city-<unix>.json: report + map + history + every row of every list" },
-        "window": { "name": "city|economy|market|people|power|transit|land|saves|help|dev", "open": "bool, omitted toggles", "tab": "people only: overview|concerns" },
+        "window": { "name": "city|economy|market|people|power|transit|land|districts|saves|help|dev", "open": "bool, omitted toggles", "tab": "people only: overview|concerns" },
         "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" }
     });
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), review.as_object()) {
         c.extend(r.clone());
     }
+    // [districts] [tourism]
+    v["commands"]["district"] = json!({ "action": "list (default)|create|paint|erase|set|remove|at|select|layer", "id": "district id (or district: id or name)", "at": "[x,y] brush centre", "radius": "m, default 40", "polygon": "[[x,y],...]", "rect": "[[x0,y0],[x1,y1]]", "residential": "kowloon|suburban|eco|none", "commercial": "neon_strip|tech_campus|night_market|tourist|none", "industry": "farming|oil|refinery|manufacturing|logistics|fishing|tech|none", "historic": "bool", "rename": "new name", "on": "bool (layer)" });
+    v["commands"]["tourism"] = json!({ "action": "refresh (re-read attractions now)", "limit": "tourists listed, default 20", "returns": "attractiveness, demand, ways in, today's and yesterday's arrivals, spending and tourist tax, hotels, attractions, tourists" });
     // [society]
     v["commands"]["society"] = json!({ "action": "report (default)|evict|offend|trash", "building": "id (evict: its households go on the street; offend: the target; trash: one building's bins)", "citizen": "id (offend)", "kind": "theft|burglary|assault|murder|vandalism (offend, with building)", "kg": "trash to add, default 100" });
     // Planning: several projects, and painting parcels.

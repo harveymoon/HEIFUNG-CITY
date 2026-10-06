@@ -142,6 +142,7 @@ pub fn tool_of(s: &str) -> Result<Tool, String> {
         "buildings" | "building" | "power" | "services" => Ok(Tool::Buildings),
         "transit" | "bus" | "buses" => Ok(Tool::Transit),
         "rail" => Ok(Tool::Rail),
+        "district" | "districts" => Ok(Tool::District),
         _ => Err(format!("unknown tool {s:?}; one of inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail")),
     }
 }
@@ -156,6 +157,7 @@ pub fn tool_name(t: Tool) -> &'static str {
         Tool::Buildings => "buildings",
         Tool::Transit => "transit",
         Tool::Rail => "rail",
+        Tool::District => "district",
     }
 }
 
@@ -400,6 +402,7 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         "lot": key_str(b.lot), "pos": lot.map_or(Value::Null, |l| v2(l.center)), "built_day": b.built_tick / 1440 + 1,
         "under_construction": construction,
         "demolition": demolition,
+        "look": b.look.map(|l| l.label()), "district": w.district_of_lot(b.lot).map(|d| d.name.clone()),
         "land_value": round(b.land_value), "rent": round(b.rent), "wage": round(b.wage()), "condition": round(b.condition), "derelict": b.is_derelict(),
         "homes": b.homes, "jobs": b.jobs, "visitors": b.visitors,
         "residents": people(&b.residents), "workers": people(&b.workers),

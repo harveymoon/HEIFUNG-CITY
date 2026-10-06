@@ -3,6 +3,7 @@
 
 mod assets;
 mod camera;
+mod district_tool;
 mod remote;
 mod render;
 mod sim;
@@ -35,6 +36,7 @@ fn main() {
             render::RenderPlugin,
             ui::UiPlugin,
             remote::RemotePlugin,
+            district_tool::DistrictToolPlugin,
         ))
         .run();
 }

@@ -99,6 +99,7 @@ pub use industry::{is_return_trip, return_cargo, IndustryArea};
 use crate::landscape::{Ground, Landscape, LandscapeParams};
 use crate::ports::Ports;
 pub use industry_bridge::INDUSTRY_CHOICES;
+pub use districts::{DistrictStats, PolicyChange};
 
 /// A parcel that loses or gains more than this share of its area under a
 /// building is treated as a new parcel: the building goes.

@@ -92,6 +92,15 @@ pub fn tool(painter: &Painter, rect: Rect, t: Tool, color: Color32) {
             painter.rect_filled(f.rect(0.22, 0.8, 0.34, 0.92), 1.0, color);
             painter.rect_filled(f.rect(0.66, 0.8, 0.78, 0.92), 1.0, color);
         }
+        Tool::District => {
+            // A district: a painted patch with a dashed border and a flag.
+            painter.rect_filled(f.rect(0.1, 0.34, 0.9, 0.9), 2.0, color.gamma_multiply(0.25));
+            for (a, b) in [((0.1, 0.34), (0.9, 0.34)), ((0.9, 0.34), (0.9, 0.9)), ((0.9, 0.9), (0.1, 0.9)), ((0.1, 0.9), (0.1, 0.34))] {
+                painter.add(f.line(&[a, b], thin));
+            }
+            painter.add(f.line(&[(0.5, 0.62), (0.5, 0.08)], thin));
+            painter.add(f.poly(&[(0.5, 0.08), (0.78, 0.16), (0.5, 0.26)], color, Stroke::NONE));
+        }
         Tool::Rail => {
             for y in [0.18f32, 0.38, 0.58, 0.78] {
                 let k = 0.08 + 0.1 * y;

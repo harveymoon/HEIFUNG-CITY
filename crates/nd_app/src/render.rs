@@ -32,6 +32,8 @@ use crate::tools::Selection;
 
 /// Emergency vehicles, fires and rubble (render/emergency.rs).
 mod air;
+/// [districts] The district layer; [tourism] visitors on foot.
+mod districts;
 mod emergency;
 mod far;
 mod haze;
@@ -126,18 +128,20 @@ pub struct Overlays {
     pub people: bool,
     /// Pollution and noise from plants, industry, nightlife and traffic.
     pub pollution: bool,
+    /// [districts] District areas, borders and names.
+    pub districts: bool,
 }
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false }
+        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, districts: false }
     }
 }
 
 impl Overlays {
     /// Every layer: API name, label, hotkey. The API's `overlay {layer, on}`
     /// and the Land window's Layers section both go through this list.
-    pub const LAYERS: [(&'static str, &'static str, &'static str); 7] = [
+    pub const LAYERS: [(&'static str, &'static str, &'static str); 8] = [
         ("land_value", "Land value", "V"),
         ("traffic", "Traffic load", ""),
         ("traffic_types", "Traffic types", ""),
@@ -145,6 +149,7 @@ impl Overlays {
         ("pollution", "Pollution and noise", ""),
         ("paths", "Pedestrian network", "P"),
         ("zoning", "Zoning layer", "O"),
+        ("districts", "Districts", ""),
     ];
     /// The heat-map style layers the L key steps through, one at a time.
     pub const CYCLE: [&'static str; 5] = ["land_value", "traffic", "traffic_types", "people", "pollution"];
@@ -159,6 +164,7 @@ impl Overlays {
             "traffic_types" => &mut self.traffic_types,
             "people" => &mut self.people,
             "pollution" => &mut self.pollution,
+            "districts" => &mut self.districts,
             _ => return None,
         })
     }
@@ -173,6 +179,7 @@ impl Overlays {
             "traffic_types" => self.traffic_types,
             "people" => self.people,
             "pollution" => self.pollution,
+            "districts" => self.districts,
             _ => return None,
         })
     }
@@ -380,6 +387,9 @@ impl Plugin for RenderPlugin {
         // Drone taxis and helicopters, after the buildings whose pads they land on.
         app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, check_car_bodies.after(lift_movers).in_set(SimSet::Sync));
+        // [districts] The district layer; [tourism] visitors on foot, after
+        // the citizens whose figure cache they share.
+        app.init_resource::<districts::DistrictRender>().add_systems(Update, (districts::sync_district_layer, districts::sync_tourists.after(sync_citizens).before(lift_movers)).in_set(SimSet::Sync));
     }
 }
 

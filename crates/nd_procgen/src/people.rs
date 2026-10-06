@@ -289,8 +289,12 @@ pub fn person_mesh(k: &PersonKey) -> MeshData {
         if k.tourist {
             // A daypack on the back in the accent colour with a reflective
             // band that catches the night, and a dark camera at the chest.
+            // Daypacks come in loud outdoor colours whatever the wearer's
+            // taste: that is what marks a visitor from above.
+            const PACKS: [[f32; 3]; 5] = [[0.95, 0.35, 0.04], [0.95, 0.75, 0.05], [0.05, 0.6, 0.85], [0.85, 0.08, 0.1], [0.2, 0.75, 0.25]];
+            let pack = PACKS[(k.fav[0] as usize + k.skin as usize) % PACKS.len()];
             let back = -td / 2.0;
-            b.part(Vec3::new(back - 0.2, 0.9, -0.15 * bw), Vec3::new(back, 1.4, 0.15 * bw), accent, accent_cell, true);
+            b.part(Vec3::new(back - 0.2, 0.9, -0.15 * bw), Vec3::new(back, 1.4, 0.15 * bw), pack, 0, true);
             b.part(Vec3::new(back - 0.21, 1.12, -0.152 * bw), Vec3::new(back - 0.19, 1.17, 0.152 * bw), trim, trim_cell, false);
             b.part(Vec3::new(td / 2.0, 1.08, -0.06), Vec3::new(td / 2.0 + 0.08, 1.17, 0.06), [0.03, 0.03, 0.035], 0, false);
         }
