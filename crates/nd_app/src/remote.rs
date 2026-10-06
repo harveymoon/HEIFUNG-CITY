@@ -46,6 +46,7 @@ use serde_json::{json, Value};
 use crate::assets::GameAssets;
 use crate::camera::{CameraMode, OrbitCamera, WalkState};
 use crate::render::{Lighting, Overlays, RenderStats};
+use nd_sim::survey::LandLayer;
 use crate::sim::{Sim, SimSet, SPEEDS};
 use crate::tools::{marquee_rect, EffectivePlan, Selection, Tool, ToolState, TransitMode, ZoneMode, BRUSH_MAX, BRUSH_MIN, ROAD_PRESETS};
 use crate::ui::{load_now, save_now, Saves, UiFlags};
@@ -459,10 +460,33 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             // bool per layer name.
             if let Some(layer) = opt_str(cmd, "layer")? {
                 let on = opt_bool(cmd, "on")?;
-                let Some(flag) = o.flag(layer) else {
-                    return Err(format!("unknown layer {layer:?}; one of {}", Overlays::LAYERS.iter().map(|l| l.0).collect::<Vec<_>>().join(", ")));
-                };
-                *flag = on.unwrap_or(!*flag);
+                if let Some(flag) = o.flag(layer) {
+                    *flag = on.unwrap_or(!*flag);
+                } else if let Some(l) = LandLayer::from_key(layer) {
+                    // Land survey layers are one at a time: on shows this
+                    // one (replacing any other), off hides it.
+                    let now = o.land == Some(l);
+                    o.land = if on.unwrap_or(!now) { Some(l) } else if now { None } else { o.land };
+                } else {
+                    return Err(format!(
+                        "unknown layer {layer:?}; one of {}, or a land layer: {}",
+                        Overlays::LAYERS.iter().map(|l| l.0).collect::<Vec<_>>().join(", "),
+                        LandLayer::ALL.iter().map(|l| l.key()).collect::<Vec<_>>().join(", ")
+                    ));
+                }
+            }
+            // `{land: "oil"}` picks the land layer, `"none"` (or null) hides it.
+            match cmd.get("land") {
+                None => {}
+                Some(Value::Null) => o.land = None,
+                Some(_) => {
+                    let k = opt_str(cmd, "land")?.unwrap_or("none");
+                    o.land = if k.eq_ignore_ascii_case("none") || k.eq_ignore_ascii_case("off") || k.is_empty() {
+                        None
+                    } else {
+                        Some(LandLayer::from_key(k).ok_or_else(|| format!("unknown land layer {k:?}; one of none, {}", LandLayer::ALL.iter().map(|l| l.key()).collect::<Vec<_>>().join(", ")))?)
+                    };
+                }
             }
             for (name, _, _) in Overlays::LAYERS {
                 if let Some(b) = opt_bool(cmd, name)? {
@@ -1888,7 +1912,7 @@ fn help() -> Value {
             "project": { "action": "start|implement|undo|redo|discard" },
             "place": { "kind": "station|freight_yard|depot|parking|coal|solar|wind|nuclear|hydro|tidal|geothermal|shipping_port|ferry_terminal|police|fire|hospital|clinic|school|dispatch|monument|stadium|jail|trash_depot (services: tier or kind:tier)", "tier": "low|mid|high", "x": "f", "y": "f", "note": "hydro beside a river or stream with a current >= 0.8 m/s, tidal on the sea shore, geothermal over a hot spot; docks at the water's edge (they build a pier and a street stub)" },
             "new_game": { "preset": "river_valley|islands|coast|delta|plains|flat (default river_valley)", "seed": "u64", "water": "0..1", "relief": "0..1 height variation", "branching": "0..1", "islands": "0..8", "highway": "ignored: every new game has the highway and the trunk line", "note": "throws the city away; omitted levers take the preset's" },
-            "terrain_at": { "x": "f", "y": "f", "returns": "natural/ground/surface heights, slope, water (kind, current, width), nearest shore, hot spot, power sites and dock placement for the lot there" },
+            "terrain_at": { "x": "f", "y": "f", "returns": "natural/ground/surface heights, slope, water (kind, current, width), nearest shore, hot spot, power sites and dock placement for the lot there, survey (every land layer's value 0..1 there: resources, and the chance of each industry kind)" },
             "grant": { "amount": "money added to the treasury (dev), default 100000" },
             "landscape": { "returns": "preset and levers, rivers (width, current, hydro_ok), lakes, sea, hot spots, highway ends and through cars, bridges, docks, ships" },
             "incident": { "kind": "fire|crime|medical", "building": "id", "citizen": "id (medical)" },
@@ -1900,7 +1924,7 @@ fn help() -> Value {
             "select": { "citizen|building|car": "id", "at": "[x,y] picks like a click; nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
             "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
-            "overlay": { "layer": "land_value|traffic|traffic_types|people|pollution|paths|zoning", "on": "bool, omitted toggles", "<layer name>": "bool (older form, any number at once)" },
+            "overlay": { "layer": "land_value|traffic|traffic_types|people|pollution|paths|zoning, or a land survey layer (one at a time): farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech", "on": "bool, omitted toggles", "land": "a land survey layer key, or none", "<layer name>": "bool (older form, any number at once)" },
             "lighting": { "follow_clock": "bool", "hour": "0..24 (also unpins from the clock)" },
             "screenshot": { "path": "optional .png; default screenshots/shot-<unix>.png; written a frame or two later" },
             "events": { "since": "seq", "limit": "default 500" },
@@ -1942,5 +1966,6 @@ fn overlays_json(o: &Overlays) -> Value {
     for (name, _, _) in Overlays::LAYERS {
         m.insert(name.into(), json!(o.get(name).unwrap_or(false)));
     }
+    m.insert("land".into(), json!(o.land.map(|l| l.key())));
     Value::Object(m)
 }

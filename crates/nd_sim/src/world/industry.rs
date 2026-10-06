@@ -51,7 +51,7 @@ pub enum IndustryArea {
     Polygon(Vec<Vec2>),
 }
 
-fn near(d: f32, full: f32, none: f32) -> f32 {
+pub(super) fn near(d: f32, full: f32, none: f32) -> f32 {
     1.0 - ((d - full) / (none - full)).clamp(0.0, 1.0)
 }
 
@@ -163,63 +163,14 @@ impl World {
 
     // ── choosing ────────────────────────────────────────────────────────────
 
-    /// What the industry choice weighs on a lot.
+    /// What the industry choice weighs on a lot. The surroundings come from
+    /// [`SiteContext`], shared with the land survey's suitability layers so
+    /// the map and the choice cannot drift apart.
     pub fn industry_site(&self, lot_id: LotId) -> Option<IndustrySite> {
         let lot = self.lots.get(lot_id)?;
         let c = lot.center;
-        let nearest = |ids: &mut dyn Iterator<Item = BuildingId>| -> f32 { ids.filter_map(|b| self.building_lot(b)).map(|l| l.center.distance(c)).fold(f32::INFINITY, f32::min) };
-        let ports = self.ports.working(PortKind::ShippingPort);
-        let port = near(nearest(&mut ports.iter().copied()), 80.0, 420.0);
-        let yard = near(nearest(&mut self.yards.iter().copied()), 80.0, 360.0);
-        let depot = near(nearest(&mut self.buildings.iter().filter(|(_, b)| b.depot && !b.is_derelict()).map(|(id, _)| id)), 60.0, 350.0);
-        let mut hw = f32::INFINITY;
-        for (sid, seg) in self.roads.alive_segments() {
-            if seg.is_highway() {
-                let (a, b) = self.roads.segment_points(sid);
-                hw = hw.min(crate::geom::project_on_segment(c, a, b).1.distance(c));
-            }
-        }
-        let highway = near(hw, 30.0, 200.0);
-        let mut neighbours = Vec::new();
-        let mut fleet_lot_near = false;
-        let mut crude_wells = 0u32;
-        for b in self.buildings.values() {
-            if b.lot == lot_id {
-                continue;
-            }
-            let Some(l) = self.lots.get(b.lot) else { continue };
-            let d = l.center.distance(c);
-            let kind = match (&b.business, b.plant) {
-                (Some(z), _) => z.kind.industry(),
-                // Coal smoke and reactor fears read as heavy industry.
-                (None, Some(PowerPlantKind::Coal)) | (None, Some(PowerPlantKind::Nuclear)) => Some(IndustryKind::Refinery),
-                _ => None,
-            };
-            if b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::OilWell && !z.closed) && d < CRUDE_REACH {
-                crude_wells += 1;
-            }
-            if b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::FleetLot) && d < 300.0 {
-                fleet_lot_near = true;
-            }
-            if let Some(k) = kind {
-                if d < industry::NEIGHBOUR_RADIUS {
-                    neighbours.push((k, d));
-                }
-            }
-        }
-        neighbours.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
-        Some(IndustrySite {
-            ground: ground::sample_area(&self.landscape, c, &lot.polygon),
-            contamination: self.contamination.over(c, &lot.polygon),
-            land_value: self.land_value.at(c),
-            port,
-            yard,
-            highway,
-            depot,
-            neighbours,
-            fleet_lot_near,
-            crude_wells,
-        })
+        let ctx = self.site_context();
+        Some(ctx.site(self, c, ground::sample_area(&self.landscape, c, &lot.polygon), self.contamination.over(c, &lot.polygon), Some(lot_id)))
     }
 
     /// The weight of each industry kind on a lot, in `IndustryKind::ALL`

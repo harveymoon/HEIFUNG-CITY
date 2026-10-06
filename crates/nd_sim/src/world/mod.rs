@@ -43,6 +43,8 @@ pub use plan::{ProjectInfo, ProjectPreview};
 mod power;
 mod services;
 mod society;
+mod survey;
+pub use survey::SiteContext;
 #[cfg(test)]
 mod car_tests;
 #[cfg(test)]

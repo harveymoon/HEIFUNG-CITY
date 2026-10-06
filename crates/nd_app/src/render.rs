@@ -43,6 +43,7 @@ mod lights;
 mod people;
 pub use people::MESH_CAP as PEOPLE_MESH_CAP;
 mod stunts;
+mod survey;
 /// [society] Camps, RVs and overflowing bins.
 mod society;
 mod turbines;
@@ -126,11 +127,15 @@ pub struct Overlays {
     pub people: bool,
     /// Pollution and noise from plants, industry, nightlife and traffic.
     pub pollution: bool,
+    /// The land survey layer shown, if any: a resource (farmland, oil,
+    /// geothermal, ...) or where each industry would do best. One at a time:
+    /// two washes over each other would read as neither.
+    pub land: Option<nd_sim::survey::LandLayer>,
 }
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false }
+        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None }
     }
 }
 
@@ -175,6 +180,16 @@ impl Overlays {
             "pollution" => self.pollution,
             _ => return None,
         })
+    }
+
+    /// Step to the next land survey layer (K); after the last, none.
+    pub fn cycle_land(&mut self) {
+        use nd_sim::survey::LandLayer;
+        let next = match self.land {
+            None => 0,
+            Some(l) => LandLayer::ALL.iter().position(|x| *x == l).map_or(0, |i| i + 1),
+        };
+        self.land = LandLayer::ALL.get(next).copied();
     }
 
     /// Step to the next of the [`Overlays::CYCLE`] layers, alone; after the
@@ -365,7 +380,7 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, sync_ring_preview.in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
         app.add_systems(Update, (holo::sync_draw_hologram, holo::sync_plan_holograms).in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
         app.add_systems(Update, holo::apply_depth.in_set(SimSet::Sync).after(lift_movers));
-        app.add_systems(Update, (turbines::sync_turbines, haze::sync_haze, layers::sync_layers, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
+        app.add_systems(Update, (turbines::sync_turbines, haze::sync_haze, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
         // The ground and water out past the map, into the fog.
         app.init_resource::<far::FarRender>().add_systems(Update, far::sync_far.in_set(SimSet::Sync).after(sync_landscape));

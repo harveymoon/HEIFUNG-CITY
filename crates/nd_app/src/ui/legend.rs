@@ -3,7 +3,9 @@
 //! renderer uses (`nd_procgen::overlay`), so the two cannot drift apart.
 
 use bevy_egui::egui::{self, Color32};
-use nd_procgen::overlay::{heat_color, pollution_color, traffic_color, VehicleClass};
+use nd_procgen::overlay::{heat_color, industry_hue, land_color, land_hue, pollution_color, traffic_color, VehicleClass};
+use nd_sim::survey::LandLayer;
+use nd_sim::IndustryKind;
 
 use super::{hint, section};
 use crate::assets::GameAssets;
@@ -30,8 +32,8 @@ fn ramp(ui: &mut egui::Ui, color: impl Fn(f32) -> Color32, lo: &str, hi: &str) {
     });
 }
 
-pub fn show(ctx: &egui::Context, o: &Overlays, assets: &GameAssets, area: egui::Rect) {
-    if !(o.land_value || o.traffic || o.traffic_types || o.people || o.pollution) {
+pub fn show(ctx: &egui::Context, o: &Overlays, assets: &GameAssets, area: egui::Rect, here: Option<&str>) {
+    if !(o.land_value || o.traffic || o.traffic_types || o.people || o.pollution || o.land.is_some()) {
         return;
     }
     let pal = &assets.palette;
@@ -72,6 +74,58 @@ pub fn show(ctx: &egui::Context, o: &Overlays, assets: &GameAssets, area: egui::
                     section(ui, "POLLUTION AND NOISE");
                     ramp(ui, |t| { let c = pollution_color(t); linear([c[0], c[1], c[2]]) }, "clean", "as by a coal plant");
                 }
+                if let Some(l) = o.land {
+                    land_legend(ui, l);
+                    if let Some(t) = here {
+                        ui.label(egui::RichText::new(t).small().color(Color32::from_rgb(230, 235, 255)));
+                    }
+                }
             });
         });
+}
+
+/// The key of the land survey layer: a ramp in its hue, or for "best
+/// industry" a swatch per kind; then what the layer means and who wants it.
+fn land_legend(ui: &mut egui::Ui, l: LandLayer) {
+    section(ui, &l.label().to_uppercase());
+    match l {
+        LandLayer::BestIndustry => {
+            ui.horizontal_wrapped(|ui| {
+                for k in IndustryKind::ALL {
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                    ui.painter().rect_filled(r, 2.0, linear(industry_hue(k)));
+                    hint(ui, k.key());
+                }
+            });
+            hint(ui, "fainter where the lead is narrow");
+        }
+        LandLayer::Industry(_) => {
+            let h = land_hue(l);
+            ramp(ui, |t| { let c = land_color(h, t); linear([c[0], c[1], c[2]]) }, "unlikely", "likely");
+        }
+        _ => {
+            let h = land_hue(l);
+            ramp(ui, |t| { let c = land_color(h, t); linear([c[0], c[1], c[2]]) }, "none", "rich");
+        }
+    }
+    hint(ui, l.hint());
+    hint(ui, "K: next land layer");
+}
+
+/// The land layer's reading at the pointer, for the legend: the resource's
+/// strength, an industry's chance, or the favourite kind.
+pub fn land_here(w: &nd_sim::World, l: LandLayer, p: nd_sim::Vec2) -> String {
+    if w.landscape.is_water(p) {
+        return "under the pointer: water".into();
+    }
+    let all = w.survey_at(p);
+    let value = |x: LandLayer| all.iter().find(|(y, _)| *y == x).map_or(0.0, |v| v.1);
+    match l {
+        LandLayer::BestIndustry => {
+            let (k, v) = IndustryKind::ALL.iter().map(|k| (*k, value(LandLayer::Industry(*k)))).fold((IndustryKind::Manufacturing, -1.0), |a, b| if b.1 > a.1 { b } else { a });
+            format!("under the pointer: {} ({:.0}% chance)", k.label(), v * 100.0)
+        }
+        LandLayer::Industry(_) => format!("under the pointer: {:.0}% chance", value(l) * 100.0),
+        _ => format!("under the pointer: {:.0}%", value(l) * 100.0),
+    }
 }

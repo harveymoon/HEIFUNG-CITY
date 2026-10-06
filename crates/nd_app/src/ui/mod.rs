@@ -163,7 +163,9 @@ fn side_panel(
 
     flags.panel_rects = vec![top_rect, bottom_rect];
     toast(ctx, &mut flags, bottom_rect.height());
-    legend::show(ctx, &overlays, &assets, content);
+    // The land layer's reading under the pointer, for the legend.
+    let here = overlays.land.zip(cursor.ground).map(|(l, p)| legend::land_here(&sim.world, l, p));
+    legend::show(ctx, &overlays, &assets, content, here.as_deref());
     if let Some(p) = fly_to {
         for mut cam in &mut cams {
             cam.target = Vec3::new(p.x, 0.0, p.y);

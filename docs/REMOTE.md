@@ -80,7 +80,7 @@ Relative paths are relative to the game's working directory (the repo root under
 | --- | --- | --- |
 | `new_game` | `preset` river_valley (default) / islands / coast / delta / plains / flat, `seed`, `water` 0..1, `relief` 0..1 (height variation), `branching` 0..1, `islands` 0..8, `highway` bool; omitted levers take the preset's | throws the city away and starts on the landscape; tools and selection reset. Reply as `landscape` |
 | `landscape` | | preset and levers, `rivers` (kind river/stream, width, current_mps, hydro_ok, source, mouth, length), `lakes`, `sea`, `hot_spots`, `highway` (entries, exits, through_cars), `bridges` (count, metres, on the highway), `ports`, `ships`, `port_stats` |
-| `terrain_at` | `x`, `y` | `natural_height`, `ground_height` (graded under roads and lots), `surface_height` (bridge decks included), `slope`, `water` (kind, current, width, flow), `nearest_shore`, `hot_spot`, `lot`, `power_sites` (hydro/tidal/geothermal ok or why not, for the lot there), `docks` (whether a shipping port or ferry terminal would go there, or why not) |
+| `terrain_at` | `x`, `y` | `natural_height`, `ground_height` (graded under roads and lots), `surface_height` (bridge decks included), `slope`, `water` (kind, current, width, flow), `nearest_shore`, `hot_spot`, `lot`, `power_sites` (hydro/tidal/geothermal ok or why not, for the lot there), `docks` (whether a shipping port or ferry terminal would go there, or why not), `survey` (every land survey layer's value 0..1 there) |
 | `grant` | `amount` (default 100000) | dev: adds money to the treasury |
 
 ```json
@@ -242,9 +242,33 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
 | `select` | `citizen` / `building` / `car` id, or `at: [x, y]` (picks like a click), or nothing to clear |
 | `favourite` | `citizen`, `on` (omit to toggle) |
 | `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway, Roundabout), `diameter` and `ring_lanes` (roundabout), `ring_at` `[x,y]` (show the roundabout preview there as if hovered, until the mouse is used), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry` (zone, industrial: auto / farming / oil / ...), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture`, `elevation` (the Road tool's level for the next point, m), `depth` (underground / ground / sky: the view layer; the Tunnel preset switches to underground, other presets back), `draw` `[[x,y,level?],...]` (the road being drawn, as if clicked, so its hologram shows), `cursor` `[x,y]` (where the pointer stands for that hologram until the mouse is used). The reply's tool state has `elevation`, `elevation_label`, `point_levels`, `tunnel`, `depth`, `grade_warnings` |
-| `overlay` | `layer` (land_value, traffic, traffic_types, people, pollution, paths, zoning) with `on` (bool; omitted toggles); or any of those names as bools. Reply: every layer and whether it is on (also in `status.overlays`) |
+| `overlay` | `layer` (land_value, traffic, traffic_types, people, pollution, paths, zoning, or a land survey layer, below) with `on` (bool; omitted toggles); or any of the first names as bools; `land` a land survey layer key or `none`. Reply: every layer and whether it is on, plus `land` (the survey layer shown, or null) (also in `status.overlays`) |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
 | `window` | `name` city / economy / market / people / power / transit / land / saves / help / dev, `open` (omit to toggle). Reply `open`, `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it |
+
+Land survey layers (one at a time, K in the game; the Land window's "Land and resources" picker;
+`nd_sim::survey`): a coloured ground wash over the buildable square.
+
+| Key | Shows |
+| --- | --- |
+| `farmland` | soil fertility, less where contaminated (what farms yield by) |
+| `oil` | oil deposits (wells only go over one) |
+| `geothermal` | hot spots: solid where a geothermal plant would work, a faint halo around |
+| `rock` | rock and steep ground (spoils farming; nothing quarries it yet) |
+| `sand` | beach sand on the sea shore |
+| `water` | closeness to open water (fishing, ferries) |
+| `shipping` | shore where a shipping port fits: the sea or a river 40 m wide |
+| `best_industry` | each spot coloured by the industry kind the ground favours most |
+| `best_farming`, `best_oil`, `best_refinery`, `best_manufacturing`, `best_logistics`, `best_fishing`, `best_tech` | the chance a new industrial lot there takes the kind, from the sim's own industry weights (the player's area bias left out) |
+
+Aliases: `fertility`, `hot_spots`, `quarry`, `port`, `industry`, and `land_<key>`. `terrain_at`
+returns every layer's value at a point under `survey`.
+
+```json
+{"cmd": "overlay", "land": "geothermal"}
+{"cmd": "overlay", "layer": "best_farming", "on": true}
+{"cmd": "overlay", "land": "none"}
+```
 
 ### Camera
 

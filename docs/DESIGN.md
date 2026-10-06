@@ -912,6 +912,19 @@ trait MindProvider {
   through the heat layers one at a time; the Land window's Layers section ticks any set; a
   legend at the bottom right shows the key of every layer that is on. The `overlay` API and
   `map {layer: "people"}` read the same data.
+- Land survey layers (`nd_sim::survey`, `world/survey.rs`, drawn by `render/survey.rs`): what
+  the ground is good for, one wash at a time (K steps through them, the Land window has a picker,
+  the legend shows the key, what the layer means and the reading under the pointer). Resources:
+  farmland (fertility less contamination), oil, geothermal hot spots (solid where a plant
+  works, a faint halo around), rock, sand, water access, and deep water for shipping ports (the
+  port's own width rule). Industry: for each kind the chance a new industrial lot there takes
+  it, and "best industry" coloured by the favourite. These read the same `industry::weights`
+  over an `IndustrySite` the sim draws from: `World::industry_site` and the survey both build
+  the site through `SiteContext`, so the map cannot drift from the choice (the player's area
+  bias is left out: the map shows what the ground wants). The static ground survey (16 m
+  corners over the buildable square) is built once per landscape on a worker thread; the
+  industry weights are recomputed when the day, the roads or the building count change.
+  Read-only: no RNG, nothing in the world changes.
 - Toolbar and sub-pane icons (`ui/icons.rs`) are painted with egui shapes: one per tool, a
   lane plan per road preset (lane arrows, centre line, rails, path paving, ramp curve), a
   glyph per land use in its zone colour.

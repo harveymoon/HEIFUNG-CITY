@@ -4,6 +4,8 @@
 
 use crate::mesh::MeshData;
 use glam::Vec2;
+use nd_sim::survey::LandLayer;
+use nd_sim::IndustryKind;
 
 /// Length of road one queued car takes up, bumper to bumper plus a gap.
 pub const CAR_SPACE_M: f32 = 7.5;
@@ -41,6 +43,58 @@ pub fn pollution_color(t: f32) -> [f32; 4] {
     let c = ramp(&[(0.0, [0.55, 0.6, 0.2]), (0.5, [0.65, 0.4, 0.12]), (1.0, [0.6, 0.08, 0.06])], t);
     let a = if t <= 0.0 { 0.0 } else { 0.15 + 0.45 * t.sqrt() };
     [c[0], c[1], c[2], a]
+}
+
+/// The colour of an industry kind on the survey layers: one hue each, kept
+/// apart so the "best industry" map reads as a patchwork.
+pub fn industry_hue(k: IndustryKind) -> [f32; 3] {
+    match k {
+        IndustryKind::Farming => [0.35, 0.9, 0.12],
+        IndustryKind::OilExtraction => [0.62, 0.18, 0.95],
+        IndustryKind::Refinery => [1.0, 0.3, 0.08],
+        IndustryKind::Manufacturing => [0.55, 0.62, 0.8],
+        IndustryKind::Logistics => [1.0, 0.72, 0.08],
+        IndustryKind::Fishing => [0.08, 0.85, 0.78],
+        IndustryKind::Tech => [1.0, 0.3, 0.75],
+    }
+}
+
+/// The hue of a land survey layer (the colour of "lots of it"). The
+/// industry layers take their kind's hue; "best industry" has none of its
+/// own (each spot takes the favourite kind's).
+pub fn land_hue(layer: LandLayer) -> [f32; 3] {
+    match layer {
+        LandLayer::Farmland => [0.3, 0.95, 0.2],
+        LandLayer::Oil => industry_hue(IndustryKind::OilExtraction),
+        LandLayer::Geothermal => [1.0, 0.38, 0.05],
+        LandLayer::Rock => [0.72, 0.72, 0.78],
+        LandLayer::Sand => [1.0, 0.86, 0.38],
+        LandLayer::Water => [0.08, 0.75, 1.0],
+        LandLayer::Shipping => [0.25, 0.4, 1.0],
+        LandLayer::Industry(k) => industry_hue(k),
+        LandLayer::BestIndustry => [1.0, 1.0, 1.0],
+    }
+}
+
+/// A survey wash for a value in `0..1`: clear below a trace, then the hue
+/// from dim and faint to full and fairly solid, so poor ground stays
+/// readable underneath and the best ground stands out from the top-down
+/// camera.
+pub fn land_color(hue: [f32; 3], t: f32) -> [f32; 4] {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.04 {
+        return [hue[0], hue[1], hue[2], 0.0];
+    }
+    let k = 0.35 + 0.65 * t;
+    [hue[0] * k, hue[1] * k, hue[2] * k, 0.12 + 0.6 * t.powf(0.8)]
+}
+
+/// Stretch an industry layer's chance for the wash: among seven kinds a
+/// third is already a strong pull, so low chances are lifted a little and
+/// 70% and up reads full, while open farmland (often 50..70% farming) still
+/// shows its better and worse patches.
+pub fn industry_wash(share: f32) -> f32 {
+    (share / 0.7).clamp(0.0, 1.0).powf(0.75)
 }
 
 fn ramp(stops: &[(f32, [f32; 3])], t: f32) -> [f32; 3] {
@@ -118,7 +172,7 @@ impl HeatGrid {
         Self { origin: lo, cell, cols, rows, values: vec![0.0; (cols + 1) * (rows + 1)] }
     }
 
-    fn at(&self, i: usize, j: usize) -> f32 {
+    pub fn at(&self, i: usize, j: usize) -> f32 {
         self.values[j * (self.cols + 1) + i]
     }
 
@@ -191,17 +245,24 @@ impl HeatGrid {
     /// `color(value / scale)`; cells whose four corners are all below 2% of
     /// the scale are left out.
     pub fn mesh(&self, scale: f32, y: f32, color: impl Fn(f32) -> [f32; 4], height: impl Fn(Vec2) -> f32) -> MeshData {
-        let mut m = MeshData::default();
         if scale <= 0.0 {
-            return m;
+            return MeshData::default();
         }
+        let floor = scale * 0.02;
+        self.mesh_by(y, |k| color((self.values[k] / scale).min(1.0)), |k| self.values[k] < floor, height)
+    }
+
+    /// The grid as a ground mesh with a colour of its own at every corner
+    /// (`color(k)`, `k` the corner's index into `values`); cells whose four
+    /// corners are all `skip` are left out.
+    pub fn mesh_by(&self, y: f32, color: impl Fn(usize) -> [f32; 4], skip: impl Fn(usize) -> bool, height: impl Fn(Vec2) -> f32) -> MeshData {
+        let mut m = MeshData::default();
         let n = self.cols + 1;
         let mut index: Vec<u32> = vec![u32::MAX; self.values.len()];
-        let floor = scale * 0.02;
         for j in 0..self.rows {
             for i in 0..self.cols {
                 let corners = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)];
-                if corners.iter().all(|&(a, b)| self.at(a, b) < floor) {
+                if corners.iter().all(|&(a, b)| skip(b * n + a)) {
                     continue;
                 }
                 let mut ids = [0u32; 4];
@@ -212,7 +273,7 @@ impl HeatGrid {
                         index[slot] = m.positions.len() as u32;
                         m.positions.push([p.x, y + height(p), p.y]);
                         m.normals.push([0.0, 1.0, 0.0]);
-                        m.colors.push(color((self.at(a, b) / scale).min(1.0)));
+                        m.colors.push(color(slot));
                         m.uvs.push([p.x, p.y]);
                         m.tangents.push([1.0, 0.0, 0.0, 1.0]);
                     }
@@ -265,5 +326,32 @@ mod tests {
         r.splat_radius(Vec2::new(50.0, 50.0), 30.0, 1.0);
         assert!(r.at(5, 5) > 0.9 && r.at(0, 0) == 0.0, "radial falloff");
         assert_eq!(heat_color(0.0)[3], 0.0, "zero is clear");
+    }
+
+    #[test]
+    fn land_washes_are_clear_when_empty_and_distinct_by_kind() {
+        for l in LandLayer::ALL {
+            let h = land_hue(l);
+            assert_eq!(land_color(h, 0.0)[3], 0.0, "{}: nothing there is clear", l.key());
+            let (lo, hi) = (land_color(h, 0.2), land_color(h, 1.0));
+            assert!(hi[3] > lo[3] && hi[3] <= 0.75, "{}: more is more solid, never opaque", l.key());
+        }
+        // Every pair of industry hues is told apart.
+        for a in IndustryKind::ALL {
+            for b in IndustryKind::ALL {
+                if a != b {
+                    let (x, y) = (industry_hue(a), industry_hue(b));
+                    let d: f32 = (0..3).map(|i| (x[i] - y[i]).abs()).sum();
+                    assert!(d > 0.3, "{:?} and {:?} look alike", a, b);
+                }
+            }
+        }
+        assert_eq!(industry_wash(0.0), 0.0);
+        assert_eq!(industry_wash(0.9), 1.0);
+        // Per-corner colours: a grid with one hot corner draws only its cells.
+        let mut g = HeatGrid::covering(Vec2::ZERO, Vec2::new(100.0, 100.0), 10.0, 1000);
+        g.values[0] = 1.0;
+        let m = g.mesh_by(0.5, |k| land_color([1.0, 0.0, 0.0], g.values[k]), |k| g.values[k] < 0.04, |_| 0.0);
+        assert_eq!(m.indices.len(), 6, "one cell touches the hot corner");
     }
 }
