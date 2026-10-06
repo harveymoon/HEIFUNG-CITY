@@ -625,6 +625,7 @@ pub fn placeable_key(p: nd_sim::Placeable) -> String {
         nd_sim::Placeable::Dock(nd_sim::PortKind::ShippingPort) => "shipping_port".to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::FerryTerminal) => "ferry_terminal".to_string(),
         nd_sim::Placeable::ParkingLot(s) => s.key().to_string(),
+        nd_sim::Placeable::Toll(s) => s.key().to_string(),
     }
 }
 

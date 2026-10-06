@@ -16,13 +16,17 @@ impl World {
                 continue;
             }
             let revenue = self.buildings[bid].business.as_ref().map_or(0.0, |z| z.revenue_today);
-            let (wage_bill, workers, publicly_funded, kind) = {
+            let (wage_bill, workers, publicly_funded, kind, tax_line) = {
                 let b = &self.buildings[bid];
                 let Some(bz) = &b.business else { continue };
                 // [parking] Lots the city runs are paid for by the city.
                 let publicly_funded = matches!(bz.kind, BusinessKind::Office) || b.land_use == LandUse::Civic || self.vehicles.city_lots.contains_key(&bid);
-                (b.workers.len() as f32 * b.wage() * 0.6, b.workers.clone(), publicly_funded, bz.kind)
+                // [tax] What its takings are taxed under (the city's own
+                // businesses at the standard rate, as before).
+                let tax_line = if publicly_funded { None } else { crate::tax::TaxCategory::of_business(bz.kind, b.tier) };
+                (b.workers.len() as f32 * b.wage() * 0.6, b.workers.clone(), publicly_funded, bz.kind, tax_line)
             };
+            let (rate, surcharge) = tax_line.map_or((crate::tax::BUSINESS_TAX, 0.0), |c| (self.economy.taxes.rate(c), self.economy.taxes.surcharge(c)));
             let b = &mut self.buildings[bid];
             let bz = b.business.as_mut().unwrap();
             if bz.closed {
@@ -36,11 +40,24 @@ impl World {
                 }
                 continue;
             }
-            self.economy.tax_today += revenue * 0.05;
-            self.economy.credit(Flow::BusinessTax, revenue * 0.05);
+            let tax = revenue * rate;
+            self.economy.tax_today += tax;
+            self.economy.credit(Flow::BusinessTax, tax);
+            if let Some(c) = tax_line {
+                self.economy.taxes.collect(c, tax);
+            }
             if !publicly_funded {
                 bz.money -= wage_bill;
                 bz.spend_today += wage_bill;
+                // [tax] Prices were set on takings after the standard rate:
+                // a rate over it is a cost the business carries (and its
+                // cover, which decides whether more of it are built, shows
+                // it); one under it is money kept.
+                let extra = revenue * surcharge;
+                if extra != 0.0 {
+                    bz.money -= extra;
+                    bz.spend_today += extra;
+                }
                 // The market's reading of this kind of business, past the
                 // first day's stocking up: what it took against what it
                 // paid out, wages and inputs.
@@ -254,11 +271,18 @@ impl World {
                         // should not be ruined by it.
                         let markup = if r == Resource::Groceries { 1.0 } else { IMPORT_MARKUP };
                         let cost = amount * r.base_price() * markup;
+                        // [tax] The import duty on top, to the treasury.
+                        let duty = cost * self.economy.taxes.import_duty;
                         {
                             let bb = self.buildings[bid].business.as_mut().unwrap();
-                            bb.money -= cost;
-                            bb.spend_today += cost;
+                            bb.money -= cost + duty;
+                            bb.spend_today += cost + duty;
                         }
+                        if duty > 0.0 {
+                            self.economy.credit(Flow::ImportDuty, duty);
+                            self.economy.taxes.duty_today += duty;
+                        }
+                        self.economy.taxes.note_import(r, amount);
                         self.economy.market.imports_today += cost;
                         if r == Resource::Groceries {
                             self.economy.market.grocery_imports_today += amount;

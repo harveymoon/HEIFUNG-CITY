@@ -251,7 +251,11 @@ impl World {
         let yards = self.buildings.values().filter(|b| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::FreightYard)).count() as f32;
         let rail_upkeep = stations * rail::STATION_UPKEEP_PER_DAY + yards * rail::YARD_UPKEEP_PER_DAY;
         self.economy.debit(Flow::RailUpkeep, rail_upkeep);
+        self.daily_tolls();
         self.economy.ledger.roll();
+        // [tax] The tax book closes with the ledger: what is collected below
+        // (incomes, takings) is booked to the new day, as in the ledger.
+        self.economy.taxes.roll();
         let rs = &mut self.rail.stats;
         rs.upkeep_today = rail_upkeep;
         rs.riders_today = 0;
@@ -411,10 +415,16 @@ impl World {
             if !viable[lu.index()] {
                 continue;
             }
-            let chance = match lu {
+            let mut chance = match lu {
                 LandUse::Park => 0.05,
                 _ => self.economy.demand_for(lu) * 0.06,
             };
+            // [tax] Homes of a tier taxed over the standard go up less
+            // readily, under it more (the land's tier is the likely one).
+            if lu == LandUse::Residential && !self.economy.taxes.is_standard() {
+                let tier = Tier::for_land_value(self.lot_value(lot_id));
+                chance *= self.economy.taxes.pull(crate::tax::TaxCategory::residential(tier));
+            }
             if self.rng.random::<f32>() < chance {
                 self.build_on(lot_id);
                 built += 1;
@@ -499,6 +509,24 @@ impl World {
         let viable = self.business_kinds_viable(lu, Some(jobs))?;
         if viable.contains(&BusinessKind::Grocery) && self.rng.random_bool(0.6) {
             return Some(BusinessKind::Grocery);
+        }
+        // [tax] At the standard rates every viable kind is as likely; else
+        // each is weighted by how its tax line pulls.
+        let tier = Tier::Mid;
+        let t = &self.economy.taxes;
+        let weights: Vec<f32> = viable.iter().map(|k| crate::tax::TaxCategory::of_business(*k, tier).map_or(1.0, |c| t.pull(c))).collect();
+        if weights.iter().any(|w| *w != 1.0) {
+            let total: f32 = weights.iter().sum();
+            if total > 0.0 {
+                let mut roll = self.rng.random::<f32>() * total;
+                for (k, w) in viable.iter().zip(&weights) {
+                    if roll < *w {
+                        return Some(*k);
+                    }
+                    roll -= w;
+                }
+                return viable.last().copied();
+            }
         }
         if let Some(kind) = viable.choose(&mut self.rng) {
             return Some(*kind);

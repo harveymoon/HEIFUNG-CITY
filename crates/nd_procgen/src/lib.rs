@@ -14,12 +14,14 @@ pub mod society;
 pub mod street;
 pub mod surface;
 pub mod terrain;
+pub mod toll;
 pub mod textures;
 pub mod vehicles;
 pub mod vacant;
 pub mod walk;
 
 pub use buildings::transit::bus_stops;
+pub use toll::{toll_booths, TollDraw};
 pub use buildings::{coal_stacks, generate_building, wind_rotor, wind_turbines, BuildingRules, Extras, LandUseRules, Neighbour, Style, StyleBook, Turbine, WINDOW_LIGHT_MARK};
 pub use mesh::MeshData;
 pub use palette::Palette;

@@ -25,6 +25,7 @@ mod places;
 mod report;
 /// [society] crime, homelessness and trash.
 mod society;
+mod taxes;
 mod view;
 mod window;
 
@@ -423,6 +424,9 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         "project" => project(cmd, ctx),
         "place" => place(cmd, ctx),
+        // [tax] [tolls]
+        "taxes" | "tax" => taxes::command(cmd, &mut ctx.sim.world),
+        "tolls" | "toll" => taxes::tolls(cmd, &mut ctx.sim.world),
         "incident" => incident(cmd, ctx),
         "incidents" => incidents(cmd, ctx),
         "society" => society::command(cmd, &mut ctx.sim.world),
@@ -976,6 +980,15 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "parking" => {
             let lot = lot_near(w, p).ok_or("no lot there")?;
             (w.build_parking(lot).ok_or("cannot build parking there: the lot is taken, landlocked or too small")?, "parking built".into())
+        }
+        // [tolls] Across the road at the point: not a building.
+        other if nd_sim::tolls::TollSize::from_key(other).is_some() => {
+            let size = nd_sim::tolls::TollSize::from_key(other).unwrap();
+            let id = w.place_toll(p, size)?;
+            let row = w.tolls.get(id).map(|b| taxes::booth_row(w, b)).unwrap_or(Value::Null);
+            let note = format!("{} built for {:.0}; {:.0}/day; toll {:.1} (lorries double)", size.label(), size.cost(), size.upkeep_per_day(), size.default_price());
+            ctx.tools.status = note.clone();
+            return Ok(json!({ "toll": id, "message": note, "row": row, "treasury": round(w.economy.treasury) }));
         }
         other if land::dock_of(other).is_some() => {
             let dock = land::dock_of(other).unwrap();
@@ -1886,7 +1899,7 @@ fn help() -> Value {
             "add_zone": { "polygon": "[[x,y],...] (3+)", "land_use": "residential|commercial|industrial|entertainment|civic|park", "implement": "bool" },
             "bulldoze": { "gesture_id": "int", "implement": "bool" },
             "project": { "action": "start|implement|undo|redo|discard" },
-            "place": { "kind": "station|freight_yard|depot|parking|coal|solar|wind|nuclear|hydro|tidal|geothermal|shipping_port|ferry_terminal|police|fire|hospital|clinic|school|dispatch|monument|stadium|jail|trash_depot (services: tier or kind:tier)", "tier": "low|mid|high", "x": "f", "y": "f", "note": "hydro beside a river or stream with a current >= 0.8 m/s, tidal on the sea shore, geothermal over a hot spot; docks at the water's edge (they build a pier and a street stub)" },
+            "place": { "kind": "toll_booth|toll_plaza (on a road: across the carriageway)|station|freight_yard|depot|parking|coal|solar|wind|nuclear|hydro|tidal|geothermal|shipping_port|ferry_terminal|police|fire|hospital|clinic|school|dispatch|monument|stadium|jail|trash_depot (services: tier or kind:tier)", "tier": "low|mid|high", "x": "f", "y": "f", "note": "hydro beside a river or stream with a current >= 0.8 m/s, tidal on the sea shore, geothermal over a hot spot; docks at the water's edge (they build a pier and a street stub)" },
             "new_game": { "preset": "river_valley|islands|coast|delta|plains|flat (default river_valley)", "seed": "u64", "water": "0..1", "relief": "0..1 height variation", "branching": "0..1", "islands": "0..8", "highway": "ignored: every new game has the highway and the trunk line", "note": "throws the city away; omitted levers take the preset's" },
             "terrain_at": { "x": "f", "y": "f", "returns": "natural/ground/surface heights, slope, water (kind, current, width), nearest shore, hot spot, power sites and dock placement for the lot there" },
             "grant": { "amount": "money added to the treasury (dev), default 100000" },
@@ -1915,8 +1928,10 @@ fn help() -> Value {
         "industry": { "lot": "lot id, or", "polygon": "[[x, y], ...] area, or", "pos": "[x, y] (query only)", "kind": "farming | oil | refinery | manufacturing | logistics | fishing | tech | none: sets the industry sub-zone bias (none hands the area back to the ground); omit to query the ground, contamination and industry weights of the lot" },
         "history": { "keys": "optional daily/hourly series names (default all)", "days": "last n days (default all kept, up to 365)" },
         "list": { "what": "businesses|buildings|citizens|lots|routes|plants|facilities", "sort": "column", "desc": "bool", "filter": "{column: substring | value | {min, max}}", "fields": "[columns] (id always kept)", "offset": "default 0", "limit": "default 50, max 1000" },
+        "taxes": { "set": "{line: rate, ...} where line is a key (residential_low|residential_mid|residential_high|grocery|bakery|gadget_shop|parking|nightlife_low|nightlife_mid|nightlife_high|farming|oil|refinery|manufacturing|logistics|fishing|tech) or a land use for its whole group; rate 0.2 or 20 (= 20%)", "category": "one line (with rate)", "import_duty": "share of import prices (0..1)", "reset": "bool: back to the standard rates", "returns": "every line: rate, default, pull, buildings, homes/jobs, today, yesterday, recent_per_day; by_land_use; duty" },
+        "tolls": { "action": "list (default) | price | remove | inspect", "id": "booth id (or at: [x,y])", "price": "toll per car (lorries pay double)", "returns": "booths with cars and revenue today/yesterday/total, paid/free today, upkeep" },
         "export": { "path": "optional; default exports/city-<unix>.json: report + map + history + every row of every list" },
-        "window": { "name": "city|economy|market|people|power|transit|land|saves|help|dev", "open": "bool, omitted toggles", "tab": "people only: overview|concerns" },
+        "window": { "name": "city|economy|taxes|market|people|power|transit|land|saves|help|dev", "open": "bool, omitted toggles", "tab": "people only: overview|concerns" },
         "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" }
     });
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), review.as_object()) {

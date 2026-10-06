@@ -903,6 +903,14 @@ pub(crate) fn tool_input(
         }
         Tool::Bulldoze => {
             tools.hover_gesture = ground.and_then(|p| nearest_gesture(plan, p)).map(|(id, _)| id);
+            // [tolls] A click on a toll booth takes the booth away, not the road.
+            if click {
+                if let Some(booth) = ground.and_then(|p| sim.world.tolls.nearest(p, 8.0)).map(|b| (b.id, b.name.clone())) {
+                    let _ = sim.world.remove_toll(booth.0);
+                    tools.status = format!("{} removed.", booth.1);
+                    return;
+                }
+            }
             if click {
                 if let Some(id) = tools.hover_gesture {
                     sim.world.remove_gesture(id);
@@ -1033,6 +1041,14 @@ pub(crate) fn tool_input(
             if click {
                 if let Some(p) = ground {
                     let what = tools.build_item();
+                    // [tolls] A toll booth goes across the road, not on a lot.
+                    if let nd_sim::Placeable::Toll(size) = what {
+                        tools.status = match sim.world.place_toll(p, size) {
+                            Ok(_) => format!("{} built for {:.0}; {:.0}/day to run. Toll {:.1} a car (set it in the Taxes window).", what.label(), what.cost(), what.upkeep(), size.default_price()),
+                            Err(e) => format!("Cannot build: {e}."),
+                        };
+                        return;
+                    }
                     tools.status = match sim.world.place_building(what, p) {
                         Ok(id) => {
                             *selection = Selection::Building(id);
@@ -1576,6 +1592,28 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
             }
             Err(_) => {
                 gizmos.circle(Isometry3d::new(lift(c), flat), 12.0, red);
+            }
+        }
+        return;
+    }
+    // [tolls] The booth line across the road where it would stand.
+    if let nd_sim::Placeable::Toll(size) = what {
+        match nd_sim::tolls::site(&w.roads, c, size) {
+            Ok((sid, at, dir)) => {
+                let hw = w.roads.segment(sid).half_width() + if size == nd_sim::tolls::TollSize::Plaza { 8.0 } else { 0.5 };
+                let right = SVec2::new(-dir.y, dir.x);
+                let y = |p: SVec2| Vec3::new(p.x, 1.0 + w.surface_height(p), p.y);
+                let near = w.tolls.booths.iter().any(|b| b.pos.distance(at) < nd_sim::tolls::SPACING_M);
+                let col = if near || w.economy.treasury < size.cost() { red } else { green };
+                gizmos.line(y(at - right * hw), y(at + right * hw), col);
+                for u in [-4.0f32, 4.0] {
+                    gizmos.line(y(at + dir * u - right * hw), y(at + dir * u + right * hw), col.with_alpha(0.5));
+                }
+                let flare = size.flare().max(10.0);
+                gizmos.line(y(at - dir * flare), y(at + dir * flare), col.with_alpha(0.4));
+            }
+            Err(_) => {
+                gizmos.circle(Isometry3d::new(lift(c), flat), 6.0, red);
             }
         }
         return;

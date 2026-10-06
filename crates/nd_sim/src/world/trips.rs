@@ -30,9 +30,25 @@ impl World {
     /// money (`daily_household`), which is soon.
     pub(super) fn daily_citizen(&mut self, cid: CitizenId) {
         let tick = self.clock.tick;
+        // [tax] Income tax at the rate of the home's tier.
+        let cat = self.income_tax_category(cid);
+        let rate = self.economy.taxes.rate(cat);
+        let surcharge = self.economy.taxes.surcharge(cat);
         let Some(c) = self.citizens.get_mut(cid) else { return };
-        self.economy.tax_today += c.income * 0.12;
-        self.economy.credit(Flow::IncomeTax, c.income * 0.12);
+        let tax = c.income * rate;
+        self.economy.tax_today += tax;
+        self.economy.credit(Flow::IncomeTax, tax);
+        self.economy.taxes.collect(cat, tax);
+        // [tax] A rate well over the standard is felt: a little mood a day,
+        // and now and then a word about it.
+        if surcharge > 0.02 && c.income > 0.0 {
+            c.mood = (c.mood - surcharge * 0.25).max(0.0);
+            if (tick / 1440 + super::cars::id_hash(cid)) % 5 == 0 {
+                let pct = rate * 100.0;
+                c.remember(tick, format!("{pct:.0}% of my pay goes to the city now. Hard to get ahead."));
+                self.concerns.said(tick, cid, c, crate::concerns::Concern::Other, (surcharge * 3.0).clamp(0.2, 0.7), "Taxes eat half the paycheque.");
+            }
+        }
         if c.satiety < 0.25 {
             c.hungry_days = c.hungry_days.saturating_add(1);
             c.mood = (c.mood - 0.1).max(0.0);
@@ -88,9 +104,12 @@ impl World {
         let rent = home.map(|h| self.buildings[h].rent).unwrap_or(0.0);
         let income = self.household_income(hid);
         let living: f32 = members.iter().map(|m| if self.citizens[*m].stage() == LifeStage::Child { 10.0 } else { 20.0 }).sum();
+        // [tax] Wages are what is left after the standard income tax; a
+        // rate over it comes out of the purse, one under it is kept.
+        let tax_extra = income * self.economy.taxes.surcharge(self.tax_category_of_home(home));
         // Pockets come back to the shared purse (with any debts run up on
         // them), then the grown-ups draw pocket money again if there is some.
-        let mut money = self.households[hid].money + income - rent - living;
+        let mut money = self.households[hid].money + income - rent - living - tax_extra;
         for &m in &members {
             money += std::mem::take(&mut self.citizens[m].savings);
         }
@@ -438,7 +457,46 @@ impl World {
             return u32::from(self.rng.random_bool(0.3)).min(free_homes);
         }
         let pull = free_homes.min(free_jobs + 10) / 40;
-        (self.rng.random_range(1..=3) + pull).min(MAX_ARRIVALS).min(free_homes)
+        let n = (self.rng.random_range(1..=3) + pull).min(MAX_ARRIVALS).min(free_homes);
+        // [tax] Word of the income tax gets round: the free homes' tiers,
+        // weighted by how many each has, set how keen people are to come.
+        let factor = self.residential_tax_pull();
+        if factor == 1.0 {
+            return n;
+        }
+        let want = n as f32 * factor;
+        let whole = want.floor();
+        let extra = u32::from(self.rng.random::<f32>() < want - whole);
+        (whole as u32 + extra).min(MAX_ARRIVALS).min(free_homes)
+    }
+
+    /// [tax] The line a citizen's income is taxed under: the tier of their
+    /// home (the street and the unhoused count as low).
+    pub fn income_tax_category(&self, cid: CitizenId) -> crate::tax::TaxCategory {
+        self.tax_category_of_home(self.citizens.get(cid).and_then(|c| c.home))
+    }
+
+    pub(super) fn tax_category_of_home(&self, home: Option<BuildingId>) -> crate::tax::TaxCategory {
+        let tier = home.and_then(|h| self.buildings.get(h)).map_or(Tier::Low, |b| b.tier);
+        crate::tax::TaxCategory::residential(tier)
+    }
+
+    /// [tax] How the income tax pulls on newcomers: the pull of each tier,
+    /// weighted by its free homes (1 at the standard rates).
+    pub(super) fn residential_tax_pull(&self) -> f32 {
+        let t = &self.economy.taxes;
+        if Tier::ALL.iter().all(|&tier| t.pull(crate::tax::TaxCategory::residential(tier)) == 1.0) {
+            return 1.0;
+        }
+        let mut free = [0.0f32; 3];
+        for b in self.buildings.values().filter(|b| b.land_use == LandUse::Residential && b.construction.is_none()) {
+            free[b.tier.index()] += b.free_homes() as f32;
+        }
+        let total: f32 = free.iter().sum();
+        if total <= 0.0 {
+            return t.land_use_pull(LandUse::Residential);
+        }
+        Tier::ALL.iter().map(|&tier| free[tier.index()] * t.pull(crate::tax::TaxCategory::residential(tier))).sum::<f32>() / total
     }
 
     /// The ages of a household arriving: singles, couples, retired
@@ -1223,7 +1281,8 @@ impl World {
                 let search = if own_space { 0.0 } else { 2.0 + c.commute.parking_pain * 10.0 };
                 let minutes = at.distance(q.from) / walk + dist * 1.3 / (9.0 * secs) + 3.0 + search;
                 let bravado = if drunk_drive { -40.0 } else { 0.0 };
-                push(TripMode::Car, minutes, dist / 1000.0 * 0.5 + fee, -4.0 - 8.0 * hedonism + bravado, ModePlan::Car { car, at });
+                // [tolls] The tolls a car trip has cost lately.
+                push(TripMode::Car, minutes, dist / 1000.0 * 0.5 + fee + c.commute.toll_avg, -4.0 - 8.0 * hedonism + bravado, ModePlan::Car { car, at });
             }
         }
         out

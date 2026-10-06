@@ -19,6 +19,8 @@ use crate::camera::CameraMode;
 pub enum Info {
     City,
     Economy,
+    /// [tax] Rates per land use and sub-type, import duty, toll booths (ui/taxes.rs).
+    Taxes,
     Market,
     People,
     Power,
@@ -32,12 +34,13 @@ pub enum Info {
 }
 
 impl Info {
-    pub const ALL: [Info; 11] = [Info::City, Info::Economy, Info::Market, Info::People, Info::Power, Info::Transit, Info::Emergencies, Info::Land, Info::Saves, Info::Help, Info::Dev];
+    pub const ALL: [Info; 12] = [Info::City, Info::Economy, Info::Taxes, Info::Market, Info::People, Info::Power, Info::Transit, Info::Emergencies, Info::Land, Info::Saves, Info::Help, Info::Dev];
 
     pub fn title(self) -> &'static str {
         match self {
             Info::City => "City",
             Info::Economy => "Economy",
+            Info::Taxes => "Taxes",
             Info::Market => "Market",
             Info::People => "People",
             Info::Power => "Power",
@@ -56,6 +59,7 @@ impl Info {
             Info::People => 420.0,
             Info::Help => 440.0,
             Info::Emergencies => 480.0,
+            Info::Taxes => 470.0,
             Info::Dev => 300.0,
             _ => 380.0,
         }
@@ -83,17 +87,22 @@ pub fn show_all(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
         }
         let mut open = true;
         let pos = content.left_top() + egui::vec2(12.0 + 28.0 * i as f32, 12.0 + 30.0 * i as f32);
-        egui::Window::new(egui::RichText::new(info.title()).color(GOLD).strong())
+        let mut win = egui::Window::new(egui::RichText::new(info.title()).color(GOLD).strong())
             .id(info.id().with("window"))
             .open(&mut open)
             .default_pos(pos)
             .default_width(info.width())
             .constrain_to(content)
             .max_height(content.height() - 24.0)
-            .vscroll(true)
-            .show(ctx, |ui| match info {
+            .vscroll(true);
+        // [tax] The schedule is long: open it tall enough to see whole.
+        if info == Info::Taxes {
+            win = win.default_height((content.height() - 40.0).min(700.0));
+        }
+        win.show(ctx, |ui| match info {
                 Info::City => city(ui, p),
                 Info::Economy => economy(ui, p),
+                Info::Taxes => super::taxes::window(ui, p),
                 Info::Market => market(ui, p),
                 Info::People => people::window(ui, p),
                 Info::Power => power(ui, p),
@@ -161,7 +170,7 @@ fn economy(ui: &mut egui::Ui, p: &mut UiCtx) {
     let net: f32 = entries.iter().map(|(_, x)| x).sum();
     ui.separator();
     signed_bar(ui, "net", net, scale);
-    hint(ui, &format!("income tax 12% of wages · business tax 5% of revenue · {} flows tracked", Flow::ALL.len()));
+    hint(ui, &format!("{} flows tracked · rates per land use and sub-type, import duty and tolls in the Taxes window", Flow::ALL.len()));
 }
 
 /// One ledger line: label, a bar growing right for income and left for

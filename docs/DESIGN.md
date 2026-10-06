@@ -499,7 +499,8 @@ Citizens are rendered from their simulated positions every frame.
   below 60% power counts a dark hour: its businesses produce proportionally less, its
   windows go dark, the people inside lose mood and say so ("The power is out again."),
   and the inspector marks it UNDERPOWERED. The treasury starts at 60,000, takes 12% of
-  incomes and 5% of business revenue each day, and pays plant upkeep and imported power.
+  incomes and 5% of business revenue each day (the standard rates; see Taxes), and pays plant upkeep
+  and imported power.
 - **Services and emergencies** (`nd_sim::services`, `world/services.rs`): police, fire, health,
   schools and a 911 dispatch centre, plus monuments and stadiums, placed by the player in three
   tiers (cost x0.5 / 1 / 2.2, upkeep x0.6 / 1 / 1.8, jobs half / base / double, radius x0.7 / 1 / 1.4,
@@ -575,6 +576,35 @@ Citizens are rendered from their simulated positions every frame.
   19 offenders and about 10 offences a day, 103 of ~350 buildings overflowing, the hauler with 88
   clients; with a police station, jail, dispatch and depot, 11 offenders, 5 arrests, nothing
   overflowing.
+- **Taxes** (`nd_sim::tax`, `world/taxes.rs`, the Taxes window): a rate per line, collected at
+  midnight: incomes by the tier of the home (three lines, 12% standard, up to 40%), business takings
+  by kind (grocers, bakeries, gadget shops, private car parks; nightlife by tier; each industry
+  sub-zone; 5% standard, up to 30%); offices and the city's own businesses stay at 5%. Wages and
+  prices were tuned as what is kept after the standard rates, so the treasury's standard take is
+  collected at source and the defaults change nothing; only the difference from the standard reaches
+  a purse (a household pays the extra out of its money every day, a business out of its takings,
+  which its cover shows). Each line has a pull, `exp(-(rate - standard) x k)` bounded to 0.25..1.6
+  (k = 4 for homes, 8 for businesses): the land use's demand is scaled by its lines' mean pull,
+  residential lots of a tier develop by that tier's pull, arrivals by the pull of the tiers with
+  free homes, a new industrial lot's sub-zone weights and a new shop's kind by their line's pull.
+  Heavy income tax costs mood (and is complained about). The import duty (0..100%) is added to the
+  price of every import and paid to the treasury (ledger `import duty`); imports are remembered by
+  resource for a few days, and under a duty the industry sub-zones that make what the town imports
+  are drawn 1 + 1.5 x duty times harder. Each line books its take (today, yesterday, a running
+  average) for the window's bars.
+- **Toll booths** (`nd_sim::tolls`, `world/tolls.rs`, Buildings > Transit): a booth (4,000, 60 a
+  day) or a plaza (15,000, 200 a day) stands across a straight stretch of street or highway, both
+  directions, saved by position and found again on every road rebuild (gone with its road). The
+  lanes of its piece carry a `LaneToll`: vehicles slow to 2.5 m/s (plaza 4.5) from 60 m before the
+  line to 6 m past it, and pay when they cross it from behind: cars from the driver's pocket (the
+  trip remembers it: it hurts like a parking fee and the next mode choice expects it), lorries
+  double from their business, through traffic and out-of-town lorries just pay; buses and emergency
+  vehicles go free. Routing counts a toll as 120 m of detour per unit of money, so drivers go round
+  a dear toll. Takings go to the ledger as `road tolls`, upkeep as `toll booth upkeep`. Drawn by the
+  app (`nd_procgen::toll`): islands with kiosks on every lane line, a canopy with neon fascia, a lit
+  TOLL board and lane lights, raised barrier arms, rumble stripes; the plaza's asphalt flares out to
+  six booth lanes with fanned lane lines (the sim keeps the road's lanes: a plaza is faster to pass,
+  not wider).
 - **Economy stats**: demand per land use, Gini of incomes, class counts, rents per
   tier, displaced, emigrated and priced-out counters, plus market stats: businesses,
   deals, imports, exports, meals sold, hungry citizens, closures, and the average

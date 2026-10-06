@@ -36,6 +36,10 @@ pub mod rail;
 pub mod roads;
 pub mod services;
 pub mod takeover;
+/// [tax] Tax rates per land use and sub-type, and the import duty.
+pub mod tax;
+/// [tolls] Toll booths on the roads.
+pub mod tolls;
 pub mod society;
 pub mod traffic;
 pub mod transit;

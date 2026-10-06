@@ -17,6 +17,7 @@ pub mod people;
 mod person;
 mod places;
 mod saves;
+mod taxes;
 mod icons;
 mod legend;
 mod toolbar;

@@ -136,6 +136,11 @@ Reply: `gesture_id`, `implemented`, `project` (`id`, `name`, `steps`, `redo`), `
   street stub to join to the city.
 - `depot`, `parking`, `coal`, `solar`, `wind`, `nuclear`: on the lot under the point, or the nearest
   vacant lot within 80 m (`build_depot`, `build_parking`, `build_power`).
+- `toll_booth` (also `toll`), `toll_plaza` (also `plaza`): across the road at the point
+  (`World::place_toll`), not on a lot: the nearest street or highway piece within 15 m that has a
+  straight run either side (booth 18 m, plaza 50 m between junctions or bends; a click near a
+  junction slides along to fit), at least 40 m from another booth. Cost 4,000 / 15,000, upkeep 60 /
+  200 a day. Reply: `toll` (the booth id, an integer), `message`, `row` (as in `tolls`), `treasury`.
 - `vertiport` (also `skyport`, `drone_pad`) with `tier` low / mid / high: the air taxi base (`nd_sim::air`), on any
   lot but parks; works once the old building on the lot is cleared.
 - Services and attractions: `police`, `fire`, `hospital` (`clinic` is a low-tier hospital), `school`, `jail`,
@@ -152,6 +157,48 @@ Reply: `building` id, `message`, `row`, `treasury`; or the sim's reason as `erro
 {"cmd": "place", "kind": "solar", "x": -210, "y": -210}
 {"cmd": "place", "kind": "fire", "tier": "high", "x": 120, "y": 40}
 {"cmd": "place", "kind": "dispatch:low", "x": -80, "y": 40}
+```
+
+### Taxes and tolls
+
+`taxes {}` reads the tax schedule; the same reply comes back from every setting form below.
+
+| Field | Meaning |
+| --- | --- |
+| `set` | `{line: rate, ...}`: `line` is a key (`residential_low`, `residential_mid`, `residential_high`, `grocery`, `bakery`, `gadget_shop`, `parking`, `nightlife_low`, `nightlife_mid`, `nightlife_high`, `farming`, `oil`, `refinery`, `manufacturing`, `logistics`, `fishing`, `tech`; industry kinds also by their `industry` names) or a land use (`residential`, `commercial`, `entertainment`, `industrial`) to set its whole group. A rate is a share (`0.2`) or a percentage (`20`, `"20%"`) |
+| `category` + `rate` | one line |
+| `import_duty` | share added to the price of imports, 0..1 |
+| `reset` | `true`: every rate back to the standard, no duty |
+
+Reply: `lines` (per line: `key`, `label`, `land_use`, `rate`, `default`, `max` (0.40 income, 0.30
+business), `pull` (1 at the standard rate; below 1 the line is taxed over it and grows less),
+`buildings`, `homes`/`jobs`, `residents`/`workers`, `today` (the last midnight's collection),
+`yesterday`, `recent_per_day` (running average)), `by_land_use` {buildings, today, yesterday, pull},
+`import_duty`, `duty_today`, `duty_yesterday`, `standard`, `tax_today`, `changed`.
+
+Taxes are collected at midnight: incomes at the rate of the home's tier (12% standard), business
+takings at the rate of the business's line (5% standard; offices and the city's own car parks stay at
+5%). The standard rates change nothing; only the difference reaches purses (a household taxed at 20%
+pays the extra 8% of its income each day, a farm at 0% keeps its 5%). See `nd_sim::tax` for what
+each rate pulls on. The same schedule is in `report {sections: ["economy"]}` under `taxes`.
+
+```json
+{"cmd": "taxes", "set": {"oil": 0.2, "farming": 0, "residential_high": 25}}
+{"cmd": "taxes", "import_duty": 0.3}
+{"cmd": "taxes", "reset": true}
+```
+
+`tolls {}` lists the booths: `booths` (id, name, size `toll_booth`/`toll_plaza`, pos, price,
+truck_price, lanes, highway, segment, cars/revenue today, yesterday and total, upkeep_per_day),
+`paid_today`, `free_today` (buses, emergency vehicles), `trucks_today`, `revenue_today`,
+`upkeep_per_day`, the ledger's `road tolls` today and yesterday. `{action: "price", id, price}` sets a
+booth's toll (0..50 per car; lorries pay double), `{action: "remove", id}` takes it away (no refund),
+`{action: "inspect", id}` returns one row; `at: [x, y]` picks the booth within 30 m instead of `id`.
+Booths go with their road when it is bulldozed. The Bulldoze tool removes a booth clicked within 8 m.
+
+```json
+{"cmd": "place", "kind": "toll_plaza", "x": 0, "y": 420}
+{"cmd": "tolls", "action": "price", "id": 1, "price": 4}
 ```
 
 ### Industry sub-zones
@@ -244,7 +291,7 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
 | `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway, Roundabout), `diameter` and `ring_lanes` (roundabout), `ring_at` `[x,y]` (show the roundabout preview there as if hovered, until the mouse is used), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry` (zone, industrial: auto / farming / oil / ...), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture`, `elevation` (the Road tool's level for the next point, m), `depth` (underground / ground / sky: the view layer; the Tunnel preset switches to underground, other presets back), `draw` `[[x,y,level?],...]` (the road being drawn, as if clicked, so its hologram shows), `cursor` `[x,y]` (where the pointer stands for that hologram until the mouse is used). The reply's tool state has `elevation`, `elevation_label`, `point_levels`, `tunnel`, `depth`, `grade_warnings` |
 | `overlay` | `layer` (land_value, traffic, traffic_types, people, pollution, paths, zoning) with `on` (bool; omitted toggles); or any of those names as bools. Reply: every layer and whether it is on (also in `status.overlays`) |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
-| `window` | `name` city / economy / market / people / power / transit / land / saves / help / dev, `open` (omit to toggle). Reply `open`, `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it |
+| `window` | `name` city / economy / taxes / market / people / power / transit / land / saves / help / dev, `open` (omit to toggle). Reply `open`, `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it |
 
 ### Camera
 

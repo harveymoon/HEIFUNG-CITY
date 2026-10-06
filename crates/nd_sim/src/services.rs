@@ -460,6 +460,9 @@ pub enum Placeable {
     Dock(PortKind),
     /// [parking] A parking lot the city runs, in three sizes.
     ParkingLot(crate::enforcement::LotSize),
+    /// [tolls] A toll booth or plaza across a road (not on a lot:
+    /// `World::place_toll`).
+    Toll(crate::tolls::TollSize),
 }
 
 /// The Buildings tool's sub-categories.
@@ -508,6 +511,7 @@ impl BuildCategory {
             BuildCategory::Transit => {
                 let mut v = vec![Placeable::BusDepot, Placeable::Service(ServiceKind::Vertiport, Tier::Mid)];
                 v.extend(crate::enforcement::LotSize::ALL.iter().map(|&s| Placeable::ParkingLot(s)));
+                v.extend(crate::tolls::TollSize::ALL.iter().map(|&s| Placeable::Toll(s)));
                 v
             }
             BuildCategory::Rail => vec![Placeable::Rail(RailFacility::Station), Placeable::Rail(RailFacility::FreightYard)],
@@ -528,6 +532,7 @@ impl Placeable {
             Placeable::Rail(_) => BuildCategory::Rail,
             Placeable::Dock(_) => BuildCategory::Water,
             Placeable::ParkingLot(_) => BuildCategory::Transit,
+            Placeable::Toll(_) => BuildCategory::Transit,
         }
     }
 
@@ -551,6 +556,7 @@ impl Placeable {
             Placeable::Rail(f) => f.label().to_lowercase(),
             Placeable::Dock(k) => k.label().to_string(),
             Placeable::ParkingLot(s) => s.label().to_string(),
+            Placeable::Toll(s) => s.label().to_string(),
         }
     }
 
@@ -572,6 +578,7 @@ impl Placeable {
                 ServiceKind::ParkingEnforcement => "Parking enforcement",
             },
             Placeable::ParkingLot(s) => s.menu_label(),
+            Placeable::Toll(s) => s.menu_label(),
             Placeable::BusDepot => "Bus depot",
             Placeable::Rail(RailFacility::Station) => "Passenger station",
             Placeable::Rail(RailFacility::FreightYard) => "Freight yard",
@@ -589,6 +596,7 @@ impl Placeable {
             Placeable::Rail(RailFacility::FreightYard) => crate::rail::YARD_COST,
             Placeable::Dock(k) => k.cost(),
             Placeable::ParkingLot(s) => s.cost(),
+            Placeable::Toll(s) => s.cost(),
         }
     }
 
@@ -601,6 +609,7 @@ impl Placeable {
             Placeable::Rail(RailFacility::FreightYard) => crate::rail::YARD_UPKEEP_PER_DAY,
             Placeable::Dock(k) => k.upkeep_per_day(),
             Placeable::ParkingLot(s) => s.upkeep_per_day(),
+            Placeable::Toll(s) => s.upkeep_per_day(),
         }
     }
 
@@ -613,6 +622,8 @@ impl Placeable {
             Placeable::Rail(RailFacility::FreightYard) => crate::rail::YARD_JOBS,
             Placeable::Dock(k) => k.jobs(),
             Placeable::ParkingLot(s) => s.jobs(),
+            // Collectors are part of the upkeep, not jobs in town.
+            Placeable::Toll(_) => 0,
         }
     }
 
@@ -630,7 +641,7 @@ impl Placeable {
             Placeable::Plant(k) => k.min_area(),
             Placeable::Service(k, t) => k.min_area(t),
             Placeable::BusDepot => crate::transit::DEPOT_MIN_AREA,
-            Placeable::Rail(_) | Placeable::Dock(_) => 0.0,
+            Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_) => 0.0,
             Placeable::ParkingLot(s) => s.min_area(),
         }
     }
@@ -641,7 +652,7 @@ impl Placeable {
             Placeable::Plant(k) => k.allowed_on(lu),
             Placeable::Service(k, _) => k.allowed_on(lu),
             Placeable::BusDepot => !matches!(lu, LandUse::Residential | LandUse::Park),
-            Placeable::Rail(_) | Placeable::Dock(_) => true,
+            Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_) => true,
             // Any road-adjacent lot but a park.
             Placeable::ParkingLot(_) => lu != LandUse::Park,
         }
@@ -672,6 +683,7 @@ impl Placeable {
             "freight_yard" | "yard" => Some(Placeable::Rail(RailFacility::FreightYard)),
             "clinic" => Some(Placeable::Service(ServiceKind::Health, tier.unwrap_or(Tier::Low))),
             other if crate::enforcement::LotSize::from_key(other).is_some() => crate::enforcement::LotSize::from_key(other).map(Placeable::ParkingLot),
+            other if crate::tolls::TollSize::from_key(other).is_some() => crate::tolls::TollSize::from_key(other).map(Placeable::Toll),
             other => ServiceKind::from_key(other).map(|k| Placeable::Service(k, tier.unwrap_or(Tier::Mid))),
         }
     }
@@ -1294,7 +1306,9 @@ mod tests {
             for p in items {
                 assert_eq!(p.category(), cat, "{p:?} listed under {cat:?}");
                 assert!(!seen.contains(&p), "{p:?} listed twice");
-                assert!(p.cost() > 0.0 && p.upkeep() > 0.0 && p.jobs() > 0, "{p:?} has no cost, upkeep or jobs");
+                // [tolls] A toll booth is no building: its collectors are in the upkeep.
+                let staffed = p.jobs() > 0 || matches!(p, Placeable::Toll(_));
+                assert!(p.cost() > 0.0 && p.upkeep() > 0.0 && staffed, "{p:?} has no cost, upkeep or jobs");
                 seen.push(p);
             }
         }
@@ -1304,6 +1318,7 @@ mod tests {
             assert!(seen.iter().any(|p| matches!(p, Placeable::Service(s, _) if *s == k)), "{k:?} is not on the menu");
         }
         assert!(seen.contains(&Placeable::BusDepot));
+        assert!(crate::tolls::TollSize::ALL.iter().all(|&t| BuildCategory::Transit.items().contains(&Placeable::Toll(t))), "toll booths under Transit");
         assert!(seen.contains(&Placeable::Rail(RailFacility::Station)) && seen.contains(&Placeable::Rail(RailFacility::FreightYard)));
         assert!(seen.contains(&Placeable::Dock(PortKind::ShippingPort)) && seen.contains(&Placeable::Dock(PortKind::FerryTerminal)), "docks live under Water");
         assert_eq!(BuildCategory::Attractions.items().len(), 2);
