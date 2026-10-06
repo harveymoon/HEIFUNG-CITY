@@ -13,7 +13,9 @@ use std::f32::consts::FRAC_PI_2;
 pub fn station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
-    let Some(link) = c.rail.as_ref() else { return };
+    if c.rail.is_none() {
+        return;
+    }
     // Forecourt the whole lot, paved.
     ground(g, f, Paving, &offset_poly(&c.lot_poly, 0.3), 0.04, mul(pal.paving, 1.1));
     // Hall: on the road half of the lot, as wide as the lot allows.
@@ -37,8 +39,35 @@ pub fn station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             band_windows(g, c, rng, &face, h * 0.55, 1, 3.0);
         }
     }
-    // Platform along the track, with a canopy on posts, benches, lamps,
-    // a yellow line and a name board.
+    platform(g, c, rng, poly_center(&hall));
+    // Forecourt: taxi rank, bike racks, bins, bollards, a lamp.
+    let gate = c.front_face(&offset_poly(&c.lot_poly, 0.3));
+    for s in [-1.0f32, 1.0] {
+        let p = gate.at(s * gate.len * 0.3, -4.0);
+        if vehicle_fits(c, p, 0.0, Vehicle::Car) {
+            let col = pick(rng, &pal.car_colors);
+            vehicle(g, f, pal, rng, p, 0.0, 0.0, Vehicle::Car, col);
+        }
+    }
+    for k in 0..4 {
+        let p = gate.at(-gate.len * 0.42 + k as f32 * 1.0, -2.0);
+        if c.inside_local(p) {
+            f.bx(g, Matte, p.x, 0.45, p.y, Vec3::new(0.05, 0.9, 0.8), mul(pal.steel, 0.8));
+        }
+    }
+    bollards(g, c, &gate, 6, -1.0);
+    lamp_post(g, f, gate.at(gate.len * 0.42, -1.6), 5.0, pal.lamp);
+}
+
+/// The platform along the track, with a canopy on posts, benches, lamps, a
+/// yellow line and name boards, and a ramped path to it from `from` (a
+/// lot-local point: the hall's middle). Shared by the railway station and
+/// the Central Station (`subway::central_station`), whose platform is the
+/// link's longer one.
+pub fn platform(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, from: Vec2) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let Some(link) = c.rail.as_ref() else { return };
     let [pa, pb] = link.platform;
     let along = link.along();
     let out = Vec2::new(-along.y, along.x) * link.side;
@@ -68,7 +97,7 @@ pub fn station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Path from the hall to the platform, ramped up. It leaves the lot at
     // the lot's point nearest the platform, not in a straight line that
     // might cut across a neighbour.
-    let hc = poly_center(&hall);
+    let hc = from;
     let hw = f.to_world(hc.x, hc.y);
     let pc = link.centre() + out * 2.8;
     let exit_l = clamp_into(&c.lot_poly, f.to_local(pc));
@@ -77,23 +106,6 @@ pub fn station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let exit = f.to_world(exit_l.x, exit_l.y);
     g.part(Paving).path_strip(&[hw, exit, pc], 0.0, 3.0, 0.05, rgba(mul(pal.paving, 1.2)));
     g.part(Concrete).slab(Vec3::new(exit.x, 0.05, exit.y), Vec3::new(pc.x, 0.95, pc.y), 3.0, 0.15, rgba(concrete));
-    // Forecourt: taxi rank, bike racks, bins, bollards, a lamp.
-    let gate = c.front_face(&offset_poly(&c.lot_poly, 0.3));
-    for s in [-1.0f32, 1.0] {
-        let p = gate.at(s * gate.len * 0.3, -4.0);
-        if vehicle_fits(c, p, 0.0, Vehicle::Car) {
-            let col = pick(rng, &pal.car_colors);
-            vehicle(g, f, pal, rng, p, 0.0, 0.0, Vehicle::Car, col);
-        }
-    }
-    for k in 0..4 {
-        let p = gate.at(-gate.len * 0.42 + k as f32 * 1.0, -2.0);
-        if c.inside_local(p) {
-            f.bx(g, Matte, p.x, 0.45, p.y, Vec3::new(0.05, 0.9, 0.8), mul(pal.steel, 0.8));
-        }
-    }
-    bollards(g, c, &gate, 6, -1.0);
-    lamp_post(g, f, gate.at(gate.len * 0.42, -1.6), 5.0, pal.lamp);
 }
 
 pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {

@@ -253,6 +253,25 @@ fn transit(ui: &mut egui::Ui, p: &mut UiCtx) {
     row(ui, "trains today", format!("{} passenger   {} freight", r.passenger_trains_today, r.freight_trains_today));
     row(ui, "freight", format!("{:.0} units in today   {:.0} waiting at yards", r.freight_in_today, r.freight_waiting));
     row(ui, "money", format!("fares {:.0} today   upkeep {:.0}/day", r.fares_today, r.upkeep_today));
+    // [subway]
+    let s = &w.subway.stats;
+    section(ui, "METRO");
+    if s.lines == 0 {
+        hint(ui, "No metro line yet: the Buses tool's Metro mode places stations and lays lines.");
+    }
+    row(ui, "network", format!("{} station{}   {} line{}   {:.1} km   {} train{} running", s.stations, if s.stations == 1 { "" } else { "s" }, s.lines, if s.lines == 1 { "" } else { "s" }, s.tunnel_m / 1000.0, s.trains, if s.trains == 1 { "" } else { "s" }));
+    row(ui, "riders", format!("{} waiting   {} riding   {} today   {} yesterday", s.waiting, s.riding, s.riders_today, s.riders_yesterday));
+    row(ui, "money", format!("fares {:.0} today ({:.0} yesterday)   upkeep {:.0} yesterday", s.fares_today, s.fares_yesterday, s.upkeep_today));
+    for l in w.subway.lines.values() {
+        row(ui, &l.name, format!("{} stations   every {} min   {} riders today   {} yesterday", l.stations.len(), l.headway, l.riders_today, l.riders_yesterday));
+    }
+    let mut busiest: Vec<(nd_sim::BuildingId, u32, u32)> = w.subway.boardings.clone();
+    busiest.sort_by(|a, b| b.1.cmp(&a.1).then(b.2.cmp(&a.2)));
+    for (b, today, yesterday) in busiest.into_iter().take(5) {
+        if let Some(bld) = w.buildings.get(b) {
+            row(ui, &bld.name, format!("{today} boarded today   {yesterday} yesterday"));
+        }
+    }
 }
 
 /// Overlays, land value and class mix, and the lighting controls: the

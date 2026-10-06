@@ -424,7 +424,7 @@ impl World {
         let active: Vec<(CitizenId, f32)> = self.society.crime.active().map(|o| (o.citizen, o.boldness)).collect();
         for (cid, boldness) in active {
             let Some(c) = self.citizens.get(cid) else { continue };
-            if matches!(c.activity, Activity::Arriving | Activity::OnTrain { .. } | Activity::Riding { .. }) || self.is_patient(cid) {
+            if matches!(c.activity, Activity::Arriving | Activity::OnTrain { .. } | Activity::OnMetro { .. } | Activity::Riding { .. }) || self.is_patient(cid) {
                 continue;
             }
             let pos = c.pos;

@@ -1324,9 +1324,13 @@ impl World {
     pub(super) fn transit_failed(&mut self, id: CitizenId) {
         let tick = self.clock.tick;
         let Some(c) = self.citizens.get_mut(id) else { return };
-        let mode = c.commute.mode.filter(|m| matches!(m, TripMode::Bus | TripMode::Train)).unwrap_or(TripMode::Bus);
+        let mode = c.commute.mode.filter(|m| matches!(m, TripMode::Bus | TripMode::Train | TripMode::Subway)).unwrap_or(TripMode::Bus);
         c.commute.feel(mode, 3.0);
-        c.remember(tick, if mode == TripMode::Train { "Waited hours for a train that never came." } else { "Waited hours for a bus that never came." });
+        c.remember(tick, match mode {
+            TripMode::Train => "Waited hours for a train that never came.",
+            TripMode::Subway => "Stood on the metro platform for hours. Nothing came.",
+            _ => "Waited hours for a bus that never came.",
+        });
         self.concerns.heard(id, c, crate::concerns::Concern::Commute, 0.5);
     }
 
@@ -1346,7 +1350,7 @@ impl World {
         let pain = match mode {
             TripMode::Walk => (minutes - 25.0).max(0.0) / 30.0 * if frail { 1.4 } else { 1.0 },
             TripMode::Bike => (minutes - 35.0).max(0.0) / 30.0 + (d / bike - 60.0).max(0.0) / 60.0,
-            TripMode::Bus | TripMode::Train => (minutes - (d / (walk * 4.0) + 20.0)).max(0.0) / 30.0,
+            TripMode::Bus | TripMode::Train | TripMode::Subway => (minutes - (d / (walk * 4.0) + 20.0)).max(0.0) / 30.0,
             TripMode::Car => {
                 // The drive against free flow (about 9 m/s door to door);
                 // the hunt for a space, the fee and the walk from the car
@@ -1370,7 +1374,7 @@ impl World {
                 TripMode::Car => format!("{minutes:.0} minutes stuck in traffic. There has to be a better way."),
                 TripMode::Walk => format!("{minutes:.0} minutes on foot. My feet are done."),
                 TripMode::Bike => format!("{minutes:.0} minutes in the saddle. Too far to ride."),
-                TripMode::Bus | TripMode::Train => format!("{minutes:.0} minutes on transit for that. Crawling."),
+                TripMode::Bus | TripMode::Train | TripMode::Subway => format!("{minutes:.0} minutes on transit for that. Crawling."),
             };
             c.remember(tick, text);
             let k = if mode == TripMode::Car && c.commute.searched / secs > 15.0 { crate::concerns::Concern::Parking } else { crate::concerns::Concern::Commute };

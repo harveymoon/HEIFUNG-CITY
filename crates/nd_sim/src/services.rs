@@ -460,6 +460,8 @@ pub enum Placeable {
     Dock(PortKind),
     /// [parking] A parking lot the city runs, in three sizes.
     ParkingLot(crate::enforcement::LotSize),
+    /// [subway] A metro station: an entrance on a lot, the platform below.
+    MetroStation,
 }
 
 /// The Buildings tool's sub-categories.
@@ -506,11 +508,11 @@ impl BuildCategory {
             BuildCategory::Power => PowerPlantKind::ALL.iter().map(|&k| Placeable::Plant(k)).collect(),
             BuildCategory::Services => [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch, ServiceKind::Jail, ServiceKind::TrashDepot, ServiceKind::ParkingEnforcement].iter().map(|&k| Placeable::Service(k, Tier::Mid)).collect(),
             BuildCategory::Transit => {
-                let mut v = vec![Placeable::BusDepot, Placeable::Service(ServiceKind::Vertiport, Tier::Mid)];
+                let mut v = vec![Placeable::BusDepot, Placeable::MetroStation, Placeable::Service(ServiceKind::Vertiport, Tier::Mid)];
                 v.extend(crate::enforcement::LotSize::ALL.iter().map(|&s| Placeable::ParkingLot(s)));
                 v
             }
-            BuildCategory::Rail => vec![Placeable::Rail(RailFacility::Station), Placeable::Rail(RailFacility::FreightYard)],
+            BuildCategory::Rail => vec![Placeable::Rail(RailFacility::Station), Placeable::Rail(RailFacility::Central), Placeable::Rail(RailFacility::FreightYard)],
             BuildCategory::Water => PortKind::ALL.iter().map(|&k| Placeable::Dock(k)).collect(),
             BuildCategory::Attractions => vec![Placeable::Service(ServiceKind::Monument, Tier::Mid), Placeable::Service(ServiceKind::Stadium, Tier::Mid)],
         }
@@ -528,6 +530,7 @@ impl Placeable {
             Placeable::Rail(_) => BuildCategory::Rail,
             Placeable::Dock(_) => BuildCategory::Water,
             Placeable::ParkingLot(_) => BuildCategory::Transit,
+            Placeable::MetroStation => BuildCategory::Transit,
         }
     }
 
@@ -551,6 +554,7 @@ impl Placeable {
             Placeable::Rail(f) => f.label().to_lowercase(),
             Placeable::Dock(k) => k.label().to_string(),
             Placeable::ParkingLot(s) => s.label().to_string(),
+            Placeable::MetroStation => "metro station".into(),
         }
     }
 
@@ -575,6 +579,8 @@ impl Placeable {
             Placeable::BusDepot => "Bus depot",
             Placeable::Rail(RailFacility::Station) => "Passenger station",
             Placeable::Rail(RailFacility::FreightYard) => "Freight yard",
+            Placeable::Rail(RailFacility::Central) => "Central Station",
+            Placeable::MetroStation => "Metro station",
             Placeable::Dock(PortKind::ShippingPort) => "Shipping port",
             Placeable::Dock(PortKind::FerryTerminal) => "Ferry terminal",
         }
@@ -585,8 +591,8 @@ impl Placeable {
             Placeable::Plant(k) => k.build_cost(),
             Placeable::Service(k, t) => k.build_cost(t),
             Placeable::BusDepot => crate::transit::DEPOT_COST,
-            Placeable::Rail(RailFacility::Station) => crate::rail::STATION_COST,
-            Placeable::Rail(RailFacility::FreightYard) => crate::rail::YARD_COST,
+            Placeable::Rail(f) => f.cost(),
+            Placeable::MetroStation => crate::subway::STATION_COST,
             Placeable::Dock(k) => k.cost(),
             Placeable::ParkingLot(s) => s.cost(),
         }
@@ -597,8 +603,8 @@ impl Placeable {
             Placeable::Plant(k) => k.upkeep_per_day(),
             Placeable::Service(k, t) => k.upkeep_per_day(t),
             Placeable::BusDepot => crate::transit::DEPOT_UPKEEP_PER_DAY,
-            Placeable::Rail(RailFacility::Station) => crate::rail::STATION_UPKEEP_PER_DAY,
-            Placeable::Rail(RailFacility::FreightYard) => crate::rail::YARD_UPKEEP_PER_DAY,
+            Placeable::Rail(f) => f.upkeep_per_day(),
+            Placeable::MetroStation => crate::subway::STATION_UPKEEP_PER_DAY,
             Placeable::Dock(k) => k.upkeep_per_day(),
             Placeable::ParkingLot(s) => s.upkeep_per_day(),
         }
@@ -609,8 +615,8 @@ impl Placeable {
             Placeable::Plant(k) => k.jobs(),
             Placeable::Service(k, t) => k.jobs(t),
             Placeable::BusDepot => crate::transit::DEPOT_JOBS,
-            Placeable::Rail(RailFacility::Station) => crate::rail::STATION_JOBS,
-            Placeable::Rail(RailFacility::FreightYard) => crate::rail::YARD_JOBS,
+            Placeable::Rail(f) => f.jobs(),
+            Placeable::MetroStation => crate::subway::STATION_JOBS,
             Placeable::Dock(k) => k.jobs(),
             Placeable::ParkingLot(s) => s.jobs(),
         }
@@ -632,6 +638,7 @@ impl Placeable {
             Placeable::BusDepot => crate::transit::DEPOT_MIN_AREA,
             Placeable::Rail(_) | Placeable::Dock(_) => 0.0,
             Placeable::ParkingLot(s) => s.min_area(),
+            Placeable::MetroStation => crate::subway::STATION_MIN_AREA,
         }
     }
 
@@ -644,6 +651,8 @@ impl Placeable {
             Placeable::Rail(_) | Placeable::Dock(_) => true,
             // Any road-adjacent lot but a park.
             Placeable::ParkingLot(_) => lu != LandUse::Park,
+            // An entrance plaza fits anywhere, parks included.
+            Placeable::MetroStation => true,
         }
     }
 
@@ -670,6 +679,8 @@ impl Placeable {
             "depot" | "bus_depot" => Some(Placeable::BusDepot),
             "station" => Some(Placeable::Rail(RailFacility::Station)),
             "freight_yard" | "yard" => Some(Placeable::Rail(RailFacility::FreightYard)),
+            "central_station" | "central" | "main_station" => Some(Placeable::Rail(RailFacility::Central)),
+            "metro_station" | "metro" | "subway_station" | "subway" => Some(Placeable::MetroStation),
             "clinic" => Some(Placeable::Service(ServiceKind::Health, tier.unwrap_or(Tier::Low))),
             other if crate::enforcement::LotSize::from_key(other).is_some() => crate::enforcement::LotSize::from_key(other).map(Placeable::ParkingLot),
             other => ServiceKind::from_key(other).map(|k| Placeable::Service(k, tier.unwrap_or(Tier::Mid))),

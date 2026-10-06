@@ -485,6 +485,42 @@ Citizens are rendered from their simulated positions every frame.
   Editing: stops can be added, dragged, deleted; buses per line set; lines deleted (the
   buses are taken off and riders stranded on the kerb). Roads changing re-snap the stops
   or drop them.
+- **Subway** (`nd_sim::subway`, `world/subway.rs`): the Cities: Skylines metro. A station is a
+  lot taken by the city (any land use, 120 m² or more, 160 m from the next station; 15,000 to build,
+  140 a day): at street level only its entrance shows, a plaza with a stairwell under an arched glass
+  canopy and a pylon with the lit M (`buildings::subway::metro_entrance`); its platform lies 16 m down
+  under the lot's middle. The Buses tool's Metro mode (or the `subway` API) lays a line through
+  stations in order: one polyline of twin bores that ignores the street grid, laid with the
+  railway's easing (`rail::smooth_track`) with a 90 m straight through every platform so a bend
+  never pulls the tunnel off a station; 22 per metre to bore, 90 per km a day to run. Tunnels are
+  not in the road network on purpose: track there would join the railway's searches, become entry
+  points for intercity trains and make every edit rebuild parcels and lanes. Trains are the
+  railway's own `Train` records (poses, stops, riders) in a map of their own, not saved: every
+  `headway` minutes (default 10, 4..60) from 05:00 to midnight a four-car set leaves each terminus,
+  runs at 22 m/s, stands 16 s at every platform and is gone at the far end (each run costs 6). Riders: a
+  trip of 420 m or more with an entrance within 320 m of each end on one line (450 m for the
+  Central Station) and walks that save real distance (`Subway::plan_trip`; no transfers yet) is an
+  option in the mode choice (`TripMode::Subway`: the walks, two minutes of stairs, half a headway,
+  the ride and its dwells; fare 2.5; the crowd-shy mind it a little less than the bus). They walk
+  to the entrance, wait on the platform (shown at the entrance), board a train going their way
+  (`Activity::OnMetro`, hidden underground), pay into the treasury (ledger "subway fares"), get off
+  at their station and walk on. A station pulled down drops out of its lines (the tunnel is re-laid
+  through the rest; a line left with one station closes) and its waiting riders go on foot. Land
+  value: +0.16 within 240 m of an entrance. Upkeep (stations, tunnels, runs) is booked at midnight
+  under "subway upkeep". The Underground view draws the bores with track and a lit strip in the
+  line's colour, island platforms, the shafts up to the entrances and the trains
+  (`nd_procgen::metro`, `render/subway.rs`); the Transit window and the inspector show lines,
+  timetables and boardings per station.
+- **Central Station** (`RailFacility::Central`): the grand terminus, a 150 by 64 m rail piece
+  placed like a station (Buildings > Rail or Transit, or the Rail tool), one per city, 120,000 to
+  build and 1,100 a day, 60 jobs. It is a passenger station on the intercity line (a 120 m platform,
+  extended along the straight the track runs, so a trunk split by crossings still gets its full
+  length), a metro station (lines can start or call there) and a bus terminal (a depot). People walk
+  420 m to its trains and 450 m to its metro. Land value +0.32 within 480 m and +0.2 within 200 m.
+  Drawn as a hall under a barrel-vaulted glass roof on steel ribs with a magenta neon ridge, a stone
+  pavilion with three lit arches, a great clock and CENTRAL in neon, a clock tower with a neon crown,
+  saw-tooth bus canopies over lit bays, a metro entrance in the forecourt, a taxi rank and the
+  railway station's canopied platform (`buildings::subway::central_station`, `rail::platform`).
 - **Power** (`nd_sim::power`): the city runs on electricity and the player supplies it.
   Every building draws megawatts by land use, floors and tier (industry most, homes
   least, high tiers more); plants draw none. Four kinds of plant go on vacant lots with
@@ -632,8 +668,8 @@ Citizens are rendered from their simulated positions every frame.
   water, buildings, lots, surface roads and walkers, draws surface roads as faint outlines and
   shows the tunnels (drawn as their own street layer, `StreetLayer::Underground`, with bore walls
   and a lit strip) and the cars in them. The Tunnel preset switches to it, other presets back to
-  Ground. Sky is a placeholder. A subway would be `RoadKind::Rail` drawn at tunnel depth: the
-  level model already carries it; trains and stations underground are not done.
+  Ground. Sky is a placeholder. The metro (see Subway) shows here: its bores, platforms, shafts and
+  trains carry the tunnel tag.
 - **Highway and the map edge**: two carriageways cross the map at
   y = 420 from the start; through cars enter at the map edge and leave at the far one.
   A new map has nothing else: no streets, the player builds the rest. Every way whose end reaches

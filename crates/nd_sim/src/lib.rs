@@ -37,6 +37,8 @@ pub mod roads;
 pub mod services;
 pub mod takeover;
 pub mod society;
+/// [subway] Metro stations, lines and trains.
+pub mod subway;
 pub mod traffic;
 pub mod transit;
 pub mod trash;
@@ -65,6 +67,7 @@ pub use ground::{Contamination, GroundSample, Soil};
 pub use industry::{IndustryKind, IndustrySite};
 pub use ports::{Port, PortId, PortKind, Ports, Ship, ShipKind};
 pub use park::{ParkFeature, ParkLayout};
+pub use subway::{MetroLine, MetroLineId, MetroTrain, MetroTrainId, Subway, SubwayStats};
 pub use transit::{BusRoute, BusStop, RouteId, Transit, TransitStats};
 pub use rail::{Facility, FacilityId, Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
 pub use services::{BuildCategory, Incident, IncidentKind, Placeable, ServiceKind, ServiceSite, Services, ServiceStats, Unit, UnitId, UnitKind};

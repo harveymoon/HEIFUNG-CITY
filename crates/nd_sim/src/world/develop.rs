@@ -72,20 +72,21 @@ impl World {
         // Transit and rail counts, and what minds may ask for: read every
         // tick, so they are tallied here rather than in each step.
         let (mut bus_wait, mut rail_wait, mut riding, mut on_train) = (0u32, 0u32, 0u32, 0u32);
+        let (mut metro_wait, mut on_metro) = (0u32, 0u32);
         for c in self.citizens.values() {
             match c.activity {
-                Activity::Waiting { .. } => {
-                    if c.transit.is_some_and(|t| matches!(t.leg, TransitLeg::Rail { .. })) {
-                        rail_wait += 1;
-                    } else {
-                        bus_wait += 1;
-                    }
-                }
+                Activity::Waiting { .. } => match c.transit.map(|t| t.leg) {
+                    Some(TransitLeg::Rail { .. }) => rail_wait += 1,
+                    Some(TransitLeg::Subway { .. }) => metro_wait += 1,
+                    _ => bus_wait += 1,
+                },
                 Activity::Riding { .. } => riding += 1,
                 Activity::OnTrain { .. } => on_train += 1,
+                Activity::OnMetro { .. } => on_metro += 1,
                 _ => {}
             }
         }
+        self.tally_subway(metro_wait, on_metro);
         let depots = self.buildings.values().filter(|b| b.depot && !b.is_derelict()).count() as u32;
         let t = &mut self.economy.transit;
         t.buses = self.traffic.cars.values().filter(|c| c.bus.is_some()).count() as u32;
@@ -209,7 +210,15 @@ impl World {
                 match link.kind {
                     RailFacility::Station => b.splat(c, 220.0, 0.25),
                     RailFacility::FreightYard => b.splat(c, 160.0, -0.12),
+                    // [subway] The grand terminus draws the whole district.
+                    RailFacility::Central => {
+                        b.splat(c, 480.0, 0.32);
+                        b.splat(c, 200.0, 0.2);
+                    }
                 }
+            } else if bld.metro {
+                // [subway] An entrance puts the block on the map.
+                b.splat(c, crate::subway::LAND_VALUE_RADIUS, crate::subway::LAND_VALUE_LIFT);
             }
             // Services reassure, landmarks draw (`services::ServiceKind::land_value`).
             if let Some(s) = bld.service {
@@ -247,9 +256,7 @@ impl World {
         let transit_upkeep = bus_days * transit::BUS_UPKEEP_PER_DAY + depots * transit::DEPOT_UPKEEP_PER_DAY;
         self.economy.debit(Flow::TransitUpkeep, transit_upkeep);
         self.economy.transit.upkeep_today = transit_upkeep;
-        let stations = self.buildings.values().filter(|b| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::Station)).count() as f32;
-        let yards = self.buildings.values().filter(|b| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::FreightYard)).count() as f32;
-        let rail_upkeep = stations * rail::STATION_UPKEEP_PER_DAY + yards * rail::YARD_UPKEEP_PER_DAY;
+        let rail_upkeep: f32 = self.buildings.values().filter_map(|b| b.rail.as_ref()).map(|l| l.kind.upkeep_per_day()).sum();
         self.economy.debit(Flow::RailUpkeep, rail_upkeep);
         self.economy.ledger.roll();
         let rs = &mut self.rail.stats;

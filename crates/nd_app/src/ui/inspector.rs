@@ -61,6 +61,9 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             // Docks, plants and services are drawn in their own style, not the land use's.
             let style_label = match b.service {
                 Some(s) => nd_procgen::buildings::Style::for_service(s.kind).label(),
+                // [subway]
+                None if b.rail.as_ref().is_some_and(|l| l.kind == nd_sim::RailFacility::Central) => nd_procgen::buildings::Style::CentralStation.label(),
+                None if b.metro => nd_procgen::buildings::Style::MetroEntrance.label(),
                 None => b.port.map(|k| k.label()).or(b.plant.map(|k| k.label())).unwrap_or(picked),
             };
             if let Some(c) = &b.construction {
@@ -110,8 +113,16 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 let joined = if link.works() { "" } else if !link.rail_connected { " · NOT CONNECTED TO THE RAILWAY" } else { " · NOT CONNECTED TO THE ROADS" };
                 match link.kind {
                     nd_sim::RailFacility::Station => ui.label(format!("railway station: platform {:.0} m, {} trains today, {} riders today across the line{joined}", link.platform[0].distance(link.platform[1]), sim.world.rail.stats.passenger_trains_today, sim.world.rail.stats.riders_today)),
+                    nd_sim::RailFacility::Central => ui.label(format!("Central Station: intercity platform {:.0} m, {} trains today, {} rail riders today; metro below, bus terminal in front{joined}", link.platform[0].distance(link.platform[1]), sim.world.rail.stats.passenger_trains_today, sim.world.rail.stats.riders_today)),
                     nd_sim::RailFacility::FreightYard => ui.label(format!("freight yard: {} orders ({:.0} units) waiting for the next train, {:.0} units of exports on the apron{joined}", b.rail_inbound.len(), b.rail_inbound.iter().map(|c| c.amount).sum::<f32>(), b.rail_outbound)),
                 };
+            }
+            // [subway]
+            if b.metro {
+                let (today, yesterday) = sim.world.subway.boardings_at(id);
+                let lines: Vec<String> = sim.world.subway.lines_at(id).map(|(_, l)| format!("{} (every {} min)", l.name, l.headway)).collect();
+                let waiting = sim.world.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Waiting { .. }) && matches!(c.transit.map(|t| t.leg), Some(nd_sim::transit::TransitLeg::Subway { board, .. }) if board == id)).count();
+                ui.label(if lines.is_empty() { "metro station: no line calls here yet (Buses tool, Metro mode)".to_string() } else { format!("metro station: {} · {today} boarded today, {yesterday} yesterday · {waiting} on the platform", lines.join(", ")) });
             }
             if b.depot {
                 let out = sim.world.traffic.cars.values().filter(|c| c.bus.as_ref().is_some_and(|x| x.depot == id)).count();
