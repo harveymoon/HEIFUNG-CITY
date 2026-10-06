@@ -434,7 +434,81 @@ pub fn car_detail(w: &World, id: CarId, c: &Car) -> Value {
         m["passenger_list"] = json!(bus.passengers.iter().filter_map(|&p| w.citizens.get(p).map(|x| json!({ "id": key_str(p), "name": x.name }))).collect::<Vec<_>>());
     }
     m["route_lanes_left"] = json!(c.route.len().saturating_sub(c.idx));
+    m["traffic"] = car_traffic(w, c);
     m
+}
+
+/// Why a vehicle drives as it does: what holds it, its lane's arrows, its
+/// next turn and how long it has waited for a left turn.
+pub fn car_traffic(w: &World, c: &Car) -> Value {
+    use nd_sim::traffic::arrows_label;
+    let net = &w.traffic.net;
+    let lane = &net.lanes[c.route[c.idx] as usize];
+    let next = c.route.get(c.idx + 1).map(|&n| &net.lanes[n as usize]);
+    let next_turn = match next {
+        Some(n) if n.is_connector() && !lane.is_connector() => match n.turn {
+            t if t < 0 => "left",
+            0 => "straight",
+            _ => "right",
+        },
+        Some(n) if lane.is_beside(c.route[c.idx + 1]) && n.length > 0.0 => "lane change",
+        _ => "none",
+    };
+    json!({
+        "wait": format!("{:?}", c.wait).to_lowercase(), "stalled_s": round(c.stalled), "in_junction": lane.is_connector(),
+        "lane_arrows": if lane.arrows != 0 { Value::String(arrows_label(lane.arrows)) } else { Value::Null },
+        "next_turn": next_turn, "left_turn_wait_s": round(c.turn_wait), "yielding_s": round(c.yielded),
+        "passing_on_shoulder": c.passing, "lateral_offset_m": round(c.lateral), "entering": c.entering,
+    })
+}
+
+/// A junction: its signal, every arriving street's lane arrows and the
+/// waits of the left turns made there.
+pub fn junction_detail(w: &World, k: usize) -> Value {
+    use nd_sim::traffic::arrows_label;
+    let net = &w.traffic.net;
+    let inter = &net.intersections[k];
+    let node = w.roads.node(inter.node);
+    let approaches: Vec<Value> = net
+        .approaches
+        .iter()
+        .filter(|a| a.node == inter.node)
+        .map(|a| {
+            let (p, q) = w.roads.segment_points(a.segment);
+            let far = if p.distance(node.pos) > q.distance(node.pos) { p } else { q };
+            let total: f32 = a.counts.iter().sum();
+            json!({
+                "segment": a.segment.0, "from": v2(node.pos + (far - node.pos).normalize_or_zero() * 30.0),
+                "lanes": a.arrows.iter().map(|&x| arrows_label(x)).collect::<Vec<_>>(), "offered": arrows_label(a.exits), "set_by_player": a.fixed,
+                "recent_turn_share": if total > 0.0 { json!({ "left": round(a.counts[0] / total), "straight": round(a.counts[1] / total), "right": round(a.counts[2] / total) }) } else { Value::Null },
+                "queued": a.lanes.iter().map(|&l| net.lanes[l as usize].cars.len()).sum::<usize>(),
+            })
+        })
+        .collect();
+    let group = inter.phases.get(inter.phase);
+    json!({
+        "node": inter.node.0, "pos": v2(node.pos), "streets": inter.approaches, "signalized": inter.signalized,
+        "signal": if inter.signalized { json!({
+            "phases": inter.phases, "green_approaches": group, "timer_s": round(inter.timer),
+            "protected_left_arrow_s": round(inter.arrow), "arrow_now": inter.timer < inter.arrow,
+        }) } else { Value::Null },
+        "approaches": approaches,
+        "left_turns": inter.left_turns,
+        "left_turn_wait_mean_s": round(if inter.left_turns > 0 { inter.left_wait_sum / inter.left_turns as f32 } else { 0.0 }),
+        "left_turn_wait_max_s": round(inter.left_wait_max),
+    })
+}
+
+/// The junction (three or more streets) nearest a point.
+pub fn junction_near(w: &World, p: SVec2) -> Option<usize> {
+    w.traffic
+        .net
+        .intersections
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| i.approaches >= 3)
+        .min_by(|a, b| w.roads.node(a.1.node).pos.distance(p).total_cmp(&w.roads.node(b.1.node).pos.distance(p)))
+        .map(|(k, _)| k)
 }
 
 pub fn train_row(w: &World, id: TrainId, t: &Train) -> Value {

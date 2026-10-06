@@ -65,12 +65,23 @@ Citizens are rendered from their simulated positions every frame.
 - **Roads**: a node/segment graph with per-direction lane counts. New polylines snap to
   existing nodes and split segments they cross. Walking uses A* over nodes.
 - **Lanes and traffic**: every segment becomes offset lanes per direction, shortened at
-  junctions. Each junction gets connector lanes with lane discipline on multi-lane
-  approaches: only the leftmost lane turns left, only the rightmost turns right, every
-  lane goes straight on lane for lane (U-turns only at dead ends). Junctions with three
-  or more approaches run an actuated signal: opposite approaches share a green (left
-  turns yield to oncoming traffic), a green with nobody left to serve is cut after 5 s
-  when another approach waits, and phases nobody waits for are skipped. Cars path over
+  junctions. Each junction gets connector lanes for every movement (U-turns only at
+  dead ends); lane arrows on each arriving street permit some of them. Defaults follow
+  the lane count and the turning counts, revised every 600 traffic seconds: two lanes
+  are a left-only lane plus straight-and-right (a shared left-and-straight lane while
+  under 30% turn left), three or more get a left lane, straight lanes and a
+  straight-and-right lane, with a second left lane when over 40% turn left. The player
+  can set arrows per approach (`lane_use`); highway ramps keep every lane open. Arrows
+  are painted before the stop line. Junctions with three or more approaches run an
+  actuated signal: opposite approaches share a green (left turns yield to oncoming
+  traffic), a green with nobody left to serve is cut after 5 s when another approach
+  waits, and phases nobody waits for are skipped. A green opens with a protected left
+  arrow (up to 7 s, oncoming red) when left turners queue in a lane of their own and
+  their head has been yielding, or when any left turner has yielded 20 s; a starving
+  left also ends an endless green. On a one-lane approach a car going straight or right
+  behind a waiting left turner pulls onto the shoulder at low speed, passes on the
+  right, stops short of the crossing if it must, and merges back; on wider approaches
+  followers change lanes out from behind the turner. Cars path over
   the lane graph with A* (lane changes are steps between parallel lanes; every vehicle
   on a lane adds to its cost, so routes spread out), follow the intelligent driver
   model, queue behind each other and stop at red lights. They move into the lane their

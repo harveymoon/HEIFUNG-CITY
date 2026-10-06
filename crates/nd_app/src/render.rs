@@ -64,6 +64,9 @@ struct VacantTag;
 struct PreviewTag;
 #[derive(Component)]
 struct SignalTag(LaneId);
+/// Lane arrows at junction approaches (follow `LaneNetwork::arrows_version`).
+#[derive(Component, Clone)]
+struct LaneArrowsTag;
 #[derive(Component)]
 struct OverlayTag;
 #[derive(Component)]
@@ -162,6 +165,7 @@ struct ChunkMeshes {
 struct RenderState {
     roads_version: u64,
     lanes_version: u64,
+    arrows_version: u64,
     plan_version: u64,
     /// What the lot ground meshes were built for: lot and zone counts, roads
     /// version, zoning overlay, and a hash of every lot's built/park/
@@ -222,6 +226,7 @@ impl Plugin for RenderPlugin {
                 .chain()
                 .in_set(SimSet::Sync),
         );
+        app.add_systems(Update, sync_lane_arrows.in_set(SimSet::Sync).after(sync_signals).before(lift_spawned));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
     }
 }
@@ -656,6 +661,27 @@ fn sync_roads(
             e.insert((NotShadowCaster, NotShadowReceiver));
         }
     }
+}
+
+/// Lane arrows painted before junction stop lines; redrawn when the arrows
+/// change (turning demand, the player's lane use, a road rebuild).
+fn sync_lane_arrows(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut state: ResMut<RenderState>,
+    existing: Query<Entity, With<LaneArrowsTag>>,
+) {
+    let net = &sim.world.traffic.net;
+    if net.arrows_version == state.arrows_version && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
+        return;
+    }
+    state.arrows_version = net.arrows_version;
+    despawn_all(&mut commands, &existing);
+    let geo = nd_procgen::street::lane_arrows(net, &assets.palette);
+    spawn_geometry(&mut commands, &mut meshes, &mats, &geo, LaneArrowsTag);
 }
 
 /// A glowing lamp in every signal head, coloured by whether that lane
@@ -1685,7 +1711,7 @@ fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res
 fn lift_spawned(
     sim: Res<Sim>,
     mut meshes: ResMut<Assets<Mesh>>,
-    q: Query<&Mesh3d, Or<(Added<RoadsTag>, Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>)>>,
+    q: Query<&Mesh3d, Or<(Added<RoadsTag>, Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>, Added<LaneArrowsTag>)>>,
     mut signals: Query<&mut Transform, Added<SignalTag>>,
 ) {
     let w = &sim.world;
