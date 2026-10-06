@@ -724,9 +724,9 @@ impl RoadNetwork {
 // ── roundabouts ─────────────────────────────────────────────────────────────
 
 /// Roundabout radius limits (centre to the middle of the ring road), metres:
-/// 24 to 80 m across.
+/// 24 to 240 m across.
 pub const RING_MIN_RADIUS: f32 = 12.0;
-pub const RING_MAX_RADIUS: f32 = 40.0;
+pub const RING_MAX_RADIUS: f32 = 120.0;
 /// Two arms whose joins on the circle are closer than this share one node.
 const RING_JOIN_MERGE: f32 = 8.0;
 /// Target length of a ring piece between joins.
@@ -755,9 +755,28 @@ impl Ring {
         self.lanes as f32 * LANE_WIDTH * 0.5 + SHOULDER
     }
 
-    /// Radius of the raised central island (inside the ring's kerb).
+    /// Radius of the ring's inner kerb: inside it the ground is open land.
     pub fn island_radius(&self) -> f32 {
         (self.radius - self.half_width() - 0.3).max(2.0)
+    }
+
+    /// Radius inside which the ground is clear of the ring road and its
+    /// inner pavement.
+    pub fn inner_radius(&self) -> f32 {
+        (self.radius - self.half_width() - crate::zoning::SIDEWALK).max(0.0)
+    }
+
+    /// Speed on the ring, m/s: about 25 km/h on a small ring, faster on a
+    /// big one (what a comfortable sideways pull allows), at most the
+    /// street limit.
+    pub fn speed(&self) -> f32 {
+        (2.0 * self.radius).sqrt().clamp(7.0, 13.0)
+    }
+
+    /// Does `inner` sit wholly inside this ring with room between them for
+    /// a lane and a pavement?
+    pub fn holds(&self, inner: &Ring) -> bool {
+        self.center.distance(inner.center) + inner.outer_radius() + LANE_WIDTH + crate::zoning::SIDEWALK <= self.inner_radius()
     }
 
     /// Radius of the ground the ring takes, pavement included.
@@ -772,8 +791,10 @@ impl Ring {
         d > self.radius - 1.6 && d < self.radius + 0.6
     }
 
+    /// Do two rings fight over ground? Apart, or one nested inside the
+    /// other with clearance, they do not.
     pub fn overlaps(&self, other: &Ring) -> bool {
-        self.center.distance(other.center) < self.outer_radius() + other.outer_radius()
+        self.center.distance(other.center) < self.outer_radius() + other.outer_radius() && !self.holds(other) && !other.holds(self)
     }
 
     /// Direction of travel at a point of the ring (island on the left).
@@ -884,52 +905,61 @@ pub struct RingLayout {
     pub cut: Vec<(usize, Vec<Vec2>)>,
 }
 
-/// Lay roundabouts over roads: each road polyline with the parts inside a
-/// ring cut away (the ends left on the circle join the ring), each ring
-/// with a vertex at every join. `roads` carry whether a ring may cut them
-/// (railways and grade-separated highways pass untouched). Rings that
-/// overlap an earlier one are left out.
-pub fn layout_rings(rings: &[Ring], roads: &[(Vec<Vec2>, bool)]) -> RingLayout {
-    let mut chosen: Vec<Ring> = Vec::new();
+/// Lay roundabouts over roads. Each ring cuts away the parts inside its
+/// circle of the roads older than it (the old junction goes; the ends left
+/// on the circle join the ring); roads newer than the ring are kept whole
+/// inside and out and join it where they cross it. Every ring gets a vertex
+/// at every join. `rings` and `roads` carry their age (gesture order) and
+/// roads whether a ring may cut them at all (railways and grade-separated
+/// highways pass untouched). Rings that overlap an earlier one are left out;
+/// nested rings with room between them are fine.
+pub fn layout_rings(rings: &[(Ring, u64)], roads: &[(Vec<Vec2>, bool, u64)]) -> RingLayout {
+    let mut chosen: Vec<(Ring, u64)> = Vec::new();
     for r in rings {
-        if !chosen.iter().any(|o| o.overlaps(r)) {
+        if !chosen.iter().any(|o| o.0.overlaps(&r.0)) {
             chosen.push(*r);
         }
     }
+    let on = |ring: &Ring, p: Vec2| (p.distance(ring.center) - ring.radius).abs() < 1e-2;
     let mut out = RingLayout::default();
     let mut joins: Vec<Vec<Vec2>> = vec![Vec::new(); chosen.len()];
-    for (i, (pts, clip)) in roads.iter().enumerate() {
+    for (i, (pts, clip, age)) in roads.iter().enumerate() {
         if !clip {
             out.kept.push((i, pts.clone()));
             continue;
         }
         let mut pieces = vec![pts.clone()];
-        for (k, ring) in chosen.iter().enumerate() {
+        for (k, (ring, ring_age)) in chosen.iter().enumerate() {
+            let older = age < ring_age;
             let mut next = Vec::new();
             for p in pieces {
                 let (outside, inside) = ring.clip(&p);
-                for o in &outside {
+                let kept_inside: Vec<Vec<Vec2>> = if older { Vec::new() } else { inside.iter().filter(|v| v.len() >= 2 && path_len(v) > 1.0).cloned().collect() };
+                for o in outside.iter().chain(kept_inside.iter()) {
                     for end in [o[0], *o.last().unwrap()] {
-                        if (end.distance(ring.center) - ring.radius).abs() < 1e-2 {
+                        if on(ring, end) {
                             joins[k].push(end);
                         }
                     }
                 }
-                out.cut.extend(inside.into_iter().map(|c| (i, c)));
+                if older {
+                    out.cut.extend(inside.into_iter().map(|c| (i, c)));
+                }
                 next.extend(outside);
+                next.extend(kept_inside);
             }
             pieces = next;
         }
         out.kept.extend(pieces.into_iter().map(|p| (i, p)));
     }
     // Rings get their vertices; arm ends move onto the vertex they share.
-    for (k, ring) in chosen.iter().enumerate() {
+    for (k, (ring, _)) in chosen.iter().enumerate() {
         let (poly, placed) = ring.polyline(&joins[k]);
         for (_, pts) in out.kept.iter_mut() {
             let last = pts.len() - 1;
             for end in [0, last] {
                 let p = pts[end];
-                if (p.distance(ring.center) - ring.radius).abs() < 1e-2 {
+                if on(ring, p) {
                     if let Some(q) = placed.iter().min_by(|a, b| a.distance(p).total_cmp(&b.distance(p))) {
                         pts[end] = *q;
                     }

@@ -61,7 +61,24 @@ impl World {
     /// and nightlife streets, whose kerbs are for loading: drivers going
     /// there use the lots.
     pub(super) fn kerb_allowed(&self, sid: SegmentId) -> bool {
-        self.roads.try_segment(sid).is_some_and(|s| s.alive && s.is_street() && !s.is_highway() && !s.bridge && s.lanes() > 0 && s.lanes_fwd < 2 && s.lanes_bwd < 2) && !self.vehicles.no_kerb.1.contains(&sid)
+        self.roads.try_segment(sid).is_some_and(|s| s.alive && s.is_street() && !s.is_highway() && !s.bridge && s.lanes() > 0 && s.lanes_fwd < 2 && s.lanes_bwd < 2)
+            && !self.vehicles.no_kerb.1.contains(&sid)
+            && !self.on_ring(sid)
+    }
+
+    /// Is this segment part of a roundabout's ring? Rings are one-way and
+    /// often one lane, which the street rule above would otherwise let
+    /// cars park along: parked cars then sat in the ring itself.
+    pub(super) fn on_ring(&self, sid: SegmentId) -> bool {
+        let Some(seg) = self.roads.try_segment(sid) else { return false };
+        let (a, b) = (self.roads.node(seg.a).pos, self.roads.node(seg.b).pos);
+        let mid = (a + b) * 0.5;
+        self.roads.rings.iter().any(|r| {
+            let near = |p: Vec2| (p.distance(r.center) - r.radius).abs() < 3.0;
+            // A chord's midpoint sits inside the circle by r(1 - cos(θ/2)).
+            let sag = (a.distance(b) * 0.5).powi(2) / (2.0 * r.radius.max(1.0));
+            near(a) && near(b) && (mid.distance(r.center) - (r.radius - sag)).abs() < 3.0
+        })
     }
 
     /// Refresh which streets have no kerb parking, when the plan or the

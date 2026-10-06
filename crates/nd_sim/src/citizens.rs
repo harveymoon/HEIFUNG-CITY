@@ -342,6 +342,10 @@ pub struct Citizen {
     pub transit: Option<crate::transit::TransitTrip>,
     pub activity: Activity,
     pub memories: Vec<Memory>,
+    /// [places] The venues, shops and parks this citizen knows, how each
+    /// went, and the people met at their regular haunts.
+    #[serde(default)]
+    pub places: crate::places::PlaceBook,
     pub thought: String,
     /// Spotlight citizens may be driven by an expensive mind (an LLM).
     pub spotlight: bool,
@@ -402,6 +406,11 @@ pub struct Citizen {
     /// [carlife] How travelling has felt lately, per mode.
     #[serde(default)]
     pub commute: Commute,
+    /// [looks] What they look like, chosen on arrival with their family
+    /// (`looks::family_looks`). `None` only on saves from before looks,
+    /// filled on load.
+    #[serde(default)]
+    pub look: Option<crate::looks::Appearance>,
 }
 
 /// [driving] Drunk enough that driving is a bad idea.
@@ -470,6 +479,11 @@ impl Citizen {
         }
     }
 
+    /// [looks] Their look; one from the seed alone if none was given yet.
+    pub fn appearance(&self) -> crate::looks::Appearance {
+        self.look.unwrap_or_else(|| crate::looks::Appearance::of_seed(self.seed, self.age, self.class()))
+    }
+
     pub fn class(&self) -> Tier {
         Tier::for_income(self.income)
     }
@@ -529,6 +543,7 @@ mod tests {
             transit: None,
             activity: Activity::Idle,
             memories: Vec::new(),
+            places: Default::default(),
             thought: String::new(),
             spotlight: false,
             next_decision_tick: 0,
@@ -552,6 +567,7 @@ mod tests {
             car: None,
             to_car: None,
             commute: Default::default(),
+            look: None,
         }
     }
 

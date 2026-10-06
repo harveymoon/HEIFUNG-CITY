@@ -24,37 +24,79 @@ pub fn citizen_summary(ui: &mut egui::Ui, w: &World, c: &Citizen) {
         _ => None,
     };
     let rent = c.home.and_then(|h| w.buildings.get(h)).map_or(0.0, |b| b.rent);
-    let how = if c.mode == TravelMode::Bike && c.activity.is_traveling() { "  ·  by bike" } else { "" };
+    let how = if c.mode == TravelMode::Bike && c.activity.is_traveling() { "  Â·  by bike" } else { "" };
 
     ui.label(egui::RichText::new(Personality::from_seed(c.seed).summary()).small());
+    look_line(ui, c);
     ui.label(match destination {
-        Some(d) => format!("{}{how}  ·  to {d}", c.activity.label()),
+        Some(d) => format!("{}{how}  Â·  to {d}", c.activity.label()),
         None => format!("{}{how}", c.activity.label()),
     });
-    ui.label(format!("home: {home}  ·  work: {work}"));
+    ui.label(format!("home: {home}  Â·  work: {work}"));
     ui.label(format!(
-        "mood {:.0}%  ·  satiety {:.0}%  ·  {} class  ·  arrived day {}",
+        "mood {:.0}%  Â·  satiety {:.0}%  Â·  {} class  Â·  arrived day {}",
         c.mood * 100.0,
         c.satiety * 100.0,
         c.class().label(),
         c.arrived_tick / 1440 + 1
     ));
     ui.label(format!(
-        "income {:.0}/day  ·  rent {:.0}/day  ·  savings {:.0}{}",
+        "income {:.0}/day  Â·  rent {:.0}/day  Â·  savings {:.0}{}",
         c.income,
         rent,
         c.savings,
-        if c.rent_stress_days > 0 { format!("  ·  rent stress {}d", c.rent_stress_days) } else { String::new() }
+        if c.rent_stress_days > 0 { format!("  Â·  rent stress {}d", c.rent_stress_days) } else { String::new() }
     ));
     ui.label(format!(
-        "meals at home {:.0}{}  ·  {}  ·  {}",
+        "meals at home {:.0}{}  Â·  {}  Â·  {}",
         c.groceries,
-        if c.hungry_days > 0 { format!("  ·  hungry {}d", c.hungry_days) } else { String::new() },
+        if c.hungry_days > 0 { format!("  Â·  hungry {}d", c.hungry_days) } else { String::new() },
         if c.owns_car { "owns a car" } else { "no car" },
         if c.owns_bike { "owns a bike" } else { "no bike" }
     ));
     ui.add_space(4.0);
-    ui.label(egui::RichText::new(format!("“{}”", c.thought)).italics().color(egui::Color32::from_rgb(220, 190, 140)));
+    ui.label(egui::RichText::new(format!("â€œ{}â€", c.thought)).italics().color(egui::Color32::from_rgb(220, 190, 140)));
+}
+
+/// [looks] A small painted figure in their colours beside a line saying
+/// what they look like.
+pub fn look_line(ui: &mut egui::Ui, c: &Citizen) {
+    use nd_sim::looks::{skin_srgb, Outfit, HairStyle, COLORS};
+    let a = c.appearance();
+    let rgb = |c: [u8; 3]| egui::Color32::from_rgb(c[0], c[1], c[2]);
+    let fav = a.fav.map(|i| rgb(COLORS[(i as usize).min(COLORS.len() - 1)].srgb));
+    let skin = rgb(skin_srgb(a.genes.skin));
+    let hair = rgb(a.shown_hair(c.age).srgb());
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 56.0), egui::Sense::hover());
+        let p = ui.painter_at(rect);
+        let s = (a.stature(c.age) / 1.1).clamp(0.4, 1.0);
+        let h = rect.height() * s / 1.1;
+        let foot = rect.bottom();
+        let cx = rect.center().x;
+        let y = |f: f32| foot - h * f;
+        let w = |f: f32| rect.width() * f;
+        let r = |x0: f32, y0: f32, x1: f32, y1: f32| egui::Rect::from_min_max(egui::pos2(cx + x0, y(y0)), egui::pos2(cx + x1, y(y1)));
+        let legs = match a.outfit { Outfit::Suit => fav[0], Outfit::Dress => skin, _ => fav[1] };
+        let arms = if matches!(a.outfit, Outfit::Tee | Outfit::Dress) { skin } else { fav[0] };
+        p.rect_filled(r(-w(0.2), 0.48, w(0.2), 0.0), 1.0, legs);
+        p.rect_filled(r(-w(0.36), 0.82, -w(0.22), 0.47), 1.0, arms);
+        p.rect_filled(r(w(0.22), 0.82, w(0.36), 0.47), 1.0, arms);
+        let torso_bottom = match a.outfit { Outfit::Coat => 0.27, Outfit::Dress => 0.25, _ => 0.47 };
+        p.rect_filled(r(-w(0.24), 0.82, w(0.24), torso_bottom), 1.0, fav[0]);
+        p.rect_filled(r(-w(0.25), 0.5, w(0.25), 0.46), 0.0, fav[1]);
+        p.rect_filled(r(-w(0.15), 1.0, w(0.15), 0.84), 2.0, skin);
+        match a.style {
+            HairStyle::Bald => {}
+            HairStyle::Afro => { p.rect_filled(r(-w(0.24), 1.08, w(0.24), 0.92), 4.0, hair); }
+            HairStyle::Mohawk => { p.rect_filled(r(-w(0.04), 1.06, w(0.04), 0.97), 0.0, hair); }
+            HairStyle::Long => { p.rect_filled(r(-w(0.17), 1.03, w(0.17), 0.97), 2.0, hair); p.rect_filled(r(-w(0.19), 0.99, -w(0.13), 0.8), 0.0, hair); p.rect_filled(r(w(0.13), 0.99, w(0.19), 0.8), 0.0, hair); }
+            HairStyle::Bun => { p.rect_filled(r(-w(0.16), 1.02, w(0.16), 0.96), 2.0, hair); p.circle_filled(egui::pos2(cx, y(1.05)), w(0.08), hair); }
+            HairStyle::Buzz => { p.rect_filled(r(-w(0.155), 1.005, w(0.155), 0.97), 1.0, hair); }
+            HairStyle::Short => { p.rect_filled(r(-w(0.165), 1.03, w(0.165), 0.95), 2.0, hair); }
+        }
+        ui.add(egui::Label::new(egui::RichText::new(a.describe(c.age, c.class())).small()).wrap());
+    });
 }
 
 /// The spotlight checkbox, written back only when it changes.
@@ -94,7 +136,7 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
         .constrain_to(content)
         .resizable(false)
         .show(ctx, |ui| {
-            let star = if is_fav { "★ favourite" } else { "☆ favourite" };
+            let star = if is_fav { "â˜… favourite" } else { "â˜† favourite" };
             if ui.selectable_label(is_fav, star).on_hover_text("Keep this person in the favourites list of the People window").clicked() {
                 toggle_fav = true;
             }
@@ -103,6 +145,7 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
             citizen_summary(ui, w, &w.citizens[id]);
             spotlight_toggle(ui, &mut sim.world, id, "Spotlight: route through the LLM mind");
             ui.separator();
+            super::places::citizen_places(ui, &sim.world, id);
             let c = &sim.world.citizens[id];
             hint(ui, &format!("memories, newest first ({})", c.memories.len()));
             egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {

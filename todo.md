@@ -62,3 +62,16 @@
 [ ] - AI committee of appointed LLM politicians (alerts, 30-day meetings, votes, secretary implements through projects) and LLM diaries for spotlit citizens   → IDEA, not started: see docs/AI_COMMITTEE.md.
 
 [~] - police response: in the society demo many police calls went unanswered within 3 hours, so arrests stay low; review unit availability, dispatch and travel   → IN PROGRESS (fix/response).
+[x] - bus line selection shows its path, stops and buses   → DONE.
+[x] - rezoned parks never went away; rezoning deleted power plants   → DONE: rezoned parks are cleared when building starts; city structures block rezoning.
+[x] - clicking a car selects it with an outline and its route; parked cars too   → DONE.
+[x] - cars stuck in roundabouts (parked on the ring)   → DONE: no kerb parking on rings.
+[x] - person selection shows outline, path and route   → DONE (selection lines now follow the terrain).
+[x] - 1x should be real time for how people and cars move   → DONE: speeds are real-time multiples (1x, 4x, 16x default, 64x, 256x, 1024x).
+[x] - pedestrians look like the people they are (skin, hair, build, clothes in their favourite colours, family resemblance)   → DONE.
+[x] - roundabout centres empty and usable, nesting, 3x larger maximum   → DONE.
+[x] - traffic deadlock at kerb pull-outs (buses at depots) and the slowdown   → DONE.
+[~] - places: taste, regulars, never-again, exploring for a drink   → IN PROGRESS (feat/places).
+[~] - roads: raise/lower while drawing, overpasses/underpasses by height, realistic preview   → IN PROGRESS (feat/elevation).
+[~] - map edges: only a highway and rail at the start, extending past the horizon, vehicles entering out of sight   → IN PROGRESS (feat/edges).
+

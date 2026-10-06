@@ -400,17 +400,28 @@ impl World {
     pub(super) fn venue_tabs(&mut self) {
         for c in self.citizens.values_mut() {
             let Activity::Visiting(b) = c.activity else { continue };
-            if c.savings < VENUE_TAB {
+            let Some(bld) = self.buildings.get_mut(b) else { continue };
+            // [places] Drinks cost more somewhere polished; a regular
+            // stands an extra round now and then.
+            let mut tab = VENUE_TAB * super::places::tab_factor(bld.tier);
+            let regular = c.places.get(b).is_some_and(|p| p.regular);
+            if regular {
+                tab *= 1.0 + crate::places::REGULAR_TIP;
+            }
+            if c.savings < tab {
                 continue;
             }
-            let Some(bz) = self.buildings.get_mut(b).and_then(|b| b.business.as_mut()) else { continue };
+            let Some(bz) = bld.business.as_mut() else { continue };
             if bz.kind != BusinessKind::Venue || bz.closed {
                 continue;
             }
-            c.savings -= VENUE_TAB;
-            bz.money += VENUE_TAB;
-            bz.revenue_today += VENUE_TAB;
+            c.savings -= tab;
+            bz.money += tab;
+            bz.revenue_today += tab;
             c.mood = (c.mood + 0.01).min(1.0);
+            if regular {
+                self.places.reputation.entry(b).or_default().regular_revenue_today += tab;
+            }
         }
     }
 
@@ -626,7 +637,9 @@ impl World {
 
     /// Nearest well-stocked shop for a resource, cheapest within reach,
     /// among those open now with room inside.
-    pub(super) fn best_shop(&self, r: Resource, at: Vec2) -> Option<BuildingId> {
+    /// The cheapest shop for `r` counting the walk, open and stocked; the
+    /// plain market answer (citizens choose with `choose_shop`).
+    pub fn best_shop(&self, r: Resource, at: Vec2) -> Option<BuildingId> {
         let hour = self.clock.hour() as u8;
         let mut best: Option<(f32, BuildingId)> = None;
         for (id, b) in self.buildings.iter() {

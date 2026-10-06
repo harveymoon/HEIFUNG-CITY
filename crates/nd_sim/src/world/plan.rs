@@ -388,8 +388,6 @@ impl World {
         }
         let footprints: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect();
         parcels.retain(|p| !footprints.iter().any(|fp| point_in_polygon(p.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.995), &p.polygon)));
-        // A roundabout's central island is planting, never a lot.
-        parcels.retain(|p| !self.roads.rings.iter().any(|r| p.center.distance(r.center) < r.radius));
         parcels
     }
 
@@ -421,8 +419,9 @@ impl World {
     }
 
     /// Lots with a building that a roundabout here would take (their
-    /// ground comes within the ring road and its pavement): demolished on
-    /// implement, as for any road works.
+    /// ground reaches under the ring road or its pavements; the inside of
+    /// the ring is not taken): demolished on implement, as for any road
+    /// works.
     pub fn roundabout_takes(&self, ring: crate::roads::Ring) -> Vec<LotId> {
         let reach = ring.outer_radius();
         let grid = LotGrid::new(&self.lots);
@@ -430,7 +429,11 @@ impl World {
             .into_iter()
             .filter(|&id| {
                 let l = &self.lots[id];
-                l.building.is_some() && (l.contains(ring.center) || crate::geom::distance_to_outline(ring.center, &l.polygon) < reach)
+                // Only ground under the ring road and its pavements: the
+                // inside of the ring stays open land.
+                let near = if l.contains(ring.center) { 0.0 } else { crate::geom::distance_to_outline(ring.center, &l.polygon) };
+                let far = l.polygon.iter().map(|p| p.distance(ring.center)).fold(0.0, f32::max);
+                l.building.is_some() && near < reach && far > ring.inner_radius()
             })
             .collect()
     }

@@ -102,23 +102,28 @@ Citizens are rendered from their simulated positions every frame.
   junction whose exit lane is full; a vehicle 30 traffic minutes on one route replans from where it stands, and nothing is ever taken off the road for being slow: jams are part of the city and drivers feel them. Pedestrians walk on the
   right-hand pavement.
 - **Roundabouts** (`Gesture::Roundabout { center, radius, lanes }`, Road tool preset): a
-  one-way ring of 1 or 2 lanes, 24 to 80 m across, traffic keeping the island on its left
+  one-way ring of 1 or 2 lanes, 24 to 240 m across, traffic keeping the middle on its left
   (anticlockwise on screen). The gesture is stamped over the plan and never edits road
-  gestures: at rebuild `Plan::built_roads` cuts every street and path out of the circle
-  (`roads::layout_rings`), lays the ring first with a vertex at every place a road
-  crossed or ended on it, and the arms snap onto those vertices; a junction inside goes,
-  signals and all. So undo, bulldoze or a radius change in the Edit tool just rebuild.
-  Highways pass over, track is not cut, a ring overlapping an older one is refused. The
-  island is never parcelled; buildings on ground the ring takes come down as for any road
-  works. In the lane network (`traffic/roundabout.rs`) ring lanes run at 7 m/s, nothing
+  gestures: at rebuild `Plan::built_roads` cuts the streets and paths *older than the ring*
+  out of the circle (`roads::layout_rings`, by gesture order), so the old junction goes,
+  signals and all; roads drawn after it are kept inside and out and join it where they
+  meet it. The ring goes down first with a vertex at every join and the arms snap onto
+  those vertices. So undo, bulldoze or a radius change in the Edit tool just rebuild.
+  Highways pass over, track is not cut. The middle is open land with a mountable apron
+  along the inner kerb: parcels are cut along the ring's inner edge and any roads inside,
+  so it can be zoned and built on, and rings can nest when the inner one's pavement
+  clears the outer one's by a lane and a pavement (partial overlaps are refused).
+  Buildings under the ring road come down as for any road works. In the lane network
+  (`traffic/roundabout.rs`) ring lanes run at `Ring::speed` (sqrt(2 r), 7 to 13 m/s), nothing
   is signalised, arms may only turn right onto the ring and ring lanes continue or leave
   from the outer lane. Entries give way with gap acceptance: a car about to reach the
   line goes unless a ring vehicle that will pass the entry (not leave by it) is in the
-  junction or arrives less than 3 s after it, looking up to 45 m back round the ring;
+  junction or arrives less than 3 s after it, looking back round the ring as far as a ring
+  car covers in 9 s (at least 45 m);
   ring traffic never yields and only follows a car merged ahead. Passing an exit in the
   outer lane of a two-lane ring costs routing a little, so the first and second exits
   keep outside and later ones go round on the inside. Hovering the tool shows the ring,
-  the road it takes up, the joins and the lots it would take (red); clicking stamps it
+  the road it takes up, the joins and the lots under the ring road (red); clicking stamps it
   into the active project.
 - **Driving** (`traffic.rs` `DriverProfile`, `world/driving.rs`, `takeover.rs`): turns follow a
   circular arc tangent to both lanes (the fillet of their corner), long vehicles swing wide, and
@@ -176,6 +181,18 @@ Citizens are rendered from their simulated positions every frame.
 - **Citizens**: immigrate when homes are free, take jobs when available, and move
   along roads between home, work, shops and nightlife. Each has a personality seed,
   a memory stream and a current thought.
+- **Looks** (`nd_sim::looks`): each citizen has a saved `Appearance`: skin tone,
+  natural hair colour and texture (the `Genes`), hair style (short, long, bun, buzz,
+  bald, afro; neon-dyed mohawks for young hedonists), greying age, height, build, two
+  favourite colours (eight neon, fourteen everyday) and an outfit by age and class
+  (tee, hoodie, work jacket, suit, dress, long coat). `family_looks` gives a
+  household's children a mix of their parents' genes, a grandparent the first
+  parent's; couples and housemates are unrelated. All drawn from the seeds, never the
+  world's dice; saves without looks get them on load. Rendered by
+  `nd_procgen::people` (under 150 triangles, vertex colours, an emissive trim in the
+  favourite colour via a palette texture) through one lit material and a bounded
+  figure cache (`render/people.rs`, 1,024 meshes; the people nearest the camera
+  claim figures first, distant overflow borrows one of the same silhouette).
 - **Land value**: a 32 m grid summing road access, parks, civic and commercial
   amenities, industrial and nightlife nuisances, traffic noise, vacant lots and the
   tier of neighbouring homes, blurred once. Recomputed every two sim hours. Power plants
@@ -273,6 +290,27 @@ Citizens are rendered from their simulated positions every frame.
   jams sell the car when there is another way, transit that keeps failing (or walks and rides too
   long) buys one if the household can afford it; memories record each. The report counts trips by
   mode per day.
+- **Places, taste and habits** (`nd_sim::places`, `world/places.rs`): every venue, door shop and
+  park has a character (`PlaceCharacter`): its vibe (dive bar, club, karaoke, lounge, arcade,
+  cabaret, night market from the name and tier; café-bakery, grocer, gadget boutique, park), polish
+  (tier and condition), price (tier), noise (vibe, louder when packed), crowd and the crowd's class,
+  safety (crime heat around it) and cleanliness (its bin overflowing). Each citizen has a taste
+  (`Taste`) from personality, age, class and budget: the rich and old want polish, safety and
+  quiet and shun cheap places; young hedonists like loud, packed and cheap; the cautious avoid hot
+  spots; curiosity sets how often they try somewhere new. Every visit is rated on arrival: the fit
+  of character to taste, events (a fight, rude staff, overpriced, too crowded, great music, great
+  food, meeting a friend, coming with family or coworkers) and luck. A `PlaceBook` per citizen keeps
+  twelve places (visits, last visit, average, best and worst, regular, never-again; the least valued
+  is forgotten) and eight acquaintances met at their haunts. A great first night is written down
+  ("Found The Velvet Den..."), three good visits make a regular, a terrible night at a place that
+  is not a habit means never again. Choice (`choose_place`, `choose_shop`): known places by
+  experience, regular bonus, friends who are regulars there and distance; unknown ones by first
+  impression (fit) and word of mouth (`Reputation::pull`: rating, sworn-off customers); a softmax
+  over the pool, with curiosity deciding between known and new; `Intent::Explore` (rule mind:
+  "looking for a drink") looks at unknown places near by. Groceries: the habitual shop unless
+  another is far cheaper. A sociable citizen may bring a free household member or coworker along (5% + 20% x sociability per outing); a regular spot adds 6% to the evening's pull.
+  Regulars stand an extra round (20% on the tab; drinks cost 0.9/1.0/1.4x by tier). All draws are
+  seeded by citizen and tick, so replays repeat.
 - **Parking businesses**: when the day's circling outruns free spaces, development opens a
   parking lot on a vacant lot near the last driver who could not find a space: a surface lot where
   land is cheap (about one space per 28 m², two jobs), a multi-storey car park on middle land

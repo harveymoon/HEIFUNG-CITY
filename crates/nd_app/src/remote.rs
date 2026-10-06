@@ -18,6 +18,8 @@ mod history;
 mod land;
 mod list;
 mod map;
+/// [places] taste, favourite places, venue ratings.
+mod places;
 mod report;
 /// [society] crime, homelessness and trash.
 mod society;
@@ -301,6 +303,7 @@ fn follow_target(sim: Res<Sim>, mut follow: ResMut<Follow>, mut cams: Query<&mut
             _ => c.pos,
         }),
         Selection::Car(id) => w.traffic.cars.get(id).map(|c| c.pos),
+        Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|c| c.spot()).map(|s| s.pos),
         Selection::Building(id) => w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map(|l| l.center),
         Selection::None => None,
     };
@@ -334,13 +337,13 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
                 sim.speed_index = i as usize;
             } else if let Some(v) = opt_f32(cmd, "value")? {
-                // The nearest step on a log scale: 10 picks 16×, 2 picks 1×.
+                // The nearest step on a log scale: 10 picks 16×, 1.5 picks 1×.
                 let v = v.max(0.01).ln();
                 sim.speed_index = SPEEDS.iter().enumerate().min_by(|a, b| ((a.1).1.ln() - v).abs().total_cmp(&((b.1).1.ln() - v).abs())).map_or(1, |(i, _)| i);
             } else {
-                return Err("speed needs {index: 0..4} or {value: minutes per second}".into());
+                return Err("speed needs {index: 0..5} or {value: multiple of real time}".into());
             }
-            Ok(json!({ "speed_index": sim.speed_index, "speed": sim.speed(), "label": SPEEDS[sim.speed_index].0 }))
+            Ok(json!({ "speed_index": sim.speed_index, "speed": SPEEDS[sim.speed_index].1, "ticks_per_second": sim.speed(), "label": SPEEDS[sim.speed_index].0 }))
         }
         "step" => {
             let n = opt_u64(cmd, "ticks")?.unwrap_or(1);
@@ -752,6 +755,9 @@ fn status(ctx: &Ctx) -> Value {
     });
     // Added after the literal: one `json!` this size hits the macro recursion limit.
     v["windows_open"] = json!(ctx.windows.open_names());
+    // [looks] The figure cache: meshes alive, people outdoors and their distinct looks.
+    let st = &ctx.stats;
+    v["render"]["people"] = json!({ "meshes": st.people_meshes, "mesh_cap": crate::render::PEOPLE_MESH_CAP, "visible": st.people_visible, "distinct_looks_visible": st.people_looks_visible, "built_total": st.people_built, "borrowed": st.people_borrowed, "materials": 1 });
     v["alerts_top"] = report::alerts_json(&report::alerts(w), 5);
     v["review_hint"] = json!("for a whole-city review call report (then map, history, list)");
     v
@@ -1355,7 +1361,9 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(v) = field(cmd, "citizen") {
         let id = key_from(v)?;
         let c = w.citizens.get(id).ok_or("no such citizen")?;
-        return Ok(json!({ "citizen": citizen_detail(w, id, c, ctx.tools.favorites.contains(&id)) }));
+        let mut v = citizen_detail(w, id, c, ctx.tools.favorites.contains(&id));
+        v["places"] = places::citizen_places(w, id);
+        return Ok(json!({ "citizen": v }));
     }
     if let Some(v) = field(cmd, "building") {
         let id = key_from(v)?;
@@ -1364,7 +1372,9 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Some(s) => nd_procgen::buildings::Style::for_service(s.kind).label(),
             None => b.port.map(|k| k.label()).or(b.plant.map(|k| k.label())).unwrap_or(ctx.assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11)).label()),
         };
-        return Ok(json!({ "building": building_detail(w, id, b, style) }));
+        let mut v = building_detail(w, id, b, style);
+        v["place"] = places::building_place(w, id);
+        return Ok(json!({ "building": v }));
     }
     if let Some(v) = field(cmd, "lot") {
         let id = key_from(v)?;
@@ -1404,6 +1414,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Citizen(id) => inspect(&json!({ "citizen": key_str(id) }), ctx),
         Selection::Building(id) => inspect(&json!({ "building": key_str(id) }), ctx),
         Selection::Car(id) => inspect(&json!({ "car": key_str(id) }), ctx),
+        Selection::Parked(_) => Err("a parked car: inspect its owner (find citizens) instead".into()),
         Selection::None => Err("inspect needs one of citizen, building, lot, car, train, route, gesture (an id), or a selection".into()),
     }
 }
@@ -1429,8 +1440,8 @@ fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         Selection::Car(id)
     } else if let Some(p) = opt_vec2(cmd, "at")? {
-        // Pick like a click: use the same radii the Inspect tool does.
-        pick_at(w, p)
+        // Pick exactly as a click with the Inspect tool does.
+        crate::tools::pick(&*ctx.sim, p)
     } else {
         Selection::None
     };
@@ -1438,20 +1449,6 @@ fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     Ok(json!({ "selection": selection(w, sel) }))
 }
 
-/// The Inspect tool's pick, in miniature: a visible person, then a vehicle
-/// (a driven car selects its driver), then the building whose lot holds the
-/// point.
-fn pick_at(w: &nd_sim::World, p: SVec2) -> Selection {
-    let person = w.citizens.iter().filter(|(_, c)| c.is_visible()).map(|(id, c)| (c.pos.distance(p), id)).filter(|(d, _)| *d < 7.0).min_by(|a, b| a.0.total_cmp(&b.0));
-    if let Some((_, id)) = person {
-        return Selection::Citizen(id);
-    }
-    let car = w.traffic.cars.iter().map(|(id, c)| (c.pos.distance(p), id, c)).filter(|(d, _, c)| *d < if c.bus.is_some() { 8.0 } else { 5.0 }).min_by(|a, b| a.0.total_cmp(&b.0));
-    if let Some((_, id, car)) = car {
-        return if car.bus.is_none() && w.citizens.contains_key(car.citizen) { Selection::Citizen(car.citizen) } else { Selection::Car(id) };
-    }
-    w.lots.values().find(|l| l.building.is_some() && point_in_polygon(p, &l.polygon)).and_then(|l| l.building).map_or(Selection::None, Selection::Building)
-}
 
 // ── tool / camera ───────────────────────────────────────────────────────────
 
@@ -1658,6 +1655,7 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let p = match sel {
                 Selection::Citizen(id) => w.citizens.get(id).map(|c| c.pos),
                 Selection::Car(id) => w.traffic.cars.get(id).map(|c| c.pos),
+        Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|c| c.spot()).map(|s| s.pos),
                 Selection::Building(id) => w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map(|l| l.center),
                 Selection::None => None,
             };
@@ -1788,14 +1786,14 @@ fn help() -> Value {
             "help": {},
             "status": {},
             "pause": { "paused": "bool, omitted toggles" },
-            "speed": { "index": "0..4", "value": "sim minutes per real second, snapped to the nearest step" },
+            "speed": { "index": "0..5", "value": "multiple of real time for what moves (1 = people walk at their true pace; the clock runs 15x faster than that), snapped to the nearest step" },
             "step": { "ticks": "advance n sim minutes now, even while paused (default 1, max 100000)" },
             "seed_demo": {},
             "save": { "path": "optional; default writes saves/city.ron and a dated slot" },
             "load": { "path": "a .ron save" },
             "list_saves": {},
             "plan": {},
-            "add_roundabout": { "center": "[x,y] (snaps onto a junction within 12 m or a street within 6 m)", "radius": "m to the ring centreline, 12..40 (or diameter 24..80)", "lanes": "1|2 ring lanes", "implement": "bool", "returns": "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state" },
+            "add_roundabout": { "center": "[x,y] (snaps onto a junction within 12 m or a street within 6 m)", "radius": "m to the ring centreline, 12..120 (or diameter 24..240)", "lanes": "1|2 ring lanes", "implement": "bool", "returns": "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state" },
             "add_road": { "points": "[[x,y],...] (2+)", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true", "implement": "bool, default false (pending in the project)" },
             "add_zone": { "polygon": "[[x,y],...] (3+)", "land_use": "residential|commercial|industrial|entertainment|civic|park", "implement": "bool" },
             "bulldoze": { "gesture_id": "int", "implement": "bool" },
@@ -1839,7 +1837,7 @@ fn help() -> Value {
     v["commands"]["society"] = json!({ "action": "report (default)|evict|offend|trash", "building": "id (evict: its households go on the street; offend: the target; trash: one building's bins)", "citizen": "id (offend)", "kind": "theft|burglary|assault|murder|vandalism (offend, with building)", "kg": "trash to add, default 100" });
     // Planning: several projects, and painting parcels.
     let planning = json!({
-        "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway|Roundabout", "diameter": "roundabout 24..80 m", "ring_lanes": "roundabout 1|2", "ring_at": "[x,y]: show the roundabout preview there as if hovered (until the mouse is used)", "kind": "sub-mode of the active tool", "mode": "zone tool: polygon|brush|marquee", "radius": "zone brush radius m", "unzone": "bool", "industry": "zone tool sub-zone for industrial land: auto|farming|oil|...", "land_use": "(or none: the brush unzones)", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
+        "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway|Roundabout", "diameter": "roundabout 24..240 m", "ring_lanes": "roundabout 1|2", "ring_at": "[x,y]: show the roundabout preview there as if hovered (until the mouse is used)", "kind": "sub-mode of the active tool", "mode": "zone tool: polygon|brush|marquee", "radius": "zone brush radius m", "unzone": "bool", "industry": "zone tool sub-zone for industrial land: auto|farming|oil|...", "land_use": "(or none: the brush unzones)", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
         "project": { "action": "list|new|switch|rename|delete|park|start|implement|undo|redo|discard", "id": "project id (default: the active one)", "name": "for new/rename, or to pick a project by name", "note": "several named projects; the active one is edited, the rest previewed dim; implement builds one at a time, the later one wins where two change the same gesture or parcel (warnings in the reply)" },
         "paint": { "land_use": "residential|...|park, or none to unzone", "at": "[x,y] brush centre", "radius": "m (default the tool's)", "industry": "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech, the sub-zone set on implement", "rect": "[[x0,y0],[x1,y1]] marquee", "polygon": "[[x,y],...]", "implement": "bool", "note": "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step" }
     });

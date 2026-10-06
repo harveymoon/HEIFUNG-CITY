@@ -2442,3 +2442,48 @@ fn rezoning_never_touches_city_structures_and_frees_parks_for_building() {
     assert!(w.buildings.contains_key(park2), "an unzoned park stays");
 }
 
+
+// ── looks (feat/looks) ─────────────────────────────────────────────────────
+
+#[test]
+fn looks_are_given_on_arrival_and_survive_save_and_load() {
+    let (w, _) = family_street();
+    assert!(w.citizens.values().all(|c| c.look.is_some()), "everyone arrives with a look");
+    // Families arrive resembling each other: children share a parent's hair.
+    for hh in w.households.values() {
+        let kids: Vec<&Citizen> = hh.members.iter().map(|m| &w.citizens[*m]).filter(|c| c.age < crate::citizens::ADULT_AGE).collect();
+        let adults: Vec<&Citizen> = hh.members.iter().map(|m| &w.citizens[*m]).filter(|c| c.age >= crate::citizens::ADULT_AGE).collect();
+        if adults.is_empty() {
+            continue;
+        }
+        for k in kids {
+            let hair = k.look.unwrap().genes.hair;
+            let parent_hair: Vec<_> = adults.iter().map(|a| a.look.unwrap().genes.hair).collect();
+            let absent = adults.len() == 1;
+            assert!(absent || parent_hair.contains(&hair), "{} has a parent's hair", k.name);
+        }
+    }
+    let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+    for (id, c) in w.citizens.iter() {
+        assert_eq!(back.citizens[id].look, c.look, "{}'s look survives a load", c.name);
+    }
+}
+
+#[test]
+fn a_save_from_before_looks_gets_the_looks_it_would_have_had() {
+    let (mut w, _) = family_street();
+    let given: Vec<(CitizenId, crate::looks::Appearance)> = w.citizens.iter().map(|(id, c)| (id, c.look.unwrap())).collect();
+    for c in w.citizens.values_mut() {
+        c.look = None;
+    }
+    let text = w.to_ron().unwrap();
+    assert!(!text.contains("genes"), "an old save has no looks");
+    let back = World::from_ron(&text).unwrap();
+    for (id, look) in given {
+        let got = back.citizens[id].look.expect("filled on load");
+        // The cut of the clothes follows the class at the time; the rest
+        // is drawn from the seeds alone.
+        assert_eq!(got.genes, look.genes);
+        assert_eq!((got.style, got.dye, got.fav, got.build), (look.style, look.dye, look.fav, look.build));
+    }
+}

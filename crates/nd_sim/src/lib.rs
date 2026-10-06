@@ -18,10 +18,13 @@ pub mod ground;
 pub mod industry;
 pub mod land_value;
 pub mod landscape;
+/// [looks] What citizens look like.
+pub mod looks;
 pub mod market;
 pub mod mind;
 pub mod names;
 pub mod park;
+pub mod places;
 pub mod plan;
 pub mod ports;
 pub mod power;

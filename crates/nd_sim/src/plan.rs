@@ -52,9 +52,11 @@ pub enum Gesture {
     },
     /// A roundabout stamped over the roads: a one-way ring of `lanes`
     /// lanes, `radius` from the centre to the middle of the ring road.
-    /// Built, it cuts every street and path that enters the circle and
-    /// joins them to the ring (`roads::layout_rings`); the road gestures
-    /// themselves are untouched, so undoing the stamp restores them.
+    /// Built, it cuts the streets and paths older than it out of the
+    /// circle and joins their ends to the ring; newer roads are kept inside
+    /// and out and join it where they meet it (`roads::layout_rings`). The
+    /// inside stays open land. The road gestures themselves are untouched,
+    /// so undoing the stamp restores them.
     Roundabout { center: Vec2, radius: f32, lanes: u8 },
 }
 
@@ -324,9 +326,13 @@ pub fn ring_effect(plan: &Plan, ring: Ring) -> RingEffect {
     if blocked {
         return RingEffect { ring: Some(ring), road: ring.polyline(&[]).0, blocked: true, ..Default::default() };
     }
-    let rings = [ring];
+    // Already in the plan, it cuts the roads older than it; a ring about
+    // to be stamped is the newest gesture of all.
+    let age = plan.roundabouts().find(|(_, r)| *r == ring).map_or(u64::MAX, |(id, _)| id.0);
+    let rings = [(ring, age)];
     let roads: Vec<(GestureId, Vec<Vec2>, bool, f32)> = plan.roads().map(|(id, pts, f, b, k)| (id, pts, ring_cuts(k, f, b), crate::roads::Segment { a: crate::roads::NodeId(0), b: crate::roads::NodeId(0), lanes_fwd: f, lanes_bwd: b, alive: true, kind: k, bridge: false, viaduct: false }.half_width() * 2.0)).collect();
-    let input: Vec<(Vec<Vec2>, bool)> = roads.iter().map(|(_, p, c, _)| (p.clone(), *c && near_ring(p, &ring))).collect();
+    let raised = |id: &GestureId| plan.gestures.get(id).is_some_and(Gesture::is_elevated);
+    let input: Vec<(Vec<Vec2>, bool, u64)> = roads.iter().map(|(id, p, c, _)| (p.clone(), *c && near_ring(p, &ring) && !raised(id), id.0)).collect();
     let layout = crate::roads::layout_rings(&rings, &input);
     let mut out = RingEffect { ring: Some(ring), ..Default::default() };
     if let Some((_, poly, joins)) = layout.rings.iter().find(|(r, ..)| *r == ring) {
@@ -406,12 +412,14 @@ impl Plan {
     }
 
     fn built_roads_flat(&self) -> (Vec<(GestureId, Vec<Vec2>, u8, u8, RoadKind)>, Vec<Ring>) {
-        let rings: Vec<Ring> = self.roundabouts().map(|(_, r)| r).collect();
+        let rings: Vec<(Ring, u64)> = self.roundabouts().map(|(id, r)| (r, id.0)).collect();
         let roads: Vec<(GestureId, Vec<Vec2>, u8, u8, RoadKind)> = self.roads().collect();
         if rings.is_empty() {
             return (roads, Vec::new());
         }
-        let input: Vec<(Vec<Vec2>, bool)> = roads.iter().map(|(_, p, f, b, k)| (p.clone(), ring_cuts(*k, *f, *b))).collect();
+        // A road drawn above or below the ground passes the ring by.
+        let raised = |id: &GestureId| self.gestures.get(id).is_some_and(Gesture::is_elevated);
+        let input: Vec<(Vec<Vec2>, bool, u64)> = roads.iter().map(|(id, p, f, b, k)| (p.clone(), ring_cuts(*k, *f, *b) && !raised(id), id.0)).collect();
         let layout = crate::roads::layout_rings(&rings, &input);
         let ids: Vec<GestureId> = self.roundabouts().filter(|(_, r)| layout.rings.iter().any(|(x, ..)| x == r)).map(|(id, _)| id).collect();
         let mut out: Vec<(GestureId, Vec<Vec2>, u8, u8, RoadKind)> = Vec::new();

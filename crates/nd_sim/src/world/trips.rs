@@ -318,6 +318,7 @@ impl World {
             let hid = self.households.insert(hh);
             self.citizens[cid].household = Some(hid);
         }
+        self.migrate_looks();
         // A building lists exactly the households that live there.
         for b in self.buildings.values_mut() {
             b.households.retain(|h| self.households.contains_key(*h));
@@ -328,6 +329,36 @@ impl World {
                 if !b.households.contains(&hid) {
                     b.households.push(hid);
                 }
+            }
+        }
+    }
+
+    /// [looks] Saves from before looks: each household's members get the
+    /// looks they would have been given on arrival (children resembling
+    /// their parents). Members who already have one keep it.
+    pub(super) fn migrate_looks(&mut self) {
+        let mut fill: Vec<(CitizenId, crate::looks::Appearance)> = Vec::new();
+        for hh in self.households.values() {
+            let members: Vec<CitizenId> = hh.members.iter().copied().filter(|m| self.citizens.contains_key(*m)).collect();
+            if members.iter().all(|m| self.citizens[*m].look.is_some()) {
+                continue;
+            }
+            let earners = members.iter().filter(|m| self.citizens[**m].income > 0.0).count().max(1) as f32;
+            let income: f32 = members.iter().map(|m| self.citizens[*m].income).sum();
+            let ids: Vec<(u64, u8)> = members.iter().map(|m| (self.citizens[*m].seed, self.citizens[*m].age)).collect();
+            let looks = crate::looks::family_looks(&ids, Tier::for_income(income / earners));
+            fill.extend(members.into_iter().zip(looks));
+        }
+        for (id, look) in fill {
+            let c = &mut self.citizens[id];
+            if c.look.is_none() {
+                c.look = Some(look);
+            }
+        }
+        // Anyone still without (no household): their own look.
+        for c in self.citizens.values_mut() {
+            if c.look.is_none() {
+                c.look = Some(c.appearance());
             }
         }
     }
@@ -503,7 +534,11 @@ impl World {
             self.buildings[home].households.push(hid);
             let home_name = self.buildings[home].name.clone();
             let family = names::family_name(&mut self.rng);
-            for (age, seed, job, income) in people {
+            // [looks] Drawn from the seeds alone, so the world's dice roll
+            // exactly as before.
+            let class = Tier::for_income(income / earners);
+            let looks = crate::looks::family_looks(&people.iter().map(|p| (p.1, p.0)).collect::<Vec<_>>(), class);
+            for ((age, seed, job, income), look) in people.into_iter().zip(looks) {
                 let stage = LifeStage::of_age(age);
                 let name = names::member_name(&mut self.rng, &family);
                 let owns_car = stage != LifeStage::Child && self.rng.random_bool(car_chance);
@@ -528,6 +563,7 @@ impl World {
                     transit: None,
                     activity: Activity::Idle,
                     memories: Vec::new(),
+                    places: Default::default(),
                     thought: "New city. New me.".to_string(),
                     spotlight: false,
                     next_decision_tick,
@@ -551,6 +587,7 @@ impl World {
                     car: None,
                     to_car: None,
                     commute: Default::default(),
+                    look: Some(look),
                 };
                 citizen.remember(tick, format!("Rolled into Neon District on day {} at {}.", self.clock.day() + 1, self.clock.format_hhmm()));
                 if let Some(s) = by_train {
@@ -679,6 +716,8 @@ impl World {
                     on_shift,
                     household_size: hh.map_or(1, |h| h.size()),
                     pantry_low: hh.is_some_and(|h| h.groceries < h.pantry_target() * 0.5),
+                    regular_spot: c.places.regular_of(LandUse::Entertainment).and_then(|p| self.buildings.get(p.place)).filter(|b| b.serves_at(hour)).map(|b| b.name.as_str()),
+                    places_known: c.places.known(LandUse::Entertainment),
                 };
                 minds.decide(&ctx)
             };
@@ -849,6 +888,7 @@ impl World {
                 }
                 c.next_decision_tick = tick + 10 + self.rng.random_range(0..20);
                 self.buy(id, b, r);
+                self.rate_visit(id, b);
                 return;
             }
             _ => {
@@ -857,6 +897,14 @@ impl World {
             }
         }
         c.next_decision_tick = tick + 30 + self.rng.random_range(0..90);
+        // [places] A night out, an afternoon in the park: how was it?
+        match (purpose, &self.citizens[id].activity) {
+            (Purpose::Visit(_), Activity::Visiting(b)) | (Purpose::Sit, Activity::Sitting { park: b, .. }) => {
+                let b = *b;
+                self.rate_visit(id, b);
+            }
+            _ => {}
+        }
     }
 
     pub(super) fn apply_decision(&mut self, id: CitizenId, d: Decision) {
@@ -896,18 +944,25 @@ impl World {
                 // not a derelict shell.
                 // Somewhere that is open now and has room: not a site, not a
                 // shut business, not a derelict shell, not packed.
-                let hour = self.clock.hour() as u8;
-                let target = self.pick_building(|b| b.land_use == lu && b.serves_at(hour));
+                // [places] Favourites, sometimes somewhere new, never a
+                // place sworn off; sometimes with company.
+                let target = self.choose_place(id, lu, false);
                 if let Some(b) = target {
                     if inside != Some(b) {
                         self.travel_to(id, Some(b), Purpose::Visit(lu));
+                        self.bring_company(id, b, Purpose::Visit(lu));
                     }
                 }
             }
+            Intent::Explore(lu) => match self.choose_place(id, lu, true) {
+                Some(b) if inside != Some(b) => self.travel_to(id, Some(b), Purpose::Visit(lu)),
+                Some(_) => {}
+                None => self.wander(id),
+            },
             Intent::Wander => self.wander(id),
             Intent::Shop(r) => {
                 let here = self.citizens[id].pos;
-                if let Some(b) = self.best_shop(r, here) {
+                if let Some(b) = self.choose_shop(id, r, here) {
                     if inside != Some(b) {
                         self.travel_to(id, Some(b), Purpose::Shop(r));
                     } else {
@@ -1303,8 +1358,7 @@ impl World {
             (c.owns_bike, c.class())
         };
         if owns_bike && (class == Tier::High || self.rng.random_bool(0.35)) {
-            let parks: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.land_use == LandUse::Park).map(|(id, _)| id).collect();
-            if let Some(&park) = parks.choose(&mut self.rng) {
+            if let Some(park) = self.choose_place(id, LandUse::Park, false) {
                 self.travel_to(id, Some(park), Purpose::Visit(LandUse::Park));
                 return;
             }
