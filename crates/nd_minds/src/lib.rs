@@ -493,6 +493,7 @@ mod tests {
             wakefulness: 0.8,
             asleep: false,
             packed_meal: 0.0,
+            drunk: 0.0,
             car: None,
             to_car: None,
             commute: Default::default(),

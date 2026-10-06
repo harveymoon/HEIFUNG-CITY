@@ -702,7 +702,7 @@ fn services(w: &World) -> Value {
     }
     let t = &e.transit;
     let r = &w.rail.stats;
-    json!({
+    let mut out = json!({
         "emergency": emergency(w),
         "power": {
             "supply_mw": round(p.supply_mw), "demand_mw": round(p.demand_mw), "imported_mw": round(p.imported_mw), "served_share": round(p.served),
@@ -743,7 +743,12 @@ fn services(w: &World) -> Value {
             "vans_on_road": nd_sim::Bots::vans(w), "van_orders_today": w.bots.van_orders_today,
             "rule": format!("shops deliver to homes within {} m; by pavement robot where shop and home both have land value >= {}, else by van", nd_sim::bots::DELIVERY_RANGE, nd_sim::bots::BOT_LAND_VALUE),
         },
-    })
+    });
+    // [driving] Crashes, drink and takeovers, in the traffic section.
+    if let (Some(t), Value::Object(d)) = (out.get_mut("traffic").and_then(|t| t.as_object_mut()), driving_json(w)) {
+        t.extend(d);
+    }
+    out
 }
 
 /// City services and emergencies: coverage, stations and their units,
@@ -1159,6 +1164,40 @@ fn industry(w: &World) -> Value {
         "biases": { "count": w.industry_bias.len(), "newest_first": biases },
         "plant_land_value": plants,
         "land_value_note": "plants and heavy industry are nuisances: homes feel 125% of them, shops 85%, industry 30%; working industry lifts land below 0.35 by up to 0.1",
+    })
+}
+
+/// [driving] Crashes, drunk drivers and street takeovers for `report.traffic`.
+fn driving_json(w: &World) -> Value {
+    json!({
+            "crashes_today": w.driving.crashes_today, "injuries_today": w.driving.injuries_today, "drunk_drivers_now": w.drunk_drivers_now(),
+            "drunk_trips_today": w.driving.drunk_trips_today, "red_lights_run_today": w.driving.red_runs_today, "crashes_total": w.driving.crashes_total,
+            "wrecks_on_road": w.driving.wrecks.len(), "tow_trucks_now": w.driving.tows.len(), "towed_total": w.driving.towed_total,
+            "drivers_by_style": ({
+                let mut m = serde_json::Map::new();
+                for c in w.traffic.cars.values() {
+                    let k = c.drive.profile.label();
+                    let n = m.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+                    m.insert(k.to_string(), json!(n + 1));
+                }
+                Value::Object(m)
+            }),
+            "recent_crashes": w.driving.recent.iter().rev().take(5).map(|r| json!({ "id": r.id, "tick": r.tick, "pos": [r.pos.x, r.pos.y], "place": r.place, "cause": r.cause.label(), "severity": round(r.severity), "injured": r.injured.len(), "drunk": r.drunk, "incident": r.incident })).collect::<Vec<_>>(),
+            "takeovers": {
+                "active": w.takeover().is_some(),
+                "location": w.takeover().map(|t| json!([t.centre.x, t.centre.y])),
+                "place": w.takeover().map(|t| t.place.clone()),
+                "stage": w.takeover().map(|t| t.stage.label()),
+                "participants": w.takeover().map_or(0, |t| t.participants()),
+                "residents": w.takeover().map_or(0, |t| t.residents.len()),
+                "outsiders": w.takeover().map_or(0, |t| t.outsiders),
+                "in_show": w.takeover().map_or(0, |t| t.cars.iter().filter(|&&c| w.traffic.cars.get(c).is_some_and(|c| c.in_stunt())).count()),
+                "crowd": w.takeover_crowd_now(),
+                "incident": w.takeover().and_then(|t| t.incident),
+                "planned_tick": w.driving.takeovers.planned,
+                "total": w.driving.takeovers.total,
+                "last": w.driving.takeovers.history.last().map(|r| json!({ "id": r.id, "place": r.place, "participants": r.participants, "crowd": r.crowd, "arrests": r.arrests, "police": r.police, "started": r.started, "ended": r.ended })),
+            }
     })
 }
 

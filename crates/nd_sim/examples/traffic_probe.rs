@@ -58,6 +58,7 @@ fn main() {
     let mut minds = HybridMind::new(Box::new(MockBackend::default()));
     seed(&mut world);
     let t0 = std::time::Instant::now();
+    let mut last_takeover: Option<(u32, &str)> = None;
     let mut last: HashMap<nd_sim::CarId, f32> = HashMap::new();
     let mut stalled: HashMap<nd_sim::CarId, f32> = HashMap::new();
     let mut lw: HashMap<nd_sim::CarId, f32> = HashMap::new();
@@ -69,6 +70,19 @@ fn main() {
     while world.clock.day() < to_day || (world.clock.minute_of_day() as f32) < at_hour * 60.0 {
         world.tick(&mut minds);
         let day = world.clock.day();
+        // [driving] Crashes, drink and takeovers, once a day and as they happen.
+        let tk = world.takeover().map(|t| (t.id, t.stage.label(), t.participants(), t.crowd.len()));
+        if tk.map(|t| (t.0, t.1)) != last_takeover {
+            println!("day {day} {:02}:{:02} takeover {:?} (cars, crowd so far)", world.clock.hour(), world.clock.minute_of_day() % 60, tk);
+            last_takeover = tk.map(|t| (t.0, t.1));
+        }
+        if world.clock.minute_of_day() == 1439 {
+            let d = &world.driving;
+            let styles = world.traffic.cars.values().fold(BTreeMap::<&str, u32>::new(), |mut m, c| { *m.entry(c.drive.profile.label()).or_default() += 1; m });
+            let causes = d.recent.iter().filter(|r| r.tick + 1440 > world.clock.tick).fold(BTreeMap::<String, (u32, u32, u32)>::new(), |mut m, r| { let e = m.entry(r.cause.label().to_string()).or_default(); e.0 += 1; e.1 += r.drunk as u32; e.2 += (r.severity >= nd_sim::traffic::BAD_CRASH) as u32; m });
+            println!("day {day} crash causes (n, drunk, bad): {causes:?}");
+            println!("day {day} driving: crashes {} injuries {} drunk trips {} red runs {} towed {} takeovers {} last {:?} | styles now {:?}", d.crashes_today, d.injuries_today, d.drunk_trips_today, d.red_runs_today, d.towed_total, d.takeovers.total, d.takeovers.history.last().map(|r| (r.participants, r.crowd, r.arrests, r.police)), styles);
+        }
         let e = per_day.entry(day).or_default();
         let nst = stalled.values().filter(|&&v| v > 180.0).count();
         let ps = peak_stall.entry(day).or_default();

@@ -430,7 +430,19 @@ fn trains_call_at_stations_and_yards_bring_freight() {
         cz.owns_car = false;
         cz.savings = 50.0;
     }
-    w.travel_to(c, Some(shop), Purpose::Shop(Resource::Goods));
+    // Walking and the train cost about the same here; the day's whim in
+    // mode choice decides, so ask again until the train wins.
+    for _ in 0..20 {
+        w.travel_to(c, Some(shop), Purpose::Shop(Resource::Goods));
+        if w.citizens[c].transit.is_some() {
+            break;
+        }
+        let home_e = w.building_entrance(home).unwrap();
+        let cz = &mut w.citizens[c];
+        cz.inside = Some(home);
+        cz.activity = Activity::AtHome;
+        cz.pos = home_e;
+    }
     assert!(matches!(w.citizens[c].transit.map(|t| t.leg), Some(crate::transit::TransitLeg::Rail { board, alight }) if board == station_a && alight == station_b), "plans a rail leg: {:?}", w.citizens[c].transit);
     let (mut waited, mut rode, mut arrived) = (false, false, false);
     for _ in 0..1500 {

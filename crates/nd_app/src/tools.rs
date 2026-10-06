@@ -1134,7 +1134,7 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
         Selection::Building(b) => lot_outline(gizmos, w, b, 1.6, gold),
         Selection::Car(id) => {
             let Some(car) = w.traffic.cars.get(id) else { return };
-            let p = blend(car.prev_pos, car.pos);
+            let p = car.pose_at(f).0;
             gizmos.circle(Isometry3d::new(at(p, 0.5), flat), if car.bus.is_some() { 7.5 } else { 4.0 }, gold);
             car_route(gizmos, w, car, route);
             if let Some(cargo) = &car.cargo {
@@ -1165,7 +1165,7 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
                 Activity::Driving { car, to, .. } => {
                     destination = to.or(destination);
                     if let Some(car) = w.traffic.cars.get(*car) {
-                        let p = blend(car.prev_pos, car.pos);
+                        let p = car.pose_at(f).0;
                         gizmos.circle(Isometry3d::new(at(p, 0.5), flat), 4.0, gold);
                         car_route(gizmos, w, car, route);
                     }
@@ -1180,7 +1180,7 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
                 }
                 Activity::Riding { bus } => {
                     if let Some(bus) = w.traffic.cars.get(*bus) {
-                        let p = blend(bus.prev_pos, bus.pos);
+                        let p = bus.pose_at(f).0;
                         gizmos.circle(Isometry3d::new(at(p, 0.5), flat), 7.5, gold);
                         car_route(gizmos, w, bus, route);
                     }

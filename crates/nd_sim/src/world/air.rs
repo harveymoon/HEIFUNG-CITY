@@ -1045,6 +1045,7 @@ mod tests {
             car: None,
             commute: Default::default(),
             to_car: None,
+            drunk: Default::default(),
             owns_car: true,
             owns_bike: false,
             vehicle: None,

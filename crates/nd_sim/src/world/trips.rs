@@ -547,6 +547,7 @@ impl World {
                     wakefulness: 0.9,
                     asleep: false,
                     packed_meal: 1.0,
+                    drunk: 0.0,
                     car: None,
                     to_car: None,
                     commute: Default::default(),
@@ -1111,7 +1112,12 @@ impl World {
         // walk to it, the drive, finding a space (as remembered), fuel and
         // the fee at the far end. A car is a comfortable seat out of the
         // weather; hedonists like driving most.
-        if q.allow_car && dist >= self.config.drive_threshold && self.building_lot(q.target).is_some_and(|l| l.car_segment.is_some()) {
+        // [driving] A drunk leaves the car, unless rebellious enough to drive
+        // anyway (`citizens::wants_to_drive_drunk`), and then takes it even
+        // for a short hop.
+        let drunk_drive = crate::citizens::wants_to_drive_drunk(c);
+        let too_drunk = c.drunk >= crate::citizens::DRUNK && !drunk_drive;
+        if q.allow_car && !too_drunk && (dist >= self.config.drive_threshold || drunk_drive) && self.building_lot(q.target).is_some_and(|l| l.car_segment.is_some()) {
             if let Some((car, at)) = self.car_ready(id, q.from) {
                 let own_space = self.buildings.get(q.target).is_some_and(|b| !b.is_parking() && b.parking_free() > 0);
                 let fee = if own_space {
@@ -1122,7 +1128,8 @@ impl World {
                 let fee = if fee.is_finite() { fee * 0.5 } else { 0.0 };
                 let search = if own_space { 0.0 } else { 2.0 + c.commute.parking_pain * 10.0 };
                 let minutes = at.distance(q.from) / walk + dist * 1.3 / (9.0 * secs) + 3.0 + search;
-                push(TripMode::Car, minutes, dist / 1000.0 * 0.5 + fee, -4.0 - 8.0 * hedonism, ModePlan::Car { car, at });
+                let bravado = if drunk_drive { -40.0 } else { 0.0 };
+                push(TripMode::Car, minutes, dist / 1000.0 * 0.5 + fee, -4.0 - 8.0 * hedonism + bravado, ModePlan::Car { car, at });
             }
         }
         out

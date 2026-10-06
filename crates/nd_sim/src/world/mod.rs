@@ -28,6 +28,7 @@ mod buses;
 mod cars;
 mod construction;
 mod develop;
+mod driving;
 mod industry;
 mod market;
 mod parking;
@@ -76,6 +77,7 @@ use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
 pub use crate::rail::TRUNK_Y;
+pub use driving::{CrashRecord, Driving, Tow, Wreck};
 pub use industry::{is_return_trip, return_cargo, IndustryArea};
 use crate::landscape::{Ground, Landscape, LandscapeParams};
 use crate::ports::Ports;
@@ -322,6 +324,9 @@ pub struct World {
     /// Pavement delivery robots and the day's home-delivery counts.
     #[serde(default)]
     pub bots: crate::bots::Bots,
+    /// [driving] Crashes, wrecks, tow trucks and street takeovers.
+    #[serde(default)]
+    pub driving: Driving,
     /// [society] Crime, homelessness and trash (`world/society.rs`).
     #[serde(default)]
     pub society: crate::society::Society,
@@ -397,6 +402,7 @@ impl World {
             ground: Ground::default(),
             bridge_metres: 0.0,
             bots: Default::default(),
+            driving: Driving::default(),
             society: Default::default(),
             vehicles: Default::default(),
             air: Default::default(),
@@ -692,6 +698,7 @@ impl World {
         }
         self.step_traffic();
         self.step_air();
+        self.step_driving();
         self.step_services();
         // [society] Trash trucks.
         self.step_society();

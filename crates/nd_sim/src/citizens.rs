@@ -388,6 +388,10 @@ pub struct Citizen {
     /// hungry away from home.
     #[serde(default)]
     pub packed_meal: f32,
+    /// [driving] Drunkenness `0..1`: rises with drinks at a venue (faster
+    /// for hedonists), wears off over a few hours (`World::step_driving`).
+    #[serde(default)]
+    pub drunk: f32,
     /// [carlife] The car this citizen owns, in `World::vehicles` (where it
     /// is parked or that it is on the road). `owns_car` mirrors it.
     #[serde(default)]
@@ -398,6 +402,33 @@ pub struct Citizen {
     /// [carlife] How travelling has felt lately, per mode.
     #[serde(default)]
     pub commute: Commute,
+}
+
+/// [driving] Drunk enough that driving is a bad idea.
+pub const DRUNK: f32 = 0.35;
+/// Rebelliousness at which a drunk drives anyway.
+pub const REBEL: f32 = 0.55;
+
+/// The personality traits that matter behind the wheel, `(caution,
+/// hedonism)`, as `nd_minds::Personality` derives them from the seed (the
+/// fourth and third draws).
+pub fn driver_traits(seed: u64) -> (f32, f32) {
+    use rand::{Rng, SeedableRng};
+    let mut rng = crate::SimRng::seed_from_u64(seed);
+    let t: [f32; 5] = [rng.random(), rng.random(), rng.random(), rng.random(), rng.random()];
+    (t[3], t[2])
+}
+
+/// How little someone cares for rules, `0..1`: careless and pleasure-seeking.
+pub fn rebelliousness(caution: f32, hedonism: f32) -> f32 {
+    (0.55 * (1.0 - caution) + 0.45 * hedonism).clamp(0.0, 1.0)
+}
+
+/// [driving] Hook for mode choice: a drunk who owns a car and is
+/// rebellious enough drives home anyway. A drunk who is not leaves the car.
+pub fn wants_to_drive_drunk(c: &Citizen) -> bool {
+    let (caution, hedonism) = driver_traits(c.seed);
+    c.owns_car && c.drunk >= DRUNK && rebelliousness(caution, hedonism) >= REBEL
 }
 
 fn default_age() -> u8 {
@@ -517,9 +548,18 @@ mod tests {
             wakefulness: 1.0,
             asleep: false,
             packed_meal: 0.0,
+            drunk: 0.0,
             car: None,
             to_car: None,
             commute: Default::default(),
+        }
+    }
+
+    #[test]
+    fn driver_traits_match_the_personality() {
+        for seed in [3u64, 77, 123_456] {
+            let p = nd_minds::Personality::from_seed(seed);
+            assert_eq!(driver_traits(seed), (p.caution, p.hedonism));
         }
     }
 

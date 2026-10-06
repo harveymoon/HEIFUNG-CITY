@@ -469,6 +469,17 @@ pub fn car_traffic(w: &World, c: &Car) -> Value {
         "lane_arrows": if lane.arrows != 0 { Value::String(arrows_label(lane.arrows)) } else { Value::Null },
         "next_turn": next_turn, "left_turn_wait_s": round(c.turn_wait), "yielding_s": round(c.yielded),
         "passing_on_shoulder": c.passing, "lateral_offset_m": round(c.lateral), "entering": c.entering,
+        // [driving]
+        "driver": ({
+            let p = &c.drive.profile;
+            json!({ "style": p.label(), "speed_factor": round(p.speed), "headway_s": round(p.headway), "accel": round(p.accel), "reaction_s": round(p.reaction),
+                "signal_compliance": round(p.compliance), "aggression": round(p.aggression), "skill": round(p.skill), "drunkenness": round(p.drunk), "ignores_signals": p.ignores_signals })
+        }),
+        "driver_drunkenness_now": w.citizens.get(c.citizen).map(|x| round(x.drunk)),
+        "weave_m": round(c.drive.weave), "running_red": c.drive.running.is_some(),
+        "crash": c.drive.crash.map(|s| json!({ "crash": s.id, "wrecked": s.wrecked, "hold_s": if s.wrecked { Value::Null } else { json!(round(s.hold)) } })),
+        "takeover": c.drive.gang.map(|g| json!({ "takeover": g.takeover, "phase": format!("{:?}", g.phase).to_lowercase() })),
+        "stunt": c.drive.stunt.map(|s| if s.is_donut() { "donut" } else { "ring" }),
     })
 }
 
