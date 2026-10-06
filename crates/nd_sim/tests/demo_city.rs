@@ -144,3 +144,52 @@ fn demo_city_stays_fed_housed_and_employed_through_fast_growth() {
     let sizes = world.economy.household_sizes;
     assert!((1..=5).all(|n| sizes[n] > 0), "households of every size from one to five: {sizes:?}");
 }
+
+/// [carlife] Over three days of the demo, no private car appears or
+/// disappears except by its events (arrived with a household, bought, sold,
+/// scrapped, emigrated), every car is parked or on the road exactly once,
+/// and none is ever taken off the road for taking too long.
+#[test]
+fn demo_city_cars_only_come_and_go_by_their_events() {
+    use nd_sim::{CarPlace, Errand};
+    let mut world = demo_world();
+    let mut minds = RuleBasedMind::default();
+    let allowed_in = ["arrived_with_household", "bought", "bought_out_of_town"];
+    let allowed_out = ["sold", "scrapped", "emigrated"];
+    let mut prev: std::collections::HashMap<nd_sim::VehicleId, CarPlace> = Default::default();
+    let mut peak_parked = 0;
+    for _ in 0..3 * 1440 {
+        world.tick(&mut minds);
+        let v = &world.vehicles;
+        assert_eq!(v.cars.len() as i64, v.stats.created_total as i64 - v.stats.destroyed_total as i64, "{:?}", v.stats.events_total);
+        for k in v.stats.events_total.keys() {
+            assert!(allowed_in.contains(&k.as_str()) || allowed_out.contains(&k.as_str()), "unexpected event {k}");
+        }
+        for (vid, car) in &v.cars {
+            if let CarPlace::Driving(cid) = car.place {
+                assert_eq!(world.traffic.cars.get(cid).and_then(|t| t.owned), Some(vid), "a driving car is on the road");
+            }
+        }
+        for (cid, t) in &world.traffic.cars {
+            if let Some(vid) = t.owned {
+                assert_eq!(v.cars.get(vid).map(|c| c.place), Some(CarPlace::Driving(cid)), "a private car on the road has its record");
+            }
+        }
+        // A car that left the record was being driven away (to be sold, or
+        // out of town) the tick before, or went for scrap.
+        for (id, place) in &prev {
+            if !v.cars.contains_key(*id) {
+                let was_leaving = matches!(place, CarPlace::Driving(_));
+                assert!(was_leaving || v.stats.events_total.contains_key("scrapped") || v.stats.events_total.contains_key("emigrated"), "a parked car vanished");
+            }
+        }
+        prev = v.cars.iter().map(|(id, c)| (id, c.place)).collect();
+        peak_parked = peak_parked.max(v.counts(&world.traffic).0);
+        // Lorries and vans are not deleted for taking long either.
+        assert!(world.traffic.cars.values().all(|c| c.errand != Errand::Trip || c.owned.is_none() || c.citizen != nd_sim::CitizenId::default()), "a private car on a plain trip has its driver");
+    }
+    let s = &world.vehicles.stats;
+    println!("cars {} created {} destroyed {} {:?} peak parked {peak_parked}", world.vehicles.cars.len(), s.created_total, s.destroyed_total, s.events_total);
+    assert!(s.created_total > 50, "households drive in with their cars");
+    assert!(peak_parked > 50, "and park them");
+}

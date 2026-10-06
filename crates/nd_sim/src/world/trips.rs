@@ -2,7 +2,7 @@
 //! journeys (`travel_to`, `arrive`, `wander`) and footfall.
 
 use super::*;
-use crate::citizens::{Household, HouseholdId, LifeStage, GROCERIES_PER_PERSON_DAY, PENSION, POCKET_MONEY};
+use crate::citizens::{Household, HouseholdId, LifeStage, TripMode, GROCERIES_PER_PERSON_DAY, PENSION, POCKET_MONEY};
 use crate::vehicle::{VehicleClass, VehicleModel};
 
 /// Most households in one arrival, however empty the town.
@@ -93,43 +93,13 @@ impl World {
                 money -= pocket;
             }
         }
-        // Wheels: a bike is cheap and first; a car needs a middle income and
-        // money in the bank; the poor sell a car they cannot keep.
+        // [carlife] Wheels: habits follow how travelling has felt. Long
+        // walks buy a bike, parking misery or jams sell the car, transit
+        // that keeps failing buys one (if it can be afforded); the poor
+        // sell a car they cannot keep. Cars come from a dealer and are
+        // delivered; sold ones are driven away.
         for &m in &grown {
-            let c = &mut self.citizens[m];
-            if !c.owns_bike && money > 60.0 && self.rng.random_bool(0.08) {
-                c.owns_bike = true;
-                money -= 45.0;
-                c.remember(tick, "Bought a bike. The city just got smaller.");
-            }
-            // What they buy follows income, age and taste (`VehicleModel::
-            // for_owner`): the poor an old banger or a scooter, which they
-            // can afford with less in the bank; the rich trade up an old one.
-            let wants = |c: &crate::citizens::Citizen| VehicleModel::for_owner(c.income, c.age, crate::vehicle::hedonism_of(c.seed), &mut crate::vehicle::model_rng(c.seed, today as u64 + 2));
-            if !c.owns_car && c.class() != Tier::Low && money > 400.0 && self.rng.random_bool(0.04) {
-                let model = wants(c);
-                c.owns_car = true;
-                money -= model.price().min(300.0);
-                c.vehicle = Some(model);
-                c.remember(tick, format!("Bought a {}.", model_name(&model)));
-            } else if !c.owns_car && c.class() == Tier::Low && money > 150.0 && self.rng.random_bool(0.02) {
-                let model = wants(c);
-                c.owns_car = true;
-                money -= model.price().min(150.0);
-                c.vehicle = Some(model);
-                c.remember(tick, format!("Picked up a {}. It runs, mostly.", model_name(&model)));
-            } else if c.owns_car && c.class() == Tier::High && money > 1500.0 && c.vehicle.is_some_and(|v| v.class == VehicleClass::Cheap) && self.rng.random_bool(0.05) {
-                let model = wants(c);
-                money -= model.price().min(800.0);
-                c.vehicle = Some(model);
-                c.remember(tick, format!("Traded the old wreck in for a {}.", model_name(&model)));
-            }
-            if c.owns_car && c.class() == Tier::Low && money < -100.0 {
-                c.owns_car = false;
-                money += c.vehicle.map_or(150.0, |v| (v.price() * 0.5).min(150.0));
-                c.vehicle = None;
-                c.remember(tick, "Sold the car. Couldn't afford to keep it.");
-            }
+            self.wheels(m, &mut money, today);
         }
         let stressed = home.is_some() && rent > income * RENT_STRESS_SHARE;
         let stress = {
@@ -282,7 +252,8 @@ impl World {
         if !self.citizens.contains_key(cid) {
             return;
         }
-        self.release_parking(cid);
+        // [carlife] The car leaves town with its owner.
+        self.car_emigrates(cid);
         let visiting = match self.citizens[cid].activity {
             Activity::Visiting(b) | Activity::Sitting { park: b, .. } => Some(b),
             _ => None,
@@ -309,9 +280,6 @@ impl World {
             if empty {
                 self.remove_household(hid);
             }
-        }
-        if let Activity::Driving { car, .. } = c.activity {
-            self.traffic.remove_car(car);
         }
         self.economy.emigrated_total += 1;
         self.events.push(SimEvent::CitizenLeft(cid));
@@ -579,6 +547,9 @@ impl World {
                     wakefulness: 0.9,
                     asleep: false,
                     packed_meal: 1.0,
+                    car: None,
+                    to_car: None,
+                    commute: Default::default(),
                 };
                 citizen.remember(tick, format!("Rolled into Neon District on day {} at {}.", self.clock.day() + 1, self.clock.format_hhmm()));
                 if let Some(s) = by_train {
@@ -593,7 +564,19 @@ impl World {
                         self.assign_job(id, job);
                     }
                 }
-                self.travel_to(id, Some(home), Purpose::Home);
+                // [carlife] Car owners drive in from out of town (a highway
+                // or the road at the map edge) with the car; without a road
+                // in, they come without it.
+                let drove = match vehicle {
+                    Some(model) => self.arrive_by_car(id, model, home),
+                    None => false,
+                };
+                if !drove {
+                    let c = &mut self.citizens[id];
+                    c.owns_car = false;
+                    c.vehicle = None;
+                    self.travel_to(id, Some(home), Purpose::Home);
+                }
                 self.events.push(SimEvent::CitizenArrived(id));
             }
             let groceries = self.households[hid].groceries;
@@ -714,6 +697,21 @@ impl World {
             Activity::Traveling { to, purpose, .. } | Activity::Driving { to, purpose, .. } => (*to, *purpose),
             _ => return,
         };
+        // [carlife] Reached the parked car: drive on from here. If it
+        // cannot get there after all, go on some other way.
+        if matches!(self.citizens[id].activity, Activity::Traveling { .. }) {
+            if let Some(tc) = self.citizens[id].to_car.take() {
+                if !self.start_drive(id, tc.car, tc.to, tc.purpose) {
+                    self.travel_with(id, Some(tc.to), tc.purpose, true, false, false);
+                }
+                return;
+            }
+        }
+        // [carlife] The journey is over (a stop is a pause in it): how did
+        // it feel?
+        if purpose != Purpose::ToStop {
+            self.end_trip(id);
+        }
         // The destination may have been demolished on the way.
         if let Some(b) = to {
             if !self.buildings.contains_key(b) {
@@ -920,7 +918,6 @@ impl World {
     }
 
     pub(super) fn leave_building(&mut self, id: CitizenId) -> Option<Vec2> {
-        self.release_parking(id);
         if matches!(self.citizens[id].activity, Activity::Waiting { .. }) {
             self.citizens[id].activity = Activity::Idle;
         }
@@ -960,87 +957,71 @@ impl World {
     /// walk at each end. `fresh` is false for the legs after a ride, so a
     /// journey's footfall is noted once, for the leg that began it.
     pub(super) fn travel_to_impl(&mut self, id: CitizenId, target: Option<BuildingId>, purpose: Purpose, allow_bus: bool, fresh: bool) {
+        self.travel_with(id, target, purpose, allow_bus, fresh, true);
+    }
+
+    /// [carlife] `travel_to_impl`, optionally without the car (it was not
+    /// where the citizen walked to). The mode is the citizen's choice
+    /// (`choose_mode`); if the best one cannot be done after all (no route
+    /// for the car), the next best is taken.
+    pub(super) fn travel_with(&mut self, id: CitizenId, target: Option<BuildingId>, purpose: Purpose, allow_bus: bool, fresh: bool, allow_car: bool) {
         let Some(target) = target else { return };
         self.citizens[id].transit = None;
+        self.citizens[id].to_car = None;
         if fresh && purpose != Purpose::Home {
             self.pack_meal(id);
         }
         if fresh {
             self.citizens[id].pending_footfall.clear();
         }
-        let Some((from_seg, from_pt, from_node)) = self.origin_for(id) else {
+        let Some((_from_seg, from_pt, from_node)) = self.origin_for(id) else {
             self.citizens[id].activity = Activity::Idle;
             return;
         };
         let Some(lot) = self.building_lot(target) else { return };
-        let (to_seg, to_node) = (lot.front_segment, lot.access_node);
+        let to_node = lot.access_node;
         let entrance = lot.entrance();
-        // Where a car can get to: the lot itself, or the nearest street for
-        // homes that line a footpath.
-        let car_to = lot.car_segment.map(|s| (s, lot.car_point));
-        let car_from = match self.citizens[id].inside.and_then(|b| self.building_lot(b)) {
-            Some(l) => l.car_segment.map(|s| (s, l.car_point)),
-            None => self.roads.nearest_street(from_pt).map(|(s, _, q)| (s, q)),
-        };
-
-        let dist = from_pt.distance(entrance);
-        let (owns_car, owns_bike) = {
-            let c = &self.citizens[id];
-            (c.owns_car, c.owns_bike)
-        };
-        // Park outings on a bike are a pleasure, not a commute: bike owners ride.
-        let park_ride = owns_bike && matches!(purpose, Purpose::Visit(LandUse::Park));
-        // Drive when the citizen has a car, it is far enough and a lane route exists.
-        if let (true, false, true, Some((cf_seg, cf_pt)), Some((ct_seg, ct_pt))) = (owns_car, park_ride, dist >= self.config.drive_threshold, car_from, car_to) {
-            if let Some((route, s0, s1)) = self.traffic.net.find_route(cf_seg, cf_pt, ct_seg, ct_pt) {
-                let exit_pos = self.leave_building(id);
-                let color = self.rng.random_range(0..8u8);
-                let car = self.traffic.spawn_car(id, None, route, s0, s1, color);
-                let model = {
-                    let c = &mut self.citizens[id];
-                    *c.vehicle.get_or_insert_with(|| VehicleModel::fallback(c.seed, c.income, c.age))
-                };
-                self.traffic.cars[car].model = model;
-                let c = &mut self.citizens[id];
-                // The short walk from a path-side home to the car is skipped.
-                c.pos = if cf_pt.distance(from_pt) > 2.0 { cf_pt } else { exit_pos.unwrap_or(c.pos) };
-                c.prev_pos = c.pos;
-                c.activity = Activity::Driving { car, to: Some(target), purpose };
-                return;
-            }
-        }
-        let _ = (from_seg, to_seg);
-
-        // Otherwise walk along the node graph.
-        let Some(nodes) = self.roads.path(from_node, to_node) else {
-            if let Some(exit) = self.leave_building(id) {
-                self.citizens[id].pos = exit;
-            }
-            let c = &mut self.citizens[id];
-            c.thought = "No way through. The grid doesn't connect.".to_string();
-            c.activity = Activity::Idle;
-            return;
-        };
         let seated = matches!(self.citizens[id].activity, Activity::Sitting { .. });
-        let mode = if owns_bike && !seated && (park_ride || dist >= self.config.bike_threshold) { TravelMode::Bike } else { TravelMode::Walk };
         let walk_from = if self.citizens[id].inside.is_some() { from_pt } else { self.citizens[id].pos };
+        let q = TripQuery { from: walk_from, to: entrance, target, purpose, allow_transit: allow_bus, allow_car, allow_bike: !seated };
+        let ranked = self.choose_mode(id, &q);
+        let dist = walk_from.distance(entrance);
+        for opt in ranked {
+            match opt.plan {
+                ModePlan::Car { car, at } => {
+                    if at.distance(walk_from) > 25.0 {
+                        self.walk_to_car(id, car, at, target, purpose, walk_from);
+                    } else if !self.start_drive(id, car, target, purpose) {
+                        continue;
+                    }
+                }
+                ModePlan::Train { board, alight, stop } => self.walk_to_transit(id, stop, TransitLeg::Rail { board, alight }, target, purpose, fresh),
+                ModePlan::Bus { route, board, alight, stop } => self.walk_to_transit(id, stop, TransitLeg::Bus { route, board, alight }, target, purpose, fresh),
+                ModePlan::Walk | ModePlan::Bike => {
+                    let mode = if matches!(opt.plan, ModePlan::Bike) { TravelMode::Bike } else { TravelMode::Walk };
+                    if !self.walk_or_ride(id, target, purpose, mode, from_node, to_node, walk_from, entrance, fresh) {
+                        continue;
+                    }
+                }
+            }
+            if fresh {
+                self.begin_trip(id, opt.mode, dist);
+            }
+            return;
+        }
+        // Nothing gets there.
+        if let Some(exit) = self.leave_building(id) {
+            self.citizens[id].pos = exit;
+        }
+        let c = &mut self.citizens[id];
+        c.thought = "No way through. The grid doesn't connect.".to_string();
+        c.activity = Activity::Idle;
+    }
 
-        // The train, for long trips on foot between two stations.
-        if allow_bus && mode == TravelMode::Walk && Rail::in_service(self.clock.minute_of_day() as u32) {
-            if let Some((board, alight, stop)) = self.plan_rail_trip(walk_from, entrance) {
-                self.walk_to_transit(id, stop, TransitLeg::Rail { board, alight }, target, purpose, fresh);
-                return;
-            }
-        }
-        // The bus, for long trips on foot when a line serves both ends and
-        // a depot has buses out. Walk to the stop first.
-        if allow_bus && mode == TravelMode::Walk && self.economy.transit.buses > 0 {
-            if let Some((route, board, alight)) = self.transit.plan_trip(walk_from, entrance) {
-                let stop = self.transit.routes[route].stops[board].pos;
-                self.walk_to_transit(id, stop, TransitLeg::Bus { route, board, alight }, target, purpose, fresh);
-                return;
-            }
-        }
+    /// On foot or by bike along the streets (walkers through the blocks).
+    #[allow(clippy::too_many_arguments)]
+    fn walk_or_ride(&mut self, id: CitizenId, target: BuildingId, purpose: Purpose, mode: TravelMode, from_node: NodeId, to_node: NodeId, walk_from: Vec2, entrance: Vec2, fresh: bool) -> bool {
+        let Some(nodes) = self.roads.path(from_node, to_node) else { return false };
         let exit_pos = self.leave_building(id);
         let mut path = match mode {
             TravelMode::Walk => match self.walk.route(walk_from, entrance) {
@@ -1062,6 +1043,166 @@ impl World {
         }
         c.mode = mode;
         c.activity = Activity::Traveling { to: Some(target), purpose, path, idx: 0 };
+        true
+    }
+
+    /// [carlife] Every way this citizen could make this trip, with what
+    /// each would cost them (`ModeOption`). Extend here for a new mode (air
+    /// taxis, say): push an option with its own `ModePlan`.
+    pub fn mode_options(&self, id: CitizenId, q: &TripQuery) -> Vec<ModeOption> {
+        let Some(c) = self.citizens.get(id) else { return Vec::new() };
+        let dist = q.from.distance(q.to);
+        let secs = self.config.traffic_seconds_per_tick;
+        let walk = self.config.walk_speed.max(0.1);
+        let bike = self.config.bike_speed.max(0.1);
+        let [sociable, ambition, hedonism, caution, curiosity] = crate::vehicle::traits_of(c.seed);
+        let frail = if matches!(c.stage(), LifeStage::Child | LifeStage::Retiree) { 1.5 } else { 1.0 };
+        let time_w = 0.7 + 0.6 * ambition;
+        let money_w = self.money_weight(id);
+        let mut out = Vec::new();
+        let mut push = |mode: TripMode, minutes: f32, money: f32, comfort: f32, plan: ModePlan| {
+            let pain = c.commute.pain_of(mode);
+            let cost = minutes * time_w + money * money_w + comfort + PAIN_WEIGHT * pain;
+            out.push(ModeOption { mode, minutes, money, comfort, pain, cost, plan });
+        };
+        // On foot: always possible, tiring when long.
+        let minutes = dist * 1.25 / walk;
+        push(TripMode::Walk, minutes, 0.0, (minutes - 15.0).max(0.0) * 0.35 * frail * (1.2 - 0.5 * curiosity), ModePlan::Walk);
+        // A bike, for owners: quick, a little sweaty, risky to the cautious.
+        let park_ride = matches!(q.purpose, Purpose::Visit(LandUse::Park));
+        if c.owns_bike && q.allow_bike && (park_ride || dist >= self.config.bike_threshold) {
+            let minutes = dist * 1.2 / bike + 2.0;
+            // Riding to the park is the outing itself.
+            let comfort = if park_ride { -30.0 } else { minutes * 0.25 * (0.5 + caution) * frail + 4.0 };
+            push(TripMode::Bike, minutes, 0.0, comfort, ModePlan::Bike);
+        }
+        // The bus and the train, for longer trips: the walk to the stop,
+        // the wait, the ride, the fare; the unsociable mind the crowd.
+        let crowd = 6.0 - 6.0 * sociable;
+        if q.allow_transit && self.economy.transit.buses > 0 {
+            if let Some((route, board, alight)) = self.transit.plan_trip(q.from, q.to) {
+                let r = &self.transit.routes[route];
+                let (s0, s1) = (r.stops[board].pos, r.stops[alight].pos);
+                let minutes = (q.from.distance(s0) + s1.distance(q.to)) / walk + 12.0 + r.ride_length(board, alight) / (7.0 * secs);
+                push(TripMode::Bus, minutes, r.fare, crowd, ModePlan::Bus { route, board, alight, stop: s0 });
+            }
+        }
+        if q.allow_transit && Rail::in_service(self.clock.minute_of_day() as u32) {
+            if let Some((board, alight, stop)) = self.plan_rail_trip(q.from, q.to) {
+                let end = self.building_entrance(alight).unwrap_or(q.to);
+                let wait = match self.rail.stats.next_passenger_in {
+                    0 => 30.0,
+                    n => (n as f32).min(120.0),
+                };
+                let minutes = (q.from.distance(stop) + end.distance(q.to)) / walk + wait + dist / (15.0 * secs);
+                push(TripMode::Train, minutes, rail::RAIL_FARE, crowd, ModePlan::Train { board, alight, stop });
+            }
+        }
+        // The car, when it is parked nearby and the trip is worth it: the
+        // walk to it, the drive, finding a space (as remembered), fuel and
+        // the fee at the far end. A car is a comfortable seat out of the
+        // weather; hedonists like driving most.
+        if q.allow_car && dist >= self.config.drive_threshold && self.building_lot(q.target).is_some_and(|l| l.car_segment.is_some()) {
+            if let Some((car, at)) = self.car_ready(id, q.from) {
+                let own_space = self.buildings.get(q.target).is_some_and(|b| !b.is_parking() && b.parking_free() > 0);
+                let fee = if own_space {
+                    0.0
+                } else {
+                    self.buildings.values().filter(|b| b.is_parking() && b.parking_free() > 0).filter_map(|b| self.lots.get(b.lot).map(|l| (l.center.distance(q.to), b.parking_price))).filter(|(d, _)| *d < 180.0).map(|(_, p)| p).fold(f32::INFINITY, f32::min)
+                };
+                let fee = if fee.is_finite() { fee * 0.5 } else { 0.0 };
+                let search = if own_space { 0.0 } else { 2.0 + c.commute.parking_pain * 10.0 };
+                let minutes = at.distance(q.from) / walk + dist * 1.3 / (9.0 * secs) + 3.0 + search;
+                push(TripMode::Car, minutes, dist / 1000.0 * 0.5 + fee, -4.0 - 8.0 * hedonism, ModePlan::Car { car, at });
+            }
+        }
+        out
+    }
+
+    /// [carlife] The options ranked best first, with a little day-to-day
+    /// whim so habits are not clockwork.
+    pub fn choose_mode(&mut self, id: CitizenId, q: &TripQuery) -> Vec<ModeOption> {
+        let mut options = self.mode_options(id, q);
+        for o in &mut options {
+            o.cost *= self.rng.random_range(0.85..1.15f32);
+        }
+        options.sort_by(|a, b| a.cost.total_cmp(&b.cost));
+        options
+    }
+
+    /// [carlife] Once a day per grown-up: buy or sell wheels by how
+    /// travelling has felt (`Commute`) and what the household can afford.
+    pub(super) fn wheels(&mut self, m: CitizenId, money: &mut f32, today: u64) {
+        let tick = self.clock.tick;
+        let Some(c) = self.citizens.get(m) else { return };
+        let class = c.class();
+        let owns_bike = c.owns_bike;
+        let has_car = c.car.is_some();
+        let p = &c.commute;
+        let (walk_p, bike_p, car_p, park_p) = (p.pain_of(TripMode::Walk), p.pain_of(TripMode::Bike), p.pain_of(TripMode::Car), p.parking_pain);
+        let transit_p = p.pain_of(TripMode::Bus).max(p.pain_of(TripMode::Train));
+        let transit_used = p.trips[TripMode::Bus.index()] + p.trips[TripMode::Train.index()] > 0.3;
+        let cheap_car = self.citizens[m].car.and_then(|v| self.vehicles.cars.get(v)).is_some_and(|v| v.model.class == VehicleClass::Cheap);
+        let wants = VehicleModel::for_owner(c.income, c.age, crate::vehicle::hedonism_of(c.seed), &mut crate::vehicle::model_rng(c.seed, today + 2));
+        // A car the poor cannot keep.
+        if has_car && class == Tier::Low && *money < -100.0 {
+            if let Some(got) = self.sell_car(m, "Sold the car. Couldn't afford to keep it.") {
+                *money += got.min(150.0);
+            }
+            return;
+        }
+        // Parking misery or endless jams, and another way to get about.
+        if has_car && (park_p > 1.5 || car_p > 2.5) && (owns_bike || transit_used || walk_p < 1.0) && self.rng.random_bool(0.25) {
+            let reason = if park_p >= car_p * 0.6 { "Sick of circling for a space every day. Sold the car." } else { "Hours in traffic, every single day. Sold the car." };
+            if let Some(got) = self.sell_car(m, reason) {
+                *money += got;
+            }
+            return;
+        }
+        // The rich trade an old wreck up.
+        if has_car && class == Tier::High && *money > 1500.0 && cheap_car && self.rng.random_bool(0.05) {
+            if let Some(got) = self.sell_car(m, "Traded the old wreck in.") {
+                *money += got;
+                if let Some(paid) = self.buy_car(m, wants, wants.price().min(800.0)) {
+                    *money -= paid;
+                }
+            }
+            return;
+        }
+        // Bikes: after long walks, or just because.
+        if !owns_bike {
+            if walk_p > 1.0 {
+                if *money > crate::vehicle::BIKE_PRICE + 15.0 && self.rng.random_bool(0.5) {
+                    *money -= self.buy_bike(m, "Tired of the long walks.");
+                }
+            } else if *money > 60.0 && self.rng.random_bool(0.05) {
+                *money -= self.buy_bike(m, "The city just got smaller.");
+            }
+        }
+        // A car: when buses and trains keep failing, or the walks and rides
+        // are too long, and it can be afforded; now and then regardless.
+        if !has_car {
+            let afford = (class != Tier::Low && *money > 400.0) || (class == Tier::Low && *money > 150.0);
+            let fed_up = transit_p > 1.2 || (walk_p > 1.5 && (!self.citizens[m].owns_bike || bike_p > 1.2));
+            let chance = if fed_up { 0.4 } else if class != Tier::Low { 0.04 } else { 0.02 };
+            if afford && self.rng.random_bool(chance) {
+                let price = wants.price().min(if class == Tier::Low { 150.0 } else { 300.0 });
+                if let Some(paid) = self.buy_car(m, wants, price) {
+                    *money -= paid;
+                    let c = &mut self.citizens[m];
+                    if fed_up {
+                        c.remember(tick, if transit_p > 1.2 { "Transit let me down once too often. Got a car." } else { "Too far to walk, too far to ride. Got a car." });
+                    }
+                    // The bike goes if riding it is what hurt.
+                    if c.owns_bike && bike_p > 1.5 {
+                        c.owns_bike = false;
+                        *money += 15.0;
+                        c.remember(tick, "Sold the bike.");
+                        self.vehicles.stats.bikes_sold_today += 1;
+                    }
+                }
+            }
+        }
     }
 
     /// Someone leaving home takes a meal from the pantry for later, if the
@@ -1182,9 +1323,44 @@ impl World {
 /// Cover charge at a venue's door.
 pub(super) const VENUE_COVER: f32 = 15.0;
 
-/// How a citizen names what they bought, for their memories.
-fn model_name(m: &VehicleModel) -> String {
-    let old = if m.class == VehicleClass::Cheap { "beat-up " } else { "" };
-    let flash = if m.tuned { "souped-up " } else { "" };
-    format!("{old}{flash}{}", m.body.label().replace('_', " "))
+/// What a trip asks of the mode choice: from where to where, for what,
+/// and which modes are allowed this time.
+#[derive(Clone, Copy, Debug)]
+pub struct TripQuery {
+    pub from: Vec2,
+    pub to: Vec2,
+    pub target: BuildingId,
+    pub purpose: Purpose,
+    pub allow_transit: bool,
+    pub allow_car: bool,
+    pub allow_bike: bool,
 }
+
+/// How a trip would be made, concretely.
+#[derive(Clone, Copy, Debug)]
+pub enum ModePlan {
+    Walk,
+    Bike,
+    Bus { route: RouteId, board: usize, alight: usize, stop: Vec2 },
+    Train { board: BuildingId, alight: BuildingId, stop: Vec2 },
+    /// The citizen's car, parked at `at`.
+    Car { car: crate::vehicle::VehicleId, at: Vec2 },
+}
+
+/// One way to make a trip and what it would cost the traveller, in
+/// minute-equivalents: `minutes` weighed by ambition, `money` by income,
+/// `comfort` by personality (negative is a pleasure), and the remembered
+/// `pain` of the mode times `PAIN_WEIGHT`.
+#[derive(Clone, Copy, Debug)]
+pub struct ModeOption {
+    pub mode: TripMode,
+    pub minutes: f32,
+    pub money: f32,
+    pub comfort: f32,
+    pub pain: f32,
+    pub cost: f32,
+    pub plan: ModePlan,
+}
+
+/// Minute-equivalents one remembered bad half-hour adds to a mode.
+pub const PAIN_WEIGHT: f32 = 20.0;

@@ -99,7 +99,7 @@ Citizens are rendered from their simulated positions every frame.
   moves at a believable pace on screen at 1x; trips therefore take sim-time tens of
   minutes, the usual city-builder compromise. Right-hand traffic; lane sets are centred
   on the road; junction curves stay inside the junction; cars refuse to enter a
-  junction whose exit lane is full; stalled trips time out. Pedestrians walk on the
+  junction whose exit lane is full; a vehicle 30 traffic minutes on one route replans from where it stands, and nothing is ever taken off the road for being slow: jams are part of the city and drivers feel them. Pedestrians walk on the
   right-hand pavement.
 - **Parcels and zones**: parcels are cut along every street and path as soon as it is
   built, zoned or not (`zoning::generate_parcels`, the land within 60 m of the
@@ -206,17 +206,41 @@ Citizens are rendered from their simulated positions every frame.
   Deep in debt for five days means closure: workers laid off, the building goes
   derelict, and after a week it is demolished so the lot can be reused. Offices
   and civic buildings are publicly funded.
-- **Parking**: every car trip ends in a space. Towers (high tier) bring their own
-  spaces for about half their homes and jobs, middle-tier blocks a quarter, cheap
-  buildings none. Drivers use the destination's spaces, else pay at the nearest
-  parking business within 180 m with room (a fee by tier and land value that goes to
-  the business), else leave the car on the street, lose a little mood, and are counted
-  as a shortage. When the day's shortage outruns free spaces, development opens a
-  parking lot on a vacant lot: a surface lot where land is cheap (about one space
-  per 28 m², two jobs), a multi-storey car park on middle land (three to five decks).
-  It is the cheapest business in town and lives or dies on fees. Parking lots render
-  their occupancy: cars fill the painted bays of a surface lot and the edges and roof
-  of a car park in proportion to the spaces in use.
+- **Cars** (`world/cars.rs`, `vehicle::Vehicles`): every private car is a record with a place:
+  parked (the owner's home spaces, a building's garage, a parking business, a kerb slot, or squeezed
+  onto the street when nothing was free) or on the road. A car comes into the city only with a
+  household driving in (off a highway carriageway at the map edge, or the road at the city's edge),
+  or when bought (at a dealer, the nearest goods or gadget shop, and delivered home by its driver; or
+  out of town, driven in from the edge); it leaves only when sold (driven to the dealer), scrapped, or
+  driven out of town by an emigrating owner. A trip by car starts at the car: the driver walks to it
+  (within 320 m) and it pulls out of its kerb slot into a gap. At the far end it uses the
+  destination's own spaces; else the driver weighs the nearest free kerb slots and parking lots by
+  the drive there (by the route it would really take), the walk back and the fee; with nothing in
+  sight it circles the streets around (counted as circling, the signal development opens lots on),
+  and after four tries parks anywhere on the street. Kerbs: one slot per 6.5 m on both sides of
+  streets, none within 12 m of a junction, none on highways, bridges, avenues (clearways) or streets
+  fronted by shops and nightlife (loading). A car keeps its space until it drives off, so a lot's
+  occupancy is the cars standing in it, overnight too. Cars parked at a building that goes are moved
+  to the street. Lorries return to their business or a truck lot (`world/industry`); delivery vans
+  to their shop.
+- **How people travel** (`World::mode_options`, `choose_mode`): per trip each citizen weighs walking,
+  their bike, the bus, the train and their car (when parked nearby) in minute-equivalents: time
+  (weighed by ambition), money (fares, fuel, the expected fee; weighed by income), comfort (long
+  walks tire, more so for children and the old; cycling worries the cautious; the unsociable mind
+  the crowd; a car is a comfortable seat, most of all to hedonists) and remembered pain, with a
+  little daily whim. Pain (`Commute`, bad half-hours per trip, fading daily) comes from long walks
+  and rides, slow transit and hours-long waits, jams, the hunt for a space, fees and the walk back
+  from the car. Habits follow once a day: long walks buy a bike at a shop, parking misery or endless
+  jams sell the car when there is another way, transit that keeps failing (or walks and rides too
+  long) buys one if the household can afford it; memories record each. The report counts trips by
+  mode per day.
+- **Parking businesses**: when the day's circling outruns free spaces, development opens a
+  parking lot on a vacant lot near the last driver who could not find a space: a surface lot where
+  land is cheap (about one space per 28 m², two jobs), a multi-storey car park on middle land
+  (three to five decks). It is the cheapest business in town and lives or dies on fees (a fee by
+  tier and land value per car parked). Towers (high tier) bring their own spaces for about half
+  their homes and jobs, middle-tier blocks a quarter, cheap buildings none. Parking lots render
+  their occupancy; cars at the kerb are drawn there.
 - **Pedestrian network** (`nd_sim::walk`): a second graph for people on foot. Pavements
   on both sides of every street, path centres, a crossing hub at every junction, a
   walkable setback loop inset into every usable lot with its front joined to the
