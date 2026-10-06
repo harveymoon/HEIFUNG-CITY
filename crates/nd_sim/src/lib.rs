@@ -37,6 +37,7 @@ pub mod roads;
 pub mod services;
 pub mod takeover;
 pub mod society;
+pub mod survey;
 pub mod traffic;
 pub mod transit;
 pub mod trash;

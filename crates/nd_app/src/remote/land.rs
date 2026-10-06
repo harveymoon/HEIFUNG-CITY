@@ -69,6 +69,8 @@ pub fn terrain_at(w: &World, p: SVec2) -> Value {
         "lot": lot.map(|l| super::view::key_str(l)),
         "power_sites": sites,
         "docks": docks,
+        // The land survey layers at this point (what the K layers show).
+        "survey": w.survey_at(p).into_iter().map(|(l, v)| (l.key().to_string(), json!(round(v)))).collect::<serde_json::Map<String, Value>>(),
     })
 }
 

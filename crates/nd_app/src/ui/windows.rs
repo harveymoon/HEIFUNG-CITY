@@ -267,6 +267,7 @@ fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
         }
     }
     ui.checkbox(&mut p.tools.show_routes, "Bus lines whatever the tool");
+    land_layers(ui, p);
     let e = &p.sim.world.economy;
     section(ui, "LAND VALUE");
     row(ui, "average", format!("{:.2}", e.avg_land_value));
@@ -285,6 +286,28 @@ fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
             }
         });
     }
+}
+
+/// The land survey picker: one resource or industry layer at a time (K
+/// steps through them), each a wash over the ground with its key in the
+/// legend.
+fn land_layers(ui: &mut egui::Ui, p: &mut UiCtx) {
+    use nd_sim::survey::LandLayer;
+    section(ui, "LAND AND RESOURCES");
+    hint(ui, "What the ground is good for. One at a time; K steps through them.");
+    let land = &mut p.overlays.land;
+    ui.horizontal_wrapped(|ui| {
+        ui.selectable_value(land, None, egui::RichText::new("Off").small());
+        for l in LandLayer::RESOURCES {
+            ui.selectable_value(land, Some(l), egui::RichText::new(l.label()).small()).on_hover_text(l.hint());
+        }
+    });
+    hint(ui, "Where a new industrial lot would go (the sim's own odds):");
+    ui.horizontal_wrapped(|ui| {
+        for l in LandLayer::ALL.into_iter().filter(|l| l.is_industry()) {
+            ui.selectable_value(land, Some(l), egui::RichText::new(l.label()).small()).on_hover_text(l.hint());
+        }
+    });
 }
 
 fn help_window(ui: &mut egui::Ui) {
