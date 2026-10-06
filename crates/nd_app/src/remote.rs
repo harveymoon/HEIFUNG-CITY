@@ -211,6 +211,7 @@ struct Ctx<'w, 's> {
     assets: Res<'w, GameAssets>,
     diagnostics: Res<'w, DiagnosticsStore>,
     commands: Commands<'w, 's>,
+    claude: ResMut<'w, crate::flags::ClaudeFlags>,
 }
 
 fn remote_commands(inbox: Res<Inbox>, mut ctx: Ctx) {
@@ -456,6 +457,19 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(json!({ "building": key_str(id), "price": set }))
         }
         "select" => select(cmd, ctx),
+        "selected" => Ok(selected_detail(&ctx.sim.world, *ctx.selection, ctx.tools.route_sel, &ctx.assets, &ctx.tools.favorites)),
+        "flags" => flags_cmd(cmd, ctx),
+        "flag" => {
+            // Flag the current selection from the API, as F8 does in game.
+            let note = opt_str(cmd, "note")?.unwrap_or_default().to_string();
+            let w = &ctx.sim.world;
+            let sel = *ctx.selection;
+            let look = ctx.cams.iter().next().map_or([0.0, 0.0], |c| [c.target.x, c.target.z]);
+            let snapshot = selected_detail(w, sel, ctx.tools.route_sel, &ctx.assets, &ctx.tools.favorites);
+            let brief = selection_json_brief(w, sel);
+            let f = ctx.claude.add(w.clock.tick, sel, brief, note, look, snapshot).clone();
+            Ok(json!({ "flag": crate::flags::flag_json(&f, None) }))
+        }
         "favourite" | "favorite" => {
             let id = key_from(field(cmd, "citizen").ok_or("missing citizen id")?)?;
             if !ctx.sim.world.citizens.contains_key(id) {
@@ -1491,14 +1505,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(v) = field(cmd, "building") {
         let id = key_from(v)?;
         let b = w.buildings.get(id).ok_or("no such building")?;
-        let style = match b.service {
-            Some(s) => nd_procgen::buildings::Style::for_service(s.kind).label(),
-            // [subway]
-            None if b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::Central) => nd_procgen::buildings::Style::CentralStation.label(),
-            None if b.metro => nd_procgen::buildings::Style::MetroEntrance.label(),
-            None => b.port.map(|k| k.label()).or(b.plant.map(|k| k.label())).unwrap_or(ctx.assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11)).label()),
-        };
-        let mut v = building_detail(w, id, b, style);
+        let mut v = building_detail(w, id, b, building_style(w, b, &ctx.assets));
         v["place"] = places::building_place(w, id);
         return Ok(json!({ "building": v }));
     }
@@ -1579,6 +1586,94 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     }
 }
 
+/// `tick_time` for other modules (the flags).
+pub fn tick_time_json(tick: u64) -> Value {
+    tick_time(tick)
+}
+
+/// Kind, id and label of a selection (`null` for none).
+pub fn selection_json_brief(w: &nd_sim::World, sel: Selection) -> Value {
+    selection(w, sel)
+}
+
+/// The building style label, as the inspector shows it.
+fn building_style(w: &nd_sim::World, b: &nd_sim::Building, assets: &GameAssets) -> &'static str {
+    let _ = w;
+    match b.service {
+        Some(s) => nd_procgen::buildings::Style::for_service(s.kind).label(),
+        // [subway]
+        None if b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::Central) => nd_procgen::buildings::Style::CentralStation.label(),
+        None if b.metro => nd_procgen::buildings::Style::MetroEntrance.label(),
+        None => b.port.map(|k| k.label()).or(b.plant.map(|k| k.label())).unwrap_or(assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11)).label()),
+    }
+}
+
+/// Everything about what the player has selected, as `inspect` gives it,
+/// in one reply: a car with why it stands, the jam in front of it, its trip
+/// and lanes; a citizen (and the car they are driving); a building; a
+/// parked car; plus the bus line picked in the Transit window, if any.
+pub fn selected_detail(w: &nd_sim::World, sel: Selection, route_sel: Option<nd_sim::RouteId>, assets: &GameAssets, favourites: &[nd_sim::CitizenId]) -> Value {
+    let detail = match sel {
+        Selection::None => Value::Null,
+        Selection::Car(id) => w.traffic.cars.get(id).map_or(Value::Null, |c| car_detail(w, id, c)),
+        Selection::Citizen(id) => match w.citizens.get(id) {
+            Some(c) => {
+                let mut v = citizen_detail(w, id, c, favourites.contains(&id));
+                v["places"] = places::citizen_places(w, id);
+                if let nd_sim::Activity::Driving { car, .. } = c.activity {
+                    if let Some(x) = w.traffic.cars.get(car) {
+                        v["driving_car"] = car_detail(w, car, x);
+                    }
+                }
+                v
+            }
+            None => Value::Null,
+        },
+        Selection::Building(id) => match w.buildings.get(id) {
+            Some(b) => {
+                let mut v = building_detail(w, id, b, building_style(w, b, assets));
+                v["place"] = places::building_place(w, id);
+                v
+            }
+            None => Value::Null,
+        },
+        Selection::Parked(id) => view::vehicle_detail(w, id).unwrap_or(Value::Null),
+    };
+    let bus_line = route_sel.and_then(|r| w.transit.routes.get(r).map(|route| {
+        let mut v = route_row(r, route);
+        v["buses"] = json!(w.traffic.cars.iter().filter(|(_, c)| c.bus.as_ref().is_some_and(|b| b.route == r)).map(|(id, c)| car_row(w, id, c)).collect::<Vec<_>>());
+        v
+    }));
+    let brief = selection(w, sel);
+    json!({
+        "kind": brief.get("kind").cloned().unwrap_or(Value::Null), "id": brief.get("id").cloned().unwrap_or(Value::Null),
+        "selection": brief, "detail": detail, "bus_line": bus_line, "clock": tick_time(w.clock.tick),
+    })
+}
+
+/// `flags {since?, clear?}`: the player's "Flag for Claude" bookmarks, each
+/// with its snapshot and the selection's live detail now.
+fn flags_cmd(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let since = opt_u64(cmd, "since")?.unwrap_or(0) as u32;
+    let w = &ctx.sim.world;
+    let rows: Vec<Value> = ctx
+        .claude
+        .list
+        .iter()
+        .filter(|f| f.id > since)
+        .map(|f| {
+            let live = selected_detail(w, f.selection, None, &ctx.assets, &ctx.tools.favorites);
+            let now = (!live["detail"].is_null()).then_some(live["detail"].clone());
+            crate::flags::flag_json(f, now)
+        })
+        .collect();
+    let total = ctx.claude.list.len();
+    if opt_bool(cmd, "clear")?.unwrap_or(false) {
+        ctx.claude.list.clear();
+    }
+    Ok(json!({ "flags": rows, "total": total, "file": absolute(crate::flags::FLAG_FILE) }))
+}
+
 fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let w = &ctx.sim.world;
     let sel = if let Some(v) = field(cmd, "citizen") {
@@ -1599,6 +1694,12 @@ fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             return Err("no such car".into());
         }
         Selection::Car(id)
+    } else if let Some(v) = field(cmd, "vehicle") {
+        let id = key_from(v)?;
+        if !w.vehicles.cars.get(id).is_some_and(|c| c.spot().is_some()) {
+            return Err("no such parked vehicle".into());
+        }
+        Selection::Parked(id)
     } else if let Some(p) = opt_vec2(cmd, "at")? {
         // Pick exactly as a click with the Inspect tool does.
         crate::tools::pick(&*ctx.sim, p)
@@ -1996,7 +2097,7 @@ fn help() -> Value {
             "find": { "what": "citizens|buildings|lots|parcels|cars|trains|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
             "inspect": { "citizen|building|lot|car|train|route": "id", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "[x,y]: the road piece nearest a point, as segment" },
             "lane_use": { "junction": "[x,y]", "approach": "[x,y] on the arriving street", "lanes": "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default" },
-            "select": { "citizen|building|car": "id", "at": "[x,y] picks like a click; nothing clears" },
+            "select": { "citizen|building|car|vehicle": "id (vehicle: a parked car)", "at": "[x,y] picks like a click; nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
             "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
             "overlay": { "layer": "land_value|traffic|traffic_types|people|pollution|paths|zoning, or a land survey layer (one at a time): farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech", "on": "bool, omitted toggles", "land": "a land survey layer key, or none", "<layer name>": "bool (older form, any number at once)" },
@@ -2030,6 +2131,11 @@ fn help() -> Value {
     // [society]
     // [subway]
     v["commands"]["subway"] = json!({ "action": "status (default)|station|line|headway|remove_line|inspect_line|inspect_station", "x": "f (station)", "y": "f (station)", "stations": "[id or [x,y], ...] (line)", "points": "[[x,y], ...] (line: places stations where none is near)", "line": "id", "minutes": "headway", "headway": "minutes (line)", "station": "id or [x,y]" });
+    // The player's selection and flags (added here: the big literal above
+    // is at the json! macro's recursion limit).
+    v["commands"]["selected"] = json!({ "": "full detail of what the player has selected: a car with why (reason, text, by), jam (chain to the head of the queue, head_reason, cycle), trip (elapsed_min, expected_min, anger), lanes, driver, cargo; a citizen (and driving_car); a building; a parked car; the bus line picked (bus_line)" });
+    v["commands"]["flags"] = json!({ "since": "flag id: only newer ones", "clear": "bool: empty the list after reading" });
+    v["commands"]["flag"] = json!({ "note": "text: flag the current selection, as F8 does in game" });
     v["commands"]["society"] = json!({ "action": "report (default)|evict|offend|trash", "building": "id (evict: its households go on the street; offend: the target; trash: one building's bins)", "citizen": "id (offend)", "kind": "theft|burglary|assault|murder|vandalism (offend, with building)", "kg": "trash to add, default 100" });
     // Planning: several projects, and painting parcels.
     let planning = json!({

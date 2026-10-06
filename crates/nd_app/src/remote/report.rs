@@ -1265,7 +1265,7 @@ fn industry(w: &World) -> Value {
 fn driving_json(w: &World) -> Value {
     json!({
             "crashes_today": w.driving.crashes_today, "injuries_today": w.driving.injuries_today, "drunk_drivers_now": w.drunk_drivers_now(),
-            "drunk_trips_today": w.driving.drunk_trips_today, "red_lights_run_today": w.driving.red_runs_today, "crashes_total": w.driving.crashes_total,
+            "drunk_trips_today": w.driving.drunk_trips_today, "angry_drivers_now": w.angry_drivers_now(), "road_rage_today": w.driving.road_rage_today, "red_lights_run_today": w.driving.red_runs_today, "crashes_total": w.driving.crashes_total,
             "wrecks_on_road": w.driving.wrecks.len(), "tow_trucks_now": w.driving.tows.len(), "towed_total": w.driving.towed_total,
             "drivers_by_style": ({
                 let mut m = serde_json::Map::new();

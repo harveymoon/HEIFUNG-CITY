@@ -32,8 +32,10 @@ use std::collections::{BinaryHeap, HashMap, VecDeque};
 
 mod crosswalk;
 mod roundabout;
+mod why;
 pub use crosswalk::{Hold, PedTraffic, PED_CLEARANCE};
 pub use roundabout::{RingLanes, RingNode, RING_CRITICAL_GAP, RING_SPEED};
+pub use why::{JamChain, StopReason};
 
 new_key_type! {
     pub struct CarId;
@@ -133,6 +135,9 @@ const KERB_SLIDE_REACH: f32 = 80.0;
 const REROUTE_BACKOFF_MAX: f32 = 320.0;
 /// Seconds standing still before a vehicle counts in the wait-for graph.
 const WAIT_GRAPH_STALL: f32 = 60.0;
+/// Seconds a car stands at the end of a lane leading off the map, unable to
+/// make the last lane change of its route, before it leaves in its own lane.
+const DEAD_END_GIVE_UP: f32 = 5.0;
 /// Trucks cruise a little below the limit, which is what gets them overtaken.
 const TRUCK_SPEED_FACTOR: f32 = 0.85;
 /// Trips older than this (traffic seconds) end where the car stands. A bus
@@ -670,6 +675,24 @@ impl DriverProfile {
         self
     }
 
+    /// [rage] This driver with `anger` (`0..1`) on top: closer to the car
+    /// ahead, harder on the throttle, quicker to change lanes and overtake,
+    /// a little faster, less inclined to stop for an amber, and sloppier
+    /// (a slightly higher chance of misjudging a gap and crashing).
+    pub fn angry(mut self, anger: f32) -> Self {
+        let a = anger.clamp(0.0, 1.0);
+        if a <= 0.0 || !self.assigned {
+            return self;
+        }
+        self.headway = (self.headway * (1.0 - 0.45 * a)).max(0.5);
+        self.accel = (self.accel * (1.0 + 0.5 * a)).min(2.6);
+        self.aggression = (self.aggression + 0.4 * a).min(1.0);
+        self.speed = (self.speed * (1.0 + 0.1 * a)).min(1.35);
+        self.compliance = (self.compliance - 0.3 * a).max(0.1);
+        self.skill = (self.skill - 0.12 * a).max(0.05);
+        self
+    }
+
     /// Sideways wander (m) around the lane centre.
     pub fn weave_amplitude(&self) -> f32 {
         if !self.assigned {
@@ -771,6 +794,41 @@ pub struct DriveState {
     /// tick's start first, for drawing the car along its real path.
     #[serde(skip)]
     pub poses: Vec<(Vec2, f32)>,
+    /// [rage] The drive under way: the tick it set off and the minutes the
+    /// route should have taken, judged at departure (0: not timed yet;
+    /// `World::step_rage` times every car the tick after it appears).
+    pub trip_start: u64,
+    pub expected_min: f32,
+    /// [rage] The driver's own profile before any anger, kept so anger can
+    /// be applied on top of it. `None`: a professional or a takeover pack,
+    /// who do not get road rage.
+    pub calm: Option<DriverProfile>,
+    /// [rage] Patience and temper `0..1`, from the driver's personality.
+    pub patience: f32,
+    pub temper: f32,
+    /// [rage] How angry the driver is now, `0..1`, and the worst it got
+    /// this trip (fed into how the trip felt).
+    pub anger: f32,
+    pub anger_peak: f32,
+}
+
+/// [rage] How angry (`0..1`) a driver gets `elapsed` minutes into a drive
+/// that should have taken `expected`. Anger starts once the drive runs
+/// past `expected * (1.8 + 1.6 * patience - 0.4 * temper)` plus five
+/// minutes (so a short hop doubling, or the usual rush-hour crawl, is
+/// shrugged off), builds over a stretch as long again as the trip scaled
+/// by patience (at least twelve minutes), and tops out lower for the
+/// even-tempered. Tuned on the demo district: at the evening peak about
+/// one driver in ten running late gets properly angry, not a third. Pure and
+/// deterministic: the same trip and person always give the same anger.
+pub fn road_rage(elapsed: f32, expected: f32, patience: f32, temper: f32) -> f32 {
+    if expected <= 0.0 || elapsed <= expected {
+        return 0.0;
+    }
+    let (patience, temper) = (patience.clamp(0.0, 1.0), temper.clamp(0.0, 1.0));
+    let start = expected * (1.8 + 1.6 * patience - 0.4 * temper) + 5.0;
+    let ramp = (expected * (1.0 + patience)).max(12.0);
+    ((elapsed - start) / ramp).clamp(0.0, 1.0) * (0.55 + 0.45 * temper)
 }
 
 /// Why two cars (or one) crashed.
@@ -892,6 +950,22 @@ impl Car {
 }
 
 impl Car {
+    /// [rage] Traffic seconds the rest of the route should take in free
+    /// flow: every lane at 90% of its limit, plus a few seconds per
+    /// junction for lights and turns and a little for pulling out.
+    pub fn expected_seconds(&self, net: &LaneNetwork) -> f32 {
+        let mut t = 15.0;
+        for (k, &l) in self.route.iter().enumerate().skip(self.idx) {
+            let Some(lane) = net.lanes.get(l as usize) else { continue };
+            let len = if k == self.idx { (lane.length - self.s).max(0.0) } else { lane.length };
+            t += len / (lane.speed_limit * 0.9).max(2.0);
+            if lane.is_connector() {
+                t += 10.0;
+            }
+        }
+        t
+    }
+
     pub fn length(&self) -> f32 {
         if self.bus.is_some() { BUS_LENGTH } else { CAR_LENGTH }
     }
@@ -2691,8 +2765,36 @@ impl Traffic {
         }
     }
 
+    /// A lane change at the very end of a route, on a lane that leads
+    /// nowhere (a carriageway running off the map), is pointless: the car
+    /// is gone at the end whichever lane it is in. Routes to a map exit end
+    /// on one chosen lane, so a car in another lane that could not merge on
+    /// the way stopped at the map's edge to squeeze in, and the queue behind
+    /// it stood for minutes (found in a player's save: the highway's three
+    /// lanes funnelled into one at both ends of the map, cars standing up to
+    /// five minutes). A car standing at the end of such a lane for
+    /// `DEAD_END_GIVE_UP` seconds drops the change and leaves in its own
+    /// lane. Only then: a car that merges on the way, as nearly all do,
+    /// drives exactly as before.
+    fn drop_dead_end_changes(&mut self) {
+        let lanes = &self.net.lanes;
+        for car in self.cars.values_mut() {
+            let n = car.route.len();
+            if car.entering || n < 2 || car.idx + 2 != n || car.v >= 0.5 || car.stalled < DEAD_END_GIVE_UP {
+                continue;
+            }
+            let (here, to) = (car.route[n - 2], car.route[n - 1]);
+            let Some(l) = lanes.get(here as usize) else { continue };
+            if l.next.is_empty() && l.is_beside(to) && car.s >= l.length - 3.0 {
+                car.route.pop();
+                car.s_end = car.s_end.min(l.length - 0.5).max(car.s.min(l.length - 0.5));
+            }
+        }
+    }
+
     pub fn step(&mut self, seconds: f32, substeps: usize) -> Vec<CarId> {
         let dt = seconds / substeps.max(1) as f32;
+        self.drop_dead_end_changes();
         for car in self.cars.values_mut() {
             car.prev_pos = car.pos;
             car.prev_heading = car.heading;
@@ -4329,6 +4431,115 @@ mod tests {
         assert!(drunk_crashes >= 3 * sober_crashes.max(1), "drunk {drunk_crashes} crashes vs sober {sober_crashes}");
         // Seeded: the same night twice.
         assert_eq!(drink_trial(0.85, 3), drink_trial(0.85, 3));
+    }
+
+    /// The inspector's "why is it standing there": a queue behind a wreck
+    /// names the car in front of each, and the chain leads back to the
+    /// wreck at its head.
+    #[test]
+    fn a_queue_explains_itself_back_to_the_wreck_at_its_head() {
+        let roads = street_cross();
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let w = LANE_WIDTH;
+        let head = send(&mut t, &roads, Vec2::new(-300.0, 0.5 * w), Vec2::new(150.0, 0.5 * w));
+        for _ in 0..3 {
+            t.step(1.0, 4);
+        }
+        t.crash(vec![head], CrashCause::OffRoad, 25.0);
+        t.crashes.clear();
+        let mut queue = Vec::new();
+        for _ in 0..3 {
+            queue.push(send(&mut t, &roads, Vec2::new(-340.0, 0.5 * w), Vec2::new(150.0, 0.5 * w)));
+            for _ in 0..12 {
+                t.step(1.0, 4);
+            }
+        }
+        for _ in 0..20 {
+            t.step(1.0, 4);
+        }
+        assert_eq!(t.stop_reason(head), StopReason::Crashed { wrecked: true });
+        let last = *queue.last().unwrap();
+        assert_eq!(t.stop_reason(last), StopReason::Queued { behind: queue[1] });
+        assert!(t.stop_reason(last).text(|_| "X".into()).contains("queued behind X"));
+        let chain = t.jam_chain(last);
+        assert!(!chain.cycle);
+        assert_eq!(chain.head(), Some(head), "the chain leads to the wreck: {:?}", chain.cars);
+        assert_eq!(chain.cars, vec![queue[2], queue[1], queue[0], head]);
+        assert!(t.stop_reason(head).is_good(), "a wreck is a reason");
+    }
+
+    #[test]
+    fn road_rage_starts_late_for_the_patient_and_is_deterministic() {
+        // On time, or a little late: no anger.
+        assert_eq!(road_rage(10.0, 10.0, 0.5, 0.5), 0.0);
+        assert_eq!(road_rage(18.0, 10.0, 0.5, 0.5), 0.0, "late, but shrugged off");
+        // A short hop doubling is not worth getting angry about.
+        assert_eq!(road_rage(4.0, 2.0, 0.0, 1.0), 0.0);
+        // Far over: angry, more so for the impatient and hot-headed.
+        let (impatient, patient) = (road_rage(30.0, 10.0, 0.1, 0.8), road_rage(30.0, 10.0, 0.9, 0.2));
+        assert!(impatient > 0.5, "{impatient}");
+        assert!(patient < impatient, "{patient} vs {impatient}");
+        assert_eq!(road_rage(32.0, 10.0, 0.9, 0.2), road_rage(32.0, 10.0, 0.9, 0.2), "deterministic");
+        // It builds with time and is capped; the even-tempered cap lower.
+        let mut last = 0.0;
+        for m in 0..200 {
+            let a = road_rage(m as f32, 10.0, 0.3, 0.6);
+            assert!(a >= last && a <= 1.0);
+            last = a;
+        }
+        assert!(road_rage(1000.0, 10.0, 0.5, 0.0) < road_rage(1000.0, 10.0, 0.5, 1.0));
+        // Anger makes a driver tailgate, floor it, push in and misjudge.
+        let calm = DriverProfile::for_driver(35, 0.6, 0.4, 0.0, 0.7, 0.3);
+        assert_eq!(calm.angry(0.0), calm);
+        let mad = calm.angry(1.0);
+        assert!(mad.headway < calm.headway && mad.accel > calm.accel && mad.aggression > calm.aggression);
+        assert!(mad.skill < calm.skill && mad.compliance < calm.compliance && mad.speed > calm.speed);
+    }
+
+    /// Found in a player's save: routes off the map end on one lane of the
+    /// last carriageway, and cars in the other lanes stood at the map's
+    /// edge waiting to squeeze into it, holding queues behind them.
+    #[test]
+    fn a_car_leaving_the_map_does_not_wait_to_change_lanes_at_the_edge() {
+        let mut roads = RoadNetwork::default();
+        // One way, two lanes, running off the map at x = 300: no U-turn.
+        roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 2, 0);
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let seg = roads.nearest_street(Vec2::ZERO).unwrap().0;
+        let (left, right) = (lane_of(&t, seg, Vec2::X, 0), lane_of(&t, seg, Vec2::X, 1));
+        assert!(t.net.lanes[right as usize].next.is_empty(), "the lane leads nowhere");
+        let len = t.net.lanes[right as usize].length;
+        // The exit lane is a standing queue all the way back: no gap to
+        // merge into anywhere on the way.
+        for k in 0..16 {
+            let s = len - 2.0 - k as f32 * (CAR_LENGTH + 1.5);
+            let parked = t.spawn_car(CitizenId::default(), None, vec![left], s, len - 1.0, 0);
+            t.cars[parked].hold = 1.0e6;
+        }
+        let car = t.spawn_car(CitizenId::default(), None, vec![right, left], len - 60.0, len - 1.0, 0);
+        let follower = t.spawn_car(CitizenId::default(), None, vec![right], len - 90.0, len - 1.0, 0);
+        let mut arrived = Vec::new();
+        let mut waited = 0.0;
+        for _ in 0..90 {
+            arrived.extend(t.step(1.0, 4));
+            if arrived.contains(&car) {
+                break;
+            }
+            if t.stop_reason(car).key() == "lane_change" && t.cars[car].v < 0.5 {
+                waited += 1.0;
+            }
+        }
+        assert!(arrived.contains(&car), "it leaves the map in its own lane");
+        assert!(waited <= DEAD_END_GIVE_UP + 3.0, "stood {waited} s at the edge of the map trying to change lanes");
+        assert_eq!(t.cars[car].route, vec![right]);
+        t.remove_car(car);
+        // And the car behind it is not held up for long either.
+        for _ in 0..30 {
+            arrived.extend(t.step(1.0, 4));
+        }
+        assert!(arrived.contains(&follower), "the queue behind clears");
     }
 
     #[test]

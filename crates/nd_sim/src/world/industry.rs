@@ -512,10 +512,20 @@ impl World {
         }
     }
 
-    /// Has this car reached the far end of a road leaving the map?
+    /// Has this car reached the far end of a road leaving the map? Its
+    /// route ends on the exit lane, or on another lane of that carriageway
+    /// that leads nowhere (`Traffic::drop_dead_end_changes` lets a car
+    /// finish in its own lane rather than change lanes at the very edge).
     fn at_map_edge(&self, car_id: CarId) -> bool {
         let Some(c) = self.traffic.cars.get(car_id) else { return true };
-        self.edge_exits(c.pos).iter().any(|&(lane, _)| c.route.last() == Some(&lane))
+        let Some(&last) = c.route.last() else { return true };
+        let lanes = &self.traffic.net.lanes;
+        let segment = |l: crate::traffic::LaneId| match lanes.get(l as usize).map(|x| &x.kind) {
+            Some(crate::traffic::LaneKind::Road { segment, .. }) => Some(*segment),
+            _ => None,
+        };
+        let dead_end = lanes.get(last as usize).is_some_and(|l| l.next.is_empty());
+        self.edge_exits(c.pos).iter().any(|&(lane, _)| lane == last || (dead_end && segment(lane).is_some() && segment(lane) == segment(last)))
     }
 
     /// Send the lorry standing at `at` on to a truck lot with room within

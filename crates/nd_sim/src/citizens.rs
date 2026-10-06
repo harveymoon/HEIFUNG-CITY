@@ -274,6 +274,10 @@ pub struct Commute {
     /// cost in tolls lately (a running average the mode choice weighs).
     pub toll: f32,
     pub toll_avg: f32,
+    /// [rage] The worst road rage on this trip's drive (`0..1`) and the
+    /// minutes the drive should have taken.
+    pub rage: f32,
+    pub expected_drive: f32,
 }
 
 impl Commute {
@@ -444,6 +448,17 @@ pub fn driver_traits(seed: u64) -> (f32, f32) {
     let mut rng = crate::SimRng::seed_from_u64(seed);
     let t: [f32; 5] = [rng.random(), rng.random(), rng.random(), rng.random(), rng.random()];
     (t[3], t[2])
+}
+
+/// [rage] Patience behind the wheel, `0..1`, from the same personality
+/// draws as `driver_traits`: the cautious and the unambitious sit a jam
+/// out; the driven and the pleasure-seeking do not.
+pub fn patience(seed: u64) -> f32 {
+    use rand::{Rng, SeedableRng};
+    let mut rng = crate::SimRng::seed_from_u64(seed);
+    let t: [f32; 5] = [rng.random(), rng.random(), rng.random(), rng.random(), rng.random()];
+    let (ambition, hedonism, caution) = (t[1], t[2], t[3]);
+    (0.5 * caution + 0.3 * (1.0 - ambition) + 0.2 * (1.0 - hedonism)).clamp(0.0, 1.0)
 }
 
 /// How little someone cares for rules, `0..1`: careless and pleasure-seeking.

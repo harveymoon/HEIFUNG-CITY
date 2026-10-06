@@ -97,6 +97,16 @@ TOOLS = [
         "inputSchema": obj({"name": {"type": "string", "enum": ["city", "economy", "market", "people", "power", "transit", "land", "saves", "help", "dev"]}, "open": {"type": "boolean"}}, ["name"]),
     },
     {
+        "name": "selected",
+        "description": "What the PLAYER has selected in the running game, in full: a car with why it stands (why.reason/text/by: red light, queued behind car X, yielding, lane change, at the kerb, unloading, crashed, takeover...), jam (the chain of cars back to the head of the queue, head_reason, cycle for gridlock), trip (elapsed_min vs expected_min, anger), lanes (lane ids, route ahead), driver profile, cargo; a citizen (and the car they are driving); a building; a parked car; the bus line picked. Use it when the player says 'this car' or 'what I selected'.",
+        "inputSchema": obj({}),
+    },
+    {
+        "name": "flags",
+        "description": "The player's 'Flag for Claude' bookmarks (F8 in game, or the button in the inspector and person pane): each has a note, the time, the selection, a snapshot of its full detail when flagged (a stuck car may have moved on since) and its live detail now. since=flag id returns only newer ones; clear=true empties the list after reading. note=... with create=true flags the current selection yourself.",
+        "inputSchema": obj({"since": {"type": "integer", "minimum": 0}, "clear": {"type": "boolean"}, "create": {"type": "boolean"}, "note": {"type": "string"}}),
+    },
+    {
         "name": "status",
         "description": "City overview: clock, pause/speed, population, buildings, treasury, power, transit, rail, fps, camera pose, active tool, selection, status messages.",
         "inputSchema": obj({}),
@@ -239,6 +249,12 @@ def run_tool(name, args):
     """Returns (reply dict, extra content blocks)."""
     if name == "status":
         return call_game({"cmd": "status"}), []
+    if name == "selected":
+        return call_game({"cmd": "selected"}), []
+    if name == "flags":
+        if args.get("create"):
+            return call_game({"cmd": "flag", **pick(args, "note")}), []
+        return call_game({"cmd": "flags", **pick(args, "since", "clear")}), []
     if name == "report":
         return call_game({"cmd": "report", **pick(args, "sections")}), []
     if name == "map":
@@ -291,7 +307,7 @@ def run_tool(name, args):
     if name == "inspect":
         return call_game({"cmd": "inspect", **pick(args, "citizen", "building", "lot", "car", "train", "route", "gesture")}), []
     if name == "select":
-        reply = call_game({"cmd": "select", **pick(args, "citizen", "building", "car", "at")})
+        reply = call_game({"cmd": "select", **pick(args, "citizen", "building", "car", "vehicle", "at")})
         if reply.get("ok") and "favourite" in args and reply.get("selection", {}) and (reply["selection"] or {}).get("kind") == "citizen":
             reply["favourite"] = call_game({"cmd": "favourite", "citizen": reply["selection"]["id"], "on": bool(args["favourite"])})
         return reply, []

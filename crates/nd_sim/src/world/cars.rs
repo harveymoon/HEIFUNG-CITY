@@ -856,6 +856,11 @@ impl World {
             c.commute.drive_minutes = tick.saturating_sub(c.commute.drive_since) as f32;
             c.commute.drive_since = 0;
         }
+        // [rage] How the drive went to their head; the anger stays in the car.
+        c.commute.rage = c.commute.rage.max(car.drive.anger_peak);
+        if car.drive.expected_min > 0.0 {
+            c.commute.expected_drive = car.drive.expected_min;
+        }
         if spot.kind == ParkKind::Overflow {
             c.mood = (c.mood - 0.03).max(0.0);
             if roll {
@@ -1322,6 +1327,8 @@ impl World {
         c.commute.drive_since = 0;
         c.commute.drive_minutes = 0.0;
         c.commute.walk_after = 0.0;
+        c.commute.rage = 0.0;
+        c.commute.expected_drive = 0.0;
         self.vehicles.stats.trips_today[mode.index()] += 1;
     }
 
@@ -1373,12 +1380,18 @@ impl World {
                 // [tolls] Tolls hurt like a fee, and are expected next time.
                 let toll = c.commute.toll;
                 c.commute.toll_avg += (toll - c.commute.toll_avg) * 0.4;
-                jam + parking + toll / 6.0
+                // [rage] Losing your temper makes a bad drive feel worse.
+                jam + parking + toll / 6.0 + c.commute.rage * 0.8
             }
         };
         c.commute.feel(mode, pain);
         c.commute.last_minutes = minutes as u32;
-        if pain >= 1.5 && (tick + id_hash(id)) % 3 == 0 {
+        if mode == TripMode::Car && c.commute.rage >= 0.5 {
+            // [rage] Always remembered: it is a story they will tell.
+            let expected = c.commute.expected_drive.max(1.0);
+            c.remember(tick, format!("Lost my temper in traffic: {minutes:.0} minutes for what should be a {expected:.0}-minute drive."));
+            self.concerns.heard(id, c, crate::concerns::Concern::Commute, 0.3);
+        } else if pain >= 1.5 && (tick + id_hash(id)) % 3 == 0 {
             let text = match mode {
                 TripMode::Car if c.commute.searched / secs > 15.0 => format!("{:.0} minutes hunting for a parking space. Driving here is a chore.", c.commute.searched / secs),
                 TripMode::Car => format!("{minutes:.0} minutes stuck in traffic. There has to be a better way."),

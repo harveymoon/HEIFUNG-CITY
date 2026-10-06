@@ -25,7 +25,13 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
         .constrain_to(content)
         .max_height(content.height() - 24.0)
         .vscroll(true)
-        .show(ctx, |ui| show(ui, p.sim, p.selection, p.assets));
+        .show(ctx, |ui| {
+            show(ui, p.sim, p.selection, p.assets);
+            ui.separator();
+            if ui.button("Flag for Claude (F8)").on_hover_text("Bookmark this with a note; the remote API's `flags` command lists it").clicked() {
+                p.flags.want_flag = true;
+            }
+        });
     if !open {
         *p.selection = Selection::None;
     }
@@ -193,6 +199,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                     }
                 }
             }
+            why_and_trip(ui, &sim.world, id, selection);
         }
         Selection::Parked(vid) => {
             let Some(owned) = sim.world.vehicles.cars.get(vid) else {
@@ -215,4 +222,85 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             }
         }
     }
+}
+
+/// Why the car is standing (or crawling), the car it waits for, the head of
+/// the jam it is in, and the drive so far against what it should take.
+/// Every car named is a button that selects it.
+fn why_and_trip(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selection: &mut Selection) {
+    use nd_sim::traffic::StopReason;
+    let t = &w.traffic;
+    let Some(car) = t.cars.get(id) else { return };
+    let reason = t.stop_reason(id);
+    hint(ui, "why");
+    let colour = |r: &StopReason| if r.is_good() { egui::Color32::LIGHT_GRAY } else { WARN };
+    if reason == StopReason::Moving {
+        ui.label("Driving freely");
+    } else {
+        ui.horizontal_wrapped(|ui| {
+            match reason.by() {
+                Some(b) => {
+                    ui.label(egui::RichText::new(capitalise(reason.lead_in())).color(colour(&reason)));
+                    if ui.small_button(w.car_label(b)).on_hover_text("Select this vehicle").clicked() {
+                        *selection = Selection::Car(b);
+                    }
+                }
+                None => {
+                    ui.label(egui::RichText::new(capitalise(&reason.text(|_| String::new()))).color(colour(&reason)));
+                }
+            }
+        });
+        if car.stalled > 1.0 {
+            ui.label(egui::RichText::new(format!("standing {}", duration(car.stalled))).small().weak());
+        }
+    }
+    let chain = t.jam_chain(id);
+    if let Some(head) = chain.head().filter(|_| chain.cars.len() >= 3 || (chain.cars.len() == 2 && chain.cycle)) {
+        let hr = t.stop_reason(head);
+        ui.add_space(2.0);
+        // The front car is rolling: a slow queue, not a blockage.
+        let crawling = t.cars.get(head).is_some_and(|h| h.v >= 0.5);
+        if chain.cycle {
+            ui.label(egui::RichText::new(format!("Gridlock: {} vehicles waiting on each other in a ring", chain.cars.len())).color(WARN));
+        } else if crawling {
+            ui.label(egui::RichText::new(format!("Queue of {}, moving off again at the front", chain.cars.len() - 1)).strong());
+        } else {
+            ui.label(egui::RichText::new(format!("Jam: {} vehicles back from the front", chain.cars.len() - 1)).strong());
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.label(if crawling { "front:" } else { "caused by" });
+            if ui.button(w.car_label(head)).on_hover_text("Select the car at the head of the jam").clicked() {
+                *selection = Selection::Car(head);
+            }
+        });
+        let speed = t.cars.get(head).map_or(0.0, |h| h.v * 3.6);
+        ui.label(egui::RichText::new(format!("— {}  ·  {speed:.0} km/h", hr.text(|c| w.car_label(c)))).color(colour(&hr)));
+    }
+    // [rage] The drive so far.
+    if let Some((elapsed, expected)) = w.car_trip_minutes(id) {
+        let over = elapsed / expected.max(1.0);
+        let col = if over > 2.0 { WARN } else if over > 1.3 { super::GOLD } else { egui::Color32::LIGHT_GRAY };
+        ui.label(egui::RichText::new(format!("On the road {:.0} min  ·  should take {:.0} min", elapsed, expected)).color(col));
+    }
+    let d = &car.drive;
+    if d.calm.is_some() && d.anger > 0.02 {
+        let word = match d.anger {
+            a if a >= 0.75 => "raging",
+            a if a >= 0.5 => "fuming",
+            a if a >= 0.25 => "losing patience",
+            _ => "getting irritated",
+        };
+        ui.add(egui::ProgressBar::new(d.anger).desired_width(220.0).fill(egui::Color32::from_rgb(200, 60, 40)).text(format!("Driver {word}  ·  {:.0}%", d.anger * 100.0)));
+    }
+    ui.label(egui::RichText::new(format!("Driver: {}", d.profile.label())).small().weak());
+}
+
+fn capitalise(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+}
+
+/// Traffic seconds as "45 s" or "3 min".
+fn duration(secs: f32) -> String {
+    if secs < 90.0 { format!("{secs:.0} s") } else { format!("{:.0} min", secs / 60.0) }
 }

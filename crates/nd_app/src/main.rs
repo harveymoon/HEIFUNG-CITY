@@ -4,6 +4,7 @@
 mod assets;
 mod camera;
 mod district_tool;
+mod flags;
 mod remote;
 mod render;
 mod sim;
@@ -35,6 +36,7 @@ fn main() {
             tools::ToolsPlugin,
             render::RenderPlugin,
             ui::UiPlugin,
+            flags::FlagsPlugin,
             remote::RemotePlugin,
             district_tool::DistrictToolPlugin,
         ))

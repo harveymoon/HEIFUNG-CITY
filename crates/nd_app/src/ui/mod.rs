@@ -52,6 +52,9 @@ pub struct UiFlags {
     pub pointer_over_ui: bool,
     /// An egui text field has focus: keys are typing, not hotkeys.
     pub keyboard_captured: bool,
+    /// A "Flag for Claude" button was pressed: `flags::flag_box` opens the
+    /// note box on its next pass.
+    pub want_flag: bool,
     /// One-line status, shown as a toast above the toolbar that fades after
     /// a few seconds. Writers just assign; the fade restarts on a change.
     pub message: String,
@@ -180,7 +183,7 @@ fn side_panel(
         }
     }
 
-    person::pane(ctx, &mut sim, &mut tools, &mut selection, content);
+    person::pane(ctx, &mut sim, &mut tools, &mut selection, &mut flags, content);
     if tools.tool == Tool::Inspect && *mode == CameraMode::Orbit {
         hover::card(ctx, &sim, &cursor);
     }
