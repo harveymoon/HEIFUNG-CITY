@@ -1691,10 +1691,10 @@ impl std::fmt::Debug for Ground {
 
 impl Ground {
     /// Build over the square of half-side `half`.
-    pub fn build(land: &Landscape, roads: &RoadNetwork, node_z: &[f32], lots: &SlotMap<LotId, Lot>, half: f32) -> Ground {
+    pub fn build(land: &Landscape, roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], lots: &SlotMap<LotId, Lot>, half: f32) -> Ground {
         let mut pads = std::collections::HashMap::new();
         for (id, lot) in lots.iter() {
-            pads.insert(id, lot_pad(roads, node_z, lot, land));
+            pads.insert(id, lot_pad(roads, node_z, inner, lot, land));
         }
         let mut decks: Vec<(Vec2, Vec2, f32, f32, f32)> = roads
             .alive_segments()
@@ -1755,7 +1755,7 @@ impl Ground {
             (a, b)
         };
         let seed_band = GROUND_CELL * 1.5;
-        for (_, seg) in roads.alive_segments() {
+        for (sid, seg) in roads.alive_segments() {
             // Water bridges leave the ground alone; a viaduct only grades
             // it where its deck comes down near it (the foot of a ramp).
             if (seg.bridge && !seg.viaduct) || seg.tunnel {
@@ -1786,7 +1786,8 @@ impl Ground {
                         continue;
                     }
                     let k = j * n + i;
-                    let z = za + (zb - za) * t;
+                    // Through the way's inner samples on a long street.
+                    let z = if inner.get(sid.0 as usize).is_some_and(|v| !v.is_empty()) { way_height(roads, node_z, inner, sid, t) } else { za + (zb - za) * t };
                     // A viaduct grades the ground only where its deck comes
                     // down near it (the foot of a ramp).
                     if foot && z - natural[k] > 2.0 {
@@ -1998,18 +1999,37 @@ impl Ground {
 }
 
 /// The level a lot is graded to: its street's height at the frontage.
-pub fn lot_pad(roads: &RoadNetwork, node_z: &[f32], lot: &Lot, land: &Landscape) -> f32 {
+pub fn lot_pad(roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], lot: &Lot, land: &Landscape) -> f32 {
     if land.is_flat() {
         return 0.0;
     }
     match roads.try_segment(lot.front_segment) {
-        Some(seg) if !seg.bridge => {
-            let za = node_z.get(seg.a.0 as usize).copied().unwrap_or(0.0);
-            let zb = node_z.get(seg.b.0 as usize).copied().unwrap_or(0.0);
-            za + (zb - za) * lot.front_t.clamp(0.0, 1.0)
-        }
+        Some(seg) if !seg.bridge => way_height(roads, node_z, inner, lot.front_segment, lot.front_t),
         _ => land.height(lot.center).max(BANK_HEIGHT),
     }
+}
+
+/// Height of a way at `t` along segment `sid`: between its nodes' heights
+/// (`node_z`), through the segment's inner samples where it has any
+/// (`inner[sid]`, `(t, z)` in rising `t`; see `World::road_inner`).
+pub fn way_height(roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], sid: crate::roads::SegmentId, t: f32) -> f32 {
+    let Some(seg) = roads.try_segment(sid) else { return 0.0 };
+    let za = node_z.get(seg.a.0 as usize).copied().unwrap_or(0.0);
+    let zb = node_z.get(seg.b.0 as usize).copied().unwrap_or(0.0);
+    let t = t.clamp(0.0, 1.0);
+    let samples = inner.get(sid.0 as usize).map(|v| v.as_slice()).unwrap_or(&[]);
+    if samples.is_empty() {
+        return za + (zb - za) * t;
+    }
+    let (mut t0, mut z0) = (0.0f32, za);
+    for &(t1, z1) in samples.iter().chain(std::iter::once(&(1.0, zb))) {
+        if t <= t1 {
+            let span = t1 - t0;
+            return if span > 1e-6 { z0 + (z1 - z0) * (t - t0) / span } else { z1 };
+        }
+        (t0, z0) = (t1, z1);
+    }
+    zb
 }
 
 #[cfg(test)]
@@ -2178,7 +2198,7 @@ mod tests {
     fn built_ground_has_no_cliffs_spikes_or_seams() {
         let w = demo_ground_world();
         let t0 = std::time::Instant::now();
-        let again = Ground::build(&w.landscape, &w.roads, &w.road_z, &w.lots, w.config.half_extent + 200.0);
+        let again = Ground::build(&w.landscape, &w.roads, &w.road_z, &w.road_inner, &w.lots, w.config.half_extent + 200.0);
         println!("ground built in {:?}", t0.elapsed());
         assert_eq!(again.h, w.ground.h);
         let g = &w.ground;

@@ -101,7 +101,7 @@ them a land use.
 | Command | Fields |
 | --- | --- |
 | `plan` | none: every gesture in the effective plan (id, kind, points, lanes, land_use), `pending_gesture_ids`, project steps |
-| `add_road` | `points` `[[x,y],...]` or `[[x,y,level],...]` (2+; level metres above the ground, negative below), `elevation` (a level for every point without its own, or a list), `tunnel` (default level -8 m), `kind` street (default) / path / rail, `lanes_fwd`, `lanes_bwd` (0..4, default 1/1, streets only), `curved`, `snap` (default true: points snap to a road at about their level; an end with no level of its own snaps to any road and takes its level), `implement`. Reply adds `grade_warnings` (too steep, crossing at an awkward height) |
+| `add_road` | `points` `[[x,y],...]` or `[[x,y,level],...]` (2+; level metres above the ground, negative below), `elevation` (a level for every point without its own, or a list), `tunnel` (default level -8 m), `kind` street (default) / path / rail, `lanes_fwd`, `lanes_bwd` (0..4, default 1/1, streets only), `curved`, `snap` (default true: points snap to a road at about their level; an end with no level of its own snaps to any road and takes its level), `implement`. Reply adds `grade_warnings` (too steep, crossing at an awkward height). Refused (400) if it would meet the railway at a level neither at grade nor clear of it, e.g. a portal ramp part way down: the error says how far to lower or raise it |
 | `add_roundabout` | `center` `[x,y]` (or `pos` / `x`,`y`; snaps onto a junction within 12 m or a street within 6 m), `radius` 12..120 m to the ring centreline or `diameter` 24..240 (default the tool's), `lanes` 1 / 2 / 3, `implement`. Reply adds `roundabout` {`center`, `radius`, `diameter`, `lanes`, `joins`, `cuts_roads` (gesture ids), `takes_buildings`}; refused where it would partly overlap another roundabout (nesting one wholly inside another, with a lane and pavement between, is fine) |
 | `add_zone` | `polygon` `[[x,y],...]` (3+), `land_use` residential / commercial / industrial / entertainment / civic / park, `implement` |
 | `bulldoze` | `gesture_id`, `implement` |
@@ -292,7 +292,7 @@ Reply: `total` (matches), `returned`, `rows`.
 ```
 
 `inspect {segment: id}` or `inspect {road: [x, y]}` (the piece nearest the point) gives a road piece: ends, kind,
-lanes, `level` (ground / viaduct / cutting / tunnel / bridge), `levels` and `heights` at its ends, the
+lanes, `level` (ground / viaduct / cutting / tunnel / bridge), `levels` and `heights` at its ends, `inner_heights` (`[t, z]` samples between them on a long street over the hills), the
 `bridge`/`viaduct`/`tunnel` flags, its nodes and their degrees, and `grade_crossings`: every way it
 passes over or under (`passes`, `other_segment`, `clearance`).
 

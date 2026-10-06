@@ -27,8 +27,9 @@ pub const MAX_RIDER_TRIS: usize = 190;
 /// A tourist carries a backpack and a camera as well.
 pub const MAX_TOURIST_TRIS: usize = 180;
 
-/// Everything a figure's mesh depends on, quantised.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// Everything a figure's mesh depends on, quantised. Ordered, so the
+/// figure cache evicts and lends in the same order every run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PersonKey {
     pub style: u8,
     pub outfit: u8,
@@ -333,10 +334,13 @@ pub fn person_mesh(k: &PersonKey) -> MeshData {
 /// cached figure of the same silhouette (or gets none) instead of growing it.
 pub struct FigureCache<H> {
     cap: usize,
-    entries: std::collections::HashMap<PersonKey, (H, u64)>,
+    /// In key order (not a `HashMap`'s), so which look is evicted among
+    /// equally old ones and which figure a newcomer borrows are the same
+    /// every run.
+    entries: std::collections::BTreeMap<PersonKey, (H, u64)>,
     frame: u64,
     /// What each silhouette borrowed this frame, so borrowers agree.
-    lent: std::collections::HashMap<(u8, u8, u8, bool, bool), Option<H>>,
+    lent: std::collections::BTreeMap<(u8, u8, u8, bool, bool), Option<H>>,
     /// Figures built over the run.
     pub built: usize,
     /// Figures borrowed this frame.

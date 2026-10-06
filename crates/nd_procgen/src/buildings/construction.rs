@@ -516,7 +516,7 @@ fn tower_crane(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], bui
     f.bx(h, Matte, base.x, top, base.y, Vec3::new(w + 0.4, 1.2, w + 0.4), mul(paint, 0.9));
     let dir = {
         let d = centre - base;
-        if d.length() > 0.5 { d.normalize() } else { Vec2::new(rng.random_range(-1.0..1.0), rng.random_range(-1.0..1.0)).normalize_or_zero().max(Vec2::X) }
+        if d.length() > 0.5 { d.normalize() } else { Vec2::new(rng.random_range(-1.0..1.0), rng.random_range(-1.0..1.0)).normalize_or(Vec2::X) }
     };
     let far = poly.iter().map(|p| (*p - base).dot(dir)).fold(0.0, f32::max) + 4.0;
     // Reach over the footprint, but never past the fence.

@@ -164,12 +164,14 @@ pub fn crosswalk_setback(roads: &RoadNetwork, node: NodeId, seg: SegmentId) -> f
 
 /// Mid-block zebras on long runs of street, as `(segment, t from a to b)`.
 /// A run is a chain of street segments through plain bends (nodes where
-/// two streets and nothing else meet); highways get none.
+/// two streets and nothing else meet); highways get none, and nor do
+/// tunnels: nobody crosses a carriageway in the bore, they walk to a portal
+/// or a junction (a zebra there was also drawn on the surface above).
 pub fn midblock_crossings(roads: &RoadNetwork) -> Vec<(SegmentId, f32)> {
     let plain = |n: NodeId| roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive).count() == 2 && street_arms(roads, n) == 2;
     let ok = |s: SegmentId| {
         let sg = roads.segment(s);
-        sg.alive && sg.is_street() && !sg.is_motorway()
+        sg.alive && sg.is_street() && !sg.fronts_nothing()
     };
     let mut seen = vec![false; roads.segments.len()];
     let mut out = Vec::new();
@@ -324,7 +326,7 @@ impl WalkGraph {
         arms.sort_by(|x, y| x.ang.total_cmp(&y.ang).then(x.seg.cmp(&y.seg)));
         let ring = roads.ring_of_node(nid).is_some();
         for arm in &arms {
-            if arm.street && arm.ccw != arm.cw && !roads.segment(arm.seg).is_motorway() {
+            if arm.street && arm.ccw != arm.cw && !roads.segment(arm.seg).fronts_nothing() {
                 let kind = if ring && roads.ring_of_segment(arm.seg).is_some() { CrossingKind::Informal } else { CrossingKind::Junction };
                 self.link_cross(arm.cw, arm.ccw, arm.seg, Some(nid), kind, roads);
             }
@@ -398,7 +400,7 @@ impl WalkGraph {
         for (sid, seg) in roads.alive_segments() {
             // No one walks in a road tunnel, nor along a highway or its
             // slip roads: they have hard shoulders, not pavements.
-            if seg.tunnel || seg.is_motorway() {
+            if seg.fronts_nothing() {
                 continue;
             }
             let (a, b) = roads.segment_points(sid);
@@ -457,7 +459,7 @@ impl WalkGraph {
                     }
                     // Jaywalkers' short cuts: straight over to the lot
                     // front opposite.
-                    if !seg.is_motorway() {
+                    if !seg.fronts_nothing() {
                         for &(t, n) in &lot_nodes[0] {
                             let best = lot_nodes[1].iter().min_by(|x, y| (x.0 - t).abs().total_cmp(&(y.0 - t).abs()));
                             if let Some(&(_, n2)) = best.filter(|x| (x.0 - t).abs() * len <= JAY_REACH) {
@@ -535,7 +537,7 @@ impl WalkGraph {
             }
             let s0 = streets[0];
             let sides: Vec<u32> = on_street.iter().filter(|x| x.1 == s0).map(|x| x.0).collect();
-            if sides.len() == 2 && !roads.segment(s0).is_motorway() {
+            if sides.len() == 2 && !roads.segment(s0).fronts_nothing() {
                 let kind = if streets.len() == 2 && paths > 0 { CrossingKind::Zebra } else { CrossingKind::Informal };
                 g.link_cross(sides[0], sides[1], s0, Some(nid), kind, roads);
             }

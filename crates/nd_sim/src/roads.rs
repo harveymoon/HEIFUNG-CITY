@@ -265,6 +265,15 @@ impl Segment {
         self.ramp || self.is_highway()
     }
 
+    /// A way for traffic only: the highway, its slip roads and tunnels.
+    /// None of them fronts parcels, takes kerb parking (legal or not),
+    /// carries walkers or crossings, or gets RVs, camps or litter beside
+    /// it. A tunnel is drawn on its own profile underground, so a car
+    /// "parked" at its kerb used to stand on the ground above the bore.
+    pub fn fronts_nothing(&self) -> bool {
+        self.is_motorway() || self.tunnel
+    }
+
     pub fn half_width(&self) -> f32 {
         match self.kind {
             RoadKind::Street => self.lanes() as f32 * LANE_WIDTH * 0.5 + SHOULDER,

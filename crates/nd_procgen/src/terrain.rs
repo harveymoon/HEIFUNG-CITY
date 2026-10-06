@@ -572,17 +572,8 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
                 let os = roads.segment(o);
                 let far = roads.node(if os.a == n { os.b } else { os.a }).pos;
                 let out = (far - p).normalize_or_zero();
-                let side = Vec2::new(-out.y, out.x);
-                let yaw = out.y.atan2(out.x);
-                let top = z + 6.2;
-                for sgn in [-1.0f32, 1.0] {
-                    let q = p + side * sgn * (hw + 0.6);
-                    g.part(Surface::Concrete).boxed(Vec3::new(q.x, (z + top) * 0.5, q.y), Vec3::new(1.2, top - z, 1.2), -yaw, wall);
-                }
-                // The lintel over the mouth, with a lit band.
-                g.part(Surface::Concrete).boxed(Vec3::new(p.x, top - 0.6, p.y), Vec3::new(1.4, 1.2, hw * 2.0 + 2.4), -yaw, coping);
-                let lit = p + out * 0.75;
-                g.part(Surface::Glow).boxed(Vec3::new(lit.x, top - 0.9, lit.y), Vec3::new(0.08, 0.25, hw * 1.6), -yaw, rgba(mul(steel, 2.2)));
+                // The bore has no pavements: the arch spans its walls.
+                portal_arch(g, p, out, z, seg.half_width() + crate::street::TUNNEL_WALL, wall, coping, rgba(mul(steel, 2.2)));
             }
             // Vent shafts on the surface along the bore.
             let vents = (len / 150.0).floor() as i32;
@@ -618,6 +609,88 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
             }
         }
     }
+}
+
+/// A tunnel mouth: a concrete headwall square across the way at `p`, facing
+/// `out` (towards the open ramp), with an elliptical arch over the opening,
+/// the arch's soffit run back through the wall's thickness, a coping along
+/// the top and a lit band under the crown. The opening clears the
+/// carriageway and pavements (`hw` either side) and the bore's 5.6 m walls.
+/// Two posts and a lintel box stood here before and read as a blob.
+#[allow(clippy::too_many_arguments)]
+fn portal_arch(g: &mut Geometry, p: Vec2, out: Vec2, z: f32, hw: f32, wall: [f32; 4], coping: [f32; 4], lamp: [f32; 4]) {
+    use glam::Vec3;
+    if out == Vec2::ZERO {
+        return;
+    }
+    let side = Vec2::new(-out.y, out.x);
+    // Opening: half width, spring line and rise; the wall around it.
+    let r = hw + 0.2;
+    let spring = 5.4;
+    let rise = (r * 0.45).clamp(1.2, 2.4);
+    let wall_half = r + 1.6;
+    let wall_top = spring + rise + 1.1;
+    let foot = -0.4;
+    let thick = 0.9;
+    // A point of the headwall at `x` across (right of `out` positive) and
+    // `y` up, on the face `t` along `out` (front +, back -).
+    let at = |x: f32, y: f32, t: f32| {
+        let q = p + side * x + out * t;
+        Vec3::new(q.x, z + y, q.y)
+    };
+    // The opening's outline from the right foot round the arch to the left
+    // foot, and for each point the matching point of the wall's outline
+    // (straight out sideways below the spring line, up through the arch's
+    // centre to the edge or the top above it).
+    let n = 14;
+    let mut opening: Vec<(f32, f32)> = vec![(r, foot), (r, spring)];
+    for k in 1..n {
+        let a = std::f32::consts::PI * k as f32 / n as f32;
+        opening.push((r * a.cos(), spring + rise * a.sin()));
+    }
+    opening.push((-r, spring));
+    opening.push((-r, foot));
+    let outline: Vec<(f32, f32)> = opening
+        .iter()
+        .map(|&(x, y)| {
+            if y <= spring + 1e-3 {
+                return (x.signum() * wall_half, y);
+            }
+            // Along the ray from the arch's centre on the spring line.
+            let (dx, dy) = (x, y - spring);
+            let to_side = if dx.abs() > 1e-4 { wall_half / dx.abs() } else { f32::MAX };
+            let to_top = (wall_top - spring) / dy;
+            let k = to_side.min(to_top);
+            (dx * k, spring + dy * k)
+        })
+        .collect();
+    let o3 = Vec3::new(out.x, 0.0, out.y);
+    let m = g.part(Surface::Concrete);
+    for w in 0..opening.len() - 1 {
+        let (a, b) = (opening[w], opening[w + 1]);
+        let (c, d) = (outline[w], outline[w + 1]);
+        for (t, face) in [(thick * 0.5, o3), (-thick * 0.5, -o3)] {
+            m.quad_facing([at(a.0, a.1, t), at(b.0, b.1, t), at(d.0, d.1, t), at(c.0, c.1, t)], face, wall);
+        }
+        // The soffit (and the jambs), facing into the opening.
+        let mid = Vec2::new((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5);
+        let inward = Vec2::new(-mid.x, if mid.y > spring { spring - mid.y } else { 0.0 }).normalize_or_zero();
+        let inward3 = Vec3::new(side.x * inward.x, inward.y, side.y * inward.x);
+        m.quad_facing([at(a.0, a.1, thick * 0.5), at(b.0, b.1, thick * 0.5), at(b.0, b.1, -thick * 0.5), at(a.0, a.1, -thick * 0.5)], inward3, wall);
+    }
+    // The wall's ends and top.
+    for sgn in [-1.0f32, 1.0] {
+        let x = sgn * wall_half;
+        let s3 = Vec3::new(side.x * sgn, 0.0, side.y * sgn);
+        m.quad_facing([at(x, foot, thick * 0.5), at(x, wall_top, thick * 0.5), at(x, wall_top, -thick * 0.5), at(x, foot, -thick * 0.5)], s3, wall);
+    }
+    // A coping a little proud of the wall, along the top.
+    let c = p;
+    let yaw = out.y.atan2(out.x);
+    m.boxed(Vec3::new(c.x, z + wall_top + 0.2, c.y), Vec3::new(thick + 0.4, 0.4, wall_half * 2.0 + 0.4), -yaw, coping);
+    // A lit band under the crown, just inside the mouth.
+    let lit = p - out * (thick * 0.5 + 0.3);
+    g.part(Surface::Glow).boxed(Vec3::new(lit.x, z + spring + rise - 0.35, lit.y), Vec3::new(0.08, 0.2, r * 1.2), -yaw, lamp);
 }
 
 /// One span of viaduct deck from `a` at height `za` to `b` at `zb`,
@@ -824,7 +897,11 @@ pub fn ship_mesh(freighter: bool, palette: &Palette) -> MeshData {
     let bottom = [Vec3::new(-half, -1.5, -beam * 0.5), Vec3::new(half - beam, -1.5, -beam * 0.5), Vec3::new(half, -1.5, 0.0), Vec3::new(half - beam, -1.5, beam * 0.5), Vec3::new(-half, -1.5, beam * 0.5)];
     let top: Vec<Vec3> = bottom.iter().map(|p| *p + Vec3::Y * 4.0).collect();
     m.frustum(&bottom, &top, rgba(hull));
-    m.cap(&top, Vec3::Y, rgba(mul(hull, 1.3)));
+    // The deck, paler than the hull. `frustum` already capped the top in
+    // the hull colour; a second cap in the same plane z-fought with it, so
+    // the deck stands a few centimetres proud of it (and hides it).
+    let deck: Vec<Vec3> = top.iter().map(|p| *p + Vec3::Y * 0.06).collect();
+    m.cap(&deck, Vec3::Y, rgba(mul(hull, 1.3)));
     if freighter {
         m.boxed(Vec3::new(-half + 6.0, 6.5, 0.0), Vec3::new(7.0, 7.0, beam * 0.8), 0.0, rgba([0.9, 0.9, 0.88]));
         let colors = &palette.container_colors;

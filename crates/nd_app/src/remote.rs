@@ -964,6 +964,11 @@ fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     }
     let curved = opt_bool(cmd, "curved")?.unwrap_or(false) && pts.len() >= 3;
     let warnings = ctx.sim.world.road_grade_warnings(&pts, &levels, kind, lf, lb);
+    // As the Road tool: a crossing with the railway off grade is refused.
+    let (bp, bl) = if curved { (nd_sim::plan::sample_curve(&pts), nd_sim::plan::sample_curve_levels(&pts, &levels)) } else { (pts.clone(), levels.clone()) };
+    if let Some(why) = ctx.sim.world.road_refusal(&bp, &bl, kind, lf, lb) {
+        return Err(why);
+    }
     let elevation = if levels.iter().any(|l| *l != 0.0) { levels } else { Vec::new() };
     let id = ctx.sim.world.add_gesture(Gesture::Road { points: pts, lanes_fwd: lf, lanes_bwd: lb, curved, kind, elevation });
     let implemented = opt_bool(cmd, "implement")?.unwrap_or(false);
@@ -1570,7 +1575,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         return Ok(json!({ "segment": {
             "id": sid.0, "from": [round(a.x), round(a.y)], "to": [round(b.x), round(b.y)], "kind": road_kind_name(s.kind),
             "lanes_fwd": s.lanes_fwd, "lanes_bwd": s.lanes_bwd, "highway": s.is_highway(),
-            "level": level, "levels": [w.roads.node(s.a).level, w.roads.node(s.b).level], "heights": [round(z(s.a)), round(z(s.b))],
+            "level": level, "levels": [w.roads.node(s.a).level, w.roads.node(s.b).level], "heights": [round(z(s.a)), round(z(s.b))], "inner_heights": w.road_inner.get(sid.0 as usize).map(|v| v.iter().map(|(t, h)| [round(*t), round(*h)]).collect::<Vec<_>>()).unwrap_or_default(),
             "bridge": s.bridge, "viaduct": s.viaduct, "tunnel": s.tunnel,
             "nodes": [s.a.0, s.b.0], "junction_degrees": [w.roads.neighbors(s.a).count(), w.roads.neighbors(s.b).count()],
             "grade_crossings": crossings,

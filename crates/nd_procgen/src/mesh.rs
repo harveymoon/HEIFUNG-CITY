@@ -178,18 +178,46 @@ impl MeshData {
 
     /// A quad from four corners in counter-clockwise order (seen from the
     /// front). Normal is computed from the corners.
+    ///
+    /// A planar convex quad is two triangles sharing four vertices and one
+    /// normal. A twisted (non-planar) quad, as a lofted floor band whose
+    /// plate turns, gets each triangle its own vertices and normal, and a
+    /// concave one is split along the diagonal that lies inside it: the
+    /// normal used to come from corners 0, 1 and 3 alone, and on such quads
+    /// it pointed against the winding of one triangle (772 of 21,680 on a
+    /// twist tower), which then lit as if seen from behind.
     pub fn quad(&mut self, corners: [Vec3; 4], color: [f32; 4]) {
-        let n = (corners[1] - corners[0]).cross(corners[3] - corners[0]).normalize_or_zero();
+        let tri = |a: usize, b: usize, c: usize| (corners[b] - corners[a]).cross(corners[c] - corners[a]);
+        // The diagonal 0-2 unless the quad folds over it (concave at 1 or 3).
+        let (t0, t1) = if tri(0, 1, 2).dot(tri(0, 2, 3)) < 0.0 { ([0, 1, 3], [1, 2, 3]) } else { ([0, 1, 2], [0, 2, 3]) };
+        let (n0, n1) = (tri(t0[0], t0[1], t0[2]).normalize_or_zero(), tri(t1[0], t1[1], t1[2]).normalize_or_zero());
+        let n = (n0 + n1).normalize_or_zero();
         if n == Vec3::ZERO {
             // Degenerate (zero-area) quad: nothing to draw, and its UVs would be NaN.
             return;
         }
-        let basis = uv_basis(n, Some(corners[1] - corners[0]));
         let base = self.positions.len() as u32;
-        for c in corners {
-            self.push(c, n, color, basis);
+        // Within about 2.5 degrees the quad is flat enough to share vertices.
+        let planar = n0 == Vec3::ZERO || n1 == Vec3::ZERO || n0.dot(n1) > 0.999;
+        if planar {
+            let basis = uv_basis(n, Some(corners[1] - corners[0]));
+            for c in corners {
+                self.push(c, n, color, basis);
+            }
+            let ix = |t: [usize; 3]| t.map(|k| base + k as u32);
+            self.indices.extend_from_slice(&ix(t0));
+            self.indices.extend_from_slice(&ix(t1));
+        } else {
+            let mut k = base;
+            for (t, tn) in [(t0, n0), (t1, n1)] {
+                let basis = uv_basis(tn, Some(corners[1] - corners[0]));
+                for i in t {
+                    self.push(corners[i], tn, color, basis);
+                }
+                self.indices.extend_from_slice(&[k, k + 1, k + 2]);
+                k += 3;
+            }
         }
-        self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
     /// One quad, `w` along `along` and `h` along `up`, centred at `center`
@@ -515,11 +543,12 @@ impl MeshData {
     pub fn slab(&mut self, a: Vec3, b: Vec3, width: f32, thick: f32, color: [f32; 4]) {
         let d = b - a;
         let flat = Vec3::new(d.x, 0.0, d.z);
-        if flat.length() < 1e-3 {
+        // No width or depth, no slab (a zero side made the normal NaN).
+        if flat.length() < 1e-3 || width <= 1e-4 || thick <= 1e-4 {
             return;
         }
         let side = flat.normalize().cross(Vec3::Y) * width * 0.5;
-        let up = side.cross(d.normalize()).normalize();
+        let up = side.cross(d.normalize()).normalize_or_zero();
         let up = if up.y < 0.0 { -up } else { up } * thick;
         let c = [a + side, a - side, a - side - up, a + side - up];
         let e = [b + side, b - side, b - side - up, b + side - up];
