@@ -447,7 +447,13 @@ impl World {
             self.economy.waiting_immigrants = (self.economy.waiting_immigrants + 1).min(60);
             return;
         }
-        let Some(entry) = self.entry_node() else { return };
+        // In from elsewhere: by a road off the map (the highway once a ramp
+        // joins it) or by train at a working station. With neither, nobody
+        // can come.
+        let entry = self.entry_node();
+        if entry.is_none() && self.stations.is_empty() {
+            return;
+        }
         let n = self.arrivals(free_homes);
         for _ in 0..n {
             // Income first: a job for each adult if one is open, gig money
@@ -478,11 +484,15 @@ impl World {
                 break;
             };
             let tick = self.clock.tick;
-            let by_train = if !self.stations.is_empty() && self.rng.random_bool(0.6) { self.stations.choose(&mut self.rng).copied() } else { None };
-            let pos = match by_train.and_then(|s| self.building_entrance(s)) {
-                Some(p) => p,
-                None => self.roads.node(entry).pos,
-            };
+            let by_train = if !self.stations.is_empty() && (entry.is_none() || self.rng.random_bool(0.6)) { self.stations.choose(&mut self.rng).copied() } else { None };
+            // Off the train at the station; otherwise by road: drivers bring
+            // their car in from the edge (`arrive_by_car`), the rest are
+            // dropped at the door (the road end is out of sight, miles off).
+            let pos = by_train
+                .and_then(|s| self.building_entrance(s))
+                .or_else(|| self.building_entrance(home))
+                .or_else(|| self.building_lot(home).map(|l| l.center))
+                .unwrap_or_default();
             let earners = people.iter().filter(|p| p.3 > 0.0).count().max(1) as f32;
             let (car_chance, bike_chance) = match Tier::for_income(income / earners) {
                 Tier::Low => (0.12, 0.6),

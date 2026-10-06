@@ -5,7 +5,7 @@ use super::*;
 use crate::roads::Ring;
 
 fn flat() -> World {
-    World::new(WorldConfig { landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::default() })
+    World::new(WorldConfig { landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::test_town() })
 }
 
 fn square(x0: f32, y0: f32, size: f32) -> Vec<Vec2> {

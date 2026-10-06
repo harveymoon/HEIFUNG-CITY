@@ -48,13 +48,13 @@ impl Sim {
         }
     }
 
-    /// A new world on a landscape, with the starter avenues.
-    fn fresh_world(landscape: nd_sim::LandscapeParams) -> World {
+    /// A new world on a landscape: the highway and the trunk line from
+    /// elsewhere to elsewhere and nothing else; the player builds the rest
+    /// (and joins it to the highway so people can move in).
+    fn fresh_world(mut landscape: nd_sim::LandscapeParams) -> World {
+        // Every new game has its highway.
+        landscape.highway = true;
         let mut world = World::new(WorldConfig { landscape, ..WorldConfig::default() });
-        // Two starter avenues so the city has entrances from day one.
-        world.add_road(&[SVec2::new(-700.0, 0.0), SVec2::new(700.0, 0.0)], 2, 2);
-        world.add_road(&[SVec2::new(0.0, -700.0), SVec2::new(0.0, 700.0)], 2, 2);
-        // The bridges the avenues need come with the map.
         world.economy.treasury = 60_000.0;
         world.economy.ledger = Default::default();
         world.drain_events();
@@ -76,7 +76,8 @@ impl Sim {
         self.world.buildings.is_empty()
     }
 
-    /// Lay out a small grid with mixed zoning around the starter avenues.
+    /// Lay out a small grid with mixed zoning in the middle of the map,
+    /// joined to the highway by a street and a pair of ramps.
     pub fn seed_demo_district(&mut self) {
         use nd_sim::{Gesture, LandUse};
         self.world.start_project();
@@ -100,6 +101,11 @@ impl Sim {
         // A branch off the trunk line (a turnout, eased into curves when built), running behind the southern row.
         self.world.add_gesture(Gesture::Road { points: vec![SVec2::new(-420.0, nd_sim::rail::TRUNK_Y), SVec2::new(-330.0, -410.0), SVec2::new(-280.0, -348.0), SVec2::new(-110.0, -348.0), SVec2::new(-70.0, -324.0), SVec2::new(150.0, -324.0)], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: nd_sim::roads::RoadKind::Rail });
         self.world.implement();
+        // The way in: a street north from the grid onto the highway (or,
+        // with no highway, a road off the east edge of the map).
+        if !self.world.link_to_highway(SVec2::new(0.0, 280.0)) {
+            self.world.add_road(&[SVec2::new(280.0, 0.0), SVec2::new(nd_sim::landscape::MAP_EDGE, 0.0)], 1, 1);
+        }
         // The demo has the money for its showpieces.
         self.world.economy.treasury = self.world.economy.treasury.max(150_000.0);
         // A freight yard and a station set down beside the branch; their

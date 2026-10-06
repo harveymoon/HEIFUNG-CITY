@@ -885,7 +885,7 @@ mod tests {
     /// Two avenues joined by cross streets, civic land between them and
     /// homes to the south; a side street makes (0, 0) a four-way junction.
     fn town(seed: u64) -> World {
-        let mut w = World::new(WorldConfig { seed, emergencies: false, ..WorldConfig::default() });
+        let mut w = World::new(WorldConfig { seed, emergencies: false, ..WorldConfig::test_town() });
         w.economy.treasury = 1_000_000.0;
         w.add_road(&[Vec2::new(-700.0, 0.0), Vec2::new(700.0, 0.0)], 1, 1);
         w.add_road(&[Vec2::new(-700.0, 120.0), Vec2::new(700.0, 120.0)], 1, 1);

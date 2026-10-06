@@ -998,7 +998,7 @@ mod tests {
     /// A long avenue: civic land on the north side, homes on the south,
     /// emergencies off so nothing random takes a building away.
     fn town(seed: u64) -> World {
-        let mut w = World::new(WorldConfig { seed, emergencies: false, landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::default() });
+        let mut w = World::new(WorldConfig { seed, emergencies: false, landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::test_town() });
         w.economy.treasury = 1_000_000.0;
         w.add_road(&[Vec2::new(-880.0, 0.0), Vec2::new(880.0, 0.0)], 1, 1);
         w.add_road(&[Vec2::new(-880.0, 120.0), Vec2::new(880.0, 120.0)], 1, 1);

@@ -80,6 +80,12 @@ fn treasury_and_population(ui: &mut egui::Ui, p: &mut UiCtx) {
     // No demand yet (an empty map) reads as 0% served: nothing to warn about.
     let text = if power.demand_mw > 0.0 && power.served < 0.98 { egui::RichText::new(format!("⚡ {:.0}%", power.served * 100.0)).small().color(WARN) } else { egui::RichText::new("") };
     slot(ui, 40.0, text).on_hover_text(format!("power served {:.0}%: the Power window has the detail", power.served * 100.0));
+    // Nobody can move in until the city's streets reach elsewhere: the
+    // highway by a ramp, a road off the map edge, or a working station.
+    if !w.has_way_in() {
+        ui.label(egui::RichText::new("Connect a road to the highway so people can move in").small().color(WARN))
+            .on_hover_text("Newcomers, their cars and lorries from out of town arrive by the highway (join a street to it with ramps), by a road drawn off the edge of the map, or by train at a working station. Until then nobody can come.");
+    }
 }
 
 /// One toggle per info window; lit while the window is open.

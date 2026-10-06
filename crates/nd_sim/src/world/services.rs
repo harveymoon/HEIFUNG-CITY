@@ -1886,7 +1886,7 @@ mod tests {
     }
 
     fn town_with(seed: u64) -> World {
-        let mut w = World::new(WorldConfig { seed, ..WorldConfig::default() });
+        let mut w = World::new(WorldConfig { seed, ..WorldConfig::test_town() });
         w.economy.treasury = 1_000_000.0;
         w.add_road(&[Vec2::new(-700.0, 0.0), Vec2::new(700.0, 0.0)], 1, 1);
         w.add_road(&[Vec2::new(-700.0, 120.0), Vec2::new(700.0, 120.0)], 1, 1);

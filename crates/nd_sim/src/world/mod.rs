@@ -41,6 +41,8 @@ mod society;
 #[cfg(test)]
 mod car_tests;
 #[cfg(test)]
+mod edge_tests;
+#[cfg(test)]
 mod tests;
 mod trains;
 mod trips;
@@ -143,6 +145,11 @@ pub struct WorldConfig {
     /// [society] Crime, homelessness and trash (`world/society.rs`). Tests
     /// about other systems may turn them off.
     pub society: bool,
+    /// The old rule, for small test towns with no road off the map: every
+    /// dead end counts as a way in from elsewhere, so people and lorries
+    /// appear there. A real game never sets it: there, only the far ends
+    /// of ways run out past the map edge do (`landscape::reach_elsewhere`).
+    pub dead_ends_lead_elsewhere: bool,
 }
 
 impl WorldConfig {
@@ -175,9 +182,18 @@ impl Default for WorldConfig {
             emergencies: true,
             landscape: LandscapeParams::default(),
             society: true,
+            dead_ends_lead_elsewhere: false,
         };
         c.derive_speeds();
         c
+    }
+}
+
+#[cfg(test)]
+impl WorldConfig {
+    /// The default, for a test town whose dead ends lead elsewhere.
+    pub(crate) fn test_town() -> Self {
+        Self { dead_ends_lead_elsewhere: true, ..Self::default() }
     }
 }
 
@@ -412,8 +428,10 @@ impl World {
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
         // The trunk line: a railway already crosses the map south of the
-        // centre. Branches, stations and yards hang off it.
-        w.add_rail(&[Vec2::new(-half - 100.0, TRUNK_Y), Vec2::new(half + 100.0, TRUNK_Y)]);
+        // centre, from elsewhere to elsewhere (edge to edge, run on out of
+        // sight when built). Branches, stations and yards hang off it.
+        let edge = crate::landscape::MAP_EDGE;
+        w.add_rail(&[Vec2::new(-edge, TRUNK_Y), Vec2::new(edge, TRUNK_Y)]);
         if w.config.landscape.highway {
             w.lay_highway();
         }

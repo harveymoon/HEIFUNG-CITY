@@ -20,12 +20,12 @@ fn finish_all(w: &mut World) {
 /// The old flat map with no river or highway, for tests that count
 /// gestures or depend on the exact random stream of a dry town.
 fn flat_world() -> World {
-    World::new(WorldConfig { landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::default() })
+    World::new(WorldConfig { landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::test_town() })
 }
 
 #[test]
 fn city_grows_and_round_trips_through_ron() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_road(&[Vec2::new(0.0, -400.0), Vec2::new(0.0, 400.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
@@ -73,7 +73,7 @@ fn projects_undo_redo_and_keep_buildings_on_implement() {
 #[test]
 fn newest_zone_wins_and_repaint_changes_lots() {
     use crate::zoning::point_in_polygon;
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     let tri = vec![Vec2::new(-180.0, 10.0), Vec2::new(250.0, 10.0), Vec2::new(-180.0, 250.0)];
     let first = w.add_zone(tri.clone(), LandUse::Entertainment).unwrap();
@@ -93,7 +93,7 @@ fn newest_zone_wins_and_repaint_changes_lots() {
 
 #[test]
 fn supply_chain_feeds_the_city() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     for i in -1..=1 {
         let c = i as f32 * 200.0;
         w.add_road(&[Vec2::new(-500.0, c), Vec2::new(500.0, c)], 1, 1);
@@ -120,7 +120,7 @@ fn supply_chain_feeds_the_city() {
 
 #[test]
 fn citizens_drive_between_buildings() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     for i in -1..=1 {
         let c = i as f32 * 200.0;
         w.add_road(&[Vec2::new(-500.0, c), Vec2::new(500.0, c)], 1, 1);
@@ -141,7 +141,7 @@ fn citizens_drive_between_buildings() {
 
 #[test]
 fn bike_owners_cycle_long_trips_and_motion_is_tracked() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
     w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
@@ -176,7 +176,7 @@ fn bike_owners_cycle_long_trips_and_motion_is_tracked() {
 
 #[test]
 fn park_visits_end_on_a_bench_and_people_leave_on_foot() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 120.0), LandUse::Park);
     w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Residential);
@@ -223,7 +223,7 @@ fn park_visits_end_on_a_bench_and_people_leave_on_foot() {
 #[test]
 fn buses_need_a_depot_run_a_loop_and_carry_riders() {
     use crate::transit;
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     // A block: two east-west streets joined by two north-south ones.
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_road(&[Vec2::new(-400.0, 140.0), Vec2::new(400.0, 140.0)], 1, 1);
@@ -337,7 +337,7 @@ fn buses_need_a_depot_run_a_loop_and_carry_riders() {
 #[test]
 fn trains_call_at_stations_and_yards_bring_freight() {
     use crate::rail::{Facility, RailFacility, TrainKind};
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     assert!(w.roads.alive_segments().any(|(_, s)| s.is_rail()), "the trunk line is there from the start");
     w.economy.treasury = 200_000.0;
     // A branch off the trunk, curving north then running east, and a
@@ -490,7 +490,7 @@ fn trains_call_at_stations_and_yards_bring_freight() {
 #[test]
 fn power_is_rationed_rich_first_and_plants_fix_it() {
     use crate::power::{demand_mw, PowerPlantKind};
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Industrial);
     w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Residential);
@@ -613,7 +613,7 @@ fn road_works_pull_down_the_buildings_whose_parcels_change() {
 fn unchanged_parcels_keep_their_buildings_through_unrelated_works() {
     // A new road elsewhere must not shake buildings off parcels that did
     // not change: the outline comparison has to tolerate regeneration.
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
     let lots: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable()).map(|(id, _)| id).collect();
@@ -630,7 +630,7 @@ fn unchanged_parcels_keep_their_buildings_through_unrelated_works() {
 #[test]
 fn stations_and_yards_never_share_ground_with_other_buildings() {
     use crate::rail::RailFacility;
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.economy.treasury = 500_000.0;
     w.add_road(&[Vec2::new(-100.0, 0.0), Vec2::new(1000.0, 0.0)], 1, 1);
     w.add_zone(vec![Vec2::new(150.0, 10.0), Vec2::new(330.0, 10.0), Vec2::new(330.0, 90.0), Vec2::new(150.0, 90.0)], LandUse::Commercial);
@@ -749,7 +749,7 @@ fn cheap_buildings_on_dear_land_are_redeveloped_and_price_people_out() {
 
 #[test]
 fn heights_follow_density() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     // One city block ringed by streets.
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_road(&[Vec2::new(-400.0, 240.0), Vec2::new(400.0, 240.0)], 1, 1);
@@ -784,7 +784,7 @@ fn heights_follow_density() {
     }
     assert!(tallest > 6, "a new building in a dense block can be tall: {tallest}");
     // Parks are untouched by the rule.
-    let mut p = World::new(WorldConfig::default());
+    let mut p = World::new(WorldConfig::test_town());
     p.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     p.add_zone(square(10.0, 10.0, 100.0), LandUse::Park);
     let park = lot_near(&p, Vec2::new(60.0, 20.0), LandUse::Park);
@@ -794,7 +794,7 @@ fn heights_follow_density() {
 
 #[test]
 fn buildings_go_up_over_days_and_people_move_in_after() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
     let lot = w.lots.iter().find(|(_, l)| l.usable()).map(|(id, _)| id).unwrap();
@@ -861,7 +861,7 @@ fn buildings_go_up_over_days_and_people_move_in_after() {
 
 #[test]
 fn a_site_waits_for_its_materials_and_resumes_on_delivery() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Commercial);
     let lot = w.lots.iter().find(|(_, l)| l.usable()).map(|(id, _)| id).unwrap();
@@ -933,7 +933,7 @@ fn a_site_waits_for_its_materials_and_resumes_on_delivery() {
 
 #[test]
 fn site_crews_commute_and_are_released_when_the_building_opens() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
     w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
@@ -976,7 +976,7 @@ fn site_crews_commute_and_are_released_when_the_building_opens() {
 fn player_placed_plants_and_depots_work_from_the_moment_of_placement() {
     use crate::power::PowerPlantKind;
     use crate::transit;
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Industrial);
     let ind: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial).map(|(id, _)| id).collect();
@@ -996,7 +996,7 @@ fn player_placed_plants_and_depots_work_from_the_moment_of_placement() {
 #[test]
 fn bulldozing_the_track_under_a_station_disconnects_it_without_panicking() {
     use crate::rail::RailFacility;
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.economy.treasury = 200_000.0;
     let branch = w.add_rail(&[Vec2::new(-200.0, TRUNK_Y), Vec2::new(-100.0, -400.0), Vec2::new(-40.0, -300.0), Vec2::new(0.0, -200.0), Vec2::new(0.0, -60.0), Vec2::new(900.0, -60.0)]);
     w.add_road(&[Vec2::new(-100.0, 0.0), Vec2::new(1000.0, 0.0)], 1, 1);
@@ -1023,7 +1023,7 @@ fn bulldozing_the_track_under_a_station_disconnects_it_without_panicking() {
 /// connected stations and a connected yard.
 fn rail_city() -> (World, GestureId, BuildingId, BuildingId, BuildingId) {
     use crate::rail::RailFacility;
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.economy.treasury = 200_000.0;
     let branch = w.add_rail(&[Vec2::new(-200.0, TRUNK_Y), Vec2::new(-100.0, -400.0), Vec2::new(-40.0, -300.0), Vec2::new(0.0, -200.0), Vec2::new(0.0, -60.0), Vec2::new(900.0, -60.0)]);
     w.add_road(&[Vec2::new(-100.0, 0.0), Vec2::new(1000.0, 0.0)], 1, 1);
@@ -1139,7 +1139,7 @@ fn imports_stranded_at_a_disconnected_yard_go_by_truck_and_sites_never_wait() {
 
 #[test]
 fn a_short_commute_at_eight_arrives_before_nine() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
     w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
@@ -1187,7 +1187,7 @@ fn a_short_commute_at_eight_arrives_before_nine() {
 #[test]
 fn a_station_is_road_connected_only_through_a_zoned_island() {
     use crate::rail::RailFacility;
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.economy.treasury = 500_000.0;
     // Island A: the town. Island B: a street with homes, not joined to
     // A. Island C: a street in a field.
@@ -1210,7 +1210,7 @@ fn a_station_is_road_connected_only_through_a_zoned_island() {
 
 #[test]
 fn a_save_with_dangling_ids_and_missing_fields_loads_cleanly() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
     w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
@@ -1264,7 +1264,7 @@ fn a_save_with_dangling_ids_and_missing_fields_loads_cleanly() {
 
 #[test]
 fn the_overdraft_floor_refuses_purchases_and_doors_and_the_ledger_balances() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Commercial);
     w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Entertainment);
@@ -1331,7 +1331,7 @@ fn the_overdraft_floor_refuses_purchases_and_doors_and_the_ledger_balances() {
 #[test]
 fn same_seed_and_script_give_identical_saves() {
     fn run() -> String {
-        let mut w = World::new(WorldConfig { seed: 11, ..WorldConfig::default() });
+        let mut w = World::new(WorldConfig { seed: 11, ..WorldConfig::test_town() });
         for i in -1..=1 {
             let c = i as f32 * 200.0;
             w.add_road(&[Vec2::new(-500.0, c), Vec2::new(500.0, c)], 1, 1);
@@ -1359,7 +1359,7 @@ fn same_seed_and_script_give_identical_saves() {
 /// A block with a bus line, a depot and a bus out on the loop.
 fn bus_city() -> (World, RouteId) {
     use crate::transit;
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_road(&[Vec2::new(-400.0, 140.0), Vec2::new(400.0, 140.0)], 1, 1);
     w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(-300.0, 140.0)], 1, 1);
@@ -1420,7 +1420,7 @@ fn a_save_mid_journey_keeps_trucks_buses_and_riders() {
 
 #[test]
 fn a_business_that_cannot_pay_closes_goes_derelict_and_is_demolished() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Commercial);
     w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Residential);
@@ -1474,7 +1474,7 @@ fn a_business_that_cannot_pay_closes_goes_derelict_and_is_demolished() {
 
 #[test]
 fn four_hungry_days_and_a_citizen_leaves() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
     let home_lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Residential);
@@ -1506,7 +1506,7 @@ fn four_hungry_days_and_a_citizen_leaves() {
 
 #[test]
 fn job_search_fills_open_jobs_with_the_fixed_skill_formula() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
     w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
@@ -1604,7 +1604,7 @@ fn removing_a_bus_stop_shifts_riders_and_buses_and_cancels_trips_through_it() {
 
 #[test]
 fn brownouts_cut_production() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Industrial);
     w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Residential);
@@ -1652,7 +1652,7 @@ fn brownouts_cut_production() {
 #[test]
 fn job_seekers_staff_the_food_shops_first_and_arrivals_scale_with_open_homes() {
     use crate::market::{Business, BusinessKind};
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);
     let a = lot_near(&w, Vec2::new(-150.0, 20.0), LandUse::Commercial);
@@ -1683,7 +1683,7 @@ fn job_seekers_staff_the_food_shops_first_and_arrivals_scale_with_open_homes() {
 
 #[test]
 fn imported_parts_come_from_out_of_town_not_from_the_site_itself() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Commercial);
     let lot = lot_near(&w, Vec2::new(100.0, 20.0), LandUse::Commercial);
@@ -1708,7 +1708,7 @@ fn imported_parts_come_from_out_of_town_not_from_the_site_itself() {
 
 #[test]
 fn the_city_buys_out_grown_buildings_for_its_own_structures_but_not_each_other() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     w.economy.treasury = 500_000.0;
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Industrial);
@@ -2015,7 +2015,7 @@ fn rent_stressed_households_move_somewhere_cheaper_before_leaving() {
 
 #[test]
 fn low_income_demand_builds_low_tier_homes() {
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     let picks = |w: &mut World| (0..200).filter(|_| w.residential_tier(Tier::High) == Tier::Low).count();
     assert_eq!(picks(&mut w), 0, "no demand: the land's tier");
     w.economy.housing_demand_by_tier = [20.0, 0.0, 0.0];
@@ -2336,7 +2336,7 @@ fn delivery_bots_work_only_on_dear_streets() {
 #[test]
 fn owners_drive_what_their_income_and_age_buy_and_saves_keep_it() {
     use crate::vehicle::{BodyType, VehicleClass, VehicleModel};
-    let mut w = World::new(WorldConfig::default());
+    let mut w = World::new(WorldConfig::test_town());
     for i in -1..=1 {
         let c = i as f32 * 200.0;
         w.add_road(&[Vec2::new(-500.0, c), Vec2::new(500.0, c)], 1, 1);

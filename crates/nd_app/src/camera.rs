@@ -52,6 +52,11 @@ const RUN_SPEED: f32 = 7.5;
 const LOOK_SPEED: f32 = 0.0022;
 const ORBIT_FOV: f32 = 0.785;
 const WALK_FOV: f32 = 1.2;
+/// The fog is solid this far from the camera; the ways to elsewhere run on
+/// past it from anywhere the camera may go, so their ends (where traffic
+/// appears and is taken off) are never seen.
+const SIGHT: f32 = nd_sim::landscape::SIGHT;
+const BOUND: f32 = nd_sim::landscape::CAMERA_BOUND;
 
 /// Where the mouse cursor hits the ground plane, in sim coordinates.
 #[derive(Resource, Default)]
@@ -79,7 +84,7 @@ fn spawn_camera(mut commands: Commands) {
         Bloom { intensity: 0.08, low_frequency_boost: 0.4, ..default() },
         DistanceFog {
             color: Color::linear_rgb(0.03, 0.02, 0.07),
-            falloff: FogFalloff::Linear { start: 500.0, end: 2600.0 },
+            falloff: FogFalloff::Linear { start: 500.0, end: SIGHT },
             ..default()
         },
         Projection::Perspective(PerspectiveProjection { fov: ORBIT_FOV, near: 0.1, ..default() }),
@@ -149,7 +154,7 @@ fn control_camera(
                 cam.distance = cam.distance.min(140.0);
                 cam.yaw = walk.yaw + std::f32::consts::PI;
                 *proj = Projection::Perspective(PerspectiveProjection { fov: ORBIT_FOV, near: 0.1, ..default() });
-                fog.falloff = FogFalloff::Linear { start: 500.0, end: 2600.0 };
+                fog.falloff = FogFalloff::Linear { start: 500.0, end: SIGHT };
                 for mut c in &mut cursors {
                     c.grab_mode = CursorGrabMode::None;
                     c.visible = true;
@@ -317,13 +322,19 @@ fn control_camera(
         cam.yaw -= 1.2 * dt;
     }
 
+    // The camera stays over the map: target and eye within the bound.
+    cam.target.x = cam.target.x.clamp(-BOUND, BOUND);
+    cam.target.z = cam.target.z.clamp(-BOUND, BOUND);
     let (sy, cy) = cam.yaw.sin_cos();
     let (sp, cp) = cam.pitch.sin_cos();
     let offset = Vec3::new(sy * cp, sp, cy * cp) * cam.distance;
     // The orbit centre rides on the ground, eased so hills do not jolt it.
     let ground = sim.world.surface_height(Vec2::new(cam.target.x, cam.target.z));
     cam.target.y += (ground - cam.target.y) * (dt * 6.0).min(1.0);
-    tf.translation = cam.target + offset;
+    let mut eye = cam.target + offset;
+    eye.x = eye.x.clamp(-BOUND, BOUND);
+    eye.z = eye.z.clamp(-BOUND, BOUND);
+    tf.translation = eye;
     tf.look_at(cam.target, Vec3::Y);
 }
 

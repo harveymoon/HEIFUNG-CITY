@@ -100,7 +100,7 @@ mod tests {
     /// The services tests' town: an avenue with civic land to the north and
     /// housing to the south, on flat ground.
     fn town(seed: u64) -> World {
-        let mut w = World::new(WorldConfig { seed, landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::default() });
+        let mut w = World::new(WorldConfig { seed, landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::test_town() });
         w.economy.treasury = 1_000_000.0;
         w.add_road(&[Vec2::new(-700.0, 0.0), Vec2::new(700.0, 0.0)], 1, 1);
         w.add_road(&[Vec2::new(-700.0, 120.0), Vec2::new(700.0, 120.0)], 1, 1);

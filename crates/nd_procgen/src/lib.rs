@@ -21,7 +21,7 @@ pub use buildings::{coal_stacks, generate_building, wind_rotor, wind_turbines, B
 pub use mesh::MeshData;
 pub use palette::Palette;
 pub use surface::{Geometry, Surface};
-pub use terrain::{build_terrain, scatter_nature, terrain_height, TerrainConfig};
+pub use terrain::{build_far_ground, build_terrain, flat_height, scatter_nature, terrain_height, TerrainConfig};
 pub use textures::{generate as generate_texture, mip_chain, Texture};
 pub use vacant::generate_vacant;
 pub use vehicles::{vehicle_mesh, VehicleMesh};
