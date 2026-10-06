@@ -509,6 +509,9 @@ pub(crate) fn tool_input(
         // not yet released is dropped.
         tools.stroke = None;
         *selection = Selection::None;
+        if tools.tool != Tool::Transit {
+            tools.route_sel = None;
+        }
     }
     if map_key(KeyCode::Backspace) && matches!(tools.tool, Tool::Road | Tool::Zone) {
         tools.points.pop();
@@ -739,6 +742,12 @@ pub(crate) fn tool_input(
             if click {
                 if let Some(p) = ground {
                     *selection = pick(&sim, p);
+                    // A bus picked shows its whole line: path, stops, its
+                    // sister buses. Anything else picked lets the line go.
+                    tools.route_sel = match *selection {
+                        Selection::Car(id) => sim.world.traffic.cars.get(id).and_then(|c| c.bus.as_ref()).map(|b| b.route),
+                        _ => None,
+                    };
                 }
             }
         }
@@ -905,7 +914,7 @@ fn pick(sim: &Sim, p: SVec2) -> Selection {
     Selection::None
 }
 
-fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, selection: Res<Selection>, mut eplan: ResMut<EffectivePlan>, cams: Query<&OrbitCamera>) {
+fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, selection: Res<Selection>, mut eplan: ResMut<EffectivePlan>, cams: Query<&OrbitCamera>, time: Res<Time>) {
     // Re-sync so a point dragged by `tool_input` this frame draws where it is.
     let plan = eplan.sync(&sim.world);
     draw_selection(&mut gizmos, &sim, *selection);
@@ -916,23 +925,53 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
     let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
 
     // Bus lines: the lane path of every leg in the line's colour, stops as
-    // rings, the selected line bright, broken legs red.
-    if tools.tool == Tool::Transit || tools.show_routes {
+    // rings, broken legs red. With the Buses tool or the toggle every line
+    // shows; otherwise only a selected one (picked in the Transit window,
+    // the Buses list or by clicking one of its buses), drawn bright with
+    // marker posts at its stops and a pulsing ring over each of its buses.
+    let all_lines = tools.tool == Tool::Transit || tools.show_routes;
+    if all_lines || tools.route_sel.is_some() {
         let palette = [[0.2, 1.4, 2.2], [2.4, 0.5, 0.3], [0.5, 2.2, 0.5], [2.2, 1.8, 0.3], [1.8, 0.4, 2.0], [0.3, 1.0, 2.4], [2.2, 1.0, 0.6], [1.2, 1.2, 1.2]];
+        let road_lift = |p: SVec2| Vec3::new(p.x, 1.2 + sim.world.surface_height(p), p.y);
+        let pulse = 0.5 + 0.5 * (time.elapsed_secs() * 4.0).sin();
         for (id, route) in &sim.world.transit.routes {
-            let c = palette[route.color as usize % palette.len()];
             let sel = tools.route_sel == Some(id);
+            if !all_lines && !sel {
+                continue;
+            }
+            let c = palette[route.color as usize % palette.len()];
             let k = if sel { 1.6 } else { 0.7 };
             let col = Color::linear_rgb(c[0] * k, c[1] * k, c[2] * k);
             for (i, leg) in route.legs.iter().enumerate() {
-                let pts: Vec<Vec3> = leg.iter().map(|&p| Vec3::new(p.x, 1.2, p.y)).collect();
+                let pts: Vec<Vec3> = leg.iter().map(|&p| road_lift(p)).collect();
                 if pts.len() >= 2 {
-                    gizmos.linestrip(pts, if route.broken.contains(&i) { red } else { col });
+                    let leg_col = if route.broken.contains(&i) { red } else { col };
+                    if sel {
+                        // Gizmo lines are a pixel wide: a second pass just
+                        // above makes the selected line read as a band.
+                        gizmos.linestrip(pts.iter().map(|p| *p + Vec3::Y * 0.6), leg_col);
+                    }
+                    gizmos.linestrip(pts, leg_col);
                 }
             }
             for (i, s) in route.stops.iter().enumerate() {
                 let hovered = tools.hover_stop == Some((id, i));
-                gizmos.circle(Isometry3d::new(Vec3::new(s.pos.x, 1.2, s.pos.y), flat), if hovered { 4.0 } else { 2.4 }, if hovered { white } else { col });
+                let at = road_lift(s.pos);
+                gizmos.circle(Isometry3d::new(at, flat), if hovered { 4.0 } else if sel { 3.2 } else { 2.4 }, if hovered { white } else { col });
+                if sel {
+                    gizmos.line(at, at + Vec3::Y * 9.0, col);
+                    gizmos.circle(Isometry3d::new(at + Vec3::Y * 9.0, flat), 1.0, col);
+                }
+            }
+            if sel {
+                let f = sim.frac();
+                let bright = Color::linear_rgb(c[0] * (1.6 + pulse), c[1] * (1.6 + pulse), c[2] * (1.6 + pulse));
+                for car in sim.world.traffic.cars.values().filter(|car| car.bus.as_ref().is_some_and(|b| b.route == id)) {
+                    let p = car.prev_pos.lerp(car.pos, f);
+                    let at = Vec3::new(p.x, sim.world.car_height(car) + 0.3, p.y);
+                    gizmos.circle(Isometry3d::new(at, flat), 7.0 + 1.5 * pulse, bright);
+                    gizmos.line(at + Vec3::Y * 4.0, at + Vec3::Y * 16.0, bright);
+                }
             }
         }
         if tools.tool == Tool::Transit {

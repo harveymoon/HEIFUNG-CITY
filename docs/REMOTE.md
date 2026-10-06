@@ -180,6 +180,7 @@ would draw) and `building` (the kind standing there).
 
 | action | fields |
 | --- | --- |
+| `select` | `route` (omit to clear): highlight that line on the map, its path, stops and every bus on it, as clicking it in the Transit window or clicking one of its buses does |
 | `new_route` | (none) |
 | `add_stop` | `x`, `y`, `route` optional (default: the line being drawn, or a new one) |
 | `move_stop` | `route`, `index`, `x`, `y` |

@@ -1065,6 +1065,16 @@ fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Ok(id)
     };
     match action {
+        // Highlight a line on the map (its path, stops and buses), as
+        // clicking it in the Transit window does; no route clears it.
+        "select" => {
+            let id = match field(cmd, "route") {
+                Some(_) => Some(route_arg(w)?),
+                None => None,
+            };
+            ctx.tools.route_sel = id;
+            Ok(json!({ "route": opt_key(id) }))
+        }
         "new_route" => {
             let id = w.add_bus_route();
             ctx.tools.route_sel = Some(id);
