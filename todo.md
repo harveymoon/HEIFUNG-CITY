@@ -86,3 +86,31 @@
 [ ] - long player streets have no intermediate height samples (would change parcel keys)   → FOUND, not started.
 [ ] - several people sitting on one park bench overlap; bikes ignore pedestrian rules at junctions   → FOUND, not started.
 
+[x] - zoning outlines hard to see: a bright zoning layer   → DONE: every zoned lot washed in a bright zone colour with a crisp edge (Zoning layer [O]).
+[x] - delivery trucks vanish after the drop-off   → DONE: the same lorry unloads at the kerb for 90 s, then drives to a truck lot, home or out of town; never deleted.
+[ ] - cars on one street fed by highway off-ramps seem to jump through it instead of driving it   → IN PROGRESS (agent: ramps). The sim moves them smoothly (jump_probe on the autosave finds no jumps), so suspect drawing: height or hiding on that street.
+[ ] - land value and long trips to parks/entertainment   → ANSWERED: parks and entertainment only lift value within a straight-line radius (parks 180 m, entertainment 110 m); trip time to them is not counted yet.
+
+## From todo3.md (merged October 2026)
+
+Agents are named in brackets; each works in its own worktree.
+
+[ ] - resource map layers: farming, oil, geothermal, rock, sand, water, fishing... per industry and its best ground   → IN PROGRESS [land-layers]
+[ ] - "heat vision" mode: buildings dark, cars and people glowing, night-vision drone look with motion blur and subtle scanlines   → IN PROGRESS [visuals]
+[ ] - solar and wind farms side by side merge their parcels visually and fill the space   → IN PROGRESS [visuals]
+[ ] - cranes in varied colours (orange, red), some with LED billboards by the counterweight, slowly slewing during working hours   → IN PROGRESS [visuals]
+[ ] - adjustable taxes per zone sub-type (oil vs farming...), with building counts and each sub-type's tax take shown visually   → IN PROGRESS [taxes]
+[ ] - import taxes; road tolls via a toll-booth building on a road (and a bigger 6-booth plaza)   → IN PROGRESS [taxes]
+[ ] - from Cities: Skylines: specialised zones and district architecture; tourism   → IN PROGRESS [districts]
+[ ] - subway trains and stations, a main-station building   → IN PROGRESS [subway]
+[ ] - taxis (businesses start with demand, night parking) and cargo hubs; lane directions painted on the road   → IN PROGRESS [taxis]
+[ ] - on/off ramps: cars jitter; ease speed evenly from highway speed to street speed over the ramp   → IN PROGRESS [ramps]
+[ ] - ramps get no parcels and no pedestrians   → IN PROGRESS [ramps]
+[ ] - roundabouts of two or three lanes   → IN PROGRESS [ramps]
+[ ] - every window gets a minimal and an expanded view (one shared toggle, one expanded at a time); expanded Economy with graphs and a ledger breakdown (what "services upkeep" holds)   → IN PROGRESS [panes]
+[ ] - population over time on the People window   → IN PROGRESS [panes]
+[ ] - a stopped car says why it is stopped (find the car causing a jam)   → IN PROGRESS [drivers]
+[ ] - the API can read what the player has selected in the game, in full detail   → IN PROGRESS [drivers]
+[ ] - old-style white figures standing frozen, not selectable   → IN PROGRESS [drivers]
+[ ] - a selected car shows how long the drive has taken; drivers delayed well past what they expected get angry and drive erratically   → IN PROGRESS [drivers]
+[ ] - comprehensive code review of the project so far   → IN PROGRESS [review]
