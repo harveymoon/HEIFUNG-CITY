@@ -7,6 +7,9 @@ use crate::vehicle::{VehicleClass, VehicleModel};
 
 /// Most households in one arrival, however empty the town.
 const MAX_ARRIVALS: u32 = 12;
+/// Share of working-age adults out of work above which, with no job free,
+/// households mostly stop arriving.
+const JOBLESS_SLOWS_ARRIVALS: f32 = 0.05;
 /// Households look for homes whose rent is at most this share of income.
 pub const AFFORDABLE_SHARE: f32 = 0.35;
 /// Rent over this share of income is stress: they move somewhere cheaper,
@@ -379,8 +382,13 @@ impl World {
     /// Households per arrival: one to three, plus more while homes and jobs
     /// stand open, so the town fills about as fast as it is built (a fixed
     /// trickle left a thousand homes empty and the shops unstaffed).
+    /// While there is no work and a good share of the town's adults are
+    /// already out of it, word gets round: households come only now and then.
     pub(super) fn arrivals(&mut self, free_homes: u32) -> u32 {
         let free_jobs: u32 = self.buildings.values().map(|b| b.free_jobs() as u32).sum();
+        if free_jobs == 0 && self.economy.unemployment_share() > JOBLESS_SLOWS_ARRIVALS {
+            return u32::from(self.rng.random_bool(0.3)).min(free_homes);
+        }
         let pull = free_homes.min(free_jobs + 10) / 40;
         (self.rng.random_range(1..=3) + pull).min(MAX_ARRIVALS).min(free_homes)
     }

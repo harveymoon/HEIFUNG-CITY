@@ -1,6 +1,7 @@
 //! The demo district (the layout `nd_app`'s `seed_demo_district` lays out),
 //! run headless with the rule-based mind for eight days. Guards the food
-//! chain and housing affordability during the fast growth of a new town.
+//! chain, housing affordability, employment and business health during the
+//! fast growth of a new town.
 //!
 //! cargo test --release -p nd_sim --test demo_city -- --nocapture
 
@@ -74,8 +75,18 @@ fn sample(w: &World) -> (usize, f32, f32, f32) {
     (pop, hungry, starving, stressed)
 }
 
+/// Jobs and businesses: (working-age adults, of them without a job, open
+/// businesses, of them broke).
+fn sample_jobs(w: &World) -> (usize, usize, usize, usize) {
+    let adults = w.citizens.values().filter(|c| c.can_work()).count();
+    let idle = w.citizens.values().filter(|c| c.can_work() && c.work.is_none()).count();
+    let open: Vec<_> = w.buildings.values().filter(|b| b.construction.is_none()).filter_map(|b| b.business.as_ref()).filter(|z| !z.closed).collect();
+    let broke = open.iter().filter(|z| z.broke_days > 0).count();
+    (adults, idle, open.len(), broke)
+}
+
 #[test]
-fn demo_city_stays_fed_and_housed_through_fast_growth() {
+fn demo_city_stays_fed_housed_and_employed_through_fast_growth() {
     let t0 = std::time::Instant::now();
     let mut world = demo_world();
     let mut minds = RuleBasedMind::default();
@@ -89,7 +100,24 @@ fn demo_city_stays_fed_and_housed_through_fast_growth() {
             }
         }
         let (pop, hungry, starving, stressed) = sample(&world);
+        let (adults, idle, open, broke) = sample_jobs(&world);
+        let unemployment = idle as f32 / adults.max(1) as f32;
+        let broke_share = broke as f32 / open.max(1) as f32;
         let e = &world.economy;
+        println!(
+            "        adults {adults} unemployed {idle} ({:.1}%) | businesses open {open} broke {broke} ({:.1}%) | jobs {} free {} building {} | homes {} free {} building {} | demand R {:.2} C {:.2} I {:.2}",
+            unemployment * 100.0,
+            broke_share * 100.0,
+            e.jobs_total,
+            e.jobs_free,
+            e.jobs_building,
+            e.homes_total,
+            e.homes_free,
+            e.homes_building,
+            e.demand_for(LandUse::Residential),
+            e.demand_for(LandUse::Commercial),
+            e.demand_for(LandUse::Industrial),
+        );
         println!(
             "day {day}: pop {pop} households {} sizes {:?} | hungry {:.1}% starving {:.1}% | rent-stressed households {:.1}% | displaced {} emigrated {} | {:.1}s",
             e.households,
@@ -106,6 +134,10 @@ fn demo_city_stays_fed_and_housed_through_fast_growth() {
         peak = peak.max(pop);
         if day == 8 {
             assert!(stressed < 0.05, "day 8: {:.1}% of households rent-stressed", stressed * 100.0);
+            // Homes and jobs grow in balance, and the businesses the town
+            // grows are ones its market can carry.
+            assert!(unemployment < 0.08, "day 8: {:.1}% of working-age adults out of work", unemployment * 100.0);
+            assert!(broke_share < 0.05, "day 8: {broke} of {open} businesses broke");
         }
     }
     assert!(peak > 1000, "the demo grows into a town ({peak})");

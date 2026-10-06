@@ -19,18 +19,26 @@ links Bevy dynamically for quicker iteration.
   People, Power, Transit, Land, Saves, Help, Dev) and the Orbit/Walk camera switch. The **Dev** window
   there seeds the demo district and shows frame figures. The bottom toolbar has one button per tool
   with its hotkey; above it a sub-pane shows only the active tool's settings and status, and the
-  project controls sit beside the buttons while a project is pending. Windows drag anywhere and
+  project controls (a Projects dropdown, Implement, Undo, Redo, Discard) sit beside the buttons. Windows drag anywhere and
   remember where they were; messages appear briefly above the toolbar.
-- Everything you draw goes into a **project**. `Ctrl+Enter` implements it, `Ctrl+Z` / `Ctrl+Y`
-  undo and redo, Discard throws it away. Planned roads show as holograms, removals in red.
+- Everything you draw goes into the active **project**. `Ctrl+Enter` implements it, `Ctrl+Z` /
+  `Ctrl+Y` undo and redo, Discard throws it away. Planned roads and zoning show as holograms,
+  removals in red. The Projects dropdown starts, switches, renames and parks projects: several can
+  be planned side by side, each with its own undo, the others drawn dim ("show others"); where two
+  change the same road or parcels, the one implemented later wins and you are warned.
 - **Road tool [2]**: pick a preset (Lane, Street, Avenue, One-way, Ramp, Highway) or set lanes per
   direction, choose Straight or Curved (`C`), click points, Enter or right-click to add. Ends dropped
   near any road snap onto it (white ring) and split it into a junction; curved roads bend smoothly
   through every point. A one-way Ramp joining a road becomes a yield merge with no signals. Roads snap
   to existing nodes and split anything they cross.
-- **Zone tool [3]**: pick a land use, click polygon corners around a road, Enter to add. Lots are
-  carved along every road inside the zone. Ctrl-click inside a zone to repaint it; a zone drawn
-  over an older one takes the ground.
+- **Zone tool [3]**: parcels are cut along every road as soon as it is built (grey outlines). Pick
+  a land use, then **Brush** (drag to paint the parcels under the circle, slider for its size,
+  right-drag erases to unzoned), **Marquee** (drag a box, release to zone the parcels inside) or
+  **Polygon** (click corners, Enter; every parcel whose centre it holds takes the use; Ctrl-click
+  inside a zone to repaint it). Parcels only take a use they may have: parks anywhere, homes on a
+  street or path, the rest on a street; the read-out says why a parcel refuses. Industrial land has
+  a sub-zone row (Auto, Farming, Oil, ...). Industry and civic sites join neighbouring parcels into
+  bigger lots.
 - **Edit [4]**: click a road to select it and change its lanes, preset, direction (flip) or curve in
   the tool's sub-pane; buildings along it stay. Drag control points of any road or zone, shift-click an edge to insert a point,
   Delete to remove the hovered point. Changing a built road rebuilds it on implement.

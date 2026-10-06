@@ -25,10 +25,19 @@ pub enum Resource {
     Parts,
     Electronics,
     Goods,
+    // -- industry block: oil and fish --
+    /// Crude oil from the wells.
+    Crude,
+    /// Refined fuel: diesel for the lorries and boats.
+    Fuel,
+    /// Plastics and chemicals from the refinery.
+    Plastics,
+    /// The catch, landed by the fishing boats.
+    Fish,
 }
 
 impl Resource {
-    pub const ALL: [Resource; 10] = [
+    pub const ALL: [Resource; 14] = [
         Resource::Produce,
         Resource::Grain,
         Resource::Flour,
@@ -39,6 +48,10 @@ impl Resource {
         Resource::Parts,
         Resource::Electronics,
         Resource::Goods,
+        Resource::Crude,
+        Resource::Fuel,
+        Resource::Plastics,
+        Resource::Fish,
     ];
 
     pub fn label(self) -> &'static str {
@@ -53,6 +66,10 @@ impl Resource {
             Resource::Parts => "parts",
             Resource::Electronics => "electronics",
             Resource::Goods => "goods",
+            Resource::Crude => "crude oil",
+            Resource::Fuel => "fuel",
+            Resource::Plastics => "plastics",
+            Resource::Fish => "fish",
         }
     }
 
@@ -61,7 +78,7 @@ impl Resource {
         match self {
             Resource::Produce => 2.0,
             Resource::Grain => 1.0,
-            Resource::Flour => 1.6,
+            Resource::Flour => 2.4,
             Resource::BakedGoods => 4.5,
             Resource::Meat => 7.0,
             Resource::Dairy => 3.0,
@@ -69,6 +86,10 @@ impl Resource {
             Resource::Parts => 9.0,
             Resource::Electronics => 45.0,
             Resource::Goods => 60.0,
+            Resource::Crude => 4.0,
+            Resource::Fuel => 12.0,
+            Resource::Plastics => 16.0,
+            Resource::Fish => 3.0,
         }
     }
 
@@ -94,6 +115,19 @@ pub enum BusinessKind {
     Office,
     /// Sells parking by the visit; no goods.
     Parking,
+    // -- industry block (see `crate::industry`) --
+    /// Pumpjacks over an oil deposit: crude, and a fouled ground.
+    OilWell,
+    /// Crude in, fuel and plastics out.
+    Refinery,
+    /// Container storage and loading: earns handling fees, burns fuel.
+    ContainerYard,
+    /// Truck and bus lot: parks idle fleets for a fee, burns fuel.
+    FleetLot,
+    /// Boats landing fish.
+    Fishery,
+    /// Fish processing: fish in, food (counted as meat) out.
+    FishPlant,
 }
 
 /// Opening hours on the clock, `open..close`; a close earlier than the open
@@ -167,6 +201,34 @@ pub struct Recipe {
 }
 
 impl BusinessKind {
+    pub const COUNT: usize = 19;
+    /// Every kind, in `index` order.
+    pub const ALL: [BusinessKind; Self::COUNT] = [
+        BusinessKind::VertFarm,
+        BusinessKind::GrainFarm,
+        BusinessKind::ProteinVat,
+        BusinessKind::Dairy,
+        BusinessKind::Mill,
+        BusinessKind::Fab,
+        BusinessKind::Assembly,
+        BusinessKind::Grocery,
+        BusinessKind::Bakery,
+        BusinessKind::GadgetShop,
+        BusinessKind::Venue,
+        BusinessKind::Office,
+        BusinessKind::Parking,
+        BusinessKind::OilWell,
+        BusinessKind::Refinery,
+        BusinessKind::ContainerYard,
+        BusinessKind::FleetLot,
+        BusinessKind::Fishery,
+        BusinessKind::FishPlant,
+    ];
+
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             BusinessKind::VertFarm => "vertical farm",
@@ -182,6 +244,12 @@ impl BusinessKind {
             BusinessKind::Venue => "venue",
             BusinessKind::Office => "office",
             BusinessKind::Parking => "parking",
+            BusinessKind::OilWell => "oil well",
+            BusinessKind::Refinery => "refinery",
+            BusinessKind::ContainerYard => "container yard",
+            BusinessKind::FleetLot => "truck and bus lot",
+            BusinessKind::Fishery => "fishery",
+            BusinessKind::FishPlant => "fish processing plant",
         }
     }
 
@@ -191,25 +259,56 @@ impl BusinessKind {
             BusinessKind::GrainFarm => Recipe { inputs: &[], outputs: &[(Resource::Grain, 4.0)] },
             BusinessKind::ProteinVat => Recipe { inputs: &[(Resource::Grain, 1.0)], outputs: &[(Resource::Meat, 1.0)] },
             BusinessKind::Dairy => Recipe { inputs: &[(Resource::Grain, 0.5)], outputs: &[(Resource::Dairy, 1.5)] },
-            BusinessKind::Mill => Recipe { inputs: &[(Resource::Grain, 2.0)], outputs: &[(Resource::Flour, 2.0)] },
+            // Milling is automated: a hand runs six of grain an hour. At two
+            // the mill added too little to what it bought to pay its wages.
+            BusinessKind::Mill => Recipe { inputs: &[(Resource::Grain, 6.0)], outputs: &[(Resource::Flour, 6.0)] },
             BusinessKind::Fab => Recipe { inputs: &[], outputs: &[(Resource::Parts, 1.0)] },
-            BusinessKind::Assembly => Recipe { inputs: &[(Resource::Parts, 2.0)], outputs: &[(Resource::Electronics, 0.4)] },
+            // Two parts (18 at base) make 0.8 electronics (36); at 0.4 the
+            // plant added nothing to what it bought and could never pay wages.
+            BusinessKind::Assembly => Recipe { inputs: &[(Resource::Parts, 2.0)], outputs: &[(Resource::Electronics, 0.8)] },
+            // Shops pay town wages, so what a job adds to its inputs at base
+            // price covers its share of them: a grocer's job adds about 80 a day
+            // against 54, a baker's about 59, a gadget seller's about 84.
             BusinessKind::Grocery => Recipe {
                 inputs: &[(Resource::Produce, 1.0), (Resource::Flour, 0.4), (Resource::Meat, 0.3), (Resource::Dairy, 0.4)],
-                outputs: &[(Resource::Groceries, 3.0)],
+                outputs: &[(Resource::Groceries, 4.0)],
             },
-            BusinessKind::Bakery => Recipe { inputs: &[(Resource::Flour, 1.0)], outputs: &[(Resource::BakedGoods, 2.0)] },
-            BusinessKind::GadgetShop => Recipe { inputs: &[(Resource::Electronics, 0.5)], outputs: &[(Resource::Goods, 0.5)] },
+            BusinessKind::Bakery => Recipe { inputs: &[(Resource::Flour, 1.2)], outputs: &[(Resource::BakedGoods, 4.0)] },
+            BusinessKind::GadgetShop => Recipe { inputs: &[(Resource::Electronics, 0.5)], outputs: &[(Resource::Goods, 0.8)] },
             BusinessKind::Venue => Recipe { inputs: &[(Resource::Groceries, 0.3)], outputs: &[] },
             BusinessKind::Office => Recipe { inputs: &[], outputs: &[] },
             BusinessKind::Parking => Recipe { inputs: &[], outputs: &[] },
+            BusinessKind::OilWell => Recipe { inputs: &[], outputs: &[(Resource::Crude, 2.5)] },
+            BusinessKind::Refinery => Recipe { inputs: &[(Resource::Crude, 1.5)], outputs: &[(Resource::Fuel, 0.8), (Resource::Plastics, 0.4)] },
+            // Fuel is burnt by the hour in `World::industry_hourly`, which
+            // also pays the handling and bay fees.
+            BusinessKind::ContainerYard => Recipe { inputs: &[(Resource::Fuel, 0.15)], outputs: &[] },
+            BusinessKind::FleetLot => Recipe { inputs: &[(Resource::Fuel, 0.1)], outputs: &[] },
+            BusinessKind::Fishery => Recipe { inputs: &[], outputs: &[(Resource::Fish, 2.5)] },
+            BusinessKind::FishPlant => Recipe { inputs: &[(Resource::Fish, 1.5)], outputs: &[(Resource::Meat, 1.0)] },
         }
     }
 
     /// Candidate kinds for a land use, picked at construction.
     pub fn candidates(land_use: LandUse) -> &'static [BusinessKind] {
         match land_use {
-            LandUse::Industrial => &[BusinessKind::VertFarm, BusinessKind::GrainFarm, BusinessKind::ProteinVat, BusinessKind::Dairy, BusinessKind::Mill, BusinessKind::Fab, BusinessKind::Assembly],
+            // Industrial lots choose through `crate::industry` (ground,
+            // neighbours, the player's bias); this is the full menu.
+            LandUse::Industrial => &[
+                BusinessKind::VertFarm,
+                BusinessKind::GrainFarm,
+                BusinessKind::ProteinVat,
+                BusinessKind::Dairy,
+                BusinessKind::Mill,
+                BusinessKind::Fab,
+                BusinessKind::Assembly,
+                BusinessKind::OilWell,
+                BusinessKind::Refinery,
+                BusinessKind::ContainerYard,
+                BusinessKind::FleetLot,
+                BusinessKind::Fishery,
+                BusinessKind::FishPlant,
+            ],
             LandUse::Commercial => &[BusinessKind::Grocery, BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::GadgetShop, BusinessKind::Office],
             LandUse::Entertainment => &[BusinessKind::Venue],
             LandUse::Civic => &[BusinessKind::Office],
@@ -225,7 +324,9 @@ impl BusinessKind {
             BusinessKind::GadgetShop => Hours::new(9, 20),
             BusinessKind::Venue => Hours::new(18, 3),
             BusinessKind::Office => Hours::new(8, 18),
-            BusinessKind::Parking => Hours::ALWAYS,
+            BusinessKind::Parking | BusinessKind::FleetLot | BusinessKind::ContainerYard | BusinessKind::OilWell => Hours::ALWAYS,
+            BusinessKind::Fishery => Hours::new(4, 16),
+            BusinessKind::Refinery | BusinessKind::FishPlant => Hours::new(6, 22),
             // Plants run two shifts.
             BusinessKind::VertFarm | BusinessKind::GrainFarm | BusinessKind::ProteinVat | BusinessKind::Dairy | BusinessKind::Mill | BusinessKind::Fab | BusinessKind::Assembly => Hours::new(6, 22),
         }
@@ -244,7 +345,12 @@ impl BusinessKind {
     /// Part of the food chain, from farm to shelf: staffed first, and
     /// ordering ahead when the town is growing.
     pub fn is_food(self) -> bool {
-        matches!(self, BusinessKind::VertFarm | BusinessKind::GrainFarm | BusinessKind::ProteinVat | BusinessKind::Dairy | BusinessKind::Mill | BusinessKind::Grocery | BusinessKind::Bakery)
+        matches!(self, BusinessKind::VertFarm | BusinessKind::GrainFarm | BusinessKind::ProteinVat | BusinessKind::Dairy | BusinessKind::Mill | BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::Fishery | BusinessKind::FishPlant)
+    }
+
+    /// The industry sub-zone this business belongs to, if any.
+    pub fn industry(self) -> Option<crate::industry::IndustryKind> {
+        crate::industry::IndustryKind::of_business(self)
     }
 
     /// Stock a business tries to keep of each input, in hours of production.
@@ -271,6 +377,26 @@ pub struct Business {
     /// Deliveries on their way, so the business does not reorder.
     #[serde(default)]
     pub inbound: BTreeMap<Resource, f32>,
+    /// Books closed since opening; the market reading
+    /// (`Economy::business_cover`) skips the stocking-up first day.
+    #[serde(default)]
+    pub days_open: u16,
+    /// A truck and bus lot: lorries parked here between jobs.
+    #[serde(default)]
+    pub fleet_trucks: u16,
+    /// The lorries parked here, longest first: whose they are and since when.
+    #[serde(default)]
+    pub fleet_log: Vec<ParkedLorry>,
+}
+
+/// A lorry parked at a truck and bus lot.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ParkedLorry {
+    /// The business it works for (null when unknown).
+    pub home: BuildingId,
+    pub since: u64,
+    #[serde(default)]
+    pub model: crate::vehicle::VehicleModel,
 }
 
 impl Business {
@@ -287,6 +413,9 @@ impl Business {
             broke_days: 0,
             closed: false,
             inbound: BTreeMap::new(),
+            days_open: 0,
+            fleet_trucks: 0,
+            fleet_log: Vec::new(),
         }
     }
 
@@ -345,12 +474,21 @@ impl Business {
             return 0.0;
         }
         let cap = self.hourly_capacity(jobs, staffing);
-        // Scale by the scarcest input.
+        // Scale by the scarcest input, and by the room left for the output:
+        // with full shelves the business stops working its inputs instead of
+        // burning stock it bought into output that has nowhere to go.
         let mut scale = 1.0f32;
         for (r, per) in recipe.inputs {
             let need = per * cap;
             if need > 0.0 {
                 scale = scale.min(self.stock_of(*r) / need);
+            }
+        }
+        for (r, per) in recipe.outputs {
+            let make = per * cap;
+            if make > 0.0 {
+                let cap_stock = per * jobs as f32 * JOB_RATE * 96.0;
+                scale = scale.min((cap_stock - self.stock_of(*r)).max(0.0) / make);
             }
         }
         let scale = scale.clamp(0.0, 1.0);

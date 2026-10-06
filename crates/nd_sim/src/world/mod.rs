@@ -17,6 +17,8 @@
 //! - `power`: plants and power allocation
 //! - `services`: police, fire, health, schools, dispatch, attractions,
 //!   emergencies and the vehicles that answer them
+//! - `industry`: industry sub-zones and the player's bias, the ground
+//!   industry fouls, logistics fees, truck and bus lots
 //! - `water`: the landscape hooks: road heights, bridges, the built ground,
 //!   the highway and its through traffic, ports, ferries and ships
 //! - `tests`: the world-level tests
@@ -25,9 +27,12 @@ mod buses;
 mod cars;
 mod construction;
 mod develop;
+mod industry;
 mod market;
 mod parking;
 mod plan;
+mod industry_bridge;
+pub use plan::{ProjectInfo, ProjectPreview};
 mod power;
 mod services;
 #[cfg(test)]
@@ -69,8 +74,10 @@ use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
 pub use crate::rail::TRUNK_Y;
+pub use industry::{is_return_trip, return_cargo, IndustryArea};
 use crate::landscape::{Ground, Landscape, LandscapeParams};
 use crate::ports::Ports;
+pub use industry_bridge::INDUSTRY_CHOICES;
 
 /// A parcel that loses or gains more than this share of its area under a
 /// building is treated as a new parcel: the building goes.
@@ -204,8 +211,30 @@ pub struct World {
     rng: SimRng,
     /// What is built.
     pub master: Plan,
-    /// Pending changes, if any.
+    /// The active project (pending changes being edited), if any.
     pub project: Option<Project>,
+    /// Other pending projects, previewed dimmed and implemented one at a
+    /// time. Saves from before named projects have none.
+    #[serde(default)]
+    pub parked_projects: Vec<Project>,
+    #[serde(default)]
+    next_project: u64,
+    /// Warnings from the last implement: gestures or parcels another
+    /// pending project also changes.
+    #[serde(skip)]
+    pub plan_warnings: Vec<String>,
+    /// Parcels along every street and path, zoned or not; derived from the
+    /// roads and rebuilt with them.
+    #[serde(skip)]
+    pub parcels: crate::zoning::ParcelMap,
+    /// Land use of each parcel under the effective plan (`planned_zoning`).
+    #[serde(skip)]
+    planned: Vec<Option<LandUse>>,
+    /// Lots are cut from the parcels. False for a save from before that:
+    /// its next rebuild moves buildings onto the new lots without eminent
+    /// domain.
+    #[serde(default)]
+    parcel_lots: bool,
     next_gesture: u64,
     /// Bumped whenever master or project changes.
     pub plan_version: u64,
@@ -291,6 +320,13 @@ pub struct World {
     /// their businesses; buying, selling and trip counts (`world/cars.rs`).
     #[serde(default)]
     pub vehicles: crate::vehicle::Vehicles,
+    /// What industry has done to the ground (oil spills, ash): saved,
+    /// spreads and fades daily. Old saves load clean.
+    #[serde(default)]
+    pub contamination: crate::ground::Contamination,
+    /// The player's industry sub-zone bias over areas, newest last.
+    #[serde(default)]
+    pub industry_bias: Vec<crate::industry::IndustryBias>,
 }
 
 impl World {
@@ -308,6 +344,12 @@ impl World {
             clock: SimClock::starting_at(0, 7, 0),
             master: Plan::default(),
             project: None,
+            parked_projects: Vec::new(),
+            next_project: 1,
+            plan_warnings: Vec::new(),
+            parcels: crate::zoning::ParcelMap::default(),
+            planned: Vec::new(),
+            parcel_lots: true,
             next_gesture: 1,
             plan_version: 0,
             plan_cache: None,
@@ -343,6 +385,8 @@ impl World {
             bridge_metres: 0.0,
             bots: Default::default(),
             vehicles: Default::default(),
+            contamination: crate::ground::Contamination::new(half + 200.0, crate::ground::CONTAMINATION_CELL),
+            industry_bias: Vec::new(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -408,6 +452,9 @@ impl World {
         }
         self.refresh_facility_cache();
         self.update_economy();
+        // A save from before named projects: number and name the one it has.
+        self.name_active_project();
+        self.recut_parcels();
         self.plan_changed();
         self.events.push(SimEvent::PlanChanged);
     }
@@ -486,7 +533,7 @@ impl World {
             }
         }
         // Vehicles whose ends no longer exist, and riders who do not.
-        let cars: Vec<CarId> = self.traffic.cars.iter().filter(|(_, car)| car.cargo.is_some_and(|c| !buildings.contains_key(c.to)) || car.bus.as_ref().is_some_and(|b| !routes.contains_key(b.route))).map(|(id, _)| id).collect();
+        let cars: Vec<CarId> = self.traffic.cars.iter().filter(|(_, car)| car.cargo.is_some_and(|c| !buildings.contains_key(c.to) && !(industry::is_return_trip(&c) && c.to == BuildingId::default())) || car.bus.as_ref().is_some_and(|b| !routes.contains_key(b.route))).map(|(id, _)| id).collect();
         for id in cars {
             self.traffic.remove_car(id);
         }
@@ -580,12 +627,14 @@ impl World {
             self.daily_services();
             self.daily_update();
             self.daily_vehicles();
+            self.industry_daily();
         }
         // Periodic work is staggered so no tick carries more than one heavy
         // job: the hour starts at :00, sites advance at :30, land value runs
         // in strips from :20, development and immigration sit between.
         if tick % 60 == 0 {
             self.hourly_economy();
+            self.industry_hourly();
         }
         if tick % 60 == 30 {
             self.step_construction();
@@ -649,6 +698,15 @@ impl World {
             }
             if self.traffic.cars.get(car_id).is_some_and(|c| c.bus.is_some()) {
                 self.bus_arrived(car_id);
+                continue;
+            }
+            let Some(car) = self.traffic.cars.get(car_id) else { continue };
+            // Lorries deliver and head back to a truck lot, their business
+            // or out of town (`world/industry`).
+            if let Some(cargo) = car.cargo {
+                let model = car.model;
+                self.traffic.remove_car(car_id);
+                self.truck_arrived(cargo, model);
                 continue;
             }
             // [carlife] Private cars park (or go on looking), trucks and

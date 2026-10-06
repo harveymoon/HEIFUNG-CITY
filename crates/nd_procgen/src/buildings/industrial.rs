@@ -581,3 +581,475 @@ pub fn depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
 }
+
+// ── industry sub-zones ───────────────────────────────────────────────────────
+//
+// The looks of the industry kinds (`nd_sim::industry`): farms, oil fields,
+// refineries, container yards, fish processing and truck lots. Each is
+// forced by the business on the lot (see `choose_style`).
+
+/// Strips of a polygon across `v`, `width` wide with `gap` between them.
+fn bands(poly: &[Vec2], width: f32, gap: f32) -> Vec<Vec<Vec2>> {
+    let (lo, hi) = bounds(poly);
+    let mut out = Vec::new();
+    let mut v = lo.y;
+    while v < hi.y && out.len() < 40 {
+        let strip = clip_v(poly, v, (v + width).min(hi.y));
+        if strip.len() >= 3 && nd_sim::zoning::polygon_area(&strip).abs() > 2.0 {
+            out.push(strip);
+        }
+        v += width + gap;
+    }
+    out
+}
+
+/// A pitched-roof shed: walls, a gable roof and a door on its front.
+fn shed(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], h: f32, wall: [f32; 3], s: crate::surface::Surface) {
+    let f = &c.frame;
+    extrude(g, f, s, poly, 0.0, h, wall);
+    gable_roof(g, c, poly, h, (inradius(poly) * 0.45).clamp(1.0, 3.5), mul(wall, 0.7));
+    let front = c.front_face(poly);
+    if front.len > 4.0 {
+        roller_door(g, c, &front, 0.0, (front.len * 0.35).min(4.0), (h - 0.6).min(4.0), mul(c.palette.steel, 0.6));
+    }
+    let _ = rng;
+}
+
+// ── farm ─────────────────────────────────────────────────────────────────────
+
+/// Fields in rows behind a barn, a farmhouse, silos and a greenhouse.
+pub fn farmstead(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let lot = offset_poly(&c.lot_poly, 0.4);
+    ground(g, f, Dirt, &lot, 0.02, mix(pal.dirt, pal.foliage_dry, 0.3));
+    let (lo, hi) = bounds(&lot);
+    let depth = hi.y - lo.y;
+    // The farmyard along the front, the fields behind.
+    let yard_d = (depth * 0.38).clamp(8.0, 18.0);
+    let fields = clip_v(&lot, lo.y + yard_d, hi.y);
+    let crop = if coin(rng, 0.5) { pal.foliage } else { mix(pal.foliage, pal.foliage_dry, 0.5) };
+    for (i, strip) in bands(&fields, 2.2, 0.9).iter().enumerate() {
+        let col = if i % 2 == 0 { mul(crop, 0.9 + 0.1 * (i % 3) as f32) } else { mul(crop, 0.75) };
+        ground(g, f, Foliage, strip, 0.08, col);
+    }
+    // A hedge or fence on the field margin.
+    let margin = c.faces(&fields);
+    for face in margin.iter().filter(|fc| !fc.is_front && fc.len > 6.0).take(3) {
+        if coin(rng, 0.6) {
+            hedge(g, c, face.at(-face.len * 0.45, 0.6), face.at(face.len * 0.45, 0.6), 1.2, 0.8, mul(pal.foliage, 0.7));
+        }
+    }
+    let front = c.front_face(&lot);
+    // Barn.
+    let barn_c = front.at(-front.len * 0.18, -yard_d * 0.5);
+    let barn = fit_inside(c, &rect(barn_c.x, barn_c.y, (front.len * 0.18).clamp(3.0, 8.0), (yard_d * 0.32).clamp(2.5, 5.0)));
+    if nd_sim::zoning::polygon_area(&barn).abs() > 12.0 {
+        let red = mix([0.45, 0.12, 0.08], pick(rng, &pal.metal_paint), 0.3);
+        shed(g, c, rng, &barn, 4.5, red, Wood);
+    }
+    // Silos beside it.
+    let silos = rng.random_range(1..=3);
+    for k in 0..silos {
+        let p = front.at(front.len * (0.05 + 0.1 * k as f32), -yard_d * 0.55);
+        let r = 1.8;
+        if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > r + 0.6 {
+            let h = rng.random_range(8.0..13.0);
+            tank_vertical(g, f, p, r, 0.0, h, Metal, mul(pal.steel, 1.1));
+            let w = f.to_world(p.x, p.y);
+            g.part(Metal).cylinder(w, r * 1.02, 0.25, h + 1.0, h + 2.4, 12, rgba(mul(pal.steel, 0.9)));
+        }
+    }
+    // Greenhouse at the far end of the yard.
+    let gh_c = front.at(front.len * 0.32, -yard_d * 0.5);
+    let gh = fit_inside(c, &rect(gh_c.x, gh_c.y, (front.len * 0.12).clamp(2.0, 6.0), (yard_d * 0.3).clamp(2.0, 4.5)));
+    if nd_sim::zoning::polygon_area(&gh).abs() > 8.0 {
+        extrude(g, f, Glass, &gh, 0.0, 2.6, mul(pick(rng, &pal.glass), 1.1));
+        gable_roof(g, c, &gh, 2.6, 1.2, mul(pick(rng, &pal.glass), 1.2));
+        ground(g, f, Foliage, &offset_poly(&gh, 0.4), 0.1, pal.foliage);
+    }
+    // A tractor (a van will do at this scale) and a water trough.
+    let t = front.at(-front.len * 0.4, -3.5);
+    if vehicle_fits(c, t, front.yaw(), Vehicle::Van) {
+        vehicle(g, f, pal, rng, t, 0.0, front.yaw(), Vehicle::Van, mix([0.2, 0.45, 0.15], pal.foliage, 0.2));
+    }
+    water_tank(g, f, front.at(front.len * 0.2, -2.5), 0.0, 0.8, 1.2, Metal, mul(pal.steel, 0.8));
+    // Low fence along the road.
+    if front.len > 6.0 {
+        fence(g, c, front.at(-front.len * 0.48, -0.3), front.at(-front.len * 0.05, -0.3), 1.1, false);
+    }
+}
+
+// ── oil field ────────────────────────────────────────────────────────────────
+
+/// Pumpjacks nodding over a stained, oily yard; a derrick, tanks and a flare.
+pub fn oil_field(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let lot = yard(g, c, 0.4, Dirt, mul(pal.dirt, 0.75));
+    // Black stains where the oil has soaked in.
+    for _ in 0..rng.random_range(4..9) {
+        if let Some(p) = c.random_inside(rng, 3.0) {
+            let r = rng.random_range(1.5..4.5);
+            let stain: Vec<Vec2> = ngon(p.x, p.y, r, 7, rng.random_range(0.0..1.0)).into_iter().map(|q| clamp_into(&lot, q)).collect();
+            ground(g, f, Asphalt, &stain, 0.05, mul(DARK, 0.7));
+        }
+    }
+    fence_lot(g, c, &lot, 2.0, true);
+    // Pumpjacks on a loose grid.
+    let (lo, hi) = bounds(&offset_poly(&lot, 4.0));
+    let mut jacks = 0;
+    let (mut v, steel) = (lo.y + 3.0, pick(rng, &pal.metal_paint));
+    while v < hi.y && jacks < 6 {
+        let mut u = lo.x + 3.0;
+        while u < hi.x && jacks < 6 {
+            let p = Vec2::new(u + rng.random_range(-1.5..1.5), v);
+            if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 4.0 {
+                pumpjack(g, c, rng, p, steel);
+                jacks += 1;
+            }
+            u += 11.0;
+        }
+        v += 10.0;
+    }
+    // A derrick if there is room.
+    if let Some(p) = c.random_inside(rng, 5.0) {
+        if distance_to_boundary(p, &c.lot_poly) > 4.0 {
+            derrick(g, c, p, rng.random_range(14.0..22.0));
+        }
+    }
+    // Storage tanks and a flare by the gate.
+    let front = c.front_face(&lot);
+    for k in 0..2 {
+        let p = front.at(front.len * (0.25 + 0.15 * k as f32), -4.5);
+        if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 3.0 {
+            tank_vertical(g, f, p, 2.2, 0.0, 5.0, Rust, pal.rust);
+        }
+    }
+    let flare = front.at(-front.len * 0.38, -3.0);
+    if c.inside_local(flare) && distance_to_boundary(flare, &c.lot_poly) > 1.0 {
+        chimney(g, f, flare, 0.35, 0.0, 12.0, mul(pal.steel, 0.7), [2.4, 1.0, 0.25]);
+    }
+    weeds(g, c, rng, &lot, 6);
+}
+
+/// One pumpjack: a sampson post, a walking beam with a horse head, the
+/// counterweight crank and a wellhead.
+fn pumpjack(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, color: [f32; 3]) {
+    let f = &c.frame;
+    let yaw = rng.random_range(0.0..std::f32::consts::TAU);
+    let d = Vec2::new(yaw.cos(), yaw.sin());
+    let tilt = rng.random_range(-0.25..0.25);
+    f.bx_yaw(g, Concrete, p.x, 0.2, p.y, Vec3::new(5.5, 0.4, 1.6), mul(c.palette.concrete[0], 0.8), yaw);
+    // Sampson post (A-frame).
+    for s in [-0.5f32, 0.5] {
+        let q = p + Vec2::new(-d.y, d.x) * s;
+        f.bx(g, Matte, q.x, 1.7, q.y, Vec3::new(0.25, 3.0, 0.25), mul(color, 0.8));
+    }
+    // Walking beam, tilted by the phase of the stroke.
+    let top = Vec3::new(p.x, 3.3, p.y);
+    let a = top + Vec3::new(d.x * 2.8, 2.8 * tilt, d.y * 2.8);
+    let b = top - Vec3::new(d.x * 2.4, 2.4 * tilt, d.y * 2.4);
+    g.part(Metal).beam(f.at(a.x, a.y, a.z), f.at(b.x, b.y, b.z), 0.35, rgba(color));
+    // Horse head over the well.
+    let head = p + d * 3.0;
+    f.bx_yaw(g, Metal, head.x, 3.3 + 3.0 * tilt, head.y, Vec3::new(0.6, 1.4, 0.5), mul(color, 0.9), yaw);
+    f.bx(g, Matte, head.x, 1.1, head.y, Vec3::new(0.08, 2.0, 0.08), CHARCOAL);
+    f.bx(g, Metal, head.x, 0.4, head.y, Vec3::new(0.5, 0.8, 0.5), mul(c.palette.steel, 0.7));
+    // Crank and counterweights at the back.
+    let crank = p - d * 2.4;
+    f.bx_yaw(g, Matte, crank.x, 1.0, crank.y, Vec3::new(1.2, 1.6, 1.0), CHARCOAL, yaw);
+    f.bx_yaw(g, Metal, crank.x, 1.4, crank.y, Vec3::new(0.4, 1.0, 1.4), mul(c.palette.warning_light, 0.4), yaw);
+}
+
+/// A lattice drilling derrick: four legs tapering to a crown, with braces.
+fn derrick(g: &mut Geometry, c: &Ctx, p: Vec2, h: f32) {
+    let f = &c.frame;
+    let steel = mul(c.palette.steel, 0.85);
+    let base = 2.2;
+    let top = 0.5;
+    let corners = [Vec2::new(-1.0, -1.0), Vec2::new(1.0, -1.0), Vec2::new(1.0, 1.0), Vec2::new(-1.0, 1.0)];
+    for q in corners {
+        let a = f.at(p.x + q.x * base, 0.0, p.y + q.y * base);
+        let b = f.at(p.x + q.x * top, h, p.y + q.y * top);
+        g.part(Metal).beam(a, b, 0.18, rgba(steel));
+    }
+    // Braces every few metres.
+    let levels = (h / 4.0) as i32;
+    for k in 1..levels {
+        let t = k as f32 / levels as f32;
+        let r = base + (top - base) * t;
+        for i in 0..4 {
+            let (q0, q1) = (corners[i], corners[(i + 1) % 4]);
+            g.part(Metal).beam(f.at(p.x + q0.x * r, h * t, p.y + q0.y * r), f.at(p.x + q1.x * r, h * t, p.y + q1.y * r), 0.1, rgba(steel));
+        }
+    }
+    f.bx(g, Metal, p.x, h + 0.4, p.y, Vec3::new(1.6, 0.8, 1.6), steel);
+    f.bx(g, Glow, p.x, h + 1.0, p.y, Vec3::new(0.3, 0.3, 0.3), c.palette.aviation_light);
+    f.bx(g, Concrete, p.x, 0.3, p.y, Vec3::new(5.0, 0.6, 5.0), mul(c.palette.concrete[0], 0.75));
+}
+
+// ── refinery ─────────────────────────────────────────────────────────────────
+
+/// Distillation columns in a pipe rack, tanks, a cracking unit and flares.
+pub fn refinery(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let lot = yard(g, c, 0.4, Asphalt, mul(pal.asphalt, 1.4));
+    fence_lot(g, c, &lot, 2.6, true);
+    let (lo, hi) = bounds(&offset_poly(&lot, 3.0));
+    let mid = (lo + hi) * 0.5;
+    let steel = mul(pal.steel, 1.05);
+    // Columns along the middle, linked by a pipe rack.
+    let n = (((hi.x - lo.x) / 7.0) as i32).clamp(1, 5);
+    let mut tops: Vec<Vec3> = Vec::new();
+    for k in 0..n {
+        let u = lo.x + (k as f32 + 0.5) * (hi.x - lo.x) / n as f32;
+        let p = Vec2::new(u, mid.y);
+        let r = rng.random_range(1.0..1.8);
+        if !c.inside_local(p) || distance_to_boundary(p, &c.lot_poly) < r + 1.0 {
+            continue;
+        }
+        let h = rng.random_range(16.0..30.0);
+        let w = f.to_world(p.x, p.y);
+        g.part(Metal).cylinder(w, r, r * 0.9, 0.0, h, 12, rgba(steel));
+        // Platforms ring the column.
+        for k in 1..(h / 6.0) as i32 {
+            g.part(Matte).cylinder(w, r + 0.6, r + 0.6, k as f32 * 6.0, k as f32 * 6.0 + 0.15, 12, rgba(mul(pal.warning_light, 0.35)));
+        }
+        f.bx(g, Glow, p.x, h + 0.4, p.y, Vec3::splat(0.3), pal.aviation_light);
+        tops.push(Vec3::new(p.x, h * 0.6, p.y));
+    }
+    if tops.len() >= 2 {
+        let a = tops[0];
+        let b = tops[tops.len() - 1];
+        pipe_run(g, f, &[Vec3::new(a.x, 6.0, a.z + 2.5), Vec3::new(b.x, 6.0, b.z + 2.5)], 0.35, mul(pal.steel, 0.75));
+        pipe_run(g, f, &[Vec3::new(a.x, 4.5, a.z + 2.5), Vec3::new(b.x, 4.5, b.z + 2.5)], 0.25, mul(pick(rng, &pal.metal_paint), 0.9));
+        for t in &tops {
+            if c.inside_local(Vec2::new(t.x, t.z + 2.5)) {
+                f.bx(g, Matte, t.x, 3.0, t.z + 2.5, Vec3::new(0.3, 6.0, 0.3), CHARCOAL);
+            }
+        }
+    }
+    // Spherical-ish storage (short fat tanks) at the back.
+    for k in 0..3 {
+        let p = Vec2::new(lo.x + (k as f32 + 0.5) * (hi.x - lo.x) / 3.0, hi.y - 4.0);
+        if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 3.5 {
+            tank_vertical(g, f, p, 3.0, 0.0, 4.5, Metal, mul(pal.steel, 1.15));
+        }
+    }
+    // A cracking unit: a boxy furnace with a stack.
+    let fu = Vec2::new(lo.x + 4.0, lo.y + 4.0);
+    let furnace = fit_inside(c, &rect(fu.x, fu.y, 3.0, 2.5));
+    if nd_sim::zoning::polygon_area(&furnace).abs() > 10.0 {
+        extrude(g, f, Rust, &furnace, 0.0, 7.0, mul(pal.rust, 0.9));
+        let stack = poly_center(&furnace);
+        if nd_sim::zoning::point_in_polygon(stack, &furnace) && distance_to_boundary(stack, &furnace) > 0.7 {
+            chimney(g, f, stack, 0.6, 7.0, 14.0, mul(pal.steel, 0.6), pal.aviation_light);
+        }
+    }
+    // Flare stacks, burning.
+    for (k, p) in [Vec2::new(hi.x - 2.0, lo.y + 2.0), Vec2::new(hi.x - 2.0, hi.y - 9.0)].into_iter().enumerate() {
+        if k == 1 && !coin(rng, 0.5) {
+            continue;
+        }
+        if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.0 {
+            let h = rng.random_range(22.0..34.0);
+            chimney(g, f, p, 0.4, 0.0, h, mul(pal.steel, 0.65), [2.6, 1.1, 0.25]);
+            let w = f.to_world(p.x, p.y);
+            g.part(Glow).cylinder(w, 0.5, 0.05, h + 0.6, h + 3.2, 6, rgba([3.0, 1.3, 0.3]));
+        }
+    }
+    let front = c.front_face(&lot);
+    sign_board(g, c, rng, &front, front.len * 0.1, 2.4, (front.len * 0.3).min(8.0), 0.8);
+    for p in [front.at(-front.len * 0.45, -1.5), front.at(front.len * 0.45, -1.5)] {
+        floodlight(g, c, p, 10.0);
+    }
+}
+
+// ── container yard ───────────────────────────────────────────────────────────
+
+/// Container stacks in blocks with a gantry and reach stackers, a lorry
+/// loading lane along the front.
+pub fn container_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let lot = yard(g, c, 0.4, Asphalt, mul(pal.asphalt, 1.5));
+    fence_lot(g, c, &lot, 2.6, true);
+    let (lo, hi) = bounds(&offset_poly(&lot, 1.5));
+    // Loading lane along the front, with lorries.
+    let lane_v = lo.y + 4.0;
+    let front = c.front_face(&lot);
+    for k in 0..3 {
+        let p = Vec2::new(lo.x + 7.0 + k as f32 * 13.0, lane_v);
+        if vehicle_fits(c, p, 0.0, Vehicle::Truck) && coin(rng, 0.6) {
+            let col = pick(rng, &pal.car_colors);
+            vehicle(g, f, pal, rng, p, 0.0, 0.0, Vehicle::Truck, col);
+        }
+    }
+    let line = clip_v(&offset_poly(&lot, 1.0), lane_v + 3.1, lane_v + 3.25);
+    if line.len() >= 3 {
+        ground(g, f, Glow, &line, 0.06, mul(pal.lane_marker, 0.6));
+    }
+    // Stacks: rows of 12 m boxes, two to four high.
+    let mut v = lane_v + 6.0;
+    let mut rows = 0;
+    while v + 2.6 < hi.y && rows < 12 {
+        let mut u = lo.x + 6.5;
+        while u + 6.1 < hi.x {
+            let p = Vec2::new(u, v);
+            if c.inside_local(p + Vec2::new(-6.2, -1.3)) && c.inside_local(p + Vec2::new(6.2, 1.3)) && c.inside_local(p + Vec2::new(6.2, -1.3)) && c.inside_local(p + Vec2::new(-6.2, 1.3)) && !coin(rng, 0.15) {
+                let high = rng.random_range(2..=4);
+                for k in 0..high {
+                    let col = pick(rng, &pal.container_colors);
+                    container_unit(g, c, rng, u, v, 0.0, 12.1, 2.44, 2.6, k as f32 * 2.6, col);
+                }
+            }
+            u += 13.0;
+        }
+        v += if rows % 2 == 0 { 2.8 } else { 6.0 };
+        rows += 1;
+    }
+    // A rail-mounted gantry over the stacks.
+    let (gu, gv0, gv1) = ((lo.x + hi.x) * 0.5, lane_v + 4.0, hi.y - 1.0);
+    let posts = [Vec2::new(gu - 2.0, gv0), Vec2::new(gu + 2.0, gv0), Vec2::new(gu - 2.0, gv1 + 1.0), Vec2::new(gu + 2.0, gv1 + 1.0), Vec2::new(gu, gv0 - 1.0)];
+    if hi.y - lane_v > 14.0 && hi.x - lo.x > 14.0 && posts.iter().all(|p| c.inside_local(*p)) {
+        gantry_crane(g, c, gu, gv0, gv1, 14.0);
+    }
+    // Gatehouse and lights.
+    let gate = front.at(front.len * 0.42, -2.5);
+    if poly_inside(c, &rect(gate.x, gate.y, 1.4, 1.2)) {
+        extrude(g, f, Panel, &rect(gate.x, gate.y, 1.4, 1.2), 0.0, 2.8, pick(rng, &pal.panel));
+    }
+    for p in [front.at(-front.len * 0.45, -1.5), Vec2::new(lo.x + 1.5, hi.y - 1.5), Vec2::new(hi.x - 1.5, hi.y - 1.5)] {
+        floodlight(g, c, p, 14.0);
+    }
+}
+
+// ── fish processing ──────────────────────────────────────────────────────────
+
+/// Long processing sheds, an ice plant with its cooling towers, crates and
+/// a boat on blocks.
+pub fn fish_processing(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let lot = yard(g, c, 0.4, Paving, mul(pal.paving, 0.85));
+    let (lo, hi) = bounds(&offset_poly(&lot, 1.5));
+    let depth = hi.y - lo.y;
+    // Processing shed along the back half.
+    let shed_poly = fit_inside(c, &clip_v(&offset_poly(&c.poly, 0.5), lo.y + depth * 0.45, hi.y));
+    let paint = mix([0.75, 0.82, 0.86], pick(rng, &pal.panel), 0.3);
+    let h = 3.0 + 3.2 * c.floors.min(2) as f32;
+    if shed_poly.len() >= 3 && nd_sim::zoning::polygon_area(&shed_poly).abs() > 20.0 {
+        shed(g, c, rng, &shed_poly, h, paint, Metal);
+        let sf = c.front_face(&shed_poly);
+        sign_board(g, c, rng, &sf, sf.len * 0.25, h - 1.0, (sf.len * 0.3).min(7.0), 0.9);
+        band_windows(g, c, rng, &sf, 0.5, 1, 2.6);
+    }
+    // Ice plant: a white block with cooling fans on the roof.
+    let ice = fit_inside(c, &rect(lo.x + 4.0, lo.y + depth * 0.25, 3.0, (depth * 0.15).clamp(2.0, 3.5)));
+    if nd_sim::zoning::polygon_area(&ice).abs() > 10.0 {
+        extrude(g, f, Panel, &ice, 0.0, 5.0, [0.85, 0.88, 0.9]);
+        let ic = poly_center(&ice);
+        chiller(g, c, ic, 5.0, 2.4, 1.6, 0.0, mul(pal.steel, 0.9));
+        vent_stack(g, f, ic + Vec2::new(1.5, 0.0), 5.0, 0.3, 1.8, mul(pal.steel, 0.7));
+    }
+    // Crates and nets in the yard, a refrigerated lorry at the dock.
+    for _ in 0..rng.random_range(3..7) {
+        if let Some(p) = c.random_inside(rng, 2.0) {
+            if !nd_sim::zoning::point_in_polygon(p, &shed_poly) && !nd_sim::zoning::point_in_polygon(p, &ice) {
+                for k in 0..rng.random_range(1..4) {
+                    f.bx_yaw(g, Matte, p.x, 0.3 + k as f32 * 0.6, p.y, Vec3::new(1.2, 0.55, 0.8), mix([0.2, 0.45, 0.75], [0.85, 0.5, 0.15], (k % 2) as f32), rng.random_range(-0.2..0.2));
+                }
+            }
+        }
+    }
+    let front = c.front_face(&lot);
+    let truck = front.at(front.len * 0.15, -4.0);
+    if vehicle_fits(c, truck, front.yaw(), Vehicle::Truck) {
+        vehicle(g, f, pal, rng, truck, 0.0, front.yaw(), Vehicle::Truck, [0.88, 0.9, 0.92]);
+    }
+    // A boat hauled out on blocks.
+    if let Some(p) = c.random_inside(rng, 5.0) {
+        if !nd_sim::zoning::point_in_polygon(p, &shed_poly) && distance_to_boundary(p, &c.lot_poly) > 4.0 {
+            let hull = mix([0.15, 0.3, 0.55], pick(rng, &pal.metal_paint), 0.3);
+            f.bx(g, Wood, p.x, 0.8, p.y, Vec3::new(7.0, 1.4, 2.4), hull);
+            f.bx(g, Wood, p.x - 1.0, 2.1, p.y, Vec3::new(2.4, 1.4, 1.8), [0.85, 0.85, 0.82]);
+            f.bx(g, Matte, p.x + 0.8, 3.6, p.y, Vec3::new(0.12, 3.0, 0.12), CHARCOAL);
+        }
+    }
+    for p in [front.at(-front.len * 0.45, -1.5), front.at(front.len * 0.45, -1.5)] {
+        floodlight(g, c, p, 8.0);
+    }
+}
+
+// ── truck and bus lot ────────────────────────────────────────────────────────
+
+/// Marked bays for lorries and buses, a fuel island and a small office;
+/// the share of bays in use follows the sim (`Ctx::parking`).
+pub fn truck_lot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let lot = yard(g, c, 0.4, Asphalt, mul(pal.asphalt, 1.3));
+    fence_lot(g, c, &lot, 2.2, false);
+    let (lo, hi) = bounds(&offset_poly(&lot, 1.0));
+    let occupancy = c.parking.unwrap_or(0.5).clamp(0.0, 1.0);
+    // Long bays across the lot, nose to the back, an aisle at the front.
+    let bay_w = 4.0;
+    let bay_d = 13.0;
+    let v0 = lo.y + 7.0;
+    let mut bays: Vec<Vec2> = Vec::new();
+    let mut v = v0;
+    while v + bay_d <= hi.y + 0.1 && bays.len() < 40 {
+        let mut u = lo.x + bay_w * 0.5;
+        while u + bay_w * 0.5 <= hi.x {
+            let p = Vec2::new(u, v + bay_d * 0.5);
+            if [Vec2::new(-bay_w * 0.5, -bay_d * 0.5), Vec2::new(bay_w * 0.5, bay_d * 0.5), Vec2::new(-bay_w * 0.5, bay_d * 0.5), Vec2::new(bay_w * 0.5, -bay_d * 0.5)].iter().all(|q| c.inside_local(p + *q)) {
+                bays.push(p);
+            }
+            u += bay_w;
+        }
+        v += bay_d + 7.0;
+    }
+    for p in &bays {
+        for s in [-1.0f32, 1.0] {
+            f.flat(g, Glow, p.x + s * bay_w * 0.5, 0.05, p.y, 0.12, bay_d * 0.95, 0.0, mul(pal.lane_marker, 0.6));
+        }
+    }
+    let n = ((bays.len() as f32) * occupancy).round() as usize;
+    let mut order: Vec<usize> = (0..bays.len()).collect();
+    // A fixed order from the seed, so the lot fills the same way.
+    order.sort_by_key(|i| (nd_sim::rng_for(c.seed, *i as u64 + 91).random::<u32>(), *i));
+    for &i in order.iter().take(n) {
+        let p = bays[i];
+        let yaw = std::f32::consts::FRAC_PI_2;
+        let kind = if i % 4 == 3 { Vehicle::Bus } else { Vehicle::Truck };
+        let col = if kind == Vehicle::Bus { mix(pal.hi_vis, [0.9, 0.9, 0.85], 0.5) } else { pick(rng, &pal.car_colors) };
+        if vehicle_fits(c, p, yaw, kind) {
+            vehicle(g, f, pal, rng, p, 0.0, yaw, kind, col);
+        }
+    }
+    // Fuel island and a portakabin office by the gate.
+    let front = c.front_face(&lot);
+    let fuel = front.at(-front.len * 0.3, -3.5);
+    if poly_inside(c, &rect(fuel.x, fuel.y, 2.5, 1.2)) {
+        f.bx(g, Concrete, fuel.x, 0.15, fuel.y, Vec3::new(5.0, 0.3, 1.6), mul(pal.concrete[0], 0.9));
+        for k in [-1.0f32, 1.0] {
+            f.bx(g, Metal, fuel.x + k * 1.2, 0.95, fuel.y, Vec3::new(0.6, 1.3, 0.5), mul(pal.warning_light, 0.5));
+        }
+        f.bx(g, Matte, fuel.x, 4.2, fuel.y, Vec3::new(6.0, 0.3, 3.0), mul(pal.steel, 0.9));
+        for k in [-1.0f32, 1.0] {
+            f.bx(g, Matte, fuel.x + k * 2.6, 2.1, fuel.y, Vec3::new(0.2, 4.2, 0.2), mul(pal.steel, 0.7));
+        }
+    }
+    let office = front.at(front.len * 0.35, -3.0);
+    if poly_inside(c, &rect(office.x, office.y, 3.0, 1.3)) {
+        let col = pick(rng, &pal.container_colors);
+        container_unit(g, c, rng, office.x, office.y, 0.0, 6.05, 2.44, 2.6, 0.0, col);
+        let of = Face::new(office + Vec2::new(-3.0, -1.22), office + Vec2::new(3.0, -1.22), Vec2::new(0.0, -1.0));
+        of.decal(g, f, Glow, 0.8, 1.5, 0.04, 1.2, 0.7, mul(c.style.window_color(0), 0.9));
+    }
+    for p in [front.at(-front.len * 0.46, -1.0), front.at(front.len * 0.46, -1.0), Vec2::new(lo.x + 1.0, hi.y - 1.0), Vec2::new(hi.x - 1.0, hi.y - 1.0)] {
+        floodlight(g, c, p, 9.0);
+    }
+}

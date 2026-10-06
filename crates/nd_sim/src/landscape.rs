@@ -1178,6 +1178,138 @@ pub const GROUND_CELL: f32 = 4.0;
 /// Within this many metres of a road's edge the ground blends from the road
 /// back to the natural terrain.
 pub const GROUND_FALLOFF: f32 = 22.0;
+/// Side slopes of embankments and cuttings: metres across per metre up. The
+/// blend from a road to the terrain widens with the height to make up so
+/// that no side is steeper than this.
+pub const EMBANKMENT_SLOPE: f32 = 2.5;
+/// Least height of one way over another for an underpass: headroom and deck.
+pub const UNDERPASS_CLEARANCE: f32 = 4.5;
+/// Margin of an underpass cut beyond the lower way's corridor: one cell of
+/// the drawn terrain (8 m), so its slope never reaches the pavement.
+pub const UNDERPASS_MARGIN: f32 = 8.0;
+
+/// Where a way crosses a highway without a junction and one runs well above
+/// the other (the highway on its embankment, usually): the upper way spans
+/// the lower on a short deck, and the ground under it is cut down to the
+/// lower way between abutments. Found by `Ground::build`; the renderer draws
+/// the deck and the abutments.
+#[derive(Clone, Debug)]
+pub struct Underpass {
+    /// Where the centrelines cross.
+    pub at: Vec2,
+    /// Unit directions of the way passing over and of the one passing under.
+    pub over_dir: Vec2,
+    pub under_dir: Vec2,
+    /// Their heights at the crossing.
+    pub over_z: f32,
+    pub under_z: f32,
+    /// Change of height per metre along each way.
+    pub over_grade: f32,
+    pub under_grade: f32,
+    /// Half the width of the upper carriageway (with its shoulder or pavement).
+    pub over_half_width: f32,
+    /// Half the width of its corridor (with the whole pavement or verge).
+    pub over_corridor_half_width: f32,
+    /// Half the width of the lower way's corridor (with its pavement).
+    pub under_half_width: f32,
+    /// Half the width of the cut across the lower way, and half its length
+    /// along it (the upper way's embankment and its slopes).
+    pub cut_half_width: f32,
+    pub cut_half_length: f32,
+}
+
+impl Underpass {
+    /// Sine of the crossing angle (1 when square), kept away from zero.
+    pub fn sin_angle(&self) -> f32 {
+        self.over_dir.perp_dot(self.under_dir).abs().max(0.25)
+    }
+
+    /// Position in the crossing's frame: (along the lower way, across it).
+    pub fn local(&self, p: Vec2) -> (f32, f32) {
+        let d = p - self.at;
+        (d.dot(self.under_dir), d.perp_dot(self.under_dir))
+    }
+
+    /// Height of the lower way `along` metres from the crossing.
+    pub fn under_z_at(&self, along: f32) -> f32 {
+        self.under_z + self.under_grade * along
+    }
+
+    /// Height of the upper way `along` metres from the crossing.
+    pub fn over_z_at(&self, along: f32) -> f32 {
+        self.over_z + self.over_grade * along
+    }
+
+    /// Inside the cut: the ground here is the lower way's.
+    pub fn in_cut(&self, p: Vec2) -> bool {
+        let (along, across) = self.local(p);
+        along.abs() <= self.cut_half_length && across.abs() <= self.cut_half_width
+    }
+}
+
+/// How far beyond its corridor a way standing `rise` metres above (or below)
+/// the terrain blends back into it: wide enough that the steepest part of
+/// the blend (a smoothstep is steepest at one and a half times its mean
+/// slope) is no steeper than `EMBANKMENT_SLOPE`; at least `GROUND_FALLOFF`,
+/// at most 160 m.
+pub fn embankment_falloff(rise: f32) -> f32 {
+    GROUND_FALLOFF.max(rise * EMBANKMENT_SLOPE * 1.5).min(160.0)
+}
+/// Half the corridor a way grades the ground for: carriageway plus pavement
+/// (streets) or a metre of verge.
+fn corridor_half_width(seg: &crate::roads::Segment) -> f32 {
+    seg.half_width() + if seg.is_street() { crate::zoning::SIDEWALK } else { 1.0 }
+}
+
+/// Every place a non-highway way crosses a highway (neither on a bridge
+/// over water, no shared node) with one well above the other.
+fn find_underpasses(land: &Landscape, roads: &RoadNetwork, node_z: &[f32]) -> Vec<Underpass> {
+    let z = |n: crate::roads::NodeId| node_z.get(n.0 as usize).copied().unwrap_or(0.0);
+    let segs: Vec<(crate::roads::SegmentId, &crate::roads::Segment)> = roads.alive_segments().filter(|(_, s)| !s.bridge).collect();
+    let mut out = Vec::new();
+    for &(hid, h) in segs.iter().filter(|(_, s)| s.is_highway()) {
+        let (ha, hb) = roads.segment_points(hid);
+        for &(sid, s) in segs.iter().filter(|(_, s)| !s.is_highway()) {
+            if s.a == h.a || s.a == h.b || s.b == h.a || s.b == h.b {
+                continue;
+            }
+            let (sa, sb) = roads.segment_points(sid);
+            let Some((t, u)) = crate::roads::segment_intersection(ha, hb, sa, sb) else { continue };
+            let (hlen, slen) = (ha.distance(hb).max(1e-3), sa.distance(sb).max(1e-3));
+            let (hz, sz) = (z(h.a) + (z(h.b) - z(h.a)) * t, z(s.a) + (z(s.b) - z(s.a)) * u);
+            if (hz - sz).abs() < UNDERPASS_CLEARANCE {
+                continue;
+            }
+            let at = ha.lerp(hb, t);
+            let (hdir, sdir) = ((hb - ha) / hlen, (sb - sa) / slen);
+            let (hgrade, sgrade) = ((z(h.b) - z(h.a)) / hlen, (z(s.b) - z(s.a)) / slen);
+            let ((over, over_dir, over_z, over_grade), (under, under_dir, under_z, under_grade)) =
+                if hz > sz { ((h, hdir, hz, hgrade), (s, sdir, sz, sgrade)) } else { ((s, sdir, sz, sgrade), (h, hdir, hz, hgrade)) };
+            let over_core = corridor_half_width(over);
+            let under_core = corridor_half_width(under);
+            let mut u = Underpass {
+                at,
+                over_dir,
+                under_dir,
+                over_z,
+                under_z,
+                over_grade,
+                under_grade,
+                over_half_width: over.half_width() + if over.is_street() { crate::zoning::SIDEWALK * 0.5 } else { 0.5 },
+                over_corridor_half_width: corridor_half_width(over),
+                under_half_width: under_core,
+                cut_half_width: under_core + UNDERPASS_MARGIN,
+                cut_half_length: 0.0,
+            };
+            // The cut runs through the upper way's corridor and the slopes
+            // either side of it, measured along the lower way.
+            let rise = (over_z - land.height(at).min(under_z)).abs();
+            u.cut_half_length = (over_core + embankment_falloff(rise)) / u.sin_angle() + UNDERPASS_MARGIN;
+            out.push(u);
+        }
+    }
+    out
+}
 
 /// The ground as built: natural terrain, cut and filled to every road's
 /// profile and levelled to a pad under every lot. The renderer draws the
@@ -1191,7 +1323,13 @@ pub struct Ground {
     /// Lot pads, by lot.
     pub pads: std::collections::HashMap<LotId, f32>,
     /// Bridge decks: ends, half width (with the pavement), end heights.
+    /// Underpass decks are among them, so what drives over one stays up.
     pub decks: Vec<(Vec2, Vec2, f32, f32, f32)>,
+    /// Ways passing over the highway or under it.
+    pub underpasses: Vec<Underpass>,
+    /// How many of `decks` are water bridges; the rest are underpass decks
+    /// carrying the highway over a street.
+    pub bridge_decks: usize,
 }
 
 impl std::fmt::Debug for Ground {
@@ -1207,7 +1345,7 @@ impl Ground {
         for (id, lot) in lots.iter() {
             pads.insert(id, lot_pad(roads, node_z, lot, land));
         }
-        let decks: Vec<(Vec2, Vec2, f32, f32, f32)> = roads
+        let mut decks: Vec<(Vec2, Vec2, f32, f32, f32)> = roads
             .alive_segments()
             .filter(|(_, s)| s.bridge)
             .map(|(id, s)| {
@@ -1217,7 +1355,17 @@ impl Ground {
             })
             .collect();
         if land.is_flat() {
-            return Ground { half, n: 0, h: Vec::new(), pads, decks };
+            let bridge_decks = decks.len();
+            return Ground { half, n: 0, h: Vec::new(), pads, decks, underpasses: Vec::new(), bridge_decks };
+        }
+        let underpasses = find_underpasses(land, roads, node_z);
+        let bridge_decks = decks.len();
+        for u in &underpasses {
+            // The upper way's deck spans the cut and a cell beyond it.
+            let reach = (u.cut_half_width + GROUND_CELL) / u.sin_angle();
+            let (a, b) = (u.at - u.over_dir * reach, u.at + u.over_dir * reach);
+            // As wide as its corridor, so its lamps and rails stay up too.
+            decks.push((a, b, u.over_corridor_half_width + 0.5, u.over_z_at(-reach), u.over_z_at(reach)));
         }
         let n = (half * 2.0 / GROUND_CELL) as usize + 1;
         let at = |i: usize, j: usize| Vec2::new(-half + i as f32 * GROUND_CELL, -half + j as f32 * GROUND_CELL);
@@ -1235,8 +1383,24 @@ impl Ground {
             }
             let (a, b) = (roads.node(seg.a).pos, roads.node(seg.b).pos);
             let (za, zb) = (node_z.get(seg.a.0 as usize).copied().unwrap_or(0.0), node_z.get(seg.b.0 as usize).copied().unwrap_or(0.0));
-            let core = seg.half_width() + if seg.is_street() { crate::zoning::SIDEWALK } else { 1.0 };
-            let reach = core + GROUND_FALLOFF;
+            let core = corridor_half_width(seg);
+            // Embankments and cuttings slope no steeper than
+            // `EMBANKMENT_SLOPE` however high the way stands
+            // (`embankment_falloff`, by the rise at each cell).
+            let len = a.distance(b);
+            let samples = (len / 16.0).ceil().max(1.0) as usize;
+            let lift = (0..=samples)
+                .map(|s| {
+                    let t = s as f32 / samples as f32;
+                    (za + (zb - za) * t - land.height(a.lerp(b, t))).abs()
+                })
+                .fold(0.0f32, f32::max);
+            let falloff_for = embankment_falloff;
+            let reach = core + falloff_for(lift + 1.0);
+            // Where this way passes over another, the ground under it is the
+            // other's.
+            let dir = (b - a).normalize_or_zero();
+            let cuts: Vec<&Underpass> = underpasses.iter().filter(|u| u.over_dir.dot(dir).abs() > 0.999 && project_on_segment(u.at, a, b).1.distance(u.at) < 0.5).collect();
             let (i0, i1) = range(a.x.min(b.x) - reach, a.x.max(b.x) + reach);
             let (j0, j1) = range(a.y.min(b.y) - reach, a.y.max(b.y) + reach);
             for j in j0..=j1 {
@@ -1244,14 +1408,30 @@ impl Ground {
                     let p = at(i, j);
                     let (t, q) = project_on_segment(p, a, b);
                     let d = q.distance(p);
-                    if d > reach {
+                    if d > reach || cuts.iter().any(|u| u.in_cut(p)) {
                         continue;
                     }
-                    let wt = if d <= core { 1.0 } else { 1.0 - smoothstep(core, reach, d) };
                     let k = j * n + i;
+                    let wt = if d <= core { 1.0 } else { 1.0 - smoothstep(core, core + falloff_for((za + (zb - za) * t - h[k]).abs()), d) };
                     if wt > w[k] + 1e-4 || (wt >= 1.0 && w[k] >= 1.0 && za + (zb - za) * t > target[k]) {
                         w[k] = wt;
                         target[k] = za + (zb - za) * t;
+                    }
+                }
+            }
+        }
+        // The cuts: level with the lower way across their whole width.
+        for u in &underpasses {
+            let r = u.cut_half_length.max(u.cut_half_width) * 1.5;
+            let (i0, i1) = range(u.at.x - r, u.at.x + r);
+            let (j0, j1) = range(u.at.y - r, u.at.y + r);
+            for j in j0..=j1 {
+                for i in i0..=i1 {
+                    let p = at(i, j);
+                    if u.in_cut(p) {
+                        let k = j * n + i;
+                        w[k] = 1.0;
+                        target[k] = u.under_z_at(u.local(p).0);
                     }
                 }
             }
@@ -1280,12 +1460,23 @@ impl Ground {
                 h[k] = h[k] * (1.0 - w[k]) + t * w[k];
             }
         }
-        Ground { half, n, h, pads, decks }
+        Ground { half, n, h, pads, decks, underpasses, bridge_decks }
     }
 
     /// Height of a bridge deck at `p`, if `p` is on one.
     pub fn deck_at(&self, p: Vec2) -> Option<f32> {
-        for &(a, b, hw, za, zb) in &self.decks {
+        self.deck_in(&self.decks, p)
+    }
+
+    /// Height of a water bridge at `p`, ignoring the underpass decks that
+    /// carry the highway over streets: what drives along the street below
+    /// stays down in its cutting.
+    pub fn bridge_at(&self, p: Vec2) -> Option<f32> {
+        self.deck_in(&self.decks[..self.bridge_decks.min(self.decks.len())], p)
+    }
+
+    fn deck_in(&self, decks: &[(Vec2, Vec2, f32, f32, f32)], p: Vec2) -> Option<f32> {
+        for &(a, b, hw, za, zb) in decks {
             if p.x < a.x.min(b.x) - hw || p.x > a.x.max(b.x) + hw || p.y < a.y.min(b.y) - hw || p.y > a.y.max(b.y) + hw {
                 continue;
             }
@@ -1417,5 +1608,45 @@ mod tests {
         // Shore finding from a point on land beside it.
         let shore = l.nearest_shore(bank + hit.flow.perp() * 30.0, 120.0).or_else(|| l.nearest_shore(bank - hit.flow.perp() * 30.0, 120.0));
         assert!(shore.is_some());
+    }
+
+    /// The starter avenue crosses the highway, which stands on a high
+    /// embankment on the default map: it passes under in a cut, the highway
+    /// keeps its height on a deck over it, and the embankment either side
+    /// slopes no steeper than about one in two.
+    #[test]
+    fn streets_pass_under_the_highway_and_embankments_slope() {
+        let mut w = crate::world::World::new(crate::world::WorldConfig::default());
+        w.add_road(&[Vec2::new(-700.0, 0.0), Vec2::new(700.0, 0.0)], 2, 2);
+        w.add_road(&[Vec2::new(0.0, -700.0), Vec2::new(0.0, 700.0)], 2, 2);
+        let cuts: Vec<&Underpass> = w.ground.underpasses.iter().filter(|u| u.at.x.abs() < 1.0 && (u.at.y - HIGHWAY_Y).abs() < 20.0).collect();
+        assert_eq!(cuts.len(), 2, "the avenue passes under both carriageways");
+        for u in cuts {
+            assert!(u.over_z - u.under_z >= UNDERPASS_CLEARANCE, "{u:?}");
+            // In the cut the ground is the avenue's, under the deck too.
+            for along in [-20.0f32, -5.0, 0.0, 5.0, 20.0] {
+                let p = u.at + u.under_dir * along;
+                assert!((w.ground_height(p) - u.under_z_at(along)).abs() < 0.3, "ground at {p} is {}, the avenue {}", w.ground_height(p), u.under_z_at(along));
+            }
+            // What drives along the highway stays up on its deck.
+            assert!((w.surface_height(u.at + u.over_dir * 6.0) - u.over_z_at(6.0)).abs() < 0.3);
+        }
+        // Away from the avenue, across the embankment: no cliff (2.5 across
+        // per metre up is 0.4; the raster and the blend allow a little more).
+        for x in [-300.0f32, 200.0] {
+            let mut worst = 0.0f32;
+            let mut prev = w.ground_height(Vec2::new(x, HIGHWAY_Y - 140.0));
+            for k in 1..=70 {
+                let y = HIGHWAY_Y - 140.0 + k as f32 * 4.0;
+                let h = w.ground_height(Vec2::new(x, y));
+                // The two carriageways may stand at different heights: the
+                // median between them is not an embankment side.
+                if (y - HIGHWAY_Y).abs() > HIGHWAY_HALF_GAP + 10.0 {
+                    worst = worst.max((h - prev).abs() / 4.0);
+                }
+                prev = h;
+            }
+            assert!(worst < 0.55, "embankment at x = {x} as steep as {worst:.2}");
+        }
     }
 }

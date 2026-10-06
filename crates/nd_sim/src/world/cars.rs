@@ -410,18 +410,11 @@ impl World {
         let Some(car) = self.traffic.cars.get(car_id) else { return true };
         let (errand, owned, cargo, citizen) = (car.errand, car.owned, car.cargo, car.citizen);
         if let Some(cargo) = cargo {
-            self.deliver(cargo);
-            self.traffic.cars[car_id].cargo = None;
-            // Bound out of town (rubble, exports): it is gone already.
-            if !self.buildings.contains_key(cargo.to) {
-                self.traffic.remove_car(car_id);
-                return true;
-            }
-            let base = match errand {
-                Errand::Haul { base } => base,
-                _ => self.truck_base(Some(cargo.from)),
-            };
-            self.send_back(car_id, base);
+            // Lorries are `world/industry`'s: deliver, then a truck lot,
+            // their business or the map edge.
+            let model = self.traffic.cars[car_id].model;
+            self.traffic.remove_car(car_id);
+            self.truck_arrived(cargo, model);
             return true;
         }
         match errand {

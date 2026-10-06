@@ -204,6 +204,34 @@ impl World {
         self.ground_height(p).max(WATER_LEVEL)
     }
 
+    /// Height a vehicle drives at: highway traffic rides its decks; every
+    /// other way stays under the highway's underpass decks (water bridges
+    /// still carry it). Position alone cannot tell the two apart where a
+    /// street passes under the highway.
+    pub fn car_height(&self, car: &crate::traffic::Car) -> f32 {
+        if self.landscape.is_flat() {
+            return 0.0;
+        }
+        let p = car.pos;
+        let lanes = &self.traffic.net.lanes;
+        let segment_of = |lane: crate::traffic::LaneId| match lanes.get(lane as usize).map(|l| &l.kind) {
+            Some(crate::traffic::LaneKind::Road { segment, .. }) => Some(*segment),
+            _ => None,
+        };
+        let here = car.route.get(car.idx).copied();
+        let seg = here.and_then(segment_of).or_else(|| {
+            here.and_then(|l| lanes.get(l as usize)).and_then(|l| l.next.first().copied()).and_then(segment_of)
+        });
+        let on_highway = seg.and_then(|s| self.roads.try_segment(s)).is_some_and(|s| s.is_highway());
+        if on_highway {
+            return self.surface_height(p);
+        }
+        if let Some(z) = self.ground.bridge_at(p) {
+            return z;
+        }
+        self.ground_height(p).max(WATER_LEVEL)
+    }
+
     /// The pad a lot is levelled to.
     pub fn lot_pad(&self, lot: LotId) -> f32 {
         if let Some(&h) = self.ground.pads.get(&lot) {
