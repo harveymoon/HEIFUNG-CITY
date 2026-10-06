@@ -497,7 +497,7 @@ Citizens are rendered from their simulated positions every frame.
   points for intercity trains and make every edit rebuild parcels and lanes. Trains are the
   railway's own `Train` records (poses, stops, riders) in a map of their own, not saved: every
   `headway` minutes (default 10, 4..60) from 05:00 to midnight a four-car set leaves each terminus,
-  runs at 22 m/s, stands 16 s at every platform and is gone at the far end (each run costs 6). Riders: a
+  runs at 22 m/s, stands 16 s at every platform and is gone at the far end (each run costs 2.5). Riders: a
   trip of 420 m or more with an entrance within 320 m of each end on one line (450 m for the
   Central Station) and walks that save real distance (`Subway::plan_trip`; no transfers yet) is an
   option in the mode choice (`TripMode::Subway`: the walks, two minutes of stairs, half a headway,

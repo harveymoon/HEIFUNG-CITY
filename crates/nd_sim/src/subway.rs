@@ -40,8 +40,9 @@ pub const MIN_SPACING: f32 = 160.0;
 pub const TUNNEL_COST_PER_M: f32 = 22.0;
 /// Keeping the tunnels dry, lit and ventilated, per km per day.
 pub const TUNNEL_UPKEEP_PER_KM: f32 = 90.0;
-/// Each train run costs drivers and power.
-pub const RUN_COST: f32 = 6.0;
+/// Each train run costs drivers and power: about one fare, so a line pays
+/// its way once a run carries more than a rider or two plus the tunnels.
+pub const RUN_COST: f32 = 2.5;
 /// The flat fare, cheaper than the intercity train, dearer than the bus.
 pub const FARE: f32 = 2.5;
 /// How far people walk to an entrance; a Central Station draws from further.
