@@ -98,7 +98,13 @@ impl World {
     /// The bias covering `p`: `Some(Some(kind))` forces a kind, `Some(None)`
     /// says "let the ground decide" over an older bias, `None` no bias.
     pub fn industry_bias_at(&self, p: Vec2) -> Option<Option<IndustryKind>> {
-        self.industry_bias.iter().rev().find(|b| b.polygon.len() >= 3 && point_in_polygon(p, &b.polygon)).map(|b| b.kind)
+        self.industry_bias
+            .iter()
+            .rev()
+            .find(|b| b.polygon.len() >= 3 && point_in_polygon(p, &b.polygon))
+            .map(|b| b.kind)
+            // [districts] a district's industry policy, under any drawn bias
+            .or_else(|| self.districts.at(p).and_then(|d| d.industry).map(Some))
     }
 
     /// Set (or with `None` clear) the industry sub-zone of one lot or of

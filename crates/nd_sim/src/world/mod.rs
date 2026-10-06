@@ -29,6 +29,9 @@ mod cars;
 mod enforcement;
 mod construction;
 mod develop;
+mod districts;
+#[cfg(test)]
+mod districts_tests;
 mod driving;
 mod industry;
 mod market;
@@ -56,6 +59,7 @@ mod concerns_tests;
 #[cfg(test)]
 mod tests;
 mod trains;
+mod tourism;
 mod trips;
 mod water;
 
@@ -391,6 +395,14 @@ pub struct World {
     /// [concerns] What people complain about, and city happiness, by day.
     #[serde(default)]
     pub concerns: crate::concerns::Concerns,
+    /// [districts] Named districts painted over the map and their
+    /// policies (`world/districts.rs`).
+    #[serde(default)]
+    pub districts: crate::districts::Districts,
+    /// [tourism] Visitors, what draws them and the hotels they sleep in
+    /// (`world/tourism.rs`).
+    #[serde(default)]
+    pub tourism: crate::tourism::Tourism,
 }
 
 impl World {
@@ -459,6 +471,8 @@ impl World {
             industry_bias: Vec::new(),
             places: Default::default(),
             concerns: Default::default(),
+            districts: Default::default(),
+            tourism: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -707,6 +721,9 @@ impl World {
             self.daily_vehicles();
             self.industry_daily();
             self.daily_places();
+            // [districts] facelifts; [tourism] hotel nights and the books.
+            self.daily_districts();
+            self.daily_tourism();
         }
         // Periodic work is staggered so no tick carries more than one heavy
         // job: the hour starts at :00, sites advance at :30, land value runs
@@ -769,6 +786,8 @@ impl World {
             self.dispatch_deliveries();
         }
         self.step_bots();
+        // [tourism] Arrivals on the hour, visitors' days, departures.
+        self.step_tourism();
         self.step_citizens(minds);
         // [concerns] Happiness on the hour and at midnight.
         self.step_concerns();

@@ -151,6 +151,8 @@ impl World {
                 self.splat_air_noise(&mut b);
                 // [industry] fouled ground
                 self.splat_contamination(&mut b);
+                // [districts] eco and historic districts lift the land
+                self.splat_districts(&mut b);
             }
             _ => {
                 b.finish(0.25, &mut self.land_value);
@@ -282,7 +284,8 @@ impl World {
                 let full = if b.land_use == LandUse::Residential { b.homes > 0 && b.free_homes() == 0 } else { b.jobs > 0 && b.free_jobs() == 0 };
                 // [industry] land value as the land use feels it
                 let value = if self.lots.contains_key(b.lot) { self.lot_value(b.lot) } else { b.land_value };
-                let special = b.is_parking() || b.is_special();
+                // [districts] a Historic district holds what stands as it is
+                let special = b.is_parking() || b.is_special() || self.district_frozen(b.lot);
                 (b.land_use, b.tier, value, b.is_derelict(), full, special)
             };
             let decay = match tier {
@@ -294,7 +297,11 @@ impl World {
                 let b = &mut self.buildings[bid];
                 b.condition = (b.condition - decay + if full { 0.006 } else { 0.0 }).clamp(0.05, 1.0);
             }
-            let target = Tier::for_land_value(value);
+            let mut target = Tier::for_land_value(value);
+            // [districts] the stacks stay cheap, campuses reach up
+            if let Some(look) = self.buildings[bid].look {
+                target = look.tier(target);
+            }
             let mut changed = false;
             // A cheap building on dear land does not last: after three days
             // in the high band it is redeveloped at the land's tier, so the
@@ -567,10 +574,20 @@ impl World {
         if lu == LandUse::Residential {
             tier = self.residential_tier(tier);
         }
-        let floors = self.pick_floors(lot_id, lu, tier);
+        // [districts] The district's policy: its architecture, and the
+        // tier and height that go with it.
+        let look = self.district_look_for(lot_id, lu);
+        if let Some(l) = look {
+            tier = l.tier(tier);
+        }
+        let mut floors = self.pick_floors(lot_id, lu, tier);
+        if let Some(l) = look {
+            floors = l.floors(floors, self.height_cap(lot_id));
+        }
         let seed = self.fresh_seed();
         let name = names::building_name(&mut self.rng, lu);
         let mut b = Building::new(lot_id, lu, floors, tier, seed, name, self.clock.tick, value);
+        b.look = look;
         if !self.lots[lot_id].car_access() {
             b.parking_capacity = 0;
         }
@@ -603,6 +620,11 @@ impl World {
     /// reading ([balance]) vetoes an unforced industrial kind that is
     /// losing money and picks every other land use.
     fn business_for_new_building(&mut self, lot_id: LotId, lu: LandUse, jobs: u16) -> Option<BusinessKind> {
+        // [tourism x districts] hotels where visitors lack beds, and the
+        // trades a district's policy favours
+        if let Some(k) = self.district_business(lot_id, lu, jobs) {
+            return Some(k);
+        }
         if lu == LandUse::Industrial {
             let forced = self.lots.get(lot_id).and_then(|l| self.industry_bias_at(l.center)).flatten().is_some();
             if let Some(k) = self.pick_industrial_business(lot_id) {
