@@ -1002,7 +1002,7 @@ fn draw_ring_effect(glow: &mut MeshData, pal: &nd_procgen::Palette, fx: &nd_sim:
     glow.ground_polygon(&island, 0.2, scale([0.35, 0.8, 0.45], 0.25 * k));
     for (i, cut) in fx.cut.iter().enumerate() {
         let wd = fx.cut_widths.get(i).copied().unwrap_or(6.0);
-        glow.ground_strip(cut, wd, 0.225, scale(pal.preview_remove, 0.3 * k));
+        glow.ground_strip(cut, wd, 0.225, scale(pal.preview_remove, 0.18 * k));
         for w in cut.windows(2) {
             dashes(glow, w[0], w[1], 0.6, 0.24, 4.0, 3.0, scale(pal.preview_remove, k));
         }
