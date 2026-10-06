@@ -335,13 +335,13 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
                 sim.speed_index = i as usize;
             } else if let Some(v) = opt_f32(cmd, "value")? {
-                // The nearest step on a log scale: 10 picks 16×, 2 picks 1×.
+                // The nearest step on a log scale: 10 picks 16×, 1.5 picks 1×.
                 let v = v.max(0.01).ln();
                 sim.speed_index = SPEEDS.iter().enumerate().min_by(|a, b| ((a.1).1.ln() - v).abs().total_cmp(&((b.1).1.ln() - v).abs())).map_or(1, |(i, _)| i);
             } else {
-                return Err("speed needs {index: 0..4} or {value: minutes per second}".into());
+                return Err("speed needs {index: 0..5} or {value: multiple of real time}".into());
             }
-            Ok(json!({ "speed_index": sim.speed_index, "speed": sim.speed(), "label": SPEEDS[sim.speed_index].0 }))
+            Ok(json!({ "speed_index": sim.speed_index, "speed": SPEEDS[sim.speed_index].1, "ticks_per_second": sim.speed(), "label": SPEEDS[sim.speed_index].0 }))
         }
         "step" => {
             let n = opt_u64(cmd, "ticks")?.unwrap_or(1);
@@ -1777,7 +1777,7 @@ fn help() -> Value {
             "help": {},
             "status": {},
             "pause": { "paused": "bool, omitted toggles" },
-            "speed": { "index": "0..4", "value": "sim minutes per real second, snapped to the nearest step" },
+            "speed": { "index": "0..5", "value": "multiple of real time for what moves (1 = people walk at their true pace; the clock runs 15x faster than that), snapped to the nearest step" },
             "step": { "ticks": "advance n sim minutes now, even while paused (default 1, max 100000)" },
             "seed_demo": {},
             "save": { "path": "optional; default writes saves/city.ron and a dated slot" },
