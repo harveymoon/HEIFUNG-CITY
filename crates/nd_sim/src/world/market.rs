@@ -642,17 +642,28 @@ impl World {
             return;
         }
         let cost = got * price;
+        // Everyone at home sees the restocked pantry, not just the shopper.
+        let mut pantry: Option<(Vec<CitizenId>, f32)> = None;
         match hh {
             Some(h) => {
                 h.money -= cost;
                 h.groceries += got;
                 c.groceries = h.groceries;
+                pantry = Some((h.members.clone(), h.groceries));
             }
             None => c.savings -= cost,
         }
         bz.money += cost;
         bz.revenue_today += cost;
         self.economy.market.deals_today += 1;
+        if let Some((members, g)) = pantry {
+            for m in members {
+                if let Some(mc) = self.citizens.get_mut(m) {
+                    mc.groceries = g;
+                }
+            }
+        }
+        let c = &mut self.citizens[cid];
         match r {
             Resource::Groceries => {
                 if c.household.is_none() {

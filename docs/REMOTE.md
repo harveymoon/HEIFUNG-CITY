@@ -90,10 +90,13 @@ Relative paths are relative to the game's working directory (the repo root under
 
 `window {name: "new_game"}` opens the New Game window (preset list, levers, mini-map).
 
-### Planning: roads, zones, the project
+### Planning: roads, zones, parcels, projects
 
-Like the tools, new gestures go into the pending **project** and change nothing until it is
+Like the tools, new gestures go into the active **project** and change nothing until it is
 implemented. Pass `"implement": true` to implement straight away, or send `project` later.
+Several named projects can be pending; the active one is edited, the others are previewed dim.
+Parcels exist along every road before anything is zoned; zoning (a polygon, or `paint`) gives
+them a land use.
 
 | Command | Fields |
 | --- | --- |
@@ -101,15 +104,20 @@ implemented. Pass `"implement": true` to implement straight away, or send `proje
 | `add_road` | `points` `[[x,y],...]` (2+), `kind` street (default) / path / rail, `lanes_fwd`, `lanes_bwd` (0..4, default 1/1, streets only), `curved`, `snap` (default true: ends snap to the network like the Road tool), `implement` |
 | `add_zone` | `polygon` `[[x,y],...]` (3+), `land_use` residential / commercial / industrial / entertainment / civic / park, `implement` |
 | `bulldoze` | `gesture_id`, `implement` |
-| `project` | `action`: start / implement / undo / redo / discard |
+| `paint` | `land_use` (or `none` to unzone), then `at` `[x,y]` + `radius` (the brush), `rect` `[[x0,y0],[x1,y1]]` (the marquee) or `polygon`; `industry` (industrial only: auto / farming / oil / refinery / manufacturing / logistics / fishing / tech), `implement`. Reply: `painted`, `touched`, `refused` (`[{parcel, center, why}]`), `gesture_id` |
+| `project` | `action`: list / new / switch / rename / delete / park / start / implement / undo / redo / discard; `id` (default the active project) or `name` to pick one; `name` for new and rename. Reply: `projects` (`id`, `name`, `active`, `steps`, `redo`, `conflicts` `[{gesture, project}]`, `shared_parcels`), `warnings` from the last implement |
+| `find` `{what: "parcels"}` | per parcel: `index`, `center`, `area`, `land_use` (built), `planned`, `landlocked`, `street`, `rough`, `accepts`, `lot`; filter `land_use`, `zoned`, `landlocked` |
 
 ```json
 {"cmd": "add_road", "points": [[300, -200], [300, 200]], "lanes_fwd": 2, "lanes_bwd": 2}
 {"cmd": "add_zone", "polygon": [[310, -60], [400, -60], [400, 60], [310, 60]], "land_use": "residential"}
 {"cmd": "project", "action": "implement"}
+{"cmd": "project", "action": "new", "name": "Harbour"}
+{"cmd": "paint", "land_use": "industrial", "industry": "logistics", "rect": [[300, 10], [420, 60]]}
+{"cmd": "project", "action": "switch", "id": 1}
 ```
 
-Reply: `gesture_id`, `implemented`, `project` (`steps`, `redo`), `plan_version`.
+Reply: `gesture_id`, `implemented`, `project` (`id`, `name`, `steps`, `redo`), `projects`, `plan_version`.
 
 ### Placing buildings
 
@@ -185,7 +193,7 @@ with none, the current selection. The detail matches what the inspector and the 
 | --- | --- |
 | `select` | `citizen` / `building` / `car` id, or `at: [x, y]` (picks like a click), or nothing to clear |
 | `favourite` | `citizen`, `on` (omit to toggle) |
-| `tool` | `name` (inspect, road, zone, edit, bulldoze, power, transit, rail), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway), `kind` (the active tool's sub-mode: road kind, plant, station / freight_yard, route / depot, land use), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture` |
+| `tool` | `name` (inspect, road, zone, edit, bulldoze, power, transit, rail), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway), `kind` (the active tool's sub-mode: road kind, plant, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry`, `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture` |
 | `overlay` | `land_value`, `paths`, `zoning` (bools) |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
 | `window` | `name` city / economy / market / people / power / transit / land / saves / help / dev, `open` (omit to toggle). Reply `open`, `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it |

@@ -46,7 +46,7 @@ pub use park::{ParkFeature, ParkLayout};
 pub use transit::{BusRoute, BusStop, RouteId, Transit, TransitStats};
 pub use rail::{Facility, FacilityId, Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
 pub use world::{World, WorldConfig};
-pub use zoning::{LandUse, Lot, LotId, Zone, ZoneId};
+pub use zoning::{LandUse, Lot, LotId, Parcel, ParcelKey, ParcelMap, Zone, ZoneId};
 
 pub use glam::Vec2;
 

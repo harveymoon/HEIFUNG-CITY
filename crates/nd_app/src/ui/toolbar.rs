@@ -1,10 +1,12 @@
 //! The bottom toolbar: a sub-pane with only the active tool's parameters and
 //! status, then one large button per tool with its hotkey, and the project
-//! controls beside them while a project is pending.
+//! controls beside them: a Projects dropdown to switch between pending
+//! projects, start, rename or park one, and implement / undo / redo /
+//! discard for the active one.
 
 use bevy_egui::egui;
 
-use super::{help, hint, section, UiCtx, GOLD, IVORY};
+use super::{help, hint, section, UiCtx, GOLD, IVORY, WARN};
 use crate::tools::Tool;
 
 /// Width and height of a tool button; big enough for a mouse at 2560 wide.
@@ -72,25 +74,99 @@ fn tool_button(ui: &mut egui::Ui, tool: Tool, active: bool) -> egui::Response {
     resp.on_hover_text(help::tool_hint(tool))
 }
 
-/// Implement / undo / redo / discard with the pending count, or a hint on
-/// how a project starts when there is none.
+/// The Projects dropdown (switch, new, rename, park, show the others dim)
+/// and implement / undo / redo / discard for the active project.
 fn project(ui: &mut egui::Ui, p: &mut UiCtx) {
     let sim = &mut *p.sim;
     let tools = &mut *p.tools;
-    let Some(proj) = &sim.world.project else {
-        hint(ui, help::PROJECT_NONE);
-        return;
-    };
-    let steps = proj.steps.len();
-    let redo = proj.redo.len();
+    let projects = sim.world.projects();
+    let active = projects.iter().find(|i| i.active).cloned();
+    let mut switch_to: Option<u64> = None;
+    let mut new = false;
+    let mut park = false;
     ui.vertical(|ui| {
-        section(ui, "PROJECT");
-        ui.label(egui::RichText::new(format!("{steps} pending step{}{}", if steps == 1 { "" } else { "s" }, if redo > 0 { format!(", {redo} redoable") } else { String::new() })).small());
+        ui.horizontal(|ui| {
+            section(ui, "PROJECT");
+            ui.checkbox(&mut p.overlays.projects, egui::RichText::new("show others").small()).on_hover_text(help::PROJECTS);
+        });
+        ui.horizontal(|ui| {
+            let label = active.as_ref().map_or_else(|| "(none active)".to_string(), |i| i.name.clone());
+            egui::ComboBox::from_id_salt("projects").selected_text(label).width(150.0).show_ui(ui, |ui| {
+                for i in &projects {
+                    let warn = !i.conflicts.is_empty() || i.shared_parcels > 0;
+                    let text = format!("{} · {} step{}{}", i.name, i.steps, if i.steps == 1 { "" } else { "s" }, if warn { "  ⚠ overlaps" } else { "" });
+                    if ui.selectable_label(i.active, text).clicked() && !i.active {
+                        switch_to = Some(i.id);
+                    }
+                }
+                if !projects.is_empty() {
+                    ui.separator();
+                }
+                if ui.selectable_label(false, "+ New project").clicked() {
+                    new = true;
+                }
+                if active.is_some() && ui.selectable_label(false, "Park (edit none)").on_hover_text("Keep it pending, drawn dim, with nothing active").clicked() {
+                    park = true;
+                }
+            });
+            match &active {
+                Some(i) => {
+                    let txt = format!("{} step{}{}", i.steps, if i.steps == 1 { "" } else { "s" }, if i.redo > 0 { format!(", {} redoable", i.redo) } else { String::new() });
+                    ui.label(egui::RichText::new(txt).small());
+                }
+                None => hint(ui, help::PROJECT_NONE),
+            }
+        });
+        // Rename in place: a field while renaming, a small button otherwise.
+        if let Some(i) = &active {
+            match tools.rename.as_mut() {
+                Some((id, name)) if *id == i.id => {
+                    let r = ui.add(egui::TextEdit::singleline(name).desired_width(150.0).hint_text("project name"));
+                    if r.lost_focus() {
+                        let (id, name) = tools.rename.take().unwrap();
+                        sim.world.rename_project(id, &name);
+                    } else if !r.has_focus() {
+                        r.request_focus();
+                    }
+                }
+                _ => {
+                    ui.horizontal(|ui| {
+                        if ui.small_button("rename").clicked() {
+                            tools.rename = Some((i.id, i.name.clone()));
+                        }
+                        if !i.conflicts.is_empty() || i.shared_parcels > 0 {
+                            let n = i.conflicts.len();
+                            ui.label(egui::RichText::new(format!("overlaps another project ({n} gesture{}, {} parcel{})", if n == 1 { "" } else { "s" }, i.shared_parcels, if i.shared_parcels == 1 { "" } else { "s" })).small().color(WARN))
+                                .on_hover_text(help::PROJECTS);
+                        }
+                    });
+                }
+            }
+        }
     });
-    if ui.add(egui::Button::new(egui::RichText::new("Implement").strong()).min_size(egui::vec2(0.0, BUTTON.y))).on_hover_text("Ctrl+Enter").clicked() {
-        sim.world.implement();
+    if let Some(id) = switch_to {
+        sim.world.switch_project(id);
         tools.points.clear();
-        tools.status = "Project implemented".into();
+        tools.stroke = None;
+        tools.status = format!("Editing {}.", sim.world.project.as_ref().map_or("", |p| p.name.as_str()));
+    }
+    if new {
+        let id = sim.world.new_project(None);
+        tools.points.clear();
+        tools.stroke = None;
+        tools.rename = Some((id, sim.world.project.as_ref().map_or(String::new(), |p| p.name.clone())));
+        tools.status = "New project: draw, paint or bulldoze into it.".into();
+    }
+    if park {
+        sim.world.park_project();
+        tools.points.clear();
+        tools.status = "Project parked: it stays pending, drawn dim.".into();
+    }
+    let Some(i) = active else { return };
+    if ui.add(egui::Button::new(egui::RichText::new("Implement").strong()).min_size(egui::vec2(0.0, BUTTON.y))).on_hover_text("Ctrl+Enter").clicked() {
+        let warnings = sim.world.implement_project(i.id).unwrap_or_default();
+        tools.points.clear();
+        tools.status = if warnings.is_empty() { format!("{} implemented.", i.name) } else { format!("{} implemented. {}", i.name, warnings.join(" ")) };
     }
     if ui.add(egui::Button::new("Undo").min_size(egui::vec2(0.0, BUTTON.y))).on_hover_text("Ctrl+Z").clicked() {
         sim.world.undo();
@@ -98,8 +174,9 @@ fn project(ui: &mut egui::Ui, p: &mut UiCtx) {
     if ui.add(egui::Button::new("Redo").min_size(egui::vec2(0.0, BUTTON.y))).on_hover_text("Ctrl+Y").clicked() {
         sim.world.redo();
     }
-    if ui.add(egui::Button::new("Discard").min_size(egui::vec2(0.0, BUTTON.y))).clicked() {
+    if ui.add(egui::Button::new("Discard").min_size(egui::vec2(0.0, BUTTON.y))).on_hover_text("Throw the active project away").clicked() {
         sim.world.discard_project();
         tools.points.clear();
+        tools.status = format!("{} discarded.", i.name);
     }
 }

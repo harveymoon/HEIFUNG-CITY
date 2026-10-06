@@ -1,5 +1,6 @@
-//! Player tools: draw roads and zones into a project, edit control points,
-//! bulldoze gestures, inspect things. Undo/redo/implement live here too.
+//! Player tools: draw roads and zones into a project, paint parcels with the
+//! zone brush or marquee, edit control points, bulldoze gestures, inspect
+//! things. Undo/redo/implement live here too.
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -9,7 +10,7 @@ use nd_sim::plan::sample_curve;
 use nd_sim::roads::RoadKind;
 use nd_sim::{Activity, BuildingId, CarId, CitizenId, Gesture, GestureId, LandUse, Plan, Vec2 as SVec2, World};
 
-use crate::camera::{CameraMode, Cursor};
+use crate::camera::{CameraMode, Cursor, OrbitCamera};
 use crate::sim::{Sim, SimSet};
 use crate::ui::UiFlags;
 
@@ -59,6 +60,51 @@ impl Tool {
     }
 }
 
+/// How the Zone tool zones: by polygon (every parcel whose centre is inside
+/// takes the use), by brush (parcels under a circle as it is dragged), or
+/// by marquee (parcels whose centre is in a dragged rectangle).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ZoneMode {
+    Polygon,
+    #[default]
+    Brush,
+    Marquee,
+}
+
+impl ZoneMode {
+    pub const ALL: [ZoneMode; 3] = [ZoneMode::Brush, ZoneMode::Marquee, ZoneMode::Polygon];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ZoneMode::Polygon => "Polygon",
+            ZoneMode::Brush => "Brush",
+            ZoneMode::Marquee => "Marquee",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<ZoneMode> {
+        ZoneMode::ALL.into_iter().find(|m| m.label().eq_ignore_ascii_case(s.trim()))
+    }
+}
+
+/// A brush stroke or marquee drag in progress: which button started it,
+/// whether it erases, and the paint gesture it is growing.
+#[derive(Clone, Debug)]
+pub struct PaintStroke {
+    pub button: MouseButton,
+    pub erase: bool,
+    pub gesture: Option<GestureId>,
+    pub painted: usize,
+    /// Parcels the brush passed over that refused the use, with a reason.
+    pub refused: std::collections::BTreeMap<usize, &'static str>,
+    /// Where a marquee drag started.
+    pub from: Option<SVec2>,
+}
+
+/// Brush radius limits, metres.
+pub const BRUSH_MIN: f32 = 4.0;
+pub const BRUSH_MAX: f32 = 80.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum TransitMode {
     #[default]
@@ -103,6 +149,20 @@ pub struct ToolState {
     pub dock: Option<nd_sim::PortKind>,
     /// People starred in the person pane; listed in the People window.
     pub favorites: Vec<CitizenId>,
+    /// Zone tool: polygon, brush or marquee.
+    pub zone_mode: ZoneMode,
+    /// Zone brush radius in metres.
+    pub brush_radius: f32,
+    /// Zone tool: left button unzones instead of painting `land_use`.
+    pub unzone: bool,
+    pub stroke: Option<PaintStroke>,
+    /// Parcel under the pointer (index into `World::parcels`).
+    pub hover_parcel: Option<usize>,
+    /// A project being renamed in the toolbar: its id and the name so far.
+    pub rename: Option<(u64, String)>,
+    /// Zone tool, industrial land: the sub-zone painting sets (a key of
+    /// `nd_sim::world::INDUSTRY_CHOICES`; "auto" lets the ground decide).
+    pub industry: &'static str,
 }
 
 /// Road presets in the spirit of Cities Skylines' road menu: (label, forward, backward, kind).
@@ -149,8 +209,79 @@ impl Default for ToolState {
             rail_kind: nd_sim::RailFacility::Station,
             dock: None,
             favorites: Vec::new(),
+            zone_mode: ZoneMode::Brush,
+            brush_radius: 12.0,
+            unzone: false,
+            stroke: None,
+            hover_parcel: None,
+            rename: None,
+            industry: "auto",
         }
     }
+}
+
+impl ToolState {
+    /// Does the active tool use right-drags itself (the zone brush erases
+    /// with them), so the camera must not orbit?
+    pub fn captures_right_drag(&self) -> bool {
+        self.tool == Tool::Zone && matches!(self.zone_mode, ZoneMode::Brush | ZoneMode::Marquee)
+    }
+
+    /// The land use a paint stroke gives: the selected one, or none when
+    /// unzoning.
+    pub fn paint_use(&self, erase: bool) -> Option<LandUse> {
+        if erase || self.unzone { None } else { Some(self.land_use) }
+    }
+
+    /// The industry sub-zone painting industrial land records.
+    pub fn paint_industry(&self) -> Option<&'static str> {
+        (self.land_use == LandUse::Industrial && !self.unzone).then_some(self.industry)
+    }
+}
+
+/// The marquee from `a` to `b` as a rectangle square to the camera (its
+/// yaw), so it looks like the box the player dragged on screen.
+pub fn marquee_rect(a: SVec2, b: SVec2, yaw: f32) -> Vec<SVec2> {
+    let (s, c) = yaw.sin_cos();
+    let right = SVec2::new(c, -s);
+    let fwd = SVec2::new(s, c);
+    let d = b - a;
+    vec![a, a + right * d.dot(right), b, a + fwd * d.dot(fwd)]
+}
+
+/// One stroke step: paint (or erase) the parcels in `ids`, note the ones
+/// that refused, and keep the stroke's gesture growing.
+fn paint_step(sim: &mut Sim, tools: &mut ToolState, ids: &[usize]) {
+    let Some(mut stroke) = tools.stroke.take() else { return };
+    let lu = tools.paint_use(stroke.erase);
+    if let Some(lu) = lu {
+        for &i in ids {
+            if let Some(why) = sim.world.parcels.parcels.get(i).and_then(|p| p.refusal(lu)) {
+                stroke.refused.insert(i, why);
+            }
+        }
+    }
+    let industry = if stroke.erase { None } else { tools.paint_industry() };
+    let (g, n) = sim.world.paint_parcels_with(ids, lu, industry, stroke.gesture);
+    stroke.gesture = g;
+    stroke.painted += n;
+    tools.stroke = Some(stroke);
+}
+
+/// What a finished stroke did, for the status line.
+fn stroke_status(stroke: &PaintStroke, lu: Option<LandUse>) -> String {
+    let what = lu.map_or("unzoned".to_string(), |l| format!("zoned {}", l.label()));
+    let mut out = format!("{} parcel{} {what}.", stroke.painted, if stroke.painted == 1 { "" } else { "s" });
+    if !stroke.refused.is_empty() {
+        let mut reasons: Vec<&str> = stroke.refused.values().copied().collect();
+        reasons.sort();
+        reasons.dedup();
+        out.push_str(&format!(" {} refused ({}).", stroke.refused.len(), reasons.join("; ")));
+    }
+    if stroke.painted > 0 {
+        out.push_str(" Ctrl+Z undoes the stroke, Ctrl+Enter implements.");
+    }
+    out
 }
 
 /// The master plan with the project applied, cached between changes.
@@ -254,6 +385,8 @@ fn nearest_gesture(plan: &Plan, p: SVec2) -> Option<(GestureId, usize)> {
                     }
                 }
             }
+            // Paint strokes have no shape to pick: undo or the eraser takes them back.
+            Gesture::ParcelZone { .. } => {}
         }
     }
     best.map(|(_, id, i)| (id, i))
@@ -270,11 +403,14 @@ pub(crate) fn tool_input(
     mut selection: ResMut<Selection>,
     mut sim: ResMut<Sim>,
     mut eplan: ResMut<EffectivePlan>,
+    cams: Query<&OrbitCamera>,
 ) {
     if *mode == CameraMode::Walk {
         tools.drag = None;
+        tools.stroke = None;
         return;
     }
+    let yaw = cams.iter().next().map_or(0.0, |c| c.yaw);
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     // While an egui text field has focus every key is typing, not a hotkey.
@@ -303,11 +439,15 @@ pub(crate) fn tool_input(
             tools.tool = tool;
             tools.points.clear();
             tools.drag = None;
+            tools.stroke = None;
         }
     }
     if key(KeyCode::Escape) {
         tools.points.clear();
         tools.drag = None;
+        // A stroke already painted stays (Ctrl+Z takes it back); a marquee
+        // not yet released is dropped.
+        tools.stroke = None;
         *selection = Selection::None;
     }
     if map_key(KeyCode::Backspace) && matches!(tools.tool, Tool::Road | Tool::Zone) {
@@ -341,7 +481,7 @@ pub(crate) fn tool_input(
         tools.points.clear();
         tools.drag = None;
         sim.world.implement();
-        tools.status = "Project implemented".into();
+        tools.status = if sim.world.plan_warnings.is_empty() { "Project implemented".into() } else { format!("Project implemented. {}", sim.world.plan_warnings.join(" ")) };
     }
 
     let pointer = window.single().ok().and_then(|w| w.cursor_position());
@@ -354,6 +494,7 @@ pub(crate) fn tool_input(
             _ => false,
         };
     let finish = (map_key(KeyCode::Enter) && !ctrl) || right_click;
+    let right_down = buttons.just_pressed(MouseButton::Right) && !flags.pointer_over_ui;
     let click = buttons.just_pressed(MouseButton::Left) && !shift && !flags.pointer_over_ui;
     let shift_click = buttons.just_pressed(MouseButton::Left) && shift && !flags.pointer_over_ui;
     let ground = cursor.ground;
@@ -381,28 +522,62 @@ pub(crate) fn tool_input(
             }
         }
         Tool::Zone => {
+            tools.hover_parcel = ground.and_then(|p| sim.world.parcels.at(p));
             tools.hover_gesture = ground.and_then(|p| nearest_gesture(plan, p)).and_then(|(id, _)| match plan.gestures.get(&id) {
                 Some(Gesture::Zone { .. }) => Some(id),
                 _ => None,
             });
-            if click && ctrl {
-                if let Some(id) = tools.hover_gesture {
-                    if sim.world.repaint_zone(id, tools.land_use) {
-                        tools.status = format!("Zone repainted as {}. Ctrl+Enter implements.", tools.land_use.label());
+            match tools.zone_mode {
+                ZoneMode::Polygon => {
+                    if click && ctrl {
+                        if let Some(id) = tools.hover_gesture {
+                            if sim.world.repaint_zone(id, tools.land_use) {
+                                tools.status = format!("Zone repainted as {}. Ctrl+Enter implements.", tools.land_use.label());
+                            }
+                        }
+                    } else if click {
+                        if let Some(p) = ground {
+                            tools.points.push(p);
+                        }
+                    }
+                    if finish {
+                        if tools.points.len() >= 3 {
+                            let industry = tools.paint_industry();
+                            sim.world.add_zone_gesture(tools.points.clone(), tools.land_use, industry);
+                            tools.status = format!("{} zone added to project: the parcels whose centre it holds take it. Ctrl+Enter implements.", tools.land_use.label());
+                        }
+                        tools.points.clear();
                     }
                 }
-            } else if click {
-                if let Some(p) = ground {
-                    tools.points.push(p);
+                ZoneMode::Brush | ZoneMode::Marquee => {
+                    // Left paints the selected use (or unzones with Unzone
+                    // picked), right always erases back to unzoned.
+                    if tools.stroke.is_none() {
+                        let start = if click { Some((MouseButton::Left, tools.unzone)) } else if right_down { Some((MouseButton::Right, true)) } else { None };
+                        if let (Some((button, erase)), Some(p)) = (start, ground) {
+                            tools.stroke = Some(PaintStroke { button, erase, gesture: None, painted: 0, refused: Default::default(), from: Some(p) });
+                        }
+                    }
+                    let Some(stroke) = tools.stroke.clone() else { return };
+                    let released = !buttons.pressed(stroke.button);
+                    if tools.zone_mode == ZoneMode::Brush {
+                        if let Some(p) = ground {
+                            let ids = sim.world.parcels.in_circle(p, tools.brush_radius);
+                            paint_step(&mut sim, &mut tools, &ids);
+                        }
+                    } else if released {
+                        if let (Some(a), Some(b)) = (stroke.from, ground) {
+                            let rect = marquee_rect(a, b, yaw);
+                            let ids = sim.world.parcels.in_polygon(&rect);
+                            paint_step(&mut sim, &mut tools, &ids);
+                        }
+                    }
+                    if released {
+                        if let Some(done) = tools.stroke.take() {
+                            tools.status = stroke_status(&done, tools.paint_use(done.erase));
+                        }
+                    }
                 }
-            }
-            if finish {
-                if tools.points.len() >= 3 {
-                    let g = Gesture::Zone { polygon: tools.points.clone(), land_use: tools.land_use };
-                    sim.world.add_gesture(g);
-                    tools.status = format!("{} zone added to project. Ctrl+Enter implements.", tools.land_use.label());
-                }
-                tools.points.clear();
             }
         }
         Tool::Edit => {
@@ -412,7 +587,9 @@ pub(crate) fn tool_input(
             if let Some((id, idx)) = tools.drag {
                 if let (Some(p), Some(mut g)) = (ground, plan.gestures.get(&id).cloned()) {
                     if idx < g.points().len() {
-                        g.points_mut()[idx] = p;
+                        if let Some(pts) = g.points_mut() {
+                            pts[idx] = p;
+                        }
                         let release = !buttons.pressed(MouseButton::Left);
                         sim.world.set_gesture(id, g, release);
                         if release {
@@ -439,9 +616,11 @@ pub(crate) fn tool_input(
                 if let (Some(p), Some((id, seg))) = (ground, ground.and_then(|p| nearest_gesture(plan, p))) {
                     if let Some(mut g) = plan.gestures.get(&id).cloned() {
                         let at = (seg + 1).min(g.points().len());
-                        g.points_mut().insert(at, p);
-                        sim.world.set_gesture(id, g, true);
-                        tools.status = "Control point inserted".into();
+                        if let Some(pts) = g.points_mut() {
+                            pts.insert(at, p);
+                            sim.world.set_gesture(id, g, true);
+                            tools.status = "Control point inserted".into();
+                        }
                     }
                 }
             }
@@ -449,7 +628,9 @@ pub(crate) fn tool_input(
                 if let Some((id, idx)) = tools.hover_point {
                     if let Some(mut g) = plan.gestures.get(&id).cloned() {
                         if g.points().len() > g.min_points() {
-                            g.points_mut().remove(idx);
+                            if let Some(pts) = g.points_mut() {
+                                pts.remove(idx);
+                            }
                             sim.world.set_gesture(id, g, true);
                             tools.status = "Control point removed".into();
                         } else {
@@ -645,7 +826,7 @@ fn pick(sim: &Sim, p: SVec2) -> Selection {
     Selection::None
 }
 
-fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, selection: Res<Selection>, mut eplan: ResMut<EffectivePlan>) {
+fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, selection: Res<Selection>, mut eplan: ResMut<EffectivePlan>, cams: Query<&OrbitCamera>) {
     // Re-sync so a point dragged by `tool_input` this frame draws where it is.
     let plan = eplan.sync(&sim.world);
     draw_selection(&mut gizmos, &sim, *selection);
@@ -686,6 +867,44 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
     }
 
     match tools.tool {
+        Tool::Zone if tools.zone_mode != ZoneMode::Polygon => {
+            let ok = Color::linear_rgb(0.3, 2.5, 0.6);
+            let erase_col = Color::linear_rgb(2.2, 1.2, 0.4);
+            let erasing = tools.stroke.as_ref().map_or(tools.unzone, |s| s.erase);
+            let lu = tools.paint_use(erasing);
+            let outline = |gizmos: &mut Gizmos, poly: &[SVec2], col: Color| {
+                let mut pts: Vec<Vec3> = poly.iter().map(|&p| lift(p)).collect();
+                if pts.len() >= 3 {
+                    pts.push(pts[0]);
+                    gizmos.linestrip(pts, col);
+                }
+            };
+            let parcels = &sim.world.parcels;
+            let mark = |gizmos: &mut Gizmos, ids: &[usize]| {
+                for &i in ids.iter().take(400) {
+                    let Some(p) = parcels.parcels.get(i) else { continue };
+                    let col = match lu {
+                        Some(l) if p.accepts(l) => ok,
+                        Some(_) => red,
+                        None => erase_col,
+                    };
+                    outline(gizmos, &p.polygon, col);
+                }
+            };
+            if let Some(c) = cursor.ground {
+                if tools.zone_mode == ZoneMode::Brush {
+                    gizmos.circle(Isometry3d::new(lift(c), flat), tools.brush_radius, if erasing { erase_col } else { cyan });
+                    mark(&mut gizmos, &parcels.in_circle(c, tools.brush_radius));
+                } else if let Some(a) = tools.stroke.as_ref().and_then(|s| s.from) {
+                    let yaw = cams.iter().next().map_or(0.0, |c| c.yaw);
+                    let rect = marquee_rect(a, c, yaw);
+                    outline(&mut gizmos, &rect, if erasing { erase_col } else { cyan });
+                    mark(&mut gizmos, &parcels.in_polygon(&rect));
+                } else if let Some(i) = tools.hover_parcel {
+                    mark(&mut gizmos, &[i]);
+                }
+            }
+        }
         Tool::Road | Tool::Zone => {
             let mut ctrl: Vec<SVec2> = tools.points.clone();
             if let Some(c) = cursor.ground {
