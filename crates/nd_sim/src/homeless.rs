@@ -67,8 +67,12 @@ pub struct Camp {
     pub pos: Vec2,
     /// Along the kerb (or the lot front), for laying the tents out.
     pub dir: Vec2,
-    /// The vacant lot it is on, or the lot whose pavement it lines.
+    /// The vacant lot it is on, or the lot whose pavement it lines (None:
+    /// an unzoned parcel).
     pub lot: Option<LotId>,
+    /// Towards the street.
+    #[serde(default)]
+    pub out: Vec2,
     /// On a pavement (else on a vacant lot).
     pub sidewalk: bool,
     pub households: Vec<HouseholdId>,
@@ -158,7 +162,8 @@ impl Homeless {
 struct Spot {
     pos: Vec2,
     dir: Vec2,
-    lot: LotId,
+    out: Vec2,
+    lot: Option<LotId>,
     sidewalk: bool,
 }
 
@@ -235,7 +240,8 @@ impl World {
         }
     }
 
-    /// Cheap pavements and vacant lots, in lot order.
+    /// Cheap pavements, vacant lots and unzoned rough parcels by a road,
+    /// in lot then parcel order.
     fn camp_spots(&self) -> Vec<Spot> {
         let mut out = Vec::new();
         for (id, l) in self.lots.iter() {
@@ -247,11 +253,23 @@ impl World {
             }
             let along = (l.front_edge[1] - l.front_edge[0]).normalize_or_zero();
             match l.building {
-                None if !self.services.is_rubble(id) => out.push(Spot { pos: l.center, dir: along, lot: id, sidewalk: false }),
+                None if !self.services.is_rubble(id) => out.push(Spot { pos: l.center, dir: along, out: l.front_dir, lot: Some(id), sidewalk: false }),
                 // Built lots lend their pavement, if it is on a street.
-                Some(_) if l.car_access() => out.push(Spot { pos: l.entrance() + l.front_dir.normalize_or_zero() * 1.5, dir: along, lot: id, sidewalk: true }),
+                Some(_) if l.car_access() => out.push(Spot { pos: l.entrance() + l.front_dir.normalize_or_zero() * 1.5, dir: along, out: l.front_dir, lot: Some(id), sidewalk: true }),
                 _ => {}
             }
+        }
+        // Unzoned land along a road nobody has built on.
+        for p in &self.parcels.parcels {
+            if p.land_use.is_some() || p.lot.is_some() || p.rough || !p.path_frontage || p.area < 60.0 {
+                continue;
+            }
+            if self.land_value.at(p.center) >= SKID_ROW_LV || self.under_facility(p.center) {
+                continue;
+            }
+            let along = (p.front_edge[1] - p.front_edge[0]).normalize_or_zero();
+            let mid = (p.front_edge[0] + p.front_edge[1]) * 0.5;
+            out.push(Spot { pos: p.center, dir: along, out: (mid - p.center).normalize_or_zero(), lot: None, sidewalk: false });
         }
         out
     }
@@ -325,7 +343,7 @@ impl World {
                     let h = &mut self.society.homeless;
                     let id = h.next_camp;
                     h.next_camp += 1;
-                    h.camps.push(Camp { id, pos: s.pos, dir: s.dir, lot: Some(s.lot), sidewalk: s.sidewalk, households: Vec::new(), people: 0, founded: tick });
+                    h.camps.push(Camp { id, pos: s.pos, dir: s.dir, out: s.out, lot: s.lot, sidewalk: s.sidewalk, households: Vec::new(), people: 0, founded: tick });
                     id
                 })
             }
@@ -391,7 +409,12 @@ impl World {
         let h = &mut self.society.homeless;
         let mut displaced: Vec<HouseholdId> = Vec::new();
         h.camps.retain(|c| {
-            let ok = lv.at(c.pos) < SKID_ROW_LV + 0.08 && c.lot.is_some_and(|l| lots.get(l).is_some_and(|l| c.sidewalk || l.building.is_none()));
+            let ground = match c.lot {
+                Some(l) => lots.get(l).is_some_and(|l| c.sidewalk || l.building.is_none()),
+                // An unzoned parcel: until a lot is laid over it.
+                None => !lots.values().any(|l| l.contains(c.pos)),
+            };
+            let ok = lv.at(c.pos) < SKID_ROW_LV + 0.08 && ground;
             if !ok {
                 displaced.extend(c.households.iter().copied());
             }

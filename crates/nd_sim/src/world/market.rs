@@ -10,6 +10,7 @@ impl World {
     pub(super) fn daily_businesses(&mut self) {
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         let mut demolish = Vec::new();
+        let mut cover = [(0.0f32, 0.0f32); BusinessKind::COUNT];
         for bid in ids {
             if self.buildings[bid].construction.is_some() {
                 continue;
@@ -39,7 +40,16 @@ impl World {
             if !publicly_funded {
                 bz.money -= wage_bill;
                 bz.spend_today += wage_bill;
+                // The market's reading of this kind of business, past the
+                // first day's stocking up: what it took against what it
+                // paid out, wages and inputs.
+                if bz.days_open >= 1 {
+                    let e = &mut cover[kind.index()];
+                    e.0 += revenue;
+                    e.1 += bz.spend_today;
+                }
             }
+            bz.days_open = bz.days_open.saturating_add(1);
             bz.revenue_today = 0.0;
             bz.spend_today = 0.0;
             if bz.money < -300.0 && !publicly_funded {
@@ -63,6 +73,11 @@ impl World {
                 self.economy.market.closed_total += 1;
                 self.events.push(SimEvent::BusinessClosed(bid));
                 self.events.push(SimEvent::BuildingChanged(bid));
+            }
+        }
+        for (i, (takings, costs)) in cover.into_iter().enumerate() {
+            if let Some(kind) = BusinessKind::ALL.get(i) {
+                self.economy.record_cover(*kind, takings, costs);
             }
         }
         for bid in demolish {
@@ -476,7 +491,9 @@ impl World {
     pub(super) fn ship(&mut self, from: BuildingId, to: BuildingId, resource: Resource, amount: f32, price: f32) {
         let cargo = Cargo { from, to, resource, amount, price };
         self.note_inbound(to, resource, amount);
-        self.dispatch_truck(TruckOrigin::Building(from), cargo, 7);
+        // [industry] a lorry parked at a truck lot near the seller takes the job
+        let origin = self.fleet_origin(from);
+        self.dispatch_truck(TruckOrigin::Building(origin), cargo, 7);
     }
 
     pub(super) fn truck_count(&self) -> usize {
@@ -648,17 +665,28 @@ impl World {
             return;
         }
         let cost = got * price;
+        // Everyone at home sees the restocked pantry, not just the shopper.
+        let mut pantry: Option<(Vec<CitizenId>, f32)> = None;
         match hh {
             Some(h) => {
                 h.money -= cost;
                 h.groceries += got;
                 c.groceries = h.groceries;
+                pantry = Some((h.members.clone(), h.groceries));
             }
             None => c.savings -= cost,
         }
         bz.money += cost;
         bz.revenue_today += cost;
         self.economy.market.deals_today += 1;
+        if let Some((members, g)) = pantry {
+            for m in members {
+                if let Some(mc) = self.citizens.get_mut(m) {
+                    mc.groceries = g;
+                }
+            }
+        }
+        let c = &mut self.citizens[cid];
         match r {
             Resource::Groceries => {
                 if c.household.is_none() {

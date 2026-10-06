@@ -171,6 +171,20 @@ pub enum Style {
     Landmark,
     Stadium,
     Prison,
+    // -- industry sub-zones (`nd_sim::industry`): forced by the business on
+    // the lot, never drawn from the land use's menu. One block at the end. --
+    /// Fields in rows, a barn, silos and a greenhouse.
+    Farmstead,
+    /// Pumpjacks and a derrick over stained ground.
+    OilField,
+    /// Distillation columns, pipe racks, tanks and flares.
+    Refinery,
+    /// Container stacks with a gantry and a loading lane.
+    ContainerYard,
+    /// Processing sheds, an ice plant, crates and a boat on blocks.
+    FishProcessing,
+    /// Marked bays with parked lorries and buses, a fuel island.
+    TruckLot,
     // [society] placed by the player; kept last so `ALL` keeps its order.
     TrashDepot,
 }
@@ -181,7 +195,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 70] = [
+    pub const ALL: [Style; 76] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -251,6 +265,12 @@ impl Style {
         Style::Landmark,
         Style::Stadium,
         Style::Prison,
+        Style::Farmstead,
+        Style::OilField,
+        Style::Refinery,
+        Style::ContainerYard,
+        Style::FishProcessing,
+        Style::TruckLot,
         Style::TrashDepot,
     ];
 
@@ -341,6 +361,12 @@ impl Style {
             Style::Landmark => "landmark",
             Style::Stadium => "stadium",
             Style::Prison => "jail",
+            Style::Farmstead => "farm",
+            Style::OilField => "oil field",
+            Style::Refinery => "refinery",
+            Style::ContainerYard => "container yard",
+            Style::FishProcessing => "fish processing",
+            Style::TruckLot => "truck and bus lot",
             Style::TrashDepot => "trash depot",
         }
     }
@@ -846,11 +872,15 @@ pub struct Extras<'a> {
     /// Draw window lights for the renderer to switch by occupancy (see
     /// [`Ctx::dynamic_lights`]).
     pub dynamic_lights: bool,
+    /// The business on the lot: industry sub-zones have their own looks.
+    pub business: Option<nd_sim::BusinessKind>,
+    /// A truck and bus lot: share of its bays in use.
+    pub fleet: f32,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, dynamic_lights: false }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, dynamic_lights: false, business: None, fleet: 0.5 }
     }
 }
 
@@ -970,8 +1000,50 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         (Some(PowerPlantKind::Geothermal), _) => Style::PowerGeothermal,
         (None, Some(_)) if tier == Tier::Low || floors < 2 => Style::ParkingLot,
         (None, Some(_)) => Style::CarPark,
+        (None, None) if extras.business.is_some_and(|k| industry_styles(k, tier).is_some()) => {
+            let options = industry_styles(extras.business.unwrap(), tier).unwrap();
+            pick_industry_style(options, extras.neighbours, &mut rng)
+        }
         (None, None) => rules.pick_style_near(land_use, tier, &adjacency::Site { floors, frontage: lot.width() }, extras.neighbours, &mut rng),
     }
+}
+
+/// The looks of an industry business, weighted, or `None` to draw from the
+/// land use's own menu (parts fabs keep the generic industrial styles).
+pub fn industry_styles(kind: nd_sim::BusinessKind, tier: Tier) -> Option<&'static [(Style, f32)]> {
+    use nd_sim::BusinessKind as B;
+    Some(match kind {
+        B::GrainFarm | B::Dairy | B::Mill => &[(Style::Farmstead, 1.0)],
+        B::VertFarm => &[(Style::Farmstead, 0.6), (Style::FlattedFactory, 0.4)],
+        B::ProteinVat => &[(Style::TankFarm, 0.6), (Style::Farmstead, 0.4)],
+        B::OilWell => &[(Style::OilField, 1.0)],
+        B::Refinery => &[(Style::Refinery, 0.8), (Style::TankFarm, 0.2)],
+        B::ContainerYard => &[(Style::ContainerYard, 0.7), (Style::Depot, 0.3)],
+        B::FleetLot => &[(Style::TruckLot, 1.0)],
+        B::Fishery | B::FishPlant => &[(Style::FishProcessing, 1.0)],
+        B::Assembly => match tier {
+            Tier::Low => &[(Style::FlattedFactory, 0.6), (Style::Workshops, 0.4)],
+            _ => &[(Style::FabPlant, 0.6), (Style::Datacenter, 0.4)],
+        },
+        _ => return None,
+    })
+}
+
+/// Weighted pick among an industry's looks, clustering by neighbours.
+fn pick_industry_style(options: &[(Style, f32)], near: &[Neighbour], rng: &mut impl Rng) -> Style {
+    let weights: Vec<f32> = options.iter().map(|(s, w)| w * adjacency::neighbour_factor(*s, near)).collect();
+    let total: f32 = weights.iter().sum();
+    if total <= 0.0 || !total.is_finite() {
+        return options[0].0;
+    }
+    let mut r = rng.random_range(0.0..total);
+    for ((s, _), w) in options.iter().zip(&weights) {
+        if r < *w {
+            return *s;
+        }
+        r -= w;
+    }
+    options[options.len() - 1].0
 }
 
 /// Generate a specific style; used by the tests and the style browser.
@@ -1003,7 +1075,8 @@ fn generate_styled_extras(
     palette: &Palette,
     extras: &Extras,
 ) -> Geometry {
-    let parking = extras.parking;
+    // A truck lot shows its fleet the way a car park shows its cars.
+    let parking = extras.parking.or((style == Style::TruckLot).then_some(extras.fleet));
     let mut g = Geometry::default();
     let mut rng = rng_for(seed, 13);
     let frame = Frame::from_lot(lot);
@@ -1120,6 +1193,12 @@ fn generate_styled_extras(
         Style::Landmark => services::landmark(&mut g, &ctx, &mut rng),
         Style::Stadium => services::stadium(&mut g, &ctx, &mut rng),
         Style::Prison => services::prison(&mut g, &ctx, &mut rng),
+        Style::Farmstead => industrial::farmstead(&mut g, &ctx, &mut rng),
+        Style::OilField => industrial::oil_field(&mut g, &ctx, &mut rng),
+        Style::Refinery => industrial::refinery(&mut g, &ctx, &mut rng),
+        Style::ContainerYard => industrial::container_yard(&mut g, &ctx, &mut rng),
+        Style::FishProcessing => industrial::fish_processing(&mut g, &ctx, &mut rng),
+        Style::TruckLot => industrial::truck_lot(&mut g, &ctx, &mut rng),
         Style::TrashDepot => sanitation::trash_depot(&mut g, &ctx, &mut rng),
     }
     if weathered(tier, ctx.wear) {
@@ -1474,6 +1553,20 @@ mod tests {
             let b = generate_building(lot, LandUse::Residential, 7, Tier::Low, 0.5, 3 + li as u64, &rules, &pal, &extras);
             assert!(a == b, "generate_building on lot {li} differs between two runs");
         }
+    }
+
+    /// A truck lot draws more lorries the fuller the sim says it is.
+    #[test]
+    fn a_truck_lot_shows_its_fleet() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let lots = many_lots(LandUse::Industrial);
+        let lot = lots.iter().max_by(|a, b| a.area().total_cmp(&b.area())).unwrap();
+        let tris = |fleet: f32| {
+            let e = Extras { business: Some(nd_sim::BusinessKind::FleetLot), fleet, ..Extras::default() };
+            generate_building(lot, LandUse::Industrial, 1, Tier::Low, 0.8, 9, &rules, &pal, &e).triangle_count()
+        };
+        assert!(tris(1.0) > tris(0.0) + 200, "{} vs {}", tris(1.0), tris(0.0));
     }
 
     #[test]

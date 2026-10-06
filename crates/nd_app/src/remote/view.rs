@@ -217,6 +217,7 @@ pub fn gesture(id: GestureId, g: &Gesture) -> Value {
             "lanes_fwd": lanes_fwd, "lanes_bwd": lanes_bwd, "curved": curved,
         }),
         Gesture::Zone { polygon, land_use } => json!({ "id": id.0, "kind": "zone", "land_use": land_use.label(), "points": points(polygon), "area": round(polygon_area(polygon).abs()) }),
+        Gesture::ParcelZone { parcels, land_use, industry } => json!({ "id": id.0, "kind": "parcel_zone", "land_use": land_use.map_or("unzoned", |l| l.label()), "parcels": parcels.len(), "industry": industry }),
     }
 }
 

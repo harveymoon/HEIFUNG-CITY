@@ -69,7 +69,7 @@ pub(super) fn sync_society(mut commands: Commands, mut meshes: ResMut<Assets<Mes
         if !camp_visible(w, c.pos) {
             continue;
         }
-        let out = c.lot.and_then(|l| w.lots.get(l)).map_or(SVec2::Y, |l| l.front_dir);
+        let out = if c.out != SVec2::ZERO { c.out } else { c.lot.and_then(|l| w.lots.get(l)).map_or(SVec2::Y, |l| l.front_dir) };
         geo.append(&camp(c.pos, c.dir, out, c.tents(), c.sidewalk, w.config.seed ^ c.id as u64 * 0x9E37, pal));
     }
     for r in &s.homeless.rvs {

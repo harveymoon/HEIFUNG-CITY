@@ -531,7 +531,9 @@ mod tests {
         assert!(w.society.trash.stats.private_revenue_yesterday > 0.0);
         // A staffed depot covering them: the clients cancel.
         let crew = adults(&w);
-        let depot = w.build_service(civic_lot(&w, 0.0), ServiceKind::TrashDepot, Tier::Mid).unwrap();
+        let what = crate::services::Placeable::Service(ServiceKind::TrashDepot, Tier::Mid);
+        let lot = w.lots.iter().filter(|(id, l)| l.land_use == LandUse::Civic && w.placement_problem(what, *id).is_none()).min_by(|a, b| a.1.center.x.abs().total_cmp(&b.1.center.x.abs())).map(|(id, _)| id).expect("a lot for the depot");
+        let depot = w.build_service(lot, ServiceKind::TrashDepot, Tier::Mid).unwrap();
         staff(&mut w, depot, &crew[..8]);
         w.hourly_trash();
         assert_eq!(w.society.trash.stats.private_clients, 0, "demand falls as the city covers");

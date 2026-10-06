@@ -382,7 +382,7 @@ impl World {
             let t = &mut self.society.trash.trucks[id];
             t.car = None;
             t.pos = t.dest;
-            self.truck_arrived(id);
+            self.trash_truck_arrived(id);
         }
         let ids: Vec<TruckId> = self.society.trash.trucks.keys().collect();
         for id in ids {
@@ -512,7 +512,7 @@ impl World {
             _ => {
                 let t = &mut self.society.trash.trucks[id];
                 t.pos = to.1;
-                self.truck_arrived(id);
+                self.trash_truck_arrived(id);
             }
         }
     }
@@ -569,7 +569,7 @@ impl World {
     }
 
     /// A truck got where it was going.
-    fn truck_arrived(&mut self, id: TruckId) {
+    fn trash_truck_arrived(&mut self, id: TruckId) {
         let Some(t) = self.society.trash.trucks.get_mut(id) else { return };
         match t.state {
             TruckState::ToStop => {
@@ -636,7 +636,7 @@ impl World {
         t.car = None;
         t.pos = c.pos;
         t.heading = c.heading;
-        self.truck_arrived(id);
+        self.trash_truck_arrived(id);
     }
 
     // ── midnight ───────────────────────────────────────────────────────────

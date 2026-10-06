@@ -3,13 +3,24 @@
 
 use super::*;
 
+/// Takings over costs a kind of business must have shown before more of
+/// it are built (1 is break-even).
+const COVER_TO_EXPAND: f32 = 1.05;
+/// A kind of business whose shelves hold more than this many days of what
+/// it makes is not selling it all: no more of it are built.
+const MARKET_FULL_DAYS: f32 = 0.75;
+/// Largest building a kind of business new to the town is tried in.
+const TRIAL_MAX_JOBS: u16 = 20;
+
 impl World {
     pub(super) fn update_economy(&mut self) {
         let e = &mut self.economy;
         e.population = self.citizens.len() as u32;
         e.unhoused = self.citizens.values().filter(|c| c.home.is_none()).count() as u32;
         // Children and retirees are not looking for work.
+        e.working_age = self.citizens.values().filter(|c| c.can_work()).count() as u32;
         e.unemployed = self.citizens.values().filter(|c| c.work.is_none() && c.can_work()).count() as u32;
+        e.jobs_permanent = self.buildings.values().filter(|b| b.construction.is_none()).map(|b| b.jobs as u32).sum();
         e.households = self.households.len() as u32;
         e.household_sizes = [0; 6];
         let mut stressed = 0;
@@ -136,13 +147,16 @@ impl World {
                 }
                 // [society] Crime hot spots, camps and overflowing bins.
                 self.splat_society(&mut b);
+                // [industry] fouled ground
+                self.splat_contamination(&mut b);
             }
             _ => {
                 b.finish(0.25, &mut self.land_value);
                 let lv = &self.land_value;
                 for bld in self.buildings.values_mut() {
                     if let Some(lot) = self.lots.get(bld.lot) {
-                        bld.update_rent(lv.at(lot.center));
+                        // [industry] as the building's land use feels it
+                        bld.update_rent(lv.for_use(lot.center, bld.land_use));
                     }
                 }
                 return;
@@ -171,7 +185,8 @@ impl World {
                     b.splat(c, 110.0, 0.06);
                     b.splat(c, 50.0, -0.08);
                 }
-                LandUse::Industrial => b.splat(c, 220.0, -0.3),
+                // [industry] by sub-zone: nuisance plus a lift on cheap land
+                LandUse::Industrial => Self::splat_industry(b, bld, c),
                 LandUse::Residential => match bld.tier {
                     Tier::High => b.splat(c, 130.0, 0.12),
                     Tier::Low => b.splat(c, 130.0, -0.07),
@@ -184,7 +199,8 @@ impl World {
             if let Some(kind) = bld.plant {
                 let (r, w) = kind.pollution();
                 if r > 0.0 {
-                    b.splat(c, r, w);
+                    // [industry] a nuisance: homes feel it most
+                    b.splat_nuisance(c, r, -w);
                 }
             }
             if let Some(link) = &bld.rail {
@@ -257,7 +273,8 @@ impl World {
             let (lu, tier, value, derelict_before, full, special) = {
                 let b = &self.buildings[bid];
                 let full = if b.land_use == LandUse::Residential { b.homes > 0 && b.free_homes() == 0 } else { b.jobs > 0 && b.free_jobs() == 0 };
-                let value = self.lots.get(b.lot).map(|l| self.land_value.at(l.center)).unwrap_or(b.land_value);
+                // [industry] land value as the land use feels it
+                let value = if self.lots.contains_key(b.lot) { self.lot_value(b.lot) } else { b.land_value };
                 let special = b.is_parking() || b.is_special();
                 (b.land_use, b.tier, value, b.is_derelict(), full, special)
             };
@@ -290,7 +307,11 @@ impl World {
                 self.redevelop(bid, target, floors.max(1), value);
                 continue;
             } else if lu != LandUse::Park && !special {
-                if target > tier && full && self.rng.random::<f32>() < 0.15 {
+                // A one-step upgrade in place (refit, tenants stay). A cheap
+                // building on dear land two tiers up is not refitted: it
+                // waits for the redevelopment above, which re-lets it.
+                let refit = target > tier && !(tier == Tier::Low && target == Tier::High);
+                if refit && full && self.rng.random::<f32>() < 0.15 {
                     let b = &mut self.buildings[bid];
                     b.tier = tier.up();
                     b.condition = 1.0;
@@ -309,6 +330,9 @@ impl World {
                 b.seed = seed;
                 b.recompute_capacity();
                 b.update_rent(value);
+                if redevelop {
+                    self.reopen_after_rebuild(bid);
+                }
                 self.events.push(SimEvent::BuildingChanged(bid));
             }
         }
@@ -360,12 +384,18 @@ impl World {
                 }
             }
         }
+        // Land uses whose businesses would all lose money are not built on:
+        // a town that cannot sell more bread does not get another bakery.
+        let viable: Vec<bool> = LandUse::ALL.iter().map(|&lu| self.business_kinds_viable(lu, None).is_none_or(|v| !v.is_empty())).collect();
         for i in 0..vacant.len() {
             if built >= self.config.max_builds_per_interval {
                 break;
             }
             let lot_id = vacant[(start + i) % vacant.len()];
             let lu = self.lots[lot_id].land_use;
+            if !viable[lu.index()] {
+                continue;
+            }
             let chance = match lu {
                 LandUse::Park => 0.05,
                 _ => self.economy.demand_for(lu) * 0.06,
@@ -374,6 +404,107 @@ impl World {
                 self.build_on(lot_id);
                 built += 1;
             }
+        }
+    }
+
+    /// The kinds of business a new building on `lu` land could open as and
+    /// expect to pay its way, by what the market says (`None` when the land
+    /// use has no businesses):
+    /// - groceries while the grocers' jobs open or being built are short of
+    ///   what the town will eat and the grocers in town are not losing money;
+    /// - offices, which are publicly funded and take on the jobless;
+    /// - any other kind with no business of it yet and none being built (a
+    ///   first one to try the market), or whose businesses in town have paid
+    ///   their way of late (`Economy::business_cover`), are selling what
+    ///   they make (`MARKET_FULL_DAYS`) and are not already adding one more
+    ///   for every few open. A first one is tried only in a
+    ///   building of at most `TRIAL_MAX_JOBS` jobs (`jobs_here`, when known):
+    ///   a tower full of bakers is no way to find out whether the town eats
+    ///   more bread.
+    pub(super) fn business_kinds_viable(&self, lu: LandUse, jobs_here: Option<u16>) -> Option<Vec<BusinessKind>> {
+        let candidates = BusinessKind::candidates(lu);
+        if candidates.is_empty() {
+            return None;
+        }
+        let (mut open, mut sites, mut jobs) = ([0u32; BusinessKind::COUNT], [0u32; BusinessKind::COUNT], [0u32; BusinessKind::COUNT]);
+        // Output on the shelves of each kind, against a day of what they
+        // make at full staff: over most of a day and the market is full.
+        let (mut stock, mut day) = ([0.0f32; BusinessKind::COUNT], [0.0f32; BusinessKind::COUNT]);
+        for b in self.buildings.values() {
+            let Some(z) = &b.business else { continue };
+            if z.closed {
+                continue;
+            }
+            let i = z.kind.index();
+            if b.construction.is_some() {
+                sites[i] += 1;
+                jobs[i] += b.planned_capacity().1 as u32;
+            } else {
+                open[i] += 1;
+                jobs[i] += b.jobs as u32;
+                if let Some((r, per)) = z.kind.recipe().outputs.first() {
+                    stock[i] += z.stock_of(*r);
+                    day[i] += per * b.jobs as f32 * crate::market::JOB_RATE * 24.0;
+                }
+            }
+        }
+        let room = |i: usize| day[i] <= 0.0 || stock[i] < day[i] * MARKET_FULL_DAYS;
+        let grocery_jobs_needed = self.grocery_jobs_needed();
+        let mut out: Vec<BusinessKind> = Vec::new();
+        for &kind in candidates {
+            let i = kind.index();
+            let ok = match kind {
+                BusinessKind::Office => true,
+                BusinessKind::Grocery if (jobs[i] as f32) < grocery_jobs_needed && self.economy.cover_of(kind).is_none_or(|c| c >= 0.85) => true,
+                _ if open[i] == 0 => sites[i] == 0 && jobs_here.is_none_or(|j| j <= TRIAL_MAX_JOBS),
+                _ => self.economy.cover_of(kind).is_some_and(|c| c >= COVER_TO_EXPAND) && room(i) && sites[i] <= open[i] / 4,
+            };
+            if ok && !out.contains(&kind) {
+                out.push(kind);
+            }
+        }
+        Some(out)
+    }
+
+    /// Grocers' jobs the town needs for the people it has and most of those
+    /// the homes going up will bring: two thirds of everyone's groceries
+    /// (the bakeries feed the rest) at what a grocer's job sells in a day.
+    pub(super) fn grocery_jobs_needed(&self) -> f32 {
+        let e = &self.economy;
+        let per_home = if e.households > 0 { self.citizens.len() as f32 / e.households as f32 } else { 2.2 };
+        let people = self.citizens.len() as f32 + e.homes_building as f32 * per_home * 0.6;
+        let per_job_day = BusinessKind::Grocery.recipe().outputs[0].1 * crate::market::JOB_RATE * BusinessKind::Grocery.hours().span() as f32;
+        people * crate::citizens::GROCERIES_PER_PERSON_DAY * 0.66 / per_job_day.max(0.1)
+    }
+
+    /// The business a new building on `lu` land opens as: a grocer first
+    /// while the town is short of them, else one of the viable kinds, else
+    /// (when a player or script builds anyway) the kind doing best.
+    pub(super) fn pick_business_kind(&mut self, lu: LandUse, jobs: u16) -> Option<BusinessKind> {
+        let viable = self.business_kinds_viable(lu, Some(jobs))?;
+        if viable.contains(&BusinessKind::Grocery) && self.rng.random_bool(0.6) {
+            return Some(BusinessKind::Grocery);
+        }
+        if let Some(kind) = viable.choose(&mut self.rng) {
+            return Some(*kind);
+        }
+        let e = &self.economy;
+        BusinessKind::candidates(lu).iter().copied().max_by(|a, b| e.cover_of(*a).unwrap_or(1.0).total_cmp(&e.cover_of(*b).unwrap_or(1.0)))
+    }
+
+    /// A building rebuilt bigger reopens as whatever the market wants now,
+    /// unless its business was paying its way: a bakery that lost money as
+    /// a corner shop does not come back as a tower full of bakers. The staff
+    /// keep their jobs; the new business starts with fresh capital.
+    pub(super) fn reopen_after_rebuild(&mut self, bid: BuildingId) {
+        let Some(b) = self.buildings.get(bid) else { return };
+        let Some(kind) = b.business.as_ref().map(|z| z.kind) else { return };
+        let (lu, jobs) = (b.land_use, b.jobs);
+        if matches!(kind, BusinessKind::Office | BusinessKind::Parking) || self.economy.cover_of(kind).is_none_or(|c| c >= COVER_TO_EXPAND) {
+            return;
+        }
+        if let Some(new) = self.pick_business_kind(lu, jobs).filter(|k| *k != kind) {
+            self.buildings[bid].business = Some(Business::new(new, jobs));
         }
     }
 
@@ -406,7 +537,8 @@ impl World {
             return;
         }
         let lu = self.lots[lot_id].land_use;
-        let value = self.land_value.at(self.lots[lot_id].center);
+        // [industry] land value as the land use feels it
+        let value = self.lot_value(lot_id);
         let mut tier = Tier::for_land_value(value);
         if lu == LandUse::Residential {
             tier = self.residential_tier(tier);
@@ -418,9 +550,14 @@ impl World {
         if !self.lots[lot_id].car_access() {
             b.parking_capacity = 0;
         }
-        if let Some(kind) = BusinessKind::candidates(lu).choose(&mut self.rng) {
+        if let Some(kind) = self.business_for_new_building(lot_id, lu, b.jobs) {
+            // [industry] some sub-zones build low: wells, fields, yards
+            if let Some(ik) = kind.industry() {
+                b.floors = b.floors.min(ik.max_floors()).max(1);
+                b.recompute_capacity();
+            }
             let jobs = b.jobs;
-            b.business = Some(Business::new(*kind, jobs));
+            b.business = Some(Business::new(kind, jobs));
         }
         // Nothing opens overnight: the lot becomes a building site first.
         b.construction = Some(Construction::new(Construction::days_for(floors, tier)));
@@ -431,3 +568,29 @@ impl World {
         self.order_materials(id);
     }
 }
+
+// [industry] Business choice for a new building, kept apart from the
+// development logic above: industrial lots choose by sub-zone (ground,
+// neighbours, the player's bias; see `world/industry.rs`), everything else
+// draws from its land use's menu as before.
+impl World {
+    /// The business for a new building. Industrial lots follow their
+    /// ground, neighbours and the player's bias ([industry]); the market
+    /// reading ([balance]) vetoes an unforced industrial kind that is
+    /// losing money and picks every other land use.
+    fn business_for_new_building(&mut self, lot_id: LotId, lu: LandUse, jobs: u16) -> Option<BusinessKind> {
+        if lu == LandUse::Industrial {
+            let forced = self.lots.get(lot_id).and_then(|l| self.industry_bias_at(l.center)).flatten().is_some();
+            if let Some(k) = self.pick_industrial_business(lot_id) {
+                if forced || self.economy.cover_of(k).is_none_or(|c| c >= INDUSTRY_MIN_COVER) {
+                    return Some(k);
+                }
+            }
+        }
+        self.pick_business_kind(lu, jobs)
+    }
+}
+
+/// [balance x industry] An industrial kind whose takings cover less than
+/// this share of its costs is not built again unless the player asked for it.
+const INDUSTRY_MIN_COVER: f32 = 0.8;

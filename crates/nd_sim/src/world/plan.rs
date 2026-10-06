@@ -1,8 +1,40 @@
 //! Planning: projects and gestures, undo/redo, the preview, and
-//! `rebuild_from_master`, which turns the master plan into roads, zones,
-//! lots and buildings (eminent domain, lot matching, demolition).
+//! `rebuild_from_master`, which turns the master plan into roads, parcels,
+//! zones, lots and buildings (eminent domain, lot matching, demolition).
+//!
+//! Several named projects can be pending at once. The active one lives in
+//! `World::project` (so "take the project, add a gesture, implement, put it
+//! back" still works for scripts); the others wait in `parked_projects`,
+//! are previewed dimmed, and are implemented one at a time, each over the
+//! master as the ones before it left it.
 
 use super::*;
+use crate::plan::{parcel_zoning, ParcelZoning};
+use crate::zoning::{generate_parcels, inner_center, join_parcels, make_lot, Parcel, ParcelKey, ParcelMap};
+
+/// One pending project as the UI and the remote API list it.
+#[derive(Clone, Debug)]
+pub struct ProjectInfo {
+    pub id: u64,
+    pub name: String,
+    pub active: bool,
+    pub steps: usize,
+    pub redo: usize,
+    /// Gestures another project also changes, with that project's id.
+    pub conflicts: Vec<(GestureId, u64)>,
+    /// Parcels another project also paints.
+    pub shared_parcels: usize,
+}
+
+/// An inactive project drawn as a dim hologram: its roads and zones, and
+/// the parcels whose land use it would change.
+#[derive(Clone, Debug)]
+pub struct ProjectPreview {
+    pub id: u64,
+    pub name: String,
+    pub preview: PlanPreview,
+    pub zoning: Vec<(usize, Option<LandUse>)>,
+}
 
 impl World {
     /// Convenience for scripts and tests: lay track right away.
@@ -18,6 +50,408 @@ impl World {
         self.project.is_some()
     }
 
+    // ── several projects ────────────────────────────────────────────────
+
+    /// The active project, then the parked ones.
+    pub fn all_projects(&self) -> impl Iterator<Item = &Project> {
+        self.project.iter().chain(self.parked_projects.iter())
+    }
+
+    /// "Project n" for the smallest n not taken.
+    fn unused_project_name(&self) -> String {
+        (1..).map(|n| format!("Project {n}")).find(|n| !self.all_projects().any(|p| &p.name == n)).unwrap_or_default()
+    }
+
+    fn fresh_project(&mut self, name: Option<&str>) -> Project {
+        self.next_project = self.next_project.max(1);
+        let id = self.next_project;
+        self.next_project += 1;
+        let name = match name.map(str::trim) {
+            Some(n) if !n.is_empty() => n.to_string(),
+            _ => self.unused_project_name(),
+        };
+        Project { id, name, ..Project::default() }
+    }
+
+    /// Number and name an active project that has neither (a save from
+    /// before named projects).
+    pub(super) fn name_active_project(&mut self) {
+        if self.project.as_ref().is_some_and(|p| p.id == 0) {
+            let fresh = self.fresh_project(None);
+            let p = self.project.as_mut().unwrap();
+            p.id = fresh.id;
+            if p.name.is_empty() {
+                p.name = fresh.name;
+            }
+        }
+    }
+
+    /// Every pending project, by id, with what it shares with the others.
+    pub fn projects(&self) -> Vec<ProjectInfo> {
+        let active = self.project.as_ref().map(|p| p.id);
+        let mut out: Vec<ProjectInfo> = self
+            .all_projects()
+            .map(|p| {
+                let mut conflicts = Vec::new();
+                let mut shared = 0;
+                let painted = p.painted();
+                for o in self.all_projects().filter(|o| o.id != p.id) {
+                    conflicts.extend(p.conflicts_with(o).into_iter().map(|g| (g, o.id)));
+                    if !painted.is_empty() {
+                        shared += o.painted().intersection(&painted).count();
+                    }
+                }
+                ProjectInfo { id: p.id, name: p.name.clone(), active: Some(p.id) == active, steps: p.steps.len(), redo: p.redo.len(), conflicts, shared_parcels: shared }
+            })
+            .collect();
+        out.sort_by_key(|i| i.id);
+        out
+    }
+
+    /// Start a new, empty project and make it the active one; the one that
+    /// was active is parked. Returns its id.
+    pub fn new_project(&mut self, name: Option<&str>) -> u64 {
+        self.name_active_project();
+        let fresh = self.fresh_project(name);
+        let id = fresh.id;
+        if let Some(old) = self.project.replace(fresh) {
+            self.parked_projects.push(old);
+        }
+        self.plan_changed();
+        id
+    }
+
+    /// Make a parked project the active one (the active one is parked).
+    pub fn switch_project(&mut self, id: u64) -> bool {
+        if self.project.as_ref().is_some_and(|p| p.id == id) {
+            return true;
+        }
+        let Some(i) = self.parked_projects.iter().position(|p| p.id == id) else { return false };
+        self.name_active_project();
+        let p = self.parked_projects.remove(i);
+        if let Some(old) = self.project.replace(p) {
+            self.parked_projects.push(old);
+        }
+        self.parked_projects.sort_by_key(|p| p.id);
+        self.plan_changed();
+        true
+    }
+
+    /// Park the active project: nothing is being edited, every project is
+    /// previewed dimmed.
+    pub fn park_project(&mut self) -> bool {
+        self.name_active_project();
+        let Some(p) = self.project.take() else { return false };
+        self.parked_projects.push(p);
+        self.parked_projects.sort_by_key(|p| p.id);
+        self.plan_changed();
+        true
+    }
+
+    fn project_mut(&mut self, id: u64) -> Option<&mut Project> {
+        if self.project.as_ref().is_some_and(|p| p.id == id) {
+            return self.project.as_mut();
+        }
+        self.parked_projects.iter_mut().find(|p| p.id == id)
+    }
+
+    pub fn rename_project(&mut self, id: u64, name: &str) -> bool {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return false;
+        }
+        match self.project_mut(id) {
+            Some(p) => {
+                p.name = name;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Throw a project away, active or parked.
+    pub fn delete_project(&mut self, id: u64) -> bool {
+        if self.project.as_ref().is_some_and(|p| p.id == id) {
+            self.discard_project();
+            return true;
+        }
+        let before = self.parked_projects.len();
+        self.parked_projects.retain(|p| p.id != id);
+        let gone = self.parked_projects.len() != before;
+        if gone {
+            self.plan_changed();
+        }
+        gone
+    }
+
+    /// Undo the last step of any project; the others are untouched.
+    pub fn undo_project(&mut self, id: u64) -> bool {
+        let ok = self.project_mut(id).is_some_and(|p| p.undo());
+        if ok {
+            self.plan_changed();
+        }
+        ok
+    }
+
+    pub fn redo_project(&mut self, id: u64) -> bool {
+        let ok = self.project_mut(id).is_some_and(|p| p.redo());
+        if ok {
+            self.plan_changed();
+        }
+        ok
+    }
+
+    /// What implementing `project` now would override or be overridden by:
+    /// gestures and parcels other pending projects also change. Implemented
+    /// in turn, each project's version is built over the last, so the
+    /// project implemented later wins.
+    fn conflict_warnings(&self, project: &Project) -> Vec<String> {
+        let mut out = Vec::new();
+        let painted = project.painted();
+        let name = |p: &Project| if p.name.is_empty() { "this project".to_string() } else { p.name.clone() };
+        for o in self.all_projects().filter(|o| o.id != project.id) {
+            let shared = project.conflicts_with(o);
+            if !shared.is_empty() {
+                let ids: Vec<String> = shared.iter().map(|g| g.0.to_string()).collect();
+                out.push(format!("{} and {} both change gesture {}: {}'s version is built now, and {} will build its own over it if implemented later.", name(project), o.name, ids.join(", "), name(project), o.name));
+            }
+            let both = if painted.is_empty() { 0 } else { o.painted().intersection(&painted).count() };
+            if both > 0 {
+                out.push(format!("{} and {} both paint {both} parcel{}: the one implemented later decides them.", name(project), o.name, if both == 1 { "" } else { "s" }));
+            }
+        }
+        out
+    }
+
+    /// Implement one project (active or parked) over the master plan.
+    /// The active project, if it is another, stays active. Returns the
+    /// conflict warnings (also left in `plan_warnings`), or None for an
+    /// unknown id.
+    pub fn implement_project(&mut self, id: u64) -> Option<Vec<String>> {
+        if self.project.as_ref().is_some_and(|p| p.id == id) {
+            self.implement();
+            return Some(self.plan_warnings.clone());
+        }
+        let i = self.parked_projects.iter().position(|p| p.id == id)?;
+        let p = self.parked_projects.remove(i);
+        let active = self.project.replace(p);
+        self.implement();
+        self.project = active;
+        self.plan_changed();
+        Some(self.plan_warnings.clone())
+    }
+
+    /// Every parked project as it would look built over today's master.
+    pub fn inactive_previews(&self) -> Vec<ProjectPreview> {
+        self.parked_projects
+            .iter()
+            .map(|p| {
+                let effective = p.apply_to(&self.master);
+                let zoning = parcel_zoning(&self.parcels, &effective)
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(i, z)| {
+                        let lu = z.map(|(l, _)| l);
+                        (lu != self.parcels.parcels[i].land_use).then_some((i, lu))
+                    })
+                    .collect();
+                ProjectPreview { id: p.id, name: p.name.clone(), preview: preview(&self.master, p), zoning }
+            })
+            .collect()
+    }
+
+    // ── parcels and painting ─────────────────────────────────────────────
+
+    /// Land use of every parcel (by index into `parcels`) under the
+    /// effective plan: the master with the active project applied. Kept
+    /// current with every plan change.
+    pub fn planned_zoning(&self) -> &[Option<LandUse>] {
+        if self.planned.len() == self.parcels.len() {
+            &self.planned
+        } else {
+            &[]
+        }
+    }
+
+    pub(super) fn refresh_planned_zoning(&mut self) {
+        let z: ParcelZoning = parcel_zoning(&self.parcels, self.effective_plan());
+        self.planned = z.into_iter().map(|o| o.map(|(l, _)| l)).collect();
+    }
+
+    /// Paint parcels (indices into `parcels`) with a land use, or erase
+    /// them back to unzoned with `None`. Only parcels that accept the use
+    /// and are not already planned as it are painted (erasing, only zoned
+    /// ones). With `stroke` naming the paint gesture of a stroke still
+    /// being dragged, the parcels join it and its step is amended, so one
+    /// stroke is one undo. Returns the stroke's gesture (None when nothing
+    /// was painted and there was no stroke) and how many parcels changed.
+    pub fn paint_parcels(&mut self, ids: &[usize], land_use: Option<LandUse>, stroke: Option<GestureId>) -> (Option<GestureId>, usize) {
+        self.paint_parcels_with(ids, land_use, None, stroke)
+    }
+
+    /// [`World::paint_parcels`] that also sets the industry sub-zone of the
+    /// painted ground (`industry`: an industry kind key, or "auto"), applied
+    /// on implement. With a sub-zone, parcels already planned industrial are
+    /// painted again so their sub-zone changes.
+    pub fn paint_parcels_with(&mut self, ids: &[usize], land_use: Option<LandUse>, industry: Option<&str>, stroke: Option<GestureId>) -> (Option<GestureId>, usize) {
+        let industry = industry.filter(|_| land_use == Some(LandUse::Industrial)).map(str::to_string);
+        let planned = self.planned_zoning();
+        let mut keys: Vec<ParcelKey> = Vec::new();
+        for &i in ids {
+            let Some(p) = self.parcels.parcels.get(i) else { continue };
+            let now = planned.get(i).copied().flatten();
+            let wanted = match land_use {
+                Some(lu) => p.accepts(lu) && (now != Some(lu) || industry.is_some()),
+                None => now.is_some(),
+            };
+            if wanted {
+                keys.push(p.key);
+            }
+        }
+        keys.sort();
+        keys.dedup();
+        if keys.is_empty() {
+            return (stroke, 0);
+        }
+        let n = keys.len();
+        if let Some(id) = stroke {
+            if let Some(Gesture::ParcelZone { parcels: mut have, land_use: l, industry: ind }) = self.gesture(id) {
+                if l == land_use && ind == industry {
+                    let before = have.len();
+                    have.extend(keys);
+                    have.sort();
+                    have.dedup();
+                    // Parcels the stroke already holds are not news.
+                    let added = have.len() - before;
+                    if added > 0 {
+                        self.set_gesture(id, Gesture::ParcelZone { parcels: have, land_use, industry }, false);
+                    }
+                    return (Some(id), added);
+                }
+            }
+        }
+        let id = self.add_gesture(Gesture::ParcelZone { parcels: keys, land_use, industry });
+        (Some(id), n)
+    }
+
+    /// A zone polygon, and with an industry sub-zone the same parcels
+    /// painted with it, as one step (one undo).
+    pub fn add_zone_gesture(&mut self, polygon: Vec<Vec2>, land_use: LandUse, industry: Option<&str>) -> GestureId {
+        let zone = GestureId(self.next_gesture);
+        self.next_gesture += 1;
+        let mut changes = vec![(zone, Some(Gesture::Zone { polygon: polygon.clone(), land_use }))];
+        if let (LandUse::Industrial, Some(ind)) = (land_use, industry) {
+            let mut keys: Vec<ParcelKey> = self.parcels.in_polygon(&polygon).into_iter().filter(|&i| self.parcels.parcels[i].accepts(land_use)).map(|i| self.parcels.parcels[i].key).collect();
+            keys.sort();
+            if !keys.is_empty() {
+                let id = GestureId(self.next_gesture);
+                self.next_gesture += 1;
+                changes.push((id, Some(Gesture::ParcelZone { parcels: keys, land_use: Some(land_use), industry: Some(ind.to_string()) })));
+            }
+        }
+        self.edit_project(|p| p.push_many(changes));
+        zone
+    }
+
+    /// After an implement: the industry sub-zones the project's strokes
+    /// painted, one bias per connected patch of their parcels, oldest
+    /// stroke first so the newest wins.
+    fn apply_industry_strokes(&mut self, project: &Project) {
+        let touched: std::collections::BTreeSet<GestureId> = project.touched().collect();
+        let mut patches: Vec<(Vec<Vec2>, String)> = Vec::new();
+        for id in touched {
+            let Some(Gesture::ParcelZone { parcels, land_use: Some(LandUse::Industrial), industry: Some(kind) }) = self.master.gestures.get(&id) else { continue };
+            let polys: Vec<Vec<Vec2>> = parcels.iter().filter_map(|k| self.parcels.find(k)).map(|i| self.parcels.parcels[i].polygon.clone()).collect();
+            for outline in crate::zoning::union_outlines(&polys) {
+                patches.push((outline, kind.clone()));
+            }
+        }
+        for (outline, kind) in patches {
+            self.apply_industry_choice(outline, &kind);
+        }
+    }
+
+    /// Cut the parcels for today's roads: rough ground marked, nothing
+    /// under a station, yard or dock footprint.
+    fn cut_parcels(&self) -> Vec<Parcel> {
+        let water = self.water_mask();
+        let h = self.config.half_extent;
+        let mut parcels = generate_parcels(&self.roads, &water, Some((Vec2::splat(-h), Vec2::splat(h))));
+        if !self.landscape.is_flat() {
+            let land = &self.landscape;
+            for p in &mut parcels {
+                let mut pts = p.polygon.clone();
+                pts.push(p.center);
+                p.rough = land.is_water(p.center) || land.slope_over(&pts) > crate::landscape::MAX_LOT_SLOPE;
+            }
+        }
+        let footprints: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect();
+        parcels.retain(|p| !footprints.iter().any(|fp| point_in_polygon(p.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.98), &p.polygon)));
+        parcels
+    }
+
+    /// Cut the parcels again and tie each to the saved lot holding its
+    /// centre (after a load: lots are saved, parcels are derived).
+    pub(super) fn recut_parcels(&mut self) {
+        let parcels = self.cut_parcels();
+        self.parcels = ParcelMap::new(parcels, self.parcels.version + 1);
+        let grid = LotGrid::new(&self.lots);
+        for p in &mut self.parcels.parcels {
+            let hit = grid.near(p.center, 0.0).into_iter().find(|&id| {
+                let l = &self.lots[id];
+                self.zones.contains_key(l.zone) && l.contains(p.center)
+            });
+            if let Some(id) = hit {
+                p.lot = Some(id);
+                p.land_use = Some(self.lots[id].land_use);
+            }
+        }
+        self.refresh_planned_zoning();
+    }
+
+    /// Parcels from the roads, zoning from the master plan, a lot for every
+    /// zoned parcel (or run of joined parcels). Zone polygons keep their
+    /// zone; painted lots get a zone of their own outline.
+    fn build_lots_from_parcels(&mut self) {
+        let parcels = self.cut_parcels();
+        self.parcels = ParcelMap::new(parcels, self.parcels.version + 1);
+        self.zones.clear();
+        let zoning = parcel_zoning(&self.parcels, &self.master);
+        // Zones newest first, as they always were listed.
+        let zones: Vec<(GestureId, Vec<Vec2>, LandUse)> = self.master.zones().map(|(id, p, lu)| (id, p.to_vec(), lu)).collect();
+        let mut zone_of: HashMap<GestureId, ZoneId> = HashMap::new();
+        for (gid, polygon, land_use) in zones.into_iter().rev() {
+            zone_of.insert(gid, self.zones.insert(Zone { polygon, land_use }));
+        }
+        for lu in LandUse::ALL {
+            let members: Vec<usize> = (0..zoning.len()).filter(|&i| zoning[i].is_some_and(|(l, _)| l == lu)).collect();
+            if members.is_empty() {
+                continue;
+            }
+            let polys: Vec<Vec<Vec2>> = members.iter().map(|&i| self.parcels.parcels[i].polygon.clone()).collect();
+            for (idx, poly) in join_parcels(&polys, lu, &self.roads) {
+                let first = members[idx[0]];
+                let Some((_, gid)) = zoning[first] else { continue };
+                let center = if idx.len() == 1 { self.parcels.parcels[first].center } else { inner_center(&poly) };
+                let zid = match zone_of.get(&gid) {
+                    Some(z) => *z,
+                    None => self.zones.insert(Zone { polygon: poly.clone(), land_use: lu }),
+                };
+                let Some(mut lot) = make_lot(zid, lu, poly, center, &self.roads) else { continue };
+                if idx.iter().any(|&k| self.parcels.parcels[members[k]].rough) {
+                    lot.landlocked = true;
+                }
+                let id = self.lots.insert(lot);
+                for &k in &idx {
+                    let p = &mut self.parcels.parcels[members[k]];
+                    p.lot = Some(id);
+                    p.land_use = Some(lu);
+                }
+            }
+        }
+        self.refresh_planned_zoning();
+    }
+
     /// Every change to master or project goes through here: the version
     /// moves and the effective plan is rebuilt once, so the tools can read
     /// it as often as they like.
@@ -28,11 +462,13 @@ impl World {
             None => self.master.clone(),
         };
         self.plan_cache = Some((self.plan_version, plan));
+        self.refresh_planned_zoning();
     }
 
+    /// Make sure there is an active project, starting a fresh one if not.
     pub fn start_project(&mut self) {
         if self.project.is_none() {
-            self.project = Some(Project::default());
+            self.project = Some(self.fresh_project(None));
             self.plan_changed();
         }
     }
@@ -68,6 +504,7 @@ impl World {
     }
 
     /// Change the land use of a zone gesture in place.
+    /// (Painted parcels are repainted with `paint_parcels`.)
     pub fn repaint_zone(&mut self, id: GestureId, land_use: LandUse) -> bool {
         match self.gesture(id) {
             Some(Gesture::Zone { polygon, .. }) => {
@@ -120,12 +557,14 @@ impl World {
     /// lanes. Buildings whose lot survives are kept; the rest are demolished.
     pub fn implement(&mut self) {
         let Some(project) = self.project.take() else { return };
+        self.plan_warnings = self.conflict_warnings(&project);
         if project.is_empty() {
             self.plan_changed();
             return;
         }
         self.master = project.apply_to(&self.master);
         self.rebuild_from_master();
+        self.apply_industry_strokes(&project);
     }
 
     /// Convenience for scripts and tests: build a road right away.
@@ -180,26 +619,15 @@ impl World {
         self.mark_bridges();
         self.rebuild_road_components();
 
-        // Zones, newest first so a zone drawn over an older one takes the ground.
-        // SlotMap reuses freed slots, so iteration order is not insertion order;
-        // keep the ids in the order we need them.
-        self.zones.clear();
-        let zones: Vec<_> = self.master.zones().collect();
-        let zone_ids: Vec<ZoneId> = zones
-            .into_iter()
-            .rev()
-            .map(|(_, polygon, land_use)| self.zones.insert(Zone { polygon: polygon.to_vec(), land_use }))
-            .collect();
-
-        // Lots: regenerate, then match old lots with buildings to new ones.
+        // Parcels along every road, the master's zoning onto them, a lot
+        // for every zoned parcel; then old lots with buildings are matched
+        // to the new ones. A save from before parcels were cut ahead of
+        // zoning has lots of other shapes: its first rebuild moves every
+        // building onto the lot that now holds it, without eminent domain.
         let old_lots = std::mem::replace(&mut self.lots, SlotMap::with_key());
-        let mut covering: Vec<Zone> = Vec::new();
-        let water = self.water_mask();
-        for zid in zone_ids {
-            let zone = self.zones[zid].clone();
-            crate::zoning::generate_lots_wet(zid, &zone, &self.roads, &mut self.lots, &covering, &water);
-            covering.push(zone);
-        }
+        let lenient = !self.parcel_lots;
+        self.parcel_lots = true;
+        self.build_lots_from_parcels();
         // Lots on ground too steep to level are left as rough land.
         self.grade_lots();
         // Facilities: their footprints are lots of their own, and zoned lots
@@ -237,7 +665,7 @@ impl World {
             match found {
                 // Eminent domain: a parcel reshaped by road or path works
                 // cannot keep its building, even if a lot is still there.
-                Some(new_lot) if outlines_differ(&old.polygon, &self.lots[new_lot].polygon, EXPROPRIATE_AREA_TOL, EXPROPRIATE_DIST_TOL) => {
+                Some(new_lot) if !lenient && outlines_differ(&old.polygon, &self.lots[new_lot].polygon, EXPROPRIATE_AREA_TOL, EXPROPRIATE_DIST_TOL) => {
                     demolish.push((bid, old.center, true));
                 }
                 Some(new_lot) => {
