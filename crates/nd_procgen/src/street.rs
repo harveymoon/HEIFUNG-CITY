@@ -31,6 +31,27 @@ pub struct StreetInput<'a> {
     /// Each run is set on its own profile, so a viaduct is drawn at its
     /// height and the street under it at the ground's, whatever overlaps.
     pub heights: &'a [f32],
+    /// Which roads to draw: all, those on and above the ground, or only the
+    /// tunnels (shown on their own in the underground view).
+    pub layer: StreetLayer,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StreetLayer {
+    #[default]
+    All,
+    Surface,
+    Underground,
+}
+
+impl StreetLayer {
+    fn keeps(self, tunnel: bool) -> bool {
+        match self {
+            StreetLayer::All => true,
+            StreetLayer::Surface => !tunnel,
+            StreetLayer::Underground => tunnel,
+        }
+    }
 }
 
 /// Where a signal lamp hangs over the end of a lane, for the renderer to
@@ -86,7 +107,8 @@ fn continuation(roads: &RoadNetwork, node: NodeId, from_seg: SegmentId, lanes_fw
     }
     let next = roads.node(node).segments.iter().copied().find(|&s| s != from_seg && roads.segment(s).alive && roads.segment(s).kind == kind)?;
     let (_, f, b) = oriented(roads, next, node);
-    (f == lanes_fwd && b == lanes_bwd).then_some(next)
+    // A tunnel is a run of its own: it starts at the portal.
+    (f == lanes_fwd && b == lanes_bwd && roads.segment(next).tunnel == roads.segment(from_seg).tunnel).then_some(next)
 }
 
 fn build_runs(roads: &RoadNetwork) -> Vec<Run> {
@@ -242,6 +264,9 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             drawn = Some((marks(&g), run.points.clone(), run.nodes.iter().map(|&n| node_z(n)).collect()));
         }
         let seg = roads.segment(run.first);
+        if !inp.layer.keeps(seg.tunnel) {
+            continue;
+        }
         let hw = seg.half_width();
         let total = run.lanes_fwd as f32 + run.lanes_bwd as f32;
         let mut rng = rng_for(inp.seed ^ (run.first.0 as u64 * 7919), 3);
@@ -296,6 +321,16 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             g.part(Paving).path_box(&walk, side * (hw + 0.3 + pw * 0.5), pw, 0.0, KERB_H - 0.01, paving_c);
         }
 
+        if seg.tunnel {
+            // The bore: walls past the pavements, a lit strip overhead, and
+            // no street furniture.
+            let wall = rgba(mul(pal.concrete(0), 0.7));
+            for side in [-1.0f32, 1.0] {
+                g.part(Concrete).path_box(pts, side * (hw + SIDEWALK + 0.2), 0.4, 0.0, 5.6, wall);
+            }
+            g.part(Glow).path_box(&walk, 0.0, 0.25, 5.3, 5.4, rgba(mul(pal.street_lamp, 0.9)));
+            continue;
+        }
         // Furniture by arc length along the pavement.
         let len = path_length(&walk);
         let lamp_off = hw + 0.95;
@@ -404,7 +439,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
 
     // Roundabouts: a mountable apron inside the ring lanes; the middle is
     // open land. At the height of the ring's nodes.
-    for ring in &roads.rings {
+    for ring in roads.rings.iter().filter(|_| inp.layer != StreetLayer::Underground) {
         let from = marks(&g);
         roundabout_apron(&mut g, pal, ring);
         if !heights.is_empty() {
@@ -425,6 +460,10 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         }
         if !heights.is_empty() {
             node_from = Some((marks(&g), node_z(NodeId(i as u32))));
+        }
+        let tunnel_node = node.segments.iter().any(|&s| roads.segment(s).alive) && node.segments.iter().filter(|&&s| roads.segment(s).alive).all(|&s| roads.segment(s).tunnel);
+        if !inp.layer.keeps(tunnel_node) {
+            continue;
         }
         let alive: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).collect();
         let paths_here = node.segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).kind == RoadKind::Path).count();
@@ -504,6 +543,11 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
 
     // Signal posts: pole at the kerb, arm over the approach, one head per lane.
     for post in signal_groups(net) {
+        let near_node = roads.nodes.iter().enumerate().min_by(|a, b| a.1.pos.distance_squared(post.pole).total_cmp(&b.1.pos.distance_squared(post.pole))).map(|(i, _)| NodeId(i as u32));
+        let underground = near_node.is_some_and(|n| roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive).all(|&s| roads.segment(s).tunnel));
+        if !inp.layer.keeps(underground) {
+            continue;
+        }
         let from = marks(&g);
         let base = post.pole;
         let pole_h = 5.6;
@@ -895,7 +939,7 @@ mod tests {
         let (roads, net) = network();
         let lv = LandValue::new(400.0, 50.0);
         let pal = Palette::default();
-        let inp = StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 5, heights: &[] };
+        let inp = StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 5, heights: &[], layer: StreetLayer::All };
         let a = generate_street(&inp);
         assert!(a.triangle_count() > 1000, "{} triangles is not a street network", a.triangle_count());
         for (s, m) in a.iter() {
@@ -945,7 +989,7 @@ mod tests {
             }
             let mut net = LaneNetwork::default();
             net.rebuild(&roads);
-            let geo = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 9, heights: &[] });
+            let geo = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 9, heights: &[], layer: StreetLayer::All });
             for (s, m) in geo.iter() {
                 assert!(m.positions.iter().all(|p| p.iter().all(|v| v.is_finite()) && p[1] < 20.0), "{s:?}");
             }

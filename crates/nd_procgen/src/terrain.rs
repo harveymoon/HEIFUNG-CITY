@@ -389,7 +389,6 @@ fn underpasses(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32;
 /// column on a footing every 24 m or so wherever the deck stands clear of
 /// the ground (a ramp runs down onto it at the end).
 pub fn viaducts(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32; 3]) {
-    use glam::Vec3;
     let roads = &world.roads;
     for (sid, seg) in roads.alive_segments() {
         if !seg.viaduct {
@@ -399,6 +398,79 @@ pub fn viaducts(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32
         let za = world.road_z.get(seg.a.0 as usize).copied().unwrap_or(0.0);
         let zb = world.road_z.get(seg.b.0 as usize).copied().unwrap_or(0.0);
         viaduct_span(g, a, b, za, zb, seg.half_width() + if seg.is_street() { nd_sim::zoning::SIDEWALK } else { 0.6 }, &|p| world.ground_height(p), concrete, steel, true);
+    }
+}
+
+/// What shows of the tunnels: a portal frame where each tunnel comes out
+/// of the ground, retaining walls along the open cutting of its ramp, and
+/// a ventilation shaft head on the surface every 150 m or so along it.
+pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32; 3]) {
+    use glam::Vec3;
+    let roads = &world.roads;
+    let z_of = |n: nd_sim::NodeId| world.road_z.get(n.0 as usize).copied().unwrap_or(0.0);
+    let wall = rgba(mul(concrete, 0.75));
+    let coping = rgba(mul(concrete, 0.6));
+    for (sid, seg) in roads.alive_segments() {
+        let (a, b) = roads.segment_points(sid);
+        let (za, zb) = (z_of(seg.a), z_of(seg.b));
+        let hw = seg.half_width() + if seg.is_street() { nd_sim::zoning::SIDEWALK } else { 0.6 };
+        let len = a.distance(b);
+        if len < 0.5 {
+            continue;
+        }
+        let dir = (b - a) / len;
+        let side = Vec2::new(-dir.y, dir.x);
+        let yaw = dir.y.atan2(dir.x);
+        if seg.tunnel {
+            // Portals: where this tunnel piece meets a way that is not one.
+            for (n, z, out) in [(seg.a, za, -dir), (seg.b, zb, dir)] {
+                let open = roads.node(n).segments.iter().any(|&o| o != sid && roads.segment(o).alive && !roads.segment(o).tunnel);
+                if !open {
+                    continue;
+                }
+                let p = roads.node(n).pos;
+                let top = z + 6.2;
+                for sgn in [-1.0f32, 1.0] {
+                    let q = p + side * sgn * (hw + 0.6);
+                    g.part(Surface::Concrete).boxed(Vec3::new(q.x, (z + top) * 0.5, q.y), Vec3::new(1.2, top - z, 1.2), -yaw, wall);
+                }
+                // The lintel over the mouth, with a lit band.
+                g.part(Surface::Concrete).boxed(Vec3::new(p.x, top - 0.6, p.y), Vec3::new(1.4, 1.2, hw * 2.0 + 2.4), -yaw, coping);
+                let lit = p + out * 0.75;
+                g.part(Surface::Glow).boxed(Vec3::new(lit.x, top - 0.9, lit.y), Vec3::new(0.08, 0.25, hw * 1.6), -yaw, rgba(mul(steel, 2.2)));
+            }
+            // Vent shafts on the surface along the bore.
+            let vents = (len / 150.0).floor() as i32;
+            for k in 1..=vents {
+                let p = a.lerp(b, k as f32 / (vents + 1) as f32);
+                let gz = world.ground_height(p);
+                g.part(Surface::Concrete).boxed(Vec3::new(p.x, gz + 1.2, p.y), Vec3::new(3.0, 2.4, 3.0), -yaw, wall);
+                g.part(Surface::Metal).boxed(Vec3::new(p.x, gz + 2.5, p.y), Vec3::new(2.6, 0.25, 2.6), -yaw, rgba(mul(steel, 0.6)));
+            }
+            continue;
+        }
+        // Open cutting: retaining walls where the way runs well below the
+        // ground beside it (a portal ramp, a sunken road).
+        let steps = (len / 4.0).ceil().max(1.0) as usize;
+        for k in 0..steps {
+            let (t0, t1) = (k as f32 / steps as f32, (k + 1) as f32 / steps as f32);
+            let (p0, p1) = (a.lerp(b, t0), a.lerp(b, t1));
+            let (r0, r1) = (za + (zb - za) * t0, za + (zb - za) * t1);
+            for sgn in [-1.0f32, 1.0] {
+                let o = side * sgn * (hw + 0.3);
+                let (g0, g1) = (world.ground_height(p0 + o * 1.6), world.ground_height(p1 + o * 1.6));
+                if g0 - r0 < 1.2 && g1 - r1 < 1.2 {
+                    continue;
+                }
+                let (q0, q1) = (p0 + o, p1 + o);
+                let (t0, t1) = (g0.max(r0) + 0.6, g1.max(r1) + 0.6);
+                let out = Vec3::new(side.x * sgn, 0.0, side.y * sgn);
+                let m = g.part(Surface::Concrete);
+                m.quad_facing([Vec3::new(q0.x, r0 - 0.5, q0.y), Vec3::new(q1.x, r1 - 0.5, q1.y), Vec3::new(q1.x, t1, q1.y), Vec3::new(q0.x, t0, q0.y)], -out, wall);
+                let (b0, b1) = (q0 + o.normalize_or_zero() * 0.4, q1 + o.normalize_or_zero() * 0.4);
+                m.quad_facing([Vec3::new(q0.x, t0, q0.y), Vec3::new(q1.x, t1, q1.y), Vec3::new(b1.x, t1, b1.y), Vec3::new(b0.x, t0, b0.y)], Vec3::Y, coping);
+            }
+        }
     }
 }
 
@@ -458,10 +530,12 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
         if world.relief {
             viaducts(world, &mut g, concrete, steel);
             underpasses(world, &mut g, concrete, steel);
+            tunnel_works(world, &mut g, concrete, steel);
         }
         return g;
     }
     viaducts(world, &mut g, concrete, steel);
+    tunnel_works(world, &mut g, concrete, steel);
     let roads = &world.roads;
     for (sid, seg) in roads.alive_segments() {
         if !seg.bridge || seg.viaduct {

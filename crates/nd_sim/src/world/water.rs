@@ -229,6 +229,23 @@ impl World {
         self.ground = crate::landscape::Ground::build(&self.landscape, &self.roads, &self.road_z, &self.lots, self.config.half_extent + 200.0);
     }
 
+    /// Legs (by their first point) of a road drawn along `points` at
+    /// `levels` that rise or fall faster than its grade, counting only legs
+    /// with an end off the ground (the land's own slopes are eased as ever).
+    pub fn steep_legs(&self, points: &[Vec2], levels: &[f32], kind: RoadKind) -> Vec<usize> {
+        let land = &self.landscape;
+        let floor = if land.is_flat() { 0.0 } else { crate::landscape::BANK_HEIGHT };
+        let lv = |i: usize| levels.get(i).copied().unwrap_or(0.0);
+        let z = |i: usize| land.height(points[i]).max(floor) + lv(i);
+        let grade = way_grade(kind);
+        (0..points.len().saturating_sub(1))
+            .filter(|&i| {
+                let len = points[i].distance(points[i + 1]);
+                len >= 0.5 && (lv(i) != 0.0 || lv(i + 1) != 0.0) && (z(i + 1) - z(i)).abs() / len > grade + 1e-3
+            })
+            .collect()
+    }
+
     /// Where the drawn road (`points` with a level each, of `kind`) would be
     /// steeper than its grade allows, or cross another way at an awkward
     /// height: one warning per problem, for the Road tool and the API.
@@ -244,16 +261,11 @@ impl World {
         let lv = |i: usize| levels.get(i).copied().unwrap_or(0.0);
         let z = |i: usize| land.height(points[i]).max(floor) + lv(i);
         let grade = way_grade(kind);
-        for i in 0..points.len() - 1 {
+        for i in self.steep_legs(points, levels, kind) {
             let len = points[i].distance(points[i + 1]);
-            if len < 0.5 {
-                continue;
-            }
             let g = (z(i + 1) - z(i)).abs() / len;
-            if g > grade + 1e-3 && (lv(i) != 0.0 || lv(i + 1) != 0.0) {
-                let need = (z(i + 1) - z(i)).abs() / grade;
-                out.push(format!("too steep between points {} and {}: {:.0}% over {:.0} m (at most {:.0}%; needs {:.0} m)", i + 1, i + 2, g * 100.0, len, grade * 100.0, need));
-            }
+            let need = (z(i + 1) - z(i)).abs() / grade;
+            out.push(format!("too steep between points {} and {}: {:.0}% over {:.0} m (at most {:.0}%; needs {:.0} m)", i + 1, i + 2, g * 100.0, len, grade * 100.0, need));
         }
         // Crossings at a height that is neither a junction nor a flyover.
         let highway = crate::roads::is_highway_spec(kind, lanes_fwd, lanes_bwd);
