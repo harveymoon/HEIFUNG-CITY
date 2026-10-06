@@ -652,6 +652,10 @@ pub struct DriveState {
     pub seen_lead_v: f32,
     /// Committed to running the red on this connector.
     pub running: Option<LaneId>,
+    /// The lane it was on at the last substep, and seconds on it: a car
+    /// that has just merged or changed lanes is not yet "following".
+    pub lane: Option<LaneId>,
+    pub on_lane: f32,
     /// Poses at the end of every physics substep of the last tick, the
     /// tick's start first, for drawing the car along its real path.
     #[serde(skip)]
@@ -2467,7 +2471,10 @@ impl Traffic {
                     continue;
                 }
                 let dv = f.v - l.v;
-                if dv > BUMP_SPEED {
+                // Squeezed together by a merge or a lane change (the model
+                // placing them, not the driver): no crash, they just part.
+                let settled = f.drive.on_lane > 2.0 && l.drive.on_lane > 2.0;
+                if dv > BUMP_SPEED && settled {
                     hits.push((w[0], w[1], dv));
                 } else {
                     bumps.push((w[0], (l.s - l.length() - 0.1).max(0.0), l.v));
@@ -2514,7 +2521,7 @@ impl Traffic {
                 let (lc, c) = (&self.cars[l], &self.cars[id]);
                 let gap = lc.s - lc.length() - c.s;
                 let dv = c.v - lc.v;
-                if dv > 2.0 && gap < c.v * 0.8 && !lc.in_stunt() && self.roll() < 0.05 * (1.0 - skill) * (1.0 - skill) * dt {
+                if dv > 2.0 && gap < c.v * 0.8 && !lc.in_stunt() && self.roll() < 0.015 * (1.0 - skill) * (1.0 - skill) * dt {
                     self.crash(vec![id, l], CrashCause::RearEnd, dv);
                     continue;
                 }
@@ -2633,7 +2640,14 @@ impl Traffic {
                 car.drive.poses.push((pos, heading));
                 continue;
             }
-            let lane = &self.net.lanes[car.route[car.idx] as usize];
+            let lane_id = car.route[car.idx];
+            if car.drive.lane == Some(lane_id) {
+                car.drive.on_lane += dt;
+            } else {
+                car.drive.lane = Some(lane_id);
+                car.drive.on_lane = 0.0;
+            }
+            let lane = &self.net.lanes[lane_id as usize];
             let (p, d) = lane.point_at(car.s);
             let right = Vec2::new(-d.y, d.x);
             // A wandering driver: a slow drift and a quicker twitch.

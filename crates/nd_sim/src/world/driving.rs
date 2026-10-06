@@ -15,10 +15,10 @@ use crate::takeover::{self, Stage, Takeover, Takeovers};
 use crate::traffic::{CrashCause, CrashReport, DriverProfile, GangPhase, GangRole, StuntKind, BAD_CRASH};
 use crate::vehicle::{BodyType, Livery, VehicleClass, VehicleModel};
 
-/// Drunkenness gained per tick at a venue (times `0.4 + hedonism`), and
-/// lost per tick everywhere else: a hedonist is well gone after a couple
-/// of hours out and sober again by morning.
-pub const DRINK_RATE: f32 = 0.0035;
+/// Drunkenness gained per tick at a venue (times `hedonism - 0.3`: the
+/// sensible have a soda), and lost per tick everywhere else: a hedonist is
+/// well gone after a couple of hours out and sober again by morning.
+pub const DRINK_RATE: f32 = 0.004;
 pub const SOBER_RATE: f32 = 0.0022;
 /// Crash records kept for the API.
 const KEEP_CRASHES: usize = 60;
@@ -114,7 +114,7 @@ impl World {
             };
             if at_venue && c.age >= 18 {
                 let (_, hedonism) = driver_traits(c.seed);
-                c.drunk = (c.drunk + DRINK_RATE * (0.4 + hedonism) * ticks as f32).min(1.0);
+                c.drunk = (c.drunk + DRINK_RATE * (hedonism - 0.3).max(0.0) * ticks as f32).min(1.0);
             } else if c.drunk > 0.0 {
                 c.drunk = (c.drunk - SOBER_RATE * ticks as f32).max(0.0);
             }
@@ -1053,14 +1053,15 @@ mod tests {
     fn drink_rises_at_a_venue_and_wears_off() {
         let mut w = town(3);
         let c = w.citizens.keys().next().unwrap();
-        w.citizens[c].seed = rebel_seed(1);
+        // A hedonist with no time for rules.
+        w.citizens[c].seed = (1..5000u64).find(|&s| { let (ca, h) = driver_traits(s); h > 0.85 && rebelliousness(ca, h) > 0.7 }).unwrap();
         w.citizens[c].age = 30;
         let venue = w.buildings.keys().next().unwrap();
         w.buildings[venue].land_use = LandUse::Entertainment;
         w.citizens[c].activity = Activity::Visiting(venue);
-        w.step_drink(120);
+        w.step_drink(150);
         let drunk = w.citizens[c].drunk;
-        assert!(drunk >= DRUNK, "two hours at the bar: {drunk}");
+        assert!(drunk >= DRUNK, "an evening at the bar: {drunk}");
         w.citizens[c].owns_car = true;
         assert!(crate::citizens::wants_to_drive_drunk(&w.citizens[c]), "a rebel drives anyway");
         w.citizens[c].activity = Activity::Idle;
