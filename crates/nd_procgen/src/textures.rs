@@ -310,7 +310,7 @@ fn sample(surface: Surface, u: f32, v: f32, px: i32, py: i32) -> Sample {
             let g = grain(px, py, 163);
             Sample { value: 0.9 + 0.08 * g, tint: 0.0, height: 0.1 * g }
         }
-        Surface::Glow => Sample { value: 1.0, tint: 0.0, height: 0.0 },
+        Surface::Glow | Surface::Paint => Sample { value: 1.0, tint: 0.0, height: 0.0 },
         // Weathered surfaces are generated through `generate_wear`.
         other => sample(other.base(), u, v, px, py),
     }

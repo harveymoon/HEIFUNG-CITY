@@ -30,6 +30,8 @@ mod society;
 /// [subway] The `subway` command and report section.
 mod subway;
 mod taxes;
+/// [taxis] Taxi companies and cargo hubs in the report and inspector.
+mod taxis;
 mod view;
 mod window;
 

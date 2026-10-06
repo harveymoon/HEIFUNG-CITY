@@ -465,6 +465,9 @@ pub enum Placeable {
     /// [tolls] A toll booth or plaza across a road (not on a lot:
     /// `World::place_toll`).
     Toll(crate::tolls::TollSize),
+    /// A cargo hub (`crate::cargo_hub`): freight terminal for the imports
+    /// and exports of the businesses around it.
+    CargoHub,
 }
 
 /// The Buildings tool's sub-categories.
@@ -516,7 +519,7 @@ impl BuildCategory {
                 v.extend(crate::tolls::TollSize::ALL.iter().map(|&s| Placeable::Toll(s)));
                 v
             }
-            BuildCategory::Rail => vec![Placeable::Rail(RailFacility::Station), Placeable::Rail(RailFacility::Central), Placeable::Rail(RailFacility::FreightYard)],
+            BuildCategory::Rail => vec![Placeable::Rail(RailFacility::Station), Placeable::Rail(RailFacility::Central), Placeable::Rail(RailFacility::FreightYard), Placeable::CargoHub],
             BuildCategory::Water => PortKind::ALL.iter().map(|&k| Placeable::Dock(k)).collect(),
             BuildCategory::Attractions => vec![Placeable::Service(ServiceKind::Monument, Tier::Mid), Placeable::Service(ServiceKind::Stadium, Tier::Mid)],
         }
@@ -536,6 +539,7 @@ impl Placeable {
             Placeable::ParkingLot(_) => BuildCategory::Transit,
             Placeable::MetroStation => BuildCategory::Transit,
             Placeable::Toll(_) => BuildCategory::Transit,
+            Placeable::CargoHub => BuildCategory::Rail,
         }
     }
 
@@ -561,6 +565,7 @@ impl Placeable {
             Placeable::ParkingLot(s) => s.label().to_string(),
             Placeable::MetroStation => "metro station".into(),
             Placeable::Toll(s) => s.label().to_string(),
+            Placeable::CargoHub => "cargo hub".into(),
         }
     }
 
@@ -590,6 +595,7 @@ impl Placeable {
             Placeable::MetroStation => "Metro station",
             Placeable::Dock(PortKind::ShippingPort) => "Shipping port",
             Placeable::Dock(PortKind::FerryTerminal) => "Ferry terminal",
+            Placeable::CargoHub => "Cargo hub",
         }
     }
 
@@ -603,6 +609,7 @@ impl Placeable {
             Placeable::Dock(k) => k.cost(),
             Placeable::ParkingLot(s) => s.cost(),
             Placeable::Toll(s) => s.cost(),
+            Placeable::CargoHub => crate::cargo_hub::HUB_COST,
         }
     }
 
@@ -616,6 +623,7 @@ impl Placeable {
             Placeable::Dock(k) => k.upkeep_per_day(),
             Placeable::ParkingLot(s) => s.upkeep_per_day(),
             Placeable::Toll(s) => s.upkeep_per_day(),
+            Placeable::CargoHub => crate::cargo_hub::HUB_UPKEEP_PER_DAY,
         }
     }
 
@@ -630,6 +638,7 @@ impl Placeable {
             Placeable::ParkingLot(s) => s.jobs(),
             // Collectors are part of the upkeep, not jobs in town.
             Placeable::Toll(_) => 0,
+            Placeable::CargoHub => crate::cargo_hub::HUB_JOBS,
         }
     }
 
@@ -650,6 +659,7 @@ impl Placeable {
             Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_) => 0.0,
             Placeable::ParkingLot(s) => s.min_area(),
             Placeable::MetroStation => crate::subway::STATION_MIN_AREA,
+            Placeable::CargoHub => crate::cargo_hub::HUB_MIN_AREA,
         }
     }
 
@@ -664,6 +674,8 @@ impl Placeable {
             Placeable::ParkingLot(_) => lu != LandUse::Park,
             // An entrance plaza fits anywhere, parks included.
             Placeable::MetroStation => true,
+            // Freight belongs on working land.
+            Placeable::CargoHub => !matches!(lu, LandUse::Residential | LandUse::Park),
         }
     }
 
@@ -692,6 +704,7 @@ impl Placeable {
             "freight_yard" | "yard" => Some(Placeable::Rail(RailFacility::FreightYard)),
             "central_station" | "central" | "main_station" => Some(Placeable::Rail(RailFacility::Central)),
             "metro_station" | "metro" | "subway_station" | "subway" => Some(Placeable::MetroStation),
+            "cargo_hub" | "hub" | "cargo" => Some(Placeable::CargoHub),
             "clinic" => Some(Placeable::Service(ServiceKind::Health, tier.unwrap_or(Tier::Low))),
             other if crate::enforcement::LotSize::from_key(other).is_some() => crate::enforcement::LotSize::from_key(other).map(Placeable::ParkingLot),
             other if crate::tolls::TollSize::from_key(other).is_some() => crate::tolls::TollSize::from_key(other).map(Placeable::Toll),

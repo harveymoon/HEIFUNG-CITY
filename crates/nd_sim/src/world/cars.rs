@@ -528,6 +528,10 @@ impl World {
                 self.tow_truck_arrived(car_id, job);
                 true
             }
+            Errand::Taxi(cab) => {
+                self.cab_arrived(car_id, cab);
+                true
+            }
             Errand::Deliver | Errand::Trip | Errand::Search { .. } | Errand::ToLot(_) | Errand::ToKerb => {
                 if owned.is_some() || self.citizens.contains_key(citizen) {
                     self.private_arrived(car_id);
@@ -1352,6 +1356,8 @@ impl World {
             TripMode::Walk => (minutes - 25.0).max(0.0) / 30.0 * if frail { 1.4 } else { 1.0 },
             TripMode::Bike => (minutes - 35.0).max(0.0) / 30.0 + (d / bike - 60.0).max(0.0) / 60.0,
             TripMode::Bus | TripMode::Train | TripMode::Subway => (minutes - (d / (walk * 4.0) + 20.0)).max(0.0) / 30.0,
+            // [taxis] The wait at the kerb and the ride against a drive.
+            TripMode::Taxi => (minutes - (d * 1.3 / (9.0 * secs) + 12.0)).max(0.0) / 30.0,
             TripMode::Car => {
                 // The drive against free flow (about 9 m/s door to door);
                 // the hunt for a space, the fee and the walk from the car
@@ -1379,6 +1385,7 @@ impl World {
                 TripMode::Walk => format!("{minutes:.0} minutes on foot. My feet are done."),
                 TripMode::Bike => format!("{minutes:.0} minutes in the saddle. Too far to ride."),
                 TripMode::Bus | TripMode::Train | TripMode::Subway => format!("{minutes:.0} minutes on transit for that. Crawling."),
+                TripMode::Taxi => format!("{minutes:.0} minutes for a cab ride. Waited forever at the kerb."),
             };
             c.remember(tick, text);
             let k = if mode == TripMode::Car && c.commute.searched / secs > 15.0 { crate::concerns::Concern::Parking } else { crate::concerns::Concern::Commute };

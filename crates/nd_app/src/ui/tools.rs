@@ -453,6 +453,13 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
                 line += &format!(" {} booths: {} cars paid today, {:.0} taken.", t.booths.len(), t.paid_today, t.revenue_today());
             }
         }
+        Placeable::CargoHub => {
+            line += &format!(
+                ". Freight terminal: businesses within {:.0} m import through it, by sea or rail when a port or yard works (one within {:.0} m unloads straight in), else in shared semis from the edge instead of one lorry each; its own lorries deliver on and park in its bays.",
+                nd_sim::cargo_hub::HUB_REACH,
+                nd_sim::cargo_hub::SIDING_REACH
+            )
+        }
     }
     hint(ui, &line);
     if let Placeable::Dock(k) = what {

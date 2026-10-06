@@ -26,6 +26,9 @@
 
 mod air;
 mod buses;
+mod cargo_hubs;
+#[cfg(test)]
+mod cargo_hub_tests;
 mod cars;
 mod enforcement;
 mod construction;
@@ -68,6 +71,9 @@ mod tests;
 mod taxes;
 pub use taxes::TaxRow;
 mod tolls;
+mod taxis;
+#[cfg(test)]
+mod taxi_tests;
 mod trains;
 mod tourism;
 mod trips;
@@ -420,6 +426,14 @@ pub struct World {
     /// [tolls] Toll booths on the roads (`world/tolls.rs`).
     #[serde(default)]
     pub tolls: crate::tolls::Tolls,
+    /// [taxis] Taxi companies' cabs, riders waiting at the kerb and the
+    /// demand nobody served (`world/taxis.rs`).
+    #[serde(default)]
+    pub taxis: crate::taxi::Taxis,
+    /// Cargo hubs: what each holds and has coming, and the day's freight
+    /// (`world/cargo_hubs.rs`).
+    #[serde(default)]
+    pub cargo_hubs: crate::cargo_hub::CargoHubs,
 }
 
 impl World {
@@ -492,6 +506,8 @@ impl World {
             tourism: Default::default(),
             subway: Default::default(),
             tolls: Default::default(),
+            taxis: Default::default(),
+            cargo_hubs: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -627,6 +643,7 @@ impl World {
                 Some(TransitLeg::Rail { board, alight }) => buildings.contains_key(board) && buildings.contains_key(alight),
                 Some(TransitLeg::Air { from, to }) => buildings.contains_key(from) && buildings.contains_key(to),
                 Some(TransitLeg::Subway { line, board, alight }) => self.subway.lines.get(line).is_some_and(|l| l.index_of(board).is_some() && l.index_of(alight).is_some()),
+                Some(TransitLeg::Taxi) => true,
             } && c.transit.is_none_or(|t| buildings.contains_key(t.target));
             if !trip_ok {
                 c.transit = None;
@@ -802,6 +819,7 @@ impl World {
         }
         self.step_traffic();
         self.step_air();
+        self.step_taxis();
         self.step_driving();
         self.step_enforcement();
         self.step_services();
@@ -812,6 +830,7 @@ impl World {
         self.step_rail();
         self.step_subway();
         self.step_ships();
+        self.step_cargo_hubs();
         if self.clock.minute_of_day() == 0 {
             self.bots.delivered_today = 0;
             self.bots.van_orders_today = 0;

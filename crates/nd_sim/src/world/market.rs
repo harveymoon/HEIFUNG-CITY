@@ -20,7 +20,7 @@ impl World {
                 let b = &self.buildings[bid];
                 let Some(bz) = &b.business else { continue };
                 // [parking] Lots the city runs are paid for by the city.
-                let publicly_funded = matches!(bz.kind, BusinessKind::Office) || b.land_use == LandUse::Civic || self.vehicles.city_lots.contains_key(&bid);
+                let publicly_funded = matches!(bz.kind, BusinessKind::Office | BusinessKind::CargoHub) || b.land_use == LandUse::Civic || self.vehicles.city_lots.contains_key(&bid);
                 // [tax] What its takings are taxed under (the city's own
                 // businesses at the standard rate, as before).
                 let tax_line = if publicly_funded { None } else { crate::tax::TaxCategory::of_business(bz.kind, b.tier) };
@@ -296,7 +296,7 @@ impl World {
         // Exports: surplus outputs leave town at a discount, less of one
         // when a freight yard ships them by rail.
         let yards: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::FreightYard) && !b.is_derelict()).map(|(id, _)| id).collect();
-        let export_bonus = (if yards.is_empty() { 1.0 } else { rail::RAIL_EXPORT_BONUS }).max(self.sea_export_bonus());
+        let export_bonus = (if yards.is_empty() { 1.0 } else { rail::RAIL_EXPORT_BONUS }).max(self.sea_export_bonus()) * self.hub_export_bonus();
         let mut shipped = 0.0f32;
         for &bid in &ids {
             let b = &mut self.buildings[bid];
@@ -328,6 +328,8 @@ impl World {
         if let Some(&y) = yards.first() {
             self.buildings[y].rail_outbound += shipped;
         }
+        // Exports through a cargo hub leave in full semis.
+        self.hub_note_exports(shipped);
         self.drain_stranded_rail_imports();
         // Statistics.
         let mut sums: std::collections::BTreeMap<Resource, (f32, u32, f32)> = std::collections::BTreeMap::new();
@@ -571,6 +573,14 @@ impl World {
         // each load would quadruple build times, so their parts come by
         // the developer's own trucks.
         let site = self.buildings.get(to).is_some_and(|b| b.construction.is_some());
+        // A cargo hub within reach takes it in (by sea, rail or a shared
+        // semi) and sends it on in its own lorry (`world/cargo_hubs.rs`).
+        if !site {
+            if let Some(hub) = self.hub_for(to) {
+                self.import_via_hub(hub, cargo);
+                return;
+            }
+        }
         // By sea is cheaper still than by rail.
         if !site && self.import_by_sea(to, cargo) {
             return;
@@ -642,6 +652,10 @@ impl World {
     }
 
     pub(super) fn deliver(&mut self, cargo: Cargo) {
+        // Goods for a cargo hub go into its shed for the local lorries.
+        if self.hub_receive(&cargo) {
+            return;
+        }
         let Some(b) = self.buildings.get_mut(cargo.to) else { return };
         if let Some(bz) = b.business.as_mut() {
             let left = (bz.inbound_of(cargo.resource) - cargo.amount).max(0.0);

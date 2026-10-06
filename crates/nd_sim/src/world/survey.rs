@@ -81,7 +81,7 @@ impl World {
                 _ => None,
             };
             let well = b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::OilWell && !z.closed);
-            let fleet = b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::FleetLot);
+            let fleet = b.business.as_ref().is_some_and(|z| z.kind.is_truck_lot());
             if kind.is_some() || well || fleet {
                 others.push((b.lot, l.center, kind, well, fleet));
             }

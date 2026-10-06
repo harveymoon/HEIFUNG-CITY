@@ -201,10 +201,12 @@ pub enum TripMode {
     Car,
     /// [subway] The metro.
     Subway,
+    /// [taxis] A cab hailed at the kerb (`crate::taxi`).
+    Taxi,
 }
 
 impl TripMode {
-    pub const ALL: [TripMode; 6] = [TripMode::Walk, TripMode::Bike, TripMode::Bus, TripMode::Train, TripMode::Car, TripMode::Subway];
+    pub const ALL: [TripMode; 7] = [TripMode::Walk, TripMode::Bike, TripMode::Bus, TripMode::Train, TripMode::Car, TripMode::Subway, TripMode::Taxi];
 
     pub fn index(self) -> usize {
         match self {
@@ -214,6 +216,7 @@ impl TripMode {
             TripMode::Train => 3,
             TripMode::Car => 4,
             TripMode::Subway => 5,
+            TripMode::Taxi => 6,
         }
     }
 
@@ -225,6 +228,7 @@ impl TripMode {
             TripMode::Train => "train",
             TripMode::Car => "car",
             TripMode::Subway => "subway",
+            TripMode::Taxi => "taxi",
         }
     }
 }

@@ -251,8 +251,8 @@ fn ramp_gore(g: &mut Geometry, roads: &RoadNetwork, node: NodeId, ramp: SegmentI
             // Chevrons across the gore every 3 m.
             if ((s - parted.unwrap()) / 3.0).fract() < 0.34 && gap > 0.8 {
                 let mid = (eh + er) * 0.5 + (dh + dr).normalize_or_zero() * 1.2;
-                g.part(Glow).ground_strip(&[eh + (er - eh) * 0.08, mid], 0.3, MARK_Y + 0.004, paint);
-                g.part(Glow).ground_strip(&[mid, er - (er - eh) * 0.08], 0.3, MARK_Y + 0.004, paint);
+                g.part(Paint).ground_strip(&[eh + (er - eh) * 0.08, mid], 0.3, MARK_Y + 0.004, paint);
+                g.part(Paint).ground_strip(&[mid, er - (er - eh) * 0.08], 0.3, MARK_Y + 0.004, paint);
             }
         } else {
             fill.push(eh);
@@ -265,8 +265,8 @@ fn ramp_gore(g: &mut Geometry, roads: &RoadNetwork, node: NodeId, ramp: SegmentI
         poly.extend(back.iter().rev());
         g.part(Asphalt).ground_polygon(&poly, ASPHALT_Y + 0.004, asphalt);
         // Edge lines along the taper on both sides of the gore.
-        g.part(Glow).ground_strip(&fill, 0.18, MARK_Y + 0.002, paint);
-        g.part(Glow).ground_strip(&back, 0.18, MARK_Y + 0.002, paint);
+        g.part(Paint).ground_strip(&fill, 0.18, MARK_Y + 0.002, paint);
+        g.part(Paint).ground_strip(&back, 0.18, MARK_Y + 0.002, paint);
     }
 }
 
@@ -386,17 +386,17 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         let fade = |c: [f32; 4]| if grit { [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5, c[3]] } else { c };
         // Carriageway and markings run the whole way; the junction pads overlap the ends.
         g.part(Asphalt).path_strip(pts, 0.0, hw * 2.0, ASPHALT_Y, asphalt_c);
-        g.part(Glow).path_strip(pts, hw - SHOULDER * 0.5, 0.18, MARK_Y, fade(edge_c));
-        g.part(Glow).path_strip(pts, -(hw - SHOULDER * 0.5), 0.18, MARK_Y, fade(edge_c));
+        g.part(Paint).path_strip(pts, hw - SHOULDER * 0.5, 0.18, MARK_Y, fade(edge_c));
+        g.part(Paint).path_strip(pts, -(hw - SHOULDER * 0.5), 0.18, MARK_Y, fade(edge_c));
         for k in 1..(run.lanes_fwd + run.lanes_bwd) as u32 {
             let off = (k as f32 - total * 0.5) * LANE_WIDTH;
             let is_centre = run.lanes_fwd > 0 && run.lanes_bwd > 0 && k == run.lanes_bwd as u32;
             if is_centre {
-                g.part(Glow).path_strip(pts, off + 0.18, 0.14, MARK_Y, fade(centre_c));
-                g.part(Glow).path_strip(pts, off - 0.18, 0.14, MARK_Y, fade(centre_c));
+                g.part(Paint).path_strip(pts, off + 0.18, 0.14, MARK_Y, fade(centre_c));
+                g.part(Paint).path_strip(pts, off - 0.18, 0.14, MARK_Y, fade(centre_c));
             } else {
                 let path = offset_path(pts, off);
-                dashes_along(g.part(Glow), &path, 0.16, MARK_Y, 3.0, 4.0, fade(divider_c));
+                dashes_along(g.part(Paint), &path, 0.16, MARK_Y, 3.0, 4.0, fade(divider_c));
             }
         }
         // One-way roads (ramps, highways, one-way streets) show which way
@@ -405,7 +405,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             let forward = run.lanes_fwd > 0;
             for k in 0..(run.lanes_fwd + run.lanes_bwd) {
                 let path = offset_path(pts, (k as f32 + 0.5 - total * 0.5) * LANE_WIDTH);
-                travel_arrows(g.part(Glow), &path, forward, fade(edge_c));
+                travel_arrows(g.part(Paint), &path, forward, fade(edge_c));
             }
         }
 
@@ -643,7 +643,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             let c1 = node.pos + d * 1.3;
             let mut s = -hw + SHOULDER + 0.4;
             while s < hw - SHOULDER - 0.2 {
-                g.part(Glow).ground_strip(&[c0 + right * s, c1 + right * s], 0.5, MARK_Y + 0.002, rgba(mul(pal.lane_marker, 0.9)));
+                g.part(Paint).ground_strip(&[c0 + right * s, c1 + right * s], 0.5, MARK_Y + 0.002, rgba(mul(pal.lane_marker, 0.9)));
                 s += 1.0;
             }
             continue;
@@ -690,14 +690,14 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             let c1 = node.pos + d * (r + 3.2);
             let mut s = -hw + SHOULDER + 0.4;
             while s < hw - SHOULDER - 0.2 {
-                g.part(Glow).ground_strip(&[c0 + right * s, c1 + right * s], 0.5, MARK_Y + 0.002, rgba(mul(pal.lane_marker, 0.9)));
+                g.part(Paint).ground_strip(&[c0 + right * s, c1 + right * s], 0.5, MARK_Y + 0.002, rgba(mul(pal.lane_marker, 0.9)));
                 s += 1.0;
             }
             let incoming = if seg.a.0 as usize == i { seg.lanes_bwd } else { seg.lanes_fwd } as f32;
             if incoming > 0.0 {
                 let w = incoming * LANE_WIDTH;
                 let centre = node.pos + d * (r + 3.7) - right * (w * 0.5);
-                g.part(Glow).ground_strip(&[centre - right * w * 0.5, centre + right * w * 0.5], 0.4, MARK_Y + 0.002, rgba(mul(pal.lane_marker, 1.1)));
+                g.part(Paint).ground_strip(&[centre - right * w * 0.5, centre + right * w * 0.5], 0.4, MARK_Y + 0.002, rgba(mul(pal.lane_marker, 1.1)));
             }
         }
     }
@@ -723,7 +723,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         let (c0, c1) = (at - d * nd_sim::walk::CROSSWALK_HALF, at + d * nd_sim::walk::CROSSWALK_HALF);
         let mut s = -hw + SHOULDER + 0.4;
         while s < hw - SHOULDER - 0.2 {
-            g.part(Glow).ground_strip(&[c0 + right * s, c1 + right * s], 0.5, MARK_Y + 0.002, rgba(mul(pal.lane_marker, 0.9)));
+            g.part(Paint).ground_strip(&[c0 + right * s, c1 + right * s], 0.5, MARK_Y + 0.002, rgba(mul(pal.lane_marker, 0.9)));
             s += 1.0;
         }
         for side in [-1.0f32, 1.0] {
@@ -811,13 +811,13 @@ fn roundabout_arm(g: &mut Geometry, pal: &Palette, at: Vec2, d: Vec2, r: f32, se
             let a = at + d * s0 + right * divide;
             let b = at + d * s1 + right * divide;
             g.part(Concrete).path_box(&[a, b], 0.0, w0, 0.0, KERB_H, rgba(pal.curb));
-            g.part(Glow).path_strip(&[a - d * 0.6, b + d * 0.6], 0.0, w0 + 0.5, MARK_Y, rgba(mul(pal.lane_marker, 0.5)));
+            g.part(Paint).path_strip(&[a - d * 0.6, b + d * 0.6], 0.0, w0 + 0.5, MARK_Y, rgba(mul(pal.lane_marker, 0.5)));
         }
     }
     let mut s = -hw + SHOULDER + 0.4;
     while s < hw - SHOULDER - 0.2 {
         if (s - divide).abs() > 0.6 || outgoing == 0 || incoming == 0 {
-            g.part(Glow).ground_strip(&[at + d * z0 + right * s, at + d * z1 + right * s], 0.5, MARK_Y + 0.002, rgba(mul(pal.lane_marker, 0.9)));
+            g.part(Paint).ground_strip(&[at + d * z0 + right * s, at + d * z1 + right * s], 0.5, MARK_Y + 0.002, rgba(mul(pal.lane_marker, 0.9)));
         }
         s += 1.0;
     }
@@ -826,7 +826,7 @@ fn roundabout_arm(g: &mut Geometry, pal: &Palette, at: Vec2, d: Vec2, r: f32, se
         let mut x = l0 + 0.3;
         while x + 0.6 < l1 {
             let p = at + d * (r + 0.9) + right * x;
-            g.part(Glow).ground_strip(&[p, p + right * 0.6], 0.35, MARK_Y + 0.003, rgba(mul(pal.lane_marker, 1.1)));
+            g.part(Paint).ground_strip(&[p, p + right * 0.6], 0.35, MARK_Y + 0.003, rgba(mul(pal.lane_marker, 1.1)));
             x += 1.1;
         }
     }
@@ -975,7 +975,7 @@ fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run: &Run, rng
     g.part(Concrete).path_box(pts, PATH_HALF_WIDTH + 0.1, 0.2, 0.0, 0.08, rgba(pal.curb));
     g.part(Concrete).path_box(pts, -(PATH_HALF_WIDTH + 0.1), 0.2, 0.0, 0.08, rgba(pal.curb));
     // Centre line for bikes to keep to one side.
-    g.part(Glow).path_strip(pts, 0.0, 0.08, MARK_Y, rgba(mul(pal.lane_divider, 0.6)));
+    g.part(Paint).path_strip(pts, 0.0, 0.08, MARK_Y, rgba(mul(pal.lane_divider, 0.6)));
     let len = path_length(pts);
     let at = |s: f32, off: f32| {
         let (p, d) = point_along(pts, s);
@@ -1193,7 +1193,7 @@ mod tests {
         }
         // Arrows in the highway's lanes: glow strips pointing +x somewhere
         // mid-carriageway, far from the join.
-        let glow = g.get(Glow);
+        let glow = g.get(Paint);
         assert!(glow.positions.iter().any(|p| p[0] > 100.0 && p[0] < 300.0 && p[2].abs() < 5.0 && (p[1] - MARK_Y - 0.003).abs() < 1e-3), "arrows on the highway");
         // A gore: hatching between the ramp and the carriageway near the join.
         assert!(glow.positions.iter().any(|p| p[0] < -2.0 && p[0] > -45.0 && p[2] < -5.0 && (p[1] - MARK_Y - 0.004).abs() < 1e-3), "chevrons in the gore");
@@ -1295,37 +1295,124 @@ mod tests {
 }
 
 /// Lane arrows painted on each lane arriving at a junction, a few metres
-/// before the stop line: a shaft with a head for every movement the lane
-/// allows (`Lane::arrows`). Separate from the street mesh because arrows
+/// before the stop line: one arrow per lane with a head for every movement
+/// it allows (`Lane::arrows`), so a left-only lane reads differently from a
+/// straight-and-right one. Separate from the street mesh because arrows
 /// follow turning demand and the player's choices without the roads
 /// changing; rebuild when `LaneNetwork::arrows_version` moves.
+///
+/// Drawn at road-marking scale (about 5 m long, 0.4 m shafts, filled
+/// heads 1.2 m across) in bright paint: the first version used 0.22 m
+/// strokes on the dimmed glow material and could not be read from the
+/// top-down camera or in daylight. A lane of 9 m or more gets one; long
+/// lanes get a second 25 m further back, as real approaches do, so the
+/// arrows are seen before the queue covers the first.
 pub fn lane_arrows(net: &LaneNetwork, pal: &Palette) -> Geometry {
-    use nd_sim::traffic::{LEFT, RIGHT, STRAIGHT};
     let mut g = Geometry::default();
-    let c = rgba(mul(pal.lane_marker, 1.1));
+    let c = rgba(mul(pal.lane_marker, 1.25));
     let y = MARK_Y + 0.003;
     for ap in &net.approaches {
         for (&l, &a) in ap.lanes.iter().zip(&ap.arrows) {
             let lane = &net.lanes[l as usize];
-            if lane.length < 16.0 || a == 0 {
+            if lane.length < 9.0 || a == 0 {
                 continue;
             }
-            let (fork, d) = lane.point_at(lane.length - 9.0);
-            let right = Vec2::new(-d.y, d.x);
-            g.part(Glow).ground_strip(&[fork - d * 1.6, fork], 0.22, y, c);
-            for (bit, side) in [(LEFT, -1.0f32), (STRAIGHT, 0.0), (RIGHT, 1.0)] {
-                if a & bit == 0 {
-                    continue;
-                }
-                let tip = if side == 0.0 { fork + d * 1.4 } else { fork + d * 0.7 + right * side * 0.75 };
-                g.part(Glow).ground_strip(&[fork, tip], 0.22, y, c);
-                let dir = (tip - fork).normalize_or_zero();
-                let across = Vec2::new(-dir.y, dir.x);
-                for s in [-1.0f32, 1.0] {
-                    g.part(Glow).ground_strip(&[tip, tip - dir * 0.55 + across * s * 0.35], 0.2, y, c);
-                }
+            // The front 8 m before the stop line, nearer on a short lane;
+            // the arrow is 5.4 m from tail to tip.
+            let mut back = 8.0f32.min(lane.length - 6.0).max(0.5);
+            let mut n = 0;
+            while back + 5.4 <= lane.length && n < 2 {
+                let (tip_at, d) = lane.point_at(lane.length - back);
+                lane_arrow(g.part(Paint), tip_at, d, a, y, c);
+                back += 25.0;
+                n += 1;
             }
         }
     }
     g
+}
+
+/// One painted lane arrow whose foremost point is near `front`, pointing
+/// along `d`, with heads for the movements in `arrows` (LEFT, STRAIGHT,
+/// RIGHT bits). Right-hand traffic: left is the counter-clockwise side
+/// seen from above, `(-d.y, d.x)` negated in sim coordinates (y south).
+pub fn lane_arrow(m: &mut crate::mesh::MeshData, front: Vec2, d: Vec2, arrows: u8, y: f32, c: [f32; 4]) {
+    use nd_sim::traffic::{LEFT, RIGHT, STRAIGHT};
+    let right = Vec2::new(-d.y, d.x);
+    let shaft = 0.4;
+    let straight = arrows & STRAIGHT != 0;
+    let head = |m: &mut crate::mesh::MeshData, base: Vec2, dir: Vec2, len: f32, half: f32| {
+        let side = Vec2::new(-dir.y, dir.x);
+        m.ground_polygon(&[base + side * half, base + dir * len, base - side * half], y, c);
+    };
+    // The shaft: up to the straight head, or ending where the turns leave.
+    let start = front - d * 5.4;
+    let end = if straight { front - d * 1.15 } else { front - d * 2.3 };
+    m.ground_strip(&[start, end], shaft, y, c);
+    if straight {
+        head(m, front - d * 1.2, d, 1.2, 0.6);
+    }
+    for (bit, sgn) in [(LEFT, -1.0f32), (RIGHT, 1.0)] {
+        if arrows & bit == 0 {
+            continue;
+        }
+        // A branch off the shaft well behind the straight head, sweeping out
+        // to the side and ending in a head that points across the lane
+        // (and a little ahead): a turn, apart from the straight arrow.
+        let side = right * sgn;
+        let j = if straight { front - d * 3.6 } else { front - d * 2.5 };
+        let elbow = j + d * 0.55 + side * 0.4;
+        m.ground_strip(&[j - d * 0.1, elbow], shaft, y, c);
+        let dir = (side + d * 0.2).normalize_or_zero();
+        head(m, elbow - dir * 0.05, dir, 1.05, 0.5);
+    }
+}
+
+#[cfg(test)]
+mod arrow_tests {
+    use super::*;
+    use nd_sim::traffic::{LEFT, RIGHT, STRAIGHT};
+
+    /// A plain crossroads of two-lane-each-way streets: every arriving lane
+    /// gets a painted arrow, in the paint surface (not the dimmed glow), and
+    /// the arrows are big enough to read from above (wider than a lane line).
+    #[test]
+    fn junction_lanes_get_readable_arrows() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 2, 2);
+        roads.add_polyline(&[Vec2::new(0.0, -200.0), Vec2::new(0.0, 200.0)], 2, 2);
+        let mut net = LaneNetwork::default();
+        net.rebuild(&roads);
+        let g = lane_arrows(&net, &Palette::default());
+        assert!(g.get(Glow).is_empty(), "arrows are paint, not glow");
+        let paint = g.get(Paint);
+        assert!(!paint.is_empty());
+        let approach_lanes: usize = net.approaches.iter().map(|a| a.arrows.iter().filter(|&&x| x != 0).count()).sum();
+        assert!(approach_lanes >= 8, "{approach_lanes}");
+        // Bright: markedly brighter than the plain lane marker.
+        let pal = Palette::default();
+        assert!(paint.colors.iter().all(|c| c[0] > pal.lane_marker[0]));
+    }
+
+    /// The heads follow the movements: a left-only arrow reaches out to the
+    /// driver's left, a right-only one to the right, a straight one only ahead.
+    #[test]
+    fn arrow_heads_follow_the_allowed_movements() {
+        let d = Vec2::X;
+        let right = Vec2::new(-d.y, d.x);
+        let extent = |a: u8| {
+            let mut m = crate::mesh::MeshData::default();
+            lane_arrow(&mut m, Vec2::ZERO, d, a, 0.0, [1.0; 4]);
+            let side: Vec<f32> = m.positions.iter().map(|p| Vec2::new(p[0], p[2]).dot(right)).collect();
+            (side.iter().cloned().fold(f32::MAX, f32::min), side.iter().cloned().fold(f32::MIN, f32::max))
+        };
+        let (l0, l1) = extent(LEFT);
+        let (r0, r1) = extent(RIGHT);
+        let (s0, s1) = extent(STRAIGHT);
+        assert!(l0 < -0.9 && l1 < 0.7, "left reaches left: {l0} {l1}");
+        assert!(r1 > 0.9 && r0 > -0.7, "right reaches right: {r0} {r1}");
+        assert!(s0 > -0.7 && s1 < 0.7, "straight stays in line: {s0} {s1}");
+        let (b0, b1) = extent(LEFT | STRAIGHT | RIGHT);
+        assert!(b0 < -0.9 && b1 > 0.9);
+    }
 }

@@ -311,7 +311,9 @@ impl World {
                 // [industry] land value as the land use feels it
                 let value = if self.lots.contains_key(b.lot) { self.lot_value(b.lot) } else { b.land_value };
                 // [districts] a Historic district holds what stands as it is
-                let special = b.is_parking() || b.is_special() || self.district_frozen(b.lot);
+                let special = b.is_parking() || b.is_special() || self.district_frozen(b.lot)
+                    // [taxis] a taxi yard and a cargo hub are what they are
+                    || b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::TaxiCompany | BusinessKind::CargoHub));
                 (b.land_use, b.tier, value, b.is_derelict(), full, special)
             };
             let decay = match tier {
@@ -431,6 +433,11 @@ impl World {
                     }
                 }
             }
+        }
+        // [taxis] Trips that wanted a cab and found none: a citizen with
+        // savings opens a taxi company near them.
+        if built < self.config.max_builds_per_interval && self.maybe_found_taxi_company(&vacant) {
+            built += 1;
         }
         // Land uses whose businesses would all lose money are not built on:
         // a town that cannot sell more bread does not get another bakery.
@@ -572,7 +579,7 @@ impl World {
         let Some(b) = self.buildings.get(bid) else { return };
         let Some(kind) = b.business.as_ref().map(|z| z.kind) else { return };
         let (lu, jobs) = (b.land_use, b.jobs);
-        if matches!(kind, BusinessKind::Office | BusinessKind::Parking) || self.economy.cover_of(kind).is_none_or(|c| c >= COVER_TO_EXPAND) {
+        if matches!(kind, BusinessKind::Office | BusinessKind::Parking | BusinessKind::TaxiCompany) || self.economy.cover_of(kind).is_none_or(|c| c >= COVER_TO_EXPAND) {
             return;
         }
         if let Some(new) = self.pick_business_kind(lu, jobs).filter(|k| *k != kind) {

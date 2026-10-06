@@ -78,7 +78,13 @@ Citizens are rendered from their simulated positions every frame.
   under 30% turn left), three or more get a left lane, straight lanes and a
   straight-and-right lane, with a second left lane when over 40% turn left. The player
   can set arrows per approach (`lane_use`); highway ramps keep every lane open. Arrows
-  are painted before the stop line. Junctions with three or more approaches run an
+  are painted in every arriving lane before the stop line (`street::lane_arrows`): one arrow
+  per lane, 8 m back (a second 25 m further on long approaches), 5.4 m long with 0.4 m shafts
+  and filled heads for each allowed movement, so a left-only lane reads apart from a
+  straight-and-right one from the top-down camera. Road paint (lane lines, stop lines,
+  zebras, arrows) is its own unlit surface (`Surface::Paint`), full at night and brighter by
+  day, instead of sharing the glow material that is dimmed to a third in daylight and made
+  the markings read dark grey on sunlit asphalt. Junctions with three or more approaches run an
   actuated signal: opposite approaches share a green (left turns yield to oncoming
   traffic), a green with nobody left to serve is cut after 5 s when another approach
   waits, and phases nobody waits for are skipped. A green opens with a protected left
@@ -588,6 +594,54 @@ Citizens are rendered from their simulated positions every frame.
   land value nuisance layer, vertiports are a nuisance too, and people on the street who are not rich grumble
   (a memory, a little mood, once a day). The renderer lands aircraft on the decks the buildings drew
   (`Geometry::pads`).
+- **Taxis** (`nd_sim::taxi`, `world/taxis.rs`): a taxi company is a commercial business
+  (`BusinessKind::TaxiCompany`) nobody plans. Every trip that chose another way although a cab
+  would have beaten it by 10% (priced with an 8-minute wait, as if a company existed) is demand
+  nobody served: near a company (within 1.65 km) it is a rider that company missed, elsewhere it
+  counts towards a new company (`Taxis::latent_today`). Once a day's count reaches 10 (10 more per
+  company in town, and at most one company per 1,500 people), development opens a company on the
+  vacant commercial lot (industrial at a pinch) nearest where those trips began, founded by the
+  adult with the most savings and household money (a kilometre away counts as 200 less), who puts
+  in 40% of it (up to 1,500) and remembers it ("<Surname> Cabs"). It starts with 3 cabs in
+  a yard drawn as a surface lot with a lit TAXI sign, 6 staff, and lives on fares. Every cab is a
+  record with a place, like a private car: in its yard, queued at a rank, stopped at a kerb, or
+  on the road as a car of the traffic model (`Errand::Taxi`); one taken off the road by road works
+  goes back to its yard, and the cabs of a company that closes are sold and driven off the map.
+  Mode choice gains `TripMode::Taxi` for trips of 250 m or more (not children, not walks in the
+  park): the walk to the kerb, the wait (the nearest free cab on duty within 1.1 km at 9 m/s, once
+  the riders already waiting have taken the free cabs; else 8 min plus 15 per queued rider per cab on
+  duty; over 30 minutes and the rider does not hail, which counts as demand), the ride, the fare (4 + 3.5/km of road, about
+  1.3 times the straight line, paid by the household to the company; the purse must hold twice
+  it), and comfort: being driven (more for hedonists and the old), at night (22:00 to 05:00, when
+  the buses stop) and above all drunk; with a cab to be had, a drunk who would drive anyway weighs
+  the car at -15 instead of -40, so fewer drink-drive. A rider walks to the kerb in front of their
+  building and waits (visible); the dispatcher sends the nearest free cab, which stops at the kerb
+  and waits for them if they are not there yet; they get in (`Activity::Riding`), are driven to the
+  kerb of their destination, pay and walk in. No cab in 30 minutes (60 with one on its way): they
+  give up, remember it, the nearest company counts a missed rider, and the trip goes another way.
+  A cab done with a fare takes the nearest unserved rider, else waits at a rank with room (4 cabs
+  each: station forecourts, the six busiest open venues, its own gate), else goes home. The rota
+  puts a share of each fleet on duty by the hour (all from 20:00 to 03:00, 80% in the evening rush,
+  half by day, 30% at dawn); off-duty cabs park in the yard. At midnight a company with 3 or more
+  missed riders and the money buys one cab per 8 missed (420 each, up to 4 a night and 20 in all);
+  one whose cabs gave under 1.5 rides each and missed nobody sells one. A rider who has booked
+  makes no other plans until the cab comes or they give up. On the demo city (day 24) one company
+  ran 11 cabs, about 120 rides a day, 2 to 3% of trips, most of its trade in the evening and night. Transit window and `report.transit.taxis`.
+- **Cargo hubs** (`nd_sim::cargo_hub`, `world/cargo_hubs.rs`): a freight terminal the player places
+  (Buildings, Rail: 9,000, 140/day, 24 jobs, on a lot of 900 m² or more with a street, not homes or
+  parks), run by the city. Businesses within 1.8 km of a working hub import through it
+  (`World::import`): by sea when a shipping port works and by rail when a freight yard does (at
+  their cheaper prices, as before), else by road at 90% of the import price; the load is addressed
+  to the hub. Road orders wait at the hub until 60 units fill a semi or the oldest has waited 30
+  minutes, then one semi brings them all from the map edge: one long-haul trip through the city
+  instead of one per order (counted as `long_haul_trips_saved`). A freight yard or port within
+  500 m unloads straight into the hub (its siding or quay, no lorry); farther ones truck the loads
+  over. From the shed the hub's own lorries (parcel livery) take each load to its buyer, and come
+  back to park in its bays: the hub is a truck lot for the fleet code (`BusinessKind::is_truck_lot`),
+  so any lorry nearby may park there too. Exports through a hub earn 6% more and leave in semis of
+  80 units. A 3% handling fee is the hub's income. A hub that closes or is bulldozed sends what it
+  holds on to the buyers, and readdresses loads still at yards, ports, on trains or ships to them:
+  nothing is lost. Transit window and `report.transit.cargo_hubs`.
 - **Crime, the street and the bins** (`nd_sim::{crime, homeless, trash}`, hooked in from
   `world/society.rs`, their own random stream). *Crime*: every hour each adult may turn, by class
   (poor 1, middle 0.22, rich 0.04), being jobless (x2.5) or homeless (x1.6), hunger, unhappiness,
