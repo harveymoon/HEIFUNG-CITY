@@ -1288,7 +1288,8 @@ fn find_underpasses(land: &Landscape, roads: &RoadNetwork, node_z: &[f32]) -> Ve
     let mut out = Vec::new();
     for c in roads.grade_crossings() {
         let (a, b) = (roads.segment(c.upper.0), roads.segment(c.lower.0));
-        if a.bridge || b.bridge {
+        // Decks and tunnels need no cut: the deck spans, the tunnel is bored.
+        if a.bridge || b.bridge || a.tunnel || b.tunnel {
             continue;
         }
         // Whichever is actually higher passes over: a street on a hill
@@ -1412,7 +1413,7 @@ impl Ground {
         for (_, seg) in roads.alive_segments() {
             // Water bridges leave the ground alone; a viaduct only grades
             // it where its deck comes down near it (the foot of a ramp).
-            if seg.bridge && !seg.viaduct {
+            if (seg.bridge && !seg.viaduct) || seg.tunnel {
                 continue;
             }
             let foot = seg.viaduct;

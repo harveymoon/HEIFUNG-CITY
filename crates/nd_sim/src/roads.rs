@@ -46,6 +46,11 @@ pub const GRADE_SEPARATION: f32 = 4.5;
 /// A way at least this far above the ground stands on a deck (a viaduct)
 /// rather than on an embankment.
 pub const VIADUCT_LEVEL: f32 = 2.5;
+/// A way at least this far below the ground at both ends of a piece runs in
+/// a covered tunnel; above it, in an open cutting (a portal ramp).
+pub const TUNNEL_LEVEL: f32 = -5.0;
+/// The level the Road tool's Tunnel preset draws at.
+pub const TUNNEL_DEPTH: f32 = -8.0;
 
 /// Do two ways crossing here pass one over the other? Highways only ever
 /// meet other roads by a dropped end (a ramp); any two ways whose planned
@@ -115,6 +120,11 @@ pub struct Segment {
     /// on pillars rather than an embankment. Viaducts are `bridge`s too.
     #[serde(default)]
     pub viaduct: bool,
+    /// Drawn deep below the ground at both ends (`TUNNEL_LEVEL` or lower):
+    /// a bored tunnel. It cuts no parcels, fronts no lots, has no
+    /// pavements, and leaves whatever stands above it alone.
+    #[serde(default)]
+    pub tunnel: bool,
 }
 
 impl Segment {
@@ -406,7 +416,7 @@ impl RoadNetwork {
             return existing;
         }
         self.index.take();
-        self.segments.push(Segment { a, b, lanes_fwd, lanes_bwd, alive: true, kind, bridge: false, viaduct: false });
+        self.segments.push(Segment { a, b, lanes_fwd, lanes_bwd, alive: true, kind, bridge: false, viaduct: false, tunnel: false });
         let id = SegmentId((self.segments.len() - 1) as u32);
         self.nodes[a.0 as usize].segments.push(id);
         self.nodes[b.0 as usize].segments.push(id);
@@ -425,6 +435,7 @@ impl RoadNetwork {
         for id in [first, second] {
             self.segments[id.0 as usize].bridge = s.bridge;
             self.segments[id.0 as usize].viaduct = s.viaduct;
+            self.segments[id.0 as usize].tunnel = s.tunnel;
         }
     }
 

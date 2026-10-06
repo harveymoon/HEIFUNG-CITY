@@ -124,10 +124,14 @@ impl World {
         for (id, a, b) in ids {
             let wet = !flat && [0.25, 0.5, 0.75].iter().filter(|&&t| self.landscape.is_water(a.lerp(b, t))).count() >= 2;
             let seg = self.roads.segment(id);
-            let viaduct = self.roads.node(seg.a).level.max(self.roads.node(seg.b).level) >= crate::roads::VIADUCT_LEVEL;
+            let (la, lb) = (self.roads.node(seg.a).level, self.roads.node(seg.b).level);
+            let viaduct = la.max(lb) >= crate::roads::VIADUCT_LEVEL;
+            // Under the water a tunnel is still a tunnel.
+            let tunnel = la.max(lb) <= crate::roads::TUNNEL_LEVEL;
             let s = &mut self.roads.segments[id.0 as usize];
-            s.bridge = wet || viaduct;
+            s.bridge = (wet && !tunnel) || viaduct;
             s.viaduct = viaduct && !wet;
+            s.tunnel = tunnel;
         }
     }
 

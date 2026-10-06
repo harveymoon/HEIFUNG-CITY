@@ -228,7 +228,8 @@ fn a_lowered_street_runs_in_a_cutting_under_a_street() {
     let mut w = World::new(WorldConfig::default());
     w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
     let pts = [Vec2::new(60.0, -300.0), Vec2::new(60.0, -150.0), Vec2::new(60.0, 150.0), Vec2::new(60.0, 300.0)];
-    build(&mut w, road(&pts, (1, 1), RoadKind::Street, &[0.0, -6.0, -6.0, 0.0]));
+    // Just shallow enough to stay open (a cutting, not a tunnel).
+    build(&mut w, road(&pts, (1, 1), RoadKind::Street, &[0.0, -4.5, -4.5, 0.0]));
     let x = w.roads.grade_crossings();
     assert_eq!(x.len(), 1);
     let c = x[0];
@@ -237,4 +238,93 @@ fn a_lowered_street_runs_in_a_cutting_under_a_street() {
     assert!(u.over_z - u.under_z >= crate::landscape::UNDERPASS_CLEARANCE - 0.05);
     // The ground in the cut is the lowered street's.
     assert!((w.ground_height(c.at + u.under_dir * 10.0) - u.under_z_at(10.0)).abs() < 0.5);
+}
+
+// ── tunnels ─────────────────────────────────────────────────────────────────
+
+const T: f32 = crate::roads::TUNNEL_DEPTH;
+
+/// A street east-west at y = 0, and a tunnel that leaves it by a portal
+/// ramp at x = -300, runs north under everything at -8 m and comes up by
+/// a ramp onto a street at y = 400.
+fn tunnel_town() -> (World, GestureId) {
+    let mut w = flat_world();
+    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    w.add_road(&[Vec2::new(-400.0, 400.0), Vec2::new(400.0, 400.0)], 1, 1);
+    let pts = [Vec2::new(-300.0, 0.0), Vec2::new(-300.0, -130.0), Vec2::new(0.0, -130.0), Vec2::new(0.0, 530.0), Vec2::new(150.0, 530.0), Vec2::new(150.0, 400.0)];
+    let id = build(&mut w, road(&pts, (1, 1), RoadKind::Street, &[0.0, T, T, T, T, 0.0]));
+    (w, id)
+}
+
+#[test]
+fn a_tunnel_passes_under_streets_and_joins_by_its_portals() {
+    let (w, _) = tunnel_town();
+    // Under both streets without a junction.
+    let x: Vec<Crossing> = w.roads.grade_crossings().into_iter().filter(|c| c.at.x.abs() < 1.0).collect();
+    assert_eq!(x.len(), 2, "under both streets");
+    for c in &x {
+        assert!(w.roads.segment(c.lower.0).tunnel, "the tunnel is the lower way");
+        assert!(!w.ground.underpasses.iter().any(|u| u.at.distance(c.at) < 1.0), "bored, not cut");
+        assert!(w.road_height(c.upper.0, c.upper.1) - w.road_height(c.lower.0, c.lower.1) >= 5.0);
+    }
+    // The portals join the ground streets: a way from one street to the
+    // other through the tunnel.
+    let a = w.roads.node_near(Vec2::new(-300.0, 0.0), 0.5).expect("a junction at the south portal");
+    let b = w.roads.node_near(Vec2::new(150.0, 400.0), 0.5).expect("a junction at the north portal");
+    assert_eq!(segments_at(&w, a).len(), 3);
+    assert_eq!(segments_at(&w, b).len(), 3);
+    let path = w.roads.path(a, b).expect("connected through the tunnel");
+    assert!(path.windows(2).any(|p| w.roads.neighbors(p[0]).any(|(n, s)| n == p[1] && w.roads.segment(s).tunnel)));
+    // Nobody walks in it; parcels above are whole.
+    let mid = Vec2::new(0.0, 200.0);
+    assert!(w.walk.nodes.iter().all(|n| n.pos.distance(mid) > 20.0), "no pavement in the tunnel");
+    assert!(w.roads.alive_segments().filter(|(_, s)| s.tunnel).count() >= 3);
+}
+
+#[test]
+fn tunnels_meet_tunnels_at_underground_junctions() {
+    let (mut w, _) = tunnel_town();
+    // A second tunnel crossing the first under the middle of the block.
+    build(&mut w, road(&[Vec2::new(-200.0, 200.0), Vec2::new(200.0, 200.0)], (1, 1), RoadKind::Street, &[T, T]));
+    let j = w.roads.node_near(Vec2::new(0.0, 200.0), 0.5).expect("a junction under ground");
+    let segs = segments_at(&w, j);
+    assert_eq!(segs.len(), 4);
+    assert!(segs.iter().all(|&s| w.roads.segment(s).tunnel));
+    assert!((w.road_z[j.0 as usize] - T).abs() < 0.5, "at tunnel depth");
+    assert!(connects(&w, j, segs[0], segs[1]) || connects(&w, j, segs[0], segs[2]) || connects(&w, j, segs[0], segs[3]));
+}
+
+#[test]
+fn cars_drive_through_a_tunnel() {
+    let (mut w, _) = tunnel_town();
+    let (s0, _, _) = w.roads.nearest_street(Vec2::new(-350.0, 0.0)).unwrap();
+    let (s1, _, _) = w.roads.nearest_street(Vec2::new(300.0, 400.0)).unwrap();
+    let (route, a, b) = w.traffic.net.find_route(s0, Vec2::new(-350.0, 0.0), s1, Vec2::new(300.0, 400.0)).expect("a route");
+    let through = route.iter().any(|&l| matches!(w.traffic.net.lanes[l as usize].kind, LaneKind::Road { segment, .. } if w.roads.segment(segment).tunnel));
+    assert!(through, "the short way is through the tunnel");
+    let id = w.traffic.spawn_car(CitizenId::default(), None, route, a, b, 0);
+    let mut deepest = 0.0f32;
+    for _ in 0..4000 {
+        w.traffic.step(1.0, 2);
+        let Some(car) = w.traffic.cars.get(id) else { break };
+        deepest = deepest.min(w.car_height(car));
+    }
+    assert!(deepest < -6.0, "the car went down into the tunnel: deepest {deepest}");
+}
+
+#[test]
+fn a_tunnel_under_a_building_leaves_it_standing() {
+    let mut w = flat_world();
+    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    w.add_zone(vec![Vec2::new(-100.0, 5.0), Vec2::new(100.0, 5.0), Vec2::new(100.0, 80.0), Vec2::new(-100.0, 80.0)], LandUse::Residential);
+    let lot = w.lots.iter().filter(|(_, l)| l.usable()).min_by(|a, b| a.1.center.length().total_cmp(&b.1.center.length())).map(|(id, _)| id).unwrap();
+    w.build_on(lot);
+    let building = w.lots[lot].building.unwrap();
+    let at = w.lots[lot].center;
+    let lots_before = w.lots.len();
+    // A tunnel straight under the building (no portal here: it is deep all along).
+    build(&mut w, road(&[Vec2::new(at.x, -300.0), Vec2::new(at.x, 300.0)], (1, 1), RoadKind::Street, &[T, T]));
+    assert!(w.buildings.contains_key(building), "the building stands");
+    assert_eq!(w.lots.len(), lots_before, "no parcel was cut");
+    assert!(w.roads.alive_segments().any(|(_, s)| s.tunnel));
 }
