@@ -25,6 +25,8 @@ mod places;
 mod report;
 /// [society] crime, homelessness and trash.
 mod society;
+/// [taxis] Taxi companies and cargo hubs in the report and inspector.
+mod taxis;
 mod view;
 mod window;
 

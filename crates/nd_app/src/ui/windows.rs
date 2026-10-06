@@ -253,6 +253,48 @@ fn transit(ui: &mut egui::Ui, p: &mut UiCtx) {
     row(ui, "trains today", format!("{} passenger   {} freight", r.passenger_trains_today, r.freight_trains_today));
     row(ui, "freight", format!("{:.0} units in today   {:.0} waiting at yards", r.freight_in_today, r.freight_waiting));
     row(ui, "money", format!("fares {:.0} today   upkeep {:.0}/day", r.fares_today, r.upkeep_today));
+    taxis_and_freight(ui, w);
+}
+
+/// [taxis] The Transit window's taxi and cargo hub sections.
+fn taxis_and_freight(ui: &mut egui::Ui, w: &nd_sim::World) {
+    let t = &w.taxis;
+    let s = &t.stats;
+    let k = t.counts();
+    section(ui, "TAXIS");
+    let companies = w.taxi_companies();
+    if companies.is_empty() {
+        hint(ui, &format!("No taxi company yet. One opens when people want cabs: {} of {} trips today would have taken one.", t.latent_today, nd_sim::taxi::FOUND_DEMAND));
+    } else {
+        row(ui, "fleet", format!("{} cab{} · {} on duty · {} on the road · {} at ranks · {} in the yard", k.cabs, if k.cabs == 1 { "" } else { "s" }, k.on_duty, k.on_road, k.at_ranks + k.at_kerb, k.in_yard));
+        row(ui, "rides", format!("{} today ({} yesterday) · {} carrying now · {} waiting at the kerb", s.rides_today, s.rides_yesterday, k.carrying, t.requests.len()));
+        row(ui, "riders", format!("{} drunk · {} late at night · {} gave up waiting", s.drunk_rides_today, s.night_rides_today, s.gave_up_today));
+        let wait = if s.rides_today > 0 { s.wait_minutes_today / s.rides_today as f32 } else { 0.0 };
+        row(ui, "money", format!("fares {:.0} today · mean wait {:.0} min", s.fares_today, wait));
+        for c in companies {
+            let name = w.buildings.get(c).map(|b| b.name.as_str()).unwrap_or("?");
+            let (rides, _) = t.rides_by_company.get(&c).copied().unwrap_or((0, 0));
+            hint(ui, &format!("{name}: {} cabs, {rides} rides today", t.fleet_size(c)));
+        }
+        if t.latent_today > 0 {
+            hint(ui, &format!("{} trips today wanted a cab out of reach of any company", t.latent_today));
+        }
+    }
+    let h = &w.cargo_hubs;
+    if !h.hubs.is_empty() {
+        let hs = &h.stats;
+        section(ui, "CARGO HUBS");
+        let (mut waiting, mut inbound, mut shed) = (0.0f32, 0.0f32, 0.0f32);
+        for st in h.hubs.values() {
+            let [a, b, c, d] = st.units();
+            waiting += a + b;
+            inbound += c;
+            shed += d;
+        }
+        row(ui, "hubs", format!("{} · {:.0} units waiting for a semi · {:.0} coming by rail or sea · {:.0} in the sheds", h.hubs.len(), waiting, inbound, shed));
+        row(ui, "today", format!("{} loads in · {} sent on · {} semis in, {} out", hs.received_today, hs.forwarded_today, hs.trunks_in_today, hs.trunks_out_today));
+        row(ui, "long haul", format!("{} trips through the city saved today ({} yesterday)", hs.long_haul_saved_today, hs.long_haul_saved_yesterday));
+    }
 }
 
 /// Overlays, land value and class mix, and the lighting controls: the

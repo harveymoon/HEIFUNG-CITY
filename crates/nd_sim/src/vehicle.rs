@@ -138,17 +138,20 @@ pub enum Livery {
     Utility,
     /// The bus network.
     Transit,
+    /// [taxis] A taxi company's cab: neon yellow, a checker band, a lit
+    /// roof sign and underglow (`crate::taxi`).
+    Taxi,
 }
 
 impl Livery {
-    pub const ALL: [Livery; 7] = [Livery::None, Livery::Pizza, Livery::Parcels, Livery::Grocery, Livery::Construction, Livery::Utility, Livery::Transit];
+    pub const ALL: [Livery; 8] = [Livery::None, Livery::Pizza, Livery::Parcels, Livery::Grocery, Livery::Construction, Livery::Utility, Livery::Transit, Livery::Taxi];
 
     /// The fleet a business sends its deliveries in.
     pub fn for_business(kind: BusinessKind) -> Livery {
         match kind {
             BusinessKind::Bakery => Livery::Pizza,
             BusinessKind::Grocery | BusinessKind::VertFarm | BusinessKind::Dairy | BusinessKind::ProteinVat => Livery::Grocery,
-            BusinessKind::GadgetShop | BusinessKind::Assembly => Livery::Parcels,
+            BusinessKind::GadgetShop | BusinessKind::Assembly | BusinessKind::CargoHub => Livery::Parcels,
             BusinessKind::Fab | BusinessKind::Mill | BusinessKind::GrainFarm => Livery::Utility,
             _ => Livery::None,
         }
@@ -507,6 +510,9 @@ pub enum Errand {
     Patrol(crate::buildings::BuildingId),
     /// [parking] A tow truck on job `n` (`crate::enforcement::TowJob`).
     Tow(u32),
+    /// [taxis] A cab of a taxi company (`crate::taxi`): what it does on
+    /// arriving is in its record's job.
+    Taxi(crate::taxi::CabId),
 }
 
 /// Why a private car came into or left the city: the only ways it can.

@@ -326,6 +326,9 @@ pub enum TransitLeg {
     Rail { board: crate::buildings::BuildingId, alight: crate::buildings::BuildingId },
     /// A drone taxi from one pad to another (`crate::air`).
     Air { from: crate::buildings::BuildingId, to: crate::buildings::BuildingId },
+    /// [taxis] A cab from the kerb to the destination's kerb
+    /// (`crate::taxi`); the cab is found by the dispatcher.
+    Taxi,
 }
 
 /// A citizen's transit trip in progress: walk to the stop or station,

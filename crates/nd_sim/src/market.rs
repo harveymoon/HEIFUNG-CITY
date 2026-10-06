@@ -131,6 +131,14 @@ pub enum BusinessKind {
     /// [parking] Tow company: tow trucks and a pound for towed cars; lives
     /// on tow and release fees (`crate::enforcement`).
     TowYard,
+    /// [taxis] Taxi company: a yard of cabs that wait at ranks and carry
+    /// riders for a fare (`crate::taxi`). Opened by a citizen when trips
+    /// want cabs and there are none, never at random.
+    TaxiCompany,
+    /// Cargo hub the player places: a freight terminal that takes in the
+    /// imports of the businesses around it, consolidated, and sends them
+    /// on in its own lorries (`crate::cargo_hub`). Run by the city.
+    CargoHub,
 }
 
 /// Opening hours on the clock, `open..close`; a close earlier than the open
@@ -204,7 +212,7 @@ pub struct Recipe {
 }
 
 impl BusinessKind {
-    pub const COUNT: usize = 20;
+    pub const COUNT: usize = 22;
     /// Every kind, in `index` order.
     pub const ALL: [BusinessKind; Self::COUNT] = [
         BusinessKind::VertFarm,
@@ -227,6 +235,8 @@ impl BusinessKind {
         BusinessKind::Fishery,
         BusinessKind::FishPlant,
         BusinessKind::TowYard,
+        BusinessKind::TaxiCompany,
+        BusinessKind::CargoHub,
     ];
 
     pub fn index(self) -> usize {
@@ -255,6 +265,8 @@ impl BusinessKind {
             BusinessKind::Fishery => "fishery",
             BusinessKind::FishPlant => "fish processing plant",
             BusinessKind::TowYard => "tow company",
+            BusinessKind::TaxiCompany => "taxi company",
+            BusinessKind::CargoHub => "cargo hub",
         }
     }
 
@@ -292,6 +304,10 @@ impl BusinessKind {
             BusinessKind::Fishery => Recipe { inputs: &[], outputs: &[(Resource::Fish, 2.5)] },
             BusinessKind::FishPlant => Recipe { inputs: &[(Resource::Fish, 1.5)], outputs: &[(Resource::Meat, 1.0)] },
             BusinessKind::TowYard => Recipe { inputs: &[], outputs: &[] },
+            // Lives on fares (`world/taxis.rs`).
+            BusinessKind::TaxiCompany => Recipe { inputs: &[], outputs: &[] },
+            // Handling fees (`world/cargo_hubs.rs`).
+            BusinessKind::CargoHub => Recipe { inputs: &[], outputs: &[] },
         }
     }
 
@@ -331,7 +347,7 @@ impl BusinessKind {
             BusinessKind::GadgetShop => Hours::new(9, 20),
             BusinessKind::Venue => Hours::new(18, 3),
             BusinessKind::Office => Hours::new(8, 18),
-            BusinessKind::Parking | BusinessKind::FleetLot | BusinessKind::ContainerYard | BusinessKind::OilWell | BusinessKind::TowYard => Hours::ALWAYS,
+            BusinessKind::Parking | BusinessKind::FleetLot | BusinessKind::ContainerYard | BusinessKind::OilWell | BusinessKind::TowYard | BusinessKind::TaxiCompany | BusinessKind::CargoHub => Hours::ALWAYS,
             BusinessKind::Fishery => Hours::new(4, 16),
             BusinessKind::Refinery | BusinessKind::FishPlant => Hours::new(6, 22),
             // Plants run two shifts.
@@ -358,6 +374,12 @@ impl BusinessKind {
     /// The industry sub-zone this business belongs to, if any.
     pub fn industry(self) -> Option<crate::industry::IndustryKind> {
         crate::industry::IndustryKind::of_business(self)
+    }
+
+    /// Parks lorries in bays: a truck and bus lot, or a cargo hub's own
+    /// fleet bays.
+    pub fn is_truck_lot(self) -> bool {
+        matches!(self, BusinessKind::FleetLot | BusinessKind::CargoHub)
     }
 
     /// Stock a business tries to keep of each input, in hours of production.

@@ -396,6 +396,13 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         Placeable::Rail(_) => line += ". Set beside track or a street it fuses to them; otherwise it lays stubs to join (see the Rail tool).",
         Placeable::Dock(_) => {}
         Placeable::ParkingLot(s) => line += &format!(", {} spaces. Run by the city: drivers pay {:.1} a visit to the treasury (set the fee in the inspector or with the API).", s.capacity(), s.default_price()),
+        Placeable::CargoHub => {
+            line += &format!(
+                ". Freight terminal: businesses within {:.0} m import through it, by sea or rail when a port or yard works (one within {:.0} m unloads straight in), else in shared semis from the edge instead of one lorry each; its own lorries deliver on and park in its bays.",
+                nd_sim::cargo_hub::HUB_REACH,
+                nd_sim::cargo_hub::SIDING_REACH
+            )
+        }
     }
     hint(ui, &line);
     if let Placeable::Dock(k) = what {

@@ -78,6 +78,8 @@ const HEAD: [f32; 3] = [2.8, 2.8, 2.5];
 const TAIL: [f32; 3] = [2.4, 0.12, 0.12];
 const AMBER: [f32; 3] = [2.4, 1.1, 0.1];
 const RIDER: [f32; 3] = [0.10, 0.10, 0.12];
+/// [taxis] Cab yellow: saturated enough to read as a cab from the top-down camera.
+const TAXI_YELLOW: [f32; 3] = [1.0, 0.55, 0.0];
 
 /// Livery colours: body, accent, lit sign.
 pub fn livery_colors(l: Livery, paint: u8) -> Option<([f32; 3], [f32; 3], [f32; 3])> {
@@ -90,6 +92,8 @@ pub fn livery_colors(l: Livery, paint: u8) -> Option<([f32; 3], [f32; 3], [f32; 
         Livery::Construction => ([0.85, 0.6, 0.04], [0.04, 0.04, 0.04], AMBER),
         Livery::Utility => ([0.82, 0.82, 0.8], [0.85, 0.3, 0.03], [2.4, 0.8, 0.1]),
         Livery::Transit => ([0.82, 0.84, 0.86], [neon[0] * 0.3, neon[1] * 0.3, neon[2] * 0.3], neon),
+        // [taxis] Neon yellow, a black checker band, a hot lit roof sign.
+        Livery::Taxi => (TAXI_YELLOW, [0.02, 0.02, 0.025], [3.2, 2.6, 0.5]),
     })
 }
 
@@ -885,6 +889,7 @@ fn livery_marks(b: &mut B, accent: [f32; 3], sign: [f32; 3]) {
             // Brand emblem: a dark square inside the lit panel.
             b.lit_sides(x, y, hw + 0.01, h * 0.25, h * 0.25, mul(accent, 0.2));
         }
+        BodyType::Hatchback | BodyType::Sedan | BodyType::Suv | BodyType::Coupe if m.livery == Livery::Taxi => taxi_marks(b, accent, sign),
         BodyType::Hatchback | BodyType::Sedan | BodyType::Suv | BodyType::Pickup | BodyType::Coupe | BodyType::CyberTruck => {
             // Door decal and a lit roof topper.
             b.sides(0.0, 0.7, if matches!(m.body, BodyType::Suv | BodyType::Pickup | BodyType::CyberTruck) { 0.97 } else { 0.89 }, 1.2, 0.3, accent);
@@ -915,6 +920,50 @@ fn livery_marks(b: &mut B, accent: [f32; 3], sign: [f32; 3]) {
         };
         b.lights.boxed(Vec3::new(x, y + 0.08, 0.0), Vec3::new(0.18, 0.14, 0.5), 0.0, c4(AMBER));
     }
+}
+
+/// [taxis] A cab: a checker band along both sides, a wide lit TAXI sign on
+/// the roof (two bright faces, readable from above and from the street), a
+/// neon sill strip and underglow in the cab's accent so the fleet glows at
+/// night: the cyberpunk cab.
+fn taxi_marks(b: &mut B, dark: [f32; 3], sign: [f32; 3]) {
+    let m = *b.m;
+    let len = body_length(m.body);
+    let tall = matches!(m.body, BodyType::Suv);
+    let hw = match m.body {
+        BodyType::Hatchback => 0.84,
+        BodyType::Suv => 0.97,
+        BodyType::Coupe => 0.93,
+        _ => 0.89,
+    };
+    let roof = match m.body {
+        BodyType::Suv => 1.87,
+        BodyType::Coupe => 1.27,
+        _ => 1.5,
+    };
+    // Checker band: alternating dark squares along the doors.
+    let y = if tall { 0.95 } else { 0.72 };
+    let sq = 0.16;
+    let n = ((len * 0.62) / sq) as i32;
+    let x0 = -(n as f32) * sq * 0.5;
+    for i in 0..n {
+        for row in 0..2 {
+            if (i + row) % 2 == 0 {
+                let x = x0 + (i as f32 + 0.5) * sq;
+                b.sides(x, y + row as f32 * sq, hw + 0.004, sq, sq, dark);
+            }
+        }
+    }
+    // Roof sign: a lit box across the roof, its top lit too for the
+    // camera overhead.
+    if b.detail {
+        b.bx((-0.25, roof + 0.03, 0.0), (0.9, 0.06, 0.7), dark);
+    }
+    b.lights.boxed(Vec3::new(-0.25, roof + 0.2, 0.0), Vec3::new(0.75, 0.26, 0.6), 0.0, c4(sign));
+    // Neon sill strip and underglow in the cab's accent.
+    let neon = NEON[m.paint as usize % NEON.len()];
+    b.lit_sides(0.0, if tall { 0.46 } else { 0.32 }, hw, len * 0.7, 0.05, neon);
+    b.underglow(len * 0.85, hw * 1.05, neon);
 }
 
 // ── parked vehicles in building dressing ────────────────────────────────────

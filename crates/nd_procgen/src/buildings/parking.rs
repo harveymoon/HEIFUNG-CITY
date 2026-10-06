@@ -49,6 +49,24 @@ fn bays(poly: &[Vec2], margin: f32) -> Vec<(Vec2, f32)> {
     out
 }
 
+/// [taxis] The bays a surface lot on `lot` paints, in world coordinates
+/// with each bay's heading (the way a car parked in it faces), in the
+/// order the lot draws them: what `parking_lot` lays out, so the renderer
+/// can stand vehicles of its own (a taxi yard's cabs) in the painted bays.
+pub fn surface_lot_bays_world(lot: &nd_sim::Lot) -> Vec<(Vec2, f32)> {
+    let frame = super::Frame::from_lot(lot);
+    let mut lot_poly: Vec<Vec2> = clean_poly(&lot.polygon.iter().map(|p| frame.to_local(*p)).collect::<Vec<_>>(), 0.3);
+    if lot_poly.len() < 3 {
+        let (hw, hd) = (frame.width * 0.5, frame.depth * 0.5);
+        lot_poly = vec![Vec2::new(-hw, -hd), Vec2::new(hw, -hd), Vec2::new(hw, hd), Vec2::new(-hw, hd)];
+    }
+    if nd_sim::zoning::polygon_area(&lot_poly) < 0.0 {
+        lot_poly.reverse();
+    }
+    let yard = offset_poly(&lot_poly, 0.4);
+    bays(&yard, 3.0).into_iter().map(|(p, yaw)| (frame.to_world(p.x, p.y), frame.yaw() + yaw)).collect()
+}
+
 /// Paint the bay lines and put cars in a share of the bays.
 fn fill_bays(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, bays: &[(Vec2, f32)], y: f32, occupancy: f32, line: [f32; 3]) {
     let f = &c.frame;

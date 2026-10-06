@@ -32,6 +32,7 @@ mod services;
 /// [society] The trash depot.
 mod sanitation;
 pub use parts::WINDOW_LIGHT_MARK;
+pub use parking::surface_lot_bays_world;
 pub use power::{coal_stacks, wind_rotor, wind_turbines, Turbine, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};
 
 use crate::palette::Palette;
@@ -1052,6 +1053,8 @@ pub fn industry_styles(kind: nd_sim::BusinessKind, tier: Tier) -> Option<&'stati
         B::FleetLot => &[(Style::TruckLot, 1.0)],
         // [parking] A tow company: its trucks and the pound.
         B::TowYard => &[(Style::TruckLot, 1.0)],
+        // A cargo hub: container stacks, a gantry crane, lorries in bays.
+        B::CargoHub => &[(Style::ContainerYard, 1.0)],
         B::Fishery | B::FishPlant => &[(Style::FishProcessing, 1.0)],
         B::Assembly => match tier {
             Tier::Low => &[(Style::FlattedFactory, 0.6), (Style::Workshops, 0.4)],

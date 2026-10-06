@@ -908,7 +908,8 @@ impl World {
             let cargo = std::mem::take(&mut ship.cargo);
             self.ports.stats.freight_landed_today += cargo.len() as u32;
             for c in cargo {
-                self.dispatch_truck(super::market::TruckOrigin::Building(port), c, 6);
+                // Into a cargo hub on the quay, else a lorry.
+                self.unload_freight(port, c);
             }
         }
     }

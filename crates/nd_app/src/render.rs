@@ -46,6 +46,8 @@ mod stunts;
 /// [society] Camps, RVs and overflowing bins.
 mod society;
 mod turbines;
+/// [taxis] Cabs in their yards, at ranks and kerbs; yard signs.
+mod taxis;
 
 
 /// Side of the square cells that buildings and vacant-lot dressing are
@@ -371,6 +373,8 @@ impl Plugin for RenderPlugin {
         app.init_resource::<far::FarRender>().add_systems(Update, far::sync_far.in_set(SimSet::Sync).after(sync_landscape));
         // [carlife] Cars parked at the kerb, after the cars on the road.
         app.init_resource::<ParkedRender>().add_systems(Update, sync_parked_cars.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
+        // [taxis] Cabs standing in yards, at ranks and kerbs.
+        app.init_resource::<taxis::TaxiRender>().add_systems(Update, taxis::sync_taxis.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // Emergency vehicles, fires and rubble, after the cars they hide.
         app.add_systems(Update, emergency::sync_emergency.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // [driving] Tyre smoke, skid marks, wrecks and tows.
@@ -1413,8 +1417,11 @@ fn sync_vacant(
 fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<()> {
     let b = world.buildings.get(id)?;
     let lot = world.lots.get(b.lot)?;
+    // [taxis] A taxi company's yard is drawn as a surface lot with empty
+    // bays; its cabs are drawn standing in them (`render/taxis.rs`).
+    let taxi_yard = b.business.as_ref().is_some_and(|z| z.kind == nd_sim::BusinessKind::TaxiCompany);
     let extras = Extras {
-        parking: b.parking_visual(),
+        parking: b.parking_visual().or(taxi_yard.then_some(0.0)),
         plant: b.plant,
         powered: b.powered,
         park: lot.park.as_ref(),
@@ -2405,6 +2412,13 @@ fn update_daylight(
         }
         if let Some(mut m) = window_materials.get_mut(&mats.windows) {
             m.base.base_color = Color::linear_rgb(glow_k, glow_k, glow_k);
+        }
+        // Road paint goes the other way from glow: full at night (as the
+        // markings always were) and brighter by day, so lane lines and
+        // arrows read as white paint on sunlit asphalt, not dark grey.
+        let paint_k = 1.0 + 0.8 * daylight;
+        if let Some(mut m) = materials.get_mut(&mats.surface(Surface::Paint)) {
+            m.base_color = Color::linear_rgb(paint_k, paint_k, paint_k);
         }
     }
 }

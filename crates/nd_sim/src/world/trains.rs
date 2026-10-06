@@ -2,7 +2,6 @@
 //! and freight. Shared with buses: `walk_to_transit`, `board_waiting`.
 
 use super::*;
-use super::market::TruckOrigin;
 
 impl World {
     /// Stations and yards that run: connected both ways and standing.
@@ -497,7 +496,8 @@ impl World {
                 b.rail_outbound = 0.0;
                 for cargo in queued {
                     self.rail.stats.freight_in_today += cargo.amount;
-                    self.dispatch_truck(TruckOrigin::Building(at), cargo, 6);
+                    // Into a cargo hub on the yard's siding, else a lorry.
+                    self.unload_freight(at, cargo);
                 }
             }
         }

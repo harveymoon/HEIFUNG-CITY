@@ -25,6 +25,9 @@
 
 mod air;
 mod buses;
+mod cargo_hubs;
+#[cfg(test)]
+mod cargo_hub_tests;
 mod cars;
 mod enforcement;
 mod construction;
@@ -55,6 +58,9 @@ mod edge_tests;
 mod concerns_tests;
 #[cfg(test)]
 mod tests;
+mod taxis;
+#[cfg(test)]
+mod taxi_tests;
 mod trains;
 mod trips;
 mod water;
@@ -391,6 +397,14 @@ pub struct World {
     /// [concerns] What people complain about, and city happiness, by day.
     #[serde(default)]
     pub concerns: crate::concerns::Concerns,
+    /// [taxis] Taxi companies' cabs, riders waiting at the kerb and the
+    /// demand nobody served (`world/taxis.rs`).
+    #[serde(default)]
+    pub taxis: crate::taxi::Taxis,
+    /// Cargo hubs: what each holds and has coming, and the day's freight
+    /// (`world/cargo_hubs.rs`).
+    #[serde(default)]
+    pub cargo_hubs: crate::cargo_hub::CargoHubs,
 }
 
 impl World {
@@ -459,6 +473,8 @@ impl World {
             industry_bias: Vec::new(),
             places: Default::default(),
             concerns: Default::default(),
+            taxis: Default::default(),
+            cargo_hubs: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -588,6 +604,7 @@ impl World {
                 Some(TransitLeg::Bus { route, board, alight }) => routes.get(route).is_some_and(|r| board < r.stops.len() && alight < r.stops.len()),
                 Some(TransitLeg::Rail { board, alight }) => buildings.contains_key(board) && buildings.contains_key(alight),
                 Some(TransitLeg::Air { from, to }) => buildings.contains_key(from) && buildings.contains_key(to),
+                Some(TransitLeg::Taxi) => true,
             } && c.transit.is_none_or(|t| buildings.contains_key(t.target));
             if !trip_ok {
                 c.transit = None;
@@ -752,6 +769,7 @@ impl World {
         }
         self.step_traffic();
         self.step_air();
+        self.step_taxis();
         self.step_driving();
         self.step_enforcement();
         self.step_services();
@@ -761,6 +779,7 @@ impl World {
         self.step_transit();
         self.step_rail();
         self.step_ships();
+        self.step_cargo_hubs();
         if self.clock.minute_of_day() == 0 {
             self.bots.delivered_today = 0;
             self.bots.van_orders_today = 0;

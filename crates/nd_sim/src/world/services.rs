@@ -85,6 +85,7 @@ impl World {
                 self.place_port(k, c)
             }
             Placeable::ParkingLot(size) => self.build_city_parking(lot, size),
+            Placeable::CargoHub => self.build_cargo_hub(lot),
         }
     }
 
@@ -117,7 +118,7 @@ impl World {
                 return Some(e);
             }
         }
-        let needs_street = matches!(what, Placeable::BusDepot | Placeable::ParkingLot(_)) || matches!(what, Placeable::Service(k, _) if k.unit_kind().is_some() || k == ServiceKind::Stadium || k == ServiceKind::TrashDepot || k == ServiceKind::ParkingEnforcement);
+        let needs_street = matches!(what, Placeable::BusDepot | Placeable::ParkingLot(_) | Placeable::CargoHub) || matches!(what, Placeable::Service(k, _) if k.unit_kind().is_some() || k == ServiceKind::Stadium || k == ServiceKind::TrashDepot || k == ServiceKind::ParkingEnforcement);
         if needs_street && !lot.car_access() {
             return Some(format!("a {} needs a street out front", what.label()));
         }

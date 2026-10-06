@@ -56,10 +56,16 @@ pub enum Surface {
     /// repeat across one unit. Last in the enum so older indices stay put.
     Container,
     WornContainer,
+    /// Road paint: lane lines, stop lines, zebras, lane arrows. Unlit like
+    /// `Glow` (so markings read at night) but with a material of its own
+    /// that is not dimmed in daylight: on the shared Glow material the
+    /// markings fell to a third of their value by day and read dark grey
+    /// on sunlit asphalt.
+    Paint,
 }
 
 impl Surface {
-    pub const ALL: [Surface; 25] = [
+    pub const ALL: [Surface; 26] = [
         Surface::Concrete,
         Surface::Plaster,
         Surface::Brick,
@@ -85,6 +91,7 @@ impl Surface {
         Surface::WornAsphalt,
         Surface::Container,
         Surface::WornContainer,
+        Surface::Paint,
     ];
 
     /// The surfaces that have a weathered variant, paired with it.
@@ -210,8 +217,9 @@ impl Surface {
         if self.base() == Surface::Container { default * 2 } else { default }
     }
 
+    /// Unlit decals with no texture: the Glow surface and road paint.
     pub fn is_glow(self) -> bool {
-        self == Surface::Glow
+        matches!(self, Surface::Glow | Surface::Paint)
     }
 }
 

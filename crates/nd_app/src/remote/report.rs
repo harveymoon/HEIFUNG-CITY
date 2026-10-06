@@ -318,11 +318,13 @@ fn people(w: &World) -> Value {
         hungry_days[(c.hungry_days as usize).min(4)] += 1;
         let mode = match &c.activity {
             Activity::Driving { .. } => Some("car"),
+            Activity::Riding { .. } if matches!(c.transit.map(|t| t.leg), Some(TransitLeg::Taxi)) => Some("taxi"),
             Activity::Riding { .. } => Some("bus"),
             Activity::OnTrain { .. } => Some("train"),
             Activity::Waiting { .. } => Some(match c.transit.map(|t| t.leg) {
                 Some(TransitLeg::Rail { .. }) => "train",
                 Some(TransitLeg::Air { .. }) => "air",
+                Some(TransitLeg::Taxi) => "taxi",
                 _ => "bus",
             }),
             Activity::Flying { .. } => Some("air"),
@@ -640,7 +642,7 @@ fn services(w: &World) -> Value {
             match c.transit.map(|t| t.leg) {
                 Some(TransitLeg::Bus { route, .. }) => *route_waiting.entry(key_str(route)).or_default() += 1,
                 Some(TransitLeg::Rail { board, .. }) => *station_waiting.entry(board).or_default() += 1,
-                Some(TransitLeg::Air { .. }) | None => {}
+                Some(TransitLeg::Air { .. }) | Some(TransitLeg::Taxi) | None => {}
             }
         }
     }
@@ -725,6 +727,8 @@ fn services(w: &World) -> Value {
             "next_passenger_in_ticks": r.next_passenger_in,
         },
         "air": crate::remote::view::air_report(w),
+        "taxis": super::taxis::taxi_report(w),
+        "cargo_hubs": super::taxis::hub_report(w),
         "parking": {
             "capacity": e.parking_capacity, "used": e.parking_used, "occupancy": share(e.parking_used as usize, e.parking_capacity as usize), "parking_lots": e.parking_lots,
             "parked_on_street_today": e.parking_street_today, "fees_today": round(e.parking_fees_today), "last_shortage_at": e.parking_shortage_at.map(v2),

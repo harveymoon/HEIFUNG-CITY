@@ -7,6 +7,8 @@
 pub mod air;
 pub mod bots;
 pub mod buildings;
+/// Cargo hubs: freight terminals that consolidate imports and exports.
+pub mod cargo_hub;
 pub mod citizens;
 pub mod clock;
 /// [concerns] Complaints by category and city happiness over time.
@@ -36,6 +38,8 @@ pub mod rail;
 pub mod roads;
 pub mod services;
 pub mod takeover;
+/// [taxis] Taxi companies, their cabs and the riders who hail them.
+pub mod taxi;
 pub mod society;
 pub mod traffic;
 pub mod transit;

@@ -1085,6 +1085,11 @@ impl World {
         }
         let q = TripQuery { from: walk_from, to: entrance, target, purpose, allow_transit: allow_bus, allow_car, allow_bike: !seated };
         let ranked = self.choose_mode(id, &q);
+        // [taxis] A trip that would have gone by cab had one been in reach
+        // is the demand a taxi company opens on.
+        if fresh {
+            self.note_taxi_demand(id, &q, &ranked);
+        }
         let dist = walk_from.distance(entrance);
         for opt in ranked {
             match opt.plan {
@@ -1097,6 +1102,7 @@ impl World {
                 }
                 ModePlan::Train { board, alight, stop } => self.walk_to_transit(id, stop, TransitLeg::Rail { board, alight }, target, purpose, fresh),
                 ModePlan::Bus { route, board, alight, stop } => self.walk_to_transit(id, stop, TransitLeg::Bus { route, board, alight }, target, purpose, fresh),
+                ModePlan::Taxi { segment, at, wait_at } => self.hail_taxi(id, segment, at, wait_at, target, purpose, fresh),
                 ModePlan::Walk | ModePlan::Bike => {
                     let mode = if matches!(opt.plan, ModePlan::Bike) { TravelMode::Bike } else { TravelMode::Walk };
                     if !self.walk_or_ride(id, target, purpose, mode, from_node, to_node, walk_from, entrance, fresh) {
@@ -1222,8 +1228,21 @@ impl World {
                 let fee = if fee.is_finite() { fee * 0.5 } else { 0.0 };
                 let search = if own_space { 0.0 } else { 2.0 + c.commute.parking_pain * 10.0 };
                 let minutes = at.distance(q.from) / walk + dist * 1.3 / (9.0 * secs) + 3.0 + search;
-                let bravado = if drunk_drive { -40.0 } else { 0.0 };
+                // [taxis] With a cab to be had, fewer drunks risk the wheel.
+                let bravado = if !drunk_drive {
+                    0.0
+                } else if self.taxis_in_service() {
+                    -15.0
+                } else {
+                    -40.0
+                };
                 push(TripMode::Car, minutes, dist / 1000.0 * 0.5 + fee, -4.0 - 8.0 * hedonism + bravado, ModePlan::Car { car, at });
+            }
+        }
+        // [taxis] A cab, when a company has one on duty within reach.
+        if q.allow_transit {
+            if let Some(o) = self.taxi_option(id, q, false) {
+                out.push(o);
             }
         }
         out
@@ -1454,6 +1473,9 @@ pub enum ModePlan {
     Train { board: BuildingId, alight: BuildingId, stop: Vec2 },
     /// The citizen's car, parked at `at`.
     Car { car: crate::vehicle::VehicleId, at: Vec2 },
+    /// [taxis] Hail a cab: wait at `wait_at` for one coming to `at` on
+    /// `segment` (`world/taxis.rs`).
+    Taxi { segment: SegmentId, at: Vec2, wait_at: Vec2 },
 }
 
 /// One way to make a trip and what it would cost the traveller, in

@@ -198,7 +198,7 @@ impl World {
             if b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::OilWell && !z.closed) && d < CRUDE_REACH {
                 crude_wells += 1;
             }
-            if b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::FleetLot) && d < 300.0 {
+            if b.business.as_ref().is_some_and(|z| z.kind.is_truck_lot()) && d < 300.0 {
                 fleet_lot_near = true;
             }
             if let Some(k) = kind {
@@ -373,7 +373,7 @@ impl World {
     /// Bays at a building that is a truck and bus lot, else zero.
     pub fn fleet_capacity(&self, b: BuildingId) -> u16 {
         match self.buildings.get(b) {
-            Some(bld) if bld.business.as_ref().is_some_and(|z| z.kind == BusinessKind::FleetLot && !z.closed) && bld.construction.is_none() => self.fleet_bays_for(bld.lot),
+            Some(bld) if bld.business.as_ref().is_some_and(|z| z.kind.is_truck_lot() && !z.closed) && bld.construction.is_none() => self.fleet_bays_for(bld.lot),
             _ => 0,
         }
     }
@@ -398,7 +398,7 @@ impl World {
         let inbound = self.fleet_inbound();
         self.buildings
             .iter()
-            .filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::FleetLot))
+            .filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind.is_truck_lot()))
             .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, l.center.distance(p))))
             .filter(|(id, d)| *d <= reach && self.fleet_parked(*id) + inbound.get(id).copied().unwrap_or(0) < self.fleet_capacity(*id))
             .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
@@ -411,7 +411,7 @@ impl World {
         let Some(at) = self.building_lot(depot).map(|l| l.center) else { return 0 };
         self.buildings
             .iter()
-            .filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::FleetLot))
+            .filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind.is_truck_lot()))
             .filter(|(_, b)| self.lots.get(b.lot).is_some_and(|l| l.center.distance(at) <= DEPOT_OVERFLOW_REACH))
             .map(|(id, _)| (self.fleet_capacity(id) as u32 / 4).max(if self.fleet_capacity(id) > 0 { 2 } else { 0 }))
             .sum()
@@ -424,7 +424,7 @@ impl World {
         let cap = self.fleet_capacity(lot_building);
         let tick = self.clock.tick;
         let Some(bz) = self.buildings.get_mut(lot_building).and_then(|b| b.business.as_mut()) else { return false };
-        if bz.kind != BusinessKind::FleetLot || bz.fleet_trucks >= cap {
+        if !bz.kind.is_truck_lot() || bz.fleet_trucks >= cap {
             return false;
         }
         let before = fleet_bucket(bz.fleet_trucks, cap);
@@ -437,7 +437,7 @@ impl World {
     }
 
     /// Take one lorry off a lot (the longest parked), if it has any.
-    fn unpark_truck(&mut self, lot_building: BuildingId) -> Option<crate::market::ParkedLorry> {
+    pub(super) fn unpark_truck(&mut self, lot_building: BuildingId) -> Option<crate::market::ParkedLorry> {
         let cap = self.fleet_capacity(lot_building);
         let bz = self.buildings.get_mut(lot_building)?.business.as_mut()?;
         if bz.fleet_trucks == 0 {
@@ -465,7 +465,7 @@ impl World {
         let lot = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::FleetLot && z.fleet_trucks > 0))
+            .filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind.is_truck_lot() && z.fleet_trucks > 0))
             .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, l.center.distance(at))))
             .filter(|(_, d)| *d <= FLEET_SHARE_REACH)
             .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
@@ -479,7 +479,7 @@ impl World {
     /// home to their business, oldest first, so a lot never silts up.
     pub(super) fn send_parked_lorries_home(&mut self) {
         let tick = self.clock.tick;
-        let lots: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::FleetLot && z.fleet_trucks > 0)).map(|(id, _)| id).collect();
+        let lots: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind.is_truck_lot() && z.fleet_trucks > 0)).map(|(id, _)| id).collect();
         for lot in lots {
             loop {
                 let Some(oldest) = self.buildings[lot].business.as_ref().and_then(|z| z.fleet_log.first().copied()) else { break };

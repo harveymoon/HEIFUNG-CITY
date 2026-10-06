@@ -460,6 +460,9 @@ pub enum Placeable {
     Dock(PortKind),
     /// [parking] A parking lot the city runs, in three sizes.
     ParkingLot(crate::enforcement::LotSize),
+    /// A cargo hub (`crate::cargo_hub`): freight terminal for the imports
+    /// and exports of the businesses around it.
+    CargoHub,
 }
 
 /// The Buildings tool's sub-categories.
@@ -510,7 +513,7 @@ impl BuildCategory {
                 v.extend(crate::enforcement::LotSize::ALL.iter().map(|&s| Placeable::ParkingLot(s)));
                 v
             }
-            BuildCategory::Rail => vec![Placeable::Rail(RailFacility::Station), Placeable::Rail(RailFacility::FreightYard)],
+            BuildCategory::Rail => vec![Placeable::Rail(RailFacility::Station), Placeable::Rail(RailFacility::FreightYard), Placeable::CargoHub],
             BuildCategory::Water => PortKind::ALL.iter().map(|&k| Placeable::Dock(k)).collect(),
             BuildCategory::Attractions => vec![Placeable::Service(ServiceKind::Monument, Tier::Mid), Placeable::Service(ServiceKind::Stadium, Tier::Mid)],
         }
@@ -528,6 +531,7 @@ impl Placeable {
             Placeable::Rail(_) => BuildCategory::Rail,
             Placeable::Dock(_) => BuildCategory::Water,
             Placeable::ParkingLot(_) => BuildCategory::Transit,
+            Placeable::CargoHub => BuildCategory::Rail,
         }
     }
 
@@ -551,6 +555,7 @@ impl Placeable {
             Placeable::Rail(f) => f.label().to_lowercase(),
             Placeable::Dock(k) => k.label().to_string(),
             Placeable::ParkingLot(s) => s.label().to_string(),
+            Placeable::CargoHub => "cargo hub".into(),
         }
     }
 
@@ -577,6 +582,7 @@ impl Placeable {
             Placeable::Rail(RailFacility::FreightYard) => "Freight yard",
             Placeable::Dock(PortKind::ShippingPort) => "Shipping port",
             Placeable::Dock(PortKind::FerryTerminal) => "Ferry terminal",
+            Placeable::CargoHub => "Cargo hub",
         }
     }
 
@@ -589,6 +595,7 @@ impl Placeable {
             Placeable::Rail(RailFacility::FreightYard) => crate::rail::YARD_COST,
             Placeable::Dock(k) => k.cost(),
             Placeable::ParkingLot(s) => s.cost(),
+            Placeable::CargoHub => crate::cargo_hub::HUB_COST,
         }
     }
 
@@ -601,6 +608,7 @@ impl Placeable {
             Placeable::Rail(RailFacility::FreightYard) => crate::rail::YARD_UPKEEP_PER_DAY,
             Placeable::Dock(k) => k.upkeep_per_day(),
             Placeable::ParkingLot(s) => s.upkeep_per_day(),
+            Placeable::CargoHub => crate::cargo_hub::HUB_UPKEEP_PER_DAY,
         }
     }
 
@@ -613,6 +621,7 @@ impl Placeable {
             Placeable::Rail(RailFacility::FreightYard) => crate::rail::YARD_JOBS,
             Placeable::Dock(k) => k.jobs(),
             Placeable::ParkingLot(s) => s.jobs(),
+            Placeable::CargoHub => crate::cargo_hub::HUB_JOBS,
         }
     }
 
@@ -632,6 +641,7 @@ impl Placeable {
             Placeable::BusDepot => crate::transit::DEPOT_MIN_AREA,
             Placeable::Rail(_) | Placeable::Dock(_) => 0.0,
             Placeable::ParkingLot(s) => s.min_area(),
+            Placeable::CargoHub => crate::cargo_hub::HUB_MIN_AREA,
         }
     }
 
@@ -644,6 +654,8 @@ impl Placeable {
             Placeable::Rail(_) | Placeable::Dock(_) => true,
             // Any road-adjacent lot but a park.
             Placeable::ParkingLot(_) => lu != LandUse::Park,
+            // Freight belongs on working land.
+            Placeable::CargoHub => !matches!(lu, LandUse::Residential | LandUse::Park),
         }
     }
 
@@ -670,6 +682,7 @@ impl Placeable {
             "depot" | "bus_depot" => Some(Placeable::BusDepot),
             "station" => Some(Placeable::Rail(RailFacility::Station)),
             "freight_yard" | "yard" => Some(Placeable::Rail(RailFacility::FreightYard)),
+            "cargo_hub" | "hub" | "cargo" => Some(Placeable::CargoHub),
             "clinic" => Some(Placeable::Service(ServiceKind::Health, tier.unwrap_or(Tier::Low))),
             other if crate::enforcement::LotSize::from_key(other).is_some() => crate::enforcement::LotSize::from_key(other).map(Placeable::ParkingLot),
             other => ServiceKind::from_key(other).map(|k| Placeable::Service(k, tier.unwrap_or(Tier::Mid))),

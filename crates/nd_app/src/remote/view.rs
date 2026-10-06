@@ -415,6 +415,7 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
             "pound": w.vehicles.cars.iter().filter(|(_, c)| c.spot().is_some_and(|s| s.kind == nd_sim::ParkKind::Pound && s.building == Some(id))).map(|(v, c)| json!({ "vehicle": key_str(v), "owner": key_str(c.owner), "release_fee": round(c.spot().map_or(0.0, |s| w.release_fee(s))) })).collect::<Vec<_>>(),
         })),
         "plant": plant, "depot": b.depot, "rail": rail, "business": business, "park": park,
+        "taxis_and_freight": super::taxis::building_extra(w, id),
     })
 }
 
@@ -625,6 +626,7 @@ pub fn placeable_key(p: nd_sim::Placeable) -> String {
         nd_sim::Placeable::Dock(nd_sim::PortKind::ShippingPort) => "shipping_port".to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::FerryTerminal) => "ferry_terminal".to_string(),
         nd_sim::Placeable::ParkingLot(s) => s.key().to_string(),
+        nd_sim::Placeable::CargoHub => "cargo_hub".to_string(),
     }
 }
 
