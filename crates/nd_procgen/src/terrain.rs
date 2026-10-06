@@ -596,8 +596,8 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
             let (p0, p1) = (a.lerp(b, t0), a.lerp(b, t1));
             let (r0, r1) = (za + (zb - za) * t0, za + (zb - za) * t1);
             for sgn in [-1.0f32, 1.0] {
-                let o = side * sgn * (hw + 0.3);
-                let probe = side * sgn * (hw + 4.0);
+                let o = side * sgn * (hw + nd_sim::landscape::GROUND_CELL - 0.6);
+                let probe = side * sgn * (hw + nd_sim::landscape::GROUND_CELL + 4.0);
                 let (g0, g1) = (world.ground_height(p0 + probe), world.ground_height(p1 + probe));
                 if g0 - r0 < 1.2 && g1 - r1 < 1.2 {
                     continue;

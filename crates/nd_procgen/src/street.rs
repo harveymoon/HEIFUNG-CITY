@@ -402,6 +402,26 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         if walk.len() < 2 {
             continue;
         }
+        // Highways and ramps have hard shoulders, not pavements: a low
+        // barrier at the edge and lamps, nothing else beside them.
+        let motorway = seg.is_highway() || nd_sim::roads::is_ramp_spec(seg.kind, seg.lanes_fwd, seg.lanes_bwd);
+        if motorway {
+            let barrier = rgba(mul(pal.concrete(0), 0.8));
+            for side in [-1.0f32, 1.0] {
+                g.part(Concrete).path_box(&walk, side * (hw + 0.2), 0.4, 0.0, 0.8, barrier);
+            }
+            let len = path_length(&walk);
+            let mut s = 10.0;
+            let mut side = 1.0;
+            while s < len - 4.0 {
+                let (p, d) = point_along(&walk, s);
+                let right = Vec2::new(-d.y, d.x);
+                lamp_post_world(&mut g, p + right * side * (hw + 0.5), 9.0, pal.street_lamp);
+                s += 40.0;
+                side = -side;
+            }
+            continue;
+        }
         for side in [-1.0f32, 1.0] {
             g.part(Concrete).path_box(&walk, side * (hw + 0.15), 0.3, 0.0, KERB_H, kerb_c);
             let pw = SIDEWALK - 0.3;

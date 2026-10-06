@@ -1767,7 +1767,7 @@ impl Ground {
             let walled = roads.node(seg.a).level < 0.0 || roads.node(seg.b).level < 0.0;
             let (a, b) = (roads.node(seg.a).pos, roads.node(seg.b).pos);
             let (za, zb) = (node_z.get(seg.a.0 as usize).copied().unwrap_or(0.0), node_z.get(seg.b.0 as usize).copied().unwrap_or(0.0));
-            let core = corridor_half_width(seg);
+            let core = corridor_half_width(seg) + if walled { GROUND_CELL } else { 0.0 };
             // A road the player sank is held by retaining walls: it holds its
             // own cells and grades nothing beside it.
             let reach = if walled { core } else { core + seed_band };
