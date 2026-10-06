@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::citizens::{Household, HouseholdId, LifeStage, GROCERIES_PER_PERSON_DAY, PENSION, POCKET_MONEY};
+use crate::vehicle::{VehicleClass, VehicleModel};
 
 /// Most households in one arrival, however empty the town.
 const MAX_ARRIVALS: u32 = 12;
@@ -98,14 +99,32 @@ impl World {
                 money -= 45.0;
                 c.remember(tick, "Bought a bike. The city just got smaller.");
             }
+            // What they buy follows income, age and taste (`VehicleModel::
+            // for_owner`): the poor an old banger or a scooter, which they
+            // can afford with less in the bank; the rich trade up an old one.
+            let wants = |c: &crate::citizens::Citizen| VehicleModel::for_owner(c.income, c.age, crate::vehicle::hedonism_of(c.seed), &mut crate::vehicle::model_rng(c.seed, today as u64 + 2));
             if !c.owns_car && c.class() != Tier::Low && money > 400.0 && self.rng.random_bool(0.04) {
+                let model = wants(c);
                 c.owns_car = true;
-                money -= 300.0;
-                c.remember(tick, "Bought a car.");
+                money -= model.price().min(300.0);
+                c.vehicle = Some(model);
+                c.remember(tick, format!("Bought a {}.", model_name(&model)));
+            } else if !c.owns_car && c.class() == Tier::Low && money > 150.0 && self.rng.random_bool(0.02) {
+                let model = wants(c);
+                c.owns_car = true;
+                money -= model.price().min(150.0);
+                c.vehicle = Some(model);
+                c.remember(tick, format!("Picked up a {}. It runs, mostly.", model_name(&model)));
+            } else if c.owns_car && c.class() == Tier::High && money > 1500.0 && c.vehicle.is_some_and(|v| v.class == VehicleClass::Cheap) && self.rng.random_bool(0.05) {
+                let model = wants(c);
+                money -= model.price().min(800.0);
+                c.vehicle = Some(model);
+                c.remember(tick, format!("Traded the old wreck in for a {}.", model_name(&model)));
             }
             if c.owns_car && c.class() == Tier::Low && money < -100.0 {
                 c.owns_car = false;
-                money += 150.0;
+                money += c.vehicle.map_or(150.0, |v| (v.price() * 0.5).min(150.0));
+                c.vehicle = None;
                 c.remember(tick, "Sold the car. Couldn't afford to keep it.");
             }
         }
@@ -509,6 +528,7 @@ impl World {
                 let stage = LifeStage::of_age(age);
                 let name = names::member_name(&mut self.rng, &family);
                 let owns_car = stage != LifeStage::Child && self.rng.random_bool(car_chance);
+                let vehicle = owns_car.then(|| VehicleModel::for_owner(income, age, crate::vehicle::hedonism_of(seed), &mut crate::vehicle::model_rng(seed, 1)));
                 let owns_bike = self.rng.random_bool(bike_chance);
                 let savings = if stage == LifeStage::Child { 0.0 } else { self.rng.random_range(10.0..40.0) };
                 let next_decision_tick = tick + self.rng.random_range(5..30);
@@ -524,6 +544,7 @@ impl World {
                     mode: TravelMode::Walk,
                     owns_car,
                     owns_bike,
+                    vehicle,
                     parked_at: None,
                     transit: None,
                     activity: Activity::Idle,
@@ -964,6 +985,11 @@ impl World {
                 let exit_pos = self.leave_building(id);
                 let color = self.rng.random_range(0..8u8);
                 let car = self.traffic.spawn_car(id, None, route, s0, s1, color);
+                let model = {
+                    let c = &mut self.citizens[id];
+                    *c.vehicle.get_or_insert_with(|| VehicleModel::fallback(c.seed, c.income, c.age))
+                };
+                self.traffic.cars[car].model = model;
                 let c = &mut self.citizens[id];
                 // The short walk from a path-side home to the car is skipped.
                 c.pos = if cf_pt.distance(from_pt) > 2.0 { cf_pt } else { exit_pos.unwrap_or(c.pos) };
@@ -1144,3 +1170,10 @@ impl World {
 
 /// Cover charge at a venue's door.
 pub(super) const VENUE_COVER: f32 = 15.0;
+
+/// How a citizen names what they bought, for their memories.
+fn model_name(m: &VehicleModel) -> String {
+    let old = if m.class == VehicleClass::Cheap { "beat-up " } else { "" };
+    let flash = if m.tuned { "souped-up " } else { "" };
+    format!("{old}{flash}{}", m.body.label().replace('_', " "))
+}

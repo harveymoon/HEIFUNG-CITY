@@ -718,6 +718,12 @@ fn services(w: &World) -> Value {
             "left_turn_wait_mean_s": round(w.traffic.left_wait_stats().0), "left_turn_wait_max_s": round(w.traffic.left_wait_stats().1),
             "left_turns_measured": w.traffic.left_wait_stats().2, "protected_left_arrows_now": w.traffic.net.intersections.iter().filter(|i| i.timer < i.arrow).count(),
             "passing_left_turners_now": w.traffic.cars.values().filter(|c| c.passing).count(), "lane_use_set_by_player": w.traffic.lane_use.len(),
+            "models": nd_sim::bots::fleet_counts(w),
+        },
+        "bots": {
+            "active": w.bots.bots.len(), "delivering": w.bots.bots.values().filter(|b| !b.returning).count(), "delivered_today": w.bots.delivered_today,
+            "vans_on_road": nd_sim::Bots::vans(w), "van_orders_today": w.bots.van_orders_today,
+            "rule": format!("shops deliver to homes within {} m; by pavement robot where shop and home both have land value >= {}, else by van", nd_sim::bots::DELIVERY_RANGE, nd_sim::bots::BOT_LAND_VALUE),
         },
     })
 }

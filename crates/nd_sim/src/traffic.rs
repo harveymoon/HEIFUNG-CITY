@@ -437,6 +437,9 @@ pub struct Car {
     /// lights and passes queues, and the cars ahead of it pull aside.
     #[serde(default)]
     pub siren: bool,
+    /// What it looks like (body, class, wear, livery); drawing only.
+    #[serde(default)]
+    pub model: crate::vehicle::VehicleModel,
 }
 
 /// Why a car is not driving freely.
@@ -1135,7 +1138,7 @@ impl Traffic {
         let lane = route[0];
         let (pos, dir) = self.net.lanes[lane as usize].point_at(s_start);
         let heading = dir.y.atan2(dir.x);
-        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false });
+        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default() });
         self.pull_out(id);
         id
     }

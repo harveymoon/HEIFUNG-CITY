@@ -397,6 +397,7 @@ pub fn car_row(w: &World, id: CarId, c: &Car) -> Value {
     let kind = car_kind(w, c);
     let mut m = json!({
         "id": key_str(id), "kind": kind, "pos": v2(c.pos), "heading": round(c.heading), "speed_kmh": round(c.v * 3.6), "at_stop": c.hold > 0.0,
+        "model": { "body": c.model.body.label(), "class": format!("{:?}", c.model.class).to_lowercase(), "wear": c.model.wear, "tuned": c.model.tuned, "livery": format!("{:?}", c.model.livery).to_lowercase() },
     });
     if kind == "car" {
         m["citizen"] = json!(key_str(c.citizen));

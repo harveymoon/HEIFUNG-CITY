@@ -2041,3 +2041,125 @@ fn low_income_demand_builds_low_tier_homes() {
     assert!(low > 120, "low-income demand pulls dear land down to cheap housing ({low}/200)");
     assert_eq!(w.residential_tier(Tier::Low), Tier::Low);
 }
+
+/// A street of homes facing a grocer, every household short of food and
+/// flush, the clock at mid-morning; land value set on every building.
+fn delivery_street(land: f32) -> (World, BuildingId) {
+    let mut w = flat_world();
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    w.add_zone(square(-150.0, 8.0, 300.0), LandUse::Residential);
+    w.add_zone(square(-150.0, -308.0, 300.0), LandUse::Commercial);
+    let shop_lot = lot_near(&w, Vec2::new(0.0, -20.0), LandUse::Commercial);
+    w.build_on(shop_lot);
+    for x in [-90.0f32, -40.0, 40.0, 90.0] {
+        let l = lot_near(&w, Vec2::new(x, 20.0), LandUse::Residential);
+        w.build_on(l);
+    }
+    finish_all(&mut w);
+    let shop = w.lots[shop_lot].building.unwrap();
+    {
+        let b = &mut w.buildings[shop];
+        let mut bz = crate::market::Business::new(crate::market::BusinessKind::Grocery, b.jobs.max(4));
+        bz.add(Resource::Groceries, 200.0);
+        b.business = Some(bz);
+    }
+    let homes: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.land_use == LandUse::Residential).map(|(id, _)| id).collect();
+    for h in homes {
+        let hid = w.households.insert(Household { members: Vec::new(), home: Some(h), money: 5000.0, groceries: 0.0, rent_stress_days: 0, moved_day: 0 });
+        w.buildings[h].households.push(hid);
+    }
+    for b in w.buildings.values_mut() {
+        b.land_value = land;
+    }
+    w.clock = crate::clock::SimClock::starting_at(0, 10, 0);
+    (w, shop)
+}
+
+#[test]
+fn delivery_bots_work_only_on_dear_streets() {
+    let (mut rich, shop) = delivery_street(0.9);
+    let stock0 = rich.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Groceries);
+    for _ in 0..20 {
+        rich.clock.tick += 15;
+        rich.dispatch_deliveries();
+    }
+    assert!(!rich.bots.bots.is_empty(), "robots carry orders on a dear street");
+    assert!(rich.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Groceries) < stock0, "orders come off the shelves");
+    assert!(rich.households.values().any(|h| h.groceries > 0.0), "and into a pantry");
+    // They walk to the door and back, then park.
+    let mut minds = IdleMind;
+    let delivered0 = rich.bots.delivered_today;
+    for _ in 0..300 {
+        rich.tick(&mut minds);
+    }
+    assert!(rich.bots.delivered_today > delivered0 || rich.clock.minute_of_day() == 0, "bots reach the door");
+    let max_lv = rich.bots.bots.values().map(|b| rich.buildings[b.shop].land_value.min(rich.buildings[b.home].land_value)).fold(1.0, f32::min);
+    assert!(rich.bots.bots.is_empty() || max_lv >= crate::bots::BOT_LAND_VALUE);
+    // A save keeps them.
+    let back = World::from_ron(&rich.to_ron().unwrap()).unwrap();
+    assert_eq!(back.bots.bots.len(), rich.bots.bots.len());
+
+    let (mut poor, _) = delivery_street(0.2);
+    for _ in 0..20 {
+        poor.clock.tick += 15;
+        poor.dispatch_deliveries();
+    }
+    assert!(poor.bots.bots.is_empty(), "no robots on cheap streets");
+    assert!(poor.bots.van_orders_today > 0, "a van brings the shopping instead");
+    assert!(poor.traffic.cars.values().any(|c| c.model.livery == crate::vehicle::Livery::Grocery), "in the grocer's livery");
+}
+
+#[test]
+fn owners_drive_what_their_income_and_age_buy_and_saves_keep_it() {
+    use crate::vehicle::{BodyType, VehicleClass, VehicleModel};
+    let mut w = World::new(WorldConfig::default());
+    for i in -1..=1 {
+        let c = i as f32 * 200.0;
+        w.add_road(&[Vec2::new(-500.0, c), Vec2::new(500.0, c)], 1, 1);
+        w.add_road(&[Vec2::new(c, -500.0), Vec2::new(c, 500.0)], 1, 1);
+    }
+    w.add_zone(square(-190.0, -190.0, 180.0), LandUse::Residential);
+    w.add_zone(square(10.0, 10.0, 180.0), LandUse::Commercial);
+    let mut minds = IdleMind;
+    for _ in 0..(24 * 60) {
+        w.tick(&mut minds);
+    }
+    finish_all(&mut w);
+    for _ in 0..(12 * 60) {
+        w.tick(&mut minds);
+    }
+    assert!(!w.citizens.is_empty());
+    // Every owner has a model, chosen by class.
+    for c in w.citizens.values().filter(|c| c.owns_car) {
+        let m = c.vehicle.expect("an owner has a vehicle");
+        match c.class() {
+            Tier::Low => assert_eq!(m.class, VehicleClass::Cheap),
+            Tier::High => assert_ne!(m.class, VehicleClass::Cheap),
+            _ => {}
+        }
+    }
+    // A driven car looks like the owner's vehicle.
+    let mut checked = false;
+    for _ in 0..(2 * 24 * 60) {
+        w.tick(&mut minds);
+        if let Some(car) = w.traffic.cars.values().find(|c| w.citizens.contains_key(c.citizen)) {
+            assert_eq!(Some(car.model), w.citizens[car.citizen].vehicle);
+            checked = true;
+            break;
+        }
+    }
+    assert!(checked, "someone drove");
+    // Old saves: an owner without a model gets one from the seed, the same
+    // each time.
+    let c = w.citizens.keys().next().unwrap();
+    let (seed, income, age) = (w.citizens[c].seed, w.citizens[c].income, w.citizens[c].age);
+    assert_eq!(VehicleModel::fallback(seed, income, age), VehicleModel::fallback(seed, income, age));
+    // Save and load keep models on citizens and cars.
+    let tuned = VehicleModel { body: BodyType::AkiraBike, class: VehicleClass::Expensive, ..Default::default() };
+    w.citizens[c].vehicle = Some(tuned);
+    let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+    assert_eq!(back.citizens[c].vehicle, Some(tuned));
+    for (id, car) in w.traffic.cars.iter() {
+        assert_eq!(back.traffic.cars[id].model, car.model);
+    }
+}

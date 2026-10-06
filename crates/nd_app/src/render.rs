@@ -135,12 +135,18 @@ struct Materials {
     citizen_mesh: Handle<Mesh>,
     bike_mesh: Handle<Mesh>,
     car_bodies: Vec<Handle<StandardMaterial>>,
+    // The old box meshes; road vehicles are generated per variant now
+    // (`VehicleRender`), these stay for anything else that wants a stand-in.
+    #[allow(dead_code)]
     car_body_mesh: Handle<Mesh>,
+    #[allow(dead_code)]
     truck_body_mesh: Handle<Mesh>,
+    #[allow(dead_code)]
     bus_body_mesh: Handle<Mesh>,
     loco_mesh: Handle<Mesh>,
     coach_mesh: Handle<Mesh>,
     wagon_mesh: Handle<Mesh>,
+    #[allow(dead_code)]
     car_lights_mesh: Handle<Mesh>,
     signal_green: Handle<StandardMaterial>,
     signal_red: Handle<StandardMaterial>,
@@ -223,9 +229,9 @@ pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<RenderState>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().init_resource::<BuildingStyles>().add_systems(Startup, setup).add_systems(
+        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().init_resource::<BuildingStyles>().add_systems(Startup, setup).add_systems(
             Update,
-            (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_haze, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_trains, update_daylight)
+            (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_haze, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)
                 .chain()
                 .in_set(SimSet::Sync),
         );
@@ -1238,28 +1244,164 @@ fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
     a + d * t
 }
 
+// ── vehicles: generated per variant (`nd_procgen::vehicles`) ─────────────────
+
+/// Marker for delivery robots on the pavement.
+#[derive(Component)]
+pub struct BotTag;
+
+/// One variant's meshes, built once and shared by every vehicle that looks
+/// the same.
+#[derive(Clone)]
+struct VariantMeshes {
+    body: Handle<Mesh>,
+    lights: Handle<Mesh>,
+    fx: Option<Handle<Mesh>>,
+}
+
+/// Vehicle drawing state: the variant cache, the materials, and the
+/// entities beyond the body and lamps of each car (underglow, trails) and
+/// of each robot.
+#[derive(Resource, Default)]
+struct VehicleRender {
+    variants: HashMap<nd_sim::VehicleModel, VariantMeshes>,
+    /// Paint finish by class: cheap (rough), mid, expensive (glossy).
+    finish: Vec<Handle<StandardMaterial>>,
+    /// Additive, unlit: underglow and light trails; scaled by night.
+    fx: Option<Handle<StandardMaterial>>,
+    night_key: Option<i32>,
+    car_fx: HashMap<CarId, Entity>,
+    trails: HashMap<CarId, (Entity, Handle<Mesh>, std::collections::VecDeque<Vec3>)>,
+    bots: HashMap<nd_sim::BotId, Vec<Entity>>,
+}
+
+impl VehicleRender {
+    fn ensure_materials(&mut self, materials: &mut Assets<StandardMaterial>) {
+        if self.fx.is_some() {
+            return;
+        }
+        for (rough, metal, refl) in [(0.85, 0.15, 0.3), (0.45, 0.4, 0.5), (0.18, 0.75, 0.7)] {
+            self.finish.push(materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: rough, metallic: metal, reflectance: refl, ..default() }));
+        }
+        self.fx = Some(materials.add(StandardMaterial { base_color: Color::BLACK, unlit: true, alpha_mode: AlphaMode::Add, ..default() }));
+    }
+
+    fn variant(&mut self, meshes: &mut Assets<Mesh>, model: &nd_sim::VehicleModel) -> VariantMeshes {
+        let key = nd_procgen::vehicles::variant_key(model);
+        self.variants
+            .entry(key)
+            .or_insert_with(|| {
+                let v = nd_procgen::vehicle_mesh(&key);
+                VariantMeshes { body: meshes.add(shared_mesh(&v.body, true)), lights: meshes.add(shared_mesh(&v.lights, false)), fx: (!v.fx.is_empty()).then(|| meshes.add(shared_mesh(&v.fx, false))) }
+            })
+            .clone()
+    }
+}
+
+/// What a car is drawn as. Cars from saves before vehicle models (and
+/// test spawns) carry the default; trucks and buses among them are given
+/// their kind's body, and the old colour becomes the paint.
+fn car_model(car: &nd_sim::Car) -> nd_sim::VehicleModel {
+    use nd_sim::{BodyType, Livery, VehicleModel};
+    let mut m = car.model;
+    if m == VehicleModel::default() {
+        m.paint = car.color % nd_sim::vehicle::PAINTS;
+        if car.cargo.is_some() {
+            m.body = BodyType::PanelTruck;
+        }
+    }
+    if car.bus.is_some() && !m.body.is_bus() {
+        m = VehicleModel { body: BodyType::BubbleBus, livery: Livery::Transit, paint: car.color % nd_sim::vehicle::PAINTS, ..Default::default() };
+    }
+    m
+}
+
+/// How dark it is, `0` (day) to `1` (night), from the same sun the
+/// lighting uses.
+fn night_strength(sim: &Sim, lighting: &Lighting) -> f32 {
+    let t = if lighting.follow_clock { sim.world.clock.day_fraction() } else { (lighting.hour / 24.0).rem_euclid(1.0) };
+    let elev = ((t - 0.25) * std::f32::consts::TAU).sin();
+    1.0 - smoothstep(-0.12, 0.30, elev)
+}
+
+/// Points kept in an Akira bike's light trail.
+const TRAIL_POINTS: usize = 28;
+
+/// A light-trail ribbon through `pts` (oldest first): two red streaks at
+/// tail-lamp height fading out behind the bike.
+fn trail_mesh(pts: &std::collections::VecDeque<Vec3>) -> MeshData {
+    let mut m = MeshData::default();
+    let n = pts.len();
+    for i in 1..n {
+        let (a, b) = (pts[i - 1], pts[i]);
+        let d = b - a;
+        if d.length_squared() < 1e-4 {
+            continue;
+        }
+        let side = Vec3::new(-d.z, 0.0, d.x).normalize_or_zero() * 0.12;
+        let fade = |k: usize| (k as f32 / n as f32).powf(1.5);
+        let ca = [2.6 * fade(i - 1), 0.12 * fade(i - 1), 0.08 * fade(i - 1), 1.0];
+        let cb = [2.6 * fade(i), 0.12 * fade(i), 0.08 * fade(i), 1.0];
+        for s in [1.0f32, -1.0] {
+            let o = side * s;
+            let (y0, y1) = (0.62f32, 0.78f32);
+            let base = m.positions.len() as u32;
+            for (p, c) in [(a + o + Vec3::Y * y0, ca), (b + o + Vec3::Y * y0, cb), (b + o + Vec3::Y * y1, cb), (a + o + Vec3::Y * y1, ca)] {
+                m.positions.push(p.to_array());
+                m.normals.push([0.0, 1.0, 0.0]);
+                m.colors.push(c);
+                m.uvs.push([0.0, 0.0]);
+            }
+            // Both faces: a ribbon is seen from either side.
+            m.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3, base, base + 2, base + 1, base, base + 3, base + 2]);
+        }
+    }
+    m
+}
+
+#[allow(clippy::too_many_arguments)]
 fn sync_cars(
     mut commands: Commands,
     sim: Res<Sim>,
     mats: Res<Materials>,
     selection: Res<Selection>,
+    lighting: Res<Lighting>,
     mut state: ResMut<RenderState>,
+    mut vr: ResMut<VehicleRender>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut q: Query<&mut Transform, With<CarTag>>,
 ) {
+    vr.ensure_materials(&mut materials);
+    let fx_mat = vr.fx.clone().expect("vehicle materials");
+    // Underglow and trails only show after dark.
+    let night = night_strength(&sim, &lighting);
+    let night_key = (night * 32.0).round() as i32;
+    if vr.night_key != Some(night_key) {
+        vr.night_key = Some(night_key);
+        if let Some(mut m) = materials.get_mut(&fx_mat) {
+            let k = night_key as f32 / 32.0;
+            m.base_color = Color::linear_rgb(k, k, k);
+        }
+    }
     let traffic = &sim.world.traffic;
     for (id, car) in traffic.cars.iter() {
         if !state.cars.contains_key(&id) {
-            let body_mat = mats.car_bodies[car.color as usize % mats.car_bodies.len().max(1)].clone();
-            let mesh = if car.bus.is_some() {
-                mats.bus_body_mesh.clone()
-            } else if car.cargo.is_some() {
-                mats.truck_body_mesh.clone()
-            } else {
-                mats.car_body_mesh.clone()
-            };
-            let body = commands.spawn((Mesh3d(mesh), MeshMaterial3d(body_mat), Transform::IDENTITY, NotShadowCaster, CarTag)).id();
-            let lights = commands.spawn((Mesh3d(mats.car_lights_mesh.clone()), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag)).id();
+            let model = car_model(car);
+            let v = vr.variant(&mut meshes, &model);
+            let finish = vr.finish[model.class as usize].clone();
+            let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), Transform::IDENTITY, NotShadowCaster, CarTag)).id();
+            let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag)).id();
             state.cars.insert(id, [body, lights]);
+            if let Some(fx) = v.fx {
+                let e = commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag)).id();
+                vr.car_fx.insert(id, e);
+            }
+            if model.body == nd_sim::BodyType::AkiraBike {
+                let h = meshes.add(shared_mesh(&MeshData::default(), false));
+                let e = commands.spawn((Mesh3d(h.clone()), MeshMaterial3d(fx_mat.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, bevy::camera::visibility::NoFrustumCulling)).id();
+                vr.trails.insert(id, (e, h, std::collections::VecDeque::new()));
+            }
         }
     }
     let gone: Vec<CarId> = state.cars.keys().copied().filter(|id| !traffic.cars.contains_key(*id)).collect();
@@ -1270,6 +1412,16 @@ fn sync_cars(
             }
         }
     }
+    let gone_fx: Vec<CarId> = vr.car_fx.keys().chain(vr.trails.keys()).copied().filter(|id| !traffic.cars.contains_key(*id)).collect();
+    for id in gone_fx {
+        if let Some(e) = vr.car_fx.remove(&id) {
+            commands.entity(e).despawn();
+        }
+        if let Some((e, h, _)) = vr.trails.remove(&id) {
+            commands.entity(e).despawn();
+            meshes.remove(&h);
+        }
+    }
     let f = sim.frac();
     for (id, ents) in state.cars.iter() {
         let Some(car) = traffic.cars.get(*id) else { continue };
@@ -1278,9 +1430,87 @@ fn sync_cars(
         // Lifted when selected, whether through its driver or, for a bus or
         // truck with nobody to inspect, as the vehicle itself.
         let selected = *selection == Selection::Citizen(car.citizen) || *selection == Selection::Car(*id);
+        let fx = vr.car_fx.get(id).copied();
+        for e in ents.iter().copied().chain(fx) {
+            if let Ok(mut tf) = q.get_mut(e) {
+                tf.translation = Vec3::new(pos.x, 0.05 + if selected { 0.4 } else { 0.0 }, pos.y);
+                tf.rotation = Quat::from_rotation_y(-heading);
+            }
+        }
+    }
+    // Akira light trails: the tail lamp's recent path, in world space.
+    if !vr.trails.is_empty() {
+        let w = &sim.world;
+        let ids: Vec<CarId> = vr.trails.keys().copied().collect();
+        for id in ids {
+            let Some(car) = traffic.cars.get(id) else { continue };
+            let pos = car.prev_pos.lerp(car.pos, f);
+            let heading = lerp_angle(car.prev_heading, car.heading, f);
+            let tail = pos - SVec2::new(heading.cos(), heading.sin()) * 1.4;
+            let p = Vec3::new(tail.x, 0.05 + w.surface_height(tail), tail.y);
+            let Some((_, h, pts)) = vr.trails.get_mut(&id) else { continue };
+            if pts.back().is_some_and(|b| b.distance(p) < 0.35) {
+                continue;
+            }
+            if pts.back().is_some_and(|b| b.distance(p) > 25.0) {
+                pts.clear();
+            }
+            pts.push_back(p);
+            while pts.len() > TRAIL_POINTS {
+                pts.pop_front();
+            }
+            let mesh = trail_mesh(pts);
+            if let Some(mut m) = meshes.get_mut(&*h) {
+                *m = shared_mesh(&mesh, false);
+            }
+        }
+    }
+}
+
+/// Pavement delivery robots: a small generated mesh per shop livery,
+/// interpolated between ticks like walkers.
+#[allow(clippy::too_many_arguments)]
+fn sync_bots(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    mats: Res<Materials>,
+    mut vr: ResMut<VehicleRender>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut q: Query<&mut Transform, With<BotTag>>,
+) {
+    vr.ensure_materials(&mut materials);
+    let w = &sim.world;
+    for (id, bot) in w.bots.bots.iter() {
+        if vr.bots.contains_key(&id) {
+            continue;
+        }
+        let livery = w.buildings.get(bot.shop).and_then(|b| b.business.as_ref()).map_or(nd_sim::Livery::None, |bz| nd_sim::Livery::for_business(bz.kind));
+        let model = nd_sim::VehicleModel { body: nd_sim::BodyType::DeliveryBot, livery, ..Default::default() };
+        let v = vr.variant(&mut meshes, &model);
+        let mut ents = vec![
+            commands.spawn((Mesh3d(v.body), MeshMaterial3d(vr.finish[1].clone()), Transform::IDENTITY, NotShadowCaster, BotTag, Grounded)).id(),
+            commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, BotTag, Grounded)).id(),
+        ];
+        if let (Some(fx), Some(mat)) = (v.fx, vr.fx.clone()) {
+            ents.push(commands.spawn((Mesh3d(fx), MeshMaterial3d(mat), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, BotTag, Grounded)).id());
+        }
+        vr.bots.insert(id, ents);
+    }
+    let gone: Vec<nd_sim::BotId> = vr.bots.keys().copied().filter(|id| !w.bots.bots.contains_key(*id)).collect();
+    for id in gone {
+        for e in vr.bots.remove(&id).unwrap_or_default() {
+            commands.entity(e).despawn();
+        }
+    }
+    let f = sim.frac();
+    for (id, ents) in vr.bots.iter() {
+        let Some(bot) = w.bots.bots.get(*id) else { continue };
+        let pos = if bot.prev_pos.distance(bot.pos) < 30.0 { bot.prev_pos.lerp(bot.pos, f) } else { bot.pos };
+        let heading = lerp_angle(bot.prev_heading, bot.heading, f);
         for e in ents {
             if let Ok(mut tf) = q.get_mut(*e) {
-                tf.translation = Vec3::new(pos.x, 0.05 + if selected { 0.4 } else { 0.0 }, pos.y);
+                tf.translation = Vec3::new(pos.x, 0.16, pos.y);
                 tf.rotation = Quat::from_rotation_y(-heading);
             }
         }
