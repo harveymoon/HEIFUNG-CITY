@@ -27,6 +27,7 @@ pub mod market;
 pub mod mind;
 pub mod names;
 pub mod park;
+pub mod pedestrians;
 pub mod places;
 pub mod plan;
 pub mod ports;

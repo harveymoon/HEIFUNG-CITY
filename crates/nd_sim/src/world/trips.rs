@@ -677,10 +677,16 @@ impl World {
         let meals_for_sale = self.meals_for_sale;
         let hour = self.clock.hour() as u8;
         let ids: Vec<CitizenId> = self.citizens.keys().collect();
+        // [pedestrians] Walkers keep right, keep their distance and mind the
+        // crossings (`world/pedestrians.rs`).
+        let mut feet = self.feet_begin();
 
         for id in ids {
             // Walking.
-            let arrived = {
+            let on_foot = self.citizens[id].mode == TravelMode::Walk && matches!(self.citizens[id].activity, Activity::Traveling { .. });
+            let arrived = if on_foot {
+                self.step_walker(id, &mut feet)
+            } else {
                 let c = &mut self.citizens[id];
                 c.prev_pos = c.pos;
                 c.prev_heading = c.heading;
@@ -753,6 +759,7 @@ impl World {
                 None => self.citizens[id].next_decision_tick = tick + 5,
             }
         }
+        self.feet_end(feet);
     }
 
     pub(super) fn arrive(&mut self, id: CitizenId) {
@@ -1119,7 +1126,7 @@ impl World {
         let Some(nodes) = self.roads.path(from_node, to_node) else { return false };
         let exit_pos = self.leave_building(id);
         let mut path = match mode {
-            TravelMode::Walk => match self.walk.route(walk_from, entrance) {
+            TravelMode::Walk => match self.walk_route_for(id, walk_from, entrance, purpose) {
                 Some((pts, walk_nodes)) => {
                     if fresh {
                         self.note_footfall(id, &walk_nodes);
@@ -1397,7 +1404,7 @@ impl World {
         let here = self.citizens[id].pos;
         let walk_route = if mode == TravelMode::Walk && !self.walk.nodes.is_empty() {
             let target = self.walk.nodes[self.rng.random_range(0..self.walk.nodes.len())].pos;
-            self.walk.route(here, target)
+            self.walk_route_for(id, here, target, Purpose::Wander)
         } else {
             None
         };

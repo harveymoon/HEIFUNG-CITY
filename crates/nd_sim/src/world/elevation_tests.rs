@@ -58,8 +58,9 @@ fn crossing_at_grade_makes_a_junction_in_roads_and_lanes() {
             assert!(old.iter().any(|&a| new.iter().any(|&b| connects(&w, x, a, b))), "no connector old -> new");
             assert!(new.iter().any(|&a| old.iter().any(|&b| connects(&w, x, a, b))), "no connector new -> old");
         } else {
-            // Walkers cross there: the pavements meet at a hub on the node.
-            assert!(w.walk.nodes.iter().any(|n| n.pos.distance(Vec2::new(40.0, 0.0)) < 0.5));
+            // Walkers cross there, on the zebras round the junction (not
+            // through its middle): one side of the street reaches the other.
+            assert!(w.walk.route(Vec2::new(40.0, -60.0), Vec2::new(40.0, 60.0)).is_some(), "walkers cross the street at the path");
         }
     }
 }

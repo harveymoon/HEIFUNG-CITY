@@ -1,11 +1,20 @@
 //! The pedestrian network: pavements on both sides of every street, path
-//! centres, crossings at junctions, a walkable setback loop around every
-//! usable lot, an alley cross inside the Stacks, and gates between lots that
-//! share an edge. Walkers route over this with A*, so people cut through
-//! blocks and the shops they pass get walk-in trade.
+//! centres, crossings, a walkable setback loop around every usable lot, an
+//! alley cross inside the Stacks, and gates between lots that share an
+//! edge. Walkers route over this with A*, so people cut through blocks and
+//! the shops they pass get walk-in trade.
+//!
+//! Streets are crossed only at crossings (`Crossing`): a crosswalk across
+//! every arm of a junction of three or more streets, set back where
+//! `nd_procgen::street` paints its zebra (signalised with the junction, see
+//! `traffic/crosswalk.rs`); a zebra where a footpath meets a street and
+//! every 120 m or so along a long block (`midblock_crossings`); and the end
+//! of a dead end, unmarked. Pavements meet round the corners of a junction,
+//! never through its middle. Opposite lot fronts are also joined by `Jay`
+//! edges, which only jaywalkers' routes may use (`route_with`).
 
 use crate::geom::{self, Grid};
-use crate::roads::{RoadKind, RoadNetwork, SegmentId};
+use crate::roads::{NodeId, RoadKind, RoadNetwork, SegmentId};
 use crate::zoning::{Lot, LotId, SIDEWALK};
 use crate::{LandUse, LandValue, Tier};
 use glam::Vec2;
@@ -25,6 +34,24 @@ const NODE_CELL: f32 = 20.0;
 /// people do not thread through back yards when the pavement is as short.
 const PARK_FACTOR: f32 = 0.92;
 const INTERIOR_FACTOR: f32 = 1.15;
+/// Middle of a junction's zebras beyond its widest half width: the node
+/// radius (widest half width + 1) plus 2.3 m, where `nd_procgen::street`
+/// paints them.
+pub const CROSSWALK_BACK: f32 = 3.3;
+/// A roundabout arm's zebra is further out, past the splitter island.
+pub const RING_CROSSWALK_BACK: f32 = 7.5;
+/// Half the depth of a zebra along the street.
+pub const CROSSWALK_HALF: f32 = 1.2;
+/// A run of street between junctions longer than this gets mid-block
+/// zebras, about one every `MIDBLOCK_EVERY` metres.
+pub const MIDBLOCK_MIN: f32 = 170.0;
+pub const MIDBLOCK_EVERY: f32 = 120.0;
+/// Jaywalking edges join lot fronts across a street at most this far apart
+/// along it, and cost this many metres extra (the look and the dash).
+const JAY_REACH: f32 = 12.0;
+const JAY_PENALTY: f32 = 4.0;
+/// `WalkEdge::cross` of an edge that crosses no street.
+pub const NO_CROSSING: u32 = u32::MAX;
 
 #[derive(Clone, Debug)]
 pub struct WalkNode {
@@ -43,6 +70,43 @@ pub struct WalkEdge {
     pub interior: bool,
     /// A park path: pleasant, so routes prefer it a little.
     pub park: bool,
+    /// Index into `WalkGraph::crossings` when the edge crosses a street.
+    pub cross: u32,
+}
+
+/// What kind of place a walker crosses a street.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CrossingKind {
+    /// Across an arm of a junction of three or more streets: signalised
+    /// when the junction is, a zebra otherwise.
+    Junction,
+    /// A painted zebra: a footpath over a street, or mid-block.
+    Zebra,
+    /// Unmarked but fair: the end of a dead end, a roundabout's own lanes.
+    Informal,
+    /// Straight over between opposite lot fronts: jaywalking.
+    Jay,
+}
+
+/// One place a walker crosses a street: the edge between nodes `a` and `b`.
+#[derive(Clone, Debug)]
+pub struct Crossing {
+    pub a: u32,
+    pub b: u32,
+    /// The street crossed.
+    pub segment: SegmentId,
+    /// The junction it belongs to, for a junction's crosswalk.
+    pub node: Option<NodeId>,
+    pub kind: CrossingKind,
+    /// Its middle, on the street's centre line.
+    pub mid: Vec2,
+}
+
+impl Crossing {
+    /// Somewhere anyone may cross (minding the lights, if any).
+    pub fn lawful(&self) -> bool {
+        self.kind != CrossingKind::Jay
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -52,9 +116,14 @@ pub struct WalkGraph {
     pub version: u64,
     /// Park benches: node, lot, and the direction a sitter faces.
     pub benches: Vec<(u32, LotId, f32)>,
+    /// Every crossing; `WalkEdge::cross` indexes it.
+    pub crossings: Vec<Crossing>,
     /// Grid over `nodes`, built at the end of `build`. `nearest` falls back
     /// to a scan if the node list has grown since.
     index: Grid,
+    /// Crossing by the exact positions of its two ends, either way round,
+    /// so a walker's path (a list of node positions) can find its crossings.
+    cross_at: HashMap<[u32; 4], u32>,
 }
 
 /// Can people walk through this lot to the next one?
@@ -66,6 +135,117 @@ pub fn walkable_through(lot: &Lot, land_value: &LandValue) -> bool {
         _ => true,
     }
 }
+
+/// Live streets at a node.
+fn street_arms(roads: &RoadNetwork, n: NodeId) -> usize {
+    roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).is_street()).count()
+}
+
+/// Widest half width of the streets at a node.
+fn widest(roads: &RoadNetwork, n: NodeId) -> f32 {
+    roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).is_street()).map(|&s| roads.segment(s).half_width()).fold(0.0, f32::max)
+}
+
+/// A junction of three or more streets: its arms get crosswalks.
+pub fn is_junction(roads: &RoadNetwork, n: NodeId) -> bool {
+    street_arms(roads, n) >= 3
+}
+
+/// Distance from a junction's centre to the middle of the crosswalk
+/// across `seg` (as `nd_procgen::street` paints it).
+pub fn crosswalk_setback(roads: &RoadNetwork, node: NodeId, seg: SegmentId) -> f32 {
+    let w = widest(roads, node);
+    if roads.ring_of_node(node).is_some() && roads.ring_of_segment(seg).is_none() {
+        w + RING_CROSSWALK_BACK
+    } else {
+        w + CROSSWALK_BACK
+    }
+}
+
+/// Mid-block zebras on long runs of street, as `(segment, t from a to b)`.
+/// A run is a chain of street segments through plain bends (nodes where
+/// two streets and nothing else meet); highways get none.
+pub fn midblock_crossings(roads: &RoadNetwork) -> Vec<(SegmentId, f32)> {
+    let plain = |n: NodeId| roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive).count() == 2 && street_arms(roads, n) == 2;
+    let ok = |s: SegmentId| {
+        let sg = roads.segment(s);
+        sg.alive && sg.is_street() && !sg.is_highway()
+    };
+    let mut seen = vec![false; roads.segments.len()];
+    let mut out = Vec::new();
+    for (sid, _) in roads.alive_segments() {
+        if seen[sid.0 as usize] || !ok(sid) {
+            continue;
+        }
+        // Back to the start of the run.
+        let (mut first, mut from) = (sid, roads.segment(sid).a);
+        for _ in 0..roads.segments.len() {
+            if !plain(from) {
+                break;
+            }
+            let Some(o) = roads.node(from).segments.iter().copied().find(|&s| s != first && roads.segment(s).alive) else { break };
+            if o == sid || !ok(o) {
+                break;
+            }
+            let os = roads.segment(o);
+            from = if os.a == from { os.b } else { os.a };
+            first = o;
+        }
+        // Forward along it.
+        let mut chain: Vec<(SegmentId, bool, f32)> = Vec::new();
+        let mut cur = first;
+        loop {
+            if seen[cur.0 as usize] {
+                break;
+            }
+            seen[cur.0 as usize] = true;
+            let s = roads.segment(cur);
+            let (pa, pb) = roads.segment_points(cur);
+            let fwd = s.a == from;
+            chain.push((cur, fwd, pa.distance(pb)));
+            let to = if fwd { s.b } else { s.a };
+            if !plain(to) {
+                break;
+            }
+            let Some(next) = roads.node(to).segments.iter().copied().find(|&x| x != cur && roads.segment(x).alive) else { break };
+            if !ok(next) {
+                break;
+            }
+            cur = next;
+            from = to;
+        }
+        let total: f32 = chain.iter().map(|c| c.2).sum();
+        if total < MIDBLOCK_MIN {
+            continue;
+        }
+        let k = ((total / MIDBLOCK_EVERY).round() as usize).saturating_sub(1).max(1);
+        for j in 1..=k {
+            let target = total * j as f32 / (k + 1) as f32;
+            let mut acc = 0.0;
+            for &(s, fwd, len) in &chain {
+                if acc + len >= target {
+                    let u = ((target - acc) / len.max(1e-3)).clamp(0.05, 0.95);
+                    out.push((s, if fwd { u } else { 1.0 - u }));
+                    break;
+                }
+                acc += len;
+            }
+        }
+    }
+    out
+}
+
+fn pos_key(p: Vec2, q: Vec2) -> [u32; 4] {
+    [p.x.to_bits(), p.y.to_bits(), q.x.to_bits(), q.y.to_bits()]
+}
+
+/// A stop along one side of a street: a lot front or a mid-block zebra.
+enum Stop {
+    Lot(LotId),
+    Zebra(usize),
+}
+
+type End = (u32, SegmentId, i8);
 
 impl WalkGraph {
     fn add_node(&mut self, pos: Vec2, lot: Option<LotId>) -> u32 {
@@ -83,16 +263,118 @@ impl WalkGraph {
             return;
         }
         let len = self.nodes[a as usize].pos.distance(self.nodes[b as usize].pos).max(0.05);
-        self.adj[a as usize].push(WalkEdge { to: b, len, interior, park });
-        self.adj[b as usize].push(WalkEdge { to: a, len, interior, park });
+        self.adj[a as usize].push(WalkEdge { to: b, len, interior, park, cross: NO_CROSSING });
+        self.adj[b as usize].push(WalkEdge { to: a, len, interior, park, cross: NO_CROSSING });
+    }
+
+    /// Join two pavement nodes across a street.
+    fn link_cross(&mut self, a: u32, b: u32, segment: SegmentId, node: Option<NodeId>, kind: CrossingKind, roads: &RoadNetwork) {
+        if a == b {
+            return;
+        }
+        let (pa, pb) = (self.nodes[a as usize].pos, self.nodes[b as usize].pos);
+        // The middle on the street's centre line.
+        let (s0, s1) = roads.segment_points(segment);
+        let mid = geom::project_on_segment((pa + pb) * 0.5, s0, s1).1;
+        let k = self.crossings.len() as u32;
+        self.crossings.push(Crossing { a, b, segment, node, kind, mid });
+        let len = pa.distance(pb).max(0.05);
+        self.adj[a as usize].push(WalkEdge { to: b, len, interior: false, park: false, cross: k });
+        self.adj[b as usize].push(WalkEdge { to: a, len, interior: false, park: false, cross: k });
+    }
+
+    /// The crossing a walker takes going from `p` to `q`, two consecutive
+    /// points of a route (node positions, exactly).
+    pub fn crossing_between(&self, p: Vec2, q: Vec2) -> Option<u32> {
+        if self.cross_at.is_empty() {
+            return None;
+        }
+        self.cross_at.get(&pos_key(p, q)).copied()
+    }
+
+    /// A junction of three or more streets: a crosswalk across every arm
+    /// (none over a highway), and the pavements of neighbouring arms meet
+    /// round the corner between them, with a corner node where the arms
+    /// are far apart so nobody cuts through the middle.
+    fn junction(&mut self, roads: &RoadNetwork, nid: NodeId, centre: Vec2, e: &[End]) {
+        struct Arm {
+            seg: SegmentId,
+            ang: f32,
+            ccw: u32,
+            cw: u32,
+            street: bool,
+        }
+        let mut segs: Vec<SegmentId> = Vec::new();
+        for x in e {
+            if !segs.contains(&x.1) {
+                segs.push(x.1);
+            }
+        }
+        let mut arms: Vec<Arm> = Vec::new();
+        for s in segs {
+            let sg = roads.segment(s);
+            let (a, b) = roads.segment_points(s);
+            let away = (if sg.a == nid { b - a } else { a - b }).normalize_or_zero();
+            let ends: Vec<u32> = e.iter().filter(|x| x.1 == s).map(|x| x.0).collect();
+            let side = |n: &u32| away.perp_dot(self.nodes[*n as usize].pos - centre);
+            let ccw = *ends.iter().max_by(|x, y| side(x).total_cmp(&side(y))).unwrap();
+            let cw = *ends.iter().min_by(|x, y| side(x).total_cmp(&side(y))).unwrap();
+            arms.push(Arm { seg: s, ang: away.y.atan2(away.x), ccw, cw, street: sg.is_street() });
+        }
+        arms.sort_by(|x, y| x.ang.total_cmp(&y.ang).then(x.seg.cmp(&y.seg)));
+        let ring = roads.ring_of_node(nid).is_some();
+        for arm in &arms {
+            if arm.street && arm.ccw != arm.cw && !roads.segment(arm.seg).is_highway() {
+                let kind = if ring && roads.ring_of_segment(arm.seg).is_some() { CrossingKind::Informal } else { CrossingKind::Junction };
+                self.link_cross(arm.cw, arm.ccw, arm.seg, Some(nid), kind, roads);
+            }
+        }
+        let reach = widest(roads, nid) + SIDEWALK * 0.55 + 0.4;
+        let n = arms.len();
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let gap = (arms[j].ang - arms[i].ang).rem_euclid(std::f32::consts::TAU);
+            let gap = if gap <= 1e-4 { std::f32::consts::TAU } else { gap };
+            if gap > 2.6 {
+                // A wide corner: go round it, not across the junction.
+                let bis = Vec2::from_angle(arms[i].ang + gap * 0.5);
+                let c = self.add_node(centre + bis * reach, None);
+                self.link(arms[i].ccw, c, false);
+                self.link(c, arms[j].cw, false);
+            } else {
+                self.link(arms[i].ccw, arms[j].cw, false);
+            }
+        }
+    }
+
+    /// Pair each end of the first segment in `among` with the nearest end
+    /// of the other; false when there is no other.
+    fn pair_ends(&mut self, among: &[End]) -> bool {
+        let Some(first) = among.first() else { return false };
+        let first_seg = first.1;
+        let (mine, theirs): (Vec<End>, Vec<End>) = among.iter().partition(|x| x.1 == first_seg);
+        for (na, _, _) in mine {
+            let p = self.nodes[na as usize].pos;
+            if let Some((nb, _, _)) = theirs.iter().copied().min_by(|x, y| self.nodes[x.0 as usize].pos.distance(p).total_cmp(&self.nodes[y.0 as usize].pos.distance(p))) {
+                self.link(na, nb, false);
+            }
+        }
+        !theirs.is_empty()
+    }
+
+    fn hub(&mut self, at: Vec2, e: &[End]) {
+        let hub = self.add_node(at, None);
+        for (n, _, _) in e {
+            self.link(*n, hub, false);
+        }
     }
 
     pub fn build(roads: &RoadNetwork, lots: &SlotMap<LotId, Lot>, land_value: &LandValue, version: u64) -> Self {
         let mut g = WalkGraph { version, ..Default::default() };
 
         // ── streets and paths ────────────────────────────────────────────
-        // Endpoints per road node: (node index, position, segment, side).
-        let mut ends: Vec<Vec<(u32, SegmentId, i8)>> = vec![Vec::new(); roads.nodes.len()];
+        // Endpoints per road node: (node index, segment, side).
+        let mut ends: Vec<Vec<End>> = vec![Vec::new(); roads.nodes.len()];
         let mut street_nodes: Vec<u32> = Vec::new();
         // Pavement node opposite every lot front, keyed by lot.
         let mut front_nodes: HashMap<LotId, u32> = HashMap::new();
@@ -104,6 +386,15 @@ impl WalkGraph {
                 fronting.entry(l.front_segment).or_default().push((id, l));
             }
         }
+        let mut zebras: HashMap<SegmentId, Vec<f32>> = HashMap::new();
+        for (s, t) in midblock_crossings(roads) {
+            zebras.entry(s).or_default().push(t);
+        }
+        // How far back from a node a street's pavements end: at the
+        // crosswalk of a junction, at the node elsewhere.
+        let setback = |n: NodeId, s: SegmentId| if is_junction(roads, n) { crosswalk_setback(roads, n, s) } else { 0.0 };
+        // A footpath meeting streets ends on their pavement.
+        let path_setback = |n: NodeId| if street_arms(roads, n) > 0 { widest(roads, n) + SIDEWALK * 0.55 } else { 0.0 };
         for (sid, seg) in roads.alive_segments() {
             // No one walks in a road tunnel.
             if seg.tunnel {
@@ -117,39 +408,70 @@ impl WalkGraph {
             match seg.kind {
                 RoadKind::Street => {
                     let off = seg.half_width() + SIDEWALK * 0.55;
-                    for side in [-1i8, 1] {
+                    let (mut sa, mut sb) = (setback(seg.a, sid), setback(seg.b, sid));
+                    if sa + sb > len * 0.8 {
+                        let k = len * 0.8 / (sa + sb);
+                        sa *= k;
+                        sb *= k;
+                    }
+                    let (ta, tb) = (sa / len + 0.01, 1.0 - sb / len - 0.01);
+                    let mids: Vec<f32> = zebras.get(&sid).cloned().unwrap_or_default();
+                    let mut zebra_nodes: Vec<[u32; 2]> = vec![[0; 2]; mids.len()];
+                    let mut lot_nodes: [Vec<(f32, u32)>; 2] = [Vec::new(), Vec::new()];
+                    for (si, side) in [-1i8, 1].into_iter().enumerate() {
                         let o = right * off * side as f32;
-                        // Lots fronting this side, ordered along the segment.
-                        let mut stops: Vec<(f32, LotId)> = fronts
+                        // Lots fronting this side, and the zebras, ordered along the segment.
+                        let mut stops: Vec<(f32, Stop)> = fronts
                             .iter()
                             .filter(|(_, l)| ((l.entrance() - a).dot(right) >= 0.0) == (side > 0))
-                            .map(|(id, l)| (l.front_t.clamp(0.02, 0.98), *id))
+                            .map(|(id, l)| (l.front_t.clamp(0.02, 0.98).clamp(ta.min(0.5), tb.max(0.5)), Stop::Lot(*id)))
                             .collect();
+                        stops.extend(mids.iter().enumerate().map(|(k, &t)| (t, Stop::Zebra(k))));
                         stops.sort_by(|x, y| x.0.total_cmp(&y.0));
-                        let na = g.add_node(a + o, None);
+                        let na = g.add_node(a + d * sa + o, None);
                         let mut prev = na;
-                        for (t, lid) in stops {
+                        for (t, stop) in stops {
                             let n = g.add_node(a + d * (t * len) + o, None);
-                            g.nodes[n as usize].near.push(lid);
+                            match stop {
+                                Stop::Lot(lid) => {
+                                    g.nodes[n as usize].near.push(lid);
+                                    front_nodes.insert(lid, n);
+                                    lot_nodes[si].push((t, n));
+                                }
+                                Stop::Zebra(k) => zebra_nodes[k][si] = n,
+                            }
                             g.link(prev, n, false);
-                            front_nodes.insert(lid, n);
                             street_nodes.push(n);
                             prev = n;
                         }
-                        let nb = g.add_node(b + o, None);
+                        let nb = g.add_node(b - d * sb + o, None);
                         g.link(prev, nb, false);
                         ends[seg.a.0 as usize].push((na, sid, side));
                         ends[seg.b.0 as usize].push((nb, sid, side));
                         street_nodes.push(na);
                         street_nodes.push(nb);
                     }
+                    for z in zebra_nodes {
+                        g.link_cross(z[0], z[1], sid, None, CrossingKind::Zebra, roads);
+                    }
+                    // Jaywalkers' short cuts: straight over to the lot
+                    // front opposite.
+                    if !seg.is_highway() {
+                        for &(t, n) in &lot_nodes[0] {
+                            let best = lot_nodes[1].iter().min_by(|x, y| (x.0 - t).abs().total_cmp(&(y.0 - t).abs()));
+                            if let Some(&(_, n2)) = best.filter(|x| (x.0 - t).abs() * len <= JAY_REACH) {
+                                g.link_cross(n, n2, sid, None, CrossingKind::Jay, roads);
+                            }
+                        }
+                    }
                 }
                 RoadKind::Rail => {}
                 RoadKind::Path => {
                     // Homes may line a path: a node opposite each of them.
+                    let (sa, sb) = (path_setback(seg.a).min(len * 0.4), path_setback(seg.b).min(len * 0.4));
                     let mut stops: Vec<(f32, LotId)> = fronts.iter().map(|(id, l)| (l.front_t.clamp(0.02, 0.98), *id)).collect();
                     stops.sort_by(|x, y| x.0.total_cmp(&y.0));
-                    let na = g.add_node(a, None);
+                    let na = g.add_node(a + d * sa, None);
                     let mut prev = na;
                     for (t, lid) in stops {
                         let n = g.add_node(a + d * (t * len), None);
@@ -159,7 +481,7 @@ impl WalkGraph {
                         street_nodes.push(n);
                         prev = n;
                     }
-                    let nb = g.add_node(b, None);
+                    let nb = g.add_node(b - d * sb, None);
                     g.link(prev, nb, false);
                     ends[seg.a.0 as usize].push((na, sid, 0));
                     ends[seg.b.0 as usize].push((nb, sid, 0));
@@ -169,32 +491,57 @@ impl WalkGraph {
             }
         }
         // Joins at road nodes: plain bends link matching sides directly;
-        // junctions and dead ends get a crossing hub at the node.
+        // junctions get crosswalks and corners; a footpath meeting a street
+        // gets a zebra; a dead end is crossed at its end.
         for (ni, node) in roads.nodes.iter().enumerate() {
             let e = &ends[ni];
             if e.is_empty() {
                 continue;
             }
-            let degree = node.segments.iter().filter(|&&s| roads.segment(s).alive).count();
-            if degree == 2 && e.len() >= 2 {
-                // Pair each endpoint of one segment with the nearest of the other.
-                let first_seg = e[0].1;
-                let (mine, theirs): (Vec<_>, Vec<_>) = e.iter().partition(|x| x.1 == first_seg);
-                for (na, _, _) in &mine {
-                    if let Some((nb, _, _)) = theirs.iter().min_by(|x, y| g.nodes[x.0 as usize].pos.distance(g.nodes[*na as usize].pos).total_cmp(&g.nodes[y.0 as usize].pos.distance(g.nodes[*na as usize].pos))) {
-                        g.link(*na, *nb, false);
+            let nid = NodeId(ni as u32);
+            let mut streets: Vec<SegmentId> = Vec::new();
+            let mut paths = 0;
+            let mut arms: Vec<SegmentId> = Vec::new();
+            for x in e {
+                if !arms.contains(&x.1) {
+                    arms.push(x.1);
+                    if roads.segment(x.1).is_street() {
+                        streets.push(x.1);
+                    } else {
+                        paths += 1;
                     }
                 }
-                if theirs.is_empty() {
-                    let hub = g.add_node(node.pos, None);
-                    for (n, _, _) in e {
-                        g.link(*n, hub, false);
+            }
+            if streets.len() >= 3 {
+                g.junction(roads, nid, node.pos, e);
+                continue;
+            }
+            if streets.is_empty() || (arms.len() == 2 && streets.len() == 2) || (arms.len() == 1 && paths == 1) {
+                // Footpaths only, or a plain bend of two streets.
+                if arms.len() == 2 && e.len() >= 2 {
+                    if !g.pair_ends(e) {
+                        g.hub(node.pos, e);
                     }
+                } else {
+                    g.hub(node.pos, e);
                 }
-            } else {
-                let hub = g.add_node(node.pos, None);
-                for (n, _, _) in e {
-                    g.link(*n, hub, false);
+                continue;
+            }
+            // One or two streets with footpaths, or a dead end.
+            let on_street: Vec<End> = e.iter().copied().filter(|x| roads.segment(x.1).is_street()).collect();
+            if streets.len() == 2 {
+                g.pair_ends(&on_street);
+            }
+            let s0 = streets[0];
+            let sides: Vec<u32> = on_street.iter().filter(|x| x.1 == s0).map(|x| x.0).collect();
+            if sides.len() == 2 && !roads.segment(s0).is_highway() {
+                let kind = if streets.len() == 2 && paths > 0 { CrossingKind::Zebra } else { CrossingKind::Informal };
+                g.link_cross(sides[0], sides[1], s0, Some(nid), kind, roads);
+            }
+            for x in e.iter().filter(|x| !roads.segment(x.1).is_street()) {
+                let p = g.nodes[x.0 as usize].pos;
+                if let Some(best) = on_street.iter().min_by(|u, v| g.nodes[u.0 as usize].pos.distance(p).total_cmp(&g.nodes[v.0 as usize].pos.distance(p))).map(|y| y.0) {
+                    g.link(x.0, best, false);
                 }
             }
         }
@@ -361,6 +708,11 @@ impl WalkGraph {
             }
         }
         g.index = Grid::new(NODE_CELL, g.nodes.iter().map(|n| (n.pos, n.pos)));
+        for (k, c) in g.crossings.iter().enumerate() {
+            let (pa, pb) = (g.nodes[c.a as usize].pos, g.nodes[c.b as usize].pos);
+            g.cross_at.insert(pos_key(pa, pb), k as u32);
+            g.cross_at.insert(pos_key(pb, pa), k as u32);
+        }
         g
     }
 
@@ -398,6 +750,12 @@ impl WalkGraph {
     /// scaled by the cheapest factor, so it never overestimates and the
     /// first time the goal pops it is optimal.
     pub fn route_nodes(&self, from: u32, to: u32) -> Option<Vec<u32>> {
+        self.route_nodes_with(from, to, false)
+    }
+
+    /// [`route_nodes`](Self::route_nodes), over `Jay` edges too when
+    /// `jaywalk` (each costs [`JAY_PENALTY`] metres more than its length).
+    pub fn route_nodes_with(&self, from: u32, to: u32, jaywalk: bool) -> Option<Vec<u32>> {
         #[derive(PartialEq)]
         struct Item(f32, u32);
         impl Eq for Item {}
@@ -425,7 +783,13 @@ impl WalkGraph {
             }
             let du = dist[u as usize];
             for e in &self.adj[u as usize] {
-                let cost = e.len * if e.park { PARK_FACTOR } else if e.interior { INTERIOR_FACTOR } else { 1.0 };
+                let mut cost = e.len * if e.park { PARK_FACTOR } else if e.interior { INTERIOR_FACTOR } else { 1.0 };
+                if e.cross != NO_CROSSING && self.crossings[e.cross as usize].kind == CrossingKind::Jay {
+                    if !jaywalk {
+                        continue;
+                    }
+                    cost += JAY_PENALTY;
+                }
                 let nd = du + cost;
                 if nd < dist[e.to as usize] {
                     dist[e.to as usize] = nd;
@@ -453,9 +817,14 @@ impl WalkGraph {
     /// Positions of a walking route between two points, snapping both ends
     /// to the network.
     pub fn route(&self, from: Vec2, to: Vec2) -> Option<(Vec<Vec2>, Vec<u32>)> {
+        self.route_with(from, to, false)
+    }
+
+    /// [`route`](Self::route), letting a jaywalker take `Jay` edges.
+    pub fn route_with(&self, from: Vec2, to: Vec2, jaywalk: bool) -> Option<(Vec<Vec2>, Vec<u32>)> {
         let a = self.nearest(from, 60.0)?;
         let b = self.nearest(to, 60.0)?;
-        let nodes = self.route_nodes(a, b)?;
+        let nodes = self.route_nodes_with(a, b, jaywalk)?;
         let pts = nodes.iter().map(|&i| self.nodes[i as usize].pos).collect();
         Some((pts, nodes))
     }
@@ -564,6 +933,81 @@ mod tests {
         assert!(nodes.windows(2).any(|w| g.adj[w[0] as usize].iter().any(|e| e.to == w[1] && e.interior)), "uses a lot interior");
         let passed = g.lots_passed(&nodes);
         assert!(!passed.is_empty(), "the route passes lots");
+    }
+
+    /// Proper intersection of two segments (not just touching at an end).
+    fn crosses(p: Vec2, q: Vec2, a: Vec2, b: Vec2) -> bool {
+        let d1 = (q - p).perp_dot(a - p);
+        let d2 = (q - p).perp_dot(b - p);
+        let d3 = (b - a).perp_dot(p - a);
+        let d4 = (b - a).perp_dot(q - a);
+        d1 * d2 < -1e-3 && d3 * d4 < -1e-3
+    }
+
+    /// A grid with a T, a dead end, a footpath over a street and one long
+    /// street, zoned so lots line the pavements.
+    fn crossing_town() -> (RoadNetwork, SlotMap<LotId, Lot>, WalkGraph) {
+        let mut roads = RoadNetwork::default();
+        for c in [-70.0f32, 70.0] {
+            roads.add_polyline(&[Vec2::new(-300.0, c), Vec2::new(300.0, c)], 1, 1);
+        }
+        roads.add_polyline(&[Vec2::new(-70.0, -300.0), Vec2::new(-70.0, 300.0)], 1, 1);
+        // A T onto the north street, and a dead end off it.
+        roads.add_polyline(&[Vec2::new(70.0, 70.0), Vec2::new(70.0, 200.0)], 1, 1);
+        // A footpath across the south street.
+        roads.add_polyline_kind(&[Vec2::new(150.0, -150.0), Vec2::new(150.0, 10.0)], 0, 0, RoadKind::Path);
+        let mut lots = SlotMap::with_key();
+        for (x, y) in [(0.0f32, 0.0f32), (0.0, -140.0), (0.0, 140.0), (-160.0, 0.0), (200.0, 0.0)] {
+            let zone = Zone { polygon: vec![Vec2::new(x - 60.0, y - 60.0), Vec2::new(x + 60.0, y - 60.0), Vec2::new(x + 60.0, y + 60.0), Vec2::new(x - 60.0, y + 60.0)], land_use: LandUse::Commercial };
+            generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[]);
+        }
+        let lv = LandValue::new(400.0, 32.0);
+        let g = WalkGraph::build(&roads, &lots, &lv, 1);
+        (roads, lots, g)
+    }
+
+    #[test]
+    fn walkers_cross_streets_only_at_crossings() {
+        let (roads, _, g) = crossing_town();
+        let streets: Vec<(Vec2, Vec2)> = roads.alive_segments().filter(|(_, s)| s.is_street()).map(|(sid, _)| roads.segment_points(sid)).collect();
+        let mut kinds = HashMap::new();
+        for c in &g.crossings {
+            *kinds.entry(format!("{:?}", c.kind)).or_insert(0) += 1;
+        }
+        for (i, edges) in g.adj.iter().enumerate() {
+            for e in edges.iter().filter(|e| e.cross == NO_CROSSING) {
+                let (p, q) = (g.nodes[i].pos, g.nodes[e.to as usize].pos);
+                for &(a, b) in &streets {
+                    assert!(!crosses(p, q, a, b), "a plain walk edge {p:?}-{q:?} crosses the street {a:?}-{b:?}");
+                }
+            }
+        }
+        // Nobody walks through the middle of a junction.
+        for (ni, node) in roads.nodes.iter().enumerate() {
+            if !is_junction(&roads, NodeId(ni as u32)) {
+                continue;
+            }
+            let r = widest(&roads, NodeId(ni as u32));
+            for (i, edges) in g.adj.iter().enumerate() {
+                for e in edges {
+                    let (p, q) = (g.nodes[i].pos, g.nodes[e.to as usize].pos);
+                    let d = geom::project_on_segment(node.pos, p, q).1.distance(node.pos);
+                    assert!(d > r, "an edge passes {d} m from the middle of the junction at {:?}", node.pos);
+                }
+            }
+        }
+        for k in ["Junction", "Zebra", "Informal", "Jay"] {
+            assert!(kinds.get(k).copied().unwrap_or(0) > 0, "some {k} crossings: {kinds:?}");
+        }
+        // The long streets get mid-block zebras, the 140 m blocks none.
+        assert!(!midblock_crossings(&roads).is_empty());
+        // Lawful routes never jaywalk; a jaywalker's may.
+        let (from, to) = (Vec2::new(-20.0, -62.0), Vec2::new(-20.0, -78.0));
+        let lawful = g.route(from, to).unwrap().1;
+        assert!(lawful.windows(2).all(|w| g.crossing_between(g.nodes[w[0] as usize].pos, g.nodes[w[1] as usize].pos).is_none_or(|c| g.crossings[c as usize].lawful())));
+        let bold = g.route_with(from, to, true).unwrap().1;
+        assert!(bold.windows(2).any(|w| g.crossing_between(g.nodes[w[0] as usize].pos, g.nodes[w[1] as usize].pos).is_some_and(|c| !g.crossings[c as usize].lawful())), "straight over");
+        assert!(bold.len() < lawful.len());
     }
 
     #[test]

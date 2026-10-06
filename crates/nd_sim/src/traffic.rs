@@ -30,7 +30,9 @@ use slotmap::{new_key_type, SlotMap};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 
+mod crosswalk;
 mod roundabout;
+pub use crosswalk::{Hold, PedTraffic, PED_CLEARANCE};
 pub use roundabout::{RingLanes, RingNode, RING_CRITICAL_GAP, RING_SPEED};
 
 new_key_type! {
@@ -891,6 +893,10 @@ pub struct Traffic {
     /// [driving] Red lights run (counted by the world per day).
     #[serde(default)]
     pub red_runs: u32,
+    /// [pedestrians] Walk lights, crossings in use and who drove over one
+    /// (`traffic/crosswalk.rs`).
+    #[serde(skip)]
+    pub peds: PedTraffic,
 }
 
 /// Arrows for the lanes (leftmost first) of `segment` arriving at `node`.
@@ -2373,8 +2379,10 @@ impl Traffic {
         }
         let mut arrived = Vec::new();
         for _ in 0..substeps {
-            let demand = self.signal_demand();
+            let mut demand = self.signal_demand();
+            self.ped_demand(&mut demand);
             self.net.step_signals(dt, Some(&demand));
+            self.update_walk(&demand);
             for lane in self.net.lanes.iter_mut().filter(|l| l.is_connector()) {
                 lane.red_for = if lane.green { 0.0 } else { lane.red_for + dt };
             }
@@ -2455,6 +2463,11 @@ impl Traffic {
                                 by = Some(owner);
                             }
                         }
+                    }
+                    // [pedestrians] Someone on a crossing ahead, or the stop line
+                    // (sirens included: they slow for people in the road).
+                    if let Some(g) = self.crosswalk_gap(car).filter(|&g| g < gap) {
+                        (gap, lead_v, why) = (g, 0.0, Wait::Yield);
                     }
                     if why == Wait::Leader && gap > 50.0 {
                         why = Wait::Free;
@@ -2614,6 +2627,7 @@ impl Traffic {
                 }
             }
             self.collisions();
+            self.crosswalk_conflicts();
             self.hazards(dt);
             self.place_cars(dt);
         }

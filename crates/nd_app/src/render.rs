@@ -85,6 +85,10 @@ struct PreviewTag;
 struct RingPreviewTag;
 #[derive(Component)]
 struct SignalTag(LaneId);
+/// [pedestrians] A walk lamp: intersection and approach (it also carries a
+/// `SignalTag` with no lane, so it is lifted and despawned with the rest).
+#[derive(Component)]
+struct PedSignalTag(usize, usize);
 /// Lane arrows at junction approaches (follow `LaneNetwork::arrows_version`).
 #[derive(Component, Clone)]
 struct LaneArrowsTag;
@@ -257,6 +261,8 @@ struct Materials {
     signal_green: Handle<StandardMaterial>,
     signal_red: Handle<StandardMaterial>,
     signal_mesh: Handle<Mesh>,
+    ped_walk: Handle<StandardMaterial>,
+    ped_stop: Handle<StandardMaterial>,
     overlay: Handle<StandardMaterial>,
     /// Building glow: the glow material with window lights switched by
     /// occupancy (see `lights`).
@@ -672,6 +678,8 @@ fn setup(
     });
     let signal_green = materials.add(unlit(pal.signal_green));
     let signal_red = materials.add(unlit(pal.signal_red));
+    let ped_walk = materials.add(unlit([0.85, 0.95, 1.0]));
+    let ped_stop = materials.add(unlit([1.0, 0.42, 0.06]));
     let signal_mesh = {
         let mut m = MeshData::default();
         m.boxed(Vec3::ZERO, Vec3::new(0.08, 0.26, 0.26), 0.0, [1.0, 1.0, 1.0, 1.0]);
@@ -695,6 +703,8 @@ fn setup(
         signal_green,
         signal_red,
         signal_mesh,
+        ped_walk,
+        ped_stop,
         overlay,
         windows,
         lit,
@@ -907,7 +917,7 @@ fn sync_signals(
     mats: Res<Materials>,
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<SignalTag>>,
-    mut q: Query<(&SignalTag, &mut MeshMaterial3d<StandardMaterial>)>,
+    mut q: Query<(&SignalTag, Option<&PedSignalTag>, &mut MeshMaterial3d<StandardMaterial>)>,
 ) {
     let net = &sim.world.traffic.net;
     if net.version != state.lanes_version || sim.full_rebuild {
@@ -922,9 +932,26 @@ fn sync_signals(
                 SignalTag(post.lane),
             ));
         }
+        for post in nd_procgen::street::ped_signal_posts(&sim.world.roads, net) {
+            commands.spawn((
+                Mesh3d(mats.signal_mesh.clone()),
+                MeshMaterial3d(mats.ped_stop.clone()),
+                Transform::from_translation(post.lamp).with_rotation(Quat::from_rotation_y(-post.heading)).with_scale(Vec3::new(1.0, 1.4, 1.0)),
+                NotShadowCaster,
+                SignalTag(LaneId::MAX),
+                PedSignalTag(post.inter, post.approach),
+            ));
+        }
         return;
     }
-    for (tag, mut mat) in &mut q {
+    for (tag, ped, mut mat) in &mut q {
+        if let Some(p) = ped {
+            let wanted = if sim.world.traffic.peds.walk_shown(p.0, p.1) { &mats.ped_walk } else { &mats.ped_stop };
+            if mat.0 != *wanted {
+                mat.0 = wanted.clone();
+            }
+            continue;
+        }
         let Some(lane) = net.lanes.get(tag.0 as usize) else { continue };
         let green = lane.next.iter().any(|&n| net.lanes[n as usize].green);
         let wanted = if green { &mats.signal_green } else { &mats.signal_red };
