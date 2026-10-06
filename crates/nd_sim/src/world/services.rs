@@ -941,7 +941,8 @@ impl World {
             let Some((want, 0)) = self.thinnest_shift(bid) else { continue };
             let b = &self.buildings[bid];
             let wage = b.wage();
-            let mut by_shift: HashMap<u8, Vec<CitizenId>> = HashMap::new();
+            // Ordered, so ties between equal shifts break the same way every run.
+            let mut by_shift: std::collections::BTreeMap<u8, Vec<CitizenId>> = std::collections::BTreeMap::new();
             for &w in &b.workers {
                 if let Some(c) = self.citizens.get(w) {
                     by_shift.entry(b.shift_for(c.seed).open).or_default().push(w);
@@ -1886,7 +1887,7 @@ mod tests {
     }
 
     fn town_with(seed: u64) -> World {
-        let mut w = World::new(WorldConfig { seed, ..WorldConfig::default() });
+        let mut w = World::new(WorldConfig { seed, ..WorldConfig::test_town() });
         w.economy.treasury = 1_000_000.0;
         w.add_road(&[Vec2::new(-700.0, 0.0), Vec2::new(700.0, 0.0)], 1, 1);
         w.add_road(&[Vec2::new(-700.0, 120.0), Vec2::new(700.0, 120.0)], 1, 1);

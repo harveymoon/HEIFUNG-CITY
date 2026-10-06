@@ -33,6 +33,7 @@ use crate::tools::Selection;
 /// Emergency vehicles, fires and rubble (render/emergency.rs).
 mod air;
 mod emergency;
+mod far;
 mod haze;
 mod layers;
 mod lights;
@@ -356,6 +357,8 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, sync_ring_preview.in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
         app.add_systems(Update, (turbines::sync_turbines, haze::sync_haze, layers::sync_layers, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
+        // The ground and water out past the map, into the fog.
+        app.init_resource::<far::FarRender>().add_systems(Update, far::sync_far.in_set(SimSet::Sync).after(sync_landscape));
         // [carlife] Cars parked at the kerb, after the cars on the road.
         app.init_resource::<ParkedRender>().add_systems(Update, sync_parked_cars.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // Emergency vehicles, fires and rubble, after the cars they hide.
@@ -491,7 +494,10 @@ fn terrain_config(w: &World) -> TerrainConfig {
     // On a landscape the scatter is generated flat and set on the ground
     // by `lift_spawned`, so it must not carry the old hills itself.
     let hill_height = if w.landscape.is_flat() { TerrainConfig::default().hill_height } else { 0.0 };
-    TerrainConfig { half_size: half * 2.0, basin_radius: half + 100.0, hill_height, ..TerrainConfig::default() }
+    // The flat map's roads lie at zero: the hills are levelled along those
+    // running out of the city (the highway, the trunk, roads off the map).
+    let corridors = if w.landscape.is_flat() { far::far_ways(w) } else { Vec::new() };
+    TerrainConfig { half_size: half * 2.0, basin_radius: half + 100.0, hill_height, corridors, ..TerrainConfig::default() }
 }
 
 fn tiling_image(size: usize, rgba: &[u8], srgb: bool) -> Image {
@@ -711,14 +717,18 @@ fn sync_terrain(
     assets: Res<GameAssets>,
     mats: Res<Materials>,
     existing: Query<Entity, With<TerrainTag>>,
+    mut ways: Local<Vec<(SVec2, SVec2, f32)>>,
 ) {
-    if !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
-        return;
-    }
     // A landscape's ground is drawn by `sync_landscape`.
     if !sim.world.landscape.is_flat() {
         return;
     }
+    // The hills are levelled along the ways running out of the city.
+    let now = far::far_ways(&sim.world);
+    if !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild && *ways == now {
+        return;
+    }
+    *ways = now;
     despawn_all(&mut commands, &existing);
     let data = build_terrain(&terrain_config(&sim.world), &assets.palette);
     commands.spawn((Mesh3d(meshes.add(to_mesh(&data, true))), MeshMaterial3d(mats.surface(Surface::Dirt)), Transform::IDENTITY, TerrainTag));

@@ -168,7 +168,7 @@ impl World {
             // The road out of town furthest from the centre, among those
             // the site's own street reaches.
             let comp = self.road_component(self.roads.segment(from_seg).a);
-            let entry = self.city_leaves().into_iter().chain(self.roads.leaf_nodes()).filter(|&n| self.road_component(n) == comp).max_by(|a, b| self.roads.node(*a).pos.length().total_cmp(&self.roads.node(*b).pos.length()))?;
+            let entry = self.city_leaves().into_iter().filter(|&n| self.road_component(n) == comp).max_by(|a, b| self.roads.node(*a).pos.length().total_cmp(&self.roads.node(*b).pos.length()))?;
             let node = self.roads.node(entry);
             let seg = *node.segments.iter().find(|&&s| self.roads.segment(s).alive)?;
             self.traffic.net.find_route(from_seg, from_pt, seg, node.pos)
@@ -474,7 +474,7 @@ mod tests {
     }
 
     fn town() -> World {
-        World::new(WorldConfig { landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::default() })
+        World::new(WorldConfig { landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::test_town() })
     }
 
     fn vacant_near(w: &World, p: Vec2, lu: LandUse) -> LotId {

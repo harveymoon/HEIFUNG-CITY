@@ -673,6 +673,8 @@ impl World {
         for (_, points, fwd, bwd, kind) in built {
             // Track is eased into smooth curves and tangential switches.
             let points = if kind == RoadKind::Rail { rail::smooth_track(&points, &roads) } else { points };
+            // An end at the map edge runs on out of sight: a way to elsewhere.
+            let points = crate::landscape::reach_elsewhere(&points);
             // Breaks at every waterline, so a bridge is exactly the span.
             let points = self.split_at_water(&points);
             let (fwd, bwd) = match kind {
@@ -778,6 +780,10 @@ impl World {
         // Lanes and cars.
         self.traffic.rebuild(&self.roads);
         for (_, car) in self.traffic.clear_cars() {
+            // Through traffic carries on along the highway.
+            if Self::is_through_car(&car) && self.resume_through_car(&car) {
+                continue;
+            }
             self.strand_car(car);
         }
         // [carlife] Parked cars on streets that changed find a kerb again.

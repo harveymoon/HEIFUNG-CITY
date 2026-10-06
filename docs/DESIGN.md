@@ -265,7 +265,7 @@ Citizens are rendered from their simulated positions every frame.
 - **Cars** (`world/cars.rs`, `vehicle::Vehicles`): every private car is a record with a place:
   parked (the owner's home spaces, a building's garage, a parking business, a kerb slot, or squeezed
   onto the street when nothing was free) or on the road. A car comes into the city only with a
-  household driving in (off a highway carriageway at the map edge, or the road at the city's edge),
+  household driving in (along the highway or a road off the map edge, from its far end out of sight),
   or when bought (at a dealer, the nearest goods or gadget shop, and delivered home by its driver; or
   out of town, driven in from the edge); it leaves only when sold (driven to the dealer), scrapped, or
   driven out of town by an emigrating owner. A trip by car starts at the car: the driver walks to it
@@ -399,7 +399,7 @@ Citizens are rendered from their simulated positions every frame.
   so high-rises appear only where the block is already dense.
 - **Railway** (`RoadKind::Rail`, `nd_sim::rail`): track is a third kind of way in the road
   network, single track 4.8 m wide. A trunk line crosses the map 480 m south of the
-  centre from the start; the player lays branches off it with the Road tool's Rail
+  centre from the start, edge to edge and on out of sight; the player lays branches off it with the Road tool's Rail
   preset. Track ends snap only to track and road ends never snap to track; a track
   crossing a street shares a node, which renders as a level crossing. Track cuts a
   corridor out of parcels but never fronts them, carries no lanes or pavements, and
@@ -565,7 +565,16 @@ Citizens are rendered from their simulated positions every frame.
   of its corridor plus 8 m along the whole embankment, the upper way crosses on a short deck
   (a registered deck, so its traffic stays up), and abutment and wing walls with coping
   follow the embankment down either side. Two carriageways cross the map at
-  y = 420 from the start; through cars enter at the map edge and leave at the far one. Docks
+  y = 420 from the start; through cars enter at the map edge and leave at the far one.
+  A new map has nothing else: no streets, the player builds the rest. Every way whose end reaches
+  the map edge (`landscape::MAP_EDGE`) runs on straight to `WAY_REACH` (5 km out), beyond the fog
+  (`SIGHT`, 2.6 km) from anywhere the camera may be (`CAMERA_BOUND`); those far ends are the only
+  places vehicles from elsewhere appear and leaving ones are removed (through traffic, newcomers'
+  cars, lorries, trains; ships leave the same distance out). Dead ends on the map lead nowhere.
+  Newcomers need a way in: a street joined to the highway by ramps, a road off the map edge, or a
+  working station; walkers arriving by road are set down at their door. Through traffic on the
+  highway carries on across a road rebuild. The ground and water beyond the map are drawn out to
+  the horizon, graded to the ways that run out there. Docks
   (`nd_sim::ports`) stand on the shore with a pier and a street stub, take over grown lots, and work
   once their street reaches the city: freighters route by water (river centrelines, tributaries
   joining, mouths opening on the sea) from off the map to the berth and back, landing imports for
