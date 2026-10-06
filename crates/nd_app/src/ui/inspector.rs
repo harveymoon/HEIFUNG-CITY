@@ -82,7 +82,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                     line += &format!("  ·  covers {:.0} m {}", s.kind.radius(s.tier), if s.kind == nd_sim::ServiceKind::TrashDepot { "around" } else { "by road" });
                 }
                 if !units.is_empty() {
-                    line += &format!("  ·  {} {}s, {} crewed, {} out", units.len(), units[0].kind.label(), w.crewed_units(id), units.iter().filter(|u| u.busy()).count());
+                    line += &format!("  ·  {} {}s, {} crewed, {} on calls, {} on patrol", units.len(), units[0].kind.label(), w.crewed_units(id), units.iter().filter(|u| u.busy()).count(), units.iter().filter(|u| u.state == nd_sim::services::UnitState::Patrol).count());
                 }
                 if s.kind == nd_sim::ServiceKind::Health {
                     line += &format!("  ·  beds {}/{}", w.services.admissions.iter().filter(|a| a.hospital == id).count(), s.kind.capacity(s.tier));

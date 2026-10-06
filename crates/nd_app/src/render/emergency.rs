@@ -183,7 +183,7 @@ pub(super) fn sync_emergency(
                 }
             }
         }
-        let shown = u.car.is_some_and(|c| w.traffic.cars.contains_key(c)) || u.state == UnitState::OnScene;
+        let shown = u.car.is_some_and(|c| w.traffic.cars.contains_key(c)) || matches!(u.state, UnitState::OnScene | UnitState::Patrol);
         if shown && !es.units.contains_key(&uid) {
             let k = kind_index(u.kind);
             let body = commands.spawn((Mesh3d(a.bodies[k].clone()), MeshMaterial3d(a.paint[k].clone()), Transform::IDENTITY, NotShadowCaster, EmergencyTag, Grounded)).id();

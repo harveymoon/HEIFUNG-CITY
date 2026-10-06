@@ -157,7 +157,7 @@ impl World {
         let Some(uk) = kind.unit_kind() else { return };
         let have = self.services.units.values().filter(|u| u.station == station).count();
         for k in have..kind.units(tier) {
-            self.services.units.insert(Unit { kind: uk, station, number: k as u8 + 1, state: UnitState::Idle, car: None, incident: None, pos, heading: 0.0, hospital: None });
+            self.services.units.insert(Unit { kind: uk, station, number: k as u8 + 1, state: UnitState::Idle, car: None, incident: None, pos, heading: 0.0, hospital: None, patrol_until: 0 });
         }
     }
 
@@ -428,7 +428,16 @@ impl World {
                 if self.buildings[bid].free_jobs() == 0 {
                     break;
                 }
-                let jobless = self.citizens.iter().find(|(_, c)| c.work.is_none() && c.can_work()).map(|(id, _)| id);
+                // Round-the-clock posts hire for the thinnest shift first.
+                let want = self.thinnest_shift(bid).map(|(s, _)| s);
+                let b = &self.buildings[bid];
+                let jobless = self
+                    .citizens
+                    .iter()
+                    .filter(|(_, c)| c.work.is_none() && c.can_work())
+                    .find(|(_, c)| want.is_none_or(|w| b.shift_for(c.seed).open == w))
+                    .or_else(|| self.citizens.iter().find(|(_, c)| c.work.is_none() && c.can_work()))
+                    .map(|(id, _)| id);
                 let poach = || {
                     self.citizens
                         .iter()
@@ -447,6 +456,7 @@ impl World {
 
     pub(super) fn hourly_services(&mut self) {
         self.recruit_staff();
+        self.balance_rosters();
         if !self.config.emergencies {
             let tick = self.clock.tick;
             let citizens = &self.citizens;
@@ -533,9 +543,28 @@ impl World {
             }
         }
         self.recover_lost_units();
+        // Lights and sirens pull up short of the kerb and the crew is out
+        // while the car is still rolling to a stop: on scene within
+        // `PULL_UP` metres of the stop (the last stretch of braking took a
+        // minute or two of clock).
+        let pulling_up: Vec<CarId> = self
+            .services
+            .units
+            .values()
+            .filter(|u| u.state == UnitState::Responding)
+            .filter_map(|u| u.car)
+            .filter(|c| self.traffic.cars.get(*c).is_some_and(|car| car.idx + 1 == car.route.len() && car.s_end - car.s < PULL_UP))
+            .collect();
+        for car in pulling_up {
+            self.unit_car_arrived(car);
+        }
         let active: Vec<u32> = self.services.active().map(|i| i.id).collect();
         for id in active {
             self.step_incident(id);
+        }
+        self.dispatch_queue();
+        if tick % 5 == 2 {
+            self.step_patrols();
         }
         if self.clock.minute_of_day() == EVENT_MINUTE {
             self.start_stadium_events();
@@ -575,10 +604,310 @@ impl World {
         s.by_car = s.units.iter().filter_map(|(id, u)| u.car.map(|c| (c, id))).collect();
         s.stats.units = s.units.len() as u32;
         s.stats.units_busy = s.units.values().filter(|u| u.busy()).count() as u32;
+        s.stats.on_patrol = s.units.values().filter(|u| u.state == UnitState::Patrol).count() as u32;
         s.stats.fires_burning = s.active().filter(|i| i.kind == IncidentKind::Fire).count() as u32;
         s.stats.waiting_for_ambulance = s.active().filter(|i| i.kind == IncidentKind::Medical && matches!(i.stage, Stage::Unreported | Stage::Reported | Stage::Dispatched)).count() as u32;
         s.stats.in_hospital = s.admissions.len() as u32;
     }
+
+    /// Units free for a call, per incident kind (`IncidentKind::index`): in
+    /// the station with a crew to spare, on patrol or standby, or driving home.
+    fn free_units(&self) -> [usize; 3] {
+        let out = self.units_out();
+        let mut n = [0; 3];
+        for u in self.services.units.values().filter(|u| self.unit_available(u, &out)) {
+            let k = IncidentKind::ALL.iter().position(|k| k.unit() == u.kind).unwrap_or(0);
+            n[k] += 1;
+        }
+        n
+    }
+
+    /// Units out of the station (crews aboard), per station.
+    fn units_out(&self) -> HashMap<BuildingId, usize> {
+        let mut out: HashMap<BuildingId, usize> = HashMap::new();
+        for u in self.services.units.values().filter(|u| u.out()) {
+            *out.entry(u.station).or_default() += 1;
+        }
+        out
+    }
+
+    /// Free for the next call: a unit in the station counts only while the
+    /// station has a crew for one more vehicle; units already out have theirs.
+    fn unit_available(&self, u: &Unit, out: &HashMap<BuildingId, usize>) -> bool {
+        match u.state {
+            UnitState::Idle => out.get(&u.station).copied().unwrap_or(0) < self.crewed_units(u.station),
+            UnitState::Patrol | UnitState::Returning => true,
+            _ => false,
+        }
+    }
+
+    /// Whether the city has a crewed station for the kind.
+    fn city_has(&self, kind: IncidentKind) -> bool {
+        self.services.units.values().any(|u| u.kind == kind.unit() && self.crewed_units(u.station) > 0)
+    }
+
+    /// Every tick: the calls past their dispatch time, most urgent first
+    /// (`Incident::priority`, then call order), each get the nearest free
+    /// unit. A call that finds none waits in the queue and goes out the tick
+    /// a unit clears; a violent crime may pull a car off a theft; a call left
+    /// waiting `MUTUAL_AID_WAIT` with every unit busy goes to the next town.
+    /// Also keeps the queue and saturation figures.
+    fn dispatch_queue(&mut self) {
+        let tick = self.clock.tick;
+        let mut queue: Vec<(u8, u64, u32, IncidentKind)> = self
+            .services
+            .active()
+            .filter(|i| i.stage == Stage::Reported && i.dispatch_at.is_some_and(|t| tick >= t))
+            .map(|i| (i.priority(), i.reported.unwrap_or(i.started), i.id, i.kind))
+            .collect();
+        queue.sort_by_key(|q| (q.0, q.1, q.2));
+        let mut free = self.free_units();
+        let mut queued = [0u32; 3];
+        for (prio, reported, id, kind) in queue {
+            let k = kind.index();
+            let first = self.services.incident(id).and_then(|i| i.dispatch_at) == Some(tick);
+            // A call no free unit could reach is retried every five minutes.
+            let retry = first || tick % 5 == 0 || !self.services.route_failed.contains_key(&id);
+            if (free[k] > 0 || first || !self.city_has(kind)) && retry {
+                if self.try_dispatch(id) {
+                    self.services.route_failed.remove(&id);
+                    free = self.free_units();
+                    continue;
+                }
+                if free[k] > 0 {
+                    self.services.route_failed.insert(id, tick);
+                }
+            }
+            if free[k] == 0 && prio == 0 && kind == IncidentKind::Crime && self.divert_for(id) {
+                self.services.stats.diverted_today += 1;
+                free = self.free_units();
+                continue;
+            }
+            let dispatcher = self.services.incident(id).and_then(|i| i.dispatcher);
+            if free[k] == 0 && dispatcher.is_some() && tick.saturating_sub(reported) >= MUTUAL_AID_WAIT && self.city_has(kind) {
+                self.services.stats.mutual_aid_today += 1;
+                self.send_from_out_of_town(id, MUTUAL_AID_TRAVEL, true);
+                continue;
+            }
+            queued[k] += 1;
+        }
+        let has = IncidentKind::ALL.map(|kind| self.city_has(kind));
+        let st = &mut self.services.stats;
+        for k in 0..3 {
+            st.queued[k] = queued[k];
+            st.queue_max_today[k] = st.queue_max_today[k].max(queued[k]);
+            if has[k] && free[k] == 0 {
+                st.saturated_since[k].get_or_insert(tick);
+                st.saturated_min_today[k] += 1;
+            } else {
+                st.saturated_since[k] = None;
+            }
+        }
+    }
+
+    /// A violent crime with every police car busy: pull the nearest car that
+    /// is still on its way to a theft or vandalism; that call goes back in
+    /// the queue.
+    fn divert_for(&mut self, id: u32) -> bool {
+        let Some(at) = self.services.incident(id).map(|i| i.pos) else { return false };
+        let Some(to) = self.incident_access(id) else { return false };
+        let mut cands: Vec<(f32, UnitId, u32)> = Vec::new();
+        for (uid, u) in self.services.units.iter() {
+            if u.kind != UnitKind::PoliceCar || u.state != UnitState::Responding {
+                continue;
+            }
+            let Some(other) = u.incident.and_then(|o| self.services.incident(o)) else { continue };
+            if other.priority() < 2 || other.stage != Stage::Dispatched {
+                continue;
+            }
+            let p = u.car.and_then(|c| self.traffic.cars.get(c)).map_or(u.pos, |c| c.pos);
+            cands.push((p.distance(at), uid, other.id));
+        }
+        cands.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let tick = self.clock.tick;
+        for (_, uid, other) in cands {
+            if !self.send_unit(uid, id, to) {
+                continue;
+            }
+            if let Some(o) = self.services.incident_mut(other) {
+                o.stage = Stage::Reported;
+                o.unit = None;
+                o.dispatched = None;
+                o.unit_name = None;
+                o.dispatch_at = Some(tick);
+            }
+            return true;
+        }
+        false
+    }
+
+    /// Where a unit pulls up for an incident.
+    fn incident_access(&self, id: u32) -> Option<(SegmentId, Vec2)> {
+        let inc = self.services.incident(id)?;
+        self.building_lot(inc.building).and_then(|l| self.lot_access(l)).or_else(|| self.roads.nearest_street(inc.pos).map(|(s, _, q)| (s, q)))
+    }
+
+    /// Take a unit's car off the road, leaving the unit where the car was.
+    fn pull_off_road(&mut self, uid: UnitId) {
+        let Some(c) = self.services.units.get_mut(uid).and_then(|u| u.car.take()) else { return };
+        if let Some(car) = self.traffic.remove_car(c) {
+            let u = &mut self.services.units[uid];
+            u.pos = car.pos;
+            u.heading = car.heading;
+        }
+        self.services.by_car.remove(&c);
+    }
+
+    // ── patrols and standby ────────────────────────────────────────────────
+
+    /// Police cars patrol and ambulances post at standby points while free;
+    /// a parked unit moves to its next beat when its stay is up. A unit
+    /// whose station has lost the crew for it goes home.
+    fn step_patrols(&mut self) {
+        let tick = self.clock.tick;
+        let ids: Vec<UnitId> = self.services.units.iter().filter(|(_, u)| matches!(u.kind, UnitKind::PoliceCar | UnitKind::Ambulance)).map(|(id, _)| id).collect();
+        for uid in ids {
+            let out = self.units_out();
+            let u = &self.services.units[uid];
+            let (station, state, parked, until) = (u.station, u.state, u.car.is_none(), u.patrol_until);
+            let crewed = self.crewed_units(station);
+            let n_out = out.get(&station).copied().unwrap_or(0);
+            match state {
+                UnitState::Idle if n_out < crewed => {
+                    self.start_patrol(uid);
+                }
+                UnitState::Patrol if n_out > crewed => self.return_to_station(uid),
+                UnitState::Patrol if parked && tick >= until => {
+                    if !self.start_patrol(uid) {
+                        self.return_to_station(uid);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Drive to a new beat within the station's district (police: crime
+    /// hot spots and shopping streets; ambulances: where people live), away
+    /// from the kind's other units on patrol. False if there is nowhere to go.
+    fn start_patrol(&mut self, uid: UnitId) -> bool {
+        let Some(u) = self.services.units.get(uid) else { return false };
+        let (station, kind) = (u.station, u.kind);
+        let here = u.car.and_then(|c| self.traffic.cars.get(c)).map_or(u.pos, |c| c.pos);
+        let Some((centre, radius)) = self.buildings.get(station).and_then(|b| Some((self.lots.get(b.lot)?.center, b.service.map(|s| s.kind.radius(s.tier))?))) else { return false };
+        let reach = radius * PATROL_REACH;
+        let others: Vec<Vec2> = self
+            .services
+            .units
+            .iter()
+            .filter(|(id, o)| *id != uid && o.kind == kind && o.state == UnitState::Patrol)
+            .map(|(_, o)| o.car.and_then(|c| self.traffic.cars.get(c)).map_or(o.pos, |c| c.pos))
+            .collect();
+        // Where this kind of call came from over the last two days.
+        let since = self.clock.tick.saturating_sub(2 * 1440);
+        let recent: Vec<Vec2> = self.services.incidents.iter().filter(|i| i.kind.unit() == kind && i.started >= since).map(|i| i.pos).collect();
+        let mut cands: Vec<(f32, LotId)> = Vec::new();
+        for b in self.buildings.values() {
+            if b.construction.is_some() || b.land_use == LandUse::Park {
+                continue;
+            }
+            let Some(l) = self.lots.get(b.lot) else { continue };
+            if l.center.distance(centre) > reach || l.center.distance(here) < 60.0 {
+                continue;
+            }
+            let calls = recent.iter().filter(|p| p.distance(l.center) < 160.0).count() as f32;
+            let base = match kind {
+                UnitKind::PoliceCar => 1.0 + 4.0 * self.society.crime.heat_at(l.center, 120.0) + 2.0 * calls + if matches!(b.land_use, LandUse::Commercial | LandUse::Entertainment) { 1.0 } else { 0.0 },
+                _ => 0.2 + b.residents.len() as f32 / 10.0 + 2.0 * calls,
+            };
+            let crowd = others.iter().filter(|p| p.distance(l.center) < 200.0).count() as f32;
+            cands.push((base / (1.0 + 3.0 * crowd), b.lot));
+        }
+        let total: f32 = cands.iter().map(|c| c.0).sum();
+        if cands.is_empty() || total <= 0.0 {
+            return false;
+        }
+        let mut roll = self.srng().random::<f32>() * total;
+        let mut pick = cands[cands.len() - 1].1;
+        for (w, lot) in &cands {
+            roll -= w;
+            if roll <= 0.0 {
+                pick = *lot;
+                break;
+            }
+        }
+        let Some(to) = self.lots.get(pick).and_then(|l| self.lot_access(l)) else { return false };
+        self.pull_off_road(uid);
+        if !self.drive_unit(uid, to, false) {
+            return false;
+        }
+        let u = &mut self.services.units[uid];
+        u.state = UnitState::Patrol;
+        u.incident = None;
+        u.hospital = None;
+        true
+    }
+
+    /// Off patrol and back to the station.
+    fn return_to_station(&mut self, uid: UnitId) {
+        self.pull_off_road(uid);
+        let Some(u) = self.services.units.get_mut(uid) else { return };
+        u.incident = None;
+        u.hospital = None;
+        let station = u.station;
+        let to = self.building_lot(station).and_then(|l| self.lot_access(l));
+        match to {
+            Some(to) if self.drive_unit(uid, to, false) => self.services.units[uid].state = UnitState::Returning,
+            _ => self.park_at_station(uid),
+        }
+    }
+
+    // ── shifts ─────────────────────────────────────────────────────────────
+
+    /// For a round-the-clock emergency post: the shift (by its opening hour)
+    /// with the fewest workers, and how many it has. None for other buildings.
+    fn thinnest_shift(&self, bid: BuildingId) -> Option<(u8, usize)> {
+        let b = self.buildings.get(bid)?;
+        let s = b.service?;
+        if !matches!(s.kind, ServiceKind::Police | ServiceKind::Fire | ServiceKind::Health | ServiceKind::Dispatch | ServiceKind::Jail) {
+            return None;
+        }
+        let shifts: Vec<u8> = (0..3u64).map(|k| s.kind.hours().shift(k).open).collect();
+        shifts.iter().map(|&open| (open, b.workers.iter().filter(|w| self.citizens.get(**w).is_some_and(|c| b.shift_for(c.seed).open == open)).count())).min_by_key(|x| x.1)
+    }
+
+    /// Emergency posts keep every shift manned: once an hour, a post with an
+    /// empty shift and a doubled-up one swaps a worker with someone whose
+    /// hours fit the empty shift, from an ordinary job paying less (they take
+    /// the public job, ours takes theirs). Hired at random, a 911 centre of
+    /// three could leave the evening with nobody at the desk.
+    fn balance_rosters(&mut self) {
+        let posts: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.service.is_some() && b.construction.is_none() && !b.is_derelict() && b.workers.len() >= 3).map(|(id, _)| id).collect();
+        for bid in posts {
+            let Some((want, 0)) = self.thinnest_shift(bid) else { continue };
+            let b = &self.buildings[bid];
+            let wage = b.wage();
+            let mut by_shift: HashMap<u8, Vec<CitizenId>> = HashMap::new();
+            for &w in &b.workers {
+                if let Some(c) = self.citizens.get(w) {
+                    by_shift.entry(b.shift_for(c.seed).open).or_default().push(w);
+                }
+            }
+            let Some(spare) = by_shift.values().filter(|v| v.len() >= 2).max_by_key(|v| v.len()).and_then(|v| v.last().copied()) else { continue };
+            let cand = self
+                .citizens
+                .iter()
+                .filter(|(_, c)| c.can_work() && b.shift_for(c.seed).open == want)
+                .filter_map(|(id, c)| c.work.filter(|w| self.buildings.get(*w).is_some_and(|x| !x.is_special() && x.construction.is_none() && x.wage() < wage)).map(|w| (id, w)))
+                .next();
+            let Some((cid, old)) = cand else { continue };
+            self.buildings[bid].workers.retain(|x| *x != spare);
+            self.buildings[old].workers.retain(|x| *x != cid);
+            self.assign_job(cid, bid);
+            self.assign_job(spare, old);
+        }
+    }
+
 
     /// A unit whose car vanished (roads rebuilt, a save loaded) carries on
     /// as best it can: a responder is sent again, a returning unit is home,
@@ -654,12 +983,23 @@ impl World {
             }
             Stage::Reported => {
                 let since = tick.saturating_sub(inc.reported.unwrap_or(tick));
-                if inc.kind == IncidentKind::Crime && since > CRIME_GIVE_UP {
-                    self.resolve(id, Outcome::Unsolved);
-                } else if inc.kind == IncidentKind::Medical && since > MEDICAL_GIVE_UP {
-                    self.resolve(id, Outcome::Recovered);
-                } else if inc.dispatch_at.is_some_and(|t| tick >= t && (tick == t || tick % 5 == 0)) {
-                    self.try_dispatch(id);
+                // (Dispatch itself runs over the whole queue: `dispatch_queue`.)
+                let give_up = match inc.kind {
+                    IncidentKind::Crime if since > CRIME_GIVE_UP => Some(Outcome::Unsolved),
+                    IncidentKind::Medical if since > MEDICAL_GIVE_UP => Some(Outcome::Recovered),
+                    _ => None,
+                };
+                if let Some(o) = give_up {
+                    let k = inc.kind.index();
+                    let city_has = self.services.units.values().any(|u| u.kind == inc.kind.unit() && self.crewed_units(u.station) > 0);
+                    let free = self.free_units()[k];
+                    let why = &mut self.services.stats.unanswered_why_today[k];
+                    match (city_has, free) {
+                        (false, _) => why.no_station += 1,
+                        (true, 0) => why.all_units_busy += 1,
+                        _ => why.no_route += 1,
+                    }
+                    self.resolve(id, o);
                 }
             }
             Stage::Dispatched if inc.outside && inc.arrive_at.is_some_and(|t| tick >= t) => self.on_scene(id),
@@ -822,80 +1162,122 @@ impl World {
         self.events.push(SimEvent::EmergencyCall(id));
     }
 
-    /// Send the nearest free, crewed unit of the right kind. Stays queued
-    /// (and is retried) when none is free or none can reach.
-    fn try_dispatch(&mut self, id: u32) {
-        let tick = self.clock.tick;
-        let Some(inc) = self.services.incident(id).cloned() else { return };
-        let Some(to) = self.building_lot(inc.building).and_then(|l| self.lot_access(l)).or_else(|| self.roads.nearest_street(inc.pos).map(|(s, _, q)| (s, q))) else { return };
-        let uk = inc.kind.unit();
-        let mut busy: HashMap<BuildingId, usize> = HashMap::new();
-        for u in self.services.units.values() {
-            if u.busy() {
-                *busy.entry(u.station).or_default() += 1;
+    /// Send the nearest free unit of the right kind: one in a station with a
+    /// crew to spare, on patrol or standby, or on its way home, each from
+    /// where it is. With no crewed station of the kind in the city, a
+    /// dispatcher calls the next town. True when help is on the way.
+    fn try_dispatch(&mut self, id: u32) -> bool {
+        let Some(inc) = self.services.incident(id).cloned() else { return false };
+        // No crewed station of the kind in the whole city: a dispatcher can
+        // ask a neighbouring town, which sends a unit slowly and bills us.
+        if !self.city_has(inc.kind) {
+            if inc.dispatcher.is_some() {
+                self.send_from_out_of_town(id, OUT_OF_TOWN_TRAVEL, false);
+                return true;
             }
+            return false;
         }
+        let Some(to) = self.incident_access(id) else { return false };
+        let uk = inc.kind.unit();
+        let out = self.units_out();
         let mut free: Vec<(f32, UnitId)> = self
             .services
             .units
             .iter()
-            .filter(|(_, u)| u.kind == uk && u.state == UnitState::Idle)
-            .filter(|(_, u)| busy.get(&u.station).copied().unwrap_or(0) < self.crewed_units(u.station))
-            .map(|(uid, u)| (u.pos.distance(inc.pos), uid))
+            .filter(|(_, u)| u.kind == uk && self.unit_available(u, &out))
+            .map(|(uid, u)| (u.car.and_then(|c| self.traffic.cars.get(c)).map_or(u.pos, |c| c.pos).distance(inc.pos), uid))
             .collect();
         free.sort_by(|a, b| a.0.total_cmp(&b.0));
-        // No crewed station of the kind in the whole city: a dispatcher can
-        // ask a neighbouring town, which sends a unit slowly and bills us.
-        let city_can = self.services.units.iter().any(|(_, u)| u.kind == uk && self.crewed_units(u.station) > 0);
-        if !city_can && inc.dispatcher.is_some() {
-            let fee = OUT_OF_TOWN_FEE[inc.kind.index()];
-            self.economy.debit(Flow::ServiceUpkeep, fee);
-            self.services.stats.out_of_town_calls_today += 1;
-            self.services.stats.out_of_town_fees_today += fee;
-            let dname = inc.dispatcher.and_then(|d| self.citizens.get(d)).map(|d| d.name.clone());
-            if let Some(d) = inc.dispatcher.and_then(|d| self.citizens.get_mut(d)) {
-                d.remember(tick, format!("No {} of ours to send to {}. Called the next town over.", uk.label(), inc.place));
+        free.into_iter().any(|(_, uid)| self.send_unit(uid, id, to))
+    }
+
+    /// The quickest way for lights and sirens from `from` to `to`: a unit
+    /// may turn round in the street and pull up on either side, so the
+    /// route is planned from and to both sides of the road and the shortest
+    /// taken. (From the lane it happened
+    /// to face, a car parked a block from a call drove round the block, and
+    /// sometimes round two.)
+    fn siren_route(&self, from: (SegmentId, Vec2), to: (SegmentId, Vec2)) -> Option<(Vec<crate::traffic::LaneId>, f32, f32)> {
+        let net = &self.traffic.net;
+        let length = |r: &(Vec<crate::traffic::LaneId>, f32, f32)| r.0.iter().map(|l| net.lanes[*l as usize].length).sum::<f32>() - r.1 - net.lanes[*r.0.last().unwrap() as usize].length + r.2;
+        // A point and its mirror across the street's centre line.
+        let sides = |(seg, p): (SegmentId, Vec2)| -> Vec<Vec2> {
+            match self.roads.nearest_street(p).filter(|(s, _, q)| *s == seg && q.distance(p) > 0.5) {
+                Some((_, _, q)) => vec![p, q * 2.0 - p],
+                None => vec![p],
             }
-            let _ = dname;
+        };
+        let ends = sides(to);
+        sides(from)
+            .into_iter()
+            .flat_map(|a| ends.iter().map(move |b| (a, *b)))
+            .filter_map(|(a, b)| net.find_route(from.0, a, to.0, b))
+            .filter(|r| !r.0.is_empty())
+            .min_by(|a, b| length(a).total_cmp(&length(b)))
+    }
+
+    /// Help from the next town: billed, and there in `travel` minutes.
+    /// `mutual` for mutual aid (the city has units, all busy).
+    fn send_from_out_of_town(&mut self, id: u32, travel: u64, mutual: bool) {
+        let tick = self.clock.tick;
+        let Some(inc) = self.services.incident(id).cloned() else { return };
+        let uk = inc.kind.unit();
+        let fee = OUT_OF_TOWN_FEE[inc.kind.index()];
+        self.economy.debit(Flow::ServiceUpkeep, fee);
+        self.services.stats.out_of_town_calls_today += 1;
+        self.services.stats.out_of_town_fees_today += fee;
+        if let Some(d) = inc.dispatcher.and_then(|d| self.citizens.get_mut(d)) {
+            d.remember(tick, if mutual { format!("Every {} we have was out. Asked the next town to cover {}.", uk.label(), inc.place) } else { format!("No {} of ours to send to {}. Called the next town over.", uk.label(), inc.place) });
+        }
+        self.services.route_failed.remove(&id);
+        let i = self.services.incident_mut(id).unwrap();
+        i.stage = Stage::Dispatched;
+        i.dispatched = Some(tick);
+        i.outside = true;
+        i.fee = fee;
+        i.arrive_at = Some(tick + travel);
+        i.unit_name = Some(if mutual { format!("{} from the next town (mutual aid)", uk.label()) } else { format!("{} from out of town", uk.label()) });
+        self.events.push(SimEvent::UnitDispatched(id));
+    }
+
+    /// Put `uid` on the road to incident `id` with lights and sirens, from
+    /// its station or from wherever it is driving or parked. False if no
+    /// road leads there.
+    fn send_unit(&mut self, uid: UnitId, id: u32, to: (SegmentId, Vec2)) -> bool {
+        let tick = self.clock.tick;
+        let Some(u) = self.services.units.get(uid) else { return false };
+        let (station, state) = (u.station, u.state);
+        let here = u.car.and_then(|c| self.traffic.cars.get(c)).map_or(u.pos, |c| c.pos);
+        let from = if state == UnitState::Idle { self.building_lot(station).and_then(|l| self.lot_access(l)) } else { self.roads.nearest_street(here).map(|(s, _, _)| (s, here)) };
+        let Some(from) = from else { return false };
+        let Some((lanes, s0, s1)) = self.siren_route(from, to) else { return false };
+        self.pull_off_road(uid);
+        let car = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, 0);
+        self.traffic.cars[car].siren = true;
+        self.services.by_car.insert(car, uid);
+        let (call, number) = {
+            let u = &mut self.services.units[uid];
+            u.state = UnitState::Responding;
+            u.car = Some(car);
+            u.incident = Some(id);
+            u.hospital = None;
+            (u.kind.call_sign(), u.number)
+        };
+        let sname = self.buildings.get(station).map(|b| b.name.clone()).unwrap_or_default();
+        let (kind, bid, dispatcher) = {
             let i = self.services.incident_mut(id).unwrap();
             i.stage = Stage::Dispatched;
             i.dispatched = Some(tick);
-            i.outside = true;
-            i.fee = fee;
-            i.arrive_at = Some(tick + OUT_OF_TOWN_TRAVEL);
-            i.unit_name = Some(format!("{} from out of town", uk.label()));
-            self.events.push(SimEvent::UnitDispatched(id));
-            return;
+            i.unit = Some(uid);
+            i.unit_name = Some(format!("{call} {number}, {sname}"));
+            (i.kind, i.building, i.dispatcher)
+        };
+        let bname = self.buildings.get(bid).map(|b| b.name.clone()).unwrap_or_default();
+        if let Some(d) = dispatcher.and_then(|d| self.citizens.get_mut(d)) {
+            d.remember(tick, format!("Took a 911 call: {} at {bname}. Sent {call} {number} from {sname}.", kind.label()));
         }
-        for (_, uid) in free {
-            let station = self.services.units[uid].station;
-            let Some(from) = self.building_lot(station).and_then(|l| self.lot_access(l)) else { continue };
-            let Some((lanes, s0, s1)) = self.traffic.net.find_route(from.0, from.1, to.0, to.1) else { continue };
-            let car = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, 0);
-            self.traffic.cars[car].siren = true;
-            self.services.by_car.insert(car, uid);
-            let (call, number) = {
-                let u = &mut self.services.units[uid];
-                u.state = UnitState::Responding;
-                u.car = Some(car);
-                u.incident = Some(id);
-                (u.kind.call_sign(), u.number)
-            };
-            let sname = self.buildings.get(station).map(|b| b.name.clone()).unwrap_or_default();
-            {
-                let i = self.services.incident_mut(id).unwrap();
-                i.stage = Stage::Dispatched;
-                i.dispatched = Some(tick);
-                i.unit = Some(uid);
-                i.unit_name = Some(format!("{call} {number}, {sname}"));
-            }
-            let bname = self.buildings.get(inc.building).map(|b| b.name.clone()).unwrap_or_default();
-            if let Some(d) = inc.dispatcher.and_then(|d| self.citizens.get_mut(d)) {
-                d.remember(tick, format!("Took a 911 call: {} at {bname}. Sent {call} {number} from {sname}.", inc.kind.label()));
-            }
-            self.events.push(SimEvent::UnitDispatched(id));
-            return;
-        }
+        self.events.push(SimEvent::UnitDispatched(id));
+        true
     }
 
     // ── units on the road ──────────────────────────────────────────────────
@@ -923,6 +1305,12 @@ impl World {
             }
             UnitState::Transporting => self.deliver_patient(uid),
             UnitState::Returning => self.park_at_station(uid),
+            UnitState::Patrol => {
+                // On the beat: park a while.
+                let stay = if self.services.units[uid].kind == UnitKind::PoliceCar { PATROL_STAY } else { STANDBY_STAY };
+                let until = self.clock.tick + self.srng().random_range(stay.0..=stay.1);
+                self.services.units[uid].patrol_until = until;
+            }
             _ => self.send_home(uid),
         }
     }
@@ -940,6 +1328,7 @@ impl World {
         if let Some(r) = response {
             self.services.stats.response_ticks_today += r;
             self.services.stats.responses_today += 1;
+            self.services.stats.response_min_today[kind.index()].push(r.min(u16::MAX as u64) as u16);
         }
         let bname = self.buildings.get(bid).map(|b| b.name.clone()).unwrap_or_default();
         let note = match kind {
@@ -972,7 +1361,16 @@ impl World {
     }
 
     /// Back to the station, or teleported home when no road leads there.
+    /// Police cars and ambulances with a crew go straight back on patrol or
+    /// standby instead.
     fn send_home(&mut self, uid: UnitId) {
+        let Some(u) = self.services.units.get(uid) else { return };
+        if matches!(u.kind, UnitKind::PoliceCar | UnitKind::Ambulance) && u.car.is_none() {
+            let out = self.units_out();
+            if out.get(&u.station).copied().unwrap_or(0) <= self.crewed_units(u.station) && self.start_patrol(uid) {
+                return;
+            }
+        }
         let Some(u) = self.services.units.get_mut(uid) else { return };
         u.incident = None;
         u.hospital = None;
@@ -1251,10 +1649,16 @@ impl World {
             _ => {}
         }
         if let Some(uid) = unit {
-            if self.services.units.get(uid).is_some_and(|u| u.state == UnitState::OnScene && u.incident == Some(id)) {
+            let u = self.services.units.get(uid).filter(|u| u.incident == Some(id)).map(|u| u.state);
+            if u == Some(UnitState::OnScene) {
+                self.send_home(uid);
+            } else if u == Some(UnitState::Responding) {
+                // Called off on the way: free at once, from where it is.
+                self.pull_off_road(uid);
                 self.send_home(uid);
             }
         }
+        self.services.route_failed.remove(&id);
         self.events.push(SimEvent::IncidentResolved(id));
     }
 
@@ -1366,6 +1770,13 @@ impl World {
         st.tickets_today = 0.0;
         st.pupils_today = 0;
         st.out_of_town_calls_today = 0;
+        st.response_min_yesterday = std::mem::take(&mut st.response_min_today);
+        st.saturated_min_yesterday = st.saturated_min_today;
+        st.saturated_min_today = [0; 3];
+        st.queue_max_today = st.queued;
+        st.unanswered_why_today = Default::default();
+        st.mutual_aid_today = 0;
+        st.diverted_today = 0;
         st.out_of_town_fees_today = 0.0;
         st.bills_paid_today = 0.0;
         st.bills_covered_today = 0.0;
@@ -1847,5 +2258,117 @@ mod tests {
         assert!(inc.fee > 0.0 && w.economy.treasury <= before - inc.fee);
         assert!(!inc.damage.is_empty() && inc.damage[0].lost > 0.0, "the fire did some damage first");
         assert!(inc.people.iter().any(|p| p.role == "dispatcher"));
+    }
+
+    /// A police post (one car, two officers aboard), a 911 desk with a
+    /// dispatcher at it, shops along the avenue, and no random incidents.
+    fn one_car_town() -> (World, BuildingId, Vec<CitizenId>) {
+        let mut w = town();
+        w.config.emergencies = false;
+        w.config.society = false;
+        let folk = people(&mut w, 10);
+        let station = w.build_service(civic_lot(&w, -600.0), ServiceKind::Police, Tier::Low).unwrap();
+        let desk = w.build_service(civic_lot(&w, -450.0), ServiceKind::Dispatch, Tier::Mid).unwrap();
+        staff(&mut w, station, &folk[..2], false);
+        staff(&mut w, desk, &folk[2..3], true);
+        assert_eq!(w.crewed_units(station), 1, "two officers crew one car");
+        (w, station, folk)
+    }
+
+    /// A crime called in at once.
+    fn crime_now(w: &mut World, kind: CrimeKind, at: BuildingId, suspect: Option<CitizenId>) -> u32 {
+        let id = w.report_crime(kind, at, suspect, None).unwrap();
+        let t = w.clock.tick;
+        w.services.incident_mut(id).unwrap().report_at = t;
+        id
+    }
+
+    fn stage(w: &World, id: u32) -> Stage {
+        w.services.incident(id).unwrap().stage
+    }
+
+    #[test]
+    fn free_police_patrol_and_answer_from_the_beat() {
+        let (mut w, station, _) = one_car_town();
+        let shop = building_at(&mut w, 450.0);
+        run_until(&mut w, 60, |w| w.services.units.values().any(|u| u.station == station && u.state == UnitState::Patrol));
+        let uid = w.services.units.iter().find(|(_, u)| u.station == station && u.kind == UnitKind::PoliceCar).map(|(id, _)| id).unwrap();
+        assert_eq!(w.services.units[uid].state, UnitState::Patrol, "a free crewed car goes on patrol");
+        assert!(!w.services.units[uid].busy(), "on patrol is free for calls");
+        assert_eq!(w.services.stats.on_patrol, 1);
+        // Out on the beat (parked or driving), not in the station.
+        run_until(&mut w, 200, |w| w.services.units[uid].car.is_none() && w.services.units[uid].state == UnitState::Patrol);
+        let beat = w.services.units[uid].pos;
+        let home = w.building_lot(station).unwrap().car_point;
+        assert!(beat.distance(home) > 60.0, "parked on a beat {beat} away from the station {home}");
+        let id = crime_now(&mut w, CrimeKind::Robbery, shop, None);
+        run_until(&mut w, 30, |w| stage(w, id) == Stage::Dispatched);
+        assert_eq!(w.services.incident(id).unwrap().unit, Some(uid));
+        let car = w.services.units[uid].car.expect("driving with lights and sirens");
+        assert!(w.traffic.cars[car].pos.distance(beat) < 40.0, "it set off from the beat, not the station");
+        run_until(&mut w, 120, |w| stage(w, id) != Stage::Dispatched);
+        assert_eq!(stage(&w, id), Stage::OnScene);
+        assert_eq!(w.services.stats.response_min_today[IncidentKind::Crime.index()].len(), 1);
+    }
+
+    #[test]
+    fn queued_calls_go_out_most_urgent_first_the_moment_a_car_clears() {
+        let (mut w, _, folk) = one_car_town();
+        let shops = [building_at(&mut w, 150.0), building_at(&mut w, 300.0), building_at(&mut w, 450.0)];
+        let first = crime_now(&mut w, CrimeKind::Theft, shops[0], None);
+        run_until(&mut w, 200, |w| stage(w, first) == Stage::OnScene);
+        assert_eq!(stage(&w, first), Stage::OnScene);
+        // While the only car is busy on scene: vandalism, then a robbery.
+        let minor = crime_now(&mut w, CrimeKind::Vandalism, shops[1], None);
+        run_until(&mut w, 2, |_| false);
+        let violent = crime_now(&mut w, CrimeKind::Robbery, shops[2], Some(folk[9]));
+        run_until(&mut w, 10, |_| false);
+        assert_eq!((stage(&w, minor), stage(&w, violent)), (Stage::Reported, Stage::Reported), "both wait in the queue");
+        assert_eq!(w.services.stats.queued[IncidentKind::Crime.index()], 2);
+        assert!(w.services.stats.saturated_since[IncidentKind::Crime.index()].is_some(), "every police car is busy");
+        run_until(&mut w, 200, |w| !w.services.incident(first).unwrap().active());
+        let cleared = w.services.incident(first).unwrap().resolved.unwrap();
+        run_until(&mut w, 2, |_| false);
+        let v = w.services.incident(violent).unwrap();
+        assert_eq!(v.stage, Stage::Dispatched, "the robbery goes out first, though called in later");
+        assert!(v.dispatched.unwrap() <= cleared + 1, "re-dispatched the moment the car cleared ({} vs {cleared})", v.dispatched.unwrap());
+        assert_eq!(stage(&w, minor), Stage::Reported, "the vandalism waits its turn");
+        assert!(w.services.stats.queue_max_today[IncidentKind::Crime.index()] >= 2 && w.services.stats.saturated_min_today[IncidentKind::Crime.index()] > 0);
+        run_until(&mut w, 400, |w| stage(w, minor) != Stage::Reported);
+        assert_eq!(stage(&w, minor), Stage::Dispatched, "and then goes out too");
+    }
+
+    #[test]
+    fn a_violent_crime_pulls_a_car_off_a_theft() {
+        let (mut w, _, _) = one_car_town();
+        let near = building_at(&mut w, -300.0);
+        let far = building_at(&mut w, 600.0);
+        let theft = crime_now(&mut w, CrimeKind::Theft, far, None);
+        run_until(&mut w, 20, |w| stage(w, theft) == Stage::Dispatched);
+        let uid = w.services.incident(theft).unwrap().unit.unwrap();
+        let assault = crime_now(&mut w, CrimeKind::Assault, near, None);
+        run_until(&mut w, 10, |w| stage(w, assault) == Stage::Dispatched);
+        assert_eq!(w.services.incident(assault).unwrap().unit, Some(uid), "the car on its way to the theft is sent to the assault");
+        assert_eq!(stage(&w, theft), Stage::Reported, "the theft goes back in the queue");
+        assert_eq!(w.services.stats.diverted_today, 1);
+    }
+
+    #[test]
+    fn with_every_car_busy_a_long_wait_brings_mutual_aid() {
+        let (mut w, _, _) = one_car_town();
+        let shops = [building_at(&mut w, 150.0), building_at(&mut w, 450.0)];
+        let long = crime_now(&mut w, CrimeKind::Theft, shops[0], None);
+        run_until(&mut w, 200, |w| stage(w, long) == Stage::OnScene);
+        w.services.incident_mut(long).unwrap().work_left = 1_000.0;
+        let before = w.economy.treasury;
+        let waiting = crime_now(&mut w, CrimeKind::Robbery, shops[1], None);
+        run_until(&mut w, MUTUAL_AID_WAIT as usize - 5, |_| false);
+        assert_eq!(stage(&w, waiting), Stage::Reported, "queued at first");
+        run_until(&mut w, 20, |w| stage(w, waiting) != Stage::Reported);
+        let i = w.services.incident(waiting).unwrap();
+        assert!(i.outside && i.unit_name.as_deref().is_some_and(|n| n.contains("mutual aid")), "{:?}", i.unit_name);
+        assert_eq!(i.arrive_at, Some(i.dispatched.unwrap() + MUTUAL_AID_TRAVEL));
+        assert!(w.economy.treasury < before, "billed");
+        assert_eq!(w.services.stats.mutual_aid_today, 1);
     }
 }

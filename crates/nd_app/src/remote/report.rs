@@ -755,6 +755,7 @@ fn emergency(w: &World) -> Value {
                 "id": key_str(id), "name": b.name, "kind": sv.kind.key(), "tier": tier_key(sv.tier), "label": sv.kind.tier_label(sv.tier),
                 "workers": b.workers.len(), "jobs": b.jobs, "radius_m": sv.kind.radius(sv.tier), "upkeep_per_day": round(sv.kind.upkeep_per_day(sv.tier)),
                 "units": units.len(), "units_crewed": w.crewed_units(id), "units_busy": units.iter().filter(|u| u.busy()).count(),
+                "units_on_patrol": units.iter().filter(|u| u.state == nd_sim::services::UnitState::Patrol).count(),
                 "beds_used": if sv.kind == ServiceKind::Health { json!(s.admissions.iter().filter(|a| a.hospital == id).count()) } else { Value::Null },
                 "capacity": sv.kind.capacity(sv.tier), "pos": building_pos(w, b).map_or(Value::Null, v2),
             })
@@ -780,6 +781,16 @@ fn emergency(w: &World) -> Value {
         .collect();
     let (dispatcher, delay) = w.dispatcher();
     let cov = |k: usize| round(st.coverage[k] * 100.0);
+    // Call-to-arrival per kind: today's answered calls, else yesterday's.
+    let response = |k: usize| {
+        let (v, when) = if st.response_min_today[k].is_empty() { (&st.response_min_yesterday[k], "yesterday") } else { (&st.response_min_today[k], "today") };
+        match nd_sim::services::response_summary(v, 30) {
+            Some((median, p90, within)) => json!({ "answered": v.len(), "median_min": median, "p90_min": p90, "within_30_min_pct": round(within * 100.0), "of": when }),
+            None => json!({ "answered": 0 }),
+        }
+    };
+    let per_kind = |f: &dyn Fn(usize) -> Value| json!({ "fire": f(0), "crime": f(1), "medical": f(2) });
+    let tick = w.clock.tick;
     json!({
         "coverage_pct_of_homes": { "police": cov(0), "fire": cov(1), "health": cov(2), "school": cov(3) },
         "incidents_today": { "fire": st.incidents_today[0], "crime": st.incidents_today[1], "medical": st.incidents_today[2] },
@@ -788,6 +799,12 @@ fn emergency(w: &World) -> Value {
         "units": st.units, "units_busy": st.units_busy, "fires_burning": st.fires_burning, "burned_down_total": st.burned_down_total,
         "waiting_for_ambulance": st.waiting_for_ambulance, "in_hospital": st.in_hospital,
         "dispatch": { "dispatcher_on_duty": dispatcher.map(key_str), "minutes_to_dispatch": delay },
+        "response": per_kind(&response),
+        "queued": per_kind(&|k| json!(st.queued[k])), "queue_max_today": per_kind(&|k| json!(st.queue_max_today[k])),
+        "all_units_busy_min_today": per_kind(&|k| json!(st.saturated_min_today[k])),
+        "all_units_busy_now_min": per_kind(&|k| st.saturated_since[k].map_or(Value::Null, |t| json!(tick.saturating_sub(t)))),
+        "unanswered_why_today": per_kind(&|k| { let u = &st.unanswered_why_today[k]; json!({ "all_units_busy": u.all_units_busy, "no_route": u.no_route, "no_station": u.no_station }) }),
+        "mutual_aid_today": st.mutual_aid_today, "diverted_today": st.diverted_today, "units_on_patrol": st.on_patrol,
         "stadium_crowd_today": st.stadium_crowd_today, "tickets_today": round(st.tickets_today), "stadium_events_tonight": s.events_today.len(),
         "upkeep_per_day": round(st.upkeep_today), "education_wage_bonus_today": round(st.education_bonus_today), "pupils_today": st.pupils_today,
         "jailed": st.jailed, "held_at_stations": st.held_at_stations, "released_early_total": st.released_early_total,
@@ -795,6 +812,54 @@ fn emergency(w: &World) -> Value {
         "hospital_bills_paid_today": round(st.bills_paid_today), "hospital_bills_covered_by_city_today": round(st.bills_covered_today),
         "stations": stations, "active_incidents": active, "recent": recent,
     })
+}
+
+/// One alert per emergency service whose every unit was busy for
+/// `SATURATED_ALERT_MIN` or more today (or yesterday, just after midnight),
+/// naming the bottleneck: too few crews for the vehicles, or too few
+/// vehicles for the calls.
+fn saturated_alerts(w: &World) -> Vec<Alert> {
+    use nd_sim::services::{IncidentKind, SATURATED_ALERT_MIN};
+    let st = &w.services.stats;
+    let mut out = Vec::new();
+    for kind in IncidentKind::ALL {
+        let k = kind.index();
+        let busy_min = st.saturated_min_today[k].max(if w.clock.minute_of_day() < 180 { st.saturated_min_yesterday[k] } else { 0 });
+        if busy_min < SATURATED_ALERT_MIN {
+            continue;
+        }
+        let service = kind.service();
+        let stations: Vec<_> = w.buildings.iter().filter(|(_, b)| b.service.is_some_and(|s| s.kind == service)).collect();
+        let units: usize = stations.iter().map(|(id, _)| w.services.units.values().filter(|u| u.station == *id).count()).sum();
+        let crewed: usize = stations.iter().map(|(id, _)| w.crewed_units(*id)).sum();
+        let label = kind.unit().label();
+        let span = if busy_min >= 90 { format!("{:.1} h", busy_min as f32 / 60.0) } else { format!("{busy_min} min") };
+        let mut a = Alert::new(
+            "emergency_units_saturated",
+            if busy_min >= 180 { 3 } else { 2 },
+            "every unit of the kind was out on calls while more came in: calls wait in the queue (most urgent first) and go to the next town as mutual aid after a while; another station or a higher tier adds units, and a fully staffed station crews all of them",
+        );
+        for (id, b) in &stations {
+            a.add(key_str(*id), building_pos(w, b));
+        }
+        let fix = if crewed < units {
+            format!("only {crewed} of {units} have a crew: let the {} hire (or raise the budget for staff), or build another", service.label())
+        } else {
+            format!("build another {} or upgrade the tier", service.label())
+        };
+        let waited = st.queue_max_today[k];
+        let gave_up = st.unanswered_why_today[k].all_units_busy;
+        a.message = format!("all {crewed} {label}s busy for {span} today (up to {waited} calls waiting at once, {gave_up} unanswered calls today because every unit was out): {fix}");
+        out.push(a);
+    }
+    let no_route: u32 = st.unanswered_why_today.iter().map(|u| u.no_route).sum();
+    if no_route > 0 {
+        let mut a = Alert::new("emergency_calls_unreachable", 2, "a free unit had no road to the call: check for cut-off streets between the station and the calls");
+        a.count = no_route as usize;
+        a.message = format!("{} calls today went unanswered although a unit was free: no road led there", a.count);
+        out.push(a);
+    }
+    out
 }
 
 pub fn route_length(r: &nd_sim::BusRoute) -> f32 {
@@ -1036,6 +1101,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
         a.message = format!("emergency units take {:.0} minutes on average from the 911 call to arrival", st.avg_response());
         uncovered.push(a);
     }
+    uncovered.extend(saturated_alerts(w));
     if w.services.incidents.iter().any(|i| i.reported.is_some()) && w.dispatcher().0.is_none() {
         let mut a = Alert::new("no_dispatcher", 2, "911 calls go to the slow regional line: place a 911 dispatch centre and let it hire");
         a.count = 1;

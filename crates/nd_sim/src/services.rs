@@ -108,6 +108,26 @@ pub const HELD_HOURS: u64 = 6;
 /// out of town comes: this many minutes after dispatch, for a fee.
 pub const OUT_OF_TOWN_TRAVEL: u64 = 45;
 pub const OUT_OF_TOWN_FEE: [f32; 3] = [1_500.0, 600.0, 800.0];
+/// Police cars between calls patrol their station's district: they drive
+/// to a beat (a busy or crime-hit block) and park there this many ticks, a
+/// range, before moving on; ambulances post at a standby point near where
+/// people live. Units on patrol or standby, and units driving home, take
+/// the next call from where they are. Fire engines wait in the station.
+pub const PATROL_STAY: (u64, u64) = (25, 50);
+pub const STANDBY_STAY: (u64, u64) = (90, 180);
+/// A beat or standby point is picked within this share of the station's
+/// coverage radius (straight line).
+pub const PATROL_REACH: f32 = 0.85;
+/// A call queued this long with every city unit of the kind busy goes to a
+/// neighbouring town as mutual aid (with a dispatcher to ask), billed like
+/// out-of-town help but quicker: their units are already on the road.
+pub const MUTUAL_AID_WAIT: u64 = 40;
+pub const MUTUAL_AID_TRAVEL: u64 = 20;
+/// A responding unit is on scene once its car is this close to its stop.
+pub const PULL_UP: f32 = 25.0;
+/// A kind counts as saturated while it has no unit free; the report raises
+/// an alert after this many saturated minutes in a day.
+pub const SATURATED_ALERT_MIN: u32 = 60;
 /// Rubble stays on a burned lot this many ticks before it can be rebuilt.
 pub const RUBBLE_TICKS: u64 = 2 * 1440;
 /// Resolved incidents kept for the record (the Emergencies window's history).
@@ -687,6 +707,11 @@ pub enum CrimeKind {
 impl CrimeKind {
     pub const ALL: [CrimeKind; 4] = [CrimeKind::Robbery, CrimeKind::Theft, CrimeKind::Assault, CrimeKind::Vandalism];
 
+    /// Robbery and assault put people in danger: they jump the queue.
+    pub fn violent(self) -> bool {
+        matches!(self, CrimeKind::Robbery | CrimeKind::Assault)
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             CrimeKind::Robbery => "robbery",
@@ -855,6 +880,18 @@ impl Incident {
         Some(self.resolved?.saturating_sub(self.arrived?))
     }
 
+    /// Dispatch priority, 0 first: fires and violent crime (lives and
+    /// property at stake), then the sick and hurt, then theft and vandalism.
+    /// Equal priorities go in call order.
+    pub fn priority(&self) -> u8 {
+        match (self.kind, self.crime) {
+            (IncidentKind::Fire, _) => 0,
+            (IncidentKind::Crime, Some(c)) if c.violent() => 0,
+            (IncidentKind::Medical, _) => 1,
+            (IncidentKind::Crime, _) => 2,
+        }
+    }
+
     /// What it was, in a word or two ("fire", "robbery", "medical").
     pub fn title(&self) -> &'static str {
         match (self.kind, self.crime) {
@@ -886,12 +923,16 @@ pub enum UnitState {
     OnScene,
     Transporting,
     Returning,
+    /// Police on patrol, ambulances on standby: crewed and free, out in the
+    /// district (driving to the next beat, or parked on it).
+    Patrol,
 }
 
 impl UnitState {
     pub fn label(self) -> &'static str {
         match self {
             UnitState::Idle => "in station",
+            UnitState::Patrol => "on patrol",
             UnitState::Responding => "responding",
             UnitState::OnScene => "on scene",
             UnitState::Transporting => "transporting",
@@ -916,10 +957,20 @@ pub struct Unit {
     pub heading: f32,
     /// Hospital it is driving a patient to.
     pub hospital: Option<BuildingId>,
+    /// On patrol, parked on a beat: when it moves on.
+    #[serde(default)]
+    pub patrol_until: u64,
 }
 
 impl Unit {
+    /// On a job: responding, on scene, transporting. Units in the station,
+    /// on patrol or driving home are free for the next call.
     pub fn busy(&self) -> bool {
+        matches!(self.state, UnitState::Responding | UnitState::OnScene | UnitState::Transporting)
+    }
+
+    /// Out of the station (so a crew is aboard).
+    pub fn out(&self) -> bool {
         self.state != UnitState::Idle
     }
 
@@ -983,6 +1034,51 @@ pub struct ServiceStats {
     pub bills_covered_today: f32,
     /// Workers' wage bonus from schooling, summed over the city, today.
     pub education_bonus_today: f32,
+    // ── response, per incident kind (fire, crime, medical) ──
+    /// Minutes from call to arrival of each call answered today, and yesterday's.
+    pub response_min_today: [Vec<u16>; 3],
+    pub response_min_yesterday: [Vec<u16>; 3],
+    /// Calls past their dispatch time waiting for a unit, now; the most today.
+    pub queued: [u32; 3],
+    pub queue_max_today: [u32; 3],
+    /// Minutes today every unit of the kind was busy, and since when the
+    /// current spell has lasted (None when a unit is free).
+    pub saturated_min_today: [u32; 3],
+    pub saturated_since: [Option<u64>; 3],
+    /// Yesterday's saturated minutes, for the alert after midnight.
+    pub saturated_min_yesterday: [u32; 3],
+    /// Calls that gave up unanswered today, per kind, by why nobody came.
+    pub unanswered_why_today: [UnansweredWhy; 3],
+    /// Mutual aid from the next town while every unit was busy, today.
+    pub mutual_aid_today: u32,
+    /// Units pulled off a lower-priority call for a more urgent one, today.
+    pub diverted_today: u32,
+    /// Units on patrol or standby, now.
+    pub on_patrol: u32,
+}
+
+/// Why calls went unanswered.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UnansweredWhy {
+    /// Every unit of the kind was out on other calls the whole wait.
+    pub all_units_busy: u32,
+    /// A unit was free but no road led there.
+    pub no_route: u32,
+    /// No crewed station of the kind and no dispatcher to call for help.
+    pub no_station: u32,
+}
+
+/// Median and 90th percentile of a list of minutes, and the share at or
+/// under `within`.
+pub fn response_summary(v: &[u16], within: u16) -> Option<(u16, u16, f32)> {
+    if v.is_empty() {
+        return None;
+    }
+    let mut s = v.to_vec();
+    s.sort_unstable();
+    let at = |q: f32| s[((s.len() - 1) as f32 * q).round() as usize];
+    Some((at(0.5), at(0.9), s.iter().filter(|m| **m <= within).count() as f32 / s.len() as f32))
 }
 
 impl ServiceStats {
@@ -1023,6 +1119,10 @@ pub struct Services {
     /// Unit by the car it drives, rebuilt as units move.
     #[serde(skip)]
     pub by_car: HashMap<CarId, UnitId>,
+    /// Queued calls no free unit could reach, and when that was found (they
+    /// are retried every five minutes rather than every tick).
+    #[serde(skip)]
+    pub route_failed: HashMap<u32, u64>,
     /// The services' own random stream (see `World::srng`).
     #[serde(skip)]
     pub rng: Option<crate::SimRng>,

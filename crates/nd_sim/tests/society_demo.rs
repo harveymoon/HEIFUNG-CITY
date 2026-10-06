@@ -1,14 +1,16 @@
 //! [society] The demo district run eight days twice: as laid out (no
 //! police, no jail, no trash depot) and with a police station, a jail, a
-//! dispatch centre and a trash depot placed on day one. Prints crime,
-//! homelessness and trash each day, and checks that the society systems
-//! leave the demo's food and rent targets alone in both runs and that the
-//! services make a difference.
+//! dispatch centre, a trash depot, a fire post and a hospital placed on
+//! day one. Prints crime, homelessness and trash each day, and checks that
+//! the society systems leave the demo's food and rent targets alone in both
+//! runs, that the services make a difference, and that with them placed the
+//! 911 calls are answered in time (police, fire and ambulance alike).
 //!
 //! cargo test --release -p nd_sim --test society_demo -- --nocapture
 
 use nd_minds::RuleBasedMind;
 use nd_sim::crime::Offence;
+use nd_sim::services::{response_summary, IncidentKind, Outcome};
 use nd_sim::{LandUse, Placeable, ServiceKind, Tier, World};
 
 #[path = "demo_city.rs"]
@@ -16,9 +18,23 @@ use nd_sim::{LandUse, Placeable, ServiceKind, Tier, World};
 mod demo;
 
 fn place(w: &mut World, kind: ServiceKind, tier: Tier, uses: &[LandUse]) {
+    place_near(w, kind, tier, uses, None)
+}
+
+/// Place on the first suitable lot, or the one nearest `near`.
+fn place_near(w: &mut World, kind: ServiceKind, tier: Tier, uses: &[LandUse], near: Option<nd_sim::Vec2>) {
     let what = Placeable::Service(kind, tier);
-    let ok = |w: &World, vacant: bool| w.lots.iter().filter(|(id, l)| uses.contains(&l.land_use) && (!vacant || l.building.is_none()) && w.placement_problem(what, *id).is_none()).map(|(id, _)| id).next();
-    let lot = ok(w, true).or_else(|| ok(w, false)).unwrap_or_else(|| panic!("nowhere for {kind:?}"));
+    let ok = |w: &World, vacant: bool| {
+        let fits = w.lots.iter().filter(|(id, l)| uses.contains(&l.land_use) && (!vacant || l.building.is_none()) && w.placement_problem(what, *id).is_none());
+        match near {
+            Some(p) => fits.min_by(|a, b| a.1.center.distance(p).total_cmp(&b.1.center.distance(p))).map(|(id, _)| id),
+            None => fits.map(|(id, _)| id).next(),
+        }
+    };
+    let lot = ok(w, true).or_else(|| ok(w, false)).unwrap_or_else(|| {
+        let why: Vec<String> = w.lots.iter().filter(|(_, l)| uses.contains(&l.land_use)).filter_map(|(id, _)| w.placement_problem(what, id)).take(5).collect();
+        panic!("nowhere for {kind:?} (treasury {:.0}): {why:?}", w.economy.treasury)
+    });
     w.build_service(lot, kind, tier).unwrap();
 }
 
@@ -35,6 +51,10 @@ struct Day8 {
     collected_city: f32,
     collected_private: f32,
     produced: f32,
+    /// Per incident kind (fire, crime, medical), day 8: calls, answered
+    /// within 30 minutes, and the minutes from call to arrival of those
+    /// answered.
+    response: [(usize, usize, Vec<u16>); 3],
 }
 
 fn run(services: bool) -> Day8 {
@@ -44,14 +64,42 @@ fn run(services: bool) -> Day8 {
         place(&mut world, ServiceKind::Dispatch, Tier::Low, &[LandUse::Civic, LandUse::Commercial]);
         place(&mut world, ServiceKind::Jail, Tier::Low, &[LandUse::Civic, LandUse::Industrial]);
         place(&mut world, ServiceKind::TrashDepot, Tier::Mid, &[LandUse::Industrial, LandUse::Civic]);
+        // Fire engines answer from their station, so the post goes in the
+        // middle of the district, as a planner would put it.
+        place_near(&mut world, ServiceKind::Fire, Tier::Low, &[LandUse::Civic, LandUse::Commercial, LandUse::Industrial], Some(nd_sim::Vec2::ZERO));
+        place(&mut world, ServiceKind::Health, Tier::Mid, &[LandUse::Civic, LandUse::Commercial]);
     }
     let mut minds = RuleBasedMind::default();
     let label = if services { "with services" } else { "bare demo" };
+    let mut pick = 0x2545_F491_4F6C_DD1Du64;
     for day in 1..=8 {
         loop {
             world.tick(&mut minds);
-            if world.clock.minute_of_day() == 0 {
+            let minute = world.clock.minute_of_day();
+            if minute == 0 {
                 break;
+            }
+            // Day 8, services placed: a 911 drill on top of the day's own
+            // calls, so the response figures rest on enough calls: a crime
+            // every 90 minutes, someone taken ill every 90, a fire every 6 h.
+            if services && day == 8 && minute < 22 * 60 {
+                let mut next = |n: usize| {
+                    pick = pick.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    (pick >> 33) as usize % n.max(1)
+                };
+                let occupied: Vec<_> = world.buildings.iter().filter(|(_, b)| b.service.is_none() && b.construction.is_none() && (!b.residents.is_empty() || !b.workers.is_empty())).map(|(id, _)| id).collect();
+                if minute % 90 == 17 && !occupied.is_empty() {
+                    world.start_crime(occupied[next(occupied.len())]);
+                }
+                if minute % 360 == 200 && !occupied.is_empty() {
+                    world.start_fire(occupied[next(occupied.len())]);
+                }
+                if minute % 90 == 62 {
+                    let indoors: Vec<_> = world.citizens.iter().filter(|(_, c)| c.inside.is_some_and(|b| world.buildings.get(b).is_some_and(|b| b.service.is_none()))).map(|(id, _)| id).collect();
+                    if !indoors.is_empty() {
+                        world.fall_ill(indoors[next(indoors.len())]);
+                    }
+                }
             }
         }
         let n = world.citizens.len().max(1) as f32;
@@ -86,8 +134,25 @@ fn run(services: bool) -> Day8 {
             assert!(stressed < 0.05, "{label} day 8: {:.1}% rent-stressed", stressed * 100.0);
         }
     }
+    // Day 8's calls, up to half an hour before midnight: one the caller
+    // abandoned before help could come (the patient left, the building came
+    // down) is not counted against the services.
+    let (day8, end) = (7 * 1440, 8 * 1440 - 30);
+    let mut response: [(usize, usize, Vec<u16>); 3] = Default::default();
+    for i in world.services.incidents.iter().filter(|i| i.reported.is_some_and(|r| r >= day8 && r <= end)) {
+        if i.arrived.is_none() && i.outcome == Some(Outcome::Gone) {
+            continue;
+        }
+        let r = &mut response[i.kind.index()];
+        r.0 += 1;
+        if let Some(t) = i.response_ticks() {
+            r.1 += (t <= 30) as usize;
+            r.2.push(t as u16);
+        }
+    }
     let s = &world.society;
     Day8 {
+        response,
         pop: world.citizens.len(),
         offenders: s.crime.offenders.len(),
         offences: s.crime.stats.offences_total,
@@ -131,4 +196,14 @@ fn the_demo_with_and_without_police_jail_and_a_trash_depot() {
     assert!(served.collected_city > 0.0, "the depot's trucks collect");
     assert!(served.overflowing < bare.overflowing, "fewer overflowing bins with a depot ({} vs {})", served.overflowing, bare.overflowing);
     assert!(served.offenders < bare.offenders, "police and a jail hold crime back ({} vs {})", served.offenders, bare.offenders);
+    // With the services placed, 911 works on day 8: at least 90 % of calls
+    // answered within 30 minutes and a median response under 15, per kind.
+    for kind in IncidentKind::ALL {
+        let (calls, quick, mins) = &served.response[kind.index()];
+        let (median, p90, _) = response_summary(mins, 30).unwrap_or((0, 0, 0.0));
+        println!("served {}: {calls} calls, {} answered, {quick} within 30 min, median {median} p90 {p90} min", kind.label(), mins.len());
+        assert!(*calls >= 3, "{}: only {calls} calls on day 8", kind.label());
+        assert!(*quick as f32 >= 0.9 * *calls as f32, "{}: only {quick} of {calls} calls answered within 30 minutes", kind.label());
+        assert!(median < 15, "{}: median response {median} min", kind.label());
+    }
 }
