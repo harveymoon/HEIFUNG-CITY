@@ -560,11 +560,44 @@ Citizens are rendered from their simulated positions every frame.
   or more lanes is a highway: 25 m/s, no frontage, grade-separated (crossings make no junction, only
   dropped ends join, so ramps merge with priority to the mainline). Embankments and cuttings
   slope no steeper than 1 in 2.5 (the blend to the terrain widens with the height, up to 160 m).
-  Where any other way crosses the highway 4.5 m or more above or below it, the lower way runs
-  through an underpass (`landscape::Underpass`): the ground is cut to its level for the width
-  of its corridor plus 8 m along the whole embankment, the upper way crosses on a short deck
-  (a registered deck, so its traffic stays up), and abutment and wing walls with coping
-  follow the embankment down either side. Two carriageways cross the map at
+  Where two ways cross without a junction (`RoadNetwork::grade_crossings`) and neither is on a
+  deck or in a tunnel of its own, the lower way runs through an underpass (`landscape::Underpass`):
+  the ground is cut to its level for the width of its corridor plus 8 m along the whole embankment,
+  the upper way crosses on a short deck (two halves meeting over the crossing, which may be the
+  crest of a lifted way; registered decks, so its traffic stays up), and abutment and wing walls
+  with coping follow the embankment down either side.
+- **Elevation** (`Gesture::Road::elevation`, `Node::level`): every control point of a road has a
+  level, metres above the ground (serde default empty: old roads are at grade); curves blend it
+  along each span, water splits and roundabout cuts carry it (`plan::carry_levels`). The Road tool
+  draws at a level stepped 2 m by Page Up / Page Down (-20..+24 m), shown in the sub-pane as
+  "ground", "+8 m viaduct", "-2 m cutting" or "-8 m tunnel"; a point snaps onto a road only at
+  about its level (the first point snaps to anything and takes that road's level: a ramp or a
+  portal starts there). Crossings: two ways meet at a junction (split in `add_segment_between`,
+  also at an existing node or a polyline vertex) unless `roads::grade_separated`: a highway and
+  anything else, or levels 4.5 m or more apart. Then nothing joins them, not in the road graph,
+  the lane network or the pavements; the upper way (higher level, else the highway) gets a vertex
+  of its own over the crossing. Heights (`World::rebuild_ground`): ground plus level; nodes drawn
+  off the ground are held, the rest eased to the grade (lowered toward a cutting beside them,
+  raised otherwise); at every separated crossing that is not clear by 4.5 m either way the upper
+  way's vertex is lifted (if the player did not set its level), so a street drawn across the
+  highway at grade passes under it with the highway on a lifted deck. A piece with an end 2.5 m
+  or more up is a viaduct (`Segment::viaduct`, a bridge: a deck on columns and crossheads,
+  parapets, no frontage, no kerb parking; the ground is graded only near its feet); one with
+  both ends 5 m or more down is a tunnel (`Segment::tunnel`: bored, no parcels cut, no
+  frontage, no pavements, nothing above it disturbed; it joins other tunnels at underground
+  junctions); between, an open cutting with retaining walls. Tunnels show on the surface as a
+  portal frame where they come out and a vent head every 150 m. Steep legs are warned about
+  (`World::road_grade_warnings`, `steep_legs`) and still built: the ground end is raised or
+  lowered to the grade. Cars ride the height of the way they are on (`car_height`), movers keep to
+  the surface nearest the height they were at (`surface_height_near`), so a walker under a
+  viaduct stays under it. Elevated roads pass roundabouts by.
+- **Depth view** (Underground / Ground / Sky, U cycles, top bar): Underground hides the terrain,
+  water, buildings, lots, surface roads and walkers, draws surface roads as faint outlines and
+  shows the tunnels (drawn as their own street layer, `StreetLayer::Underground`, with bore walls
+  and a lit strip) and the cars in them. The Tunnel preset switches to it, other presets back to
+  Ground. Sky is a placeholder. A subway would be `RoadKind::Rail` drawn at tunnel depth: the
+  level model already carries it; trains and stations underground are not done.
+- **Highway and the map edge**: two carriageways cross the map at
   y = 420 from the start; through cars enter at the map edge and leave at the far one.
   A new map has nothing else: no streets, the player builds the rest. Every way whose end reaches
   the map edge (`landscape::MAP_EDGE`) runs on straight to `WAY_REACH` (5 km out), beyond the fog
@@ -683,6 +716,22 @@ trait MindProvider {
   arenas avoid repeating a neighbour. The renderer keeps a `StyleBook` that resolves
   styles in build order (a building sees only older neighbours), so the result does not
   depend on drawing order and a building keeps its look when a newer neighbour arrives.
+- Ramps (`roads::is_ramp_spec`: one-way streets narrower than a highway): an end dropped on a
+  highway gets a lead point `RAMP_LEAD` (40 m) before a merge or after a diverge, beside the
+  carriageway (`roads::ease_ramp_ends`), so the ramp joins nearly tangent; the join is drawn as a
+  taper filled to the carriageway edge with edge lines and a chevron-hatched gore, no junction pad,
+  crossings or stop lines (`street::ramp_gore`). Every one-way road (ramps, highways, one-way
+  streets) has an arrow painted in each lane every 45 m (`street::travel_arrows`), in the
+  holograms too. A ramp that has to stand 2.5 m or more above the land after easing (climbing to
+  the highway's embankment or a deck) is made a viaduct, so it stands on columns, not earth.
+- Road holograms (`nd_procgen::preview::road_preview`, `render/holo.rs`): the road being drawn
+  and every pending project's roads are drawn with the street generator itself (carriageway, lane
+  lines, kerbs, pavements), at their planned heights with viaduct decks and columns and tunnel
+  bores, a pad where each will make a junction, translucent in the preview colour; legs steeper
+  than the grade turn red and so do the lots with buildings the road would take. The tool's
+  hologram is rebuilt only when the points, the pointer (in quarter metres), the level or the plan
+  change. Street meshes are set on their own run's height profile (`StreetInput::heights`), so a
+  viaduct and the street under it are each drawn at their own height.
 - Streets (`nd_procgen::street`): roads are drawn as runs, chains of segments joined
   at plain bends, with one continuous mitred carriageway and pavement per run so a
   curved road is one road rather than a string of pieces; asphalt with lane markings, kerbs and paved

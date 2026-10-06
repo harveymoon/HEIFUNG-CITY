@@ -391,6 +391,7 @@ impl World {
                 if c.home == Some(bid) {
                     c.home = None;
                     c.remember(tick, note.clone());
+                    self.concerns.heard(cid, c, crate::concerns::Concern::Displacement, 0.8);
                     self.economy.displaced_total += 1;
                 }
             }

@@ -383,9 +383,20 @@ impl World {
             Verdict::Ordinary if has(VisitEvent::MetFriend) && friend_name.is_some() => Some(format!("Ran into {} at {name}.", friend_name.clone().unwrap_or_default())),
             Verdict::Ordinary => None,
         };
+        // [concerns] A bad night or a place gone downhill.
+        let gripe = match verdict {
+            Verdict::NeverAgain if has(VisitEvent::Fight) => Some(0.5),
+            Verdict::NeverAgain => Some(0.3),
+            Verdict::Lapsed => Some(0.2),
+            Verdict::Ordinary if has(VisitEvent::Fight) => Some(0.4),
+            _ => None,
+        };
         if let Some(t) = text {
             c.thought = t.clone();
             c.remember(tick, t);
+            if let Some(s) = gripe {
+                self.concerns.heard(id, c, crate::concerns::Concern::Nightlife, s);
+            }
         }
         for &o in &met {
             if let Some(x) = self.citizens.get_mut(o) {

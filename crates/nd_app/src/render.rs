@@ -35,6 +35,8 @@ mod air;
 mod emergency;
 mod far;
 mod haze;
+/// Planned roads as holograms of the real thing; the depth view.
+mod holo;
 mod layers;
 mod lights;
 /// [looks] Citizens drawn with their own look.
@@ -355,6 +357,8 @@ impl Plugin for RenderPlugin {
         );
         app.add_systems(Update, sync_lane_arrows.in_set(SimSet::Sync).after(sync_signals).before(lift_spawned));
         app.add_systems(Update, sync_ring_preview.in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
+        app.add_systems(Update, (holo::sync_draw_hologram, holo::sync_plan_holograms).in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
+        app.add_systems(Update, holo::apply_depth.in_set(SimSet::Sync).after(lift_movers));
         app.add_systems(Update, (turbines::sync_turbines, haze::sync_haze, layers::sync_layers, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
         // The ground and water out past the map, into the fog.
@@ -540,10 +544,11 @@ fn setup(
     const TEX: usize = 256;
     let mut surfaces = Vec::with_capacity(Surface::ALL.len());
     for s in Surface::ALL {
-        let mat = match generate_texture(s, TEX) {
+        let size = s.texels(TEX);
+        let mat = match generate_texture(s, size) {
             Some(tex) => {
-                let color = images.add(tiling_image(TEX, &tex.color, true));
-                let normal = images.add(tiling_image(TEX, &tex.normal, false));
+                let color = images.add(tiling_image(size, &tex.color, true));
+                let normal = images.add(tiling_image(size, &tex.normal, false));
                 StandardMaterial {
                     base_color: Color::WHITE,
                     base_color_texture: Some(color),
@@ -704,7 +709,7 @@ fn setup(
     ));
 }
 
-fn despawn_all<T: Component>(commands: &mut Commands, q: &Query<Entity, With<T>>) {
+fn despawn_all<F: bevy::ecs::query::QueryFilter>(commands: &mut Commands, q: &Query<Entity, F>) {
     for e in q.iter() {
         commands.entity(e).despawn();
     }
@@ -843,7 +848,7 @@ fn sync_roads(
     mats: Res<Materials>,
     mut state: ResMut<RenderState>,
     mut stats: ResMut<RenderStats>,
-    existing: Query<Entity, With<RoadsTag>>,
+    existing: Query<Entity, Or<(With<RoadsTag>, With<holo::TunnelTag>)>>,
 ) {
     let version = sim.world.roads.version;
     if version == state.roads_version && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
@@ -852,12 +857,23 @@ fn sync_roads(
     state.roads_version = version;
     despawn_all(&mut commands, &existing);
     let w = &sim.world;
-    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed });
+    // Each run is set on its own height profile here (a viaduct over a
+    // street, the street under it), so the roads are not lifted again.
+    let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
+    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, layer: nd_procgen::street::StreetLayer::Surface });
     stats.street_triangles = geo.triangle_count();
     for (s, data) in geo.iter() {
         let mut e = commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, RoadsTag));
         if s.is_glow() {
             e.insert((NotShadowCaster, NotShadowReceiver));
+        }
+    }
+    // The tunnels on their own, shown in the underground view.
+    if w.roads.alive_segments().any(|(_, s)| s.tunnel) {
+        let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, layer: nd_procgen::street::StreetLayer::Underground });
+        stats.street_triangles += geo.triangle_count();
+        for (s, data) in geo.iter() {
+            commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, holo::TunnelTag, Visibility::Hidden, NotShadowCaster));
         }
     }
 }
@@ -978,11 +994,7 @@ fn sync_preview(
     if overlays.projects {
         for other in w.inactive_previews() {
             let dim = 0.35;
-            for (_, pts, fwd, bwd, kind) in &other.preview.planned_roads {
-                let wd = preview_width(*kind, *fwd, *bwd);
-                glow.ground_strip(pts, wd, 0.2, scale(pal.preview, 0.35 * dim));
-                glow.ground_strip(pts, 0.4, 0.21, scale(pal.preview, dim));
-            }
+            // Their planned roads are holograms (`holo::sync_plan_holograms`).
             for (_, pts, _, _, _) in &other.preview.removed_roads {
                 dashes(&mut glow, pts[0], *pts.last().unwrap(), 0.5, 0.21, 4.0, 3.0, scale(pal.preview_remove, dim));
             }
@@ -1000,11 +1012,8 @@ fn sync_preview(
             }
         }
     }
-    for (_, pts, fwd, bwd, kind) in &pv.planned_roads {
-        let w = preview_width(*kind, *fwd, *bwd);
-        glow.ground_strip(pts, w, 0.22, scale(pal.preview, 0.35));
-        glow.ground_strip(pts, 0.5, 0.23, rgba(pal.preview));
-    }
+    // Planned roads are drawn as holograms of the real road
+    // (`holo::sync_plan_holograms`).
     for (_, pts, fwd, bwd, kind) in &pv.removed_roads {
         let w = preview_width(*kind, *fwd, *bwd);
         glow.ground_strip(pts, w, 0.22, scale(pal.preview_remove, 0.35));
@@ -2386,6 +2395,7 @@ fn landscape_signature(w: &World) -> u64 {
     w.ports.ports.len().hash(&mut h);
     w.buildings.values().filter(|b| b.plant.is_some()).count().hash(&mut h);
     w.landscape.is_flat().hash(&mut h);
+    w.relief.hash(&mut h);
     h.finish()
 }
 
@@ -2414,6 +2424,12 @@ fn sync_landscape(
     despawn_all(&mut commands, &water);
     despawn_all(&mut commands, &works);
     if w.landscape.is_flat() {
+        // No terrain or water to draw, but viaducts and flyovers the
+        // player built stand on the flat ground.
+        if w.relief {
+            let geo = nd_procgen::terrain::waterworks(w, &assets.palette);
+            spawn_geometry(&mut commands, &mut meshes, &mats, &geo, WaterworksTag);
+        }
         return;
     }
     despawn_all(&mut commands, &terrain);
@@ -2483,23 +2499,44 @@ fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res
 fn lift_spawned(
     sim: Res<Sim>,
     mut meshes: ResMut<Assets<Mesh>>,
-    q: Query<&Mesh3d, Or<(Added<RoadsTag>, Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>, Added<LaneArrowsTag>, Added<RingPreviewTag>)>>,
+    q: Query<&Mesh3d, Or<(Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>, Added<RingPreviewTag>)>>,
+    arrows: Query<&Mesh3d, Added<LaneArrowsTag>>,
     mut signals: Query<&mut Transform, Added<SignalTag>>,
 ) {
     let w = &sim.world;
-    if w.landscape.is_flat() {
+    if !w.relief {
         return;
     }
+    // Lane arrows and signal lamps belong to a road: they go at its height
+    // (a tunnel junction's lamps stay in the tunnel).
+    let on_road = |p: SVec2| match w.roads.nearest_where(p, |s| !s.is_rail()) {
+        Some((sid, t, q)) if q.distance(p) < 25.0 => w.road_height(sid, t),
+        _ => w.surface_height(p),
+    };
+    for m in &arrows {
+        let Some(mut mesh) = meshes.get_mut(&m.0) else { continue };
+        if let Some(bevy::mesh::VertexAttributeValues::Float32x3(pos)) = mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
+            for p in pos.iter_mut() {
+                p[1] += on_road(SVec2::new(p[0], p[2]));
+            }
+        }
+    }
+    // Lots, parks, overlays and the like lie on the ground: under a viaduct
+    // they stay down (over the water, a bridge deck is the nearest surface).
+    let lie = |p: SVec2| {
+        let g = w.ground_height(p);
+        w.surface_height_near(p, g)
+    };
     for m in &q {
         let Some(mut mesh) = meshes.get_mut(&m.0) else { continue };
         if let Some(bevy::mesh::VertexAttributeValues::Float32x3(pos)) = mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
             for p in pos.iter_mut() {
-                p[1] += w.surface_height(SVec2::new(p[0], p[2]));
+                p[1] += lie(SVec2::new(p[0], p[2]));
             }
         }
     }
     for mut tf in &mut signals {
-        tf.translation.y += w.surface_height(SVec2::new(tf.translation.x, tf.translation.z));
+        tf.translation.y += on_road(SVec2::new(tf.translation.x, tf.translation.z));
     }
 }
 
@@ -2507,7 +2544,7 @@ fn lift_spawned(
 #[allow(clippy::type_complexity)]
 fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>) {
     let w = &sim.world;
-    if w.landscape.is_flat() {
+    if !w.relief {
         return;
     }
     for (e, mut tf, lifted) in &mut q {
@@ -2516,7 +2553,12 @@ fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut
             Some(l) if tf.translation.y == l.after => tf.translation.y - l.lift,
             _ => tf.translation.y,
         };
-        let lift = w.surface_height(SVec2::new(tf.translation.x, tf.translation.z));
+        // Keep to the level it was on: under a viaduct or on it.
+        let at = SVec2::new(tf.translation.x, tf.translation.z);
+        let lift = match &lifted {
+            Some(l) => w.surface_height_near(at, l.lift),
+            None => w.surface_height_near(at, w.ground_height(at)),
+        };
         tf.translation.y = base + lift;
         let after = tf.translation.y;
         match lifted {

@@ -87,6 +87,21 @@ pub fn vec2_of(v: &Value) -> Result<SVec2, String> {
     Ok(SVec2::new(x, y))
 }
 
+/// Points `[[x, y], ...]` where each may carry a third number, its level
+/// (metres above the ground; missing levels are None).
+pub fn req_points_levels(cmd: &Value, name: &str) -> Result<(Vec<SVec2>, Vec<Option<f32>>), String> {
+    let arr = field(cmd, name).and_then(Value::as_array).ok_or_else(|| format!("missing field {name:?}: [[x, y, level?], ...]"))?;
+    let mut pts = Vec::new();
+    let mut levels = Vec::new();
+    for v in arr {
+        let a = v.as_array().filter(|a| a.len() == 2 || a.len() == 3).ok_or_else(|| format!("expected [x, y] or [x, y, level], got {v}"))?;
+        let n = |i: usize| a[i].as_f64().map(|x| x as f32).ok_or_else(|| format!("{v}: coordinates must be numbers"));
+        pts.push(SVec2::new(n(0)?, n(1)?));
+        levels.push(if a.len() == 3 { Some(n(2)?) } else { None });
+    }
+    Ok((pts, levels))
+}
+
 pub fn opt_vec2(cmd: &Value, name: &str) -> Result<Option<SVec2>, String> {
     field(cmd, name).map(vec2_of).transpose()
 }
@@ -213,9 +228,10 @@ pub fn selection(w: &World, sel: Selection) -> Value {
 
 pub fn gesture(id: GestureId, g: &Gesture) -> Value {
     match g {
-        Gesture::Road { points: ps, lanes_fwd, lanes_bwd, curved, kind } => json!({
+        Gesture::Road { points: ps, lanes_fwd, lanes_bwd, curved, kind, elevation } => json!({
             "id": id.0, "kind": "road", "road_kind": road_kind_name(*kind), "points": points(ps),
             "lanes_fwd": lanes_fwd, "lanes_bwd": lanes_bwd, "curved": curved,
+            "elevation": (0..ps.len()).map(|i| elevation.get(i).copied().unwrap_or(0.0)).collect::<Vec<f32>>(),
         }),
         Gesture::Zone { polygon, land_use } => json!({ "id": id.0, "kind": "zone", "land_use": land_use.label(), "points": points(polygon), "area": round(polygon_area(polygon).abs()) }),
         Gesture::ParcelZone { parcels, land_use, industry } => json!({ "id": id.0, "kind": "parcel_zone", "land_use": land_use.map_or("unzoned", |l| l.label()), "parcels": parcels.len(), "industry": industry }),

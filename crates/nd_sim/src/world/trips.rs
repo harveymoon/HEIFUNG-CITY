@@ -36,13 +36,22 @@ impl World {
         if c.satiety < 0.25 {
             c.hungry_days = c.hungry_days.saturating_add(1);
             c.mood = (c.mood - 0.1).max(0.0);
+            // [concerns]
+            let days = c.hungry_days;
+            let text = if days > 1 { format!("Hungry for {days} days now. No proper meal.") } else { "Went to bed hungry.".to_string() };
+            self.concerns.said(tick, cid, c, crate::concerns::Concern::Food, 0.3 + 0.15 * days as f32, text);
         } else {
             c.hungry_days = 0;
+        }
+        // [concerns] Grown-ups on gig money a day after arriving.
+        if c.can_work() && c.work.is_none() && tick.saturating_sub(c.arrived_tick) > 1440 {
+            self.concerns.said(tick, cid, c, crate::concerns::Concern::Jobs, 0.3, "Still no steady work. Gigs don't pay the bills.");
         }
         if c.hungry_days < 4 {
             return;
         }
         c.remember(tick, "Couldn't keep myself fed here. Leaving.".to_string());
+        self.concerns.heard(cid, c, crate::concerns::Concern::Food, 0.9);
         self.emigrate(cid);
     }
 
@@ -114,6 +123,10 @@ impl World {
             let c = &mut self.citizens[m];
             c.rent_stress_days = stress;
             c.mood = (c.mood + if stressed { -0.05 } else { 0.01 }).clamp(0.0, 1.0);
+            // [concerns]
+            if stressed && c.stage() != LifeStage::Child {
+                self.concerns.said(tick, m, c, crate::concerns::Concern::Housing, 0.35 + 0.1 * stress.min(5) as f32, "Rent takes more than half of what we bring in.");
+            }
         }
         if self.households[hid].moved_day == today && home.is_some() {
             return;
@@ -139,6 +152,7 @@ impl World {
                     if stress >= 3 && money < -60.0 * members.len() as f32 {
                         for &m in &members {
                             self.citizens[m].remember(tick, "Couldn't make the rent anywhere in town. Leaving.");
+                            self.concerns.heard(m, &self.citizens[m], crate::concerns::Concern::Housing, 0.9);
                         }
                         // [society] Most stay on the street if there is cheap ground to camp on.
                         if !self.become_homeless(hid) {
@@ -815,6 +829,7 @@ impl World {
                     c.remember(tick, format!("{name} was packed. Couldn't get in."));
                     c.thought = "Packed to the doors. Another time.".to_string();
                 }
+                self.concerns.heard(id, c, crate::concerns::Concern::Nightlife, 0.2);
                 c.mood = (c.mood - 0.03).max(0.0);
                 c.activity = Activity::Idle;
                 c.inside = None;
@@ -868,6 +883,7 @@ impl World {
                     c.inside = None;
                     c.mood = (c.mood - 0.04).max(0.0);
                     c.thought = "Turned away at the door. Skint.".to_string();
+                    self.concerns.said(tick, id, c, crate::concerns::Concern::Jobs, 0.3, "Turned away at the door. Skint.");
                     c.next_decision_tick = tick + 10 + self.rng.random_range(0..20);
                     return;
                 }
@@ -1091,6 +1107,8 @@ impl World {
         let c = &mut self.citizens[id];
         c.thought = "No way through. The grid doesn't connect.".to_string();
         c.activity = Activity::Idle;
+        let tick = self.clock.tick;
+        self.concerns.said(tick, id, &self.citizens[id], crate::concerns::Concern::Commute, 0.5, "No way through. The grid doesn't connect.");
     }
 
     /// On foot or by bike along the streets (walkers through the blocks).

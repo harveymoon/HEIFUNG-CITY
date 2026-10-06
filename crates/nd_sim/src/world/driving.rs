@@ -243,6 +243,7 @@ impl World {
                         _ => "car",
                     };
                     p.remember(tick, format!("Wrote off my {what} in a crash by {place} ({}).", r.cause.label()));
+                    self.concerns.heard(driver, p, crate::concerns::Concern::Commute, 0.6);
                 }
             }
             let at_fault = cars.first().map(|&c| &self.traffic.cars[c]).filter(|c| c.drive.profile.drunk >= DRUNK || matches!(r.cause, CrashCause::RedLight | CrashCause::OffRoad)).and(drivers.first().copied());
@@ -265,6 +266,7 @@ impl World {
             for &d in &drivers {
                 let c = &mut self.citizens[d];
                 c.remember(tick, format!("Fender bender by {place}. Lost a few minutes swapping details."));
+                self.concerns.heard(d, c, crate::concerns::Concern::Commute, 0.2);
                 c.mood = (c.mood - 0.03).max(0.0);
             }
         }
@@ -625,8 +627,9 @@ impl World {
                             t.incident = Some(id);
                         }
                     }
-                    if let Some(c) = caller.and_then(|c| self.citizens.get_mut(c)) {
+                    if let Some((who, c)) = caller.and_then(|c| self.citizens.get_mut(c).map(|x| (c, x))) {
                         c.remember(tick, format!("Called the cops on a street takeover at {}. Can't sleep through that.", t.place));
+                        self.concerns.heard(who, c, crate::concerns::Concern::Noise, 0.5);
                     }
                 } else if waited > takeover::GATHER_TICKS * 3 {
                     // Nobody showed: it fizzles out.
@@ -841,6 +844,7 @@ impl World {
                 if let Some(c) = self.citizens.get_mut(r) {
                     if c.inside == Some(b) {
                         c.remember(tick, format!("Engines and burning rubber outside at {} half the night.", t.place));
+                        self.concerns.heard(r, c, crate::concerns::Concern::Noise, 0.3);
                         c.mood = (c.mood - 0.03).max(0.0);
                         told += 1;
                     }

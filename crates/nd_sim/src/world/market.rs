@@ -678,6 +678,7 @@ impl World {
         let affordable = ((purse - OVERDRAFT) / price).floor();
         if affordable < 1.0 {
             c.remember(tick, format!("Couldn't afford anything at {name}."));
+            self.concerns.heard(cid, c, crate::concerns::Concern::Jobs, 0.4);
             c.thought = "Skint. Can't even afford the basics.".to_string();
             c.mood = (c.mood - 0.06).max(0.0);
             return;
@@ -685,6 +686,7 @@ impl World {
         let got = bz.take(r, want.min(affordable));
         if got <= 0.0 {
             c.remember(tick, format!("Shelves were empty at {name}."));
+            self.concerns.heard(cid, c, crate::concerns::Concern::Food, 0.4);
             c.mood = (c.mood - 0.05).max(0.0);
             return;
         }

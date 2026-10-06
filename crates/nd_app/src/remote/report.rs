@@ -378,6 +378,7 @@ fn people(w: &World) -> Value {
         },
         "commute_modes_now": { "travelling": travelling, "modes": mode_json, "owns_car_share": share(owns_car as usize, n), "owns_bike_share": share(owns_bike as usize, n) },
         "moves": { "displaced_by_rent_total": e.displaced_total, "emigrated_total": e.emigrated_total, "priced_out_immigrants_total": e.priced_out_total },
+        "concerns": super::concerns::summary(w),
         "recent_memory_reasons": {
             "window_days": MEMORY_WINDOW_TICKS / 1440,
             "note": "counted over residents still in the city; people who left took their memories with them",
@@ -1167,6 +1168,8 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     out.extend(uncovered);
     // [society] hot spots, no jail, camps, overflowing bins.
     out.extend(super::society::alerts(w));
+    // [concerns] What people complain about most this week.
+    out.extend(super::concerns::alerts(w));
     out.retain(|a| a.count > 0);
     out.sort_by(|a, b| b.score().total_cmp(&a.score()));
     out

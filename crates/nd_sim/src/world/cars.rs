@@ -61,7 +61,7 @@ impl World {
     /// and nightlife streets, whose kerbs are for loading: drivers going
     /// there use the lots.
     pub(super) fn kerb_allowed(&self, sid: SegmentId) -> bool {
-        self.roads.try_segment(sid).is_some_and(|s| s.alive && s.is_street() && !s.is_highway() && !s.bridge && s.lanes() > 0 && s.lanes_fwd < 2 && s.lanes_bwd < 2)
+        self.roads.try_segment(sid).is_some_and(|s| s.alive && s.is_street() && !s.is_highway() && !s.bridge && !s.tunnel && s.lanes() > 0 && s.lanes_fwd < 2 && s.lanes_bwd < 2)
             && !self.vehicles.no_kerb.1.contains(&sid)
             && !self.on_ring(sid)
     }
@@ -752,8 +752,10 @@ impl World {
             if roll {
                 c.remember(tick, "Circled for ages. Nowhere to park, so I left it on the street.");
             }
+            self.concerns.said(tick, driver, c, crate::concerns::Concern::Parking, 0.4, "Circled for ages. Nowhere to park, so I left it on the street.");
         } else if tries >= 2 && roll {
             c.remember(tick, "Went round the block twice before I found a space.");
+            self.concerns.heard(driver, c, crate::concerns::Concern::Parking, 0.2);
         }
         let _ = target;
         self.walk_from_car(driver, spot.pos);
@@ -1208,6 +1210,7 @@ impl World {
         let mode = c.commute.mode.filter(|m| matches!(m, TripMode::Bus | TripMode::Train)).unwrap_or(TripMode::Bus);
         c.commute.feel(mode, 3.0);
         c.remember(tick, if mode == TripMode::Train { "Waited hours for a train that never came." } else { "Waited hours for a bus that never came." });
+        self.concerns.heard(id, c, crate::concerns::Concern::Commute, 0.5);
     }
 
     /// The trip is over: how bad was it? Slow trips hurt by mode (a long
@@ -1253,6 +1256,8 @@ impl World {
                 TripMode::Bus | TripMode::Train => format!("{minutes:.0} minutes on transit for that. Crawling."),
             };
             c.remember(tick, text);
+            let k = if mode == TripMode::Car && c.commute.searched / secs > 15.0 { crate::concerns::Concern::Parking } else { crate::concerns::Concern::Commute };
+            self.concerns.heard(id, c, k, (pain / 4.0).clamp(0.3, 0.8));
         }
     }
 }

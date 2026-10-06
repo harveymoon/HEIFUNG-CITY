@@ -522,6 +522,7 @@ impl World {
                 for w in self.buildings[target].workers.clone() {
                     if let Some(c) = self.citizens.get_mut(w) {
                         c.remember(tick, format!("Somebody cleaned out the till at {bname}."));
+                        self.concerns.heard(w, c, crate::concerns::Concern::Safety, 0.3);
                         c.mood = (c.mood - 0.03).max(0.0);
                     }
                 }
@@ -539,6 +540,7 @@ impl World {
                     for m in members {
                         if let Some(c) = self.citizens.get_mut(m) {
                             c.remember(tick, format!("Our place at {bname} got burgled."));
+                            self.concerns.heard(m, c, crate::concerns::Concern::Safety, 0.6);
                             c.mood = (c.mood - 0.06).max(0.0);
                             c.thought = "They took everything that wasn't nailed down.".to_string();
                         }
@@ -556,17 +558,20 @@ impl World {
                     for m in family.into_iter().filter(|m| *m != v) {
                         if let Some(c) = self.citizens.get_mut(m) {
                             c.remember(tick, format!("{vname} was killed at {bname}. Nothing is the same."));
+                            self.concerns.heard(m, c, crate::concerns::Concern::Safety, 1.0);
                             c.mood = (c.mood - 0.3).max(0.0);
                         }
                     }
                     for w in regulars.iter().filter(|w| **w != v) {
                         if let Some(c) = self.citizens.get_mut(*w) {
                             c.remember(tick, format!("Someone was killed at {bname}."));
+                            self.concerns.heard(*w, c, crate::concerns::Concern::Safety, 0.6);
                             c.mood = (c.mood - 0.08).max(0.0);
                         }
                     }
                 } else if let Some(c) = self.citizens.get_mut(v) {
                     c.remember(tick, format!("Got jumped at {bname}."));
+                    self.concerns.heard(v, c, crate::concerns::Concern::Safety, 0.7);
                     c.mood = (c.mood - 0.12).max(0.0);
                     c.thought = "My ribs. I didn't even see him coming.".to_string();
                 }
@@ -582,6 +587,7 @@ impl World {
                 for r in regulars.iter().take(12) {
                     if let Some(c) = self.citizens.get_mut(*r) {
                         c.remember(tick, format!("Somebody trashed the front of {bname}."));
+                        self.concerns.heard(*r, c, crate::concerns::Concern::Safety, 0.2);
                         c.mood = (c.mood - 0.02).max(0.0);
                     }
                 }
@@ -693,6 +699,7 @@ impl World {
                 for &m in &members {
                     if let Some(c) = self.citizens.get_mut(m) {
                         c.remember(tick, format!("Too much crime around {street}. We're getting out of this town."));
+                        self.concerns.heard(m, c, crate::concerns::Concern::Safety, 0.9);
                     }
                 }
                 self.society.crime.stats.fled_crime_total += members.len() as u32;

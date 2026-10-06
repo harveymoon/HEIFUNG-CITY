@@ -361,6 +361,7 @@ impl World {
                         let tick = self.clock.tick;
                         if let Some(c) = self.citizens.get_mut(cid) {
                             c.remember(tick, "Rats in the bins downstairs. Now I'm sick.");
+                            self.concerns.heard(cid, c, crate::concerns::Concern::Trash, 0.7);
                         }
                     }
                 }
@@ -662,6 +663,7 @@ impl World {
                 // One complaint per household-ish a day, not one per person.
                 if k % 2 == 0 {
                     c.remember(tick, format!("The bins at {name} are overflowing again. The whole block stinks."));
+                    self.concerns.heard_at(*cid, c, crate::concerns::Concern::Trash, 0.3 + 0.1 * level.min(3.0), Some((*bid, at)));
                     complaints += 1;
                 }
             }
