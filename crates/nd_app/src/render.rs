@@ -212,6 +212,14 @@ pub struct CarTag;
 #[derive(Component)]
 pub struct SelfLifted;
 
+/// Where a mover is spawned before its first pose: far below the map.
+/// Spawns go through `Commands`, so the frame's pose systems cannot see the
+/// new entity yet; spawned at `Transform::IDENTITY` it would flash for a
+/// frame at the world origin (the centre of the main junction).
+pub(crate) fn offstage() -> Transform {
+    Transform::from_xyz(0.0, -10_000.0, 0.0)
+}
+
 #[derive(Resource)]
 struct Materials {
     /// One material per [`Surface`], indexed by `Surface::index()`.

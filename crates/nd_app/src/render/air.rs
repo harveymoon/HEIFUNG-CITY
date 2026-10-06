@@ -114,15 +114,15 @@ pub(super) fn sync_air(
         let model = model_of(d.craft, d.number);
         let v = vr.variant(&mut meshes, &model);
         let finish = vr.finish[model.class as usize].clone();
-        let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), Transform::IDENTITY, Visibility::Visible, AirTag)).id();
-        let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), Transform::IDENTITY, Visibility::Visible, NotShadowCaster, NotShadowReceiver, AirTag)).id();
-        let fx = v.fx.map(|fx| commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), Transform::IDENTITY, Visibility::Visible, NotShadowCaster, NotShadowReceiver, AirTag)).id());
-        let strobe = commands.spawn((Mesh3d(st.strobe_mesh.clone().unwrap()), MeshMaterial3d(st.strobe_mat.clone().unwrap()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, NotShadowReceiver, AirTag)).id();
-        let rotor = (d.craft != Craft::Taxi).then(|| commands.spawn((Mesh3d(st.rotor.clone().unwrap()), MeshMaterial3d(vr.finish[1].clone()), Transform::IDENTITY, Visibility::Visible, AirTag)).id());
+        let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), super::offstage(), Visibility::Visible, AirTag)).id();
+        let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), super::offstage(), Visibility::Visible, NotShadowCaster, NotShadowReceiver, AirTag)).id();
+        let fx = v.fx.map(|fx| commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), super::offstage(), Visibility::Visible, NotShadowCaster, NotShadowReceiver, AirTag)).id());
+        let strobe = commands.spawn((Mesh3d(st.strobe_mesh.clone().unwrap()), MeshMaterial3d(st.strobe_mat.clone().unwrap()), super::offstage(), Visibility::Hidden, NotShadowCaster, NotShadowReceiver, AirTag)).id();
+        let rotor = (d.craft != Craft::Taxi).then(|| commands.spawn((Mesh3d(st.rotor.clone().unwrap()), MeshMaterial3d(vr.finish[1].clone()), super::offstage(), Visibility::Visible, AirTag)).id());
         let beam = (d.craft == Craft::PoliceHeli).then(|| {
-            let cone = commands.spawn((Mesh3d(st.cone.clone().unwrap()), MeshMaterial3d(st.beam_mat.clone().unwrap()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, NotShadowReceiver, AirTag)).id();
+            let cone = commands.spawn((Mesh3d(st.cone.clone().unwrap()), MeshMaterial3d(st.beam_mat.clone().unwrap()), super::offstage(), Visibility::Hidden, NotShadowCaster, NotShadowReceiver, AirTag)).id();
             let light = commands
-                .spawn((SpotLight { color: Color::linear_rgb(1.0, 0.97, 0.88), intensity: 0.0, range: 400.0, radius: 0.3, shadow_maps_enabled: false, inner_angle: 0.05, outer_angle: 0.11, ..default() }, Transform::IDENTITY, Visibility::Hidden, AirTag))
+                .spawn((SpotLight { color: Color::linear_rgb(1.0, 0.97, 0.88), intensity: 0.0, range: 400.0, radius: 0.3, shadow_maps_enabled: false, inner_angle: 0.05, outer_angle: 0.11, ..default() }, super::offstage(), Visibility::Hidden, AirTag))
                 .id();
             (cone, light)
         });
