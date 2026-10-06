@@ -88,7 +88,7 @@
 
 [x] - zoning outlines hard to see: a bright zoning layer   → DONE: every zoned lot washed in a bright zone colour with a crisp edge (Zoning layer [O]).
 [x] - delivery trucks vanish after the drop-off   → DONE: the same lorry unloads at the kerb for 90 s, then drives to a truck lot, home or out of town; never deleted.
-[ ] - cars on one street fed by highway off-ramps seem to jump through it instead of driving it   → IN PROGRESS (agent: ramps). The sim moves them smoothly (jump_probe on the autosave finds no jumps), so suspect drawing: height or hiding on that street.
+[x] - cars on one street fed by highway off-ramps seem to jump through it instead of driving it   → FIXED (likely causes; not reproduced): cars were lifted to the road height of their end-of-tick spot while drawn sliding along (hops of up to 6 m on grades), crossed only one short lane per physics step (stood, then sprang ahead), and stopped dead entering a ramp (a 6 m/s junction turn). Please check the street again.
 [x] - cars freezing for hours just after turning onto a roundabout   → DONE (root cause): rings are made of ~9 m pieces; a car moving into the next piece could land on the tail of the car just ahead, the overlap fix shoved the car behind back to the start of its piece, and cars piled up there (ring 2 of the player's city held 107 cars on 490 m, 35 overlapping). Cars now wait at the end of their piece until there is room; a car squeezed back past the start goes back onto the lane behind, and one standing right on another pulls aside and rejoins when there is room. On the player's snapshot the piles clear at once and the selected car drives off.
 [ ] - heavy traffic still packs a busy ring solid now and then (its exits full, entries filling every gap)   → OPEN: going round again at a full exit and capping entries at 60% occupancy were tried on the snapshot and did not help; the jam is city-wide (300+ cars stuck at the morning peak).
 [ ] - land value and long trips to parks/entertainment   → ANSWERED: parks and entertainment only lift value within a straight-line radius (parks 180 m, entertainment 110 m); trip time to them is not counted yet.
@@ -97,22 +97,32 @@
 
 Agents are named in brackets; each works in its own worktree.
 
-[ ] - resource map layers: farming, oil, geothermal, rock, sand, water, fishing... per industry and its best ground   → IN PROGRESS [land-layers]
-[ ] - "heat vision" mode: buildings dark, cars and people glowing, night-vision drone look with motion blur and subtle scanlines   → IN PROGRESS [visuals]
-[ ] - solar and wind farms side by side merge their parcels visually and fill the space   → IN PROGRESS [visuals]
-[ ] - cranes in varied colours (orange, red), some with LED billboards by the counterweight, slowly slewing during working hours   → IN PROGRESS [visuals]
-[ ] - adjustable taxes per zone sub-type (oil vs farming...), with building counts and each sub-type's tax take shown visually   → IN PROGRESS [taxes]
-[ ] - import taxes; road tolls via a toll-booth building on a road (and a bigger 6-booth plaza)   → IN PROGRESS [taxes]
-[ ] - from Cities: Skylines: specialised zones and district architecture; tourism   → IN PROGRESS [districts]
-[ ] - subway trains and stations, a main-station building   → IN PROGRESS [subway]
-[ ] - taxis (businesses start with demand, night parking) and cargo hubs; lane directions painted on the road   → IN PROGRESS [taxis]
-[ ] - on/off ramps: cars jitter; ease speed evenly from highway speed to street speed over the ramp   → IN PROGRESS [ramps]
-[ ] - ramps get no parcels and no pedestrians   → IN PROGRESS [ramps]
-[ ] - roundabouts of two or three lanes   → IN PROGRESS [ramps]
-[ ] - every window gets a minimal and an expanded view (one shared toggle, one expanded at a time); expanded Economy with graphs and a ledger breakdown (what "services upkeep" holds)   → IN PROGRESS [panes]
-[ ] - population over time on the People window   → IN PROGRESS [panes]
-[ ] - a stopped car says why it is stopped (find the car causing a jam)   → IN PROGRESS [drivers]
-[ ] - the API can read what the player has selected in the game, in full detail   → IN PROGRESS [drivers]
-[ ] - old-style white figures standing frozen, not selectable   → IN PROGRESS [drivers]
-[ ] - a selected car shows how long the drive has taken; drivers delayed well past what they expected get angry and drive erratically   → IN PROGRESS [drivers]
-[ ] - comprehensive code review of the project so far   → IN PROGRESS [review]
+[x] - resource map layers: farming, oil, geothermal, rock, sand, water, fishing... per industry and its best ground   → DONE: K cycles 15 layers (farmland, oil, geothermal, rock, sand, water, shipping, best place for each industry kind, best industry here); Land window picker; legend with value under the pointer; API overlay land.
+[x] - "heat vision" mode: buildings dark, cars and people glowing, night-vision drone look with motion blur and subtle scanlines   → DONE: H or the Heat button; dark teal city, glowing people and vehicles, motion blur, scanlines, noise, reticle.
+[x] - solar and wind farms side by side merge their parcels visually and fill the space   → DONE: touching solar/wind lots lay one shared grid of panels or turbines across the seams.
+[x] - cranes in varied colours (orange, red), some with LED billboards by the counterweight, slowly slewing during working hours   → DONE: orange/red/yellow/white per site, ~45% carry an LED billboard by the counterweight, jibs slew during working hours.
+[x] - adjustable taxes per zone sub-type (oil vs farming...), with building counts and each sub-type's tax take shown visually   → DONE: Taxes window, 17 lines (homes by tier, shops, nightlife by tier, each industry), building counts and take per line; rates change demand, growth and sub-type choice.
+[x] - import taxes; road tolls via a toll-booth building on a road (and a bigger 6-booth plaza)   → DONE: import duty (0-100%, favours local supply); toll booth and 6-booth plaza on roads, drivers pay and route around dear tolls.
+[x] - from Cities: Skylines: specialised zones and district architecture; tourism   → DONE: District tool (9) with policies (Kowloon stacks, Suburban, Eco, Neon strip, Tech campus, Night market, Tourist quarter, Historic, industry) and their own architecture; tourism with visitors, hotels and a tourist tax.
+[x] - subway trains and stations, a main-station building   → DONE: metro stations and tunnel lines (Buses tool, Metro mode), trains every headway, riders, fares; Central Station (rail + metro + bus terminal).
+[x] - taxis (businesses start with demand, night parking) and cargo hubs; lane directions painted on the road   → DONE: taxi companies open with demand, cabs with yards, ranks and night shifts, taxi in mode choice; cargo hubs; painted turn arrows per lane and brighter road paint.
+[x] - on/off ramps: cars jitter; ease speed evenly from highway speed to street speed over the ramp   → DONE: ramp speed eases from highway to street speed along the ramp; drivers brake ahead for lower limits.
+[x] - ramps get no parcels and no pedestrians   → DONE: ramps are classified; no lots, kerb parking or pavements along them.
+[x] - roundabouts of two or three lanes   → DONE: 1-3 lanes; outer lane for outside arms, inner lane for arms from the middle.
+[x] - every window gets a minimal and an expanded view (one shared toggle, one expanded at a time); expanded Economy with graphs and a ledger breakdown (what "services upkeep" holds)   → DONE: one expand button on every info window, one expanded at a time; expanded Economy with charts and a ledger drill-down for every line (what service upkeep holds, building by building).
+[x] - population over time on the People window   → DONE: sparkline in the compact view, full charts when expanded.
+[x] - a stopped car says why it is stopped (find the car causing a jam)   → DONE: plain-language stop reason, jam chain to the car at the front (selectable, drawn on the map). Also fixed: highway map-edge lane funnel.
+[x] - the API can read what the player has selected in the game, in full detail   → DONE: `selected` command; F8 flags the selection with a note for Claude (`flags`).
+[x] - old-style white figures standing frozen, not selectable   → DONE: the depth view re-showed hidden indoor citizens every frame; it now only restores what it hid.
+[x] - a selected car shows how long the drive has taken; drivers delayed well past what they expected get angry and drive erratically   → DONE: trip time vs expected in the inspector; road rage past ~1.4-3.4x expected by patience and temper.
+[x] - comprehensive code review of the project so far   → DONE: docs/REVIEW2.md (1 critical, 4 high, 15 medium, 19 low); fixes not started.
+
+## From the October review (docs/REVIEW2.md), open
+
+[ ] - C1: an ambulance on scene when its hospital is removed panics the tick (stale unit key)
+[ ] - H1: any plan edit takes every city vehicle off the road (clear_cars/strand_car)
+[ ] - H2: police stations, hospitals and power plants burn down and are removed outright
+[ ] - H3: incidents whose unit is gone stay active forever (wrecks never towed)
+[ ] - H4: remote API accepts requests from any web page (no Origin/Host check)
+[ ] - medium and low findings: see docs/REVIEW2.md
+
