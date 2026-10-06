@@ -89,6 +89,8 @@
 [x] - zoning outlines hard to see: a bright zoning layer   → DONE: every zoned lot washed in a bright zone colour with a crisp edge (Zoning layer [O]).
 [x] - delivery trucks vanish after the drop-off   → DONE: the same lorry unloads at the kerb for 90 s, then drives to a truck lot, home or out of town; never deleted.
 [ ] - cars on one street fed by highway off-ramps seem to jump through it instead of driving it   → IN PROGRESS (agent: ramps). The sim moves them smoothly (jump_probe on the autosave finds no jumps), so suspect drawing: height or hiding on that street.
+[x] - cars freezing for hours just after turning onto a roundabout   → DONE (root cause): rings are made of ~9 m pieces; a car moving into the next piece could land on the tail of the car just ahead, the overlap fix shoved the car behind back to the start of its piece, and cars piled up there (ring 2 of the player's city held 107 cars on 490 m, 35 overlapping). Cars now wait at the end of their piece until there is room, and a car shoved back past the start pulls aside and rejoins. On the player's snapshot the piles clear at once and the selected car drives off.
+[ ] - heavy traffic still packs a busy ring solid now and then (its exits full, entries filling every gap)   → OPEN: going round again at a full exit and capping entries at 60% occupancy were tried on the snapshot and did not help; the jam is city-wide (300+ cars stuck at the morning peak).
 [ ] - land value and long trips to parks/entertainment   → ANSWERED: parks and entertainment only lift value within a straight-line radius (parks 180 m, entertainment 110 m); trip time to them is not counted yet.
 
 ## From todo3.md (merged October 2026)

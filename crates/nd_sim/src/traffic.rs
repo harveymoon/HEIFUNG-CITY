@@ -1570,13 +1570,6 @@ impl Traffic {
         id
     }
 
-    /// A new car joins its first lane only where there is room (no overlap
-    /// with the vehicles there, nobody forced to brake hard); otherwise it
-    /// waits at the kerb and tries again every step. After `COURTESY_AFTER`
-    /// the next driver stops short for it (see the claims in `step`) and it
-    /// commits as soon as its spot is physically clear; if standing traffic
-    /// keeps the spot covered for `KERB_SLIDE_AFTER` it pulls out into the
-    /// nearest real gap behind instead. So the kerb can never deadlock.
     /// Pull a vehicle standing in its lane over to the kerb for `secs`
     /// (a lorry unloading, a van at a job): out of the lane so traffic
     /// passes, drawn at the kerb, and afterwards it pulls out like a car
@@ -1600,6 +1593,13 @@ impl Traffic {
         }
     }
 
+    /// A new car joins its first lane only where there is room (no overlap
+    /// with the vehicles there, nobody forced to brake hard); otherwise it
+    /// waits at the kerb and tries again every step. After `COURTESY_AFTER`
+    /// the next driver stops short for it (see the claims in `step`) and it
+    /// commits as soon as its spot is physically clear; if standing traffic
+    /// keeps the spot covered for `KERB_SLIDE_AFTER` it pulls out into the
+    /// nearest real gap behind instead. So the kerb can never deadlock.
     fn pull_out(&mut self, id: CarId) -> bool {
         let lane = self.cars[id].route[self.cars[id].idx];
         let (waited, len, s) = (self.cars[id].stalled, self.cars[id].length(), self.cars[id].s);
@@ -2639,6 +2639,25 @@ impl Traffic {
                         c.v = 0.0;
                         continue;
                     }
+                    // Never land on (or ahead of) the tail of the last
+                    // vehicle into the next lane: it would be shoved back
+                    // there onto whoever stands behind, and with nowhere
+                    // behind the lane start cars piled up on it (rings of
+                    // short segments locked solid that way). Wait at the
+                    // end of this lane until there is room.
+                    // (Lights and sirens squeeze past as they always have.)
+                    if let Some(&next) = self.cars[cid].route.get(idx + 1).filter(|_| !self.cars[cid].siren) {
+                        if let Some(&tail) = self.net.lanes[next as usize].cars.first() {
+                            let room = self.cars[tail].s - self.cars[tail].length() - 0.1;
+                            if s - len > room {
+                                let tv = self.cars[tail].v;
+                                let c = &mut self.cars[cid];
+                                c.s = len - 0.05;
+                                c.v = c.v.min(tv);
+                                continue;
+                            }
+                        }
+                    }
                     self.net.lanes[lane_id as usize].cars.retain(|&c| c != cid);
                     let next = {
                         let c = &mut self.cars[cid];
@@ -2772,6 +2791,25 @@ impl Traffic {
             }
         }
         for (f, s, v) in bumps {
+            // Squeezed back past the start of its lane (a pile left by an
+            // older build, or a merge with no room behind): it cannot stand
+            // on the car ahead, so it pulls aside off the lane and rejoins
+            // when there is room, like a car leaving a space.
+            let lane = self.cars[f].route[self.cars[f].idx];
+            if s <= 0.0 && self.cars[f].s < self.cars[f].length() {
+                self.net.lanes[lane as usize].cars.retain(|&o| o != f);
+                let kerb = self.net.lanes[lane as usize].right.is_none();
+                let c = &mut self.cars[f];
+                c.s = 0.0;
+                c.v = 0.0;
+                c.entering = true;
+                c.wait = Wait::Entering;
+                c.blocked_by = None;
+                if kerb {
+                    c.lateral = LANE_WIDTH * 0.6;
+                }
+                continue;
+            }
             let c = &mut self.cars[f];
             c.s = s.min(c.s);
             c.v = c.v.min(v);
@@ -3410,6 +3448,39 @@ mod tests {
         // Deterministic: the same arrivals in the same order.
         let (_, _, again) = busy_junction();
         assert_eq!(order, again);
+    }
+
+    #[test]
+    fn a_car_never_lands_on_the_tail_of_one_just_into_the_next_lane() {
+        // A street with a bend: two segments joined by a short connector,
+        // like the many short pieces of a roundabout ring.
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-100.0, 0.0), Vec2::new(0.0, 0.0), Vec2::new(100.0, 8.0)], 1, 1);
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let first = lane_of(&t, roads.nearest_street(Vec2::new(-50.0, 0.0)).unwrap().0, Vec2::X, 0);
+        let conn = t.net.lanes[first as usize].next[0];
+        let second = t.net.lanes[conn as usize].next[0];
+        // Someone stands just inside the second lane; a profiled driver comes
+        // up too fast to stop short (a real driver cannot brake infinitely).
+        let lead = t.spawn_car(CitizenId::default(), None, vec![second], 1.5, 50.0, 0);
+        let len = t.net.lanes[first as usize].length;
+        let fast = t.spawn_car(CitizenId::default(), None, vec![first, conn, second], len - 3.0, 50.0, 0);
+        for id in [lead, fast] {
+            t.cars[id].drive.profile.assigned = true;
+        }
+        t.cars[fast].v = 12.0;
+        t.cars[lead].hold = 30.0;
+        for _ in 0..6 {
+            t.step(0.5, 2);
+            let lane = &t.net.lanes[second as usize];
+            for w in lane.cars.windows(2) {
+                let (a, b) = (&t.cars[w[0]], &t.cars[w[1]]);
+                assert!(b.s - b.length() - a.s > -0.5, "no car standing on another: {:.2} behind {:.2}", a.s, b.s);
+            }
+            assert!(t.cars.values().all(|c| c.s > 0.01 || c.entering || c.idx == 0 && c.route[0] == first), "nobody shoved back onto the lane start");
+        }
+        assert!(t.cars[lead].s >= 1.5 - 1e-3, "the car already there keeps its place");
     }
 
     #[test]
