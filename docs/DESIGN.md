@@ -273,6 +273,27 @@ Citizens are rendered from their simulated positions every frame.
   jams sell the car when there is another way, transit that keeps failing (or walks and rides too
   long) buys one if the household can afford it; memories record each. The report counts trips by
   mode per day.
+- **Places, taste and habits** (`nd_sim::places`, `world/places.rs`): every venue, door shop and
+  park has a character (`PlaceCharacter`): its vibe (dive bar, club, karaoke, lounge, arcade,
+  cabaret, night market from the name and tier; café-bakery, grocer, gadget boutique, park), polish
+  (tier and condition), price (tier), noise (vibe, louder when packed), crowd and the crowd's class,
+  safety (crime heat around it) and cleanliness (its bin overflowing). Each citizen has a taste
+  (`Taste`) from personality, age, class and budget: the rich and old want polish, safety and
+  quiet and shun cheap places; young hedonists like loud, packed and cheap; the cautious avoid hot
+  spots; curiosity sets how often they try somewhere new. Every visit is rated on arrival: the fit
+  of character to taste, events (a fight, rude staff, overpriced, too crowded, great music, great
+  food, meeting a friend, coming with family or coworkers) and luck. A `PlaceBook` per citizen keeps
+  twelve places (visits, last visit, average, best and worst, regular, never-again; the least valued
+  is forgotten) and eight acquaintances met at their haunts. A great first night is written down
+  ("Found The Velvet Den..."), three good visits make a regular, a terrible night at a place that
+  is not a habit means never again. Choice (`choose_place`, `choose_shop`): known places by
+  experience, regular bonus, friends who are regulars there and distance; unknown ones by first
+  impression (fit) and word of mouth (`Reputation::pull`: rating, sworn-off customers); a softmax
+  over the pool, with curiosity deciding between known and new; `Intent::Explore` (rule mind:
+  "looking for a drink") looks at unknown places near by. Groceries: the habitual shop unless
+  another is far cheaper. A sociable citizen may bring a free household member or coworker along.
+  Regulars stand an extra round (20% on the tab; drinks cost 0.9/1.0/1.4x by tier). All draws are
+  seeded by citizen and tick, so replays repeat.
 - **Parking businesses**: when the day's circling outruns free spaces, development opens a
   parking lot on a vacant lot near the last driver who could not find a space: a surface lot where
   land is cheap (about one space per 28 m², two jobs), a multi-storey car park on middle land

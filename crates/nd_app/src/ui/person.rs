@@ -103,6 +103,7 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
             citizen_summary(ui, w, &w.citizens[id]);
             spotlight_toggle(ui, &mut sim.world, id, "Spotlight: route through the LLM mind");
             ui.separator();
+            super::places::citizen_places(ui, &sim.world, id);
             let c = &sim.world.citizens[id];
             hint(ui, &format!("memories, newest first ({})", c.memories.len()));
             egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {

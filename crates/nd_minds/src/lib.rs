@@ -136,6 +136,11 @@ const DINNER_THOUGHTS: &[&str] = &["Dinner's waiting at home.", "Something in th
 const PANTRY_THOUGHTS: &[&str] = &["Stocking up for the family.", "Pantry's getting thin. Big shop.", "Feeding a household is a full-time job."];
 const KID_THOUGHTS: &[&str] = &["Nothing to do. Bored.", "Wish there was a school round here.", "Gonna go see the trees."];
 const RETIREE_THOUGHTS: &[&str] = &["Slow morning. My right, at my age.", "A walk does the knees good.", "Seen this city change a lot."];
+const EXPLORE_THOUGHTS: &[&str] = &[
+    "Wandering, looking for a drink somewhere new.",
+    "Same old bars. Let's find a new one.",
+    "Heard there's a place round the corner. Let's see.",
+];
 const NO_HOME_THOUGHTS: &[&str] = &[
     "No place to crash yet. Keep moving.",
     "Someone's gotta have a free bunk.",
@@ -144,6 +149,24 @@ const NO_HOME_THOUGHTS: &[&str] = &[
 impl RuleBasedMind {
     fn pick(&mut self, list: &[&str]) -> String {
         list.choose(&mut self.rng).unwrap().to_string()
+    }
+
+    /// [places] A night out: the regular spot most of the time, somewhere
+    /// new for the curious (and for anyone who knows nowhere yet), else
+    /// wherever appeals.
+    fn night_out(&mut self, ctx: &MindContext, p: &Personality) -> Option<Decision> {
+        let decide = |intent: Intent, thought: String| Some(Decision { intent, thought, memory: None });
+        if let Some(name) = ctx.regular_spot {
+            if self.rng.random::<f32>() < 0.75 - 0.3 * p.curiosity {
+                return decide(Intent::Visit(LandUse::Entertainment), format!("{name} tonight. My usual."));
+            }
+        }
+        if ctx.places_known == 0 || self.rng.random::<f32>() < 0.35 * p.curiosity {
+            let t = self.pick(EXPLORE_THOUGHTS);
+            return decide(Intent::Explore(LandUse::Entertainment), t);
+        }
+        let t = self.pick(PARTY_THOUGHTS);
+        decide(Intent::Visit(LandUse::Entertainment), t)
     }
 }
 
@@ -222,9 +245,10 @@ impl MindProvider for RuleBasedMind {
         }
 
         if clock.is_night() {
-            if grown && p.hedonism > 0.75 && ctx.wakefulness > 0.25 && ctx.available[LandUse::Entertainment.index()] && self.rng.random_bool(0.25) {
-                let t = self.pick(PARTY_THOUGHTS);
-                return decide(Intent::Visit(LandUse::Entertainment), t);
+            // Regulars drift back to their spot even on a quiet night.
+            let habit = if ctx.regular_spot.is_some() { 0.1 } else { 0.0 };
+            if grown && ctx.wakefulness > 0.25 && ctx.available[LandUse::Entertainment.index()] && (p.hedonism > 0.75 && self.rng.random_bool(0.25) || self.rng.random::<f32>() < habit) {
+                return self.night_out(ctx, &p);
             }
             let t = self.pick(NIGHT_THOUGHTS);
             return decide(Intent::GoHome, t);
@@ -241,12 +265,13 @@ impl MindProvider for RuleBasedMind {
 
         if clock.is_evening() {
             let roll: f32 = self.rng.random();
-            let p_party = (p.hedonism * 0.5 + p.sociability * 0.3) * 0.8;
+            // [places] Having a regular spot is a reason to go out.
+            let habit = if ctx.regular_spot.is_some() { 0.12 } else { 0.0 };
+            let p_party = (p.hedonism * 0.5 + p.sociability * 0.3) * 0.8 + habit;
             let p_shop = 0.25;
             let p_park = p.caution * 0.2;
             if roll < p_party && grown && ctx.available[LandUse::Entertainment.index()] {
-                let t = self.pick(PARTY_THOUGHTS);
-                return decide(Intent::Visit(LandUse::Entertainment), t);
+                return self.night_out(ctx, &p);
             }
             if roll < p_party + p_shop && ctx.groceries_for_sale {
                 let t = self.pick(SHOP_THOUGHTS);
@@ -396,7 +421,7 @@ impl HybridMind {
             activity: ctx.citizen.activity.label().to_string(),
             recent_memories: ctx.citizen.memories.iter().rev().take(6).map(|m| m.text.clone()).collect(),
             population: ctx.population,
-            options: ["Stay", "GoHome", "GoWork", "Shop(Groceries)", "Shop(BakedGoods)", "Shop(Goods)", "Visit(Entertainment)", "Visit(Park)", "Wander"]
+            options: ["Stay", "GoHome", "GoWork", "Shop(Groceries)", "Shop(BakedGoods)", "Shop(Goods)", "Visit(Entertainment)", "Visit(Park)", "Explore(Entertainment)", "Wander"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
@@ -413,6 +438,9 @@ impl HybridMind {
             "Visit(Entertainment)" => Intent::Visit(LandUse::Entertainment),
             "Visit(Park)" => Intent::Visit(LandUse::Park),
             "Visit(Civic)" => Intent::Visit(LandUse::Civic),
+            "Explore(Entertainment)" => Intent::Explore(LandUse::Entertainment),
+            "Explore(Park)" => Intent::Explore(LandUse::Park),
+            "Explore(Commercial)" => Intent::Explore(LandUse::Commercial),
             "Shop(Groceries)" => Intent::Shop(Resource::Groceries),
             "Shop(BakedGoods)" => Intent::Shop(Resource::BakedGoods),
             "Shop(Goods)" => Intent::Shop(Resource::Goods),
@@ -474,6 +502,7 @@ mod tests {
             transit: None,
             activity: Activity::Idle,
             memories: Vec::new(),
+            places: Default::default(),
             thought: String::new(),
             spotlight: false,
             next_decision_tick: 0,
@@ -510,11 +539,13 @@ mod tests {
         satiety: f32,
         groceries: f32,
         pantry_low: bool,
+        regular_spot: Option<&'static str>,
+        places_known: usize,
     }
 
     impl Default for Case {
         fn default() -> Self {
-            Self { hour: 10, stage_age: 35, wakefulness: 0.8, asleep: false, at_home: false, on_shift: false, satiety: 0.9, groceries: 5.0, pantry_low: false }
+            Self { hour: 10, stage_age: 35, wakefulness: 0.8, asleep: false, at_home: false, on_shift: false, satiety: 0.9, groceries: 5.0, pantry_low: false, regular_spot: None, places_known: 0 }
         }
     }
 
@@ -550,6 +581,8 @@ mod tests {
                     on_shift: case.on_shift,
                     household_size: 3,
                     pantry_low: case.pantry_low,
+                    regular_spot: case.regular_spot,
+                    places_known: case.places_known,
                 };
                 mind.decide(&ctx).map(|d| d.intent)
             })
@@ -581,6 +614,17 @@ mod tests {
         assert!(pantry.iter().any(|i| *i == Intent::Shop(Resource::Groceries)), "a low pantry sends a grown-up shopping");
         let kid = intents(Case { hour: 16, stage_age: 9, pantry_low: true, satiety: 0.3, groceries: 0.0, ..Default::default() });
         assert!(kid.iter().all(|i| *i != Intent::Shop(Resource::Groceries)), "children do not do the shopping");
+    }
+
+    #[test]
+    fn strangers_go_looking_and_regulars_go_back() {
+        let out = |i: &Intent| matches!(i, Intent::Visit(LandUse::Entertainment) | Intent::Explore(LandUse::Entertainment));
+        let stranger = intents(Case { hour: 20, ..Default::default() });
+        assert!(stranger.iter().filter(|i| out(i)).all(|i| *i == Intent::Explore(LandUse::Entertainment)), "knowing nowhere, a night out is a search");
+        let regular = intents(Case { hour: 20, regular_spot: Some("Velvet Den"), places_known: 3, ..Default::default() });
+        let n = |v: &[Intent], i: Intent| v.iter().filter(|x| **x == i).count();
+        assert!(regular.iter().filter(|i| out(i)).count() >= stranger.iter().filter(|i| out(i)).count(), "a regular spot is a reason to go out");
+        assert!(n(&regular, Intent::Visit(LandUse::Entertainment)) > n(&regular, Intent::Explore(LandUse::Entertainment)), "mostly back to the usual");
     }
 
     #[test]

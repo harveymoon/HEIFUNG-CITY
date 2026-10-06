@@ -33,6 +33,9 @@ mod industry;
 mod market;
 mod parking;
 mod plan;
+mod places;
+#[cfg(test)]
+mod places_tests;
 mod industry_bridge;
 pub use plan::{ProjectInfo, ProjectPreview};
 mod power;
@@ -345,6 +348,9 @@ pub struct World {
     /// The player's industry sub-zone bias over areas, newest last.
     #[serde(default)]
     pub industry_bias: Vec<crate::industry::IndustryBias>,
+    /// [places] Venue, shop and park reputations (`world/places.rs`).
+    #[serde(default)]
+    pub places: crate::places::Places,
 }
 
 impl World {
@@ -408,6 +414,7 @@ impl World {
             air: Default::default(),
             contamination: crate::ground::Contamination::new(half + 200.0, crate::ground::CONTAMINATION_CELL),
             industry_bias: Vec::new(),
+            places: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -653,6 +660,7 @@ impl World {
             self.daily_update();
             self.daily_vehicles();
             self.industry_daily();
+            self.daily_places();
         }
         // Periodic work is staggered so no tick carries more than one heavy
         // job: the hour starts at :00, sites advance at :30, land value runs

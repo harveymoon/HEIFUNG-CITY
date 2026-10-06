@@ -13,6 +13,7 @@ mod inspector;
 pub mod newgame;
 mod people;
 mod person;
+mod places;
 mod saves;
 mod icons;
 mod legend;

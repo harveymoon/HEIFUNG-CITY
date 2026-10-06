@@ -18,6 +18,8 @@ mod history;
 mod land;
 mod list;
 mod map;
+/// [places] taste, favourite places, venue ratings.
+mod places;
 mod report;
 /// [society] crime, homelessness and trash.
 mod society;
@@ -1355,7 +1357,9 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(v) = field(cmd, "citizen") {
         let id = key_from(v)?;
         let c = w.citizens.get(id).ok_or("no such citizen")?;
-        return Ok(json!({ "citizen": citizen_detail(w, id, c, ctx.tools.favorites.contains(&id)) }));
+        let mut v = citizen_detail(w, id, c, ctx.tools.favorites.contains(&id));
+        v["places"] = places::citizen_places(w, id);
+        return Ok(json!({ "citizen": v }));
     }
     if let Some(v) = field(cmd, "building") {
         let id = key_from(v)?;
@@ -1364,7 +1368,9 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Some(s) => nd_procgen::buildings::Style::for_service(s.kind).label(),
             None => b.port.map(|k| k.label()).or(b.plant.map(|k| k.label())).unwrap_or(ctx.assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11)).label()),
         };
-        return Ok(json!({ "building": building_detail(w, id, b, style) }));
+        let mut v = building_detail(w, id, b, style);
+        v["place"] = places::building_place(w, id);
+        return Ok(json!({ "building": v }));
     }
     if let Some(v) = field(cmd, "lot") {
         let id = key_from(v)?;
