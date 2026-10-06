@@ -96,7 +96,7 @@ fn project(ui: &mut egui::Ui, p: &mut UiCtx) {
         });
         ui.horizontal(|ui| {
             let label = active.as_ref().map_or_else(|| "(none active)".to_string(), |i| i.name.clone());
-            egui::ComboBox::from_id_salt("projects").selected_text(label).width(150.0).show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt("projects").selected_text(label).width(130.0).show_ui(ui, |ui| {
                 for i in &projects {
                     let warn = !i.conflicts.is_empty() || i.shared_parcels > 0;
                     let text = format!("{} · {} step{}{}", i.name, i.steps, if i.steps == 1 { "" } else { "s" }, if warn { "  ⚠ overlaps" } else { "" });
@@ -168,20 +168,27 @@ fn project(ui: &mut egui::Ui, p: &mut UiCtx) {
         tools.status = "Project parked: it stays pending, drawn dim.".into();
     }
     let Some(i) = active else { return };
-    if ui.add(egui::Button::new(egui::RichText::new("Implement").strong()).min_size(egui::vec2(0.0, BUTTON.y))).on_hover_text("Ctrl+Enter").clicked() {
-        let warnings = sim.world.implement_project(i.id).unwrap_or_default();
-        tools.points.clear();
-        tools.status = if warnings.is_empty() { format!("{} implemented.", i.name) } else { format!("{} implemented. {}", i.name, warnings.join(" ")) };
-    }
-    if ui.add(egui::Button::new("Undo").min_size(egui::vec2(0.0, BUTTON.y))).on_hover_text("Ctrl+Z").clicked() {
-        sim.world.undo();
-    }
-    if ui.add(egui::Button::new("Redo").min_size(egui::vec2(0.0, BUTTON.y))).on_hover_text("Ctrl+Y").clicked() {
-        sim.world.redo();
-    }
-    if ui.add(egui::Button::new("Discard").min_size(egui::vec2(0.0, BUTTON.y))).on_hover_text("Throw the active project away").clicked() {
-        sim.world.discard_project();
-        tools.points.clear();
-        tools.status = format!("{} discarded.", i.name);
-    }
+    // Two rows of buttons, so the bar stays narrow beside the tool buttons.
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            if ui.add(egui::Button::new(egui::RichText::new("Implement").strong()).min_size(egui::vec2(78.0, 0.0))).on_hover_text("Ctrl+Enter").clicked() {
+                let warnings = sim.world.implement_project(i.id).unwrap_or_default();
+                tools.points.clear();
+                tools.status = if warnings.is_empty() { format!("{} implemented.", i.name) } else { format!("{} implemented. {}", i.name, warnings.join(" ")) };
+            }
+            if ui.add(egui::Button::new("Discard").min_size(egui::vec2(60.0, 0.0))).on_hover_text("Throw the active project away").clicked() {
+                sim.world.discard_project();
+                tools.points.clear();
+                tools.status = format!("{} discarded.", i.name);
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui.add(egui::Button::new("Undo").min_size(egui::vec2(78.0, 0.0))).on_hover_text("Ctrl+Z").clicked() {
+                sim.world.undo();
+            }
+            if ui.add(egui::Button::new("Redo").min_size(egui::vec2(60.0, 0.0))).on_hover_text("Ctrl+Y").clicked() {
+                sim.world.redo();
+            }
+        });
+    });
 }
