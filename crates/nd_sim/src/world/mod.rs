@@ -56,6 +56,8 @@ mod car_tests;
 #[cfg(test)]
 mod elevation_tests;
 #[cfg(test)]
+mod ramp_tests;
+#[cfg(test)]
 mod parking_tests;
 #[cfg(test)]
 mod edge_tests;
@@ -534,6 +536,9 @@ impl World {
         // per citizen (no household), so no version bump is needed.
         self.migrate_households();
         self.version = SAVE_VERSION;
+        // Ring pieces and slip roads are flagged from the network's shape;
+        // a save from before the flags has them unset.
+        self.roads.classify();
         self.rebuild_road_components();
         self.rebuild_ground();
         self.traffic.rebuild(&self.roads);

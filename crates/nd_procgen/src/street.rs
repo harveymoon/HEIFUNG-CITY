@@ -419,8 +419,10 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             continue;
         }
         // Highways and ramps have hard shoulders, not pavements: a low
-        // barrier at the edge and lamps, nothing else beside them.
-        let motorway = seg.is_highway() || nd_sim::roads::is_ramp_spec(seg.kind, seg.lanes_fwd, seg.lanes_bwd);
+        // barrier at the edge and lamps, nothing else beside them. So does
+        // a roundabout's ring: its inner edge is the mountable apron, and
+        // the arms' pavements meet round the outside.
+        let motorway = seg.is_motorway() || seg.ring;
         if motorway {
             let barrier = rgba(mul(pal.concrete(0), 0.8));
             // Where a ramp runs beside the carriageway to merge or diverge,
@@ -433,7 +435,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             let blocked = |p: Vec2| {
                 roads.segments_in_box(p - Vec2::splat(30.0), p + Vec2::splat(30.0)).any(|o| {
                     let os = roads.segment(o);
-                    if mine(o) || !(os.is_highway() || nd_sim::roads::is_ramp_spec(os.kind, os.lanes_fwd, os.lanes_bwd)) {
+                    if mine(o) || !(os.is_motorway() || os.ring) {
                         return false;
                     }
                     let (a, b) = roads.segment_points(o);

@@ -47,6 +47,22 @@ const ROAD_SPEED: f32 = 13.0;
 /// Highway carriageways (one-way, three lanes or more).
 pub const HIGHWAY_SPEED: f32 = 25.0;
 const CONNECTOR_SPEED: f32 = 6.0;
+/// Deceleration (m/s²) a driver plans with to meet a lower speed limit
+/// ahead (a ramp's eased limit, a turn), braking early instead of at the
+/// line.
+const ANTICIPATE_BRAKE: f32 = 1.5;
+/// How far ahead (m) a driver reads the limits of the lanes on its route.
+const ANTICIPATE_REACH: f32 = 220.0;
+/// Hardest deceleration (m/s²) the free-road term of the car-following
+/// model asks for when a car is over its desired speed. Plain IDM gives
+/// `a (1 - (v/v0)^4)`, which for a car at 25 m/s entering a 6 m/s lane is
+/// -250 m/s²: it stopped dead in one step and pulled away again (the
+/// stop-go "jitter" on ramps). Drivers anticipate limits, so this only
+/// trims what is left over.
+const FREE_BRAKE: f32 = 3.0;
+/// Sideways acceleration (m/s²) drivers accept on a ramp's bends: what
+/// caps a curved ramp's eased limit (`v = sqrt(a r)`).
+const RAMP_LATERAL: f32 = 3.0;
 const IDM_ACCEL: f32 = 1.4;
 const IDM_BRAKE: f32 = 2.0;
 const IDM_MIN_GAP: f32 = 2.0;
@@ -146,7 +162,15 @@ pub struct Lane {
     /// Cars on this lane ordered by increasing position.
     pub cars: Vec<CarId>,
     pub green: bool,
+    /// Limit at the lane's start, m/s. Most lanes have one limit; a ramp's
+    /// lanes ease from it to `limit_end` along their length.
     pub speed_limit: f32,
+    /// Limit at the lane's end (equal to `speed_limit` except on ramps).
+    pub limit_end: f32,
+    /// A lane of a highway carriageway: its traffic has priority at merges.
+    pub highway: bool,
+    /// A lane of a highway slip road or a connector along one.
+    pub ramp: bool,
     pub end_node: NodeId,
     /// Parallel lanes of the same segment and direction, if any.
     pub left: Option<LaneId>,
@@ -201,11 +225,26 @@ impl Lane {
             cum.push(cum.last().unwrap() + w[0].distance(w[1]));
         }
         let length = *cum.last().unwrap();
-        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX, red_for: 0.0, blocked: false, toll: None }
+        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, limit_end: speed_limit, highway: false, ramp: false, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX, red_for: 0.0, blocked: false, toll: None }
     }
 
     pub fn is_connector(&self) -> bool {
         matches!(self.kind, LaneKind::Connector { .. })
+    }
+
+    /// The speed limit `s` metres along the lane.
+    pub fn limit_at(&self, s: f32) -> f32 {
+        if self.limit_end == self.speed_limit || self.length <= 0.0 {
+            return self.speed_limit;
+        }
+        let t = (s / self.length).clamp(0.0, 1.0);
+        self.speed_limit + (self.limit_end - self.speed_limit) * t
+    }
+
+    /// Set one limit for the whole lane.
+    pub fn set_limit(&mut self, v: f32) {
+        self.speed_limit = v;
+        self.limit_end = v;
     }
 
     /// True when `other` is the lane beside this one (a lane change).
@@ -1112,16 +1151,19 @@ impl LaneNetwork {
             let mut ids = Vec::new();
             let first = self.lanes.len() as LaneId;
             let speed = if seg.is_highway() { HIGHWAY_SPEED } else { ROAD_SPEED };
+            let (highway, ramp) = (seg.is_highway(), seg.ramp);
             for i in 0..seg.lanes_fwd {
                 let off = right * (left_edge + (seg.lanes_bwd as f32 + i as f32 + 0.5) * LANE_WIDTH);
                 let id = self.lanes.len() as LaneId;
                 self.lanes.push(Lane::new(vec![p0 + off, p1 + off], LaneKind::Road { segment: sid, forward: true, index: i }, seg.b, speed));
+                (self.lanes[id as usize].highway, self.lanes[id as usize].ramp) = (highway, ramp);
                 ids.push(id);
             }
             for j in 0..seg.lanes_bwd {
                 let off = right * (left_edge + (seg.lanes_bwd as f32 - j as f32 - 0.5) * LANE_WIDTH);
                 let id = self.lanes.len() as LaneId;
                 self.lanes.push(Lane::new(vec![p1 + off, p0 + off], LaneKind::Road { segment: sid, forward: false, index: j }, seg.a, speed));
+                (self.lanes[id as usize].highway, self.lanes[id as usize].ramp) = (highway, ramp);
                 ids.push(id);
             }
             // Index 0 is the leftmost lane in both directions.
@@ -1270,8 +1312,170 @@ impl LaneNetwork {
                 self.lanes[next].prev.push(id as LaneId);
             }
         }
+        self.ramp_profiles(roads);
         self.apply_roundabouts(roads);
         self.apply_signals();
+    }
+
+    /// Ease the limits along every highway slip road: from the highway's
+    /// speed where it leaves (or joins) the carriageway to the street's
+    /// where it meets the town, smoothly over its whole length, capped on
+    /// its bends by what the curve allows. A ramp is several pieces joined
+    /// by connectors; each lane gets the profile's value at its start and
+    /// end (`Lane::limit_at` interpolates between), so the limit a driver
+    /// sees changes gradually instead of stepping at every joint (before,
+    /// the highway-to-ramp connector was a 6 m/s junction turn and every
+    /// bend of a curved ramp another limit).
+    fn ramp_profiles(&mut self, roads: &RoadNetwork) {
+        let n = self.lanes.len();
+        // Connectors along a ramp: between two ramp lanes, or between a
+        // ramp lane and the highway.
+        for i in 0..n {
+            if !self.lanes[i].is_connector() {
+                continue;
+            }
+            let (Some(&a), Some(&b)) = (self.lanes[i].prev.first(), self.lanes[i].next.first()) else { continue };
+            let (la, lb) = (&self.lanes[a as usize], &self.lanes[b as usize]);
+            if (la.ramp || lb.ramp) && (la.ramp || la.highway) && (lb.ramp || lb.highway) {
+                self.lanes[i].ramp = true;
+            }
+        }
+        if !self.lanes.iter().any(|l| l.ramp) {
+            return;
+        }
+        // Distance from the ramp's upstream boundary to each lane's start
+        // (Dijkstra forward), and from each lane's end to its downstream
+        // boundary (backward); and whether those boundaries are the highway.
+        let inf = f32::INFINITY;
+        let mut up = vec![(inf, false); n];
+        let mut down = vec![(inf, false); n];
+        let key = |d: f32| (d * 1000.0) as u64;
+        let mut heap: BinaryHeap<std::cmp::Reverse<(u64, LaneId)>> = BinaryHeap::new();
+        for i in 0..n {
+            if !self.lanes[i].ramp {
+                continue;
+            }
+            if let Some(&p) = self.lanes[i].prev.iter().find(|&&p| !self.lanes[p as usize].ramp) {
+                up[i] = (0.0, self.lanes[p as usize].highway);
+                heap.push(std::cmp::Reverse((0, i as LaneId)));
+            }
+        }
+        while let Some(std::cmp::Reverse((_, l))) = heap.pop() {
+            let (d, hw) = up[l as usize];
+            let len = self.lanes[l as usize].length;
+            for k in 0..self.lanes[l as usize].next.len() {
+                let mi = self.lanes[l as usize].next[k] as usize;
+                if self.lanes[mi].ramp && d + len < up[mi].0 {
+                    up[mi] = (d + len, hw);
+                    heap.push(std::cmp::Reverse((key(d + len), mi as LaneId)));
+                }
+            }
+        }
+        for i in 0..n {
+            if !self.lanes[i].ramp {
+                continue;
+            }
+            if let Some(&x) = self.lanes[i].next.iter().find(|&&x| !self.lanes[x as usize].ramp) {
+                down[i] = (0.0, self.lanes[x as usize].highway);
+                heap.push(std::cmp::Reverse((0, i as LaneId)));
+            }
+        }
+        while let Some(std::cmp::Reverse((_, l))) = heap.pop() {
+            let (d, hw) = down[l as usize];
+            // From the end of a lane feeding `l`, on through all of `l`.
+            let len = self.lanes[l as usize].length;
+            for k in 0..self.lanes[l as usize].prev.len() {
+                let mi = self.lanes[l as usize].prev[k] as usize;
+                if self.lanes[mi].ramp && d + len < down[mi].0 {
+                    down[mi] = (d + len, hw);
+                    heap.push(std::cmp::Reverse((key(d + len), mi as LaneId)));
+                }
+            }
+        }
+        // How close to the highway a point is, 1 at the carriageway and 0
+        // where the ramp meets the street, eased (smoothstep) so the change
+        // in limit starts and ends gently.
+        let profile = |to_up: f32, to_down: f32, up_hw: bool, down_hw: bool| -> f32 {
+            let total = (to_up + to_down).max(1e-3);
+            let k = match (up_hw, down_hw) {
+                (true, true) => 1.0,
+                (false, false) => 0.0,
+                (true, false) => to_down / total,
+                (false, true) => to_up / total,
+            };
+            let k = k.clamp(0.0, 1.0);
+            let k = k * k * (3.0 - 2.0 * k);
+            ROAD_SPEED + (HIGHWAY_SPEED - ROAD_SPEED) * k
+        };
+        // Bends: at a ramp node joining two pieces, the radius of the curve
+        // they stand for caps the limit around it.
+        let bend_cap = |node: NodeId| -> f32 {
+            let nd = roads.node(node);
+            let segs: Vec<SegmentId> = nd.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).collect();
+            if segs.len() != 2 {
+                return f32::INFINITY;
+            }
+            let away = |s: SegmentId| {
+                let (a, b) = roads.segment_points(s);
+                if a.distance(nd.pos) < b.distance(nd.pos) { b - a } else { a - b }
+            };
+            let (u, v) = (away(segs[0]), away(segs[1]));
+            let turn = std::f32::consts::PI - u.angle_to(v).abs();
+            if turn < 0.02 {
+                return f32::INFINITY;
+            }
+            let r = 0.5 * (u.length().min(60.0) + v.length().min(60.0)) / turn;
+            (RAMP_LATERAL * r).sqrt().max(CONNECTOR_SPEED)
+        };
+        // The bend caps, each at its place along its ramp (distance from
+        // the ramp's upstream end), by ramp: the ramp lanes linked to each
+        // other form one component.
+        let mut comp: Vec<usize> = (0..n).collect();
+        fn root(c: &mut [usize], mut i: usize) -> usize {
+            while c[i] != i {
+                c[i] = c[c[i]];
+                i = c[i];
+            }
+            i
+        }
+        for i in 0..n {
+            if !self.lanes[i].ramp {
+                continue;
+            }
+            for k in 0..self.lanes[i].next.len() {
+                let j = self.lanes[i].next[k] as usize;
+                if self.lanes[j].ramp {
+                    let (a, b) = (root(&mut comp, i), root(&mut comp, j));
+                    comp[a.max(b)] = a.min(b);
+                }
+            }
+        }
+        let mut caps: HashMap<usize, Vec<(f32, f32)>> = HashMap::new();
+        for i in 0..n {
+            if let (true, LaneKind::Connector { node, .. }) = (self.lanes[i].ramp && up[i].0.is_finite(), &self.lanes[i].kind) {
+                let cap = bend_cap(*node);
+                if cap.is_finite() {
+                    let r = root(&mut comp, i);
+                    caps.entry(r).or_default().push((up[i].0 + self.lanes[i].length * 0.5, cap));
+                }
+            }
+        }
+        for i in 0..n {
+            if !self.lanes[i].ramp || !up[i].0.is_finite() || !down[i].0.is_finite() {
+                continue;
+            }
+            let len = self.lanes[i].length;
+            let (uh, dh) = (up[i].1, down[i].1);
+            let r = root(&mut comp, i);
+            // The profile, or less near a bend: a cap holds at its bend and
+            // eases off either side at the rate drivers brake for limits,
+            // so the limit never steps.
+            let at = |x: f32, v: f32| {
+                caps.get(&r).map_or(v, |cs| cs.iter().fold(v, |v, &(cx, c)| v.min((c * c + 2.0 * ANTICIPATE_BRAKE * (x - cx).abs()).sqrt())))
+            };
+            self.lanes[i].speed_limit = at(up[i].0, profile(up[i].0, down[i].0 + len, uh, dh));
+            self.lanes[i].limit_end = at(up[i].0 + len, profile(up[i].0 + len, down[i].0, uh, dh));
+        }
     }
 
     fn push_connector(&mut self, inc: LaneId, out: LaneId, nid: NodeId, approach: usize, radius: f32, approaches: usize) -> LaneId {
@@ -1563,7 +1767,10 @@ impl Ord for Open {
 fn idm_with(v: f32, v0: f32, gap: f32, dv: f32, headway: f32, accel: f32) -> f32 {
     let gap = gap.max(0.1);
     let s_star = IDM_MIN_GAP + (v * headway + v * dv / (2.0 * (accel * IDM_BRAKE).sqrt())).max(0.0);
-    accel * (1.0 - (v / v0.max(0.1)).powi(4) - (s_star / gap).powi(2))
+    // Over the desired speed the free-road term brakes firmly, not
+    // without limit (see `FREE_BRAKE`).
+    let free = (accel * (1.0 - (v / v0.max(0.1)).powi(4))).max(-FREE_BRAKE);
+    free - accel * (s_star / gap).powi(2)
 }
 
 impl Traffic {
@@ -1847,6 +2054,34 @@ impl Traffic {
 
     /// Gap, leader speed and the reason for a car with no leader on its
     /// own lane: look down the route for the next car or a red light.
+    /// The speed limit a driver drives to: the limit where it is, or lower
+    /// when a lane ahead on its route has a lower one it must brake for
+    /// now to meet it at `ANTICIPATE_BRAKE` (a ramp easing down, a turn).
+    fn limit_ahead(&self, car: &Car, lane: &Lane) -> f32 {
+        let mut limit = lane.limit_at(car.s);
+        // The end of this lane (a ramp lane easing down).
+        let to_end = (lane.length - car.s).max(0.0);
+        limit = limit.min((lane.limit_end * lane.limit_end + 2.0 * ANTICIPATE_BRAKE * to_end).sqrt());
+        let mut dist = to_end;
+        let mut prev = lane;
+        for &next in car.route.iter().skip(car.idx + 1).take(8) {
+            if dist > ANTICIPATE_REACH {
+                break;
+            }
+            let nl = &self.net.lanes[next as usize];
+            if prev.is_beside(next) {
+                // A lane change: the lane beside runs alongside, no farther.
+                prev = nl;
+                continue;
+            }
+            let reach = |v: f32, d: f32| (v * v + 2.0 * ANTICIPATE_BRAKE * d).sqrt();
+            limit = limit.min(reach(nl.speed_limit, dist)).min(reach(nl.limit_end, dist + nl.length));
+            dist += nl.length;
+            prev = nl;
+        }
+        limit
+    }
+
     fn lookahead(&self, car: &Car, lane: &Lane) -> (f32, f32, Wait, Option<LaneId>) {
         let mut dist = lane.length - car.s;
         let route = &car.route;
@@ -1887,7 +2122,7 @@ impl Traffic {
                     if let Some(inter) = self.net.node_intersection.get(node.0 as usize).and_then(|&i| self.net.intersections.get(i)) {
                         // Merging traffic yields; the highway mainline does not.
                         let barging = run.is_some() || car.drive.profile.ignores_signals;
-                        if !ring && !barging && !inter.signalized && inter.approaches >= 3 && lane.speed_limit <= ROAD_SPEED {
+                        if !ring && !barging && !inter.signalized && inter.approaches >= 3 && !lane.highway {
                             let busy = inter.connectors.iter().any(|&(lid, ap)| ap != approach && !self.net.lanes[lid as usize].cars.is_empty());
                             if busy {
                                 return (dist - 1.0 + IDM_MIN_GAP, 0.0, Wait::Yield, None);
@@ -2064,7 +2299,9 @@ impl Traffic {
         for ai in 0..self.net.approaches.len() {
             let ap = &self.net.approaches[ai];
             let total: f32 = ap.counts.iter().sum();
-            if !ap.fixed && total >= 20.0 {
+            // Roundabout arrows follow the ring's lanes, not the counts.
+            let ring = self.net.rings.nodes.contains_key(&ap.node);
+            if !ap.fixed && !ring && total >= 20.0 {
                 let a = default_arrows(ap.lanes.len(), ap.exits, Some(ap.counts[0] / total), Some(&ap.arrows));
                 self.net.set_arrows(ai, a);
             }
@@ -2111,9 +2348,9 @@ impl Traffic {
                 if gap < IDM_MIN_GAP * 0.5 {
                     return None;
                 }
-                c.idm(c.desired_speed(tl.speed_limit), gap, c.v - self.cars[l].v)
+                c.idm(c.desired_speed(tl.limit_at(s)), gap, c.v - self.cars[l].v)
             }
-            None => c.idm(c.desired_speed(tl.speed_limit), tl.length - s + LOOKAHEAD, 0.0),
+            None => c.idm(c.desired_speed(tl.limit_at(s)), tl.length - s + LOOKAHEAD, 0.0),
         };
         if acc < -brake {
             return None;
@@ -2123,7 +2360,7 @@ impl Traffic {
             if gap < IDM_MIN_GAP * 0.5 {
                 return None;
             }
-            if fc.idm(fc.desired_speed(tl.speed_limit), gap, fc.v - c.v) < -brake {
+            if fc.idm(fc.desired_speed(tl.limit_at(fc.s)), gap, fc.v - c.v) < -brake {
                 return None;
             }
         }
@@ -2203,7 +2440,7 @@ impl Traffic {
             let Some(&lead) = lane.cars.get(k + 1) else { continue };
             let l = &self.cars[lead];
             let gap = l.s - c.s - l.length();
-            let v0 = c.desired_speed(lane.speed_limit);
+            let v0 = c.desired_speed(lane.limit_at(c.s));
             // A bus at a stop, a slower truck, or a left turner about to wait
             // for a gap in the oncoming traffic.
             // [driving] A crashed car is in the way too; an aggressive driver
@@ -2567,8 +2804,9 @@ impl Traffic {
                     // only after their reaction time.
                     let reaction = car.drive.profile.reaction;
                     let seen = if reaction > 0.0 { car.drive.seen_lead_v + (lead_v - car.drive.seen_lead_v) * (dt / reaction).min(1.0) } else { lead_v };
-                    // [tolls] Slow through a toll booth on the way.
-                    let mut v0 = car.desired_speed(lane.speed_limit);
+                    // The limit here, or a lower one ahead the driver is
+                    // already braking for; [tolls] slow through a toll booth.
+                    let mut v0 = car.desired_speed(self.limit_ahead(car, lane));
                     if self.net.tolls && !car.siren {
                         if let Some(cap) = self.toll_cap(car) {
                             v0 = v0.min(cap);
@@ -2693,52 +2931,68 @@ impl Traffic {
                         }
                     }
                 } else if s >= len {
-                    if self.cars[cid].change_pending(&self.net).is_some() {
-                        // Never roll off the end into the lane beside.
-                        let c = &mut self.cars[cid];
-                        c.s = len - 0.05;
-                        c.v = 0.0;
-                        continue;
-                    }
-                    // Never land on (or ahead of) the tail of the last
-                    // vehicle into the next lane: it would be shoved back
-                    // there onto whoever stands behind, and with nowhere
-                    // behind the lane start cars piled up on it (rings of
-                    // short segments locked solid that way). Wait at the
-                    // end of this lane until there is room.
-                    // (Lights and sirens squeeze past as they always have.)
-                    if let Some(&next) = self.cars[cid].route.get(idx + 1).filter(|_| !self.cars[cid].siren) {
-                        if let Some(&tail) = self.net.lanes[next as usize].cars.first() {
-                            let room = self.cars[tail].s - self.cars[tail].length() - 0.1;
-                            if s - len > room {
-                                let tv = self.cars[tail].v;
-                                let c = &mut self.cars[cid];
-                                c.s = len - 0.05;
-                                c.v = c.v.min(tv);
-                                continue;
+                    // On through as many lanes as the step covered: a fast
+                    // car crosses a short connector or curve piece within
+                    // one step. Taking one lane a step left it standing at
+                    // the end of each short lane (drawn there) and then
+                    // springing ahead with the backlog: the stutter along
+                    // curved ramps.
+                    let (mut lane_id, mut len) = (lane_id, len);
+                    loop {
+                        if self.cars[cid].change_pending(&self.net).is_some() {
+                            // Never roll off the end into the lane beside.
+                            let c = &mut self.cars[cid];
+                            c.s = len - 0.05;
+                            c.v = 0.0;
+                            break;
+                        }
+                        // Never land on (or ahead of) the tail of the last
+                        // vehicle into the next lane: it would be shoved back
+                        // there onto whoever stands behind, and with nowhere
+                        // behind the lane start cars piled up on it (rings of
+                        // short segments locked solid that way). Wait at the
+                        // end of this lane until there is room. (Lights and
+                        // sirens squeeze past as they always have.)
+                        let (at, idx_now, siren) = (self.cars[cid].s, self.cars[cid].idx, self.cars[cid].siren);
+                        if let Some(&next) = self.cars[cid].route.get(idx_now + 1).filter(|_| !siren) {
+                            if let Some(&tail) = self.net.lanes[next as usize].cars.first() {
+                                let room = self.cars[tail].s - self.cars[tail].length() - 0.1;
+                                if at - len > room {
+                                    let tv = self.cars[tail].v;
+                                    let c = &mut self.cars[cid];
+                                    c.s = len - 0.05;
+                                    c.v = c.v.min(tv);
+                                    break;
+                                }
                             }
                         }
-                    }
-                    self.net.lanes[lane_id as usize].cars.retain(|&c| c != cid);
-                    let next = {
-                        let c = &mut self.cars[cid];
-                        c.s -= len;
-                        c.idx += 1;
-                        c.passing = false;
-                        c.route[c.idx]
-                    };
-                    self.entered(lane_id, next, cid);
-                    self.insert_sorted(next, cid);
-                    self.entered_red(next, cid);
-                    // [tolls] Came onto a tolled lane from behind: it will
-                    // pay once past the booth line (even if already past it
-                    // after this substep's hop).
-                    if let Some(t) = self.net.lanes[next as usize].toll {
-                        let c = &mut self.cars[cid];
-                        if c.toll_booth != t.booth {
-                            c.toll_booth = t.booth;
-                            c.toll_paid = false;
+                        self.net.lanes[lane_id as usize].cars.retain(|&c| c != cid);
+                        let next = {
+                            let c = &mut self.cars[cid];
+                            c.s -= len;
+                            c.idx += 1;
+                            c.passing = false;
+                            c.route[c.idx]
+                        };
+                        self.entered(lane_id, next, cid);
+                        self.insert_sorted(next, cid);
+                        self.entered_red(next, cid);
+                        // [tolls] Came onto a tolled lane from behind: it will
+                        // pay once past the booth line (even if already past it
+                        // after this substep's hop).
+                        if let Some(t) = self.net.lanes[next as usize].toll {
+                            let c = &mut self.cars[cid];
+                            if c.toll_booth != t.booth {
+                                c.toll_booth = t.booth;
+                                c.toll_paid = false;
+                            }
                         }
+                        let c = &self.cars[cid];
+                        let next_len = self.net.lanes[next as usize].length;
+                        if c.idx + 1 >= c.route.len() || c.s < next_len {
+                            break;
+                        }
+                        (lane_id, len) = (next, next_len);
                     }
                 }
             }

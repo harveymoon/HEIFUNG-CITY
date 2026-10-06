@@ -57,7 +57,7 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
                 tools.ring_radius = d * 0.5;
             }
             ui.separator();
-            for n in [1u8, 2] {
+            for n in 1..=nd_sim::roads::RING_MAX_LANES {
                 if ui.selectable_label(tools.ring_lanes == n, format!("{n} lane{}", if n == 1 { "" } else { "s" })).clicked() {
                     tools.ring_lanes = n;
                 }

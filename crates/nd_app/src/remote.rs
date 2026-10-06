@@ -304,13 +304,16 @@ fn record_history(sim: Res<Sim>, mut history: ResMut<History>) {
 fn follow_target(sim: Res<Sim>, mut follow: ResMut<Follow>, mut cams: Query<&mut OrbitCamera>) {
     let Some(sel) = follow.0 else { return };
     let w = &sim.world;
+    // Where the car is drawn this frame, not where it ends the tick: the
+    // camera held still between ticks and jumped ahead of the car at each.
+    let f = sim.frac();
     let pos = match sel {
         Selection::Citizen(id) => w.citizens.get(id).map(|c| match &c.activity {
-            nd_sim::Activity::Driving { car, .. } => w.traffic.cars.get(*car).map_or(c.pos, |car| car.pos),
-            nd_sim::Activity::Riding { bus } => w.traffic.cars.get(*bus).map_or(c.pos, |car| car.pos),
+            nd_sim::Activity::Driving { car, .. } => w.traffic.cars.get(*car).map_or(c.pos, |car| car.pose_at(f).0),
+            nd_sim::Activity::Riding { bus } => w.traffic.cars.get(*bus).map_or(c.pos, |car| car.pose_at(f).0),
             _ => c.pos,
         }),
-        Selection::Car(id) => w.traffic.cars.get(id).map(|c| c.pos),
+        Selection::Car(id) => w.traffic.cars.get(id).map(|c| c.pose_at(f).0),
         Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|c| c.spot()).map(|s| s.pos),
         Selection::Building(id) => w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map(|l| l.center),
         Selection::None => None,
@@ -971,8 +974,8 @@ fn add_roundabout(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         (None, None) => ctx.tools.ring_radius,
     };
     let lanes = opt_u64(cmd, "lanes")?.map_or(ctx.tools.ring_lanes, |n| n as u8);
-    if !(1..=2).contains(&lanes) {
-        return Err("a roundabout has 1 or 2 ring lanes".into());
+    if !(1..=nd_sim::roads::RING_MAX_LANES).contains(&lanes) {
+        return Err("a roundabout has 1, 2 or 3 ring lanes".into());
     }
     let id = ctx.sim.world.add_roundabout(center, radius, lanes)?;
     let ring = ctx.sim.world.gesture(id).and_then(|g| g.ring()).ok_or("roundabout not in the plan")?;
@@ -1625,7 +1628,7 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         t.ring_radius = (d * 0.5).clamp(nd_sim::roads::RING_MIN_RADIUS, nd_sim::roads::RING_MAX_RADIUS);
     }
     if let Some(n) = opt_u64(cmd, "ring_lanes")? {
-        t.ring_lanes = (n as u8).clamp(1, 2);
+        t.ring_lanes = (n as u8).clamp(1, nd_sim::roads::RING_MAX_LANES);
     }
     if let Some(preset) = opt_str(cmd, "preset").ok().flatten().filter(|p| p.eq_ignore_ascii_case("roundabout")) {
         let _ = preset;
@@ -1975,7 +1978,7 @@ fn help() -> Value {
             "load": { "path": "a .ron save" },
             "list_saves": {},
             "plan": {},
-            "add_roundabout": { "center": "[x,y] (snaps onto a junction within 12 m or a street within 6 m)", "radius": "m to the ring centreline, 12..120 (or diameter 24..240)", "lanes": "1|2 ring lanes", "implement": "bool", "returns": "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state" },
+            "add_roundabout": { "center": "[x,y] (snaps onto a junction within 12 m or a street within 6 m)", "radius": "m to the ring centreline, 12..120 (or diameter 24..240)", "lanes": "1|2|3 ring lanes", "implement": "bool", "returns": "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state" },
             "add_road": { "points": "[[x,y] or [x,y,level],...] (2+; level metres above ground, negative below)", "elevation": "level for points without one (number), or a list", "tunnel": "bool: default level -8 m", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true", "implement": "bool, default false (pending in the project)" },
             "add_zone": { "polygon": "[[x,y],...] (3+)", "land_use": "residential|commercial|industrial|entertainment|civic|park", "implement": "bool" },
             "bulldoze": { "gesture_id": "int", "implement": "bool" },
@@ -2028,7 +2031,7 @@ fn help() -> Value {
     v["commands"]["society"] = json!({ "action": "report (default)|evict|offend|trash", "building": "id (evict: its households go on the street; offend: the target; trash: one building's bins)", "citizen": "id (offend)", "kind": "theft|burglary|assault|murder|vandalism (offend, with building)", "kg": "trash to add, default 100" });
     // Planning: several projects, and painting parcels.
     let planning = json!({
-        "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway|Tunnel|Roundabout (Tunnel switches the view underground, the others back to ground)", "elevation": "road tool level for the next point, m (-20..24)", "depth": "underground|ground|sky: the view layer", "draw": "[[x,y,level?],...]: the road being drawn, for its preview", "cursor": "[x,y]: where the pointer stands for the road preview (until the mouse is used)", "diameter": "roundabout 24..240 m", "ring_lanes": "roundabout 1|2", "ring_at": "[x,y]: show the roundabout preview there as if hovered (until the mouse is used)", "kind": "sub-mode of the active tool", "mode": "zone tool: polygon|brush|marquee", "radius": "zone brush radius m", "unzone": "bool", "industry": "zone tool sub-zone for industrial land: auto|farming|oil|...", "land_use": "(or none: the brush unzones)", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
+        "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway|Tunnel|Roundabout (Tunnel switches the view underground, the others back to ground)", "elevation": "road tool level for the next point, m (-20..24)", "depth": "underground|ground|sky: the view layer", "draw": "[[x,y,level?],...]: the road being drawn, for its preview", "cursor": "[x,y]: where the pointer stands for the road preview (until the mouse is used)", "diameter": "roundabout 24..240 m", "ring_lanes": "roundabout 1|2|3", "ring_at": "[x,y]: show the roundabout preview there as if hovered (until the mouse is used)", "kind": "sub-mode of the active tool", "mode": "zone tool: polygon|brush|marquee", "radius": "zone brush radius m", "unzone": "bool", "industry": "zone tool sub-zone for industrial land: auto|farming|oil|...", "land_use": "(or none: the brush unzones)", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
         "project": { "action": "list|new|switch|rename|delete|park|start|implement|undo|redo|discard", "id": "project id (default: the active one)", "name": "for new/rename, or to pick a project by name", "note": "several named projects; the active one is edited, the rest previewed dim; implement builds one at a time, the later one wins where two change the same gesture or parcel (warnings in the reply)" },
         "paint": { "land_use": "residential|...|park, or none to unzone", "at": "[x,y] brush centre", "radius": "m (default the tool's)", "industry": "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech, the sub-zone set on implement", "rect": "[[x0,y0],[x1,y1]] marquee", "polygon": "[[x,y],...]", "implement": "bool", "note": "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step" }
     });

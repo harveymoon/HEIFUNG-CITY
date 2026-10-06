@@ -677,14 +677,16 @@ impl World {
             let points = crate::landscape::reach_elsewhere(&points);
             // Ramps meet the highway tangentially: a lead point before a
             // merge (after a diverge) brings the last piece alongside.
-            let points = if crate::roads::is_ramp_spec(kind, fwd, bwd) { crate::roads::ease_ramp_ends(&points, fwd > 0, &roads) } else { points };
+            // (A roundabout's ring is a one-way street too, but no ramp.)
+            let ring = roads.is_ring_way(&points, fwd, bwd, kind);
+            let points = if crate::roads::is_ramp_spec(kind, fwd, bwd) && !ring { crate::roads::ease_ramp_ends(&points, fwd > 0, &roads) } else { points };
             // Breaks at every waterline, so a bridge is exactly the span.
             let points = self.split_at_water(&points);
             // A height sample every so often, so a long straight way follows
             // the land instead of running dead straight between its ends.
             // Only ways that front nothing (highways, track): a street's
             // vertices decide where its parcels are cut.
-            let sampled = kind == RoadKind::Rail || crate::roads::is_highway_spec(kind, fwd, bwd);
+            let sampled = kind == RoadKind::Rail || (crate::roads::is_highway_spec(kind, fwd, bwd) && !ring);
             let points = if sampled { crate::roads::sample_heights(&points, crate::roads::HEIGHT_SAMPLE) } else { points };
             // Levels follow the points wherever they moved or multiplied.
             let levels = if points == drawn { levels } else { crate::plan::carry_levels(&drawn, &levels, &points) };
