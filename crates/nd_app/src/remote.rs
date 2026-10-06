@@ -753,6 +753,9 @@ fn status(ctx: &Ctx) -> Value {
     });
     // Added after the literal: one `json!` this size hits the macro recursion limit.
     v["windows_open"] = json!(ctx.windows.open_names());
+    // [looks] The figure cache: meshes alive, people outdoors and their distinct looks.
+    let st = &ctx.stats;
+    v["render"]["people"] = json!({ "meshes": st.people_meshes, "mesh_cap": crate::render::PEOPLE_MESH_CAP, "visible": st.people_visible, "distinct_looks_visible": st.people_looks_visible, "built_total": st.people_built, "borrowed": st.people_borrowed, "materials": 1 });
     v["alerts_top"] = report::alerts_json(&report::alerts(w), 5);
     v["review_hint"] = json!("for a whole-city review call report (then map, history, list)");
     v

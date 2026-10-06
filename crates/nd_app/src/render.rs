@@ -36,6 +36,9 @@ mod emergency;
 mod haze;
 mod layers;
 mod lights;
+/// [looks] Citizens drawn with their own look.
+mod people;
+pub use people::MESH_CAP as PEOPLE_MESH_CAP;
 mod stunts;
 /// [society] Camps, RVs and overflowing bins.
 mod society;
@@ -228,6 +231,7 @@ pub(crate) fn offstage() -> Transform {
 struct Materials {
     /// One material per [`Surface`], indexed by `Surface::index()`.
     surfaces: Vec<Handle<StandardMaterial>>,
+    /// The plain citizen tint from before looks (`ND_PLAIN_PEOPLE=1`).
     citizen: Handle<StandardMaterial>,
     citizen_spotlight: Handle<StandardMaterial>,
     citizen_selected: Handle<StandardMaterial>,
@@ -328,12 +332,20 @@ pub struct RenderStats {
     pub building_entities: usize,
     pub street_triangles: usize,
     pub building_triangles: usize,
+    /// [looks] Figure meshes cached, people outdoors, distinct looks among
+    /// them, figures built over the run and borrowed this frame.
+    pub people_meshes: usize,
+    pub people_visible: usize,
+    pub people_looks_visible: usize,
+    pub people_built: usize,
+    pub people_borrowed: usize,
 }
 
 pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<people::PeopleRender>();
         app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().init_resource::<BuildingStyles>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_systems(Startup, (lights::add_shader, setup)).add_systems(
             Update,
             (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)
@@ -1519,20 +1531,33 @@ fn sync_walk_detail(
     *drawn = Some((here, key.0, key.1));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sync_citizens(
     mut commands: Commands,
     sim: Res<Sim>,
     mats: Res<Materials>,
     selection: Res<Selection>,
+    lighting: Res<Lighting>,
     mut state: ResMut<RenderState>,
+    mut people: ResMut<people::PeopleRender>,
+    mut stats: ResMut<RenderStats>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    camera: Query<&GlobalTransform, With<Camera3d>>,
     mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d), With<CitizenTag>>,
 ) {
     let w = &sim.world;
     let f = sim.frac();
+    let plain = people::plain();
+    // [looks] One lit material for every figure; its trim glows at night.
+    let look_mat = people.material(&mut materials, &mut images);
+    people.set_night(night_strength(&sim, &lighting), &mut materials);
+    people.cache.begin_frame();
     for (id, _) in w.citizens.iter() {
         if !state.citizens.contains_key(&id) {
             let e = commands
-                .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(mats.citizen.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CitizenTag))
+                .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(look_mat.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CitizenTag))
                 .id();
             state.citizens.insert(id, e);
         }
@@ -1543,36 +1568,75 @@ fn sync_citizens(
             commands.entity(e).despawn();
         }
     }
+    // Everyone outdoors and their look, first, so no look on screen this
+    // frame is evicted to make room for another.
+    // Nearest the camera first: they claim figures before the distant.
+    let eye = camera.iter().next().map_or(Vec3::ZERO, |t| t.translation());
+    let mut outdoors: Vec<(CitizenId, Entity, nd_procgen::people::PersonKey, f32, f32)> = state
+        .citizens
+        .iter()
+        .filter_map(|(id, &e)| w.citizens.get(*id).filter(|c| c.is_visible()).map(|c| (*id, e, people::figure_of(c), c.pos.distance_squared(SVec2::new(eye.x, eye.z)))))
+        .map(|(id, e, (k, s), d)| (id, e, k, s, d))
+        .collect();
+    outdoors.sort_by(|a, b| a.4.total_cmp(&b.4));
+    let mut protected: HashSet<nd_procgen::people::PersonKey> = HashSet::new();
+    for o in &outdoors {
+        if protected.len() >= people::MESH_CAP {
+            break;
+        }
+        if protected.insert(o.2) {
+            people.cache.touch(&o.2);
+        }
+    }
+    let mut looks: HashSet<nd_procgen::people::PersonKey> = HashSet::new();
+    for &(id, e, key, stature, _) in &outdoors {
+        let Some(c) = w.citizens.get(id) else { continue };
+        let Ok((mut tf, mut vis, _, mut mesh)) = q.get_mut(e) else { continue };
+        *vis = Visibility::Visible;
+        let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
+        let heading = lerp_angle(c.prev_heading, c.heading, f);
+        let seated = matches!(c.activity, nd_sim::Activity::Sitting { .. });
+        tf.translation = Vec3::new(pos.x, if seated { 0.02 } else { 0.16 }, pos.y);
+        tf.rotation = Quat::from_rotation_y(-heading);
+        tf.scale = if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE } * stature;
+        looks.insert(key);
+        let fallback = || if key.ride { mats.bike_mesh.clone() } else { mats.citizen_mesh.clone() };
+        let wanted_mesh = if plain { fallback() } else { people.mesh_for(key, &mut meshes).unwrap_or_else(fallback) };
+        if plain {
+            tf.scale = if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE };
+        }
+        if mesh.0 != wanted_mesh {
+            mesh.0 = wanted_mesh;
+        }
+    }
     for (id, &e) in state.citizens.iter() {
         let Some(c) = w.citizens.get(*id) else { continue };
-        let Ok((mut tf, mut vis, mut mat, mut mesh)) = q.get_mut(e) else { continue };
-        if c.is_visible() {
-            *vis = Visibility::Visible;
-            let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
-            let heading = lerp_angle(c.prev_heading, c.heading, f);
-            let seated = matches!(c.activity, nd_sim::Activity::Sitting { .. });
-            tf.translation = Vec3::new(pos.x, if seated { 0.02 } else { 0.16 }, pos.y);
-            tf.rotation = Quat::from_rotation_y(-heading);
-            tf.scale = if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE };
-            let cycling = c.mode == nd_sim::citizens::TravelMode::Bike && c.activity.is_traveling();
-            let wanted_mesh = if cycling { &mats.bike_mesh } else { &mats.citizen_mesh };
-            if mesh.0 != *wanted_mesh {
-                mesh.0 = wanted_mesh.clone();
-            }
-        } else {
+        let Ok((_, mut vis, mut mat, mut mesh)) = q.get_mut(e) else { continue };
+        if !c.is_visible() {
             *vis = Visibility::Hidden;
+            // Indoors: let go of the figure so the cache can drop it.
+            if mesh.0 != mats.citizen_mesh {
+                mesh.0 = mats.citizen_mesh.clone();
+            }
         }
         let wanted = if *selection == Selection::Citizen(*id) {
             &mats.citizen_selected
         } else if c.spotlight {
             &mats.citizen_spotlight
-        } else {
+        } else if plain {
             &mats.citizen
+        } else {
+            &look_mat
         };
         if mat.0 != *wanted {
             mat.0 = wanted.clone();
         }
     }
+    stats.people_meshes = people.cache.len();
+    stats.people_visible = outdoors.len();
+    stats.people_looks_visible = looks.len();
+    stats.people_built = people.cache.built;
+    stats.people_borrowed = people.cache.borrowed;
 }
 
 fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {

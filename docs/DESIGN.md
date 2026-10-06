@@ -176,6 +176,18 @@ Citizens are rendered from their simulated positions every frame.
 - **Citizens**: immigrate when homes are free, take jobs when available, and move
   along roads between home, work, shops and nightlife. Each has a personality seed,
   a memory stream and a current thought.
+- **Looks** (`nd_sim::looks`): each citizen has a saved `Appearance`: skin tone,
+  natural hair colour and texture (the `Genes`), hair style (short, long, bun, buzz,
+  bald, afro; neon-dyed mohawks for young hedonists), greying age, height, build, two
+  favourite colours (eight neon, fourteen everyday) and an outfit by age and class
+  (tee, hoodie, work jacket, suit, dress, long coat). `family_looks` gives a
+  household's children a mix of their parents' genes, a grandparent the first
+  parent's; couples and housemates are unrelated. All drawn from the seeds, never the
+  world's dice; saves without looks get them on load. Rendered by
+  `nd_procgen::people` (under 150 triangles, vertex colours, an emissive trim in the
+  favourite colour via a palette texture) through one lit material and a bounded
+  figure cache (`render/people.rs`, 1,024 meshes; the people nearest the camera
+  claim figures first, distant overflow borrows one of the same silhouette).
 - **Land value**: a 32 m grid summing road access, parks, civic and commercial
   amenities, industrial and nightlife nuisances, traffic noise, vacant lots and the
   tier of neighbouring homes, blurred once. Recomputed every two sim hours. Power plants
