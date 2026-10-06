@@ -387,7 +387,8 @@ pub fn megastructure(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                     let yy = y0 + k as f32 * fh + fh * 0.4;
                     let rr = r - 0.08 * r * (k as f32 / fl as f32);
                     if coin(rng, c.lit_chance() * 1.4) {
-                        g.part(Glow).frustum(&MeshData::ngon(cw, rr + 0.04, 16, 0.0, yy), &MeshData::ngon(cw, rr + 0.04, 16, 0.0, yy + fh * 0.35), rgba(mul(pick(rng, &c.style.window_colors), 0.8)));
+                        let col = rgba(mul(pick(rng, &c.style.window_colors), 0.8));
+                        window_light(g, c, |g| g.part(Glow).frustum(&MeshData::ngon(cw, rr + 0.04, 16, 0.0, yy), &MeshData::ngon(cw, rr + 0.04, 16, 0.0, yy + fh * 0.35), col));
                     }
                     k += 2;
                 }
@@ -600,7 +601,8 @@ pub fn glass_castle(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 let y = k as f32 * fh;
                 let ring = if y < h * 0.55 { scale_poly(&base, 1.0 - 0.08 * (y / (h * 0.55))) } else { scale_poly(&mid_poly, 1.0 - 0.05 * ((y - h * 0.55) / (h * 0.45))) };
                 let ring = offset_poly(&ring, -0.04);
-                extrude(g, f, Glow, &ring, y, y + 0.2, mul(pick(rng, &c.style.window_colors), 0.75));
+                let col = mul(pick(rng, &c.style.window_colors), 0.75);
+                window_light(g, c, |g| extrude(g, f, Glow, &ring, y, y + 0.2, col));
             }
         }
         crystal_crown(g, c, rng, &body_top, h, glass);

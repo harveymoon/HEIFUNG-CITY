@@ -770,3 +770,39 @@ mod tests {
         assert!(posts.iter().all(|p| p.lamp.is_finite()));
     }
 }
+
+/// Lane arrows painted on each lane arriving at a junction, a few metres
+/// before the stop line: a shaft with a head for every movement the lane
+/// allows (`Lane::arrows`). Separate from the street mesh because arrows
+/// follow turning demand and the player's choices without the roads
+/// changing; rebuild when `LaneNetwork::arrows_version` moves.
+pub fn lane_arrows(net: &LaneNetwork, pal: &Palette) -> Geometry {
+    use nd_sim::traffic::{LEFT, RIGHT, STRAIGHT};
+    let mut g = Geometry::default();
+    let c = rgba(mul(pal.lane_marker, 1.1));
+    let y = MARK_Y + 0.003;
+    for ap in &net.approaches {
+        for (&l, &a) in ap.lanes.iter().zip(&ap.arrows) {
+            let lane = &net.lanes[l as usize];
+            if lane.length < 16.0 || a == 0 {
+                continue;
+            }
+            let (fork, d) = lane.point_at(lane.length - 9.0);
+            let right = Vec2::new(-d.y, d.x);
+            g.part(Glow).ground_strip(&[fork - d * 1.6, fork], 0.22, y, c);
+            for (bit, side) in [(LEFT, -1.0f32), (STRAIGHT, 0.0), (RIGHT, 1.0)] {
+                if a & bit == 0 {
+                    continue;
+                }
+                let tip = if side == 0.0 { fork + d * 1.4 } else { fork + d * 0.7 + right * side * 0.75 };
+                g.part(Glow).ground_strip(&[fork, tip], 0.22, y, c);
+                let dir = (tip - fork).normalize_or_zero();
+                let across = Vec2::new(-dir.y, dir.x);
+                for s in [-1.0f32, 1.0] {
+                    g.part(Glow).ground_strip(&[tip, tip - dir * 0.55 + across * s * 0.35], 0.2, y, c);
+                }
+            }
+        }
+    }
+    g
+}

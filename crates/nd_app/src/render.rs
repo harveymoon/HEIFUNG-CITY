@@ -30,6 +30,14 @@ use crate::ui::UiFlags;
 use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
 
+/// Emergency vehicles, fires and rubble (render/emergency.rs).
+mod emergency;
+mod haze;
+mod layers;
+mod lights;
+mod turbines;
+
+
 /// Side of the square cells that buildings and vacant-lot dressing are
 /// batched into. Wide enough that a few hundred buildings become a few dozen
 /// meshes per surface, small enough that one changed building regenerates a
@@ -64,10 +72,16 @@ struct VacantTag;
 struct PreviewTag;
 #[derive(Component)]
 struct SignalTag(LaneId);
+/// Lane arrows at junction approaches (follow `LaneNetwork::arrows_version`).
+#[derive(Component, Clone)]
+struct LaneArrowsTag;
 #[derive(Component)]
 struct OverlayTag;
 #[derive(Component)]
 struct PathsTag;
+/// No longer spawned: coal smoke is drawn by `haze` as moving puffs. Kept
+/// because `lift_spawned` still lists it.
+#[allow(dead_code)]
 #[derive(Component)]
 struct HazeTag;
 #[derive(Component, Clone)]
@@ -87,11 +101,80 @@ pub struct Overlays {
     pub zoning: bool,
     /// Draw the parked (inactive) projects as dim holograms.
     pub projects: bool,
+    /// Load per lane: fullness and speed, green to red.
+    pub traffic: bool,
+    /// A coloured disc under every vehicle by type.
+    pub traffic_types: bool,
+    /// Where people are right now, as a heat map.
+    pub people: bool,
+    /// Pollution and noise from plants, industry, nightlife and traffic.
+    pub pollution: bool,
 }
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true, projects: true }
+        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false }
+    }
+}
+
+impl Overlays {
+    /// Every layer: API name, label, hotkey. The API's `overlay {layer, on}`
+    /// and the Land window's Layers section both go through this list.
+    pub const LAYERS: [(&'static str, &'static str, &'static str); 7] = [
+        ("land_value", "Land value", "V"),
+        ("traffic", "Traffic load", ""),
+        ("traffic_types", "Traffic types", ""),
+        ("people", "People", ""),
+        ("pollution", "Pollution and noise", ""),
+        ("paths", "Pedestrian network", "P"),
+        ("zoning", "Zoning outlines", "O"),
+    ];
+    /// The heat-map style layers the L key steps through, one at a time.
+    pub const CYCLE: [&'static str; 5] = ["land_value", "traffic", "traffic_types", "people", "pollution"];
+
+    pub fn flag(&mut self, layer: &str) -> Option<&mut bool> {
+        Some(match layer {
+            "land_value" => &mut self.land_value,
+            "paths" => &mut self.paths,
+            "zoning" => &mut self.zoning,
+            "projects" => &mut self.projects,
+            "traffic" => &mut self.traffic,
+            "traffic_types" => &mut self.traffic_types,
+            "people" => &mut self.people,
+            "pollution" => &mut self.pollution,
+            _ => return None,
+        })
+    }
+
+    pub fn get(&self, layer: &str) -> Option<bool> {
+        Some(match layer {
+            "land_value" => self.land_value,
+            "paths" => self.paths,
+            "zoning" => self.zoning,
+            "projects" => self.projects,
+            "traffic" => self.traffic,
+            "traffic_types" => self.traffic_types,
+            "people" => self.people,
+            "pollution" => self.pollution,
+            _ => return None,
+        })
+    }
+
+    /// Step to the next of the [`Overlays::CYCLE`] layers, alone; after the
+    /// last, none.
+    pub fn cycle(&mut self) {
+        let current = Self::CYCLE.iter().rposition(|l| self.get(l) == Some(true));
+        for l in Self::CYCLE {
+            if let Some(f) = self.flag(l) {
+                *f = false;
+            }
+        }
+        let next = current.map_or(0, |i| i + 1);
+        if let Some(l) = Self::CYCLE.get(next) {
+            if let Some(f) = self.flag(l) {
+                *f = true;
+            }
+        }
     }
 }
 
@@ -131,17 +214,28 @@ struct Materials {
     citizen_mesh: Handle<Mesh>,
     bike_mesh: Handle<Mesh>,
     car_bodies: Vec<Handle<StandardMaterial>>,
+    // The old box meshes; road vehicles are generated per variant now
+    // (`VehicleRender`), these stay for anything else that wants a stand-in.
+    #[allow(dead_code)]
     car_body_mesh: Handle<Mesh>,
+    #[allow(dead_code)]
     truck_body_mesh: Handle<Mesh>,
+    #[allow(dead_code)]
     bus_body_mesh: Handle<Mesh>,
     loco_mesh: Handle<Mesh>,
     coach_mesh: Handle<Mesh>,
     wagon_mesh: Handle<Mesh>,
+    #[allow(dead_code)]
     car_lights_mesh: Handle<Mesh>,
     signal_green: Handle<StandardMaterial>,
     signal_red: Handle<StandardMaterial>,
     signal_mesh: Handle<Mesh>,
     overlay: Handle<StandardMaterial>,
+    /// Building glow: the glow material with window lights switched by
+    /// occupancy (see `lights`).
+    windows: Handle<lights::WindowMaterial>,
+    /// The lit share of every building, one texel each.
+    lit: Handle<Image>,
 }
 
 impl Materials {
@@ -167,6 +261,7 @@ struct RenderState {
     /// What the project holograms were built for: plan version, parcels
     /// version, whether parked projects are shown.
     preview_key: Option<(u64, u64, bool)>,
+    arrows_version: u64,
     /// What the lot ground meshes were built for: lot and zone counts, roads
     /// version, zoning overlay, and a hash of every lot's built/park/
     /// landlocked state.
@@ -188,7 +283,6 @@ struct RenderState {
     overlay_shown: bool,
     paths_version: u64,
     paths_shown: bool,
-    haze_signature: usize,
     transit_version: u64,
     trains: HashMap<nd_sim::TrainId, Vec<Entity>>,
     /// Quantised sun elevation the lighting was last written for.
@@ -220,13 +314,17 @@ pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<RenderState>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().init_resource::<BuildingStyles>().add_systems(Startup, setup).add_systems(
+        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().init_resource::<BuildingStyles>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_systems(Startup, (lights::add_shader, setup)).add_systems(
             Update,
-            (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_haze, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_trains, update_daylight)
+            (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)
                 .chain()
                 .in_set(SimSet::Sync),
         );
+        app.add_systems(Update, sync_lane_arrows.in_set(SimSet::Sync).after(sync_signals).before(lift_spawned));
+        app.add_systems(Update, (turbines::sync_turbines, haze::sync_haze, layers::sync_layers, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
+        // Emergency vehicles, fires and rubble, after the cars they hide.
+        app.add_systems(Update, emergency::sync_emergency.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
     }
 }
 
@@ -290,6 +388,22 @@ fn spawn_geometry<T: Component + Clone>(commands: &mut Commands, meshes: &mut As
     out
 }
 
+/// Building chunk meshes: like [`spawn_geometry`], but the Glow surface
+/// uses the window-lights material so lights follow occupancy.
+fn spawn_building_geometry(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, geo: &Geometry) -> Vec<Entity> {
+    let mut out = Vec::new();
+    for (s, data) in geo.iter() {
+        let mesh = Mesh3d(meshes.add(to_mesh(data, !s.is_glow())));
+        let e = if s.is_glow() {
+            commands.spawn((mesh, MeshMaterial3d(mats.windows.clone()), Transform::IDENTITY, BuildingTag, NotShadowCaster, NotShadowReceiver)).id()
+        } else {
+            commands.spawn((mesh, MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, BuildingTag)).id()
+        };
+        out.push(e);
+    }
+    out
+}
+
 /// Spawn a glow-surface mesh: unlit, no shadows either way.
 fn spawn_glow<T: Component>(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, data: &MeshData, tag: T) {
     commands.spawn((Mesh3d(meshes.add(to_mesh(data, false))), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, tag));
@@ -343,7 +457,14 @@ fn tiling_image(size: usize, rgba: &[u8], srgb: bool) -> Image {
     img
 }
 
-fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>, mut meshes: ResMut<Assets<Mesh>>, mut images: ResMut<Assets<Image>>, assets: Res<GameAssets>) {
+fn setup(
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut window_materials: ResMut<Assets<lights::WindowMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    assets: Res<GameAssets>,
+) {
     let pal = &assets.palette;
     let unlit = |c: [f32; 3]| StandardMaterial { base_color: Color::linear_rgb(c[0], c[1], c[2]), unlit: true, ..default() };
 
@@ -471,6 +592,11 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         meshes.add(shared_mesh(&m, false))
     };
     let overlay = materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, alpha_mode: AlphaMode::Blend, ..default() });
+    let lit = images.add(lights::lit_image());
+    let windows = window_materials.add(lights::WindowMaterial {
+        base: StandardMaterial { base_color: Color::WHITE, unlit: true, ..default() },
+        extension: lights::WindowLights { lit: lit.clone() },
+    });
     let signal_green = materials.add(unlit(pal.signal_green));
     let signal_red = materials.add(unlit(pal.signal_red));
     let signal_mesh = {
@@ -497,6 +623,8 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>
         signal_red,
         signal_mesh,
         overlay,
+        windows,
+        lit,
     });
 
     commands.insert_resource(GlobalAmbientLight { color: Color::linear_rgb(0.35, 0.45, 0.9), brightness: 70.0, ..default() });
@@ -660,6 +788,27 @@ fn sync_roads(
             e.insert((NotShadowCaster, NotShadowReceiver));
         }
     }
+}
+
+/// Lane arrows painted before junction stop lines; redrawn when the arrows
+/// change (turning demand, the player's lane use, a road rebuild).
+fn sync_lane_arrows(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut state: ResMut<RenderState>,
+    existing: Query<Entity, With<LaneArrowsTag>>,
+) {
+    let net = &sim.world.traffic.net;
+    if net.arrows_version == state.arrows_version && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
+        return;
+    }
+    state.arrows_version = net.arrows_version;
+    despawn_all(&mut commands, &existing);
+    let geo = nd_procgen::street::lane_arrows(net, &assets.palette);
+    spawn_geometry(&mut commands, &mut meshes, &mats, &geo, LaneArrowsTag);
 }
 
 /// A glowing lamp in every signal head, coloured by whether that lane
@@ -1045,9 +1194,23 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         rail: b.rail.as_ref(),
         port: b.port,
         construction: b.construction.as_ref().map(|c| c.progress),
+        demolition: None,
         neighbours: styles.neighbours(id),
+        service: b.service.map(|s| s.kind),
+        animated_rotors: true,
+        dynamic_lights: true,
     };
-    let mut g = generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras);
+    let mut g = match &b.demolition {
+        // Coming down: what stood there (which, during a redevelopment or a
+        // civic take-over, is not what the building's own fields describe),
+        // cut down to what is left, with the demolition site around it.
+        Some(d) => {
+            let extras = Extras { powered: b.powered, park: lot.park.as_ref(), demolition: Some(d.progress), neighbours: styles.neighbours(id), ..Extras::default() };
+            generate_building(lot, d.land_use, d.floors, d.tier, d.condition, d.seed, &assets.rules, &assets.palette, &extras)
+        }
+        None => generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras),
+    };
+    lights::tag_windows(&mut g, lights::slot_of(id));
     // Every building stands on its lot's levelled pad.
     nd_procgen::terrain::raise_geometry(&mut g, world.lot_pad(b.lot));
     geo.append(&g);
@@ -1166,7 +1329,7 @@ fn sync_buildings(
                     state.building_chunks.insert(id, k);
                 }
             }
-            let entities = spawn_geometry(&mut commands, &mut meshes, &mats, &geo, BuildingTag);
+            let entities = spawn_building_geometry(&mut commands, &mut meshes, &mats, &geo);
             state.chunks.insert(k, ChunkMeshes { entities, triangles: geo.triangle_count() });
         }
     }
@@ -1281,28 +1444,164 @@ fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
     a + d * t
 }
 
+// ── vehicles: generated per variant (`nd_procgen::vehicles`) ─────────────────
+
+/// Marker for delivery robots on the pavement.
+#[derive(Component)]
+pub struct BotTag;
+
+/// One variant's meshes, built once and shared by every vehicle that looks
+/// the same.
+#[derive(Clone)]
+struct VariantMeshes {
+    body: Handle<Mesh>,
+    lights: Handle<Mesh>,
+    fx: Option<Handle<Mesh>>,
+}
+
+/// Vehicle drawing state: the variant cache, the materials, and the
+/// entities beyond the body and lamps of each car (underglow, trails) and
+/// of each robot.
+#[derive(Resource, Default)]
+struct VehicleRender {
+    variants: HashMap<nd_sim::VehicleModel, VariantMeshes>,
+    /// Paint finish by class: cheap (rough), mid, expensive (glossy).
+    finish: Vec<Handle<StandardMaterial>>,
+    /// Additive, unlit: underglow and light trails; scaled by night.
+    fx: Option<Handle<StandardMaterial>>,
+    night_key: Option<i32>,
+    car_fx: HashMap<CarId, Entity>,
+    trails: HashMap<CarId, (Entity, Handle<Mesh>, std::collections::VecDeque<Vec3>)>,
+    bots: HashMap<nd_sim::BotId, Vec<Entity>>,
+}
+
+impl VehicleRender {
+    fn ensure_materials(&mut self, materials: &mut Assets<StandardMaterial>) {
+        if self.fx.is_some() {
+            return;
+        }
+        for (rough, metal, refl) in [(0.85, 0.15, 0.3), (0.45, 0.4, 0.5), (0.18, 0.75, 0.7)] {
+            self.finish.push(materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: rough, metallic: metal, reflectance: refl, ..default() }));
+        }
+        self.fx = Some(materials.add(StandardMaterial { base_color: Color::BLACK, unlit: true, alpha_mode: AlphaMode::Add, ..default() }));
+    }
+
+    fn variant(&mut self, meshes: &mut Assets<Mesh>, model: &nd_sim::VehicleModel) -> VariantMeshes {
+        let key = nd_procgen::vehicles::variant_key(model);
+        self.variants
+            .entry(key)
+            .or_insert_with(|| {
+                let v = nd_procgen::vehicle_mesh(&key);
+                VariantMeshes { body: meshes.add(shared_mesh(&v.body, true)), lights: meshes.add(shared_mesh(&v.lights, false)), fx: (!v.fx.is_empty()).then(|| meshes.add(shared_mesh(&v.fx, false))) }
+            })
+            .clone()
+    }
+}
+
+/// What a car is drawn as. Cars from saves before vehicle models (and
+/// test spawns) carry the default; trucks and buses among them are given
+/// their kind's body, and the old colour becomes the paint.
+fn car_model(car: &nd_sim::Car) -> nd_sim::VehicleModel {
+    use nd_sim::{BodyType, Livery, VehicleModel};
+    let mut m = car.model;
+    if m == VehicleModel::default() {
+        m.paint = car.color % nd_sim::vehicle::PAINTS;
+        if car.cargo.is_some() {
+            m.body = BodyType::PanelTruck;
+        }
+    }
+    if car.bus.is_some() && !m.body.is_bus() {
+        m = VehicleModel { body: BodyType::BubbleBus, livery: Livery::Transit, paint: car.color % nd_sim::vehicle::PAINTS, ..Default::default() };
+    }
+    m
+}
+
+/// How dark it is, `0` (day) to `1` (night), from the same sun the
+/// lighting uses.
+fn night_strength(sim: &Sim, lighting: &Lighting) -> f32 {
+    let t = if lighting.follow_clock { sim.world.clock.day_fraction() } else { (lighting.hour / 24.0).rem_euclid(1.0) };
+    let elev = ((t - 0.25) * std::f32::consts::TAU).sin();
+    1.0 - smoothstep(-0.12, 0.30, elev)
+}
+
+/// Points kept in an Akira bike's light trail.
+const TRAIL_POINTS: usize = 28;
+
+/// A light-trail ribbon through `pts` (oldest first): two red streaks at
+/// tail-lamp height fading out behind the bike.
+fn trail_mesh(pts: &std::collections::VecDeque<Vec3>) -> MeshData {
+    let mut m = MeshData::default();
+    let n = pts.len();
+    for i in 1..n {
+        let (a, b) = (pts[i - 1], pts[i]);
+        let d = b - a;
+        if d.length_squared() < 1e-4 {
+            continue;
+        }
+        let side = Vec3::new(-d.z, 0.0, d.x).normalize_or_zero() * 0.12;
+        let fade = |k: usize| (k as f32 / n as f32).powf(1.5);
+        let ca = [2.6 * fade(i - 1), 0.12 * fade(i - 1), 0.08 * fade(i - 1), 1.0];
+        let cb = [2.6 * fade(i), 0.12 * fade(i), 0.08 * fade(i), 1.0];
+        for s in [1.0f32, -1.0] {
+            let o = side * s;
+            let (y0, y1) = (0.62f32, 0.78f32);
+            let base = m.positions.len() as u32;
+            for (p, c) in [(a + o + Vec3::Y * y0, ca), (b + o + Vec3::Y * y0, cb), (b + o + Vec3::Y * y1, cb), (a + o + Vec3::Y * y1, ca)] {
+                m.positions.push(p.to_array());
+                m.normals.push([0.0, 1.0, 0.0]);
+                m.colors.push(c);
+                m.uvs.push([0.0, 0.0]);
+            }
+            // Both faces: a ribbon is seen from either side.
+            m.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3, base, base + 2, base + 1, base, base + 3, base + 2]);
+        }
+    }
+    m
+}
+
+#[allow(clippy::too_many_arguments)]
 fn sync_cars(
     mut commands: Commands,
     sim: Res<Sim>,
     mats: Res<Materials>,
     selection: Res<Selection>,
+    lighting: Res<Lighting>,
     mut state: ResMut<RenderState>,
+    mut vr: ResMut<VehicleRender>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut q: Query<&mut Transform, With<CarTag>>,
 ) {
+    vr.ensure_materials(&mut materials);
+    let fx_mat = vr.fx.clone().expect("vehicle materials");
+    // Underglow and trails only show after dark.
+    let night = night_strength(&sim, &lighting);
+    let night_key = (night * 32.0).round() as i32;
+    if vr.night_key != Some(night_key) {
+        vr.night_key = Some(night_key);
+        if let Some(mut m) = materials.get_mut(&fx_mat) {
+            let k = night_key as f32 / 32.0;
+            m.base_color = Color::linear_rgb(k, k, k);
+        }
+    }
     let traffic = &sim.world.traffic;
     for (id, car) in traffic.cars.iter() {
         if !state.cars.contains_key(&id) {
-            let body_mat = mats.car_bodies[car.color as usize % mats.car_bodies.len().max(1)].clone();
-            let mesh = if car.bus.is_some() {
-                mats.bus_body_mesh.clone()
-            } else if car.cargo.is_some() {
-                mats.truck_body_mesh.clone()
-            } else {
-                mats.car_body_mesh.clone()
-            };
-            let body = commands.spawn((Mesh3d(mesh), MeshMaterial3d(body_mat), Transform::IDENTITY, NotShadowCaster, CarTag)).id();
-            let lights = commands.spawn((Mesh3d(mats.car_lights_mesh.clone()), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag)).id();
+            let model = car_model(car);
+            let v = vr.variant(&mut meshes, &model);
+            let finish = vr.finish[model.class as usize].clone();
+            let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), Transform::IDENTITY, NotShadowCaster, CarTag)).id();
+            let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag)).id();
             state.cars.insert(id, [body, lights]);
+            if let Some(fx) = v.fx {
+                let e = commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag)).id();
+                vr.car_fx.insert(id, e);
+            }
+            if model.body == nd_sim::BodyType::AkiraBike {
+                let h = meshes.add(shared_mesh(&MeshData::default(), false));
+                let e = commands.spawn((Mesh3d(h.clone()), MeshMaterial3d(fx_mat.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, bevy::camera::visibility::NoFrustumCulling)).id();
+                vr.trails.insert(id, (e, h, std::collections::VecDeque::new()));
+            }
         }
     }
     let gone: Vec<CarId> = state.cars.keys().copied().filter(|id| !traffic.cars.contains_key(*id)).collect();
@@ -1313,6 +1612,16 @@ fn sync_cars(
             }
         }
     }
+    let gone_fx: Vec<CarId> = vr.car_fx.keys().chain(vr.trails.keys()).copied().filter(|id| !traffic.cars.contains_key(*id)).collect();
+    for id in gone_fx {
+        if let Some(e) = vr.car_fx.remove(&id) {
+            commands.entity(e).despawn();
+        }
+        if let Some((e, h, _)) = vr.trails.remove(&id) {
+            commands.entity(e).despawn();
+            meshes.remove(&h);
+        }
+    }
     let f = sim.frac();
     for (id, ents) in state.cars.iter() {
         let Some(car) = traffic.cars.get(*id) else { continue };
@@ -1321,9 +1630,87 @@ fn sync_cars(
         // Lifted when selected, whether through its driver or, for a bus or
         // truck with nobody to inspect, as the vehicle itself.
         let selected = *selection == Selection::Citizen(car.citizen) || *selection == Selection::Car(*id);
+        let fx = vr.car_fx.get(id).copied();
+        for e in ents.iter().copied().chain(fx) {
+            if let Ok(mut tf) = q.get_mut(e) {
+                tf.translation = Vec3::new(pos.x, 0.05 + if selected { 0.4 } else { 0.0 }, pos.y);
+                tf.rotation = Quat::from_rotation_y(-heading);
+            }
+        }
+    }
+    // Akira light trails: the tail lamp's recent path, in world space.
+    if !vr.trails.is_empty() {
+        let w = &sim.world;
+        let ids: Vec<CarId> = vr.trails.keys().copied().collect();
+        for id in ids {
+            let Some(car) = traffic.cars.get(id) else { continue };
+            let pos = car.prev_pos.lerp(car.pos, f);
+            let heading = lerp_angle(car.prev_heading, car.heading, f);
+            let tail = pos - SVec2::new(heading.cos(), heading.sin()) * 1.4;
+            let p = Vec3::new(tail.x, 0.05 + w.surface_height(tail), tail.y);
+            let Some((_, h, pts)) = vr.trails.get_mut(&id) else { continue };
+            if pts.back().is_some_and(|b| b.distance(p) < 0.35) {
+                continue;
+            }
+            if pts.back().is_some_and(|b| b.distance(p) > 25.0) {
+                pts.clear();
+            }
+            pts.push_back(p);
+            while pts.len() > TRAIL_POINTS {
+                pts.pop_front();
+            }
+            let mesh = trail_mesh(pts);
+            if let Some(mut m) = meshes.get_mut(&*h) {
+                *m = shared_mesh(&mesh, false);
+            }
+        }
+    }
+}
+
+/// Pavement delivery robots: a small generated mesh per shop livery,
+/// interpolated between ticks like walkers.
+#[allow(clippy::too_many_arguments)]
+fn sync_bots(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    mats: Res<Materials>,
+    mut vr: ResMut<VehicleRender>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut q: Query<&mut Transform, With<BotTag>>,
+) {
+    vr.ensure_materials(&mut materials);
+    let w = &sim.world;
+    for (id, bot) in w.bots.bots.iter() {
+        if vr.bots.contains_key(&id) {
+            continue;
+        }
+        let livery = w.buildings.get(bot.shop).and_then(|b| b.business.as_ref()).map_or(nd_sim::Livery::None, |bz| nd_sim::Livery::for_business(bz.kind));
+        let model = nd_sim::VehicleModel { body: nd_sim::BodyType::DeliveryBot, livery, ..Default::default() };
+        let v = vr.variant(&mut meshes, &model);
+        let mut ents = vec![
+            commands.spawn((Mesh3d(v.body), MeshMaterial3d(vr.finish[1].clone()), Transform::IDENTITY, NotShadowCaster, BotTag, Grounded)).id(),
+            commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, BotTag, Grounded)).id(),
+        ];
+        if let (Some(fx), Some(mat)) = (v.fx, vr.fx.clone()) {
+            ents.push(commands.spawn((Mesh3d(fx), MeshMaterial3d(mat), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, BotTag, Grounded)).id());
+        }
+        vr.bots.insert(id, ents);
+    }
+    let gone: Vec<nd_sim::BotId> = vr.bots.keys().copied().filter(|id| !w.bots.bots.contains_key(*id)).collect();
+    for id in gone {
+        for e in vr.bots.remove(&id).unwrap_or_default() {
+            commands.entity(e).despawn();
+        }
+    }
+    let f = sim.frac();
+    for (id, ents) in vr.bots.iter() {
+        let Some(bot) = w.bots.bots.get(*id) else { continue };
+        let pos = if bot.prev_pos.distance(bot.pos) < 30.0 { bot.prev_pos.lerp(bot.pos, f) } else { bot.pos };
+        let heading = lerp_angle(bot.prev_heading, bot.heading, f);
         for e in ents {
             if let Ok(mut tf) = q.get_mut(*e) {
-                tf.translation = Vec3::new(pos.x, 0.05 + if selected { 0.4 } else { 0.0 }, pos.y);
+                tf.translation = Vec3::new(pos.x, 0.16, pos.y);
                 tf.rotation = Quat::from_rotation_y(-heading);
             }
         }
@@ -1497,44 +1884,6 @@ fn sync_transit(
     spawn_geometry(&mut commands, &mut meshes, &mats, &geo, TransitTag);
 }
 
-/// Brown haze over coal plants: stacked translucent layers that read as a
-/// dome from above and as murk from the street.
-fn sync_haze(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    sim: Res<Sim>,
-    mats: Res<Materials>,
-    mut state: ResMut<RenderState>,
-    existing: Query<Entity, With<HazeTag>>,
-) {
-    let w = &sim.world;
-    let coal: Vec<SVec2> = w.buildings.values().filter(|b| b.plant.map_or(false, |k| k.makes_haze())).filter_map(|b| w.lots.get(b.lot).map(|l| l.center)).collect();
-    let signature = coal.iter().fold(coal.len(), |acc, c| acc ^ ((c.x * 7.0 + c.y * 13.0) as i64 as usize));
-    if signature == state.haze_signature {
-        return;
-    }
-    state.haze_signature = signature;
-    despawn_all(&mut commands, &existing);
-    if coal.is_empty() {
-        return;
-    }
-    let mut mesh = MeshData::default();
-    for c in coal {
-        // Four thin layers, light enough that the ground still reads through;
-        // the plume drifts the upper layers a little downwind.
-        for (k, (h, r)) in [(22.0f32, 95.0f32), (42.0, 135.0), (66.0, 165.0), (92.0, 185.0)].iter().enumerate() {
-            let drift = SVec2::new(18.0, 8.0) * k as f32;
-            let poly: Vec<SVec2> = (0..28).map(|i| {
-                let a = i as f32 / 28.0 * std::f32::consts::TAU;
-                c + drift + SVec2::new(a.cos(), a.sin()) * *r
-            }).collect();
-            let alpha = 0.075 - k as f32 * 0.012;
-            mesh.ground_polygon(&poly, *h, [0.52, 0.40, 0.27, alpha]);
-        }
-    }
-    spawn_overlay(&mut commands, &mut meshes, &mats, &mesh, HazeTag);
-}
-
 fn preview_width(kind: nd_sim::roads::RoadKind, fwd: u8, bwd: u8) -> f32 {
     match kind {
         nd_sim::roads::RoadKind::Path => nd_sim::roads::PATH_HALF_WIDTH * 2.0,
@@ -1565,6 +1914,7 @@ fn update_daylight(
     mats: Res<Materials>,
     mut state: ResMut<RenderState>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut window_materials: ResMut<Assets<lights::WindowMaterial>>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut clear: ResMut<ClearColor>,
     mut sun: Query<(&mut DirectionalLight, &mut Transform), With<SunTag>>,
@@ -1617,6 +1967,9 @@ fn update_daylight(
         let glow_k = glow_key as f32 / 64.0;
         if let Some(mut m) = materials.get_mut(&mats.glow()) {
             m.base_color = Color::linear_rgb(glow_k, glow_k, glow_k);
+        }
+        if let Some(mut m) = window_materials.get_mut(&mats.windows) {
+            m.base.base_color = Color::linear_rgb(glow_k, glow_k, glow_k);
         }
     }
 }
@@ -1760,7 +2113,7 @@ fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res
 fn lift_spawned(
     sim: Res<Sim>,
     mut meshes: ResMut<Assets<Mesh>>,
-    q: Query<&Mesh3d, Or<(Added<RoadsTag>, Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>)>>,
+    q: Query<&Mesh3d, Or<(Added<RoadsTag>, Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>, Added<LaneArrowsTag>)>>,
     mut signals: Query<&mut Transform, Added<SignalTag>>,
 ) {
     let w = &sim.world;

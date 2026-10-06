@@ -10,6 +10,7 @@ impl World {
     pub(super) fn daily_businesses(&mut self) {
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         let mut demolish = Vec::new();
+        let mut cover = [(0.0f32, 0.0f32); BusinessKind::COUNT];
         for bid in ids {
             if self.buildings[bid].construction.is_some() {
                 continue;
@@ -39,7 +40,16 @@ impl World {
             if !publicly_funded {
                 bz.money -= wage_bill;
                 bz.spend_today += wage_bill;
+                // The market's reading of this kind of business, past the
+                // first day's stocking up: what it took against what it
+                // paid out, wages and inputs.
+                if bz.days_open >= 1 {
+                    let e = &mut cover[kind.index()];
+                    e.0 += revenue;
+                    e.1 += bz.spend_today;
+                }
             }
+            bz.days_open = bz.days_open.saturating_add(1);
             bz.revenue_today = 0.0;
             bz.spend_today = 0.0;
             if bz.money < -300.0 && !publicly_funded {
@@ -63,6 +73,11 @@ impl World {
                 self.economy.market.closed_total += 1;
                 self.events.push(SimEvent::BusinessClosed(bid));
                 self.events.push(SimEvent::BuildingChanged(bid));
+            }
+        }
+        for (i, (takings, costs)) in cover.into_iter().enumerate() {
+            if let Some(kind) = BusinessKind::ALL.get(i) {
+                self.economy.record_cover(*kind, takings, costs);
             }
         }
         for bid in demolish {
@@ -556,7 +571,13 @@ impl World {
         })();
         match route {
             Some((route, s0, s1)) => {
-                self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, color);
+                // The lorry by the goods and the seller's trade, in its livery.
+                let seller = self.buildings.get(cargo.from).and_then(|b| b.business.as_ref()).map(|bz| bz.kind);
+                let to_site = self.buildings.get(cargo.to).is_some_and(|b| b.construction.is_some());
+                let long_haul = matches!(origin, TruckOrigin::CityEdge) || seller.is_none();
+                let id = self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, color);
+                let mut rng = crate::vehicle::model_rng(self.clock.tick, slotmap::Key::data(&id).as_ffi());
+                self.traffic.cars[id].model = crate::vehicle::VehicleModel::for_cargo(cargo.resource, seller, to_site, long_haul, &mut rng);
             }
             None => self.deliver(cargo),
         }

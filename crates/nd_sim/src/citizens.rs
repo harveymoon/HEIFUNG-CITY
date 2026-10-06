@@ -212,6 +212,10 @@ pub struct Citizen {
     pub owns_car: bool,
     #[serde(default)]
     pub owns_bike: bool,
+    /// The car (or motorcycle, scooter) owned, chosen at purchase; `None`
+    /// on old saves, where it is derived from the seed on the first drive.
+    #[serde(default)]
+    pub vehicle: Option<crate::vehicle::VehicleModel>,
     /// Where the car is parked while the citizen is inside somewhere.
     #[serde(default)]
     pub parked_at: Option<BuildingId>,
@@ -361,6 +365,7 @@ mod tests {
             mode: TravelMode::Walk,
             owns_car: false,
             owns_bike: false,
+            vehicle: None,
             parked_at: None,
             transit: None,
             activity: Activity::Idle,

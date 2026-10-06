@@ -71,12 +71,23 @@ Citizens are rendered from their simulated positions every frame.
 - **Roads**: a node/segment graph with per-direction lane counts. New polylines snap to
   existing nodes and split segments they cross. Walking uses A* over nodes.
 - **Lanes and traffic**: every segment becomes offset lanes per direction, shortened at
-  junctions. Each junction gets connector lanes with lane discipline on multi-lane
-  approaches: only the leftmost lane turns left, only the rightmost turns right, every
-  lane goes straight on lane for lane (U-turns only at dead ends). Junctions with three
-  or more approaches run an actuated signal: opposite approaches share a green (left
-  turns yield to oncoming traffic), a green with nobody left to serve is cut after 5 s
-  when another approach waits, and phases nobody waits for are skipped. Cars path over
+  junctions. Each junction gets connector lanes for every movement (U-turns only at
+  dead ends); lane arrows on each arriving street permit some of them. Defaults follow
+  the lane count and the turning counts, revised every 600 traffic seconds: two lanes
+  are a left-only lane plus straight-and-right (a shared left-and-straight lane while
+  under 30% turn left), three or more get a left lane, straight lanes and a
+  straight-and-right lane, with a second left lane when over 40% turn left. The player
+  can set arrows per approach (`lane_use`); highway ramps keep every lane open. Arrows
+  are painted before the stop line. Junctions with three or more approaches run an
+  actuated signal: opposite approaches share a green (left turns yield to oncoming
+  traffic), a green with nobody left to serve is cut after 5 s when another approach
+  waits, and phases nobody waits for are skipped. A green opens with a protected left
+  arrow (up to 7 s, oncoming red) when left turners queue in a lane of their own and
+  their head has been yielding, or when any left turner has yielded 20 s; a starving
+  left also ends an endless green. On a one-lane approach a car going straight or right
+  behind a waiting left turner pulls onto the shoulder at low speed, passes on the
+  right, stops short of the crossing if it must, and merges back; on wider approaches
+  followers change lanes out from behind the turner. Cars path over
   the lane graph with A* (lane changes are steps between parallel lanes; every vehicle
   on a lane adds to its cost, so routes spread out), follow the intelligent driver
   model, queue behind each other and stop at red lights. They move into the lane their
@@ -110,6 +121,19 @@ Citizens are rendered from their simulated positions every frame.
 - **Buildings**: a vacant lot develops when demand for its land use is high. Floors
   and capacity (homes or jobs) depend on land use and a seed. Geometry is generated
   from the seed, so a save stays small.
+- **Homes and jobs in balance**: demand counts working-age adults only (children and
+  retirees neither work nor look for work). The job gap (adults the empty and coming homes
+  will bring, at the town's adults per household, against permanent and coming jobs) and
+  adult unemployment pull commercial and industrial land; joblessness and a coming job
+  shortage hold back the residential trickle (people already waiting for a home still pull).
+  With no job free and over 5% of adults out of work, households mostly stop arriving.
+- **Which business opens**: a new commercial, industrial or entertainment building opens as
+  what the market can carry, not a random kind. Each kind has a cover (takings over wages
+  and inputs, smoothed daily, first day skipped); more of a kind are built only while its
+  cover is at least 1.05 and its shelves hold under 0.75 days of output. Grocers are built to
+  the town's need (two thirds of everyone's groceries); a kind new to town is tried once, in a
+  building of at most 20 jobs; offices (publicly funded) take the rest. A building
+  redeveloped while its business loses money reopens as what the market wants.
 - **Citizens**: immigrate when homes are free, take jobs when available, and move
   along roads between home, work, shops and nightlife. Each has a personality seed,
   a memory stream and a current thought.
@@ -200,6 +224,32 @@ Citizens are rendered from their simulated positions every frame.
   complete at once. Housing and job pressure are damped by what is already under
   construction. Sites are drawn as hoarding, raft, shell to the last full floor, scaffold,
   a tower crane from six floors, pallets, cabin, mixer and hi-vis workers.
+- **Demolition** (`buildings::Demolition`): nothing vanishes either. Whatever pulls a
+  building down (a bulldozed zone, road works, a shop shut for a week, a take-over, a
+  redevelopment) turns it into a demolition site: residents, households and staff leave
+  at once, and a wrecking crew (2 + floors/3 jobs) takes it down over (0.9 + 0.1 × floors)
+  days, clamped to 1–3. A pure demolition also carries a placeholder `Construction`, so
+  every system that skips building sites skips it, and nothing can be built on the lot
+  until it is clear. Dump trucks leave as the rubble piles up (2 + floors/3 loads, at most
+  10, spread evenly, the last before hand-over), as real trucks on the roads to the
+  nearest freight yard or off the map's edge; the work does not wait for them. When the
+  zone itself was erased the site keeps a parcel of the usual size where the building
+  stood, removed with the rubble; when a road now runs over the spot, or another building
+  holds it, the building is cleared at once (a demolition site already there takes on
+  its rubble). Car parks, plants, depots, stations, yards and docks appear at once and
+  go at once, as do sites still at groundworks.
+  Redevelopment is demolition then construction: the building keeps its id, its fields
+  describe the successor, the `Demolition` keeps the old look; materials are ordered only
+  when the lot is clear. A civic structure placed over a grown building works from the
+  moment it is placed (specials always have) and inherits the clearing: its lot shows the
+  old building coming down, and the structure appears when the rubble is gone. (Making
+  the structure wait would mean gating plants, depots, stations and docks on a state they
+  never had; showing the clearing first gives the same picture without that.) Sites are
+  drawn as the real building cut down from the top (triangles above the working level are
+  dropped, those across it clipped), a raw broken slab with rebar on what is left,
+  hoarding, a high-reach excavator with a crusher at the cut (a small machine on the roof
+  and a tower crane above 26 m), rubble heaps that grow and are carted away, a dump truck
+  at the gate and the crew; the last fifth is bare earth and the last heaps.
 - **Eminent domain**: when a parcel changes shape under a building on a rebuild (area off by
   more than 12% or an outline point moved more than 3 m) the building is pulled down and
   residents remember why (`SimEvent::Expropriated`). Specials own their ground: zoned lots
@@ -275,6 +325,34 @@ Citizens are rendered from their simulated positions every frame.
   windows go dark, the people inside lose mood and say so ("The power is out again."),
   and the inspector marks it UNDERPOWERED. The treasury starts at 60,000, takes 12% of
   incomes and 5% of business revenue each day, and pays plant upkeep and imported power.
+- **Services and emergencies** (`nd_sim::services`, `world/services.rs`): police, fire, health,
+  schools and a 911 dispatch centre, plus monuments and stadiums, placed by the player in three
+  tiers (cost x0.5 / 1 / 2.2, upkeep x0.6 / 1 / 1.8, jobs half / base / double, radius x0.7 / 1 / 1.4,
+  vehicles 1 / 2 / 4). Coverage is by road: a multi-source Dijkstra over street nodes from every
+  station with its radius as budget; a lot is fully covered with 200 m of budget left, fading to none.
+  Hourly, each building may catch fire (by tier, condition, land use, x(1 - 0.7 fire coverage)), an
+  occupied one may suffer a crime (by unemployment, land value, night, x(1 - 0.75 police coverage)),
+  and each citizen indoors may fall ill (by age, hunger, x(1 - 0.5 health coverage)). Someone present
+  calls it in after a few minutes; the dispatcher (a worker at a dispatch centre who is at the desk:
+  2 min; staffed but nobody in: 8; no centre: 20, the regional line) sends the nearest idle unit whose
+  station has the crew; the vehicle is a car of the traffic model, drives over the lanes, parks on
+  scene, works (engines knock fire down 0.012 a minute; crimes 25 min, patients 12), resolves (fire
+  out, arrest 75 % if quick else 40 %, patient driven to the nearest hospital with a free bed for
+  6-24 h) and drives home. Unanswered crimes go unsolved after 3 h, patients recover alone after 8 h;
+  unanswered fires grow, jump to buildings on touching lots (4 % x intensity per neighbour every 20 min) and burn a building down at condition 0.08,
+  leaving rubble for two days. Workers near a school earn up to 12 % more; school-age children whose home a school covers go there at 07:30 until it closes at 16:00. Stations, hospitals and dispatch work three round-the-clock shifts; the sick are weighted by age (small children and the old most); a hospital stay bills the household 60, the city covering what it cannot pay. Stadiums host a game on
+  30-60 % of evenings; fans within 1.6 km buy a ticket and go. Upkeep is booked at midnight under
+  `service upkeep`, tickets under `tickets`. A placed special buys out whatever grew on its lot.
+  With no crewed station of the kind but a dispatcher at a dispatch centre, a unit comes from out of
+  town 45 minutes after dispatch and is billed (fire 1500, police 600, ambulance 800); with no
+  dispatcher nobody asks. Arrests go to the nearest jail with room for 2-5 days; without one the
+  suspect is held at a police station for 6 hours and let go early (`released_early_total`), so the
+  same people offend again. `World::report_crime(kind, at, suspect, victim)` is the hook for crimes
+  decided elsewhere; `Services::arrests_of`, `jail_occupancy`, `SimEvent::Arrested/Released` report
+  back. Every incident keeps a record (place, crime kind, people and their roles and where they were
+  taken, unit and whether it came from out of town, fee, fire damage per building), the last 500
+  resolved ones on file, shown live in the Emergencies window and by the `incidents` API command.
+  Services draw from their own random stream so the rest of the simulation is not perturbed.
 - **Economy stats**: demand per land use, Gini of incomes, class counts, rents per
   tier, displaced, emigrated and priced-out counters, plus market stats: businesses,
   deals, imports, exports, meals sold, hungry citizens, closures, and the average
@@ -295,7 +373,13 @@ Citizens are rendered from their simulated positions every frame.
   onto it, raises buildings to their pad and movers to `surface_height` (decks over water). Water cuts
   parcels (`zoning::generate_lots_wet`); lots steeper than 0.2 are unusable. A one-way street of three
   or more lanes is a highway: 25 m/s, no frontage, grade-separated (crossings make no junction, only
-  dropped ends join, so ramps merge with priority to the mainline). Two carriageways cross the map at
+  dropped ends join, so ramps merge with priority to the mainline). Embankments and cuttings
+  slope no steeper than 1 in 2.5 (the blend to the terrain widens with the height, up to 160 m).
+  Where any other way crosses the highway 4.5 m or more above or below it, the lower way runs
+  through an underpass (`landscape::Underpass`): the ground is cut to its level for the width
+  of its corridor plus 8 m along the whole embankment, the upper way crosses on a short deck
+  (a registered deck, so its traffic stays up), and abutment and wing walls with coping
+  follow the embankment down either side. Two carriageways cross the map at
   y = 420 from the start; through cars enter at the map edge and leave at the far one. Docks
   (`nd_sim::ports`) stand on the shore with a pier and a street stub, take over grown lots, and work
   once their street reaches the city: freighters route by water (river centrelines, tributaries
@@ -420,11 +504,40 @@ trait MindProvider {
   the HUD shows fps, meshes and triangles.
 - Citizens: small figures that walk the pavements, or ride a bike mesh when cycling; positions
   are interpolated between ticks from the previous pose so nothing jumps. Cars and trucks have wheels.
+- Vehicles (`nd_procgen::vehicles`): one parametric generator draws every road vehicle from a
+  `nd_sim::VehicleModel` (body, class, wear, tuned, livery, paint): hatchback, sedan, coupe, SUV,
+  pickup, faceted cyber-truck, box van, delivery van, panel truck, semi with a container, garbage
+  truck, a rounded driverless bubble bus (glass band all round, lidar puck, no cab) and an
+  articulated one, motorcycle, scooter, a long low red Akira bike, and the six-wheeled pavement
+  delivery robot. Bodies are side silhouettes extruded across with a narrower glass greenhouse;
+  class bends them (cheap: taller, boxy, black bumpers, rust, a primer door, a dead headlamp;
+  expensive: lower, raked, chrome, full-width light bars), tuning adds a spoiler, wide wheels, neon
+  side strips and underglow, and a fleet livery (pizza, parcels, grocery, construction, utility,
+  transit) repaints it with a stripe, a lit sign panel and a beacon. Each variant is under 600
+  triangles and built once into three meshes (lit body, glow lamps, additive night fx) that the
+  renderer caches per variant; underglow and the Akira bikes' ribbon light trails only show after
+  dark. Parked vehicles in building dressing use the same generator at low detail.
 - Mobility: one sim minute shows `traffic_seconds_per_tick` (1.5 s) of motion for everyone, so
   walking is 1.4 m/s, cycling 4.5 m/s and driving the lane speed limit on the same clock. Citizens
   own a car and/or a bike by class (poor: 12% car, 60% bike; middle: 60% / 35%; rich: 92% / 35%)
   and buy or sell them as savings allow. Walkers use the middle of the pavement, bikes the road
   shoulder, both the centre of a path; bike owners ride to parks for pleasure.
+- Who drives what (`nd_sim::vehicle`): the model is chosen at purchase from income, age and the
+  personality's hedonism. The poor run beat-up cheap cars, scooters and old motorcycles (they can
+  buy one with less in the bank, and sell it when broke); the middle hatchbacks, saloons, SUVs and
+  pickups, the young often a motorcycle; the rich coupes, SUVs and cyber-trucks, trading in an old
+  wreck. Young rich hedonists tune theirs or ride an Akira bike. Motorcycles and scooters are
+  driven in the car lanes like cars. Lorries follow their cargo (groceries and goods in delivery
+  vans, chilled food and electronics in box vans, farm goods in panel trucks, imports and parts on
+  semis, building materials in construction-liveried trucks) and wear the seller's livery; buses
+  are bubble pods, a quarter articulated; through traffic mixes cars, semis, parcel vans and
+  garbage trucks.
+- Home deliveries (`nd_sim::bots`): every quarter hour from 08:00 to 22:00 a few grocers,
+  bakeries and gadget shops sell an order to a household within 450 m that can pay (groceries
+  only to a short pantry). Where the shop and the home both have land value 0.6 or more, a
+  pavement robot carries it along the walk graph at 1.1 m/s, to the door and back (at most 40);
+  elsewhere the shop's liveried van or the bakery's scooter drives it (at most 10 on the road).
+  The sale is settled on dispatch. The report shows the robots under `bots`.
 - Every part of a building stays on its lot. Lots are concave, triangular, slivered
   and skewed, so the toolkit is defensive: `offset_poly` limits mitres to 2.5 times
   the offset and drops inward-offset vertices that leave the polygon, `fit_inside`
@@ -474,12 +587,48 @@ trait MindProvider {
   fountain with jets, bandstand with string lights, striped carousel with horses, ferris
   wheel with gondolas and a ticket booth, kiosk with café tables and parasols, flower
   beds, statue, dog run.
-- Power plants have their own styles: a coal station with a boiler hall, two stacks with
-  plumes, a coal pile and conveyor and a transformer yard; rows of tilted panels on posts;
-  white turbines with nacelles and three blades; a containment dome, hyperbolic cooling
-  towers with steam and a double fence. Coal plants get a haze: stacked translucent brown
-  discs on the overlay material that read as a dome from above and murk from the street.
-  Underpowered buildings light fewer windows (`Ctx::lit_chance` scales with `powered`).
+- Power plants have their own styles: a coal station with a boiler hall, two stacks, a
+  coal pile and conveyor and a transformer yard; rows of tilted panels on posts; a wind farm
+  of helical vertical-axis turbines; a containment dome, hyperbolic cooling towers with steam
+  and a double fence.
+- Wind farms (`buildings/power.rs`): turbines of one size (18 m gunmetal mast, 11 m rotor of
+  three graphite blades twisted a third of a turn, 3 m radius) in staggered rows 15 m apart,
+  as many as fit with 2 m between every blade tip and the lot edge (`wind_sites`, tested for
+  count growing with area and containment). The generator draws masts only
+  (`Extras::animated_rotors`); the app puts a rotor entity on each mast (`wind_turbines` gives
+  the same sites) and turns it about the vertical: still below wind 0.15, 0.6 to 4.2 rad/s
+  above, easing up and down, stopped while paused. A red cap light and cyan tip lights trace
+  the spin at night.
+- Coal smoke (`render/haze.rs`): no geometry in the plant. Each stack (`coal_stacks`) emits
+  18 camera-facing puffs with a soft generated texture that rise, drift downwind (the wind
+  direction veers slowly over days, the distance grows with wind), swell and fade over 36 s;
+  14 wide, flat puffs of brown smog lie downwind at 7 to 30 m, which is what the street sees.
+  Alpha comes from a palette of twelve steps per kind (plume at most 0.85, smog 0.38, both scaled by puff age and a soft texture), so the
+  city reads through from above; the colour darkens at night; nothing casts or receives
+  shadows. Thickness follows the plant's output: staffing times the grid's draw on supply.
+- Window lights follow occupancy (`render/lights.rs`, `nd_procgen::lights`). In the app every
+  window light is generated (`Extras::dynamic_lights`, about 92% of windows) through
+  `parts::window_light`, which ranks it by a hash of its position and lays dark glass just
+  behind it. When chunks are built, the rank and the building's slot go into the glow
+  vertices' UVs, and chunk glow is drawn with a material extension that reads the building's
+  lit share from a 256 by 256 one-byte texture and discards windows ranked above it. Four
+  times a sim hour the app counts who is in every building (awake or asleep at home, staff)
+  and writes `lit_share`: homes light a room per awake household in, fewer by day, a night
+  light when asleep, dark when out; workplaces light with the staff in and customers while
+  open, security lights when closed; buildings without homes or jobs stay lit; all of it
+  scaled by the power share. No mesh is rebuilt.
+- Map layers (`render/layers.rs`, ramps and heat grid in `nd_procgen::overlay`): land value
+  (V), traffic load (a ribbon per lane from cars per metre and speed against the limit, green
+  to magenta), traffic types (a disc under every vehicle: cars cyan, trucks orange, buses
+  green; emergency red once the sim has them), people (a heat map of everyone where they
+  are, indoors at their building), pollution and noise (plants by pollution radius,
+  industry, nightlife, traffic), the pedestrian network (P) and zoning outlines (O). L steps
+  through the heat layers one at a time; the Land window's Layers section ticks any set; a
+  legend at the bottom right shows the key of every layer that is on. The `overlay` API and
+  `map {layer: "people"}` read the same data.
+- Toolbar and sub-pane icons (`ui/icons.rs`) are painted with egui shapes: one per tool, a
+  lane plan per road preset (lane arrows, centre line, rails, path paving, ramp curve), a
+  glyph per land use in its zone colour.
 - Paths (`RoadKind::Path`): 3.2 m ways with no car lanes, drawn as paving with edge stones,
   low lamps, benches and bollards where they meet a street; they cut parcels but give no
   frontage, and a path crossing a street mid-block gets a zebra.

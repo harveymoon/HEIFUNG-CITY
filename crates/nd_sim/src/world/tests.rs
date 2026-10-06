@@ -623,12 +623,15 @@ fn road_works_pull_down_the_buildings_whose_parcels_change() {
     // Widen the road to 3+3: every parcel along it loses a strip.
     w.set_gesture(road, Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 3, lanes_bwd: 3, curved: false, kind: RoadKind::Street }, true);
     w.implement();
-    assert!(!w.buildings.contains_key(fronting), "the building fronting the widened road is gone");
+    // It comes down over the next day or so, on what is left of its parcel.
+    assert!(w.buildings.get(fronting).is_some_and(|b| b.being_demolished()), "the building fronting the widened road is coming down");
     assert!(w.buildings.contains_key(far), "a building on an untouched lot stays");
-    assert!(w.lots.values().all(|l| l.building != Some(fronting)));
     let events = w.drain_events();
     assert!(events.iter().any(|e| matches!(e, SimEvent::Expropriated(b, _) if *b == fronting)), "an expropriation event was raised: {events:?}");
-    assert!(events.iter().any(|e| matches!(e, SimEvent::BuildingRemoved(b, _) if *b == fronting)));
+    w.finish_demolition(fronting);
+    assert!(!w.buildings.contains_key(fronting), "then it is gone");
+    assert!(w.lots.values().all(|l| l.building != Some(fronting)));
+    assert!(w.drain_events().iter().any(|e| matches!(e, SimEvent::BuildingRemoved(b, _) if *b == fronting)));
     let c = &w.citizens[resident];
     assert_eq!(c.home, None);
     assert!(c.memories.iter().any(|m| m.text.contains("pulled down for the road works")), "{:?}", c.memories);
@@ -637,9 +640,13 @@ fn road_works_pull_down_the_buildings_whose_parcels_change() {
     assert!(outlines_differ(&old_outline, &w.lots[new_lot].polygon, EXPROPRIATE_AREA_TOL, EXPROPRIATE_DIST_TOL));
 
     // A footpath drawn through a built lot removes that building too.
-    let far_center = w.lots[far_lot].center;
+    // (Lot ids change with every rebuild: find the building's lot afresh.)
+    let far_center = w.lots[w.buildings[far].lot].center;
     w.add_path(&[Vec2::new(far_center.x, 380.0), Vec2::new(far_center.x, 620.0)]);
-    assert!(!w.buildings.contains_key(far), "a path through the lot takes the building");
+    assert!(w.buildings.get(far).is_none_or(|b| b.being_demolished()), "a path through the lot takes the building");
+    if w.buildings.contains_key(far) {
+        w.finish_demolition(far);
+    }
     assert!(w.lots.values().all(|l| l.building != Some(far)));
 }
 
@@ -724,7 +731,9 @@ fn stations_and_yards_never_share_ground_with_other_buildings() {
 
 #[test]
 fn cheap_buildings_on_dear_land_are_redeveloped_and_price_people_out() {
+    // No random fires here: the test is about rent, not a blaze. (services)
     let mut w = flat_world();
+    w.config.emergencies = false;
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
     w.land_value.fill(0.1);
@@ -763,19 +772,19 @@ fn cheap_buildings_on_dear_land_are_redeveloped_and_price_people_out() {
     assert!(b.rent > rent0 * 2.0, "rent rose from {rent0:.0} to {:.0}", b.rent);
     assert!(b.residents.iter().all(|c| residents.contains(c)), "no one new moved in yet");
     assert!(w.citizens.values().any(|c| c.memories.iter().any(|m| m.text.contains("rebuilt for richer tenants"))));
-    // The old tenants cannot pay the new rent and move on.
-    let rent = w.buildings[bid].rent;
-    let priced_out: Vec<CitizenId> = w.buildings[bid].residents.iter().copied().filter(|&c| w.citizens[c].income * 0.5 < rent).collect();
-    assert!(!priced_out.is_empty(), "somebody is priced out by {rent:.0}/day");
+    // Torn down, not refitted: the old tenants left when the wrecking crew
+    // came, and the new building opens at the new rent.
+    for cid in &residents {
+        assert!(w.citizens.get(*cid).map_or(true, |c| c.home != Some(bid)), "an old tenant is still there");
+    }
     for _ in 0..5 * 1440 {
         w.land_value.fill(0.95);
         fed(&mut w);
         w.tick(&mut minds);
     }
     assert!(w.citizens.values().all(|c| c.hungry_days == 0), "nobody is starving: what follows is about rent");
-    for cid in &priced_out {
-        assert!(w.citizens.get(*cid).map_or(true, |c| c.home != Some(bid)), "a priced-out tenant is still there");
-    }
+    let b = &w.buildings[bid];
+    assert!(b.construction.is_none() && b.demolition.is_none(), "the new building opened");
     assert!(w.economy.displaced_total + w.economy.emigrated_total > 0);
 }
 
@@ -1498,7 +1507,9 @@ fn a_business_that_cannot_pay_closes_goes_derelict_and_is_demolished() {
         assert!(w.buildings.contains_key(shop), "a week of grace");
     }
     w.daily_businesses();
-    assert!(!w.buildings.contains_key(shop), "then the lot is cleared");
+    assert!(w.buildings[shop].being_demolished(), "then it is pulled down");
+    w.finish_demolition(shop);
+    assert!(!w.buildings.contains_key(shop), "and the lot is cleared");
     assert!(w.lots[shop_lot].building.is_none() || !w.buildings.contains_key(w.lots[shop_lot].building.unwrap()));
 }
 
@@ -2285,4 +2296,126 @@ fn an_industrial_sub_zone_rides_on_the_stroke_and_one_undo_takes_both() {
     assert!(n > 0);
     let (_, n) = w.paint_parcels(&ids, Some(LandUse::Industrial), None);
     assert_eq!(n, 0, "without a sub-zone, already industrial parcels are left alone");
+}
+
+/// A street of homes facing a grocer, every household short of food and
+/// flush, the clock at mid-morning; land value set on every building.
+fn delivery_street(land: f32) -> (World, BuildingId) {
+    let mut w = flat_world();
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    w.add_zone(square(-150.0, 8.0, 300.0), LandUse::Residential);
+    w.add_zone(square(-150.0, -308.0, 300.0), LandUse::Commercial);
+    let shop_lot = lot_near(&w, Vec2::new(0.0, -20.0), LandUse::Commercial);
+    w.build_on(shop_lot);
+    for x in [-90.0f32, -40.0, 40.0, 90.0] {
+        let l = lot_near(&w, Vec2::new(x, 20.0), LandUse::Residential);
+        w.build_on(l);
+    }
+    finish_all(&mut w);
+    let shop = w.lots[shop_lot].building.unwrap();
+    {
+        let b = &mut w.buildings[shop];
+        let mut bz = crate::market::Business::new(crate::market::BusinessKind::Grocery, b.jobs.max(4));
+        bz.add(Resource::Groceries, 200.0);
+        b.business = Some(bz);
+    }
+    let homes: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.land_use == LandUse::Residential).map(|(id, _)| id).collect();
+    for h in homes {
+        let hid = w.households.insert(Household { members: Vec::new(), home: Some(h), money: 5000.0, groceries: 0.0, rent_stress_days: 0, moved_day: 0 });
+        w.buildings[h].households.push(hid);
+    }
+    for b in w.buildings.values_mut() {
+        b.land_value = land;
+    }
+    w.clock = crate::clock::SimClock::starting_at(0, 10, 0);
+    (w, shop)
+}
+
+#[test]
+fn delivery_bots_work_only_on_dear_streets() {
+    let (mut rich, shop) = delivery_street(0.9);
+    let stock0 = rich.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Groceries);
+    for _ in 0..20 {
+        rich.clock.tick += 15;
+        rich.dispatch_deliveries();
+    }
+    assert!(!rich.bots.bots.is_empty(), "robots carry orders on a dear street");
+    assert!(rich.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Groceries) < stock0, "orders come off the shelves");
+    assert!(rich.households.values().any(|h| h.groceries > 0.0), "and into a pantry");
+    // They walk to the door and back, then park.
+    let mut minds = IdleMind;
+    let delivered0 = rich.bots.delivered_today;
+    for _ in 0..300 {
+        rich.tick(&mut minds);
+    }
+    assert!(rich.bots.delivered_today > delivered0 || rich.clock.minute_of_day() == 0, "bots reach the door");
+    let max_lv = rich.bots.bots.values().map(|b| rich.buildings[b.shop].land_value.min(rich.buildings[b.home].land_value)).fold(1.0, f32::min);
+    assert!(rich.bots.bots.is_empty() || max_lv >= crate::bots::BOT_LAND_VALUE);
+    // A save keeps them.
+    let back = World::from_ron(&rich.to_ron().unwrap()).unwrap();
+    assert_eq!(back.bots.bots.len(), rich.bots.bots.len());
+
+    let (mut poor, _) = delivery_street(0.2);
+    for _ in 0..20 {
+        poor.clock.tick += 15;
+        poor.dispatch_deliveries();
+    }
+    assert!(poor.bots.bots.is_empty(), "no robots on cheap streets");
+    assert!(poor.bots.van_orders_today > 0, "a van brings the shopping instead");
+    assert!(poor.traffic.cars.values().any(|c| c.model.livery == crate::vehicle::Livery::Grocery), "in the grocer's livery");
+}
+
+#[test]
+fn owners_drive_what_their_income_and_age_buy_and_saves_keep_it() {
+    use crate::vehicle::{BodyType, VehicleClass, VehicleModel};
+    let mut w = World::new(WorldConfig::default());
+    for i in -1..=1 {
+        let c = i as f32 * 200.0;
+        w.add_road(&[Vec2::new(-500.0, c), Vec2::new(500.0, c)], 1, 1);
+        w.add_road(&[Vec2::new(c, -500.0), Vec2::new(c, 500.0)], 1, 1);
+    }
+    w.add_zone(square(-190.0, -190.0, 180.0), LandUse::Residential);
+    w.add_zone(square(10.0, 10.0, 180.0), LandUse::Commercial);
+    let mut minds = IdleMind;
+    for _ in 0..(24 * 60) {
+        w.tick(&mut minds);
+    }
+    finish_all(&mut w);
+    for _ in 0..(12 * 60) {
+        w.tick(&mut minds);
+    }
+    assert!(!w.citizens.is_empty());
+    // Every owner has a model, chosen by class.
+    for c in w.citizens.values().filter(|c| c.owns_car) {
+        let m = c.vehicle.expect("an owner has a vehicle");
+        match c.class() {
+            Tier::Low => assert_eq!(m.class, VehicleClass::Cheap),
+            Tier::High => assert_ne!(m.class, VehicleClass::Cheap),
+            _ => {}
+        }
+    }
+    // A driven car looks like the owner's vehicle.
+    let mut checked = false;
+    for _ in 0..(2 * 24 * 60) {
+        w.tick(&mut minds);
+        if let Some(car) = w.traffic.cars.values().find(|c| w.citizens.contains_key(c.citizen)) {
+            assert_eq!(Some(car.model), w.citizens[car.citizen].vehicle);
+            checked = true;
+            break;
+        }
+    }
+    assert!(checked, "someone drove");
+    // Old saves: an owner without a model gets one from the seed, the same
+    // each time.
+    let c = w.citizens.keys().next().unwrap();
+    let (seed, income, age) = (w.citizens[c].seed, w.citizens[c].income, w.citizens[c].age);
+    assert_eq!(VehicleModel::fallback(seed, income, age), VehicleModel::fallback(seed, income, age));
+    // Save and load keep models on citizens and cars.
+    let tuned = VehicleModel { body: BodyType::AkiraBike, class: VehicleClass::Expensive, ..Default::default() };
+    w.citizens[c].vehicle = Some(tuned);
+    let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+    assert_eq!(back.citizens[c].vehicle, Some(tuned));
+    for (id, car) in w.traffic.cars.iter() {
+        assert_eq!(back.traffic.cars[id].model, car.model);
+    }
 }

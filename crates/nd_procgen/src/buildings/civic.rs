@@ -229,21 +229,20 @@ pub fn monument(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let plaza = yard(g, c, 0.5, Paving, mul(pal.paving, 1.2));
     let center = poly_center(&c.poly);
     let r = (inradius(&c.poly) * 0.28).clamp(1.5, 6.0);
-    let h = rng.random_range(35.0..70.0);
-    let sides = *[3usize, 4, 5, 6].choose(rng).unwrap_or(&4);
+    let sides = *[5usize, 6, 8].choose(rng).unwrap_or(&6);
     let stone = mul(pal.stone, 1.6);
-    // Stepped base, tapered spire, glow rings.
+    // Stepped memorial base and a broad faceted glass crown with a lit
+    // girdle: no needle obelisk.
     extrude(g, f, Stone, &ngon(center.x, center.y, r * 2.2, sides * 2, 0.3), 0.0, 1.2, stone);
     extrude(g, f, Stone, &ngon(center.x, center.y, r * 1.6, sides * 2, 0.3), 1.2, 2.4, stone);
-    let base = ngon(center.x, center.y, r, sides, 0.0);
-    loft(g, f, Panel, &base, &scale_poly(&base, 0.08), 2.4, 2.4 + h, mul(pick(rng, &pal.panel), 1.1));
-    let rings = (h / 9.0) as i32;
-    for k in 1..rings {
-        let t = k as f32 / rings as f32;
-        let rr = r * (1.0 - 0.92 * t) + 0.08;
-        extrude(g, f, Glow, &ngon(center.x, center.y, rr, sides, 0.0), 2.4 + t * h, 2.4 + t * h + 0.4, mul(pal.window_cold, 0.8));
-    }
-    g.part(Glow).boxed(f.at2(center, 2.4 + h + 0.4), Vec3::splat(0.6), 0.0, rgba(pal.aviation_light));
+    extrude(g, f, Stone, &ngon(center.x, center.y, r * 1.2, sides, 0.0), 2.4, 3.6, mul(stone, 1.05));
+    let girdle = ngon(center.x, center.y, r * 1.3, sides, 0.0);
+    let glass = mul(pick(rng, &pal.glass), 1.2);
+    let hh = r * rng.random_range(1.2..1.8);
+    loft(g, f, Glass, &ngon(center.x, center.y, r * 0.7, sides, 0.3), &girdle, 3.6, 3.6 + hh * 0.5, glass);
+    loft(g, f, Glass, &girdle, &ngon(center.x, center.y, r * 0.5, sides, 0.3), 3.6 + hh * 0.5, 3.6 + hh, mul(glass, 1.1));
+    extrude(g, f, Glow, &ngon(center.x, center.y, r * 1.32, sides, 0.0), 3.6 + hh * 0.5 - 0.15, 3.6 + hh * 0.5 + 0.15, mul(pal.window_cold, 0.9));
+    g.part(Glow).boxed(f.at2(center, 3.6 + hh + 0.3), Vec3::new(r * 0.6, 0.3, r * 0.6), 0.0, rgba(pal.lamp));
     // Reflecting pool in front, pylons, trees in a grid, benches, uplights.
     let front = c.front_face(&c.poly);
     let pp = front.at(0.0, -(inradius(&c.poly) * 0.5));

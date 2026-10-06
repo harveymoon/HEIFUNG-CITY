@@ -12,6 +12,8 @@
 //! - `buses`: depots, routes, stops and the bus loop
 //! - `trains`: stations, yards, rail links and trains
 //! - `power`: plants and power allocation
+//! - `services`: police, fire, health, schools, dispatch, attractions,
+//!   emergencies and the vehicles that answer them
 //! - `water`: the landscape hooks: road heights, bridges, the built ground,
 //!   the highway and its through traffic, ports, ferries and ships
 //! - `tests`: the world-level tests
@@ -25,6 +27,7 @@ mod plan;
 mod industry_bridge;
 pub use plan::{ProjectInfo, ProjectPreview};
 mod power;
+mod services;
 #[cfg(test)]
 mod tests;
 mod trains;
@@ -116,6 +119,10 @@ pub struct WorldConfig {
     pub development_interval: u64,
     /// Upper bound on buildings started per development interval.
     pub max_builds_per_interval: usize,
+    /// Fires, crimes and illness roll every hour (`world/services.rs`).
+    /// Tests about other systems turn it off so a random fire cannot take
+    /// their building away.
+    pub emergencies: bool,
     /// The landscape a new world is generated with. After a load this
     /// mirrors `World::landscape.params`.
     pub landscape: LandscapeParams,
@@ -148,6 +155,7 @@ impl Default for WorldConfig {
             immigration_interval: 30,
             development_interval: 20,
             max_builds_per_interval: 2,
+            emergencies: true,
             landscape: LandscapeParams::default(),
         };
         c.derive_speeds();
@@ -247,6 +255,9 @@ pub struct World {
     #[serde(default)]
     pub facilities: SlotMap<FacilityId, Facility>,
     pub economy: Economy,
+    /// City services, emergencies and their vehicles (`world/services.rs`).
+    #[serde(default)]
+    pub services: crate::services::Services,
     pub land_value: LandValue,
     #[serde(skip)]
     land_value_work: LandValueWork,
@@ -292,6 +303,9 @@ pub struct World {
     /// Metres of bridge already paid for.
     #[serde(default)]
     pub bridge_metres: f32,
+    /// Pavement delivery robots and the day's home-delivery counts.
+    #[serde(default)]
+    pub bots: crate::bots::Bots,
 }
 
 impl World {
@@ -331,6 +345,7 @@ impl World {
             rail: Rail::default(),
             facilities: SlotMap::with_key(),
             economy,
+            services: crate::services::Services::default(),
             land_value_work: LandValueWork::default(),
             events: Vec::new(),
             next_seed: 1,
@@ -347,6 +362,7 @@ impl World {
             road_z: Vec::new(),
             ground: Ground::default(),
             bridge_metres: 0.0,
+            bots: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -537,7 +553,7 @@ impl World {
         let near_floors: u32 = self
             .buildings
             .values()
-            .filter(|b| b.lot != lot_id && b.land_use != LandUse::Park && !b.is_parking() && b.plant.is_none() && !b.depot && b.rail.is_none())
+            .filter(|b| b.lot != lot_id && b.land_use != LandUse::Park && !b.is_parking() && b.plant.is_none() && !b.depot && b.rail.is_none() && b.service.is_none())
             .filter_map(|b| self.lots.get(b.lot).map(|l| (b.floors as u32, l.center)))
             .filter(|(_, c)| c.distance(center) <= DENSITY_RADIUS)
             .map(|(f, _)| f)
@@ -582,6 +598,8 @@ impl World {
         let tick = self.clock.tick;
         if self.clock.minute_of_day() == 0 {
             self.events.push(SimEvent::NewDay(self.clock.day()));
+            // Services settle their upkeep before the books close.
+            self.daily_services();
             self.daily_update();
         }
         // Periodic work is staggered so no tick carries more than one heavy
@@ -609,16 +627,29 @@ impl World {
         if tick % 120 == 90 {
             self.job_search();
         }
+        // Fires, crimes and illness roll hourly at :50, clear of the rest.
+        if tick % 60 == 50 {
+            self.hourly_services();
+        }
         for (id, decision) in minds.poll() {
             if self.citizens.contains_key(id) {
                 self.apply_decision(id, decision);
             }
         }
         self.step_traffic();
+        self.step_services();
         self.step_through_traffic();
         self.step_transit();
         self.step_rail();
         self.step_ships();
+        if self.clock.minute_of_day() == 0 {
+            self.bots.delivered_today = 0;
+            self.bots.van_orders_today = 0;
+        }
+        if tick % crate::bots::ROUND_TICKS == 11 {
+            self.dispatch_deliveries();
+        }
+        self.step_bots();
         self.step_citizens(minds);
         // Every system that moves people has run: lay the breadcrumbs.
         for c in self.citizens.values_mut() {
@@ -629,6 +660,11 @@ impl World {
     fn step_traffic(&mut self) {
         let arrived = self.traffic.step(self.config.traffic_seconds_per_tick, self.config.traffic_substeps);
         for car_id in arrived {
+            // Fire engines, police cars and ambulances: services handle them.
+            if self.services.unit_of_car(car_id).is_some() {
+                self.unit_car_arrived(car_id);
+                continue;
+            }
             if self.traffic.cars.get(car_id).is_some_and(|c| c.bus.is_some()) {
                 self.bus_arrived(car_id);
                 continue;

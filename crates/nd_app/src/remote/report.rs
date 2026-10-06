@@ -1,4 +1,4 @@
-//! Whole-city review for the remote API: `report` (overview, people,
+﻿//! Whole-city review for the remote API: `report` (overview, people,
 //! economy, land, services, alerts) and the ranked alert list that
 //! `status` also quotes.
 //!
@@ -20,9 +20,9 @@ use nd_sim::transit::TransitLeg;
 use nd_sim::{Activity, Building, BuildingId, BusinessKind, LandUse, Resource, Tier, TrainKind, Vec2 as SVec2, World};
 use serde_json::{json, Map, Value};
 
-use super::view::{key_str, plant_name, rail_name, round, v2};
+use super::view::{building_name, key_str, plant_name, rail_name, round, tier_key, v2};
 
-// ── thresholds ──────────────────────────────────────────────────────────────
+// â”€â”€ thresholds â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // Named so a reader of the docs and of a reply can tell what "hungry" or
 // "stuck" means; they mirror the sim's own cut-offs where it has one.
@@ -128,7 +128,7 @@ fn centroid(points: &[SVec2]) -> (Value, Value) {
     (v2(c), json!(spread.round()))
 }
 
-// ── report ──────────────────────────────────────────────────────────────────
+// â”€â”€ report â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 pub fn report(w: &World, sections: &[String]) -> Result<Value, String> {
     for s in sections {
@@ -160,7 +160,7 @@ pub fn report(w: &World, sections: &[String]) -> Result<Value, String> {
     Ok(Value::Object(out))
 }
 
-fn ledger_map(values: &[f32; 9]) -> Value {
+fn ledger_map(values: &[f32]) -> Value {
     let mut m = Map::new();
     for f in Flow::ALL {
         let x = values[f.index()];
@@ -177,9 +177,14 @@ fn demand(w: &World) -> Value {
 
 fn overview(w: &World, alerts: &[Alert]) -> Value {
     let e = &w.economy;
-    let (mut built, mut sites, mut derelict) = (0, 0, 0);
+    let (mut built, mut sites, mut derelict, mut demolishing) = (0, 0, 0, 0);
     for b in w.buildings.values() {
-        if b.construction.is_some() {
+        if b.demolition.is_some() {
+            demolishing += 1;
+        }
+        if b.being_demolished() {
+            // Counted above only.
+        } else if b.construction.is_some() {
             sites += 1;
         } else {
             built += 1;
@@ -196,7 +201,7 @@ fn overview(w: &World, alerts: &[Alert]) -> Value {
         "population": w.citizens.len(), "households": w.households.len(), "households_housed": housed,
         "homes": { "total": e.homes_total, "free": e.homes_free, "being_built": e.homes_building },
         "jobs": { "total": e.jobs_total, "filled": e.jobs_total - e.jobs_free.min(e.jobs_total), "free": e.jobs_free, "being_built": e.jobs_building },
-        "buildings": { "built": built, "under_construction": sites, "derelict": derelict, "vacant_lots": vacant, "unusable_lots": unusable, "lots_total": w.lots.len() },
+        "buildings": { "built": built, "under_construction": sites, "being_demolished": demolishing, "derelict": derelict, "vacant_lots": vacant, "unusable_lots": unusable, "lots_total": w.lots.len() },
         "treasury": round(e.treasury),
         "net_yesterday": round(e.ledger.yesterday.iter().sum()), "net_today_so_far": round(e.ledger.today.iter().sum()),
         "land_value_avg": round(e.avg_land_value), "gini": round(e.gini),
@@ -221,7 +226,7 @@ fn memory_reason(text: &str) -> String {
         }
     }
     let words: Vec<&str> = text.split_whitespace().take(4).collect();
-    format!("{}…", words.join(" "))
+    format!("{}â€¦", words.join(" "))
 }
 
 /// Households: how many, their sizes, life stages, shared money and rent.
@@ -341,6 +346,9 @@ fn people(w: &World) -> Value {
         "employment": {
             "employed": employed, "employed_in_businesses": in_business, "employed_on_building_sites": on_sites,
             "unemployed_on_gig_income": n - employed, "unemployment_share": share(n - employed, n), "jobs_free": e.jobs_free,
+            // Children and retirees do not look for work; these count adults of working age.
+            "working_age_adults": e.working_age, "unemployed_adults": e.unemployed,
+            "adult_unemployment_share": share(e.unemployed as usize, e.working_age as usize),
         },
         "housing": { "housed": housed, "unhoused": n - housed, "waiting_immigrants": e.waiting_immigrants, "homes_free": e.homes_free },
         "households": households(w),
@@ -598,7 +606,7 @@ fn services(w: &World) -> Value {
     let e = &w.economy;
     let p = &e.power;
     let day = w.clock.day_fraction();
-    // Plants share the load pro rata: output = available × min(1, demand / supply).
+    // Plants share the load pro rata: output = available Ã— min(1, demand / supply).
     let dispatch = if p.supply_mw > 0.0 { (p.demand_mw / p.supply_mw).min(1.0) } else { 0.0 };
     let plants: Vec<Value> = w
         .buildings
@@ -687,6 +695,7 @@ fn services(w: &World) -> Value {
     let t = &e.transit;
     let r = &w.rail.stats;
     json!({
+        "emergency": emergency(w),
         "power": {
             "supply_mw": round(p.supply_mw), "demand_mw": round(p.demand_mw), "imported_mw": round(p.imported_mw), "served_share": round(p.served),
             "unpowered_buildings": p.unpowered_buildings, "brownout_hours_today": p.brownout_hours_today, "upkeep_per_day": round(p.upkeep_today),
@@ -714,7 +723,74 @@ fn services(w: &World) -> Value {
             "waiting_at_kerb": kerb, "gridlocks": w.traffic.gridlocks().len(),
             "lanes": w.traffic.net.lanes.len(), "intersections": w.traffic.net.intersections.len(), "signals": w.traffic.net.intersections.iter().filter(|i| i.signalized).count(),
             "walk_trips_today": e.walk_trips_today,
+            "left_turn_wait_mean_s": round(w.traffic.left_wait_stats().0), "left_turn_wait_max_s": round(w.traffic.left_wait_stats().1),
+            "left_turns_measured": w.traffic.left_wait_stats().2, "protected_left_arrows_now": w.traffic.net.intersections.iter().filter(|i| i.timer < i.arrow).count(),
+            "passing_left_turners_now": w.traffic.cars.values().filter(|c| c.passing).count(), "lane_use_set_by_player": w.traffic.lane_use.len(),
+            "models": nd_sim::bots::fleet_counts(w),
         },
+        "bots": {
+            "active": w.bots.bots.len(), "delivering": w.bots.bots.values().filter(|b| !b.returning).count(), "delivered_today": w.bots.delivered_today,
+            "vans_on_road": nd_sim::Bots::vans(w), "van_orders_today": w.bots.van_orders_today,
+            "rule": format!("shops deliver to homes within {} m; by pavement robot where shop and home both have land value >= {}, else by van", nd_sim::bots::DELIVERY_RANGE, nd_sim::bots::BOT_LAND_VALUE),
+        },
+    })
+}
+
+/// City services and emergencies: coverage, stations and their units,
+/// incidents today and under way, response times, hospital beds, stadiums.
+fn emergency(w: &World) -> Value {
+    use nd_sim::services::{IncidentKind, ServiceKind};
+    let s = &w.services;
+    let st = &s.stats;
+    let stations: Vec<Value> = w
+        .buildings
+        .iter()
+        .filter_map(|(id, b)| b.service.map(|sv| (id, b, sv)))
+        .map(|(id, b, sv)| {
+            let units: Vec<&nd_sim::Unit> = s.units.values().filter(|u| u.station == id).collect();
+            json!({
+                "id": key_str(id), "name": b.name, "kind": sv.kind.key(), "tier": tier_key(sv.tier), "label": sv.kind.tier_label(sv.tier),
+                "workers": b.workers.len(), "jobs": b.jobs, "radius_m": sv.kind.radius(sv.tier), "upkeep_per_day": round(sv.kind.upkeep_per_day(sv.tier)),
+                "units": units.len(), "units_crewed": w.crewed_units(id), "units_busy": units.iter().filter(|u| u.busy()).count(),
+                "beds_used": if sv.kind == ServiceKind::Health { json!(s.admissions.iter().filter(|a| a.hospital == id).count()) } else { Value::Null },
+                "capacity": sv.kind.capacity(sv.tier), "pos": building_pos(w, b).map_or(Value::Null, v2),
+            })
+        })
+        .collect();
+    let active: Vec<Value> = s
+        .active()
+        .map(|i| {
+            json!({
+                "id": i.id, "kind": i.kind.label(), "stage": i.stage.label(), "building": key_str(i.building), "name": building_name(w, Some(i.building)),
+                "pos": v2(i.pos), "minutes_since_start": w.clock.tick.saturating_sub(i.started), "intensity": if i.kind == IncidentKind::Fire { json!(round(i.intensity)) } else { Value::Null },
+                "unit": i.unit.map(key_str), "dispatcher": i.dispatcher.map(key_str),
+            })
+        })
+        .collect();
+    let recent: Vec<Value> = s
+        .incidents
+        .iter()
+        .rev()
+        .filter(|i| !i.active())
+        .take(10)
+        .map(|i| json!({ "id": i.id, "kind": i.kind.label(), "outcome": i.outcome.map(|o| o.label()), "name": building_name(w, Some(i.building)), "response_min": i.response_ticks() }))
+        .collect();
+    let (dispatcher, delay) = w.dispatcher();
+    let cov = |k: usize| round(st.coverage[k] * 100.0);
+    json!({
+        "coverage_pct_of_homes": { "police": cov(0), "fire": cov(1), "health": cov(2), "school": cov(3) },
+        "incidents_today": { "fire": st.incidents_today[0], "crime": st.incidents_today[1], "medical": st.incidents_today[2] },
+        "resolved_today": st.resolved_today.iter().sum::<u32>(), "unanswered_today": st.unanswered_today, "arrests_today": st.arrests_today,
+        "avg_response_min": round(st.avg_response()), "avg_response_min_yesterday": round(st.avg_response_yesterday),
+        "units": st.units, "units_busy": st.units_busy, "fires_burning": st.fires_burning, "burned_down_total": st.burned_down_total,
+        "waiting_for_ambulance": st.waiting_for_ambulance, "in_hospital": st.in_hospital,
+        "dispatch": { "dispatcher_on_duty": dispatcher.map(key_str), "minutes_to_dispatch": delay },
+        "stadium_crowd_today": st.stadium_crowd_today, "tickets_today": round(st.tickets_today), "stadium_events_tonight": s.events_today.len(),
+        "upkeep_per_day": round(st.upkeep_today), "education_wage_bonus_today": round(st.education_bonus_today), "pupils_today": st.pupils_today,
+        "jailed": st.jailed, "held_at_stations": st.held_at_stations, "released_early_total": st.released_early_total,
+        "out_of_town_calls_today": st.out_of_town_calls_today, "out_of_town_fees_today": round(st.out_of_town_fees_today),
+        "hospital_bills_paid_today": round(st.bills_paid_today), "hospital_bills_covered_by_city_today": round(st.bills_covered_today),
+        "stations": stations, "active_incidents": active, "recent": recent,
     })
 }
 
@@ -731,7 +807,7 @@ pub fn route_length(r: &nd_sim::BusRoute) -> f32 {
         .sum()
 }
 
-// ── alerts ──────────────────────────────────────────────────────────────────
+// â”€â”€ alerts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// One concrete problem: how many, where (the centroid of the cases and
 /// their mean distance from it), and ids to `inspect`.
@@ -847,7 +923,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
             if b.is_derelict() {
                 derelict.add(k.clone(), at);
             }
-        } else if b.construction.as_ref().is_some_and(|c| c.waiting_for_materials()) {
+        } else if b.demolition.is_none() && b.construction.as_ref().is_some_and(|c| c.waiting_for_materials()) {
             sites.add(k.clone(), at);
         }
         if b.powered < UNPOWERED_BELOW && nd_sim::power::demand_mw(b) > 0.0 {
@@ -900,7 +976,8 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     food_staff.message = format!("{} open groceries/bakeries are below {:.0}% staffing", food_staff.count, FOOD_SELLER_MIN_STAFFING * 100.0);
     food_empty.message = format!("{} open groceries/bakeries have nothing to sell", food_empty.count);
     closed.message = format!("{} businesses are closed ({} closures in total)", closed.count, e.market.closed_total);
-    broke.message = format!("{} open businesses could not pay their way recently", broke.count);
+    let open_businesses = w.buildings.values().filter(|b| b.construction.is_none() && b.business.as_ref().is_some_and(|z| !z.closed)).count();
+    broke.message = format!("{} of {open_businesses} open businesses are in the red past their overdraft (they close after 5 such days)", broke.count);
     unpowered.message = format!("{} buildings get less than {:.0}% of their power (served {:.0}% of demand)", unpowered.count, UNPOWERED_BELOW * 100.0, e.power.served * 100.0);
     crowded.message = format!("{} buildings house more people than they have homes", crowded.count);
     rail_broken.message = format!("{} stations/yards do not work: {} lack a track connection, {} a street connection", rail_broken.count, rail_missing.0, rail_missing.1);
@@ -921,13 +998,57 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     derelict.message = format!("{} buildings are derelict", derelict.count);
     vacant_demand.message = format!("{} vacant lots of high-demand land use ({}) stand empty", vacant_demand.count, high.iter().map(|lu| lu_key(*lu)).collect::<Vec<_>>().join(", "));
 
-    let mut out = vec![hungry, starving, unhoused, rent, food_staff, food_empty, closed, broke, unpowered, crowded, rail_broken, route_broken, sites, stuck, derelict, vacant_demand];
+    // Services: homes outside each service's road reach, fires, slow responses.
+    let mut uncovered: Vec<Alert> = Vec::new();
+    let homes: Vec<(BuildingId, &Building)> = w.buildings.iter().filter(|(_, b)| b.homes > 0 && b.construction.is_none()).collect();
+    if homes.len() >= 10 {
+        for (k, (kind, sev, hint)) in [
+            ("no_police_coverage", 2u8, "place a police station (Buildings > Services) near these homes; crime falls and arrests come quicker"),
+            ("no_fire_coverage", 2, "place a fire station (Buildings > Services); fires nobody fights spread and burn buildings down"),
+            ("no_health_coverage", 1, "place a clinic or hospital (Buildings > Services); the sick wait for an ambulance that may not come"),
+            ("no_school_coverage", 1, "place a school (Buildings > Services); workers near one earn more"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut a = Alert::new(kind, sev, hint);
+            for (id, b) in &homes {
+                if w.services.coverage.get(&b.lot).is_none_or(|c| c[k] < nd_sim::services::COVERED) {
+                    a.add(key_str(*id), building_pos(w, b));
+                }
+            }
+            a.message = format!("{} of {} residential buildings are outside {} coverage", a.count, homes.len(), ["police", "fire", "health", "school"][k]);
+            uncovered.push(a);
+        }
+    }
+    let mut fires = Alert::new("fires_burning", 3, "fire engines on the way show in services.emergency.active_incidents; with no fire station in reach they burn until the building is gone");
+    for i in w.services.active().filter(|i| i.kind == nd_sim::IncidentKind::Fire) {
+        fires.add(key_str(i.building), Some(i.pos));
+    }
+    fires.message = format!("{} buildings are on fire", fires.count);
+    let st = &w.services.stats;
+    if st.avg_response() > 45.0 {
+        let mut a = Alert::new("slow_emergency_response", 2, "a dispatcher on shift (911 dispatch centre with staff) and stations closer to the calls cut response times");
+        a.count = 1;
+        a.message = format!("emergency units take {:.0} minutes on average from the 911 call to arrival", st.avg_response());
+        uncovered.push(a);
+    }
+    if w.services.incidents.iter().any(|i| i.reported.is_some()) && w.dispatcher().0.is_none() {
+        let mut a = Alert::new("no_dispatcher", 2, "911 calls go to the slow regional line: place a 911 dispatch centre and let it hire");
+        a.count = 1;
+        a.message = format!("no dispatcher on duty: jobs go out {} minutes after the call", w.dispatcher().1);
+        uncovered.push(a);
+    }
+    let mut out = vec![fires, hungry, starving, unhoused, rent, food_staff, food_empty, closed, broke, unpowered, crowded, rail_broken, route_broken, sites, stuck, derelict, vacant_demand];
     // City-wide conditions with no single place.
-    let unemployed = n - w.citizens.values().filter(|c| c.work.is_some()).count();
-    if n > 0 && unemployed as f32 / n as f32 >= UNEMPLOYMENT_ALERT {
+    // Only working-age adults look for work: children and retirees are not
+    // unemployed.
+    let adults = w.citizens.values().filter(|c| c.can_work()).count();
+    let unemployed = w.citizens.values().filter(|c| c.can_work() && c.work.is_none()).count();
+    if adults > 0 && unemployed as f32 / adults as f32 >= UNEMPLOYMENT_ALERT {
         let mut a = Alert::new("high_unemployment", 2, "zone commercial or industrial; jobs_free shows whether jobs exist but are out of reach");
         a.count = unemployed;
-        a.message = format!("{:.0}% of citizens have no job ({} jobs free)", unemployed as f32 / n as f32 * 100.0, e.jobs_free);
+        a.message = format!("{:.0}% of working-age adults have no job ({unemployed} of {adults}; {} jobs free)", unemployed as f32 / adults as f32 * 100.0, e.jobs_free);
         out.push(a);
     }
     let net = e.ledger.yesterday.iter().sum::<f32>();
@@ -960,6 +1081,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
         a.message = format!("{} resources are scarce: {}", scarce.len(), scarce.join(", "));
         out.push(a);
     }
+    out.extend(uncovered);
     out.retain(|a| a.count > 0);
     out.sort_by(|a, b| b.score().total_cmp(&a.score()));
     out

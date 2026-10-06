@@ -300,6 +300,82 @@ pub fn build_water(world: &World, palette: &Palette) -> MeshData {
     mesh
 }
 
+/// Where a way crosses the highway well above or below it
+/// (`Ground::underpasses`): the upper way's deck over the cut with parapets
+/// and rails, and abutment walls either side of the lower way holding the
+/// embankment back, stepped down to the ground beyond them. The walls run
+/// from just outside the lower way's pavement to past the cut's edge, so the
+/// drawn terrain's slope into the cut is inside them.
+fn underpasses(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32; 3]) {
+    use glam::Vec3;
+    let all = &world.ground.underpasses;
+    for (i, u) in all.iter().enumerate() {
+        // Both carriageways of the highway cut the same street: its walls
+        // are drawn once, by the first.
+        let drawn = |p: Vec2| all[..i].iter().any(|o| o.under_dir.dot(u.under_dir).abs() > 0.999 && o.in_cut(p));
+        let s = u.sin_angle();
+        let opening = u.under_half_width + 0.6;
+        let back = u.cut_half_width + 8.5;
+        // The deck bears on the walls a few metres either side.
+        let reach = (opening + 4.0) / s;
+        let (a, b) = (u.at - u.over_dir * reach, u.at + u.over_dir * reach);
+        let a3 = Vec3::new(a.x, u.over_z_at(-reach) - 0.05, a.y);
+        let b3 = Vec3::new(b.x, u.over_z_at(reach) - 0.05, b.y);
+        let hw = u.over_half_width + 0.4;
+        g.part(Surface::Concrete).slab(a3, b3, hw * 2.0, 1.4, rgba(concrete));
+        let side = Vec2::new(-u.over_dir.y, u.over_dir.x) * (hw - 0.2);
+        for sgn in [1.0f32, -1.0] {
+            let off = Vec3::new(side.x * sgn, 0.0, side.y * sgn);
+            g.part(Surface::Metal).beam(a3 + off + Vec3::Y * 1.0, b3 + off + Vec3::Y * 1.0, 0.15, rgba(steel));
+            g.part(Surface::Concrete).slab(a3 + off + Vec3::Y * 0.45, b3 + off + Vec3::Y * 0.45, 0.35, 0.5, rgba(mul(concrete, 0.9)));
+        }
+        // Abutment and wing walls along the lower way, their tops following
+        // the embankment beyond them down to its toe.
+        let across = Vec2::new(-u.under_dir.y, u.under_dir.x);
+        let step = 3.0;
+        let steps = (u.cut_half_length / step).ceil() as i32;
+        let wall = rgba(mul(concrete, 0.78));
+        let coping = rgba(mul(concrete, 0.7));
+        for sgn in [1.0f32, -1.0] {
+            let at = |along: f32, lat: f32, y: f32| {
+                let p = u.at + u.under_dir * along + across * sgn * lat;
+                Vec3::new(p.x, y, p.y)
+            };
+            // Wall top at each station: the highest ground the wall holds
+            // back there, never above the upper way's carriageway.
+            let top = |along: f32| {
+                let base = u.at + u.under_dir * along;
+                let ground = [0.5f32, 0.75, 1.0]
+                    .iter()
+                    .map(|f| opening + (back - opening) * f)
+                    .chain([back + 4.0])
+                    .map(|o| world.ground_height(base + across * sgn * o))
+                    .fold(f32::MIN, f32::max);
+                let mid = base + across * sgn * (opening + back) * 0.5;
+                ground.min(u.over_z_at((mid - u.at).dot(u.over_dir)) - 0.15).max(u.under_z_at(along))
+            };
+            for k in -steps..steps {
+                let (a0, a1) = (k as f32 * step, (k + 1) as f32 * step);
+                if drawn(u.at + u.under_dir * (a0 + a1) * 0.5) {
+                    continue;
+                }
+                let (f0, f1) = (u.under_z_at(a0), u.under_z_at(a1));
+                let (t0, t1) = (top(a0), top(a1));
+                if (t0 - f0).max(t1 - f1) < 0.4 {
+                    continue;
+                }
+                let (b0, b1) = (f0 - 0.6, f1 - 0.6);
+                let out = Vec3::new(across.x * sgn, 0.0, across.y * sgn);
+                let m = g.part(Surface::Concrete);
+                // Face to the lower way, back into the fill, coping on top.
+                m.quad_facing([at(a0, opening, b0), at(a1, opening, b1), at(a1, opening, t1), at(a0, opening, t0)], -out, wall);
+                m.quad_facing([at(a0, back, b0), at(a1, back, b1), at(a1, back, t1), at(a0, back, t0)], out, wall);
+                m.quad_facing([at(a0, opening, t0), at(a1, opening, t1), at(a1, back, t1), at(a0, back, t0)], Vec3::Y, coping);
+            }
+        }
+    }
+}
+
 /// Everything built in or over the water, and the hot ground: bridge decks
 /// with railings and piers, dock piers with piles, bollards and the crane
 /// boom, weirs where hydro plants take their water, tidal turbine
@@ -344,6 +420,7 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
             g.part(Surface::Concrete).boxed(Vec3::new(p.x, (top + bed) * 0.5, p.y), Vec3::new(2.2, top - bed, hw * 1.6), -yaw, rgba(mul(concrete, 0.8)));
         }
     }
+    underpasses(world, &mut g, concrete, steel);
     // Dock piers.
     for port in world.ports.ports.values() {
         let (_, width) = port.kind.pier();
