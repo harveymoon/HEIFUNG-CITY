@@ -105,6 +105,10 @@ impl WalkGraph {
             }
         }
         for (sid, seg) in roads.alive_segments() {
+            // No one walks in a road tunnel.
+            if seg.tunnel {
+                continue;
+            }
             let (a, b) = roads.segment_points(sid);
             let len = a.distance(b).max(1e-3);
             let d = (b - a) / len;

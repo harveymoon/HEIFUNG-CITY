@@ -40,7 +40,7 @@ impl World {
     /// Convenience for scripts and tests: lay track right away.
     pub fn add_rail(&mut self, points: &[Vec2]) -> GestureId {
         let had_project = self.project.take();
-        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Rail });
+        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Rail, elevation: Vec::new() });
         self.implement();
         self.project = had_project;
         id
@@ -387,7 +387,7 @@ impl World {
             }
         }
         let footprints: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect();
-        parcels.retain(|p| !footprints.iter().any(|fp| point_in_polygon(p.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.98), &p.polygon)));
+        parcels.retain(|p| !footprints.iter().any(|fp| point_in_polygon(p.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.995), &p.polygon)));
         parcels
     }
 
@@ -634,7 +634,7 @@ impl World {
     /// Convenience for scripts and tests: build a road right away.
     pub fn add_road(&mut self, points: &[Vec2], lanes_fwd: u8, lanes_bwd: u8) -> GestureId {
         let had_project = self.project.take();
-        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd, lanes_bwd, curved: false, kind: RoadKind::Street });
+        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd, lanes_bwd, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
         self.implement();
         self.project = had_project;
         id
@@ -643,7 +643,7 @@ impl World {
     /// Convenience for scripts and tests: a walking and cycling path right away.
     pub fn add_path(&mut self, points: &[Vec2]) -> GestureId {
         let had_project = self.project.take();
-        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Path });
+        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Path, elevation: Vec::new() });
         self.implement();
         self.project = had_project;
         id
@@ -668,21 +668,26 @@ impl World {
         let mut roads = RoadNetwork::default();
         // Roundabouts cut the roads entering them and join them to their
         // rings; the rings go down first so the arms snap onto them.
-        let (built, rings) = self.master.built_roads();
+        let (built, rings) = self.master.built_roads_levels();
         roads.rings = rings;
-        for (_, points, fwd, bwd, kind) in built {
+        for (_, drawn, levels, fwd, bwd, kind) in built {
             // Track is eased into smooth curves and tangential switches.
-            let points = if kind == RoadKind::Rail { rail::smooth_track(&points, &roads) } else { points };
+            let points = if kind == RoadKind::Rail { rail::smooth_track(&drawn, &roads) } else { drawn.clone() };
             // An end at the map edge runs on out of sight: a way to elsewhere.
             let points = crate::landscape::reach_elsewhere(&points);
+            // Ramps meet the highway tangentially: a lead point before a
+            // merge (after a diverge) brings the last piece alongside.
+            let points = if crate::roads::is_ramp_spec(kind, fwd, bwd) { crate::roads::ease_ramp_ends(&points, fwd > 0, &roads) } else { points };
             // Breaks at every waterline, so a bridge is exactly the span.
             let points = self.split_at_water(&points);
+            // Levels follow the points wherever they moved or multiplied.
+            let levels = if points == drawn { levels } else { crate::plan::carry_levels(&drawn, &levels, &points) };
             let (fwd, bwd) = match kind {
                 RoadKind::Street if fwd == 0 && bwd == 0 => (1, 1),
                 RoadKind::Street => (fwd, bwd),
                 RoadKind::Path | RoadKind::Rail => (0, 0),
             };
-            roads.add_polyline_kind(&points, fwd, bwd, kind);
+            roads.add_polyline_levels(&points, &levels, fwd, bwd, kind);
         }
         roads.version = self.roads.version + 1;
         self.roads = roads;
@@ -715,7 +720,7 @@ impl World {
         // A lot whose centre is under a footprint, or whose outline crosses
         // one, would share ground with the station or yard.
         let footprints: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect();
-        self.lots.retain(|_, l| !footprints.iter().any(|fp| point_in_polygon(l.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.98), &l.polygon)));
+        self.lots.retain(|_, l| !footprints.iter().any(|fp| point_in_polygon(l.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.995), &l.polygon)));
         let fids: Vec<FacilityId> = self.facilities.keys().collect();
         for fid in fids {
             // A facility with no street anywhere to front gets no lot this
@@ -1078,7 +1083,7 @@ impl LotGrid {
 
 /// A polygon scaled about its centroid, to test overlap without counting
 /// outlines that merely touch.
-fn shrink_about_centroid(poly: &[Vec2], factor: f32) -> Vec<Vec2> {
+pub(super) fn shrink_about_centroid(poly: &[Vec2], factor: f32) -> Vec<Vec2> {
     let c = crate::zoning::polygon_centroid(poly);
     poly.iter().map(|&p| c + (p - c) * factor).collect()
 }

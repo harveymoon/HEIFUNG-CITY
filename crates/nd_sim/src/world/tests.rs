@@ -56,12 +56,12 @@ fn projects_undo_redo_and_keep_buildings_on_implement() {
     w.build_on(lot);
     let building = w.lots[lot].building.unwrap();
 
-    let id = w.add_gesture(Gesture::Road { points: vec![Vec2::new(300.0, -300.0), Vec2::new(300.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street });
+    let id = w.add_gesture(Gesture::Road { points: vec![Vec2::new(300.0, -300.0), Vec2::new(300.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
     assert_eq!(w.preview().planned_roads.len(), 1);
     assert!(w.undo());
     assert_eq!(w.preview().planned_roads.len(), 0);
     assert!(w.redo());
-    w.set_gesture(id, Gesture::Road { points: vec![Vec2::new(320.0, -300.0), Vec2::new(320.0, 300.0)], lanes_fwd: 2, lanes_bwd: 2, curved: false, kind: RoadKind::Street }, true);
+    w.set_gesture(id, Gesture::Road { points: vec![Vec2::new(320.0, -300.0), Vec2::new(320.0, 300.0)], lanes_fwd: 2, lanes_bwd: 2, curved: false, kind: RoadKind::Street, elevation: Vec::new() }, true);
     w.implement();
     assert!(!w.has_project());
     assert_eq!(w.master.gestures.len(), 4, "two roads, a zone and the trunk line");
@@ -580,7 +580,7 @@ fn road_works_pull_down_the_buildings_whose_parcels_change() {
     w.drain_events();
 
     // Widen the road to 3+3: every parcel along it loses a strip.
-    w.set_gesture(road, Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 3, lanes_bwd: 3, curved: false, kind: RoadKind::Street }, true);
+    w.set_gesture(road, Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 3, lanes_bwd: 3, curved: false, kind: RoadKind::Street, elevation: Vec::new() }, true);
     w.implement();
     // It comes down over the next day or so, on what is left of its parcel.
     assert!(w.buildings.get(fronting).is_some_and(|b| b.being_demolished()), "the building fronting the widened road is coming down");
@@ -659,7 +659,9 @@ fn stations_and_yards_never_share_ground_with_other_buildings() {
             continue;
         }
         assert!(!point_in_polygon(l.center, &fp), "a lot centre under the yard: {:?}", l.center);
-        assert!(!polygons_overlap(&fp, &l.polygon), "a lot crossing the yard: {:?}", l.polygon);
+        // As the rebuild judges it: a sliver along the edge where the
+        // parcel cuts fall is not a crossing.
+        assert!(!polygons_overlap(&plan::shrink_about_centroid(&fp, 0.995), &l.polygon), "a lot crossing the yard: {:?}", l.polygon);
     }
     // Nothing ever gets built on that ground: force development onto
     // every lot and let the city develop on its own for a while.
@@ -2028,7 +2030,7 @@ fn low_income_demand_builds_low_tier_homes() {
 // ── planning: projects, pre-cut parcels, the zone brush ─────────────────
 
 fn street(x0: f32, y0: f32, x1: f32, y1: f32) -> Gesture {
-    Gesture::Road { points: vec![Vec2::new(x0, y0), Vec2::new(x1, y1)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street }
+    Gesture::Road { points: vec![Vec2::new(x0, y0), Vec2::new(x1, y1)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() }
 }
 
 #[test]
@@ -2038,13 +2040,13 @@ fn several_projects_keep_their_own_history_and_implement_in_turn() {
     // Project A: a new street and a widened main road.
     let a = w.new_project(Some("Docks"));
     let a_street = w.add_gesture(street(100.0, -300.0, 100.0, 300.0));
-    w.set_gesture(main_road, Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 2, lanes_bwd: 2, curved: false, kind: RoadKind::Street }, true);
+    w.set_gesture(main_road, Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 2, lanes_bwd: 2, curved: false, kind: RoadKind::Street, elevation: Vec::new() }, true);
     // Project B: another street, and the main road changed differently.
     let b = w.new_project(None);
     assert_ne!(a, b);
     assert_eq!(w.project.as_ref().unwrap().id, b, "a new project becomes the active one");
     let b_street = w.add_gesture(street(-100.0, -300.0, -100.0, 300.0));
-    w.set_gesture(main_road, Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 3, lanes_bwd: 3, curved: false, kind: RoadKind::Street }, true);
+    w.set_gesture(main_road, Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 3, lanes_bwd: 3, curved: false, kind: RoadKind::Street, elevation: Vec::new() }, true);
     let list = w.projects();
     assert_eq!(list.len(), 2);
     assert_eq!(list.iter().find(|i| i.id == a).unwrap().name, "Docks");
@@ -2238,7 +2240,7 @@ fn painted_parcels_keep_their_zone_through_rebuilds() {
     // The road widened under them reshapes the parcels: the keys are found
     // again by their old centres and the zone carries over, while the
     // building whose parcel changed shape is pulled down.
-    w.set_gesture(road, Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 3, lanes_bwd: 3, curved: false, kind: RoadKind::Street }, true);
+    w.set_gesture(road, Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 3, lanes_bwd: 3, curved: false, kind: RoadKind::Street, elevation: Vec::new() }, true);
     w.implement();
     assert!(!w.buildings.contains_key(b), "eminent domain still applies");
     let still = homes.iter().filter(|(k, _)| w.parcels.find(k).is_some_and(|i| w.parcels.parcels[i].land_use == Some(LandUse::Residential))).count();

@@ -3,7 +3,7 @@
 //! traffic, and the docks with their ships.
 
 use super::*;
-use crate::landscape::{BRIDGE_CLEARANCE, HIGHWAY_HALF_GAP, HIGHWAY_LANES, HIGHWAY_Y, MAX_LOT_SLOPE, WATER_LEVEL};
+use crate::landscape::{BRIDGE_CLEARANCE, HIGHWAY_HALF_GAP, HIGHWAY_LANES, HIGHWAY_Y, MAX_LOT_SLOPE, UNDERPASS_CLEARANCE, WATER_LEVEL};
 use crate::ports::{self, Port, PortId, PortKind, Ship, ShipKind};
 use crate::zoning::WaterMask;
 
@@ -19,6 +19,64 @@ pub const MAX_THROUGH_CARS: usize = 100;
 pub const THROUGH_CHANCE: f64 = 0.45;
 /// How far a bridge deck reaches onto each bank.
 const ABUTMENT: f32 = 5.0;
+
+/// Steepest grade a way of this kind keeps.
+pub fn way_grade(kind: RoadKind) -> f32 {
+    match kind {
+        RoadKind::Rail => RAIL_GRADE,
+        RoadKind::Path => PATH_GRADE,
+        RoadKind::Street => STREET_GRADE,
+    }
+}
+
+/// Ease node heights `z` to the grades of `segs` (a, b, length, grade):
+/// first every free node is brought down to within its grade of a fixed
+/// node below it (the approach to a cutting), then the low end of anything
+/// still too steep is raised (fill and embankment). Fixed nodes never move.
+fn ease_heights(z: &mut [f32], fixed: &[bool], segs: &[(usize, usize, f32, f32)]) {
+    let n = z.len();
+    if fixed.iter().any(|f| *f) {
+        let mut cap: Vec<f32> = (0..n).map(|k| if fixed[k] { z[k] } else { f32::INFINITY }).collect();
+        for _ in 0..200 {
+            let mut changed = false;
+            for &(a, b, len, grade) in segs {
+                let max = len * grade;
+                if !fixed[b] && cap[a] + max < cap[b] - 1e-3 {
+                    cap[b] = cap[a] + max;
+                    changed = true;
+                }
+                if !fixed[a] && cap[b] + max < cap[a] - 1e-3 {
+                    cap[a] = cap[b] + max;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        for k in 0..n {
+            if !fixed[k] {
+                z[k] = z[k].min(cap[k]);
+            }
+        }
+    }
+    for _ in 0..200 {
+        let mut changed = false;
+        for &(a, b, len, grade) in segs {
+            let max = len * grade;
+            if z[a] > z[b] + max + 1e-3 && !fixed[b] {
+                z[b] = z[a] - max;
+                changed = true;
+            } else if z[b] > z[a] + max + 1e-3 && !fixed[a] {
+                z[a] = z[b] - max;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
 
 impl World {
     /// Insert a vertex wherever a polyline crosses a waterline, set back a
@@ -58,15 +116,22 @@ impl World {
         out
     }
 
-    /// Flag every segment whose middle is over water.
+    /// Flag every segment whose middle is over water, and every segment
+    /// the player drew well above the ground (a viaduct: a deck too).
     pub(super) fn mark_bridges(&mut self) {
-        if self.landscape.is_flat() {
-            return;
-        }
+        let flat = self.landscape.is_flat();
         let ids: Vec<(SegmentId, Vec2, Vec2)> = self.roads.alive_segments().map(|(id, _)| (id, self.roads.segment_points(id).0, self.roads.segment_points(id).1)).collect();
         for (id, a, b) in ids {
-            let wet = [0.25, 0.5, 0.75].iter().filter(|&&t| self.landscape.is_water(a.lerp(b, t))).count();
-            self.roads.segments[id.0 as usize].bridge = wet >= 2;
+            let wet = !flat && [0.25, 0.5, 0.75].iter().filter(|&&t| self.landscape.is_water(a.lerp(b, t))).count() >= 2;
+            let seg = self.roads.segment(id);
+            let (la, lb) = (self.roads.node(seg.a).level, self.roads.node(seg.b).level);
+            let viaduct = la.max(lb) >= crate::roads::VIADUCT_LEVEL;
+            // Under the water a tunnel is still a tunnel.
+            let tunnel = la.max(lb) <= crate::roads::TUNNEL_LEVEL;
+            let s = &mut self.roads.segments[id.0 as usize];
+            s.bridge = (wet && !tunnel) || viaduct;
+            s.viaduct = viaduct && !wet;
+            s.tunnel = tunnel;
         }
     }
 
@@ -97,58 +162,151 @@ impl World {
     }
 
     /// Heights of the road nodes, then the built ground from them.
+    ///
+    /// Every node starts on the ground plus the level it was drawn at. Nodes
+    /// drawn off the ground (a viaduct, a cutting) are held there; the rest
+    /// are eased so no way is steeper than its grade: lowered towards a
+    /// cutting next to them, raised otherwise (fill and embankment). Where
+    /// two ways cross grade-separated and the upper is not clear of the
+    /// lower by `UNDERPASS_CLEARANCE` (the highway at grade with a street,
+    /// say), the upper way's vertex over the crossing is lifted until it is,
+    /// and its approaches ramp up to it.
     pub(super) fn rebuild_ground(&mut self) {
-        let n = self.roads.nodes.len();
         let land = &self.landscape;
+        let flat = land.is_flat();
+        let floor = if flat { 0.0 } else { crate::landscape::BANK_HEIGHT };
+        let roads = &self.roads;
         // Out past the map a way to elsewhere keeps the level it had at
         // the edge: the far hills are cut and filled for it.
         let edge = crate::landscape::LAND_HALF;
-        let mut z: Vec<f32> = self.roads.nodes.iter().map(|nd| land.height(nd.pos.clamp(Vec2::splat(-edge), Vec2::splat(edge))).max(if land.is_flat() { 0.0 } else { crate::landscape::BANK_HEIGHT })).collect();
-        if !land.is_flat() {
+        let mut z: Vec<f32> = roads.nodes.iter().map(|nd| land.height(nd.pos.clamp(Vec2::splat(-edge), Vec2::splat(edge))).max(floor) + nd.level).collect();
+        let mut fixed: Vec<bool> = roads.nodes.iter().map(|nd| nd.level != 0.0).collect();
+        if !flat {
             // Bridge ends stand at deck height; the approaches ramp up to them.
-            for (_, seg) in self.roads.alive_segments() {
-                if seg.bridge {
+            for (_, seg) in roads.alive_segments() {
+                if seg.bridge && !seg.viaduct {
                     let deck = WATER_LEVEL + BRIDGE_CLEARANCE;
                     for k in [seg.a.0 as usize, seg.b.0 as usize] {
                         z[k] = z[k].max(deck);
                     }
                 }
             }
-            // Raise the low end of anything steeper than its grade, until
-            // nothing is (fill and embankment, never a cut below the land).
-            let segs: Vec<(usize, usize, f32, f32)> = self
-                .roads
-                .alive_segments()
-                .map(|(id, s)| {
-                    let (a, b) = self.roads.segment_points(id);
-                    let grade = match s.kind {
-                        RoadKind::Rail => RAIL_GRADE,
-                        RoadKind::Path => PATH_GRADE,
-                        RoadKind::Street => STREET_GRADE,
-                    };
-                    (s.a.0 as usize, s.b.0 as usize, a.distance(b), grade)
-                })
-                .collect();
-            for _ in 0..60 {
-                let mut changed = false;
-                for &(a, b, len, grade) in &segs {
-                    let max = len * grade;
-                    if z[a] > z[b] + max + 1e-3 {
-                        z[b] = z[a] - max;
-                        changed = true;
-                    } else if z[b] > z[a] + max + 1e-3 {
-                        z[a] = z[b] - max;
-                        changed = true;
-                    }
+        }
+        let segs: Vec<(usize, usize, f32, f32)> = roads
+            .alive_segments()
+            .map(|(id, s)| {
+                let (a, b) = roads.segment_points(id);
+                (s.a.0 as usize, s.b.0 as usize, a.distance(b), way_grade(s.kind))
+            })
+            .collect();
+        let crossings = roads.grade_crossings();
+        let seg_z = |z: &[f32], (sid, t): (SegmentId, f32)| {
+            let s = roads.segment(sid);
+            z[s.a.0 as usize] + (z[s.b.0 as usize] - z[s.a.0 as usize]) * t
+        };
+        for _ in 0..6 {
+            ease_heights(&mut z, &fixed, &segs);
+            let mut lifted = false;
+            for c in &crossings {
+                let (zu, zl) = (seg_z(&z, c.upper), seg_z(&z, c.lower));
+                // Clear, either way up: the other way may pass over where the
+                // land carries it (a street on a hill over the highway in its
+                // valley), but not on a long fill that merely spans the gap.
+                let on_land = zl <= land.height(c.at).max(floor) + 1.0;
+                if zu - zl >= UNDERPASS_CLEARANCE - 0.01 || (on_land && zl - zu >= UNDERPASS_CLEARANCE - 0.01) {
+                    continue;
                 }
-                if !changed {
-                    break;
+                let s = roads.segment(c.upper.0);
+                let vertex = if c.upper.1 < 0.02 { Some(s.a.0 as usize) } else if c.upper.1 > 0.98 { Some(s.b.0 as usize) } else { None };
+                // Only a way at grade is lifted: one the player set at a
+                // level keeps it (the tool warns about it).
+                if let Some(k) = vertex.filter(|&k| !fixed[k]) {
+                    z[k] = zl + UNDERPASS_CLEARANCE + 0.01;
+                    fixed[k] = true;
+                    lifted = true;
+                }
+            }
+            if !lifted {
+                break;
+            }
+        }
+        // A ramp that has to climb well above the land (to the highway's
+        // embankment, onto a deck) stands on piers rather than on earth.
+        let ramps: Vec<SegmentId> = self
+            .roads
+            .alive_segments()
+            .filter(|(_, s)| !s.bridge && !s.tunnel && crate::roads::is_ramp_spec(s.kind, s.lanes_fwd, s.lanes_bwd))
+            .filter(|(_, s)| [s.a, s.b].iter().any(|&n| z[n.0 as usize] - (land.height(self.roads.node(n).pos).max(floor)) >= crate::roads::VIADUCT_LEVEL))
+            .map(|(id, _)| id)
+            .collect();
+        for id in ramps {
+            let s = &mut self.roads.segments[id.0 as usize];
+            s.bridge = true;
+            s.viaduct = true;
+        }
+        self.relief = !flat || z.iter().any(|h| h.abs() > 1e-3) || self.roads.alive_segments().any(|(_, s)| s.bridge);
+        self.road_z = z;
+        self.ground = crate::landscape::Ground::build(&self.landscape, &self.roads, &self.road_z, &self.lots, self.config.half_extent + 200.0);
+    }
+
+    /// Legs (by their first point) of a road drawn along `points` at
+    /// `levels` that rise or fall faster than its grade, counting only legs
+    /// with an end off the ground (the land's own slopes are eased as ever).
+    pub fn steep_legs(&self, points: &[Vec2], levels: &[f32], kind: RoadKind) -> Vec<usize> {
+        let land = &self.landscape;
+        let floor = if land.is_flat() { 0.0 } else { crate::landscape::BANK_HEIGHT };
+        let lv = |i: usize| levels.get(i).copied().unwrap_or(0.0);
+        let z = |i: usize| land.height(points[i]).max(floor) + lv(i);
+        let grade = way_grade(kind);
+        (0..points.len().saturating_sub(1))
+            .filter(|&i| {
+                let len = points[i].distance(points[i + 1]);
+                len >= 0.5 && (lv(i) != 0.0 || lv(i + 1) != 0.0) && (z(i + 1) - z(i)).abs() / len > grade + 1e-3
+            })
+            .collect()
+    }
+
+    /// Where the drawn road (`points` with a level each, of `kind`) would be
+    /// steeper than its grade allows, or cross another way at an awkward
+    /// height: one warning per problem, for the Road tool and the API.
+    /// Steep legs are still built: the end on the ground is raised (or
+    /// lowered) until the grade holds, which takes ground beside it.
+    pub fn road_grade_warnings(&self, points: &[Vec2], levels: &[f32], kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> Vec<String> {
+        let mut out = Vec::new();
+        if points.len() < 2 {
+            return out;
+        }
+        let land = &self.landscape;
+        let floor = if land.is_flat() { 0.0 } else { crate::landscape::BANK_HEIGHT };
+        let lv = |i: usize| levels.get(i).copied().unwrap_or(0.0);
+        let z = |i: usize| land.height(points[i]).max(floor) + lv(i);
+        let grade = way_grade(kind);
+        for i in self.steep_legs(points, levels, kind) {
+            let len = points[i].distance(points[i + 1]);
+            let g = (z(i + 1) - z(i)).abs() / len;
+            let need = (z(i + 1) - z(i)).abs() / grade;
+            out.push(format!("too steep between points {} and {}: {:.0}% over {:.0} m (at most {:.0}%; needs {:.0} m)", i + 1, i + 2, g * 100.0, len, grade * 100.0, need));
+        }
+        // Crossings at a height that is neither a junction nor a flyover.
+        let highway = crate::roads::is_highway_spec(kind, lanes_fwd, lanes_bwd);
+        for i in 0..points.len() - 1 {
+            let (a, b) = (points[i], points[i + 1]);
+            for sid in self.roads.segments_in_box(a.min(b), a.max(b)) {
+                let (p0, p1) = self.roads.segment_points(sid);
+                let Some((t, u)) = crate::roads::segment_intersection(a, b, p0, p1) else { continue };
+                let s = self.roads.segment(sid);
+                let mine = lv(i) + (lv(i + 1) - lv(i)) * t;
+                let theirs = self.roads.segment_level(sid, u);
+                let gap = (mine - theirs).abs();
+                if !crate::roads::grade_separated(highway, mine, s.is_highway(), theirs) && gap >= 1.0 {
+                    out.push(format!("meets a road {gap:.0} m below or above it at grade: raise or lower it {:.0} m more to pass over or under", crate::roads::GRADE_SEPARATION - gap));
+                } else if crate::roads::grade_separated(highway, mine, s.is_highway(), theirs) && gap > 0.0 && gap < UNDERPASS_CLEARANCE && (mine != 0.0 && theirs != 0.0) {
+                    out.push(format!("only {gap:.1} m clear of the road it crosses (needs {UNDERPASS_CLEARANCE} m)"));
                 }
             }
         }
-        debug_assert_eq!(z.len(), n);
-        self.road_z = z;
-        self.ground = crate::landscape::Ground::build(&self.landscape, &self.roads, &self.road_z, &self.lots, self.config.half_extent + 200.0);
+        out.dedup();
+        out
     }
 
     /// Pay for bridge deck laid since the last rebuild.
@@ -201,25 +359,41 @@ impl World {
         self.ground.height(&self.landscape, p)
     }
 
-    /// What something standing or driving at `p` stands on: a bridge deck
-    /// over the water, else the built ground. Movers and street furniture
-    /// are set on this.
+    /// What something standing or driving at `p` stands on: a deck (over
+    /// the water, a viaduct, the upper way of an underpass), else the built
+    /// ground. Street furniture and the camera are set on this.
     pub fn surface_height(&self, p: Vec2) -> f32 {
-        if self.landscape.is_flat() {
+        if !self.relief {
             return 0.0;
         }
         if let Some(z) = self.ground.deck_at(p) {
             return z;
         }
-        self.ground_height(p).max(WATER_LEVEL)
+        self.ground_or_water(p)
     }
 
-    /// Height a vehicle drives at: highway traffic rides its decks; every
-    /// other way stays under the highway's underpass decks (water bridges
-    /// still carry it). Position alone cannot tell the two apart where a
-    /// street passes under the highway.
+    /// The built ground, or the water's surface where there is water.
+    fn ground_or_water(&self, p: Vec2) -> f32 {
+        let g = self.ground_height(p);
+        if !self.landscape.is_flat() && self.landscape.is_water(p) { g.max(WATER_LEVEL) } else { g }
+    }
+
+    /// The surface at `p` nearest the height `hint`: the ground or any deck
+    /// over it. Something moving along keeps to the level it was on, so a
+    /// walker on the street under a viaduct stays under it.
+    pub fn surface_height_near(&self, p: Vec2, hint: f32) -> f32 {
+        if !self.relief {
+            return 0.0;
+        }
+        let ground = self.ground_or_water(p);
+        self.ground.decks_at(p).into_iter().fold(ground, |best, z| if (z - hint).abs() < (best - hint).abs() { z } else { best })
+    }
+
+    /// Height a vehicle drives at: the height of the way it is on (or, in
+    /// a junction, the way it turns onto), so traffic on a viaduct stays up
+    /// and traffic under it stays down whatever passes over where.
     pub fn car_height(&self, car: &crate::traffic::Car) -> f32 {
-        if self.landscape.is_flat() {
+        if !self.relief {
             return 0.0;
         }
         let p = car.pos;
@@ -232,14 +406,14 @@ impl World {
         let seg = here.and_then(segment_of).or_else(|| {
             here.and_then(|l| lanes.get(l as usize)).and_then(|l| l.next.first().copied()).and_then(segment_of)
         });
-        let on_highway = seg.and_then(|s| self.roads.try_segment(s)).is_some_and(|s| s.is_highway());
-        if on_highway {
-            return self.surface_height(p);
+        if let Some((sid, s)) = seg.and_then(|sid| self.roads.try_segment(sid).map(|s| (sid, s))) {
+            let (a, b) = self.roads.segment_points(sid);
+            let (t, q) = crate::geom::project_on_segment(p, a, b);
+            if q.distance(p) <= s.half_width() + 8.0 {
+                return self.road_height(sid, t);
+            }
         }
-        if let Some(z) = self.ground.bridge_at(p) {
-            return z;
-        }
-        self.ground_height(p).max(WATER_LEVEL)
+        self.surface_height_near(p, self.ground_height(p))
     }
 
     /// The pad a lot is levelled to.
@@ -260,8 +434,8 @@ impl World {
         // Edge to edge of the map; built, both ends run on out of sight
         // (`landscape::reach_elsewhere`): traffic comes from elsewhere.
         let x = crate::landscape::MAP_EDGE;
-        let east = self.add_gesture(Gesture::Road { points: vec![Vec2::new(-x, HIGHWAY_Y + HIGHWAY_HALF_GAP), Vec2::new(x, HIGHWAY_Y + HIGHWAY_HALF_GAP)], lanes_fwd: HIGHWAY_LANES, lanes_bwd: 0, curved: false, kind: RoadKind::Street });
-        let west = self.add_gesture(Gesture::Road { points: vec![Vec2::new(x, HIGHWAY_Y - HIGHWAY_HALF_GAP), Vec2::new(-x, HIGHWAY_Y - HIGHWAY_HALF_GAP)], lanes_fwd: HIGHWAY_LANES, lanes_bwd: 0, curved: false, kind: RoadKind::Street });
+        let east = self.add_gesture(Gesture::Road { points: vec![Vec2::new(-x, HIGHWAY_Y + HIGHWAY_HALF_GAP), Vec2::new(x, HIGHWAY_Y + HIGHWAY_HALF_GAP)], lanes_fwd: HIGHWAY_LANES, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        let west = self.add_gesture(Gesture::Road { points: vec![Vec2::new(x, HIGHWAY_Y - HIGHWAY_HALF_GAP), Vec2::new(-x, HIGHWAY_Y - HIGHWAY_HALF_GAP)], lanes_fwd: HIGHWAY_LANES, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
         self.implement();
         self.project = had_project;
         [east, west]
@@ -284,7 +458,7 @@ impl World {
         }
         let had_project = self.project.take();
         let j = Vec2::new(x, y - 50.0);
-        let street = |points: Vec<Vec2>, fwd: u8, bwd: u8| Gesture::Road { points, lanes_fwd: fwd, lanes_bwd: bwd, curved: false, kind: RoadKind::Street };
+        let street = |points: Vec<Vec2>, fwd: u8, bwd: u8| Gesture::Road { points, lanes_fwd: fwd, lanes_bwd: bwd, curved: false, kind: RoadKind::Street, elevation: Vec::new() };
         self.add_gesture(street(vec![from, j], 1, 1));
         // Westbound traffic comes from the east: off on that side, back on
         // on the other.
@@ -458,7 +632,7 @@ impl World {
         let pid = self.ports.ports.insert(port);
         let had_project = self.project.take();
         if !fused {
-            self.add_gesture(Gesture::Road { points: stub.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street });
+            self.add_gesture(Gesture::Road { points: stub.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
         }
         if self.project.is_some() {
             self.implement();

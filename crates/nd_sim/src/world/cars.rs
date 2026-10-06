@@ -61,7 +61,7 @@ impl World {
     /// and nightlife streets, whose kerbs are for loading: drivers going
     /// there use the lots.
     pub(super) fn kerb_allowed(&self, sid: SegmentId) -> bool {
-        self.roads.try_segment(sid).is_some_and(|s| s.alive && s.is_street() && !s.is_highway() && !s.bridge && s.lanes() > 0 && s.lanes_fwd < 2 && s.lanes_bwd < 2)
+        self.roads.try_segment(sid).is_some_and(|s| s.alive && s.is_street() && !s.is_highway() && !s.bridge && !s.tunnel && s.lanes() > 0 && s.lanes_fwd < 2 && s.lanes_bwd < 2)
             && !self.vehicles.no_kerb.1.contains(&sid)
             && !self.on_ring(sid)
     }

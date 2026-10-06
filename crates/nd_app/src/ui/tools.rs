@@ -27,18 +27,25 @@ pub fn sub_pane(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &
 fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
     ui.horizontal_wrapped(|ui| {
         for (label, f, b, k) in ROAD_PRESETS {
-            let on = !tools.roundabout && tools.kind == k && (k != RoadKind::Street || (tools.lanes_fwd == f && tools.lanes_bwd == b));
+            let on = !tools.roundabout && !tools.tunnel && tools.kind == k && (k != RoadKind::Street || (tools.lanes_fwd == f && tools.lanes_bwd == b));
             if icons::selectable(ui, on, label, |p, r, c| icons::road(p, r, k, f, b, c)).on_hover_text(preset_hint(label)).clicked() {
-                tools.roundabout = false;
-                tools.kind = k;
-                if k == RoadKind::Street {
-                    tools.lanes_fwd = f;
-                    tools.lanes_bwd = b;
-                }
+                tools.pick_preset(label);
             }
+        }
+        let (tf, tb) = (tools.lanes_fwd.max(1), tools.lanes_bwd);
+        if icons::selectable(ui, tools.tunnel && !tools.roundabout, "Tunnel", |p, r, c| {
+            icons::road(p, r, RoadKind::Street, tf, tb, c);
+            // The bore's arch over the lanes.
+            p.rect_stroke(r.shrink(r.width() * 0.08), r.width() * 0.3, egui::Stroke::new(1.5, egui::Color32::from_rgb(170, 160, 150)), egui::StrokeKind::Inside);
+        })
+        .on_hover_text(preset_hint("Tunnel"))
+        .clicked()
+        {
+            tools.pick_preset("Tunnel");
         }
         if icons::selectable(ui, tools.roundabout, "Roundabout", |p, r, c| icons::roundabout(p, r, c)).on_hover_text(preset_hint("Roundabout")).clicked() {
             tools.roundabout = true;
+            tools.tunnel = false;
             tools.points.clear();
         }
     });
@@ -75,6 +82,23 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
             tools.curved = true;
         }
     });
+    // The level the next point goes down at.
+    ui.horizontal(|ui| {
+        if ui.small_button("lower").on_hover_text("Lower [Page Down]").clicked() {
+            tools.step_elevation(false);
+        }
+        let text = egui::RichText::new(format!("Level: {}", crate::tools::elevation_label(tools.elevation))).strong();
+        ui.label(text).on_hover_text("Page Up / Page Down step the level 2 m. Roads 4.5 m or more above or below another pass over or under it without a junction; a raised road stands on a viaduct, one 5 m or more down runs in a tunnel.");
+        if ui.small_button("raise").on_hover_text("Raise [Page Up]").clicked() {
+            tools.step_elevation(true);
+        }
+        if tools.elevation != 0.0 && !tools.tunnel && ui.small_button("ground").clicked() {
+            tools.elevation = 0.0;
+        }
+    });
+    for w in &tools.grade_warnings {
+        ui.label(egui::RichText::new(format!("! {w}")).color(WARN).small());
+    }
     match tools.kind {
         RoadKind::Path => hint(ui, help::ROAD_PATH),
         RoadKind::Rail => hint(ui, help::ROAD_RAIL),
@@ -155,7 +179,7 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
     hint(ui, help::tool_hint(Tool::Edit));
     let Some(id) = tools.selected_gesture else { return };
     match plan.sync(&sim.world).gestures.get(&id).cloned() {
-        Some(Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind }) => {
+        Some(Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind, mut elevation }) => {
             section(ui, "ROAD UPGRADE");
             let (mut f, mut b, mut c, mut k) = (lanes_fwd, lanes_bwd, curved, kind);
             let mut changed = false;
@@ -178,6 +202,16 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
                     changed = true;
                 }
                 changed |= ui.checkbox(&mut c, "Curved").changed();
+                // The whole road up or down a step (ends on other roads too).
+                let lv = |e: &Vec<f32>, i: usize| e.get(i).copied().unwrap_or(0.0);
+                if ui.small_button("raise").on_hover_text("Every point 2 m higher").clicked() {
+                    elevation = (0..points.len()).map(|i| lv(&elevation, i) + crate::tools::ELEVATION_STEP).collect();
+                    changed = true;
+                }
+                if ui.small_button("lower").on_hover_text("Every point 2 m lower").clicked() {
+                    elevation = (0..points.len()).map(|i| lv(&elevation, i) - crate::tools::ELEVATION_STEP).collect();
+                    changed = true;
+                }
                 if ui.button("Deselect").clicked() {
                     tools.selected_gesture = None;
                 }
@@ -186,7 +220,10 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
                 if f + b == 0 && k == RoadKind::Street {
                     f = 1;
                 }
-                sim.world.set_gesture(id, Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved: c, kind: k }, true);
+                if elevation.iter().all(|l| *l == 0.0) {
+                    elevation.clear();
+                }
+                sim.world.set_gesture(id, Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved: c, kind: k, elevation }, true);
                 tools.status = "Road changed. Ctrl+Enter implements; buildings along it stay.".into();
             }
         }
@@ -382,8 +419,24 @@ fn dock_hint(ui: &mut egui::Ui, sim: &mut Sim, k: nd_sim::PortKind) {
 }
 
 /// Tooltip for a road preset button.
+/// The view's layer: Underground, Ground, Sky [U cycles].
+pub fn depth_switch(ui: &mut egui::Ui, tools: &mut ToolState) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("View [U]").small());
+        for d in crate::tools::Depth::ALL {
+            if ui.selectable_label(tools.depth == d, d.label()).clicked() {
+                tools.depth = d;
+            }
+        }
+        if tools.depth == crate::tools::Depth::Sky {
+            ui.label(egui::RichText::new("air routes: coming soon").small().italics());
+        }
+    });
+}
+
 fn preset_hint(label: &str) -> &'static str {
     match label {
+        "Tunnel" => "A road 8 m under the ground: passes under streets, water and buildings without taking them; joins other tunnels; start or end it on a street to make a portal ramp. Switches to the underground view",
         "Path" => "Footpath: walkers and bikes only",
         "Rail" => "Railway track: trains only, never fronts lots",
         "Lane" => "One lane each way",

@@ -592,6 +592,7 @@ fn tool_state(t: &ToolState) -> Value {
         "land_use": t.land_use.label(), "zone_mode": t.zone_mode.label(), "brush_radius": t.brush_radius, "unzone": t.unzone, "industry": t.industry, "building": placeable_key(t.build_item()), "building_category": t.build_cat.key(), "rail_kind": rail_name(t.rail_kind),
         "transit_mode": transit_mode_name(t.transit_mode), "route": opt_key(t.route_sel), "show_routes": t.show_routes,
         "pending_points": t.points.len(), "selected_gesture": t.selected_gesture.map(|g| g.0), "status": t.status,
+        "elevation": t.elevation, "elevation_label": crate::tools::elevation_label(t.elevation), "point_levels": t.levels(), "tunnel": t.tunnel, "depth": t.depth.label(), "grade_warnings": t.grade_warnings,
     })
 }
 
@@ -833,7 +834,13 @@ fn plan(ctx: &Ctx) -> Value {
 }
 
 fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
-    let mut pts = req_points(cmd, "points")?;
+    let (mut pts, given) = view::req_points_levels(cmd, "points")?;
+    // `elevation`: one level for every point without its own, or a list.
+    let all = opt_f32(cmd, "elevation").ok().flatten();
+    let list: Option<Vec<f32>> = field(cmd, "elevation").and_then(Value::as_array).map(|a| a.iter().map(|v| v.as_f64().unwrap_or(0.0) as f32).collect());
+    let tunnel = opt_bool(cmd, "tunnel")?.unwrap_or(false);
+    let base = all.unwrap_or(if tunnel { nd_sim::roads::TUNNEL_DEPTH } else { 0.0 });
+    let mut levels: Vec<f32> = given.iter().enumerate().map(|(i, l)| l.or_else(|| list.as_ref().and_then(|v| v.get(i).copied())).unwrap_or(base)).collect();
     if pts.len() < 2 {
         return Err("a road needs at least two points".into());
     }
@@ -847,13 +854,23 @@ fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     }
     // Snap the ends to the network like the Road tool does, so the road
     // joins existing roads instead of stopping a metre short of them.
+    // Points snap onto a road at about their level; an end given no level of
+    // its own takes the level of the road it snaps onto (a ramp or portal).
     if opt_bool(cmd, "snap")?.unwrap_or(true) {
-        for p in &mut pts {
-            *p = ToolState::road_snap(&ctx.sim, *p, kind).0;
+        let last = pts.len() - 1;
+        for (i, p) in pts.iter_mut().enumerate() {
+            let end = (i == 0 || i == last) && given[i].is_none();
+            let (q, snapped, l) = ToolState::road_snap_level(&ctx.sim, *p, kind, levels[i], end);
+            *p = q;
+            if snapped {
+                levels[i] = l;
+            }
         }
     }
     let curved = opt_bool(cmd, "curved")?.unwrap_or(false) && pts.len() >= 3;
-    let id = ctx.sim.world.add_gesture(Gesture::Road { points: pts, lanes_fwd: lf, lanes_bwd: lb, curved, kind });
+    let warnings = ctx.sim.world.road_grade_warnings(&pts, &levels, kind, lf, lb);
+    let elevation = if levels.iter().any(|l| *l != 0.0) { levels } else { Vec::new() };
+    let id = ctx.sim.world.add_gesture(Gesture::Road { points: pts, lanes_fwd: lf, lanes_bwd: lb, curved, kind, elevation });
     let implemented = opt_bool(cmd, "implement")?.unwrap_or(false);
     if implemented {
         ctx.sim.world.implement();
@@ -862,6 +879,7 @@ fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let mut v = project_state(ctx);
     v["gesture_id"] = json!(id.0);
     v["implemented"] = json!(implemented);
+    v["grade_warnings"] = json!(warnings);
     Ok(v)
 }
 
@@ -1420,6 +1438,36 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         let g = w.gesture(id).ok_or("no such gesture")?;
         return Ok(json!({ "gesture": gesture(id, &g) }));
     }
+    // A road piece: by id, or the one nearest a point.
+    let seg = match (field(cmd, "segment"), field(cmd, "road")) {
+        (Some(v), _) => Some(nd_sim::SegmentId(v.as_u64().ok_or("segment id is a number")? as u32)),
+        (None, Some(v)) => Some(w.roads.nearest_on_network(vec2_of(v)?).ok_or("no roads")?.0),
+        _ => None,
+    };
+    if let Some(sid) = seg {
+        let s = w.roads.try_segment(sid).ok_or("no such segment")?;
+        let (a, b) = w.roads.segment_points(sid);
+        let z = |n: nd_sim::NodeId| w.road_z.get(n.0 as usize).copied().unwrap_or(0.0);
+        let level = if s.tunnel { "tunnel" } else if s.viaduct { "viaduct" } else if s.bridge { "bridge" } else if w.roads.node(s.a).level < 0.0 || w.roads.node(s.b).level < 0.0 { "cutting" } else { "ground" };
+        let crossings: Vec<Value> = w
+            .roads
+            .grade_crossings()
+            .into_iter()
+            .filter(|c| c.upper.0 == sid || c.lower.0 == sid)
+            .map(|c| {
+                let other = if c.upper.0 == sid { c.lower.0 } else { c.upper.0 };
+                json!({ "at": [round(c.at.x), round(c.at.y)], "passes": if c.upper.0 == sid { "over" } else { "under" }, "other_segment": other.0, "clearance": round((w.road_height(c.upper.0, c.upper.1) - w.road_height(c.lower.0, c.lower.1)).abs()) })
+            })
+            .collect();
+        return Ok(json!({ "segment": {
+            "id": sid.0, "from": [round(a.x), round(a.y)], "to": [round(b.x), round(b.y)], "kind": road_kind_name(s.kind),
+            "lanes_fwd": s.lanes_fwd, "lanes_bwd": s.lanes_bwd, "highway": s.is_highway(),
+            "level": level, "levels": [w.roads.node(s.a).level, w.roads.node(s.b).level], "heights": [round(z(s.a)), round(z(s.b))],
+            "bridge": s.bridge, "viaduct": s.viaduct, "tunnel": s.tunnel,
+            "nodes": [s.a.0, s.b.0], "junction_degrees": [w.roads.neighbors(s.a).count(), w.roads.neighbors(s.b).count()],
+            "grade_crossings": crossings,
+        }}));
+    }
     // No id: whatever is selected.
     match *ctx.selection {
         Selection::Citizen(id) => inspect(&json!({ "citizen": key_str(id) }), ctx),
@@ -1488,13 +1536,31 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         t.tool = Tool::Road;
         t.roundabout = true;
     } else if let Some(preset) = opt_str(cmd, "preset")? {
-        t.roundabout = false;
-        let (_, f, b, k) = ROAD_PRESETS.iter().find(|(l, ..)| l.eq_ignore_ascii_case(preset)).ok_or_else(|| format!("unknown preset {preset:?}; one of {}", ROAD_PRESETS.iter().map(|p| p.0).collect::<Vec<_>>().join(", ")))?;
-        t.kind = *k;
-        if *k == RoadKind::Street {
-            t.lanes_fwd = *f;
-            t.lanes_bwd = *b;
+        if !t.pick_preset(preset) {
+            return Err(format!("unknown preset {preset:?}; one of {}, Tunnel, Roundabout", ROAD_PRESETS.iter().map(|p| p.0).collect::<Vec<_>>().join(", ")));
         }
+    }
+    if let Some(e) = opt_f32(cmd, "elevation")? {
+        t.elevation = e.clamp(crate::tools::ELEVATION_MIN, crate::tools::ELEVATION_MAX);
+    }
+    if let Some(d) = opt_str(cmd, "depth")? {
+        t.depth = crate::tools::Depth::parse(d).ok_or_else(|| format!("unknown depth {d:?}; underground, ground or sky"))?;
+    }
+    // `draw`: the points of a road being drawn, as if clicked (for the
+    // preview); `cursor`: where the pointer stands for the preview.
+    if field(cmd, "draw").is_some() {
+        let (pts, levels) = view::req_points_levels(cmd, "draw")?;
+        t.tool = Tool::Road;
+        t.roundabout = false;
+        t.points.clear();
+        t.point_levels.clear();
+        for (p, l) in pts.into_iter().zip(levels) {
+            let l = l.unwrap_or(t.elevation);
+            t.push_point(p, l);
+        }
+    }
+    if let Some(c) = view::opt_vec2(cmd, "cursor")? {
+        t.cursor_pin = Some(c);
     }
     if let Some(kind) = opt_str(cmd, "kind")? {
         // `kind` means whatever the active tool chooses between.
@@ -1805,7 +1871,7 @@ fn help() -> Value {
             "list_saves": {},
             "plan": {},
             "add_roundabout": { "center": "[x,y] (snaps onto a junction within 12 m or a street within 6 m)", "radius": "m to the ring centreline, 12..120 (or diameter 24..240)", "lanes": "1|2 ring lanes", "implement": "bool", "returns": "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state" },
-            "add_road": { "points": "[[x,y],...] (2+)", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true", "implement": "bool, default false (pending in the project)" },
+            "add_road": { "points": "[[x,y] or [x,y,level],...] (2+; level metres above ground, negative below)", "elevation": "level for points without one (number), or a list", "tunnel": "bool: default level -8 m", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true", "implement": "bool, default false (pending in the project)" },
             "add_zone": { "polygon": "[[x,y],...] (3+)", "land_use": "residential|commercial|industrial|entertainment|civic|park", "implement": "bool" },
             "bulldoze": { "gesture_id": "int", "implement": "bool" },
             "project": { "action": "start|implement|undo|redo|discard" },
@@ -1818,7 +1884,7 @@ fn help() -> Value {
             "incidents": { "active": "bool (only those under way)", "limit": "default 50, newest first", "kind": "fire|crime|medical" },
             "bus": { "action": "new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses" },
             "find": { "what": "citizens|buildings|lots|parcels|cars|trains|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
-            "inspect": { "citizen|building|lot|car|train|route": "id", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits" },
+            "inspect": { "citizen|building|lot|car|train|route": "id", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "[x,y]: the road piece nearest a point, as segment" },
             "lane_use": { "junction": "[x,y]", "approach": "[x,y] on the arriving street", "lanes": "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default" },
             "select": { "citizen|building|car": "id", "at": "[x,y] picks like a click; nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
@@ -1849,7 +1915,7 @@ fn help() -> Value {
     v["commands"]["society"] = json!({ "action": "report (default)|evict|offend|trash", "building": "id (evict: its households go on the street; offend: the target; trash: one building's bins)", "citizen": "id (offend)", "kind": "theft|burglary|assault|murder|vandalism (offend, with building)", "kg": "trash to add, default 100" });
     // Planning: several projects, and painting parcels.
     let planning = json!({
-        "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway|Roundabout", "diameter": "roundabout 24..240 m", "ring_lanes": "roundabout 1|2", "ring_at": "[x,y]: show the roundabout preview there as if hovered (until the mouse is used)", "kind": "sub-mode of the active tool", "mode": "zone tool: polygon|brush|marquee", "radius": "zone brush radius m", "unzone": "bool", "industry": "zone tool sub-zone for industrial land: auto|farming|oil|...", "land_use": "(or none: the brush unzones)", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
+        "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway|Tunnel|Roundabout (Tunnel switches the view underground, the others back to ground)", "elevation": "road tool level for the next point, m (-20..24)", "depth": "underground|ground|sky: the view layer", "draw": "[[x,y,level?],...]: the road being drawn, for its preview", "cursor": "[x,y]: where the pointer stands for the road preview (until the mouse is used)", "diameter": "roundabout 24..240 m", "ring_lanes": "roundabout 1|2", "ring_at": "[x,y]: show the roundabout preview there as if hovered (until the mouse is used)", "kind": "sub-mode of the active tool", "mode": "zone tool: polygon|brush|marquee", "radius": "zone brush radius m", "unzone": "bool", "industry": "zone tool sub-zone for industrial land: auto|farming|oil|...", "land_use": "(or none: the brush unzones)", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
         "project": { "action": "list|new|switch|rename|delete|park|start|implement|undo|redo|discard", "id": "project id (default: the active one)", "name": "for new/rename, or to pick a project by name", "note": "several named projects; the active one is edited, the rest previewed dim; implement builds one at a time, the later one wins where two change the same gesture or parcel (warnings in the reply)" },
         "paint": { "land_use": "residential|...|park, or none to unzone", "at": "[x,y] brush centre", "radius": "m (default the tool's)", "industry": "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech, the sub-zone set on implement", "rect": "[[x0,y0],[x1,y1]] marquee", "polygon": "[[x,y],...]", "implement": "bool", "note": "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step" }
     });
