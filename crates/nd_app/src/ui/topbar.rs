@@ -9,8 +9,8 @@ use super::{help, neon, UiCtx, GOLD, WARN};
 use crate::camera::CameraMode;
 use crate::sim::SPEEDS;
 
-/// Width the Walk/Orbit pair needs at the right edge.
-const CAMERA_WIDTH: f32 = 96.0;
+/// Width the Heat toggle and the Walk/Orbit pair need at the right edge.
+const CAMERA_WIDTH: f32 = 140.0;
 
 pub fn show(ui: &mut egui::Ui, p: &mut UiCtx) {
     // Wrapped, so a narrow window moves the tail of the row onto a second
@@ -108,6 +108,11 @@ fn window_toggles(ui: &mut egui::Ui) {
 }
 
 fn camera(ui: &mut egui::Ui, p: &mut UiCtx) {
+    let heat = p.lighting.heat;
+    if ui.selectable_label(heat, "Heat").on_hover_text("Drone heat vision [H]: buildings go dark, people and engines glow").clicked() {
+        p.lighting.heat = !heat;
+    }
+    ui.separator();
     let walking = *p.mode == CameraMode::Walk;
     if ui.selectable_label(walking, "Walk").on_hover_text(format!("Walk the street [Tab]. {}", help::CAMERA_WALK)).clicked() {
         *p.mode = CameraMode::Walk;

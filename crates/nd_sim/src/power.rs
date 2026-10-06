@@ -161,6 +161,14 @@ impl PowerPlantKind {
         self == PowerPlantKind::Coal
     }
 
+    /// Whether neighbouring plants of this kind read as one field: solar
+    /// arrays and wind farms on parcels that touch are drawn as a single
+    /// installation spanning them (see `World::plant_cluster`). Everything
+    /// else is a building with its own fence.
+    pub fn merges_with_neighbours(self) -> bool {
+        matches!(self, PowerPlantKind::Solar | PowerPlantKind::Wind)
+    }
+
     /// Smallest lot it fits on.
     pub fn min_area(self) -> f32 {
         match self {

@@ -35,6 +35,8 @@ mod air;
 mod emergency;
 mod far;
 mod haze;
+/// Drone heat vision (render/heat.rs).
+mod heat;
 /// Planned roads as holograms of the real thing; the depth view.
 mod holo;
 mod layers;
@@ -202,11 +204,14 @@ pub struct Lighting {
     pub follow_clock: bool,
     /// Hour of day used when not following the clock, 0..24.
     pub hour: f32,
+    /// Drone heat vision: the city through a thermal camera (see
+    /// `render/heat.rs`). A view mode like the time of day, so it lives here.
+    pub heat: bool,
 }
 
 impl Default for Lighting {
     fn default() -> Self {
-        Self { follow_clock: true, hour: 14.0 }
+        Self { follow_clock: true, hour: 14.0, heat: false }
     }
 }
 /// One chunk's worth of building geometry. Which buildings a mesh holds is
@@ -309,6 +314,9 @@ struct RenderState {
     /// Which chunk each drawn building sits in, so a changed or removed
     /// building can mark its chunk dirty.
     building_chunks: HashMap<BuildingId, ChunkKey>,
+    /// Solar and wind plants drawn, by lot centre: a plant coming, changing
+    /// or going redraws the fields round it (see [`plant_field`]).
+    plant_sites: HashMap<BuildingId, SVec2>,
     chunks: HashMap<ChunkKey, ChunkMeshes>,
     citizens: HashMap<CitizenId, Entity>,
     cars: HashMap<CarId, [Entity; 2]>,
@@ -380,6 +388,9 @@ impl Plugin for RenderPlugin {
         // Drone taxis and helicopters, after the buildings whose pads they land on.
         app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, check_car_bodies.after(lift_movers).in_set(SimSet::Sync));
+        // Tower cranes slewing on building sites.
+        app.add_systems(Update, animate_cranes.after(sync_buildings).in_set(SimSet::Sync));
+        app.add_plugins(heat::HeatPlugin);
     }
 }
 
@@ -917,7 +928,7 @@ fn sync_signals(
     mats: Res<Materials>,
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<SignalTag>>,
-    mut q: Query<(&SignalTag, Option<&PedSignalTag>, &mut MeshMaterial3d<StandardMaterial>)>,
+    mut q: Query<(&SignalTag, Option<&PedSignalTag>, &mut MeshMaterial3d<StandardMaterial>, Option<&heat::HeatOriginal>)>,
 ) {
     let net = &sim.world.traffic.net;
     if net.version != state.lanes_version || sim.full_rebuild {
@@ -944,10 +955,13 @@ fn sync_signals(
         }
         return;
     }
-    for (tag, ped, mut mat) in &mut q {
+    for (tag, ped, mut mat, heat_original) in &mut q {
+        // Under heat vision the entity shows a stand-in; what it stands in
+        // for is what counts.
+        let shown = heat_original.map_or(mat.0.clone(), |h| h.0.clone());
         if let Some(p) = ped {
             let wanted = if sim.world.traffic.peds.walk_shown(p.0, p.1) { &mats.ped_walk } else { &mats.ped_stop };
-            if mat.0 != *wanted {
+            if shown != *wanted {
                 mat.0 = wanted.clone();
             }
             continue;
@@ -955,7 +969,7 @@ fn sync_signals(
         let Some(lane) = net.lanes.get(tag.0 as usize) else { continue };
         let green = lane.next.iter().any(|&n| net.lanes[n as usize].green);
         let wanted = if green { &mats.signal_green } else { &mats.signal_red };
-        if mat.0 != *wanted {
+        if shown != *wanted {
             mat.0 = wanted.clone();
         }
     }
@@ -1410,9 +1424,32 @@ fn sync_vacant(
 }
 
 /// Generate one building's geometry into the chunk's merged geometry.
+/// The field a solar or wind plant is drawn as part of, when its parcel
+/// touches others of its kind (`World::plant_cluster`); `None` for a lone
+/// plant or anything else.
+pub(crate) fn plant_field(world: &World, id: BuildingId) -> Option<nd_procgen::PlantField> {
+    let b = world.buildings.get(id)?;
+    if !b.plant.is_some_and(|k| k.merges_with_neighbours()) {
+        return None;
+    }
+    let cluster = world.plant_cluster(id);
+    if cluster.len() < 2 {
+        return None;
+    }
+    let lots: Vec<&nd_sim::Lot> = cluster.iter().filter_map(|l| world.lots.get(*l)).collect();
+    let own = cluster.iter().position(|l| *l == b.lot)?;
+    let anchor_seed = world.lots.get(cluster[0])?.building.and_then(|a| world.buildings.get(a)).map_or(0, |a| a.seed);
+    nd_procgen::PlantField::new(&lots, own, anchor_seed)
+}
+
+/// How far a plant coming or going reaches when redrawing the fields round
+/// it: further than any parcel of a field it could touch.
+const PLANT_FIELD_REACH: f32 = 300.0;
+
 fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<()> {
     let b = world.buildings.get(id)?;
     let lot = world.lots.get(b.lot)?;
+    let field = if b.construction.is_none() && b.demolition.is_none() { plant_field(world, id) } else { None };
     let extras = Extras {
         parking: b.parking_visual(),
         plant: b.plant,
@@ -1426,6 +1463,8 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         neighbours: styles.neighbours(id),
         service: b.service.map(|s| s.kind),
         animated_rotors: true,
+        field: field.as_ref(),
+        animated_cranes: true,
         dynamic_lights: true,
         business: b.business.as_ref().map(|z| z.kind),
         fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
@@ -1436,7 +1475,7 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         // civic take-over, is not what the building's own fields describe),
         // cut down to what is left, with the demolition site around it.
         Some(d) => {
-            let extras = Extras { powered: b.powered, park: lot.park.as_ref(), demolition: Some(d.progress), neighbours: styles.neighbours(id), ..Extras::default() };
+            let extras = Extras { powered: b.powered, park: lot.park.as_ref(), demolition: Some(d.progress), neighbours: styles.neighbours(id), animated_cranes: true, ..Extras::default() };
             generate_building(lot, d.land_use, d.floors, d.tier, d.condition, d.seed, &assets.rules, &assets.palette, &extras)
         }
         None => generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras),
@@ -1482,6 +1521,7 @@ fn sync_buildings(
             }
         }
         state.building_chunks.clear();
+        state.plant_sites.clear();
         if sim.full_rebuild {
             // Slotmap keys are reused by a loaded world, so an old car mesh
             // could stand in for a new bus; start the movers from scratch.
@@ -1520,9 +1560,42 @@ fn sync_buildings(
         // Removed buildings leave no event in some paths (a rebuild of the
         // master plan drops them), so compare against what was drawn.
         let gone: Vec<BuildingId> = state.building_chunks.keys().copied().filter(|id| !sim.world.buildings.contains_key(*id)).collect();
+        // Solar and wind plants merge with the ones they touch, so one
+        // coming, changing or going redraws the plants round it too.
+        let mut plant_touch: Vec<SVec2> = Vec::new();
+        for e in &sim.events {
+            if let SimEvent::BuildingBuilt(id) | SimEvent::BuildingChanged(id) = e {
+                let w = &sim.world;
+                if let Some(b) = w.buildings.get(*id).filter(|b| b.plant.is_some_and(|k| k.merges_with_neighbours())) {
+                    if let Some(lot) = w.lots.get(b.lot) {
+                        plant_touch.push(lot.center);
+                    }
+                } else if let Some(p) = state.plant_sites.get(id) {
+                    // Was a plant, is something else now.
+                    plant_touch.push(*p);
+                }
+            }
+        }
         for id in gone {
             if let Some(k) = state.building_chunks.remove(&id) {
                 dirty.insert(k);
+            }
+            if let Some(p) = state.plant_sites.remove(&id) {
+                plant_touch.push(p);
+            }
+        }
+        if !plant_touch.is_empty() {
+            let w = &sim.world;
+            for (id, b) in w.buildings.iter() {
+                if !b.plant.is_some_and(|k| k.merges_with_neighbours()) {
+                    continue;
+                }
+                let Some(lot) = w.lots.get(b.lot) else { continue };
+                if plant_touch.iter().any(|p| p.distance(lot.center) < PLANT_FIELD_REACH) {
+                    if let Some(k) = building_chunk(w, id) {
+                        dirty.insert(k);
+                    }
+                }
             }
         }
         // Buildings that exist but were never drawn (missed events) are
@@ -1558,9 +1631,18 @@ fn sync_buildings(
             for &id in &ids {
                 if append_building(&mut geo, &sim.world, &assets, &styles.0, id).is_some() {
                     state.building_chunks.insert(id, k);
+                    let w = &sim.world;
+                    match w.buildings[id].plant.filter(|k| k.merges_with_neighbours()).and_then(|_| w.lots.get(w.buildings[id].lot)) {
+                        Some(lot) => state.plant_sites.insert(id, lot.center),
+                        None => state.plant_sites.remove(&id),
+                    };
                 }
             }
-            let entities = spawn_building_geometry(&mut commands, &mut meshes, &mats, &geo);
+            let mut entities = spawn_building_geometry(&mut commands, &mut meshes, &mats, &geo);
+            let work = sim.world.clock.work_minutes();
+            for rig in &geo.cranes {
+                entities.extend(spawn_crane_head(&mut commands, &mut meshes, &mats, rig, work));
+            }
             state.chunks.insert(k, ChunkMeshes { entities, triangles: geo.triangle_count() });
         }
     }
@@ -1571,6 +1653,60 @@ fn sync_buildings(
     // Clear the full-rebuild flag last so every sync system saw it this frame.
     if sim.full_rebuild {
         sim.full_rebuild = false;
+    }
+}
+
+/// A tower crane's head, turned about its mast by [`animate_cranes`]. Each
+/// surface of a head is its own entity, all carrying the same state.
+#[derive(Component)]
+struct CraneHead {
+    /// World heading of the jib as generated: the slew is measured from it.
+    yaw: f32,
+    seed: u64,
+    /// Current slew from `yaw`, radians.
+    slew: f32,
+}
+
+/// Fastest a jib turns on screen, radians per real second, whatever the
+/// sim speed: at 1x a swing takes several seconds, at 256x the crane just
+/// keeps working, never spinning.
+const CRANE_SLEW_RATE: f32 = 0.16;
+
+/// Spawn a crane head (from `Geometry::cranes`) at the slew its site is at.
+fn spawn_crane_head(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, rig: &nd_procgen::CraneRig, work_minutes: u64) -> Vec<Entity> {
+    let slew = nd_procgen::crane_slew(rig.seed, work_minutes);
+    let tf = Transform::from_xyz(rig.pos.x, 0.0, rig.pos.y).with_rotation(Quat::from_rotation_y(-(rig.yaw + slew)));
+    rig.head
+        .iter()
+        .map(|(s, m)| {
+            let mut e = commands.spawn((Mesh3d(meshes.add(to_mesh(m, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), tf, CraneHead { yaw: rig.yaw, seed: rig.seed, slew }, BuildingTag));
+            if s.is_glow() {
+                e.insert((NotShadowCaster, NotShadowReceiver));
+            }
+            e.id()
+        })
+        .collect()
+}
+
+/// Slew the tower cranes: each eases towards the heading of its current
+/// lift (`nd_procgen::crane_slew`, from the sim's working minutes), so
+/// cranes work through the day and stand still from knocking-off time to
+/// the morning, and while the game is paused.
+fn animate_cranes(sim: Res<Sim>, time: Res<Time>, mut q: Query<(&mut CraneHead, &mut Transform)>) {
+    if q.is_empty() || sim.paused {
+        return;
+    }
+    let work = sim.world.clock.work_minutes();
+    let dt = time.delta_secs().min(0.1);
+    for (mut c, mut tf) in &mut q {
+        let diff = nd_procgen::crane_slew(c.seed, work) - c.slew;
+        if diff.abs() < 1e-4 {
+            continue;
+        }
+        // Eases in to the new heading; slow and steady otherwise.
+        let rate = (0.5 * diff.abs() + 0.02).min(CRANE_SLEW_RATE);
+        c.slew += diff.signum() * (rate * dt).min(diff.abs());
+        tf.rotation = Quat::from_rotation_y(-(c.yaw + c.slew));
     }
 }
 
@@ -1622,7 +1758,7 @@ fn sync_citizens(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
-    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d), With<CitizenTag>>,
+    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d, Option<&heat::HeatOriginal>), With<CitizenTag>>,
 ) {
     let w = &sim.world;
     let f = sim.frac();
@@ -1668,7 +1804,7 @@ fn sync_citizens(
     let mut looks: HashSet<nd_procgen::people::PersonKey> = HashSet::new();
     for &(id, e, key, stature, _) in &outdoors {
         let Some(c) = w.citizens.get(id) else { continue };
-        let Ok((mut tf, mut vis, _, mut mesh)) = q.get_mut(e) else { continue };
+        let Ok((mut tf, mut vis, _, mut mesh, _)) = q.get_mut(e) else { continue };
         *vis = Visibility::Visible;
         let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
         let heading = lerp_angle(c.prev_heading, c.heading, f);
@@ -1688,7 +1824,7 @@ fn sync_citizens(
     }
     for (id, &e) in state.citizens.iter() {
         let Some(c) = w.citizens.get(*id) else { continue };
-        let Ok((_, mut vis, mut mat, mut mesh)) = q.get_mut(e) else { continue };
+        let Ok((_, mut vis, mut mat, mut mesh, heat_original)) = q.get_mut(e) else { continue };
         if !c.is_visible() {
             *vis = Visibility::Hidden;
             // Indoors: let go of the figure so the cache can drop it.
@@ -1705,7 +1841,9 @@ fn sync_citizens(
         } else {
             &look_mat
         };
-        if mat.0 != *wanted {
+        // Under heat vision the entity shows a stand-in; what it stands in
+        // for is what counts.
+        if heat_original.map_or(&mat.0, |h| &h.0) != wanted {
             mat.0 = wanted.clone();
         }
     }

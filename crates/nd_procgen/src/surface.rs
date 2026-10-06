@@ -223,11 +223,14 @@ pub struct Geometry {
     /// centre of each deck's top, world coordinates. The renderer lands
     /// aircraft on them.
     pub pads: Vec<glam::Vec3>,
+    /// Tower crane heads left out of the mesh for the renderer to slew
+    /// (`Ctx::animated_cranes`), in world position.
+    pub cranes: Vec<crate::buildings::CraneRig>,
 }
 
 impl Default for Geometry {
     fn default() -> Self {
-        Self { parts: (0..Surface::ALL.len()).map(|_| MeshData::default()).collect(), pads: Vec::new() }
+        Self { parts: (0..Surface::ALL.len()).map(|_| MeshData::default()).collect(), pads: Vec::new(), cranes: Vec::new() }
     }
 }
 
@@ -249,6 +252,7 @@ impl Geometry {
             a.append(b);
         }
         self.pads.extend_from_slice(&other.pads);
+        self.cranes.extend(other.cranes.iter().cloned());
     }
 
     /// Move every surface that has a weathered variant onto it: the whole

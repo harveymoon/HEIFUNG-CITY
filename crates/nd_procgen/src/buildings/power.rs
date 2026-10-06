@@ -109,6 +109,9 @@ pub fn coal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
 }
 
 pub fn solar(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    if let Some(field) = c.field {
+        return solar_field(g, c, rng, field);
+    }
     let f = &c.frame;
     let pal = c.palette;
     let yard = yard(g, c, 0.5, Dirt, pal.gravel);
@@ -153,6 +156,222 @@ pub fn solar(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
     fence_lot(g, c, &yard, 2.0, false);
+    sign_board(g, c, rng, &front, -front.len * 0.3, 2.6, (front.len * 0.3).min(6.0), 0.6);
+}
+
+// ── plant fields: touching solar or wind plants drawn as one ──────────────
+
+/// Share of an edge another member's edges must cover for it to count as an
+/// inner seam of the field (no fence, no margin) rather than its outside.
+const SEAM_COVER: f32 = 0.6;
+/// Panels and turbines keep this far from every member's road front: each
+/// parcel keeps its gate, cabin and sign there.
+const FIELD_FRONT_CLEAR: f32 = 4.5;
+/// Panel rows of a field: spacing along a row and between rows.
+const PANEL_PITCH: f32 = 6.4;
+const PANEL_ROW: f32 = 5.0;
+/// Free ground between a field's panels and its outside fence.
+const PANEL_EDGE: f32 = 1.6;
+
+/// Touching solar arrays or wind farms laid out as one installation
+/// (`nd_sim::World::plant_cluster`). Every parcel of the field is still
+/// generated on its own, into its own chunk, but all of them lay their
+/// panel rows or turbine grid out in the *anchor* parcel's frame and test
+/// against the whole field's outline, so rows run on across the seams
+/// and nothing is drawn twice: a panel or turbine belongs to the parcel
+/// its centre stands on. Seams get no fence and no margin.
+#[derive(Clone, Debug)]
+pub struct PlantField {
+    frame: super::Frame,
+    seed: u64,
+    /// Every parcel of the field (world outline, road-front edge).
+    members: Vec<(Vec<Vec2>, [Vec2; 2])>,
+    /// The one being drawn.
+    own: usize,
+    /// Edges on the field's outside, world coordinates.
+    open: Vec<(Vec2, Vec2)>,
+}
+
+impl PlantField {
+    /// `lots` are the field's parcels with the anchor first (the order
+    /// `plant_cluster` returns), `own` the index of the one being drawn and
+    /// `anchor_seed` the anchor plant's seed. `None` for a field of one: a
+    /// lone plant keeps its own layout.
+    pub fn new(lots: &[&nd_sim::Lot], own: usize, anchor_seed: u64) -> Option<Self> {
+        if lots.len() < 2 || own >= lots.len() {
+            return None;
+        }
+        let members: Vec<(Vec<Vec2>, [Vec2; 2])> = lots.iter().map(|l| (l.polygon.clone(), l.front_edge)).collect();
+        let mut open = Vec::new();
+        for (i, (poly, _)) in members.iter().enumerate() {
+            let n = poly.len();
+            for k in 0..n {
+                let (a, b) = (poly[k], poly[(k + 1) % n]);
+                if !Self::seam_of(&members, i, a, b) {
+                    open.push((a, b));
+                }
+            }
+        }
+        Some(Self { frame: super::Frame::from_lot(lots[0]), seed: anchor_seed, members, own, open })
+    }
+
+    /// Is the world edge `a`–`b` of member `i` mostly covered by edges of
+    /// the other members?
+    fn seam_of(members: &[(Vec<Vec2>, [Vec2; 2])], i: usize, a: Vec2, b: Vec2) -> bool {
+        let len = a.distance(b);
+        if len < 1e-3 {
+            return true;
+        }
+        let mut cover = 0.0;
+        for (j, (poly, _)) in members.iter().enumerate() {
+            if j == i {
+                continue;
+            }
+            let n = poly.len();
+            for k in 0..n {
+                if let Some((lo, hi)) = nd_sim::geom::shared_stretch(a, b, poly[k], poly[(k + 1) % n]) {
+                    cover += hi - lo;
+                }
+            }
+        }
+        cover >= len * SEAM_COVER
+    }
+
+    /// Whether the world edge `a`–`b` of the parcel being drawn is a seam.
+    pub fn is_seam(&self, a: Vec2, b: Vec2) -> bool {
+        Self::seam_of(&self.members, self.own, a, b)
+    }
+
+    fn inside(&self, p: Vec2) -> bool {
+        self.members.iter().any(|(poly, _)| nd_sim::zoning::point_in_polygon(p, poly))
+    }
+
+    fn owns(&self, p: Vec2) -> bool {
+        nd_sim::zoning::point_in_polygon(p, &self.members[self.own].0)
+    }
+
+    /// Distance to the field's outside edge.
+    fn clearance(&self, p: Vec2) -> f32 {
+        self.open.iter().map(|(a, b)| p.distance(nd_sim::roads::project_on_segment(p, *a, *b).1)).fold(f32::MAX, f32::min)
+    }
+
+    /// Distance to the nearest member's road front.
+    fn front_clearance(&self, p: Vec2) -> f32 {
+        self.members.iter().map(|(_, [a, b])| p.distance(nd_sim::roads::project_on_segment(p, *a, *b).1)).fold(f32::MAX, f32::min)
+    }
+
+    /// Room for something at world point `p`: on the field, `edge` metres
+    /// from its outside and clear of the road fronts.
+    fn room(&self, p: Vec2, edge: f32) -> bool {
+        self.inside(p) && self.clearance(p) >= edge && self.front_clearance(p) >= FIELD_FRONT_CLEAR
+    }
+
+    /// Range of grid indices whose points can fall on the parcel being drawn,
+    /// for a grid of `step` (x, y) in the anchor frame, with `pad` metres of
+    /// slack round the parcel.
+    fn grid_range(&self, step: Vec2, pad: f32) -> (std::ops::RangeInclusive<i32>, std::ops::RangeInclusive<i32>) {
+        let local: Vec<Vec2> = self.members[self.own].0.iter().map(|p| self.frame.to_local(*p)).collect();
+        let (lo, hi) = bounds(&local);
+        let r = |lo: f32, hi: f32, s: f32| ((lo - pad) / s).floor() as i32..=((hi + pad) / s).ceil() as i32;
+        (r(lo.x, hi.x, step.x), r(lo.y, hi.y, step.y))
+    }
+
+    /// Seams of the parcel being drawn, per edge of its lot-local outline.
+    fn seams(&self, c: &Ctx) -> Vec<bool> {
+        let n = c.lot_poly.len();
+        let w = |p: Vec2| c.frame.to_world(p.x, p.y);
+        (0..n).map(|i| self.is_seam(w(c.lot_poly[i]), w(c.lot_poly[(i + 1) % n]))).collect()
+    }
+
+    /// Turbine sites of the parcel being drawn (world position, height
+    /// jitter, rotor phase): one staggered grid over the whole field, so
+    /// spacing holds across the seams and the farm spreads over all of it.
+    fn wind_sites(&self) -> Vec<(Vec2, f32, f32)> {
+        let need = TURBINE_RADIUS + TURBINE_CLEARANCE;
+        let row = TURBINE_SPACING * 0.866;
+        let (ks, rs) = self.grid_range(Vec2::new(TURBINE_SPACING, row), TURBINE_SPACING);
+        let mut out = Vec::new();
+        for r in rs {
+            for k in ks.clone() {
+                // Jitter keyed to the grid cell, so every parcel agrees on it.
+                let mut rng = nd_sim::rng_for(self.seed ^ (((r as u32 as u64) << 32) | k as u32 as u64), 73);
+                let shift = if r.rem_euclid(2) == 1 { TURBINE_SPACING * 0.5 } else { 0.0 };
+                let local = Vec2::new(k as f32 * TURBINE_SPACING + shift + rng.random_range(-0.3..0.3), r as f32 * row + rng.random_range(-0.3..0.3));
+                let dh = rng.random_range(-0.3f32..0.3);
+                let phase = rng.random_range(0.0..std::f32::consts::TAU);
+                let p = self.frame.to_world(local.x, local.y);
+                if self.owns(p) && self.room(p, need) && self.front_clearance(p) >= need + 1.0 {
+                    out.push((p, dh, phase));
+                }
+            }
+        }
+        out.truncate(48);
+        out
+    }
+}
+
+/// Yard and fence of a field parcel: the ground runs flush over the seams,
+/// the fence only along the field's outside, with the gate on the front.
+fn field_yard(g: &mut Geometry, c: &Ctx, field: &PlantField, s: crate::surface::Surface, color: [f32; 3], fence_h: f32) -> Vec<Vec2> {
+    let seams = field.seams(c);
+    let insets: Vec<f32> = seams.iter().map(|&seam| if seam { 0.0 } else { 0.5 }).collect();
+    let yard = offset_edges(&c.lot_poly, &insets);
+    ground(g, &c.frame, s, &yard, 0.03, color);
+    let front = c.front_face_index(&yard);
+    let n = yard.len();
+    for i in 0..n {
+        if seams[i] {
+            continue;
+        }
+        let (a, b) = (yard[i], yard[(i + 1) % n]);
+        if front == Some(i) {
+            gate(g, c, a, b, fence_h);
+        } else {
+            fence(g, c, a, b, fence_h, false);
+        }
+    }
+    yard
+}
+
+/// A solar parcel that is part of a field: panel rows laid out in the
+/// anchor's frame across the whole field, filling it to [`PANEL_EDGE`] of
+/// its outside fence; each parcel keeps its inverter cabin and sign by its
+/// gate.
+fn solar_field(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, field: &PlantField) {
+    let pal = c.palette;
+    let yard = field_yard(g, c, field, Dirt, pal.gravel, 2.0);
+    let af = &field.frame;
+    let (ks, js) = field.grid_range(Vec2::new(PANEL_PITCH, PANEL_ROW), PANEL_PITCH);
+    let (s, co) = af.yaw().sin_cos();
+    let (ts, tc) = 0.5f32.sin_cos();
+    for j in js {
+        for k in ks.clone() {
+            let (u, v) = (k as f32 * PANEL_PITCH, j as f32 * PANEL_ROW);
+            let centre = af.to_world(u + 1.3, v);
+            if !field.owns(centre) {
+                continue;
+            }
+            let fits = [(-2.95f32, -0.95f32), (2.95, -0.95), (2.95, 0.95), (-2.95, 0.95)].iter().all(|&(du, dv)| field.room(af.to_world(u + 1.3 + du, v + dv), PANEL_EDGE));
+            if !fits {
+                continue;
+            }
+            af.bx(g, Matte, u, 0.9, v, Vec3::new(0.12, 1.8, 0.12), mul(pal.steel, 0.7));
+            af.bx(g, Matte, u + 2.6, 0.9, v, Vec3::new(0.12, 1.8, 0.12), mul(pal.steel, 0.7));
+            let corners = |du: f32, dv: f32| {
+                let y = 1.8 + dv * ts;
+                let vv = dv * tc;
+                Vec3::new(centre.x + du * co - vv * s, y, centre.y + du * s + vv * co)
+            };
+            g.part(Glass).quad_facing([corners(-2.9, -1.0), corners(2.9, -1.0), corners(2.9, 1.0), corners(-2.9, 1.0)], Vec3::new(0.0, 1.0, 0.0), rgba([0.10, 0.14, 0.26]));
+        }
+    }
+    let f = &c.frame;
+    let front = c.front_face(&yard);
+    let cab = front.at(front.len * 0.3, -2.4);
+    if c.inside_local(cab) {
+        let cb = fit_inside(c, &rect(cab.x, cab.y, 2.5, 1.4));
+        extrude(g, f, Panel, &cb, 0.0, 2.8, mul(pick(rng, &pal.panel), 0.9));
+    }
     sign_board(g, c, rng, &front, -front.len * 0.3, 2.6, (front.len * 0.3).min(6.0), 0.6);
 }
 
@@ -252,9 +471,12 @@ fn wind_sites(poly: &[Vec2], seed: u64) -> Vec<(Vec2, f32, f32)> {
 }
 
 /// The turbines of a wind farm on `lot`, in world coordinates. Depends only
-/// on the parcel and the seed, so the renderer finds the masts the generator
+/// on the parcel, the seed and the field it is part of, so the renderer finds the masts the generator
 /// drew and puts a spinning rotor on each.
-pub fn wind_turbines(lot: &nd_sim::Lot, seed: u64) -> Vec<Turbine> {
+pub fn wind_turbines(lot: &nd_sim::Lot, seed: u64, field: Option<&PlantField>) -> Vec<Turbine> {
+    if let Some(field) = field {
+        return field.wind_sites().into_iter().map(|(p, dh, phase)| Turbine { pos: p, hub: TURBINE_MAST + dh, phase }).collect();
+    }
     let (frame, poly) = local_lot(lot);
     wind_sites(&poly, seed).into_iter().map(|(p, dh, phase)| Turbine { pos: frame.to_world(p.x, p.y), hub: TURBINE_MAST + dh, phase }).collect()
 }
@@ -313,11 +535,17 @@ pub fn wind_rotor(phase: f32) -> Geometry {
 pub fn wind(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
-    let yard = yard(g, c, 0.5, Foliage, mul(pal.foliage_dry, 1.1));
+    let yard = match c.field {
+        Some(field) => field_yard(g, c, field, Foliage, mul(pal.foliage_dry, 1.1), 1.6),
+        None => yard(g, c, 0.5, Foliage, mul(pal.foliage_dry, 1.1)),
+    };
     weeds(g, c, rng, &yard, 10);
     let toward_front = f.dir3(Vec2::new(0.0, -1.0));
-    for (p, dh, phase) in wind_sites(&c.lot_poly, c.seed) {
-        let w = f.to_world(p.x, p.y);
+    let sites: Vec<(Vec2, f32, f32)> = match c.field {
+        Some(field) => field.wind_sites(),
+        None => wind_sites(&c.lot_poly, c.seed).into_iter().map(|(p, dh, phase)| (f.to_world(p.x, p.y), dh, phase)).collect(),
+    };
+    for (w, dh, phase) in sites {
         let hub = TURBINE_MAST + dh;
         // Footing, a tapered gunmetal mast, a bearing housing on top.
         g.part(Concrete).cylinder(w, 2.2, 2.2, 0.0, 0.5, 12, rgba(mul(pal.concrete(0), 0.8)));
@@ -346,7 +574,9 @@ pub fn wind(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let cb = fit_inside(c, &rect(cab.x, cab.y, 2.0, 1.6));
         extrude(g, f, Panel, &cb, 0.0, 2.6, mul(GUNMETAL, 1.4));
     }
-    fence_lot(g, c, &yard, 1.6, false);
+    if c.field.is_none() {
+        fence_lot(g, c, &yard, 1.6, false);
+    }
 }
 
 pub fn nuclear(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {

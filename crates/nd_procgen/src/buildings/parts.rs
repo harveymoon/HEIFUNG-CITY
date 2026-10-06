@@ -199,6 +199,43 @@ pub fn offset_poly(poly: &[Vec2], inset: f32) -> Vec<Vec2> {
     out
 }
 
+/// Offset each edge of a counter-clockwise polygon inward by its own
+/// distance (`insets[i]` for the edge from vertex `i` to `i + 1`; zero
+/// leaves the edge where it is). Unlike [`offset_poly`] every vertex is
+/// kept, so edge `i` of the result is the shifted edge `i`: a plant field
+/// insets the sides it fences and runs flush to the sides it shares with
+/// the next parcel of the field. Mitres are limited to 2.5 times the larger
+/// inset; meant for the near-rectangular parcels of a block.
+pub fn offset_edges(poly: &[Vec2], insets: &[f32]) -> Vec<Vec2> {
+    let n = poly.len();
+    if n < 3 || insets.len() != n {
+        return poly.to_vec();
+    }
+    (0..n)
+        .map(|i| {
+            let prev = (i + n - 1) % n;
+            let (p0, p1, p2) = (poly[prev], poly[i], poly[(i + 1) % n]);
+            let d1 = (p1 - p0).normalize_or_zero();
+            let d2 = (p2 - p1).normalize_or_zero();
+            let n1 = Vec2::new(-d1.y, d1.x) * insets[prev];
+            let n2 = Vec2::new(-d2.y, d2.x) * insets[i];
+            let a = p0 + n1;
+            let b = p1 + n2;
+            let denom = d1.perp_dot(d2);
+            let q = if denom.abs() < 1e-4 { p1 + (n1 + n2) * 0.5 } else { a + d1 * ((b - a).perp_dot(d2) / denom) };
+            let limit = insets[prev].max(insets[i]).abs() * 2.5;
+            let d = q - p1;
+            if !q.is_finite() {
+                p1
+            } else if d.length() > limit && limit > 0.0 {
+                p1 + d * (limit / d.length())
+            } else {
+                q
+            }
+        })
+        .collect()
+}
+
 /// Pull a point back inside a polygon along the line to the polygon's
 /// anchor point (a bisection, so it ends just inside the edge).
 pub fn clamp_into(poly: &[Vec2], p: Vec2) -> Vec2 {
@@ -1041,19 +1078,21 @@ pub fn fence_poly(g: &mut Geometry, c: &Ctx, poly: &[Vec2], h: f32, skip_face: O
     let n = poly.len();
     for i in 0..n {
         if skip_face == Some(i) {
-            // gate posts and a sliding gate half-open
-            let a = poly[i];
-            let b = poly[(i + 1) % n];
-            let face = Face::from_edge(a, b);
-            let f = &c.frame;
-            for side in [-1.0f32, 1.0] {
-                face.bx(g, f, Matte, side * face.len * 0.5, h * 0.6, 0.0, Vec3::new(0.2, h * 1.2, 0.2), mul(c.palette.steel, 0.6));
-            }
-            face.bx(g, f, Matte, -face.len * 0.2, h * 0.5, 0.15, Vec3::new(face.len * 0.55, h * 0.9, 0.05), mul(c.palette.steel, 0.5));
+            gate(g, c, poly[i], poly[(i + 1) % n], h);
             continue;
         }
         fence(g, c, poly[i], poly[(i + 1) % n], h, barbed);
     }
+}
+
+/// Gate posts at both ends of a lot-local edge and a sliding gate half open.
+pub fn gate(g: &mut Geometry, c: &Ctx, a: Vec2, b: Vec2, h: f32) {
+    let face = Face::from_edge(a, b);
+    let f = &c.frame;
+    for side in [-1.0f32, 1.0] {
+        face.bx(g, f, Matte, side * face.len * 0.5, h * 0.6, 0.0, Vec3::new(0.2, h * 1.2, 0.2), mul(c.palette.steel, 0.6));
+    }
+    face.bx(g, f, Matte, -face.len * 0.2, h * 0.5, 0.15, Vec3::new(face.len * 0.55, h * 0.9, 0.05), mul(c.palette.steel, 0.5));
 }
 
 /// Bollards `d` out from a face, pulled back to the lot edge when the

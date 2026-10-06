@@ -355,9 +355,130 @@ fn scaffolding(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], top
     }
 }
 
+/// Paints tower cranes come in: the orange and red of the big rental
+/// fleets, the classic yellow, and white. Picked per site from its seed.
+const CRANE_PAINTS: [[f32; 3]; 4] = [[0.95, 0.36, 0.05], [0.72, 0.07, 0.05], [0.92, 0.70, 0.08], [0.82, 0.83, 0.80]];
+/// Share of cranes carrying an LED billboard on the counter-jib.
+const CRANE_BILLBOARD_CHANCE: f64 = 0.45;
+/// Ad looks for the counter-jib billboards: background, lettering, logo.
+/// Glow colours, so above 1 for the bright parts.
+const CRANE_ADS: [([f32; 3], [f32; 3], [f32; 3]); 5] = [
+    ([1.6, 0.10, 0.85], [2.2, 2.2, 2.2], [0.2, 1.6, 2.0]),
+    ([0.10, 1.10, 1.70], [0.05, 0.05, 0.12], [2.2, 1.5, 0.2]),
+    ([1.9, 0.55, 0.05], [2.3, 2.2, 2.0], [0.10, 0.10, 0.12]),
+    ([0.08, 0.12, 0.85], [2.2, 1.9, 0.3], [2.0, 0.2, 0.4]),
+    ([0.05, 0.05, 0.06], [0.3, 2.0, 0.9], [2.0, 2.0, 2.0]),
+];
+
+/// The paint of the tower crane on a site with this seed.
+pub fn crane_paint(seed: u64) -> [f32; 3] {
+    let mut rng = nd_sim::rng_for(seed, 91);
+    let r: f32 = rng.random_range(0.0..1.0);
+    // Orange and red are what most of the skyline flies; yellow and white less.
+    let i = if r < 0.35 { 0 } else if r < 0.6 { 1 } else if r < 0.85 { 2 } else { 3 };
+    CRANE_PAINTS[i]
+}
+
+/// The slewing head of a tower crane, handed to the renderer instead of
+/// being baked into the site's mesh (see `Ctx::animated_cranes`) so it can turn:
+/// the jib, counter-jib with its ballast and billboard, cab, tower top,
+/// trolley and hook, drawn about the mast's axis with the jib along +x.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CraneRig {
+    /// Where the mast stands, world x/z.
+    pub pos: Vec2,
+    /// World heading of the jib as drawn (radians from +x towards +z): the
+    /// rest heading the jib swings about.
+    pub yaw: f32,
+    /// The head, in mast coordinates; heights are above the lot pad.
+    pub head: Geometry,
+    /// The site's seed: the rhythm of its lifts.
+    pub seed: u64,
+}
+
+/// Lift cycle of a working crane, in working minutes (`SimClock::work_minutes`).
+pub const CRANE_LIFT_MINUTES: u64 = 12;
+/// Furthest a crane swings from its rest heading, radians.
+pub const CRANE_SLEW_RANGE: f32 = 1.2;
+
+/// Where a crane's jib is aimed, relative to its rest heading, after
+/// `work_minutes` of working time: a new heading for every lift, picked
+/// from the site's seed and the lift's number, so every viewer sees the
+/// same crane do the same thing, and nothing moves while work is off. The
+/// renderer eases the jib towards it at a slow, capped rate.
+pub fn crane_slew(seed: u64, work_minutes: u64) -> f32 {
+    let lift = work_minutes / CRANE_LIFT_MINUTES;
+    let mut rng = nd_sim::rng_for(seed ^ lift.wrapping_mul(0x9E37_79B9_7F4A_7C15), 92);
+    // Mostly working over the slab, now and then a long swing to the
+    // stacks by the gate.
+    if rng.random_bool(0.2) {
+        rng.random_range(-CRANE_SLEW_RANGE..CRANE_SLEW_RANGE)
+    } else {
+        rng.random_range(-0.45..0.45)
+    }
+}
+
+/// Turn every vertex of `head` about the vertical through `pivot` by
+/// `-yaw`, moving `pivot` to the origin: world to mast coordinates.
+fn to_mast_frame(head: &mut Geometry, pivot: Vec2, yaw: f32) {
+    let (s, c) = (-yaw).sin_cos();
+    let rot = |x: f32, z: f32| (x * c - z * s, x * s + z * c);
+    for surface in crate::surface::Surface::ALL {
+        let m = head.part(surface);
+        for p in &mut m.positions {
+            let (x, z) = rot(p[0] - pivot.x, p[2] - pivot.y);
+            p[0] = x;
+            p[2] = z;
+        }
+        for n in &mut m.normals {
+            let (x, z) = rot(n[0], n[2]);
+            n[0] = x;
+            n[2] = z;
+        }
+        for t in &mut m.tangents {
+            let (x, z) = rot(t[0], t[2]);
+            t[0] = x;
+            t[2] = z;
+        }
+    }
+}
+
+/// An LED billboard standing on the counter-jib by the ballast, lit on
+/// both faces: a bright ad (background, two lines of lettering and a logo)
+/// in a dark frame. `centre` and `along` are world (along the counter-jib).
+fn crane_billboard(g: &mut Geometry, rng: &mut impl Rng, centre: Vec3, along: Vec3, w: f32, h: f32) {
+    let across = Vec3::new(-along.z, 0.0, along.x);
+    let (bg, ink, logo) = CRANE_ADS[rng.random_range(0..CRANE_ADS.len())];
+    // Frame and the two posts it stands on.
+    g.part(Matte).boxed(centre, Vec3::new(w + 0.3, h + 0.3, 0.3), along.z.atan2(along.x), rgba(DARK));
+    for t in [-0.35f32, 0.35] {
+        let p = centre + along * (t * w) - Vec3::Y * (h * 0.5 + 0.4);
+        g.part(Matte).boxed(p, Vec3::new(0.2, 0.8, 0.2), 0.0, rgba(DARK));
+    }
+    let lines = [rng.random_range(0.45f32..0.62), rng.random_range(0.3f32..0.5)];
+    for side in [-1.0f32, 1.0] {
+        let facing = across * side;
+        let face = |u: f32, v: f32| centre + facing * 0.17 + along * u + Vec3::Y * v;
+        // Mirrored on the far face, so the copy reads left to right there too.
+        let a = along * side;
+        g.part(Glow).decal(face(0.0, 0.0), a, Vec3::Y, w * 0.96, h * 0.92, facing, rgba(bg));
+        let lift = facing * 0.02;
+        for (k, len) in lines.iter().enumerate() {
+            let lw = w * len;
+            let u = (-w * 0.42 + lw * 0.5) * side;
+            g.part(Glow).decal(face(u, h * (0.16 - 0.3 * k as f32)) + lift, a, Vec3::Y, lw, h * 0.16, facing, rgba(ink));
+        }
+        g.part(Glow).decal(face(w * 0.3 * side, 0.0) + lift, a, Vec3::Y, h * 0.55, h * 0.55, facing, rgba(logo));
+    }
+}
+
 /// A tower crane standing clear of the footprint, jib reaching over it.
+/// The mast is drawn into `g`; the head that slews goes to the renderer
+/// in `Geometry::cranes` when it animates them ([`Ctx::animated_cranes`]),
+/// into `g` otherwise.
 fn tower_crane(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], built: f32, height: f32) {
     let f = &c.frame;
+    let paint = crane_paint(c.seed);
     let centre = poly_center(poly);
     // Stand by the footprint on the side with the most room.
     let mut best: Option<(f32, Vec2)> = None;
@@ -377,20 +498,22 @@ fn tower_crane(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], bui
     let w = 1.5;
     // Lattice mast: corner legs and a lighter core.
     for (du, dv) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-        f.bx(g, Matte, base.x + du * w * 0.45, mast_h * 0.5, base.y + dv * w * 0.45, Vec3::new(0.14, mast_h, 0.14), c.palette.crane);
+        f.bx(g, Matte, base.x + du * w * 0.45, mast_h * 0.5, base.y + dv * w * 0.45, Vec3::new(0.14, mast_h, 0.14), paint);
     }
     let bands = (mast_h / 2.5) as i32;
     for k in 0..=bands {
         let y = k as f32 * 2.5;
-        f.bx(g, Matte, base.x, y, base.y, Vec3::new(w, 0.08, 0.08), c.palette.crane);
-        f.bx(g, Matte, base.x, y, base.y, Vec3::new(0.08, 0.08, w), c.palette.crane);
+        f.bx(g, Matte, base.x, y, base.y, Vec3::new(w, 0.08, 0.08), paint);
+        f.bx(g, Matte, base.x, y, base.y, Vec3::new(0.08, 0.08, w), paint);
     }
-    f.bx(g, Matte, base.x, mast_h * 0.5, base.y, Vec3::new(w * 0.5, mast_h, w * 0.5), mul(c.palette.crane, 0.8));
+    f.bx(g, Matte, base.x, mast_h * 0.5, base.y, Vec3::new(w * 0.5, mast_h, w * 0.5), mul(paint, 0.8));
     // Foundation block and ballast.
     f.bx(g, Concrete, base.x, 0.4, base.y, Vec3::new(w + 2.0, 0.8, w + 2.0), mul(c.palette.concrete(0), 0.75));
-    // Slewing unit, cab, and the jib out over the footprint.
+    // Everything from the slewing unit up turns with the jib.
+    let mut head = Geometry::default();
+    let h = &mut head;
     let top = mast_h + 0.6;
-    f.bx(g, Matte, base.x, top, base.y, Vec3::new(w + 0.4, 1.2, w + 0.4), mul(c.palette.crane, 0.9));
+    f.bx(h, Matte, base.x, top, base.y, Vec3::new(w + 0.4, 1.2, w + 0.4), mul(paint, 0.9));
     let dir = {
         let d = centre - base;
         if d.length() > 0.5 { d.normalize() } else { Vec2::new(rng.random_range(-1.0..1.0), rng.random_range(-1.0..1.0)).normalize_or_zero().max(Vec2::X) }
@@ -409,43 +532,65 @@ fn tower_crane(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], bui
     let angle = dir.y.atan2(dir.x);
     let jib_y = top + 1.4;
     let jib_mid = base + dir * jib_len * 0.5;
-    f.bx_yaw(g, Matte, jib_mid.x, jib_y, jib_mid.y, Vec3::new(jib_len, 0.9, 0.9), c.palette.crane, angle);
-    f.bx_yaw(g, Matte, jib_mid.x, jib_y + 0.6, jib_mid.y, Vec3::new(jib_len * 0.98, 0.1, 0.1), mul(c.palette.crane, 0.8), angle);
-    // Counter-jib with ballast blocks, kept inside the fence too.
-    let back_len = reach(-dir, jib_len * 0.4, 2.0);
+    f.bx_yaw(h, Matte, jib_mid.x, jib_y, jib_mid.y, Vec3::new(jib_len, 0.9, 0.9), paint, angle);
+    f.bx_yaw(h, Matte, jib_mid.x, jib_y + 0.6, jib_mid.y, Vec3::new(jib_len * 0.98, 0.1, 0.1), mul(paint, 0.8), angle);
+    // Counter-jib with ballast blocks. A crane the renderer slews swings it
+    // over the street anyway, so there it is not cut short at the fence: a
+    // real counter-jib is about a third of the jib, long enough for the
+    // ballast (and, on some, a billboard). A crane drawn standing still
+    // keeps it inside the fence.
+    let back_len = if c.animated_cranes { (jib_len * 0.35).clamp(5.0, 12.0) } else { reach(-dir, jib_len * 0.4, 2.0) };
     let back_mid = base - dir * back_len * 0.5;
-    f.bx_yaw(g, Matte, back_mid.x, jib_y, back_mid.y, Vec3::new(back_len, 0.8, 1.0), c.palette.crane, angle);
+    f.bx_yaw(h, Matte, back_mid.x, jib_y, back_mid.y, Vec3::new(back_len, 0.8, 1.0), paint, angle);
     let ballast = base - dir * (back_len - 1.0);
-    f.bx_yaw(g, Concrete, ballast.x, jib_y - 0.9, ballast.y, Vec3::new(1.8, 1.4, 1.6), mul(c.palette.concrete(0), 0.8), angle);
+    f.bx_yaw(h, Concrete, ballast.x, jib_y - 0.9, ballast.y, Vec3::new(1.8, 1.4, 1.6), mul(c.palette.concrete(0), 0.8), angle);
     // Cab beside the mast, facing the jib.
     let cab = base + dir * (w * 0.5 + 1.0);
-    f.bx_yaw(g, Matte, cab.x, top + 0.2, cab.y, Vec3::new(1.8, 1.9, 1.6), mul(c.palette.crane, 0.95), angle);
-    f.bx_yaw(g, Glass, cab.x + dir.x * 0.5, top + 0.4, cab.y + dir.y * 0.5, Vec3::new(1.0, 1.1, 1.7), c.palette.glass_dark, angle);
+    f.bx_yaw(h, Matte, cab.x, top + 0.2, cab.y, Vec3::new(1.8, 1.9, 1.6), mul(paint, 0.95), angle);
+    f.bx_yaw(h, Glass, cab.x + dir.x * 0.5, top + 0.4, cab.y + dir.y * 0.5, Vec3::new(1.0, 1.1, 1.7), c.palette.glass_dark, angle);
     // Tower top and pendant lines.
-    f.bx(g, Matte, base.x, jib_y + 3.0, base.y, Vec3::new(0.4, 5.0, 0.4), c.palette.crane);
+    f.bx(h, Matte, base.x, jib_y + 3.0, base.y, Vec3::new(0.4, 5.0, 0.4), paint);
     let apex = f.at2(base, jib_y + 5.5);
-    g.part(Matte).tube(apex, f.at2(base + dir * jib_len * 0.9, jib_y + 0.5), 0.03, 4, rgba(DARK));
-    g.part(Matte).tube(apex, f.at2(base - dir * back_len * 0.9, jib_y + 0.4), 0.03, 4, rgba(DARK));
+    h.part(Matte).tube(apex, f.at2(base + dir * jib_len * 0.9, jib_y + 0.5), 0.03, 4, rgba(DARK));
+    h.part(Matte).tube(apex, f.at2(base - dir * back_len * 0.9, jib_y + 0.4), 0.03, 4, rgba(DARK));
     // Trolley, hoist rope and hook with a load swinging over the slab.
     let t = rng.random_range(0.45..0.85);
     let trolley = base + dir * jib_len * t;
-    f.bx_yaw(g, Matte, trolley.x, jib_y - 0.6, trolley.y, Vec3::new(1.2, 0.4, 1.1), DARK, angle);
+    f.bx_yaw(h, Matte, trolley.x, jib_y - 0.6, trolley.y, Vec3::new(1.2, 0.4, 1.1), DARK, angle);
     let hook_y = (built + 4.0 + rng.random_range(0.0..5.0)).min(jib_y - 2.0);
     let rope = f.at2(trolley, jib_y - 0.8);
-    g.part(Matte).tube(rope, f.at2(trolley, hook_y), 0.025, 4, rgba(DARK));
-    f.bx(g, Matte, trolley.x, hook_y - 0.3, trolley.y, Vec3::new(0.5, 0.7, 0.3), DARK);
+    h.part(Matte).tube(rope, f.at2(trolley, hook_y), 0.025, 4, rgba(DARK));
+    f.bx(h, Matte, trolley.x, hook_y - 0.3, trolley.y, Vec3::new(0.5, 0.7, 0.3), DARK);
     if rng.random_bool(0.7) {
         let load = hook_y - 1.6;
         // A swinging steel bundle is 3.6 m long: only where it clears the fence.
         if rng.random_bool(0.5) && poly_inside(c, &rect_yaw(trolley.x, trolley.y, 1.9, 0.6, angle + 0.4)) {
-            f.bx_yaw(g, Metal, trolley.x, load, trolley.y, Vec3::new(3.6, 0.5, 1.0), mul(c.palette.steel, 0.8), angle + 0.4);
+            f.bx_yaw(h, Metal, trolley.x, load, trolley.y, Vec3::new(3.6, 0.5, 1.0), mul(c.palette.steel, 0.8), angle + 0.4);
         } else {
-            f.bx_yaw(g, Concrete, trolley.x, load, trolley.y, Vec3::new(1.4, 1.2, 1.2), mul(c.palette.concrete(0), 0.9), angle);
+            f.bx_yaw(h, Concrete, trolley.x, load, trolley.y, Vec3::new(1.4, 1.2, 1.2), mul(c.palette.concrete(0), 0.9), angle);
         }
     }
     // Aviation lights.
-    f.bx(g, Glow, base.x, jib_y + 5.8, base.y, Vec3::new(0.3, 0.3, 0.3), c.palette.aviation_light);
-    f.bx(g, Glow, tip.x, jib_y + 0.6, tip.y, Vec3::new(0.3, 0.3, 0.3), c.palette.aviation_light);
+    f.bx(h, Glow, base.x, jib_y + 5.8, base.y, Vec3::new(0.3, 0.3, 0.3), c.palette.aviation_light);
+    f.bx(h, Glow, tip.x, jib_y + 0.6, tip.y, Vec3::new(0.3, 0.3, 0.3), c.palette.aviation_light);
+    // Some carry an LED billboard on the counter-jib, by the counterweight:
+    // its own random stream, so the rest of the site is drawn as before.
+    let mut ad = nd_sim::rng_for(c.seed, 93);
+    if back_len >= 4.0 && ad.random_bool(CRANE_BILLBOARD_CHANCE) {
+        let bw = (back_len * 0.8).min(7.0);
+        let bh = (bw * 0.42).clamp(1.6, 2.8);
+        let mid = base - dir * (back_len - 1.2 - bw * 0.5).max(bw * 0.5 + 0.6);
+        crane_billboard(h, &mut ad, f.at2(mid, jib_y + 0.4 + 0.45 + bh * 0.5 + 0.35), f.dir3(-dir), bw, bh);
+    }
+    if c.animated_cranes {
+        let pivot = f.to_world(base.x, base.y);
+        let d3 = f.dir3(dir);
+        let yaw = d3.z.atan2(d3.x);
+        to_mast_frame(&mut head, pivot, yaw);
+        g.cranes.push(CraneRig { pos: pivot, yaw, head, seed: c.seed });
+    } else {
+        g.append(&head);
+    }
 }
 
 /// Portable site office: a container-like cabin with a lit window and steps.
