@@ -77,6 +77,9 @@ pub const CRIME_WORK: f32 = 25.0;
 pub const MEDICAL_WORK: f32 = 12.0;
 /// [driving] Ticks the police spend clearing a crash scene.
 pub const CRASH_WORK: f32 = 20.0;
+/// A crash this close to an open crash scene joins it rather than opening
+/// a call of its own.
+pub const CRASH_SCENE_JOIN: f32 = 60.0;
 /// [driving] Chance the police arrest a driver at fault who was drunk or
 /// ran a red, once they are on scene.
 pub const DUI_ARREST: f32 = 0.6;
