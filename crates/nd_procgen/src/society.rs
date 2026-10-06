@@ -265,8 +265,8 @@ pub fn rv(p: Vec2, heading: f32, camper: bool, seed: u64, pal: &Palette) -> Geom
         let c = f.at(u, 0.0);
         g.part(Matte).pipe(c, right, w + 0.1, 0.38, 0.38, 8, rgba(DARK));
     }
-    // On the pavement side: a chair, a generator, crates.
-    let side = -1.0;
+    // On the pavement side (the right, parked with the traffic): a chair, a generator.
+    let side = 1.0;
     g.part(Tarp).boxed(f.v3(-0.5, side * (w * 0.5 + 1.0), 0.45), Vec3::new(0.5, 0.06, 0.5), yaw, rgba(pick(&mut rng, &pal.tarp_colors)));
     if rng.random_bool(0.6) {
         g.part(Metal).boxed(f.v3(1.2, side * (w * 0.5 + 0.8), 0.3), Vec3::new(0.6, 0.45, 0.4), yaw, rgba(mul([0.75, 0.55, 0.1], 0.9)));

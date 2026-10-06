@@ -390,6 +390,35 @@ Citizens are rendered from their simulated positions every frame.
   taken, unit and whether it came from out of town, fee, fire damage per building), the last 500
   resolved ones on file, shown live in the Emergencies window and by the `incidents` API command.
   Services draw from their own random stream so the rest of the simulation is not perturbed.
+- **Crime, the street and the bins** (`nd_sim::{crime, homeless, trash}`, hooked in from
+  `world/society.rs`, their own random stream). *Crime*: every hour each adult may turn, by class
+  (poor 1, middle 0.22, rich 0.04), being jobless (x2.5) or homeless (x1.6), hunger, unhappiness,
+  cheap land at home (nothing from land value 0.7 up), police coverage at home (cut by up to 80%),
+  personality (boldness from the seed), youth and the offenders living within 140 m (+60% each, up
+  to x4: crime spreads through a poor district nobody polices); at most 8% of adults offend. An
+  active offender strikes about a third of the time a day (twice as often at night, less under
+  coverage) at a building within 260 m: theft from a business (6% of its cash up to 80, two units of
+  stock), burglary (a quarter of a household's money up to 100), assault (the victim falls ill
+  through the medical hook; 6% are murders) or vandalism (condition). Every offence goes to
+  `report_crime`; the services arrest. A jail term ends a career at 20% + 8% a day served, an early
+  release from a police cell at 5% (and emboldens); released offenders who strike again make the
+  reoffending rate. Offences leave decaying heat at hot spots, which take land value off the block
+  and frighten the neighbours (mood; rich households near heat 4+ leave). *Homelessness*: a
+  household evicted with nowhere cheaper and no money stays on the street 70% of the time if any
+  land is cheap (value < 0.36): camps of up to six households on cheap pavements, vacant lots and
+  unzoned parcels, or (with a car) an RV or van at the kerb; they eat charity meals, walk back to
+  the camp at night, are housed again by the ordinary daily search when something affordable is
+  free, by outreach from a clinic or police post nearby, or give up after ten days. Camps lower land
+  value and are drawn only on cheap land. *Trash*: people throw out 1.5/1.8/2.4 kg a day by class,
+  workers 0.6 to 2.8 kg by land use; bins hold three days. A staffed trash depot (Buildings >
+  Services, radius 560/800/1120 m, 2/4/7 trucks of two crew) sends garbage trucks (cars of the
+  traffic model, 9 t, a few minutes a stop) 06:00-18:00 to the fullest covered bins, unloading at
+  the depot. Outside its reach rich buildings pay a private hauler (1.5 a household a day) whose
+  trucks come in from the map edge and drive the trash out of town; everyone else's bins overflow:
+  bags on the pavement, complaints and mood, land value, and rats (illness). Demo, day 8: bare,
+  19 offenders and about 10 offences a day, 103 of ~350 buildings overflowing, the hauler with 88
+  clients; with a police station, jail, dispatch and depot, 11 offenders, 5 arrests, nothing
+  overflowing.
 - **Economy stats**: demand per land use, Gini of incomes, class counts, rents per
   tier, displaced, emigrated and priced-out counters, plus market stats: businesses,
   deals, imports, exports, meals sold, hungry citizens, closures, and the average
