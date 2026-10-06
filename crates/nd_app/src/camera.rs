@@ -332,9 +332,13 @@ fn control_camera(
     // The orbit centre rides on the ground, eased so hills do not jolt it.
     let ground = sim.world.surface_height(Vec2::new(cam.target.x, cam.target.z));
     cam.target.y += (ground - cam.target.y) * (dt * 6.0).min(1.0);
-    let mut eye = cam.target + offset;
-    eye.x = eye.x.clamp(-BOUND, BOUND);
-    eye.z = eye.z.clamp(-BOUND, BOUND);
+    // An eye that would leave the bound slides the whole view back in,
+    // keeping its angle (clamping the eye alone stacked it over the
+    // target and the camera looked straight down).
+    let eye = cam.target + offset;
+    let over = Vec3::new(eye.x - eye.x.clamp(-BOUND, BOUND), 0.0, eye.z - eye.z.clamp(-BOUND, BOUND));
+    cam.target -= over;
+    let eye = cam.target + offset;
     tf.translation = eye;
     tf.look_at(cam.target, Vec3::Y);
 }
