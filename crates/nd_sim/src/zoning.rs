@@ -1,11 +1,18 @@
-//! Zones (land-use polygons) and the parcels carved out of them.
+//! Parcels, zones (land-use polygons) and lots.
 //!
-//! The road corridors are subtracted from a zone with real polygon booleans,
-//! so a curved road removes exactly its own strip and nothing else. Each
-//! remaining block is sliced along its road frontage into parcels of the
-//! land use's size. A parcel is usable only when one of its edges lies along
-//! a road; land with no road access is kept as unusable ground, and slivers
-//! are never built on.
+//! Parcels are cut along every street and path as soon as it is built,
+//! zoned or not ([`generate_parcels`]): the road corridors are subtracted
+//! from the land within reach of the roads with real polygon booleans, so a
+//! curved road removes exactly its own strip and nothing else, and each
+//! remaining block is sliced along its road frontage into parcels of a
+//! home's size. A parcel is usable only when one of its edges lies along a
+//! road; land with no road access is kept as landlocked backland, and
+//! slivers are never built on. Zoning then gives parcels a land use
+//! ([`crate::plan::parcel_zoning`]) and every zoned parcel becomes a lot;
+//! uses that want wider lots join neighbouring parcels ([`join_parcels`]).
+//!
+//! [`generate_lots`] still cuts a single zone polygon on its own, at the
+//! land use's own lot size: tests and the building previews use it.
 
 use crate::buildings::BuildingId;
 use crate::geom::{self, bounds as bounds_of, boxes_overlap, perimeter, Grid};
@@ -15,6 +22,7 @@ use glam::Vec2;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use slotmap::{new_key_type, SlotMap};
+use std::collections::HashMap;
 
 pub use crate::geom::{distance_to_outline, point_in_polygon, polygon_area, polygon_centroid};
 
@@ -86,6 +94,39 @@ impl LandUse {
             LandUse::Park => 28.0,
             _ => 24.0,
         }
+    }
+
+    /// Smallest parcel this use may take: no works yard or civic site on a
+    /// corner scrap.
+    pub fn min_parcel_area(self) -> f32 {
+        match self {
+            LandUse::Industrial | LandUse::Civic => 200.0,
+            _ => MIN_AREA,
+        }
+    }
+
+    /// Does this use join neighbouring parcels into bigger lots? Every use
+    /// whose lots are bigger than a home's does; parks join up as clusters
+    /// instead ([`crate::park`]).
+    pub fn joins_parcels(self) -> bool {
+        self != LandUse::Park && self.lot_area() > PARCEL_USE.lot_area() * 1.1
+    }
+
+    /// Uses whose lots run deeper than a parcel (works yards, civic
+    /// grounds) take the backland behind their lots, as the deeper rows
+    /// they were cut to always did.
+    pub fn takes_backland(self) -> bool {
+        self != LandUse::Park && self.lot_depth() > PARCEL_USE.lot_depth()
+    }
+
+    /// The area of a typical lot: its width by a row's usual depth.
+    pub fn lot_area(self) -> f32 {
+        self.lot_width() * self.lot_depth() * 1.15
+    }
+
+    /// Parse a label or key ("residential", "Park", ...).
+    pub fn parse(s: &str) -> Option<LandUse> {
+        LandUse::ALL.into_iter().find(|l| l.label().eq_ignore_ascii_case(s.trim()))
     }
 }
 
@@ -298,7 +339,7 @@ fn halfplane(origin: Vec2, normal: Vec2, reach: f32) -> Polygon<f64> {
 /// Chains of road pieces joined at plain two-way nodes, with the corridor
 /// half-width of the chain and whether each end sits at a junction or dead
 /// end (where the corridor is extended to clear the corner).
-fn road_chains(roads: &RoadNetwork) -> Vec<(Vec<Vec2>, f32, bool, bool)> {
+fn road_chains(roads: &RoadNetwork) -> Vec<(Vec<Vec2>, f32, bool, bool, SegmentId)> {
     let degree = |n: NodeId| roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive).count();
     let hw_of = |s: SegmentId| {
         let seg = roads.segment(s);
@@ -343,7 +384,7 @@ fn road_chains(roads: &RoadNetwork) -> Vec<(Vec<Vec2>, f32, bool, bool)> {
         }
         let end_junction = degree(node) != 2 || node == start;
         let start_junction = degree(start) != 2 || node == start;
-        out.push((pts, hw_of(cur), start_junction, end_junction));
+        out.push((pts, hw_of(cur), start_junction, end_junction, cur));
     }
     out
 }
@@ -963,7 +1004,7 @@ pub fn generate_lots_wet(
     // Blocks: the zone minus every nearby road corridor (one smooth polygon
     // per chain of road pieces).
     let mut corridors: Option<MultiPolygon<f64>> = None;
-    for (pts, hw, ext_a, ext_b) in road_chains(roads) {
+    for (pts, hw, ext_a, ext_b, _) in road_chains(roads) {
         let (lo, hi) = pts.iter().fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
         let (lo, hi) = (lo - Vec2::splat(hw * 2.0), hi + Vec2::splat(hw * 2.0));
         if hi.x < zlo.x || hi.y < zlo.y || lo.x > zhi.x || lo.y > zhi.y {
@@ -1020,13 +1061,7 @@ pub fn generate_lots_wet(
         if poly.len() < 3 {
             continue;
         }
-        let mut center = polygon_centroid(&poly);
-        if !point_in_polygon(center, &poly) {
-            use geo::InteriorPoint;
-            if let Some(ip) = to_geo(&poly).interior_point() {
-                center = Vec2::new(ip.x() as f32, ip.y() as f32);
-            }
-        }
+        let center = inner_center(&poly);
         if covering.iter().any(|z| z.contains(center)) {
             continue;
         }
@@ -1036,74 +1071,682 @@ pub fn generate_lots_wet(
         if taken {
             continue;
         }
-        let area = polygon_area(&poly);
-        let compact = area / perimeter(&poly).powi(2);
-        let (fi, road) = frontage_edge(&poly, roads, lu.fronts_paths());
-        let n = poly.len();
-        let fa = poly[fi];
-        let fb = poly[(fi + 1) % n];
-        let along = (fb - fa).normalize_or_zero();
-        if along == Vec2::ZERO {
-            continue;
-        }
-        let inward = Vec2::new(-along.y, along.x);
-        let (u0, u1) = extents(&poly, along);
-        let (v0, v1) = extents(&poly, inward);
-        let corners = [
-            along * u0 + inward * v0,
-            along * u1 + inward * v0,
-            along * u1 + inward * v1,
-            along * u0 + inward * v1,
-        ];
-        let has_frontage = road.is_some() && fa.distance(fb) >= MIN_FRONTAGE.min(lu.lot_width() * 0.45);
-        let sharp = reflex_vertex(&poly, 0.6).is_some();
-        let landlocked = !has_frontage || sharp || compact < MIN_COMPACTNESS || (u1 - u0) < 8.0 || (v1 - v0) < 8.0;
-        #[cfg(test)]
-        if landlocked {
-            let reason = if !has_frontage { "nofront" } else if sharp { "sharp" } else if compact < MIN_COMPACTNESS { "compact" } else { "narrow" };
-            DEAD_REASONS.with(|r| r.borrow_mut().push((center, reason, area, compact)));
-        }
-        let (sid, t) = match road {
-            Some(hit) => hit,
-            None => match nearest_road(roads, center, true) {
-                Some((s, t, _)) => (s, t),
-                None => continue,
-            },
-        };
-        let fronts_street = roads.segment(sid).is_street();
-        let entrance = fa.lerp(fb, 0.5);
-        let (car_segment, car_point) = if fronts_street {
-            (Some(sid), entrance)
-        } else {
-            match roads.nearest_street(entrance) {
-                Some((cs, _, q)) if q.distance(entrance) < 260.0 => (Some(cs), q),
-                _ => (None, entrance),
-            }
-        };
-        let lot = Lot {
-            zone: zone_id,
-            land_use: lu,
-            polygon: poly,
-            corners,
-            front_edge: [fa, fb],
-            center,
-            front_dir: -inward,
-            front_segment: sid,
-            front_t: t,
-            access_node: roads.nearest_endpoint(sid, t),
-            building: None,
-            landlocked,
-            footfall_today: 0,
-            footfall_hour: 0,
-            car_segment,
-            car_point,
-            park: None,
-        };
+        let Some(lot) = make_lot(zone_id, lu, poly, center, roads) else { continue };
         let id = lots.insert(lot);
         mine.push((id, pbox));
         created.push(id);
     }
     created
+}
+
+/// A lot of land use `lu` on a parcel outline (counter-clockwise) with its
+/// interior centre: frontage, the frontage-aligned rectangle, the street a
+/// car reaches it from, and whether it is landlocked for that use (no
+/// frontage it may use, a sharp inward corner, a sliver, too narrow).
+/// None when there is no road anywhere to hang it on.
+pub fn make_lot(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, roads: &RoadNetwork) -> Option<Lot> {
+    let area = polygon_area(&poly);
+    let compact = area / perimeter(&poly).powi(2);
+    let (fi, road) = frontage_edge(&poly, roads, lu.fronts_paths());
+    let n = poly.len();
+    let fa = poly[fi];
+    let fb = poly[(fi + 1) % n];
+    let along = (fb - fa).normalize_or_zero();
+    if along == Vec2::ZERO {
+        return None;
+    }
+    let inward = Vec2::new(-along.y, along.x);
+    let (u0, u1) = extents(&poly, along);
+    let (v0, v1) = extents(&poly, inward);
+    let corners = [
+        along * u0 + inward * v0,
+        along * u1 + inward * v0,
+        along * u1 + inward * v1,
+        along * u0 + inward * v1,
+    ];
+    let has_frontage = road.is_some() && fa.distance(fb) >= MIN_FRONTAGE.min(lu.lot_width() * 0.45);
+    let sharp = reflex_vertex(&poly, 0.6).is_some();
+    let landlocked = !has_frontage || sharp || compact < MIN_COMPACTNESS || (u1 - u0) < 8.0 || (v1 - v0) < 8.0;
+    #[cfg(test)]
+    if landlocked {
+        let reason = if !has_frontage { "nofront" } else if sharp { "sharp" } else if compact < MIN_COMPACTNESS { "compact" } else { "narrow" };
+        DEAD_REASONS.with(|r| r.borrow_mut().push((center, reason, area, compact)));
+    }
+    let (sid, t) = match road {
+        Some(hit) => hit,
+        None => {
+            let (s, t, _) = nearest_road(roads, center, true)?;
+            (s, t)
+        }
+    };
+    let fronts_street = roads.segment(sid).is_street();
+    let entrance = fa.lerp(fb, 0.5);
+    let (car_segment, car_point) = if fronts_street {
+        (Some(sid), entrance)
+    } else {
+        match roads.nearest_street(entrance) {
+            Some((cs, _, q)) if q.distance(entrance) < 260.0 => (Some(cs), q),
+            _ => (None, entrance),
+        }
+    };
+    Some(Lot {
+        zone: zone_id,
+        land_use: lu,
+        polygon: poly,
+        corners,
+        front_edge: [fa, fb],
+        center,
+        front_dir: -inward,
+        front_segment: sid,
+        front_t: t,
+        access_node: roads.nearest_endpoint(sid, t),
+        building: None,
+        landlocked,
+        footfall_today: 0,
+        footfall_hour: 0,
+        car_segment,
+        car_point,
+        park: None,
+    })
+}
+
+/// A point inside the polygon: the area centroid, or for a concave shape
+/// whose centroid falls outside, an interior point.
+pub fn inner_center(poly: &[Vec2]) -> Vec2 {
+    let mut center = polygon_centroid(poly);
+    if !point_in_polygon(center, poly) {
+        use geo::InteriorPoint;
+        if let Some(ip) = to_geo(poly).interior_point() {
+            center = Vec2::new(ip.x() as f32, ip.y() as f32);
+        }
+    }
+    center
+}
+
+// ── parcels cut before zoning ───────────────────────────────────────────────
+
+/// Every parcel is cut to a home's lot; uses that want wider lots join
+/// neighbouring parcels ([`join_parcels`]).
+pub const PARCEL_USE: LandUse = LandUse::Residential;
+/// Parcels reach this far behind the edge of a street's or path's corridor.
+pub const PARCEL_REACH: f32 = 60.0;
+/// Landlocked pieces bigger than this many parcels are chopped up, so a
+/// park can be painted onto backland a piece at a time.
+const BACKLAND_PARCELS: f32 = 4.0;
+/// Land enclosed by the reach of the roads around it is parcelled too, up
+/// to this area (m²); bigger enclosures keep their open middle.
+const ENCLOSED_FILL: f64 = 40_000.0;
+/// Resolution of parcel keys, in metres.
+const KEY_UNIT: f32 = 0.25;
+/// Long straight frontages are first cut across where the coordinate along
+/// the road is a multiple of this, so a block's parcels do not depend on
+/// where its far end is.
+const CHUNK: f32 = 96.0;
+
+/// A parcel's identity across rebuilds: its centre and frontage edge on a
+/// quarter-metre grid. Lot ids change every time the lots are rebuilt; a key
+/// stays the same as long as the parcel does. A parcel reshaped by road
+/// works is found again by the old centre ([`ParcelMap::find`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ParcelKey {
+    pub center: (i32, i32),
+    pub front: [(i32, i32); 2],
+}
+
+impl ParcelKey {
+    pub fn new(center: Vec2, front: [Vec2; 2]) -> Self {
+        let q = |p: Vec2| ((p.x / KEY_UNIT).round() as i32, (p.y / KEY_UNIT).round() as i32);
+        Self { center: q(center), front: [q(front[0]), q(front[1])] }
+    }
+
+    pub fn center(&self) -> Vec2 {
+        Vec2::new(self.center.0 as f32, self.center.1 as f32) * KEY_UNIT
+    }
+}
+
+/// A piece of land along a road, cut whether or not it is zoned.
+#[derive(Clone, Debug)]
+pub struct Parcel {
+    pub key: ParcelKey,
+    /// Counter-clockwise outline.
+    pub polygon: Vec<Vec2>,
+    /// A point inside the outline (the centroid when that is inside).
+    pub center: Vec2,
+    pub front_edge: [Vec2; 2],
+    pub area: f32,
+    /// Has a frontage a home may use (a street or a footpath).
+    pub path_frontage: bool,
+    /// Has a street frontage, which shops, industry and the rest need.
+    pub street_frontage: bool,
+    /// Too steep to level, or standing in the water.
+    pub rough: bool,
+    /// Land use as built (from the master plan); None is unzoned.
+    pub land_use: Option<LandUse>,
+    /// The lot this parcel is part of, once zoned and built into one.
+    pub lot: Option<LotId>,
+}
+
+impl Parcel {
+    /// No frontage anyone may use, or rough ground: backland.
+    pub fn landlocked(&self) -> bool {
+        self.rough || !self.path_frontage
+    }
+
+    /// Why this parcel cannot take `lu`, or None if it can. The ruleset:
+    /// parks go anywhere, backland and rough ground included (a park is
+    /// reached through the park); homes need a street or path to front;
+    /// everything else needs a street; industry and civic sites are not put
+    /// on scraps, but their deep yards may take the backland behind them
+    /// (it is folded into the lot in front, see [`join_parcels`]).
+    pub fn refusal(&self, lu: LandUse) -> Option<&'static str> {
+        if lu == LandUse::Park {
+            return None;
+        }
+        if self.rough {
+            return Some("too steep or wet to build on");
+        }
+        if !self.path_frontage {
+            if lu.takes_backland() {
+                return None;
+            }
+            return Some("landlocked: no street or path to front");
+        }
+        if !lu.fronts_paths() && !self.street_frontage {
+            return Some("fronts only a footpath; this use needs a street");
+        }
+        if self.area < lu.min_parcel_area() {
+            return Some("too small for this use");
+        }
+        None
+    }
+
+    pub fn accepts(&self, lu: LandUse) -> bool {
+        self.refusal(lu).is_none()
+    }
+
+    pub fn contains(&self, p: Vec2) -> bool {
+        point_in_polygon(p, &self.polygon)
+    }
+}
+
+/// The parcels of the city with a key index and a spatial grid.
+#[derive(Clone, Debug, Default)]
+pub struct ParcelMap {
+    pub parcels: Vec<Parcel>,
+    by_key: HashMap<ParcelKey, usize>,
+    grid: Grid,
+    /// Bumped every time the parcels are cut again.
+    pub version: u64,
+}
+
+impl ParcelMap {
+    pub fn new(parcels: Vec<Parcel>, version: u64) -> Self {
+        let by_key = parcels.iter().enumerate().map(|(i, p)| (p.key, i)).collect();
+        let grid = Grid::new(48.0, parcels.iter().map(|p| bounds_of(&p.polygon)));
+        ParcelMap { parcels, by_key, grid, version }
+    }
+
+    pub fn len(&self) -> usize {
+        self.parcels.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.parcels.is_empty()
+    }
+
+    /// The parcel under a point.
+    pub fn at(&self, p: Vec2) -> Option<usize> {
+        self.grid.in_box(p, p).into_iter().map(|i| i as usize).find(|&i| self.parcels[i].contains(p))
+    }
+
+    /// Parcels a brush of radius `r` at `c` touches.
+    pub fn in_circle(&self, c: Vec2, r: f32) -> Vec<usize> {
+        self.grid
+            .in_box(c - Vec2::splat(r), c + Vec2::splat(r))
+            .into_iter()
+            .map(|i| i as usize)
+            .filter(|&i| {
+                let p = &self.parcels[i];
+                p.contains(c) || distance_to_outline(c, &p.polygon) <= r
+            })
+            .collect()
+    }
+
+    /// Parcels whose centre lies inside `poly`.
+    pub fn in_polygon(&self, poly: &[Vec2]) -> Vec<usize> {
+        if poly.len() < 3 {
+            return Vec::new();
+        }
+        let (lo, hi) = bounds_of(poly);
+        self.grid.in_box(lo, hi).into_iter().map(|i| i as usize).filter(|&i| point_in_polygon(self.parcels[i].center, poly)).collect()
+    }
+
+    /// The parcel a key names: the same parcel if it is still there, else
+    /// the one that now holds its old centre.
+    pub fn find(&self, key: &ParcelKey) -> Option<usize> {
+        self.by_key.get(key).copied().or_else(|| self.at(key.center()))
+    }
+}
+
+/// Cut parcels along every street and path: the land within
+/// [`PARCEL_REACH`] of the corridors, minus every corridor (track and
+/// highway included) and the water, clipped to `clip`, each block sliced as
+/// [`subdivide`] does for a home's lot. Long straight frontages are first
+/// chunked at fixed world positions along the road ([`CHUNK`]), and every
+/// chunk draws its own random stream from its own shape, so road works
+/// elsewhere never move a parcel here: the same road gives the same
+/// parcels.
+pub fn generate_parcels(roads: &RoadNetwork, water: &WaterMask, clip: Option<(Vec2, Vec2)>) -> Vec<Parcel> {
+    let mut out = Vec::new();
+    if roads.is_empty() {
+        return out;
+    }
+    let mut corridors: Vec<Polygon<f64>> = Vec::new();
+    let mut reach: Vec<Polygon<f64>> = Vec::new();
+    let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+    for (pts, hw, ext_a, ext_b, sid) in road_chains(roads) {
+        if let Some(c) = chain_corridor(&pts, hw, ext_a, ext_b) {
+            corridors.push(c);
+        }
+        let seg = roads.segment(sid);
+        // Highways and track front nothing, so no parcels hang off them.
+        if seg.is_rail() || seg.is_highway() {
+            continue;
+        }
+        let r = hw + PARCEL_REACH;
+        for p in &pts {
+            lo = lo.min(*p - Vec2::splat(r + hw));
+            hi = hi.max(*p + Vec2::splat(r + hw));
+        }
+        reach_pieces(&pts, hw, r, ext_a, ext_b, &mut reach);
+    }
+    if reach.is_empty() {
+        return out;
+    }
+    let mut region: MultiPolygon<f64> = geo::unary_union(&reach);
+    // Ground the reach does not quite get to but that roads close round
+    // (the middle of a big block) is still that block's: fill such holes,
+    // or the block would be split around a speck of nobody's land.
+    region = MultiPolygon(
+        region
+            .0
+            .into_iter()
+            .map(|p| {
+                let keep: Vec<LineString<f64>> = p.interiors().iter().filter(|r| Polygon::new((*r).clone(), vec![]).unsigned_area() > ENCLOSED_FILL).cloned().collect();
+                Polygon::new(p.exterior().clone(), keep)
+            })
+            .collect(),
+    );
+    let corridors: MultiPolygon<f64> = geo::unary_union(&corridors);
+    region = region.difference(&corridors);
+    if let Some((clo, chi)) = clip {
+        region = region.intersection(&MultiPolygon(vec![to_geo(&[clo, Vec2::new(chi.x, clo.y), chi, Vec2::new(clo.x, chi.y)])]));
+    }
+    if let Some(w) = water.near(lo, hi) {
+        region = region.difference(&w);
+    }
+    let mut polys: Vec<Vec<Vec2>> = Vec::new();
+    for block in region.0 {
+        if area_f(&block) < MIN_AREA {
+            continue;
+        }
+        for chunk in chunk_block(block, roads) {
+            let chunk = canonical(chunk);
+            let mut rng = crate::rng_for(block_seed(&chunk), 5);
+            let mut pieces: Vec<Vec<Vec2>> = Vec::new();
+            subdivide(chunk, PARCEL_USE, roads, &mut rng, 0, &mut pieces);
+            for piece in merge_backland(pieces, PARCEL_USE, roads) {
+                chop_backland(piece, roads, 0, &mut polys);
+            }
+        }
+    }
+    for poly in polys {
+        if let Some(p) = parcel_of(poly, roads) {
+            out.push(p);
+        }
+    }
+    out
+}
+
+/// Cut a block across every long straight frontage edge where the
+/// coordinate along the edge's direction is a multiple of [`CHUNK`]. The
+/// lines are fixed in the world, so the chunks away from a change keep
+/// their exact shape.
+fn chunk_block(block: Polygon<f64>, roads: &RoadNetwork) -> Vec<Polygon<f64>> {
+    let pts = from_geo(&block);
+    let n = pts.len();
+    let mut lines: Vec<(Vec2, Vec2)> = Vec::new();
+    let margin = PARCEL_USE.lot_width() * 1.5;
+    for i in 0..n {
+        let (a, b) = (pts[i], pts[(i + 1) % n]);
+        if a.distance(b) < CHUNK * 2.0 || edge_on_road(roads, a, b, true).is_none() {
+            continue;
+        }
+        let d = (b - a).normalize_or_zero();
+        // Canonical direction, so both sides of a road agree on the lines.
+        let d = if d.x < -1e-6 || (d.x.abs() <= 1e-6 && d.y < 0.0) { -d } else { d };
+        let (s0, s1) = (a.dot(d).min(b.dot(d)), a.dot(d).max(b.dot(d)));
+        let mut k = ((s0 + margin) / CHUNK).ceil() as i64;
+        while (k as f32) * CHUNK <= s1 - margin {
+            let s = k as f32 * CHUNK;
+            let t = (s - a.dot(d)) / (b - a).dot(d);
+            lines.push((a.lerp(b, t), d));
+            k += 1;
+        }
+    }
+    let mut pieces = vec![block];
+    for (origin, normal) in lines {
+        let mut next = Vec::new();
+        for piece in pieces {
+            let (lo, hi) = extents(&from_geo(&piece), normal);
+            let at = origin.dot(normal);
+            if at - lo > 1.0 && hi - at > 1.0 {
+                let cut_pieces = cut(&piece, origin, normal);
+                if cut_pieces.len() >= 2 {
+                    next.extend(cut_pieces);
+                    continue;
+                }
+            }
+            next.push(piece);
+        }
+        pieces = next;
+    }
+    pieces
+}
+
+/// Ground within `r` of a road's centreline, as overlapping convex pieces
+/// (a rectangle per leg, a disc at every bend) for one robust union. The
+/// ends stop where the corridor does, so a dead end grows no backland cap.
+fn reach_pieces(pts: &[Vec2], hw: f32, r: f32, ext_start: bool, ext_end: bool, out: &mut Vec<Polygon<f64>>) {
+    if pts.len() < 2 {
+        return;
+    }
+    let mut p = pts.to_vec();
+    let n = p.len();
+    let d0 = (p[1] - p[0]).normalize_or_zero();
+    let d1 = (p[n - 1] - p[n - 2]).normalize_or_zero();
+    p[0] -= d0 * if ext_start { hw } else { 0.5 };
+    p[n - 1] += d1 * if ext_end { hw } else { 0.5 };
+    for w in p.windows(2) {
+        let d = (w[1] - w[0]).normalize_or_zero();
+        if d == Vec2::ZERO {
+            continue;
+        }
+        let nrm = Vec2::new(-d.y, d.x) * r;
+        out.push(to_geo(&[w[0] - nrm, w[1] - nrm, w[1] + nrm, w[0] + nrm]));
+    }
+    for &c in &p[1..n - 1] {
+        let ring: Vec<Vec2> = (0..16).map(|k| {
+            let a = k as f32 / 16.0 * std::f32::consts::TAU;
+            c + Vec2::new(a.cos(), a.sin()) * r
+        }).collect();
+        out.push(to_geo(&ring));
+    }
+}
+
+/// The same block always starts at the same corner, so the same shape is
+/// always cut the same way whatever the boolean ops handed back.
+fn canonical(p: Polygon<f64>) -> Polygon<f64> {
+    let ring = from_geo(&p);
+    if ring.len() < 3 {
+        return p;
+    }
+    let k = (0..ring.len()).min_by(|&a, &b| ring[a].x.total_cmp(&ring[b].x).then(ring[a].y.total_cmp(&ring[b].y))).unwrap_or(0);
+    let coords: Vec<Coord<f64>> = ring[k..].iter().chain(ring[..k].iter()).map(|q| Coord { x: q.x as f64, y: q.y as f64 }).collect();
+    Polygon::new(LineString::from(coords), p.interiors().to_vec())
+}
+
+/// Seed from a block's area and bounding box, rounded to the metre: the
+/// same land gives the same stream.
+fn block_seed(p: &Polygon<f64>) -> u64 {
+    let ring = from_geo(p);
+    let (lo, hi) = bounds_of(&ring);
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for v in [area_f(p), lo.x, lo.y, hi.x, hi.y] {
+        h ^= v.round() as i64 as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// Halve big landlocked pieces across their long axis until each is a few
+/// parcels' worth.
+fn chop_backland(poly: Vec<Vec2>, roads: &RoadNetwork, depth: u32, out: &mut Vec<Vec<Vec2>>) {
+    let limit = PARCEL_USE.lot_width() * PARCEL_USE.lot_depth() * BACKLAND_PARCELS;
+    if depth > 10 || poly.len() < 3 || polygon_area(&poly).abs() <= limit || fronted(&poly, PARCEL_USE, roads) {
+        out.push(poly);
+        return;
+    }
+    let pts = ccw(&poly);
+    let n = pts.len();
+    let (mut li, mut ll) = (0, 0.0);
+    for i in 0..n {
+        let l = pts[i].distance(pts[(i + 1) % n]);
+        if l > ll {
+            li = i;
+            ll = l;
+        }
+    }
+    let axis = (pts[(li + 1) % n] - pts[li]).normalize_or_zero();
+    let (u0, u1) = extents(&pts, axis);
+    let perp = Vec2::new(-axis.y, axis.x);
+    let (v0, v1) = extents(&pts, perp);
+    let origin = axis * ((u0 + u1) * 0.5) + perp * ((v0 + v1) * 0.5);
+    let pieces = cut(&to_geo(&pts), origin, axis);
+    if pieces.len() < 2 {
+        out.push(pts);
+        return;
+    }
+    for piece in pieces {
+        chop_backland(from_geo(&piece), roads, depth + 1, out);
+    }
+}
+
+/// A parcel from an outline, with its frontage judged for homes and for
+/// everything else. None when there is no road anywhere to hang it on.
+fn parcel_of(poly: Vec<Vec2>, roads: &RoadNetwork) -> Option<Parcel> {
+    let poly = ccw(&poly);
+    if poly.len() < 3 {
+        return None;
+    }
+    let center = inner_center(&poly);
+    let home = make_lot(ZoneId::default(), PARCEL_USE, poly.clone(), center, roads)?;
+    let street = make_lot(ZoneId::default(), LandUse::Commercial, poly.clone(), center, roads).is_some_and(|l| !l.landlocked);
+    Some(Parcel {
+        key: ParcelKey::new(center, home.front_edge),
+        area: polygon_area(&poly).abs(),
+        center,
+        front_edge: home.front_edge,
+        path_frontage: !home.landlocked,
+        street_frontage: street,
+        rough: false,
+        land_use: None,
+        lot: None,
+        polygon: poly,
+    })
+}
+
+/// The outlines of the patches a set of parcels makes (touching parcels
+/// merged into one), holes dropped.
+pub fn union_outlines(polys: &[Vec<Vec2>]) -> Vec<Vec<Vec2>> {
+    let geo_polys: Vec<Polygon<f64>> = polys.iter().filter(|p| p.len() >= 3).map(|p| to_geo(p)).collect();
+    if geo_polys.is_empty() {
+        return Vec::new();
+    }
+    let u: MultiPolygon<f64> = geo::unary_union(&geo_polys);
+    u.0.iter().map(from_geo).filter(|p| p.len() >= 3).collect()
+}
+
+/// Width along the frontage `lu` would use, or None with no frontage.
+fn frontage_width(poly: &[Vec2], lu: LandUse, roads: &RoadNetwork) -> Option<f32> {
+    let (fi, road) = frontage_edge(poly, roads, lu.fronts_paths());
+    road?;
+    let n = poly.len();
+    let along = (poly[(fi + 1) % n] - poly[fi]).normalize_or_zero();
+    if along == Vec2::ZERO {
+        return None;
+    }
+    let (u0, u1) = extents(poly, along);
+    Some(u1 - u0)
+}
+
+/// Drop vertices where the outline runs on nearly straight, so two joined
+/// parcels have one frontage edge rather than two.
+fn simplify_collinear(poly: &[Vec2]) -> Vec<Vec2> {
+    let mut pts = poly.to_vec();
+    loop {
+        let n = pts.len();
+        if n <= 3 {
+            return pts;
+        }
+        let drop = (0..n).find(|&i| {
+            let a = pts[(i + n - 1) % n];
+            let b = pts[i];
+            let c = pts[(i + 1) % n];
+            let d1 = (b - a).normalize_or_zero();
+            let d2 = (c - b).normalize_or_zero();
+            d1.dot(d2) > 0.9985 || a.distance(b) < 0.05
+        });
+        match drop {
+            Some(i) => {
+                pts.remove(i);
+            }
+            None => return pts,
+        }
+    }
+}
+
+/// Join neighbouring parcels given the same land use into lots about the
+/// size that use wants (works yards and civic sites span two or three
+/// parcels, a shop or a club takes a small neighbour). A piece under three
+/// quarters of the use's lot area takes the neighbour that keeps the joined
+/// lot smallest, as long as the result is one convex-ish piece with
+/// frontage, at most 1.35 lot areas and 1.6 lot widths. Then backland
+/// (pieces with no frontage this use can take) is folded into the
+/// neighbouring lot sharing the longest boundary, while the result stays
+/// convex-ish, under 2.8 lot areas and three lots deep; what cannot be
+/// folded stays a landlocked lot of its own. Returns the members of each
+/// lot (indices into `polys`) and its outline. Uses that do not join get
+/// one lot per parcel.
+pub fn join_parcels(polys: &[Vec<Vec2>], lu: LandUse, roads: &RoadNetwork) -> Vec<(Vec<usize>, Vec<Vec2>)> {
+    let mut groups: Vec<Option<(Vec<usize>, Vec<Vec2>)>> = polys.iter().enumerate().map(|(i, p)| Some((vec![i], p.clone()))).collect();
+    if lu.joins_parcels() {
+        let lw = lu.lot_width();
+        let target = lu.lot_area();
+        for _ in 0..4 {
+            let mut merged = false;
+            for i in 0..groups.len() {
+                let Some((_, pi)) = groups[i].clone() else { continue };
+                if frontage_width(&pi, lu, roads).is_none() || polygon_area(&pi).abs() >= target * 0.75 {
+                    continue;
+                }
+                let bi = bounds_of(&pi);
+                let gi = to_geo(&pi);
+                let per_i = perimeter(&pi);
+                let mut best: Option<(f32, usize, Vec<Vec2>)> = None;
+                for (j, g) in groups.iter().enumerate() {
+                    if i == j {
+                        continue;
+                    }
+                    let Some((_, pj)) = g else { continue };
+                    if !boxes_overlap(bi, bounds_of(pj), 0.5) {
+                        continue;
+                    }
+                    let u: MultiPolygon<f64> = gi.union(&to_geo(pj));
+                    if u.0.len() != 1 || !u.0[0].interiors().is_empty() {
+                        continue;
+                    }
+                    let up = simplify_collinear(&from_geo(&u.0[0]));
+                    if up.len() < 3 {
+                        continue;
+                    }
+                    let shared = (per_i + perimeter(pj) - perimeter(&up)) * 0.5;
+                    if shared < 4.0 || reflex_vertex(&up, 0.6).is_some() {
+                        continue;
+                    }
+                    let Some(wu) = frontage_width(&up, lu, roads) else { continue };
+                    let au = polygon_area(&up).abs();
+                    if wu > lw * 1.6 || au > target * 1.35 {
+                        continue;
+                    }
+                    if best.as_ref().map_or(true, |b| au < b.0) {
+                        best = Some((au, j, up));
+                    }
+                }
+                if let Some((_, j, up)) = best {
+                    let (mj, _) = groups[j].take().unwrap();
+                    let g = groups[i].as_mut().unwrap();
+                    g.0.extend(mj);
+                    g.0.sort();
+                    g.1 = up;
+                    merged = true;
+                }
+            }
+            if !merged {
+                break;
+            }
+        }
+    }
+    if lu.takes_backland() {
+        let ld = lu.lot_depth();
+        let max_area = lu.lot_area() * 2.8;
+        for _ in 0..4 {
+            let mut merged = false;
+            for i in 0..groups.len() {
+                let Some((_, pi)) = groups[i].clone() else { continue };
+                if frontage_width(&pi, lu, roads).is_some() {
+                    continue;
+                }
+                let bi = bounds_of(&pi);
+                let gi = to_geo(&pi);
+                let per_i = perimeter(&pi);
+                let mut best: Option<(f32, usize, Vec<Vec2>)> = None;
+                for (j, g) in groups.iter().enumerate() {
+                    if i == j {
+                        continue;
+                    }
+                    let Some((_, pj)) = g else { continue };
+                    if !boxes_overlap(bi, bounds_of(pj), 0.5) || frontage_width(pj, lu, roads).is_none() {
+                        continue;
+                    }
+                    let u: MultiPolygon<f64> = gi.union(&to_geo(pj));
+                    if u.0.len() != 1 || !u.0[0].interiors().is_empty() {
+                        continue;
+                    }
+                    let up = simplify_collinear(&from_geo(&u.0[0]));
+                    if up.len() < 3 || polygon_area(&up).abs() > max_area || reflex_vertex(&up, 0.6).is_some() {
+                        continue;
+                    }
+                    let shared = (per_i + perimeter(pj) - perimeter(&up)) * 0.5;
+                    if shared < 3.0 {
+                        continue;
+                    }
+                    let (fi, _) = frontage_edge(&up, roads, lu.fronts_paths());
+                    let m = up.len();
+                    let along = (up[(fi + 1) % m] - up[fi]).normalize_or_zero();
+                    let (v0, v1) = extents(&up, Vec2::new(-along.y, along.x));
+                    if v1 - v0 > ld * 3.0 {
+                        continue;
+                    }
+                    if best.as_ref().map_or(true, |b| shared > b.0) {
+                        best = Some((shared, j, up));
+                    }
+                }
+                if let Some((_, j, up)) = best {
+                    let (mi, _) = groups[i].take().unwrap();
+                    let g = groups[j].as_mut().unwrap();
+                    g.0.extend(mi);
+                    g.0.sort();
+                    g.1 = up;
+                    merged = true;
+                }
+            }
+            if !merged {
+                break;
+            }
+        }
+    }
+    groups.into_iter().flatten().collect()
 }
 
 #[cfg(test)]
@@ -1429,3 +2072,4 @@ mod tests {
     }
 
 }
+

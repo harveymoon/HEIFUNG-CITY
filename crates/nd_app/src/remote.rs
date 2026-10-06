@@ -41,7 +41,7 @@ use crate::assets::GameAssets;
 use crate::camera::{CameraMode, OrbitCamera, WalkState};
 use crate::render::{Lighting, Overlays, RenderStats};
 use crate::sim::{Sim, SimSet, SPEEDS};
-use crate::tools::{EffectivePlan, Selection, Tool, ToolState, TransitMode, ROAD_PRESETS};
+use crate::tools::{marquee_rect, EffectivePlan, Selection, Tool, ToolState, TransitMode, ZoneMode, BRUSH_MAX, BRUSH_MIN, ROAD_PRESETS};
 use crate::ui::{load_now, save_now, Saves, UiFlags};
 use history::History;
 use view::*;
@@ -394,6 +394,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "plan" => Ok(plan(ctx)),
         "add_road" => add_road(cmd, ctx),
         "add_zone" => add_zone(cmd, ctx),
+        "paint" => paint(cmd, ctx),
         "bulldoze" => {
             let id = GestureId(opt_u64(cmd, "gesture_id")?.ok_or("missing gesture_id")?);
             if ctx.sim.world.gesture(id).is_none() {
@@ -406,35 +407,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             ctx.tools.status = "Marked for removal. Ctrl+Enter implements.".into();
             Ok(project_state(ctx))
         }
-        "project" => {
-            let action = req_str(cmd, "action")?;
-            let w = &mut ctx.sim.world;
-            let result = match action {
-                "start" => {
-                    w.start_project();
-                    true
-                }
-                "implement" => {
-                    let had = w.has_project();
-                    w.implement();
-                    ctx.tools.points.clear();
-                    ctx.tools.status = "Project implemented".into();
-                    had
-                }
-                "undo" => w.undo(),
-                "redo" => w.redo(),
-                "discard" => {
-                    let had = w.has_project();
-                    w.discard_project();
-                    ctx.tools.points.clear();
-                    had
-                }
-                _ => return Err(format!("unknown project action {action:?}; one of start, implement, undo, redo, discard")),
-            };
-            let mut v = project_state(ctx);
-            v["did"] = json!(result);
-            Ok(v)
-        }
+        "project" => project(cmd, ctx),
         "place" => place(cmd, ctx),
         "incident" => incident(cmd, ctx),
         "incidents" => incidents(cmd, ctx),
@@ -592,7 +565,7 @@ fn camera_pose(ctx: &Ctx) -> Value {
 fn tool_state(t: &ToolState) -> Value {
     json!({
         "name": tool_name(t.tool), "road_kind": road_kind_name(t.kind), "lanes_fwd": t.lanes_fwd, "lanes_bwd": t.lanes_bwd, "curved": t.curved,
-        "land_use": t.land_use.label(), "building": placeable_key(t.build_item()), "building_category": t.build_cat.key(), "rail_kind": rail_name(t.rail_kind),
+        "land_use": t.land_use.label(), "zone_mode": t.zone_mode.label(), "brush_radius": t.brush_radius, "unzone": t.unzone, "industry": t.industry, "building": placeable_key(t.build_item()), "building_category": t.build_cat.key(), "rail_kind": rail_name(t.rail_kind),
         "transit_mode": transit_mode_name(t.transit_mode), "route": opt_key(t.route_sel), "show_routes": t.show_routes,
         "pending_points": t.points.len(), "selected_gesture": t.selected_gesture.map(|g| g.0), "status": t.status,
     })
@@ -600,7 +573,137 @@ fn tool_state(t: &ToolState) -> Value {
 
 fn project_state(ctx: &Ctx) -> Value {
     let w = &ctx.sim.world;
-    json!({ "project": w.project.as_ref().map(|p| json!({ "steps": p.steps.len(), "redo": p.redo.len() })), "gestures": w.effective_plan().gestures.len(), "plan_version": w.plan_version })
+    let projects: Vec<Value> = w
+        .projects()
+        .into_iter()
+        .map(|i| {
+            json!({
+                "id": i.id, "name": i.name, "active": i.active, "steps": i.steps, "redo": i.redo,
+                "conflicts": i.conflicts.iter().map(|(g, o)| json!({ "gesture": g.0, "project": o })).collect::<Vec<_>>(),
+                "shared_parcels": i.shared_parcels,
+            })
+        })
+        .collect();
+    json!({
+        "project": w.project.as_ref().map(|p| json!({ "id": p.id, "name": p.name, "steps": p.steps.len(), "redo": p.redo.len() })),
+        "projects": projects,
+        "warnings": w.plan_warnings,
+        "gestures": w.effective_plan().gestures.len(),
+        "plan_version": w.plan_version,
+    })
+}
+
+/// `project {action, id?, name?}`: several named projects, one active.
+/// `id` (or `name`) picks the project; without either the active one.
+fn project(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let action = req_str(cmd, "action")?.to_ascii_lowercase();
+    let name = opt_str(cmd, "name")?;
+    let w = &mut ctx.sim.world;
+    // The project a command is about: by id, by name, or the active one.
+    let target = match opt_u64(cmd, "id")? {
+        Some(id) => Some(w.projects().into_iter().find(|i| i.id == id).map(|i| i.id).ok_or_else(|| format!("no project {id}"))?),
+        None => match name.filter(|_| action != "new" && action != "rename") {
+            Some(n) => Some(w.projects().into_iter().find(|i| i.name.eq_ignore_ascii_case(n.trim())).map(|i| i.id).ok_or_else(|| format!("no project named {n:?}"))?),
+            None => w.project.as_ref().map(|p| p.id),
+        },
+    };
+    let need = |t: Option<u64>| t.ok_or_else(|| "no active project; give an id".to_string());
+    let did: Value = match action.as_str() {
+        "list" => json!(true),
+        "start" => {
+            w.start_project();
+            json!(w.project.as_ref().map(|p| p.id))
+        }
+        "new" => {
+            let id = w.new_project(name);
+            ctx.tools.points.clear();
+            json!(id)
+        }
+        "switch" => {
+            let id = need(target)?;
+            ctx.tools.points.clear();
+            ctx.tools.stroke = None;
+            json!(w.switch_project(id))
+        }
+        "park" => json!(w.park_project()),
+        "rename" => {
+            let id = need(target)?;
+            let n = name.ok_or("rename needs a name")?;
+            json!(w.rename_project(id, n))
+        }
+        "delete" => {
+            let id = need(target)?;
+            ctx.tools.points.clear();
+            json!(w.delete_project(id))
+        }
+        "discard" => {
+            let had = target.is_some();
+            if let Some(id) = target {
+                w.delete_project(id);
+            }
+            ctx.tools.points.clear();
+            json!(had)
+        }
+        "implement" => {
+            let id = need(target)?;
+            let warnings = w.implement_project(id).ok_or_else(|| format!("no project {id}"))?;
+            ctx.tools.points.clear();
+            ctx.tools.status = if warnings.is_empty() { "Project implemented".into() } else { format!("Project implemented. {}", warnings.join(" ")) };
+            json!(true)
+        }
+        "undo" => json!(target.is_some_and(|id| w.undo_project(id))),
+        "redo" => json!(target.is_some_and(|id| w.redo_project(id))),
+        _ => return Err(format!("unknown project action {action:?}; one of list, new, switch, rename, delete, park, start, implement, undo, redo, discard")),
+    };
+    let mut v = project_state(ctx);
+    v["did"] = did;
+    Ok(v)
+}
+
+/// `paint {land_use, at+radius | rect | polygon, implement?}`: the zone
+/// brush and marquee by remote. `land_use` "none" (or "unzoned") erases.
+/// Only parcels that accept the use take it; the rest are listed with why.
+fn paint(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let lu_s = req_str(cmd, "land_use")?;
+    let land_use = match lu_s.trim().to_ascii_lowercase().as_str() {
+        "none" | "unzoned" | "erase" => None,
+        other => Some(land_use_of(other)?),
+    };
+    let w = &mut ctx.sim.world;
+    let ids: Vec<usize> = if let Some(at) = opt_vec2(cmd, "at")? {
+        let r = opt_f32(cmd, "radius")?.unwrap_or(ctx.tools.brush_radius).clamp(BRUSH_MIN, BRUSH_MAX * 4.0);
+        w.parcels.in_circle(at, r)
+    } else if let Some(rect) = field(cmd, "rect") {
+        let pts = rect.as_array().filter(|a| a.len() == 2).ok_or("rect must be [[x0, y0], [x1, y1]]")?;
+        let (a, b) = (vec2_of(&pts[0])?, vec2_of(&pts[1])?);
+        w.parcels.in_polygon(&marquee_rect(a, b, 0.0))
+    } else if field(cmd, "polygon").is_some() {
+        w.parcels.in_polygon(&req_points(cmd, "polygon")?)
+    } else {
+        return Err("give at (+ radius), rect or polygon".into());
+    };
+    let refused: Vec<Value> = match land_use {
+        Some(lu) => ids.iter().filter_map(|&i| w.parcels.parcels[i].refusal(lu).map(|why| json!({ "parcel": i, "center": v2(w.parcels.parcels[i].center), "why": why }))).collect(),
+        None => Vec::new(),
+    };
+    let industry = match opt_str(cmd, "industry")? {
+        Some(k) => Some(nd_sim::world::INDUSTRY_CHOICES.iter().map(|(key, _)| *key).find(|key| key.eq_ignore_ascii_case(k.trim())).ok_or_else(|| format!("unknown industry {k:?}; one of {}", nd_sim::world::INDUSTRY_CHOICES.map(|c| c.0).join(", ")))?),
+        None => None,
+    };
+    let (gesture, painted) = w.paint_parcels_with(&ids, land_use, industry, None);
+    let implemented = opt_bool(cmd, "implement")?.unwrap_or(false);
+    if implemented {
+        w.implement();
+    }
+    let what = land_use.map_or("unzoned".to_string(), |l| format!("zoned {}", l.label()));
+    ctx.tools.status = format!("{painted} parcels {what} by remote{}", if implemented { " and implemented" } else { " (pending)" });
+    let mut v = project_state(ctx);
+    v["gesture_id"] = json!(gesture.map(|g| g.0));
+    v["touched"] = json!(ids.len());
+    v["painted"] = json!(painted);
+    v["refused"] = json!(refused);
+    v["implemented"] = json!(implemented);
+    Ok(v)
 }
 
 fn status(ctx: &Ctx) -> Value {
@@ -1074,6 +1177,27 @@ fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
             }
         }
+        "parcels" | "parcel" => {
+            let f_lu = str_filter(filter, "land_use");
+            let f_zoned = bool_filter(filter, "zoned");
+            let f_landlocked = bool_filter(filter, "landlocked");
+            let planned = w.planned_zoning();
+            for (i, p) in w.parcels.parcels.iter().enumerate() {
+                let built = p.land_use.map_or("unzoned", |l| l.label());
+                if !contains(built, &f_lu) || f_zoned.is_some_and(|z| z != p.land_use.is_some()) || f_landlocked.is_some_and(|l| l != p.landlocked()) {
+                    continue;
+                }
+                if let Some(d) = within(p.center) {
+                    let accepts: Vec<&str> = nd_sim::LandUse::ALL.iter().filter(|l| p.accepts(**l)).map(|l| l.label()).collect();
+                    let plan = planned.get(i).copied().flatten().map_or("unzoned", |l| l.label());
+                    rows.push((d, json!({
+                        "index": i, "center": v2(p.center), "area": round(p.area), "land_use": built, "planned": plan,
+                        "landlocked": p.landlocked(), "street": p.street_frontage, "rough": p.rough, "accepts": accepts,
+                        "lot": p.lot.map(key_str), "key": [p.key.center.0, p.key.center.1],
+                    })));
+                }
+            }
+        }
         "gestures" => {
             for (id, g) in &w.effective_plan().gestures {
                 let d = near.map_or(0.0, |n| g.points().iter().map(|p| p.distance(n)).fold(f32::INFINITY, f32::min));
@@ -1082,7 +1206,7 @@ fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
             }
         }
-        other => return Err(format!("unknown what {other:?}; one of citizens, buildings, lots, cars, trains, routes, gestures")),
+        other => return Err(format!("unknown what {other:?}; one of citizens, buildings, lots, parcels, cars, trains, routes, gestures")),
     }
     let total = rows.len();
     if near.is_some() {
@@ -1290,12 +1414,33 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 };
                 t.route_sel = None;
             }
-            Tool::Zone => t.land_use = land_use_of(kind)?,
+            Tool::Zone => match ZoneMode::parse(kind) {
+                Some(m) => t.zone_mode = m,
+                None => t.land_use = land_use_of(kind)?,
+            },
             Tool::Inspect | Tool::Bulldoze => return Err("this tool has no kind".into()),
         }
     }
     if let Some(lu) = opt_str(cmd, "land_use")? {
-        t.land_use = land_use_of(lu)?;
+        if lu.eq_ignore_ascii_case("none") || lu.eq_ignore_ascii_case("unzoned") {
+            t.unzone = true;
+        } else {
+            t.land_use = land_use_of(lu)?;
+            t.unzone = false;
+        }
+    }
+    if let Some(m) = opt_str(cmd, "mode")? {
+        t.zone_mode = ZoneMode::parse(m).ok_or_else(|| format!("unknown zone mode {m:?}; polygon, brush or marquee"))?;
+        t.stroke = None;
+    }
+    if let Some(r) = opt_f32(cmd, "radius")? {
+        t.brush_radius = r.clamp(BRUSH_MIN, BRUSH_MAX);
+    }
+    if let Some(u) = opt_bool(cmd, "unzone")? {
+        t.unzone = u;
+    }
+    if let Some(k) = opt_str(cmd, "industry")? {
+        t.industry = nd_sim::world::INDUSTRY_CHOICES.iter().map(|(key, _)| *key).find(|key| key.eq_ignore_ascii_case(k.trim())).ok_or_else(|| format!("unknown industry {k:?}"))?;
     }
     if let Some(n) = opt_u64(cmd, "lanes_fwd")? {
         t.lanes_fwd = n.min(4) as u8;
@@ -1544,7 +1689,6 @@ fn help() -> Value {
             "add_road": { "points": "[[x,y],...] (2+)", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true", "implement": "bool, default false (pending in the project)" },
             "add_zone": { "polygon": "[[x,y],...] (3+)", "land_use": "residential|commercial|industrial|entertainment|civic|park", "implement": "bool" },
             "bulldoze": { "gesture_id": "int", "implement": "bool" },
-            "project": { "action": "start|implement|undo|redo|discard" },
             "place": { "kind": "station|freight_yard|depot|parking|coal|solar|wind|nuclear|hydro|tidal|geothermal|shipping_port|ferry_terminal|police|fire|hospital|clinic|school|dispatch|monument|stadium (services: tier or kind:tier)", "tier": "low|mid|high", "x": "f", "y": "f", "note": "hydro beside a river or stream with a current >= 0.8 m/s, tidal on the sea shore, geothermal over a hot spot; docks at the water's edge (they build a pier and a street stub)" },
             "new_game": { "preset": "river_valley|islands|coast|delta|plains|flat (default river_valley)", "seed": "u64", "water": "0..1", "relief": "0..1 height variation", "branching": "0..1", "islands": "0..8", "highway": "bool", "note": "throws the city away; omitted levers take the preset's" },
             "terrain_at": { "x": "f", "y": "f", "returns": "natural/ground/surface heights, slope, water (kind, current, width), nearest shore, hot spot, power sites and dock placement for the lot there" },
@@ -1553,12 +1697,11 @@ fn help() -> Value {
             "incident": { "kind": "fire|crime|medical", "building": "id", "citizen": "id (medical)" },
             "incidents": { "active": "bool (only those under way)", "limit": "default 50, newest first", "kind": "fire|crime|medical" },
             "bus": { "action": "new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses" },
-            "find": { "what": "citizens|buildings|lots|cars|trains|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
+            "find": { "what": "citizens|buildings|lots|parcels|cars|trains|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
             "inspect": { "citizen|building|lot|car|train|route": "id", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits" },
             "lane_use": { "junction": "[x,y]", "approach": "[x,y] on the arriving street", "lanes": "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default" },
             "select": { "citizen|building|car": "id", "at": "[x,y] picks like a click; nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
-            "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway", "kind": "sub-mode of the active tool", "land_use": "", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
             "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
             "overlay": { "layer": "land_value|traffic|traffic_types|people|pollution|paths|zoning", "on": "bool, omitted toggles", "<layer name>": "bool (older form, any number at once)" },
             "lighting": { "follow_clock": "bool", "hour": "0..24 (also unpins from the clock)" },
@@ -1579,6 +1722,15 @@ fn help() -> Value {
         "window": { "name": "city|economy|market|people|power|transit|land|saves|help|dev", "open": "bool, omitted toggles" }
     });
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), review.as_object()) {
+        c.extend(r.clone());
+    }
+    // Planning: several projects, and painting parcels.
+    let planning = json!({
+        "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway", "kind": "sub-mode of the active tool", "mode": "zone tool: polygon|brush|marquee", "radius": "zone brush radius m", "unzone": "bool", "industry": "zone tool sub-zone for industrial land: auto|farming|oil|...", "land_use": "(or none: the brush unzones)", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
+        "project": { "action": "list|new|switch|rename|delete|park|start|implement|undo|redo|discard", "id": "project id (default: the active one)", "name": "for new/rename, or to pick a project by name", "note": "several named projects; the active one is edited, the rest previewed dim; implement builds one at a time, the later one wins where two change the same gesture or parcel (warnings in the reply)" },
+        "paint": { "land_use": "residential|...|park, or none to unzone", "at": "[x,y] brush centre", "radius": "m (default the tool's)", "industry": "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech, the sub-zone set on implement", "rect": "[[x0,y0],[x1,y1]] marquee", "polygon": "[[x,y],...]", "implement": "bool", "note": "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step" }
+    });
+    if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), planning.as_object()) {
         c.extend(r.clone());
     }
     v

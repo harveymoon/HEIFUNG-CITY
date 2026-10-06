@@ -27,6 +27,8 @@ mod industry;
 mod market;
 mod parking;
 mod plan;
+mod industry_bridge;
+pub use plan::{ProjectInfo, ProjectPreview};
 mod power;
 mod services;
 #[cfg(test)]
@@ -69,6 +71,7 @@ pub use crate::rail::TRUNK_Y;
 pub use industry::{is_return_trip, return_cargo, IndustryArea};
 use crate::landscape::{Ground, Landscape, LandscapeParams};
 use crate::ports::Ports;
+pub use industry_bridge::INDUSTRY_CHOICES;
 
 /// A parcel that loses or gains more than this share of its area under a
 /// building is treated as a new parcel: the building goes.
@@ -202,8 +205,30 @@ pub struct World {
     rng: SimRng,
     /// What is built.
     pub master: Plan,
-    /// Pending changes, if any.
+    /// The active project (pending changes being edited), if any.
     pub project: Option<Project>,
+    /// Other pending projects, previewed dimmed and implemented one at a
+    /// time. Saves from before named projects have none.
+    #[serde(default)]
+    pub parked_projects: Vec<Project>,
+    #[serde(default)]
+    next_project: u64,
+    /// Warnings from the last implement: gestures or parcels another
+    /// pending project also changes.
+    #[serde(skip)]
+    pub plan_warnings: Vec<String>,
+    /// Parcels along every street and path, zoned or not; derived from the
+    /// roads and rebuilt with them.
+    #[serde(skip)]
+    pub parcels: crate::zoning::ParcelMap,
+    /// Land use of each parcel under the effective plan (`planned_zoning`).
+    #[serde(skip)]
+    planned: Vec<Option<LandUse>>,
+    /// Lots are cut from the parcels. False for a save from before that:
+    /// its next rebuild moves buildings onto the new lots without eminent
+    /// domain.
+    #[serde(default)]
+    parcel_lots: bool,
     next_gesture: u64,
     /// Bumped whenever master or project changes.
     pub plan_version: u64,
@@ -309,6 +334,12 @@ impl World {
             clock: SimClock::starting_at(0, 7, 0),
             master: Plan::default(),
             project: None,
+            parked_projects: Vec::new(),
+            next_project: 1,
+            plan_warnings: Vec::new(),
+            parcels: crate::zoning::ParcelMap::default(),
+            planned: Vec::new(),
+            parcel_lots: true,
             next_gesture: 1,
             plan_version: 0,
             plan_cache: None,
@@ -409,6 +440,9 @@ impl World {
         }
         self.refresh_facility_cache();
         self.update_economy();
+        // A save from before named projects: number and name the one it has.
+        self.name_active_project();
+        self.recut_parcels();
         self.plan_changed();
         self.events.push(SimEvent::PlanChanged);
     }

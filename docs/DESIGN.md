@@ -57,11 +57,17 @@ Citizens are rendered from their simulated positions every frame.
 ## Simulation model (v0)
 
 - **Clock**: one tick is one simulated minute. 1440 ticks per day.
-- **Planning**: roads and zones are *gestures*. The master plan is what is built; a
-  project is a stack of deltas on top of it with undo and redo. Control points of any
-  gesture can be dragged, inserted or deleted; bulldozing marks a gesture for removal.
-  Implementing applies the deltas and rebuilds roads, zones, lots and lanes. Buildings
-  whose lot survives the rebuild are kept, the rest are demolished.
+- **Planning**: roads, zone polygons and paint strokes are *gestures*. The master plan
+  is what is built; a project is a named stack of deltas on top of it with undo and
+  redo. Several projects can be pending at once, as in Citybound: the active one is
+  edited and drawn bright, the others (`World::parked_projects`) are drawn as dim
+  holograms and keep their own histories. Control points of any road or zone can be
+  dragged, inserted or deleted; bulldozing marks a gesture for removal. Implementing
+  one project applies its deltas over the master as the projects implemented before it
+  left it (so where two projects change the same gesture or paint the same parcels,
+  the one implemented later wins, with a warning) and rebuilds roads, parcels, zones,
+  lots and lanes. Buildings whose lot survives the rebuild are kept, the rest are
+  demolished. A save from before named projects loads its one project as "Project 1".
 - **Roads**: a node/segment graph with per-direction lane counts. New polylines snap to
   existing nodes and split segments they cross. Walking uses A* over nodes.
 - **Lanes and traffic**: every segment becomes offset lanes per direction, shortened at
@@ -95,9 +101,23 @@ Citizens are rendered from their simulated positions every frame.
   on the road; junction curves stay inside the junction; cars refuse to enter a
   junction whose exit lane is full; stalled trips time out. Pedestrians walk on the
   right-hand pavement.
-- **Zones**: polygons with a land use (Residential, Commercial, Industrial,
-  Entertainment, Civic, Park). Lots are carved along every road segment that runs
-  through a zone.
+- **Parcels and zones**: parcels are cut along every street and path as soon as it is
+  built, zoned or not (`zoning::generate_parcels`, the land within 60 m of the
+  corridors), at a home's lot size; land behind the rows is backland. Zoning gives
+  parcels a land use: a zone polygon (Residential, Commercial, Industrial,
+  Entertainment, Civic, Park) zones every parcel whose centre it holds, and the zone
+  brush or marquee zones the parcels it touches (a `Gesture::ParcelZone`, keyed by
+  each parcel's centre and frontage on a quarter-metre grid, found again by its old
+  centre if road works reshape it). Gestures apply oldest first, so the newest wins
+  (`plan::parcel_zoning`). Only parcels the use may go on take it: parks anywhere
+  (backland and rough ground too), homes on a street or a footpath, everything else on
+  a street, industry and civic sites not on scraps under 200 m², with their deep
+  yards allowed to take the backland behind them; nothing but parks on rough ground.
+  Every zoned parcel becomes a lot; uses with lots bigger than a home's join small
+  neighbouring parcels (works yards and civic sites two or three, a shop a small
+  neighbour) and industry and civic grounds fold in the backland behind them
+  (`zoning::join_parcels`). Industrial strokes can carry an industry sub-zone that is
+  set on implement.
 - **Buildings**: a vacant lot develops when demand for its land use is high. Floors
   and capacity (homes or jobs) depend on land use and a seed. Geometry is generated
   from the seed, so a save stays small.
@@ -444,8 +464,11 @@ trait MindProvider {
   wall, vertical up it), so brick courses line up across a facade and nothing has to
   be unwrapped. Vertex colours set the hue; the textures are grey. Glow stays unlit
   with mildly HDR vertex colours and low bloom.
-- Parcels: the road corridors are subtracted from a zone with polygon booleans
-  (`geo`), so a curved road removes exactly its own strip. Road corridors are one
+- Parcels: the road corridors are subtracted from the land within reach of the roads
+  with polygon booleans (`geo`), so a curved road removes exactly its own strip. Long
+  straight frontages are first chunked where the coordinate along the road is a
+  multiple of 96 m and every chunk seeds its own random stream from its own shape, so
+  works elsewhere never move a parcel: the same road gives the same parcels. Road corridors are one
   mitred polygon per chain of road pieces, so a curve's edge is smooth. Rows one lot
   deep are peeled off every road frontage at once as a union of strips along the road
   edges (nothing can fold over on a bend), the first frontage claims the corners, and
