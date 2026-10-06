@@ -900,7 +900,8 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     food_staff.message = format!("{} open groceries/bakeries are below {:.0}% staffing", food_staff.count, FOOD_SELLER_MIN_STAFFING * 100.0);
     food_empty.message = format!("{} open groceries/bakeries have nothing to sell", food_empty.count);
     closed.message = format!("{} businesses are closed ({} closures in total)", closed.count, e.market.closed_total);
-    broke.message = format!("{} open businesses could not pay their way recently", broke.count);
+    let open_businesses = w.buildings.values().filter(|b| b.construction.is_none() && b.business.as_ref().is_some_and(|z| !z.closed)).count();
+    broke.message = format!("{} of {open_businesses} open businesses are in the red past their overdraft (they close after 5 such days)", broke.count);
     unpowered.message = format!("{} buildings get less than {:.0}% of their power (served {:.0}% of demand)", unpowered.count, UNPOWERED_BELOW * 100.0, e.power.served * 100.0);
     crowded.message = format!("{} buildings house more people than they have homes", crowded.count);
     rail_broken.message = format!("{} stations/yards do not work: {} lack a track connection, {} a street connection", rail_broken.count, rail_missing.0, rail_missing.1);
@@ -923,11 +924,14 @@ pub fn alerts(w: &World) -> Vec<Alert> {
 
     let mut out = vec![hungry, starving, unhoused, rent, food_staff, food_empty, closed, broke, unpowered, crowded, rail_broken, route_broken, sites, stuck, derelict, vacant_demand];
     // City-wide conditions with no single place.
-    let unemployed = n - w.citizens.values().filter(|c| c.work.is_some()).count();
-    if n > 0 && unemployed as f32 / n as f32 >= UNEMPLOYMENT_ALERT {
+    // Only working-age adults look for work: children and retirees are not
+    // unemployed.
+    let adults = w.citizens.values().filter(|c| c.can_work()).count();
+    let unemployed = w.citizens.values().filter(|c| c.can_work() && c.work.is_none()).count();
+    if adults > 0 && unemployed as f32 / adults as f32 >= UNEMPLOYMENT_ALERT {
         let mut a = Alert::new("high_unemployment", 2, "zone commercial or industrial; jobs_free shows whether jobs exist but are out of reach");
         a.count = unemployed;
-        a.message = format!("{:.0}% of citizens have no job ({} jobs free)", unemployed as f32 / n as f32 * 100.0, e.jobs_free);
+        a.message = format!("{:.0}% of working-age adults have no job ({unemployed} of {adults}; {} jobs free)", unemployed as f32 / adults as f32 * 100.0, e.jobs_free);
         out.push(a);
     }
     let net = e.ledger.yesterday.iter().sum::<f32>();

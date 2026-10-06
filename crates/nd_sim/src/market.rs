@@ -61,7 +61,7 @@ impl Resource {
         match self {
             Resource::Produce => 2.0,
             Resource::Grain => 1.0,
-            Resource::Flour => 1.6,
+            Resource::Flour => 2.4,
             Resource::BakedGoods => 4.5,
             Resource::Meat => 7.0,
             Resource::Dairy => 3.0,
@@ -167,6 +167,28 @@ pub struct Recipe {
 }
 
 impl BusinessKind {
+    pub const COUNT: usize = 13;
+    /// Every kind, in `index` order.
+    pub const ALL: [BusinessKind; Self::COUNT] = [
+        BusinessKind::VertFarm,
+        BusinessKind::GrainFarm,
+        BusinessKind::ProteinVat,
+        BusinessKind::Dairy,
+        BusinessKind::Mill,
+        BusinessKind::Fab,
+        BusinessKind::Assembly,
+        BusinessKind::Grocery,
+        BusinessKind::Bakery,
+        BusinessKind::GadgetShop,
+        BusinessKind::Venue,
+        BusinessKind::Office,
+        BusinessKind::Parking,
+    ];
+
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             BusinessKind::VertFarm => "vertical farm",
@@ -191,15 +213,22 @@ impl BusinessKind {
             BusinessKind::GrainFarm => Recipe { inputs: &[], outputs: &[(Resource::Grain, 4.0)] },
             BusinessKind::ProteinVat => Recipe { inputs: &[(Resource::Grain, 1.0)], outputs: &[(Resource::Meat, 1.0)] },
             BusinessKind::Dairy => Recipe { inputs: &[(Resource::Grain, 0.5)], outputs: &[(Resource::Dairy, 1.5)] },
-            BusinessKind::Mill => Recipe { inputs: &[(Resource::Grain, 2.0)], outputs: &[(Resource::Flour, 2.0)] },
+            // Milling is automated: a hand runs six of grain an hour. At two
+            // the mill added too little to what it bought to pay its wages.
+            BusinessKind::Mill => Recipe { inputs: &[(Resource::Grain, 6.0)], outputs: &[(Resource::Flour, 6.0)] },
             BusinessKind::Fab => Recipe { inputs: &[], outputs: &[(Resource::Parts, 1.0)] },
-            BusinessKind::Assembly => Recipe { inputs: &[(Resource::Parts, 2.0)], outputs: &[(Resource::Electronics, 0.4)] },
+            // Two parts (18 at base) make 0.6 electronics (27); at 0.4 the
+            // plant added nothing to what it bought and could never pay wages.
+            BusinessKind::Assembly => Recipe { inputs: &[(Resource::Parts, 2.0)], outputs: &[(Resource::Electronics, 0.6)] },
+            // Shops pay town wages, so what a job adds to its inputs at base
+            // price covers its share of them: a grocer's job adds about 80 a day
+            // against 54, a baker's about 59, a gadget seller's about 84.
             BusinessKind::Grocery => Recipe {
                 inputs: &[(Resource::Produce, 1.0), (Resource::Flour, 0.4), (Resource::Meat, 0.3), (Resource::Dairy, 0.4)],
-                outputs: &[(Resource::Groceries, 3.0)],
+                outputs: &[(Resource::Groceries, 4.0)],
             },
-            BusinessKind::Bakery => Recipe { inputs: &[(Resource::Flour, 1.0)], outputs: &[(Resource::BakedGoods, 2.0)] },
-            BusinessKind::GadgetShop => Recipe { inputs: &[(Resource::Electronics, 0.5)], outputs: &[(Resource::Goods, 0.5)] },
+            BusinessKind::Bakery => Recipe { inputs: &[(Resource::Flour, 1.2)], outputs: &[(Resource::BakedGoods, 4.0)] },
+            BusinessKind::GadgetShop => Recipe { inputs: &[(Resource::Electronics, 0.5)], outputs: &[(Resource::Goods, 0.8)] },
             BusinessKind::Venue => Recipe { inputs: &[(Resource::Groceries, 0.3)], outputs: &[] },
             BusinessKind::Office => Recipe { inputs: &[], outputs: &[] },
             BusinessKind::Parking => Recipe { inputs: &[], outputs: &[] },
@@ -271,6 +300,10 @@ pub struct Business {
     /// Deliveries on their way, so the business does not reorder.
     #[serde(default)]
     pub inbound: BTreeMap<Resource, f32>,
+    /// Books closed since opening; the market reading
+    /// (`Economy::business_cover`) skips the stocking-up first day.
+    #[serde(default)]
+    pub days_open: u16,
 }
 
 impl Business {
@@ -287,6 +320,7 @@ impl Business {
             broke_days: 0,
             closed: false,
             inbound: BTreeMap::new(),
+            days_open: 0,
         }
     }
 
@@ -345,12 +379,21 @@ impl Business {
             return 0.0;
         }
         let cap = self.hourly_capacity(jobs, staffing);
-        // Scale by the scarcest input.
+        // Scale by the scarcest input, and by the room left for the output:
+        // with full shelves the business stops working its inputs instead of
+        // burning stock it bought into output that has nowhere to go.
         let mut scale = 1.0f32;
         for (r, per) in recipe.inputs {
             let need = per * cap;
             if need > 0.0 {
                 scale = scale.min(self.stock_of(*r) / need);
+            }
+        }
+        for (r, per) in recipe.outputs {
+            let make = per * cap;
+            if make > 0.0 {
+                let cap_stock = per * jobs as f32 * JOB_RATE * 96.0;
+                scale = scale.min((cap_stock - self.stock_of(*r)).max(0.0) / make);
             }
         }
         let scale = scale.clamp(0.0, 1.0);

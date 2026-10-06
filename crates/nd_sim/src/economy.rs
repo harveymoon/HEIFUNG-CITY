@@ -174,6 +174,20 @@ pub struct Economy {
     pub population_yesterday: u32,
     #[serde(default)]
     pub growth_per_day: f32,
+    /// Adults of working age (children and retirees neither work nor look
+    /// for work); `unemployed` counts the ones of them without a job.
+    #[serde(default)]
+    pub working_age: u32,
+    /// Jobs in finished buildings (site crews are temporary and not counted).
+    #[serde(default)]
+    pub jobs_permanent: u32,
+    /// How well each kind of business pays its way (`BusinessKind::index`):
+    /// takings over costs (wages and inputs), smoothed over a few days; 1 is
+    /// break-even. Only kinds marked in `business_cover_seen` have a reading.
+    #[serde(default)]
+    pub business_cover: [f32; crate::market::BusinessKind::COUNT],
+    #[serde(default)]
+    pub business_cover_seen: [bool; crate::market::BusinessKind::COUNT],
 }
 
 fn default_treasury() -> f32 {
@@ -209,23 +223,73 @@ impl Economy {
         self.demand[lu.index()]
     }
 
+    /// Share of working-age adults without a job.
+    pub fn unemployment_share(&self) -> f32 {
+        if self.working_age == 0 {
+            0.0
+        } else {
+            self.unemployed as f32 / self.working_age as f32
+        }
+    }
+
+    /// Workers the town will have once the homes standing empty and the
+    /// homes being built fill up, against the jobs it will have once its
+    /// sites open, as a share of those workers: positive when jobs will be
+    /// short, negative when homes will be. Households bring children and
+    /// retirees, so it counts adults per home, not people.
+    pub fn job_gap(&self) -> f32 {
+        let adults = self.working_age as f32;
+        let adults_per_home = if self.households > 0 { (adults / self.households as f32).clamp(0.5, 3.0) } else { 1.3 };
+        let workers = adults + (self.homes_free + self.homes_building) as f32 * adults_per_home;
+        let jobs = (self.jobs_permanent + self.jobs_building) as f32;
+        ((workers - jobs) / workers.max(50.0)).clamp(-1.0, 1.0)
+    }
+
+    /// The smoothed cover of a kind of business, once it has one.
+    pub fn cover_of(&self, kind: crate::market::BusinessKind) -> Option<f32> {
+        let i = kind.index();
+        self.business_cover_seen[i].then_some(self.business_cover[i])
+    }
+
+    /// Fold one day's takings and costs of a kind into its cover.
+    pub fn record_cover(&mut self, kind: crate::market::BusinessKind, takings: f32, costs: f32) {
+        if costs <= 0.0 {
+            return;
+        }
+        let i = kind.index();
+        let today = (takings / costs).clamp(0.0, 4.0);
+        self.business_cover[i] = if self.business_cover_seen[i] { self.business_cover[i] * 0.6 + today * 0.4 } else { today };
+        self.business_cover_seen[i] = true;
+    }
+
     pub fn recompute(&mut self) {
         let pop = self.population.max(1) as f32;
         // Homes and jobs already going up count against the pressure, so a
         // boom does not start a site on every vacant lot while the first ones
         // are still scaffolding.
         let housing_pressure = ((self.waiting_immigrants as f32 + self.unhoused as f32) - self.homes_building as f32 * 0.5).max(0.0) / 6.0;
-        let job_pressure = (self.unemployed as f32 - self.jobs_building as f32 * 0.5).max(0.0) / pop;
+        // Homes and jobs are built in balance: the jobs the town will need
+        // once its homes fill (the gap) and the adults out of work today pull
+        // commercial and industrial development; joblessness and a coming
+        // shortage of jobs hold back new housing, and a coming shortage of
+        // workers for the jobs on offer pulls it.
+        let unemployment = self.unemployment_share();
+        let gap = self.job_gap();
+        let job_pressure = (gap.max(0.0) * 1.5 + (unemployment - 0.03).max(0.0) * 2.0).min(1.0);
+        let home_pull = (-gap).max(0.0) * 0.8;
+        let home_damp = (1.0 - (unemployment - 0.04).max(0.0) * 4.0 - gap.max(0.0) * 1.5).clamp(0.2, 1.0);
         let entertainment_pressure = (pop / 40.0).min(1.0);
+        // New venues open only while the ones in town pay their way.
+        let venue_room = self.cover_of(crate::market::BusinessKind::Venue).map_or(1.0, |c| ((c - 0.8) / 0.4).clamp(0.1, 1.0));
 
         let mut d = [0.0f32; 6];
-        // Residential demand: always a trickle so the city starts, then driven by
-        // people waiting for homes.
-        d[LandUse::Residential.index()] = (0.35 + housing_pressure).min(1.0);
-        // Jobs: unemployment pulls commercial and industrial development.
+        // Residential demand: a trickle so the city starts, held back while
+        // work is short, plus the people waiting for a home (never held back:
+        // they are here already).
+        d[LandUse::Residential.index()] = ((0.35 + home_pull) * home_damp + housing_pressure).min(1.0);
         d[LandUse::Commercial.index()] = (0.2 + job_pressure * 1.2).min(1.0);
         d[LandUse::Industrial.index()] = (0.15 + job_pressure).min(1.0);
-        d[LandUse::Entertainment.index()] = (0.1 + entertainment_pressure * 0.8).min(1.0);
+        d[LandUse::Entertainment.index()] = ((0.1 + entertainment_pressure * 0.8) * venue_room).min(1.0);
         d[LandUse::Civic.index()] = (0.1 + (pop / 150.0)).min(1.0);
         d[LandUse::Park.index()] = 0.5;
         self.demand = d;
