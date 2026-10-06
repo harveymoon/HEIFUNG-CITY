@@ -226,9 +226,11 @@ impl World {
             return None;
         }
         let tsp = self.config.traffic_seconds_per_tick;
-        let fly = (da + db) / self.config.walk_speed.max(0.1) + air::flight_ticks(metres, a.height, b.height, air::TAXI_ALT, air::TAXI_MPS, tsp) + 4.0;
-        let road = dist * 1.35 / (10.0 * tsp);
-        if fly > road {
+        // Door to door against a city drive (7 m/s on average, a detour,
+        // finding a space); the rich pay for the view, so a little slower is fine.
+        let fly = (da + db) / self.config.walk_speed.max(0.1) + air::flight_ticks(metres, a.height, b.height, air::TAXI_ALT, air::TAXI_MPS, tsp) + 2.0;
+        let road = dist * 1.35 / (7.0 * tsp) + 6.0;
+        if fly > road * 1.25 {
             return None;
         }
         let plan = AirPlan { from: a.building, to: b.building, from_pos: a.pos };

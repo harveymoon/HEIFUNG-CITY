@@ -44,7 +44,7 @@ pub const HELI_ALT: f32 = 115.0;
 pub const TAXI_MPS: f32 = 45.0;
 pub const HELI_MPS: f32 = 55.0;
 /// Climb and descent rate.
-pub const VERTICAL_MPS: f32 = 8.0;
+pub const VERTICAL_MPS: f32 = 12.0;
 /// Within this of its pad a drone asks for a landing slot.
 pub const APPROACH: f32 = 70.0;
 /// Radius of the holding circle round a busy pad.
@@ -56,7 +56,7 @@ pub const TURNAROUND: u64 = 3;
 /// Walk at most this far to a pad, at each end.
 pub const REACH: f32 = 170.0;
 /// Trips shorter than this (straight line) are not flown.
-pub const MIN_TRIP: f32 = 550.0;
+pub const MIN_TRIP: f32 = 400.0;
 /// Fare: a flag fall plus a rate per kilometre flown.
 pub const FARE_BASE: f32 = 20.0;
 pub const FARE_PER_KM: f32 = 16.0;
