@@ -176,6 +176,84 @@ fn trim(points: &[Vec2], start: f32, end: f32) -> Vec<Vec2> {
     out
 }
 
+/// Arrows painted along a lane every 45 m (none within 12 m of its ends),
+/// pointing the way traffic runs: `forward` along the path.
+pub fn travel_arrows(m: &mut crate::mesh::MeshData, path: &[Vec2], forward: bool, color: [f32; 4]) {
+    let len = path_length(path);
+    let mut s = 20.0;
+    while s < len - 12.0 {
+        let (p, d) = point_along(path, s);
+        let d = if forward { d } else { -d };
+        let side = Vec2::new(-d.y, d.x);
+        let tail = p - d * 2.0;
+        let tip = p + d * 2.2;
+        m.ground_strip(&[tail, p + d * 0.9], 0.22, MARK_Y + 0.003, color);
+        for sgn in [-1.0f32, 1.0] {
+            m.ground_strip(&[p + d * 0.6 + side * sgn * 0.75, tip], 0.22, MARK_Y + 0.003, color);
+        }
+        s += 45.0;
+    }
+}
+
+/// Where a ramp joins a highway (or leaves it): asphalt filling the taper
+/// between the ramp's edge and the carriageway's until they part, edge
+/// lines along both, and chevron hatching in the gore beyond.
+fn ramp_gore(g: &mut Geometry, roads: &RoadNetwork, node: NodeId, ramp: SegmentId, alive: &[SegmentId], asphalt: [f32; 4], paint: [f32; 4]) {
+    let at = roads.node(node).pos;
+    let away = |s: SegmentId| {
+        let seg = roads.segment(s);
+        let far = if seg.a == node { seg.b } else { seg.a };
+        (roads.node(far).pos - at).normalize_or_zero()
+    };
+    let dr = away(ramp);
+    // The carriageway on the ramp's side of the node: the one it runs along.
+    let Some(&hw_seg) = alive.iter().filter(|&&s| s != ramp).max_by(|&&x, &&y| away(x).dot(dr).total_cmp(&away(y).dot(dr))) else { return };
+    let dh = away(hw_seg);
+    let (hh, hr) = (roads.segment(hw_seg).half_width() - SHOULDER * 0.5, roads.segment(ramp).half_width() - SHOULDER * 0.5);
+    // Unit normals of each way toward the other.
+    let nh = { let n = Vec2::new(-dh.y, dh.x); if n.dot(dr) >= 0.0 { n } else { -n } };
+    let nr = { let n = Vec2::new(-dr.y, dr.x); if n.dot(dh) >= 0.0 { n } else { -n } };
+    let mut fill: Vec<Vec2> = Vec::new();
+    let mut back: Vec<Vec2> = Vec::new();
+    let mut parted = None;
+    let mut s = 0.0f32;
+    while s <= 60.0 {
+        let eh = at + dh * s + nh * hh;
+        let er = at + dr * s + nr * hr;
+        // The two edges cross while the ramp still overlaps the carriageway;
+        // once the ramp's inner edge is outside, the gap between is the gore.
+        let gap = (er - eh).dot(nh);
+        if gap > 0.15 {
+            parted.get_or_insert(s);
+            if s - parted.unwrap() > 40.0 {
+                break;
+            }
+            if fill.len() < 2 {
+                fill.push(eh);
+                back.push(er);
+            }
+            // Chevrons across the gore every 3 m.
+            if ((s - parted.unwrap()) / 3.0).fract() < 0.34 && gap > 0.8 {
+                let mid = (eh + er) * 0.5 + (dh + dr).normalize_or_zero() * 1.2;
+                g.part(Glow).ground_strip(&[eh + (er - eh) * 0.08, mid], 0.3, MARK_Y + 0.004, paint);
+                g.part(Glow).ground_strip(&[mid, er - (er - eh) * 0.08], 0.3, MARK_Y + 0.004, paint);
+            }
+        } else {
+            fill.push(eh);
+            back.push(er);
+        }
+        s += 1.0;
+    }
+    if fill.len() >= 2 {
+        let mut poly = fill.clone();
+        poly.extend(back.iter().rev());
+        g.part(Asphalt).ground_polygon(&poly, ASPHALT_Y + 0.004, asphalt);
+        // Edge lines along the taper on both sides of the gore.
+        g.part(Glow).ground_strip(&fill, 0.18, MARK_Y + 0.002, paint);
+        g.part(Glow).ground_strip(&back, 0.18, MARK_Y + 0.002, paint);
+    }
+}
+
 /// Vertex counts of every part: where the next piece of drawing starts.
 fn marks(g: &Geometry) -> Vec<usize> {
     g.parts.iter().map(|m| m.positions.len()).collect()
@@ -303,6 +381,15 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             } else {
                 let path = offset_path(pts, off);
                 dashes_along(g.part(Glow), &path, 0.16, MARK_Y, 3.0, 4.0, fade(divider_c));
+            }
+        }
+        // One-way roads (ramps, highways, one-way streets) show which way
+        // they run: an arrow in every lane every 45 m.
+        if (run.lanes_fwd == 0) != (run.lanes_bwd == 0) {
+            let forward = run.lanes_fwd > 0;
+            for k in 0..(run.lanes_fwd + run.lanes_bwd) {
+                let path = offset_path(pts, (k as f32 + 0.5 - total * 0.5) * LANE_WIDTH);
+                travel_arrows(g.part(Glow), &path, forward, fade(edge_c));
             }
         }
 
@@ -491,6 +578,14 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         }
         if alive.is_empty() || alive.len() == 2 {
             continue;
+        }
+        // A ramp meeting a highway: a taper and a hatched gore instead of a
+        // junction pad, crossings and stop lines.
+        if alive.len() == 3 && alive.iter().filter(|&&s| roads.segment(s).is_highway()).count() == 2 {
+            if let Some(&ramp) = alive.iter().find(|&&s| !roads.segment(s).is_highway()) {
+                ramp_gore(&mut g, roads, NodeId(i as u32), ramp, &alive, asphalt_c, rgba(mul(pal.lane_marker, 0.9)));
+                continue;
+            }
         }
         let r = net.node_radius.get(i).copied().unwrap_or(4.0) + 0.3;
         let poly: Vec<Vec2> = (0..20)
@@ -932,6 +1027,30 @@ mod tests {
         let mut net = LaneNetwork::default();
         net.rebuild(&roads);
         (roads, net)
+    }
+
+    #[test]
+    fn one_way_roads_show_their_direction_and_ramps_get_a_gore() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 3, 0);
+        roads.add_polyline(&[Vec2::new(-100.0, -150.0), Vec2::new(-50.0, -12.0), Vec2::new(0.0, 0.0)], 1, 0);
+        let mut net = LaneNetwork::default();
+        net.rebuild(&roads);
+        let lv = LandValue::new(400.0, 50.0);
+        let pal = Palette::default();
+        let g = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 3, heights: &[], layer: StreetLayer::All });
+        for (_, m) in g.iter() {
+            assert!(m.positions.iter().all(|p| p.iter().all(|v| v.is_finite())));
+        }
+        // Arrows in the highway's lanes: glow strips pointing +x somewhere
+        // mid-carriageway, far from the join.
+        let glow = g.get(Glow);
+        assert!(glow.positions.iter().any(|p| p[0] > 100.0 && p[0] < 300.0 && p[2].abs() < 5.0 && (p[1] - MARK_Y - 0.003).abs() < 1e-3), "arrows on the highway");
+        // A gore: hatching between the ramp and the carriageway near the join.
+        assert!(glow.positions.iter().any(|p| p[0] < -2.0 && p[0] > -45.0 && p[2] < -5.0 && (p[1] - MARK_Y - 0.004).abs() < 1e-3), "chevrons in the gore");
+        // No round junction pad at the join.
+        let pad_y = ASPHALT_Y + 0.01;
+        assert!(!g.get(Asphalt).positions.iter().any(|p| (p[1] - pad_y).abs() < 1e-4 && Vec2::new(p[0], p[2]).length() < 15.0), "no pad over the merge");
     }
 
     #[test]

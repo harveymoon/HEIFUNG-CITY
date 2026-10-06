@@ -224,6 +224,20 @@ impl World {
                 break;
             }
         }
+        // A ramp that has to climb well above the land (to the highway's
+        // embankment, onto a deck) stands on piers rather than on earth.
+        let ramps: Vec<SegmentId> = self
+            .roads
+            .alive_segments()
+            .filter(|(_, s)| !s.bridge && !s.tunnel && crate::roads::is_ramp_spec(s.kind, s.lanes_fwd, s.lanes_bwd))
+            .filter(|(_, s)| [s.a, s.b].iter().any(|&n| z[n.0 as usize] - (land.height(self.roads.node(n).pos).max(floor)) >= crate::roads::VIADUCT_LEVEL))
+            .map(|(id, _)| id)
+            .collect();
+        for id in ramps {
+            let s = &mut self.roads.segments[id.0 as usize];
+            s.bridge = true;
+            s.viaduct = true;
+        }
         self.relief = !flat || z.iter().any(|h| h.abs() > 1e-3) || self.roads.alive_segments().any(|(_, s)| s.bridge);
         self.road_z = z;
         self.ground = crate::landscape::Ground::build(&self.landscape, &self.roads, &self.road_z, &self.lots, self.config.half_extent + 200.0);

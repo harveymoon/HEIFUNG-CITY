@@ -96,6 +96,60 @@ pub fn is_highway_spec(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> bool {
     kind == RoadKind::Street && (lanes_fwd == 0 || lanes_bwd == 0) && lanes_fwd + lanes_bwd >= 3
 }
 
+/// A ramp: a one-way street too narrow to be a highway (slip roads on and
+/// off the highway, and any one-way link).
+pub fn is_ramp_spec(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> bool {
+    kind == RoadKind::Street && (lanes_fwd == 0) != (lanes_bwd == 0) && !is_highway_spec(kind, lanes_fwd, lanes_bwd)
+}
+
+/// How far back from a merge (or on from a diverge) a ramp runs alongside
+/// the highway before it joins.
+pub const RAMP_LEAD: f32 = 40.0;
+
+/// A ramp polyline with its ends on a highway eased in: where an end lies on
+/// a highway carriageway and the ramp meets it at more than 15 degrees, a
+/// lead point is put `RAMP_LEAD` before the join (a merge) or after it (a
+/// diverge), beside the carriageway, so the last piece runs alongside it
+/// and joins nearly tangent. `forward` is whether traffic runs in point
+/// order.
+pub fn ease_ramp_ends(points: &[Vec2], forward: bool, roads: &RoadNetwork) -> Vec<Vec2> {
+    let mut pts = points.to_vec();
+    if pts.len() < 2 {
+        return pts;
+    }
+    for end in [false, true] {
+        let n = pts.len();
+        let (i_end, i_next) = if end { (n - 1, n - 2) } else { (0, 1) };
+        let p = pts[i_end];
+        let Some((sid, _, q)) = roads.nearest_where(p, Segment::is_highway) else { continue };
+        if q.distance(p) > END_SNAP_RADIUS {
+            continue;
+        }
+        let s = roads.segment(sid);
+        let (a, b) = roads.segment_points(sid);
+        let travel = if s.lanes_fwd > 0 { (b - a).normalize_or_zero() } else { (a - b).normalize_or_zero() };
+        let away = (pts[i_next] - q).normalize_or_zero();
+        if away == Vec2::ZERO || travel.dot(away).abs() > 0.966 || pts[i_next].distance(q) < RAMP_LEAD + 5.0 {
+            continue;
+        }
+        // Traffic arrives at this end (a merge) or leaves from it (a diverge).
+        let merge = end == forward;
+        let along = if merge { -travel } else { travel };
+        let side = Vec2::new(-travel.y, travel.x);
+        let side = if side.dot(away) >= 0.0 { side } else { -side };
+        // Beside the carriageway: half its width, half the ramp's, a margin.
+        let gap = s.half_width() + LANE_WIDTH * 0.5 + SHOULDER + 1.0;
+        let lead = q + along * RAMP_LEAD + side * gap;
+        pts[i_end] = q;
+        if end {
+            pts.insert(i_end, lead);
+        } else {
+            pts.insert(1, lead);
+        }
+    }
+    pts
+}
+
 /// Half the width of a path, in metres.
 /// Half the corridor of a single track: ballast shoulder to ballast shoulder.
 pub const RAIL_HALF_WIDTH: f32 = 2.4;

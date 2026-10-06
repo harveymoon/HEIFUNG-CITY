@@ -673,6 +673,9 @@ impl World {
         for (_, drawn, levels, fwd, bwd, kind) in built {
             // Track is eased into smooth curves and tangential switches.
             let points = if kind == RoadKind::Rail { rail::smooth_track(&drawn, &roads) } else { drawn.clone() };
+            // Ramps meet the highway tangentially: a lead point before a
+            // merge (after a diverge) brings the last piece alongside.
+            let points = if crate::roads::is_ramp_spec(kind, fwd, bwd) { crate::roads::ease_ramp_ends(&points, fwd > 0, &roads) } else { points };
             // Breaks at every waterline, so a bridge is exactly the span.
             let points = self.split_at_water(&points);
             // Levels follow the points wherever they moved or multiplied.

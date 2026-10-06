@@ -328,3 +328,42 @@ fn a_tunnel_under_a_building_leaves_it_standing() {
     assert_eq!(w.lots.len(), lots_before, "no parcel was cut");
     assert!(w.roads.alive_segments().any(|(_, s)| s.tunnel));
 }
+
+// ── ramps ───────────────────────────────────────────────────────────────────
+
+#[test]
+fn ramps_join_the_highway_nearly_tangent() {
+    let mut w = flat_world();
+    // An eastbound carriageway and a ramp drawn square onto it from the
+    // south (a merge), and one leaving it square to the north (a diverge).
+    w.add_road(&[Vec2::new(-500.0, 0.0), Vec2::new(500.0, 0.0)], 3, 0);
+    w.add_road(&[Vec2::new(-100.0, -200.0), Vec2::new(-100.0, -5.0)], 1, 0);
+    w.add_road(&[Vec2::new(200.0, 5.0), Vec2::new(200.0, 200.0)], 1, 0);
+    for x in [-100.0f32, 200.0] {
+        let j = w.roads.node_near(Vec2::new(x, 0.0), 0.5).expect("the ramp joins the highway");
+        let segs = segments_at(&w, j);
+        assert_eq!(segs.len(), 3);
+        let ramp = segs.iter().copied().find(|&s| !w.roads.segment(s).is_highway()).unwrap();
+        let (a, b) = w.roads.segment_points(ramp);
+        let d = (b - a).normalize();
+        assert!(d.x.abs() > 0.95, "the ramp's last piece runs alongside: {d:?}");
+    }
+    // The merge comes in from behind the join, the diverge leaves ahead.
+    assert!(w.roads.nodes.iter().any(|n| (n.pos.x - (-100.0 - crate::roads::RAMP_LEAD)).abs() < 1.0 && n.pos.y < 0.0));
+    assert!(w.roads.nodes.iter().any(|n| (n.pos.x - (200.0 + crate::roads::RAMP_LEAD)).abs() < 1.0 && n.pos.y > 0.0));
+    // Still connected: a car can go ramp -> highway -> ramp.
+    let (s0, _, _) = w.roads.nearest_street(Vec2::new(-100.0, -190.0)).unwrap();
+    let (s1, _, _) = w.roads.nearest_street(Vec2::new(200.0, 190.0)).unwrap();
+    assert!(w.traffic.net.find_route(s0, Vec2::new(-100.0, -190.0), s1, Vec2::new(200.0, 190.0)).is_some());
+}
+
+#[test]
+fn a_ramp_climbing_to_a_raised_highway_stands_on_piers() {
+    let mut w = flat_world();
+    // A highway on a deck 8 m up, and a ramp from the ground onto it.
+    build(&mut w, road(&[Vec2::new(-500.0, 0.0), Vec2::new(500.0, 0.0)], (3, 0), RoadKind::Street, &[8.0, 8.0]));
+    w.add_road(&[Vec2::new(-100.0, -300.0), Vec2::new(-100.0, -5.0)], 1, 0);
+    let raised: Vec<_> = w.roads.alive_segments().filter(|(_, s)| !s.is_highway() && s.viaduct).collect();
+    assert!(!raised.is_empty(), "the high part of the ramp is a viaduct");
+    assert!(w.roads.alive_segments().filter(|(_, s)| !s.is_highway()).any(|(_, s)| !s.viaduct), "its foot is on the ground");
+}
