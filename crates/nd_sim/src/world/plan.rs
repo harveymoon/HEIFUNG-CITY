@@ -680,6 +680,12 @@ impl World {
             let points = if crate::roads::is_ramp_spec(kind, fwd, bwd) { crate::roads::ease_ramp_ends(&points, fwd > 0, &roads) } else { points };
             // Breaks at every waterline, so a bridge is exactly the span.
             let points = self.split_at_water(&points);
+            // A height sample every so often, so a long straight way follows
+            // the land instead of running dead straight between its ends.
+            // Only ways that front nothing (highways, track): a street's
+            // vertices decide where its parcels are cut.
+            let sampled = kind == RoadKind::Rail || crate::roads::is_highway_spec(kind, fwd, bwd);
+            let points = if sampled { crate::roads::sample_heights(&points, crate::roads::HEIGHT_SAMPLE) } else { points };
             // Levels follow the points wherever they moved or multiplied.
             let levels = if points == drawn { levels } else { crate::plan::carry_levels(&drawn, &levels, &points) };
             let (fwd, bwd) = match kind {

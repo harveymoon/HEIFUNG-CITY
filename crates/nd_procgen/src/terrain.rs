@@ -532,7 +532,10 @@ pub fn viaducts(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32
         let (a, b) = roads.segment_points(sid);
         let za = world.road_z.get(seg.a.0 as usize).copied().unwrap_or(0.0);
         let zb = world.road_z.get(seg.b.0 as usize).copied().unwrap_or(0.0);
-        viaduct_span(g, a, b, za, zb, seg.half_width() + if seg.is_street() { nd_sim::zoning::SIDEWALK } else { 0.6 }, &|p| world.ground_height(p), concrete, steel, true);
+        // Highways and ramps have no pavements: the deck is the lanes and shoulders.
+        let motorway = seg.is_highway() || nd_sim::roads::is_ramp_spec(seg.kind, seg.lanes_fwd, seg.lanes_bwd);
+        let hw = seg.half_width() + if seg.is_street() && !motorway { nd_sim::zoning::SIDEWALK } else { 0.6 };
+        viaduct_span(g, a, b, za, zb, hw, &|p| world.ground_height(p), concrete, steel, true);
     }
 }
 
@@ -596,8 +599,8 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
             let (p0, p1) = (a.lerp(b, t0), a.lerp(b, t1));
             let (r0, r1) = (za + (zb - za) * t0, za + (zb - za) * t1);
             for sgn in [-1.0f32, 1.0] {
-                let o = side * sgn * (hw + 0.3);
-                let probe = side * sgn * (hw + 4.0);
+                let o = side * sgn * (hw + nd_sim::landscape::GROUND_CELL - 0.6);
+                let probe = side * sgn * (hw + nd_sim::landscape::GROUND_CELL + 4.0);
                 let (g0, g1) = (world.ground_height(p0 + probe), world.ground_height(p1 + probe));
                 if g0 - r0 < 1.2 && g1 - r1 < 1.2 {
                     continue;
