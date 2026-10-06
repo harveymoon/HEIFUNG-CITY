@@ -105,11 +105,6 @@ struct LaneArrowsTag;
 struct OverlayTag;
 #[derive(Component)]
 struct PathsTag;
-/// No longer spawned: coal smoke is drawn by `haze` as moving puffs. Kept
-/// because `lift_spawned` still lists it.
-#[allow(dead_code)]
-#[derive(Component)]
-struct HazeTag;
 #[derive(Component, Clone)]
 struct TransitTag;
 /// [tolls] Toll booth meshes, set on the road's height by `lift_spawned`.
@@ -279,19 +274,9 @@ struct Materials {
     citizen_mesh: Handle<Mesh>,
     bike_mesh: Handle<Mesh>,
     car_bodies: Vec<Handle<StandardMaterial>>,
-    // The old box meshes; road vehicles are generated per variant now
-    // (`VehicleRender`), these stay for anything else that wants a stand-in.
-    #[allow(dead_code)]
-    car_body_mesh: Handle<Mesh>,
-    #[allow(dead_code)]
-    truck_body_mesh: Handle<Mesh>,
-    #[allow(dead_code)]
-    bus_body_mesh: Handle<Mesh>,
     loco_mesh: Handle<Mesh>,
     coach_mesh: Handle<Mesh>,
     wagon_mesh: Handle<Mesh>,
-    #[allow(dead_code)]
-    car_lights_mesh: Handle<Mesh>,
     signal_green: Handle<StandardMaterial>,
     signal_red: Handle<StandardMaterial>,
     signal_mesh: Handle<Mesh>,
@@ -429,6 +414,9 @@ impl Plugin for RenderPlugin {
         // [districts] The district layer; [tourism] visitors on foot, after
         // the citizens whose figure cache they share.
         app.init_resource::<districts::DistrictRender>().add_systems(Update, (districts::sync_district_layer, districts::sync_tourists.after(sync_citizens).before(lift_movers)).in_set(SimSet::Sync));
+        // After every renderer, before the UI (which may load a city and set
+        // the flag again for the next frame's renderers).
+        app.add_systems(Update, clear_full_rebuild.after(SimSet::Sync));
     }
 }
 
@@ -648,37 +636,6 @@ fn setup(
         .iter()
         .map(|&c| materials.add(StandardMaterial { base_color: Color::linear_rgb(c[0], c[1], c[2]), perceptual_roughness: 0.35, metallic: 0.6, ..default() }))
         .collect();
-    let wheels = |m: &mut MeshData, xs: &[f32], z: f32, r: f32| {
-        for &x in xs {
-            for s in [-1.0f32, 1.0] {
-                m.boxed(Vec3::new(x, r, s * z), Vec3::new(r * 2.0, r * 2.0, 0.26), 0.0, [0.08, 0.08, 0.08, 1.0]);
-            }
-        }
-    };
-    let car_body_mesh = {
-        let mut m = MeshData::default();
-        m.boxed(Vec3::new(0.0, 0.75, 0.0), Vec3::new(4.2, 0.8, 1.85), 0.0, [1.0, 1.0, 1.0, 1.0]);
-        m.boxed(Vec3::new(-0.3, 1.45, 0.0), Vec3::new(2.2, 0.6, 1.6), 0.0, [0.25, 0.28, 0.32, 1.0]);
-        wheels(&mut m, &[-1.35, 1.35], 0.86, 0.34);
-        meshes.add(shared_mesh(&m, true))
-    };
-    let truck_body_mesh = {
-        let mut m = MeshData::default();
-        m.boxed(Vec3::new(-0.9, 1.75, 0.0), Vec3::new(5.6, 2.5, 2.3), 0.0, [1.0, 1.0, 1.0, 1.0]);
-        m.boxed(Vec3::new(3.0, 1.4, 0.0), Vec3::new(2.0, 1.8, 2.2), 0.0, [0.5, 0.5, 0.55, 1.0]);
-        m.boxed(Vec3::new(3.9, 1.8, 0.0), Vec3::new(0.2, 0.7, 2.0), 0.0, [0.2, 0.25, 0.3, 1.0]);
-        wheels(&mut m, &[-2.6, -1.4, 2.6], 1.05, 0.5);
-        meshes.add(shared_mesh(&m, true))
-    };
-    let bus_body_mesh = {
-        let mut m = MeshData::default();
-        m.boxed(Vec3::new(0.0, 1.65, 0.0), Vec3::new(11.5, 3.0, 2.5), 0.0, [1.0, 1.0, 1.0, 1.0]);
-        m.boxed(Vec3::new(0.0, 2.25, 0.0), Vec3::new(11.0, 0.9, 2.56), 0.0, [0.14, 0.17, 0.2, 1.0]);
-        m.boxed(Vec3::new(5.6, 1.95, 0.0), Vec3::new(0.4, 1.6, 2.3), 0.0, [0.14, 0.17, 0.2, 1.0]);
-        m.boxed(Vec3::new(-5.72, 2.95, 0.0), Vec3::new(0.1, 0.4, 1.6), 0.0, [1.0, 0.7, 0.2, 1.0]);
-        wheels(&mut m, &[-3.8, 3.6], 1.15, 0.5);
-        meshes.add(shared_mesh(&m, true))
-    };
     let rail_wheels = |m: &mut MeshData, len: f32| {
         for x in [-len * 0.35, len * 0.35] {
             for s in [-1.0f32, 1.0] {
@@ -711,14 +668,6 @@ fn setup(
         rail_wheels(&mut m, 13.0);
         meshes.add(shared_mesh(&m, true))
     };
-    let car_lights_mesh = {
-        let mut m = MeshData::default();
-        for z in [-0.6, 0.6] {
-            m.boxed(Vec3::new(2.1, 0.7, z), Vec3::new(0.15, 0.3, 0.4), 0.0, rgba(pal.headlight));
-            m.boxed(Vec3::new(-2.1, 0.75, z), Vec3::new(0.15, 0.25, 0.4), 0.0, rgba(pal.taillight));
-        }
-        meshes.add(shared_mesh(&m, false))
-    };
     let overlay = materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, alpha_mode: AlphaMode::Blend, ..default() });
     let lit = images.add(lights::lit_image());
     let windows = window_materials.add(lights::WindowMaterial {
@@ -742,13 +691,9 @@ fn setup(
         citizen_mesh,
         bike_mesh,
         car_bodies,
-        car_body_mesh,
-        truck_body_mesh,
-        bus_body_mesh,
         loco_mesh,
         coach_mesh,
         wagon_mesh,
-        car_lights_mesh,
         signal_green,
         signal_red,
         signal_mesh,
@@ -1545,7 +1490,7 @@ fn building_chunk(world: &World, id: BuildingId) -> Option<ChunkKey> {
 fn sync_buildings(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut sim: ResMut<Sim>,
+    sim: Res<Sim>,
     assets: Res<GameAssets>,
     mats: Res<Materials>,
     mut state: ResMut<RenderState>,
@@ -1693,7 +1638,14 @@ fn sync_buildings(
         stats.building_entities = state.chunks.values().map(|c| c.entities.len()).sum();
         stats.building_triangles = state.chunks.values().map(|c| c.triangles).sum();
     }
-    // Clear the full-rebuild flag last so every sync system saw it this frame.
+}
+
+/// Clear the full-rebuild flag once every reader has seen it. It runs
+/// after all of `SimSet::Sync` (the renderers ordered after
+/// `sync_cars` and `sync_trains` included); clearing it inside
+/// `sync_buildings` hid it from the emergency, stunt, turbine, air, parked
+/// car and layer renderers, so a Load kept their stale meshes.
+fn clear_full_rebuild(mut sim: ResMut<Sim>) {
     if sim.full_rebuild {
         sim.full_rebuild = false;
     }
@@ -2258,6 +2210,13 @@ fn sync_parked_cars(mut commands: Commands, sim: Res<Sim>, mut pr: ResMut<Parked
         return;
     }
     pr.key = Some(key);
+    if sim.full_rebuild {
+        // A loaded world reuses vehicle ids: a stale body could stand in
+        // for a different model parked on the same spot.
+        for (_, (_, e)) in pr.cars.drain() {
+            commands.entity(e).despawn();
+        }
+    }
     vr.ensure_materials(&mut materials);
     let mut seen: std::collections::HashSet<nd_sim::VehicleId> = std::collections::HashSet::new();
     for (vid, car) in w.vehicles.cars.iter() {
@@ -2297,6 +2256,14 @@ fn sync_bots(
     mut q: Query<&mut Transform, With<BotTag>>,
 ) {
     vr.ensure_materials(&mut materials);
+    if sim.full_rebuild {
+        // Bot ids are reused by a loaded world; the livery would be stale.
+        for (_, ents) in vr.bots.drain() {
+            for e in ents {
+                commands.entity(e).despawn();
+            }
+        }
+    }
     let w = &sim.world;
     for (id, bot) in w.bots.bots.iter() {
         if vr.bots.contains_key(&id) {
@@ -2798,7 +2765,7 @@ fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res
 fn lift_spawned(
     sim: Res<Sim>,
     mut meshes: ResMut<Assets<Mesh>>,
-    q: Query<&Mesh3d, Or<(Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>, Added<RingPreviewTag>)>>,
+    q: Query<&Mesh3d, Or<(Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<ScatterTag>, Added<RingPreviewTag>)>>,
     arrows: Query<&Mesh3d, Or<(Added<LaneArrowsTag>, Added<TollTag>)>>,
     mut signals: Query<&mut Transform, Added<SignalTag>>,
 ) {

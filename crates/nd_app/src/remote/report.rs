@@ -1,4 +1,4 @@
-﻿//! Whole-city review for the remote API: `report` (overview, people,
+//! Whole-city review for the remote API: `report` (overview, people,
 //! economy, land, services, alerts) and the ranked alert list that
 //! `status` also quotes.
 //!
@@ -22,7 +22,7 @@ use serde_json::{json, Map, Value};
 
 use super::view::{building_name, key_str, plant_name, rail_name, round, tier_key, v2};
 
-// â”€â”€ thresholds â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── thresholds ──────────────────────────────────────────────────────────────
 //
 // Named so a reader of the docs and of a reply can tell what "hungry" or
 // "stuck" means; they mirror the sim's own cut-offs where it has one.
@@ -124,7 +124,7 @@ fn centroid(points: &[SVec2]) -> (Value, Value) {
     (v2(c), json!(spread.round()))
 }
 
-// â”€â”€ report â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── report ──────────────────────────────────────────────────────────────────
 
 pub fn report(w: &World, sections: &[String]) -> Result<Value, String> {
     for s in sections {
@@ -232,7 +232,7 @@ fn memory_reason(text: &str) -> String {
         }
     }
     let words: Vec<&str> = text.split_whitespace().take(4).collect();
-    format!("{}â€¦", words.join(" "))
+    format!("{}…", words.join(" "))
 }
 
 /// Households: how many, their sizes, life stages, shared money and rent.
@@ -630,7 +630,7 @@ fn services(w: &World) -> Value {
     let e = &w.economy;
     let p = &e.power;
     let day = w.clock.day_fraction();
-    // Plants share the load pro rata: output = available Ã— min(1, demand / supply).
+    // Plants share the load pro rata: output = available × min(1, demand / supply).
     let dispatch = if p.supply_mw > 0.0 { (p.demand_mw / p.supply_mw).min(1.0) } else { 0.0 };
     let plants: Vec<Value> = w
         .buildings
@@ -913,7 +913,7 @@ pub fn route_length(r: &nd_sim::BusRoute) -> f32 {
         .sum()
 }
 
-// â”€â”€ alerts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── alerts ──────────────────────────────────────────────────────────────────
 
 /// One concrete problem: how many, where (the centroid of the cases and
 /// their mean distance from it), and ids to `inspect`.

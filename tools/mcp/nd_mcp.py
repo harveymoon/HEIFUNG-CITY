@@ -33,12 +33,12 @@ MAX_IMAGE_BYTES = int(os.environ.get("ND_MCP_MAX_IMAGE_BYTES", str(5 * 1024 * 10
 def call_game(cmd, timeout=15.0):
     """POST one command; return the decoded reply (ok or error)."""
     data = json.dumps(cmd).encode("utf-8")
-    req = urllib.request.Request(BASE + "/cmd", data=data, headers={"Content-Type": "application/json"}, method="POST")
+    req = urllib.request.Request(BASE + "/cmd", data=data, headers={"Content-Type": "application/json", "X-ND-Remote": "1"}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
-        # 400/504 carry a JSON body {"ok": false, "error": ...}.
+        # 400/403/413/415/503/504 carry a JSON body {"ok": false, "error": ...}.
         try:
             return json.loads(e.read().decode("utf-8"))
         except Exception:
@@ -62,13 +62,13 @@ TOOLS = [
     {
         "name": "report",
         "description": "Use report first to review the whole city in one call: overview (population, homes, jobs, treasury, demand), people (class, activity, employment, housing, income/savings/mood distributions, rent burden, hunger, commute modes, top reasons from recent memories), economy (ledger, businesses by kind with staffing and stock vs target, resources supply vs demand and scarcity, most/least profitable businesses), land (lots and buildings by land use and tier, rents, land value), services (power plants, bus routes, rail facilities, parking, traffic) and alerts: a ranked list of concrete problems, each with a count, a location [x, y], example ids for inspect and a hint. Pass sections to get only some.",
-        "inputSchema": obj({"sections": {"type": "array", "items": {"type": "string", "enum": ["overview", "people", "economy", "land", "services", "alerts"]}, "description": "default: all"}}),
+        "inputSchema": obj({"sections": {"type": "array", "items": {"type": "string", "enum": ["overview", "people", "economy", "land", "services", "industry", "society", "alerts", "history"]}, "description": "default: all but history"}}),
     },
     {
         "name": "map",
         "description": "Use map for WHERE: the city cut into square cells (default 100 m, at most 400 cells). layer=summary gives a table of every non-empty cell (residents, homes, jobs, jobs filled, businesses, land value, hungry, vacant lots, unpowered, cars, dominant land use). A single layer (population, land_value, jobs, hunger, vacancy, power, traffic) gives its value grid and an ASCII heat map (' .:-=+*#%@', rows from the smallest y at the top), returned also as a separate text block. Cell (col,row) centre = [x0+(col+0.5)*cell_m, y0+(row+0.5)*cell_m].",
         "inputSchema": obj({
-            "layer": {"type": "string", "enum": ["summary", "population", "land_value", "jobs", "hunger", "vacancy", "power", "traffic"]},
+            "layer": {"type": "string", "enum": ["summary", "population", "people", "land_value", "jobs", "hunger", "vacancy", "power", "traffic", "fertility", "oil", "contamination", "industry", "crime", "homeless", "trash"]},
             "cell_m": {"type": "number", "minimum": 25, "description": "cell size in metres (default 100; grown if the grid would exceed 400 cells)"},
         }),
     },
@@ -89,12 +89,12 @@ TOOLS = [
     {
         "name": "export",
         "description": "Write the whole review (report, summary map, history, and every row of every list) to one JSON file for offline analysis; default <game dir>/exports/city-<unix>.json. Returns the path and size in bytes.",
-        "inputSchema": obj({"path": {"type": "string"}}),
+        "inputSchema": obj({"path": {"type": "string", "description": "a .json path inside saves/, screenshots/ or exports/ (relative to the game dir) or the OS temp folder; no '..'"}}),
     },
     {
         "name": "window",
         "description": "Open, close or toggle one of the game's info windows (what the player sees): city, economy, market, people, power, transit, land, saves, help, dev. open omitted toggles. Returns the windows now open. Useful before a screenshot.",
-        "inputSchema": obj({"name": {"type": "string", "enum": ["city", "economy", "market", "people", "power", "transit", "land", "saves", "help", "dev"]}, "open": {"type": "boolean"}}, ["name"]),
+        "inputSchema": obj({"name": {"type": "string", "enum": ["city", "economy", "taxes", "market", "people", "power", "transit", "emergencies", "land", "districts", "saves", "help", "dev", "new_game"]}, "open": {"type": "boolean"}}, ["name"]),
     },
     {
         "name": "selected",
@@ -141,9 +141,10 @@ TOOLS = [
     },
     {
         "name": "place",
-        "description": "Place a building piece at a point: station or freight_yard (rail pieces, placed anywhere), depot/parking/coal/solar/wind/nuclear (on the vacant lot under or nearest the point). Returns the building id or the game's reason it cannot build.",
+        "description": "Place a building piece at a point: rail pieces (placed anywhere), power plants, depots and parking (on the vacant lot under or nearest the point), docks at the water's edge, toll booths across a road, services and attractions on the lot under the point (with tier). Returns the building id or the game's reason it cannot build.",
         "inputSchema": obj({
-            "kind": {"type": "string", "enum": ["station", "freight_yard", "depot", "parking", "coal", "solar", "wind", "nuclear"]},
+            "kind": {"type": "string", "description": "station, freight_yard, central_station, metro_station, cargo_hub, depot, parking, coal, solar, wind, nuclear, hydro, tidal, geothermal, shipping_port, ferry_terminal, toll_booth, toll_plaza, vertiport, police, fire, hospital, clinic, school, jail, dispatch, monument, stadium, trash_depot, parking_enforcement (services take tier low|mid|high or a :tier suffix); see docs/REMOTE.md"},
+            "tier": {"type": "string", "enum": ["low", "mid", "high"]},
             "x": {"type": "number"}, "y": {"type": "number"},
         }, ["kind", "x", "y"]),
     },
@@ -160,14 +161,14 @@ TOOLS = [
         "name": "find",
         "description": "Search the city. what=citizens|buildings|lots|cars|trains|routes|gestures, optional near [x,y] + radius (nearest first), filter object (citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind), limit. Rows carry ids for inspect/select.",
         "inputSchema": obj({
-            "what": {"type": "string", "enum": ["citizens", "buildings", "lots", "cars", "trains", "routes", "gestures"]},
+            "what": {"type": "string", "enum": ["citizens", "buildings", "lots", "parcels", "cars", "trains", "drones", "routes", "gestures"]},
             "near": POINT, "radius": {"type": "number"}, "filter": {"type": "object"}, "limit": {"type": "integer", "minimum": 1},
         }, ["what"]),
     },
     {
         "name": "inspect",
         "description": "Full detail of one thing by id: citizen (personality, activity, home/work, mood, money, thought, memories), building (tier, floors, homes/jobs, business stock and prices, power, construction, rail link), lot, car, train, route, or gesture. With no id: the current selection.",
-        "inputSchema": obj({"citizen": ID, "building": ID, "lot": ID, "car": ID, "train": ID, "route": ID, "gesture": {"type": "integer"}}),
+        "inputSchema": obj({"citizen": ID, "building": ID, "lot": ID, "car": ID, "train": ID, "drone": ID, "vehicle": {"type": "string", "description": "a private car's record id (owner, model, where it is parked)"}, "route": ID, "gesture": {"type": "integer"}}),
     },
     {
         "name": "select",
@@ -190,7 +191,7 @@ TOOLS = [
         "inputSchema": obj({
             "land_value": {"type": "boolean"}, "paths": {"type": "boolean"}, "zoning": {"type": "boolean"},
             "follow_clock": {"type": "boolean"}, "hour": {"type": "number", "minimum": 0, "maximum": 24},
-            "tool": {"type": "string", "enum": ["inspect", "road", "zone", "edit", "bulldoze", "power", "transit", "rail"]},
+            "tool": {"type": "string", "enum": ["inspect", "road", "zone", "edit", "bulldoze", "buildings", "power", "transit", "rail", "district"]},
             "preset": {"type": "string"}, "kind": {"type": "string"}, "land_use": {"type": "string"},
             "lanes_fwd": {"type": "integer"}, "lanes_bwd": {"type": "integer"}, "curved": {"type": "boolean"}, "show_routes": {"type": "boolean"},
         }),
@@ -198,7 +199,7 @@ TOOLS = [
     {
         "name": "screenshot",
         "description": "Capture the game window to a PNG (default <game dir>/screenshots/shot-<unix>.png). Waits up to 5 s for the file and returns its path, plus the image itself unless include_image=false.",
-        "inputSchema": obj({"path": {"type": "string"}, "include_image": {"type": "boolean"}}),
+        "inputSchema": obj({"path": {"type": "string", "description": "a .png path inside saves/, screenshots/ or exports/ (relative to the game dir) or the OS temp folder; no '..'"}, "include_image": {"type": "boolean"}}),
     },
     {
         "name": "events",
@@ -208,7 +209,7 @@ TOOLS = [
     {
         "name": "saves",
         "description": "action=save (path optional: default writes saves/city.ron plus a dated slot), load (path; the city comes up paused), list.",
-        "inputSchema": obj({"action": {"type": "string", "enum": ["save", "load", "list"]}, "path": {"type": "string"}}, ["action"]),
+        "inputSchema": obj({"action": {"type": "string", "enum": ["save", "load", "list"]}, "path": {"type": "string", "description": "a .ron path inside saves/, screenshots/ or exports/ (relative to the game dir) or the OS temp folder; no '..'"}}, ["action"]),
     },
     {
         "name": "seed_demo",
@@ -299,13 +300,13 @@ def run_tool(name, args):
             return call_game({"cmd": "plan"}), []
         return {"ok": False, "error": f"unknown build action {a!r}"}, []
     if name == "place":
-        return call_game({"cmd": "place", **pick(args, "kind", "x", "y")}), []
+        return call_game({"cmd": "place", **pick(args, "kind", "tier", "x", "y")}), []
     if name == "bus":
         return call_game({"cmd": "bus", **pick(args, "action", "route", "x", "y", "index", "n")}), []
     if name == "find":
         return call_game({"cmd": "find", **pick(args, "what", "near", "radius", "filter", "limit")}), []
     if name == "inspect":
-        return call_game({"cmd": "inspect", **pick(args, "citizen", "building", "lot", "car", "train", "route", "gesture")}), []
+        return call_game({"cmd": "inspect", **pick(args, "citizen", "building", "lot", "car", "train", "drone", "vehicle", "route", "gesture")}), []
     if name == "select":
         reply = call_game({"cmd": "select", **pick(args, "citizen", "building", "car", "vehicle", "at")})
         if reply.get("ok") and "favourite" in args and reply.get("selection", {}) and (reply["selection"] or {}).get("kind") == "citizen":

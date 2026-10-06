@@ -17,13 +17,13 @@ use crate::tools::ToolState;
 /// id or a name).
 fn district_id(cmd: &Value, w: &World) -> Result<Option<u16>, String> {
     if let Some(n) = opt_u64(cmd, "id")? {
-        return w.districts.get(n as u16).map(|d| Some(d.id)).ok_or_else(|| format!("no district {n}"));
+        return u16::try_from(n).ok().and_then(|n| w.districts.get(n)).map(|d| Some(d.id)).ok_or_else(|| format!("no district {n}"));
     }
     for key in ["district", "name"] {
         match field(cmd, key) {
             Some(Value::Number(n)) => {
-                let n = n.as_u64().unwrap_or(0) as u16;
-                return w.districts.get(n).map(|d| Some(d.id)).ok_or_else(|| format!("no district {n}"));
+                let n = n.as_u64().unwrap_or(0);
+                return u16::try_from(n).ok().and_then(|n| w.districts.get(n)).map(|d| Some(d.id)).ok_or_else(|| format!("no district {n}"));
             }
             Some(Value::String(s)) if key == "district" => return w.districts.find(s).map(Some).ok_or_else(|| format!("no district {s:?}")),
             _ => {}
