@@ -996,7 +996,7 @@ fn sync_preview(
 }
 
 /// A roundabout as a hologram: the ring road with its direction of travel,
-/// the island, where the arms join, and the parts of roads it takes up
+/// its inner kerb (the middle is open land), where the arms join, and the parts of roads it takes up
 /// (dashed red). `k` dims it for a parked project.
 fn draw_ring_effect(glow: &mut MeshData, pal: &nd_procgen::Palette, fx: &nd_sim::plan::RingEffect, k: f32) {
     let Some(ring) = fx.ring else { return };
@@ -1018,8 +1018,10 @@ fn draw_ring_effect(glow: &mut MeshData, pal: &nd_procgen::Palette, fx: &nd_sim:
             glow.ground_strip(&[mid - d * 0.6 + side * s * 1.4, tip], 0.45, 0.235, scale(tint, 1.2 * k));
         }
     }
-    let island: Vec<SVec2> = (0..32).map(|i| ring.center + SVec2::from_angle(i as f32 / 32.0 * std::f32::consts::TAU) * ring.island_radius()).collect();
-    glow.ground_polygon(&island, 0.2, scale([0.35, 0.8, 0.45], 0.25 * k));
+    // The middle stays open land: only its inner kerb is outlined.
+    let mut kerb: Vec<SVec2> = (0..=64).map(|i| ring.center + SVec2::from_angle(i as f32 / 64.0 * std::f32::consts::TAU) * ring.inner_radius()).collect();
+    kerb.dedup();
+    glow.ground_strip(&kerb, 0.3, 0.21, scale(tint, 0.6 * k));
     for (i, cut) in fx.cut.iter().enumerate() {
         let wd = fx.cut_widths.get(i).copied().unwrap_or(6.0);
         glow.ground_strip(cut, wd, 0.225, scale(pal.preview_remove, 0.18 * k));

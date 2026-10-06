@@ -21,13 +21,15 @@
 use super::*;
 use std::collections::HashSet;
 
-/// Speed on the ring, m/s (about 25 km/h).
+/// Speed on the smallest rings, m/s (about 25 km/h); bigger rings are
+/// faster (`Ring::speed`).
 pub const RING_SPEED: f32 = 7.0;
 /// Speed through an entry connector, m/s.
 const RING_ENTRY_SPEED: f32 = 6.0;
 /// A ring vehicle closer than this many seconds to an entry blocks it.
 pub const RING_CRITICAL_GAP: f32 = 3.0;
-/// How far back round the ring an entering driver looks, metres.
+/// How far back round the ring an entering driver looks at least, metres;
+/// on a fast ring as far as a car covers in the time it judges.
 const RING_LOOKBACK: f32 = 45.0;
 /// Routing cost of passing an exit in the outer lane of a two-lane ring
 /// (a lane change costs `LANE_CHANGE_COST`): first and second exits stay
@@ -58,6 +60,8 @@ pub struct RingNode {
     pub exits: Vec<LaneId>,
     /// Ring lanes arriving at the node.
     pub ring_in: Vec<LaneId>,
+    /// How far back round the ring entering drivers look, metres.
+    pub lookback: f32,
 }
 
 impl RingLanes {
@@ -87,8 +91,8 @@ impl LaneNetwork {
         let mut ring_lane = vec![false; self.lanes.len()];
         for (i, lane) in self.lanes.iter_mut().enumerate() {
             if let LaneKind::Road { segment, .. } = lane.kind {
-                if roads.ring_of_segment(segment).is_some() {
-                    lane.speed_limit = RING_SPEED;
+                if let Some(r) = roads.ring_of_segment(segment) {
+                    lane.speed_limit = roads.rings[r].speed();
                     ring_lane[i] = true;
                     self.rings.circulating.insert(i as LaneId);
                 }
@@ -102,7 +106,9 @@ impl LaneNetwork {
             let nid = self.intersections[k].node;
             let Some(ring) = roads.ring_of_node(nid) else { continue };
             let lanes_on_ring = roads.rings[ring].lanes;
-            let mut rn = RingNode { ring, ..Default::default() };
+            let speed = roads.rings[ring].speed();
+            let lookback = (speed * 3.0 * RING_CRITICAL_GAP + 10.0).max(RING_LOOKBACK);
+            let mut rn = RingNode { ring, lookback, ..Default::default() };
             let arms = self.intersections[k].approaches >= 3;
             for &(conn, _) in &self.intersections[k].connectors {
                 let c = conn as usize;
@@ -110,7 +116,7 @@ impl LaneNetwork {
                 match (ring_lane[inc as usize], ring_lane[out as usize]) {
                     (true, true) => {
                         self.lanes[c].turn = 0;
-                        self.lanes[c].speed_limit = RING_SPEED;
+                        self.lanes[c].speed_limit = speed;
                         self.rings.circulating.insert(conn);
                         rn.through.push(conn);
                         let outer = matches!(self.lanes[inc as usize].kind, LaneKind::Road { index, .. } if lanes_on_ring > 1 && index + 1 == lanes_on_ring);
@@ -261,13 +267,13 @@ impl Traffic {
                 if arrive + 1.0 < reach || arrive > reach + RING_CRITICAL_GAP {
                     continue;
                 }
-                let passes = car.route.iter().skip(car.idx).take(32).any(|x| rn.through.contains(x));
+                let passes = car.route.iter().skip(car.idx).take(64).any(|x| rn.through.contains(x));
                 if passes {
                     return true;
                 }
             }
             let further = off + lane.length;
-            if further > RING_LOOKBACK {
+            if further > rn.lookback {
                 continue;
             }
             for &p in &lane.prev {
@@ -342,7 +348,7 @@ mod tests {
         let ring = roads.rings[0];
         for &l in &t.net.rings.circulating {
             let lane = &t.net.lanes[l as usize];
-            assert!(lane.speed_limit <= RING_SPEED + 1e-3);
+            assert!(lane.speed_limit <= ring.speed() + 1e-3);
             if let LaneKind::Road { .. } = lane.kind {
                 let mid = (lane.start() + lane.end()) * 0.5;
                 let d = (lane.end() - lane.start()).normalize();
@@ -543,5 +549,95 @@ mod tests {
         }
         let state: Vec<String> = t.cars.iter().map(|(id, c)| format!("{id:?} {:?} v{:.1} s{:.1} idx{}/{} lane{} len{:.1} stalled{:.0} entering{}", c.wait, c.v, c.s, c.idx, c.route.len(), c.route[c.idx], t.net.lanes[c.route[c.idx] as usize].length, c.stalled, c.entering)).collect();
         assert!(done.contains(&bus) && done.contains(&truck), "bus and lorry made it round: {state:?}");
+    }
+
+    /// Two rings, one inside the other, joined by two short roads; the
+    /// crossroads outside joins the outer ring.
+    fn nested() -> RoadNetwork {
+        let mut plan = Plan::default();
+        let road = |a: Vec2, b: Vec2| Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street };
+        plan.gestures.insert(GestureId(1), road(Vec2::new(-320.0, 0.0), Vec2::new(320.0, 0.0)));
+        plan.gestures.insert(GestureId(2), road(Vec2::new(0.0, -320.0), Vec2::new(0.0, 320.0)));
+        plan.gestures.insert(GestureId(3), Gesture::Roundabout { center: Vec2::ZERO, radius: 100.0, lanes: 1 });
+        plan.gestures.insert(GestureId(4), Gesture::Roundabout { center: Vec2::ZERO, radius: 30.0, lanes: 1 });
+        plan.gestures.insert(GestureId(5), road(Vec2::new(30.0, 0.0), Vec2::new(100.0, 0.0)));
+        plan.gestures.insert(GestureId(6), road(Vec2::new(-30.0, 0.0), Vec2::new(-100.0, 0.0)));
+        let (built, rings) = plan.built_roads();
+        let mut net = RoadNetwork::default();
+        net.rings = rings;
+        for (_, pts, f, b, k) in built {
+            net.add_polyline_kind(&pts, f, b, k);
+        }
+        net
+    }
+
+    #[test]
+    fn traffic_flows_between_nested_rings_without_deadlock() {
+        let roads = nested();
+        assert_eq!(roads.rings.len(), 2);
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        assert!(t.net.intersections.iter().all(|i| !i.signalized));
+        // Cars from the four arms to the links between the rings, and from
+        // the links back out to the far arm.
+        let links = [Vec2::new(65.0, 0.0), Vec2::new(-65.0, 0.0)];
+        let mut spawned = 0;
+        let mut arrived = 0;
+        let mut rest = Vec::new();
+        for run in 0..2 {
+            let mut t = t.clone();
+            let (mut s, mut a) = (0, 0);
+            for tick in 0..900u32 {
+                if tick < 240 && tick % 4 == 0 {
+                    for (k, &u) in ARMS.iter().enumerate() {
+                        let (from, _) = arm_points(u, 1, 0);
+                        let link = links[(k + tick as usize / 4) % 2];
+                        // Travelling inward on a link, toward the centre.
+                        let inward = Vec2::new(-link.x.signum(), 0.0);
+                        let right_in = Vec2::new(-inward.y, inward.x);
+                        send(&mut t, &roads, from, link + right_in * 1.75);
+                        send(&mut t, &roads, link - inward * 10.0 - right_in * 1.75, arm_points(ARMS[(k + 2) % 4], 1, 0).1);
+                        s += 2;
+                    }
+                }
+                for id in t.step(2.0, 4) {
+                    if t.cars[id].age < super::REPLAN_AFTER {
+                        a += 1;
+                    }
+                    t.remove_car(id);
+                }
+                assert!(t.gridlocks().is_empty(), "gridlock at {}s", tick * 2);
+                if tick > 240 && t.cars.is_empty() {
+                    break;
+                }
+            }
+            let left: Vec<(Vec2, f32)> = t.cars.values().map(|c| (c.pos, c.v)).collect();
+            if run == 0 {
+                (spawned, arrived, rest) = (s, a, left);
+            } else {
+                assert_eq!((s, a), (spawned, arrived), "deterministic");
+                assert_eq!(left, rest);
+            }
+        }
+        assert_eq!(arrived, spawned, "everyone gets between the rings and out again");
+    }
+
+    #[test]
+    fn a_240_m_ring_is_faster_and_flows() {
+        let roads = city(1, Some((120.0, 1)));
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let lane = t.net.rings.circulating.iter().copied().find(|&l| !t.net.lanes[l as usize].is_connector()).unwrap();
+        assert!(t.net.lanes[lane as usize].speed_limit > 12.0, "a big ring runs near street speed");
+        assert!(t.net.rings.nodes.values().all(|n| n.lookback > 100.0), "and drivers look further back");
+        let small = city(1, Some((12.0, 1)));
+        let mut ts = Traffic::default();
+        ts.rebuild(&small);
+        assert!(ts.net.rings.circulating.iter().all(|&l| ts.net.lanes[l as usize].speed_limit <= RING_SPEED + 1e-3));
+        let (spawned, arrived, _, _) = load(&roads, 1, 4);
+        assert_eq!(arrived, spawned);
+        let roads = city(2, Some((120.0, 2)));
+        let (spawned, arrived, _, _) = load(&roads, 2, 4);
+        assert_eq!(arrived, spawned);
     }
 }

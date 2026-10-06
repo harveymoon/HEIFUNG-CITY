@@ -102,23 +102,28 @@ Citizens are rendered from their simulated positions every frame.
   junction whose exit lane is full; a vehicle 30 traffic minutes on one route replans from where it stands, and nothing is ever taken off the road for being slow: jams are part of the city and drivers feel them. Pedestrians walk on the
   right-hand pavement.
 - **Roundabouts** (`Gesture::Roundabout { center, radius, lanes }`, Road tool preset): a
-  one-way ring of 1 or 2 lanes, 24 to 80 m across, traffic keeping the island on its left
+  one-way ring of 1 or 2 lanes, 24 to 240 m across, traffic keeping the middle on its left
   (anticlockwise on screen). The gesture is stamped over the plan and never edits road
-  gestures: at rebuild `Plan::built_roads` cuts every street and path out of the circle
-  (`roads::layout_rings`), lays the ring first with a vertex at every place a road
-  crossed or ended on it, and the arms snap onto those vertices; a junction inside goes,
-  signals and all. So undo, bulldoze or a radius change in the Edit tool just rebuild.
-  Highways pass over, track is not cut, a ring overlapping an older one is refused. The
-  island is never parcelled; buildings on ground the ring takes come down as for any road
-  works. In the lane network (`traffic/roundabout.rs`) ring lanes run at 7 m/s, nothing
+  gestures: at rebuild `Plan::built_roads` cuts the streets and paths *older than the ring*
+  out of the circle (`roads::layout_rings`, by gesture order), so the old junction goes,
+  signals and all; roads drawn after it are kept inside and out and join it where they
+  meet it. The ring goes down first with a vertex at every join and the arms snap onto
+  those vertices. So undo, bulldoze or a radius change in the Edit tool just rebuild.
+  Highways pass over, track is not cut. The middle is open land with a mountable apron
+  along the inner kerb: parcels are cut along the ring's inner edge and any roads inside,
+  so it can be zoned and built on, and rings can nest when the inner one's pavement
+  clears the outer one's by a lane and a pavement (partial overlaps are refused).
+  Buildings under the ring road come down as for any road works. In the lane network
+  (`traffic/roundabout.rs`) ring lanes run at `Ring::speed` (sqrt(2 r), 7 to 13 m/s), nothing
   is signalised, arms may only turn right onto the ring and ring lanes continue or leave
   from the outer lane. Entries give way with gap acceptance: a car about to reach the
   line goes unless a ring vehicle that will pass the entry (not leave by it) is in the
-  junction or arrives less than 3 s after it, looking up to 45 m back round the ring;
+  junction or arrives less than 3 s after it, looking back round the ring as far as a ring
+  car covers in 9 s (at least 45 m);
   ring traffic never yields and only follows a car merged ahead. Passing an exit in the
   outer lane of a two-lane ring costs routing a little, so the first and second exits
   keep outside and later ones go round on the inside. Hovering the tool shows the ring,
-  the road it takes up, the joins and the lots it would take (red); clicking stamps it
+  the road it takes up, the joins and the lots under the ring road (red); clicking stamps it
   into the active project.
 - **Driving** (`traffic.rs` `DriverProfile`, `world/driving.rs`, `takeover.rs`): turns follow a
   circular arc tangent to both lanes (the fillet of their corner), long vehicles swing wide, and
