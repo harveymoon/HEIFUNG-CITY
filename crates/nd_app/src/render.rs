@@ -144,7 +144,7 @@ impl Overlays {
         ("people", "People", ""),
         ("pollution", "Pollution and noise", ""),
         ("paths", "Pedestrian network", "P"),
-        ("zoning", "Zoning outlines", "O"),
+        ("zoning", "Zoning layer", "O"),
     ];
     /// The heat-map style layers the L key steps through, one at a time.
     pub const CYCLE: [&'static str; 5] = ["land_value", "traffic", "traffic_types", "people", "pollution"];
@@ -1206,6 +1206,10 @@ fn sync_lots(
     let outlines = overlays.zoning;
     let mut glow = MeshData::default();
     let mut fill = MeshData::default();
+    // The zoning layer: every zoned lot washed in its zone's colour (bright,
+    // translucent, above the ground and pavements), built or not, with a
+    // crisp edge; built lots a little fainter so the city still reads.
+    let mut wash = MeshData::default();
     if outlines {
         // The drawn zone polygons (painted lots carry zones of their own
         // outline, which the lot outlines below already show).
@@ -1228,6 +1232,19 @@ fn sync_lots(
             glow.ground_strip(&outline, 0.16, 0.03, scale(grey, k));
         }
     }
+    if outlines {
+        for lot in w.lots.values() {
+            if lot.polygon.len() < 3 || lot.landlocked {
+                continue;
+            }
+            let c = zone_layer_color(lot.land_use);
+            let alpha = if lot.building.is_some() { 0.5 } else { 0.72 };
+            wash.ground_polygon(&lot.polygon, 0.35, [c[0], c[1], c[2], alpha]);
+            let mut edge = lot.polygon.clone();
+            edge.push(lot.polygon[0]);
+            glow.ground_strip(&edge, 0.35, 0.4, scale(c, 1.3));
+        }
+    }
     for lot in w.lots.values() {
         if is_park_lot(lot) || lot.polygon.is_empty() {
             continue;
@@ -1236,12 +1253,7 @@ fn sync_lots(
             // Unusable ground: plain earth, no outline.
             fill.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15));
         } else if lot.building.is_none() {
-            if outlines {
-                let c = pal.zone_color(lot.land_use);
-                let mut outline = lot.polygon.clone();
-                outline.push(lot.polygon[0]);
-                glow.ground_strip(&outline, 0.22, 0.035, scale(c, 0.45));
-            }
+            // Vacant: the zoning layer (above) shows what it is zoned for.
         } else {
             fill.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel));
         }
@@ -1251,6 +1263,23 @@ fn sync_lots(
     }
     if !glow.is_empty() {
         spawn_glow(&mut commands, &mut meshes, &mats, &glow, LotsTag);
+    }
+    if !wash.is_empty() {
+        spawn_overlay(&mut commands, &mut meshes, &mats, &wash, LotsTag);
+    }
+}
+
+/// The zoning layer's colours: fixed, saturated and far apart (as city
+/// builders use them), not the palette's subdued tints, so zones read at a
+/// glance over any ground. Values just above 1 glow a touch at night.
+fn zone_layer_color(lu: nd_sim::LandUse) -> [f32; 3] {
+    match lu {
+        nd_sim::LandUse::Residential => [0.15, 1.15, 0.25],
+        nd_sim::LandUse::Commercial => [0.2, 0.55, 1.25],
+        nd_sim::LandUse::Industrial => [1.2, 0.95, 0.05],
+        nd_sim::LandUse::Entertainment => [1.2, 0.2, 1.05],
+        nd_sim::LandUse::Civic => [0.05, 1.05, 1.15],
+        nd_sim::LandUse::Park => [0.1, 0.55, 0.15],
     }
 }
 

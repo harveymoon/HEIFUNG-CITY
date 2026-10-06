@@ -846,7 +846,7 @@ trait MindProvider {
 - Inspecting: the selected building's lot is outlined, people and cars get a ring, the
   selected person's remaining route and recent trail are drawn with the destination lot, a
   hover card describes the parcel under the cursor, and a draggable person pane carries their
-  story with a favourites list to jump back to. Zoning outlines toggle with O.
+  story with a favourites list to jump back to. Zoning layer toggle with O.
 - Track (`street.rs`): ballast, sleepers every 0.7 m, two rails; level crossings get planks
   over the carriageway, crossbuck signs, lights and raised barrier arms. Stations
   (`buildings/rail.rs`): brick hall with an arched glass front, canopy, clock and name
