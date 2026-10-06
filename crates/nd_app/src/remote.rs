@@ -255,6 +255,12 @@ fn log_events(sim: Res<Sim>, flags: Res<UiFlags>, tools: Res<ToolState>, mut log
             SimEvent::BurnedDown(b, l) => json!({ "kind": "BurnedDown", "building": key_str(*b), "lot": key_str(*l) }),
             SimEvent::Arrested(i, c) => json!({ "kind": "Arrested", "incident": i, "citizen": key_str(*c), "name": w.citizens.get(*c).map(|x| x.name.as_str()) }),
             SimEvent::Released(c) => json!({ "kind": "Released", "citizen": key_str(*c), "name": w.citizens.get(*c).map(|x| x.name.as_str()) }),
+            SimEvent::Crash(id) => {
+                let r = w.driving.recent.iter().find(|r| r.id == *id);
+                json!({ "kind": "Crash", "crash": id, "pos": r.map(|r| [r.pos.x, r.pos.y]), "cause": r.map(|r| r.cause.label()), "severity": r.map(|r| r.severity), "injured": r.map(|r| r.injured.len()), "place": r.map(|r| r.place.clone()), "incident": r.and_then(|r| r.incident) })
+            }
+            SimEvent::Takeover(id) => json!({ "kind": "Takeover", "takeover": id, "place": w.takeover().map(|t| t.place.clone()) }),
+            SimEvent::TakeoverOver(id) => json!({ "kind": "TakeoverOver", "takeover": id }),
             SimEvent::StadiumEvent(b) => json!({ "kind": "StadiumEvent", "building": key_str(*b), "name": building_name(w, Some(*b)) }),
             SimEvent::NewThought(c) => {
                 let cit = w.citizens.get(*c);
@@ -937,7 +943,30 @@ fn incident(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             };
             w.fall_ill(c).ok_or("that citizen is not indoors or is already a patient")?
         }
-        _ => return Err(format!("unknown incident kind {kind:?}; fire, crime or medical")),
+        // [driving] A crash: the car given (or the nearest to `at`) crashes
+        // at `speed` m/s (25: written off). Processed on the next tick.
+        "crash" => {
+            let car: nd_sim::CarId = match field(cmd, "car") {
+                Some(v) => key_from(v)?,
+                None => {
+                    let at = cmd.get("at").and_then(|v| v.as_array()).and_then(|a| Some(nd_sim::Vec2::new(a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32))).unwrap_or(nd_sim::Vec2::ZERO);
+                    w.traffic.cars.iter().filter(|(_, c)| !c.siren && c.bus.is_none() && !c.in_stunt() && !c.crashed()).min_by(|a, b| a.1.pos.distance(at).total_cmp(&b.1.pos.distance(at))).map(|(id, _)| id).ok_or("no car on the road")?
+                }
+            };
+            if !w.traffic.cars.contains_key(car) {
+                return Err("no such car".into());
+            }
+            let speed = cmd.get("speed").and_then(|v| v.as_f64()).unwrap_or(25.0) as f32;
+            w.traffic.crash(vec![car], nd_sim::traffic::CrashCause::OffRoad, speed);
+            return Ok(json!({ "car": key_str(car), "crash": w.traffic.next_crash - 1 }));
+        }
+        // [driving] A street takeover at the junction nearest `at`.
+        "takeover" => {
+            let at = cmd.get("at").and_then(|v| v.as_array()).and_then(|a| Some(nd_sim::Vec2::new(a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32)));
+            let id = w.start_takeover(at)?;
+            return Ok(json!({ "takeover": id }));
+        }
+        _ => return Err(format!("unknown incident kind {kind:?}; fire, crime, medical, crash or takeover")),
     };
     Ok(json!({ "incident": id }))
 }

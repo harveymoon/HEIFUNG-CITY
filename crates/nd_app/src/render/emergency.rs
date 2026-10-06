@@ -210,7 +210,7 @@ pub(super) fn sync_emergency(
     for (uid, ents) in es.units.iter() {
         let Some(u) = s.units.get(*uid) else { continue };
         let (pos, heading) = match u.car.and_then(|c| w.traffic.cars.get(c)) {
-            Some(car) => (car.prev_pos.lerp(car.pos, f), lerp_angle(car.prev_heading, car.heading, f)),
+            Some(car) => car.pose_at(f),
             None => (u.pos, u.heading),
         };
         // Lights and sirens: the two halves of the bar alternate.

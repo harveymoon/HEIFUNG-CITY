@@ -35,6 +35,7 @@ mod emergency;
 mod haze;
 mod layers;
 mod lights;
+mod stunts;
 mod turbines;
 
 
@@ -330,6 +331,8 @@ impl Plugin for RenderPlugin {
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
         // Emergency vehicles, fires and rubble, after the cars they hide.
         app.add_systems(Update, emergency::sync_emergency.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
+        // [driving] Tyre smoke, skid marks, wrecks and tows.
+        app.add_systems(Update, stunts::sync_stunts.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
     }
 }
 
@@ -1632,8 +1635,8 @@ fn sync_cars(
     let f = sim.frac();
     for (id, ents) in state.cars.iter() {
         let Some(car) = traffic.cars.get(*id) else { continue };
-        let pos = car.prev_pos.lerp(car.pos, f);
-        let heading = lerp_angle(car.prev_heading, car.heading, f);
+        // [driving] Along the substep poses, not a chord across the turn.
+        let (pos, heading) = car.pose_at(f);
         // Lifted when selected, whether through its driver or, for a bus or
         // truck with nobody to inspect, as the vehicle itself.
         let selected = *selection == Selection::Citizen(car.citizen) || *selection == Selection::Car(*id);
@@ -1654,8 +1657,7 @@ fn sync_cars(
         let ids: Vec<CarId> = vr.trails.keys().copied().collect();
         for id in ids {
             let Some(car) = traffic.cars.get(id) else { continue };
-            let pos = car.prev_pos.lerp(car.pos, f);
-            let heading = lerp_angle(car.prev_heading, car.heading, f);
+            let (pos, heading) = car.pose_at(f);
             let tail = pos - SVec2::new(heading.cos(), heading.sin()) * 1.4;
             let p = Vec3::new(tail.x, 0.05 + w.surface_height(tail), tail.y);
             let Some((_, h, pts)) = vr.trails.get_mut(&id) else { continue };
