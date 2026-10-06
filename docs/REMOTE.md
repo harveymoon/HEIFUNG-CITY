@@ -143,6 +143,26 @@ Reply: `building` id, `message`, `row`, `treasury`; or the sim's reason as `erro
 {"cmd": "place", "kind": "dispatch:low", "x": -80, "y": 40}
 ```
 
+### Industry sub-zones
+
+`industry {lot | pos | polygon, kind}` sets the player's industry bias (`World::set_industry_bias`):
+`kind` is `farming`, `oil`, `refinery`, `manufacturing`, `logistics`, `fishing`, `tech`, or `none`
+(hand the area back to the ground over an older bias). `lot` is a lot id, `pos: [x, y]` the lot
+under the point, `polygon: [[x, y], ...]` an area (the bias belongs to the ground, so it survives
+the lots being recut). New industrial buildings there take that kind; standing industry of another
+kind retools on the spot. Reply: `kind`, `retooled` (buildings changed), `biases`.
+
+Without `kind` it is a query of the lot: `ground` {soil, fertility, oil, rock, sand, water},
+`contamination`, `land_value`, `near` {port, yard, highway, depot (0..1), fleet_lot}, `neighbours`
+([kind, metres] of industry within 160 m), `bias`, `chance` (share of each kind a new building
+would draw) and `building` (the kind standing there).
+
+```json
+{"cmd": "industry", "pos": [-210, -210], "kind": "farming"}
+{"cmd": "industry", "polygon": [[-280, -280], [-140, -280], [-140, -140], [-280, -140]], "kind": "none"}
+{"cmd": "industry", "pos": [-210, -210]}
+```
+
 ### Buses
 
 `bus {action, ...}`:
@@ -261,7 +281,7 @@ Each reply carries `took_ms`; see the timings measured on a real city at the end
 
 ### report
 
-`{"cmd": "report", "sections": ["overview", "alerts"]}` (default: all six).
+`{"cmd": "report", "sections": ["overview", "alerts"]}` (default: all seven).
 
 | Section | Fields |
 | --- | --- |
@@ -270,6 +290,7 @@ Each reply carries `took_ms`; see the timings measured on a real city at the end
 | `economy` | treasury, ledger {today_so_far and yesterday by flow, nets}, tax_today, upkeep_today, trade_today {imports_value, exports_value, building_materials_imported, deals, meals_sold, walk_in_sales, parking_fees}, businesses {total, open, closed_ever, by_kind: count, open, closed, mean_staffing, mean_money, revenue and spend totals, inputs (stock, target, fill), outputs (stock, mean_price)}, resources (town_stock, avg_price, price_vs_base, local_sellers_open, local_supply_per_day, business_demand_per_day, scarce), most_profitable_today and least_profitable_today (10 each, with ids) |
 | `land` | lots_by_land_use {vacant, built, under_construction, unusable, total, area_m2}, buildings_by_land_use_and_tier, special_buildings, floors_histogram, rents_by_tier {buildings, homes, residents, occupancy, rent_per_home_day_avg, min, max}, land_value {avg_grid, lots distribution, tier_cuts}, parks {lots, area_m2} |
 | `services` | emergency {coverage_pct_of_homes {police, fire, health, school}, incidents_today {fire, crime, medical}, resolved_today, unanswered_today, arrests_today, avg_response_min (call to arrival, today or else yesterday), units, units_busy, fires_burning, burned_down_total, waiting_for_ambulance, in_hospital, dispatch {dispatcher_on_duty, minutes_to_dispatch}, stadium_crowd_today, tickets_today, stadium_events_tonight, upkeep_per_day, education_wage_bonus_today, stations: id, kind, tier, workers, radius_m, units, units_crewed, units_busy, beds_used, capacity; active_incidents: id, kind, stage, building, minutes_since_start, intensity, unit, dispatcher; recent (last 10 resolved with outcome and response_min)}, power {supply, demand and imported MW, served_share, unpowered_buildings, brownout_hours_today, weather, plants: id, kind, capacity_mw, available_mw, output_mw_est, upkeep, pollution}, transit {routes: id, stops, buses_wanted, buses_running, riders_today, waiting, length_m, broken_legs, runnable; totals}, rail {facilities: id, kind, rail_connected, road_connected, works, waiting_passengers, freight units; trains by kind; riders, freight}, parking {capacity, used, occupancy, parked_on_street_today, last_shortage_at}, traffic {vehicles, cars, trucks, buses, mean_speed_kmh_moving, stopped, stuck, waiting_at_kerb, gridlocks, left_turn_wait_mean_s, left_turn_wait_max_s (over the last 500 left turns), left_turns_measured, protected_left_arrows_now, passing_left_turners_now, lane_use_set_by_player, lanes, intersections, signals} |
+| `industry` | by_kind (farming, oil, refinery, manufacturing, logistics, fishing, tech): buildings, open, jobs, mean_staffing, profit_today, nuisance {radius_m, weight}, fouls_ground; contamination {cells, cells_over_0_3, max, total, cell_m}; fleet {truck_and_bus_lots, bays, trucks_parked, trucks_on_road, returning_empty}; biases {count, newest_first}; plant_land_value (each plant kind's radius, weight, load, ash) |
 | `alerts` | the ranked list below |
 
 A distribution is `{count, mean, median, p10, p90, min, max, histogram: {edges (bins + 1), counts}}`
@@ -320,7 +341,8 @@ the top; col 0 the smallest x, at the left.
   center, residents (counted at their home), homes, jobs, jobs_filled, businesses, land_value (lot
   average), hungry, vacant_lots, unpowered, cars (now), land_use (dominant by lot area).
 - One of `population`, `people` (citizens where they are now, indoors at their building: the
-  People map layer's data), `land_value`, `jobs`, `hunger`, `vacancy`, `power`, `traffic`: `unit`,
+  People map layer's data), `land_value`, `jobs`, `hunger`, `vacancy`, `power`, `traffic`, `fertility`,
+  `oil`, `contamination` (the ground at each cell centre, 0..1), `industry` (industrial buildings): `unit`,
   `max`, `total`, `grid` (rows of numbers), `ascii` (one string per row, one character per cell
   from `" .:-=+*#%@"` scaled to the layer's max; any non-zero value shows at least `.`), `legend`
   (the value range of each character) and `ascii_text` (framed, with each row's y):

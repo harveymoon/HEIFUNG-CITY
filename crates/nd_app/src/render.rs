@@ -1122,6 +1122,8 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         service: b.service.map(|s| s.kind),
         animated_rotors: true,
         dynamic_lights: true,
+        business: b.business.as_ref().map(|z| z.kind),
+        fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
     };
     let mut g = match &b.demolition {
         // Coming down: what stood there (which, during a redevelopment or a

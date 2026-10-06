@@ -69,6 +69,10 @@ pub enum Family {
     Heavy,
     /// Clean industry.
     Tech,
+    /// Fields, barns and greenhouses: wants clean neighbours.
+    Farm,
+    /// Container yards, truck lots and fish docks: port-side trade.
+    Logistics,
     /// Civic, parks, parking, plants and rail: neutral.
     Special,
 }
@@ -127,6 +131,14 @@ pub fn traits(style: Style) -> (Family, f32) {
         Style::PoliceStation | Style::FireStation | Style::Hospital | Style::School | Style::DispatchCenter => (Special, 0.0),
         Style::Landmark | Style::Stadium => (Special, -1.5),
         Style::Prison => (Special, -1.0),
+        // Industry sub-zones: farms spread in big patches, oil and
+        // refineries are heavy, yards and lots line up together.
+        Style::Farmstead => (Farm, 0.9),
+        Style::OilField => (Heavy, 0.9),
+        Style::Refinery => (Heavy, 0.3),
+        Style::ContainerYard => (Logistics, 0.8),
+        Style::FishProcessing => (Logistics, 0.6),
+        Style::TruckLot => (Logistics, 0.2),
         _ => (Special, 0.0),
     }
 }
@@ -163,6 +175,18 @@ fn family_affinity(a: Family, b: Family) -> f32 {
         (Heavy, Heavy, 0.4),
         (Heavy, Tech, -0.2),
         (Tech, Tech, 0.3),
+        (Farm, Farm, 0.5),
+        (Farm, Heavy, -1.2),
+        (Farm, Tech, -0.2),
+        (Farm, Walkup, 0.1),
+        (Farm, Luxury, 0.2),
+        (Farm, Slum, -0.2),
+        (Farm, Logistics, -0.3),
+        (Logistics, Logistics, 0.4),
+        (Logistics, Heavy, 0.3),
+        (Logistics, Tech, 0.1),
+        (Logistics, Luxury, -0.6),
+        (Logistics, Spire, -0.3),
     ];
     table.iter().find(|(x, y, _)| key(*x, *y) == k).map(|t| t.2).unwrap_or(0.0)
 }
@@ -248,8 +272,14 @@ pub struct StyleBook {
     entries: HashMap<BuildingId, Entry>,
 }
 
-/// What a building is besides its zone: drives forced styles.
+/// What a building is besides its zone: drives forced styles. Industry
+/// businesses count by kind, so a retooled plant is restyled.
 fn role(b: &nd_sim::Building) -> u8 {
+    if let Some(z) = b.business.as_ref().filter(|z| z.kind.industry().is_some()) {
+        if let Some(i) = nd_sim::BusinessKind::ALL.iter().position(|k| *k == z.kind) {
+            return 10 + i as u8;
+        }
+    }
     if b.depot {
         1
     } else if b.rail.is_some() {
@@ -340,6 +370,7 @@ impl StyleBook {
                 depot: b.depot,
                 rail: b.rail.as_ref(),
                 neighbours: &near,
+                business: b.business.as_ref().map(|z| z.kind),
                 ..Extras::default()
             };
             let style = choose_style(lot, b.land_use, b.floors, b.tier, b.seed, rules, &extras);
@@ -491,5 +522,34 @@ mod tests {
             }
         }
         assert!(!rules.options(LandUse::Industrial, Tier::Low).iter().any(|o| o.style == Style::Workshops));
+    }
+
+    #[test]
+    fn industry_businesses_wear_their_own_looks_and_farms_shun_oil() {
+        use nd_sim::BusinessKind as B;
+        let lots = {
+            let mut w = World::new(nd_sim::world::WorldConfig::default());
+            w.add_road(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+            w.add_zone(vec![Vec2::new(-150.0, 8.0), Vec2::new(150.0, 8.0), Vec2::new(150.0, 70.0), Vec2::new(-150.0, 70.0)], LandUse::Industrial);
+            w.lots.values().filter(|l| l.usable()).cloned().collect::<Vec<_>>()
+        };
+        let lot = lots.iter().max_by(|a, b| a.area().total_cmp(&b.area())).unwrap();
+        let rules = BuildingRules::default();
+        for (kind, want) in [(B::OilWell, Style::OilField), (B::FleetLot, Style::TruckLot), (B::Fishery, Style::FishProcessing), (B::GrainFarm, Style::Farmstead)] {
+            for seed in 0..10 {
+                let extras = Extras { business: Some(kind), ..Extras::default() };
+                assert_eq!(choose_style(lot, LandUse::Industrial, 1, Tier::Low, seed, &rules, &extras), want, "{kind:?}");
+            }
+        }
+        // Parts fabs keep the generic industrial menu.
+        let fab = Extras { business: Some(B::Fab), ..Extras::default() };
+        let s = choose_style(lot, LandUse::Industrial, 2, Tier::Mid, 3, &rules, &fab);
+        assert!(!matches!(s, Style::Farmstead | Style::OilField | Style::TruckLot | Style::FishProcessing | Style::ContainerYard | Style::Refinery), "{s:?}");
+        // Families: farms cluster and keep away from heavy industry.
+        assert!(affinity(Style::Farmstead, Style::Farmstead) > 0.0);
+        assert!(affinity(Style::Farmstead, Style::OilField) < -0.5);
+        assert!(affinity(Style::ContainerYard, Style::TruckLot) > 0.0);
+        let near_oil = [Neighbour { style: Style::OilField, distance: 20.0 }];
+        assert!(neighbour_factor(Style::Farmstead, &near_oil) < 0.5);
     }
 }

@@ -491,7 +491,9 @@ impl World {
     pub(super) fn ship(&mut self, from: BuildingId, to: BuildingId, resource: Resource, amount: f32, price: f32) {
         let cargo = Cargo { from, to, resource, amount, price };
         self.note_inbound(to, resource, amount);
-        self.dispatch_truck(TruckOrigin::Building(from), cargo, 7);
+        // [industry] a lorry parked at a truck lot near the seller takes the job
+        let origin = self.fleet_origin(from);
+        self.dispatch_truck(TruckOrigin::Building(origin), cargo, 7);
     }
 
     pub(super) fn truck_count(&self) -> usize {

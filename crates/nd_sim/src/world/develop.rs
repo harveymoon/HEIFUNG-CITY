@@ -145,13 +145,16 @@ impl World {
                 for car in self.traffic.cars.values() {
                     b.splat(car.pos, 45.0, -0.004);
                 }
+                // [industry] fouled ground
+                self.splat_contamination(&mut b);
             }
             _ => {
                 b.finish(0.25, &mut self.land_value);
                 let lv = &self.land_value;
                 for bld in self.buildings.values_mut() {
                     if let Some(lot) = self.lots.get(bld.lot) {
-                        bld.update_rent(lv.at(lot.center));
+                        // [industry] as the building's land use feels it
+                        bld.update_rent(lv.for_use(lot.center, bld.land_use));
                     }
                 }
                 return;
@@ -180,7 +183,8 @@ impl World {
                     b.splat(c, 110.0, 0.06);
                     b.splat(c, 50.0, -0.08);
                 }
-                LandUse::Industrial => b.splat(c, 220.0, -0.3),
+                // [industry] by sub-zone: nuisance plus a lift on cheap land
+                LandUse::Industrial => Self::splat_industry(b, bld, c),
                 LandUse::Residential => match bld.tier {
                     Tier::High => b.splat(c, 130.0, 0.12),
                     Tier::Low => b.splat(c, 130.0, -0.07),
@@ -193,7 +197,8 @@ impl World {
             if let Some(kind) = bld.plant {
                 let (r, w) = kind.pollution();
                 if r > 0.0 {
-                    b.splat(c, r, w);
+                    // [industry] a nuisance: homes feel it most
+                    b.splat_nuisance(c, r, -w);
                 }
             }
             if let Some(link) = &bld.rail {
@@ -266,7 +271,8 @@ impl World {
             let (lu, tier, value, derelict_before, full, special) = {
                 let b = &self.buildings[bid];
                 let full = if b.land_use == LandUse::Residential { b.homes > 0 && b.free_homes() == 0 } else { b.jobs > 0 && b.free_jobs() == 0 };
-                let value = self.lots.get(b.lot).map(|l| self.land_value.at(l.center)).unwrap_or(b.land_value);
+                // [industry] land value as the land use feels it
+                let value = if self.lots.contains_key(b.lot) { self.lot_value(b.lot) } else { b.land_value };
                 let special = b.is_parking() || b.is_special();
                 (b.land_use, b.tier, value, b.is_derelict(), full, special)
             };
@@ -529,7 +535,8 @@ impl World {
             return;
         }
         let lu = self.lots[lot_id].land_use;
-        let value = self.land_value.at(self.lots[lot_id].center);
+        // [industry] land value as the land use feels it
+        let value = self.lot_value(lot_id);
         let mut tier = Tier::for_land_value(value);
         if lu == LandUse::Residential {
             tier = self.residential_tier(tier);
@@ -541,7 +548,12 @@ impl World {
         if !self.lots[lot_id].car_access() {
             b.parking_capacity = 0;
         }
-        if let Some(kind) = self.pick_business_kind(lu, b.jobs) {
+        if let Some(kind) = self.business_for_new_building(lot_id, lu, b.jobs) {
+            // [industry] some sub-zones build low: wells, fields, yards
+            if let Some(ik) = kind.industry() {
+                b.floors = b.floors.min(ik.max_floors()).max(1);
+                b.recompute_capacity();
+            }
             let jobs = b.jobs;
             b.business = Some(Business::new(kind, jobs));
         }
@@ -554,3 +566,29 @@ impl World {
         self.order_materials(id);
     }
 }
+
+// [industry] Business choice for a new building, kept apart from the
+// development logic above: industrial lots choose by sub-zone (ground,
+// neighbours, the player's bias; see `world/industry.rs`), everything else
+// draws from its land use's menu as before.
+impl World {
+    /// The business for a new building. Industrial lots follow their
+    /// ground, neighbours and the player's bias ([industry]); the market
+    /// reading ([balance]) vetoes an unforced industrial kind that is
+    /// losing money and picks every other land use.
+    fn business_for_new_building(&mut self, lot_id: LotId, lu: LandUse, jobs: u16) -> Option<BusinessKind> {
+        if lu == LandUse::Industrial {
+            let forced = self.lots.get(lot_id).and_then(|l| self.industry_bias_at(l.center)).flatten().is_some();
+            if let Some(k) = self.pick_industrial_business(lot_id) {
+                if forced || self.economy.cover_of(k).is_none_or(|c| c >= INDUSTRY_MIN_COVER) {
+                    return Some(k);
+                }
+            }
+        }
+        self.pick_business_kind(lu, jobs)
+    }
+}
+
+/// [balance x industry] An industrial kind whose takings cover less than
+/// this share of its costs is not built again unless the player asked for it.
+const INDUSTRY_MIN_COVER: f32 = 0.8;
