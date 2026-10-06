@@ -31,9 +31,13 @@ pub fn way_grade(kind: RoadKind) -> f32 {
 
 /// Ease node heights `z` to the grades of `segs` (a, b, length, grade):
 /// first every free node is brought down to within its grade of a fixed
-/// node below it (the approach to a cutting), then the low end of anything
-/// still too steep is raised (fill and embankment). Fixed nodes never move.
-fn ease_heights(z: &mut [f32], fixed: &[bool], segs: &[(usize, usize, f32, f32)]) {
+/// node below it (the approach to a cutting), then the high end of anything
+/// too steep is lowered (a cutting), never below its `least` (a bridge end
+/// keeps its deck), so a way climbing to the hills at the map edge cuts
+/// into them rather than carrying the basin up on an embankment as high as
+/// the hills; last the low end of anything still too steep is raised (fill
+/// and embankment, the approaches to a deck). Fixed nodes never move.
+fn ease_heights(z: &mut [f32], fixed: &[bool], least: &[f32], segs: &[(usize, usize, f32, f32)]) {
     let n = z.len();
     if fixed.iter().any(|f| *f) {
         let mut cap: Vec<f32> = (0..n).map(|k| if fixed[k] { z[k] } else { f32::INFINITY }).collect();
@@ -58,6 +62,22 @@ fn ease_heights(z: &mut [f32], fixed: &[bool], segs: &[(usize, usize, f32, f32)]
             if !fixed[k] {
                 z[k] = z[k].min(cap[k]);
             }
+        }
+    }
+    for _ in 0..200 {
+        let mut changed = false;
+        for &(a, b, len, grade) in segs {
+            let max = len * grade;
+            if z[a] > z[b] + max + 1e-3 && !fixed[a] && z[a] > least[a] + 1e-3 {
+                z[a] = (z[b] + max).max(least[a]);
+                changed = true;
+            } else if z[b] > z[a] + max + 1e-3 && !fixed[b] && z[b] > least[b] + 1e-3 {
+                z[b] = (z[a] + max).max(least[b]);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
         }
     }
     for _ in 0..200 {
@@ -181,6 +201,7 @@ impl World {
         let edge = crate::landscape::LAND_HALF;
         let mut z: Vec<f32> = roads.nodes.iter().map(|nd| land.height(nd.pos.clamp(Vec2::splat(-edge), Vec2::splat(edge))).max(floor) + nd.level).collect();
         let mut fixed: Vec<bool> = roads.nodes.iter().map(|nd| nd.level != 0.0).collect();
+        let mut least = vec![f32::NEG_INFINITY; z.len()];
         if !flat {
             // Bridge ends stand at deck height; the approaches ramp up to them.
             for (_, seg) in roads.alive_segments() {
@@ -188,6 +209,7 @@ impl World {
                     let deck = WATER_LEVEL + BRIDGE_CLEARANCE;
                     for k in [seg.a.0 as usize, seg.b.0 as usize] {
                         z[k] = z[k].max(deck);
+                        least[k] = deck;
                     }
                 }
             }
@@ -205,7 +227,7 @@ impl World {
             z[s.a.0 as usize] + (z[s.b.0 as usize] - z[s.a.0 as usize]) * t
         };
         for _ in 0..6 {
-            ease_heights(&mut z, &fixed, &segs);
+            ease_heights(&mut z, &fixed, &least, &segs);
             let mut lifted = false;
             for c in &crossings {
                 let (zu, zl) = (seg_z(&z, c.upper), seg_z(&z, c.lower));

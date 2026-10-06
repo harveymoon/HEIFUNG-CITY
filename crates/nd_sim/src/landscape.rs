@@ -1472,6 +1472,9 @@ pub struct Ground {
     half: f32,
     n: usize,
     h: Vec<f32>,
+    /// What holds each cell (a road, a cut, a pad), or free ground.
+    #[cfg_attr(not(test), allow(dead_code))]
+    fix: Vec<Fix>,
     /// Lot pads, by lot.
     pub pads: std::collections::HashMap<LotId, f32>,
     /// Bridge decks: ends, half width (with the pavement), end heights.
@@ -1483,10 +1486,201 @@ pub struct Ground {
     /// How many of `decks` are water bridges; the rest are underpass decks
     /// carrying the highway over a street.
     pub bridge_decks: usize,
-    /// Ways reaching past the raster (the highway, the trunk line, roads
-    /// out to elsewhere): ends, end heights and corridor half width. The
-    /// ground beyond the raster is graded to them as inside it.
+    /// Ways reaching past the raster or near its edge (the highway, the
+    /// trunk line, roads out to elsewhere): ends, end heights and corridor
+    /// half width. The ground beyond the raster is graded to them as inside
+    /// it.
     outer: Vec<(Vec2, Vec2, f32, f32, f32)>,
+    /// `outer` by square of `OUTER_BUCKET` metres (over `FAR_GROUND`): the
+    /// ways that may grade the ground in each.
+    outer_index: Vec<Vec<u32>>,
+}
+
+/// What holds a cell of the built-ground raster.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Fix {
+    /// Graded between what holds the cells around it.
+    #[default]
+    Free,
+    /// A road's corridor, at the road's height.
+    Road,
+    /// An underpass cut, at the lower way's height. Its sides are walls, so
+    /// it does not grade the ground beside it.
+    Cut,
+    /// A sunken road between retaining walls: likewise.
+    Wall,
+    /// A lot, at its pad.
+    Pad,
+}
+
+/// Ways within this many metres of the raster's edge also grade the
+/// ground beyond it.
+const OUTER_NEAR: f32 = 250.0;
+/// How far from a way's corridor its side slopes are followed beyond the
+/// raster (at 1 in `EMBANKMENT_SLOPE` that makes up 120 m).
+const OUTER_REACH: f32 = 300.0;
+/// Width of the band along the raster's edge that eases into the ground
+/// beyond it.
+const OUTER_BLEND: f32 = 48.0;
+/// The toe and the top of every side slope are rounded over this many
+/// metres of height.
+const TOE_ROUNDING: f32 = 1.5;
+
+/// Side of the squares `Ground::outer_index` sorts the outer ways into.
+const OUTER_BUCKET: f32 = 128.0;
+const OUTER_BUCKETS: usize = (2.0 * FAR_GROUND / OUTER_BUCKET) as usize + 1;
+
+fn outer_bucket(p: Vec2) -> Option<usize> {
+    let i = ((p.x + FAR_GROUND) / OUTER_BUCKET).floor();
+    let j = ((p.y + FAR_GROUND) / OUTER_BUCKET).floor();
+    let range = 0.0..OUTER_BUCKETS as f32;
+    (range.contains(&i) && range.contains(&j)).then(|| j as usize * OUTER_BUCKETS + i as usize)
+}
+
+/// Every outer way, filed under each square its slopes may reach.
+fn index_outer(outer: &[(Vec2, Vec2, f32, f32, f32)]) -> Vec<Vec<u32>> {
+    let mut index = vec![Vec::new(); OUTER_BUCKETS * OUTER_BUCKETS];
+    let cell = |v: f32| (((v + FAR_GROUND) / OUTER_BUCKET).floor().max(0.0) as usize).min(OUTER_BUCKETS - 1);
+    for (id, &(a, b, _, _, core)) in outer.iter().enumerate() {
+        let reach = core + 40.0 + OUTER_REACH;
+        let (lo, hi) = (a.min(b) - Vec2::splat(reach), a.max(b) + Vec2::splat(reach));
+        for j in cell(lo.y)..=cell(hi.y) {
+            for i in cell(lo.x)..=cell(hi.x) {
+                // Only squares the corridor and its slopes come near.
+                let c = Vec2::new(-FAR_GROUND + (i as f32 + 0.5) * OUTER_BUCKET, -FAR_GROUND + (j as f32 + 0.5) * OUTER_BUCKET);
+                if project_on_segment(c, a, b).1.distance(c) <= reach + OUTER_BUCKET * std::f32::consts::FRAC_1_SQRT_2 {
+                    index[j * OUTER_BUCKETS + i].push(id as u32);
+                }
+            }
+        }
+    }
+    index
+}
+
+/// Least distance between the segments `p0`-`p1` and `q0`-`q1`.
+fn segment_distance(p0: Vec2, p1: Vec2, q0: Vec2, q1: Vec2) -> f32 {
+    if crate::roads::segment_intersection(p0, p1, q0, q1).is_some() {
+        return 0.0;
+    }
+    let d = |p: Vec2, a: Vec2, b: Vec2| project_on_segment(p, a, b).1.distance(p);
+    d(p0, q0, q1).min(d(p1, q0, q1)).min(d(q0, p0, p1)).min(d(q1, p0, p1))
+}
+
+/// Polynomial smooth maximum: `max(a, b)` with the corner rounded over `k`.
+fn smooth_max(a: f32, b: f32, k: f32) -> f32 {
+    let h = ((k - (a - b).abs()) / k).max(0.0);
+    a.max(b) + h * h * k * 0.25
+}
+
+fn smooth_min(a: f32, b: f32, k: f32) -> f32 {
+    -smooth_max(-a, -b, k)
+}
+
+/// The free ground at a point: the natural height, filled up to `lo` (the
+/// embankments around it) and cut down to `hi` (the cuttings), the toe of
+/// each slope rounded into the terrain. Where two works ask for more than
+/// their side slopes allow (`lo > hi`), the ground runs evenly between them.
+fn settle(natural: f32, lo: f32, hi: f32) -> f32 {
+    if lo > hi {
+        return 0.5 * (lo + hi);
+    }
+    let up = if lo.is_finite() { smooth_max(natural, lo, TOE_ROUNDING) } else { natural };
+    let z = if hi.is_finite() { smooth_min(up, hi, TOE_ROUNDING) } else { up };
+    z.clamp(lo, hi)
+}
+
+/// Grade the free cells of an `n`×`n` raster to the cells that are held
+/// (`fix`, at `set`). Each held road or pad cell is the apex of two cones
+/// of side slope 1 in `EMBANKMENT_SLOPE`: one below it (`lo`, the least the
+/// ground around may be: an embankment) and one above it (`hi`, the most:
+/// a cutting). `lo` and `hi` come in seeded with the exact cones beside
+/// the road cores. The cones spread over free ground only, so a road or a
+/// pad between two works shields one from the other. The natural ground is
+/// clamped between them (`settle`) and the result smoothed once: side
+/// slopes are even and never steeper than the limit, they blend into the
+/// terrain, and where two works meet the ground runs from one to the other
+/// instead of whichever is nearer winning cell by cell.
+fn grade_free_ground(n: usize, natural: &[f32], fix: &[Fix], set: &[f32], mut lo: Vec<f32>, mut hi: Vec<f32>) -> Vec<f32> {
+    let step = GROUND_CELL / EMBANKMENT_SLOPE;
+    let diag = step * std::f32::consts::SQRT_2;
+    for k in 0..n * n {
+        match fix[k] {
+            Fix::Road | Fix::Pad => {
+                lo[k] = set[k];
+                hi[k] = set[k];
+            }
+            // A cut neither grades the ground beside it nor is graded.
+            Fix::Cut | Fix::Wall => {
+                lo[k] = f32::NEG_INFINITY;
+                hi[k] = f32::INFINITY;
+            }
+            Fix::Free => {}
+        }
+    }
+    // Chamfer sweeps, forward and back, repeated until nothing changes: the
+    // cones reach every free cell along the shortest free path.
+    let behind: [(isize, isize, f32); 4] = [(-1, -1, diag), (0, -1, step), (1, -1, diag), (-1, 0, step)];
+    for _ in 0..24 {
+        let mut changed = false;
+        for pass in 0..2 {
+            for idx in 0..n * n {
+                let k = if pass == 0 { idx } else { n * n - 1 - idx };
+                if fix[k] != Fix::Free {
+                    continue;
+                }
+                let (i, j) = ((k % n) as isize, (k / n) as isize);
+                let (mut l, mut h) = (lo[k], hi[k]);
+                for &(di, dj, s) in &behind {
+                    let (di, dj) = if pass == 0 { (di, dj) } else { (-di, -dj) };
+                    let (ii, jj) = (i + di, j + dj);
+                    if ii < 0 || jj < 0 || ii >= n as isize || jj >= n as isize {
+                        continue;
+                    }
+                    let m = jj as usize * n + ii as usize;
+                    l = l.max(lo[m] - s);
+                    h = h.min(hi[m] + s);
+                }
+                if l > lo[k] + 1e-4 || h < hi[k] - 1e-4 {
+                    lo[k] = l;
+                    hi[k] = h;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let raw: Vec<f32> = (0..n * n).map(|k| if fix[k] == Fix::Free { settle(natural[k], lo[k], hi[k]) } else { set[k] }).collect();
+    // One pass of smoothing over the free ground takes the crease off the
+    // top and the foot of every slope. A cut's walls stay sharp.
+    let mut h = raw.clone();
+    for j in 0..n {
+        for i in 0..n {
+            let k = j * n + i;
+            if fix[k] != Fix::Free {
+                continue;
+            }
+            let (mut sum, mut wsum) = (0.0, 0.0);
+            for dj in -1isize..=1 {
+                for di in -1isize..=1 {
+                    let (ii, jj) = (i as isize + di, j as isize + dj);
+                    if ii < 0 || jj < 0 || ii >= n as isize || jj >= n as isize {
+                        continue;
+                    }
+                    let m = jj as usize * n + ii as usize;
+                    if matches!(fix[m], Fix::Cut | Fix::Wall) {
+                        continue;
+                    }
+                    let w = if di == 0 && dj == 0 { 4.0 } else if di == 0 || dj == 0 { 2.0 } else { 1.0 };
+                    sum += raw[m] * w;
+                    wsum += w;
+                }
+            }
+            h[k] = sum / wsum;
+        }
+    }
+    h
 }
 
 impl std::fmt::Debug for Ground {
@@ -1513,10 +1707,10 @@ impl Ground {
             .collect();
         let outer: Vec<(Vec2, Vec2, f32, f32, f32)> = roads
             .alive_segments()
-            .filter(|(_, s)| !s.bridge)
+            .filter(|(_, s)| !s.bridge && !s.tunnel)
             .filter_map(|(id, s)| {
                 let (a, b) = roads.segment_points(id);
-                (chebyshev(a) > half - 1.0 || chebyshev(b) > half - 1.0).then(|| {
+                (chebyshev(a).max(chebyshev(b)) > half - OUTER_NEAR).then(|| {
                     (a, b, node_z.get(s.a.0 as usize).copied().unwrap_or(0.0), node_z.get(s.b.0 as usize).copied().unwrap_or(0.0), corridor_half_width(s))
                 })
             })
@@ -1536,18 +1730,31 @@ impl Ground {
         if land.is_flat() {
             // No raster: the flat map's ground is level, and a way below
             // it runs out of sight.
-            return Ground { half, n: 0, h: Vec::new(), pads, decks, underpasses, bridge_decks, outer: Vec::new() };
+            return Ground { half, n: 0, h: Vec::new(), fix: Vec::new(), pads, decks, underpasses, bridge_decks, outer: Vec::new(), outer_index: Vec::new() };
         }
         let n = (half * 2.0 / GROUND_CELL) as usize + 1;
         let at = |i: usize, j: usize| Vec2::new(-half + i as f32 * GROUND_CELL, -half + j as f32 * GROUND_CELL);
-        let mut h: Vec<f32> = (0..n * n).map(|k| land.height(at(k % n, k / n))).collect();
-        let mut w = vec![0.0f32; n * n];
-        let mut target = vec![0.0f32; n * n];
+        let natural: Vec<f32> = (0..n * n).map(|k| land.height(at(k % n, k / n))).collect();
+        // What holds each cell: the road cores, the underpass cuts and the
+        // lot pads are set to their own heights; the free ground between is
+        // graded to them (`grade_free_ground`).
+        let mut fix = vec![Fix::Free; n * n];
+        let mut set = vec![0.0f32; n * n];
+        // Free cells just beside a road core take their bounds from the
+        // exact distance to it, so a core drawn on the grid leaves no
+        // staircase along its edge.
+        let mut lo = vec![f32::NEG_INFINITY; n * n];
+        let mut hi = vec![f32::INFINITY; n * n];
+        // Never carve the built ground below the waterline beside the
+        // water; a cutting away from it may go deeper.
+        let floor_at = |p: Vec2, z: f32| if z < WATER_LEVEL + 0.4 && land.water_distance(p) < 40.0 { WATER_LEVEL + 0.4 } else { z };
+        let rise = 1.0 / EMBANKMENT_SLOPE;
         let range = |lo: f32, hi: f32| -> (usize, usize) {
             let a = (((lo + half) / GROUND_CELL).floor().max(0.0) as usize).min(n - 1);
             let b = (((hi + half) / GROUND_CELL).ceil().max(0.0) as usize).min(n - 1);
             (a, b)
         };
+        let seed_band = GROUND_CELL * 1.5;
         for (_, seg) in roads.alive_segments() {
             // Water bridges leave the ground alone; a viaduct only grades
             // it where its deck comes down near it (the foot of a ramp).
@@ -1561,19 +1768,9 @@ impl Ground {
             let (a, b) = (roads.node(seg.a).pos, roads.node(seg.b).pos);
             let (za, zb) = (node_z.get(seg.a.0 as usize).copied().unwrap_or(0.0), node_z.get(seg.b.0 as usize).copied().unwrap_or(0.0));
             let core = corridor_half_width(seg);
-            // Embankments and cuttings slope no steeper than
-            // `EMBANKMENT_SLOPE` however high the way stands
-            // (`embankment_falloff`, by the rise at each cell).
-            let len = a.distance(b);
-            let samples = (len / 16.0).ceil().max(1.0) as usize;
-            let lift = (0..=samples)
-                .map(|s| {
-                    let t = s as f32 / samples as f32;
-                    (za + (zb - za) * t - land.height(a.lerp(b, t))).abs()
-                })
-                .fold(0.0f32, f32::max);
-            let falloff_for = |rise: f32| if walled { 3.0 } else { embankment_falloff(rise) };
-            let reach = if foot { core + GROUND_FALLOFF } else { core + falloff_for(lift + 1.0) };
+            // A road the player sank is held by retaining walls: it holds its
+            // own cells and grades nothing beside it.
+            let reach = if walled { core } else { core + seed_band };
             // Where this way passes over another, the ground under it is the
             // other's.
             let dir = (b - a).normalize_or_zero();
@@ -1589,18 +1786,31 @@ impl Ground {
                         continue;
                     }
                     let k = j * n + i;
-                    if foot && za + (zb - za) * t - h[k] > 2.0 {
+                    let z = za + (zb - za) * t;
+                    // A viaduct grades the ground only where its deck comes
+                    // down near it (the foot of a ramp).
+                    if foot && z - natural[k] > 2.0 {
                         continue;
                     }
-                    let wt = if d <= core { 1.0 } else { 1.0 - smoothstep(core, core + falloff_for((za + (zb - za) * t - h[k]).abs()), d) };
-                    if wt > w[k] + 1e-4 || (wt >= 1.0 && w[k] >= 1.0 && za + (zb - za) * t > target[k]) {
-                        w[k] = wt;
-                        target[k] = za + (zb - za) * t;
+                    let z = floor_at(p, z);
+                    if d <= core {
+                        // Where cores overlap (a junction, a merge) the higher way holds.
+                        if fix[k] == Fix::Free || fix[k] == Fix::Wall || z > set[k] {
+                            set[k] = z;
+                        }
+                        fix[k] = if walled && fix[k] != Fix::Road { Fix::Wall } else { Fix::Road };
+                    } else {
+                        let e = (d - core) * rise;
+                        lo[k] = lo[k].max(z - e);
+                        hi[k] = hi[k].min(z + e);
                     }
                 }
             }
         }
-        // The cuts: level with the lower way across their whole width.
+        // The cuts: level with the lower way across their whole width. Their
+        // sides are the abutments' walls, so they hold their own cells but
+        // do not grade the ground beside them (that stays the upper way's
+        // embankment).
         for u in &underpasses {
             let r = u.cut_half_length.max(u.cut_half_width) * 1.5;
             let (i0, i1) = range(u.at.x - r, u.at.x + r);
@@ -1610,67 +1820,109 @@ impl Ground {
                     let p = at(i, j);
                     if u.in_cut(p) {
                         let k = j * n + i;
-                        w[k] = 1.0;
-                        target[k] = u.under_z_at(u.local(p).0);
+                        fix[k] = Fix::Cut;
+                        set[k] = floor_at(p, u.under_z_at(u.local(p).0));
                     }
                 }
             }
         }
         for (id, lot) in lots.iter() {
             let pad = pads[&id];
-            let (lo, hi) = crate::geom::bounds(&lot.polygon);
-            let (i0, i1) = range(lo.x - 2.0, hi.x + 2.0);
-            let (j0, j1) = range(lo.y - 2.0, hi.y + 2.0);
+            let (lo_b, hi_b) = crate::geom::bounds(&lot.polygon);
+            let (i0, i1) = range(lo_b.x - 2.0, hi_b.x + 2.0);
+            let (j0, j1) = range(lo_b.y - 2.0, hi_b.y + 2.0);
             for j in j0..=j1 {
                 for i in i0..=i1 {
                     let p = at(i, j);
                     let inside = point_in_polygon(p, &lot.polygon) || distance_to_outline(p, &lot.polygon) < 2.0;
                     if inside {
                         let k = j * n + i;
-                        w[k] = 1.0;
-                        target[k] = pad;
+                        fix[k] = Fix::Pad;
+                        set[k] = floor_at(p, pad);
                     }
                 }
             }
         }
-        for k in 0..n * n {
-            if w[k] > 0.0 {
-                // Never carve the built ground below the waterline beside
-                // the water; a cutting away from it may go deeper.
-                let low = target[k] < WATER_LEVEL + 0.4 && land.water_distance(at(k % n, k / n)) < 40.0;
-                let t = if low { WATER_LEVEL + 0.4 } else { target[k] };
-                h[k] = h[k] * (1.0 - w[k]) + t * w[k];
+        let h = grade_free_ground(n, &natural, &fix, &set, lo, hi);
+        let outer_index = index_outer(&outer);
+        let mut g = Ground { half, n, h, fix, pads, decks, underpasses, bridge_decks, outer, outer_index };
+        g.blend_into_outer(land);
+        g
+    }
+
+    /// The last stretch of the raster eases into the ground beyond it
+    /// (`outer_height`), so there is no seam where the two meet.
+    fn blend_into_outer(&mut self, land: &Landscape) {
+        let n = self.n;
+        for j in 0..n {
+            for i in 0..n {
+                let p = Vec2::new(-self.half + i as f32 * GROUND_CELL, -self.half + j as f32 * GROUND_CELL);
+                let r = chebyshev(p);
+                if r < self.half - OUTER_BLEND {
+                    continue;
+                }
+                let k = j * n + i;
+                let w = smoothstep(self.half - OUTER_BLEND, self.half, r);
+                self.h[k] = self.h[k] * (1.0 - w) + self.outer_height(land, p) * w;
             }
         }
-        Ground { half, n, h, pads, decks, underpasses, bridge_decks, outer }
     }
 
     /// The ground beyond the raster: natural terrain, graded to the ways
-    /// that run out there. Past the map edge each corridor gets a wide
-    /// level shoulder, so the coarse far ground never rises over the road.
+    /// that run out there with the same side slopes as inside it. Past the
+    /// map edge each corridor gets a wide level shoulder, so the coarse far
+    /// ground never rises over the road.
     fn outer_height(&self, land: &Landscape, p: Vec2) -> f32 {
         let natural = land.height(p);
         let far = smoothstep(LAND_HALF - 100.0, LAND_HALF + 200.0, chebyshev(p));
-        let mut best = (0.0f32, natural);
-        for &(a, b, za, zb, core) in &self.outer {
+        let floor = WATER_LEVEL + 0.4;
+        let rise = 1.0 / EMBANKMENT_SLOPE;
+        let mut on = f32::NEG_INFINITY;
+        // Ways in reach: ends, core half width, foot of the perpendicular, height there.
+        let mut near: Vec<(Vec2, Vec2, f32, Vec2, f32)> = Vec::new();
+        let all: Vec<u32>;
+        let ids = match outer_bucket(p) {
+            Some(c) if !self.outer_index.is_empty() => &self.outer_index[c],
+            _ => {
+                all = (0..self.outer.len() as u32).collect();
+                &all
+            }
+        };
+        for &id in ids {
+            let (a, b, za, zb, core) = self.outer[id as usize];
             let core = core + 40.0 * far;
-            let reach = core + 170.0;
+            let reach = core + OUTER_REACH;
             if p.x < a.x.min(b.x) - reach || p.x > a.x.max(b.x) + reach || p.y < a.y.min(b.y) - reach || p.y > a.y.max(b.y) + reach {
                 continue;
             }
             let (t, q) = project_on_segment(p, a, b);
             let d = q.distance(p);
-            let z = za + (zb - za) * t;
-            let w = if d <= core { 1.0 } else { 1.0 - smoothstep(core, core + embankment_falloff((z - natural).abs()), d) };
-            if w > best.0 {
-                best = (w, z);
+            if d > reach {
+                continue;
             }
+            let z = (za + (zb - za) * t).max(floor);
+            if d <= core {
+                on = on.max(z);
+            }
+            near.push((a, b, core, q, z));
         }
-        let (w, z) = best;
-        if w <= 0.0 {
-            return natural;
+        if on > f32::NEG_INFINITY {
+            return on;
         }
-        natural * (1.0 - w) + z.max(WATER_LEVEL + 0.4) * w
+        // As inside the raster, a way's side slope stops at another way's
+        // corridor: the far carriageway does not grade the ground beyond
+        // the near one.
+        let shielded = |k: usize| {
+            let q = near[k].3;
+            near.iter().enumerate().any(|(m, &(a, b, other_core, _, _))| m != k && project_on_segment(q, a, b).1.distance(q) > other_core && segment_distance(p, q, a, b) < other_core)
+        };
+        // The highest embankment and the deepest cutting not shielded.
+        let mut cones: Vec<(f32, usize)> = near.iter().enumerate().map(|(k, &(_, _, core, q, _))| ((p.distance(q) - core) * rise, k)).collect();
+        cones.sort_by(|x, y| (near[y.1].4 - y.0).total_cmp(&(near[x.1].4 - x.0)));
+        let lo = cones.iter().find(|c| !shielded(c.1)).map_or(f32::NEG_INFINITY, |c| near[c.1].4 - c.0);
+        cones.sort_by(|x, y| (near[x.1].4 + x.0).total_cmp(&(near[y.1].4 + y.0)));
+        let hi = cones.iter().find(|c| !shielded(c.1)).map_or(f32::INFINITY, |c| near[c.1].4 + c.0);
+        settle(natural, lo, hi)
     }
 
     /// Height of a bridge deck at `p`, if `p` is on one.
@@ -1880,6 +2132,147 @@ mod tests {
                 prev = h;
             }
             assert!(worst < 0.55, "embankment at x = {x} as steep as {worst:.2}");
+        }
+    }
+
+    /// The demo district's roads, zoning, rail branch, highway link and rail
+    /// facilities (the layout `nd_app`'s `seed_demo_district` lays out) on
+    /// the default map.
+    fn demo_ground_world() -> crate::world::World {
+        use crate::roads::RoadKind;
+        use crate::{Gesture, LandUse};
+        let mut w = crate::world::World::new(crate::world::WorldConfig::default());
+        w.start_project();
+        for i in -2..=2 {
+            let c = i as f32 * 140.0;
+            w.add_gesture(Gesture::Road { points: vec![Vec2::new(-280.0, c), Vec2::new(280.0, c)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+            w.add_gesture(Gesture::Road { points: vec![Vec2::new(c, -280.0), Vec2::new(c, 280.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        }
+        let cell = |cx: f32, cy: f32| vec![Vec2::new(cx - 65.0, cy - 65.0), Vec2::new(cx + 65.0, cy - 65.0), Vec2::new(cx + 65.0, cy + 65.0), Vec2::new(cx - 65.0, cy + 65.0)];
+        let uses = [LandUse::Industrial, LandUse::Residential, LandUse::Commercial, LandUse::Park];
+        for (k, (x, y)) in [-210.0f32, -70.0, 70.0, 210.0].iter().flat_map(|&x| [-210.0f32, -70.0, 70.0, 210.0].map(move |y| (x, y))).enumerate() {
+            w.add_gesture(Gesture::Zone { polygon: cell(x, y), land_use: uses[k % uses.len()] });
+        }
+        w.add_gesture(Gesture::Road {
+            points: vec![Vec2::new(-420.0, crate::rail::TRUNK_Y), Vec2::new(-330.0, -410.0), Vec2::new(-280.0, -348.0), Vec2::new(-110.0, -348.0), Vec2::new(-70.0, -324.0), Vec2::new(150.0, -324.0)],
+            lanes_fwd: 0,
+            lanes_bwd: 0,
+            curved: false,
+            kind: RoadKind::Rail,
+            elevation: Vec::new(),
+        });
+        w.implement();
+        w.economy.treasury = w.economy.treasury.max(150_000.0);
+        assert!(w.link_to_highway(Vec2::new(0.0, 280.0)), "the demo's ramps join the highway");
+        let _ = w.place_rail_facility(crate::RailFacility::FreightYard, Vec2::new(-200.0, -330.0));
+        let _ = w.place_rail_facility(crate::RailFacility::Station, Vec2::new(80.0, -310.0));
+        w
+    }
+
+    /// The built ground is smooth: between free cells (not a road, a cut or
+    /// a pad) it is never steeper than 1 in 1.5, no free cell stands up or
+    /// sinks as a spike against all eight neighbours, the ground beside every
+    /// road and pad runs down (or up) to it no steeper than that either, and
+    /// there is no seam where the raster meets the ground beyond it.
+    #[test]
+    fn built_ground_has_no_cliffs_spikes_or_seams() {
+        let w = demo_ground_world();
+        let t0 = std::time::Instant::now();
+        let again = Ground::build(&w.landscape, &w.roads, &w.road_z, &w.lots, w.config.half_extent + 200.0);
+        println!("ground built in {:?}", t0.elapsed());
+        assert_eq!(again.h, w.ground.h);
+        let g = &w.ground;
+        let n = g.n;
+        assert!(n > 2);
+        let at = |i: usize, j: usize| Vec2::new(-g.half + i as f32 * GROUND_CELL, -g.half + j as f32 * GROUND_CELL);
+        let limit = 1.0 / 1.5;
+        let (mut worst, mut worst_at) = (0.0f32, Vec2::ZERO);
+        let (mut worst_held, mut held_at) = (0.0f32, Vec2::ZERO);
+        let mut spikes = Vec::new();
+        // Walls stand at underpass cuts, sunken roads and tunnel portals, and
+        // under a viaduct the ground is left as it was: none of that is
+        // earthwork.
+        let skip: Vec<bool> = (0..n * n).map(|k| matches!(g.fix[k], Fix::Cut | Fix::Wall) || !g.decks_at(at(k % n, k / n)).is_empty()).collect();
+        for j in 1..n - 1 {
+            for i in 1..n - 1 {
+                let k = j * n + i;
+                let mut walled = skip[k];
+                let mut above = 0;
+                let mut below = 0;
+                for (di, dj) in [(-1isize, -1isize), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+                    let m = (j as isize + dj) as usize * n + (i as isize + di) as usize;
+                    let run = GROUND_CELL * if di != 0 && dj != 0 { std::f32::consts::SQRT_2 } else { 1.0 };
+                    let s = (g.h[k] - g.h[m]).abs() / run;
+                    if g.h[k] > g.h[m] + 1.0 {
+                        above += 1;
+                    }
+                    if g.h[k] < g.h[m] - 1.0 {
+                        below += 1;
+                    }
+                    walled |= skip[m];
+                    if g.fix[k] != Fix::Free || skip[k] || skip[m] {
+                        continue;
+                    }
+                    // The hills are as steep as they were made; only the
+                    // works are held to the limit.
+                    let (pk, pm) = (at(i, j), at((i as isize + di) as usize, (j as isize + dj) as usize));
+                    let natural = (w.landscape.height(pk) - w.landscape.height(pm)).abs() / run;
+                    let s = if s <= natural + 0.02 { 0.0 } else { s };
+                    if g.fix[m] == Fix::Free {
+                        if s > worst {
+                            (worst, worst_at) = (s, at(i, j));
+                        }
+                    } else if s > worst_held {
+                        (worst_held, held_at) = (s, at(i, j));
+                    }
+                }
+                if g.fix[k] == Fix::Free && !walled && (above == 8 || below == 8) {
+                    spikes.push(at(i, j));
+                }
+            }
+        }
+        println!("steepest free ground 1 in {:.2} at {worst_at}; beside a road or pad 1 in {:.2} at {held_at}; {} spikes", 1.0 / worst, 1.0 / worst_held, spikes.len());
+        if std::env::var("ND_GROUND_DEBUG").is_ok() {
+            for c in [worst_at, held_at] {
+                let ci = ((c.x + g.half) / GROUND_CELL).round() as isize;
+                let cj = ((c.y + g.half) / GROUND_CELL).round() as isize;
+                for dj in -3isize..=3 {
+                    let row: Vec<String> = (-3isize..=3).map(|di| {
+                        let k = (cj + dj) as usize * n + (ci + di) as usize;
+                        format!("{:7.2}{}|{:6.1}", g.h[k], match g.fix[k] { Fix::Free => ' ', Fix::Road => 'R', Fix::Cut => 'C', Fix::Wall => 'W', Fix::Pad => 'P' }, g.outer_height(&w.landscape, at((ci + di) as usize, (cj + dj) as usize)))
+                    }).collect();
+                    println!("y {:7.1}: {}", at(0, (cj + dj) as usize).y, row.join(" "));
+                }
+                println!();
+                for o in &g.outer {
+                    if project_on_segment(c, o.0, o.1).1.distance(c) < 80.0 {
+                        println!("outer {:?}", o);
+                    }
+                }
+            }
+        }
+        assert!(worst <= limit, "free ground as steep as 1 in {:.2} at {worst_at}", 1.0 / worst);
+        assert!(worst_held <= limit, "ground beside a road or pad as steep as 1 in {:.2} at {held_at}", 1.0 / worst_held);
+        assert!(spikes.is_empty(), "spikes at {spikes:?}");
+        // The ways keep their heights through the grading: no embankment as
+        // high as the hills at the map edge across the basin (the rail
+        // branch behind the plant stood 50 m up against the lots).
+        for p in [Vec2::new(-200.0, -348.0), Vec2::new(-200.0, crate::rail::TRUNK_Y), Vec2::new(-120.0, HIGHWAY_Y - HIGHWAY_HALF_GAP)] {
+            let rise = w.ground_height(p) - w.landscape.height(p);
+            assert!(rise.abs() < 12.0, "the way at {p} stands {rise:.1} m off the land");
+        }
+        // No seam where the raster meets the ground beyond it, nor at the
+        // edge of the drawn map.
+        for edge in [g.half, LAND_HALF] {
+            for k in 0..60 {
+                let along = -1700.0 + k as f32 * 57.0;
+                for p in [Vec2::new(edge, along), Vec2::new(-edge, along), Vec2::new(along, edge), Vec2::new(along, -edge)] {
+                    let out = p + p.signum() * Vec2::new((p.x.abs() >= edge - 0.1) as u8 as f32, (p.y.abs() >= edge - 0.1) as u8 as f32) * 2.0;
+                    let inn = p - (out - p);
+                    let (a, b) = (w.ground_height(inn), w.ground_height(out));
+                    assert!((a - b).abs() < 4.0 * limit, "a seam at {p}: {a:.2} inside, {b:.2} outside");
+                }
+            }
         }
     }
 }
