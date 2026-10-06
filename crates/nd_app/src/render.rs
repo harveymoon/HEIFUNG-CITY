@@ -31,6 +31,7 @@ use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
 
 /// Emergency vehicles, fires and rubble (render/emergency.rs).
+mod air;
 mod emergency;
 mod haze;
 mod layers;
@@ -336,6 +337,8 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, emergency::sync_emergency.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // [society] Skid row and the trash.
         app.init_resource::<society::SocietyRender>().add_systems(Update, society::sync_society.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
+        // Drone taxis and helicopters, after the buildings whose pads they land on.
+        app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
     }
 }
 
@@ -1212,6 +1215,7 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         dynamic_lights: true,
         business: b.business.as_ref().map(|z| z.kind),
         fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
+        rooftop_pad: world.air.has_rooftop(id),
     };
     let mut g = match &b.demolition {
         // Coming down: what stood there (which, during a redevelopment or a

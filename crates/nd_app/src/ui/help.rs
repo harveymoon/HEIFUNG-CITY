@@ -65,5 +65,6 @@ pub fn service_note(k: nd_sim::ServiceKind) -> &'static str {
         K::Stadium => "Hosts games some evenings: crowds come, tickets pay into the treasury.",
         K::Jail => "Arrested suspects serve days here; without one they are held a few hours at a police station and let go early.",
         K::TrashDepot => "Garbage trucks (two crew each) empty the bins of every building within its radius, 06:00 to 18:00. Without one only the rich pay a private hauler; everyone else's trash overflows onto the pavement.",
+        K::Vertiport => "Base for the air taxi company's drones: the rich fly between vertiports and rooftop pads, above the traffic. Noisy neighbours.",
     }
 }

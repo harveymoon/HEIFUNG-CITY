@@ -23,6 +23,7 @@
 //!   the highway and its through traffic, ports, ferries and ships
 //! - `tests`: the world-level tests
 
+mod air;
 mod buses;
 mod cars;
 mod construction;
@@ -328,6 +329,10 @@ pub struct World {
     /// their businesses; buying, selling and trip counts (`world/cars.rs`).
     #[serde(default)]
     pub vehicles: crate::vehicle::Vehicles,
+    /// Drone taxis, air ambulances, police helicopters and their pads
+    /// (`world/air.rs`).
+    #[serde(default)]
+    pub air: crate::air::Air,
     /// What industry has done to the ground (oil spills, ash): saved,
     /// spreads and fades daily. Old saves load clean.
     #[serde(default)]
@@ -394,6 +399,7 @@ impl World {
             bots: Default::default(),
             society: Default::default(),
             vehicles: Default::default(),
+            air: Default::default(),
             contamination: crate::ground::Contamination::new(half + 200.0, crate::ground::CONTAMINATION_CELL),
             industry_bias: Vec::new(),
         };
@@ -522,6 +528,7 @@ impl World {
                 None => true,
                 Some(TransitLeg::Bus { route, board, alight }) => routes.get(route).is_some_and(|r| board < r.stops.len() && alight < r.stops.len()),
                 Some(TransitLeg::Rail { board, alight }) => buildings.contains_key(board) && buildings.contains_key(alight),
+                Some(TransitLeg::Air { from, to }) => buildings.contains_key(from) && buildings.contains_key(to),
             } && c.transit.is_none_or(|t| buildings.contains_key(t.target));
             if !trip_ok {
                 c.transit = None;
@@ -533,6 +540,7 @@ impl World {
                 Activity::AtHome => c.home.is_none(),
                 Activity::Working => c.work.is_none(),
                 Activity::Waiting { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } => c.transit.is_none(),
+                Activity::Flying { drone } => !self.air.drones.contains_key(*drone),
                 _ => false,
             };
             if lost || target_gone {
@@ -683,6 +691,7 @@ impl World {
             }
         }
         self.step_traffic();
+        self.step_air();
         self.step_services();
         // [society] Trash trucks.
         self.step_society();

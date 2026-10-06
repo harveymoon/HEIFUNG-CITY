@@ -40,6 +40,7 @@ fn service_floors(kind: ServiceKind, tier: Tier) -> u8 {
         ServiceKind::Stadium => [1, 2, 3],
         ServiceKind::Jail => [1, 2, 3],
         ServiceKind::TrashDepot => [1, 1, 2],
+        ServiceKind::Vertiport => [1, 2, 4],
     };
     f[tier.index()]
 }
@@ -929,7 +930,7 @@ impl World {
 
     /// A unit (city or out of town) got there: the clock on the response
     /// stops and the people involved see it arrive.
-    fn on_scene(&mut self, id: u32) {
+    pub(super) fn on_scene(&mut self, id: u32) {
         let tick = self.clock.tick;
         let (kind, bid, response) = {
             let i = self.services.incident_mut(id).unwrap();
@@ -1038,7 +1039,7 @@ impl World {
         }
     }
 
-    fn treat_on_site(&mut self, id: u32) {
+    pub(super) fn treat_on_site(&mut self, id: u32) {
         let tick = self.clock.tick;
         if let Some(c) = self.services.incident(id).and_then(|i| i.citizen).and_then(|c| self.citizens.get_mut(c)) {
             c.remember(tick, "Patched up by paramedics where I fell. No bed free anywhere.");
@@ -1075,7 +1076,7 @@ impl World {
     }
 
     /// A patient into a hospital bed; the household is billed.
-    fn admit(&mut self, id: u32, p: CitizenId, h: BuildingId) {
+    pub(super) fn admit(&mut self, id: u32, p: CitizenId, h: BuildingId) {
         let tick = self.clock.tick;
         {
             {
@@ -1206,7 +1207,7 @@ impl World {
     }
 
     /// Close an incident. The unit on scene, if any, heads home.
-    fn resolve(&mut self, id: u32, outcome: Outcome) {
+    pub(super) fn resolve(&mut self, id: u32, outcome: Outcome) {
         let tick = self.clock.tick;
         let Some(inc) = self.services.incident_mut(id) else { return };
         if !inc.active() {

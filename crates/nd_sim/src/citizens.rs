@@ -139,6 +139,10 @@ pub enum Activity {
     OnTrain {
         train: crate::rail::TrainId,
     },
+    /// In a drone taxi or an air ambulance (`crate::air`).
+    Flying {
+        drone: crate::air::DroneId,
+    },
 }
 
 impl Activity {
@@ -153,6 +157,7 @@ impl Activity {
             Activity::Waiting { .. } => "waiting for the bus",
             Activity::Riding { .. } => "on the bus",
             Activity::OnTrain { .. } => "on the train",
+            Activity::Flying { .. } => "in the air",
             Activity::Traveling { purpose, .. } | Activity::Driving { purpose, .. } => match purpose {
                 Purpose::Home => "heading home",
                 Purpose::Work => "commuting",
@@ -166,7 +171,7 @@ impl Activity {
     }
 
     pub fn is_traveling(&self) -> bool {
-        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. })
+        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } | Activity::Flying { .. })
     }
 }
 

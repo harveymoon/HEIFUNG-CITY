@@ -147,6 +147,8 @@ impl World {
                 }
                 // [society] Crime hot spots, camps and overflowing bins.
                 self.splat_society(&mut b);
+                // Rotor noise under busy flight paths and round the pads.
+                self.splat_air_noise(&mut b);
                 // [industry] fouled ground
                 self.splat_contamination(&mut b);
             }
@@ -212,7 +214,12 @@ impl World {
             // Services reassure, landmarks draw (`services::ServiceKind::land_value`).
             if let Some(s) = bld.service {
                 let (r, w) = s.kind.land_value(s.tier);
-                b.splat(c, r, w);
+                if s.kind == crate::services::ServiceKind::Vertiport {
+                    // Rotor noise: a nuisance the homes around feel most.
+                    b.splat_nuisance(c, r, -w);
+                } else {
+                    b.splat(c, r, w);
+                }
             }
         }
     }

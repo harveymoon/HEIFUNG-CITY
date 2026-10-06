@@ -983,6 +983,15 @@ impl World {
         let entrance = lot.entrance();
         let seated = matches!(self.citizens[id].activity, Activity::Sitting { .. });
         let walk_from = if self.citizens[id].inside.is_some() { from_pt } else { self.citizens[id].pos };
+        // [air] The rich fly when pads serve both ends and a drone beats
+        // the drive (`world/air.rs` decides); everyone else ranks the
+        // ground modes below. Drone trips keep their own statistics.
+        if allow_bus {
+            if let Some(plan) = self.consider_air(id, target, purpose, walk_from, entrance) {
+                self.start_air_trip(id, plan, target, purpose, fresh);
+                return;
+            }
+        }
         let q = TripQuery { from: walk_from, to: entrance, target, purpose, allow_transit: allow_bus, allow_car, allow_bike: !seated };
         let ranked = self.choose_mode(id, &q);
         let dist = walk_from.distance(entrance);

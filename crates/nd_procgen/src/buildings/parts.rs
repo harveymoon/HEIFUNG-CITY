@@ -865,6 +865,7 @@ pub fn helipad(g: &mut Geometry, c: &Ctx, p: Vec2, y: f32, r: f32) {
     f.bx(g, Glow, p.x, y + 0.4, p.y, Vec3::new(r * 0.9, 0.08, 0.3), mul(c.palette.lamp, 0.9));
     f.bx(g, Glow, p.x - r * 0.35, y + 0.4, p.y, Vec3::new(0.3, 0.08, r * 0.8), mul(c.palette.lamp, 0.9));
     f.bx(g, Glow, p.x + r * 0.35, y + 0.4, p.y, Vec3::new(0.3, 0.08, r * 0.8), mul(c.palette.lamp, 0.9));
+    g.pads.push(Vec3::new(w.x, y + 0.36, w.y));
 }
 
 /// Big HVAC / chiller unit with fan rings on top.

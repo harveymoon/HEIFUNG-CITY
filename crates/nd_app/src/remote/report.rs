@@ -318,7 +318,12 @@ fn people(w: &World) -> Value {
             Activity::Driving { .. } => Some("car"),
             Activity::Riding { .. } => Some("bus"),
             Activity::OnTrain { .. } => Some("train"),
-            Activity::Waiting { .. } => Some(if matches!(c.transit.map(|t| t.leg), Some(TransitLeg::Rail { .. })) { "train" } else { "bus" }),
+            Activity::Waiting { .. } => Some(match c.transit.map(|t| t.leg) {
+                Some(TransitLeg::Rail { .. }) => "train",
+                Some(TransitLeg::Air { .. }) => "air",
+                _ => "bus",
+            }),
+            Activity::Flying { .. } => Some("air"),
             Activity::Traveling { .. } => Some(if c.mode == TravelMode::Bike { "bike" } else { "walk" }),
             _ => None,
         };
@@ -632,7 +637,7 @@ fn services(w: &World) -> Value {
             match c.transit.map(|t| t.leg) {
                 Some(TransitLeg::Bus { route, .. }) => *route_waiting.entry(key_str(route)).or_default() += 1,
                 Some(TransitLeg::Rail { board, .. }) => *station_waiting.entry(board).or_default() += 1,
-                None => {}
+                Some(TransitLeg::Air { .. }) | None => {}
             }
         }
     }
@@ -716,6 +721,7 @@ fn services(w: &World) -> Value {
             "freight_trains_today": r.freight_trains_today, "freight_in_today": round(r.freight_in_today), "freight_waiting": round(r.freight_waiting),
             "next_passenger_in_ticks": r.next_passenger_in,
         },
+        "air": crate::remote::view::air_report(w),
         "parking": {
             "capacity": e.parking_capacity, "used": e.parking_used, "occupancy": share(e.parking_used as usize, e.parking_capacity as usize), "parking_lots": e.parking_lots,
             "parked_on_street_today": e.parking_street_today, "fees_today": round(e.parking_fees_today), "last_shortage_at": e.parking_shortage_at.map(v2),

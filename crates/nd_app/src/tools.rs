@@ -1098,6 +1098,14 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
                         car_route(gizmos, w, car, route);
                     }
                 }
+                Activity::Flying { drone } => {
+                    if let Some(d) = w.air.drones.get(*drone) {
+                        let p = blend(d.prev_pos, d.pos);
+                        let alt = d.prev_alt + (d.alt - d.prev_alt) * f;
+                        gizmos.circle(Isometry3d::new(at(p, alt), flat), 6.0, gold);
+                        gizmos.line(at(p, alt), at(d.goal, d.goal_alt + 1.0), route);
+                    }
+                }
                 Activity::Riding { bus } => {
                     if let Some(bus) = w.traffic.cars.get(*bus) {
                         let p = blend(bus.prev_pos, bus.pos);

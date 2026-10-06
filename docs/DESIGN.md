@@ -414,6 +414,24 @@ Citizens are rendered from their simulated positions every frame.
   taken, unit and whether it came from out of town, fee, fire damage per building), the last 500
   resolved ones on file, shown live in the Emergencies window and by the `incidents` API command.
   Services draw from their own random stream so the rest of the simulation is not perturbed.
+- **Air** (`nd_sim::air`, `world/air.rs`): the rich fly. Vertiports are placed under Transit (drone pad /
+  vertiport / skyport: 2 / 4 / 6 landing slots, decks at 0.4 / 7 / 15 m); rooftop pads are rare: a high-tier
+  tower of 9+ floors on land worth 0.8+ qualifies when 8+ rich adults would fly from it (its own in full,
+  those within 150 m at half), and only the most-demanded towers get one, about one per nine towers
+  (5 of 67 on the demo at day 12); kept at 60% of the bar and land down to 0.72; redrawn with a helideck
+  on stilts, styles limited to deck-capable towers. The air taxi company keeps one eVTOL drone per vertiport slot but one. A
+  rich adult on a trip of 400 m or more flies when a taxi pad is within 170 m of both ends, the fare (20 + 16/km,
+  15% levy to the treasury) is in the purse and the flight beats a city drive (`consider_air`, the only hook in
+  the mode choice): walk to the pad, wait, the nearest drone with the charge for the job comes, climb to 150 m,
+  fly straight at 45 m/s, land, walk on. A pad takes as many aircraft as it has slots; the rest circle and land
+  first come first served. Batteries drain per km and per metre climbed and charge on the stand at base; riders
+  with no drone after 40 minutes drive. High-tier hospitals and the fire HQ keep an air ambulance: a critical
+  patient (65+ or one in three) over 500 m from any hospital is flown, landing on the roof pad or in the street,
+  10 minutes of work, then to the nearest hospital with a bed, helipad first. The police HQ helicopter circles
+  crime scenes at night with a searchlight. Flying is logged on a 64 m noise grid (halved nightly) that feeds the
+  land value nuisance layer, vertiports are a nuisance too, and people on the street who are not rich grumble
+  (a memory, a little mood, once a day). The renderer lands aircraft on the decks the buildings drew
+  (`Geometry::pads`).
 - **Crime, the street and the bins** (`nd_sim::{crime, homeless, trash}`, hooked in from
   `world/society.rs`, their own random stream). *Crime*: every hour each adult may turn, by class
   (poor 1, middle 0.22, rich 0.04), being jobless (x2.5) or homeless (x1.6), hunger, unhappiness,
