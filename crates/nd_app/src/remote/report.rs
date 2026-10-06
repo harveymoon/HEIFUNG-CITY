@@ -64,7 +64,7 @@ pub const MEMORY_WINDOW_TICKS: u64 = 2 * 1440;
 /// Example ids carried by each alert.
 const ALERT_EXAMPLES: usize = 5;
 
-pub const SECTIONS: &[&str] = &["overview", "people", "economy", "land", "services", "industry", "society", "alerts"];
+pub const SECTIONS: &[&str] = &["overview", "people", "economy", "land", "services", "industry", "society", "alerts", "history"];
 
 const KINDS: [BusinessKind; BusinessKind::COUNT] = BusinessKind::ALL;
 
@@ -133,6 +133,7 @@ pub fn report(w: &World, sections: &[String]) -> Result<Value, String> {
         }
     }
     let want = |s: &str| sections.is_empty() || sections.iter().any(|x| x == s);
+    // `history` is long and filled in by the caller (`sim_history`).
     let alerts = alerts(w);
     let mut out = Map::new();
     if want("overview") {
@@ -493,6 +494,11 @@ fn economy(w: &World) -> Value {
             "today_so_far": ledger_map(&l.today), "yesterday": ledger_map(&l.yesterday),
             "net_today_so_far": round(l.today.iter().sum()), "net_yesterday": round(l.yesterday.iter().sum()),
             "note": "positive is income to the treasury; upkeep is booked at midnight",
+        },
+        "ledger_items": {
+            "yesterday": ledger_items(w, &l.items_yesterday, &l.yesterday),
+            "today_so_far": ledger_items(w, &l.items_today, &l.today),
+            "note": "each flow broken into what made it (building, bus line, income class, land use or a named item); not_itemised is what the row holds beyond its items",
         },
         "tax_today": round(e.tax_today),
         "upkeep_today": { "power_plants": round(e.power.upkeep_today), "transit": round(e.transit.upkeep_today), "rail": round(w.rail.stats.upkeep_today), "grid_import_cost": round(e.power.import_cost_today) },
@@ -1396,5 +1402,111 @@ pub fn parking_enforcement(w: &World) -> Value {
         "tow_companies": companies,
         "city_lots": city_lots, "city_lot_fees_today": round(s.city_lot_fees_today),
         "parked_by_place": kinds,
+    })
+}
+
+// ── itemised ledger and the sim's history ──────────────────────────────────
+
+/// One flow's items, biggest first: `{flow: {items: [...], not_itemised}}`.
+fn ledger_items(w: &World, items: &[nd_sim::economy::ItemEntry], row: &[f32; nd_sim::economy::FLOWS]) -> Value {
+    use nd_sim::economy::{Item, Ledger};
+    let mut m = Map::new();
+    for f in Flow::ALL {
+        let (lines, rest) = Ledger::items_of(items, row, f);
+        if lines.is_empty() && rest.abs() < 0.5 {
+            continue;
+        }
+        let rows: Vec<Value> = lines
+            .iter()
+            .map(|e| {
+                let mut v = match &e.item {
+                    Item::Building(b) => json!({ "building": key_str(*b), "name": w.buildings.get(*b).map_or("(gone)".to_string(), |x| x.name.clone()) }),
+                    Item::Class(t) => json!({ "class": tier_key(*t) }),
+                    Item::LandUse(lu) => json!({ "land_use": lu_key(*lu) }),
+                    Item::Route(r) => json!({ "route": key_str(*r), "name": w.transit.routes.get(*r).map_or("(removed)".to_string(), |x| x.name.clone()) }),
+                    Item::Named(n) => json!({ "name": n }),
+                };
+                v["amount"] = json!(round(e.amount));
+                v["postings"] = json!(e.count);
+                v
+            })
+            .collect();
+        m.insert(f.label().replace(' ', "_"), json!({ "total": round(row[f.index()]), "items": rows, "not_itemised": round(rest) }));
+    }
+    Value::Object(m)
+}
+
+/// The sim's daily and hourly history rings (`nd_sim::history`) as
+/// columns: `days.population` is a list over the days, oldest first, and
+/// so on. Arrays in a record become named sub-columns (ledger by flow,
+/// energy by plant kind, tax by class and land use, calls by kind,
+/// riders by bus line).
+pub fn sim_history(w: &World, days: usize) -> Value {
+    use nd_sim::PowerPlantKind;
+    let h = &w.economy.history;
+    let recs: Vec<&nd_sim::history::DayRecord> = h.last_days(days).collect();
+    let mut cols: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    let n = recs.len();
+    let put = |cols: &mut BTreeMap<String, Vec<Value>>, i: usize, k: String, v: Value| {
+        cols.entry(k).or_insert_with(|| vec![Value::Null; n])[i] = v;
+    };
+    let kinds = ["fire", "crime", "medical"];
+    for (i, d) in recs.iter().enumerate() {
+        let mut flat = serde_json::to_value(d).unwrap_or(Value::Null);
+        if let Value::Object(o) = &mut flat {
+            for k in ["ledger", "income_tax_by_class", "business_tax_by_use", "demand", "supply_mwh", "incidents", "resolved", "avg_rent", "classes", "route_riders"] {
+                o.remove(k);
+            }
+            for (k, v) in o.iter() {
+                let v = v.as_f64().map_or(v.clone(), |x| json!(round(x as f32)));
+                put(&mut cols, i, k.clone(), v);
+            }
+        }
+        put(&mut cols, i, "net".into(), json!(round(d.net())));
+        put(&mut cols, i, "income".into(), json!(round(d.income())));
+        put(&mut cols, i, "spending".into(), json!(round(d.spending())));
+        for f in Flow::ALL {
+            put(&mut cols, i, format!("ledger.{}", f.label().replace(' ', "_")), json!(round(d.flow(f))));
+        }
+        for t in Tier::ALL {
+            put(&mut cols, i, format!("income_tax.{}", tier_key(t)), json!(round(d.income_tax_by_class[t as usize])));
+            put(&mut cols, i, format!("classes.{}", tier_key(t)), json!(d.classes[t as usize]));
+            put(&mut cols, i, format!("avg_rent.{}", tier_key(t)), json!(round(d.avg_rent[t as usize])));
+        }
+        for lu in LandUse::ALL {
+            put(&mut cols, i, format!("business_tax.{}", lu_key(lu)), json!(round(d.business_tax_by_use[lu.index()])));
+            put(&mut cols, i, format!("demand.{}", lu_key(lu)), json!(round(d.demand[lu.index()])));
+        }
+        for k in PowerPlantKind::ALL {
+            put(&mut cols, i, format!("supply_mwh.{}", k.short()), json!(round(d.supply_mwh[k.index()])));
+        }
+        for (j, k) in kinds.iter().enumerate() {
+            put(&mut cols, i, format!("incidents.{k}"), json!(d.incidents[j]));
+            put(&mut cols, i, format!("resolved.{k}"), json!(d.resolved[j]));
+        }
+        for (r, riders) in &d.route_riders {
+            let name = w.transit.routes.get(*r).map_or_else(|| key_str(*r), |x| x.name.clone());
+            put(&mut cols, i, format!("route_riders.{name}"), json!(riders));
+        }
+    }
+    let hours: Vec<&nd_sim::history::HourRecord> = h.last_hours(nd_sim::history::HOURS_KEPT).collect();
+    let mut hcols: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    let hn = hours.len();
+    for (i, r) in hours.iter().enumerate() {
+        let mut flat = serde_json::to_value(r).unwrap_or(Value::Null);
+        if let Value::Object(o) = &mut flat {
+            o.remove("supply_by_kind");
+            for (k, v) in o.iter() {
+                let v = v.as_f64().map_or(v.clone(), |x| json!(round(x as f32)));
+                hcols.entry(k.clone()).or_insert_with(|| vec![Value::Null; hn])[i] = v;
+            }
+        }
+        for k in PowerPlantKind::ALL {
+            hcols.entry(format!("supply_mw.{}", k.short())).or_insert_with(|| vec![Value::Null; hn])[i] = json!(round(r.supply_by_kind[k.index()]));
+        }
+    }
+    json!({
+        "days_kept": h.days.len(), "days": cols, "hours": hcols,
+        "note": "kept in the save (nd_sim::history): up to 365 days and 72 hours; a day's record closes at midnight, so counters are that day's totals and levels are as it closed",
     })
 }

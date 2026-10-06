@@ -15,7 +15,7 @@ impl World {
             return Err(problem);
         }
         self.take_over_lot(lot_id, size.label())?;
-        self.economy.debit(Flow::Construction, size.cost());
+        self.economy.debit_item(Flow::Construction, size.cost(), Item::Named(size.label().to_string()));
         let n = self.fresh_seed() % 90 + 1;
         let name = match size {
             crate::enforcement::LotSize::Small => format!("City Lot {n}"),

@@ -4,7 +4,8 @@
 //! only exists inside an egui pass. The remote command runs in `Update`, so
 //! it queues the request here and `apply_window_requests`, in
 //! `EguiPrimaryContextPass`, applies it before the windows are drawn that
-//! frame; the same system mirrors which windows are open for `status`.
+//! frame; the same system mirrors which windows are open (and which one is
+//! expanded) for `status`.
 //! This keeps `remote.rs` free of egui.
 
 use bevy::prelude::*;
@@ -21,6 +22,10 @@ pub struct WindowRequests {
     pub new_game: Option<bool>,
     /// [concerns] A People window tab to show.
     pub people_tab: Option<crate::ui::people::Tab>,
+    /// Expand (true) or collapse (false) a window (`ui::pane`).
+    pub expand: Option<(Info, bool)>,
+    /// The expanded window at the end of the last egui pass.
+    pub expanded: Option<&'static str>,
 }
 
 pub fn info_of(name: &str) -> Result<Info, String> {
@@ -45,6 +50,11 @@ impl WindowRequests {
         (will, list)
     }
 
+    /// The expanded window as `status` reports it.
+    pub fn expanded_name(&self) -> Option<String> {
+        self.expanded.map(|t| t.to_ascii_lowercase())
+    }
+
     pub fn open_names(&self) -> Vec<String> {
         self.open.iter().map(|t| t.to_ascii_lowercase()).collect()
     }
@@ -62,5 +72,9 @@ pub fn apply_window_requests(mut contexts: EguiContexts, mut req: ResMut<WindowR
         let open = open.unwrap_or(!info.is_open(ctx));
         info.set_open(ctx, open);
     }
+    if let Some((info, on)) = req.expand.take() {
+        crate::ui::pane::set_expanded(ctx, info, on);
+    }
+    req.expanded = crate::ui::pane::expanded(ctx).filter(|i| i.is_open(ctx)).map(|i| i.title());
     req.open = Info::ALL.into_iter().filter(|i| i.is_open(ctx)).map(|i| i.title()).collect();
 }

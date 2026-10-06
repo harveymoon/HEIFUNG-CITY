@@ -32,7 +32,7 @@ impl World {
         let tick = self.clock.tick;
         let Some(c) = self.citizens.get_mut(cid) else { return };
         self.economy.tax_today += c.income * 0.12;
-        self.economy.credit(Flow::IncomeTax, c.income * 0.12);
+        self.economy.credit_item(Flow::IncomeTax, c.income * 0.12, Item::Class(c.class()));
         if c.satiety < 0.25 {
             c.hungry_days = c.hungry_days.saturating_add(1);
             c.mood = (c.mood - 0.1).max(0.0);

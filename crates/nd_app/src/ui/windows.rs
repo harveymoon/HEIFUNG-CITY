@@ -1,21 +1,21 @@
 //! The info windows: draggable, closable `egui::Window`s opened from the top
 //! bar. egui remembers each window's position in its own memory; whether a
 //! window is open lives in the same memory, so the UI carries no state of
-//! its own for them. Each window's body is one function below, ported from
+//! its own for them. Every window has a compact and an expanded view
+//! (`ui/pane.rs` explains the split). Each window's body is one function below, ported from
 //! the sections of the old side panel.
 
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy_egui::egui;
-use nd_sim::economy::Flow;
 use nd_sim::{LandUse, Resource as Good};
 
 use super::tools::warn_if;
-use super::{help, hint, neon, people, saves, section, zone_color32, UiCtx, GOLD, WARN};
+use super::{detail, economy, help, hint, neon, pane, people, saves, section, zone_color32, UiCtx, WARN};
 use crate::camera::CameraMode;
 
 /// The windows the top bar can open, in toggle order. `Saves` and `Help`
 /// come after a separator in the bar, `Dev` after another.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Info {
     City,
     Economy,
@@ -61,6 +61,12 @@ impl Info {
         }
     }
 
+    /// Whether the window has an expanded view. Saves, Help and Dev are
+    /// tools rather than reports and have nothing to chart.
+    pub fn expandable(self) -> bool {
+        !matches!(self, Info::Saves | Info::Help | Info::Dev)
+    }
+
     fn id(self) -> egui::Id {
         egui::Id::new(("info_window", self.title()))
     }
@@ -76,37 +82,72 @@ impl Info {
 
 /// Every open window. `content` is the map area between the bars: windows
 /// open in a cascade down its left side and cannot be dragged under a bar.
+///
+/// Each draws its own header (`pane::header`: title, expand, close) in
+/// place of egui's title bar, so the expand button sits in the same spot on
+/// every window; the window still drags by any empty part of it. The
+/// expanded view is a separate egui window (its own id), so each view keeps
+/// its own size and place; it first opens where the compact one stood.
 pub fn show_all(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
+    // A window closed while expanded gives the expansion up.
+    if let Some(big) = pane::expanded(ctx).filter(|i| !i.is_open(ctx)) {
+        pane::set_expanded(ctx, big, false);
+    }
     for (i, info) in Info::ALL.into_iter().enumerate() {
         if !info.is_open(ctx) {
             continue;
         }
-        let mut open = true;
-        let pos = content.left_top() + egui::vec2(12.0 + 28.0 * i as f32, 12.0 + 30.0 * i as f32);
-        egui::Window::new(egui::RichText::new(info.title()).color(GOLD).strong())
-            .id(info.id().with("window"))
-            .open(&mut open)
-            .default_pos(pos)
-            .default_width(info.width())
-            .constrain_to(content)
-            .max_height(content.height() - 24.0)
-            .vscroll(true)
-            .show(ctx, |ui| match info {
-                Info::City => city(ui, p),
-                Info::Economy => economy(ui, p),
-                Info::Market => market(ui, p),
-                Info::People => people::window(ui, p),
-                Info::Power => power(ui, p),
-                Info::Transit => transit(ui, p),
-                Info::Emergencies => super::emergencies::window(ui, p),
-                Info::Land => land(ui, p),
-                Info::Saves => saves::panel(ui, p.sim, p.tools, p.selection, p.plan, p.saves, p.flags),
-                Info::Help => help_window(ui),
-                Info::Dev => dev(ui, p),
-            });
-        if !open {
-            info.set_open(ctx, false);
+        let big = info.expandable() && pane::expanded(ctx) == Some(info);
+        let cascade = content.left_top() + egui::vec2(12.0 + 28.0 * i as f32, 12.0 + 30.0 * i as f32);
+        let corner_id = info.id().with("compact_corner");
+        let window = egui::Window::new(info.title()).title_bar(false).constrain_to(content).max_height(content.height() - 24.0);
+        let window = if big {
+            let pos = ctx.data(|d| d.get_temp::<egui::Pos2>(corner_id)).unwrap_or(cascade);
+            let size = egui::vec2(EXPANDED_WIDTH.min(content.width() - 24.0), EXPANDED_HEIGHT.min(content.height() - 24.0));
+            window.id(info.id().with("expanded")).default_pos(pos).default_size(size).resizable(true)
+        } else {
+            window.id(info.id().with("window")).default_pos(cascade).default_width(info.width())
+        };
+        let mut keep = true;
+        let shown = window.show(ctx, |ui| {
+            keep = pane::header(ui, info, info.expandable());
+            let scroll = egui::ScrollArea::vertical().id_salt(("info_scroll", info.title(), big));
+            let scroll = if big { scroll.auto_shrink([false, false]) } else { scroll };
+            scroll.show(ui, |ui| body(ui, p, info, big));
+        });
+        if let (Some(r), false) = (shown, big) {
+            ctx.data_mut(|d| d.insert_temp(corner_id, r.response.rect.left_top()));
         }
+        if !keep {
+            info.set_open(ctx, false);
+            pane::set_expanded(ctx, info, false);
+        }
+    }
+}
+
+/// Where an expanded window starts, in points; it resizes from there.
+const EXPANDED_WIDTH: f32 = 820.0;
+const EXPANDED_HEIGHT: f32 = 680.0;
+
+fn body(ui: &mut egui::Ui, p: &mut UiCtx, info: Info, big: bool) {
+    match (info, big) {
+        (Info::City, false) => city(ui, p),
+        (Info::City, true) => detail::city(ui, p),
+        (Info::Economy, false) => economy::compact(ui, p),
+        (Info::Economy, true) => economy::expanded(ui, p),
+        (Info::Market, false) => market(ui, p),
+        (Info::Market, true) => detail::market(ui, p),
+        (Info::People, _) => people::window(ui, p, big),
+        (Info::Power, false) => power(ui, p),
+        (Info::Power, true) => detail::power(ui, p),
+        (Info::Transit, false) => transit(ui, p),
+        (Info::Transit, true) => detail::transit(ui, p),
+        (Info::Emergencies, _) => super::emergencies::window(ui, p, big),
+        (Info::Land, false) => land(ui, p),
+        (Info::Land, true) => detail::land(ui, p),
+        (Info::Saves, _) => saves::panel(ui, p.sim, p.tools, p.selection, p.plan, p.saves, p.flags),
+        (Info::Help, _) => help_window(ui),
+        (Info::Dev, _) => dev(ui, p),
     }
 }
 
@@ -118,7 +159,7 @@ fn row(ui: &mut egui::Ui, label: &str, value: impl Into<egui::RichText>) {
     });
 }
 
-fn city(ui: &mut egui::Ui, p: &mut UiCtx) {
+pub(super) fn city(ui: &mut egui::Ui, p: &mut UiCtx) {
     let w = &p.sim.world;
     let e = &w.economy;
     let sites = w.buildings.values().filter(|b| b.construction.is_some()).count();
@@ -136,50 +177,6 @@ fn city(ui: &mut egui::Ui, p: &mut UiCtx) {
     row(ui, "cars on the road", format!("{}   lanes {}   signalled junctions {}", w.traffic.cars.len(), w.traffic.net.lanes.len(), w.traffic.net.intersections.iter().filter(|i| i.signalized).count()));
     row(ui, "parking", format!("{}/{} spaces in {} lots   circling today {}   fees today {:.0}", e.parking_used, e.parking_capacity, e.parking_lots, e.parking_street_today, e.parking_fees_today));
     row(ui, "walking", format!("{} trips today   walk-in sales {:.0}   {} pedestrian nodes", e.walk_trips_today, e.walk_in_sales_today, w.walk.nodes.len()));
-}
-
-/// Treasury and yesterday's ledger as signed bars, biggest first.
-fn economy(ui: &mut egui::Ui, p: &mut UiCtx) {
-    let e = &p.sim.world.economy;
-    section(ui, "TREASURY");
-    row(ui, "balance", warn_if(e.treasury < 0.0, format!("{:.0}", e.treasury)).strong());
-    row(ui, "taxes so far today", format!("{:.0}", e.tax_today));
-    row(ui, "plant upkeep", format!("{:.0}/day   imported power {:.0} today", e.power.upkeep_today, e.power.import_cost_today));
-    let today: f32 = e.ledger.today.iter().sum();
-    row(ui, "net today so far", warn_if(today < 0.0, format!("{today:+.0}")));
-
-    section(ui, "YESTERDAY'S LEDGER");
-    let entries = e.ledger.yesterday_sorted();
-    if entries.is_empty() {
-        hint(ui, "No books yet: the ledger closes at midnight.");
-        return;
-    }
-    let scale = entries.iter().map(|(_, x)| x.abs()).fold(1.0, f32::max);
-    for (flow, x) in &entries {
-        signed_bar(ui, flow.label(), *x, scale);
-    }
-    let net: f32 = entries.iter().map(|(_, x)| x).sum();
-    ui.separator();
-    signed_bar(ui, "net", net, scale);
-    hint(ui, &format!("income tax 12% of wages · business tax 5% of revenue · {} flows tracked", Flow::ALL.len()));
-}
-
-/// One ledger line: label, a bar growing right for income and left for
-/// spending from a centre axis, and the figure. Drawn with the painter so
-/// the sign reads at a glance.
-fn signed_bar(ui: &mut egui::Ui, label: &str, value: f32, scale: f32) {
-    ui.horizontal(|ui| {
-        ui.add_sized(egui::vec2(110.0, 16.0), egui::Label::new(egui::RichText::new(label).small()));
-        let (resp, painter) = ui.allocate_painter(egui::vec2(160.0, 14.0), egui::Sense::hover());
-        let rect = resp.rect;
-        let mid = rect.center().x;
-        painter.vline(mid, rect.y_range(), egui::Stroke::new(1.0, egui::Color32::from_gray(90)));
-        let half = rect.width() / 2.0 - 2.0;
-        let len = (value.abs() / scale * half).max(if value == 0.0 { 0.0 } else { 1.0 });
-        let (x0, x1, col) = if value >= 0.0 { (mid, mid + len, egui::Color32::from_rgb(110, 200, 140)) } else { (mid - len, mid, WARN) };
-        painter.rect_filled(egui::Rect::from_min_max(egui::pos2(x0, rect.top() + 2.0), egui::pos2(x1, rect.bottom() - 2.0)), 1.0, col);
-        ui.label(warn_if(value < 0.0, format!("{value:+.0}")).small());
-    });
 }
 
 fn market(ui: &mut egui::Ui, p: &mut UiCtx) {
@@ -210,7 +207,7 @@ fn market(ui: &mut egui::Ui, p: &mut UiCtx) {
     }
 }
 
-fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
+pub(super) fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
     let w = &p.sim.world;
     let pw = &w.economy.power;
     section(ui, "GRID");
@@ -226,7 +223,7 @@ fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
     hint(ui, "Solar dims under cloud and stops at night; wind follows the wind. Coal and nuclear are steady.");
 }
 
-fn transit(ui: &mut egui::Ui, p: &mut UiCtx) {
+pub(super) fn transit(ui: &mut egui::Ui, p: &mut UiCtx) {
     let w = &p.sim.world;
     let t = &w.economy.transit;
     section(ui, "BUSES");
@@ -257,7 +254,7 @@ fn transit(ui: &mut egui::Ui, p: &mut UiCtx) {
 
 /// Overlays, land value and class mix, and the lighting controls: the
 /// window about how the ground reads.
-fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
+pub(super) fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
     section(ui, "LAYERS");
     hint(ui, "L steps through the map layers one at a time; tick several to stack them.");
     for (name, label, key) in crate::render::Overlays::LAYERS {

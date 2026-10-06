@@ -65,14 +65,54 @@ impl Flow {
     }
 }
 
+/// What a ledger posting was for, one level finer than its `Flow`: the
+/// Economy window's drill-down ("service upkeep" is which station, clinic
+/// and car park; "income tax" is which class paid it). The UI names a
+/// building by looking it up, so a demolished one shows as gone.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Item {
+    /// A building the city runs or charges: plant, service, depot, station,
+    /// yard, port, car park, stadium.
+    Building(crate::buildings::BuildingId),
+    /// Income tax by the payer's income class.
+    Class(crate::buildings::Tier),
+    /// Business tax by the land use of the business's building.
+    LandUse(LandUse),
+    /// Fares by bus line.
+    Route(crate::transit::RouteId),
+    /// Anything else, named: the bus fleet, help from the next town, bills.
+    Named(String),
+}
+
+/// One line of the itemised ledger: the total of every posting of `item`
+/// under `flow` in the day, and how many postings made it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ItemEntry {
+    pub flow: Flow,
+    pub item: Item,
+    pub amount: f32,
+    #[serde(default)]
+    pub count: u32,
+}
+
 /// Where the treasury's money came from and went, by source and sink, for
 /// today so far and for the whole of yesterday. Positive is income.
+///
+/// `items_*` break the rows down further where the posting said what it
+/// was for (`Economy::credit_item`); postings made with plain `credit`
+/// stay in the row only, so a row can be more than the sum of its items
+/// and the UI shows the rest as "not itemised". One entry per item a day,
+/// so the lists are bounded by the buildings, lines and classes in town.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Ledger {
     #[serde(deserialize_with = "ledger_row")]
     pub today: [f32; FLOWS],
     #[serde(deserialize_with = "ledger_row")]
     pub yesterday: [f32; FLOWS],
+    #[serde(default)]
+    pub items_today: Vec<ItemEntry>,
+    #[serde(default)]
+    pub items_yesterday: Vec<ItemEntry>,
 }
 
 /// A ledger row from a save, which may predate the newer flows: shorter
@@ -112,6 +152,29 @@ impl Ledger {
     pub fn roll(&mut self) {
         self.yesterday = self.today;
         self.today = [0.0; FLOWS];
+        self.items_yesterday = std::mem::take(&mut self.items_today);
+    }
+
+    /// Add a posting to today's itemised lines. A linear search: a day has
+    /// at most a few hundred items and most postings land on a recent one.
+    fn post_item(&mut self, flow: Flow, item: Item, amount: f32) {
+        match self.items_today.iter_mut().rev().find(|e| e.flow == flow && e.item == item) {
+            Some(e) => {
+                e.amount += amount;
+                e.count += 1;
+            }
+            None => self.items_today.push(ItemEntry { flow, item, amount, count: 1 }),
+        }
+    }
+
+    /// The itemised lines of one flow from `items` (today's or yesterday's),
+    /// biggest first, and what the row holds beyond them (postings that
+    /// named no item).
+    pub fn items_of<'a>(items: &'a [ItemEntry], row: &[f32; FLOWS], flow: Flow) -> (Vec<&'a ItemEntry>, f32) {
+        let mut v: Vec<&ItemEntry> = items.iter().filter(|e| e.flow == flow).collect();
+        v.sort_by(|a, b| b.amount.abs().total_cmp(&a.amount.abs()));
+        let itemised: f32 = v.iter().map(|e| e.amount).sum();
+        (v, row[flow.index()] - itemised)
     }
 
     /// Yesterday's entries, largest first, for a report.
@@ -229,6 +292,10 @@ pub struct Economy {
     pub business_cover: [f32; crate::market::BusinessKind::COUNT],
     #[serde(default)]
     pub business_cover_seen: [bool; crate::market::BusinessKind::COUNT],
+    /// Daily and hourly records of the headline numbers, for the charts in
+    /// the expanded info windows (`history.rs`). Bounded rings.
+    #[serde(default)]
+    pub history: crate::history::History,
 }
 
 fn default_treasury() -> f32 {
@@ -245,6 +312,20 @@ impl Economy {
     /// Money out of the treasury, booked under `flow`.
     pub fn debit(&mut self, flow: Flow, amount: f32) {
         self.credit(flow, -amount);
+    }
+
+    /// `credit`, and also itemised: what the money was for. Zero amounts
+    /// are skipped so an idle building does not crowd the drill-down.
+    pub fn credit_item(&mut self, flow: Flow, amount: f32, item: Item) {
+        self.credit(flow, amount);
+        if amount != 0.0 {
+            self.ledger.post_item(flow, item, amount);
+        }
+    }
+
+    /// `debit`, itemised.
+    pub fn debit_item(&mut self, flow: Flow, amount: f32, item: Item) {
+        self.credit_item(flow, -amount, item);
     }
 
     /// How far ahead the food chain orders: one plus the day's growth, so a

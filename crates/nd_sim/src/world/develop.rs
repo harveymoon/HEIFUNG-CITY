@@ -229,10 +229,14 @@ impl World {
     pub(super) fn daily_update(&mut self) {
         // Treasury: yesterday's taxes came in as they were earned; plant
         // upkeep and imported power are settled now, then the books close.
-        let upkeep: f32 = self.buildings.values().filter_map(|b| b.plant).map(|k| k.upkeep_per_day()).sum();
-        self.economy.debit(Flow::PlantUpkeep, upkeep);
+        // Each plant is its own line in the itemised ledger.
+        let plants: Vec<(BuildingId, f32)> = self.buildings.iter().filter_map(|(id, b)| b.plant.map(|k| (id, k.upkeep_per_day()))).collect();
+        let upkeep: f32 = plants.iter().map(|(_, x)| x).sum();
+        for (id, x) in plants {
+            self.economy.debit_item(Flow::PlantUpkeep, x, Item::Building(id));
+        }
         let grid = self.economy.power.import_cost_today;
-        self.economy.debit(Flow::GridImport, grid);
+        self.economy.debit_item(Flow::GridImport, grid, Item::Named("power bought from the regional grid".into()));
         self.daily_ports();
         self.economy.power.upkeep_today = upkeep;
         self.economy.tax_today = 0.0;
@@ -243,14 +247,26 @@ impl World {
         }
         // Buses and depots cost money; yesterday's fares were taken as they came.
         let bus_days = self.traffic.cars.values().filter(|c| c.bus.is_some()).count() as f32;
-        let depots = self.buildings.values().filter(|b| b.depot).count() as f32;
-        let transit_upkeep = bus_days * transit::BUS_UPKEEP_PER_DAY + depots * transit::DEPOT_UPKEEP_PER_DAY;
-        self.economy.debit(Flow::TransitUpkeep, transit_upkeep);
+        let depots: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.depot).map(|(id, _)| id).collect();
+        let transit_upkeep = bus_days * transit::BUS_UPKEEP_PER_DAY + depots.len() as f32 * transit::DEPOT_UPKEEP_PER_DAY;
+        let fleet = format!("{bus_days:.0} buses on the lines at {:.0} a day", transit::BUS_UPKEEP_PER_DAY);
+        self.economy.debit_item(Flow::TransitUpkeep, bus_days * transit::BUS_UPKEEP_PER_DAY, Item::Named(fleet));
+        for id in depots {
+            self.economy.debit_item(Flow::TransitUpkeep, transit::DEPOT_UPKEEP_PER_DAY, Item::Building(id));
+        }
         self.economy.transit.upkeep_today = transit_upkeep;
-        let stations = self.buildings.values().filter(|b| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::Station)).count() as f32;
-        let yards = self.buildings.values().filter(|b| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::FreightYard)).count() as f32;
-        let rail_upkeep = stations * rail::STATION_UPKEEP_PER_DAY + yards * rail::YARD_UPKEEP_PER_DAY;
-        self.economy.debit(Flow::RailUpkeep, rail_upkeep);
+        let rail_sites: Vec<(BuildingId, f32)> = self
+            .buildings
+            .iter()
+            .filter_map(|(id, b)| match b.rail.as_ref()?.kind {
+                RailFacility::Station => Some((id, rail::STATION_UPKEEP_PER_DAY)),
+                RailFacility::FreightYard => Some((id, rail::YARD_UPKEEP_PER_DAY)),
+            })
+            .collect();
+        let rail_upkeep: f32 = rail_sites.iter().map(|(_, x)| x).sum();
+        for (id, x) in rail_sites {
+            self.economy.debit_item(Flow::RailUpkeep, x, Item::Building(id));
+        }
         self.economy.ledger.roll();
         let rs = &mut self.rail.stats;
         rs.upkeep_today = rail_upkeep;

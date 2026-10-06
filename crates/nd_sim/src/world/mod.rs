@@ -28,6 +28,7 @@ mod buses;
 mod cars;
 mod enforcement;
 mod construction;
+mod history;
 mod develop;
 mod driving;
 mod industry;
@@ -64,7 +65,7 @@ mod water;
 use crate::buildings::{Building, BuildingId, Construction, Tier};
 use crate::citizens::{Activity, Citizen, CitizenId, Household, HouseholdId, Purpose};
 use crate::clock::SimClock;
-use crate::economy::{Economy, Flow, GIG_INCOME, OVERDRAFT};
+use crate::economy::{Economy, Flow, Item, GIG_INCOME, OVERDRAFT};
 use crate::events::SimEvent;
 use crate::land_value::{LandValue, LandValueBuilder};
 use crate::market::{Business, BusinessKind, Resource, EXPORT_DISCOUNT, HAULAGE, IMPORT_MARKUP};
@@ -701,6 +702,8 @@ impl World {
         let tick = self.clock.tick;
         if self.clock.minute_of_day() == 0 {
             self.events.push(SimEvent::NewDay(self.clock.day()));
+            // The day's counters, read before anything below resets them.
+            let record = self.open_day_record();
             // Services settle their upkeep before the books close.
             self.daily_services();
             // [society] crime, the street and the bins settle their day.
@@ -709,6 +712,7 @@ impl World {
             self.daily_vehicles();
             self.industry_daily();
             self.daily_places();
+            self.close_day_record(record);
         }
         // Periodic work is staggered so no tick carries more than one heavy
         // job: the hour starts at :00, sites advance at :30, land value runs
@@ -716,6 +720,7 @@ impl World {
         if tick % 60 == 0 {
             self.hourly_economy();
             self.industry_hourly();
+            self.record_hour();
         }
         if tick % 60 == 30 {
             self.step_construction();

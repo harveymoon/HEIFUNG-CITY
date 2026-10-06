@@ -536,6 +536,12 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let start = std::time::Instant::now();
             let sections = opt_strings(cmd, "sections")?.unwrap_or_default();
             let mut v = report::report(&ctx.sim.world, &sections)?;
+            // The sim's own history rings: asked for by name only, as they
+            // are long.
+            if sections.iter().any(|s| s == "history") {
+                let days = opt_u64(cmd, "history_days")?.unwrap_or(30).clamp(1, 365) as usize;
+                v["history"] = report::sim_history(&ctx.sim.world, days);
+            }
             v["clock"] = clock(&ctx.sim);
             v["took_ms"] = json!(ms(start));
             Ok(v)
@@ -584,8 +590,23 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     other => return Err(format!("unknown tab {other:?}; people has overview, concerns")),
                 });
             }
-            let (open, list) = ctx.windows.request(info, opt_bool(cmd, "open")?);
-            Ok(json!({ "window": info.title().to_ascii_lowercase(), "open": open, "windows_open": list }))
+            // Expanding opens the window too; only one is expanded at a time.
+            let expand = opt_bool(cmd, "expanded")?;
+            if expand.is_some() && !info.expandable() {
+                return Err(format!("{} has no expanded view", info.title()));
+            }
+            let open_arg = if expand == Some(true) { Some(true) } else { opt_bool(cmd, "open")? };
+            let (open, list) = ctx.windows.request(info, open_arg);
+            let mut expanded = ctx.windows.expanded_name();
+            if let Some(on) = expand {
+                ctx.windows.expand = Some((info, on));
+                let me = info.title().to_ascii_lowercase();
+                expanded = if on { Some(me) } else if expanded.as_deref() == Some(me.as_str()) { None } else { expanded };
+            }
+            if !open && expanded.as_deref() == Some(info.title().to_ascii_lowercase().as_str()) {
+                expanded = None;
+            }
+            Ok(json!({ "window": info.title().to_ascii_lowercase(), "open": open, "expanded": expanded, "windows_open": list }))
         }
         other => Err(format!("unknown command {other:?}; try {{\"cmd\": \"help\"}}")),
     }
@@ -803,6 +824,7 @@ fn status(ctx: &Ctx) -> Value {
     });
     // Added after the literal: one `json!` this size hits the macro recursion limit.
     v["windows_open"] = json!(ctx.windows.open_names());
+    v["window_expanded"] = json!(ctx.windows.expanded_name());
     // [looks] The figure cache: meshes alive, people outdoors and their distinct looks.
     let st = &ctx.stats;
     v["render"]["people"] = json!({ "meshes": st.people_meshes, "mesh_cap": crate::render::PEOPLE_MESH_CAP, "visible": st.people_visible, "distinct_looks_visible": st.people_looks_visible, "built_total": st.people_built, "borrowed": st.people_borrowed, "materials": 1 });
@@ -1940,13 +1962,13 @@ fn help() -> Value {
     // The review commands, added separately: one `json!` this size hits the
     // macro recursion limit.
     let review = json!({
-        "report": { "sections": "optional subset of overview, people, economy, land, services, industry, society, alerts (default all): the one-call city review" },
+        "report": { "sections": "optional subset of overview, people, economy, land, services, industry, society, alerts, history (default all but history): the one-call city review", "history_days": "days of the history section (default 30, max 365)" },
         "map": { "cell_m": "cell size in metres, default 100 (grown to keep at most 400 cells)", "layer": "summary (table of cells) | population | land_value | jobs | hunger | vacancy | power | traffic | fertility | oil | contamination | industry | crime | homeless | trash (grid + ASCII heat map)" },
         "industry": { "lot": "lot id, or", "polygon": "[[x, y], ...] area, or", "pos": "[x, y] (query only)", "kind": "farming | oil | refinery | manufacturing | logistics | fishing | tech | none: sets the industry sub-zone bias (none hands the area back to the ground); omit to query the ground, contamination and industry weights of the lot" },
         "history": { "keys": "optional daily/hourly series names (default all)", "days": "last n days (default all kept, up to 365)" },
         "list": { "what": "businesses|buildings|citizens|lots|routes|plants|facilities", "sort": "column", "desc": "bool", "filter": "{column: substring | value | {min, max}}", "fields": "[columns] (id always kept)", "offset": "default 0", "limit": "default 50, max 1000" },
         "export": { "path": "optional; default exports/city-<unix>.json: report + map + history + every row of every list" },
-        "window": { "name": "city|economy|market|people|power|transit|land|saves|help|dev", "open": "bool, omitted toggles", "tab": "people only: overview|concerns" },
+        "window": { "name": "city|economy|market|people|power|transit|emergencies|land|saves|help|dev", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns" },
         "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" }
     });
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), review.as_object()) {

@@ -346,7 +346,7 @@ impl World {
         }).sum();
         let new = metres - self.bridge_metres;
         if new > 1.0 {
-            self.economy.debit(Flow::Construction, new * BRIDGE_COST_PER_M);
+            self.economy.debit_item(Flow::Construction, new * BRIDGE_COST_PER_M, Item::Named("bridges".into()));
         }
         self.bridge_metres = metres;
     }
@@ -651,7 +651,7 @@ impl World {
         for (_, lot) in self.buildings_under(&port.footprint()) {
             self.take_over_lot(lot, kind.label())?;
         }
-        self.economy.debit(Flow::Construction, kind.cost());
+        self.economy.debit_item(Flow::Construction, kind.cost(), Item::Named(kind.label().to_string()));
         let probe = port.front_mid() - port.seaward * rail::ROAD_GAP;
         let fused = self.roads.nearest_street(probe).is_some_and(|(_, _, q)| q.distance(probe) <= rail::ROAD_EDGE_FUSE);
         let stub = port.road_line();
@@ -882,7 +882,7 @@ impl World {
                     let riders = self.ferry_riders(b, to);
                     let fares = riders as f32 * ports::FERRY_FARE;
                     // Ferry fares are public transport income, booked with the bus fares.
-                    self.economy.credit(Flow::BusFares, fares);
+                    self.economy.credit_item(Flow::BusFares, fares, Item::Building(b));
                     self.ports.stats.ferry_riders_today += riders;
                     self.ports.stats.ferry_fares_today += fares;
                     self.ports.ships.insert(Ship { kind: ShipKind::Ferry, path, s: 0.0, prev_s: 0.0, speed, dwell: ports::FERRY_DWELL, port: b, to, cargo: Vec::new(), passengers: riders, docked: false, berth_s, color: 0 });
@@ -915,9 +915,10 @@ impl World {
 
     /// Daily books for the docks: upkeep and fresh counters.
     pub(super) fn daily_ports(&mut self) {
-        let upkeep: f32 = self.ports.ports.values().map(|p| p.kind.upkeep_per_day()).sum();
-        if upkeep > 0.0 {
-            self.economy.debit(Flow::TransitUpkeep, upkeep);
+        let docks: Vec<(Option<BuildingId>, PortKind, f32)> = self.ports.ports.values().map(|p| (p.building, p.kind, p.kind.upkeep_per_day())).collect();
+        for (b, kind, upkeep) in docks {
+            let item = b.map_or_else(|| Item::Named(kind.label().to_string()), Item::Building);
+            self.economy.debit_item(Flow::TransitUpkeep, upkeep, item);
         }
         let s = &mut self.ports.stats;
         s.freight_landed_today = 0;

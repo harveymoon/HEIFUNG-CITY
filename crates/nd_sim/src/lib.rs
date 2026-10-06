@@ -16,6 +16,7 @@ pub mod economy;
 pub mod enforcement;
 pub mod events;
 pub mod geom;
+pub mod history;
 pub mod homeless;
 pub mod ground;
 pub mod industry;

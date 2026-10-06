@@ -946,6 +946,51 @@ trait MindProvider {
   heading every lift (`crane_slew` of `SimClock::work_minutes`), so cranes work 8:00 to 17:00
   and stand still overnight and while paused, at a capped on-screen rate at any speed.
 
+## Info windows: compact and expanded
+
+Every info window (City, Economy, Market, People, Power, Transit, Emergencies, Land) has two
+views behind one control: the corner-marks button at the right of the window's own header,
+beside close, the same widget in the same place on every window (`ui/pane.rs`). The *compact*
+view is the summary that sits beside the map; the *expanded* view is a large window (820 by 680
+to start, resizable) with charts over time and the detail behind each figure. Only one window is
+expanded at a time: expanding another puts the first back, so the map is never buried under two
+big panels. Saves, Help and Dev are tools, not reports, and stay compact.
+
+Every expanded view follows one pattern, top to bottom: a range picker (72 h, 7, 30, 90 days,
+all), a row of headline figures, charts over the range (hover a day for every series' value),
+then a table with a row per thing (plant, bus line, good, business kind, ledger item), then the
+compact view's figures so nothing goes missing.
+
+- **Economy**: treasury over time (hourly for 72 h); income and spending by flow as diverging
+  stacked bars per day with the net as a line; the ledger line by line, each flow opening onto
+  what made it, for yesterday or today so far (service upkeep by station, clinic, school and
+  car park, help from the next town, less the hospital bills patients paid; transit upkeep by
+  depot, port and the bus fleet; plant upkeep by plant; fares by line and station; construction
+  by what was built), with a note of what each flow includes and buttons that fly to the
+  building; the tax take by class and land use; trade. A taxes section (rates per sub-type) slots
+  in after the tax take as one more section function.
+- **People**: population, households, employed, unemployed, unhoused and waiting over time; the
+  class mix stacked; Gini over time. The compact view keeps a 30-day population sparkline.
+- **Power**: the last 72 hours' supply stacked by kind of plant plus grid imports, under a
+  demand line; energy per day by kind; brownout hours and peak demand; every plant's output now
+  against its nameplate.
+- **Transit**: riders per day by mode; riders per bus line; fares against upkeep; who is waiting
+  and riding hour by hour; a table of lines with today, yesterday, the average and fares.
+- **City**: homes and jobs (built and filled), buildings and sites, vehicles on the road by hour.
+  **Market**: trade, businesses and deals, demand by land use, every good's price against its
+  base, how each kind of business pays. **Land**: land value and rents by tier over time, lots by
+  land use. **Emergencies**: calls per day by kind, response time, unanswered and out-of-town calls.
+
+The numbers come from the sim, not the app. `nd_sim::history` keeps a daily ring (365 days) and
+an hourly ring (72 hours) inside `Economy`, so they are in the save and charts survive a load; a
+day's record is read in two halves across midnight (`world/history.rs`: the day's counters before
+midnight resets them, the closed ledger and levels after). The ledger is itemised: postings say
+what they were for (`Economy::credit_item`: a building, a bus line, an income class, a land use
+or a named item), one entry per item a day, so the lists are bounded by what stands in town.
+Postings without an item stay in their row and show as "not itemised". All new fields are
+`serde(default)`; the history's ledger rows are `Vec`s so a new flow does not break old records.
+Recording reads the world and pushes; it draws no random numbers, so determinism is untouched.
+
 ## Roadmap
 
 - v0 (done): roads, zones, lots, procedural buildings, immigration, schedules,
