@@ -2509,7 +2509,6 @@ mod tests {
                 arrows_seen += 1;
             }
             let c = &t.cars[turner];
-            let c = &t.cars[turner];
             if t.net.lanes[c.route[c.idx] as usize].is_connector() && turned_at.is_none() {
                 turned_at = Some(tick);
                 break;
