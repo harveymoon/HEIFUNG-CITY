@@ -459,16 +459,23 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "camera" => camera(cmd, ctx),
         "overlay" => {
             let o = &mut ctx.overlays;
-            if let Some(b) = opt_bool(cmd, "land_value")? {
-                o.land_value = b;
+            // `{layer, on}` (on omitted toggles), and the older form with a
+            // bool per layer name.
+            if let Some(layer) = opt_str(cmd, "layer")? {
+                let on = opt_bool(cmd, "on")?;
+                let Some(flag) = o.flag(layer) else {
+                    return Err(format!("unknown layer {layer:?}; one of {}", Overlays::LAYERS.iter().map(|l| l.0).collect::<Vec<_>>().join(", ")));
+                };
+                *flag = on.unwrap_or(!*flag);
             }
-            if let Some(b) = opt_bool(cmd, "paths")? {
-                o.paths = b;
+            for (name, _, _) in Overlays::LAYERS {
+                if let Some(b) = opt_bool(cmd, name)? {
+                    if let Some(f) = o.flag(name) {
+                        *f = b;
+                    }
+                }
             }
-            if let Some(b) = opt_bool(cmd, "zoning")? {
-                o.zoning = b;
-            }
-            Ok(json!({ "land_value": o.land_value, "paths": o.paths, "zoning": o.zoning }))
+            Ok(overlays_json(o))
         }
         "lighting" => {
             let l = &mut ctx.lighting;
@@ -624,7 +631,7 @@ fn status(ctx: &Ctx) -> Value {
         "rail": { "trains": r.trains, "stations": r.stations, "yards": r.yards, "waiting": r.waiting, "riding": r.riding, "riders_today": r.riders_today, "fares_today": round(r.fares_today), "next_passenger_in": r.next_passenger_in, "freight_in_today": round(r.freight_in_today), "freight_waiting": round(r.freight_waiting), "upkeep_today": round(r.upkeep_today) },
         "render": { "fps": round(fps as f32), "ticks_per_frame": sim.ticks_last_frame, "triangles": ctx.stats.street_triangles + ctx.stats.building_triangles, "building_meshes": ctx.stats.building_entities },
         "camera": camera_pose(ctx), "tool": tool_state(&ctx.tools), "selection": selection(w, *ctx.selection),
-        "project": project_state(ctx)["project"], "overlays": { "land_value": ctx.overlays.land_value, "paths": ctx.overlays.paths, "zoning": ctx.overlays.zoning },
+        "project": project_state(ctx)["project"], "overlays": overlays_json(&ctx.overlays),
         "lighting": { "follow_clock": ctx.lighting.follow_clock, "hour": round(ctx.lighting.hour) },
         "message": ctx.flags.message, "tool_status": ctx.tools.status, "event_seq": ctx.log.seq,
         "favourites": ctx.tools.favorites.iter().map(|&f| key_str(f)).collect::<Vec<_>>(),
@@ -1552,7 +1559,7 @@ fn help() -> Value {
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
             "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway", "kind": "sub-mode of the active tool", "land_use": "", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
             "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
-            "overlay": { "land_value": "bool", "paths": "bool", "zoning": "bool" },
+            "overlay": { "layer": "land_value|traffic|traffic_types|people|pollution|paths|zoning", "on": "bool, omitted toggles", "<layer name>": "bool (older form, any number at once)" },
             "lighting": { "follow_clock": "bool", "hour": "0..24 (also unpins from the clock)" },
             "screenshot": { "path": "optional .png; default screenshots/shot-<unix>.png; written a frame or two later" },
             "events": { "since": "seq", "limit": "default 500" },
@@ -1573,4 +1580,13 @@ fn help() -> Value {
         c.extend(r.clone());
     }
     v
+}
+
+/// Every map layer and whether it is on.
+fn overlays_json(o: &Overlays) -> Value {
+    let mut m = serde_json::Map::new();
+    for (name, _, _) in Overlays::LAYERS {
+        m.insert(name.into(), json!(o.get(name).unwrap_or(false)));
+    }
+    Value::Object(m)
 }

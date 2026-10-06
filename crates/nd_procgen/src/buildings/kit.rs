@@ -104,7 +104,8 @@ pub fn dense_windows(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face,
                 face.decal(g, f, Wood, t, y, 0.04, w, h, c.palette.plywood);
             } else if coin(rng, lit) {
                 let wc = pick(rng, &c.style.window_colors);
-                face.decal(g, f, Glow, t, y, 0.04, w, h, mul(wc, rng.random_range(0.45..0.95)));
+                let col = mul(wc, rng.random_range(0.45..0.95));
+                window_light(g, c, |g| face.decal(g, f, Glow, t, y, 0.04, w, h, col));
             } else {
                 face.decal(g, f, Glass, t, y, 0.04, w, h, c.palette.glass_dark);
             }

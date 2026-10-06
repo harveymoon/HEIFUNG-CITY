@@ -28,6 +28,8 @@ mod works;
 
 pub use adjacency::{Neighbour, StyleBook};
 mod services;
+pub use parts::WINDOW_LIGHT_MARK;
+pub use power::{coal_stacks, wind_rotor, wind_turbines, Turbine, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};
 
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface};
@@ -800,6 +802,12 @@ pub struct Ctx<'a> {
     pub park: Option<ParkLayout>,
     /// For stations and yards: the track and platform beside the lot.
     pub rail: Option<RailLink>,
+    /// Wind farm rotors are left out for the renderer to spin.
+    pub animated_rotors: bool,
+    /// Window lights are switched by the renderer from occupancy: nearly
+    /// every window is drawn as a marked light over its glass (see
+    /// `parts::window_light`), and `lit_chance` ignores power.
+    pub dynamic_lights: bool,
 }
 
 /// Per-building state that changes the look beyond style and condition.
@@ -826,11 +834,16 @@ pub struct Extras<'a> {
     pub neighbours: &'a [Neighbour],
     /// A city service or attraction: its own style, at the placed tier.
     pub service: Option<nd_sim::services::ServiceKind>,
+    /// Leave wind farm rotors out: the renderer draws and spins them.
+    pub animated_rotors: bool,
+    /// Draw window lights for the renderer to switch by occupancy (see
+    /// [`Ctx::dynamic_lights`]).
+    pub dynamic_lights: bool,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, dynamic_lights: false }
     }
 }
 
@@ -845,6 +858,10 @@ impl Ctx<'_> {
 
     /// Chance a window is lit, clamped so rule files cannot push it past 1.
     pub fn lit_chance(&self) -> f32 {
+        if self.dynamic_lights {
+            // Most windows can light; which ones do is the renderer's call.
+            return (0.92 * (1.0 - 0.3 * self.wear)).clamp(0.0, 1.0);
+        }
         (self.style.lit_chance * (1.0 - 0.8 * self.wear) * self.powered.clamp(0.08, 1.0)).clamp(0.0, 1.0)
     }
 
@@ -1011,6 +1028,8 @@ fn generate_styled_extras(
         powered: extras.powered,
         rail: extras.rail.cloned().or_else(|| matches!(style, Style::Station | Style::FreightYard).then(|| back_edge_link(lot, if style == Style::Station { RailFacility::Station } else { RailFacility::FreightYard }))),
         park: if land_use == LandUse::Park || matches!(style, Style::ScrubLot | Style::Garden | Style::Plaza) { Some(extras.park.cloned().unwrap_or_else(|| nd_sim::park::plan_single(lot, tier))) } else { None },
+        animated_rotors: extras.animated_rotors,
+        dynamic_lights: extras.dynamic_lights,
     };
     if let Some(progress) = extras.demolition {
         let mut g = generate_styled_extras(lot, land_use, floors, tier, condition, seed, style, rules, palette, &Extras { demolition: None, construction: None, ..*extras });
@@ -1503,6 +1522,17 @@ mod tests {
             check_mesh(g, "powered");
             assert!(extent(g, lot, None).0 <= 1.0);
         }
+        // Occupancy lighting: nearly every window becomes a marked light over
+        // glass, ranked so the renderer can switch them by share.
+        let dynamic = generate_building(lot, LandUse::Residential, 8, Tier::Mid, 0.9, 5, &rules, &pal, &Extras { dynamic_lights: true, ..Extras::default() });
+        check_mesh(&dynamic, "dynamic lights");
+        let marks: Vec<f32> = dynamic.get(Surface::Glow).colors.iter().map(|c| c[3]).filter(|a| *a >= WINDOW_LIGHT_MARK).collect();
+        assert!(marks.len() >= 4 * lit(&bright) / 6, "most windows are switchable lights: {} marked vertices", marks.len());
+        assert!(marks.iter().all(|a| *a < WINDOW_LIGHT_MARK + 1.0), "ranks stay in 0..1");
+        let ranks: std::collections::HashSet<u32> = marks.iter().map(|a| ((a - WINDOW_LIGHT_MARK) * 1000.0) as u32).collect();
+        assert!(ranks.len() > 10, "windows get spread-out ranks, got {}", ranks.len());
+        assert!(dynamic.get(Surface::Glass).positions.len() > bright.get(Surface::Glass).positions.len(), "glass behind every switchable light");
+        assert!(dynamic.get(Surface::Glow).colors.iter().any(|c| c[3] == 1.0) || dynamic.get(Surface::Glow).colors.iter().all(|c| c[3] >= WINDOW_LIGHT_MARK), "other glow untouched");
         // Parking: a full lot has more car than an empty one.
         let empty = generate_building(lot, LandUse::Commercial, 1, Tier::Low, 0.8, 5, &rules, &pal, &Extras { parking: Some(0.0), ..Extras::default() });
         let full = generate_building(lot, LandUse::Commercial, 1, Tier::Low, 0.8, 5, &rules, &pal, &Extras { parking: Some(1.0), ..Extras::default() });
