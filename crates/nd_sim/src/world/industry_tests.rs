@@ -11,7 +11,7 @@ fn square(x0: f32, y0: f32, size: f32) -> Vec<Vec2> {
 }
 
 fn flat() -> World {
-    World::new(WorldConfig { landscape: LandscapeParams::flat(), ..WorldConfig::default() })
+    World::new(WorldConfig { landscape: LandscapeParams::flat(), ..WorldConfig::test_town() })
 }
 
 /// A street along y = 0 and an industrial strip north of it; lots sorted
@@ -129,7 +129,7 @@ fn zone_at(w: &mut World, o: Vec2) -> Vec<LotId> {
 
 #[test]
 fn oil_ground_draws_wells_and_good_soil_draws_farms() {
-    let mut w = World::new(WorldConfig { landscape: LandscapeParams::preset(LandscapePreset::Plains, 7), ..WorldConfig::default() });
+    let mut w = World::new(WorldConfig { landscape: LandscapeParams::preset(LandscapePreset::Plains, 7), ..WorldConfig::test_town() });
     let oil = best_square(&w, |g| g.oil);
     let lots = zone_at(&mut w, oil);
     assert!(!lots.is_empty());
@@ -282,7 +282,7 @@ fn idle_trucks_park_at_a_fleet_lot_and_go_out_from_it() {
 
 #[test]
 fn a_river_bank_draws_fishing() {
-    let w = World::new(WorldConfig::default());
+    let w = World::new(WorldConfig::test_town());
     let mut bank = None;
     'scan: for iy in -40..40 {
         for ix in -40..40 {
@@ -308,7 +308,7 @@ fn a_river_bank_draws_fishing() {
 #[test]
 #[ignore]
 fn industry_mix_diagnostic() {
-    let mut w = World::new(WorldConfig { landscape: LandscapeParams::preset(LandscapePreset::RiverValley, 7), ..WorldConfig::default() });
+    let mut w = World::new(WorldConfig { landscape: LandscapeParams::preset(LandscapePreset::RiverValley, 7), ..WorldConfig::test_town() });
     for i in -2..=2 {
         let c = i as f32 * 140.0;
         w.add_road(&[Vec2::new(-280.0, c), Vec2::new(280.0, c)], 1, 1);

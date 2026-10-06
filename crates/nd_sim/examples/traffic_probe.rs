@@ -6,8 +6,6 @@ use nd_sim::{Gesture, LandUse, Vec2 as SVec2, World, WorldConfig};
 use std::collections::{BTreeMap, HashMap};
 
 fn seed(world: &mut World) {
-    world.add_road(&[SVec2::new(-700.0, 0.0), SVec2::new(700.0, 0.0)], 2, 2);
-    world.add_road(&[SVec2::new(0.0, -700.0), SVec2::new(0.0, 700.0)], 2, 2);
     world.drain_events();
     world.start_project();
     for i in -2..=2 {
@@ -28,6 +26,8 @@ fn seed(world: &mut World) {
     world.add_gesture(Gesture::Road { points: vec![SVec2::new(-420.0, nd_sim::rail::TRUNK_Y), SVec2::new(-330.0, -410.0), SVec2::new(-280.0, -348.0), SVec2::new(-110.0, -348.0), SVec2::new(-70.0, -324.0), SVec2::new(150.0, -324.0)], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: nd_sim::roads::RoadKind::Rail, elevation: Vec::new() });
     world.implement();
     world.economy.treasury = world.economy.treasury.max(150_000.0);
+    // The district's way in: a street north from the grid onto the highway.
+    world.link_to_highway(SVec2::new(0.0, 280.0));
     use nd_sim::RailFacility;
     let _ = world.place_rail_facility(RailFacility::FreightYard, SVec2::new(-200.0, -330.0));
     let _ = world.place_rail_facility(RailFacility::Station, SVec2::new(80.0, -310.0));

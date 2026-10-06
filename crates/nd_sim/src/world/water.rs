@@ -14,7 +14,7 @@ pub const STREET_GRADE: f32 = 0.07;
 pub const RAIL_GRADE: f32 = 0.03;
 pub const PATH_GRADE: f32 = 0.10;
 /// At most this many through cars on the highway at once.
-pub const MAX_THROUGH_CARS: usize = 36;
+pub const MAX_THROUGH_CARS: usize = 100;
 /// Chance per tick that a through car joins each carriageway.
 pub const THROUGH_CHANCE: f64 = 0.45;
 /// How far a bridge deck reaches onto each bank.
@@ -176,7 +176,10 @@ impl World {
         let flat = land.is_flat();
         let floor = if flat { 0.0 } else { crate::landscape::BANK_HEIGHT };
         let roads = &self.roads;
-        let mut z: Vec<f32> = roads.nodes.iter().map(|nd| land.height(nd.pos).max(floor) + nd.level).collect();
+        // Out past the map a way to elsewhere keeps the level it had at
+        // the edge: the far hills are cut and filled for it.
+        let edge = crate::landscape::LAND_HALF;
+        let mut z: Vec<f32> = roads.nodes.iter().map(|nd| land.height(nd.pos.clamp(Vec2::splat(-edge), Vec2::splat(edge))).max(floor) + nd.level).collect();
         let mut fixed: Vec<bool> = roads.nodes.iter().map(|nd| nd.level != 0.0).collect();
         if !flat {
             // Bridge ends stand at deck height; the approaches ramp up to them.
@@ -206,8 +209,11 @@ impl World {
             let mut lifted = false;
             for c in &crossings {
                 let (zu, zl) = (seg_z(&z, c.upper), seg_z(&z, c.lower));
-                // Clear, either way up (a street on a hill over the highway).
-                if zu - zl >= UNDERPASS_CLEARANCE - 0.01 || zl - zu >= UNDERPASS_CLEARANCE - 0.01 {
+                // Clear, either way up: the other way may pass over where the
+                // land carries it (a street on a hill over the highway in its
+                // valley), but not on a long fill that merely spans the gap.
+                let on_land = zl <= land.height(c.at).max(floor) + 1.0;
+                if zu - zl >= UNDERPASS_CLEARANCE - 0.01 || (on_land && zl - zu >= UNDERPASS_CLEARANCE - 0.01) {
                     continue;
                 }
                 let s = roads.segment(c.upper.0);
@@ -215,7 +221,7 @@ impl World {
                 // Only a way at grade is lifted: one the player set at a
                 // level keeps it (the tool warns about it).
                 if let Some(k) = vertex.filter(|&k| !fixed[k]) {
-                    z[k] = zl + UNDERPASS_CLEARANCE;
+                    z[k] = zl + UNDERPASS_CLEARANCE + 0.01;
                     fixed[k] = true;
                     lifted = true;
                 }
@@ -305,9 +311,16 @@ impl World {
 
     /// Pay for bridge deck laid since the last rebuild.
     pub(super) fn charge_bridges(&mut self) {
+        // Only deck on the map is paid for: the ways run on elsewhere at
+        // elsewhere's expense.
+        let edge = crate::landscape::LAND_HALF;
         let metres: f32 = self.roads.alive_segments().filter(|(_, s)| s.bridge).map(|(id, _)| {
             let (a, b) = self.roads.segment_points(id);
-            a.distance(b)
+            let inside = (0..8).filter(|k| {
+                let p = a.lerp(b, (*k as f32 + 0.5) / 8.0);
+                p.x.abs() <= edge && p.y.abs() <= edge
+            }).count();
+            a.distance(b) * inside as f32 / 8.0
         }).sum();
         let new = metres - self.bridge_metres;
         if new > 1.0 {
@@ -418,8 +431,9 @@ impl World {
     /// drives on the right, so the eastbound carriageway is the north one.
     pub fn lay_highway(&mut self) -> [GestureId; 2] {
         let had_project = self.project.take();
-        // Edge to edge of the drawn land: traffic comes from off the map.
-        let x = crate::landscape::LAND_HALF - 40.0;
+        // Edge to edge of the map; built, both ends run on out of sight
+        // (`landscape::reach_elsewhere`): traffic comes from elsewhere.
+        let x = crate::landscape::MAP_EDGE;
         let east = self.add_gesture(Gesture::Road { points: vec![Vec2::new(-x, HIGHWAY_Y + HIGHWAY_HALF_GAP), Vec2::new(x, HIGHWAY_Y + HIGHWAY_HALF_GAP)], lanes_fwd: HIGHWAY_LANES, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
         let west = self.add_gesture(Gesture::Road { points: vec![Vec2::new(x, HIGHWAY_Y - HIGHWAY_HALF_GAP), Vec2::new(-x, HIGHWAY_Y - HIGHWAY_HALF_GAP)], lanes_fwd: HIGHWAY_LANES, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
         self.implement();
@@ -427,12 +441,44 @@ impl World {
         [east, west]
     }
 
-    /// Ends of highway carriageways: where traffic comes in from elsewhere
-    /// (`entries`) and leaves (`exits`), with the end segment.
+    /// Join the street end at `from` (south of the highway) to the highway:
+    /// a street north to a junction short of it, an off-ramp from the
+    /// westbound carriageway and an on-ramp back onto it, built at once.
+    /// False when there is no highway there (nothing is laid then). Scripts
+    /// and tests use it; the player draws their own ramps.
+    pub fn link_to_highway(&mut self, from: Vec2) -> bool {
+        let y = HIGHWAY_Y - HIGHWAY_HALF_GAP;
+        let x = from.x;
+        let there = self.roads.alive_segments().any(|(id, s)| {
+            let (a, b) = self.roads.segment_points(id);
+            s.is_highway() && crate::geom::project_on_segment(Vec2::new(x, y), a, b).1.distance(Vec2::new(x, y)) < 1.0
+        });
+        if !there || from.y > y - 60.0 {
+            return false;
+        }
+        let had_project = self.project.take();
+        let j = Vec2::new(x, y - 50.0);
+        let street = |points: Vec<Vec2>, fwd: u8, bwd: u8| Gesture::Road { points, lanes_fwd: fwd, lanes_bwd: bwd, curved: false, kind: RoadKind::Street, elevation: Vec::new() };
+        self.add_gesture(street(vec![from, j], 1, 1));
+        // Westbound traffic comes from the east: off on that side, back on
+        // on the other.
+        self.add_gesture(street(vec![Vec2::new(x + 220.0, y), Vec2::new(x + 70.0, y - 30.0), j], 1, 0));
+        self.add_gesture(street(vec![j, Vec2::new(x - 70.0, y - 30.0), Vec2::new(x - 220.0, y)], 1, 0));
+        self.implement();
+        self.project = had_project;
+        true
+    }
+
+    /// Ends of highway carriageways out of sight beyond the map: where
+    /// traffic comes in from elsewhere (`entries`) and leaves (`exits`),
+    /// with the end segment. A highway stub ending on the map is neither.
     pub fn highway_ends(&self) -> (Vec<(NodeId, SegmentId)>, Vec<(NodeId, SegmentId)>) {
         let mut entries = Vec::new();
         let mut exits = Vec::new();
         for n in self.roads.leaf_nodes() {
+            if !crate::landscape::is_elsewhere(self.roads.node(n).pos) {
+                continue;
+            }
             let Some(&sid) = self.roads.node(n).segments.iter().find(|&&s| self.roads.segment(s).alive) else { continue };
             let seg = self.roads.segment(sid);
             if !seg.is_highway() {
@@ -493,11 +539,43 @@ impl World {
         }
     }
 
-    /// Road ends people and lorries can arrive by: dead ends a car can drive
-    /// away from, on a network that reaches the city's lots. Before any lot
-    /// exists, every leaf.
+    /// Put a through car back on the highway after the roads were rebuilt
+    /// (every car is taken off then): on the lane under it, at the same
+    /// place and speed, bound for the far exit. Nothing vanishes on the
+    /// highway because the player built a ramp. False when it is not on a
+    /// highway any more or cannot get out from there.
+    pub(super) fn resume_through_car(&mut self, car: &crate::traffic::Car) -> bool {
+        let Some((sid, _, q)) = self.roads.nearest_where(car.pos, |s| s.is_highway()) else { return false };
+        if q.distance(car.pos) > 8.0 {
+            return false;
+        }
+        let Some((lane, s, _)) = self.traffic.net.nearest_lane_on(sid, car.pos) else { return false };
+        let (_, mut exits) = self.highway_ends();
+        exits.sort_by(|a, b| self.roads.node(b.0).pos.distance(car.pos).total_cmp(&self.roads.node(a.0).pos.distance(car.pos)));
+        for (en, esid) in exits {
+            let end = self.roads.node(en).pos;
+            let Some((goal, s1, _)) = self.traffic.net.nearest_lane_on(esid, end) else { continue };
+            if let Some((route, s0, s1)) = self.traffic.net.route_lanes(lane, s, goal, s1) {
+                let id = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, car.color);
+                let c = &mut self.traffic.cars[id];
+                c.model = car.model;
+                c.v = car.v;
+                c.prev_pos = car.prev_pos;
+                c.prev_heading = car.prev_heading;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Road ends people and lorries can arrive by: the far ends of ways to
+    /// elsewhere (out of sight past the map edge) a car can drive away
+    /// from, on a network that reaches the city's lots. Before any lot
+    /// exists, every such end. A dead end on the map is never one: nothing
+    /// appears or vanishes where the player can see it.
     pub(super) fn city_leaves(&self) -> Vec<NodeId> {
-        let leaves = self.roads.leaf_nodes();
+        let open = self.config.dead_ends_lead_elsewhere;
+        let leaves: Vec<NodeId> = self.roads.leaf_nodes().into_iter().filter(|&n| open || crate::landscape::is_elsewhere(self.roads.node(n).pos)).collect();
         let comps: std::collections::HashSet<u32> = self.lots.values().filter(|l| self.zones.contains_key(l.zone)).filter_map(|l| self.road_component(l.access_node)).collect();
         let drivable = |n: NodeId| {
             self.roads.node(n).segments.iter().filter(|&&s| self.roads.segment(s).alive).all(|&s| {
@@ -506,7 +584,17 @@ impl World {
             })
         };
         let keep: Vec<NodeId> = leaves.iter().copied().filter(|&n| drivable(n) && (comps.is_empty() || self.road_component(n).is_some_and(|c| comps.contains(&c)))).collect();
-        if keep.is_empty() { leaves } else { keep }
+        if keep.is_empty() && open { leaves } else { keep }
+    }
+
+    /// Can newcomers get in: a road from elsewhere (the highway, a road
+    /// off the map edge) reaching the city's lots, or a working station?
+    pub fn has_way_in(&self) -> bool {
+        if !self.stations.is_empty() {
+            return true;
+        }
+        let comps: std::collections::HashSet<u32> = self.lots.values().filter(|l| self.zones.contains_key(l.zone)).filter_map(|l| self.road_component(l.access_node)).collect();
+        !comps.is_empty() && !self.city_leaves().is_empty()
     }
 
     // ── docks ───────────────────────────────────────────────────────────

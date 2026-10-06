@@ -215,7 +215,7 @@ fn steep_ramps_and_half_height_crossings_are_warned_about() {
     // Built anyway, a steep ramp is eased: its foot is lifted onto an
     // embankment so no piece is steeper than the grade.
     build(&mut w, road(&[Vec2::new(-200.0, -300.0), Vec2::new(-200.0, -260.0), Vec2::new(-200.0, -100.0)], (1, 1), RoadKind::Street, &[0.0, 8.0, 8.0]));
-    for (sid, s) in w.roads.alive_segments() {
+    for (sid, s) in w.roads.alive_segments().filter(|(_, s)| s.is_street()) {
         let (a, b) = w.roads.segment_points(sid);
         let fixed = w.roads.node(s.a).level != 0.0 && w.roads.node(s.b).level != 0.0;
         let dz = (w.road_z[s.a.0 as usize] - w.road_z[s.b.0 as usize]).abs();

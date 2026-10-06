@@ -46,6 +46,93 @@ pub const HIGHWAY_Y: f32 = 420.0;
 pub const HIGHWAY_HALF_GAP: f32 = 9.0;
 pub const HIGHWAY_LANES: u8 = 3;
 
+// ── the world beyond the map ────────────────────────────────────────────────
+//
+// The highway, the trunk line and any road the player draws to the edge of
+// the map lead "elsewhere": they run on far past the playable square, out of
+// the camera's sight, and that is where traffic from elsewhere appears and
+// where traffic leaving is taken off. Nothing is ever spawned or removed
+// where the player can see it.
+
+/// A way whose end reaches this far from the centre (on either axis) has
+/// reached the edge of the map and leads elsewhere.
+pub const MAP_EDGE: f32 = LAND_HALF - 40.0;
+/// The orbit camera's eye and target stay within this square.
+pub const CAMERA_BOUND: f32 = LAND_HALF + 200.0;
+/// Nothing is seen farther than this from the camera: the fog is solid.
+pub const SIGHT: f32 = 2600.0;
+/// Ways leading elsewhere run out to this square; their ends are where
+/// vehicles from elsewhere enter and where those leaving are removed. It is
+/// beyond `SIGHT` from anywhere the camera can be.
+pub const WAY_REACH: f32 = 5000.0;
+/// The ground is drawn out to this square, past anything in sight.
+pub const FAR_GROUND: f32 = WAY_REACH + 300.0;
+
+fn chebyshev(p: Vec2) -> f32 {
+    p.x.abs().max(p.y.abs())
+}
+
+/// Is `p` out where the ways to elsewhere end (beyond anyone's sight)?
+pub fn is_elsewhere(p: Vec2) -> bool {
+    chebyshev(p) >= WAY_REACH - 1.0
+}
+
+/// A way drawn as `points`, with each end that reaches the edge of the map
+/// carried on straight out to `WAY_REACH`. Ends already out there, ends
+/// short of the edge and ends running along it are left as they are.
+pub fn reach_elsewhere(points: &[Vec2]) -> Vec<Vec2> {
+    let mut out = points.to_vec();
+    if out.len() < 2 {
+        return out;
+    }
+    let extend = |end: Vec2, prev: Vec2| -> Option<Vec2> {
+        let r = chebyshev(end);
+        if r < MAP_EDGE - 1.0 || r >= WAY_REACH - 1.0 {
+            return None;
+        }
+        let d = (end - prev).normalize_or_zero();
+        // Leaving the map, not running along its edge.
+        let outward = if end.x.abs() >= end.y.abs() { d.x * end.x.signum() } else { d.y * end.y.signum() };
+        if outward < 0.3 {
+            return None;
+        }
+        let mut t = f32::INFINITY;
+        for (pc, dc) in [(end.x, d.x), (end.y, d.y)] {
+            if dc.abs() > 1e-4 {
+                let k = (WAY_REACH * dc.signum() - pc) / dc;
+                if k > 0.0 {
+                    t = t.min(k);
+                }
+            }
+        }
+        t.is_finite().then(|| end + d * t)
+    };
+    if let Some(p) = extend(out[out.len() - 1], out[out.len() - 2]) {
+        out.push(p);
+    }
+    if let Some(p) = extend(out[0], out[1]) {
+        out.insert(0, p);
+    }
+    out
+}
+
+/// River ends at the edge of the map carried on straight out past sight.
+fn extend_off_map(pts: &mut Vec<Vec2>) {
+    if pts.len() < 2 {
+        return;
+    }
+    let n = pts.len();
+    if chebyshev(pts[n - 1]) >= LAND_HALF - 30.0 {
+        let d = (pts[n - 1] - pts[n - 2]).normalize_or_zero();
+        pts.push(pts[n - 1] + d * (WAY_REACH + 400.0));
+    }
+    if chebyshev(pts[0]) >= LAND_HALF - 30.0 {
+        let d = (pts[0] - pts[1]).normalize_or_zero();
+        let p = pts[0] + d * (WAY_REACH + 400.0);
+        pts.insert(0, p);
+    }
+}
+
 const CELL: f32 = 10.0;
 /// How far from the water the banks blend into the hills.
 const BANK_REACH: f32 = 160.0;
@@ -143,7 +230,8 @@ impl LandscapeParams {
             LandscapePreset::Plains => (0.25, 0.08, 0.4, 0),
             LandscapePreset::Flat => (0.0, 0.0, 0.0, 0),
         };
-        Self { preset, seed, water, relief, branching, islands, highway: preset != LandscapePreset::Flat }
+        // Every map has its highway from elsewhere to elsewhere.
+        Self { preset, seed, water, relief, branching, islands, highway: true }
     }
 
     /// The old map: flat, dry, no highway. Tests that need open ground use it.
@@ -248,8 +336,9 @@ impl Sea {
     /// Where a ship at `p` leaves the map.
     pub fn exit_from(&self, p: Vec2) -> Vec2 {
         match self.outward {
-            SeaExit::South => Vec2::new(p.x, -LAND_HALF - 80.0),
-            SeaExit::Radial => p.normalize_or(Vec2::NEG_Y) * (LAND_HALF * 1.45),
+            // Out of sight, so ships come and go where nobody sees them.
+            SeaExit::South => Vec2::new(p.x, -WAY_REACH),
+            SeaExit::Radial => p.normalize_or(Vec2::NEG_Y) * WAY_REACH,
         }
     }
 
@@ -519,6 +608,7 @@ impl Landscape {
                     l.rivers.push(River { points: ch, width: width * 0.55, current, stream: false });
                 }
             }
+            extend_off_map(&mut pts);
             l.rivers.insert(0, River { points: pts, width, current, stream: false });
         }
         // Tributaries and streams.
@@ -560,6 +650,7 @@ impl Landscape {
                     continue;
                 }
                 line.reverse();
+                extend_off_map(&mut line);
                 let current = if big { 0.9 + params.relief * 1.5 } else { 1.2 + params.relief * 2.2 } + rng.random_range(0.0..0.6);
                 l.rivers.push(River { points: line, width, current, stream: !big });
             }
@@ -900,9 +991,42 @@ impl Landscape {
             return self.base_height(p);
         }
         if p.x.abs() > LAND_HALF || p.y.abs() > LAND_HALF {
-            return self.base_height(p);
+            return self.carve(self.base_height(p), self.far_water_distance(p));
         }
         self.sample(|r| &r.h, p)
+    }
+
+    /// Signed distance to water beyond the raster (the rivers carried off
+    /// the map, the open sea), capped like the raster's.
+    fn far_water_distance(&self, p: Vec2) -> f32 {
+        let mut d = FAR;
+        for r in &self.rivers {
+            let hw = r.width * 0.5;
+            let reach = hw + BANK_REACH;
+            for w in r.points.windows(2) {
+                if p.x < w[0].x.min(w[1].x) - reach || p.x > w[0].x.max(w[1].x) + reach || p.y < w[0].y.min(w[1].y) - reach || p.y > w[0].y.max(w[1].y) + reach {
+                    continue;
+                }
+                d = d.min(project_on_segment(p, w[0], w[1]).1.distance(p) - hw);
+            }
+        }
+        if let Some(sea) = &self.sea {
+            let mut u = FAR;
+            let rings = std::iter::once(&sea.outline).chain(sea.islands.iter());
+            for ring in rings {
+                let m = ring.len();
+                for k in 0..m {
+                    let (a, b) = (ring[k], ring[(k + 1) % m]);
+                    if p.x < a.x.min(b.x) - BANK_REACH || p.x > a.x.max(b.x) + BANK_REACH || p.y < a.y.min(b.y) - BANK_REACH || p.y > a.y.max(b.y) + BANK_REACH {
+                        continue;
+                    }
+                    u = u.min(project_on_segment(p, a, b).1.distance(p));
+                }
+            }
+            let s = if sea.contains(p) { -u } else { u };
+            d = d.min(s);
+        }
+        d
     }
 
     /// Signed distance to the nearest water, negative in the water, capped
@@ -1359,6 +1483,10 @@ pub struct Ground {
     /// How many of `decks` are water bridges; the rest are underpass decks
     /// carrying the highway over a street.
     pub bridge_decks: usize,
+    /// Ways reaching past the raster (the highway, the trunk line, roads
+    /// out to elsewhere): ends, end heights and corridor half width. The
+    /// ground beyond the raster is graded to them as inside it.
+    outer: Vec<(Vec2, Vec2, f32, f32, f32)>,
 }
 
 impl std::fmt::Debug for Ground {
@@ -1383,6 +1511,16 @@ impl Ground {
                 (a, b, hw, node_z.get(s.a.0 as usize).copied().unwrap_or(0.0), node_z.get(s.b.0 as usize).copied().unwrap_or(0.0))
             })
             .collect();
+        let outer: Vec<(Vec2, Vec2, f32, f32, f32)> = roads
+            .alive_segments()
+            .filter(|(_, s)| !s.bridge)
+            .filter_map(|(id, s)| {
+                let (a, b) = roads.segment_points(id);
+                (chebyshev(a) > half - 1.0 || chebyshev(b) > half - 1.0).then(|| {
+                    (a, b, node_z.get(s.a.0 as usize).copied().unwrap_or(0.0), node_z.get(s.b.0 as usize).copied().unwrap_or(0.0), corridor_half_width(s))
+                })
+            })
+            .collect();
         let underpasses = find_underpasses(land, roads, node_z);
         let bridge_decks = decks.len();
         for u in &underpasses {
@@ -1398,7 +1536,7 @@ impl Ground {
         if land.is_flat() {
             // No raster: the flat map's ground is level, and a way below
             // it runs out of sight.
-            return Ground { half, n: 0, h: Vec::new(), pads, decks, underpasses, bridge_decks };
+            return Ground { half, n: 0, h: Vec::new(), pads, decks, underpasses, bridge_decks, outer: Vec::new() };
         }
         let n = (half * 2.0 / GROUND_CELL) as usize + 1;
         let at = |i: usize, j: usize| Vec2::new(-half + i as f32 * GROUND_CELL, -half + j as f32 * GROUND_CELL);
@@ -1504,7 +1642,35 @@ impl Ground {
                 h[k] = h[k] * (1.0 - w[k]) + t * w[k];
             }
         }
-        Ground { half, n, h, pads, decks, underpasses, bridge_decks }
+        Ground { half, n, h, pads, decks, underpasses, bridge_decks, outer }
+    }
+
+    /// The ground beyond the raster: natural terrain, graded to the ways
+    /// that run out there. Past the map edge each corridor gets a wide
+    /// level shoulder, so the coarse far ground never rises over the road.
+    fn outer_height(&self, land: &Landscape, p: Vec2) -> f32 {
+        let natural = land.height(p);
+        let far = smoothstep(LAND_HALF - 100.0, LAND_HALF + 200.0, chebyshev(p));
+        let mut best = (0.0f32, natural);
+        for &(a, b, za, zb, core) in &self.outer {
+            let core = core + 40.0 * far;
+            let reach = core + 170.0;
+            if p.x < a.x.min(b.x) - reach || p.x > a.x.max(b.x) + reach || p.y < a.y.min(b.y) - reach || p.y > a.y.max(b.y) + reach {
+                continue;
+            }
+            let (t, q) = project_on_segment(p, a, b);
+            let d = q.distance(p);
+            let z = za + (zb - za) * t;
+            let w = if d <= core { 1.0 } else { 1.0 - smoothstep(core, core + embankment_falloff((z - natural).abs()), d) };
+            if w > best.0 {
+                best = (w, z);
+            }
+        }
+        let (w, z) = best;
+        if w <= 0.0 {
+            return natural;
+        }
+        natural * (1.0 - w) + z.max(WATER_LEVEL + 0.4) * w
     }
 
     /// Height of a bridge deck at `p`, if `p` is on one.
@@ -1558,7 +1724,7 @@ impl Ground {
     /// Height of the built ground (natural terrain outside the raster).
     pub fn height(&self, land: &Landscape, p: Vec2) -> f32 {
         if self.n < 2 || p.x.abs() >= self.half || p.y.abs() >= self.half {
-            return if land.is_flat() { land.base_height(p) } else { land.height(p) };
+            return if land.is_flat() { land.base_height(p) } else { self.outer_height(land, p) };
         }
         let n = self.n;
         let fx = ((p.x + self.half) / GROUND_CELL).clamp(0.0, (n - 1) as f32 - 1e-3);

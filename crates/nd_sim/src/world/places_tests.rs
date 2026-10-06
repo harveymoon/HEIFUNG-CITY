@@ -37,7 +37,7 @@ struct Town {
 /// A street with homes and two venues side by side: a cheap, run-down
 /// dive on a crime hot spot with overflowing bins, and a polished lounge.
 fn night_town() -> Town {
-    let mut w = World::new(WorldConfig { emergencies: false, society: false, landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::default() });
+    let mut w = World::new(WorldConfig { emergencies: false, society: false, landscape: crate::landscape::LandscapeParams::flat(), dead_ends_lead_elsewhere: true, ..WorldConfig::default() });
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_zone(square(10.0, 10.0, 190.0), LandUse::Entertainment);
     w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Residential);

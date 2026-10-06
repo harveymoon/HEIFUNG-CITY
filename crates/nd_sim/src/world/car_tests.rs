@@ -28,7 +28,7 @@ fn run(w: &mut World, ticks: usize) {
 /// parking lot among the shops. Shopping streets have no kerb parking, the
 /// homes' street does.
 fn town() -> (World, BuildingId, BuildingId) {
-    let mut w = World::new(WorldConfig { emergencies: false, landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::default() });
+    let mut w = World::new(WorldConfig { emergencies: false, landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::test_town() });
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
     w.add_road(&[Vec2::new(0.0, -300.0), Vec2::new(0.0, 300.0)], 1, 1);
     w.add_zone(square(-200.0, 10.0, 190.0), LandUse::Commercial);

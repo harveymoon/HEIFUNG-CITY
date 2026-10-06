@@ -169,7 +169,8 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
 
     for unit in &units {
-        let col = mul(unit.color, (0.75 + rng.random_range(0.0..0.3)) * (1.0 - 0.4 * c.wear));
+        // Each unit jitters and fades its own paint in `container_unit`.
+        let col = mul(unit.color, 1.0 - 0.3 * c.wear);
         let yc = unit.y0 + unit.h * 0.5;
         container_unit(g, c, rng, unit.u, unit.v, unit.yaw, unit.len, unit.wid, unit.h, unit.y0, col);
         // Tags along a long side of the lower units, where a spray can reaches.
@@ -184,10 +185,26 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             f.bx_yaw(g, s, p.x, y, p.y, size, color, unit.yaw);
         };
         let side = if rng.random_bool(0.5) { -1.0 } else { 1.0 };
+        // Openings cut in the long side: a window and a door, as decals
+        // proud of the corrugation (the frame, then the pane or leaf).
+        let along = f.dir3(Vec2::new(unit.yaw.cos(), unit.yaw.sin()));
+        let out = f.dir3(Vec2::new(-unit.yaw.sin(), unit.yaw.cos())) * side;
+        let opening = |g: &mut Geometry, s, lu: f32, y: f32, d: f32, w: f32, h: f32, color: [f32; 3]| {
+            g.part(s).decal(f.at2(unit.local_to_lot(lu, side * (unit.wid * 0.5 + d)), y), along, Vec3::Y, w, h, out, rgba(color));
+        };
+        let win_u = rng.random_range(-unit.len * 0.3..unit.len * 0.3);
         if coin(rng, lit_chance) {
             let wc = if rng.random_bool(0.3) { [0.5, 0.75, 1.1] } else { pick(rng, &c.style.window_colors) };
-            place(g, Matte, rng.random_range(-unit.len * 0.3..unit.len * 0.3), yc + 0.3, side * (unit.wid * 0.5 + 0.03), Vec3::new(1.1, 0.9, 0.08), DARK);
-            window_light(g, c, |g| place(g, Glow, 0.0, yc + 0.3, side * (unit.wid * 0.5 + 0.06), Vec3::new(0.9, 0.7, 0.05), mul(wc, 0.9)));
+            opening(g, Matte, win_u, yc + 0.3, 0.05, 1.1, 0.9, DARK);
+            window_light(g, c, |g| opening(g, Glow, win_u, yc + 0.3, 0.06, 0.9, 0.7, mul(wc, 0.9)));
+        }
+        if unit.len > 5.0 && coin(rng, 0.7) {
+            // The front door, at the other end of the wall from the window.
+            let du = -win_u.signum() * (unit.len * 0.5 - 1.0);
+            let dh = (unit.h - 0.6).min(2.0);
+            let door_col = if rng.random_bool(0.5) { mul(col, 0.7) } else { mul(pick(rng, &pal.tarp_colors), 0.6) };
+            opening(g, Matte, du, unit.y0 + 0.16 + dh * 0.5 + 0.03, 0.05, 1.0, dh + 0.06, DARK);
+            opening(g, Matte, du, unit.y0 + 0.16 + dh * 0.5, 0.06, 0.82, dh, door_col);
         }
         if coin(rng, 0.25 + 0.4 * c.wear) {
             place(g, Wood, rng.random_range(-unit.len * 0.3..unit.len * 0.3), yc + rng.random_range(-0.5..0.5), -side * (unit.wid * 0.5 + 0.05), Vec3::new(rng.random_range(0.6..1.4), rng.random_range(0.6..1.2), 0.05), pal.plywood);
@@ -224,17 +241,60 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
 
-    // Jacks under unsupported corners.
+    // Rusted I-beam props under unsupported corners; timber cribbing where
+    // the gap is too short for a beam. Two tall props at one end of a unit
+    // are tied into a frame (a header and, higher up, a cross brace); a lone
+    // tall one gets a raking strut.
+    let mut placed: Vec<(Vec2, f32)> = Vec::new();
     for unit in units.iter().filter(|x| x.level > 0) {
-        for corner in unit.corners() {
+        let mut props: [Option<(Vec2, f32)>; 4] = [None; 4];
+        for (ci, corner) in unit.corners().into_iter().enumerate() {
             let inset = corner + (Vec2::new(unit.u, unit.v) - corner).normalize_or_zero() * 0.35;
             if units.iter().any(|o| o.level == unit.level - 1 && o.contains(inset)) {
                 continue;
             }
             let base = units.iter().filter(|o| o.level < unit.level && o.contains(inset)).map(|o| o.top()).fold(0.0, f32::max);
             let h = unit.y0 - base;
-            if h > 0.3 {
-                f.bx(g, if rng.random_bool(0.4) { Rust } else { Matte }, inset.x, base + h * 0.5, inset.y, Vec3::new(0.22, h, 0.22), if rng.random_bool(0.4) { c.palette.rust } else { steel });
+            // Neighbouring units' corners share a prop.
+            if placed.iter().any(|(q, y)| q.distance(inset) < 0.7 && (y - unit.y0).abs() < 0.1) {
+                continue;
+            }
+            if h > 0.6 {
+                ibeam_support(g, c, rng, inset, unit.yaw, base, unit.y0, base <= 0.0);
+                props[ci] = Some((inset, base));
+                placed.push((inset, unit.y0));
+            } else if h > 0.25 {
+                f.bx_yaw(g, Wood, inset.x, base + h * 0.5, inset.y, Vec3::new(0.5, h, 0.3), mul(pal.wood, 0.7), unit.yaw);
+            }
+        }
+        let brace = mul(pal.rust, 0.8);
+        // Corners 0 and 3 are one end of the unit, 1 and 2 the other.
+        for (i, j) in [(0usize, 3usize), (1, 2)] {
+            match (props[i], props[j]) {
+                (Some((a, ba)), Some((b, bb))) if (ba - bb).abs() < 0.1 && unit.y0 - ba > 2.0 => {
+                    // The plane of the frame, for the braces' faces.
+                    let n = f.dir3((b - a).perp()).normalize_or_zero();
+                    let top = unit.y0 - 0.12;
+                    let m = g.part(Rust);
+                    flat_bar(m, f.at2(a, top), f.at2(b, top), 0.2, n, brace);
+                    if unit.y0 - ba > 3.2 {
+                        flat_bar(m, f.at2(a, ba + 0.5), f.at2(b, top - 0.3), 0.08, n, brace);
+                        flat_bar(m, f.at2(b, bb + 0.5), f.at2(a, top - 0.3), 0.08, n, brace);
+                    }
+                }
+                _ => {
+                    for (p, base) in [props[i], props[j]].into_iter().flatten() {
+                        if unit.y0 - base > 3.2 {
+                            // Raking strut from two-thirds up to the ground (or roof)
+                            // a metre and a half in under the unit.
+                            let foot = p + (Vec2::new(unit.u, unit.v) - p).normalize_or_zero() * 1.5;
+                            if units.iter().filter(|o| o.level < unit.level && o.contains(foot)).map(|o| o.top()).fold(0.0, f32::max) == base {
+                                let n = f.dir3((foot - p).perp()).normalize_or_zero();
+                                flat_bar(g.part(Rust), f.at2(p, base + (unit.y0 - base) * 0.66), f.at2(foot, base + 0.05), 0.12, n, brace);
+                            }
+                        }
+                    }
+                }
             }
         }
     }

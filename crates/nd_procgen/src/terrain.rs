@@ -19,11 +19,15 @@ pub struct TerrainConfig {
     /// Radius of the flat basin the city sits in.
     pub basin_radius: f32,
     pub hill_height: f32,
+    /// Ways running out through the hills (the highway, the trunk line,
+    /// roads off the map): ends and half width. The flat map's roads lie at
+    /// height zero, so the hills are levelled along them.
+    pub corridors: Vec<(Vec2, Vec2, f32)>,
 }
 
 impl Default for TerrainConfig {
     fn default() -> Self {
-        Self { seed: 7, half_size: 1800.0, cell: 12.0, basin_radius: 1000.0, hill_height: 160.0 }
+        Self { seed: 7, half_size: 1800.0, cell: 12.0, basin_radius: 1000.0, hill_height: 160.0, corridors: Vec::new() }
     }
 }
 
@@ -35,7 +39,98 @@ pub fn terrain_height(cfg: &TerrainConfig, noise: &Fbm<Perlin>, x: f32, z: f32) 
     let t = ((r - cfg.basin_radius) / (cfg.half_size - cfg.basin_radius)).clamp(0.0, 1.0);
     let ramp = t * t * (3.0 - 2.0 * t);
     let n = noise.get([x as f64 * 0.0025, z as f64 * 0.0025]) as f32 * 0.5 + 0.5;
-    ramp * cfg.hill_height * (0.4 + 0.6 * n)
+    let mut level = 1.0f32;
+    let p = Vec2::new(x, z);
+    for &(a, b, hw) in &cfg.corridors {
+        let core = hw + 40.0;
+        let reach = core + 160.0;
+        if x < a.x.min(b.x) - reach || x > a.x.max(b.x) + reach || z < a.y.min(b.y) - reach || z > a.y.max(b.y) + reach {
+            continue;
+        }
+        let ab = b - a;
+        let t = ((p - a).dot(ab) / ab.length_squared().max(1e-6)).clamp(0.0, 1.0);
+        let d = (a + ab * t).distance(p);
+        let k = ((d - core) / (reach - core)).clamp(0.0, 1.0);
+        level = level.min(k * k * (3.0 - 2.0 * k));
+    }
+    ramp * cfg.hill_height * (0.4 + 0.6 * n) * level
+}
+
+/// The flat map's ground height anywhere, the hills beyond the drawn
+/// square included (they keep their full height out there).
+pub fn flat_height(cfg: &TerrainConfig) -> impl Fn(Vec2) -> f32 + '_ {
+    let noise = height_noise(cfg);
+    move |p: Vec2| terrain_height(cfg, &noise, p.x, p.y)
+}
+
+/// The ground beyond the drawn square, out to `outer` (past anything in
+/// sight): a coarse height field from `height`, coloured like the hills,
+/// mud under water. Cells wholly inside `inner` less a cell are left out;
+/// the ring overlaps the main terrain by a cell and sits a little lower, so
+/// there is never a gap at the seam and the main terrain wins over it.
+pub fn build_far_ground(inner: f32, outer: f32, cell: f32, height: &dyn Fn(Vec2) -> f32, wet: &dyn Fn(Vec2) -> bool, palette: &Palette) -> MeshData {
+    let n = ((outer * 2.0) / cell).ceil() as usize + 1;
+    let at = |i: usize, j: usize| Vec2::new(-outer + i as f32 * cell, -outer + j as f32 * cell);
+    // Grid points needed: everything but the middle, less a cell's margin
+    // for the normals.
+    let hole = inner - cell;
+    let skip = |p: Vec2, margin: f32| p.x.abs() < hole - margin && p.y.abs() < hole - margin;
+    let mut heights = vec![f32::NAN; n * n];
+    for j in 0..n {
+        for i in 0..n {
+            let p = at(i, j);
+            if !skip(p, cell * 1.5) {
+                heights[j * n + i] = height(p) - 0.5;
+            }
+        }
+    }
+    let mut mesh = MeshData::default();
+    let mut index = vec![u32::MAX; n * n];
+    let detail = Fbm::<Perlin>::new(91).set_octaves(2);
+    let mud = mul(mix(palette.ground, [0.25, 0.22, 0.16], 0.6), 0.7);
+    let h = |i: usize, j: usize| {
+        let v = heights[j.min(n - 1) * n + i.min(n - 1)];
+        if v.is_nan() { 0.0 } else { v }
+    };
+    for j in 0..n - 1 {
+        for i in 0..n - 1 {
+            if skip(at(i, j), 0.0) && skip(at(i + 1, j + 1), 0.0) {
+                continue;
+            }
+            let mut corner = |ii: usize, jj: usize, mesh: &mut MeshData| -> u32 {
+                let k = jj * n + ii;
+                if index[k] != u32::MAX {
+                    return index[k];
+                }
+                let p = at(ii, jj);
+                let y = h(ii, jj);
+                let v = detail.get([p.x as f64 * 0.004, p.y as f64 * 0.004]) as f32 * 0.5 + 0.5;
+                let hill_t = ((y - 12.0) / 120.0).clamp(0.0, 1.0);
+                let mut rgb = [0.0f32; 3];
+                for c in 0..3 {
+                    let f = palette.ground[c] + palette.ground_variation[c] * v;
+                    rgb[c] = f * (1.0 - hill_t) + palette.hills[c] * hill_t;
+                }
+                if wet(p) {
+                    rgb = mud;
+                }
+                let dx = h(ii + 1, jj) - h(ii.saturating_sub(1), jj);
+                let dz = h(ii, jj + 1) - h(ii, jj.saturating_sub(1));
+                mesh.positions.push([p.x, y, p.y]);
+                mesh.normals.push(glam::Vec3::new(-dx, 2.0 * cell, -dz).normalize().to_array());
+                mesh.colors.push([rgb[0], rgb[1], rgb[2], 1.0]);
+                mesh.uvs.push([p.x, -p.y]);
+                index[k] = (mesh.positions.len() - 1) as u32;
+                index[k]
+            };
+            let a = corner(i, j, &mut mesh);
+            let b = corner(i + 1, j, &mut mesh);
+            let c = corner(i, j + 1, &mut mesh);
+            let d = corner(i + 1, j + 1, &mut mesh);
+            mesh.indices.extend_from_slice(&[a, c, b, b, c, d]);
+        }
+    }
+    mesh
 }
 
 /// The noise the hills are built from, so other passes can sample the same height.
@@ -295,6 +390,46 @@ pub fn build_water(world: &World, palette: &Palette) -> MeshData {
                 mesh.positions.push([c.x, WATER_LEVEL, c.y]);
                 mesh.normals.push([0.0, 1.0, 0.0]);
                 mesh.colors.push([rgb[0], rgb[1], rgb[2], 0.86]);
+                mesh.uvs.push([c.x, -c.y]);
+            }
+            mesh.indices.extend_from_slice(&[base, base + 3, base + 1, base + 1, base + 3, base + 2]);
+        }
+    }
+    mesh
+}
+
+/// The water beyond the fine sheet of [`build_water`]: the sea and the
+/// rivers running on out of sight, in coarse cells. It depends on the
+/// landscape alone, so it is built once per map.
+pub fn build_far_water(world: &World, palette: &Palette) -> MeshData {
+    let land = &world.landscape;
+    let mut mesh = MeshData::default();
+    if land.is_flat() {
+        return mesh;
+    }
+    let half = LAND_HALF + 400.0;
+    let deep = mul(palette.water, 0.22);
+    let far_cell = 40.0;
+    // On the same grid as the fine sheet's edge, so the two meet exactly.
+    let outer = half + ((nd_sim::landscape::FAR_GROUND - half) / far_cell).ceil() * far_cell;
+    let m = ((outer * 2.0) / far_cell) as i32;
+    for j in 0..m {
+        for i in 0..m {
+            let x0 = -outer + i as f32 * far_cell;
+            let z0 = -outer + j as f32 * far_cell;
+            // Only outside the fine sheet.
+            if x0 >= -half && x0 + far_cell <= half && z0 >= -half && z0 + far_cell <= half {
+                continue;
+            }
+            let corners = [Vec2::new(x0, z0), Vec2::new(x0 + far_cell, z0), Vec2::new(x0 + far_cell, z0 + far_cell), Vec2::new(x0, z0 + far_cell)];
+            if !corners.iter().any(|c| land.is_water(*c)) && !land.is_water(Vec2::new(x0 + far_cell * 0.5, z0 + far_cell * 0.5)) {
+                continue;
+            }
+            let base = mesh.positions.len() as u32;
+            for c in corners {
+                mesh.positions.push([c.x, WATER_LEVEL, c.y]);
+                mesh.normals.push([0.0, 1.0, 0.0]);
+                mesh.colors.push([deep[0], deep[1], deep[2], 0.86]);
                 mesh.uvs.push([c.x, -c.y]);
             }
             mesh.indices.extend_from_slice(&[base, base + 3, base + 1, base + 1, base + 3, base + 2]);

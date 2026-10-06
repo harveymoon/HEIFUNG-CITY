@@ -12,8 +12,6 @@ use nd_sim::{Gesture, LandUse, PowerPlantKind, RailFacility, Vec2, World, WorldC
 /// The same layout as `Sim::new` + `Sim::seed_demo_district` in nd_app.
 pub fn demo_world() -> World {
     let mut world = World::new(WorldConfig::default());
-    world.add_road(&[Vec2::new(-700.0, 0.0), Vec2::new(700.0, 0.0)], 2, 2);
-    world.add_road(&[Vec2::new(0.0, -700.0), Vec2::new(0.0, 700.0)], 2, 2);
     world.drain_events();
     world.start_project();
     for i in -2..=2 {
@@ -41,6 +39,8 @@ pub fn demo_world() -> World {
     });
     world.implement();
     world.economy.treasury = world.economy.treasury.max(150_000.0);
+    // The district's way in: a street north from the grid onto the highway.
+    world.link_to_highway(Vec2::new(0.0, 280.0));
     let _ = world.place_rail_facility(RailFacility::FreightYard, Vec2::new(-200.0, -330.0));
     let _ = world.place_rail_facility(RailFacility::Station, Vec2::new(80.0, -310.0));
     let lot = world.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial && l.building.is_none() && l.area() >= 600.0).max_by(|a, b| a.1.area().total_cmp(&b.1.area())).map(|(id, _)| id);

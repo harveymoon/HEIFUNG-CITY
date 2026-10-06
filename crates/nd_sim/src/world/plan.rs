@@ -673,6 +673,8 @@ impl World {
         for (_, drawn, levels, fwd, bwd, kind) in built {
             // Track is eased into smooth curves and tangential switches.
             let points = if kind == RoadKind::Rail { rail::smooth_track(&drawn, &roads) } else { drawn.clone() };
+            // An end at the map edge runs on out of sight: a way to elsewhere.
+            let points = crate::landscape::reach_elsewhere(&points);
             // Ramps meet the highway tangentially: a lead point before a
             // merge (after a diverge) brings the last piece alongside.
             let points = if crate::roads::is_ramp_spec(kind, fwd, bwd) { crate::roads::ease_ramp_ends(&points, fwd > 0, &roads) } else { points };
@@ -783,6 +785,10 @@ impl World {
         // Lanes and cars.
         self.traffic.rebuild(&self.roads);
         for (_, car) in self.traffic.clear_cars() {
+            // Through traffic carries on along the highway.
+            if Self::is_through_car(&car) && self.resume_through_car(&car) {
+                continue;
+            }
             self.strand_car(car);
         }
         // [carlife] Parked cars on streets that changed find a kerb again.

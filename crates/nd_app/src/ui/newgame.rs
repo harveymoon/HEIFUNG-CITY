@@ -66,10 +66,8 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, draft: &mut Draft) {
             for preset in LandscapePreset::ALL {
                 let on = draft.params.preset == preset;
                 if ui.selectable_label(on, preset.label()).on_hover_text(preset.blurb()).clicked() && !on {
-                    // A preset sets its own levers; the seed and highway stay.
-                    let keep = (draft.params.seed, draft.params.highway);
-                    draft.params = LandscapeParams::preset(preset, keep.0);
-                    draft.params.highway = keep.1 && preset != LandscapePreset::Flat;
+                    // A preset sets its own levers; the seed stays.
+                    draft.params = LandscapeParams::preset(preset, draft.params.seed);
                 }
             }
             hint(ui, draft.params.preset.blurb());
@@ -92,7 +90,7 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, draft: &mut Draft) {
                     draft.params.seed = (draft.params.seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) >> 20) % 1_000_000;
                 }
             });
-            ui.checkbox(&mut draft.params.highway, "through highway at the start");
+            hint(ui, "Every map starts with the highway and the trunk line, edge to edge; the rest is yours to build.");
         });
         ui.vertical(|ui| {
             refresh_preview(ui.ctx(), draft);
@@ -165,7 +163,7 @@ pub fn preview_image(params: &LandscapeParams) -> (egui::ColorImage, String) {
                 [220, 190, 60]
             } else if params.highway && ((p.y - nd_sim::landscape::HIGHWAY_Y).abs() < 14.0) {
                 [235, 180, 90]
-            } else if (p.y - nd_sim::rail::TRUNK_Y).abs() < 8.0 && p.x.abs() < 1000.0 {
+            } else if (p.y - nd_sim::rail::TRUNK_Y).abs() < 8.0 {
                 [150, 150, 160]
             } else {
                 let h = land.base_height(p);

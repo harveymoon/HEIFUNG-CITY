@@ -71,7 +71,7 @@
 [x] - pedestrians look like the people they are (skin, hair, build, clothes in their favourite colours, family resemblance)   → DONE.
 [x] - roundabout centres empty and usable, nesting, 3x larger maximum   → DONE.
 [x] - traffic deadlock at kerb pull-outs (buses at depots) and the slowdown   → DONE.
-[~] - places: taste, regulars, never-again, exploring for a drink   → IN PROGRESS (feat/places).
+[x] - places: taste, regulars, never-again, exploring for a drink   → DONE: places have a character, people a taste; visits are rated with luck and events; regulars, grudges, word of mouth, outings with family and coworkers.
 [~] - roads: raise/lower while drawing, overpasses/underpasses by height, realistic preview   → IN PROGRESS (feat/elevation).
 [~] - map edges: only a highway and rail at the start, extending past the horizon, vehicles entering out of sight   → IN PROGRESS (feat/edges).
 
