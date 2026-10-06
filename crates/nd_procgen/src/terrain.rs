@@ -423,12 +423,16 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
         let yaw = dir.y.atan2(dir.x);
         if seg.tunnel {
             // Portals: where this tunnel piece meets a way that is not one.
-            for (n, z, out) in [(seg.a, za, -dir), (seg.b, zb, dir)] {
-                let open = roads.node(n).segments.iter().any(|&o| o != sid && roads.segment(o).alive && !roads.segment(o).tunnel);
-                if !open {
-                    continue;
-                }
+            for (n, z) in [(seg.a, za), (seg.b, zb)] {
+                let Some(o) = roads.node(n).segments.iter().copied().find(|&o| o != sid && roads.segment(o).alive && !roads.segment(o).tunnel) else { continue };
                 let p = roads.node(n).pos;
+                // Square to the ramp coming down to it (the bore may turn
+                // at the portal).
+                let os = roads.segment(o);
+                let far = roads.node(if os.a == n { os.b } else { os.a }).pos;
+                let out = (far - p).normalize_or_zero();
+                let side = Vec2::new(-out.y, out.x);
+                let yaw = out.y.atan2(out.x);
                 let top = z + 6.2;
                 for sgn in [-1.0f32, 1.0] {
                     let q = p + side * sgn * (hw + 0.6);
