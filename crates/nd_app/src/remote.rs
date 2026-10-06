@@ -487,6 +487,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             v["took_ms"] = json!(ms(start));
             Ok(v)
         }
+        "industry" => map::industry(cmd, &mut ctx.sim.world),
         "map" => {
             let start = std::time::Instant::now();
             let layer = opt_str(cmd, "layer")?.unwrap_or("summary");
@@ -1415,7 +1416,8 @@ fn help() -> Value {
     // macro recursion limit.
     let review = json!({
         "report": { "sections": "optional subset of overview, people, economy, land, services, alerts (default all): the one-call city review" },
-        "map": { "cell_m": "cell size in metres, default 100 (grown to keep at most 400 cells)", "layer": "summary (table of cells) | population | land_value | jobs | hunger | vacancy | power | traffic (grid + ASCII heat map)" },
+        "map": { "cell_m": "cell size in metres, default 100 (grown to keep at most 400 cells)", "layer": "summary (table of cells) | population | land_value | jobs | hunger | vacancy | power | traffic | fertility | oil | contamination | industry (grid + ASCII heat map)" },
+        "industry": { "lot": "lot id, or", "polygon": "[[x, y], ...] area, or", "pos": "[x, y] (query only)", "kind": "farming | oil | refinery | manufacturing | logistics | fishing | tech | none: sets the industry sub-zone bias (none hands the area back to the ground); omit to query the ground, contamination and industry weights of the lot" },
         "history": { "keys": "optional daily/hourly series names (default all)", "days": "last n days (default all kept, up to 365)" },
         "list": { "what": "businesses|buildings|citizens|lots|routes|plants|facilities", "sort": "column", "desc": "bool", "filter": "{column: substring | value | {min, max}}", "fields": "[columns] (id always kept)", "offset": "default 0", "limit": "default 50, max 1000" },
         "export": { "path": "optional; default exports/city-<unix>.json: report + map + history + every row of every list" },

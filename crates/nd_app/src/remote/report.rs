@@ -64,13 +64,9 @@ pub const MEMORY_WINDOW_TICKS: u64 = 2 * 1440;
 /// Example ids carried by each alert.
 const ALERT_EXAMPLES: usize = 5;
 
-pub const SECTIONS: &[&str] = &["overview", "people", "economy", "land", "services", "alerts"];
+pub const SECTIONS: &[&str] = &["overview", "people", "economy", "land", "services", "industry", "alerts"];
 
-const KINDS: [BusinessKind; 13] = [
-    BusinessKind::VertFarm, BusinessKind::GrainFarm, BusinessKind::ProteinVat, BusinessKind::Dairy, BusinessKind::Mill, BusinessKind::Fab,
-    BusinessKind::Assembly, BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::GadgetShop, BusinessKind::Venue, BusinessKind::Office,
-    BusinessKind::Parking,
-];
+const KINDS: [BusinessKind; 19] = BusinessKind::ALL;
 
 pub fn lu_key(lu: LandUse) -> String {
     lu.label().to_ascii_lowercase()
@@ -153,6 +149,9 @@ pub fn report(w: &World, sections: &[String]) -> Result<Value, String> {
     }
     if want("services") {
         out.insert("services".into(), services(w));
+    }
+    if want("industry") {
+        out.insert("industry".into(), industry(w));
     }
     if want("alerts") {
         out.insert("alerts".into(), alerts_json(&alerts, usize::MAX));
@@ -963,4 +962,67 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     out.retain(|a| a.count > 0);
     out.sort_by(|a, b| b.score().total_cmp(&a.score()));
     out
+}
+
+/// Industry by sub-zone, the ground it fouls, the player's biases, truck
+/// and bus lots, and what the plants cost the land around them.
+fn industry(w: &World) -> Value {
+    use nd_sim::IndustryKind;
+    let mut rows: Vec<(u32, u32, u32, f32, f32)> = vec![(0, 0, 0, 0.0, 0.0); IndustryKind::ALL.len()];
+    let (mut fleet_lots, mut fleet_bays, mut fleet_parked) = (0u32, 0u32, 0u32);
+    for (id, b) in w.buildings.iter() {
+        let Some(z) = &b.business else { continue };
+        let Some(k) = z.kind.industry() else { continue };
+        let r = &mut rows[k.index()];
+        r.0 += 1;
+        if !z.closed && b.construction.is_none() {
+            r.1 += 1;
+        }
+        r.2 += b.jobs as u32;
+        r.3 += b.staffing();
+        r.4 += z.revenue_today - z.spend_today;
+        if z.kind == BusinessKind::FleetLot {
+            fleet_lots += 1;
+            fleet_bays += w.fleet_capacity(id) as u32;
+            fleet_parked += z.fleet_trucks as u32;
+        }
+    }
+    let kinds: Map<String, Value> = IndustryKind::ALL
+        .iter()
+        .map(|k| {
+            let r = rows[k.index()];
+            let (radius, nuisance) = k.nuisance();
+            (
+                k.key().to_string(),
+                json!({ "label": k.label(), "buildings": r.0, "open": r.1, "jobs": r.2, "mean_staffing": if r.0 > 0 { r3(r.3 / r.0 as f32) } else { 0.0 },
+                        "profit_today": round(r.4), "nuisance": { "radius_m": radius, "weight": nuisance }, "fouls_ground": k.spill().is_some() }),
+            )
+        })
+        .collect();
+    let returning = w.traffic.cars.values().filter(|c| c.cargo.as_ref().is_some_and(nd_sim::world::is_return_trip)).count();
+    let trucks = w.traffic.cars.values().filter(|c| c.cargo.is_some()).count();
+    let biases: Vec<Value> = w
+        .industry_bias
+        .iter()
+        .rev()
+        .take(20)
+        .map(|b| json!({ "kind": b.kind.map(|k| k.key()), "corners": b.polygon.len(), "first": b.polygon.first().map(|p| [round(p.x), round(p.y)]) }))
+        .collect();
+    let plants: Vec<Value> = nd_sim::PowerPlantKind::ALL
+        .iter()
+        .map(|k| {
+            let (r, wgt) = k.pollution();
+            json!({ "kind": k.label(), "radius_m": r, "land_value": wgt, "load": round(k.pollution_load()), "ash": k.ground_spill().is_some() })
+        })
+        .collect();
+    let c = &w.contamination;
+    json!({
+        "by_kind": kinds,
+        "contamination": { "cells": c.cells.len(), "cells_over_0_3": c.cells_over(0.3), "max": r3(c.max()), "total": round(c.total()), "cell_m": c.cell,
+                            "note": "0..1 per cell; oil wells, refineries and coal ash raise it, it spreads and fades daily; it costs land value and spoils crops" },
+        "fleet": { "truck_and_bus_lots": fleet_lots, "bays": fleet_bays, "trucks_parked": fleet_parked, "trucks_on_road": trucks, "returning_empty": returning },
+        "biases": { "count": w.industry_bias.len(), "newest_first": biases },
+        "plant_land_value": plants,
+        "land_value_note": "plants and heavy industry are nuisances: homes feel 125% of them, shops 85%, industry 30%; working industry lifts land below 0.35 by up to 0.1",
+    })
 }

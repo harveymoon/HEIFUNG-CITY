@@ -12,6 +12,8 @@
 //! - `buses`: depots, routes, stops and the bus loop
 //! - `trains`: stations, yards, rail links and trains
 //! - `power`: plants and power allocation
+//! - `industry`: industry sub-zones and the player's bias, the ground
+//!   industry fouls, logistics fees, truck and bus lots
 //! - `water`: the landscape hooks: road heights, bridges, the built ground,
 //!   the highway and its through traffic, ports, ferries and ships
 //! - `tests`: the world-level tests
@@ -19,6 +21,7 @@
 mod buses;
 mod construction;
 mod develop;
+mod industry;
 mod market;
 mod parking;
 mod plan;
@@ -60,6 +63,7 @@ use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
 pub use crate::rail::TRUNK_Y;
+pub use industry::{is_return_trip, IndustryArea};
 use crate::landscape::{Ground, Landscape, LandscapeParams};
 use crate::ports::Ports;
 
@@ -267,6 +271,13 @@ pub struct World {
     /// Metres of bridge already paid for.
     #[serde(default)]
     pub bridge_metres: f32,
+    /// What industry has done to the ground (oil spills, ash): saved,
+    /// spreads and fades daily. Old saves load clean.
+    #[serde(default)]
+    pub contamination: crate::ground::Contamination,
+    /// The player's industry sub-zone bias over areas, newest last.
+    #[serde(default)]
+    pub industry_bias: Vec<crate::industry::IndustryBias>,
 }
 
 impl World {
@@ -316,6 +327,8 @@ impl World {
             road_z: Vec::new(),
             ground: Ground::default(),
             bridge_metres: 0.0,
+            contamination: crate::ground::Contamination::new(half + 200.0, crate::ground::CONTAMINATION_CELL),
+            industry_bias: Vec::new(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -549,12 +562,14 @@ impl World {
         if self.clock.minute_of_day() == 0 {
             self.events.push(SimEvent::NewDay(self.clock.day()));
             self.daily_update();
+            self.industry_daily();
         }
         // Periodic work is staggered so no tick carries more than one heavy
         // job: the hour starts at :00, sites advance at :30, land value runs
         // in strips from :20, development and immigration sit between.
         if tick % 60 == 0 {
             self.hourly_economy();
+            self.industry_hourly();
         }
         if tick % 60 == 30 {
             self.step_construction();
@@ -601,7 +616,7 @@ impl World {
             }
             let Some(car) = self.traffic.remove_car(car_id) else { continue };
             if let Some(cargo) = car.cargo {
-                self.deliver(cargo);
+                self.truck_arrived(cargo);
                 continue;
             }
             if let Some(c) = self.citizens.get_mut(car.citizen) {

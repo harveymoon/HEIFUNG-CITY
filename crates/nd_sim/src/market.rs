@@ -25,10 +25,19 @@ pub enum Resource {
     Parts,
     Electronics,
     Goods,
+    // -- industry block: oil and fish --
+    /// Crude oil from the wells.
+    Crude,
+    /// Refined fuel: diesel for the lorries and boats.
+    Fuel,
+    /// Plastics and chemicals from the refinery.
+    Plastics,
+    /// The catch, landed by the fishing boats.
+    Fish,
 }
 
 impl Resource {
-    pub const ALL: [Resource; 10] = [
+    pub const ALL: [Resource; 14] = [
         Resource::Produce,
         Resource::Grain,
         Resource::Flour,
@@ -39,6 +48,10 @@ impl Resource {
         Resource::Parts,
         Resource::Electronics,
         Resource::Goods,
+        Resource::Crude,
+        Resource::Fuel,
+        Resource::Plastics,
+        Resource::Fish,
     ];
 
     pub fn label(self) -> &'static str {
@@ -53,6 +66,10 @@ impl Resource {
             Resource::Parts => "parts",
             Resource::Electronics => "electronics",
             Resource::Goods => "goods",
+            Resource::Crude => "crude oil",
+            Resource::Fuel => "fuel",
+            Resource::Plastics => "plastics",
+            Resource::Fish => "fish",
         }
     }
 
@@ -69,6 +86,10 @@ impl Resource {
             Resource::Parts => 9.0,
             Resource::Electronics => 45.0,
             Resource::Goods => 60.0,
+            Resource::Crude => 4.0,
+            Resource::Fuel => 12.0,
+            Resource::Plastics => 16.0,
+            Resource::Fish => 3.0,
         }
     }
 
@@ -94,6 +115,19 @@ pub enum BusinessKind {
     Office,
     /// Sells parking by the visit; no goods.
     Parking,
+    // -- industry block (see `crate::industry`) --
+    /// Pumpjacks over an oil deposit: crude, and a fouled ground.
+    OilWell,
+    /// Crude in, fuel and plastics out.
+    Refinery,
+    /// Container storage and loading: earns handling fees, burns fuel.
+    ContainerYard,
+    /// Truck and bus lot: parks idle fleets for a fee, burns fuel.
+    FleetLot,
+    /// Boats landing fish.
+    Fishery,
+    /// Fish processing: fish in, food (counted as meat) out.
+    FishPlant,
 }
 
 /// Opening hours on the clock, `open..close`; a close earlier than the open
@@ -167,6 +201,28 @@ pub struct Recipe {
 }
 
 impl BusinessKind {
+    pub const ALL: [BusinessKind; 19] = [
+        BusinessKind::VertFarm,
+        BusinessKind::GrainFarm,
+        BusinessKind::ProteinVat,
+        BusinessKind::Dairy,
+        BusinessKind::Mill,
+        BusinessKind::Fab,
+        BusinessKind::Assembly,
+        BusinessKind::Grocery,
+        BusinessKind::Bakery,
+        BusinessKind::GadgetShop,
+        BusinessKind::Venue,
+        BusinessKind::Office,
+        BusinessKind::Parking,
+        BusinessKind::OilWell,
+        BusinessKind::Refinery,
+        BusinessKind::ContainerYard,
+        BusinessKind::FleetLot,
+        BusinessKind::Fishery,
+        BusinessKind::FishPlant,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             BusinessKind::VertFarm => "vertical farm",
@@ -182,6 +238,12 @@ impl BusinessKind {
             BusinessKind::Venue => "venue",
             BusinessKind::Office => "office",
             BusinessKind::Parking => "parking",
+            BusinessKind::OilWell => "oil well",
+            BusinessKind::Refinery => "refinery",
+            BusinessKind::ContainerYard => "container yard",
+            BusinessKind::FleetLot => "truck and bus lot",
+            BusinessKind::Fishery => "fishery",
+            BusinessKind::FishPlant => "fish processing plant",
         }
     }
 
@@ -203,13 +265,37 @@ impl BusinessKind {
             BusinessKind::Venue => Recipe { inputs: &[(Resource::Groceries, 0.3)], outputs: &[] },
             BusinessKind::Office => Recipe { inputs: &[], outputs: &[] },
             BusinessKind::Parking => Recipe { inputs: &[], outputs: &[] },
+            BusinessKind::OilWell => Recipe { inputs: &[], outputs: &[(Resource::Crude, 2.5)] },
+            BusinessKind::Refinery => Recipe { inputs: &[(Resource::Crude, 1.5)], outputs: &[(Resource::Fuel, 0.8), (Resource::Plastics, 0.4)] },
+            // Fuel is burnt by the hour in `World::industry_hourly`, which
+            // also pays the handling and bay fees.
+            BusinessKind::ContainerYard => Recipe { inputs: &[(Resource::Fuel, 0.15)], outputs: &[] },
+            BusinessKind::FleetLot => Recipe { inputs: &[(Resource::Fuel, 0.1)], outputs: &[] },
+            BusinessKind::Fishery => Recipe { inputs: &[], outputs: &[(Resource::Fish, 2.5)] },
+            BusinessKind::FishPlant => Recipe { inputs: &[(Resource::Fish, 1.5)], outputs: &[(Resource::Meat, 1.0)] },
         }
     }
 
     /// Candidate kinds for a land use, picked at construction.
     pub fn candidates(land_use: LandUse) -> &'static [BusinessKind] {
         match land_use {
-            LandUse::Industrial => &[BusinessKind::VertFarm, BusinessKind::GrainFarm, BusinessKind::ProteinVat, BusinessKind::Dairy, BusinessKind::Mill, BusinessKind::Fab, BusinessKind::Assembly],
+            // Industrial lots choose through `crate::industry` (ground,
+            // neighbours, the player's bias); this is the full menu.
+            LandUse::Industrial => &[
+                BusinessKind::VertFarm,
+                BusinessKind::GrainFarm,
+                BusinessKind::ProteinVat,
+                BusinessKind::Dairy,
+                BusinessKind::Mill,
+                BusinessKind::Fab,
+                BusinessKind::Assembly,
+                BusinessKind::OilWell,
+                BusinessKind::Refinery,
+                BusinessKind::ContainerYard,
+                BusinessKind::FleetLot,
+                BusinessKind::Fishery,
+                BusinessKind::FishPlant,
+            ],
             LandUse::Commercial => &[BusinessKind::Grocery, BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::GadgetShop, BusinessKind::Office],
             LandUse::Entertainment => &[BusinessKind::Venue],
             LandUse::Civic => &[BusinessKind::Office],
@@ -225,7 +311,9 @@ impl BusinessKind {
             BusinessKind::GadgetShop => Hours::new(9, 20),
             BusinessKind::Venue => Hours::new(18, 3),
             BusinessKind::Office => Hours::new(8, 18),
-            BusinessKind::Parking => Hours::ALWAYS,
+            BusinessKind::Parking | BusinessKind::FleetLot | BusinessKind::ContainerYard | BusinessKind::OilWell => Hours::ALWAYS,
+            BusinessKind::Fishery => Hours::new(4, 16),
+            BusinessKind::Refinery | BusinessKind::FishPlant => Hours::new(6, 22),
             // Plants run two shifts.
             BusinessKind::VertFarm | BusinessKind::GrainFarm | BusinessKind::ProteinVat | BusinessKind::Dairy | BusinessKind::Mill | BusinessKind::Fab | BusinessKind::Assembly => Hours::new(6, 22),
         }
@@ -244,7 +332,12 @@ impl BusinessKind {
     /// Part of the food chain, from farm to shelf: staffed first, and
     /// ordering ahead when the town is growing.
     pub fn is_food(self) -> bool {
-        matches!(self, BusinessKind::VertFarm | BusinessKind::GrainFarm | BusinessKind::ProteinVat | BusinessKind::Dairy | BusinessKind::Mill | BusinessKind::Grocery | BusinessKind::Bakery)
+        matches!(self, BusinessKind::VertFarm | BusinessKind::GrainFarm | BusinessKind::ProteinVat | BusinessKind::Dairy | BusinessKind::Mill | BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::Fishery | BusinessKind::FishPlant)
+    }
+
+    /// The industry sub-zone this business belongs to, if any.
+    pub fn industry(self) -> Option<crate::industry::IndustryKind> {
+        crate::industry::IndustryKind::of_business(self)
     }
 
     /// Stock a business tries to keep of each input, in hours of production.
@@ -271,6 +364,9 @@ pub struct Business {
     /// Deliveries on their way, so the business does not reorder.
     #[serde(default)]
     pub inbound: BTreeMap<Resource, f32>,
+    /// A truck and bus lot: lorries parked here between jobs.
+    #[serde(default)]
+    pub fleet_trucks: u16,
 }
 
 impl Business {
@@ -287,6 +383,7 @@ impl Business {
             broke_days: 0,
             closed: false,
             inbound: BTreeMap::new(),
+            fleet_trucks: 0,
         }
     }
 

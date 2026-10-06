@@ -971,6 +971,8 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         port: b.port,
         construction: b.construction.as_ref().map(|c| c.progress),
         neighbours: styles.neighbours(id),
+        business: b.business.as_ref().map(|z| z.kind),
+        fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
     };
     let mut g = generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras);
     // Every building stands on its lot's levelled pad.

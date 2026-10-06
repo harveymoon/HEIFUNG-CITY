@@ -22,7 +22,7 @@ pub const MAX_CELLS: usize = 400;
 const MIN_CELL_M: f32 = 25.0;
 /// Heat map characters, empty to hottest.
 const RAMP: &[u8] = b" .:-=+*#%@";
-pub const LAYERS: &[&str] = &["summary", "population", "land_value", "jobs", "hunger", "vacancy", "power", "traffic"];
+pub const LAYERS: &[&str] = &["summary", "population", "land_value", "jobs", "hunger", "vacancy", "power", "traffic", "fertility", "oil", "contamination", "industry"];
 
 #[derive(Default, Clone)]
 struct Cell {
@@ -38,6 +38,12 @@ struct Cell {
     unpowered: u32,
     cars: u32,
     lu_area: [f32; 6],
+    /// Ground at the cell centre (static) and contamination now.
+    fertility: f32,
+    oil: f32,
+    contamination: f32,
+    /// Industrial buildings in the cell by sub-zone.
+    industry: [u32; 7],
 }
 
 impl Cell {
@@ -58,6 +64,10 @@ impl Cell {
             "vacancy" => self.vacant_lots as f32,
             "power" => self.unpowered as f32,
             "traffic" => self.cars as f32,
+            "fertility" => self.fertility,
+            "oil" => self.oil,
+            "contamination" => self.contamination,
+            "industry" => self.industry.iter().sum::<u32>() as f32,
             _ => 0.0,
         }
     }
@@ -149,6 +159,24 @@ fn build(w: &World, cell_m: f32) -> Result<Grid, String> {
             c.cars += 1;
         }
     }
+    for b in w.buildings.values() {
+        let Some(k) = b.business.as_ref().and_then(|z| z.kind.industry()) else { continue };
+        let Some(p) = w.lots.get(b.lot).map(|l| l.center) else { continue };
+        if let Some(c) = g.at(p) {
+            c.industry[k.index()] += 1;
+        }
+    }
+    for row in 0..g.rows {
+        for col in 0..g.cols {
+            let [x, y] = g.center(col, row);
+            let p = SVec2::new(x as f32, y as f32);
+            let s = w.ground_at(p);
+            let cell = &mut g.cells[row * g.cols + col];
+            cell.fertility = s.fertility;
+            cell.oil = s.oil;
+            cell.contamination = w.contamination.at(p);
+        }
+    }
     Ok(g)
 }
 
@@ -230,6 +258,10 @@ pub fn map(w: &World, cell_m: Option<f32>, layer: &str) -> Result<Value, String>
         "hunger" => "hungry residents (satiety < 0.3)",
         "vacancy" => "vacant buildable lots",
         "power" => "buildings below 60% power",
+        "fertility" => "soil fertility at the cell centre, 0..1 (good grass by rivers and on the plains)",
+        "oil" => "oil deposit under the cell centre, 0..1",
+        "contamination" => "ground contamination at the cell centre, 0..1 (oil wells, refineries, coal ash)",
+        "industry" => "industrial buildings (all sub-zones; see report industry)",
         _ => "vehicles on the road now",
     });
     out["max"] = json!(round(max));
@@ -239,4 +271,59 @@ pub fn map(w: &World, cell_m: Option<f32>, layer: &str) -> Result<Value, String>
     out["ascii_text"] = json!(text);
     out["grid"] = json!(grid);
     Ok(out)
+}
+
+/// `industry`: set the industry sub-zone bias of a lot or an area, or with
+/// no `kind` field, read what the ground and the neighbours say about a lot.
+/// This is the sim hook the sub-zone picker calls (`World::set_industry_bias`).
+pub fn industry(cmd: &Value, w: &mut World) -> Result<Value, String> {
+    use super::view::{field, key_from, opt_str, opt_vec2, req_points};
+    use nd_sim::world::IndustryArea;
+    use nd_sim::{IndustryKind, LotId};
+    let lot: Option<LotId> = match field(cmd, "lot") {
+        Some(v) => Some(key_from(v)?),
+        None => match opt_vec2(cmd, "pos")? {
+            Some(p) => w.lots.iter().find(|(_, l)| nd_sim::zoning::point_in_polygon(p, &l.polygon)).map(|(id, _)| id),
+            None => None,
+        },
+    };
+    let polygon = if field(cmd, "polygon").is_some() { Some(req_points(cmd, "polygon")?) } else { None };
+    if cmd.get("kind").is_some() {
+        let kind = match cmd.get("kind") {
+            Some(Value::Null) => None,
+            _ => {
+                let k = opt_str(cmd, "kind")?.unwrap_or("none");
+                if k.eq_ignore_ascii_case("none") || k.eq_ignore_ascii_case("natural") || k.is_empty() {
+                    None
+                } else {
+                    Some(IndustryKind::from_key(k).ok_or_else(|| format!("unknown industry kind {k:?}; one of farming, oil, refinery, manufacturing, logistics, fishing, tech, none"))?)
+                }
+            }
+        };
+        let area = match (polygon, lot) {
+            (Some(p), _) => IndustryArea::Polygon(p),
+            (None, Some(l)) => IndustryArea::Lot(l),
+            (None, None) => return Err("give a lot id, a pos on a lot, or a polygon".into()),
+        };
+        let retooled = w.set_industry_bias(area, kind)?;
+        return Ok(json!({ "ok": true, "kind": kind.map(|k| k.key()), "retooled": retooled, "biases": w.industry_bias.len() }));
+    }
+    let lot = lot.ok_or("give a lot id or a pos on a lot to query (or kind to set a bias)")?;
+    let l = w.lots.get(lot).ok_or("no such lot")?;
+    let g = w.lot_ground(lot).unwrap_or_default();
+    let site = w.industry_site(lot).ok_or("no such lot")?;
+    let weights = w.industry_weights(lot).unwrap_or([0.0; 7]);
+    let total: f32 = weights.iter().sum::<f32>().max(1e-6);
+    let shares: serde_json::Map<String, Value> = IndustryKind::ALL.iter().map(|k| (k.key().to_string(), json!(round(weights[k.index()] / total)))).collect();
+    let bias = w.industry_bias_at(l.center);
+    Ok(json!({
+        "lot": super::view::key_str(lot), "land_use": l.land_use.label(),
+        "ground": { "soil": g.soil().label(), "fertility": round(g.fertility), "oil": round(g.oil), "rock": round(g.rock), "sand": round(g.sand), "water": round(g.water) },
+        "contamination": round(site.contamination), "land_value": round(site.land_value),
+        "near": { "port": round(site.port), "yard": round(site.yard), "highway": round(site.highway), "depot": round(site.depot), "fleet_lot": site.fleet_lot_near },
+        "neighbours": site.neighbours.iter().map(|(k, d)| json!([k.key(), round(*d)])).collect::<Vec<_>>(),
+        "bias": match bias { None => Value::Null, Some(None) => json!("none"), Some(Some(k)) => json!(k.key()) },
+        "chance": shares,
+        "building": l.building.and_then(|b| w.industry_of(b)).map(|k| k.key()),
+    }))
 }
