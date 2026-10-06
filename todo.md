@@ -72,6 +72,17 @@
 [x] - roundabout centres empty and usable, nesting, 3x larger maximum   → DONE.
 [x] - traffic deadlock at kerb pull-outs (buses at depots) and the slowdown   → DONE.
 [x] - places: taste, regulars, never-again, exploring for a drink   → DONE: places have a character, people a taste; visits are rated with luck and events; regulars, grudges, word of mouth, outings with family and coworkers.
-[~] - roads: raise/lower while drawing, overpasses/underpasses by height, realistic preview   → IN PROGRESS (feat/elevation).
-[~] - map edges: only a highway and rail at the start, extending past the horizon, vehicles entering out of sight   → IN PROGRESS (feat/edges).
+[x] - roads: raise/lower while drawing, overpasses/underpasses by height, realistic preview   → DONE: Page Up/Down levels, viaducts, cuttings, tunnels; grade separation by height; translucent real-road preview.
+[x] - map edges: only a highway and rail at the start, extending past the horizon, vehicles entering out of sight   → DONE.
+[x] - tunnel road type and Underground / Ground / Sky depth switch   → DONE (Sky is a placeholder; subway left as a hook).
+[x] - shipping containers look like containers; rusted I-beam supports   → DONE.
+[x] - parked cars overlapping; parking enforcement, tow trucks, player parking lots (3 sizes)   → DONE.
+[x] - complaints & concerns tab in the People window   → DONE.
+[x] - pedestrians obey crossings and signals, jaywalk only by temperament, keep personal space   → DONE.
+[x] - ramps: smooth highway joins, painted direction arrows, piers when raised   → DONE (barrier fix at the taper not yet seen in game).
+[x] - terrain cliffs and spikes beside roads; highway carriageways at different heights   → DONE.
+[x] - emergency response: night desk, far-highway crashes, pile-ups, sirens clearing walkers, rear-end chains behind cars yielding to sirens   → DONE.
+[ ] - lane markings read dark grey in daylight; gore hatching hard to see; tunnel ramp crossing rail at a slope   → FOUND, not started.
+[ ] - long player streets have no intermediate height samples (would change parcel keys)   → FOUND, not started.
+[ ] - several people sitting on one park bench overlap; bikes ignore pedestrian rules at junctions   → FOUND, not started.
 
