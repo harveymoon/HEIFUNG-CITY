@@ -1430,13 +1430,14 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         business: b.business.as_ref().map(|z| z.kind),
         fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
         rooftop_pad: world.air.has_rooftop(id),
+        look: b.look,
     };
     let mut g = match &b.demolition {
         // Coming down: what stood there (which, during a redevelopment or a
         // civic take-over, is not what the building's own fields describe),
         // cut down to what is left, with the demolition site around it.
         Some(d) => {
-            let extras = Extras { powered: b.powered, park: lot.park.as_ref(), demolition: Some(d.progress), neighbours: styles.neighbours(id), ..Extras::default() };
+            let extras = Extras { powered: b.powered, park: lot.park.as_ref(), demolition: Some(d.progress), neighbours: styles.neighbours(id), look: d.look, ..Extras::default() };
             generate_building(lot, d.land_use, d.floors, d.tier, d.condition, d.seed, &assets.rules, &assets.palette, &extras)
         }
         None => generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras),

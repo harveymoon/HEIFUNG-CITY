@@ -261,7 +261,8 @@ fn rank(b: &nd_sim::Building) -> (u64, u64) {
 
 #[derive(Clone, Debug, PartialEq)]
 struct Entry {
-    key: (u64, LandUse, Tier, u8, u8),
+    /// Seed, land use, tier, floors, role, [districts] look (0 none).
+    key: (u64, LandUse, Tier, u8, u8, u8),
     style: Style,
     neighbours: Vec<Neighbour>,
 }
@@ -326,7 +327,7 @@ impl StyleBook {
     pub fn refresh(&mut self, world: &World, rules: &BuildingRules) {
         self.entries.retain(|id, _| world.buildings.contains_key(*id));
         // A rooftop pad picks a pad-capable style, so it is part of the key.
-        let key_of = |id: BuildingId, b: &nd_sim::Building| (b.seed, b.land_use, b.tier, b.floors, role(b) + if world.air.has_rooftop(id) { 8 } else { 0 });
+        let key_of = |id: BuildingId, b: &nd_sim::Building| (b.seed, b.land_use, b.tier, b.floors, role(b) + if world.air.has_rooftop(id) { 8 } else { 0 }, b.look.map_or(0, |l| l.index() as u8 + 1));
         let mut pending: Vec<BuildingId> = world
             .buildings
             .iter()
@@ -380,6 +381,7 @@ impl StyleBook {
                 // Placed services (a vertiport among them) are their own style.
                 service: b.service.map(|s| s.kind),
                 business: b.business.as_ref().map(|z| z.kind),
+                look: b.look,
                 ..Extras::default()
             };
             let style = choose_style(lot, b.land_use, b.floors, b.tier, b.seed, rules, &extras);
