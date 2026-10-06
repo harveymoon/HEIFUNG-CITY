@@ -1577,6 +1577,29 @@ impl Traffic {
     /// commits as soon as its spot is physically clear; if standing traffic
     /// keeps the spot covered for `KERB_SLIDE_AFTER` it pulls out into the
     /// nearest real gap behind instead. So the kerb can never deadlock.
+    /// Pull a vehicle standing in its lane over to the kerb for `secs`
+    /// (a lorry unloading, a van at a job): out of the lane so traffic
+    /// passes, drawn at the kerb, and afterwards it pulls out like a car
+    /// leaving a space. Its route from here must already be set.
+    pub fn pull_in(&mut self, id: CarId, secs: f32) {
+        let Some(c) = self.cars.get(id) else { return };
+        let lane = c.route[c.idx];
+        let kerb = self.net.lanes[lane as usize].right.is_none();
+        if !c.entering {
+            self.net.lanes[lane as usize].cars.retain(|&o| o != id);
+        }
+        let c = &mut self.cars[id];
+        c.entering = true;
+        c.v = 0.0;
+        c.hold = c.hold.max(secs);
+        c.stalled = 0.0;
+        c.wait = Wait::Dwell;
+        c.blocked_by = None;
+        if kerb {
+            c.lateral = LANE_WIDTH * 0.6;
+        }
+    }
+
     fn pull_out(&mut self, id: CarId) -> bool {
         let lane = self.cars[id].route[self.cars[id].idx];
         let (waited, len, s) = (self.cars[id].stalled, self.cars[id].length(), self.cars[id].s);
@@ -2553,6 +2576,15 @@ impl Traffic {
 
             let waiting: Vec<CarId> = self.cars.iter().filter(|(_, c)| c.entering).map(|(id, _)| id).collect();
             for id in waiting {
+                // Standing at the kerb on purpose (unloading): not waiting yet.
+                if self.cars[id].hold > 0.0 {
+                    let c = &mut self.cars[id];
+                    c.hold -= dt;
+                    c.v = 0.0;
+                    c.stalled = 0.0;
+                    c.wait = Wait::Dwell;
+                    continue;
+                }
                 if !self.pull_out(id) {
                     let c = &mut self.cars[id];
                     c.stalled += dt;

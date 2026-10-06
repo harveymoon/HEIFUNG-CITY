@@ -59,6 +59,11 @@ fn near(d: f32, full: f32, none: f32) -> f32 {
 /// price, and fuel as the marker (rubble trucks also run empty, as parts).
 /// `from` is the lorry's home business, `to` where it is going (null: out
 /// of town by the edge).
+/// Seconds a lorry stands at the kerb unloading after a delivery.
+pub const UNLOAD_SECONDS: f32 = 90.0;
+/// Seconds a lorry with no road anywhere waits before trying again.
+pub const STRANDED_RETRY_SECONDS: f32 = 120.0;
+
 pub fn is_return_trip(c: &Cargo) -> bool {
     c.amount == 0.0 && c.price == 0.0 && c.resource == Resource::Fuel
 }
@@ -497,10 +502,98 @@ impl World {
         }
     }
 
-    /// A truck reached the end of its trip. An empty one parks at its lot
+    /// A lorry on the road reached the end of its trip. The same vehicle
+    /// stays: a loaded one hands over its load and stands at the kerb
+    /// unloading (`UNLOAD_SECONDS`) before driving on to a truck lot, its
+    /// business or out of town; an empty one parks at its lot, is back in
+    /// its business's yard, or has reached the map edge. One with nowhere
+    /// to go waits where it is and tries again: it never vanishes.
+    pub(super) fn lorry_arrived(&mut self, car_id: CarId) {
+        let Some(car) = self.traffic.cars.get(car_id) else { return };
+        let Some(cargo) = car.cargo else { return };
+        let model = car.model;
+        if is_return_trip(&cargo) {
+            let home = cargo.from;
+            if self.park_truck(cargo.to, home, model) {
+                self.traffic.remove_car(car_id);
+                return;
+            }
+            // Home in its own yard, or off the map at the edge.
+            let at_home = cargo.to == home && self.buildings.contains_key(home) && self.fleet_capacity(home) == 0;
+            if at_home || !self.buildings.contains_key(cargo.to) && self.at_map_edge(car_id) {
+                self.traffic.remove_car(car_id);
+                return;
+            }
+            // A full lot (or a lorry stranded earlier): drive on.
+            if !self.drive_lorry_on(car_id, cargo.to, home) && self.traffic.cars.contains_key(car_id) {
+                self.traffic.pull_in(car_id, STRANDED_RETRY_SECONDS);
+            }
+            return;
+        }
+        let at = cargo.to;
+        let home = cargo.from;
+        self.deliver(cargo);
+        // Unloading out front, then on its way; the next stop is set now so
+        // the inspector shows where it goes.
+        let on = self.drive_lorry_on(car_id, at, home);
+        // (Parked at a truck lot it delivered to: off the road already.)
+        if let Some(c) = self.traffic.cars.get_mut(car_id) {
+            if !on {
+                c.cargo = Some(return_cargo(home, at));
+            }
+        }
+        if self.traffic.cars.contains_key(car_id) {
+            self.traffic.pull_in(car_id, UNLOAD_SECONDS);
+        }
+    }
+
+    /// Has this car reached the far end of a road leaving the map?
+    fn at_map_edge(&self, car_id: CarId) -> bool {
+        let Some(c) = self.traffic.cars.get(car_id) else { return true };
+        self.edge_exits(c.pos).iter().any(|&(lane, _)| c.route.last() == Some(&lane))
+    }
+
+    /// Send the lorry standing at `at` on to a truck lot with room within
+    /// `FLEET_REACH`, else its business, else any lot with room, else out
+    /// of town, driving from where it stands. False when no road leads
+    /// anywhere (it keeps standing).
+    fn drive_lorry_on(&mut self, car_id: CarId, at: BuildingId, home: BuildingId) -> bool {
+        let model = self.traffic.cars[car_id].model;
+        let pos = self.building_lot(at).map(|l| l.center).unwrap_or(self.traffic.cars[car_id].pos);
+        let home_ok = home != at && self.buildings.get(home).is_some_and(|h| h.construction.is_none() && !h.is_derelict());
+        let dest = self
+            .fleet_lot_with_room(pos, FLEET_REACH)
+            .or_else(|| home_ok.then_some(home))
+            .or_else(|| self.fleet_lot_with_room(pos, f32::INFINITY))
+            .unwrap_or_default();
+        if dest == at && self.park_truck(dest, home, model) {
+            // Delivered to a truck lot with room: it parks right there.
+            self.traffic.remove_car(car_id);
+            return true;
+        }
+        if dest != at && self.buildings.contains_key(dest) {
+            if let Some((seg, pt)) = self.truck_stop(dest) {
+                if let Some((goal, s_end, _)) = self.traffic.net.nearest_lane_on(seg, pt) {
+                    if self.traffic.redirect(car_id, goal, s_end) {
+                        self.traffic.cars[car_id].cargo = Some(return_cargo(home, dest));
+                        return true;
+                    }
+                }
+            }
+        }
+        if self.redirect_out(car_id) {
+            self.traffic.cars[car_id].cargo = Some(return_cargo(home, BuildingId::default()));
+            return true;
+        }
+        false
+    }
+
+    /// A truck reached the end of its trip (a lorry not on the road: the
+    /// vehicle is gone and an empty one sets off from the stop). An empty one parks at its lot
     /// (or is home, back in its business's yard, or has left town); a
     /// loaded one delivers and then heads for a truck lot, its business, or
     /// out of town. No lorry ever just vanishes.
+    #[cfg(test)]
     pub(super) fn truck_arrived(&mut self, cargo: Cargo, model: VehicleModel) {
         if is_return_trip(&cargo) {
             if self.park_truck(cargo.to, cargo.from, model) {
@@ -546,6 +639,7 @@ impl World {
     /// Where an empty lorry goes after a delivery at `at`: a truck lot with
     /// room within `FLEET_REACH`, else its business wherever it is, else the
     /// nearest lot with room at any distance, else out of town by the edge.
+    #[cfg(test)]
     fn send_truck_back(&mut self, at: BuildingId, home: BuildingId, resource: Resource, model: VehicleModel) {
         let Some(pos) = self.building_lot(at).map(|l| l.center) else { return };
         let home_ok = home != at && self.buildings.get(home).is_some_and(|h| h.construction.is_none() && !h.is_derelict());

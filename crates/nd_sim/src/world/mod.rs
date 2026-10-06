@@ -797,10 +797,8 @@ impl World {
             let Some(car) = self.traffic.cars.get(car_id) else { continue };
             // Lorries deliver and head back to a truck lot, their business
             // or out of town (`world/industry`).
-            if let Some(cargo) = car.cargo {
-                let model = car.model;
-                self.traffic.remove_car(car_id);
-                self.truck_arrived(cargo, model);
+            if let Some(_) = car.cargo {
+                self.lorry_arrived(car_id);
                 continue;
             }
             // [carlife] Private cars park (or go on looking), trucks and

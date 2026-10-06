@@ -348,3 +348,39 @@ fn industry_mix_diagnostic() {
     }
     println!("contamination cells {} max {:.2}; trucks {} returning {}", w.contamination.cells.len(), w.contamination.max(), w.traffic.cars.values().filter(|c| c.cargo.is_some()).count(), w.traffic.cars.values().filter(|c| c.cargo.as_ref().is_some_and(is_return_trip)).count());
 }
+
+#[test]
+fn a_delivery_lorry_unloads_at_the_kerb_and_drives_home() {
+    let (mut w, lots) = strip();
+    let seller = make(&mut w, lots[1], BusinessKind::GrainFarm);
+    let buyer = make(&mut w, lots[lots.len() - 1], BusinessKind::Mill);
+    let (a, b) = (w.truck_stop(seller).unwrap(), w.truck_stop(buyer).unwrap());
+    let (lanes, s0, s1) = w.traffic.net.find_route(a.0, a.1, b.0, b.1).expect("a road between them");
+    let cargo = Cargo { from: seller, to: buyer, resource: Resource::Grain, amount: 3.0, price: 5.0 };
+    let id = w.traffic.spawn_car(CitizenId::default(), Some(cargo), lanes, s0, s1, 7);
+    let mut minds = IdleMind;
+    let mut unloading = false;
+    for _ in 0..400 {
+        w.tick(&mut minds);
+        let car = w.traffic.cars.get(id).expect("the lorry never vanishes");
+        if car.cargo.as_ref().is_some_and(is_return_trip) {
+            unloading = true;
+            assert!(car.hold > 0.0, "stands unloading out front");
+            assert_eq!(car.cargo.unwrap().to, seller, "then home to the farm");
+            break;
+        }
+    }
+    assert!(unloading, "it arrived and unloaded");
+    assert_eq!(w.buildings[buyer].business.as_ref().unwrap().stock_of(Resource::Grain), 3.0, "delivered");
+    // It drives home in the same vehicle and only then leaves the road.
+    let mut home = false;
+    for _ in 0..600 {
+        w.tick(&mut minds);
+        if !w.traffic.cars.contains_key(id) {
+            home = true;
+            break;
+        }
+        assert!(w.traffic.cars[id].pos.distance(w.lots[lots[1]].center) < 2000.0);
+    }
+    assert!(home, "back in its yard");
+}

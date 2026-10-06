@@ -494,12 +494,10 @@ impl World {
     pub(super) fn vehicle_arrived(&mut self, car_id: CarId) -> bool {
         let Some(car) = self.traffic.cars.get(car_id) else { return true };
         let (errand, owned, cargo, citizen) = (car.errand, car.owned, car.cargo, car.citizen);
-        if let Some(cargo) = cargo {
-            // Lorries are `world/industry`'s: deliver, then a truck lot,
-            // their business or the map edge.
-            let model = self.traffic.cars[car_id].model;
-            self.traffic.remove_car(car_id);
-            self.truck_arrived(cargo, model);
+        if let Some(_) = cargo {
+            // Lorries are `world/industry`'s: deliver, unload at the kerb,
+            // then a truck lot, their business or the map edge.
+            self.lorry_arrived(car_id);
             return true;
         }
         match errand {
@@ -549,6 +547,7 @@ impl World {
                 if let Some((goal, s_end, _)) = self.traffic.net.nearest_lane_on(seg, pt) {
                     if self.traffic.redirect(car_id, goal, s_end) {
                         self.traffic.cars[car_id].errand = Errand::Return(b);
+                        self.traffic.pull_in(car_id, 45.0);
                         return;
                     }
                 }

@@ -334,8 +334,18 @@ mod tests {
         run_hours(&mut w, 2);
         let o = w.society.crime.offender(thief).expect("held");
         assert!(o.in_custody && !o.jailed);
-        run_hours(&mut w, crate::services::HELD_HOURS + 2);
-        assert!(!w.services.in_custody(thief), "let go after a few hours");
+        // Let go within the hold (watched tick by tick: out, they may well
+        // offend and be picked up again later, which is a new custody).
+        let mut minds = IdleMind;
+        let mut out = false;
+        for _ in 0..(crate::services::HELD_HOURS + 2) * 60 {
+            w.tick(&mut minds);
+            if w.society.crime.stats.released_early_total > 0 {
+                out = true;
+                break;
+            }
+        }
+        assert!(out, "let go after a few hours");
         assert_eq!(w.society.crime.stats.released_early_total, 1);
     }
 
