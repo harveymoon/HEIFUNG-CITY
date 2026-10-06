@@ -159,7 +159,8 @@ impl World {
                 let depot = depots
                     .iter()
                     .copied()
-                    .filter(|d| at_depot.get(d).copied().unwrap_or(0) < transit::DEPOT_CAPACITY)
+                    // [industry] full depots overflow into truck and bus lots nearby
+                    .filter(|d| at_depot.get(d).copied().unwrap_or(0) < transit::DEPOT_CAPACITY + self.depot_overflow(*d))
                     .filter_map(|d| self.building_lot(d).map(|l| (d, l.car_point.distance(first.pos))))
                     .min_by(|a, b| a.1.total_cmp(&b.1))
                     .map(|(d, _)| d);

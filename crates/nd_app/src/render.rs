@@ -99,6 +99,8 @@ pub struct Overlays {
     pub paths: bool,
     /// Zone outline glows and vacant-lot outlines. The ground fills stay.
     pub zoning: bool,
+    /// Draw the parked (inactive) projects as dim holograms.
+    pub projects: bool,
     /// Load per lane: fullness and speed, green to red.
     pub traffic: bool,
     /// A coloured disc under every vehicle by type.
@@ -111,7 +113,7 @@ pub struct Overlays {
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true, traffic: false, traffic_types: false, people: false, pollution: false }
+        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false }
     }
 }
 
@@ -135,6 +137,7 @@ impl Overlays {
             "land_value" => &mut self.land_value,
             "paths" => &mut self.paths,
             "zoning" => &mut self.zoning,
+            "projects" => &mut self.projects,
             "traffic" => &mut self.traffic,
             "traffic_types" => &mut self.traffic_types,
             "people" => &mut self.people,
@@ -148,6 +151,7 @@ impl Overlays {
             "land_value" => self.land_value,
             "paths" => self.paths,
             "zoning" => self.zoning,
+            "projects" => self.projects,
             "traffic" => self.traffic,
             "traffic_types" => self.traffic_types,
             "people" => self.people,
@@ -199,6 +203,11 @@ pub struct BuildingTag;
 pub struct CitizenTag;
 #[derive(Component)]
 pub struct CarTag;
+
+/// A mover that sets its own height (cars, from the road they are on);
+/// `lift_movers` leaves it alone.
+#[derive(Component)]
+pub struct SelfLifted;
 
 #[derive(Resource)]
 struct Materials {
@@ -254,8 +263,10 @@ struct ChunkMeshes {
 struct RenderState {
     roads_version: u64,
     lanes_version: u64,
+    /// What the project holograms were built for: plan version, parcels
+    /// version, whether parked projects are shown.
+    preview_key: Option<(u64, u64, bool)>,
     arrows_version: u64,
-    plan_version: u64,
     /// What the lot ground meshes were built for: lot and zone counts, roads
     /// version, zoning overlay, and a hash of every lot's built/park/
     /// landlocked state.
@@ -853,23 +864,75 @@ fn dashes(mesh: &mut MeshData, a: SVec2, b: SVec2, width: f32, y: f32, dash: f32
     }
 }
 
+/// The projects as holograms: the active one bright (its roads, zones,
+/// and every parcel whose land use it changes, filled in the new use's
+/// colour or outlined grey where it unzones), the parked ones dim.
+#[allow(clippy::too_many_arguments)]
 fn sync_preview(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     sim: Res<Sim>,
     assets: Res<GameAssets>,
     mats: Res<Materials>,
+    overlays: Res<Overlays>,
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<PreviewTag>>,
 ) {
-    if sim.world.plan_version == state.plan_version && !assets.palette_changed && !sim.full_rebuild {
+    let key = (sim.world.plan_version, sim.world.parcels.version, overlays.projects);
+    if state.preview_key == Some(key) && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
-    state.plan_version = sim.world.plan_version;
+    state.preview_key = Some(key);
     despawn_all(&mut commands, &existing);
     let pv = sim.world.preview();
     let pal = &assets.palette;
     let mut glow = MeshData::default();
+    let w = &sim.world;
+    let unzoned = [0.55f32, 0.55, 0.6];
+    // Parcels the active project re-zones.
+    let planned = w.planned_zoning();
+    for (i, p) in w.parcels.parcels.iter().enumerate() {
+        let Some(&want) = planned.get(i) else { break };
+        if want == p.land_use {
+            continue;
+        }
+        let mut outline = p.polygon.clone();
+        outline.push(p.polygon[0]);
+        match want {
+            Some(lu) => {
+                let c = pal.zone_color(lu);
+                glow.ground_polygon(&p.polygon, 0.05, scale(c, 0.22));
+                glow.ground_strip(&outline, 0.45, 0.21, scale(c, 1.2));
+            }
+            None => glow.ground_strip(&outline, 0.45, 0.21, scale(unzoned, 0.9)),
+        }
+    }
+    // Parked projects, dim.
+    if overlays.projects {
+        for other in w.inactive_previews() {
+            let dim = 0.35;
+            for (_, pts, fwd, bwd, kind) in &other.preview.planned_roads {
+                let wd = preview_width(*kind, *fwd, *bwd);
+                glow.ground_strip(pts, wd, 0.2, scale(pal.preview, 0.35 * dim));
+                glow.ground_strip(pts, 0.4, 0.21, scale(pal.preview, dim));
+            }
+            for (_, pts, _, _, _) in &other.preview.removed_roads {
+                dashes(&mut glow, pts[0], *pts.last().unwrap(), 0.5, 0.21, 4.0, 3.0, scale(pal.preview_remove, dim));
+            }
+            for (_, poly, lu) in &other.preview.planned_zones {
+                let mut outline = poly.clone();
+                outline.push(poly[0]);
+                glow.ground_strip(&outline, 0.6, 0.2, scale(pal.zone_color(*lu), 1.3 * dim));
+            }
+            for &(i, want) in &other.zoning {
+                let Some(p) = w.parcels.parcels.get(i) else { continue };
+                let mut outline = p.polygon.clone();
+                outline.push(p.polygon[0]);
+                let c = want.map_or(unzoned, |lu| pal.zone_color(lu));
+                glow.ground_strip(&outline, 0.35, 0.2, scale(c, dim));
+            }
+        }
+    }
     for (_, pts, fwd, bwd, kind) in &pv.planned_roads {
         let w = preview_width(*kind, *fwd, *bwd);
         glow.ground_strip(pts, w, 0.22, scale(pal.preview, 0.35));
@@ -924,6 +987,7 @@ fn sync_lots(
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<LotsTag>>,
     flags: Res<UiFlags>,
+    tools: Res<crate::tools::ToolState>,
 ) {
     if keys.just_pressed(KeyCode::KeyO) && !flags.keyboard_captured {
         overlays.zoning = !overlays.zoning;
@@ -934,6 +998,10 @@ fn sync_lots(
         id.hash(&mut h);
         (lot.building.is_some(), lot.park.is_some(), lot.landlocked).hash(&mut h);
     }
+    // Unzoned parcels are outlined grey with the zoning overlay, and always
+    // while the Zone tool is out (they are what it paints).
+    let show_parcels = overlays.zoning || tools.tool == crate::tools::Tool::Zone;
+    (w.parcels.version, show_parcels).hash(&mut h);
     let signature = (w.lots.len(), w.zones.len(), w.roads.version, overlays.zoning, h.finish());
     if state.lots_signature == Some(signature) && !assets.palette_changed && !sim.full_rebuild {
         return;
@@ -945,11 +1013,25 @@ fn sync_lots(
     let mut glow = MeshData::default();
     let mut fill = MeshData::default();
     if outlines {
-        for zone in w.zones.values().filter(|z| !z.polygon.is_empty()) {
-            let c = pal.zone_color(zone.land_use);
-            let mut outline = zone.polygon.clone();
-            outline.push(zone.polygon[0]);
+        // The drawn zone polygons (painted lots carry zones of their own
+        // outline, which the lot outlines below already show).
+        for (_, polygon, lu) in w.master.zones() {
+            if polygon.len() < 3 {
+                continue;
+            }
+            let c = pal.zone_color(lu);
+            let mut outline = polygon.to_vec();
+            outline.push(polygon[0]);
             glow.ground_strip(&outline, 0.5, 0.04, scale(c, 1.0));
+        }
+    }
+    if show_parcels {
+        let grey = [0.5f32, 0.5, 0.56];
+        for p in w.parcels.parcels.iter().filter(|p| p.lot.is_none() && p.polygon.len() >= 3) {
+            let mut outline = p.polygon.clone();
+            outline.push(p.polygon[0]);
+            let k = if p.landlocked() { 0.18 } else { 0.32 };
+            glow.ground_strip(&outline, 0.16, 0.03, scale(grey, k));
         }
     }
     for lot in w.lots.values() {
@@ -1122,6 +1204,8 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         service: b.service.map(|s| s.kind),
         animated_rotors: true,
         dynamic_lights: true,
+        business: b.business.as_ref().map(|z| z.kind),
+        fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
     };
     let mut g = match &b.demolition {
         // Coming down: what stood there (which, during a redevelopment or a
@@ -1513,11 +1597,11 @@ fn sync_cars(
             let model = car_model(car);
             let v = vr.variant(&mut meshes, &model);
             let finish = vr.finish[model.class as usize].clone();
-            let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), Transform::IDENTITY, NotShadowCaster, CarTag)).id();
-            let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag)).id();
+            let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), Transform::IDENTITY, NotShadowCaster, CarTag, SelfLifted)).id();
+            let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted)).id();
             state.cars.insert(id, [body, lights]);
             if let Some(fx) = v.fx {
-                let e = commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag)).id();
+                let e = commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted)).id();
                 vr.car_fx.insert(id, e);
             }
             if model.body == nd_sim::BodyType::AkiraBike {
@@ -1554,9 +1638,12 @@ fn sync_cars(
         // truck with nobody to inspect, as the vehicle itself.
         let selected = *selection == Selection::Citizen(car.citizen) || *selection == Selection::Car(*id);
         let fx = vr.car_fx.get(id).copied();
+        // Lifted here from the road the car is on, not by `lift_movers`:
+        // under the highway's decks position alone would put it up top.
+        let lift = sim.world.car_height(car);
         for e in ents.iter().copied().chain(fx) {
             if let Ok(mut tf) = q.get_mut(e) {
-                tf.translation = Vec3::new(pos.x, 0.05 + if selected { 0.4 } else { 0.0 }, pos.y);
+                tf.translation = Vec3::new(pos.x, lift + 0.05 + if selected { 0.4 } else { 0.0 }, pos.y);
                 tf.rotation = Quat::from_rotation_y(-heading);
             }
         }
@@ -2058,7 +2145,7 @@ fn lift_spawned(
 
 /// Raise movers onto the ground after their poses are written.
 #[allow(clippy::type_complexity)]
-fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>), Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>>) {
+fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>) {
     let w = &sim.world;
     if w.landscape.is_flat() {
         return;

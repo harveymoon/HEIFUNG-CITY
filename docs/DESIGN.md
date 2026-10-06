@@ -57,11 +57,17 @@ Citizens are rendered from their simulated positions every frame.
 ## Simulation model (v0)
 
 - **Clock**: one tick is one simulated minute. 1440 ticks per day.
-- **Planning**: roads and zones are *gestures*. The master plan is what is built; a
-  project is a stack of deltas on top of it with undo and redo. Control points of any
-  gesture can be dragged, inserted or deleted; bulldozing marks a gesture for removal.
-  Implementing applies the deltas and rebuilds roads, zones, lots and lanes. Buildings
-  whose lot survives the rebuild are kept, the rest are demolished.
+- **Planning**: roads, zone polygons and paint strokes are *gestures*. The master plan
+  is what is built; a project is a named stack of deltas on top of it with undo and
+  redo. Several projects can be pending at once, as in Citybound: the active one is
+  edited and drawn bright, the others (`World::parked_projects`) are drawn as dim
+  holograms and keep their own histories. Control points of any road or zone can be
+  dragged, inserted or deleted; bulldozing marks a gesture for removal. Implementing
+  one project applies its deltas over the master as the projects implemented before it
+  left it (so where two projects change the same gesture or paint the same parcels,
+  the one implemented later wins, with a warning) and rebuilds roads, parcels, zones,
+  lots and lanes. Buildings whose lot survives the rebuild are kept, the rest are
+  demolished. A save from before named projects loads its one project as "Project 1".
 - **Roads**: a node/segment graph with per-direction lane counts. New polylines snap to
   existing nodes and split segments they cross. Walking uses A* over nodes.
 - **Lanes and traffic**: every segment becomes offset lanes per direction, shortened at
@@ -95,18 +101,54 @@ Citizens are rendered from their simulated positions every frame.
   on the road; junction curves stay inside the junction; cars refuse to enter a
   junction whose exit lane is full; stalled trips time out. Pedestrians walk on the
   right-hand pavement.
-- **Zones**: polygons with a land use (Residential, Commercial, Industrial,
-  Entertainment, Civic, Park). Lots are carved along every road segment that runs
-  through a zone.
+- **Parcels and zones**: parcels are cut along every street and path as soon as it is
+  built, zoned or not (`zoning::generate_parcels`, the land within 60 m of the
+  corridors), at a home's lot size; land behind the rows is backland. Zoning gives
+  parcels a land use: a zone polygon (Residential, Commercial, Industrial,
+  Entertainment, Civic, Park) zones every parcel whose centre it holds, and the zone
+  brush or marquee zones the parcels it touches (a `Gesture::ParcelZone`, keyed by
+  each parcel's centre and frontage on a quarter-metre grid, found again by its old
+  centre if road works reshape it). Gestures apply oldest first, so the newest wins
+  (`plan::parcel_zoning`). Only parcels the use may go on take it: parks anywhere
+  (backland and rough ground too), homes on a street or a footpath, everything else on
+  a street, industry and civic sites not on scraps under 200 m², with their deep
+  yards allowed to take the backland behind them; nothing but parks on rough ground.
+  Every zoned parcel becomes a lot; uses with lots bigger than a home's join small
+  neighbouring parcels (works yards and civic sites two or three, a shop a small
+  neighbour) and industry and civic grounds fold in the backland behind them
+  (`zoning::join_parcels`). Industrial strokes can carry an industry sub-zone that is
+  set on implement.
 - **Buildings**: a vacant lot develops when demand for its land use is high. Floors
   and capacity (homes or jobs) depend on land use and a seed. Geometry is generated
   from the seed, so a save stays small.
+- **Homes and jobs in balance**: demand counts working-age adults only (children and
+  retirees neither work nor look for work). The job gap (adults the empty and coming homes
+  will bring, at the town's adults per household, against permanent and coming jobs) and
+  adult unemployment pull commercial and industrial land; joblessness and a coming job
+  shortage hold back the residential trickle (people already waiting for a home still pull).
+  With no job free and over 5% of adults out of work, households mostly stop arriving.
+- **Which business opens**: a new commercial, industrial or entertainment building opens as
+  what the market can carry, not a random kind. Each kind has a cover (takings over wages
+  and inputs, smoothed daily, first day skipped); more of a kind are built only while its
+  cover is at least 1.05 and its shelves hold under 0.75 days of output. Grocers are built to
+  the town's need (two thirds of everyone's groceries); a kind new to town is tried once, in a
+  building of at most 20 jobs; offices (publicly funded) take the rest. A building
+  redeveloped while its business loses money reopens as what the market wants.
 - **Citizens**: immigrate when homes are free, take jobs when available, and move
   along roads between home, work, shops and nightlife. Each has a personality seed,
   a memory stream and a current thought.
 - **Land value**: a 32 m grid summing road access, parks, civic and commercial
   amenities, industrial and nightlife nuisances, traffic noise, vacant lots and the
-  tier of neighbouring homes, blurred once. Recomputed every two sim hours.
+  tier of neighbouring homes, blurred once. Recomputed every two sim hours. Power plants
+  and industry are *nuisances*, kept in a second grid so land uses feel them differently
+  (`LandValue::for_use`, read through `World::lot_value` for tiers and rents): homes feel
+  125% of a nuisance, shops 85%, nightlife 70%, industry 30%. Every plant costs its
+  neighbours something: coal 0.40 over 360 m, nuclear 0.18 over 260 m (fear, not fact),
+  geothermal 0.09 over 180 m, hydro 0.05, wind and tidal 0.045 over 120-130 m, solar 0.03
+  over 90 m. Industry by sub-zone: refinery 0.40/300 m, oil 0.32/260 m, manufacturing
+  0.30/220 m, logistics 0.18, fishing 0.14, farming 0.08, clean tech 0.05. Working industry
+  also lifts run-down land (up to +0.1, fading to nothing at 0.35): jobs bring activity.
+  Contaminated ground costs everyone up to 0.6.
 - **Tiers and rent**: buildings are low, middle or high tier. New construction takes
   the tier the land value supports (pulled down when people are waiting for something
   affordable). Full buildings on rising land upgrade; buildings on falling land decay.
@@ -116,13 +158,41 @@ Citizens are rendered from their simulated positions every frame.
   best home they can afford (rent at most half their income) and are turned away if
   there is none. Three days of rent stress sends people looking for somewhere cheaper,
   or out of town once their savings are gone; the comfortable move up a tier.
-- **Resources and businesses**: ten resources (produce, grain, flour, baked goods,
-  meat, dairy, groceries, parts, electronics, goods). Every non-residential building
+- **Resources and businesses**: fourteen resources (produce, grain, flour, baked goods,
+  meat, dairy, groceries, parts, electronics, goods; crude, fuel, plastics, fish). Every non-residential building
   hosts a business with a recipe: farms, protein vats, dairies, mills, fabs and
   assembly plants on industrial lots; grocers, bakeries, gadget shops and offices on
   commercial; venues on entertainment. Output per hour scales with filled jobs.
   Businesses hold stock and cash; prices rise when stock is scarce and fall when it
   piles up.
+- **Industry sub-zones** (`nd_sim::industry`, `nd_sim::ground`, `world/industry.rs`):
+  industrial land splits into farming (vertical farms, grain farms, protein vats, dairies,
+  mills), oil extraction (oil wells: crude), refinery (crude to fuel and plastics),
+  manufacturing (parts fabs), logistics (container yards; truck and bus lots), fishing
+  (fisheries landing fish; fish plants turning fish into food counted as meat) and clean tech
+  (assembly plants). A new industrial lot picks its kind by weight: farming by soil fertility
+  and clean ground, oil only over a deposit and then strongly, fishing only by the water,
+  logistics by shipping ports, freight yards, the highway and bus depots, clean tech by
+  dear land, heavy kinds by cheap land; then neighbours: the same kind clusters, farms and
+  fishing keep away from oil and refineries, refineries follow the wells. The player's bias
+  (`World::set_industry_bias(IndustryArea::Lot | Polygon, Option<IndustryKind>)`) forces a kind
+  over an area (or with `None` hands it back to the ground); standing industry of another kind
+  retools on the spot. The ground is read from the landscape seed: fertility (river banks,
+  plains), oil patches (about a tenth of the land), rock (noise and slope), sand (sea shore)
+  and water proximity. Contamination is a saved 32 m raster (0..1): oil wells pour 0.01 per
+  working hour within 60 m, refineries 0.004 within 80 m, coal plants 0.003 within 120 m;
+  each day an eighth of every cell seeps into its neighbours and 3.5% fades, so a closed field
+  takes months to recover. Grain farms yield 0.6 + 0.8 x fertility and lose up to 90% on fouled
+  ground; container yards and truck lots burn fuel and earn handling fees (2 per filled job
+  hour, more near a port or yard), truck lots a bay fee per parked lorry.
+- **Truck and bus lots**: a logistics building with one bay per 90 m² (4..40). A lorry that
+  has delivered parks at the nearest lot with room within 700 m, else drives back to the
+  business that sent it, else to the nearest lot with room at any distance, else out of town by
+  the edge: no lorry ever vanishes. A seller within 800 m of a lot with a lorry parked sends its
+  next load out in the longest-parked one; at 22:00 lorries parked 18 hours or more drive home to
+  their business. Refineries are only developed with working oil wells within 1200 m or a
+  shipping port to land crude. A bus depot with no room left dispatches into
+  the lots within 450 m (a quarter of their bays). Lots develop near depots, ports and yards.
 - **Market**: a buyer whose stock plus inbound deliveries drops below half its target
   asks for the cheapest supplier, delivered price including haulage distance, strikes
   the deal, and a truck carries it. With no local seller it imports at a markup from a
@@ -281,7 +351,7 @@ Citizens are rendered from their simulated positions every frame.
   Every building draws megawatts by land use, floors and tier (industry most, homes
   least, high tiers more); plants draw none. Four kinds of plant go on vacant lots with
   the Power tool, paid from the treasury: coal (120 MW, cheap, steady, industrial land
-  only, a brown haze and a heavy land value penalty for 300 m), solar (25 MW nameplate,
+  only, a brown haze, ash on the ground and a heavy land value penalty for 360 m), solar (25 MW nameplate,
   any land, output follows the sun and is dimmed by cloud), wind (40 MW nameplate, any
   land, output follows the wind) and nuclear (400 MW, steady, very expensive to build and
   run, industrial land only, a smaller penalty for the nervous neighbours). Weather is a
@@ -340,7 +410,13 @@ Citizens are rendered from their simulated positions every frame.
   onto it, raises buildings to their pad and movers to `surface_height` (decks over water). Water cuts
   parcels (`zoning::generate_lots_wet`); lots steeper than 0.2 are unusable. A one-way street of three
   or more lanes is a highway: 25 m/s, no frontage, grade-separated (crossings make no junction, only
-  dropped ends join, so ramps merge with priority to the mainline). Two carriageways cross the map at
+  dropped ends join, so ramps merge with priority to the mainline). Embankments and cuttings
+  slope no steeper than 1 in 2.5 (the blend to the terrain widens with the height, up to 160 m).
+  Where any other way crosses the highway 4.5 m or more above or below it, the lower way runs
+  through an underpass (`landscape::Underpass`): the ground is cut to its level for the width
+  of its corridor plus 8 m along the whole embankment, the upper way crosses on a short deck
+  (a registered deck, so its traffic stays up), and abutment and wing walls with coping
+  follow the embankment down either side. Two carriageways cross the map at
   y = 420 from the start; through cars enter at the map edge and leave at the far one. Docks
   (`nd_sim::ports`) stand on the shore with a pier and a street stub, take over grown lots, and work
   once their street reaches the city: freighters route by water (river centrelines, tributaries
@@ -388,8 +464,11 @@ trait MindProvider {
   wall, vertical up it), so brick courses line up across a facade and nothing has to
   be unwrapped. Vertex colours set the hue; the textures are grey. Glow stays unlit
   with mildly HDR vertex colours and low bloom.
-- Parcels: the road corridors are subtracted from a zone with polygon booleans
-  (`geo`), so a curved road removes exactly its own strip. Road corridors are one
+- Parcels: the road corridors are subtracted from the land within reach of the roads
+  with polygon booleans (`geo`), so a curved road removes exactly its own strip. Long
+  straight frontages are first chunked where the coordinate along the road is a
+  multiple of 96 m and every chunk seeds its own random stream from its own shape, so
+  works elsewhere never move a parcel: the same road gives the same parcels. Road corridors are one
   mitred polygon per chain of road pieces, so a curve's edge is smooth. Rows one lot
   deep are peeled off every road frontage at once as a union of strips along the road
   edges (nothing can fold over on a bend), the first frontage claims the corners, and
@@ -419,6 +498,12 @@ trait MindProvider {
   - Commercial: shophouse rows, market halls, night market arcades, retail blocks,
     podium offices, pencil towers, neon towers, corporate slabs, twist towers,
     cantilevered malls, glass terraces, megastructures.
+  - Industry sub-zones have their own looks, chosen by the business: farms (fields in rows,
+    a barn, silos, a greenhouse), oil fields (pumpjacks, a derrick, stained ground, a flare),
+    refineries (columns, pipe racks, tanks, flares), container yards (stacks, a gantry, a
+    loading lane), fish processing (sheds, an ice plant, crates, a boat on blocks) and truck and
+    bus lots (marked bays filled to the sim's occupancy, a fuel island). Families `Farm` and
+    `Logistics` join the adjacency table: farms cluster and shun heavy industry.
   - Industrial: junkyards, rusted warehouses and garage workshops (low), saw-tooth
     factories, tank farms and flatted factories (middle), datacentres, container depots
     and semiconductor fabs (high).

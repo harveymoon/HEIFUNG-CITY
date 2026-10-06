@@ -15,7 +15,7 @@ pub const WINDOWS: &str = "The buttons in the top bar open and close the info wi
 /// The one-line hint under each tool's controls.
 pub const TOOL_HINTS: [(Tool, &str); 8] = [
     (Tool::Road, "Click to place points; ends dropped near a road snap onto it and make a junction (white ring). Curved roads bend through every point. One-way presets make ramps: a Ramp joining a road is a yield merge with no signals. Enter or right-click adds the road, Backspace undoes a point."),
-    (Tool::Zone, "Click polygon corners around a road, Enter or right-click to add to the project. Ctrl-click inside an existing zone to repaint it with the selected land use. Zones drawn over older ones take the ground."),
+    (Tool::Zone, "Polygon: click corners around a road, Enter or right-click to add to the project; every parcel whose centre it holds takes the use. Ctrl-click inside an existing zone to repaint it. Zones drawn over older ones take the ground."),
     (Tool::Edit, "Click a road to select it for upgrading. Drag a control point to move it. Shift-click a road or zone edge to insert a point. Delete removes the hovered point."),
     (Tool::Bulldoze, "Click a road or zone to mark it for removal."),
     (Tool::Inspect, "Click a glowing citizen, a car, or a building. Hover a parcel for a quick read-out; a selected person opens the person pane, where the star keeps them in the People window's favourites."),
@@ -30,9 +30,12 @@ pub fn tool_hint(tool: Tool) -> &'static str {
 
 pub const ROAD_PATH: &str = "Path: 3 m wide, for walkers and bikes only. Cars never use it; it joins streets at junctions and crosses them with a zebra.";
 pub const ROAD_RAIL: &str = "Rail: single track. Ends snap to other track only, so branch off the trunk line that already crosses the map; crossing a street makes a level crossing. Stations and freight yards go on lots beside the track (Rail tool).";
+pub const ZONE_BRUSH: &str = "Parcels are cut along every road already; drag over them to give them the selected use (right-drag erases to unzoned). Only parcels the use may go on take it: parks anywhere, homes on a street or path, the rest on a street. One stroke is one undo.";
+pub const ZONE_MARQUEE: &str = "Drag a box: on release every parcel whose centre is inside takes the selected use (right-drag erases). Parcels that refuse the use keep theirs.";
+pub const PROJECTS: &str = "Several projects can be planned side by side: the active one is edited and drawn bright, the others are drawn dim (Show others). Implement builds one at a time; where two projects change the same road or parcels, the one implemented later wins and you are warned.";
 pub const EDIT_ZONE_SELECTED: &str = "Selected a zone; use the Zone tool with Ctrl-click to repaint it.";
 pub const TRANSIT_DEPOT: &str = "Click a vacant lot by a street (not homes or parks). Buses park here overnight and leave at 05:30; each bus costs its upkeep per day and riders pay a fare.";
-pub const PROJECT_NONE: &str = "No pending project. Drawing or bulldozing starts one.";
+pub const PROJECT_NONE: &str = "No active project. Drawing, painting or bulldozing starts one.";
 pub const SEED_EXISTING: &str = "The map already has buildings: the demo is laid out blind over the centre and implements at once (no undo).";
 pub const SAVES: &str = "Save writes saves/city.ron (always the latest) and a dated slot; the newest eight slots are kept. Load on a running city asks first, then comes up paused with the tools reset.";
 pub const ASSETS_RELOAD: &str = "assets/palette.ron and assets/rules/buildings.ron hot-reload while running.";

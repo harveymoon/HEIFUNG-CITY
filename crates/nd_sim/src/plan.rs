@@ -1,11 +1,17 @@
-//! Planning: gestures (roads and zones as drawn by the player), the master
-//! plan (what is built), and projects (pending changes with undo/redo).
+//! Planning: gestures (roads, zones and painted parcels as drawn by the
+//! player), the master plan (what is built), and projects (named sets of
+//! pending changes, each with its own undo/redo).
 //!
 //! Everything in the world's road network, zones and lots is derived from the
 //! master plan, so implementing a project is "apply deltas, rebuild".
+//!
+//! Parcels are cut along every road whether or not anyone zoned them
+//! ([`crate::zoning::generate_parcels`]); zoning only gives them a land use.
+//! [`parcel_zoning`] folds the plan's zone gestures over the parcels, oldest
+//! first, so the newest gesture that covers a parcel decides it.
 
 use crate::roads::RoadKind;
-use crate::zoning::LandUse;
+use crate::zoning::{LandUse, ParcelKey, ParcelMap};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -27,6 +33,18 @@ pub enum Gesture {
         kind: RoadKind,
     },
     Zone { polygon: Vec<Vec2>, land_use: LandUse },
+    /// Parcels painted with the zone brush or marquee: each parcel named by
+    /// its stable key gets `land_use`, or goes back to unzoned with `None`.
+    /// One brush stroke is one gesture. Industrial strokes may also set the
+    /// industry sub-zone of the painted ground (`industry`: an
+    /// `IndustryKind` key, or "auto" to let the ground decide), applied when
+    /// the project is implemented, so it is undone with the stroke.
+    ParcelZone {
+        parcels: Vec<ParcelKey>,
+        land_use: Option<LandUse>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        industry: Option<String>,
+    },
 }
 
 /// Spacing of the straight pieces a curved road is built from, in metres.
@@ -74,20 +92,25 @@ impl Gesture {
             Gesture::Road { points, curved: true, .. } => sample_curve(points),
             Gesture::Road { points, .. } => points.clone(),
             Gesture::Zone { polygon, .. } => polygon.clone(),
+            Gesture::ParcelZone { .. } => Vec::new(),
         }
     }
 
+    /// Control points: a road's or a zone's corners. Painted parcels have none.
     pub fn points(&self) -> &[Vec2] {
         match self {
             Gesture::Road { points, .. } => points,
             Gesture::Zone { polygon, .. } => polygon,
+            Gesture::ParcelZone { .. } => &[],
         }
     }
 
-    pub fn points_mut(&mut self) -> &mut Vec<Vec2> {
+    /// The control points to edit, if the gesture has any.
+    pub fn points_mut(&mut self) -> Option<&mut Vec<Vec2>> {
         match self {
-            Gesture::Road { points, .. } => points,
-            Gesture::Zone { polygon, .. } => polygon,
+            Gesture::Road { points, .. } => Some(points),
+            Gesture::Zone { polygon, .. } => Some(polygon),
+            Gesture::ParcelZone { .. } => None,
         }
     }
 
@@ -97,10 +120,10 @@ impl Gesture {
 
     /// Minimum number of points for the gesture to be valid.
     pub fn min_points(&self) -> usize {
-        if self.is_road() {
-            2
-        } else {
-            3
+        match self {
+            Gesture::Road { .. } => 2,
+            Gesture::Zone { .. } => 3,
+            Gesture::ParcelZone { .. } => 0,
         }
     }
 }
@@ -132,8 +155,17 @@ impl Plan {
 /// One undoable step: gestures set to a new version, or removed (`None`).
 pub type PlanDelta = BTreeMap<GestureId, Option<Gesture>>;
 
+/// A named set of pending changes. Several can be planned side by side;
+/// one is active (edited, and what the tools see as the plan), the others
+/// are previewed dimmed and implemented one at a time.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Project {
+    /// Stable id (0 until the world numbers it: a save from before named
+    /// projects gets one on load).
+    #[serde(default)]
+    pub id: u64,
+    #[serde(default)]
+    pub name: String,
     pub steps: Vec<PlanDelta>,
     pub redo: Vec<PlanDelta>,
     /// Bumped on every change so previews know when to rebuild.
@@ -143,6 +175,16 @@ pub struct Project {
 impl Project {
     pub fn is_empty(&self) -> bool {
         self.steps.is_empty()
+    }
+
+    /// Record several gestures as one step (one undo).
+    pub fn push_many(&mut self, changes: Vec<(GestureId, Option<Gesture>)>) {
+        if changes.is_empty() {
+            return;
+        }
+        self.steps.push(changes.into_iter().collect());
+        self.redo.clear();
+        self.version += 1;
     }
 
     /// Record a new step.
@@ -210,6 +252,66 @@ impl Project {
     pub fn touched(&self) -> impl Iterator<Item = GestureId> + '_ {
         self.steps.iter().flat_map(|s| s.keys().copied())
     }
+
+    /// Gestures both projects change: implemented one after the other, the
+    /// later one's version wins.
+    pub fn conflicts_with(&self, other: &Project) -> Vec<GestureId> {
+        let mine: std::collections::BTreeSet<GestureId> = self.touched().collect();
+        let theirs: std::collections::BTreeSet<GestureId> = other.touched().collect();
+        mine.intersection(&theirs).copied().collect()
+    }
+
+    /// Parcel keys this project paints (with a land use, or back to unzoned).
+    pub fn painted(&self) -> std::collections::BTreeSet<ParcelKey> {
+        let mut out = std::collections::BTreeSet::new();
+        for step in &self.steps {
+            for g in step.values().flatten() {
+                if let Gesture::ParcelZone { parcels, .. } = g {
+                    out.extend(parcels.iter().copied());
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Land use and deciding gesture of every parcel, by parcel index.
+pub type ParcelZoning = Vec<Option<(LandUse, GestureId)>>;
+
+/// What each parcel is zoned as under `plan`. Gestures are applied oldest
+/// first (gesture ids only grow), so the newest zone polygon that holds the
+/// parcel's centre, or the newest stroke that painted it, decides. A parcel
+/// takes a land use only if it accepts it ([`crate::zoning::Parcel::accepts`]);
+/// a gesture it refuses leaves it as it was. A stroke with no land use
+/// erases back to unzoned.
+pub fn parcel_zoning(parcels: &ParcelMap, plan: &Plan) -> ParcelZoning {
+    let mut out: Vec<Option<(LandUse, GestureId)>> = vec![None; parcels.len()];
+    for (id, g) in &plan.gestures {
+        match g {
+            Gesture::Zone { polygon, land_use } => {
+                if polygon.len() < 3 || crate::geom::self_intersects(polygon) {
+                    continue;
+                }
+                for i in parcels.in_polygon(polygon) {
+                    if parcels.parcels[i].accepts(*land_use) {
+                        out[i] = Some((*land_use, *id));
+                    }
+                }
+            }
+            Gesture::ParcelZone { parcels: keys, land_use, .. } => {
+                for k in keys {
+                    let Some(i) = parcels.find(k) else { continue };
+                    match land_use {
+                        Some(lu) if parcels.parcels[i].accepts(*lu) => out[i] = Some((*lu, *id)),
+                        Some(_) => {}
+                        None => out[i] = None,
+                    }
+                }
+            }
+            Gesture::Road { .. } => {}
+        }
+    }
+    out
 }
 
 /// What the renderer needs to draw a project on top of the built city.
@@ -221,6 +323,9 @@ pub struct PlanPreview {
     pub removed_roads: Vec<(GestureId, Vec<Vec2>, u8, u8, RoadKind)>,
     pub planned_zones: Vec<(GestureId, Vec<Vec2>, LandUse)>,
     pub removed_zones: Vec<(GestureId, Vec<Vec2>)>,
+    /// Paint strokes added, changed or taken back (the parcels they colour
+    /// are in `World::planned_zoning`).
+    pub parcel_strokes: usize,
     /// Every control point of every road or zone in the effective plan.
     pub control_points: Vec<(GestureId, usize, Vec2)>,
 }
@@ -239,6 +344,7 @@ pub fn preview(master: &Plan, project: &Project) -> PlanPreview {
         match g {
             Gesture::Road { lanes_fwd, lanes_bwd, kind, .. } => out.planned_roads.push((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd, *kind)),
             Gesture::Zone { polygon, land_use } => out.planned_zones.push((*id, polygon.clone(), *land_use)),
+            Gesture::ParcelZone { .. } => out.parcel_strokes += 1,
         }
     }
     for (id, g) in &master.gestures {
@@ -249,6 +355,7 @@ pub fn preview(master: &Plan, project: &Project) -> PlanPreview {
         match g {
             Gesture::Road { lanes_fwd, lanes_bwd, kind, .. } => out.removed_roads.push((*id, g.road_polyline(), *lanes_fwd, *lanes_bwd, *kind)),
             Gesture::Zone { polygon, .. } => out.removed_zones.push((*id, polygon.clone())),
+            Gesture::ParcelZone { .. } => out.parcel_strokes += 1,
         }
     }
     out

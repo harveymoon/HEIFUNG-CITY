@@ -9,12 +9,12 @@ use super::help;
 use super::{hint, icons, section, zone_color32, WARN};
 use crate::assets::GameAssets;
 use crate::sim::Sim;
-use crate::tools::{EffectivePlan, Tool, ToolState, TransitMode, ROAD_PRESETS};
+use crate::tools::{EffectivePlan, Tool, ToolState, TransitMode, ZoneMode, BRUSH_MAX, BRUSH_MIN, ROAD_PRESETS};
 
 pub fn sub_pane(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut EffectivePlan, assets: &GameAssets) {
     match tools.tool {
         Tool::Road => road(ui, tools),
-        Tool::Zone => zone(ui, tools, assets),
+        Tool::Zone => zone(ui, sim, tools, assets),
         Tool::Edit => edit(ui, sim, tools, plan),
         Tool::Bulldoze => hint(ui, help::tool_hint(Tool::Bulldoze)),
         Tool::Inspect => hint(ui, help::tool_hint(Tool::Inspect)),
@@ -62,17 +62,72 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
     hint(ui, help::tool_hint(Tool::Road));
 }
 
-fn zone(ui: &mut egui::Ui, tools: &mut ToolState, assets: &GameAssets) {
+fn zone(ui: &mut egui::Ui, sim: &Sim, tools: &mut ToolState, assets: &GameAssets) {
     ui.horizontal_wrapped(|ui| {
         for lu in LandUse::ALL {
             let colour = zone_color32(assets.palette.zone_color(lu));
             let text = egui::RichText::new(lu.label()).color(colour);
-            if icons::selectable(ui, tools.land_use == lu, text, |p, r, _| icons::land_use(p, r, lu, colour)).clicked() {
+            if icons::selectable(ui, tools.land_use == lu && !tools.unzone, text, |p, r, _| icons::land_use(p, r, lu, colour)).clicked() {
                 tools.land_use = lu;
+                tools.unzone = false;
             }
         }
+        if tools.zone_mode != ZoneMode::Polygon && ui.selectable_label(tools.unzone, "Unzone").on_hover_text("Left button erases parcels back to unzoned (the right button always does)").clicked() {
+            tools.unzone = !tools.unzone;
+        }
     });
-    hint(ui, help::tool_hint(Tool::Zone));
+    // Industrial land: the sub-zone painting sets.
+    if tools.land_use == LandUse::Industrial && !tools.unzone {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("sub-zone").small());
+            for (key, label) in nd_sim::world::INDUSTRY_CHOICES {
+                if ui.selectable_label(tools.industry == key, label).clicked() {
+                    tools.industry = key;
+                }
+            }
+        });
+    }
+    ui.horizontal(|ui| {
+        for m in ZoneMode::ALL {
+            if ui.selectable_label(tools.zone_mode == m, m.label()).clicked() {
+                tools.zone_mode = m;
+                tools.points.clear();
+                tools.stroke = None;
+            }
+        }
+        if tools.zone_mode == ZoneMode::Brush {
+            ui.separator();
+            ui.add(egui::Slider::new(&mut tools.brush_radius, BRUSH_MIN..=BRUSH_MAX).text("brush m"));
+        }
+    });
+    hint(ui, match tools.zone_mode {
+        ZoneMode::Polygon => help::tool_hint(Tool::Zone),
+        ZoneMode::Brush => help::ZONE_BRUSH,
+        ZoneMode::Marquee => help::ZONE_MARQUEE,
+    });
+    // The parcel under the pointer: what it is, and whether it takes the
+    // selected use.
+    if let Some(p) = tools.hover_parcel.and_then(|i| sim.world.parcels.parcels.get(i)) {
+        let built = p.land_use.map_or("unzoned", |l| l.label());
+        let planned = tools.hover_parcel.and_then(|i| sim.world.planned_zoning().get(i).copied()).flatten();
+        let plan_note = if planned != p.land_use { format!(" → {} planned", planned.map_or("unzoned", |l| l.label())) } else { String::new() };
+        let front = if p.rough { "rough ground" } else if p.street_frontage { "street frontage" } else if p.path_frontage { "footpath frontage" } else { "landlocked backland" };
+        let verdict = if tools.unzone { String::new() } else {
+            match p.refusal(tools.land_use) {
+                None => format!(" · takes {}", tools.land_use.label()),
+                Some(why) => format!(" · no {}: {why}", tools.land_use.label()),
+            }
+        };
+        hint(ui, &format!("Parcel {:.0} m² · {front} · {built}{plan_note}{verdict}", p.area));
+        if tools.land_use == LandUse::Industrial {
+            let i = tools.hover_parcel.unwrap_or_default();
+            let ground = sim.world.suggested_industry(i).map_or_else(String::new, |k| format!("the ground suggests {k}"));
+            let set = sim.world.industry_choice_at(p.center).map_or_else(String::new, |k| format!(" · sub-zone set: {k}"));
+            if !ground.is_empty() || !set.is_empty() {
+                hint(ui, &format!("{ground}{set}"));
+            }
+        }
+    }
 }
 
 fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut EffectivePlan) {

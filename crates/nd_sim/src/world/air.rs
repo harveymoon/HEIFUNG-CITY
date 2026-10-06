@@ -923,16 +923,17 @@ impl World {
         }
     }
 
-    /// Land value: busy flight paths and rooftop pads take a little off.
+    /// Land value: busy flight paths and rooftop pads are a nuisance (the
+    /// land value grid's nuisance layer, which homes feel most).
     pub(super) fn splat_air_noise(&self, b: &mut LandValueBuilder) {
         for (cell, n) in self.air.noise.iter() {
             let p = air::noise_penalty(*n);
             if p > 0.0 {
-                b.splat(air::noise_cell_center(*cell), 90.0, -p);
+                b.splat_nuisance(air::noise_cell_center(*cell), 90.0, p);
             }
         }
         for pad in self.air.pads.iter().filter(|p| p.kind == PadKind::Rooftop) {
-            b.splat(pad.pos, 70.0, -0.01);
+            b.splat_nuisance(pad.pos, 70.0, 0.01);
         }
     }
 }

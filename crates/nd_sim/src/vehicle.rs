@@ -299,6 +299,9 @@ impl VehicleModel {
                 Resource::Electronics => BodyType::BoxVan,
                 Resource::Parts => BodyType::Semi,
                 Resource::Produce | Resource::Grain | Resource::Flour => BodyType::PanelTruck,
+                // [industry] tankers for oil, reefers for fish
+                Resource::Crude | Resource::Fuel => BodyType::Semi,
+                Resource::Plastics | Resource::Fish => BodyType::BoxVan,
             };
             let mut m = Self::new(VehicleClass::Mid, body);
             m.livery = seller.map(Livery::for_business).unwrap_or(Livery::None);
