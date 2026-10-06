@@ -150,6 +150,49 @@ pub fn ease_ramp_ends(points: &[Vec2], forward: bool, roads: &RoadNetwork) -> Ve
     pts
 }
 
+/// Spacing of the height samples along a long way (`sample_heights`).
+pub const HEIGHT_SAMPLE: f32 = 120.0;
+
+/// A polyline with a vertex wherever a leg longer than `spacing` crosses a
+/// line of a world grid of that spacing (across its main direction), so
+/// every long way gets a height to ease at least that often. The grid is
+/// fixed in the world, so two parallel ways (the two carriageways of the
+/// highway) get their samples side by side and are eased alike. No sample
+/// falls within a fifth of the spacing of a leg's ends.
+pub fn sample_heights(points: &[Vec2], spacing: f32) -> Vec<Vec2> {
+    let mut out: Vec<Vec2> = Vec::with_capacity(points.len());
+    for (i, w) in points.windows(2).enumerate() {
+        let (a, b) = (w[0], w[1]);
+        if i == 0 {
+            out.push(a);
+        }
+        let d = b - a;
+        let len = d.length();
+        if len > spacing {
+            let along_x = d.x.abs() >= d.y.abs();
+            let (c0, c1) = if along_x { (a.x, b.x) } else { (a.y, b.y) };
+            let (lo, hi) = (c0.min(c1), c0.max(c1));
+            let margin = spacing * 0.2 * (hi - lo) / len;
+            let mut ts: Vec<f32> = Vec::new();
+            let mut k = (lo / spacing).ceil() as i64;
+            while (k as f32) * spacing < hi {
+                let c = k as f32 * spacing;
+                if c > lo + margin && c < hi - margin {
+                    ts.push((c - c0) / (c1 - c0));
+                }
+                k += 1;
+            }
+            ts.sort_by(|x, y| x.total_cmp(y));
+            out.extend(ts.into_iter().map(|t| a + d * t));
+        }
+        out.push(b);
+    }
+    if points.len() == 1 {
+        out.push(points[0]);
+    }
+    out
+}
+
 /// Half the width of a path, in metres.
 /// Half the corridor of a single track: ballast shoulder to ballast shoulder.
 pub const RAIL_HALF_WIDTH: f32 = 2.4;
@@ -351,7 +394,18 @@ impl RoadNetwork {
         if let Some(id) = self.node_near_kind_where(p, SNAP_RADIUS, kind, |net, n| net.node_accepts(n, level, highway)) {
             return id;
         }
-        self.push_node(p, level)
+        // A vertex lying on a way it may meet (a height sample of one road
+        // falling on another) splits it there: a crossing exactly at a
+        // vertex is no crossing to the segment test.
+        let on = self.nearest_where(p, |s| s.alive).filter(|&(sid, t, q)| {
+            let s = self.segment(sid);
+            q.distance(p) < 0.5 && Self::joins(s.kind, kind) == Self::joins(kind, s.kind) && (s.kind == RoadKind::Rail) == (kind == RoadKind::Rail) && !grade_separated(s.is_highway(), self.segment_level(sid, t), highway, level)
+        });
+        let id = self.push_node(p, level);
+        if let Some((sid, _, _)) = on {
+            self.split_segment(sid, id);
+        }
+        id
     }
 
     /// Node for a road end: an existing node nearby, else a new node on the

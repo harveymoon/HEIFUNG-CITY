@@ -577,6 +577,10 @@ impl World {
         for (en, esid) in exits {
             let end = self.roads.node(en).pos;
             let Some((goal, s1, _)) = self.traffic.net.nearest_lane_on(esid, end) else { continue };
+            // On the last piece already: it drives on in its own lane.
+            let (goal, s1) = if esid == sid { (lane, self.traffic.net.lanes[lane as usize].project(end).0) } else { (goal, s1) };
+            // Already on the last lane at its very end: it leaves from there.
+            let s = if goal == lane { s.min(s1 - 0.5).max(0.0) } else { s };
             if let Some((route, s0, s1)) = self.traffic.net.route_lanes(lane, s, goal, s1) {
                 let id = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, car.color);
                 let c = &mut self.traffic.cars[id];
