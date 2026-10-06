@@ -1097,6 +1097,7 @@ impl World {
                 }
                 ModePlan::Train { board, alight, stop } => self.walk_to_transit(id, stop, TransitLeg::Rail { board, alight }, target, purpose, fresh),
                 ModePlan::Bus { route, board, alight, stop } => self.walk_to_transit(id, stop, TransitLeg::Bus { route, board, alight }, target, purpose, fresh),
+                ModePlan::Subway { line, board, alight, stop } => self.walk_to_transit(id, stop, TransitLeg::Subway { line, board, alight }, target, purpose, fresh),
                 ModePlan::Walk | ModePlan::Bike => {
                     let mode = if matches!(opt.plan, ModePlan::Bike) { TravelMode::Bike } else { TravelMode::Walk };
                     if !self.walk_or_ride(id, target, purpose, mode, from_node, to_node, walk_from, entrance, fresh) {
@@ -1202,6 +1203,16 @@ impl World {
                 push(TripMode::Train, minutes, rail::RAIL_FARE, crowd, ModePlan::Train { board, alight, stop });
             }
         }
+        // [subway] The metro: the walk to an entrance, the stairs, half a
+        // headway on the platform, the ride. Out of the weather and the
+        // traffic, so a little kinder than the bus to the crowd-shy.
+        if q.allow_transit && crate::subway::Subway::in_service(self.clock.minute_of_day() as u32) {
+            if let Some(p) = self.plan_subway_trip(q.from, q.to) {
+                let headway = self.subway.lines.get(p.line).map_or(crate::subway::DEFAULT_HEADWAY, |l| l.headway) as f32;
+                let minutes = (q.from.distance(p.entrance) + p.exit.distance(q.to)) / walk + 2.0 + headway * 0.5 + p.minutes_riding;
+                push(TripMode::Subway, minutes, crate::subway::FARE, crowd * 0.8, ModePlan::Subway { line: p.line, board: p.board, alight: p.alight, stop: p.entrance });
+            }
+        }
         // The car, when it is parked nearby and the trip is worth it: the
         // walk to it, the drive, finding a space (as remembered), fuel and
         // the fee at the far end. A car is a comfortable seat out of the
@@ -1250,8 +1261,8 @@ impl World {
         let has_car = c.car.is_some();
         let p = &c.commute;
         let (walk_p, bike_p, car_p, park_p) = (p.pain_of(TripMode::Walk), p.pain_of(TripMode::Bike), p.pain_of(TripMode::Car), p.parking_pain);
-        let transit_p = p.pain_of(TripMode::Bus).max(p.pain_of(TripMode::Train));
-        let transit_used = p.trips[TripMode::Bus.index()] + p.trips[TripMode::Train.index()] > 0.3;
+        let transit_p = p.pain_of(TripMode::Bus).max(p.pain_of(TripMode::Train)).max(p.pain_of(TripMode::Subway));
+        let transit_used = p.trips[TripMode::Bus.index()] + p.trips[TripMode::Train.index()] + p.trips[TripMode::Subway.index()] > 0.3;
         let cheap_car = self.citizens[m].car.and_then(|v| self.vehicles.cars.get(v)).is_some_and(|v| v.model.class == VehicleClass::Cheap);
         let wants = VehicleModel::for_owner(c.income, c.age, crate::vehicle::hedonism_of(c.seed), &mut crate::vehicle::model_rng(c.seed, today + 2));
         // A car the poor cannot keep.
@@ -1452,6 +1463,8 @@ pub enum ModePlan {
     Bike,
     Bus { route: RouteId, board: usize, alight: usize, stop: Vec2 },
     Train { board: BuildingId, alight: BuildingId, stop: Vec2 },
+    /// [subway] A metro ride on one line, walking to `stop` (the entrance).
+    Subway { line: crate::subway::MetroLineId, board: BuildingId, alight: BuildingId, stop: Vec2 },
     /// The citizen's car, parked at `at`.
     Car { car: crate::vehicle::VehicleId, at: Vec2 },
 }

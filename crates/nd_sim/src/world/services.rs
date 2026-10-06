@@ -85,6 +85,7 @@ impl World {
                 self.place_port(k, c)
             }
             Placeable::ParkingLot(size) => self.build_city_parking(lot, size),
+            Placeable::MetroStation => self.build_metro_station(lot),
         }
     }
 

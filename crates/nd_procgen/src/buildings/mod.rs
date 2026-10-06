@@ -28,6 +28,8 @@ pub mod transit;
 mod residential;
 mod towers;
 mod works;
+/// [subway] Metro entrances and the Central Station.
+pub mod subway;
 
 pub use adjacency::{Neighbour, StyleBook};
 mod services;
@@ -193,6 +195,9 @@ pub enum Style {
     TrashDepot,
     // air transport, placed by the player (buildings/air.rs)
     Vertiport,
+    // [subway] metro entrances and the Central Station
+    MetroEntrance,
+    CentralStation,
 }
 
 impl Style {
@@ -201,7 +206,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 77] = [
+    pub const ALL: [Style; 79] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -279,7 +284,19 @@ impl Style {
         Style::TruckLot,
         Style::TrashDepot,
         Style::Vertiport,
+        Style::MetroEntrance,
+        Style::CentralStation,
     ];
+
+    /// The railway piece a style is drawn beside, if it is one.
+    pub fn rail_kind(self) -> Option<RailFacility> {
+        match self {
+            Style::Station => Some(RailFacility::Station),
+            Style::FreightYard => Some(RailFacility::FreightYard),
+            Style::CentralStation => Some(RailFacility::Central),
+            _ => None,
+        }
+    }
 
     /// High-tier towers that take a rooftop helideck when the sim gives the
     /// building a pad (`buildings::air::rooftop_deck` finds the roof).
@@ -351,6 +368,8 @@ impl Style {
             Style::PowerNuclear => "nuclear plant",
             Style::BusDepot => "bus depot",
             Style::Station => "railway station",
+            Style::MetroEntrance => "metro entrance",
+            Style::CentralStation => "Central Station",
             Style::FreightYard => "freight yard",
             Style::WalledCity => "walled block",
             Style::PencilTower => "pencil tower",
@@ -905,6 +924,8 @@ pub struct Extras<'a> {
     pub rooftop_pad: bool,
     /// The business on the lot: industry sub-zones have their own looks.
     pub business: Option<nd_sim::BusinessKind>,
+    /// [subway] A metro station: drawn as its entrance plaza.
+    pub metro: bool,
     /// A truck and bus lot: share of its bays in use.
     pub fleet: f32,
     /// [districts] The district architecture the building was put up in:
@@ -914,7 +935,7 @@ pub struct Extras<'a> {
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false }
     }
 }
 
@@ -1020,6 +1041,9 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
     let mut rng = rng_for(seed, 11);
     match (extras.plant, extras.parking) {
         _ if extras.service.is_some() => Style::for_service(extras.service.unwrap()),
+        // [subway] Before the depot: the Central Station is a bus terminal too.
+        _ if extras.rail.is_some_and(|r| r.kind == RailFacility::Central) => Style::CentralStation,
+        _ if extras.metro => Style::MetroEntrance,
         _ if extras.depot => Style::BusDepot,
         _ if extras.port == Some(nd_sim::ports::PortKind::ShippingPort) => Style::ShippingPort,
         _ if extras.port == Some(nd_sim::ports::PortKind::FerryTerminal) => Style::FerryTerminal,
@@ -1169,7 +1193,7 @@ fn generate_styled_extras(
         seed,
         parking,
         powered: extras.powered,
-        rail: extras.rail.cloned().or_else(|| matches!(style, Style::Station | Style::FreightYard).then(|| back_edge_link(lot, if style == Style::Station { RailFacility::Station } else { RailFacility::FreightYard }))),
+        rail: extras.rail.cloned().or_else(|| style.rail_kind().map(|k| back_edge_link(lot, k))),
         park: if land_use == LandUse::Park || matches!(style, Style::ScrubLot | Style::Garden | Style::Plaza) { Some(extras.park.cloned().unwrap_or_else(|| nd_sim::park::plan_single(lot, tier))) } else { None },
         animated_rotors: extras.animated_rotors,
         field: extras.field,
@@ -1233,6 +1257,8 @@ fn generate_styled_extras(
         Style::BusDepot => transit::bus_depot(&mut g, &ctx, &mut rng),
         Style::Station => rail::station(&mut g, &ctx, &mut rng),
         Style::FreightYard => rail::freight_yard(&mut g, &ctx, &mut rng),
+        Style::MetroEntrance => subway::metro_entrance(&mut g, &ctx, &mut rng),
+        Style::CentralStation => subway::central_station(&mut g, &ctx, &mut rng),
         Style::WalledCity => dense::walled_city(&mut g, &ctx, &mut rng),
         Style::PencilTower => towers::pencil_tower(&mut g, &ctx, &mut rng),
         Style::TwinSlab => towers::twin_slab(&mut g, &ctx, &mut rng),
@@ -1641,11 +1667,7 @@ mod tests {
                 for style in Style::ALL {
                     for (seed, floors, tier) in [(1u64, 2u8, Tier::Low), (7, 9, Tier::Mid), (13, 30, Tier::High)] {
                         let g = generate_styled(lot, lu, floors, tier, 0.6, seed + li as u64, style, &rules, &pal);
-                        let link = match style {
-                            Style::Station => Some(back_edge_link(lot, RailFacility::Station)),
-                            Style::FreightYard => Some(back_edge_link(lot, RailFacility::FreightYard)),
-                            _ => None,
-                        };
+                        let link = style.rail_kind().map(|k| back_edge_link(lot, k));
                         let (over, top, low, culprit) = extent(&g, lot, link.as_ref());
                         let tris = g.triangle_count();
                         let allow = 1.0;

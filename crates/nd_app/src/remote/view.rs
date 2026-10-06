@@ -185,6 +185,7 @@ pub fn rail_name(k: RailFacility) -> &'static str {
     match k {
         RailFacility::Station => "station",
         RailFacility::FreightYard => "freight_yard",
+        RailFacility::Central => "central_station",
     }
 }
 
@@ -192,6 +193,7 @@ pub fn transit_mode_name(m: TransitMode) -> &'static str {
     match m {
         TransitMode::Route => "route",
         TransitMode::Depot => "depot",
+        TransitMode::Metro => "metro",
     }
 }
 
@@ -276,6 +278,9 @@ fn activity(w: &World, c: &Citizen) -> Value {
         }
         Activity::Flying { drone } => {
             m.insert("drone".into(), json!(key_str(*drone)));
+        }
+        Activity::OnMetro { train } => {
+            m.insert("metro_train".into(), json!(key_str(*train)));
         }
         Activity::Arriving | Activity::AtHome | Activity::Working | Activity::Idle | Activity::Waiting { .. } => {}
     }
@@ -628,6 +633,7 @@ pub fn placeable_key(p: nd_sim::Placeable) -> String {
         nd_sim::Placeable::Dock(nd_sim::PortKind::ShippingPort) => "shipping_port".to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::FerryTerminal) => "ferry_terminal".to_string(),
         nd_sim::Placeable::ParkingLot(s) => s.key().to_string(),
+        nd_sim::Placeable::MetroStation => "metro_station".to_string(),
     }
 }
 

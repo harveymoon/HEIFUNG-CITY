@@ -321,8 +321,10 @@ fn people(w: &World) -> Value {
             Activity::Driving { .. } => Some("car"),
             Activity::Riding { .. } => Some("bus"),
             Activity::OnTrain { .. } => Some("train"),
+            Activity::OnMetro { .. } => Some("subway"),
             Activity::Waiting { .. } => Some(match c.transit.map(|t| t.leg) {
                 Some(TransitLeg::Rail { .. }) => "train",
+                Some(TransitLeg::Subway { .. }) => "subway",
                 Some(TransitLeg::Air { .. }) => "air",
                 _ => "bus",
             }),
@@ -646,7 +648,7 @@ fn services(w: &World) -> Value {
             match c.transit.map(|t| t.leg) {
                 Some(TransitLeg::Bus { route, .. }) => *route_waiting.entry(key_str(route)).or_default() += 1,
                 Some(TransitLeg::Rail { board, .. }) => *station_waiting.entry(board).or_default() += 1,
-                Some(TransitLeg::Air { .. }) | None => {}
+                Some(TransitLeg::Air { .. }) | Some(TransitLeg::Subway { .. }) | None => {}
             }
         }
     }
@@ -730,6 +732,7 @@ fn services(w: &World) -> Value {
             "freight_trains_today": r.freight_trains_today, "freight_in_today": round(r.freight_in_today), "freight_waiting": round(r.freight_waiting),
             "next_passenger_in_ticks": r.next_passenger_in,
         },
+        "subway": crate::remote::subway::report(w),
         "air": crate::remote::view::air_report(w),
         "parking": {
             "capacity": e.parking_capacity, "used": e.parking_used, "occupancy": share(e.parking_used as usize, e.parking_capacity as usize), "parking_lots": e.parking_lots,

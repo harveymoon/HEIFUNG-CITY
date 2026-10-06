@@ -143,6 +143,10 @@ pub enum Activity {
     Flying {
         drone: crate::air::DroneId,
     },
+    /// [subway] On a metro train, underground.
+    OnMetro {
+        train: crate::subway::MetroTrainId,
+    },
 }
 
 impl Activity {
@@ -158,6 +162,7 @@ impl Activity {
             Activity::Riding { .. } => "on the bus",
             Activity::OnTrain { .. } => "on the train",
             Activity::Flying { .. } => "in the air",
+            Activity::OnMetro { .. } => "on the subway",
             Activity::Traveling { purpose, .. } | Activity::Driving { purpose, .. } => match purpose {
                 Purpose::Home => "heading home",
                 Purpose::Work => "commuting",
@@ -171,7 +176,7 @@ impl Activity {
     }
 
     pub fn is_traveling(&self) -> bool {
-        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } | Activity::Flying { .. })
+        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } | Activity::Flying { .. } | Activity::OnMetro { .. })
     }
 }
 
@@ -194,10 +199,12 @@ pub enum TripMode {
     Bus,
     Train,
     Car,
+    /// [subway] The metro.
+    Subway,
 }
 
 impl TripMode {
-    pub const ALL: [TripMode; 5] = [TripMode::Walk, TripMode::Bike, TripMode::Bus, TripMode::Train, TripMode::Car];
+    pub const ALL: [TripMode; 6] = [TripMode::Walk, TripMode::Bike, TripMode::Bus, TripMode::Train, TripMode::Car, TripMode::Subway];
 
     pub fn index(self) -> usize {
         match self {
@@ -206,6 +213,7 @@ impl TripMode {
             TripMode::Bus => 2,
             TripMode::Train => 3,
             TripMode::Car => 4,
+            TripMode::Subway => 5,
         }
     }
 
@@ -216,6 +224,7 @@ impl TripMode {
             TripMode::Bus => "bus",
             TripMode::Train => "train",
             TripMode::Car => "car",
+            TripMode::Subway => "subway",
         }
     }
 }

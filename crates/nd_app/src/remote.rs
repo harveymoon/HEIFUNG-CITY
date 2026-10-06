@@ -27,6 +27,8 @@ mod places;
 mod report;
 /// [society] crime, homelessness and trash.
 mod society;
+/// [subway] The `subway` command and report section.
+mod subway;
 mod view;
 mod window;
 
@@ -433,6 +435,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "tourism" | "tourists" => districts::tourism(cmd, &mut ctx.sim.world),
         "concerns" => concerns::command(cmd, &ctx.sim.world),
         "bus" => bus(cmd, ctx),
+        "subway" | "metro" => subway::command(cmd, &mut ctx.sim.world),
         "find" => find(cmd, ctx),
         "inspect" => inspect(cmd, ctx),
         "lane_use" => lane_use(cmd, ctx),
@@ -826,6 +829,9 @@ fn status(ctx: &Ctx) -> Value {
         "message": ctx.flags.message, "tool_status": ctx.tools.status, "event_seq": ctx.log.seq,
         "favourites": ctx.tools.favorites.iter().map(|&f| key_str(f)).collect::<Vec<_>>(),
     });
+    // [subway] Added apart: the literal above is at serde_json's macro depth.
+    let ss = &w.subway.stats;
+    v["subway"] = json!({ "stations": ss.stations, "lines": ss.lines, "trains": ss.trains, "waiting": ss.waiting, "riding": ss.riding, "riders_today": ss.riders_today, "riders_yesterday": ss.riders_yesterday, "fares_today": round(ss.fares_today) });
     // Added after the literal: one `json!` this size hits the macro recursion limit.
     v["windows_open"] = json!(ctx.windows.open_names());
     v["window_expanded"] = json!(ctx.windows.expanded_name());
@@ -1019,8 +1025,12 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let p = req_point(cmd)?;
     let w = &mut ctx.sim.world;
     let (id, note) = match kind.as_str() {
-        "station" | "freight_yard" | "yard" => {
-            let fac = if kind == "station" { RailFacility::Station } else { RailFacility::FreightYard };
+        "station" | "freight_yard" | "yard" | "central_station" | "central" | "main_station" => {
+            let fac = match kind.as_str() {
+                "station" => RailFacility::Station,
+                "freight_yard" | "yard" => RailFacility::FreightYard,
+                _ => RailFacility::Central,
+            };
             let id = w.place_rail_facility(fac, p)?;
             let link = w.buildings.get(id).and_then(|b| b.rail.as_ref()).map(|l| (l.rail_connected, l.road_connected));
             let note = match link {
@@ -1465,6 +1475,9 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         let b = w.buildings.get(id).ok_or("no such building")?;
         let style = match b.service {
             Some(s) => nd_procgen::buildings::Style::for_service(s.kind).label(),
+            // [subway]
+            None if b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::Central) => nd_procgen::buildings::Style::CentralStation.label(),
+            None if b.metro => nd_procgen::buildings::Style::MetroEntrance.label(),
             None => b.port.map(|k| k.label()).or(b.plant.map(|k| k.label())).unwrap_or(ctx.assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11)).label()),
         };
         let mut v = building_detail(w, id, b, style);
@@ -1656,14 +1669,16 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 t.rail_kind = match kind.to_ascii_lowercase().as_str() {
                     "station" => RailFacility::Station,
                     "freight_yard" | "yard" => RailFacility::FreightYard,
-                    _ => return Err(format!("unknown rail kind {kind:?}; station or freight_yard")),
+                    "central_station" | "central" => RailFacility::Central,
+                    _ => return Err(format!("unknown rail kind {kind:?}; station, central_station or freight_yard")),
                 }
             }
             Tool::Transit => {
                 t.transit_mode = match kind.to_ascii_lowercase().as_str() {
                     "route" | "lines" => TransitMode::Route,
                     "depot" => TransitMode::Depot,
-                    _ => return Err(format!("unknown transit mode {kind:?}; route or depot")),
+                    "metro" | "subway" => TransitMode::Metro,
+                    _ => return Err(format!("unknown transit mode {kind:?}; route, depot or metro")),
                 };
                 t.route_sel = None;
             }
@@ -1993,6 +2008,8 @@ fn help() -> Value {
     v["commands"]["district"] = json!({ "action": "list (default)|create|paint|erase|set|remove|at|select|layer", "id": "district id (or district: id or name)", "at": "[x,y] brush centre", "radius": "m, default 40", "polygon": "[[x,y],...]", "rect": "[[x0,y0],[x1,y1]]", "residential": "kowloon|suburban|eco|none", "commercial": "neon_strip|tech_campus|night_market|tourist|none", "industry": "farming|oil|refinery|manufacturing|logistics|fishing|tech|none", "historic": "bool", "rename": "new name", "on": "bool (layer)" });
     v["commands"]["tourism"] = json!({ "action": "refresh (re-read attractions now)", "limit": "tourists listed, default 20", "returns": "attractiveness, demand, ways in, today's and yesterday's arrivals, spending and tourist tax, hotels, attractions, tourists" });
     // [society]
+    // [subway]
+    v["commands"]["subway"] = json!({ "action": "status (default)|station|line|headway|remove_line|inspect_line|inspect_station", "x": "f (station)", "y": "f (station)", "stations": "[id or [x,y], ...] (line)", "points": "[[x,y], ...] (line: places stations where none is near)", "line": "id", "minutes": "headway", "headway": "minutes (line)", "station": "id or [x,y]" });
     v["commands"]["society"] = json!({ "action": "report (default)|evict|offend|trash", "building": "id (evict: its households go on the street; offend: the target; trash: one building's bins)", "citizen": "id (offend)", "kind": "theft|burglary|assault|murder|vandalism (offend, with building)", "kg": "trash to add, default 100" });
     // Planning: several projects, and painting parcels.
     let planning = json!({

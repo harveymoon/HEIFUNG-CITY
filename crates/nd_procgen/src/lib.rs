@@ -3,6 +3,8 @@
 
 pub mod buildings;
 pub mod lights;
+/// [subway] Metro tunnels, platforms and cars for the Underground view.
+pub mod metro;
 pub mod mesh;
 pub mod overlay;
 pub mod palette;

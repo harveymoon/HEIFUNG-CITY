@@ -256,10 +256,11 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
 
 fn transit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
     ui.horizontal(|ui| {
-        for (m, label) in [(TransitMode::Route, "Lines"), (TransitMode::Depot, "Depot")] {
+        for (m, label) in [(TransitMode::Route, "Lines"), (TransitMode::Depot, "Depot"), (TransitMode::Metro, "Metro")] {
             if ui.selectable_label(tools.transit_mode == m, label).clicked() {
                 tools.transit_mode = m;
                 tools.route_sel = None;
+                tools.metro_draft.clear();
             }
         }
         ui.checkbox(&mut tools.show_routes, "Always show lines");
@@ -294,6 +295,46 @@ fn transit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
             }
         }
         TransitMode::Depot => hint(ui, help::TRANSIT_DEPOT),
+        TransitMode::Metro => metro(ui, sim, tools),
+    }
+}
+
+/// [subway] The Metro mode: what it does and costs, the lines with their
+/// timetable and riders, and the line being laid.
+fn metro(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
+    use nd_sim::subway as m;
+    let s = &sim.world.subway.stats;
+    hint(ui, &format!("Click lots to put stations there ({:.0} each, {:.0}/day) or pick standing ones and the Central Station, in order; Enter or right-click lays the line (tunnel {:.0}/m, {:.0}/km/day). Trains every {} min each way, 05:00 to midnight; fare {:.1}. U shows the tunnels.", m::STATION_COST, m::STATION_UPKEEP_PER_DAY, m::TUNNEL_COST_PER_M, m::TUNNEL_UPKEEP_PER_KM, m::DEFAULT_HEADWAY, m::FARE));
+    hint(ui, &format!("{} station{} · {} line{} · {} train{} · {} waiting · {} riding · {} riders today ({} yesterday) · fares {:.0}", s.stations, if s.stations == 1 { "" } else { "s" }, s.lines, if s.lines == 1 { "" } else { "s" }, s.trains, if s.trains == 1 { "" } else { "s" }, s.waiting, s.riding, s.riders_today, s.riders_yesterday, s.fares_today));
+    if !tools.metro_draft.is_empty() {
+        let names: Vec<String> = tools.metro_draft.iter().filter_map(|b| sim.world.buildings.get(*b).map(|b| b.name.clone())).collect();
+        hint(ui, &format!("laying: {}", names.join(" → ")));
+    }
+    let ids: Vec<nd_sim::MetroLineId> = sim.world.subway.lines.keys().collect();
+    let mut remove = None;
+    let mut headway = None;
+    egui::ScrollArea::vertical().max_height(66.0).show(ui, |ui| {
+        for id in ids {
+            let l = &sim.world.subway.lines[id];
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format!("{} · {} stations · {:.1} km · every {} min · {} riders today", l.name, l.stations.len(), l.length() / 1000.0, l.headway, l.riders_today)).small());
+                if ui.small_button("−").on_hover_text("trains more often").clicked() {
+                    headway = Some((id, l.headway.saturating_sub(2)));
+                }
+                if ui.small_button("+").on_hover_text("trains less often").clicked() {
+                    headway = Some((id, l.headway + 2));
+                }
+                if ui.small_button("delete").clicked() {
+                    remove = Some(id);
+                }
+            });
+        }
+    });
+    if let Some((id, h)) = headway {
+        let _ = sim.world.set_metro_headway(id, h);
+    }
+    if let Some(id) = remove {
+        sim.world.remove_metro_line(id);
     }
 }
 
@@ -318,7 +359,7 @@ fn route_row(ui: &mut egui::Ui, tools: &mut ToolState, id: nd_sim::RouteId, r: &
 
 fn rail(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
     ui.horizontal(|ui| {
-        for (k, label) in [(RailFacility::Station, "Passenger station"), (RailFacility::FreightYard, "Freight yard")] {
+        for (k, label) in [(RailFacility::Station, "Passenger station"), (RailFacility::Central, "Central Station"), (RailFacility::FreightYard, "Freight yard")] {
             if ui.selectable_label(tools.dock.is_none() && tools.rail_kind == k, label).clicked() {
                 tools.rail_kind = k;
                 tools.dock = None;
@@ -330,6 +371,7 @@ fn rail(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
     let (w, d) = nd_sim::Facility::size(tools.rail_kind);
     hint(ui, &match tools.rail_kind {
         RailFacility::Station => format!("A piece with track along one side and a street along the other, {w:.0} by {d:.0} m. Click anywhere: set beside track or a street it fuses to them, otherwise it lays stubs for you to join. {:.0} to build, {:.0}/day. People ride between stations for trips over {:.0} m; newcomers arrive by train.", nd_sim::rail::STATION_COST, nd_sim::rail::STATION_UPKEEP_PER_DAY, nd_sim::rail::RAIL_TRIP_MIN),
+        RailFacility::Central => format!("The city's grand terminus, {w:.0} by {d:.0} m: intercity platforms under a vaulted glass hall, a metro station below (lay metro lines to it with the Buses tool's Metro mode) and a bus terminal at its front. People walk {:.0} m to it. One per city; {:.0} to build, {:.0}/day.", nd_sim::rail::CENTRAL_REACH, nd_sim::rail::CENTRAL_COST, nd_sim::rail::CENTRAL_UPKEEP_PER_DAY),
         RailFacility::FreightYard => format!("A yard with sidings along one side and a street for lorries along the other, {w:.0} by {d:.0} m, anywhere you like. {:.0} to build, {:.0}/day. Once connected, imports come by rail at {:.0}% of the price and exports earn {:.0}% more.", nd_sim::rail::YARD_COST, nd_sim::rail::YARD_UPKEEP_PER_DAY, nd_sim::rail::RAIL_IMPORT_FACTOR * 100.0, (nd_sim::rail::RAIL_EXPORT_BONUS - 1.0) * 100.0),
     });
     hint(ui, help::tool_hint(Tool::Rail));
@@ -396,6 +438,7 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         Placeable::BusDepot => line += &format!(". {}", help::TRANSIT_DEPOT),
         Placeable::Rail(_) => line += ". Set beside track or a street it fuses to them; otherwise it lays stubs to join (see the Rail tool).",
         Placeable::Dock(_) => {}
+        Placeable::MetroStation => line += &format!(". An entrance on its plaza, the platform underground; join stations into lines with the Buses tool's Metro mode (tunnel {:.0}/m). Lifts land value round it.", nd_sim::subway::TUNNEL_COST_PER_M),
         Placeable::ParkingLot(s) => line += &format!(", {} spaces. Run by the city: drivers pay {:.1} a visit to the treasury (set the fee in the inspector or with the API).", s.capacity(), s.default_price()),
     }
     hint(ui, &line);

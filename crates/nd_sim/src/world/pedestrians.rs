@@ -502,7 +502,7 @@ impl World {
     fn ped_witness(&self, p: Vec2, except: &[CitizenId]) -> Option<CitizenId> {
         self.citizens
             .iter()
-            .filter(|(id, c)| !except.contains(id) && !c.asleep && c.age >= 12 && c.inside.is_none() && !matches!(c.activity, Activity::OnTrain { .. } | Activity::Arriving))
+            .filter(|(id, c)| !except.contains(id) && !c.asleep && c.age >= 12 && c.inside.is_none() && !matches!(c.activity, Activity::OnTrain { .. } | Activity::OnMetro { .. } | Activity::Arriving))
             .map(|(id, c)| (id, c.pos.distance(p)))
             .filter(|(_, d)| *d < 300.0)
             .min_by(|a, b| a.1.total_cmp(&b.1))

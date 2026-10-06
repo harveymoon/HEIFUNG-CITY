@@ -14,6 +14,7 @@
 //! - `parking`: parking businesses
 //! - `buses`: depots, routes, stops and the bus loop
 //! - `trains`: stations, yards, rail links and trains
+//! - `subway`: metro stations, lines, trains and riders
 //! - `power`: plants and power allocation
 //! - `services`: police, fire, health, schools, dispatch, attractions,
 //!   emergencies and the vehicles that answer them
@@ -49,6 +50,7 @@ mod services;
 mod society;
 mod survey;
 pub use survey::SiteContext;
+mod subway;
 #[cfg(test)]
 mod car_tests;
 #[cfg(test)]
@@ -407,6 +409,9 @@ pub struct World {
     /// (`world/tourism.rs`).
     #[serde(default)]
     pub tourism: crate::tourism::Tourism,
+    /// [subway] Metro lines and their trains (`world/subway.rs`).
+    #[serde(default)]
+    pub subway: crate::subway::Subway,
 }
 
 impl World {
@@ -477,6 +482,7 @@ impl World {
             concerns: Default::default(),
             districts: Default::default(),
             tourism: Default::default(),
+            subway: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -543,6 +549,7 @@ impl World {
             self.strand_driver(id, pos);
         }
         self.refresh_facility_cache();
+        self.subway_after_load();
         self.update_economy();
         // A save from before named projects: number and name the one it has.
         self.name_active_project();
@@ -606,6 +613,7 @@ impl World {
                 Some(TransitLeg::Bus { route, board, alight }) => routes.get(route).is_some_and(|r| board < r.stops.len() && alight < r.stops.len()),
                 Some(TransitLeg::Rail { board, alight }) => buildings.contains_key(board) && buildings.contains_key(alight),
                 Some(TransitLeg::Air { from, to }) => buildings.contains_key(from) && buildings.contains_key(to),
+                Some(TransitLeg::Subway { line, board, alight }) => self.subway.lines.get(line).is_some_and(|l| l.index_of(board).is_some() && l.index_of(alight).is_some()),
             } && c.transit.is_none_or(|t| buildings.contains_key(t.target));
             if !trip_ok {
                 c.transit = None;
@@ -618,6 +626,8 @@ impl World {
                 Activity::Working => c.work.is_none(),
                 Activity::Waiting { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } => c.transit.is_none(),
                 Activity::Flying { drone } => !self.air.drones.contains_key(*drone),
+                // Trains are not saved: `subway_after_load` sets riders down.
+                Activity::OnMetro { .. } => c.transit.is_none(),
                 _ => false,
             };
             if lost || target_gone {
@@ -721,6 +731,8 @@ impl World {
             let record = self.open_day_record();
             // Services settle their upkeep before the books close.
             self.daily_services();
+            // [subway] Upkeep before the books close.
+            self.daily_subway();
             // [society] crime, the street and the bins settle their day.
             self.daily_society();
             self.daily_update();
@@ -785,6 +797,7 @@ impl World {
         self.step_through_traffic();
         self.step_transit();
         self.step_rail();
+        self.step_subway();
         self.step_ships();
         if self.clock.minute_of_day() == 0 {
             self.bots.delivered_today = 0;

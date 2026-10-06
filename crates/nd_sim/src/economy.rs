@@ -36,13 +36,17 @@ pub enum Flow {
     ParkingFees,
     /// [tourism] The city's tax on every hotel night (`crate::tourism`).
     TouristTax,
+    /// [subway] Metro fares.
+    SubwayFares,
+    /// [subway] Metro stations, tunnels and train runs.
+    SubwayUpkeep,
 }
 
 /// Number of `Flow`s; the ledger's row length.
-pub const FLOWS: usize = 14;
+pub const FLOWS: usize = 16;
 
 impl Flow {
-    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax];
+    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -60,6 +64,8 @@ impl Flow {
             Flow::ParkingFines => "parking fines",
             Flow::ParkingFees => "city parking fees",
             Flow::TouristTax => "tourist tax",
+            Flow::SubwayFares => "subway fares",
+            Flow::SubwayUpkeep => "subway upkeep",
         }
     }
 

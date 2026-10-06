@@ -48,6 +48,8 @@ mod people;
 pub use people::MESH_CAP as PEOPLE_MESH_CAP;
 mod stunts;
 mod survey;
+/// [subway] Metro tunnels and trains in the Underground view.
+mod subway;
 /// [society] Camps, RVs and overflowing bins.
 mod society;
 mod turbines;
@@ -395,6 +397,7 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, sync_ring_preview.in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
         app.add_systems(Update, (holo::sync_draw_hologram, holo::sync_plan_holograms).in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
         app.add_systems(Update, holo::apply_depth.in_set(SimSet::Sync).after(lift_movers));
+        app.add_systems(Update, (subway::sync_metro_tunnels, subway::sync_metro_trains).in_set(SimSet::Sync).after(sync_trains).before(holo::apply_depth));
         app.add_systems(Update, (turbines::sync_turbines, haze::sync_haze, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
         // The ground and water out past the map, into the fog.
@@ -1495,6 +1498,7 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
         rooftop_pad: world.air.has_rooftop(id),
         look: b.look,
+        metro: b.metro,
     };
     let mut g = match &b.demolition {
         // Coming down: what stood there (which, during a redevelopment or a

@@ -49,6 +49,15 @@ pub const STATION_COST: f32 = 25_000.0;
 pub const STATION_UPKEEP_PER_DAY: f32 = 300.0;
 pub const STATION_JOBS: u16 = 8;
 pub const STATION_PLATFORM: f32 = 70.0;
+/// [subway] The Central Station: a grand hall over long intercity
+/// platforms, with a metro station under it and a bus terminal at its
+/// front. One per city.
+pub const CENTRAL_COST: f32 = 120_000.0;
+pub const CENTRAL_UPKEEP_PER_DAY: f32 = 1_100.0;
+pub const CENTRAL_JOBS: u16 = 60;
+pub const CENTRAL_PLATFORM: f32 = 120.0;
+/// People walk further to a Central Station than to a halt.
+pub const CENTRAL_REACH: f32 = 420.0;
 pub const YARD_COST: f32 = 30_000.0;
 pub const YARD_UPKEEP_PER_DAY: f32 = 400.0;
 pub const YARD_JOBS: u16 = 20;
@@ -83,6 +92,9 @@ pub const BLOCK: f32 = 90.0;
 pub enum RailFacility {
     Station,
     FreightYard,
+    /// [subway] The city's main station: intercity platforms, a metro
+    /// station and a bus terminal under one grand roof.
+    Central,
 }
 
 impl RailFacility {
@@ -90,6 +102,53 @@ impl RailFacility {
         match self {
             RailFacility::Station => "railway station",
             RailFacility::FreightYard => "freight yard",
+            RailFacility::Central => "Central Station",
+        }
+    }
+
+    /// Passenger trains call here.
+    pub fn is_passenger(self) -> bool {
+        matches!(self, RailFacility::Station | RailFacility::Central)
+    }
+
+    /// Length of the platform (or apron) along the track.
+    pub fn platform_length(self) -> f32 {
+        match self {
+            RailFacility::Station => STATION_PLATFORM,
+            RailFacility::FreightYard => YARD_APRON,
+            RailFacility::Central => CENTRAL_PLATFORM,
+        }
+    }
+
+    /// How far people walk to it to take a train.
+    pub fn reach(self) -> f32 {
+        match self {
+            RailFacility::Central => CENTRAL_REACH,
+            _ => RAIL_REACH,
+        }
+    }
+
+    pub fn cost(self) -> f32 {
+        match self {
+            RailFacility::Station => STATION_COST,
+            RailFacility::FreightYard => YARD_COST,
+            RailFacility::Central => CENTRAL_COST,
+        }
+    }
+
+    pub fn upkeep_per_day(self) -> f32 {
+        match self {
+            RailFacility::Station => STATION_UPKEEP_PER_DAY,
+            RailFacility::FreightYard => YARD_UPKEEP_PER_DAY,
+            RailFacility::Central => CENTRAL_UPKEEP_PER_DAY,
+        }
+    }
+
+    pub fn jobs(self) -> u16 {
+        match self {
+            RailFacility::Station => STATION_JOBS,
+            RailFacility::FreightYard => YARD_JOBS,
+            RailFacility::Central => CENTRAL_JOBS,
         }
     }
 }
@@ -139,6 +198,7 @@ impl Facility {
         match kind {
             RailFacility::Station => (64.0, 28.0),
             RailFacility::FreightYard => (110.0, 56.0),
+            RailFacility::Central => (150.0, 64.0),
         }
     }
 
@@ -265,12 +325,21 @@ impl RailLink {
         let seg_len = a.distance(b).max(1.0);
         let d = (b - a) / seg_len;
         let right = Vec2::new(-d.y, d.x);
-        let (t, q) = project_on_segment(center, a, b);
+        let (_, q) = project_on_segment(center, a, b);
         let side = if (center - q).dot(right) >= 0.0 { 1.0 } else { -1.0 };
-        let half = (length * 0.5).min(seg_len * 0.45);
-        let mid_t = t.clamp(half / seg_len, 1.0 - half / seg_len);
-        let mid = a + (b - a) * mid_t;
+        // The platform may run on along the straight the segment is part
+        // of: track is split wherever anything joins or crosses it, and a
+        // long platform (the Central Station's) must not be cut to one
+        // short piece of it.
+        let (lo, hi) = straight_run(roads, segment);
+        let t = (center - a).dot(d);
+        let half = (length * 0.5).min((hi - lo) * 0.45);
+        let mid_t = t.clamp(lo + half, hi - half);
+        let mid = a + d * mid_t;
         let off = right * side * (RAIL_HALF_WIDTH + 1.4);
+        // The piece of track beside the platform's middle, which is what
+        // trains route to and turn at (`plan_train_route`).
+        let segment = roads.nearest_rail(mid).filter(|(_, _, q)| q.distance(mid) < 1.0).map_or(segment, |(sid, _, _)| sid);
         Some(RailLink { kind, segment, platform: [mid - d * half + off, mid + d * half + off], side, rail_connected: false, road_connected: false })
     }
 
@@ -282,6 +351,48 @@ impl RailLink {
     pub fn along(&self) -> Vec2 {
         (self.platform[1] - self.platform[0]).normalize_or_zero()
     }
+}
+
+/// How far the track runs straight on either side of `segment`'s start,
+/// along its direction: rail segments joined end to end and in line with it
+/// (within a degree and half a metre). Metres from its `a` end.
+fn straight_run(roads: &RoadNetwork, segment: SegmentId) -> (f32, f32) {
+    let (a, b) = roads.segment_points(segment);
+    let len = a.distance(b);
+    if len < 0.01 {
+        return (0.0, len);
+    }
+    let d = (b - a) / len;
+    let in_line = |p: Vec2| {
+        let off = p - a;
+        (off.dot(d), (off - d * off.dot(d)).length())
+    };
+    let (mut lo, mut hi) = (0.0f32, len);
+    let seg = roads.segment(segment);
+    for (start, forward) in [(seg.a, false), (seg.b, true)] {
+        let mut node = start;
+        let mut came = segment;
+        // Bounded: a straight longer than a few kilometres is the trunk
+        // running off the map, and no platform needs that much of it.
+        for _ in 0..400 {
+            let next = roads.neighbors(node).find(|(other, sid)| {
+                *sid != came && roads.segment(*sid).is_rail() && {
+                    let (t, off) = in_line(roads.node(*other).pos);
+                    off < 0.5 && if forward { t > in_line(roads.node(node).pos).0 + 0.01 } else { t < in_line(roads.node(node).pos).0 - 0.01 }
+                }
+            });
+            let Some((other, sid)) = next else { break };
+            let (t, _) = in_line(roads.node(other).pos);
+            if forward {
+                hi = hi.max(t);
+            } else {
+                lo = lo.min(t);
+            }
+            node = other;
+            came = sid;
+        }
+    }
+    (lo, hi)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

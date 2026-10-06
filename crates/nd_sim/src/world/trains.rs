@@ -13,7 +13,9 @@ impl World {
     /// Recompute the working station and yard lists. Called when links,
     /// rail buildings or conditions change; everything else reads the lists.
     pub(super) fn refresh_facility_cache(&mut self) {
+        // [subway] A Central Station is a passenger station too.
         self.stations = self.facilities(RailFacility::Station);
+        self.stations.extend(self.facilities(RailFacility::Central));
         self.yards = self.facilities(RailFacility::FreightYard);
     }
 
@@ -28,10 +30,7 @@ impl World {
     /// are joined to the networks.
     pub fn place_rail_facility(&mut self, kind: RailFacility, p: Vec2) -> Result<BuildingId, String> {
         let (facility, rail_fused, road_fused) = Facility::plan(kind, p, &self.roads);
-        let cost = match kind {
-            RailFacility::Station => rail::STATION_COST,
-            RailFacility::FreightYard => rail::YARD_COST,
-        };
+        let cost = kind.cost();
         if self.economy.treasury < cost {
             return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), cost));
         }
@@ -47,7 +46,12 @@ impl World {
         if let Some(b) = under.iter().filter_map(|(id, _)| self.buildings.get(*id)).find(|b| Self::is_civic_structure(b)) {
             return Err(format!("{} stands there; bulldoze it first", b.name));
         }
-        if self.facilities.values().any(|f| f.center.distance(facility.center) < Facility::size(kind).0 * 0.9) {
+        // [subway] The Central Station is the one grand terminus.
+        if kind == RailFacility::Central && self.buildings.values().any(|b| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::Central)) {
+            return Err("the city has its Central Station already".into());
+        }
+        let spacing = |k: RailFacility| Facility::size(k).0 * 0.5;
+        if self.facilities.values().any(|f| f.center.distance(facility.center) < (spacing(kind) + spacing(f.kind)) * 0.9) {
             return Err("too close to another station or yard".into());
         }
         for (_, lot) in under {
@@ -91,7 +95,7 @@ impl World {
         let (front_segment, front_t, car_point) = self.roads.nearest_street(probe)?;
         Some(Lot {
             zone: ZoneId::default(),
-            land_use: if f.kind == RailFacility::Station { LandUse::Civic } else { LandUse::Industrial },
+            land_use: if f.kind.is_passenger() { LandUse::Civic } else { LandUse::Industrial },
             polygon: corners.to_vec(),
             corners,
             front_edge: [corners[0], corners[1]],
@@ -127,7 +131,7 @@ impl World {
             // find it afresh before asking whether it reaches the trunk.
             let lot_poly = self.lots.get(self.buildings[id].lot).map(|l| (l.polygon.clone(), l.center, l.front_edge));
             let kind = self.buildings[id].rail.as_ref().unwrap().kind;
-            let length = if kind == RailFacility::Station { rail::STATION_PLATFORM } else { rail::YARD_APRON };
+            let length = kind.platform_length();
             let fresh = lot_poly.and_then(|(poly, center, front)| RailLink::beside(&self.roads, &poly, center, front, kind, length));
             let segment = fresh.as_ref().map(|f| f.segment).or_else(|| {
                 let old = self.buildings[id].rail.as_ref().unwrap().segment;
@@ -161,17 +165,31 @@ impl World {
     /// The building on a facility's lot.
     pub(super) fn attach_rail_building(&mut self, lot_id: LotId, kind: RailFacility) -> Result<BuildingId, String> {
         let lot = self.lots.get(lot_id).ok_or("no such lot")?;
-        let (jobs, length) = match kind {
-            RailFacility::Station => (rail::STATION_JOBS, rail::STATION_PLATFORM),
-            RailFacility::FreightYard => (rail::YARD_JOBS, rail::YARD_APRON),
-        };
+        let (jobs, length) = (kind.jobs(), kind.platform_length());
         let link = RailLink::beside(&self.roads, &lot.polygon, lot.center, lot.front_edge, kind, length).ok_or("the track stub did not get laid")?;
         let name = match kind {
             RailFacility::Station => format!("{} Station", names::building_name(&mut self.rng, LandUse::Civic).split(' ').next().unwrap_or("Central")),
             RailFacility::FreightYard => format!("Yard {}", self.rng.random_range(1..30)),
+            RailFacility::Central => "Central Station".to_string(),
         };
-        let parking = if kind == RailFacility::Station { 12 } else { 4 };
-        Ok(self.place_special(lot_id, name, jobs, parking, |b| b.rail = Some(link)))
+        let parking = match kind {
+            RailFacility::Station => 12,
+            RailFacility::FreightYard => 4,
+            RailFacility::Central => 60,
+        };
+        // [subway] The Central Station is also a metro station (its
+        // platforms under the hall) and a bus terminal (a depot at its
+        // front, where buses start and end their day).
+        let central = kind == RailFacility::Central;
+        let id = self.place_special(lot_id, name, jobs, parking, |b| {
+            b.rail = Some(link);
+            b.metro = central;
+            b.depot = central;
+        });
+        if central {
+            self.subway.version += 1;
+        }
+        Ok(id)
     }
 
     /// A building the player places finished: one floor, middle tier, no
@@ -201,11 +219,13 @@ impl World {
         if from.distance(to) < rail::RAIL_TRIP_MIN {
             return None;
         }
-        let stations: Vec<(BuildingId, Vec2)> = self.stations.iter().copied().filter_map(|s| self.building_entrance(s).map(|p| (s, p))).collect();
+        // [subway] Each station draws from its own reach: a Central Station
+        // from further than a halt.
+        let stations: Vec<(BuildingId, Vec2, f32)> = self.stations.iter().copied().filter_map(|s| self.building_entrance(s).map(|p| (s, p, self.buildings[s].rail.as_ref().map_or(rail::RAIL_REACH, |l| l.kind.reach())))).collect();
         if stations.len() < 2 {
             return None;
         }
-        let near = |p: Vec2| stations.iter().map(|(id, q)| (*id, *q, q.distance(p))).filter(|(_, _, d)| *d <= rail::RAIL_REACH).min_by(|a, b| a.2.total_cmp(&b.2));
+        let near = |p: Vec2| stations.iter().map(|(id, q, r)| (*id, *q, q.distance(p), *r)).filter(|(_, _, d, r)| *d <= *r).min_by(|a, b| a.2.total_cmp(&b.2)).map(|(id, q, d, _)| (id, q, d));
         let (a, pa, da) = near(from)?;
         let (b, _, db) = near(to)?;
         if a == b || da + db + 200.0 > from.distance(to) {

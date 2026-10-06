@@ -170,7 +170,7 @@ impl World {
     fn witness(&self, p: Vec2, reach: f32, except: &[CitizenId]) -> Option<CitizenId> {
         self.citizens
             .iter()
-            .filter(|(id, c)| !except.contains(id) && !c.asleep && c.age >= 12 && !matches!(c.activity, Activity::OnTrain { .. } | Activity::Arriving))
+            .filter(|(id, c)| !except.contains(id) && !c.asleep && c.age >= 12 && !matches!(c.activity, Activity::OnTrain { .. } | Activity::OnMetro { .. } | Activity::Arriving))
             .map(|(id, c)| (id, c.pos.distance(p)))
             .filter(|(_, d)| *d < reach)
             .min_by(|a, b| a.1.total_cmp(&b.1))

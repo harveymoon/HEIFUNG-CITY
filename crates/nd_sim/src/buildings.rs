@@ -316,6 +316,11 @@ pub struct Building {
     /// (`crate::districts::Look`); `None` draws the land use's own menu.
     #[serde(default)]
     pub look: Option<crate::districts::Look>,
+    /// [subway] A metro station: an entrance kiosk on its plaza here, the
+    /// platform underground (`nd_sim::subway`). A Central Station has it
+    /// too, beside its railway platforms and bus terminal.
+    #[serde(default)]
+    pub metro: bool,
 }
 
 fn one() -> f32 {
@@ -361,6 +366,7 @@ impl Building {
             service: None,
             demolition: None,
             look: None,
+            metro: false,
         };
         b.recompute_capacity();
         b.update_rent(land_value);
@@ -374,7 +380,7 @@ impl Building {
     /// Placed by the player: a plant, depot, station, yard, service or
     /// attraction. Never upgraded, redeveloped or counted towards density.
     pub fn is_special(&self) -> bool {
-        self.plant.is_some() || self.depot || self.rail.is_some() || self.service.is_some()
+        self.plant.is_some() || self.depot || self.rail.is_some() || self.service.is_some() || self.metro
     }
 
     pub fn parking_free(&self) -> u16 {

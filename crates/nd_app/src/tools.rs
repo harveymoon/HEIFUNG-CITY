@@ -117,6 +117,8 @@ pub enum TransitMode {
     #[default]
     Route,
     Depot,
+    /// [subway] Place metro stations and join them into lines.
+    Metro,
 }
 
 /// Which layer of the city the view and the tools work on.
@@ -209,6 +211,8 @@ pub struct ToolState {
     pub stop_drag: Option<(nd_sim::RouteId, usize)>,
     /// Draw the lines whatever tool is active.
     pub show_routes: bool,
+    /// [subway] Metro mode: the stations of the line being laid, in order.
+    pub metro_draft: Vec<BuildingId>,
     /// Rail tool: station or freight yard.
     pub rail_kind: nd_sim::RailFacility,
     /// Rail tool: a dock instead of a station or yard.
@@ -394,6 +398,7 @@ impl Default for ToolState {
             stop_drag: None,
             show_routes: false,
             rail_kind: nd_sim::RailFacility::Station,
+            metro_draft: Vec::new(),
             dock: None,
             favorites: Vec::new(),
             zone_mode: ZoneMode::Brush,
@@ -676,6 +681,7 @@ pub(crate) fn tool_input(
         if tools.tool != Tool::Transit {
             tools.route_sel = None;
         }
+        tools.metro_draft.clear();
     }
     if map_key(KeyCode::Backspace) && matches!(tools.tool, Tool::Road | Tool::Zone) {
         tools.points.pop();
@@ -692,7 +698,9 @@ pub(crate) fn tool_input(
         tools.step_elevation(key(KeyCode::PageUp));
         tools.status = format!("Drawing at {}.", elevation_label(tools.elevation));
     }
-    if map_key(KeyCode::Backspace) && tools.tool == Tool::Transit {
+    if map_key(KeyCode::Backspace) && tools.tool == Tool::Transit && tools.transit_mode == TransitMode::Metro {
+        tools.metro_draft.pop();
+    } else if map_key(KeyCode::Backspace) && tools.tool == Tool::Transit {
         if let Some(r) = tools.route_sel {
             let n = sim.world.transit.routes.get(r).map_or(0, |x| x.stops.len());
             if n > 0 {
@@ -986,6 +994,7 @@ pub(crate) fn tool_input(
                     }
                 }
             }
+            TransitMode::Metro => metro_click(&mut sim, &mut tools, &mut selection, ground, click, finish),
             TransitMode::Depot => {
                 if click {
                     if let Some(p) = ground {
@@ -1055,6 +1064,50 @@ pub(crate) fn tool_input(
                 }
             }
         }
+    }
+}
+
+/// [subway] The Buses tool's Metro mode: a click on a lot puts a station
+/// there (or picks the one standing there, the Central Station too) and
+/// adds it to the line being laid; Enter or a right-click lays the line.
+fn metro_click(sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, ground: Option<SVec2>, click: bool, finish: bool) {
+    let w = &mut sim.world;
+    tools.metro_draft.retain(|s| w.metro_platform(*s).is_some());
+    if click {
+        if let Some(p) = ground {
+            let lot = w.lots.iter().find(|(_, l)| point_in_polygon(p, &l.polygon)).map(|(id, _)| id);
+            let standing = lot.and_then(|l| w.lots[l].building).filter(|b| w.buildings.get(*b).is_some_and(|b| b.metro));
+            let picked = match (standing, lot) {
+                (Some(b), _) => Ok(b),
+                (None, Some(l)) => w.build_metro_station(l),
+                (None, None) => Err("click a lot".to_string()),
+            };
+            tools.status = match picked {
+                Ok(b) if tools.metro_draft.last() == Some(&b) => format!("{} is already the last stop.", w.buildings[b].name),
+                Ok(b) => {
+                    tools.metro_draft.push(b);
+                    *selection = Selection::Building(b);
+                    let n = tools.metro_draft.len();
+                    if n < 2 { format!("{} picked. Click the next station's lot.", w.buildings[b].name) } else { format!("{} stations. Keep clicking lots, Enter or right-click lays the line, Backspace drops the last.", n) }
+                }
+                Err(e) => format!("No station: {e}."),
+            };
+        }
+    }
+    if finish && !tools.metro_draft.is_empty() {
+        let draft = std::mem::take(&mut tools.metro_draft);
+        tools.status = match w.add_metro_line(&draft) {
+            Ok(id) => {
+                let l = &w.subway.lines[id];
+                format!("{} laid: {} stations, {:.1} km of tunnel. Trains every {} minutes from 05:00.", l.name, l.stations.len(), l.length() / 1000.0, l.headway)
+            }
+            Err(e) => {
+                if draft.len() < 2 {
+                    tools.metro_draft = draft;
+                }
+                format!("No line: {e}.")
+            }
+        };
     }
 }
 
@@ -1165,6 +1218,33 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                     gizmos.circle(Isometry3d::new(at, flat), 7.0 + 1.5 * pulse, bright);
                     gizmos.line(at + Vec3::Y * 4.0, at + Vec3::Y * 16.0, bright);
                 }
+            }
+        }
+        // [subway] Metro lines over the map in the Metro mode (or with
+        // the toggle), and the line being laid up to the pointer.
+        if tools.transit_mode == TransitMode::Metro || tools.show_routes {
+            for l in sim.world.subway.lines.values() {
+                let c = nd_procgen::metro::line_colour(l.color);
+                let col = Color::linear_rgb(c[0], c[1], c[2]);
+                gizmos.linestrip(l.path.iter().map(|&p| lift(p) + Vec3::Y * 0.5), col);
+                for &s in &l.stations {
+                    if let Some(p) = sim.world.metro_platform(s) {
+                        gizmos.circle(Isometry3d::new(lift(p) + Vec3::Y * 0.5, flat), 6.0, col);
+                    }
+                }
+            }
+        }
+        if tools.tool == Tool::Transit && tools.transit_mode == TransitMode::Metro {
+            let mut pts: Vec<Vec3> = tools.metro_draft.iter().filter_map(|&s| sim.world.metro_platform(s)).map(|p| lift(p) + Vec3::Y * 1.0).collect();
+            for p in &pts {
+                gizmos.circle(Isometry3d::new(*p, flat), 8.0, white);
+            }
+            if let Some(c) = cursor.ground {
+                pts.push(lift(c) + Vec3::Y * 1.0);
+                gizmos.circle(Isometry3d::new(lift(c), flat), 4.0, cyan);
+            }
+            if pts.len() >= 2 {
+                gizmos.linestrip(pts, white);
             }
         }
         if tools.tool == Tool::Transit {
@@ -1460,6 +1540,23 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
                         let p = bus.pose_at(f).0;
                         gizmos.circle(Isometry3d::new(at(p, 0.5), flat), 7.5, gold);
                         car_route(gizmos, w, bus, route);
+                    }
+                }
+                // [subway] Underground: a ring where the train is, its line ahead.
+                Activity::OnMetro { train } => {
+                    if let Some(t) = w.subway.trains.get(*train) {
+                        let s = t.run.prev_s + (t.run.s - t.run.prev_s) * f;
+                        let head = nd_sim::rail::point_along(&t.run.poly, s).0;
+                        gizmos.circle(Isometry3d::new(at(head, 0.5), flat), 8.0, gold);
+                        let alight = match c.transit.map(|t| t.leg) {
+                            Some(nd_sim::transit::TransitLeg::Subway { alight, .. }) => Some(alight),
+                            _ => None,
+                        };
+                        let s_end = alight.and_then(|b| t.run.stops.iter().find(|(stop, _)| *stop == b)).map_or_else(|| nd_sim::rail::path_length(&t.run.poly), |&(_, s1)| s1);
+                        let pts: Vec<Vec3> = sub_polyline(&t.run.poly, s, s_end).iter().map(|&q| at(q, 1.0)).collect();
+                        if pts.len() >= 2 {
+                            gizmos.linestrip(pts, route);
+                        }
                     }
                 }
                 Activity::OnTrain { train } => {
