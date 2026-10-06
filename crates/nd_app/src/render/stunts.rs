@@ -150,7 +150,7 @@ pub(super) fn sync_stunts(
             let billow = 1.0 + 0.15 * (t * 4.0 + p.x).sin();
             tf.translation = Vec3::new(p.x, y + 0.02, p.y);
             tf.rotation = Quat::from_rotation_y(-h + 0.2 * (t * 3.0).sin());
-            tf.scale = Vec3::new(1.3 * billow, billow, 1.3 * billow);
+            tf.scale = Vec3::new(0.85 * billow, 0.7 * billow, 0.85 * billow);
         }
         if !st.skids.iter().any(|s| s.0.distance(centre) < 1.0) {
             let e = commands.spawn((Mesh3d(a.skid.clone()), MeshMaterial3d(mats.overlay.clone()), Transform::from_translation(Vec3::new(centre.x, w.surface_height(centre) + 0.02, centre.y)), NotShadowCaster, NotShadowReceiver, StuntTag)).id();

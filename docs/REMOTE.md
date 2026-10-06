@@ -458,6 +458,17 @@ window (`window {name: "emergencies"}`) shows the same, live.
 
 `incident {kind, building | citizen}` starts one by hand (fire, crime or medical) for testing; reply
 `incident` (its id, as in the report and the events).
+`incident {kind: "crash", car? | at?: [x, y], speed? (m/s, default 25 = written off)}` crashes a car
+(the next tick turns it into injuries and 911 calls); `incident {kind: "takeover", at?: [x, y]}`
+starts a street takeover at the junction nearest `at`.
+
+**Driving** (`report.traffic`): crashes_today, injuries_today, drunk_drivers_now, drunk_trips_today,
+red_lights_run_today, crashes_total, wrecks_on_road, tow_trucks_now, towed_total, drivers_by_style,
+recent_crashes (cause, severity, injured, drunk, incident), takeovers {active, location, place,
+stage, participants, residents, outsiders, in_show, crowd, incident, planned_tick, total, last}.
+A car's `inspect` `traffic` carries `driver` (style, speed_factor, headway_s, reaction_s,
+signal_compliance, aggression, skill, drunkenness), driver_drunkenness_now, weave_m, running_red,
+crash, takeover and stunt. Events: `Crash`, `Takeover`, `TakeoverOver`.
 
 Events in the log (`events`): `IncidentStarted`, `EmergencyCall`, `UnitDispatched`, `UnitOnScene`,
 `IncidentResolved` (each with `incident`, `type` fire / crime / medical, `building`, `outcome`),

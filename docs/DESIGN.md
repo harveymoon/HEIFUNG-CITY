@@ -101,6 +101,26 @@ Citizens are rendered from their simulated positions every frame.
   on the road; junction curves stay inside the junction; cars refuse to enter a
   junction whose exit lane is full; stalled trips time out. Pedestrians walk on the
   right-hand pavement.
+- **Driving** (`traffic.rs` `DriverProfile`, `world/driving.rs`, `takeover.rs`): turns follow a
+  circular arc tangent to both lanes (the fillet of their corner), long vehicles swing wide, and
+  cars are drawn along the poses of every physics substep (`Car::pose_at`) rather than a straight
+  blend across a 4 s tick, so nothing cuts corners. Each driver gets a profile from age,
+  personality (caution, hedonism) and drunkenness: desired speed, IDM headway and acceleration,
+  reaction lag, signal compliance (late ambers, reds), lane-change eagerness, skill (weave). The
+  old drive slower with slower reactions; rebellious youth faster, closer, through late ambers.
+  Citizens drink at venues (hedonists only), sober up over hours; rebellious drunks who own a car
+  drive anyway (`citizens::wants_to_drive_drunk`) and weave over the lines. Crashes: running
+  into the car ahead (profiled drivers cannot brake harder than 8 m/s per s), red lights run into
+  green cross traffic, drunks running off the road, weaving sideswipes, misjudged gaps. Minor
+  ones stop both cars a minute or three; bad ones (closing speed) write cars off and may hurt
+  people: a witness calls 911, a `Crash` incident brings the police (who may arrest a drunk or
+  red-light driver) and each injured person gets an on-road `Medical` incident and an ambulance;
+  once the scene clears a tow truck hauls the wreck to the nearest industrial yard. Street
+  takeovers: on ~30 % of nights (with a crew) at 22:00 a meet is planned; rebellious young locals
+  drive over, outsiders roll in off the highway as a pack ignoring lights, the junction is closed,
+  cars ring it and the flashiest spin donuts in tyre smoke, a crowd walks over, a neighbour calls
+  the police; police on scene break it up (some arrests, cars impounded), else it ends after
+  45-80 minutes and everyone leaves in convoy.
 - **Parcels and zones**: parcels are cut along every street and path as soon as it is
   built, zoned or not (`zoning::generate_parcels`, the land within 60 m of the
   corridors), at a home's lot size; land behind the rows is backland. Zoning gives
