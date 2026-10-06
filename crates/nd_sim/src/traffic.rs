@@ -103,6 +103,15 @@ const REROUTE_LANE_CHANGE_AFTER: f32 = 10.0;
 /// Seconds a car waits at the kerb before the next driver along lets it
 /// in, if that driver is slow enough to stop comfortably.
 const COURTESY_AFTER: f32 = 15.0;
+/// A vehicle at the kerb whose spot stays covered by standing traffic this
+/// long pulls out into the nearest real gap behind it instead.
+const KERB_SLIDE_AFTER: f32 = 90.0;
+const KERB_SLIDE_REACH: f32 = 80.0;
+/// A stalled car tries another way at most this often, doubling the wait
+/// after every try that leaves it standing (from `REROUTE_LANE_CHANGE_AFTER`).
+const REROUTE_BACKOFF_MAX: f32 = 320.0;
+/// Seconds standing still before a vehicle counts in the wait-for graph.
+const WAIT_GRAPH_STALL: f32 = 60.0;
 /// Trucks cruise a little below the limit, which is what gets them overtaken.
 const TRUCK_SPEED_FACTOR: f32 = 0.85;
 /// Trips older than this (traffic seconds) end where the car stands. A bus
@@ -436,6 +445,14 @@ pub struct Car {
     /// yet in the lane's list, so nobody queues behind it.
     #[serde(default)]
     pub entering: bool,
+    /// The vehicle this one is waiting for (its leader, the tail of a full
+    /// exit, the car it lets out of the kerb, the car covering its kerb
+    /// spot), for finding wait-for cycles.
+    #[serde(skip)]
+    pub blocked_by: Option<CarId>,
+    /// Tries at another way since it last moved (backs the next one off).
+    #[serde(default)]
+    pub replans: u8,
     /// Squeezing past a left turner waiting at the head of a one-lane
     /// approach, on the shoulder to its right.
     #[serde(default)]
@@ -826,7 +843,10 @@ impl Car {
 /// in the ring: nobody can move until somebody takes another way.
 #[derive(Clone, Debug)]
 pub struct Gridlock {
+    /// Lanes of a ring of full lanes (empty for a cycle of vehicles).
     pub lanes: Vec<LaneId>,
+    /// Vehicles waiting on each other in a cycle (empty for a lane ring).
+    pub cycle: Vec<CarId>,
     /// The junctions the ring passes through (where its heads stand).
     pub junctions: Vec<NodeId>,
     pub points: Vec<Vec2>,
@@ -1537,17 +1557,41 @@ impl Traffic {
         let lane = route[0];
         let (pos, dir) = self.net.lanes[lane as usize].point_at(s_start);
         let heading = dir.y.atan2(dir.x);
-        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), owned: None, errand: Default::default(), drive: DriveState::default() });
+        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, blocked_by: None, replans: 0, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), owned: None, errand: Default::default(), drive: DriveState::default() });
         self.pull_out(id);
         id
     }
 
     /// A new car joins its first lane only where there is room (no overlap
     /// with the vehicles there, nobody forced to brake hard); otherwise it
-    /// waits at the kerb and tries again every step.
+    /// waits at the kerb and tries again every step. After `COURTESY_AFTER`
+    /// the next driver stops short for it (see the claims in `step`) and it
+    /// commits as soon as its spot is physically clear; if standing traffic
+    /// keeps the spot covered for `KERB_SLIDE_AFTER` it pulls out into the
+    /// nearest real gap behind instead. So the kerb can never deadlock.
     fn pull_out(&mut self, id: CarId) -> bool {
         let lane = self.cars[id].route[self.cars[id].idx];
-        let room = self.change_ok(id, lane, LC_SAFE_BRAKE).is_some();
+        let (waited, len, s) = (self.cars[id].stalled, self.cars[id].length(), self.cars[id].s);
+        let mut room = self.change_ok(id, lane, LC_SAFE_BRAKE).is_some();
+        let (leader, follower) = self.neighbours_at(lane, s.min(self.net.lanes[lane as usize].length), len, id);
+        if !room && waited > COURTESY_AFTER {
+            // Committed: only real overlap, or a follower too fast to stop, holds it.
+            let clear_ahead = leader.is_none_or(|(_, g)| g >= 0.5);
+            let clear_behind = follower.is_none_or(|(f, g)| g >= 0.5 && self.cars[f].v * self.cars[f].v <= 2.0 * LC_FORCED_BRAKE * g);
+            room = clear_ahead && clear_behind;
+        }
+        if !room && waited > KERB_SLIDE_AFTER {
+            if let Some(at) = self.kerb_gap(lane, s, len, id) {
+                self.cars[id].s = at;
+                room = true;
+            }
+        }
+        let blocker = match (leader, follower) {
+            (Some((l, g)), _) if g < 0.5 => Some(l),
+            (_, Some((f, _))) => Some(f),
+            (Some((l, _)), None) => Some(l),
+            _ => None,
+        };
         let kerb = self.net.lanes[lane as usize].right.is_none();
         let c = &mut self.cars[id];
         if room {
@@ -1555,16 +1599,44 @@ impl Traffic {
                 c.entering = false;
                 c.cooldown = LC_COOLDOWN;
             }
+            c.blocked_by = None;
             self.insert_sorted(lane, id);
-        } else if !c.entering {
-            c.entering = true;
-            c.wait = Wait::Entering;
-            // Drawn pulled in at the kerb until it can go.
-            if kerb {
-                c.lateral = LANE_WIDTH * 0.6;
+        } else {
+            c.blocked_by = blocker;
+            if !c.entering {
+                c.entering = true;
+                c.wait = Wait::Entering;
+                // Drawn pulled in at the kerb until it can go.
+                if kerb {
+                    c.lateral = LANE_WIDTH * 0.6;
+                }
             }
         }
         room
+    }
+
+    /// The nearest place behind `s` on `lane` (within `KERB_SLIDE_REACH`)
+    /// where a vehicle of `len` fits between standing or slow traffic with
+    /// half a metre each side, as the position of its front.
+    fn kerb_gap(&self, lane: LaneId, s: f32, len: f32, skip: CarId) -> Option<f32> {
+        let l = &self.net.lanes[lane as usize];
+        let cars: Vec<&Car> = l.cars.iter().filter(|&&c| c != skip).map(|&c| &self.cars[c]).collect();
+        // Spaces between consecutive vehicles (and before the first), back to front.
+        let mut ahead_tail = f32::MAX;
+        for k in (0..=cars.len()).rev() {
+            let (behind_front, behind_v) = if k == 0 { (0.0f32, 0.0) } else { (cars[k - 1].s, cars[k - 1].v) };
+            let front = (ahead_tail - 0.5).min(s).min(l.length);
+            if front <= s && s - front <= KERB_SLIDE_REACH && front - len - 0.5 >= behind_front && behind_v < 2.0 && front >= len {
+                return Some(front);
+            }
+            if k > 0 {
+                ahead_tail = cars[k - 1].s - cars[k - 1].length();
+                if s - ahead_tail > KERB_SLIDE_REACH + len {
+                    break;
+                }
+            }
+        }
+        None
     }
 
     /// Send a car on a new route from where it stands: a bus leaving a stop.
@@ -1766,7 +1838,8 @@ impl Traffic {
     fn oncoming(&self, inter: &Intersection, approach: usize) -> bool {
         let Some(opp) = inter.opposite.get(approach).copied().flatten() else { return false };
         let lanes = &self.net.lanes;
-        let in_junction = inter.connectors.iter().any(|&(lid, ap)| ap == opp && lanes[lid as usize].turn >= 0 && !lanes[lid as usize].cars.is_empty());
+        // A wreck standing in the junction is not oncoming traffic.
+        let in_junction = inter.connectors.iter().any(|&(lid, ap)| ap == opp && lanes[lid as usize].turn >= 0 && lanes[lid as usize].cars.iter().any(|&c| !self.cars[c].crashed()));
         in_junction
             || inter.incoming.iter().any(|&(lid, ap)| {
                 let lane = &lanes[lid as usize];
@@ -2119,8 +2192,14 @@ impl Traffic {
                 continue;
             }
             let next = c.route[c.idx + 1];
+            // A crash in the junction (or just beyond it) on the way: go round it.
+            let nl = &self.net.lanes[next as usize];
+            let wreck_ahead = nl.cars.iter().any(|&o| self.cars[o].crashed())
+                || c.route.get(c.idx + 2).is_some_and(|&e| self.net.lanes[e as usize].cars.first().is_some_and(|&o| self.cars[o].crashed() && self.cars[o].s < 2.0 * CAR_LENGTH));
             let (avoid_lane, avoid_step) = if lane.is_beside(next) {
                 (None, Some((here, next)))
+            } else if wreck_ahead && c.stalled >= REROUTE_AFTER && nl.is_connector() {
+                (Some(next), None)
             } else if c.stalled < REROUTE_AFTER {
                 continue;
             } else {
@@ -2132,7 +2211,9 @@ impl Traffic {
             let (goal, s_end, s) = (*c.route.last().unwrap(), c.s_end, c.s);
             let found = self.net.route_avoiding(here, s, goal, s_end, avoid_lane, avoid_step);
             let c = &mut self.cars[id];
-            c.cooldown = REROUTE_LANE_CHANGE_AFTER;
+            // Back off: a car that keeps standing tries again ever more rarely.
+            c.cooldown = (REROUTE_LANE_CHANGE_AFTER * 2f32.powi(c.replans as i32)).min(REROUTE_BACKOFF_MAX);
+            c.replans = c.replans.saturating_add(1).min(8);
             if let Some((route, _, _)) = found {
                 c.route = route;
                 c.idx = 0;
@@ -2170,6 +2251,7 @@ impl Traffic {
                     let i = path.iter().position(|&x| x == cur).unwrap_or(0);
                     let lanes: Vec<LaneId> = path[i..].iter().map(|&l| l as LaneId).collect();
                     out.push(Gridlock {
+                        cycle: Vec::new(),
                         junctions: lanes.iter().map(|&l| self.net.lanes[l as usize].end_node).collect(),
                         points: lanes.iter().map(|&l| self.net.lanes[l as usize].end()).collect(),
                         vehicles: lanes.iter().map(|&l| self.net.lanes[l as usize].cars.len()).sum(),
@@ -2189,6 +2271,69 @@ impl Traffic {
             }
             for p in path {
                 state[p] = 2;
+            }
+        }
+        out.extend(self.wait_cycles());
+        out
+    }
+
+    /// The vehicle that a car held up by a leader further down its route,
+    /// or by a full exit, is waiting for.
+    fn blocker_ahead(&self, car: &Car, why: Wait) -> Option<CarId> {
+        if why == Wait::ExitFull {
+            let exit = *car.route.get(car.idx + 2)?;
+            return self.net.lanes[exit as usize].cars.first().copied();
+        }
+        let mut prev = car.route[car.idx];
+        for &next in car.route.iter().skip(car.idx + 1).take(4) {
+            if self.net.lanes[prev as usize].is_beside(next) {
+                return None;
+            }
+            if let Some(&first) = self.net.lanes[next as usize].cars.first() {
+                return Some(first);
+            }
+            prev = next;
+        }
+        None
+    }
+
+    /// Cycles in the wait-for graph of standing vehicles: each waits for
+    /// the next (a leader, a full exit's tail, a kerb car it lets out, the
+    /// car covering its kerb spot) and the last for the first. Catches the
+    /// knots a lane ring does not, a kerb car and the queue letting it out
+    /// included.
+    fn wait_cycles(&self) -> Vec<Gridlock> {
+        let standing = |id: CarId| self.cars.get(id).is_some_and(|c| c.v < 0.5 && c.stalled > WAIT_GRAPH_STALL);
+        let mut state: HashMap<CarId, u8> = HashMap::new();
+        let mut out = Vec::new();
+        for (start, _) in self.cars.iter() {
+            if state.contains_key(&start) || !standing(start) {
+                continue;
+            }
+            let mut path = Vec::new();
+            let mut cur = start;
+            loop {
+                match state.get(&cur) {
+                    Some(1) => {
+                        let i = path.iter().position(|&x| x == cur).unwrap_or(0);
+                        let cycle: Vec<CarId> = path[i..].to_vec();
+                        let points: Vec<Vec2> = cycle.iter().map(|&c| self.cars[c].pos).collect();
+                        let junctions = cycle.iter().map(|&c| self.net.lanes[self.cars[c].route[self.cars[c].idx] as usize].end_node).collect();
+                        out.push(Gridlock { lanes: Vec::new(), vehicles: cycle.len(), cycle, junctions, points });
+                        break;
+                    }
+                    Some(_) => break,
+                    None => {}
+                }
+                state.insert(cur, 1);
+                path.push(cur);
+                match self.cars[cur].blocked_by.filter(|&b| standing(b)) {
+                    Some(n) => cur = n,
+                    None => break,
+                }
+            }
+            for p in path {
+                state.insert(p, 2);
             }
         }
         out
@@ -2234,9 +2379,18 @@ impl Traffic {
             }
 
             // Kerb positions where a car has waited long enough to be let in.
-            let mut claims: HashMap<LaneId, Vec<f32>> = HashMap::new();
-            for c in self.cars.values().filter(|c| c.entering && c.stalled > COURTESY_AFTER) {
-                claims.entry(c.route[c.idx]).or_default().push(c.s);
+            // Each claim: where the kerb car's front will be, how long it is
+            // and who it is. A spot near the start of a lane also holds up
+            // traffic still on the lanes feeding it.
+            let mut claims: HashMap<LaneId, Vec<(f32, f32, CarId)>> = HashMap::new();
+            for (cid, c) in self.cars.iter().filter(|(_, c)| c.entering && c.stalled > COURTESY_AFTER) {
+                let lane = c.route[c.idx];
+                claims.entry(lane).or_default().push((c.s, c.length(), cid));
+                if c.s < c.length() + IDM_MIN_GAP + 30.0 {
+                    for &p in &self.net.lanes[lane as usize].prev {
+                        claims.entry(p).or_default().push((c.s + self.net.lanes[p as usize].length, c.length(), cid));
+                    }
+                }
             }
             let mut accs: Vec<Step> = Vec::with_capacity(self.cars.len());
             for (lane_id, lane) in self.net.lanes.iter().enumerate() {
@@ -2244,11 +2398,11 @@ impl Traffic {
                 for (k, &cid) in lane.cars.iter().enumerate() {
                     let car = &self.cars[cid];
                     if car.hold > 0.0 {
-                        accs.push(Step { id: cid, acc: -1000.0, why: Wait::Dwell, left_wait: false, seen: 0.0, run: None });
+                        accs.push(Step { by: None, id: cid, acc: -1000.0, why: Wait::Dwell, left_wait: false, seen: 0.0, run: None });
                         continue;
                     }
                     if car.crashed() {
-                        accs.push(Step { id: cid, acc: -1000.0, why: Wait::Crashed, left_wait: false, seen: 0.0, run: None });
+                        accs.push(Step { by: None, id: cid, acc: -1000.0, why: Wait::Crashed, left_wait: false, seen: 0.0, run: None });
                         continue;
                     }
                     let pending = car.change_pending(&self.net).is_some();
@@ -2289,29 +2443,40 @@ impl Traffic {
                         }
                     }
                     // The first driver behind a waiting car stops short to let it out.
+                    let mut by: Option<CarId> = None;
                     if let Some(cl) = lane_claims {
                         let ahead = lane.cars.get(k + 1).map_or(f32::MAX, |&l| self.cars[l].s);
-                        for &at in cl.iter().filter(|&&at| at > car.s + 1.0 && at < ahead - 1.0) {
-                            let room = at - CAR_LENGTH - IDM_MIN_GAP - car.s;
+                        for &(at, len, owner) in cl.iter().filter(|&&(at, _, _)| at > car.s + 1.0 && at < ahead - 1.0) {
+                            // Room for the whole vehicle (a bus is 12 m), not a car.
+                            let room = at - len - IDM_MIN_GAP - car.s;
                             if room < gap && car.v * car.v < 2.0 * IDM_BRAKE * room.max(0.0) {
                                 (gap, lead_v, why) = (room + IDM_MIN_GAP, 0.0, Wait::Leader);
+                                by = Some(owner);
                             }
                         }
                     }
                     if why == Wait::Leader && gap > 50.0 {
                         why = Wait::Free;
                     }
+                    if by.is_none() {
+                        by = match (why, lead) {
+                            (Wait::Leader, Some(&l)) => Some(l),
+                            (Wait::Leader | Wait::ExitFull, None) => self.blocker_ahead(car, why),
+                            _ => None,
+                        };
+                    }
                     let left_wait = car.v < 0.5 && self.next_turn(car) == Some(-1);
                     // [driving] The driver sees the car ahead change speed
                     // only after their reaction time.
                     let reaction = car.drive.profile.reaction;
                     let seen = if reaction > 0.0 { car.drive.seen_lead_v + (lead_v - car.drive.seen_lead_v) * (dt / reaction).min(1.0) } else { lead_v };
-                    accs.push(Step { id: cid, acc: car.idm(car.desired_speed(lane.speed_limit), gap, car.v - seen), why, left_wait, seen, run });
+                    accs.push(Step { by, id: cid, acc: car.idm(car.desired_speed(lane.speed_limit), gap, car.v - seen), why, left_wait, seen, run });
                 }
             }
             for st in accs {
                 let car = &mut self.cars[st.id];
                 car.wait = st.why;
+                car.blocked_by = st.by;
                 car.drive.seen_lead_v = st.seen;
                 if st.run.is_some() {
                     car.drive.running = st.run;
@@ -2345,6 +2510,9 @@ impl Traffic {
                 car.v = (car.v + acc * dt).max(0.0);
                 car.s += car.v * dt;
                 car.stalled = if car.v < 0.5 { car.stalled + dt } else { 0.0 };
+                if car.v >= 0.5 {
+                    car.replans = 0;
+                }
                 if car.v < 0.3 {
                     // Stopped after all: the next light is a new decision.
                     car.drive.running = None;
@@ -2753,6 +2921,8 @@ impl Traffic {
 /// One car's physics for a substep, worked out before any car moves.
 struct Step {
     id: CarId,
+    /// The vehicle holding it back, if one is.
+    by: Option<CarId>,
     acc: f32,
     why: Wait,
     left_wait: bool,
@@ -3672,5 +3842,71 @@ mod tests {
             }
         }
         assert!(arrived, "back on the lanes and away");
+    }
+
+    /// A bus leaves a depot onto a lane saturated by a stream queuing at a
+    /// signal: the next driver lets it out with room for all 12 m of it,
+    /// it commits, and nothing ever waits on anything in a cycle. (The
+    /// courtesy gap used to be a car's length: the follower stopped 7.5 m
+    /// short of what the bus needed and both waited for ever.)
+    #[test]
+    fn a_bus_pulls_out_of_a_depot_beside_a_saturated_lane() {
+        let roads = street_cross();
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let w = LANE_WIDTH;
+        let mut bus = None;
+        let mut out_at = None;
+        for tick in 0..900 {
+            send(&mut t, &roads, Vec2::new(-380.0, 0.5 * w), Vec2::new(380.0, 0.5 * w));
+            if tick == 120 {
+                let id = send(&mut t, &roads, Vec2::new(-100.0, 0.5 * w), Vec2::new(300.0, 0.5 * w));
+                t.cars[id].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 0, passengers: Vec::new(), to_depot: false, depot: BuildingId::default() });
+                if !t.cars[id].entering {
+                    // Out of the depot gate, not yet on the road.
+                    let lane = t.cars[id].route[0];
+                    t.net.lanes[lane as usize].cars.retain(|&c| c != id);
+                    t.cars[id].entering = true;
+                }
+                bus = Some(id);
+            }
+            for id in t.step(2.0, 4) {
+                t.remove_car(id);
+            }
+            if let Some(b) = bus {
+                if out_at.is_none() && t.cars.get(b).is_none_or(|c| !c.entering) {
+                    out_at = Some(tick);
+                }
+            }
+            let cycles = t.wait_cycles();
+            assert!(cycles.is_empty(), "vehicles waiting on each other at {}s: {:?}", tick * 2, cycles.iter().map(|g| &g.points).collect::<Vec<_>>());
+        }
+        let west = roads.nearest_street(Vec2::new(-100.0, 0.0)).unwrap().0;
+        let queued = t.net.lanes[lane_of(&t, west, Vec2::X, 0) as usize].cars.len();
+        assert!(queued > 20, "the lane was saturated ({queued} vehicles)");
+        let out = out_at.expect("the bus got out of the depot");
+        assert!(out - 120 < 150, "within five minutes, took {}s", (out - 120) * 2);
+        let worst = t.cars.values().filter(|c| !c.entering).map(|c| c.stalled).fold(0.0, f32::max);
+        assert!(worst < 600.0, "the queue keeps moving (longest stand {worst:.0}s)");
+    }
+
+    #[test]
+    fn vehicles_waiting_on_each_other_are_a_gridlock() {
+        let roads = street_cross();
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let w = LANE_WIDTH;
+        let a = send(&mut t, &roads, Vec2::new(-200.0, 0.5 * w), Vec2::new(300.0, 0.5 * w));
+        let b = send(&mut t, &roads, Vec2::new(-150.0, 0.5 * w), Vec2::new(300.0, 0.5 * w));
+        for (x, y) in [(a, b), (b, a)] {
+            let c = &mut t.cars[x];
+            c.blocked_by = Some(y);
+            c.stalled = WAIT_GRAPH_STALL + 1.0;
+        }
+        let locks = t.gridlocks();
+        assert_eq!(locks.len(), 1);
+        assert_eq!(locks[0].cycle.len(), 2);
+        t.cars[b].stalled = 0.0;
+        assert!(t.gridlocks().is_empty(), "a car that has just moved is not in a knot");
     }
 }
