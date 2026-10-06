@@ -532,7 +532,10 @@ pub fn viaducts(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32
         let (a, b) = roads.segment_points(sid);
         let za = world.road_z.get(seg.a.0 as usize).copied().unwrap_or(0.0);
         let zb = world.road_z.get(seg.b.0 as usize).copied().unwrap_or(0.0);
-        viaduct_span(g, a, b, za, zb, seg.half_width() + if seg.is_street() { nd_sim::zoning::SIDEWALK } else { 0.6 }, &|p| world.ground_height(p), concrete, steel, true);
+        // Highways and ramps have no pavements: the deck is the lanes and shoulders.
+        let motorway = seg.is_highway() || nd_sim::roads::is_ramp_spec(seg.kind, seg.lanes_fwd, seg.lanes_bwd);
+        let hw = seg.half_width() + if seg.is_street() && !motorway { nd_sim::zoning::SIDEWALK } else { 0.6 };
+        viaduct_span(g, a, b, za, zb, hw, &|p| world.ground_height(p), concrete, steel, true);
     }
 }
 

@@ -407,8 +407,42 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         let motorway = seg.is_highway() || nd_sim::roads::is_ramp_spec(seg.kind, seg.lanes_fwd, seg.lanes_bwd);
         if motorway {
             let barrier = rgba(mul(pal.concrete(0), 0.8));
+            // Where a ramp runs beside the carriageway to merge or diverge,
+            // neither barrier stands between them: a barrier stops where it
+            // would be on (or right beside) another motorway's lanes.
+            let mine = |sid: SegmentId| {
+                let s = roads.segment(sid);
+                run.nodes.contains(&s.a) && run.nodes.contains(&s.b)
+            };
+            let blocked = |p: Vec2| {
+                roads.segments_in_box(p - Vec2::splat(30.0), p + Vec2::splat(30.0)).any(|o| {
+                    let os = roads.segment(o);
+                    if mine(o) || !(os.is_highway() || nd_sim::roads::is_ramp_spec(os.kind, os.lanes_fwd, os.lanes_bwd)) {
+                        return false;
+                    }
+                    let (a, b) = roads.segment_points(o);
+                    nd_sim::roads::project_on_segment(p, a, b).1.distance(p) < os.half_width() + 1.2
+                })
+            };
             for side in [-1.0f32, 1.0] {
-                g.part(Concrete).path_box(&walk, side * (hw + 0.2), 0.4, 0.0, 0.8, barrier);
+                let line = offset_path(&walk, side * (hw + 0.2));
+                let len = path_length(&line);
+                let steps = (len / 2.0).ceil().max(1.0) as usize;
+                let mut piece: Vec<Vec2> = Vec::new();
+                for k in 0..=steps {
+                    let q = point_along(&line, len * k as f32 / steps as f32).0;
+                    if blocked(q) {
+                        if piece.len() >= 2 {
+                            g.part(Concrete).path_box(&offset_path(&piece, 0.0), 0.0, 0.4, 0.0, 0.8, barrier);
+                        }
+                        piece.clear();
+                    } else {
+                        piece.push(q);
+                    }
+                }
+                if piece.len() >= 2 {
+                    g.part(Concrete).path_box(&piece, 0.0, 0.4, 0.0, 0.8, barrier);
+                }
             }
             let len = path_length(&walk);
             let mut s = 10.0;
@@ -1071,6 +1105,31 @@ mod tests {
         // No round junction pad at the join.
         let pad_y = ASPHALT_Y + 0.01;
         assert!(!g.get(Asphalt).positions.iter().any(|p| (p[1] - pad_y).abs() < 1e-4 && Vec2::new(p[0], p[2]).length() < 15.0), "no pad over the merge");
+    }
+
+    #[test]
+    fn motorway_barriers_never_stand_on_another_motorways_lanes() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 3, 0);
+        // A slip road peeling off at a shallow angle, as the demo's do.
+        roads.add_polyline(&[Vec2::new(0.0, 0.0), Vec2::new(-150.0, -30.0), Vec2::new(-200.0, -120.0)], 0, 1);
+        let mut net = LaneNetwork::default();
+        net.rebuild(&roads);
+        let lv = LandValue::new(400.0, 50.0);
+        let pal = Palette::default();
+        let g = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 3, heights: &[], layer: StreetLayer::All });
+        let lanes = |p: Vec2| {
+            roads.alive_segments().any(|(sid, s)| {
+                let (a, b) = roads.segment_points(sid);
+                nd_sim::roads::project_on_segment(p, a, b).1.distance(p) < s.lanes() as f32 * LANE_WIDTH * 0.5 - 0.3
+            })
+        };
+        // Barrier tops (0.8 m up) never stand over any lane.
+        // (Cheap streets move their concrete to the worn material.)
+        let tops: Vec<[f32; 3]> = [Concrete, WornConcrete].iter().flat_map(|s| g.get(*s).positions.iter().copied()).filter(|p| (p[1] - 0.8).abs() < 1e-3).collect();
+        assert!(tops.len() > 20, "the barriers are drawn");
+        let bad: Vec<_> = tops.iter().filter(|p| lanes(Vec2::new(p[0], p[2]))).collect();
+        assert!(bad.is_empty(), "{} barrier vertices on the lanes, e.g. {:?}", bad.len(), bad.first());
     }
 
     #[test]
