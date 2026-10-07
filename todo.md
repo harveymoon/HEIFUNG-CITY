@@ -168,9 +168,9 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 ### A. Fixes and clarity: traffic, tow, people
 [ ] - pedestrians and bikes never use tunnels; fix riders drawn on the ground above a tunnel
-[ ] - crashed cars: "waiting for a tow" timer; "truck inbound" with a locate button that selects the tow truck; draw the truck's path to the wreck when the wreck is selected
-[ ] - tow trucks break traffic rules only near the job (one-way, U-turns); they drive lawfully on the way there; a tow is always reachable even when a one-way is blocked behind the wreck   → overlaps the running wreck/tow agent
-[ ] - bad crashes can flip cars; the tow truck rights them
+[x] - crashed cars: "waiting for a tow" timer; "truck inbound" with a locate button that selects the tow truck; draw the truck's path to the wreck when the wreck is selected   → DONE [fix/flags]
+[x] - tow trucks break traffic rules only near the job (one-way, U-turns); they drive lawfully on the way there; a tow is always reachable even when a one-way is blocked behind the wreck   → DONE [fix/flags]: lawful with ambers; within 250 m uses opposing lane or kerb; wrecks pushed to the shoulder so traffic squeezes past; swap fallback if late. Not done: driving against a one-way, U-turns (no reverse lanes)
+[x] - bad crashes can flip cars; the tow truck rights them   → DONE [fix/flags]: rolled onto side or roof, righted over 6 min before hooking
 [ ] - people hurt in a crash or shot lie on the ground until medics come; homeless people sometimes lie down or sit on the kerb
 [ ] - delivery drivers: each stop resets the trip timer (no road rage over a multi-stop route); show the trip's purpose
 [ ] - every vehicle shows "coming from [place] / going to [place]" (clickable); out-of-town drivers show "unknown person from out of the city"; police "patrolling", taxis "looking for a pickup"; larger activity text in the person section ("going home to Habitat 21F")
@@ -223,8 +223,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [x] - flag: cars changing into each other's lane at a roundabout entry; truck turning left from the right lane at a circle (no lane changes near junctions, glide, missed turns re-route) [fix/traffic]
 [x] - flag: 79-car jam behind a "2-hour red light" (really full exits from parking hunters; the stop reason now names the exit) [fix/traffic]
 [x] - flag: cyclist turning right swings into the middle of the road [main]
-[~] - flag: windows z-fighting on Aurora Block (stepped terraces)   → fixed on fix/flags, not merged yet
-[~] - flag: crashed motorcycle in a one-way tunnel waits hours for a tow and blocks traffic; wreck drawn above ground   → IN PROGRESS [fix/flags]
+[x] - flag: windows z-fighting on Aurora Block (stepped terraces)   → DONE [fix/flags]: glass 13 mm behind lights, coplanar-face test. Left: coplanar tail in other styles (mostly hidden faces)
+[x] - flag: crashed motorcycle in a one-way tunnel waits hours for a tow and blocks traffic; wreck drawn above ground   → DONE [fix/flags]: real tow trucks drive in (out-of-town by any reachable road end), shoulder squeeze; tunnel cars decided by lane (World::car_in_tunnel). Left: out-of-town truck can loop 1–2.5 h through jams
 [x] - heat vision toggled off left motion blur and odd light colours   → FIXED [feat/look]: heat and the Traffic/Crime focus views swapped materials separately and restored each other's stand-ins; one shared swapper now, camera effects recomputed each frame
 [x] - flag: kerbs turn to dirt at corners   → DONE [feat/kerbs]: rounded kerbed corners with paving (rings paved outside), dropped kerbs at every crosswalk end with yellow domed tactile pads; street triangles slightly down. Left: very sharp (~60°) corners get no cut; one-way ramp streets still have no pavements
 [x] - realistic example maps   → DONE [feat/mapgen]: nd_procgen::citygen tensor-field streets, zoning, presets grid_plaza / coastal_river / old_town / twin_centres; generate_city remote command; "Starting town" in New game; tests per preset. Roundabouts dropped from plazas (they jammed by day 4)
@@ -232,7 +232,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [ ] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)
 
 ### Agent waves (4–5 at a time)
-- Running: fix/flags (wreck/tow plus the tow items from section A), feat/kerbs, feat/clarity (section A), feat/look (section D look-dev), feat/economy (section C part 1), feat/land (section C part 2), feat/tools ([ ] road raising, intersection editor, footbridges)
+- Merged: fix/flags, feat/kerbs, feat/look
+- Running: feat/identity (D: tunnel tubes, city name / game id / game history), feat/clarity (section A), feat/economy (section C part 1), feat/land (section C part 2), feat/tools ([ ] road raising, intersection editor, footbridges)
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
-- Next as slots free: D3 tunnel tubes in underground view, city name / game id / game history · B camera and inspector · C3 events (races, raves) and infrastructure decay · E verify stale statuses
+- Next as slots free: B camera and inspector · C3 events (races, raves) and infrastructure decay · E verify stale statuses
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open
