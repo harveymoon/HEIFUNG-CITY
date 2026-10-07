@@ -204,7 +204,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [ ] - infrastructure decay: roads and bridges wear slowly; road-maintenance budget; cuts hit poor streets first, rich areas get fixed first; bad roads slow cars
 
 ### D. Look and tools
-[ ] - look-dev pass, grounded neon: PBR materials with roughness and normal maps on roads, buildings and cars; SSAO; sky/atmosphere, distance and volumetric fog; TAA; a dynamic performance throttler that scales effects to hold the frame rate
+[x] - look-dev pass, grounded neon   → DONE [feat/look]: roughness/metal maps, sky-light reflections, distance-scaled SSAO, volumetric haze, TAA, Auto/Low/Medium/High with a frame-time throttler (View window; `graphics` remote command). Left: street lamps don't cast light, no wet roads.   Was: PBR materials with roughness and normal maps on roads, buildings and cars; SSAO; sky/atmosphere, distance and volumetric fog; TAA; a dynamic performance throttler that scales effects to hold the frame rate
 [ ] - underground view: tunnels as tubes, near side cut away so the cars inside show
 [ ] - [ and ] raise or lower a road while drawing; pillars hold it up; pillars avoid buildings and roads underneath (refuse if there's no room for them); the preview shows clearly what pillars would remove
 [ ] - intersection editor (Edit mode, click a junction or crosswalk): top-down orthographic view without buildings; lane permissions, left turns, signal timing; crosswalk upgrades: push-button signal, or a pedestrian bridge (raised walkways with steps that connect into a skywalk network)
@@ -225,14 +225,14 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [x] - flag: cyclist turning right swings into the middle of the road [main]
 [~] - flag: windows z-fighting on Aurora Block (stepped terraces)   → fixed on fix/flags, not merged yet
 [~] - flag: crashed motorcycle in a one-way tunnel waits hours for a tow and blocks traffic; wreck drawn above ground   → IN PROGRESS [fix/flags]
-[~] - heat vision toggled off left motion blur and odd light colours   → waiting for a repro; feat/look must guarantee a clean restore
-[~] - flag: kerbs turn to dirt at corners; curb cuts with tactile paving wanted   → IN PROGRESS [feat/kerbs]
+[x] - heat vision toggled off left motion blur and odd light colours   → FIXED [feat/look]: heat and the Traffic/Crime focus views swapped materials separately and restored each other's stand-ins; one shared swapper now, camera effects recomputed each frame
+[x] - flag: kerbs turn to dirt at corners   → DONE [feat/kerbs]: rounded kerbed corners with paving (rings paved outside), dropped kerbs at every crosswalk end with yellow domed tactile pads; street triangles slightly down. Left: very sharp (~60°) corners get no cut; one-way ramp streets still have no pavements
 [x] - realistic example maps   → DONE [feat/mapgen]: nd_procgen::citygen tensor-field streets, zoning, presets grid_plaza / coastal_river / old_town / twin_centres; generate_city remote command; "Starting town" in New game; tests per preset. Roundabouts dropped from plazas (they jammed by day 4)
 [ ] - corner lots levelled to their front street can stand above a side street (left open by fix/terrain-cut)
 [ ] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)
 
 ### Agent waves (4–5 at a time)
-- Running: fix/flags (wreck/tow plus the tow items from section A), feat/kerbs, feat/clarity (section A), feat/look (section D look-dev), feat/economy (section C part 1)
+- Running: fix/flags (wreck/tow plus the tow items from section A), feat/kerbs, feat/clarity (section A), feat/look (section D look-dev), feat/economy (section C part 1), feat/land (section C part 2), feat/tools ([ ] road raising, intersection editor, footbridges)
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
-- Next as slots free: C2 land (density by pressure, buyouts, company expansion and merged plots, housing variety, super-elite) · D2 tools ([ ] road raising with pillars, intersection editor, footbridges) · D3 tunnel tubes in underground view, city name / game id / game history · B camera and inspector · C3 events (races, raves) and infrastructure decay · E verify stale statuses
+- Next as slots free: D3 tunnel tubes in underground view, city name / game id / game history · B camera and inspector · C3 events (races, raves) and infrastructure decay · E verify stale statuses
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open

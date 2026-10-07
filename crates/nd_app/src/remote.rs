@@ -698,6 +698,14 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             l.heat = opt_bool(cmd, "on")?.unwrap_or(!l.heat);
             Ok(json!({ "heat_vision": l.heat }))
         }
+        "graphics" | "quality" => {
+            // [look] `{quality: auto|low|medium|high}` pins the tier (for
+            // screenshots that must compare) or hands it back to Auto.
+            if let Some(q) = opt_str(cmd, "quality")?.or(opt_str(cmd, "tier")?) {
+                ctx.lighting.quality = crate::render::QualitySetting::parse(q).ok_or_else(|| format!("unknown quality {q:?}; auto, low, medium or high"))?;
+            }
+            Ok(graphics_json(ctx))
+        }
         "screenshot" => screenshot(cmd, ctx),
         "events" => {
             let since = opt_u64(cmd, "since")?.unwrap_or(0);
@@ -1039,7 +1047,7 @@ fn status(ctx: &Ctx) -> Value {
         "bots": { "active": w.bots.bots.len(), "delivered_today": w.bots.delivered_today, "vans_on_road": nd_sim::Bots::vans(w), "van_orders_today": w.bots.van_orders_today },
         "transit": { "routes": w.transit.routes.len(), "buses": t.buses, "depots": t.depots, "depot_capacity": t.depot_capacity, "waiting": t.waiting, "riding": t.riding, "riders_today": t.riders_today, "fares_today": round(t.fares_today), "upkeep_today": round(t.upkeep_today) },
         "rail": { "trains": r.trains, "stations": r.stations, "yards": r.yards, "waiting": r.waiting, "riding": r.riding, "riders_today": r.riders_today, "fares_today": round(r.fares_today), "next_passenger_in": r.next_passenger_in, "freight_in_today": round(r.freight_in_today), "freight_waiting": round(r.freight_waiting), "upkeep_today": round(r.upkeep_today) },
-        "render": { "fps": round(fps as f32), "ticks_per_frame": sim.ticks_last_frame, "triangles": ctx.stats.street_triangles + ctx.stats.building_triangles, "building_meshes": ctx.stats.building_entities },
+        "render": { "fps": round(fps as f32), "ticks_per_frame": sim.ticks_last_frame, "triangles": ctx.stats.street_triangles + ctx.stats.building_triangles, "building_meshes": ctx.stats.building_entities, "graphics": graphics_json(ctx) },
         "camera": camera_pose(ctx), "tool": tool_state(&ctx.tools), "selection": selection(w, *ctx.selection),
         "project": project_state(ctx)["project"], "overlays": overlays_json(&ctx.overlays),
         "lighting": { "follow_clock": ctx.lighting.follow_clock, "hour": round(ctx.lighting.hour), "heat_vision": ctx.lighting.heat },
@@ -2265,6 +2273,20 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
 
 // ── screenshot ──────────────────────────────────────────────────────────────
 
+/// [look] The graphics setting, the tier in force (the setting's or Auto's
+/// pick, which takes effect next frame), the frame time and the effects.
+fn graphics_json(ctx: &Ctx) -> Value {
+    let g = &ctx.stats.graphics;
+    let tier = match ctx.lighting.quality {
+        crate::render::QualitySetting::Fixed(q) => q,
+        crate::render::QualitySetting::Auto => g.tier,
+    };
+    json!({
+        "quality": ctx.lighting.quality.label().to_lowercase(), "tier": tier.label().to_lowercase(),
+        "frame_ms": round(g.frame_ms), "sim_ms": round(g.sim_ms), "auto_steps": g.steps, "reason": g.reason, "effects": g.effects,
+    })
+}
+
 fn screenshot(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let default = format!("screenshots/shot-{secs}.png");
@@ -2371,7 +2393,8 @@ fn help() -> Value {
     });
     // Kept out of the literal above: it is at the json! recursion limit.
     v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
-    v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite" });
+    v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
+    v["commands"]["graphics"] = json!({ "quality": "auto|low|medium|high: pin the graphics tier (pin one before screenshots that must compare) or hand it back to the frame-rate throttler; omitted reports the setting, the tier in force, the smoothed frame time and the effects on the camera" });
     // The review commands, added separately: one `json!` this size hits the
     // macro recursion limit.
     let review = json!({

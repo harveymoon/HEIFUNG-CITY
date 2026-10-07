@@ -1228,6 +1228,30 @@ trait MindProvider {
 - Performance: the sim gets a real-time budget per frame (12 ms) and drops its
   backlog instead of stalling the renderer; shadows use three cascades out to 650 m;
   the HUD shows fps, meshes and triangles.
+- Look ("grounded neon", `render/look.rs`): realistic light under the neon. Surfaces carry a
+  metallic-roughness map beside their colour and normal maps (`textures::roughness_map`: grime
+  and cracks rougher, clean spots glossier, rust less metallic); expensive car paint has a
+  clear coat. The dome's colours are painted, prefiltered on the CPU, into two small cubemaps
+  (reflection levels and diffuse) for an environment light, repainted at most twice a second,
+  so glass, paint and wet-looking asphalt reflect the sky and the city's glow and shadowed
+  sides take the sky's colour; the flat ambient is cut to what that leaves. Screen-space
+  ambient occlusion uses Bevy's shader with a radius that grows with view depth
+  (`ssao_city.wgsl`, 0.73 to 5 m) so buildings darken the street at their feet from the
+  orbit camera. TAA stops lamp posts and lane markings shimmering (window lights are in the
+  depth prepass with the same discard, so dark windows leave no depth). Volumetric fog fills
+  a 140 m slab of haze round the camera, lit by the sun or moon (light shafts) and by the
+  horizon's colour, so it fades into the distance fog and the dome. Bevy's `Atmosphere` was
+  not used: it needs physical sun units and a black night sky, and the dome's light-pollution
+  band is the night's identity.
+- Graphics tiers: Low (MSAA 4x, 1024 shadows), Medium (TAA, light SSAO, 2048 shadows), High
+  (TAA, full SSAO, volumetric haze, 4096 shadows). The setting (View window, `graphics` API,
+  `ND_QUALITY`) is Auto or a tier. Auto starts at High and steps down when the smoothed frame
+  time stays over 18.8 ms for 2 s, up when it stays under 17.2 ms for 8 s; a step up taken
+  back doubles the next wait (up to 4 min), changes are followed by 3 s of settling while
+  pipelines compile, and it holds when the sim, not the renderer, fills the frame. One system
+  derives the camera's components from the tier and the view (heat vision adds motion blur,
+  drops the haze) and touches the camera only when that set changes, so nothing has to be
+  put back. The Dev window shows the tier, the frame time and the effects.
 - Citizens: small figures that walk the pavements, or ride a bike mesh when cycling; positions
   are interpolated between ticks from the previous pose so nothing jumps. Cars and trucks have wheels.
 - Vehicles (`nd_procgen::vehicles`): one parametric generator draws every road vehicle from a
@@ -1442,6 +1466,9 @@ trait MindProvider {
   parked cars lukewarm); a `FullscreenMaterial` pass after motion blur and before bloom maps
   brightness through a teal-magenta-white thermal palette with scanlines, noise, a vignette
   and a reticle, and Bevy's `MotionBlur` smears what moves. Off puts every original back.
+  The material swap is shared with the focus views (`render/swap.rs`): one original per
+  entity whatever the view, stand-ins always derived from it, so heat vision toggled with
+  the Traffic or Crime layer on can no longer leave heat's materials behind.
 - Plant fields: touching solar or wind plants (`World::plant_cluster`, parcels sharing 4 m+
   of boundary) are drawn as one installation (`nd_procgen::PlantField`): each parcel lays its
   panel rows or turbine grid out in the anchor parcel's frame against the whole field's
