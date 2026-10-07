@@ -182,8 +182,10 @@ Citizens are rendered from their simulated positions every frame.
   cars ring it and the flashiest spin donuts in tyre smoke, a crowd walks over, a neighbour calls
   the police; police on scene break it up (some arrests, cars impounded), else it ends after
   45-80 minutes and everyone leaves in convoy.
-- **Street races** (`nd_sim::street_events`, `world/nights.rs`): at 23:00, on 35% of nights when
-  three or more locals aged 18-42 with a fast car of their own (tuned, a coupé, a superbike, an
+- **Street races** (`nd_sim::street_events`, `world/nights.rs`): a young town has no scene, so
+  neither races nor raves happen on their own before day 10 (`SCENE_FROM_DAY`; the API forces one
+  any time). From then, at 23:00, on 35% of nights when three or more locals aged 18-42 at home
+  with a fast car of their own (tuned, a coupé, a superbike, an
   expensive saloon or wedge; rebelliousness 0.45+) are free and no takeover is on, a race is planned
   for 23:30-01:00. The crew (up to 8, flashiest first) drives to an empty lot or a surface car park
   (the meet: near their homes, on cheap land) and parks up in rows, nose to the street
@@ -206,9 +208,11 @@ Citizens are rendered from their simulated positions every frame.
   artists (`pressure::is_artist`) / 6, plus 0.25 when the city has an art scene; 1 or more is a
   scene. The strongest with a scene, if it has not held one in four days and the city none in two,
   opens at 23:00 with a chance of 12% per point of culture (at most 30%). Night owls and artists
-  within 1.6 km who are free walk over (two in three take up the word; more word goes round every
+  within 1.6 km who are at home or idle (nobody is pulled out of a bar or a shift) walk over (two
+  in three take up the word; more word goes round every
   20 minutes until 01:00, 70 guests at most) and queue along the pavement from the door; the door
-  lets two in every two minutes (`Activity::Visiting` the warehouse, mood up, a memory). Beams
+  lets two in every two minutes (`Activity::Visiting` the warehouse, mood up, a memory) for 8 on
+  the door, half of it the hire of the place to whoever runs the warehouse. Beams
   sweep the sky over the roof and coloured light pulses to the beat. After the first hour the
   neighbours within 220 m who are home lose sleep and mood every half hour (a Noise concern), and
   one may call the police (15% plus 4% per neighbour woken, at most 85%): an `illegal rave` crime at
@@ -218,7 +222,8 @@ Citizens are rendered from their simulated positions every frame.
 - **Road wear and maintenance** (`nd_sim::road_wear`, `world/roadworks.rs`): every street piece
   the city looks after (not paths, track, bored tunnels, highway carriageways or anything past the
   map edge) wears 0.0033 a day with age (about 300 days to crumble) plus 0.00012 per vehicle sample
-  per lane (vehicles on the piece every 10 minutes, lorries and buses x4), bridges 35% faster.
+  per lane per 100 m (vehicles seen on the piece every 10 minutes, lorries and buses x4: a lane
+  holding a car per 100 m all day adds about 0.003), bridges 35% faster.
   Wear is kept per segment with each piece's midpoint, so road works carry it to the pieces that
   are still there and new road starts smooth (`RoadCondition::remap`). At midnight the crews work
   down a queue of pieces worn past 0.3 until the day's allowance is spent: the allowance is the

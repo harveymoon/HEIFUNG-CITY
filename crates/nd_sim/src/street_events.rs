@@ -23,6 +23,10 @@ use crate::zoning::{Lot, LotId};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
+/// A young town has no scene yet: nights out like these start once the
+/// city has been going this many days (the API can force one any time).
+pub const SCENE_FROM_DAY: u64 = 10;
+
 // ── races ─────────────────────────────────────────────────────────────────
 
 /// Chance a night has a race when at least `MIN_RACERS` could come.
@@ -86,6 +90,9 @@ pub const DOOR_RATE: usize = 2;
 pub const NOISE_REACH: f32 = 220.0;
 /// What the promoter pays when the police shut it down.
 pub const RAVE_FINE: f32 = 400.0;
+/// Paid on the door; half of it hires the place from whoever runs the
+/// warehouse (their business's takings).
+pub const RAVE_DOOR_FEE: f32 = 8.0;
 
 /// Where a race is in its night.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -235,6 +242,9 @@ pub struct Rave {
     pub incident: Option<u32>,
     pub arrests: u32,
     pub fines: f32,
+    /// Taken on the door.
+    #[serde(default)]
+    pub takings: f32,
     /// What made the culture here (for the record).
     pub pull: RavePull,
 }

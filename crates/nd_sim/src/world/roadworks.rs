@@ -103,10 +103,11 @@ impl World {
             if !wears(&self.roads, i) {
                 continue;
             }
-            let lanes = (self.roads.segments[i].lanes_fwd + self.roads.segments[i].lanes_bwd).max(1) as f32;
-            // Traffic per lane: a two-lane road carrying the same cars as
-            // a one-lane one wears each lane half as much.
-            let traffic = load.get(i).copied().unwrap_or(0.0) / lanes;
+            // Traffic per lane per 100 m: a two-lane road carrying the same
+            // cars as a one-lane one wears each lane half as much, and a
+            // long piece holds more cars at once without more passing.
+            let per_100m = (lane_metres(&self.roads, i) / 100.0).max(0.05);
+            let traffic = load.get(i).copied().unwrap_or(0.0) / per_100m;
             let mut d = AGE_WEAR + TRAFFIC_WEAR * traffic;
             if self.roads.segments[i].bridge {
                 d *= BRIDGE_WEAR;

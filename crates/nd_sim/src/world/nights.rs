@@ -51,7 +51,7 @@ impl World {
             let crew = self.race_crew().len();
             // Not on a takeover night: the same crowd is out at that.
             let takeover = self.driving.takeovers.active.is_some() || self.driving.takeovers.planned.is_some();
-            if crew >= MIN_RACERS && self.citizens.len() >= 60 && !takeover && unit(h) < RACE_NIGHT_CHANCE as f32 {
+            if day >= SCENE_FROM_DAY && crew >= MIN_RACERS && self.citizens.len() >= 60 && !takeover && unit(h) < RACE_NIGHT_CHANCE as f32 {
                 let window = RACE_START_WINDOW.1 - RACE_START_WINDOW.0;
                 self.street_events.race_planned = Some(tick + RACE_START_WINDOW.0 + mix(h, 1) % window);
             }
@@ -107,7 +107,7 @@ impl World {
             .citizens
             .iter()
             .filter(|(id, c)| (18..=42).contains(&c.age) && c.owns_car && c.car.is_some() && !busy.contains(id) && !self.services.in_custody(*id) && !self.is_patient(*id))
-            .filter(|(_, c)| matches!(c.activity, Activity::AtHome | Activity::Visiting(_) | Activity::Idle))
+            .filter(|(_, c)| matches!(c.activity, Activity::AtHome | Activity::Idle))
             .filter_map(|(id, c)| {
                 let model = c.car.and_then(|v| self.vehicles.cars.get(v)).map(|o| o.model)?;
                 if !fast_car(&model) {
@@ -446,7 +446,7 @@ impl World {
             .citizens
             .iter()
             .filter(|(id, c)| !r.crowd.contains(id) && !r.racers.contains(id) && (16..=40).contains(&c.age) && !c.asleep)
-            .filter(|(_, c)| matches!(c.activity, Activity::Idle | Activity::Visiting(_) | Activity::AtHome))
+            .filter(|(_, c)| matches!(c.activity, Activity::AtHome | Activity::Idle))
             .filter(|(id, _)| !self.services.in_custody(*id) && !self.is_patient(*id))
             .filter_map(|(id, c)| {
                 let d = c.pos.distance(spot.centre);
@@ -715,6 +715,9 @@ impl World {
         let pick = spots.iter().find(|s| s.pull.has_scene() && s.last_rave_day.is_none_or(|d| day >= d + RAVE_REST_DAYS)).cloned();
         self.street_events.rave_spots = spots.into_iter().take(12).collect();
         let Some(spot) = pick else { return };
+        if day < SCENE_FROM_DAY {
+            return;
+        }
         // Not every night somewhere: a gap after the last one in town.
         if self.street_events.rave_days.iter().any(|&(_, d)| day < d + RAVE_GAP_DAYS) {
             return;
@@ -742,7 +745,7 @@ impl World {
         let id = self.street_events.next_id;
         self.street_events.next_id += 1;
         let length = RAVE_LENGTH.0 + mix(key_of(b), tick) % (RAVE_LENGTH.1 - RAVE_LENGTH.0);
-        let mut rave = Rave { id, building: b, place: place.clone(), centre, door, queue_dir: along, started: tick, ends_at: tick + length, promoter: None, guests: Vec::new(), queue: Vec::new(), inside: Vec::new(), peak: 0, complaints: 0, incident: None, arrests: 0, fines: 0.0, pull };
+        let mut rave = Rave { id, building: b, place: place.clone(), centre, door, queue_dir: along, started: tick, ends_at: tick + length, promoter: None, guests: Vec::new(), queue: Vec::new(), inside: Vec::new(), peak: 0, complaints: 0, incident: None, arrests: 0, fines: 0.0, takings: 0.0, pull };
         self.invite_ravers(&mut rave, RAVE_GUESTS * 2 / 3);
         rave.promoter = rave.guests.first().copied();
         if rave.guests.is_empty() {
@@ -774,7 +777,7 @@ impl World {
             .citizens
             .iter()
             .filter(|(id, c)| !rave.guests.contains(id) && (night_owl(c) || (super::pressure::is_artist(c) && c.age <= 50)))
-            .filter(|(_, c)| matches!(c.activity, Activity::AtHome | Activity::Idle | Activity::Visiting(_)))
+            .filter(|(_, c)| matches!(c.activity, Activity::AtHome | Activity::Idle))
             .filter(|(_, c)| c.work.and_then(|w| self.buildings.get(w)).is_none_or(|b| !b.shift_for(c.seed).contains(hour)))
             .filter(|(id, _)| !self.services.in_custody(*id) && !self.is_patient(*id))
             .filter_map(|(id, c)| {
@@ -820,6 +823,13 @@ impl World {
         if tick % 20 == 0 && tick < r.started + 120 {
             self.invite_ravers(&mut r, 8);
         }
+        // The queue is in the order people got there: whoever has arrived
+        // (standing within sight of the door) is ahead of anyone still
+        // walking over, so one slow walker never holds the door.
+        let arrived = |w: &World, c: CitizenId| w.citizens.get(c).is_some_and(|c| matches!(c.activity, Activity::Idle) || (matches!(c.activity, Activity::Traveling { .. }) && c.pos.distance(r.door) < 45.0));
+        let (mut here, away): (Vec<CitizenId>, Vec<CitizenId>) = r.queue.iter().partition(|&&c| arrived(self, c));
+        here.extend(away);
+        r.queue = here;
         // The door: the head of the queue, standing there, goes in.
         if tick % 2 == 0 {
             let mut let_in = 0;
@@ -832,6 +842,15 @@ impl World {
                 r.queue.remove(0);
                 let b = r.building;
                 let place = r.place.clone();
+                // On the door: the promoter's cut, and the hire of the
+                // place to whoever runs the warehouse.
+                let fee = RAVE_DOOR_FEE.min(self.citizens[cid].savings.max(0.0));
+                self.citizens[cid].savings -= fee;
+                if let Some(z) = self.buildings.get_mut(b).and_then(|x| x.business.as_mut()) {
+                    z.money += fee * 0.5;
+                    z.revenue_today += fee * 0.5;
+                }
+                r.takings += fee;
                 let c = &mut self.citizens[cid];
                 c.activity = Activity::Visiting(b);
                 c.inside = Some(b);

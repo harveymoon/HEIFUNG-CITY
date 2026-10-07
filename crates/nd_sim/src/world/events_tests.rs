@@ -188,6 +188,8 @@ fn artists(w: &mut World, n: usize) {
 fn frozen(mut w: World) -> World {
     w.config.max_builds_per_interval = 0;
     w.config.immigration_interval = u64::MAX / 4;
+    // A town old enough to have a scene.
+    w.clock.tick += crate::street_events::SCENE_FROM_DAY * 1440;
     w
 }
 
@@ -225,14 +227,20 @@ fn raves_happen_only_where_there_is_a_scene_for_them() {
 
 #[test]
 fn a_rave_draws_a_queue_lets_people_in_and_ends() {
-    let mut w = town(5, true);
+    let mut w = frozen(town(5, true));
     artists(&mut w, 14);
     // 23:00 tonight.
     let to = (23 * 60 + 1440 - w.clock.minute_of_day() as usize) % 1440;
     run(&mut w, to, |_| false);
-    let b = w.rave_spots()[0].building;
-    w.street_events.rave_rolled_day = w.clock.day();
-    let id = w.start_rave(b).expect("a rave");
+    // Tonight's own, or one opened now.
+    let id = match w.rave() {
+        Some(r) => r.id,
+        None => {
+            let b = w.rave_spots()[0].building;
+            w.start_rave(b).expect("a rave")
+        }
+    };
+    let b = w.rave().unwrap().building;
     let r = w.rave().unwrap().clone();
     assert_eq!(r.id, id);
     assert!(r.guests.len() >= 4, "guests invited: {}", r.guests.len());

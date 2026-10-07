@@ -61,7 +61,7 @@ fn rave_json(w: &World, r: &Rave) -> Value {
         "promoter": r.promoter.map(key_str), "promoter_name": r.promoter.and_then(|p| w.citizens.get(p)).map(|c| c.name.as_str()),
         "guests": r.guests.len(), "queue": r.queue.len(),
         "queue_at_door": r.queue.iter().filter(|&&c| w.citizens.get(c).is_some_and(|c| c.pos.distance(r.door) < 30.0)).count(),
-        "inside": r.inside.len(), "peak": r.peak, "complaints": r.complaints, "incident": r.incident, "pull": pull_json(&r.pull),
+        "inside": r.inside.len(), "peak": r.peak, "takings": round(r.takings), "complaints": r.complaints, "incident": r.incident, "pull": pull_json(&r.pull),
     })
 }
 
@@ -86,7 +86,7 @@ pub fn command(cmd: &Value, w: &World) -> Result<Value, String> {
         "history": e.history.iter().rev().take(limit).map(record_row).collect::<Vec<_>>(),
         "news": e.news.iter().rev().take(limit).map(news_row).collect::<Vec<_>>(),
         "totals": { "races": e.races_total, "raves": e.raves_total, "busts": e.busts_total, "fines": round(e.fines_total) },
-        "note": "races roll at 23:00 (35% of nights with 3+ free locals owning fast cars), raves at 22:00 for 23:00 at the warehouse with the strongest scene (culture >= 1: young night owls / 30 + artists / 6 within 900 m)",
+        "note": "from day 10: races roll at 23:00 (35% of nights with 3+ free locals owning fast cars), raves at 22:00 for 23:00 at the warehouse with the strongest scene (culture >= 1: young night owls / 30 + artists / 6 within 900 m)",
     }))
 }
 

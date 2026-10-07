@@ -1108,14 +1108,14 @@ Warehouse raves, Road wear and maintenance).
 | --- | --- | --- |
 | `street_events` (or `nights`) | `limit` (rows of history and news, default 10), `fresh` (bool: weigh the warehouses now instead of the last 22:00 roll) | `race` (below, or null), `race_planned` (time), `race_crew` (locals with a fast car free now), `rave` (below), `rave_planned` {building, name, doors}, `rave_spots` (warehouses best first: building, name, pos, `pull` {youth, artists, art_scene, neighbours, culture, has_scene, night_chance, why}, last_rave_day), `history` (newest first: id, kind, place, pos, finish, started, ended, minutes, people, crowd, winner, police, arrests, fines, complaints, chase, culture), `news` (seq, tick, time, kind, headline, pos), `totals` {races, raves, busts, fines} |
 | `race` | `at` [x,y] optional: meet at the empty lot or surface car park nearest it | `race` id and `detail`; refused with fewer than two free locals with a fast car, or no lot pair 450 m-2.4 km apart (550 m by road) |
-| `rave` | `building` id, or `at` [x,y] (the old warehouse nearest it); neither: the one with the strongest scene | `rave` id and `detail`. Forcing one skips the scene check (the roll at 22:00 does not) |
+| `rave` | `building` id, or `at` [x,y] (the old warehouse nearest it); neither: the one with the strongest scene | `rave` id and `detail`. Forcing one skips the scene check and the day-10 start (the roll at 22:00 does not) |
 | `roads` (or `road_condition`, `road_budget`) | `funding` 0..1.5 (sets the road maintenance level; 1 = what the network needs), `age_days` (dev: wear every street that many days at yesterday's traffic, the crews working each night at the funding level unless `crews: false`; nothing charged), `near` [x,y], `limit` (default 10) | `pieces`, `lane_km`, `mean_wear`, `worn` (0.5+), `crumbling` (0.8+), `waiting_for_repair`, `mean_wear_by_land_value` {cheap, middle, dear} (tier cuts of land value), `budget` {funding, max_funding, need_per_day, allowance_per_day, spent_yesterday, repaired_yesterday, repaired_land_value_yesterday, ledger_today, ledger_yesterday, repaired_total}, `days` (the last 7: allowance, spent, repaired, repaired_lane_m, repaired_land_value, waiting), `pieces_listed` (worst first, or nearest `near`: segment, pos and the `condition` fields of `inspect {segment}`) |
 
 A race `detail`: id, `stage` (gathering / racing / party), `meet` and `finish` {name, pos, lot},
 started, go, ends, `route_m`, `racers` (car, driver, name, pos, speed_kmh, parked_in_lot, place,
 phase), finished, crowd, incident, arrests, fined, fines, chase_incident. A rave: id, building,
 place, pos, door, started, ends, promoter, promoter_name, guests, queue, queue_at_door, inside,
-peak, complaints, incident, pull.
+peak, complaints, incident, takings (on the door), pull.
 
 `report.traffic` carries `street_events` {race, rave, races_total, raves_total, busts_total,
 last_news} and `road_condition` (the `roads` reply without the list). The ledger has two more flows,

@@ -21,10 +21,13 @@ use std::collections::HashMap;
 /// Wear a piece gains a day from age alone (a street left alone crumbles
 /// in about 300 days).
 pub const AGE_WEAR: f32 = 0.0033;
-/// Wear a day per vehicle-sample per lane-metre-normalised unit: a sample is
-/// one vehicle seen on the piece at a traffic check (every
-/// `SAMPLE_EVERY` ticks); lorries and buses count `HEAVY` cars.
-pub const TRAFFIC_WEAR: f32 = 0.00012;
+/// Wear a day per vehicle sample per lane per 100 m of the piece: a sample
+/// is one vehicle seen on the piece at a traffic check (every
+/// `SAMPLE_EVERY` ticks), so a lane holding one car per 100 m all day adds
+/// about 0.003 a day, a jammed one three times that; lorries and buses
+/// count `HEAVY` cars. Per metre, so a long piece is not worn more for
+/// holding more cars at once.
+pub const TRAFFIC_WEAR: f32 = 0.00002;
 pub const HEAVY: f32 = 4.0;
 pub const SAMPLE_EVERY: u64 = 10;
 /// Bridges and viaducts wear this much faster (joints, salt, the deck).
