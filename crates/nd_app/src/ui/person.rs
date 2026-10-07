@@ -33,6 +33,11 @@ pub fn citizen_summary(ui: &mut egui::Ui, w: &World, c: &Citizen) {
         None => format!("{}{how}", c.activity.label()),
     });
     ui.label(format!("home: {home}  ·  work: {work}"));
+    // [economy] the art scene's people
+    if nd_sim::world::is_artist(c) {
+        let studio = c.work.and_then(|b| w.buildings.get(b)).and_then(|b| b.business.as_ref()).is_some_and(|z| matches!(z.kind, nd_sim::BusinessKind::ArtStudio | nd_sim::BusinessKind::Gallery));
+        ui.label(egui::RichText::new(if studio { "Artist, working in the art scene" } else { "Artist, painting after a day job" }).small().color(egui::Color32::from_rgb(220, 150, 255)));
+    }
     ui.label(format!(
         "mood {:.0}%  ·  satiety {:.0}%  ·  {} class  ·  arrived day {}",
         c.mood * 100.0,

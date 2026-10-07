@@ -529,13 +529,17 @@ impl World {
 
     // ── firms ──────────────────────────────────────────────────────────────
 
-    /// The generic "wants to expand" trigger: an open business that has
-    /// paid its way for its last three days with room to spare, holds cash
-    /// for the move and is mostly staffed. (The economy branch's
-    /// `Business::wants_expand` can be ORed in here once both are on main.)
+    /// The "wants to expand" trigger: the business says so itself
+    /// (`Business::wants_expand`, set by the economy's pressures: a gallery
+    /// with enough donations), or, generically, it is open, has paid its
+    /// way for its last three days with room to spare, holds cash for the
+    /// move and is mostly staffed.
     pub fn wants_to_expand(&self, bid: BuildingId) -> bool {
         let Some(b) = self.buildings.get(bid) else { return false };
         let Some(z) = &b.business else { return false };
+        if z.wants_expand && !z.closed && b.construction.is_none() && b.demolition.is_none() {
+            return true;
+        }
         if z.closed || b.construction.is_some() || b.demolition.is_some() || b.is_derelict() || z.days_open < 6 || z.books.len() < 3 {
             return false;
         }

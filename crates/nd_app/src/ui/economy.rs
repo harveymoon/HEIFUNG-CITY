@@ -101,6 +101,8 @@ pub fn compact(ui: &mut egui::Ui, p: &mut UiCtx) {
     let net: f32 = entries.iter().map(|(_, x)| x).sum();
     ui.separator();
     signed_bar(ui, "net", net, scale);
+    // [economy] what the city's businesses want
+    super::pressure::compact(ui, &p.sim.world);
     hint(ui, "Expand (the corner button) for the ledger over time and what each line is made of.");
 }
 
@@ -147,6 +149,8 @@ pub fn expanded(ui: &mut egui::Ui, p: &mut UiCtx) {
         let zone = |lu: LandUse| zone_color32(assets.palette.zone_color(lu));
         let days = pane::days(&w.economy.history, span);
         headline(ui, w, &days);
+        // [economy] what the city's businesses want, and why
+        super::pressure::expanded(ui, w);
         treasury(ui, w, &days, span);
         flows_over_time(ui, &days);
         ledger_drill(ui, w, &days, &mut act);

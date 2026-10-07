@@ -152,7 +152,7 @@ pub fn expansion_form(kind: BusinessKind) -> Option<Form> {
         K::Hotel => Some(Form::MegaHotel),
         K::OilWell | K::Refinery | K::Fab | K::Assembly | K::GrainFarm | K::VertFarm | K::Dairy | K::ProteinVat | K::Mill | K::ContainerYard => Some(Form::Merged),
         K::GadgetShop | K::Office | K::Venue | K::Grocery => Some(Form::Merged),
-        _ if kind.label() == "gallery" => Some(Form::Museum),
+        K::Gallery => Some(Form::Museum),
         _ => None,
     }
 }

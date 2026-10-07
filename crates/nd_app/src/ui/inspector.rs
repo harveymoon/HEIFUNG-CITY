@@ -105,6 +105,10 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                     return;
                 }
             }
+            // [services] A wreck waiting for its tow, or the truck coming.
+            if tow_status(ui, w, id, selection) {
+                return;
+            }
             // Everyone aboard but the driver, as faces that select them.
             let riders: Vec<nd_sim::CitizenId> = occupants(w, id).into_iter().filter(|c| *c != car.citizen || !driver_shown).collect();
             if !riders.is_empty() {
@@ -213,6 +217,8 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             figure(ui, "staff", format!("{}/{}", b.workers.len(), b.jobs), IVORY);
         });
         cashflow(ui, &bz.books, (bz.revenue_today, bz.spend_today));
+        // [economy] why it is here and how it is doing
+        super::pressure::business_story(ui, w, id);
         let recipe = bz.kind.recipe();
         if !recipe.inputs.is_empty() || !recipe.outputs.is_empty() {
             egui::CollapsingHeader::new(egui::RichText::new(format!("stock  ·  {} deals so far", bz.deals)).small()).id_salt(("inspector_stock", id)).show(ui, |ui| {
@@ -649,4 +655,62 @@ fn capitalise(s: &str) -> String {
 /// Traffic seconds as "45 s" or "3 min".
 fn duration(secs: f32) -> String {
     if secs < 90.0 { format!("{secs:.0} s") } else { format!("{:.0} min", secs / 60.0) }
+}
+
+/// [services] A written-off car: how long it has waited for the tow, and
+/// once a recovery truck is on its way, "truck inbound" with a button that
+/// selects it (the truck's road to the wreck is drawn while the wreck is
+/// selected, `tools::draw_selection`). A recovery truck: the wreck it is
+/// going to. True when the selection changed.
+fn tow_status(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selection: &mut Selection) -> bool {
+    let tick = w.clock.tick;
+    if let Some(wr) = w.driving.wrecks.iter().find(|x| x.car == id) {
+        section(ui, "TOW");
+        let waited = tick.saturating_sub(wr.since);
+        match wr.truck.and_then(|t| w.traffic.cars.get(t).map(|c| (t, c))) {
+            Some((t, truck)) => {
+                let d = w.traffic.cars.get(id).map_or(0.0, |c| c.pos.distance(truck.pos));
+                ui.label(egui::RichText::new(format!("Truck inbound  ·  {d:.0} m away  ·  sent {} ago", duration_min(tick.saturating_sub(wr.sent)))).color(WARN));
+                ui.horizontal_wrapped(|ui| {
+                    hint(ui, if wr.company.is_some() { "from a tow company in town" } else { "from out of town" });
+                    if ui.small_button("locate").on_hover_text("Select the tow truck").clicked() {
+                        *selection = Selection::Car(t);
+                    }
+                });
+                if *selection == Selection::Car(t) {
+                    return true;
+                }
+            }
+            None => {
+                let called = if wr.due > 0 { "called, finding a truck" } else { "waiting for the police to call it in" };
+                ui.label(egui::RichText::new(format!("Waiting for a tow  ·  {}", duration_min(waited))).color(WARN));
+                hint(ui, called);
+            }
+        }
+        if wr.truck.is_some() {
+            hint(ui, &format!("waiting {} so far", duration_min(waited)));
+        }
+        if wr.flipped > 0 {
+            let how = if wr.flipped == 1 { "on its side" } else { "on its roof" };
+            hint(ui, &if wr.righted_at > 0 { format!("{how}: the crew is righting it") } else { format!("{how}: the truck will right it before towing") });
+        }
+        return false;
+    }
+    let Some(car) = w.traffic.cars.get(id) else { return false };
+    if let nd_sim::Errand::Recover(wreck) = car.errand {
+        section(ui, "RECOVERY");
+        ui.horizontal_wrapped(|ui| {
+            ui.label(if car.drive.recovering { "Amber lights, nearly there, going round the queue:" } else { "Amber lights, on the way to" });
+            if ui.small_button(w.car_label(wreck)).on_hover_text("Select the wreck").clicked() {
+                *selection = Selection::Car(wreck);
+            }
+        });
+        return *selection == Selection::Car(wreck);
+    }
+    false
+}
+
+/// Game minutes as "12 min" or "2 h 05".
+fn duration_min(m: u64) -> String {
+    if m < 60 { format!("{m} min") } else { format!("{} h {:02}", m / 60, m % 60) }
 }

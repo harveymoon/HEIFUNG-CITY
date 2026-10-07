@@ -181,11 +181,11 @@ impl World {
 
     /// The weight of each industry kind on a lot, in `IndustryKind::ALL`
     /// order, with the player's bias applied (a forced kind takes it all).
-    pub fn industry_weights(&self, lot_id: LotId) -> Option<[f32; 7]> {
+    pub fn industry_weights(&self, lot_id: LotId) -> Option<[f32; crate::industry::IndustryKind::COUNT]> {
         let site = self.industry_site(lot_id)?;
         let mut w = industry::weights(&site);
         if let Some(Some(k)) = self.industry_bias_at(self.lots[lot_id].center) {
-            w = [0.0; 7];
+            w = [0.0; crate::industry::IndustryKind::COUNT];
             w[k.index()] = 1.0;
         }
         Some(w)
@@ -218,7 +218,8 @@ impl World {
             // Plants carry their own figures (`PowerPlantKind::pollution`).
             return;
         }
-        let kind = bld.business.as_ref().and_then(|z| z.kind.industry());
+        // [economy] A fishing port smells like the fishing it is.
+        let kind = bld.business.as_ref().and_then(|z| z.kind.industry()).or_else(|| bld.port.filter(|p| p.is_fishing()).map(|_| IndustryKind::Fishing));
         let (r, w) = kind.map_or((220.0, 0.3), |k| k.nuisance());
         b.splat_nuisance(c, r, w);
         if let Some(k) = kind {

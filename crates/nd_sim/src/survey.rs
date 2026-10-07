@@ -55,7 +55,7 @@ impl LandLayer {
     pub const RESOURCES: [LandLayer; 7] = [LandLayer::Farmland, LandLayer::Oil, LandLayer::Geothermal, LandLayer::Rock, LandLayer::Sand, LandLayer::Water, LandLayer::Shipping];
 
     /// Every layer, in the order the K key steps through them.
-    pub const ALL: [LandLayer; 15] = [
+    pub const ALL: [LandLayer; 16] = [
         LandLayer::Farmland,
         LandLayer::Oil,
         LandLayer::Geothermal,
@@ -71,6 +71,7 @@ impl LandLayer {
         LandLayer::Industry(IndustryKind::Logistics),
         LandLayer::Industry(IndustryKind::Fishing),
         LandLayer::Industry(IndustryKind::Tech),
+        LandLayer::Industry(IndustryKind::Mining),
     ];
 
     /// Name for the API (`overlay {layer}`) and settings.
@@ -92,6 +93,7 @@ impl LandLayer {
                 IndustryKind::Logistics => "best_logistics",
                 IndustryKind::Fishing => "best_fishing",
                 IndustryKind::Tech => "best_tech",
+                IndustryKind::Mining => "best_mining",
             },
         }
     }
@@ -131,6 +133,7 @@ impl LandLayer {
                 IndustryKind::Logistics => "Best for logistics",
                 IndustryKind::Fishing => "Best for fishing",
                 IndustryKind::Tech => "Best for clean tech",
+                IndustryKind::Mining => "Best for strip mining",
             },
         }
     }
@@ -141,7 +144,7 @@ impl LandLayer {
             LandLayer::Farmland => "deep soil by rivers and on the plains; farms yield by it, contamination spoils it",
             LandLayer::Oil => "oil wells only go over a deposit; refineries follow the wells",
             LandLayer::Geothermal => "steaming vents: a geothermal plant needs a lot over one (solid = workable)",
-            LandLayer::Rock => "thin soil and steep slopes: poor farming, nothing else uses it yet",
+            LandLayer::Rock => "thin soil and steep slopes: poor farming; strip mines dig where the rock is near the surface",
             LandLayer::Sand => "beach and dune on the sea shore: poor farming",
             LandLayer::Water => "fishing wants the shore; ferries need water 16 m wide",
             LandLayer::Shipping => "a shipping port fits on the sea or a river 40 m wide; logistics and refineries follow ports",
@@ -154,6 +157,7 @@ impl LandLayer {
                 IndustryKind::Logistics => "chance of container yards and truck lots: near ports, freight yards, highways, depots",
                 IndustryKind::Fishing => "chance of fisheries: on the shore, clean water, a port helps",
                 IndustryKind::Tech => "chance of clean tech: dear land, away from heavy industry",
+                IndustryKind::Mining => "chance of a strip mine: rock near the surface, on cheap land",
             },
         }
     }
@@ -291,10 +295,10 @@ pub fn resource_value(layer: LandLayer, g: &GroundSample, heat: f32, shipping: f
 
 /// Share of each kind in a set of industry weights (they sum to 1; all
 /// zero when nothing has any weight).
-pub fn shares(w: &[f32; 7]) -> [f32; 7] {
+pub fn shares(w: &[f32; crate::industry::IndustryKind::COUNT]) -> [f32; crate::industry::IndustryKind::COUNT] {
     let total: f32 = w.iter().sum();
     if total <= 0.0 || !total.is_finite() {
-        return [0.0; 7];
+        return [0.0; crate::industry::IndustryKind::COUNT];
     }
     w.map(|x| x / total)
 }
@@ -365,8 +369,8 @@ mod tests {
         assert_eq!(resource_value(LandLayer::Geothermal, &g, 0.9, 0.0, 0.0), 0.9);
         assert_eq!(resource_value(LandLayer::Shipping, &g, 0.0, 0.7, 0.0), 0.7);
         assert_eq!(resource_value(LandLayer::BestIndustry, &g, 1.0, 1.0, 0.0), 0.0);
-        let sh = shares(&[1.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        let sh = shares(&[1.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
         assert!((sh[1] - 0.75).abs() < 1e-6 && (sh.iter().sum::<f32>() - 1.0).abs() < 1e-6);
-        assert_eq!(shares(&[0.0; 7]), [0.0; 7]);
+        assert_eq!(shares(&[0.0; crate::industry::IndustryKind::COUNT]), [0.0; crate::industry::IndustryKind::COUNT]);
     }
 }

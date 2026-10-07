@@ -296,3 +296,23 @@ fn phase_of<T: Hash>(id: T) -> f32 {
     id.hash(&mut h);
     (h.finish() % 1000) as f32 / 1000.0
 }
+
+/// [services] A recovery truck on its way to a wreck flashes the amber
+/// beacon on its cab roof: lights, but no siren, so nobody pulls over for
+/// it (`DriveState::amber`). Drawn as a bright gizmo in the layer the truck
+/// is seen in (in a tunnel only in the Underground view).
+pub(super) fn amber_beacons(sim: Res<Sim>, time: Res<Time>, tools: Res<crate::tools::ToolState>, mut gizmos: Gizmos) {
+    let w = &sim.world;
+    let t = time.elapsed_secs();
+    let f = sim.frac();
+    let under = tools.depth == crate::tools::Depth::Underground;
+    for (id, car) in w.traffic.cars.iter().filter(|(_, c)| c.drive.amber) {
+        if w.car_in_tunnel(car) != under || ((t * 3.0 + phase_of(id)) as i64) % 2 != 0 {
+            continue;
+        }
+        let (pos, heading) = car.pose_at(f);
+        let p = pos + SVec2::new(heading.cos(), heading.sin()) * 0.5;
+        let y = w.car_height_at(car, pos) + 1.95;
+        gizmos.sphere(Isometry3d::from_translation(Vec3::new(p.x, y, p.y)), 0.22, Color::linear_rgb(6.0, 2.6, 0.15));
+    }
+}

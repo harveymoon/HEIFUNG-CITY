@@ -25,6 +25,8 @@ pub mod pane;
 pub mod people;
 mod person;
 mod places;
+/// [economy] What the city's businesses want, and why a business is here.
+mod pressure;
 /// [inspector] Painted head-and-shoulders portraits of citizens.
 mod portrait;
 pub mod saves;

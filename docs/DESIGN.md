@@ -161,7 +161,22 @@ Citizens are rendered from their simulated positions every frame.
   ones stop both cars a minute or three; bad ones (closing speed) write cars off and may hurt
   people: a witness calls 911, a `Crash` incident brings the police (who may arrest a drunk or
   red-light driver) and each injured person gets an on-road `Medical` incident and an ambulance;
-  once the scene clears a tow truck hauls the wreck to the nearest industrial yard. Street
+  a crashed car is pushed onto the shoulder of a kerb lane and the traffic behind eases past it at
+  a crawl where its body fits beside it (`traffic/hazard.rs`; no room, as for a crash in an inner
+  lane or a junction, and it changes lanes or waits and re-routes). Once the police are on scene
+  (or have gone, or 45 minutes after a crash nobody reported) the nearest tow company with a truck
+  free sends a recovery truck (with none in town, one from out of town comes in from the map edge,
+  by any road end that reaches the wreck). It drives there with amber beacons (no siren: nobody
+  pulls over), and within 250 m (or 1 km to go along its route) takes the siren's off-law moves
+  round the queue (the opposing lane when clear, the kerb past standing traffic; never a red
+  light), stops just behind the wreck (on the lane before when there is no room on its own) and
+  hauls it to the yard or off the map. A bad crash can roll a car onto its side or roof (drawn
+  so); the crew rights it (`RIGHTING_MIN`) before hooking it. A crash whose call stays open two
+  hours has its tow called anyway. The inspector shows a wreck's wait ("Waiting for a tow"), then
+  "Truck inbound" with a locate button, and draws the truck's road to it while it is selected. A truck not there within an hour is called off and the
+  wreck hooked where it lies (a truck from the far side); only a wreck no road leads away from is
+  craned off after a day. (The out-of-town tow used to aim only for the nearest road end, often
+  behind the wreck with no way to turn, so wrecks stood for a day.) Street
   takeovers: on ~30 % of nights (with a crew) at 22:00 a meet is planned; rebellious young locals
   drive over, outsiders roll in off the highway as a pack ignoring lights, the junction is closed,
   cars ring it and the flashiest spin donuts in tyre smoke, a crowd walks over, a neighbour calls
@@ -218,6 +233,117 @@ Citizens are rendered from their simulated positions every frame.
   the town's need (two thirds of everyone's groceries); a kind new to town is tried once, in a
   building of at most 20 jobs; offices (publicly funded) take the rest. A building
   redeveloped while its business loses money reopens as what the market wants.
+- **How businesses open and close today** (the whole picture, `world/develop.rs`,
+  `world/industry.rs`, `world/market.rs`): every development round (a) opens a parking lot
+  near the last driver who could not find a space once four or more circled today (a surface
+  lot on cheap land, a car park on middle land, never on dear land); (b) lets a citizen with
+  savings found a taxi company near trips that wanted a cab; (c) opens one business a
+  pressure asks for (below); then (d) tries each vacant lot with a chance of its land use's
+  demand x 0.06. The business on a new building comes from, in order: a district's policy
+  (hotels where visitors lack beds, the trades a district favours); for industrial land the
+  sub-zone the ground, the neighbours and the player's bias pick (`industry::weights`, then
+  `business_weights` inside it: farms by soil, wells over oil, fishing by water, logistics by
+  ports, refineries only with crude in reach; kinds cluster by `industry::affinity` and the
+  procgen adjacency table), vetoed if that kind covers under 0.8 of its costs; and otherwise
+  the market (`business_kinds_viable`: cover at least 1.05 with shelves under 0.75 days
+  full, a first one of a kind in a building of at most 20 jobs, grocers to the town's need,
+  offices always). Kinds that need their site or a pressure (`BusinessKind::needs_site`) are
+  never the market's blind pick. A business pays a share of its staff's wages each night;
+  five days deep in debt (under -300) it closes, its staff are laid off, and a week later the
+  building is demolished; a cheap building on dear land is redeveloped after three days.
+- **Business pressure** (`nd_sim::pressure`, `world/pressure.rs`): pressures open the trades
+  a city needs for reasons the market does not see. At midnight each reads a cause, smoothed
+  (40% of today), into `wanted` (businesses the cause would keep busy) against `have` (open
+  and being built), giving a `gap`; `strength` is the gap clamped to 0..1 (one business of
+  unmet need is full). A gap of 0.75 held two days opens one business of the kind on the
+  vacant lot that suits it (allowed land uses, area, distance to its anchors, the land value
+  it likes); with enough of them the gap closes. A business that cannot pay its way closes as
+  any other; its kind then waits ten days (`COOLDOWN_DAYS`). The pressures:
+  - *tow company* (`TowYard`): cars a day towed by the company from out of town, 6 per
+    company (locals take the jobs they can, so `wanted` = local companies + outside tows / 6);
+    industrial or commercial land near the city's recent crashes. Reads the tow counts only.
+  - *car repair shop* (`Mechanic`): wrecks a day plus one service a day per 90 cars, 9 a shop;
+    one-storey garages on cheap commercial or industrial land near the crashes. Repairs pay
+    90 a wreck and 30 a service, spread over the shop day by capacity; the car-owning
+    households pay the bill at midnight.
+  - *car dealership* (`CarDealer`): one per 250 wealthy households plus one per 25 cars bought a
+    day; on commercial land near the rich. Cars bought in town go to a dealership within 4 km
+    first (the old gadget-shop fallback stays), the dealer keeps 25%, and wealthy households
+    within reach pay 2 a day for leases and valeting. The forecourt is drawn full of rows of
+    one new model in one colour.
+  - *trash company* (`TrashCompany`, `crate::trash`): buildings out of every city depot's
+    reach, 150 per company; industrial land near them. A local company serves every
+    uncovered building within 1.8 km (cheap homes only at a fee of 1.0 or less), from its yard
+    with up to four trucks; the household fee falls with the companies in reach
+    (`company_fee`: 1.2 alone, 0.92 with a rival, 0.75 with two more, never under 0.6; the
+    hauler from out of town charges 1.5 and only takes the rich).
+  - *bike shop* (`BikeShop`): bike owners / 900 + walks of 25 minutes or more a day / 2000 +
+    bikes bought a day / 60; commercial land near the riders. Bikes are bought at a bike shop
+    within 2.5 km first; repairs (one a day per 25 owners, 12 each) pay too.
+  - *slaughterhouse*: livestock a day from the cattle and chicken farms, 110 each; industrial
+    land within 1.5 km of the farms. *Fish gutting*: fish landed a day, 90 a shed; *fish-stick
+    factory*: fillets a day, 80 a factory, plus 0.6 per gutting shed open (its fillets need a buyer); *fish market*: 0.8 per small and 1.6 per large
+    fishing port; all near a fishing port. *Seafood restaurant*: 0.8 per small marina, 1.8
+    per large, 0.5 per fishing port, within 900 m of one.
+  - *golf driving range*: comfortable and rich adults / 650; entertainment or commercial lots
+    of 2,800 m² or more near them.
+  - *artists' studios* and *galleries* (the art scene, below).
+  - *marina* (advice only: the player builds them): wealthy households within 900 m of the
+    water / 150.
+  The Economy window's "What the city's businesses want" lists every pressure with its bar,
+  `have` and `wanted`, why, and why nothing opens when it is held (cooling down, no lot, a
+  player-placed kind). The inspector says why a business is where it is (its `origin`, or for
+  the market's picks what picked it) and how it is doing (paying its way, struggling, days in
+  debt, short-staffed, out of an input, more of them than the city needs, competitors).
+- **New supply chains** (`market.rs` recipes, per job-hour; a job adds about 50 a day at base
+  prices): cattle farm grain 1.0 -> livestock 2.2, chicken farm grain 0.8 -> livestock 1.8
+  (both farming sub-zone, drawn by the farming menu on open land), slaughterhouse livestock
+  2.0 -> meat 2.0 (farming; drawn only where two livestock farms per slaughterhouse stand within 700 m,
+  and more likely the more farms; cattle and chicken farms are a small share of the farming menu,
+  since what a slaughterhouse cannot take sells out of town at a loss); strip mine -> ore 2.0 (new sub-zone `IndustryKind::Mining`: only where the ground's
+  rock is near the surface, on cheap land; nuisance 0.42 over 340 m, dust 0.002 a working
+  hour over 90 m; ore sells out of town, taxed with oil extraction); fishing port -> fish 3.0;
+  fish gutting fish 2.0 -> fillets 2.0; fish-stick factory fillets 1.5 -> meat 2.2 (fish
+  sticks counted as meat); fish market fish 2.0 -> groceries 3.0 (a grocer for
+  the public); seafood restaurant: diners' tabs (x1.5), 0.3 fillets a diner-hour (half the tab
+  with none); artists' studios -> art 0.5; galleries buy art.
+- **Waterfront** (`world/waterfront.rs`, Build > Water): small and large marinas and fishing
+  ports are docks the player places at the water's edge, checked as the shipping ports and
+  ferry terminals are (`Port::plan`: the nearest shore within 90 m, the yard set back on dry
+  land, a pier that reaches open water, not too steep or ragged; marinas and fishing ports
+  take rivers 18 m wide (26 m for the large ones) and lakes). The city pays for the quay
+  (9,000 / 26,000 / 8,000 / 22,000, upkeep 40 or 90 a day); an operator business runs it on its
+  takings with a float of 1,500; one that goes under is replaced by a new operator after three
+  days shut (the dock stays). A marina lets its berths (10 or 22) to the wealthy households
+  within 1.5 km (20 a day); a large one also takes yachts from the rich anywhere (one per 12
+  rich households, 32 a day) and has a clubhouse that is a place to go out. Marinas lift the
+  land around them (+0.08 over 220 m, +0.14 over 320 m for a large one) and draw seafood
+  restaurants. Fishing ports land fish (their own recipe; nuisance as fishing), draw gutting
+  sheds, fish-stick factories and fish markets. Boats are port ships, not saved: trawlers put
+  out between 04:00 and 07:00 (two thirds of the berths), fish for five hours and come home;
+  sailing boats and (large marinas) motor yachts go out 09:00-18:00, a quarter of the berths at
+  most, for a short loop on open water that keeps 5 m off the banks; 24 boats at most in all,
+  never counted against the freighters and ferries.
+- **Golf driving ranges**: a place to go out (`BusinessKind::is_outing`): a night out also
+  finds restaurants, ranges, galleries and marina clubhouses on any land use; each charges by
+  the hour at its own rate (`tab_factor`). Open 08:00-23:00, floodlit after dark.
+- **The art scene**: about 4.5% of adults have an artist's calling (`artist_seed`, a hash of
+  their seed, no draw from the RNG). Two artist households a day move to cheap (low tier)
+  homes within 500 m of old warehouses (low-tier industrial buildings) no dearer than their
+  own; up to six artists a day leave their day jobs for open studio or gallery jobs. The scene
+  exists when at least four artists earn a middle income and twenty rich adults live in town;
+  then studios open (one per 25 artists) on cheap commercial or industrial land near the
+  warehouses, and galleries (one per 300 rich adults, at most three for every four studios)
+  near the studios on middle land. A gallery holds an opening about every six days (a hash
+  of the gallery and the day): at 17:00 it invites eighteen comfortable or rich adults within
+  2.5 km (the rich and artists first); at 18:00 about two in three free guests go; the opening
+  runs to 22:00 and draws others too (choose_place: +1.2 for guests, +0.4 for everyone).
+  Visitors lift their mood; the rich buy a piece now and then (2.5x the art's base price) and,
+  enjoying the evening (mood over 0.45), give 4% of what they and their household have, up to 60
+  (paid from the household's purse). Donations are the
+  gallery's takings and are counted; a gallery that has been given 1,500 and lost money on at
+  most two of its last seven days sets `Business::wants_expand`: the hook for the land agent
+  (C2) to buy the plots next door and grow it into a museum. Nothing acts on it yet.
 - **Citizens**: immigrate when homes are free, take jobs when available, and move
   along roads between home, work, shops and nightlife. Each has a personality seed,
   a memory stream and a current thought.
@@ -983,7 +1109,9 @@ Citizens are rendered from their simulated positions every frame.
   water, buildings, lots, surface roads and walkers, draws surface roads as faint outlines and
   shows the tunnels (drawn as their own street layer, `StreetLayer::Underground`, with bore walls
   and a lit strip; each layer draws only its own roads' crossings, beacons and signal posts) and
-  the cars in them. The Tunnel preset switches to it, other presets back to
+  the cars in them: a car is in the tunnel layer by the lane it is on (`World::car_in_tunnel`),
+  hidden above ground and shown below, not by its height (near a portal, where the cutting is
+  graded down to the road, cars and wrecks used to show above ground and vanish below). The Tunnel preset switches to it, other presets back to
   Ground. Sky is a placeholder. The metro (see Subway) shows here: its bores, platforms, shafts and
   trains carry the tunnel tag.
 - **Highway and the map edge**: two carriageways cross the map at
@@ -1171,6 +1299,30 @@ trait MindProvider {
 - Performance: the sim gets a real-time budget per frame (12 ms) and drops its
   backlog instead of stalling the renderer; shadows use three cascades out to 650 m;
   the HUD shows fps, meshes and triangles.
+- Look ("grounded neon", `render/look.rs`): realistic light under the neon. Surfaces carry a
+  metallic-roughness map beside their colour and normal maps (`textures::roughness_map`: grime
+  and cracks rougher, clean spots glossier, rust less metallic); expensive car paint has a
+  clear coat. The dome's colours are painted, prefiltered on the CPU, into two small cubemaps
+  (reflection levels and diffuse) for an environment light, repainted at most twice a second,
+  so glass, paint and wet-looking asphalt reflect the sky and the city's glow and shadowed
+  sides take the sky's colour; the flat ambient is cut to what that leaves. Screen-space
+  ambient occlusion uses Bevy's shader with a radius that grows with view depth
+  (`ssao_city.wgsl`, 0.73 to 5 m) so buildings darken the street at their feet from the
+  orbit camera. TAA stops lamp posts and lane markings shimmering (window lights are in the
+  depth prepass with the same discard, so dark windows leave no depth). Volumetric fog fills
+  a 140 m slab of haze round the camera, lit by the sun or moon (light shafts) and by the
+  horizon's colour, so it fades into the distance fog and the dome. Bevy's `Atmosphere` was
+  not used: it needs physical sun units and a black night sky, and the dome's light-pollution
+  band is the night's identity.
+- Graphics tiers: Low (MSAA 4x, 1024 shadows), Medium (TAA, light SSAO, 2048 shadows), High
+  (TAA, full SSAO, volumetric haze, 4096 shadows). The setting (View window, `graphics` API,
+  `ND_QUALITY`) is Auto or a tier. Auto starts at High and steps down when the smoothed frame
+  time stays over 18.8 ms for 2 s, up when it stays under 17.2 ms for 8 s; a step up taken
+  back doubles the next wait (up to 4 min), changes are followed by 3 s of settling while
+  pipelines compile, and it holds when the sim, not the renderer, fills the frame. One system
+  derives the camera's components from the tier and the view (heat vision adds motion blur,
+  drops the haze) and touches the camera only when that set changes, so nothing has to be
+  put back. The Dev window shows the tier, the frame time and the effects.
 - Citizens: small figures that walk the pavements, or ride a bike mesh when cycling; positions
   are interpolated between ticks from the previous pose so nothing jumps. Cars and trucks have wheels.
 - Vehicles (`nd_procgen::vehicles`): one parametric generator draws every road vehicle from a
@@ -1292,7 +1444,9 @@ trait MindProvider {
 - Window lights follow occupancy (`render/lights.rs`, `nd_procgen::lights`). In the app every
   window light is generated (`Extras::dynamic_lights`, about 92% of windows) through
   `parts::window_light`, which ranks it by a hash of its position and lays dark glass just
-  behind it. When chunks are built, the rank and the building's slot go into the glow
+  behind it (`LIGHT_GLASS_BEHIND`, 13 mm: off the whole-centimetre grid the decals stand on, so
+  it never shares a plane with a window frame; at 2 cm it lay in the frame's plane and the
+  windows z-fought with the lights off; `buildings/coplanar_tests.rs` checks every style). When chunks are built, the rank and the building's slot go into the glow
   vertices' UVs, and chunk glow is drawn with a material extension that reads the building's
   lit share from a 256 by 256 one-byte texture and discards windows ranked above it. Four
   times a sim hour the app counts who is in every building (awake or asleep at home, staff)
@@ -1385,6 +1539,9 @@ trait MindProvider {
   parked cars lukewarm); a `FullscreenMaterial` pass after motion blur and before bloom maps
   brightness through a teal-magenta-white thermal palette with scanlines, noise, a vignette
   and a reticle, and Bevy's `MotionBlur` smears what moves. Off puts every original back.
+  The material swap is shared with the focus views (`render/swap.rs`): one original per
+  entity whatever the view, stand-ins always derived from it, so heat vision toggled with
+  the Traffic or Crime layer on can no longer leave heat's materials behind.
 - Plant fields: touching solar or wind plants (`World::plant_cluster`, parcels sharing 4 m+
   of boundary) are drawn as one installation (`nd_procgen::PlantField`): each parcel lays its
   panel rows or turbine grid out in the anchor parcel's frame against the whole field's

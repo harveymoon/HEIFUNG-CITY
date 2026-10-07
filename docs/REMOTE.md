@@ -413,7 +413,7 @@ next turn, left turn wait, passing on the shoulder). `lane_use {junction: [x, y]
 lanes: ["L", "S+R"]}` sets the arrows of the street arriving nearest `approach`, leftmost lane first;
 `lanes: "reset"` goes back to the demand-chosen default.
 
-`inspect` with one of `citizen`, `building`, `lot`, `car`, `drone`, `vehicle` (a private car's record: owner, model, place with minutes_here, limit_min, illegal, ticketed_tick, impounded {pound, out_of_town, release_fee, auction_in_min} and tow_job), `train`, `route` (ids) or `gesture` (int). A building that is a parking office adds `parking_office` {officers, patrol cars}, a tow company `tow_company` {trucks, jobs_open, pound}, a lot the city runs `parking.city_run`; a tow truck's `car` adds `tow` {job, state, reason, vehicle, company, out_of_town}, an officer's car `patrol`. `parking_price {building, price}` sets the fee at a city-run lot. [boot] `tow_car {car | vehicle}` (also `tow`, `boot`) clamps a private car and calls the tow truck, as the inspector's "Tow this car" button does: `car` is a car on the road (it pulls over to a kerb slot, or the street's edge, is taken off the lanes, and its driver and passengers walk on), `vehicle` a car's record (parked at a kerb, or driving). Reply {tow_job, vehicle, company, out_of_town}; an error says why not (not a resident's car, off the street, already towed, leaving town). A clamped car's place has `booted: true`; the owner's mood drops, they remember it, and they pay the release fee at the pound as for any tow. The enforcement report adds `boots_today` and `boots_total`. [passengers] A car row of kind car carries `occupants` ([{id, name}]: everyone riding along besides the driver, `citizen`) and `vehicle` (its record); a passenger's activity has `driver`, `driver_name`, `in_car`, `car`, `to`, `purpose`. `report` traffic.private_cars adds `passengers` {riding_now, walking_to_a_car, cars_with_passengers, today, outings_today, carpools_today, school_runs_today, lifts_today, yesterday, total, fullest_car, drop_offs_pending}. `place` takes `parking_enforcement[:tier]`, `parking_small`, `parking_large`, `parking_garage`;
+`inspect` with one of `citizen`, `building`, `lot`, `car`, `drone`, `vehicle` (a private car's record: owner, model, place with minutes_here, limit_min, illegal, ticketed_tick, impounded {pound, out_of_town, release_fee, auction_in_min} and tow_job), `train`, `route` (ids) or `gesture` (int). A building that is a parking office adds `parking_office` {officers, patrol cars}, a tow company `tow_company` {trucks, jobs_open, pound}, a lot the city runs `parking.city_run`; a tow truck's `car` adds `tow` {job, state, reason, vehicle, company, out_of_town}, an officer's car `patrol`; [services] a recovery truck going to a wreck (errand `Recover`) adds `recovery` {wreck, metres_to_go, amber, off_law_allowed (within 250 m), move (its off-law move: Lane, Overtake, Kerb, Wait), company, out_of_town, sent_tick}, a written-off car `wreck` {since_tick, incident, tow_due_tick, truck, truck_sent_tick, pushed_aside_m, flipped (0 upright, 1 side, 2 roof), righted_at_tick}, and a car easing past a crash on the shoulder `passing_hazard` (the crashed car's id). `parking_price {building, price}` sets the fee at a city-run lot. [boot] `tow_car {car | vehicle}` (also `tow`, `boot`) clamps a private car and calls the tow truck, as the inspector's "Tow this car" button does: `car` is a car on the road (it pulls over to a kerb slot, or the street's edge, is taken off the lanes, and its driver and passengers walk on), `vehicle` a car's record (parked at a kerb, or driving). Reply {tow_job, vehicle, company, out_of_town}; an error says why not (not a resident's car, off the street, already towed, leaving town). A clamped car's place has `booted: true`; the owner's mood drops, they remember it, and they pay the release fee at the pound as for any tow. The enforcement report adds `boots_today` and `boots_total`. [passengers] A car row of kind car carries `occupants` ([{id, name}]: everyone riding along besides the driver, `citizen`) and `vehicle` (its record); a passenger's activity has `driver`, `driver_name`, `in_car`, `car`, `to`, `purpose`. `report` traffic.private_cars adds `passengers` {riding_now, walking_to_a_car, cars_with_passengers, today, outings_today, carpools_today, school_runs_today, lifts_today, yesterday, total, fullest_car, drop_offs_pending}. `place` takes `parking_enforcement[:tier]`, `parking_small`, `parking_large`, `parking_garage`;
 with none, the current selection. The detail matches what the inspector and the person pane show:
 A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price, place: parked (home / building / parking lot / kerb / street (no space) / dealer, building, pos, since_tick) or driving (car id, errand)}} and `commute` {pain per mode with recent_trips, parking_pain, trip_mode_now, last_trip {mode, minutes, pain}}: what the mode choice weighs and what the daily habits (buy a bike, sell the car, buy one) act on.
 
@@ -466,6 +466,7 @@ several plots), home, business, form. A billionaire's other homes and businesses
 | `overlay` | **Map layers are exclusive**: one shows at a time (as the top bar's Layer button), with its key in the legend. `active` a layer key or `none`: show it alone. `layer` (zoning, land_value, districts, traffic, traffic_types, paths, people, pollution, crime, map, or a land survey layer, below; `traffic` and `crime` also dim the city and light up the vehicles they are about, `map` is the street map view with street names and pins) with `on` (bool; omitted toggles): on shows it and hides every other, off hides it if it shows. `land` a land survey layer key (shown alone) or `none`. Older form, a bool per layer name: true shows that layer alone (several trues: the last listed in the registry wins), false hides it if it shows. `projects` (bool, or `layer: "projects"`) is the dim other-projects switch, not a layer, and is left alone by the rest. Reply: every flag layer and whether it is on, `land` (the survey layer shown, or null), `active` (the key of the layer showing, or null) and `projects` (also in `status.overlays`). New layers are added as one entry in `crate::map_layers::MAP_LAYERS` and appear here by their key |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
 | `heat_vision` (alias `heat`) | `on` (bool; omitted toggles). Drone heat vision: buildings, ground and roads go near-black, people, vehicles, fires and drones glow by temperature (lights and engines white-hot), with motion blur, scanlines, noise, a vignette and a reticle. Same as key H and the top bar's Heat button. Reply `heat_vision`; also `status.lighting.heat_vision` |
+| `graphics` (alias `quality`) | `quality` auto / low / medium / high. Pins the graphics tier (Low: MSAA, no SSAO or haze; Medium: TAA, light SSAO; High: TAA, full SSAO, volumetric haze, big shadows) or hands it back to the frame-rate throttler (Auto). Pin one before screenshots that must compare. Reply `quality`, `tier` (in force from the next frame), `frame_ms` (smoothed), `sim_ms`, `auto_steps`, `reason`, `effects`; also `status.render.graphics`. `ND_QUALITY` sets the starting setting |
 | `window` | `name` city / economy / taxes / market / people / power / transit / emergencies / view (also `land`, `layers`, `map`: the View window, once Land) / districts / saves / help / dev, `open` (omit to toggle), `expanded` (bool: the large view with charts over time and the drill-downs; `true` also opens the window, and only one window is expanded at a time, so expanding one puts the other back to compact; saves, help and dev have none). Reply `open`, `expanded` (the expanded window's name or null), `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it; `status.window_expanded` names the expanded window. `name: "build"`: the Build window, `open` (omit to toggle), `section` roads / zoning / parks / districts / power / services / transit / rail / water / attractions (opens it there); `status.build_window` {open, section}. A building tool picked with `tool` opens the Build window at its section, as its hotkey does. `name: "title"`: the title screen (above) |
 
 Land survey layers (map layers like the rest, so one at a time with them; K steps through these
@@ -938,3 +939,44 @@ on the street (camps form on cheap land); `offend {citizen, building?, kind?}` m
 criminal and has them strike; `trash {kg, building?}` adds trash to bins. `place {kind:
 "trash_depot"}` (also `trash`, `garbage`) puts down a depot (industrial or civic land, a street out
 front). Garbage trucks are cars in `find {what: "cars"}` with a garbage truck body.
+
+## Business pressure, the waterfront and the art scene
+
+`report {sections: ["pressure"]}` (also the `pressure` command with no fields): `pressures` (every
+pressure, strongest first: `kind` (tow_company, mechanic, car_dealer, trash_company, bike_shop,
+slaughterhouse, fish_gutting, fish_stick_factory, fish_market, seafood_restaurant, golf_range,
+art_studio, gallery, marina), `label`, `business` (the business kind key it opens), `strength`
+0..1, `wanted`, `have` (open and being built), `gap`, `struggling`, `wants_more`, `why` (the
+cause in words), `held` (why nothing opens despite the gap: cooling down after one closed, no
+lot, a player-placed kind), `player_placed`), `opened_total` (by kind), `signals` (the smoothed
+causes: outside and local tows a day, crashes a day, cars, rich households, cars bought a day and
+of them out of town, buildings out of the city's trash rounds, overflowing bins, depots, bike
+owners, bikes bought, long walks a day, livestock, fish and fillets a day, fishing ports and
+marinas [small, large], comfortable adults, artists, artists of middle income, rich adults, rich
+households near the water, has_water, art_scene), `trash` {local_companies, local_clients,
+local_fee, out_of_town_fee}, `art` {openings_total, donations_total, art_sold_total, openings (the
+last six: gallery, name, from/until tick, on_now, invited, visitors, donations, sales),
+galleries_wanting_to_expand}, `waterfront` {boats_out, berth_fees_last_night, docks: kind, label,
+building, pos, works, berths, boats_out, open}, `repairs_today`, `bike_repairs_today`.
+
+`pressure {open, x, y}` (or `at`): opens a business of that kind (a `BusinessKind` key, label or
+variant name: `mechanic` (`car_repair_shop`), `car_dealer` (`car_dealership`), `trash_company`,
+`bike_shop`, `cow_farm` (`cattle_farm`), `chicken_farm`, `slaughterhouse`, `strip_mine`,
+`fish_gutting` (`fish_gutting_shed`), `fish_stick_factory`, `fish_market`, `seafood_restaurant`,
+`golf_range` (`golf_driving_range`), `art_studio` (`artists_studios`), `gallery`, and the older
+kinds) on the vacant lot under or nearest the point (within 150 m), as a pressure would; `finish:
+true` builds it at once. Reply `building`, `kind`, `lot`, `finished`, `story`. Marinas and fishing
+ports are docks: use `place`.
+
+`place {kind}` takes the docks `marina` (`marina_small`), `marina_large` (`yacht_club`),
+`fishing_port` (`fishing_port_small`, `fish_quay`) and `fishing_port_large` (`fishing_harbour`) at
+the water's edge, like `shipping_port` and `ferry` (refused away from the shore: "must be built at
+the water's edge"). They are in the Build window under Water.
+
+A building's `inspect` (and `selected`) has `story`: `why` (why the business is here), `doing`
+(how it is doing: paying its way, struggling, days in debt, short-staffed, out of an input, more
+of its kind than the city needs, competitors, donations, an opening tonight), `struggling`,
+`wants_expand` (a thriving gallery: the hook for growing into a museum), `opened_by_pressure` (the
+pressure key when its kind is one a pressure opens), `donations`, `opening_now` {invited,
+visitors, donations}. Boats are port ships of kinds `FishingBoat`, `Yacht` and `Sailboat` besides
+the freighters and ferries.

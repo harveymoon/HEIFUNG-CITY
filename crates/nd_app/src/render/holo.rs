@@ -257,7 +257,7 @@ pub fn apply_depth(
         ),
     >,
     mut tunnels: Query<&mut Visibility, (Or<(With<TunnelTag>, With<GhostRoadTag>)>, Without<CarTag>)>,
-    mut cars: Query<(Entity, &Transform, &mut Visibility, Has<DepthHidden>), (With<CarTag>, Without<TunnelTag>)>,
+    mut cars: Query<(Entity, &Transform, &mut Visibility, Has<DepthHidden>, Option<&InTunnel>), (With<CarTag>, Without<TunnelTag>)>,
 ) {
     let under = tools.depth == Depth::Underground;
     // Hide (and mark) or restore (only if marked); `restore` false leaves
@@ -287,8 +287,16 @@ pub fn apply_depth(
             *v = want;
         }
     }
-    for (e, tf, mut v, marked) in &mut cars {
-        apply(e, &mut v, marked, !under || tf.translation.y < UNDERGROUND_BELOW, true);
+    for (e, tf, mut v, marked, tunnel) in &mut cars {
+        // A car on the road is in the tunnel layer by the lane it is on,
+        // not by its height (a tunnel near its portal runs barely below
+        // the graded ground); anything else by its height.
+        let on = match tunnel {
+            Some(t) if under => t.0 || tf.translation.y < UNDERGROUND_BELOW,
+            Some(t) => !t.0,
+            None => !under || tf.translation.y < UNDERGROUND_BELOW,
+        };
+        apply(e, &mut v, marked, on, true);
     }
     if under {
         let w = &sim.world;

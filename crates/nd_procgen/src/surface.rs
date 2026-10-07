@@ -168,7 +168,7 @@ impl Surface {
             Surface::Tarp => 0.55,
             Surface::Matte => 0.7,
             Surface::Rust => 0.95,
-            Surface::Asphalt => 0.95,
+            Surface::Asphalt => 0.8,
             Surface::Dirt => 1.0,
             Surface::Foliage => 0.9,
             _ => 0.85,

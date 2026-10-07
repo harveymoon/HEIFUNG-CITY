@@ -244,6 +244,9 @@ pub fn groups(cat: Cat) -> Vec<Group> {
             (Cat::Transit, Item::Place(p)) => transit_group(p),
             (Cat::Rail, _) => "Stations and yards",
             (Cat::Power, _) => "Power",
+            // [economy] the waterfront's marinas and fishing ports
+            (Cat::Water, Item::Place(Placeable::Dock(k))) if k.is_marina() => "Marinas",
+            (Cat::Water, Item::Place(Placeable::Dock(k))) if k.is_fishing() => "Fishing",
             (Cat::Water, _) => "Ports and ferries",
             (Cat::Attractions, _) => "Attractions",
             _ => "Other",
@@ -743,6 +746,11 @@ fn figures(ui: &mut egui::Ui, what: Placeable) {
             r("footprint", format!("{w:.0} × {d:.0} m"));
             if k == PortKind::ShippingPort {
                 r("water", format!("{:.0} m wide or the sea", k.min_width()));
+            }
+            // [economy]
+            if k.berths() > 0 {
+                r("berths", format!("{}", k.berths()));
+                r("water", format!("{:.0} m wide, a lake or the sea", k.min_width()));
             }
         }
     });

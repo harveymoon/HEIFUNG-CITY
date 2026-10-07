@@ -327,6 +327,8 @@ pub fn citizen_detail(w: &World, id: CitizenId, c: &Citizen, favourite: bool) ->
         "work": opt_key(c.work), "work_name": building_name(w, c.work),
         "inside": opt_key(c.inside), "parked_at": opt_key(c.parked_at),
         "class": c.class().label(), "mood": round(c.mood), "satiety": round(c.satiety),
+        // [economy] an artist's calling (the art scene)
+        "artist": nd_sim::world::is_artist(c),
         "arrived_day": c.arrived_tick / 1440 + 1,
         "income": round(c.income), "rent": round(rent), "savings": round(c.savings), "rent_stress_days": c.rent_stress_days,
         "groceries": round(c.groceries), "hungry_days": c.hungry_days, "owns_car": c.owns_car, "owns_bike": c.owns_bike,
@@ -443,6 +445,8 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         })),
         "plant": plant, "depot": b.depot, "rail": rail, "business": business, "park": park,
         "taxis_and_freight": super::taxis::building_extra(w, id),
+        // [economy] why the business is here and how it is doing
+        "story": super::economy::story(w, id),
     })
 }
 
@@ -538,6 +542,18 @@ pub fn car_detail(w: &World, id: CarId, c: &Car) -> Value {
     }
     if let nd_sim::Errand::Patrol(office) = c.errand {
         m["patrol"] = json!({ "office": key_str(office), "office_name": building_name(w, Some(office)) });
+    }
+    // [services] A recovery truck going to a wreck, and a wreck waiting.
+    if let nd_sim::Errand::Recover(wreck) = c.errand {
+        let rec = w.driving.wrecks.iter().find(|x| x.car == wreck);
+        m["recovery"] = json!({ "wreck": key_str(wreck), "metres_to_go": w.traffic.cars.get(wreck).map(|x| round(x.pos.distance(c.pos))), "amber": c.drive.amber, "off_law_allowed": c.drive.recovering, "move": format!("{:?}", c.drive.offlaw.mode), "company": rec.and_then(|r| r.company).map(key_str), "out_of_town": rec.is_some_and(|r| r.company.is_none()), "sent_tick": rec.map(|r| r.sent) });
+    }
+    if let Some(r) = w.driving.wrecks.iter().find(|x| x.car == id) {
+        m["wreck"] = json!({ "since_tick": r.since, "incident": r.incident, "tow_due_tick": (r.due > 0).then_some(r.due), "truck": r.truck.map(key_str), "truck_sent_tick": r.truck.map(|_| r.sent), "pushed_aside_m": round(c.lateral), "flipped": r.flipped, "righted_at_tick": (r.righted_at > 0).then_some(r.righted_at) });
+    }
+    // [driving] Easing past a wreck on the shoulder.
+    if c.passing_hazard() {
+        m["passing_hazard"] = json!(c.drive.offlaw.hazard.map(key_str));
     }
     m["traffic"] = car_traffic(w, c);
     m["label"] = json!(w.car_label(id));
@@ -793,6 +809,10 @@ pub fn placeable_key(p: nd_sim::Placeable) -> String {
         nd_sim::Placeable::Rail(f) => rail_name(f).to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::ShippingPort) => "shipping_port".to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::FerryTerminal) => "ferry_terminal".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::MarinaSmall) => "marina_small".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::MarinaLarge) => "marina_large".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::FishingPortSmall) => "fishing_port_small".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::FishingPortLarge) => "fishing_port_large".to_string(),
         nd_sim::Placeable::ParkingLot(s) => s.key().to_string(),
         nd_sim::Placeable::MetroStation => "metro_station".to_string(),
         nd_sim::Placeable::Toll(s) => s.key().to_string(),
