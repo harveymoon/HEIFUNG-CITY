@@ -77,7 +77,7 @@ impl World {
             }
             let side = if seg.is_street() && !seg.fronts_nothing() { crate::zoning::SIDEWALK } else { 0.6 };
             if q.distance(p) < seg.half_width() + side + r {
-                return Site::Blocked;
+                return Site::Road;
             }
             // A junction's corners are road too.
             for n in [seg.a, seg.b] {
@@ -86,7 +86,7 @@ impl World {
                 if arms >= 3 && node.level < level - 2.0 {
                     let widest = node.segments.iter().filter(|&&o| roads.segment(o).alive).map(|&o| roads.segment(o).half_width()).fold(0.0, f32::max);
                     if node.pos.distance(p) < widest + crate::zoning::SIDEWALK + 1.0 + r {
-                        return Site::Blocked;
+                        return Site::Road;
                     }
                 }
             }
@@ -130,10 +130,13 @@ impl World {
         pillars::plan(pts, levels, half_width, pillars::way_key(pts, levels), &site, held)
     }
 
-    /// The plan for a road as the tools draw it (lanes and kind as given).
+    /// The plan for a road as the tools draw it (lanes and kind as given),
+    /// with its ends where and at the level the network will lay them (an
+    /// end dropped on a road ramps down to it: no column there).
     pub fn road_pillar_plan(&self, pts: &[Vec2], levels: &[f32], fwd: u8, bwd: u8, kind: RoadKind) -> PillarPlan {
         let held: Vec<Vec2> = self.pillars.iter().map(|p| p.at).collect();
-        self.plan_pillars(pts, levels, deck_half_width(kind, fwd, bwd), &held)
+        let (pts, levels) = self.roads.as_built(pts, levels, kind);
+        self.plan_pillars(&pts, &levels, deck_half_width(kind, fwd, bwd), &held)
     }
 
     /// The columns of every raised way (`ways`: built polyline, levels and
@@ -146,27 +149,44 @@ impl World {
     pub(super) fn place_pillars(&mut self, ways: &[(u64, Vec<Vec2>, Vec<f32>, f32)], buy: bool) -> HashSet<BuildingId> {
         let mut out: Vec<Pillar> = Vec::new();
         let mut taken: HashSet<BuildingId> = HashSet::new();
-        let mut gaps: Vec<(Vec2, Vec2)> = Vec::new();
+        let mut gaps: Vec<pillars::Gap> = Vec::new();
         let fps = self.structure_footprints();
-        for (key, pts, levels, hw) in ways {
-            let key = *key;
-            if !pillars::is_raised(levels) {
-                continue;
-            }
-            let lots = self.lots_near_way(pts, *hw);
-            let site = |p: Vec2, level: f32| {
-                let s = self.pillar_site(p, level, &lots, &fps);
+        let this: &World = self;
+        let fps_ref = &fps;
+        let site_for = |pts: &[Vec2], hw: f32| {
+            let lots = this.lots_near_way(pts, hw);
+            move |p: Vec2, level: f32| {
+                let s = this.pillar_site(p, level, &lots, fps_ref);
                 // On load nothing is pulled down: a building is in the way.
                 match s {
                     Site::Buyout(..) | Site::EmptyLot(_) if !buy => Site::Blocked,
                     s => s,
                 }
-            };
-            let old: Vec<Pillar> = self.pillars.iter().filter(|p| p.way == key).copied().collect();
-            if !old.is_empty() && old.iter().all(|p| matches!(site(p.at, p.level), Site::Free | Site::EmptyLot(_))) {
-                out.extend(old);
+            }
+        };
+        // First the ways drawn as before whose columns all still stand
+        // clear: they keep them. Then the rest, each held up where one of
+        // those (or one placed before it) stands under it: the order the
+        // ways come in makes no difference to what any of them gets, as
+        // in the Road tool's preview (`road_pillar_plan`), which counts
+        // every standing column.
+        let mut todo: Vec<usize> = Vec::new();
+        for (i, (key, pts, levels, hw)) in ways.iter().enumerate() {
+            if !pillars::is_raised(levels) {
                 continue;
             }
+            let site = site_for(pts, *hw);
+            let old: Vec<Pillar> = self.pillars.iter().filter(|p| p.way == *key).copied().collect();
+            if !old.is_empty() && old.iter().all(|p| matches!(site(p.at, p.level), Site::Free | Site::EmptyLot(_))) {
+                out.extend(old);
+            } else {
+                todo.push(i);
+            }
+        }
+        for i in todo {
+            let (key, pts, levels, hw) = &ways[i];
+            let key = *key;
+            let site = site_for(pts, *hw);
             let held: Vec<Vec2> = out.iter().map(|p| p.at).collect();
             let plan = pillars::plan(pts, levels, *hw, key, &site, &held);
             for (_, b) in &plan.buyouts {
@@ -267,7 +287,12 @@ impl World {
         built
             .into_iter()
             .filter(|(_, _, levels, ..)| pillars::is_raised(levels))
-            .map(|(_, pts, levels, f, b, k)| (pillars::way_key(&pts, &levels), pts, levels, deck_half_width(k, f, b)))
+            .map(|(_, pts, levels, f, b, k)| {
+                let key = pillars::way_key(&pts, &levels);
+                // Built already: each end's node says where it landed.
+                let (pts, levels) = self.roads.as_built(&pts, &levels, k);
+                (key, pts, levels, deck_half_width(k, f, b))
+            })
             .collect()
     }
 }

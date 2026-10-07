@@ -119,30 +119,75 @@ fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32],
         let ring: Vec<SVec2> = (0..=16).map(|k| p.at + SVec2::from_angle(k as f32 / 16.0 * std::f32::consts::TAU) * nd_sim::pillars::PILLAR_RADIUS).collect();
         red.ground_strip(&ring, if on_building { 0.6 } else { 0.3 }, w.ground_height(p.at) + 0.5, [c[0], c[1], c[2], 1.0]);
     }
-    // No room: a bright red band along the stretch on the ground, and the
-    // deck over it red.
+    // No room for a column: the stretch red, with a pin at the spot.
     let deck_w = half_width(kind, f, b) * 2.0;
-    let level_at = |p: SVec2| {
-        let mut best = (f32::MAX, 0.0);
-        for (i, s) in pts.windows(2).enumerate() {
-            let (t, q) = nd_sim::roads::project_on_segment(p, s[0], s[1]);
-            let (la, lb) = (levels.get(i).copied().unwrap_or(0.0), levels.get(i + 1).copied().unwrap_or(0.0));
-            if q.distance(p) < best.0 {
-                best = (q.distance(p), la + (lb - la) * t);
-            }
-        }
-        best.1
-    };
-    for &(ga, gb) in &plan.gaps {
-        red.ground_strip(&[ga, gb], 3.0, w.ground_height(ga.lerp(gb, 0.5)) + 0.6, [WARN_TINT[0] * 2.0, WARN_TINT[1], WARN_TINT[2], 1.0]);
-        let n = ((ga.distance(gb) / 4.0).ceil() as usize).max(1);
-        for k in 0..n {
-            let (p, q) = (ga.lerp(gb, k as f32 / n as f32), ga.lerp(gb, (k + 1) as f32 / n as f32));
-            let m = p.lerp(q, 0.5);
-            red.ground_strip(&[p, q], deck_w, w.ground_height(m) + level_at(m) + 0.25, [WARN_TINT[0] * 1.6, WARN_TINT[1] * 0.8, WARN_TINT[2] * 0.8, 1.0]);
-        }
+    for g in &plan.gaps {
+        gap_marks(w, g, deck_w, &mut red);
     }
     (pv.mesh, red, plan)
+}
+
+/// [tools] Where a stretch with no room for a column is: a red band on the
+/// ground, the deck over it red, and a tall red pin at the spot (the end
+/// left in the air, or the middle of the gap) so it can be found on the map.
+fn gap_marks(w: &World, g: &nd_sim::pillars::Gap, deck_w: f32, red: &mut MeshData) {
+    let (ga, gb) = (g.a, g.b);
+    red.ground_strip(&[ga, gb], 3.0, w.ground_height(ga.lerp(gb, 0.5)) + 0.6, [WARN_TINT[0] * 2.0, WARN_TINT[1], WARN_TINT[2], 1.0]);
+    let n = ((ga.distance(gb) / 4.0).ceil() as usize).max(1);
+    for k in 0..n {
+        let (p, q) = (ga.lerp(gb, k as f32 / n as f32), ga.lerp(gb, (k + 1) as f32 / n as f32));
+        let m = p.lerp(q, 0.5);
+        red.ground_strip(&[p, q], deck_w, w.ground_height(m) + g.level + 0.25, [WARN_TINT[0] * 1.6, WARN_TINT[1] * 0.8, WARN_TINT[2] * 0.8, 1.0]);
+    }
+    let spot = gap_spot(g);
+    let z = w.ground_height(spot);
+    let pin = [WARN_TINT[0] * 2.4, WARN_TINT[1] * 1.6, WARN_TINT[2] * 1.6, 1.0];
+    red.boxed(glam::Vec3::new(spot.x, z + (g.level + 14.0) * 0.5, spot.y), glam::Vec3::new(0.6, g.level + 14.0, 0.6), 0.0, pin);
+    red.boxed(glam::Vec3::new(spot.x, z + g.level + 15.0, spot.y), glam::Vec3::new(2.4, 2.4, 2.4), 0.785, pin);
+    let ring: Vec<SVec2> = (0..=24).map(|k| spot + SVec2::from_angle(k as f32 / 24.0 * std::f32::consts::TAU) * 6.0).collect();
+    red.ground_strip(&ring, 0.8, z + 0.7, pin);
+}
+
+/// [tools] A label on the map over each red pin: what is wrong there, for
+/// the road being drawn and for the active project's pending roads.
+pub fn gap_labels(mut contexts: bevy_egui::EguiContexts, sim: Res<Sim>, tools: Res<ToolState>, cams: Query<(&Camera, &GlobalTransform), With<crate::camera::OrbitCamera>>) -> Result {
+    use bevy_egui::egui;
+    let mut gaps: Vec<nd_sim::pillars::Gap> = tools.pillars.gaps.clone();
+    if let Some(c) = &tools.plan_check {
+        for g in &c.pillar_gaps {
+            if !gaps.iter().any(|o| o.a.distance(g.a) < 3.0 && o.b.distance(g.b) < 3.0) {
+                gaps.push(*g);
+            }
+        }
+    }
+    if gaps.is_empty() {
+        return Ok(());
+    }
+    let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
+    let w = &sim.world;
+    let ctx = contexts.ctx_mut()?;
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("pillar_gap_labels")));
+    for g in &gaps {
+        let spot = gap_spot(g);
+        let top = w.ground_height(spot) + g.level + 17.0;
+        let Ok(v) = camera.world_to_viewport(gt, Vec3::new(spot.x, top, spot.y)) else { continue };
+        let text = if g.end {
+            format!("Ends in the air: no room for a column within {:.0} m", nd_sim::pillars::PILLAR_END_REACH)
+        } else {
+            format!("No room for a column for {:.0} m (a span may be {:.0})", g.a.distance(g.b), nd_sim::pillars::PILLAR_MAX_SPAN)
+        };
+        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(13.0), egui::Color32::WHITE);
+        let at = egui::pos2(v.x - galley.size().x * 0.5, v.y - galley.size().y - 6.0);
+        let r = egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(6.0, 3.0));
+        painter.rect_filled(r, 4.0, egui::Color32::from_rgba_unmultiplied(150, 20, 20, 220));
+        painter.galley(at, galley, egui::Color32::WHITE);
+    }
+    Ok(())
+}
+
+/// The spot a gap is shown at: the end left in the air, else its middle.
+pub fn gap_spot(g: &nd_sim::pillars::Gap) -> SVec2 {
+    if g.end { g.b } else { g.a.lerp(g.b, 0.5) }
 }
 
 /// The road the Road tool is drawing, as it will be built.
@@ -209,6 +254,7 @@ pub fn sync_plan_holograms(
     overlays: Res<Overlays>,
     mut last: Local<Option<(u64, u64, bool)>>,
     existing: Query<Entity, With<PlanHoloTag>>,
+    mut tools: ResMut<ToolState>,
 ) {
     let w = &sim.world;
     let key = Some((w.plan_version, w.roads.version, overlays.projects));
@@ -217,6 +263,10 @@ pub fn sync_plan_holograms(
     }
     *last = key;
     despawn_all(&mut commands, &existing);
+    // [tools] The active project checked as implementing will check it
+    // (the trial rebuild included), so what would be refused shows before
+    // the player implements: red on the map, the reason in the toolbar.
+    let check = w.active_project_check();
     let mut all = MeshData::default();
     let mut red = MeshData::default();
     let mut add = |pv: &nd_sim::PlanPreview, alpha: f32, red_too: bool| {
@@ -235,6 +285,11 @@ pub fn sync_plan_holograms(
             add(&other.preview, 0.22, false);
         }
     }
+    // Gaps the per-road previews did not show (found on the trial rebuild).
+    for g in &check.pillar_gaps {
+        gap_marks(w, g, 12.0, &mut red);
+    }
+    tools.plan_check = (!check.pillar_gaps.is_empty() || !check.blockers.is_empty()).then_some(check);
     if !all.is_empty() {
         spawn_overlay(&mut commands, &mut meshes, &mats, &all, PlanHoloTag);
     }
