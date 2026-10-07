@@ -486,6 +486,35 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "new game");
             Ok(land::summary(&ctx.sim.world))
         }
+        "generate_city" => {
+            let (preset, params) = land::city_params_from(cmd)?;
+            ctx.saves.title = false;
+            ctx.sim.paused = false;
+            let start = std::time::Instant::now();
+            let (plan, laid) = ctx.sim.generate_city(preset, params);
+            *ctx.tools = ToolState::default();
+            *ctx.selection = Selection::None;
+            ctx.eplan.invalidate();
+            ctx.follow.0 = None;
+            ctx.tools.status = format!("New city: {} on a {} landscape", preset.label(), ctx.sim.world.landscape.params.preset.label());
+            ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "generated city");
+            let mut v = land::summary(&ctx.sim.world);
+            let class = |c: nd_procgen::citygen::RoadClass| json!({ "roads": plan.roads.iter().filter(|r| r.class == c).count(), "length_m": round(plan.road_length(c)) });
+            v["city"] = json!({
+                "preset": preset.key(),
+                "seed": plan.seed,
+                "arterial": class(nd_procgen::citygen::RoadClass::Arterial),
+                "collector": class(nd_procgen::citygen::RoadClass::Collector),
+                "local": class(nd_procgen::citygen::RoadClass::Local),
+                "zones": laid.zones,
+                "lots": laid.lots,
+                "interchanges": laid.links,
+                "way_in": laid.way_in,
+                "centres": plan.cores.iter().map(|c| v2(*c)).collect::<Vec<_>>(),
+                "took_ms": start.elapsed().as_millis() as u64,
+            });
+            Ok(v)
+        }
         "terrain_at" => Ok(land::terrain_at(&ctx.sim.world, req_point(cmd)?)),
         "landscape" => Ok(land::summary(&ctx.sim.world)),
         "grant" => {
@@ -665,6 +694,14 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let l = &mut ctx.lighting;
             l.heat = opt_bool(cmd, "on")?.unwrap_or(!l.heat);
             Ok(json!({ "heat_vision": l.heat }))
+        }
+        "graphics" | "quality" => {
+            // [look] `{quality: auto|low|medium|high}` pins the tier (for
+            // screenshots that must compare) or hands it back to Auto.
+            if let Some(q) = opt_str(cmd, "quality")?.or(opt_str(cmd, "tier")?) {
+                ctx.lighting.quality = crate::render::QualitySetting::parse(q).ok_or_else(|| format!("unknown quality {q:?}; auto, low, medium or high"))?;
+            }
+            Ok(graphics_json(ctx))
         }
         "screenshot" => screenshot(cmd, ctx),
         "events" => {
@@ -1007,7 +1044,7 @@ fn status(ctx: &Ctx) -> Value {
         "bots": { "active": w.bots.bots.len(), "delivered_today": w.bots.delivered_today, "vans_on_road": nd_sim::Bots::vans(w), "van_orders_today": w.bots.van_orders_today },
         "transit": { "routes": w.transit.routes.len(), "buses": t.buses, "depots": t.depots, "depot_capacity": t.depot_capacity, "waiting": t.waiting, "riding": t.riding, "riders_today": t.riders_today, "fares_today": round(t.fares_today), "upkeep_today": round(t.upkeep_today) },
         "rail": { "trains": r.trains, "stations": r.stations, "yards": r.yards, "waiting": r.waiting, "riding": r.riding, "riders_today": r.riders_today, "fares_today": round(r.fares_today), "next_passenger_in": r.next_passenger_in, "freight_in_today": round(r.freight_in_today), "freight_waiting": round(r.freight_waiting), "upkeep_today": round(r.upkeep_today) },
-        "render": { "fps": round(fps as f32), "ticks_per_frame": sim.ticks_last_frame, "triangles": ctx.stats.street_triangles + ctx.stats.building_triangles, "building_meshes": ctx.stats.building_entities },
+        "render": { "fps": round(fps as f32), "ticks_per_frame": sim.ticks_last_frame, "triangles": ctx.stats.street_triangles + ctx.stats.building_triangles, "building_meshes": ctx.stats.building_entities, "graphics": graphics_json(ctx) },
         "camera": camera_pose(ctx), "tool": tool_state(&ctx.tools), "selection": selection(w, *ctx.selection),
         "project": project_state(ctx)["project"], "overlays": overlays_json(&ctx.overlays),
         "lighting": { "follow_clock": ctx.lighting.follow_clock, "hour": round(ctx.lighting.hour), "heat_vision": ctx.lighting.heat },
@@ -2233,6 +2270,20 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
 
 // ── screenshot ──────────────────────────────────────────────────────────────
 
+/// [look] The graphics setting, the tier in force (the setting's or Auto's
+/// pick, which takes effect next frame), the frame time and the effects.
+fn graphics_json(ctx: &Ctx) -> Value {
+    let g = &ctx.stats.graphics;
+    let tier = match ctx.lighting.quality {
+        crate::render::QualitySetting::Fixed(q) => q,
+        crate::render::QualitySetting::Auto => g.tier,
+    };
+    json!({
+        "quality": ctx.lighting.quality.label().to_lowercase(), "tier": tier.label().to_lowercase(),
+        "frame_ms": round(g.frame_ms), "sim_ms": round(g.sim_ms), "auto_steps": g.steps, "reason": g.reason, "effects": g.effects,
+    })
+}
+
 fn screenshot(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let default = format!("screenshots/shot-{secs}.png");
@@ -2339,7 +2390,8 @@ fn help() -> Value {
     });
     // Kept out of the literal above: it is at the json! recursion limit.
     v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
-    v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite" });
+    v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
+    v["commands"]["graphics"] = json!({ "quality": "auto|low|medium|high: pin the graphics tier (pin one before screenshots that must compare) or hand it back to the frame-rate throttler; omitted reports the setting, the tier in force, the smoothed frame time and the effects on the camera" });
     // The review commands, added separately: one `json!` this size hits the
     // macro recursion limit.
     let review = json!({
@@ -2357,6 +2409,8 @@ fn help() -> Value {
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), review.as_object()) {
         c.extend(r.clone());
     }
+    // [mapgen] (out of the literal above: it is at the json! recursion limit)
+    v["commands"]["generate_city"] = json!({ "preset": "grid_plaza|coastal_river|old_town|twin_centres (default grid_plaza)", "seed": "u64 (default 1): the city and its landscape", "landscape": "optional landscape preset to lay it on instead of the city preset's own (river_valley|islands|coast|delta|plains|flat)", "water": "0..1", "relief": "0..1", "branching": "0..1", "note": "throws the city away: a new game with a whole generated city (tensor-field streets, zoning, highway interchanges, a coal plant); returns the landscape summary and city {arterial, collector, local, zones, lots, interchanges, way_in, centres}" });
     // [districts] [tourism]
     v["commands"]["district"] = json!({ "action": "list (default)|create|paint|erase|set|remove|at|select|layer", "id": "district id (or district: id or name)", "at": "[x,y] brush centre", "radius": "m, default 40", "polygon": "[[x,y],...]", "rect": "[[x0,y0],[x1,y1]]", "residential": "kowloon|suburban|eco|none", "commercial": "neon_strip|tech_campus|night_market|tourist|none", "industry": "farming|oil|refinery|manufacturing|logistics|fishing|tech|none", "historic": "bool", "rename": "new name", "on": "bool (layer)" });
     v["commands"]["tourism"] = json!({ "action": "refresh (re-read attractions now)", "limit": "tourists listed, default 20", "returns": "attractiveness, demand, ways in, today's and yesterday's arrivals, spending and tourist tax, hotels, attractions, tourists" });

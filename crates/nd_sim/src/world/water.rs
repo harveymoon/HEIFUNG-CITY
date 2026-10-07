@@ -639,6 +639,20 @@ impl World {
     /// False when there is no highway there (nothing is laid then). Scripts
     /// and tests use it; the player draws their own ramps.
     pub fn link_to_highway(&mut self, from: Vec2) -> bool {
+        let Some(gestures) = self.highway_link(from) else { return false };
+        let had_project = self.project.take();
+        for g in gestures {
+            self.add_gesture(g);
+        }
+        self.implement();
+        self.project = had_project;
+        true
+    }
+
+    /// The gestures `link_to_highway` lays for a street end at `from`, for
+    /// a caller that adds them to a project of its own; None when there is
+    /// no highway there or `from` is too close to it.
+    pub fn highway_link(&self, from: Vec2) -> Option<Vec<Gesture>> {
         let y = HIGHWAY_Y - HIGHWAY_HALF_GAP;
         let x = from.x;
         let there = self.roads.alive_segments().any(|(id, s)| {
@@ -646,19 +660,17 @@ impl World {
             s.is_highway() && crate::geom::project_on_segment(Vec2::new(x, y), a, b).1.distance(Vec2::new(x, y)) < 1.0
         });
         if !there || from.y > y - 60.0 {
-            return false;
+            return None;
         }
-        let had_project = self.project.take();
         let j = Vec2::new(x, y - 50.0);
         let street = |points: Vec<Vec2>, fwd: u8, bwd: u8| Gesture::Road { points, lanes_fwd: fwd, lanes_bwd: bwd, curved: false, kind: RoadKind::Street, elevation: Vec::new() };
-        self.add_gesture(street(vec![from, j], 1, 1));
         // Westbound traffic comes from the east: off on that side, back on
         // on the other.
-        self.add_gesture(street(vec![Vec2::new(x + 220.0, y), Vec2::new(x + 70.0, y - 30.0), j], 1, 0));
-        self.add_gesture(street(vec![j, Vec2::new(x - 70.0, y - 30.0), Vec2::new(x - 220.0, y)], 1, 0));
-        self.implement();
-        self.project = had_project;
-        true
+        Some(vec![
+            street(vec![from, j], 1, 1),
+            street(vec![Vec2::new(x + 220.0, y), Vec2::new(x + 70.0, y - 30.0), j], 1, 0),
+            street(vec![j, Vec2::new(x - 70.0, y - 30.0), Vec2::new(x - 220.0, y)], 1, 0),
+        ])
     }
 
     /// Ends of highway carriageways out of sight beyond the map: where

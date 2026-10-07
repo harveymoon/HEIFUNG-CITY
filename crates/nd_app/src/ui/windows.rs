@@ -393,6 +393,23 @@ pub(super) fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
             }
         });
     }
+    graphics_setting(ui, p);
+}
+
+/// [look] The graphics setting: Auto holds about 60 fps by stepping the
+/// effects down and up; a tier pins them.
+fn graphics_setting(ui: &mut egui::Ui, p: &mut UiCtx) {
+    section(ui, "GRAPHICS");
+    ui.horizontal(|ui| {
+        for q in crate::render::QualitySetting::ALL {
+            if ui.selectable_label(p.lighting.quality == q, q.label()).clicked() {
+                p.lighting.quality = q;
+            }
+        }
+    });
+    let g = &p.stats.graphics;
+    let now = if p.lighting.quality == crate::render::QualitySetting::Auto { format!("Auto, at {} now", g.tier.label()) } else { g.tier.label().to_string() };
+    hint(ui, &format!("{now} · {:.1} ms a frame. Auto steps ambient occlusion, volumetric fog, anti-aliasing and shadow detail down to hold 60 fps, and back up when there is room.", g.frame_ms));
 }
 
 fn help_window(ui: &mut egui::Ui) {
@@ -437,6 +454,10 @@ fn dev(ui: &mut egui::Ui, p: &mut UiCtx) {
     let fps = p.diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
     hint(ui, &format!("{fps:.0} fps · {} ticks/frame · effective speed {:.0}%", p.sim.ticks_last_frame, p.sim.effective_speed * 100.0));
     hint(ui, &format!("{} building meshes · {}k triangles", p.stats.building_entities, (p.stats.street_triangles + p.stats.building_triangles) / 1000));
+    // [look] The graphics tier in force and why, the frame time it is held to.
+    let g = &p.stats.graphics;
+    hint(ui, &format!("graphics: {} ({}) · {:.1} ms/frame, sim {:.1} ms · {} auto steps · {}", g.tier.label(), p.lighting.quality.label(), g.frame_ms, g.sim_ms, g.steps, g.reason));
+    hint(ui, &g.effects);
     if let Some(err) = &p.assets.last_error {
         ui.label(egui::RichText::new(err).small().color(egui::Color32::from_rgb(255, 60, 90)));
     }

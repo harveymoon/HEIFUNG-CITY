@@ -33,6 +33,32 @@ pub fn params_from(cmd: &Value) -> Result<LandscapeParams, String> {
     Ok(p)
 }
 
+/// `generate_city`'s fields: the city preset and the landscape it is laid
+/// on (the preset's own, or `landscape` with any levers given, as for
+/// `new_game`).
+pub fn city_params_from(cmd: &Value) -> Result<(nd_procgen::citygen::CityPreset, LandscapeParams), String> {
+    use nd_procgen::citygen::CityPreset;
+    let preset = match opt_str(cmd, "preset")? {
+        Some(s) => CityPreset::parse(s).ok_or_else(|| format!("unknown city preset {s:?}; one of {}", CityPreset::ALL.map(|p| p.key()).join(", ")))?,
+        None => CityPreset::GridPlaza,
+    };
+    let seed = opt_u64(cmd, "seed")?.unwrap_or(1);
+    let mut p = match opt_str(cmd, "landscape")? {
+        Some(s) => LandscapeParams::preset(LandscapePreset::from_label(s).ok_or_else(|| format!("unknown landscape {s:?}; one of river_valley, islands, coast, delta, plains, flat"))?, seed),
+        None => preset.landscape(seed),
+    };
+    if let Some(v) = opt_f32(cmd, "water")? {
+        p.water = v.clamp(0.0, 1.0);
+    }
+    if let Some(v) = opt_f32(cmd, "relief")?.or(opt_f32(cmd, "height")?) {
+        p.relief = v.clamp(0.0, 1.0);
+    }
+    if let Some(v) = opt_f32(cmd, "branching")? {
+        p.branching = v.clamp(0.0, 1.0);
+    }
+    Ok((preset, p))
+}
+
 /// Everything about the ground at a point.
 pub fn terrain_at(w: &World, p: SVec2) -> Value {
     let land = &w.landscape;

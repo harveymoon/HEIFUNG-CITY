@@ -38,14 +38,13 @@ const UPDATE_EVERY_TICKS: u64 = 3;
 const STAGGER: u64 = 5;
 
 pub(super) const WINDOW_SHADER: Handle<Shader> = uuid_handle!("6f0b8f9e-5d1c-4a87-9e43-1f7c2a9d3b51");
+/// [look] The same windows in the depth prepass (SSAO, TAA): an unlit
+/// window must leave no depth behind either, or it would hide the dark
+/// glass laid behind it.
+pub(super) const WINDOW_PREPASS_SHADER: Handle<Shader> = uuid_handle!("9a1c3e57-24b8-4d6f-8e0a-5b7c9d1f2e34");
 
-const WINDOW_SHADER_SRC: &str = r#"
-#import bevy_pbr::{
-    pbr_fragment::pbr_input_from_standard_material,
-    forward_io::{VertexOutput, FragmentOutput},
-    pbr_functions::main_pass_post_lighting_processing,
-}
-
+/// Bindings and the lit test, shared by the main pass and the prepass.
+const WINDOW_COMMON_SRC: &str = r#"
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var lit_texture: texture_2d<f32>;
 // x: sim minutes (wrapped), for each window's own wandering.
 @group(#{MATERIAL_BIND_GROUP}) @binding(101) var<uniform> lights_clock: vec4<f32>;
@@ -54,31 +53,49 @@ fn window_hash(p: vec2<f32>) -> f32 {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
 
+// uv.x: the building's slot, or -1 for glow that is always on; uv.y: this
+// window's rank. A window lights when its rank is below the building's lit
+// share.
+fn window_dark(uv: vec2<f32>) -> bool {
+    if uv.x < 0.0 {
+        return false;
+    }
+    let slot = u32(uv.x + 0.5);
+    let dims = textureDimensions(lit_texture);
+    let share = textureLoad(lit_texture, vec2<u32>(slot % dims.x, min(slot / dims.x, dims.y - 1u)), 0).r;
+    if share <= 0.004 {
+        return true;
+    }
+    // Each window (its building slot and rank) re-rolls a small offset
+    // to its threshold every 40..180 sim minutes, at its own phase: the
+    // building's share holds on average while single rooms come and go.
+    if share < 0.996 {
+        let key = vec2(uv.x * 0.618 + 3.1, uv.y * 977.0);
+        let period = 40.0 + 140.0 * window_hash(key);
+        let epoch = floor(lights_clock.x / period + window_hash(key.yx + 1.7));
+        let jitter = (window_hash(key + vec2(epoch * 0.731, epoch * 1.37)) - 0.5) * 0.26;
+        if uv.y + jitter >= share {
+            return true;
+        }
+    }
+    return false;
+}
+"#;
+
+const WINDOW_SHADER_SRC: &str = r#"
+#import bevy_pbr::{
+    pbr_fragment::pbr_input_from_standard_material,
+    forward_io::{VertexOutput, FragmentOutput},
+    pbr_functions::main_pass_post_lighting_processing,
+}
+"#;
+
+const WINDOW_MAIN_SRC: &str = r#"
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
 #ifdef VERTEX_UVS_A
-    // uv.x: the building's slot, or -1 for glow that is always on; uv.y:
-    // this window's rank. A window lights when its rank is below the
-    // building's lit share.
-    if in.uv.x >= 0.0 {
-        let slot = u32(in.uv.x + 0.5);
-        let dims = textureDimensions(lit_texture);
-        let share = textureLoad(lit_texture, vec2<u32>(slot % dims.x, min(slot / dims.x, dims.y - 1u)), 0).r;
-        if share <= 0.004 {
-            discard;
-        }
-        // Each window (its building slot and rank) re-rolls a small offset
-        // to its threshold every 40..180 sim minutes, at its own phase: the
-        // building's share holds on average while single rooms come and go.
-        if share < 0.996 {
-            let key = vec2(in.uv.x * 0.618 + 3.1, in.uv.y * 977.0);
-            let period = 40.0 + 140.0 * window_hash(key);
-            let epoch = floor(lights_clock.x / period + window_hash(key.yx + 1.7));
-            let jitter = (window_hash(key + vec2(epoch * 0.731, epoch * 1.37)) - 0.5) * 0.26;
-            if in.uv.y + jitter >= share {
-                discard;
-            }
-        }
+    if window_dark(in.uv) {
+        discard;
     }
 #endif
     let pbr_input = pbr_input_from_standard_material(in, is_front);
@@ -86,6 +103,46 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     out.color = main_pass_post_lighting_processing(pbr_input, pbr_input.material.base_color);
     return out;
 }
+"#;
+
+const WINDOW_PREPASS_SRC: &str = r#"
+#import bevy_pbr::{
+    prepass_io::{VertexOutput, FragmentOutput},
+    pbr_prepass_functions,
+}
+"#;
+
+const WINDOW_PREPASS_MAIN_SRC: &str = r#"
+#ifdef PREPASS_FRAGMENT
+@fragment
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+#ifdef VERTEX_UVS_A
+    if window_dark(in.uv) {
+        discard;
+    }
+#endif
+    var out: FragmentOutput;
+#ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
+    out.frag_depth = in.unclipped_depth;
+#endif
+#ifdef NORMAL_PREPASS
+    out.normal = vec4(in.world_normal * 0.5 + vec3(0.5), 1.0);
+#endif
+#ifdef MOTION_VECTOR_PREPASS
+    out.motion_vector = pbr_prepass_functions::calculate_motion_vector(in.world_position, in.previous_world_position);
+#endif
+    return out;
+}
+#else
+@fragment
+fn fragment(in: VertexOutput) {
+#ifdef VERTEX_UVS_A
+    if window_dark(in.uv) {
+        discard;
+    }
+#endif
+}
+#endif
 "#;
 
 /// The building glow material: the shared unlit glow plus the lit-share
@@ -105,8 +162,8 @@ impl MaterialExtension for WindowLights {
     fn fragment_shader() -> ShaderRef {
         WINDOW_SHADER.into()
     }
-    fn enable_prepass() -> bool {
-        false
+    fn prepass_fragment_shader() -> ShaderRef {
+        WINDOW_PREPASS_SHADER.into()
     }
     fn enable_shadows() -> bool {
         false
@@ -114,7 +171,10 @@ impl MaterialExtension for WindowLights {
 }
 
 pub(super) fn add_shader(mut shaders: ResMut<Assets<Shader>>) {
-    let _ = shaders.insert(WINDOW_SHADER.id(), Shader::from_wgsl(WINDOW_SHADER_SRC, "nd_app/window_lights.wgsl"));
+    let main = format!("{WINDOW_SHADER_SRC}{WINDOW_COMMON_SRC}{WINDOW_MAIN_SRC}");
+    let _ = shaders.insert(WINDOW_SHADER.id(), Shader::from_wgsl(main, "nd_app/window_lights.wgsl"));
+    let prepass = format!("{WINDOW_PREPASS_SRC}{WINDOW_COMMON_SRC}{WINDOW_PREPASS_MAIN_SRC}");
+    let _ = shaders.insert(WINDOW_PREPASS_SHADER.id(), Shader::from_wgsl(prepass, "nd_app/window_lights_prepass.wgsl"));
 }
 
 /// The lit-share texture, all on until the first update.

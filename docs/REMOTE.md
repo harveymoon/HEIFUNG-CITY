@@ -136,9 +136,9 @@ ring (see `events`).
 | `list_saves` | | `saves`, newest first: `path`, `name` (as typed for named games; "Latest quick save", "Autosave", "Quick save, day N" otherwise), `kind` (named / latest / autosave / dated), `modified_unix`, `bytes`, `day`, `population`, `treasury`, `buildings`, `landscape` (null for saves without a sidecar), `thumbnail` (absolute PNG path, or null) |
 
 The **title screen** comes up at startup (unless `ND_TITLE=0`) over a paused city: the saved
-games as cards with their pictures, Continue, New game, Play this map. `load`, `new_game` and
-`seed_demo` close it; `window {name: "title", open: false}` closes it and runs the city (as Play
-this map), `open: true` brings it back. `status.title_screen` says whether it is up. Scripts that
+games as cards with their pictures, Continue, New game, Play this map. `load`, `new_game`,
+`generate_city` and `seed_demo` close it; `window {name: "title", open: false}` closes it and runs
+the city (as Play this map), `open: true` brings it back. `status.title_screen` says whether it is up. Scripts that
 screenshot the city should close it first.
 
 Paths are limited to `saves/`, `screenshots/`, `exports/` and the temp folder (see
@@ -154,6 +154,7 @@ main thread, then serialises and writes it on a worker thread.
 | Command | Fields | Reply |
 | --- | --- | --- |
 | `new_game` | `preset` river_valley (default) / islands / coast / delta / plains / flat, `seed`, `water` 0..1, `relief` 0..1 (height variation), `branching` 0..1, `islands` 0..8 (`highway` is ignored: every new game has the highway and the trunk line); omitted levers take the preset's | throws the city away and starts on the landscape; tools and selection reset. Reply as `landscape` |
+| `generate_city` | `preset` grid_plaza (default) / coastal_river / old_town / twin_centres, `seed` (default 1; seeds the landscape and the city), optional `landscape` (a `new_game` preset to lay the city on instead of the preset's own) and `water`, `relief`, `branching` levers | throws the city away and starts a new game with a whole generated city on it (below); tools and selection reset. Reply as `landscape` plus `city`: `preset`, `seed`, `arterial`/`collector`/`local` (`roads`, `length_m`), `zones`, `lots`, `interchanges`, `way_in`, `centres`, `took_ms` |
 | `landscape` | | preset and levers, `rivers` (kind river/stream, width, current_mps, hydro_ok, source, mouth, length), `lakes`, `sea`, `hot_spots`, `highway` (entries, exits, through_cars), `bridges` (count, metres, on the highway), `ports`, `ships`, `port_stats` |
 | `terrain_at` | `x`, `y` | `natural_height`, `ground_height` (graded under roads and lots), `surface_height` (bridge decks included), `slope`, `water` (kind, current, width, flow), `nearest_shore`, `hot_spot`, `lot`, `power_sites` (hydro/tidal/geothermal ok or why not, for the lot there), `docks` (whether a shipping port or ferry terminal would go there, or why not), `survey` (every land survey layer's value 0..1 there), `access` (`park_min`, `nightlife_min`: minutes on foot along the walk network to the nearest park / open entertainment, null when none can be walked to; `value_for_homes`: what that adds to a home's land value; `text`; the whole object is null off the walk network) |
 | `grant` | `amount` (default 100000) | dev: adds money to the treasury |
@@ -163,7 +164,32 @@ main thread, then serialises and writes it on a worker thread.
 {"cmd": "terrain_at", "x": -420, "y": 100}
 ```
 
-`window {name: "new_game"}` opens the New Game window (preset list, levers, mini-map).
+`window {name: "new_game"}` opens the New Game window (preset list, levers, mini-map, and a
+starting town: an empty map or one of the generated cities, drawn on the mini-map).
+
+**Generated cities** (`nd_procgen::citygen`, after Chen et al. 2008, "Interactive Procedural
+Street Modeling", the method ProbableTrain's MapGenerator uses). Streets are traced through a
+tensor field blended from grids, radial centres and the lines of the land (rivers, the coast, the
+highway, the railway): arterials about 330 m apart, collectors about 165 m, local streets 64 x
+108 m, a waterfront street along each river bank and the coast. Dangling ends are joined to the
+street ahead, and the network is cleaned to the game's rules (junctions at least 22 m apart and
+32 degrees, no sliver blocks, one network) before it is laid as road gestures (arterials 2+2
+lanes, collectors and locals 1+1; curves sampled every 7 m, straight into every junction). The
+blocks are zoned by a land-use model: shops round the centres and along the arterials, works by
+the railway, the highway and the edge of town, parks on the waterfronts and plazas, homes
+between. Up to two interchanges join the town to the highway, and a coal plant goes on the
+biggest works lot. The city stays south of the highway (up to y 340) inside the buildable square.
+
+| Preset | Landscape | Plan |
+| --- | --- | --- |
+| `grid_plaza` | plains | one grid round a radial plaza |
+| `coastal_river` | coast, sea close in | streets follow the shore and the river; the port centre at the river mouth |
+| `old_town` | river valley | a twisting radial old town, modern grids at other angles either side |
+| `twin_centres` | plains | two radial centres, each with its own grid, grown together |
+
+```json
+{"cmd": "generate_city", "preset": "old_town", "seed": 3}
+```
 
 ### Planning: roads, zones, parcels, projects
 
@@ -412,6 +438,7 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
 | `overlay` | **Map layers are exclusive**: one shows at a time (as the top bar's Layer button), with its key in the legend. `active` a layer key or `none`: show it alone. `layer` (zoning, land_value, districts, traffic, traffic_types, paths, people, pollution, crime, map, or a land survey layer, below; `traffic` and `crime` also dim the city and light up the vehicles they are about, `map` is the street map view with street names and pins) with `on` (bool; omitted toggles): on shows it and hides every other, off hides it if it shows. `land` a land survey layer key (shown alone) or `none`. Older form, a bool per layer name: true shows that layer alone (several trues: the last listed in the registry wins), false hides it if it shows. `projects` (bool, or `layer: "projects"`) is the dim other-projects switch, not a layer, and is left alone by the rest. Reply: every flag layer and whether it is on, `land` (the survey layer shown, or null), `active` (the key of the layer showing, or null) and `projects` (also in `status.overlays`). New layers are added as one entry in `crate::map_layers::MAP_LAYERS` and appear here by their key |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
 | `heat_vision` (alias `heat`) | `on` (bool; omitted toggles). Drone heat vision: buildings, ground and roads go near-black, people, vehicles, fires and drones glow by temperature (lights and engines white-hot), with motion blur, scanlines, noise, a vignette and a reticle. Same as key H and the top bar's Heat button. Reply `heat_vision`; also `status.lighting.heat_vision` |
+| `graphics` (alias `quality`) | `quality` auto / low / medium / high. Pins the graphics tier (Low: MSAA, no SSAO or haze; Medium: TAA, light SSAO; High: TAA, full SSAO, volumetric haze, big shadows) or hands it back to the frame-rate throttler (Auto). Pin one before screenshots that must compare. Reply `quality`, `tier` (in force from the next frame), `frame_ms` (smoothed), `sim_ms`, `auto_steps`, `reason`, `effects`; also `status.render.graphics`. `ND_QUALITY` sets the starting setting |
 | `window` | `name` city / economy / taxes / market / people / power / transit / emergencies / view (also `land`, `layers`, `map`: the View window, once Land) / districts / saves / help / dev, `open` (omit to toggle), `expanded` (bool: the large view with charts over time and the drill-downs; `true` also opens the window, and only one window is expanded at a time, so expanding one puts the other back to compact; saves, help and dev have none). Reply `open`, `expanded` (the expanded window's name or null), `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it; `status.window_expanded` names the expanded window. `name: "build"`: the Build window, `open` (omit to toggle), `section` roads / zoning / parks / districts / power / services / transit / rail / water / attractions (opens it there); `status.build_window` {open, section}. A building tool picked with `tool` opens the Build window at its section, as its hotkey does. `name: "title"`: the title screen (above) |
 
 Land survey layers (map layers like the rest, so one at a time with them; K steps through these
