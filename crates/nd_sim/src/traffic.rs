@@ -1198,6 +1198,11 @@ pub struct Traffic {
     /// along its first lane each set off.
     #[serde(skip)]
     pub toll_checks: Vec<(CarId, f32)>,
+    /// [road-inspect] Street pieces (segment index) vehicles drove onto this
+    /// tick, one entry a vehicle; the world drains them into the hourly
+    /// counts (`crate::road_traffic`).
+    #[serde(skip)]
+    pub segment_entries: Vec<u32>,
     /// [tools] The player's junction settings (signals, phase greens, the
     /// left arrow, banned left turns), reapplied on every rebuild by
     /// position (`traffic/junction.rs`).
@@ -2898,6 +2903,10 @@ impl Traffic {
     /// Bookkeeping as a car moves from `from` onto `to`: turning counts for
     /// the approach's arrows, and the wait before a left turn.
     fn entered(&mut self, from: LaneId, to: LaneId, id: CarId) {
+        // [road-inspect] Counted onto the street piece it drives onto.
+        if let LaneKind::Road { segment, .. } = self.net.lanes[to as usize].kind {
+            self.segment_entries.push(segment.0);
+        }
         let (ap, turn) = (self.net.lanes[from as usize].approach, self.net.lanes[to as usize].turn);
         if !self.net.lanes[to as usize].is_connector() {
             return;

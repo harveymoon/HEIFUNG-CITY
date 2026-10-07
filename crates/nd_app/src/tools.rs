@@ -634,6 +634,9 @@ pub enum Selection {
     Train(nd_sim::TrainId),
     /// [train-inspect] A metro train in its tunnel (`world.subway.trains`).
     Metro(nd_sim::MetroTrainId),
+    /// [road-inspect] A street piece (kept on its piece through rebuilds by
+    /// `road_select::keep_on_rebuild`).
+    Road(nd_sim::SegmentId),
 }
 
 pub struct ToolsPlugin;
@@ -644,7 +647,7 @@ impl Plugin for ToolsPlugin {
             .init_resource::<Selection>()
             .init_resource::<EffectivePlan>()
             .configure_sets(Update, (SimSet::Input, SimSet::Step, SimSet::Sync).chain())
-            .add_systems(Update, (tool_input, draw_gizmos).chain().in_set(SimSet::Input));
+            .add_systems(Update, (tool_input, crate::road_select::keep_on_rebuild, draw_gizmos).chain().in_set(SimSet::Input));
     }
 }
 
@@ -1051,6 +1054,14 @@ pub(crate) fn tool_input(
                     if tools.selected_gesture.is_some() {
                         tools.status = "Road selected: change lanes, direction or curve in the panel.".into();
                     }
+                    // [road-inspect] The piece clicked, for the road card
+                    // beside the upgrade panel (none for a road only planned).
+                    let piece = ground.filter(|_| tools.selected_gesture.is_some()).and_then(|p| crate::road_select::pick(&sim.world, p, tools.depth));
+                    match piece {
+                        Some(sid) => *selection = Selection::Road(sid),
+                        None if matches!(*selection, Selection::Road(_)) => *selection = Selection::None,
+                        None => {}
+                    }
                 }
             } else if shift_click {
                 if let (Some(p), Some((id, seg))) = (ground, ground.and_then(|p| nearest_gesture(plan, p))) {
@@ -1415,6 +1426,10 @@ pub(crate) fn pick(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
     if let Some((_, vid)) = parked {
         return Selection::Parked(vid);
     }
+    // [road-inspect] The street piece under the pointer (not in a junction).
+    if let Some(sid) = crate::road_select::pick(w, p, depth) {
+        return Selection::Road(sid);
+    }
     for (_, lot) in w.lots.iter() {
         if let Some(b) = lot.building {
             if point_in_polygon(p, &lot.polygon) {
@@ -1771,6 +1786,7 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
     match selection {
         Selection::None => {}
         Selection::Toll(id) => crate::toll_select::draw(gizmos, w, id),
+        Selection::Road(sid) => crate::road_select::draw(gizmos, w, sid),
         // [camera] drawn by `crate::marks`, with its route and its shop.
         Selection::Bot(_) => {}
         // [train-inspect] drawn by `crate::train_select::draw`.

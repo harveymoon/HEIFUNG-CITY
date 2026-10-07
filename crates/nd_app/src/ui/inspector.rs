@@ -46,6 +46,10 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
         }
         // [toll-inspect] (its own window, `super::toll`, is the same one)
         Selection::Toll(id) => super::toll::show(ui, sim, selection, id),
+        // [road-inspect] (its own window, `super::road`, is the same one)
+        Selection::Road(sid) => {
+            let _ = super::road::show(ui, sim, selection, sid, false);
+        }
         Selection::Citizen(id) => {
             if !sim.world.citizens.contains_key(id) {
                 *selection = Selection::None;
