@@ -545,6 +545,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         "project" => project(cmd, ctx),
         "place" => place(cmd, ctx),
+        "plant_preview" => plant_preview(cmd, ctx),
         // [tax] [tolls]
         "taxes" | "tax" => taxes::command(cmd, &mut ctx.sim.world),
         "tolls" | "toll" => taxes::tolls(cmd, &mut ctx.sim.world),
@@ -1385,14 +1386,45 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let tier = opt_str(cmd, "tier")?.map(|t| nd_sim::services::parse_tier(t).ok_or_else(|| format!("unknown tier {t:?}; low, mid or high"))).transpose()?;
             let what = nd_sim::Placeable::parse(other, tier).ok_or_else(|| format!("unknown kind {other:?}; one of station, freight_yard, depot, parking, coal, solar, wind, nuclear, hydro, tidal, geothermal, battery_small, battery_medium, battery_large, police, fire, hospital (clinic), school, dispatch, monument, stadium, vertiport (services take tier low|mid|high or a :tier suffix)"))?;
             let lot = lot_near(w, p).ok_or("no lot there: aim at a lot")?;
+            let before = w.economy.treasury;
             let id = w.place_on_lot(what, lot)?;
-            (id, format!("{} built for {:.0}; {:.0}/day", what.label(), what.cost(), what.upkeep()))
+            // [plant-groups] What was paid, and a plant's MW on its lot and its park.
+            let paid = before - w.economy.treasury;
+            let note = match w.buildings.get(id).filter(|b| b.plant.is_some()) {
+                Some(b) => {
+                    let mut s = format!("{} built: {:.1} MW for {:.0}; {:.0}/day", what.label(), w.plant_capacity_mw(b), paid, w.plant_upkeep(b));
+                    if let Some(g) = w.plant_group_of(id) {
+                        s += &format!("; part of {} ({} lots)", g.name, g.members.len());
+                    }
+                    s
+                }
+                None => format!("{} built for {:.0}; {:.0}/day", what.label(), paid, what.upkeep()),
+            };
+            (id, note)
         }
     };
     *ctx.selection = Selection::Building(id);
     ctx.tools.status = note.clone();
     let b = ctx.sim.world.buildings.get(id).map(|b| building_row(&ctx.sim.world, id, b)).unwrap_or(Value::Null);
     Ok(json!({ "building": key_str(id), "message": note, "row": b, "treasury": round(ctx.sim.world.economy.treasury) }))
+}
+
+/// [plant-groups] What a plant `kind` would be on the lot at `x`,`y`
+/// before placing it: its MW, cost and upkeep there, the Sunfield or Wind
+/// Park it would join, and why it cannot go (if not). Read-only.
+fn plant_preview(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let kind = req_str(cmd, "kind")?.trim().to_ascii_lowercase();
+    let p = req_point(cmd)?;
+    let w = &ctx.sim.world;
+    let Some(nd_sim::Placeable::Plant(k)) = nd_sim::Placeable::parse(&kind, None) else { return Err(format!("{kind:?} is not a power plant")) };
+    let lot = lot_near(w, p).ok_or("no lot there: aim at a lot")?;
+    let v = w.plant_preview(k, lot).ok_or("no such lot")?;
+    Ok(json!({
+        "lot": key_str(lot), "kind": kind, "area_m2": round(v.area), "size_scale": round(k.size_scale(v.area)), "capacity_mw": round(v.capacity_mw), "site": round(v.site),
+        "cost": round(v.cost), "upkeep_per_day": round(v.upkeep_per_day), "min_area": k.min_area(), "small_lot_joins": v.small_lot_joins,
+        "joins": v.join.as_ref().and_then(|j| j.joins.clone()), "joined_lots": v.join.as_ref().map(|j| j.members.len() + 1), "joined_area_m2": v.join.as_ref().map(|j| round(j.area)), "joined_capacity_mw": v.join.as_ref().map(|j| round(j.capacity_mw)),
+        "ok": v.problem.is_none(), "problem": v.problem,
+    }))
 }
 
 /// Start an emergency by hand, for testing and demos: `kind` fire / crime
@@ -2470,6 +2502,8 @@ fn help() -> Value {
     // Kept out of the literal above: it is at the json! recursion limit.
     v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
     v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
+    // [plant-groups]
+    v["commands"]["plant_preview"] = json!({ "kind": "solar|wind|coal|...", "x": "f", "y": "f", "note": "read-only: MW, cost and upkeep on the lot there, the Sunfield / Wind Park it would join, and any problem" });
     // [camera]
     v["commands"]["follow"] = json!({ "citizen|car|bot|building|vehicle": "id, or the selection", "stop": "bool: end the follow (also on: false)", "pov": "bool: look through their eyes (Walk view) or back to orbit", "fly": "bool, default true: fly in smoothly first", "note": "the camera stays on it (pan locked, rotate and zoom free) until stopped, Esc, or it is gone" });
     v["commands"]["zoom_to"] = json!({ "citizen|car|bot|building|vehicle": "id, or the selection", "at": "[x,y] instead of a thing", "distance": "m (default by kind)", "pitch": "rad (default 0.62)", "note": "a smooth move of 0.7..2.2 s; replies at once" });

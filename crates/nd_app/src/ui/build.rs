@@ -106,7 +106,12 @@ impl Item {
             Item::Zone(LandUse::Park) => "Park".into(),
             Item::Zone(lu) => lu.label().to_string(),
             Item::District => "Paint districts".into(),
-            Item::Place(Placeable::Plant(k)) => format!("{} {:.0} MW", k.label(), k.capacity_mw()),
+            // [plant-groups] Solar and wind are sized to the lot: no flat MW
+            // (the tile's price line and the figures quote them per m²).
+            Item::Place(Placeable::Plant(k)) => match k.reference_area() {
+                Some(_) => k.label().to_string(),
+                None => format!("{} {:.0} MW", k.label(), k.capacity_mw()),
+            },
             Item::Place(p) => p.menu_label().to_string(),
             Item::RailPiece(f) => Placeable::Rail(f).menu_label().to_string(),
             Item::BusLines => "Bus lines".into(),
@@ -607,7 +612,14 @@ fn tile(ui: &mut egui::Ui, p: &UiCtx, item: Item, on: bool) -> egui::Response {
         }
     }
     let name = item.label();
-    let price = item.placeable().map(|pl| format!("{:.0}", pl.cost()));
+    // [plant-groups] Solar and wind: price and output per m² of lot.
+    let price = item.placeable().map(|pl| match pl {
+        Placeable::Plant(k) if k.reference_area().is_some() => {
+            let a = k.reference_area().unwrap_or(1.0);
+            format!("{:.1}/m² · {:.0} kW/m²", pl.cost() / a, k.capacity_mw() * 1000.0 / a)
+        }
+        _ => format!("{:.0}", pl.cost()),
+    });
     let font = egui::FontId::proportional(11.0);
     painter.text(egui::pos2(rect.center().x, img.bottom() + 3.0), egui::Align2::CENTER_TOP, elide(&name, 17), font.clone(), if on { Color32::WHITE } else { IVORY });
     if let Some(price) = price {
@@ -743,8 +755,22 @@ fn figures(ui: &mut egui::Ui, what: Placeable) {
             ui.label(egui::RichText::new(value).small());
             ui.end_row();
         };
-        r("cost", format!("$ {:.0}", what.cost()));
-        r("upkeep", format!("$ {:.0} a day", what.upkeep()));
+        // [plant-groups] Solar and wind: per 1,000 m² of lot; the card by
+        // the pointer shows the figures for the lot under it.
+        let per = match what {
+            Placeable::Plant(k) => k.reference_area().map(|a| 1000.0 / a),
+            _ => None,
+        };
+        match per {
+            Some(f) => {
+                r("cost", format!("$ {:.0} per 1000 m²", what.cost() * f));
+                r("upkeep", format!("$ {:.0} a day per 1000 m²", what.upkeep() * f));
+            }
+            None => {
+                r("cost", format!("$ {:.0}", what.cost()));
+                r("upkeep", format!("$ {:.0} a day", what.upkeep()));
+            }
+        }
         if what.jobs() > 0 {
             r("jobs", format!("{}", what.jobs()));
         }
@@ -752,7 +778,13 @@ fn figures(ui: &mut egui::Ui, what: Placeable) {
             r("lot", format!("{:.0} m² or more", what.min_area()));
         }
         if let Placeable::Plant(k) = what {
-            r("output", format!("{:.0} MW", k.capacity_mw()));
+            match per {
+                Some(f) => {
+                    r("output", format!("{:.0} MW per 1000 m², up to {:.0} MW a lot", k.capacity_mw() * f, k.capacity_mw() * nd_sim::power::MAX_LOT_SCALE));
+                    r("groups", format!("touching lots join one {} (+{:.0}% a lot, up to +{:.0}%)", if k == nd_sim::PowerPlantKind::Solar { "Sunfield" } else { "Wind Park" }, nd_sim::world::plant_groups::PLANT_GROUP_BONUS_PER_LOT * 100.0, nd_sim::world::plant_groups::PLANT_GROUP_BONUS_MAX * 100.0));
+                }
+                None => r("output", format!("{:.0} MW (fixed size)", k.capacity_mw())),
+            }
         }
         if let Placeable::Service(k, t) = what {
             if k.radius(t) > 0.0 {

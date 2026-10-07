@@ -278,6 +278,15 @@ Road works never take the city's own structures (depots, stations, yards, plants
   under the point, or the nearest vacant lot within 80 m (`build_depot`, `build_parking`,
   `build_power`). Hydro needs a lot within 30 m of a river or stream running at 0.8 m/s or more,
   tidal a lot on the sea shore, geothermal a lot over a hot spot (`terrain_at` says which apply).
+  Solar and wind are sized to the lot: nameplate, cost and upkeep scale with its area (600 / 800 m²
+  for the quoted figures, capped at 6× on one lot); the reply's message gives the MW, what was paid
+  and the Sunfield or Wind Park it joined. A lot below the kind's minimum may still take one when it
+  joins plants of its kind next door and the joined lots reach the minimum.
+- `plant_preview {kind, x, y}` (read-only): what a plant would be on the lot there before placing
+  it: `area_m2`, `size_scale`, `capacity_mw` (its own, group bonus included), `site`, `cost`,
+  `upkeep_per_day`, `min_area`, `joins` (the Sunfield / Wind Park it would join, or null),
+  `joined_lots`, `joined_area_m2`, `joined_capacity_mw`, `small_lot_joins` (allowed only by joining),
+  `ok`, `problem`.
 - `shipping_port` (or `port`), `ferry_terminal` (or `ferry`): at the water's edge within 90 m of the
   point (`World::place_port`). Ports need a river at least 40 m wide or the sea; ferries any water
   16 m or wider. Each builds a pier and, unless a street is already along its landward side, a
@@ -782,8 +791,16 @@ discharging_mw, round_trip_efficiency}`, `weather`, and a row per plant and batt
   curtailment), mean_mw_24h, upkeep_per_day, cost_per_mwh (upkeep over the last 24 hours' energy; null
   when it made next to nothing), co2_t_per_day, co2_t_per_mwh, air_index (smog at the fence now, 0..1),
   noise_db (null while idle), noise_db_running, pollution_radius_m, pollution_land_value_effect,
-  workers, jobs, derelict, pending (lot still being cleared), pos, `output_mw_hours` (the last 72
-  hours) and `energy_mwh_days` (up to 90 days).
+  workers, jobs, derelict, pending (lot still being cleared), pos, area_m2, size_scale, `group`
+  (bool), `members`, `lots`, `member_names`, `output_mw_hours` (the last 72 hours, a group's
+  members summed) and `energy_mwh_days` (up to 90 days). Touching solar lots (an edge, or a lot
+  line up to 2.5 m wide, never across a road or path) are one row, a "<Name> Sunfield", and
+  touching wind lots a "<Name> Wind Park" (`World::plant_groups`; derived from adjacency, not
+  saved): the figures are the members' summed, each member making 4% more per extra lot (up to
+  12%) for the shared inverters and grid connection; the id is the anchor member's. `inspect
+  {building}` on any member has `plant.group {name, anchor, members, member_names, lots, area_m2,
+  capacity_mw, output_mw, upkeep_per_day, bonus}`; `list {what: plants}` has `area_m2` and
+  `group` (its name) per lot.
 - `batteries`: id, name, kind, capacity_mwh, max_mw, charge_mwh, level, flow_mw (+ delivering,
   - charging), state (charging / discharging / idle), delivered_mwh_24h, upkeep_per_day,
   cost_per_mwh, noise_db, derelict, pending, pos, `flow_mw_hours`, `charge_mwh_hours`.

@@ -233,7 +233,17 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
     let w = &sim.world;
     let b = &w.buildings[id];
     // ── Header ──
-    ui.label(egui::RichText::new(&b.name).size(19.0).color(IVORY).strong());
+    // [plant-groups] A member of a Sunfield or Wind Park shows the park.
+    let group = w.plant_group_of(id);
+    match &group {
+        Some(g) => {
+            ui.label(egui::RichText::new(&g.name).size(19.0).color(IVORY).strong());
+            hint(ui, &format!("{} lots run as one; this one is {}", g.members.len(), b.name));
+        }
+        None => {
+            ui.label(egui::RichText::new(&b.name).size(19.0).color(IVORY).strong());
+        }
+    }
     let zone_col = super::zone_color32(assets.palette.zone_color(b.land_use));
     let style = nd_procgen::building_style(w, id, &assets.rules, Some(&sim.styles));
     ui.horizontal_wrapped(|ui| {
@@ -381,8 +391,25 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
         ui.label(egui::RichText::new(line).color(egui::Color32::from_rgb(120, 200, 255)));
     }
     if let Some(kind) = b.plant {
-        section(ui, "POWER PLANT");
-        ui.label(format!("{:.0} MW nameplate, {:.0}% available now, {:.0}/day upkeep", w.plant_capacity_mw(b), kind.availability(&w.weather, w.clock.day_fraction()) * 100.0, w.plant_upkeep(b)));
+        // [plant-groups] A Sunfield or Wind Park: the whole park's figures.
+        if let Some(g) = w.plant_group_of(id) {
+            let members: Vec<&nd_sim::Building> = g.members.iter().filter_map(|m| w.buildings.get(*m)).collect();
+            let cap: f32 = members.iter().map(|m| w.plant_capacity_mw(m)).sum();
+            let now: f32 = members.iter().map(|m| w.plant_dispatched_mw(m)).sum();
+            let upkeep: f32 = members.iter().map(|m| w.plant_upkeep(m)).sum();
+            section(ui, if kind == nd_sim::PowerPlantKind::Wind { "WIND PARK" } else { "SUNFIELD" });
+            ui.label(format!("{now:.1} MW now of {cap:.0} MW nameplate, {upkeep:.0}/day upkeep"));
+            hint(ui, &format!("{} lots, {:.0} m² together; +{:.0}% for the shared inverters and grid connection", g.members.len(), g.area, (nd_sim::world::plant_groups::group_bonus(g.members.len()) - 1.0) * 100.0));
+            for m in &g.members {
+                if let Some(mb) = w.buildings.get(*m) {
+                    let area = w.lots.get(mb.lot).map_or(0.0, |l| l.area());
+                    hint(ui, &format!("{}{}: {:.0} m², {:.1} MW", if *m == id { "> " } else { "  " }, mb.name, area, w.plant_capacity_mw(mb)));
+                }
+            }
+        } else {
+            section(ui, "POWER PLANT");
+        }
+        ui.label(format!("{}{:.1} MW nameplate, {:.0}% available now, {:.0}/day upkeep", if w.plant_group_of(id).is_some() { "this lot: " } else { "" }, w.plant_capacity_mw(b), kind.availability(&w.weather, w.clock.day_fraction()) * 100.0, w.plant_upkeep(b)));
         if kind.reference_area().is_some() {
             hint(ui, &format!("sized to its lot: {:.0} m², {:.2}× a standard {}", w.lots.get(b.lot).map_or(0.0, |l| l.area()), w.plant_scale(b), kind.label()));
         }

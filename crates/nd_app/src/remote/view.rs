@@ -424,7 +424,22 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         })
     });
     let plant = b.plant.map(|k| {
-        json!({ "kind": plant_name(k), "label": k.label(), "capacity_mw": round(k.capacity_mw()), "availability": round(k.availability(&w.weather, w.clock.day_fraction())), "upkeep_per_day": round(k.upkeep_per_day()) })
+        // [plant-groups] This lot's own figures (sized to it), and its park.
+        let group = w.plant_group_of(id).map(|g| {
+            let members: Vec<&nd_sim::Building> = g.members.iter().filter_map(|m| w.buildings.get(*m)).collect();
+            json!({
+                "name": g.name, "anchor": key_str(g.anchor()), "members": g.members.iter().map(|m| key_str(*m)).collect::<Vec<_>>(),
+                "member_names": members.iter().map(|m| m.name.clone()).collect::<Vec<_>>(), "lots": g.lots.iter().map(|l| key_str(*l)).collect::<Vec<_>>(),
+                "area_m2": round(g.area), "capacity_mw": round(members.iter().map(|m| w.plant_capacity_mw(m)).sum::<f32>()),
+                "output_mw": round(members.iter().map(|m| w.plant_dispatched_mw(m)).sum::<f32>()), "upkeep_per_day": round(members.iter().map(|m| w.plant_upkeep(m)).sum::<f32>()),
+                "bonus": round(nd_sim::world::plant_groups::group_bonus(g.members.len())),
+            })
+        });
+        json!({
+            "kind": plant_name(k), "label": k.label(), "capacity_mw": round(w.plant_capacity_mw(b)), "availability": round(k.availability(&w.weather, w.clock.day_fraction())),
+            "upkeep_per_day": round(w.plant_upkeep(b)), "output_mw": round(w.plant_dispatched_mw(b)), "area_m2": round(lot.map_or(0.0, |l| l.area())), "size_scale": round(w.plant_scale(b)),
+            "group": group,
+        })
     });
     let park = lot.and_then(|l| l.park.as_ref()).map(|p| {
         json!({ "benches": p.benches.len(), "paths": p.paths.len(), "entrances": p.entrances.len(), "features": p.features.iter().map(|f| f.kind.label()).collect::<Vec<_>>(), "cluster_lots": p.cluster_lots, "cluster_area": round(p.cluster_area) })

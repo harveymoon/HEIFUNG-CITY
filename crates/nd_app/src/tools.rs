@@ -1189,13 +1189,23 @@ pub(crate) fn tool_input(
                         };
                         return;
                     }
+                    let before = sim.world.economy.treasury;
                     tools.status = match sim.world.place_building(what, p) {
                         Ok(id) => {
                             *selection = Selection::Building(id);
-                            // [clarity] Solar and wind are sized to their lot.
+                            // [clarity] Solar and wind are sized to their lot;
+                            // [plant-groups] the price is what was paid.
+                            let paid = before - sim.world.economy.treasury;
                             match sim.world.buildings.get(id).filter(|b| b.plant.is_some()) {
-                                Some(b) => format!("{} built: {:.0} MW for {:.0}; {:.0}/day to run.", what.label(), sim.world.plant_capacity_mw(b), what.cost() * sim.world.plant_scale(b), sim.world.plant_upkeep(b)),
-                                None => format!("{} built for {:.0}; {:.0}/day to run.", what.label(), what.cost(), what.upkeep()),
+                                Some(b) => {
+                                    let mut s = format!("{} built: {:.1} MW for {:.0}; {:.0}/day to run.", what.label(), sim.world.plant_capacity_mw(b), paid, sim.world.plant_upkeep(b));
+                                    if let Some(g) = sim.world.plant_group_of(id) {
+                                        let mw: f32 = g.members.iter().filter_map(|m| sim.world.buildings.get(*m)).map(|m| sim.world.plant_capacity_mw(m)).sum();
+                                        s += &format!(" Part of {}: {} lots, {:.0} MW.", g.name, g.members.len(), mw);
+                                    }
+                                    s
+                                }
+                                None => format!("{} built for {:.0}; {:.0}/day to run.", what.label(), paid, what.upkeep()),
                             }
                         }
                         Err(e) => format!("Cannot build: {e}."),
@@ -1651,6 +1661,12 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
         Selection::Bot(_) => {}
         Selection::Building(b) => {
             lot_outline(gizmos, w, b, 1.6, gold);
+            // [plant-groups] A Sunfield or Wind Park is selected whole.
+            if let Some(g) = w.plant_group_of(b) {
+                for m in g.members.into_iter().filter(|&m| m != b) {
+                    lot_outline(gizmos, w, m, 1.6, gold);
+                }
+            }
             // [land] Everything its owner owns (a rich person's other homes
             // and businesses), outlined and tied to it by a line.
             let owned = w.owned_with(b);

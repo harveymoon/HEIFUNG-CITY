@@ -69,6 +69,10 @@ mod industry_bridge;
 pub use plan::{ProjectCheck, ProjectInfo, ProjectPreview};
 mod power;
 pub use power::{GridAsset, PlantRow};
+pub mod plant_groups;
+pub use plant_groups::{PlantGroup, PlantJoin, PlantPreview};
+#[cfg(test)]
+mod plant_groups_tests;
 mod services;
 mod society;
 mod survey;

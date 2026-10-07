@@ -255,6 +255,6 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] New Game climate picker: Temperate, Desert, Tropical, Arctic, Volcanic (more hot spots) [feat/climates]
 - [ ] Climate looks: snow/ice and conifers, palms and lush ground, basalt and steam; rain/snowfall [feat/climates]
 
-- [ ] Hydro dam: curved arch dam with spillway, cooler look [feat/plant-groups]
-- [ ] Solar/wind output and cost follow plot size everywhere the player looks (they read as identical) [feat/plant-groups]
-- [ ] Adjacent solar lots merge into one Sunfield; adjacent wind lots into a Wind Park; small lot allowed if it joins a wind farm [feat/plant-groups]
+- [x] Hydro dam: curved arch dam with spillway, cooler look [feat/plant-groups] → DONE [feat/plant-groups]: `dam.rs`, arch with spillway, intake towers, penstock, neon lines
+- [x] Solar/wind output and cost follow plot size everywhere the player looks (they read as identical) [feat/plant-groups] → DONE [feat/plant-groups]: Build menu, tooltip, pointer card, inspect API and place messages were flat; now per lot, capped 6×
+- [x] Adjacent solar lots merge into one Sunfield; adjacent wind lots into a Wind Park; small lot allowed if it joins a wind farm [feat/plant-groups] → DONE [feat/plant-groups]: `world/plant_groups.rs`, derived groups, +4%/lot bonus, `plant_preview` API

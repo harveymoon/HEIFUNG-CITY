@@ -2,10 +2,6 @@
 
 use super::*;
 
-/// Boundary two plant parcels must share to be drawn as one field, metres:
-/// more than a corner, less than any real parcel side.
-pub const PLANT_MERGE_MIN_SHARED: f32 = 4.0;
-
 /// What a row of the plant table is: a plant of a kind or a battery.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GridAsset {
@@ -49,6 +45,11 @@ pub struct PlantRow {
     pub derelict: bool,
     /// Still clearing the lot or being built: not on the grid yet.
     pub pending: bool,
+    /// [plant-groups] The plants this row stands for (just `id`, or every
+    /// member of a Sunfield or Wind Park), their lots and their lot area.
+    pub members: Vec<BuildingId>,
+    pub lots: Vec<LotId>,
+    pub area_m2: f32,
 }
 
 impl World {
@@ -70,7 +71,7 @@ impl World {
         if !kind.allowed_on(lot.land_use) {
             return Err(format!("a {} cannot go on {} land", kind.label(), lot.land_use.label().to_lowercase()));
         }
-        if lot.area() < kind.min_area() {
+        if lot.area() < kind.min_area() && self.small_plant_lot_joins(kind, lot_id).is_none() {
             return Err(format!("too small: a {} needs {:.0} m²", kind.label(), kind.min_area()));
         }
         self.power_site(lot_id, kind)?;
@@ -83,7 +84,7 @@ impl World {
         self.economy.debit_item(Flow::Construction, cost, Item::Named(kind.label().to_string()));
         let name = format!("{} {}", match kind {
             PowerPlantKind::Coal => "Blackridge",
-            PowerPlantKind::Solar => "Sunfield",
+            PowerPlantKind::Solar => "Solar Array",
             PowerPlantKind::Wind => "Westerly",
             PowerPlantKind::Nuclear => "Calder",
             PowerPlantKind::Hydro => "Millrace",
@@ -134,7 +135,8 @@ impl World {
 
     /// [clarity] A plant's own nameplate output (scaled by its lot).
     pub fn plant_capacity_mw(&self, b: &Building) -> f32 {
-        b.plant.map_or(0.0, |k| k.capacity_mw() * self.plant_scale(b))
+        // [plant-groups] times the shared-connection bonus of its group.
+        b.plant.map_or(0.0, |k| k.capacity_mw() * self.plant_scale(b) * self.plant_group_bonus(b))
     }
 
     /// [clarity] A plant's own daily upkeep (scaled by its lot).
@@ -175,6 +177,9 @@ impl World {
                     capacity_mwh: 0.0,
                     derelict: b.is_derelict(),
                     pending,
+                    members: vec![id],
+                    lots: vec![b.lot],
+                    area_m2: self.lots.get(b.lot).map_or(0.0, |l| l.area()),
                 });
             } else if let Some(bat) = &b.battery {
                 let k = bat.kind;
@@ -196,9 +201,13 @@ impl World {
                     capacity_mwh: k.capacity_mwh(),
                     derelict: b.is_derelict(),
                     pending: pending || b.demolition.is_some(),
+                    members: vec![id],
+                    lots: vec![b.lot],
+                    area_m2: self.lots.get(b.lot).map_or(0.0, |l| l.area()),
                 });
             }
         }
+        let mut rows = self.fold_group_rows(rows);
         let order = |a: &GridAsset| match a {
             GridAsset::Plant(k) => k.index(),
             GridAsset::Battery(k) => 100 + *k as usize,
@@ -433,8 +442,9 @@ impl World {
     }
 
     /// The lots of the plant field `id` belongs to: `id`'s own lot plus every
-    /// finished plant of the same kind reachable through parcels that share
-    /// at least [`PLANT_MERGE_MIN_SHARED`] of boundary, sorted by lot id (so
+    /// finished plant of the same kind reachable through parcels that
+    /// touch ([`super::plant_groups::lots_touch`]: an edge, or a lot line a
+    /// couple of metres wide, never a road), sorted by lot id (so
     /// the first is the same for every member: the field's anchor). Only
     /// kinds that [merge](PowerPlantKind::merges_with_neighbours) form
     /// fields; for anything else, a site under construction or demolition,
@@ -454,7 +464,7 @@ impl World {
             let here = &self.lots[field[next]].polygon;
             next += 1;
             for &l in &candidates {
-                if !field.contains(&l) && crate::geom::shared_boundary(here, &self.lots[l].polygon) >= PLANT_MERGE_MIN_SHARED {
+                if !field.contains(&l) && super::plant_groups::lots_touch(here, &self.lots[l].polygon, &self.roads) {
                     field.push(l);
                 }
             }
