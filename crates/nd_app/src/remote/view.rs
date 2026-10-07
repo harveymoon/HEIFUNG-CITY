@@ -282,6 +282,24 @@ fn activity(w: &World, c: &Citizen) -> Value {
         Activity::OnMetro { train } => {
             m.insert("metro_train".into(), json!(key_str(*train)));
         }
+        // [passengers] Riding along: whose car, where to.
+        Activity::Passenger { driver, to, purpose, seated } => {
+            m.insert("driver".into(), json!(key_str(*driver)));
+            m.insert("driver_name".into(), json!(w.citizens.get(*driver).map(|d| d.name.as_str())));
+            m.insert("in_car".into(), json!(seated));
+            if let Some(Activity::Driving { car, .. }) = w.citizens.get(*driver).map(|d| &d.activity) {
+                m.insert("car".into(), json!(key_str(*car)));
+            }
+            m.insert("to".into(), opt_key(*to));
+            m.insert("to_name".into(), name_of(*to));
+            m.insert("purpose".into(), json!(format!("{purpose:?}")));
+        }
+        // [ferries] Away for the day in a town off the map.
+        Activity::Abroad { terminal, town, until } => {
+            m.insert("terminal".into(), json!(key_str(*terminal)));
+            m.insert("town".into(), json!(w.ferry_town_name(*terminal, *town)));
+            m.insert("back_after_tick".into(), json!(until));
+        }
         Activity::Arriving | Activity::AtHome | Activity::Working | Activity::Idle | Activity::Waiting { .. } => {}
     }
     if let Some(t) = &c.transit {
@@ -485,6 +503,9 @@ pub fn car_row(w: &World, id: CarId, c: &Car) -> Value {
     if kind == "car" {
         m["citizen"] = json!(key_str(c.citizen));
         m["citizen_name"] = json!(w.citizens.get(c.citizen).map(|x| x.name.as_str()));
+        // [passengers] Everyone riding along besides the driver.
+        m["occupants"] = json!(c.occupants.iter().filter_map(|&p| w.citizens.get(p).map(|x| json!({ "id": key_str(p), "name": x.name }))).collect::<Vec<_>>());
+        m["vehicle"] = json!(c.owned.map(key_str));
     }
     if let Some(bus) = &c.bus {
         m["route"] = json!(key_str(bus.route));
@@ -792,6 +813,8 @@ pub fn vehicle_spot(w: &World, vid: nd_sim::VehicleId, s: &nd_sim::ParkSpot) -> 
         v["limit_min"] = json!(w.kerb_limit(vid));
         v["illegal"] = json!(w.parked_illegally(s));
         v["ticketed_tick"] = if s.ticketed > 0 { json!(s.ticketed) } else { Value::Null };
+        // [boot] Clamped on the city's orders, waiting for the tow truck.
+        v["booted"] = json!(s.booted);
     }
     if s.kind == nd_sim::ParkKind::Pound {
         v["impounded"] = json!({ "pound": s.building.map(key_str), "out_of_town": s.building.is_none(), "release_fee": round(w.release_fee(s)), "auction_in_min": (s.since + nd_sim::enforcement::AUCTION_AFTER).saturating_sub(w.clock.tick) });

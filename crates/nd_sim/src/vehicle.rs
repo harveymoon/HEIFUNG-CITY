@@ -449,6 +449,10 @@ pub struct ParkSpot {
     /// [parking] In the pound: the tow fee owed (storage is added daily).
     #[serde(default)]
     pub fee: f32,
+    /// [boot] A wheel clamp is on: the car cannot be driven until the tow
+    /// truck has taken it (the hook replaces the spot, clamp and all).
+    #[serde(default)]
+    pub booted: bool,
 }
 
 /// Where a private car is: parked somewhere, or on the road.

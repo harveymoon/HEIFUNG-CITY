@@ -1848,7 +1848,10 @@ impl World {
             c.asleep = false;
             c.remember(tick, format!("Off to {name} for the day."));
             self.services.stats.pupils_today += 1;
-            self.travel_to(cid, Some(sid), Purpose::Visit(lu));
+            // [passengers] Driven there by a parent now and then.
+            if !self.school_run(cid, sid, Purpose::Visit(lu)) {
+                self.travel_to(cid, Some(sid), Purpose::Visit(lu));
+            }
         }
     }
 

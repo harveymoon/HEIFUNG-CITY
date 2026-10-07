@@ -1121,6 +1121,51 @@ impl Landscape {
         let g = WaterGraph::build(self);
         g.route(self, from, to)
     }
+
+    /// [ferries] Every edge of the map that water from `from` reaches,
+    /// with the shortest route out across it, nearest first. A dock on a
+    /// river that runs off both sides of the map reaches both; one on a
+    /// coast reaches only the edge its sea opens onto (each coast of a
+    /// two-coast map is its own way out); one on a lake reaches none. The
+    /// routes end out of sight, like `water_route`'s.
+    pub fn water_routes_out(&self, from: Vec2) -> Vec<(MapEdge, Vec<Vec2>)> {
+        let g = WaterGraph::build(self);
+        g.routes_out(self, from)
+    }
+}
+
+/// [ferries] A side of the map, for routes that leave it. `+y` is north
+/// (the sea's `SeaExit::South` leaves towards `-y`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum MapEdge {
+    North,
+    East,
+    South,
+    West,
+}
+
+impl MapEdge {
+    pub const ALL: [MapEdge; 4] = [MapEdge::North, MapEdge::East, MapEdge::South, MapEdge::West];
+
+    /// The side a point far out (or a direction) lies towards.
+    pub fn of(p: Vec2) -> MapEdge {
+        if p.x.abs() >= p.y.abs() {
+            if p.x >= 0.0 { MapEdge::East } else { MapEdge::West }
+        } else if p.y >= 0.0 {
+            MapEdge::North
+        } else {
+            MapEdge::South
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            MapEdge::North => "north",
+            MapEdge::East => "east",
+            MapEdge::South => "south",
+            MapEdge::West => "west",
+        }
+    }
 }
 
 // ── water routing ───────────────────────────────────────────────────────────
@@ -1236,6 +1281,95 @@ impl WaterGraph {
             }
         }
         None
+    }
+
+    /// Shortest distances from `start` to every node (Dijkstra over the
+    /// whole graph) and the tree to walk paths back along.
+    fn tree(&self, start: usize) -> (Vec<f32>, Vec<usize>) {
+        let n = self.nodes.len();
+        let mut dist = vec![f32::INFINITY; n];
+        let mut prev = vec![usize::MAX; n];
+        let mut done = vec![false; n];
+        dist[start] = 0.0;
+        // Small graphs (a few hundred nodes): a plain scan is plenty.
+        loop {
+            let mut u = usize::MAX;
+            for k in 0..n {
+                if !done[k] && dist[k].is_finite() && (u == usize::MAX || dist[k] < dist[u]) {
+                    u = k;
+                }
+            }
+            if u == usize::MAX {
+                break;
+            }
+            done[u] = true;
+            for &v in &self.adj[u] {
+                let nd = dist[u] + self.nodes[u].distance(self.nodes[v]);
+                if nd < dist[v] {
+                    dist[v] = nd;
+                    prev[v] = u;
+                }
+            }
+        }
+        (dist, prev)
+    }
+
+    /// [ferries] The nearest way out across each edge of the map.
+    fn routes_out(&self, l: &Landscape, from: Vec2) -> Vec<(MapEdge, Vec<Vec2>)> {
+        let in_sea = |p: Vec2| l.sea.as_ref().is_some_and(|s| s.contains(p));
+        if in_sea(from) {
+            let Some(sea) = l.sea.as_ref() else { return Vec::new() };
+            let out = sea.exit_from(from);
+            return vec![(MapEdge::of(out), vec![from, out])];
+        }
+        let Some(start) = self.nearest(l, from) else { return Vec::new() };
+        let (dist, prev) = self.tree(start);
+        // The way out from each goal node: on past the river's end, or
+        // across the sea from its mouth.
+        let mut best: Vec<(MapEdge, f32, usize, Vec2)> = Vec::new();
+        for k in 0..self.nodes.len() {
+            if !dist[k].is_finite() || !(self.exit[k] || self.sea[k]) {
+                continue;
+            }
+            let p = self.nodes[k];
+            let out = if self.sea[k] {
+                match l.sea.as_ref() {
+                    Some(s) => s.exit_from(p),
+                    None => continue,
+                }
+            } else {
+                p
+            };
+            let edge = MapEdge::of(out);
+            let d = dist[k] + p.distance(out);
+            match best.iter_mut().find(|b| b.0 == edge) {
+                Some(b) if b.1 <= d => {}
+                Some(b) => *b = (edge, d, k, out),
+                None => best.push((edge, d, k, out)),
+            }
+        }
+        best.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        best.into_iter()
+            .map(|(edge, _, k, out)| {
+                let mut path = vec![k];
+                let mut c = k;
+                while prev[c] != usize::MAX && path.len() <= self.nodes.len() {
+                    c = prev[c];
+                    path.push(c);
+                }
+                path.reverse();
+                let mut pts = vec![from];
+                pts.extend(path.iter().map(|&i| self.nodes[i]));
+                if self.sea[k] {
+                    pts.push(out);
+                } else {
+                    // Carry on past the edge, as `route` does.
+                    let q = path.len().checked_sub(2).map_or(out, |i| self.nodes[path[i]]);
+                    pts.push(out + (out - q).normalize_or(out.normalize_or(Vec2::X)) * 120.0);
+                }
+                (edge, pts)
+            })
+            .collect()
     }
 
     fn route(&self, l: &Landscape, from: Vec2, to: Option<Vec2>) -> Option<Vec<Vec2>> {

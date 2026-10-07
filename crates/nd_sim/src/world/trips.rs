@@ -833,7 +833,10 @@ impl World {
         if at_car && matches!(self.citizens[id].activity, Activity::Traveling { .. }) {
             if let Some(tc) = self.citizens[id].to_car.take() {
                 if !self.start_drive(id, tc.car, tc.to, tc.purpose) {
-                    self.travel_with(id, Some(tc.to), tc.purpose, true, false, false);
+                    // [passengers] A school run without the car: the
+                    // child goes alone, the parent where they were going after.
+                    let (to, purpose) = self.onward_after_failed_drive(id).unwrap_or((tc.to, tc.purpose));
+                    self.travel_with(id, Some(to), purpose, true, false, false);
                 }
                 return;
             }
@@ -853,6 +856,12 @@ impl World {
                 c.pending_footfall.clear();
                 c.thought = "It's gone. There's nothing here any more.".to_string();
                 c.next_decision_tick = tick + 1;
+                return;
+            }
+        }
+        // [ferries] At the terminal for a day out: aboard.
+        if let Some(b) = to {
+            if self.board_day_trip(id, b) {
                 return;
             }
         }
@@ -1115,6 +1124,7 @@ impl World {
     /// for the car), the next best is taken.
     pub(super) fn travel_with(&mut self, id: CitizenId, target: Option<BuildingId>, purpose: Purpose, allow_bus: bool, fresh: bool, allow_car: bool) {
         let Some(target) = target else { return };
+        let origin = self.citizens[id].inside;
         self.citizens[id].transit = None;
         self.citizens[id].to_car = None;
         if fresh && purpose != Purpose::Home {
@@ -1155,6 +1165,19 @@ impl World {
                     if at.distance(walk_from) > 25.0 {
                         self.walk_to_car(id, car, at, target, purpose, walk_from);
                     } else if !self.start_drive(id, car, target, purpose) {
+                        continue;
+                    }
+                    if fresh {
+                        self.begin_trip(id, opt.mode, dist);
+                        // [passengers] Coworkers and family setting off
+                        // from here the same way come along.
+                        self.pick_up(id, origin, target, purpose);
+                    }
+                    return;
+                }
+                // [passengers] A seat in someone else's car.
+                ModePlan::Lift { driver } => {
+                    if !self.join_ride(id, driver, target, purpose, crate::rides::RideKind::Lift, false) {
                         continue;
                     }
                 }
@@ -1307,6 +1330,16 @@ impl World {
                 };
                 // [tolls] The tolls a car trip has cost lately.
                 push(TripMode::Car, minutes, dist / 1000.0 * 0.5 + fee + c.commute.toll_avg, -4.0 - 8.0 * hedonism + bravado, ModePlan::Car { car, at });
+            }
+        }
+        // [passengers] A lift: family or a coworker setting off by car from
+        // right here to near where this trip goes has a seat. Free, a
+        // comfortable seat, and company the sociable enjoy; the drive's
+        // jams and the walk from wherever they park are the same.
+        if q.allow_car && dist >= self.config.drive_threshold * 0.5 {
+            if let Some((driver, dest)) = self.lift_on_offer(id, q) {
+                let minutes = dist * 1.3 / (9.0 * secs) + 3.0 + dest.distance(q.to) / walk;
+                push(TripMode::Car, minutes, 0.0, -6.0 - 6.0 * sociable, ModePlan::Lift { driver });
             }
         }
         // [taxis] A cab, when a company has one on duty within reach.
@@ -1545,6 +1578,8 @@ pub enum ModePlan {
     Subway { line: crate::subway::MetroLineId, board: BuildingId, alight: BuildingId, stop: Vec2 },
     /// The citizen's car, parked at `at`.
     Car { car: crate::vehicle::VehicleId, at: Vec2 },
+    /// [passengers] A seat in `driver`'s car, setting off from here.
+    Lift { driver: CitizenId },
     /// [taxis] Hail a cab: wait at `wait_at` for one coming to `at` on
     /// `segment` (`world/taxis.rs`).
     Taxi { segment: SegmentId, at: Vec2, wait_at: Vec2 },

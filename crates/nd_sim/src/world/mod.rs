@@ -68,6 +68,8 @@ mod edge_tests;
 mod concerns_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod gameplay_tests;
 mod taxes;
 pub use taxes::TaxRow;
 mod tolls;
@@ -78,6 +80,8 @@ mod trains;
 mod tourism;
 mod trips;
 mod water;
+mod ferry;
+mod rides;
 
 use crate::buildings::{Building, BuildingId, Construction, Tier};
 use crate::citizens::{Activity, Citizen, CitizenId, Household, HouseholdId, Purpose};
@@ -434,6 +438,10 @@ pub struct World {
     /// (`world/cargo_hubs.rs`).
     #[serde(default)]
     pub cargo_hubs: crate::cargo_hub::CargoHubs,
+    /// [passengers] Stops on the way and the counts of people riding
+    /// along in others' cars (`world/rides.rs`).
+    #[serde(default)]
+    pub rides: crate::rides::Rides,
 }
 
 impl World {
@@ -508,6 +516,7 @@ impl World {
             tolls: Default::default(),
             taxis: Default::default(),
             cargo_hubs: Default::default(),
+            rides: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -769,6 +778,7 @@ impl World {
             self.daily_vehicles();
             self.industry_daily();
             self.daily_places();
+            self.rides.stats.roll();
             // [districts] facelifts; [tourism] hotel nights and the books.
             self.daily_districts();
             self.daily_tourism();
@@ -830,6 +840,8 @@ impl World {
         self.step_rail();
         self.step_subway();
         self.step_ships();
+        // [ferries] Day trips out, and anyone stranded abroad.
+        self.step_ferry_people();
         self.step_cargo_hubs();
         if self.clock.minute_of_day() == 0 {
             self.bots.delivered_today = 0;
@@ -842,6 +854,8 @@ impl World {
         // [tourism] Arrivals on the hour, visitors' days, departures.
         self.step_tourism();
         self.step_citizens(minds);
+        // [passengers] With their drivers, in or out of the car.
+        self.step_passengers();
         // [concerns] Happiness on the hour and at midnight.
         self.step_concerns();
         // Every system that moves people has run: lay the breadcrumbs.

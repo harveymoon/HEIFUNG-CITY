@@ -123,6 +123,17 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                     nd_sim::RailFacility::FreightYard => ui.label(format!("freight yard: {} orders ({:.0} units) waiting for the next train, {:.0} units of exports on the apron{joined}", b.rail_inbound.len(), b.rail_inbound.iter().map(|c| c.amount).sum::<f32>(), b.rail_outbound)),
                 };
             }
+            // [ferries] The towns off the map its boats run to.
+            if b.port == Some(nd_sim::ports::PortKind::FerryTerminal) {
+                let towns = sim.world.ferry_towns(id);
+                let waiting = sim.world.ports.boarding.get(&id).copied().unwrap_or(0);
+                if towns.is_empty() {
+                    ui.label("ferry terminal: its water does not reach the edge of the map, so no boats run off it");
+                } else {
+                    let list: Vec<String> = towns.iter().map(|t| format!("{} ({}, {:.0} km)", t.name, t.edge.label(), t.km)).collect();
+                    ui.label(format!("ferries to {} · {waiting} waiting to board", list.join(", ")));
+                }
+            }
             // [subway]
             if b.metro {
                 let (today, yesterday) = sim.world.subway.boardings_at(id);
@@ -198,7 +209,21 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                         ui.label(format!("{:.0} km/h  ·  nobody we know at the wheel", car.v * 3.6));
                     }
                 }
+                // [boot] Clamp it: it pulls over and waits for the tow truck.
+                if car.owned.is_some() && tow_button(ui) {
+                    let owned = car.owned;
+                    match sim.world.order_tow_car(id) {
+                        Ok(_) => {
+                            if let Some(v) = owned {
+                                *selection = Selection::Parked(v);
+                            }
+                        }
+                        Err(e) => tow_refused(ui, e),
+                    }
+                    return;
+                }
             }
+            show_tow_refusal(ui);
             why_and_trip(ui, &sim.world, id, selection);
         }
         Selection::Parked(vid) => {
@@ -220,6 +245,16 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                     *selection = Selection::Citizen(owner);
                 }
             }
+            // [boot] Clamped and waiting, or the button to have it done.
+            if spot.booted {
+                let truck = sim.world.enforcement.job_for(vid).map(|j| if j.truck.is_some() { "the tow truck is on its way" } else if j.company.is_none() { "a tow truck is coming from out of town" } else { "waiting for a tow truck" }).unwrap_or("waiting for a tow truck");
+                ui.label(egui::RichText::new(format!("Clamped  ·  {truck}")).color(egui::Color32::from_rgb(255, 140, 20)));
+            } else if spot.kind.on_street() && tow_button(ui) {
+                if let Err(e) = sim.world.order_tow(vid) {
+                    tow_refused(ui, e);
+                }
+            }
+            show_tow_refusal(ui);
         }
     }
 }
@@ -293,6 +328,29 @@ fn why_and_trip(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selecti
         ui.add(egui::ProgressBar::new(d.anger).desired_width(220.0).fill(egui::Color32::from_rgb(200, 60, 40)).text(format!("Driver {word}  ·  {:.0}%", d.anger * 100.0)));
     }
     ui.label(egui::RichText::new(format!("Driver: {}", d.profile.label())).small().weak());
+}
+
+/// [boot] "Tow this car": a wheel clamp now, the tow truck after; the owner
+/// pays at the pound.
+fn tow_button(ui: &mut egui::Ui) -> bool {
+    ui.button(egui::RichText::new("Tow this car").color(egui::Color32::from_rgb(255, 140, 20)))
+        .on_hover_text("Clamp it where it stands (a moving car pulls over first) and call the tow truck; the owner pays to get it back from the pound")
+        .clicked()
+}
+
+/// Why the last tow order was refused, shown under the button for a while.
+fn tow_refused(ui: &egui::Ui, why: String) {
+    let until = ui.ctx().input(|i| i.time) + 4.0;
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("tow_refused"), (why, until)));
+}
+
+fn show_tow_refusal(ui: &mut egui::Ui) {
+    let now = ui.ctx().input(|i| i.time);
+    if let Some((why, until)) = ui.ctx().data(|d| d.get_temp::<(String, f64)>(egui::Id::new("tow_refused"))) {
+        if now < until {
+            ui.label(egui::RichText::new(format!("Can't tow: {why}")).color(WARN).small());
+        }
+    }
 }
 
 fn capitalise(s: &str) -> String {

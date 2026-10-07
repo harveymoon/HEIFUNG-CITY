@@ -303,7 +303,7 @@ next turn, left turn wait, passing on the shoulder). `lane_use {junction: [x, y]
 lanes: ["L", "S+R"]}` sets the arrows of the street arriving nearest `approach`, leftmost lane first;
 `lanes: "reset"` goes back to the demand-chosen default.
 
-`inspect` with one of `citizen`, `building`, `lot`, `car`, `drone`, `vehicle` (a private car's record: owner, model, place with minutes_here, limit_min, illegal, ticketed_tick, impounded {pound, out_of_town, release_fee, auction_in_min} and tow_job), `train`, `route` (ids) or `gesture` (int). A building that is a parking office adds `parking_office` {officers, patrol cars}, a tow company `tow_company` {trucks, jobs_open, pound}, a lot the city runs `parking.city_run`; a tow truck's `car` adds `tow` {job, state, reason, vehicle, company, out_of_town}, an officer's car `patrol`. `parking_price {building, price}` sets the fee at a city-run lot. `place` takes `parking_enforcement[:tier]`, `parking_small`, `parking_large`, `parking_garage`;
+`inspect` with one of `citizen`, `building`, `lot`, `car`, `drone`, `vehicle` (a private car's record: owner, model, place with minutes_here, limit_min, illegal, ticketed_tick, impounded {pound, out_of_town, release_fee, auction_in_min} and tow_job), `train`, `route` (ids) or `gesture` (int). A building that is a parking office adds `parking_office` {officers, patrol cars}, a tow company `tow_company` {trucks, jobs_open, pound}, a lot the city runs `parking.city_run`; a tow truck's `car` adds `tow` {job, state, reason, vehicle, company, out_of_town}, an officer's car `patrol`. `parking_price {building, price}` sets the fee at a city-run lot. [boot] `tow_car {car | vehicle}` (also `tow`, `boot`) clamps a private car and calls the tow truck, as the inspector's "Tow this car" button does: `car` is a car on the road (it pulls over to a kerb slot, or the street's edge, is taken off the lanes, and its driver and passengers walk on), `vehicle` a car's record (parked at a kerb, or driving). Reply {tow_job, vehicle, company, out_of_town}; an error says why not (not a resident's car, off the street, already towed, leaving town). A clamped car's place has `booted: true`; the owner's mood drops, they remember it, and they pay the release fee at the pound as for any tow. The enforcement report adds `boots_today` and `boots_total`. [passengers] A car row of kind car carries `occupants` ([{id, name}]: everyone riding along besides the driver, `citizen`) and `vehicle` (its record); a passenger's activity has `driver`, `driver_name`, `in_car`, `car`, `to`, `purpose`. `report` traffic.private_cars adds `passengers` {riding_now, walking_to_a_car, cars_with_passengers, today, outings_today, carpools_today, school_runs_today, lifts_today, yesterday, total, fullest_car, drop_offs_pending}. `place` takes `parking_enforcement[:tier]`, `parking_small`, `parking_large`, `parking_garage`;
 with none, the current selection. The detail matches what the inspector and the person pane show:
 A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price, place: parked (home / building / parking lot / kerb / street (no space) / dealer, building, pos, since_tick) or driving (car id, errand)}} and `commute` {pain per mode with recent_trips, parking_pain, trip_mode_now, last_trip {mode, minutes, pain}}: what the mode choice weighs and what the daily habits (buy a bike, sell the car, buy one) act on.
 
@@ -696,6 +696,17 @@ building; strongest first) and `tourist_list` (`limit`, default 20: id, pos, act
 via, hotel, money, spent, sights, arrived_day, leaves_day, going_to). `action: "refresh"` re-reads
 the attractions now instead of on the two-hour cycle. `status` carries a `tourism` summary and the
 number of `districts`; the ledger has a `tourist tax` row.
+
+[ferries] A tourist row also has `commuter_at` (a commuter from over the water: the business they
+work a shift at; null for a visitor), and the reply `ferry_commuters` (commuters in town now; they are
+not counted in `tourists`). The `landscape` reply's `ports` rows carry `remote_towns` ({name, edge
+north/east/south/west, km}: the towns off the map a ferry terminal runs to, beyond edges its water
+reaches), `sailings` and `waiting_to_board`; `ships` rows `remote_town` (a run off the map) and
+`back_home` (unloading at its own pier); `port_stats` adds `remote_sailings_today`,
+`visitors_in_today`, `visitors_out_today`, `commuters_in_today`, `commuters_out_today`,
+`day_trips_today`, `day_trippers_back_today`, `abroad_now` and `commuters_in_town`. A citizen away
+on a day trip has activity `away on a day trip` with `terminal`, `town` and `back_after_tick`.
+Placing a ferry terminal on water that does not reach the map edge is refused.
 
 ## Crime, homelessness and trash
 
