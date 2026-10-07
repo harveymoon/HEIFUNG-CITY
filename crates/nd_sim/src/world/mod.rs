@@ -104,6 +104,11 @@ mod rides;
 // [economy] business pressure, the new trades, the waterfront and the art scene
 mod pressure;
 mod waterfront;
+// [events] street races and warehouse raves; road wear and maintenance
+mod nights;
+mod roadworks;
+#[cfg(test)]
+mod events_tests;
 #[cfg(test)]
 mod economy_tests;
 
@@ -529,6 +534,14 @@ pub struct World {
     /// load unnamed and without an id (the app gives them one when saved).
     #[serde(default)]
     pub identity: crate::identity::CityIdentity,
+    /// [events] Street races and warehouse raves: tonight's, the record and
+    /// the news (`world/nights.rs`).
+    #[serde(default)]
+    pub street_events: crate::street_events::StreetEvents,
+    /// [events] Wear on every street piece and the maintenance budget
+    /// (`world/roadworks.rs`). Old saves load with every road like new.
+    #[serde(default)]
+    pub road_wear: crate::road_wear::RoadCondition,
 }
 
 impl World {
@@ -618,6 +631,8 @@ impl World {
             pressure: Default::default(),
             scene: Default::default(),
             identity: Default::default(),
+            street_events: Default::default(),
+            road_wear: Default::default(),
         };
         w.estate.pressure = crate::estate::Pressure::new(half + 200.0);
         w.landscape = Landscape::new(&w.config.landscape);
@@ -673,6 +688,8 @@ impl World {
         self.rebuild_ground();
         self.traffic.rebuild(&self.roads);
         self.apply_tolls();
+        // [events] Worn streets are rough again for the traffic.
+        self.apply_road_wear();
         // Park layouts are saved with their lots (the benches people sit on
         // must survive a load), so they are only planned again when a save
         // from before parks were serialised has park lots without one.
@@ -938,6 +955,8 @@ impl World {
             crate::prof!("daily_services", self.daily_services());
             // [subway] Upkeep before the books close.
             crate::prof!("daily_subway", self.daily_subway());
+            // [events] Roads wear and the crews resurface, before the books close.
+            crate::prof!("daily_roads", self.daily_roads());
             // [society] crime, the street and the bins settle their day.
             self.daily_society();
             self.daily_update();
@@ -1025,6 +1044,11 @@ impl World {
         self.step_air();
         self.step_taxis();
         self.step_driving();
+        // [events] Street races and warehouse raves.
+        self.step_nights();
+        if tick % crate::road_wear::SAMPLE_EVERY == 3 {
+            self.sample_road_load();
+        }
         self.step_enforcement();
         self.step_services();
         // [society] Trash trucks.

@@ -48,10 +48,14 @@ pub mod pressure;
 pub mod prof;
 pub mod rail;
 pub mod rides;
+/// [events] Road wear, the maintenance budget and its bias.
+pub mod road_wear;
 pub mod roads;
 pub mod services;
 /// Street names: chains of segments named once and kept across rebuilds.
 pub mod streets;
+/// [events] Street races and warehouse raves.
+pub mod street_events;
 pub mod takeover;
 /// [tax] Tax rates per land use and sub-type, and the import duty.
 pub mod tax;

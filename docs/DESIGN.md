@@ -182,6 +182,65 @@ Citizens are rendered from their simulated positions every frame.
   cars ring it and the flashiest spin donuts in tyre smoke, a crowd walks over, a neighbour calls
   the police; police on scene break it up (some arrests, cars impounded), else it ends after
   45-80 minutes and everyone leaves in convoy.
+- **Street races** (`nd_sim::street_events`, `world/nights.rs`): a young town has no scene, so
+  neither races nor raves happen on their own before day 10 (`SCENE_FROM_DAY`; the API forces one
+  any time). From then, at 23:00, on 35% of nights when three or more locals aged 18-42 at home
+  with a fast car of their own (tuned, a coupé, a superbike, an
+  expensive saloon or wedge; rebelliousness 0.45+) are free and no takeover is on, a race is planned
+  for 23:30-01:00. The crew (up to 8, flashiest first) drives to an empty lot or a surface car park
+  (the meet: near their homes, on cheap land) and parks up in rows, nose to the street
+  (`Spot::bay`, a `Ring` stunt); onlookers walk over. Once everyone is in (or most after 40
+  minutes, a pair after 80) they show the cars off for ten minutes, then the flag drops: every car
+  pulls out onto the same route over the streets to another such lot 450 m to 2.4 km away (550 m
+  by road at least) with a racing profile (`DriverProfile::racing`: 1.55x the limit, hard on the
+  throttle, through every light; a `GangRole` with `race` set and phase `Racing`, held at the end
+  of its route instead of parking). Cars park up at the finish in the order they arrive (the
+  winner first) and party there for 50-90 minutes. On most nights (by a hash of the race) a
+  neighbour at the meet calls it in when the engines go: a `StreetRace` crime at the finish. Police
+  on scene there wait for the first car in, then bust it: each racer at the party may be arrested
+  (40%, at most three; the car impounded and towed like a takeover's), every other racer caught is
+  fined 250 from their household (`Flow::Fines`), and one may floor it, handed to the chase system
+  (`try_chase`, the incident's suspect set to them). Then everyone drives home. The race is in the
+  record, the news and the inspector ("STREET RACER · racing to Lot 24", the place they came in).
+- **Warehouse raves** (`world/nights.rs`): an old warehouse is a cheap (low tier) industrial
+  building standing (not a dock, plant, station or service). At 22:00 each is weighed by the
+  culture living within 900 m (`RavePull`): young night owls (18-34, hedonism 0.55+) / 30 plus
+  artists (`pressure::is_artist`) / 6, plus 0.25 when the city has an art scene; 1 or more is a
+  scene. The strongest with a scene, if it has not held one in four days and the city none in two,
+  opens at 23:00 with a chance of 12% per point of culture (at most 30%). Night owls and artists
+  within 1.6 km who are at home or idle (nobody is pulled out of a bar or a shift) walk over (two
+  in three take up the word; more word goes round every
+  20 minutes until 01:00, 70 guests at most) and queue along the pavement from the door; the door
+  lets two in every two minutes (`Activity::Visiting` the warehouse, mood up, a memory) for 8 on
+  the door, half of it the hire of the place to whoever runs the warehouse. Beams
+  sweep the sky over the roof and coloured light pulses to the beat. After the first hour the
+  neighbours within 220 m who are home lose sleep and mood every half hour (a Noise concern), and
+  one may call the police (15% plus 4% per neighbour woken, at most 85%): an `illegal rave` crime at
+  the door. Police on scene shut it down, fine the promoter 400 (a quarter of the time taking them
+  in); otherwise it winds down between 03:00 and 04:30. A city without a scene near its warehouses
+  never has one (tested).
+- **Road wear and maintenance** (`nd_sim::road_wear`, `world/roadworks.rs`): every street piece
+  the city looks after (not paths, track, bored tunnels, highway carriageways or anything past the
+  map edge) wears 0.0033 a day with age (about 300 days to crumble) plus 0.00012 per vehicle sample
+  per lane per 100 m (vehicles seen on the piece every 10 minutes, lorries and buses x4: a lane
+  holding a car per 100 m all day adds about 0.003), bridges 35% faster.
+  Wear is kept per segment with each piece's midpoint, so road works carry it to the pieces that
+  are still there and new road starts smooth (`RoadCondition::remap`). At midnight the crews work
+  down a queue of pieces worn past 0.3 until the day's allowance is spent: the allowance is the
+  funding level (0-150%, the Taxes window's Road maintenance slider, default 100%) times what the
+  network needs to stand still (lane-metres x 0.033 a day); resurfacing costs 6 per lane-metre per
+  unit of wear and leaves the piece like new; the job the money runs out on is patched part way.
+  The queue is honest about whose street gets fixed: priority is wear x (0.35 + 1.3 x land
+  value), so at the same wear dear land goes about three times ahead of cheap land (rich
+  neighbourhoods call the council and the council answers). Cut the line and the poor streets
+  crumble first (tested: at a third of the need, the dear side stays near its start while the
+  cheap side wears on). Spending is booked as `Flow::RoadMaintenance`. From 0.35 wear the lanes
+  are rough (`Lane::rough`): drivers keep up to 35% under the limit (`limit_at`) and misjudge gaps
+  and run off the road up to 2.5 times as often (the same rolls, so no new draws). Worn pieces are
+  drawn with dark wheel ruts (from 50%), cracks (from 40%), patches (from 55%) and potholes (from
+  75%), placed by a hash of the piece's midpoint; the Road condition layer colours every street
+  green to red; hovering a street with Inspect shows its surface, what it does to traffic and its
+  place in the crews' queue.
 - **Road rage and trip time** (`traffic::road_rage`, `World::step_rage`): every drive is timed
   from the tick it appears, against the minutes its route should take in free flow (90 % of each
   lane's limit plus 10 s per junction). A private driver running far over (from about 1.4 to 3.4
@@ -1538,6 +1597,9 @@ trait MindProvider {
   older layers off whenever any code switches a flag on, so adding a layer is a flag on
   `Overlays` for its renderer plus one entry. The `overlay` API and `map {layer: "people"}` read
   the same data.
+- Road condition (`render/nights.rs`, `overlay {layer: "road_condition"}`): a ribbon down every
+  street piece the city maintains, green (new) through yellow to red (crumbling), rebuilt when the
+  wear changes; the legend gives the mean wear on cheap, middle and dear land.
 - Focus layers (`render/focus.rs`, the heat-vision material swap reused): with Traffic load on
   the city is dimmed and every vehicle on the road turns one light blue; vehicles in bored
   tunnels and the tunnels themselves are outlined through the ground (`layers::layer_gizmos`,
