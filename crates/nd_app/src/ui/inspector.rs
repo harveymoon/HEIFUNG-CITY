@@ -424,7 +424,7 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
         let lines: Vec<String> = w.subway.lines_at(id).map(|(_, l)| format!("{} (every {} min)", l.name, l.headway)).collect();
         let waiting = w.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Waiting { .. }) && matches!(c.transit.map(|t| t.leg), Some(nd_sim::transit::TransitLeg::Subway { board, .. }) if board == id)).count();
         section(ui, "METRO");
-        ui.label(if lines.is_empty() { "no line calls here yet (Buses tool, Metro mode)".to_string() } else { format!("{} · {today} boarded today, {yesterday} yesterday · {waiting} on the platform", lines.join(", ")) });
+        ui.label(if lines.is_empty() { "no line calls here yet (Build window, Transit, Metro lines)".to_string() } else { format!("{} · {today} boarded today, {yesterday} yesterday · {waiting} on the platform", lines.join(", ")) });
     }
     if b.depot {
         let out = w.traffic.cars.values().filter(|c| c.bus.as_ref().is_some_and(|x| x.depot == id)).count();

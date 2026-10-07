@@ -107,6 +107,12 @@ pub struct MetroLine {
     pub riders_yesterday: u32,
     #[serde(default)]
     pub runs_today: u32,
+    /// [metro-ux] A loop: the tunnel runs on from the last station back to
+    /// the first (`path` ends where it starts) and every run goes the whole
+    /// way round, one train each way. `stops` still has one entry per
+    /// station; the way home to the first is at [`MetroLine::length`].
+    #[serde(default)]
+    pub looped: bool,
 }
 
 fn default_headway() -> u32 {
@@ -122,11 +128,28 @@ impl MetroLine {
         self.stations.iter().position(|&s| s == b)
     }
 
-    /// Metres ridden from one station to another, either way.
+    /// Metres ridden from one station to another, either way (on a loop,
+    /// the shorter way round).
     pub fn ride_length(&self, board: usize, alight: usize) -> f32 {
         match (self.stops.get(board), self.stops.get(alight)) {
+            (Some(a), Some(b)) if self.looped => (a - b).abs().min(self.length() - (a - b).abs()),
             (Some(a), Some(b)) => (a - b).abs(),
             _ => 0.0,
+        }
+    }
+
+    /// Where station `i` comes in a run's calls, as the place a rider
+    /// boards or alights. On a loop the first station is both the first
+    /// call and the last (the train comes home to it).
+    fn call_position(&self, forward: bool, i: usize, alighting: bool) -> usize {
+        let n = self.stations.len();
+        if self.looped && i == 0 {
+            return if alighting { n } else { 0 };
+        }
+        match (forward, self.looped) {
+            (true, _) => i,
+            (false, true) => n - i,
+            (false, false) => n - 1 - i,
         }
     }
 
@@ -134,7 +157,7 @@ impl MetroLine {
     /// rider from `board` on to `alight`.
     pub fn serves(&self, forward: bool, board: BuildingId, alight: BuildingId) -> bool {
         match (self.index_of(board), self.index_of(alight)) {
-            (Some(a), Some(b)) => if forward { b > a } else { b < a },
+            (Some(a), Some(b)) if a != b => self.call_position(forward, b, true) > self.call_position(forward, a, false),
             _ => false,
         }
     }
@@ -143,19 +166,32 @@ impl MetroLine {
     /// station called at on the way.
     pub fn ride_minutes(&self, board: usize, alight: usize, seconds_per_tick: f32) -> f32 {
         let secs = seconds_per_tick.max(0.1);
-        let calls = board.abs_diff(alight) as f32;
-        self.ride_length(board, alight) / (SPEED * secs) + calls * DWELL_SECONDS / secs
+        let mut calls = board.abs_diff(alight);
+        if self.looped {
+            calls = calls.min(self.stations.len() - calls);
+        }
+        self.ride_length(board, alight) / (SPEED * secs) + calls as f32 * DWELL_SECONDS / secs
     }
 
     /// A run of this line as a railway [`Train`]: the tunnel's polyline,
     /// one way or the other, with its calls.
     pub fn run(&self, forward: bool, color: u8) -> Train {
         let total = self.length();
-        let (poly, stops): (Vec<Vec2>, Vec<(BuildingId, f32)>) = if forward {
+        let (poly, mut stops): (Vec<Vec2>, Vec<(BuildingId, f32)>) = if forward {
             (self.path.clone(), self.stations.iter().copied().zip(self.stops.iter().copied()).collect())
+        } else if self.looped {
+            // Round the other way: from home, the stations backwards.
+            let back = self.stations.iter().skip(1).rev().copied().zip(self.stops.iter().skip(1).rev().map(|s| total - s));
+            (self.path.iter().rev().copied().collect(), self.stations.first().map(|&s| (s, 0.0)).into_iter().chain(back).collect())
         } else {
             (self.path.iter().rev().copied().collect(), self.stations.iter().rev().copied().zip(self.stops.iter().rev().map(|s| total - s)).collect())
         };
+        // A loop's run comes home to the first station.
+        if self.looped {
+            if let Some(&first) = self.stations.first() {
+                stops.push((first, total));
+            }
+        }
         Train { kind: TrainKind::Passenger, cars: CARS, nodes: Vec::new(), poly, s: 0.0, prev_s: 0.0, speed: SPEED, stops, next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo: Vec::new(), color, held: false, branch: None }
     }
 }
@@ -373,6 +409,202 @@ pub fn lay_tunnel(stations: &[Vec2]) -> (Vec<Vec2>, Vec<f32>) {
     (path, stops)
 }
 
+/// [metro-ux] Lay a line's tunnel, end to end or (`looped`, three stations
+/// or more) round from the last station back to the first.
+pub fn lay_line(stations: &[Vec2], looped: bool) -> (Vec<Vec2>, Vec<f32>) {
+    if looped && stations.len() >= 3 {
+        lay_loop_tunnel(stations)
+    } else {
+        lay_tunnel(stations)
+    }
+}
+
+/// A loop's tunnel: as [`lay_tunnel`], every platform a straight along the
+/// chord from the station before to the one after (wrapping round), and
+/// the path closed back on the first station.
+pub fn lay_loop_tunnel(stations: &[Vec2]) -> (Vec<Vec2>, Vec<f32>) {
+    let n = stations.len();
+    if n < 3 {
+        return lay_tunnel(stations);
+    }
+    let dir = |k: usize| (stations[(k + 1) % n] - stations[(k + n - 1) % n]).normalize_or_zero();
+    let room = |a: Vec2, b: Vec2| (a.distance(b) / 3.0).min(PLATFORM_STRAIGHT);
+    let mut ctrl: Vec<Vec2> = Vec::with_capacity(n * 3 + 2);
+    for (k, &p) in stations.iter().enumerate() {
+        if k > 0 {
+            ctrl.push(p - dir(k) * room(p, stations[k - 1]));
+        }
+        ctrl.push(p);
+        ctrl.push(p + dir(k) * room(p, stations[(k + 1) % n]));
+    }
+    let home = stations[0];
+    ctrl.push(home - dir(0) * room(home, stations[n - 1]));
+    ctrl.push(home);
+    ctrl.dedup_by(|a, b| a.distance(*b) < 0.5);
+    let path = crate::rail::smooth_track(&ctrl, &RoadNetwork::default());
+    let mut stops = Vec::with_capacity(n);
+    let mut from = 0.0f32;
+    for (k, p) in stations.iter().enumerate() {
+        let s = if k == 0 { 0.0 } else { project_from(&path, *p, from) };
+        stops.push(s);
+        from = s + 1.0;
+    }
+    (path, stops)
+}
+
+/// [metro-ux] What a line would be before it is laid: its tunnel and the
+/// figures the line tool shows while the player clicks stations.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LinePreview {
+    pub stops: usize,
+    pub looped: bool,
+    /// The tunnel's centreline, as [`lay_line`] lays it.
+    pub path: Vec<Vec2>,
+    pub length_m: f32,
+    /// Metres of tunnel from each stop to the next (on a loop the last leg
+    /// runs home to the first).
+    pub legs_m: Vec<f32>,
+    /// Clock minutes for one run: end to end, or once round a loop.
+    pub run_min: f32,
+    /// Clock minutes for a train to be back where it started.
+    pub round_trip_min: f32,
+    /// Trains out at once at the headway, both directions together.
+    pub trains: u32,
+    pub headway: u32,
+    /// Boring the tunnel, paid when the line is laid.
+    pub tunnel_cost: f32,
+    /// Tunnels and runs a day (the stations pay their own upkeep already).
+    pub upkeep_per_day: f32,
+}
+
+/// Preview a line through `stations` (platform points in calling order).
+pub fn preview(stations: &[Vec2], looped: bool, headway: u32, seconds_per_tick: f32) -> LinePreview {
+    let looped = looped && stations.len() >= 3;
+    let headway = headway.clamp(MIN_HEADWAY, MAX_HEADWAY);
+    if stations.len() < 2 {
+        return LinePreview { stops: stations.len(), looped, path: stations.to_vec(), headway, ..Default::default() };
+    }
+    let (path, stops) = lay_line(stations, looped);
+    let length = path_length(&path);
+    let mut legs: Vec<f32> = stops.windows(2).map(|w| w[1] - w[0]).collect();
+    if looped {
+        legs.push(length - stops.last().copied().unwrap_or(0.0));
+    }
+    let secs = seconds_per_tick.max(0.1);
+    let calls = if looped { stations.len() } else { stations.len() - 1 };
+    let run = length / (SPEED * secs) + calls as f32 * DWELL_SECONDS / secs;
+    let round_trip = if looped { run } else { 2.0 * run };
+    let trains = 2 * (run / headway as f32).ceil().max(1.0) as u32;
+    let runs_per_day = 2.0 * ((SERVICE_END - SERVICE_START) as f32 / headway as f32).ceil();
+    LinePreview {
+        stops: stations.len(),
+        looped,
+        path,
+        length_m: length,
+        legs_m: legs,
+        run_min: run,
+        round_trip_min: round_trip,
+        trains,
+        headway,
+        tunnel_cost: length * TUNNEL_COST_PER_M,
+        upkeep_per_day: length / 1000.0 * TUNNEL_UPKEEP_PER_KM + runs_per_day * RUN_COST,
+    }
+}
+
+/// What clicking a station did to the line being drawn.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DraftStep {
+    /// The first stop of a new line.
+    Started,
+    /// The next stop, joined to the one before by a tunnel.
+    Added,
+    /// The first station clicked again: the line closes into a loop.
+    Looped,
+    /// Not taken, and why (for the player).
+    Refused(String),
+}
+
+/// [metro-ux] A metro line being drawn station by station (the line tool's
+/// state and the remote API's `metro_line`). Only the order of the clicks
+/// lives here; `World::metro_draft_add` checks them against the city.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MetroDraft {
+    pub stations: Vec<BuildingId>,
+    /// Closed back on the first station.
+    pub looped: bool,
+}
+
+impl MetroDraft {
+    pub fn is_empty(&self) -> bool {
+        self.stations.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.stations.len()
+    }
+
+    /// Add `station` after the last stop. The first station again closes a
+    /// loop (three stations or more); the last stop again, or any other
+    /// station already on the line, is refused. `name` names a station for
+    /// the messages.
+    pub fn push(&mut self, station: BuildingId, name: impl Fn(BuildingId) -> String) -> DraftStep {
+        if self.looped {
+            return DraftStep::Refused("the line is already a loop: Enter or Finish lays it, Backspace opens it again".into());
+        }
+        if self.stations.last() == Some(&station) {
+            return DraftStep::Refused(format!("{} is already the last stop: click the next station", name(station)));
+        }
+        if self.stations.first() == Some(&station) {
+            if self.stations.len() >= 3 {
+                self.looped = true;
+                return DraftStep::Looped;
+            }
+            return DraftStep::Refused(format!("a loop needs three stations or more: click another station before coming back to {}", name(station)));
+        }
+        if self.stations.contains(&station) {
+            return DraftStep::Refused(format!("{} is already on this line (a line calls at a station once; only the first station closes a loop)", name(station)));
+        }
+        self.stations.push(station);
+        if self.stations.len() == 1 {
+            DraftStep::Started
+        } else {
+            DraftStep::Added
+        }
+    }
+
+    /// Take back the last click: a closed loop opens again, else the last
+    /// stop goes. False when there was nothing to take back.
+    pub fn undo(&mut self) -> bool {
+        if self.looped {
+            self.looped = false;
+            return true;
+        }
+        self.stations.pop().is_some()
+    }
+
+    pub fn clear(&mut self) {
+        self.stations.clear();
+        self.looped = false;
+    }
+
+    /// The stops as `World::add_metro_line` takes them: in order, and the
+    /// first again at the end for a loop.
+    pub fn calls(&self) -> Vec<BuildingId> {
+        let mut v = self.stations.clone();
+        if self.looped {
+            if let Some(&first) = self.stations.first() {
+                v.push(first);
+            }
+        }
+        v
+    }
+
+    /// Enough stops to lay a line.
+    pub fn ready(&self) -> bool {
+        self.stations.len() >= 2
+    }
+}
+
 /// The arc position on `path` nearest `p`, at or after `from`.
 fn project_from(path: &[Vec2], p: Vec2, from: f32) -> f32 {
     let mut acc = 0.0;
@@ -405,7 +637,7 @@ mod tests {
     fn line(sub: &mut Subway, pts: &[Vec2], first: u64) -> MetroLineId {
         let (path, stops) = lay_tunnel(pts);
         let stations = (0..pts.len() as u64).map(|i| bid(first + i)).collect();
-        sub.lines.insert(MetroLine { name: "Line 1".into(), color: 0, stations, path, stops, headway: DEFAULT_HEADWAY, last_dispatch: 0, riders_today: 0, riders_yesterday: 0, runs_today: 0 })
+        sub.lines.insert(MetroLine { name: "Line 1".into(), color: 0, stations, path, stops, headway: DEFAULT_HEADWAY, last_dispatch: 0, riders_today: 0, riders_yesterday: 0, runs_today: 0, looped: false })
     }
 
     #[test]
@@ -499,5 +731,106 @@ mod tests {
         let expect = 1760.0 / (SPEED * 4.0) + 2.0 * DWELL_SECONDS / 4.0;
         assert!((m - expect).abs() < 0.2, "{m} vs {expect}");
         assert_eq!(l.ride_minutes(1, 1, 4.0), 0.0);
+    }
+
+    // [metro-ux] Drawing lines station by station.
+
+    #[test]
+    fn a_draft_takes_stations_in_order_and_closes_a_loop_on_the_first() {
+        let name = |b: BuildingId| format!("{b:?}");
+        let mut d = MetroDraft::default();
+        assert!(!d.ready());
+        assert_eq!(d.push(bid(1), name), DraftStep::Started);
+        assert!(matches!(d.push(bid(1), name), DraftStep::Refused(why) if why.contains("last stop")), "the same station twice in a row");
+        assert_eq!(d.push(bid(2), name), DraftStep::Added);
+        assert!(d.ready());
+        assert!(matches!(d.push(bid(1), name), DraftStep::Refused(why) if why.contains("three stations")), "a loop of two is no loop");
+        assert_eq!(d.push(bid(3), name), DraftStep::Added);
+        assert!(matches!(d.push(bid(2), name), DraftStep::Refused(why) if why.contains("already on this line")));
+        assert_eq!(d.push(bid(1), name), DraftStep::Looped);
+        assert!(d.looped);
+        assert_eq!(d.calls(), vec![bid(1), bid(2), bid(3), bid(1)]);
+        assert!(matches!(d.push(bid(4), name), DraftStep::Refused(_)), "nothing after the loop closes");
+        // Undo opens the loop first, then drops stops one at a time.
+        assert!(d.undo());
+        assert!(!d.looped && d.len() == 3);
+        assert!(d.undo());
+        assert_eq!(d.stations, vec![bid(1), bid(2)]);
+        d.clear();
+        assert!(d.is_empty() && !d.undo());
+    }
+
+    #[test]
+    fn a_loop_tunnel_closes_on_its_first_station_with_platforms_in_order() {
+        let pts = [Vec2::new(0.0, 0.0), Vec2::new(800.0, 0.0), Vec2::new(800.0, 700.0), Vec2::new(0.0, 700.0)];
+        let (path, stops) = lay_loop_tunnel(&pts);
+        assert_eq!(stops.len(), 4);
+        assert!(path[0].distance(pts[0]) < 0.5 && path.last().unwrap().distance(pts[0]) < 0.5, "the loop ends where it starts");
+        let total = path_length(&path);
+        assert!(total > 2600.0 && total < 3300.0, "about the rectangle's perimeter: {total:.0}");
+        assert!(stops.windows(2).all(|w| w[1] > w[0] + 100.0), "{stops:?}");
+        for k in 1..4 {
+            let d = point_along(&path, stops[k]).0.distance(pts[k]);
+            assert!(d < 3.0, "platform {k} on the line: {d:.1} m off");
+        }
+        assert!(crate::rail::sharpest_turn(&path) < 0.6, "no corner a train cannot take");
+        // Fewer than three stations is an ordinary line.
+        assert_eq!(lay_line(&pts[..2], true), lay_tunnel(&pts[..2]));
+    }
+
+    #[test]
+    fn loop_runs_go_round_both_ways_and_every_pair_is_served() {
+        let mut sub = Subway::default();
+        let pts = [Vec2::new(0.0, 0.0), Vec2::new(800.0, 0.0), Vec2::new(800.0, 700.0), Vec2::new(0.0, 700.0)];
+        let (path, stops) = lay_loop_tunnel(&pts);
+        let stations: Vec<BuildingId> = (1..=4).map(bid).collect();
+        let id = sub.lines.insert(MetroLine { name: "Loop".into(), color: 1, stations: stations.clone(), path, stops, headway: DEFAULT_HEADWAY, last_dispatch: 0, riders_today: 0, riders_yesterday: 0, runs_today: 0, looped: true });
+        let l = &sub.lines[id];
+        let fwd = l.run(true, 1);
+        let back = l.run(false, 1);
+        assert_eq!(fwd.stops.iter().map(|s| s.0).collect::<Vec<_>>(), vec![bid(1), bid(2), bid(3), bid(4), bid(1)]);
+        assert_eq!(back.stops.iter().map(|s| s.0).collect::<Vec<_>>(), vec![bid(1), bid(4), bid(3), bid(2), bid(1)]);
+        for run in [&fwd, &back] {
+            assert!(run.stops.windows(2).all(|w| w[1].1 > w[0].1), "calls increase along the run");
+            assert!((run.stops.last().unwrap().1 - l.length()).abs() < 0.5, "home at the end of the loop");
+        }
+        // Backwards, the second call is the last station, near the start.
+        assert!(point_along(&back.poly, back.stops[1].1).0.distance(pts[3]) < 3.0);
+        for &a in &stations {
+            for &b in &stations {
+                if a != b {
+                    assert!(l.serves(true, a, b) || l.serves(false, a, b), "{a:?} to {b:?} served one way or the other");
+                }
+            }
+        }
+        // 4 -> 1 forward is one stop home; 2 -> 1 is backwards.
+        assert!(l.serves(true, bid(4), bid(1)) && l.serves(false, bid(2), bid(1)));
+        assert!(!l.serves(true, bid(3), bid(2)) && l.serves(false, bid(3), bid(2)));
+        // The ride between neighbours across home is the short way round.
+        assert!(l.ride_length(0, 3) < 800.0, "{}", l.ride_length(0, 3));
+        assert!(l.ride_minutes(0, 3, 4.0) < l.ride_minutes(0, 2, 4.0));
+    }
+
+    #[test]
+    fn a_preview_counts_stops_length_time_trains_and_cost() {
+        let pts = [Vec2::ZERO, Vec2::new(1000.0, 0.0), Vec2::new(2000.0, 0.0)];
+        let p = preview(&pts, false, DEFAULT_HEADWAY, 4.0);
+        assert_eq!((p.stops, p.looped, p.legs_m.len()), (3, false, 2));
+        assert!((p.length_m - 2000.0).abs() < 5.0);
+        assert!((p.legs_m[0] - 1000.0).abs() < 5.0);
+        let run = 2000.0 / (SPEED * 4.0) + 2.0 * DWELL_SECONDS / 4.0;
+        assert!((p.run_min - run).abs() < 0.3 && (p.round_trip_min - 2.0 * run).abs() < 0.6);
+        assert_eq!(p.trains, 2 * (run / DEFAULT_HEADWAY as f32).ceil() as u32);
+        assert!((p.tunnel_cost - p.length_m * TUNNEL_COST_PER_M).abs() < 1.0);
+        assert!(p.upkeep_per_day > 2.0 * TUNNEL_UPKEEP_PER_KM * 0.9);
+        // A loop's round trip is one run; its legs include the way home.
+        let sq = [Vec2::ZERO, Vec2::new(800.0, 0.0), Vec2::new(800.0, 700.0)];
+        let lp = preview(&sq, true, 6, 4.0);
+        assert!(lp.looped && lp.legs_m.len() == 3);
+        assert!((lp.legs_m.iter().sum::<f32>() - lp.length_m).abs() < 1.0);
+        assert!((lp.round_trip_min - lp.run_min).abs() < 1e-3);
+        // One station: nothing to lay yet.
+        let one = preview(&pts[..1], false, DEFAULT_HEADWAY, 4.0);
+        assert_eq!((one.stops, one.length_m, one.trains), (1, 0.0, 0));
     }
 }

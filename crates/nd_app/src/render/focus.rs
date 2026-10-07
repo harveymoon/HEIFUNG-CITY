@@ -21,6 +21,8 @@ use super::{Lighting, Overlays};
 pub(super) enum Focus {
     Traffic,
     Crime,
+    /// [metro-ux] The Metro layer: everything dimmed under the lines.
+    Metro,
 }
 
 impl Focus {
@@ -33,6 +35,8 @@ impl Focus {
             Some(Focus::Crime)
         } else if o.traffic {
             Some(Focus::Traffic)
+        } else if o.metro {
+            Some(Focus::Metro)
         } else {
             None
         }
@@ -43,6 +47,7 @@ impl Focus {
         match self {
             Focus::Traffic => (0.05, 0.035, 0.05),
             Focus::Crime => (0.075, 0.05, 0.08),
+            Focus::Metro => (0.07, 0.045, 0.07),
         }
     }
 }

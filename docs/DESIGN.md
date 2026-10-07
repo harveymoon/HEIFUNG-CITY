@@ -818,8 +818,10 @@ Citizens are rendered from their simulated positions every frame.
   lot taken by the city (any land use, 120 m² or more, 160 m from the next station; 15,000 to build,
   140 a day): at street level only its entrance shows, a plaza with a stairwell under an arched glass
   canopy and a pylon with the lit M (`buildings::subway::metro_entrance`); its platform lies 16 m down
-  under the lot's middle. The Buses tool's Metro mode (or the `subway` API) lays a line through
-  stations in order: one polyline of twin bores that ignores the street grid, laid with the
+  under the lot's middle. Stations are placed first (Build window, Transit, Metro, Metro station);
+  the metro line tool (Transit, Metro lines; the Transit tool's Metro mode) or the `subway` /
+  `metro_line` API lays a line through stations in order: one polyline of twin bores that ignores
+  the street grid, laid with the
   railway's easing (`rail::smooth_track`) with a 90 m straight through every platform so a bend
   never pulls the tunnel off a station; 22 per metre to bore, 90 per km a day to run. Tunnels are
   not in the road network on purpose: track there would join the railway's searches, become entry
@@ -840,6 +842,32 @@ Citizens are rendered from their simulated positions every frame.
   line's colour, island platforms, the shafts up to the entrances and the trains
   (`nd_procgen::metro`, `render/subway.rs`); the Transit window and the inspector show lines,
   timetables and boardings per station.
+  - **Loops** (`MetroLine::looped`): a line closed back on its first station (three stations or
+    more; `add_metro_line` takes the first station again at the end as a loop). Its tunnel
+    (`subway::lay_loop_tunnel`) wraps round with the same platform straights and ends where it
+    starts; every run goes the whole way round, one each way from the first station on the
+    headway, so every pair of stations is served one way or the other (`MetroLine::serves` by
+    call position; the first station is the first call and the last). Rides are timed the short
+    way round. A loop that loses stations down to two runs end to end.
+  - **Drawing a line station to station** (`metro_ux.rs`, `tools::metro_click`, the pure
+    `subway::MetroDraft`): picking Metro lines switches the map to the Metro layer (below; leaving
+    the tool puts back the layer before). A click on a station (its lot, or within 75 m of its
+    platform or entrance: `World::metro_station_at`) adds it and the tunnel to it is drawn white
+    (`World::metro_draft_preview` lays it as it will be laid); the station under the pointer
+    previews the next leg in green (red when it would be refused) and off a station a dashed lead
+    follows the pointer. The first station again closes a loop; Enter or the panel's Finish lays
+    the line; a right-click or Backspace takes back the last stop (a closed loop opens first); Esc
+    cancels. A click that misses every station does nothing but say so, and with fewer than two
+    stations the panel says to place them first (with a button that picks Metro station).
+    `World::metro_draft_add` refuses, with the reason in the status line: the last stop again, a
+    station already on the line, a loop of two, and a stop whose tunnel the treasury could not pay
+    for. Tunnels are bored straight under everything (streets, water, road tunnels, which they
+    pass below), so any two stations connect and the line digs its own tunnel as it always did:
+    there is no "no tunnel path" case to refuse or offer to dig, only the cost, shown up front.
+    The Metro line panel lists the four steps with the current one lit and the line so far: its
+    stations, stops, length, round trip (end to end and back, or once round a loop: running at
+    22 m/s plus 16 s per call), trains out at once at the headway, the tunnel's cost against the
+    treasury and the running cost a day (`subway::preview`).
 - **Central Station** (`RailFacility::Central`): the grand terminus, a 150 by 64 m rail piece
   placed like a station (Buildings > Rail or Transit, or the Rail tool), one per city, 120,000 to
   build and 1,100 a day, 60 jobs. It is a passenger station on the intercity line (a 120 m platform,
@@ -1616,6 +1644,12 @@ trait MindProvider {
   police cars lit blue-white (light bars keep their colours), each police car's route ahead
   drawn over everything (flashing red and blue on a call, cyan on patrol) with a ring at its
   goal, and pulsing rings on crimes not yet answered. Heat vision wins over a focus view.
+- Metro (`metro_ux.rs`, `overlay {layer: "metro"}`, M, Transit in the Layer menu): a focus view
+  (`Focus::Metro`) that dims the whole city; over it every metro line along its tunnel in its
+  colour, painted in screen space with egui (gizmo lines far off lost stretches under the
+  translucent street overlays), and every station as a big marker: rings on the ground (a gizmo
+  group with depth bias -1) and a round "M" badge with the station's name and a dot per line
+  calling there. The metro line tool shows it (see Subway).
 - Map view (`render/mapview.rs`, `overlay {layer: "map"}`): every mesh but water and the sky is
   hidden (after all visibility owners, in `PostUpdate`), and a flat unlit map is drawn: dark land
   (open over water), lots tinted by zone, roads as casing and fill ribbons by class (highway

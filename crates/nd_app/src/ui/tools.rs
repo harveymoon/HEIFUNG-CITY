@@ -287,11 +287,12 @@ fn transit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
 fn metro(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
     use nd_sim::subway as m;
     let s = &sim.world.subway.stats;
-    hint(ui, &format!("Click lots to put stations there ({:.0} each, {:.0}/day) or pick standing ones and the Central Station, in order; Enter or right-click lays the line (tunnel {:.0}/m, {:.0}/km/day). Trains every {} min each way, 05:00 to midnight; fare {:.1}. U shows the tunnels.", m::STATION_COST, m::STATION_UPKEEP_PER_DAY, m::TUNNEL_COST_PER_M, m::TUNNEL_UPKEEP_PER_KM, m::DEFAULT_HEADWAY, m::FARE));
+    // [metro-ux] Lines join stations placed beforehand; the Metro line panel walks through it.
+    hint(ui, &format!("Click stations in order (the Metro layer marks them); each click draws the tunnel to it. Click the first station again for a loop; Enter or Finish lays the line, right-click or Backspace takes back a stop, Esc cancels. Tunnel {:.0}/m and {:.0}/km/day; trains every {} min each way, 05:00 to midnight; fare {:.1}. New stations: Transit, Metro, Metro station ({:.0} each, {:.0}/day).", m::TUNNEL_COST_PER_M, m::TUNNEL_UPKEEP_PER_KM, m::DEFAULT_HEADWAY, m::FARE, m::STATION_COST, m::STATION_UPKEEP_PER_DAY));
     hint(ui, &format!("{} station{} · {} line{} · {} train{} · {} waiting · {} riding · {} riders today ({} yesterday) · fares {:.0}", s.stations, if s.stations == 1 { "" } else { "s" }, s.lines, if s.lines == 1 { "" } else { "s" }, s.trains, if s.trains == 1 { "" } else { "s" }, s.waiting, s.riding, s.riders_today, s.riders_yesterday, s.fares_today));
     if !tools.metro_draft.is_empty() {
-        let names: Vec<String> = tools.metro_draft.iter().filter_map(|b| sim.world.buildings.get(*b).map(|b| b.name.clone())).collect();
-        hint(ui, &format!("laying: {}", names.join(" → ")));
+        let names: Vec<String> = tools.metro_draft.stations.iter().filter_map(|b| sim.world.buildings.get(*b).map(|b| b.name.clone())).collect();
+        hint(ui, &format!("laying: {}{}", names.join(" > "), if tools.metro_draft.looped { " > back to the first (loop)" } else { "" }));
     }
     let ids: Vec<nd_sim::MetroLineId> = sim.world.subway.lines.keys().collect();
     let mut remove = None;
@@ -300,7 +301,7 @@ fn metro(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         for id in ids {
             let l = &sim.world.subway.lines[id];
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(format!("{} · {} stations · {:.1} km · every {} min · {} riders today", l.name, l.stations.len(), l.length() / 1000.0, l.headway, l.riders_today)).small());
+                ui.label(egui::RichText::new(format!("{}{} · {} stations · {:.1} km · every {} min · {} riders today", l.name, if l.looped { " (loop)" } else { "" }, l.stations.len(), l.length() / 1000.0, l.headway, l.riders_today)).small());
                 if ui.small_button("−").on_hover_text("trains more often").clicked() {
                     headway = Some((id, l.headway.saturating_sub(2)));
                 }

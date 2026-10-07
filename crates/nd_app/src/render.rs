@@ -181,11 +181,15 @@ pub struct Overlays {
     /// [events] Road condition: every street piece green to red by its
     /// wear (`nights::sync_road_layer`).
     pub road_condition: bool,
+    /// [metro-ux] Metro: the city dimmed, the metro's lines in their
+    /// colours over it and every station a big named marker
+    /// (`metro_ux`, `focus::Focus::Metro`). The metro line tool shows it.
+    pub metro: bool,
 }
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false }
+        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false }
     }
 }
 
