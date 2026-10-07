@@ -269,3 +269,4 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Coal plant came out huge on unzoned ground: bound the site, scale thermal plants within a cap, modular dark coal plant (many stacks at different heights, cooling towers, coal yard, smoke) [feat/plant-scale]
 - [ ] Build hover shows cost, MW and upkeep before clicking, and the combined yield if it joins a Sunfield/Wind Park [feat/plant-scale]
 - [ ] Dirty industries (mining, oil, refinery, new smelting and factory farming): soil contamination field + map layer, strong adjacency penalties (farms/homes avoid them), heavy trucks wear roads faster, dirty looks [feat/dirty-industry]
+- [ ] Select a road segment in Inspect/Edit: lanes, speed, traffic now and hourly chart, congestion, wear/condition, repair cost and Repair now [feat/road-inspect]
