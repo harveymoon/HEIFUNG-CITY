@@ -409,12 +409,32 @@ truck_price, lanes, highway, segment, cars/revenue today, yesterday and total, u
 `paid_today`, `free_today` (buses, emergency vehicles), `trucks_today`, `revenue_today`,
 `upkeep_per_day`, the ledger's `road tolls` today and yesterday. `{action: "price", id, price}` sets a
 booth's toll (0..50 per car; lorries pay double), `{action: "remove", id}` takes it away (no refund),
-`{action: "inspect", id}` returns one row; `at: [x, y]` picks the booth within 30 m instead of `id`.
+`{action: "inspect", id}` returns the booth in full (as `inspect {toll}`, below); `at: [x, y]` picks the booth within 30 m instead of `id`.
 Booths go with their road when it is bulldozed. The Bulldoze tool removes a booth clicked within 8 m.
 
 ```json
 {"cmd": "place", "kind": "toll_plaza", "x": 0, "y": 420}
 {"cmd": "tolls", "action": "price", "id": 1, "price": 4}
+```
+
+**Inspecting a booth.** [toll-inspect] `select {toll: id}` (the booth id, an integer; or a click on
+the booth with the Inspect tool, `select {at}`) selects a booth: the inspector shows its card and the
+map outlines it in gold. `inspect {toll: id}` (or `inspect` / `selected` with a booth selected; also
+`tolls {action: "inspect"}`) gives the `tolls` row plus: `kind` ("toll"), `label`, `road` (the road
+in words: "two-way street, 2 + 2 lanes", "highway carriageway"...), `charges` ([{heading, lanes}]: the
+directions it charges and their lanes), `trucks_*`, `free_*` (buses, emergency and city vehicles let
+through) and `avoided_*` (drivers who set off on a way round that they would not have taken with no
+tolls: counted when a paying vehicle sets off and a booth near its trip is on the toll-free way but
+not on its route; one extra route search only for those trips, no randomness) for today, yesterday
+and total; `cars_*` count every vehicle through (lorries and free ones too); `net_per_day`
+(yesterday's takings, or today's so far on the first day, less upkeep); `queue` {cars (within 150 m
+before the line and under 3 m/s), back_m, wait_minutes (game minutes for the last of them)};
+`this_hour` and `hourly` (the last 72 hours, oldest first: {day, hour, cars, trucks, free, avoided,
+revenue}). Saves from before this keep their booths with the new books empty.
+
+```json
+{"cmd": "select", "toll": 1}
+{"cmd": "inspect", "toll": 1}
 ```
 
 ### Industry sub-zones
@@ -604,7 +624,7 @@ A citizen's `inspect` carries `raised_level`: how high they stand on a raised wa
 footbridge's stairs or deck), 0 at grade. Dev: `walk_to {citizen, to: [x, y], from?}` sends a
 citizen out on foot along the walk graph (footbridges included).
 
-`inspect` with one of `citizen`, `building`, `lot`, `car`, `drone`, `vehicle` (a private car's record: owner, model, place with minutes_here, limit_min, illegal, ticketed_tick, impounded {pound, out_of_town, release_fee, auction_in_min} and tow_job), `train`, `metro` (a metro train; see **Trains** below), `route` (ids) or `gesture` (int). A building that is a parking office adds `parking_office` {officers, patrol cars}, a tow company `tow_company` {trucks, jobs_open, pound}, a lot the city runs `parking.city_run`; a tow truck's `car` adds `tow` {job, state, reason, vehicle, company, out_of_town}, an officer's car `patrol`; [services] a recovery truck going to a wreck (errand `Recover`) adds `recovery` {wreck, metres_to_go, amber, off_law_allowed (within 250 m), move (its off-law move: Lane, Overtake, Kerb, Wait), company, out_of_town, sent_tick}, a written-off car `wreck` {since_tick, incident, tow_due_tick, truck, truck_sent_tick, pushed_aside_m, flipped (0 upright, 1 side, 2 roof), righted_at_tick}, and a car easing past a crash on the shoulder `passing_hazard` (the crashed car's id). `parking_price {building, price}` sets the fee at a city-run lot. [boot] `tow_car {car | vehicle}` (also `tow`, `boot`) clamps a private car and calls the tow truck, as the inspector's "Tow this car" button does: `car` is a car on the road (it pulls over to a kerb slot, or the street's edge, is taken off the lanes, and its driver and passengers walk on), `vehicle` a car's record (parked at a kerb, or driving). Reply {tow_job, vehicle, company, out_of_town}; an error says why not (not a resident's car, off the street, already towed, leaving town). A clamped car's place has `booted: true`; the owner's mood drops, they remember it, and they pay the release fee at the pound as for any tow. The enforcement report adds `boots_today` and `boots_total`. [passengers] A car row of kind car carries `occupants` ([{id, name}]: everyone riding along besides the driver, `citizen`) and `vehicle` (its record); a passenger's activity has `driver`, `driver_name`, `in_car`, `car`, `to`, `purpose`. `report` traffic.private_cars adds `passengers` {riding_now, walking_to_a_car, cars_with_passengers, today, outings_today, carpools_today, school_runs_today, lifts_today, yesterday, total, fullest_car, drop_offs_pending}. `place` takes `parking_enforcement[:tier]`, `parking_small`, `parking_large`, `parking_garage`;
+`inspect` with one of `citizen`, `building`, `lot`, `car`, `drone`, `vehicle` (a private car's record: owner, model, place with minutes_here, limit_min, illegal, ticketed_tick, impounded {pound, out_of_town, release_fee, auction_in_min} and tow_job), `train`, `metro` (a metro train; see **Trains** below), `toll` (a booth id; see Taxes and tolls), `route` (ids) or `gesture` (int). A building that is a parking office adds `parking_office` {officers, patrol cars}, a tow company `tow_company` {trucks, jobs_open, pound}, a lot the city runs `parking.city_run`; a tow truck's `car` adds `tow` {job, state, reason, vehicle, company, out_of_town}, an officer's car `patrol`; [services] a recovery truck going to a wreck (errand `Recover`) adds `recovery` {wreck, metres_to_go, amber, off_law_allowed (within 250 m), move (its off-law move: Lane, Overtake, Kerb, Wait), company, out_of_town, sent_tick}, a written-off car `wreck` {since_tick, incident, tow_due_tick, truck, truck_sent_tick, pushed_aside_m, flipped (0 upright, 1 side, 2 roof), righted_at_tick}, and a car easing past a crash on the shoulder `passing_hazard` (the crashed car's id). `parking_price {building, price}` sets the fee at a city-run lot. [boot] `tow_car {car | vehicle}` (also `tow`, `boot`) clamps a private car and calls the tow truck, as the inspector's "Tow this car" button does: `car` is a car on the road (it pulls over to a kerb slot, or the street's edge, is taken off the lanes, and its driver and passengers walk on), `vehicle` a car's record (parked at a kerb, or driving). Reply {tow_job, vehicle, company, out_of_town}; an error says why not (not a resident's car, off the street, already towed, leaving town). A clamped car's place has `booted: true`; the owner's mood drops, they remember it, and they pay the release fee at the pound as for any tow. The enforcement report adds `boots_today` and `boots_total`. [passengers] A car row of kind car carries `occupants` ([{id, name}]: everyone riding along besides the driver, `citizen`) and `vehicle` (its record); a passenger's activity has `driver`, `driver_name`, `in_car`, `car`, `to`, `purpose`. `report` traffic.private_cars adds `passengers` {riding_now, walking_to_a_car, cars_with_passengers, today, outings_today, carpools_today, school_runs_today, lifts_today, yesterday, total, fullest_car, drop_offs_pending}. `place` takes `parking_enforcement[:tier]`, `parking_small`, `parking_large`, `parking_garage`;
 with none, the current selection. The detail matches what the inspector and the person pane show:
 A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price, place: parked (home / building / parking lot / kerb / street (no space) / dealer, building, pos, since_tick) or driving (car id, errand)}} and `commute` {pain per mode with recent_trips, parking_pain, trip_mode_now, last_trip {mode, minutes, pain}}: what the mode choice weighs and what the daily habits (buy a bike, sell the car, buy one) act on.
 
@@ -649,7 +669,7 @@ several plots), home, business, form. A billionaire's other homes and businesses
 
 | Command | Fields |
 | --- | --- |
-| `select` | `citizen` / `building` / `car` / `vehicle` (a parked car) / `bot` (a delivery robot) / `train` / `metro` (a metro train) id, or `at: [x, y]` (picks like a click: on a train's car it picks the train; a metro train only with the Underground view on), or nothing to clear |
+| `select` | `citizen` / `building` / `car` / `vehicle` (a parked car) / `bot` (a delivery robot) / `train` / `metro` (a metro train) id, `toll` (a booth id, an integer), or `at: [x, y]` (picks like a click: on a train's car it picks the train; a metro train only with the Underground view on), or nothing to clear |
 | `selected` | full detail of the player's selection (see below) |
 | `flags` / `flag` | the player's "Flag for Claude" bookmarks (see below) |
 | `favourite` | `citizen`, `on` (omit to toggle). Favourites wear a gold ring and diamond in the world (their car, driving or parked, a gold box) |
@@ -697,6 +717,7 @@ window, with its buses) and `clock`. So when the player says "this car", ask `se
 - **car**: `car_detail` (below), including `why`, `jam`, `trip` and `lanes`.
 - **citizen**: as `inspect {citizen}`, plus `driving_car` (the car's full detail) while they drive.
 - **building**, **parked_car**: as `inspect {building}` / `inspect {vehicle}`.
+- **toll**: as `inspect {toll}` (Taxes and tolls, above).
 
 A car's detail (`inspect {car}`, `selected`) carries:
 
