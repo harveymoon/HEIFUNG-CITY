@@ -324,13 +324,15 @@ pub(super) fn mural(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, 
     let h = y1 - y0;
     let t0 = rng.random_range(-(face.len - w) * 0.5..=(face.len - w) * 0.5);
     let base = mul(MURAL[rng.random_range(0..MURAL.len())], 0.8 * fade);
-    face.decal(g, f, Matte, t0, y0 + h * 0.5, 0.04, w, h, base);
+    // Painted on the wall, under the window frames (0.03) and lights (0.05)
+    // that sit over it, so nothing shares a plane.
+    face.decal(g, f, Matte, t0, y0 + h * 0.5, 0.008, w, h, base);
     for i in 0..rng.random_range(5..10) {
         let col = mul(MURAL[rng.random_range(0..MURAL.len())], fade);
         let (bw, bh) = if i % 3 == 0 { (w * rng.random_range(0.5..0.9), h * rng.random_range(0.06..0.15)) } else { (w * rng.random_range(0.08..0.3), h * rng.random_range(0.15..0.6)) };
         let t = t0 + rng.random_range(-0.5..0.5) * (w - bw);
         let y = y0 + bh * 0.5 + rng.random::<f32>() * (h - bh);
-        face.decal(g, f, Matte, t, y, 0.05 + i as f32 * 0.004, bw, bh, col);
+        face.decal(g, f, Matte, t, y, 0.011 + i as f32 * 0.0015, bw, bh, col);
     }
 }
 
@@ -424,8 +426,11 @@ pub fn mechanic(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             block(g, c, wall_s, &o, 0.0, oh, wall);
             parapet(g, c, &o.poly(), oh, 0.4, 0.2, Matte, mul(wall, 0.8));
             let of = o.front();
-            pane(g, c, rng, &of, 0.0, 1.5, (o.w() - 1.4).max(0.8), 1.6, false);
-            of.decal(g, f, Matte, -o.w() * 0.5 + 0.7, 1.05, 0.05, 0.9, 2.1, DARK);
+            // The window beside the door, never across it (the door is a
+            // decal in the window's plane).
+            let pw = (o.w() - 2.5).max(0.6);
+            pane(g, c, rng, &of, 0.55, 1.5, pw, 1.6, false);
+            of.decal(g, f, Matte, -o.w() * 0.5 + 0.7, 1.05, 0.04, 0.9, 2.1, DARK);
             if t == 2 {
                 pane_row(g, c, rng, &of, h, 1, oh - h, 2.0, 1.4, 1.2, false);
             }
