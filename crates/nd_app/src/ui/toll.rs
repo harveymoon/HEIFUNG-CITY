@@ -26,6 +26,8 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
         .open(&mut open)
         .default_pos(egui::pos2(content.right() - 392.0, content.top() + 12.0))
         .default_width(360.0)
+        // Tall enough for the chart without scrolling.
+        .default_height((content.height() - 24.0).min(780.0))
         .constrain_to(content)
         .max_height(content.height() - 24.0)
         .vscroll(true)
@@ -180,7 +182,7 @@ fn hour_chart(ui: &mut egui::Ui, hours: &[TollHour], now: &TollHour, day_now: u3
     all.push(TollHour { day: day_now, hour: hour_now, ..*now });
     let n = all.len();
     let max = all.iter().map(|h| h.cars.max(h.avoided)).max().unwrap_or(1).max(1) as f32;
-    let plot = egui::Rect::from_min_max(rect.min + egui::vec2(4.0, 13.0), rect.max - egui::vec2(4.0, 12.0));
+    let plot = egui::Rect::from_min_max(rect.min + egui::vec2(4.0, 13.0), rect.max - egui::vec2(4.0, 15.0));
     let bw = plot.width() / n.max(24) as f32;
     let y = |v: f32| plot.bottom() - plot.height() * v / max;
     for (i, h) in all.iter().enumerate() {

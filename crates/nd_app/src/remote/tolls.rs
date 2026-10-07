@@ -26,7 +26,7 @@ pub fn toll_detail(w: &World, id: u32) -> Option<Value> {
     v["avoided_total"] = json!(b.avoided_total);
     v["net_per_day"] = json!(round(b.net_per_day()));
     v["queue"] = json!({ "cars": queued, "back_m": round(back), "wait_minutes": round(wait) });
-    v["this_hour"] = hour_json(&b.hour);
+    v["this_hour"] = hour_json(&nd_sim::tolls::TollHour { day: w.clock.day() as u32 + 1, hour: w.clock.hour() as u8, ..b.hour });
     v["hourly"] = json!(b.hourly.iter().map(hour_json).collect::<Vec<_>>());
     v["note"] = json!("cars_* count every vehicle through (lorries and free ones too); lorries pay double; buses, emergency and city vehicles go free; avoided: drivers whose route went round the booth that would have gone through it with no toll; hourly: the last 72 hours, oldest first");
     Some(v)
