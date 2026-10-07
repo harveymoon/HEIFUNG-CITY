@@ -159,9 +159,9 @@ Agents in brackets. Items extending running work went to those agents.
 [x] - nights too dark: brighter city glow and light pollution, atmospheric scattering   → DONE: merged [layers]: night sky glow.
 
 ## Dev speed (after the current agents finish; Harvey asked 2026-10-07)
-- [ ] Build speed: sccache shared across worktrees, rust-lld linker, a fast dev/test profile (keep full release for the playable exe).
-- [ ] Project CLAUDE.md: crate/module map, how to launch a test instance (ports, ND_TITLE=0, remote API), and the rules for agents (never touch the user's game on 4817 or target/release saves, no Ctrl+Shift+G, move the exe aside before building).
-- [ ] rust-analyzer via the LSP tool for go-to-definition and references.
+- [x] Build speed: sccache shared across worktrees, rust-lld linker, a fast dev/test profile   → DONE: .cargo/config.toml + [profile.fast]; an nd_app-only change rebuilds in ~40 s
+- [x] Project CLAUDE.md: crate/module map, how to launch a test instance (ports, ND_TITLE=0, remote API), and the rules for agents (never touch the user's game on 4817 or target/release saves, no Ctrl+Shift+G, move the exe aside before building).
+- [x] rust-analyzer via the LSP tool   → installed on stable; works in sessions started in C:/CODE/Neon_District (C:/CODE/citybound is pinned to nightly-2020, which has none)
 
 ## From todo5.md (merged 2026-10-07), sorted by area
 Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO and fog, with neon kept as the identity). Agents run 4–5 at a time.
@@ -234,12 +234,13 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [x] - a 10k-person city (saves/land_day18.ron on feat/land) loses about 400 people a day with homes free and no unemployment; not caused by buyouts (land market off: same). Suspect the power shortage (~80% supply); investigate   → DONE [fix/review]: not power. ~400/day left over hunger: 1,000+ cyclists stood for good at a five-arm signalised junction (a rider obeyed a neighbouring arm's light too) and never got home to eat. Fixed in world/riders.rs; leave reasons now counted (economy.emigrated_by) and shown in the People window and the remote report.
 [x] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)   → DONE [fix/review]: the inspector strings were already clean (d8dbe8d); last mojibake comments re-encoded; tests/source_encoding.rs guards it.
 
-[ ] - metro lines aren't self-explanatory: the metro tool switches to a Metro map layer with highlighted stations; build a line by clicking stations in order, with step hints   → IN PROGRESS [feat/metro-ux]
+[x] - metro lines aren't self-explanatory: the metro tool switches to a Metro map layer with highlighted stations; build a line by clicking stations in order, with step hints   → DONE [feat/metro-ux]: Metro layer (key M), click stations in order, loops, hint panel with cost and round trip; API metro_line
+[x] - Build window: sections centred, sub-sections left-aligned   → FIXED [main 2b9550b]: sections left-aligned, sub-sections indented
 [x] - flag: a raised bridge over a highway shows blue in the plan but implement refuses "no room for a pillar" (the implement check ignores the downramp to a ground junction); refusals must show red at the spot first   → DONE [feat/tools 21bbb70]: RoadNetwork::as_built levels for preview, rebuild and implement; plan view runs project_check (red band, pin, label, "show" button); clearer refusal text
 
 ### Agent waves (4–5 at a time)
-- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera, feat/land, feat/events, fix/review, feat/clarity
-- Running: feat/metro-ux (metro line tool)
+- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera, feat/land, feat/events, fix/review, feat/clarity, feat/metro-ux
+- Running: none
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
-- Next as slots free: dev-speed pass, then the review pass
+- Next: done (dev-speed pass and review pass complete 2026-10-07)
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open

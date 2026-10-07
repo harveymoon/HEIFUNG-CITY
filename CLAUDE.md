@@ -28,8 +28,8 @@ Open work: `todo.md` (sorted by area; tick items with "→ DONE [branch]: what")
 
 ## Building and testing
 - Drive C: is tight. Build agent work to `CARGO_TARGET_DIR=O:/nd_targets/<branch>`.
-- Speed: `RUSTC_WRAPPER=<sccache.exe>` with `CARGO_INCREMENTAL=0`, and `--profile fast`
-  (release without LTO, 16 codegen units) for tests:
+- Speed: `.cargo/config.toml` turns on sccache (shared across worktrees; incremental off) and
+  the rust-lld linker. Use `--profile fast` (release without LTO, 16 codegen units) for tests:
   `cargo test --profile fast --workspace`
 - The playable exe is `cargo build -p nd_app --release` into `target/release` (main checkout
   only). Move a running `neon_district.exe` aside first (`mv` it to `neon_district.old-HHMM.exe`).
