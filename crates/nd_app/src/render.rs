@@ -49,6 +49,9 @@ mod heat;
 /// Planned roads as holograms of the real thing; the depth view.
 mod holo;
 pub use holo::gap_spot;
+/// [plot-hover] The plot under the pointer while placing: outline, light wall, verdict.
+mod plot_hover;
+pub use plot_hover::hover_site;
 mod junction_view;
 mod layers;
 mod lights;
@@ -491,6 +494,9 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, clear_full_rebuild.after(SimSet::Sync));
         // [tools] A label at each spot with no room for a column.
         app.add_systems(bevy_egui::EguiPrimaryContextPass, holo::gap_labels);
+        // [plot-hover] The plot under the pointer while placing, and its verdict.
+        app.init_resource::<plot_hover::PlotHover>().add_systems(Update, plot_hover::sync_plot_hover.in_set(SimSet::Sync).after(sync_preview));
+        app.add_systems(bevy_egui::EguiPrimaryContextPass, plot_hover::plot_hover_label);
         // [tools] Footbridges, and the Intersection editor's road view.
         app.init_resource::<junction_view::JunctionCam>()
             .add_systems(Update, (junction_view::sync_footbridges.after(sync_roads).before(lift_spawned), junction_view::sync_junction_camera).in_set(SimSet::Sync))
