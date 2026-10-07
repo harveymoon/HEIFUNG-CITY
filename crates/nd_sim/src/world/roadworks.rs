@@ -61,6 +61,43 @@ impl World {
     /// is spent; the cost is booked as road maintenance.
     pub(super) fn daily_roads(&mut self) {
         self.road_wear.remap(&self.roads);
+        let load = std::mem::take(&mut self.road_wear.load);
+        self.wear_a_day(&load);
+        self.road_wear.load = vec![0.0; load.len()];
+        self.road_wear.last_load = load;
+        let day = self.crews_work_a_day();
+        if day.spent > 0.0 {
+            self.economy.debit(Flow::RoadMaintenance, day.spent);
+        }
+        self.road_wear.days.push(day);
+        if self.road_wear.days.len() > 30 {
+            self.road_wear.days.remove(0);
+        }
+        self.road_wear.version += 1;
+        self.apply_road_wear();
+    }
+
+    /// Dev and remote: age every street `days` days at yesterday's traffic,
+    /// with the crews working each night at the funding level (`crews`) or
+    /// not; nothing is charged or put in the daily record (the repaired
+    /// total counts it). To see in minutes what the budget does over
+    /// months.
+    pub fn age_roads(&mut self, days: u32, crews: bool) {
+        self.road_wear.remap(&self.roads);
+        let load = if self.road_wear.last_load.len() == self.roads.segments.len() { self.road_wear.last_load.clone() } else { self.road_wear.load.clone() };
+        for _ in 0..days.min(3650) {
+            self.wear_a_day(&load);
+            if crews {
+                self.crews_work_a_day();
+            }
+        }
+        self.road_wear.version += 1;
+        self.apply_road_wear();
+    }
+
+    /// Every piece wears a day: age, `load` (vehicle samples per piece),
+    /// bridges more.
+    fn wear_a_day(&mut self, load: &[f32]) {
         let n = self.roads.segments.len();
         for i in 0..n {
             if !wears(&self.roads, i) {
@@ -69,16 +106,18 @@ impl World {
             let lanes = (self.roads.segments[i].lanes_fwd + self.roads.segments[i].lanes_bwd).max(1) as f32;
             // Traffic per lane: a two-lane road carrying the same cars as
             // a one-lane one wears each lane half as much.
-            let traffic = self.road_wear.load.get(i).copied().unwrap_or(0.0) / lanes;
+            let traffic = load.get(i).copied().unwrap_or(0.0) / lanes;
             let mut d = AGE_WEAR + TRAFFIC_WEAR * traffic;
             if self.roads.segments[i].bridge {
                 d *= BRIDGE_WEAR;
             }
             self.road_wear.wear[i] = (self.road_wear.wear[i] + d).min(1.0);
         }
-        for l in self.road_wear.load.iter_mut() {
-            *l = 0.0;
-        }
+    }
+
+    /// The crews work down the queue until the day's allowance is spent:
+    /// what they did.
+    fn crews_work_a_day(&mut self) -> MaintenanceDay {
         let allowance = self.road_wear.allowance(&self.roads);
         let mut left = allowance;
         let mut day = MaintenanceDay { day: self.clock.day(), allowance, ..Default::default() };
@@ -113,17 +152,8 @@ impl World {
         if worked > 0 {
             day.repaired_land_value = lv_sum / worked as f32;
         }
-        if day.spent > 0.0 {
-            self.economy.debit(Flow::RoadMaintenance, day.spent);
-        }
         self.road_wear.repaired_total += day.repaired;
-        self.road_wear.spent_today = 0.0;
-        self.road_wear.days.push(day);
-        if self.road_wear.days.len() > 30 {
-            self.road_wear.days.remove(0);
-        }
-        self.road_wear.version += 1;
-        self.apply_road_wear();
+        day
     }
 
     /// Give every lane its piece's roughness (after a rebuild, a load and

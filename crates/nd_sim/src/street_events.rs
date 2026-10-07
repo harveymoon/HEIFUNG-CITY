@@ -35,12 +35,16 @@ pub const MIN_RACERS: usize = 3;
 pub const MAX_RACERS: usize = 8;
 /// Ticks the crews wait in the lot for stragglers before the race goes.
 pub const RACE_GATHER: u64 = 40;
+/// Minutes in the lot showing the cars off once the crew is in.
+pub const SHOW_OFF: u64 = 10;
 /// The longest a race may take before whoever is not in is left behind.
 pub const RACE_MAX: u64 = 90;
 /// How long the party at the finish runs, ticks.
 pub const PARTY_TICKS: (u64, u64) = (50, 90);
 /// How far (straight line, m) the finish lot is from the start.
-pub const RACE_LENGTH: (f32, f32) = (900.0, 2400.0);
+pub const RACE_LENGTH: (f32, f32) = (450.0, 2400.0);
+/// The shortest route by road a race is run over (m).
+pub const RACE_MIN_ROUTE: f32 = 550.0;
 /// A car this close to its lot's kerb point pulls in.
 pub const LOT_REACH: f32 = 45.0;
 /// Chance a racer still there is arrested when the police arrive, and the

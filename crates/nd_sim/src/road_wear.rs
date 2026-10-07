@@ -123,11 +123,13 @@ pub struct RoadCondition {
     /// Vehicle samples on each piece since midnight (`HEAVY` per lorry).
     #[serde(skip)]
     pub load: Vec<f32>,
+    /// Yesterday's samples, for `World::age_roads`.
+    #[serde(skip)]
+    pub last_load: Vec<f32>,
     /// The player's funding level: 1.0 is what the network needs, 0 cuts
     /// the line, up to `MAX_FUNDING`.
     pub funding: f32,
-    /// Spent today and the last days (newest last, 30 kept).
-    pub spent_today: f32,
+    /// The last days' maintenance (newest last, 30 kept).
     pub days: Vec<MaintenanceDay>,
     pub repaired_total: u32,
     /// Bumped whenever the wear changes enough to redraw the cracks.
@@ -137,7 +139,7 @@ pub struct RoadCondition {
 
 impl Default for RoadCondition {
     fn default() -> Self {
-        Self { wear: Vec::new(), mids: Vec::new(), roads_version: u64::MAX, load: Vec::new(), funding: 1.0, spent_today: 0.0, days: Vec::new(), repaired_total: 0, version: 0 }
+        Self { wear: Vec::new(), mids: Vec::new(), roads_version: u64::MAX, load: Vec::new(), last_load: Vec::new(), funding: 1.0, days: Vec::new(), repaired_total: 0, version: 0 }
     }
 }
 
@@ -150,10 +152,16 @@ fn cell(p: Vec2) -> (i32, i32) {
     ((p.x / MATCH_CELL).floor() as i32, (p.y / MATCH_CELL).floor() as i32)
 }
 
-/// Does this piece wear: an alive street (not a path, not track, not a
-/// bored tunnel, which is lined and dry).
+/// Is this piece the city's to wear and mend: an alive street in town (not
+/// a path, not track, not a bored tunnel, which is lined and dry; not a
+/// highway carriageway or anything past the map edge, which the region
+/// looks after).
 pub fn wears(roads: &RoadNetwork, i: usize) -> bool {
-    roads.segments.get(i).is_some_and(|s| s.alive && s.is_street() && !s.tunnel)
+    roads.segments.get(i).is_some_and(|s| {
+        let edge = crate::landscape::MAP_EDGE;
+        let inside = |n: crate::roads::NodeId| roads.node(n).pos.abs().max_element() <= edge;
+        s.alive && s.is_street() && !s.tunnel && !s.is_highway() && inside(s.a) && inside(s.b)
+    })
 }
 
 /// Lane-metres of a piece.

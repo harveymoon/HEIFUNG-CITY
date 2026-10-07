@@ -68,6 +68,8 @@ pub const MAP_LAYERS: &[MapLayer] = &[
     MapLayer { key: "pollution", label: "Pollution and noise", group: "Environment", hotkey: "L", hint: "From plants, industry, nightlife and traffic", flag: |o| &mut o.pollution, legend: legend_pollution },
     // [layers] (render/focus.rs, render/layers.rs, render/mapview.rs)
     MapLayer { key: "crime", label: "Crime", group: "People", hotkey: "L", hint: "Where offences pile up; police cars and their routes lit over a dimmed city", flag: |o| &mut o.crime, legend: legend_crime },
+    // [events] (render/nights.rs)
+    MapLayer { key: "road_condition", label: "Road condition", group: "Traffic", hotkey: "", hint: "Wear on every street: green is smooth, red is crumbling; crews fix dear land first", flag: |o| &mut o.road_condition, legend: legend_road_condition },
     MapLayer { key: "map", label: "Map view", group: "City", hotkey: "L", hint: "A street map: roads, street names, zones and pins, buildings and people hidden", flag: |o| &mut o.map, legend: legend_map },
 ];
 
@@ -289,6 +291,13 @@ fn legend_crime(ui: &mut egui::Ui, _: &LegendCtx) {
         ],
         false,
     );
+}
+
+fn legend_road_condition(ui: &mut egui::Ui, cx: &LegendCtx) {
+    ramp(ui, |t| linear(crate::render::road_wear_color(t)), "new", "crumbling");
+    let w = cx.world;
+    let by = w.road_wear_by_land_value();
+    small(ui, &format!("worn past 35%: slower and riskier · mean wear cheap {:.0}% / middle {:.0}% / dear {:.0}%", by[0].0 * 100.0, by[1].0 * 100.0, by[2].0 * 100.0));
 }
 
 fn legend_map(ui: &mut egui::Ui, _: &LegendCtx) {

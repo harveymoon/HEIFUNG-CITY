@@ -206,20 +206,20 @@ impl World {
                 .filter(|(id, _)| *id != meet_lot)
                 .filter_map(|(id, name)| {
                     let d = self.lots[*id].center.distance(meet.centre);
-                    (RACE_LENGTH.0..=RACE_LENGTH.1).contains(&d).then(|| ((d - 1500.0).abs() + 200.0 * unit(mix(key_of(*id), day ^ 7)), *id, name.clone()))
+                    (RACE_LENGTH.0..=RACE_LENGTH.1).contains(&d).then(|| ((d - 1200.0).abs() + 200.0 * unit(mix(key_of(*id), day ^ 7)), *id, name.clone()))
                 })
                 .collect();
             finishes.sort_by(|a, b| a.0.total_cmp(&b.0).then(key_of(a.1).cmp(&key_of(b.1))));
             for (_, fin_lot, fin_name) in finishes.into_iter().take(6) {
                 let finish = Spot::of(fin_lot, &self.lots[fin_lot], fin_name);
                 let Some((route, _, _, len)) = self.race_route(&meet, &finish) else { continue };
-                if len < 600.0 {
+                if len < RACE_MIN_ROUTE {
                     continue;
                 }
                 return self.launch_race(meet, finish, route, len, crew, tick);
             }
         }
-        Err("no lot pair a race could run between (900 m to 2.4 km apart by road)".into())
+        Err(format!("no pair of the {} empty lots and surface car parks a race could run between ({:.0} m to {:.1} km apart, {RACE_MIN_ROUTE:.0} m by road)", lots.len(), RACE_LENGTH.0, RACE_LENGTH.1 / 1000.0))
     }
 
     fn launch_race(&mut self, meet: Spot, finish: Spot, route: Vec<LaneId>, route_m: f32, crew: Vec<CitizenId>, tick: u64) -> Result<u32, String> {
@@ -295,7 +295,15 @@ impl World {
                 if tick % 3 == 0 {
                     self.gather_onlookers(&mut r, false);
                 }
-                if (in_lot >= 3 && (in_lot == r.cars.len() || waited >= RACE_GATHER)) || (in_lot >= 2 && waited >= RACE_GATHER * 2) {
+                // Ready when everyone is in, or most after a wait, or a
+                // pair after a long one; then a few minutes showing off
+                // the cars (`ends_at` holds the flag until then).
+                let ready = (in_lot >= 3 && (in_lot == r.cars.len() || (waited >= RACE_GATHER && in_lot * 10 >= r.cars.len() * 6))) || (in_lot >= 2 && waited >= RACE_GATHER * 2);
+                if ready && r.ends_at.is_none() {
+                    r.ends_at = Some(tick + SHOW_OFF);
+                }
+                if r.ends_at.is_some_and(|t| tick >= t) {
+                    r.ends_at = None;
                     self.go(&mut r);
                 } else if waited > RACE_GATHER * 3 || r.cars.is_empty() {
                     self.end_race(r, false);
@@ -357,6 +365,7 @@ impl World {
             let (at, face) = spot.bay(r.bays, n);
             r.bays += 1;
             self.traffic.begin_stunt(c, StuntKind::Ring { at, face });
+            self.traffic.cars[c].v = 0.0;
             if at_finish && !r.finished.contains(&c) {
                 r.finished.push(c);
                 if let Some(cid) = r.racer_of(c) {

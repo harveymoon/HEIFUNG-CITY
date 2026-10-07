@@ -106,6 +106,9 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
         ui.label(egui::RichText::new(format!("{duty_today:.0} today · {:.0} imported", p.sim.world.economy.market.imports_today)).small().weak());
     });
 
+    // [events] Road crews: the funding level and who they serve.
+    super::nights::road_budget(ui, p);
+
     section(ui, "TOLL BOOTHS");
     if p.sim.world.tolls.booths.is_empty() {
         hint(ui, "None yet. Buildings > Transit > Toll booth or Toll plaza, then click a straight stretch of road.");

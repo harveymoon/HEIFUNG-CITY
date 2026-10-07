@@ -168,12 +168,19 @@ pub fn report_json(w: &World) -> Value {
     })
 }
 
-/// `roads {funding?, near?, limit?}`: set the maintenance funding level (1 =
-/// what the network needs, 0..1.5), then the network's condition, the
-/// budget, and the worst pieces (or those nearest `near`).
+/// `roads {funding?, age_days?, crews?, near?, limit?}`: set the maintenance
+/// funding level (1 = what the network needs, 0..1.5); `age_days` (dev)
+/// wears every street that many days at yesterday's traffic, the crews
+/// working each night unless `crews: false`, nothing charged; then the
+/// network's condition, the budget, and the worst pieces (or those nearest
+/// `near`).
 pub fn roads(cmd: &Value, w: &mut World) -> Result<Value, String> {
     if let Some(f) = opt_f32(cmd, "funding")? {
         w.set_road_funding(f);
+    }
+    if let Some(days) = opt_u64(cmd, "age_days")? {
+        let crews = field(cmd, "crews").and_then(|v| v.as_bool()).unwrap_or(true);
+        w.age_roads(days as u32, crews);
     }
     let limit = opt_u64(cmd, "limit")?.unwrap_or(10) as usize;
     let near = opt_vec2(cmd, "near")?;
