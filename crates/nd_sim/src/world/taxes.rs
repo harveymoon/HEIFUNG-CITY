@@ -179,7 +179,7 @@ mod tests {
         for k in IndustryKind::ALL {
             taxed[k.index()] *= t.pull(TaxCategory::of_industry(k));
         }
-        let share = |w: &[f32; 7], k: IndustryKind| w[k.index()] / w.iter().sum::<f32>();
+        let share = |w: &[f32; crate::industry::IndustryKind::COUNT], k: IndustryKind| w[k.index()] / w.iter().sum::<f32>();
         assert!(share(&taxed, IndustryKind::OilExtraction) < share(&base, IndustryKind::OilExtraction) * 0.5);
         assert!(share(&taxed, IndustryKind::Farming) > share(&base, IndustryKind::Farming) * 1.3);
     }

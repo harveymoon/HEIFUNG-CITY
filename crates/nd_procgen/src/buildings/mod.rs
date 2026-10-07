@@ -35,6 +35,14 @@ pub use adjacency::{building_style, style_extras, Neighbour, StyleBook};
 mod services;
 /// [society] The trash depot.
 mod sanitation;
+/// [economy] Shops, garages and places to go out opened by the economy.
+mod trades;
+/// [economy] Farms, slaughterhouse, strip mine, trash company, fish trades.
+mod rural;
+/// [economy] Land side of marinas and fishing ports.
+mod docks;
+#[cfg(test)]
+mod economy_tests;
 pub use parts::WINDOW_LIGHT_MARK;
 pub use construction::{crane_paint, crane_slew, CraneRig, CRANE_LIFT_MINUTES, CRANE_SLEW_RANGE};
 pub use power::{battery_lights, coal_stacks, solar_head, solar_trackers, wind_rotor, wind_turbines, PlantField, SolarTracker, Turbine, SOLAR_HUB, SOLAR_MAX_TILT, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};
@@ -201,6 +209,47 @@ pub enum Style {
     CentralStation,
     // [power] grid battery packs, placed by the player
     PowerBattery,
+    // -- [economy] businesses and waterfront docks (`nd_sim::market`,
+    // `nd_sim::ports`): forced by the business or the dock, never drawn
+    // from a land use's menu. Appended so saved indices keep their order. --
+    /// Garage bays with roll-up doors, a car on a lift, tyre stacks.
+    Mechanic,
+    /// Showroom and a forecourt of matching new cars, bunting and flags.
+    CarDealer,
+    /// Yard of garbage trucks, dumpsters and a shed.
+    TrashCompany,
+    /// Narrow shopfront with bikes in racks outside.
+    BikeShop,
+    /// Barn, silo and a fenced pasture of cows.
+    CowFarm,
+    /// Long low chicken sheds with vents and feed silos.
+    ChickenFarm,
+    /// Windowless block, holding pens and refrigerated trucks.
+    Slaughterhouse,
+    /// Terraced open pit, haul trucks, a conveyor and spoil heaps.
+    StripMine,
+    /// Gutting sheds, an ice plant, crates and a reefer van.
+    FishGutting,
+    /// Factory with a freezer block, a chimney and a fish-stick sign.
+    FishStickFactory,
+    /// Open-sided hall of stalls under awnings, crates of fish.
+    FishMarket,
+    /// Restaurant with a deck, string lights and a fish sign.
+    SeafoodRestaurant,
+    /// Two-storey tee bays, a green field, nets on poles and floodlights.
+    GolfRange,
+    /// Converted brick warehouse with big windows, murals and sculptures.
+    ArtStudio,
+    /// White cube with a glass front, a banner and a sculpture.
+    Gallery,
+    /// Land side of a small marina: boathouse, boat trailers, parking.
+    MarinaSmall,
+    /// Land side of a large marina: clubhouse terrace, yacht on a cradle, flagpoles.
+    MarinaLarge,
+    /// Land side of a small fishing port: quay shed, nets, crates.
+    FishingPortSmall,
+    /// Land side of a large fishing port: ice house, crane, big shed, crates.
+    FishingPortLarge,
 }
 
 impl Style {
@@ -209,7 +258,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 80] = [
+    pub const ALL: [Style; 99] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -290,6 +339,25 @@ impl Style {
         Style::MetroEntrance,
         Style::CentralStation,
         Style::PowerBattery,
+        Style::Mechanic,
+        Style::CarDealer,
+        Style::TrashCompany,
+        Style::BikeShop,
+        Style::CowFarm,
+        Style::ChickenFarm,
+        Style::Slaughterhouse,
+        Style::StripMine,
+        Style::FishGutting,
+        Style::FishStickFactory,
+        Style::FishMarket,
+        Style::SeafoodRestaurant,
+        Style::GolfRange,
+        Style::ArtStudio,
+        Style::Gallery,
+        Style::MarinaSmall,
+        Style::MarinaLarge,
+        Style::FishingPortSmall,
+        Style::FishingPortLarge,
     ];
 
     /// The railway piece a style is drawn beside, if it is one.
@@ -409,6 +477,25 @@ impl Style {
             Style::TruckLot => "truck and bus lot",
             Style::TrashDepot => "trash depot",
             Style::Vertiport => "vertiport",
+            Style::Mechanic => "car repair shop",
+            Style::CarDealer => "car dealership",
+            Style::TrashCompany => "trash company",
+            Style::BikeShop => "bike shop",
+            Style::CowFarm => "cattle farm",
+            Style::ChickenFarm => "chicken farm",
+            Style::Slaughterhouse => "slaughterhouse",
+            Style::StripMine => "strip mine",
+            Style::FishGutting => "fish gutting sheds",
+            Style::FishStickFactory => "fish-stick factory",
+            Style::FishMarket => "fish market",
+            Style::SeafoodRestaurant => "seafood restaurant",
+            Style::GolfRange => "driving range",
+            Style::ArtStudio => "artists' studios",
+            Style::Gallery => "gallery",
+            Style::MarinaSmall => "small marina",
+            Style::MarinaLarge => "large marina",
+            Style::FishingPortSmall => "small fishing port",
+            Style::FishingPortLarge => "large fishing port",
         }
     }
 }
@@ -1058,6 +1145,11 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         _ if extras.depot => Style::BusDepot,
         _ if extras.port == Some(nd_sim::ports::PortKind::ShippingPort) => Style::ShippingPort,
         _ if extras.port == Some(nd_sim::ports::PortKind::FerryTerminal) => Style::FerryTerminal,
+        // [economy] Waterfront docks: each kind has its own land side.
+        _ if extras.port == Some(nd_sim::ports::PortKind::MarinaSmall) => Style::MarinaSmall,
+        _ if extras.port == Some(nd_sim::ports::PortKind::MarinaLarge) => Style::MarinaLarge,
+        _ if extras.port == Some(nd_sim::ports::PortKind::FishingPortSmall) => Style::FishingPortSmall,
+        _ if extras.port == Some(nd_sim::ports::PortKind::FishingPortLarge) => Style::FishingPortLarge,
         _ if extras.rail.is_some_and(|r| r.kind == RailFacility::Station) => Style::Station,
         _ if extras.rail.is_some_and(|r| r.kind == RailFacility::FreightYard) => Style::FreightYard,
         _ if extras.battery.is_some() => Style::PowerBattery,
@@ -1070,6 +1162,12 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         (Some(PowerPlantKind::Geothermal), _) => Style::PowerGeothermal,
         (None, Some(_)) if tier == Tier::Low || floors < 2 => Style::ParkingLot,
         (None, Some(_)) => Style::CarPark,
+        // [economy] The new trades wear their own look whatever the zone or
+        // the district: a car dealer is a car dealer in any architecture.
+        (None, None) if extras.business.is_some_and(business_look_wins) => {
+            let options = industry_styles(extras.business.unwrap(), tier).unwrap();
+            pick_industry_style(options, extras.neighbours, &mut rng)
+        }
         // [districts] A district's look, then hotels, before the land use's menu.
         (None, None) if !extras.rooftop_pad && extras.look.is_some_and(|l| district::look_styles(l, land_use, tier).is_some()) => {
             let menu = district::look_styles(extras.look.unwrap(), land_use, tier).unwrap();
@@ -1118,12 +1216,48 @@ pub fn industry_styles(kind: nd_sim::BusinessKind, tier: Tier) -> Option<&'stati
         // A cargo hub: container stacks, a gantry crane, lorries in bays.
         B::CargoHub => &[(Style::ContainerYard, 1.0)],
         B::Fishery | B::FishPlant => &[(Style::FishProcessing, 1.0)],
+        // [economy] One look per new trade, whatever the land use.
+        B::Mechanic => &[(Style::Mechanic, 1.0)],
+        B::CarDealer => &[(Style::CarDealer, 1.0)],
+        B::TrashCompany => &[(Style::TrashCompany, 1.0)],
+        B::BikeShop => &[(Style::BikeShop, 1.0)],
+        B::CowFarm => &[(Style::CowFarm, 1.0)],
+        B::ChickenFarm => &[(Style::ChickenFarm, 1.0)],
+        B::Slaughterhouse => &[(Style::Slaughterhouse, 1.0)],
+        B::StripMine => &[(Style::StripMine, 1.0)],
+        B::FishGutting => &[(Style::FishGutting, 1.0)],
+        B::FishStickFactory => &[(Style::FishStickFactory, 1.0)],
+        B::FishMarket => &[(Style::FishMarket, 1.0)],
+        B::SeafoodRestaurant => &[(Style::SeafoodRestaurant, 1.0)],
+        B::GolfRange => &[(Style::GolfRange, 1.0)],
+        B::ArtStudio => &[(Style::ArtStudio, 1.0)],
+        B::Gallery => &[(Style::Gallery, 1.0)],
+        // A dock's operator: normally drawn by its port kind (`extras.port`);
+        // this is the fallback when the port is not passed.
+        B::Marina => match tier {
+            Tier::High => &[(Style::MarinaLarge, 1.0)],
+            _ => &[(Style::MarinaSmall, 1.0)],
+        },
+        B::FishingPort => match tier {
+            Tier::High => &[(Style::FishingPortLarge, 1.0)],
+            _ => &[(Style::FishingPortSmall, 1.0)],
+        },
         B::Assembly => match tier {
             Tier::Low => &[(Style::FlattedFactory, 0.6), (Style::Workshops, 0.4)],
             _ => &[(Style::FabPlant, 0.6), (Style::Datacenter, 0.4)],
         },
         _ => return None,
     })
+}
+
+/// [economy] Businesses whose own look wins over a district's look and
+/// the land use's menu: the trades the economy opens by pressure.
+pub fn business_look_wins(kind: nd_sim::BusinessKind) -> bool {
+    use nd_sim::BusinessKind as B;
+    matches!(
+        kind,
+        B::Mechanic | B::CarDealer | B::TrashCompany | B::BikeShop | B::CowFarm | B::ChickenFarm | B::Slaughterhouse | B::StripMine | B::Marina | B::FishingPort | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::GolfRange | B::ArtStudio | B::Gallery
+    )
 }
 
 /// Weighted pick among an industry's looks, clustering by neighbours.
@@ -1310,6 +1444,25 @@ fn generate_styled_extras(
         Style::TruckLot => industrial::truck_lot(&mut g, &ctx, &mut rng),
         Style::TrashDepot => sanitation::trash_depot(&mut g, &ctx, &mut rng),
         Style::Vertiport => air::vertiport(&mut g, &ctx, &mut rng),
+        Style::Mechanic => trades::mechanic(&mut g, &ctx, &mut rng),
+        Style::CarDealer => trades::car_dealer(&mut g, &ctx, &mut rng),
+        Style::TrashCompany => rural::trash_company(&mut g, &ctx, &mut rng),
+        Style::BikeShop => trades::bike_shop(&mut g, &ctx, &mut rng),
+        Style::CowFarm => rural::cow_farm(&mut g, &ctx, &mut rng),
+        Style::ChickenFarm => rural::chicken_farm(&mut g, &ctx, &mut rng),
+        Style::Slaughterhouse => rural::slaughterhouse(&mut g, &ctx, &mut rng),
+        Style::StripMine => rural::strip_mine(&mut g, &ctx, &mut rng),
+        Style::FishGutting => rural::fish_gutting(&mut g, &ctx, &mut rng),
+        Style::FishStickFactory => rural::fish_stick_factory(&mut g, &ctx, &mut rng),
+        Style::FishMarket => trades::fish_market(&mut g, &ctx, &mut rng),
+        Style::SeafoodRestaurant => trades::seafood_restaurant(&mut g, &ctx, &mut rng),
+        Style::GolfRange => trades::golf_range(&mut g, &ctx, &mut rng),
+        Style::ArtStudio => trades::art_studio(&mut g, &ctx, &mut rng),
+        Style::Gallery => trades::gallery(&mut g, &ctx, &mut rng),
+        Style::MarinaSmall => docks::marina_small(&mut g, &ctx, &mut rng),
+        Style::MarinaLarge => docks::marina_large(&mut g, &ctx, &mut rng),
+        Style::FishingPortSmall => docks::fishing_port_small(&mut g, &ctx, &mut rng),
+        Style::FishingPortLarge => docks::fishing_port_large(&mut g, &ctx, &mut rng),
     }
     if extras.rooftop_pad && style.pad_capable() && g.pads.is_empty() {
         air::rooftop_deck(&mut g, &ctx);

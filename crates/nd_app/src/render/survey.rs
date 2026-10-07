@@ -45,7 +45,7 @@ pub(super) struct SurveyState {
     /// A survey being built on a worker thread.
     pending: Option<(LandscapeParams, f32, Receiver<LandSurvey>)>,
     /// Industry weights per corner and what they were computed from.
-    weights: Option<(WeightsKey, Vec<[f32; 7]>)>,
+    weights: Option<(WeightsKey, Vec<[f32; nd_sim::IndustryKind::COUNT]>)>,
     /// What is on screen: the layer and the inputs it was drawn from.
     shown: Option<(LandLayer, WeightsKey, u64)>,
     last_build: f32,
@@ -65,7 +65,7 @@ fn grid(s: &LandSurvey, values: Vec<f32>) -> HeatGrid {
 }
 
 /// The wash for one layer over the survey.
-pub(super) fn land_mesh(w: &World, s: &LandSurvey, layer: LandLayer, weights: &[[f32; 7]]) -> nd_procgen::MeshData {
+pub(super) fn land_mesh(w: &World, s: &LandSurvey, layer: LandLayer, weights: &[[f32; nd_sim::IndustryKind::COUNT]]) -> nd_procgen::MeshData {
     let height = |p: nd_sim::Vec2| if w.landscape.is_flat() { 0.0 } else { w.ground_height(p) };
     match layer {
         LandLayer::BestIndustry => {

@@ -200,6 +200,8 @@ impl TaxCategory {
             IndustryKind::Logistics => TaxCategory::Logistics,
             IndustryKind::Fishing => TaxCategory::Fishing,
             IndustryKind::Tech => TaxCategory::Tech,
+            // [economy] Strip mines are taxed with the other extraction.
+            IndustryKind::Mining => TaxCategory::Oil,
         }
     }
 
@@ -222,11 +224,14 @@ impl TaxCategory {
             BusinessKind::Bakery => TaxCategory::Bakery,
             BusinessKind::GadgetShop => TaxCategory::GadgetShop,
             BusinessKind::Parking => TaxCategory::Parking,
-            BusinessKind::Venue => match tier {
+            BusinessKind::Venue | BusinessKind::SeafoodRestaurant | BusinessKind::GolfRange | BusinessKind::Gallery | BusinessKind::Marina => match tier {
                 Tier::Low => TaxCategory::NightlifeLow,
                 Tier::Mid => TaxCategory::NightlifeMid,
                 Tier::High => TaxCategory::NightlifeHigh,
             },
+            // [economy] Shops by what they sell.
+            BusinessKind::FishMarket => TaxCategory::Grocery,
+            BusinessKind::CarDealer | BusinessKind::BikeShop | BusinessKind::Mechanic | BusinessKind::ArtStudio => TaxCategory::GadgetShop,
             _ => return None,
         })
     }

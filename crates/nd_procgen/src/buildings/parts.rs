@@ -1412,6 +1412,10 @@ pub enum Vehicle {
     Truck,
     Wreck,
     Bus,
+    /// [economy] A garbage truck, never a panel lorry.
+    GarbageTruck,
+    /// [economy] A box lorry, never a garbage truck.
+    Lorry,
 }
 
 impl Vehicle {
@@ -1421,7 +1425,7 @@ impl Vehicle {
         match self {
             Vehicle::Car => (2.1, 0.95, 0.0),
             Vehicle::Van => (2.6, 1.0, 0.0),
-            Vehicle::Truck => (4.9, 1.2, -0.3),
+            Vehicle::Truck | Vehicle::GarbageTruck | Vehicle::Lorry => (4.9, 1.2, -0.3),
             Vehicle::Wreck => (2.0, 0.9, 0.0),
             Vehicle::Bus => (5.75, 1.25, 0.0),
         }
@@ -1450,9 +1454,11 @@ pub fn vehicle(g: &mut Geometry, f: &Frame, pal: &Palette, rng: &mut impl Rng, p
         Vehicle::Truck => Parked::Truck,
         Vehicle::Wreck => Parked::Wreck,
         Vehicle::Bus => Parked::Bus,
+        Vehicle::GarbageTruck => Parked::GarbageTruck,
+        Vehicle::Lorry => Parked::Lorry,
     };
     // Trucks sat a little behind their anchor (see the footprint).
-    let back = if kind == Parked::Truck { -0.3 } else { 0.0 };
+    let back = if matches!(kind, Parked::Truck | Parked::GarbageTruck | Parked::Lorry) { -0.3 } else { 0.0 };
     let a = f.yaw() + yaw;
     let w = f.to_world(p.x, p.y) + Vec2::new(a.cos(), a.sin()) * back;
     crate::vehicles::draw_parked(g, pal, rng, w, y, a, kind, color);

@@ -364,7 +364,7 @@ pub fn industry(cmd: &Value, w: &mut World) -> Result<Value, String> {
     let l = w.lots.get(lot).ok_or("no such lot")?;
     let g = w.lot_ground(lot).unwrap_or_default();
     let site = w.industry_site(lot).ok_or("no such lot")?;
-    let weights = w.industry_weights(lot).unwrap_or([0.0; 7]);
+    let weights = w.industry_weights(lot).unwrap_or([0.0; IndustryKind::COUNT]);
     let total: f32 = weights.iter().sum::<f32>().max(1e-6);
     let shares: serde_json::Map<String, Value> = IndustryKind::ALL.iter().map(|k| (k.key().to_string(), json!(round(weights[k.index()] / total)))).collect();
     let bias = w.industry_bias_at(l.center);

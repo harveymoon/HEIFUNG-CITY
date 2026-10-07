@@ -2848,7 +2848,8 @@ struct LandscapeRender {
     /// What the ground, water and works were built for.
     signature: Option<u64>,
     water_mat: Option<Handle<StandardMaterial>>,
-    ship_meshes: Option<[Handle<Mesh>; 2]>,
+    /// [economy] One mesh per `ShipKind` (freighter, ferry, trawler, yacht, sailboat).
+    ship_meshes: Option<[Handle<Mesh>; 5]>,
     ships: HashMap<nd_sim::ports::ShipId, Entity>,
 }
 
@@ -2923,7 +2924,10 @@ fn sync_landscape(
     spawn_geometry(&mut commands, &mut meshes, &mats, &geo, WaterworksTag);
 }
 
-/// Freighters and ferries along their routes, blended between ticks.
+/// [economy] The ship kinds in `ship_meshes` order.
+const SHIP_KINDS: [nd_sim::ShipKind; 5] = [nd_sim::ShipKind::Freighter, nd_sim::ShipKind::Ferry, nd_sim::ShipKind::FishingBoat, nd_sim::ShipKind::Yacht, nd_sim::ShipKind::Sailboat];
+
+/// Freighters, ferries and (economy) boats along their routes, blended between ticks.
 fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut state: ResMut<LandscapeRender>, mut q: Query<&mut Transform, With<ShipTag>>) {
     let ships = &sim.world.ports.ships;
     if ships.is_empty() && state.ships.is_empty() {
@@ -2931,11 +2935,11 @@ fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res
     }
     let handles = state
         .ship_meshes
-        .get_or_insert_with(|| [meshes.add(shared_mesh(&nd_procgen::terrain::ship_mesh(true, &assets.palette), true)), meshes.add(shared_mesh(&nd_procgen::terrain::ship_mesh(false, &assets.palette), true))])
+        .get_or_insert_with(|| SHIP_KINDS.map(|k| meshes.add(shared_mesh(&nd_procgen::terrain::boat_mesh(k, &assets.palette), true))))
         .clone();
     for (id, ship) in ships.iter() {
         if !state.ships.contains_key(&id) {
-            let mesh = if ship.kind == nd_sim::ShipKind::Freighter { handles[0].clone() } else { handles[1].clone() };
+            let mesh = handles[SHIP_KINDS.iter().position(|k| *k == ship.kind).unwrap_or(1)].clone();
             let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(mats.surface(Surface::Panel)), Transform::IDENTITY, ShipTag)).id();
             state.ships.insert(id, e);
         }

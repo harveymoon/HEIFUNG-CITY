@@ -27,10 +27,14 @@ pub enum IndustryKind {
     Fishing,
     /// Clean industry: electronics assembly.
     Tech,
+    /// [economy] Strip mining over rocky ground: an open pit, ore for
+    /// export, dust, noise and a heavy land value hit. Appended.
+    Mining,
 }
 
 impl IndustryKind {
-    pub const ALL: [IndustryKind; 7] = [
+    pub const COUNT: usize = 8;
+    pub const ALL: [IndustryKind; Self::COUNT] = [
         IndustryKind::Farming,
         IndustryKind::OilExtraction,
         IndustryKind::Refinery,
@@ -38,6 +42,7 @@ impl IndustryKind {
         IndustryKind::Logistics,
         IndustryKind::Fishing,
         IndustryKind::Tech,
+        IndustryKind::Mining,
     ];
 
     pub fn index(self) -> usize {
@@ -53,6 +58,7 @@ impl IndustryKind {
             IndustryKind::Logistics => "logistics",
             IndustryKind::Fishing => "fishing",
             IndustryKind::Tech => "clean tech",
+            IndustryKind::Mining => "strip mining",
         }
     }
 
@@ -66,6 +72,7 @@ impl IndustryKind {
             IndustryKind::Logistics => "logistics",
             IndustryKind::Fishing => "fishing",
             IndustryKind::Tech => "tech",
+            IndustryKind::Mining => "mining",
         }
     }
 
@@ -79,6 +86,7 @@ impl IndustryKind {
             "logistics" | "shipping" | "containers" => IndustryKind::Logistics,
             "fishing" | "fish" => IndustryKind::Fishing,
             "tech" | "clean" | "clean_tech" => IndustryKind::Tech,
+            "mining" | "mine" | "strip_mining" | "quarry" => IndustryKind::Mining,
             _ => return None,
         })
     }
@@ -86,13 +94,14 @@ impl IndustryKind {
     /// The businesses of this kind.
     pub fn businesses(self) -> &'static [BusinessKind] {
         match self {
-            IndustryKind::Farming => &[BusinessKind::VertFarm, BusinessKind::GrainFarm, BusinessKind::ProteinVat, BusinessKind::Dairy, BusinessKind::Mill],
+            IndustryKind::Farming => &[BusinessKind::VertFarm, BusinessKind::GrainFarm, BusinessKind::ProteinVat, BusinessKind::Dairy, BusinessKind::Mill, BusinessKind::CowFarm, BusinessKind::ChickenFarm, BusinessKind::Slaughterhouse],
             IndustryKind::OilExtraction => &[BusinessKind::OilWell],
             IndustryKind::Refinery => &[BusinessKind::Refinery],
             IndustryKind::Manufacturing => &[BusinessKind::Fab],
-            IndustryKind::Logistics => &[BusinessKind::ContainerYard, BusinessKind::FleetLot, BusinessKind::TowYard],
-            IndustryKind::Fishing => &[BusinessKind::Fishery, BusinessKind::FishPlant],
+            IndustryKind::Logistics => &[BusinessKind::ContainerYard, BusinessKind::FleetLot, BusinessKind::TowYard, BusinessKind::TrashCompany],
+            IndustryKind::Fishing => &[BusinessKind::Fishery, BusinessKind::FishPlant, BusinessKind::FishGutting, BusinessKind::FishStickFactory],
             IndustryKind::Tech => &[BusinessKind::Assembly],
+            IndustryKind::Mining => &[BusinessKind::StripMine],
         }
     }
 
@@ -113,6 +122,8 @@ impl IndustryKind {
             IndustryKind::Logistics => (180.0, 0.18),
             IndustryKind::Fishing => (160.0, 0.14),
             IndustryKind::Tech => (120.0, 0.05),
+            // Blasting, dust and a scarred hillside: the worst neighbour.
+            IndustryKind::Mining => (340.0, 0.42),
         }
     }
 
@@ -124,6 +135,7 @@ impl IndustryKind {
             IndustryKind::Farming | IndustryKind::Fishing => (180.0, 0.05),
             IndustryKind::Manufacturing | IndustryKind::Logistics => (200.0, 0.07),
             IndustryKind::Tech => (200.0, 0.09),
+            IndustryKind::Mining => (160.0, 0.03),
         }
     }
 
@@ -133,6 +145,8 @@ impl IndustryKind {
         match self {
             IndustryKind::OilExtraction => Some((60.0, 0.010)),
             IndustryKind::Refinery => Some((80.0, 0.004)),
+            // Dust and run-off from the pit.
+            IndustryKind::Mining => Some((90.0, 0.002)),
             _ => None,
         }
     }
@@ -140,7 +154,7 @@ impl IndustryKind {
     /// Floors a building of this kind is built with, at most.
     pub fn max_floors(self) -> u8 {
         match self {
-            IndustryKind::OilExtraction | IndustryKind::Farming | IndustryKind::Logistics => 1,
+            IndustryKind::OilExtraction | IndustryKind::Farming | IndustryKind::Logistics | IndustryKind::Mining => 1,
             IndustryKind::Fishing => 2,
             _ => 3,
         }
@@ -176,7 +190,19 @@ pub struct IndustrySite {
     pub fleet_lot_near: bool,
     /// Working oil wells within reach of a refinery here.
     pub crude_wells: u32,
+    /// [economy] Cattle and chicken farms within [`LIVESTOCK_REACH`]: a
+    /// slaughterhouse wants to be near them.
+    pub livestock_farms: u32,
+    /// [economy] Slaughterhouses already within [`LIVESTOCK_REACH`]: two
+    /// farms keep one busy, no more.
+    pub slaughterhouses: u32,
+    /// [economy] A working fishing port (`0..1`, 1 on the quay): gutting
+    /// sheds and the fish-stick factory gather round the catch.
+    pub fishing_port: f32,
 }
+
+/// [economy] Livestock farms this close count for a slaughterhouse.
+pub const LIVESTOCK_REACH: f32 = 700.0;
 
 /// Industry further than this does not count as a neighbour.
 pub const NEIGHBOUR_RADIUS: f32 = 160.0;
@@ -199,6 +225,7 @@ pub fn affinity(kind: IndustryKind, other: IndustryKind) -> f32 {
             Fishing => 0.4,
             Manufacturing => 0.3,
             Tech => 0.35,
+            Mining => 0.5,
         };
     }
     match (kind, other) {
@@ -213,18 +240,23 @@ pub fn affinity(kind: IndustryKind, other: IndustryKind) -> f32 {
         (Logistics, Refinery) | (Logistics, Manufacturing) | (Logistics, Fishing) => 0.25,
         (Fishing, Logistics) => 0.2,
         (Tech, Manufacturing) | (Manufacturing, Tech) => 0.2,
+        // [economy] Nobody wants a blasting pit next door but the hauliers.
+        (Farming, Mining) => -1.0,
+        (Fishing, Mining) | (Tech, Mining) => -0.5,
+        (Logistics, Mining) => 0.2,
+        (Mining, Logistics) => 0.1,
         _ => 0.0,
     }
 }
 
 /// Unnormalised weight of each industry kind on a site, in
 /// [`IndustryKind::ALL`] order. Deterministic.
-pub fn weights(site: &IndustrySite) -> [f32; 7] {
+pub fn weights(site: &IndustrySite) -> [f32; IndustryKind::COUNT] {
     use IndustryKind::*;
     let g = &site.ground;
     let lv = site.land_value.clamp(0.0, 1.0);
     let clean = (1.0 - site.contamination).clamp(0.0, 1.0);
-    let mut w = [0.0f32; 7];
+    let mut w = [0.0f32; IndustryKind::COUNT];
     // Farming wants deep soil and clean ground; it is the bread and butter
     // of new industrial land, so it starts high.
     w[Farming.index()] = 2.0 * (0.25 + 1.75 * g.fertility) * clean * clean * (1.0 - 0.6 * g.rock);
@@ -241,8 +273,11 @@ pub fn weights(site: &IndustrySite) -> [f32; 7] {
     w[Fishing.index()] = 2.5 * g.water * (0.5 + 0.5 * clean) + 0.8 * site.port * g.water;
     // Clean industry wants dear land; heavy industry the cheap stuff.
     w[Tech.index()] = 0.35 + 1.0 * smoothstep(0.3, 0.7, lv);
+    // [economy] A strip mine only where the rock is near the surface; it
+    // takes the cheap land like the wells do.
+    w[Mining.index()] = 2.4 * smoothstep(0.62, 0.9, g.rock);
     let cheap = 1.3 - lv;
-    for k in [OilExtraction, Refinery, Farming] {
+    for k in [OilExtraction, Refinery, Farming, Mining] {
         w[k.index()] *= cheap;
     }
     // Neighbours: exp of the summed affinities, nearer counting more.
@@ -266,9 +301,9 @@ pub fn weights(site: &IndustrySite) -> [f32; 7] {
 }
 
 /// The kind with the most weight (ties to the earlier kind).
-pub fn favourite(w: &[f32; 7]) -> IndustryKind {
+pub fn favourite(w: &[f32; IndustryKind::COUNT]) -> IndustryKind {
     let mut best = 0;
-    for i in 1..7 {
+    for i in 1..IndustryKind::COUNT {
         if w[i] > w[best] {
             best = i;
         }
@@ -277,7 +312,7 @@ pub fn favourite(w: &[f32; 7]) -> IndustryKind {
 }
 
 /// Weighted pick with `roll` in `0..1`.
-pub fn pick(w: &[f32; 7], roll: f32) -> IndustryKind {
+pub fn pick(w: &[f32; IndustryKind::COUNT], roll: f32) -> IndustryKind {
     let total: f32 = w.iter().sum();
     if total <= 0.0 || !total.is_finite() {
         return IndustryKind::Manufacturing;
@@ -299,7 +334,19 @@ pub fn business_weights(kind: IndustryKind, site: &IndustrySite) -> Vec<(Busines
         IndustryKind::Farming => {
             // Open fields on good soil; vats and vertical farms anywhere.
             let field = 0.3 + 1.4 * g.fertility;
-            vec![(BusinessKind::GrainFarm, field), (BusinessKind::Dairy, field * 0.8), (BusinessKind::VertFarm, 0.9), (BusinessKind::ProteinVat, 0.8), (BusinessKind::Mill, 0.7)]
+            // [economy] Pasture and chicken sheds on the open land; a
+            // slaughterhouse where the livestock farms are.
+            let farms = site.livestock_farms.min(4) as f32;
+            vec![
+                (BusinessKind::GrainFarm, field),
+                (BusinessKind::Dairy, field * 0.8),
+                (BusinessKind::VertFarm, 0.9),
+                (BusinessKind::ProteinVat, 0.8),
+                (BusinessKind::Mill, 0.7),
+                (BusinessKind::CowFarm, field * 0.12),
+                (BusinessKind::ChickenFarm, 0.1),
+                (BusinessKind::Slaughterhouse, if site.livestock_farms >= 2 * (site.slaughterhouses + 1) { 0.15 + 0.35 * farms } else { 0.0 }),
+            ]
         }
         IndustryKind::Logistics => {
             let fleet = if site.fleet_lot_near { 0.15 } else { 0.5 + 1.5 * site.depot + 0.8 * site.port.max(site.yard) };
@@ -308,7 +355,13 @@ pub fn business_weights(kind: IndustryKind, site: &IndustrySite) -> Vec<(Busines
         }
         IndustryKind::Fishing => {
             let processors = site.neighbours.iter().filter(|(k, _)| *k == IndustryKind::Fishing).count() as f32;
-            vec![(BusinessKind::Fishery, 1.2 + g.water), (BusinessKind::FishPlant, 0.6 + 0.4 * processors.min(3.0))]
+            vec![
+                (BusinessKind::Fishery, 1.2 + g.water),
+                (BusinessKind::FishPlant, 0.6 + 0.4 * processors.min(3.0)),
+                // [economy] Gutting and the fish-stick factory follow a fishing port.
+                (BusinessKind::FishGutting, 1.2 * site.fishing_port),
+                (BusinessKind::FishStickFactory, 0.6 * site.fishing_port),
+            ]
         }
         k => k.businesses().iter().map(|b| (*b, 1.0)).collect(),
     }
@@ -386,11 +439,11 @@ mod tests {
 
     #[test]
     fn picks_are_deterministic_and_cover_the_weights() {
-        let w = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 2.0];
+        let w = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 2.0, 0.0];
         assert_eq!(pick(&w, 0.1), IndustryKind::Farming);
         assert_eq!(pick(&w, 0.3), IndustryKind::Manufacturing);
         assert_eq!(pick(&w, 0.9), IndustryKind::Tech);
-        assert_eq!(pick(&[0.0; 7], 0.5), IndustryKind::Manufacturing);
+        assert_eq!(pick(&[0.0; IndustryKind::COUNT], 0.5), IndustryKind::Manufacturing);
         let near_depot = IndustrySite { depot: 1.0, ..Default::default() };
         let opts = business_weights(IndustryKind::Logistics, &near_depot);
         let fleet = opts.iter().find(|o| o.0 == BusinessKind::FleetLot).unwrap().1;

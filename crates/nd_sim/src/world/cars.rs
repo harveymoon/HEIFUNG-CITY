@@ -1132,9 +1132,31 @@ impl World {
     /// street in front (the gadget shops double as dealers), else any open
     /// shop. `None` when the town has none: cars come from out of town.
     pub(super) fn dealer_near(&self, p: Vec2) -> Option<BuildingId> {
+        self.specialist_near(p, BusinessKind::CarDealer, CAR_DEALER_REACH).or_else(|| self.any_shop_near(p))
+    }
+
+    /// [economy] Where a bike is bought: a bike shop in reach, else as a
+    /// car (a goods or gadget shop doubles).
+    pub(super) fn bike_shop_near(&self, p: Vec2) -> Option<BuildingId> {
+        self.specialist_near(p, BusinessKind::BikeShop, BIKE_SHOP_REACH).or_else(|| self.any_shop_near(p))
+    }
+
+    /// [economy] The nearest open business of `kind` with a street in
+    /// front within `reach`.
+    fn specialist_near(&self, p: Vec2, kind: BusinessKind, reach: f32) -> Option<BuildingId> {
         self.buildings
             .iter()
-            .filter(|(_, b)| b.land_use == LandUse::Commercial && b.construction.is_none() && b.business.as_ref().is_some_and(|z| !z.closed && !b.is_parking()))
+            .filter(|(_, b)| b.construction.is_none() && b.business.as_ref().is_some_and(|z| z.kind == kind && !z.closed))
+            .filter_map(|(id, b)| self.lots.get(b.lot).filter(|l| l.car_access()).map(|l| (l.center.distance(p), id)))
+            .filter(|(d, _)| *d <= reach)
+            .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+            .map(|(_, id)| id)
+    }
+
+    fn any_shop_near(&self, p: Vec2) -> Option<BuildingId> {
+        self.buildings
+            .iter()
+            .filter(|(_, b)| b.land_use == LandUse::Commercial && b.construction.is_none() && b.port.is_none() && b.business.as_ref().is_some_and(|z| !z.closed && !b.is_parking()))
             .filter(|(id, _)| self.building_lot(*id).is_some_and(|l| l.car_access()))
             .filter_map(|(id, b)| {
                 let goods = b.business.as_ref().is_some_and(|z| z.sells(Resource::Goods) || z.sells(Resource::Electronics));
@@ -1280,7 +1302,7 @@ impl World {
     pub(super) fn buy_bike(&mut self, id: CitizenId, reason: &str) -> f32 {
         let tick = self.clock.tick;
         let at = self.citizens[id].home.and_then(|h| self.building_entrance(h)).unwrap_or(self.citizens[id].pos);
-        let shop = self.dealer_near(at);
+        let shop = self.bike_shop_near(at);
         let name = match shop {
             Some(s) => {
                 if let Some(bz) = self.buildings[s].business.as_mut() {
@@ -1568,6 +1590,11 @@ impl World {
         };
         c.commute.feel(mode, pain);
         c.commute.last_minutes = minutes as u32;
+        // [economy] A long walk: a bike would have helped (bike shops).
+        if mode == TripMode::Walk && minutes >= 25.0 {
+            self.pressure.long_walks_today += 1;
+        }
+        let Some(c) = self.citizens.get_mut(id) else { return };
         if mode == TripMode::Car && c.commute.rage >= 0.5 {
             // [rage] Always remembered: it is a story they will tell.
             let expected = c.commute.expected_drive.max(1.0);
@@ -1588,6 +1615,11 @@ impl World {
         }
     }
 }
+
+/// [economy] A car dealership sells to buyers this far away; a bike shop
+/// to riders this far. Beyond, the old shop down the road will do.
+pub const CAR_DEALER_REACH: f32 = 4000.0;
+pub const BIKE_SHOP_REACH: f32 = 2500.0;
 
 pub(super) fn id_hash(id: CitizenId) -> u64 {
     slotmap::Key::data(&id).as_ffi()

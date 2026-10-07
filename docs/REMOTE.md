@@ -911,3 +911,44 @@ on the street (camps form on cheap land); `offend {citizen, building?, kind?}` m
 criminal and has them strike; `trash {kg, building?}` adds trash to bins. `place {kind:
 "trash_depot"}` (also `trash`, `garbage`) puts down a depot (industrial or civic land, a street out
 front). Garbage trucks are cars in `find {what: "cars"}` with a garbage truck body.
+
+## Business pressure, the waterfront and the art scene
+
+`report {sections: ["pressure"]}` (also the `pressure` command with no fields): `pressures` (every
+pressure, strongest first: `kind` (tow_company, mechanic, car_dealer, trash_company, bike_shop,
+slaughterhouse, fish_gutting, fish_stick_factory, fish_market, seafood_restaurant, golf_range,
+art_studio, gallery, marina), `label`, `business` (the business kind key it opens), `strength`
+0..1, `wanted`, `have` (open and being built), `gap`, `struggling`, `wants_more`, `why` (the
+cause in words), `held` (why nothing opens despite the gap: cooling down after one closed, no
+lot, a player-placed kind), `player_placed`), `opened_total` (by kind), `signals` (the smoothed
+causes: outside and local tows a day, crashes a day, cars, rich households, cars bought a day and
+of them out of town, buildings out of the city's trash rounds, overflowing bins, depots, bike
+owners, bikes bought, long walks a day, livestock, fish and fillets a day, fishing ports and
+marinas [small, large], comfortable adults, artists, artists of middle income, rich adults, rich
+households near the water, has_water, art_scene), `trash` {local_companies, local_clients,
+local_fee, out_of_town_fee}, `art` {openings_total, donations_total, art_sold_total, openings (the
+last six: gallery, name, from/until tick, on_now, invited, visitors, donations, sales),
+galleries_wanting_to_expand}, `waterfront` {boats_out, berth_fees_last_night, docks: kind, label,
+building, pos, works, berths, boats_out, open}, `repairs_today`, `bike_repairs_today`.
+
+`pressure {open, x, y}` (or `at`): opens a business of that kind (a `BusinessKind` key, label or
+variant name: `mechanic` (`car_repair_shop`), `car_dealer` (`car_dealership`), `trash_company`,
+`bike_shop`, `cow_farm` (`cattle_farm`), `chicken_farm`, `slaughterhouse`, `strip_mine`,
+`fish_gutting` (`fish_gutting_shed`), `fish_stick_factory`, `fish_market`, `seafood_restaurant`,
+`golf_range` (`golf_driving_range`), `art_studio` (`artists_studios`), `gallery`, and the older
+kinds) on the vacant lot under or nearest the point (within 150 m), as a pressure would; `finish:
+true` builds it at once. Reply `building`, `kind`, `lot`, `finished`, `story`. Marinas and fishing
+ports are docks: use `place`.
+
+`place {kind}` takes the docks `marina` (`marina_small`), `marina_large` (`yacht_club`),
+`fishing_port` (`fishing_port_small`, `fish_quay`) and `fishing_port_large` (`fishing_harbour`) at
+the water's edge, like `shipping_port` and `ferry` (refused away from the shore: "must be built at
+the water's edge"). They are in the Build window under Water.
+
+A building's `inspect` (and `selected`) has `story`: `why` (why the business is here), `doing`
+(how it is doing: paying its way, struggling, days in debt, short-staffed, out of an input, more
+of its kind than the city needs, competitors, donations, an opening tonight), `struggling`,
+`wants_expand` (a thriving gallery: the hook for growing into a museum), `opened_by_pressure` (the
+pressure key when its kind is one a pressure opens), `donations`, `opening_now` {invited,
+visitors, donations}. Boats are port ships of kinds `FishingBoat`, `Yacht` and `Sailboat` besides
+the freighters and ferries.

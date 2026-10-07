@@ -327,6 +327,8 @@ pub fn citizen_detail(w: &World, id: CitizenId, c: &Citizen, favourite: bool) ->
         "work": opt_key(c.work), "work_name": building_name(w, c.work),
         "inside": opt_key(c.inside), "parked_at": opt_key(c.parked_at),
         "class": c.class().label(), "mood": round(c.mood), "satiety": round(c.satiety),
+        // [economy] an artist's calling (the art scene)
+        "artist": nd_sim::world::is_artist(c),
         "arrived_day": c.arrived_tick / 1440 + 1,
         "income": round(c.income), "rent": round(rent), "savings": round(c.savings), "rent_stress_days": c.rent_stress_days,
         "groceries": round(c.groceries), "hungry_days": c.hungry_days, "owns_car": c.owns_car, "owns_bike": c.owns_bike,
@@ -443,6 +445,8 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         })),
         "plant": plant, "depot": b.depot, "rail": rail, "business": business, "park": park,
         "taxis_and_freight": super::taxis::building_extra(w, id),
+        // [economy] why the business is here and how it is doing
+        "story": super::economy::story(w, id),
     })
 }
 
@@ -805,6 +809,10 @@ pub fn placeable_key(p: nd_sim::Placeable) -> String {
         nd_sim::Placeable::Rail(f) => rail_name(f).to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::ShippingPort) => "shipping_port".to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::FerryTerminal) => "ferry_terminal".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::MarinaSmall) => "marina_small".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::MarinaLarge) => "marina_large".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::FishingPortSmall) => "fishing_port_small".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::FishingPortLarge) => "fishing_port_large".to_string(),
         nd_sim::Placeable::ParkingLot(s) => s.key().to_string(),
         nd_sim::Placeable::MetroStation => "metro_station".to_string(),
         nd_sim::Placeable::Toll(s) => s.key().to_string(),
