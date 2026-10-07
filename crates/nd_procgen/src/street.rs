@@ -502,10 +502,18 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         if let Some(marks) = worn_from.take() {
             weather_tail(&mut g, marks);
         }
-        if !heights.is_empty() {
+        // The run is drawn through its profile's points: a long street's
+        // inner height samples become vertices of its carriageway, kerbs
+        // and pavements. Drawn through its nodes alone, a street over a
+        // rise ran straight from end to end under the profile the ground
+        // and the cars follow, and the built ground covered its asphalt.
+        let dense = if heights.is_empty() {
+            run.points.clone()
+        } else {
             let (pts, z) = run_profile(roads, &run, &node_z, inp.inner);
-            drawn = Some((marks(&g), pts, z));
-        }
+            drawn = Some((marks(&g), pts.clone(), z));
+            pts
+        };
         let seg = roads.segment(run.first);
         if !inp.layer.keeps(seg.tunnel) {
             continue;
@@ -513,12 +521,12 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         let hw = seg.half_width();
         let total = run.lanes_fwd as f32 + run.lanes_bwd as f32;
         let mut rng = rng_for(inp.seed ^ (run.first.0 as u64 * 7919), 3);
-        let pts = &run.points;
+        let pts = &dense;
         if path_length(pts) < 0.5 {
             continue;
         }
         if run.kind == RoadKind::Path {
-            footpath(&mut g, pal, roads, &run, &mut rng);
+            footpath(&mut g, pal, roads, &run, pts, &mut rng);
             continue;
         }
         if run.kind == RoadKind::Rail {
@@ -1108,10 +1116,10 @@ fn level_crossing(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, at: Vec2
 
 /// A path for walkers and bikes: paving with edge stones, low lamps, the odd
 /// bench and bin, and bollards where it meets a street so cars stay out.
-fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run: &Run, rng: &mut impl Rng) {
+fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run: &Run, points: &[Vec2], rng: &mut impl Rng) {
     // Where the path meets a street, stop at the back of that street's
     // pavement and flare out onto it, instead of running under the kerb.
-    let mut points = run.points.clone();
+    let mut points = points.to_vec();
     for (end, node) in [(true, run.start_node), (false, run.end_node)] {
         if roads.street_degree(node) == 0 || points.len() < 2 {
             continue;

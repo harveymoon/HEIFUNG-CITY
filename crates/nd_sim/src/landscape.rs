@@ -1990,8 +1990,12 @@ impl Ground {
                 for i in i0..=i1 {
                     let p = at(i, j);
                     let inside = point_in_polygon(p, &lot.polygon) || distance_to_outline(p, &lot.polygon) < 2.0;
-                    if inside {
-                        let k = j * n + i;
+                    let k = j * n + i;
+                    // A road's corridor keeps its own height: the margin
+                    // round a lot reaches over the pavement, and a corner
+                    // lot levelled to its higher street used to lift the
+                    // side street's kerb and lanes to its pad.
+                    if inside && !matches!(fix[k], Fix::Road | Fix::Wall) {
                         fix[k] = Fix::Pad;
                         set[k] = floor_at(p, pad);
                     }
