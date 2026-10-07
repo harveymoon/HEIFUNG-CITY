@@ -438,7 +438,10 @@ Reply: `total` (matches), `returned`, `rows`.
 `inspect {segment: id}` or `inspect {road: [x, y]}` (the piece nearest the point) gives a road piece: ends, kind,
 lanes, `level` (ground / viaduct / cutting / tunnel / bridge), `levels` and `heights` at its ends, `inner_heights` (`[t, z]` samples between them on a long street over the hills), the
 `bridge`/`viaduct`/`tunnel` flags, its nodes and their degrees, and `grade_crossings`: every way it
-passes over or under (`passes`, `other_segment`, `clearance`).
+passes over or under (`passes`, `other_segment`, `clearance`). Also `condition` (null for pieces the
+city does not maintain): `wear`, `condition`, `label` (good / fair / worn / crumbling),
+`speed_factor`, `crash_factor`, `land_value`, `repair_cost`, `queue_place` and `queue_length` in
+the crews' queue, and the `street` name.
 
 `inspect {junction: [x, y]}` gives the nearest junction: its signal (phases, green, timer, protected
 left arrow), each arriving street's lane arrows (`"L"`, `"S+R"` ...), recent turn shares, queues and
@@ -587,6 +590,9 @@ minimised window renders nothing and produces no file.
   `BurnedDown`, `Arrested` (incident, citizen), `Released` (citizen);
 - driving: `Crash` (crash id, pos, cause, severity, injured, place, incident), `Takeover`,
   `TakeoverOver`;
+- street nights: `News` (`seq`, `event` "street race" / "warehouse rave", `headline`, `pos`): a
+  race gathering, the flag dropping, the winner, a bust or a chase; a rave opening, a noise
+  complaint, a shutdown or dawn (see [Street races, raves and the roads](#street-races-raves-and-the-roads));
 - the UI: `Message` and `ToolStatus` whenever the status lines change. Poll with `since` = the last `seq` you saw; `dropped: true` means events fell out of the
 ring in between. `thoughts {limit?}`: the newest memories across all citizens, and current thoughts.
 
@@ -986,3 +992,33 @@ of its kind than the city needs, competitors, donations, an opening tonight), `s
 pressure key when its kind is one a pressure opens), `donations`, `opening_now` {invited,
 visitors, donations}. Boats are port ships of kinds `FishingBoat`, `Yacht` and `Sailboat` besides
 the freighters and ferries.
+
+## Street races, raves and the roads
+
+The code is `crates/nd_app/src/remote/nights.rs`; the model is in DESIGN.md (Street races,
+Warehouse raves, Road wear and maintenance).
+
+| Command | Fields | Reply |
+| --- | --- | --- |
+| `street_events` (or `nights`) | `limit` (rows of history and news, default 10), `fresh` (bool: weigh the warehouses now instead of the last 22:00 roll) | `race` (below, or null), `race_planned` (time), `race_crew` (locals with a fast car free now), `rave` (below), `rave_planned` {building, name, doors}, `rave_spots` (warehouses best first: building, name, pos, `pull` {youth, artists, art_scene, neighbours, culture, has_scene, night_chance, why}, last_rave_day), `history` (newest first: id, kind, place, pos, finish, started, ended, minutes, people, crowd, winner, police, arrests, fines, complaints, chase, culture), `news` (seq, tick, time, kind, headline, pos), `totals` {races, raves, busts, fines} |
+| `race` | `at` [x,y] optional: meet at the empty lot or surface car park nearest it | `race` id and `detail`; refused with fewer than two free locals with a fast car, or no lot pair 450 m-2.4 km apart (550 m by road) |
+| `rave` | `building` id, or `at` [x,y] (the old warehouse nearest it); neither: the one with the strongest scene | `rave` id and `detail`. Forcing one skips the scene check (the roll at 22:00 does not) |
+| `roads` (or `road_condition`, `road_budget`) | `funding` 0..1.5 (sets the road maintenance level; 1 = what the network needs), `age_days` (dev: wear every street that many days at yesterday's traffic, the crews working each night at the funding level unless `crews: false`; nothing charged), `near` [x,y], `limit` (default 10) | `pieces`, `lane_km`, `mean_wear`, `worn` (0.5+), `crumbling` (0.8+), `waiting_for_repair`, `mean_wear_by_land_value` {cheap, middle, dear} (tier cuts of land value), `budget` {funding, max_funding, need_per_day, allowance_per_day, spent_yesterday, repaired_yesterday, repaired_land_value_yesterday, ledger_today, ledger_yesterday, repaired_total}, `days` (the last 7: allowance, spent, repaired, repaired_lane_m, repaired_land_value, waiting), `pieces_listed` (worst first, or nearest `near`: segment, pos and the `condition` fields of `inspect {segment}`) |
+
+A race `detail`: id, `stage` (gathering / racing / party), `meet` and `finish` {name, pos, lot},
+started, go, ends, `route_m`, `racers` (car, driver, name, pos, speed_kmh, parked_in_lot, place,
+phase), finished, crowd, incident, arrests, fined, fines, chase_incident. A rave: id, building,
+place, pos, door, started, ends, promoter, promoter_name, guests, queue, queue_at_door, inside,
+peak, complaints, incident, pull.
+
+`report.traffic` carries `street_events` {race, rave, races_total, raves_total, busts_total,
+last_news} and `road_condition` (the `roads` reply without the list). The ledger has two more flows,
+`road maintenance` and `fines`. `overlay {layer: "road_condition"}` shows the Road condition layer.
+Racer cars show `takeover {phase: "racing", ...}` in `inspect {car}` (the gang role they share with
+takeover crews); crimes of kind `street race` and `illegal rave` appear in `incidents`.
+
+```sh
+curl -d '{"cmd":"race"}' http://127.0.0.1:4817/cmd
+curl -d '{"cmd":"street_events","limit":5}' http://127.0.0.1:4817/cmd
+curl -d '{"cmd":"roads","funding":0.3,"age_days":120}' http://127.0.0.1:4817/cmd
+```
