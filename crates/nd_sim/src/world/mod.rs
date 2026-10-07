@@ -494,6 +494,10 @@ pub struct World {
     /// (`world/waterfront.rs`, `world/pressure.rs`).
     #[serde(default)]
     pub scene: crate::pressure::Scene,
+    /// [identity] The city's name and its game's id. Saves from before
+    /// load unnamed and without an id (the app gives them one when saved).
+    #[serde(default)]
+    pub identity: crate::identity::CityIdentity,
 }
 
 impl World {
@@ -578,6 +582,7 @@ impl World {
             streets: Default::default(),
             pressure: Default::default(),
             scene: Default::default(),
+            identity: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();

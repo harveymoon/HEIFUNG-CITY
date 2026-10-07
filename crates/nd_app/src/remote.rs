@@ -24,6 +24,8 @@ mod economy;
 /// file commands may use.
 mod guard;
 mod history;
+/// [identity] `city_name` and `game_history`.
+mod identity;
 mod land;
 mod list;
 mod map;
@@ -462,6 +464,8 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(json!({ "buildings": ctx.sim.world.buildings.len(), "lots": ctx.sim.world.lots.len() }))
         }
         "save" => save(cmd, ctx),
+        "city_name" | "city_identity" => identity::city_name(cmd, ctx),
+        "game_history" => identity::game_history(cmd, ctx),
         "load" => {
             let path = allowed_path(req_str(cmd, "path")?, "ron", false)?;
             let Ctx { sim, tools, selection, eplan, flags, saves, follow, .. } = &mut *ctx;
@@ -480,13 +484,18 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             ctx.saves.title = false;
             ctx.sim.paused = false;
             ctx.sim.new_game(params);
+            if let Some(name) = opt_str(cmd, "name")? {
+                ctx.sim.set_city_name(name);
+            }
             *ctx.tools = ToolState::default();
             *ctx.selection = Selection::None;
             ctx.eplan.invalidate();
             ctx.follow.0 = None;
             ctx.tools.status = format!("New city: {} landscape", ctx.sim.world.landscape.params.preset.label());
             ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "new game");
-            Ok(land::summary(&ctx.sim.world))
+            let mut v = land::summary(&ctx.sim.world);
+            v["identity"] = identity::identity_json(&ctx.sim.world);
+            Ok(v)
         }
         "generate_city" => {
             let (preset, params) = land::city_params_from(cmd)?;
@@ -494,6 +503,9 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             ctx.sim.paused = false;
             let start = std::time::Instant::now();
             let (plan, laid) = ctx.sim.generate_city(preset, params);
+            if let Some(name) = opt_str(cmd, "name")? {
+                ctx.sim.set_city_name(name);
+            }
             *ctx.tools = ToolState::default();
             *ctx.selection = Selection::None;
             ctx.eplan.invalidate();
@@ -515,6 +527,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 "centres": plan.cores.iter().map(|c| v2(*c)).collect::<Vec<_>>(),
                 "took_ms": start.elapsed().as_millis() as u64,
             });
+            v["identity"] = identity::identity_json(&ctx.sim.world);
             Ok(v)
         }
         "terrain_at" => Ok(land::terrain_at(&ctx.sim.world, req_point(cmd)?)),
@@ -781,6 +794,12 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let open = opt_bool(cmd, "open")?.unwrap_or(if section.is_some() { true } else { !ctx.windows.build_open });
             ctx.windows.build = Some((open, section));
             Ok(json!({ "window": "build", "open": open, "section": section.map(|c| c.key()).or(ctx.windows.build_section) }))
+        }
+        "window" if req_str(cmd, "name").is_ok_and(|n| matches!(n.trim().to_ascii_lowercase().as_str(), "history" | "game_history" | "game history")) => {
+            // [identity] The Game history window.
+            let open = opt_bool(cmd, "open")?.unwrap_or(true);
+            ctx.saves.history_requested = Some(open);
+            Ok(json!({ "window": "game history", "open": open }))
         }
         "window" if req_str(cmd, "name").is_ok_and(|n| matches!(n.trim().to_ascii_lowercase().as_str(), "title" | "title_screen" | "title screen")) => {
             let open = opt_bool(cmd, "open")?.unwrap_or(!ctx.saves.title);
@@ -1062,6 +1081,8 @@ fn status(ctx: &Ctx) -> Value {
     v["window_expanded"] = json!(ctx.windows.expanded_name());
     v["build_window"] = json!({ "open": ctx.windows.build_open, "section": ctx.windows.build_section });
     v["title_screen"] = json!(ctx.saves.title);
+    // [identity]
+    v["identity"] = identity::identity_json(w);
     // [looks] The figure cache: meshes alive, people outdoors and their distinct looks.
     let st = &ctx.stats;
     v["render"]["people"] = json!({ "meshes": st.people_meshes, "mesh_cap": crate::render::PEOPLE_MESH_CAP, "visible": st.people_visible, "distinct_looks_visible": st.people_looks_visible, "built_total": st.people_built, "borrowed": st.people_borrowed, "materials": 1 });
@@ -1082,12 +1103,13 @@ fn save(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         let Ctx { sim, saves, flags, .. } = ctx;
         let path = crate::ui::save_as(sim, saves, flags, name)?;
         let p = slash(&path);
-        return Ok(json!({ "path": absolute(&p), "name": name.trim(), "thumbnail": absolute(&p.replace(".ron", ".png")), "meta": absolute(&p.replace(".ron", ".meta.json")), "note": "the thumbnail is written about half a second later (rendered offscreen)", "message": flags.message }));
+        return Ok(json!({ "path": absolute(&p), "name": name.trim(), "thumbnail": absolute(&p.replace(".ron", ".png")), "meta": absolute(&p.replace(".ron", ".meta.json")), "note": "the thumbnail is written about half a second later (rendered offscreen)", "message": flags.message, "identity": identity::identity_json(&sim.world) }));
     }
     match opt_str(cmd, "path")? {
         Some(raw) => {
             let path = allowed_path(raw, "ron", true)?;
             let shown = path.to_string_lossy().replace('\\', "/");
+            crate::ui::saves::ensure_game_id(&mut ctx.sim.world);
             ctx.sim.save(&path)?;
             ctx.saves.mark_dirty();
             ctx.flags.message = format!("saved {shown}");
@@ -1111,8 +1133,9 @@ fn slash(p: &std::path::Path) -> String {
 
 /// Every save, newest first, with what its sidecar knows and its picture.
 fn list_saves() -> Value {
-    let rows: Vec<Value> = crate::ui::saves::scan()
-        .into_iter()
+    let slots = crate::ui::saves::scan();
+    let rows: Vec<Value> = slots
+        .iter()
         .map(|s| {
             let modified = s.modified.and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
             let bytes = std::fs::metadata(&s.path).map_or(0, |m| m.len());
@@ -1128,10 +1151,15 @@ fn list_saves() -> Value {
                 "buildings": s.meta.as_ref().map(|m| m.buildings),
                 "landscape": s.meta.as_ref().map(|m| m.landscape.clone()),
                 "thumbnail": s.picture.as_ref().filter(|p| p.exists()).map(|p| absolute(&slash(p))),
+                "city": s.city(),
+                "game_id": s.meta.as_ref().map(|m| m.game_id.clone()).filter(|g| !g.is_empty()),
             })
         })
         .collect();
-    json!({ "saves": rows, "latest": crate::ui::LATEST })
+    // [identity] The same saves grouped by city name, as the title screen
+    // and the Saves window show them.
+    let groups: Vec<Value> = crate::ui::saves::group_by_city(&slots).into_iter().map(|(city, members)| json!({ "city": city, "saves": members.iter().map(|&i| slash(&slots[i].path)).collect::<Vec<_>>() })).collect();
+    json!({ "saves": rows, "by_city": groups, "latest": crate::ui::LATEST })
 }
 
 /// A path a file command may use (see `guard::confine`): inside saves/,
@@ -2362,7 +2390,7 @@ fn help() -> Value {
             "seed_demo": {},
             "save": { "name": "optional: save as a named game, saves/<name>.ron (file-safe) with a sidecar <name>.meta.json and a map picture <name>.png", "path": "optional; neither: writes saves/city.ron and a dated slot (with a picture)" },
             "load": { "path": "a .ron save (see files)" },
-            "list_saves": { "note": "newest first: path, name, kind (named|latest|autosave|dated), modified_unix, bytes, day, population, treasury, buildings, landscape (null for saves without a sidecar), thumbnail (absolute path of the PNG, or null)" },
+            "list_saves": { "note": "newest first: path, name, kind (named|latest|autosave|dated), modified_unix, bytes, day, population, treasury, buildings, landscape (null for saves without a sidecar), thumbnail (absolute path of the PNG, or null), city (\"Unnamed city\" when none), game_id; by_city groups the paths by city name" },
             "plan": {},
             "add_roundabout": { "center": "[x,y] (snaps onto a junction within 12 m or a street within 6 m)", "radius": "m to the ring centreline, 12..120 (or diameter 24..240)", "lanes": "1|2|3 ring lanes", "implement": "bool", "returns": "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state" },
             "add_road": { "points": "[[x,y] or [x,y,level],...] (2+; level metres above ground, negative below)", "elevation": "level for points without one (number), or a list", "tunnel": "bool: default level -8 m", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true", "implement": "bool, default false (pending in the project)" },
@@ -2394,6 +2422,9 @@ fn help() -> Value {
     // Kept out of the literal above: it is at the json! recursion limit.
     v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
     v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
+    // [identity]
+    v["commands"]["city_name"] = json!({ "name": "optional: rename the city (tidied, at most 40 characters; empty leaves it unnamed)", "returns": "name, display_name, game_id (null for a legacy save until it is next saved), history_entries" });
+    v["commands"]["game_history"] = json!({ "action": "list (default)|bookmark|unmark|mark|revert", "game_id": "list: another game's history", "marked_only": "list: bool", "path": "bookmark/unmark/revert: an entry's path from list (or file: its file name)", "label": "bookmark/mark: the moment's name", "confirm": "revert: must be true (the running city is replaced, as Load)", "returns": "entries newest first: path, file, day, population, treasury, buildings, saved_unix, city, bookmark, thumbnail" });
     v["commands"]["graphics"] = json!({ "quality": "auto|low|medium|high: pin the graphics tier (pin one before screenshots that must compare) or hand it back to the frame-rate throttler; omitted reports the setting, the tier in force, the smoothed frame time and the effects on the camera" });
     // The review commands, added separately: one `json!` this size hits the
     // macro recursion limit.
@@ -2406,7 +2437,7 @@ fn help() -> Value {
         "taxes": { "set": "{line: rate, ...} where line is a key (residential_low|residential_mid|residential_high|grocery|bakery|gadget_shop|parking|nightlife_low|nightlife_mid|nightlife_high|farming|oil|refinery|manufacturing|logistics|fishing|tech) or a land use for its whole group; rate 0.2 or 20 (= 20%)", "category": "one line (with rate)", "import_duty": "share of import prices (0..1)", "reset": "bool: back to the standard rates", "returns": "every line: rate, default, pull, buildings, homes/jobs, today, yesterday, recent_per_day; by_land_use; duty" },
         "tolls": { "action": "list (default) | price | remove | inspect", "id": "booth id (or at: [x,y])", "price": "toll per car (lorries pay double)", "returns": "booths with cars and revenue today/yesterday/total, paid/free today, upkeep" },
         "export": { "path": "optional .json (see files); default exports/city-<unix>.json: report + map + history + every row of every list" },
-        "window": { "name": "city|economy|taxes|market|people|power|transit|emergencies|view (or land)|districts|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), or title (the title screen)", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns" },
+        "window": { "name": "city|economy|taxes|market|people|power|transit|emergencies|view (or land)|districts|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), or title (the title screen), or history (the Game history window)", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns" },
         "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" }
     });
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), review.as_object()) {

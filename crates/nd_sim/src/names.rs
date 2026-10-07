@@ -112,3 +112,19 @@ pub fn building_name(rng: &mut impl Rng, land_use: LandUse) -> String {
         LandUse::Park => format!("{} {}", RES_PREFIX.choose(rng).unwrap(), PARK.choose(rng).unwrap()),
     }
 }
+
+const CITY_FIRST: &[&str] = &[
+    "Neon", "Chrome", "Vanta", "Halcyon", "Cobalt", "Ember", "Static", "Saffron", "Onyx", "Lumen",
+    "Iron", "Velvet", "Cinder", "Argent", "Mercury", "Juniper", "Obsidian", "Amber", "Silica", "Port",
+];
+
+const CITY_LAST: &[&str] = &[
+    "Bay", "Heights", "Reach", "Harbor", "Junction", "Hollow", "Crossing", "Point", "Falls", "Gate",
+    "Basin", "Ridge", "Sprawl", "Quarter", "Haven", "Vale", "Springs", "Landing", "Strand", "Row",
+];
+
+/// [identity] A name to offer for a new city ("Cobalt Reach"); the player
+/// may keep it or type their own.
+pub fn city_name(rng: &mut impl Rng) -> String {
+    format!("{} {}", CITY_FIRST.choose(rng).unwrap(), CITY_LAST.choose(rng).unwrap())
+}

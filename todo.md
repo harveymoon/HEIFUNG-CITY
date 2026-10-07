@@ -205,10 +205,10 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 ### D. Look and tools
 [x] - look-dev pass, grounded neon   → DONE [feat/look]: roughness/metal maps, sky-light reflections, distance-scaled SSAO, volumetric haze, TAA, Auto/Low/Medium/High with a frame-time throttler (View window; `graphics` remote command). Left: street lamps don't cast light, no wet roads.   Was: PBR materials with roughness and normal maps on roads, buildings and cars; SSAO; sky/atmosphere, distance and volumetric fog; TAA; a dynamic performance throttler that scales effects to hold the frame rate
-[ ] - underground view: tunnels as tubes, near side cut away so the cars inside show
+[x] - underground view: tunnels as tubes, near side cut away so the cars inside show   → DONE [feat/identity]: inward-facing concrete tube (street::bore_shell), back-face culling cuts the near half. Left: metro bores unchanged
 [ ] - [ and ] raise or lower a road while drawing; pillars hold it up; pillars avoid buildings and roads underneath (refuse if there's no room for them); the preview shows clearly what pillars would remove
 [ ] - intersection editor (Edit mode, click a junction or crosswalk): top-down orthographic view without buildings; lane permissions, left turns, signal timing; crosswalk upgrades: push-button signal, or a pedestrian bridge (raised walkways with steps that connect into a skywalk network)
-[ ] - new game asks for a city name (changeable) and makes a unique game id; saves and loads list by city name; autosaves keep a history with a "game history" viewer to mark key moments and revert
+[x] - new game asks for a city name (changeable) and makes a unique game id; saves and loads list by city name; autosaves keep a history with a "game history" viewer to mark key moments and revert   → DONE [feat/identity]: World::identity, saves/history/<game id>/, Game history window, API city_name / game_history
 
 ### E. Housekeeping
 [x] - stale IN PROGRESS statuses verified against merged branches and code (2026-10-07)
