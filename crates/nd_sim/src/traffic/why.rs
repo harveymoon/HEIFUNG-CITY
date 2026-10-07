@@ -27,6 +27,10 @@ pub enum StopReason {
     RedLight,
     /// People on a pedestrian crossing ahead.
     Pedestrians,
+    /// Braking hard for someone crossing where there is no crosswalk (a
+    /// roundabout's lanes, a dead end, a jaywalker): nobody stops for them
+    /// there, but nobody runs them down either if they can still stop.
+    Jaywalker,
     /// Giving way at an unsignalled junction to traffic already in it.
     GiveWay { to: Option<CarId> },
     /// Turning left on a shared green, waiting for oncoming traffic.
@@ -79,6 +83,7 @@ impl StopReason {
             StopReason::LettingOut { .. } => "letting_out",
             StopReason::RedLight => "red_light",
             StopReason::Pedestrians => "pedestrians",
+            StopReason::Jaywalker => "jaywalker",
             StopReason::GiveWay { .. } => "give_way",
             StopReason::TurningLeft { .. } => "turning_left",
             StopReason::Roundabout => "roundabout",
@@ -104,6 +109,7 @@ impl StopReason {
             StopReason::LettingOut { car } => format!("letting {} out of the kerb", name(car)),
             StopReason::RedLight => "waiting at a red light".into(),
             StopReason::Pedestrians => "stopped for people on a crossing".into(),
+            StopReason::Jaywalker => "braking for someone crossing the road (no crosswalk)".into(),
             StopReason::GiveWay { to } => or(to, "giving way at the junction to", "giving way at the junction"),
             StopReason::TurningLeft { to } => or(to, "turning left, waiting for oncoming", "turning left, waiting for a gap in oncoming traffic"),
             StopReason::Roundabout => "giving way to the roundabout".into(),
@@ -242,13 +248,16 @@ impl Traffic {
             if self.peds.holds.get(&l).is_some_and(|hs| hs.iter().any(|h| base + h.s >= -0.5 && base + h.s < 40.0)) {
                 return StopReason::Pedestrians;
             }
+            if self.peds.watch.get(&l).is_some_and(|hs| hs.iter().any(|h| base + h.s >= -0.5 && base + h.s < 40.0)) {
+                return StopReason::Jaywalker;
+            }
             base += lanes[l as usize].length;
         }
-        let Some(&next) = c.route.get(c.idx + 1) else { return StopReason::Pedestrians };
+        let Some(&next) = c.route.get(c.idx + 1) else { return StopReason::GiveWay { to: None } };
         let nl = &lanes[next as usize];
-        let LaneKind::Connector { node, approach } = nl.kind else { return StopReason::Pedestrians };
+        let LaneKind::Connector { node, approach } = nl.kind else { return StopReason::GiveWay { to: None } };
         if lanes[here as usize].is_connector() {
-            return StopReason::Pedestrians;
+            return StopReason::GiveWay { to: None };
         }
         if self.net.rings.nodes.contains_key(&node) {
             return StopReason::Roundabout;

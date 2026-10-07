@@ -284,8 +284,11 @@ impl World {
         }
         if lawful {
             // Unmarked (a dead end, a roundabout's lanes): nobody gives way,
-            // so a real gap, judged as carefully as the walker is careful.
-            return (gap >= gap_needed(w.caution, late)).then_some(false);
+            // so a gap long enough to get across, plus the walker's margin.
+            let across = self.walk.nodes.get(crossing.a as usize).zip(self.walk.nodes.get(crossing.b as usize)).map_or(8.0, |(a, b)| a.pos.distance(b.pos));
+            let per_second = self.config.walk_speed / self.config.traffic_seconds_per_tick.max(0.1);
+            let needed = across / per_second.max(0.5) + gap_needed(w.caution, late);
+            return (gap >= needed).then_some(false);
         }
         if crossing.kind != CrossingKind::Jay && !w.bold {
             return None;
