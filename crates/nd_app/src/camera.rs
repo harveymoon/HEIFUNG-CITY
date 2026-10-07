@@ -108,7 +108,7 @@ impl CameraFollow {
             return false;
         }
         match self.target {
-            Some(Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_)) => true,
+            Some(Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_)) => true,
             Some(Selection::Citizen(id)) => sim.world.citizens.get(id).is_some_and(|c| matches!(c.activity, nd_sim::Activity::Driving { .. } | nd_sim::Activity::Riding { .. } | nd_sim::Activity::Passenger { seated: true, .. })),
             _ => false,
         }
@@ -172,6 +172,9 @@ pub fn zoom_distance(sim: &Sim, sel: Selection) -> f32 {
             }
         }
         Selection::Parked(_) => 35.0,
+        // [train-inspect] Far enough back to see the whole train.
+        Selection::Train(_) => 110.0,
+        Selection::Metro(_) => 70.0,
         Selection::Building(id) => {
             let w = &sim.world;
             let r = w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map_or(30.0, |l| l.polygon.iter().map(|p| p.distance(l.center)).fold(0.0, f32::max));
@@ -213,6 +216,16 @@ pub fn thing_pose(sim: &Sim, sel: Selection) -> Option<ThingPose> {
         }
         Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|c| c.spot()).map(|s| ThingPose { pos: s.pos, heading: Some(s.heading), eye: ground(s.pos) + 1.2 }),
         Selection::Building(id) => w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map(|l| ThingPose { pos: l.center, heading: None, eye: ground(l.center) + EYE_HEIGHT }),
+        // [train-inspect] The locomotive's cab (the metro's front car, in its tunnel).
+        Selection::Train(_) | Selection::Metro(_) => {
+            let (p, h, _) = crate::train_select::car_poses(w, sel, f).first().copied()?;
+            let fwd = Vec2::new(h.cos(), h.sin()) * 6.0;
+            let floor = match sel {
+                Selection::Metro(_) => (if w.relief { w.ground_height(p) } else { 0.0 }) - nd_sim::subway::DEPTH,
+                _ => w.surface_height(p),
+            };
+            Some(ThingPose { pos: p + fwd, heading: Some(h), eye: floor + 3.4 })
+        }
         Selection::Bot(id) => w.bots.bots.get(id).map(|b| {
             let p = if b.prev_pos.distance(b.pos) < 30.0 { b.prev_pos.lerp(b.pos, f) } else { b.pos };
             ThingPose { pos: p, heading: Some(lerp_angle(b.prev_heading, b.heading, f)), eye: ground(p) + 0.75 }

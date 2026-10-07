@@ -271,6 +271,54 @@ impl World {
         c.activity = Activity::Traveling { to: Some(target), purpose: Purpose::ToStop, path, idx: 0 };
     }
 
+    /// [train-inspect] What a freight train carries: the imports queued at
+    /// the yards still ahead of it (they ride in on this train and come off
+    /// when it calls; a yard another freight train will reach first is left
+    /// to that one), the exports it has picked up, and the exports waiting
+    /// at the yards ahead. Loads bound for a cargo hub name the business
+    /// that ordered them. `None` for a passenger train or no such train.
+    pub fn freight_manifest(&self, id: TrainId) -> Option<rail::FreightManifest> {
+        let t = self.rail.trains.get(id).filter(|t| t.kind == TrainKind::Freight)?;
+        let mut m = rail::FreightManifest { exports_aboard: t.exports, unloaded: t.unloaded, ..Default::default() };
+        // Anything carried on the train itself.
+        for c in &t.cargo {
+            m.loads.push(rail::FreightLoad { resource: c.resource, amount: c.amount, price: c.price, yard: c.from, buyer: c.to, hub: None });
+        }
+        let ahead = t.calls_ahead(rail::DWELL_SECONDS, self.config.traffic_seconds_per_tick, |b| self.buildings.contains_key(b));
+        // Hub orders already matched to a load, so two equal loads name two orders.
+        let mut used: Vec<(BuildingId, usize)> = Vec::new();
+        for call in ahead {
+            let Some(yard) = self.buildings.get(call.stop) else { continue };
+            let left = call.s - t.s;
+            let sooner = self.rail.trains.iter().any(|(oid, o)| {
+                oid != id && o.kind == TrainKind::Freight && o.calls_ahead(rail::DWELL_SECONDS, 1.0, |_| true).iter().any(|c| c.stop == call.stop && (c.s - o.s < left || (c.s - o.s == left && oid < id)))
+            });
+            if sooner {
+                continue;
+            }
+            for c in &yard.rail_inbound {
+                let (buyer, hub) = match self.cargo_hubs.hubs.get(&c.to) {
+                    Some(h) => {
+                        let found = h.inbound.iter().enumerate().find(|(i, l)| l.via == crate::cargo_hub::Via::Rail && l.resource == c.resource && (l.amount - c.amount).abs() < 0.01 && !used.contains(&(c.to, *i)));
+                        match found {
+                            Some((i, l)) => {
+                                used.push((c.to, i));
+                                (l.buyer, Some(c.to))
+                            }
+                            None => (c.to, Some(c.to)),
+                        }
+                    }
+                    None => (c.to, None),
+                };
+                m.loads.push(rail::FreightLoad { resource: c.resource, amount: c.amount, price: c.price, yard: call.stop, buyer, hub });
+            }
+            if yard.rail_outbound > 0.0 {
+                m.exports_to_collect.push((call.stop, yard.rail_outbound));
+            }
+        }
+        Some(m)
+    }
+
     /// The route a train takes from the west end of the line to the east,
     /// calling at each facility in turn, and where along it each one lies.
     pub(super) fn plan_train_route(&self, facilities: &[BuildingId]) -> Option<(Vec<NodeId>, Vec<Vec2>, Vec<(BuildingId, f32)>)> {
@@ -380,7 +428,7 @@ impl World {
             }
             prev_acc = acc;
         }
-        self.rail.trains.insert(Train { kind, cars, nodes, poly, s: 0.0, prev_s: 0.0, speed, stops, next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo: Vec::new(), color, held: false, branch });
+        self.rail.trains.insert(Train { kind, cars, nodes, poly, s: 0.0, prev_s: 0.0, speed, stops, next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo: Vec::new(), color, held: false, branch, exports: 0.0, unloaded: 0.0 });
         true
     }
 
@@ -522,7 +570,9 @@ impl World {
             TrainKind::Freight => {
                 let Some(b) = self.buildings.get_mut(at) else { return };
                 let queued = std::mem::take(&mut b.rail_inbound);
-                b.rail_outbound = 0.0;
+                let exports = std::mem::take(&mut b.rail_outbound);
+                self.rail.trains[id].exports += exports;
+                self.rail.trains[id].unloaded += queued.iter().map(|c| c.amount).sum::<f32>();
                 for cargo in queued {
                     self.rail.stats.freight_in_today += cargo.amount;
                     // Into a cargo hub on the yard's siding, else a lorry.

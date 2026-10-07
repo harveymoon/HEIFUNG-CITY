@@ -32,6 +32,15 @@ pub(super) fn target_of(cmd: &Value, ctx: &Ctx, what: &str) -> Result<Selection,
         let id = key_from(v)?;
         return w.buildings.contains_key(id).then_some(Selection::Building(id)).ok_or_else(|| format!("{what}: no such building"));
     }
+    // [train-inspect]
+    if let Some(v) = field(cmd, "train") {
+        let id = key_from(v)?;
+        return w.rail.trains.contains_key(id).then_some(Selection::Train(id)).ok_or_else(|| format!("{what}: no such train"));
+    }
+    if let Some(v) = field(cmd, "metro") {
+        let id = key_from(v)?;
+        return w.subway.trains.contains_key(id).then_some(Selection::Metro(id)).ok_or_else(|| format!("{what}: no such metro train"));
+    }
     if let Some(v) = field(cmd, "vehicle") {
         let id = key_from(v)?;
         return w.vehicles.cars.get(id).is_some_and(|c| c.spot().is_some()).then_some(Selection::Parked(id)).ok_or_else(|| format!("{what}: no such parked vehicle"));

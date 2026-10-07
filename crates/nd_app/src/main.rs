@@ -14,6 +14,7 @@ mod remote;
 mod render;
 mod sim;
 mod tools;
+mod train_select;
 mod ui;
 
 use bevy::prelude::*;

@@ -528,14 +528,15 @@ can refuse a click.
 ### Finding and inspecting
 
 `find {what, near?, radius?, filter?, limit?}`, with `what` one of citizens, buildings, lots, cars,
-trains, routes, gestures. With `near` the rows are nearest first and carry `distance`; `radius`
+trains, metro_trains, routes, gestures. With `near` the rows are nearest first and carry `distance`; `radius`
 defaults to 100 m then. Filters (substring match on strings, case-insensitive):
 
 - citizens: `activity` ("commuting", "at home", ...), `name`, `class` (low / middle / high), `visible`, `spotlight`
 - buildings: `land_use`, `tier`, `business_kind` ("grocery", "parts fab", ...), `name`,
   `under_construction`, `plant`, `rail`, `depot`, `derelict`
 - lots: `land_use`, `vacant`, `park`, `min_area`
-- cars: `kind` (car, bus, truck); trains: `kind` (passenger, freight)
+- cars: `kind` (car, bus, truck); trains: `kind` (passenger, freight). Train rows carry `headcode`;
+  metro_trains rows: `id`, `headcode`, `line_name`, `pos`, `passengers`, `dwelling`
 - bots (also `delivery_bots`): `shop` (the owning shop's name). Rows: `id`, `name` ("Lucky Bodega bot #2"),
   `shop`, `pos`, `returning`.
 
@@ -603,7 +604,7 @@ A citizen's `inspect` carries `raised_level`: how high they stand on a raised wa
 footbridge's stairs or deck), 0 at grade. Dev: `walk_to {citizen, to: [x, y], from?}` sends a
 citizen out on foot along the walk graph (footbridges included).
 
-`inspect` with one of `citizen`, `building`, `lot`, `car`, `drone`, `vehicle` (a private car's record: owner, model, place with minutes_here, limit_min, illegal, ticketed_tick, impounded {pound, out_of_town, release_fee, auction_in_min} and tow_job), `train`, `route` (ids) or `gesture` (int). A building that is a parking office adds `parking_office` {officers, patrol cars}, a tow company `tow_company` {trucks, jobs_open, pound}, a lot the city runs `parking.city_run`; a tow truck's `car` adds `tow` {job, state, reason, vehicle, company, out_of_town}, an officer's car `patrol`; [services] a recovery truck going to a wreck (errand `Recover`) adds `recovery` {wreck, metres_to_go, amber, off_law_allowed (within 250 m), move (its off-law move: Lane, Overtake, Kerb, Wait), company, out_of_town, sent_tick}, a written-off car `wreck` {since_tick, incident, tow_due_tick, truck, truck_sent_tick, pushed_aside_m, flipped (0 upright, 1 side, 2 roof), righted_at_tick}, and a car easing past a crash on the shoulder `passing_hazard` (the crashed car's id). `parking_price {building, price}` sets the fee at a city-run lot. [boot] `tow_car {car | vehicle}` (also `tow`, `boot`) clamps a private car and calls the tow truck, as the inspector's "Tow this car" button does: `car` is a car on the road (it pulls over to a kerb slot, or the street's edge, is taken off the lanes, and its driver and passengers walk on), `vehicle` a car's record (parked at a kerb, or driving). Reply {tow_job, vehicle, company, out_of_town}; an error says why not (not a resident's car, off the street, already towed, leaving town). A clamped car's place has `booted: true`; the owner's mood drops, they remember it, and they pay the release fee at the pound as for any tow. The enforcement report adds `boots_today` and `boots_total`. [passengers] A car row of kind car carries `occupants` ([{id, name}]: everyone riding along besides the driver, `citizen`) and `vehicle` (its record); a passenger's activity has `driver`, `driver_name`, `in_car`, `car`, `to`, `purpose`. `report` traffic.private_cars adds `passengers` {riding_now, walking_to_a_car, cars_with_passengers, today, outings_today, carpools_today, school_runs_today, lifts_today, yesterday, total, fullest_car, drop_offs_pending}. `place` takes `parking_enforcement[:tier]`, `parking_small`, `parking_large`, `parking_garage`;
+`inspect` with one of `citizen`, `building`, `lot`, `car`, `drone`, `vehicle` (a private car's record: owner, model, place with minutes_here, limit_min, illegal, ticketed_tick, impounded {pound, out_of_town, release_fee, auction_in_min} and tow_job), `train`, `metro` (a metro train; see **Trains** below), `route` (ids) or `gesture` (int). A building that is a parking office adds `parking_office` {officers, patrol cars}, a tow company `tow_company` {trucks, jobs_open, pound}, a lot the city runs `parking.city_run`; a tow truck's `car` adds `tow` {job, state, reason, vehicle, company, out_of_town}, an officer's car `patrol`; [services] a recovery truck going to a wreck (errand `Recover`) adds `recovery` {wreck, metres_to_go, amber, off_law_allowed (within 250 m), move (its off-law move: Lane, Overtake, Kerb, Wait), company, out_of_town, sent_tick}, a written-off car `wreck` {since_tick, incident, tow_due_tick, truck, truck_sent_tick, pushed_aside_m, flipped (0 upright, 1 side, 2 roof), righted_at_tick}, and a car easing past a crash on the shoulder `passing_hazard` (the crashed car's id). `parking_price {building, price}` sets the fee at a city-run lot. [boot] `tow_car {car | vehicle}` (also `tow`, `boot`) clamps a private car and calls the tow truck, as the inspector's "Tow this car" button does: `car` is a car on the road (it pulls over to a kerb slot, or the street's edge, is taken off the lanes, and its driver and passengers walk on), `vehicle` a car's record (parked at a kerb, or driving). Reply {tow_job, vehicle, company, out_of_town}; an error says why not (not a resident's car, off the street, already towed, leaving town). A clamped car's place has `booted: true`; the owner's mood drops, they remember it, and they pay the release fee at the pound as for any tow. The enforcement report adds `boots_today` and `boots_total`. [passengers] A car row of kind car carries `occupants` ([{id, name}]: everyone riding along besides the driver, `citizen`) and `vehicle` (its record); a passenger's activity has `driver`, `driver_name`, `in_car`, `car`, `to`, `purpose`. `report` traffic.private_cars adds `passengers` {riding_now, walking_to_a_car, cars_with_passengers, today, outings_today, carpools_today, school_runs_today, lifts_today, yesterday, total, fullest_car, drop_offs_pending}. `place` takes `parking_enforcement[:tier]`, `parking_small`, `parking_large`, `parking_garage`;
 with none, the current selection. The detail matches what the inspector and the person pane show:
 A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price, place: parked (home / building / parking lot / kerb / street (no space) / dealer, building, pos, since_tick) or driving (car id, errand)}} and `commute` {pain per mode with recent_trips, parking_pain, trip_mode_now, last_trip {mode, minutes, pain}}: what the mode choice weighs and what the daily habits (buy a bike, sell the car, buy one) act on.
 
@@ -648,7 +649,7 @@ several plots), home, business, form. A billionaire's other homes and businesses
 
 | Command | Fields |
 | --- | --- |
-| `select` | `citizen` / `building` / `car` / `vehicle` (a parked car) / `bot` (a delivery robot) id, or `at: [x, y]` (picks like a click), or nothing to clear |
+| `select` | `citizen` / `building` / `car` / `vehicle` (a parked car) / `bot` (a delivery robot) / `train` / `metro` (a metro train) id, or `at: [x, y]` (picks like a click: on a train's car it picks the train; a metro train only with the Underground view on), or nothing to clear |
 | `selected` | full detail of the player's selection (see below) |
 | `flags` / `flag` | the player's "Flag for Claude" bookmarks (see below) |
 | `favourite` | `citizen`, `on` (omit to toggle). Favourites wear a gold ring and diamond in the world (their car, driving or parked, a gold box) |
@@ -779,6 +780,34 @@ its size); `pitch` 0.62. Ends a follow of anything else. The reply comes at once
 returning to the shop), `cargo` {resource, amount} (null on the way back), `destination`,
 `customer` {building, name, household}, `pos`, `metres_left`, `minutes_left`, `minutes_out` and
 `route` (the pavement ahead, sampled). The map draws the route in the fleet colour.
+
+**Trains.** [train-inspect] `select {train}` (or a click on any car of a train with the Inspect
+tool) selects a railway train; `select {metro}` a metro train (clickable in the Underground view).
+`inspect {train}` / `inspect {metro}` (or `inspect` / `selected` with one selected) gives:
+`id`, `headcode` ("1E07": 1 for passenger, 6 for freight; metro "M12"), `kind` (passenger /
+freight / metro), `cars` (coaches or wagons behind the locomotive), `car_name`, `length_m`,
+`colour_index`, `colour_rgb` (the body paint; metro: the line colour), `pos` (head),
+`line_speed_kmh`, `held`, `on_branch`, a metro train's `line`, `line_name`, `looped`, `forward`;
+`state` {kind: running / dwelling (`at`, `at_name`, `leaves_in_s`) / held_signal (`by`, the train
+in the block ahead, and its `by_headcode`) / held_branch (waiting at the switch for the single-track
+branch) / leaving (all calls made, running out), `text`}; `run` {calls_made [{id, name}],
+standing_at, calls_ahead [{id, name, eta_min (sim minutes, at line speed with the stand at each
+call; signals can make it later), eta_time ("14:32"), pos}], next_stop, origin, terminus (first and
+last stop), end_of_run {pos, eta_min, eta_time}, route_m, run_m, progress (0..1), route_ahead (the
+track still to run)}. Passenger and metro trains add `passengers` {count, capacity, riders [{id,
+name, alights, alights_name (their station), going_to, going_to_name (their final destination),
+why ("going to work", "shopping for groceries", ...)}]}. Freight trains add `freight`
+{import_units, unloaded (units already set down), by_kind [{resource, amount}], loads [{resource, amount, price, from ("out of town (by
+rail)"), yard, yard_name (where it comes off), hub, hub_name (a cargo hub it passes through), buyer,
+buyer_name, purpose ("material for the protein vat to make meat", "stock for the grocery's
+shelves", "building materials for the site at ...")}], exports_aboard (units of the town's exports
+picked up), exports_to_collect [{yard, yard_name, amount}]}: the imports a freight train shows are
+those queued at the yards still ahead of it (they come in on it and are set down when it calls).
+In game the inspector shows the same, and the map draws the selected train's cars boxed, the rest
+of its run as a glowing band in its colour with posts at the stops ahead (the next one tallest,
+with a pulsing ring), the track already run faintly, and an "o"/"x" at the ends of its route.
+`follow {train}` / `follow {metro}`, `zoom_to {train}` and `camera {follow: {train: id}}` work on
+trains (the camera rides the locomotive).
 
 **A person's places.** A selected citizen's `holdings` are their home, work and every business they
 own (a taxi firm's founder owns it: `business.owner`); in game each is a big clickable pin (HOME,
