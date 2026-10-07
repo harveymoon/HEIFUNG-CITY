@@ -162,3 +162,53 @@ Agents in brackets. Items extending running work went to those agents.
 - [ ] Build speed: sccache shared across worktrees, rust-lld linker, a fast dev/test profile (keep full release for the playable exe).
 - [ ] Project CLAUDE.md: crate/module map, how to launch a test instance (ports, ND_TITLE=0, remote API), and the rules for agents (never touch the user's game on 4817 or target/release saves, no Ctrl+Shift+G, move the exe aside before building).
 - [ ] rust-analyzer via the LSP tool for go-to-definition and references.
+
+## From todo5.md (merged 2026-10-07), sorted by area
+Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO and fog, with neon kept as the identity). Agents run 4–5 at a time.
+
+### A. Fixes and clarity: traffic, tow, people
+[ ] - pedestrians and bikes never use tunnels; fix riders drawn on the ground above a tunnel
+[ ] - crashed cars: "waiting for a tow" timer; "truck inbound" with a locate button that selects the tow truck; draw the truck's path to the wreck when the wreck is selected
+[ ] - tow trucks break traffic rules only near the job (one-way, U-turns); they drive lawfully on the way there; a tow is always reachable even when a one-way is blocked behind the wreck   → overlaps the running wreck/tow agent
+[ ] - bad crashes can flip cars; the tow truck rights them
+[ ] - people hurt in a crash or shot lie on the ground until medics come; homeless people sometimes lie down or sit on the kerb
+[ ] - delivery drivers: each stop resets the trip timer (no road rage over a multi-stop route); show the trip's purpose
+[ ] - every vehicle shows "coming from [place] / going to [place]" (clickable); out-of-town drivers show "unknown person from out of the city"; police "patrolling", taxis "looking for a pickup"; larger activity text in the person section ("going home to Habitat 21F")
+[ ] - police officers are jobs filled by citizens (a cop car shows its officer)
+[ ] - selected person/car route line: an "o" at the origin and an "x" at the destination
+[ ] - Edit mode: the selected road shows big arrows for the number and direction of its lanes (flip is not guesswork)
+[ ] - traffic load layer: big markers at current crashes; load lines drawn over everything, translucent
+[ ] - traffic danger layer: accidents per road segment; "dangerous streets" complaint; walkers take a raised walkway over a crosswalk when it costs only slightly more time
+[ ] - all taxes in the tax panel (the tourist tax rate is fixed today)
+[ ] - healthcare complaint when the hospital is far or missing; out-of-town ambulances are expensive
+[ ] - solar/wind: cost and output in proportion to the lot size
+
+### B. Camera and inspector
+[ ] - follow the selection (camera stays on the person or car); Walk view while following gives their point of view; show that camera moves are locked, with an easy "stop following" button
+[ ] - "zoom to" button in the inspector (smooth camera move)
+[ ] - a selected person's home and work are clickable, with big home/work pins on the map (several for the rich who own more)
+[ ] - favourites: gold highlight in the world, a favourites list, and a "gift $1000" button
+[ ] - delivery bots selectable: name or ID, owning business, route, destination, cargo; each company's fleet in its own colour
+
+### C. Economy and growth
+[ ] - business pressure made visible (an inspector/economy view of why businesses open or close) and extended: lots of outsider tows → tow companies; many breakdowns → mechanics; rich population → car dealerships (lots full of matching cars); poor city trash service → private trash companies (competition lowers prices); bike demand → bike shops/repair
+[ ] - company expansion: successful firms open branches (taxi, pizza, tow scatter across the city) or buy adjacent plots (even landlocked ones) and merge them: seamless oil fields, bigger data centres and factories, mega hotels (valet, roof pool, sky-bridges), museums; selecting a building highlights everything its owner owns
+[ ] - density by pressure: new games start low density; busy, well-connected areas densify; every owner has a sale price; buyers buy out, demolish and build bigger; building height reflects how well the city moves people
+[ ] - housing variety: one-storey shacks, trailer parks and huts (poor, low density); suburbs (middle class); McMansions (two lots, pool); mansions
+[ ] - super-elite class (fictional people only): rare billionaires (from town or visiting) buy connected parcels for mansions in quiet spots (noise and pollution limits), NIMBY pressure prices out neighbours within strict limits, more billionaires follow; supercars with 2–5 black escort cars and security in black by net worth; the very richest get a police escort; they own several homes, cars and businesses
+[ ] - new industries: cow and chicken farms → slaughterhouse; strip mining
+[ ] - waterfront: recreational marina (small and large; large takes yachts, with a clubhouse; raises land value; draws seafood restaurants); fishing ports (small and large) with fish gutting / fish-stick factory industry and fish markets nearby
+[ ] - entertainment: golf driving ranges
+[ ] - art scene: artists live cheap near warehouses; studios, small galleries, openings with invitations; successful galleries buy neighbouring plots and become museums (architecture to match); wealthy visitors donate; needs a rich enough audience and enough middle-income artists
+[ ] - events: street races (fast cars meet in a lot, race, party; a call to the cops may bust it); warehouse raves at night (lights, a queue outside) where the culture exists
+[ ] - infrastructure decay: roads and bridges wear slowly; road-maintenance budget; cuts hit poor streets first, rich areas get fixed first; bad roads slow cars
+
+### D. Look and tools
+[ ] - look-dev pass, grounded neon: PBR materials with roughness and normal maps on roads, buildings and cars; SSAO; sky/atmosphere, distance and volumetric fog; TAA; a dynamic performance throttler that scales effects to hold the frame rate
+[ ] - underground view: tunnels as tubes, near side cut away so the cars inside show
+[ ] - [ and ] raise or lower a road while drawing; pillars hold it up; pillars avoid buildings and roads underneath (refuse if there's no room for them); the preview shows clearly what pillars would remove
+[ ] - intersection editor (Edit mode, click a junction or crosswalk): top-down orthographic view without buildings; lane permissions, left turns, signal timing; crosswalk upgrades: push-button signal, or a pedestrian bridge (raised walkways with steps that connect into a skywalk network)
+[ ] - new game asks for a city name (changeable) and makes a unique game id; saves and loads list by city name; autosaves keep a history with a "game history" viewer to mark key moments and revert
+
+### E. Housekeeping
+[ ] - many todo4 items above still say IN PROGRESS although their branches were merged: verify each in code and mark done or reopen
