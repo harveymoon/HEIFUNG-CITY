@@ -90,8 +90,8 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx, big: bool) {
         }
     ));
     ui.label(egui::RichText::new(format!(
-        "today: {} fires · {} crimes · {} medical · {} unanswered · {} arrests · {} out-of-town calls ({:.0}) · {} in hospital · {} in jail · {} held at stations",
-        st.incidents_today[0], st.incidents_today[1], st.incidents_today[2], st.unanswered_today, st.arrests_today, st.out_of_town_calls_today, st.out_of_town_fees_today, st.in_hospital, st.jailed, st.held_at_stations
+        "today: {} fires · {} crimes · {} medical · {} unanswered · {} arrests · {} car chases ({} tagged, {} lost) · {} out-of-town calls ({:.0}) · {} in hospital · {} in jail · {} held at stations",
+        st.incidents_today[0], st.incidents_today[1], st.incidents_today[2], st.unanswered_today, st.arrests_today, st.chases_today, st.chases_tagged_today, st.chases_lost_today, st.out_of_town_calls_today, st.out_of_town_fees_today, st.in_hospital, st.jailed, st.held_at_stations
     )).small());
     ui.label(egui::RichText::new(format!("homes covered: police {:.0}% · fire {:.0}% · health {:.0}% · schools {:.0}%", st.coverage[0] * 100.0, st.coverage[1] * 100.0, st.coverage[2] * 100.0, st.coverage[3] * 100.0)).small().weak());
 
@@ -184,6 +184,17 @@ fn details(ui: &mut egui::Ui, now: u64, inc: &Incident) {
     }
     for dmg in &inc.damage {
         ui.label(egui::RichText::new(format!("damage: {} lost {:.0}% condition{}", dmg.name, dmg.lost * 100.0, if dmg.destroyed { ", burned down" } else { "" })).color(FIRE));
+    }
+    if let Some(ch) = &inc.chase {
+        let so_far = if ch.ended.is_none() { " so far" } else { "" };
+        ui.label(egui::RichText::new(format!(
+            "car chase: fled in {} at {} · {:.0} m driven{so_far} · closest {:.0} m · {}",
+            ch.vehicle,
+            when(ch.started),
+            ch.metres,
+            ch.closest,
+            ch.result.map_or("still running".to_string(), |r| format!("{} after {} min", r.label(), ch.ended.unwrap_or(now).saturating_sub(ch.started)))
+        )).color(CRIME));
     }
     if let Some(o) = inc.outcome {
         ui.label(egui::RichText::new(format!("outcome: {} at {}", o.label(), inc.resolved.map_or("-".to_string(), when))).strong());

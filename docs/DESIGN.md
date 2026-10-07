@@ -394,6 +394,13 @@ Citizens are rendered from their simulated positions every frame.
   aside for anyone else within 0.75 m (0.5 m in a crowd), using a 2 m grid of walkers per
   tick. `report.traffic.pedestrians` counts walkers waiting, jaywalkers, near misses and
   collisions today.
+  Crowds are not queues: each person walks at their own pace (0.86-1.14x) and prefers a place
+  across the path spread from left of centre to well right; the width they have is the pavement
+  between kerb and building line, the zebra's depth, or 2.6 m either side on lot paths, parks and
+  plazas (a crush spills 0.9 m further). Someone slower ahead is passed on the left (or right) where
+  it fits; walkers only fall in behind when boxed in. With the walk light on, cars standing or
+  crawling (under 2 m/s) across a crossing do not hold walkers back: they weave round the ends of
+  the stopped cars.
 - **Homes on paths**: in a residential zone a path counts as frontage, so houses and
   blocks line footpaths. Such lots have no car access: a resident's car trips start and
   end at the nearest street, the last stretch is walked over the pedestrian network,
@@ -594,7 +601,28 @@ Citizens are rendered from their simulated positions every frame.
   taken, unit and whether it came from out of town, fee, fire damage per building), the last 500
   resolved ones on file, shown live in the Emergencies window and by the `incidents` API command.
   Services draw from their own random stream so the rest of the simulation is not perturbed.
-- **Air** (`nd_sim::air`, `world/air.rs`): the rich fly. Vertiports are placed under Transit (drone pad /
+- **Lights and sirens, and car chases** (`traffic/siren.rs`, `world/chases.rs`): drivers up to
+  60 m ahead of an emergency vehicle on its lane or the next lane of its route (and oncoming drivers
+  on a lane it overtakes in) pull right, onto the kerb edge from a kerb lane, and slow to a crawl,
+  stopping once it is within 20 m; drivers about to cross a junction it is running against the light
+  hold at the line. Whether a driver does is temperament (`traffic::pulls_over`: from compliance and
+  drink; about 95% of ordinary drivers, ~75% of the reckless, fewer drunks, no takeover crew).
+  Sirens drive off-law: someone in the way who will not pull over is passed in the lane to the left
+  or on the opposing lane when it is clear beyond the queue (oncoming speed counted), else up on the
+  kerb past standing traffic, else after 4 s stuck it squeezes past at a crawl; reds are taken at
+  6.5 m/s, holding at the line while cross traffic is moving in the junction. The swing is drawn on
+  top of the lane (`DriveState::offlaw`). *Chases*: when the police finish at a crime scene and the
+  suspect can get to their own car or motorbike (parked within 700 m, or the one they are driving),
+  half the time they run for it instead of the usual arrest roll: a reckless fleeing profile (fast,
+  through every light, round slower traffic the same way) heading for lots 250-1200 m off, away from
+  the police car, re-chosen every 8 minutes. The unit (`UnitState::Pursuing`, incident
+  `Stage::Pursuit`) chases at 1.4x the limit, re-routed every minute along the fugitive's own route
+  (a route ending just past it had it braking for its own stop). Tag rules: the police car touching
+  it (4.6 m centre to centre at any substep) ends it, the suspect stops, gets out and is arrested,
+  the car left at the kerb; more than 280 m apart for 6 minutes or 60 minutes in, they are lost and
+  drive home. Each chase is on its incident (`Incident::chase`: vehicle, metres, closest, result),
+  counted in `ServiceStats::chases_*`, shown in the Emergencies window and by `incidents`/`report`.
+: the rich fly. Vertiports are placed under Transit (drone pad /
   vertiport / skyport: 2 / 4 / 6 landing slots, decks at 0.4 / 7 / 15 m); rooftop pads are rare: a high-tier
   tower of 9+ floors on land worth 0.8+ qualifies when 8+ rich adults would fly from it (its own in full,
   those within 150 m at half), and only the most-demanded towers get one, about one per nine towers

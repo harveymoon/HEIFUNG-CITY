@@ -617,8 +617,12 @@ title (fire, robbery, theft, assault, vandalism, medical), stage, outcome, place
 started / was called in / dispatched / arrived / resolved, call_to_dispatch_min, dispatch_to_scene_min,
 on_scene_min, call_to_arrival_min, unit ("Engine 2, Eastgate Fire HQ" or "fire engine from out of
 town"), out_of_town, fee, people (citizen, name, role caller / dispatcher / victim / suspect /
-patient, taken_to), damage (building, name, condition_lost, destroyed); plus jail_occupancy,
-held_at_stations, released_early_total and today's out-of-town calls and fees. The Emergencies
+patient, taken_to), damage (building, name, condition_lost, destroyed), chase (null, or vehicle,
+started, ended, result "tagged and arrested" / "lost them" / "called off", metres, closest_m: a
+suspect who fled by car, stage "car chase" while it runs); plus jail_occupancy,
+held_at_stations, released_early_total, today's out-of-town calls and fees, and chases_now,
+chases_today, chases_tagged_today, chases_lost_today, chases_total, chases_tagged_total
+(`report` has the same under `services.emergency.car_chases`). The Emergencies
 window (`window {name: "emergencies"}`) shows the same, live.
 
 Dispatch: calls past their dispatch time form one queue, most urgent first (fires and violent
@@ -640,6 +644,8 @@ night crews keep night hours.
 `incident {kind: "crash", car? | at?: [x, y], speed? (m/s, default 25 = written off)}` crashes a car
 (the next tick turns it into injuries and 911 calls); `incident {kind: "takeover", at?: [x, y]}`
 starts a street takeover at the junction nearest `at`.
+`incident {kind: "chase"}` stages a car chase: a free police car comes for someone whose car is
+parked near home (a robbery on the record) and they run for it; `chases` in `incidents` follows it.
 
 **Driving** (`report.traffic`): crashes_today, injuries_today, drunk_drivers_now, drunk_trips_today,
 red_lights_run_today, crashes_total, wrecks_on_road, tow_trucks_now, towed_total, drivers_by_style,

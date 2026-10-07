@@ -50,7 +50,7 @@ impl World {
     /// The services' own random stream, so fires, crimes and illness never
     /// shift what the other systems draw. Not saved: a loaded world reseeds
     /// it from the seed and the clock.
-    fn srng(&mut self) -> &mut crate::SimRng {
+    pub(super) fn srng(&mut self) -> &mut crate::SimRng {
         let (seed, tick) = (self.config.seed, self.clock.tick);
         self.services.rng.get_or_insert_with(|| crate::rng_for(seed ^ 0x5E7_1CE5, tick))
     }
@@ -333,6 +333,7 @@ impl World {
             people: Vec::new(),
             damage: Vec::new(),
             on_road: false,
+            chase: None,
         });
         if let Some(n) = self.services.stats.incidents_today.get_mut(kind.index()) {
             *n += 1;
@@ -636,6 +637,8 @@ impl World {
                 self.refresh_coverage();
             }
         }
+        // [emergency] Car chases before lost units are looked for.
+        self.step_chases();
         self.recover_lost_units();
         // Lights and sirens pull up short of the kerb and the crew is out
         // while the car is still rolling to a stop: on scene within
@@ -851,7 +854,7 @@ impl World {
     }
 
     /// Take a unit's car off the road, leaving the unit where the car was.
-    fn pull_off_road(&mut self, uid: UnitId) {
+    pub(super) fn pull_off_road(&mut self, uid: UnitId) {
         let Some(c) = self.services.units.get_mut(uid).and_then(|u| u.car.take()) else { return };
         if let Some(car) = self.traffic.remove_car(c) {
             let u = &mut self.services.units[uid];
@@ -1397,6 +1400,10 @@ impl World {
     /// An emergency vehicle reached the end of its route (called from
     /// `step_traffic`).
     pub(super) fn unit_car_arrived(&mut self, car_id: CarId) {
+        // [emergency] In pursuit: it stays on the road after its quarry.
+        if self.pursuit_arrived(car_id) {
+            return;
+        }
         let Some(uid) = self.services.by_car.remove(&car_id) else { return };
         let Some(car) = self.traffic.remove_car(car_id) else { return };
         let Some(u) = self.services.units.get_mut(uid) else { return };
@@ -1475,7 +1482,7 @@ impl World {
     }
 
     /// Drive a car for `uid` from where it stands to `to`. False if no road.
-    fn drive_unit(&mut self, uid: UnitId, to: (SegmentId, Vec2), siren: bool) -> bool {
+    pub(super) fn drive_unit(&mut self, uid: UnitId, to: (SegmentId, Vec2), siren: bool) -> bool {
         let from = self.services.units[uid].pos;
         let Some((seg, _, q)) = self.roads.nearest_street(from) else { return false };
         let Some((lanes, s0, s1)) = self.traffic.net.find_route(seg, q, to.0, to.1) else { return false };
@@ -1489,7 +1496,7 @@ impl World {
     /// Back to the station, or teleported home when no road leads there.
     /// Police cars and ambulances with a crew go straight back on patrol or
     /// standby instead.
-    fn send_home(&mut self, uid: UnitId) {
+    pub(super) fn send_home(&mut self, uid: UnitId) {
         let Some(u) = self.services.units.get(uid) else { return };
         if matches!(u.kind, UnitKind::PoliceCar | UnitKind::Ambulance) && u.car.is_none() {
             let out = self.units_out();
@@ -1514,6 +1521,10 @@ impl World {
         let Some(inc) = self.services.incident(id).cloned() else { return };
         match inc.kind {
             IncidentKind::Crime => {
+                // [emergency] A suspect who can get to a car may run for it.
+                if self.try_chase(id) {
+                    return;
+                }
                 let quick = inc.arrived.unwrap_or(tick).saturating_sub(inc.started) <= QUICK_RESPONSE;
                 let caught = inc.suspect.is_some() && self.srng().random::<f32>() < if quick { ARREST_QUICK } else { ARREST_SLOW };
                 let bname = self.buildings.get(inc.building).map(|b| b.name.clone()).unwrap_or_default();
@@ -1932,6 +1943,9 @@ impl World {
         st.unanswered_why_today = Default::default();
         st.mutual_aid_today = 0;
         st.diverted_today = 0;
+        st.chases_today = 0;
+        st.chases_tagged_today = 0;
+        st.chases_lost_today = 0;
         st.unreachable_today = 0;
         st.out_of_town_fees_today = 0.0;
         st.bills_paid_today = 0.0;

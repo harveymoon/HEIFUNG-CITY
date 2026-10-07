@@ -11,7 +11,7 @@
 
 use super::*;
 use crate::citizens::{driver_traits, DRUNK};
-use crate::pedestrians::{gap_needed, hash01, jaywalk_chance, CrossingInfo, PedIncident, Walker, CROWD, CROWD_SPACE, KEEP_INCIDENTS, KEEP_RIGHT_MAX, KEEP_RIGHT_MIN, LAWFUL_GAP, PERSONAL_SPACE, SIDESTEP_MAX, HURT_SPEED};
+use crate::pedestrians::{gap_needed, hash01, jaywalk_chance, CrossingInfo, PedIncident, Walker, CROWD, CROWD_SPACE, CRUSH_SPILL, JAM_CRAWL, KEEP_INCIDENTS, KEEP_SPREAD, KERB_MARGIN, LAWFUL_GAP, OPEN_ROOM, PACE, PERSONAL_SPACE, SIDESTEP_MAX, HURT_SPEED};
 use crate::traffic::{Hold, LaneId};
 use crate::walk::{CrossingKind, CROSSWALK_HALF};
 use std::collections::BTreeMap;
@@ -47,6 +47,11 @@ fn path_key(path: &[Vec2]) -> (usize, u32, u32) {
     let first = path.first().map_or(0, |p| p.x.to_bits() ^ p.y.to_bits().rotate_left(16));
     let last = path.last().map_or(0, |p| p.x.to_bits() ^ p.y.to_bits().rotate_left(16));
     (path.len(), first, last)
+}
+
+/// Where the leg ending at path index `idx` starts.
+fn leg_start_of(path: &[Vec2], idx: usize, base: Vec2) -> Vec2 {
+    if idx > 0 { path[idx - 1] } else { base }
 }
 
 fn walking(c: &Citizen) -> bool {
@@ -152,10 +157,65 @@ impl World {
         self.peds.crossings.get(cr as usize).is_some_and(|info| info.lanes.iter().any(|&(l, s)| self.traffic.siren_near(l, s)))
     }
 
-    /// Seconds before the first moving vehicle reaches crossing `cr`.
-    fn crossing_gap(&self, cr: u32) -> f32 {
+    /// Seconds before the first vehicle moving at `min_v` or more reaches
+    /// crossing `cr`.
+    fn crossing_gap(&self, cr: u32, min_v: f32) -> f32 {
         let Some(info) = self.peds.crossings.get(cr as usize) else { return f32::INFINITY };
-        info.lanes.iter().map(|&(l, s)| self.traffic.time_to_crossing(l, s, HOLD_DEPTH)).fold(f32::INFINITY, f32::min)
+        info.lanes.iter().map(|&(l, s)| self.traffic.time_to_crossing_above(l, s, HOLD_DEPTH, min_v)).fold(f32::INFINITY, f32::min)
+    }
+
+    /// [emergency] The room a walker has either side of the line from `a`
+    /// to `b` (m, - left, + right): on a pavement, from the building line
+    /// to the kerb; on a crossing, the zebra's depth; anywhere else (lot
+    /// paths, parks, plazas) a good width.
+    fn walk_room(&self, a: Vec2, b: Vec2) -> (f32, f32) {
+        let open = (-OPEN_ROOM, OPEN_ROOM);
+        let len = a.distance(b);
+        if len < 0.5 {
+            return open;
+        }
+        if self.walk.crossing_between(a, b).is_some() {
+            return (-CROSSWALK_HALF - 0.4, CROSSWALK_HALF + 0.4);
+        }
+        let dir = (b - a) / len;
+        let right = Vec2::new(-dir.y, dir.x);
+        let mid = (a + b) * 0.5;
+        let Some((sid, _, q)) = self.roads.nearest_street(mid) else { return open };
+        let hw = self.roads.segment(sid).half_width();
+        let to = q - mid;
+        let d = to.length();
+        // A pavement: alongside the street, within its width of the kerb.
+        if d < hw + crate::zoning::SIDEWALK + 0.6 && d > hw && (to / d.max(1e-3)).dot(dir).abs() < 0.5 {
+            let kerb = (d - hw - KERB_MARGIN).max(0.2);
+            let wall = (hw + crate::zoning::SIDEWALK - d - KERB_MARGIN).max(0.2);
+            return if to.dot(right) > 0.0 { (-wall, kerb) } else { (-kerb, wall) };
+        }
+        open
+    }
+
+    /// [emergency] On a crossing: step round any car standing (or crawling)
+    /// on it, out past its nearer end, rather than through it.
+    fn weave_cars(&self, cr: u32, p: Vec2) -> Vec2 {
+        let Some(info) = self.peds.crossings.get(cr as usize) else { return p };
+        let mut p = p;
+        for &(lane, s) in &info.lanes {
+            let Some(l) = self.traffic.net.lanes.get(lane as usize) else { continue };
+            for &cid in &l.cars {
+                let c = &self.traffic.cars[cid];
+                let len = c.length();
+                if c.s < s - 1.0 || c.s - len > s + HOLD_DEPTH + 1.0 {
+                    continue;
+                }
+                let fwd = Vec2::from_angle(c.heading);
+                let rel = p - (c.pos - fwd * len * 0.5);
+                let (along, across) = (rel.dot(fwd), rel.dot(Vec2::new(-fwd.y, fwd.x)));
+                if along.abs() < len * 0.5 + 0.45 && across.abs() < 1.35 {
+                    let push = if along >= 0.0 { len * 0.5 + 0.5 - along } else { -(len * 0.5 + 0.5 + along) };
+                    p += fwd * push;
+                }
+            }
+        }
+        p
     }
 
     /// On the way to a shift that has already started.
@@ -193,7 +253,9 @@ impl World {
             (_, Some((k, ap))) => self.traffic.peds.walk_shown(k as usize, ap as usize),
             _ => true,
         };
-        let gap = self.crossing_gap(cr);
+        // With the walk light on, a jam standing or crawling across the
+        // crossing is walked through (between the cars), not waited for.
+        let gap = self.crossing_gap(cr, if lawful && signal.is_some() { JAM_CRAWL } else { 0.5 });
         if lawful {
             // Look first: nobody too close to stop.
             return (gap >= LAWFUL_GAP).then_some(false);
@@ -232,8 +294,9 @@ impl World {
             Some(w) => *w,
             None => {
                 let (caution, hedonism) = driver_traits(seed);
-                let keep = KEEP_RIGHT_MIN + (KEEP_RIGHT_MAX - KEEP_RIGHT_MIN) * hash01(seed, 0x5eed, 1);
-                Walker { key: (usize::MAX, 0, 0), base: start, side: 0.0, keep, crossing: None, waiting: None, bold: false, against: false, caution, hedonism }
+                let keep = KEEP_SPREAD.0 + (KEEP_SPREAD.1 - KEEP_SPREAD.0) * hash01(seed, 0x5eed, 1);
+                let pace = PACE.0 + (PACE.1 - PACE.0) * hash01(seed, 0x9ace, 2);
+                Walker { key: (usize::MAX, 0, 0), base: start, side: 0.0, keep, crossing: None, waiting: None, bold: false, against: false, caution, hedonism, pace, room: (-SIDESTEP_MAX, SIDESTEP_MAX), room_leg: usize::MAX }
             }
         };
         if w.key != key {
@@ -244,7 +307,10 @@ impl World {
             w.crossing = None;
             w.waiting = None;
             w.against = false;
+            w.room_leg = usize::MAX;
         }
+        // [emergency] Everyone at their own pace.
+        let speed = speed * w.pace;
         let mut heading = self.citizens[id].heading;
         let mut dir = Vec2::from_angle(heading);
         let mut budget = speed;
@@ -323,6 +389,8 @@ impl World {
         }
         let arrived = *idx >= path.len();
         let moved = speed - budget;
+        // The leg now being walked, for its width.
+        let (leg_idx, leg) = (*idx, (*idx < path.len()).then(|| (leg_start_of(path, *idx, w.base), path[*idx])));
         self.citizens[id].activity = act;
 
         let pos = if let Some((cr, kerb, far)) = wait_at {
@@ -350,12 +418,21 @@ impl World {
         } else {
             heading = dir.y.atan2(dir.x);
             let right = Vec2::new(-dir.y, dir.x);
-            w.side += (w.keep - w.side) * 0.35;
+            // [emergency] The width this leg offers, and where in it this
+            // walker likes to be (further out on a wide path or a plaza).
+            if let Some((a, b)) = leg.filter(|_| w.room_leg != leg_idx) {
+                w.room = self.walk_room(a, b);
+                w.room_leg = leg_idx;
+            }
+            let (mut lo, mut hi) = w.room;
+            let wide = hi - lo > 4.0;
+            let keep = (if wide { w.keep * 1.8 } else { w.keep }).clamp(lo + 0.2, (hi - 0.2).max(lo + 0.2));
+            w.side += (keep - w.side) * 0.25;
             let mut p = w.base + right * w.side;
             // Personal space: fall in behind someone going the same way
             // (or standing), step aside for anyone else.
             let (cx, cy) = cell(p);
-            let mut near: Vec<(Vec2, Vec2, bool)> = Vec::new();
+            let mut near: Vec<(Vec2, Vec2, bool, f32)> = Vec::new();
             for dx in -1..=1 {
                 for dy in -1..=1 {
                     let Some(list) = feet.grid.get(&(cx + dx, cy + dy)) else { continue };
@@ -365,18 +442,24 @@ impl World {
                         }
                         let Some(oc) = self.citizens.get(o) else { continue };
                         let standing = self.peds.walkers.get(&o).is_some_and(|ow| ow.waiting.is_some());
-                        near.push((oc.pos, Vec2::from_angle(oc.heading), standing));
+                        near.push((oc.pos, Vec2::from_angle(oc.heading), standing, oc.pos.distance(oc.prev_pos)));
                     }
                 }
             }
             if !near.is_empty() && !arrived {
                 let crowd = near.iter().filter(|x| x.0.distance(p) < 3.0).count() > CROWD;
                 let r = if crowd { CROWD_SPACE } else { PERSONAL_SPACE };
+                // In a crush the rules are a suggestion: step off the line
+                // onto whatever is beside it.
+                if crowd {
+                    (lo, hi) = (lo - CRUSH_SPILL, hi + CRUSH_SPILL);
+                }
+                let mine = speed;
                 let mut back_room = moved.min(w.base.distance(leg_start));
                 // A few passes: stepping clear of one may bring another close.
                 for _ in 0..3 {
                     let mut clear = true;
-                    for &(op, odir, standing) in &near {
+                    for &(op, odir, standing, omoved) in &near {
                         let d = op.distance(p);
                         if d >= r {
                             continue;
@@ -385,23 +468,53 @@ impl World {
                         let along = (op - p).dot(dir);
                         let lateral = (op - p).dot(right);
                         let same_way = standing || odir.dot(dir) > 0.3;
-                        // No room to step aside (abreast already): fall in behind.
-                        let boxed = w.side + (r - d) > SIDESTEP_MAX && along > -0.05;
-                        if (along > 0.05 || boxed) && same_way && back_room > 0.0 {
-                            let back = ((r * r - lateral * lateral).max(0.0).sqrt() + along + 0.02).min(back_room);
-                            w.base -= dir * back;
-                            back_room -= back;
+                        // Where they are across the path, and the two places
+                        // beside them that clear them.
+                        let theirs = w.side + lateral;
+                        let (left_of, right_of) = (theirs - r - 0.05, theirs + r + 0.05);
+                        let fits = |x: f32| x >= lo && x <= hi;
+                        if same_way && along > 0.05 {
+                            // Someone ahead going my way: pass on the left (or
+                            // the right) when they are slower and there is
+                            // room; abreast if we are only bunched up; fall in
+                            // behind only when boxed in.
+                            let slower = standing || omoved < mine * 0.92;
+                            let to = if fits(left_of) { Some(left_of) } else if fits(right_of) { Some(right_of) } else { None };
+                            match to {
+                                Some(x) if slower || d < r * 0.8 => w.side = x,
+                                _ if back_room > 0.0 => {
+                                    let back = ((r * r - lateral * lateral).max(0.0).sqrt() + along + 0.02).min(back_room);
+                                    w.base -= dir * back;
+                                    back_room -= back;
+                                }
+                                _ => {}
+                            }
                         } else {
-                            // Step away from them: right unless they are on our right.
+                            // Beside, behind or coming the other way: step
+                            // away from them, within the room there is.
                             let away = if lateral > 0.05 { -1.0 } else { 1.0 };
                             let to = w.side + away * (r - d);
-                            w.side = if to.abs() <= SIDESTEP_MAX { to } else { w.side - away * (r - d) }.clamp(-SIDESTEP_MAX, SIDESTEP_MAX);
+                            w.side = if fits(to) {
+                                to
+                            } else if fits(w.side - away * (r - d)) && !same_way {
+                                w.side - away * (r - d)
+                            } else {
+                                to.clamp(lo, hi.max(lo))
+                            };
                         }
                         p = w.base + right * w.side;
                     }
                     if clear {
                         break;
                     }
+                }
+            }
+            // [emergency] Between the cars of a jam standing on the crossing.
+            if let Some((cr, _)) = w.crossing {
+                let q = self.weave_cars(cr, p);
+                if q != p {
+                    w.side += (q - p).dot(right);
+                    p = q;
                 }
             }
             p
@@ -703,6 +816,62 @@ mod tests {
         assert!(worst <= 4, "two walkers stayed within 0.5 m of each other for {worst} ticks");
         assert!(late_close == 0, "walkers already strung out came within 0.5 m again for long: {late_close}");
         assert!(ids.iter().all(|&id| !matches!(w.citizens[id].activity, Activity::Traveling { .. })), "everyone got there");
+    }
+
+    /// [emergency] A dozen setting off together along one pavement spread
+    /// across it and pass each other at their own pace, rather than filing
+    /// along one line.
+    #[test]
+    fn a_crowd_spreads_out_and_overtakes_instead_of_walking_single_file() {
+        let mut w = town();
+        quiet(&mut w);
+        let route = w.walk.route(Vec2::new(-250.0, -8.0), Vec2::new(-30.0, -8.0)).expect("a pavement route").0;
+        let ids: Vec<CitizenId> = w.citizens.keys().take(12).collect();
+        for &id in &ids {
+            let seed = w.citizens[id].seed;
+            walker(&mut w, id, seed, route.clone());
+        }
+        let order = |w: &World| -> Vec<(CitizenId, f32)> { ids.iter().filter(|&&id| matches!(w.citizens[id].activity, Activity::Traveling { .. })).map(|&id| (id, w.citizens[id].pos.x)).collect() };
+        run(&mut w, 12);
+        let early = order(&w);
+        // Spread across the pavement: the walkers' offsets from its line.
+        let ys: Vec<f32> = early.iter().map(|&(id, _)| w.citizens[id].pos.y).collect();
+        let mean = ys.iter().sum::<f32>() / ys.len().max(1) as f32;
+        let sd = (ys.iter().map(|y| (y - mean) * (y - mean)).sum::<f32>() / ys.len().max(1) as f32).sqrt();
+        assert!(sd > 0.3, "spread across the pavement, not one line: sd {sd:.2} m");
+        run(&mut w, 40);
+        let late = order(&w);
+        let ahead = |list: &[(CitizenId, f32)], a: CitizenId, b: CitizenId| {
+            let (pa, pb) = (list.iter().find(|x| x.0 == a).map(|x| x.1), list.iter().find(|x| x.0 == b).map(|x| x.1));
+            pa.zip(pb).map(|(x, y)| x > y)
+        };
+        let mut passed = 0;
+        for &(a, _) in &early {
+            for &(b, _) in &early {
+                if let (Some(before), Some(after)) = (ahead(&early, a, b), ahead(&late, a, b)) {
+                    passed += (!before && after) as u32;
+                }
+            }
+        }
+        assert!(passed > 0, "faster walkers overtook slower ones");
+    }
+
+    /// [emergency] With the walk light on and a car standing across the
+    /// crossing, a walker goes round its end, not through it.
+    #[test]
+    fn walkers_weave_round_a_car_standing_on_the_crossing() {
+        let mut w = town();
+        quiet(&mut w);
+        run(&mut w, 1);
+        let (cr, ..) = crosswalk(&w);
+        let (lane, s) = w.peds.crossings[cr as usize].lanes[0];
+        let car = w.traffic.spawn_car(CitizenId::default(), None, vec![lane], s + 3.0, s + 3.5, 0);
+        w.traffic.step(0.1, 1);
+        let c = &w.traffic.cars[car];
+        let fwd = Vec2::from_angle(c.heading);
+        let middle = c.pos - fwd * c.length() * 0.5;
+        let q = w.weave_cars(cr, middle + Vec2::new(-fwd.y, fwd.x) * 0.3);
+        assert!((q - middle).dot(fwd).abs() >= c.length() * 0.5 + 0.4, "stepped out past the car's end: {q} from {middle}");
     }
 
     #[test]

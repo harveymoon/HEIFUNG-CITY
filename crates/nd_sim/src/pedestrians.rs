@@ -12,6 +12,14 @@
 //! steps aside for people coming the other way and falls in behind the
 //! slower ones; in a crowd they stand closer.
 //!
+//! [emergency] Crowds are not queues: people walk at their own pace and
+//! spread across the width they have (a pavement, a park path, a plaza),
+//! pass slower walkers on the left where there is room and only fall in
+//! behind when boxed in; in a crush they step off the line onto whatever
+//! is beside it. On a crossing with the walk light on they do not wait for
+//! a jam that is standing (or crawling) across it: they weave between the
+//! stopped cars.
+//!
 //! The movement itself lives in `world/pedestrians.rs`.
 
 use crate::citizens::{rebelliousness, CitizenId, DRUNK};
@@ -35,6 +43,22 @@ pub const CROWD: usize = 8;
 pub const KEEP_RIGHT_MIN: f32 = 0.35;
 pub const KEEP_RIGHT_MAX: f32 = 0.75;
 pub const SIDESTEP_MAX: f32 = 1.2;
+/// [emergency] Where people like to walk, right of the centre line, spread
+/// wider than `KEEP_RIGHT_*` so a crowd walks abreast rather than in single
+/// file; scaled up on wide paths and plazas.
+pub const KEEP_SPREAD: (f32, f32) = (-0.2, 1.05);
+/// Walking pace as a share of the standard, by person.
+pub const PACE: (f32, f32) = (0.86, 1.14);
+/// Half-width either side of the line a walker may use away from any
+/// street (lot paths, parks, plazas), and on a crossing.
+pub const OPEN_ROOM: f32 = 2.6;
+/// Room kept from the kerb and the building line on a pavement.
+pub const KERB_MARGIN: f32 = 0.35;
+/// In a crush, people spill this far beyond the path's usual width.
+pub const CRUSH_SPILL: f32 = 0.9;
+/// Cars crawling slower than this (m/s) across a crossing with the walk
+/// light on are a jam to weave through, not traffic to wait for.
+pub const JAM_CRAWL: f32 = 2.0;
 /// Seconds of clear road a lawful walker wants before stepping onto a
 /// crossing: drivers further off than that can stop for them.
 pub const LAWFUL_GAP: f32 = 1.6;
@@ -96,6 +120,12 @@ pub struct Walker {
     /// Personality, from the seed: caution, hedonism.
     pub caution: f32,
     pub hedonism: f32,
+    /// [emergency] Own walking pace (share of the standard).
+    pub pace: f32,
+    /// [emergency] Room either side of the path line on the current leg
+    /// (m, - left, + right), and the leg it was found for.
+    pub room: (f32, f32),
+    pub room_leg: usize,
 }
 
 /// What a crossing is to the lane network, worked out when roads change.
