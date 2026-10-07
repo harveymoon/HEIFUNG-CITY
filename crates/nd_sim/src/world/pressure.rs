@@ -299,14 +299,14 @@ impl World {
             self.pressure.cooldown[i] = cooling.saturating_sub(1);
         }
         self.pressure.readings = readings;
-        self.dealer_leases();
-        self.waterfront_daily();
-        self.art_scene_daily();
         let s = &mut self.scene;
         s.repairs_today = 0.0;
         s.bike_repairs_today = 0.0;
         s.fish_landed_today = 0.0;
         s.berth_fees_today = 0.0;
+        self.dealer_leases();
+        self.waterfront_daily();
+        self.art_scene_daily();
     }
 
     /// The day's repairs are paid by the households with a car (a wreck's

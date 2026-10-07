@@ -53,15 +53,17 @@ pub const REPAIRS_PER_SHOP: f32 = 9.0;
 /// Cars in town per service a day (each car is serviced every few months).
 pub const CARS_PER_SERVICE: f32 = 90.0;
 /// Wealthy households one dealership lives on.
-pub const RICH_PER_DEALER: f32 = 70.0;
+pub const RICH_PER_DEALER: f32 = 250.0;
 /// Cars bought a day that keep a dealership busy.
-pub const SALES_PER_DEALER: f32 = 4.0;
+pub const SALES_PER_DEALER: f32 = 25.0;
 /// Buildings outside the city's trash rounds one trash company serves.
-pub const CLIENTS_PER_TRASH_CO: f32 = 45.0;
+pub const CLIENTS_PER_TRASH_CO: f32 = 150.0;
 /// Bike owners a bike shop keeps on the road.
-pub const RIDERS_PER_BIKE_SHOP: f32 = 220.0;
+pub const RIDERS_PER_BIKE_SHOP: f32 = 900.0;
 /// Long walks a day that would sell a bike shop's worth of bikes.
-pub const WALKS_PER_BIKE_SHOP: f32 = 60.0;
+pub const WALKS_PER_BIKE_SHOP: f32 = 2000.0;
+/// Bikes bought a day a bike shop sells.
+pub const SALES_PER_BIKE_SHOP: f32 = 60.0;
 /// Livestock a day one slaughterhouse takes.
 pub const LIVESTOCK_PER_SLAUGHTERHOUSE: f32 = 110.0;
 /// Fish a day one gutting shed takes.
@@ -71,15 +73,15 @@ pub const FILLETS_PER_FACTORY: f32 = 80.0;
 /// Comfortable and rich adults per driving range.
 pub const GOLFERS_PER_RANGE: f32 = 650.0;
 /// Artists per studio building.
-pub const ARTISTS_PER_STUDIO: f32 = 8.0;
+pub const ARTISTS_PER_STUDIO: f32 = 25.0;
 /// Rich adults per gallery.
-pub const RICH_PER_GALLERY: f32 = 45.0;
+pub const RICH_PER_GALLERY: f32 = 300.0;
 /// The art scene needs this many artists of middle income ...
 pub const SCENE_MIN_ARTISTS: f32 = 4.0;
 /// ... and this many rich adults to buy.
 pub const SCENE_MIN_AUDIENCE: f32 = 20.0;
 /// Wealthy households near the water per marina berth's worth of demand.
-pub const RICH_PER_MARINA: f32 = 60.0;
+pub const RICH_PER_MARINA: f32 = 150.0;
 /// A pressure never asks for more than this many of a kind at once.
 pub const MAX_WANTED: f32 = 8.0;
 
@@ -398,21 +400,26 @@ pub fn assess(s: &Signals, supply: &Supply) -> Vec<Pressure> {
             PressureKind::TrashCompany => {
                 let wanted = s.trash_uncovered / CLIENTS_PER_TRASH_CO;
                 let depots = match s.depots.round() as i64 {
-                    0 => "the city runs no trash depot".to_string(),
-                    1 => "the city's one depot".to_string(),
-                    n => format!("the city's {n} depots"),
+                    0 => "any city trash round (the city runs no depot)".to_string(),
+                    1 => "the rounds of the city's one depot".to_string(),
+                    n => format!("the rounds of the city's {n} depots"),
                 };
-                (wanted, format!("{} buildings beyond {depots}'s rounds, {} overflowing; {ht}", s.trash_uncovered.round(), s.trash_overflowing.round()))
+                (wanted, format!("{} buildings beyond {depots}, {} overflowing; {ht}", s.trash_uncovered.round(), s.trash_overflowing.round()))
             }
             PressureKind::BikeShop => {
-                let wanted = s.bike_owners / RIDERS_PER_BIKE_SHOP + s.long_walks / WALKS_PER_BIKE_SHOP + s.bikes_bought / 3.0;
+                let wanted = s.bike_owners / RIDERS_PER_BIKE_SHOP + s.long_walks / WALKS_PER_BIKE_SHOP + s.bikes_bought / SALES_PER_BIKE_SHOP;
                 (wanted, format!("{} bike owners, {} bought a day and {} long walks a day; {ht}", s.bike_owners.round(), s.bikes_bought.round(), s.long_walks.round()))
             }
             PressureKind::Slaughterhouse => {
                 (s.livestock / LIVESTOCK_PER_SLAUGHTERHOUSE, format!("{} livestock a day from the cattle and chicken farms; {ht}", s.livestock.round()))
             }
             PressureKind::FishGutting => (s.fish / FISH_PER_GUTTING, format!("{} fish landed a day; {ht}", s.fish.round())),
-            PressureKind::FishStickFactory => (s.fillets / FILLETS_PER_FACTORY, format!("{} fillets a day from the gutting sheds; {ht}", s.fillets.round())),
+            PressureKind::FishStickFactory => {
+                // A gutting shed's fillets need a buyer before they pile up:
+                // a factory follows the sheds as well as their output.
+                let sheds = supply.open[BusinessKind::FishGutting.index()] as f32;
+                (s.fillets / FILLETS_PER_FACTORY + 0.6 * sheds, format!("{} fillets a day from {} gutting sheds; {ht}", s.fillets.round(), sheds))
+            }
             PressureKind::FishMarket => {
                 let ports = s.fishing_small + s.fishing_large;
                 (0.8 * s.fishing_small + 1.6 * s.fishing_large, format!("{} fishing {} landing a catch; {ht}", ports.round(), if ports.round() == 1.0 { "port" } else { "ports" }))
@@ -615,16 +622,16 @@ mod tests {
     fn each_cause_raises_its_pressure_and_supply_meets_it() {
         let cases: Vec<(Signals, PressureKind)> = vec![
             (Signals { crashes: 10.0, cars: 900.0, ..Default::default() }, PressureKind::Mechanic),
-            (Signals { rich_households: 160.0, cars_bought: 2.0, ..Default::default() }, PressureKind::CarDealer),
-            (Signals { trash_uncovered: 120.0, ..Default::default() }, PressureKind::TrashCompany),
-            (Signals { bike_owners: 300.0, long_walks: 50.0, ..Default::default() }, PressureKind::BikeShop),
+            (Signals { rich_households: 400.0, cars_bought: 10.0, ..Default::default() }, PressureKind::CarDealer),
+            (Signals { trash_uncovered: 300.0, ..Default::default() }, PressureKind::TrashCompany),
+            (Signals { bike_owners: 1200.0, long_walks: 1000.0, ..Default::default() }, PressureKind::BikeShop),
             (Signals { livestock: 160.0, ..Default::default() }, PressureKind::Slaughterhouse),
             (Signals { fish: 140.0, ..Default::default() }, PressureKind::FishGutting),
             (Signals { fillets: 120.0, ..Default::default() }, PressureKind::FishStickFactory),
             (Signals { fishing_large: 1.0, ..Default::default() }, PressureKind::FishMarket),
             (Signals { marinas_large: 1.0, ..Default::default() }, PressureKind::SeafoodRestaurant),
             (Signals { comfortable_adults: 1500.0, ..Default::default() }, PressureKind::GolfRange),
-            (Signals { artists: 20.0, artists_mid: 8.0, rich_adults: 60.0, ..Default::default() }, PressureKind::ArtStudio),
+            (Signals { artists: 40.0, artists_mid: 8.0, rich_adults: 60.0, ..Default::default() }, PressureKind::ArtStudio),
         ];
         for (s, k) in cases {
             let quiet = get(&assess(&Signals::default(), &Supply::default()), k);
@@ -645,7 +652,7 @@ mod tests {
         let no_buyers = Signals { artists: 30.0, artists_mid: 10.0, rich_adults: 5.0, ..Default::default() };
         let p = get(&assess(&no_buyers, &Supply::default()), PressureKind::ArtStudio);
         assert!(!p.wants_more() && p.why.contains("no scene yet"), "{p:?}");
-        let scene = Signals { artists: 30.0, artists_mid: 10.0, rich_adults: 100.0, ..Default::default() };
+        let scene = Signals { artists: 60.0, artists_mid: 10.0, rich_adults: 700.0, ..Default::default() };
         assert!(get(&assess(&scene, &Supply::default()), PressureKind::ArtStudio).wants_more());
         // Galleries follow the studios.
         assert!(!get(&assess(&scene, &Supply::default()), PressureKind::Gallery).wants_more());
@@ -654,7 +661,7 @@ mod tests {
 
     #[test]
     fn marinas_are_advice_for_the_player() {
-        let s = Signals { rich_near_water: 200.0, has_water: true, ..Default::default() };
+        let s = Signals { rich_near_water: 400.0, has_water: true, ..Default::default() };
         let p = get(&assess(&s, &Supply::default()), PressureKind::Marina);
         assert!(p.wants_more() && p.held.as_deref().is_some_and(|h| h.contains("Build")));
         let dry = Signals { rich_near_water: 200.0, ..Default::default() };

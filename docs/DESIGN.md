@@ -251,30 +251,30 @@ Citizens are rendered from their simulated positions every frame.
     one-storey garages on cheap commercial or industrial land near the crashes. Repairs pay
     90 a wreck and 30 a service, spread over the shop day by capacity; the car-owning
     households pay the bill at midnight.
-  - *car dealership* (`CarDealer`): one per 70 wealthy households plus one per 4 cars bought a
+  - *car dealership* (`CarDealer`): one per 250 wealthy households plus one per 25 cars bought a
     day; on commercial land near the rich. Cars bought in town go to a dealership within 4 km
     first (the old gadget-shop fallback stays), the dealer keeps 25%, and wealthy households
     within reach pay 2 a day for leases and valeting. The forecourt is drawn full of rows of
     one new model in one colour.
   - *trash company* (`TrashCompany`, `crate::trash`): buildings out of every city depot's
-    reach, 45 per company; industrial land near them. A local company serves every
+    reach, 150 per company; industrial land near them. A local company serves every
     uncovered building within 1.8 km (cheap homes only at a fee of 1.0 or less), from its yard
     with up to four trucks; the household fee falls with the companies in reach
     (`company_fee`: 1.2 alone, 0.92 with a rival, 0.75 with two more, never under 0.6; the
     hauler from out of town charges 1.5 and only takes the rich).
-  - *bike shop* (`BikeShop`): bike owners / 220 + walks of 25 minutes or more a day / 60 +
-    bikes bought a day / 3; commercial land near the riders. Bikes are bought at a bike shop
+  - *bike shop* (`BikeShop`): bike owners / 900 + walks of 25 minutes or more a day / 2000 +
+    bikes bought a day / 60; commercial land near the riders. Bikes are bought at a bike shop
     within 2.5 km first; repairs (one a day per 25 owners, 12 each) pay too.
   - *slaughterhouse*: livestock a day from the cattle and chicken farms, 110 each; industrial
     land within 1.5 km of the farms. *Fish gutting*: fish landed a day, 90 a shed; *fish-stick
-    factory*: fillets a day, 80 a factory; *fish market*: 0.8 per small and 1.6 per large
+    factory*: fillets a day, 80 a factory, plus 0.6 per gutting shed open (its fillets need a buyer); *fish market*: 0.8 per small and 1.6 per large
     fishing port; all near a fishing port. *Seafood restaurant*: 0.8 per small marina, 1.8
     per large, 0.5 per fishing port, within 900 m of one.
   - *golf driving range*: comfortable and rich adults / 650; entertainment or commercial lots
     of 2,800 m² or more near them.
   - *artists' studios* and *galleries* (the art scene, below).
   - *marina* (advice only: the player builds them): wealthy households within 900 m of the
-    water / 60.
+    water / 150.
   The Economy window's "What the city's businesses want" lists every pressure with its bar,
   `have` and `wanted`, why, and why nothing opens when it is held (cooling down, no lot, a
   player-placed kind). The inspector says why a business is where it is (its `origin`, or for
@@ -289,9 +289,9 @@ Citizens are rendered from their simulated positions every frame.
   rock is near the surface, on cheap land; nuisance 0.42 over 340 m, dust 0.002 a working
   hour over 90 m; ore sells out of town, taxed with oil extraction); fishing port -> fish 3.0;
   fish gutting fish 2.0 -> fillets 2.0; fish-stick factory fillets 1.5 -> meat 2.2 (fish
-  sticks counted as meat); fish market fish 1.5 + fillets 0.5 -> groceries 3.0 (a grocer for
+  sticks counted as meat); fish market fish 2.0 -> groceries 3.0 (a grocer for
   the public); seafood restaurant: diners' tabs (x1.5), 0.3 fillets a diner-hour (half the tab
-  with none); artists' studios -> art 0.25; galleries buy art.
+  with none); artists' studios -> art 0.5; galleries buy art.
 - **Waterfront** (`world/waterfront.rs`, Build > Water): small and large marinas and fishing
   ports are docks the player places at the water's edge, checked as the shipping ports and
   ferry terminals are (`Port::plan`: the nearest shore within 90 m, the yard set back on dry
@@ -317,8 +317,8 @@ Citizens are rendered from their simulated positions every frame.
   homes within 500 m of old warehouses (low-tier industrial buildings) no dearer than their
   own; up to six artists a day leave their day jobs for open studio or gallery jobs. The scene
   exists when at least four artists earn a middle income and twenty rich adults live in town;
-  then studios open (one per eight artists) on cheap commercial or industrial land near the
-  warehouses, and galleries (one per 45 rich adults, at most three for every four studios)
+  then studios open (one per 25 artists) on cheap commercial or industrial land near the
+  warehouses, and galleries (one per 300 rich adults, at most three for every four studios)
   near the studios on middle land. A gallery holds an opening about every six days (a hash
   of the gallery and the day): at 17:00 it invites eighteen comfortable or rich adults within
   2.5 km (the rich and artists first); at 18:00 about two in three free guests go; the opening

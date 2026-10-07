@@ -170,7 +170,7 @@ fn trash_companies_serve_what_the_city_misses_and_compete_on_price() {
     assert!(wanted > 0.0, "{uncovered} buildings out of the city's reach call for a trash company");
     // Push the reading over the line, as a bigger town would.
     for _ in 0..4 {
-        w.pressure.signals.trash_uncovered = 200.0;
+        w.pressure.signals.trash_uncovered = 600.0;
         let v = vacant(&w);
         w.pressure.readings = crate::pressure::assess(&w.pressure.signals, &w.pressure_supply());
         w.pressure.held_days[PressureKind::TrashCompany.index()] = crate::pressure::OPEN_DAYS;

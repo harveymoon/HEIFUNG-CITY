@@ -441,11 +441,11 @@ impl BusinessKind {
             BusinessKind::FishingPort => Recipe { inputs: &[], outputs: &[(Resource::Fish, 3.0)] },
             BusinessKind::FishGutting => Recipe { inputs: &[(Resource::Fish, 2.0)], outputs: &[(Resource::Fillets, 2.0)] },
             BusinessKind::FishStickFactory => Recipe { inputs: &[(Resource::Fillets, 1.5)], outputs: &[(Resource::Meat, 2.2)] },
-            BusinessKind::FishMarket => Recipe { inputs: &[(Resource::Fish, 1.5), (Resource::Fillets, 0.5)], outputs: &[(Resource::Groceries, 3.0)] },
+            BusinessKind::FishMarket => Recipe { inputs: &[(Resource::Fish, 2.0)], outputs: &[(Resource::Groceries, 3.0)] },
             // Diners and golfers pay at the door (`World::venue_tabs`).
             BusinessKind::SeafoodRestaurant => Recipe { inputs: &[(Resource::Fillets, 0.3)], outputs: &[] },
             BusinessKind::GolfRange => Recipe { inputs: &[], outputs: &[] },
-            BusinessKind::ArtStudio => Recipe { inputs: &[], outputs: &[(Resource::Art, 0.25)] },
+            BusinessKind::ArtStudio => Recipe { inputs: &[], outputs: &[(Resource::Art, 0.5)] },
             // Hangs art bought from the studios; sells it to visitors.
             BusinessKind::Gallery => Recipe { inputs: &[(Resource::Art, 0.1)], outputs: &[] },
         }
