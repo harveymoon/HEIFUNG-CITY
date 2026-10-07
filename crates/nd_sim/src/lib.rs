@@ -92,6 +92,8 @@ pub use transit::{BusRoute, BusStop, RouteId, Transit, TransitStats};
 pub use rail::{Facility, FacilityId, Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
 pub use services::{BuildCategory, Incident, IncidentKind, Placeable, ServiceKind, ServiceSite, Services, ServiceStats, Unit, UnitId, UnitKind};
 pub use world::{GridAsset, PlantRow, World, WorldConfig, RIGHTING_MIN};
+/// [camera]
+pub use world::{Gift, Holding, GIFT_AMOUNT};
 pub use zoning::{LandUse, Lot, LotId, Parcel, ParcelKey, ParcelMap, Zone, ZoneId};
 
 pub use glam::Vec2;

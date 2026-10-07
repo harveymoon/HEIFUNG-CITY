@@ -2368,6 +2368,59 @@ fn delivery_street(land: f32) -> (World, BuildingId) {
     (w, shop)
 }
 
+/// [camera] Every robot knows its shop, its number in the shop's fleet, the
+/// household that ordered, what it carries and where it is going; the
+/// fleet's colour is the shop's own; a save keeps it all.
+#[test]
+fn delivery_bots_carry_their_owner_number_and_cargo() {
+    let (mut w, shop) = delivery_street(0.9);
+    for _ in 0..20 {
+        w.clock.tick += 15;
+        w.dispatch_deliveries();
+    }
+    let fleet = w.bots.fleet_of(shop);
+    assert!(!fleet.is_empty(), "the shop sent robots out");
+    let serials: Vec<u32> = fleet.iter().map(|&id| w.bots.bots[id].serial).collect();
+    assert_eq!(serials, (1..=fleet.len() as u32).collect::<Vec<_>>(), "numbered 1, 2, 3 in the fleet");
+    for &id in &fleet {
+        let b = &w.bots.bots[id];
+        assert_eq!(b.shop, shop);
+        assert_eq!(b.destination(), b.home, "heading to the customer");
+        let (res, n) = b.cargo().expect("carrying the order");
+        assert_eq!(res, Resource::Groceries);
+        assert!(n > 0.0);
+        let hh = b.household.expect("an order has a household");
+        assert_eq!(w.households[hh].home, Some(b.home), "the household lives at the door it goes to");
+        assert!(b.metres_left() > 0.0);
+        assert!(crate::bots::bot_name(&w, id).starts_with(&w.buildings[shop].name));
+    }
+    // The next free number fills a gap.
+    let first = fleet[0];
+    w.bots.bots.remove(first);
+    assert_eq!(w.bots.next_serial(shop), 1);
+    // Each company its own colour, the same every time.
+    let other = w.buildings.keys().find(|&b| b != shop).unwrap();
+    assert_eq!(crate::bots::fleet_colour(shop), crate::bots::fleet_colour(shop));
+    assert_ne!(crate::bots::fleet_colour(shop), crate::bots::fleet_colour(other));
+    // Delivered: empty-handed, heading home to the shop.
+    let id = fleet[1.min(fleet.len() - 1)];
+    if let Some(b) = w.bots.bots.get_mut(id) {
+        b.idx = b.path.len();
+    }
+    w.step_bots();
+    if let Some(b) = w.bots.bots.get(id) {
+        assert!(b.returning);
+        assert_eq!(b.destination(), shop);
+        assert!(b.cargo().is_none(), "the order was handed over");
+    }
+    // A save keeps the numbers and orders.
+    let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+    for (id, b) in w.bots.bots.iter() {
+        assert_eq!(back.bots.bots[id].serial, b.serial);
+        assert_eq!(back.bots.bots[id].household, b.household);
+    }
+}
+
 #[test]
 fn delivery_bots_work_only_on_dear_streets() {
     let (mut rich, shop) = delivery_street(0.9);
