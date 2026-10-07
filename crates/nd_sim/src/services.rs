@@ -850,6 +850,10 @@ pub enum CrimeKind {
     Vandalism,
     /// [driving] A street takeover: an intersection held for donuts.
     StreetTakeover,
+    /// [events] An illegal street race.
+    StreetRace,
+    /// [events] A noise complaint about a warehouse rave.
+    Rave,
 }
 
 impl CrimeKind {
@@ -867,6 +871,8 @@ impl CrimeKind {
             CrimeKind::Assault => "assault",
             CrimeKind::Vandalism => "vandalism",
             CrimeKind::StreetTakeover => "street takeover",
+            CrimeKind::StreetRace => "street race",
+            CrimeKind::Rave => "illegal rave",
         }
     }
 }

@@ -1570,6 +1570,7 @@ fn four_hungry_days_and_a_citizen_leaves() {
     assert!(!w.citizens.contains_key(c), "gone on the fourth");
     assert!(!w.buildings[home].residents.contains(&c));
     assert_eq!(w.economy.emigrated_total, 1);
+    assert_eq!(w.economy.emigrated_by[crate::economy::LeaveReason::Hunger.index()], 1, "counted as leaving over hunger");
     assert!(w.drain_events().iter().any(|e| matches!(e, SimEvent::CitizenLeft(x) if *x == c)));
 }
 

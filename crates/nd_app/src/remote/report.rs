@@ -386,7 +386,7 @@ fn people(w: &World) -> Value {
             "note": "a citizen leaves after 4 hungry days",
         },
         "commute_modes_now": { "travelling": travelling, "modes": mode_json, "owns_car_share": share(owns_car as usize, n), "owns_bike_share": share(owns_bike as usize, n) },
-        "moves": { "displaced_by_rent_total": e.displaced_total, "emigrated_total": e.emigrated_total, "priced_out_immigrants_total": e.priced_out_total },
+        "moves": { "displaced_by_rent_total": e.displaced_total, "emigrated_total": e.emigrated_total, "emigrated_by_reason": nd_sim::economy::LeaveReason::ALL.iter().map(|r| (r.key().to_string(), serde_json::json!(e.emigrated_by[r.index()]))).collect::<serde_json::Map<_, _>>(), "priced_out_immigrants_total": e.priced_out_total },
         "concerns": super::concerns::summary(w),
         "recent_memory_reasons": {
             "window_days": MEMORY_WINDOW_TICKS / 1440,
@@ -1339,7 +1339,15 @@ fn driving_json(w: &World) -> Value {
                 "planned_tick": w.driving.takeovers.planned,
                 "total": w.driving.takeovers.total,
                 "last": w.driving.takeovers.history.last().map(|r| json!({ "id": r.id, "place": r.place, "participants": r.participants, "crowd": r.crowd, "arrests": r.arrests, "police": r.police, "started": r.started, "ended": r.ended })),
-            }
+            },
+            // [events] Street races and raves tonight, and the state of the roads.
+            "street_events": {
+                "race": w.race().map(|r| json!({ "id": r.id, "stage": r.stage.label(), "meet": r.meet.name, "finish": r.finish.name, "racers": r.cars.len(), "incident": r.incident })),
+                "rave": w.rave().map(|r| json!({ "id": r.id, "place": r.place, "inside": r.inside.len(), "queue": r.queue.len(), "complaints": r.complaints, "incident": r.incident })),
+                "races_total": w.street_events.races_total, "raves_total": w.street_events.raves_total, "busts_total": w.street_events.busts_total,
+                "last_news": w.street_events.news.last().map(|n| n.headline.clone()),
+            },
+            "road_condition": super::nights::report_json(w),
     })
 }
 

@@ -51,6 +51,8 @@ mod holo;
 mod junction_view;
 mod layers;
 mod lights;
+// [review] retaining walls at corner lots over a lower side street
+mod retaining;
 /// [look] Graphics quality, camera effects (SSAO, TAA, volumetric fog,
 /// reflections of the sky) and the frame-rate throttler.
 mod look;
@@ -61,6 +63,7 @@ mod swap;
 mod mapview;
 pub use focus::{POLICE_GLOW, TRAFFIC_BLUE};
 pub use layers::danger_color;
+pub use nights::road_wear_color;
 pub use mapview::{zone_tint as map_zone_tint, PIN_KEY as MAP_PIN_KEY, ROAD_KEY as MAP_ROAD_KEY};
 /// The sky dome: light pollution at night, glare round the sun by day.
 mod sky;
@@ -68,6 +71,8 @@ mod sky;
 mod people;
 pub use people::MESH_CAP as PEOPLE_MESH_CAP;
 mod stunts;
+/// [events] Rave lights, race markers, road cracks and the road condition layer.
+mod nights;
 mod survey;
 /// [subway] Metro tunnels and trains in the Underground view.
 mod subway;
@@ -172,11 +177,14 @@ pub struct Overlays {
     /// [clarity] Traffic danger: crashes on the record per street segment,
     /// drawn over everything (`layers::load_gizmos`).
     pub danger: bool,
+    /// [events] Road condition: every street piece green to red by its
+    /// wear (`nights::sync_road_layer`).
+    pub road_condition: bool,
 }
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false }
+        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false }
     }
 }
 
@@ -437,6 +445,7 @@ impl Plugin for RenderPlugin {
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
         // The ground and water out past the map, into the fog.
         app.init_resource::<far::FarRender>().add_systems(Update, far::sync_far.in_set(SimSet::Sync).after(sync_landscape));
+        app.add_systems(Update, retaining::sync_retaining.in_set(SimSet::Sync).after(sync_landscape));
         // [carlife] Cars parked at the kerb, after the cars on the road.
         app.init_resource::<ParkedRender>().add_systems(Update, sync_parked_cars.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // [taxis] Cabs standing in yards, at ranks and kerbs.
@@ -448,6 +457,8 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, stunts::sync_stunts.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // [land] billionaires' convoys and bodyguards
         app.init_resource::<convoys::ConvoyRender>().add_systems(Update, convoys::sync_convoys.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
+        // [events]
+        app.add_systems(Update, (nights::sync_road_wear, nights::sync_raves, nights::race_gizmos).in_set(SimSet::Sync).after(sync_cars).before(lift_movers));
         // [society] Skid row and the trash.
         app.init_resource::<society::SocietyRender>().add_systems(Update, society::sync_society.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
         // Drone taxis and helicopters, after the buildings whose pads they land on.

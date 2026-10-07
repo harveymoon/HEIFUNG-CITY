@@ -63,12 +63,13 @@ impl World {
 
     // ── doors into private systems ─────────────────────────────────────────
 
-    pub(crate) fn society_emigrate(&mut self, cid: CitizenId) {
-        self.emigrate(cid);
+    /// A citizen gone for good without leaving (killed): not an emigrant.
+    pub(crate) fn society_remove_citizen(&mut self, cid: CitizenId) {
+        self.remove_citizen(cid);
     }
 
-    pub(crate) fn society_emigrate_household(&mut self, hid: HouseholdId) {
-        self.emigrate_household(hid);
+    pub(crate) fn society_emigrate_household(&mut self, hid: HouseholdId, why: crate::economy::LeaveReason) {
+        self.emigrate_household(hid, why);
     }
 
     pub(crate) fn society_move_household(&mut self, hid: HouseholdId, to: BuildingId, template: &str) {

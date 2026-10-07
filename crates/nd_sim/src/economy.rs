@@ -54,13 +54,17 @@ pub enum Flow {
     /// [camera] Money the player gave a household from the treasury (the
     /// inspector's "gift $1000").
     Gifts,
+    /// [events] Resurfacing worn streets (`crate::road_wear`).
+    RoadMaintenance,
+    /// [events] Fines from busted street races and raves.
+    Fines,
 }
 
 /// Number of `Flow`s; the ledger's row length.
-pub const FLOWS: usize = 21;
+pub const FLOWS: usize = 23;
 
 impl Flow {
-    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport, Flow::Gifts];
+    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport, Flow::Gifts, Flow::RoadMaintenance, Flow::Fines];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -85,6 +89,8 @@ impl Flow {
             Flow::TollUpkeep => "toll booth upkeep",
             Flow::GridExport => "grid export",
             Flow::Gifts => "gifts to residents",
+            Flow::RoadMaintenance => "road maintenance",
+            Flow::Fines => "fines",
         }
     }
 
@@ -284,6 +290,35 @@ impl Ledger {
     }
 }
 
+/// [review] Why citizens leave town for good.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LeaveReason {
+    /// Four hungry days in a row.
+    Hunger,
+    /// Rent stress with no cheaper home and the money gone.
+    Rent,
+    /// The household fled crime around its home.
+    Crime,
+    /// Gave up after long enough on the street.
+    Homeless,
+}
+
+impl LeaveReason {
+    pub const COUNT: usize = 4;
+    pub const ALL: [LeaveReason; Self::COUNT] = [Self::Hunger, Self::Rent, Self::Crime, Self::Homeless];
+    pub fn index(self) -> usize {
+        self as usize
+    }
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Hunger => "hunger",
+            Self::Rent => "rent",
+            Self::Crime => "crime",
+            Self::Homeless => "homeless",
+        }
+    }
+}
+
 /// Deliberately simple demand model. Demand per land use is in `0..1` and
 /// drives how quickly vacant lots develop.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -311,6 +346,10 @@ pub struct Economy {
     pub displaced_total: u32,
     /// Citizens who gave up and left the city, cumulative.
     pub emigrated_total: u32,
+    /// [review] Of `emigrated_total`, how many left for each `LeaveReason`
+    /// (indexed by `LeaveReason::index`), cumulative.
+    #[serde(default)]
+    pub emigrated_by: [u32; LeaveReason::COUNT],
     /// Immigrants turned away because nothing was affordable, cumulative.
     pub priced_out_total: u32,
     /// Market statistics: their only home (rail's are `Rail::stats`).

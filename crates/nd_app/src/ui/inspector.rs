@@ -93,6 +93,8 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             } else {
                 neon(ui, &format!("Car  ·  {}", car.model.body.label().replace('_', " ")));
                 ui.label(format!("{:.0} km/h", car.v * 3.6));
+                // [events] A street racer: the race and their place.
+                super::nights::racer_line(ui, w, id);
                 driver_shown = driver_card(ui, w, id, selection);
                 if !driver_shown {
                     hint(ui, "nobody we know at the wheel");
@@ -255,6 +257,8 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
     });
     let started = if b.construction.is_some() { "started" } else { "built" };
     hint(ui, &format!("{}  ·  {} floor{}  ·  {started} day {}", style.map_or("unknown style", |s| s.label()), b.floors, if b.floors == 1 { "" } else { "s" }, b.built_tick / 1440 + 1));
+    // [events] A rave on tonight (or the scene round an old warehouse).
+    super::nights::rave_line(ui, w, id);
     // Alarms, before anything else.
     if w.services.is_burning(id) {
         ui.label(egui::RichText::new("ON FIRE").strong().color(egui::Color32::from_rgb(255, 110, 60)));

@@ -125,7 +125,7 @@ Agents are named in brackets; each works in its own worktree.
 [x] - H2: police stations, hospitals and power plants burn down and are removed outright   → DONE: fixed [fix-services]: civic fires are repaired, not removed.
 [x] - H3: incidents whose unit is gone stay active forever (wrecks never towed)   → DONE: fixed [fix-services] and [fix-traffic]: orphaned incidents close; tows capped and always dispatched.
 [x] - H4: remote API accepts requests from any web page (no Origin/Host check)   → DONE: fixed [fix-app]: Host/Origin checks, JSON content type, paths confined.
-[~] - medium and low findings (docs/REVIEW2.md): fixed per merged commits M1, M2, M3, M5, M6, M8–M11, M13–M15; still unverified M4 (async mind answers mid-trip), M7 (removed bus stop teleports bus), M12 (full_rebuild cleared early) and the LOW list
+[x] - medium and low findings (docs/REVIEW2.md): fixed per merged commits M1, M2, M3, M5, M6, M8–M11, M13–M15; still unverified M4 (async mind answers mid-trip), M7 (removed bus stop teleports bus), M12 (full_rebuild cleared early) and the LOW list   → DONE [fix/review]: M4, M7, M12 and L1–L8, L10–L17, L19 were already fixed; L9 (stunt car spinning forever) and L18 (dead code) fixed; status per item in docs/REVIEW2.md §5.
 
 
 ## From todo4.md (merged October 2026)
@@ -200,8 +200,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [x] - waterfront: recreational marina (small and large; large takes yachts, with a clubhouse; raises land value; draws seafood restaurants); fishing ports (small and large) with fish gutting / fish-stick factory industry and fish markets nearby   → DONE [feat/economy]: small/large marinas and fishing ports in Build > Water; boats move; fish chain to markets and seafood restaurants
 [x] - entertainment: golf driving ranges   → DONE [feat/economy]
 [x] - art scene: artists live cheap near warehouses; studios, small galleries, openings with invitations; successful galleries buy neighbouring plots and become museums (architecture to match); wealthy visitors donate; needs a rich enough audience and enough middle-income artists   → DONE [feat/economy]: artists, studios, galleries with openings and donations; galleries set wants_expand (museum growth left to feat/land)
-[ ] - events: street races (fast cars meet in a lot, race, party; a call to the cops may bust it); warehouse raves at night (lights, a queue outside) where the culture exists
-[ ] - infrastructure decay: roads and bridges wear slowly; road-maintenance budget; cuts hit poor streets first, rich areas get fixed first; bad roads slow cars
+[x] - events: street races (fast cars meet in a lot, race, party; a call to the cops may bust it); warehouse raves at night (lights, a queue outside) where the culture exists   → DONE [feat/events]: races from day 10 (lots, lit route, party, busts and chases); warehouse raves where a scene exists (queue, beams, noise calls, shutdowns). Raves may be too frequent in big cities; tune
+[x] - infrastructure decay: roads and bridges wear slowly; road-maintenance budget; cuts hit poor streets first, rich areas get fixed first; bad roads slow cars   → DONE [feat/events]: wear by age and traffic, Road maintenance slider, rich streets fixed first, worn roads slow cars and raise crashes; Road condition layer; ruts and potholes
 
 ### D. Look and tools
 [x] - look-dev pass, grounded neon   → DONE [feat/look]: roughness/metal maps, sky-light reflections, distance-scaled SSAO, volumetric haze, TAA, Auto/Low/Medium/High with a frame-time throttler (View window; `graphics` remote command). Left: street lamps don't cast light, no wet roads.   Was: PBR materials with roughness and normal maps on roads, buildings and cars; SSAO; sky/atmosphere, distance and volumetric fog; TAA; a dynamic performance throttler that scales effects to hold the frame rate
@@ -226,17 +226,17 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [x] - flag: windows z-fighting on Aurora Block (stepped terraces)   → DONE [fix/flags]: glass 13 mm behind lights, coplanar-face test. Left: coplanar tail in other styles (mostly hidden faces)
 [x] - flag: crashed motorcycle in a one-way tunnel waits hours for a tow and blocks traffic; wreck drawn above ground   → DONE [fix/flags]: real tow trucks drive in (out-of-town by any reachable road end), shoulder squeeze; tunnel cars decided by lane (World::car_in_tunnel). Left: out-of-town truck can loop 1–2.5 h through jams
 [x] - heat vision toggled off left motion blur and odd light colours   → FIXED [feat/look]: heat and the Traffic/Crime focus views swapped materials separately and restored each other's stand-ins; one shared swapper now, camera effects recomputed each frame
-[x] - flag: kerbs turn to dirt at corners   → DONE [feat/kerbs]: rounded kerbed corners with paving (rings paved outside), dropped kerbs at every crosswalk end with yellow domed tactile pads; street triangles slightly down. Left: very sharp (~60°) corners get no cut; one-way ramp streets still have no pavements
+[x] - flag: kerbs turn to dirt at corners   → DONE [feat/kerbs]: rounded kerbed corners with paving (rings paved outside), dropped kerbs at every crosswalk end with yellow domed tactile pads; street triangles slightly down. Left: very sharp (~60°) corners get no cut; one-way ramp streets still have no pavements   → [fix/review] sharp corners now get their curb cuts (crosswalks set out to the kerb, walk::crosswalk_setback). One-way ramp streets still have no pavements on purpose (ramps front nothing, no walkers).
 [x] - realistic example maps   → DONE [feat/mapgen]: nd_procgen::citygen tensor-field streets, zoning, presets grid_plaza / coastal_river / old_town / twin_centres; generate_city remote command; "Starting town" in New game; tests per preset. Roundabouts dropped from plazas (they jammed by day 4)
-[ ] - corner lots levelled to their front street can stand above a side street (left open by fix/terrain-cut)
-[ ] - about 100 cyclists stuck at one point beside a 5-arm signalised junction in a generated city (riders waiting on each other at crossings, world/riders.rs); seen by feat/tools
-[ ] - new economy building styles (Mechanic, FishStickFactory, ArtStudio) put windows in their frame's plane (coplanar test failing on main)   → economy agent fixing
-[ ] - a 10k-person city (saves/land_day18.ron on feat/land) loses about 400 people a day with homes free and no unemployment; not caused by buyouts (land market off: same). Suspect the power shortage (~80% supply); investigate
-[ ] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)
+[x] - corner lots levelled to their front street can stand above a side street (left open by fix/terrain-cut)   → DONE [fix/review]: retaining walls along a lot edge whose pad stands over a side street; inside the lot the ground is the pad.
+[x] - about 100 cyclists stuck at one point beside a 5-arm signalised junction in a generated city (riders waiting on each other at crossings, world/riders.rs); seen by feat/tools   → DONE [fix/review]: riders obeyed a neighbouring arm's crosswalk light at 5-arm junctions; only the best-aligned crosswalk controls them now
+[x] - new economy building styles (Mechanic, FishStickFactory, ArtStudio) put windows in their frame's plane (coplanar test failing on main)   → FIXED [feat/economy] 5a0a9ce
+[x] - a 10k-person city (saves/land_day18.ron on feat/land) loses about 400 people a day with homes free and no unemployment; not caused by buyouts (land market off: same). Suspect the power shortage (~80% supply); investigate   → DONE [fix/review]: not power. ~400/day left over hunger: 1,000+ cyclists stood for good at a five-arm signalised junction (a rider obeyed a neighbouring arm's light too) and never got home to eat. Fixed in world/riders.rs; leave reasons now counted (economy.emigrated_by) and shown in the People window and the remote report.
+[x] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)   → DONE [fix/review]: the inspector strings were already clean (d8dbe8d); last mojibake comments re-encoded; tests/source_encoding.rs guards it.
 
 ### Agent waves (4–5 at a time)
-- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera, feat/land
-- Running: fix/review (population drain, REVIEW2 M4/M7/M12/LOW, corner lots, mojibake, kerb leftovers), feat/events (C3: races, raves, infrastructure decay), feat/clarity (section A)
+- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera, feat/land, feat/events, fix/review
+- Running: feat/clarity (section A), feat/tools follow-up (pillar check must match the preview; Harvey's bridge)
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
 - Next as slots free: dev-speed pass, then the review pass
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open

@@ -201,18 +201,6 @@ impl Gesture {
         }
     }
 
-    /// Set a road control point's level (no-op for other gestures).
-    pub fn set_level(&mut self, idx: usize, level: f32) {
-        if let Gesture::Road { points, elevation, .. } = self {
-            if idx < points.len() {
-                elevation.resize(points.len(), 0.0);
-                elevation[idx] = level;
-                if elevation.iter().all(|l| *l == 0.0) {
-                    elevation.clear();
-                }
-            }
-        }
-    }
 
     /// The polyline a road is actually built from: the control points, or the
     /// sampled spline for curved roads.

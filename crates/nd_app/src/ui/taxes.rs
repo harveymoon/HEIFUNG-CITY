@@ -165,6 +165,8 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
         let col = if pull < 0.95 { WARN } else if pull > 1.05 { LESS } else { egui::Color32::LIGHT_GRAY };
         ui.label(egui::RichText::new(format!("{:.0} today · {:.0} yesterday · visits ×{pull:.2}", s.tax_today, s.tax_yesterday)).small().color(col));
     });
+    // [events] Road crews: the funding level and who they serve.
+    super::nights::road_budget(ui, p);
 
     section(ui, "TOLL BOOTHS");
     if p.sim.world.tolls.booths.is_empty() {

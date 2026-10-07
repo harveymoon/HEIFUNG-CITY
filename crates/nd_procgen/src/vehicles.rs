@@ -226,10 +226,8 @@ impl B<'_> {
         for s in [-1.0f32, 1.0] {
             let z = s * (hw - w * 0.5);
             self.body.pipe(Vec2::new(x, z), Vec2::Y, w, r, r, sides, c4(TYRE));
-            if self.detail {
-                let hub = if self.m.class == VehicleClass::Cheap && self.m.wear >= 2 { mul(TRIM, 1.5) } else if self.m.class == VehicleClass::Expensive || self.m.tuned { CHROME } else { [0.4, 0.4, 0.42] };
-                self.body.decal(Vec3::new(x, r, s * (hw + 0.006)), Vec3::X, Vec3::Y, r * 1.1, r * 1.1, Vec3::Z * s, c4(hub));
-            }
+            let hub = if self.m.class == VehicleClass::Cheap && self.m.wear >= 2 { mul(TRIM, 1.5) } else if self.m.class == VehicleClass::Expensive || self.m.tuned { CHROME } else { [0.4, 0.4, 0.42] };
+            self.body.decal(Vec3::new(x, r, s * (hw + 0.006)), Vec3::X, Vec3::Y, r * 1.1, r * 1.1, Vec3::Z * s, c4(hub));
         }
     }
 
