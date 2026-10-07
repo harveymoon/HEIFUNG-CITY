@@ -104,6 +104,16 @@ pub fn land_color(hue: [f32; 3], t: f32) -> [f32; 4] {
     [hue[0] * k, hue[1] * k, hue[2] * k, 0.12 + 0.6 * t.powf(0.8)]
 }
 
+/// [grid-weather] The wind layer's wash for a wind farm's ordinary-day
+/// share `t`: a ramp from still blue through teal and mint to bright
+/// white-gold, all fairly solid, so the windy ridges and sheltered hollows
+/// read against each other rather than as one tint.
+pub fn wind_color(t: f32) -> [f32; 4] {
+    let t = t.clamp(0.0, 1.0);
+    let c = ramp(&[(0.0, [0.05, 0.12, 0.55]), (0.3, [0.05, 0.55, 0.85]), (0.55, [0.25, 0.95, 0.6]), (0.8, [0.95, 1.0, 0.45]), (1.0, [1.0, 0.95, 0.85])], t);
+    [c[0], c[1], c[2], 0.42 + 0.2 * t]
+}
+
 /// Stretch an industry layer's chance for the wash: among seven kinds a
 /// third is already a strong pull, so low chances are lifted a little and
 /// 70% and up reads full, while open farmland (often 50..70% farming) still

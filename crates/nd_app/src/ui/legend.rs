@@ -59,8 +59,7 @@ pub fn land_legend(ui: &mut egui::Ui, l: LandLayer) {
             ramp(ui, |t| { let c = land_color(h, t); linear([c[0], c[1], c[2]]) }, "unlikely", "likely");
         }
         LandLayer::Wind => {
-            let h = land_hue(l);
-            ramp(ui, |t| { let c = land_color(h, t); linear([c[0], c[1], c[2]]) }, "becalmed", "full output");
+            ramp(ui, |t| { let c = nd_procgen::overlay::wind_color(t); linear([c[0], c[1], c[2]]) }, "becalmed", "full output");
         }
         LandLayer::Solar => {
             let h = land_hue(l);
