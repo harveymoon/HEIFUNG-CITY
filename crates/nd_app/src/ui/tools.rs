@@ -377,16 +377,14 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         }
     });
     placeable_info(ui, sim, tools.build_item());
-<<<<<<< HEAD
     // [free-placement] What a click under the pointer would do.
     if let Some((ok, note, _)) = &tools.build_here {
         let col = if *ok { egui::Color32::from_rgb(120, 230, 140) } else { egui::Color32::from_rgb(240, 110, 120) };
         ui.label(egui::RichText::new(format!("Here: {note}")).small().color(col));
-=======
+    }
     // [grid-weather] Wind and solar: what the ground under the pointer gives.
     if let (Placeable::Plant(k @ (nd_sim::PowerPlantKind::Wind | nd_sim::PowerPlantKind::Solar)), Some(p)) = (tools.build_item(), tools.hover_ground) {
         hint(ui, &site_note(&sim.world, k, p));
->>>>>>> main
     }
     if tools.build_cat == BuildCategory::Services {
         let s = &sim.world.services.stats;

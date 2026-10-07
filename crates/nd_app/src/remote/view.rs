@@ -432,8 +432,8 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         json!({ "benches": p.benches.len(), "paths": p.paths.len(), "entrances": p.entrances.len(), "features": p.features.iter().map(|f| f.kind.label()).collect::<Vec<_>>(), "cluster_lots": p.cluster_lots, "cluster_area": round(p.cluster_area) })
     });
     let people = |ids: &[CitizenId]| ids.iter().filter_map(|&c| w.citizens.get(c).map(|x| json!({ "id": key_str(c), "name": x.name }))).collect::<Vec<_>>();
-    json!({
-        "id": key_str(id), "name": b.name, "land_use": w.shown_use(id).label(), "use": b.land_use.label(), "tier": b.tier.label(), "style": style, "floors": b.floors,
+    let mut v = json!({
+        "id": key_str(id), "name": b.name, "land_use": w.shown_use(id).label(), "tier": b.tier.label(), "style": style, "floors": b.floors,
         "lot": key_str(b.lot), "pos": lot.map_or(Value::Null, |l| v2(l.center)), "built_day": b.built_tick / 1440 + 1,
         "under_construction": construction,
         "demolition": demolition,
@@ -456,7 +456,10 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         "taxis_and_freight": super::taxis::building_extra(w, id),
         // [economy] why the business is here and how it is doing
         "story": super::economy::story(w, id),
-    })
+    });
+    // [free-placement] The building's own use (power, wages, venues); `land_use` is Civic for a city building.
+    v["use"] = json!(b.land_use.label());
+    v
 }
 
 // ── lots ────────────────────────────────────────────────────────────────────
