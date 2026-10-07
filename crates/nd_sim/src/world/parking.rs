@@ -31,6 +31,8 @@ impl World {
             b.floors = size.floors();
             b.business = Some(bz);
             b.parking_price = price;
+            // [free-placement] Its own use (the ground is the city's).
+            b.land_use = LandUse::Commercial;
         });
         self.vehicles.city_lots.insert(id, crate::enforcement::CityLot { size, price });
         Ok(id)

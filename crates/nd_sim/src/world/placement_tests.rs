@@ -52,7 +52,8 @@ fn a_plant_goes_on_unzoned_ground_and_the_ground_becomes_the_citys() {
     let id = w.place_building(Placeable::Plant(PowerPlantKind::Solar), p).expect("placed");
     assert_eq!(w.lots.len(), lots0 + 1, "a lot was made for it");
     let b = &w.buildings[id];
-    assert_eq!(b.land_use, LandUse::Civic);
+    assert_eq!(b.land_use, LandUse::Industrial, "a plant works as industry whatever the ground");
+    assert_eq!(w.shown_use(id), LandUse::Civic, "and reads Civic: the ground is the city's");
     let lot = &w.lots[b.lot];
     assert_eq!(lot.land_use, LandUse::Civic);
     assert!(w.is_city_ground(lot));
@@ -92,6 +93,7 @@ fn a_police_station_on_housing_is_civic_and_goes_back_to_housing_when_bulldozed(
     let id = w.place_on_lot(Placeable::Service(ServiceKind::Police, Tier::Low), lot).expect("placed");
     assert_eq!(w.buildings[id].lot, lot, "same lot, nothing moved");
     assert_eq!(w.buildings[id].land_use, LandUse::Civic, "a police station, not a home");
+    assert_eq!(w.shown_use(id), LandUse::Civic);
     assert_eq!(w.lots[lot].land_use, LandUse::Civic);
     assert_eq!(lots_of(&w, LandUse::Residential), homes0 - 1, "the zone has one lot fewer");
     let parcel = w.parcels.at(centre).unwrap();
@@ -150,7 +152,8 @@ fn an_older_save_keeps_every_building_and_switches_city_lots_on_load() {
     }
     let l = &loaded.lots[loaded.buildings[station].lot];
     assert_eq!(l.land_use, LandUse::Civic);
-    assert_eq!(loaded.buildings[station].land_use, LandUse::Civic);
+    assert_eq!(loaded.shown_use(station), LandUse::Civic);
+    assert_eq!(loaded.buildings[station].land_use, LandUse::Residential, "what it does is not changed by a load");
     assert!(loaded.is_city_ground(&loaded.lots[loaded.buildings[plant].lot]));
     // And through the first rebuild.
     loaded.add_road(&[Vec2::new(-600.0, 200.0), Vec2::new(600.0, 200.0)], 1, 1);
@@ -158,4 +161,25 @@ fn an_older_save_keeps_every_building_and_switches_city_lots_on_load() {
         assert!(loaded.buildings.contains_key(*id), "a rebuild keeps every building");
     }
     assert_eq!(loaded.lots[loaded.buildings[station].lot].land_use, LandUse::Civic);
+}
+
+#[test]
+fn a_city_building_keeps_its_own_use_whatever_the_ground() {
+    let mut w = town();
+    // A depot and a stadium on housing, a cargo hub on unzoned ground.
+    let lot = home_lot(&w, 200.0);
+    let depot = w.place_building(Placeable::BusDepot, unzoned_point(&w, -450.0)).expect("depot on unzoned ground");
+    assert_eq!(w.buildings[depot].land_use, LandUse::Industrial, "a depot draws and pays like industry");
+    let stadium = w.place_building(Placeable::Service(ServiceKind::Stadium, Tier::Low), unzoned_point(&w, 450.0)).expect("stadium on unzoned ground");
+    assert_eq!(w.buildings[stadium].land_use, LandUse::Entertainment, "a stadium is a night out");
+    let dispatch = w.place_on_lot(Placeable::Service(ServiceKind::Dispatch, Tier::Low), lot).expect("dispatch on housing");
+    assert_eq!(w.buildings[dispatch].land_use, LandUse::Civic);
+    for id in [depot, stadium, dispatch] {
+        assert_eq!(w.shown_use(id), LandUse::Civic);
+        assert_eq!(w.lots[w.buildings[id].lot].land_use, LandUse::Civic);
+    }
+    let draw = crate::power::demand_mw(&w.buildings[depot]);
+    w.add_road(&[Vec2::new(-600.0, 200.0), Vec2::new(600.0, 200.0)], 1, 1);
+    assert_eq!(w.buildings[depot].land_use, LandUse::Industrial, "a rebuild keeps it");
+    assert_eq!(crate::power::demand_mw(&w.buildings[depot]), draw);
 }

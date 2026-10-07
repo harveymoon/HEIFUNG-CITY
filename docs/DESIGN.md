@@ -286,9 +286,13 @@ Citizens are rendered from their simulated positions every frame.
   where vehicles come and go, the lot's size, the site (river, coast, hot spot), ground
   under a station; parks are kept (but a metro entrance). The ground under a city
   building (`World::is_city_building`) is the city's own: its lot's use is Civic with a
-  zone of its own outline (`take_for_city`), so the inspector and the API say "Civic",
-  zoned growth never claims it, zone tallies leave it out and the zone tools refuse to
-  paint it while the building stands. Rebuilds keep it so (`build_lots_from_parcels`
+  zone of its own outline (`take_for_city`), so the inspector and the API say "Civic"
+  (`World::shown_use`), zoned growth never claims it, zone tallies leave it out and the zone tools refuse to
+  paint it while the building stands. The building itself keeps its own use
+  (`World::city_use`, its `land_use`): plants, batteries, depots, the cargo hub and trash
+  depots work as industry, a stadium as entertainment (a night out), a city car park as
+  commercial, services and metro entrances as civic, whatever ground they stand on, so
+  their power draw, wages and venue role do not depend on where the player put them. Rebuilds keep it so (`build_lots_from_parcels`
   pins one Civic lot per city building); an older save's city buildings are switched
   over on load and on the first rebuild without moving anything. The Bulldoze tool (or
   `World::bulldoze_building`) takes a city building down at once, and its lot goes back to

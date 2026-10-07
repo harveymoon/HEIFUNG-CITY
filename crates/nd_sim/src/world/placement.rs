@@ -195,17 +195,40 @@ impl World {
         if own_outline && !self.lots.values().any(|l| l.zone == old) {
             self.zones.remove(old);
         }
-        // The city building on it is Civic too (not what it is clearing:
-        // that goes when the new one starts).
-        if let Some(bid) = self.lots[lot_id].building.filter(|&b| self.is_city_building(b)) {
-            if let Some(b) = self.buildings.get_mut(bid) {
-                if b.land_use != LandUse::Civic {
-                    b.land_use = LandUse::Civic;
-                    self.events.push(SimEvent::BuildingChanged(bid));
-                }
-            }
-        }
+        // The building keeps its own use (`Building::land_use`: what it
+        // draws, pays and is for); only the ground is the city's.
         self.events.push(SimEvent::LotsChanged);
+    }
+
+    /// The use a city building has whatever ground it stands on: what it
+    /// draws from the grid, what its jobs pay and what kind of place it is
+    /// (a plant or depot works like industry, a stadium is a night out, a
+    /// city car park is a commercial lot). None for anything else (grown
+    /// buildings, stations and docks keep the use they were given).
+    pub fn city_use(b: &Building) -> Option<LandUse> {
+        use crate::services::ServiceKind;
+        if b.is_power() || b.depot || b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::CargoHub) {
+            return Some(LandUse::Industrial);
+        }
+        if b.metro {
+            return Some(LandUse::Civic);
+        }
+        match b.service.map(|s| s.kind) {
+            Some(ServiceKind::Stadium) => Some(LandUse::Entertainment),
+            Some(ServiceKind::TrashDepot) => Some(LandUse::Industrial),
+            Some(_) => Some(LandUse::Civic),
+            None => None,
+        }
+    }
+
+    /// The use to show for a building (inspector, hover, API): Civic for a
+    /// city building (its ground is out of the zoning), else its own.
+    pub fn shown_use(&self, id: BuildingId) -> LandUse {
+        match self.buildings.get(id) {
+            Some(_) if self.is_city_building(id) => LandUse::Civic,
+            Some(b) => b.land_use,
+            None => LandUse::Civic,
+        }
     }
 
     /// A city building is gone from `lot_id`: the ground goes back to what

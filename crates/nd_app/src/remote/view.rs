@@ -376,7 +376,7 @@ pub fn appearance(c: &Citizen) -> Value {
 
 pub fn building_row(w: &World, id: BuildingId, b: &Building) -> Value {
     json!({
-        "id": key_str(id), "name": b.name, "land_use": b.land_use.label(), "tier": b.tier.label(), "floors": b.floors,
+        "id": key_str(id), "name": b.name, "land_use": w.shown_use(id).label(), "use": b.land_use.label(), "tier": b.tier.label(), "floors": b.floors,
         "pos": w.lots.get(b.lot).map_or(Value::Null, |l| v2(l.center)), "lot": key_str(b.lot),
         "homes": b.homes, "residents": b.residents.len(), "jobs": b.jobs, "workers": b.workers.len(),
         "under_construction": b.construction.is_some() && !b.being_demolished(), "being_demolished": b.demolition.is_some(),
@@ -431,7 +431,7 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
     });
     let people = |ids: &[CitizenId]| ids.iter().filter_map(|&c| w.citizens.get(c).map(|x| json!({ "id": key_str(c), "name": x.name }))).collect::<Vec<_>>();
     json!({
-        "id": key_str(id), "name": b.name, "land_use": b.land_use.label(), "tier": b.tier.label(), "style": style, "floors": b.floors,
+        "id": key_str(id), "name": b.name, "land_use": w.shown_use(id).label(), "use": b.land_use.label(), "tier": b.tier.label(), "style": style, "floors": b.floors,
         "lot": key_str(b.lot), "pos": lot.map_or(Value::Null, |l| v2(l.center)), "built_day": b.built_tick / 1440 + 1,
         "under_construction": construction,
         "demolition": demolition,

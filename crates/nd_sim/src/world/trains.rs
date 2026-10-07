@@ -206,9 +206,13 @@ impl World {
         setup(&mut b);
         // [free-placement] The city's own building: its ground leaves the
         // zone (a station's or dock's own lot is in none and stays as it is).
+        // The building keeps its own use for demand, wages and venues
+        // (`city_use`), whatever zone the ground was in.
         if Self::is_civic_structure(&b) && self.zones.contains_key(self.lots[lot_id].zone) {
             self.take_for_city(lot_id);
-            b.land_use = LandUse::Civic;
+            if let Some(own) = Self::city_use(&b) {
+                b.land_use = own;
+            }
         }
         // What the city took the lot over from is cleared first.
         b.demolition = self.take_clearing(lot_id);

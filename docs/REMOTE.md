@@ -268,8 +268,9 @@ the parcel joined with its unzoned neighbours when one is too small. Only physic
 refuse: no road access, a street out front where it needs one, the lot's size, the site
 (river, coast, hot spot), a station's ground, another city building ("bulldoze it first"),
 park land (but for a metro station), the treasury. The ground under the new building leaves its
-zone: the lot's and the building's `land_use` read `Civic` and lot rows carry `city_ground:
-true`, zone tallies leave it out, `paint` refuses it while the building stands, and `bulldoze
+zone: the lot's and the building's `land_use` read `Civic` (building rows add `use`, the
+building's own use for power, wages and venues: industrial for plants and depots,
+entertainment for a stadium, ...) and lot rows carry `city_ground: true`, zone tallies leave it out, `paint` refuses it while the building stands, and `bulldoze
 {building}` gives it back to the plan. The reply's `message` ends with what happened to the
 zoning ("unzoned parcel: fine, a lot is made for it", "takes this lot out of the residential
 zone"). With `check: true` nothing is built: the reply is `{ok, note, lot, parcels,

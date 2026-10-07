@@ -243,11 +243,13 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
     let b = &w.buildings[id];
     // ── Header ──
     ui.label(egui::RichText::new(&b.name).size(19.0).color(IVORY).strong());
-    let zone_col = super::zone_color32(assets.palette.zone_color(b.land_use));
+    // [free-placement] A city building reads Civic (its ground is out of the zoning).
+    let shown = w.shown_use(id);
+    let zone_col = super::zone_color32(assets.palette.zone_color(shown));
     let style = nd_procgen::building_style(w, id, &assets.rules, Some(&sim.styles));
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        tag(ui, b.land_use.label(), zone_col);
+        tag(ui, shown.label(), zone_col);
         if let Some(bz) = &b.business {
             tag(ui, &capitalise(bz.kind.label()), GOLD);
             if let Some(ind) = bz.kind.industry() {
