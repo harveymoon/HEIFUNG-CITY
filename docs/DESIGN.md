@@ -324,7 +324,8 @@ Citizens are rendered from their simulated positions every frame.
   2.5 km (the rich and artists first); at 18:00 about two in three free guests go; the opening
   runs to 22:00 and draws others too (choose_place: +1.2 for guests, +0.4 for everyone).
   Visitors lift their mood; the rich buy a piece now and then (2.5x the art's base price) and,
-  enjoying the evening (mood over 0.55), give 4% of their savings up to 60. Donations are the
+  enjoying the evening (mood over 0.45), give 4% of what they and their household have, up to 60
+  (paid from the household's purse). Donations are the
   gallery's takings and are counted; a gallery that has been given 1,500 and lost money on at
   most two of its last seven days sets `Business::wants_expand`: the hook for the land agent
   (C2) to buy the plots next door and grow it into a museum. Nothing acts on it yet.

@@ -702,9 +702,12 @@ impl World {
             .collect();
         for (cid, g) in visits {
             let opening = self.scene.opening_at(g, tick).is_some();
-            let (rich, mood, savings, artist) = {
+            // What they can spend: pocket money and the household's purse.
+            let (rich, mood, savings, artist, hh) = {
                 let c = &self.citizens[cid];
-                (c.class() == Tier::High, c.mood, c.savings, is_artist(c))
+                let hh = c.household.filter(|h| self.households.contains_key(*h));
+                let purse = hh.map_or(0.0, |h| self.households[h].money.max(0.0));
+                (c.class() == Tier::High, c.mood, c.savings.max(0.0) + purse, is_artist(c), hh)
             };
             if opening {
                 if let Some(o) = self.scene.openings.iter_mut().rev().find(|o| o.gallery == g && o.on_at(tick)) {
@@ -725,8 +728,11 @@ impl World {
             let price = Resource::Art.base_price() * 2.5;
             let has_art = self.buildings[g].business.as_ref().is_some_and(|z| z.stock_of(Resource::Art) >= 1.0);
             if has_art && savings > price * 3.0 && roll < if opening { 12 } else { 3 } {
+                match hh {
+                    Some(h) => self.households[h].money -= price,
+                    None => self.citizens[cid].savings -= price,
+                }
                 let c = &mut self.citizens[cid];
-                c.savings -= price;
                 let name = self.buildings[g].name.clone();
                 c.remember(tick, format!("Bought a painting at {name}."));
                 let z = self.buildings[g].business.as_mut().unwrap();
@@ -738,12 +744,15 @@ impl World {
                 if let Some(o) = self.scene.openings.iter_mut().rev().find(|o| o.gallery == g && o.on_at(tick)) {
                     o.sales += 1;
                 }
-            } else if opening && mood > 0.55 && (12..40).contains(&roll) && hour >= pressure::OPENING_START_HOUR {
+            } else if opening && mood > 0.45 && (12..40).contains(&roll) && hour >= pressure::OPENING_START_HOUR {
                 // Enjoyed it: a gift towards the next show.
                 let gift = (savings * 0.04).clamp(0.0, pressure::MAX_DONATION);
                 if gift >= 5.0 {
+                    match hh {
+                        Some(h) => self.households[h].money -= gift,
+                        None => self.citizens[cid].savings -= gift,
+                    }
                     let c = &mut self.citizens[cid];
-                    c.savings -= gift;
                     let name = self.buildings[g].name.clone();
                     c.remember(tick, format!("Loved the opening at {name}. Gave {gift:.0} towards the next show."));
                     let z = self.buildings[g].business.as_mut().unwrap();
