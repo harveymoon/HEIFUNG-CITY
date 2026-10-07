@@ -15,5 +15,13 @@ ron = { workspace = true }
 anyhow = { workspace = true }
 geo = "0.30"
 
+[features]
+# Section timings (`prof!`) for examples/perf_probe.rs; off in the game.
+profile = []
+
+[[example]]
+name = "perf_probe"
+required-features = ["profile"]
+
 [dev-dependencies]
 nd_minds = { workspace = true }

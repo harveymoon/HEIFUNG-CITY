@@ -26,7 +26,7 @@ use crate::citizens::{rebelliousness, CitizenId, DRUNK};
 use crate::traffic::LaneId;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Caution at or above which someone never jaywalks.
 pub const CAUTIOUS: f32 = 0.65;
@@ -99,7 +99,7 @@ pub fn hash01(a: u64, b: u64, c: u64) -> f32 {
 
 /// One walker's state on the move (never saved: a loaded walker starts
 /// afresh from where they stand).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Walker {
     /// The path this state belongs to: length and its ends' bits.
     pub key: (usize, u32, u32),
@@ -129,6 +129,17 @@ pub struct Walker {
 }
 
 /// What a crossing is to the lane network, worked out when roads change.
+/// [cyclists] A cyclist's state at the crossings (`world/riders.rs`).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Rider {
+    /// The crossing they are waiting at and since when.
+    pub waiting: Option<(u32, u64)>,
+    /// The last light they ran, counted once.
+    pub ran: Option<u32>,
+    pub caution: f32,
+    pub hedonism: f32,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CrossingInfo {
     /// Signalised: the intersection and the approach it crosses.
@@ -164,8 +175,10 @@ pub struct Pedestrians {
     /// Walkers standing at a kerb waiting to cross, last tick.
     #[serde(skip)]
     pub waiting_now: u32,
-    #[serde(skip)]
-    pub walkers: HashMap<CitizenId, Walker>,
+    /// Walkers' state on the pavement (side, crossing, waiting), saved so
+    /// a game loaded mid-walk carries on exactly (REVIEW2 L7); keyed in
+    /// order so the save is the same every time.
+    pub walkers: BTreeMap<CitizenId, Walker>,
     /// Per `WalkGraph::crossings` entry.
     #[serde(skip)]
     pub crossings: Vec<CrossingInfo>,
@@ -175,6 +188,17 @@ pub struct Pedestrians {
     /// Who was on which crossing last tick, by crossing.
     #[serde(skip)]
     pub occupants: Vec<(u32, CitizenId)>,
+    /// [cyclists] Red lights (and walk lights) cyclists rode against.
+    pub red_lights_run_today: u32,
+    pub red_lights_run_total: u64,
+    /// [cyclists] Riders stopped at a light or for a walker this tick.
+    #[serde(skip)]
+    pub riders_waiting_now: u32,
+    pub riders: BTreeMap<CitizenId, Rider>,
+    /// Grid over the walk graph's crossings (their two ends), rebuilt with
+    /// `crossings`, for a cyclist to find the ones ahead.
+    #[serde(skip)]
+    pub cross_grid: crate::geom::Grid,
 }
 
 /// Incidents kept for the API.

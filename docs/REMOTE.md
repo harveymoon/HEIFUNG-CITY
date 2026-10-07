@@ -155,7 +155,7 @@ main thread, then serialises and writes it on a worker thread.
 | --- | --- | --- |
 | `new_game` | `preset` river_valley (default) / islands / coast / delta / plains / flat, `seed`, `water` 0..1, `relief` 0..1 (height variation), `branching` 0..1, `islands` 0..8 (`highway` is ignored: every new game has the highway and the trunk line); omitted levers take the preset's | throws the city away and starts on the landscape; tools and selection reset. Reply as `landscape` |
 | `landscape` | | preset and levers, `rivers` (kind river/stream, width, current_mps, hydro_ok, source, mouth, length), `lakes`, `sea`, `hot_spots`, `highway` (entries, exits, through_cars), `bridges` (count, metres, on the highway), `ports`, `ships`, `port_stats` |
-| `terrain_at` | `x`, `y` | `natural_height`, `ground_height` (graded under roads and lots), `surface_height` (bridge decks included), `slope`, `water` (kind, current, width, flow), `nearest_shore`, `hot_spot`, `lot`, `power_sites` (hydro/tidal/geothermal ok or why not, for the lot there), `docks` (whether a shipping port or ferry terminal would go there, or why not), `survey` (every land survey layer's value 0..1 there) |
+| `terrain_at` | `x`, `y` | `natural_height`, `ground_height` (graded under roads and lots), `surface_height` (bridge decks included), `slope`, `water` (kind, current, width, flow), `nearest_shore`, `hot_spot`, `lot`, `power_sites` (hydro/tidal/geothermal ok or why not, for the lot there), `docks` (whether a shipping port or ferry terminal would go there, or why not), `survey` (every land survey layer's value 0..1 there), `access` (`park_min`, `nightlife_min`: minutes on foot along the walk network to the nearest park / open entertainment, null when none can be walked to; `value_for_homes`: what that adds to a home's land value; `text`; the whole object is null off the walk network) |
 | `grant` | `amount` (default 100000) | dev: adds money to the treasury |
 
 ```json
@@ -398,7 +398,7 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
   footfall, power (powered share, demand), parking, plant, depot, rail link, business (cash,
   takings, `industry`, `books`: the last 30 days' revenue and spend, oldest first, needs and sells
   with stock and prices), park
-- lot: land use, polygon, area, land value and tier, zone, building, vacant/landlocked, footfall
+- lot: land use, polygon, area, land value and tier, `land_value_for_use` (as the lot's own land use feels it), `access` (as in `terrain_at`), zone, building, vacant/landlocked, footfall
 
 ### Selection and the player's UI
 

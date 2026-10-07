@@ -551,6 +551,7 @@ impl World {
     }
 
     pub(super) fn hourly_services(&mut self) {
+        crate::prof_scope!("hourly_services");
         self.recruit_staff();
         self.balance_rosters();
         if !self.config.emergencies {
