@@ -29,6 +29,9 @@ use std::collections::BTreeMap;
 pub const PED_CLEARANCE: f32 = 4.0;
 /// Hardest a driver brakes to give way to a walker, m/s per s.
 const PED_BRAKE: f32 = 5.0;
+/// An emergency stop for someone in the road where there is no crosswalk:
+/// only a driver who can still stop this hard does.
+const PED_EMERGENCY_BRAKE: f32 = 8.0;
 /// A car still going this fast over an occupied crossing is a conflict.
 pub const CONFLICT_SPEED: f32 = 3.0;
 /// How far ahead (metres) a driver looks for someone on a crossing.
@@ -151,14 +154,14 @@ impl Traffic {
     /// that someone is on, if the driver can still stop for it; and to a
     /// signalised crosswalk's stop line when the light ahead is red.
     pub(super) fn crosswalk_gap(&self, car: &Car) -> Option<f32> {
-        if self.peds.holds.is_empty() && self.peds.stop_lines.is_empty() {
+        if self.peds.holds.is_empty() && self.peds.watch.is_empty() && self.peds.stop_lines.is_empty() {
             return None;
         }
-        let can_stop = |dist: f32| car.v * car.v <= 2.0 * PED_BRAKE * dist.max(0.0) + 0.25;
+        let can_stop = |dist: f32, brake: f32| car.v * car.v <= 2.0 * brake * dist.max(0.0) + 0.25;
         let mut base = -car.s;
         let mut best: Option<f32> = None;
-        let mut take = |dist: f32| {
-            if dist >= -0.3 && dist < PED_LOOKAHEAD && can_stop(dist) {
+        let mut take = |dist: f32, brake: f32| {
+            if dist >= -0.3 && dist < PED_LOOKAHEAD && can_stop(dist, brake) {
                 let g = dist.max(0.0) + IDM_MIN_GAP;
                 best = Some(best.map_or(g, |b: f32| b.min(g)));
             }
@@ -170,7 +173,14 @@ impl Traffic {
             }
             if let Some(hs) = self.peds.holds.get(&l) {
                 for h in hs {
-                    take(base + h.s);
+                    take(base + h.s, PED_BRAKE);
+                }
+            }
+            // Someone actually in the road off a crosswalk: an emergency stop
+            // if there is still room for one, else they are run into.
+            if let Some(hs) = self.peds.watch.get(&l) {
+                for h in hs {
+                    take(base + h.s, PED_EMERGENCY_BRAKE);
                 }
             }
             // Lights and sirens go through the red, but not through people.
@@ -181,7 +191,7 @@ impl Traffic {
                     nl.is_connector() && !nl.green
                 });
                 if red && car.drive.running != car.route.get(k + 1).copied() {
-                    take(base + s);
+                    take(base + s, PED_BRAKE);
                 }
             }
             base += self.net.lanes[l as usize].length;
@@ -319,27 +329,39 @@ mod tests {
     }
 
     #[test]
-    fn nobody_stops_for_someone_on_an_unmarked_crossing_but_going_over_them_counts() {
+    fn off_a_crosswalk_drivers_only_brake_if_they_still_can_and_running_someone_down_counts() {
         let roads = roads(false);
-        let mut t = Traffic::default();
-        t.rebuild(&roads);
         let w = LANE_WIDTH;
-        let car = send(&mut t, &roads, Vec2::new(-300.0, 0.5 * w), Vec2::new(300.0, 0.5 * w));
-        let lane = t.cars[car].route[t.cars[car].idx];
-        let hold = t.net.lanes[lane as usize].project(Vec2::new(0.0, 0.5 * w)).0 - 1.5;
-        let watch: BTreeMap<LaneId, Vec<Hold>> = [(lane, vec![Hold { s: hold, depth: 3.0, crossing: 7 }])].into_iter().collect();
-        let mut passed = false;
+        let setup = || {
+            let mut t = Traffic::default();
+            t.rebuild(&roads);
+            let car = send(&mut t, &roads, Vec2::new(-300.0, 0.5 * w), Vec2::new(300.0, 0.5 * w));
+            let lane = t.cars[car].route[t.cars[car].idx];
+            let hold = t.net.lanes[lane as usize].project(Vec2::new(0.0, 0.5 * w)).0 - 1.5;
+            let watch: BTreeMap<LaneId, Vec<Hold>> = [(lane, vec![Hold { s: hold, depth: 3.0, crossing: 7 }])].into_iter().collect();
+            (t, car, lane, hold, watch)
+        };
+        // Far off: an emergency stop short of the person in the road, and the
+        // reason says there was no crosswalk.
+        let (mut t, car, lane, hold, watch) = setup();
         for _ in 0..60 {
             t.set_pedestrians(BTreeMap::new(), Vec::new());
             t.set_unmarked(watch.clone());
             t.step(1.0, 4);
-            passed |= t.cars.get(car).is_none_or(|c| c.route[c.idx] != lane || c.s > hold + 5.0);
-            if passed {
-                break;
-            }
         }
-        assert!(passed, "drove on over the unmarked crossing");
-        assert!(t.peds.conflicts.iter().any(|c| c.0 == car && c.1 == 7), "and that counts as a near miss or worse: {:?}", t.peds.conflicts);
+        let c = &t.cars[car];
+        assert!(c.route[c.idx] == lane && c.s <= hold + 0.05 && c.v < 0.1, "braked short of them: s {} hold {hold}", c.s);
+        assert_eq!(t.stop_reason(car).key(), "jaywalker");
+        // Too close and too fast to stop: through, and it counts.
+        let (mut t, car, _, hold, watch) = setup();
+        t.cars[car].s = hold - 6.0;
+        t.cars[car].v = 13.0;
+        for _ in 0..4 {
+            t.set_pedestrians(BTreeMap::new(), Vec::new());
+            t.set_unmarked(watch.clone());
+            t.step(1.0, 4);
+        }
+        assert!(t.peds.conflicts.iter().any(|c| c.0 == car && c.1 == 7), "ran into them: {:?}", t.peds.conflicts);
     }
 
     #[test]

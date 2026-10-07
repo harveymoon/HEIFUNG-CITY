@@ -490,7 +490,9 @@ impl World {
     }
 
     /// [services] Send a recovery truck to the wreck `car`: from the
-    /// nearest tow company with one free, else from out of town. It aims
+    /// nearest tow company with one free, else from out of town (which
+    /// always has one for a wreck: `OUT_OF_TOWN_TOW_TRUCKS` caps its
+    /// parking tows, not its recoveries, so a crash never waits on it). It aims
     /// for just behind the wreck on its lane. `None` when no road leads
     /// there from either.
     fn send_recovery(&mut self, car: CarId) -> Option<(CarId, Option<BuildingId>)> {

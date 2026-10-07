@@ -953,7 +953,7 @@ pub(crate) fn tool_input(
         Tool::Inspect => {
             if click {
                 if let Some(p) = ground {
-                    *selection = pick(&sim, p);
+                    *selection = pick(&sim, p, tools.depth);
                     // A bus picked shows its whole line: path, stops, its
                     // sister buses. Anything else picked lets the line go.
                     tools.route_sel = match *selection {
@@ -1142,17 +1142,25 @@ fn metro_click(sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, 
 /// What a click at `p` picks: the vehicle drawn under it (tested where it
 /// is drawn this frame, not where the sim will have it at the end of the
 /// tick), else a person in the open, else a parked car, else a building.
-pub(crate) fn pick(sim: &Sim, p: SVec2) -> Selection {
+/// The underground view draws only what is below ground, so there a click
+/// picks only a vehicle in a tunnel: nothing it could not see.
+pub(crate) fn pick(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
     let w = &sim.world;
     let f = sim.frac();
+    let under = depth == Depth::Underground;
     // Vehicles on the road, by their drawn pose: a click on the body wins.
     let car = w
         .traffic
         .cars
         .iter()
-        .map(|(id, car)| (car.pose_at(f).0.distance(p), id, car))
+        .map(|(id, car)| (car.pose_at(f).0, id, car))
+        .filter(|(at, _, car)| !under || w.car_height_at(car, *at) < crate::render::UNDERGROUND_BELOW)
+        .map(|(at, id, car)| (at.distance(p), id, car))
         .filter(|(d, _, car)| *d < if car.bus.is_some() { 8.0 } else { 4.5 })
         .min_by(|a, b| a.0.total_cmp(&b.0));
+    if under {
+        return car.map_or(Selection::None, |(_, id, _)| Selection::Car(id));
+    }
     // People in the open (drivers are picked through their car).
     let person = w
         .citizens

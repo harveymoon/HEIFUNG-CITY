@@ -41,6 +41,9 @@ const RING_LOOKBACK: f32 = 45.0;
 /// change costs `LANE_CHANGE_COST`: first and second exits stay outside,
 /// later ones go round further in.
 const RING_OUTER_THROUGH: f32 = 5.0;
+/// Seconds a ring car stands behind a ring that does not move before it
+/// gets off at the arm it is at (`Traffic::bail_off_ring`).
+const RING_BAIL_AFTER: f32 = 20.0;
 
 /// The lanes of every roundabout, found when the lane network is rebuilt.
 #[derive(Clone, Debug, Default)]
@@ -298,6 +301,50 @@ impl Traffic {
             }
         }
         RingCall::Go
+    }
+
+    /// A ring car standing at the end of a ring lane behind a ring that
+    /// does not move leaves by the arm here when that arm has room, and
+    /// finds its way from there. A one-lane ring packed solid (every car
+    /// at a junction going on round, the ones that want to leave stuck
+    /// behind them) never moves again: nobody can go on until somebody
+    /// gets off.
+    pub(super) fn bail_off_ring(&mut self, id: CarId) -> bool {
+        let c = &self.cars[id];
+        if c.stalled < RING_BAIL_AFTER || c.cooldown > 0.0 || c.entering || c.hold > 0.0 || c.wait != Wait::Leader || c.idx + 1 >= c.route.len() {
+            return false;
+        }
+        let here = c.route[c.idx];
+        if !self.net.rings.circulating.contains(&here) {
+            return false;
+        }
+        let lane = &self.net.lanes[here as usize];
+        if lane.is_connector() || lane.cars.last() != Some(&id) || lane.length - c.s > 6.0 {
+            return false;
+        }
+        let next = c.route[c.idx + 1];
+        let Some(rn) = self.net.rings.nodes.get(&lane.end_node) else { return false };
+        if !rn.through.contains(&next) {
+            return false;
+        }
+        let (goal, s_end, s) = (*c.route.last().unwrap(), c.s_end, c.s);
+        let exits: Vec<LaneId> = rn.exits.iter().copied().filter(|&x| self.net.lanes[x as usize].prev.contains(&here)).collect();
+        for x in exits {
+            let Some(&arm) = self.net.lanes[x as usize].next.first() else { continue };
+            if self.exit_blocked(&self.net.lanes[x as usize], arm, false) {
+                continue;
+            }
+            let Some((rest, _, _)) = self.net.route_lanes(arm, 0.0, goal, s_end) else { continue };
+            let mut route = vec![here, x];
+            route.extend(rest);
+            let c = &mut self.cars[id];
+            c.route = route;
+            c.idx = 0;
+            c.s = s;
+            c.cooldown = REROUTE_LANE_CHANGE_AFTER;
+            return true;
+        }
+        false
     }
 
     /// Would a car reaching the give-way line in `reach` seconds meet ring
@@ -808,5 +855,52 @@ mod tests {
             assert!(t.gridlocks().is_empty());
         }
         assert_eq!(done, cars.len(), "every car got in and out of the middle");
+    }
+
+    /// A ring car held up behind a ring that does not move gets off at the
+    /// arm it is at when that arm has room, and finds its way from there.
+    #[test]
+    fn a_car_behind_a_ring_that_does_not_move_gets_off_at_the_arm() {
+        let roads = city(1, Some((30.0, 1)));
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        // A ring junction with an exit, the ring lane arriving there, the
+        // ring going on and the arm leaving.
+        let (node, rn) = t.net.rings.nodes.iter().filter(|(_, n)| !n.exits.is_empty() && !n.through.is_empty()).min_by_key(|(id, _)| id.0).map(|(id, n)| (*id, n.clone())).unwrap();
+        let here = rn.ring_in[0];
+        let through = *t.net.lanes[here as usize].next.iter().find(|n| rn.through.contains(n)).unwrap();
+        let exit = *t.net.lanes[here as usize].next.iter().find(|n| rn.exits.contains(n)).unwrap();
+        let on = t.net.lanes[through as usize].next[0];
+        // Bound for another arm, round the ring past this one.
+        let goal = t.net.lanes.iter().enumerate().filter(|(i, l)| !l.is_connector() && l.next.is_empty() == false && !t.net.rings.circulating.contains(&(*i as LaneId)) && l.start().length() < 40.0 && l.end().length() > 200.0).map(|(i, _)| i as LaneId).find(|&g| {
+            t.net.route_lanes(on, 0.0, g, 100.0).is_some_and(|(r, _, _)| !r.contains(&t.net.lanes[exit as usize].next[0]))
+        }).expect("another arm out");
+        let (rest, _, _) = t.net.route_lanes(on, 0.0, goal, 100.0).unwrap();
+        let mut route = vec![here, through];
+        route.extend(rest);
+        let len = t.net.lanes[here as usize].length;
+        let car = t.spawn_car(CitizenId::default(), None, route.clone(), len - 1.0, 100.0, 0);
+        // The ring ahead stands (a car stopped right past the junction).
+        let block = t.spawn_car(CitizenId::default(), None, route[2..].to_vec(), t.net.lanes[on as usize].length - 0.1, 100.0, 0);
+        t.cars[block].hold = 10_000.0;
+        // And one standing behind it across the junction.
+        let tl = t.net.lanes[through as usize].length;
+        let block2 = t.spawn_car(CitizenId::default(), None, route[1..].to_vec(), (tl - CAR_LENGTH - 0.5 - IDM_MIN_GAP).max(0.5), 100.0, 0);
+        t.cars[block2].hold = 10_000.0;
+        let _ = node;
+        let mut left_by_exit = false;
+        // Well before the 40 s after which a car at a full exit takes
+        // another way (`REROUTE_AFTER`).
+        for _ in 0..70 {
+            for id in t.step(0.5, 1) {
+                t.remove_car(id);
+            }
+            let Some(c) = t.cars.get(car) else { break };
+            if c.route.contains(&exit) {
+                left_by_exit = true;
+                break;
+            }
+        }
+        assert!(left_by_exit, "got off at the arm instead of standing behind the ring for good");
     }
 }

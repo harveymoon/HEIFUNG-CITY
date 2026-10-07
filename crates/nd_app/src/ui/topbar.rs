@@ -81,7 +81,13 @@ fn treasury_and_population(ui: &mut egui::Ui, p: &mut UiCtx) {
     let w = &p.sim.world;
     let e = &w.economy;
     let treasury = egui::RichText::new(format!("$ {:.0}", e.treasury)).strong();
-    slot(ui, 80.0, if e.treasury < 0.0 { treasury.color(WARN) } else { treasury.color(GOLD) }).on_hover_text(format!("treasury · taxes so far today {:.0}", e.tax_today));
+    let treasury = if e.treasury < 0.0 { treasury.color(WARN) } else { treasury.color(GOLD) };
+    let resp = ui
+        .add_sized(egui::vec2(80.0, ui.spacing().interact_size.y), egui::Label::new(treasury).wrap_mode(egui::TextWrapMode::Extend).sense(egui::Sense::click()))
+        .on_hover_text(format!("treasury · taxes so far today {:.0}", e.tax_today));
+    dev_grant(ui, &resp, p);
+    let w = &p.sim.world;
+    let e = &w.economy;
     slot(ui, 64.0, egui::RichText::new(format!("pop {}", w.citizens.len())).strong()).on_hover_text(format!("{} homes · {} jobs · {} waiting to move in", e.homes_total, e.jobs_total, e.waiting_immigrants));
     let power = &e.power;
     // No demand yet (an empty map) reads as 0% served: nothing to warn about.
@@ -93,6 +99,33 @@ fn treasury_and_population(ui: &mut egui::Ui, p: &mut UiCtx) {
         ui.label(egui::RichText::new("Connect a road to the highway so people can move in").small().color(WARN))
             .on_hover_text("Newcomers, their cars and lorries from out of town arrive by the highway (join a street to it with ramps), by a road drawn off the edge of the map, or by train at a working station. Until then nobody can come.");
     }
+}
+
+/// Dev: how long the treasury figure must be held down for a grant.
+const GRANT_HOLD_SECS: f64 = 10.0;
+/// Dev: what each full hold adds to the treasury.
+const GRANT_AMOUNT: f32 = 1_000_000.0;
+
+/// Dev cheat: hold the mouse down on the treasury figure for ten seconds and
+/// a million goes into the treasury; keep holding for another million every
+/// ten seconds. A tooltip counts the hold down so it is clear it is working.
+fn dev_grant(ui: &mut egui::Ui, resp: &egui::Response, p: &mut UiCtx) {
+    let id = resp.id.with("dev_grant_since");
+    let now = ui.input(|i| i.time);
+    if !resp.is_pointer_button_down_on() {
+        ui.data_mut(|d| d.remove::<f64>(id));
+        return;
+    }
+    let since = ui.data_mut(|d| *d.get_temp_mut_or_insert_with(id, || now));
+    let held = now - since;
+    if held >= GRANT_HOLD_SECS {
+        p.sim.world.economy.treasury += GRANT_AMOUNT;
+        p.tools.status = format!("Dev: +$ {GRANT_AMOUNT:.0} to the treasury");
+        ui.data_mut(|d| d.insert_temp(id, now));
+    } else if held > 0.5 {
+        resp.show_tooltip_text(format!("dev grant: +$1,000,000 in {:.0} s", (GRANT_HOLD_SECS - held).ceil()));
+    }
+    ui.ctx().request_repaint();
 }
 
 /// One toggle per info window; lit while the window is open.

@@ -247,6 +247,10 @@ pub struct CarTag;
 #[derive(Component)]
 pub struct InTunnel(pub bool);
 
+/// A vehicle drawn lower than this (metres) is in a tunnel: the
+/// underground view shows it, and only it can be clicked there.
+pub const UNDERGROUND_BELOW: f32 = -2.5;
+
 /// A mover that sets its own height (cars, from the road they are on);
 /// `lift_movers` leaves it alone.
 #[derive(Component)]
@@ -280,6 +284,8 @@ struct Materials {
     ped_walk: Handle<StandardMaterial>,
     ped_stop: Handle<StandardMaterial>,
     overlay: Handle<StandardMaterial>,
+    /// The surface streets seen from the underground view: faint, see-through.
+    ghost_road: Handle<StandardMaterial>,
     /// Building glow: the glow material with window lights switched by
     /// occupancy (see `lights`).
     windows: Handle<lights::WindowMaterial>,
@@ -668,6 +674,7 @@ fn setup(
         meshes.add(shared_mesh(&m, true))
     };
     let overlay = materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, alpha_mode: AlphaMode::Blend, ..default() });
+    let ghost_road = materials.add(StandardMaterial { base_color: Color::linear_rgba(0.55, 0.75, 1.3, 0.2), unlit: true, alpha_mode: AlphaMode::Blend, ..default() });
     let lit = images.add(lights::lit_image());
     let windows = window_materials.add(lights::WindowMaterial {
         base: StandardMaterial { base_color: Color::WHITE, unlit: true, ..default() },
@@ -699,6 +706,7 @@ fn setup(
         ped_walk,
         ped_stop,
         overlay,
+        ghost_road,
         windows,
         lit,
     });
@@ -851,7 +859,7 @@ fn sync_roads(
     mats: Res<Materials>,
     mut state: ResMut<RenderState>,
     mut stats: ResMut<RenderStats>,
-    existing: Query<Entity, Or<(With<RoadsTag>, With<holo::TunnelTag>)>>,
+    existing: Query<Entity, Or<(With<RoadsTag>, With<holo::TunnelTag>, With<holo::GhostRoadTag>)>>,
 ) {
     let version = sim.world.roads.version;
     if version == state.roads_version && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
@@ -866,9 +874,13 @@ fn sync_roads(
     let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Surface });
     stats.street_triangles = geo.triangle_count();
     for (s, data) in geo.iter() {
-        let mut e = commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, RoadsTag));
+        let mesh = meshes.add(to_mesh(data, !s.is_glow()));
+        let mut e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, RoadsTag));
         if s.is_glow() {
             e.insert((NotShadowCaster, NotShadowReceiver));
+        } else {
+            // The same mesh again, see-through, for the underground view.
+            commands.spawn((Mesh3d(mesh), MeshMaterial3d(mats.ghost_road.clone()), Transform::IDENTITY, holo::GhostRoadTag, Visibility::Hidden, NotShadowCaster, NotShadowReceiver));
         }
     }
     // The tunnels on their own, shown in the underground view.

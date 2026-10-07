@@ -907,6 +907,11 @@ impl World {
         if tick % 60 == 45 {
             crate::prof!("hourly_vehicles", self.hourly_vehicles());
         }
+        // [parking] Drivers worn out by the hunt and stuck in a queue leave
+        // the car where it stands.
+        if tick % 5 == 2 {
+            self.hunters_give_up();
+        }
         // Answers a mind worked out in the background (an LLM's) land
         // whenever they are ready. Someone mid-journey (driving, on a bus or
         // train, waiting at the stop) keeps going: only the thought and the

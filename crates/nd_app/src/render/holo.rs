@@ -21,6 +21,11 @@ use nd_sim::roads::RoadKind;
 #[derive(Component, Clone)]
 pub struct TunnelTag;
 
+/// The surface streets drawn see-through, shown only in the underground
+/// view so the tunnels can be read against the streets above them.
+#[derive(Component)]
+pub struct GhostRoadTag;
+
 /// The Road tool's road being drawn.
 #[derive(Component, Clone)]
 pub struct DrawHoloTag;
@@ -238,8 +243,20 @@ pub fn apply_depth(
     tools: Res<ToolState>,
     sim: Res<Sim>,
     mut gizmos: Gizmos,
-    mut surface: Query<(Entity, &mut Visibility, Has<DepthHidden>, Has<CitizenTag>), (Or<(With<TerrainTag>, With<BuildingTag>, With<LotsTag>, With<ScatterTag>, With<ParkTag>, With<VacantTag>, With<RoadsTag>, With<WaterTag>, With<WaterworksTag>, With<LaneArrowsTag>, With<PathsTag>, With<WalkDetailTag>, With<SignalTag>, With<CitizenTag>)>, Without<TunnelTag>, Without<CarTag>)>,
-    mut tunnels: Query<&mut Visibility, (With<TunnelTag>, Without<CarTag>)>,
+    mut surface: Query<
+        (Entity, &mut Visibility, Has<DepthHidden>, Has<CitizenTag>),
+        (
+            Or<(
+                Or<(With<TerrainTag>, With<BuildingTag>, With<LotsTag>, With<ScatterTag>, With<ParkTag>, With<VacantTag>, With<RoadsTag>, With<WaterTag>, With<WaterworksTag>, With<LaneArrowsTag>, With<PathsTag>, With<WalkDetailTag>, With<SignalTag>, With<CitizenTag>)>,
+                // Kerbside life: parked cars, trash and camps, stops, tolls, pavement bots.
+                Or<(With<ParkedTag>, With<super::society::SocietyTag>, With<TransitTag>, With<TollTag>, With<BotTag>)>,
+            )>,
+            Without<TunnelTag>,
+            Without<GhostRoadTag>,
+            Without<CarTag>,
+        ),
+    >,
+    mut tunnels: Query<&mut Visibility, (Or<(With<TunnelTag>, With<GhostRoadTag>)>, Without<CarTag>)>,
     mut cars: Query<(Entity, &Transform, &mut Visibility, Has<DepthHidden>, Option<&InTunnel>), (With<CarTag>, Without<TunnelTag>)>,
 ) {
     let under = tools.depth == Depth::Underground;
@@ -275,15 +292,16 @@ pub fn apply_depth(
         // not by its height (a tunnel near its portal runs barely below
         // the graded ground); anything else by its height.
         let on = match tunnel {
-            Some(t) if under => t.0 || tf.translation.y < -2.5,
+            Some(t) if under => t.0 || tf.translation.y < UNDERGROUND_BELOW,
             Some(t) => !t.0,
-            None => !under || tf.translation.y < -2.5,
+            None => !under || tf.translation.y < UNDERGROUND_BELOW,
         };
         apply(e, &mut v, marked, on, true);
     }
     if under {
         let w = &sim.world;
-        let faint = Color::linear_rgba(0.55, 0.7, 0.95, 0.8);
+        // Centre lines over the see-through streets (`GhostRoadTag`).
+        let faint = Color::linear_rgba(0.55, 0.7, 0.95, 0.35);
         let z = |n: nd_sim::NodeId| w.road_z.get(n.0 as usize).copied().unwrap_or(0.0);
         for (sid, s) in w.roads.alive_segments() {
             if s.tunnel || s.is_rail() {
