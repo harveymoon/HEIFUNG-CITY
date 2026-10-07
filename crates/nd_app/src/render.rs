@@ -31,6 +31,9 @@ use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
 
 /// Emergency vehicles, fires and rubble (render/emergency.rs).
+/// Offscreen renders: Build window thumbnails, save pictures.
+mod thumbs;
+pub use thumbs::Thumbs;
 mod air;
 /// [districts] The district layer; [tourism] visitors on foot.
 mod districts;
@@ -60,6 +63,7 @@ mod survey;
 mod subway;
 /// [society] Camps, RVs and overflowing bins.
 mod society;
+mod solar;
 mod turbines;
 /// [taxis] Cabs in their yards, at ranks and kerbs; yard signs.
 mod taxis;
@@ -113,11 +117,6 @@ struct LaneArrowsTag;
 struct OverlayTag;
 #[derive(Component)]
 struct PathsTag;
-/// No longer spawned: coal smoke is drawn by `haze` as moving puffs. Kept
-/// because `lift_spawned` still lists it.
-#[allow(dead_code)]
-#[derive(Component)]
-struct HazeTag;
 #[derive(Component, Clone)]
 struct TransitTag;
 /// [tolls] Toll booth meshes, set on the road's height by `lift_spawned`.
@@ -128,8 +127,9 @@ struct TollTag;
 #[derive(Component)]
 struct TrainTag;
 
-/// Toggleable data layers drawn over the ground.
-#[derive(Resource)]
+/// Data layers drawn over the ground, one at a time (`crate::map_layers`
+/// keeps them exclusive and lists them for the UI and the API).
+#[derive(Resource, Clone)]
 pub struct Overlays {
     pub land_value: bool,
     /// Pedestrian network: lot loops, alleys and gates.
@@ -168,55 +168,21 @@ impl Default for Overlays {
 }
 
 impl Overlays {
-    /// Every layer: API name, label, hotkey. The API's `overlay {layer, on}`
-    /// and the Land window's Layers section both go through this list.
-    pub const LAYERS: [(&'static str, &'static str, &'static str); 10] = [
-        ("land_value", "Land value", "V"),
-        ("traffic", "Traffic load", ""),
-        ("traffic_types", "Traffic types", ""),
-        ("people", "People", ""),
-        ("pollution", "Pollution and noise", ""),
-        ("crime", "Crime", ""),
-        ("map", "Map view", ""),
-        ("paths", "Pedestrian network", "P"),
-        ("zoning", "Zoning layer", "O"),
-        ("districts", "Districts", ""),
-    ];
     /// The heat-map style layers the L key steps through, one at a time.
     pub const CYCLE: [&'static str; 7] = ["land_value", "traffic", "traffic_types", "people", "pollution", "crime", "map"];
 
+    /// A layer's flag by API name (`crate::map_layers::MAP_LAYERS`), or the
+    /// "show other projects" switch, which is not a layer.
     pub fn flag(&mut self, layer: &str) -> Option<&mut bool> {
-        Some(match layer {
-            "land_value" => &mut self.land_value,
-            "paths" => &mut self.paths,
-            "zoning" => &mut self.zoning,
-            "projects" => &mut self.projects,
-            "traffic" => &mut self.traffic,
-            "traffic_types" => &mut self.traffic_types,
-            "people" => &mut self.people,
-            "pollution" => &mut self.pollution,
-            "districts" => &mut self.districts,
-            "crime" => &mut self.crime,
-            "map" | "map_view" => &mut self.map,
-            _ => return None,
-        })
+        if layer == "projects" {
+            return Some(&mut self.projects);
+        }
+        let entry = crate::map_layers::MAP_LAYERS.iter().find(|l| l.key == layer)?;
+        Some((entry.flag)(self))
     }
 
     pub fn get(&self, layer: &str) -> Option<bool> {
-        Some(match layer {
-            "land_value" => self.land_value,
-            "paths" => self.paths,
-            "zoning" => self.zoning,
-            "projects" => self.projects,
-            "traffic" => self.traffic,
-            "traffic_types" => self.traffic_types,
-            "people" => self.people,
-            "pollution" => self.pollution,
-            "districts" => self.districts,
-            "crime" => self.crime,
-            "map" | "map_view" => self.map,
-            _ => return None,
-        })
+        self.clone().flag(layer).map(|f| *f)
     }
 
     /// Step to the next land survey layer (K); after the last, none.
@@ -300,19 +266,9 @@ struct Materials {
     citizen_mesh: Handle<Mesh>,
     bike_mesh: Handle<Mesh>,
     car_bodies: Vec<Handle<StandardMaterial>>,
-    // The old box meshes; road vehicles are generated per variant now
-    // (`VehicleRender`), these stay for anything else that wants a stand-in.
-    #[allow(dead_code)]
-    car_body_mesh: Handle<Mesh>,
-    #[allow(dead_code)]
-    truck_body_mesh: Handle<Mesh>,
-    #[allow(dead_code)]
-    bus_body_mesh: Handle<Mesh>,
     loco_mesh: Handle<Mesh>,
     coach_mesh: Handle<Mesh>,
     wagon_mesh: Handle<Mesh>,
-    #[allow(dead_code)]
-    car_lights_mesh: Handle<Mesh>,
     signal_green: Handle<StandardMaterial>,
     signal_red: Handle<StandardMaterial>,
     signal_mesh: Handle<Mesh>,
@@ -384,12 +340,6 @@ struct RenderState {
     glow_key: Option<i32>,
 }
 
-/// Every building's resolved style and the older neighbours it was picked
-/// against, so styles cluster or contrast with what stands nearby (see
-/// `nd_procgen::buildings::adjacency`).
-#[derive(Resource, Default)]
-struct BuildingStyles(StyleBook);
-
 /// Street-level props drawn only around the walker (`nd_procgen::walk`).
 #[derive(Component, Clone)]
 struct WalkDetailTag;
@@ -415,7 +365,8 @@ pub struct RenderPlugin;
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<people::PeopleRender>();
-        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().init_resource::<BuildingStyles>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).init_resource::<sky::SkyLook>().add_systems(Startup, (lights::add_shader, setup)).add_systems(
+        app.add_plugins(thumbs::ThumbsPlugin);
+        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).init_resource::<sky::SkyLook>().add_systems(Startup, (lights::add_shader, setup)).add_systems(
             Update,
             (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)
                 .chain()
@@ -427,7 +378,7 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, (holo::sync_draw_hologram, holo::sync_plan_holograms).in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
         app.add_systems(Update, holo::apply_depth.in_set(SimSet::Sync).after(lift_movers));
         app.add_systems(Update, (subway::sync_metro_tunnels, subway::sync_metro_trains).in_set(SimSet::Sync).after(sync_trains).before(holo::apply_depth));
-        app.add_systems(Update, (turbines::sync_turbines, haze::sync_haze, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
+        app.add_systems(Update, (turbines::sync_turbines, solar::sync_solar, haze::sync_haze, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
         // The ground and water out past the map, into the fog.
         app.init_resource::<far::FarRender>().add_systems(Update, far::sync_far.in_set(SimSet::Sync).after(sync_landscape));
@@ -456,6 +407,9 @@ impl Plugin for RenderPlugin {
         // [districts] The district layer; [tourism] visitors on foot, after
         // the citizens whose figure cache they share.
         app.init_resource::<districts::DistrictRender>().add_systems(Update, (districts::sync_district_layer, districts::sync_tourists.after(sync_citizens).before(lift_movers)).in_set(SimSet::Sync));
+        // After every renderer, before the UI (which may load a city and set
+        // the flag again for the next frame's renderers).
+        app.add_systems(Update, clear_full_rebuild.after(SimSet::Sync));
     }
 }
 
@@ -675,37 +629,6 @@ fn setup(
         .iter()
         .map(|&c| materials.add(StandardMaterial { base_color: Color::linear_rgb(c[0], c[1], c[2]), perceptual_roughness: 0.35, metallic: 0.6, ..default() }))
         .collect();
-    let wheels = |m: &mut MeshData, xs: &[f32], z: f32, r: f32| {
-        for &x in xs {
-            for s in [-1.0f32, 1.0] {
-                m.boxed(Vec3::new(x, r, s * z), Vec3::new(r * 2.0, r * 2.0, 0.26), 0.0, [0.08, 0.08, 0.08, 1.0]);
-            }
-        }
-    };
-    let car_body_mesh = {
-        let mut m = MeshData::default();
-        m.boxed(Vec3::new(0.0, 0.75, 0.0), Vec3::new(4.2, 0.8, 1.85), 0.0, [1.0, 1.0, 1.0, 1.0]);
-        m.boxed(Vec3::new(-0.3, 1.45, 0.0), Vec3::new(2.2, 0.6, 1.6), 0.0, [0.25, 0.28, 0.32, 1.0]);
-        wheels(&mut m, &[-1.35, 1.35], 0.86, 0.34);
-        meshes.add(shared_mesh(&m, true))
-    };
-    let truck_body_mesh = {
-        let mut m = MeshData::default();
-        m.boxed(Vec3::new(-0.9, 1.75, 0.0), Vec3::new(5.6, 2.5, 2.3), 0.0, [1.0, 1.0, 1.0, 1.0]);
-        m.boxed(Vec3::new(3.0, 1.4, 0.0), Vec3::new(2.0, 1.8, 2.2), 0.0, [0.5, 0.5, 0.55, 1.0]);
-        m.boxed(Vec3::new(3.9, 1.8, 0.0), Vec3::new(0.2, 0.7, 2.0), 0.0, [0.2, 0.25, 0.3, 1.0]);
-        wheels(&mut m, &[-2.6, -1.4, 2.6], 1.05, 0.5);
-        meshes.add(shared_mesh(&m, true))
-    };
-    let bus_body_mesh = {
-        let mut m = MeshData::default();
-        m.boxed(Vec3::new(0.0, 1.65, 0.0), Vec3::new(11.5, 3.0, 2.5), 0.0, [1.0, 1.0, 1.0, 1.0]);
-        m.boxed(Vec3::new(0.0, 2.25, 0.0), Vec3::new(11.0, 0.9, 2.56), 0.0, [0.14, 0.17, 0.2, 1.0]);
-        m.boxed(Vec3::new(5.6, 1.95, 0.0), Vec3::new(0.4, 1.6, 2.3), 0.0, [0.14, 0.17, 0.2, 1.0]);
-        m.boxed(Vec3::new(-5.72, 2.95, 0.0), Vec3::new(0.1, 0.4, 1.6), 0.0, [1.0, 0.7, 0.2, 1.0]);
-        wheels(&mut m, &[-3.8, 3.6], 1.15, 0.5);
-        meshes.add(shared_mesh(&m, true))
-    };
     let rail_wheels = |m: &mut MeshData, len: f32| {
         for x in [-len * 0.35, len * 0.35] {
             for s in [-1.0f32, 1.0] {
@@ -738,14 +661,6 @@ fn setup(
         rail_wheels(&mut m, 13.0);
         meshes.add(shared_mesh(&m, true))
     };
-    let car_lights_mesh = {
-        let mut m = MeshData::default();
-        for z in [-0.6, 0.6] {
-            m.boxed(Vec3::new(2.1, 0.7, z), Vec3::new(0.15, 0.3, 0.4), 0.0, rgba(pal.headlight));
-            m.boxed(Vec3::new(-2.1, 0.75, z), Vec3::new(0.15, 0.25, 0.4), 0.0, rgba(pal.taillight));
-        }
-        meshes.add(shared_mesh(&m, false))
-    };
     let overlay = materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, alpha_mode: AlphaMode::Blend, ..default() });
     let lit = images.add(lights::lit_image());
     let windows = window_materials.add(lights::WindowMaterial {
@@ -769,13 +684,9 @@ fn setup(
         citizen_mesh,
         bike_mesh,
         car_bodies,
-        car_body_mesh,
-        truck_body_mesh,
-        bus_body_mesh,
         loco_mesh,
         coach_mesh,
         wagon_mesh,
-        car_lights_mesh,
         signal_green,
         signal_red,
         signal_mesh,
@@ -1318,7 +1229,13 @@ fn sync_lots(
             }
             let c = zone_layer_color(lot.land_use);
             let alpha = if lot.building.is_some() { 0.5 } else { 0.72 };
-            wash.ground_polygon(&lot.polygon, 0.35, [c[0], c[1], c[2], alpha]);
+            // A plant or battery field is a flat yard: the wash would flood
+            // it in the zone's colour (a solar farm on a residential lot
+            // read as a green block), so it keeps only the outline.
+            let power = lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.is_power());
+            if !power {
+                wash.ground_polygon(&lot.polygon, 0.35, [c[0], c[1], c[2], alpha]);
+            }
             // A park's lots are one park: no zone edge down the seams
             // between them, only round the outside.
             let shared: &[usize] = lot.park.as_ref().map_or(&[], |p| p.shared_edges.as_slice());
@@ -1526,30 +1443,21 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
     let b = world.buildings.get(id)?;
     let lot = world.lots.get(b.lot)?;
     let field = if b.construction.is_none() && b.demolition.is_none() { plant_field(world, id) } else { None };
-    // [taxis] A taxi company's yard is drawn as a surface lot with empty
-    // bays; its cabs are drawn standing in them (`render/taxis.rs`).
-    let taxi_yard = b.business.as_ref().is_some_and(|z| z.kind == nd_sim::BusinessKind::TaxiCompany);
+    // What decides the style comes from `style_extras`, the same inputs the
+    // style book and the inspector's label use (a taxi company's yard is a
+    // surface lot whose cabs `render/taxis.rs` stands in the bays); only
+    // the look of the moment is added here.
     let extras = Extras {
-        parking: b.parking_visual().or(taxi_yard.then_some(0.0)),
-        plant: b.plant,
         powered: b.powered,
         park: lot.park.as_ref(),
-        depot: b.depot,
-        rail: b.rail.as_ref(),
-        port: b.port,
         construction: b.construction.as_ref().map(|c| c.progress),
         demolition: None,
-        neighbours: styles.neighbours(id),
-        service: b.service.map(|s| s.kind),
         animated_rotors: true,
         field: field.as_ref(),
         animated_cranes: true,
         dynamic_lights: true,
-        business: b.business.as_ref().map(|z| z.kind),
         fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
-        rooftop_pad: world.air.has_rooftop(id),
-        look: b.look,
-        metro: b.metro,
+        ..nd_procgen::style_extras(world, id, styles.neighbours(id))
     };
     let mut g = match &b.demolition {
         // Coming down: what stood there (which, during a redevelopment or a
@@ -1588,11 +1496,13 @@ fn sync_buildings(
     mats: Res<Materials>,
     mut state: ResMut<RenderState>,
     mut stats: ResMut<RenderStats>,
-    mut styles: ResMut<BuildingStyles>,
 ) {
     let rebuild_all = sim.full_rebuild || assets.rules_changed || assets.palette_changed;
     if sim.full_rebuild || assets.rules_changed {
-        styles.0.clear();
+        // Every building's resolved style and the older neighbours it was
+        // picked against live in `Sim::styles` (`nd_procgen::buildings::
+        // adjacency`), where the inspector reads them too.
+        sim.styles.clear();
     }
     let mut dirty: HashSet<ChunkKey> = HashSet::new();
     if rebuild_all {
@@ -1691,7 +1601,10 @@ fn sync_buildings(
     }
     let touched = !dirty.is_empty();
     if touched {
-        styles.0.refresh(&sim.world, &assets.rules);
+        {
+            let s = &mut *sim;
+            s.styles.refresh(&s.world, &assets.rules);
+        }
         // Bucket every building once; only the dirty cells are regenerated.
         let mut members: HashMap<ChunkKey, Vec<BuildingId>> = HashMap::new();
         for id in sim.world.buildings.keys() {
@@ -1710,7 +1623,7 @@ fn sync_buildings(
             let Some(ids) = members.remove(&k) else { continue };
             let mut geo = Geometry::default();
             for &id in &ids {
-                if append_building(&mut geo, &sim.world, &assets, &styles.0, id).is_some() {
+                if append_building(&mut geo, &sim.world, &assets, &sim.styles, id).is_some() {
                     state.building_chunks.insert(id, k);
                     let w = &sim.world;
                     match w.buildings[id].plant.filter(|k| k.merges_with_neighbours()).and_then(|_| w.lots.get(w.buildings[id].lot)) {
@@ -1731,7 +1644,14 @@ fn sync_buildings(
         stats.building_entities = state.chunks.values().map(|c| c.entities.len()).sum();
         stats.building_triangles = state.chunks.values().map(|c| c.triangles).sum();
     }
-    // Clear the full-rebuild flag last so every sync system saw it this frame.
+}
+
+/// Clear the full-rebuild flag once every reader has seen it. It runs
+/// after all of `SimSet::Sync` (the renderers ordered after
+/// `sync_cars` and `sync_trains` included); clearing it inside
+/// `sync_buildings` hid it from the emergency, stunt, turbine, air, parked
+/// car and layer renderers, so a Load kept their stale meshes.
+fn clear_full_rebuild(mut sim: ResMut<Sim>) {
     if sim.full_rebuild {
         sim.full_rebuild = false;
     }
@@ -2296,6 +2216,13 @@ fn sync_parked_cars(mut commands: Commands, sim: Res<Sim>, mut pr: ResMut<Parked
         return;
     }
     pr.key = Some(key);
+    if sim.full_rebuild {
+        // A loaded world reuses vehicle ids: a stale body could stand in
+        // for a different model parked on the same spot.
+        for (_, (_, e)) in pr.cars.drain() {
+            commands.entity(e).despawn();
+        }
+    }
     vr.ensure_materials(&mut materials);
     let mut seen: std::collections::HashSet<nd_sim::VehicleId> = std::collections::HashSet::new();
     for (vid, car) in w.vehicles.cars.iter() {
@@ -2335,6 +2262,14 @@ fn sync_bots(
     mut q: Query<&mut Transform, With<BotTag>>,
 ) {
     vr.ensure_materials(&mut materials);
+    if sim.full_rebuild {
+        // Bot ids are reused by a loaded world; the livery would be stale.
+        for (_, ents) in vr.bots.drain() {
+            for e in ents {
+                commands.entity(e).despawn();
+            }
+        }
+    }
     let w = &sim.world;
     for (id, bot) in w.bots.bots.iter() {
         if vr.bots.contains_key(&id) {
@@ -2888,7 +2823,7 @@ fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res
 fn lift_spawned(
     sim: Res<Sim>,
     mut meshes: ResMut<Assets<Mesh>>,
-    q: Query<&Mesh3d, Or<(Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<HazeTag>, Added<ScatterTag>, Added<RingPreviewTag>)>>,
+    q: Query<&Mesh3d, Or<(Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<ScatterTag>, Added<RingPreviewTag>)>>,
     arrows: Query<&Mesh3d, Or<(Added<LaneArrowsTag>, Added<TollTag>)>>,
     mut signals: Query<&mut Transform, Added<SignalTag>>,
 ) {

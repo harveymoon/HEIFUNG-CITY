@@ -86,6 +86,12 @@ impl World {
             supply_by_kind: e.power.supply_by_kind,
             demand_mw: e.power.demand_mw,
             imported_mw: e.power.imported_mw,
+            exported_mw: e.power.exported_mw,
+            curtailed_mw: e.power.curtailed_mw,
+            battery_in_mw: e.power.battery_in_mw,
+            battery_out_mw: e.power.battery_out_mw,
+            battery_charge_mwh: e.power.battery_charge_mwh,
+            battery_capacity_mwh: e.power.battery_capacity_mwh,
             served: e.power.served,
             bus_waiting: e.transit.waiting,
             bus_riding: e.transit.riding,
@@ -93,6 +99,24 @@ impl World {
             cars: self.traffic.cars.len() as u32,
         };
         self.economy.history.push_hour(h);
+        // Every plant's output and every battery's flow and charge, in slot
+        // order; records of buildings gone or changed are dropped.
+        let rows: Vec<(BuildingId, f32, Option<f32>)> = self
+            .buildings
+            .iter()
+            .filter_map(|(id, b)| {
+                if b.plant.is_some() {
+                    Some((id, self.plant_dispatched_mw(b), None))
+                } else {
+                    b.battery.as_ref().map(|bat| (id, bat.flow_mw, Some(bat.charge_mwh)))
+                }
+            })
+            .collect();
+        let h = &mut self.economy.history;
+        h.retain_plants(|id| rows.iter().any(|r| r.0 == id));
+        for (id, mw, level) in rows {
+            h.push_plant_hour(id, mw, level);
+        }
     }
 }
 

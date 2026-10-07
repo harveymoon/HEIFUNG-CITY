@@ -5,7 +5,8 @@
 //! both ends. The depot is the condition: no depot, no buses.
 
 use crate::roads::{RoadNetwork, SegmentId};
-use crate::traffic::LaneNetwork;
+use crate::traffic::{CarId, LaneNetwork};
+use std::collections::HashMap;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use slotmap::{new_key_type, SlotMap};
@@ -45,12 +46,63 @@ pub const DEPOT_MIN_AREA: f32 = 500.0;
 /// it goes nearly all the way round; this is what rules that out.
 pub const RIDE_DETOUR: f32 = 2.5;
 pub const RIDE_SLACK: f32 = 200.0;
+/// Metres per second a bus is assumed to average, stops and lights
+/// included, for a leg no bus has timed yet (about 22 km/h).
+pub const BUS_ESTIMATE_SPEED: f32 = 6.0;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct BusStop {
     pub segment: SegmentId,
     /// Kerb-side point on the lane the stop serves.
     pub pos: Vec2,
+    /// Who got on and off here, and how long the leg from here to the next
+    /// stop takes. Kept on the stop itself so the figures follow it when
+    /// stops before it are removed (the Lines window's strip diagram).
+    #[serde(default)]
+    pub stats: StopStats,
+}
+
+/// A stop's ridership and the timing of the leg that leaves it, for the
+/// player tuning a line. Counted, never drawn from the random generator.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct StopStats {
+    pub on_today: u32,
+    pub off_today: u32,
+    pub on_yesterday: u32,
+    pub off_yesterday: u32,
+    /// Sim minutes from pulling in at this stop to pulling in at the next
+    /// (the dwell here plus the drive), smoothed over the buses that ran it;
+    /// `0` until a bus has. Reset when the leg changes.
+    pub leg_minutes: f32,
+    /// Runs timed into `leg_minutes`.
+    pub leg_runs: u32,
+}
+
+impl StopStats {
+    /// Weight of the newest run in `leg_minutes`: a few runs settle it,
+    /// one jam does not swing it.
+    const LEG_SMOOTHING: f32 = 0.3;
+
+    /// Fold one timed run of the leg into the average.
+    pub fn time_leg(&mut self, minutes: f32) {
+        self.leg_minutes = if self.leg_runs == 0 { minutes } else { self.leg_minutes + (minutes - self.leg_minutes) * Self::LEG_SMOOTHING };
+        self.leg_runs = self.leg_runs.saturating_add(1);
+    }
+
+    /// The leg changed (a stop moved, or the next stop went): its old time
+    /// says nothing about the new one.
+    pub fn forget_leg(&mut self) {
+        self.leg_minutes = 0.0;
+        self.leg_runs = 0;
+    }
+
+    /// Midnight: today's counts become yesterday's.
+    pub fn roll_day(&mut self) {
+        self.on_yesterday = self.on_today;
+        self.off_yesterday = self.off_today;
+        self.on_today = 0;
+        self.off_today = 0;
+    }
 }
 
 impl BusStop {
@@ -66,7 +118,7 @@ impl BusStop {
         let right = Vec2::new(-d.y, d.x);
         let side = if (p - q).dot(right) >= 0.0 { 1.0 } else { -1.0 };
         let hw = roads.segment(segment).half_width();
-        Some(BusStop { segment, pos: q + right * side * (hw - 1.4).max(1.5) })
+        Some(BusStop { segment, pos: q + right * side * (hw - 1.4).max(1.5), stats: StopStats::default() })
     }
 }
 
@@ -104,19 +156,79 @@ impl BusRoute {
     /// `b`, along the legs' lane polylines; stop to stop as the crow flies
     /// when the legs are not computed yet (right after a load).
     pub fn ride_length(&self, a: usize, b: usize) -> f32 {
-        let n = self.stops.len();
-        if n < 2 {
+        if self.stops.len() < 2 {
             return 0.0;
         }
-        (0..self.hops(a, b))
-            .map(|k| {
-                let i = (a + k) % n;
-                match self.legs.get(i) {
-                    Some(leg) if self.legs.len() == n => crate::geom::path_length(leg),
-                    _ => self.stops[i].pos.distance(self.stops[(i + 1) % n].pos),
-                }
-            })
-            .sum()
+        (0..self.hops(a, b)).map(|k| self.leg_length((a + k) % self.stops.len())).sum()
+    }
+
+    /// Metres of the leg from stop `i` to the next one round the loop:
+    /// along its lane polyline, or as the crow flies before the legs are
+    /// computed (right after a load).
+    pub fn leg_length(&self, i: usize) -> f32 {
+        let n = self.stops.len();
+        if n < 2 || i >= n {
+            return 0.0;
+        }
+        match self.legs.get(i) {
+            Some(leg) if self.legs.len() == n => crate::geom::path_length(leg),
+            _ => self.stops[i].pos.distance(self.stops[(i + 1) % n].pos),
+        }
+    }
+
+    /// Sim minutes the leg from stop `i` takes: as timed by the buses, or,
+    /// before any has run it, an estimate at [`BUS_ESTIMATE_SPEED`] plus
+    /// the dwell. The flag says whether it was timed.
+    pub fn leg_minutes(&self, i: usize, traffic_seconds_per_tick: f32) -> (f32, bool) {
+        match self.stops.get(i) {
+            Some(s) if s.stats.leg_runs > 0 => (s.stats.leg_minutes, true),
+            _ => ((self.leg_length(i) / BUS_ESTIMATE_SPEED + DWELL_SECONDS) / traffic_seconds_per_tick.max(0.1), false),
+        }
+    }
+
+    /// Boardings across the line yesterday (riders are counted when they
+    /// board, so this is the line's ridership).
+    pub fn boardings_yesterday(&self) -> u32 {
+        self.stops.iter().map(|s| s.stats.on_yesterday).sum()
+    }
+
+    /// Where a bus on this line is along the loop, in stops: `2.4` is 40%
+    /// of the way from the third stop to the fourth. From the stop it heads
+    /// for and how far along the leg into it the point `pos` lies. `None`
+    /// when it is not running the loop (going home, or the line changed).
+    pub fn bus_progress(&self, next_stop: usize, pos: Vec2) -> Option<f32> {
+        let n = self.stops.len();
+        if n < 2 || next_stop >= n {
+            return None;
+        }
+        let prev = (next_stop + n - 1) % n;
+        let leg: Vec<Vec2> = match self.legs.get(prev) {
+            Some(l) if self.legs.len() == n && l.len() >= 2 => l.clone(),
+            _ => vec![self.stops[prev].pos, self.stops[next_stop].pos],
+        };
+        let total = crate::geom::path_length(&leg).max(1e-3);
+        // Nearest point on the polyline, as distance along it.
+        let (mut best, mut along, mut walked) = (f32::MAX, 0.0, 0.0);
+        for w in leg.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let ab = b - a;
+            let len = ab.length();
+            let t = if len > 1e-6 { ((pos - a).dot(ab) / (len * len)).clamp(0.0, 1.0) } else { 0.0 };
+            let d = pos.distance(a + ab * t);
+            if d < best {
+                best = d;
+                along = walked + len * t;
+            }
+            walked += len;
+        }
+        Some(prev as f32 + (along / total).clamp(0.0, 1.0))
+    }
+
+    /// Midnight: every stop's counts move to yesterday.
+    pub fn roll_day(&mut self) {
+        for s in &mut self.stops {
+            s.stats.roll_day();
+        }
     }
 }
 
@@ -142,6 +254,12 @@ pub struct Transit {
     /// Bumped on every edit, so the renderer knows to redraw stops.
     #[serde(skip)]
     pub version: u64,
+    /// Each bus's last stop and the tick it pulled in there, to time the
+    /// leg to the next one ([`StopStats::leg_minutes`]). A bus missing here
+    /// has not served a stop yet: it is still on its way from the depot.
+    /// Not saved: a load loses one leg's timing per bus, nothing more.
+    #[serde(skip)]
+    pub departures: HashMap<CarId, (usize, u64)>,
 }
 
 impl Transit {
@@ -244,7 +362,7 @@ mod tests {
     fn line(transit: &mut Transit, pts: &[Vec2], buses: u8) -> RouteId {
         let id = transit.new_route();
         let r = &mut transit.routes[id];
-        r.stops = pts.iter().map(|&p| BusStop { segment: SegmentId(0), pos: p }).collect();
+        r.stops = pts.iter().map(|&p| BusStop { segment: SegmentId(0), pos: p, stats: StopStats::default() }).collect();
         let n = pts.len();
         r.legs = (0..n).map(|i| vec![pts[i], pts[(i + 1) % n]]).collect();
         r.buses = buses;
@@ -303,6 +421,38 @@ mod tests {
         let mut single = Transit::default();
         let s = line(&mut single, &[Vec2::ZERO], 1);
         assert_eq!(single.routes[s].ride_length(0, 0), 0.0);
+    }
+
+    #[test]
+    fn stop_stats_time_legs_roll_over_and_forget() {
+        let mut s = StopStats::default();
+        s.time_leg(10.0);
+        assert_eq!(s.leg_minutes, 10.0, "the first run is the time");
+        s.time_leg(20.0);
+        assert!(s.leg_minutes > 10.0 && s.leg_minutes < 15.0, "one slow run moves it a little: {}", s.leg_minutes);
+        s.on_today = 4;
+        s.off_today = 2;
+        s.roll_day();
+        assert_eq!((s.on_today, s.off_today, s.on_yesterday, s.off_yesterday), (0, 0, 4, 2));
+        s.forget_leg();
+        assert_eq!((s.leg_minutes, s.leg_runs), (0.0, 0));
+    }
+
+    #[test]
+    fn bus_progress_and_leg_estimates_follow_the_loop() {
+        let mut t = Transit::default();
+        let id = line(&mut t, &block(), 1);
+        let r = &t.routes[id];
+        // Heading for stop 1, a quarter of the way along the 400 m leg.
+        assert!((r.bus_progress(1, Vec2::new(-100.0, 3.0)).unwrap() - 0.25).abs() < 1e-3);
+        // Heading for stop 0: on the last leg, from stop 5.
+        assert!(r.bus_progress(0, Vec2::new(-300.0, 300.0)).unwrap() >= 5.0);
+        assert!(r.bus_progress(usize::MAX, Vec2::ZERO).is_none(), "going home");
+        // Untimed legs are estimated from their length; timed ones are read.
+        let (est, timed) = r.leg_minutes(0, 4.0);
+        assert!(!timed && (est - (400.0 / BUS_ESTIMATE_SPEED + DWELL_SECONDS) / 4.0).abs() < 1e-3);
+        t.routes[id].stops[0].stats.time_leg(7.0);
+        assert_eq!(t.routes[id].leg_minutes(0, 4.0), (7.0, true));
     }
 
     #[test]

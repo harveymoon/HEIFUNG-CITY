@@ -563,7 +563,23 @@ Citizens are rendered from their simulated positions every frame.
   shared out highest tier first, so brownouts land on the cheap districts. A building
   below 60% power counts a dark hour: its businesses produce proportionally less, its
   windows go dark, the people inside lose mood and say so ("The power is out again."),
-  and the inspector marks it UNDERPOWERED. The treasury starts at 60,000, takes 12% of
+  and the inspector marks it UNDERPOWERED. Surplus and storage (`power::dispatch`, the merit order): a surplus
+  first charges the grid batteries, then is sold to the regional grid up to 120 MW at 0.5 a MWh (a
+  fifth of the import price; booked at midnight under the `grid export` flow), and what is left is
+  curtailed (every plant turns down by the same share); a shortfall first drains the batteries, then
+  is imported. Battery packs (Buildings, Power: small 20 MWh / 5 MW, medium 80 / 20, farm 240 / 80;
+  `BatteryKind`) charge and discharge at 95% each way (about 90% round trip); every pack takes or
+  gives the same share of its own headroom, so they fill and empty together; they work once their
+  lot is clear and run in slot order, so the dispatch is deterministic. Placing a plant or battery
+  refreshes who is powered but books no hour (no money, no battery energy, no dark hour); the hour is
+  booked once, on the hour. A plant does not feed the grid while the old building on its lot is
+  still being cleared; solar, wind and battery yards clear it at once. Each plant kind has an air
+  and noise model beside its land-value cone: CO2 per MWh (coal 0.95 t, geothermal 0.08, the rest
+  0), smog at the fence (coal 1, geothermal 0.15) and noise while running (coal 68 dB(A) down to
+  solar 38; batteries 40-48). `World::plant_rows` puts each plant's and battery's output, 24-hour
+  mean, upkeep, cost per MWh (upkeep over the last 24 hours' energy), CO2, smog and noise in one row
+  for the Power window and the API; `nd_sim::history` keeps a per-plant record (`PlantLog`: 72
+  hours of output, a battery's charge, 90 days of energy). The treasury starts at 60,000, takes 12% of
   incomes and 5% of business revenue each day (the standard rates; see Taxes), and pays plant upkeep
   and imported power.
 - **Services and emergencies** (`nd_sim::services`, `world/services.rs`): police, fire, health,
@@ -1074,7 +1090,7 @@ trait MindProvider {
   wheel with gondolas and a ticket booth, kiosk with café tables and parasols, flower
   beds, statue, dog run.
 - Power plants have their own styles: a coal station with a boiler hall, two stacks, a
-  coal pile and conveyor and a transformer yard; rows of tilted panels on posts; a wind farm
+  coal pile and conveyor and a transformer yard; a honeycomb of hexagonal sun trackers; a wind farm
   of helical vertical-axis turbines; a containment dome, hyperbolic cooling towers with steam
   and a double fence.
 - Wind farms (`buildings/power.rs`): turbines of one size (18 m gunmetal mast, 11 m rotor of
@@ -1085,6 +1101,20 @@ trait MindProvider {
   the same sites) and turns it about the vertical: still below wind 0.15, 0.6 to 4.2 rad/s
   above, easing up and down, stopped while paused. A red cap light and cyan tip lights trace
   the spin at night.
+- Solar farms (`buildings/power.rs`, `render/solar.rs`): dark blue hexagonal panels (2.2 m to a
+  corner, six cells with dark seams and a cyan rim light) on dual-axis trackers, a pedestal every
+  4.2 m on a triangular grid, flat sides facing their neighbours, so stowed panels tile the yard as a
+  honeycomb; touching parcels share one grid (`PlantField::solar_sites`). The generator draws the
+  pedestals (`solar_trackers` gives the same sites); the app puts a panel entity on each and turns
+  them all to face the sun the city is lit by (`nd_sim::power::sun_direction`), tilting at most 65
+  degrees, waking from flat as the sun clears the horizon and lying flat (stowed) at night. The
+  rotation is rewritten only when the facing moves a fifth of a degree. The zoning wash leaves plant
+  and battery yards out (it flooded a solar farm on a residential lot green).
+- Battery packs (`buildings/power.rs::battery`): container-sized white modules on plinths in rows
+  (2 / 8 / up to 36 by size) with roof fans, door seams, an inverter skid at each row end, a control
+  cabin and a fence; five status lights on each long face show fifths of charge, cyan charging,
+  amber delivering, green holding, with a light line in the same colour. The sim raises
+  `BuildingChanged` only when the lights would change (`Battery::status`).
 - Coal smoke (`render/haze.rs`): no geometry in the plant. Each stack (`coal_stacks`) emits
   18 camera-facing puffs with a soft generated texture that rise, drift downwind (the wind
   direction veers slowly over days, the distance grows with wind), swell and fade over 36 s;
@@ -1114,10 +1144,16 @@ trait MindProvider {
   to magenta), traffic types (a disc under every vehicle: cars cyan, trucks orange, buses
   green; emergency red once the sim has them), people (a heat map of everyone where they
   are, indoors at their building), pollution and noise (plants by pollution radius,
-  industry, nightlife, traffic), the pedestrian network (P) and zoning outlines (O). L steps
-  through the heat layers one at a time; the Land window's Layers section ticks any set; a
-  legend at the bottom right shows the key of every layer that is on. The `overlay` API and
-  `map {layer: "people"}` read the same data.
+  industry, nightlife, traffic), the pedestrian network (P), zoning outlines (O) and districts.
+  **One layer at a time** (`map_layers.rs`): the top bar's Layer button (a dropdown with None)
+  and the View window pick it, V, O and P toggle theirs, L steps through the heat layers, K
+  through the land layers; the legend at the bottom right always shows the key of the layer on.
+  Every layer is one `MapLayer` entry in `map_layers::MAP_LAYERS` (API key, label, picker group,
+  hotkey, hint, the `Overlays` flag the renderer reads, a legend function); the picker, the
+  legend, the `overlay` API and `status.overlays` follow the list, and `keep_exclusive` turns the
+  older layers off whenever any code switches a flag on, so adding a layer is a flag on
+  `Overlays` for its renderer plus one entry. The `overlay` API and `map {layer: "people"}` read
+  the same data.
 - Focus layers (`render/focus.rs`, the heat-vision material swap reused): with Traffic load on
   the city is dimmed and every vehicle on the road turns one light blue; vehicles in bored
   tunnels and the tunnels themselves are outlined through the ground (`layers::layer_gizmos`,
@@ -1149,7 +1185,8 @@ trait MindProvider {
   directional light colour); night ambient is a warm violet bounce that grows with the city;
   moonlight is brighter; bloom rises at night (0.16) and falls by day (0.07).
 - Land survey layers (`nd_sim::survey`, `world/survey.rs`, drawn by `render/survey.rs`): what
-  the ground is good for, one wash at a time (K steps through them, the Land window has a picker,
+  the ground is good for, one wash at a time (K steps through them, the View window and the top
+  bar's Layer button list them,
   the legend shows the key, what the layer means and the reading under the pointer). Resources:
   farmland (fertility less contamination), oil, geothermal hot spots (solid where a plant
   works, a faint halo around), rock, sand, water access, and deep water for shipping ports (the
@@ -1164,6 +1201,14 @@ trait MindProvider {
 - Toolbar and sub-pane icons (`ui/icons.rs`) are painted with egui shapes: one per tool, a
   lane plan per road preset (lane arrows, centre line, rails, path paving, ramp curve), a
   glyph per land use in its zone colour.
+- Building thumbnails (`render/thumbs.rs`): a few frames after startup every placeable's
+  building is generated by the same grammar call the city uses (`generate_building` on a
+  made-up lot of its size), spawned far off the map on render layer 7 with its own key and fill
+  light, and filmed once by an orthographic camera into a 192 px image; the cameras and meshes
+  go after 150 frames (time for new pipelines to compile), the images stay as egui textures
+  (`Thumbs`) for the Build window. Save pictures: a straight-down orthographic camera over the
+  built-up area renders into a 512 px image for 20 frames and a `Screenshot` of that image is
+  written beside the save.
 - Paths (`RoadKind::Path`): 3.2 m ways with no car lanes, drawn as paving with edge stones,
   low lamps, benches and bollards where they meet a street; they cut parcels but give no
   frontage, and a path crossing a street mid-block gets a zebra.
@@ -1182,9 +1227,39 @@ trait MindProvider {
   heading every lift (`crane_slew` of `SimClock::work_minutes`), so cranes work 8:00 to 17:00
   and stand still overnight and while paused, at a capped on-screen rate at any speed.
 
+## The HUD: Build window, map layers, saves
+
+- **Bottom toolbar**: Inspect, Build, then the quick tools (Edit, Bulldoze, any tool that does
+  not build), and the project controls. The strip above shows the active tool's options, or
+  while the Build window is open just what is being built and how the last click went.
+- **Build window** (`ui/build.rs`): one movable, resizable window for everything the player can
+  put down. A tree of sections on the left (Roads, Zoning, Parks, Districts, Power, Services,
+  Transit, Rail, Water, Attractions; the selected one lists its sub-sections, e.g. Services:
+  Safety, Health and education, Sanitation; Transit: Buses, Metro, Air, Parking, Tolls,
+  Freight); a grid of thumbnails in the middle (building renders, icons for roads, zones and
+  lines); on the right the hovered or picked item's cost, upkeep, jobs, lot size, output or
+  coverage and notes, then the active tool's options (lanes, level, brush, tier, the bus and
+  metro line lists). Each thing is in one place: rail track and the stations and yards are all
+  under Rail (no Rail preset under Roads, no rail pieces under Buildings), the bus depot only
+  under Transit, the cargo hub under Transit, Freight. Picking an item picks the tool and preset
+  that place it (`build::activate`); the tools are unchanged, so the digit and letter hotkeys and
+  the API's `tool` command still work, and the window follows them: a building tool picked by
+  key opens the window at its section. Items come from the sim's `BuildCategory::items()`, so a
+  new placeable appears without UI changes (and gets a thumbnail).
+- **Map layers**: see Rendering; the top bar's Layer button is the core control, the View window
+  (once Land) also has lighting, land value and the dim-projects and bus-line switches.
+- **Saves and the title screen** (`ui/saves.rs`, `ui/title.rs`): Saves, Save as writes
+  `saves/<name>.ron` (the name made file-safe), a sidecar `<name>.meta.json` (name as typed, day,
+  population, treasury, buildings, landscape) and a top-down picture `<name>.png`; quick saves
+  and autosaves get a sidecar and picture too. At startup a title screen lists the saved games
+  newest first as cards with their picture, name, day and population: Continue loads the newest,
+  New game opens the landscape picker, Play this map starts on the landscape already loaded. The
+  city behind is paused while it is up; `ND_TITLE=0` skips it, and the API's `load`, `new_game`
+  and `seed_demo` close it.
+
 ## Info windows: compact and expanded
 
-Every info window (City, Economy, Market, People, Power, Transit, Emergencies, Land) has two
+Every info window (City, Economy, Market, People, Power, Transit, Emergencies, View) has two
 views behind one control: the corner-marks button at the right of the window's own header,
 beside close, the same widget in the same place on every window (`ui/pane.rs`). The *compact*
 view is the summary that sits beside the map; the *expanded* view is a large window (820 by 680
@@ -1207,14 +1282,19 @@ compact view's figures so nothing goes missing.
   in after the tax take as one more section function.
 - **People**: population, households, employed, unemployed, unhoused and waiting over time; the
   class mix stacked; Gini over time. The compact view keeps a 30-day population sparkline.
-- **Power**: the last 72 hours' supply stacked by kind of plant plus grid imports, under a
-  demand line; energy per day by kind; brownout hours and peak demand; every plant's output now
-  against its nameplate.
+- **Power**: the last 72 hours' supply stacked by source above the axis (each kind of plant,
+  batteries delivering, imports) and where a surplus went below it (into the batteries, exported),
+  under a demand line; the batteries' stored MWh against capacity with charging and delivering MW;
+  energy per day the same way; money for power per day (export income, import cost, upkeep);
+  brownout hours and peak demand; a table of plants and batteries (output now and 24-hour mean,
+  upkeep, cost per MWh, CO2 a day, smog, noise; batteries' charge and flow) and a 72-hour chart per
+  plant (output against nameplate) and per battery (stored MWh and flow). The compact view has the
+  hour's balance, the batteries' fill and the same table, narrower.
 - **Transit**: riders per day by mode; riders per bus line; fares against upkeep; who is waiting
   and riding hour by hour; a table of lines with today, yesterday, the average and fares.
 - **City**: homes and jobs (built and filled), buildings and sites, vehicles on the road by hour.
   **Market**: trade, businesses and deals, demand by land use, every good's price against its
-  base, how each kind of business pays. **Land**: land value and rents by tier over time, lots by
+  base, how each kind of business pays. **View**: land value and rents by tier over time, lots by
   land use. **Emergencies**: calls per day by kind, response time, unanswered and out-of-town calls.
 
 The numbers come from the sim, not the app. `nd_sim::history` keeps a daily ring (365 days) and
@@ -1226,6 +1306,50 @@ or a named item), one entry per item a day, so the lists are bounded by what sta
 Postings without an item stay in their row and show as "not itemised". All new fields are
 `serde(default)`; the history's ledger rows are `Vec`s so a new flow does not break old records.
 Recording reads the world and pushes; it draws no random numbers, so determinism is untouched.
+
+## The inspector and the Lines window
+
+The inspector reads top down in order of what the player asks first. A building opens with its
+name, then coloured tags for what it is: the zone (in the zone's colour), the business kind and its
+industry, or the service, plant, depot or "Homes"; the tier and the district. The style, floors and
+build day follow in small print, then alarms (on fire, derelict, under construction with progress,
+underpowered). Sections appear only when they apply: a business shows cash, today's takings and
+spending, staff and a cash-flow sparkline (takings up in green, spending down in red, net as a gold
+line, the last 30 closed days from `Business::books` plus today) and its stock folded away, and no
+homes section; homes show only where people live and there is no business. Services, plants, rail,
+metro, depots, parks and parking follow, then the people: who lives, works and is inside now, as a
+grid of painted head-and-shoulders portraits (`ui/portrait.rs`, from the citizen's look: skin, hair
+and greying, outfit in their two colours) with first names; a click selects the person. Land value,
+rent, wage, condition, power and footfall sit in a folded "site" section at the end.
+
+The style named is the style drawn. `nd_procgen::style_extras` collects every input that decides a
+building's style (plants, car parks and taxi yards, depots, rail, docks, services, metro, the
+business, a rooftop pad, the district look); the renderer builds its `Extras` on top of it, the
+`StyleBook` (kept in `Sim::styles`) resolves styles from it against older neighbours, and
+`nd_procgen::building_style` reads the book (or picks with the same inputs when the renderer has
+not drawn the building yet), so the inspector and the remote API name exactly what is on screen.
+Every farm business (grain, dairy, mill, vertical farm) is drawn as a farmstead.
+
+A car shows its driver under the car without a second click: a portrait (click to select them),
+name, age, class, mood, why and where they are driving, the drive so far against what it should
+take, their anger, and a slow - normal - reckless slider from `DriverProfile::boldness` (speed,
+overtaking, ambers and following distance against a by-the-book driver, -1..1; a ring marks their
+calm self when anger has moved them). Everyone else aboard is a portrait grid: a bus's riders, and
+anyone the sim says rides in the vehicle (`ui::occupants`, the one place a car's passenger list
+plugs in).
+
+The Lines window (top bar, or "Lines" in the Transit window and on a bus) lists every bus line
+with riders today and yesterday; picking one shows it on the map and opens its strip diagram: each
+stop in running order, named after the nearest building, with boardings and alightings today
+(yesterday on hover), and between stops the leg's length and minutes, timed by the buses where
+they have run it (`StopStats::leg_minutes`, arrival to arrival, smoothed) and estimated from the
+length otherwise. Buses sit on the strip where they are along the loop (`BusRoute::bus_progress`),
+grey on their last lap, and select on a click. Per stop, "show" flies the camera there and marks
+the stop with a tall post (`ToolState::stop_sel`), "delete" removes it. The line can be renamed,
+recoloured (its buses too), given more or fewer buses, or deleted (with a confirming second
+click). Stop counters live on the stops themselves (`BusStop::stats`, serde default), so they
+follow a stop when one before it is removed; a moved or removed stop forgets the timing of the
+legs it changed. Nothing here draws random numbers.
 
 ## Roadmap
 

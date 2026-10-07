@@ -6,7 +6,7 @@
 
 use bevy_egui::egui;
 
-use super::{help, hint, icons, section, UiCtx, GOLD, IVORY, WARN};
+use super::{build, help, hint, icons, section, UiCtx, GOLD, IVORY, WARN};
 use crate::tools::Tool;
 
 /// Width and height of a tool button; big enough for a mouse at 2560 wide.
@@ -22,11 +22,20 @@ pub fn show(ui: &mut egui::Ui, p: &mut UiCtx) {
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        for tool in Tool::ALL {
-            if tool_button(ui, tool, p.tools.tool == tool).clicked() && p.tools.tool != tool {
-                p.tools.tool = tool;
-                p.tools.points.clear();
-                p.tools.drag = None;
+        // Inspect, the Build button, then the other quick tools (Edit,
+        // Bulldoze, ...): everything that builds is picked in the Build
+        // window.
+        let quick: Vec<Tool> = Tool::ALL.into_iter().filter(|t| !build::is_build_tool(*t)).collect();
+        for (i, tool) in quick.into_iter().enumerate() {
+            if tool_button(ui, tool, p.tools.tool == tool).clicked() {
+                pick(p, tool);
+            }
+            if i == 0 {
+                let open = build::is_open(ui.ctx());
+                let building = build::is_build_tool(p.tools.tool);
+                if build_button(ui, open, building).clicked() {
+                    build::set_open(ui.ctx(), !open);
+                }
             }
         }
         ui.add_space(12.0);
@@ -34,9 +43,44 @@ pub fn show(ui: &mut egui::Ui, p: &mut UiCtx) {
     });
 }
 
-/// The active tool's parameters in a framed strip above the buttons.
+fn pick(p: &mut UiCtx, tool: Tool) {
+    if p.tools.tool != tool {
+        p.tools.tool = tool;
+        p.tools.points.clear();
+        p.tools.drag = None;
+    }
+}
+
+/// The Build button: opens and closes the Build window; lit while a
+/// building tool is active, outlined while the window is open.
+fn build_button(ui: &mut egui::Ui, open: bool, building: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(BUTTON, egui::Sense::click());
+    let fill = if building {
+        egui::Color32::from_rgb(150, 105, 40)
+    } else if resp.hovered() {
+        egui::Color32::from_rgb(70, 55, 35)
+    } else {
+        egui::Color32::from_rgba_unmultiplied(30, 32, 46, 230)
+    };
+    let stroke = if open || building { GOLD } else { egui::Color32::from_rgb(60, 60, 72) };
+    let text = if building { egui::Color32::WHITE } else { IVORY };
+    let painter = ui.painter();
+    painter.rect_filled(rect, 4.0, fill);
+    painter.rect_stroke(rect, 4.0, egui::Stroke::new(if open { 2.0 } else { 1.0 }, stroke), egui::StrokeKind::Inside);
+    let icon = egui::Rect::from_center_size(egui::pos2(rect.left() + 8.0 + ICON * 0.5, rect.center().y), egui::vec2(ICON, ICON));
+    icons::tool(painter, icon, Tool::Buildings, if building { egui::Color32::WHITE } else { GOLD });
+    let mid = egui::pos2((icon.right() + rect.right()) * 0.5, rect.center().y);
+    painter.text(mid - egui::vec2(0.0, 6.0), egui::Align2::CENTER_CENTER, "Build", egui::FontId::proportional(15.0), text);
+    painter.text(mid + egui::vec2(0.0, 11.0), egui::Align2::CENTER_CENTER, "R Z N T Y", egui::FontId::proportional(10.0), egui::Color32::from_rgb(170, 160, 140));
+    resp.on_hover_text("Everything you can build: roads, zones, parks, districts, power, services, transit, rail, water, attractions. Their keys (2 R road, 3 Z zone, 6 N buildings, 7 T transit, 8 Y rail, 9 districts) open it at their section.")
+}
+
+/// The active tool's parameters in a framed strip above the buttons. While
+/// the Build window is open a building tool's options are there, and the
+/// strip only says what is being built and how it went.
 fn sub_pane(ui: &mut egui::Ui, p: &mut UiCtx) {
     let tool = p.tools.tool;
+    let in_window = build::is_build_tool(tool) && build::is_open(ui.ctx());
     egui::Frame::new()
         .fill(egui::Color32::from_rgba_unmultiplied(16, 18, 30, 230))
         .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 58, 40)))
@@ -47,8 +91,16 @@ fn sub_pane(ui: &mut egui::Ui, p: &mut UiCtx) {
             ui.horizontal(|ui| {
                 section(ui, &tool.label().to_uppercase());
                 hint(ui, tool.hotkey());
+                if in_window {
+                    if let Some(item) = build::current_item(p.tools) {
+                        ui.label(egui::RichText::new(item.label()).color(IVORY).strong());
+                    }
+                    hint(ui, "· options in the Build window");
+                }
             });
-            super::tools::sub_pane(ui, p.sim, p.tools, p.plan, p.assets);
+            if !in_window {
+                super::tools::sub_pane(ui, p.sim, p.tools, p.plan, p.assets);
+            }
             if !p.tools.status.is_empty() {
                 ui.label(egui::RichText::new(&p.tools.status).small().color(IVORY));
             }

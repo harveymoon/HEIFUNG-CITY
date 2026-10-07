@@ -7,6 +7,8 @@
 //! of the HUD lives in its own module.
 
 /// [concerns] The People window's complaints tab.
+/// The Build window: every road, zone and building in one catalogue.
+pub mod build;
 mod concerns;
 mod detail;
 mod economy;
@@ -21,10 +23,16 @@ pub mod pane;
 pub mod people;
 mod person;
 mod places;
-mod saves;
+/// [inspector] Painted head-and-shoulders portraits of citizens.
+mod portrait;
+pub mod saves;
 mod taxes;
+/// The title screen: saved games with their map pictures.
+mod title;
 mod icons;
-mod legend;
+pub mod legend;
+/// [lines] The Lines window.
+mod lines;
 mod toolbar;
 mod tools;
 mod topbar;
@@ -36,13 +44,15 @@ use bevy_egui::{egui, EguiContexts, EguiPreUpdateSet, EguiPrimaryContextPass};
 
 use crate::assets::GameAssets;
 use crate::camera::{CameraMode, Cursor, OrbitCamera};
-use crate::render::{Lighting, Overlays, RenderStats};
+use crate::render::{Lighting, Overlays, RenderStats, Thumbs};
 use crate::sim::{Sim, SimSet};
 use crate::tools::{EffectivePlan, Selection, Tool, ToolState};
 
-pub use saves::{load_now, save_now, Saves, LATEST};
+pub use saves::{load_now, save_as, save_now, Saves, LATEST};
 /// For the remote API's `window` command.
 pub use windows::Info;
+/// For the remote API's car detail: everyone aboard a vehicle.
+pub use inspector::occupants;
 
 /// What the UI wants the rest of the app to know about input this frame.
 #[derive(Resource, Default)]
@@ -111,13 +121,15 @@ pub struct UiCtx<'a> {
     pub assets: &'a GameAssets,
     pub stats: &'a RenderStats,
     pub diagnostics: &'a DiagnosticsStore,
+    /// Rendered thumbnails of the buildings, for the Build window.
+    pub thumbs: &'a Thumbs,
 }
 
 /// The whole HUD, once per frame. The name is historical: this used to lay
 /// out one side panel and now lays out the bars and the windows, but it is
 /// still the single system the rest of the app knows the UI by.
 #[allow(clippy::too_many_arguments)]
-fn side_panel(
+pub(crate) fn side_panel(
     mut contexts: EguiContexts,
     mut styled: Local<bool>,
     mut sim: ResMut<Sim>,
@@ -132,8 +144,7 @@ fn side_panel(
     cursor: Res<Cursor>,
     mut cams: Query<&mut OrbitCamera>,
     assets: Res<GameAssets>,
-    stats: Res<RenderStats>,
-    diagnostics: Res<DiagnosticsStore>,
+    (stats, diagnostics, thumbs): (Res<RenderStats>, Res<DiagnosticsStore>, Res<Thumbs>),
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     // Visuals persist in the context; setting them every frame only churns.
@@ -158,6 +169,7 @@ fn side_panel(
         assets: &assets,
         stats: &stats,
         diagnostics: &diagnostics,
+        thumbs: &thumbs,
     };
     let top = egui::Panel::top("top_bar").frame(bar_frame()).show(&mut root, |ui| topbar::show(ui, &mut p));
     let bottom = egui::Panel::bottom("tool_bar").frame(bar_frame()).show(&mut root, |ui| toolbar::show(ui, &mut p));
@@ -166,15 +178,17 @@ fn side_panel(
     // from being dragged under either bar.
     let content = egui::Rect::from_min_max(egui::pos2(view.left(), top_rect.bottom()), egui::pos2(view.right(), bottom_rect.top()));
     windows::show_all(ctx, &mut p, content);
+    build::window(ctx, &mut p, content);
     inspector::window(ctx, &mut p, content);
     newgame::window(ctx, &mut p, content);
+    title::screen(ctx, &mut p);
     let fly_to = p.fly_to;
 
     flags.panel_rects = vec![top_rect, bottom_rect];
     toast(ctx, &mut flags, bottom_rect.height());
     // The land layer's reading under the pointer, for the legend.
     let here = overlays.land.zip(cursor.ground).map(|(l, p)| legend::land_here(&sim.world, l, p));
-    legend::show(ctx, &overlays, &assets, content, here.as_deref());
+    legend::show(ctx, &overlays, &assets, &sim.world, content, here.as_deref());
     if let Some(p) = fly_to {
         for mut cam in &mut cams {
             cam.target = Vec3::new(p.x, 0.0, p.y);

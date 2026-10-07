@@ -71,18 +71,30 @@ pub struct History {
     /// Why the history last started over (startup or load), for the reply.
     started: String,
     started_tick: u64,
+    /// `Sim::generation` the rings belong to.
+    generation: u64,
 }
 
 impl History {
     /// Forget everything and take a first sample of the city as it is now.
     pub fn reset(&mut self, w: &World, why: &str) {
-        *self = History { started: why.to_string(), started_tick: w.clock.tick, ..Default::default() };
+        *self = History { started: why.to_string(), started_tick: w.clock.tick, generation: self.generation, ..Default::default() };
         self.last_tick = Some(w.clock.tick);
         self.last_day = w.clock.day();
         self.last_hour = w.clock.tick / 60;
         self.counters = Counters::read(w);
         self.push_daily(w);
         self.push_hourly(w);
+    }
+
+    /// Start over if the city was replaced (loaded or a new game, from the
+    /// API or the UI) since the rings were last reset: the old city's
+    /// samples are not this one's.
+    pub fn follow_city(&mut self, generation: u64, w: &World, why: &str) {
+        if self.generation != generation {
+            self.generation = generation;
+            self.reset(w, why);
+        }
     }
 
     /// Look at the city; record a sample if an hour or a day has turned

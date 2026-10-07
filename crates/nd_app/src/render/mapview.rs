@@ -109,7 +109,9 @@ fn disc(c: SVec2, r: f32) -> Vec<SVec2> {
 /// The whole map as one mesh: land, lots, road casings, road fills.
 fn build_map(w: &World) -> MeshData {
     let mut m = MeshData::default();
-    let half = w.config.half_extent + 60.0;
+    // Well past the buildable square, so the map does not end in the sky's
+    // haze at the edge of the view.
+    let half = w.config.half_extent + 900.0;
     // Land: a grid on the ground, open over the water so it shows through.
     let g = HeatGrid::covering(SVec2::splat(-half), SVec2::splat(half), 16.0, 40_000);
     let n = g.cols + 1;
@@ -284,16 +286,17 @@ fn overlaps(a: (egui::Pos2, egui::Vec2), b: (egui::Pos2, egui::Vec2)) -> bool {
 }
 
 /// Street names along the roads and pins on special buildings.
-fn map_labels(mut contexts: EguiContexts, sim: Res<Sim>, overlays: Res<Overlays>, cams: Query<(&Camera, &GlobalTransform), With<Camera3d>>) -> Result {
+fn map_labels(mut contexts: EguiContexts, sim: Res<Sim>, overlays: Res<Overlays>, cams: Query<(&Camera, &GlobalTransform), With<crate::camera::OrbitCamera>>) -> Result {
     if !overlays.map {
         return Ok(());
     }
     let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
     let w = &sim.world;
     let ctx = contexts.ctx_mut()?;
-    // Clear of the top bar and the toolbar, so no name runs under them.
+    // Clear of the top bar and the toolbar with its sub-pane, so no name
+    // runs under them.
     let full = ctx.content_rect();
-    let screen = egui::Rect::from_min_max(full.min + egui::vec2(4.0, 52.0), full.max - egui::vec2(4.0, 64.0));
+    let screen = egui::Rect::from_min_max(full.min + egui::vec2(4.0, 52.0), full.max - egui::vec2(4.0, 170.0));
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("map_labels")));
     let to_screen = |p: SVec2, y: f32| camera.world_to_viewport(gt, Vec3::new(p.x, y, p.y)).ok().map(|v| egui::pos2(v.x, v.y));
     let mut taken: Vec<(egui::Pos2, egui::Vec2)> = Vec::new();

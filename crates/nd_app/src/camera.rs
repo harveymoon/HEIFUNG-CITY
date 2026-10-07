@@ -115,6 +115,9 @@ fn control_camera(
     // field has focus, so the one-shot keys stand down then. Escape always
     // works: it is how you get off the pavement.
     let key = |k: KeyCode| !flags.keyboard_captured && keys.just_pressed(k);
+    // Held movement keys stand down too: typing "Westside" into a name
+    // field must not pan and turn the camera.
+    let held = |k: KeyCode| !flags.keyboard_captured && keys.pressed(k);
 
     // Tab toggles walk mode; Escape leaves it.
     if key(KeyCode::Tab) || (keys.just_pressed(KeyCode::Escape) && *mode == CameraMode::Walk) {
@@ -172,16 +175,16 @@ fn control_camera(
         // right = forward x up in this Y-up, right-handed world.
         let right = Vec3::new(-cy, 0.0, sy);
         let mut mv = Vec3::ZERO;
-        if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
+        if held(KeyCode::KeyW) || held(KeyCode::ArrowUp) {
             mv += forward;
         }
-        if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
+        if held(KeyCode::KeyS) || held(KeyCode::ArrowDown) {
             mv -= forward;
         }
-        if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
+        if held(KeyCode::KeyD) || held(KeyCode::ArrowRight) {
             mv += right;
         }
-        if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
+        if held(KeyCode::KeyA) || held(KeyCode::ArrowLeft) {
             mv -= right;
         }
         let run = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
@@ -291,16 +294,16 @@ fn control_camera(
 
     // Keyboard pan and rotate.
     let mut pan = Vec2::ZERO;
-    if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
+    if held(KeyCode::KeyW) || held(KeyCode::ArrowUp) {
         pan.y += 1.0;
     }
-    if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
+    if held(KeyCode::KeyS) || held(KeyCode::ArrowDown) {
         pan.y -= 1.0;
     }
-    if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
+    if held(KeyCode::KeyA) || held(KeyCode::ArrowLeft) {
         pan.x -= 1.0;
     }
-    if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
+    if held(KeyCode::KeyD) || held(KeyCode::ArrowRight) {
         pan.x += 1.0;
     }
     if pan != Vec2::ZERO {
@@ -310,16 +313,16 @@ fn control_camera(
         let speed = cam.distance * 0.9 * dt;
         cam.target += (right * pan.x + forward * pan.y) * speed;
     }
-    if keys.pressed(KeyCode::BracketLeft) {
+    if held(KeyCode::BracketLeft) {
         cam.distance = (cam.distance * (1.0 - 1.5 * dt)).max(12.0);
     }
-    if keys.pressed(KeyCode::BracketRight) {
+    if held(KeyCode::BracketRight) {
         cam.distance = (cam.distance * (1.0 + 1.5 * dt)).min(2500.0);
     }
-    if keys.pressed(KeyCode::KeyQ) {
+    if held(KeyCode::KeyQ) {
         cam.yaw += 1.2 * dt;
     }
-    if keys.pressed(KeyCode::KeyE) {
+    if held(KeyCode::KeyE) {
         cam.yaw -= 1.2 * dt;
     }
 

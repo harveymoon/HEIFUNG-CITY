@@ -19,6 +19,7 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
+use crate::buildings::BuildingId;
 use crate::economy::{Flow, FLOWS};
 use crate::transit::RouteId;
 
@@ -27,6 +28,10 @@ pub const DAYS_KEPT: usize = 365;
 /// Hours kept in the hourly ring: three days, enough to see the solar day
 /// and the commuter peaks repeat.
 pub const HOURS_KEPT: usize = 72;
+/// Days kept in each plant's and battery's own ring: a season, enough to
+/// see what a plant earns its upkeep with, without a year per plant in the
+/// save.
+pub const PLANT_DAYS_KEPT: usize = 90;
 
 /// One closed day. Counters ("riders", "imports", the ledger) are the
 /// day's totals; levels ("population", "treasury") are as the day closed.
@@ -77,6 +82,11 @@ pub struct DayRecord {
     pub supply_mwh: [f32; 7],
     pub demand_mwh: f32,
     pub imported_mwh: f32,
+    /// Sold to the regional grid, MWh.
+    pub exported_mwh: f32,
+    /// Into and out of the batteries (grid side), MWh.
+    pub battery_in_mwh: f32,
+    pub battery_out_mwh: f32,
     pub peak_demand_mw: f32,
     pub brownout_hours: u32,
     pub bus_riders: u32,
@@ -135,6 +145,16 @@ pub struct HourRecord {
     pub supply_by_kind: [f32; 7],
     pub demand_mw: f32,
     pub imported_mw: f32,
+    /// Sold to the regional grid.
+    pub exported_mw: f32,
+    /// Surplus nobody took: plants turned down.
+    pub curtailed_mw: f32,
+    /// Into and out of the batteries (grid side), and what they held at
+    /// the end of the hour against what they could.
+    pub battery_in_mw: f32,
+    pub battery_out_mw: f32,
+    pub battery_charge_mwh: f32,
+    pub battery_capacity_mwh: f32,
     pub served: f32,
     pub bus_waiting: u32,
     pub bus_riding: u32,
@@ -149,7 +169,40 @@ pub struct DayAcc {
     pub supply_mwh: [f32; 7],
     pub demand_mwh: f32,
     pub imported_mwh: f32,
+    pub exported_mwh: f32,
+    pub battery_in_mwh: f32,
+    pub battery_out_mwh: f32,
     pub peak_demand_mw: f32,
+}
+
+/// One plant's or battery's own record, for the Power window's table and
+/// per-plant charts: its output hour by hour (a battery's flow, positive
+/// delivering, negative charging, and its charge), and its energy per day.
+/// Kept by building and dropped when the building goes.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlantLog {
+    pub id: BuildingId,
+    /// MW each hour, the last [`HOURS_KEPT`], oldest first.
+    pub hours: VecDeque<f32>,
+    /// A battery's stored MWh at the end of each hour (empty for a plant).
+    pub level: VecDeque<f32>,
+    /// MWh each closed day (a battery: delivered), the last
+    /// [`PLANT_DAYS_KEPT`].
+    pub days: VecDeque<f32>,
+    /// MWh so far today.
+    pub today_mwh: f32,
+}
+
+impl PlantLog {
+    /// Mean output over the last `n` hours (fewer if it is newer), MW.
+    pub fn mean_mw(&self, n: usize) -> f32 {
+        let k = self.hours.len().min(n);
+        if k == 0 {
+            return 0.0;
+        }
+        self.hours.iter().skip(self.hours.len() - k).sum::<f32>() / k as f32
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -158,6 +211,9 @@ pub struct History {
     pub days: VecDeque<DayRecord>,
     pub hours: VecDeque<HourRecord>,
     pub acc: DayAcc,
+    /// Every standing plant's and battery's own record, in the order they
+    /// were first recorded.
+    pub plants: Vec<PlantLog>,
 }
 
 impl History {
@@ -168,6 +224,9 @@ impl History {
         }
         self.acc.demand_mwh += h.demand_mw;
         self.acc.imported_mwh += h.imported_mw;
+        self.acc.exported_mwh += h.exported_mw;
+        self.acc.battery_in_mwh += h.battery_in_mw;
+        self.acc.battery_out_mwh += h.battery_out_mw;
         self.acc.peak_demand_mw = self.acc.peak_demand_mw.max(h.demand_mw);
         self.hours.push_back(h);
         while self.hours.len() > HOURS_KEPT {
@@ -181,7 +240,16 @@ impl History {
         d.supply_mwh = acc.supply_mwh;
         d.demand_mwh = acc.demand_mwh;
         d.imported_mwh = acc.imported_mwh;
+        d.exported_mwh = acc.exported_mwh;
+        d.battery_in_mwh = acc.battery_in_mwh;
+        d.battery_out_mwh = acc.battery_out_mwh;
         d.peak_demand_mw = acc.peak_demand_mw;
+        for p in &mut self.plants {
+            p.days.push_back(std::mem::take(&mut p.today_mwh));
+            while p.days.len() > PLANT_DAYS_KEPT {
+                p.days.pop_front();
+            }
+        }
         if d.ledger.len() < FLOWS {
             d.ledger.resize(FLOWS, 0.0);
         }
@@ -189,6 +257,40 @@ impl History {
         while self.days.len() > DAYS_KEPT {
             self.days.pop_front();
         }
+    }
+
+    /// Add an hour to a plant's or battery's record (`level` for a battery's
+    /// charge), starting one for a building seen for the first time. A
+    /// battery's day counts what it delivered.
+    pub fn push_plant_hour(&mut self, id: BuildingId, mw: f32, level: Option<f32>) {
+        let i = match self.plants.iter().position(|p| p.id == id) {
+            Some(i) => i,
+            None => {
+                self.plants.push(PlantLog { id, ..Default::default() });
+                self.plants.len() - 1
+            }
+        };
+        let p = &mut self.plants[i];
+        p.hours.push_back(mw);
+        while p.hours.len() > HOURS_KEPT {
+            p.hours.pop_front();
+        }
+        if let Some(l) = level {
+            p.level.push_back(l);
+            while p.level.len() > HOURS_KEPT {
+                p.level.pop_front();
+            }
+        }
+        p.today_mwh += mw.max(0.0);
+    }
+
+    /// Drop the records of buildings that are no longer plants or batteries.
+    pub fn retain_plants(&mut self, keep: impl Fn(BuildingId) -> bool) {
+        self.plants.retain(|p| keep(p.id));
+    }
+
+    pub fn plant(&self, id: BuildingId) -> Option<&PlantLog> {
+        self.plants.iter().find(|p| p.id == id)
     }
 
     /// The last `n` days (all of them if fewer), oldest first.

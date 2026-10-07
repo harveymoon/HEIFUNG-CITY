@@ -7,6 +7,10 @@ use crate::vehicle::{VehicleClass, VehicleModel};
 
 /// Most households in one arrival, however empty the town.
 const MAX_ARRIVALS: u32 = 12;
+/// How long (ticks) a late mind answer for someone on their way is still
+/// acted on once they arrive: an hour. Older, the moment it answered has
+/// passed and the citizen decides afresh.
+pub(super) const DEFERRED_INTENT_TTL: u64 = 60;
 /// Share of working-age adults out of work above which, with no job free,
 /// households mostly stop arriving.
 const JOBLESS_SLOWS_ARRIVALS: f32 = 0.05;
@@ -779,6 +783,14 @@ impl World {
             if self.citizens[id].next_decision_tick > tick || self.citizens[id].activity.is_traveling() {
                 continue;
             }
+            // A late answer that came while they were on their way.
+            if let Some((intent, at)) = self.deferred_intents.remove(&id) {
+                if tick.saturating_sub(at) <= DEFERRED_INTENT_TTL {
+                    self.citizens[id].next_decision_tick = tick + 20 + self.rng.random_range(0..40);
+                    self.apply_decision(id, Decision { intent, thought: String::new(), memory: None });
+                    continue;
+                }
+            }
             let decision = {
                 let c = &self.citizens[id];
                 let hh = c.household.and_then(|h| self.households.get(h));
@@ -998,6 +1010,30 @@ impl World {
             }
             _ => {}
         }
+    }
+
+    /// A mind's late answer (`MindProvider::poll`, an LLM thinking it over
+    /// while the citizen carried on). Someone driving, riding or walking a
+    /// trip cannot act on it now: setting off on foot would leave their car
+    /// driving on empty or them still on the bus's list. So they think the
+    /// thought now and act at their next decision, if the answer is still
+    /// fresh then (`DEFERRED_INTENT_TTL`).
+    pub(super) fn apply_late_decision(&mut self, id: CitizenId, d: Decision) {
+        let busy = self.citizens.get(id).is_some_and(|c| c.activity.is_traveling() || c.to_car.is_some());
+        if !busy {
+            self.apply_decision(id, d);
+            return;
+        }
+        let tick = self.clock.tick;
+        let c = &mut self.citizens[id];
+        if !d.thought.is_empty() && d.thought != c.thought {
+            c.thought = d.thought;
+            self.events.push(SimEvent::NewThought(id));
+        }
+        if let Some(m) = d.memory {
+            c.remember(tick, m);
+        }
+        self.deferred_intents.insert(id, (d.intent, tick));
     }
 
     pub(super) fn apply_decision(&mut self, id: CitizenId, d: Decision) {

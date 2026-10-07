@@ -155,11 +155,102 @@ pub fn plant_color(k: PowerPlantKind) -> Color32 {
 }
 
 const IMPORT: Color32 = Color32::from_rgb(200, 120, 230);
+const EXPORT: Color32 = Color32::from_rgb(120, 225, 245);
 const DEMAND: Color32 = Color32::from_rgb(255, 90, 90);
+/// Batteries: delivering (above the axis) and their charge level.
+pub const BATTERY: Color32 = Color32::from_rgb(90, 235, 170);
+/// Batteries charging (below the axis).
+const CHARGING: Color32 = Color32::from_rgb(40, 140, 110);
+
+/// The plant table, compact or wide: a row per plant and battery with what
+/// it puts out, what it costs to run and per MWh, and what it does to the
+/// air and the ears; batteries show their charge and flow instead. The
+/// figures come from `World::plant_rows`, the same as the API's.
+pub fn plant_table(ui: &mut egui::Ui, w: &nd_sim::World, rows: &[nd_sim::PlantRow], wide: bool) -> Option<(nd_sim::BuildingId, Vec2)> {
+    let mut act = None;
+    let cols = if wide { 9 } else { 6 };
+    egui::Grid::new(if wide { "power_plants_wide" } else { "power_plants" }).num_columns(cols).spacing(egui::vec2(10.0, 2.0)).striped(true).show(ui, |ui| {
+        let heads: &[(&str, &str)] = if wide {
+            &[("plant", ""), ("now", "output now / nameplate"), ("24 h mean", "mean output over the last 24 hours"), ("upkeep", "running cost per day"), ("cost/MWh", "upkeep over the last 24 hours' energy"), ("CO2 t/day", "carbon dioxide at the last 24 hours' rate"), ("smog", "air at the fence now, 0 to 1 (coal at full output is 1)"), ("noise", "at the fence while running"), ("", "")]
+        } else {
+            &[("plant", ""), ("now", "output now"), ("upkeep", "running cost per day"), ("cost/MWh", "upkeep over the last 24 hours' energy"), ("air", "CO2 per day; smog at the fence now"), ("noise", "at the fence while running")]
+        };
+        for (h, tip) in heads {
+            let l = ui.label(egui::RichText::new(*h).small().weak());
+            if !tip.is_empty() {
+                l.on_hover_text(*tip);
+            }
+        }
+        ui.end_row();
+        for r in rows {
+            let (color, kind) = match r.asset {
+                nd_sim::GridAsset::Plant(k) => (plant_color(k), k.label().to_string()),
+                nd_sim::GridAsset::Battery(k) => (BATTERY, k.label().to_string()),
+            };
+            let status = if r.pending { " (not yet working)" } else if r.derelict { " (derelict)" } else { "" };
+            let name = ui.label(egui::RichText::new(&r.name).small().color(color));
+            name.on_hover_text(format!("{kind}{status}"));
+            let cost = r.cost_per_mwh.map_or("-".to_string(), |c| format!("{c:.1}"));
+            let noise = r.noise_db.map_or("quiet".to_string(), |d| format!("{d:.0} dB"));
+            match r.asset {
+                nd_sim::GridAsset::Plant(_) => {
+                    let pct = if r.capacity_mw > 0.0 { r.now_mw / r.capacity_mw * 100.0 } else { 0.0 };
+                    let smog = egui::RichText::new(format!("{:.2}", r.air)).small();
+                    ui.label(egui::RichText::new(if wide { format!("{:.1} MW · {pct:.0}% of {:.0}", r.now_mw, r.capacity_mw) } else { format!("{:.1} MW", r.now_mw) }).small());
+                    if wide {
+                        ui.label(egui::RichText::new(format!("{:.1} MW", r.mean_mw)).small().weak());
+                    }
+                    ui.label(egui::RichText::new(format!("{:.0}", r.upkeep_per_day)).small());
+                    ui.label(egui::RichText::new(cost).small());
+                    if wide {
+                        ui.label(warn_if(r.co2_t_per_day > 100.0, format!("{:.0}", r.co2_t_per_day)).small());
+                        ui.label(if r.air > 0.5 { smog.color(WARN) } else { smog });
+                    } else {
+                        ui.label(warn_if(r.co2_t_per_day > 100.0, if r.co2_t_per_day > 0.0 { format!("{:.0} t CO2 · smog {:.1}", r.co2_t_per_day, r.air) } else { "clean".to_string() }).small());
+                    }
+                    ui.label(warn_if(r.noise_db.is_some_and(|d| d >= 60.0), noise).small());
+                }
+                nd_sim::GridAsset::Battery(_) => {
+                    let level = if r.capacity_mwh > 0.0 { r.charge_mwh / r.capacity_mwh } else { 0.0 };
+                    let flow = if r.now_mw > 0.05 { format!("gives {:.1} MW", r.now_mw) } else if r.now_mw < -0.05 { format!("takes {:.1} MW", -r.now_mw) } else { "holding".to_string() };
+                    ui.label(egui::RichText::new(if wide { format!("{:.0}% of {:.0} MWh · {flow}", level * 100.0, r.capacity_mwh) } else { format!("{:.0}% · {flow}", level * 100.0) }).small());
+                    if wide {
+                        ui.label(egui::RichText::new(format!("{:.0} MWh out", r.mean_mw * 24.0)).small().weak());
+                    }
+                    ui.label(egui::RichText::new(format!("{:.0}", r.upkeep_per_day)).small());
+                    ui.label(egui::RichText::new(cost).small());
+                    if wide {
+                        ui.label(egui::RichText::new("0").small().weak());
+                        ui.label(egui::RichText::new("0.00").small().weak());
+                    } else {
+                        ui.label(egui::RichText::new("clean").small().weak());
+                    }
+                    ui.label(egui::RichText::new(noise).small());
+                }
+            }
+            if wide && ui.small_button("go").on_hover_text("Select it and fly there").clicked() {
+                if let Some(l) = w.buildings.get(r.id).and_then(|b| w.lots.get(b.lot)) {
+                    act = Some((r.id, Vec2::new(l.center.x, l.center.y)));
+                }
+            }
+            ui.end_row();
+        }
+    });
+    act
+}
+
+/// A plant's own record over the hours shown, padded at the front with
+/// zeros when it is younger than the chart.
+fn plant_hours(series: &std::collections::VecDeque<f32>, n: usize) -> Vec<f32> {
+    let take = series.len().min(n);
+    let mut v = vec![0.0; n - take];
+    v.extend(series.iter().skip(series.len() - take));
+    v
+}
 
 pub fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
     let span = pane::span_picker(ui, Info::Power);
-    let mut act: Option<(nd_sim::BuildingId, Vec2)> = None;
+    let act: Option<(nd_sim::BuildingId, Vec2)>;
     {
         let w = &p.sim.world;
         let pw = &w.economy.power;
@@ -169,57 +260,97 @@ pub fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
             pane::kpi(ui, "supply now", egui::RichText::new(format!("{:.0} MW", pw.supply_mw)).color(GOLD));
             pane::kpi(ui, "demand now", egui::RichText::new(format!("{:.0} MW", pw.demand_mw)));
             pane::kpi(ui, "imported now", egui::RichText::new(format!("{:.0} MW", pw.imported_mw)).color(IMPORT));
+            pane::kpi(ui, "exported now", egui::RichText::new(format!("{:.0} MW", pw.exported_mw)).color(EXPORT));
+            if pw.batteries > 0 {
+                let level = if pw.battery_capacity_mwh > 0.0 { pw.battery_charge_mwh / pw.battery_capacity_mwh } else { 0.0 };
+                pane::kpi(ui, "batteries full", egui::RichText::new(format!("{:.0}%", level * 100.0)).color(BATTERY));
+            }
             pane::kpi(ui, "in the dark", warn_if(pw.unpowered_buildings > 0, format!("{}", pw.unpowered_buildings)));
         });
         let used: Vec<PowerPlantKind> = PowerPlantKind::ALL.into_iter().filter(|k| h.hours.iter().any(|r| r.supply_by_kind[k.index()] > 0.0) || h.days.iter().any(|d| d.supply_mwh[k.index()] > 0.0)).collect();
         section(ui, "SUPPLY AND DEMAND, LAST 72 HOURS");
         let hours = pane::hours(h);
+        let hour_labels = pane::hour_labels(&hours);
+        // Above the axis what fed the city: each kind of plant, the
+        // batteries giving back, the regional grid; below it where the
+        // surplus went: into the batteries and out to the region.
         let mut series: Vec<Series> = used.iter().map(|k| Series::new(k.short(), plant_color(*k), pane::hcol(&hours, |r| r.supply_by_kind[k.index()]))).collect();
+        series.push(Series::new("batteries delivering", BATTERY, pane::hcol(&hours, |r| r.battery_out_mw)));
         series.push(Series::new("imported", IMPORT, pane::hcol(&hours, |r| r.imported_mw)));
+        series.push(Series::new("into batteries", CHARGING, pane::hcol(&hours, |r| -r.battery_in_mw)));
+        series.push(Series::new("exported", EXPORT, pane::hcol(&hours, |r| -r.exported_mw)));
+        series.retain(|s| s.values.iter().any(|v| *v != 0.0) || used.iter().any(|k| k.short() == s.name));
         let demand = Series::new("demand", DEMAND, pane::hcol(&hours, |r| r.demand_mw));
-        pane::stacked_bars(ui, &pane::hour_labels(&hours), &series, 140.0, false, Some(&demand), &|x| format!("{x:.1} MW"));
+        pane::stacked_bars(ui, &hour_labels, &series, 160.0, false, Some(&demand), &|x| format!("{x:.1} MW"));
         let mut lg: Vec<(&str, Color32)> = series.iter().map(|s| (s.name.as_str(), s.color)).collect();
         lg.push(("demand (line)", DEMAND));
         pane::legend(ui, &lg);
-        hint(ui, "Each hour's supply stacked by kind of plant, then what the regional grid sold; the red line is what the city wanted.");
+        hint(ui, "Each hour's supply stacked by source above the line: the plants by kind, the batteries giving back, what the regional grid sold. Below the line, where a surplus went: into the batteries first, then sold to the region. The red line is what the city wanted.");
+
+        if h.hours.iter().any(|r| r.battery_capacity_mwh > 0.0) {
+            section(ui, "BATTERIES, LAST 72 HOURS");
+            let series = [
+                Series::new("stored MWh", BATTERY, pane::hcol(&hours, |r| r.battery_charge_mwh)),
+                Series::new("capacity MWh", Color32::from_gray(120), pane::hcol(&hours, |r| r.battery_capacity_mwh)),
+                Series::new("charging MW", CHARGING, pane::hcol(&hours, |r| r.battery_in_mw)),
+                Series::new("delivering MW", Color32::from_rgb(255, 190, 80), pane::hcol(&hours, |r| r.battery_out_mw)),
+            ];
+            pane::line_chart(ui, &hour_labels, &series, 110.0, &|x| format!("{x:.1}"));
+            legend(ui, &series);
+            hint(ui, "How full the batteries were at the end of each hour, and when they took surplus in or carried the city (about 90% of what goes in comes back out).");
+        }
 
         let days = pane::days(h, if span == Span::Hours { Span::Week } else { span });
         section(ui, "ENERGY PER DAY");
         let mut series: Vec<Series> = used.iter().map(|k| Series::new(k.short(), plant_color(*k), pane::col(&days, |d| d.supply_mwh[k.index()]))).collect();
+        series.push(Series::new("batteries delivering", BATTERY, pane::col(&days, |d| d.battery_out_mwh)));
         series.push(Series::new("imported", IMPORT, pane::col(&days, |d| d.imported_mwh)));
+        series.push(Series::new("into batteries", CHARGING, pane::col(&days, |d| -d.battery_in_mwh)));
+        series.push(Series::new("exported", EXPORT, pane::col(&days, |d| -d.exported_mwh)));
+        series.retain(|s| s.values.iter().any(|v| *v != 0.0) || used.iter().any(|k| k.short() == s.name));
         let demand = Series::new("demand", DEMAND, pane::col(&days, |d| d.demand_mwh));
         pane::stacked_bars(ui, &pane::day_labels(&days), &series, 130.0, false, Some(&demand), &|x| format!("{x:.0} MWh"));
+        section(ui, "MONEY FOR POWER PER DAY");
+        let series = [
+            Series::new("export income", EXPORT, pane::col(&days, |d| d.flow(nd_sim::economy::Flow::GridExport))),
+            Series::new("import cost", IMPORT, pane::col(&days, |d| d.flow(nd_sim::economy::Flow::GridImport))),
+            Series::new("upkeep", Color32::from_rgb(255, 120, 90), pane::col(&days, |d| d.flow(nd_sim::economy::Flow::PlantUpkeep))),
+        ];
+        pane::stacked_bars(ui, &pane::day_labels(&days), &series, 100.0, true, None, &|x| format!("{x:.0}"));
+        legend(ui, &series);
         section(ui, "BROWNOUTS AND PEAK");
         let series = [Series::new("brownout hours", WARN, pane::col(&days, |d| d.brownout_hours as f32)), Series::new("peak demand MW", IVORY, pane::col(&days, |d| d.peak_demand_mw))];
         pane::line_chart(ui, &pane::day_labels(&days), &series, 90.0, &|x| format!("{x:.0}"));
         legend(ui, &series);
 
-        section(ui, "PLANTS");
-        let mut plants: Vec<(nd_sim::BuildingId, &nd_sim::Building, PowerPlantKind)> = w.buildings.iter().filter_map(|(id, b)| b.plant.map(|k| (id, b, k))).collect();
-        plants.sort_by(|a, b| a.2.index().cmp(&b.2.index()).then(a.1.name.cmp(&b.1.name)));
-        if plants.is_empty() {
-            hint(ui, "No plants: the city buys what the regional grid will sell. The Buildings tool places plants.");
+        section(ui, "PLANTS AND BATTERIES");
+        let rows = w.plant_rows();
+        if rows.is_empty() {
+            hint(ui, "No plants: the city buys what the regional grid will sell. Buildings, Power places plants and battery packs.");
         }
-        egui::Grid::new("power_plants").num_columns(6).spacing(egui::vec2(12.0, 2.0)).striped(true).show(ui, |ui| {
-            for hd in ["plant", "kind", "now", "of nameplate", "upkeep/day", ""] {
-                ui.label(egui::RichText::new(hd).small().weak());
-            }
-            ui.end_row();
-            for (id, b, k) in plants {
-                let now = w.plant_output_mw(b);
-                ui.label(egui::RichText::new(&b.name).small().color(plant_color(k)));
-                ui.label(egui::RichText::new(if b.is_derelict() { format!("{} (derelict)", k.label()) } else { k.label().to_string() }).small().weak());
-                ui.label(egui::RichText::new(format!("{now:.1} MW")).small());
-                ui.label(egui::RichText::new(format!("{:.0}% of {:.0} MW", now / k.capacity_mw() * 100.0, k.capacity_mw())).small().weak());
-                ui.label(egui::RichText::new(format!("{:.0}", k.upkeep_per_day())).small());
-                if ui.small_button("go").on_hover_text("Select it and fly there").clicked() {
-                    if let Some(l) = w.lots.get(b.lot) {
-                        act = Some((id, Vec2::new(l.center.x, l.center.y)));
+        act = plant_table(ui, w, &rows, true);
+        if !rows.is_empty() {
+            section(ui, "EACH PLANT, LAST 72 HOURS");
+            let n = hours.len();
+            for r in &rows {
+                let Some(log) = h.plant(r.id) else { continue };
+                if n == 0 {
+                    break;
+                }
+                match r.asset {
+                    nd_sim::GridAsset::Plant(k) => {
+                        ui.label(egui::RichText::new(format!("{} · {}", r.name, k.label())).small().color(plant_color(k)));
+                        let s = [Series::new("output MW", plant_color(k), plant_hours(&log.hours, n)), Series::new("nameplate", Color32::from_gray(90), vec![r.capacity_mw; n])];
+                        pane::line_chart(ui, &hour_labels, &s, 56.0, &|x| format!("{x:.1} MW"));
+                    }
+                    nd_sim::GridAsset::Battery(k) => {
+                        ui.label(egui::RichText::new(format!("{} · {}", r.name, k.label())).small().color(BATTERY));
+                        let s = [Series::new("stored MWh", BATTERY, plant_hours(&log.level, n)), Series::new("flow MW (+ gives, - takes)", Color32::from_rgb(255, 190, 80), plant_hours(&log.hours, n))];
+                        pane::line_chart(ui, &hour_labels, &s, 56.0, &|x| format!("{x:.1}"));
                     }
                 }
-                ui.end_row();
             }
-        });
+        }
     }
     if let Some((b, at)) = act {
         *p.selection = Selection::Building(b);

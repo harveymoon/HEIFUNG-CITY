@@ -1,26 +1,93 @@
-//! Save slots, the load confirmation, and the daily autosave.
+//! Saved games: named saves with a map picture, the quick save slots, the
+//! load confirmation, and the daily autosave.
 //!
-//! `saves/city.ron` is always the latest manual save (the path older builds
-//! and scripts know); every manual save also lands in a dated slot,
-//! `saves/city-<unix seconds>-day<N>.ron`, of which the newest few are kept.
-//! The sim autosaves to `saves/autosave.ron` at the start of each day.
+//! - **Named games**: "Save as" writes `saves/<name>.ron` (the name made
+//!   file-safe by [`file_stem`]), a sidecar `saves/<name>.meta.json` with the
+//!   name as typed, the day, the population and the treasury, and a top-down
+//!   picture of the city, `saves/<name>.png`, rendered offscreen a moment
+//!   later (`render/thumbs.rs`).
+//! - **Quick save**: `saves/city.ron` is always the latest (the path older
+//!   builds and scripts know); every quick save also lands in a dated slot,
+//!   `saves/city-<unix seconds>-day<N>.ron`, of which the newest few are
+//!   kept. It gets a picture and a sidecar too.
+//! - **Autosave**: `saves/autosave.ron` at the start of each day.
+//!
+//! The title screen (`ui/title.rs`) and the Saves window list them newest
+//! first. Saves from before sidecars show their file name and no figures.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use bevy::prelude::*;
 use bevy_egui::egui;
 use nd_sim::SimEvent;
+use serde::{Deserialize, Serialize};
 
-use super::{hint, UiFlags, WARN};
+use super::{hint, section, UiFlags, GOLD, IVORY, WARN};
 use crate::sim::Sim;
 use crate::tools::{EffectivePlan, Selection, ToolState};
 
-const DIR: &str = "saves";
+pub const DIR: &str = "saves";
 pub const LATEST: &str = "saves/city.ron";
 pub const AUTOSAVE: &str = "saves/autosave.ron";
 /// Dated slots kept before the oldest is deleted on the next save.
 const SLOTS_KEPT: usize = 8;
+
+/// What is known about a save without reading the city: written beside it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SaveMeta {
+    /// The name as the player typed it ("" for quick saves and autosaves).
+    pub name: String,
+    /// Day of the city (1-based, as the top bar shows it).
+    pub day: u64,
+    pub population: usize,
+    pub treasury: f32,
+    #[serde(default)]
+    pub buildings: usize,
+    #[serde(default)]
+    pub landscape: String,
+    pub saved_unix: u64,
+}
+
+/// What kind of save a file is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlotKind {
+    Named,
+    Latest,
+    Autosave,
+    /// A dated backup of a quick save.
+    Dated,
+}
+
+impl SlotKind {
+    pub fn key(self) -> &'static str {
+        match self {
+            SlotKind::Named => "named",
+            SlotKind::Latest => "latest",
+            SlotKind::Autosave => "autosave",
+            SlotKind::Dated => "dated",
+        }
+    }
+}
+
+pub struct Slot {
+    pub path: PathBuf,
+    pub label: String,
+    pub kind: SlotKind,
+    pub modified: Option<SystemTime>,
+    pub meta: Option<SaveMeta>,
+    /// `saves/<stem>.png` (it may not have been written, or ever be: saves
+    /// from before pictures).
+    pub picture: Option<PathBuf>,
+}
+
+impl Slot {
+    /// "Day 12 · 340 people · $ 52000" from the sidecar, or "" for an old save.
+    pub fn figures(&self) -> String {
+        self.meta.as_ref().map_or_else(String::new, |m| format!("Day {} · {} people · $ {:.0}", m.day, m.population, m.treasury))
+    }
+}
 
 #[derive(Resource)]
 pub struct Saves {
@@ -29,18 +96,25 @@ pub struct Saves {
     dirty: bool,
     /// A load the player clicked that still needs confirming.
     pending_load: Option<PathBuf>,
+    /// The autosave being written on a worker thread: the day and how long
+    /// the write took, or why it failed.
+    autosave: Option<std::thread::JoinHandle<Result<(u64, f64), String>>>,
+    /// Pictures to render (PNG paths); `render/thumbs.rs` takes them.
+    shots: Vec<PathBuf>,
+    /// Pictures loaded as egui textures, by path, with the file time they
+    /// were read at.
+    pictures: HashMap<PathBuf, (Option<SystemTime>, egui::TextureHandle)>,
+    /// The name typed into "Save as".
+    pub name: String,
+    /// The title screen is up (at startup unless `ND_TITLE=0`).
+    pub title: bool,
 }
 
 impl Default for Saves {
     fn default() -> Self {
-        Self { slots: Vec::new(), dirty: true, pending_load: None }
+        let title = !std::env::var("ND_TITLE").is_ok_and(|v| v == "0");
+        Self { slots: Vec::new(), dirty: true, pending_load: None, autosave: None, shots: Vec::new(), pictures: HashMap::new(), name: String::new(), title }
     }
-}
-
-struct Slot {
-    path: PathBuf,
-    label: String,
-    modified: Option<SystemTime>,
 }
 
 impl Saves {
@@ -49,21 +123,33 @@ impl Saves {
         self.dirty = true;
     }
 
-    fn rescan(&mut self) {
-        self.dirty = false;
-        self.slots.clear();
-        let Ok(dir) = std::fs::read_dir(DIR) else { return };
-        for entry in dir.flatten() {
-            let path = entry.path();
-            if path.extension().is_none_or(|e| e != "ron") {
-                continue;
-            }
-            let modified = entry.metadata().ok().and_then(|m| m.modified().ok());
-            let label = slot_label(&path);
-            self.slots.push(Slot { path, label, modified });
+    /// The pictures asked for since the last call.
+    pub fn take_shots(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.shots)
+    }
+
+    /// Every save, newest first (rescanning if stale).
+    pub fn slots(&mut self) -> &[Slot] {
+        if self.dirty {
+            self.dirty = false;
+            self.slots = scan();
         }
-        // Newest first; the two fixed names sort by time like the rest.
-        self.slots.sort_by(|a, b| b.modified.cmp(&a.modified));
+        &self.slots
+    }
+
+    /// The picture of a save as an egui texture, loaded once per file time.
+    pub fn picture(&mut self, ctx: &egui::Context, path: &Path) -> Option<egui::TextureHandle> {
+        let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
+        let mtime = Some(mtime);
+        if let Some((t, tex)) = self.pictures.get(path) {
+            if *t == mtime {
+                return Some(tex.clone());
+            }
+        }
+        let image = load_png(path)?;
+        let tex = ctx.load_texture(format!("save_picture:{}", path.display()), image, egui::TextureOptions::LINEAR);
+        self.pictures.insert(path.to_path_buf(), (mtime, tex.clone()));
+        Some(tex)
     }
 
     /// Delete the oldest dated slots beyond `SLOTS_KEPT`. The zero-padded
@@ -74,43 +160,147 @@ impl Saves {
         dated.sort();
         let excess = dated.len().saturating_sub(SLOTS_KEPT);
         for p in dated.into_iter().take(excess) {
-            let _ = std::fs::remove_file(p);
+            let _ = std::fs::remove_file(&p);
+            let _ = std::fs::remove_file(meta_path(&p));
         }
     }
 }
 
-/// "latest", "autosave", or "Day N" from a dated slot's file name.
-fn slot_label(path: &Path) -> String {
+/// Every save in `saves/`, newest first.
+pub fn scan() -> Vec<Slot> {
+    let mut slots = Vec::new();
+    let Ok(dir) = std::fs::read_dir(DIR) else { return slots };
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "ron") {
+            continue;
+        }
+        let modified = entry.metadata().ok().and_then(|m| m.modified().ok());
+        let meta = read_meta(&path);
+        let kind = slot_kind(&path);
+        let label = match (&meta, kind) {
+            (Some(m), SlotKind::Named) if !m.name.is_empty() => m.name.clone(),
+            _ => slot_label(&path),
+        };
+        // Kept even before the file exists: the picture lands a moment
+        // after the save, and `Saves::picture` picks it up when it does.
+        let picture = Some(path.with_extension("png"));
+        slots.push(Slot { path, label, kind, modified, meta, picture });
+    }
+    // Newest first; the fixed names sort by time like the rest.
+    slots.sort_by(|a, b| b.modified.cmp(&a.modified));
+    slots
+}
+
+fn slot_kind(path: &Path) -> SlotKind {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     match stem {
-        "city" => "latest".into(),
-        "autosave" => "autosave".into(),
-        _ => match stem.rsplit_once("-day") {
-            Some((_, day)) => format!("Day {day}"),
-            None => stem.to_string(),
-        },
+        "city" => SlotKind::Latest,
+        "autosave" => SlotKind::Autosave,
+        _ if stem.starts_with("city-") && stem.contains("-day") => SlotKind::Dated,
+        _ => SlotKind::Named,
     }
 }
 
-fn age(modified: Option<SystemTime>) -> String {
-    let Some(secs) = modified.and_then(|m| SystemTime::now().duration_since(m).ok()).map(|d| d.as_secs()) else { return String::new() };
-    match secs {
-        0..=59 => "just now".into(),
-        60..=3599 => format!("{} min ago", secs / 60),
-        3600..=86_399 => format!("{} h ago", secs / 3600),
-        _ => format!("{} d ago", secs / 86_400),
+/// "Latest quick save", "Autosave", "Quick save, day N" or the stem.
+fn slot_label(path: &Path) -> String {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    match slot_kind(path) {
+        SlotKind::Latest => "Latest quick save".into(),
+        SlotKind::Autosave => "Autosave".into(),
+        SlotKind::Dated => match stem.rsplit_once("-day") {
+            Some((_, day)) => format!("Quick save, day {day}"),
+            None => stem.to_string(),
+        },
+        SlotKind::Named => stem.replace('_', " "),
+    }
+}
+
+/// The sidecar of a save: `<stem>.meta.json` beside it.
+pub fn meta_path(save: &Path) -> PathBuf {
+    save.with_extension("meta.json")
+}
+
+fn read_meta(save: &Path) -> Option<SaveMeta> {
+    let text = std::fs::read_to_string(meta_path(save)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// A file-safe stem for a typed name: ASCII letters, digits and `-` kept,
+/// anything else made `_`, runs of `_` folded, ends trimmed, at most 48
+/// characters; names Windows reserves get a `_` after them. Empty input
+/// gives "city".
+pub fn file_stem(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.trim().chars() {
+        let c = if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' };
+        if c == '_' && (out.ends_with('_') || out.is_empty()) {
+            continue;
+        }
+        out.push(c);
+        if out.len() >= 48 {
+            break;
+        }
+    }
+    let out = out.trim_matches(|c| c == '_' || c == '-').to_string();
+    if out.is_empty() {
+        return "city".into();
+    }
+    let reserved = ["con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"];
+    if reserved.contains(&out.to_ascii_lowercase().as_str()) {
+        return format!("{out}_");
+    }
+    out
+}
+
+fn now_unix() -> u64 {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// The sidecar for the city as it stands.
+fn meta_of(sim: &Sim, name: &str) -> SaveMeta {
+    let w = &sim.world;
+    SaveMeta { name: name.to_string(), day: w.clock.day() + 1, population: w.citizens.len(), treasury: w.economy.treasury, buildings: w.buildings.len(), landscape: w.landscape.params.preset.label().to_string(), saved_unix: now_unix() }
+}
+
+/// Write `path` (a .ron save), its sidecar, and ask for its picture.
+fn write_save(sim: &Sim, saves: &mut Saves, path: &Path, name: &str) -> Result<(), String> {
+    let shown = path.to_string_lossy().replace('\\', "/");
+    sim.save(&shown)?;
+    if let Ok(text) = serde_json::to_string_pretty(&meta_of(sim, name)) {
+        let _ = std::fs::write(meta_path(path), text);
+    }
+    saves.shots.push(path.with_extension("png"));
+    saves.dirty = true;
+    Ok(())
+}
+
+/// Save the city under a name: `saves/<file_stem(name)>.ron`, its sidecar
+/// and picture. Returns the save's path.
+pub fn save_as(sim: &Sim, saves: &mut Saves, flags: &mut UiFlags, name: &str) -> Result<PathBuf, String> {
+    let name = if name.trim().is_empty() { "City".to_string() } else { name.trim().to_string() };
+    let path = PathBuf::from(DIR).join(format!("{}.ron", file_stem(&name)));
+    match write_save(sim, saves, &path, &name) {
+        Ok(()) => {
+            flags.message = format!("saved \"{name}\" ({})", path.display());
+            Ok(path)
+        }
+        Err(e) => {
+            flags.message = format!("save failed: {e}");
+            Err(e)
+        }
     }
 }
 
 /// Write the latest slot and a dated copy of it.
 pub fn save_now(sim: &Sim, saves: &mut Saves, flags: &mut UiFlags) {
     saves.dirty = true;
-    flags.message = match sim.save(LATEST) {
+    flags.message = match write_save(sim, saves, Path::new(LATEST), "") {
         Ok(()) => {
-            let secs = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            let slot = format!("{DIR}/city-{secs:012}-day{}.ron", sim.world.clock.day() + 1);
+            let slot = format!("{DIR}/city-{:012}-day{}.ron", now_unix(), sim.world.clock.day() + 1);
             match std::fs::copy(LATEST, &slot) {
                 Ok(_) => {
+                    let _ = std::fs::copy(meta_path(Path::new(LATEST)), meta_path(Path::new(&slot)));
                     saves.prune();
                     format!("saved {LATEST} and slot {}", slot_label(Path::new(&slot)))
                 }
@@ -138,29 +328,61 @@ pub fn load_now(path: &Path, sim: &mut Sim, tools: &mut ToolState, selection: &m
     };
 }
 
-/// The body of the Saves window: save, the slot list, the load confirmation.
+/// A PNG as an egui image.
+fn load_png(path: &Path) -> Option<egui::ColorImage> {
+    use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
+    let bytes = std::fs::read(path).ok()?;
+    let img = Image::from_buffer(&bytes, ImageType::Extension("png"), CompressedImageFormats::NONE, true, ImageSampler::Default, bevy::asset::RenderAssetUsages::MAIN_WORLD).ok()?;
+    let rgba = img.try_into_dynamic().ok()?.to_rgba8();
+    let size = [rgba.width() as usize, rgba.height() as usize];
+    Some(egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()))
+}
+
+/// How long ago, in words.
+pub fn age(modified: Option<SystemTime>) -> String {
+    let Some(secs) = modified.and_then(|m| SystemTime::now().duration_since(m).ok()).map(|d| d.as_secs()) else { return String::new() };
+    match secs {
+        0..=59 => "just now".into(),
+        60..=3599 => format!("{} min ago", secs / 60),
+        3600..=86_399 => format!("{} h ago", secs / 3600),
+        _ => format!("{} d ago", secs / 86_400),
+    }
+}
+
+/// The body of the Saves window: save as a name, quick save, the list with
+/// pictures, the load confirmation.
 pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, plan: &mut EffectivePlan, saves: &mut Saves, flags: &mut UiFlags) {
-    if saves.dirty {
-        saves.rescan();
+    section(ui, "SAVE AS");
+    ui.horizontal(|ui| {
+        let r = ui.add(egui::TextEdit::singleline(&mut saves.name).desired_width(170.0).hint_text("name your city"));
+        let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if (ui.button(egui::RichText::new("Save").strong()).on_hover_text("Writes saves/<name>.ron with a map picture; the title screen lists it").clicked() || enter) && !saves.name.trim().is_empty() {
+            let name = saves.name.clone();
+            let _ = save_as(sim, saves, flags, &name);
+        }
+    });
+    if !saves.name.trim().is_empty() {
+        let stem = file_stem(&saves.name);
+        let exists = Path::new(DIR).join(format!("{stem}.ron")).exists();
+        hint(ui, &format!("→ saves/{stem}.ron{}", if exists { " (replaces the save of that name)" } else { "" }));
     }
     ui.horizontal(|ui| {
-        if ui.button("Save").on_hover_text(format!("Writes {LATEST} and a dated slot; the newest {SLOTS_KEPT} slots are kept")).clicked() {
+        if ui.button("Quick save").on_hover_text(format!("Writes {LATEST} and a dated slot; the newest {SLOTS_KEPT} slots are kept")).clicked() {
             save_now(sim, saves, flags);
         }
         if ui.small_button("refresh list").clicked() {
             saves.dirty = true;
         }
-        hint(ui, &format!("autosave at the start of each day → {AUTOSAVE}"));
+        if ui.small_button("title screen").on_hover_text("Back to the list of saved games").clicked() {
+            saves.title = true;
+        }
     });
+    hint(ui, &format!("autosave at the start of each day → {AUTOSAVE}"));
 
     if let Some(pending) = saves.pending_load.clone() {
         // Confirmation: a running city would be thrown away.
-        ui.label(egui::RichText::new(format!(
-            "Load {}? The running city (day {}, {}) is lost unless saved.",
-            slot_label(&pending),
-            sim.world.clock.day() + 1,
-            sim.world.clock.format_hhmm()
-        )).color(WARN));
+        let label = saves.slots().iter().find(|s| s.path == pending).map_or_else(|| slot_label(&pending), |s| s.label.clone());
+        ui.label(egui::RichText::new(format!("Load {label}? The running city (day {}, {}) is lost unless saved.", sim.world.clock.day() + 1, sim.world.clock.format_hhmm())).color(WARN));
         ui.horizontal(|ui| {
             if ui.button("Load it").clicked() {
                 load_now(&pending, sim, tools, selection, plan, flags);
@@ -173,17 +395,34 @@ pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, selection:
         return;
     }
 
-    if saves.slots.is_empty() {
+    section(ui, "SAVED GAMES");
+    if saves.slots().is_empty() {
         hint(ui, "No saves yet.");
     }
     let mut load: Option<PathBuf> = None;
-    for slot in &saves.slots {
+    let rows: Vec<(PathBuf, String, SlotKind, String, Option<SystemTime>, Option<PathBuf>)> = saves.slots().iter().map(|s| (s.path.clone(), s.label.clone(), s.kind, s.figures(), s.modified, s.picture.clone())).collect();
+    for (path, label, kind, figures, modified, picture) in rows {
         ui.horizontal(|ui| {
-            if ui.small_button("Load").clicked() {
-                load = Some(slot.path.clone());
+            let pic = picture.as_deref().and_then(|p| saves.picture(ui.ctx(), p));
+            match pic {
+                Some(tex) => {
+                    ui.add(egui::Image::new(&tex).fit_to_exact_size(egui::vec2(44.0, 44.0)).corner_radius(3.0));
+                }
+                None => {
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), egui::Sense::hover());
+                    ui.painter().rect_filled(r, 3.0, egui::Color32::from_rgb(20, 22, 34));
+                }
             }
-            ui.label(egui::RichText::new(&slot.label).small());
-            hint(ui, &age(slot.modified));
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    if ui.small_button("Load").clicked() {
+                        load = Some(path.clone());
+                    }
+                    let text = egui::RichText::new(&label).color(if kind == SlotKind::Named { GOLD } else { IVORY });
+                    ui.label(if kind == SlotKind::Named { text.strong() } else { text.small() });
+                });
+                hint(ui, &format!("{figures}{}{}", if figures.is_empty() { "" } else { " · " }, age(modified)));
+            });
         });
     }
     if let Some(path) = load {
@@ -198,13 +437,75 @@ pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, selection:
 
 /// Autosave when the sim rolls over to a new day. Runs in `SimSet::Sync`,
 /// where `Sim::events` holds this frame's events for every reader.
+///
+/// The frame pays only for a copy of the world; serialising it to RON (the
+/// slow part, hundreds of milliseconds for a big city) and writing it
+/// happen on a worker thread, and the write is atomic. One autosave at a
+/// time: a day that turns while the last one is still writing (1024x on a
+/// slow disk) is skipped, and the next day catches up.
 pub fn autosave(sim: Res<Sim>, mut saves: ResMut<Saves>, mut flags: ResMut<UiFlags>) {
+    if saves.autosave.as_ref().is_some_and(|j| j.is_finished()) {
+        let job = saves.autosave.take().expect("checked above");
+        saves.dirty = true;
+        flags.message = match job.join() {
+            Ok(Ok((day, ms))) => {
+                debug!("autosave of day {day} written in {ms:.0} ms off the main thread");
+                format!("autosaved day {day} to {AUTOSAVE}")
+            }
+            Ok(Err(e)) => format!("autosave failed: {e}"),
+            Err(_) => "autosave failed: the writer thread panicked".into(),
+        };
+    }
     if !sim.events.iter().any(|e| matches!(e, SimEvent::NewDay(_))) {
         return;
     }
+    if saves.autosave.is_some() {
+        warn!("autosave skipped: the previous one is still being written");
+        return;
+    }
+    let start = std::time::Instant::now();
+    let world = sim.world.clone();
+    let hitch = start.elapsed().as_secs_f64() * 1000.0;
+    debug!("autosave: world copied in {hitch:.1} ms on the main thread");
+    let day = world.clock.day() + 1;
+    let job = std::thread::Builder::new().name("nd-autosave".into()).spawn(move || {
+        let t = std::time::Instant::now();
+        crate::sim::save_world(&world, Path::new(AUTOSAVE)).map(|()| (day, t.elapsed().as_secs_f64() * 1000.0))
+    });
+    match job {
+        Ok(j) => saves.autosave = Some(j),
+        Err(e) => flags.message = format!("autosave failed: {e}"),
+    }
+    // [saves] The sidecar (name, day, population) and the map picture,
+    // as every save gets; the picture is rendered a frame or two later.
+    if let Ok(text) = serde_json::to_string_pretty(&meta_of(&sim, "")) {
+        let _ = std::fs::write(meta_path(Path::new(AUTOSAVE)), text);
+    }
+    saves.shots.push(Path::new(AUTOSAVE).with_extension("png"));
     saves.dirty = true;
-    flags.message = match sim.save(AUTOSAVE) {
-        Ok(()) => format!("autosaved day {} to {AUTOSAVE}", sim.world.clock.day() + 1),
-        Err(e) => format!("autosave failed: {e}"),
-    };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_become_safe_file_stems() {
+        assert_eq!(file_stem("Neon Bay"), "Neon_Bay");
+        assert_eq!(file_stem("  ../../etc/passwd "), "etc_passwd");
+        assert_eq!(file_stem("a:b*c?d\"e<f>g|h"), "a_b_c_d_e_f_g_h");
+        assert_eq!(file_stem(""), "city");
+        assert_eq!(file_stem("   "), "city");
+        assert_eq!(file_stem("CON"), "CON_");
+        assert!(file_stem(&"x".repeat(200)).len() <= 48);
+    }
+
+    #[test]
+    fn kinds_by_file_name() {
+        assert_eq!(slot_kind(Path::new("saves/city.ron")), SlotKind::Latest);
+        assert_eq!(slot_kind(Path::new("saves/autosave.ron")), SlotKind::Autosave);
+        assert_eq!(slot_kind(Path::new("saves/city-000001700000-day3.ron")), SlotKind::Dated);
+        assert_eq!(slot_kind(Path::new("saves/Neon_Bay.ron")), SlotKind::Named);
+        assert_eq!(meta_path(Path::new("saves/Neon_Bay.ron")), PathBuf::from("saves/Neon_Bay.meta.json"));
+    }
 }

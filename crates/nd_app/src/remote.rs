@@ -18,6 +18,9 @@
 mod concerns;
 /// [districts] [tourism] `district` and `tourism`.
 mod districts;
+/// Request checks (Host, Origin, content type, body size) and the folders
+/// file commands may use.
+mod guard;
 mod history;
 mod land;
 mod list;
@@ -36,9 +39,11 @@ mod view;
 mod window;
 
 use std::collections::VecDeque;
+use std::io::Read;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
@@ -66,6 +71,9 @@ const DEFAULT_PORT: u16 = 4817;
 /// normally takes milliseconds; a long `step` or a stalled window can take
 /// longer, and the caller gets a 504 rather than hanging forever.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long to wait for a command the main thread has already started
+/// (a `step` of many days can run for a minute).
+const LONG_REPLY_TIMEOUT: Duration = Duration::from_secs(300);
 /// Events kept for `events {since}`; at 256× a busy city makes hundreds a
 /// second, so a poll every few seconds still sees everything.
 const EVENT_RING: usize = 2000;
@@ -85,7 +93,7 @@ impl Plugin for RemotePlugin {
         match tiny_http::Server::http(("127.0.0.1", port)) {
             Ok(server) => {
                 info!("remote API listening on http://127.0.0.1:{port}  (POST /cmd, GET /status)");
-                std::thread::Builder::new().name("nd-remote-http".into()).spawn(move || serve(server, tx)).expect("spawn remote http thread");
+                std::thread::Builder::new().name("nd-remote-http".into()).spawn(move || serve(server, tx, port)).expect("spawn remote http thread");
             }
             Err(e) => {
                 warn!("remote API could not bind 127.0.0.1:{port}: {e}; set ND_REMOTE_PORT or ND_REMOTE=0");
@@ -99,15 +107,23 @@ impl Plugin for RemotePlugin {
             .init_resource::<WindowRequests>()
             .add_systems(Update, remote_commands.in_set(SimSet::Input).before(crate::tools::tool_input))
             .add_systems(Update, (log_events, follow_target, record_history).in_set(SimSet::Sync))
-            .add_systems(bevy_egui::EguiPrimaryContextPass, window::apply_window_requests);
+            // Before the panel draws, so a request shows the same frame.
+            .add_systems(bevy_egui::EguiPrimaryContextPass, window::apply_window_requests.before(crate::ui::side_panel));
     }
 }
 
-/// One parked request: the parsed command and where the reply goes.
+/// One parked request: the parsed command, where the reply goes, and
+/// whether it is still wanted ([`QUEUED`] until the main thread takes it,
+/// [`CANCELLED`] if the HTTP side gave up first).
 struct Pending {
     cmd: Value,
     reply: Sender<Reply>,
+    state: Arc<AtomicU8>,
 }
+
+const QUEUED: u8 = 0;
+const TAKEN: u8 = 1;
+const CANCELLED: u8 = 2;
 
 struct Reply {
     status: u16,
@@ -143,47 +159,96 @@ impl EventLog {
 }
 
 /// `camera {follow: id}` keeps the orbit target on a moving thing until the
-/// next camera command.
+/// next camera command. The second field is the `Sim::generation` the
+/// target belongs to.
 #[derive(Resource, Default)]
-struct Follow(Option<Selection>);
+struct Follow(Option<Selection>, u64);
 
 // ── HTTP thread ─────────────────────────────────────────────────────────────
 
-fn serve(server: tiny_http::Server, tx: Sender<Pending>) {
-    for mut req in server.incoming_requests() {
-        // Owned copies: reading the body borrows the request mutably.
-        let method = req.method().as_str().to_string();
-        let url = req.url().split('?').next().unwrap_or("").to_string();
-        let cmd = match (method.as_str(), url.as_str()) {
-            ("GET", "/status") | ("GET", "/status/") => Ok(json!({ "cmd": "status" })),
-            ("GET", "/help") => Ok(json!({ "cmd": "help" })),
-            ("POST", "/cmd") | ("POST", "/cmd/") | ("POST", "/") => {
-                let mut body = String::new();
-                match req.as_reader().read_to_string(&mut body) {
-                    Ok(_) => serde_json::from_str::<Value>(&body).map_err(|e| (400, format!("body is not JSON: {e}"))),
-                    Err(e) => Err((400, format!("could not read body: {e}"))),
-                }
-            }
-            _ => Err((404, "use POST /cmd with a JSON body {\"cmd\": ...}, or GET /status".to_string())),
-        };
-        let reply = match cmd {
-            Err((status, error)) => Reply { status, body: json!({ "ok": false, "error": error }) },
-            Ok(cmd) => {
-                let (reply_tx, reply_rx) = mpsc::channel();
-                if tx.send(Pending { cmd, reply: reply_tx }).is_err() {
-                    // The app is shutting down; the receiver is gone.
-                    return;
-                }
-                match reply_rx.recv_timeout(REPLY_TIMEOUT) {
-                    Ok(r) => r,
-                    Err(_) => Reply { status: 504, body: json!({ "ok": false, "error": "the game did not answer in time (frame stalled or window closing)" }) },
-                }
-            }
-        };
-        let text = reply.body.to_string();
-        let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).expect("static header");
-        let _ = req.respond(tiny_http::Response::from_string(text).with_status_code(reply.status).with_header(header));
+fn serve(server: tiny_http::Server, tx: Sender<Pending>, port: u16) {
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    for req in server.incoming_requests() {
+        // One thread per request, so a client that trickles its body holds
+        // up only itself; capped, so a flood is answered 503 at once.
+        if in_flight.fetch_add(1, Ordering::SeqCst) >= guard::MAX_IN_FLIGHT {
+            in_flight.fetch_sub(1, Ordering::SeqCst);
+            respond(req, Reply { status: 503, body: json!({ "ok": false, "error": "too many requests at once; retry" }) });
+            continue;
+        }
+        let tx = tx.clone();
+        let count = in_flight.clone();
+        let spawned = std::thread::Builder::new().name("nd-remote-req".into()).spawn(move || {
+            handle(req, &tx, port);
+            count.fetch_sub(1, Ordering::SeqCst);
+        });
+        if spawned.is_err() {
+            in_flight.fetch_sub(1, Ordering::SeqCst);
+        }
     }
+}
+
+fn respond(req: tiny_http::Request, reply: Reply) {
+    let text = reply.body.to_string();
+    let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).expect("static header");
+    let _ = req.respond(tiny_http::Response::from_string(text).with_status_code(reply.status).with_header(header));
+}
+
+/// One request, on its own thread: check who is asking (before reading the
+/// body), read a bounded body, queue the command and wait for its reply.
+fn handle(mut req: tiny_http::Request, tx: &Sender<Pending>, port: u16) {
+    // Owned copies: reading the body borrows the request mutably.
+    let method = req.method().as_str().to_string();
+    let url = req.url().split('?').next().unwrap_or("").to_string();
+    let headers: Vec<(String, String)> = req.headers().iter().map(|h| (h.field.as_str().as_str().to_string(), h.value.as_str().to_string())).collect();
+    if let Err((status, error)) = guard::check_headers(&method, &headers, port) {
+        return respond(req, Reply { status, body: json!({ "ok": false, "error": error }) });
+    }
+    let cmd = match (method.as_str(), url.as_str()) {
+        ("GET", "/status") | ("GET", "/status/") => Ok(json!({ "cmd": "status" })),
+        ("GET", "/help") => Ok(json!({ "cmd": "help" })),
+        ("POST", "/cmd") | ("POST", "/cmd/") | ("POST", "/") => read_body(&mut req),
+        _ => Err((404, "use POST /cmd with a JSON body {\"cmd\": ...}, or GET /status".to_string())),
+    };
+    let reply = match cmd {
+        Err((status, error)) => Reply { status, body: json!({ "ok": false, "error": error }) },
+        Ok(cmd) => {
+            let (reply_tx, reply_rx) = mpsc::channel();
+            let state = Arc::new(AtomicU8::new(QUEUED));
+            if tx.send(Pending { cmd, reply: reply_tx, state: state.clone() }).is_err() {
+                // The app is shutting down; the receiver is gone.
+                return;
+            }
+            match reply_rx.recv_timeout(REPLY_TIMEOUT) {
+                Ok(r) => r,
+                // Not started yet: withdraw it, so the caller can retry
+                // without the command running twice.
+                Err(_) if state.compare_exchange(QUEUED, CANCELLED, Ordering::SeqCst, Ordering::SeqCst).is_ok() => {
+                    Reply { status: 504, body: json!({ "ok": false, "error": "the game did not answer in time (frame stalled or window closing); the command was withdrawn and did not run" }) }
+                }
+                // Already running (a long `step`): its answer is coming.
+                Err(_) => match reply_rx.recv_timeout(LONG_REPLY_TIMEOUT) {
+                    Ok(r) => r,
+                    Err(_) => Reply { status: 504, body: json!({ "ok": false, "error": "the command started but did not finish in time; it may still take effect" }) },
+                },
+            }
+        }
+    };
+    respond(req, reply);
+}
+
+/// The body as JSON, at most [`guard::MAX_BODY`] bytes.
+fn read_body(req: &mut tiny_http::Request) -> Result<Value, (u16, String)> {
+    let too_big = || (413, format!("body larger than {} bytes", guard::MAX_BODY));
+    if req.body_length().is_some_and(|n| n > guard::MAX_BODY) {
+        return Err(too_big());
+    }
+    let mut body = Vec::new();
+    req.as_reader().take(guard::MAX_BODY as u64 + 1).read_to_end(&mut body).map_err(|e| (400, format!("could not read body: {e}")))?;
+    if body.len() > guard::MAX_BODY {
+        return Err(too_big());
+    }
+    serde_json::from_slice::<Value>(&body).map_err(|e| (400, format!("body is not JSON: {e}")))
 }
 
 // ── main-thread systems ─────────────────────────────────────────────────────
@@ -221,6 +286,11 @@ fn remote_commands(inbox: Res<Inbox>, mut ctx: Ctx) {
         Err(_) => return,
     };
     for p in batch {
+        // Withdrawn after a 504: running it now would surprise a client
+        // that was told it did not run.
+        if p.state.compare_exchange(QUEUED, TAKEN, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+            continue;
+        }
         let reply = match execute(&p.cmd, &mut ctx) {
             Ok(mut body) => {
                 if body.get("ok").is_none() {
@@ -299,12 +369,17 @@ fn log_events(sim: Res<Sim>, flags: Res<UiFlags>, tools: Res<ToolState>, mut log
 /// Sample the city into the history rings when an hour or a day turns
 /// (cheap otherwise: a few integer compares and four counters copied).
 fn record_history(sim: Res<Sim>, mut history: ResMut<History>) {
+    history.follow_city(sim.generation, &sim.world, "city replaced");
     history.observe(&sim.world);
 }
 
 /// Keep the orbit target on the followed citizen or car; drop the follow
 /// when they are gone.
 fn follow_target(sim: Res<Sim>, mut follow: ResMut<Follow>, mut cams: Query<&mut OrbitCamera>) {
+    // A loaded city reuses ids: the followed one would be someone else.
+    if follow.1 != sim.generation {
+        *follow = Follow(None, sim.generation);
+    }
     let Some(sel) = follow.0 else { return };
     let w = &sim.world;
     // Where the car is drawn this frame, not where it ends the tick: the
@@ -379,32 +454,36 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(json!({ "ticks": n, "clock": clock(&ctx.sim), "took_ms": start.elapsed().as_millis() as u64 }))
         }
         "seed_demo" => {
+            ctx.saves.title = false;
             ctx.sim.seed_demo_district();
             ctx.tools.status = "Demo district laid out around the centre".into();
             Ok(json!({ "buildings": ctx.sim.world.buildings.len(), "lots": ctx.sim.world.lots.len() }))
         }
         "save" => save(cmd, ctx),
         "load" => {
-            let path = PathBuf::from(req_str(cmd, "path")?);
+            let path = allowed_path(req_str(cmd, "path")?, "ron", false)?;
             let Ctx { sim, tools, selection, eplan, flags, saves, follow, .. } = &mut *ctx;
             load_now(&path, sim, tools, selection, eplan, flags);
             saves.mark_dirty();
+            saves.title = false;
             follow.0 = None;
             if flags.message.starts_with("load failed") {
                 return Err(flags.message.clone());
             }
-            ctx.history.reset(&ctx.sim.world, "city loaded");
+            ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "city loaded");
             Ok(json!({ "message": ctx.flags.message, "clock": clock(&ctx.sim), "paused": ctx.sim.paused }))
         }
         "new_game" => {
             let params = land::params_from(cmd)?;
+            ctx.saves.title = false;
+            ctx.sim.paused = false;
             ctx.sim.new_game(params);
             *ctx.tools = ToolState::default();
             *ctx.selection = Selection::None;
             ctx.eplan.invalidate();
             ctx.follow.0 = None;
             ctx.tools.status = format!("New city: {} landscape", ctx.sim.world.landscape.params.preset.label());
-            ctx.history.reset(&ctx.sim.world, "new game");
+            ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "new game");
             Ok(land::summary(&ctx.sim.world))
         }
         "terrain_at" => Ok(land::terrain_at(&ctx.sim.world, req_point(cmd)?)),
@@ -457,7 +536,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(json!({ "building": key_str(id), "price": set }))
         }
         "select" => select(cmd, ctx),
-        "selected" => Ok(selected_detail(&ctx.sim.world, *ctx.selection, ctx.tools.route_sel, &ctx.assets, &ctx.tools.favorites)),
+        "selected" => Ok(selected_detail(&ctx.sim, *ctx.selection, ctx.tools.route_sel, &ctx.assets, &ctx.tools.favorites)),
         "flags" => flags_cmd(cmd, ctx),
         "flag" => {
             // Flag the current selection from the API, as F8 does in game.
@@ -465,7 +544,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let w = &ctx.sim.world;
             let sel = *ctx.selection;
             let look = ctx.cams.iter().next().map_or([0.0, 0.0], |c| [c.target.x, c.target.z]);
-            let snapshot = selected_detail(w, sel, ctx.tools.route_sel, &ctx.assets, &ctx.tools.favorites);
+            let snapshot = selected_detail(&ctx.sim, sel, ctx.tools.route_sel, &ctx.assets, &ctx.tools.favorites);
             let brief = selection_json_brief(w, sel);
             let f = ctx.claude.add(w.clock.tick, sel, brief, note, look, snapshot).clone();
             Ok(json!({ "flag": crate::flags::flag_json(&f, None) }))
@@ -485,45 +564,75 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "tool" => tool(cmd, ctx),
         "camera" => camera(cmd, ctx),
         "overlay" => {
+            // Map layers are exclusive (`crate::map_layers`): turning one on
+            // turns every other off; turning the one showing off leaves none.
+            use crate::map_layers::{self as ml, LayerId};
             let o = &mut ctx.overlays;
-            // `{layer, on}` (on omitted toggles), and the older form with a
-            // bool per layer name.
+            let unknown = |k: &str| format!("unknown layer {k:?}; one of none, {}", ml::keys().join(", "));
+            let parse = |k: &str| -> Result<Option<LayerId>, String> {
+                if k.is_empty() || k.eq_ignore_ascii_case("none") || k.eq_ignore_ascii_case("off") {
+                    Ok(None)
+                } else {
+                    LayerId::parse(k).map(Some).ok_or_else(|| unknown(k))
+                }
+            };
+            let switch = |o: &mut Overlays, l: LayerId, on: bool| {
+                if on {
+                    ml::set_active(o, Some(l));
+                } else if ml::active(o) == Some(l) {
+                    ml::set_active(o, None);
+                }
+            };
+            // `{active: "traffic" | "none"}`: the layer to show.
+            match cmd.get("active") {
+                None => {}
+                Some(Value::Null) => ml::set_active(o, None),
+                Some(_) => {
+                    let k = opt_str(cmd, "active")?.unwrap_or("none");
+                    ml::set_active(o, parse(k)?);
+                }
+            }
+            // `{layer, on}` (on omitted toggles).
             if let Some(layer) = opt_str(cmd, "layer")? {
                 let on = opt_bool(cmd, "on")?;
-                if let Some(flag) = o.flag(layer) {
-                    *flag = on.unwrap_or(!*flag);
-                } else if let Some(l) = LandLayer::from_key(layer) {
-                    // Land survey layers are one at a time: on shows this
-                    // one (replacing any other), off hides it.
-                    let now = o.land == Some(l);
-                    o.land = if on.unwrap_or(!now) { Some(l) } else if now { None } else { o.land };
+                if layer == "projects" {
+                    o.projects = on.unwrap_or(!o.projects);
                 } else {
-                    return Err(format!(
-                        "unknown layer {layer:?}; one of {}, or a land layer: {}",
-                        Overlays::LAYERS.iter().map(|l| l.0).collect::<Vec<_>>().join(", "),
-                        LandLayer::ALL.iter().map(|l| l.key()).collect::<Vec<_>>().join(", ")
-                    ));
-                }
-            }
-            // `{land: "oil"}` picks the land layer, `"none"` (or null) hides it.
-            match cmd.get("land") {
-                None => {}
-                Some(Value::Null) => o.land = None,
-                Some(_) => {
-                    let k = opt_str(cmd, "land")?.unwrap_or("none");
-                    o.land = if k.eq_ignore_ascii_case("none") || k.eq_ignore_ascii_case("off") || k.is_empty() {
-                        None
-                    } else {
-                        Some(LandLayer::from_key(k).ok_or_else(|| format!("unknown land layer {k:?}; one of none, {}", LandLayer::ALL.iter().map(|l| l.key()).collect::<Vec<_>>().join(", ")))?)
-                    };
-                }
-            }
-            for (name, _, _) in Overlays::LAYERS {
-                if let Some(b) = opt_bool(cmd, name)? {
-                    if let Some(f) = o.flag(name) {
-                        *f = b;
+                    match parse(layer)? {
+                        Some(l) => {
+                            let now = ml::active(o) == Some(l);
+                            switch(o, l, on.unwrap_or(!now));
+                        }
+                        None => ml::set_active(o, None),
                     }
                 }
+            }
+            // `{land: "oil"}` shows a land layer, `"none"` (or null) hides
+            // whichever land layer shows.
+            match cmd.get("land") {
+                None => {}
+                Some(Value::Null) => {
+                    if o.land.is_some() {
+                        o.land = None;
+                    }
+                }
+                Some(_) => {
+                    let k = opt_str(cmd, "land")?.unwrap_or("none");
+                    match parse(k)? {
+                        Some(l @ LayerId::Land(_)) => ml::set_active(o, Some(l)),
+                        Some(_) => return Err(format!("{k:?} is not a land layer; one of none, {}", LandLayer::ALL.iter().map(|l| l.key()).collect::<Vec<_>>().join(", "))),
+                        None => o.land = None,
+                    }
+                }
+            }
+            // The older form, a bool per layer name: true shows it (alone).
+            for l in ml::MAP_LAYERS {
+                if let Some(b) = opt_bool(cmd, l.key)? {
+                    switch(o, LayerId::parse(l.key).expect("registry key"), b);
+                }
+            }
+            if let Some(b) = opt_bool(cmd, "projects")? {
+                o.projects = b;
             }
             Ok(overlays_json(o))
         }
@@ -609,6 +718,25 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let open = opt_bool(cmd, "open")?.unwrap_or(true);
             ctx.windows.new_game = Some(open);
             Ok(json!({ "window": "new game", "open": open }))
+        }
+        "window" if req_str(cmd, "name").is_ok_and(|n| n.trim().eq_ignore_ascii_case("build")) => {
+            // The Build window, optionally at a section.
+            let section = match opt_str(cmd, "section")? {
+                Some(k) => Some(crate::ui::build::Cat::parse(k).ok_or_else(|| format!("unknown section {k:?}; one of {}", crate::ui::build::Cat::ALL.iter().map(|c| c.key()).collect::<Vec<_>>().join(", ")))?),
+                None => None,
+            };
+            let open = opt_bool(cmd, "open")?.unwrap_or(if section.is_some() { true } else { !ctx.windows.build_open });
+            ctx.windows.build = Some((open, section));
+            Ok(json!({ "window": "build", "open": open, "section": section.map(|c| c.key()).or(ctx.windows.build_section) }))
+        }
+        "window" if req_str(cmd, "name").is_ok_and(|n| matches!(n.trim().to_ascii_lowercase().as_str(), "title" | "title_screen" | "title screen")) => {
+            let open = opt_bool(cmd, "open")?.unwrap_or(!ctx.saves.title);
+            ctx.saves.title = open;
+            if !open {
+                // As "Play this map": the city behind runs again.
+                ctx.sim.paused = false;
+            }
+            Ok(json!({ "window": "title", "open": open }))
         }
         "window" => {
             let info = window::info_of(req_str(cmd, "name")?)?;
@@ -700,6 +828,10 @@ fn project_state(ctx: &Ctx) -> Value {
         "project": w.project.as_ref().map(|p| json!({ "id": p.id, "name": p.name, "steps": p.steps.len(), "redo": p.redo.len() })),
         "projects": projects,
         "warnings": w.plan_warnings,
+        // The last implement refused (its roads would take a city
+        // structure), and the structures the pending roads run over now.
+        "implement_refused": w.implement_refused,
+        "blockers": w.project_blockers().iter().map(|b| json!({ "id": key_str(*b), "name": w.buildings.get(*b).map(|x| x.name.clone()) })).collect::<Vec<_>>(),
         "gestures": w.effective_plan().gestures.len(),
         "plan_version": w.plan_version,
     })
@@ -760,8 +892,18 @@ fn project(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let id = need(target)?;
             let warnings = w.implement_project(id).ok_or_else(|| format!("no project {id}"))?;
             ctx.tools.points.clear();
-            ctx.tools.status = if warnings.is_empty() { "Project implemented".into() } else { format!("Project implemented. {}", warnings.join(" ")) };
-            json!(true)
+            match w.implement_refused.clone() {
+                // Its roads would take a city structure: still pending, and
+                // the reply's `refused` and `blockers` say which.
+                Some(why) => {
+                    ctx.tools.status = why;
+                    json!(false)
+                }
+                None => {
+                    ctx.tools.status = if warnings.is_empty() { "Project implemented".into() } else { format!("Project implemented. {}", warnings.join(" ")) };
+                    json!(true)
+                }
+            }
         }
         "undo" => json!(target.is_some_and(|id| w.undo_project(id))),
         "redo" => json!(target.is_some_and(|id| w.redo_project(id))),
@@ -814,7 +956,7 @@ fn paint(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     v["touched"] = json!(ids.len());
     v["painted"] = json!(painted);
     v["refused"] = json!(refused);
-    v["implemented"] = json!(implemented);
+    v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
     Ok(v)
 }
 
@@ -828,6 +970,7 @@ fn status(ctx: &Ctx) -> Value {
     let sites = w.buildings.values().filter(|b| b.construction.is_some()).count();
     let fps = ctx.diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
     let ledger: serde_json::Map<String, Value> = e.ledger.yesterday_sorted().into_iter().map(|(f, x)| (f.label().to_string(), json!(round(x)))).collect();
+    let power_rows = report::power_json(w, false);
     let mut v = json!({
         "clock": clock(sim), "paused": sim.paused, "speed_index": sim.speed_index, "speed": sim.speed(), "speed_label": SPEEDS[sim.speed_index].0,
         "effective_speed": round(sim.effective_speed), "ticks_last_frame": sim.ticks_last_frame,
@@ -836,7 +979,13 @@ fn status(ctx: &Ctx) -> Value {
         "homes": { "used": e.homes_total - e.homes_free, "total": e.homes_total }, "jobs": { "used": e.jobs_total - e.jobs_free, "total": e.jobs_total },
         "waiting_immigrants": e.waiting_immigrants, "unhoused": e.unhoused, "unemployed": e.unemployed,
         "treasury": round(e.treasury), "tax_today": round(e.tax_today), "ledger_yesterday": ledger,
-        "power": { "supply_mw": round(p.supply_mw), "imported_mw": round(p.imported_mw), "demand_mw": round(p.demand_mw), "served": round(p.served), "plants": p.plants, "unpowered_buildings": p.unpowered_buildings, "brownout_hours_today": p.brownout_hours_today, "upkeep_today": round(p.upkeep_today), "import_cost_today": round(p.import_cost_today) },
+        "power": {
+            "supply_mw": round(p.supply_mw), "imported_mw": round(p.imported_mw), "exported_mw": round(p.exported_mw), "demand_mw": round(p.demand_mw), "served": round(p.served),
+            "plants": p.plants, "unpowered_buildings": p.unpowered_buildings, "brownout_hours_today": p.brownout_hours_today, "upkeep_today": round(p.upkeep_today),
+            "import_cost_today": round(p.import_cost_today), "export_income_today": round(p.export_income_today),
+            "batteries": { "count": p.batteries, "charge_mwh": round(p.battery_charge_mwh), "capacity_mwh": round(p.battery_capacity_mwh), "charging_mw": round(p.battery_in_mw), "discharging_mw": round(p.battery_out_mw) },
+            "rows": { "plants": power_rows["plants"], "batteries": power_rows["batteries"] },
+        },
         "weather": { "label": w.weather.label(), "cloud": round(w.weather.cloud), "wind": round(w.weather.wind) },
         "land": { "avg_land_value": round(e.avg_land_value), "gini": round(e.gini), "displaced_total": e.displaced_total, "emigrated_total": e.emigrated_total, "priced_out_total": e.priced_out_total, "tier_counts": e.tier_counts, "class_counts": e.class_counts, "avg_rent": e.avg_rent.map(round) },
         "market": { "businesses": e.market.businesses, "deals_today": e.market.deals_today, "imports_today": round(e.market.imports_today), "exports_today": round(e.market.exports_today), "meals_sold_today": e.market.meals_sold_today, "hungry": e.market.hungry, "closed_total": e.market.closed_total },
@@ -858,6 +1007,8 @@ fn status(ctx: &Ctx) -> Value {
     // Added after the literal: one `json!` this size hits the macro recursion limit.
     v["windows_open"] = json!(ctx.windows.open_names());
     v["window_expanded"] = json!(ctx.windows.expanded_name());
+    v["build_window"] = json!({ "open": ctx.windows.build_open, "section": ctx.windows.build_section });
+    v["title_screen"] = json!(ctx.saves.title);
     // [looks] The figure cache: meshes alive, people outdoors and their distinct looks.
     let st = &ctx.stats;
     v["render"]["people"] = json!({ "meshes": st.people_meshes, "mesh_cap": crate::render::PEOPLE_MESH_CAP, "visible": st.people_visible, "distinct_looks_visible": st.people_looks_visible, "built_total": st.people_built, "borrowed": st.people_borrowed, "materials": 1 });
@@ -873,12 +1024,21 @@ fn status(ctx: &Ctx) -> Value {
 // ── saves ───────────────────────────────────────────────────────────────────
 
 fn save(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    if let Some(name) = opt_str(cmd, "name")? {
+        // A named game: saves/<file-safe name>.ron, its sidecar and picture.
+        let Ctx { sim, saves, flags, .. } = ctx;
+        let path = crate::ui::save_as(sim, saves, flags, name)?;
+        let p = slash(&path);
+        return Ok(json!({ "path": absolute(&p), "name": name.trim(), "thumbnail": absolute(&p.replace(".ron", ".png")), "meta": absolute(&p.replace(".ron", ".meta.json")), "note": "the thumbnail is written about half a second later (rendered offscreen)", "message": flags.message }));
+    }
     match opt_str(cmd, "path")? {
-        Some(path) => {
-            ctx.sim.save(path)?;
+        Some(raw) => {
+            let path = allowed_path(raw, "ron", true)?;
+            let shown = path.to_string_lossy().replace('\\', "/");
+            ctx.sim.save(&path)?;
             ctx.saves.mark_dirty();
-            ctx.flags.message = format!("saved {path}");
-            Ok(json!({ "path": absolute(path) }))
+            ctx.flags.message = format!("saved {shown}");
+            Ok(json!({ "path": shown }))
         }
         None => {
             let Ctx { sim, saves, flags, .. } = ctx;
@@ -886,26 +1046,53 @@ fn save(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             if flags.message.starts_with("save failed") {
                 return Err(flags.message.clone());
             }
-            Ok(json!({ "path": absolute(crate::ui::LATEST), "message": flags.message }))
+            Ok(json!({ "path": absolute(crate::ui::LATEST), "thumbnail": absolute("saves/city.png"), "message": flags.message }))
         }
     }
 }
 
+/// A path with forward slashes.
+fn slash(p: &std::path::Path) -> String {
+    p.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")
+}
+
+/// Every save, newest first, with what its sidecar knows and its picture.
 fn list_saves() -> Value {
-    let mut rows: Vec<(u64, Value)> = std::fs::read_dir("saves")
-        .map(|dir| {
-            dir.flatten()
-                .filter(|e| e.path().extension().is_some_and(|x| x == "ron"))
-                .map(|e| {
-                    let modified = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
-                    let size = e.metadata().map_or(0, |m| m.len());
-                    (modified, json!({ "path": e.path().to_string_lossy().replace('\\', "/"), "modified_unix": modified, "bytes": size }))
-                })
-                .collect()
+    let rows: Vec<Value> = crate::ui::saves::scan()
+        .into_iter()
+        .map(|s| {
+            let modified = s.modified.and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+            let bytes = std::fs::metadata(&s.path).map_or(0, |m| m.len());
+            json!({
+                "path": slash(&s.path),
+                "name": s.label,
+                "kind": s.kind.key(),
+                "modified_unix": modified,
+                "bytes": bytes,
+                "day": s.meta.as_ref().map(|m| m.day),
+                "population": s.meta.as_ref().map(|m| m.population),
+                "treasury": s.meta.as_ref().map(|m| round(m.treasury)),
+                "buildings": s.meta.as_ref().map(|m| m.buildings),
+                "landscape": s.meta.as_ref().map(|m| m.landscape.clone()),
+                "thumbnail": s.picture.as_ref().filter(|p| p.exists()).map(|p| absolute(&slash(p))),
+            })
         })
-        .unwrap_or_default();
-    rows.sort_by(|a, b| b.0.cmp(&a.0));
-    json!({ "saves": rows.into_iter().map(|(_, v)| v).collect::<Vec<_>>(), "latest": crate::ui::LATEST })
+        .collect();
+    json!({ "saves": rows, "latest": crate::ui::LATEST })
+}
+
+/// A path a file command may use (see `guard::confine`): inside saves/,
+/// screenshots/ or exports/ under the working directory, or the temp
+/// folder, ending in `.ext`. `write` makes its folder.
+fn allowed_path(raw: &str, ext: &str, write: bool) -> Result<PathBuf, String> {
+    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+    let path = guard::confine(raw, ext, &cwd, &std::env::temp_dir())?;
+    if write {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        }
+    }
+    Ok(path)
 }
 
 fn absolute(path: &str) -> String {
@@ -940,12 +1127,15 @@ fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         return Err("a road needs at least two points".into());
     }
     let kind = opt_str(cmd, "kind")?.map(road_kind_of).transpose()?.unwrap_or(RoadKind::Street);
-    let (lf, lb) = if kind == RoadKind::Street { (opt_u64(cmd, "lanes_fwd")?.unwrap_or(1) as u8, opt_u64(cmd, "lanes_bwd")?.unwrap_or(1) as u8) } else { (0, 0) };
-    if kind == RoadKind::Street && lf + lb == 0 {
-        return Err("a street needs at least one lane".into());
-    }
+    // Range-checked as u64 before narrowing: `as u8` wrapped 257 to 1, and
+    // a u8 sum of 200 + 100 overflowed (a panic in a dev build).
+    let (lf, lb) = if kind == RoadKind::Street { (opt_u64(cmd, "lanes_fwd")?.unwrap_or(1), opt_u64(cmd, "lanes_bwd")?.unwrap_or(1)) } else { (0, 0) };
     if lf > 4 || lb > 4 {
         return Err("lanes are 0..4 per direction".into());
+    }
+    let (lf, lb) = (lf as u8, lb as u8);
+    if kind == RoadKind::Street && lf + lb == 0 {
+        return Err("a street needs at least one lane".into());
     }
     // Snap the ends to the network like the Road tool does, so the road
     // joins existing roads instead of stopping a metre short of them.
@@ -970,10 +1160,13 @@ fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if implemented {
         ctx.sim.world.implement();
     }
-    ctx.tools.status = format!("{} added by remote{}", match kind { RoadKind::Path => "path", RoadKind::Rail => "track", RoadKind::Street => "road" }, if implemented { " and implemented" } else { " (pending)" });
+    ctx.tools.status = match &ctx.sim.world.implement_refused {
+        Some(why) if implemented => why.clone(),
+        _ => format!("{} added by remote{}", match kind { RoadKind::Path => "path", RoadKind::Rail => "track", RoadKind::Street => "road" }, if implemented { " and implemented" } else { " (pending)" }),
+    };
     let mut v = project_state(ctx);
     v["gesture_id"] = json!(id.0);
-    v["implemented"] = json!(implemented);
+    v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
     v["grade_warnings"] = json!(warnings);
     Ok(v)
 }
@@ -989,7 +1182,7 @@ fn add_roundabout(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         (None, Some(d)) => d * 0.5,
         (None, None) => ctx.tools.ring_radius,
     };
-    let lanes = opt_u64(cmd, "lanes")?.map_or(ctx.tools.ring_lanes, |n| n as u8);
+    let lanes = opt_u64(cmd, "lanes")?.map_or(ctx.tools.ring_lanes, |n| u8::try_from(n).unwrap_or(u8::MAX));
     if !(1..=nd_sim::roads::RING_MAX_LANES).contains(&lanes) {
         return Err("a roundabout has 1, 2 or 3 ring lanes".into());
     }
@@ -1004,7 +1197,7 @@ fn add_roundabout(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     ctx.tools.status = format!("Roundabout {:.0} m across added by remote{}", ring.radius * 2.0, if implemented { " and implemented" } else { " (pending)" });
     let mut v = project_state(ctx);
     v["gesture_id"] = json!(id.0);
-    v["implemented"] = json!(implemented);
+    v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
     v["roundabout"] = json!({
         "center": [ring.center.x, ring.center.y], "radius": ring.radius, "diameter": ring.radius * 2.0, "lanes": ring.lanes,
         "joins": fx.joins.iter().map(|p| json!([p.x, p.y])).collect::<Vec<_>>(),
@@ -1028,7 +1221,7 @@ fn add_zone(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     ctx.tools.status = format!("{} zone added by remote{}", land_use.label(), if implemented { " and implemented" } else { " (pending)" });
     let mut v = project_state(ctx);
     v["gesture_id"] = json!(id.0);
-    v["implemented"] = json!(implemented);
+    v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
     Ok(v)
 }
 
@@ -1091,7 +1284,7 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         other => {
             let tier = opt_str(cmd, "tier")?.map(|t| nd_sim::services::parse_tier(t).ok_or_else(|| format!("unknown tier {t:?}; low, mid or high"))).transpose()?;
-            let what = nd_sim::Placeable::parse(other, tier).ok_or_else(|| format!("unknown kind {other:?}; one of station, freight_yard, depot, parking, coal, solar, wind, nuclear, police, fire, hospital (clinic), school, dispatch, monument, stadium, vertiport (services take tier low|mid|high or a :tier suffix)"))?;
+            let what = nd_sim::Placeable::parse(other, tier).ok_or_else(|| format!("unknown kind {other:?}; one of station, freight_yard, depot, parking, coal, solar, wind, nuclear, hydro, tidal, geothermal, battery_small, battery_medium, battery_large, police, fire, hospital (clinic), school, dispatch, monument, stadium, vertiport (services take tier low|mid|high or a :tier suffix)"))?;
             let lot = lot_near(w, p).ok_or("no lot there: aim at a lot")?;
             let id = w.place_on_lot(what, lot)?;
             (id, format!("{} built for {:.0}; {:.0}/day", what.label(), what.cost(), what.upkeep()))
@@ -1256,6 +1449,7 @@ fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 return Err("no such stop".into());
             }
             w.remove_bus_stop(id, idx);
+            ctx.tools.stop_sel = None;
             let alive = w.transit.routes.contains_key(id);
             if !alive && ctx.tools.route_sel == Some(id) {
                 ctx.tools.route_sel = None;
@@ -1277,7 +1471,43 @@ fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(json!({ "removed": key_str(id), "routes": w.transit.routes.len() }))
         }
         "list" => Ok(json!({ "routes": w.transit.routes.iter().map(|(id, r)| route_row(id, r)).collect::<Vec<_>>() })),
-        _ => Err(format!("unknown bus action {action:?}; one of new_route, add_stop, move_stop, remove_stop, set_buses, remove_route, list")),
+        // [lines] The Lines window's figures for one line.
+        "line" => {
+            let id = route_arg(w)?;
+            Ok(view::line_detail(w, id))
+        }
+        "rename" => {
+            let id = route_arg(w)?;
+            w.rename_bus_route(id, req_str(cmd, "name")?)?;
+            Ok(json!({ "route": key_str(id), "row": route_row(id, &w.transit.routes[id]) }))
+        }
+        "recolour" | "recolor" => {
+            let id = route_arg(w)?;
+            let c = opt_u64(cmd, "color")?.ok_or("missing color (0..7)")?;
+            w.recolour_bus_route(id, (c % nd_sim::vehicle::PAINTS as u64) as u8)?;
+            Ok(json!({ "route": key_str(id), "row": route_row(id, &w.transit.routes[id]) }))
+        }
+        // Mark a stop on the map as the Lines window's "show" does; no
+        // route clears the mark. look: true also points the camera at it.
+        "select_stop" => {
+            if field(cmd, "route").is_none() {
+                ctx.tools.stop_sel = None;
+                return Ok(json!({ "stop": Value::Null }));
+            }
+            let id = route_arg(w)?;
+            let idx = opt_u64(cmd, "index")?.ok_or("missing stop index")? as usize;
+            let pos = w.transit.routes[id].stops.get(idx).ok_or("no such stop")?.pos;
+            ctx.tools.route_sel = Some(id);
+            ctx.tools.stop_sel = Some((id, idx));
+            if cmd.get("look").and_then(Value::as_bool).unwrap_or(false) {
+                for mut cam in ctx.cams.iter_mut() {
+                    cam.target = bevy::prelude::Vec3::new(pos.x, 0.0, pos.y);
+                    cam.distance = cam.distance.min(120.0);
+                }
+            }
+            Ok(json!({ "route": key_str(id), "index": idx, "pos": [pos.x, pos.y] }))
+        }
+        _ => Err(format!("unknown bus action {action:?}; one of select, new_route, add_stop, move_stop, remove_stop, set_buses, remove_route, rename, recolour, line, select_stop, list")),
     }
 }
 
@@ -1505,7 +1735,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(v) = field(cmd, "building") {
         let id = key_from(v)?;
         let b = w.buildings.get(id).ok_or("no such building")?;
-        let mut v = building_detail(w, id, b, building_style(w, b, &ctx.assets));
+        let mut v = building_detail(w, id, b, building_style(&ctx.sim, id, &ctx.assets));
         v["place"] = places::building_place(w, id);
         return Ok(json!({ "building": v }));
     }
@@ -1596,23 +1826,18 @@ pub fn selection_json_brief(w: &nd_sim::World, sel: Selection) -> Value {
     selection(w, sel)
 }
 
-/// The building style label, as the inspector shows it.
-fn building_style(w: &nd_sim::World, b: &nd_sim::Building, assets: &GameAssets) -> &'static str {
-    let _ = w;
-    match b.service {
-        Some(s) => nd_procgen::buildings::Style::for_service(s.kind).label(),
-        // [subway]
-        None if b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::Central) => nd_procgen::buildings::Style::CentralStation.label(),
-        None if b.metro => nd_procgen::buildings::Style::MetroEntrance.label(),
-        None => b.port.map(|k| k.label()).or(b.plant.map(|k| k.label())).unwrap_or(assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11)).label()),
-    }
+/// The building style label, as the inspector shows it: the style the
+/// renderer draws (`nd_procgen::building_style`, one decision for both).
+pub fn building_style(sim: &crate::sim::Sim, id: nd_sim::BuildingId, assets: &GameAssets) -> &'static str {
+    nd_procgen::building_style(&sim.world, id, &assets.rules, Some(&sim.styles)).map_or("unknown", |s| s.label())
 }
 
 /// Everything about what the player has selected, as `inspect` gives it,
 /// in one reply: a car with why it stands, the jam in front of it, its trip
 /// and lanes; a citizen (and the car they are driving); a building; a
 /// parked car; plus the bus line picked in the Transit window, if any.
-pub fn selected_detail(w: &nd_sim::World, sel: Selection, route_sel: Option<nd_sim::RouteId>, assets: &GameAssets, favourites: &[nd_sim::CitizenId]) -> Value {
+pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<nd_sim::RouteId>, assets: &GameAssets, favourites: &[nd_sim::CitizenId]) -> Value {
+    let w = &sim.world;
     let detail = match sel {
         Selection::None => Value::Null,
         Selection::Car(id) => w.traffic.cars.get(id).map_or(Value::Null, |c| car_detail(w, id, c)),
@@ -1631,7 +1856,7 @@ pub fn selected_detail(w: &nd_sim::World, sel: Selection, route_sel: Option<nd_s
         },
         Selection::Building(id) => match w.buildings.get(id) {
             Some(b) => {
-                let mut v = building_detail(w, id, b, building_style(w, b, assets));
+                let mut v = building_detail(w, id, b, building_style(sim, id, assets));
                 v["place"] = places::building_place(w, id);
                 v
             }
@@ -1654,15 +1879,14 @@ pub fn selected_detail(w: &nd_sim::World, sel: Selection, route_sel: Option<nd_s
 /// `flags {since?, clear?}`: the player's "Flag for Claude" bookmarks, each
 /// with its snapshot and the selection's live detail now.
 fn flags_cmd(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
-    let since = opt_u64(cmd, "since")?.unwrap_or(0) as u32;
-    let w = &ctx.sim.world;
+    let since = opt_u64(cmd, "since")?.unwrap_or(0).min(u32::MAX as u64) as u32;
     let rows: Vec<Value> = ctx
         .claude
         .list
         .iter()
         .filter(|f| f.id > since)
         .map(|f| {
-            let live = selected_detail(w, f.selection, None, &ctx.assets, &ctx.tools.favorites);
+            let live = selected_detail(&ctx.sim, f.selection, None, &ctx.assets, &ctx.tools.favorites);
             let now = (!live["detail"].is_null()).then_some(live["detail"].clone());
             crate::flags::flag_json(f, now)
         })
@@ -1731,7 +1955,7 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         t.ring_radius = (d * 0.5).clamp(nd_sim::roads::RING_MIN_RADIUS, nd_sim::roads::RING_MAX_RADIUS);
     }
     if let Some(n) = opt_u64(cmd, "ring_lanes")? {
-        t.ring_lanes = (n as u8).clamp(1, nd_sim::roads::RING_MAX_LANES);
+        t.ring_lanes = (n.min(u8::MAX as u64) as u8).clamp(1, nd_sim::roads::RING_MAX_LANES);
     }
     if let Some(preset) = opt_str(cmd, "preset").ok().flatten().filter(|p| p.eq_ignore_ascii_case("roundabout")) {
         let _ = preset;
@@ -1980,28 +2204,18 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
     }
     ctx.follow.0 = follow;
+    ctx.follow.1 = ctx.sim.generation;
     Ok(json!({ "camera": camera_pose(ctx), "following": follow.map(|s| selection(&ctx.sim.world, s)) }))
 }
 
 // ── screenshot ──────────────────────────────────────────────────────────────
 
 fn screenshot(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
-    let path = match opt_str(cmd, "path")? {
-        Some(p) => PathBuf::from(p),
-        None => {
-            let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            PathBuf::from("screenshots").join(format!("shot-{secs}.png"))
-        }
-    };
-    let path = if path.is_absolute() { path } else { std::env::current_dir().map_err(|e| e.to_string())?.join(path) };
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let default = format!("screenshots/shot-{secs}.png");
     // PNG only: Bevy's `jpeg` image feature is not enabled in this build,
     // and the failure would surface only as a log line, not as a reply.
-    if path.extension().is_none_or(|e| !e.eq_ignore_ascii_case("png")) {
-        return Err("screenshot path must end in .png".into());
-    }
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    }
+    let path = allowed_path(opt_str(cmd, "path")?.unwrap_or(&default), "png", true)?;
     // The capture runs in the render graph and the file is written by the
     // observer when the GPU copy lands, a frame or two from now; the reply
     // only promises the path.
@@ -2033,14 +2247,9 @@ fn opt_strings(cmd: &Value, name: &str) -> Result<Option<Vec<String>>, String> {
 /// directory (the repo root under `cargo run`; `/exports` is git-ignored).
 fn export(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let start = std::time::Instant::now();
-    let path = match opt_str(cmd, "path")? {
-        Some(p) => PathBuf::from(p),
-        None => {
-            let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-            PathBuf::from("exports").join(format!("city-{secs}.json"))
-        }
-    };
-    let path = if path.is_absolute() { path } else { std::env::current_dir().map_err(|e| e.to_string())?.join(path) };
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let default = format!("exports/city-{secs}.json");
+    let path = allowed_path(opt_str(cmd, "path")?.unwrap_or(&default), "json", true)?;
     let w = &ctx.sim.world;
     let mut tables = serde_json::Map::new();
     for what in list::WHATS {
@@ -2056,10 +2265,7 @@ fn export(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "tables": tables,
     });
     let text = serde_json::to_string(&doc).map_err(|e| e.to_string())?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    }
-    std::fs::write(&path, &text).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    crate::sim::write_atomic(&path, text.as_bytes()).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(json!({ "path": path.to_string_lossy().replace('\\', "/"), "bytes": text.len(), "took_ms": ms(start) }))
 }
 
@@ -2067,7 +2273,7 @@ fn export(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
 
 fn help() -> Value {
     let mut v = json!({
-        "transport": "POST http://127.0.0.1:4817/cmd with JSON {\"cmd\": name, ...fields}; GET /status. Replies {ok: true, ...} or {ok: false, error} with HTTP 400.",
+        "transport": "POST http://127.0.0.1:<port>/cmd (default port 4817) with JSON {\"cmd\": name, ...fields} and Content-Type: application/json (or the header X-ND-Remote: 1); GET /status, GET /help. Replies {ok: true, ...} or {ok: false, error} with HTTP 400. Requests from web pages (an Origin or Sec-Fetch-Site header from another site, a foreign Host) get 403; bodies over 1 MB 413; a 504 means the command was withdrawn unrun. See docs/REMOTE.md.",
         "start_here": "to review the city: status -> report (all sections, ranked alerts) -> map {layer: hunger|land_value|...} for where -> history for trends -> list for tables -> inspect ids",
         "ids": "slotmap ids are \"idx:version\" strings (citizen, building, lot, car, train, route); gesture ids are plain integers. Positions are [x, y] sim metres.",
         "commands": {
@@ -2077,9 +2283,9 @@ fn help() -> Value {
             "speed": { "index": "0..5", "value": "multiple of real time for what moves (1 = people walk at their true pace; the clock runs 15x faster than that), snapped to the nearest step" },
             "step": { "ticks": "advance n sim minutes now, even while paused (default 1, max 100000)" },
             "seed_demo": {},
-            "save": { "path": "optional; default writes saves/city.ron and a dated slot" },
-            "load": { "path": "a .ron save" },
-            "list_saves": {},
+            "save": { "name": "optional: save as a named game, saves/<name>.ron (file-safe) with a sidecar <name>.meta.json and a map picture <name>.png", "path": "optional; neither: writes saves/city.ron and a dated slot (with a picture)" },
+            "load": { "path": "a .ron save (see files)" },
+            "list_saves": { "note": "newest first: path, name, kind (named|latest|autosave|dated), modified_unix, bytes, day, population, treasury, buildings, landscape (null for saves without a sidecar), thumbnail (absolute path of the PNG, or null)" },
             "plan": {},
             "add_roundabout": { "center": "[x,y] (snaps onto a junction within 12 m or a street within 6 m)", "radius": "m to the ring centreline, 12..120 (or diameter 24..240)", "lanes": "1|2|3 ring lanes", "implement": "bool", "returns": "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state" },
             "add_road": { "points": "[[x,y] or [x,y,level],...] (2+; level metres above ground, negative below)", "elevation": "level for points without one (number), or a list", "tunnel": "bool: default level -8 m", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true", "implement": "bool, default false (pending in the project)" },
@@ -2091,23 +2297,26 @@ fn help() -> Value {
             "terrain_at": { "x": "f", "y": "f", "returns": "natural/ground/surface heights, slope, water (kind, current, width), nearest shore, hot spot, power sites and dock placement for the lot there, survey (every land layer's value 0..1 there: resources, and the chance of each industry kind)" },
             "grant": { "amount": "money added to the treasury (dev), default 100000" },
             "landscape": { "returns": "preset and levers, rivers (width, current, hydro_ok), lakes, sea, hot spots, highway ends and through cars, bridges, docks, ships" },
-            "incident": { "kind": "fire|crime|medical", "building": "id", "citizen": "id (medical)" },
+            "incident": { "kind": "fire|crime|medical|crash|takeover", "building": "id (fire, crime; medical without citizen)", "citizen": "id (medical)", "car": "id (crash; default the car nearest at)", "at": "[x,y] (crash, takeover: the junction nearest)", "speed": "m/s (crash, default 25 = written off)" },
             "incidents": { "active": "bool (only those under way)", "limit": "default 50, newest first", "kind": "fire|crime|medical" },
-            "bus": { "action": "new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses" },
-            "find": { "what": "citizens|buildings|lots|parcels|cars|trains|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
-            "inspect": { "citizen|building|lot|car|train|route": "id", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "[x,y]: the road piece nearest a point, as segment" },
+            "bus": { "action": "select|new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|rename|recolour|line|select_stop|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses", "name": "rename", "color": "0..7", "look": "select_stop: point the camera" },
+            "find": { "what": "citizens|buildings|lots|parcels|cars|trains|drones|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
+            "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "[x,y]: the road piece nearest a point, as segment" },
             "lane_use": { "junction": "[x,y]", "approach": "[x,y] on the arriving street", "lanes": "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default" },
             "select": { "citizen|building|car|vehicle": "id (vehicle: a parked car)", "at": "[x,y] picks like a click; nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
             "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
-            "overlay": { "layer": "land_value|traffic|traffic_types|people|pollution|paths|zoning, or a land survey layer (one at a time): farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech", "on": "bool, omitted toggles", "land": "a land survey layer key, or none", "<layer name>": "bool (older form, any number at once)" },
+            "overlay": { "active": "the map layer to show, or none (layers are exclusive: showing one hides the others)", "layer": "zoning|land_value|districts|traffic|traffic_types|paths|people|pollution, a land survey layer (farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech), or projects (the dim other-projects switch, not a layer)", "on": "bool, omitted toggles; on hides every other layer", "land": "a land survey layer key, or none", "<layer name>": "bool (older form): true shows it alone, false hides it if it shows" },
             "lighting": { "follow_clock": "bool", "hour": "0..24 (also unpins from the clock)" },
             "heat_vision": { "on": "bool, omitted toggles: the drone thermal camera view (also key H)" },
-            "screenshot": { "path": "optional .png; default screenshots/shot-<unix>.png; written a frame or two later" },
+            "screenshot": { "path": "optional .png (see files); default screenshots/shot-<unix>.png; written a frame or two later" },
             "events": { "since": "seq", "limit": "default 500" },
             "thoughts": { "limit": "default 50" }
         }
     });
+    // Kept out of the literal above: it is at the json! recursion limit.
+    v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
+    v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite" });
     // The review commands, added separately: one `json!` this size hits the
     // macro recursion limit.
     let review = json!({
@@ -2118,8 +2327,8 @@ fn help() -> Value {
         "list": { "what": "businesses|buildings|citizens|lots|routes|plants|facilities", "sort": "column", "desc": "bool", "filter": "{column: substring | value | {min, max}}", "fields": "[columns] (id always kept)", "offset": "default 0", "limit": "default 50, max 1000" },
         "taxes": { "set": "{line: rate, ...} where line is a key (residential_low|residential_mid|residential_high|grocery|bakery|gadget_shop|parking|nightlife_low|nightlife_mid|nightlife_high|farming|oil|refinery|manufacturing|logistics|fishing|tech) or a land use for its whole group; rate 0.2 or 20 (= 20%)", "category": "one line (with rate)", "import_duty": "share of import prices (0..1)", "reset": "bool: back to the standard rates", "returns": "every line: rate, default, pull, buildings, homes/jobs, today, yesterday, recent_per_day; by_land_use; duty" },
         "tolls": { "action": "list (default) | price | remove | inspect", "id": "booth id (or at: [x,y])", "price": "toll per car (lorries pay double)", "returns": "booths with cars and revenue today/yesterday/total, paid/free today, upkeep" },
-        "export": { "path": "optional; default exports/city-<unix>.json: report + map + history + every row of every list" },
-        "window": { "name": "city|economy|taxes|market|people|power|transit|emergencies|land|districts|saves|help|dev", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns" },
+        "export": { "path": "optional .json (see files); default exports/city-<unix>.json: report + map + history + every row of every list" },
+        "window": { "name": "city|economy|taxes|market|people|power|transit|emergencies|view (or land)|districts|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), or title (the title screen)", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns" },
         "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" }
     });
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), review.as_object()) {
@@ -2134,6 +2343,7 @@ fn help() -> Value {
     // The player's selection and flags (added here: the big literal above
     // is at the json! macro's recursion limit).
     v["commands"]["selected"] = json!({ "": "full detail of what the player has selected: a car with why (reason, text, by), jam (chain to the head of the queue, head_reason, cycle), trip (elapsed_min, expected_min, anger), lanes, driver, cargo; a citizen (and driving_car); a building; a parked car; the bus line picked (bus_line)" });
+    v["commands"]["parking_price"] = json!({ "building": "id of a parking lot the city runs", "price": "the fee, 0..50", "returns": "building, price (as set, clamped)" });
     v["commands"]["flags"] = json!({ "since": "flag id: only newer ones", "clear": "bool: empty the list after reading" });
     v["commands"]["flag"] = json!({ "note": "text: flag the current selection, as F8 does in game" });
     v["commands"]["society"] = json!({ "action": "report (default)|evict|offend|trash", "building": "id (evict: its households go on the street; offend: the target; trash: one building's bins)", "citizen": "id (offend)", "kind": "theft|burglary|assault|murder|vandalism (offend, with building)", "kg": "trash to add, default 100" });
@@ -2149,12 +2359,15 @@ fn help() -> Value {
     v
 }
 
-/// Every map layer and whether it is on.
+/// Every map layer and whether it is on, the one showing (`active`, null
+/// for none: they are exclusive) and the "show other projects" switch.
 fn overlays_json(o: &Overlays) -> Value {
     let mut m = serde_json::Map::new();
-    for (name, _, _) in Overlays::LAYERS {
-        m.insert(name.into(), json!(o.get(name).unwrap_or(false)));
+    for l in crate::map_layers::MAP_LAYERS {
+        m.insert(l.key.into(), json!(o.get(l.key).unwrap_or(false)));
     }
     m.insert("land".into(), json!(o.land.map(|l| l.key())));
+    m.insert("active".into(), json!(crate::map_layers::active(o).map(|l| l.key())));
+    m.insert("projects".into(), json!(o.projects));
     Value::Object(m)
 }

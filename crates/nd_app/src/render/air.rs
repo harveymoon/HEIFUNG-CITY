@@ -79,7 +79,6 @@ pub(super) fn sync_air(
     mats: Res<Materials>,
     lighting: Res<Lighting>,
     time: Res<Time>,
-    styles: Res<BuildingStyles>,
     mut state: ResMut<AirState>,
     mut vr: ResMut<VehicleRender>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -89,6 +88,16 @@ pub(super) fn sync_air(
 ) {
     let w = &sim.world;
     let st = &mut state.0;
+    if sim.full_rebuild {
+        // A loaded world reuses drone and building ids: drop every craft and
+        // every cached pad drawing.
+        for (_, c) in st.craft.drain() {
+            for e in [Some(c.body), Some(c.lights), c.fx, Some(c.strobe), c.rotor, c.beam.map(|b| b.0), c.beam.map(|b| b.1)].into_iter().flatten() {
+                commands.entity(e).despawn();
+            }
+        }
+        st.pads.clear();
+    }
     if w.air.drones.is_empty() && st.craft.is_empty() {
         return;
     }
@@ -153,7 +162,7 @@ pub(super) fn sync_air(
         // Near its pad and low: ease onto the deck the building drew.
         if let Some(pb) = d.at.or(d.dest) {
             if let Some(pad) = w.air.pad(pb).copied() {
-                let drawn = drawn_pads(st, w, &assets, &styles.0, pb);
+                let drawn = drawn_pads(st, w, &assets, &sim.styles, pb);
                 if !drawn.is_empty() {
                     let real = drawn[d.slot as usize % drawn.len()];
                     let cruise = d.craft.cruise();

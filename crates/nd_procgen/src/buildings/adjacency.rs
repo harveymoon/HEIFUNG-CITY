@@ -279,8 +279,22 @@ pub struct StyleBook {
 }
 
 /// What a building is besides its zone: drives forced styles. Industry
-/// businesses count by kind, so a retooled plant is restyled.
+/// businesses count by kind, so a retooled plant is restyled. Every input
+/// [`style_extras`] passes that can force a style has its own value here,
+/// so a building that gains or loses one is styled again.
 fn role(b: &nd_sim::Building) -> u8 {
+    if let Some(s) = b.service {
+        return 50 + nd_sim::ServiceKind::ALL.iter().position(|k| *k == s.kind).unwrap_or(0) as u8;
+    }
+    if b.metro {
+        return 70;
+    }
+    if let Some(p) = b.port {
+        return 71 + p as u8;
+    }
+    if b.business.as_ref().is_some_and(|z| matches!(z.kind, nd_sim::BusinessKind::TaxiCompany | nd_sim::BusinessKind::Hotel)) {
+        return 75 + u8::from(b.business.as_ref().is_some_and(|z| z.kind == nd_sim::BusinessKind::Hotel));
+    }
     if let Some(z) = b.business.as_ref().filter(|z| z.kind.industry().is_some()) {
         if let Some(i) = nd_sim::BusinessKind::ALL.iter().position(|k| *k == z.kind) {
             return 10 + i as u8;
@@ -292,6 +306,8 @@ fn role(b: &nd_sim::Building) -> u8 {
         2
     } else if b.plant.is_some() {
         3
+    } else if b.battery.is_some() {
+        5
     } else if b.parking_visual().is_some() {
         4
     } else {
@@ -371,23 +387,55 @@ impl StyleBook {
                 }
             }
             near.sort_by(|a, b| a.distance.total_cmp(&b.distance).then((a.style as usize).cmp(&(b.style as usize))));
-            let extras = Extras {
-                parking: b.parking_visual(),
-                plant: b.plant,
-                depot: b.depot,
-                rail: b.rail.as_ref(),
-                neighbours: &near,
-                rooftop_pad: world.air.has_rooftop(id),
-                // Placed services (a vertiport among them) are their own style.
-                service: b.service.map(|s| s.kind),
-                business: b.business.as_ref().map(|z| z.kind),
-                look: b.look,
-                ..Extras::default()
-            };
+            let extras = style_extras(world, id, &near);
             let style = choose_style(lot, b.land_use, b.floors, b.tier, b.seed, rules, &extras);
             self.entries.insert(id, Entry { key: key_of(id, b), style, neighbours: near });
         }
     }
+}
+
+/// The inputs of a building that decide its style, and nothing else:
+/// plants, car parks, depots, rail, docks, services, metro entrances, the
+/// business (industry looks, hotels, a taxi yard drawn as a car park), a
+/// rooftop pad and the district look. The renderer builds its [`Extras`]
+/// on top of these (`..style_extras(..)`), and the [`StyleBook`] and
+/// [`building_style`] pick from exactly these, so what is drawn and what
+/// the inspector names are one decision.
+pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neighbour]) -> Extras<'a> {
+    let Some(b) = world.buildings.get(id) else { return Extras { neighbours, ..Extras::default() } };
+    // [taxis] A taxi company's yard is drawn as a surface lot with empty bays.
+    let taxi_yard = b.business.as_ref().is_some_and(|z| z.kind == nd_sim::BusinessKind::TaxiCompany);
+    Extras {
+        parking: b.parking_visual().or(taxi_yard.then_some(0.0)),
+        plant: b.plant,
+        // [power] grid battery: size, share full and flow
+        battery: b.battery.as_ref().map(|x| (x.kind, x.level(), x.flow_mw)),
+        depot: b.depot,
+        rail: b.rail.as_ref(),
+        port: b.port,
+        neighbours,
+        rooftop_pad: world.air.has_rooftop(id),
+        // Placed services (a vertiport among them) are their own style.
+        service: b.service.map(|s| s.kind),
+        business: b.business.as_ref().map(|z| z.kind),
+        look: b.look,
+        metro: b.metro,
+        ..Extras::default()
+    }
+}
+
+/// The style a building is drawn in: the [`StyleBook`]'s entry when the
+/// renderer has resolved it (picked against its neighbours), otherwise the
+/// same pick against no neighbours, which agrees for every forced style
+/// (plants, depots, services, farms, docks). The one function behind the
+/// inspector's and the remote API's style label.
+pub fn building_style(world: &World, id: BuildingId, rules: &BuildingRules, book: Option<&StyleBook>) -> Option<Style> {
+    if let Some(s) = book.and_then(|b| b.style(id)) {
+        return Some(s);
+    }
+    let b = world.buildings.get(id)?;
+    let lot = world.lots.get(b.lot)?;
+    Some(choose_style(lot, b.land_use, b.floors, b.tier, b.seed, rules, &style_extras(world, id, &[])))
 }
 
 #[cfg(test)]
@@ -517,6 +565,42 @@ mod tests {
             }
         }
         assert_eq!(book.len(), w.buildings.len());
+    }
+
+    /// [inspector] One decision: the book, the renderer's extras and the
+    /// inspector's label agree for every building, and a farm business is
+    /// always drawn (and named) as a farm, whatever its zone's menu says.
+    #[test]
+    fn drawn_style_and_labelled_style_are_one_decision() {
+        use nd_sim::BusinessKind as B;
+        let mut w = town();
+        let rules = BuildingRules::default();
+        let ids: Vec<BuildingId> = w.buildings.keys().collect();
+        let farms: Vec<BuildingId> = ids.iter().copied().step_by(3).collect();
+        for (i, &id) in farms.iter().enumerate() {
+            let kind = [B::GrainFarm, B::VertFarm, B::Dairy, B::Mill][i % 4];
+            w.buildings[id].business = Some(nd_sim::Business::new(kind, 4));
+        }
+        let taxi = ids[1];
+        w.buildings[taxi].business = Some(nd_sim::Business::new(B::TaxiCompany, 4));
+        let mut book = StyleBook::default();
+        book.refresh(&w, &rules);
+        for &id in &ids {
+            let b = &w.buildings[id];
+            let drawn = choose_style(&w.lots[b.lot], b.land_use, b.floors, b.tier, b.seed, &rules, &style_extras(&w, id, book.neighbours(id)));
+            assert_eq!(book.style(id), Some(drawn), "the book records what is drawn");
+            assert_eq!(building_style(&w, id, &rules, Some(&book)), Some(drawn), "the label names what is drawn");
+        }
+        for &id in &farms {
+            assert_eq!(building_style(&w, id, &rules, Some(&book)), Some(Style::Farmstead));
+            assert_eq!(building_style(&w, id, &rules, None), Some(Style::Farmstead), "forced styles agree without the book too");
+        }
+        assert!(matches!(building_style(&w, taxi, &rules, Some(&book)), Some(Style::ParkingLot | Style::CarPark)), "a taxi yard is drawn and named as a car park");
+        // A building that turns into a farm is restyled on the next refresh.
+        let later = ids.iter().copied().find(|id| !farms.contains(id) && *id != taxi && book.style(*id) != Some(Style::Farmstead)).unwrap();
+        w.buildings[later].business = Some(nd_sim::Business::new(B::GrainFarm, 4));
+        book.refresh(&w, &rules);
+        assert_eq!(book.style(later), Some(Style::Farmstead));
     }
 
     #[test]

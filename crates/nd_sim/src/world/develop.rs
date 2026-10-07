@@ -239,15 +239,25 @@ impl World {
     /// react to it.
     pub(super) fn daily_update(&mut self) {
         // Treasury: yesterday's taxes came in as they were earned; plant
-        // upkeep and imported power are settled now, then the books close.
-        // Each plant is its own line in the itemised ledger.
-        let plants: Vec<(BuildingId, f32)> = self.buildings.iter().filter_map(|(id, b)| b.plant.map(|k| (id, k.upkeep_per_day()))).collect();
+        // and battery upkeep and imported and exported power are settled
+        // now, then the books close. Each plant and battery is its own line
+        // in the itemised ledger.
+        let plants: Vec<(BuildingId, f32)> = self
+            .buildings
+            .iter()
+            .filter_map(|(id, b)| b.plant.map(|k| (id, k.upkeep_per_day())).or(b.battery.as_ref().map(|bat| (id, bat.kind.upkeep_per_day()))))
+            .collect();
         let upkeep: f32 = plants.iter().map(|(_, x)| x).sum();
         for (id, x) in plants {
             self.economy.debit_item(Flow::PlantUpkeep, x, Item::Building(id));
         }
         let grid = self.economy.power.import_cost_today;
         self.economy.debit_item(Flow::GridImport, grid, Item::Named("power bought from the regional grid".into()));
+        let sold = self.economy.power.export_income_today;
+        if sold > 0.0 {
+            self.economy.credit_item(Flow::GridExport, sold, Item::Named("power sold to the regional grid".into()));
+        }
+        self.economy.power.export_income_today = 0.0;
         self.daily_ports();
         self.economy.power.upkeep_today = upkeep;
         self.economy.tax_today = 0.0;
@@ -291,7 +301,11 @@ impl World {
         self.economy.transit.fares_today = 0.0;
         for r in self.transit.routes.values_mut() {
             r.riders_today = 0;
+            r.roll_day();
         }
+        // Buses that left the road without going home leave no timings behind.
+        let cars = &self.traffic.cars;
+        self.transit.departures.retain(|id, _| cars.contains_key(*id));
         self.economy.parking_street_today = 0;
         self.economy.parking_fees_today = 0.0;
         self.economy.materials_today = 0.0;
@@ -321,7 +335,11 @@ impl World {
                 Tier::Mid => 0.008,
                 Tier::High => 0.002,
             };
-            {
+            // [services] The city's own structures do not wear out: their
+            // daily upkeep is their maintenance. (They decayed to derelict
+            // in weeks, out of service but still charged, and nothing ever
+            // repaired them.) Fire damage is mended by `repair_civic`.
+            if !Self::is_civic_structure(&self.buildings[bid]) {
                 let b = &mut self.buildings[bid];
                 b.condition = (b.condition - decay + if full { 0.006 } else { 0.0 }).clamp(0.05, 1.0);
             }
@@ -372,9 +390,6 @@ impl World {
                 b.seed = seed;
                 b.recompute_capacity();
                 b.update_rent(value);
-                if redevelop {
-                    self.reopen_after_rebuild(bid);
-                }
                 self.events.push(SimEvent::BuildingChanged(bid));
             }
         }

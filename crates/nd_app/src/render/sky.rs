@@ -141,7 +141,7 @@ pub(super) fn sync_sky(
     mut materials: ResMut<Assets<StandardMaterial>>,
     look: Res<SkyLook>,
     lighting: Res<Lighting>,
-    cams: Query<&GlobalTransform, (With<Camera3d>, Without<SkyDome>)>,
+    cams: Query<&GlobalTransform, (With<crate::camera::OrbitCamera>, Without<SkyDome>)>,
     mut dome: Query<(&Mesh3d, &mut Transform, &mut Visibility), With<SkyDome>>,
     mut painted: Local<Option<u64>>,
 ) {

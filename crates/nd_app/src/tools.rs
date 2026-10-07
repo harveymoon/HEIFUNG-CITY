@@ -6,7 +6,6 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use nd_sim::roads::project_on_segment;
 use nd_sim::zoning::point_in_polygon;
-use nd_sim::plan::sample_curve;
 use nd_sim::roads::RoadKind;
 use nd_sim::{Activity, BuildingId, CarId, CitizenId, Gesture, GestureId, LandUse, Plan, Vec2 as SVec2, World};
 
@@ -204,6 +203,9 @@ pub struct ToolState {
     /// The line being drawn or edited.
     pub route_sel: Option<nd_sim::RouteId>,
     pub hover_stop: Option<(nd_sim::RouteId, usize)>,
+    /// [lines] The stop picked in the Lines window (or with the remote
+    /// API's `bus select_stop`): marked on the map with a tall post.
+    pub stop_sel: Option<(nd_sim::RouteId, usize)>,
     /// Where the right button went down (window pixels); a right *click*
     /// (released within a few pixels) finishes a gesture, a right drag only
     /// orbits the camera. None when it went down over the UI.
@@ -290,11 +292,6 @@ impl ToolState {
             self.build_tier = t;
         }
         self.build = p;
-    }
-
-    /// Where a road end dropped at `p` would snap to.
-    pub fn road_snap(sim: &Sim, p: SVec2, kind: RoadKind) -> (SVec2, bool) {
-        sim.world.roads.snap_point_kind(p, POINT_PICK_RADIUS, kind)
     }
 
     /// Where a point placed at `p` at `level` lands, and its level: it snaps
@@ -395,6 +392,7 @@ impl Default for ToolState {
             transit_mode: TransitMode::Route,
             route_sel: None,
             hover_stop: None,
+            stop_sel: None,
             stop_drag: None,
             show_routes: false,
             rail_kind: nd_sim::RailFacility::Station,
@@ -727,8 +725,12 @@ pub(crate) fn tool_input(
     if ctrl && key(KeyCode::Enter) {
         tools.points.clear();
         tools.drag = None;
-        sim.world.implement();
-        tools.status = if sim.world.plan_warnings.is_empty() { "Project implemented".into() } else { format!("Project implemented. {}", sim.world.plan_warnings.join(" ")) };
+        tools.status = match sim.world.try_implement() {
+            // The roads would take a depot, station or other city structure.
+            Err(why) => why,
+            Ok(()) if sim.world.plan_warnings.is_empty() => "Project implemented".into(),
+            Ok(()) => format!("Project implemented. {}", sim.world.plan_warnings.join(" ")),
+        };
     }
 
     let pointer = window.single().ok().and_then(|w| w.cursor_position());
@@ -1238,6 +1240,13 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                     gizmos.line(at, at + Vec3::Y * 9.0, col);
                     gizmos.circle(Isometry3d::new(at + Vec3::Y * 9.0, flat), 1.0, col);
                 }
+                // [lines] The stop picked in the Lines window: a pulsing
+                // white ring and a post three times as tall.
+                if tools.stop_sel == Some((id, i)) {
+                    gizmos.circle(Isometry3d::new(at, flat), 5.0 + 2.0 * pulse, white);
+                    gizmos.line(at, at + Vec3::Y * 28.0, white);
+                    gizmos.circle(Isometry3d::new(at + Vec3::Y * 28.0, flat), 2.0, white);
+                }
             }
             if sel {
                 let f = sim.frac();
@@ -1334,7 +1343,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 gizmos.circle(Isometry3d::new(lift(r.center), flat), 1.2, white);
             }
         }
-        Tool::Road if !tools.roundabout => {
+        Tool::Road => {
             // The road itself is a hologram (render/holo.rs); here only the
             // control points, each at its level with a stalk to the ground.
             let at = |p: SVec2, level: f32| Vec3::new(p.x, sim.world.ground_height(p).max(if sim.world.landscape.is_flat() { 0.0 } else { nd_sim::landscape::WATER_LEVEL }) + level + 0.8, p.y);
@@ -1362,26 +1371,22 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 gizmos.linestrip(ctrl.iter().zip(&l).map(|(&p, &l)| at(p, l)).collect::<Vec<_>>(), Color::linear_rgb(0.3, 0.4, 0.5));
             }
         }
-        Tool::Road | Tool::Zone => {
+        // The Road tool is drawn above (both of its arms cover every case).
+        Tool::Zone => {
             let mut ctrl: Vec<SVec2> = tools.points.clone();
             if let Some(c) = cursor.ground {
-                let (c, snapped) = if tools.tool == Tool::Road { ToolState::road_snap(&sim, c, tools.kind) } else { (c, false) };
-                gizmos.circle(Isometry3d::new(lift(c), flat), if snapped { 4.5 } else { 3.0 }, if snapped { white } else { cyan });
+                gizmos.circle(Isometry3d::new(lift(c), flat), 3.0, cyan);
                 ctrl.push(c);
             }
             for &p in &tools.points {
                 gizmos.circle(Isometry3d::new(lift(p), flat), 2.0, cyan);
             }
-            let built: Vec<SVec2> = if tools.tool == Tool::Road && tools.curved { sample_curve(&ctrl) } else { ctrl.clone() };
-            let mut pts: Vec<Vec3> = built.iter().map(|&p| lift(p)).collect();
+            let mut pts: Vec<Vec3> = ctrl.iter().map(|&p| lift(p)).collect();
             if pts.len() >= 2 {
-                if tools.tool == Tool::Zone && pts.len() >= 3 {
+                if pts.len() >= 3 {
                     pts.push(pts[0]);
                 }
                 gizmos.linestrip(pts, cyan);
-                if tools.tool == Tool::Road && tools.curved && ctrl.len() >= 3 {
-                    gizmos.linestrip(ctrl.iter().map(|&p| lift(p)).collect::<Vec<_>>(), Color::linear_rgb(0.3, 0.4, 0.5));
-                }
             }
         }
         Tool::Edit => {

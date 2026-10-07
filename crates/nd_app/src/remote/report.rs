@@ -1,4 +1,4 @@
-﻿//! Whole-city review for the remote API: `report` (overview, people,
+//! Whole-city review for the remote API: `report` (overview, people,
 //! economy, land, services, alerts) and the ranked alert list that
 //! `status` also quotes.
 //!
@@ -22,7 +22,7 @@ use serde_json::{json, Map, Value};
 
 use super::view::{building_name, key_str, plant_name, rail_name, round, tier_key, v2};
 
-// â”€â”€ thresholds â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── thresholds ──────────────────────────────────────────────────────────────
 //
 // Named so a reader of the docs and of a reply can tell what "hungry" or
 // "stuck" means; they mirror the sim's own cut-offs where it has one.
@@ -124,7 +124,7 @@ fn centroid(points: &[SVec2]) -> (Value, Value) {
     (v2(c), json!(spread.round()))
 }
 
-// â”€â”€ report â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── report ──────────────────────────────────────────────────────────────────
 
 pub fn report(w: &World, sections: &[String]) -> Result<Value, String> {
     for s in sections {
@@ -232,7 +232,7 @@ fn memory_reason(text: &str) -> String {
         }
     }
     let words: Vec<&str> = text.split_whitespace().take(4).collect();
-    format!("{}â€¦", words.join(" "))
+    format!("{}…", words.join(" "))
 }
 
 /// Households: how many, their sizes, life stages, shared money and rent.
@@ -626,26 +626,70 @@ fn land(w: &World) -> Value {
     })
 }
 
+/// [power] The grid in one object, for `report.services.power` and
+/// (without the per-plant hours) `status.power`: supply, demand, imports
+/// and exports, the batteries, and a row per plant and battery with its
+/// output, cost per MWh, CO2, smog and noise (`World::plant_rows`).
+pub fn power_json(w: &World, with_hours: bool) -> Value {
+    let p = &w.economy.power;
+    let mut plants = Vec::new();
+    let mut batteries = Vec::new();
+    for r in w.plant_rows() {
+        let Some(b) = w.buildings.get(r.id) else { continue };
+        let log = w.economy.history.plant(r.id);
+        let series = |v: Option<&std::collections::VecDeque<f32>>| v.map_or(Value::Null, |l| json!(l.iter().map(|x| round(*x)).collect::<Vec<_>>()));
+        match r.asset {
+            nd_sim::GridAsset::Plant(k) => {
+                let mut v = json!({
+                    "id": key_str(r.id), "name": r.name, "kind": plant_name(k), "capacity_mw": round(r.capacity_mw), "available_mw": round(w.plant_output_mw(b)),
+                    "output_mw": round(r.now_mw), "output_mw_est": round(r.now_mw), "mean_mw_24h": round(r.mean_mw), "upkeep_per_day": round(r.upkeep_per_day),
+                    "cost_per_mwh": r.cost_per_mwh.map(round), "co2_t_per_day": round(r.co2_t_per_day), "co2_t_per_mwh": round(k.co2_t_per_mwh()),
+                    "air_index": round(r.air), "noise_db": r.noise_db.map(round), "noise_db_running": round(k.noise_db()),
+                    "pollution_radius_m": r.nuisance.0, "pollution_land_value_effect": round(r.nuisance.1),
+                    "workers": b.workers.len(), "jobs": b.jobs, "derelict": r.derelict, "pending": r.pending, "pos": building_pos(w, b).map_or(Value::Null, v2),
+                });
+                if with_hours {
+                    v["output_mw_hours"] = series(log.map(|l| &l.hours));
+                    v["energy_mwh_days"] = series(log.map(|l| &l.days));
+                }
+                plants.push(v);
+            }
+            nd_sim::GridAsset::Battery(k) => {
+                let mut v = json!({
+                    "id": key_str(r.id), "name": r.name, "kind": k.key(), "capacity_mwh": round(r.capacity_mwh), "max_mw": round(r.capacity_mw),
+                    "charge_mwh": round(r.charge_mwh), "level": round(if r.capacity_mwh > 0.0 { r.charge_mwh / r.capacity_mwh } else { 0.0 }),
+                    "flow_mw": round(r.now_mw), "state": if r.now_mw > 0.05 { "discharging" } else if r.now_mw < -0.05 { "charging" } else { "idle" },
+                    "delivered_mwh_24h": round(r.mean_mw * 24.0), "upkeep_per_day": round(r.upkeep_per_day), "cost_per_mwh": r.cost_per_mwh.map(round),
+                    "noise_db": r.noise_db.map(round), "derelict": r.derelict, "pending": r.pending, "pos": building_pos(w, b).map_or(Value::Null, v2),
+                });
+                if with_hours {
+                    v["flow_mw_hours"] = series(log.map(|l| &l.hours));
+                    v["charge_mwh_hours"] = series(log.map(|l| &l.level));
+                }
+                batteries.push(v);
+            }
+        }
+    }
+    let level = if p.battery_capacity_mwh > 0.0 { p.battery_charge_mwh / p.battery_capacity_mwh } else { 0.0 };
+    json!({
+        "supply_mw": round(p.supply_mw), "demand_mw": round(p.demand_mw), "imported_mw": round(p.imported_mw), "served_share": round(p.served),
+        "exported_mw": round(p.exported_mw), "curtailed_mw": round(p.curtailed_mw), "plants_count": p.plants,
+        "unpowered_buildings": p.unpowered_buildings, "brownout_hours_today": p.brownout_hours_today, "upkeep_per_day": round(p.upkeep_today),
+        "import_cost_today": round(p.import_cost_today), "export_income_today": round(p.export_income_today),
+        "import": { "max_mw": nd_sim::power::GRID_IMPORT_MW, "price_per_mwh": nd_sim::power::GRID_IMPORT_PRICE },
+        "export": { "mw": round(p.exported_mw), "max_mw": nd_sim::power::GRID_EXPORT_MW, "price_per_mwh": nd_sim::power::GRID_EXPORT_PRICE,
+                    "income_today": round(p.export_income_today), "income_yesterday": round(w.economy.ledger.yesterday_of(Flow::GridExport)) },
+        "battery_totals": { "count": p.batteries, "charge_mwh": round(p.battery_charge_mwh), "capacity_mwh": round(p.battery_capacity_mwh), "level": round(level),
+                            "charging_mw": round(p.battery_in_mw), "discharging_mw": round(p.battery_out_mw),
+                            "round_trip_efficiency": round(nd_sim::power::BATTERY_CHARGE_EFF * nd_sim::power::BATTERY_DISCHARGE_EFF) },
+        "weather": { "label": w.weather.label(), "cloud": round(w.weather.cloud), "wind": round(w.weather.wind) },
+        "plants": plants,
+        "batteries": batteries,
+    })
+}
+
 fn services(w: &World) -> Value {
     let e = &w.economy;
-    let p = &e.power;
-    let day = w.clock.day_fraction();
-    // Plants share the load pro rata: output = available Ã— min(1, demand / supply).
-    let dispatch = if p.supply_mw > 0.0 { (p.demand_mw / p.supply_mw).min(1.0) } else { 0.0 };
-    let plants: Vec<Value> = w
-        .buildings
-        .iter()
-        .filter_map(|(id, b)| b.plant.map(|k| (id, b, k)))
-        .map(|(id, b, k)| {
-            let avail = if b.is_derelict() { 0.0 } else { k.capacity_mw() * k.availability(&w.weather, day) };
-            let (radius, weight) = k.pollution();
-            json!({
-                "id": key_str(id), "name": b.name, "kind": plant_name(k), "capacity_mw": round(k.capacity_mw()), "available_mw": round(avail),
-                "output_mw_est": round(avail * dispatch), "upkeep_per_day": round(k.upkeep_per_day()), "pollution_radius_m": radius, "pollution_land_value_effect": round(weight),
-                "workers": b.workers.len(), "jobs": b.jobs, "derelict": b.is_derelict(), "pos": building_pos(w, b).map_or(Value::Null, v2),
-            })
-        })
-        .collect();
     let mut route_waiting: BTreeMap<String, u32> = BTreeMap::new();
     let mut station_waiting: BTreeMap<BuildingId, u32> = BTreeMap::new();
     for c in w.citizens.values() {
@@ -720,12 +764,7 @@ fn services(w: &World) -> Value {
     let r = &w.rail.stats;
     let mut out = json!({
         "emergency": emergency(w),
-        "power": {
-            "supply_mw": round(p.supply_mw), "demand_mw": round(p.demand_mw), "imported_mw": round(p.imported_mw), "served_share": round(p.served),
-            "unpowered_buildings": p.unpowered_buildings, "brownout_hours_today": p.brownout_hours_today, "upkeep_per_day": round(p.upkeep_today),
-            "import_cost_today": round(p.import_cost_today), "weather": { "label": w.weather.label(), "cloud": round(w.weather.cloud), "wind": round(w.weather.wind) },
-            "plants": plants,
-        },
+        "power": power_json(w, true),
         "transit": {
             "routes": routes, "buses": t.buses, "depots": t.depots, "depot_capacity": t.depot_capacity, "waiting": t.waiting, "riding": t.riding,
             "riders_today": t.riders_today, "fares_today": round(t.fares_today), "upkeep_today": round(t.upkeep_today),
@@ -913,7 +952,7 @@ pub fn route_length(r: &nd_sim::BusRoute) -> f32 {
         .sum()
 }
 
-// â”€â”€ alerts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── alerts ──────────────────────────────────────────────────────────────────
 
 /// One concrete problem: how many, where (the centroid of the cases and
 /// their mean distance from it), and ids to `inspect`.

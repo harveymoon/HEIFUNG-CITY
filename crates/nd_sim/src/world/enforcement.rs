@@ -19,6 +19,10 @@ use crate::services::ServiceKind;
 use crate::vehicle::{BodyType, CarEvent, CarPlace, Errand, Livery, ParkKind, ParkSpot, VehicleClass, VehicleId, VehicleModel};
 use rand::seq::IndexedRandom;
 
+/// [services] How near the tow company's driveway a truck must stand to be
+/// at the pound (metres).
+const POUND_REACH: f32 = 25.0;
+
 /// What a tow truck looks like (as the driving agent's wreck trucks do).
 pub(super) fn tow_model() -> VehicleModel {
     VehicleModel { class: VehicleClass::Mid, body: BodyType::Pickup, wear: 1, tuned: false, livery: Livery::Utility, paint: 3 }
@@ -113,9 +117,11 @@ impl World {
                 }
             }
         }
+        // [services] An office pulled down: its officers drive off the map
+        // rather than vanish mid-street.
         let gone: Vec<CarId> = self.enforcement.patrols.iter().filter(|p| !self.buildings.contains_key(p.office)).map(|p| p.car).collect();
         for car in gone {
-            self.traffic.remove_car(car);
+            self.retire_vehicle(car);
         }
         let traffic = &self.traffic;
         self.enforcement.patrols.retain(|p| traffic.cars.get(p.car).is_some_and(|c| c.errand == Errand::Patrol(p.office)));
@@ -125,9 +131,8 @@ impl World {
         let home = self.truck_stop(office).and_then(|(s, p)| self.traffic.net.nearest_lane_on(s, p));
         match home {
             Some((goal, s_end, _)) if self.traffic.redirect(car, goal, s_end) => self.traffic.cars[car].errand = Errand::Return(office),
-            _ => {
-                self.traffic.remove_car(car);
-            }
+            // [services] No road home: off the map, not gone on the spot.
+            _ => self.retire_vehicle(car),
         }
     }
 
@@ -396,22 +401,30 @@ impl World {
                 }
                 let _ = spot;
                 // On to the pound.
-                let to_pound = match job.company {
-                    Some(c) => self.truck_stop(c).and_then(|(s, p)| self.traffic.net.nearest_lane_on(s, p)).is_some_and(|(goal, s_end, _)| self.traffic.redirect(truck, goal, s_end)),
-                    None => self.redirect_out(truck),
-                };
                 if let Some(j) = self.enforcement.jobs.iter_mut().find(|j| j.id == job_id) {
                     j.state = TowState::ToPound;
                 }
-                if !to_pound {
-                    self.traffic.remove_car(truck);
-                    self.impound(job.car, job.company);
-                    self.enforcement.jobs.retain(|j| j.id != job_id);
+                // [services] With no road there yet it waits at the kerb with
+                // the car on the hook and tries again (it used to vanish, the
+                // car teleported into the pound).
+                if !self.route_to_pound(truck, job_id) {
+                    self.traffic.pull_in(truck, super::cars::RETIRE_RETRY_SECONDS);
                 }
             }
             TowState::ToPound => {
+                // [services] Only at the pound (the yard's driveway, or the
+                // map edge for one out of town) does the car go in; a truck
+                // that held for want of a road, or whose yard was pulled
+                // down on the way, drives on.
+                if !self.at_pound(truck, job_id) {
+                    if !self.route_to_pound(truck, job_id) {
+                        self.traffic.pull_in(truck, super::cars::RETIRE_RETRY_SECONDS);
+                    }
+                    return;
+                }
+                let company = self.enforcement.job(job_id).and_then(|j| j.company);
                 self.traffic.remove_car(truck);
-                self.impound(job.car, job.company);
+                self.impound(job.car, company);
                 self.enforcement.jobs.retain(|j| j.id != job_id);
             }
             TowState::Waiting { .. } => self.tow_truck_home(truck, job.company),
@@ -431,7 +444,41 @@ impl World {
             self.traffic.cars[truck].errand = Errand::Leave;
             return;
         }
-        self.traffic.remove_car(truck);
+        // [services] No road out either: it holds and tries again.
+        self.retire_vehicle(truck);
+    }
+
+    /// [services] Is the tow truck of job `job_id` at its pound: the
+    /// company's driveway (while the company stands), else the map edge?
+    fn at_pound(&self, truck: CarId, job_id: u32) -> bool {
+        if !self.traffic.cars.contains_key(truck) {
+            return true;
+        }
+        match self.enforcement.job(job_id).and_then(|j| j.company).filter(|c| self.buildings.contains_key(*c)) {
+            Some(c) => self.truck_stop(c).is_some_and(|(seg, p)| self.car_at_stop(truck, seg, p, POUND_REACH)),
+            None => self.at_map_edge(truck),
+        }
+    }
+
+    /// [services] Send the tow truck of job `job_id` on to its pound: the
+    /// company's yard, or (the company gone, or none in town) the pound
+    /// out of town past the map edge. False when no road leads there.
+    fn route_to_pound(&mut self, truck: CarId, job_id: u32) -> bool {
+        let company = self.enforcement.job(job_id).and_then(|j| j.company);
+        if let Some(c) = company {
+            if self.buildings.contains_key(c) {
+                let stop = self.truck_stop(c).and_then(|(s, p)| self.traffic.net.nearest_lane_on(s, p));
+                return stop.is_some_and(|(goal, s_end, _)| self.traffic.redirect(truck, goal, s_end));
+            }
+            // The yard was pulled down: the pound out of town takes it.
+            if let Some(j) = self.enforcement.jobs.iter_mut().find(|j| j.id == job_id) {
+                j.company = None;
+            }
+            if let Some(t) = self.driving.tows.iter_mut().find(|t| t.truck == truck) {
+                t.yard = None;
+            }
+        }
+        self.redirect_out(truck)
     }
 
     /// In the pound: the company's yard, or one out of town.

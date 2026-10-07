@@ -31,9 +31,11 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 
 mod crosswalk;
+mod remap;
 mod roundabout;
 mod why;
 pub use crosswalk::{Hold, PedTraffic, PED_CLEARANCE};
+pub use remap::CarryReport;
 pub use roundabout::{RingLanes, RingNode, RING_CRITICAL_GAP, RING_SPEED};
 pub use why::{JamChain, StopReason};
 
@@ -701,6 +703,22 @@ impl DriverProfile {
         (1.0 - self.skill) * 0.35 + self.drunk * 1.3 + if self.ignores_signals { 0.45 } else { 0.0 }
     }
 
+    /// Where the driver sits between slow (`-1`) and reckless (`1`), `0`
+    /// an ordinary driver: desired speed, eagerness to overtake, how
+    /// readily they stop for an amber, and how close they follow, each
+    /// measured from a by-the-book driver and averaged. The inspector's
+    /// slow–normal–reckless slider. Drink pushes it up through those.
+    pub fn boldness(&self) -> f32 {
+        if !self.assigned {
+            return 0.0;
+        }
+        let speed = (self.speed - 1.0) / 0.3;
+        let aggression = (self.aggression - 0.45) / 0.55;
+        let ambers = (0.85 - self.compliance) / 0.65;
+        let tailgating = (1.5 - self.headway) / 0.9;
+        ((speed + aggression + ambers + tailgating) / 4.0).clamp(-1.0, 1.0)
+    }
+
     pub fn label(&self) -> &'static str {
         if !self.assigned {
             "unassigned"
@@ -1060,6 +1078,15 @@ pub struct LaneUseRule {
     pub segment: SegmentId,
     pub node: NodeId,
     pub arrows: Vec<u8>,
+    /// Where the junction is and the unit direction the street leaves it
+    /// in: how the rule finds its approach again after a rebuild has
+    /// renumbered segments and nodes (`Traffic::anchor_lane_use`). None in
+    /// saves from before anchoring, and until the next rebuild for a rule
+    /// just set; those are matched by id on the network they were made on.
+    #[serde(default)]
+    pub at: Option<Vec2>,
+    #[serde(default)]
+    pub away: Option<Vec2>,
 }
 
 /// What a signal knows about one approach of its junction.
@@ -1853,12 +1880,9 @@ fn idm_with(v: f32, v0: f32, gap: f32, dv: f32, headway: f32, accel: f32) -> f32
 impl Traffic {
     pub fn rebuild(&mut self, roads: &RoadNetwork) {
         self.net.rebuild(roads);
-        for r in self.lane_use.clone() {
-            if let Some(ai) = self.net.approaches.iter().position(|a| a.segment == r.segment && a.node == r.node && a.lanes.len() == r.arrows.len()) {
-                self.net.approaches[ai].fixed = true;
-                self.net.set_arrows(ai, r.arrows.clone());
-            }
-        }
+        // Player arrows go back on their approaches by geometry
+        // (`traffic/remap.rs`): ids are renumbered by every rebuild.
+        self.resolve_lane_use(roads);
     }
 
     /// Drop every car; used when the road network changes shape.
@@ -2356,7 +2380,7 @@ impl Traffic {
                     return Err("some exit would be reachable from no lane".into());
                 }
                 let a: Vec<u8> = a.iter().map(|&x| x & ap.exits).collect();
-                self.lane_use.push(LaneUseRule { segment, node, arrows: a.clone() });
+                self.lane_use.push(LaneUseRule { segment, node, arrows: a.clone(), at: None, away: None });
                 self.net.approaches[ai].fixed = true;
                 self.net.set_arrows(ai, a);
             }
@@ -3601,6 +3625,22 @@ fn step_stunt(st: &mut Stunt, pos: Vec2, heading: f32, dt: f32) -> (Vec2, f32) {
 
 #[cfg(test)]
 mod tests {
+
+    /// [inspector] The slow–normal–reckless reading of a driver.
+    #[test]
+    fn boldness_runs_from_slow_to_reckless() {
+        let ordinary = DriverProfile::for_driver(40, 0.5, 0.3, 0.0, 0.5, 0.0).boldness();
+        let careful_old = DriverProfile::for_driver(85, 0.95, 0.05, 0.0, 0.5, 0.0).boldness();
+        let rebel = DriverProfile::for_driver(21, 0.05, 0.95, 0.0, 0.5, 0.0).boldness();
+        let drunk_rebel = DriverProfile::for_driver(21, 0.05, 0.95, 1.0, 0.5, 0.0).boldness();
+        assert!(ordinary.abs() < 0.25, "ordinary {ordinary}");
+        assert!(careful_old < -0.25, "careful pensioner {careful_old}");
+        assert!(rebel > 0.45, "rebel {rebel}");
+        assert!(drunk_rebel >= rebel);
+        assert!(DriverProfile::professional(0.0).boldness().abs() < 0.25);
+        assert_eq!(DriverProfile::default().boldness(), 0.0, "unassigned reads as normal");
+        assert!(DriverProfile::for_driver(40, 0.5, 0.3, 0.0, 0.5, 0.0).angry(1.0).boldness() > ordinary, "anger shows");
+    }
     use super::*;
 
     fn cross() -> RoadNetwork {
