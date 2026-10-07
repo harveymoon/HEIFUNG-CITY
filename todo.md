@@ -234,8 +234,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [ ] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)
 
 ### Agent waves (4–5 at a time)
-- Merged: fix/flags, feat/kerbs, feat/look, feat/economy
-- Running: feat/camera (section B), feat/identity (D: tunnel tubes, city name / game id / game history), feat/clarity (section A), feat/land (section C part 2), feat/tools ([ ] road raising, intersection editor, footbridges)
+- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity
+- Running: feat/events (C3: races, raves, infrastructure decay), feat/camera (section B), feat/clarity (section A), feat/land (section C part 2), feat/tools ([ ] road raising, intersection editor, footbridges)
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
-- Next as slots free: C3 events (races, raves) and infrastructure decay · E verify stale statuses
+- Next as slots free: dev-speed pass, then the review pass
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open
