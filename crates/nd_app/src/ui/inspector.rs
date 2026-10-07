@@ -44,6 +44,8 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
         Selection::None => {
             ui.label(egui::RichText::new("Nothing selected.").weak());
         }
+        // [toll-inspect] (its own window, `super::toll`, is the same one)
+        Selection::Toll(id) => super::toll::show(ui, sim, selection, id),
         Selection::Citizen(id) => {
             if !sim.world.citizens.contains_key(id) {
                 *selection = Selection::None;

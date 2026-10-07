@@ -447,6 +447,9 @@ pub struct LaneNetwork {
     pub rings: RingLanes,
     /// [tolls] Some lane has a toll booth (skips the toll checks when none does).
     pub tolls: bool,
+    /// [toll-inspect] Every booth and where it stands (set with the lanes'
+    /// tolls), for telling who drove round one.
+    pub toll_points: Vec<(u32, Vec2)>,
 }
 
 /// Arrow bit for a connector's turn.
@@ -1190,6 +1193,11 @@ pub struct Traffic {
     /// last drained them.
     #[serde(skip)]
     pub toll_passes: Vec<TollPass>,
+    /// [toll-inspect] Vehicles set off this tick while some road is tolled:
+    /// the world checks whether their route went round a booth. With where
+    /// along its first lane each set off.
+    #[serde(skip)]
+    pub toll_checks: Vec<(CarId, f32)>,
     /// [tools] The player's junction settings (signals, phase greens, the
     /// left arrow, banned left turns), reapplied on every rebuild by
     /// position (`traffic/junction.rs`).
@@ -1889,6 +1897,41 @@ impl LaneNetwork {
     /// `LANE_CHANGE_COST`; every vehicle already on a lane adds
     /// `QUEUE_COST`, so routes spread over lanes and around queues.
     pub fn route_avoiding(&self, start: LaneId, s_start: f32, goal: LaneId, s_end: f32, avoid_lane: Option<LaneId>, avoid_step: Option<(LaneId, LaneId)>) -> Option<(Vec<LaneId>, f32, f32)> {
+        self.route_search(start, s_start, goal, s_end, avoid_lane, avoid_step, true)
+    }
+
+    /// [toll-inspect] The booths a driver on `route` (from `s_start` along
+    /// its first lane to `s_end` along its last) went round: those the way
+    /// it would have taken with no tolls anywhere passes and `route` does
+    /// not. Only booths near enough the trip to matter are looked for (the
+    /// straight line there and on is no longer than the drive, with some
+    /// slack), and only then is the toll-free way searched, so most trips
+    /// cost nothing extra. No randomness.
+    pub fn avoided_booths(&self, route: &[LaneId], s_start: f32, s_end: f32) -> Vec<u32> {
+        let (Some(&first), Some(&last)) = (route.first(), route.last()) else { return Vec::new() };
+        if !self.tolls || self.toll_points.is_empty() {
+            return Vec::new();
+        }
+        let paid: Vec<u32> = route.iter().filter_map(|&l| self.lanes.get(l as usize).and_then(|l| l.toll)).map(|t| t.booth).collect();
+        let (Some(a), Some(b)) = (self.lanes.get(first as usize), self.lanes.get(last as usize)) else { return Vec::new() };
+        let (from, to) = (a.point_at(s_start).0, b.point_at(s_end).0);
+        let drive = self.route_length(route, s_start) - (b.length - s_end).max(0.0);
+        let reach = drive * 1.15 + 60.0;
+        let near: Vec<u32> = self.toll_points.iter().filter(|(id, p)| !paid.contains(id) && from.distance(*p) + p.distance(to) <= reach).map(|(id, _)| *id).collect();
+        if near.is_empty() {
+            return Vec::new();
+        }
+        let Some((free, _, _)) = self.route_search(first, s_start, last, s_end, None, None, false) else { return Vec::new() };
+        let mut out: Vec<u32> = free.iter().filter_map(|&l| self.lanes[l as usize].toll).map(|t| t.booth).filter(|id| near.contains(id)).collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// The A* behind `route_avoiding`; `tolls` false searches as if no road
+    /// were tolled.
+    #[allow(clippy::too_many_arguments)]
+    fn route_search(&self, start: LaneId, s_start: f32, goal: LaneId, s_end: f32, avoid_lane: Option<LaneId>, avoid_step: Option<(LaneId, LaneId)>, tolls: bool) -> Option<(Vec<LaneId>, f32, f32)> {
         if start == goal && s_end >= s_start {
             return Some((vec![start], s_start, s_end));
         }
@@ -1921,7 +1964,7 @@ impl LaneNetwork {
             let gl = g[&lane];
             let here = &self.lanes[lane as usize];
             // [tolls] A toll counts as the detour a driver would take to avoid it.
-            let ahead = here.next.iter().filter(|&&n| self.lanes[n as usize].permitted).map(|&n| (n, self.lanes[n as usize].length + self.rings.penalty(n) + self.toll_penalty(n)));
+            let ahead = here.next.iter().filter(|&&n| self.lanes[n as usize].permitted).map(|&n| (n, self.lanes[n as usize].length + self.rings.penalty(n) + if tolls { self.toll_penalty(n) } else { 0.0 }));
             // Room on this piece before the solid line of the junction
             // ahead (the line may begin pieces back, round bends).
             // On a roundabout, slow and with arms close together, the line
@@ -2029,6 +2072,7 @@ impl LaneNetwork {
             l.toll = None;
         }
         self.tolls = false;
+        self.toll_points.clear();
     }
 
     /// Metres left to drive on `route` from `s` along its first lane.
@@ -2134,6 +2178,11 @@ impl Traffic {
         let heading = dir.y.atan2(dir.x);
         let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, blocked_by: None, replans: 0, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), owned: None, errand: Default::default(), drive: DriveState::default(), toll_booth: 0, toll_paid: false, occupants: Vec::new(), glide_from: 0.0, glide_len: 0.0, glide_done: 0.0 });
         self.pull_out(id);
+        // [toll-inspect] Did it set off round a booth? (The world looks,
+        // once it knows whether this is a bus or a city vehicle.)
+        if self.net.tolls {
+            self.toll_checks.push((id, s_start));
+        }
         id
     }
 

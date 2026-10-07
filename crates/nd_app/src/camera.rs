@@ -181,6 +181,11 @@ pub fn zoom_distance(sim: &Sim, sel: Selection) -> f32 {
             let tall = w.buildings.get(id).map_or(0.0, |b| b.floors as f32 * 3.5);
             (r * 2.6 + tall * 1.2).clamp(60.0, 400.0)
         }
+        // [toll-inspect] The booth and the road either side of it.
+        Selection::Toll(id) => match sim.world.tolls.get(id).map(|b| b.size) {
+            Some(nd_sim::tolls::TollSize::Plaza) => 110.0,
+            _ => 70.0,
+        },
         Selection::None => 70.0,
     }
 }
@@ -210,6 +215,7 @@ pub fn thing_pose(sim: &Sim, sel: Selection) -> Option<ThingPose> {
     let ground = |p: Vec2| w.surface_height_near(p, w.ground_height(p));
     match sel {
         Selection::None => None,
+        Selection::Toll(id) => w.tolls.get(id).map(|b| ThingPose { pos: b.pos, heading: None, eye: w.surface_height(b.pos) + EYE_HEIGHT }),
         Selection::Car(id) => {
             let big = w.traffic.cars.get(id).is_some_and(|c| c.bus.is_some() || c.cargo.is_some());
             car_pose(id, if big { 2.6 } else { 1.25 })

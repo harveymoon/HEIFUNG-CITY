@@ -10,6 +10,8 @@ mod map_layers;
 mod marks;
 /// [metro-ux] The Metro map layer and drawing lines station to station.
 mod metro_ux;
+/// [toll-inspect] Picking and outlining toll booths.
+mod toll_select;
 mod remote;
 mod render;
 mod sim;

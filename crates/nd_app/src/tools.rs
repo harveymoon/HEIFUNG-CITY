@@ -626,6 +626,8 @@ pub enum Selection {
     Car(CarId),
     /// A private car standing parked (`world.vehicles`).
     Parked(nd_sim::VehicleId),
+    /// [toll-inspect] A toll booth or plaza (`world.tolls`, by its id).
+    Toll(u32),
     /// [camera] A pavement delivery robot (`world.bots`).
     Bot(nd_sim::BotId),
     /// [train-inspect] A train on the railway (`world.rail.trains`).
@@ -1398,6 +1400,10 @@ pub(crate) fn pick(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
         (_, Some((_, id))) => return Selection::Citizen(id),
         _ => {}
     }
+    // [toll-inspect] A toll booth (a vehicle in it was picked above).
+    if let Some(id) = crate::toll_select::pick(w, p) {
+        return Selection::Toll(id);
+    }
     // Parked cars at the kerb, in lots and on driveways.
     let parked = w
         .vehicles
@@ -1764,6 +1770,7 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
 
     match selection {
         Selection::None => {}
+        Selection::Toll(id) => crate::toll_select::draw(gizmos, w, id),
         // [camera] drawn by `crate::marks`, with its route and its shop.
         Selection::Bot(_) => {}
         // [train-inspect] drawn by `crate::train_select::draw`.

@@ -223,6 +223,7 @@ pub fn building_name(w: &World, b: Option<BuildingId>) -> Value {
 pub fn selection(w: &World, sel: Selection) -> Value {
     match sel {
         Selection::None => Value::Null,
+        Selection::Toll(id) => json!({ "kind": "toll", "id": id, "name": w.tolls.get(id).map(|b| b.name.as_str()) }),
         Selection::Citizen(id) => json!({ "kind": "citizen", "id": key_str(id), "name": w.citizens.get(id).map(|c| c.name.as_str()) }),
         Selection::Building(id) => json!({ "kind": "building", "id": key_str(id), "name": w.buildings.get(id).map(|b| b.name.as_str()) }),
         Selection::Car(id) => json!({ "kind": "car", "id": key_str(id), "label": w.car_label(id), "why": w.traffic.cars.contains_key(id).then(|| w.traffic.stop_reason(id).text(|c| w.car_label(c))) }),
