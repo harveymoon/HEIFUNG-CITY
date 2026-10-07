@@ -224,7 +224,7 @@ fn market(ui: &mut egui::Ui, p: &mut UiCtx) {
     hint(ui, "how quickly vacant lots of each use develop");
     for lu in LandUse::ALL {
         let col = zone_color32(p.assets.palette.zone_color(lu));
-        ui.add(egui::ProgressBar::new(e.demand_for(lu)).text(lu.label()).fill(col.gamma_multiply(0.7)).desired_height(12.0));
+        ui.add(egui::ProgressBar::new(e.demand_for(lu)).text(lu.label()).fill(col.gamma_multiply(0.7)).desired_height(18.0));
     }
 }
 
@@ -232,7 +232,7 @@ pub(super) fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
     let w = &p.sim.world;
     let pw = &w.economy.power;
     section(ui, "GRID");
-    ui.add(egui::ProgressBar::new(pw.served).text(format!("served {:.0}%", pw.served * 100.0)).fill(if pw.served < 0.98 { WARN.gamma_multiply(0.8) } else { egui::Color32::from_rgb(110, 200, 140).gamma_multiply(0.8) }).desired_height(14.0));
+    ui.add(egui::ProgressBar::new(pw.served).text(format!("served {:.0}%", pw.served * 100.0)).fill(if pw.served < 0.98 { WARN.gamma_multiply(0.8) } else { egui::Color32::from_rgb(110, 200, 140).gamma_multiply(0.8) }).desired_height(18.0));
     row(ui, "supply", format!("{:.0} MW from {} plant{}", pw.supply_mw, pw.plants, if pw.plants == 1 { "" } else { "s" }));
     row(ui, "demand", format!("{:.0} MW", pw.demand_mw));
     // Where the balance went this hour: the merit order of `power::dispatch`.
@@ -260,7 +260,7 @@ pub(super) fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
         section(ui, "BATTERIES");
         let level = if pw.battery_capacity_mwh > 0.0 { pw.battery_charge_mwh / pw.battery_capacity_mwh } else { 0.0 };
         let state = if pw.battery_out_mw > 0.0 { format!("delivering {:.0} MW", pw.battery_out_mw) } else if pw.battery_in_mw > 0.0 { format!("charging {:.0} MW", pw.battery_in_mw) } else { "holding".to_string() };
-        ui.add(egui::ProgressBar::new(level).text(format!("{:.0} of {:.0} MWh · {state}", pw.battery_charge_mwh, pw.battery_capacity_mwh)).fill(detail::BATTERY.gamma_multiply(0.8)).desired_height(14.0));
+        ui.add(egui::ProgressBar::new(level).text(format!("{:.0} of {:.0} MWh · {state}", pw.battery_charge_mwh, pw.battery_capacity_mwh)).fill(detail::BATTERY.gamma_multiply(0.8)).desired_height(18.0));
     }
     let rows = w.plant_rows();
     if !rows.is_empty() {
@@ -415,6 +415,7 @@ pub(super) fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
         });
     }
     graphics_setting(ui, p);
+    super::theme::scale_setting(ui);
 }
 
 /// [look] The graphics setting: Auto holds about 60 fps by stepping the

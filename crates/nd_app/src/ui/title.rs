@@ -15,7 +15,7 @@ use bevy_egui::egui::{self, Color32, Rect};
 use super::saves::{age, group_by_city, SlotKind};
 use super::{hint, section, UiCtx, GOLD, IVORY};
 
-const CARD: egui::Vec2 = egui::vec2(208.0, 262.0);
+const CARD: egui::Vec2 = egui::vec2(208.0, 272.0);
 const PICTURE: f32 = 192.0;
 
 pub fn screen(ctx: &egui::Context, p: &mut UiCtx) {
@@ -42,14 +42,14 @@ pub fn screen(ctx: &egui::Context, p: &mut UiCtx) {
                 // The logo (assets/brand/logo.svg, rendered by make_logo.py).
                 let w = (width * 0.62).min(700.0);
                 ui.add(egui::Image::new(&logo_texture(ui.ctx())).fit_to_exact_size(egui::vec2(w, w * 0.35)));
-                ui.label(egui::RichText::new("a neon city builder").color(IVORY).italics().size(15.0));
+                ui.label(egui::RichText::new("a neon city builder").color(IVORY).italics().size(crate::ui::theme::BODY));
             });
             ui.add_space(18.0);
             let slots = p.saves.slots();
             let newest = slots.iter().find(|s| s.kind != SlotKind::Dated).map(|s| (s.path.clone(), s.label.clone()));
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
-                let big = |t: &str| egui::Button::new(egui::RichText::new(t).strong().size(16.0)).min_size(egui::vec2(170.0, 36.0));
+                let big = |t: &str| egui::Button::new(egui::RichText::new(t).strong().font(crate::ui::theme::lead())).min_size(egui::vec2(170.0, 36.0));
                 if let Some((path, label)) = &newest {
                     if ui.add(big("Continue")).on_hover_text(format!("Load {label}")).clicked() {
                         load = Some(path.clone());
@@ -86,7 +86,7 @@ pub fn screen(ctx: &egui::Context, p: &mut UiCtx) {
             egui::ScrollArea::vertical().id_salt("title_saves").auto_shrink([false, false]).show(ui, |ui| {
                 for (city, rows) in groups {
                     ui.add_space(6.0);
-                    ui.label(egui::RichText::new(city).color(GOLD).strong().size(17.0));
+                    ui.label(egui::RichText::new(city).color(GOLD).strong().font(crate::ui::theme::lead()));
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
                         for (path, label, kind, figures, modified, picture) in rows {
@@ -135,19 +135,19 @@ fn card(ui: &mut egui::Ui, label: &str, kind: SlotKind, figures: &str, age: &str
         }
         None => {
             painter.rect_filled(img, 4.0, Color32::from_rgb(10, 12, 22));
-            painter.text(img.center(), egui::Align2::CENTER_CENTER, "no picture", egui::FontId::proportional(12.0), Color32::from_gray(110));
+            painter.text(img.center(), egui::Align2::CENTER_CENTER, "no picture", crate::ui::theme::small(), Color32::from_gray(110));
         }
     }
     painter.rect_stroke(img, 4.0, egui::Stroke::new(1.0, Color32::from_rgb(50, 50, 60)), egui::StrokeKind::Inside);
     let mut y = img.bottom() + 6.0;
     let name_col = if kind == SlotKind::Named { GOLD } else { IVORY };
-    painter.text(egui::pos2(rect.left() + 10.0, y), egui::Align2::LEFT_TOP, label, egui::FontId::proportional(15.0), name_col);
-    y += 20.0;
+    painter.text(egui::pos2(rect.left() + 10.0, y), egui::Align2::LEFT_TOP, label, crate::ui::theme::lead(), name_col);
+    y += 24.0;
     let line = if figures.is_empty() { age.to_string() } else { figures.to_string() };
-    painter.text(egui::pos2(rect.left() + 10.0, y), egui::Align2::LEFT_TOP, line, egui::FontId::proportional(11.0), Color32::from_rgb(190, 185, 170));
-    y += 15.0;
+    painter.text(egui::pos2(rect.left() + 10.0, y), egui::Align2::LEFT_TOP, line, crate::ui::theme::small(), Color32::from_rgb(190, 185, 170));
+    y += 19.0;
     if !figures.is_empty() {
-        painter.text(egui::pos2(rect.left() + 10.0, y), egui::Align2::LEFT_TOP, age, egui::FontId::proportional(10.0), Color32::from_gray(130));
+        painter.text(egui::pos2(rect.left() + 10.0, y), egui::Align2::LEFT_TOP, age, crate::ui::theme::small(), Color32::from_gray(130));
     }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }

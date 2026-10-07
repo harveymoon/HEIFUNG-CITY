@@ -171,12 +171,13 @@ pub fn gap_labels(mut contexts: bevy_egui::EguiContexts, sim: Res<Sim>, tools: R
         let spot = gap_spot(g);
         let top = w.ground_height(spot) + g.level + 17.0;
         let Ok(v) = camera.world_to_viewport(gt, Vec3::new(spot.x, top, spot.y)) else { continue };
+        let v = crate::ui::theme::to_points(ctx, v);
         let text = if g.end {
             format!("Ends in the air: no room for a column within {:.0} m", nd_sim::pillars::PILLAR_END_REACH)
         } else {
             format!("No room for a column for {:.0} m (a span may be {:.0})", g.a.distance(g.b), nd_sim::pillars::PILLAR_MAX_SPAN)
         };
-        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(13.0), egui::Color32::WHITE);
+        let galley = painter.layout_no_wrap(text, crate::ui::theme::small(), egui::Color32::WHITE);
         let at = egui::pos2(v.x - galley.size().x * 0.5, v.y - galley.size().y - 6.0);
         let r = egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(6.0, 3.0));
         painter.rect_filled(r, 4.0, egui::Color32::from_rgba_unmultiplied(150, 20, 20, 220));

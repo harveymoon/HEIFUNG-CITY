@@ -64,7 +64,7 @@ fn overview(ui: &mut egui::Ui, p: &mut UiCtx, big: bool) {
     let e = &p.sim.world.economy;
     section(ui, "POPULATION");
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(format!("{}", p.sim.world.citizens.len())).strong().size(18.0));
+        ui.label(egui::RichText::new(format!("{}", p.sim.world.citizens.len())).strong().font(crate::ui::theme::title()));
         ui.label(egui::RichText::new(format!("people   {} waiting to move in   {} unhoused   {} unemployed", e.waiting_immigrants, e.unhoused, e.unemployed)).small());
     });
     if !big {
@@ -203,7 +203,7 @@ fn histogram(ui: &mut egui::Ui, sorted: &[f32], width: f32) {
 
     let (resp, painter) = ui.allocate_painter(egui::vec2(width, 150.0), egui::Sense::hover());
     let rect = resp.rect;
-    let plot = egui::Rect::from_min_max(rect.min + egui::vec2(30.0, 6.0), rect.max - egui::vec2(6.0, 16.0));
+    let plot = egui::Rect::from_min_max(rect.min + egui::vec2(36.0, 8.0), rect.max - egui::vec2(6.0, 19.0));
     painter.rect_filled(plot, 2.0, egui::Color32::from_rgba_unmultiplied(20, 22, 34, 220));
     let axis = egui::Stroke::new(1.0, egui::Color32::from_gray(110));
     painter.line_segment([plot.left_bottom(), plot.right_bottom()], axis);
@@ -228,7 +228,7 @@ fn histogram(ui: &mut egui::Ui, sorted: &[f32], width: f32) {
         painter.rect_filled(bar, 1.0, tier_color(tier));
     }
 
-    let small = egui::FontId::proportional(10.0);
+    let small = crate::ui::theme::small();
     let grey = egui::Color32::from_gray(170);
     painter.text(egui::pos2(plot.left() - 3.0, plot.top()), egui::Align2::RIGHT_TOP, format!("{peak}"), small.clone(), grey);
     painter.text(egui::pos2(plot.left() - 3.0, plot.bottom()), egui::Align2::RIGHT_BOTTOM, "0", small.clone(), grey);
@@ -256,9 +256,9 @@ fn dashed_vline(painter: &egui::Painter, x: f32, y: egui::Rangef, color: egui::C
 /// people, poorest first, sampled at 48 points however many citizens there
 /// are. The gap below the diagonal is the Gini index, drawn.
 fn lorenz(ui: &mut egui::Ui, sorted: &[f32], total: f32) {
-    let (resp, painter) = ui.allocate_painter(egui::vec2(130.0, 150.0), egui::Sense::hover());
+    let (resp, painter) = ui.allocate_painter(egui::vec2(160.0, 160.0), egui::Sense::hover());
     let rect = resp.rect;
-    let plot = egui::Rect::from_min_max(rect.min + egui::vec2(6.0, 6.0), rect.max - egui::vec2(6.0, 26.0));
+    let plot = egui::Rect::from_min_max(rect.min + egui::vec2(6.0, 6.0), rect.max - egui::vec2(6.0, 34.0));
     painter.rect_filled(plot, 2.0, egui::Color32::from_rgba_unmultiplied(20, 22, 34, 220));
     painter.line_segment([plot.left_bottom(), plot.right_top()], egui::Stroke::new(1.0, egui::Color32::from_gray(110)));
 
@@ -277,10 +277,10 @@ fn lorenz(ui: &mut egui::Ui, sorted: &[f32], total: f32) {
         points.push(egui::pos2(plot.left() + plot.width() * k as f32 / SAMPLES as f32, plot.bottom() - plot.height() * share));
     }
     painter.line(points, egui::Stroke::new(1.5, GOLD));
-    let small = egui::FontId::proportional(10.0);
+    let small = crate::ui::theme::small();
     let grey = egui::Color32::from_gray(170);
     painter.text(egui::pos2(plot.center().x, plot.bottom() + 2.0), egui::Align2::CENTER_TOP, "people, poorest first", small.clone(), grey);
-    painter.text(egui::pos2(plot.center().x, plot.bottom() + 13.0), egui::Align2::CENTER_TOP, "↑ share of income", small, grey);
+    painter.text(egui::pos2(plot.center().x, plot.bottom() + 17.0), egui::Align2::CENTER_TOP, "↑ share of income", small, grey);
     resp.on_hover_text("Lorenz curve: the further it sags below the diagonal, the more unequal the city. Gini is twice the area between them.");
 }
 

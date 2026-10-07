@@ -37,6 +37,8 @@ mod pressure;
 mod portrait;
 pub mod saves;
 mod taxes;
+/// [fonts] The HUD's fonts and type scale.
+pub mod theme;
 /// The title screen: saved games with their map pictures.
 mod title;
 mod icons;
@@ -109,9 +111,24 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<UiFlags>()
             .init_resource::<Saves>()
+            // [fonts] Before the pass begins, so the first pass already has them.
+            .add_systems(PreUpdate, install_fonts.after(EguiPreUpdateSet::InitContexts).before(EguiPreUpdateSet::BeginPass))
             .add_systems(PreUpdate, read_input_flags.after(EguiPreUpdateSet::BeginPass))
             .add_systems(Update, saves::autosave.in_set(SimSet::Sync))
             .add_systems(EguiPrimaryContextPass, (side_panel, pins::map_pins.after(side_panel)));
+    }
+}
+
+/// [fonts] Fonts and the type scale (`theme`), once the context exists.
+/// egui applies new fonts when a pass begins, so this runs before
+/// `BeginPass`: no pass ever lays out text in a family not yet loaded.
+fn install_fonts(mut contexts: EguiContexts, mut done: Local<bool>) {
+    if *done {
+        return;
+    }
+    if let Ok(ctx) = contexts.ctx_mut() {
+        theme::install(ctx);
+        *done = true;
     }
 }
 
