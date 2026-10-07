@@ -405,6 +405,25 @@ impl World {
             .collect()
     }
 
+    /// [services] `edge_exits`, then every other road end leading off the
+    /// map (the nearer ends `edge_exits` leaves to walkers), nearest first:
+    /// for a tow that must get away from wherever a wreck lies.
+    pub(super) fn any_exits(&self, from: Vec2) -> Vec<(LaneId, f32)> {
+        let mut out = self.edge_exits(from);
+        let mut leaves: Vec<NodeId> = self.city_leaves();
+        leaves.sort_by(|a, b| self.roads.node(*a).pos.distance(from).total_cmp(&self.roads.node(*b).pos.distance(from)).then(a.0.cmp(&b.0)));
+        for n in leaves {
+            let at = self.roads.node(n).pos;
+            let Some(sid) = self.roads.node(n).segments.iter().copied().find(|&s| self.roads.segment(s).alive && self.roads.segment(s).is_street()) else { continue };
+            let Some(lanes) = self.traffic.net.segment_lanes.get(&sid) else { continue };
+            let Some(&lane) = lanes.iter().min_by(|a, b| self.traffic.net.lanes[**a as usize].end().distance(at).total_cmp(&self.traffic.net.lanes[**b as usize].end().distance(at))) else { continue };
+            if !out.iter().any(|&(l, _)| l == lane) {
+                out.push((lane, (self.traffic.net.lanes[lane as usize].length - 1.0).max(0.0)));
+            }
+        }
+        out
+    }
+
     /// Send a car on the road off the map by the first exit it can reach.
     pub(super) fn redirect_out(&mut self, car: CarId) -> bool {
         let pos = self.traffic.cars[car].pos;
@@ -465,6 +484,11 @@ impl World {
     /// along a road from the city's edge.
     pub(super) fn route_from_edge(&mut self, to_seg: SegmentId, to_pt: Vec2) -> Option<(Vec<LaneId>, f32, f32)> {
         let (goal, s_end, _) = self.traffic.net.nearest_lane_on(to_seg, to_pt)?;
+        self.route_from_edge_to(goal, s_end)
+    }
+
+    /// `route_from_edge` to a given lane: `s_end` metres along `goal`.
+    pub(super) fn route_from_edge_to(&mut self, goal: LaneId, s_end: f32) -> Option<(Vec<LaneId>, f32, f32)> {
         let (mut highway, _) = self.highway_ends();
         highway.shuffle(&mut self.rng);
         let mut leaves: Vec<(NodeId, SegmentId)> = self
@@ -477,15 +501,29 @@ impl World {
         leaves.retain(|(n, _)| self.roads.node(*n).pos.length() >= max * 0.6);
         leaves.shuffle(&mut self.rng);
         for (n, sid) in highway.into_iter().take(3).chain(leaves.into_iter().take(3)) {
-            let at = self.roads.node(n).pos;
-            let Some(lanes) = self.traffic.net.segment_lanes.get(&sid) else { continue };
-            let Some(&lane) = lanes.iter().min_by(|a, b| self.traffic.net.lanes[**a as usize].start().distance(at).total_cmp(&self.traffic.net.lanes[**b as usize].start().distance(at))) else { continue };
-            let s0 = 1.0f32.min(self.traffic.net.lanes[lane as usize].length * 0.5);
-            if let Some(r) = self.traffic.net.route_lanes(lane, s0, goal, s_end) {
+            if let Some(r) = self.route_in_from(n, sid, goal, s_end) {
                 return Some(r);
             }
         }
-        None
+        // [services] Then any road end leading off the map, nearest first:
+        // a recovery truck must get to a wreck however it can.
+        let to = self.traffic.net.lanes.get(goal as usize)?.point_at(s_end).0;
+        let mut all: Vec<(NodeId, SegmentId)> = self
+            .city_leaves()
+            .into_iter()
+            .filter_map(|n| self.roads.node(n).segments.iter().copied().find(|&s| self.roads.segment(s).alive && self.roads.segment(s).is_street()).map(|s| (n, s)))
+            .collect();
+        all.sort_by(|a, b| self.roads.node(a.0).pos.distance(to).total_cmp(&self.roads.node(b.0).pos.distance(to)).then(a.0 .0.cmp(&b.0 .0)));
+        all.into_iter().find_map(|(n, sid)| self.route_in_from(n, sid, goal, s_end))
+    }
+
+    /// A route in from the road end `n` (segment `sid`) to `s_end` on `goal`.
+    fn route_in_from(&self, n: NodeId, sid: SegmentId, goal: LaneId, s_end: f32) -> Option<(Vec<LaneId>, f32, f32)> {
+        let at = self.roads.node(n).pos;
+        let lanes = self.traffic.net.segment_lanes.get(&sid)?;
+        let &lane = lanes.iter().min_by(|a, b| self.traffic.net.lanes[**a as usize].start().distance(at).total_cmp(&self.traffic.net.lanes[**b as usize].start().distance(at)))?;
+        let s0 = 1.0f32.min(self.traffic.net.lanes[lane as usize].length * 0.5);
+        self.traffic.net.route_lanes(lane, s0, goal, s_end)
     }
 
     /// The citizen's car, if it is parked within reach of `near`.
@@ -586,6 +624,10 @@ impl World {
             }
             Errand::Tow(job) => {
                 self.tow_truck_arrived(car_id, job);
+                true
+            }
+            Errand::Recover(wreck) => {
+                self.recovery_truck_arrived(car_id, wreck);
                 true
             }
             Errand::Taxi(cab) => {

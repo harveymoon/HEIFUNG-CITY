@@ -31,6 +31,7 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 
 mod crosswalk;
+mod hazard;
 mod remap;
 mod roundabout;
 mod siren;
@@ -842,6 +843,13 @@ pub struct DriveState {
     /// [emergency] A police car in pursuit: the car it is chasing. It drives
     /// at it rather than round it; touching it is the tag.
     pub chasing: Option<CarId>,
+    /// [services] A recovery vehicle (a tow truck going to a wreck) with its
+    /// amber beacons on: drawn flashing, but nobody pulls over for it.
+    pub amber: bool,
+    /// [services] That vehicle is close to the wreck: it may take the
+    /// off-law moves (`traffic/siren.rs`) round the queue in its way, but
+    /// not run red lights. Set by the world every tick.
+    pub recovering: bool,
 }
 
 /// [rage] How angry (`0..1`) a driver gets `elapsed` minutes into a drive
@@ -2878,7 +2886,7 @@ impl Traffic {
                     }
                     // [emergency] Lights and sirens (and whoever flees them):
                     // past what their move takes them round, no red light.
-                    if car.offlaw() {
+                    if car.offlaw() || car.passing_hazard() {
                         (gap, lead_v, why) = self.offlaw_gap(car, gap, lead_v, why);
                     }
                     if pending {
@@ -3080,7 +3088,10 @@ impl Traffic {
                         // sirens squeeze past as they always have.)
                         let (at, idx_now, siren) = (self.cars[cid].s, self.cars[cid].idx, self.cars[cid].siren);
                         if let Some(&next) = self.cars[cid].route.get(idx_now + 1).filter(|_| !siren) {
-                            if let Some(&tail) = self.net.lanes[next as usize].cars.first() {
+                            // [driving] Nor a crash on the shoulder it is
+                            // easing past (`traffic/hazard.rs`).
+                            let passing = self.cars[cid].passing_hazard();
+                            if let Some(&tail) = self.net.lanes[next as usize].cars.first().filter(|&&t| !(passing && self.is_hazard(&self.cars[t]))) {
                                 let room = self.cars[tail].s - self.cars[tail].length() - 0.1;
                                 if at - len > room {
                                     let tv = self.cars[tail].v;

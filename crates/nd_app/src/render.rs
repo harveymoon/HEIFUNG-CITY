@@ -241,6 +241,11 @@ pub struct BuildingTag;
 pub struct CitizenTag;
 #[derive(Component)]
 pub struct CarTag;
+/// [render] A car's body, lights or glow, and whether the car is in a
+/// tunnel (`World::car_in_tunnel`): the depth view shows it with the
+/// Underground layer and hides it above ground (`holo::apply_depth`).
+#[derive(Component)]
+pub struct InTunnel(pub bool);
 
 /// A mover that sets its own height (cars, from the road they are on);
 /// `lift_movers` leaves it alone.
@@ -388,6 +393,7 @@ impl Plugin for RenderPlugin {
         app.init_resource::<taxis::TaxiRender>().add_systems(Update, taxis::sync_taxis.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // Emergency vehicles, fires and rubble, after the cars they hide.
         app.add_systems(Update, emergency::sync_emergency.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
+        app.add_systems(Update, emergency::amber_beacons.after(sync_cars).in_set(SimSet::Sync));
         // [driving] Tyre smoke, skid marks, wrecks and tows.
         app.add_systems(Update, stunts::sync_stunts.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // [society] Skid row and the trash.
@@ -2003,7 +2009,7 @@ fn sync_cars(
     mut vr: ResMut<VehicleRender>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut q: Query<&mut Transform, With<CarTag>>,
+    mut q: Query<(&mut Transform, Option<&mut InTunnel>), With<CarTag>>,
 ) {
     vr.ensure_materials(&mut materials);
     let fx_mat = vr.fx.clone().expect("vehicle materials");
@@ -2038,11 +2044,12 @@ fn sync_cars(
             // the world origin: the centre of the main junction, flashing
             // each time a car joined the road.
             let pose = car_pose(car, f, &sim.world);
-            let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, CarTag, SelfLifted)).id();
-            let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), pose, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted)).id();
+            let tunnel = sim.world.car_in_tunnel(car);
+            let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, CarTag, SelfLifted, InTunnel(tunnel))).id();
+            let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), pose, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted, InTunnel(tunnel))).id();
             state.cars.insert(id, [body, lights]);
             if let Some(fx) = v.fx {
-                let e = commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), pose, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted)).id();
+                let e = commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), pose, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted, InTunnel(tunnel))).id();
                 vr.car_fx.insert(id, e);
             }
             if model.body == nd_sim::BodyType::AkiraBike {
@@ -2101,10 +2108,14 @@ fn sync_cars(
         // At the height of the road where it is drawn, not where it ends
         // the tick.
         let lift = sim.world.car_height_at(car, pos);
+        let tunnel = sim.world.car_in_tunnel(car);
         for e in ents.iter().copied().chain(fx) {
-            if let Ok(mut tf) = q.get_mut(e) {
+            if let Ok((mut tf, depth)) = q.get_mut(e) {
                 tf.translation = Vec3::new(pos.x, lift + 0.05 + if selected { 0.4 } else { 0.0 }, pos.y);
                 tf.rotation = Quat::from_rotation_y(-heading);
+                if let Some(mut d) = depth.filter(|d| d.0 != tunnel) {
+                    d.0 = tunnel;
+                }
             }
         }
     }

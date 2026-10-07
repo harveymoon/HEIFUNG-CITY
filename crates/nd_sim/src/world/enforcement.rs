@@ -273,7 +273,9 @@ impl World {
             .iter()
             .filter(|(id, _)| {
                 let busy = self.enforcement.jobs.iter().filter(|j| j.company == Some(*id) && j.truck.is_some()).count();
-                busy < self.tow_trucks(*id)
+                // [services] And its trucks out to wrecks.
+                let wrecks = self.driving.wrecks.iter().filter(|w| w.company == Some(*id) && w.truck.is_some()).count();
+                busy + wrecks < self.tow_trucks(*id)
             })
             .filter_map(|(id, b)| self.lots.get(b.lot).filter(|l| l.car_segment.is_some()).map(|l| (id, l.center.distance(p))))
             .min_by(|a, b| a.1.total_cmp(&b.1))

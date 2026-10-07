@@ -150,7 +150,18 @@ Citizens are rendered from their simulated positions every frame.
   ones stop both cars a minute or three; bad ones (closing speed) write cars off and may hurt
   people: a witness calls 911, a `Crash` incident brings the police (who may arrest a drunk or
   red-light driver) and each injured person gets an on-road `Medical` incident and an ambulance;
-  once the scene clears a tow truck hauls the wreck to the nearest industrial yard. Street
+  a crashed car is pushed onto the shoulder of a kerb lane and the traffic behind eases past it at
+  a crawl where its body fits beside it (`traffic/hazard.rs`; no room, as for a crash in an inner
+  lane or a junction, and it changes lanes or waits and re-routes). Once the police are on scene
+  (or have gone, or 45 minutes after a crash nobody reported) the nearest tow company with a truck
+  free sends a recovery truck (with none in town, one from out of town comes in from the map edge,
+  by any road end that reaches the wreck). It drives there with amber beacons (no siren: nobody
+  pulls over), and within 250 m takes the siren's off-law moves round the queue (the opposing lane
+  when clear, the kerb past standing traffic; never a red light), hooks the wreck just behind it
+  and hauls it to the yard or off the map. A truck not there within an hour is called off and the
+  wreck hooked where it lies (a truck from the far side); only a wreck no road leads away from is
+  craned off after a day. (The out-of-town tow used to aim only for the nearest road end, often
+  behind the wreck with no way to turn, so wrecks stood for a day.) Street
   takeovers: on ~30 % of nights (with a crew) at 22:00 a meet is planned; rebellious young locals
   drive over, outsiders roll in off the highway as a pack ignoring lights, the junction is closed,
   cars ring it and the flashiest spin donuts in tyre smoke, a crowd walks over, a neighbour calls
@@ -916,7 +927,9 @@ Citizens are rendered from their simulated positions every frame.
   water, buildings, lots, surface roads and walkers, draws surface roads as faint outlines and
   shows the tunnels (drawn as their own street layer, `StreetLayer::Underground`, with bore walls
   and a lit strip; each layer draws only its own roads' crossings, beacons and signal posts) and
-  the cars in them. The Tunnel preset switches to it, other presets back to
+  the cars in them: a car is in the tunnel layer by the lane it is on (`World::car_in_tunnel`),
+  hidden above ground and shown below, not by its height (near a portal, where the cutting is
+  graded down to the road, cars and wrecks used to show above ground and vanish below). The Tunnel preset switches to it, other presets back to
   Ground. Sky is a placeholder. The metro (see Subway) shows here: its bores, platforms, shafts and
   trains carry the tunnel tag.
 - **Highway and the map edge**: two carriageways cross the map at
@@ -1225,7 +1238,9 @@ trait MindProvider {
 - Window lights follow occupancy (`render/lights.rs`, `nd_procgen::lights`). In the app every
   window light is generated (`Extras::dynamic_lights`, about 92% of windows) through
   `parts::window_light`, which ranks it by a hash of its position and lays dark glass just
-  behind it. When chunks are built, the rank and the building's slot go into the glow
+  behind it (`LIGHT_GLASS_BEHIND`, 13 mm: off the whole-centimetre grid the decals stand on, so
+  it never shares a plane with a window frame; at 2 cm it lay in the frame's plane and the
+  windows z-fought with the lights off; `buildings/coplanar_tests.rs` checks every style). When chunks are built, the rank and the building's slot go into the glow
   vertices' UVs, and chunk glow is drawn with a material extension that reads the building's
   lit share from a 256 by 256 one-byte texture and discards windows ranked above it. Four
   times a sim hour the app counts who is in every building (awake or asleep at home, staff)
