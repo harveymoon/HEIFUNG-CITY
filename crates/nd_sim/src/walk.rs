@@ -203,11 +203,44 @@ pub fn is_junction(roads: &RoadNetwork, n: NodeId) -> bool {
 /// across `seg` (as `nd_procgen::street` paints it).
 pub fn crosswalk_setback(roads: &RoadNetwork, node: NodeId, seg: SegmentId) -> f32 {
     let w = widest(roads, node);
-    if roads.ring_of_node(node).is_some() && roads.ring_of_segment(seg).is_none() {
-        w + RING_CROSSWALK_BACK
-    } else {
-        w + CROSSWALK_BACK
+    let usual = if roads.ring_of_node(node).is_some() && roads.ring_of_segment(seg).is_none() { w + RING_CROSSWALK_BACK } else { w + CROSSWALK_BACK };
+    usual.max(acute_setback(roads, node, seg))
+}
+
+/// [review] Where `seg` makes a sharp corner (under about 80 degrees) with
+/// a neighbouring street at `node`, the two kerb lines meet far out from
+/// the node and the rounded kerb (`nd_procgen::street`, radius 3 to 6 m)
+/// begins further out still. A zebra at the usual set-back ended on the
+/// asphalt between the two arms, with no kerb to drop and the pavement's
+/// end in the other street. Out to where it meets the corner's kerb.
+fn acute_setback(roads: &RoadNetwork, node: NodeId, seg: SegmentId) -> f32 {
+    let here = roads.node(node).pos;
+    let away = |s: SegmentId| {
+        let (a, b) = roads.segment_points(s);
+        (if a.distance(here) < b.distance(here) { b - a } else { a - b }).normalize_or_zero()
+    };
+    let me = roads.segment(seg);
+    let (d1, h1) = (away(seg), me.half_width());
+    let mut need: f32 = 0.0;
+    for &s in &roads.node(node).segments {
+        let o = roads.segment(s);
+        if s == seg || !o.alive || !o.is_street() {
+            continue;
+        }
+        let cos = d1.dot(away(s)).clamp(-1.0, 1.0);
+        let theta = cos.acos();
+        if !(0.05..80f32.to_radians()).contains(&theta) {
+            continue;
+        }
+        let h2 = o.half_width();
+        // Along `seg`, where its kerb line meets the neighbour's.
+        let meet = (h2 + h1 * cos) / theta.sin();
+        // Half the rounded kerb's run along the arm past that point.
+        let r = (0.6 * h1.min(h2)).clamp(3.0, 6.0);
+        let round = r * ((std::f32::consts::PI - theta) * 0.5).tan();
+        need = need.max(meet + 0.5 * round + CROSSWALK_HALF);
     }
+    need
 }
 
 /// Mid-block zebras on long runs of street, as `(segment, t from a to b)`.
@@ -1129,6 +1162,41 @@ impl WalkGraph {
 mod tests {
     use super::*;
     use crate::zoning::{generate_lots, Zone, ZoneId};
+
+    /// [review] At a sharp corner the crosswalk is set out past where the
+    /// two arms' kerb lines meet (else it ends on the asphalt between them,
+    /// and so does the pavement); a right-angled junction keeps the usual
+    /// set-back.
+    #[test]
+    fn sharp_corners_set_their_crosswalks_out_to_the_kerb() {
+        let mut roads = RoadNetwork::default();
+        let a = 150f32.to_radians();
+        roads.add_polyline(&[Vec2::ZERO, Vec2::new(120.0, 0.0)], 1, 1);
+        roads.add_polyline(&[Vec2::ZERO, Vec2::from_angle(a) * 120.0], 1, 1);
+        roads.add_polyline(&[Vec2::ZERO, Vec2::from_angle(-a) * 120.0], 1, 1);
+        let node = roads.nodes.iter().position(|n| n.pos.length() < 0.1).map(|i| NodeId(i as u32)).unwrap();
+        let hw = roads.segment(roads.node(node).segments[0]).half_width();
+        let usual = hw + CROSSWALK_BACK;
+        // Where two kerb lines 60 degrees apart meet, along either arm.
+        let meet = (hw + hw * 0.5) / 60f32.to_radians().sin();
+        for &s in &roads.node(node).segments {
+            let (p, q) = roads.segment_points(s);
+            let far = if p.length() > q.length() { p } else { q };
+            let set = crosswalk_setback(&roads, node, s);
+            if far.x > 0.0 {
+                assert_eq!(set, usual, "the straight-on arm keeps the usual set-back");
+            } else {
+                assert!(set - CROSSWALK_HALF > meet, "an arm of the sharp corner: zebra from {} m, the kerb lines meet at {meet} m", set - CROSSWALK_HALF);
+            }
+        }
+        let mut plus = RoadNetwork::default();
+        plus.add_polyline(&[Vec2::new(-120.0, 0.0), Vec2::new(120.0, 0.0)], 1, 1);
+        plus.add_polyline(&[Vec2::new(0.0, -120.0), Vec2::new(0.0, 120.0)], 1, 1);
+        let node = plus.nodes.iter().position(|n| n.pos.length() < 0.1).map(|i| NodeId(i as u32)).unwrap();
+        for &s in &plus.node(node).segments {
+            assert_eq!(crosswalk_setback(&plus, node, s), usual, "a crossroads is unchanged");
+        }
+    }
 
     /// A hand-built graph: `nodes` positions and `edges` as (a, b, interior, park).
     fn graph(nodes: &[Vec2], edges: &[(u32, u32, bool, bool)]) -> WalkGraph {

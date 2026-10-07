@@ -313,3 +313,35 @@ Most probes on this branch can become these tests once their asserts are flipped
 
 - A "flat" world produced a node at (−5000, −480) with `road_z` 109.9. This was seen once during the procgen probes and not investigated.
 - `strand_car` teleporting private cars into parking during H1 is arguably "into parking". It is listed under H1 because it happens to every car on every edit.
+
+---
+
+## 5. Status after the fix/review pass (7 October 2026)
+
+M1–M3, M5, M6, M8–M11 and M13–M15 were fixed by earlier merged commits (see todo.md). The rest were checked against the code at c8d9a49:
+
+| # | Status | Where / why |
+|---|---|---|
+| M4 | Already fixed | `World::tick` passes polled answers to `apply_late_decision` (`world/mod.rs`, `world/trips.rs`): only the thought and memory are taken mid-trip, and the intent waits up to `DEFERRED_INTENT_TTL`. Tests: `demo_city.rs` (M4 section), `sim_checks.rs`. |
+| M7 | Already fixed | `stop_removed` (`world/buses.rs`) decrements only on `> idx`, keeps the index on `== idx` and reroutes from the bus's own lane. Test: `demo_city.rs` (M7 section). |
+| M12 | Already fixed | `clear_full_rebuild` runs `.after(SimSet::Sync)` (`nd_app/src/render.rs`); air, bots and parked cars drain on a rebuild. |
+| L1 | Already fixed | `add_road` range-checks lanes before the cast (`remote.rs`). |
+| L2 | Already fixed | `reopen_after_rebuild` is called from the redevelopment path in `construction.rs` (when it starts, not when it finishes). |
+| L3 | Already fixed | `HybridMind` has `REQUEST_TTL` and `reset()`; `city_replaced` makes a fresh mind on load and new game. |
+| L4 | Already fixed | A city generation counter stops Follow and resets History after any load. |
+| L5 | Fixed here | Visible strings were already clean (the inspector redesign rewrote the "Â·" lines). Six nd_procgen comments still had "â”€", "â€“", "Ã—"; re-encoded. `nd_sim/tests/source_encoding.rs` now fails on any double-encoded pair in `crates/**/*.rs`. |
+| L6 | Already fixed | `after_load` rebuilds `services.by_car`. |
+| L7 | Already fixed | Walkers are saved (a `BTreeMap`); the land-value work is serialised. |
+| L8 | Already fixed | `demolish_with` clears `Household.home`. |
+| L9 | Fixed here | `end_takeover` (`world/driving.rs`): a stunt car with no home, no exit or no lane there is towed off instead of skipped. Test: `a_stunt_car_with_nowhere_to_go_is_towed_not_left_spinning`. |
+| L10 | Already fixed (mostly) | `mesh.rs` `quad` picks the diagonal by concavity and uses per-triangle normals on non-planar quads, so the flipped faces are gone. Won't fix: re-lofting TwistTower's floor band plate to plate (`commercial.rs`) changes the building's look for no visible gain now. |
+| L11 | Already fixed | The ship deck is lifted 6 cm off the hull top. |
+| L12 | Already fixed | `slab` returns early on zero width. |
+| L13 | Already fixed | Signal posts use their own node; `tunnel_node` needs at least one live segment. |
+| L14 | Already fixed | `normalize_or(Vec2::X)`. |
+| L15 | Already fixed | `poll_assets.before(SimSet::Input)`, `apply_window_requests.before(side_panel)`. |
+| L16 | Already fixed | A 504 withdraws a queued command; a running one is reported as "may still take effect". |
+| L17 | Already fixed | `draw_gizmos` has separate Road and Zone arms. |
+| L18 | Fixed here | Removed `Gesture::set_level`, `let _ = kind;`, two `let _ = tick;` (market, trains) and the redundant `if self.detail` in `vehicles.rs`. |
+| L19 | Already fixed | `FigureCache` uses `BTreeMap`s. |
+| REMOTE.md / help | Already fixed, one nit fixed here | Speeds, `parking_price`, concerns, incident kinds, the `window` list and events were all brought up to date. The `incidents` filter's help and doc comment now list `crash` too. |

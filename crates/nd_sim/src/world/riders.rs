@@ -129,6 +129,29 @@ impl World {
         // within a few metres of the box.
         let pad = Vec2::splat(3.5);
         let near = self.peds.cross_grid.in_box(pos.min(end) - pad, pos.max(end) + pad);
+        // [review] Per junction, the crosswalk best aligned with the ride
+        // is the one over the arm the rider comes in on: only its light
+        // is theirs. At a five-arm junction a neighbouring arm's crosswalk
+        // can lie within 45 degrees of the ride too; obeying both lights
+        // (never green together) held every rider there for good.
+        let mut own_arm: Vec<(NodeId, f32)> = Vec::new();
+        for &cr in &near {
+            let Some(crossing) = self.walk.crossings.get(cr as usize) else { continue };
+            let Some(n) = crossing.node else { continue };
+            if crossing.kind == CrossingKind::Jay || self.roads.segments.len() <= crossing.segment.0 as usize {
+                continue;
+            }
+            let (s0, s1) = self.roads.segment_points(crossing.segment);
+            let along = dir.dot((s1 - s0).normalize_or_zero()).abs();
+            let (a, b) = (self.walk.nodes[crossing.a as usize].pos, self.walk.nodes[crossing.b as usize].pos);
+            if along < ALONG || ray_hits(pos, dir, reach, a, b).is_none() {
+                continue;
+            }
+            match own_arm.iter_mut().find(|(m, _)| *m == n) {
+                Some(e) => e.1 = e.1.max(along),
+                None => own_arm.push((n, along)),
+            }
+        }
         let mut best: Option<Stop> = None;
         for cr in near {
             let Some(crossing) = self.walk.crossings.get(cr as usize) else { continue };
@@ -151,6 +174,8 @@ impl World {
                 let at = (near_edge - STOP_SHORT).max(0.0);
                 // Into the junction, with lights: the approach's signal.
                 let entering = crossing.node.is_some_and(|n| (self.roads.node(n).pos - crossing.mid).dot(dir) > 0.0);
+                let own = crossing.node.is_none_or(|n| own_arm.iter().any(|(m, best)| *m == n && along >= *best));
+                let entering = entering && own;
                 let red = match signal {
                     Some((k, ap)) if entering && !self.approach_green(k as usize, ap as usize) => Some((k, ap)),
                     _ => None,
@@ -352,9 +377,17 @@ mod tests {
     /// A signalised crossroads with a few homes, everyone indoors and
     /// deciding nothing, so only the riders we set off move.
     fn town() -> World {
+        town_with(&[])
+    }
+
+    /// `town` with extra arms from the junction out to each of `arms`.
+    fn town_with(arms: &[Vec2]) -> World {
         let mut w = World::new(WorldConfig { emergencies: false, society: false, landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::test_town() });
         w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
         w.add_road(&[Vec2::new(0.0, -300.0), Vec2::new(0.0, 300.0)], 1, 1);
+        for &a in arms {
+            w.add_road(&[Vec2::ZERO, a], 1, 1);
+        }
         w.add_zone(square(10.0, 10.0, 180.0), LandUse::Residential);
         run(&mut w, 8 * 60);
         let sites: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.construction.is_some()).map(|(id, _)| id).collect();
@@ -494,6 +527,36 @@ mod tests {
         }
         run(&mut w, 3);
         assert!(out_of(w.citizens[id].pos, centre, out) > mid_out + CROSSWALK_HALF || !matches!(w.citizens[id].activity, Activity::Traveling { .. }), "rode on once the zebra was clear");
+    }
+
+    /// [review] At a five-arm junction a neighbouring arm's crosswalk lies
+    /// within 45 degrees of a rider coming in; the rider obeyed both lights,
+    /// which are never green together, and waited for good (a thousand
+    /// riders held at one junction starved and left town).
+    #[test]
+    fn a_cyclist_gets_through_a_five_arm_junction_from_every_arm() {
+        let diag = Vec2::from_angle(35f32.to_radians()) * 300.0;
+        let mut w = town_with(&[diag]);
+        let node = w.walk.crossings.iter().filter_map(|c| c.node).find(|n| w.roads.node(*n).pos.length() < 1.0).expect("the junction");
+        let centre = w.roads.node(node).pos;
+        let arms: Vec<(u32, Vec2)> = w.walk.crossings.iter().enumerate().filter(|(i, c)| c.node == Some(node) && w.peds.crossings.get(*i).is_some_and(|x| x.signal.is_some())).map(|(i, c)| (i as u32, (c.mid - centre).normalize())).collect();
+        assert_eq!(arms.len(), 5, "five signalised crosswalks");
+        let id = w.citizens.keys().next().unwrap();
+        let seed = seeds(|c, _| c > CAUTIOUS, 1)[0];
+        for (cr, out) in arms {
+            let mid_out = out_of(w.walk.crossings[cr as usize].mid, centre, out);
+            // In along this arm and straight on past the centre.
+            let path = shoulder(&w, centre, out, mid_out + CROSSWALK_HALF + 6.0, -12.0);
+            rider(&mut w, id, seed, path);
+            let mut ticks = 0;
+            while matches!(w.citizens[id].activity, Activity::Traveling { .. }) && ticks < 600 {
+                run(&mut w, 1);
+                ticks += 1;
+            }
+            assert!(!matches!(w.citizens[id].activity, Activity::Traveling { .. }), "a rider in along {out:?} got through within ten minutes (held at {:?})", w.citizens[id].pos);
+            w.citizens[id].activity = Activity::Idle;
+        }
+        assert_eq!(w.peds.red_lights_run_total, 0, "lawfully");
     }
 
     #[test]

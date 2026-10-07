@@ -470,13 +470,11 @@ impl World {
 
     /// A train stands at a station or yard: people off and on, goods off.
     pub(super) fn train_arrived(&mut self, id: TrainId) {
-        let tick = self.clock.tick;
         let (at, kind) = {
             let t = &mut self.rail.trains[id];
             t.dwell = rail::DWELL_SECONDS;
             (t.stops[t.next_stop].0, t.kind)
         };
-        let _ = tick;
         match kind {
             TrainKind::Passenger => {
                 let entrance = self.building_entrance(at).unwrap_or(self.rail.trains[id].head());

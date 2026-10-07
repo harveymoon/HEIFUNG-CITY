@@ -665,8 +665,7 @@ impl World {
             // The victim is gone: the incident keeps their name.
             if let Some(v) = victim {
                 if self.citizens.contains_key(v) {
-                    self.society_emigrate(v);
-                    self.economy.emigrated_total = self.economy.emigrated_total.saturating_sub(1);
+                    self.society_remove_citizen(v);
                     self.society.crime.stats.killed_total += 1;
                 }
             }
@@ -740,7 +739,7 @@ impl World {
                     }
                 }
                 self.society.crime.stats.fled_crime_total += members.len() as u32;
-                self.society_emigrate_household(hid);
+                self.society_emigrate_household(hid, crate::economy::LeaveReason::Crime);
             }
         }
         let s = &mut self.society.crime;

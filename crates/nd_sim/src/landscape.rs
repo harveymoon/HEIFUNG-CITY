@@ -1628,6 +1628,45 @@ pub struct Ground {
     /// `outer` by square of `OUTER_BUCKET` metres (over `FAR_GROUND`): the
     /// ways that may grade the ground in each.
     outer_index: Vec<Vec<u32>>,
+    /// [review] Lot edges held by a retaining wall: a corner lot levelled
+    /// to its front street standing over a lower side street.
+    pub retaining: Vec<Retaining>,
+    /// The lots behind those walls: their outline, pad and bounds. Inside
+    /// one the ground is its pad exactly, up to the wall's top (the raster
+    /// alone ramped down to the side street across a cell).
+    terraces: Vec<Terrace>,
+    /// `terraces` by square of `TERRACE_BUCKET` metres.
+    terrace_index: std::collections::HashMap<(i32, i32), Vec<u32>>,
+}
+
+/// [review] A lot pad standing at least this far over a street it does not
+/// front gets a retaining wall along that edge.
+pub const RETAIN_MIN: f32 = 0.4;
+const TERRACE_BUCKET: f32 = 32.0;
+
+/// [review] One edge of a lot held by a retaining wall, from `a` to `b`
+/// along the lot's outline: the wall's foot is the side street's height at
+/// each end (`foot_a`, `foot_b`), its top the lot's pad.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Retaining {
+    pub lot: LotId,
+    pub a: Vec2,
+    pub b: Vec2,
+    pub foot_a: f32,
+    pub foot_b: f32,
+    pub top: f32,
+    /// Unit vector from the edge into the lot.
+    pub inward: Vec2,
+}
+
+#[derive(Clone, Debug)]
+struct Terrace {
+    polygon: Vec<Vec2>,
+    pad: f32,
+    lo: Vec2,
+    hi: Vec2,
+    /// Indices into `Ground::retaining` of this lot's walls.
+    walls: Vec<u32>,
 }
 
 /// What holds a cell of the built-ground raster.
@@ -1864,7 +1903,7 @@ impl Ground {
         if land.is_flat() {
             // No raster: the flat map's ground is level, and a way below
             // it runs out of sight.
-            return Ground { half, n: 0, h: Vec::new(), fix: Vec::new(), pads, decks, underpasses, bridge_decks, outer: Vec::new(), outer_index: Vec::new() };
+            return Ground { half, n: 0, h: Vec::new(), fix: Vec::new(), pads, decks, underpasses, bridge_decks, outer: Vec::new(), outer_index: Vec::new(), retaining: Vec::new(), terraces: Vec::new(), terrace_index: Default::default() };
         }
         let n = (half * 2.0 / GROUND_CELL) as usize + 1;
         let at = |i: usize, j: usize| Vec2::new(-half + i as f32 * GROUND_CELL, -half + j as f32 * GROUND_CELL);
@@ -2004,9 +2043,108 @@ impl Ground {
         }
         let h = grade_free_ground(n, &natural, &fix, &set, lo, hi);
         let outer_index = index_outer(&outer);
-        let mut g = Ground { half, n, h, fix, pads, decks, underpasses, bridge_decks, outer, outer_index };
+        let mut g = Ground { half, n, h, fix, pads, decks, underpasses, bridge_decks, outer, outer_index, retaining: Vec::new(), terraces: Vec::new(), terrace_index: Default::default() };
         g.blend_into_outer(land);
+        g.find_retaining(roads, node_z, inner, lots);
         g
+    }
+
+    /// [review] Every lot edge along a street the lot does not front where
+    /// the pad stands `RETAIN_MIN` or more over that street: a corner lot
+    /// levelled to its front street used to ramp down across a ground cell
+    /// to the side street's pavement (the raster cannot step). The edge
+    /// gets a retaining wall (drawn by the app), and inside the lot the
+    /// ground is held at the pad right up to it.
+    fn find_retaining(&mut self, roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], lots: &SlotMap<LotId, Lot>) {
+        const SAMPLES: [f32; 5] = [0.1, 0.3, 0.5, 0.7, 0.9];
+        for (id, lot) in lots.iter() {
+            let Some(&pad) = self.pads.get(&id) else { continue };
+            let m = lot.polygon.len();
+            if m < 3 {
+                continue;
+            }
+            let mut walls = Vec::new();
+            for k in 0..m {
+                let (a, b) = (lot.polygon[k], lot.polygon[(k + 1) % m]);
+                if a.distance(b) < 1.0 {
+                    continue;
+                }
+                // The nearest street beside a point of the edge, if one is
+                // (a side street may be cut into several segments along it).
+                let street_at = |x: Vec2| {
+                    let reach = Vec2::splat(20.0);
+                    roads
+                        .segments_in_box(x - reach, x + reach)
+                        .filter(|&sid| {
+                            let sg = roads.segment(sid);
+                            sid != lot.front_segment && sg.alive && sg.is_street() && !sg.bridge && !sg.tunnel && !sg.viaduct && roads.node(sg.a).level >= 0.0 && roads.node(sg.b).level >= 0.0
+                        })
+                        .filter_map(|sid| {
+                            let (p, q) = roads.segment_points(sid);
+                            let (t, on) = project_on_segment(x, p, q);
+                            let d = on.distance(x);
+                            (d <= corridor_half_width(roads.segment(sid)) + 1.0).then_some((d, sid, t, on))
+                        })
+                        .min_by(|u, v| u.0.total_cmp(&v.0))
+                };
+                let found: Vec<(Vec2, f32, Vec2)> = SAMPLES.iter().filter_map(|&f| street_at(a.lerp(b, f)).map(|(_, sid, t, on)| (a.lerp(b, f), way_height(roads, node_z, inner, sid, t), on))).collect();
+                if found.len() < 4 {
+                    continue;
+                }
+                // The street's height at either end of the edge, from the
+                // samples nearest them.
+                let (first, last) = (found[0], found[found.len() - 1]);
+                let (fa, fb) = (first.1, last.1);
+                if pad - fa.max(fb) < RETAIN_MIN {
+                    continue;
+                }
+                // Into the lot: away from the street.
+                let d = (b - a).normalize_or_zero();
+                let mut inward = Vec2::new(-d.y, d.x);
+                if (first.2 - first.0).dot(inward) > 0.0 {
+                    inward = -inward;
+                }
+                walls.push(self.retaining.len() as u32);
+                self.retaining.push(Retaining { lot: id, a, b, foot_a: fa, foot_b: fb, top: pad, inward });
+            }
+            if walls.is_empty() {
+                continue;
+            }
+            let (lo, hi) = crate::geom::bounds(&lot.polygon);
+            let t = self.terraces.len() as u32;
+            let bucket = |v: f32| (v / TERRACE_BUCKET).floor() as i32;
+            for bx in bucket(lo.x - 0.1)..=bucket(hi.x + 0.1) {
+                for by in bucket(lo.y - 0.1)..=bucket(hi.y + 0.1) {
+                    self.terrace_index.entry((bx, by)).or_default().push(t);
+                }
+            }
+            self.terraces.push(Terrace { polygon: lot.polygon.clone(), pad, lo, hi, walls });
+        }
+    }
+
+    /// The pad of a lot behind a retaining wall that `p` lies in (or on one
+    /// of its walls), if any.
+    fn terrace_at(&self, p: Vec2) -> Option<f32> {
+        if self.terraces.is_empty() {
+            return None;
+        }
+        let key = ((p.x / TERRACE_BUCKET).floor() as i32, (p.y / TERRACE_BUCKET).floor() as i32);
+        for &t in self.terrace_index.get(&key)? {
+            let tr = &self.terraces[t as usize];
+            if p.x < tr.lo.x - 0.05 || p.y < tr.lo.y - 0.05 || p.x > tr.hi.x + 0.05 || p.y > tr.hi.y + 0.05 {
+                continue;
+            }
+            let on_wall = || {
+                tr.walls.iter().any(|&w| {
+                    let r = &self.retaining[w as usize];
+                    project_on_segment(p, r.a, r.b).1.distance(p) < 0.05
+                })
+            };
+            if point_in_polygon(p, &tr.polygon) || on_wall() {
+                return Some(tr.pad);
+            }
+        }
+        None
     }
 
     /// The last stretch of the raster eases into the ground beyond it
@@ -2136,6 +2274,9 @@ impl Ground {
     pub fn height(&self, land: &Landscape, p: Vec2) -> f32 {
         if self.n < 2 || p.x.abs() >= self.half || p.y.abs() >= self.half {
             return if land.is_flat() { land.base_height(p) } else { self.outer_height(land, p) };
+        }
+        if let Some(pad) = self.terrace_at(p) {
+            return pad;
         }
         let n = self.n;
         let fx = ((p.x + self.half) / GROUND_CELL).clamp(0.0, (n - 1) as f32 - 1e-3);
@@ -2352,6 +2493,60 @@ mod tests {
         let _ = w.place_rail_facility(crate::RailFacility::FreightYard, Vec2::new(-200.0, -330.0));
         let _ = w.place_rail_facility(crate::RailFacility::Station, Vec2::new(80.0, -310.0));
         w
+    }
+
+    /// [review] A corner lot levelled to its front street that stands over
+    /// a lower side street meets it with a retaining wall: inside the lot
+    /// the ground is the pad right up to the edge (it used to ramp down
+    /// across a ground cell to the side street's pavement), and the wall
+    /// runs from the street's height up to the pad. Every such edge has one.
+    #[test]
+    fn corner_lots_over_a_lower_side_street_get_a_retaining_wall() {
+        let w = demo_ground_world();
+        let g = &w.ground;
+        // Independently: lot edges with a street they do not front beside
+        // them that lies well below the pad.
+        let mut expected = 0;
+        for (id, lot) in w.lots.iter() {
+            let pad = w.lot_pad(id);
+            let m = lot.polygon.len();
+            for k in 0..m {
+                let (a, b) = (lot.polygon[k], lot.polygon[(k + 1) % m]);
+                if a.distance(b) < 4.0 {
+                    continue;
+                }
+                let mid = a.lerp(b, 0.5);
+                let low = w.roads.alive_segments().any(|(sid, s)| {
+                    if sid == lot.front_segment || !s.is_street() || s.bridge || s.tunnel || s.viaduct {
+                        return false;
+                    }
+                    let (p, q) = w.roads.segment_points(sid);
+                    let (t, on) = project_on_segment(mid, p, q);
+                    let ends = [a, b].iter().all(|&e| project_on_segment(e, p, q).1.distance(e) <= corridor_half_width(s) + 0.5);
+                    on.distance(mid) <= corridor_half_width(s) + 0.5 && ends && pad - w.road_height(sid, t) > RETAIN_MIN + 0.2
+                });
+                if low {
+                    expected += 1;
+                    assert!(g.retaining.iter().any(|r| r.lot == id && r.a.lerp(r.b, 0.5).distance(mid) < 0.01), "the edge at {mid} of a lot {:.2} m over its side street has a wall", pad);
+                }
+            }
+        }
+        println!("{} retaining walls, {expected} edges well over a side street", g.retaining.len());
+        assert!(expected >= 1, "the demo's slopes make some corner lots stand over a side street");
+        for r in &g.retaining {
+            assert!(r.top - r.foot_a.max(r.foot_b) >= RETAIN_MIN - 1e-3, "{r:?}");
+            assert_eq!(r.top, w.lot_pad(r.lot));
+            let mid = r.a.lerp(r.b, 0.5);
+            // On the pad right up to the wall, and on the wall's line too.
+            for x in [mid + r.inward * 0.3, mid + r.inward * 2.0, mid] {
+                assert!((w.ground_height(x) - r.top).abs() < 1e-3, "inside the lot at {x}: ground {} pad {}", w.ground_height(x), r.top);
+            }
+            // The wall faces the street: just outside, the ground is down
+            // at the street, not the pad.
+            let foot = (r.foot_a + r.foot_b) * 0.5;
+            let out = mid - r.inward * 0.5;
+            assert!(w.ground_height(out) < r.top - 0.2, "outside the wall at {out}: ground {} street {foot} pad {}", w.ground_height(out), r.top);
+        }
     }
 
     /// The built ground is smooth: between free cells (not a road, a cut or

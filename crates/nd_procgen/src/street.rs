@@ -2373,24 +2373,14 @@ mod kerb_tests {
         assert!(g.get(Asphalt).positions.iter().any(|p| Vec2::new(p[0], p[2]).distance(tip) < 1e-3), "asphalt out to the old corner");
     }
 
-    /// Every crosswalk end meets a dropped kerb with a tactile pad behind
-    /// it, and nowhere across the crosswalk does the kerb stand full height.
-    #[test]
-    fn every_crosswalk_end_gets_a_kerb_drop_and_a_tactile_pad() {
-        let (roads, net) = junctions();
-        let g = draw(&roads, &net, &[]);
-        let cuts = crossing_cuts(&roads);
+    /// The crosswalk ends in `g` that meet no kerb; panics where a kerb is
+    /// met but not dropped, stands full height across the crosswalk, or has
+    /// no tactile pad behind it.
+    fn crosswalk_ends_without_kerb(roads: &RoadNetwork, g: &Geometry) -> Vec<(Vec2, f32)> {
+        let cuts = crossing_cuts(roads);
         let all: Vec<(u32, Cut)> = cuts.iter().flat_map(|(s, v)| v.iter().map(move |c| (*s, *c))).collect();
-        let kinds = (
-            all.iter().filter(|(_, c)| c.half == nd_sim::walk::CROSSWALK_HALF).count(),
-            all.iter().filter(|(_, c)| c.half == 1.3).count(),
-        );
-        assert!(kinds.0 >= 10 && kinds.1 >= 2, "junction, mid-block and path crossings: {kinds:?}");
-        assert!(!nd_sim::walk::midblock_crossings(&roads).is_empty(), "the long block has a mid-block zebra");
         let kerb = g.get(Concrete);
         let pads = g.get(Tactile);
-        // Ends with no kerb to meet: the crosswalks either side of the Y's
-        // acute corner end on the asphalt where its two arms run together.
         let mut no_kerb = Vec::new();
         for (sid, c) in &all {
             let hw = roads.segment(SegmentId(*sid)).half_width();
@@ -2412,9 +2402,49 @@ mod kerb_tests {
                 assert!(pad >= 4, "crosswalk at {:?} (side {side}): no tactile pad", c.mid);
             }
         }
-        assert!(no_kerb.len() <= 2, "crosswalk ends that meet no kerb: {no_kerb:?}");
+        no_kerb
+    }
+
+    /// Every crosswalk end meets a dropped kerb with a tactile pad behind
+    /// it, and nowhere across the crosswalk does the kerb stand full height.
+    #[test]
+    fn every_crosswalk_end_gets_a_kerb_drop_and_a_tactile_pad() {
+        let (roads, net) = junctions();
+        let g = draw(&roads, &net, &[]);
+        let cuts = crossing_cuts(&roads);
+        let all: Vec<(u32, Cut)> = cuts.iter().flat_map(|(s, v)| v.iter().map(move |c| (*s, *c))).collect();
+        let kinds = (
+            all.iter().filter(|(_, c)| c.half == nd_sim::walk::CROSSWALK_HALF).count(),
+            all.iter().filter(|(_, c)| c.half == 1.3).count(),
+        );
+        assert!(kinds.0 >= 10 && kinds.1 >= 2, "junction, mid-block and path crossings: {kinds:?}");
+        assert!(!nd_sim::walk::midblock_crossings(&roads).is_empty(), "the long block has a mid-block zebra");
+        let no_kerb = crosswalk_ends_without_kerb(&roads, &g);
+        assert!(no_kerb.is_empty(), "crosswalk ends that meet no kerb: {no_kerb:?}");
         // The pads lie low, on the landing behind the dropped kerb.
-        assert!(pads.positions.iter().all(|p| p[1] < KERB_LOW + 0.01));
+        assert!(g.get(Tactile).positions.iter().all(|p| p[1] < KERB_LOW + 0.01));
+    }
+
+    /// [review] A Y of three narrow streets, two of them 60 degrees apart:
+    /// the crosswalks either side of the sharp corner used to end on the
+    /// asphalt where the two arms run together, short of where their kerb
+    /// lines even meet, so the corner got no curb cut. They are set out to
+    /// the rounded kerb now (`nd_sim::walk::crosswalk_setback`).
+    #[test]
+    fn a_sharp_corner_gets_its_curb_cuts() {
+        for deg in [60f32, 50.0, 70.0] {
+            let mut roads = RoadNetwork::default();
+            let a = (180.0 - deg * 0.5).to_radians();
+            roads.add_polyline(&[Vec2::ZERO, Vec2::new(120.0, 0.0)], 1, 1);
+            roads.add_polyline(&[Vec2::ZERO, Vec2::from_angle(a) * 120.0], 1, 1);
+            roads.add_polyline(&[Vec2::ZERO, Vec2::from_angle(-a) * 120.0], 1, 1);
+            let mut net = LaneNetwork::default();
+            net.rebuild(&roads);
+            let g = draw(&roads, &net, &[]);
+            assert_eq!(crossing_cuts(&roads).values().map(Vec::len).sum::<usize>(), 3, "three crosswalks");
+            let no_kerb = crosswalk_ends_without_kerb(&roads, &g);
+            assert!(no_kerb.is_empty(), "{deg} degrees: crosswalk ends that meet no kerb: {no_kerb:?}");
+        }
     }
 
     /// Curb cuts and corners are cheap: a pad is a couple of triangles (the

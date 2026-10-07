@@ -51,6 +51,8 @@ mod holo;
 mod junction_view;
 mod layers;
 mod lights;
+// [review] retaining walls at corner lots over a lower side street
+mod retaining;
 /// [look] Graphics quality, camera effects (SSAO, TAA, volumetric fog,
 /// reflections of the sky) and the frame-rate throttler.
 mod look;
@@ -439,6 +441,7 @@ impl Plugin for RenderPlugin {
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
         // The ground and water out past the map, into the fog.
         app.init_resource::<far::FarRender>().add_systems(Update, far::sync_far.in_set(SimSet::Sync).after(sync_landscape));
+        app.add_systems(Update, retaining::sync_retaining.in_set(SimSet::Sync).after(sync_landscape));
         // [carlife] Cars parked at the kerb, after the cars on the road.
         app.init_resource::<ParkedRender>().add_systems(Update, sync_parked_cars.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // [taxis] Cabs standing in yards, at ranks and kerbs.

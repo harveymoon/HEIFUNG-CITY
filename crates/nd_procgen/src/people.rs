@@ -91,7 +91,7 @@ pub fn tourist_key(look: &Appearance, age: u8, class: Tier) -> PersonKey {
     PersonKey { tourist: true, ..person_key(look, age, class, false) }
 }
 
-// â”€â”€ the emissive palette â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── the emissive palette ───────────────────────────────────────────────────
 
 /// Cells in the emissive palette: black, each colour bright, each dim.
 pub const EMISSIVE_CELLS: usize = 1 + 2 * COLORS.len();
@@ -130,7 +130,7 @@ pub fn emissive_palette() -> Vec<[f32; 3]> {
     out
 }
 
-// â”€â”€ the figure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── the figure ─────────────────────────────────────────────────────────────
 
 fn rgba(c: [f32; 3]) -> [f32; 4] {
     [c[0], c[1], c[2], 1.0]
@@ -326,7 +326,7 @@ pub fn person_mesh(k: &PersonKey) -> MeshData {
     m
 }
 
-// â”€â”€ the figure cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── the figure cache ───────────────────────────────────────────────────────
 
 /// Figures (meshes, or anything a renderer makes of one) by look, bounded
 /// at `cap`. A look used this frame (`touch`, `get_or_build`) is never

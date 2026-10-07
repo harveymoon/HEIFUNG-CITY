@@ -85,7 +85,6 @@ impl World {
                 b.condition = b.condition.min(0.25);
                 b.workers.clear();
                 let name = b.name.clone();
-                let _ = kind;
                 for w in workers {
                     self.lay_off(w, Some(format!("{name} shut down. Out of a job.")));
                     if let Some(c) = self.citizens.get_mut(w) {
@@ -116,7 +115,6 @@ impl World {
     /// Every sim hour: hunger, eating at home, production, restocking through
     /// the market or imports, exporting surplus, and market statistics.
     pub(super) fn hourly_economy(&mut self) {
-        let tick = self.clock.tick;
         self.weather.step(&mut self.rng);
         self.allocate_power();
         self.sync_households();
@@ -362,7 +360,6 @@ impl World {
             m.stock.insert(r, stock);
         }
         m.hungry = self.citizens.values().filter(|c| c.satiety < 0.3).count() as u32;
-        let _ = tick;
     }
 
     /// Every hour: people sleep at home or tire; satiety drains (slower

@@ -72,7 +72,7 @@ impl World {
         }
         c.remember(tick, "Couldn't keep myself fed here. Leaving.".to_string());
         self.concerns.heard(cid, c, crate::concerns::Concern::Food, 0.9);
-        self.emigrate(cid);
+        self.emigrate(cid, crate::economy::LeaveReason::Hunger);
     }
 
     /// Everyone's daily earnings: wages, gig money or a pension.
@@ -179,7 +179,7 @@ impl World {
                         }
                         // [society] Most stay on the street if there is cheap ground to camp on.
                         if !self.become_homeless(hid) {
-                            self.emigrate_household(hid);
+                            self.emigrate_household(hid, crate::economy::LeaveReason::Rent);
                         }
                     }
                 }
@@ -277,17 +277,26 @@ impl World {
     }
 
     /// The whole household leaves town.
-    pub(super) fn emigrate_household(&mut self, hid: HouseholdId) {
+    pub(super) fn emigrate_household(&mut self, hid: HouseholdId, why: crate::economy::LeaveReason) {
         let members = self.households.get(hid).map(|h| h.members.clone()).unwrap_or_default();
         for m in members {
-            self.emigrate(m);
+            self.emigrate(m, why);
         }
         self.remove_household(hid);
     }
 
-    pub(super) fn emigrate(&mut self, cid: CitizenId) {
+    pub(super) fn emigrate(&mut self, cid: CitizenId, why: crate::economy::LeaveReason) {
+        if self.remove_citizen(cid) {
+            self.economy.emigrated_total += 1;
+            self.economy.emigrated_by[why.index()] += 1;
+        }
+    }
+
+    /// Take a citizen out of the city (with their car), from wherever they
+    /// are; false when there was no such citizen. Not counted as leaving.
+    pub(super) fn remove_citizen(&mut self, cid: CitizenId) -> bool {
         if !self.citizens.contains_key(cid) {
-            return;
+            return false;
         }
         // [carlife] The car leaves town with its owner.
         self.car_emigrates(cid);
@@ -298,7 +307,7 @@ impl World {
         if let Some(b) = visiting.and_then(|b| self.buildings.get_mut(b)) {
             b.visitors = b.visitors.saturating_sub(1);
         }
-        let Some(c) = self.citizens.remove(cid) else { return };
+        let Some(c) = self.citizens.remove(cid) else { return false };
         if let Some(h) = c.home {
             if let Some(b) = self.buildings.get_mut(h) {
                 b.residents.retain(|&x| x != cid);
@@ -318,8 +327,8 @@ impl World {
                 self.remove_household(hid);
             }
         }
-        self.economy.emigrated_total += 1;
         self.events.push(SimEvent::CitizenLeft(cid));
+        true
     }
 
     /// Households whose home was pulled down lose it here, and every

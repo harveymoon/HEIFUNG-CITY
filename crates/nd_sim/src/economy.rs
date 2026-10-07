@@ -290,6 +290,35 @@ impl Ledger {
     }
 }
 
+/// [review] Why citizens leave town for good.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LeaveReason {
+    /// Four hungry days in a row.
+    Hunger,
+    /// Rent stress with no cheaper home and the money gone.
+    Rent,
+    /// The household fled crime around its home.
+    Crime,
+    /// Gave up after long enough on the street.
+    Homeless,
+}
+
+impl LeaveReason {
+    pub const COUNT: usize = 4;
+    pub const ALL: [LeaveReason; Self::COUNT] = [Self::Hunger, Self::Rent, Self::Crime, Self::Homeless];
+    pub fn index(self) -> usize {
+        self as usize
+    }
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Hunger => "hunger",
+            Self::Rent => "rent",
+            Self::Crime => "crime",
+            Self::Homeless => "homeless",
+        }
+    }
+}
+
 /// Deliberately simple demand model. Demand per land use is in `0..1` and
 /// drives how quickly vacant lots develop.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -317,6 +346,10 @@ pub struct Economy {
     pub displaced_total: u32,
     /// Citizens who gave up and left the city, cumulative.
     pub emigrated_total: u32,
+    /// [review] Of `emigrated_total`, how many left for each `LeaveReason`
+    /// (indexed by `LeaveReason::index`), cumulative.
+    #[serde(default)]
+    pub emigrated_by: [u32; LeaveReason::COUNT],
     /// Immigrants turned away because nothing was affordable, cumulative.
     pub priced_out_total: u32,
     /// Market statistics: their only home (rail's are `Rail::stats`).
