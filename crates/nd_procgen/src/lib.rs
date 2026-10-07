@@ -2,6 +2,8 @@
 //! be unit-tested and rendered by any engine.
 
 pub mod buildings;
+/// [mapgen] Whole example cities traced through a tensor field.
+pub mod citygen;
 pub mod lights;
 /// [subway] Metro tunnels, platforms and cars for the Underground view.
 pub mod metro;

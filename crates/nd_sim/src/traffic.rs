@@ -1355,7 +1355,8 @@ impl LaneNetwork {
             let mut outgoing: Vec<(LaneId, SegmentId)> = Vec::new();
             for &sid in &approaches {
                 let seg = roads.segment(sid);
-                for &lid in &self.segment_lanes[&sid] {
+                // A piece too short for lanes (under half a metre) has none.
+                for &lid in self.segment_lanes.get(&sid).into_iter().flatten() {
                     if let LaneKind::Road { forward, .. } = self.lanes[lid as usize].kind {
                         let ends_here = if forward { seg.b == nid } else { seg.a == nid };
                         if ends_here {

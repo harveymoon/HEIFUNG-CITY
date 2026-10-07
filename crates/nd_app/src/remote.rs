@@ -486,6 +486,35 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "new game");
             Ok(land::summary(&ctx.sim.world))
         }
+        "generate_city" => {
+            let (preset, params) = land::city_params_from(cmd)?;
+            ctx.saves.title = false;
+            ctx.sim.paused = false;
+            let start = std::time::Instant::now();
+            let (plan, laid) = ctx.sim.generate_city(preset, params);
+            *ctx.tools = ToolState::default();
+            *ctx.selection = Selection::None;
+            ctx.eplan.invalidate();
+            ctx.follow.0 = None;
+            ctx.tools.status = format!("New city: {} on a {} landscape", preset.label(), ctx.sim.world.landscape.params.preset.label());
+            ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "generated city");
+            let mut v = land::summary(&ctx.sim.world);
+            let class = |c: nd_procgen::citygen::RoadClass| json!({ "roads": plan.roads.iter().filter(|r| r.class == c).count(), "length_m": round(plan.road_length(c)) });
+            v["city"] = json!({
+                "preset": preset.key(),
+                "seed": plan.seed,
+                "arterial": class(nd_procgen::citygen::RoadClass::Arterial),
+                "collector": class(nd_procgen::citygen::RoadClass::Collector),
+                "local": class(nd_procgen::citygen::RoadClass::Local),
+                "zones": laid.zones,
+                "lots": laid.lots,
+                "interchanges": laid.links,
+                "way_in": laid.way_in,
+                "centres": plan.cores.iter().map(|c| v2(*c)).collect::<Vec<_>>(),
+                "took_ms": start.elapsed().as_millis() as u64,
+            });
+            Ok(v)
+        }
         "terrain_at" => Ok(land::terrain_at(&ctx.sim.world, req_point(cmd)?)),
         "landscape" => Ok(land::summary(&ctx.sim.world)),
         "grant" => {
@@ -2380,6 +2409,8 @@ fn help() -> Value {
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), review.as_object()) {
         c.extend(r.clone());
     }
+    // [mapgen] (out of the literal above: it is at the json! recursion limit)
+    v["commands"]["generate_city"] = json!({ "preset": "grid_plaza|coastal_river|old_town|twin_centres (default grid_plaza)", "seed": "u64 (default 1): the city and its landscape", "landscape": "optional landscape preset to lay it on instead of the city preset's own (river_valley|islands|coast|delta|plains|flat)", "water": "0..1", "relief": "0..1", "branching": "0..1", "note": "throws the city away: a new game with a whole generated city (tensor-field streets, zoning, highway interchanges, a coal plant); returns the landscape summary and city {arterial, collector, local, zones, lots, interchanges, way_in, centres}" });
     // [districts] [tourism]
     v["commands"]["district"] = json!({ "action": "list (default)|create|paint|erase|set|remove|at|select|layer", "id": "district id (or district: id or name)", "at": "[x,y] brush centre", "radius": "m, default 40", "polygon": "[[x,y],...]", "rect": "[[x0,y0],[x1,y1]]", "residential": "kowloon|suburban|eco|none", "commercial": "neon_strip|tech_campus|night_market|tourist|none", "industry": "farming|oil|refinery|manufacturing|logistics|fishing|tech|none", "historic": "bool", "rename": "new name", "on": "bool (layer)" });
     v["commands"]["tourism"] = json!({ "action": "refresh (re-read attractions now)", "limit": "tourists listed, default 20", "returns": "attractiveness, demand, ways in, today's and yesterday's arrivals, spending and tourist tax, hotels, attractions, tourists" });
