@@ -24,6 +24,10 @@ pub struct SiteContext {
     highway: Vec<(Vec2, Vec2)>,
     /// Lot, centre, the industry kind it reads as, a working oil well, a fleet lot.
     others: Vec<(LotId, Vec2, Option<IndustryKind>, bool, bool)>,
+    /// [economy] Working cattle and chicken farms, and fishing ports.
+    livestock: Vec<(LotId, Vec2)>,
+    slaughterhouses: Vec<(LotId, Vec2)>,
+    fishing_ports: Vec<Vec2>,
 }
 
 impl SiteContext {
@@ -59,7 +63,10 @@ impl SiteContext {
             }
         }
         neighbours.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
-        IndustrySite { ground, contamination, land_value: w.land_value.at(c), port, yard, highway, depot, neighbours, fleet_lot_near, crude_wells }
+        let livestock_farms = self.livestock.iter().filter(|(lot, at)| Some(*lot) != exclude && at.distance(c) < industry::LIVESTOCK_REACH).count() as u32;
+        let slaughterhouses = self.slaughterhouses.iter().filter(|(lot, at)| Some(*lot) != exclude && at.distance(c) < industry::LIVESTOCK_REACH).count() as u32;
+        let fishing_port = near(nearest(&self.fishing_ports), 120.0, 700.0);
+        IndustrySite { ground, contamination, land_value: w.land_value.at(c), port, yard, highway, depot, neighbours, fleet_lot_near, crude_wells, livestock_farms, slaughterhouses, fishing_port }
     }
 }
 
@@ -72,6 +79,9 @@ impl World {
         let depots = self.buildings.iter().filter(|(_, b)| b.depot && !b.is_derelict()).filter_map(|(id, _)| centre(id)).collect();
         let highway = self.roads.alive_segments().filter(|(_, s)| s.is_highway()).map(|(sid, _)| self.roads.segment_points(sid)).collect();
         let mut others = Vec::new();
+        let mut livestock = Vec::new();
+        let mut slaughterhouses = Vec::new();
+        let fishing_ports = self.ports.ports.values().filter(|p| p.kind.is_fishing() && p.works()).filter_map(|p| p.building).filter_map(centre).collect();
         for b in self.buildings.values() {
             let Some(l) = self.lots.get(b.lot) else { continue };
             let kind = match (&b.business, b.plant) {
@@ -85,8 +95,14 @@ impl World {
             if kind.is_some() || well || fleet {
                 others.push((b.lot, l.center, kind, well, fleet));
             }
+            if b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::CowFarm | BusinessKind::ChickenFarm) && !z.closed) {
+                livestock.push((b.lot, l.center));
+            }
+            if b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Slaughterhouse && !z.closed) {
+                slaughterhouses.push((b.lot, l.center));
+            }
         }
-        SiteContext { ports, yards, depots, highway, others }
+        SiteContext { ports, yards, depots, highway, others, livestock, slaughterhouses, fishing_ports }
     }
 
     /// The ground's industry weights at every corner of the survey, in
@@ -95,13 +111,13 @@ impl World {
     /// is left out on purpose: the layer shows what the ground favours, which
     /// is what the player wants to know before setting one. Water corners
     /// are all zero.
-    pub fn survey_industry_weights(&self, s: &LandSurvey) -> Vec<[f32; 7]> {
+    pub fn survey_industry_weights(&self, s: &LandSurvey) -> Vec<[f32; crate::industry::IndustryKind::COUNT]> {
         let ctx = self.site_context();
         s.corners()
             .enumerate()
             .map(|(k, p)| {
                 if s.wet[k] {
-                    return [0.0; 7];
+                    return [0.0; crate::industry::IndustryKind::COUNT];
                 }
                 industry::weights(&ctx.site(self, p, s.ground[k], self.contamination.at(p), None))
             })
@@ -112,7 +128,7 @@ impl World {
     /// resource layers, the chance of the kind for an industry layer (pass
     /// the weights from [`World::survey_industry_weights`] to reuse them),
     /// and for "best industry" the favourite's chance.
-    pub fn survey_values(&self, s: &LandSurvey, layer: LandLayer, weights: Option<&[[f32; 7]]>) -> Vec<f32> {
+    pub fn survey_values(&self, s: &LandSurvey, layer: LandLayer, weights: Option<&[[f32; crate::industry::IndustryKind::COUNT]]>) -> Vec<f32> {
         if layer.is_industry() {
             let own;
             let w = match weights {
@@ -151,7 +167,7 @@ impl World {
         let ship = survey::shipping_at(&self.landscape, p);
         let c = self.contamination.at(p);
         let mut out: Vec<(LandLayer, f32)> = LandLayer::RESOURCES.iter().map(|l| (*l, survey::resource_value(*l, &g, heat, ship, c))).collect();
-        let sh = if self.landscape.is_water(p) { [0.0; 7] } else { survey::shares(&industry::weights(&self.site_context().site(self, p, g, c, None))) };
+        let sh = if self.landscape.is_water(p) { [0.0; crate::industry::IndustryKind::COUNT] } else { survey::shares(&industry::weights(&self.site_context().site(self, p, g, c, None))) };
         out.extend(IndustryKind::ALL.iter().map(|k| (LandLayer::Industry(*k), sh[k.index()])));
         out
     }

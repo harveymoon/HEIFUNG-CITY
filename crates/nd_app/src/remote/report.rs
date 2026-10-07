@@ -64,7 +64,7 @@ pub const MEMORY_WINDOW_TICKS: u64 = 2 * 1440;
 /// Example ids carried by each alert.
 const ALERT_EXAMPLES: usize = 5;
 
-pub const SECTIONS: &[&str] = &["overview", "people", "economy", "land", "services", "industry", "society", "alerts", "history"];
+pub const SECTIONS: &[&str] = &["overview", "people", "economy", "land", "services", "industry", "society", "pressure", "alerts", "history"];
 
 const KINDS: [BusinessKind; BusinessKind::COUNT] = BusinessKind::ALL;
 
@@ -159,6 +159,10 @@ pub fn report(w: &World, sections: &[String]) -> Result<Value, String> {
     }
     if want("industry") {
         out.insert("industry".into(), industry(w));
+    }
+    // [economy] what the city's businesses want
+    if want("pressure") {
+        out.insert("pressure".into(), super::economy::report(w));
     }
     if want("alerts") {
         out.insert("alerts".into(), alerts_json(&alerts, usize::MAX));
