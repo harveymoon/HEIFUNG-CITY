@@ -40,6 +40,9 @@ pub struct Sim {
     /// replaced it.
     pub generation: u64,
     pub ticks_last_frame: u32,
+    /// Milliseconds the last frame spent ticking (the graphics throttler
+    /// holds its tier when the sim, not the renderer, fills the frame).
+    pub tick_ms: f32,
     /// Ticks actually run per second of sim time asked for, smoothed over
     /// about half a second: 1.0 means the sim keeps up with the chosen
     /// speed, less means the tick budget is throttling it. Shown in the HUD.
@@ -63,6 +66,7 @@ impl Sim {
             full_rebuild: true,
             generation: 0,
             ticks_last_frame: 0,
+            tick_ms: 0.0,
             effective_speed: 1.0,
             styles: nd_procgen::StyleBook::default(),
         }
@@ -313,6 +317,7 @@ fn sim_hotkeys(keys: Res<ButtonInput<KeyCode>>, mut flags: ResMut<UiFlags>, mode
 
 fn step_sim(time: Res<Time>, mut sim: ResMut<Sim>) {
     let mut ticks = 0;
+    let began = std::time::Instant::now();
     if !sim.paused {
         let speed = sim.speed();
         sim.accumulator += time.delta_secs() * speed;
@@ -332,6 +337,7 @@ fn step_sim(time: Res<Time>, mut sim: ResMut<Sim>) {
         }
     }
     sim.ticks_last_frame = ticks;
+    sim.tick_ms = began.elapsed().as_secs_f32() * 1000.0;
     // Ticks delivered against ticks asked for, as a half-second moving
     // average: single frames carry 0 or 1 tick at low speeds, so the raw
     // ratio is meaningless without smoothing.
