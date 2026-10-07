@@ -81,6 +81,16 @@ pub fn road_preview_with(world: &World, points: &[Vec2], levels: &[f32], lanes_f
         let (f, b) = if s.lanes_fwd + s.lanes_bwd > 0 || kind != RoadKind::Street { (s.lanes_fwd, s.lanes_bwd) } else { (lanes_fwd, lanes_bwd) };
         mini.add_polyline_levels(&[pa, pb], &[la, lb], f, b, s.kind);
     }
+    // A slip road is one for what it joins: alone, a ramp onto a highway is
+    // just a one-way street, and was drawn with kerbs and pavements, far
+    // wider than it will be built.
+    let ramps: Vec<(Vec2, Vec2)> = made.iter().filter(|&&sid| net.segment(sid).ramp).map(|&sid| net.segment_points(sid)).collect();
+    for i in 0..mini.segments.len() {
+        let (a, b) = mini.segment_points(nd_sim::SegmentId(i as u32));
+        if ramps.iter().any(|&(p, q)| (p.distance(a) < 0.01 && q.distance(b) < 0.01) || (p.distance(b) < 0.01 && q.distance(a) < 0.01)) {
+            mini.segments[i].ramp = true;
+        }
+    }
     // Heights: the ground plus the level; where it lands on a way at grade,
     // that way's height.
     let ground = |p: Vec2| world.ground_height(p).max(if world.landscape.is_flat() { f32::MIN } else { nd_sim::landscape::WATER_LEVEL });
