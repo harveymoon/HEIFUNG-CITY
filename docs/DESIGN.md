@@ -1587,6 +1587,20 @@ trait MindProvider {
   degrees, waking from flat as the sun clears the horizon and lying flat (stowed) at night. The
   rotation is rewritten only when the facing moves a fifth of a degree. The zoning wash leaves plant
   and battery yards out (it flooded a solar farm on a residential lot green).
+- [plant-groups] Solar and wind are sized to their lot (cost, upkeep and MW per m², capped at
+  6× the reference lot on one lot); the Build window quotes them per m² and a card by the pointer
+  gives the MW, cost and upkeep for the lot under it, and what it would join. Touching solar lots
+  run as one "<Name> Sunfield", touching wind lots as one "<Name> Wind Park"
+  (`world/plant_groups.rs`): derived from lot adjacency (an edge, or a lot line up to 2.5 m, never
+  across a road or path), named by the oldest member, one row in the plant table, one inspector
+  card, selected whole, +4% output per extra lot (up to +12%). A lot too small on its own may join
+  a park of its kind next door when the joined lots reach the minimum.
+- Hydro dam (`dam.rs`, drawn by `terrain::waterworks`): a concrete arch bowed upstream across the
+  river beside the plant, stepped in three tiers, abutment blocks in the banks, a crest road with
+  parapets and lamp posts, a spillway chute down the middle with radial gates, training walls and
+  streaked white water into a stilling basin of foam that fades downstream, and two intake towers
+  on the plant's side with a penstock to the turbine hall. Cyan light lines on the parapets, the
+  ledges and the chute walls, magenta on the gates and the towers.
 - Battery packs (`buildings/power.rs::battery`): container-sized white modules on plinths in rows
   (2 / 8 / up to 36 by size) with roof fans, door seams, an inverter skid at each row end, a control
   cabin and a fence; five status lights on each long face show fifths of charge, cyan charging,

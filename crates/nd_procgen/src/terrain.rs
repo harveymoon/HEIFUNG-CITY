@@ -1041,23 +1041,11 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
         let Some(lot) = world.lots.get(b.lot) else { continue };
         match kind {
             PowerPlantKind::Hydro => {
-                // A weir across the river beside the plant.
+                // [plant-groups] A curved arch dam across the river beside the plant.
                 if let Some((ri, _, bank)) = land.river_beside(&lot.polygon, 40.0) {
                     let r = &land.rivers[ri];
                     let (seg, c, _) = r.nearest(bank);
-                    let flow = r.flow(seg);
-                    let across = Vec2::new(-flow.y, flow.x);
-                    let half = r.width * 0.5 + 4.0;
-                    let (p0, p1) = (c - across * half, c + across * half);
-                    let top = BANK_HEIGHT + 1.2;
-                    g.part(Surface::Concrete).slab(Vec3::new(p0.x, top, p0.y), Vec3::new(p1.x, top, p1.y), 4.0, top + 3.0, rgba(concrete));
-                    // Spillway foam below it.
-                    let foam = c + flow * 6.0;
-                    g.part(Surface::Matte).ground_strip(&[foam - across * (half - 4.0), foam + across * (half - 4.0)], 7.0, WATER_LEVEL + 0.08, rgba([0.86, 0.9, 0.92]));
-                    for k in 0..(r.width / 6.0) as i32 {
-                        let p = p0 + across * (4.0 + k as f32 * 6.0);
-                        g.part(Surface::Metal).boxed(Vec3::new(p.x, top + 1.6, p.y), Vec3::new(1.0, 2.0, 1.0), 0.0, rgba(steel));
-                    }
+                    crate::dam::hydro_dam(&mut g, c, r.flow(seg), r.width, lot.center, &|p| world.ground_height(p), concrete, steel);
                 }
             }
             PowerPlantKind::Tidal => {

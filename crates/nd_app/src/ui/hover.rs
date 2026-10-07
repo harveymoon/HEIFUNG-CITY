@@ -83,3 +83,73 @@ pub fn ground_label(lot: &nd_sim::Lot) -> &'static str {
         "Vacant lot"
     }
 }
+
+/// [plant-groups] The Buildings tool's card beside the pointer: what the
+/// picked building would be on the lot under it before the click. Plants
+/// show their MW, cost and upkeep for this lot (solar and wind are sized
+/// to it) and the Sunfield or Wind Park they would join; anything else its
+/// cost; and why it cannot go, if it cannot.
+pub fn build_card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor, what: nd_sim::Placeable) {
+    use nd_sim::Placeable;
+    if matches!(what, Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_)) {
+        return;
+    }
+    let (Some(ground), Some(pointer)) = (cursor.ground, ctx.pointer_latest_pos()) else { return };
+    let w = &sim.world;
+    let Some((lot_id, lot)) = w.lots.iter().find(|(_, l)| point_in_polygon(ground, &l.polygon)) else { return };
+    let small = |t: String| egui::RichText::new(t).small();
+    let good = egui::Color32::from_rgb(120, 230, 150);
+    let bad = egui::Color32::from_rgb(255, 120, 110);
+    let mut lines: Vec<egui::RichText> = Vec::new();
+    let title;
+    let problem;
+    if let Placeable::Plant(k) = what {
+        let Some(p) = w.plant_preview(k, lot_id) else { return };
+        title = format!("{} on {:.0} m²", capitalise(k.label()), p.area);
+        let site = if p.site > 0.0 && (p.site - 1.0).abs() > 0.01 { format!("  ·  site {:.0}%", p.site * 100.0) } else { String::new() };
+        lines.push(small(format!("{:.1} MW nameplate{site}  ·  costs {:.0}  ·  {:.0}/day", p.capacity_mw, p.cost, p.upkeep_per_day)));
+        lines.push(small(format!("about {:.1} MW right now (weather, hour and site)", p.now_mw)).weak());
+        if let Some(a) = k.reference_area() {
+            lines.push(small(format!("{:.2}× a standard {:.0} m² {}", k.size_scale(p.area), a, k.label())).weak());
+        }
+        if let Some(j) = &p.join {
+            let name = j.joins.clone().unwrap_or_default();
+            lines.push(small(format!("joins {name}: {} lots, {:.0} m², {:.0} MW together", j.members.len() + 1, j.area, j.capacity_mw)).color(good));
+            if p.small_lot_joins {
+                lines.push(small(format!("too small alone ({:.0} m² needed): allowed as part of {name}", k.min_area())).color(good));
+            }
+        }
+        problem = p.problem;
+    } else {
+        title = format!("{} here", capitalise(&what.label()));
+        lines.push(small(format!("costs {:.0}  ·  {:.0}/day  ·  lot {:.0} m²", what.cost(), what.upkeep(), lot.area())));
+        problem = w.placement_problem(what, lot_id);
+    }
+    match &problem {
+        Some(e) => lines.push(small(format!("cannot build: {e}")).color(bad)),
+        None => lines.push(small("click to build".to_string()).color(good)),
+    }
+    let size = egui::vec2(300.0, 20.0 + 16.0 * lines.len() as f32);
+    let view = ctx.viewport_rect();
+    let mut at = pointer + egui::vec2(18.0, 18.0);
+    if at.x + size.x > view.right() {
+        at.x = pointer.x - 18.0 - size.x;
+    }
+    if at.y + size.y > view.bottom() {
+        at.y = pointer.y - 18.0 - size.y;
+    }
+    egui::Area::new(egui::Id::new("build_hover_card")).order(egui::Order::Tooltip).interactable(false).fixed_pos(at).show(ctx, |ui| {
+        egui::Frame::popup(ui.style()).show(ui, |ui| {
+            ui.set_max_width(size.x);
+            neon(ui, &title);
+            for l in lines {
+                ui.label(l);
+            }
+        });
+    });
+}
+
+fn capitalise(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map_or(String::new(), |f| f.to_uppercase().collect::<String>() + c.as_str())
+}

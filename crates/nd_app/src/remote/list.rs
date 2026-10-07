@@ -116,6 +116,7 @@ pub fn rows(w: &World, what: &str) -> Result<Vec<Value>, String> {
                 json!({
                     "id": key_str(id), "name": b.name, "kind": plant_name(k), "capacity_mw": round(w.plant_capacity_mw(b)), "available_mw": round(avail),
                     "upkeep_per_day": round(w.plant_upkeep(b)), "workers": b.workers.len(), "jobs": b.jobs, "derelict": b.is_derelict(), "pos": pos(b),
+                    "area_m2": round(w.lots.get(b.lot).map_or(0.0, |l| l.area())), "group": w.plant_group_of(id).map(|g| g.name),
                 })
             })
             .collect(),

@@ -255,6 +255,10 @@ pub(crate) fn side_panel(
     if tools.tool == Tool::Inspect && *mode == CameraMode::Orbit {
         hover::card(ctx, &sim, &cursor);
     }
+    // [plant-groups] What the picked building would be on the lot under the pointer.
+    if tools.tool == Tool::Buildings && *mode == CameraMode::Orbit && !ctx.is_pointer_over_egui() {
+        hover::build_card(ctx, &sim, &cursor, tools.build_item());
+    }
 
     // egui keeps keyboard focus on the last clicked widget and re-clicks it
     // on Space or Enter, so a Space to pause would also toggle the last

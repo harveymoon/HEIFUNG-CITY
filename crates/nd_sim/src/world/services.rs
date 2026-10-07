@@ -119,7 +119,9 @@ impl World {
         if !what.allowed_on(lot.land_use) {
             return Some(format!("a {} cannot go on {} land", what.label(), lot.land_use.label().to_lowercase()));
         }
-        if lot.area() < what.min_area() {
+        // [plant-groups] A small lot may join the solar or wind farm next door.
+        let joins = matches!(what, Placeable::Plant(k) if self.small_plant_lot_joins(k, lot_id).is_some());
+        if lot.area() < what.min_area() && !joins {
             return Some(format!("too small: a {} needs {:.0} m² (this lot is {:.0})", what.label(), what.min_area(), lot.area()));
         }
         if let Placeable::Plant(k) = what {

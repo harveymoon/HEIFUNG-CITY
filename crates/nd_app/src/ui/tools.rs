@@ -418,7 +418,7 @@ pub fn placeable_info(ui: &mut egui::Ui, sim: &mut Sim, what: Placeable) {
     match what {
         Placeable::Plant(k) => {
             if let Some(a) = k.reference_area() {
-                line += &format!(" (for a {a:.0} m² lot: output, cost and upkeep scale with the lot's size)");
+                line += &format!(" (for a {a:.0} m² lot: output, cost and upkeep scale with the lot's size, up to {:.0}× on one lot). Touching lots of the same kind run as one {}; a lot too small on its own may join one next door.", nd_sim::power::MAX_LOT_SCALE, if k == nd_sim::PowerPlantKind::Solar { "Sunfield" } else { "Wind Park" });
             }
             line += help::power_note(k);
             line += &format!(" Goes {}.", k.site_hint());
