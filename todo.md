@@ -245,3 +245,13 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
 - Next: done (dev-speed pass and review pass complete 2026-10-07)
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open
+
+## Climate, weather and the grid (2026-10-07)
+- [ ] Power demand follows the day (morning bump, evening peak), heat waves add AC load, cold adds heating [feat/grid-weather]
+- [ ] Time-of-use import/export price (dear at the evening peak and in heat waves, cheap at night) [feat/grid-weather]
+- [ ] Weather by climate: temperature, heat waves, cold snaps, storms; cloud and wind drive solar/wind [feat/grid-weather]
+- [ ] Wind field over the map (hills/coasts windy, valleys sheltered) and solar by climate; wind map layer [feat/grid-weather]
+- [ ] Turbines spin by their own farm's output; stop in storm cut-out [feat/grid-weather]
+- [ ] New Game climate picker: Temperate, Desert, Tropical, Arctic, Volcanic (more hot spots) [feat/climates]
+- [ ] Climate looks: snow/ice and conifers, palms and lush ground, basalt and steam; rain/snowfall [feat/climates]
+
