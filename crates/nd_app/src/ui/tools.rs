@@ -377,11 +377,35 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         }
     });
     placeable_info(ui, sim, tools.build_item());
+    // [grid-weather] Wind and solar: what the ground under the pointer gives.
+    if let (Placeable::Plant(k @ (nd_sim::PowerPlantKind::Wind | nd_sim::PowerPlantKind::Solar)), Some(p)) = (tools.build_item(), tools.hover_ground) {
+        hint(ui, &site_note(&sim.world, k, p));
+    }
     if tools.build_cat == BuildCategory::Services {
         let s = &sim.world.services.stats;
         hint(ui, &format!("Coverage of homes: police {:.0}% · fire {:.0}% · health {:.0}% · schools {:.0}% · {} incidents today · avg response {:.0} min · {}/{} units out · {} fires burning", s.coverage[0] * 100.0, s.coverage[1] * 100.0, s.coverage[2] * 100.0, s.coverage[3] * 100.0, s.incidents_today.iter().sum::<u32>(), s.avg_response(), s.units_busy, s.units, s.fires_burning));
     }
     hint(ui, help::tool_hint(Tool::Buildings));
+}
+
+/// [grid-weather] The wind or sun a plant of `k` would get at `p`: the site
+/// factor, and what it would make on an ordinary day and right now.
+pub fn site_note(w: &nd_sim::World, k: nd_sim::PowerPlantKind, p: nd_sim::Vec2) -> String {
+    let land = &w.landscape;
+    let s = w.site_resource_at(p);
+    let now = w.kind_availability_at(k, p) * 100.0;
+    match k {
+        nd_sim::PowerPlantKind::Wind => {
+            let mean = nd_sim::weather::mean_wind_ms_at(land, p);
+            let typical = nd_sim::weather::wind_yield_at(land, p) * 100.0;
+            let word = if s.wind >= 1.15 { "an exposed, windy site" } else if s.wind <= 0.85 { "a sheltered site" } else { "an ordinary site" };
+            format!("Under the pointer: {word}, wind ×{:.2} (mean {mean:.1} m/s): a wind farm here makes about {typical:.0}% of nameplate on an ordinary day, {now:.0}% now. The Wind resource layer (K) maps it.", s.wind)
+        }
+        _ => {
+            let sun = nd_sim::weather::sun_at(land, p) * 100.0;
+            format!("Under the pointer: sun {sun:.0}% of the desert's ({} climate, site ×{:.2}); a solar field here makes {now:.0}% of nameplate now. The Solar resource layer (K) maps it.", land.params.climate.label(), s.sun)
+        }
+    }
 }
 
 /// What a placeable costs and does, in a line or two; for docks how the

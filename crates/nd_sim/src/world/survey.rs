@@ -154,7 +154,7 @@ impl World {
             .enumerate()
             .map(|(k, p)| {
                 let c = if need_contamination { self.contamination.at(p) } else { 0.0 };
-                survey::resource_value(layer, &s.ground[k], s.heat[k], s.shipping[k], c)
+                survey::resource_value(layer, &s.ground[k], survey::PointResources { heat: s.heat[k], shipping: s.shipping[k], wind: s.wind[k], solar: s.solar[k], contamination: c })
             })
             .collect()
     }
@@ -166,7 +166,9 @@ impl World {
         let heat = survey::geothermal_at(&self.landscape, p);
         let ship = survey::shipping_at(&self.landscape, p);
         let c = self.contamination.at(p);
-        let mut out: Vec<(LandLayer, f32)> = LandLayer::RESOURCES.iter().map(|l| (*l, survey::resource_value(*l, &g, heat, ship, c))).collect();
+        let (wind, solar) = (survey::wind_value(&self.landscape, p), survey::solar_value(&self.landscape, p));
+        let r = survey::PointResources { heat, shipping: ship, wind, solar, contamination: c };
+        let mut out: Vec<(LandLayer, f32)> = LandLayer::RESOURCES.iter().map(|l| (*l, survey::resource_value(*l, &g, r))).collect();
         let sh = if self.landscape.is_water(p) { [0.0; crate::industry::IndustryKind::COUNT] } else { survey::shares(&industry::weights(&self.site_context().site(self, p, g, c, None))) };
         out.extend(IndustryKind::ALL.iter().map(|k| (LandLayer::Industry(*k), sh[k.index()])));
         out

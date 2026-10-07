@@ -289,6 +289,19 @@ pub fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
         pane::legend(ui, &lg);
         hint(ui, "Each hour's supply stacked by source above the line: the plants by kind, the batteries giving back, what the regional grid sold. Below the line, where a surplus went: into the batteries first, then sold to the region. The red line is what the city wanted.");
 
+        // [grid-weather] What power cost and how hot it was, hour by hour.
+        section(ui, "GRID PRICE AND TEMPERATURE, LAST 72 HOURS");
+        let ratio = nd_sim::power::GRID_EXPORT_PRICE / nd_sim::power::GRID_IMPORT_PRICE;
+        let series = [
+            Series::new("import price /MWh", IMPORT, pane::hcol(&hours, |r| r.import_price)),
+            Series::new("export price /MWh", EXPORT, pane::hcol(&hours, |r| r.import_price * ratio)),
+        ];
+        pane::line_chart(ui, &hour_labels, &series, 90.0, &|x| format!("{x:.2}"));
+        legend(ui, &series);
+        let temp = [Series::new("temperature °C", Color32::from_rgb(255, 200, 120), pane::hcol(&hours, |r| r.temp_c))];
+        pane::line_chart(ui, &hour_labels, &temp, 60.0, &|x| format!("{x:.1} °C"));
+        hint(ui, "The regional grid charges by its load: cheap in the small hours, dear in the evening peak, dearest when a heat wave has every air conditioner on. It pays a fifth of that for exports.");
+
         if h.hours.iter().any(|r| r.battery_capacity_mwh > 0.0) {
             section(ui, "BATTERIES, LAST 72 HOURS");
             let series = [

@@ -108,6 +108,7 @@ pub fn build_card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor, what: nd_sim:
         title = format!("{} on {:.0} m²", capitalise(k.label()), p.area);
         let site = if p.site > 0.0 && (p.site - 1.0).abs() > 0.01 { format!("  ·  site {:.0}%", p.site * 100.0) } else { String::new() };
         lines.push(small(format!("{:.1} MW nameplate{site}  ·  costs {:.0}  ·  {:.0}/day", p.capacity_mw, p.cost, p.upkeep_per_day)));
+        lines.push(small(format!("about {:.1} MW right now (weather, hour and site)", p.now_mw)).weak());
         if let Some(a) = k.reference_area() {
             lines.push(small(format!("{:.2}× a standard {:.0} m² {}", k.size_scale(p.area), a, k.label())).weak());
         }

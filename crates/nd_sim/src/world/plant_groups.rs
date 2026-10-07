@@ -339,6 +339,9 @@ pub struct PlantPreview {
     /// Share of nameplate the site supports (hydro's current, geothermal's
     /// heat; 1 elsewhere), 0 when the site does not suit.
     pub site: f32,
+    /// What it would make right now, MW: the nameplate times this hour's
+    /// weather and the lot's wind or sun, times the site factor.
+    pub now_mw: f32,
     pub cost: f32,
     pub upkeep_per_day: f32,
     pub join: Option<PlantJoin>,
@@ -354,11 +357,14 @@ impl World {
         let scale = kind.size_scale(area);
         let join = self.plant_join(kind, lot);
         let n = join.as_ref().map_or(1, |j| j.members.len() + 1);
+        let capacity_mw = kind.capacity_mw() * scale * group_bonus(n);
+        let site = self.power_site(lot, kind).unwrap_or(0.0);
         Some(PlantPreview {
             kind,
             area,
-            capacity_mw: kind.capacity_mw() * scale * group_bonus(n),
-            site: self.power_site(lot, kind).unwrap_or(0.0),
+            capacity_mw,
+            site,
+            now_mw: capacity_mw * self.kind_availability_at(kind, l.center) * site,
             cost: self.plant_cost_on(kind, lot),
             upkeep_per_day: kind.upkeep_per_day() * scale,
             small_lot_joins: area < kind.min_area() && join.as_ref().is_some_and(|j| j.joins.is_some() && j.area >= kind.min_area()),

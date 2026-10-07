@@ -74,6 +74,8 @@ pub mod transit;
 pub mod trash;
 pub mod vehicle;
 pub mod walk;
+/// [grid-weather] Weather by climate; the wind and sun on the map.
+pub mod weather;
 pub mod world;
 pub mod zoning;
 

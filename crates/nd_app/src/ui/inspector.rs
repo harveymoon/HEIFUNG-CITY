@@ -409,7 +409,17 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
         } else {
             section(ui, "POWER PLANT");
         }
-        ui.label(format!("{}{:.1} MW nameplate, {:.0}% available now, {:.0}/day upkeep", if w.plant_group_of(id).is_some() { "this lot: " } else { "" }, w.plant_capacity_mw(b), kind.availability(&w.weather, w.clock.day_fraction()) * 100.0, w.plant_upkeep(b)));
+        ui.label(format!("{}{:.1} MW nameplate, {:.0}% available now, {:.0}/day upkeep", if w.plant_group_of(id).is_some() { "this lot: " } else { "" }, w.plant_capacity_mw(b), w.plant_availability(b) * 100.0, w.plant_upkeep(b)));
+        // [grid-weather] The site's wind or sun, and what the farm runs at.
+        if let Some(l) = w.lots.get(b.lot).filter(|_| matches!(kind, nd_sim::PowerPlantKind::Wind | nd_sim::PowerPlantKind::Solar)) {
+            hint(ui, &super::tools::site_note(w, kind, l.center).replace("Under the pointer: ", "Site: "));
+            if kind == nd_sim::PowerPlantKind::Wind {
+                let share = w.plant_dispatched_mw(b) / w.plant_capacity_mw(b).max(1e-3);
+                let v = w.weather.wind_ms() * w.plant_resource(b).wind;
+                let state = if v >= nd_sim::weather::CUT_OUT_MS { "braked: the wind is past cut-out".to_string() } else if v < nd_sim::weather::CUT_IN_MS { "becalmed".to_string() } else { format!("running at {:.0}%", share * 100.0) };
+                hint(ui, &format!("wind here now {v:.1} m/s: {state}"));
+            }
+        }
         if kind.reference_area().is_some() {
             hint(ui, &format!("sized to its lot: {:.0} m², {:.2}× a standard {}", w.lots.get(b.lot).map_or(0.0, |l| l.area()), w.plant_scale(b), kind.label()));
         }
