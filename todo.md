@@ -229,14 +229,14 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [x] - flag: kerbs turn to dirt at corners   → DONE [feat/kerbs]: rounded kerbed corners with paving (rings paved outside), dropped kerbs at every crosswalk end with yellow domed tactile pads; street triangles slightly down. Left: very sharp (~60°) corners get no cut; one-way ramp streets still have no pavements   → [fix/review] sharp corners now get their curb cuts (crosswalks set out to the kerb, walk::crosswalk_setback). One-way ramp streets still have no pavements on purpose (ramps front nothing, no walkers).
 [x] - realistic example maps   → DONE [feat/mapgen]: nd_procgen::citygen tensor-field streets, zoning, presets grid_plaza / coastal_river / old_town / twin_centres; generate_city remote command; "Starting town" in New game; tests per preset. Roundabouts dropped from plazas (they jammed by day 4)
 [x] - corner lots levelled to their front street can stand above a side street (left open by fix/terrain-cut)   → DONE [fix/review]: retaining walls along a lot edge whose pad stands over a side street; inside the lot the ground is the pad.
-[ ] - about 100 cyclists stuck at one point beside a 5-arm signalised junction in a generated city (riders waiting on each other at crossings, world/riders.rs); seen by feat/tools
-[ ] - new economy building styles (Mechanic, FishStickFactory, ArtStudio) put windows in their frame's plane (coplanar test failing on main)   → economy agent fixing
+[x] - about 100 cyclists stuck at one point beside a 5-arm signalised junction in a generated city (riders waiting on each other at crossings, world/riders.rs); seen by feat/tools   → DONE [fix/review]: riders obeyed a neighbouring arm's crosswalk light at 5-arm junctions; only the best-aligned crosswalk controls them now
+[x] - new economy building styles (Mechanic, FishStickFactory, ArtStudio) put windows in their frame's plane (coplanar test failing on main)   → FIXED [feat/economy] 5a0a9ce
 [x] - a 10k-person city (saves/land_day18.ron on feat/land) loses about 400 people a day with homes free and no unemployment; not caused by buyouts (land market off: same). Suspect the power shortage (~80% supply); investigate   → DONE [fix/review]: not power. ~400/day left over hunger: 1,000+ cyclists stood for good at a five-arm signalised junction (a rider obeyed a neighbouring arm's light too) and never got home to eat. Fixed in world/riders.rs; leave reasons now counted (economy.emigrated_by) and shown in the People window and the remote report.
 [x] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)   → DONE [fix/review]: the inspector strings were already clean (d8dbe8d); last mojibake comments re-encoded; tests/source_encoding.rs guards it.
 
 ### Agent waves (4–5 at a time)
-- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera, feat/land, feat/events
-- Running: fix/review (population drain, REVIEW2 M4/M7/M12/LOW, corner lots, mojibake, kerb leftovers), feat/clarity (section A)
+- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera, feat/land, feat/events, fix/review
+- Running: feat/clarity (section A), feat/tools follow-up (pillar check must match the preview; Harvey's bridge)
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
 - Next as slots free: dev-speed pass, then the review pass
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open
