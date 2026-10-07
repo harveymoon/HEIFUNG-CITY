@@ -13,7 +13,7 @@ use crate::tools::Selection;
 /// The inspector window on a selected building or car, on the right where
 /// the person pane opens too. Closing it deselects.
 pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
-    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_)) {
+    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_)) {
         return;
     }
     let mut open = true;
@@ -28,6 +28,8 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
         .show(ctx, |ui| {
             show(ui, p.sim, p.selection, p.assets);
             ui.separator();
+            // [camera] Follow it, or fly to it.
+            super::follow::camera_buttons(ui, p.sim, *p.selection, p.follow, p.fly, p.mode);
             if ui.button("Flag for Claude (F8)").on_hover_text("Bookmark this with a note; the remote API's `flags` command lists it").clicked() {
                 p.flags.want_flag = true;
             }
@@ -49,6 +51,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             }
             neon(ui, &sim.world.citizens[id].name);
             citizen_summary(ui, &sim.world, &sim.world.citizens[id]);
+            super::estate::citizen_line(ui, &sim.world, id);
             ui.add_space(4.0);
             spotlight_toggle(ui, &mut sim.world, id, "Spotlight: route this citizen through the LLM mind");
             super::places::citizen_places(ui, &sim.world, id);
@@ -120,6 +123,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             }
             why_and_trip(ui, w, id, selection, !driver_shown);
         }
+        Selection::Bot(id) => bot(ui, &sim.world, selection, id),
         Selection::Parked(vid) => {
             let Some(owned) = sim.world.vehicles.cars.get(vid) else {
                 *selection = Selection::None;
@@ -151,6 +155,62 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             show_tow_refusal(ui);
         }
     }
+}
+
+/// [camera] A pavement delivery robot: its name and code, the shop that
+/// owns it (in the fleet's colour), what it carries, where it is going and
+/// how far, and the household that ordered. Owner and destination select.
+fn bot(ui: &mut egui::Ui, w: &nd_sim::World, selection: &mut Selection, id: nd_sim::BotId) {
+    let Some(b) = w.bots.bots.get(id) else {
+        *selection = Selection::None;
+        return;
+    };
+    let [r, g, bl] = nd_sim::bots::fleet_colour(b.shop);
+    let fleet = egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (bl * 255.0) as u8);
+    ui.label(egui::RichText::new(nd_sim::bots::bot_name(w, id)).size(17.0).color(IVORY).strong());
+    let size = w.bots.fleet_of(b.shop).len();
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        tag(ui, "Delivery bot", GOLD);
+        tag(ui, &nd_sim::bots::bot_code(id), egui::Color32::from_gray(150));
+        tag(ui, &format!("fleet of {size}"), fleet);
+    });
+    let name = |x: nd_sim::BuildingId| w.buildings.get(x).map_or("a building that is gone".to_string(), |b| b.name.clone());
+    section(ui, "OWNER");
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 2.0, fleet);
+        let kind = w.buildings.get(b.shop).and_then(|s| s.business.as_ref()).map(|z| capitalise(z.kind.label()));
+        if ui.link(egui::RichText::new(name(b.shop)).color(fleet)).on_hover_text("Select the shop").clicked() {
+            *selection = Selection::Building(b.shop);
+        }
+        if let Some(k) = kind {
+            hint(ui, &k);
+        }
+    });
+    section(ui, "TRIP");
+    match b.cargo() {
+        Some((res, n)) => ui.label(format!("Carrying {n:.0} {} to the customer's door", res.label())),
+        None => ui.label("Delivered; trundling back to the shop, hold empty"),
+    };
+    ui.horizontal(|ui| {
+        ui.label("Going to");
+        let to = b.destination();
+        if ui.link(name(to)).on_hover_text("Select it").clicked() {
+            *selection = Selection::Building(to);
+        }
+    });
+    let m = b.metres_left();
+    ui.label(format!("{m:.0} m of pavement left  ·  about {:.0} min  ·  out {} min", (m / nd_sim::bots::BOT_MPS / 60.0).ceil(), b.age));
+    if !b.returning {
+        ui.horizontal(|ui| {
+            hint(ui, "ordered by a household at");
+            if ui.link(egui::RichText::new(name(b.home)).small()).clicked() {
+                *selection = Selection::Building(b.home);
+            }
+        });
+    }
+    hint(ui, "Route: the line on the map, in the fleet's colour.");
 }
 
 /// A selected building, most important first: its name, then what it is
@@ -267,6 +327,8 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
         ui.label(format!("parking {}/{} spaces{}", b.parking_used, b.parking_capacity, if b.is_parking() { format!("  ·  {:.1} per visit", b.parking_price) } else { "  ·  for residents and workers".to_string() }));
     }
     super::places::building_place(ui, w, id);
+    // [land] owner, price, plots and the owner's other properties
+    super::estate::building_section(ui, w, id, selection);
 
     // ── People ──
     let inside: Vec<nd_sim::CitizenId> = w.citizens.iter().filter(|(_, c)| c.inside == Some(id)).map(|(cid, _)| cid).collect();

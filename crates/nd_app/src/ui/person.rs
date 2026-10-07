@@ -7,6 +7,7 @@ use nd_sim::citizens::TravelMode;
 use nd_sim::{Activity, Citizen, CitizenId, World};
 
 use super::hint;
+use crate::camera::{CameraFly, CameraFollow, CameraMode};
 use crate::sim::Sim;
 use crate::tools::{Selection, ToolState};
 
@@ -124,13 +125,15 @@ pub fn memory_line(ui: &mut egui::Ui, m: &nd_sim::Memory) {
 /// doing, where they are going, and everything they remember. The star keeps
 /// them in the People window's favourites; closing the pane deselects them.
 /// `content` is the map area between the bars the window stays inside.
-pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, flags: &mut super::UiFlags, content: egui::Rect) {
+pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, flags: &mut super::UiFlags, content: egui::Rect, cam: (&mut CameraFollow, &mut CameraFly, &mut CameraMode)) {
+    let (follow, fly, mode) = cam;
     let Selection::Citizen(id) = *selection else { return };
     if !sim.world.citizens.contains_key(id) {
         return;
     }
     let is_fav = tools.favorites.contains(&id);
     let mut toggle_fav = false;
+    let mut go_to: Option<nd_sim::BuildingId> = None;
     let mut open = true;
     let title = sim.world.citizens[id].name.clone();
     egui::Window::new(egui::RichText::new(title).color(egui::Color32::from_rgb(230, 225, 210)).strong())
@@ -150,9 +153,20 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
                     flags.want_flag = true;
                 }
             });
+            // [camera] Follow, zoom to, a gift; their places as buttons.
+            ui.horizontal(|ui| {
+                super::follow::camera_buttons(ui, sim, Selection::Citizen(id), follow, fly, mode);
+                if let Some(msg) = super::follow::gift_button(ui, sim, id, false) {
+                    flags.message = msg;
+                }
+            });
+            if let Some(b) = places_row(ui, &sim.world, id) {
+                go_to = Some(b);
+            }
             ui.separator();
             let w = &sim.world;
             citizen_summary(ui, w, &w.citizens[id]);
+            super::estate::citizen_line(ui, w, id);
             spotlight_toggle(ui, &mut sim.world, id, "Spotlight: route through the LLM mind");
             ui.separator();
             super::places::citizen_places(ui, &sim.world, id);
@@ -174,4 +188,36 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
     if !open {
         *selection = Selection::None;
     }
+    if let Some(b) = go_to {
+        *selection = Selection::Building(b);
+    }
+}
+
+fn capital(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
+}
+
+/// [camera] Home, work and anything they own as buttons in the pins'
+/// colours, each selecting its building (the same as clicking its pin).
+fn places_row(ui: &mut egui::Ui, w: &World, id: CitizenId) -> Option<nd_sim::BuildingId> {
+    let holdings = w.holdings_of(id);
+    if holdings.is_empty() {
+        return None;
+    }
+    let mut pick = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for (b, h) in holdings {
+            let Some(name) = w.buildings.get(b).map(|x| x.name.as_str()) else { continue };
+            let [r, g, bl] = crate::marks::holding_rgb(h);
+            let col = egui::Color32::from_rgb(r, g, bl);
+            let icon = if h == nd_sim::Holding::Owns { "★ " } else { "" };
+            let text = egui::RichText::new(format!("{icon}{}: {name}", capital(h.label()))).small().color(col);
+            if ui.add(egui::Button::new(text).stroke(egui::Stroke::new(1.0, col.gamma_multiply(0.6)))).on_hover_text("Select this building (its pin is on the map)").clicked() {
+                pick = Some(b);
+            }
+        }
+    });
+    pick
 }

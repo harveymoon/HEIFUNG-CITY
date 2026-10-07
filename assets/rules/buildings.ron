@@ -322,5 +322,45 @@
             style: Plaza,
             weight: 1.0,
         ),
+        // [land] Low-density homes by class: one-storey shacks, trailer
+        // parks and huts for the poor, suburbs of houses for the middle
+        // class (and bungalows and big houses either side of it). Only
+        // drawn on one- or two-storey sites.
+        (
+            land_use: Residential,
+            tier: Low,
+            style: Shacks,
+            weight: 0.9,
+        ),
+        (
+            land_use: Residential,
+            tier: Low,
+            style: TrailerPark,
+            weight: 0.7,
+        ),
+        (
+            land_use: Residential,
+            tier: Low,
+            style: Huts,
+            weight: 0.35,
+        ),
+        (
+            land_use: Residential,
+            tier: Low,
+            style: Suburb,
+            weight: 0.25,
+        ),
+        (
+            land_use: Residential,
+            tier: Mid,
+            style: Suburb,
+            weight: 1.2,
+        ),
+        (
+            land_use: Residential,
+            tier: High,
+            style: Suburb,
+            weight: 0.5,
+        ),
     ],
 )

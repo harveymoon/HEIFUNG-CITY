@@ -227,6 +227,7 @@ pub fn selection(w: &World, sel: Selection) -> Value {
         Selection::Building(id) => json!({ "kind": "building", "id": key_str(id), "name": w.buildings.get(id).map(|b| b.name.as_str()) }),
         Selection::Car(id) => json!({ "kind": "car", "id": key_str(id), "label": w.car_label(id), "why": w.traffic.cars.contains_key(id).then(|| w.traffic.stop_reason(id).text(|c| w.car_label(c))) }),
         Selection::Parked(id) => json!({ "kind": "parked_car", "id": key_str(id) }),
+        Selection::Bot(id) => json!({ "kind": "bot", "id": key_str(id), "name": nd_sim::bots::bot_name(w, id) }),
     }
 }
 
@@ -346,6 +347,9 @@ pub fn citizen_detail(w: &World, id: CitizenId, c: &Citizen, favourite: bool) ->
         "thought": c.thought, "spotlight": c.spotlight, "favourite": favourite,
         "memories": c.memories.iter().rev().map(|m| { let mut t = tick_time(m.tick); t["text"] = json!(m.text); t }).collect::<Vec<_>>(),
     });
+    // [tools] On a raised walkway (a footbridge), how high (outside the
+    // literal above: it is at the json! macro's recursion limit).
+    v["raised_level"] = json!(round(w.walker_level(c, c.pos)));
     v["appearance"] = appearance(c);
     v
 }

@@ -154,6 +154,10 @@ impl World {
                 self.splat_contamination(&mut b);
                 // [districts] eco and historic districts lift the land
                 self.splat_districts(&mut b);
+                // [land] NIMBY: the land round a mansion jumps, fading.
+                for n in &self.estate.nimby {
+                    b.splat(n.center, n.radius, n.strength);
+                }
             }
             4 => {
                 // The player's rule: a long walk to any park or night out
@@ -711,6 +715,7 @@ impl World {
     /// [economy] Build on a vacant lot; with `forced`, the business is that
     /// kind (a pressure's pick, `world/pressure.rs`) and the building keeps
     /// to the kind's height. Returns the new building site.
+    /// [land] Also a firm's branch (`World::open_branch`).
     pub fn build_on_as(&mut self, lot_id: LotId, forced: Option<BusinessKind>) -> Option<BuildingId> {
         let Some(lot) = self.lots.get(lot_id) else { return None };
         // A park on ground rezoned for building goes when building begins.
@@ -722,7 +727,8 @@ impl World {
             self.events.push(SimEvent::BuildingRemoved(park, lot_id));
         }
         let Some(lot) = self.lots.get(lot_id) else { return None };
-        if lot.landlocked || lot.building.is_some() || self.under_facility(lot.center) || self.services.is_rubble(lot_id) {
+        // [land] a plot someone bought is theirs
+        if lot.landlocked || lot.building.is_some() || self.under_facility(lot.center) || self.services.is_rubble(lot_id) || self.estate.reserved.contains_key(&lot_id) {
             return None;
         }
         let lu = self.lots[lot_id].land_use;

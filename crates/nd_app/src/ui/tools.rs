@@ -64,18 +64,33 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
     });
     // The level the next point goes down at.
     ui.horizontal(|ui| {
-        if ui.small_button("lower").on_hover_text("Lower [Page Down]").clicked() {
+        if ui.small_button("lower").on_hover_text("Lower: [ or Page Down").clicked() {
             tools.step_elevation(false);
         }
         let text = egui::RichText::new(format!("Level: {}", crate::tools::elevation_label(tools.elevation))).strong();
-        ui.label(text).on_hover_text("Page Up / Page Down step the level 2 m. Roads 4.5 m or more above or below another pass over or under it without a junction; a raised road stands on a viaduct, one 5 m or more down runs in a tunnel.");
-        if ui.small_button("raise").on_hover_text("Raise [Page Up]").clicked() {
+        ui.label(text).on_hover_text("] raises and [ lowers the next point 2 m (or Page Up / Page Down); Shift+] / Shift+[ move the whole road drawn so far. A raised road stands on concrete pillars that dodge the roads and buildings under it: red where there is no room for one (implementing is refused), buildings a pillar would buy out outlined in orange. Roads 4.5 m or more above or below another pass over or under it without a junction; a raised road stands on a viaduct, one 5 m or more down runs in a tunnel.");
+        if ui.small_button("raise").on_hover_text("Raise: ] or Page Up").clicked() {
             tools.step_elevation(true);
         }
         if tools.elevation != 0.0 && !tools.tunnel && ui.small_button("ground").clicked() {
             tools.elevation = 0.0;
         }
     });
+    // [tools] The raised road's columns.
+    if tools.pillars.count > 0 || tools.pillars.refusal.is_some() {
+        let n = &tools.pillars;
+        let mut line = format!("{} pillars", n.count);
+        if n.lots > 0 {
+            line.push_str(&format!(", {} empty lot{} taken", n.lots, if n.lots == 1 { "" } else { "s" }));
+        }
+        ui.label(egui::RichText::new(line).small()).on_hover_text("Pillars stand about 24 m apart, shifted along the road to clear the roads and buildings under it (at most 42 m between supports).");
+        if !n.buyouts.is_empty() {
+            ui.label(egui::RichText::new(format!("Pillars buy out: {}", n.buyouts.join(", "))).color(egui::Color32::from_rgb(255, 170, 40)).small());
+        }
+        if let Some(why) = &n.refusal {
+            ui.label(egui::RichText::new(format!("! Cannot be built: {why}.")).color(WARN).small());
+        }
+    }
     for w in &tools.grade_warnings {
         ui.label(egui::RichText::new(format!("! {w}")).color(WARN).small());
     }

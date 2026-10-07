@@ -1464,6 +1464,16 @@ impl World {
         for o in &mut options {
             o.cost *= self.rng.random_range(0.85..1.15f32);
         }
+        // [land] A billionaire is driven, or walks a few steps with the
+        // guards; never the bus, the train or a bike.
+        if self.estate.is_elite(id) {
+            options.retain(|o| matches!(o.mode, crate::citizens::TripMode::Car | crate::citizens::TripMode::Walk | crate::citizens::TripMode::Taxi));
+            for o in &mut options {
+                if o.mode == crate::citizens::TripMode::Car {
+                    o.cost *= 0.2;
+                }
+            }
+        }
         options.sort_by(|a, b| a.cost.total_cmp(&b.cost));
         options
     }

@@ -184,18 +184,18 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [ ] - solar/wind: cost and output in proportion to the lot size
 
 ### B. Camera and inspector
-[ ] - follow the selection (camera stays on the person or car); Walk view while following gives their point of view; show that camera moves are locked, with an easy "stop following" button
-[ ] - "zoom to" button in the inspector (smooth camera move)
-[ ] - a selected person's home and work are clickable, with big home/work pins on the map (several for the rich who own more)
-[ ] - favourites: gold highlight in the world, a favourites list, and a "gift $1000" button
-[ ] - delivery bots selectable: name or ID, owning business, route, destination, cargo; each company's fleet in its own colour
+[x] - follow the selection (camera stays on the person or car); Walk view while following gives their point of view; show that camera moves are locked, with an easy "stop following" button   → DONE [feat/camera]: lock banner, Esc, their view (walk/drive/bus/bot)
+[x] - "zoom to" button in the inspector (smooth camera move)   → DONE [feat/camera]
+[x] - a selected person's home and work are clickable, with big home/work pins on the map (several for the rich who own more)   → DONE [feat/camera]: HOME/WORK/OWNS pins (Business::owner). Left: owning several homes has no data yet
+[x] - favourites: gold highlight in the world, a favourites list, and a "gift $1000" button   → DONE [feat/camera]
+[x] - delivery bots selectable: name or ID, owning business, route, destination, cargo; each company's fleet in its own colour   → DONE [feat/camera]
 
 ### C. Economy and growth
 [x] - business pressure made visible (an inspector/economy view of why businesses open or close) and extended: lots of outsider tows → tow companies; many breakdowns → mechanics; rich population → car dealerships (lots full of matching cars); poor city trash service → private trash companies (competition lowers prices); bike demand → bike shops/repair   → DONE [feat/economy]: pressure.rs; Economy window "What the city's businesses want"; inspector "Why it's here / How it's doing"; tow companies, mechanics, dealerships, private trash (price competition), bike shops
-[ ] - company expansion: successful firms open branches (taxi, pizza, tow scatter across the city) or buy adjacent plots (even landlocked ones) and merge them: seamless oil fields, bigger data centres and factories, mega hotels (valet, roof pool, sky-bridges), museums; selecting a building highlights everything its owner owns
-[ ] - density by pressure: new games start low density; busy, well-connected areas densify; every owner has a sale price; buyers buy out, demolish and build bigger; building height reflects how well the city moves people
-[ ] - housing variety: one-storey shacks, trailer parks and huts (poor, low density); suburbs (middle class); McMansions (two lots, pool); mansions
-[ ] - super-elite class (fictional people only): rare billionaires (from town or visiting) buy connected parcels for mansions in quiet spots (noise and pollution limits), NIMBY pressure prices out neighbours within strict limits, more billionaires follow; supercars with 2–5 black escort cars and security in black by net worth; the very richest get a police escort; they own several homes, cars and businesses
+[x] - company expansion: successful firms open branches (taxi, pizza, tow scatter across the city) or buy adjacent plots (even landlocked ones) and merge them: seamless oil fields, bigger data centres and factories, mega hotels (valet, roof pool, sky-bridges), museums; selecting a building highlights everything its owner owns   → DONE [feat/land]: `World::wants_to_expand` (generic; OR in feat/economy's `Business::wants_expand` on merge), branches 450 m+ apart, merges across compact plots drawn as one building on `World::footprint`, galleries with `Business::wants_expand` grow into museums, owner highlight + `ownership` API
+[x] - density by pressure: new games start low density; busy, well-connected areas densify; every owner has a sale price; buyers buy out, demolish and build bigger; building height reflects how well the city moves people   → DONE [feat/land]: hourly pressure grid x daily mobility caps heights; developers' buyouts through the demolition/construction sequence; `World::sale_price`
+[x] - housing variety: one-storey shacks, trailer parks and huts (poor, low density); suburbs (middle class); McMansions (two lots, pool); mansions   → DONE [feat/land]: Shacks, TrailerPark, Huts, Suburb (three tiers), McMansion, Mansion styles with weights in buildings.ron
+[x] - super-elite class (fictional people only): rare billionaires (from town or visiting) buy connected parcels for mansions in quiet spots (noise and pollution limits), NIMBY pressure prices out neighbours within strict limits, more billionaires follow; supercars with 2–5 black escort cars and security in black by net worth; the very richest get a police escort; they own several homes, cars and businesses   → DONE [feat/land]: gated on Gini 0.40+ and top/median 3.5x; NIMBY radius/cap/decay; convoys with escorts that follow; `estate spawn_elite` dev command
 [x] - new industries: cow and chicken farms → slaughterhouse; strip mining   → DONE [feat/economy]: cattle/chicken farms → slaughterhouse; strip mining on rocky cheap ground
 [x] - waterfront: recreational marina (small and large; large takes yachts, with a clubhouse; raises land value; draws seafood restaurants); fishing ports (small and large) with fish gutting / fish-stick factory industry and fish markets nearby   → DONE [feat/economy]: small/large marinas and fishing ports in Build > Water; boats move; fish chain to markets and seafood restaurants
 [x] - entertainment: golf driving ranges   → DONE [feat/economy]
@@ -206,8 +206,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 ### D. Look and tools
 [x] - look-dev pass, grounded neon   → DONE [feat/look]: roughness/metal maps, sky-light reflections, distance-scaled SSAO, volumetric haze, TAA, Auto/Low/Medium/High with a frame-time throttler (View window; `graphics` remote command). Left: street lamps don't cast light, no wet roads.   Was: PBR materials with roughness and normal maps on roads, buildings and cars; SSAO; sky/atmosphere, distance and volumetric fog; TAA; a dynamic performance throttler that scales effects to hold the frame rate
 [x] - underground view: tunnels as tubes, near side cut away so the cars inside show   → DONE [feat/identity]: inward-facing concrete tube (street::bore_shell), back-face culling cuts the near half. Left: metro bores unchanged
-[ ] - [ and ] raise or lower a road while drawing; pillars hold it up; pillars avoid buildings and roads underneath (refuse if there's no room for them); the preview shows clearly what pillars would remove
-[ ] - intersection editor (Edit mode, click a junction or crosswalk): top-down orthographic view without buildings; lane permissions, left turns, signal timing; crosswalk upgrades: push-button signal, or a pedestrian bridge (raised walkways with steps that connect into a skywalk network)
+[x] - [ and ] raise or lower a road while drawing; pillars hold it up; pillars avoid buildings and roads underneath (refuse if there's no room for them); the preview shows clearly what pillars would remove   → DONE [feat/tools]: ] / [ step the next point 2 m (Shift: the whole road drawn), the camera's bracket zoom yields to the Road tool; columns planned along the way (24 m aimed, 42 m limit), shifted off roads, junction corners and buildings (empty lots and open ground first, grown buildings bought out last, the city's own structures never); no room = deck red in the preview + refusal; buyouts orange; decks 6 m+ span over lots (buildings that fit stay, growth capped under them)
+[x] - intersection editor (Edit mode, click a junction or crosswalk): top-down orthographic view without buildings; lane permissions, left turns, signal timing; crosswalk upgrades: push-button signal, or a pedestrian bridge (raised walkways with steps that connect into a skywalk network)   → DONE [feat/tools]: modal with a road-layer render (wheel zooms), lane L/S/R per lane, left turns per street or all, signals auto/on/none, phase greens, protected left auto/always/never + length; push-button crossings (red only when pressed) and footbridges (raised walk edges `WalkEdge::raised`, walkers prefer them, never hold traffic); `intersection` remote command; saved
 [x] - new game asks for a city name (changeable) and makes a unique game id; saves and loads list by city name; autosaves keep a history with a "game history" viewer to mark key moments and revert   → DONE [feat/identity]: World::identity, saves/history/<game id>/, Game history window, API city_name / game_history
 
 ### E. Housekeeping
@@ -231,11 +231,12 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [ ] - corner lots levelled to their front street can stand above a side street (left open by fix/terrain-cut)
 [ ] - about 100 cyclists stuck at one point beside a 5-arm signalised junction in a generated city (riders waiting on each other at crossings, world/riders.rs); seen by feat/tools
 [ ] - new economy building styles (Mechanic, FishStickFactory, ArtStudio) put windows in their frame's plane (coplanar test failing on main)   → economy agent fixing
+[ ] - a 10k-person city (saves/land_day18.ron on feat/land) loses about 400 people a day with homes free and no unemployment; not caused by buyouts (land market off: same). Suspect the power shortage (~80% supply); investigate
 [ ] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)
 
 ### Agent waves (4–5 at a time)
-- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity
-- Running: feat/events (C3: races, raves, infrastructure decay), feat/camera (section B), feat/clarity (section A), feat/land (section C part 2), feat/tools ([ ] road raising, intersection editor, footbridges)
+- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera, feat/land
+- Running: fix/review (population drain, REVIEW2 M4/M7/M12/LOW, corner lots, mojibake, kerb leftovers), feat/events (C3: races, raves, infrastructure decay), feat/clarity (section A)
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
 - Next as slots free: dev-speed pass, then the review pass
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open

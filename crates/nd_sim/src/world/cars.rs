@@ -305,7 +305,7 @@ impl World {
 
     /// The best place to leave a car near `p` with nobody to pay: the
     /// owner's home if `home` has room, a kerb slot, else the street.
-    fn place_near(&self, p: Vec2, home: Option<BuildingId>) -> Option<ParkSpot> {
+    pub(super) fn place_near(&self, p: Vec2, home: Option<BuildingId>) -> Option<ParkSpot> {
         if let Some(h) = home.filter(|h| self.buildings.get(*h).is_some_and(|b| b.parking_free() > 0)) {
             if self.building_lot(h).is_some_and(|l| l.entrance().distance(p) < 60.0) {
                 return self.building_spot(ParkKind::Home, h);

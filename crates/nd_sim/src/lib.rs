@@ -18,6 +18,8 @@ pub mod crime;
 pub mod districts;
 pub mod economy;
 pub mod enforcement;
+/// [land] The land market: pressure, prices, owners, merged plots, the super-elite.
+pub mod estate;
 pub mod events;
 pub mod geom;
 pub mod history;
@@ -26,6 +28,7 @@ pub mod homeless;
 pub mod identity;
 pub mod ground;
 pub mod industry;
+pub mod junctions;
 pub mod land_value;
 pub mod landscape;
 /// [looks] What citizens look like.
@@ -35,6 +38,7 @@ pub mod mind;
 pub mod names;
 pub mod park;
 pub mod pedestrians;
+pub mod pillars;
 pub mod places;
 pub mod plan;
 pub mod ports;
@@ -99,6 +103,9 @@ pub use transit::{BusRoute, BusStop, RouteId, Transit, TransitStats};
 pub use rail::{Facility, FacilityId, Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
 pub use services::{BuildCategory, Incident, IncidentKind, Placeable, ServiceKind, ServiceSite, Services, ServiceStats, Unit, UnitId, UnitKind};
 pub use world::{GridAsset, PlantRow, World, WorldConfig, RIGHTING_MIN};
+pub use world::{ApproachView, CrossingView, IntersectionView, PhaseView};
+/// [camera]
+pub use world::{Gift, Holding, GIFT_AMOUNT};
 pub use zoning::{LandUse, Lot, LotId, Parcel, ParcelKey, ParcelMap, Zone, ZoneId};
 
 pub use glam::Vec2;

@@ -704,7 +704,60 @@ Citizens are rendered from their simulated positions every frame.
 - **Redevelopment and density**: a Low-tier building on High-value land for three days is
   rebuilt in place at the land's tier; rents rise and the displacement rules move people on.
   New buildings are capped at two floors plus one per ten neighbouring floors within 150 m,
-  so high-rises appear only where the block is already dense.
+  so high-rises appear only where the block is already dense; the land market below caps
+  them again by pressure.
+- **The land market** (`nd_sim::estate`, `world/estate.rs`, [land]). *Pressure*: every hour
+  (:13) each 64 m cell counts the people present (walkers twice: they are also moving
+  through) and the cars in it, folded into a running average (half a day to rise, two days
+  to fall; an old save's cold grid takes its first sample outright). *Mobility* per cell,
+  daily: 0.8 + 0.5 x transit (bus stops within 300 m, a station or metro entrance within
+  600 m) - 0.6 x the share of cars standing, clamped 0.5..1.5. A lot's pressure floors are
+  2 + (pressure - 4) / 2.5 x mobility (2..40), so height follows how well the city moves
+  people; `height_cap` is the lesser of that and the neighbour rule plus five floors. A new
+  game is low almost everywhere. Cheap homes on land held to two floors are one storey
+  (shacks, trailer parks, huts) with six homes, as many as the walk-up they replace.
+  *Prices and buyouts*: every building has a sale price (land at 25 + 400 x value per m²,
+  the structure by homes and jobs, tier and condition, a year of a business's recent profit
+  as goodwill; mansions x3). Daily, developers (a handful of fictional firms) buy the most
+  pressed low buildings (pressure floors at least twice the height and three more) while
+  demand for the use is over 0.2, a few a day (1 + buildings/400, at most 4), only when the
+  new building is worth 1.2 x the price: residents move out with a memory, a business
+  closes, and the existing redevelopment (demolition, then construction) builds bigger.
+  *Owners*: `Building::plot.owner` names an `Owner` (a firm, a developer, a household, a
+  billionaire) with its properties; none means an independent owner. Selecting a building
+  outlines everything its owner holds (`World::owned_with`). *Firms grow* (generic trigger
+  `World::wants_to_expand`: open six days, the last three days' takings over 1.1 x costs,
+  cash for the move, mostly staffed; two a day at a 20% roll): taxi companies, bakeries
+  (pizza) and tow yards open branches on vacant lots of their use as far as can be (450 m at
+  least) from the firm's other properties; other kinds buy the plot next door (two for oil
+  and farms), even landlocked backland, vacant first then cheapest, and rebuild across them
+  (`estate::expansion_form`: hotels as mega hotels, galleries as museums, the rest as a
+  bigger building of their kind; oil fields are one field over every plot). Plots stay
+  lots for zoning and each names the building (`plot.extra_lots`); a built neighbour is
+  demolished first and joins when its rubble is gone (`EstateMarket::reserved`). A merge
+  is refused unless the plots make a compact block (hull within 6% of their area); the
+  renderer draws the building on `World::footprint`, the merged outline. Rebuilds carry
+  extras; a building's removal frees them. *McMansions*: at most one a day (30% roll), one
+  per six households earning 220+, on two touching residential plots in a block held to
+  three floors on land worth 0.45+, bought by the richest such household, which moves in;
+  owner-occupied homes pay no rent. *The super-elite* (fictional people only, named by the
+  town's own generator): rare (5% a day, more with each one already here) and only with
+  extreme disparity (900+ people, Gini 0.40+, the top twentieth earning 3.5x the median),
+  one per 2,500 people, at most six. A local high earner made rich, or a visitor who stays
+  (put up in the best free home meanwhile), worth 1-45 billion, buys two to four touching
+  residential plots (1,400 m² at least) where pressure is under max(4, 0.3 x the town's
+  median), with no nuisance or fouled ground, no works or nightlife within 160 m and little
+  built round it; land value counts, parks hardly, other mansions within 650 m draw them.
+  Also one or two other homes, one to three businesses and two to six supercars
+  (`Class::Elite` above the three income classes; class counts and the Gini are unchanged).
+  The finished mansion starts a NIMBY pull: land value +0.22 fading 4% a day within 200 m
+  (260 at most), nothing redeveloped taller than three floors there, and up to two cheap
+  homes a day priced out (rebuilt middle tier), six per mansion at most. *Convoys*: when a
+  billionaire drives (never the bus or a bike), black escort SUVs (2 + 3 x log40 of their
+  billions, 2..5) spawn on their tail and the richest (20 billion+) gets a police car ahead;
+  escorts take the boss's driving style, follow every change of course and leave at the end
+  of the run. Guards (one per escort car) walk round them on foot and stand at the kerb for
+  an hour where the convoy stopped (drawn by `render/convoys.rs`).
 - **Railway** (`RoadKind::Rail`, `nd_sim::rail`): track is a third kind of way in the road
   network, single track 4.8 m wide. A trunk line crosses the map 480 m south of the
   centre from the start, edge to edge and on out of sight; the player lays branches off it with the Road tool's Rail
@@ -1106,6 +1159,61 @@ Citizens are rendered from their simulated positions every frame.
   lowered to the grade. Cars ride the height of the way they are on (`car_height`), movers keep to
   the surface nearest the height they were at (`surface_height_near`), so a walker under a
   viaduct stays under it. Elevated roads pass roundabouts by.
+- **Raising roads while drawing, and pillars** [tools]: with the Road tool, `]` raises and `[`
+  lowers the next point by 2 m (as Page Up / Page Down; the camera's bracket zoom gives way while
+  the Road tool is out); `Shift+]` / `Shift+[` move the whole road drawn so far, its placed points
+  and the next one, together. A raised way stands on concrete columns planned along its built
+  polyline (`nd_sim::pillars::plan`, a shortest path over 1 m samples): about 24 m apart
+  (`PILLAR_SPAN`), never more than 42 m between supports (`PILLAR_MAX_SPAN`, the structural
+  limit; a raised end needs one within 10 m), none where the deck is under 2.5 m up (it lands on
+  its ramp). Each sample is a site (`World::pillar_site`): a road, path or track below the deck
+  (with its pavements and a junction's corners, 1.6 m footing clearance) or a facility or one of
+  the city's own structures (plants, depots, stations, services, docks, hubs) or a park blocks a
+  column; an empty lot is taken (it leaves the zoning); a grown building is bought out, and costs
+  the most, so the plan shifts columns onto open ground or empty lots first. A stretch with no
+  site for longer than a span may be is a gap: the preview draws the deck red over it (and a red
+  band on the ground), the sub-pane says why, and implementing is refused (`World::pillar_refusal`,
+  also on a trial rebuild, so a ground road laid under a viaduct where its columns stood is refused
+  too). The preview shows the columns where they will stand, orange (with the lot outlined and the
+  building named in the sub-pane) where one buys out a building. A deck at least 6 m up at both
+  ends of a piece (`pillars::SPAN_LEVEL`, `RoadNetwork::spans_lots`) spans over the lots under it:
+  it takes no corridor from the parcels; a building taller than fits under it (`floors_under`:
+  deck, roof and 3.6 m storeys) is bought out, growth there is capped to what fits
+  (`World::deck_cap`, in `height_cap`), and a lot under a deck too low for a storey goes. One of the
+  city's own structures under a deck refuses the road unless it is a building of storeys that fits
+  (a plant, a station or a dock never). Columns are kept on the world (`World::pillars`, serde
+  default) with the key of the way they carry, so a way drawn again the same keeps them where they
+  stood while each is still clear; a save from before pillars plans them on load without pulling
+  anything down. `terrain::viaducts` draws each column at its deck's height (a highway hoisted by
+  the grading alone keeps its evenly spaced columns).
+- **Intersection editor** [tools]: Edit mode, click a junction or a crosswalk (Ctrl+click still
+  grabs a control point there). A modal (`ui::junction`) with a top-down orthographic render of the
+  roads only (`render::junction_view`: a camera on its own render layer, which the road, lane-arrow,
+  path and footbridge meshes are on as well as the main one, filming into an image egui shows; the
+  wheel zooms) with each arriving street's lane arrows and the crosswalks over it, clickable, and
+  beside it: signals (auto / signals / none), each phase's green (5..90 s), the protected left
+  (when needed / always / never, 3..30 s), left turns allowed or forbidden for the whole junction
+  or per street, lane permissions per lane (L, S, R toggles: the player's lane arrows, checked as
+  `set_lane_use` checks them), and per crosswalk an upgrade. The junction's settings are a
+  `junctions::JunctionRule` kept by the traffic (`Traffic::junction_rules`, anchored by the
+  junction's position and the directions its streets leave it, applied on every lane rebuild
+  before the player's arrows: a forced signal, the greens on `Intersection::greens`, the arrow mode
+  and length, and banned lefts taken out of the approach's offered movements). Crosswalk upgrades
+  are `junctions::CrossingRule`s on the world (`World::crosswalks`), applied to the walk graph after
+  every build (`WalkGraph::apply_upgrades`):
+  - a push-button signal (`Crossing::button`): a walker at the kerb presses it and waits; 3 s later
+    traffic gets a red (a hold on every lane over the crossing) for 12 s, then at least 20 s of
+    green (`pedestrians::ButtonLight`). Nobody pressing, nobody stopped;
+  - a footbridge (`walk::Footbridge`): a walkway 6 m up a little to the side of the crosswalk and
+    stairs from each end along the pavement, away from the junction. The walk graph gets raised
+    nodes (`WalkNode::level`) and raised edges (`WalkEdge::raised`, listed in `WalkGraph::raised`):
+    generic, so skywalks between buildings can join the same network. Raised nodes are never
+    snapped onto (their stairs reach them). A walker on the bridge crosses no street, so holds no
+    one up; crossing at grade under a bridge costs `BRIDGED_GRADE_PENALTY` (30 m) more in the
+    route search, so walkers take the bridge when it costs them only a little more. Walkers are
+    drawn at their level on the leg they walk (`World::walker_level`); the bridge itself is
+    `nd_procgen::footbridge` (deck on columns, glass balustrades, steel rails, neon strips, stairs).
+  The remote API's `intersection` command reads and sets all of it.
 - **Depth view** (Underground / Ground / Sky, U cycles, top bar): Underground hides the terrain,
   water, buildings, lots, surface roads and walkers, draws surface roads as faint outlines and
   shows the tunnels (drawn as their own street layer, `StreetLayer::Underground`; each layer draws
@@ -1702,6 +1810,39 @@ recoloured (its buses too), given more or fewer buses, or deleted (with a confir
 click). Stop counters live on the stops themselves (`BusStop::stats`, serde default), so they
 follow a stop when one before it is removed; a moved or removed stop forgets the timing of the
 legs it changed. Nothing here draws random numbers.
+
+## Following, zooming and the people you care about
+
+- **Follow** (inspector, person pane, favourites; API `follow`): `camera::CameraFollow` locks the
+  orbit target on a person, vehicle, delivery robot or building. It is applied after the sim has
+  stepped (`follow_and_fly`, after `SimSet::Sync`), so the camera sits on the thing where it is
+  drawn this frame, with no lag. Pan keys, pan drags and the F-key jumps are locked; rotate and
+  zoom stay free. A banner ("CAMERA LOCKED ... Stop following (Esc)") and a gold viewfinder frame
+  round the map say so. Esc ends it and is used up, so a second Esc clears the selection. A
+  followed car that parks hands the follow, and the selection, to its driver on foot.
+- **Point of view**: Walk view while following looks through their eyes (a walker's head, a
+  driver's seat, a bus window, a robot's camera), turning with them (smoothed) and right-drag
+  looks around, springing back. The pointer stays free for the banner. The selection's outline
+  box is not drawn from inside the vehicle.
+- **Zoom to** (`camera::CameraFly`): a smooth flight of target, distance (in log space) and pitch,
+  0.7 to 2.2 s by length, hopping out over long trips; a moving goal is tracked while the camera
+  travels. Every "go" and "fly there" button in the HUD now flies the same way.
+- **A person's places**: `World::holdings_of` is their home, work and every business they own
+  (`Business::owner`; taxi founders own their firm). Each is a big clickable pin (HOME, WORK,
+  OWNS, `ui/pins.rs`) over its building on a post (`marks.rs`), held at the screen edge when off
+  screen, and a button in the person pane. Either selects the building. Multiple homes have no
+  data yet; when they do, `holdings_of` lists them and they get pins with no UI change.
+- **Favourites** wear gold in the world: a ring and a diamond over the head, and a gold box round
+  the car they drive or ride in and their parked car (`marks.rs`). The People window's list has
+  go (a smooth flight), follow and a "$" gift.
+- **Gift**: `World::gift` moves money (the button gives $1000) from the treasury to the
+  household, or the savings of someone without one. It is booked as the `Gifts` flow, itemised
+  by name. They remember it and cheer up. Refused when the treasury cannot pay.
+- **Delivery robots** are selectable (`Selection::Bot`). The inspector shows their name ("Lucky
+  Bodega bot #2": `DeliveryBot::serial`, the lowest free number in the shop's fleet), code, the
+  owning shop, what they carry (`amount`, `household`), where they are going, the metres and
+  minutes left, and the route on the map in the fleet colour. Each company's fleet is painted
+  its own colour (`bots::fleet_colour`, a golden-ratio hue per shop).
 
 ## Roadmap
 

@@ -14,7 +14,7 @@
 
 use super::*;
 use crate::tools::{Depth, Tool, ToolState};
-use nd_procgen::preview::road_preview;
+use nd_procgen::preview::road_preview_with;
 use nd_sim::roads::RoadKind;
 
 /// The tunnel layer of the streets (only shown underground).
@@ -35,6 +35,9 @@ pub struct DrawHoloTag;
 pub struct PlanHoloTag;
 
 const WARN_TINT: [f32; 3] = [1.6, 0.25, 0.2];
+/// [tools] What a pillar would buy out: orange, apart from the red of what
+/// the road itself takes.
+const PILLAR_TINT: [f32; 3] = [1.7, 0.75, 0.1];
 
 /// The road the Road tool would build now: its points, then the pointer
 /// (snapped, at the level the next click would place).
@@ -63,28 +66,6 @@ fn built(pts: &[SVec2], levels: &[f32], curved: bool) -> (Vec<SVec2>, Vec<f32>) 
     }
 }
 
-/// Lots with a building the road would take: within its corridor where it
-/// is not in a tunnel.
-fn takes(w: &World, pts: &[SVec2], levels: &[f32], half: f32) -> Vec<nd_sim::LotId> {
-    let (lo, hi) = nd_sim::geom::bounds(pts);
-    let (lo, hi) = (lo - SVec2::splat(half + 40.0), hi + SVec2::splat(half + 40.0));
-    w.lots
-        .iter()
-        .filter(|(_, l)| l.building.is_some() && l.center.x > lo.x && l.center.y > lo.y && l.center.x < hi.x && l.center.y < hi.y)
-        .filter(|(_, l)| {
-            pts.windows(2).enumerate().any(|(i, s)| {
-                let deep = levels.get(i).copied().unwrap_or(0.0).max(levels.get(i + 1).copied().unwrap_or(0.0)) <= nd_sim::roads::TUNNEL_LEVEL;
-                if deep {
-                    return false;
-                }
-                let (_, q) = nd_sim::roads::project_on_segment(l.center, s[0], s[1]);
-                l.contains(q) || nd_sim::geom::distance_to_outline(q, &l.polygon) < half
-            })
-        })
-        .map(|(id, _)| id)
-        .collect()
-}
-
 fn half_width(kind: RoadKind, f: u8, b: u8) -> f32 {
     match kind {
         RoadKind::Street => (f.max(1) + b) as f32 * nd_sim::roads::LANE_WIDTH * 0.5 + nd_sim::roads::SHOULDER + nd_sim::zoning::SIDEWALK,
@@ -93,13 +74,18 @@ fn half_width(kind: RoadKind, f: u8, b: u8) -> f32 {
     }
 }
 
-/// A road's hologram and the red outlines of what it takes.
+/// A road's hologram and the red outlines of what it takes. A raised road
+/// shows its columns where they would stand (`World::road_pillar_plan`):
+/// the deck red over a stretch with no room for one, the buildings a
+/// column would buy out outlined in orange with a marker where it stands.
 #[allow(clippy::too_many_arguments)]
-fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32], f: u8, b: u8, kind: RoadKind, alpha: f32) -> (MeshData, MeshData) {
+fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32], f: u8, b: u8, kind: RoadKind, alpha: f32) -> (MeshData, MeshData, nd_sim::pillars::PillarPlan) {
     let steep = w.steep_legs(pts, levels, kind);
-    let pv = road_preview(w, pts, levels, f, b, kind, pal, &steep, pal.preview, WARN_TINT, alpha);
+    let plan = w.road_pillar_plan(pts, levels, f, b, kind);
+    let raised = nd_sim::pillars::is_raised(levels);
+    let pv = road_preview_with(w, pts, levels, f, b, kind, pal, &steep, pal.preview, WARN_TINT, alpha, raised.then_some(&plan));
     let mut red = MeshData::default();
-    for lot in takes(w, pts, levels, half_width(kind, f, b)) {
+    for lot in w.road_takes(pts, levels, f, b, kind) {
         let Some(l) = w.lots.get(lot) else { continue };
         let y = w.lot_pad(lot) + 0.35;
         let mut outline = l.polygon.clone();
@@ -118,7 +104,45 @@ fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32],
         outline.push(l.polygon[0]);
         red.ground_strip(&outline, 2.4, y, [WARN_TINT[0] * 2.0, WARN_TINT[1] * 1.5, WARN_TINT[2] * 1.5, 1.0]);
     }
-    (pv.mesh, red)
+    // [tools] Buildings a column would buy out, and where the column goes.
+    for (lot, _) in &plan.buyouts {
+        let Some(l) = w.lots.get(*lot) else { continue };
+        let y = w.lot_pad(*lot) + 0.4;
+        let mut outline = l.polygon.clone();
+        outline.push(l.polygon[0]);
+        red.ground_polygon(&l.polygon, y, [PILLAR_TINT[0] * 0.3, PILLAR_TINT[1] * 0.3, PILLAR_TINT[2] * 0.3, 1.0]);
+        red.ground_strip(&outline, 1.6, y + 0.02, [PILLAR_TINT[0], PILLAR_TINT[1], PILLAR_TINT[2], 1.0]);
+    }
+    for p in &plan.pillars {
+        let on_building = plan.buyouts.iter().any(|(lot, _)| w.lots.get(*lot).is_some_and(|l| l.contains(p.at) || nd_sim::geom::distance_to_outline(p.at, &l.polygon) < nd_sim::pillars::PILLAR_RADIUS));
+        let c = if on_building { PILLAR_TINT } else { [0.35, 0.9, 1.3] };
+        let ring: Vec<SVec2> = (0..=16).map(|k| p.at + SVec2::from_angle(k as f32 / 16.0 * std::f32::consts::TAU) * nd_sim::pillars::PILLAR_RADIUS).collect();
+        red.ground_strip(&ring, if on_building { 0.6 } else { 0.3 }, w.ground_height(p.at) + 0.5, [c[0], c[1], c[2], 1.0]);
+    }
+    // No room: a bright red band along the stretch on the ground, and the
+    // deck over it red.
+    let deck_w = half_width(kind, f, b) * 2.0;
+    let level_at = |p: SVec2| {
+        let mut best = (f32::MAX, 0.0);
+        for (i, s) in pts.windows(2).enumerate() {
+            let (t, q) = nd_sim::roads::project_on_segment(p, s[0], s[1]);
+            let (la, lb) = (levels.get(i).copied().unwrap_or(0.0), levels.get(i + 1).copied().unwrap_or(0.0));
+            if q.distance(p) < best.0 {
+                best = (q.distance(p), la + (lb - la) * t);
+            }
+        }
+        best.1
+    };
+    for &(ga, gb) in &plan.gaps {
+        red.ground_strip(&[ga, gb], 3.0, w.ground_height(ga.lerp(gb, 0.5)) + 0.6, [WARN_TINT[0] * 2.0, WARN_TINT[1], WARN_TINT[2], 1.0]);
+        let n = ((ga.distance(gb) / 4.0).ceil() as usize).max(1);
+        for k in 0..n {
+            let (p, q) = (ga.lerp(gb, k as f32 / n as f32), ga.lerp(gb, (k + 1) as f32 / n as f32));
+            let m = p.lerp(q, 0.5);
+            red.ground_strip(&[p, q], deck_w, w.ground_height(m) + level_at(m) + 0.25, [WARN_TINT[0] * 1.6, WARN_TINT[1] * 0.8, WARN_TINT[2] * 0.8, 1.0]);
+        }
+    }
+    (pv.mesh, red, plan)
 }
 
 /// The road the Road tool is drawing, as it will be built.
@@ -155,13 +179,16 @@ pub fn sync_draw_hologram(
     despawn_all(&mut commands, &existing);
     let Some((ctrl, ctrl_levels)) = drawn else {
         tools.grade_warnings.clear();
+        tools.pillars = Default::default();
         return;
     };
     let kind = tools.kind;
     let (f, b) = if kind == RoadKind::Street { (tools.lanes_fwd, tools.lanes_bwd) } else { (0, 0) };
     tools.grade_warnings = w.road_grade_warnings(&ctrl, &ctrl_levels, kind, f, b);
     let (pts, levels) = built(&ctrl, &ctrl_levels, tools.curved);
-    let (mesh, red) = hologram(w, &assets.palette, &pts, &levels, f, b, kind, 0.55);
+    let (mesh, red, plan) = hologram(w, &assets.palette, &pts, &levels, f, b, kind, 0.55);
+    // [tools] The columns, for the sub-pane and the remote API.
+    tools.pillars = crate::tools::PillarNote::of(w, &plan);
     if !mesh.is_empty() {
         spawn_overlay(&mut commands, &mut meshes, &mats, &mesh, DrawHoloTag);
     }
@@ -195,7 +222,7 @@ pub fn sync_plan_holograms(
     let mut add = |pv: &nd_sim::PlanPreview, alpha: f32, red_too: bool| {
         for (i, (_, pts, f, b, kind)) in pv.planned_roads.iter().enumerate() {
             let levels = pv.planned_levels.get(i).cloned().unwrap_or_else(|| vec![0.0; pts.len()]);
-            let (m, r) = hologram(w, &assets.palette, pts, &levels, *f, *b, *kind, alpha);
+            let (m, r, _) = hologram(w, &assets.palette, pts, &levels, *f, *b, *kind, alpha);
             all.append(&m);
             if red_too {
                 red.append(&r);

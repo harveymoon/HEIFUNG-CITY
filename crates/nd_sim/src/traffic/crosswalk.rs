@@ -134,7 +134,7 @@ impl Traffic {
             if !inter.signalized || inter.phases.is_empty() {
                 continue;
             }
-            let green_end = inter.arrow + GREEN_SECONDS;
+            let green_end = inter.arrow + inter.green();
             if inter.timer < inter.arrow || inter.timer >= green_end {
                 continue;
             }
