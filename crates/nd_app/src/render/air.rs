@@ -79,7 +79,6 @@ pub(super) fn sync_air(
     mats: Res<Materials>,
     lighting: Res<Lighting>,
     time: Res<Time>,
-    styles: Res<BuildingStyles>,
     mut state: ResMut<AirState>,
     mut vr: ResMut<VehicleRender>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -163,7 +162,7 @@ pub(super) fn sync_air(
         // Near its pad and low: ease onto the deck the building drew.
         if let Some(pb) = d.at.or(d.dest) {
             if let Some(pad) = w.air.pad(pb).copied() {
-                let drawn = drawn_pads(st, w, &assets, &styles.0, pb);
+                let drawn = drawn_pads(st, w, &assets, &sim.styles, pb);
                 if !drawn.is_empty() {
                     let real = drawn[d.slot as usize % drawn.len()];
                     let cruise = d.craft.cruise();

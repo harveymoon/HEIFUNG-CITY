@@ -291,7 +291,11 @@ impl World {
         self.economy.transit.fares_today = 0.0;
         for r in self.transit.routes.values_mut() {
             r.riders_today = 0;
+            r.roll_day();
         }
+        // Buses that left the road without going home leave no timings behind.
+        let cars = &self.traffic.cars;
+        self.transit.departures.retain(|id, _| cars.contains_key(*id));
         self.economy.parking_street_today = 0;
         self.economy.parking_fees_today = 0.0;
         self.economy.materials_today = 0.0;

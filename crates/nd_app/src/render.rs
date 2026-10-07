@@ -348,12 +348,6 @@ struct RenderState {
     glow_key: Option<i32>,
 }
 
-/// Every building's resolved style and the older neighbours it was picked
-/// against, so styles cluster or contrast with what stands nearby (see
-/// `nd_procgen::buildings::adjacency`).
-#[derive(Resource, Default)]
-struct BuildingStyles(StyleBook);
-
 /// Street-level props drawn only around the walker (`nd_procgen::walk`).
 #[derive(Component, Clone)]
 struct WalkDetailTag;
@@ -379,7 +373,7 @@ pub struct RenderPlugin;
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<people::PeopleRender>();
-        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().init_resource::<BuildingStyles>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_systems(Startup, (lights::add_shader, setup)).add_systems(
+        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_systems(Startup, (lights::add_shader, setup)).add_systems(
             Update,
             (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)
                 .chain()
@@ -1433,30 +1427,21 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
     let b = world.buildings.get(id)?;
     let lot = world.lots.get(b.lot)?;
     let field = if b.construction.is_none() && b.demolition.is_none() { plant_field(world, id) } else { None };
-    // [taxis] A taxi company's yard is drawn as a surface lot with empty
-    // bays; its cabs are drawn standing in them (`render/taxis.rs`).
-    let taxi_yard = b.business.as_ref().is_some_and(|z| z.kind == nd_sim::BusinessKind::TaxiCompany);
+    // What decides the style comes from `style_extras`, the same inputs the
+    // style book and the inspector's label use (a taxi company's yard is a
+    // surface lot whose cabs `render/taxis.rs` stands in the bays); only
+    // the look of the moment is added here.
     let extras = Extras {
-        parking: b.parking_visual().or(taxi_yard.then_some(0.0)),
-        plant: b.plant,
         powered: b.powered,
         park: lot.park.as_ref(),
-        depot: b.depot,
-        rail: b.rail.as_ref(),
-        port: b.port,
         construction: b.construction.as_ref().map(|c| c.progress),
         demolition: None,
-        neighbours: styles.neighbours(id),
-        service: b.service.map(|s| s.kind),
         animated_rotors: true,
         field: field.as_ref(),
         animated_cranes: true,
         dynamic_lights: true,
-        business: b.business.as_ref().map(|z| z.kind),
         fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
-        rooftop_pad: world.air.has_rooftop(id),
-        look: b.look,
-        metro: b.metro,
+        ..nd_procgen::style_extras(world, id, styles.neighbours(id))
     };
     let mut g = match &b.demolition {
         // Coming down: what stood there (which, during a redevelopment or a
@@ -1490,16 +1475,18 @@ fn building_chunk(world: &World, id: BuildingId) -> Option<ChunkKey> {
 fn sync_buildings(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    sim: Res<Sim>,
+    mut sim: ResMut<Sim>,
     assets: Res<GameAssets>,
     mats: Res<Materials>,
     mut state: ResMut<RenderState>,
     mut stats: ResMut<RenderStats>,
-    mut styles: ResMut<BuildingStyles>,
 ) {
     let rebuild_all = sim.full_rebuild || assets.rules_changed || assets.palette_changed;
     if sim.full_rebuild || assets.rules_changed {
-        styles.0.clear();
+        // Every building's resolved style and the older neighbours it was
+        // picked against live in `Sim::styles` (`nd_procgen::buildings::
+        // adjacency`), where the inspector reads them too.
+        sim.styles.clear();
     }
     let mut dirty: HashSet<ChunkKey> = HashSet::new();
     if rebuild_all {
@@ -1598,7 +1585,10 @@ fn sync_buildings(
     }
     let touched = !dirty.is_empty();
     if touched {
-        styles.0.refresh(&sim.world, &assets.rules);
+        {
+            let s = &mut *sim;
+            s.styles.refresh(&s.world, &assets.rules);
+        }
         // Bucket every building once; only the dirty cells are regenerated.
         let mut members: HashMap<ChunkKey, Vec<BuildingId>> = HashMap::new();
         for id in sim.world.buildings.keys() {
@@ -1617,7 +1607,7 @@ fn sync_buildings(
             let Some(ids) = members.remove(&k) else { continue };
             let mut geo = Geometry::default();
             for &id in &ids {
-                if append_building(&mut geo, &sim.world, &assets, &styles.0, id).is_some() {
+                if append_building(&mut geo, &sim.world, &assets, &sim.styles, id).is_some() {
                     state.building_chunks.insert(id, k);
                     let w = &sim.world;
                     match w.buildings[id].plant.filter(|k| k.merges_with_neighbours()).and_then(|_| w.lots.get(w.buildings[id].lot)) {

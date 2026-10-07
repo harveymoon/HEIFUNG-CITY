@@ -1191,6 +1191,50 @@ Postings without an item stay in their row and show as "not itemised". All new f
 `serde(default)`; the history's ledger rows are `Vec`s so a new flow does not break old records.
 Recording reads the world and pushes; it draws no random numbers, so determinism is untouched.
 
+## The inspector and the Lines window
+
+The inspector reads top down in order of what the player asks first. A building opens with its
+name, then coloured tags for what it is: the zone (in the zone's colour), the business kind and its
+industry, or the service, plant, depot or "Homes"; the tier and the district. The style, floors and
+build day follow in small print, then alarms (on fire, derelict, under construction with progress,
+underpowered). Sections appear only when they apply: a business shows cash, today's takings and
+spending, staff and a cash-flow sparkline (takings up in green, spending down in red, net as a gold
+line, the last 30 closed days from `Business::books` plus today) and its stock folded away, and no
+homes section; homes show only where people live and there is no business. Services, plants, rail,
+metro, depots, parks and parking follow, then the people: who lives, works and is inside now, as a
+grid of painted head-and-shoulders portraits (`ui/portrait.rs`, from the citizen's look: skin, hair
+and greying, outfit in their two colours) with first names; a click selects the person. Land value,
+rent, wage, condition, power and footfall sit in a folded "site" section at the end.
+
+The style named is the style drawn. `nd_procgen::style_extras` collects every input that decides a
+building's style (plants, car parks and taxi yards, depots, rail, docks, services, metro, the
+business, a rooftop pad, the district look); the renderer builds its `Extras` on top of it, the
+`StyleBook` (kept in `Sim::styles`) resolves styles from it against older neighbours, and
+`nd_procgen::building_style` reads the book (or picks with the same inputs when the renderer has
+not drawn the building yet), so the inspector and the remote API name exactly what is on screen.
+Every farm business (grain, dairy, mill, vertical farm) is drawn as a farmstead.
+
+A car shows its driver under the car without a second click: a portrait (click to select them),
+name, age, class, mood, why and where they are driving, the drive so far against what it should
+take, their anger, and a slow - normal - reckless slider from `DriverProfile::boldness` (speed,
+overtaking, ambers and following distance against a by-the-book driver, -1..1; a ring marks their
+calm self when anger has moved them). Everyone else aboard is a portrait grid: a bus's riders, and
+anyone the sim says rides in the vehicle (`ui::occupants`, the one place a car's passenger list
+plugs in).
+
+The Lines window (top bar, or "Lines" in the Transit window and on a bus) lists every bus line
+with riders today and yesterday; picking one shows it on the map and opens its strip diagram: each
+stop in running order, named after the nearest building, with boardings and alightings today
+(yesterday on hover), and between stops the leg's length and minutes, timed by the buses where
+they have run it (`StopStats::leg_minutes`, arrival to arrival, smoothed) and estimated from the
+length otherwise. Buses sit on the strip where they are along the loop (`BusRoute::bus_progress`),
+grey on their last lap, and select on a click. Per stop, "show" flies the camera there and marks
+the stop with a tall post (`ToolState::stop_sel`), "delete" removes it. The line can be renamed,
+recoloured (its buses too), given more or fewer buses, or deleted (with a confirming second
+click). Stop counters live on the stops themselves (`BusStop::stats`, serde default), so they
+follow a stop when one before it is removed; a moved or removed stop forgets the timing of the
+legs it changed. Nothing here draws random numbers.
+
 ## Roadmap
 
 - v0 (done): roads, zones, lots, procedural buildings, immigration, schedules,

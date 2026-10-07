@@ -32,6 +32,7 @@ impl World {
             if bz.closed {
                 // A shut business takes nothing and owes no tax; whatever
                 // the inspector still showed from its last day is cleared.
+                bz.close_books(0.0, 0.0);
                 bz.revenue_today = 0.0;
                 bz.spend_today = 0.0;
                 bz.broke_days = bz.broke_days.saturating_add(1);
@@ -69,6 +70,8 @@ impl World {
                 }
             }
             bz.days_open = bz.days_open.saturating_add(1);
+            let spent = bz.spend_today;
+            bz.close_books(revenue, spent);
             bz.revenue_today = 0.0;
             bz.spend_today = 0.0;
             if bz.money < -300.0 && !publicly_funded {

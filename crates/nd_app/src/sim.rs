@@ -44,6 +44,10 @@ pub struct Sim {
     /// about half a second: 1.0 means the sim keeps up with the chosen
     /// speed, less means the tick budget is throttling it. Shown in the HUD.
     pub effective_speed: f32,
+    /// Every building's resolved style (`nd_procgen::StyleBook`): filled by
+    /// the renderer as it draws, read by the inspector and the remote API so
+    /// the style they name is the one on screen.
+    pub styles: nd_procgen::StyleBook,
 }
 
 impl Sim {
@@ -60,6 +64,7 @@ impl Sim {
             generation: 0,
             ticks_last_frame: 0,
             effective_speed: 1.0,
+            styles: nd_procgen::StyleBook::default(),
         }
     }
 

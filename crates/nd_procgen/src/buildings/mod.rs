@@ -31,7 +31,7 @@ mod works;
 /// [subway] Metro entrances and the Central Station.
 pub mod subway;
 
-pub use adjacency::{Neighbour, StyleBook};
+pub use adjacency::{building_style, style_extras, Neighbour, StyleBook};
 mod services;
 /// [society] The trash depot.
 mod sanitation;
@@ -1094,7 +1094,9 @@ pub fn industry_styles(kind: nd_sim::BusinessKind, tier: Tier) -> Option<&'stati
     use nd_sim::BusinessKind as B;
     Some(match kind {
         B::GrainFarm | B::Dairy | B::Mill => &[(Style::Farmstead, 1.0)],
-        B::VertFarm => &[(Style::Farmstead, 0.6), (Style::FlattedFactory, 0.4)],
+        // Every farm looks like one: a vertical farm is greenhouses and
+        // barns on the ground, not a factory the inspector calls a farm.
+        B::VertFarm => &[(Style::Farmstead, 1.0)],
         B::ProteinVat => &[(Style::TankFarm, 0.6), (Style::Farmstead, 0.4)],
         B::OilWell => &[(Style::OilField, 1.0)],
         B::Refinery => &[(Style::Refinery, 0.8), (Style::TankFarm, 0.2)],
