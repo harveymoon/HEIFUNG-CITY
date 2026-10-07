@@ -310,6 +310,17 @@ fn sample(surface: Surface, u: f32, v: f32, px: i32, py: i32) -> Sample {
             let g = grain(px, py, 163);
             Sample { value: 0.9 + 0.08 * g, tint: 0.0, height: 0.1 * g }
         }
+        Surface::Tactile => {
+            // 0.6 m tile: a square grid of 4 x 4 truncated domes, 15 cm
+            // apart. Real ones are 50-60 mm apart; these are drawn a size up
+            // so the dots still read from the street, not only underfoot.
+            let (fu, fv) = ((u * 4.0).fract() - 0.5, (v * 4.0).fract() - 0.5);
+            let r = (fu * fu + fv * fv).sqrt();
+            // Flat top, sloped shoulder, then the slab between the domes.
+            let dome = ((0.33 - r) / 0.09).clamp(0.0, 1.0);
+            let g = grain(px, py, 167);
+            Sample { value: (0.6 + 0.4 * dome) * (0.94 + 0.06 * g), tint: 0.0, height: dome * 1.2 + 0.1 * g }
+        }
         Surface::Glow | Surface::Paint => Sample { value: 1.0, tint: 0.0, height: 0.0 },
         // Weathered surfaces are generated through `generate_wear`.
         other => sample(other.base(), u, v, px, py),
