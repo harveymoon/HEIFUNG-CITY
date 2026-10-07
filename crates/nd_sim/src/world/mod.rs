@@ -68,7 +68,7 @@ mod places_tests;
 mod industry_bridge;
 pub use plan::{ProjectCheck, ProjectInfo, ProjectPreview};
 mod power;
-pub use power::{GridAsset, PlantRow};
+pub use power::{GridAsset, GridHour, PlantRow};
 mod services;
 mod society;
 mod survey;
@@ -129,7 +129,9 @@ use crate::plan::{preview, Gesture, GestureId, Plan, PlanPreview, Project};
 use crate::roads::{NodeId, RoadNetwork, SegmentId};
 use crate::traffic::Traffic;
 use crate::walk::WalkGraph;
-use crate::power::{demand_mw, Battery, BatteryKind, PowerPlantKind, Weather, GRID_IMPORT_PRICE};
+use crate::power::{Battery, BatteryKind, PowerPlantKind, Weather};
+#[cfg(test)]
+use crate::power::demand_mw;
 use crate::traffic::{Bus, CarId};
 use std::collections::{BTreeMap, HashMap};
 use crate::transit::{self, BusStop, RouteId, Transit, TransitLeg, TransitTrip};
@@ -645,6 +647,8 @@ impl World {
         };
         w.estate.pressure = crate::estate::Pressure::new(half + 200.0);
         w.landscape = Landscape::new(&w.config.landscape);
+        // [grid-weather] The climate's ordinary weather to start.
+        w.weather = Weather::for_climate(w.landscape.params.climate);
         w.plan_changed();
         // The trunk line: a railway already crosses the map south of the
         // centre, from elsewhere to elsewhere (edge to edge, run on out of
@@ -683,6 +687,9 @@ impl World {
         // walks at today's pace.
         self.config.derive_speeds();
         self.config.landscape = self.landscape.params.clone();
+        // [grid-weather] A save from before the climates keeps its weather
+        // but learns which climate it is in.
+        self.weather.climate = self.landscape.params.climate;
         self.validate();
         self.migrate_through_cars();
         // [people] Saves from before households: one per citizen. Detected

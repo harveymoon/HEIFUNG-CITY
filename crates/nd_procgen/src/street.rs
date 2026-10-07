@@ -286,6 +286,97 @@ fn build_runs(roads: &RoadNetwork) -> Vec<Run> {
     runs
 }
 
+/// Metres of taper per metre of width gained or lost, and its bounds.
+const TAPER_PER_M: f32 = 9.0;
+const TAPER_MIN: f32 = 12.0;
+const TAPER_MAX: f32 = 45.0;
+
+/// At a bend node `n` (two streets, `alive`) where the carriageway changes
+/// width: the run of the narrower street, its path from `n` (as long as
+/// the taper), and the half widths at `n` (the wider street's) and at the
+/// taper's end. None where both are as wide, where the narrower is a town
+/// street, or where either is a ring, tunnel, bridge or viaduct (decks and
+/// bores have widths of their own).
+fn lane_taper_at(roads: &RoadNetwork, runs: &[Run], n: NodeId, alive: &[SegmentId]) -> Option<(usize, Vec<Vec2>, f32, f32)> {
+    let (sa, sb) = (roads.segment(alive[0]), roads.segment(alive[1]));
+    if [sa, sb].iter().any(|s| s.ring || s.tunnel || s.bridge || s.viaduct) {
+        return None;
+    }
+    let (wide, narrow) = if sa.half_width() >= sb.half_width() { (sa, alive[1]) } else { (sb, alive[0]) };
+    let (hw0, hw1) = (wide.half_width(), roads.segment(narrow).half_width());
+    // A town street's pavements and kerbs would cover the taper (they
+    // step at the joint as before): only a highway or ramp, which has none.
+    if hw0 - hw1 < 0.5 || !roads.segment(narrow).is_motorway() {
+        return None;
+    }
+    let s = roads.segment(narrow);
+    let far = if s.a == n { s.b } else { s.a };
+    // The narrower street's run, from `n` outwards.
+    let (ri, path) = runs.iter().enumerate().find_map(|(ri, r)| {
+        let k = r.nodes.len();
+        if k >= 2 && r.nodes[0] == n && r.nodes[1] == far {
+            Some((ri, r.points.clone()))
+        } else if k >= 2 && r.nodes[k - 1] == n && r.nodes[k - 2] == far {
+            Some((ri, r.points.iter().rev().copied().collect::<Vec<_>>()))
+        } else {
+            None
+        }
+    })?;
+    let len = ((hw0 - hw1) * TAPER_PER_M).clamp(TAPER_MIN, TAPER_MAX).min(path_length(&path) * 0.8);
+    if len < 2.0 {
+        return None;
+    }
+    // The path up to the taper's end.
+    let mut out = vec![path[0]];
+    let mut acc = 0.0;
+    for w in path.windows(2) {
+        let d = w[0].distance(w[1]);
+        if acc + d >= len {
+            out.push(w[0].lerp(w[1], (len - acc) / d.max(1e-6)));
+            break;
+        }
+        acc += d;
+        out.push(w[1]);
+    }
+    Some((ri, out, hw0, hw1))
+}
+
+/// A carriageway along `path` whose half width eases from `hw0` at its
+/// start to `hw1` at its end, with its edge lines: the taper where a road
+/// gains or drops lanes, drawn just over the narrower road's asphalt; with
+/// `barrier`, a highway's low concrete barrier along both edges.
+fn lane_taper(g: &mut Geometry, path: &[Vec2], hw0: f32, hw1: f32, asphalt: [f32; 4], edge: [f32; 4], barrier: Option<[f32; 4]>) {
+    let total = path_length(path);
+    if total < 0.5 {
+        return;
+    }
+    // A vertex every couple of metres, so a bend keeps its shape.
+    let steps = ((total / 2.0).ceil() as usize).clamp(2, 40);
+    let samples: Vec<(Vec2, Vec2, f32)> = (0..=steps)
+        .map(|k| {
+            let t = k as f32 / steps as f32;
+            let (p, d) = point_along(path, total * t);
+            // Smoothstep: the edge leaves the wide road's edge and meets
+            // the narrow one's tangentially.
+            let e = t * t * (3.0 - 2.0 * t);
+            (p, Vec2::new(-d.y, d.x), hw0 + (hw1 - hw0) * e)
+        })
+        .collect();
+    for w in samples.windows(2) {
+        let ((p0, n0, h0), (p1, n1, h1)) = (w[0], w[1]);
+        g.part(Asphalt).ground_polygon(&[p0 - n0 * h0, p1 - n1 * h1, p1 + n1 * h1, p0 + n0 * h0], ASPHALT_Y + 0.008, asphalt);
+    }
+    for side in [-1.0f32, 1.0] {
+        let line: Vec<Vec2> = samples.iter().map(|&(p, n, h)| p + n * side * (h - SHOULDER * 0.5)).collect();
+        g.part(Paint).ground_strip(&line, 0.18, MARK_Y + 0.003, edge);
+        // A highway's or ramp's barrier follows the taper's edge.
+        if let Some(c) = barrier {
+            let rail: Vec<Vec2> = samples.iter().map(|&(p, n, h)| p + n * side * (h + 0.2)).collect();
+            g.part(Concrete).path_box(&rail, 0.0, 0.4, 0.0, 0.8, c);
+        }
+    }
+}
+
 /// Trim a polyline by `start` at the beginning and `end` at the end.
 fn trim(points: &[Vec2], start: f32, end: f32) -> Vec<Vec2> {
     let total = path_length(points);
@@ -592,6 +683,18 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
     let lifts: Vec<Option<RunProfile>> = profiles.iter().map(|(p, z)| z.iter().any(|h| *h != 0.0).then(|| RunProfile::new(p, z, 40.0))).collect();
     let run_z = |ri: usize, p: Vec2| lifts.get(ri).and_then(|l| l.as_ref()).map_or(0.0, |l| l.height(p));
     let corners = junction_corners(roads, net, &runs);
+    // Where a road carries on with fewer or more lanes: (node, narrower
+    // run, taper path from the node, half widths at its two ends).
+    let tapers: Vec<(NodeId, usize, Vec<Vec2>, f32, f32)> = (0..roads.nodes.len())
+        .filter_map(|i| {
+            let n = NodeId(i as u32);
+            let alive: Vec<SegmentId> = roads.node(n).segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).collect();
+            if alive.len() != 2 || roads.node(n).segments.iter().any(|&s| roads.segment(s).alive && !roads.segment(s).is_street()) {
+                return None;
+            }
+            lane_taper_at(roads, &runs, n, &alive).map(|(ri, path, h0, h1)| (n, ri, path, h0, h1))
+        })
+        .collect();
     let cuts = crossing_cuts(roads);
     let kerb_cols = KerbColours { kerb: kerb_c, paving: paving_c, tactile: rgba(pal.tactile) };
     // The run drawn last and where its drawing began, to set it on its
@@ -704,8 +807,22 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             // passing well under or over) is not beside it, and the
             // barrier used to stop exactly where a tunnel ramp ran beneath.
             let run_z: Vec<f32> = run.nodes.iter().map(|&n| node_z(n)).collect();
+            // Along a taper at either end the barrier follows its edge
+            // (`lane_taper`), not the narrower road's.
+            let in_taper = |p: Vec2| {
+                tapers.iter().filter(|t| t.1 == ri).any(|(_, _, path, h0, _)| {
+                    let total = path_length(path);
+                    let mut acc = 0.0;
+                    path.windows(2).any(|w| {
+                        let (t, q) = nd_sim::roads::project_on_segment(p, w[0], w[1]);
+                        let along = acc + w[0].distance(w[1]) * t;
+                        acc += w[0].distance(w[1]);
+                        along < total - 0.3 && q.distance(p) < h0 + 1.0
+                    })
+                })
+            };
             let blocked = |p: Vec2| {
-                roads.segments_in_box(p - Vec2::splat(30.0), p + Vec2::splat(30.0)).any(|o| {
+                in_taper(p) || roads.segments_in_box(p - Vec2::splat(30.0), p + Vec2::splat(30.0)).any(|o| {
                     let os = roads.segment(o);
                     if mine(o) || !(os.is_motorway() || os.ring) || os.tunnel != seg.tunnel {
                         return false;
@@ -930,7 +1047,25 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             }
             continue;
         }
-        if alive.is_empty() || alive.len() == 2 {
+        if alive.len() == 2 {
+            // Where a road carries on with fewer or more lanes (a ramp onto
+            // a highway's end, a street that widens), the carriageway
+            // narrows over a taper instead of stepping at the joint.
+            if let Some((_, ri, path, hw0, hw1)) = tapers.iter().find(|t| t.0 == NodeId(i as u32)) {
+                let (ri, hw0, hw1) = (*ri, *hw0, *hw1);
+                let from = marks(&g);
+                let motorway = alive.iter().any(|&s| roads.segment(s).is_motorway());
+                lane_taper(&mut g, path, hw0, hw1, asphalt_c, edge_c, motorway.then(|| rgba(mul(pal.concrete(0), 0.8))));
+                if !lifts.is_empty() {
+                    // On the narrower run's profile (the node loop adds the
+                    // node's height to all it draws).
+                    let z0 = node_z(NodeId(i as u32));
+                    lift_since(&mut g, &from, |p| run_z(ri, p) - z0);
+                }
+            }
+            continue;
+        }
+        if alive.is_empty() {
             continue;
         }
         // A ramp meeting a highway: a taper and a hatched gore instead of a
@@ -2316,6 +2451,35 @@ mod kerb_tests {
             let e = 1e-4;
             (d0 >= -e && d1 >= -e && d2 >= -e) || (d0 <= e && d1 <= e && d2 <= e)
         })
+    }
+
+    /// A ramp carried on from a highway's start keeps its own width, and
+    /// the joint narrows over a taper instead of stepping: asphalt reaches
+    /// out past the ramp's edge just beside the joint, not further on.
+    #[test]
+    fn a_lane_drop_at_a_joint_tapers() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0), Vec2::new(400.0, 0.0)], 4, 0);
+        roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(-150.0, 0.0), Vec2::new(0.0, 0.0)], 1, 0);
+        let mut net = LaneNetwork::default();
+        net.rebuild(&roads);
+        let g = draw(&roads, &net, &[]);
+        let m = g.get(Asphalt);
+        let tris: Vec<([Vec2; 3], Vec2, Vec2)> = m
+            .indices
+            .chunks(3)
+            .map(|t| {
+                let q = [t[0], t[1], t[2]].map(|i| Vec2::new(m.positions[i as usize][0], m.positions[i as usize][2]));
+                (q, q[0].min(q[1]).min(q[2]), q[0].max(q[1]).max(q[2]))
+            })
+            .collect();
+        let ramp_hw = LANE_WIDTH * 0.5 + SHOULDER;
+        let highway_hw = 2.0 * LANE_WIDTH + SHOULDER;
+        let beside = (ramp_hw + highway_hw) * 0.5;
+        assert!(covered(&tris, Vec2::new(-2.0, beside)) && covered(&tris, Vec2::new(-2.0, -beside)), "the joint widens out to the highway");
+        assert!(!covered(&tris, Vec2::new(-100.0, beside)), "the ramp further on keeps its width");
+        // The highway itself is drawn its full width right up to the joint.
+        assert!(covered(&tris, Vec2::new(2.0, highway_hw - 0.5)));
     }
 
     /// Round every junction, everything within the arms' pavements out to

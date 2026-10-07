@@ -424,7 +424,9 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         })
     });
     let plant = b.plant.map(|k| {
-        json!({ "kind": plant_name(k), "label": k.label(), "capacity_mw": round(k.capacity_mw()), "availability": round(k.availability(&w.weather, w.clock.day_fraction())), "upkeep_per_day": round(k.upkeep_per_day()) })
+        let s = w.plant_resource(b);
+        json!({ "kind": plant_name(k), "label": k.label(), "capacity_mw": round(k.capacity_mw()), "availability": round(w.plant_availability(b)), "upkeep_per_day": round(k.upkeep_per_day()),
+            "site": { "wind_factor": round(s.wind), "sun_factor": round(s.sun) } })
     });
     let park = lot.and_then(|l| l.park.as_ref()).map(|p| {
         json!({ "benches": p.benches.len(), "paths": p.paths.len(), "entrances": p.entrances.len(), "features": p.features.iter().map(|f| f.kind.label()).collect::<Vec<_>>(), "cluster_lots": p.cluster_lots, "cluster_area": round(p.cluster_area) })
@@ -440,7 +442,7 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         "homes": b.homes, "jobs": b.jobs, "visitors": b.visitors,
         "residents": people(&b.residents), "workers": people(&b.workers),
         "footfall_today": lot.map(|l| l.footfall_today), "footfall_hour": lot.map(|l| l.footfall_hour), "car_access": lot.map(|l| l.car_access()),
-        "powered": round(b.powered), "demand_mw": round(nd_sim::power::demand_mw(b)), "unpowered_hours_today": b.unpowered_hours_today,
+        "powered": round(b.powered), "demand_mw": round(nd_sim::power::demand_mw(b)), "demand_now_mw": round(nd_sim::power::demand_at(b, w.grid_hour(), w.weather.temp_c)), "unpowered_hours_today": b.unpowered_hours_today,
         "parking": if b.parking_capacity > 0 { json!({ "capacity": b.parking_capacity, "used": b.parking_used, "occupancy": round(b.parking_used as f32 / b.parking_capacity.max(1) as f32), "price": round(b.parking_price), "public": b.is_parking(), "city_run": w.vehicles.city_lots.get(&id).map(|l| l.size.key()) }) } else { Value::Null },
         "parking_office": b.service.filter(|s| s.kind == nd_sim::ServiceKind::ParkingEnforcement).map(|s| json!({
             "officers": b.workers.len(), "patrol_cars_now": w.enforcement.patrols.iter().filter(|p| p.office == id).count(), "patrol_cars_wanted": w.enforcement_cars(id),

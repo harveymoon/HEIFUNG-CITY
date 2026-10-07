@@ -1,8 +1,11 @@
 //! Spinning wind turbine rotors. The farm's generator draws the masts and
 //! leaves the rotors out (`Extras::animated_rotors`); here every turbine
 //! gets a helical rotor entity on top of its mast, turned about the vertical
-//! at a speed set by the weather's wind. They stop in calm air and while the
-//! game is paused, and spin up and down smoothly.
+//! at a speed set by its own farm's output ([grid-weather]: dispatched over
+//! nameplate), so a farm on a sheltered site, one turned down because
+//! nobody wants the power, or one braked in a storm (cut-out) turns slowly
+//! or stands still while others run. They stop while the game is paused,
+//! and spin up and down smoothly.
 
 use bevy::prelude::*;
 use nd_procgen::{wind_rotor, wind_turbines, Surface};
@@ -14,12 +17,13 @@ use std::hash::{Hash, Hasher};
 use super::{shared_mesh, Materials};
 use crate::sim::Sim;
 
-/// Below this wind (the sim's `0..1` figure) the rotors stand still.
-pub(super) const CALM_WIND: f32 = 0.15;
+/// Below this share of nameplate the rotors stand still.
+pub(super) const IDLE_SHARE: f32 = 0.03;
 
 #[derive(Component)]
 pub(super) struct TurbineRotor {
     phase: f32,
+    farm: BuildingId,
 }
 
 #[derive(Default)]
@@ -28,20 +32,21 @@ pub(super) struct TurbineState {
     farms: HashMap<BuildingId, (u64, Vec<Entity>)>,
     /// The rotor's meshes, one per surface, shared by every turbine.
     meshes: Vec<(Surface, Handle<Mesh>)>,
-    angle: f32,
-    omega: f32,
+    /// Rotor angle and angular speed per farm.
+    spin: HashMap<BuildingId, (f32, f32)>,
     /// The farms standing when the rotors were last placed: a farm coming
     /// or going can rearrange the fields next to it.
     farms_seen: Vec<BuildingId>,
 }
 
-/// Angular speed of the rotors in radians per second for a wind in `0..1`:
-/// still in calm air, about six turns a minute in a breeze, forty in a gale.
-pub(super) fn rotor_speed(wind: f32) -> f32 {
-    if wind < CALM_WIND {
+/// Angular speed of the rotors in radians per second for a farm running at
+/// `share` of its nameplate: still when idle, about six turns a minute
+/// just past cut-in, forty at full output.
+pub(super) fn rotor_speed(share: f32) -> f32 {
+    if share < IDLE_SHARE {
         0.0
     } else {
-        0.6 + 3.6 * ((wind - CALM_WIND) / (1.0 - CALM_WIND)).clamp(0.0, 1.0)
+        0.6 + 3.6 * ((share - IDLE_SHARE) / (1.0 - IDLE_SHARE)).clamp(0.0, 1.0)
     }
 }
 
@@ -100,10 +105,11 @@ pub(super) fn sync_turbines(
             }
         }
         let mut ents = Vec::new();
+        let angle = state.spin.get(&id).map_or(0.0, |s| s.0);
         for t in wind_turbines(lot, b.seed, field.as_ref()) {
-            let tf = Transform::from_xyz(t.pos.x, pad + t.hub, t.pos.y).with_rotation(Quat::from_rotation_y(-(state.angle + t.phase)));
+            let tf = Transform::from_xyz(t.pos.x, pad + t.hub, t.pos.y).with_rotation(Quat::from_rotation_y(-(angle + t.phase)));
             for (s, mesh) in &state.meshes {
-                let mut e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mats.surface(*s)), tf, TurbineRotor { phase: t.phase }));
+                let mut e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mats.surface(*s)), tf, TurbineRotor { phase: t.phase, farm: id }));
                 if s.is_glow() {
                     e.insert((bevy::light::NotShadowCaster, bevy::light::NotShadowReceiver));
                 }
@@ -120,17 +126,35 @@ pub(super) fn sync_turbines(
                 commands.entity(e).despawn();
             }
         }
+        state.spin.remove(&id);
     }
-    // Spin.
-    let dt = time.delta_secs().min(0.1);
-    let target = if sim.paused { 0.0 } else { rotor_speed(w.weather.wind) };
-    state.omega += (target - state.omega) * (dt * 0.6).min(1.0);
-    state.angle = (state.angle + state.omega * dt) % std::f32::consts::TAU;
     if state.farms.is_empty() {
         return;
     }
-    let angle = state.angle;
+    // Spin: each farm at its own output.
+    let dt = time.delta_secs().min(0.1);
+    let ids: Vec<BuildingId> = state.farms.keys().copied().collect();
+    for id in ids {
+        let share = w.buildings.get(id).map_or(0.0, |b| w.plant_dispatched_mw(b) / w.plant_capacity_mw(b).max(1e-3));
+        let target = if sim.paused { 0.0 } else { rotor_speed(share) };
+        let s = state.spin.entry(id).or_insert((0.0, target));
+        s.1 += (target - s.1) * (dt * 0.6).min(1.0);
+        s.0 = (s.0 + s.1 * dt) % std::f32::consts::TAU;
+    }
     for (r, mut tf) in &mut q {
+        let angle = state.spin.get(&r.farm).map_or(0.0, |s| s.0);
         tf.rotation = Quat::from_rotation_y(-(angle + r.phase));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotors_follow_the_farms_output() {
+        assert_eq!(rotor_speed(0.0), 0.0, "braked or becalmed");
+        assert!(rotor_speed(0.2) > 0.0 && rotor_speed(0.2) < rotor_speed(0.9));
+        assert!((rotor_speed(1.0) - 4.2).abs() < 1e-4);
     }
 }

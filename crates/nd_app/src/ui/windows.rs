@@ -269,11 +269,28 @@ pub(super) fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
     }
     section(ui, "COSTS");
     row(ui, "upkeep", format!("{:.0}/day (plants and batteries)", pw.upkeep_today));
-    row(ui, "grid import", format!("{:.0} today (up to {:.0} MW at {:.1}/MWh)", pw.import_cost_today, nd_sim::power::GRID_IMPORT_MW, nd_sim::power::GRID_IMPORT_PRICE));
-    row(ui, "grid export", format!("+{:.0} today, +{:.0} yesterday (up to {:.0} MW at {:.1}/MWh)", pw.export_income_today, w.economy.ledger.yesterday_of(nd_sim::economy::Flow::GridExport), nd_sim::power::GRID_EXPORT_MW, nd_sim::power::GRID_EXPORT_PRICE));
+    row(ui, "grid import", format!("{:.0} today (up to {:.0} MW, now {:.2}/MWh)", pw.import_cost_today, nd_sim::power::GRID_IMPORT_MW, pw.import_price));
+    row(ui, "grid export", format!("+{:.0} today, +{:.0} yesterday (up to {:.0} MW, now {:.2}/MWh)", pw.export_income_today, w.economy.ledger.yesterday_of(nd_sim::economy::Flow::GridExport), nd_sim::power::GRID_EXPORT_MW, pw.export_price));
+    // [grid-weather] Time-of-use: the next day's demand and price.
+    section(ui, "NEXT 24 HOURS");
+    let ahead = w.grid_day_ahead();
+    let price_word = if pw.import_price < nd_sim::power::GRID_IMPORT_PRICE * 0.7 { "cheap" } else if pw.import_price > nd_sim::power::GRID_IMPORT_PRICE * 1.3 { "peak" } else { "middling" };
+    let (dear, cheap) = ahead.iter().fold((ahead[0], ahead[0]), |(d, c), g| (if g.import_price > d.import_price { *g } else { d }, if g.import_price < c.import_price { *g } else { c }));
+    row(ui, "price now", format!("{price_word}: buy {:.2}, sell {:.2} per MWh   dearest {:.2} at {:02}:00, cheapest {:.2} at {:02}:00", pw.import_price, pw.export_price, dear.import_price, dear.hour, cheap.import_price, cheap.hour));
+    let peak = ahead.iter().map(|g| g.demand_mw).fold(0.0f32, f32::max);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("demand").small().weak());
+        pane::sparkline(ui, &ahead.iter().map(|g| g.demand_mw).collect::<Vec<_>>(), egui::Color32::from_rgb(255, 90, 90), 26.0, &format!("The city's demand hour by hour from now, if the weather holds: peak {peak:.0} MW. Homes peak in the evening, offices in the day; heat and cold add air conditioning and heating."));
+    });
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("price  ").small().weak());
+        pane::sparkline(ui, &ahead.iter().map(|g| g.import_price).collect::<Vec<_>>(), egui::Color32::from_rgb(255, 175, 80), 26.0, "The regional grid's import price hour by hour from now: cheap at night, dear in the evening peak and in heat waves. Batteries carry cheap or free power into the dear hours.");
+    });
     section(ui, "WEATHER");
-    row(ui, w.weather.label(), format!("cloud {:.0}%   wind {:.0}%", w.weather.cloud * 100.0, w.weather.wind * 100.0));
-    hint(ui, "Solar dims under cloud and stops at night; wind follows the wind. Surplus charges the batteries, then is sold; a shortfall drains them, then is bought.");
+    let x = &w.weather;
+    let spell = if x.spell == nd_sim::power::Spell::Normal { String::new() } else { format!("   {} for {} more hours", x.spell.label(), x.spell_hours) };
+    row(ui, x.label(), format!("{:.0} °C   cloud {:.0}%   wind {:.1} m/s{spell}", x.temp_c, x.cloud * 100.0, x.wind_ms()));
+    hint(ui, &format!("{} climate. Solar dims under cloud and in great heat, and stops at night; wind farms follow the wind at their site and brake above {:.0} m/s in a storm. Heat waves and cold snaps raise demand (air conditioning, heating). Surplus charges the batteries, then is sold; a shortfall drains them, then is bought.", x.climate.label(), nd_sim::weather::CUT_OUT_MS));
 }
 
 pub(super) fn transit(ui: &mut egui::Ui, p: &mut UiCtx) {

@@ -87,6 +87,11 @@ pub(super) fn land_mesh(w: &World, s: &LandSurvey, layer: LandLayer, weights: &[
             let hue = land_hue(layer);
             g.mesh_by(WASH_Y, |k| land_color(hue, g.values[k]), |k| g.values[k] < 0.04, height)
         }
+        // [grid-weather] Wind on its own ramp so the field's pattern reads.
+        LandLayer::Wind => {
+            let g = grid(s, w.survey_values(s, layer, None));
+            g.mesh_by(WASH_Y, |k| nd_procgen::overlay::wind_color(g.values[k]), |k| s.wet[k], height)
+        }
         _ => {
             let g = grid(s, w.survey_values(s, layer, None));
             let hue = land_hue(layer);

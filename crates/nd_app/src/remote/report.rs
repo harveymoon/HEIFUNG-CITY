@@ -651,7 +651,12 @@ pub fn power_json(w: &World, with_hours: bool) -> Value {
                     "air_index": round(r.air), "noise_db": r.noise_db.map(round), "noise_db_running": round(k.noise_db()),
                     "pollution_radius_m": r.nuisance.0, "pollution_land_value_effect": round(r.nuisance.1),
                     "workers": b.workers.len(), "jobs": b.jobs, "derelict": r.derelict, "pending": r.pending, "pos": building_pos(w, b).map_or(Value::Null, v2),
+                    "availability": round(w.plant_availability(b)),
                 });
+                if matches!(k, nd_sim::PowerPlantKind::Wind | nd_sim::PowerPlantKind::Solar) {
+                    let s = w.plant_resource(b);
+                    v["site"] = json!({ "wind_factor": round(s.wind), "sun_factor": round(s.sun) });
+                }
                 if with_hours {
                     v["output_mw_hours"] = series(log.map(|l| &l.hours));
                     v["energy_mwh_days"] = series(log.map(|l| &l.days));
@@ -680,13 +685,14 @@ pub fn power_json(w: &World, with_hours: bool) -> Value {
         "exported_mw": round(p.exported_mw), "curtailed_mw": round(p.curtailed_mw), "plants_count": p.plants,
         "unpowered_buildings": p.unpowered_buildings, "brownout_hours_today": p.brownout_hours_today, "upkeep_per_day": round(p.upkeep_today),
         "import_cost_today": round(p.import_cost_today), "export_income_today": round(p.export_income_today),
-        "import": { "max_mw": nd_sim::power::GRID_IMPORT_MW, "price_per_mwh": nd_sim::power::GRID_IMPORT_PRICE },
-        "export": { "mw": round(p.exported_mw), "max_mw": nd_sim::power::GRID_EXPORT_MW, "price_per_mwh": nd_sim::power::GRID_EXPORT_PRICE,
+        "import": { "max_mw": nd_sim::power::GRID_IMPORT_MW, "price_per_mwh": round(p.import_price), "mean_price_per_mwh": nd_sim::power::GRID_IMPORT_PRICE },
+        "export": { "mw": round(p.exported_mw), "max_mw": nd_sim::power::GRID_EXPORT_MW, "price_per_mwh": round(p.export_price), "mean_price_per_mwh": nd_sim::power::GRID_EXPORT_PRICE,
                     "income_today": round(p.export_income_today), "income_yesterday": round(w.economy.ledger.yesterday_of(Flow::GridExport)) },
         "battery_totals": { "count": p.batteries, "charge_mwh": round(p.battery_charge_mwh), "capacity_mwh": round(p.battery_capacity_mwh), "level": round(level),
                             "charging_mw": round(p.battery_in_mw), "discharging_mw": round(p.battery_out_mw),
                             "round_trip_efficiency": round(nd_sim::power::BATTERY_CHARGE_EFF * nd_sim::power::BATTERY_DISCHARGE_EFF) },
-        "weather": { "label": w.weather.label(), "cloud": round(w.weather.cloud), "wind": round(w.weather.wind) },
+        "weather": super::land::weather_json(w),
+        "grid": super::land::grid_json(w),
         "plants": plants,
         "batteries": batteries,
     })

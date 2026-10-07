@@ -234,6 +234,9 @@ pub struct ToolState {
     pub stroke: Option<PaintStroke>,
     /// Parcel under the pointer (index into `World::parcels`).
     pub hover_parcel: Option<usize>,
+    /// [grid-weather] Where the pointer meets the ground, for the Buildings
+    /// tool's reading of the wind and sun under it.
+    pub hover_ground: Option<SVec2>,
     /// A project being renamed in the toolbar: its id and the name so far.
     pub rename: Option<(u64, String)>,
     /// Zone tool, industrial land: the sub-zone painting sets (a key of
@@ -475,6 +478,7 @@ impl Default for ToolState {
             unzone: false,
             stroke: None,
             hover_parcel: None,
+            hover_ground: None,
             rename: None,
             industry: "auto",
             roundabout: false,
@@ -628,17 +632,38 @@ impl Plugin for ToolsPlugin {
 
 const POINT_PICK_RADIUS: f32 = 8.0;
 
+/// Control points of different gestures closer than this are one joint.
+const SAME_POINT: f32 = 0.5;
+
+/// The control point under the cursor. Where several gestures share it (a
+/// road attached to another's end), the one whose legs from it run nearest
+/// the cursor wins, then the newest: clicking a ramp's end where it meets
+/// a highway must pick the ramp, not the highway (picking the older road
+/// there turned the whole highway into a ramp when the player then picked
+/// the Ramp preset in the upgrade panel).
 fn nearest_control_point(plan: &Plan, p: SVec2) -> Option<(GestureId, usize)> {
-    let mut best: Option<(f32, GestureId, usize)> = None;
+    let mut best: Option<(f32, f32, GestureId, usize)> = None;
     for (id, g) in &plan.gestures {
-        for (i, &q) in g.points().iter().enumerate() {
+        let pts = g.points();
+        for (i, &q) in pts.iter().enumerate() {
             let d = p.distance(q);
-            if d < POINT_PICK_RADIUS && best.map_or(true, |b| d < b.0) {
-                best = Some((d, *id, i));
+            if d >= POINT_PICK_RADIUS {
+                continue;
+            }
+            let legs = [i.checked_sub(1), (i + 1 < pts.len()).then_some(i + 1)];
+            let leg = legs.into_iter().flatten().map(|j| p.distance(project_on_segment(p, q, pts[j]).1)).fold(f32::INFINITY, f32::min);
+            // Later gestures win ties: the map iterates them oldest first.
+            let better = match best {
+                None => true,
+                Some((bd, bl, ..)) if (d - bd).abs() <= SAME_POINT => leg <= bl,
+                Some((bd, ..)) => d < bd,
+            };
+            if better {
+                best = Some((d, leg, *id, i));
             }
         }
     }
-    best.map(|(_, id, i)| (id, i))
+    best.map(|(_, _, id, i)| (id, i))
 }
 
 /// Gesture under the cursor: a road whose polyline is close, or a zone that
@@ -654,7 +679,8 @@ fn nearest_gesture(plan: &Plan, p: SVec2) -> Option<(GestureId, usize)> {
                 for (i, w) in built.windows(2).enumerate() {
                     let (_, q) = project_on_segment(p, w[0], w[1]);
                     let d = p.distance(q);
-                    if d < hw && best.map_or(true, |b| d < b.0) {
+                    // `<=`: at a joint the newer road (the one attached) wins.
+                    if d < hw && best.map_or(true, |b| d <= b.0) {
                         // Map the built leg back to the control leg for insertion.
                         let ctrl = if *curved {
                             let mid = (w[0] + w[1]) * 0.5;
@@ -844,6 +870,7 @@ pub(crate) fn tool_input(
     let click = buttons.just_pressed(MouseButton::Left) && !shift && !flags.pointer_over_ui;
     let shift_click = buttons.just_pressed(MouseButton::Left) && shift && !flags.pointer_over_ui;
     let ground = cursor.ground;
+    tools.hover_ground = ground;
 
     match tools.tool {
         Tool::Road if tools.roundabout => {
@@ -2073,5 +2100,37 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
         let col = Color::linear_rgb(0.4, 1.4, 2.4);
         gizmos.circle(Isometry3d::new(lift(lot.center), flat), r, col);
         gizmos.circle(Isometry3d::new(lift(lot.center), flat), (r - nd_sim::services::COVERAGE_FADE).max(1.0), col.with_alpha(0.5));
+    }
+}
+
+#[cfg(test)]
+mod pick_tests {
+    use super::*;
+
+    fn road(points: Vec<SVec2>, f: u8, b: u8) -> Gesture {
+        Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved: false, kind: RoadKind::Street, elevation: Vec::new() }
+    }
+
+    /// A ramp drawn onto a highway's start shares its control point. A click
+    /// there, or on the ramp beside it, picks the ramp: picking the older
+    /// highway turned the whole of it into a ramp when the player then set
+    /// the Ramp preset in the upgrade panel.
+    #[test]
+    fn a_click_at_a_joint_picks_the_road_attached_there() {
+        let mut plan = Plan::default();
+        let start = SVec2::new(-400.0, 0.0);
+        plan.gestures.insert(GestureId(1), road(vec![start, SVec2::new(-150.0, 10.0), SVec2::new(100.0, 0.0)], 4, 0));
+        plan.gestures.insert(GestureId(2), road(vec![SVec2::new(-600.0, 120.0), SVec2::new(-480.0, 40.0), start], 1, 0));
+        // Exactly on the joint: the newer road.
+        assert_eq!(nearest_control_point(&plan, start), Some((GestureId(2), 2)));
+        assert_eq!(nearest_gesture(&plan, start).map(|g| g.0), Some(GestureId(2)));
+        // A little up the ramp: the ramp.
+        let on_ramp = start + (SVec2::new(-480.0, 40.0) - start).normalize() * 3.0;
+        assert_eq!(nearest_control_point(&plan, on_ramp), Some((GestureId(2), 2)));
+        assert_eq!(nearest_gesture(&plan, on_ramp).map(|g| g.0), Some(GestureId(2)));
+        // A little along the highway: the highway.
+        let on_highway = start + (SVec2::new(-150.0, 10.0) - start).normalize() * 3.0;
+        assert_eq!(nearest_control_point(&plan, on_highway), Some((GestureId(1), 0)));
+        assert_eq!(nearest_gesture(&plan, on_highway).map(|g| g.0), Some(GestureId(1)));
     }
 }

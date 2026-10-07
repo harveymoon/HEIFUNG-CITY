@@ -2584,6 +2584,15 @@ mod tests {
     }
 
     #[test]
+    fn a_new_world_takes_its_weather_from_the_landscape_climate() {
+        for climate in Climate::ALL {
+            let w = crate::World::new(crate::WorldConfig { landscape: LandscapeParams { climate, ..LandscapeParams::flat() }, emergencies: false, society: false, ..crate::WorldConfig::default() });
+            assert_eq!(w.landscape.params.climate, climate);
+            assert_eq!(w.weather.climate, climate, "the grid-weather climate matches the look");
+        }
+    }
+
+    #[test]
     fn old_saves_without_a_climate_are_desert() {
         let p: LandscapeParams = ron::from_str("(preset: Coast, seed: 5, water: 0.5, relief: 0.3, branching: 0.25, islands: 1, highway: true)").unwrap();
         assert_eq!(p.climate, Climate::Desert);
