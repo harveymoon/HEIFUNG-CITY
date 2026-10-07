@@ -844,9 +844,17 @@ impl World {
             match kind {
                 PortKind::ShippingPort => format!("Port of {n}"),
                 PortKind::FerryTerminal => format!("{n} Ferry"),
+                // [economy]
+                PortKind::MarinaSmall => format!("{n} Marina"),
+                PortKind::MarinaLarge => format!("{n} Yacht Club"),
+                PortKind::FishingPortSmall => format!("{n} Fish Quay"),
+                PortKind::FishingPortLarge => format!("{n} Fishing Harbour"),
             }
         };
         let id = self.place_special(lot_id, name, kind.jobs(), kind.jobs() / 3, |b| b.port = Some(kind));
+        // [economy] A marina or fishing port is run by an operator on the
+        // city's quay (`world/waterfront.rs`).
+        self.lease_dock(id, kind, false);
         self.ports.ports[pid].building = Some(id);
         // [ferries] Its towns off the map, across the edges its water reaches.
         if kind == PortKind::FerryTerminal {
@@ -871,7 +879,7 @@ impl World {
         let (front_segment, front_t, car_point) = self.roads.nearest_street(probe)?;
         Some(Lot {
             zone: ZoneId::default(),
-            land_use: if p.kind == PortKind::ShippingPort { LandUse::Industrial } else { LandUse::Civic },
+            land_use: p.kind.land_use(),
             polygon: corners.to_vec(),
             corners,
             front_edge: [corners[0], corners[1]],
@@ -996,6 +1004,8 @@ impl World {
                 ship.dwell = match ship.kind {
                     ShipKind::Freighter => ports::FREIGHTER_DWELL,
                     ShipKind::Ferry => ports::FERRY_DWELL,
+                    // [economy] out on the fishing ground, or at anchor
+                    ShipKind::FishingBoat | ShipKind::Yacht | ShipKind::Sailboat => crate::world::waterfront::boat_dwell(ship.kind),
                 };
                 docked.push(id);
             } else if ship.s >= total {
@@ -1014,7 +1024,10 @@ impl World {
             self.ferry_returned(port, town);
         }
         for id in done {
-            self.ports.ships.remove(id);
+            if let Some(ship) = self.ports.ships.remove(id) {
+                // [economy] A trawler back at the quay lands its catch.
+                self.boat_home(&ship);
+            }
         }
         self.ports.stats.ships_out = self.ports.ships.len() as u32;
     }
@@ -1026,8 +1039,13 @@ impl World {
         self.ports.stats.ports = ports_now.iter().filter(|(_, p)| p.kind == PortKind::ShippingPort).count() as u32;
         self.ports.stats.terminals = ports_now.iter().filter(|(_, p)| p.kind == PortKind::FerryTerminal).count() as u32;
         self.ports.stats.waiting_cargo = self.ports.inbound.len() as u32;
+        // [economy] Marina and fishing boats do not count against the ships.
+        let big_ships = self.ports.ships.values().filter(|s| matches!(s.kind, ShipKind::Freighter | ShipKind::Ferry)).count();
         for (pid, port) in &ports_now {
-            if !port.works() || self.ports.ships.len() >= ports::MAX_SHIPS {
+            if !matches!(port.kind, PortKind::ShippingPort | PortKind::FerryTerminal) {
+                continue;
+            }
+            if !port.works() || big_ships >= ports::MAX_SHIPS {
                 continue;
             }
             let Some(b) = port.building else { continue };
@@ -1041,6 +1059,7 @@ impl World {
             let busy = match port.kind {
                 PortKind::ShippingPort => !mine.is_empty(),
                 PortKind::FerryTerminal => at_pier || mine.len() >= ports::FERRIES_PER_TERMINAL,
+                _ => true,
             };
             if busy {
                 continue;
@@ -1067,6 +1086,8 @@ impl World {
                     self.ports.ships.insert(Ship { kind: ShipKind::Freighter, path, s: 0.0, prev_s: 0.0, speed, dwell: 0, port: b, to: None, cargo, passengers: 0, docked: false, berth_s, color, remote: None, home: false });
                     self.ports.ports[*pid].last_sailing = tick;
                 }
+                // [economy] Boats are sent by `World::step_boats`.
+                PortKind::MarinaSmall | PortKind::MarinaLarge | PortKind::FishingPortSmall | PortKind::FishingPortLarge => {}
                 PortKind::FerryTerminal => {
                     if !(ports::FERRY_SERVICE_START..ports::FERRY_SERVICE_END).contains(&minute) || tick.saturating_sub(port.last_sailing) < ports::FERRY_HEADWAY {
                         continue;

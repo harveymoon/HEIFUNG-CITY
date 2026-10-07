@@ -305,6 +305,9 @@ impl VehicleModel {
                 // [industry] tankers for oil, reefers for fish
                 Resource::Crude | Resource::Fuel => BodyType::Semi,
                 Resource::Plastics | Resource::Fish => BodyType::BoxVan,
+                // [economy] cattle trucks, ore tippers, reefers and art vans
+                Resource::Livestock | Resource::Ore => BodyType::Semi,
+                Resource::Fillets | Resource::Art => BodyType::BoxVan,
             };
             let mut m = Self::new(VehicleClass::Mid, body);
             m.livery = seller.map(Livery::for_business).unwrap_or(Livery::None);
