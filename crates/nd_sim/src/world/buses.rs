@@ -68,11 +68,43 @@ impl World {
             r.stops.remove(idx);
         }
         let empty = r.stops.is_empty();
-        // Buses heading past the removed stop re-aim at what is now there.
-        for car in self.traffic.cars.values_mut() {
+        self.stop_removed(route, idx);
+        if empty {
+            self.remove_bus_route(route);
+        } else {
+            self.transit.refresh_legs(&self.traffic.net);
+        }
+    }
+
+    /// Stop `idx` of a line has just been taken out of its list (by the
+    /// player, or because its street went): buses and riders bound for
+    /// later stops shift down with the list. A bus driving to the removed
+    /// stop keeps its index, which now names the stop after it (wrapping
+    /// to the first), and turns for it from the lane it is on: re-aiming it
+    /// at the stop behind it sent it back there by teleport. A rider whose
+    /// trip boards or alights at the removed stop decides again.
+    pub(super) fn stop_removed(&mut self, route: RouteId, idx: usize) {
+        let n = self.transit.routes.get(route).map_or(0, |r| r.stops.len());
+        let mut turn: Vec<CarId> = Vec::new();
+        for (id, car) in self.traffic.cars.iter_mut() {
             if let Some(bus) = car.bus.as_mut() {
-                if bus.route == route && bus.next_stop != usize::MAX && bus.next_stop >= idx {
-                    bus.next_stop = bus.next_stop.saturating_sub(1);
+                if bus.route != route || bus.next_stop == usize::MAX {
+                    continue;
+                }
+                if bus.next_stop > idx {
+                    bus.next_stop -= 1;
+                } else if bus.next_stop == idx && n > 0 {
+                    bus.next_stop = if idx >= n { 0 } else { idx };
+                    turn.push(id);
+                }
+            }
+        }
+        for id in turn {
+            let Some(k) = self.traffic.cars.get(id).and_then(|c| c.bus.as_ref()).map(|b| b.next_stop) else { continue };
+            let stop = self.transit.routes[route].stops[k];
+            if let Some((goal, s1, _)) = self.traffic.net.nearest_lane_on(stop.segment, stop.pos) {
+                if let Some(lanes) = self.traffic.route_from_here(id, goal, s1) {
+                    self.traffic.follow(id, lanes, s1);
                 }
             }
         }
@@ -99,11 +131,6 @@ impl World {
             if *alight > idx {
                 *alight -= 1;
             }
-        }
-        if empty {
-            self.remove_bus_route(route);
-        } else {
-            self.transit.refresh_legs(&self.traffic.net);
         }
     }
 
@@ -268,7 +295,12 @@ impl World {
             let s = self.transit.routes[bus.route].stops[k];
             (k, s.segment, s.pos)
         };
-        match self.traffic.net.find_route(here.segment, pos, to_seg, to_pos) {
+        // On from the lane the bus stands in; only if there is no way from
+        // there is it set on a route from the stop's own street.
+        let goal = self.traffic.net.nearest_lane_on(to_seg, to_pos);
+        let from_here = goal.and_then(|(g, s1, _)| self.traffic.route_from_here(car_id, g, s1).map(|r| (r, s1)));
+        let s_here = self.traffic.cars[car_id].s;
+        match from_here.map(|(r, s1)| (r, s_here, s1)).or_else(|| self.traffic.net.find_route(here.segment, pos, to_seg, to_pos)) {
             Some((lanes, s0, s1)) => {
                 self.traffic.reroute(car_id, lanes, s0, s1);
                 let car = &mut self.traffic.cars[car_id];

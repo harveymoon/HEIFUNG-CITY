@@ -372,9 +372,6 @@ impl World {
                 b.seed = seed;
                 b.recompute_capacity();
                 b.update_rent(value);
-                if redevelop {
-                    self.reopen_after_rebuild(bid);
-                }
                 self.events.push(SimEvent::BuildingChanged(bid));
             }
         }

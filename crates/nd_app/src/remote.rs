@@ -700,6 +700,10 @@ fn project_state(ctx: &Ctx) -> Value {
         "project": w.project.as_ref().map(|p| json!({ "id": p.id, "name": p.name, "steps": p.steps.len(), "redo": p.redo.len() })),
         "projects": projects,
         "warnings": w.plan_warnings,
+        // The last implement refused (its roads would take a city
+        // structure), and the structures the pending roads run over now.
+        "implement_refused": w.implement_refused,
+        "blockers": w.project_blockers().iter().map(|b| json!({ "id": key_str(*b), "name": w.buildings.get(*b).map(|x| x.name.clone()) })).collect::<Vec<_>>(),
         "gestures": w.effective_plan().gestures.len(),
         "plan_version": w.plan_version,
     })
@@ -760,8 +764,18 @@ fn project(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let id = need(target)?;
             let warnings = w.implement_project(id).ok_or_else(|| format!("no project {id}"))?;
             ctx.tools.points.clear();
-            ctx.tools.status = if warnings.is_empty() { "Project implemented".into() } else { format!("Project implemented. {}", warnings.join(" ")) };
-            json!(true)
+            match w.implement_refused.clone() {
+                // Its roads would take a city structure: still pending, and
+                // the reply's `refused` and `blockers` say which.
+                Some(why) => {
+                    ctx.tools.status = why;
+                    json!(false)
+                }
+                None => {
+                    ctx.tools.status = if warnings.is_empty() { "Project implemented".into() } else { format!("Project implemented. {}", warnings.join(" ")) };
+                    json!(true)
+                }
+            }
         }
         "undo" => json!(target.is_some_and(|id| w.undo_project(id))),
         "redo" => json!(target.is_some_and(|id| w.redo_project(id))),
@@ -814,7 +828,7 @@ fn paint(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     v["touched"] = json!(ids.len());
     v["painted"] = json!(painted);
     v["refused"] = json!(refused);
-    v["implemented"] = json!(implemented);
+    v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
     Ok(v)
 }
 
@@ -970,10 +984,13 @@ fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if implemented {
         ctx.sim.world.implement();
     }
-    ctx.tools.status = format!("{} added by remote{}", match kind { RoadKind::Path => "path", RoadKind::Rail => "track", RoadKind::Street => "road" }, if implemented { " and implemented" } else { " (pending)" });
+    ctx.tools.status = match &ctx.sim.world.implement_refused {
+        Some(why) if implemented => why.clone(),
+        _ => format!("{} added by remote{}", match kind { RoadKind::Path => "path", RoadKind::Rail => "track", RoadKind::Street => "road" }, if implemented { " and implemented" } else { " (pending)" }),
+    };
     let mut v = project_state(ctx);
     v["gesture_id"] = json!(id.0);
-    v["implemented"] = json!(implemented);
+    v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
     v["grade_warnings"] = json!(warnings);
     Ok(v)
 }
@@ -1004,7 +1021,7 @@ fn add_roundabout(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     ctx.tools.status = format!("Roundabout {:.0} m across added by remote{}", ring.radius * 2.0, if implemented { " and implemented" } else { " (pending)" });
     let mut v = project_state(ctx);
     v["gesture_id"] = json!(id.0);
-    v["implemented"] = json!(implemented);
+    v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
     v["roundabout"] = json!({
         "center": [ring.center.x, ring.center.y], "radius": ring.radius, "diameter": ring.radius * 2.0, "lanes": ring.lanes,
         "joins": fx.joins.iter().map(|p| json!([p.x, p.y])).collect::<Vec<_>>(),
@@ -1028,7 +1045,7 @@ fn add_zone(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     ctx.tools.status = format!("{} zone added by remote{}", land_use.label(), if implemented { " and implemented" } else { " (pending)" });
     let mut v = project_state(ctx);
     v["gesture_id"] = json!(id.0);
-    v["implemented"] = json!(implemented);
+    v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
     Ok(v)
 }
 

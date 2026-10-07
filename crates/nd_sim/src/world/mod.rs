@@ -95,7 +95,7 @@ use crate::traffic::Traffic;
 use crate::walk::WalkGraph;
 use crate::power::{demand_mw, PowerPlantKind, Weather, GRID_IMPORT_MW, GRID_IMPORT_PRICE};
 use crate::traffic::{Bus, CarId};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use crate::transit::{self, BusStop, RouteId, Transit, TransitLeg, TransitTrip};
 use crate::rail::{self, Facility, FacilityId, Rail, RailFacility, RailLink, Train, TrainId, TrainKind};
 use crate::zoning::{outlines_differ, point_in_polygon, polygons_overlap};
@@ -279,6 +279,10 @@ pub struct World {
     /// pending project also changes.
     #[serde(skip)]
     pub plan_warnings: Vec<String>,
+    /// Why the last implement was refused (the project's roads would take
+    /// one of the city's own structures), cleared by the next that works.
+    #[serde(skip)]
+    pub implement_refused: Option<String>,
     /// Parcels along every street and path, zoned or not; derived from the
     /// roads and rebuilt with them.
     #[serde(skip)]
@@ -334,6 +338,12 @@ pub struct World {
     /// segments (index = node id), rebuilt with the roads.
     #[serde(skip)]
     road_component: Vec<u32>,
+    /// Late mind answers (`MindProvider::poll`) for citizens who were
+    /// travelling when they came, with the tick they came: acted on at the
+    /// citizen's next decision (`step_citizens`) if still fresh. Not saved:
+    /// an answer in flight is lost on load anyway.
+    #[serde(skip)]
+    deferred_intents: BTreeMap<CitizenId, (crate::mind::Intent, u64)>,
     /// Working stations and yards (connected and not derelict), refreshed
     /// when links, buildings or conditions change.
     #[serde(skip)]
@@ -460,6 +470,8 @@ impl World {
             next_gesture: 1,
             plan_version: 0,
             plan_cache: None,
+            implement_refused: None,
+            deferred_intents: BTreeMap::new(),
             roads: RoadNetwork::default(),
             zones: SlotMap::with_key(),
             lots: SlotMap::with_key(),
@@ -814,8 +826,12 @@ impl World {
         }
         for (id, decision) in minds.poll() {
             if self.citizens.contains_key(id) {
-                self.apply_decision(id, decision);
+                self.apply_late_decision(id, decision);
             }
+        }
+        // Late answers nobody came back for (they are still out, or gone).
+        if tick % 60 == 0 {
+            self.deferred_intents.retain(|_, (_, at)| tick.saturating_sub(*at) <= trips::DEFERRED_INTENT_TTL);
         }
         self.step_traffic();
         self.step_air();

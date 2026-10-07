@@ -31,9 +31,11 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 
 mod crosswalk;
+mod remap;
 mod roundabout;
 mod why;
 pub use crosswalk::{Hold, PedTraffic, PED_CLEARANCE};
+pub use remap::CarryReport;
 pub use roundabout::{RingLanes, RingNode, RING_CRITICAL_GAP, RING_SPEED};
 pub use why::{JamChain, StopReason};
 
@@ -1060,6 +1062,15 @@ pub struct LaneUseRule {
     pub segment: SegmentId,
     pub node: NodeId,
     pub arrows: Vec<u8>,
+    /// Where the junction is and the unit direction the street leaves it
+    /// in: how the rule finds its approach again after a rebuild has
+    /// renumbered segments and nodes (`Traffic::anchor_lane_use`). None in
+    /// saves from before anchoring, and until the next rebuild for a rule
+    /// just set; those are matched by id on the network they were made on.
+    #[serde(default)]
+    pub at: Option<Vec2>,
+    #[serde(default)]
+    pub away: Option<Vec2>,
 }
 
 /// What a signal knows about one approach of its junction.
@@ -1853,12 +1864,9 @@ fn idm_with(v: f32, v0: f32, gap: f32, dv: f32, headway: f32, accel: f32) -> f32
 impl Traffic {
     pub fn rebuild(&mut self, roads: &RoadNetwork) {
         self.net.rebuild(roads);
-        for r in self.lane_use.clone() {
-            if let Some(ai) = self.net.approaches.iter().position(|a| a.segment == r.segment && a.node == r.node && a.lanes.len() == r.arrows.len()) {
-                self.net.approaches[ai].fixed = true;
-                self.net.set_arrows(ai, r.arrows.clone());
-            }
-        }
+        // Player arrows go back on their approaches by geometry
+        // (`traffic/remap.rs`): ids are renumbered by every rebuild.
+        self.resolve_lane_use(roads);
     }
 
     /// Drop every car; used when the road network changes shape.
@@ -2356,7 +2364,7 @@ impl Traffic {
                     return Err("some exit would be reachable from no lane".into());
                 }
                 let a: Vec<u8> = a.iter().map(|&x| x & ap.exits).collect();
-                self.lane_use.push(LaneUseRule { segment, node, arrows: a.clone() });
+                self.lane_use.push(LaneUseRule { segment, node, arrows: a.clone(), at: None, away: None });
                 self.net.approaches[ai].fixed = true;
                 self.net.set_arrows(ai, a);
             }

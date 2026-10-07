@@ -102,6 +102,17 @@ fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32],
         red.ground_polygon(&l.polygon, y, [WARN_TINT[0] * 0.25, WARN_TINT[1] * 0.25, WARN_TINT[2] * 0.25, 1.0]);
         red.ground_strip(&outline, 0.7, y + 0.02, [WARN_TINT[0], WARN_TINT[1], WARN_TINT[2], 1.0]);
     }
+    // The city's own structures in the way: implementing is refused until
+    // the road is moved (`World::try_implement`), so they get a wide,
+    // bright border that cannot be mistaken for an ordinary buy-out.
+    for bid in w.structures_in_way(pts, levels, f, b, kind) {
+        let Some(lot) = w.buildings.get(bid).map(|b| b.lot) else { continue };
+        let Some(l) = w.lots.get(lot) else { continue };
+        let y = w.lot_pad(lot) + 0.45;
+        let mut outline = l.polygon.clone();
+        outline.push(l.polygon[0]);
+        red.ground_strip(&outline, 2.4, y, [WARN_TINT[0] * 2.0, WARN_TINT[1] * 1.5, WARN_TINT[2] * 1.5, 1.0]);
+    }
     (pv.mesh, red)
 }
 

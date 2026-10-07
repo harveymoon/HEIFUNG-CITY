@@ -727,8 +727,12 @@ pub(crate) fn tool_input(
     if ctrl && key(KeyCode::Enter) {
         tools.points.clear();
         tools.drag = None;
-        sim.world.implement();
-        tools.status = if sim.world.plan_warnings.is_empty() { "Project implemented".into() } else { format!("Project implemented. {}", sim.world.plan_warnings.join(" ")) };
+        tools.status = match sim.world.try_implement() {
+            // The roads would take a depot, station or other city structure.
+            Err(why) => why,
+            Ok(()) if sim.world.plan_warnings.is_empty() => "Project implemented".into(),
+            Ok(()) => format!("Project implemented. {}", sim.world.plan_warnings.join(" ")),
+        };
     }
 
     let pointer = window.single().ok().and_then(|w| w.cursor_position());
