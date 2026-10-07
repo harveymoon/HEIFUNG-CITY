@@ -4,8 +4,9 @@
 //! same good grass and the same oil patches and nothing extra is saved.
 //!
 //! What industry does to the ground is saved: [`Contamination`] is a coarse
-//! raster (0..1 per cell) that oil wells, refineries and coal ash raise,
-//! that spreads a little to neighbouring cells every day and slowly fades.
+//! raster (0..1 per cell) that oil wells, refineries, mines, smelters,
+//! chemical works, factory farms and coal ash raise, that spreads a little
+//! to neighbouring cells every day and fades over months.
 //! Contaminated ground loses land value and spoils crops.
 //!
 //! (Not to be confused with [`crate::landscape::Ground`], the raster of the
@@ -18,8 +19,11 @@ use std::collections::BTreeMap;
 
 /// Side of a contamination cell, metres.
 pub const CONTAMINATION_CELL: f32 = 32.0;
-/// Share of a cell's contamination that fades each day.
-pub const CONTAMINATION_DECAY_PER_DAY: f32 = 0.035;
+/// Share of a cell's contamination that fades each day: slowly, so
+/// poisoned ground stays poisoned for months after the plant is gone
+/// (half of it after about ten weeks; parks and a clean-up go faster,
+/// `world/dirt.rs`).
+pub const CONTAMINATION_DECAY_PER_DAY: f32 = 0.01;
 /// Share of a cell's contamination that seeps into its four neighbours each day.
 pub const CONTAMINATION_SPREAD_PER_DAY: f32 = 0.12;
 /// Cells below this are forgotten (kept sparse in the save).
@@ -276,6 +280,46 @@ impl Contamination {
         self.version += 1;
     }
 
+    /// [dirty-industry] Contamination in the cells whose centres lie within
+    /// `radius` of `center`, summed (cell units).
+    pub fn within(&self, center: Vec2, radius: f32) -> f32 {
+        self.cells_within(center, radius).into_iter().filter_map(|i| self.cells.get(&i)).sum()
+    }
+
+    /// [dirty-industry] Multiply the cells within `radius` of `center` by
+    /// `k` (0 cleans them out).
+    pub fn scale_within(&mut self, center: Vec2, radius: f32, k: f32) {
+        let mut changed = false;
+        for i in self.cells_within(center, radius) {
+            if let Some(v) = self.cells.get_mut(&i) {
+                *v *= k.clamp(0.0, 1.0);
+                changed = true;
+            }
+        }
+        if changed {
+            self.cells.retain(|_, v| *v >= CONTAMINATION_EPS);
+            self.version += 1;
+        }
+    }
+
+    fn cells_within(&self, center: Vec2, radius: f32) -> Vec<u32> {
+        let Some((cx, cy)) = self.coords(center) else { return Vec::new() };
+        let r = (radius / self.cell).ceil() as i64 + 1;
+        let mut out = Vec::new();
+        for dy in -r..=r {
+            for dx in -r..=r {
+                let (x, y) = (cx as i64 + dx, cy as i64 + dy);
+                if x < 0 || y < 0 || x as usize >= self.n || y as usize >= self.n {
+                    continue;
+                }
+                if self.cell_center(x as usize, y as usize).distance(center) <= radius.max(self.cell * 0.5) {
+                    out.push((y as usize * self.n + x as usize) as u32);
+                }
+            }
+        }
+        out
+    }
+
     /// Sum over the cells, in cell units (for stats and tests).
     pub fn total(&self) -> f32 {
         self.cells.values().sum()
@@ -363,7 +407,7 @@ mod tests {
         assert!(c.at(away) > 0.0, "it seeps outward");
         assert!(c.at(Vec2::ZERO) < peak, "the source cell drains and fades");
         assert!(c.total() < total0, "the ground recovers overall");
-        for _ in 0..400 {
+        for _ in 0..1200 {
             c.daily();
         }
         assert!(c.cells.is_empty(), "after a long while the ground is clean: {}", c.total());

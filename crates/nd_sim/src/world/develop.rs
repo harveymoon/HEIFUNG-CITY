@@ -554,6 +554,12 @@ impl World {
                 let tier = Tier::for_land_value(self.lot_value(lot_id));
                 chance *= self.economy.taxes.pull(crate::tax::TaxCategory::residential(tier));
             }
+            // [dirty-industry] Nobody wants to build homes or shops in the
+            // shadow of a smelter: the more exposed, the less likely.
+            if matches!(lu, LandUse::Residential | LandUse::Commercial | LandUse::Entertainment) && !self.dirty.is_empty() {
+                let e = self.dirt_exposure_at(self.lots[lot_id].center, crate::industry::Neighbour::Land(lu), None);
+                chance *= 1.0 - super::dirt::ADJACENCY_BUILD_HIT * e;
+            }
             if self.rng.random::<f32>() < chance {
                 self.build_on(lot_id);
                 built += 1;

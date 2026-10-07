@@ -119,6 +119,8 @@ mod waterfront;
 // [events] street races and warehouse raves; road wear and maintenance
 mod nights;
 mod roadworks;
+mod dirt;
+pub use dirt::{DirtyNeighbour, ADJACENCY_OUTPUT_HIT, ADJACENCY_VALUE_HIT};
 #[cfg(test)]
 mod events_tests;
 #[cfg(test)]
@@ -561,6 +563,12 @@ pub struct World {
     /// (`world/roadworks.rs`). Old saves load with every road like new.
     #[serde(default)]
     pub road_wear: crate::road_wear::RoadCondition,
+    /// [dirty-industry] The dirty plants and how hard each is working,
+    /// refreshed every hour (`world/dirt.rs`). Saved, so a loaded city
+    /// reads its neighbours exactly as the running one did; old saves fill
+    /// it on load.
+    #[serde(default)]
+    pub dirty: Vec<crate::industry::DirtySource>,
 }
 
 impl World {
@@ -653,6 +661,7 @@ impl World {
             identity: Default::default(),
             street_events: Default::default(),
             road_wear: Default::default(),
+            dirty: Vec::new(),
         };
         w.estate.pressure = crate::estate::Pressure::new(half + 200.0);
         w.landscape = Landscape::new(&w.config.landscape);
@@ -759,6 +768,11 @@ impl World {
         self.prune_estate();
         self.subway_after_load();
         self.seats_after_load();
+        // [dirty-industry] A save from before the dirty plants were kept
+        // (or a stale entry): read them off the buildings.
+        if self.dirty.is_empty() || self.dirty.iter().any(|d| !self.buildings.contains_key(d.building)) {
+            self.refresh_dirty();
+        }
         self.update_economy();
         // A save from before named projects: number and name the one it has.
         self.name_active_project();

@@ -89,8 +89,17 @@ impl World {
 
     /// Land value as the lot's own land use feels it: homes by a power plant
     /// lose more than the grid shows, industry less.
+    /// [dirty-industry] Less again next to dirty industry, by how much the
+    /// lot's building (or its land use) minds it ([`ADJACENCY_VALUE_HIT`]).
     pub fn lot_value(&self, lot: LotId) -> f32 {
-        self.lots.get(lot).map_or(0.3, |l| self.land_value.for_use(l.center, l.land_use))
+        let Some(l) = self.lots.get(lot) else { return 0.3 };
+        let base = self.land_value.for_use(l.center, l.land_use);
+        if self.dirty.is_empty() {
+            return base;
+        }
+        let who = l.building.and_then(|b| self.neighbour_use(b)).unwrap_or(crate::industry::Neighbour::Land(l.land_use));
+        let e = self.dirt_exposure_at(l.center, who, l.building);
+        (base - super::ADJACENCY_VALUE_HIT * e).max(0.0)
     }
 
     // ── the player's bias ───────────────────────────────────────────────────
@@ -254,6 +263,8 @@ impl World {
         if self.clock.hour() == 22 {
             self.send_parked_lorries_home();
         }
+        // [dirty-industry] Who is dirty this hour, and how hard it works.
+        self.refresh_dirty();
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         for id in ids {
             let b = &self.buildings[id];
@@ -273,37 +284,32 @@ impl World {
             let kind = bz.kind;
             let jobs = b.jobs;
             let staffing = if jobs == 0 { 0.0 } else { (b.workers.len() as f32 / jobs as f32).clamp(0.0, 1.0) * b.powered.clamp(0.0, 1.0) };
-            if let Some((r, a)) = kind.industry().and_then(|k| k.spill()) {
+            if let Some((r, a)) = kind.spill() {
                 if staffing > 0.0 {
                     self.contamination.add(center, r, a * staffing);
                 }
             }
             let cap = jobs as f32 * staffing * crate::market::JOB_RATE;
+            // [dirty-industry] The food chain next to dirty industry loses
+            // output on top of what the soil does (`world/dirt.rs`).
+            let neighbours = self.adjacency_output_factor(id);
             match kind {
-                // Field crops follow the soil; indoor farms only mind poison.
-                BusinessKind::GrainFarm | BusinessKind::VertFarm | BusinessKind::Fishery => {
+                // Field crops follow the soil; pasture and indoor farms only
+                // mind poison.
+                BusinessKind::GrainFarm | BusinessKind::VertFarm | BusinessKind::Fishery | BusinessKind::CowFarm | BusinessKind::Dairy | BusinessKind::ChickenFarm => {
                     let contam = self.contamination.over(center, &outline);
-                    let factor = match kind {
-                        BusinessKind::GrainFarm => {
-                            let g = ground::sample_area(&self.landscape, center, &outline);
-                            (0.6 + 0.8 * g.fertility) * (1.0 - 0.9 * contam)
-                        }
-                        _ => 1.0 - 0.5 * contam,
-                    };
-                    if (factor - 1.0).abs() > 0.01 && cap > 0.0 {
-                        let bz = self.buildings[id].business.as_mut().unwrap();
-                        for (res, per) in kind.recipe().outputs {
-                            let delta = per * cap * (factor - 1.0);
-                            if delta < 0.0 {
-                                bz.take(*res, -delta);
-                            } else {
-                                let ceiling = per * jobs as f32 * crate::market::JOB_RATE * 96.0;
-                                let room = (ceiling - bz.stock_of(*res)).max(0.0);
-                                bz.add(*res, delta.min(room));
+                    let factor = neighbours
+                        * match kind {
+                            BusinessKind::GrainFarm => {
+                                let g = ground::sample_area(&self.landscape, center, &outline);
+                                (0.6 + 0.8 * g.fertility) * (1.0 - 0.9 * contam)
                             }
-                        }
-                    }
+                            BusinessKind::CowFarm | BusinessKind::Dairy => 1.0 - 0.7 * contam,
+                            _ => 1.0 - 0.5 * contam,
+                        };
+                    self.scale_output(id, kind, cap, jobs, factor);
                 }
+                _ if neighbours < 0.99 => self.scale_output(id, kind, cap, jobs, neighbours),
                 BusinessKind::ContainerYard | BusinessKind::FleetLot => {
                     let per = kind.recipe().inputs.iter().find(|(r, _)| *r == Resource::Fuel).map_or(0.0, |x| x.1);
                     let need = per * cap;
@@ -324,9 +330,31 @@ impl World {
         }
     }
 
-    /// Once a day: contamination seeps and fades.
+    /// This hour's output of `id` made `factor` times what production made
+    /// (`cap` filled job-rate): spoiled below one, a bumper crop above,
+    /// never past four days of stock.
+    fn scale_output(&mut self, id: BuildingId, kind: BusinessKind, cap: f32, jobs: u16, factor: f32) {
+        if (factor - 1.0).abs() <= 0.01 || cap <= 0.0 {
+            return;
+        }
+        let Some(bz) = self.buildings[id].business.as_mut() else { return };
+        for (res, per) in kind.recipe().outputs {
+            let delta = per * cap * (factor - 1.0);
+            if delta < 0.0 {
+                bz.take(*res, -delta);
+            } else {
+                let ceiling = per * jobs as f32 * crate::market::JOB_RATE * 96.0;
+                let room = (ceiling - bz.stock_of(*res)).max(0.0);
+                bz.add(*res, delta.min(room));
+            }
+        }
+    }
+
+    /// Once a day: contamination seeps and fades; parks clean the ground
+    /// and the neighbours of dirty industry feel it (`world/dirt.rs`).
     pub(super) fn industry_daily(&mut self) {
         self.contamination.daily();
+        self.daily_dirt();
     }
 
     // ── truck and bus lots ──────────────────────────────────────────────────

@@ -208,7 +208,7 @@ impl World {
             bike_owners: bike_owners as f32,
             bikes_bought,
             long_walks,
-            livestock: self.daily_output(&[BusinessKind::CowFarm, BusinessKind::ChickenFarm]),
+            livestock: self.daily_output(&[BusinessKind::CowFarm, BusinessKind::ChickenFarm, BusinessKind::Feedlot]),
             fish: self.daily_output(&[BusinessKind::FishingPort, BusinessKind::Fishery]),
             fillets: self.daily_output(&[BusinessKind::FishGutting]),
             fishing_small: fishing.iter().filter(|f| !f.1.is_large()).count() as f32,
@@ -480,7 +480,7 @@ impl World {
                 Placement { uses: &[Commercial], anchors: vec![self.centroid(&riders)], reach: f32::INFINITY, min_area: 0.0, value: 0.0, needs_street: false }
             }
             PressureKind::Slaughterhouse => {
-                let farms = self.sites_of(&[BusinessKind::CowFarm, BusinessKind::ChickenFarm]);
+                let farms = self.sites_of(&[BusinessKind::CowFarm, BusinessKind::ChickenFarm, BusinessKind::Feedlot]);
                 if farms.is_empty() {
                     return None;
                 }
