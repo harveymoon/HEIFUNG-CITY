@@ -107,6 +107,14 @@ impl Crossing {
     pub fn lawful(&self) -> bool {
         self.kind != CrossingKind::Jay
     }
+
+    /// Painted on the road (a junction's crosswalk or a zebra): drivers give
+    /// way to people on it. Elsewhere (a dead end, a roundabout's own lanes,
+    /// straight over mid-block) nothing is painted and nobody stops: the
+    /// walker finds a gap, at their own risk.
+    pub fn marked(&self) -> bool {
+        matches!(self.kind, CrossingKind::Junction | CrossingKind::Zebra)
+    }
 }
 
 #[derive(Clone, Debug, Default)]

@@ -88,22 +88,28 @@ impl World {
         let mut occ = feet.occupied;
         occ.sort();
         occ.dedup();
+        // Drivers stop only for painted crossings; unmarked ones in use are
+        // watched for cars going over someone.
         let mut holds: BTreeMap<LaneId, Vec<Hold>> = BTreeMap::new();
+        let mut watch: BTreeMap<LaneId, Vec<Hold>> = BTreeMap::new();
         let mut last = u32::MAX;
         for &(cr, _) in &occ {
             if cr == last {
                 continue;
             }
             last = cr;
+            let marked = self.walk.crossings.get(cr as usize).is_some_and(|c| c.marked());
             if let Some(info) = self.peds.crossings.get(cr as usize) {
+                let into = if marked { &mut holds } else { &mut watch };
                 for &(lane, s) in &info.lanes {
-                    holds.entry(lane).or_default().push(Hold { s, depth: HOLD_DEPTH, crossing: cr });
+                    into.entry(lane).or_default().push(Hold { s, depth: HOLD_DEPTH, crossing: cr });
                 }
             }
         }
         self.peds.occupants = occ;
         self.peds.waiting_now = feet.waiting;
         self.traffic.set_pedestrians(holds, feet.calls);
+        self.traffic.set_unmarked(watch);
     }
 
     /// Match the walk graph's crossings to the lane network: which are
@@ -256,9 +262,14 @@ impl World {
         // With the walk light on, a jam standing or crawling across the
         // crossing is walked through (between the cars), not waited for.
         let gap = self.crossing_gap(cr, if lawful && signal.is_some() { JAM_CRAWL } else { 0.5 });
-        if lawful {
+        if lawful && crossing.marked() {
             // Look first: nobody too close to stop.
             return (gap >= LAWFUL_GAP).then_some(false);
+        }
+        if lawful {
+            // Unmarked (a dead end, a roundabout's lanes): nobody gives way,
+            // so a real gap, judged as carefully as the walker is careful.
+            return (gap >= gap_needed(w.caution, late)).then_some(false);
         }
         if crossing.kind != CrossingKind::Jay && !w.bold {
             return None;
@@ -409,7 +420,7 @@ impl World {
                 if let Some(x) = feet.calls.get_mut(k as usize).and_then(|v| v.get_mut(ap as usize)) {
                     *x = true;
                 }
-            } else if crossing.lawful() && !self.siren_at_crossing(cr) {
+            } else if crossing.marked() && !self.siren_at_crossing(cr) {
                 // About to step onto a zebra: drivers give way (but not to
                 // someone standing back for lights and sirens).
                 feet.occupied.push((cr, id));
