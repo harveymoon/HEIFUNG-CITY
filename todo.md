@@ -167,21 +167,21 @@ Agents in brackets. Items extending running work went to those agents.
 Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO and fog, with neon kept as the identity). Agents run 4–5 at a time.
 
 ### A. Fixes and clarity: traffic, tow, people
-[ ] - pedestrians and bikes never use tunnels; fix riders drawn on the ground above a tunnel
+[x] - pedestrians and bikes never use tunnels; fix riders drawn on the ground above a tunnel   → DONE [feat/clarity]
 [x] - crashed cars: "waiting for a tow" timer; "truck inbound" with a locate button that selects the tow truck; draw the truck's path to the wreck when the wreck is selected   → DONE [fix/flags]
 [x] - tow trucks break traffic rules only near the job (one-way, U-turns); they drive lawfully on the way there; a tow is always reachable even when a one-way is blocked behind the wreck   → DONE [fix/flags]: lawful with ambers; within 250 m uses opposing lane or kerb; wrecks pushed to the shoulder so traffic squeezes past; swap fallback if late. Not done: driving against a one-way, U-turns (no reverse lanes)
 [x] - bad crashes can flip cars; the tow truck rights them   → DONE [fix/flags]: rolled onto side or roof, righted over 6 min before hooking
-[ ] - people hurt in a crash or shot lie on the ground until medics come; homeless people sometimes lie down or sit on the kerb
-[ ] - delivery drivers: each stop resets the trip timer (no road rage over a multi-stop route); show the trip's purpose
-[ ] - every vehicle shows "coming from [place] / going to [place]" (clickable); out-of-town drivers show "unknown person from out of the city"; police "patrolling", taxis "looking for a pickup"; larger activity text in the person section ("going home to Habitat 21F")
-[ ] - police officers are jobs filled by citizens (a cop car shows its officer)
-[ ] - selected person/car route line: an "o" at the origin and an "x" at the destination
-[ ] - Edit mode: the selected road shows big arrows for the number and direction of its lanes (flip is not guesswork)
-[ ] - traffic load layer: big markers at current crashes; load lines drawn over everything, translucent
-[ ] - traffic danger layer: accidents per road segment; "dangerous streets" complaint; walkers take a raised walkway over a crosswalk when it costs only slightly more time
-[ ] - all taxes in the tax panel (the tourist tax rate is fixed today)
-[ ] - healthcare complaint when the hospital is far or missing; out-of-town ambulances are expensive
-[ ] - solar/wind: cost and output in proportion to the lot size
+[x] - people hurt in a crash or shot lie on the ground until medics come; homeless people sometimes lie down or sit on the kerb   → DONE [feat/clarity]
+[x] - delivery drivers: each stop resets the trip timer (no road rage over a multi-stop route); show the trip's purpose   → DONE [feat/clarity]
+[x] - every vehicle shows "coming from [place] / going to [place]" (clickable); out-of-town drivers show "unknown person from out of the city"; police "patrolling", taxis "looking for a pickup"; larger activity text in the person section ("going home to Habitat 21F")   → DONE [feat/clarity]
+[x] - police officers are jobs filled by citizens (a cop car shows its officer)   → DONE [feat/clarity]
+[x] - selected person/car route line: an "o" at the origin and an "x" at the destination   → DONE [feat/clarity]
+[x] - Edit mode: the selected road shows big arrows for the number and direction of its lanes (flip is not guesswork)   → DONE [feat/clarity]
+[x] - traffic load layer: big markers at current crashes; load lines drawn over everything, translucent   → DONE [feat/clarity]
+[x] - traffic danger layer: accidents per road segment; "dangerous streets" complaint; walkers take a raised walkway over a crosswalk when it costs only slightly more time   → DONE [feat/clarity]
+[x] - all taxes in the tax panel (the tourist tax rate is fixed today)   → DONE [feat/clarity]
+[x] - healthcare complaint when the hospital is far or missing; out-of-town ambulances are expensive   → DONE [feat/clarity]
+[x] - solar/wind: cost and output in proportion to the lot size   → DONE [feat/clarity]
 
 ### B. Camera and inspector
 [x] - follow the selection (camera stays on the person or car); Walk view while following gives their point of view; show that camera moves are locked, with an easy "stop following" button   → DONE [feat/camera]: lock banner, Esc, their view (walk/drive/bus/bot)
@@ -238,8 +238,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [x] - flag: a raised bridge over a highway shows blue in the plan but implement refuses "no room for a pillar" (the implement check ignores the downramp to a ground junction); refusals must show red at the spot first   → DONE [feat/tools 21bbb70]: RoadNetwork::as_built levels for preview, rebuild and implement; plan view runs project_check (red band, pin, label, "show" button); clearer refusal text
 
 ### Agent waves (4–5 at a time)
-- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera, feat/land, feat/events, fix/review
-- Running: feat/metro-ux (metro line tool), feat/clarity (section A)
+- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera, feat/land, feat/events, fix/review, feat/clarity
+- Running: feat/metro-ux (metro line tool)
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
 - Next as slots free: dev-speed pass, then the review pass
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open
