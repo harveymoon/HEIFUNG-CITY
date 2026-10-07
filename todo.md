@@ -191,15 +191,15 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [ ] - delivery bots selectable: name or ID, owning business, route, destination, cargo; each company's fleet in its own colour
 
 ### C. Economy and growth
-[ ] - business pressure made visible (an inspector/economy view of why businesses open or close) and extended: lots of outsider tows → tow companies; many breakdowns → mechanics; rich population → car dealerships (lots full of matching cars); poor city trash service → private trash companies (competition lowers prices); bike demand → bike shops/repair
+[x] - business pressure made visible (an inspector/economy view of why businesses open or close) and extended: lots of outsider tows → tow companies; many breakdowns → mechanics; rich population → car dealerships (lots full of matching cars); poor city trash service → private trash companies (competition lowers prices); bike demand → bike shops/repair   → DONE [feat/economy]: pressure.rs; Economy window "What the city's businesses want"; inspector "Why it's here / How it's doing"; tow companies, mechanics, dealerships, private trash (price competition), bike shops
 [ ] - company expansion: successful firms open branches (taxi, pizza, tow scatter across the city) or buy adjacent plots (even landlocked ones) and merge them: seamless oil fields, bigger data centres and factories, mega hotels (valet, roof pool, sky-bridges), museums; selecting a building highlights everything its owner owns
 [ ] - density by pressure: new games start low density; busy, well-connected areas densify; every owner has a sale price; buyers buy out, demolish and build bigger; building height reflects how well the city moves people
 [ ] - housing variety: one-storey shacks, trailer parks and huts (poor, low density); suburbs (middle class); McMansions (two lots, pool); mansions
 [ ] - super-elite class (fictional people only): rare billionaires (from town or visiting) buy connected parcels for mansions in quiet spots (noise and pollution limits), NIMBY pressure prices out neighbours within strict limits, more billionaires follow; supercars with 2–5 black escort cars and security in black by net worth; the very richest get a police escort; they own several homes, cars and businesses
-[ ] - new industries: cow and chicken farms → slaughterhouse; strip mining
-[ ] - waterfront: recreational marina (small and large; large takes yachts, with a clubhouse; raises land value; draws seafood restaurants); fishing ports (small and large) with fish gutting / fish-stick factory industry and fish markets nearby
-[ ] - entertainment: golf driving ranges
-[ ] - art scene: artists live cheap near warehouses; studios, small galleries, openings with invitations; successful galleries buy neighbouring plots and become museums (architecture to match); wealthy visitors donate; needs a rich enough audience and enough middle-income artists
+[x] - new industries: cow and chicken farms → slaughterhouse; strip mining   → DONE [feat/economy]: cattle/chicken farms → slaughterhouse; strip mining on rocky cheap ground
+[x] - waterfront: recreational marina (small and large; large takes yachts, with a clubhouse; raises land value; draws seafood restaurants); fishing ports (small and large) with fish gutting / fish-stick factory industry and fish markets nearby   → DONE [feat/economy]: small/large marinas and fishing ports in Build > Water; boats move; fish chain to markets and seafood restaurants
+[x] - entertainment: golf driving ranges   → DONE [feat/economy]
+[x] - art scene: artists live cheap near warehouses; studios, small galleries, openings with invitations; successful galleries buy neighbouring plots and become museums (architecture to match); wealthy visitors donate; needs a rich enough audience and enough middle-income artists   → DONE [feat/economy]: artists, studios, galleries with openings and donations; galleries set wants_expand (museum growth left to feat/land)
 [ ] - events: street races (fast cars meet in a lot, race, party; a call to the cops may bust it); warehouse raves at night (lights, a queue outside) where the culture exists
 [ ] - infrastructure decay: roads and bridges wear slowly; road-maintenance budget; cuts hit poor streets first, rich areas get fixed first; bad roads slow cars
 
@@ -232,8 +232,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [ ] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)
 
 ### Agent waves (4–5 at a time)
-- Merged: fix/flags, feat/kerbs, feat/look
-- Running: feat/identity (D: tunnel tubes, city name / game id / game history), feat/clarity (section A), feat/economy (section C part 1), feat/land (section C part 2), feat/tools ([ ] road raising, intersection editor, footbridges)
+- Merged: fix/flags, feat/kerbs, feat/look, feat/economy
+- Running: feat/camera (section B), feat/identity (D: tunnel tubes, city name / game id / game history), feat/clarity (section A), feat/land (section C part 2), feat/tools ([ ] road raising, intersection editor, footbridges)
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
-- Next as slots free: B camera and inspector · C3 events (races, raves) and infrastructure decay · E verify stale statuses
+- Next as slots free: C3 events (races, raves) and infrastructure decay · E verify stale statuses
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open
