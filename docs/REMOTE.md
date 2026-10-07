@@ -191,12 +191,39 @@ main thread, then serialises and writes it on a worker thread.
 | `generate_city` | `preset` grid_plaza (default) / coastal_river / old_town / twin_centres, `seed` (default 1; seeds the landscape and the city), optional `landscape` (a `new_game` preset to lay the city on instead of the preset's own) and `water`, `relief`, `branching` levers, optional `name` | throws the city away and starts a new game with a whole generated city on it (below); tools and selection reset. Reply as `landscape` plus `city`: `preset`, `seed`, `arterial`/`collector`/`local` (`roads`, `length_m`), `zones`, `lots`, `interchanges`, `way_in`, `centres`, `took_ms` |
 | `landscape` | | preset and levers, `rivers` (kind river/stream, width, current_mps, hydro_ok, source, mouth, length), `lakes`, `sea`, `hot_spots`, `highway` (entries, exits, through_cars), `bridges` (count, metres, on the highway), `ports`, `ships`, `port_stats` |
 | `terrain_at` | `x`, `y` | `natural_height`, `ground_height` (graded under roads and lots), `surface_height` (bridge decks included), `slope`, `water` (kind, current, width, flow), `nearest_shore`, `hot_spot`, `lot`, `power_sites` (hydro/tidal/geothermal ok or why not, for the lot there), `docks` (whether a shipping port or ferry terminal would go there, or why not), `survey` (every land survey layer's value 0..1 there), `access` (`park_min`, `nightlife_min`: minutes on foot along the walk network to the nearest park / open entertainment, null when none can be walked to; `value_for_homes`: what that adds to a home's land value; `text`; the whole object is null off the walk network) |
+| `resource` | `x`, `y` (or `z` for `y`) | the wind and sun for power plants at a point: `climate`, `water`, `wind {site_factor` (the map's wind field there against open level ground, 0.35..1.8: windy on hills, ridges, high ground and by wide water, sheltered in valleys), `mean_ms` (ordinary-day wind there), `now_ms`, `typical_yield` (a wind farm's share of nameplate on an ordinary day), `yield_now`, `cut_out_now}` (the wind there is past the turbines' cut-out), `solar {site_factor, climate_sun, sun` (0..1.1, 1 = the desert's open ground), `yield_now}`. `terrain_at` carries the same under `resource` |
+| `weather` | | `label`, `cloud` 0..1, `wind` (the 0..1 drift), `wind_ms` (over open ground), `temp_c`, `spell` (normal / heat wave / cold snap / storm), `spell_hours_left`, `climate`, `turbine {cut_in_ms, rated_ms, cut_out_ms}` |
+| `grid` | | the time-of-use grid: `hour`, `import_price` and `export_price` now (per MWh), `mean_import_price`, `demand_mw` now, `full_draw_mw` (every building flat out, the old figure), `demand_factor_now`, `weather`, `day_ahead` (24 rows from this hour: `hour`, `temp_c`, `demand_mw`, `import_price`, `export_price`, if the weather holds), `last_24h` (recorded `day`, `hour`, `demand_mw`, `supply_mw`, `imported_mw`, `exported_mw`, `import_price`, `temp_c`) |
 | `grant` | `amount` (default 100000) | dev: adds money to the treasury |
 
 ```json
 {"cmd": "new_game", "preset": "delta", "seed": 12, "water": 0.7, "branching": 0.9}
 {"cmd": "terrain_at", "x": -420, "y": 100}
+{"cmd": "resource", "x": 300, "z": -650}
+{"cmd": "grid"}
 ```
+
+#### Weather, demand and prices [grid-weather]
+
+- **Weather** follows the map's climate (`landscape.climate`): Temperate mild and mixed, Desert clear
+  and hot, Tropical hot with afternoon cloud, Arctic cold, windy and dim, Volcanic cold and windy.
+  Once a sim hour cloud and wind drift toward the climate's sky at that hour, the temperature follows
+  the climate's mean and daily swing (coolest about 05:00, warmest about 15:00), and a *spell* may set
+  in: a heat wave (+8 °C for 2-4 days, clear skies), a cold snap (-9 °C), a storm (half a day to a
+  day: low cloud, a gale). Spells come from hashes of the seed and the hour, not the random stream.
+- **Demand** varies by hour and land use: homes have a morning bump and the evening peak (about
+  19:00), shops and offices run in the day, industry is flat with a night dip, nightlife peaks late,
+  parks light up at night; air conditioning adds load above 24 °C and heating below 15 °C.
+  `status.power.demand_mw` is this hour's; `inspect building` has `demand_mw` (flat out) and
+  `demand_now_mw`.
+- **Wind farms** run a power curve on the wind at their lot (the climate's wind times the site
+  factor): nothing below 3 m/s, nameplate from 11 m/s, braked above 25 m/s, so in a storm exposed farms
+  stop while sheltered ones run flat out. **Solar** follows the sun's height, the cloud, the
+  climate's sun and the site, and loses 0.4% per °C above 25.
+- **Prices**: the regional grid charges with the square of its own load (the same daily curve and
+  weather): cheapest in the small hours, dearest in the evening peak and on heat-wave evenings, a
+  mild day averaging the old 2.5/MWh. Exports earn a fifth of the import price at the hour.
+- The land survey has `wind` and `solar` layers (`overlay {land: "wind"}`).
 
 `window {name: "new_game"}` opens the New Game window (preset list, levers, mini-map, and a
 starting town: an empty map or one of the generated cities, drawn on the mini-map).
@@ -624,6 +651,8 @@ in the game; the top bar's Layer button and the View window list them;
 | `sand` | beach sand on the sea shore |
 | `water` | closeness to open water (fishing, ferries) |
 | `shipping` | shore where a shipping port fits: the sea or a river 40 m wide |
+| `wind` | what a wind farm makes on an ordinary day there (the map's wind field times the climate's wind, through the power curve) |
+| `solar` | the sun a solar field gets (the climate's, a little more on high open ground) |
 | `best_industry` | each spot coloured by the industry kind the ground favours most |
 | `best_farming`, `best_oil`, `best_refinery`, `best_manufacturing`, `best_logistics`, `best_fishing`, `best_tech` | the chance a new industrial lot there takes the kind, from the sim's own industry weights (the player's area bias left out) |
 
@@ -790,24 +819,28 @@ Each reply carries `took_ms`; see the timings measured on a real city at the end
 `report {sections: ["services"]}` has `power` (`remote/report.rs::power_json`): `supply_mw`,
 `demand_mw`, `imported_mw`, `exported_mw`, `curtailed_mw` (surplus with nowhere to go), `served_share`,
 `unpowered_buildings`, `brownout_hours_today`, `upkeep_per_day`, `import_cost_today`,
-`export_income_today`, `import {max_mw, price_per_mwh}`, `export {mw, max_mw, price_per_mwh,
-income_today, income_yesterday}`, `battery_totals {count, charge_mwh, capacity_mwh, level, charging_mw,
-discharging_mw, round_trip_efficiency}`, `weather`, and a row per plant and battery
+`export_income_today`, `import {max_mw, price_per_mwh` (this hour's), `mean_price_per_mwh}`, `export {mw,
+max_mw, price_per_mwh, mean_price_per_mwh, income_today, income_yesterday}`, `battery_totals {count,
+charge_mwh, capacity_mwh, level, charging_mw, discharging_mw, round_trip_efficiency}`, `weather` (as the
+`weather` command), `grid` (as the `grid` command), and a row per plant and battery
 (`World::plant_rows`, the same figures as the Power window):
 
 - `plants`: id, name, kind, capacity_mw, available_mw (what the weather allows), output_mw (less
   curtailment), mean_mw_24h, upkeep_per_day, cost_per_mwh (upkeep over the last 24 hours' energy; null
   when it made next to nothing), co2_t_per_day, co2_t_per_mwh, air_index (smog at the fence now, 0..1),
   noise_db (null while idle), noise_db_running, pollution_radius_m, pollution_land_value_effect,
-  workers, jobs, derelict, pending (lot still being cleared), pos, `output_mw_hours` (the last 72
-  hours) and `energy_mwh_days` (up to 90 days).
+  workers, jobs, derelict, pending (lot still being cleared), pos, `availability` (share of nameplate
+  the weather, hour and site allow now), `site {wind_factor, sun_factor}` (wind and solar only),
+  `output_mw_hours` (the last 72 hours) and `energy_mwh_days` (up to 90 days).
 - `batteries`: id, name, kind, capacity_mwh, max_mw, charge_mwh, level, flow_mw (+ delivering,
   - charging), state (charging / discharging / idle), delivered_mwh_24h, upkeep_per_day,
   cost_per_mwh, noise_db, derelict, pending, pos, `flow_mw_hours`, `charge_mwh_hours`.
 
-`status.power` carries the headline figures plus `exported_mw`, `export_income_today`, `batteries
+`status.power` carries the headline figures plus `exported_mw`, `export_income_today`,
+`import_price`, `export_price` (this hour's, per MWh), `batteries
 {count, charge_mwh, capacity_mwh, charging_mw, discharging_mw}` and `rows {plants, batteries}` (the
-rows without the hourly series). `report {sections: ["history"]}` hours gain `exported_mw`,
+rows without the hourly series); `status.weather` is as the `weather` command. `report {sections:
+["history"]}` hours gain `import_price` and `temp_c`, and `exported_mw`,
 `curtailed_mw`, `battery_in_mw`, `battery_out_mw`, `battery_charge_mwh`, `battery_capacity_mwh`; days
 gain `exported_mwh`, `battery_in_mwh`, `battery_out_mwh` and `ledger.grid_export`.
 

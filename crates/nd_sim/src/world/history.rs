@@ -93,6 +93,8 @@ impl World {
             battery_charge_mwh: e.power.battery_charge_mwh,
             battery_capacity_mwh: e.power.battery_capacity_mwh,
             served: e.power.served,
+            import_price: e.power.import_price,
+            temp_c: self.weather.temp_c,
             bus_waiting: e.transit.waiting,
             bus_riding: e.transit.riding,
             rail_riding: self.rail.stats.riding,

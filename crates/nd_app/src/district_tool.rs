@@ -235,15 +235,15 @@ fn district_labels(mut contexts: EguiContexts, sim: Res<Sim>, overlays: Res<Over
         let Ok(screen) = camera.world_to_viewport(gt, p3) else { continue };
         let c = COLORS[d.color as usize % COLORS.len()];
         let col = egui::Color32::from_rgb((c[0].min(1.0) * 255.0) as u8, (c[1].min(1.0) * 255.0) as u8, (c[2].min(1.0) * 255.0) as u8);
-        let pos = egui::pos2(screen.x, screen.y);
-        let font = egui::FontId::proportional(17.0);
+        let pos = crate::ui::theme::to_points(ctx, screen);
+        let font = crate::ui::theme::lead();
         // A dark halo so the name reads over neon.
         for off in [egui::vec2(1.5, 1.5), egui::vec2(-1.5, 1.5), egui::vec2(1.5, -1.5), egui::vec2(-1.5, -1.5)] {
             painter.text(pos + off, egui::Align2::CENTER_CENTER, &d.name, font.clone(), egui::Color32::from_black_alpha(220));
         }
         painter.text(pos, egui::Align2::CENTER_CENTER, &d.name, font, col);
         let policy = d.policy_label();
-        painter.text(pos + egui::vec2(0.0, 15.0), egui::Align2::CENTER_CENTER, policy, egui::FontId::proportional(11.5), egui::Color32::from_gray(210));
+        painter.text(pos + egui::vec2(0.0, 18.0), egui::Align2::CENTER_CENTER, policy, crate::ui::theme::small(), egui::Color32::from_gray(210));
     }
     Ok(())
 }

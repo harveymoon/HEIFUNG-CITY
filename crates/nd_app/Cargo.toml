@@ -27,6 +27,10 @@ tiny_http = "0.12"
 # The window icon is set on the winit window itself (the version Bevy uses).
 winit = { version = "0.30", default-features = false }
 
+[dev-dependencies]
+# [fonts] The glyph-coverage test reads the fonts' character maps.
+ttf-parser = "0.25"
+
 [build-dependencies]
 # The exe's icon in Explorer and the taskbar (a Windows resource).
 embed-resource = "3"

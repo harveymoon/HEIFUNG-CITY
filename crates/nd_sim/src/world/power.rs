@@ -6,6 +6,16 @@ use super::*;
 /// more than a corner, less than any real parcel side.
 pub const PLANT_MERGE_MIN_SHARED: f32 = 4.0;
 
+/// [grid-weather] One hour of [`World::grid_day_ahead`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GridHour {
+    pub hour: u8,
+    pub temp_c: f32,
+    pub demand_mw: f32,
+    pub import_price: f32,
+    pub export_price: f32,
+}
+
 /// What a row of the plant table is: a plant of a kind or a battery.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GridAsset {
@@ -250,7 +260,59 @@ impl World {
             return 0.0;
         }
         let site = self.power_site(b.lot, kind).unwrap_or(0.0);
-        self.plant_capacity_mw(b) * kind.availability(&self.weather, self.clock.day_fraction()) * site
+        self.plant_capacity_mw(b) * self.plant_availability(b) * site
+    }
+
+    /// [grid-weather] The wind and sun a plant at `p` would get: the map's
+    /// wind field and sun factor there ([`crate::weather::SiteResource`]).
+    pub fn site_resource_at(&self, p: Vec2) -> crate::weather::SiteResource {
+        crate::weather::SiteResource::at(&self.landscape, p)
+    }
+
+    /// [grid-weather] What a plant's site gives it: the resource at its
+    /// lot's centre for wind and solar, open ground for the rest.
+    pub fn plant_resource(&self, b: &Building) -> crate::weather::SiteResource {
+        match b.plant {
+            Some(PowerPlantKind::Wind | PowerPlantKind::Solar) => self.lots.get(b.lot).map_or_else(Default::default, |l| self.site_resource_at(l.center)),
+            _ => Default::default(),
+        }
+    }
+
+    /// [grid-weather] Share of a plant's nameplate the weather, the hour and
+    /// its site allow right now (before the hydro and geothermal site
+    /// factor of [`Self::power_site`]).
+    pub fn plant_availability(&self, b: &Building) -> f32 {
+        let Some(kind) = b.plant else { return 0.0 };
+        kind.availability(&self.weather, self.clock.day_fraction(), self.plant_resource(b))
+    }
+
+    /// [grid-weather] Share of nameplate a plant of `kind` on a lot at `p`
+    /// would make right now, and on an ordinary day's average (for the
+    /// placement preview): wind on the map's wind there, solar on the sun.
+    pub fn kind_availability_at(&self, kind: PowerPlantKind, p: Vec2) -> f32 {
+        kind.availability(&self.weather, self.clock.day_fraction(), self.site_resource_at(p))
+    }
+
+    /// [grid-weather] The hour of the day now, `0..24`, as the grid reads it.
+    pub fn grid_hour(&self) -> f32 {
+        self.clock.day_fraction() * 24.0
+    }
+
+    /// [grid-weather] The next 24 hours on the grid from the top of this
+    /// hour, if the weather holds (the temperature follows the day's swing):
+    /// the city's demand and the regional prices. For the Power window's
+    /// sparkline and the remote API.
+    pub fn grid_day_ahead(&self) -> Vec<GridHour> {
+        let base = crate::power::DemandBase::of(self.buildings.values());
+        let now = self.clock.hour() as u32;
+        (0..24)
+            .map(|k| {
+                let hour = (now + k) % 24;
+                let h = hour as f32;
+                let temp = if k == 0 { self.weather.temp_c } else { self.weather.temp_at(h) };
+                GridHour { hour: hour as u8, temp_c: temp, demand_mw: base.at(h, temp), import_price: crate::power::import_price(h, temp), export_price: crate::power::export_price(h, temp) }
+            })
+            .collect()
     }
 
     /// What a plant actually ran at this hour: its output less its share of
@@ -303,7 +365,10 @@ impl World {
             }
         }
         self.economy.power.supply_by_kind = by_kind;
-        let demand: f32 = self.buildings.values().map(demand_mw).sum::<f32>() + 0.0; // sum of nothing is -0.0
+        // [grid-weather] Demand follows the hour and the weather.
+        let (hour, temp) = (self.grid_hour(), self.weather.temp_c);
+        let demand: f32 = self.buildings.values().map(|b| crate::power::demand_at(b, hour, temp)).sum::<f32>() + 0.0; // sum of nothing is -0.0
+        let (import_price, export_price) = (crate::power::import_price(hour, temp), crate::power::export_price(hour, temp));
         // Batteries, in slot order (deterministic); each takes or gives the
         // same share of its own headroom.
         let mut batteries = 0;
@@ -352,11 +417,13 @@ impl World {
         }
         let imported = d.imported_mw;
         if hourly {
-            self.economy.power.import_cost_today += imported * GRID_IMPORT_PRICE;
-            self.economy.power.export_income_today += d.exported_mw * crate::power::GRID_EXPORT_PRICE;
+            self.economy.power.import_cost_today += imported * import_price;
+            self.economy.power.export_income_today += d.exported_mw * export_price;
         }
         {
             let p = &mut self.economy.power;
+            p.import_price = import_price;
+            p.export_price = export_price;
             p.exported_mw = d.exported_mw;
             p.curtailed_mw = d.curtailed_mw;
             p.batteries = batteries;
@@ -370,7 +437,7 @@ impl World {
         // megawatt keeps rounding from browning out the last building.
         let delivered = supply + d.discharge_mw + imported;
         let mut remaining = delivered.min(demand + 1e-3);
-        let mut order: Vec<(BuildingId, f32)> = self.buildings.iter().map(|(id, b)| (id, demand_mw(b))).collect();
+        let mut order: Vec<(BuildingId, f32)> = self.buildings.iter().map(|(id, b)| (id, crate::power::demand_at(b, hour, temp))).collect();
         order.sort_by(|a, b| {
             let ta = self.buildings[a.0].tier;
             let tb = self.buildings[b.0].tier;
@@ -517,7 +584,8 @@ mod tests {
         assert!(p.exported_mw > 0.0 && p.imported_mw == 0.0 && p.served >= 1.0);
         let charge = w.buildings[bat].battery.as_ref().unwrap().charge_mwh;
         assert!((charge - BatteryKind::Medium.max_mw() * crate::power::BATTERY_CHARGE_EFF).abs() < 1e-3);
-        assert!((p.export_income_today - p.exported_mw * crate::power::GRID_EXPORT_PRICE).abs() < 1e-2);
+        assert!(p.export_price > 0.0 && p.export_price < p.import_price);
+        assert!((p.export_income_today - p.exported_mw * p.export_price).abs() < 1e-2);
         // Midnight pays the exports into the ledger.
         w.daily_update();
         assert!((w.economy.ledger.yesterday_of(Flow::GridExport) - p.export_income_today).abs() < 1e-2, "the day closed with the export income on its books");

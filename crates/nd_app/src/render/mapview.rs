@@ -286,7 +286,7 @@ fn overlaps(a: (egui::Pos2, egui::Vec2), b: (egui::Pos2, egui::Vec2)) -> bool {
 }
 
 /// Street names along the roads and pins on special buildings.
-fn map_labels(mut contexts: EguiContexts, sim: Res<Sim>, overlays: Res<Overlays>, cams: Query<(&Camera, &GlobalTransform), With<crate::camera::OrbitCamera>>) -> Result {
+fn map_labels(mut contexts: EguiContexts, sim: Res<Sim>, overlays: Res<Overlays>, flags: Res<crate::ui::UiFlags>, cams: Query<(&Camera, &GlobalTransform), With<crate::camera::OrbitCamera>>) -> Result {
     if !overlays.map {
         return Ok(());
     }
@@ -296,9 +296,11 @@ fn map_labels(mut contexts: EguiContexts, sim: Res<Sim>, overlays: Res<Overlays>
     // Clear of the top bar and the toolbar with its sub-pane, so no name
     // runs under them.
     let full = ctx.content_rect();
-    let screen = egui::Rect::from_min_max(full.min + egui::vec2(4.0, 52.0), full.max - egui::vec2(4.0, 170.0));
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("map_labels")));
-    let to_screen = |p: SVec2, y: f32| camera.world_to_viewport(gt, Vec3::new(p.x, y, p.y)).ok().map(|v| egui::pos2(v.x, v.y));
+    // [fonts] The bars' real rectangles (they grow with the text), and the
+    // painter clipped to them, so a long name cannot run under a bar either.
+    let screen = flags.map_rect(full).shrink(4.0);
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("map_labels"))).with_clip_rect(screen);
+    let to_screen = |p: SVec2, y: f32| camera.world_to_viewport(gt, Vec3::new(p.x, y, p.y)).ok().map(|v| crate::ui::theme::to_points(ctx, v));
     let mut taken: Vec<(egui::Pos2, egui::Vec2)> = Vec::new();
 
     // Pins first: they matter most and are fewest.
@@ -309,18 +311,18 @@ fn map_labels(mut contexts: EguiContexts, sim: Res<Sim>, overlays: Res<Overlays>
         pins.push((prio, lot.center, b.name.as_str(), glyph, col));
     }
     pins.sort_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(b.2)));
-    let name_font = egui::FontId::proportional(12.0);
+    let name_font = crate::ui::theme::small();
     for (_, at, name, glyph, col) in pins {
         let y = if w.relief { w.surface_height(at) } else { 0.0 } + 0.5;
         let Some(tip) = to_screen(at, y) else { continue };
         if !screen.contains(tip) {
             continue;
         }
-        let head = tip - egui::vec2(0.0, 17.0);
+        let head = tip - egui::vec2(0.0, 19.0);
         let galley = painter.layout_no_wrap(name.to_string(), name_font.clone(), egui::Color32::from_rgb(235, 238, 250));
-        let text_at = head + egui::vec2(12.0, -galley.size().y * 0.5);
+        let text_at = head + egui::vec2(14.0, -galley.size().y * 0.5);
         let bx = (egui::pos2(head.x + (galley.size().x + 12.0) * 0.5 - 4.0, head.y), egui::vec2((galley.size().x + 24.0) * 0.5, 11.0));
-        let pin_box = (head, egui::vec2(9.0, 18.0));
+        let pin_box = (head, egui::vec2(10.5, 20.0));
         if taken.iter().any(|t| overlaps(*t, pin_box)) {
             continue;
         }
@@ -330,8 +332,8 @@ fn map_labels(mut contexts: EguiContexts, sim: Res<Sim>, overlays: Res<Overlays>
         let c = egui::Color32::from_rgb(col[0], col[1], col[2]);
         // The pin: a round head on a point, dark-rimmed.
         painter.add(egui::Shape::convex_polygon(vec![head + egui::vec2(-5.5, 3.5), tip, head + egui::vec2(5.5, 3.5)], c, egui::Stroke::new(1.0, egui::Color32::from_black_alpha(200))));
-        painter.circle(head, 8.0, c, egui::Stroke::new(1.2, egui::Color32::from_black_alpha(220)));
-        painter.text(head, egui::Align2::CENTER_CENTER, glyph, egui::FontId::proportional(if glyph.len() > 1 && glyph.is_ascii() { 7.5 } else { 10.5 }), egui::Color32::from_rgb(12, 14, 22));
+        painter.circle(head, 9.5, c, egui::Stroke::new(1.2, egui::Color32::from_black_alpha(220)));
+        painter.text(head, egui::Align2::CENTER_CENTER, glyph, egui::FontId::proportional(if glyph.len() > 1 && glyph.is_ascii() { 9.0 } else { 12.0 }), egui::Color32::from_rgb(12, 14, 22));
         taken.push(pin_box);
         // The name beside it, if there is room.
         if name_fits {
@@ -370,11 +372,11 @@ fn map_labels(mut contexts: EguiContexts, sim: Res<Sim>, overlays: Res<Overlays>
             })
             .collect();
         let (size, color) = match st.class {
-            StreetClass::Highway => (12.5, egui::Color32::from_rgb(255, 200, 130)),
-            StreetClass::Avenue => (12.0, egui::Color32::from_rgb(250, 230, 170)),
-            _ => (11.0, if tunnel { egui::Color32::from_gray(150) } else { egui::Color32::from_rgb(220, 225, 240) }),
+            StreetClass::Highway => (15.0, egui::Color32::from_rgb(255, 200, 130)),
+            StreetClass::Avenue => (14.0, egui::Color32::from_rgb(250, 230, 170)),
+            _ => (crate::ui::theme::SMALL, if tunnel { egui::Color32::from_gray(150) } else { egui::Color32::from_rgb(220, 225, 240) }),
         };
-        let galley = painter.layout_no_wrap(st.name.clone(), egui::FontId::proportional(size), color);
+        let galley = painter.layout_no_wrap(st.name.clone(), crate::ui::theme::display(size), color);
         let tw = galley.size().x;
         let th = galley.size().y;
         // Runs of consecutive visible points.

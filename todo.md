@@ -247,11 +247,11 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open
 
 ## Climate, weather and the grid (2026-10-07)
-- [ ] Power demand follows the day (morning bump, evening peak), heat waves add AC load, cold adds heating [feat/grid-weather]
-- [ ] Time-of-use import/export price (dear at the evening peak and in heat waves, cheap at night) [feat/grid-weather]
-- [ ] Weather by climate: temperature, heat waves, cold snaps, storms; cloud and wind drive solar/wind [feat/grid-weather]
-- [ ] Wind field over the map (hills/coasts windy, valleys sheltered) and solar by climate; wind map layer [feat/grid-weather]
-- [ ] Turbines spin by their own farm's output; stop in storm cut-out [feat/grid-weather]
+- [x] Power demand follows the day (morning bump, evening peak), heat waves add AC load, cold adds heating   → DONE [feat/grid-weather]: hourly profile per land use x AC/heating by temperature, in the dispatch (power::demand_at)
+- [x] Time-of-use import/export price (dear at the evening peak and in heat waves, cheap at night)   → DONE [feat/grid-weather]: price with the square of the regional load; Power window price row, 24 h demand/price sparklines, 72 h price chart
+- [x] Weather by climate: temperature, heat waves, cold snaps, storms; cloud and wind drive solar/wind   → DONE [feat/grid-weather]: weather.rs (spells from hashes; same two RNG draws per hour)
+- [x] Wind field over the map (hills/coasts windy, valleys sheltered) and solar by climate; wind map layer   → DONE [feat/grid-weather]: weather::wind_site, Wind and Solar land layers (K), site note in the Buildings tool and inspector
+- [x] Turbines spin by their own farm's output; stop in storm cut-out   → DONE [feat/grid-weather]
 - [ ] New Game climate picker: Temperate, Desert, Tropical, Arctic, Volcanic (more hot spots) [feat/climates]
 - [ ] Climate looks: snow/ice and conifers, palms and lush ground, basalt and steam; rain/snowfall [feat/climates]
 
@@ -260,5 +260,6 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Adjacent solar lots merge into one Sunfield; adjacent wind lots into a Wind Park; small lot allowed if it joins a wind farm [feat/plant-groups]
 - [x] Player-placed buildings (plants, services, depots, stations...) go on any usable parcel, zoned or not [feat/free-placement]   → DONE [feat/free-placement]: any lot whatever its zone, or unzoned ground with road access (a lot is made on placement, small parcels joined); only physical rules refuse (access, street, size, site, parks kept); the Build panel says "Here: ..." and the outline shows the site; API `place` too, `check: true` dry run
 - [x] A placed building takes its parcel out of the zone and shows its own use (civic/utility), back to the zone when bulldozed [feat/free-placement]   → DONE [feat/free-placement]: lot and building read Civic ("city ground"), own zone, out of zone tallies and the zone tools; pinned through rebuilds; older saves switched on load; Bulldoze tool / inspector button / API `bulldoze {building}` take a city building down and the lot goes back to the plan
-- [ ] BUG: attaching a 1-lane ramp to a highway's start turned the whole highway into a 1-lane road; joins must keep each road's lanes and taper at the joint [fix/lane-join]
-- [ ] UI font pass: themed open-licence font, one type scale, smallest text larger, no boxes for arrows/symbols [feat/fonts]
+- [x] BUG: attaching a 1-lane ramp to a highway's start turned the whole highway into a 1-lane road; joins must keep each road's lanes and taper at the joint [fix/lane-join] → DONE [fix/lane-join]: the network always kept each road's lanes (tests in nd_sim/tests/lane_joins.rs); the Edit tool picked the older road (the highway) at a shared control point, so the upgrade panel's Ramp preset rewrote the whole highway: now the road the cursor is on wins, ties to the newest. Highway/ramp lane-count joints draw a smoothstep taper with barriers along it; a planned ramp's hologram is drawn as a ramp (no pavements). Town-street width changes still step at the kerbs.
+- [x] UI font pass: themed open-licence font, one type scale, smallest text larger, no boxes for arrows/symbols [feat/fonts] → DONE [feat/fonts]: Plex Sans + Chakra Petch (OFL), named scale in ui/theme.rs (Small 13 / Body 15), symbol fallbacks + glyph test, View window Text size
+- [ ] Build hover: crisp plot outline plus an extruded light wall fading upward, green if it can go there, red (with the reason) if not [feat/plot-hover]

@@ -1742,6 +1742,15 @@ trait MindProvider {
 
 ## The HUD: Build window, map layers, saves
 
+- **Type** (`ui/theme.rs`): IBM Plex Sans for running text and figures, Chakra Petch (squared,
+  cut-cornered, signage-like) for headings, window titles, buttons and street names on the map,
+  IBM Plex Mono for monospace; Noto Sans Symbols 2 and egui's emoji fonts behind them for the
+  symbols (★ ⏸ ⚡ ✔ ⚠ →). All SIL OFL, in `assets/fonts/` and embedded. One scale in points:
+  Small 13 (the smallest text anywhere), Body 15, Button 15, Lead 17, Heading 19, Title 22,
+  Mono 14; egui's text styles come from it and painters take its `FontId`s. The View window's
+  Text size (Small 90%, Normal, Large 115%, Huge 130%) zooms the whole HUD, saved in
+  `settings.ron` in the working directory (`ND_UI_SCALE` overrides it for a run). A test checks
+  that every non-ASCII character in the app's and the sim's string literals has a glyph.
 - **Bottom toolbar**: Inspect, Build, then the quick tools (Edit, Bulldoze, any tool that does
   not build), and the project controls. The strip above shows the active tool's options, or
   while the Build window is open just what is being built and how the last click went.

@@ -32,7 +32,7 @@ pub fn map_pins(mut contexts: EguiContexts, sim: Res<Sim>, mut selection: ResMut
         // Off the screen: the pin waits at the edge, pointing the way, so
         // home and work are always one click away.
         let inner = egui::Rect::from_min_max(screen.min + egui::vec2(30.0, 110.0), screen.max - egui::vec2(30.0, 190.0));
-        let raw = egui::pos2(at.x, at.y);
+        let raw = crate::ui::theme::to_points(ctx, at);
         let tip = inner.clamp(raw);
         let edge = tip != raw;
         let [r, g, bl] = holding_rgb(h);
@@ -76,9 +76,9 @@ pub fn map_pins(mut contexts: EguiContexts, sim: Res<Sim>, mut selection: ResMut
         let (at, align) = if left { (tip + egui::vec2(-20.0, -38.0), egui::Align2::RIGHT_CENTER) } else { (tip + egui::vec2(20.0, -38.0), egui::Align2::LEFT_CENTER) };
         let text = if edge { format!("{word}  {name}  (off screen)") } else { format!("{word}  {name}") };
         for off in [egui::vec2(1.0, 1.0), egui::vec2(-1.0, 1.0), egui::vec2(1.0, -1.0), egui::vec2(-1.0, -1.0)] {
-            painter.text(at + off, align, &text, egui::FontId::proportional(13.0), egui::Color32::BLACK);
+            painter.text(at + off, align, &text, crate::ui::theme::small(), egui::Color32::BLACK);
         }
-        painter.text(at, align, &text, egui::FontId::proportional(13.0), col);
+        painter.text(at, align, &text, crate::ui::theme::small(), col);
     }
     if let Some(b) = pick {
         *selection = Selection::Building(b);

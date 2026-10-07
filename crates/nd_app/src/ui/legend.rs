@@ -23,11 +23,11 @@ pub fn show(ctx: &egui::Context, o: &Overlays, assets: &GameAssets, world: &nd_s
     egui::Area::new(egui::Id::new("map_legend"))
         .order(egui::Order::Middle)
         .interactable(false)
-        .fixed_pos(egui::pos2(area.right() - 216.0, area.bottom() - 12.0))
+        .fixed_pos(egui::pos2(area.right() - 246.0, area.bottom() - 12.0))
         .pivot(egui::Align2::LEFT_BOTTOM)
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style()).fill(Color32::from_rgba_unmultiplied(8, 10, 20, 225)).show(ui, |ui| {
-                ui.set_width(186.0);
+                ui.set_width(216.0);
                 if let LayerId::Flag(_) = layer {
                     section(ui, &layer.label().to_uppercase());
                 }
@@ -58,6 +58,13 @@ pub fn land_legend(ui: &mut egui::Ui, l: LandLayer) {
             let h = land_hue(l);
             ramp(ui, |t| { let c = land_color(h, t); linear([c[0], c[1], c[2]]) }, "unlikely", "likely");
         }
+        LandLayer::Wind => {
+            ramp(ui, |t| { let c = nd_procgen::overlay::wind_color(t); linear([c[0], c[1], c[2]]) }, "becalmed", "full output");
+        }
+        LandLayer::Solar => {
+            let h = land_hue(l);
+            ramp(ui, |t| { let c = land_color(h, t); linear([c[0], c[1], c[2]]) }, "weak sun", "desert sun");
+        }
         _ => {
             let h = land_hue(l);
             ramp(ui, |t| { let c = land_color(h, t); linear([c[0], c[1], c[2]]) }, "none", "rich");
@@ -72,6 +79,17 @@ pub fn land_legend(ui: &mut egui::Ui, l: LandLayer) {
 pub fn land_here(w: &nd_sim::World, l: LandLayer, p: nd_sim::Vec2) -> String {
     if w.landscape.is_water(p) {
         return "under the pointer: water".into();
+    }
+    // [grid-weather] Wind and sun read in their own units.
+    match l {
+        LandLayer::Wind => {
+            let s = w.site_resource_at(p);
+            return format!("under the pointer: mean wind {:.1} m/s (site ×{:.2}); a wind farm makes ~{:.0}% on an ordinary day", nd_sim::weather::mean_wind_ms_at(&w.landscape, p), s.wind, nd_sim::weather::wind_yield_at(&w.landscape, p) * 100.0);
+        }
+        LandLayer::Solar => {
+            return format!("under the pointer: sun {:.0}% of the desert's ({} climate)", nd_sim::weather::sun_at(&w.landscape, p) * 100.0, w.landscape.params.climate.label());
+        }
+        _ => {}
     }
     let all = w.survey_at(p);
     let value = |x: LandLayer| all.iter().find(|(y, _)| *y == x).map_or(0.0, |v| v.1);

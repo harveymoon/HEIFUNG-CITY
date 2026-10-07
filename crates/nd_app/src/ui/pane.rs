@@ -248,13 +248,13 @@ fn nice(x: f32) -> f32 {
 /// The plot rect inside an allocated chart, leaving room for the y labels
 /// on the left and the x labels below.
 fn plot_rect(rect: Rect) -> Rect {
-    Rect::from_min_max(rect.min + egui::vec2(40.0, 4.0), rect.max - egui::vec2(6.0, 14.0))
+    Rect::from_min_max(rect.min + egui::vec2(46.0, 4.0), rect.max - egui::vec2(6.0, 18.0))
 }
 
 fn empty(ui: &mut egui::Ui, height: f32, text: &str) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height.min(40.0)), egui::Sense::hover());
     ui.painter().rect_filled(rect, 2.0, PLOT_BG);
-    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, text, egui::FontId::proportional(11.0), TICK);
+    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, text, crate::ui::theme::small(), TICK);
 }
 
 /// Index of the x slot under the pointer, if it is over the plot.
@@ -265,7 +265,7 @@ fn hovered_slot(resp: &egui::Response, plot: Rect, n: usize) -> Option<usize> {
 }
 
 fn x_labels(painter: &egui::Painter, plot: Rect, labels: &[String]) {
-    let small = egui::FontId::proportional(10.0);
+    let small = crate::ui::theme::small();
     if let (Some(first), Some(last)) = (labels.first(), labels.last()) {
         painter.text(egui::pos2(plot.left(), plot.bottom() + 2.0), egui::Align2::LEFT_TOP, first, small.clone(), TICK);
         if labels.len() > 1 {
@@ -327,7 +327,7 @@ pub fn line_chart(ui: &mut egui::Ui, labels: &[String], series: &[Series], heigh
     if bottom < 0.0 {
         painter.hline(plot.x_range(), y_of(0.0), Stroke::new(1.0, AXIS));
     }
-    let small = egui::FontId::proportional(10.0);
+    let small = crate::ui::theme::small();
     painter.text(egui::pos2(plot.left() - 3.0, plot.top()), egui::Align2::RIGHT_TOP, short(top), small.clone(), TICK);
     painter.text(egui::pos2(plot.left() - 3.0, plot.bottom()), egui::Align2::RIGHT_BOTTOM, short(bottom), small, TICK);
     x_labels(&painter, plot, labels);
@@ -410,7 +410,7 @@ pub fn stacked_bars(ui: &mut egui::Ui, labels: &[String], series: &[Series], hei
             painter.circle_filled(pts[0], 2.5, o.color);
         }
     }
-    let small = egui::FontId::proportional(10.0);
+    let small = crate::ui::theme::small();
     painter.text(egui::pos2(plot.left() - 3.0, plot.top()), egui::Align2::RIGHT_TOP, short(top), small.clone(), TICK);
     painter.text(egui::pos2(plot.left() - 3.0, plot.bottom()), egui::Align2::RIGHT_BOTTOM, short(bottom), small, TICK);
     x_labels(&painter, plot, labels);
@@ -432,7 +432,7 @@ pub fn sparkline(ui: &mut egui::Ui, values: &[f32], color: Color32, height: f32,
     let rect = resp.rect;
     painter.rect_filled(rect, 2.0, PLOT_BG);
     if values.len() < 2 {
-        painter.text(rect.center(), egui::Align2::CENTER_CENTER, "the chart fills in day by day", egui::FontId::proportional(10.0), TICK);
+        painter.text(rect.center(), egui::Align2::CENTER_CENTER, "the chart fills in day by day", crate::ui::theme::small(), TICK);
         return;
     }
     let max = values.iter().copied().fold(f32::MIN, f32::max);
@@ -442,7 +442,7 @@ pub fn sparkline(ui: &mut egui::Ui, values: &[f32], color: Color32, height: f32,
     let inner = rect.shrink2(egui::vec2(4.0, 4.0));
     let pts: Vec<Pos2> = values.iter().enumerate().map(|(i, v)| egui::pos2(inner.left() + inner.width() * i as f32 / (values.len() - 1) as f32, inner.bottom() - inner.height() * (v - lo) / span)).collect();
     painter.line(pts, Stroke::new(1.5, color));
-    painter.text(rect.right_top() + egui::vec2(-4.0, 2.0), egui::Align2::RIGHT_TOP, short(max), egui::FontId::proportional(10.0), TICK);
+    painter.text(rect.right_top() + egui::vec2(-4.0, 2.0), egui::Align2::RIGHT_TOP, short(max), crate::ui::theme::small(), TICK);
     resp.on_hover_text(tip);
 }
 
@@ -460,7 +460,7 @@ pub fn hcol<'a>(hours: &[&'a HourRecord], f: impl Fn(&'a HourRecord) -> f32) -> 
 /// of an expanded view.
 pub fn kpi(ui: &mut egui::Ui, caption: &str, value: egui::RichText) {
     ui.vertical(|ui| {
-        ui.label(value.size(17.0).strong());
+        ui.label(value.font(crate::ui::theme::lead()).strong());
         ui.label(egui::RichText::new(caption).small().weak());
     });
     ui.add_space(14.0);
