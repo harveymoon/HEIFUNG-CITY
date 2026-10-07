@@ -1782,6 +1782,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         let c = w.citizens.get(id).ok_or("no such citizen")?;
         let mut v = citizen_detail(w, id, c, ctx.tools.favorites.contains(&id));
         v["places"] = places::citizen_places(w, id);
+        v["holdings"] = follow::holdings_json(w, id);
         return Ok(json!({ "citizen": v }));
     }
     if let Some(v) = field(cmd, "building") {
@@ -1902,6 +1903,7 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
             Some(c) => {
                 let mut v = citizen_detail(w, id, c, favourites.contains(&id));
                 v["places"] = places::citizen_places(w, id);
+                v["holdings"] = follow::holdings_json(w, id);
                 if let nd_sim::Activity::Driving { car, .. } = c.activity {
                     if let Some(x) = w.traffic.cars.get(car) {
                         v["driving_car"] = car_detail(w, car, x);

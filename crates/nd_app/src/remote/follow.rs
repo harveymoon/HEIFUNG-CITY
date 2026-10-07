@@ -160,3 +160,8 @@ pub fn bot_row(w: &World, id: BotId) -> Value {
     let b = &w.bots.bots[id];
     json!({ "id": key_str(id), "name": bot_name(w, id), "shop": key_str(b.shop), "pos": v2(b.pos), "returning": b.returning })
 }
+
+/// [camera] A citizen's places for the pins: home, work and what they own.
+pub fn holdings_json(w: &World, id: nd_sim::CitizenId) -> Value {
+    json!(w.holdings_of(id).into_iter().map(|(b, h)| json!({ "building": key_str(b), "name": building_name(w, Some(b)), "kind": h.label() })).collect::<Vec<_>>())
+}

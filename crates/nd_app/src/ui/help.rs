@@ -18,7 +18,7 @@ pub const TOOL_HINTS: [(Tool, &str); 9] = [
     (Tool::Zone, "Polygon: click corners around a road, Enter or right-click to add to the project; every parcel whose centre it holds takes the use. Ctrl-click inside an existing zone to repaint it. Zones drawn over older ones take the ground."),
     (Tool::Edit, "Click a road to select it for upgrading. Drag a control point to move it. Shift-click a road or zone edge to insert a point. Delete removes the hovered point."),
     (Tool::Bulldoze, "Click a road or zone to mark it for removal."),
-    (Tool::Inspect, "Click a glowing citizen, a car, or a building. Hover a parcel for a quick read-out; a selected person opens the person pane, where the star keeps them in the People window's favourites."),
+    (Tool::Inspect, "Click a glowing citizen, a car, a delivery robot, or a building. Hover a parcel for a quick read-out; a selected person opens the person pane, where the star keeps them in the People window's favourites (gold in the city) and their home and work pins select those buildings. Follow keeps the camera on them (Tab: their point of view; Esc stops); Zoom to flies there."),
     (Tool::Transit, "Click streets in order to lay stops round a loop (the side you click is the side buses serve); Enter or right-click closes the line. Click a stop to select its line, drag it to move it, Delete removes it, Backspace drops the last stop."),
     (Tool::Rail, "Nothing runs until both connectors are joined: track from its rail stub to the line (a trunk already crosses the map to the south) and a road from its street stub to the city. Unjoined stubs show red. Track is laid with the Build window's Rail, Track."),
     (Tool::District, super::districts::TOOL_HINT),

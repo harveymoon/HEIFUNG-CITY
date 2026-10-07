@@ -598,6 +598,7 @@ fn follow_and_fly(
     mut fly: ResMut<CameraFly>,
     mut flags: ResMut<UiFlags>,
     mut q: Query<(&mut OrbitCamera, &mut Transform)>,
+    mut selection: ResMut<Selection>,
 ) {
     let Ok((mut cam, mut tf)) = q.single_mut() else { return };
     let dt = time.delta_secs().min(0.1);
@@ -648,6 +649,10 @@ fn follow_and_fly(
         // A car that parked: stay with its driver, now on foot.
         if let Some(d) = follow.driver.take().filter(|d| w.citizens.contains_key(*d)) {
             follow.target = Some(Selection::Citizen(d));
+            // The inspector was on the car: it moves to the driver too.
+            if *selection == sel {
+                *selection = Selection::Citizen(d);
+            }
             flags.message = format!("{} parked; following them on foot.", w.citizens[d].name);
             return;
         }

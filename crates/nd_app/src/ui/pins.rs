@@ -12,7 +12,7 @@ use crate::marks::{holding_rgb, pin_top};
 use crate::sim::Sim;
 use crate::tools::Selection;
 
-pub fn map_pins(mut contexts: EguiContexts, sim: Res<Sim>, mut selection: ResMut<Selection>, mode: Res<CameraMode>, cams: Query<(&Camera, &GlobalTransform), With<OrbitCamera>>) -> Result {
+pub fn map_pins(mut contexts: EguiContexts, sim: Res<Sim>, mut selection: ResMut<Selection>, mode: Res<CameraMode>, cams: Query<(&Camera, &GlobalTransform), With<OrbitCamera>>, mut flags: ResMut<super::UiFlags>) -> Result {
     let Selection::Citizen(id) = *selection else { return Ok(()) };
     if *mode == CameraMode::Walk {
         return Ok(());
@@ -47,11 +47,14 @@ pub fn map_pins(mut contexts: EguiContexts, sim: Res<Sim>, mut selection: ResMut
         // The pin's head sits above its point, which marks the post's top.
         let size = egui::vec2(34.0, 46.0);
         egui::Area::new(egui::Id::new(("holding_pin", b)))
-            .order(egui::Order::Middle)
+            // Under every window (they are on the middle layer); the map's
+            // click test learns the pin's rectangle below, as for the bars.
+            .order(egui::Order::Background)
             .fixed_pos(tip)
             .pivot(egui::Align2::CENTER_BOTTOM)
             .show(ctx, |ui| {
                 let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+                flags.panel_rects.push(rect);
                 let p = ui.painter();
                 let head = egui::pos2(rect.center().x, rect.top() + 17.0);
                 let hot = resp.hovered();
@@ -67,7 +70,7 @@ pub fn map_pins(mut contexts: EguiContexts, sim: Res<Sim>, mut selection: ResMut
                 }
             });
         // The word and the name beside the head, outlined for any background.
-        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new(("holding_pin_label", b))));
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new(("holding_pin_label", b))));
         // Text to the side with room: left of a pin near the right edge.
         let left = tip.x > screen.right() - 240.0;
         let (at, align) = if left { (tip + egui::vec2(-20.0, -38.0), egui::Align2::RIGHT_CENTER) } else { (tip + egui::vec2(20.0, -38.0), egui::Align2::LEFT_CENTER) };
