@@ -1090,8 +1090,9 @@ impl World {
             cands.push((value + quiet + company, lid));
         }
         cands.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-        cands.truncate(40);
+        // Partners may be any quiet plot; the best forty seed the search.
         let pool: Vec<LotId> = cands.iter().map(|c| c.1).collect();
+        cands.truncate(40);
         for &(_, seed) in &cands {
             let s = &self.lots[seed];
             if s.landlocked || !s.car_access() {
