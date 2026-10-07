@@ -236,7 +236,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 ### Agent waves (4–5 at a time)
 - Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera, feat/land
-- Running: feat/events (C3: races, raves, infrastructure decay), feat/clarity (section A)
+- Running: fix/review (population drain, REVIEW2 M4/M7/M12/LOW, corner lots, mojibake, kerb leftovers), feat/events (C3: races, raves, infrastructure decay), feat/clarity (section A)
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
 - Next as slots free: dev-speed pass, then the review pass
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open
