@@ -2687,3 +2687,35 @@ fn land_value_counts_the_walk_to_a_park_not_the_crow_flight() {
     old.access.clear();
     assert!(old.access_at(near.1).is_none());
 }
+
+/// [clarity] Solar and wind fill their lot: a field on twice the land
+/// costs, runs to and yields twice as much, so a megawatt costs the same.
+#[test]
+fn solar_and_wind_scale_with_their_lot_at_a_steady_cost_per_megawatt() {
+    let mut w = World::new(WorldConfig::test_town());
+    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    w.add_zone(square(10.0, 10.0, 190.0), LandUse::Industrial);
+    w.add_zone(square(-300.0, 10.0, 90.0), LandUse::Industrial);
+    w.economy.treasury = 10_000_000.0;
+    let mut lots: Vec<(LotId, f32)> = w.lots.iter().filter(|(_, l)| l.usable() && l.area() >= PowerPlantKind::Wind.min_area()).map(|(id, l)| (id, l.area())).collect();
+    lots.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let (small, big) = (lots[0], *lots.last().unwrap());
+    assert!(big.1 > small.1 * 1.3, "lots of different sizes: {} and {}", small.1, big.1);
+    for kind in [PowerPlantKind::Solar, PowerPlantKind::Wind] {
+        let mut w = w.clone();
+        let before = w.economy.treasury;
+        let a = w.build_power(small.0, kind).unwrap();
+        let paid_a = before - w.economy.treasury;
+        let before = w.economy.treasury;
+        let b = w.build_power(big.0, kind).unwrap();
+        let paid_b = before - w.economy.treasury;
+        let (ba, bb) = (&w.buildings[a], &w.buildings[b]);
+        let (mw_a, mw_b) = (w.plant_capacity_mw(ba), w.plant_capacity_mw(bb));
+        let ratio = big.1 / small.1;
+        assert!((mw_b / mw_a - ratio).abs() < 0.01, "{kind:?}: output in proportion to the land");
+        assert!((paid_a / mw_a - paid_b / mw_b).abs() < 1.0, "{kind:?}: the same build cost per MW ({} and {})", paid_a / mw_a, paid_b / mw_b);
+        assert!((w.plant_upkeep(ba) / mw_a - w.plant_upkeep(bb) / mw_b).abs() < 0.01, "{kind:?}: the same upkeep per MW");
+    }
+    // A fixed-size plant is not scaled.
+    assert_eq!(PowerPlantKind::Coal.size_scale(10_000.0), 1.0);
+}

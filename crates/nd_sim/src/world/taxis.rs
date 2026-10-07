@@ -511,6 +511,7 @@ impl World {
                 if !self.traffic.cars.contains_key(car) || !self.traffic.redirect(car, goal, s_end) {
                     return false;
                 }
+                self.begin_leg(car);
             }
             parked => {
                 let from = match parked {

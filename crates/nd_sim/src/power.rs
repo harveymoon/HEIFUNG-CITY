@@ -34,6 +34,10 @@ pub enum PlantSite {
     HotSpot,
 }
 
+/// [clarity] The lot area solar and wind nameplates are quoted for.
+pub const SOLAR_REFERENCE_AREA: f32 = 600.0;
+pub const WIND_REFERENCE_AREA: f32 = 800.0;
+
 impl PowerPlantKind {
     pub const ALL: [PowerPlantKind; 7] = [PowerPlantKind::Coal, PowerPlantKind::Solar, PowerPlantKind::Wind, PowerPlantKind::Nuclear, PowerPlantKind::Hydro, PowerPlantKind::Tidal, PowerPlantKind::Geothermal];
 
@@ -185,6 +189,29 @@ impl PowerPlantKind {
     /// else is a building with its own fence.
     pub fn merges_with_neighbours(self) -> bool {
         matches!(self, PowerPlantKind::Solar | PowerPlantKind::Wind)
+    }
+
+    /// [clarity] Panels and turbines fill the lot they stand on: a solar
+    /// field or wind farm's output, build cost and upkeep scale with the
+    /// lot's area, so every megawatt costs the same whatever the lot. The
+    /// nameplate figures (`capacity_mw`, `build_cost`, `upkeep_per_day`)
+    /// are for a lot of this many square metres. `None`: a plant of fixed
+    /// size.
+    pub fn reference_area(self) -> Option<f32> {
+        match self {
+            PowerPlantKind::Solar => Some(SOLAR_REFERENCE_AREA),
+            PowerPlantKind::Wind => Some(WIND_REFERENCE_AREA),
+            _ => None,
+        }
+    }
+
+    /// [clarity] What a lot of `area` square metres makes of the nameplate:
+    /// area over the reference area for solar and wind, 1 for the rest.
+    pub fn size_scale(self, area: f32) -> f32 {
+        match self.reference_area() {
+            Some(r) => (area.max(0.0) / r).max(0.05),
+            None => 1.0,
+        }
     }
 
     /// Smallest lot it fits on.

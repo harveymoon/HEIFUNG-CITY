@@ -112,10 +112,10 @@ pub fn rows(w: &World, what: &str) -> Result<Vec<Value>, String> {
             .iter()
             .filter_map(|(id, b)| b.plant.map(|k| (id, b, k)))
             .map(|(id, b, k)| {
-                let avail = if b.is_derelict() { 0.0 } else { k.capacity_mw() * k.availability(&w.weather, w.clock.day_fraction()) };
+                let avail = if b.is_derelict() { 0.0 } else { w.plant_capacity_mw(b) * k.availability(&w.weather, w.clock.day_fraction()) };
                 json!({
-                    "id": key_str(id), "name": b.name, "kind": plant_name(k), "capacity_mw": round(k.capacity_mw()), "available_mw": round(avail),
-                    "upkeep_per_day": round(k.upkeep_per_day()), "workers": b.workers.len(), "jobs": b.jobs, "derelict": b.is_derelict(), "pos": pos(b),
+                    "id": key_str(id), "name": b.name, "kind": plant_name(k), "capacity_mw": round(w.plant_capacity_mw(b)), "available_mw": round(avail),
+                    "upkeep_per_day": round(w.plant_upkeep(b)), "workers": b.workers.len(), "jobs": b.jobs, "derelict": b.is_derelict(), "pos": pos(b),
                 })
             })
             .collect(),

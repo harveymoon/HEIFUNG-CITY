@@ -74,11 +74,13 @@ impl World {
             return Err(format!("too small: a {} needs {:.0} m²", kind.label(), kind.min_area()));
         }
         self.power_site(lot_id, kind)?;
-        if self.economy.treasury < kind.build_cost() {
-            return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), kind.build_cost()));
+        // [clarity] Solar and wind are priced by the lot they fill.
+        let cost = kind.build_cost() * kind.size_scale(lot.area());
+        if self.economy.treasury < cost {
+            return Err(format!("the treasury has {:.0}; a {} here costs {:.0}", self.economy.treasury, kind.label(), cost));
         }
         self.take_over_lot(lot_id, kind.label())?;
-        self.economy.debit_item(Flow::Construction, kind.build_cost(), Item::Named(kind.label().to_string()));
+        self.economy.debit_item(Flow::Construction, cost, Item::Named(kind.label().to_string()));
         let name = format!("{} {}", match kind {
             PowerPlantKind::Coal => "Blackridge",
             PowerPlantKind::Solar => "Sunfield",
@@ -123,6 +125,28 @@ impl World {
         }
     }
 
+    /// [clarity] How much of its kind's nameplate a plant is: its lot's
+    /// area over the reference for solar and wind, 1 for the others.
+    pub fn plant_scale(&self, b: &Building) -> f32 {
+        let Some(k) = b.plant else { return 1.0 };
+        self.lots.get(b.lot).map_or(1.0, |l| k.size_scale(l.area()))
+    }
+
+    /// [clarity] A plant's own nameplate output (scaled by its lot).
+    pub fn plant_capacity_mw(&self, b: &Building) -> f32 {
+        b.plant.map_or(0.0, |k| k.capacity_mw() * self.plant_scale(b))
+    }
+
+    /// [clarity] A plant's own daily upkeep (scaled by its lot).
+    pub fn plant_upkeep(&self, b: &Building) -> f32 {
+        b.plant.map_or(0.0, |k| k.upkeep_per_day() * self.plant_scale(b))
+    }
+
+    /// [clarity] What a plant of `kind` on `lot` would cost to build.
+    pub fn plant_cost_on(&self, kind: PowerPlantKind, lot: LotId) -> f32 {
+        kind.build_cost() * self.lots.get(lot).map_or(1.0, |l| kind.size_scale(l.area()))
+    }
+
     /// Every plant and battery as a table row, plants in kind order then
     /// batteries, each group by name.
     pub fn plant_rows(&self) -> Vec<PlantRow> {
@@ -139,12 +163,12 @@ impl World {
                     name: b.name.clone(),
                     asset: GridAsset::Plant(k),
                     now_mw: now,
-                    capacity_mw: k.capacity_mw(),
+                    capacity_mw: self.plant_capacity_mw(b),
                     mean_mw: mean,
-                    upkeep_per_day: k.upkeep_per_day(),
-                    cost_per_mwh: (mean > 0.05).then(|| k.upkeep_per_day() / (mean * 24.0)),
+                    upkeep_per_day: self.plant_upkeep(b),
+                    cost_per_mwh: (mean > 0.05).then(|| self.plant_upkeep(b) / (mean * 24.0)),
                     co2_t_per_day: mean * 24.0 * k.co2_t_per_mwh(),
-                    air: k.air_index() * (now / k.capacity_mw()).clamp(0.0, 1.0),
+                    air: k.air_index() * (now / self.plant_capacity_mw(b).max(0.01)).clamp(0.0, 1.0),
                     noise_db: (now > 0.0).then(|| k.noise_db()),
                     nuisance: k.pollution(),
                     charge_mwh: 0.0,
@@ -220,7 +244,7 @@ impl World {
             return 0.0;
         }
         let site = self.power_site(b.lot, kind).unwrap_or(0.0);
-        kind.capacity_mw() * kind.availability(&self.weather, self.clock.day_fraction()) * site
+        self.plant_capacity_mw(b) * kind.availability(&self.weather, self.clock.day_fraction()) * site
     }
 
     /// What a plant actually ran at this hour: its output less its share of

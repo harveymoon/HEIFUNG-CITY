@@ -552,6 +552,8 @@ impl World {
                 if let Some((goal, s_end, _)) = self.traffic.net.nearest_lane_on(seg, pt) {
                     if self.traffic.redirect(car_id, goal, s_end) {
                         self.traffic.cars[car_id].cargo = Some(return_cargo(home, dest));
+                        self.begin_leg(car_id);
+                        self.car_departs_from(car_id, at);
                         return true;
                     }
                 }

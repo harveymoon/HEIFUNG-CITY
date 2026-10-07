@@ -283,6 +283,33 @@ fn a_tunnel_passes_under_streets_and_joins_by_its_portals() {
 }
 
 #[test]
+fn walkers_and_bikes_never_route_through_a_tunnel() {
+    let (mut w, _) = tunnel_town();
+    {
+        // The tunnel is the only link between the two streets: cars use it,
+        // walkers and bikes have no way.
+        let a = w.roads.node_near(Vec2::new(-300.0, 0.0), 0.5).unwrap();
+        let b = w.roads.node_near(Vec2::new(150.0, 400.0), 0.5).unwrap();
+        assert!(w.roads.path(a, b).is_some(), "cars go through the tunnel");
+        assert!(w.roads.foot_path(a, b).is_none(), "nobody walks or cycles through it");
+    }
+    // A street round the east end: a way on the surface.
+    w.add_road(&[Vec2::new(400.0, 0.0), Vec2::new(400.0, 400.0)], 1, 1);
+    let a = w.roads.node_near(Vec2::new(-300.0, 0.0), 0.5).unwrap();
+    let b = w.roads.node_near(Vec2::new(150.0, 400.0), 0.5).unwrap();
+    let in_bore = |p: &[NodeId]| p.windows(2).any(|q| w.roads.neighbors(q[0]).any(|(n, s)| n == q[1] && w.roads.segment(s).fronts_nothing()));
+    let feet = w.roads.foot_path(a, b).expect("the surface way round");
+    assert!(!in_bore(&feet), "walkers and bikes keep to the surface");
+    // The rider's line stays on the surface streets.
+    for mode in [TravelMode::Bike, TravelMode::Walk] {
+        for p in w.route_path(&feet, mode) {
+            let on_street = p.y.abs() < 15.0 || (p.y - 400.0).abs() < 15.0 || (p.x - 400.0).abs() < 15.0;
+            assert!(on_street, "{mode:?} point {p} is off the surface streets (over the bore)");
+        }
+    }
+}
+
+#[test]
 fn tunnels_meet_tunnels_at_underground_junctions() {
     let (mut w, _) = tunnel_town();
     // A second tunnel crossing the first under the middle of the block.

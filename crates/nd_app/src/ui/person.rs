@@ -29,10 +29,7 @@ pub fn citizen_summary(ui: &mut egui::Ui, w: &World, c: &Citizen) {
 
     ui.label(egui::RichText::new(Personality::from_seed(c.seed).summary()).small());
     look_line(ui, c);
-    ui.label(match destination {
-        Some(d) => format!("{}{how}  ·  to {d}", c.activity.label()),
-        None => format!("{}{how}", c.activity.label()),
-    });
+    let _ = (destination, how);
     ui.label(format!("home: {home}  ·  work: {work}"));
     // [economy] the art scene's people
     if nd_sim::world::is_artist(c) {
@@ -62,6 +59,50 @@ pub fn citizen_summary(ui: &mut egui::Ui, w: &World, c: &Citizen) {
     ));
     ui.add_space(4.0);
     ui.label(egui::RichText::new(format!("“{}”", c.thought)).italics().color(egui::Color32::from_rgb(220, 190, 140)));
+}
+
+/// [clarity] What they are doing, large: "Going home to Habitat 21F", the
+/// place a button that selects it, and where they set off from. Returns
+/// the building picked.
+pub fn activity_heading(ui: &mut egui::Ui, w: &World, id: CitizenId) -> Option<nd_sim::BuildingId> {
+    let line = w.activity_line(id);
+    if line.is_empty() {
+        return None;
+    }
+    let mut pick = None;
+    let col = egui::Color32::from_rgb(120, 220, 255);
+    ui.label(egui::RichText::new(capital(&line)).size(16.0).color(col).strong());
+    let from = w.citizen_origin(id);
+    let to = w.citizen_destination(id);
+    if from.is_some() || to.is_some() {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if let Some(f) = &from {
+                ui.label(egui::RichText::new("coming from").small().weak());
+                if place_button(ui, f) {
+                    pick = f.building;
+                }
+            }
+            if let Some(t) = &to {
+                ui.label(egui::RichText::new(if from.is_some() { "— going to" } else { "going to" }).small().weak());
+                if place_button(ui, t) {
+                    pick = t.building;
+                }
+            }
+        });
+    }
+    pick
+}
+
+/// [clarity] A journey's end as a small button (selectable when it is a
+/// building or a vehicle), or plain text. True when clicked.
+pub fn place_button(ui: &mut egui::Ui, p: &nd_sim::world::Place) -> bool {
+    if p.building.is_some() || p.car.is_some() {
+        ui.add(egui::Button::new(egui::RichText::new(&p.label).small().color(egui::Color32::from_rgb(230, 225, 210))).small()).on_hover_text("Select it").clicked()
+    } else {
+        ui.label(egui::RichText::new(&p.label).small());
+        false
+    }
 }
 
 /// [looks] A small painted figure in their colours beside a line saying
@@ -165,6 +206,9 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
             }
             ui.separator();
             let w = &sim.world;
+            if let Some(b) = activity_heading(ui, w, id) {
+                go_to = Some(b);
+            }
             citizen_summary(ui, w, &w.citizens[id]);
             super::estate::citizen_line(ui, w, id);
             spotlight_toggle(ui, &mut sim.world, id, "Spotlight: route through the LLM mind");

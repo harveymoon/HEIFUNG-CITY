@@ -897,6 +897,13 @@ impl RoadNetwork {
         self.path_where(from, to, |s| !s.is_rail())
     }
 
+    /// A* for walkers and bikes: streets and paths, but never a tunnel, a
+    /// highway or a slip road (`Segment::fronts_nothing`). A rider routed
+    /// through a bore was drawn on the ground above it.
+    pub fn foot_path(&self, from: NodeId, to: NodeId) -> Option<Vec<NodeId>> {
+        self.path_where(from, to, |s| !s.is_rail() && !s.fronts_nothing())
+    }
+
     /// A* along the railway only.
     pub fn rail_path(&self, from: NodeId, to: NodeId) -> Option<Vec<NodeId>> {
         self.path_where(from, to, |s| s.is_rail())

@@ -244,8 +244,19 @@ fn a_parent_drops_a_child_on_the_way_and_drives_on() {
     set_off(&mut w, parent, vid, shop, stop, Purpose::Visit(LandUse::Residential));
     w.rides.onward.push(crate::rides::OnwardLeg { driver: parent, stop, to: home, purpose: Purpose::Home });
     assert!(w.join_ride(kid, parent, stop, Purpose::Home, RideKind::SchoolRun, true));
+    let mut leg_timed = false;
     for _ in 0..900 {
         run(&mut w, 1);
+        // [clarity] The stop starts a new leg: its timer restarts there.
+        if !leg_timed && w.rides.onward.is_empty() {
+            if let Some((elapsed, _)) = match w.citizens[parent].activity {
+                Activity::Driving { car, .. } => w.car_trip_minutes(car),
+                _ => None,
+            } {
+                assert!(elapsed <= 1.0, "the leg after the stop is timed from the stop, not from setting off ({elapsed} min)");
+                leg_timed = true;
+            }
+        }
         if w.citizens[parent].inside == Some(home) && w.citizens[kid].inside == Some(stop) {
             break;
         }
@@ -253,6 +264,7 @@ fn a_parent_drops_a_child_on_the_way_and_drives_on() {
     assert_eq!(w.citizens[kid].inside, Some(stop), "dropped at the stop");
     assert_eq!(w.citizens[parent].inside, Some(home), "the parent drove on home");
     assert!(w.rides.onward.is_empty());
+    assert!(leg_timed, "saw the drive on after the stop");
     assert_no_car_lost(&w);
 }
 

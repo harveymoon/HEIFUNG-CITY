@@ -1179,7 +1179,11 @@ pub(crate) fn tool_input(
                     tools.status = match sim.world.place_building(what, p) {
                         Ok(id) => {
                             *selection = Selection::Building(id);
-                            format!("{} built for {:.0}; {:.0}/day to run.", what.label(), what.cost(), what.upkeep())
+                            // [clarity] Solar and wind are sized to their lot.
+                            match sim.world.buildings.get(id).filter(|b| b.plant.is_some()) {
+                                Some(b) => format!("{} built: {:.0} MW for {:.0}; {:.0}/day to run.", what.label(), sim.world.plant_capacity_mw(b), what.cost() * sim.world.plant_scale(b), sim.world.plant_upkeep(b)),
+                                None => format!("{} built for {:.0}; {:.0}/day to run.", what.label(), what.cost(), what.upkeep()),
+                            }
                         }
                         Err(e) => format!("Cannot build: {e}."),
                     };
@@ -1537,6 +1541,14 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                     gizmos.linestrip(pts, colour);
                 }
             }
+            // [clarity] The selected road's lanes as big arrows, one per
+            // lane in its direction of travel, so "Flip direction" is no
+            // guesswork.
+            if let Some(g) = tools.selected_gesture.and_then(|id| plan.gestures.get(&id)) {
+                if let Gesture::Road { lanes_fwd, lanes_bwd, kind: RoadKind::Street, .. } = g {
+                    lane_arrows(&mut gizmos, &g.road_polyline(), *lanes_fwd, *lanes_bwd, &lift);
+                }
+            }
         }
         Tool::Bulldoze => {
             if let Some(id) = tools.hover_gesture {
@@ -1664,6 +1676,9 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
             let width = if car.bus.is_some() || car.cargo.is_some() { 2.7 } else { 2.1 };
             vehicle_outline(gizmos, p, heading, car.length() + 0.6, width + 0.5, w.car_height(car) + 0.35, gold);
             car_route(gizmos, w, car, route);
+            // [clarity] An "o" where it set off, an "x" where it is going.
+            let origin = w.car_journey(id).and_then(|j| j.from.pos);
+            route_ends(gizmos, w, origin, car_route_end(w, car));
             // [services] A wreck with its recovery truck on the way: the
             // truck's road to it, in amber, and a ring round the truck.
             if let Some(t) = w.driving.wrecks.iter().find(|x| x.car == id).and_then(|x| x.truck).and_then(|t| w.traffic.cars.get(t)) {
@@ -1822,6 +1837,17 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
                     }
                 }
             }
+            // [clarity] An "o" where the trip began, an "x" at its end.
+            let origin = c.trail.first().copied().or_else(|| w.citizen_origin(id).and_then(|p| p.pos));
+            let end = match &c.activity {
+                Activity::Traveling { path, .. } => path.last().copied(),
+                Activity::Driving { car, .. } => w.traffic.cars.get(*car).and_then(|car| car_route_end(w, car)),
+                _ => None,
+            }
+            .or_else(|| destination.and_then(|b| w.building_entrance(b)));
+            if c.activity.is_traveling() || matches!(c.activity, Activity::Driving { .. } | Activity::Passenger { .. } | Activity::Riding { .. } | Activity::Waiting { .. }) {
+                route_ends(gizmos, w, origin, end);
+            }
             if let Some(b) = destination {
                 lot_outline(gizmos, w, b, 1.2, dest);
                 // A thin line from where they are to where they are going,
@@ -1830,6 +1856,57 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
                     let faint = Color::linear_rgb(1.2, 0.4, 1.3);
                     gizmos.line(at(here, 3.0), at(goal, 3.0), faint);
                 }
+            }
+        }
+    }
+}
+
+/// [clarity] Big arrows along a road, one per lane, pointing the way its
+/// traffic runs: lanes forward (along the drawing) on the right of the
+/// line, lanes back on the left (right-hand traffic); a one-way road's
+/// lanes centred on it. Repeated every 45 m or so, at least once.
+fn lane_arrows(gizmos: &mut Gizmos, line: &[SVec2], fwd: u8, bwd: u8, lift: &dyn Fn(SVec2) -> Vec3) {
+    if line.len() < 2 || fwd + bwd == 0 {
+        return;
+    }
+    let lane_w = nd_sim::roads::LANE_WIDTH;
+    let total: f32 = line.windows(2).map(|w| w[0].distance(w[1])).sum();
+    let n = ((total / 45.0).floor() as usize).max(1);
+    let fwd_col = Color::linear_rgb(0.4, 3.2, 1.0);
+    let bwd_col = Color::linear_rgb(3.2, 1.2, 0.3);
+    for k in 0..n {
+        let s = total * (k as f32 + 0.5) / n as f32;
+        let (p, d) = nd_sim::rail::point_along(line, s);
+        let d = d.normalize_or_zero();
+        if d == SVec2::ZERO {
+            continue;
+        }
+        let right = SVec2::new(-d.y, d.x);
+        let mut lanes: Vec<(f32, f32, Color)> = Vec::new();
+        if bwd == 0 || fwd == 0 {
+            let (m, sign, col) = if bwd == 0 { (fwd, 1.0, fwd_col) } else { (bwd, -1.0, bwd_col) };
+            for i in 0..m {
+                lanes.push(((i as f32 - (m as f32 - 1.0) * 0.5) * lane_w, sign, col));
+            }
+        } else {
+            for i in 0..fwd {
+                lanes.push(((i as f32 + 0.5) * lane_w, 1.0, fwd_col));
+            }
+            for i in 0..bwd {
+                lanes.push((-(i as f32 + 0.5) * lane_w, -1.0, bwd_col));
+            }
+        }
+        for (off, sign, col) in lanes {
+            let c = p + right * off;
+            let dir = d * sign;
+            let tail = c - dir * 5.0;
+            let tip = c + dir * 5.0;
+            let side = SVec2::new(-dir.y, dir.x);
+            let up = Vec3::Y * 1.4;
+            for y in [up, up + Vec3::Y * 0.25] {
+                gizmos.line(lift(tail) + y, lift(tip) + y, col);
+                gizmos.line(lift(tip) + y, lift(tip - dir * 2.6 + side * 1.4) + y, col);
+                gizmos.line(lift(tip) + y, lift(tip - dir * 2.6 - side * 1.4) + y, col);
             }
         }
     }
@@ -1869,6 +1946,39 @@ pub(crate) fn lot_outline(gizmos: &mut Gizmos, w: &nd_sim::World, b: BuildingId,
         pts.push(pts[0]);
         gizmos.linestrip(pts, col);
     }
+}
+
+/// [clarity] The ends of a selected route: a small "o" (a ring) where the
+/// trip began and an "x" where it ends, standing a little above the road
+/// so they read from any height.
+fn route_ends(gizmos: &mut Gizmos, w: &nd_sim::World, origin: Option<SVec2>, end: Option<SVec2>) {
+    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    let at = |p: SVec2, y: f32| Vec3::new(p.x, y + w.surface_height(p), p.y);
+    if let Some(o) = origin {
+        let col = Color::linear_rgb(0.6, 3.0, 1.2);
+        for y in [1.2, 1.5] {
+            gizmos.circle(Isometry3d::new(at(o, y), flat), 3.0, col);
+        }
+        gizmos.line(at(o, 0.1), at(o, 1.2), col);
+    }
+    if let Some(e) = end {
+        let col = Color::linear_rgb(3.2, 0.6, 2.4);
+        let r = 3.2;
+        for y in [1.2, 1.5] {
+            gizmos.line(at(e + SVec2::new(-r, -r), y), at(e + SVec2::new(r, r), y), col);
+            gizmos.line(at(e + SVec2::new(-r, r), y), at(e + SVec2::new(r, -r), y), col);
+        }
+        gizmos.line(at(e, 0.1), at(e, 1.2), col);
+    }
+}
+
+/// Where a car's lane route ends.
+fn car_route_end(w: &nd_sim::World, car: &nd_sim::Car) -> Option<SVec2> {
+    let net = &w.traffic.net;
+    if car.idx >= car.route.len() || car.route.iter().any(|&l| l as usize >= net.lanes.len()) {
+        return None;
+    }
+    net.polyline(&car.route[car.idx..], car.s, car.s_end).last().copied()
 }
 
 /// The rest of a car's lane route, from where it is to where it stops.

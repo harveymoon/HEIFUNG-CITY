@@ -65,10 +65,14 @@ pub enum Concern {
     Nightlife,
     Displacement,
     Other,
+    /// [clarity] Crashes on the street outside (`World::daily_dangerous_streets`).
+    DangerousStreets,
+    /// [clarity] No hospital in reach (`World::daily_healthcare`).
+    Healthcare,
 }
 
 impl Concern {
-    pub const COUNT: usize = 13;
+    pub const COUNT: usize = 15;
     pub const ALL: [Concern; Concern::COUNT] = [
         Concern::Housing,
         Concern::Food,
@@ -82,6 +86,8 @@ impl Concern {
         Concern::Services,
         Concern::Nightlife,
         Concern::Displacement,
+        Concern::DangerousStreets,
+        Concern::Healthcare,
         Concern::Other,
     ];
 
@@ -104,6 +110,8 @@ impl Concern {
             Concern::Nightlife => "Nightlife & places",
             Concern::Displacement => "Displacement",
             Concern::Other => "Other",
+            Concern::DangerousStreets => "Dangerous streets",
+            Concern::Healthcare => "Healthcare",
         }
     }
 
@@ -123,6 +131,8 @@ impl Concern {
             Concern::Nightlife => "nightlife",
             Concern::Displacement => "displacement",
             Concern::Other => "other",
+            Concern::DangerousStreets => "dangerous_streets",
+            Concern::Healthcare => "healthcare",
         }
     }
 
@@ -146,6 +156,8 @@ impl Concern {
             Concern::Nightlife => "places shut or packed, bad nights out, fights",
             Concern::Displacement => "homes demolished or expropriated, evictions",
             Concern::Other => "everything else",
+            Concern::DangerousStreets => "crashes piling up on the street where they live",
+            Concern::Healthcare => "the nearest hospital far away, or none at all",
         }
     }
 }
