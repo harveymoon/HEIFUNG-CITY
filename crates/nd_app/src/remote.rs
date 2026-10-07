@@ -44,6 +44,8 @@ mod society;
 /// [subway] The `subway` command and report section.
 mod subway;
 mod taxes;
+/// [toll-inspect] A toll booth in full for `inspect {toll}`.
+mod tolls;
 /// [taxis] Taxi companies and cargo hubs in the report and inspector.
 mod taxis;
 mod view;
@@ -1926,6 +1928,11 @@ fn lane_use(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
 
 fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let w = &ctx.sim.world;
+    // [toll-inspect] A toll booth by its id.
+    if let Some(v) = field(cmd, "toll") {
+        let id = tolls::toll_id(w, v)?;
+        return Ok(json!({ "toll": tolls::toll_detail(w, id) }));
+    }
     if let Some(v) = field(cmd, "citizen") {
         let id = key_from(v)?;
         let c = w.citizens.get(id).ok_or("no such citizen")?;
@@ -2017,6 +2024,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     }
     // No id: whatever is selected.
     match *ctx.selection {
+        Selection::Toll(id) => inspect(&json!({ "toll": id }), ctx),
         Selection::Citizen(id) => inspect(&json!({ "citizen": key_str(id) }), ctx),
         Selection::Building(id) => inspect(&json!({ "building": key_str(id) }), ctx),
         Selection::Car(id) => inspect(&json!({ "car": key_str(id) }), ctx),
@@ -2050,6 +2058,7 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
     let w = &sim.world;
     let detail = match sel {
         Selection::None => Value::Null,
+        Selection::Toll(id) => tolls::toll_detail(w, id).unwrap_or(Value::Null),
         Selection::Car(id) => w.traffic.cars.get(id).map_or(Value::Null, |c| car_detail(w, id, c)),
         Selection::Citizen(id) => match w.citizens.get(id) {
             Some(c) => {
@@ -2112,7 +2121,10 @@ fn flags_cmd(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
 
 fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let w = &ctx.sim.world;
-    let sel = if let Some(v) = field(cmd, "citizen") {
+    let sel = if let Some(v) = field(cmd, "toll") {
+        // [toll-inspect]
+        Selection::Toll(tolls::toll_id(w, v)?)
+    } else if let Some(v) = field(cmd, "citizen") {
         let id = key_from(v)?;
         if !w.citizens.contains_key(id) {
             return Err("no such citizen".into());

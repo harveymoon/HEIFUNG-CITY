@@ -15,6 +15,7 @@
 use crate::roads::{RoadNetwork, SegmentId};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 
 /// Metres of detour a driver will take to save one unit of money: the
 /// routing weight of a toll (a toll of 3 is worth about 360 m of driving).
@@ -31,6 +32,12 @@ pub const SNAP_M: f32 = 15.0;
 pub const SPACING_M: f32 = 40.0;
 /// Highest toll the player may set.
 pub const MAX_PRICE: f32 = 50.0;
+/// [toll-inspect] Hours of passages each booth keeps for its chart.
+pub const HOURS_KEPT: usize = 72;
+/// [toll-inspect] A car counts as queueing for a booth when it is this far
+/// or less before the line and slower than `QUEUE_SPEED`.
+pub const QUEUE_M: f32 = 150.0;
+pub const QUEUE_SPEED: f32 = 3.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum TollSize {
@@ -152,12 +159,124 @@ pub struct TollBooth {
     pub cars_total: u64,
     #[serde(default)]
     pub revenue_total: f32,
+    /// [toll-inspect] Lorries through (they pay `TRUCK_FACTOR` times), and
+    /// vehicles let through free (buses, emergency and city vehicles):
+    /// both are part of `cars_*`.
+    #[serde(default)]
+    pub trucks_today: u32,
+    #[serde(default)]
+    pub trucks_yesterday: u32,
+    #[serde(default)]
+    pub trucks_total: u64,
+    #[serde(default)]
+    pub free_today: u32,
+    #[serde(default)]
+    pub free_yesterday: u32,
+    #[serde(default)]
+    pub free_total: u64,
+    /// [toll-inspect] Drivers who set off on a way round this booth that
+    /// they would have driven through were there no toll.
+    #[serde(default)]
+    pub avoided_today: u32,
+    #[serde(default)]
+    pub avoided_yesterday: u32,
+    #[serde(default)]
+    pub avoided_total: u64,
+    /// [toll-inspect] The hour under way, and the last `HOURS_KEPT` hours,
+    /// oldest first.
+    #[serde(default)]
+    pub hour: TollHour,
+    #[serde(default)]
+    pub hourly: VecDeque<TollHour>,
     /// The road piece it stands on and the piece's direction (a to b);
     /// found again on every road rebuild.
     #[serde(skip)]
     pub segment: Option<SegmentId>,
     #[serde(skip)]
     pub dir: Vec2,
+}
+
+/// [toll-inspect] One hour of passages at a booth.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TollHour {
+    /// Game day (1 and up) and hour of day the counts are for.
+    pub day: u32,
+    pub hour: u8,
+    /// Every vehicle through, lorries and free ones included.
+    pub cars: u32,
+    pub trucks: u32,
+    pub free: u32,
+    pub avoided: u32,
+    pub revenue: f32,
+}
+
+impl TollBooth {
+    /// A new booth with empty books.
+    pub fn new(id: u32, size: TollSize, pos: Vec2, name: String) -> Self {
+        Self {
+            id,
+            size,
+            pos,
+            price: size.default_price(),
+            name,
+            cars_today: 0,
+            revenue_today: 0.0,
+            cars_yesterday: 0,
+            revenue_yesterday: 0.0,
+            cars_total: 0,
+            revenue_total: 0.0,
+            trucks_today: 0,
+            trucks_yesterday: 0,
+            trucks_total: 0,
+            free_today: 0,
+            free_yesterday: 0,
+            free_total: 0,
+            avoided_today: 0,
+            avoided_yesterday: 0,
+            avoided_total: 0,
+            hour: TollHour::default(),
+            hourly: VecDeque::new(),
+            segment: None,
+            dir: Vec2::X,
+        }
+    }
+
+    /// [toll-inspect] Count a vehicle through the booth: `paid` is what it
+    /// was charged (nothing when it went free).
+    pub fn count_pass(&mut self, truck: bool, free: bool, paid: f32) {
+        self.cars_today += 1;
+        self.cars_total += 1;
+        self.hour.cars += 1;
+        if free {
+            self.free_today += 1;
+            self.free_total += 1;
+            self.hour.free += 1;
+            return;
+        }
+        if truck {
+            self.trucks_today += 1;
+            self.trucks_total += 1;
+            self.hour.trucks += 1;
+        }
+        self.revenue_today += paid;
+        self.revenue_total += paid;
+        self.hour.revenue += paid;
+    }
+
+    /// [toll-inspect] Count a driver who went round it.
+    pub fn count_avoided(&mut self) {
+        self.avoided_today += 1;
+        self.avoided_total += 1;
+        self.hour.avoided += 1;
+    }
+
+    /// [toll-inspect] What it takes in a day less its upkeep, on
+    /// yesterday's takings (today's so far on the first day).
+    pub fn net_per_day(&self) -> f32 {
+        let take = if self.cars_yesterday > 0 || self.revenue_yesterday > 0.0 { self.revenue_yesterday } else { self.revenue_today };
+        take - self.size.upkeep_per_day()
+    }
 }
 
 /// Every toll booth, and the day's passages.
@@ -205,10 +324,27 @@ impl Tolls {
         for b in &mut self.booths {
             b.cars_yesterday = std::mem::take(&mut b.cars_today);
             b.revenue_yesterday = std::mem::take(&mut b.revenue_today);
+            b.trucks_yesterday = std::mem::take(&mut b.trucks_today);
+            b.free_yesterday = std::mem::take(&mut b.free_today);
+            b.avoided_yesterday = std::mem::take(&mut b.avoided_today);
         }
         self.paid_today = 0;
         self.free_today = 0;
         self.trucks_today = 0;
+    }
+
+    /// [toll-inspect] Close the hour at every booth: `day` (1 and up) and
+    /// `hour` are those the hour's counts belong to.
+    pub fn close_hour(&mut self, day: u32, hour: u8) {
+        for b in &mut self.booths {
+            let mut h = std::mem::take(&mut b.hour);
+            h.day = day;
+            h.hour = hour;
+            b.hourly.push_back(h);
+            while b.hourly.len() > HOURS_KEPT {
+                b.hourly.pop_front();
+            }
+        }
     }
 }
 
@@ -263,11 +399,22 @@ mod tests {
             assert_eq!(TollSize::from_key(s.key()), Some(s));
         }
         let mut t = Tolls::default();
-        t.booths.push(TollBooth { id: 1, size: TollSize::Booth, pos: Vec2::ZERO, price: 2.0, name: String::new(), cars_today: 4, revenue_today: 8.0, cars_yesterday: 0, revenue_yesterday: 0.0, cars_total: 4, revenue_total: 8.0, segment: None, dir: Vec2::X });
+        t.booths.push(TollBooth::new(1, TollSize::Booth, Vec2::ZERO, String::new()));
+        for _ in 0..3 {
+            t.booths[0].count_pass(false, false, 2.0);
+        }
+        t.booths[0].count_pass(true, false, 4.0);
+        t.booths[0].count_pass(false, true, 0.0);
+        t.booths[0].count_avoided();
         t.paid_today = 4;
         t.roll();
-        assert_eq!(t.booths[0].cars_yesterday, 4);
-        assert_eq!(t.booths[0].revenue_today, 0.0);
+        let b = &t.booths[0];
+        assert_eq!((b.cars_yesterday, b.trucks_yesterday, b.free_yesterday, b.avoided_yesterday), (5, 1, 1, 1));
+        assert!((b.revenue_yesterday - 10.0).abs() < 1e-4);
+        assert_eq!((b.cars_today, b.trucks_today, b.free_today, b.avoided_today), (0, 0, 0, 0));
+        assert_eq!(b.revenue_today, 0.0);
+        assert_eq!((b.cars_total, b.trucks_total, b.free_total, b.avoided_total), (5, 1, 1, 1));
+        assert!((b.net_per_day() - (10.0 - TollSize::Booth.upkeep_per_day())).abs() < 1e-4);
         assert_eq!(t.paid_today, 0);
         assert_eq!(t.nearest(Vec2::new(3.0, 0.0), 5.0).map(|b| b.id), Some(1));
     }

@@ -16,6 +16,7 @@ pub fn label(sim: &Sim, sel: Selection) -> String {
     let w = &sim.world;
     match sel {
         Selection::None => String::new(),
+        Selection::Toll(id) => w.tolls.get(id).map_or_else(|| "a toll booth".into(), |b| b.name.clone()),
         Selection::Citizen(id) => w.citizens.get(id).map_or_else(|| "someone".into(), |c| c.name.clone()),
         Selection::Car(id) => w.car_label(id),
         Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|v| w.citizens.get(v.owner)).map_or_else(|| "a parked car".into(), |c| format!("{}'s parked car", c.name)),
@@ -46,7 +47,7 @@ pub fn camera_buttons(ui: &mut egui::Ui, sim: &Sim, sel: Selection, follow: &mut
     if sel == Selection::None || thing_pose(sim, sel).is_none() {
         return;
     }
-    let movable = !matches!(sel, Selection::Building(_));
+    let movable = !matches!(sel, Selection::Building(_) | Selection::Toll(_));
     ui.horizontal(|ui| {
         if movable {
             if follow.is(sel) {

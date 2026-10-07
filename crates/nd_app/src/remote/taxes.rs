@@ -177,8 +177,8 @@ pub fn tolls(cmd: &Value, w: &mut World) -> Result<Value, String> {
         }
         "inspect" => {
             let id = id.ok_or("missing id (or at)")?;
-            let b = w.tolls.get(id).ok_or("no such toll booth")?;
-            return Ok(booth_row(w, b));
+            // [toll-inspect] The booth in full, as `inspect {toll}`.
+            return super::tolls::toll_detail(w, id).ok_or_else(|| "no such toll booth".into());
         }
         other => return Err(format!("unknown action {other:?}; list, price, remove or inspect")),
     }

@@ -37,6 +37,8 @@ mod pressure;
 mod portrait;
 pub mod saves;
 mod taxes;
+/// [toll-inspect] The inspector on a toll booth.
+mod toll;
 /// [fonts] The HUD's fonts and type scale.
 pub mod theme;
 /// The title screen: saved games with their map pictures.
@@ -229,6 +231,7 @@ pub(crate) fn side_panel(
     windows::show_all(ctx, &mut p, content);
     build::window(ctx, &mut p, content);
     inspector::window(ctx, &mut p, content);
+    toll::window(ctx, &mut p, content);
     newgame::window(ctx, &mut p, content);
     history::window(ctx, &mut p, content);
     title::screen(ctx, &mut p);

@@ -1015,6 +1015,8 @@ impl World {
             // [economy] repair shops, bike shops, galleries and boats
             crate::prof!("trades_hourly", self.trades_hourly());
             crate::prof!("record_hour", self.record_hour());
+            // [toll-inspect] each booth's hour on its chart
+            self.hourly_tolls();
         }
         if tick % 60 == 30 {
             crate::prof!("step_construction", self.step_construction());
