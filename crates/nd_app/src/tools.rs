@@ -197,6 +197,9 @@ pub struct ToolState {
     /// [free-placement] The last site worked out, kept while the pointer
     /// stays on its parcel: (item, parcel, parcels version, lots, site).
     pub build_site: Option<(nd_sim::Placeable, usize, u64, usize, Result<nd_sim::PlacementSite, String>)>,
+    /// [plant-scale] The verdict on that site (with a plant's figures),
+    /// kept while nothing it depends on changes: (key, ok, text).
+    pub build_verdict: Option<(u64, bool, String)>,
     /// Draw smooth roads through the clicked points.
     pub curved: bool,
     /// Road picked with the Edit tool for upgrading.
@@ -468,6 +471,7 @@ impl Default for ToolState {
             hover_city_building: None,
             build_here: None,
             build_site: None,
+            build_verdict: None,
             curved: false,
             selected_gesture: None,
             kind: RoadKind::Street,
@@ -1259,11 +1263,25 @@ pub(crate) fn tool_input(
                     if let Some((a, b, c, d)) = key {
                         tools.build_site = Some((a, b, c, d, site.clone()));
                     }
+                    // [plant-scale] With what it would be there: a plant's
+                    // MW, cost and upkeep, the park it would join.
                     Some(match site {
-                        Ok(site) => match w.site_problem(what, &site) {
-                            None => (true, site.note(), site.outline),
-                            Some(why) => (false, why, site.outline),
-                        },
+                        Ok(site) => {
+                            // Worked out again only when the site, the
+                            // buildings or the treasury move.
+                            let vkey = {
+                                use std::hash::{Hash, Hasher};
+                                let mut h = std::collections::hash_map::DefaultHasher::new();
+                                (format!("{what:?}"), key.map(|k| (k.1, k.2, k.3)), site.lot, site.parcels.clone(), w.buildings.len(), w.economy.treasury.round() as i64, w.clock.tick / 60).hash(&mut h);
+                                h.finish()
+                            };
+                            let (ok, text) = match &tools.build_verdict {
+                                Some((k, ok, text)) if *k == vkey => (*ok, text.clone()),
+                                _ => crate::render::site_verdict(w, what, &site),
+                            };
+                            tools.build_verdict = Some((vkey, ok, text.clone()));
+                            (ok, text, site.outline)
+                        }
                         Err(why) => (false, why, Vec::new()),
                     })
                 }

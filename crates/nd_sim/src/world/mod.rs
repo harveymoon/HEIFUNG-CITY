@@ -78,6 +78,8 @@ pub mod plant_groups;
 pub use plant_groups::{PlantGroup, PlantJoin, PlantPreview};
 #[cfg(test)]
 mod plant_groups_tests;
+#[cfg(test)]
+mod plant_scale_tests;
 mod services;
 mod society;
 mod survey;

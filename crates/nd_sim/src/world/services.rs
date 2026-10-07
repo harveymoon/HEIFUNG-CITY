@@ -127,7 +127,8 @@ impl World {
             return Some(format!("that is park land: unzone it before putting a {} there", what.label()));
         }
         // [plant-groups] A small lot may join the solar or wind farm next door.
-        let joins = matches!(what, Placeable::Plant(k) if lot_id.is_some_and(|id| self.small_plant_lot_joins(k, id).is_some()));
+        // [plant-scale] A site on unzoned ground (no lot yet) too.
+        let joins = matches!(what, Placeable::Plant(k) if lot.area() < k.min_area() && self.small_plant_site_joins(k, &lot.polygon, lot_id).is_some());
         if lot.area() < what.min_area() && !joins {
             return Some(format!("too small: a {} needs {:.0} m² (this lot is {:.0})", what.label(), what.min_area(), lot.area()));
         }
@@ -141,9 +142,9 @@ impl World {
             return Some(format!("a {} needs a street out front", what.label()));
         }
         // [clarity] Solar and wind cost what the lot they fill makes them.
-        let cost = match (what, lot_id) {
-            (Placeable::Plant(k), Some(id)) => self.plant_cost_on(k, id),
-            (Placeable::Plant(k), None) => k.build_cost() * k.size_scale(lot.area()),
+        // [plant-scale] Coal, nuclear and geothermal by their site too.
+        let cost = match what {
+            Placeable::Plant(k) => k.cost_at(k.size_scale(lot.area())),
             _ => what.cost(),
         };
         if self.economy.treasury < cost {

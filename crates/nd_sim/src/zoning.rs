@@ -1650,6 +1650,62 @@ fn simplify_collinear(poly: &[Vec2]) -> Vec<Vec2> {
     }
 }
 
+/// [plant-scale] A site for a building the player puts on unzoned ground:
+/// parcel `start` joined with as few of its neighbours in `polys` as it
+/// takes to reach `need` square metres with a frontage (a street or a
+/// path), never past `cap`. Each step takes the neighbour that reaches the
+/// need with the smallest site, else the one sharing the longest boundary
+/// (compact sites, not strings of parcels); the joined outline stays one
+/// convex-ish piece. Returns the members (indices into `polys`, sorted) and
+/// the outline; short of `need` when the neighbours run out.
+pub fn grow_site(polys: &[Vec<Vec2>], start: usize, need: f32, cap: f32, roads: &RoadNetwork) -> (Vec<usize>, Vec<Vec2>) {
+    let fronted = |p: &[Vec2]| frontage_width(p, PARCEL_USE, roads).is_some();
+    let mut members = vec![start];
+    let mut outline = polys[start].clone();
+    for _ in 0..12 {
+        let area = polygon_area(&outline).abs();
+        let has_front = fronted(&outline);
+        if area >= need && has_front {
+            break;
+        }
+        let bo = bounds_of(&outline);
+        let go = to_geo(&outline);
+        let per = perimeter(&outline);
+        // (rank, score, index, outline): a site that reaches the need with a
+        // frontage ranks 2 and scores smaller-is-better; otherwise one that
+        // gains a frontage ranks 1, the rest 0, scored by shared boundary.
+        let mut best: Option<(u8, f32, usize, Vec<Vec2>)> = None;
+        for (j, pj) in polys.iter().enumerate() {
+            if members.contains(&j) || pj.len() < 3 || !boxes_overlap(bo, bounds_of(pj), 0.5) {
+                continue;
+            }
+            let u: MultiPolygon<f64> = go.union(&to_geo(pj));
+            if u.0.len() != 1 || !u.0[0].interiors().is_empty() {
+                continue;
+            }
+            let up = simplify_collinear(&from_geo(&u.0[0]));
+            if up.len() < 3 || reflex_vertex(&up, 0.6).is_some() {
+                continue;
+            }
+            let shared = (per + perimeter(pj) - perimeter(&up)) * 0.5;
+            let au = polygon_area(&up).abs();
+            if shared < 4.0 || au > cap {
+                continue;
+            }
+            let front = fronted(&up);
+            let (rank, score) = if au >= need && front { (2u8, -au) } else { (u8::from(front && !has_front), shared) };
+            if best.as_ref().is_none_or(|b| (rank, score) > (b.0, b.1)) {
+                best = Some((rank, score, j, up));
+            }
+        }
+        let Some((_, _, j, up)) = best else { break };
+        members.push(j);
+        outline = up;
+    }
+    members.sort();
+    (members, outline)
+}
+
 /// Join neighbouring parcels given the same land use into lots about the
 /// size that use wants (works yards and civic sites span two or three
 /// parcels, a shop or a club takes a small neighbour). A piece under three

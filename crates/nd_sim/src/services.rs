@@ -678,6 +678,16 @@ impl Placeable {
         }
     }
 
+    /// [plant-scale] Most unzoned ground free placement joins into a site
+    /// for it, m²: a plant's [`crate::power::PowerPlantKind::max_area`],
+    /// for anything else three times what it needs (a works yard at least).
+    pub fn max_site_area(self) -> f32 {
+        match self {
+            Placeable::Plant(k) => k.max_area(),
+            _ => (self.min_area() * 3.0).max(1200.0),
+        }
+    }
+
     /// Whether it goes on a lot of this land use. [free-placement] The zone
     /// is no bar to the city's own buildings: the ground leaves the zone
     /// when one goes down (unzoned ground takes them too). Only park land

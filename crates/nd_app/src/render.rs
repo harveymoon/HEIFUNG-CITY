@@ -53,7 +53,7 @@ mod holo;
 pub use holo::gap_spot;
 /// [plot-hover] The plot under the pointer while placing: outline, light wall, verdict.
 mod plot_hover;
-pub use plot_hover::hover_site;
+pub use plot_hover::{hover_site, site_verdict};
 mod junction_view;
 mod layers;
 mod lights;

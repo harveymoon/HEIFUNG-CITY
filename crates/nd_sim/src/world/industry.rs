@@ -263,7 +263,9 @@ impl World {
             let Some(lot) = self.lots.get(b.lot) else { continue };
             let (center, outline) = (lot.center, lot.polygon.clone());
             if let Some((r, a)) = b.plant.and_then(|k| k.ground_spill()) {
-                self.contamination.add(center, r, a);
+                // [plant-scale] More ash from a bigger plant.
+                let s = b.plant_scale.unwrap_or(1.0).clamp(0.25, 4.0);
+                self.contamination.add(center, r * s.sqrt(), a * s.sqrt());
                 continue;
             }
             let Some(bz) = &b.business else { continue };

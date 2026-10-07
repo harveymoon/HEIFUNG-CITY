@@ -59,6 +59,9 @@ pub struct PlantJoin {
     pub area: f32,
     /// Its nameplate once joined, MW (the bonus included).
     pub capacity_mw: f32,
+    /// [plant-scale] The nameplate of the plants it joins as they are now,
+    /// MW: `capacity_mw` less this is what placing it adds.
+    pub before_mw: f32,
 }
 
 /// Output share for a group of `n` lots.
@@ -172,23 +175,32 @@ impl World {
     /// What a solar or wind farm on `lot` would join, and the joined
     /// installation's area and nameplate. `None` for other kinds.
     pub fn plant_join(&self, kind: PowerPlantKind, lot: LotId) -> Option<PlantJoin> {
-        if !kind.merges_with_neighbours() {
+        let l = self.lots.get(lot)?;
+        self.plant_join_on(kind, &l.polygon, Some(lot))
+    }
+
+    /// [plant-scale] [`World::plant_join`] for a lot outline that may not be
+    /// a lot yet (a site on unzoned ground); `lot`: the lot it is, if any
+    /// (left out of the plants it could join).
+    pub fn plant_join_on(&self, kind: PowerPlantKind, outline: &[Vec2], lot: Option<LotId>) -> Option<PlantJoin> {
+        if !kind.merges_with_neighbours() || outline.len() < 3 {
             return None;
         }
-        let l = self.lots.get(lot)?;
-        let all: Vec<(BuildingId, LotId)> = self.plants_of(kind).into_iter().filter(|x| x.1 != lot).collect();
-        let touching: Vec<LotId> = all.iter().filter(|x| self.plant_lots_touch(lot, x.1)).map(|x| x.1).collect();
+        let area = crate::geom::polygon_area(outline).abs();
+        let all: Vec<(BuildingId, LotId)> = self.plants_of(kind).into_iter().filter(|x| Some(x.1) != lot).collect();
+        let touching: Vec<LotId> = all.iter().filter(|x| lots_touch(outline, &self.lots[x.1].polygon, &self.roads)).map(|x| x.1).collect();
         let members = if touching.is_empty() { Vec::new() } else { self.flood(&all, &touching) };
         let n = members.len() + 1;
-        let base: f32 = members.iter().map(|&(id, _)| kind.capacity_mw() * self.plant_scale(&self.buildings[id])).sum::<f32>() + kind.capacity_mw() * kind.size_scale(l.area());
+        let base: f32 = members.iter().map(|&(id, _)| kind.capacity_mw() * self.plant_scale(&self.buildings[id])).sum::<f32>() + kind.capacity_mw() * kind.size_scale(area);
         let joins = (!members.is_empty()).then(|| {
             // The name the joined park keeps: the oldest member's.
             let founder = members.iter().map(|&(id, _)| id).min_by_key(|&id| (self.buildings[id].built_tick, self.buildings[id].lot)).unwrap();
             group_name(kind, founder)
         });
         Some(PlantJoin {
+            before_mw: members.iter().map(|&(id, _)| self.plant_capacity_mw(&self.buildings[id])).sum(),
             joins,
-            area: l.area() + members.iter().map(|x| self.lots[x.1].area()).sum::<f32>(),
+            area: area + members.iter().map(|x| self.lots[x.1].area()).sum::<f32>(),
             capacity_mw: base * group_bonus(n),
             members: members.into_iter().map(|x| x.0).collect(),
         })
@@ -200,6 +212,13 @@ impl World {
     /// `Some(name)` of the group it joins when the exception applies.
     pub fn small_plant_lot_joins(&self, kind: PowerPlantKind, lot: LotId) -> Option<String> {
         let j = self.plant_join(kind, lot)?;
+        (j.area >= kind.min_area()).then_some(j.joins).flatten()
+    }
+
+    /// [plant-scale] [`World::small_plant_lot_joins`] for a lot outline that
+    /// may not be a lot yet (a site on unzoned ground).
+    pub fn small_plant_site_joins(&self, kind: PowerPlantKind, outline: &[Vec2], lot: Option<LotId>) -> Option<String> {
+        let j = self.plant_join_on(kind, outline, lot)?;
         (j.area >= kind.min_area()).then_some(j.joins).flatten()
     }
 
@@ -334,6 +353,9 @@ pub fn lots_touch(a: &[Vec2], b: &[Vec2], roads: &RoadNetwork) -> bool {
 pub struct PlantPreview {
     pub kind: PowerPlantKind,
     pub area: f32,
+    /// [plant-scale] Its size as a share of the kind's nameplate
+    /// (`PowerPlantKind::size_scale` of the area).
+    pub scale: f32,
     /// Its own nameplate on this lot, MW, the group bonus included.
     pub capacity_mw: f32,
     /// Share of nameplate the site supports (hydro's current, geothermal's
@@ -353,23 +375,48 @@ pub struct PlantPreview {
 impl World {
     pub fn plant_preview(&self, kind: PowerPlantKind, lot: LotId) -> Option<PlantPreview> {
         let l = self.lots.get(lot)?;
+        Some(self.preview_on(kind, l, Some(lot)))
+    }
+
+    /// [plant-scale] What a plant of `kind` would be on a site found by
+    /// [`World::placement_site`]: an existing lot, or the lot about to be
+    /// made of unzoned parcels (the same outline the click makes, so the
+    /// figures are what the click charges and the plant then makes).
+    pub fn plant_preview_site(&self, kind: PowerPlantKind, site: &crate::world::PlacementSite) -> Option<PlantPreview> {
+        match site.lot {
+            Some(id) => self.plant_preview(kind, id),
+            None => {
+                let lot = self.site_lot(site)?;
+                Some(self.preview_on(kind, &lot, None))
+            }
+        }
+    }
+
+    /// [plant-scale] The preview for a plant on `lot` (`lot_id`: the lot it
+    /// is, None for one not made yet).
+    fn preview_on(&self, kind: PowerPlantKind, l: &Lot, lot_id: Option<LotId>) -> PlantPreview {
         let area = l.area();
         let scale = kind.size_scale(area);
-        let join = self.plant_join(kind, lot);
+        let join = self.plant_join_on(kind, &l.polygon, lot_id);
         let n = join.as_ref().map_or(1, |j| j.members.len() + 1);
-        let capacity_mw = kind.capacity_mw() * scale * group_bonus(n);
-        let site = self.power_site(lot, kind).unwrap_or(0.0);
-        Some(PlantPreview {
+        let capacity_mw = kind.capacity_at(scale) * group_bonus(n);
+        let site = self.power_site_on(l, kind).unwrap_or(0.0);
+        let what = crate::services::Placeable::Plant(kind);
+        PlantPreview {
             kind,
             area,
+            scale,
             capacity_mw,
             site,
             now_mw: capacity_mw * self.kind_availability_at(kind, l.center) * site,
-            cost: self.plant_cost_on(kind, lot),
-            upkeep_per_day: kind.upkeep_per_day() * scale,
+            cost: kind.cost_at(scale),
+            upkeep_per_day: kind.upkeep_at(scale),
             small_lot_joins: area < kind.min_area() && join.as_ref().is_some_and(|j| j.joins.is_some() && j.area >= kind.min_area()),
             join: join.filter(|j| j.joins.is_some()),
-            problem: self.placement_problem(crate::services::Placeable::Plant(kind), lot),
-        })
+            problem: match lot_id {
+                Some(id) => self.placement_problem(what, id),
+                None => self.lot_problem(what, l, None),
+            },
+        }
     }
 }

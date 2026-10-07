@@ -40,6 +40,12 @@ pub const SOLAR_REFERENCE_AREA: f32 = 600.0;
 pub const WIND_REFERENCE_AREA: f32 = 800.0;
 /// [plant-groups] Most a single solar or wind lot makes of its nameplate.
 pub const MAX_LOT_SCALE: f32 = 6.0;
+/// [plant-scale] The site area the thermal plants' nameplates are quoted
+/// for, and the most ground each puts to use: a bigger plant on a bigger
+/// site, in a capped range (see [`PowerPlantKind::size_scale`]).
+pub const COAL_REFERENCE_AREA: f32 = 1000.0;
+pub const NUCLEAR_REFERENCE_AREA: f32 = 1500.0;
+pub const GEOTHERMAL_REFERENCE_AREA: f32 = 700.0;
 
 impl PowerPlantKind {
     pub const ALL: [PowerPlantKind; 7] = [PowerPlantKind::Coal, PowerPlantKind::Solar, PowerPlantKind::Wind, PowerPlantKind::Nuclear, PowerPlantKind::Hydro, PowerPlantKind::Tidal, PowerPlantKind::Geothermal];
@@ -164,6 +170,15 @@ impl PowerPlantKind {
         }
     }
 
+    /// [plant-scale] The land-value cone of a plant of this size: a bigger
+    /// coal plant smokes further and harder (by the square root of its
+    /// size, so twice the plant is not twice the blight); 1 is the kind's.
+    pub fn pollution_at(self, scale: f32) -> (f32, f32) {
+        let (r, w) = self.pollution();
+        let k = scale.clamp(0.25, 4.0).sqrt();
+        (r * k, w * k)
+    }
+
     /// How much land value the plant takes overall: weight times the area
     /// of its cone. Used to order the plants for the UI and tests.
     pub fn pollution_load(self) -> f32 {
@@ -196,25 +211,93 @@ impl PowerPlantKind {
     /// field or wind farm's output, build cost and upkeep scale with the
     /// lot's area, so every megawatt costs the same whatever the lot. The
     /// nameplate figures (`capacity_mw`, `build_cost`, `upkeep_per_day`)
-    /// are for a lot of this many square metres. `None`: a plant of fixed
-    /// size.
+    /// are for a lot of this many square metres. [plant-scale] Coal,
+    /// nuclear and geothermal plants are sized to their site too, in a
+    /// narrower range ([`Self::size_range`]), fixed when they are built
+    /// ([`Self::sized_when_built`]). `None`: a plant of fixed size (hydro
+    /// and tidal, sized by their water).
     pub fn reference_area(self) -> Option<f32> {
         match self {
             PowerPlantKind::Solar => Some(SOLAR_REFERENCE_AREA),
             PowerPlantKind::Wind => Some(WIND_REFERENCE_AREA),
-            _ => None,
+            PowerPlantKind::Coal => Some(COAL_REFERENCE_AREA),
+            PowerPlantKind::Nuclear => Some(NUCLEAR_REFERENCE_AREA),
+            PowerPlantKind::Geothermal => Some(GEOTHERMAL_REFERENCE_AREA),
+            PowerPlantKind::Hydro | PowerPlantKind::Tidal => None,
+        }
+    }
+
+    /// [plant-scale] A thermal plant (coal, nuclear, geothermal): its size is
+    /// worked out from its site when it is built and kept on the building
+    /// (`Building::plant_scale`), so it never changes under it; a plant from
+    /// an older save, built at the fixed size, keeps that (scale 1). Solar
+    /// and wind follow their lot's area as they always have.
+    pub fn sized_when_built(self) -> bool {
+        matches!(self, PowerPlantKind::Coal | PowerPlantKind::Nuclear | PowerPlantKind::Geothermal)
+    }
+
+    /// [plant-scale] Most ground a plant of this kind puts to use, m²: a
+    /// site bigger than this makes it no bigger (the plant stands on part
+    /// of it), and free placement joins no more unzoned parcels than this.
+    pub fn max_area(self) -> f32 {
+        match self {
+            PowerPlantKind::Coal => 2400.0,
+            PowerPlantKind::Nuclear => 3000.0,
+            PowerPlantKind::Geothermal => 1600.0,
+            PowerPlantKind::Solar => SOLAR_REFERENCE_AREA * MAX_LOT_SCALE,
+            PowerPlantKind::Wind => WIND_REFERENCE_AREA * MAX_LOT_SCALE,
+            // Fixed size: a works yard's worth.
+            PowerPlantKind::Hydro | PowerPlantKind::Tidal => 1500.0,
+        }
+    }
+
+    /// [plant-scale] The range of `size_scale`: (smallest, largest) share of
+    /// the nameplate one plant can be. (1, 1) for the fixed-size kinds.
+    pub fn size_range(self) -> (f32, f32) {
+        match self.reference_area() {
+            Some(r) if self.sized_when_built() => (self.min_area() / r, self.max_area() / r),
+            Some(_) => (0.05, MAX_LOT_SCALE),
+            None => (1.0, 1.0),
         }
     }
 
     /// [clarity] What a lot of `area` square metres makes of the nameplate:
-    /// area over the reference area for solar and wind, 1 for the rest.
+    /// area over the reference area, within [`Self::size_range`]; 1 for
+    /// hydro and tidal.
     pub fn size_scale(self, area: f32) -> f32 {
         match self.reference_area() {
             // [plant-groups] Capped: past six reference lots a single lot
             // gains nothing more (join lots into a park to go bigger).
-            Some(r) => (area.max(0.0) / r).clamp(0.05, MAX_LOT_SCALE),
+            // [plant-scale] Thermal plants between their smallest and
+            // largest size.
+            Some(r) => {
+                let (lo, hi) = self.size_range();
+                (area.max(0.0) / r).clamp(lo, hi)
+            }
             None => 1.0,
         }
+    }
+
+    /// [plant-scale] Nameplate, cost and upkeep at a given size.
+    pub fn capacity_at(self, scale: f32) -> f32 {
+        self.capacity_mw() * scale
+    }
+
+    pub fn cost_at(self, scale: f32) -> f32 {
+        self.build_cost() * scale
+    }
+
+    pub fn upkeep_at(self, scale: f32) -> f32 {
+        self.upkeep_per_day() * scale
+    }
+
+    /// [plant-scale] Jobs at a plant of this size: a bigger plant has more
+    /// shifts on the boilers and the coal yard (never fewer than a third).
+    pub fn jobs_at(self, scale: f32) -> u16 {
+        if !self.sized_when_built() {
+            return self.jobs();
+        }
+        ((self.jobs() as f32 * scale).round() as u16).max(self.jobs() / 3).max(1)
     }
 
     /// Smallest lot it fits on.

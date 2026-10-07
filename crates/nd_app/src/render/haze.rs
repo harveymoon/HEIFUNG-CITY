@@ -11,7 +11,7 @@ use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use nd_procgen::coal_stacks;
+use nd_procgen::{coal_vents, CoalVent};
 use nd_sim::{BuildingId, Vec2 as SVec2};
 use std::collections::HashMap;
 
@@ -28,8 +28,12 @@ const PLUME_LIFE: f32 = 36.0;
 const ALPHA_STEPS: usize = 12;
 /// Most opaque a plume puff gets (at full output, just out of the stack).
 const PLUME_ALPHA: f32 = 0.85;
-/// Plume colour: light ash, so it stands off the dusty ground below.
-const PLUME_RGB: [f32; 3] = [0.62, 0.60, 0.58];
+/// Plume colour: [plant-scale] a dark sooty grey, heavy against the sky
+/// (still lighter than the black plant under it).
+const PLUME_RGB: [f32; 3] = [0.30, 0.285, 0.27];
+/// Steam from a coal station's cooling towers: white.
+const STEAM_RGB: [f32; 3] = [0.86, 0.87, 0.9];
+const STEAM_ALPHA: f32 = 0.7;
 /// Most opaque a smog puff gets.
 const SMOG_ALPHA: f32 = 0.38;
 /// Smog colour: a dirty brown.
@@ -44,7 +48,7 @@ pub(super) struct Puff {
 }
 
 struct Plant {
-    stacks: Vec<Vec3>,
+    stacks: Vec<CoalVent>,
     centre: Vec3,
     intensity: f32,
     entities: Vec<Entity>,
@@ -55,7 +59,7 @@ struct Plant {
 pub(super) struct HazeState {
     plants: HashMap<BuildingId, Plant>,
     quad: Option<Handle<Mesh>>,
-    /// Plume then smog materials, `ALPHA_STEPS` each, darkened at night.
+    /// Plume, smog then steam materials, `ALPHA_STEPS` each, darkened at night.
     materials: Vec<Handle<StandardMaterial>>,
     light_key: Option<i32>,
 }
@@ -117,7 +121,7 @@ pub(super) fn sync_haze(
     if state.quad.is_none() {
         state.quad = Some(meshes.add(Rectangle::new(1.0, 1.0)));
         let tex = images.add(puff_image());
-        for (rgb, top) in [(PLUME_RGB, PLUME_ALPHA), (SMOG_RGB, SMOG_ALPHA)] {
+        for (rgb, top) in [(PLUME_RGB, PLUME_ALPHA), (SMOG_RGB, SMOG_ALPHA), (STEAM_RGB, STEAM_ALPHA)] {
             for k in 0..ALPHA_STEPS {
                 let a = top * (k + 1) as f32 / ALPHA_STEPS as f32;
                 state.materials.push(materials.add(StandardMaterial {
@@ -141,7 +145,7 @@ pub(super) fn sync_haze(
     if state.light_key != Some(light_key) {
         state.light_key = Some(light_key);
         for (i, h) in state.materials.iter().enumerate() {
-            let (rgb, top) = if i < ALPHA_STEPS { (PLUME_RGB, PLUME_ALPHA) } else { (SMOG_RGB, SMOG_ALPHA) };
+            let (rgb, top) = [(PLUME_RGB, PLUME_ALPHA), (SMOG_RGB, SMOG_ALPHA), (STEAM_RGB, STEAM_ALPHA)][(i / ALPHA_STEPS).min(2)];
             let a = top * ((i % ALPHA_STEPS) + 1) as f32 / ALPHA_STEPS as f32;
             if let Some(mut m) = materials.get_mut(h) {
                 m.base_color = Color::linear_rgba(rgb[0] * light, rgb[1] * light * 0.97, rgb[2] * light * 0.92, a);
@@ -163,7 +167,10 @@ pub(super) fn sync_haze(
         // A running plant always smokes; harder the more of it the grid draws.
         let intensity = if b.is_derelict() { 0.0 } else { 0.55 + 0.45 * (staffed * draw).clamp(0.0, 1.0) };
         let pad = w.lot_pad(b.lot);
-        let key = (lot.center.x.to_bits() as u64) << 32 | lot.center.y.to_bits() as u64 ^ pad.to_bits() as u64;
+        // [plant-scale] The stacks come from the station's own layout (its
+        // seed and size), so they follow a rebuild of the plant too.
+        let scale = w.plant_scale(b);
+        let key = ((lot.center.x.to_bits() as u64) << 32 | lot.center.y.to_bits() as u64 ^ pad.to_bits() as u64) ^ b.seed.rotate_left(17) ^ (scale.to_bits() as u64) << 7;
         if let Some(plant) = state.plants.get_mut(&id) {
             plant.intensity = intensity;
             if plant.key == key {
@@ -175,7 +182,7 @@ pub(super) fn sync_haze(
                 commands.entity(e).despawn();
             }
         }
-        let stacks: Vec<Vec3> = coal_stacks(lot).into_iter().map(|s| s + Vec3::Y * pad).collect();
+        let stacks: Vec<CoalVent> = coal_vents(lot, b.seed, scale).into_iter().map(|v| CoalVent { top: v.top + Vec3::Y * pad, ..v }).collect();
         let quad = state.quad.clone().unwrap_or_default();
         let mat = state.materials[0].clone();
         let mut entities = Vec::new();
@@ -218,15 +225,22 @@ pub(super) fn sync_haze(
         let seed = puff.plant_seed();
         let (pos, size, alpha, smog) = match puff.stack {
             Some(s) => {
-                let Some(top) = plant.stacks.get(s) else { continue };
+                let Some(vent) = plant.stacks.get(s) else { continue };
+                let top = &vent.top;
+                // A thick flue puts out a fatter plume; steam billows wider and
+                // goes sooner.
+                let girth = (vent.r / 1.6).clamp(0.6, 2.2);
                 // Age 0..1, puffs evenly spaced in time, each stack offset.
                 let age = (now / PLUME_LIFE + puff.k as f32 / PLUME_PUFFS as f32 + s as f32 * 0.37).fract();
                 let rise = 50.0 * (1.0 - (1.0 - age).powi(2)) * (1.15 - 0.6 * wind);
                 let wobble = (now * 0.21 + puff.k as f32 * 1.9).sin() * 9.0 * age;
                 let pos = *top + Vec3::Y * rise + along * (age * reach) + side * wobble;
-                let size = 5.0 + 44.0 * age.powf(0.8);
-                let alpha = smoothstep(0.0, 0.06, age) * (1.0 - age).powf(1.4);
-                (pos, size, alpha, false)
+                let (size, alpha) = if vent.steam {
+                    (vent.r * 1.6 + 40.0 * age.powf(0.7), smoothstep(0.0, 0.05, age) * (1.0 - age).powf(2.4))
+                } else {
+                    (5.0 * girth + 44.0 * girth.sqrt() * age.powf(0.8), smoothstep(0.0, 0.06, age) * (1.0 - age).powf(1.2))
+                };
+                (pos, size, alpha, if vent.steam { 2 } else { 0 })
             }
             None => {
                 // Smog: wide, flat-lying puffs downwind, breathing slowly.
@@ -239,7 +253,7 @@ pub(super) fn sync_haze(
                 let pos = plant.centre + along * (d + drift) + side * lateral + Vec3::Y * h;
                 let size = 45.0 + 35.0 * r2 + d * 0.15;
                 let alpha = 0.55 + 0.45 * (now * 0.08 + puff.k as f32 * 2.1).sin().abs();
-                (pos, size, alpha, true)
+                (pos, size, alpha, 1)
             }
         };
         let a = alpha * plant.intensity;
@@ -249,14 +263,14 @@ pub(super) fn sync_haze(
         }
         *vis = Visibility::Inherited;
         let step = ((a * ALPHA_STEPS as f32).round() as usize).clamp(1, ALPHA_STEPS) - 1;
-        let want = &state.materials[if smog { ALPHA_STEPS + step } else { step }];
+        let want = &state.materials[smog * ALPHA_STEPS + step];
         if mat.0 != *want {
             mat.0 = want.clone();
         }
         tf.translation = pos;
         tf.rotation = face;
         // Smog lies flatter than it is tall from the street.
-        tf.scale = if smog { Vec3::new(size, size * 0.45, 1.0) } else { Vec3::splat(size) };
+        tf.scale = if smog == 1 { Vec3::new(size, size * 0.45, 1.0) } else { Vec3::splat(size) };
     }
 }
 

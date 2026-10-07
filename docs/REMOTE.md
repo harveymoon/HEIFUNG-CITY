@@ -339,11 +339,13 @@ within 80 m is used, as before.
   for the quoted figures, capped at 6× on one lot); the reply's message gives the MW, what was paid
   and the Sunfield or Wind Park it joined. A lot below the kind's minimum may still take one when it
   joins plants of its kind next door and the joined lots reach the minimum.
-- `plant_preview {kind, x, y}` (read-only): what a plant would be on the lot there before placing
-  it: `area_m2`, `size_scale`, `capacity_mw` (its own, group bonus included), `site`, `cost`,
-  `upkeep_per_day`, `min_area`, `joins` (the Sunfield / Wind Park it would join, or null),
-  `joined_lots`, `joined_area_m2`, `joined_capacity_mw`, `small_lot_joins` (allowed only by joining),
-  `ok`, `problem`.
+- `plant_preview {kind, x, y}` (read-only): what a plant would be on the site a click there takes
+  (a lot, or unzoned parcels joined into one: `lot` null, `unzoned_parcels`, `outline`) before
+  placing it: `area_m2`, `size_scale`, `capacity_mw` (its own, group bonus included), `site`, `cost`,
+  `upkeep_per_day`, `min_area`, `max_area`, `joins` (the Sunfield / Wind Park it would join, or null),
+  `joined_lots`, `joined_area_m2`, `joined_capacity_mw`, `adds_mw` (what placing it adds to the
+  joined installation), `small_lot_joins` (allowed only by joining), `ok`, `problem`. The same
+  figures are in the Buildings tool's hover `note` (`tool {hover}`).
 - `shipping_port` (or `port`), `ferry_terminal` (or `ferry`): at the water's edge within 90 m of the
   point (`World::place_port`). Ports need a river at least 40 m wide or the sea; ferries any water
   16 m or wider. Each builds a pier and, unless a street is already along its landward side, a

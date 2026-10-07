@@ -16,7 +16,7 @@
 use super::*;
 use crate::plan::parcel_zoning;
 use crate::services::Placeable;
-use crate::zoning::{inner_center, join_parcels, make_placed_lot};
+use crate::zoning::{grow_site, inner_center, make_placed_lot};
 
 /// Unzoned parcels this close to the one clicked may join it into a site,
 /// metres from its centre.
@@ -84,19 +84,24 @@ impl World {
             return Err("that parcel is not free".into());
         }
         let need = what.min_area();
+        // A parcel big enough on its own is the site, however big: a plant
+        // there is no bigger than its kind's largest (`size_scale`) and
+        // stands on part of it.
         if parcel.path_frontage && parcel.area >= need {
             return Ok(PlacementSite { lot: None, parcels: vec![i], outline: parcel.polygon.clone(), leaves_zone: None });
         }
-        // Too small on its own (or backland): it joins its unzoned
-        // neighbours as civic ground would be joined, a works yard's size.
-        let near: Vec<usize> = self.parcels.in_circle(parcel.center, SITE_REACH).into_iter().filter(|&k| k == i || self.free_parcel(k)).collect();
+        // [plant-scale] Too small on its own (or backland): it joins just
+        // enough unzoned neighbours to reach what the building needs, and
+        // never more ground than it can use (`max_site_area`).
+        let mut near: Vec<usize> = self.parcels.in_circle(parcel.center, SITE_REACH).into_iter().filter(|&k| k == i || self.free_parcel(k)).collect();
+        near.sort_unstable();
+        near.dedup();
         let polys: Vec<Vec<Vec2>> = near.iter().map(|&k| self.parcels.parcels[k].polygon.clone()).collect();
-        let me = near.iter().position(|&k| k == i).unwrap_or(0);
-        let group = join_parcels(&polys, LandUse::Civic, &self.roads).into_iter().find(|(idx, _)| idx.contains(&me));
-        match group {
-            Some((idx, outline)) => Ok(PlacementSite { lot: None, parcels: idx.iter().map(|&k| near[k]).collect(), outline, leaves_zone: None }),
-            None => Ok(PlacementSite { lot: None, parcels: vec![i], outline: parcel.polygon.clone(), leaves_zone: None }),
-        }
+        let Some(me) = near.iter().position(|&k| k == i) else {
+            return Ok(PlacementSite { lot: None, parcels: vec![i], outline: parcel.polygon.clone(), leaves_zone: None });
+        };
+        let (idx, outline) = grow_site(&polys, me, need, what.max_site_area().max(need), &self.roads);
+        Ok(PlacementSite { lot: None, parcels: idx.iter().map(|&k| near[k]).collect(), outline, leaves_zone: None })
     }
 
     /// An unzoned parcel with nothing on it, on open ground.
@@ -106,7 +111,7 @@ impl World {
     }
 
     /// The lot a site would become (not inserted).
-    fn site_lot(&self, site: &PlacementSite) -> Option<Lot> {
+    pub(super) fn site_lot(&self, site: &PlacementSite) -> Option<Lot> {
         if let Some(id) = site.lot {
             return self.lots.get(id).cloned();
         }
