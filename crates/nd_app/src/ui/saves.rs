@@ -16,8 +16,9 @@
 //! [identity] Every world carries its city's name and a game id
 //! (`nd_sim::CityIdentity`), and every sidecar repeats them. A new game
 //! gets an id at once ([`new_game_id`]); a save from before ids gets one
-//! when it is next saved ([`ensure_game_id`]) and is "Unnamed city" until
-//! named.
+//! when it is next saved ([`ensure_game_id`]). An old named save takes its
+//! save name as the city's on load ([`legacy_city_name`]); other old saves
+//! are "Unnamed city" until named.
 //!
 //! The title screen (`ui/title.rs`) and the Saves window list them newest
 //! first, grouped by city name ([`group_by_city`]). Saves from before
@@ -111,9 +112,15 @@ pub struct Slot {
 }
 
 impl Slot {
-    /// The city the save is of: its sidecar's, or "Unnamed city".
+    /// The city the save is of: its sidecar's; for a named save from
+    /// before city names the name it was saved under (as it loads, see
+    /// [`legacy_city_name`]); otherwise "Unnamed city".
     pub fn city(&self) -> &str {
-        self.meta.as_ref().map_or(nd_sim::identity::UNNAMED, |m| m.city_name())
+        match &self.meta {
+            Some(m) if !m.city.trim().is_empty() => &m.city,
+            _ if self.kind == SlotKind::Named && !self.label.trim().is_empty() => &self.label,
+            _ => nd_sim::identity::UNNAMED,
+        }
     }
 
     /// "Day 12 · 340 people · $ 52000" from the sidecar, or "" for an old save.
@@ -406,6 +413,13 @@ pub fn load_now(path: &Path, sim: &mut Sim, tools: &mut ToolState, selection: &m
     let shown = path.display().to_string();
     flags.message = match sim.load(&shown) {
         Ok(()) => {
+            // [identity] A named save from before city names: the name it
+            // was saved under becomes the city's.
+            if sim.world.identity.name.trim().is_empty() {
+                if let Some(name) = legacy_city_name(path) {
+                    rename_city(&mut sim.world, &name);
+                }
+            }
             *tools = ToolState::default();
             *selection = Selection::None;
             plan.invalidate();
@@ -414,6 +428,19 @@ pub fn load_now(path: &Path, sim: &mut Sim, tools: &mut ToolState, selection: &m
         }
         Err(e) => format!("load failed: {e}"),
     };
+}
+
+/// [identity] The city name an unnamed save takes on load: a named save's
+/// name as typed (its sidecar), or else its file name with spaces. None for
+/// the quick save slots, the autosave and history entries, which have no
+/// name of their own.
+pub fn legacy_city_name(path: &Path) -> Option<String> {
+    if path.components().any(|c| c.as_os_str() == super::history::SUBDIR) || slot_kind(path) != SlotKind::Named {
+        return None;
+    }
+    let typed = read_meta(path).map(|m| m.name).filter(|n| !n.trim().is_empty());
+    let name = nd_sim::identity::clean_name(&typed.unwrap_or_else(|| slot_label(path)));
+    (!name.is_empty()).then_some(name)
 }
 
 /// [identity] Save the city now into its game history with a name for the
@@ -763,6 +790,33 @@ mod tests {
         assert_eq!(back.identity.display_name(), "Cobalt Reach");
     }
 
+    /// [identity] An old named save takes its save name as the city name;
+    /// quick saves, the autosave and history entries do not.
+    #[test]
+    fn legacy_named_saves_take_their_name() {
+        let dir = std::env::temp_dir().join(format!("nd_legacy_name_{}_{}", std::process::id(), new_game_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let typed = dir.join("Neon_Bay.ron");
+        std::fs::write(meta_path(&typed), r#"{"name":"Neon Bay!","day":3,"population":10,"treasury":5.0,"saved_unix":1}"#).unwrap();
+        assert_eq!(legacy_city_name(&typed).as_deref(), Some("Neon Bay!"));
+        assert_eq!(legacy_city_name(&dir.join("Old_Town.ron")).as_deref(), Some("Old Town"), "no sidecar: the file name");
+        assert_eq!(legacy_city_name(&dir.join("city.ron")), None);
+        assert_eq!(legacy_city_name(&dir.join("autosave.ron")), None);
+        assert_eq!(legacy_city_name(&dir.join("city-000001700000-day3.ron")), None);
+        assert_eq!(legacy_city_name(&dir.join("history").join("g").join("000000000001000-day3.ron")), None);
+        // Loaded: the city takes it.
+        let sim0 = Sim::new();
+        let legacy = dir.join("Old_Town.ron");
+        std::fs::write(&legacy, legacy_ron(&sim0.world)).unwrap();
+        let mut sim = Sim::new();
+        let (mut tools, mut selection, mut plan, mut flags) = (ToolState::default(), Selection::None, EffectivePlan::default(), UiFlags::default());
+        load_now(&legacy, &mut sim, &mut tools, &mut selection, &mut plan, &mut flags);
+        assert!(flags.message.starts_with("loaded"), "{}", flags.message);
+        assert_eq!(sim.world.identity.name, "Old Town");
+        assert!(!sim.world.identity.has_id(), "the id still comes with the next save");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// [identity] Grouping by city name: newest group first, unnamed saves
     /// together.
     #[test]
@@ -770,7 +824,7 @@ mod tests {
         let slot = |city: Option<&str>, n: &str| Slot {
             path: PathBuf::from(format!("saves/{n}.ron")),
             label: n.into(),
-            kind: SlotKind::Named,
+            kind: if city.is_some_and(|c| !c.is_empty()) { SlotKind::Named } else { SlotKind::Autosave },
             modified: None,
             meta: city.map(|c| SaveMeta { city: c.into(), ..Default::default() }),
             picture: None,
@@ -781,6 +835,9 @@ mod tests {
         assert_eq!(names, vec!["Neon Bay", nd_sim::identity::UNNAMED, "Iron Vale"]);
         assert_eq!(g[0].1, vec![0, 3]);
         assert_eq!(g[1].1, vec![1, 4]);
+        // An old named save groups under the name it was saved under.
+        let old = Slot { path: PathBuf::from("saves/Old_Town.ron"), label: "Old Town".into(), kind: SlotKind::Named, modified: None, meta: None, picture: None };
+        assert_eq!(old.city(), "Old Town");
     }
 
     /// [identity] Revert puts back the moment saved, with its game id, and

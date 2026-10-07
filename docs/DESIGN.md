@@ -1540,8 +1540,9 @@ trait MindProvider {
   with the world. A new game gets an id at once (`saves::new_game_id`: the time and 64 bits from a
   randomly keyed hasher, so the sim stays deterministic); the New game window and the title
   screen ask for the name (a suggestion from `names::city_name` is offered), and the City and
-  Saves windows rename it. A save from before identities loads as "Unnamed city" and gets an id
-  when it is next saved. The Saves window and the title screen group saves by city name.
+  Saves windows rename it. A save from before identities gets an id when it is next saved; a
+  named one takes the name it was saved under as the city's (`saves::legacy_city_name`), quick
+  saves and the autosave load as "Unnamed city". The Saves window and the title screen group saves by city name.
 - **Game history** (`ui/history.rs`): every daily autosave is also written to
   `saves/history/<game id>/<unix ms>-day<N>.ron` (serialised once on the worker thread, written
   there and to `saves/autosave.ron`), with its sidecar and picture. The Game history window

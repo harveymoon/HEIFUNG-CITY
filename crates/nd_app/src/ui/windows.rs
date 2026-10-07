@@ -71,6 +71,8 @@ impl Info {
             Info::Lines => 430.0,
             Info::Taxes => 470.0,
             Info::Dev => 300.0,
+            // [identity] Room for the city name row and the grouped list.
+            Info::Saves => 460.0,
             _ => 380.0,
         }
     }

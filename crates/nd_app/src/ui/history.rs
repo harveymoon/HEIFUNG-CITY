@@ -180,7 +180,8 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
         .id(egui::Id::new("game_history_window"))
         .open(&mut open)
         .constrain_to(content)
-        .default_pos(content.center() - egui::vec2(230.0, 260.0))
+        // Right of centre: the Saves window it opens from stays readable.
+        .default_pos(content.center() + egui::vec2(60.0, -260.0))
         .default_size(egui::vec2(460.0, 520.0))
         .resizable(true)
         .show(ctx, |ui| body(ui, p, &mut st));

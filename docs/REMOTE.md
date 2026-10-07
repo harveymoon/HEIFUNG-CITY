@@ -133,7 +133,7 @@ ring (see `events`).
 | `seed_demo` | | lays out and implements the demo district (works on any map) |
 | `save` | `name` or `path`, both optional | `name`: a named game, as Saves, Save as: `saves/<name>.ron` (the name made file-safe: ASCII letters, digits and `-` kept, the rest `_`, at most 48 characters), a sidecar `saves/<name>.meta.json` (name as typed, day, population, treasury, buildings, landscape, saved_unix) and a top-down map picture `saves/<name>.png`, rendered offscreen and written about half a second later. Reply `path`, `name`, `thumbnail`, `meta` (absolute). Neither: `saves/city.ron` plus a dated slot, like Quick save (with a sidecar and `saves/city.png`). `path`: just that file |
 | `load` | `path` (`.ron`, see the file rules) | as the Load button: tools and selection reset, the city comes up paused; closes the title screen |
-| `list_saves` | | `saves`, newest first: `path`, `name` (as typed for named games; "Latest quick save", "Autosave", "Quick save, day N" otherwise), `kind` (named / latest / autosave / dated), `modified_unix`, `bytes`, `day`, `population`, `treasury`, `buildings`, `landscape` (null for saves without a sidecar), `thumbnail` (absolute PNG path, or null), `city` (the city's name, "Unnamed city" for none), `game_id` (null before ids); `by_city`: `[{city, saves: [path, ...]}]`, the grouping the title screen and the Saves window show |
+| `list_saves` | | `saves`, newest first: `path`, `name` (as typed for named games; "Latest quick save", "Autosave", "Quick save, day N" otherwise), `kind` (named / latest / autosave / dated), `modified_unix`, `bytes`, `day`, `population`, `treasury`, `buildings`, `landscape` (null for saves without a sidecar), `thumbnail` (absolute PNG path, or null), `city` (the city's name; an old named save's save name; "Unnamed city" otherwise), `game_id` (null before ids); `by_city`: `[{city, saves: [path, ...]}]`, the grouping the title screen and the Saves window show |
 | `city_name` | `name` optional | without `name`: `name` (as kept, "" when unnamed), `display_name`, `game_id` (null for a save from before ids until it is next saved), `history_entries`. With `name`: renames the city (control characters dropped, spaces folded, at most 40 characters; "" leaves it unnamed); saves from then on carry it |
 | `game_history` | `action` list (default) / bookmark / unmark / mark / revert, and per action below | the running game's history of autosaves (below) |
 
@@ -150,8 +150,10 @@ repo root under `cargo run`).
 **City name and game id.** Every world carries its city's name and a game id (saved with it,
 and repeated in each sidecar as `city` and `game_id`). `new_game` and `generate_city` make a
 fresh id and take an optional `name`; the New game window and the title screen ask for one.
-`status.identity` is `{name, display_name, game_id}`. A save from before ids loads as "Unnamed
-city" with no id and gets one the next time it is saved (any save, or the next autosave).
+`status.identity` is `{name, display_name, game_id}`. A save from before ids loads with no id
+and gets one the next time it is saved (any save, or the next autosave). Its city name is the
+name it was saved under when it is a named save (the sidecar's name as typed, else the file
+name with spaces), and "Unnamed city" for the quick save slots and the autosave.
 
 **Game history.** Each daily autosave is also written to
 `saves/history/<game id>/<unix ms>-day<N>.ron` with its sidecar and picture; the newest 24
