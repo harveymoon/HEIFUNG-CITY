@@ -93,7 +93,7 @@ pub use walk::WalkGraph;
 pub use vehicle::{BodyType, CarEvent, CarPlace, Errand, Livery, OwnedCar, ParkKind, ParkSpot, VehicleClass, VehicleId, VehicleModel, Vehicles};
 pub use bots::{BotId, Bots, DeliveryBot};
 pub use power::{Battery, BatteryKind, PlantSite, PowerPlantKind, PowerStats, Weather};
-pub use landscape::{Landscape, LandscapeParams, LandscapePreset, MapEdge, WaterKind};
+pub use landscape::{Climate, Landscape, LandscapeParams, LandscapePreset, MapEdge, WaterKind};
 pub use ground::{Contamination, GroundSample, Soil};
 pub use industry::{IndustryKind, IndustrySite};
 pub use ports::{Port, PortId, PortKind, Ports, Ship, ShipKind};

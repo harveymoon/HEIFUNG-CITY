@@ -195,6 +195,38 @@ impl LandscapePreset {
     }
 }
 
+/// The map's climate: the look of the ground and plants, the weather it
+/// gets and how much sun, wind and hot ground it has. Old saves are Desert,
+/// the dry look the game always had.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Climate {
+    /// Mild, green, four seasons' worth of weather.
+    Temperate,
+    /// Dry, sunny, hot; the original look.
+    #[default]
+    Desert,
+    /// Hot, humid, lush; strong sun, heavy afternoon cloud, palms.
+    Tropical,
+    /// Snow and ice, low sun, strong wind.
+    Arctic,
+    /// Iceland-style: cold, windy, many geothermal hot spots.
+    Volcanic,
+}
+
+impl Climate {
+    pub const ALL: [Climate; 5] = [Climate::Temperate, Climate::Desert, Climate::Tropical, Climate::Arctic, Climate::Volcanic];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Climate::Temperate => "Temperate",
+            Climate::Desert => "Desert",
+            Climate::Tropical => "Tropical",
+            Climate::Arctic => "Arctic",
+            Climate::Volcanic => "Volcanic",
+        }
+    }
+}
+
 /// What the New Game window's levers set.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -211,6 +243,8 @@ pub struct LandscapeParams {
     pub islands: u8,
     /// Lay the through highway at the start.
     pub highway: bool,
+    /// Ground, plants, weather and energy resources.
+    pub climate: Climate,
 }
 
 impl Default for LandscapeParams {
@@ -231,7 +265,7 @@ impl LandscapeParams {
             LandscapePreset::Flat => (0.0, 0.0, 0.0, 0),
         };
         // Every map has its highway from elsewhere to elsewhere.
-        Self { preset, seed, water, relief, branching, islands, highway: true }
+        Self { preset, seed, water, relief, branching, islands, highway: true, climate: Climate::default() }
     }
 
     /// The old map: flat, dry, no highway. Tests that need open ground use it.
