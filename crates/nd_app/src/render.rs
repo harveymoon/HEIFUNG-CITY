@@ -60,6 +60,7 @@ mod swap;
 /// [layers] Map view: a flat street map with names and pins.
 mod mapview;
 pub use focus::{POLICE_GLOW, TRAFFIC_BLUE};
+pub use layers::danger_color;
 pub use mapview::{zone_tint as map_zone_tint, PIN_KEY as MAP_PIN_KEY, ROAD_KEY as MAP_ROAD_KEY};
 /// The sky dome: light pollution at night, glare round the sun by day.
 mod sky;
@@ -168,11 +169,14 @@ pub struct Overlays {
     /// drawn flat like a street map with their names, the zones tinted and
     /// pins on the special buildings (`mapview`).
     pub map: bool,
+    /// [clarity] Traffic danger: crashes on the record per street segment,
+    /// drawn over everything (`layers::load_gizmos`).
+    pub danger: bool,
 }
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false }
+        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false }
     }
 }
 
@@ -458,6 +462,10 @@ impl Plugin for RenderPlugin {
         app.add_plugins(look::LookPlugin);
         app.insert_gizmo_config(layers::XrayGizmos, bevy::gizmos::config::GizmoConfig { depth_bias: -1.0, line: bevy::gizmos::config::GizmoLineConfig { width: 3.0, ..default() }, ..default() });
         app.add_systems(Update, layers::layer_gizmos.in_set(SimSet::Sync).after(lift_movers));
+        // [clarity] Traffic load lines and crash markers over everything.
+        app.insert_gizmo_config(layers::LoadGizmos, bevy::gizmos::config::GizmoConfig { depth_bias: -1.0, line: bevy::gizmos::config::GizmoLineConfig { width: 5.0, ..default() }, ..default() });
+        app.add_systems(Update, layers::load_gizmos.in_set(SimSet::Sync).after(lift_movers));
+        app.add_systems(Update, layers::danger_gizmos.in_set(SimSet::Sync).after(lift_movers));
         app.add_plugins(mapview::MapViewPlugin);
         // [districts] The district layer; [tourism] visitors on foot, after
         // the citizens whose figure cache they share.

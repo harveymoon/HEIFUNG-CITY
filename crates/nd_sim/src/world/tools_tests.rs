@@ -546,3 +546,26 @@ fn a_save_from_before_the_tools_loads() {
     assert!(w2.pillars.is_empty() && w2.traffic.junction_rules.is_empty() && w2.crosswalks.rules.is_empty());
     assert_eq!(w2.roads.alive_segments().count(), w.roads.alive_segments().count());
 }
+
+/// [clarity] Walkers take the footbridge over the crosswalk when it costs
+/// only a little more, but not when it is a real detour: from the far side
+/// of the crosswalk (away from the stairs) they cross at grade.
+#[test]
+fn walkers_take_a_footbridge_only_when_it_is_no_big_detour() {
+    let (mut w, cr) = zebra_town();
+    w.economy.treasury = 1.0e6;
+    w.set_crossing_upgrade(cr, CrossingUpgrade::Footbridge).unwrap();
+    let cr = w.walk.crossings.iter().position(|c| c.bridged).unwrap() as u32;
+    let c = &w.walk.crossings[cr as usize];
+    let (a, b) = (w.walk.nodes[c.a as usize].pos, w.walk.nodes[c.b as usize].pos);
+    let fb = w.walk.footbridges[0].clone();
+    let along = (fb.foot[0] - fb.top[0]).normalize();
+    let climbs = |w: &World, from: Vec2, to: Vec2| {
+        let (_, nodes) = w.walk.route(from, to).expect("a way across");
+        nodes.iter().any(|&n| w.walk.nodes[n as usize].level > 0.0)
+    };
+    // On the stairs' side: a few metres more, so over the bridge.
+    assert!(climbs(&w, a + along * 15.0, b + along * 15.0), "takes the bridge when it is on the way");
+    // From the other side, the bridge would be a long way round.
+    assert!(!climbs(&w, a - along * 40.0, b - along * 40.0), "no big detour for a bridge");
+}

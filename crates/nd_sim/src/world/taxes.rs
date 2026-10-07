@@ -65,6 +65,12 @@ impl World {
     pub fn set_import_duty(&mut self, duty: f32) -> f32 {
         self.economy.taxes.set_import_duty(duty)
     }
+
+    /// [clarity] Set the tourist tax on a hotel night; the demand for
+    /// visits follows at the next tourism update.
+    pub fn set_tourist_tax(&mut self, rate: f32) -> f32 {
+        self.economy.taxes.set_tourist_tax(rate)
+    }
 }
 
 #[cfg(test)]

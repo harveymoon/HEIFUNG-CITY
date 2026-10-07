@@ -50,6 +50,10 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 return;
             }
             neon(ui, &sim.world.citizens[id].name);
+            if let Some(b) = super::person::activity_heading(ui, &sim.world, id) {
+                *selection = Selection::Building(b);
+                return;
+            }
             citizen_summary(ui, &sim.world, &sim.world.citizens[id]);
             super::estate::citizen_line(ui, &sim.world, id);
             ui.add_space(4.0);
@@ -106,6 +110,10 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                     }
                     return;
                 }
+            }
+            // [clarity] Where from, where to, why, and who is driving.
+            if journey_card(ui, w, id, selection) {
+                return;
             }
             // [services] A wreck waiting for its tow, or the truck coming.
             if tow_status(ui, w, id, selection) {
@@ -497,6 +505,53 @@ pub fn occupants(w: &nd_sim::World, id: nd_sim::CarId) -> Vec<nd_sim::CitizenId>
         }
     }
     out
+}
+
+/// [clarity] "coming from [place] → going to [place]" (each a button that
+/// selects it), what the vehicle is doing, and who is at the wheel when
+/// that is not a driver card of its own: a city vehicle's crew (citizens
+/// on the station's payroll, as faces), or an unknown person from out of
+/// the city. True when the selection changed.
+fn journey_card(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selection: &mut Selection) -> bool {
+    let Some(j) = w.car_journey(id) else { return false };
+    let mut picked: Option<Selection> = None;
+    ui.add_space(2.0);
+    ui.label(egui::RichText::new(capitalise(&j.purpose)).size(15.0).color(egui::Color32::from_rgb(120, 220, 255)).strong());
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.label(egui::RichText::new("coming from").small().weak());
+        if super::person::place_button(ui, &j.from) {
+            picked = j.from.building.map(Selection::Building).or(j.from.car.map(Selection::Car));
+        }
+        match &j.to {
+            Some(t) => {
+                ui.label(egui::RichText::new("→ going to").small().weak());
+                if super::person::place_button(ui, t) {
+                    picked = t.building.map(Selection::Building).or(t.car.map(Selection::Car));
+                }
+            }
+            None => {
+                ui.label(egui::RichText::new(format!("→ {}", j.purpose)).small().weak());
+            }
+        }
+    });
+    match &j.driver {
+        nd_sim::world::Driver::Crew(crew) => {
+            section(ui, if crew.len() == 1 { "OFFICER" } else { "CREW" });
+            super::portrait::grid(ui, w, crew, 24, selection);
+        }
+        nd_sim::world::Driver::Unknown(who) => {
+            ui.label(egui::RichText::new(format!("At the wheel: {who}")).small().weak());
+        }
+        nd_sim::world::Driver::Citizen(_) => {}
+    }
+    match picked {
+        Some(s) => {
+            *selection = s;
+            true
+        }
+        None => false,
+    }
 }
 
 /// Why someone is on the road, in a few words.

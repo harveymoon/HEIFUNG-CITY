@@ -28,6 +28,45 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
         (t.duty_today, t.duty_yesterday, t.import_duty)
     };
 
+    // [clarity] Every tax the city raises, in one table: what each brought
+    // in today and yesterday (from the ledger).
+    section(ui, "ALL TAXES");
+    {
+        use nd_sim::economy::Flow;
+        let l = &p.sim.world.economy.ledger;
+        let t = &p.sim.world.economy.taxes;
+        let lines: [(&str, Flow, String); 5] = [
+            ("Income tax", Flow::IncomeTax, "by home tier, below".into()),
+            ("Business tax", Flow::BusinessTax, "on takings, by kind, below".into()),
+            ("Tourist tax", Flow::TouristTax, format!("{:.0}% of a hotel night", t.tourist_tax() * 100.0)),
+            ("Import duty", Flow::ImportDuty, format!("{:.0}% on imports", t.import_duty * 100.0)),
+            ("Tolls", Flow::Tolls, format!("{} booths", p.sim.world.tolls.booths.len())),
+        ];
+        egui::Grid::new("tax_all").num_columns(4).spacing(egui::vec2(10.0, 2.0)).show(ui, |ui| {
+            ui.label(egui::RichText::new("tax").small().weak());
+            ui.label(egui::RichText::new("rate").small().weak());
+            ui.label(egui::RichText::new("today").small().weak());
+            ui.label(egui::RichText::new("yesterday").small().weak());
+            ui.end_row();
+            let (mut sum_t, mut sum_y) = (0.0, 0.0);
+            for (name, flow, rate) in lines {
+                let (td, yd) = (l.today_of(flow), l.yesterday_of(flow));
+                sum_t += td;
+                sum_y += yd;
+                ui.label(egui::RichText::new(name).small());
+                ui.label(egui::RichText::new(rate).small().weak());
+                ui.label(egui::RichText::new(format!("{td:.0}")).small());
+                ui.label(egui::RichText::new(format!("{yd:.0}")).small());
+                ui.end_row();
+            }
+            ui.label(egui::RichText::new("All taxes").small().strong().color(GOLD));
+            ui.label("");
+            ui.label(egui::RichText::new(format!("{sum_t:.0}")).small().strong());
+            ui.label(egui::RichText::new(format!("{sum_y:.0}")).small().strong());
+            ui.end_row();
+        });
+    }
+
     section(ui, "LAST COLLECTION BY LAND USE");
     // One stacked bar: each land use's share of the take, in its zone colour.
     let (resp, painter) = ui.allocate_painter(egui::vec2(ui.available_width().min(360.0), 16.0), egui::Sense::hover());
@@ -104,6 +143,27 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
             p.sim.world.set_import_duty(pct / 100.0);
         }
         ui.label(egui::RichText::new(format!("{duty_today:.0} today · {:.0} imported", p.sim.world.economy.market.imports_today)).small().weak());
+    });
+
+    // [clarity] The tourist tax: a share of every hotel night, paid by the
+    // visitor. Dearer keeps some away; cheaper draws more.
+    section(ui, "TOURIST TAX");
+    ui.horizontal(|ui| {
+        let t = &p.sim.world.economy.taxes;
+        let mut pct = t.tourist_tax() * 100.0;
+        let pull = t.tourist_pull();
+        ui.spacing_mut().slider_width = 160.0;
+        let hint_text = format!(
+            "A share of every hotel night, paid by the visitor to the city (standard {:.0}%). Dearer keeps some visitors away, cheaper draws more: at this rate {:.0}% of the visits the city would otherwise get.",
+            nd_sim::tourism::TOURIST_TAX * 100.0,
+            pull * 100.0
+        );
+        if ui.add(egui::Slider::new(&mut pct, 0.0..=nd_sim::tax::MAX_TOURIST_TAX * 100.0).step_by(0.5).suffix("%").fixed_decimals(1)).on_hover_text(hint_text).changed() {
+            p.sim.world.set_tourist_tax(pct / 100.0);
+        }
+        let s = &p.sim.world.tourism.stats;
+        let col = if pull < 0.95 { WARN } else if pull > 1.05 { LESS } else { egui::Color32::LIGHT_GRAY };
+        ui.label(egui::RichText::new(format!("{:.0} today · {:.0} yesterday · visits ×{pull:.2}", s.tax_today, s.tax_yesterday)).small().color(col));
     });
 
     section(ui, "TOLL BOOTHS");

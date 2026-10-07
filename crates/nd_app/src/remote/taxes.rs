@@ -40,6 +40,8 @@ pub fn schedule(w: &World) -> Value {
         "by_land_use": by_land_use,
         "import_duty": round(t.import_duty), "import_duty_max": nd_sim::tax::MAX_IMPORT_DUTY,
         "duty_today": round(t.duty_today), "duty_yesterday": round(t.duty_yesterday),
+        "tourist_tax": round(t.tourist_tax()), "tourist_tax_max": nd_sim::tax::MAX_TOURIST_TAX, "tourist_pull": round(t.tourist_pull()),
+        "tourist_tax_today": round(w.tourism.stats.tax_today), "tourist_tax_yesterday": round(w.tourism.stats.tax_yesterday),
         "standard": t.is_standard(),
         "tax_today": round(w.economy.tax_today),
         "note": "rates are shares (0.12 = 12%); standard: 12% of incomes, 5% of business takings, no duty. pull < 1 means the line is taxed over the standard and grows less",
@@ -78,7 +80,8 @@ fn rate_of(v: &Value) -> Result<f32, String> {
 /// `taxes {}` reads; `{set: {line: rate, ...}}` sets lines (a key, an
 /// industry kind, or a land use name for its whole group: residential,
 /// commercial, entertainment, industrial); `{category, rate}` sets one;
-/// `{import_duty}` sets the duty; `{reset: true}` goes back to standard.
+/// `{import_duty}` sets the duty; `{tourist_tax}` the tax on a hotel
+/// night; `{reset: true}` goes back to standard.
 pub fn command(cmd: &Value, w: &mut World) -> Result<Value, String> {
     let mut changed: Vec<Value> = Vec::new();
     if opt_bool(cmd, "reset")?.unwrap_or(false) {
@@ -114,6 +117,11 @@ pub fn command(cmd: &Value, w: &mut World) -> Result<Value, String> {
     if let Some(v) = field(cmd, "import_duty") {
         let set = w.set_import_duty(rate_of(v)?);
         changed.push(json!({ "import_duty": round(set) }));
+    }
+    // [clarity] The tourist tax on a hotel night.
+    if let Some(v) = field(cmd, "tourist_tax") {
+        let set = w.set_tourist_tax(rate_of(v)?);
+        changed.push(json!({ "tourist_tax": round(set) }));
     }
     let mut out = schedule(w);
     out["changed"] = json!(changed);
