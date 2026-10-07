@@ -229,13 +229,23 @@ impl World {
     /// unknown id.
     pub fn implement_project(&mut self, id: u64) -> Option<Vec<String>> {
         if self.project.as_ref().is_some_and(|p| p.id == id) {
-            self.implement();
+            if let Err(why) = self.try_implement() {
+                return Some(vec![why]);
+            }
             return Some(self.plan_warnings.clone());
         }
         let i = self.parked_projects.iter().position(|p| p.id == id)?;
         let p = self.parked_projects.remove(i);
         let active = self.project.replace(p);
-        self.implement();
+        if let Err(why) = self.try_implement() {
+            // Refused: it goes back to waiting where it was.
+            if let Some(p) = self.project.take() {
+                self.parked_projects.insert(i, p);
+            }
+            self.project = active;
+            self.plan_changed();
+            return Some(vec![why]);
+        }
         self.project = active;
         self.plan_changed();
         Some(self.plan_warnings.clone())
@@ -619,16 +629,153 @@ impl World {
 
     /// Apply the project to the master plan and rebuild roads, zones, lots and
     /// lanes. Buildings whose lot survives are kept; the rest are demolished.
+    ///
+    /// Refused (the project stays pending, the reason in
+    /// `implement_refused`) while the project's roads would take one of
+    /// the city's own structures: see `try_implement`.
     pub fn implement(&mut self) {
-        let Some(project) = self.project.take() else { return };
+        let _ = self.try_implement();
+    }
+
+    /// `implement`, saying why when it refuses. Road works may buy out and
+    /// pull down what grew, but never a depot, station, plant, service
+    /// building, dock, metro station or cargo hub the player placed: a
+    /// project that would take one (its roads run over the lot, or leave it
+    /// with no street to stand on) is refused until the road is moved or
+    /// the structure bulldozed. The tools outline those structures in red
+    /// while the road is planned (`project_blockers`).
+    pub fn try_implement(&mut self) -> Result<(), String> {
+        let Some(project) = self.project.take() else {
+            self.implement_refused = None;
+            return Ok(());
+        };
+        if !project.is_empty() {
+            let blockers = self.implement_blockers(&project);
+            if !blockers.is_empty() {
+                let names: Vec<String> = blockers.iter().filter_map(|b| self.buildings.get(*b)).map(|b| b.name.clone()).collect();
+                let why = format!("Not implemented: the planned roads would take {}. Move the road clear of it (outlined in red) or bulldoze it first.", names.join(", "));
+                self.project = Some(project);
+                self.implement_refused = Some(why.clone());
+                return Err(why);
+            }
+        }
+        self.implement_refused = None;
         self.plan_warnings = self.conflict_warnings(&project);
         if project.is_empty() {
             self.plan_changed();
-            return;
+            return Ok(());
         }
         self.master = project.apply_to(&self.master);
         self.rebuild_from_master();
         self.apply_industry_strokes(&project);
+        Ok(())
+    }
+
+    /// The city's own structures (`is_civic_structure`) that the active
+    /// project's roads run over: what the road tools outline in red. A
+    /// quick test of the planned roads' asphalt against the structures'
+    /// lots, cheap enough to run whenever the plan changes.
+    pub fn project_blockers(&self) -> Vec<BuildingId> {
+        match &self.project {
+            Some(p) => self.road_blockers(p),
+            None => Vec::new(),
+        }
+    }
+
+    /// Everything that would refuse `project`: the structures its roads run
+    /// over, and (for a project that changes roads at all) any the rebuild
+    /// itself would lose, found by implementing it on a copy of the world:
+    /// a structure left with no street to front loses its lot too.
+    pub fn implement_blockers(&self, project: &Project) -> Vec<BuildingId> {
+        let mut out = self.road_blockers(project);
+        let pv = preview(&self.master, project);
+        let roads_change = !pv.planned_roads.is_empty() || !pv.removed_roads.is_empty() || !pv.planned_rings.is_empty() || !pv.removed_rings.is_empty();
+        if roads_change && self.buildings.values().any(Self::is_civic_structure) {
+            let mut trial = self.clone();
+            trial.project = None;
+            trial.master = project.apply_to(&trial.master);
+            trial.rebuild_from_master();
+            for (id, b) in self.buildings.iter() {
+                if Self::is_civic_structure(b) && !trial.buildings.contains_key(id) && !out.contains(&id) {
+                    out.push(id);
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// The city's own structures whose lots the asphalt of one road would
+    /// cover (`pts` drawn at `levels`, as the road tool and the preview
+    /// give them): what the road tools outline in red, and what refuses
+    /// implementing. Points on a road already built are skipped (a junction
+    /// onto the street in front is no trespass), and so are bored tunnels,
+    /// which leave the ground alone.
+    pub fn structures_in_way(&self, pts: &[Vec2], levels: &[f32], fwd: u8, bwd: u8, kind: RoadKind) -> Vec<BuildingId> {
+        let civic: Vec<(BuildingId, &Lot)> = self
+            .buildings
+            .iter()
+            .filter(|(_, b)| Self::is_civic_structure(b))
+            .filter_map(|(id, b)| self.lots.get(b.lot).filter(|l| l.building == Some(id) && l.polygon.len() >= 3).map(|l| (id, l)))
+            .collect();
+        let mut out: Vec<BuildingId> = Vec::new();
+        if civic.is_empty() {
+            return out;
+        }
+        let hw = match kind {
+            RoadKind::Street => (fwd + bwd).max(2) as f32 * crate::roads::LANE_WIDTH * 0.5 + crate::roads::SHOULDER,
+            RoadKind::Path => crate::roads::PATH_HALF_WIDTH,
+            RoadKind::Rail => crate::roads::RAIL_HALF_WIDTH,
+        };
+        for (i, w) in pts.windows(2).enumerate() {
+            let (la, lb) = (levels.get(i).copied().unwrap_or(0.0), levels.get(i + 1).copied().unwrap_or(0.0));
+            let n = (w[0].distance(w[1]).ceil() as usize).max(1);
+            for k in 0..=n {
+                let f = k as f32 / n as f32;
+                if la + (lb - la) * f <= crate::roads::TUNNEL_LEVEL {
+                    continue;
+                }
+                let p = w[0].lerp(w[1], f);
+                if self.roads.nearest_where(p, |s| !s.is_rail()).is_some_and(|(sid, _, q)| q.distance(p) < self.roads.segment(sid).half_width()) {
+                    continue;
+                }
+                for (id, l) in &civic {
+                    if out.contains(id) || l.center.distance(p) > hw + l.polygon.iter().map(|c| c.distance(l.center)).fold(0.0, f32::max) {
+                        continue;
+                    }
+                    if point_in_polygon(p, &l.polygon) || crate::geom::distance_to_outline(p, &l.polygon) < hw - 0.5 {
+                        out.push(*id);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Civic structures `project`'s new or changed roads (or roundabouts)
+    /// would run over (`structures_in_way` for each).
+    fn road_blockers(&self, project: &Project) -> Vec<BuildingId> {
+        let pv = preview(&self.master, project);
+        let mut out: Vec<BuildingId> = Vec::new();
+        for ((_, pts, fwd, bwd, kind), levels) in pv.planned_roads.iter().zip(&pv.planned_levels) {
+            for id in self.structures_in_way(pts, levels, *fwd, *bwd, *kind) {
+                if !out.contains(&id) {
+                    out.push(id);
+                }
+            }
+        }
+        let civic = |b: &BuildingId| self.buildings.get(*b).is_some_and(Self::is_civic_structure);
+        for (_, effect) in &pv.planned_rings {
+            if let Some(ring) = effect.ring {
+                for lot in self.roundabout_takes(ring) {
+                    if let Some(b) = self.lots[lot].building.filter(|b| civic(b) && !out.contains(b)) {
+                        out.push(b);
+                    }
+                }
+            }
+        }
+        out.sort();
+        out
     }
 
     /// Convenience for scripts and tests: build a road right away.
@@ -697,10 +844,23 @@ impl World {
             };
             roads.add_polyline_levels(&points, &levels, fwd, bwd, kind);
         }
-        roads.version = self.roads.version + 1;
-        self.roads = roads;
-        self.mark_bridges();
-        self.rebuild_road_components();
+        // A zoning edit, or a facility fused onto what is there, gives back
+        // exactly the roads that are built. Then the network, its ids and
+        // everything hanging off them (lanes, vehicles, trains, bus stops,
+        // signals, takeover blocks) stay as they are: only lots are re-cut.
+        let roads_changed = !same_layout(&self.roads, &roads);
+        if roads_changed {
+            // Player arrows note where they stand before ids are renumbered.
+            self.traffic.anchor_lane_use(&self.roads);
+            roads.version = self.roads.version + 1;
+            self.roads = roads;
+            self.mark_bridges();
+            self.rebuild_road_components();
+        } else {
+            // Still a new version: the app regrades and redraws the ground
+            // and lots on it (lot pads change with the zoning).
+            self.roads.version += 1;
+        }
 
         // Parcels along every road, the master's zoning onto them, a lot
         // for every zoned parcel; then old lots with buildings are matched
@@ -744,7 +904,9 @@ impl World {
         let grid = LotGrid::new(&self.lots);
         // (building, where it stood, pulled down for the works?)
         let mut demolish: Vec<(BuildingId, Vec2, bool)> = Vec::new();
-        for (_, old) in old_lots.iter() {
+        // Old lot key to the new lot its building moved onto.
+        let mut carried: HashMap<LotId, LotId> = HashMap::new();
+        for (old_id, old) in old_lots.iter() {
             let Some(bid) = old.building else { continue };
             let found = grid
                 .near(old.center, 6.0)
@@ -766,6 +928,7 @@ impl World {
                     demolish.push((bid, old.center, true));
                 }
                 Some(new_lot) => {
+                    carried.insert(old_id, new_lot);
                     self.lots[new_lot].building = Some(bid);
                     if let Some(b) = self.buildings.get_mut(bid) {
                         b.lot = new_lot;
@@ -786,38 +949,107 @@ impl World {
             }
         }
 
+        // Everything else that names a lot by key follows it to its new key.
+        self.remap_lot_keys(&old_lots, &grid, &carried);
+
         // Road heights and the ground they are graded into; new bridges are paid for.
         self.rebuild_ground();
         self.charge_bridges();
 
-        // Lanes and cars.
-        self.traffic.rebuild(&self.roads);
-        self.apply_tolls();
-        for (_, car) in self.traffic.clear_cars() {
-            // Through traffic carries on along the highway.
-            if Self::is_through_car(&car) && self.resume_through_car(&car) {
-                continue;
-            }
-            self.strand_car(car);
+        if roads_changed {
+            self.carry_traffic();
+            // Trains ran on track that may be gone or re-laid, and their stops
+            // and node ids are stale either way: everyone gets off where the
+            // train stands and the next headway brings fresh ones.
+            self.clear_trains();
+            self.resnap_bus_stops();
         }
         // [carlife] Parked cars on streets that changed find a kerb again.
         self.refresh_kerbs();
-        // Trains ran on track that may be gone or re-laid, and their stops
-        // and node ids are stale either way: everyone gets off where the
-        // train stands and the next headway brings fresh ones.
-        self.clear_trains();
-        // Bus stops follow the streets they sat on, or go.
-        for route in self.transit.routes.values_mut() {
-            route.stops = route.stops.iter().filter_map(|s| BusStop::snap(&self.roads, s.pos)).collect();
-        }
-        self.transit.refresh_legs(&self.traffic.net);
         self.refresh_rail_links();
         self.refresh_port_links();
         self.rebuild_walk();
+        // Coverage is per lot key: the old map names other lots now.
+        self.refresh_coverage();
 
         self.events.push(SimEvent::RoadsChanged);
         self.events.push(SimEvent::LotsChanged);
         self.events.push(SimEvent::PlanChanged);
+    }
+
+    /// Lanes for the new roads, with every vehicle carried across them
+    /// (`traffic/remap.rs`): a vehicle on a lane that did not change drives
+    /// on as it was, one on a reshaped lane goes on from the new lane under
+    /// it. Only one whose street was removed, or that has no way on from
+    /// where it stands, leaves the road: through traffic rejoins what is
+    /// left of the highway, anything else parks or is stranded there.
+    pub(super) fn carry_traffic(&mut self) {
+        let report = self.traffic.rebuild_carrying(&self.roads);
+        self.apply_tolls();
+        for (id, car) in report.lost {
+            // (A service unit only looks like through traffic: its station
+            // recovers it.)
+            if Self::is_through_car(&car) && self.services.unit_of_car(id).is_none() && self.resume_through_car(&car) {
+                continue;
+            }
+            self.strand_car(car);
+        }
+    }
+
+    /// Bus stops follow the streets they sat on, or go. A stop that goes is
+    /// taken out the way the player removing it would be
+    /// (`stop_removed`), so buses and riders bound for later stops keep
+    /// their places on the line.
+    pub(super) fn resnap_bus_stops(&mut self) {
+        let ids: Vec<RouteId> = self.transit.routes.keys().collect();
+        for rid in ids {
+            let snapped: Vec<Option<BusStop>> = self.transit.routes[rid].stops.iter().map(|s| BusStop::snap(&self.roads, s.pos)).collect();
+            for (k, s) in snapped.iter().enumerate() {
+                if let Some(s) = s {
+                    self.transit.routes[rid].stops[k] = *s;
+                }
+            }
+            for k in (0..snapped.len()).rev() {
+                if snapped[k].is_none() {
+                    self.transit.routes[rid].stops.remove(k);
+                    self.stop_removed(rid, k);
+                }
+            }
+        }
+        self.transit.refresh_legs(&self.traffic.net);
+    }
+
+    /// Every rebuild cuts lots afresh, and a fresh SlotMap hands out the
+    /// same keys again in a new order: an old key held anywhere now names
+    /// some other lot (and no `.get()` guard notices). Each old key is
+    /// mapped to the new lot its building moved onto, else the new lot
+    /// under its old centre, and the keys kept elsewhere follow: rubble by
+    /// where it lies, camps and footfall still owed to shops by their lot.
+    /// Keys with no lot any more are dropped.
+    fn remap_lot_keys(&mut self, old_lots: &SlotMap<LotId, Lot>, grid: &LotGrid, carried: &HashMap<LotId, LotId>) {
+        let lots = &self.lots;
+        let lot_at = |p: Vec2| -> Option<LotId> {
+            let near = grid.near(p, 6.0);
+            near.iter().copied().find(|&id| lots.get(id).is_some_and(|l| l.contains(p))).or_else(|| {
+                near.iter()
+                    .filter_map(|&id| lots.get(id).map(|l| (id, l.center.distance(p))))
+                    .filter(|(_, d)| *d < 6.0)
+                    .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
+                    .map(|(id, _)| id)
+            })
+        };
+        let map: HashMap<LotId, LotId> = old_lots.iter().filter_map(|(id, l)| carried.get(&id).copied().or_else(|| lot_at(l.center)).map(|n| (id, n))).collect();
+        let rubble = std::mem::take(&mut self.services.rubble);
+        let rubble: Vec<(LotId, Vec2, u64)> = rubble.into_iter().filter_map(|(lot, at, until)| lot_at(at).or_else(|| map.get(&lot).copied()).map(|n| (n, at, until))).collect();
+        self.services.rubble = rubble;
+        for camp in &mut self.society.homeless.camps {
+            camp.lot = camp.lot.and_then(|l| map.get(&l).copied());
+        }
+        for c in self.citizens.values_mut() {
+            if !c.pending_footfall.is_empty() {
+                c.pending_footfall = c.pending_footfall.iter().filter_map(|l| map.get(l).copied()).collect();
+            }
+        }
     }
 
     /// Union-find over the alive street and path segments: two nodes share
@@ -946,6 +1178,15 @@ impl World {
                 }
             }
         }
+        // Households too, not only their members: the household's home
+        // would otherwise dangle until the hourly `sync_households`.
+        for hid in b.households.iter().copied() {
+            if let Some(h) = self.households.get_mut(hid) {
+                if h.home == Some(bid) {
+                    h.home = None;
+                }
+            }
+        }
         for cid in b.workers.iter().copied() {
             if self.citizens.get(cid).is_some_and(|c| c.work == Some(bid)) {
                 self.lay_off(cid, None);
@@ -1040,6 +1281,19 @@ impl World {
             c.next_decision_tick = self.clock.tick + 1;
         }
     }
+}
+
+/// Do two road networks have the same layout: the same nodes where they
+/// were, the same pieces between them with the same lanes, kind and
+/// classification, the same rings? Only what the plan decides is compared,
+/// not what the world derives afterwards (bridges, decks, heights), so a
+/// network rebuilt from an unchanged plan compares equal to the one built.
+fn same_layout(a: &RoadNetwork, b: &RoadNetwork) -> bool {
+    a.nodes.len() == b.nodes.len()
+        && a.segments.len() == b.segments.len()
+        && a.rings == b.rings
+        && a.nodes.iter().zip(&b.nodes).all(|(x, y)| x.pos == y.pos && x.level == y.level && x.segments == y.segments)
+        && a.segments.iter().zip(&b.segments).all(|(x, y)| x.a == y.a && x.b == y.b && x.lanes_fwd == y.lanes_fwd && x.lanes_bwd == y.lanes_bwd && x.alive == y.alive && x.kind == y.kind && x.ring == y.ring && x.ramp == y.ramp)
 }
 
 /// Lots bucketed by the cells their bounding boxes cover, so "which new

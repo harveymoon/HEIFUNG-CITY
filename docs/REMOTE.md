@@ -189,6 +189,8 @@ them a land use.
 
 Reply: `gesture_id`, `implemented`, `project` (`id`, `name`, `steps`, `redo`), `projects`, `plan_version`.
 
+Road works never take the city's own structures (depots, stations, yards, plants, service buildings, docks, metro stations, cargo hubs). An implement whose roads would run over one, or leave one with no street, is refused and the project stays pending: `implemented` is false (`project implement` replies `did: false`), `implement_refused` gives the reason, and every project reply lists `blockers` (`[{id, name}]`), the structures the pending roads run over now (drawn with a wide red border in the game). Move the road or bulldoze the structure, then implement again.
+
 ### Placing buildings
 
 `place {kind, x, y}` (or `pos: [x, y]`):
