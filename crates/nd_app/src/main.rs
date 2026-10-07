@@ -16,10 +16,21 @@ mod remote;
 mod render;
 mod sim;
 mod tools;
+mod train_select;
 mod ui;
 
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
+
+/// The starting window size: `ND_WINDOW=WxH`, else 1600 x 900.
+fn window_size() -> WindowResolution {
+    let parsed = std::env::var("ND_WINDOW").ok().and_then(|v| {
+        let (w, h) = v.trim().split_once(['x', 'X'])?;
+        Some((w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?))
+    });
+    let (w, h) = parsed.filter(|&(w, h)| w >= 320 && h >= 240).unwrap_or((1600, 900));
+    WindowResolution::new(w, h)
+}
 
 fn main() {
     App::new()
@@ -27,7 +38,8 @@ fn main() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "District 2040".into(),
-                resolution: WindowResolution::new(1600, 900),
+                // `ND_WINDOW=1268x900` for another starting size (UI layout checks).
+                resolution: window_size(),
                 // `ND_NO_VSYNC=1` for measuring frame rates.
                 present_mode: if std::env::var("ND_NO_VSYNC").is_ok_and(|v| v == "1") { bevy::window::PresentMode::AutoNoVsync } else { bevy::window::PresentMode::AutoVsync },
                 ..default()

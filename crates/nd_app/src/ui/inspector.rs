@@ -13,7 +13,7 @@ use crate::tools::Selection;
 /// The inspector window on a selected building or car, on the right where
 /// the person pane opens too. Closing it deselects.
 pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
-    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_)) {
+    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_)) {
         return;
     }
     let mut open = true;
@@ -137,6 +137,8 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             why_and_trip(ui, w, id, selection, !driver_shown);
         }
         Selection::Bot(id) => bot(ui, &sim.world, selection, id),
+        // [train-inspect]
+        Selection::Train(_) | Selection::Metro(_) => super::train::show(ui, &sim.world, selection, assets),
         Selection::Parked(vid) => {
             let Some(owned) = sim.world.vehicles.cars.get(vid) else {
                 *selection = Selection::None;

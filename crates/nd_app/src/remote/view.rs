@@ -229,6 +229,8 @@ pub fn selection(w: &World, sel: Selection) -> Value {
         Selection::Car(id) => json!({ "kind": "car", "id": key_str(id), "label": w.car_label(id), "why": w.traffic.cars.contains_key(id).then(|| w.traffic.stop_reason(id).text(|c| w.car_label(c))) }),
         Selection::Parked(id) => json!({ "kind": "parked_car", "id": key_str(id) }),
         Selection::Bot(id) => json!({ "kind": "bot", "id": key_str(id), "name": nd_sim::bots::bot_name(w, id) }),
+        Selection::Train(id) => json!({ "kind": "train", "id": key_str(id), "headcode": w.rail.trains.get(id).map(|t| crate::train_select::headcode(id, t.kind)) }),
+        Selection::Metro(id) => json!({ "kind": "metro_train", "id": key_str(id), "headcode": crate::train_select::metro_code(id), "line": w.subway.trains.get(id).and_then(|t| w.subway.lines.get(t.line)).map(|l| l.name.clone()) }),
     }
 }
 
@@ -781,7 +783,7 @@ pub fn train_row(w: &World, id: TrainId, t: &Train) -> Value {
     let head = nd_sim::rail::point_along(&t.poly, t.s).0;
     let next = t.stops.get(t.next_stop).map(|(b, _)| *b);
     json!({
-        "id": key_str(id), "kind": match t.kind { TrainKind::Passenger => "passenger", TrainKind::Freight => "freight" },
+        "id": key_str(id), "headcode": crate::train_select::headcode(id, t.kind), "kind": match t.kind { TrainKind::Passenger => "passenger", TrainKind::Freight => "freight" },
         "cars": t.cars, "pos": v2(head), "speed": round(t.speed), "held": t.held, "dwell": round(t.dwell),
         "passengers": t.passengers.len(), "cargo_units": round(t.cargo.iter().map(|c| c.amount).sum::<f32>()),
         "next_stop": opt_key(next), "next_stop_name": building_name(w, next), "stops": t.stops.len(),

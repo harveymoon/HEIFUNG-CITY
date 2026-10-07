@@ -22,6 +22,8 @@ pub fn label(sim: &Sim, sel: Selection) -> String {
         Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|v| w.citizens.get(v.owner)).map_or_else(|| "a parked car".into(), |c| format!("{}'s parked car", c.name)),
         Selection::Building(id) => w.buildings.get(id).map_or_else(|| "a building".into(), |b| b.name.clone()),
         Selection::Bot(id) => nd_sim::bots::bot_name(w, id),
+        Selection::Train(id) => w.rail.trains.get(id).map_or_else(|| "a train".into(), |t| format!("train {}", crate::train_select::headcode(id, t.kind))),
+        Selection::Metro(id) => w.subway.trains.get(id).and_then(|t| w.subway.lines.get(t.line)).map_or_else(|| "a metro train".into(), |l| format!("{} train {}", l.name, crate::train_select::metro_code(id))),
     }
 }
 

@@ -630,6 +630,10 @@ pub enum Selection {
     Toll(u32),
     /// [camera] A pavement delivery robot (`world.bots`).
     Bot(nd_sim::BotId),
+    /// [train-inspect] A train on the railway (`world.rail.trains`).
+    Train(nd_sim::TrainId),
+    /// [train-inspect] A metro train in its tunnel (`world.subway.trains`).
+    Metro(nd_sim::MetroTrainId),
 }
 
 pub struct ToolsPlugin;
@@ -1239,7 +1243,8 @@ pub(crate) fn tool_input(
             // [free-placement] What a click here would do, for the panel and
             // the outline: any lot, or unzoned ground with road access.
             let what = tools.build_item();
-            tools.build_here = match (ground, what) {
+            // [plot-hover] The remote API's pin stands in for the pointer.
+            tools.build_here = match (tools.cursor_pin.or(ground), what) {
                 (_, nd_sim::Placeable::Toll(_) | nd_sim::Placeable::Rail(_) | nd_sim::Placeable::Dock(_)) | (None, _) => None,
                 (Some(p), _) => {
                     let w = &sim.world;
@@ -1355,6 +1360,15 @@ pub(crate) fn pick(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
         .map(|(at, id, car)| (at.distance(p), id, car))
         .filter(|(d, _, car)| *d < if car.bus.is_some() { 8.0 } else { 4.5 })
         .min_by(|a, b| a.0.total_cmp(&b.0));
+    // [train-inspect] A train: any car of it, by its drawn pose (the metro's
+    // only from underground). A road vehicle right on the spot wins, at a
+    // level crossing say.
+    let train = crate::train_select::pick(w, p, f, under);
+    if let Some((dt, sel)) = train {
+        if car.is_none_or(|c| c.0 > dt + 1.5) {
+            return sel;
+        }
+    }
     if under {
         return car.map_or(Selection::None, |(_, id, _)| Selection::Car(id));
     }
@@ -1412,13 +1426,15 @@ pub(crate) fn pick(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, selection: Res<Selection>, mut eplan: ResMut<EffectivePlan>, cams: Query<&OrbitCamera>, time: Res<Time>, (cam_mode, follow): (Res<crate::camera::CameraMode>, Res<crate::camera::CameraFollow>)) {
+fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, selection: Res<Selection>, mut eplan: ResMut<EffectivePlan>, cams: Query<&OrbitCamera>, time: Res<Time>, (cam_mode, follow, assets): (Res<crate::camera::CameraMode>, Res<crate::camera::CameraFollow>, Res<crate::assets::GameAssets>)) {
     // Re-sync so a point dragged by `tool_input` this frame draws where it is.
     let plan = eplan.sync(&sim.world);
     // [camera] Not from inside the followed vehicle: its outline box would
     // be drawn round the eye.
     if !follow.pov_in_vehicle(&sim, *cam_mode) {
         draw_selection(&mut gizmos, &sim, *selection);
+        // [train-inspect] A train: its cars, the run ahead in its colour, its stops.
+        crate::train_select::draw(&mut gizmos, &sim, *selection, &assets.palette.car_colors, tools.depth == Depth::Underground, time.elapsed_secs());
     }
     let cyan = Color::linear_rgb(1.4, 1.6, 1.8);
     let red = Color::linear_rgb(3.0, 0.2, 0.4);
@@ -1757,6 +1773,8 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
         Selection::Toll(id) => crate::toll_select::draw(gizmos, w, id),
         // [camera] drawn by `crate::marks`, with its route and its shop.
         Selection::Bot(_) => {}
+        // [train-inspect] drawn by `crate::train_select::draw`.
+        Selection::Train(_) | Selection::Metro(_) => {}
         Selection::Building(b) => {
             lot_outline(gizmos, w, b, 1.6, gold);
             // [plant-groups] A Sunfield or Wind Park is selected whole.
@@ -2060,7 +2078,7 @@ pub(crate) fn lot_outline(gizmos: &mut Gizmos, w: &nd_sim::World, b: BuildingId,
 /// [clarity] The ends of a selected route: a small "o" (a ring) where the
 /// trip began and an "x" where it ends, standing a little above the road
 /// so they read from any height.
-fn route_ends(gizmos: &mut Gizmos, w: &nd_sim::World, origin: Option<SVec2>, end: Option<SVec2>) {
+pub(crate) fn route_ends(gizmos: &mut Gizmos, w: &nd_sim::World, origin: Option<SVec2>, end: Option<SVec2>) {
     let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
     let at = |p: SVec2, y: f32| Vec3::new(p.x, y + w.surface_height(p), p.y);
     if let Some(o) = origin {
@@ -2177,13 +2195,12 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
     }
     // [free-placement] The lot under the pointer, or the unzoned parcels a
     // lot would be made of (worked out once a frame in `tool_input`).
-    let Some((ok, _, outline)) = &tools.build_here else { return };
+    // [plot-hover] Its outline and light wall are drawn by
+    // `render::plot_hover`; here only the coverage rings.
+    let Some((_, _, outline)) = &tools.build_here else { return };
     if outline.len() < 3 {
         return;
     }
-    let mut pts: Vec<Vec3> = outline.iter().map(|&p| lift(p)).collect();
-    pts.push(pts[0]);
-    gizmos.linestrip(pts, if *ok { green } else { red });
     let r = what.radius();
     if r > 0.0 {
         let centre = nd_sim::zoning::inner_center(outline);
