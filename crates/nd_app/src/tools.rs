@@ -1534,6 +1534,14 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
             let width = if car.bus.is_some() || car.cargo.is_some() { 2.7 } else { 2.1 };
             vehicle_outline(gizmos, p, heading, car.length() + 0.6, width + 0.5, w.car_height(car) + 0.35, gold);
             car_route(gizmos, w, car, route);
+            // [services] A wreck with its recovery truck on the way: the
+            // truck's road to it, in amber, and a ring round the truck.
+            if let Some(t) = w.driving.wrecks.iter().find(|x| x.car == id).and_then(|x| x.truck).and_then(|t| w.traffic.cars.get(t)) {
+                let amber = Color::linear_rgb(3.0, 1.4, 0.1);
+                car_route(gizmos, w, t, amber);
+                let (tp, th) = t.pose_at(f);
+                vehicle_outline(gizmos, tp, th, t.length() + 0.6, 2.6, w.car_height(t) + 0.35, amber);
+            }
             // Where it is going: the cargo's buyer, or the driver's errand.
             let to = car.cargo.as_ref().map(|c| c.to).or_else(|| match w.citizens.get(car.citizen).map(|c| &c.activity) {
                 Some(Activity::Driving { to, .. }) => *to,

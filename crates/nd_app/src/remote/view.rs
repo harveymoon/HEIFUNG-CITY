@@ -545,7 +545,7 @@ pub fn car_detail(w: &World, id: CarId, c: &Car) -> Value {
         m["recovery"] = json!({ "wreck": key_str(wreck), "metres_to_go": w.traffic.cars.get(wreck).map(|x| round(x.pos.distance(c.pos))), "amber": c.drive.amber, "off_law_allowed": c.drive.recovering, "move": format!("{:?}", c.drive.offlaw.mode), "company": rec.and_then(|r| r.company).map(key_str), "out_of_town": rec.is_some_and(|r| r.company.is_none()), "sent_tick": rec.map(|r| r.sent) });
     }
     if let Some(r) = w.driving.wrecks.iter().find(|x| x.car == id) {
-        m["wreck"] = json!({ "since_tick": r.since, "incident": r.incident, "tow_due_tick": (r.due > 0).then_some(r.due), "truck": r.truck.map(key_str), "truck_sent_tick": r.truck.map(|_| r.sent), "pushed_aside_m": round(c.lateral) });
+        m["wreck"] = json!({ "since_tick": r.since, "incident": r.incident, "tow_due_tick": (r.due > 0).then_some(r.due), "truck": r.truck.map(key_str), "truck_sent_tick": r.truck.map(|_| r.sent), "pushed_aside_m": round(c.lateral), "flipped": r.flipped, "righted_at_tick": (r.righted_at > 0).then_some(r.righted_at) });
     }
     // [driving] Easing past a wreck on the shoulder.
     if c.passing_hazard() {

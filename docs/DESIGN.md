@@ -167,9 +167,13 @@ Citizens are rendered from their simulated positions every frame.
   (or have gone, or 45 minutes after a crash nobody reported) the nearest tow company with a truck
   free sends a recovery truck (with none in town, one from out of town comes in from the map edge,
   by any road end that reaches the wreck). It drives there with amber beacons (no siren: nobody
-  pulls over), and within 250 m takes the siren's off-law moves round the queue (the opposing lane
-  when clear, the kerb past standing traffic; never a red light), hooks the wreck just behind it
-  and hauls it to the yard or off the map. A truck not there within an hour is called off and the
+  pulls over), and within 250 m (or 1 km to go along its route) takes the siren's off-law moves
+  round the queue (the opposing lane when clear, the kerb past standing traffic; never a red
+  light), stops just behind the wreck (on the lane before when there is no room on its own) and
+  hauls it to the yard or off the map. A bad crash can roll a car onto its side or roof (drawn
+  so); the crew rights it (`RIGHTING_MIN`) before hooking it. A crash whose call stays open two
+  hours has its tow called anyway. The inspector shows a wreck's wait ("Waiting for a tow"), then
+  "Truck inbound" with a locate button, and draws the truck's road to it while it is selected. A truck not there within an hour is called off and the
   wreck hooked where it lies (a truck from the far side); only a wreck no road leads away from is
   craned off after a day. (The out-of-town tow used to aim only for the nearest road end, often
   behind the wreck with no way to turn, so wrecks stood for a day.) Street

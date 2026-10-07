@@ -41,12 +41,21 @@ const TOW_GIVE_UP: u64 = 1440;
 const TOW_ARRIVE_MAX: u64 = 60;
 const TOW_ARRIVE_CAP: u64 = 150;
 const TOW_STALL_MIN: f32 = 20.0;
-/// [services] Within this distance (m) of its wreck a recovery truck may
+/// [services] Within this distance (m) of its wreck, or this far along its
+/// route from it (`RECOVERY_ROUTE`: a wreck reached by a loop round the
+/// block is near as the crow flies but not by road), a recovery truck may
 /// leave the lane to get there (`Car::offlaw`): round the queue on the
 /// opposing lane or along the kerb.
 const RECOVERY_REACH: f32 = 250.0;
+const RECOVERY_ROUTE: f32 = 1000.0;
 /// [services] How near (m) the truck must stop to hook the wreck.
 const HOOK_REACH: f32 = 30.0;
+/// [services] A crash whose call stays open this long (minutes: its police
+/// unit gone, say) has its tow called anyway; it used to wait for ever.
+const TOW_CALL_MAX: u64 = 120;
+/// [driving] Minutes a recovery crew takes to right a flipped car before
+/// hooking it.
+pub const RIGHTING_MIN: u64 = 6;
 
 /// A written-off car waiting for the scene to clear.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -71,6 +80,14 @@ pub struct Wreck {
     pub sent: u64,
     #[serde(default)]
     pub company: Option<BuildingId>,
+    /// [driving] A bad crash can flip the car: 0 on its wheels, 1 on its
+    /// side, 2 on its roof (drawn so). The recovery truck rights it before
+    /// hooking it: `righted_at` is the tick it will be back on its wheels
+    /// (0: not started).
+    #[serde(default)]
+    pub flipped: u8,
+    #[serde(default)]
+    pub righted_at: u64,
 }
 
 /// A tow truck hauling a wreck to the yard (`model` is what it carries).
@@ -367,7 +384,16 @@ impl World {
                 if let Some(vid) = owned {
                     self.drop_car(vid, crate::vehicle::CarEvent::Scrapped);
                 }
-                self.driving.wrecks.push(Wreck { car: c, crash: r.id, incident: None, since: tick, retry_at: 0, due: 0, truck: None, sent: 0, company: None });
+                // [driving] Hard enough and it rolls: a bike goes down on
+                // its side, a car onto its side or its roof.
+                // (Its own draw, so the crash's other dice fall as before.)
+                let (roll, side) = (car_hash(c, 0xF1 + r.id as u64), car_hash(c, 0xF2 + r.id as u64));
+                let flipped = if r.severity > 0.7 && roll < (r.severity - 0.6) * 1.5 {
+                    if model.body.two_wheeler() || side < 0.5 { 1 } else { 2 }
+                } else {
+                    0
+                };
+                self.driving.wrecks.push(Wreck { car: c, crash: r.id, incident: None, since: tick, retry_at: 0, due: 0, truck: None, sent: 0, company: None, flipped, righted_at: 0 });
                 if let Some(p) = self.citizens.get_mut(driver) {
                     // Out of the car, standing (or lying) by it.
                     p.activity = Activity::Idle;
@@ -441,12 +467,13 @@ impl World {
             self.traffic.push_aside(w.car);
             if let Some(t) = w.truck {
                 let wreck_pos = self.traffic.cars[w.car].pos;
+                let to_go = self.traffic.cars.get(t).filter(|c| c.idx < c.route.len()).map(|c| self.traffic.route_metres(t, &c.route[c.idx..], c.s_end));
                 match self.traffic.cars.get_mut(t).filter(|c| c.errand == Errand::Recover(w.car)) {
                     Some(truck) => {
                         truck.drive.amber = true;
-                        truck.drive.recovering = truck.pos.distance(wreck_pos) < RECOVERY_REACH;
+                        truck.drive.recovering = truck.pos.distance(wreck_pos) < RECOVERY_REACH || to_go.is_some_and(|m| m < RECOVERY_ROUTE);
                         let allowed = ((truck.drive.expected_min * 2.0) as u64).clamp(TOW_ARRIVE_MAX, TOW_ARRIVE_CAP);
-                        let late = tick >= w.sent + allowed || truck.stalled > TOW_STALL_MIN * self.config.traffic_seconds_per_tick;
+                        let late = w.righted_at == 0 && (tick >= w.sent + allowed || truck.stalled > TOW_STALL_MIN * self.config.traffic_seconds_per_tick);
                         if late && self.tow(w.car) {
                             self.recovery_truck_home(t, w.company);
                             continue;
@@ -459,7 +486,7 @@ impl World {
                 }
             }
             let called = match w.incident {
-                Some(i) => self.services.incident(i).is_none_or(|i| !i.active() || i.stage == IncidentStage::OnScene),
+                Some(i) => self.services.incident(i).is_none_or(|i| !i.active() || i.stage == IncidentStage::OnScene) || tick >= w.since + TOW_CALL_MAX,
                 None => tick >= w.since + TOW_UNREPORTED,
             };
             if !called || tick < w.retry_at {
@@ -499,7 +526,15 @@ impl World {
         let c = self.traffic.cars.get(car)?;
         let (lane, pos) = (c.route[c.idx], c.pos);
         let len = self.traffic.net.lanes[lane as usize].length;
-        let goal_s = (c.s - c.length() - 2.5).clamp(0.5f32.min(len), len);
+        let back = c.s - c.length() - 2.5;
+        // No room behind it on its own lane (a short connector, the very
+        // start of a lane): stop at the end of the lane leading in instead.
+        // Aimed at the wreck's own lane it could never get there, held at
+        // the lane's end by the wreck itself.
+        let (lane, goal_s) = match self.traffic.net.lanes[lane as usize].prev.first().copied() {
+            Some(p) if back < 0.5 => (p, (self.traffic.net.lanes[p as usize].length + back).max(0.5).min(self.traffic.net.lanes[p as usize].length)),
+            _ => (lane, back.clamp(0.5f32.min(len), len)),
+        };
         let company = self.tow_company_near(pos);
         let from_yard = company.and_then(|y| self.truck_stop(y)).and_then(|(seg, pt)| {
             let mut lanes: Vec<(crate::traffic::LaneId, f32, f32)> = self
@@ -551,6 +586,20 @@ impl World {
             self.driving.wrecks[k].truck = None;
             self.recovery_truck_home(truck, company);
             return;
+        }
+        // [driving] On its side or roof: rolled back onto its wheels first,
+        // the truck standing by (it is reported here every tick it stands
+        // at the end of its route).
+        let tick = self.clock.tick;
+        let wr = &mut self.driving.wrecks[k];
+        if wr.flipped > 0 {
+            if wr.righted_at == 0 {
+                wr.righted_at = tick + RIGHTING_MIN;
+            }
+            if tick < wr.righted_at {
+                return;
+            }
+            wr.flipped = 0;
         }
         self.driving.wrecks.remove(k);
         let model = self.traffic.cars[wreck].model;
@@ -635,7 +684,7 @@ impl World {
             return;
         }
         let tick = self.clock.tick;
-        self.driving.wrecks.push(Wreck { car, crash: 0, incident: None, since: tick.saturating_sub(TOW_UNREPORTED), retry_at: tick + TOW_RETRY, due: tick, truck: None, sent: 0, company: None });
+        self.driving.wrecks.push(Wreck { car, crash: 0, incident: None, since: tick.saturating_sub(TOW_UNREPORTED), retry_at: tick + TOW_RETRY, due: tick, truck: None, sent: 0, company: None, flipped: 0, righted_at: 0 });
     }
 
     /// Tow trucks on the road and what they carry.
@@ -1468,6 +1517,9 @@ mod tests {
         tick(&mut w, 3, |_| false);
         wreck(&mut w, car);
         assert!(w.traffic.cars[car].lateral >= 1.5, "pushed onto the shoulder");
+        // On its roof: the crew rights it before hooking it.
+        w.driving.wrecks.iter_mut().find(|x| x.car == car).unwrap().flipped = 2;
+        let mut righting: Option<u64> = None;
         let wx = w.traffic.cars[car].pos.x;
         // A queue builds behind it.
         let mut behind = Vec::new();
@@ -1484,14 +1536,19 @@ mod tests {
                 assert_eq!(tc.errand, Errand::Recover(car));
                 amber |= tc.drive.amber;
             }
+            if let Some(x) = w.driving.wrecks.iter().find(|x| x.car == car && x.righted_at > 0) {
+                righting.get_or_insert(x.righted_at);
+            }
             if !w.traffic.cars.contains_key(car) {
                 gone = Some(k);
                 break;
             }
         }
         let gone = gone.expect("the wreck was towed within four hours");
-        assert!(gone < TOW_UNREPORTED + TOW_ARRIVE_MAX + 10, "and soon: {gone} min");
+        assert!(gone < TOW_UNREPORTED + TOW_ARRIVE_MAX + RIGHTING_MIN + 10, "and soon: {gone} min");
         assert!(amber, "the truck came with its ambers on");
+        let righted = righting.expect("righted before it was hooked");
+        assert!(w.clock.tick >= righted, "hooked only once back on its wheels");
         assert_eq!(w.driving.tows.len(), 1, "on the hook, off the map");
         let past = behind.iter().filter(|&&c| w.traffic.cars.get(c).is_none_or(|c| c.pos.x > wx)).count();
         assert!(past >= 4, "the queue eased past the wreck meanwhile: {past} of 6");

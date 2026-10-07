@@ -48,8 +48,8 @@ const INTO_NEXT_LANE: f32 = 0.5;
 const HAZARD_LOOK: f32 = 30.0;
 /// Speeds going past (m/s): a crawl when it is tight, a little more with
 /// room to spare (everyone slows to look).
-const HAZARD_CRAWL: f32 = 3.5;
-const HAZARD_EASY: f32 = 6.0;
+const HAZARD_CRAWL: f32 = 4.0;
+const HAZARD_EASY: f32 = 8.0;
 /// Spare room (m) beyond the clearance that counts as easy.
 const EASY_ROOM: f32 = 0.8;
 

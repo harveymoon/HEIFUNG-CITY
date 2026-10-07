@@ -106,6 +106,7 @@ pub(super) fn sync_stunts(
     mut st: Local<StuntState>,
     mut q: Query<(&mut Transform, &mut Visibility), With<StuntTag>>,
     mut cars: Query<&mut Transform, (With<CarTag>, Without<StuntTag>)>,
+    tools: Res<crate::tools::ToolState>,
 ) {
     let w = &sim.world;
     if sim.full_rebuild {
@@ -175,8 +176,26 @@ pub(super) fn sync_stunts(
         }
         keep
     });
+    // [render] In the layer its car is seen in: a crash in a tunnel only in
+    // the Underground view.
+    let under = tools.depth == crate::tools::Depth::Underground;
+    // [driving] Wrecks on their side or roof, rolling back onto their
+    // wheels while the recovery crew rights them: (roll, lift).
+    let now = w.clock.tick as f32 + f;
+    let flips: HashMap<CarId, f32> = w
+        .driving
+        .wrecks
+        .iter()
+        .filter(|x| x.flipped > 0)
+        .map(|x| {
+            let base = if x.flipped == 1 { std::f32::consts::FRAC_PI_2 } else { std::f32::consts::PI };
+            let left = if x.righted_at > 0 { ((x.righted_at as f32 - now) / nd_sim::RIGHTING_MIN as f32).clamp(0.0, 1.0) } else { 1.0 };
+            (x.car, base * left)
+        })
+        .collect();
     for &(id, wrecked) in &crashed {
         let Some(car) = traffic.cars.get(id) else { continue };
+        let seen = w.car_in_tunnel(car) == under;
         let (p, h) = car.pose_at(f);
         let y = w.car_height(car);
         let es = *st.crashed.entry(id).or_insert_with(|| {
@@ -188,17 +207,23 @@ pub(super) fn sync_stunts(
         if let Ok((mut tf, mut vis)) = q.get_mut(es[0]) {
             tf.translation = Vec3::new(p.x, y, p.y);
             tf.rotation = Quat::from_rotation_y(-(h + skew));
-            *vis = if wrecked { Visibility::Inherited } else { Visibility::Hidden };
+            *vis = if wrecked && seen { Visibility::Inherited } else { Visibility::Hidden };
         }
         if let Ok((mut tf, mut vis)) = q.get_mut(es[1]) {
             tf.translation = Vec3::new(p.x, y + 1.7, p.y);
-            *vis = if (t * 2.5) as i64 % 2 == 0 { Visibility::Inherited } else { Visibility::Hidden };
+            *vis = if seen && (t * 2.5) as i64 % 2 == 0 { Visibility::Inherited } else { Visibility::Hidden };
         }
         if wrecked {
             if let Some(ents) = state.cars.get(&id) {
                 for e in ents {
                     if let Ok(mut tf) = cars.get_mut(*e) {
-                        tf.rotation = Quat::from_rotation_y(-(h + skew)) * Quat::from_rotation_x(0.12);
+                        let roll = flips.get(&id).copied().unwrap_or(0.0);
+                        tf.rotation = Quat::from_rotation_y(-(h + skew)) * Quat::from_rotation_x(0.12 + roll);
+                        if roll > 0.0 {
+                            // Rolled about its length, raised to lie on the road.
+                            let half = if car.model.body.two_wheeler() { 0.35 } else { 0.9 };
+                            tf.translation.y = y + 0.05 + half * roll.sin().abs() + 0.7 * (1.0 - roll.cos());
+                        }
                     }
                 }
             }
