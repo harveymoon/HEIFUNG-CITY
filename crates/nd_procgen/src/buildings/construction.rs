@@ -699,7 +699,7 @@ fn worker(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, y: f32) {
     f.bx_yaw(g, Matte, p.x, y + 1.7, p.y, Vec3::new(0.3, 0.14, 0.32), c.palette.helmet, yaw);
 }
 
-// â”€â”€ demolition â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── demolition ──────────────────────────────────────────────────────────
 
 /// Share of the job spent on the structure itself; the rest is the last of
 /// the rubble and the slab being broken out.
@@ -933,7 +933,7 @@ pub fn clip_above(g: &mut Geometry, cut: f32) -> Vec<Vec2> {
             if ys.iter().all(|&y| y > cut) {
                 continue;
             }
-            // Sutherlandâ€“Hodgman against the plane y = cut, keeping below.
+            // Sutherland–Hodgman against the plane y = cut, keeping below.
             let mut out: Vec<u32> = Vec::with_capacity(4);
             for k in 0..3 {
                 let (a, b) = (tri[k], tri[(k + 1) % 3]);
@@ -997,7 +997,7 @@ fn rng_angle(rng: &mut impl Rng) -> f32 {
     rng.random_range(0.0..std::f32::consts::TAU)
 }
 
-/// Room for an excavator's body (tracks 4.6 Ã— 3.0 m, turning) at `p`.
+/// Room for an excavator's body (tracks 4.6 × 3.0 m, turning) at `p`.
 fn fits(c: &Ctx, p: Vec2, yaw: f32, clear: &impl Fn(Vec2) -> bool) -> bool {
     let d = Vec2::new(yaw.cos(), yaw.sin());
     let n = Vec2::new(-d.y, d.x);
