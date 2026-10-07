@@ -1131,13 +1131,15 @@ impl World {
                 Some(d) => Some(d),
                 None => exit_to,
             };
-            let Some((dseg, dp)) = dest else { continue };
-            let Some((goal, gs, _)) = self.traffic.net.nearest_lane_on(dseg, dp) else { continue };
+            // REVIEW2 L9: a stunt car with nowhere to go (no home, no exit,
+            // no lane there) used to be skipped and did donuts for good; it
+            // is towed off below like one with no route.
+            let goal = dest.and_then(|(dseg, dp)| self.traffic.net.nearest_lane_on(dseg, dp));
             if c.in_stunt() {
                 let pos = c.pos;
                 let mut starts = outgoing.clone();
                 starts.sort_by(|a, b| self.traffic.net.lanes[*a as usize].start().distance(pos).total_cmp(&self.traffic.net.lanes[*b as usize].start().distance(pos)).then(a.cmp(b)));
-                let found = starts.iter().find_map(|&l| self.traffic.net.route_lanes(l, 0.5, goal, gs));
+                let found = goal.and_then(|(goal, gs, _)| starts.iter().find_map(|&l| self.traffic.net.route_lanes(l, 0.5, goal, gs)));
                 match found {
                     Some((route, s0, s1)) => self.traffic.end_stunt(car, route, s0, s1),
                     None => {
@@ -1156,6 +1158,7 @@ impl World {
                 }
             } else {
                 // Never got there: turn round for home.
+                let Some((goal, gs, _)) = goal else { continue };
                 let (here, s) = (c.route[c.idx], c.s);
                 if let Some((route, _, s1)) = self.traffic.net.route_lanes(here, s, goal, gs) {
                     self.traffic.reroute(car, route, s, s1);
@@ -1455,6 +1458,42 @@ mod tests {
         let (again, s2, _, _) = takeover_night(11);
         assert_eq!((rec.ended, rec.participants, rec.crowd, rec.arrests), (again.ended, again.participants, again.crowd, again.arrests));
         assert_eq!(stunts, s2);
+    }
+
+    /// REVIEW2 L9: when a takeover ends, a stunt car whose driver has no
+    /// home and no exit to drive to is towed off, not left spinning.
+    #[test]
+    fn a_stunt_car_with_nowhere_to_go_is_towed_not_left_spinning() {
+        let mut w = town(11);
+        let folk: Vec<CitizenId> = w.citizens.keys().collect();
+        let mut s = 1;
+        for &c in &folk[8..12] {
+            s = rebel_seed(s + 1);
+            let p = &mut w.citizens[c];
+            p.seed = s;
+            p.age = 23;
+            p.next_decision_tick = u64::MAX / 2;
+            if let Some(h) = p.home {
+                p.inside = Some(h);
+                p.activity = Activity::AtHome;
+            }
+            let near = w.citizens[c].home.and_then(|h| w.building_entrance(h)).unwrap();
+            let vid = w.give_car_parked(c, near);
+            w.vehicles.cars[vid].model = VehicleModel { tuned: true, ..VehicleModel::new(VehicleClass::Expensive, BodyType::Coupe) };
+        }
+        w.start_takeover(Some(Vec2::ZERO)).expect("starts");
+        assert!(tick(&mut w, 300, |w| w.takeover().is_some_and(|t| t.stage == Stage::Show)), "the show began");
+        let mut t = w.driving.takeovers.active.take().unwrap();
+        let car = *t.cars.iter().find(|&&c| w.traffic.cars[c].in_stunt()).expect("a stunt car");
+        // Its driver has nowhere to go: no home, and no exit off the map.
+        let driver = w.traffic.cars[car].citizen;
+        if let Some(p) = w.citizens.get_mut(driver) {
+            p.home = None;
+        }
+        t.exit = None;
+        w.end_takeover(t, false);
+        tick(&mut w, 5, |_| false);
+        assert!(!w.traffic.cars.get(car).is_some_and(|c| c.in_stunt()), "no longer doing donuts");
     }
 
     #[test]
