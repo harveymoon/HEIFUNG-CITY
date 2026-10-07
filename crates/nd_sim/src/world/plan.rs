@@ -987,6 +987,8 @@ impl World {
     pub(super) fn carry_traffic(&mut self) {
         let report = self.traffic.rebuild_carrying(&self.roads);
         self.apply_tolls();
+        // [events] Wear follows the pieces that are still there.
+        self.apply_road_wear();
         for (id, car) in report.lost {
             // (A service unit only looks like through traffic: its station
             // recovers it.)

@@ -48,4 +48,7 @@ pub enum SimEvent {
     /// [driving] A street takeover started gathering, and one ended.
     Takeover(u32),
     TakeoverOver(u32),
+    /// [events] A line of city news about a street race or a rave
+    /// (`World::street_events.news`, by its `seq`).
+    News(u32),
 }

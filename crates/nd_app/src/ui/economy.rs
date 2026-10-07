@@ -48,6 +48,8 @@ pub fn flow_color(f: Flow) -> Color32 {
         Flow::Tolls => Color32::from_rgb(250, 190, 60),
         Flow::TollUpkeep => Color32::from_rgb(180, 110, 70),
         Flow::GridExport => Color32::from_rgb(120, 225, 245),
+        Flow::RoadMaintenance => Color32::from_rgb(160, 130, 100),
+        Flow::Fines => Color32::from_rgb(220, 150, 255),
     }
 }
 
@@ -75,6 +77,8 @@ pub fn flow_note(f: Flow) -> &'static str {
         Flow::Tolls => "Tolls paid at the city's toll booths and plazas.",
         Flow::TollUpkeep => "Staff and upkeep of each toll booth and plaza, paid at midnight.",
         Flow::GridExport => "Surplus electricity sold to the regional grid (what the batteries had no room for), paid at midnight at the export price; the Power window shows when.",
+        Flow::RoadMaintenance => "Road crews resurfacing worn streets, up to the day's allowance (the funding level in the Taxes window times what the network needs); the crews go to dear land first.",
+        Flow::Fines => "Fines from busted street races and shut-down raves.",
     }
 }
 
