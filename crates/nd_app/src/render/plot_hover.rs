@@ -6,7 +6,8 @@
 //! Used by the Buildings tool (anything that goes on a lot) and the Zone
 //! tool's brush and marquee (the parcel being painted). The verdict and
 //! the outline come from one adapter, [`hover_site`], which asks the sim
-//! (`World::placement_problem`, `World::parcel_refusal`) and never applies
+//! (`World::placement_site` / `site_problem`, as the click and the Build
+//! window's "Here:" line do, and `World::parcel_refusal`) and never applies
 //! rules of its own. The mesh is rebuilt only when the site, its verdict or
 //! the wall's size step changes; the pulse is the material's alpha.
 //!
@@ -34,34 +35,30 @@ pub struct HoverSite {
 /// verdict on it. None where the tool has no plot to show (roads, tolls,
 /// rail pieces and docks have their own previews; erasing zones).
 ///
-/// The one place the verdict comes from: when `World::placement_site` /
-/// `placement_problem_at` land (free placement on unzoned ground), the
-/// Buildings arm becomes `placement_site(what, p)` → outline, and
-/// `site_problem` → verdict.
+/// The Buildings tool's verdict is `World::placement_site(what, p)` (any
+/// lot, or unzoned ground a lot is made of) checked by `site_problem`, the
+/// same as the click; the site kept in `ToolState::build_site` while the
+/// pointer stays on its parcel is reused rather than worked out again.
 pub fn hover_site(w: &World, tools: &ToolState, p: SVec2) -> Option<HoverSite> {
-    use nd_sim::Placeable;
     match tools.tool {
         Tool::Buildings => {
             let what = tools.build_item();
-            if matches!(what, Placeable::Toll(_) | Placeable::Rail(_) | Placeable::Dock(_)) {
+            if !on_a_plot(what) {
                 return None;
             }
-            if let Some((id, lot)) = w.lots.iter().find(|(_, l)| l.contains(p)) {
-                let verdict = match w.placement_problem(what, id) {
-                    Some(why) => Err(why),
-                    None => {
-                        let cost = match what {
-                            Placeable::Plant(k) => w.plant_cost_on(k, id),
-                            _ => what.cost(),
-                        };
-                        Ok(format!("{} fits here: {:.0} to build", capitalised(&what.label()), cost))
-                    }
-                };
-                return Some(HoverSite { outline: lot.polygon.clone(), verdict, zone: false });
-            }
-            // Ground with no lot: `World::place_building` refuses it.
-            let parcel = w.parcels.parcels.get(w.parcels.at(p)?)?;
-            Some(HoverSite { outline: parcel.polygon.clone(), verdict: Err("no lot here: city buildings go on a lot".into()), zone: false })
+            let key = w.parcels.at(p).map(|i| (what, i, w.parcels.version, w.lots.len()));
+            let site = match (&tools.build_site, key) {
+                (Some((a, b, c, d, site)), Some(k)) if (*a, *b, *c, *d) == k => site.clone(),
+                _ => w.placement_site(what, p),
+            };
+            let (ok, text, outline) = match site {
+                Ok(site) => match w.site_problem(what, &site) {
+                    None => (true, site.note(), site.outline),
+                    Some(why) => (false, why, site.outline),
+                },
+                Err(why) => (false, why, Vec::new()),
+            };
+            buildings_site(w, tools, p, ok, text, outline)
         }
         Tool::Zone if tools.zone_mode != ZoneMode::Polygon => {
             let lu = tools.paint_use(tools.stroke.as_ref().map_or(tools.unzone, |s| s.erase))?;
@@ -80,6 +77,23 @@ pub fn hover_site(w: &World, tools: &ToolState, p: SVec2) -> Option<HoverSite> {
 fn capitalised(s: &str) -> String {
     let mut c = s.chars();
     c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+}
+
+/// Whether the Buildings tool's item goes on a plot (tolls, rail pieces
+/// and docks have previews of their own).
+fn on_a_plot(what: nd_sim::Placeable) -> bool {
+    use nd_sim::Placeable;
+    !matches!(what, Placeable::Toll(_) | Placeable::Rail(_) | Placeable::Dock(_))
+}
+
+/// The Buildings tool's site from its verdict (`ToolState::build_here`'s
+/// shape): a refusal with no site outlines the parcel under the point, if
+/// any, so the red still shows where the pointer is.
+fn buildings_site(w: &World, tools: &ToolState, p: SVec2, ok: bool, text: String, outline: Vec<SVec2>) -> Option<HoverSite> {
+    let outline = if outline.len() >= 3 { outline } else { w.parcels.parcels.get(w.parcels.at(p)?)?.polygon.clone() };
+    let label = capitalised(&tools.build_item().label());
+    let verdict = if ok { Ok(format!("{label} can go here: {text}")) } else { Err(text) };
+    Some(HoverSite { outline, verdict, zone: false })
 }
 
 /// The point standing in for the pointer: the remote API's pin, else the
@@ -176,6 +190,7 @@ pub fn sync_plot_hover(
     cursor: Res<crate::camera::Cursor>,
     cams: Query<&crate::camera::OrbitCamera>,
     time: Res<Time>,
+    lighting: Res<Lighting>,
     mut hover: ResMut<PlotHover>,
     mut state: Local<(Option<u64>, Option<Handle<StandardMaterial>>, Option<SVec2>)>,
     existing: Query<Entity, With<PlotHoverTag>>,
@@ -188,7 +203,12 @@ pub fn sync_plot_hover(
     *last_ground = cursor.ground;
     let w = &sim.world;
     let at = hover_point(&tools, &cursor);
-    let site = at.and_then(|p| hover_site(w, &tools, p));
+    // The Buildings tool's verdict was worked out this frame in
+    // `tool_input` (`build_here`, from the same point): not again here.
+    let site = at.and_then(|p| match (&tools.build_here, tools.tool) {
+        (Some((ok, text, outline)), Tool::Buildings) if on_a_plot(tools.build_item()) => buildings_site(w, &tools, p, *ok, text.clone(), outline.clone()),
+        _ => hover_site(w, &tools, p),
+    });
     let distance = cams.iter().next().map_or(400.0, |c| c.distance);
     let key = site.as_ref().map(|s| {
         let (h, lw) = sizes(distance, s.zone);
@@ -202,7 +222,11 @@ pub fn sync_plot_hover(
         // A soft pulse, a little quicker on a refusal.
         let speed = if site.as_ref().is_some_and(|s| s.verdict.is_err()) { 5.0 } else { 3.0 };
         if let Some(mut m) = materials.get_mut(&mat) {
-            m.base_color = Color::linear_rgba(1.0, 1.0, 1.0, 0.8 + 0.2 * (time.elapsed_secs() * speed).sin());
+            // Dimmer at night, when the glow has nothing to compete with.
+            let t = if lighting.follow_clock { w.clock.day_fraction() } else { (lighting.hour / 24.0).rem_euclid(1.0) };
+            let daylight = smoothstep(-0.12, 0.30, ((t - 0.25) * std::f32::consts::TAU).sin());
+            let k = 0.45 + 0.55 * daylight;
+            m.base_color = Color::linear_rgba(k, k, k, 0.8 + 0.2 * (time.elapsed_secs() * speed).sin());
         }
     }
     hover.at = at;
