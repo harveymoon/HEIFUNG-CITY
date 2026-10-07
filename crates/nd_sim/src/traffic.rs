@@ -33,6 +33,7 @@ use std::collections::{BinaryHeap, HashMap, VecDeque};
 mod crosswalk;
 mod roundabout;
 mod why;
+
 pub use crosswalk::{Hold, PedTraffic, PED_CLEARANCE};
 pub use roundabout::{RingLanes, RingNode, RING_CRITICAL_GAP, RING_SPEED};
 pub use why::{JamChain, StopReason};
@@ -108,6 +109,13 @@ const DEMAND_REACH: f32 = 40.0;
 /// so routes spread over parallel lanes and around queues.
 const LANE_CHANGE_COST: f32 = 8.0;
 const QUEUE_COST: f32 = 6.0;
+/// Extra routing cost of a lane change made on a piece of lane shorter
+/// than `SHORT_CHANGE_LEN` (all of it on a piece of no length): a change
+/// planned onto the last few metres before a junction is the one that
+/// ends with a car stopped at the line, waiting for a gap that the queue
+/// beside it never leaves.
+const SHORT_CHANGE_COST: f32 = 60.0;
+const SHORT_CHANGE_LEN: f32 = 40.0;
 /// Hardest braking (m/s per s) a lane change may ask of the changer or of its
 /// new follower; a car stopped at the end of its lane accepts a little more.
 const LC_SAFE_BRAKE: f32 = 3.0;
@@ -126,6 +134,9 @@ const REROUTE_LANE_CHANGE_AFTER: f32 = 10.0;
 /// Seconds a car waits at the kerb before the next driver along lets it
 /// in, if that driver is slow enough to stop comfortably.
 const COURTESY_AFTER: f32 = 15.0;
+/// Seconds two cars stand side by side, each wanting the other's lane,
+/// before they swap places (`Traffic::swap_lanes`).
+const SWAP_AFTER: f32 = 8.0;
 /// A vehicle at the kerb whose spot stays covered by standing traffic this
 /// long pulls out into the nearest real gap behind it instead.
 const KERB_SLIDE_AFTER: f32 = 90.0;
@@ -1765,7 +1776,8 @@ impl LaneNetwork {
             let here = &self.lanes[lane as usize];
             // [tolls] A toll counts as the detour a driver would take to avoid it.
             let ahead = here.next.iter().filter(|&&n| self.lanes[n as usize].permitted).map(|&n| (n, self.lanes[n as usize].length + self.rings.penalty(n) + self.toll_penalty(n)));
-            let beside = [here.left, here.right].into_iter().flatten().map(|n| (n, LANE_CHANGE_COST));
+            let short = SHORT_CHANGE_COST * (1.0 - here.length / SHORT_CHANGE_LEN).max(0.0);
+            let beside = [here.left, here.right].into_iter().flatten().map(|n| (n, LANE_CHANGE_COST + short));
             for (next, step) in ahead.chain(beside) {
                 if next == start || Some(next) == avoid_lane || Some((lane, next)) == avoid_step {
                     continue;
@@ -2120,6 +2132,16 @@ impl Traffic {
         // tail is not moving off.
         let blocked = last.is_some_and(|c| c.s < c.length() + IDM_MIN_GAP + 1.0 && (queue > el.length - conn.length || (strict && c.v < 0.5)));
         let tail_near = last.is_some_and(|c| c.s < c.length() + 0.5);
+        if strict && !conn.cars.is_empty() {
+            // Room left at the start of the exit for the cars already in
+            // the junction heading there, while its tail stands: counting
+            // only the exit's own queue let a run of cars into the box
+            // behind one another, and the last of them stood in it.
+            let in_box: f32 = conn.cars.iter().map(|&c| self.cars[c].length() + IDM_MIN_GAP).sum();
+            if last.is_some_and(|c| c.v < 0.5 && c.s - c.length() < in_box + CAR_LENGTH + IDM_MIN_GAP) {
+                return true;
+            }
+        }
         blocked || (tail_near && !conn.cars.is_empty())
     }
 
@@ -2506,6 +2528,8 @@ impl Traffic {
                 let forced = lane.length - c.s < 8.0 && c.v < 1.0;
                 if self.change_ok(id, target, if forced { LC_FORCED_BRAKE.max(safe_brake) } else { safe_brake }).is_some() {
                     self.change_lane(id, target, None);
+                } else if forced && c.stalled > SWAP_AFTER {
+                    self.swap_lanes(id, target);
                 }
                 continue;
             }
@@ -2545,6 +2569,33 @@ impl Traffic {
         }
     }
 
+    /// Two stopped cars side by side, each waiting at the end of its lane
+    /// to move into the other's, can never make room for each other: each
+    /// stands in the gap the other needs. They squeeze past at a crawl and
+    /// swap places, each taking the other's spot (so nobody else in either
+    /// lane is overlapped).
+    fn swap_lanes(&mut self, id: CarId, target: LaneId) {
+        let c = &self.cars[id];
+        let here = c.route[c.idx];
+        let s = c.s;
+        let other = self.net.lanes[target as usize].cars.iter().copied().filter(|&o| o != id).min_by(|&a, &b| (self.cars[a].s - s).abs().total_cmp(&(self.cars[b].s - s).abs()));
+        let Some(o) = other else { return };
+        let oc = &self.cars[o];
+        if oc.v >= 0.5 || oc.entering || oc.hold > 0.0 || oc.crashed() || (oc.s - s).abs() > 3.0 || oc.change_pending(&self.net) != Some(here) {
+            return;
+        }
+        let (s_a, s_b) = (s, oc.s);
+        self.change_lane(id, target, None);
+        self.change_lane(o, here, None);
+        self.cars[id].s = s_b.min(self.net.lanes[target as usize].length);
+        self.cars[o].s = s_a.min(self.net.lanes[here as usize].length);
+        for l in [here, target] {
+            let mut cars = std::mem::take(&mut self.net.lanes[l as usize].cars);
+            cars.sort_by(|a, b| self.cars[*a].s.total_cmp(&self.cars[*b].s));
+            self.net.lanes[l as usize].cars = cars;
+        }
+    }
+
     /// Bookkeeping as a car moves from `from` onto `to`: turning counts for
     /// the approach's arrows, and the wait before a left turn.
     fn entered(&mut self, from: LaneId, to: LaneId, id: CarId) {
@@ -2581,6 +2632,9 @@ impl Traffic {
     /// another way from where they stand.
     fn reroute_stalled(&mut self) {
         let ids: Vec<CarId> = self.cars.keys().collect();
+        for &id in &ids {
+            self.bail_off_ring(id);
+        }
         for id in ids {
             let c = &self.cars[id];
             if c.stalled < REROUTE_LANE_CHANGE_AFTER || c.cooldown > 0.0 || c.hold > 0.0 || c.entering || c.idx + 1 >= c.route.len() {
@@ -2817,6 +2871,16 @@ impl Traffic {
             // and who it is. A spot near the start of a lane also holds up
             // traffic still on the lanes feeding it.
             let mut claims: HashMap<LaneId, Vec<(f32, f32, CarId)>> = HashMap::new();
+            // A car stopped at the end of its lane for the lane change its
+            // turn needs is let in the same way (the zip: the driver behind
+            // in the next lane leaves it a gap as the queue moves up).
+            // Without it a car in a slow queue waited for a gap that the
+            // queue beside it never left, and blocked its own lane meanwhile.
+            for (cid, c) in self.cars.iter().filter(|(_, c)| !c.entering && c.wait == Wait::LaneChange && c.stalled > COURTESY_AFTER) {
+                if let Some(target) = c.change_pending(&self.net) {
+                    claims.entry(target).or_default().push((c.s.min(self.net.lanes[target as usize].length), c.length(), cid));
+                }
+            }
             for (cid, c) in self.cars.iter().filter(|(_, c)| c.entering && c.stalled > COURTESY_AFTER) {
                 let lane = c.route[c.idx];
                 claims.entry(lane).or_default().push((c.s, c.length(), cid));
@@ -4679,5 +4743,78 @@ mod tests {
         assert_eq!(locks[0].cycle.len(), 2);
         t.cars[b].stalled = 0.0;
         assert!(t.gridlocks().is_empty(), "a car that has just moved is not in a knot");
+    }
+
+    /// Two cars stopped side by side at the stop line, each needing the
+    /// other's lane for its turn (a left turner in the right lane, a right
+    /// turner in the left), can never find a gap: each stands in the one
+    /// the other needs. They swap places and both make their turns.
+    #[test]
+    fn two_cars_waiting_for_each_others_lane_swap_places() {
+        let roads = avenue_cross();
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let w = LANE_WIDTH;
+        let west = roads.nearest_street(Vec2::new(-200.0, 0.0)).unwrap().0;
+        let south = roads.nearest_street(Vec2::new(0.0, -200.0)).unwrap().0;
+        let north = roads.nearest_street(Vec2::new(0.0, 200.0)).unwrap().0;
+        let (inner, outer) = (lane_of(&t, west, Vec2::X, 0), lane_of(&t, west, Vec2::X, 1));
+        let (left_route, _, s1) = t.net.find_route(west, Vec2::new(-300.0, 1.5 * w), south, Vec2::new(0.5 * w, -150.0)).expect("route");
+        let (right_route, _, s2) = t.net.find_route(west, Vec2::new(-300.0, 0.5 * w), north, Vec2::new(-0.5 * w, 150.0)).expect("route");
+        assert_eq!(&left_route[..2], &[outer, inner]);
+        assert_eq!(&right_route[..2], &[inner, outer]);
+        let len = t.net.lanes[outer as usize].length;
+        let a = t.spawn_car(CitizenId::default(), None, left_route, len - 1.0, s1, 0);
+        let b = t.spawn_car(CitizenId::default(), None, right_route, len - 1.0, s2, 0);
+        assert!(!t.cars[a].entering && !t.cars[b].entering);
+        assert!(t.change_ok(a, inner, LC_FORCED_BRAKE).is_none() && t.change_ok(b, outer, LC_FORCED_BRAKE).is_none(), "no room either way");
+        let mut used: HashMap<CarId, Vec<LaneId>> = HashMap::new();
+        let mut done = Vec::new();
+        for _ in 0..400 {
+            for (id, c) in t.cars.iter() {
+                let u = used.entry(id).or_default();
+                if u.last() != Some(&c.route[c.idx]) {
+                    u.push(c.route[c.idx]);
+                }
+            }
+            for id in t.step(0.5, 1) {
+                done.push(id);
+                t.remove_car(id);
+            }
+            if done.len() == 2 {
+                break;
+            }
+        }
+        assert_eq!(done.len(), 2, "both arrived");
+        let turn = |id: CarId| {
+            let u = &used[&id];
+            let k = u.iter().position(|&l| t.net.lanes[l as usize].is_connector() && t.net.lanes[l as usize].turn != 0).expect("turned");
+            (t.net.lanes[u[k] as usize].turn, u[k - 1])
+        };
+        assert_eq!(turn(a), (-1, inner), "the left turner turned left from the left lane");
+        assert_eq!(turn(b), (1, outer), "the right turner turned right from the right lane");
+    }
+
+    /// A junction whose exit has room for one car behind a standing tail
+    /// takes one car, not every car that sees that room: the ones already
+    /// in the junction count.
+    #[test]
+    fn cars_in_the_junction_count_against_the_room_on_its_exit() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        roads.add_polyline(&[Vec2::new(0.0, -400.0), Vec2::new(0.0, 400.0)], 1, 1);
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let west = roads.nearest_street(Vec2::new(-200.0, 0.0)).unwrap().0;
+        let east = roads.nearest_street(Vec2::new(200.0, 0.0)).unwrap().0;
+        let (into, out) = (lane_of(&t, west, Vec2::X, 0), lane_of(&t, east, Vec2::X, 0));
+        let conn = *t.net.lanes[into as usize].next.iter().find(|&&c| t.net.lanes[c as usize].next[0] == out).expect("straight on");
+        // A tail standing 10 m into the exit: room for one more car.
+        let tail = t.spawn_car(CitizenId::default(), None, vec![out], 10.0, 300.0, 0);
+        t.cars[tail].hold = 1000.0;
+        assert!(!t.exit_blocked(&t.net.lanes[conn as usize], out, true), "room for one");
+        let inside = t.spawn_car(CitizenId::default(), None, vec![conn, out], 4.0, 300.0, 0);
+        assert_eq!(t.net.lanes[conn as usize].cars, vec![inside]);
+        assert!(t.exit_blocked(&t.net.lanes[conn as usize], out, true), "that room is taken by the car already in the junction");
     }
 }
