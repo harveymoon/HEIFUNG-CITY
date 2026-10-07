@@ -273,7 +273,9 @@ impl World {
             .iter()
             .filter(|(id, _)| {
                 let busy = self.enforcement.jobs.iter().filter(|j| j.company == Some(*id) && j.truck.is_some()).count();
-                busy < self.tow_trucks(*id)
+                // [services] And its trucks out to wrecks.
+                let wrecks = self.driving.wrecks.iter().filter(|w| w.company == Some(*id) && w.truck.is_some()).count();
+                busy + wrecks < self.tow_trucks(*id)
             })
             .filter_map(|(id, b)| self.lots.get(b.lot).filter(|l| l.car_segment.is_some()).map(|l| (id, l.center.distance(p))))
             .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -350,7 +352,9 @@ impl World {
         // free when the call came may have gone since.)
         let free = |c: BuildingId| {
             let out = self.enforcement.jobs.iter().filter(|j| j.id != job_id && j.company == Some(c) && j.truck.is_some()).count();
-            self.tow_trucks(c) > out
+            // [services] And those out at wrecks.
+            let wrecks = self.driving.wrecks.iter().filter(|w| w.company == Some(c) && w.truck.is_some()).count();
+            self.tow_trucks(c) > out + wrecks
         };
         let company = job.company.filter(|&c| free(c)).or_else(|| self.tow_company_near(spot.pos));
         // The company from out of town has a fleet of its own, not one
@@ -360,7 +364,11 @@ impl World {
         // were feeding.
         if company.is_none() {
             let out = self.enforcement.jobs.iter().filter(|j| j.company.is_none() && j.truck.is_some_and(|t| self.traffic.cars.contains_key(t))).count();
-            if out >= OUT_OF_TOWN_TOW_TRUCKS {
+            // [services] Its trucks out at wrecks count too, but a wreck is
+            // never kept waiting on this cap (`World::step_wrecks`): a crash
+            // blocking a road comes before a parking ticket.
+            let wrecks = self.driving.wrecks.iter().filter(|w| w.company.is_none() && w.truck.is_some_and(|t| self.traffic.cars.contains_key(t))).count();
+            if out + wrecks >= OUT_OF_TOWN_TOW_TRUCKS {
                 if let Some(j) = self.enforcement.jobs.iter_mut().find(|j| j.id == job_id) {
                     j.state = TowState::Waiting { until: tick + 10 };
                 }

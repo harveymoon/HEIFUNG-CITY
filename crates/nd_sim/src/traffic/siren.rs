@@ -89,6 +89,10 @@ pub enum OffLawMove {
     Squeeze,
     /// At its quarry: drive into it (the tag).
     Ram,
+    /// [driving] Any driver easing past a stopped hazard (a crash pushed to
+    /// the edge of the lane) where there is room, slowly
+    /// (`traffic/hazard.rs`).
+    Hazard,
 }
 
 /// The plan of a vehicle driving off-law, refreshed every substep (never
@@ -109,8 +113,11 @@ pub struct OffLaw {
     /// Seconds spent in `Wait`.
     pub held: f32,
     /// In `Wait`: the tail of whoever is in the way (metres along the
-    /// current lane, past its end for the next lane) and their speed.
+    /// current lane, past its end for the next lane) and their speed. In
+    /// `Hazard`: the same for whoever is beyond the hazard.
     pub lead: Option<(f32, f32)>,
+    /// In `Hazard`: the stopped vehicle being passed.
+    pub hazard: Option<CarId>,
 }
 
 /// Does this driver pull over for lights and sirens? Nearly everyone does;
@@ -145,9 +152,16 @@ impl DriverProfile {
 }
 
 impl Car {
-    /// Drives off-law: lights and sirens, or fleeing them.
+    /// Drives off-law: lights and sirens, fleeing them, or [services] a
+    /// recovery truck with its ambers on, close to the wreck it is going to.
     pub fn offlaw(&self) -> bool {
-        self.siren || self.drive.fleeing
+        self.siren || self.drive.fleeing || (self.drive.amber && self.drive.recovering)
+    }
+
+    /// [driving] Easing past a stopped hazard (`traffic/hazard.rs`): its
+    /// leader is whoever is beyond the hazard, at a crawl.
+    pub fn passing_hazard(&self) -> bool {
+        self.drive.offlaw.mode == OffLawMove::Hazard
     }
 }
 
@@ -284,7 +298,8 @@ impl Traffic {
     /// Plan every off-law vehicle's move for this substep, and ease the
     /// sideways offsets (back to the lane for any that stopped).
     pub(super) fn plan_offlaw(&mut self, dt: f32) {
-        let ids: Vec<CarId> = self.cars.iter().filter(|(_, c)| c.offlaw() || c.drive.offlaw.side != 0.0).map(|(id, _)| id).collect();
+        // Cars easing past a hazard are planned in `plan_hazard_passes`.
+        let ids: Vec<CarId> = self.cars.iter().filter(|(_, c)| c.offlaw() || (c.drive.offlaw.side != 0.0 && !c.passing_hazard())).map(|(id, _)| id).collect();
         for id in ids {
             let c = &self.cars[id];
             let active = c.offlaw() && !c.entering && !c.crashed() && !c.in_stunt() && c.hold <= 0.0;
@@ -348,6 +363,8 @@ impl Traffic {
             }
             self.cars[id].drive.offlaw = plan;
         }
+        // [driving] Everyone else past crashes pushed to the edge.
+        self.plan_hazard_passes(dt);
     }
 
     /// Something (not pulled over) still overlaps this car along its lane.
@@ -374,6 +391,12 @@ impl Traffic {
                 if car.siren || why != Wait::Leader || g < gap { (g, v, Wait::Leader) } else { (gap, lead_v, why) }
             }
             (OffLawMove::Overtake | OffLawMove::Kerb | OffLawMove::Squeeze | OffLawMove::Ram, _) if why == Wait::Leader => free,
+            // [driving] Past a hazard: follow whoever is beyond it (the
+            // hazard is the leader the plan was made for).
+            (OffLawMove::Hazard, lead) if why == Wait::Leader => match lead {
+                Some((tail, v)) => ((tail - car.s).max(0.0), v, Wait::Leader),
+                None => free,
+            },
             // Lights and sirens: no red light or full exit holds them, and a
             // leader in the lane with no move planned is no real obstacle
             // (pulled over, or passed and not yet behind in the lane order).
@@ -391,14 +414,14 @@ impl Traffic {
 
     /// The speed cap of the car's off-law move, if any.
     pub(super) fn offlaw_cap(car: &Car) -> Option<f32> {
-        car.offlaw().then_some(car.drive.offlaw.cap).flatten().map(|c| c.max(0.5))
+        (car.offlaw() || car.passing_hazard()).then_some(car.drive.offlaw.cap).flatten().map(|c| c.max(0.5))
     }
 
     /// An off-law car that drove past others keeps the lane's order:
     /// ahead of whoever it has passed (else the car behind would follow
     /// the wrong leader and drive into the one passed).
     pub(super) fn offlaw_reorder(&mut self) {
-        let ids: Vec<CarId> = self.cars.iter().filter(|(_, c)| c.offlaw() && !c.entering).map(|(id, _)| id).collect();
+        let ids: Vec<CarId> = self.cars.iter().filter(|(_, c)| (c.offlaw() || c.passing_hazard()) && !c.entering).map(|(id, _)| id).collect();
         for id in ids {
             let lane = self.cars[id].route[self.cars[id].idx];
             let s = self.cars[id].s;

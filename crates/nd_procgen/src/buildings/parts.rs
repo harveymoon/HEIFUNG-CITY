@@ -36,6 +36,15 @@ pub fn coin(rng: &mut impl Rng, p: f32) -> bool {
 /// for that share's lookup (opaque glow ignores alpha anyway).
 pub const WINDOW_LIGHT_MARK: f32 = 2.0;
 
+/// How far (m) the dark glass under a switchable window light sits behind
+/// it. Decals stand off their wall on a whole-centimetre grid (a frame at
+/// 3 cm, the pane or light at 5 cm), so the glass goes 13 mm back, off that
+/// grid: at 2 cm it landed exactly in the plane of the window frame, and
+/// with the light off the frame and the glass z-fought as the camera moved.
+/// 13 mm is far beyond the depth buffer's resolution at any view distance
+/// (reverse-Z float depth resolves well under a millimetre at 2 km).
+pub const LIGHT_GLASS_BEHIND: f32 = 0.013;
+
 /// Draw a window light with `emit` (which adds Glow). With
 /// [`Ctx::dynamic_lights`] the new glow vertices are marked with
 /// [`WINDOW_LIGHT_MARK`] plus a rank hashed from their position, and a
@@ -68,7 +77,7 @@ pub fn window_light(g: &mut Geometry, c: &Ctx, emit: impl FnOnce(&mut Geometry))
     };
     for (pos, n) in glass.positions.iter_mut().zip(&glass.normals) {
         for k in 0..3 {
-            pos[k] -= n[k] * 0.02;
+            pos[k] -= n[k] * LIGHT_GLASS_BEHIND;
         }
     }
     g.part(Glass).append(&glass);
@@ -626,11 +635,13 @@ pub fn roller_door(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, w: f32, h: f3
 pub fn entrance(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32, w: f32, h: f32) {
     let f = &c.frame;
     face.bx(g, f, Matte, t, h * 0.5, -0.3, Vec3::new(w + 0.6, h, 0.8), DARK);
-    face.decal(g, f, Glass, t, h * 0.5, 0.12, w, h * 0.95, c.palette.glass_dark);
+    // Half a centimetre off the grid: mullions 12 cm deep (podium office)
+    // put their faces at exactly 12 cm, and the door glass flickered on them.
+    face.decal(g, f, Glass, t, h * 0.5, 0.125, w, h * 0.95, c.palette.glass_dark);
     let lit = coin(rng, 0.6 + 0.4 * c.lit_chance());
     if lit {
         let col = mul(pick(rng, &c.style.window_colors), 0.7);
-        window_light(g, c, |g| face.decal(g, f, Glow, t, h * 0.5, 0.14, w * 0.9, h * 0.85, col));
+        window_light(g, c, |g| face.decal(g, f, Glow, t, h * 0.5, 0.145, w * 0.9, h * 0.85, col));
     }
     canopy(g, c, face, t, h + 0.3, w + 1.6, 2.0, mul(c.style.trim_color, 0.9));
     // Doorstep paving, as deep as the forecourt allows.
