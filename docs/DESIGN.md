@@ -101,7 +101,16 @@ Citizens are rendered from their simulated positions every frame.
   across over a few seconds, and overtake buses at stops and slower trucks when a
   parallel lane is free. New cars pull out of the kerb only into a gap (the next driver
   lets them in after 15 s); a car stalled 40 s before a full exit, or 10 s at a lane
-  change it cannot make, takes another way, which breaks gridlock rings. Traffic physics runs 1.5 seconds per sim minute so a car at 50 km/h
+  change it cannot make, takes another way, which breaks gridlock rings. Lane changes stop at the solid line before a junction or a roundabout junction
+  (the last 20 m, more at speed, up to 32 m) and never happen inside one: routing plans
+  them on pieces with room before that line (`SHORT_CHANGE_COST`, `SOLID_CHANGE_COST`), and
+  a car not in the lane its turn needs by the line carries on in its own lane and finds
+  another way (it misses the turn) instead of stopping for a gap. Only with no other way at
+  all does it wait at the line: then the driver behind in the next lane leaves it a gap as the
+  queue moves (the zip), and two cars side by side each wanting the other's lane swap places.
+  A change is drawn as a glide: the sideways offset eases along a half cosine over 2.5-3 s of
+  driving (8 to 45 m) with the nose along it. Cars already in the junction count against the
+  room on its exit, so a run of cars cannot fill the box behind a standing tail. Traffic physics runs 1.5 seconds per sim minute so a car at 50 km/h
   moves at a believable pace on screen at 1x; trips therefore take sim-time tens of
   minutes, the usual city-builder compromise. Right-hand traffic; lane sets are centred
   on the road; junction curves stay inside the junction; cars refuse to enter a
@@ -129,7 +138,9 @@ Citizens are rendered from their simulated positions every frame.
   line goes unless a ring vehicle that will pass the entry (not leave by it) is in the
   junction or arrives less than 3 s after it, looking back round the ring as far as a ring
   car covers in 9 s (at least 45 m);
-  ring traffic never yields and only follows a car merged ahead. Passing an arm in a
+  ring traffic never yields and only follows a car merged ahead. A ring car that has stood 20 s at the end of a ring lane
+  behind a ring that does not move gets off at the arm it is at when that arm has room
+  (`Traffic::bail_off_ring`): a one-lane ring packed solid otherwise never moved again. Passing an arm in a
   lane on that arm's side costs routing a little, the more lanes in from the side the
   more (`RING_OUTER_THROUGH` per lane), so the first exits keep to the outside and later
   ones go round further in, changing back out between junctions; ring arrows are fixed
@@ -311,7 +322,10 @@ Citizens are rendered from their simulated positions every frame.
   destination's own spaces; else the driver weighs the nearest free kerb slots and parking lots by
   the drive there (by the route it would really take), the walk back and the fee; with nothing in
   sight it circles the streets around (counted as circling, the signal development opens lots on),
-  and after four tries parks anywhere on the street. Kerbs: one slot per 6.5 m on both sides of
+  and after four tries parks anywhere on the street. The hunt is also timed: after 20 minutes the driver looks further and at
+  banned kerbs, after an hour it stops looking and leaves the car where it can (a banned kerb
+  nearby, a free one within 700 m, else squeezed in where it stands), and a worn-out hunter
+  standing two minutes in a queue does so on the spot instead of waiting to reach its street. Kerbs: one slot per 6.5 m on both sides of
   streets, none within 12 m of a junction, none on highways, bridges, avenues (clearways) or streets
   fronted by shops and nightlife (loading). A car keeps its space until it drives off, so a lot's
   occupancy is the cars standing in it, overnight too. Cars parked at a building that goes are moved
@@ -356,7 +370,7 @@ Citizens are rendered from their simulated positions every frame.
   150 m of home hold a permit. A parking enforcement office (Services, three tiers) sends officers,
   two a car, round the streets within its reach from 07:00 to 21:00: a car over its limit gets a 35
   ticket (household to treasury, ledger "parking fines"); an hour later, or at once if parked where
-  parking is banned, the tow truck is called. Tow companies are businesses on industrial land
+  parking is banned, the tow truck is called. A company in town sends a truck only when one is free; the company from out of town has four on the city's roads at most, the other jobs wait their turn (uncapped, a city short of parking had 170 tow trucks in its jam). Tow companies are businesses on industrial land
   (logistics); the nearest with a truck free sends one, which hooks the car where it stands and
   carries it to its pound (drawn on the truck as wrecks are). With none in town a company from out
   of town comes in from the edge 45 minutes later and charges 180 instead of 80. The owner pays the

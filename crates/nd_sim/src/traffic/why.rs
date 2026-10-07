@@ -194,7 +194,14 @@ impl Traffic {
                 // parked, off the map): it is about to pull away.
                 None => self.next_on_route(c).map_or(if c.stalled < 30.0 { StopReason::Moving } else { StopReason::Unexplained }, |b| StopReason::Queued { behind: b }),
             },
-            Wait::Signal => StopReason::RedLight,
+            // At a red light with the road beyond full as well: the light
+            // is not what holds it (a player saw a head "at a red light"
+            // for two hours at a junction whose every exit was a queue).
+            // Named for the full exit, so the chain goes on to its head.
+            Wait::Signal => match (c.route.get(c.idx + 1), c.route.get(c.idx + 2)) {
+                (Some(&conn), Some(&exit)) if self.net.lanes[conn as usize].is_connector() && self.exit_blocked(&self.net.lanes[conn as usize], exit, true) => StopReason::ExitFull { tail: self.net.lanes[exit as usize].cars.first().copied() },
+                _ => StopReason::RedLight,
+            },
             Wait::Yield => self.yield_reason(c, here),
             Wait::ExitFull => StopReason::ExitFull { tail: by },
             Wait::LaneChange => StopReason::LaneChange { beside: self.lane_change_blocker(c) },
