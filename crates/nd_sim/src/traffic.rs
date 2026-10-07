@@ -113,13 +113,31 @@ const DEMAND_REACH: f32 = 40.0;
 /// so routes spread over parallel lanes and around queues.
 const LANE_CHANGE_COST: f32 = 8.0;
 const QUEUE_COST: f32 = 6.0;
-/// Extra routing cost of a lane change made on a piece of lane shorter
-/// than `SHORT_CHANGE_LEN` (all of it on a piece of no length): a change
-/// planned onto the last few metres before a junction is the one that
-/// ends with a car stopped at the line, waiting for a gap that the queue
-/// beside it never leaves.
+/// Extra routing cost of a lane change on a piece of lane with less than
+/// `SHORT_CHANGE_LEN` before the solid line of the junction ahead (planned
+/// as long as it can be, `SOLID_LINE_MAX`): drivers pick their lane
+/// well before the junction, and a change planned into the last metres is
+/// the one that is never made.
 const SHORT_CHANGE_COST: f32 = 60.0;
 const SHORT_CHANGE_LEN: f32 = 40.0;
+/// Routing cost of a lane change planned on a piece that lies wholly in
+/// the solid-line zone before a junction: possible only as a last resort.
+const SOLID_CHANGE_COST: f32 = 300.0;
+/// The solid line before a junction (or a roundabout entry): no lane
+/// changes in the last `SOLID_LINE_MIN` metres, more at speed (as far as a
+/// car covers in `SOLID_LINE_SECONDS`, up to `SOLID_LINE_MAX`), nor inside
+/// the junction. A car not yet in the lane its turn needs by then carries
+/// on in its own lane and finds another way (it misses the turn).
+const SOLID_LINE_MIN: f32 = 20.0;
+const SOLID_LINE_SECONDS: f32 = 2.0;
+const SOLID_LINE_MAX: f32 = 32.0;
+/// A lane change glides over this many seconds of driving (at least
+/// `GLIDE_MIN` metres, at most `GLIDE_MAX`).
+const GLIDE_SECONDS: f32 = 2.5;
+const GLIDE_MIN: f32 = 8.0;
+const GLIDE_MAX: f32 = 45.0;
+/// Metres a second a stopped car mid-change still creeps across by.
+const GLIDE_CREEP: f32 = 0.8;
 /// Hardest braking (m/s per s) a lane change may ask of the changer or of its
 /// new follower; a car stopped at the end of its lane accepts a little more.
 const LC_SAFE_BRAKE: f32 = 3.0;
@@ -141,6 +159,9 @@ const COURTESY_AFTER: f32 = 15.0;
 /// Seconds two cars stand side by side, each wanting the other's lane,
 /// before they swap places (`Traffic::swap_lanes`).
 const SWAP_AFTER: f32 = 8.0;
+/// Seconds before a car with no other way than the lane change it could
+/// not make looks for one again.
+const SOLID_RETRY: f32 = 2.0;
 /// A vehicle at the kerb whose spot stays covered by standing traffic this
 /// long pulls out into the nearest real gap behind it instead.
 const KERB_SLIDE_AFTER: f32 = 90.0;
@@ -577,6 +598,16 @@ pub struct Car {
     pub toll_booth: u32,
     #[serde(default)]
     pub toll_paid: bool,
+    /// The glide of a lane change: the sideways offset it began with
+    /// (0: none under way, the offset simply settles), the metres it takes
+    /// and the metres driven so far. The offset eases out and back in
+    /// along a half cosine over that distance, the nose turned along it.
+    #[serde(default)]
+    pub glide_from: f32,
+    #[serde(default)]
+    pub glide_len: f32,
+    #[serde(default)]
+    pub glide_done: f32,
     /// [passengers] Everyone riding along besides the driver (`citizen`),
     /// kept by `World::step_passengers`.
     #[serde(default)]
@@ -1029,6 +1060,12 @@ impl Car {
     }
 
     /// The route asks for a change into the lane beside this one next.
+    /// The sideways offset a glide under way puts the car at now.
+    fn glide_at(&self) -> f32 {
+        let u = (self.glide_done / self.glide_len.max(0.1)).min(1.0);
+        self.glide_from * 0.5 * (1.0 + (std::f32::consts::PI * u).cos())
+    }
+
     fn change_pending(&self, net: &LaneNetwork) -> Option<LaneId> {
         let next = *self.route.get(self.idx + 1)?;
         net.lanes[self.route[self.idx] as usize].is_beside(next).then_some(next)
@@ -1817,7 +1854,21 @@ impl LaneNetwork {
             let here = &self.lanes[lane as usize];
             // [tolls] A toll counts as the detour a driver would take to avoid it.
             let ahead = here.next.iter().filter(|&&n| self.lanes[n as usize].permitted).map(|&n| (n, self.lanes[n as usize].length + self.rings.penalty(n) + self.toll_penalty(n)));
-            let short = SHORT_CHANGE_COST * (1.0 - here.length / SHORT_CHANGE_LEN).max(0.0);
+            // Room on this piece before the solid line of the junction
+            // ahead (the line may begin pieces back, round bends).
+            // On a roundabout, slow and with arms close together, the line
+            // is the shortest there is and changing between arms is how
+            // the ring is driven: only a change inside the line costs.
+            let ring = self.rings.circulating.contains(&lane);
+            let line = if ring { SOLID_LINE_MIN } else { SOLID_LINE_MAX };
+            let room = here.length - (line - self.junction_after(lane, line)).max(0.0);
+            let short = if room <= 0.0 {
+                SOLID_CHANGE_COST
+            } else if ring {
+                0.0
+            } else {
+                SHORT_CHANGE_COST * (1.0 - room / SHORT_CHANGE_LEN).max(0.0)
+            };
             let beside = [here.left, here.right].into_iter().flatten().map(|n| (n, LANE_CHANGE_COST + short));
             for (next, step) in ahead.chain(beside) {
                 if next == start || Some(next) == avoid_lane || Some((lane, next)) == avoid_step {
@@ -1837,6 +1888,63 @@ impl LaneNetwork {
             }
         }
         None
+    }
+
+    /// Does this road lane end at a junction (three or more streets, or a
+    /// roundabout junction with arms), not at a bend? Where the solid line
+    /// before it forbids lane changes.
+    pub fn ends_at_junction(&self, lane: LaneId) -> bool {
+        let Some(l) = self.lanes.get(lane as usize) else { return false };
+        if l.is_connector() {
+            return false;
+        }
+        let node = l.end_node;
+        self.node_intersection.get(node.0 as usize).and_then(|&i| self.intersections.get(i)).is_some_and(|i| i.approaches >= 3)
+            || self.rings.nodes.get(&node).is_some_and(|n| !n.entries.is_empty() || !n.exits.is_empty())
+    }
+
+    /// Metres from the end of `lane` to the next junction straight on
+    /// (through bends, where a lane has one way on), up to `limit`.
+    pub fn junction_after(&self, lane: LaneId, limit: f32) -> f32 {
+        let mut d = 0.0;
+        let mut l = lane;
+        for _ in 0..16 {
+            if self.ends_at_junction(l) {
+                return d;
+            }
+            let here = &self.lanes[l as usize];
+            let [conn] = here.next[..] else { return limit };
+            let Some(&n) = self.lanes[conn as usize].next.first() else { return limit };
+            d += self.lanes[conn as usize].length + self.lanes[n as usize].length;
+            if d >= limit {
+                return limit;
+            }
+            l = n;
+        }
+        limit
+    }
+
+    /// Metres from `s` along `route[idx]` to the next junction on the
+    /// route (`ends_at_junction`), up to `limit`; lane changes on the way
+    /// add nothing (the lane beside runs alongside).
+    pub fn to_junction(&self, route: &[LaneId], idx: usize, s: f32, limit: f32) -> f32 {
+        let mut d = 0.0;
+        let mut k = idx;
+        let mut from = s;
+        while let Some(&l) = route.get(k) {
+            let lane = &self.lanes[l as usize];
+            if route.get(k + 1).is_some_and(|&n| lane.is_beside(n)) {
+                k += 1;
+                continue;
+            }
+            d += (lane.length - from).max(0.0);
+            if self.ends_at_junction(l) || d >= limit {
+                return d.min(limit);
+            }
+            from = 0.0;
+            k += 1;
+        }
+        limit
     }
 
     /// [tolls] Routing cost of the toll on a lane, in metres.
@@ -1953,7 +2061,7 @@ impl Traffic {
         let lane = route[0];
         let (pos, dir) = self.net.lanes[lane as usize].point_at(s_start);
         let heading = dir.y.atan2(dir.x);
-        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, blocked_by: None, replans: 0, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), owned: None, errand: Default::default(), drive: DriveState::default(), toll_booth: 0, toll_paid: false, occupants: Vec::new() });
+        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, blocked_by: None, replans: 0, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), owned: None, errand: Default::default(), drive: DriveState::default(), toll_booth: 0, toll_paid: false, occupants: Vec::new(), glide_from: 0.0, glide_len: 0.0, glide_done: 0.0 });
         self.pull_out(id);
         id
     }
@@ -2521,6 +2629,10 @@ impl Traffic {
         }
         c.s = c.s.min(len);
         c.lateral = (c.lateral + shift).clamp(-1.5 * LANE_WIDTH, 1.5 * LANE_WIDTH);
+        // A glide across, longer the faster the car goes.
+        c.glide_from = c.lateral;
+        c.glide_len = (GLIDE_SECONDS * c.v).clamp(GLIDE_MIN, GLIDE_MAX);
+        c.glide_done = 0.0;
         // [driving] Eager drivers change again sooner.
         c.cooldown = LC_COOLDOWN * (1.5 - c.drive.profile.aggression).max(0.3);
         self.insert_sorted(target, id);
@@ -2562,7 +2674,31 @@ impl Traffic {
                 }
                 continue;
             }
+            // The solid line before a junction: no changing lanes there.
+            let zone = if self.net.rings.circulating.contains(&c.route[c.idx]) { SOLID_LINE_MIN } else { (SOLID_LINE_SECONDS * c.v).clamp(SOLID_LINE_MIN, SOLID_LINE_MAX) };
+            let solid = self.net.to_junction(&c.route, c.idx, c.s, zone + 1.0) <= zone;
             if let Some(target) = c.change_pending(&self.net) {
+                if solid && c.cooldown <= 0.0 {
+                    // Not in the lane its turn needs by the solid line: it
+                    // carries on in its own lane and finds another way (it
+                    // misses the turn) rather than stopping at the line to
+                    // wait for a gap. Two cars there each wanting the
+                    // other's lane used to stand side by side for good.
+                    let here = c.route[c.idx];
+                    let (goal, s_end, s) = (*c.route.last().unwrap(), c.s_end, c.s);
+                    match self.net.route_avoiding(here, s, goal, s_end, None, Some((here, target))) {
+                        Some((route, _, _)) => {
+                            let c = &mut self.cars[id];
+                            c.route = route;
+                            c.idx = 0;
+                            continue;
+                        }
+                        // No other way at all: as a last resort it waits
+                        // for its gap (let in by the zip, or a swap).
+                        None => self.cars[id].cooldown = SOLID_RETRY,
+                    }
+                }
+                let c = &self.cars[id];
                 let forced = lane.length - c.s < 8.0 && c.v < 1.0;
                 if self.change_ok(id, target, if forced { LC_FORCED_BRAKE.max(safe_brake) } else { safe_brake }).is_some() {
                     self.change_lane(id, target, None);
@@ -2571,7 +2707,7 @@ impl Traffic {
                 }
                 continue;
             }
-            if c.cooldown > 0.0 || lane.length - c.s < 12.0 || (c.idx + 1 == c.route.len() && c.s_end - c.s < 40.0) {
+            if solid || c.cooldown > 0.0 || lane.length - c.s < 12.0 || (c.idx + 1 == c.route.len() && c.s_end - c.s < 40.0) {
                 continue;
             }
             // Held up by a vehicle that is slow on its own account?
@@ -3054,7 +3190,19 @@ impl Traffic {
                     let target = CAR_WIDTH + 0.25;
                     let rate = PASS_LATERAL_SPEED * (car.v / 3.0).clamp(0.5, 1.0) * dt;
                     car.lateral = (car.lateral + rate).min(target.max(car.lateral));
+                } else if car.glide_from != 0.0 && (car.lateral - car.glide_at()).abs() < 0.05 {
+                    // Eased out and back in along a half cosine (a car
+                    // standing mid-change still creeps across).
+                    car.glide_done += car.v.max(GLIDE_CREEP) * dt;
+                    car.lateral = car.glide_at();
+                    if car.glide_done >= car.glide_len {
+                        car.lateral = 0.0;
+                        car.glide_from = 0.0;
+                    }
                 } else if car.lateral != 0.0 {
+                    // Settling back from a nudge (pulled aside for a siren,
+                    // back from the shoulder): no glide under way.
+                    car.glide_from = 0.0;
                     let rate = LC_LATERAL_SPEED * (car.v / 3.0).clamp(0.3, 1.0) * dt;
                     car.lateral -= car.lateral.signum() * car.lateral.abs().min(rate);
                 }
@@ -3620,7 +3768,12 @@ impl Traffic {
             }
             car.pos = p + right * side;
             let mut heading = d.y.atan2(d.x);
-            if car.lateral.abs() > 0.05 && car.v > 0.5 {
+            if car.glide_from != 0.0 && car.glide_len > 0.0 {
+                // Nose along the glide: the slope of the eased offset.
+                let u = (car.glide_done / car.glide_len).min(1.0);
+                let slope = -car.glide_from * 0.5 * std::f32::consts::PI / car.glide_len * (std::f32::consts::PI * u).sin();
+                heading += slope.atan();
+            } else if car.lateral.abs() > 0.05 && car.v > 0.5 {
                 // Nose turned toward the lane it is drifting into.
                 heading += (-car.lateral.signum() * LC_LATERAL_SPEED).atan2(car.v.max(2.0));
             }
@@ -4788,12 +4941,13 @@ mod tests {
         assert!(t.gridlocks().is_empty(), "a car that has just moved is not in a knot");
     }
 
-    /// Two cars stopped side by side at the stop line, each needing the
-    /// other's lane for its turn (a left turner in the right lane, a right
-    /// turner in the left), can never find a gap: each stands in the one
-    /// the other needs. They swap places and both make their turns.
+    /// Two cars side by side at the stop line, each needing the other's
+    /// lane for its turn (a left turner in the right lane, a right turner
+    /// in the left), are past the solid line: neither changes lanes there
+    /// nor stands waiting for the other. Each misses its turn, goes on from
+    /// its own lane and finds another way.
     #[test]
-    fn two_cars_waiting_for_each_others_lane_swap_places() {
+    fn cars_that_missed_their_lane_by_the_solid_line_go_on_and_reroute() {
         let roads = avenue_cross();
         let mut t = Traffic::default();
         t.rebuild(&roads);
@@ -4810,14 +4964,17 @@ mod tests {
         let a = t.spawn_car(CitizenId::default(), None, left_route, len - 1.0, s1, 0);
         let b = t.spawn_car(CitizenId::default(), None, right_route, len - 1.0, s2, 0);
         assert!(!t.cars[a].entering && !t.cars[b].entering);
-        assert!(t.change_ok(a, inner, LC_FORCED_BRAKE).is_none() && t.change_ok(b, outer, LC_FORCED_BRAKE).is_none(), "no room either way");
         let mut used: HashMap<CarId, Vec<LaneId>> = HashMap::new();
         let mut done = Vec::new();
-        for _ in 0..400 {
+        let mut waited: f32 = 0.0;
+        for _ in 0..1200 {
             for (id, c) in t.cars.iter() {
                 let u = used.entry(id).or_default();
                 if u.last() != Some(&c.route[c.idx]) {
                     u.push(c.route[c.idx]);
+                }
+                if c.wait == Wait::LaneChange {
+                    waited = waited.max(c.stalled);
                 }
             }
             for id in t.step(0.5, 1) {
@@ -4828,14 +4985,50 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(done.len(), 2, "both arrived");
-        let turn = |id: CarId| {
+        assert_eq!(done.len(), 2, "both got where they were going");
+        assert!(waited < 1.0, "nobody stood at the line for a lane change ({waited} s)");
+        // Out of the junction from the lane each was in.
+        let out_of = |id: CarId| {
             let u = &used[&id];
-            let k = u.iter().position(|&l| t.net.lanes[l as usize].is_connector() && t.net.lanes[l as usize].turn != 0).expect("turned");
-            (t.net.lanes[u[k] as usize].turn, u[k - 1])
+            let k = u.iter().position(|&l| t.net.lanes[l as usize].is_connector()).expect("through the junction");
+            u[k - 1]
         };
-        assert_eq!(turn(a), (-1, inner), "the left turner turned left from the left lane");
-        assert_eq!(turn(b), (1, outer), "the right turner turned right from the right lane");
+        assert_eq!(out_of(a), outer);
+        assert_eq!(out_of(b), inner);
+    }
+
+    /// A car that is beside a free lane well before the junction still
+    /// moves over for its turn: the solid line is only the last stretch.
+    #[test]
+    fn a_car_changes_lanes_for_its_turn_before_the_solid_line() {
+        let roads = avenue_cross();
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let w = LANE_WIDTH;
+        let west = roads.nearest_street(Vec2::new(-200.0, 0.0)).unwrap().0;
+        let south = roads.nearest_street(Vec2::new(0.0, -200.0)).unwrap().0;
+        let inner = lane_of(&t, west, Vec2::X, 0);
+        let (route, s0, s1) = t.net.find_route(west, Vec2::new(-300.0, 1.5 * w), south, Vec2::new(0.5 * w, -150.0)).expect("route");
+        let car = t.spawn_car(CitizenId::default(), None, route, s0, s1, 0);
+        let mut glide: Vec<f32> = Vec::new();
+        let mut changed = false;
+        for _ in 0..1000 {
+            t.step(0.2, 1);
+            let Some(c) = t.cars.get(car) else { break };
+            changed |= c.route[c.idx] == inner;
+            if c.glide_from != 0.0 {
+                glide.push(c.lateral);
+            }
+            if c.route[c.idx] != inner && changed {
+                break;
+            }
+        }
+        assert!(changed, "moved to the inner lane for the left turn");
+        // A glide: the offset eases off, slowly at first and last.
+        assert!(glide.len() >= 4, "{glide:?}");
+        let steps: Vec<f32> = glide.windows(2).map(|p| (p[0] - p[1]).abs()).collect();
+        let mid = steps[steps.len() / 2];
+        assert!(steps[0] < mid && *steps.last().unwrap() < mid, "eased in and out: {steps:?}");
     }
 
     /// A junction whose exit has room for one car behind a standing tail
