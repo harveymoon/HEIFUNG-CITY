@@ -1511,6 +1511,7 @@ fn sync_vacant(
             let seed = w.config.seed ^ ((lot.center.x * 31.0 + lot.center.y * 17.0).abs() as u64);
             geo.append(&generate_vacant(lot, w.land_value.at(lot.center), seed, pal));
         }
+        nd_procgen::climate::snow_cover(&mut geo, pal.snow);
         let ents = if geo.triangle_count() > 0 { spawn_geometry(&mut commands, &mut meshes, &mats, &geo, VacantTag) } else { Vec::new() };
         state.vacant_chunks.insert(k, (key, ents));
     }

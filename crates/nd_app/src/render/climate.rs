@@ -23,8 +23,8 @@ pub const CLOUD_START: f32 = 0.6;
 /// Side and height of one block of falling particles, metres.
 const TILE: f32 = 120.0;
 /// Particles per block.
-const RAIN_DROPS: usize = 2600;
-const SNOW_FLAKES: usize = 2200;
+const RAIN_DROPS: usize = 3000;
+const SNOW_FLAKES: usize = 4000;
 /// Blocks: 2 x 2 round the camera, 3 high.
 const LAYERS: usize = 3;
 
@@ -75,7 +75,7 @@ fn particle_block(snow: bool) -> Mesh {
         let k = i * 4 + salt;
         let c = Vec3::new(hash(k) * TILE, hash(k + 1) * TILE, hash(k + 2) * TILE);
         let a = hash(k + 3) * std::f32::consts::PI;
-        let (w, h) = if snow { (0.22, 0.22) } else { (0.06, 2.6) };
+        let (w, h) = if snow { (0.09, 0.09) } else { (0.035, 2.2) };
         let mut quad = |u: Vec3, v: Vec3| {
             let b = pos.len() as u32;
             for p in [c - u * w - v * h, c + u * w - v * h, c + u * w + v * h, c - u * w + v * h] {
@@ -238,7 +238,7 @@ pub(super) fn sync_steam(
         }
     }
     let land = &w.landscape;
-    let key = (sim.generation, land.hot_spots.len(), land.params.seed ^ land.params.climate as u64);
+    let key = (sim.generation, land.hot_spots.len(), land.params.seed ^ land.params.climate as u64 ^ w.roads.version << 8 ^ (w.buildings.len() as u64) << 40);
     if state.key != Some(key) || sim.full_rebuild {
         state.key = Some(key);
         for e in state.entities.drain(..) {
@@ -255,6 +255,9 @@ pub(super) fn sync_steam(
                 let a = hash(i as u32 * 31 + v as u32 * 7 + 1) * std::f32::consts::TAU;
                 let r = hash(i as u32 * 31 + v as u32 * 7 + 2) * s.radius * 0.6;
                 let p = s.pos + nd_sim::Vec2::from_angle(a) * r;
+                if !nd_procgen::climate::vent_clear(w, p) {
+                    continue;
+                }
                 let y = w.ground_height(p);
                 let vent = state.vents.len();
                 state.vents.push(Vec3::new(p.x, y, p.y));

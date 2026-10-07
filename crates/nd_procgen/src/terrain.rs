@@ -444,10 +444,10 @@ pub fn build_water(world: &World, palette: &Palette) -> MeshData {
     let (shallow, deep) = look.water.unwrap_or((mix(mul(palette.water, 0.45), [0.2, 0.3, 0.28], 0.4), mul(palette.water, 0.22)));
     // [climate] Still water frozen over: lakes, and the sea out to
     // `sea_ice` from the shore. Rivers and streams keep running.
-    let frozen = |p: Vec2, d: f32| -> bool {
-        look.ice.is_some() && (land.lakes.iter().any(|l| l.center.distance(p) < 400.0 && nd_sim::geom::point_in_polygon(p, &l.outline)) || (d > -look.sea_ice && p.x.abs() < LAND_HALF && p.y.abs() < LAND_HALF && land.sea.as_ref().is_some_and(|s| s.contains(p))))
-    };
     let crack = Fbm::<Perlin>::new(land.params.seed as u32 ^ 0x1CE).set_octaves(3);
+    let frozen = |p: Vec2, d: f32| -> bool {
+        look.ice.is_some() && (land.lakes.iter().any(|l| l.center.distance(p) < 400.0 && nd_sim::geom::point_in_polygon(p, &l.outline)) || (d > -look.sea_ice * (0.5 + 0.9 * (crack.get([p.x as f64 * 0.004, p.y as f64 * 0.004]) as f32 * 0.5 + 0.5)) && p.x.abs() < LAND_HALF && p.y.abs() < LAND_HALF && land.sea.as_ref().is_some_and(|s| s.contains(p))))
+    };
     let wet = |p: Vec2| -> Option<f32> {
         if p.x.abs() > LAND_HALF || p.y.abs() > LAND_HALF {
             return if land.is_water(p) { Some(-60.0) } else { None };
@@ -465,14 +465,24 @@ pub fn build_water(world: &World, palette: &Palette) -> MeshData {
                 continue;
             }
             let base = mesh.positions.len() as u32;
-            // One test per cell, at its middle, so ice edges stay square-ish
-            // and cheap.
-            let mid = Vec2::new(x0 + cell * 0.5, z0 + cell * 0.5);
-            let ice = look.ice.filter(|_| frozen(mid, ds.iter().flatten().fold(f32::INFINITY, |a, b| a.min(*b))));
+            // Ice per corner, so its edge fades over a cell into open water
+            // instead of stepping; corners on the bank follow the cell's water.
+            let mut fr = [false; 4];
+            if look.ice.is_some() {
+                for (k, c) in corners.iter().enumerate() {
+                    fr[k] = ds[k].is_some_and(|d| d < 0.0 && frozen(*c, d));
+                }
+                let any = fr.iter().any(|f| *f);
+                for k in 0..4 {
+                    if ds[k].is_none_or(|d| d >= 0.0) {
+                        fr[k] = any;
+                    }
+                }
+            }
             for (k, c) in corners.iter().enumerate() {
                 let d = ds[k].unwrap_or(12.0);
                 let t = ((-d) / 25.0).clamp(0.0, 1.0);
-                let (rgb, a) = match ice {
+                let (rgb, a) = match look.ice.filter(|_| fr[k]) {
                     Some(ice) => {
                         let v = crack.get([c.x as f64 * 0.03, c.y as f64 * 0.03]) as f32;
                         (mul(ice, 0.85 + 0.3 * v.abs() + 0.15 * (1.0 - t)), 0.97)
@@ -1065,18 +1075,20 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
             _ => {}
         }
     }
-    // Steaming vents at the hot spots.
+    // Vents at the hot spots: crusted rocks round a pale sinter ring, on
+    // open ground only (the city may have been laid over a hot spot). The
+    // steam itself is animated by the renderer.
     for (k, s) in land.hot_spots.iter().enumerate() {
         let mut rng = rng_for(land.params.seed, 900 + k as u64);
         for _ in 0..7 {
             let p = s.pos + Vec2::from_angle(rng.random_range(0.0..6.28)) * rng.random_range(0.0..s.radius * 0.8);
-            let y = world.ground_height(p);
             let size = 0.8 + rng.random::<f32>();
-            rock_world(&mut g, &mut rng, p, y - 0.1, size, mul(palette.stone, 0.7));
-            for q in 0..4 {
-                let yy = y + 0.5 + q as f32 * 1.6;
-                g.part(Surface::Matte).cylinder(p + Vec2::splat(q as f32 * 0.25), 0.4 + q as f32 * 0.35, 0.6 + q as f32 * 0.35, yy, yy + 1.4, 7, rgba([0.88, 0.88, 0.86]));
+            if !climate::vent_clear(world, p) {
+                continue;
             }
+            let y = world.ground_height(p);
+            rock_world(&mut g, &mut rng, p, y - 0.1, size, mul(palette.stone, 0.7));
+            g.part(Surface::Stone).ground_polygon(&ngon(p.x, p.y, size * 2.2, 9, 0.0), y + 0.06, rgba([0.62, 0.58, 0.46]));
         }
     }
     g

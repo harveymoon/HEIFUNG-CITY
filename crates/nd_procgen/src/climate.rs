@@ -63,6 +63,8 @@ pub struct ClimateLook {
     pub hot_ground: [f32; 3],
     /// Leaves and dry leaves; `None` keeps the palette's.
     pub foliage: Option<([f32; 3], [f32; 3])>,
+    /// Bare earth (scrapes, sites, yards); `None` keeps the palette's.
+    pub dirt: Option<[f32; 3]>,
     /// Water: (shallow, deep), linear; `None` keeps the palette's.
     pub water: Option<([f32; 3], [f32; 3])>,
     /// Lakes and the sea's edge are frozen (a look only: still water to the sim).
@@ -85,6 +87,7 @@ pub fn look(c: Climate) -> ClimateLook {
             shore: None,
             hot_ground: [0.62, 0.55, 0.22],
             foliage: None,
+            dirt: None,
             water: None,
             ice: None,
             sea_ice: 0.0,
@@ -97,7 +100,8 @@ pub fn look(c: Climate) -> ClimateLook {
             ground: Some(([0.030, 0.052, 0.022], [0.016, 0.020, 0.010], [0.042, 0.060, 0.036])),
             shore: Some([0.20, 0.19, 0.15]),
             hot_ground: [0.55, 0.50, 0.24],
-            foliage: Some(([0.10, 0.26, 0.07], [0.22, 0.26, 0.09])),
+            foliage: Some(([0.08, 0.19, 0.06], [0.17, 0.19, 0.08])),
+            dirt: Some([0.13, 0.15, 0.085]),
             water: Some(([0.06, 0.16, 0.17], [0.012, 0.05, 0.075])),
             ice: None,
             sea_ice: 0.0,
@@ -110,7 +114,8 @@ pub fn look(c: Climate) -> ClimateLook {
             ground: Some(([0.022, 0.070, 0.016], [0.018, 0.032, 0.006], [0.020, 0.075, 0.026])),
             shore: Some([0.62, 0.58, 0.44]),
             hot_ground: [0.58, 0.52, 0.20],
-            foliage: Some(([0.06, 0.34, 0.06], [0.16, 0.34, 0.06])),
+            foliage: Some(([0.06, 0.30, 0.06], [0.14, 0.28, 0.06])),
+            dirt: Some([0.12, 0.15, 0.07]),
             water: Some(([0.05, 0.42, 0.40], [0.006, 0.07, 0.12])),
             ice: None,
             sea_ice: 0.0,
@@ -124,6 +129,7 @@ pub fn look(c: Climate) -> ClimateLook {
             shore: Some([0.22, 0.24, 0.27]),
             hot_ground: [0.20, 0.17, 0.12],
             foliage: Some(([0.035, 0.08, 0.05], [0.10, 0.11, 0.08])),
+            dirt: None,
             water: Some(([0.05, 0.11, 0.15], [0.008, 0.03, 0.06])),
             ice: Some([0.40, 0.50, 0.58]),
             sea_ice: 70.0,
@@ -136,7 +142,8 @@ pub fn look(c: Climate) -> ClimateLook {
             ground: Some(([0.020, 0.021, 0.022], [0.016, 0.034, 0.010], [0.034, 0.048, 0.030])),
             shore: Some([0.012, 0.012, 0.014]),
             hot_ground: [0.50, 0.40, 0.12],
-            foliage: Some(([0.08, 0.17, 0.05], [0.14, 0.16, 0.07])),
+            foliage: Some(([0.05, 0.09, 0.035], [0.075, 0.08, 0.055])),
+            dirt: Some([0.075, 0.07, 0.068]),
             water: Some(([0.04, 0.16, 0.19], [0.008, 0.04, 0.07])),
             ice: None,
             sea_ice: 0.0,
@@ -163,6 +170,9 @@ pub fn palette_for(base: &Palette, c: Climate) -> Palette {
         p.foliage = f;
         p.foliage_dry = d;
     }
+    if let Some(d) = l.dirt {
+        p.dirt = d;
+    }
     p.flora = l.flora;
     p.snow = l.snow;
     p
@@ -188,7 +198,7 @@ pub fn snow_cover(geo: &mut Geometry, amount: f32) {
 
 fn snow_mesh(m: &mut MeshData, amount: f32) {
     for (n, c) in m.normals.iter().zip(m.colors.iter_mut()) {
-        let up = ((n[1] - 0.55) / 0.35).clamp(0.0, 1.0) * amount;
+        let up = ((n[1] - 0.3) / 0.45).clamp(0.0, 1.0) * amount;
         if up > 0.0 {
             let rgb = mix([c[0], c[1], c[2]], SNOW, up);
             c[0] = rgb[0];
@@ -224,6 +234,18 @@ pub fn climate_tree(g: &mut Geometry, pal: &Palette, w: Vec2, h: f32, canopy: f3
             }
         }
     }
+}
+
+/// Can a steam vent stand at `p`: off every road and track and not under a
+/// building? (Hot spots predate the city; their vents keep to open ground.)
+pub fn vent_clear(world: &nd_sim::World, p: Vec2) -> bool {
+    let roads = &world.roads;
+    if let Some((sid, _, q)) = roads.nearest_where(p, |_| true) {
+        if q.distance(p) < roads.segment(sid).half_width() + 4.0 {
+            return false;
+        }
+    }
+    !world.lots.values().any(|l| l.building.is_some() && nd_sim::geom::point_in_polygon(p, &l.polygon))
 }
 
 /// 0..1 from a position, for picks that must not draw from an RNG.
