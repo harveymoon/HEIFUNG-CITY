@@ -552,7 +552,6 @@ fn a_save_from_before_the_tools_loads() {
     assert_eq!(w2.roads.alive_segments().count(), w.roads.alive_segments().count());
 }
 
-<<<<<<< HEAD
 /// [clarity] Walkers take the footbridge over the crosswalk when it costs
 /// only a little more, but not when it is a real detour: from the far side
 /// of the crosswalk (away from the stairs) they cross at grade.
@@ -574,7 +573,8 @@ fn walkers_take_a_footbridge_only_when_it_is_no_big_detour() {
     assert!(climbs(&w, a + along * 15.0, b + along * 15.0), "takes the bridge when it is on the way");
     // From the other side, the bridge would be a long way round.
     assert!(!climbs(&w, a - along * 40.0, b - along * 40.0), "no big detour for a bridge");
-=======
+}
+
 /// Harvey's gesture 423, exactly: a raised street (6 m) whose last point
 /// is dropped on a highway carriageway. The network lands that end on the
 /// carriageway at its level, so the deck ramps down to it and needs no
@@ -634,5 +634,4 @@ fn an_end_in_the_air_is_flagged_everywhere_with_the_end_reason() {
     let segs = w.roads.alive_segments().count();
     assert_eq!(w.try_implement().expect_err("refused"), shown);
     assert_eq!(w.roads.alive_segments().count(), segs, "nothing was built");
->>>>>>> main
 }
