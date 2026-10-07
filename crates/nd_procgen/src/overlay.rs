@@ -68,7 +68,7 @@ pub fn industry_hue(k: IndustryKind) -> [f32; 3] {
         IndustryKind::Logistics => [1.0, 0.72, 0.08],
         IndustryKind::Fishing => [0.08, 0.85, 0.78],
         IndustryKind::Tech => [1.0, 0.3, 0.75],
-        IndustryKind::Mining => [0.78, 0.55, 0.35],
+        IndustryKind::Mining => [0.75, 0.55, 0.32],
     }
 }
 
