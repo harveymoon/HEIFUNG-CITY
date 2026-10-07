@@ -332,6 +332,11 @@ fn a_billionaire_buys_quiet_land_and_stays_within_limits() {
     assert!(at.distance(loud) >= ELITE_NUISANCE_CLEARANCE, "away from the works");
     assert!(at.x > 300.0, "on the quiet land");
     assert!(w.estate.owners[e.owner].properties.len() >= 2, "several properties");
+    // The person pins (HOME/WORK/OWNS) show every one of them.
+    let pinned: Vec<BuildingId> = w.holdings_of(e.citizen).into_iter().map(|(b, _)| b).collect();
+    for p in &w.estate.owners[e.owner].properties {
+        assert!(pinned.contains(p), "{p:?} pinned among {pinned:?}");
+    }
     // Built and moved in: the NIMBY pull starts, within strict limits.
     for l in w.buildings[mansion].plot.pending_lots.clone() {
         if let Some(o) = w.lots[l].building {

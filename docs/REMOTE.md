@@ -428,6 +428,8 @@ defaults to 100 m then. Filters (substring match on strings, case-insensitive):
   `under_construction`, `plant`, `rail`, `depot`, `derelict`
 - lots: `land_use`, `vacant`, `park`, `min_area`
 - cars: `kind` (car, bus, truck); trains: `kind` (passenger, freight)
+- bots (also `delivery_bots`): `shop` (the owning shop's name). Rows: `id`, `name` ("Lucky Bodega bot #2"),
+  `shop`, `pos`, `returning`.
 
 Reply: `total` (matches), `returned`, `rows`.
 
@@ -446,6 +448,42 @@ the mean and max left turn wait there. A car's `inspect` carries `traffic` (wait
 next turn, left turn wait, passing on the shoulder). `lane_use {junction: [x, y], approach: [x, y],
 lanes: ["L", "S+R"]}` sets the arrows of the street arriving nearest `approach`, leftmost lane first;
 `lanes: "reset"` goes back to the demand-chosen default.
+
+#### Intersection editor: `intersection`
+
+`intersection {at: [x, y]}` reads what the Intersection editor edits at the junction (or lone
+crosswalk) nearest `at` (default: the one the editor has open); any of the fields below edits it,
+in this order, and the reply is the state after:
+
+| Field | Effect |
+| --- | --- |
+| `signal` | `auto` (the junction's shape decides), `signals` (forced on where two phases can run), `none` (unsignalised: drivers yield, left turns give way) |
+| `greens` | seconds per phase, in the order `phases` lists them (5..90; `null` leaves one as it is), or `"default"` |
+| `left_arrow`, `arrow_seconds` | the protected left at the start of a green: `auto` (when left turners queue or starve), `always`, `never`; its length 3..30 s |
+| `left_turns` | `true` allows the left from every street, `false` forbids it from every street |
+| `no_left` | `[approach index or [x,y], ...]`: those streets forbid the left, the others allow it. A banned left is taken out of what the junction offers there, so its lane arrows lose it and no route turns left there |
+| `approach` + `lanes` | lane permissions of one arriving street (index, or a point on it): `["L+S", "S+R"]` leftmost first, or `"reset"` (as `lane_use`) |
+| `crossing` + `upgrade` | a crosswalk (walk-graph index from `crossings`, or a point near it): `none`, `button` (a push-button signal: traffic gets a red only after someone presses it; not on a crosswalk that already has walk lights) or `footbridge` (a raised walkway with stairs at both ends; refused where it would stand in another's way). Paid for: 1,500 and 18,000 |
+| `open`, `extent`, `select_approach`, `select_crossing` | show the editor modal (and its road view's width in metres, 30..300; which street or crosswalk is picked) |
+| `close` | hide it |
+
+Reply: `intersection` {`at`, `junction` (false for a lone crosswalk), `node`, `radius`, `roundabout`,
+`signalized`, `rule` {signal, left_arrow, arrow_seconds, greens [{dir, seconds}], no_left [dir]},
+`approaches` [{index, segment, street, dir (the way it leaves the junction), from, lanes, offered,
+set_by_player, left_forbidden, left_possible, queued}], `phases` [{index, approaches, green_s,
+running}], `crossings` [{index, mid, ends, upgrade, signalised, kind, button_light, footbridge
+{walkway, stair_feet, width}}], `footbridges` (in the city), `button_presses_total`}, `done` (what
+was changed) and `editor_open`. Everything is saved with the city (`Traffic::junction_rules`,
+`World::crosswalks`, serde defaults) and found again by position after the roads are rebuilt.
+
+```json
+{"cmd": "intersection", "at": [209, -149], "greens": [25, 14], "left_arrow": "always", "no_left": [2]}
+{"cmd": "intersection", "at": [209, -149], "crossing": 700, "upgrade": "footbridge"}
+```
+
+A citizen's `inspect` carries `raised_level`: how high they stand on a raised walkway (a
+footbridge's stairs or deck), 0 at grade. Dev: `walk_to {citizen, to: [x, y], from?}` sends a
+citizen out on foot along the walk graph (footbridges included).
 
 `inspect` with one of `citizen`, `building`, `lot`, `car`, `drone`, `vehicle` (a private car's record: owner, model, place with minutes_here, limit_min, illegal, ticketed_tick, impounded {pound, out_of_town, release_fee, auction_in_min} and tow_job), `train`, `route` (ids) or `gesture` (int). A building that is a parking office adds `parking_office` {officers, patrol cars}, a tow company `tow_company` {trucks, jobs_open, pound}, a lot the city runs `parking.city_run`; a tow truck's `car` adds `tow` {job, state, reason, vehicle, company, out_of_town}, an officer's car `patrol`; [services] a recovery truck going to a wreck (errand `Recover`) adds `recovery` {wreck, metres_to_go, amber, off_law_allowed (within 250 m), move (its off-law move: Lane, Overtake, Kerb, Wait), company, out_of_town, sent_tick}, a written-off car `wreck` {since_tick, incident, tow_due_tick, truck, truck_sent_tick, pushed_aside_m, flipped (0 upright, 1 side, 2 roof), righted_at_tick}, and a car easing past a crash on the shoulder `passing_hazard` (the crashed car's id). `parking_price {building, price}` sets the fee at a city-run lot. [boot] `tow_car {car | vehicle}` (also `tow`, `boot`) clamps a private car and calls the tow truck, as the inspector's "Tow this car" button does: `car` is a car on the road (it pulls over to a kerb slot, or the street's edge, is taken off the lanes, and its driver and passengers walk on), `vehicle` a car's record (parked at a kerb, or driving). Reply {tow_job, vehicle, company, out_of_town}; an error says why not (not a resident's car, off the street, already towed, leaving town). A clamped car's place has `booted: true`; the owner's mood drops, they remember it, and they pay the release fee at the pound as for any tow. The enforcement report adds `boots_today` and `boots_total`. [passengers] A car row of kind car carries `occupants` ([{id, name}]: everyone riding along besides the driver, `citizen`) and `vehicle` (its record); a passenger's activity has `driver`, `driver_name`, `in_car`, `car`, `to`, `purpose`. `report` traffic.private_cars adds `passengers` {riding_now, walking_to_a_car, cars_with_passengers, today, outings_today, carpools_today, school_runs_today, lifts_today, yesterday, total, fullest_car, drop_offs_pending}. `place` takes `parking_enforcement[:tier]`, `parking_small`, `parking_large`, `parking_garage`;
 with none, the current selection. The detail matches what the inspector and the person pane show:
@@ -492,11 +530,12 @@ several plots), home, business, form. A billionaire's other homes and businesses
 
 | Command | Fields |
 | --- | --- |
-| `select` | `citizen` / `building` / `car` / `vehicle` (a parked car) id, or `at: [x, y]` (picks like a click), or nothing to clear |
+| `select` | `citizen` / `building` / `car` / `vehicle` (a parked car) / `bot` (a delivery robot) id, or `at: [x, y]` (picks like a click), or nothing to clear |
 | `selected` | full detail of the player's selection (see below) |
 | `flags` / `flag` | the player's "Flag for Claude" bookmarks (see below) |
-| `favourite` | `citizen`, `on` (omit to toggle) |
-| `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail, district; the building ones are what the Build window's items pick: road and its presets for Roads and Rail track, zone for Zoning and Parks, buildings for Power, Services, Transit placeables, Water and Attractions, rail for stations and yards, transit for bus and metro lines), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway, Roundabout), `diameter` and `ring_lanes` (roundabout), `ring_at` `[x,y]` (show the roundabout preview there as if hovered, until the mouse is used), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry` (zone, industrial: auto / farming / oil / ...), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture`, `elevation` (the Road tool's level for the next point, m), `depth` (underground / ground / sky: the view layer; the Tunnel preset switches to underground, other presets back), `draw` `[[x,y,level?],...]` (the road being drawn, as if clicked, so its hologram shows), `cursor` `[x,y]` (where the pointer stands for that hologram until the mouse is used). The reply's tool state has `elevation`, `elevation_label`, `point_levels`, `tunnel`, `depth`, `grade_warnings` |
+| `favourite` | `citizen`, `on` (omit to toggle). Favourites wear a gold ring and diamond in the world (their car, driving or parked, a gold box) |
+| `gift` | `citizen` (default: the selected citizen), `amount` (default 1000): money from the treasury to their household (their savings if they have none), as the person pane's "Gift $1000". Refused when the treasury cannot pay. Booked as `gifts_to_residents`, itemised by name; they remember it. Reply `amount`, `household`, `household_money`, `savings`, `treasury` |
+| `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail, district; the building ones are what the Build window's items pick: road and its presets for Roads and Rail track, zone for Zoning and Parks, buildings for Power, Services, Transit placeables, Water and Attractions, rail for stations and yards, transit for bus and metro lines), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway, Roundabout), `diameter` and `ring_lanes` (roundabout), `ring_at` `[x,y]` (show the roundabout preview there as if hovered, until the mouse is used), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry` (zone, industrial: auto / farming / oil / ...), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture`, `elevation` (the Road tool's level for the next point, m), `depth` (underground / ground / sky: the view layer; the Tunnel preset switches to underground, other presets back), `draw` `[[x,y,level?],...]` (the road being drawn, as if clicked, so its hologram shows), `cursor` `[x,y]` (where the pointer stands for that hologram until the mouse is used). The reply's tool state has `elevation`, `elevation_label`, `point_levels`, `tunnel`, `depth`, `grade_warnings`, and (refreshed with the road preview, a frame later) `pillars` {count, at, buyouts (building names a pillar would buy out), empty_lots, gaps ([[x,y],[x,y]] stretches with no room for a pillar), refusal}, and `intersection_editor` (where the editor is open, or null) |
 | `overlay` | **Map layers are exclusive**: one shows at a time (as the top bar's Layer button), with its key in the legend. `active` a layer key or `none`: show it alone. `layer` (zoning, land_value, districts, traffic, traffic_types, paths, people, pollution, crime, map, or a land survey layer, below; `traffic` and `crime` also dim the city and light up the vehicles they are about, `map` is the street map view with street names and pins) with `on` (bool; omitted toggles): on shows it and hides every other, off hides it if it shows. `land` a land survey layer key (shown alone) or `none`. Older form, a bool per layer name: true shows that layer alone (several trues: the last listed in the registry wins), false hides it if it shows. `projects` (bool, or `layer: "projects"`) is the dim other-projects switch, not a layer, and is left alone by the rest. Reply: every flag layer and whether it is on, `land` (the survey layer shown, or null), `active` (the key of the layer showing, or null) and `projects` (also in `status.overlays`). New layers are added as one entry in `crate::map_layers::MAP_LAYERS` and appear here by their key |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
 | `heat_vision` (alias `heat`) | `on` (bool; omitted toggles). Drone heat vision: buildings, ground and roads go near-black, people, vehicles, fires and drones glow by temperature (lights and engines white-hot), with motion blur, scanlines, noise, a vignette and a reticle. Same as key H and the top bar's Heat button. Reply `heat_vision`; also `status.lighting.heat_vision` |
@@ -586,6 +625,45 @@ selection from the API. Flags live in the running game and are also appended to
 - `mode`: orbit / walk (in walk mode `look_at`/`x`/`z` place the eye, yaw/pitch turn the head).
 
 Reply: the pose (`mode`, `target`, `distance`, `yaw`, `pitch`, `eye`), and `following`.
+A `follow` here is the same follow as the inspector's Follow button (below).
+
+`follow {citizen|car|bot|building|vehicle?, stop?, on?, pov?, fly?}` is the inspector's **Follow**
+button: the camera stays on the thing (default: the selection) until stopped. Pan (WASD, middle or
+shift drag) and the F-key jumps are locked; rotate and zoom still work. In game a banner says
+"CAMERA LOCKED" with **Stop following (Esc)** and a gold frame holds the map; Esc stops it (and
+is used up: a second Esc clears the selection). `stop: true` or `on: false` stops it. `pov: true`
+looks through their eyes (Walk view: a walker's eyes, a driver's seat, a robot's camera; right-drag
+looks around and springs back; Tab in game), `pov: false` back to the orbit camera; a building has
+no point of view. The camera flies in smoothly first unless `fly: false`. A followed car that parks
+hands the follow (and the selection) to its driver on foot; anything else that is gone ends it.
+Any `camera` command ends a follow. Reply `following`, `pov`, `at`, `flying`, `camera`;
+`status.following` names what is followed (or null).
+
+`zoom_to {citizen|car|bot|building|vehicle?, at?, distance?, pitch?}` (alias `zoom`) is the
+inspector's **Zoom to**: a smooth flight (0.7 to 2.2 s, a hop out over long trips) onto the thing
+(default: the selection; a moving thing is tracked while the camera travels) or the point `at`.
+`distance` defaults by kind (a person 32 m, a car 40, a bus or truck 55, a robot 22, a building by
+its size); `pitch` 0.62. Ends a follow of anything else. The reply comes at once: `to`, `at`,
+`distance`, `seconds`; screenshot after `seconds`.
+
+```json
+{"cmd": "follow", "citizen": "12:3", "pov": true}
+{"cmd": "follow", "stop": true}
+{"cmd": "zoom_to", "bot": "4:2"}
+{"cmd": "gift", "citizen": "12:3"}
+```
+
+**Delivery bots.** `select {bot}` selects one, `inspect {bot}` (or `selected`) gives `id`, `code`
+("B-4"), `name`, `serial` (its number in the shop's fleet), `owner` {building, name, business_kind,
+`fleet_colour` (each company's fleet is painted its own colour), fleet_size}, `state` (delivering /
+returning to the shop), `cargo` {resource, amount} (null on the way back), `destination`,
+`customer` {building, name, household}, `pos`, `metres_left`, `minutes_left`, `minutes_out` and
+`route` (the pavement ahead, sampled). The map draws the route in the fleet colour.
+
+**A person's places.** A selected citizen's `holdings` are their home, work and every business they
+own (a taxi firm's founder owns it: `business.owner`); in game each is a big clickable pin (HOME,
+WORK, OWNS) over its building, held at the screen edge when off screen, and a button in the person
+pane; clicking either selects the building.
 
 ```json
 {"cmd": "camera", "look_at": [0, 0], "distance": 400, "pitch": 0.9}

@@ -222,6 +222,53 @@ impl World {
         }
     }
 
+    /// The owner record that is `cid`'s own: their billionaire record, a
+    /// person record, or the household's (a McMansion), made on first use.
+    fn owner_for_citizen(&mut self, cid: CitizenId) -> Option<OwnerId> {
+        let c = self.citizens.get(cid)?;
+        let hh = c.household;
+        let name = c.name.clone();
+        let found = self.estate.owners.iter().find(|(_, o)| o.kind.citizen() == Some(cid)).map(|(id, _)| id);
+        if let Some(o) = found {
+            return Some(o);
+        }
+        if let Some(o) = hh.and_then(|h| self.estate.owners.iter().find(|(_, o)| o.kind == OwnerKind::Household { household: h }).map(|(id, _)| id)) {
+            return Some(o);
+        }
+        Some(self.new_owner(name, OwnerKind::Person { citizen: cid }))
+    }
+
+    /// `cid` owns the business at `bid` (a founder): the owner record is
+    /// the source of truth; `Business::owner` mirrors it for older code
+    /// and saves.
+    pub fn set_business_owner(&mut self, bid: BuildingId, cid: CitizenId) {
+        let Some(o) = self.owner_for_citizen(cid) else { return };
+        if let Some(z) = self.buildings.get_mut(bid).and_then(|b| b.business.as_mut()) {
+            z.owner = Some(cid);
+        }
+        self.give_to(bid, o, 0.0);
+    }
+
+    /// Every building `cid` owns: through their owner records (a
+    /// billionaire's homes and firms, a family's McMansion, a founder's
+    /// firm), and any business that still names them only on its own
+    /// books. Sorted, each once.
+    pub fn properties_of(&self, cid: CitizenId) -> Vec<BuildingId> {
+        let hh = self.citizens.get(cid).and_then(|c| c.household);
+        let mut out: Vec<BuildingId> = self
+            .estate
+            .owners
+            .values()
+            .filter(|o| o.kind.citizen() == Some(cid) || hh.is_some_and(|h| o.kind == OwnerKind::Household { household: h }))
+            .flat_map(|o| o.properties.iter().copied())
+            .filter(|b| self.buildings.contains_key(*b))
+            .collect();
+        out.extend(self.buildings.iter().filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.owner == Some(cid))).map(|(id, _)| id));
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// The owner record of a firm, made on its first branch or merge.
     fn firm_of(&mut self, bid: BuildingId) -> Option<OwnerId> {
         let b = self.buildings.get(bid)?;
@@ -294,6 +341,12 @@ impl World {
             o.properties.retain(|p| buildings.contains_key(*p));
         }
         // Owners of nothing (and nobody's billionaire) go.
+        // Founders named only on a business's books (older saves) get
+        // their owner record.
+        let named: Vec<(BuildingId, CitizenId)> = self.buildings.iter().filter(|(_, b)| b.plot.owner.is_none()).filter_map(|(id, b)| b.business.as_ref().and_then(|z| z.owner).filter(|c| self.citizens.contains_key(*c)).map(|c| (id, c))).collect();
+        for (b, c) in named {
+            self.set_business_owner(b, c);
+        }
         let elites: Vec<OwnerId> = self.estate.elites.iter().map(|e| e.owner).collect();
         self.estate.owners.retain(|id, o| !o.properties.is_empty() || elites.contains(&id));
         for b in self.buildings.values_mut() {

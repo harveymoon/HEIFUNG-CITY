@@ -199,6 +199,97 @@ pub struct Pedestrians {
     /// `crossings`, for a cyclist to find the ones ahead.
     #[serde(skip)]
     pub cross_grid: crate::geom::Grid,
+    /// [tools] Push-button crossings' lights, by crossing (reset when the
+    /// walk graph is rebuilt).
+    #[serde(skip)]
+    pub buttons: BTreeMap<u32, ButtonLight>,
+    /// Walk graph version `buttons` belongs to.
+    #[serde(skip)]
+    pub buttons_key: u64,
+    /// [tools] Button presses ever, and red lights they gave traffic.
+    pub button_presses_total: u64,
+    pub button_reds_total: u64,
+}
+
+/// [tools] Seconds from a press to the red for traffic (an amber), the
+/// red's length, and the least green traffic then gets before the next red.
+pub const BUTTON_DELAY: f32 = 3.0;
+pub const BUTTON_RED: f32 = 12.0;
+pub const BUTTON_MIN_GREEN: f32 = 20.0;
+
+/// [tools] A push-button crossing's light for traffic.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum ButtonLight {
+    /// Green for traffic, nobody waiting.
+    #[default]
+    Idle,
+    /// Pressed: red for traffic in so many seconds.
+    Pressed(f32),
+    /// Red for traffic (walk for walkers) for so many seconds more.
+    Red(f32),
+    /// Green for traffic for at least so many seconds more; `true` if
+    /// someone pressed meanwhile.
+    Green(f32, bool),
+}
+
+impl ButtonLight {
+    /// Someone presses the button.
+    pub fn press(self) -> Self {
+        match self {
+            ButtonLight::Idle => ButtonLight::Pressed(BUTTON_DELAY),
+            ButtonLight::Green(t, _) => ButtonLight::Green(t, true),
+            other => other,
+        }
+    }
+
+    /// Advance by `dt` seconds; true when the red starts now.
+    pub fn step(&mut self, dt: f32) -> bool {
+        match *self {
+            ButtonLight::Idle => false,
+            ButtonLight::Pressed(t) if t - dt <= 0.0 => {
+                *self = ButtonLight::Red(BUTTON_RED);
+                true
+            }
+            ButtonLight::Pressed(t) => {
+                *self = ButtonLight::Pressed(t - dt);
+                false
+            }
+            ButtonLight::Red(t) if t - dt <= 0.0 => {
+                *self = ButtonLight::Green(BUTTON_MIN_GREEN, false);
+                false
+            }
+            ButtonLight::Red(t) => {
+                *self = ButtonLight::Red(t - dt);
+                false
+            }
+            ButtonLight::Green(t, pending) if t - dt <= 0.0 => {
+                *self = if pending { ButtonLight::Pressed(BUTTON_DELAY) } else { ButtonLight::Idle };
+                false
+            }
+            ButtonLight::Green(t, pending) => {
+                *self = ButtonLight::Green(t - dt, pending);
+                false
+            }
+        }
+    }
+
+    /// Red for traffic: walkers may cross.
+    pub fn walk(self) -> bool {
+        matches!(self, ButtonLight::Red(t) if t > 2.0)
+    }
+
+    pub fn red(self) -> bool {
+        matches!(self, ButtonLight::Red(_))
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ButtonLight::Idle => "green (nobody waiting)",
+            ButtonLight::Pressed(_) => "pressed: amber",
+            ButtonLight::Red(_) => "red: walk",
+            ButtonLight::Green(..) => "green",
+        }
+    }
 }
 
 /// Incidents kept for the API.

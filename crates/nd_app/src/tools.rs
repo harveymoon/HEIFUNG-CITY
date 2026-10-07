@@ -156,7 +156,8 @@ impl Depth {
     }
 }
 
-/// Elevation steps of the Road tool (Page Up / Page Down), metres.
+/// Elevation steps of the Road tool (Page Up / Page Down, or ] and [ while
+/// drawing; Shift+[ ] for the whole road), metres.
 pub const ELEVATION_STEP: f32 = 2.0;
 pub const ELEVATION_MIN: f32 = -20.0;
 pub const ELEVATION_MAX: f32 = 24.0;
@@ -265,6 +266,39 @@ pub struct ToolState {
     /// [districts] The District tool: the district painted, brush or
     /// polygon, the polygon's points (`crate::district_tool`).
     pub district: crate::district_tool::DistrictTool,
+    /// [tools] The columns of the raised road being drawn, refreshed with
+    /// its preview.
+    pub pillars: PillarNote,
+    /// [tools] The Intersection editor, when open.
+    pub junction_editor: Option<crate::ui::junction::EditorState>,
+}
+
+/// [tools] What the Road tool says about the columns of the raised road
+/// being drawn.
+#[derive(Clone, Debug, Default)]
+pub struct PillarNote {
+    pub count: usize,
+    /// Buildings a column would buy out (names).
+    pub buyouts: Vec<String>,
+    /// Empty lots a column takes.
+    pub lots: usize,
+    /// Why it cannot be built (no room for a column), if so.
+    pub refusal: Option<String>,
+    pub gaps: Vec<(SVec2, SVec2)>,
+    pub at: Vec<SVec2>,
+}
+
+impl PillarNote {
+    pub fn of(w: &nd_sim::World, plan: &nd_sim::pillars::PillarPlan) -> Self {
+        Self {
+            count: plan.pillars.len(),
+            buyouts: plan.buyouts.iter().filter_map(|(_, b)| w.buildings.get(*b).map(|b| b.name.clone())).collect(),
+            lots: plan.lots.len(),
+            refusal: plan.refusal(),
+            gaps: plan.gaps.clone(),
+            at: plan.pillars.iter().map(|p| p.at).collect(),
+        }
+    }
 }
 
 /// Road presets in the spirit of Cities Skylines' road menu: (label, forward, backward, kind).
@@ -361,6 +395,25 @@ impl ToolState {
         true
     }
 
+    /// [tools] Does the Road tool take the [ and ] keys (the camera zooms
+    /// with them otherwise)?
+    pub fn captures_brackets(&self) -> bool {
+        self.tool == Tool::Road && !self.roundabout
+    }
+
+    /// [tools] Raise or lower the whole road being drawn a step: every
+    /// point placed so far and the next one.
+    pub fn step_whole_road(&mut self, up: bool) {
+        let max = if self.tunnel { 0.0 } else { ELEVATION_MAX };
+        let d = if up { ELEVATION_STEP } else { -ELEVATION_STEP };
+        let mut levels = self.levels();
+        for l in &mut levels {
+            *l = (*l + d).clamp(ELEVATION_MIN, max);
+        }
+        self.point_levels = levels;
+        self.step_elevation(up);
+    }
+
     /// Step the drawing level (tunnels stay deep).
     pub fn step_elevation(&mut self, up: bool) {
         let max = if self.tunnel { 0.0 } else { ELEVATION_MAX };
@@ -417,6 +470,8 @@ impl Default for ToolState {
             depth: Depth::Ground,
             grade_warnings: Vec::new(),
             cursor_pin: None,
+            pillars: Default::default(),
+            junction_editor: None,
         }
     }
 }
@@ -536,6 +591,8 @@ pub enum Selection {
     Car(CarId),
     /// A private car standing parked (`world.vehicles`).
     Parked(nd_sim::VehicleId),
+    /// [camera] A pavement delivery robot (`world.bots`).
+    Bot(nd_sim::BotId),
 }
 
 pub struct ToolsPlugin;
@@ -695,6 +752,19 @@ pub(crate) fn tool_input(
     if tools.tool == Tool::Road && !tools.roundabout && (key(KeyCode::PageUp) || key(KeyCode::PageDown)) {
         tools.step_elevation(key(KeyCode::PageUp));
         tools.status = format!("Drawing at {}.", elevation_label(tools.elevation));
+    }
+    // [tools] ] raises and [ lowers the next point while drawing (the
+    // camera's bracket zoom gives way to the Road tool); with Shift, the
+    // whole road drawn so far goes up or down with it.
+    if tools.captures_brackets() && (key(KeyCode::BracketRight) || key(KeyCode::BracketLeft)) {
+        let up = key(KeyCode::BracketRight);
+        if shift && !tools.points.is_empty() {
+            tools.step_whole_road(up);
+            tools.status = format!("The whole road at {} (Shift+[ ] move every point; [ ] the next one).", elevation_label(tools.elevation));
+        } else {
+            tools.step_elevation(up);
+            tools.status = format!("Next point at {} ([ lowers, ] raises; Shift for the whole road).", elevation_label(tools.elevation));
+        }
     }
     if map_key(KeyCode::Backspace) && tools.tool == Tool::Transit && tools.transit_mode == TransitMode::Metro {
         tools.metro_draft.pop();
@@ -895,7 +965,13 @@ pub(crate) fn tool_input(
                     tools.drag = None;
                 }
             } else if click {
-                if let Some(hp) = tools.hover_point {
+                // [tools] A junction or a crosswalk opens the Intersection
+                // editor (Ctrl+click still grabs a control point there).
+                let target = ground.filter(|_| !ctrl).and_then(|p| crate::ui::junction::target_at(&sim.world, p));
+                if let Some(at) = target {
+                    tools.junction_editor = crate::ui::junction::EditorState::open(&sim.world, at);
+                    tools.status = "Intersection editor: lanes, left turns, signals and crosswalks.".into();
+                } else if let Some(hp) = tools.hover_point {
                     tools.drag = Some(hp);
                     tools.selected_gesture = Some(hp.0);
                 } else {
@@ -1169,6 +1245,20 @@ pub(crate) fn pick(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
         .map(|(id, c)| (c.prev_pos.lerp(c.pos, f).distance(p), id))
         .filter(|(d, _)| *d < 6.0)
         .min_by(|a, b| a.0.total_cmp(&b.0));
+    // [camera] Pavement delivery robots: small, so a click must be close,
+    // and nearer than any car or person it might be standing by.
+    let bot = w
+        .bots
+        .bots
+        .iter()
+        .map(|(id, b)| ((if b.prev_pos.distance(b.pos) < 30.0 { b.prev_pos.lerp(b.pos, f) } else { b.pos }).distance(p), id))
+        .filter(|(d, _)| *d < 2.0)
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    if let Some((db, id)) = bot {
+        if car.is_none_or(|c| c.0 > db) && person.is_none_or(|q| q.0 > db) {
+            return Selection::Bot(id);
+        }
+    }
     match (car, person) {
         (Some((dc, id, _)), Some((dp, _))) if dc <= dp + 1.0 => return Selection::Car(id),
         (Some((_, id, _)), None) => return Selection::Car(id),
@@ -1196,10 +1286,15 @@ pub(crate) fn pick(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
     Selection::None
 }
 
-fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, selection: Res<Selection>, mut eplan: ResMut<EffectivePlan>, cams: Query<&OrbitCamera>, time: Res<Time>) {
+#[allow(clippy::too_many_arguments)]
+fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, selection: Res<Selection>, mut eplan: ResMut<EffectivePlan>, cams: Query<&OrbitCamera>, time: Res<Time>, (cam_mode, follow): (Res<crate::camera::CameraMode>, Res<crate::camera::CameraFollow>)) {
     // Re-sync so a point dragged by `tool_input` this frame draws where it is.
     let plan = eplan.sync(&sim.world);
-    draw_selection(&mut gizmos, &sim, *selection);
+    // [camera] Not from inside the followed vehicle: its outline box would
+    // be drawn round the eye.
+    if !follow.pov_in_vehicle(&sim, *cam_mode) {
+        draw_selection(&mut gizmos, &sim, *selection);
+    }
     let cyan = Color::linear_rgb(1.4, 1.6, 1.8);
     let red = Color::linear_rgb(3.0, 0.2, 0.4);
     let white = Color::linear_rgb(3.0, 3.0, 3.0);
@@ -1527,6 +1622,8 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
 
     match selection {
         Selection::None => {}
+        // [camera] drawn by `crate::marks`, with its route and its shop.
+        Selection::Bot(_) => {}
         Selection::Building(b) => {
             lot_outline(gizmos, w, b, 1.6, gold);
             // [land] Everything its owner owns (a rich person's other homes
@@ -1733,7 +1830,7 @@ fn person_outline(gizmos: &mut Gizmos, base: Vec3, col: Color) {
 
 /// A rectangle round a vehicle's body, a little above the road, drawn twice
 /// so it reads as a box.
-fn vehicle_outline(gizmos: &mut Gizmos, p: SVec2, heading: f32, length: f32, width: f32, y: f32, col: Color) {
+pub(crate) fn vehicle_outline(gizmos: &mut Gizmos, p: SVec2, heading: f32, length: f32, width: f32, y: f32, col: Color) {
     let fwd = SVec2::new(heading.cos(), heading.sin());
     let right = SVec2::new(-fwd.y, fwd.x);
     let (hl, hw) = (length * 0.5, width * 0.5);
@@ -1746,7 +1843,7 @@ fn vehicle_outline(gizmos: &mut Gizmos, p: SVec2, heading: f32, length: f32, wid
     gizmos.linestrip(pts.iter().map(|v| *v + Vec3::Y * 1.4), col);
 }
 
-fn lot_outline(gizmos: &mut Gizmos, w: &nd_sim::World, b: BuildingId, y: f32, col: Color) {
+pub(crate) fn lot_outline(gizmos: &mut Gizmos, w: &nd_sim::World, b: BuildingId, y: f32, col: Color) {
     // [land] the whole footprint of a building over merged plots
     let Some(lot) = w.footprint(b) else { return };
     let mut pts: Vec<Vec3> = lot.polygon.iter().map(|&p| Vec3::new(p.x, y, p.y)).collect();

@@ -31,6 +31,7 @@ pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildi
         Some((name, OwnerKind::Elite { .. })) => format!("{name} (billionaire)"),
         Some((name, OwnerKind::Developer)) => format!("{name} (developer)"),
         Some((name, OwnerKind::Household { .. })) => format!("{name} (owner-occupied)"),
+        Some((name, OwnerKind::Person { .. })) => format!("{name}, who founded it"),
         Some((name, OwnerKind::Firm { kind })) => {
             let n = owner.map_or(0, |(_, o)| o.properties.len());
             if n > 1 { format!("{name} ({} chain of {n})", kind.label()) } else { format!("{name} (the {} firm)", kind.label()) }

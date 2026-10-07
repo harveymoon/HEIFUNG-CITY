@@ -16,6 +16,7 @@ fn owner_kind(k: &OwnerKind) -> Value {
         OwnerKind::Developer => json!({ "kind": "developer" }),
         OwnerKind::Household { household } => json!({ "kind": "household", "household": key_str(*household) }),
         OwnerKind::Elite { citizen } => json!({ "kind": "elite", "citizen": key_str(*citizen) }),
+        OwnerKind::Person { citizen } => json!({ "kind": "person", "citizen": key_str(*citizen) }),
     }
 }
 

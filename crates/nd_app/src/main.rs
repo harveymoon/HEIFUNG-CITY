@@ -6,6 +6,8 @@ mod camera;
 mod district_tool;
 mod flags;
 mod map_layers;
+/// [camera] Favourites' gold, a person's place posts, a robot's route.
+mod marks;
 mod remote;
 mod render;
 mod sim;
@@ -42,6 +44,7 @@ fn main() {
             remote::RemotePlugin,
             district_tool::DistrictToolPlugin,
             map_layers::MapLayersPlugin,
+            marks::MarksPlugin,
         ))
         .run();
 }

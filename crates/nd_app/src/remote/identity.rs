@@ -97,10 +97,11 @@ pub fn game_history(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     e.bookmark().map_or(String::new(), |b| format!(" (\"{b}\")"))
                 ));
             }
-            let Ctx { sim, tools, selection, eplan, flags, saves, follow, .. } = &mut *ctx;
+            let Ctx { sim, tools, selection, eplan, flags, saves, follow, fly, .. } = &mut *ctx;
             saves::revert(&e.path, sim, tools, selection, eplan, saves, flags);
             saves.title = false;
-            follow.0 = None;
+            follow.stop();
+            fly.flight = None;
             if flags.message.starts_with("load failed") {
                 return Err(flags.message.clone());
             }

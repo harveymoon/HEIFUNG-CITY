@@ -48,6 +48,7 @@ mod haze;
 mod heat;
 /// Planned roads as holograms of the real thing; the depth view.
 mod holo;
+mod junction_view;
 mod layers;
 mod lights;
 /// [look] Graphics quality, camera effects (SSAO, TAA, volumetric fog,
@@ -464,6 +465,10 @@ impl Plugin for RenderPlugin {
         // After every renderer, before the UI (which may load a city and set
         // the flag again for the next frame's renderers).
         app.add_systems(Update, clear_full_rebuild.after(SimSet::Sync));
+        // [tools] Footbridges, and the Intersection editor's road view.
+        app.init_resource::<junction_view::JunctionCam>()
+            .add_systems(Update, (junction_view::sync_footbridges.after(sync_roads).before(lift_spawned), junction_view::sync_junction_camera).in_set(SimSet::Sync))
+            .add_systems(PostUpdate, junction_view::tag_road_layers);
     }
 }
 
@@ -1877,7 +1882,9 @@ fn sync_citizens(
         let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
         let heading = lerp_angle(c.prev_heading, c.heading, f);
         let seated = matches!(c.activity, nd_sim::Activity::Sitting { .. });
-        tf.translation = Vec3::new(pos.x, if seated { 0.02 } else { 0.16 }, pos.y);
+        // [tools] Up the stairs and over a footbridge (a raised walkway).
+        let raised = w.walker_level(c, pos);
+        tf.translation = Vec3::new(pos.x, if seated { 0.02 } else { 0.16 } + raised, pos.y);
         tf.rotation = Quat::from_rotation_y(-heading);
         tf.scale = if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE } * stature;
         looks.insert(key);
@@ -1965,6 +1972,8 @@ struct VehicleRender {
     /// bike: trail meshes are never removed from `Assets<Mesh>`.
     spare_trails: Vec<(Entity, Handle<Mesh>)>,
     bots: HashMap<nd_sim::BotId, Vec<Entity>>,
+    /// [camera] Each shop's robot fleet in its own paint (`bots::fleet_colour`).
+    fleet_paint: HashMap<nd_sim::BuildingId, Handle<StandardMaterial>>,
 }
 
 impl VehicleRender {
@@ -2410,6 +2419,7 @@ fn sync_bots(
     vr.ensure_materials(&mut materials);
     if sim.full_rebuild {
         // Bot ids are reused by a loaded world; the livery would be stale.
+        vr.fleet_paint.clear();
         for (_, ents) in vr.bots.drain() {
             for e in ents {
                 commands.entity(e).despawn();
@@ -2421,13 +2431,20 @@ fn sync_bots(
         if vr.bots.contains_key(&id) {
             continue;
         }
-        let livery = w.buildings.get(bot.shop).and_then(|b| b.business.as_ref()).map_or(nd_sim::Livery::None, |bz| nd_sim::Livery::for_business(bz.kind));
-        let model = nd_sim::VehicleModel { body: nd_sim::BodyType::DeliveryBot, livery, ..Default::default() };
+        // [camera] A plain light shell painted in the company's colour, so
+        // each shop's fleet reads as its own (all grocers' robots used to
+        // share the grocery livery).
+        let paint = (slotmap::Key::data(&bot.shop).as_ffi() % nd_sim::vehicle::PAINTS as u64) as u8;
+        let model = nd_sim::VehicleModel { body: nd_sim::BodyType::DeliveryBot, livery: nd_sim::Livery::None, paint, ..Default::default() };
         let v = vr.variant(&mut meshes, &model);
+        let finish = vr.fleet_paint.entry(bot.shop).or_insert_with(|| {
+            let [r, g, b] = nd_sim::bots::fleet_colour(bot.shop);
+            materials.add(StandardMaterial { base_color: Color::srgb(r, g, b), perceptual_roughness: 0.45, metallic: 0.2, reflectance: 0.5, ..default() })
+        }).clone();
         // [carlife] Spawned where it is, not at the origin (see `sync_cars`).
         let pose = Transform::from_translation(Vec3::new(bot.pos.x, 0.16, bot.pos.y)).with_rotation(Quat::from_rotation_y(-bot.heading));
         let mut ents = vec![
-            commands.spawn((Mesh3d(v.body), MeshMaterial3d(vr.finish[1].clone()), pose, NotShadowCaster, BotTag, Grounded)).id(),
+            commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, BotTag, Grounded)).id(),
             commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), pose, NotShadowCaster, NotShadowReceiver, BotTag, Grounded)).id(),
         ];
         if let (Some(fx), Some(mat)) = (v.fx, vr.fx.clone()) {

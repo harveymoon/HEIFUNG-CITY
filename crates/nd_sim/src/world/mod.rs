@@ -34,6 +34,9 @@ mod cargo_hub_tests;
 mod cars;
 mod chases;
 mod enforcement;
+/// [camera] Gifts from the treasury; the places that are someone's.
+pub mod gifts;
+pub use gifts::{Gift, Holding, GIFT_AMOUNT};
 mod construction;
 /// [land] Pressure, prices, owners, merged plots and the super-elite.
 mod estate;
@@ -51,6 +54,10 @@ mod market;
 mod parking;
 mod pedestrians;
 mod plan;
+mod pillars;
+pub use pillars::deck_half_width;
+mod junctions;
+pub use junctions::{ApproachView, CrossingView, IntersectionView, PhaseView};
 mod riders;
 mod places;
 #[cfg(test)]
@@ -68,6 +75,8 @@ mod subway;
 mod car_tests;
 #[cfg(test)]
 mod elevation_tests;
+#[cfg(test)]
+mod tools_tests;
 #[cfg(test)]
 mod ramp_tests;
 #[cfg(test)]
@@ -491,6 +500,18 @@ pub struct World {
     /// on load.
     #[serde(default)]
     pub streets: crate::streets::StreetNames,
+    /// [tools] The columns under the raised roads (`world/pillars.rs`).
+    #[serde(default)]
+    pub pillars: Vec<crate::pillars::Pillar>,
+    /// [tools] Stretches of raised road with no room for a column, from the
+    /// last rebuild (the trial rebuild of a project refuses on them).
+    #[serde(skip)]
+    pub pillar_gaps: Vec<(Vec2, Vec2)>,
+    /// [tools] Crosswalk upgrades from the Intersection editor (push-button
+    /// signals, footbridges): `world/junctions.rs`. The junctions' own
+    /// settings live with the traffic (`Traffic::junction_rules`).
+    #[serde(default)]
+    pub crosswalks: crate::junctions::Crosswalks,
     /// [land] The land market: pressure, owners, merged plots, the
     /// super-elite (`crate::estate`, `world/estate.rs`). Old saves start
     /// with an empty one.
@@ -590,6 +611,9 @@ impl World {
             cargo_hubs: Default::default(),
             rides: Default::default(),
             streets: Default::default(),
+            pillars: Vec::new(),
+            pillar_gaps: Vec::new(),
+            crosswalks: Default::default(),
             estate: Default::default(),
             pressure: Default::default(),
             scene: Default::default(),
@@ -615,6 +639,7 @@ impl World {
     fn rebuild_walk(&mut self) {
         crate::park::plan_parks(&mut self.lots, &self.land_value);
         self.walk = WalkGraph::build(&self.roads, &self.lots, &self.land_value, self.walk.version + 1);
+        self.walk.apply_upgrades(&self.crosswalks.rules, &self.roads);
     }
 
     pub fn to_ron(&self) -> Result<String, ron::Error> {
@@ -655,6 +680,10 @@ impl World {
             crate::park::plan_parks(&mut self.lots, &self.land_value);
         }
         self.walk = WalkGraph::build(&self.roads, &self.lots, &self.land_value, self.walk.version + 1);
+        // [tools] Footbridges and push buttons on the crossings.
+        self.walk.apply_upgrades(&self.crosswalks.rules, &self.roads);
+        // [tools] Columns for raised roads from a save without them.
+        self.pillars_after_load();
         for (_, car) in self.traffic.reattach_cars() {
             self.strand_car(car);
         }
@@ -853,10 +882,12 @@ impl World {
         // [land] Pressure decides: quiet land stays low however much is
         // built round it, and a busy, well-served block may rise a few
         // floors over its neighbours (`estate::Pressure::floors_at`).
-        if !self.pressure_active() {
-            return neighbours;
+        let cap = if self.pressure_active() { self.pressure_floors(lot_id).min(neighbours.saturating_add(crate::estate::PRESSURE_OVER_NEIGHBOURS)).max(1) } else { neighbours };
+        // [tools] Under a deck spanning over the lot: what fits beneath it.
+        match self.deck_cap(lot_id) {
+            Some(deck) => cap.min(deck),
+            None => cap,
         }
-        self.pressure_floors(lot_id).min(neighbours.saturating_add(crate::estate::PRESSURE_OVER_NEIGHBOURS)).max(1)
     }
 
     /// Floors for a new building on `lot_id`: the tier's range, held down

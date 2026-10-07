@@ -222,6 +222,18 @@ pub enum OwnerKind {
     Household { household: HouseholdId },
     /// A billionaire.
     Elite { citizen: CitizenId },
+    /// A citizen who owns what they founded (a taxi firm's founder).
+    Person { citizen: CitizenId },
+}
+
+impl OwnerKind {
+    /// The citizen behind the owner, for a person or a billionaire.
+    pub fn citizen(&self) -> Option<CitizenId> {
+        match self {
+            OwnerKind::Elite { citizen } | OwnerKind::Person { citizen } => Some(*citizen),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

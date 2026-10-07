@@ -670,6 +670,10 @@ pub struct Business {
     /// it yet.
     #[serde(default)]
     pub wants_expand: bool,
+    /// [camera] The resident who owns it, when one put their money in (a
+    /// taxi firm's founder). The inspector pins it among their places.
+    #[serde(default)]
+    pub owner: Option<crate::citizens::CitizenId>,
 }
 
 /// One closed day of a business's books.
@@ -710,6 +714,7 @@ impl Business {
             origin: None,
             donations: 0.0,
             wants_expand: false,
+            owner: None,
         }
     }
 

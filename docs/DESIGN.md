@@ -1105,6 +1105,61 @@ Citizens are rendered from their simulated positions every frame.
   lowered to the grade. Cars ride the height of the way they are on (`car_height`), movers keep to
   the surface nearest the height they were at (`surface_height_near`), so a walker under a
   viaduct stays under it. Elevated roads pass roundabouts by.
+- **Raising roads while drawing, and pillars** [tools]: with the Road tool, `]` raises and `[`
+  lowers the next point by 2 m (as Page Up / Page Down; the camera's bracket zoom gives way while
+  the Road tool is out); `Shift+]` / `Shift+[` move the whole road drawn so far, its placed points
+  and the next one, together. A raised way stands on concrete columns planned along its built
+  polyline (`nd_sim::pillars::plan`, a shortest path over 1 m samples): about 24 m apart
+  (`PILLAR_SPAN`), never more than 42 m between supports (`PILLAR_MAX_SPAN`, the structural
+  limit; a raised end needs one within 10 m), none where the deck is under 2.5 m up (it lands on
+  its ramp). Each sample is a site (`World::pillar_site`): a road, path or track below the deck
+  (with its pavements and a junction's corners, 1.6 m footing clearance) or a facility or one of
+  the city's own structures (plants, depots, stations, services, docks, hubs) or a park blocks a
+  column; an empty lot is taken (it leaves the zoning); a grown building is bought out, and costs
+  the most, so the plan shifts columns onto open ground or empty lots first. A stretch with no
+  site for longer than a span may be is a gap: the preview draws the deck red over it (and a red
+  band on the ground), the sub-pane says why, and implementing is refused (`World::pillar_refusal`,
+  also on a trial rebuild, so a ground road laid under a viaduct where its columns stood is refused
+  too). The preview shows the columns where they will stand, orange (with the lot outlined and the
+  building named in the sub-pane) where one buys out a building. A deck at least 6 m up at both
+  ends of a piece (`pillars::SPAN_LEVEL`, `RoadNetwork::spans_lots`) spans over the lots under it:
+  it takes no corridor from the parcels; a building taller than fits under it (`floors_under`:
+  deck, roof and 3.6 m storeys) is bought out, growth there is capped to what fits
+  (`World::deck_cap`, in `height_cap`), and a lot under a deck too low for a storey goes. One of the
+  city's own structures under a deck refuses the road unless it is a building of storeys that fits
+  (a plant, a station or a dock never). Columns are kept on the world (`World::pillars`, serde
+  default) with the key of the way they carry, so a way drawn again the same keeps them where they
+  stood while each is still clear; a save from before pillars plans them on load without pulling
+  anything down. `terrain::viaducts` draws each column at its deck's height (a highway hoisted by
+  the grading alone keeps its evenly spaced columns).
+- **Intersection editor** [tools]: Edit mode, click a junction or a crosswalk (Ctrl+click still
+  grabs a control point there). A modal (`ui::junction`) with a top-down orthographic render of the
+  roads only (`render::junction_view`: a camera on its own render layer, which the road, lane-arrow,
+  path and footbridge meshes are on as well as the main one, filming into an image egui shows; the
+  wheel zooms) with each arriving street's lane arrows and the crosswalks over it, clickable, and
+  beside it: signals (auto / signals / none), each phase's green (5..90 s), the protected left
+  (when needed / always / never, 3..30 s), left turns allowed or forbidden for the whole junction
+  or per street, lane permissions per lane (L, S, R toggles: the player's lane arrows, checked as
+  `set_lane_use` checks them), and per crosswalk an upgrade. The junction's settings are a
+  `junctions::JunctionRule` kept by the traffic (`Traffic::junction_rules`, anchored by the
+  junction's position and the directions its streets leave it, applied on every lane rebuild
+  before the player's arrows: a forced signal, the greens on `Intersection::greens`, the arrow mode
+  and length, and banned lefts taken out of the approach's offered movements). Crosswalk upgrades
+  are `junctions::CrossingRule`s on the world (`World::crosswalks`), applied to the walk graph after
+  every build (`WalkGraph::apply_upgrades`):
+  - a push-button signal (`Crossing::button`): a walker at the kerb presses it and waits; 3 s later
+    traffic gets a red (a hold on every lane over the crossing) for 12 s, then at least 20 s of
+    green (`pedestrians::ButtonLight`). Nobody pressing, nobody stopped;
+  - a footbridge (`walk::Footbridge`): a walkway 6 m up a little to the side of the crosswalk and
+    stairs from each end along the pavement, away from the junction. The walk graph gets raised
+    nodes (`WalkNode::level`) and raised edges (`WalkEdge::raised`, listed in `WalkGraph::raised`):
+    generic, so skywalks between buildings can join the same network. Raised nodes are never
+    snapped onto (their stairs reach them). A walker on the bridge crosses no street, so holds no
+    one up; crossing at grade under a bridge costs `BRIDGED_GRADE_PENALTY` (30 m) more in the
+    route search, so walkers take the bridge when it costs them only a little more. Walkers are
+    drawn at their level on the leg they walk (`World::walker_level`); the bridge itself is
+    `nd_procgen::footbridge` (deck on columns, glass balustrades, steel rails, neon strips, stairs).
+  The remote API's `intersection` command reads and sets all of it.
 - **Depth view** (Underground / Ground / Sky, U cycles, top bar): Underground hides the terrain,
   water, buildings, lots, surface roads and walkers, draws surface roads as faint outlines and
   shows the tunnels (drawn as their own street layer, `StreetLayer::Underground`; each layer draws
@@ -1698,6 +1753,39 @@ recoloured (its buses too), given more or fewer buses, or deleted (with a confir
 click). Stop counters live on the stops themselves (`BusStop::stats`, serde default), so they
 follow a stop when one before it is removed; a moved or removed stop forgets the timing of the
 legs it changed. Nothing here draws random numbers.
+
+## Following, zooming and the people you care about
+
+- **Follow** (inspector, person pane, favourites; API `follow`): `camera::CameraFollow` locks the
+  orbit target on a person, vehicle, delivery robot or building. It is applied after the sim has
+  stepped (`follow_and_fly`, after `SimSet::Sync`), so the camera sits on the thing where it is
+  drawn this frame, with no lag. Pan keys, pan drags and the F-key jumps are locked; rotate and
+  zoom stay free. A banner ("CAMERA LOCKED ... Stop following (Esc)") and a gold viewfinder frame
+  round the map say so. Esc ends it and is used up, so a second Esc clears the selection. A
+  followed car that parks hands the follow, and the selection, to its driver on foot.
+- **Point of view**: Walk view while following looks through their eyes (a walker's head, a
+  driver's seat, a bus window, a robot's camera), turning with them (smoothed) and right-drag
+  looks around, springing back. The pointer stays free for the banner. The selection's outline
+  box is not drawn from inside the vehicle.
+- **Zoom to** (`camera::CameraFly`): a smooth flight of target, distance (in log space) and pitch,
+  0.7 to 2.2 s by length, hopping out over long trips; a moving goal is tracked while the camera
+  travels. Every "go" and "fly there" button in the HUD now flies the same way.
+- **A person's places**: `World::holdings_of` is their home, work and every business they own
+  (`Business::owner`; taxi founders own their firm). Each is a big clickable pin (HOME, WORK,
+  OWNS, `ui/pins.rs`) over its building on a post (`marks.rs`), held at the screen edge when off
+  screen, and a button in the person pane. Either selects the building. Multiple homes have no
+  data yet; when they do, `holdings_of` lists them and they get pins with no UI change.
+- **Favourites** wear gold in the world: a ring and a diamond over the head, and a gold box round
+  the car they drive or ride in and their parked car (`marks.rs`). The People window's list has
+  go (a smooth flight), follow and a "$" gift.
+- **Gift**: `World::gift` moves money (the button gives $1000) from the treasury to the
+  household, or the savings of someone without one. It is booked as the `Gifts` flow, itemised
+  by name. They remember it and cheer up. Refused when the treasury cannot pay.
+- **Delivery robots** are selectable (`Selection::Bot`). The inspector shows their name ("Lucky
+  Bodega bot #2": `DeliveryBot::serial`, the lowest free number in the shop's fleet), code, the
+  owning shop, what they carry (`amount`, `household`), where they are going, the metres and
+  minutes left, and the route on the map in the fleet colour. Each company's fleet is painted
+  its own colour (`bots::fleet_colour`, a golden-ratio hue per shop).
 
 ## Roadmap
 
