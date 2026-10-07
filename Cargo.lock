@@ -3954,6 +3954,7 @@ name = "nd_procgen"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "nd_minds",
  "nd_sim",
  "noise",
  "rand 0.9.5",
