@@ -372,11 +372,12 @@ impl World {
     pub(super) fn sleep_and_eat(&mut self) -> HashMap<BuildingId, u16> {
         let tick = self.clock.tick;
         let hour = self.clock.hour();
-        let night = !(6..22).contains(&hour);
         let mut exhausted: HashMap<BuildingId, u16> = HashMap::new();
         let buildings = &self.buildings;
         for c in self.citizens.values_mut() {
             let at_home = c.home.is_some() && c.inside == c.home && matches!(c.activity, Activity::AtHome);
+            // Each keeps their own bedtime, so the city goes dark home by home.
+            let night = crate::citizens::night_for(c.seed, hour);
             // [services] Night crews at round-the-clock emergency posts
             // (police, fire, ambulance, 911, jail) keep a night worker's
             // hours: up for a shift that is on or about to start, a sleep

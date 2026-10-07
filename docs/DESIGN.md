@@ -1182,7 +1182,13 @@ trait MindProvider {
   and writes `lit_share`: homes light a room per awake household in, fewer by day, a night
   light when asleep, dark when out; workplaces light with the staff in and customers while
   open, security lights when closed; buildings without homes or jobs stay lit; all of it
-  scaled by the power share. No mesh is rebuilt.
+  scaled by the power share. No mesh is rebuilt. Nothing switches in step: citizens keep
+  their own bedtimes (21:00 to midnight, up 05:00 to 07:00, `citizens::night_for` from the
+  seed); the texture is refreshed every 3 sim minutes but each building takes its new share
+  only on its own turn (one in five, by a hash of its slot) and eases toward it 12..44/255 a
+  turn (a power cut is instant); and in the shader each window's threshold wanders by up to
+  ±0.13 on its own clock (re-rolled every 40..180 sim minutes at its own phase, a sim-time
+  uniform on the material), so blocks twinkle room by room.
 - Map layers (`render/layers.rs`, ramps and heat grid in `nd_procgen::overlay`): land value
   (V), traffic load (a ribbon per lane from cars per metre and speed against the limit, green
   to magenta), traffic types (a disc under every vehicle: cars cyan, trucks orange, buses
@@ -1198,6 +1204,36 @@ trait MindProvider {
   older layers off whenever any code switches a flag on, so adding a layer is a flag on
   `Overlays` for its renderer plus one entry. The `overlay` API and `map {layer: "people"}` read
   the same data.
+- Focus layers (`render/focus.rs`, the heat-vision material swap reused): with Traffic load on
+  the city is dimmed and every vehicle on the road turns one light blue; vehicles in bored
+  tunnels and the tunnels themselves are outlined through the ground (`layers::layer_gizmos`,
+  a gizmo group with depth bias -1). Crime (`overlay {layer: "crime"}`): a heat map of the
+  sim's hot spots plus open crime incidents (`crime_color`), the city dimmed a little less,
+  police cars lit blue-white (light bars keep their colours), each police car's route ahead
+  drawn over everything (flashing red and blue on a call, cyan on patrol) with a ring at its
+  goal, and pulsing rings on crimes not yet answered. Heat vision wins over a focus view.
+- Map view (`render/mapview.rs`, `overlay {layer: "map"}`): every mesh but water and the sky is
+  hidden (after all visibility owners, in `PostUpdate`), and a flat unlit map is drawn: dark land
+  (open over water), lots tinted by zone, roads as casing and fill ribbons by class (highway
+  amber, avenue gold, street grey, path, rail), tunnels dashed, joints rounded. Street names
+  (`nd_sim::streets`: the network cut into chains that carry straight on through junctions,
+  named from the seed and a serial, kept across rebuilds by matching new chains to the saved
+  outlines, saved with serde default) run along the roads, repeated along long streets and
+  decluttered on screen, main roads first; pins with a glyph and the name mark services,
+  plants, stations, ports, depots, civic buildings and big venues.
+- Parks merge visually: a park of several lots (`park::plan_parks` already plans one cluster)
+  lays its lawn up to the seams (no inset on shared edges), keeps trees and lamps clear of the
+  park's outside edges only, draws the zone outline only round the outside, and puts the
+  forecourt, gate pillars and name sign on one anchor lot (`ParkLayout::anchor`, the largest
+  lot on a street; serde default true for older saves). The plots stay separate lots.
+- Night and sky (`render/sky.rs`, `update_daylight`): a dome of vertex colours 30 km out (the
+  projection has no far plane), unlit and out of the fog, following the camera: the fog's
+  colour at the horizon (so distant ground dissolves into it without a line), a light-pollution
+  band above it at night (sodium orange under neon magenta, growing with the number of
+  buildings), a dark blue zenith, and glare round the sun by day and dusk, faint round the moon.
+  The fog itself is lit by the city at night and brightens toward the sun (`DistanceFog`
+  directional light colour); night ambient is a warm violet bounce that grows with the city;
+  moonlight is brighter; bloom rises at night (0.16) and falls by day (0.07).
 - Land survey layers (`nd_sim::survey`, `world/survey.rs`, drawn by `render/survey.rs`): what
   the ground is good for, one wash at a time (K steps through them, the View window and the top
   bar's Layer button list them,

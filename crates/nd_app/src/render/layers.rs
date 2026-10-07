@@ -1,12 +1,15 @@
 //! Map layers beyond land value: traffic load per lane, vehicle types,
-//! where people are right now, and pollution and noise. Each is rebuilt on
-//! a short real-time timer while it is on and dropped when it is turned off.
+//! where people are right now, pollution and noise, and crime. Each is
+//! rebuilt on a short real-time timer while it is on and dropped when it is
+//! turned off. The Traffic load and Crime layers also dim the city and light
+//! up the vehicles they are about (`focus`); [`layer_gizmos`] draws what
+//! must show through the ground: cars in tunnels, police routes.
 //! The colour ramps and the heat grid live in `nd_procgen::overlay`, where
 //! they are tested; the legend in `ui::legend` draws the same ramps.
 
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;
-use nd_procgen::overlay::{heat_color, pollution_color, traffic_color, traffic_load, HeatGrid, VehicleClass};
+use nd_procgen::overlay::{crime_color, heat_color, pollution_color, traffic_color, traffic_load, HeatGrid, VehicleClass};
 use nd_procgen::MeshData;
 use nd_sim::traffic::LaneKind;
 use nd_sim::{Activity, LandUse, Vec2 as SVec2, World};
@@ -21,6 +24,13 @@ pub(super) struct TrafficLayerTag;
 pub(super) struct PeopleLayerTag;
 #[derive(Component)]
 pub(super) struct PollutionLayerTag;
+#[derive(Component)]
+pub(super) struct CrimeLayerTag;
+
+/// Lines drawn over everything (depth bias -1): cars in tunnels in the
+/// Traffic load layer, police routes and calls in the Crime layer.
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub(super) struct XrayGizmos;
 /// A coloured disc under one vehicle, for the traffic types layer.
 #[derive(Component)]
 pub(super) struct VehicleMarker(nd_sim::CarId);
@@ -94,13 +104,15 @@ pub(super) fn traffic_ribbons(w: &World) -> MeshData {
         let load = traffic_load(n, lane.length, mean_v, lane.speed_limit);
         // Empty lanes are a faint grey so the network reads; lanes with
         // traffic are coloured by load and widen as it builds.
+        // The cars themselves are lit up over the dimmed city (`focus`),
+        // so the ribbons stay a thin, half-clear guide beside them.
         let color = if n == 0 {
-            [0.45, 0.5, 0.6, 0.18]
+            [0.45, 0.5, 0.6, 0.14]
         } else {
             let c = traffic_color(load);
-            [c[0] * 1.3, c[1] * 1.3, c[2] * 1.3, 0.85]
+            [c[0], c[1], c[2], 0.5]
         };
-        let width = if n == 0 { 1.0 } else { 1.8 + 1.2 * load };
+        let width = if n == 0 { 0.8 } else { 1.0 + 1.0 * load };
         m.ground_strip(&lane.points, width, 0.45, color);
     }
     m
@@ -119,6 +131,21 @@ pub(super) fn people_grid(w: &World) -> Option<HeatGrid> {
         g.splat(p, 1.0);
     }
     g.blur();
+    g.blur();
+    Some(g)
+}
+
+/// Crime: the sim's hot spots (offences, decaying by a quarter a day) as a
+/// smooth heat map, with the crimes still open counted in where they are.
+pub(super) fn crime_grid(w: &World) -> Option<HeatGrid> {
+    let (lo, hi) = occupied(w)?;
+    let mut g = HeatGrid::covering(lo, hi, 14.0, 24_000);
+    for h in &w.society.crime.hotspots {
+        g.splat_radius(h.pos, nd_sim::crime::HOTSPOT_MERGE, h.heat);
+    }
+    for i in w.services.incidents.iter().filter(|i| i.kind == nd_sim::services::IncidentKind::Crime && i.resolved.is_none()) {
+        g.splat_radius(i.pos, 35.0, nd_sim::crime::HOTSPOT_HEAT);
+    }
     g.blur();
     Some(g)
 }
@@ -162,12 +189,12 @@ pub(super) fn sync_layers(
     mats: Res<Materials>,
     time: Res<Time>,
     mut overlays: ResMut<Overlays>,
-    mut timers: Local<[f32; 3]>,
-    mut shown: Local<[bool; 3]>,
+    mut layer_state: Local<([f32; 4], [bool; 4])>,
     mut marker_assets: Local<MarkerAssets>,
     traffic_q: Query<Entity, With<TrafficLayerTag>>,
     people_q: Query<Entity, With<PeopleLayerTag>>,
     pollution_q: Query<Entity, With<PollutionLayerTag>>,
+    crime_q: Query<Entity, With<CrimeLayerTag>>,
     mut markers: Query<(Entity, &VehicleMarker, &mut Transform)>,
 ) {
     if keys.just_pressed(KeyCode::KeyL) && !flags.keyboard_captured {
@@ -175,15 +202,17 @@ pub(super) fn sync_layers(
     }
     let w = &sim.world;
     let now = time.elapsed_secs();
-    let on = [overlays.traffic, overlays.people, overlays.pollution];
-    let every = [0.5f32, 1.0, 2.0];
-    for i in 0..3 {
+    let (timers, shown) = &mut *layer_state;
+    let on = [overlays.traffic, overlays.people, overlays.pollution, overlays.crime];
+    let every = [0.5f32, 1.0, 2.0, 1.0];
+    for i in 0..4 {
         let due = on[i] && (!shown[i] || now - timers[i] >= every[i] || sim.full_rebuild);
         if (shown[i] && !on[i]) || due {
             match i {
                 0 => despawn_all(&mut commands, &traffic_q),
                 1 => despawn_all(&mut commands, &people_q),
-                _ => despawn_all(&mut commands, &pollution_q),
+                2 => despawn_all(&mut commands, &pollution_q),
+                _ => despawn_all(&mut commands, &crime_q),
             }
             shown[i] = false;
         }
@@ -207,11 +236,21 @@ pub(super) fn sync_layers(
                     spawn_layer(&mut commands, &mut meshes, &mats, &m, PeopleLayerTag);
                 }
             }
-            _ => {
+            2 => {
                 if let Some(g) = pollution_grid(w) {
                     let mut m = g.mesh(1.0, 0.7, pollution_color, |_| 0.0);
                     lift(w, &mut m);
                     spawn_layer(&mut commands, &mut meshes, &mats, &m, PollutionLayerTag);
+                }
+            }
+            _ => {
+                if let Some(g) = crime_grid(w) {
+                    // Scaled to the worst spot, but never below a fresh
+                    // offence's heat, so a quiet city does not glow red
+                    // over a single theft.
+                    let mut m = g.mesh((g.max() * 0.85).max(nd_sim::crime::HOTSPOT_HEAT * 0.35), 0.8, crime_color, |_| 0.0);
+                    lift(w, &mut m);
+                    spawn_layer(&mut commands, &mut meshes, &mats, &m, CrimeLayerTag);
                 }
             }
         }
@@ -271,5 +310,136 @@ pub(super) fn sync_layers(
             Grounded,
             VehicleMarker(id),
         ));
+    }
+}
+
+/// Height of the road under a point of a lane: the segment's height there
+/// (tunnels and viaducts included), or the junction's for a connector.
+fn lane_height(w: &World, lane: &nd_sim::traffic::Lane, p: SVec2) -> f32 {
+    if !w.relief {
+        return 0.0;
+    }
+    match lane.kind {
+        LaneKind::Road { segment, .. } => {
+            if w.roads.try_segment(segment).is_none() {
+                return 0.0;
+            }
+            let (a, b) = w.roads.segment_points(segment);
+            let (t, _) = nd_sim::geom::project_on_segment(p, a, b);
+            w.road_height(segment, t)
+        }
+        LaneKind::Connector { node, .. } => w.road_z.get(node.0 as usize).copied().unwrap_or(0.0),
+    }
+}
+
+/// Is the lane in a bored tunnel?
+fn in_tunnel(w: &World, lane: &nd_sim::traffic::Lane) -> bool {
+    match lane.kind {
+        LaneKind::Road { segment, .. } => w.roads.try_segment(segment).is_some_and(|s| s.tunnel),
+        LaneKind::Connector { node, .. } => w.road_z.get(node.0 as usize).copied().unwrap_or(0.0) <= nd_sim::roads::TUNNEL_LEVEL,
+    }
+}
+
+/// A flat ring on the ground.
+fn ground_ring(at: Vec3) -> Isometry3d {
+    Isometry3d::new(at, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2))
+}
+
+/// What the focus layers show through everything else:
+///
+/// - **Traffic load**: every vehicle in a tunnel as a light-blue outline at
+///   its place under the ground (the same blue the cars above turn), and
+///   the tunnels themselves as faint lines, so the traffic below the city
+///   reads with the traffic on it.
+/// - **Crime**: each police car's route ahead (flashing red and blue when it
+///   runs with lights to a call, a calm cyan on patrol), a ring where it is
+///   going, and a pulsing ring on every crime not yet dealt with.
+pub(super) fn layer_gizmos(sim: Res<Sim>, overlays: Res<Overlays>, lighting: Res<super::Lighting>, time: Res<Time>, mut gizmos: Gizmos<XrayGizmos>) {
+    if lighting.heat || overlays.map || !(overlays.traffic || overlays.crime) {
+        return;
+    }
+    let w = &sim.world;
+    let f = sim.frac();
+    let lanes = &w.traffic.net.lanes;
+    if overlays.traffic && !overlays.crime {
+        let blue = super::focus::TRAFFIC_BLUE;
+        let car_col = Color::linear_rgb(blue[0] * 1.4, blue[1] * 1.4, blue[2] * 1.4);
+        let tunnel_col = Color::linear_rgba(0.25, 0.5, 1.0, 0.35);
+        for (sid, s) in w.roads.alive_segments() {
+            if !s.tunnel {
+                continue;
+            }
+            let (a, b) = w.roads.segment_points(sid);
+            let (za, zb) = (w.road_height(sid, 0.0), w.road_height(sid, 1.0));
+            gizmos.line(Vec3::new(a.x, za + 0.3, a.y), Vec3::new(b.x, zb + 0.3, b.y), tunnel_col);
+        }
+        for car in w.traffic.cars.values() {
+            let Some(lane) = car.route.get(car.idx).and_then(|l| lanes.get(*l as usize)) else { continue };
+            if !in_tunnel(w, lane) {
+                continue;
+            }
+            let (p, heading) = car.pose_at(f);
+            let y = w.car_height_at(car, p) + 1.0;
+            let (half_l, half_w) = if car.bus.is_some() { (6.0, 1.4) } else if car.cargo.is_some() { (4.2, 1.3) } else { (2.3, 1.0) };
+            let d = SVec2::new(heading.cos(), heading.sin());
+            let r = SVec2::new(-d.y, d.x);
+            let corner = |a: f32, b: f32| {
+                let q = p + d * a + r * b;
+                Vec3::new(q.x, y, q.y)
+            };
+            let c = [corner(half_l, half_w), corner(half_l, -half_w), corner(-half_l, -half_w), corner(-half_l, half_w)];
+            gizmos.linestrip([c[0], c[1], c[2], c[3], c[0]], car_col);
+            gizmos.line(c[0], c[2], car_col);
+            gizmos.line(c[1], c[3], car_col);
+        }
+    }
+    if overlays.crime {
+        let t = time.elapsed_secs();
+        for i in w.services.incidents.iter().filter(|i| i.kind == nd_sim::services::IncidentKind::Crime && i.resolved.is_none()) {
+            let pulse = (t * 0.9 + i.id as f32 * 0.37).fract();
+            let at = Vec3::new(i.pos.x, w.surface_height(i.pos) + 0.6, i.pos.y);
+            gizmos.circle(ground_ring(at), 4.0 + 14.0 * pulse, Color::linear_rgba(1.8, 0.25, 0.1, 1.0 - pulse));
+            gizmos.circle(ground_ring(at), 3.0, Color::linear_rgb(1.6, 0.4, 0.1));
+        }
+        for u in w.services.units.values() {
+            if u.kind != nd_sim::services::UnitKind::PoliceCar {
+                continue;
+            }
+            let col = if u.lights() {
+                // Red and blue, alternating as the bar does.
+                if (t * 2.5) as i64 % 2 == 0 { Color::linear_rgb(0.3, 0.6, 2.4) } else { Color::linear_rgb(2.2, 0.25, 0.3) }
+            } else {
+                Color::linear_rgba(0.3, 0.9, 1.3, 0.8)
+            };
+            let Some(car) = u.car.and_then(|c| w.traffic.cars.get(c)) else {
+                if u.out() {
+                    let at = Vec3::new(u.pos.x, w.surface_height(u.pos) + 0.6, u.pos.y);
+                    gizmos.circle(ground_ring(at), 5.0, col);
+                }
+                continue;
+            };
+            let (p, _) = car.pose_at(f);
+            let mut pts: Vec<Vec3> = vec![Vec3::new(p.x, w.car_height_at(car, p) + 1.2, p.y)];
+            let mut left = 2500.0f32;
+            for (k, lid) in car.route.iter().enumerate().skip(car.idx) {
+                let Some(lane) = lanes.get(*lid as usize) else { break };
+                // On the lane it is on, only the points still ahead of it.
+                let ahead = |q: &SVec2| k != car.idx || lane.points.last().is_some_and(|end| (*q - car.pos).dot(*end - car.pos) > 0.0);
+                for q in lane.points.iter().filter(|q| ahead(q)) {
+                    let last = *pts.last().unwrap_or(&Vec3::ZERO);
+                    let v = Vec3::new(q.x, lane_height(w, lane, *q) + 1.2, q.y);
+                    left -= last.distance(v);
+                    pts.push(v);
+                }
+                if left <= 0.0 {
+                    break;
+                }
+            }
+            if pts.len() >= 2 {
+                let end = *pts.last().unwrap_or(&Vec3::ZERO);
+                gizmos.linestrip(pts, col);
+                gizmos.circle(ground_ring(end), 4.0, col);
+            }
+        }
     }
 }

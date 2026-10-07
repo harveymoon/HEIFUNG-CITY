@@ -458,6 +458,11 @@ pub struct World {
     /// along in others' cars (`world/rides.rs`).
     #[serde(default)]
     pub rides: crate::rides::Rides,
+    /// Street names, kept across rebuilds by matching the new chains to
+    /// the old outlines (`streets.rs`). Saves from before names get them
+    /// on load.
+    #[serde(default)]
+    pub streets: crate::streets::StreetNames,
 }
 
 impl World {
@@ -536,6 +541,7 @@ impl World {
             taxis: Default::default(),
             cargo_hubs: Default::default(),
             rides: Default::default(),
+            streets: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -585,6 +591,7 @@ impl World {
         // a save from before the flags has them unset.
         self.roads.classify();
         self.rebuild_road_components();
+        self.streets.relink(&self.roads, self.config.seed);
         self.rebuild_ground();
         self.traffic.rebuild(&self.roads);
         self.apply_tolls();

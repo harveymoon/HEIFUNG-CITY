@@ -36,15 +36,28 @@ struct Park<'a> {
     tier: Tier,
     /// Lot outline in world coordinates.
     lot: Vec<Vec2>,
+    /// The lot's edges on the outside of the park (not shared with another
+    /// lot of it), world coordinates. Trees and lamps keep clear of these
+    /// only: a margin along a shared edge too left a bare strip down every
+    /// seam, so a park of several lots read as a row of small ones.
+    open_edges: Vec<(Vec2, Vec2)>,
     path_width: f32,
 }
 
 impl Park<'_> {
-    /// Whether a world point lies on this lot, `margin` in from its edge.
+    /// Whether a world point lies on this lot, `margin` in from its edges on
+    /// the outside of the park (the seams with the park's other lots need
+    /// no margin: the park carries on over them).
     /// Parks are planned in world coordinates, unlike every other style, so
     /// the name says which space it takes (`Ctx::inside_local` is the other).
     fn inside_world(&self, w: Vec2, margin: f32) -> bool {
-        nd_sim::zoning::point_in_polygon(w, &self.lot) && edge_distance(w, &self.lot) >= margin
+        if !nd_sim::zoning::point_in_polygon(w, &self.lot) {
+            return false;
+        }
+        // The ends of the seams too: past a seam's end the neighbour lot's
+        // own side runs off, and a canopy leaning round it would leave the
+        // park. Over a seam itself half the margin: trees may lean across.
+        self.open_edges.iter().all(|(a, b)| w.distance(project(w, *a, *b)) >= margin) && self.layout.seams.iter().all(|(a, b)| w.distance(*a) >= margin && w.distance(*b) >= margin && w.distance(project(w, *a, *b)) >= margin * 0.5)
     }
 
     /// Distance from a world point to the lot edge: how big a paved apron or
@@ -82,15 +95,22 @@ fn project(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
     a + ab * ((p - a).dot(ab) / l2).clamp(0.0, 1.0)
 }
 
-fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
+fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, _style_tier: Tier) {
     let Some(layout) = c.park.as_ref() else { return };
+    // The park's own tier, planned once for all its lots (from their
+    // area-weighted land value), not the style the lot's building drew:
+    // otherwise one lot of a park came out as bare dirt beside its
+    // neighbour's lawn, and the park fell apart into plots.
+    let tier = layout.tier;
     let f = &c.frame;
     let pal = c.palette;
     let lot: Vec<Vec2> = c.lot_poly.iter().map(|p| f.to_world(p.x, p.y)).collect();
+    let open_edges = open_stretches(&lot, &layout.seams);
     let park = Park {
         layout,
         tier,
         lot,
+        open_edges,
         path_width: match tier {
             Tier::Low => 1.6,
             Tier::Mid => 2.0,
@@ -98,11 +118,15 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
         },
     };
     let inner = offset_poly(&c.lot_poly, 0.3);
+    // The lawn runs right up to (a hair over) the edges shared with the
+    // park's other lots, so their ground meets without a seam; it keeps the
+    // usual inset from the street and the neighbours.
+    let lawn = if layout.shared_edges.is_empty() { inner.clone() } else { inset_edges(&c.lot_poly, |i| if layout.shared_edges.contains(&i) { -0.05 } else { 0.3 }) };
 
     // ── ground ───────────────────────────────────────────────────────────
     match tier {
         Tier::Low => {
-            ground(g, f, Dirt, &inner, 0.03, mul(pal.dirt, 0.92));
+            ground(g, f, Dirt, &lawn, 0.03, mul(pal.dirt, 0.92));
             // Patches of dry grass and bare scrapes.
             for _ in 0..rng.random_range(6..14) {
                 if let Some(p) = c.random_inside(rng, 2.0) {
@@ -113,12 +137,12 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
             }
             weeds(g, c, rng, &inner, 24);
         }
-        Tier::Mid => ground(g, f, Foliage, &inner, 0.03, mul(pal.foliage, 0.9)),
+        Tier::Mid => ground(g, f, Foliage, &lawn, 0.03, mul(pal.foliage, 0.9)),
         Tier::High => {
-            ground(g, f, Foliage, &inner, 0.03, mul(pal.foliage, 1.05));
-            // A paved forecourt just inside the gate.
+            ground(g, f, Foliage, &lawn, 0.03, mul(pal.foliage, 1.05));
+            // A paved forecourt just inside the gate (of the park's main lot).
             let front = c.front_face(&inner);
-            if front.len > 6.0 {
+            if front.len > 6.0 && layout.anchor {
                 front.bx(g, f, Paving, 0.0, 0.04, -1.2, Vec3::new((front.len * 0.6).min(14.0), 0.04, 2.4), mul(pal.paving, 1.15));
             }
         }
@@ -254,7 +278,11 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
                     hedge(g, c, face.at(t0, 0.0), face.at(t1, 0.0), if face.is_front { 1.1 } else { 1.3 }, 0.8, pal.foliage);
                 }
             }
+            // Gate pillars at the main entrance only.
             for s in [-1.0f32, 1.0] {
+                if !layout.anchor {
+                    break;
+                }
                 let p = front.at(s * 1.9, -0.2);
                 f.bx(g, Stone, p.x, 0.7, p.y, Vec3::new(0.5, 1.4, 0.5), mul(pal.stone, 1.2));
             }
@@ -268,15 +296,81 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, tier: Tier) {
                     railing(g, c, face, t0, t1);
                 }
             }
-            for s in [-1.0f32, 1.0] {
-                let p = front.at(s * 2.4, -0.3);
-                f.bx(g, Stone, p.x, 1.0, p.y, Vec3::new(0.7, 2.0, 0.7), mul(pal.stone, 1.5));
-                f.bx(g, Glow, p.x, 2.15, p.y, Vec3::new(0.3, 0.3, 0.3), mul(pal.lamp, 0.8));
+            if layout.anchor {
+                for s in [-1.0f32, 1.0] {
+                    let p = front.at(s * 2.4, -0.3);
+                    f.bx(g, Stone, p.x, 1.0, p.y, Vec3::new(0.7, 2.0, 0.7), mul(pal.stone, 1.5));
+                    f.bx(g, Glow, p.x, 2.15, p.y, Vec3::new(0.3, 0.3, 0.3), mul(pal.lamp, 0.8));
+                }
+                // A sign with the park's name by the gate.
+                sign_board(g, c, rng, &front, -front.len * 0.3, 1.6, (front.len * 0.25).min(4.0), 0.6);
             }
-            // A sign with the park's name by the gate.
-            sign_board(g, c, rng, &front, -front.len * 0.3, 1.6, (front.len * 0.25).min(4.0), 0.6);
         }
     }
+}
+
+/// The parts of the outline `poly` not covered by any of `seams` (stretches
+/// the park's other lots also border), as world segments.
+fn open_stretches(poly: &[Vec2], seams: &[(Vec2, Vec2)]) -> Vec<(Vec2, Vec2)> {
+    let n = poly.len();
+    let mut out = Vec::new();
+    for i in 0..n {
+        let (a, b) = (poly[i], poly[(i + 1) % n]);
+        let len = a.distance(b);
+        if len < 1e-3 {
+            continue;
+        }
+        let dir = (b - a) / len;
+        // Covered intervals along this edge, from the seams lying on it.
+        let mut cover: Vec<(f32, f32)> = seams
+            .iter()
+            .filter(|(p, q)| (*p - a).perp_dot(dir).abs() < 0.3 && (*q - a).perp_dot(dir).abs() < 0.3)
+            .map(|(p, q)| {
+                let (t0, t1) = ((*p - a).dot(dir), (*q - a).dot(dir));
+                (t0.min(t1).max(0.0), t0.max(t1).min(len))
+            })
+            .filter(|(lo, hi)| hi > lo)
+            .collect();
+        cover.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let mut t = 0.0f32;
+        for (lo, hi) in cover {
+            if lo > t + 0.01 {
+                out.push((a + dir * t, a + dir * lo));
+            }
+            t = t.max(hi);
+        }
+        if t < len - 0.01 {
+            out.push((a + dir * t, b));
+        }
+    }
+    out
+}
+
+/// `poly` with each edge `i` moved in by `inset(i)` (negative: out), the
+/// corners at the meeting of the moved edges (mitres capped at 1.5 m).
+fn inset_edges(poly: &[Vec2], inset: impl Fn(usize) -> f32) -> Vec<Vec2> {
+    let n = poly.len();
+    if n < 3 {
+        return poly.to_vec();
+    }
+    // Inward normal: the polygon's winding decides which side is in.
+    let ccw = nd_sim::zoning::polygon_area(poly) > 0.0;
+    let normal = |i: usize| {
+        let d = (poly[(i + 1) % n] - poly[i]).normalize_or_zero();
+        if ccw { d.perp() } else { -d.perp() }
+    };
+    (0..n)
+        .map(|i| {
+            let prev = (i + n - 1) % n;
+            let (d1, d2) = ((poly[i] - poly[prev]).normalize_or_zero(), (poly[(i + 1) % n] - poly[i]).normalize_or_zero());
+            let a = poly[prev] + normal(prev) * inset(prev);
+            let b = poly[i] + normal(i) * inset(i);
+            let denom = d1.perp_dot(d2);
+            let q = if denom.abs() < 1e-4 { poly[i] + (normal(prev) * inset(prev) + normal(i) * inset(i)) * 0.5 } else { a + d1 * ((b - a).perp_dot(d2) / denom) };
+            let off = q - poly[i];
+            if off.length() > 1.5 { poly[i] + off.normalize_or_zero() * 1.5 } else { q }
+        })
+        .collect()
 }
 
 /// The stretches of a face (as offsets from its middle) that are not an

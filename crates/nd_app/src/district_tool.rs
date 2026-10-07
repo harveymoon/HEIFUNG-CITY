@@ -210,7 +210,7 @@ fn district_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor
 
 /// District names over the map while the layer is on: each at its
 /// district's centre, in its colour, with its policy underneath.
-fn district_labels(mut contexts: EguiContexts, sim: Res<Sim>, overlays: Res<Overlays>, cams: Query<(&Camera, &GlobalTransform), With<Camera3d>>, mut cache: Local<(u64, usize, Vec<(u16, SVec2)>)>) -> Result {
+fn district_labels(mut contexts: EguiContexts, sim: Res<Sim>, overlays: Res<Overlays>, cams: Query<(&Camera, &GlobalTransform), With<crate::camera::OrbitCamera>>, mut cache: Local<(u64, usize, Vec<(u16, SVec2)>)>) -> Result {
     if !overlays.districts {
         return Ok(());
     }
@@ -225,6 +225,7 @@ fn district_labels(mut contexts: EguiContexts, sim: Res<Sim>, overlays: Res<Over
         cache.0 = w.districts.version;
         cache.1 = w.districts.list.len();
     }
+    // The player's view, not a save-thumbnail camera rendering offscreen.
     let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
     let ctx = contexts.ctx_mut()?;
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("district_labels")));

@@ -39,6 +39,8 @@ mod air;
 mod districts;
 mod emergency;
 mod far;
+/// [layers] Traffic and Crime focus views: the city dimmed, vehicles lit.
+mod focus;
 mod haze;
 /// Drone heat vision (render/heat.rs).
 mod heat;
@@ -46,6 +48,12 @@ mod heat;
 mod holo;
 mod layers;
 mod lights;
+/// [layers] Map view: a flat street map with names and pins.
+mod mapview;
+pub use focus::{POLICE_GLOW, TRAFFIC_BLUE};
+pub use mapview::{zone_tint as map_zone_tint, PIN_KEY as MAP_PIN_KEY, ROAD_KEY as MAP_ROAD_KEY};
+/// The sky dome: light pollution at night, glare round the sun by day.
+mod sky;
 /// [looks] Citizens drawn with their own look.
 mod people;
 pub use people::MESH_CAP as PEOPLE_MESH_CAP;
@@ -144,17 +152,24 @@ pub struct Overlays {
     pub land: Option<nd_sim::survey::LandLayer>,
     /// [districts] District areas, borders and names.
     pub districts: bool,
+    /// [layers] Crime: a heat map of offences, the police cars lit up over
+    /// a dimmed city and the routes they are driving (`layers`, `focus`).
+    pub crime: bool,
+    /// [layers] Map view: buildings, people and traffic hidden, the roads
+    /// drawn flat like a street map with their names, the zones tinted and
+    /// pins on the special buildings (`mapview`).
+    pub map: bool,
 }
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false }
+        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false }
     }
 }
 
 impl Overlays {
     /// The heat-map style layers the L key steps through, one at a time.
-    pub const CYCLE: [&'static str; 5] = ["land_value", "traffic", "traffic_types", "people", "pollution"];
+    pub const CYCLE: [&'static str; 7] = ["land_value", "traffic", "traffic_types", "people", "pollution", "crime", "map"];
 
     /// A layer's flag by API name (`crate::map_layers::MAP_LAYERS`), or the
     /// "show other projects" switch, which is not a layer.
@@ -351,7 +366,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<people::PeopleRender>();
         app.add_plugins(thumbs::ThumbsPlugin);
-        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_systems(Startup, (lights::add_shader, setup)).add_systems(
+        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).init_resource::<sky::SkyLook>().add_systems(Startup, (lights::add_shader, setup)).add_systems(
             Update,
             (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)
                 .chain()
@@ -380,9 +395,15 @@ impl Plugin for RenderPlugin {
         // Drone taxis and helicopters, after the buildings whose pads they land on.
         app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, check_car_bodies.after(lift_movers).in_set(SimSet::Sync));
+        app.add_systems(Update, sky::sync_sky.after(update_daylight).in_set(SimSet::Sync));
         // Tower cranes slewing on building sites.
         app.add_systems(Update, animate_cranes.after(sync_buildings).in_set(SimSet::Sync));
         app.add_plugins(heat::HeatPlugin);
+        // [layers] Focus views swap materials before heat vision does (heat wins).
+        app.init_resource::<focus::FocusState>().add_systems(PostUpdate, focus::swap_focus.before(heat::apply_heat));
+        app.insert_gizmo_config(layers::XrayGizmos, bevy::gizmos::config::GizmoConfig { depth_bias: -1.0, line: bevy::gizmos::config::GizmoLineConfig { width: 3.0, ..default() }, ..default() });
+        app.add_systems(Update, layers::layer_gizmos.in_set(SimSet::Sync).after(lift_movers));
+        app.add_plugins(mapview::MapViewPlugin);
         // [districts] The district layer; [tourism] visitors on foot, after
         // the citizens whose figure cache they share.
         app.init_resource::<districts::DistrictRender>().add_systems(Update, (districts::sync_district_layer, districts::sync_tourists.after(sync_citizens).before(lift_movers)).in_set(SimSet::Sync));
@@ -644,7 +665,7 @@ fn setup(
     let lit = images.add(lights::lit_image());
     let windows = window_materials.add(lights::WindowMaterial {
         base: StandardMaterial { base_color: Color::WHITE, unlit: true, ..default() },
-        extension: lights::WindowLights { lit: lit.clone() },
+        extension: lights::WindowLights { lit: lit.clone(), clock: Vec4::ZERO },
     });
     let signal_green = materials.add(unlit(pal.signal_green));
     let signal_red = materials.add(unlit(pal.signal_red));
@@ -1215,9 +1236,19 @@ fn sync_lots(
             if !power {
                 wash.ground_polygon(&lot.polygon, 0.35, [c[0], c[1], c[2], alpha]);
             }
-            let mut edge = lot.polygon.clone();
-            edge.push(lot.polygon[0]);
-            glow.ground_strip(&edge, 0.35, 0.4, scale(c, 1.3));
+            // A park's lots are one park: no zone edge down the seams
+            // between them, only round the outside.
+            let shared: &[usize] = lot.park.as_ref().map_or(&[], |p| p.shared_edges.as_slice());
+            if shared.is_empty() {
+                let mut edge = lot.polygon.clone();
+                edge.push(lot.polygon[0]);
+                glow.ground_strip(&edge, 0.35, 0.4, scale(c, 1.3));
+            } else {
+                let n = lot.polygon.len();
+                for i in (0..n).filter(|i| !shared.contains(i)) {
+                    glow.ground_strip(&[lot.polygon[i], lot.polygon[(i + 1) % n]], 0.35, 0.4, scale(c, 1.3));
+                }
+            }
         }
     }
     for lot in w.lots.values() {
@@ -1276,6 +1307,7 @@ fn park_key(lot: &nd_sim::Lot, layout: &nd_sim::ParkLayout) -> u64 {
         facing.to_bits().hash(&mut h);
     }
     layout.shared_edges.hash(&mut h);
+    layout.anchor.hash(&mut h);
     h.finish()
 }
 
@@ -2593,6 +2625,8 @@ fn update_daylight(
     mut clear: ResMut<ClearColor>,
     mut sun: Query<(&mut DirectionalLight, &mut Transform), With<SunTag>>,
     mut fog: Query<&mut DistanceFog>,
+    mut sky_look: ResMut<sky::SkyLook>,
+    mut blooms: Query<&mut bevy::post_process::bloom::Bloom>,
 ) {
     let pal = &assets.palette;
     let t = if lighting.follow_clock { sim.world.clock.day_fraction() } else { (lighting.hour / 24.0).rem_euclid(1.0) };
@@ -2610,7 +2644,16 @@ fn update_daylight(
     let dusk = (1.0 - smoothstep(0.0, 0.22, elev.abs())) * 0.8;
 
     let sun_color = lerp3(lerp3(pal.sun_low, pal.sun, 1.0 - low_sun), pal.moon, 1.0 - daylight);
-    let illuminance = 500.0 + 10500.0 * daylight;
+    // Moonlight plus the city's own glow off the haze: night stays night
+    // (the sky is dark, the shadows soft and blue) but streets read.
+    let illuminance = 650.0 + 10350.0 * daylight;
+    let night = 1.0 - daylight;
+    // Light pollution grows with the city: a village barely tints its sky,
+    // a few hundred lit buildings make the low clouds glow.
+    let city = (sim.world.buildings.len() as f32 / 350.0).clamp(0.2, 1.0);
+    let pollution = night * city;
+    // Sodium orange under neon magenta, as the haze over a big city at night.
+    let glow_color = [0.26, 0.10, 0.22];
     let azimuth = (t - 0.25) * std::f32::consts::TAU;
     let sun_dir = if elev > 0.02 {
         let r = (1.0 - elev * elev).sqrt();
@@ -2627,13 +2670,54 @@ fn update_daylight(
 
     let sky = lerp3(lerp3(pal.sky, pal.sky_day, daylight), pal.sky_dusk, dusk * 0.6);
     let fog_c = lerp3(lerp3(pal.fog, pal.fog_day, daylight), pal.sky_dusk, dusk * 0.5);
-    clear.0 = Color::linear_rgb(sky[0], sky[1], sky[2]);
+    // At night the haze is lit from below by the city.
+    let fog_c = [fog_c[0] + glow_color[0] * 0.15 * pollution, fog_c[1] + glow_color[1] * 0.15 * pollution, fog_c[2] + glow_color[2] * 0.15 * pollution];
+    // The zenith stays dark and a little blue at night.
+    let zenith = lerp3(sky, [0.003, 0.004, 0.016], night * 0.85);
+    clear.0 = Color::linear_rgb(zenith[0], zenith[1], zenith[2]);
+    // Scattering: the fog brightens towards the sun (low sun most), so
+    // distant haze glows at dusk; the moon lends a faint cold halo.
+    let glare = lerp3(lerp3(pal.sun_low, pal.sun, 1.0 - low_sun), pal.moon, night);
+    let glare_k = 0.08 + 0.55 * low_sun * daylight.max(0.25) - 0.05 * night;
     for mut f in &mut fog {
         f.color = Color::linear_rgb(fog_c[0], fog_c[1], fog_c[2]);
+        f.directional_light_color = Color::linear_rgba(glare[0] * glare_k, glare[1] * glare_k, glare[2] * glare_k, 0.6);
+        f.directional_light_exponent = 18.0;
     }
-    ambient.brightness = 90.0 + 800.0 * daylight;
-    let amb = lerp3([0.35, 0.45, 0.9], [0.8, 0.85, 1.0], daylight);
+    // The dome: fog at the horizon, the pollution band, the dark zenith,
+    // glare round the sun or moon.
+    let band = lerp3(lerp3(fog_c, [fog_c[0] * 1.15, fog_c[1] * 1.15, fog_c[2] * 1.2], daylight), [fog_c[0] + glow_color[0] * 0.35 * pollution, fog_c[1] + glow_color[1] * 0.35 * pollution, fog_c[2] + glow_color[2] * 0.35 * pollution], night);
+    let next = sky::SkyLook {
+        zenith,
+        horizon: fog_c,
+        glow: band,
+        glow_height: 0.12 + 0.18 * pollution + 0.25 * daylight,
+        // The real sun while it is near or over the horizon (its glow
+        // lingers after sunset), else the moon the night light comes from.
+        sun_dir: if elev > -0.2 {
+            let r = (1.0 - elev * elev).max(0.0).sqrt();
+            Vec3::new(azimuth.cos() * r, elev.max(0.0), azimuth.sin() * r).normalize_or_zero()
+        } else {
+            sun_dir.normalize_or_zero()
+        },
+        sun_glare: { let k = 0.35 * daylight + 0.9 * dusk + 0.04 * night; [glare[0] * k, glare[1] * k, glare[2] * k] },
+        version: sky_look.version + 1,
+    };
+    *sky_look = next;
+    // The city's light bouncing back off the haze fills the shadows at
+    // night with a warm violet; by day the sky's own blue-white.
+    ambient.brightness = 95.0 + 105.0 * pollution + 800.0 * daylight;
+    let amb_night = lerp3([0.35, 0.45, 0.9], [0.85, 0.5, 0.85], 0.45 * city);
+    let amb = lerp3(amb_night, [0.8, 0.85, 1.0], daylight);
     ambient.color = Color::linear_rgb(amb[0], amb[1], amb[2]);
+    // Bloom: neon and windows bleed into the haze at night, barely by day.
+    // Heat vision keeps its own (it stores and restores the camera's).
+    if !lighting.heat {
+        for mut b in &mut blooms {
+            b.intensity = 0.07 + 0.09 * night;
+            b.low_frequency_boost = 0.45 + 0.2 * night;
+        }
+    }
 
     let glow_key = ((1.0 - 0.7 * daylight) * 64.0).round() as i32;
     if state.glow_key != Some(glow_key) || assets.palette_changed {

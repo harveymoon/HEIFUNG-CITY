@@ -25,7 +25,7 @@
 
 use bevy::prelude::*;
 use bevy_egui::egui::{self, Color32};
-use nd_procgen::overlay::{heat_color, pollution_color, traffic_color, VehicleClass};
+use nd_procgen::overlay::{crime_color, heat_color, pollution_color, traffic_color, VehicleClass};
 use nd_sim::survey::LandLayer;
 use nd_sim::LandUse;
 
@@ -66,6 +66,9 @@ pub const MAP_LAYERS: &[MapLayer] = &[
     MapLayer { key: "paths", label: "Pedestrian network", group: "Traffic", hotkey: "P", hint: "Lot loops, alleys and gates people walk", flag: |o| &mut o.paths, legend: legend_paths },
     MapLayer { key: "people", label: "People", group: "People", hotkey: "L", hint: "Where everyone is right now", flag: |o| &mut o.people, legend: legend_people },
     MapLayer { key: "pollution", label: "Pollution and noise", group: "Environment", hotkey: "L", hint: "From plants, industry, nightlife and traffic", flag: |o| &mut o.pollution, legend: legend_pollution },
+    // [layers] (render/focus.rs, render/layers.rs, render/mapview.rs)
+    MapLayer { key: "crime", label: "Crime", group: "People", hotkey: "L", hint: "Where offences pile up; police cars and their routes lit over a dimmed city", flag: |o| &mut o.crime, legend: legend_crime },
+    MapLayer { key: "map", label: "Map view", group: "City", hotkey: "L", hint: "A street map: roads, street names, zones and pins, buildings and people hidden", flag: |o| &mut o.map, legend: legend_map },
 ];
 
 /// A layer: a flag entry of [`MAP_LAYERS`] or a land survey layer.
@@ -266,6 +269,40 @@ fn legend_districts(ui: &mut egui::Ui, cx: &LegendCtx) {
 fn legend_traffic(ui: &mut egui::Ui, _: &LegendCtx) {
     ramp(ui, |t| linear(traffic_color(t)), "free flow", "jammed");
     small(ui, "per lane: how full and how slow");
+    swatches(ui, &[(linear(crate::render::TRAFFIC_BLUE), "every vehicle".into()), (linear([0.25, 0.5, 1.0]), "tunnels, seen through".into())], false);
+    small(ui, "the city is dimmed; cars in tunnels are outlined through the ground");
+}
+
+fn legend_crime(ui: &mut egui::Ui, _: &LegendCtx) {
+    ramp(ui, |t| {
+        let c = crime_color(t);
+        linear([c[0], c[1], c[2]])
+    }, "quiet", "hot spot");
+    small(ui, "offences lately, fading a quarter a day");
+    swatches(
+        ui,
+        &[
+            (linear(crate::render::POLICE_GLOW), "police car".into()),
+            (linear([0.3, 0.9, 1.3]), "patrol route".into()),
+            (linear([2.2, 0.25, 0.3]), "on a call".into()),
+            (linear([1.6, 0.4, 0.1]), "open crime".into()),
+        ],
+        false,
+    );
+}
+
+fn legend_map(ui: &mut egui::Ui, _: &LegendCtx) {
+    let roads: Vec<(Color32, String)> = crate::render::MAP_ROAD_KEY.iter().map(|(l, c)| (linear(*c), l.to_string())).collect();
+    swatches(ui, &roads, false);
+    // The tints are dark on the map; shown brighter here so they read.
+    let zones: Vec<(Color32, String)> = LandUse::ALL.iter().map(|lu| {
+        let c = crate::render::map_zone_tint(*lu);
+        (linear([c[0] * 4.0, c[1] * 4.0, c[2] * 4.0]), lu.label().to_string())
+    }).collect();
+    swatches(ui, &zones, false);
+    let pins: Vec<(Color32, String)> = crate::render::MAP_PIN_KEY.iter().map(|(g, c, l)| (Color32::from_rgb(c[0], c[1], c[2]), format!("{g} {l}"))).collect();
+    swatches(ui, &pins, true);
+    small(ui, "street names along the roads; tunnels dashed");
 }
 
 fn legend_traffic_types(ui: &mut egui::Ui, _: &LegendCtx) {

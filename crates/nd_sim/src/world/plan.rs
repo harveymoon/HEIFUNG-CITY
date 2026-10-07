@@ -856,6 +856,7 @@ impl World {
             self.roads = roads;
             self.mark_bridges();
             self.rebuild_road_components();
+            self.streets.update(&self.roads, self.config.seed);
         } else {
             // Still a new version: the app regrades and redraws the ground
             // and lots on it (lot pads change with the zoning).
