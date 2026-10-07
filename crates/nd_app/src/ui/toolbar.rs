@@ -34,7 +34,11 @@ pub fn show(ui: &mut egui::Ui, p: &mut UiCtx) {
                 let open = build::is_open(ui.ctx());
                 let building = build::is_build_tool(p.tools.tool);
                 if build_button(ui, open, building).clicked() {
-                    build::set_open(ui.ctx(), !open);
+                    if open {
+                        build::close(ui.ctx(), p.tools);
+                    } else {
+                        build::set_open(ui.ctx(), true);
+                    }
                 }
             }
         }

@@ -377,6 +377,17 @@ pub fn set_open(ctx: &egui::Context, open: bool) {
     ctx.data_mut(|d| d.insert_temp(open_id(), open));
 }
 
+/// Close the window; a building tool in hand goes back to Inspect, so
+/// nothing is left half-picked with its options out of sight.
+pub fn close(ctx: &egui::Context, tools: &mut ToolState) {
+    set_open(ctx, false);
+    if is_build_tool(tools.tool) {
+        tools.tool = Tool::Inspect;
+        tools.points.clear();
+        tools.drag = None;
+    }
+}
+
 /// What the window remembers between frames (egui memory).
 #[derive(Clone, Default)]
 struct State {
@@ -414,8 +425,10 @@ pub fn section_of(ctx: &egui::Context) -> Option<Cat> {
 pub fn follow_tools(ctx: &egui::Context, tools: &ToolState) {
     let mut st: State = ctx.data(|d| d.get_temp(state_id())).unwrap_or_default();
     let now = current_item(tools);
-    if st.last_tool != Some(tools.tool) && st.last_tool.is_some() && is_build_tool(tools.tool) {
-        set_open(ctx, true);
+    if st.last_tool != Some(tools.tool) && st.last_tool.is_some() {
+        // A building tool picked elsewhere opens the window; any other tool
+        // (Inspect, Edit, Bulldoze: a button, a key or the API) closes it.
+        set_open(ctx, is_build_tool(tools.tool));
     }
     if let Some(item) = now {
         if st.last.is_none_or(|l| !l.same(item)) || st.cat.is_none() {
@@ -503,7 +516,7 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: Rect) {
     st.last_tool = Some(p.tools.tool);
     ctx.data_mut(|d| d.insert_temp(state_id(), st));
     if !keep {
-        set_open(ctx, false);
+        close(ctx, p.tools);
     }
 }
 
