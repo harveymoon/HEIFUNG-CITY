@@ -235,11 +235,11 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [x] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)   → DONE [fix/review]: the inspector strings were already clean (d8dbe8d); last mojibake comments re-encoded; tests/source_encoding.rs guards it.
 
 [ ] - metro lines aren't self-explanatory: the metro tool switches to a Metro map layer with highlighted stations; build a line by clicking stations in order, with step hints   → IN PROGRESS [feat/metro-ux]
-[ ] - flag: a raised bridge over a highway shows blue in the plan but implement refuses "no room for a pillar" (the implement check ignores the downramp to a ground junction); refusals must show red at the spot first   → IN PROGRESS [feat/tools follow-up]
+[x] - flag: a raised bridge over a highway shows blue in the plan but implement refuses "no room for a pillar" (the implement check ignores the downramp to a ground junction); refusals must show red at the spot first   → DONE [feat/tools 21bbb70]: RoadNetwork::as_built levels for preview, rebuild and implement; plan view runs project_check (red band, pin, label, "show" button); clearer refusal text
 
 ### Agent waves (4–5 at a time)
 - Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera, feat/land, feat/events, fix/review
-- Running: feat/metro-ux (metro line tool), feat/clarity (section A), feat/tools follow-up (pillar check must match the preview; Harvey's bridge)
+- Running: feat/metro-ux (metro line tool), feat/clarity (section A)
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
 - Next as slots free: dev-speed pass, then the review pass
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open
