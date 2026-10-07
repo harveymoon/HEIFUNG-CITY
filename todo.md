@@ -212,3 +212,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 ### E. Housekeeping
 [ ] - many todo4 items above still say IN PROGRESS although their branches were merged: verify each in code and mark done or reopen
+
+### Agent waves (4–5 at a time)
+- Running: fix/flags (wreck/tow plus the tow items from section A), feat/kerbs, feat/mapgen, feat/clarity (section A), feat/look (section D look-dev)
+- Next as slots free: C1 business pressure and new industries (farms, mining, marina, fishing, golf, art venues) · C2 land (density by pressure, buyouts, company expansion and merged plots, housing variety, super-elite) · D2 tools ([ ] road raising with pillars, intersection editor, footbridges) · D3 tunnel tubes in underground view, city name / game id / game history · B camera and inspector · C3 events (races, raves) and infrastructure decay · E verify stale statuses
+- After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open
