@@ -447,7 +447,7 @@ impl World {
                 let near: Vec<BuildingId> = self
                     .buildings
                     .iter()
-                    .filter(|(id, b)| Some(*id) != home && b.construction.is_none() && b.service.is_none() && b.land_use != LandUse::Park && b.plant.is_none() && b.rail.is_none())
+                    .filter(|(id, b)| Some(*id) != home && b.construction.is_none() && b.service.is_none() && b.land_use != LandUse::Park && !b.is_power() && b.rail.is_none())
                     .filter(|(_, b)| !b.residents.is_empty() || b.business.as_ref().is_some_and(|z| !z.closed))
                     .filter(|(_, b)| self.lots.get(b.lot).is_some_and(|l| l.center.distance(pos) < REACH))
                     .map(|(id, _)| id)

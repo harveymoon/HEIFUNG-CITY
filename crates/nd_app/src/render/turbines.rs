@@ -70,7 +70,7 @@ pub(super) fn sync_turbines(
     // Which farms stand, and where their rotors go. Touching farms are laid
     // out as one field, so the placement is only rechecked when buildings
     // came, changed or went (the field search walks every building).
-    let seen: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.plant == Some(PowerPlantKind::Wind) && b.construction.is_none() && w.lots.contains_key(b.lot)).map(|(id, _)| id).collect();
+    let seen: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.plant == Some(PowerPlantKind::Wind) && b.construction.is_none() && b.demolition.is_none() && w.lots.contains_key(b.lot)).map(|(id, _)| id).collect();
     let recheck = sim.full_rebuild || seen != state.farms_seen || sim.events.iter().any(|e| matches!(e, SimEvent::BuildingBuilt(_) | SimEvent::BuildingChanged(_)));
     for &id in seen.iter().filter(|_| recheck) {
         let b = &w.buildings[id];

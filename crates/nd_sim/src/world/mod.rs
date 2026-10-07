@@ -49,6 +49,7 @@ mod places_tests;
 mod industry_bridge;
 pub use plan::{ProjectInfo, ProjectPreview};
 mod power;
+pub use power::{GridAsset, PlantRow};
 mod services;
 mod society;
 mod survey;
@@ -93,7 +94,7 @@ use crate::plan::{preview, Gesture, GestureId, Plan, PlanPreview, Project};
 use crate::roads::{NodeId, RoadNetwork, SegmentId};
 use crate::traffic::Traffic;
 use crate::walk::WalkGraph;
-use crate::power::{demand_mw, PowerPlantKind, Weather, GRID_IMPORT_MW, GRID_IMPORT_PRICE};
+use crate::power::{demand_mw, Battery, BatteryKind, PowerPlantKind, Weather, GRID_IMPORT_PRICE};
 use crate::traffic::{Bus, CarId};
 use std::collections::HashMap;
 use crate::transit::{self, BusStop, RouteId, Transit, TransitLeg, TransitTrip};
@@ -712,7 +713,7 @@ impl World {
         let near_floors: u32 = self
             .buildings
             .values()
-            .filter(|b| b.lot != lot_id && b.land_use != LandUse::Park && !b.is_parking() && b.plant.is_none() && !b.depot && b.rail.is_none() && b.service.is_none())
+            .filter(|b| b.lot != lot_id && b.land_use != LandUse::Park && !b.is_parking() && !b.is_power() && !b.depot && b.rail.is_none() && b.service.is_none())
             .filter_map(|b| self.lots.get(b.lot).map(|l| (b.floors as u32, l.center)))
             .filter(|(_, c)| c.distance(center) <= DENSITY_RADIUS)
             .map(|(f, _)| f)

@@ -563,7 +563,23 @@ Citizens are rendered from their simulated positions every frame.
   shared out highest tier first, so brownouts land on the cheap districts. A building
   below 60% power counts a dark hour: its businesses produce proportionally less, its
   windows go dark, the people inside lose mood and say so ("The power is out again."),
-  and the inspector marks it UNDERPOWERED. The treasury starts at 60,000, takes 12% of
+  and the inspector marks it UNDERPOWERED. Surplus and storage (`power::dispatch`, the merit order): a surplus
+  first charges the grid batteries, then is sold to the regional grid up to 120 MW at 0.5 a MWh (a
+  fifth of the import price; booked at midnight under the `grid export` flow), and what is left is
+  curtailed (every plant turns down by the same share); a shortfall first drains the batteries, then
+  is imported. Battery packs (Buildings, Power: small 20 MWh / 5 MW, medium 80 / 20, farm 240 / 80;
+  `BatteryKind`) charge and discharge at 95% each way (about 90% round trip); every pack takes or
+  gives the same share of its own headroom, so they fill and empty together; they work once their
+  lot is clear and run in slot order, so the dispatch is deterministic. Placing a plant or battery
+  refreshes who is powered but books no hour (no money, no battery energy, no dark hour); the hour is
+  booked once, on the hour. A plant does not feed the grid while the old building on its lot is
+  still being cleared; solar, wind and battery yards clear it at once. Each plant kind has an air
+  and noise model beside its land-value cone: CO2 per MWh (coal 0.95 t, geothermal 0.08, the rest
+  0), smog at the fence (coal 1, geothermal 0.15) and noise while running (coal 68 dB(A) down to
+  solar 38; batteries 40-48). `World::plant_rows` puts each plant's and battery's output, 24-hour
+  mean, upkeep, cost per MWh (upkeep over the last 24 hours' energy), CO2, smog and noise in one row
+  for the Power window and the API; `nd_sim::history` keeps a per-plant record (`PlantLog`: 72
+  hours of output, a battery's charge, 90 days of energy). The treasury starts at 60,000, takes 12% of
   incomes and 5% of business revenue each day (the standard rates; see Taxes), and pays plant upkeep
   and imported power.
 - **Services and emergencies** (`nd_sim::services`, `world/services.rs`): police, fire, health,
@@ -1074,7 +1090,7 @@ trait MindProvider {
   wheel with gondolas and a ticket booth, kiosk with café tables and parasols, flower
   beds, statue, dog run.
 - Power plants have their own styles: a coal station with a boiler hall, two stacks, a
-  coal pile and conveyor and a transformer yard; rows of tilted panels on posts; a wind farm
+  coal pile and conveyor and a transformer yard; a honeycomb of hexagonal sun trackers; a wind farm
   of helical vertical-axis turbines; a containment dome, hyperbolic cooling towers with steam
   and a double fence.
 - Wind farms (`buildings/power.rs`): turbines of one size (18 m gunmetal mast, 11 m rotor of
@@ -1085,6 +1101,20 @@ trait MindProvider {
   the same sites) and turns it about the vertical: still below wind 0.15, 0.6 to 4.2 rad/s
   above, easing up and down, stopped while paused. A red cap light and cyan tip lights trace
   the spin at night.
+- Solar farms (`buildings/power.rs`, `render/solar.rs`): dark blue hexagonal panels (2.2 m to a
+  corner, six cells with dark seams and a cyan rim light) on dual-axis trackers, a pedestal every
+  4.2 m on a triangular grid, flat sides facing their neighbours, so stowed panels tile the yard as a
+  honeycomb; touching parcels share one grid (`PlantField::solar_sites`). The generator draws the
+  pedestals (`solar_trackers` gives the same sites); the app puts a panel entity on each and turns
+  them all to face the sun the city is lit by (`nd_sim::power::sun_direction`), tilting at most 65
+  degrees, waking from flat as the sun clears the horizon and lying flat (stowed) at night. The
+  rotation is rewritten only when the facing moves a fifth of a degree. The zoning wash leaves plant
+  and battery yards out (it flooded a solar farm on a residential lot green).
+- Battery packs (`buildings/power.rs::battery`): container-sized white modules on plinths in rows
+  (2 / 8 / up to 36 by size) with roof fans, door seams, an inverter skid at each row end, a control
+  cabin and a fence; five status lights on each long face show fifths of charge, cyan charging,
+  amber delivering, green holding, with a light line in the same colour. The sim raises
+  `BuildingChanged` only when the lights would change (`Battery::status`).
 - Coal smoke (`render/haze.rs`): no geometry in the plant. Each stack (`coal_stacks`) emits
   18 camera-facing puffs with a soft generated texture that rise, drift downwind (the wind
   direction veers slowly over days, the distance grows with wind), swell and fade over 36 s;
@@ -1171,9 +1201,14 @@ compact view's figures so nothing goes missing.
   in after the tax take as one more section function.
 - **People**: population, households, employed, unemployed, unhoused and waiting over time; the
   class mix stacked; Gini over time. The compact view keeps a 30-day population sparkline.
-- **Power**: the last 72 hours' supply stacked by kind of plant plus grid imports, under a
-  demand line; energy per day by kind; brownout hours and peak demand; every plant's output now
-  against its nameplate.
+- **Power**: the last 72 hours' supply stacked by source above the axis (each kind of plant,
+  batteries delivering, imports) and where a surplus went below it (into the batteries, exported),
+  under a demand line; the batteries' stored MWh against capacity with charging and delivering MW;
+  energy per day the same way; money for power per day (export income, import cost, upkeep);
+  brownout hours and peak demand; a table of plants and batteries (output now and 24-hour mean,
+  upkeep, cost per MWh, CO2 a day, smog, noise; batteries' charge and flow) and a 72-hour chart per
+  plant (output against nameplate) and per battery (stored MWh and flow). The compact view has the
+  hour's balance, the batteries' fill and the same table, narrower.
 - **Transit**: riders per day by mode; riders per bus line; fares against upkeep; who is waiting
   and riding hour by hour; a table of lines with today, yesterday, the average and fares.
 - **City**: homes and jobs (built and filled), buildings and sites, vehicles on the road by hour.

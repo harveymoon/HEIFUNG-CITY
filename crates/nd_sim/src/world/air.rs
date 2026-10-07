@@ -173,7 +173,7 @@ impl World {
                 && b.construction.is_none()
                 && b.demolition.is_none()
                 && b.service.is_none()
-                && b.plant.is_none()
+                && !b.is_power()
                 && !b.depot
                 && b.rail.is_none()
                 && b.port.is_none()

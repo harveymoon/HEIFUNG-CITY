@@ -77,6 +77,7 @@ impl World {
     pub fn place_on_lot(&mut self, what: Placeable, lot: LotId) -> Result<BuildingId, String> {
         match what {
             Placeable::Plant(k) => self.build_power(lot, k),
+            Placeable::Battery(k) => self.build_battery(lot, k),
             Placeable::BusDepot => self.build_depot(lot),
             Placeable::Service(k, t) => self.build_service(lot, k, t),
             Placeable::Rail(f) => {

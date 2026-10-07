@@ -396,6 +396,7 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
             let on = std::mem::discriminant(&tools.build) == std::mem::discriminant(&item) && tools.build.with_tier(Tier::Mid) == item.with_tier(Tier::Mid);
             let text = match item {
                 Placeable::Plant(k) => format!("{} {:.0} MW", k.label(), k.capacity_mw()),
+                Placeable::Battery(k) => format!("{} {:.0} MWh", k.label(), k.capacity_mwh()),
                 other => other.menu_label().to_string(),
             };
             if ui.selectable_label(on, text).clicked() {
@@ -434,6 +435,14 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
             }
             line += ". ";
             line += help::service_note(k);
+        }
+        Placeable::Battery(k) => {
+            line += &format!(
+                ". Stores {:.0} MWh and charges or delivers up to {:.0} MW: it soaks up the plants' surplus before any is exported and covers shortfalls before power is imported; about {:.0}% comes back out. Any land but parks.",
+                k.capacity_mwh(),
+                k.max_mw(),
+                nd_sim::power::BATTERY_CHARGE_EFF * nd_sim::power::BATTERY_DISCHARGE_EFF * 100.0
+            );
         }
         Placeable::BusDepot => line += &format!(". {}", help::TRANSIT_DEPOT),
         Placeable::Rail(_) => line += ". Set beside track or a street it fuses to them; otherwise it lays stubs to join (see the Rail tool).",

@@ -70,7 +70,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 // [subway]
                 None if b.rail.as_ref().is_some_and(|l| l.kind == nd_sim::RailFacility::Central) => nd_procgen::buildings::Style::CentralStation.label(),
                 None if b.metro => nd_procgen::buildings::Style::MetroEntrance.label(),
-                None => b.port.map(|k| k.label()).or(b.plant.map(|k| k.label())).unwrap_or(picked),
+                None => b.port.map(|k| k.label()).or(b.plant.map(|k| k.label())).or(b.battery.as_ref().map(|x| x.kind.label())).unwrap_or(picked),
             };
             if let Some(c) = &b.construction {
                 ui.label(format!("{}  ·  {} tier  ·  {}  ·  {} floors  ·  started day {}", b.land_use.label(), b.tier.label(), style_label, b.floors, b.built_tick / 1440 + 1));
@@ -136,6 +136,14 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             }
             if let Some(kind) = b.plant {
                 ui.label(format!("{}: {:.0} MW nameplate, {:.0}% available now, {:.0}/day upkeep", kind.label(), kind.capacity_mw(), kind.availability(&sim.world.weather, sim.world.clock.day_fraction()) * 100.0, kind.upkeep_per_day()));
+                if b.demolition.is_some() {
+                    ui.label(egui::RichText::new("clearing the lot: not on the grid yet").color(WARN));
+                }
+            } else if let Some(bat) = &b.battery {
+                let k = bat.kind;
+                let doing = if bat.flow_mw > 0.05 { format!("delivering {:.1} MW", bat.flow_mw) } else if bat.flow_mw < -0.05 { format!("charging {:.1} MW", -bat.flow_mw) } else { "holding".to_string() };
+                ui.label(format!("{}: {:.0} of {:.0} MWh ({:.0}%), {doing}; up to {:.0} MW, {:.0}/day upkeep", k.label(), bat.charge_mwh, k.capacity_mwh(), bat.level() * 100.0, k.max_mw(), k.upkeep_per_day()));
+                ui.add(egui::ProgressBar::new(bat.level()).desired_height(10.0).fill(super::detail::BATTERY.gamma_multiply(0.8)));
             } else if b.powered < 0.98 {
                 ui.label(egui::RichText::new(format!("UNDERPOWERED: {:.0}% of {:.1} MW, {} dark hours today", b.powered * 100.0, nd_sim::power::demand_mw(b), b.unpowered_hours_today)).color(WARN));
             } else {

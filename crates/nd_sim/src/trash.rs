@@ -270,7 +270,7 @@ impl World {
     /// Kilograms a building throws out a day, and its bin size.
     fn trash_rate(&self, id: BuildingId) -> (f32, f32) {
         let Some(b) = self.buildings.get(id) else { return (0.0, 0.0) };
-        if b.construction.is_some() || b.land_use == LandUse::Park || b.plant.is_some() || b.rail.is_some() || b.is_parking() {
+        if b.construction.is_some() || b.land_use == LandUse::Park || b.is_power() || b.rail.is_some() || b.is_parking() {
             return (0.0, 0.0);
         }
         let mut daily = 0.0;
