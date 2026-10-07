@@ -63,7 +63,7 @@ mod places;
 #[cfg(test)]
 mod places_tests;
 mod industry_bridge;
-pub use plan::{ProjectInfo, ProjectPreview};
+pub use plan::{ProjectCheck, ProjectInfo, ProjectPreview};
 mod power;
 pub use power::{GridAsset, PlantRow};
 mod services;
@@ -511,7 +511,7 @@ pub struct World {
     /// [tools] Stretches of raised road with no room for a column, from the
     /// last rebuild (the trial rebuild of a project refuses on them).
     #[serde(skip)]
-    pub pillar_gaps: Vec<(Vec2, Vec2)>,
+    pub pillar_gaps: Vec<crate::pillars::Gap>,
     /// [tools] Crosswalk upgrades from the Intersection editor (push-button
     /// signals, footbridges): `world/junctions.rs`. The junctions' own
     /// settings live with the traffic (`Traffic::junction_rules`).

@@ -183,11 +183,16 @@ pub fn command(cmd: &Value, w: &mut World, tools: &mut ToolState) -> Result<Valu
     Ok(json!({ "intersection": view_json(w, &view), "done": done, "editor_open": tools.junction_editor.is_some() }))
 }
 
+/// A stretch with no room for a column.
+pub fn gap_json(g: &nd_sim::pillars::Gap) -> Value {
+    json!({ "from": v2(g.a), "to": v2(g.b), "end_in_the_air": g.end, "over_road": g.over_road, "level": round(g.level), "reason": g.reason() })
+}
+
 /// For the Road tool's state: the columns of the raised road drawn.
 pub fn pillars_json(n: &crate::tools::PillarNote) -> Value {
     json!({
         "count": n.count, "buyouts": n.buyouts, "empty_lots": n.lots, "refusal": n.refusal,
-        "gaps": n.gaps.iter().map(|(a, b)| json!([v2(*a), v2(*b)])).collect::<Vec<_>>(),
+        "gaps": n.gaps.iter().map(gap_json).collect::<Vec<_>>(),
         "at": n.at.iter().map(|p| v2(*p)).collect::<Vec<_>>(),
     })
 }

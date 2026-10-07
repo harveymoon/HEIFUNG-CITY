@@ -963,13 +963,16 @@ fn project(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         "implement" => {
             let id = need(target)?;
+            let name = w.projects().into_iter().find(|i| i.id == id).map_or_else(|| format!("Project {id}"), |i| i.name);
+            let roads = if w.project.as_ref().is_some_and(|p| p.id == id) { w.preview().planned_roads.len() } else { 0 };
             let warnings = w.implement_project(id).ok_or_else(|| format!("no project {id}"))?;
             ctx.tools.points.clear();
             match w.implement_refused.clone() {
-                // Its roads would take a city structure: still pending, and
-                // the reply's `refused` and `blockers` say which.
+                // Its roads would take a city structure, or a raised road has
+                // no room for its columns: still pending, nothing built, and
+                // the reply's `refused` and `blockers` say why.
                 Some(why) => {
-                    ctx.tools.status = why;
+                    ctx.tools.status = crate::tools::refused_text(&name, roads, &why);
                     json!(false)
                 }
                 None => {
@@ -1196,6 +1199,11 @@ fn plan(ctx: &Ctx) -> Value {
     v["gestures"] = json!(gestures);
     v["pending_gesture_ids"] = json!(pending);
     v["master_gestures"] = json!(w.master.gestures.len());
+    // [tools] What implementing the active project would refuse on, checked
+    // now as implementing checks it (the trial rebuild included).
+    let check = w.active_project_check();
+    v["will_refuse"] = json!(check.pillar_refusal);
+    v["pillar_gaps"] = json!(check.pillar_gaps.iter().map(junction::gap_json).collect::<Vec<_>>());
     v
 }
 

@@ -481,6 +481,40 @@ impl RoadNetwork {
         self.push_node(p, level)
     }
 
+    /// [tools] Where an end of a way dropped at `p` lands and the level it
+    /// takes there, as `add_polyline_levels` lays it (`end_node`): a node
+    /// within `SNAP_RADIUS` (its level), else a point on a road within
+    /// `END_SNAP_RADIUS` (that road's level there), else None (the end stays
+    /// where and how it was drawn). A raised road dropped on a road at grade
+    /// ends on that road: its deck ramps down to it.
+    pub fn end_landing(&self, p: Vec2, kind: RoadKind) -> Option<(Vec2, f32)> {
+        if let Some(id) = self.node_near_kind_where(p, SNAP_RADIUS, kind, |_, _| true) {
+            let n = self.node(id);
+            if n.segments.iter().any(|&s| self.segment(s).alive) {
+                return Some((n.pos, n.level));
+            }
+        }
+        let (sid, t, q) = self.nearest_where(p, |seg| Self::joins(seg.kind, kind))?;
+        (q.distance(p) <= END_SNAP_RADIUS).then(|| (q, self.segment_level(sid, t)))
+    }
+
+    /// [tools] A way's points and levels as the network lays it: each end
+    /// that lands on a road (`end_landing`) at that road's point and level.
+    pub fn as_built(&self, points: &[Vec2], levels: &[f32], kind: RoadKind) -> (Vec<Vec2>, Vec<f32>) {
+        let mut pts = points.to_vec();
+        let mut lv: Vec<f32> = (0..points.len()).map(|i| levels.get(i).copied().unwrap_or(0.0)).collect();
+        let n = pts.len();
+        if n >= 2 {
+            for i in [0, n - 1] {
+                if let Some((q, l)) = self.end_landing(pts[i], kind) {
+                    pts[i] = q;
+                    lv[i] = l;
+                }
+            }
+        }
+        (pts, lv)
+    }
+
     /// Where a road end dropped at `p` would land: a node, a point on a road,
     /// or `p` itself. Used by the tools to show the snap before committing.
     pub fn snap_point(&self, p: Vec2, radius: f32) -> (Vec2, bool) {

@@ -271,6 +271,20 @@ pub struct ToolState {
     pub pillars: PillarNote,
     /// [tools] The Intersection editor, when open.
     pub junction_editor: Option<crate::ui::junction::EditorState>,
+    /// [tools] What implementing the active project would refuse on,
+    /// refreshed with the plan view (None: nothing).
+    pub plan_check: Option<nd_sim::ProjectCheck>,
+}
+
+/// [tools] What the player is told when implementing a project is refused:
+/// nothing of it was built (it is all or nothing), and why.
+pub fn refused_text(name: &str, roads: usize, why: &str) -> String {
+    let why = why.trim_start_matches("Not implemented: ");
+    if roads > 0 {
+        format!("{name}: 0 of {roads} road{} built, nothing changed. {why}", if roads == 1 { "" } else { "s" })
+    } else {
+        format!("{name}: not implemented, nothing changed. {why}")
+    }
 }
 
 /// [tools] What the Road tool says about the columns of the raised road
@@ -284,7 +298,7 @@ pub struct PillarNote {
     pub lots: usize,
     /// Why it cannot be built (no room for a column), if so.
     pub refusal: Option<String>,
-    pub gaps: Vec<(SVec2, SVec2)>,
+    pub gaps: Vec<nd_sim::pillars::Gap>,
     pub at: Vec<SVec2>,
 }
 
@@ -472,6 +486,7 @@ impl Default for ToolState {
             cursor_pin: None,
             pillars: Default::default(),
             junction_editor: None,
+            plan_check: None,
         }
     }
 }
@@ -795,9 +810,12 @@ pub(crate) fn tool_input(
     if ctrl && key(KeyCode::Enter) {
         tools.points.clear();
         tools.drag = None;
+        let name = sim.world.project.as_ref().map_or_else(|| "Project".to_string(), |p| p.name.clone());
+        let roads = sim.world.preview().planned_roads.len();
         tools.status = match sim.world.try_implement() {
-            // The roads would take a depot, station or other city structure.
-            Err(why) => why,
+            // The roads would take a depot, station or other city structure,
+            // or a raised road has no room for its columns.
+            Err(why) => refused_text(&name, roads, &why),
             Ok(()) if sim.world.plan_warnings.is_empty() => "Project implemented".into(),
             Ok(()) => format!("Project implemented. {}", sim.world.plan_warnings.join(" ")),
         };

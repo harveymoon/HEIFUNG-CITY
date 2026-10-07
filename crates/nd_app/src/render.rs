@@ -48,6 +48,7 @@ mod haze;
 mod heat;
 /// Planned roads as holograms of the real thing; the depth view.
 mod holo;
+pub use holo::gap_spot;
 mod junction_view;
 mod layers;
 mod lights;
@@ -473,6 +474,8 @@ impl Plugin for RenderPlugin {
         // After every renderer, before the UI (which may load a city and set
         // the flag again for the next frame's renderers).
         app.add_systems(Update, clear_full_rebuild.after(SimSet::Sync));
+        // [tools] A label at each spot with no room for a column.
+        app.add_systems(bevy_egui::EguiPrimaryContextPass, holo::gap_labels);
         // [tools] Footbridges, and the Intersection editor's road view.
         app.init_resource::<junction_view::JunctionCam>()
             .add_systems(Update, (junction_view::sync_footbridges.after(sync_roads).before(lift_spawned), junction_view::sync_junction_camera).in_set(SimSet::Sync))
