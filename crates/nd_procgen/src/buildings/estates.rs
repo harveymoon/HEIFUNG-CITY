@@ -46,7 +46,9 @@ fn ridge(r: &[Vec2]) -> Vec<Vec2> {
 fn house(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, cu: f32, cv: f32, hw: f32, hd: f32, yaw: f32, storeys: u8, wall: (Surface, [f32; 3]), roof: [f32; 3], pitch: f32) -> Option<Vec<Vec2>> {
     let f = &c.frame;
     let p = fit_inside(c, &rect_yaw(cu, cv, hw, hd, yaw));
-    if p.len() != 4 || !poly_inside(c, &p) || p[0].distance(p[1]) < 3.0 {
+    // Pushed off its spot to fit (an odd or small lot): left out rather
+    // than stacked onto another house.
+    if p.len() != 4 || !poly_inside(c, &p) || p[0].distance(p[1]) < 3.0 || poly_center(&p).distance(Vec2::new(cu, cv)) > 1.5 {
         return None;
     }
     let fh = 3.0;
@@ -416,7 +418,8 @@ pub fn mcmansion(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let mc = poly_center(&main);
     // Wings either side, set forward, with their own gables.
     for side in [-1.0f32, 1.0] {
-        let wu = mc.x + side * (hw + 3.2);
+        // Clear of the main block, so no two walls share a plane.
+        let wu = mc.x + side * (hw + 4.0);
         let _ = house(g, c, rng, wu, mc.y - 1.5, 3.4, hd * 0.75, 0.0, 2, wall, roof, 2.6);
     }
     // Columned porch with a pediment.
@@ -546,7 +549,7 @@ pub fn mansion(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     };
     let mc = poly_center(&main);
     for s in [-1.0f32, 1.0] {
-        let _ = house(g, c, rng, mc.x + s * (hw + 5.0), mc.y + 1.5, 5.0, hd * 0.8, 0.0, 2, wall, roof, 3.0);
+        let _ = house(g, c, rng, mc.x + s * (hw + 5.8), mc.y + 1.5, 5.0, hd * 0.8, 0.0, 2, wall, roof, 3.0);
     }
     // Colonnade across the front.
     let front = c.front_face(&main);

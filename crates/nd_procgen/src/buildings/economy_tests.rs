@@ -153,7 +153,8 @@ fn new_businesses_wear_their_own_looks() {
         assert_eq!(traits(s).0, Family::Special);
     }
     // Indices of older styles are untouched: the new block is at the end.
-    assert_eq!(Style::ALL.len(), 80 + NEW.len());
+    // ([land] appends its eight housing and estate styles after this block.)
+    assert_eq!(Style::ALL.len(), 80 + NEW.len() + 8);
     for (k, s) in NEW.iter().enumerate() {
         assert_eq!(s.index(), 80 + k);
         assert_eq!(Style::ALL[80 + k], *s);

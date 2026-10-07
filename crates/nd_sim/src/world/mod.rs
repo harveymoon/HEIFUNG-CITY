@@ -848,7 +848,7 @@ impl World {
         // [land] Pressure decides: quiet land stays low however much is
         // built round it, and a busy, well-served block may rise a few
         // floors over its neighbours (`estate::Pressure::floors_at`).
-        if self.estate.pressure.samples == 0 {
+        if !self.pressure_active() {
             return neighbours;
         }
         self.pressure_floors(lot_id).min(neighbours.saturating_add(crate::estate::PRESSURE_OVER_NEIGHBOURS)).max(1)
@@ -877,7 +877,7 @@ impl World {
         let floors = floors.clamp(1, self.height_cap(lot_id).max(1));
         // [land] Cheap homes on quiet land: one storey (a row of shacks, a
         // trailer park, huts) housing as many as the walk-up it replaces.
-        if lu == LandUse::Residential && tier == Tier::Low && floors <= 2 && self.estate.pressure.samples > 0 && self.pressure_floors(lot_id) <= 2 {
+        if lu == LandUse::Residential && tier == Tier::Low && floors <= 2 && self.pressure_active() && self.pressure_floors(lot_id) <= 2 {
             return 1;
         }
         floors

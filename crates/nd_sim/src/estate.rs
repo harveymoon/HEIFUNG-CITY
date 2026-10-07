@@ -46,6 +46,9 @@ pub const PRESSURE_MAX_FLOORS: u8 = 40;
 /// Floors over the old neighbour-density cap pressure may add: towers rise
 /// beside other buildings, not in a field.
 pub const PRESSURE_OVER_NEIGHBOURS: u8 = 5;
+/// People a town needs before pressure caps its heights: a hamlet keeps
+/// the neighbour rule alone (and small test towns build as they always did).
+pub const PRESSURE_MIN_POP: usize = 300;
 /// Height at or under which a block counts as low density (shacks,
 /// trailer parks, suburbs, McMansions, mansions).
 pub const LOW_DENSITY_FLOORS: u8 = 3;
@@ -338,12 +341,16 @@ pub struct Pressure {
     /// flowing. Recomputed daily.
     pub mobility: Vec<f32>,
     pub samples: u32,
+    /// Apply the caps however small the town (tests); otherwise they
+    /// wait for `PRESSURE_MIN_POP` people.
+    #[serde(default)]
+    pub always: bool,
 }
 
 impl Pressure {
     pub fn new(half: f32) -> Self {
         let n = ((half * 2.0) / PRESSURE_CELL).ceil().max(1.0) as usize;
-        Self { half, n, value: vec![0.0; n * n], congestion: vec![0.0; n * n], mobility: vec![1.0; n * n], samples: 0 }
+        Self { half, n, value: vec![0.0; n * n], congestion: vec![0.0; n * n], mobility: vec![1.0; n * n], samples: 0, always: false }
     }
 
     pub fn ready(&self) -> bool {

@@ -47,6 +47,7 @@ fn press(w: &mut World, busy: &[Vec2], value: f32) {
     p.samples = 0;
     p.sample(&present, &zeros);
     p.samples = 48;
+    p.always = true;
 }
 
 /// Low homes the length of a road: a busy block at the west end, a quiet

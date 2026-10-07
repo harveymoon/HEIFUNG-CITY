@@ -87,6 +87,13 @@ impl World {
 
     /// Floors the pressure on a lot justifies (two where it is quiet), held
     /// to `NIMBY_HEIGHT_CAP` inside a billionaire's NIMBY radius.
+    /// Does pressure cap heights yet? Measured at least once, in a town of
+    /// `PRESSURE_MIN_POP` people.
+    pub fn pressure_active(&self) -> bool {
+        let p = &self.estate.pressure;
+        p.samples > 0 && (p.always || self.citizens.len() >= PRESSURE_MIN_POP)
+    }
+
     pub fn pressure_floors(&self, lot_id: LotId) -> u8 {
         let Some(lot) = self.lots.get(lot_id) else { return PRESSURE_MAX_FLOORS };
         let f = self.estate.pressure.floors_at(lot.center);
