@@ -273,8 +273,8 @@ fn legend_districts(ui: &mut egui::Ui, cx: &LegendCtx) {
 fn legend_traffic(ui: &mut egui::Ui, _: &LegendCtx) {
     ramp(ui, |t| linear(traffic_color(t)), "free flow", "jammed");
     small(ui, "per lane: how full and how slow");
-    swatches(ui, &[(linear(crate::render::TRAFFIC_BLUE), "every vehicle".into()), (linear([0.25, 0.5, 1.0]), "tunnels, seen through".into())], false);
-    small(ui, "the city is dimmed; cars in tunnels are outlined through the ground");
+    swatches(ui, &[(linear(crate::render::TRAFFIC_BLUE), "every vehicle".into()), (linear([0.25, 0.5, 1.0]), "tunnels, seen through".into()), (linear([3.5, 0.3, 0.15]), "a crash in the road".into())], false);
+    small(ui, "the city is dimmed; load lines, crashes and cars in tunnels show through everything");
 }
 
 fn legend_danger(ui: &mut egui::Ui, ctx: &LegendCtx) {

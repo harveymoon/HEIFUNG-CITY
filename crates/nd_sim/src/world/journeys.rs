@@ -260,8 +260,14 @@ impl World {
                 None => format!("{base}{how}"),
             };
         }
-        if self.pose_of(id) == crate::world::Pose::Lying && c.inside.is_none() {
-            return "lying hurt in the street, waiting for the paramedics".into();
+        if c.inside.is_none() {
+            let down = self.down_on_street();
+            match self.pose_with(id, &down) {
+                crate::world::Pose::Lying if down.contains(&id) => return "lying hurt in the street, waiting for the paramedics".into(),
+                crate::world::Pose::Lying => return "lying down on the pavement".into(),
+                crate::world::Pose::SittingKerb => return "sitting on the kerb".into(),
+                _ => {}
+            }
         }
         match (&c.activity, c.inside) {
             (Activity::AtHome, Some(b)) => name(b).map_or("at home".into(), |n| format!("at home in {n}")),
@@ -365,7 +371,24 @@ impl World {
             Errand::Haul { base } => Some(("on a job".to_string(), base.map(|b| self.place_of_building(b)))),
             _ => None,
         };
-        let driver = if self.citizens.contains_key(car.citizen) { Driver::Citizen(car.citizen) } else { stranger() };
+        // A city resident's own car with nobody known at the wheel (its
+        // driver dropped off, or gone) is still theirs.
+        let owner = car.owned.and_then(|v| self.vehicles.cars.get(v)).map(|o| o.owner).filter(|o| self.citizens.contains_key(*o));
+        let driver = if self.citizens.contains_key(car.citizen) {
+            Driver::Citizen(car.citizen)
+        } else if let Some(o) = owner {
+            Driver::Citizen(o)
+        } else {
+            stranger()
+        };
+        if !self.citizens.contains_key(car.citizen) && owner.is_some() {
+            let purpose = match car.errand {
+                Errand::Search { .. } | Errand::ToKerb | Errand::ToLot(_) => "looking for parking",
+                Errand::Deliver => "being delivered to its new owner",
+                _ => "on the road",
+            };
+            return Some(Journey { purpose: purpose.into(), from, to: None, driver });
+        }
         if let Some((purpose, to)) = errand_story {
             let driver = match car.errand {
                 Errand::Taxi(_) if !self.citizens.contains_key(car.citizen) => Driver::Unknown("a cab driver".into()),

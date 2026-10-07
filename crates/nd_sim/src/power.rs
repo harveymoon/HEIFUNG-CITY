@@ -35,8 +35,8 @@ pub enum PlantSite {
 }
 
 /// [clarity] The lot area solar and wind nameplates are quoted for.
-pub const SOLAR_REFERENCE_AREA: f32 = 1_500.0;
-pub const WIND_REFERENCE_AREA: f32 = 1_500.0;
+pub const SOLAR_REFERENCE_AREA: f32 = 600.0;
+pub const WIND_REFERENCE_AREA: f32 = 800.0;
 
 impl PowerPlantKind {
     pub const ALL: [PowerPlantKind; 7] = [PowerPlantKind::Coal, PowerPlantKind::Solar, PowerPlantKind::Wind, PowerPlantKind::Nuclear, PowerPlantKind::Hydro, PowerPlantKind::Tidal, PowerPlantKind::Geothermal];

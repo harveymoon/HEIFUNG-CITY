@@ -91,14 +91,17 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 let name = |b| w.buildings.get(b).map(|b| b.name.as_str()).unwrap_or("out of town");
                 ui.label(format!("{:.0} {} from {} to {}  ·  worth {:.0}  ·  {:.0} km/h", cargo.amount, cargo.resource.label(), name(cargo.from), name(cargo.to), cargo.price, car.v * 3.6));
             } else {
-                neon(ui, &format!("Car  ·  {}", car.model.body.label().replace('_', " ")));
+                // [clarity] A city vehicle says what it is and whose it is.
+                let unit = w.services.unit_of_car(id).and_then(|u| w.services.units.get(u));
+                match unit {
+                    Some(u) => neon(ui, &format!("{} {} {}  ·  {}", capitalise(u.kind.label()), u.kind.call_sign(), u.number, w.buildings.get(u.station).map_or("", |b| b.name.as_str()))),
+                    None => neon(ui, &format!("Car  ·  {}", car.model.body.label().replace('_', " "))),
+                }
                 ui.label(format!("{:.0} km/h", car.v * 3.6));
                 // [events] A street racer: the race and their place.
                 super::nights::racer_line(ui, w, id);
                 driver_shown = driver_card(ui, w, id, selection);
-                if !driver_shown {
-                    hint(ui, "nobody we know at the wheel");
-                }
+                // (Crews and strangers are named by the journey card below.)
                 // [boot] Clamp it: it pulls over and waits for the tow truck.
                 if car.owned.is_some() && tow_button(ui) {
                     let owned = car.owned;
@@ -529,13 +532,13 @@ fn journey_card(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selecti
         }
         match &j.to {
             Some(t) => {
-                ui.label(egui::RichText::new("→ going to").small().weak());
+                ui.label(egui::RichText::new("— going to").small().weak());
                 if super::person::place_button(ui, t) {
                     picked = t.building.map(Selection::Building).or(t.car.map(Selection::Car));
                 }
             }
             None => {
-                ui.label(egui::RichText::new(format!("→ {}", j.purpose)).small().weak());
+                ui.label(egui::RichText::new(format!("— {}", j.purpose)).small().weak());
             }
         }
     });

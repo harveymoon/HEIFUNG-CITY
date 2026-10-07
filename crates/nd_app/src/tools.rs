@@ -1939,13 +1939,13 @@ fn route_ends(gizmos: &mut Gizmos, w: &nd_sim::World, origin: Option<SVec2>, end
     if let Some(o) = origin {
         let col = Color::linear_rgb(0.6, 3.0, 1.2);
         for y in [1.2, 1.5] {
-            gizmos.circle(Isometry3d::new(at(o, y), flat), 2.6, col);
+            gizmos.circle(Isometry3d::new(at(o, y), flat), 3.0, col);
         }
         gizmos.line(at(o, 0.1), at(o, 1.2), col);
     }
     if let Some(e) = end {
         let col = Color::linear_rgb(3.2, 0.6, 2.4);
-        let r = 2.6;
+        let r = 3.2;
         for y in [1.2, 1.5] {
             gizmos.line(at(e + SVec2::new(-r, -r), y), at(e + SVec2::new(r, r), y), col);
             gizmos.line(at(e + SVec2::new(-r, r), y), at(e + SVec2::new(r, -r), y), col);

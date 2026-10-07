@@ -1906,6 +1906,8 @@ fn sync_citizens(
         let pose = w.pose_with(id, &down);
         let seated = matches!(pose, nd_sim::world::Pose::Bench | nd_sim::world::Pose::SittingKerb);
         let lying = pose == nd_sim::world::Pose::Lying;
+        // Thrown clear of the wreck: beside it, not under it.
+        let pos = if lying && down.contains(&id) { pos + SVec2::new(-c.heading.sin(), c.heading.cos()) * 2.6 } else { pos };
         // [tools] Up the stairs and over a footbridge (a raised walkway).
         let raised = w.walker_level(c, pos);
         tf.translation = Vec3::new(pos.x, if lying { 0.12 } else if seated { 0.02 } else { 0.16 } + raised, pos.y);
@@ -1913,7 +1915,13 @@ fn sync_citizens(
         if lying {
             tf.rotation *= Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
         }
-        tf.scale = if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE } * stature;
+        // On the kerb: lower, hunched forward over the knees.
+        let kerb = pose == nd_sim::world::Pose::SittingKerb;
+        if kerb {
+            tf.rotation *= Quat::from_rotation_x(0.35);
+            tf.translation.y -= 0.1;
+        }
+        tf.scale = if kerb { Vec3::new(1.05, 0.5, 1.25) } else if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE } * stature;
         looks.insert(key);
         let fallback = || if key.ride { mats.bike_mesh.clone() } else { mats.citizen_mesh.clone() };
         let wanted_mesh = if plain { fallback() } else { people.mesh_for(key, &mut meshes).unwrap_or_else(fallback) };

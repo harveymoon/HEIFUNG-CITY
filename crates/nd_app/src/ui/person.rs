@@ -84,7 +84,7 @@ pub fn activity_heading(ui: &mut egui::Ui, w: &World, id: CitizenId) -> Option<n
                 }
             }
             if let Some(t) = &to {
-                ui.label(egui::RichText::new(if from.is_some() { "→ going to" } else { "going to" }).small().weak());
+                ui.label(egui::RichText::new(if from.is_some() { "— going to" } else { "going to" }).small().weak());
                 if place_button(ui, t) {
                     pick = t.building;
                 }
