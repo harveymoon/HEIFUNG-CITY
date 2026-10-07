@@ -186,9 +186,15 @@ pub(super) fn sync_emergency(
         let shown = u.car.is_some_and(|c| w.traffic.cars.contains_key(c)) || matches!(u.state, UnitState::OnScene | UnitState::Patrol);
         if shown && !es.units.contains_key(&uid) {
             let k = kind_index(u.kind);
-            let body = commands.spawn((Mesh3d(a.bodies[k].clone()), MeshMaterial3d(a.paint[k].clone()), super::offstage(), NotShadowCaster, EmergencyTag, Grounded)).id();
-            let la = commands.spawn((Mesh3d(a.bars[k][0].clone()), MeshMaterial3d(a.light_a[k].clone()), super::offstage(), NotShadowCaster, NotShadowReceiver, EmergencyTag, Grounded)).id();
-            let lb = commands.spawn((Mesh3d(a.bars[k][1].clone()), MeshMaterial3d(a.light_b[k].clone()), super::offstage(), NotShadowCaster, NotShadowReceiver, EmergencyTag, Grounded)).id();
+            let body = commands.spawn((Mesh3d(a.bodies[k].clone()), MeshMaterial3d(a.paint[k].clone()), super::offstage(), NotShadowCaster, EmergencyTag, Grounded, super::focus::UnitTag)).id();
+            let la = commands.spawn((Mesh3d(a.bars[k][0].clone()), MeshMaterial3d(a.light_a[k].clone()), super::offstage(), NotShadowCaster, NotShadowReceiver, EmergencyTag, Grounded, super::focus::UnitTag)).id();
+            let lb = commands.spawn((Mesh3d(a.bars[k][1].clone()), MeshMaterial3d(a.light_b[k].clone()), super::offstage(), NotShadowCaster, NotShadowReceiver, EmergencyTag, Grounded, super::focus::UnitTag)).id();
+            // [layers] The Crime layer lights the police up (`focus`).
+            if u.kind == UnitKind::PoliceCar {
+                for e in [body, la, lb] {
+                    commands.entity(e).insert(super::focus::PoliceTag);
+                }
+            }
             es.units.insert(uid, [body, la, lb]);
         }
         if !shown {

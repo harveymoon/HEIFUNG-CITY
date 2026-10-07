@@ -40,6 +40,8 @@ pub mod power;
 pub mod rail;
 pub mod roads;
 pub mod services;
+/// Street names: chains of segments named once and kept across rebuilds.
+pub mod streets;
 pub mod takeover;
 /// [tax] Tax rates per land use and sub-type, and the import duty.
 pub mod tax;

@@ -1949,12 +1949,25 @@ mod tests {
         assert!(planned.iter().any(|l| l.park.as_ref().unwrap().cluster_lots >= 2), "the park zone should plan at least one multi-lot park");
         assert!(planned.iter().any(|l| !l.park.as_ref().unwrap().shared_edges.is_empty()), "adjoining park lots should share an edge");
         let mut drawn = 0;
-        for lot in planned {
+        for lot in planned.iter().copied() {
             let layout = lot.park.as_ref().unwrap();
             let g = generate_building(lot, LandUse::Park, 1, layout.tier, 1.0, 11, &rules, &pal, &Extras { park: Some(layout), ..Extras::default() });
             check_mesh(&g, "park");
-            let (over, _, low, culprit) = extent(&g, lot, None);
-            assert!(over <= 1.0 && low >= -0.3, "park lot ({} lots, tier {:?}) leaves its lot: {over:.1} m / {low:.1}: {culprit}", layout.cluster_lots, layout.tier);
+            let (_, _, low, _) = extent(&g, lot, None);
+            // A park of several lots is one park: a tree by a seam may lean
+            // over the next lot of it, but nothing may leave the park.
+            let (mut over, mut culprit) = (0.0f32, String::new());
+            for (surface, m) in g.iter() {
+                for p in &m.positions {
+                    let q = Vec2::new(p[0], p[2]);
+                    let d = planned.iter().map(|l| outside_by(q, l)).fold(f32::MAX, f32::min);
+                    if d > over {
+                        over = d;
+                        culprit = format!("{surface:?} at ({:.1}, {:.1}) y {:.1}", q.x, q.y, p[1]);
+                    }
+                }
+            }
+            assert!(over <= 1.0 && low >= -0.3, "park lot ({} lots, tier {:?}) leaves its park: {over:.1} m / {low:.1}: {culprit}", layout.cluster_lots, layout.tier);
             drawn += 1;
         }
         assert!(drawn > 3);

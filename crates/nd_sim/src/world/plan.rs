@@ -701,6 +701,7 @@ impl World {
         self.roads = roads;
         self.mark_bridges();
         self.rebuild_road_components();
+        self.streets.update(&self.roads, self.config.seed);
 
         // Parcels along every road, the master's zoning onto them, a lot
         // for every zoned parcel; then old lots with buildings are matched
