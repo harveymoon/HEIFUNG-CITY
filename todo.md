@@ -264,3 +264,5 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [x] UI font pass: themed open-licence font, one type scale, smallest text larger, no boxes for arrows/symbols [feat/fonts] → DONE [feat/fonts]: Plex Sans + Chakra Petch (OFL), named scale in ui/theme.rs (Small 13 / Body 15), symbol fallbacks + glyph test, View window Text size
 - [ ] Build hover: crisp plot outline plus an extruded light wall fading upward, green if it can go there, red (with the reason) if not [feat/plot-hover]
 - [ ] Click a train in Inspect: passenger or freight, cars, next stop and remaining stops, passengers (clickable) or cargo with origin/destination; its route glows along the rail [feat/train-inspect]
+- [ ] Top bar overlaps itself after the font pass (Orbit over Ground, Underground cut) [fix/topbar]
+- [ ] Click a toll booth: price, cars/trucks and revenue today/yesterday/total, net per day, drivers who avoided it, queue, hourly chart [feat/toll-inspect]
