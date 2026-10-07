@@ -157,3 +157,8 @@ Agents in brackets. Items extending running work went to those agents.
 [ ] - a new road deleted a bus depot: roads never delete special buildings; red outline in the preview, implementing refused until moved   → IN PROGRESS [fix-plan]
 [ ] - map view layer: roads like Google Maps with street names, zones lightly tinted, special buildings as labels/pins, buildings and people hidden   → IN PROGRESS [layers]
 [ ] - nights too dark: brighter city glow and light pollution, atmospheric scattering   → IN PROGRESS [layers]
+
+## Dev speed (after the current agents finish; Harvey asked 2026-10-07)
+- [ ] Build speed: sccache shared across worktrees, rust-lld linker, a fast dev/test profile (keep full release for the playable exe).
+- [ ] Project CLAUDE.md: crate/module map, how to launch a test instance (ports, ND_TITLE=0, remote API), and the rules for agents (never touch the user's game on 4817 or target/release saves, no Ctrl+Shift+G, move the exe aside before building).
+- [ ] rust-analyzer via the LSP tool for go-to-definition and references.
