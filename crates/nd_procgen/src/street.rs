@@ -908,16 +908,25 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         for corner in list {
             let from = marks(&g);
             let corner_cuts: Vec<Cut> = corner.arms.iter().flat_map(|a| cuts.get(&a.2 .0).into_iter().flatten().copied()).collect();
-            kerb_ribbon(&mut g, &corner.kerb, Some(&corner.normals), -1.0, CORNER_RIBBON, false, false, &corner_cuts, &kerb_cols);
+            kerb_ribbon(&mut g, &corner.kerb, Some(&corner.normals), -1.0, CORNER_RIBBON, false, corner.stub, &corner_cuts, &kerb_cols);
             if corner.apron.len() >= 3 {
                 g.part(Asphalt).ground_polygon(&corner.apron, ASPHALT_Y + 0.01, asphalt_c);
             }
             if corner.fill.len() >= 3 {
                 g.part(Paving).ground_polygon(&corner.fill, KERB_H - 0.01, paving_c);
-                for w in corner.rim.windows(2) {
-                    let (p, q) = (w[0], w[1]);
+                let mut edges: Vec<(Vec2, Vec2, Option<Vec2>)> = corner.rim.windows(2).map(|w| (w[0], w[1], None)).collect();
+                if corner.stub && !corner.rim.is_empty() {
+                    // Where the paving stops beside a link with none: its
+                    // two ends (one of them hidden under the other arm's).
+                    let (k0, k1) = (corner.kerb[0], corner.kerb[corner.kerb.len() - 1]);
+                    let back_last = corner.fill[corner.fill.len() - corner.rim.len() - 1];
+                    edges.push((back_last, corner.rim[0], Some(k1 - corner.kerb[corner.kerb.len() - 2])));
+                    edges.push((corner.rim[corner.rim.len() - 1], corner.fill[0], Some(k0 - corner.kerb[1])));
+                }
+                for (p, q, facing) in edges {
                     let n = Vec2::new(-(q - p).y, (q - p).x);
-                    let n = if n.dot((p + q) * 0.5 - centre) < 0.0 { -n } else { n };
+                    let towards = facing.unwrap_or((p + q) * 0.5 - centre);
+                    let n = if n.dot(towards) < 0.0 { -n } else { n };
                     let y = KERB_H - 0.01;
                     g.part(Paving).quad_facing([Vec3::new(p.x, 0.0, p.y), Vec3::new(q.x, 0.0, q.y), Vec3::new(q.x, y, q.y), Vec3::new(p.x, y, p.y)], Vec3::new(n.x, 0.0, n.y), paving_c);
                 }
@@ -1668,6 +1677,9 @@ struct ArmEnd {
     /// next arm round), and on the clockwise side.
     pave_ccw: bool,
     pave_cw: bool,
+    /// A one-way link with no pavements of its own (`Segment::ramp`): a
+    /// neighbour's kerb rounds the corner onto it and stops.
+    stub: bool,
     ang: f32,
 }
 
@@ -1690,6 +1702,8 @@ pub(crate) struct Corner {
     /// Signed turn of the kerb at the corner: negative for an ordinary
     /// corner rounded off, positive for one that wraps round the junction.
     pub turn: f32,
+    /// One arm has no pavement: the kerb rounds onto it and ends there.
+    pub stub: bool,
 }
 
 /// Every junction corner, and how far each run's kerb on each side stays
@@ -1842,7 +1856,7 @@ fn corner_between(a: &ArmEnd, b: &ArmEnd, base: f32) -> Option<(Corner, f32, f32
             }
             let with = |rim: &[Vec2]| back.iter().chain(rim.iter()).copied().collect::<Vec<_>>();
             let (fill, rim) = tries.into_iter().map(|r| (with(&r), r)).find(|(f, _)| simple_polygon(f)).unwrap_or_default();
-            let corner = Corner { kerb, normals, apron, fill, rim, arms: [(a.run, a.start, a.seg), (b.run, b.start, b.seg)], turn };
+            let corner = Corner { kerb, normals, apron, fill, rim, arms: [(a.run, a.start, a.seg), (b.run, b.start, b.seg)], turn, stub: false };
             return Some((corner, ea, eb));
         }
         r *= 0.6;
@@ -1894,7 +1908,8 @@ fn junction_corners(roads: &RoadNetwork, net: &LaneNetwork, runs: &[Run]) -> Cor
                     None => (ccw, cw) = (false, false),
                 }
             }
-            ends.entry(node.0).or_default().push(ArmEnd { run: ri, start, seg, path, hw, pave_ccw: ccw, pave_cw: cw, ang: d.y.atan2(d.x) });
+            let stub = sg.ramp && !sg.tunnel && !sg.ring && !sg.is_highway();
+            ends.entry(node.0).or_default().push(ArmEnd { run: ri, start, seg, path, hw, pave_ccw: ccw, pave_cw: cw, stub, ang: d.y.atan2(d.x) });
         }
     }
     let mut out = Corners { by_node: BTreeMap::new(), trims: HashMap::new() };
@@ -1907,10 +1922,15 @@ fn junction_corners(roads: &RoadNetwork, net: &LaneNetwork, runs: &[Run]) -> Cor
         let base = net.node_radius.get(node as usize).copied().unwrap_or(4.0) + 0.6;
         for i in 0..n {
             let (a, b) = (&arms[i], &arms[(i + 1) % n]);
-            if !(a.pave_ccw && b.pave_cw) {
+            // Two pavements meet round the corner; a pavement next to a
+            // one-way link without any rounds onto the link and ends, so
+            // the corner is not left bare either way.
+            let stub = !(a.pave_ccw && b.pave_cw);
+            if stub && !((a.pave_ccw && b.stub) || (a.stub && b.pave_cw)) {
                 continue;
             }
-            let Some((corner, ea, eb)) = corner_between(a, b, base) else { continue };
+            let Some((mut corner, ea, eb)) = corner_between(a, b, base) else { continue };
+            corner.stub = stub;
             // The counter-clockwise side of the way out is the run's +1
             // side where the run starts here, its -1 side where it ends.
             out.trims.insert((a.run, a.start, a.start), ea);
@@ -2366,6 +2386,47 @@ mod kerb_tests {
         let cuts: usize = crossing_cuts(&w.roads).values().map(|v| v.len()).sum();
         let corners: usize = junction_corners(&w.roads, &w.traffic.net, &build_runs(&w.roads)).by_node.values().map(|v| v.len()).sum();
         println!("street triangles {} (tactile {}), {cuts} crossings, {corners} corners, {ms} ms", g.triangle_count(), g.get(Tactile).indices.len() / 3);
+        if let Ok(n) = std::env::var("ND_STREET_NODE") {
+            let nid = NodeId(n.parse().unwrap());
+            let runs = build_runs(&w.roads);
+            for &s in &w.roads.node(nid).segments {
+                let sg = w.roads.segment(s);
+                println!("seg {} alive {} kind {:?} lanes {}+{} ramp {} ring {} tunnel {} hw {}", s.0, sg.alive, sg.kind, sg.lanes_fwd, sg.lanes_bwd, sg.ramp, sg.ring, sg.tunnel, sg.half_width());
+            }
+            let c = junction_corners(&w.roads, &w.traffic.net, &runs);
+            for (ri, r) in runs.iter().enumerate().filter(|(_, r)| r.start_node == nid || r.end_node == nid) {
+                println!("run {ri} len {} start {} trims {:?} {:?} {:?} {:?}", path_length(&r.points), r.start_node == nid, c.trims.get(&(ri, true, true)), c.trims.get(&(ri, true, false)), c.trims.get(&(ri, false, true)), c.trims.get(&(ri, false, false)));
+            }
+            println!("corners {}", c.by_node.get(&nid.0).map_or(0, |v| v.len()));
+        }
+        if std::env::var("ND_STREET_PLACES").is_ok() {
+            // Where to look: signalised junctions, Ts, mid-block zebras and
+            // crossings on a slope.
+            for i in w.traffic.net.intersections.iter().filter(|i| i.signalized).take(3) {
+                println!("signalised {:?}", w.roads.node(i.node).pos);
+            }
+            for (k, n) in w.roads.nodes.iter().enumerate().filter(|(k, _)| w.roads.street_degree(NodeId(*k as u32)) == 3).take(3) {
+                println!("T {:?} z {}", n.pos, heights.get(k).copied().unwrap_or(0.0));
+            }
+            for (s, t) in nd_sim::walk::midblock_crossings(&w.roads).into_iter().take(3) {
+                let (a, b) = w.roads.segment_points(s);
+                let sg = w.roads.segment(s);
+                let dz = (heights.get(sg.a.0 as usize).copied().unwrap_or(0.0) - heights.get(sg.b.0 as usize).copied().unwrap_or(0.0)).abs() / a.distance(b);
+                println!("zebra {:?} slope {dz}", a.lerp(b, t));
+            }
+            let mut steep: Vec<(f32, Vec2)> = crossing_cuts(&w.roads)
+                .iter()
+                .map(|(s, v)| {
+                    let sg = w.roads.segment(SegmentId(*s));
+                    let (a, b) = w.roads.segment_points(SegmentId(*s));
+                    ((heights.get(sg.a.0 as usize).copied().unwrap_or(0.0) - heights.get(sg.b.0 as usize).copied().unwrap_or(0.0)).abs() / a.distance(b).max(1.0), v[0].mid)
+                })
+                .collect();
+            steep.sort_by(|a, b| b.0.total_cmp(&a.0));
+            for (dz, p) in steep.iter().take(3) {
+                println!("sloped crossing {p:?} slope {dz}");
+            }
+        }
     }
 }
 
