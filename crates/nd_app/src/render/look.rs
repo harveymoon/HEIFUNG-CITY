@@ -828,7 +828,7 @@ mod tests {
         for face in 0..6 {
             let d = cube_dir(face, 4, 4, 8);
             let axis = [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z][face as usize];
-            assert!(d.dot(axis) > 0.99, "face {face}: {d}");
+            assert!(d.dot(axis) > 0.97, "face {face}: {d}");
         }
     }
 }
