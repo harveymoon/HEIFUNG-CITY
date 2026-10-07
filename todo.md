@@ -270,3 +270,5 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Build hover shows cost, MW and upkeep before clicking, and the combined yield if it joins a Sunfield/Wind Park [feat/plant-scale]
 - [ ] Dirty industries (mining, oil, refinery, new smelting and factory farming): soil contamination field + map layer, strong adjacency penalties (farms/homes avoid them), heavy trucks wear roads faster, dirty looks [feat/dirty-industry]
 - [ ] Select a road segment in Inspect/Edit: lanes, speed, traffic now and hourly chart, congestion, wear/condition, repair cost and Repair now [feat/road-inspect]
+- [ ] Social layer: encounters and conversations build friendships/rivalries; friends meet up and help each other, enemies avoid and feud; crews/clubs form and make things (gigs, murals, gardens, startups, petitions); speech bubbles, person pane ties, Social window [feat/social]
+- [ ] Visual QA pass on road structures: walk + orbit survey of junctions, overpasses, underpasses, bridges, ramps, tunnels; fix artifacts at the root, before/after shots [fix/road-polish]
