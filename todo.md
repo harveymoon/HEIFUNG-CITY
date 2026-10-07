@@ -229,6 +229,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [x] - flag: kerbs turn to dirt at corners   → DONE [feat/kerbs]: rounded kerbed corners with paving (rings paved outside), dropped kerbs at every crosswalk end with yellow domed tactile pads; street triangles slightly down. Left: very sharp (~60°) corners get no cut; one-way ramp streets still have no pavements
 [x] - realistic example maps   → DONE [feat/mapgen]: nd_procgen::citygen tensor-field streets, zoning, presets grid_plaza / coastal_river / old_town / twin_centres; generate_city remote command; "Starting town" in New game; tests per preset. Roundabouts dropped from plazas (they jammed by day 4)
 [ ] - corner lots levelled to their front street can stand above a side street (left open by fix/terrain-cut)
+[ ] - about 100 cyclists stuck at one point beside a 5-arm signalised junction in a generated city (riders waiting on each other at crossings, world/riders.rs); seen by feat/tools
+[ ] - new economy building styles (Mechanic, FishStickFactory, ArtStudio) put windows in their frame's plane (coplanar test failing on main)   → economy agent fixing
 [ ] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)
 
 ### Agent waves (4–5 at a time)
