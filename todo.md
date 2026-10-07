@@ -200,8 +200,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [x] - waterfront: recreational marina (small and large; large takes yachts, with a clubhouse; raises land value; draws seafood restaurants); fishing ports (small and large) with fish gutting / fish-stick factory industry and fish markets nearby   → DONE [feat/economy]: small/large marinas and fishing ports in Build > Water; boats move; fish chain to markets and seafood restaurants
 [x] - entertainment: golf driving ranges   → DONE [feat/economy]
 [x] - art scene: artists live cheap near warehouses; studios, small galleries, openings with invitations; successful galleries buy neighbouring plots and become museums (architecture to match); wealthy visitors donate; needs a rich enough audience and enough middle-income artists   → DONE [feat/economy]: artists, studios, galleries with openings and donations; galleries set wants_expand (museum growth left to feat/land)
-[ ] - events: street races (fast cars meet in a lot, race, party; a call to the cops may bust it); warehouse raves at night (lights, a queue outside) where the culture exists
-[ ] - infrastructure decay: roads and bridges wear slowly; road-maintenance budget; cuts hit poor streets first, rich areas get fixed first; bad roads slow cars
+[x] - events: street races (fast cars meet in a lot, race, party; a call to the cops may bust it); warehouse raves at night (lights, a queue outside) where the culture exists   → DONE [feat/events]: races from day 10 (lots, lit route, party, busts and chases); warehouse raves where a scene exists (queue, beams, noise calls, shutdowns). Raves may be too frequent in big cities; tune
+[x] - infrastructure decay: roads and bridges wear slowly; road-maintenance budget; cuts hit poor streets first, rich areas get fixed first; bad roads slow cars   → DONE [feat/events]: wear by age and traffic, Road maintenance slider, rich streets fixed first, worn roads slow cars and raise crashes; Road condition layer; ruts and potholes
 
 ### D. Look and tools
 [x] - look-dev pass, grounded neon   → DONE [feat/look]: roughness/metal maps, sky-light reflections, distance-scaled SSAO, volumetric haze, TAA, Auto/Low/Medium/High with a frame-time throttler (View window; `graphics` remote command). Left: street lamps don't cast light, no wet roads.   Was: PBR materials with roughness and normal maps on roads, buildings and cars; SSAO; sky/atmosphere, distance and volumetric fog; TAA; a dynamic performance throttler that scales effects to hold the frame rate
@@ -235,8 +235,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [ ] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)
 
 ### Agent waves (4–5 at a time)
-- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera, feat/land
-- Running: fix/review (population drain, REVIEW2 M4/M7/M12/LOW, corner lots, mojibake, kerb leftovers), feat/events (C3: races, raves, infrastructure decay), feat/clarity (section A)
+- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera, feat/land, feat/events
+- Running: fix/review (population drain, REVIEW2 M4/M7/M12/LOW, corner lots, mojibake, kerb leftovers), feat/clarity (section A)
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
 - Next as slots free: dev-speed pass, then the review pass
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open
