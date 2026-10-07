@@ -513,6 +513,19 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(v)
         }
         "terrain_at" => Ok(land::terrain_at(&ctx.sim.world, req_point(cmd)?)),
+        // [dirty-industry] Pay to clean up poisoned ground: {x, y, radius}.
+        "remediate" | "cleanup" | "clean_up" => {
+            let p = req_point(cmd)?;
+            let r = opt_f32(cmd, "radius")?.unwrap_or(100.0);
+            let (cost, removed) = ctx.sim.world.remediate(p, r)?;
+            Ok(json!({ "ok": true, "cost": round(cost), "removed_cells": round(removed), "treasury": round(ctx.sim.world.economy.treasury) }))
+        }
+        // [dirty-industry] Dirty plants and contamination near a point.
+        "dirt_at" | "contamination_at" => {
+            let p = req_point(cmd)?;
+            let w = &ctx.sim.world;
+            Ok(json!({ "at": [p.x, p.y], "contamination": round(w.contamination.at(p)), "dirty_nearby": land::dirty_near(w, p) }))
+        }
         // [grid-weather] Wind and sun at a point; y may be given as z (the
         // renderer's name for the sim's y).
         "resource" => {
@@ -2623,6 +2636,9 @@ fn help() -> Value {
     v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
     // [plant-groups]
     v["commands"]["plant_preview"] = json!({ "kind": "solar|wind|coal|...", "x": "f", "y": "f", "note": "read-only: MW, cost and upkeep on the lot there, the Sunfield / Wind Park it would join, and any problem" });
+    // [dirty-industry]
+    v["commands"]["remediate"] = json!({ "x": "f", "y": "f", "radius": "m, default 100, at most 300", "note": "pay to dig out the contamination there (450 per cell of full contamination); alias cleanup" });
+    v["commands"]["dirt_at"] = json!({ "x": "f", "y": "f", "returns": "contamination, dirty_nearby {plants [{building, name, what, distance_m, level, reach_m}], home_exposure, farm_exposure}" });
     // [grid-weather]
     v["commands"]["resource"] = json!({ "x": "f", "y": "f (or z)", "returns": "wind (site_factor, mean_ms, now_ms, typical_yield, yield_now, cut_out_now) and solar (site_factor, climate_sun, sun, yield_now) at the point, and the climate" });
     v["commands"]["grid"] = json!({ "returns": "time-of-use import/export price now, demand now vs the full draw, weather, day_ahead (24 h: hour, temp_c, demand_mw, import_price, export_price if the weather holds), last_24h (recorded demand, supply, imports, exports, price, temperature)" });

@@ -1314,7 +1314,10 @@ fn industry(w: &World) -> Value {
     json!({
         "by_kind": kinds,
         "contamination": { "cells": c.cells.len(), "cells_over_0_3": c.cells_over(0.3), "max": r3(c.max()), "total": round(c.total()), "cell_m": c.cell,
-                            "note": "0..1 per cell; oil wells, refineries and coal ash raise it, it spreads and fades daily; it costs land value and spoils crops" },
+                            "note": "0..1 per cell; oil wells, refineries, chemical works, mines, smelters, factory farms and coal ash raise it; it spreads a little and fades about 1% a day (faster under parks; `remediate` cleans it for money); it costs land value, spoils crops and wears residents down" },
+        // [dirty-industry] The dirty plants and the neighbours they hurt.
+        "dirty": w.dirty.iter().map(|s| json!({ "building": super::view::key_str(s.building), "name": w.buildings.get(s.building).map(|b| b.name.clone()), "reads_as": s.as_kind.label(), "level": r3(s.level), "reach_m": round(s.reach) })).collect::<Vec<_>>(),
+        "suffering_neighbours": w.buildings.keys().filter(|id| w.building_exposure(*id) > 0.05).count(),
         "fleet": { "truck_and_bus_lots": fleet_lots, "bays": fleet_bays, "trucks_parked": fleet_parked, "trucks_on_road": trucks, "returning_empty": returning },
         "biases": { "count": w.industry_bias.len(), "newest_first": biases },
         "plant_land_value": plants,

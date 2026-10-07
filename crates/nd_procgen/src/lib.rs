@@ -30,6 +30,7 @@ pub mod vacant;
 pub mod walk;
 
 pub use buildings::transit::bus_stops;
+pub use buildings::dirty;
 pub use toll::{toll_booths, TollDraw};
 pub use buildings::{battery_lights, solar_head, solar_trackers, SolarTracker, SOLAR_HUB, SOLAR_MAX_TILT, building_style, style_extras, coal_stacks, generate_building, wind_rotor, wind_turbines, BuildingRules, PlantField, CraneRig, crane_slew, Extras, LandUseRules, Neighbour, Style, StyleBook, Turbine, WINDOW_LIGHT_MARK};
 pub use mesh::MeshData;

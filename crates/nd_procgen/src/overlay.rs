@@ -69,6 +69,9 @@ pub fn industry_hue(k: IndustryKind) -> [f32; 3] {
         IndustryKind::Fishing => [0.08, 0.85, 0.78],
         IndustryKind::Tech => [1.0, 0.3, 0.75],
         IndustryKind::Mining => [0.75, 0.55, 0.32],
+        // [dirty-industry] slag crimson; feedlot mud brown
+        IndustryKind::Smelting => [0.95, 0.15, 0.35],
+        IndustryKind::FactoryFarming => [0.6, 0.42, 0.18],
     }
 }
 
@@ -88,7 +91,32 @@ pub fn land_hue(layer: LandLayer) -> [f32; 3] {
         LandLayer::Solar => [1.0, 0.92, 0.12],
         LandLayer::Industry(k) => industry_hue(k),
         LandLayer::BestIndustry => [1.0, 1.0, 1.0],
+        LandLayer::Contamination => [0.78, 0.86, 0.12],
     }
+}
+
+/// [dirty-industry] The contamination layer's wash for `t` in `0..1`: a
+/// sickly yellow-green trace, through mustard and rust brown, to a dark
+/// poisoned purple at saturation; clear below a trace.
+pub fn contamination_color(t: f32) -> [f32; 4] {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.02 {
+        return [0.0, 0.0, 0.0, 0.0];
+    }
+    let c = ramp(&[(0.0, [0.7, 0.95, 0.15]), (0.25, [0.95, 0.8, 0.1]), (0.5, [0.85, 0.45, 0.08]), (0.75, [0.6, 0.12, 0.1]), (1.0, [0.45, 0.05, 0.4])], t);
+    [c[0], c[1], c[2], 0.3 + 0.45 * t.powf(0.6)]
+}
+
+/// [dirty-industry] The tint poisoned ground takes in the city, always on:
+/// a sickly yellow-green stain where it is light, a dead brown where it is
+/// bad; mostly transparent so the ground reads through.
+pub fn ground_stain_color(t: f32) -> [f32; 4] {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.03 {
+        return [0.0, 0.0, 0.0, 0.0];
+    }
+    let c = ramp(&[(0.0, [0.42, 0.5, 0.08]), (0.4, [0.36, 0.3, 0.06]), (1.0, [0.16, 0.1, 0.04])], t);
+    [c[0], c[1], c[2], (0.12 + 0.55 * t.powf(0.7)).min(0.68)]
 }
 
 /// A survey wash for a value in `0..1`: clear below a trace, then the hue

@@ -328,6 +328,12 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
     if b.plant.is_none() && b.powered < 0.98 && b.construction.is_none() {
         ui.label(egui::RichText::new(format!("UNDERPOWERED: {:.0}% of {:.1} MW, {} dark hours today", b.powered * 100.0, nd_sim::power::demand_mw(b), b.unpowered_hours_today)).color(WARN));
     }
+    // [dirty-industry] Dirty itself, dirty neighbours, poisoned ground.
+    let pick = dirt_lines(ui, w, id);
+    if let Some(src) = pick {
+        *selection = Selection::Building(src);
+        return;
+    }
 
     // ── The business ──
     if let Some(bz) = &b.business {
@@ -912,4 +918,49 @@ fn tow_status(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selection
 /// Game minutes as "12 min" or "2 h 05".
 fn duration_min(m: u64) -> String {
     if m < 60 { format!("{m} min") } else { format!("{} h {:02}", m / 60, m % 60) }
+}
+
+/// [dirty-industry] What dirty industry means for this building: a dirty
+/// plant says how far it fouls and how many neighbours suffer; a sufferer
+/// lists its unhappy neighbours, worst first, with what they cost it
+/// ("Ironmaw Smelter 120 m · food output −30%, land value −0.09"); and the
+/// ground's contamination when there is any. Returns a neighbour clicked.
+fn dirt_lines(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId) -> Option<nd_sim::BuildingId> {
+    let b = &w.buildings[id];
+    let mut clicked = None;
+    if let Some(src) = w.dirty.iter().find(|s| s.building == id) {
+        let hurt = w.buildings.iter().filter(|(o, x)| *o != id && x.construction.is_none() && w.building_exposure(*o) > 0.05 && w.building_lot(*o).is_some_and(|l| l.center.distance(src.pos) < src.reach)).count();
+        let spill = b.business.as_ref().and_then(|z| z.kind.spill()).map(|(r, _)| r).or_else(|| b.plant.and_then(|k| k.ground_spill()).map(|(r, _)| r)).unwrap_or(0.0);
+        ui.label(egui::RichText::new(format!("DIRTY INDUSTRY: fouls the ground within {spill:.0} m; neighbours within {:.0} m suffer ({hurt} now)", src.reach)).small().color(egui::Color32::from_rgb(210, 170, 90)));
+        hint(ui, "farms, fishing, homes, shops and clean tech hate it; manufacturing and logistics shrug");
+    }
+    let neighbours = w.unhappy_neighbours(id);
+    if !neighbours.is_empty() {
+        section(ui, "UNHAPPY NEIGHBOURS");
+        for n in neighbours.iter().take(4) {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if ui.link(egui::RichText::new(&n.name).small().color(WARN)).on_hover_text(format!("Select the {}", n.what)).clicked() {
+                    clicked = Some(n.source);
+                }
+                ui.label(egui::RichText::new(format!("{} · {:.0} m · hit {:.0}%", n.what, n.distance, n.hit * 100.0)).small());
+            });
+        }
+        if neighbours.len() > 4 {
+            hint(ui, &format!("and {} more", neighbours.len() - 4));
+        }
+        if let Some(cost) = w.adjacency_cost(id) {
+            ui.label(egui::RichText::new(format!("Costs it: {cost}")).small().color(WARN));
+        }
+    }
+    if let Some(l) = w.lots.get(b.lot) {
+        let c = w.contamination.over(l.center, &l.polygon);
+        if c >= 0.02 {
+            let col = if c > 0.3 { WARN } else { egui::Color32::from_rgb(200, 200, 120) };
+            let farm = b.business.as_ref().is_some_and(|z| z.kind.is_food());
+            let what = if farm { format!(" · crops −{:.0}%", c * 90.0) } else { String::new() };
+            ui.label(egui::RichText::new(format!("Ground contamination {:.0}%{what}", c * 100.0)).small().color(col));
+        }
+    }
+    clicked
 }

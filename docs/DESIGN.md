@@ -490,12 +490,36 @@ Citizens are rendered from their simulated positions every frame.
   over an area (or with `None` hands it back to the ground); standing industry of another kind
   retools on the spot. The ground is read from the landscape seed: fertility (river banks,
   plains), oil patches (about a tenth of the land), rock (noise and slope), sand (sea shore)
-  and water proximity. Contamination is a saved 32 m raster (0..1): oil wells pour 0.01 per
-  working hour within 60 m, refineries 0.004 within 80 m, coal plants 0.003 within 120 m;
-  each day an eighth of every cell seeps into its neighbours and 3.5% fades, so a closed field
-  takes months to recover. Grain farms yield 0.6 + 0.8 x fertility and lose up to 90% on fouled
-  ground; container yards and truck lots burn fuel and earn handling fees (2 per filled job
-  hour, more near a port or yard), truck lots a bay fee per parked lorry.
+  and water proximity. Contamination is a saved 32 m raster (0..1): per working hour at full
+  staff oil wells pour 0.01 within 60 m, refineries 0.004 within 80 m, chemical works 0.008
+  within 140 m, strip mines 0.004 within 120 m, smelters 0.006 within 130 m, factory farms
+  0.004 within 110 m, coal plants 0.003 within 120 m; each day an eighth of every cell seeps
+  into its neighbours and 1% fades (half-life about ten weeks), parks take another 3% a day
+  off the ground under them, and the player can pay to dig it out (`remediate`, 450 per cell
+  of full contamination, at most 300 m round). Grain farms yield 0.6 + 0.8 x fertility and lose
+  up to 90% on fouled ground (pasture farms and dairies 70%, vertical farms, chicken farms and
+  fisheries 50%); container yards and truck lots burn fuel and earn handling fees (2 per filled
+  job hour, more near a port or yard), truck lots a bay fee per parked lorry.
+- **Dirty industry** (`industry::IndustryKind::dirtiness`, `world/dirt.rs`): strip mining
+  (0.75), oil extraction (0.55), refineries (0.8; a chemical works with mercury cells 1.0),
+  smelting (0.9: smelters turn 2 ore and 0.1 fuel into 1 metal, base 40, exported) and factory
+  farming (0.6: feedlots turn 1.4 grain into 3 livestock; still food) are dirty, and so is a
+  coal plant (0.7, read as a refinery). A dirty plant is felt out to 250 + 330 x dirtiness
+  metres (about 450..580 m); what a neighbour suffers is level x sensitivity x (1 - d/reach)^1.2
+  per plant, combined as 1 - prod(1 - hit), capped at 0.9 (its *exposure*). Level is the
+  dirtiness times 0.6 + 0.4 x staffing (0.5 when shut). The compatibility table
+  (`industry::sensitivity`): farming 1.0 (0.6 against a feedlot), fishing 0.9, clean tech 0.8,
+  factory farming 0.3, manufacturing 0.25, logistics 0.1, the dirty kinds 0; homes 1.0, shops
+  0.7, nightlife and civic 0.6, parks 0.5. Exposure takes up to 0.3 off a lot's value (so rent
+  and tier), up to half a farm's or fishery's output, and up to 85% of the chance homes, shops
+  or nightlife are built on a lot; new industry squares its weights by (1 - exposure), so a farm
+  by a smelter is rare and a fab or a yard is not. Residents of exposed or poisoned homes (over
+  0.12) lose up to 0.04 mood a day and some complain (Noise & pollution). Smelters only come
+  with strip mines within 1500 m or a shipping port. Loaded lorries wear the road by their load:
+  ore and metal 2.5, crude 2, livestock 1.6 times an ordinary lorry (`road_wear::vehicle_load`).
+  The looks: sooty stained yards, slag and ore heaps, a manure lagoon, a poisoned settling pond,
+  smoke, fumes and dust from their vents, and the contamination stains the ground in the city
+  (sickly yellow-green to dead brown) and has its own map layer.
 - **Truck and bus lots**: a logistics building with one bay per 90 m² (4..40). A lorry that
   has delivered parks at the nearest lot with room within 700 m, else drives back to the
   business that sent it, else to the nearest lot with room at any distance, else out of town by
