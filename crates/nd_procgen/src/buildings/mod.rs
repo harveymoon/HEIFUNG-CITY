@@ -1345,6 +1345,9 @@ fn back_edge_link(lot: &Lot, kind: RailFacility) -> RailLink {
 }
 
 #[cfg(test)]
+mod coplanar_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use nd_sim::roads::RoadNetwork;
