@@ -650,10 +650,18 @@ impl World {
             return Ok(());
         };
         if !project.is_empty() {
-            let blockers = self.implement_blockers(&project);
+            // One trial rebuild answers both: the structures the project
+            // would take, and [tools] whether every raised road has room
+            // for its columns.
+            let (blockers, pillars) = self.implement_checks(&project);
             if !blockers.is_empty() {
                 let names: Vec<String> = blockers.iter().filter_map(|b| self.buildings.get(*b)).map(|b| b.name.clone()).collect();
                 let why = format!("Not implemented: the planned roads would take {}. Move the road clear of it (outlined in red) or bulldoze it first.", names.join(", "));
+                self.project = Some(project);
+                self.implement_refused = Some(why.clone());
+                return Err(why);
+            }
+            if let Some(why) = pillars {
                 self.project = Some(project);
                 self.implement_refused = Some(why.clone());
                 return Err(why);
@@ -687,10 +695,36 @@ impl World {
     /// itself would lose, found by implementing it on a copy of the world:
     /// a structure left with no street to front loses its lot too.
     pub fn implement_blockers(&self, project: &Project) -> Vec<BuildingId> {
+        self.implement_checks(project).0
+    }
+
+    /// [tools] Why `project` cannot be built for want of room for the
+    /// columns of a raised road, if so (`implement_checks`).
+    pub fn pillar_refusal(&self, project: &Project) -> Option<String> {
+        self.implement_checks(project).1
+    }
+
+    /// `implement_blockers`, and [tools] the pillar refusal: one of the
+    /// project's raised roads has a stretch with no site for a column for
+    /// longer than a span may be, or (found on the same trial rebuild) a
+    /// road it lays under a viaduct leaves the viaduct without one.
+    fn implement_checks(&self, project: &Project) -> (Vec<BuildingId>, Option<String>) {
         let mut out = self.road_blockers(project);
         let pv = preview(&self.master, project);
         let roads_change = !pv.planned_roads.is_empty() || !pv.removed_roads.is_empty() || !pv.planned_rings.is_empty() || !pv.removed_rings.is_empty();
-        if roads_change && self.buildings.values().any(Self::is_civic_structure) {
+        let raised_new = pv.planned_levels.iter().any(|l| crate::pillars::is_raised(l));
+        let mut pillars: Option<String> = None;
+        if roads_change && raised_new {
+            for ((_, pts, f, b, k), levels) in pv.planned_roads.iter().zip(&pv.planned_levels) {
+                if let Some(why) = self.road_pillar_plan(pts, levels, *f, *b, *k).refusal() {
+                    pillars = Some(format!("Not implemented: {why}."));
+                    break;
+                }
+            }
+        }
+        let civic = self.buildings.values().any(Self::is_civic_structure);
+        let check_pillars = pillars.is_none() && (raised_new || !self.pillars.is_empty());
+        if roads_change && (civic || check_pillars) {
             let mut trial = self.clone();
             trial.project = None;
             trial.master = project.apply_to(&trial.master);
@@ -700,9 +734,15 @@ impl World {
                     out.push(id);
                 }
             }
+            if check_pillars {
+                if let Some(&(a, b)) = trial.pillar_gaps.first() {
+                    let plan = crate::pillars::PillarPlan { gaps: vec![(a, b)], ..Default::default() };
+                    pillars = plan.refusal().map(|why| format!("Not implemented: {why}."));
+                }
+            }
         }
         out.sort();
-        out
+        (out, pillars)
     }
 
     /// The city's own structures whose lots the asphalt of one road would
@@ -744,6 +784,14 @@ impl World {
                         continue;
                     }
                     if point_in_polygon(p, &l.polygon) || crate::geom::distance_to_outline(p, &l.polygon) < hw - 0.5 {
+                        // [tools] A deck spanning over it passes over if
+                        // it is low enough to fit under (a building of
+                        // storeys: a plant, a station or a dock is taller
+                        // than its floors say, and is never built over).
+                        let storeys = |b: &Building| b.service.is_some() || b.depot || b.metro || b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::CargoHub);
+                        if la.min(lb) >= crate::pillars::SPAN_LEVEL && self.buildings.get(*id).is_some_and(|b| storeys(b) && b.floors <= crate::pillars::floors_under(la.min(lb))) {
+                            continue;
+                        }
                         out.push(*id);
                     }
                 }
@@ -817,7 +865,11 @@ impl World {
         // rings; the rings go down first so the arms snap onto them.
         let (built, rings) = self.master.built_roads_levels();
         roads.rings = rings;
+        // [tools] The raised ways, for their columns: key, built polyline,
+        // levels, deck half width.
+        let mut raised: Vec<(u64, Vec<Vec2>, Vec<f32>, f32)> = Vec::new();
         for (_, drawn, levels, fwd, bwd, kind) in built {
+            let way = crate::pillars::is_raised(&levels).then(|| crate::pillars::way_key(&drawn, &levels));
             // Track is eased into smooth curves and tangential switches.
             let points = if kind == RoadKind::Rail { rail::smooth_track(&drawn, &roads) } else { drawn.clone() };
             // An end at the map edge runs on out of sight: a way to elsewhere.
@@ -843,6 +895,9 @@ impl World {
                 RoadKind::Path | RoadKind::Rail => (0, 0),
             };
             roads.add_polyline_levels(&points, &levels, fwd, bwd, kind);
+            if let Some(key) = way {
+                raised.push((key, points.clone(), levels.clone(), super::deck_half_width(kind, fwd, bwd)));
+            }
         }
         // A zoning edit, or a facility fused onto what is there, gives back
         // exactly the roads that are built. Then the network, its ids and
@@ -862,6 +917,11 @@ impl World {
             // and lots on it (lot pads change with the zoning).
             self.roads.version += 1;
         }
+
+        // [tools] Columns under the raised roads, placed against the old
+        // lots (they still hold the buildings): grown buildings in the way
+        // are bought out below.
+        let pillar_taken: std::collections::HashSet<BuildingId> = if roads_changed { self.place_pillars(&raised, true) } else { Default::default() };
 
         // Parcels along every road, the master's zoning onto them, a lot
         // for every zoned parcel; then old lots with buildings are matched
@@ -890,6 +950,22 @@ impl World {
         // one, would share ground with the station or yard.
         let footprints: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect();
         self.lots.retain(|_, l| !footprints.iter().any(|fp| point_in_polygon(l.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.995), &l.polygon)));
+        // [tools] A column takes its lot from the zoning, and so does a deck
+        // too low over a lot for a storey under it (parks and the city's
+        // own structures stay: a column never stands on one, and a project
+        // that would put a deck too low over one is refused).
+        if !self.pillars.is_empty() || self.roads.alive_segments().any(|(sid, _)| self.roads.spans_lots(sid)) {
+            let drop: Vec<LotId> = self
+                .lots
+                .iter()
+                .filter(|(_, l)| l.land_use != LandUse::Park && !pins.iter().any(|(pp, _)| *pp == l.polygon))
+                .filter(|(_, l)| self.pillars_on(&l.polygon) || self.deck_cap_of(&l.polygon) == Some(0))
+                .map(|(id, _)| id)
+                .collect();
+            for id in drop {
+                self.lots.remove(id);
+            }
+        }
         let fids: Vec<FacilityId> = self.facilities.keys().collect();
         for fid in fids {
             // A facility with no street anywhere to front gets no lot this
@@ -907,8 +983,25 @@ impl World {
         let mut demolish: Vec<(BuildingId, Vec2, bool)> = Vec::new();
         // Old lot key to the new lot its building moved onto.
         let mut carried: HashMap<LotId, LotId> = HashMap::new();
+        // [land] A building over merged plots names each of them; only its
+        // primary lot moves the building, the others follow as extras.
+        let primary_of: HashMap<BuildingId, LotId> = self.buildings.iter().map(|(id, b)| (id, b.lot)).collect();
+        let mut extras: HashMap<BuildingId, Vec<LotId>> = HashMap::new();
         for (old_id, old) in old_lots.iter() {
             let Some(bid) = old.building else { continue };
+            if primary_of.get(&bid).is_some_and(|p| *p != old_id) {
+                let found = grid
+                    .near(old.center, 6.0)
+                    .into_iter()
+                    .filter(|id| self.lots[*id].building.is_none() && self.lots[*id].contains(old.center))
+                    .find(|id| !outlines_differ(&old.polygon, &self.lots[*id].polygon, EXPROPRIATE_AREA_TOL, EXPROPRIATE_DIST_TOL));
+                if let Some(new_lot) = found {
+                    carried.insert(old_id, new_lot);
+                    self.lots[new_lot].building = Some(bid);
+                    extras.entry(bid).or_default().push(new_lot);
+                }
+                continue;
+            }
             let found = grid
                 .near(old.center, 6.0)
                 .into_iter()
@@ -918,7 +1011,13 @@ impl World {
                 .filter(|(_, d)| *d < 6.0)
                 .min_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|(id, _)| id);
+            let civic = self.buildings.get(bid).is_some_and(Self::is_civic_structure);
+            let floors = self.buildings.get(bid).map_or(0, |b| b.floors);
             match found {
+                // [tools] Bought out for a column, or too tall for the deck
+                // now spanning over it.
+                _ if !civic && pillar_taken.contains(&bid) => demolish.push((bid, old.center, true)),
+                Some(new_lot) if !civic && self.deck_cap(new_lot).is_some_and(|cap| floors > cap) => demolish.push((bid, old.center, true)),
                 // Eminent domain: a parcel reshaped by road or path works
                 // cannot keep its building, even if a lot is still there.
                 Some(new_lot)
@@ -938,6 +1037,13 @@ impl World {
                 None => demolish.push((bid, old.center, false)),
             }
         }
+        // [land] Extras follow their building; bought plots still waiting
+        // are let go (the works changed them).
+        for (bid, b) in self.buildings.iter_mut() {
+            b.plot.extra_lots = extras.remove(&bid).unwrap_or_default();
+            b.plot.pending_lots.clear();
+        }
+        self.estate.reserved.clear();
         for (bid, at, expropriated) in demolish {
             if expropriated {
                 let lot = self.buildings.get(bid).map(|b| b.lot);
@@ -1209,6 +1315,9 @@ impl World {
             self.refresh_facility_cache();
         }
         self.events.push(SimEvent::BuildingRemoved(bid, b.lot));
+        // [land] Extra plots freed, a bought plot handed over.
+        let lot = if at.is_none() { b.lot } else { LotId::default() };
+        self.estate_building_gone(bid, &b.plot, lot);
     }
 
     /// Someone loses their job: back to gig money, with a note if there is

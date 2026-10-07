@@ -51,13 +51,16 @@ pub enum Flow {
     /// [power] Surplus electricity sold to the regional grid
     /// (`crate::power::GRID_EXPORT_PRICE`).
     GridExport,
+    /// [camera] Money the player gave a household from the treasury (the
+    /// inspector's "gift $1000").
+    Gifts,
 }
 
 /// Number of `Flow`s; the ledger's row length.
-pub const FLOWS: usize = 20;
+pub const FLOWS: usize = 21;
 
 impl Flow {
-    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport];
+    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport, Flow::Gifts];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -81,6 +84,7 @@ impl Flow {
             Flow::Tolls => "road tolls",
             Flow::TollUpkeep => "toll booth upkeep",
             Flow::GridExport => "grid export",
+            Flow::Gifts => "gifts to residents",
         }
     }
 
@@ -190,6 +194,48 @@ where
         }
     }
     d.deserialize_tuple(N, Pad::<T, N>(std::marker::PhantomData))
+}
+
+/// [economy] One value per business kind (`BusinessKind::index`). More
+/// kinds than serde's arrays reach, so it is saved as a tuple by hand and
+/// loads padded like the arrays before it (`padded`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct KindArray<T>(pub [T; crate::market::BusinessKind::COUNT]);
+
+impl<T: Default + Copy> Default for KindArray<T> {
+    fn default() -> Self {
+        KindArray([T::default(); crate::market::BusinessKind::COUNT])
+    }
+}
+
+impl<T> std::ops::Index<usize> for KindArray<T> {
+    type Output = T;
+    fn index(&self, i: usize) -> &T {
+        &self.0[i]
+    }
+}
+
+impl<T> std::ops::IndexMut<usize> for KindArray<T> {
+    fn index_mut(&mut self, i: usize) -> &mut T {
+        &mut self.0[i]
+    }
+}
+
+impl<T: Serialize> Serialize for KindArray<T> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeTuple;
+        let mut t = s.serialize_tuple(self.0.len())?;
+        for x in &self.0 {
+            t.serialize_element(x)?;
+        }
+        t.end()
+    }
+}
+
+impl<'de, T: serde::Deserialize<'de> + Default + Copy> serde::Deserialize<'de> for KindArray<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        padded(d).map(KindArray)
+    }
 }
 
 impl Ledger {
@@ -341,10 +387,10 @@ pub struct Economy {
     /// How well each kind of business pays its way (`BusinessKind::index`):
     /// takings over costs (wages and inputs), smoothed over a few days; 1 is
     /// break-even. Only kinds marked in `business_cover_seen` have a reading.
-    #[serde(default, deserialize_with = "padded")]
-    pub business_cover: [f32; crate::market::BusinessKind::COUNT],
-    #[serde(default, deserialize_with = "padded")]
-    pub business_cover_seen: [bool; crate::market::BusinessKind::COUNT],
+    #[serde(default)]
+    pub business_cover: KindArray<f32>,
+    #[serde(default)]
+    pub business_cover_seen: KindArray<bool>,
     /// Daily and hourly records of the headline numbers, for the charts in
     /// the expanded info windows (`history.rs`). Bounded rings.
     #[serde(default)]

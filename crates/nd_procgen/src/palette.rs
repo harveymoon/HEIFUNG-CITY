@@ -103,6 +103,9 @@ pub struct Palette {
     pub police_light: [f32; 3],
     /// Yellow safety line along a platform edge.
     pub platform_line: [f32; 3],
+    /// Tactile paving at a dropped kerb: the classic warning yellow, lit
+    /// like the slabs round it (not a glow).
+    pub tactile: [f32; 3],
 }
 
 impl Default for Palette {
@@ -222,6 +225,7 @@ impl Default for Palette {
             parking_sign: [0.3, 0.6, 2.4],
             police_light: [0.3, 0.6, 2.6],
             platform_line: [1.4, 1.2, 0.2],
+            tactile: [0.78, 0.52, 0.04],
         }
     }
 }

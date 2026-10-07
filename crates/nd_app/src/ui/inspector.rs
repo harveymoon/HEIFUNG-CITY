@@ -13,7 +13,7 @@ use crate::tools::Selection;
 /// The inspector window on a selected building or car, on the right where
 /// the person pane opens too. Closing it deselects.
 pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
-    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_)) {
+    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_)) {
         return;
     }
     let mut open = true;
@@ -28,6 +28,8 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
         .show(ctx, |ui| {
             show(ui, p.sim, p.selection, p.assets);
             ui.separator();
+            // [camera] Follow it, or fly to it.
+            super::follow::camera_buttons(ui, p.sim, *p.selection, p.follow, p.fly, p.mode);
             if ui.button("Flag for Claude (F8)").on_hover_text("Bookmark this with a note; the remote API's `flags` command lists it").clicked() {
                 p.flags.want_flag = true;
             }
@@ -49,6 +51,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             }
             neon(ui, &sim.world.citizens[id].name);
             citizen_summary(ui, &sim.world, &sim.world.citizens[id]);
+            super::estate::citizen_line(ui, &sim.world, id);
             ui.add_space(4.0);
             spotlight_toggle(ui, &mut sim.world, id, "Spotlight: route this citizen through the LLM mind");
             super::places::citizen_places(ui, &sim.world, id);
@@ -104,6 +107,10 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                     return;
                 }
             }
+            // [services] A wreck waiting for its tow, or the truck coming.
+            if tow_status(ui, w, id, selection) {
+                return;
+            }
             // Everyone aboard but the driver, as faces that select them.
             let riders: Vec<nd_sim::CitizenId> = occupants(w, id).into_iter().filter(|c| *c != car.citizen || !driver_shown).collect();
             if !riders.is_empty() {
@@ -114,6 +121,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             }
             why_and_trip(ui, w, id, selection, !driver_shown);
         }
+        Selection::Bot(id) => bot(ui, &sim.world, selection, id),
         Selection::Parked(vid) => {
             let Some(owned) = sim.world.vehicles.cars.get(vid) else {
                 *selection = Selection::None;
@@ -145,6 +153,62 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             show_tow_refusal(ui);
         }
     }
+}
+
+/// [camera] A pavement delivery robot: its name and code, the shop that
+/// owns it (in the fleet's colour), what it carries, where it is going and
+/// how far, and the household that ordered. Owner and destination select.
+fn bot(ui: &mut egui::Ui, w: &nd_sim::World, selection: &mut Selection, id: nd_sim::BotId) {
+    let Some(b) = w.bots.bots.get(id) else {
+        *selection = Selection::None;
+        return;
+    };
+    let [r, g, bl] = nd_sim::bots::fleet_colour(b.shop);
+    let fleet = egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (bl * 255.0) as u8);
+    ui.label(egui::RichText::new(nd_sim::bots::bot_name(w, id)).size(17.0).color(IVORY).strong());
+    let size = w.bots.fleet_of(b.shop).len();
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        tag(ui, "Delivery bot", GOLD);
+        tag(ui, &nd_sim::bots::bot_code(id), egui::Color32::from_gray(150));
+        tag(ui, &format!("fleet of {size}"), fleet);
+    });
+    let name = |x: nd_sim::BuildingId| w.buildings.get(x).map_or("a building that is gone".to_string(), |b| b.name.clone());
+    section(ui, "OWNER");
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 2.0, fleet);
+        let kind = w.buildings.get(b.shop).and_then(|s| s.business.as_ref()).map(|z| capitalise(z.kind.label()));
+        if ui.link(egui::RichText::new(name(b.shop)).color(fleet)).on_hover_text("Select the shop").clicked() {
+            *selection = Selection::Building(b.shop);
+        }
+        if let Some(k) = kind {
+            hint(ui, &k);
+        }
+    });
+    section(ui, "TRIP");
+    match b.cargo() {
+        Some((res, n)) => ui.label(format!("Carrying {n:.0} {} to the customer's door", res.label())),
+        None => ui.label("Delivered; trundling back to the shop, hold empty"),
+    };
+    ui.horizontal(|ui| {
+        ui.label("Going to");
+        let to = b.destination();
+        if ui.link(name(to)).on_hover_text("Select it").clicked() {
+            *selection = Selection::Building(to);
+        }
+    });
+    let m = b.metres_left();
+    ui.label(format!("{m:.0} m of pavement left  ·  about {:.0} min  ·  out {} min", (m / nd_sim::bots::BOT_MPS / 60.0).ceil(), b.age));
+    if !b.returning {
+        ui.horizontal(|ui| {
+            hint(ui, "ordered by a household at");
+            if ui.link(egui::RichText::new(name(b.home)).small()).clicked() {
+                *selection = Selection::Building(b.home);
+            }
+        });
+    }
+    hint(ui, "Route: the line on the map, in the fleet's colour.");
 }
 
 /// A selected building, most important first: its name, then what it is
@@ -212,6 +276,8 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             figure(ui, "staff", format!("{}/{}", b.workers.len(), b.jobs), IVORY);
         });
         cashflow(ui, &bz.books, (bz.revenue_today, bz.spend_today));
+        // [economy] why it is here and how it is doing
+        super::pressure::business_story(ui, w, id);
         let recipe = bz.kind.recipe();
         if !recipe.inputs.is_empty() || !recipe.outputs.is_empty() {
             egui::CollapsingHeader::new(egui::RichText::new(format!("stock  ·  {} deals so far", bz.deals)).small()).id_salt(("inspector_stock", id)).show(ui, |ui| {
@@ -257,6 +323,8 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
         ui.label(format!("parking {}/{} spaces{}", b.parking_used, b.parking_capacity, if b.is_parking() { format!("  ·  {:.1} per visit", b.parking_price) } else { "  ·  for residents and workers".to_string() }));
     }
     super::places::building_place(ui, w, id);
+    // [land] owner, price, plots and the owner's other properties
+    super::estate::building_section(ui, w, id, selection);
 
     // ── People ──
     let inside: Vec<nd_sim::CitizenId> = w.citizens.iter().filter(|(_, c)| c.inside == Some(id)).map(|(cid, _)| cid).collect();
@@ -646,4 +714,62 @@ fn capitalise(s: &str) -> String {
 /// Traffic seconds as "45 s" or "3 min".
 fn duration(secs: f32) -> String {
     if secs < 90.0 { format!("{secs:.0} s") } else { format!("{:.0} min", secs / 60.0) }
+}
+
+/// [services] A written-off car: how long it has waited for the tow, and
+/// once a recovery truck is on its way, "truck inbound" with a button that
+/// selects it (the truck's road to the wreck is drawn while the wreck is
+/// selected, `tools::draw_selection`). A recovery truck: the wreck it is
+/// going to. True when the selection changed.
+fn tow_status(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selection: &mut Selection) -> bool {
+    let tick = w.clock.tick;
+    if let Some(wr) = w.driving.wrecks.iter().find(|x| x.car == id) {
+        section(ui, "TOW");
+        let waited = tick.saturating_sub(wr.since);
+        match wr.truck.and_then(|t| w.traffic.cars.get(t).map(|c| (t, c))) {
+            Some((t, truck)) => {
+                let d = w.traffic.cars.get(id).map_or(0.0, |c| c.pos.distance(truck.pos));
+                ui.label(egui::RichText::new(format!("Truck inbound  ·  {d:.0} m away  ·  sent {} ago", duration_min(tick.saturating_sub(wr.sent)))).color(WARN));
+                ui.horizontal_wrapped(|ui| {
+                    hint(ui, if wr.company.is_some() { "from a tow company in town" } else { "from out of town" });
+                    if ui.small_button("locate").on_hover_text("Select the tow truck").clicked() {
+                        *selection = Selection::Car(t);
+                    }
+                });
+                if *selection == Selection::Car(t) {
+                    return true;
+                }
+            }
+            None => {
+                let called = if wr.due > 0 { "called, finding a truck" } else { "waiting for the police to call it in" };
+                ui.label(egui::RichText::new(format!("Waiting for a tow  ·  {}", duration_min(waited))).color(WARN));
+                hint(ui, called);
+            }
+        }
+        if wr.truck.is_some() {
+            hint(ui, &format!("waiting {} so far", duration_min(waited)));
+        }
+        if wr.flipped > 0 {
+            let how = if wr.flipped == 1 { "on its side" } else { "on its roof" };
+            hint(ui, &if wr.righted_at > 0 { format!("{how}: the crew is righting it") } else { format!("{how}: the truck will right it before towing") });
+        }
+        return false;
+    }
+    let Some(car) = w.traffic.cars.get(id) else { return false };
+    if let nd_sim::Errand::Recover(wreck) = car.errand {
+        section(ui, "RECOVERY");
+        ui.horizontal_wrapped(|ui| {
+            ui.label(if car.drive.recovering { "Amber lights, nearly there, going round the queue:" } else { "Amber lights, on the way to" });
+            if ui.small_button(w.car_label(wreck)).on_hover_text("Select the wreck").clicked() {
+                *selection = Selection::Car(wreck);
+            }
+        });
+        return *selection == Selection::Car(wreck);
+    }
+    false
+}
+
+/// Game minutes as "12 min" or "2 h 05".
+fn duration_min(m: u64) -> String {
+    if m < 60 { format!("{m} min") } else { format!("{} h {:02}", m / 60, m % 60) }
 }

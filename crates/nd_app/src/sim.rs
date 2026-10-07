@@ -40,6 +40,9 @@ pub struct Sim {
     /// replaced it.
     pub generation: u64,
     pub ticks_last_frame: u32,
+    /// Milliseconds the last frame spent ticking (the graphics throttler
+    /// holds its tier when the sim, not the renderer, fills the frame).
+    pub tick_ms: f32,
     /// Ticks actually run per second of sim time asked for, smoothed over
     /// about half a second: 1.0 means the sim keeps up with the chosen
     /// speed, less means the tick budget is throttling it. Shown in the HUD.
@@ -63,6 +66,7 @@ impl Sim {
             full_rebuild: true,
             generation: 0,
             ticks_last_frame: 0,
+            tick_ms: 0.0,
             effective_speed: 1.0,
             styles: nd_procgen::StyleBook::default(),
         }
@@ -78,7 +82,15 @@ impl Sim {
         world.economy.treasury = 60_000.0;
         world.economy.ledger = Default::default();
         world.drain_events();
+        // [identity] Every new game is a game of its own, unnamed until
+        // the player names it.
+        world.identity = nd_sim::CityIdentity { name: String::new(), game_id: crate::ui::saves::new_game_id() };
         world
+    }
+
+    /// [identity] Name the city (tidied, see `nd_sim::identity::clean_name`).
+    pub fn set_city_name(&mut self, name: &str) -> String {
+        crate::ui::saves::rename_city(&mut self.world, name)
     }
 
     /// Throw the city away and start again on a new landscape.
@@ -89,6 +101,17 @@ impl Sim {
         self.events.clear();
         self.accumulator = 0.0;
         self.city_replaced();
+    }
+
+    /// Throw the city away and start again with a whole example city
+    /// generated on `landscape` (`nd_procgen::citygen`): its streets, its
+    /// zoning, its interchanges and a power plant, ready to grow.
+    pub fn generate_city(&mut self, preset: nd_procgen::citygen::CityPreset, landscape: nd_sim::LandscapeParams) -> (nd_procgen::citygen::CityPlan, nd_procgen::citygen::LaidCity) {
+        self.new_game(landscape);
+        let seed = self.world.landscape.params.seed;
+        let plan = nd_procgen::citygen::generate(preset, seed, &self.world.landscape);
+        let laid = nd_procgen::citygen::lay_city(&mut self.world, &plan);
+        (plan, laid)
     }
 
     /// The demo district is laid out blind over the centre of the map, so
@@ -302,6 +325,7 @@ fn sim_hotkeys(keys: Res<ButtonInput<KeyCode>>, mut flags: ResMut<UiFlags>, mode
 
 fn step_sim(time: Res<Time>, mut sim: ResMut<Sim>) {
     let mut ticks = 0;
+    let began = std::time::Instant::now();
     if !sim.paused {
         let speed = sim.speed();
         sim.accumulator += time.delta_secs() * speed;
@@ -321,6 +345,7 @@ fn step_sim(time: Res<Time>, mut sim: ResMut<Sim>) {
         }
     }
     sim.ticks_last_frame = ticks;
+    sim.tick_ms = began.elapsed().as_secs_f32() * 1000.0;
     // Ticks delivered against ticks asked for, as a half-second moving
     // average: single frames carry 0 or 1 tick at low speeds, so the raw
     // ratio is meaningless without smoothing.

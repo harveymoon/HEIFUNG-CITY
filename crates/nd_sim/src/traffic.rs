@@ -31,6 +31,8 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 
 mod crosswalk;
+mod hazard;
+mod junction;
 mod remap;
 mod roundabout;
 mod siren;
@@ -380,6 +382,31 @@ pub struct Intersection {
     /// Road lanes ending here, with their approach index.
     pub incoming: Vec<(LaneId, usize)>,
     pub signalized: bool,
+    /// [tools] Green seconds per phase (the player's, from the
+    /// Intersection editor; `GREEN_SECONDS` by default).
+    pub greens: Vec<f32>,
+    /// [tools] When the protected left arrow runs, and for how long.
+    pub arrow_mode: crate::junctions::LeftArrow,
+    pub arrow_len: f32,
+    /// [tools] Set by a junction rule: the player chose signals or none.
+    pub ruled: bool,
+}
+
+impl Intersection {
+    /// Green seconds of the phase now running.
+    pub fn green(&self) -> f32 {
+        self.green_of(self.phase)
+    }
+
+    /// Green seconds of phase `k`.
+    pub fn green_of(&self, k: usize) -> f32 {
+        self.greens.get(k).copied().filter(|g| *g > 0.0).unwrap_or(GREEN_SECONDS)
+    }
+
+    /// The default green, for the editor.
+    pub const DEFAULT_GREEN: f32 = GREEN_SECONDS;
+    /// The default protected arrow, for the editor.
+    pub const DEFAULT_ARROW: f32 = ARROW_SECONDS;
 }
 
 /// The lanes of one street arriving at a junction, with their arrows.
@@ -884,6 +911,13 @@ pub struct DriveState {
     /// [emergency] A police car in pursuit: the car it is chasing. It drives
     /// at it rather than round it; touching it is the tag.
     pub chasing: Option<CarId>,
+    /// [services] A recovery vehicle (a tow truck going to a wreck) with its
+    /// amber beacons on: drawn flashing, but nobody pulls over for it.
+    pub amber: bool,
+    /// [services] That vehicle is close to the wreck: it may take the
+    /// off-law moves (`traffic/siren.rs`) round the queue in its way, but
+    /// not run red lights. Set by the world every tick.
+    pub recovering: bool,
 }
 
 /// [rage] How angry (`0..1`) a driver gets `elapsed` minutes into a drive
@@ -1132,6 +1166,11 @@ pub struct Traffic {
     /// last drained them.
     #[serde(skip)]
     pub toll_passes: Vec<TollPass>,
+    /// [tools] The player's junction settings (signals, phase greens, the
+    /// left arrow, banned left turns), reapplied on every rebuild by
+    /// position (`traffic/junction.rs`).
+    #[serde(default)]
+    pub junction_rules: Vec<crate::junctions::JunctionRule>,
 }
 
 /// Arrows for the lanes (leftmost first) of `segment` arriving at `node`.
@@ -1355,7 +1394,8 @@ impl LaneNetwork {
             let mut outgoing: Vec<(LaneId, SegmentId)> = Vec::new();
             for &sid in &approaches {
                 let seg = roads.segment(sid);
-                for &lid in &self.segment_lanes[&sid] {
+                // A piece too short for lanes (under half a metre) has none.
+                for &lid in self.segment_lanes.get(&sid).into_iter().flatten() {
                     if let LaneKind::Road { forward, .. } = self.lanes[lid as usize].kind {
                         let ends_here = if forward { seg.b == nid } else { seg.a == nid };
                         if ends_here {
@@ -1469,7 +1509,8 @@ impl LaneNetwork {
             self.node_intersection.resize(roads.nodes.len().max(self.node_intersection.len()), usize::MAX);
             self.node_intersection[ni] = self.intersections.len();
             let incoming = incoming.iter().map(|&(l, s)| (l, approaches.iter().position(|&a| a == s).unwrap_or(0))).collect();
-            self.intersections.push(Intersection { node: nid, radius, approaches: approaches.len(), phases, phase: 0, opposite, arrow: 0.0, left_turns: 0, left_wait_sum: 0.0, left_wait_max: 0.0, timer: 0.0, connectors, incoming, signalized });
+            let greens = vec![GREEN_SECONDS; phases.len()];
+            self.intersections.push(Intersection { node: nid, radius, approaches: approaches.len(), phases, phase: 0, opposite, arrow: 0.0, left_turns: 0, left_wait_sum: 0.0, left_wait_max: 0.0, timer: 0.0, connectors, incoming, signalized, greens, arrow_mode: Default::default(), arrow_len: ARROW_SECONDS, ruled: false });
         }
         let _ = road_lane_count;
         for id in 0..self.lanes.len() {
@@ -1693,7 +1734,7 @@ impl LaneNetwork {
                     // Protected arrow: left turns only.
                     self.lanes[lane as usize].turn < 0
                 } else {
-                    inter.timer < inter.arrow + GREEN_SECONDS
+                    inter.timer < inter.arrow + inter.green()
                 };
                 self.lanes[lane as usize].green = !inter.signalized || (mine && open);
             }
@@ -1727,7 +1768,7 @@ impl LaneNetwork {
                 if inter.timer < inter.arrow && inter.timer >= ARROW_MIN && inter.phases[inter.phase].iter().all(|&ap| d.left_queue[ap] == 0) {
                     inter.arrow = inter.timer;
                 }
-                let green_end = inter.arrow + GREEN_SECONDS;
+                let green_end = inter.arrow + inter.green();
                 // A left turner starving in an endless oncoming stream: end
                 // this green so the next one can open with an arrow.
                 let starving = inter.phases[inter.phase].iter().any(|&ap| d.left_starved[ap]);
@@ -1739,7 +1780,7 @@ impl LaneNetwork {
                     }
                 }
             }
-            if inter.timer >= inter.arrow + GREEN_SECONDS + CLEARANCE_SECONDS {
+            if inter.timer >= inter.arrow + inter.green() + CLEARANCE_SECONDS {
                 inter.timer = 0.0;
                 let n = inter.phases.len();
                 let mut next = (inter.phase + 1) % n;
@@ -1752,8 +1793,11 @@ impl LaneNetwork {
                 // A protected left where opposed lefts queue in a lane of
                 // their own, or a left turner has waited too long.
                 let g = &inter.phases[next];
-                inter.arrow = match d {
-                    Some(d) if g.len() > 1 && g.iter().any(|&ap| (d.dedicated[ap] && d.left_queue[ap] >= 3 && d.left_yielding[ap]) || d.left_starved[ap]) => ARROW_SECONDS,
+                // [tools] The player may have the arrow always or never.
+                inter.arrow = match (inter.arrow_mode, d) {
+                    (crate::junctions::LeftArrow::Never, _) => 0.0,
+                    (crate::junctions::LeftArrow::Always, _) if g.len() > 1 => inter.arrow_len,
+                    (crate::junctions::LeftArrow::Auto, Some(d)) if g.len() > 1 && g.iter().any(|&ap| (d.dedicated[ap] && d.left_queue[ap] >= 3 && d.left_yielding[ap]) || d.left_starved[ap]) => inter.arrow_len,
                     _ => 0.0,
                 };
             }
@@ -2014,6 +2058,9 @@ fn idm_with(v: f32, v0: f32, gap: f32, dv: f32, headway: f32, accel: f32) -> f32
 impl Traffic {
     pub fn rebuild(&mut self, roads: &RoadNetwork) {
         self.net.rebuild(roads);
+        // [tools] The player's junction settings first: a banned left
+        // takes the movement away before the arrows are fitted.
+        self.apply_junction_rules(roads);
         // Player arrows go back on their approaches by geometry
         // (`traffic/remap.rs`): ids are renumbered by every rebuild.
         self.resolve_lane_use(roads);
@@ -3083,7 +3130,7 @@ impl Traffic {
                     }
                     // [emergency] Lights and sirens (and whoever flees them):
                     // past what their move takes them round, no red light.
-                    if car.offlaw() {
+                    if car.offlaw() || car.passing_hazard() {
                         (gap, lead_v, why) = self.offlaw_gap(car, gap, lead_v, why);
                     }
                     if pending {
@@ -3299,7 +3346,10 @@ impl Traffic {
                         // sirens squeeze past as they always have.)
                         let (at, idx_now, siren) = (self.cars[cid].s, self.cars[cid].idx, self.cars[cid].siren);
                         if let Some(&next) = self.cars[cid].route.get(idx_now + 1).filter(|_| !siren) {
-                            if let Some(&tail) = self.net.lanes[next as usize].cars.first() {
+                            // [driving] Nor a crash on the shoulder it is
+                            // easing past (`traffic/hazard.rs`).
+                            let passing = self.cars[cid].passing_hazard();
+                            if let Some(&tail) = self.net.lanes[next as usize].cars.first().filter(|&&t| !(passing && self.is_hazard(&self.cars[t]))) {
                                 let room = self.cars[tail].s - self.cars[tail].length() - 0.1;
                                 if at - len > room {
                                     let tv = self.cars[tail].v;

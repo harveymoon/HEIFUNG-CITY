@@ -545,6 +545,30 @@ impl World {
         self.car_height_at(car, car.pos)
     }
 
+    /// [render] Is the vehicle in a tunnel: on a tunnel's lane, or in a
+    /// junction between tunnels? The depth view draws it with the
+    /// Underground layer and hides it above ground, whatever its height: a
+    /// wreck near a portal, where the cutting is graded down to the road,
+    /// used to show above ground and vanish in the Underground view (which
+    /// went by height alone).
+    pub fn car_in_tunnel(&self, car: &crate::traffic::Car) -> bool {
+        let lanes = &self.traffic.net.lanes;
+        let tunnel = |lane: crate::traffic::LaneId| match lanes.get(lane as usize).map(|l| &l.kind) {
+            Some(crate::traffic::LaneKind::Road { segment, .. }) => Some(self.roads.try_segment(*segment).is_some_and(|s| s.tunnel)),
+            _ => None,
+        };
+        let Some(&here) = car.route.get(car.idx) else { return false };
+        match tunnel(here) {
+            Some(t) => t,
+            // A connector: in the tunnel when the ways on both sides are.
+            None => {
+                let before = car.idx.checked_sub(1).and_then(|k| car.route.get(k)).copied().and_then(tunnel);
+                let after = car.route.get(car.idx + 1).copied().and_then(tunnel);
+                before.unwrap_or(false) && after.unwrap_or(before.unwrap_or(false))
+            }
+        }
+    }
+
     /// The height of the road under a car drawn at `p` somewhere along the
     /// last tick: the road of whichever lane it was on there (the lanes it
     /// passed this tick, and the one ahead), the nearest that `p` lies on.
@@ -615,6 +639,20 @@ impl World {
     /// False when there is no highway there (nothing is laid then). Scripts
     /// and tests use it; the player draws their own ramps.
     pub fn link_to_highway(&mut self, from: Vec2) -> bool {
+        let Some(gestures) = self.highway_link(from) else { return false };
+        let had_project = self.project.take();
+        for g in gestures {
+            self.add_gesture(g);
+        }
+        self.implement();
+        self.project = had_project;
+        true
+    }
+
+    /// The gestures `link_to_highway` lays for a street end at `from`, for
+    /// a caller that adds them to a project of its own; None when there is
+    /// no highway there or `from` is too close to it.
+    pub fn highway_link(&self, from: Vec2) -> Option<Vec<Gesture>> {
         let y = HIGHWAY_Y - HIGHWAY_HALF_GAP;
         let x = from.x;
         let there = self.roads.alive_segments().any(|(id, s)| {
@@ -622,19 +660,17 @@ impl World {
             s.is_highway() && crate::geom::project_on_segment(Vec2::new(x, y), a, b).1.distance(Vec2::new(x, y)) < 1.0
         });
         if !there || from.y > y - 60.0 {
-            return false;
+            return None;
         }
-        let had_project = self.project.take();
         let j = Vec2::new(x, y - 50.0);
         let street = |points: Vec<Vec2>, fwd: u8, bwd: u8| Gesture::Road { points, lanes_fwd: fwd, lanes_bwd: bwd, curved: false, kind: RoadKind::Street, elevation: Vec::new() };
-        self.add_gesture(street(vec![from, j], 1, 1));
         // Westbound traffic comes from the east: off on that side, back on
         // on the other.
-        self.add_gesture(street(vec![Vec2::new(x + 220.0, y), Vec2::new(x + 70.0, y - 30.0), j], 1, 0));
-        self.add_gesture(street(vec![j, Vec2::new(x - 70.0, y - 30.0), Vec2::new(x - 220.0, y)], 1, 0));
-        self.implement();
-        self.project = had_project;
-        true
+        Some(vec![
+            street(vec![from, j], 1, 1),
+            street(vec![Vec2::new(x + 220.0, y), Vec2::new(x + 70.0, y - 30.0), j], 1, 0),
+            street(vec![j, Vec2::new(x - 70.0, y - 30.0), Vec2::new(x - 220.0, y)], 1, 0),
+        ])
     }
 
     /// Ends of highway carriageways out of sight beyond the map: where
@@ -832,9 +868,17 @@ impl World {
             match kind {
                 PortKind::ShippingPort => format!("Port of {n}"),
                 PortKind::FerryTerminal => format!("{n} Ferry"),
+                // [economy]
+                PortKind::MarinaSmall => format!("{n} Marina"),
+                PortKind::MarinaLarge => format!("{n} Yacht Club"),
+                PortKind::FishingPortSmall => format!("{n} Fish Quay"),
+                PortKind::FishingPortLarge => format!("{n} Fishing Harbour"),
             }
         };
         let id = self.place_special(lot_id, name, kind.jobs(), kind.jobs() / 3, |b| b.port = Some(kind));
+        // [economy] A marina or fishing port is run by an operator on the
+        // city's quay (`world/waterfront.rs`).
+        self.lease_dock(id, kind, false);
         self.ports.ports[pid].building = Some(id);
         // [ferries] Its towns off the map, across the edges its water reaches.
         if kind == PortKind::FerryTerminal {
@@ -859,7 +903,7 @@ impl World {
         let (front_segment, front_t, car_point) = self.roads.nearest_street(probe)?;
         Some(Lot {
             zone: ZoneId::default(),
-            land_use: if p.kind == PortKind::ShippingPort { LandUse::Industrial } else { LandUse::Civic },
+            land_use: p.kind.land_use(),
             polygon: corners.to_vec(),
             corners,
             front_edge: [corners[0], corners[1]],
@@ -984,6 +1028,8 @@ impl World {
                 ship.dwell = match ship.kind {
                     ShipKind::Freighter => ports::FREIGHTER_DWELL,
                     ShipKind::Ferry => ports::FERRY_DWELL,
+                    // [economy] out on the fishing ground, or at anchor
+                    ShipKind::FishingBoat | ShipKind::Yacht | ShipKind::Sailboat => crate::world::waterfront::boat_dwell(ship.kind),
                 };
                 docked.push(id);
             } else if ship.s >= total {
@@ -1002,7 +1048,10 @@ impl World {
             self.ferry_returned(port, town);
         }
         for id in done {
-            self.ports.ships.remove(id);
+            if let Some(ship) = self.ports.ships.remove(id) {
+                // [economy] A trawler back at the quay lands its catch.
+                self.boat_home(&ship);
+            }
         }
         self.ports.stats.ships_out = self.ports.ships.len() as u32;
     }
@@ -1014,8 +1063,13 @@ impl World {
         self.ports.stats.ports = ports_now.iter().filter(|(_, p)| p.kind == PortKind::ShippingPort).count() as u32;
         self.ports.stats.terminals = ports_now.iter().filter(|(_, p)| p.kind == PortKind::FerryTerminal).count() as u32;
         self.ports.stats.waiting_cargo = self.ports.inbound.len() as u32;
+        // [economy] Marina and fishing boats do not count against the ships.
+        let big_ships = self.ports.ships.values().filter(|s| matches!(s.kind, ShipKind::Freighter | ShipKind::Ferry)).count();
         for (pid, port) in &ports_now {
-            if !port.works() || self.ports.ships.len() >= ports::MAX_SHIPS {
+            if !matches!(port.kind, PortKind::ShippingPort | PortKind::FerryTerminal) {
+                continue;
+            }
+            if !port.works() || big_ships >= ports::MAX_SHIPS {
                 continue;
             }
             let Some(b) = port.building else { continue };
@@ -1029,6 +1083,7 @@ impl World {
             let busy = match port.kind {
                 PortKind::ShippingPort => !mine.is_empty(),
                 PortKind::FerryTerminal => at_pier || mine.len() >= ports::FERRIES_PER_TERMINAL,
+                _ => true,
             };
             if busy {
                 continue;
@@ -1055,6 +1110,8 @@ impl World {
                     self.ports.ships.insert(Ship { kind: ShipKind::Freighter, path, s: 0.0, prev_s: 0.0, speed, dwell: 0, port: b, to: None, cargo, passengers: 0, docked: false, berth_s, color, remote: None, home: false });
                     self.ports.ports[*pid].last_sailing = tick;
                 }
+                // [economy] Boats are sent by `World::step_boats`.
+                PortKind::MarinaSmall | PortKind::MarinaLarge | PortKind::FishingPortSmall | PortKind::FishingPortLarge => {}
                 PortKind::FerryTerminal => {
                     if !(ports::FERRY_SERVICE_START..ports::FERRY_SERVICE_END).contains(&minute) || tick.saturating_sub(port.last_sailing) < ports::FERRY_HEADWAY {
                         continue;

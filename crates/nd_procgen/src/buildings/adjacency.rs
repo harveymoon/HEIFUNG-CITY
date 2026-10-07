@@ -144,6 +144,25 @@ pub fn traits(style: Style) -> (Family, f32) {
         Style::ContainerYard => (Logistics, 0.8),
         Style::FishProcessing => (Logistics, 0.6),
         Style::TruckLot => (Logistics, 0.2),
+        // [economy] The new trades. Farms spread, the dirty trades sit with
+        // heavy industry, yards with logistics, shops and nights out with
+        // their kind; docks are the city's own.
+        Style::CowFarm => (Farm, 0.8),
+        Style::ChickenFarm => (Farm, 0.6),
+        Style::Slaughterhouse => (Heavy, -0.3),
+        Style::StripMine => (Heavy, 0.4),
+        Style::FishStickFactory => (Heavy, 0.0),
+        Style::TrashCompany => (Logistics, -0.2),
+        Style::FishGutting => (Logistics, 0.5),
+        Style::Mechanic => (Retail, 0.3),
+        Style::CarDealer => (Retail, 0.5),
+        Style::BikeShop => (Retail, 0.2),
+        Style::FishMarket => (Retail, -0.5),
+        Style::SeafoodRestaurant => (Night, 0.3),
+        Style::GolfRange => (Night, -1.5),
+        Style::Gallery => (Night, 0.4),
+        Style::ArtStudio => (Night, 0.6),
+        Style::MarinaSmall | Style::MarinaLarge | Style::FishingPortSmall | Style::FishingPortLarge => (Special, 0.0),
         _ => (Special, 0.0),
     }
 }
@@ -248,7 +267,12 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         Style::Villas | Style::Fortress => low(8.0) * if w > 24.0 { 1.3 } else { 1.0 },
         Style::Shophouse | Style::Tenement | Style::ShackBar | Style::NightMarket => low(5.0),
         Style::HillsideSteps => if w > 0.0 && w < 14.0 { 0.5 } else { 1.0 },
-        Style::WalledCity | Style::Stacks => 1.0,
+        Style::WalledCity | Style::Stacks => if f <= 1.0 { 0.12 } else { 1.0 },
+        // [land] Low density: shacks, trailers and huts are one storey; the
+        // walk-ups and capsule piles they stand in for are not.
+        Style::Shacks | Style::TrailerPark | Style::Huts => if f <= 1.0 { 1.0 } else { 0.0 },
+        Style::Suburb => if f <= 2.0 { 1.0 } else { 0.0 },
+        Style::CapsuleHotel => if f <= 1.0 { 0.12 } else { 1.0 },
         _ => 1.0,
     }
 }
@@ -283,6 +307,10 @@ pub struct StyleBook {
 /// [`style_extras`] passes that can force a style has its own value here,
 /// so a building that gains or loses one is styled again.
 fn role(b: &nd_sim::Building) -> u8 {
+    // [land] A McMansion, mansion, mega hotel or museum is its own look.
+    if let Some(f) = b.plot.form {
+        return 90 + f as u8;
+    }
     if let Some(s) = b.service {
         return 50 + nd_sim::ServiceKind::ALL.iter().position(|k| *k == s.kind).unwrap_or(0) as u8;
     }
@@ -290,14 +318,17 @@ fn role(b: &nd_sim::Building) -> u8 {
         return 70;
     }
     if let Some(p) = b.port {
-        return 71 + p as u8;
+        // [economy] Six dock kinds now: kept clear of the taxi and hotel values.
+        return 100 + p as u8;
     }
     if b.business.as_ref().is_some_and(|z| matches!(z.kind, nd_sim::BusinessKind::TaxiCompany | nd_sim::BusinessKind::Hotel)) {
         return 75 + u8::from(b.business.as_ref().is_some_and(|z| z.kind == nd_sim::BusinessKind::Hotel));
     }
-    if let Some(z) = b.business.as_ref().filter(|z| z.kind.industry().is_some()) {
+    // [economy] Every business with a look of its own counts by kind (the
+    // new trades are not all industries), clear of the service values.
+    if let Some(z) = b.business.as_ref().filter(|z| z.kind.industry().is_some() || super::industry_styles(z.kind, Tier::Mid).is_some()) {
         if let Some(i) = nd_sim::BusinessKind::ALL.iter().position(|k| *k == z.kind) {
-            return 10 + i as u8;
+            return 120 + i as u8;
         }
     }
     if b.depot {
@@ -420,6 +451,7 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
         business: b.business.as_ref().map(|z| z.kind),
         look: b.look,
         metro: b.metro,
+        form: b.plot.form,
         ..Extras::default()
     }
 }

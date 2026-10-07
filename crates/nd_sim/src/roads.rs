@@ -381,6 +381,15 @@ impl RoadNetwork {
         best.map(|(_, id)| id)
     }
 
+    /// [tools] A raised piece high enough at both ends to span over the
+    /// lots under it (`pillars::SPAN_LEVEL`): it takes no corridor from
+    /// the parcels; its columns stand where there is room
+    /// (`crate::pillars`).
+    pub fn spans_lots(&self, sid: SegmentId) -> bool {
+        let s = self.segment(sid);
+        !s.tunnel && self.node(s.a).level >= crate::pillars::SPAN_LEVEL && self.node(s.b).level >= crate::pillars::SPAN_LEVEL
+    }
+
     /// Level of a segment `t` of the way from its `a` end.
     pub fn segment_level(&self, sid: SegmentId, t: f32) -> f32 {
         let s = self.segment(sid);

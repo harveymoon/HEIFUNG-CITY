@@ -229,7 +229,10 @@ impl Traffic {
                 r.away = Some(away);
             }
             self.net.approaches[ai].fixed = true;
-            self.net.set_arrows(ai, r.arrows.clone());
+            // [tools] A banned left takes the movement off the arrows too
+            // (the rule keeps it, should the ban be lifted).
+            let exits = self.net.approaches[ai].exits;
+            self.net.set_arrows(ai, r.arrows.iter().map(|&x| x & exits).collect());
             self.lane_use.push(r);
         }
     }

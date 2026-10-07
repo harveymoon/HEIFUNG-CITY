@@ -154,6 +154,10 @@ impl World {
                 self.splat_contamination(&mut b);
                 // [districts] eco and historic districts lift the land
                 self.splat_districts(&mut b);
+                // [land] NIMBY: the land round a mansion jumps, fading.
+                for n in &self.estate.nimby {
+                    b.splat(n.center, n.radius, n.strength);
+                }
             }
             4 => {
                 // The player's rule: a long walk to any park or night out
@@ -263,6 +267,11 @@ impl World {
             }
             if bld.is_derelict() {
                 b.splat(c, 100.0, -0.12);
+            }
+            // [economy] A marina lifts the streets round it.
+            if let Some(k) = bld.port.filter(|k| k.is_marina()) {
+                let (r, w) = super::waterfront::marina_lift(k);
+                b.splat(c, r, w);
             }
             if let Some(kind) = bld.plant {
                 let (r, w) = kind.pollution();
@@ -518,6 +527,11 @@ impl World {
         if built < self.config.max_builds_per_interval && self.maybe_found_taxi_company(&vacant) {
             built += 1;
         }
+        // [economy] What the city is short of (`crate::pressure`): one
+        // business a round, on the lot that suits it.
+        if built < self.config.max_builds_per_interval && self.open_by_pressure(&vacant) {
+            built += 1;
+        }
         // Land uses whose businesses would all lose money are not built on:
         // a town that cannot sell more bread does not get another bakery.
         let viable: Vec<bool> = LandUse::ALL.iter().map(|&lu| self.business_kinds_viable(lu, None).is_none_or(|v| !v.is_empty())).collect();
@@ -592,6 +606,11 @@ impl World {
         let grocery_jobs_needed = self.grocery_jobs_needed();
         let mut out: Vec<BusinessKind> = Vec::new();
         for &kind in candidates {
+            // [economy] Kinds that need their site (the rock, the catch,
+            // livestock, a pressure) are never a market's blind pick.
+            if kind.needs_site() {
+                continue;
+            }
             let i = kind.index();
             let ok = match kind {
                 BusinessKind::Office => true,
@@ -647,7 +666,7 @@ impl World {
             return Some(*kind);
         }
         let e = &self.economy;
-        BusinessKind::candidates(lu).iter().copied().max_by(|a, b| e.cover_of(*a).unwrap_or(1.0).total_cmp(&e.cover_of(*b).unwrap_or(1.0)))
+        BusinessKind::candidates(lu).iter().copied().filter(|k| !k.needs_site()).max_by(|a, b| e.cover_of(*a).unwrap_or(1.0).total_cmp(&e.cover_of(*b).unwrap_or(1.0)))
     }
 
     /// A building rebuilt bigger reopens as whatever the market wants now,
@@ -690,7 +709,15 @@ impl World {
     }
 
     pub fn build_on(&mut self, lot_id: LotId) {
-        let Some(lot) = self.lots.get(lot_id) else { return };
+        self.build_on_as(lot_id, None);
+    }
+
+    /// [economy] Build on a vacant lot; with `forced`, the business is that
+    /// kind (a pressure's pick, `world/pressure.rs`) and the building keeps
+    /// to the kind's height. Returns the new building site.
+    /// [land] Also a firm's branch (`World::open_branch`).
+    pub fn build_on_as(&mut self, lot_id: LotId, forced: Option<BusinessKind>) -> Option<BuildingId> {
+        let Some(lot) = self.lots.get(lot_id) else { return None };
         // A park on ground rezoned for building goes when building begins.
         if let Some(park) = self.rezoned_park(lot) {
             self.vacate(park, Some("The park was cleared for new building after a rezoning.".to_string()), None);
@@ -699,9 +726,10 @@ impl World {
             self.lots[lot_id].park = None;
             self.events.push(SimEvent::BuildingRemoved(park, lot_id));
         }
-        let Some(lot) = self.lots.get(lot_id) else { return };
-        if lot.landlocked || lot.building.is_some() || self.under_facility(lot.center) || self.services.is_rubble(lot_id) {
-            return;
+        let Some(lot) = self.lots.get(lot_id) else { return None };
+        // [land] a plot someone bought is theirs
+        if lot.landlocked || lot.building.is_some() || self.under_facility(lot.center) || self.services.is_rubble(lot_id) || self.estate.reserved.contains_key(&lot_id) {
+            return None;
         }
         let lu = self.lots[lot_id].land_use;
         // [industry] land value as the land use feels it
@@ -727,10 +755,19 @@ impl World {
         if !self.lots[lot_id].car_access() {
             b.parking_capacity = 0;
         }
-        if let Some(kind) = self.business_for_new_building(lot_id, lu, b.jobs) {
+        let kind = match forced {
+            Some(k) => Some(k),
+            None => self.business_for_new_building(lot_id, lu, b.jobs),
+        };
+        if let Some(kind) = kind {
             // [industry] some sub-zones build low: wells, fields, yards
             if let Some(ik) = kind.industry() {
                 b.floors = b.floors.min(ik.max_floors()).max(1);
+                b.recompute_capacity();
+            }
+            // [economy] sheds, forecourts and ranges stay low too
+            if let Some(m) = kind.max_floors() {
+                b.floors = b.floors.min(m).max(1);
                 b.recompute_capacity();
             }
             let jobs = b.jobs;
@@ -743,6 +780,7 @@ impl World {
         self.lots[lot_id].building = Some(id);
         self.events.push(SimEvent::BuildingBuilt(id));
         self.order_materials(id);
+        Some(id)
     }
 }
 

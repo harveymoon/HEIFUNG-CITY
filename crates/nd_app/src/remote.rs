@@ -18,15 +18,24 @@
 mod concerns;
 /// [districts] [tourism] `district` and `tourism`.
 mod districts;
+/// [economy] business pressure: what the city's businesses want
+mod economy;
+/// [camera] `follow`, `zoom_to`, `gift`; delivery robots' detail.
+mod follow;
 /// Request checks (Host, Origin, content type, body size) and the folders
 /// file commands may use.
 mod guard;
 mod history;
+/// [identity] `city_name` and `game_history`.
+mod identity;
+mod junction;
 mod land;
 mod list;
 mod map;
 /// [places] taste, favourite places, venue ratings.
 mod places;
+/// [land] Owners, prices, merged plots, pressure and the super-elite.
+mod property;
 mod report;
 /// [society] crime, homelessness and trash.
 mod society;
@@ -102,11 +111,10 @@ impl Plugin for RemotePlugin {
         }
         app.insert_resource(Inbox(Mutex::new(rx)))
             .init_resource::<EventLog>()
-            .init_resource::<Follow>()
             .init_resource::<History>()
             .init_resource::<WindowRequests>()
             .add_systems(Update, remote_commands.in_set(SimSet::Input).before(crate::tools::tool_input))
-            .add_systems(Update, (log_events, follow_target, record_history).in_set(SimSet::Sync))
+            .add_systems(Update, (log_events, record_history).in_set(SimSet::Sync))
             // Before the panel draws, so a request shows the same frame.
             .add_systems(bevy_egui::EguiPrimaryContextPass, window::apply_window_requests.before(crate::ui::side_panel));
     }
@@ -158,11 +166,6 @@ impl EventLog {
     }
 }
 
-/// `camera {follow: id}` keeps the orbit target on a moving thing until the
-/// next camera command. The second field is the `Sim::generation` the
-/// target belongs to.
-#[derive(Resource, Default)]
-struct Follow(Option<Selection>, u64);
 
 // ── HTTP thread ─────────────────────────────────────────────────────────────
 
@@ -267,7 +270,10 @@ struct Ctx<'w, 's> {
     lighting: ResMut<'w, Lighting>,
     mode: ResMut<'w, CameraMode>,
     walk: ResMut<'w, WalkState>,
-    follow: ResMut<'w, Follow>,
+    /// [camera] The camera's follow (shared with the inspector's button)
+    /// and its smooth moves.
+    follow: ResMut<'w, crate::camera::CameraFollow>,
+    fly: ResMut<'w, crate::camera::CameraFly>,
     log: ResMut<'w, EventLog>,
     history: ResMut<'w, History>,
     windows: ResMut<'w, WindowRequests>,
@@ -373,38 +379,6 @@ fn record_history(sim: Res<Sim>, mut history: ResMut<History>) {
     history.observe(&sim.world);
 }
 
-/// Keep the orbit target on the followed citizen or car; drop the follow
-/// when they are gone.
-fn follow_target(sim: Res<Sim>, mut follow: ResMut<Follow>, mut cams: Query<&mut OrbitCamera>) {
-    // A loaded city reuses ids: the followed one would be someone else.
-    if follow.1 != sim.generation {
-        *follow = Follow(None, sim.generation);
-    }
-    let Some(sel) = follow.0 else { return };
-    let w = &sim.world;
-    // Where the car is drawn this frame, not where it ends the tick: the
-    // camera held still between ticks and jumped ahead of the car at each.
-    let f = sim.frac();
-    let pos = match sel {
-        Selection::Citizen(id) => w.citizens.get(id).map(|c| match &c.activity {
-            nd_sim::Activity::Driving { car, .. } => w.traffic.cars.get(*car).map_or(c.pos, |car| car.pose_at(f).0),
-            nd_sim::Activity::Riding { bus } => w.traffic.cars.get(*bus).map_or(c.pos, |car| car.pose_at(f).0),
-            _ => c.pos,
-        }),
-        Selection::Car(id) => w.traffic.cars.get(id).map(|c| c.pose_at(f).0),
-        Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|c| c.spot()).map(|s| s.pos),
-        Selection::Building(id) => w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map(|l| l.center),
-        Selection::None => None,
-    };
-    match pos {
-        Some(p) => {
-            for mut cam in &mut cams {
-                cam.target = Vec3::new(p.x, 0.0, p.y);
-            }
-        }
-        None => follow.0 = None,
-    }
-}
 
 // ── dispatch ────────────────────────────────────────────────────────────────
 
@@ -460,13 +434,16 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(json!({ "buildings": ctx.sim.world.buildings.len(), "lots": ctx.sim.world.lots.len() }))
         }
         "save" => save(cmd, ctx),
+        "city_name" | "city_identity" => identity::city_name(cmd, ctx),
+        "game_history" => identity::game_history(cmd, ctx),
         "load" => {
             let path = allowed_path(req_str(cmd, "path")?, "ron", false)?;
-            let Ctx { sim, tools, selection, eplan, flags, saves, follow, .. } = &mut *ctx;
+            let Ctx { sim, tools, selection, eplan, flags, saves, follow, fly, .. } = &mut *ctx;
             load_now(&path, sim, tools, selection, eplan, flags);
             saves.mark_dirty();
             saves.title = false;
-            follow.0 = None;
+            follow.stop();
+            fly.flight = None;
             if flags.message.starts_with("load failed") {
                 return Err(flags.message.clone());
             }
@@ -478,13 +455,53 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             ctx.saves.title = false;
             ctx.sim.paused = false;
             ctx.sim.new_game(params);
+            if let Some(name) = opt_str(cmd, "name")? {
+                ctx.sim.set_city_name(name);
+            }
             *ctx.tools = ToolState::default();
             *ctx.selection = Selection::None;
             ctx.eplan.invalidate();
-            ctx.follow.0 = None;
+            ctx.follow.stop();
+            ctx.fly.flight = None;
             ctx.tools.status = format!("New city: {} landscape", ctx.sim.world.landscape.params.preset.label());
             ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "new game");
-            Ok(land::summary(&ctx.sim.world))
+            let mut v = land::summary(&ctx.sim.world);
+            v["identity"] = identity::identity_json(&ctx.sim.world);
+            Ok(v)
+        }
+        "generate_city" => {
+            let (preset, params) = land::city_params_from(cmd)?;
+            ctx.saves.title = false;
+            ctx.sim.paused = false;
+            let start = std::time::Instant::now();
+            let (plan, laid) = ctx.sim.generate_city(preset, params);
+            if let Some(name) = opt_str(cmd, "name")? {
+                ctx.sim.set_city_name(name);
+            }
+            *ctx.tools = ToolState::default();
+            *ctx.selection = Selection::None;
+            ctx.eplan.invalidate();
+            ctx.follow.stop();
+            ctx.fly.flight = None;
+            ctx.tools.status = format!("New city: {} on a {} landscape", preset.label(), ctx.sim.world.landscape.params.preset.label());
+            ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "generated city");
+            let mut v = land::summary(&ctx.sim.world);
+            let class = |c: nd_procgen::citygen::RoadClass| json!({ "roads": plan.roads.iter().filter(|r| r.class == c).count(), "length_m": round(plan.road_length(c)) });
+            v["city"] = json!({
+                "preset": preset.key(),
+                "seed": plan.seed,
+                "arterial": class(nd_procgen::citygen::RoadClass::Arterial),
+                "collector": class(nd_procgen::citygen::RoadClass::Collector),
+                "local": class(nd_procgen::citygen::RoadClass::Local),
+                "zones": laid.zones,
+                "lots": laid.lots,
+                "interchanges": laid.links,
+                "way_in": laid.way_in,
+                "centres": plan.cores.iter().map(|c| v2(*c)).collect::<Vec<_>>(),
+                "took_ms": start.elapsed().as_millis() as u64,
+            });
+            v["identity"] = identity::identity_json(&ctx.sim.world);
+            Ok(v)
         }
         "terrain_at" => Ok(land::terrain_at(&ctx.sim.world, req_point(cmd)?)),
         "landscape" => Ok(land::summary(&ctx.sim.world)),
@@ -493,6 +510,14 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let amount = opt_f32(cmd, "amount")?.unwrap_or(100_000.0);
             ctx.sim.world.economy.treasury += amount;
             Ok(json!({ "treasury": round(ctx.sim.world.economy.treasury) }))
+        }
+        "walk_to" => {
+            // Dev: send a citizen out on foot (to try crossings and footbridges).
+            let id = key_from(field(cmd, "citizen").ok_or("missing field \"citizen\": id")?)?;
+            let to = opt_vec2(cmd, "to")?.ok_or("missing field \"to\": [x, y]")?;
+            let from = opt_vec2(cmd, "from")?;
+            let n = ctx.sim.world.dev_walk(id, from, to)?;
+            Ok(json!({ "citizen": key_str(id), "route_points": n }))
         }
         "list_saves" => Ok(list_saves()),
         "plan" => Ok(plan(ctx)),
@@ -523,11 +548,16 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "district" | "districts" => districts::district(cmd, &mut ctx.sim.world, &mut ctx.overlays, &mut ctx.tools),
         "tourism" | "tourists" => districts::tourism(cmd, &mut ctx.sim.world),
         "concerns" => concerns::command(cmd, &ctx.sim.world),
+        // [land] the land market; ownership highlight data
+        "estate" | "land_market" => property::command(cmd, &mut ctx.sim.world),
+        "ownership" => property::ownership(cmd, &ctx.sim.world),
+        "pressure" | "pressures" => economy::command(cmd, &mut ctx.sim.world),
         "bus" => bus(cmd, ctx),
         "subway" | "metro" => subway::command(cmd, &mut ctx.sim.world),
         "find" => find(cmd, ctx),
         "inspect" => inspect(cmd, ctx),
         "lane_use" => lane_use(cmd, ctx),
+        "intersection" => junction::command(cmd, &mut ctx.sim.world, &mut ctx.tools),
         // [boot] Clamp a private car and have it towed: `car` (on the road:
         // it pulls over first) or `vehicle` (its record, parked or driving).
         "tow_car" | "tow" | "boot" => {
@@ -576,6 +606,10 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         "tool" => tool(cmd, ctx),
         "camera" => camera(cmd, ctx),
+        // [camera] The inspector's Follow, Zoom to and gift buttons.
+        "follow" => follow::follow(cmd, ctx),
+        "zoom_to" | "zoom" => follow::zoom_to(cmd, ctx),
+        "gift" => follow::gift(cmd, ctx),
         "overlay" => {
             // Map layers are exclusive (`crate::map_layers`): turning one on
             // turns every other off; turning the one showing off leaves none.
@@ -666,6 +700,14 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             l.heat = opt_bool(cmd, "on")?.unwrap_or(!l.heat);
             Ok(json!({ "heat_vision": l.heat }))
         }
+        "graphics" | "quality" => {
+            // [look] `{quality: auto|low|medium|high}` pins the tier (for
+            // screenshots that must compare) or hands it back to Auto.
+            if let Some(q) = opt_str(cmd, "quality")?.or(opt_str(cmd, "tier")?) {
+                ctx.lighting.quality = crate::render::QualitySetting::parse(q).ok_or_else(|| format!("unknown quality {q:?}; auto, low, medium or high"))?;
+            }
+            Ok(graphics_json(ctx))
+        }
         "screenshot" => screenshot(cmd, ctx),
         "events" => {
             let since = opt_u64(cmd, "since")?.unwrap_or(0);
@@ -741,6 +783,12 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let open = opt_bool(cmd, "open")?.unwrap_or(if section.is_some() { true } else { !ctx.windows.build_open });
             ctx.windows.build = Some((open, section));
             Ok(json!({ "window": "build", "open": open, "section": section.map(|c| c.key()).or(ctx.windows.build_section) }))
+        }
+        "window" if req_str(cmd, "name").is_ok_and(|n| matches!(n.trim().to_ascii_lowercase().as_str(), "history" | "game_history" | "game history")) => {
+            // [identity] The Game history window.
+            let open = opt_bool(cmd, "open")?.unwrap_or(true);
+            ctx.saves.history_requested = Some(open);
+            Ok(json!({ "window": "game history", "open": open }))
         }
         "window" if req_str(cmd, "name").is_ok_and(|n| matches!(n.trim().to_ascii_lowercase().as_str(), "title" | "title_screen" | "title screen")) => {
             let open = opt_bool(cmd, "open")?.unwrap_or(!ctx.saves.title);
@@ -821,6 +869,7 @@ fn tool_state(t: &ToolState) -> Value {
         "transit_mode": transit_mode_name(t.transit_mode), "route": opt_key(t.route_sel), "show_routes": t.show_routes,
         "pending_points": t.points.len(), "selected_gesture": t.selected_gesture.map(|g| g.0), "status": t.status,
         "elevation": t.elevation, "elevation_label": crate::tools::elevation_label(t.elevation), "point_levels": t.levels(), "tunnel": t.tunnel, "depth": t.depth.label(), "grade_warnings": t.grade_warnings,
+        "pillars": junction::pillars_json(&t.pillars), "intersection_editor": t.junction_editor.as_ref().map(|e| v2(e.at)),
     })
 }
 
@@ -1007,13 +1056,15 @@ fn status(ctx: &Ctx) -> Value {
         "bots": { "active": w.bots.bots.len(), "delivered_today": w.bots.delivered_today, "vans_on_road": nd_sim::Bots::vans(w), "van_orders_today": w.bots.van_orders_today },
         "transit": { "routes": w.transit.routes.len(), "buses": t.buses, "depots": t.depots, "depot_capacity": t.depot_capacity, "waiting": t.waiting, "riding": t.riding, "riders_today": t.riders_today, "fares_today": round(t.fares_today), "upkeep_today": round(t.upkeep_today) },
         "rail": { "trains": r.trains, "stations": r.stations, "yards": r.yards, "waiting": r.waiting, "riding": r.riding, "riders_today": r.riders_today, "fares_today": round(r.fares_today), "next_passenger_in": r.next_passenger_in, "freight_in_today": round(r.freight_in_today), "freight_waiting": round(r.freight_waiting), "upkeep_today": round(r.upkeep_today) },
-        "render": { "fps": round(fps as f32), "ticks_per_frame": sim.ticks_last_frame, "triangles": ctx.stats.street_triangles + ctx.stats.building_triangles, "building_meshes": ctx.stats.building_entities },
+        "render": { "fps": round(fps as f32), "ticks_per_frame": sim.ticks_last_frame, "triangles": ctx.stats.street_triangles + ctx.stats.building_triangles, "building_meshes": ctx.stats.building_entities, "graphics": graphics_json(ctx) },
         "camera": camera_pose(ctx), "tool": tool_state(&ctx.tools), "selection": selection(w, *ctx.selection),
         "project": project_state(ctx)["project"], "overlays": overlays_json(&ctx.overlays),
         "lighting": { "follow_clock": ctx.lighting.follow_clock, "hour": round(ctx.lighting.hour), "heat_vision": ctx.lighting.heat },
         "message": ctx.flags.message, "tool_status": ctx.tools.status, "event_seq": ctx.log.seq,
         "favourites": ctx.tools.favorites.iter().map(|&f| key_str(f)).collect::<Vec<_>>(),
     });
+    // [camera] What the camera is locked on, if anything.
+    v["following"] = json!(ctx.follow.target.map(|s| selection(w, s)));
     // [subway] Added apart: the literal above is at serde_json's macro depth.
     let ss = &w.subway.stats;
     v["subway"] = json!({ "stations": ss.stations, "lines": ss.lines, "trains": ss.trains, "waiting": ss.waiting, "riding": ss.riding, "riders_today": ss.riders_today, "riders_yesterday": ss.riders_yesterday, "fares_today": round(ss.fares_today) });
@@ -1022,6 +1073,8 @@ fn status(ctx: &Ctx) -> Value {
     v["window_expanded"] = json!(ctx.windows.expanded_name());
     v["build_window"] = json!({ "open": ctx.windows.build_open, "section": ctx.windows.build_section });
     v["title_screen"] = json!(ctx.saves.title);
+    // [identity]
+    v["identity"] = identity::identity_json(w);
     // [looks] The figure cache: meshes alive, people outdoors and their distinct looks.
     let st = &ctx.stats;
     v["render"]["people"] = json!({ "meshes": st.people_meshes, "mesh_cap": crate::render::PEOPLE_MESH_CAP, "visible": st.people_visible, "distinct_looks_visible": st.people_looks_visible, "built_total": st.people_built, "borrowed": st.people_borrowed, "materials": 1 });
@@ -1042,12 +1095,13 @@ fn save(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         let Ctx { sim, saves, flags, .. } = ctx;
         let path = crate::ui::save_as(sim, saves, flags, name)?;
         let p = slash(&path);
-        return Ok(json!({ "path": absolute(&p), "name": name.trim(), "thumbnail": absolute(&p.replace(".ron", ".png")), "meta": absolute(&p.replace(".ron", ".meta.json")), "note": "the thumbnail is written about half a second later (rendered offscreen)", "message": flags.message }));
+        return Ok(json!({ "path": absolute(&p), "name": name.trim(), "thumbnail": absolute(&p.replace(".ron", ".png")), "meta": absolute(&p.replace(".ron", ".meta.json")), "note": "the thumbnail is written about half a second later (rendered offscreen)", "message": flags.message, "identity": identity::identity_json(&sim.world) }));
     }
     match opt_str(cmd, "path")? {
         Some(raw) => {
             let path = allowed_path(raw, "ron", true)?;
             let shown = path.to_string_lossy().replace('\\', "/");
+            crate::ui::saves::ensure_game_id(&mut ctx.sim.world);
             ctx.sim.save(&path)?;
             ctx.saves.mark_dirty();
             ctx.flags.message = format!("saved {shown}");
@@ -1071,8 +1125,9 @@ fn slash(p: &std::path::Path) -> String {
 
 /// Every save, newest first, with what its sidecar knows and its picture.
 fn list_saves() -> Value {
-    let rows: Vec<Value> = crate::ui::saves::scan()
-        .into_iter()
+    let slots = crate::ui::saves::scan();
+    let rows: Vec<Value> = slots
+        .iter()
         .map(|s| {
             let modified = s.modified.and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
             let bytes = std::fs::metadata(&s.path).map_or(0, |m| m.len());
@@ -1088,10 +1143,15 @@ fn list_saves() -> Value {
                 "buildings": s.meta.as_ref().map(|m| m.buildings),
                 "landscape": s.meta.as_ref().map(|m| m.landscape.clone()),
                 "thumbnail": s.picture.as_ref().filter(|p| p.exists()).map(|p| absolute(&slash(p))),
+                "city": s.city(),
+                "game_id": s.meta.as_ref().map(|m| m.game_id.clone()).filter(|g| !g.is_empty()),
             })
         })
         .collect();
-    json!({ "saves": rows, "latest": crate::ui::LATEST })
+    // [identity] The same saves grouped by city name, as the title screen
+    // and the Saves window show them.
+    let groups: Vec<Value> = crate::ui::saves::group_by_city(&slots).into_iter().map(|(city, members)| json!({ "city": city, "saves": members.iter().map(|&i| slash(&slots[i].path)).collect::<Vec<_>>() })).collect();
+    json!({ "saves": rows, "by_city": groups, "latest": crate::ui::LATEST })
 }
 
 /// A path a file command may use (see `guard::confine`): inside saves/,
@@ -1644,6 +1704,19 @@ fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
             }
         }
+        // [camera] Pavement delivery robots; `filter.shop` matches the shop's name.
+        "bots" | "bot" | "delivery_bots" => {
+            let f_shop = str_filter(filter, "shop");
+            for (id, b) in w.bots.bots.iter() {
+                let shop = w.buildings.get(b.shop).map_or("", |s| s.name.as_str());
+                if !contains(shop, &f_shop) {
+                    continue;
+                }
+                if let Some(d) = within(b.pos) {
+                    rows.push((d, follow::bot_row(w, id)));
+                }
+            }
+        }
         "drones" | "drone" | "aircraft" => {
             let f_kind = str_filter(filter, "kind");
             for (id, d) in w.air.drones.iter() {
@@ -1753,6 +1826,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         let c = w.citizens.get(id).ok_or("no such citizen")?;
         let mut v = citizen_detail(w, id, c, ctx.tools.favorites.contains(&id));
         v["places"] = places::citizen_places(w, id);
+        v["holdings"] = follow::holdings_json(w, id);
         return Ok(json!({ "citizen": v }));
     }
     if let Some(v) = field(cmd, "building") {
@@ -1760,6 +1834,8 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         let b = w.buildings.get(id).ok_or("no such building")?;
         let mut v = building_detail(w, id, b, building_style(&ctx.sim, id, &ctx.assets));
         v["place"] = places::building_place(w, id);
+        // [land] owner, sale price, plots, form, pressure
+        v["land"] = property::building_land(w, id);
         return Ok(json!({ "building": v }));
     }
     if let Some(v) = field(cmd, "lot") {
@@ -1775,6 +1851,10 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(v) = field(cmd, "vehicle") {
         let id = key_from(v)?;
         return Ok(json!({ "vehicle": view::vehicle_detail(w, id).ok_or("no such vehicle")? }));
+    }
+    if let Some(v) = field(cmd, "bot") {
+        let id = key_from(v)?;
+        return Ok(json!({ "bot": follow::bot_detail(w, id).ok_or("no such delivery bot")? }));
     }
     if let Some(v) = field(cmd, "junction") {
         let k = view::junction_near(w, vec2_of(v)?).ok_or("no junctions")?;
@@ -1835,7 +1915,8 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Building(id) => inspect(&json!({ "building": key_str(id) }), ctx),
         Selection::Car(id) => inspect(&json!({ "car": key_str(id) }), ctx),
         Selection::Parked(id) => inspect(&json!({ "vehicle": key_str(id) }), ctx),
-        Selection::None => Err("inspect needs one of citizen, building, lot, car, train, route, gesture (an id), or a selection".into()),
+        Selection::Bot(id) => inspect(&json!({ "bot": key_str(id) }), ctx),
+        Selection::None => Err("inspect needs one of citizen, building, lot, car, bot, train, route, gesture (an id), or a selection".into()),
     }
 }
 
@@ -1868,6 +1949,7 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
             Some(c) => {
                 let mut v = citizen_detail(w, id, c, favourites.contains(&id));
                 v["places"] = places::citizen_places(w, id);
+                v["holdings"] = follow::holdings_json(w, id);
                 if let nd_sim::Activity::Driving { car, .. } = c.activity {
                     if let Some(x) = w.traffic.cars.get(car) {
                         v["driving_car"] = car_detail(w, car, x);
@@ -1886,6 +1968,7 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
             None => Value::Null,
         },
         Selection::Parked(id) => view::vehicle_detail(w, id).unwrap_or(Value::Null),
+        Selection::Bot(id) => follow::bot_detail(w, id).unwrap_or(Value::Null),
     };
     let bus_line = route_sel.and_then(|r| w.transit.routes.get(r).map(|route| {
         let mut v = route_row(r, route);
@@ -1947,6 +2030,12 @@ fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             return Err("no such parked vehicle".into());
         }
         Selection::Parked(id)
+    } else if let Some(v) = field(cmd, "bot") {
+        let id = key_from(v)?;
+        if !w.bots.bots.contains_key(id) {
+            return Err("no such delivery bot".into());
+        }
+        Selection::Bot(id)
     } else if let Some(p) = opt_vec2(cmd, "at")? {
         // Pick exactly as a click with the Inspect tool does.
         crate::tools::pick(&*ctx.sim, p, ctx.tools.depth)
@@ -2112,8 +2201,10 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
 }
 
 fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
-    // Any explicit pose ends a follow; `follow` below may start a new one.
-    ctx.follow.0 = None;
+    // Any explicit pose ends a follow and a flight; `follow` below may
+    // start a new one.
+    ctx.follow.stop();
+    ctx.fly.flight = None;
     if let Some(mode) = opt_str(cmd, "mode")? {
         *ctx.mode = match mode.to_ascii_lowercase().as_str() {
             "orbit" => CameraMode::Orbit,
@@ -2156,7 +2247,14 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
                 Selection::Building(id)
             }
-            _ => return Err("follow: one of citizen, car, building".into()),
+            "bot" => {
+                let id = key_from(id)?;
+                if !w.bots.bots.contains_key(id) {
+                    return Err("follow: no such delivery bot".into());
+                }
+                Selection::Bot(id)
+            }
+            _ => return Err("follow: one of citizen, car, bot, building".into()),
         });
     }
     let look_at = opt_vec2(cmd, "look_at")?;
@@ -2187,13 +2285,7 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         if let Some(sel) = follow {
             // Start on the thing right away rather than one frame later.
-            let p = match sel {
-                Selection::Citizen(id) => w.citizens.get(id).map(|c| c.pos),
-                Selection::Car(id) => w.traffic.cars.get(id).map(|c| c.pos),
-        Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|c| c.spot()).map(|s| s.pos),
-                Selection::Building(id) => w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map(|l| l.center),
-                Selection::None => None,
-            };
+            let p = crate::camera::thing_pose(&ctx.sim, sel).map(|t| t.pos);
             if let Some(p) = p {
                 cam.target = Vec3::new(p.x, 0.0, p.y);
                 if distance.is_none() {
@@ -2226,12 +2318,28 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             walk.pitch = p.clamp(-1.35, 1.35);
         }
     }
-    ctx.follow.0 = follow;
-    ctx.follow.1 = ctx.sim.generation;
+    if let Some(sel) = follow {
+        let generation = ctx.sim.generation;
+        ctx.follow.start(sel, generation);
+    }
     Ok(json!({ "camera": camera_pose(ctx), "following": follow.map(|s| selection(&ctx.sim.world, s)) }))
 }
 
 // ── screenshot ──────────────────────────────────────────────────────────────
+
+/// [look] The graphics setting, the tier in force (the setting's or Auto's
+/// pick, which takes effect next frame), the frame time and the effects.
+fn graphics_json(ctx: &Ctx) -> Value {
+    let g = &ctx.stats.graphics;
+    let tier = match ctx.lighting.quality {
+        crate::render::QualitySetting::Fixed(q) => q,
+        crate::render::QualitySetting::Auto => g.tier,
+    };
+    json!({
+        "quality": ctx.lighting.quality.label().to_lowercase(), "tier": tier.label().to_lowercase(),
+        "frame_ms": round(g.frame_ms), "sim_ms": round(g.sim_ms), "auto_steps": g.steps, "reason": g.reason, "effects": g.effects,
+    })
+}
 
 fn screenshot(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -2308,7 +2416,7 @@ fn help() -> Value {
             "seed_demo": {},
             "save": { "name": "optional: save as a named game, saves/<name>.ron (file-safe) with a sidecar <name>.meta.json and a map picture <name>.png", "path": "optional; neither: writes saves/city.ron and a dated slot (with a picture)" },
             "load": { "path": "a .ron save (see files)" },
-            "list_saves": { "note": "newest first: path, name, kind (named|latest|autosave|dated), modified_unix, bytes, day, population, treasury, buildings, landscape (null for saves without a sidecar), thumbnail (absolute path of the PNG, or null)" },
+            "list_saves": { "note": "newest first: path, name, kind (named|latest|autosave|dated), modified_unix, bytes, day, population, treasury, buildings, landscape (null for saves without a sidecar), thumbnail (absolute path of the PNG, or null), city (\"Unnamed city\" when none), game_id; by_city groups the paths by city name" },
             "plan": {},
             "add_roundabout": { "center": "[x,y] (snaps onto a junction within 12 m or a street within 6 m)", "radius": "m to the ring centreline, 12..120 (or diameter 24..240)", "lanes": "1|2|3 ring lanes", "implement": "bool", "returns": "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state" },
             "add_road": { "points": "[[x,y] or [x,y,level],...] (2+; level metres above ground, negative below)", "elevation": "level for points without one (number), or a list", "tunnel": "bool: default level -8 m", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true", "implement": "bool, default false (pending in the project)" },
@@ -2326,9 +2434,9 @@ fn help() -> Value {
             "find": { "what": "citizens|buildings|lots|parcels|cars|trains|drones|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
             "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "[x,y]: the road piece nearest a point, as segment" },
             "lane_use": { "junction": "[x,y]", "approach": "[x,y] on the arriving street", "lanes": "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default" },
-            "select": { "citizen|building|car|vehicle": "id (vehicle: a parked car)", "at": "[x,y] picks like a click; nothing clears" },
+            "select": { "citizen|building|car|vehicle|bot": "id (vehicle: a parked car; bot: a delivery robot)", "at": "[x,y] picks like a click; nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
-            "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
+            "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|bot|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
             "overlay": { "active": "the map layer to show, or none (layers are exclusive: showing one hides the others)", "layer": "zoning|land_value|districts|traffic|traffic_types|paths|people|pollution, a land survey layer (farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech), or projects (the dim other-projects switch, not a layer)", "on": "bool, omitted toggles; on hides every other layer", "land": "a land survey layer key, or none", "<layer name>": "bool (older form): true shows it alone, false hides it if it shows" },
             "lighting": { "follow_clock": "bool", "hour": "0..24 (also unpins from the clock)" },
             "heat_vision": { "on": "bool, omitted toggles: the drone thermal camera view (also key H)" },
@@ -2339,7 +2447,15 @@ fn help() -> Value {
     });
     // Kept out of the literal above: it is at the json! recursion limit.
     v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
-    v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite" });
+    v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
+    // [camera]
+    v["commands"]["follow"] = json!({ "citizen|car|bot|building|vehicle": "id, or the selection", "stop": "bool: end the follow (also on: false)", "pov": "bool: look through their eyes (Walk view) or back to orbit", "fly": "bool, default true: fly in smoothly first", "note": "the camera stays on it (pan locked, rotate and zoom free) until stopped, Esc, or it is gone" });
+    v["commands"]["zoom_to"] = json!({ "citizen|car|bot|building|vehicle": "id, or the selection", "at": "[x,y] instead of a thing", "distance": "m (default by kind)", "pitch": "rad (default 0.62)", "note": "a smooth move of 0.7..2.2 s; replies at once" });
+    v["commands"]["gift"] = json!({ "citizen": "id, or the selected citizen", "amount": "default 1000", "note": "from the treasury to their household (booked as gifts to residents)" });
+    // [identity]
+    v["commands"]["city_name"] = json!({ "name": "optional: rename the city (tidied, at most 40 characters; empty leaves it unnamed)", "returns": "name, display_name, game_id (null for a legacy save until it is next saved), history_entries" });
+    v["commands"]["game_history"] = json!({ "action": "list (default)|bookmark|unmark|mark|revert", "game_id": "list: another game's history", "marked_only": "list: bool", "path": "bookmark/unmark/revert: an entry's path from list (or file: its file name)", "label": "bookmark/mark: the moment's name", "confirm": "revert: must be true (the running city is replaced, as Load)", "returns": "entries newest first: path, file, day, population, treasury, buildings, saved_unix, city, bookmark, thumbnail" });
+    v["commands"]["graphics"] = json!({ "quality": "auto|low|medium|high: pin the graphics tier (pin one before screenshots that must compare) or hand it back to the frame-rate throttler; omitted reports the setting, the tier in force, the smoothed frame time and the effects on the camera" });
     // The review commands, added separately: one `json!` this size hits the
     // macro recursion limit.
     let review = json!({
@@ -2351,12 +2467,17 @@ fn help() -> Value {
         "taxes": { "set": "{line: rate, ...} where line is a key (residential_low|residential_mid|residential_high|grocery|bakery|gadget_shop|parking|nightlife_low|nightlife_mid|nightlife_high|farming|oil|refinery|manufacturing|logistics|fishing|tech) or a land use for its whole group; rate 0.2 or 20 (= 20%)", "category": "one line (with rate)", "import_duty": "share of import prices (0..1)", "reset": "bool: back to the standard rates", "returns": "every line: rate, default, pull, buildings, homes/jobs, today, yesterday, recent_per_day; by_land_use; duty" },
         "tolls": { "action": "list (default) | price | remove | inspect", "id": "booth id (or at: [x,y])", "price": "toll per car (lorries pay double)", "returns": "booths with cars and revenue today/yesterday/total, paid/free today, upkeep" },
         "export": { "path": "optional .json (see files); default exports/city-<unix>.json: report + map + history + every row of every list" },
-        "window": { "name": "city|economy|taxes|market|people|power|transit|emergencies|view (or land)|districts|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), or title (the title screen)", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns" },
+        "window": { "name": "city|economy|taxes|market|people|power|transit|emergencies|view (or land)|districts|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), or title (the title screen), or history (the Game history window)", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns" },
         "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" }
     });
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), review.as_object()) {
         c.extend(r.clone());
     }
+    // [mapgen] (out of the literal above: it is at the json! recursion limit)
+    // [land]
+    v["commands"]["estate"] = json!({ "action": "summary (default: counters, floors histogram, the billionaire gate, elites with their convoys, NIMBY zones, forms, owners) | pressure ({at: [x,y]} for one point, else every busy cell) | spawn_elite (dev: a billionaire now, needs quiet land) | expand {building} (dev: branch or merge now) | buyout {building} (dev) | drive {citizen, to} (dev)" });
+    v["commands"]["ownership"] = json!({ "building": "id: what to highlight when it is selected: the owner and every property with its outline (a rich person's other homes and businesses too)" });
+    v["commands"]["generate_city"] = json!({ "preset": "grid_plaza|coastal_river|old_town|twin_centres (default grid_plaza)", "seed": "u64 (default 1): the city and its landscape", "landscape": "optional landscape preset to lay it on instead of the city preset's own (river_valley|islands|coast|delta|plains|flat)", "water": "0..1", "relief": "0..1", "branching": "0..1", "note": "throws the city away: a new game with a whole generated city (tensor-field streets, zoning, highway interchanges, a coal plant); returns the landscape summary and city {arterial, collector, local, zones, lots, interchanges, way_in, centres}" });
     // [districts] [tourism]
     v["commands"]["district"] = json!({ "action": "list (default)|create|paint|erase|set|remove|at|select|layer", "id": "district id (or district: id or name)", "at": "[x,y] brush centre", "radius": "m, default 40", "polygon": "[[x,y],...]", "rect": "[[x0,y0],[x1,y1]]", "residential": "kowloon|suburban|eco|none", "commercial": "neon_strip|tech_campus|night_market|tourist|none", "industry": "farming|oil|refinery|manufacturing|logistics|fishing|tech|none", "historic": "bool", "rename": "new name", "on": "bool (layer)" });
     v["commands"]["tourism"] = json!({ "action": "refresh (re-read attractions now)", "limit": "tourists listed, default 20", "returns": "attractiveness, demand, ways in, today's and yesterday's arrivals, spending and tourist tax, hotels, attractions, tourists" });
@@ -2369,6 +2490,8 @@ fn help() -> Value {
     v["commands"]["parking_price"] = json!({ "building": "id of a parking lot the city runs", "price": "the fee, 0..50", "returns": "building, price (as set, clamped)" });
     v["commands"]["flags"] = json!({ "since": "flag id: only newer ones", "clear": "bool: empty the list after reading" });
     v["commands"]["flag"] = json!({ "note": "text: flag the current selection, as F8 does in game" });
+    v["commands"]["walk_to"] = json!({ "citizen": "id", "to": "[x,y]", "from": "[x,y] (default: where they are)", "note": "dev: sends the citizen out on foot by the walk graph (footbridges included)" });
+    v["commands"]["intersection"] = json!({ "at": "[x,y] near a junction or crosswalk (default: the editor's)", "signal": "auto|signals|none", "greens": "[seconds per phase, ...] (phases as listed) or \"default\"", "left_arrow": "auto|always|never", "arrow_seconds": "3..30", "left_turns": "bool: allow (true) or forbid every left", "no_left": "[approach index or [x,y], ...]: approaches with the left forbidden (the rest allowed)", "approach": "index or [x,y] (with lanes)", "lanes": "[\"L\", \"S+R\", ...] leftmost first, or \"reset\"", "crossing": "index or [x,y]", "upgrade": "none|button|footbridge (with crossing)", "open": "bool: show the Intersection editor modal", "close": "bool", "select_approach": "index (open)", "select_crossing": "walk crossing index (open)", "returns": "intersection: at, signalized, rule, approaches (lanes, offered, left_forbidden), phases (green_s, running), crossings (upgrade, signalised, button_light); done; editor_open" });
     v["commands"]["society"] = json!({ "action": "report (default)|evict|offend|trash", "building": "id (evict: its households go on the street; offend: the target; trash: one building's bins)", "citizen": "id (offend)", "kind": "theft|burglary|assault|murder|vandalism (offend, with building)", "kg": "trash to add, default 100" });
     // Planning: several projects, and painting parcels.
     let planning = json!({

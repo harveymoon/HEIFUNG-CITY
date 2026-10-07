@@ -305,6 +305,9 @@ impl VehicleModel {
                 // [industry] tankers for oil, reefers for fish
                 Resource::Crude | Resource::Fuel => BodyType::Semi,
                 Resource::Plastics | Resource::Fish => BodyType::BoxVan,
+                // [economy] cattle trucks, ore tippers, reefers and art vans
+                Resource::Livestock | Resource::Ore => BodyType::Semi,
+                Resource::Fillets | Resource::Art => BodyType::BoxVan,
             };
             let mut m = Self::new(VehicleClass::Mid, body);
             m.livery = seller.map(Livery::for_business).unwrap_or(Livery::None);
@@ -515,6 +518,9 @@ pub enum Errand {
     Patrol(crate::buildings::BuildingId),
     /// [parking] A tow truck on job `n` (`crate::enforcement::TowJob`).
     Tow(u32),
+    /// [services] A tow truck on its way to the wreck `CarId` (a crash
+    /// written off in the road, `World::step_wrecks`), ambers flashing.
+    Recover(crate::traffic::CarId),
     /// [taxis] A cab of a taxi company (`crate::taxi`): what it does on
     /// arriving is in its record's job.
     Taxi(crate::taxi::CabId),

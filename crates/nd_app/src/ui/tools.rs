@@ -64,18 +64,33 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
     });
     // The level the next point goes down at.
     ui.horizontal(|ui| {
-        if ui.small_button("lower").on_hover_text("Lower [Page Down]").clicked() {
+        if ui.small_button("lower").on_hover_text("Lower: [ or Page Down").clicked() {
             tools.step_elevation(false);
         }
         let text = egui::RichText::new(format!("Level: {}", crate::tools::elevation_label(tools.elevation))).strong();
-        ui.label(text).on_hover_text("Page Up / Page Down step the level 2 m. Roads 4.5 m or more above or below another pass over or under it without a junction; a raised road stands on a viaduct, one 5 m or more down runs in a tunnel.");
-        if ui.small_button("raise").on_hover_text("Raise [Page Up]").clicked() {
+        ui.label(text).on_hover_text("] raises and [ lowers the next point 2 m (or Page Up / Page Down); Shift+] / Shift+[ move the whole road drawn so far. A raised road stands on concrete pillars that dodge the roads and buildings under it: red where there is no room for one (implementing is refused), buildings a pillar would buy out outlined in orange. Roads 4.5 m or more above or below another pass over or under it without a junction; a raised road stands on a viaduct, one 5 m or more down runs in a tunnel.");
+        if ui.small_button("raise").on_hover_text("Raise: ] or Page Up").clicked() {
             tools.step_elevation(true);
         }
         if tools.elevation != 0.0 && !tools.tunnel && ui.small_button("ground").clicked() {
             tools.elevation = 0.0;
         }
     });
+    // [tools] The raised road's columns.
+    if tools.pillars.count > 0 || tools.pillars.refusal.is_some() {
+        let n = &tools.pillars;
+        let mut line = format!("{} pillars", n.count);
+        if n.lots > 0 {
+            line.push_str(&format!(", {} empty lot{} taken", n.lots, if n.lots == 1 { "" } else { "s" }));
+        }
+        ui.label(egui::RichText::new(line).small()).on_hover_text("Pillars stand about 24 m apart, shifted along the road to clear the roads and buildings under it (at most 42 m between supports).");
+        if !n.buyouts.is_empty() {
+            ui.label(egui::RichText::new(format!("Pillars buy out: {}", n.buyouts.join(", "))).color(egui::Color32::from_rgb(255, 170, 40)).small());
+        }
+        if let Some(why) = &n.refusal {
+            ui.label(egui::RichText::new(format!("! Cannot be built: {why}.")).color(WARN).small());
+        }
+    }
     for w in &tools.grade_warnings {
         ui.label(egui::RichText::new(format!("! {w}")).color(WARN).small());
     }
@@ -441,6 +456,9 @@ fn dock_hint(ui: &mut egui::Ui, sim: &mut Sim, k: nd_sim::PortKind) {
         hint(ui, &match k {
             nd_sim::PortKind::ShippingPort => format!("A container port, {w:.0} by {d:.0} m, on a river at least {:.0} m wide or on the sea; it builds a pier out into the water and a street along its landward side. {:.0} to build, {:.0}/day. Imports come by ship at {:.0}% of the price, exports earn {:.0}% more.", k.min_width(), k.cost(), k.upkeep_per_day(), nd_sim::ports::SHIP_IMPORT_FACTOR * 100.0, (nd_sim::ports::SHIP_EXPORT_BONUS - 1.0) * 100.0),
             nd_sim::PortKind::FerryTerminal => format!("A ferry terminal, {w:.0} by {d:.0} m, on any water; ferries run to every other terminal on connected water, or out to elsewhere. {:.0} to build, {:.0}/day, fare {:.0}.", k.cost(), k.upkeep_per_day(), nd_sim::ports::FERRY_FARE),
+            // [economy]
+            nd_sim::PortKind::MarinaSmall | nd_sim::PortKind::MarinaLarge => format!("A recreational marina, {w:.0} by {d:.0} m, at the water's edge (a lake will do; rivers {:.0} m wide): {} berths let to the wealthy households around{}. Lifts the land value nearby and draws seafood restaurants. The city builds the quay ({:.0}, {:.0}/day); an operator runs it on the berth fees.", k.min_width(), k.berths(), if k.is_large() { ", yachts from all over town, and a clubhouse to go out to" } else { "" }, k.cost(), k.upkeep_per_day()),
+            nd_sim::PortKind::FishingPortSmall | nd_sim::PortKind::FishingPortLarge => format!("A fishing port, {w:.0} by {d:.0} m, at the water's edge: {} trawlers put out before dawn and land fish by early afternoon. Fish gutting sheds, a fish-stick factory and fish markets open near it. The city builds the quay ({:.0}, {:.0}/day); an operator sells the catch.", k.berths(), k.cost(), k.upkeep_per_day()),
         });
         hint(ui, &format!("{} port{} · {} terminal{} · {} ship{} out · {} loads landed today, {} waiting · {} ferry riders today, fares {:.0}", s.ports, if s.ports == 1 { "" } else { "s" }, s.terminals, if s.terminals == 1 { "" } else { "s" }, s.ships_out, if s.ships_out == 1 { "" } else { "s" }, s.freight_landed_today, s.waiting_cargo, s.ferry_riders_today, s.ferry_fares_today));
 }

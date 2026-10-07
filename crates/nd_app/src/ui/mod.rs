@@ -15,14 +15,24 @@ mod economy;
 /// [districts] The District tool's pane and the Districts window.
 mod districts;
 mod emergencies;
+/// [camera] Follow / Zoom to buttons, the gift button, the locked banner.
+pub mod follow;
+/// [land] Ownership, sale price and merged plots in the inspector.
+mod estate;
 mod help;
+/// [identity] The Game history window: autosaves, bookmarks, revert.
+pub mod history;
 mod hover;
 mod inspector;
 pub mod newgame;
 pub mod pane;
 pub mod people;
 mod person;
+/// [camera] A selected person's home / work / owned pins.
+mod pins;
 mod places;
+/// [economy] What the city's businesses want, and why a business is here.
+mod pressure;
 /// [inspector] Painted head-and-shoulders portraits of citizens.
 mod portrait;
 pub mod saves;
@@ -31,6 +41,7 @@ mod taxes;
 mod title;
 mod icons;
 pub mod legend;
+pub mod junction;
 /// [lines] The Lines window.
 mod lines;
 mod toolbar;
@@ -43,7 +54,7 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPreUpdateSet, EguiPrimaryContextPass};
 
 use crate::assets::GameAssets;
-use crate::camera::{CameraMode, Cursor, OrbitCamera};
+use crate::camera::{CameraFly, CameraFollow, CameraMode, Cursor, FlyGoal, OrbitCamera};
 use crate::render::{Lighting, Overlays, RenderStats, Thumbs};
 use crate::sim::{Sim, SimSet};
 use crate::tools::{EffectivePlan, Selection, Tool, ToolState};
@@ -86,7 +97,7 @@ impl Plugin for UiPlugin {
             .init_resource::<Saves>()
             .add_systems(PreUpdate, read_input_flags.after(EguiPreUpdateSet::BeginPass))
             .add_systems(Update, saves::autosave.in_set(SimSet::Sync))
-            .add_systems(EguiPrimaryContextPass, side_panel);
+            .add_systems(EguiPrimaryContextPass, (side_panel, pins::map_pins.after(side_panel)));
     }
 }
 
@@ -115,9 +126,13 @@ pub struct UiCtx<'a> {
     pub overlays: &'a mut Overlays,
     pub lighting: &'a mut Lighting,
     pub mode: &'a mut CameraMode,
-    /// Where the favourites' "go" button asked the camera to fly; the
-    /// caller applies it (a `Query` borrowed here would pin its lifetimes).
+    /// Where a "go" button asked the camera to fly; the caller turns it
+    /// into a smooth move.
     pub fly_to: Option<Vec2>,
+    /// [camera] The camera's follow and its smooth moves, for the Follow
+    /// and Zoom to buttons.
+    pub follow: &'a mut CameraFollow,
+    pub fly: &'a mut CameraFly,
     pub assets: &'a GameAssets,
     pub stats: &'a RenderStats,
     pub diagnostics: &'a DiagnosticsStore,
@@ -142,9 +157,10 @@ pub(crate) fn side_panel(
     mut lighting: ResMut<Lighting>,
     mut mode: ResMut<CameraMode>,
     cursor: Res<Cursor>,
-    mut cams: Query<&mut OrbitCamera>,
+    cams: Query<&OrbitCamera>,
     assets: Res<GameAssets>,
     (stats, diagnostics, thumbs): (Res<RenderStats>, Res<DiagnosticsStore>, Res<Thumbs>),
+    (mut follow, mut fly): (ResMut<CameraFollow>, ResMut<CameraFly>),
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     // Visuals persist in the context; setting them every frame only churns.
@@ -166,6 +182,8 @@ pub(crate) fn side_panel(
         lighting: &mut lighting,
         mode: &mut mode,
         fly_to: None,
+        follow: &mut follow,
+        fly: &mut fly,
         assets: &assets,
         stats: &stats,
         diagnostics: &diagnostics,
@@ -181,7 +199,10 @@ pub(crate) fn side_panel(
     build::window(ctx, &mut p, content);
     inspector::window(ctx, &mut p, content);
     newgame::window(ctx, &mut p, content);
+    history::window(ctx, &mut p, content);
     title::screen(ctx, &mut p);
+    // [tools] The Intersection editor (a modal).
+    junction::window(ctx, &mut p);
     let fly_to = p.fly_to;
 
     flags.panel_rects = vec![top_rect, bottom_rect];
@@ -189,15 +210,16 @@ pub(crate) fn side_panel(
     // The land layer's reading under the pointer, for the legend.
     let here = overlays.land.zip(cursor.ground).map(|(l, p)| legend::land_here(&sim.world, l, p));
     legend::show(ctx, &overlays, &assets, &sim.world, content, here.as_deref());
+    // [camera] "go" buttons fly smoothly, and end a follow.
     if let Some(p) = fly_to {
-        for mut cam in &mut cams {
-            cam.target = Vec3::new(p.x, 0.0, p.y);
-            cam.distance = cam.distance.min(70.0);
-            cam.pitch = 0.7;
-        }
+        follow.stop();
+        *mode = CameraMode::Orbit;
+        let d = cams.iter().next().map_or(70.0, |c| c.distance.min(70.0));
+        fly.to(FlyGoal::Point(p), Some(d), Some(0.7));
     }
 
-    person::pane(ctx, &mut sim, &mut tools, &mut selection, &mut flags, content);
+    person::pane(ctx, &mut sim, &mut tools, &mut selection, &mut flags, content, (&mut follow, &mut fly, &mut mode));
+    follow::banner(ctx, &sim, &mut follow, &mut mode, &mut selection, content);
     if tools.tool == Tool::Inspect && *mode == CameraMode::Orbit {
         hover::card(ctx, &sim, &cursor);
     }

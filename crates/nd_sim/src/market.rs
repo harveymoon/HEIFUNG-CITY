@@ -34,10 +34,21 @@ pub enum Resource {
     Plastics,
     /// The catch, landed by the fishing boats.
     Fish,
+    // -- [economy] new supply chains, appended so saved maps keep their keys --
+    /// Cattle and poultry from the cow and chicken farms, for the slaughterhouse.
+    Livestock,
+    /// Rock and ore dug out of a strip mine; sold out of town.
+    Ore,
+    /// Gutted, filleted fish: from the gutting sheds to the fish-stick
+    /// factory, the fish markets and the seafood restaurants.
+    Fillets,
+    /// Paintings and sculpture from the artists' studios, hung and sold by
+    /// the galleries.
+    Art,
 }
 
 impl Resource {
-    pub const ALL: [Resource; 14] = [
+    pub const ALL: [Resource; 18] = [
         Resource::Produce,
         Resource::Grain,
         Resource::Flour,
@@ -52,6 +63,10 @@ impl Resource {
         Resource::Fuel,
         Resource::Plastics,
         Resource::Fish,
+        Resource::Livestock,
+        Resource::Ore,
+        Resource::Fillets,
+        Resource::Art,
     ];
 
     pub fn label(self) -> &'static str {
@@ -70,6 +85,10 @@ impl Resource {
             Resource::Fuel => "fuel",
             Resource::Plastics => "plastics",
             Resource::Fish => "fish",
+            Resource::Livestock => "livestock",
+            Resource::Ore => "ore",
+            Resource::Fillets => "fish fillets",
+            Resource::Art => "art",
         }
     }
 
@@ -90,6 +109,10 @@ impl Resource {
             Resource::Fuel => 12.0,
             Resource::Plastics => 16.0,
             Resource::Fish => 3.0,
+            Resource::Livestock => 3.5,
+            Resource::Ore => 6.0,
+            Resource::Fillets => 6.0,
+            Resource::Art => 30.0,
         }
     }
 
@@ -143,6 +166,45 @@ pub enum BusinessKind {
     /// imports of the businesses around it, consolidated, and sends them
     /// on in its own lorries (`crate::cargo_hub`). Run by the city.
     CargoHub,
+    // -- [economy] businesses opened by pressure (`crate::pressure`) and the
+    // new supply chains. Appended so saved kinds keep their order. --
+    /// Car repair shop: wrecks and servicing (`world/pressure.rs`).
+    Mechanic,
+    /// Car dealership: a showroom and a forecourt of new cars; sells the
+    /// city's cars (`World::buy_car`).
+    CarDealer,
+    /// Private trash company: a yard of garbage trucks serving the
+    /// buildings the city's depots do not reach, for a fee (`crate::trash`).
+    TrashCompany,
+    /// Bike shop: sells and mends bikes.
+    BikeShop,
+    /// Cattle on pasture, fed grain: livestock for the slaughterhouse.
+    CowFarm,
+    /// Long chicken sheds, fed grain: livestock for the slaughterhouse.
+    ChickenFarm,
+    /// Livestock in, meat out.
+    Slaughterhouse,
+    /// An open pit: ore for export; dust, noise and a scarred landscape.
+    StripMine,
+    /// A recreational marina on a player-placed dock: berth fees from boat
+    /// owners (`world/waterfront.rs`).
+    Marina,
+    /// A fishing port on a player-placed dock: trawlers landing fish.
+    FishingPort,
+    /// Fish gutting and filleting sheds: fish in, fillets out.
+    FishGutting,
+    /// Fish-stick factory: fillets in, frozen food (counted as meat) out.
+    FishStickFactory,
+    /// Fish market: the catch sold to the public as groceries.
+    FishMarket,
+    /// Seafood restaurant: a place to go out, on fillets.
+    SeafoodRestaurant,
+    /// Golf driving range: bays, nets and floodlights; a place to go out.
+    GolfRange,
+    /// Artists' studios: art made in cheap space near the warehouses.
+    ArtStudio,
+    /// A small gallery: hangs and sells art, holds openings, takes donations.
+    Gallery,
 }
 
 /// Opening hours on the clock, `open..close`; a close earlier than the open
@@ -216,7 +278,7 @@ pub struct Recipe {
 }
 
 impl BusinessKind {
-    pub const COUNT: usize = 23;
+    pub const COUNT: usize = 40;
     /// Every kind, in `index` order.
     pub const ALL: [BusinessKind; Self::COUNT] = [
         BusinessKind::VertFarm,
@@ -242,6 +304,23 @@ impl BusinessKind {
         BusinessKind::Hotel,
         BusinessKind::TaxiCompany,
         BusinessKind::CargoHub,
+        BusinessKind::Mechanic,
+        BusinessKind::CarDealer,
+        BusinessKind::TrashCompany,
+        BusinessKind::BikeShop,
+        BusinessKind::CowFarm,
+        BusinessKind::ChickenFarm,
+        BusinessKind::Slaughterhouse,
+        BusinessKind::StripMine,
+        BusinessKind::Marina,
+        BusinessKind::FishingPort,
+        BusinessKind::FishGutting,
+        BusinessKind::FishStickFactory,
+        BusinessKind::FishMarket,
+        BusinessKind::SeafoodRestaurant,
+        BusinessKind::GolfRange,
+        BusinessKind::ArtStudio,
+        BusinessKind::Gallery,
     ];
 
     pub fn index(self) -> usize {
@@ -273,7 +352,37 @@ impl BusinessKind {
             BusinessKind::Hotel => "hotel",
             BusinessKind::TaxiCompany => "taxi company",
             BusinessKind::CargoHub => "cargo hub",
+            BusinessKind::Mechanic => "car repair shop",
+            BusinessKind::CarDealer => "car dealership",
+            BusinessKind::TrashCompany => "trash company",
+            BusinessKind::BikeShop => "bike shop",
+            BusinessKind::CowFarm => "cattle farm",
+            BusinessKind::ChickenFarm => "chicken farm",
+            BusinessKind::Slaughterhouse => "slaughterhouse",
+            BusinessKind::StripMine => "strip mine",
+            BusinessKind::Marina => "marina",
+            BusinessKind::FishingPort => "fishing port",
+            BusinessKind::FishGutting => "fish gutting shed",
+            BusinessKind::FishStickFactory => "fish-stick factory",
+            BusinessKind::FishMarket => "fish market",
+            BusinessKind::SeafoodRestaurant => "seafood restaurant",
+            BusinessKind::GolfRange => "golf driving range",
+            BusinessKind::ArtStudio => "artists' studios",
+            BusinessKind::Gallery => "gallery",
         }
+    }
+
+    /// [economy] Short key for the remote API: the label in snake case.
+    pub fn key(self) -> String {
+        self.label().replace(['\'', '-'], "").replace(' ', "_")
+    }
+
+    /// [economy] The kind with this key, label or variant name (case,
+    /// spaces, dashes and underscores ignored).
+    pub fn from_key(s: &str) -> Option<BusinessKind> {
+        let norm = |x: &str| x.to_ascii_lowercase().replace(['\'', '-', '_', ' '], "");
+        let want = norm(s);
+        Self::ALL.into_iter().find(|k| norm(k.label()) == want || norm(&format!("{k:?}")) == want)
     }
 
     pub fn recipe(self) -> Recipe {
@@ -317,6 +426,28 @@ impl BusinessKind {
             BusinessKind::TaxiCompany => Recipe { inputs: &[], outputs: &[] },
             // Handling fees (`world/cargo_hubs.rs`).
             BusinessKind::CargoHub => Recipe { inputs: &[], outputs: &[] },
+            // [economy] Services paid by the job (`world/pressure.rs`), car
+            // and bike sales (`world/cars.rs`) and contracts (`trash.rs`).
+            BusinessKind::Mechanic | BusinessKind::CarDealer | BusinessKind::TrashCompany | BusinessKind::BikeShop => Recipe { inputs: &[], outputs: &[] },
+            // A job adds about 50 a day at base prices (7 an hour of value
+            // added at `JOB_RATE`), like the farms and plants it sits with.
+            BusinessKind::CowFarm => Recipe { inputs: &[(Resource::Grain, 1.0)], outputs: &[(Resource::Livestock, 2.2)] },
+            BusinessKind::ChickenFarm => Recipe { inputs: &[(Resource::Grain, 0.8)], outputs: &[(Resource::Livestock, 1.8)] },
+            BusinessKind::Slaughterhouse => Recipe { inputs: &[(Resource::Livestock, 2.0)], outputs: &[(Resource::Meat, 2.0)] },
+            // Sold out of town at the export discount.
+            BusinessKind::StripMine => Recipe { inputs: &[], outputs: &[(Resource::Ore, 2.0)] },
+            // Berth fees (`world/waterfront.rs`).
+            BusinessKind::Marina => Recipe { inputs: &[], outputs: &[] },
+            BusinessKind::FishingPort => Recipe { inputs: &[], outputs: &[(Resource::Fish, 3.0)] },
+            BusinessKind::FishGutting => Recipe { inputs: &[(Resource::Fish, 2.0)], outputs: &[(Resource::Fillets, 2.0)] },
+            BusinessKind::FishStickFactory => Recipe { inputs: &[(Resource::Fillets, 1.5)], outputs: &[(Resource::Meat, 2.2)] },
+            BusinessKind::FishMarket => Recipe { inputs: &[(Resource::Fish, 2.0)], outputs: &[(Resource::Groceries, 3.0)] },
+            // Diners and golfers pay at the door (`World::venue_tabs`).
+            BusinessKind::SeafoodRestaurant => Recipe { inputs: &[(Resource::Fillets, 0.3)], outputs: &[] },
+            BusinessKind::GolfRange => Recipe { inputs: &[], outputs: &[] },
+            BusinessKind::ArtStudio => Recipe { inputs: &[], outputs: &[(Resource::Art, 0.5)] },
+            // Hangs art bought from the studios; sells it to visitors.
+            BusinessKind::Gallery => Recipe { inputs: &[(Resource::Art, 0.1)], outputs: &[] },
         }
     }
 
@@ -340,6 +471,13 @@ impl BusinessKind {
                 BusinessKind::Fishery,
                 BusinessKind::FishPlant,
                 BusinessKind::TowYard,
+                BusinessKind::CowFarm,
+                BusinessKind::ChickenFarm,
+                BusinessKind::Slaughterhouse,
+                BusinessKind::StripMine,
+                BusinessKind::FishGutting,
+                BusinessKind::FishStickFactory,
+                BusinessKind::TrashCompany,
             ],
             LandUse::Commercial => &[BusinessKind::Grocery, BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::GadgetShop, BusinessKind::Office],
             LandUse::Entertainment => &[BusinessKind::Venue],
@@ -356,7 +494,19 @@ impl BusinessKind {
             BusinessKind::GadgetShop => Hours::new(9, 20),
             BusinessKind::Venue => Hours::new(18, 3),
             BusinessKind::Office => Hours::new(8, 18),
-            BusinessKind::Parking | BusinessKind::FleetLot | BusinessKind::ContainerYard | BusinessKind::OilWell | BusinessKind::TowYard | BusinessKind::Hotel | BusinessKind::TaxiCompany | BusinessKind::CargoHub => Hours::ALWAYS,
+            BusinessKind::Parking | BusinessKind::FleetLot | BusinessKind::ContainerYard | BusinessKind::OilWell | BusinessKind::TowYard | BusinessKind::Hotel | BusinessKind::TaxiCompany | BusinessKind::CargoHub | BusinessKind::Marina => Hours::ALWAYS,
+            BusinessKind::Mechanic => Hours::new(8, 18),
+            BusinessKind::CarDealer | BusinessKind::BikeShop => Hours::new(9, 19),
+            BusinessKind::TrashCompany => Hours::new(6, 18),
+            BusinessKind::FishingPort => Hours::new(4, 16),
+            BusinessKind::FishGutting => Hours::new(5, 17),
+            BusinessKind::FishMarket => Hours::new(5, 14),
+            BusinessKind::SeafoodRestaurant => Hours::new(11, 23),
+            // Floodlit until late.
+            BusinessKind::GolfRange => Hours::new(8, 23),
+            BusinessKind::ArtStudio => Hours::new(10, 20),
+            BusinessKind::Gallery => Hours::new(11, 22),
+            BusinessKind::CowFarm | BusinessKind::ChickenFarm | BusinessKind::Slaughterhouse | BusinessKind::StripMine | BusinessKind::FishStickFactory => Hours::new(6, 22),
             BusinessKind::Fishery => Hours::new(4, 16),
             BusinessKind::Refinery | BusinessKind::FishPlant => Hours::new(6, 22),
             // Plants run two shifts.
@@ -370,6 +520,9 @@ impl BusinessKind {
         match self {
             BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop => Some(3),
             BusinessKind::Venue => Some(8),
+            BusinessKind::FishMarket | BusinessKind::BikeShop => Some(3),
+            BusinessKind::SeafoodRestaurant | BusinessKind::GolfRange => Some(6),
+            BusinessKind::Gallery => Some(8),
             _ => None,
         }
     }
@@ -377,7 +530,81 @@ impl BusinessKind {
     /// Part of the food chain, from farm to shelf: staffed first, and
     /// ordering ahead when the town is growing.
     pub fn is_food(self) -> bool {
-        matches!(self, BusinessKind::VertFarm | BusinessKind::GrainFarm | BusinessKind::ProteinVat | BusinessKind::Dairy | BusinessKind::Mill | BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::Fishery | BusinessKind::FishPlant)
+        matches!(
+            self,
+            BusinessKind::VertFarm
+                | BusinessKind::GrainFarm
+                | BusinessKind::ProteinVat
+                | BusinessKind::Dairy
+                | BusinessKind::Mill
+                | BusinessKind::Grocery
+                | BusinessKind::Bakery
+                | BusinessKind::Fishery
+                | BusinessKind::FishPlant
+                | BusinessKind::CowFarm
+                | BusinessKind::ChickenFarm
+                | BusinessKind::Slaughterhouse
+                | BusinessKind::FishingPort
+                | BusinessKind::FishGutting
+                | BusinessKind::FishStickFactory
+                | BusinessKind::FishMarket
+        )
+    }
+
+    /// [economy] A place people go out to and pay at the door by the hour
+    /// (`World::venue_tabs`): venues, and the restaurants, ranges and
+    /// galleries that open by pressure on whatever land suits them.
+    pub fn is_outing(self) -> bool {
+        matches!(self, BusinessKind::Venue | BusinessKind::SeafoodRestaurant | BusinessKind::GolfRange | BusinessKind::Gallery | BusinessKind::Marina)
+    }
+
+    /// [economy] What an hour's tab costs here against a venue's.
+    pub fn tab_factor(self) -> f32 {
+        match self {
+            BusinessKind::SeafoodRestaurant => 1.5,
+            BusinessKind::GolfRange => 1.7,
+            // A drink at the clubhouse or the marina café.
+            BusinessKind::Marina => 1.3,
+            // Entry is free; sales and donations pay (`world/pressure.rs`).
+            BusinessKind::Gallery => 0.4,
+            _ => 1.0,
+        }
+    }
+
+    /// [economy] Opened only where its site or a pressure calls for it:
+    /// never the market's pick for a plain lot (`World::business_kinds_viable`).
+    pub fn needs_site(self) -> bool {
+        matches!(
+            self,
+            BusinessKind::Mechanic
+                | BusinessKind::CarDealer
+                | BusinessKind::TrashCompany
+                | BusinessKind::BikeShop
+                | BusinessKind::CowFarm
+                | BusinessKind::ChickenFarm
+                | BusinessKind::Slaughterhouse
+                | BusinessKind::StripMine
+                | BusinessKind::Marina
+                | BusinessKind::FishingPort
+                | BusinessKind::FishGutting
+                | BusinessKind::FishStickFactory
+                | BusinessKind::FishMarket
+                | BusinessKind::SeafoodRestaurant
+                | BusinessKind::GolfRange
+                | BusinessKind::ArtStudio
+                | BusinessKind::Gallery
+        )
+    }
+
+    /// [economy] Most floors a building of this kind goes up with: sheds,
+    /// forecourts and ranges stay low.
+    pub fn max_floors(self) -> Option<u8> {
+        Some(match self {
+            BusinessKind::Mechanic | BusinessKind::TrashCompany | BusinessKind::GolfRange | BusinessKind::StripMine | BusinessKind::CowFarm | BusinessKind::ChickenFarm | BusinessKind::CarDealer | BusinessKind::BikeShop => 1,
+            BusinessKind::FishMarket | BusinessKind::SeafoodRestaurant | BusinessKind::ArtStudio | BusinessKind::Gallery | BusinessKind::FishGutting => 2,
+            BusinessKind::Slaughterhouse | BusinessKind::FishStickFactory => 3,
+            _ => return None,
+        })
     }
 
     /// The industry sub-zone this business belongs to, if any.
@@ -394,7 +621,7 @@ impl BusinessKind {
     /// Stock a business tries to keep of each input, in hours of production.
     pub fn target_hours(self) -> f32 {
         match self {
-            BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Venue => 36.0,
+            BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Venue | BusinessKind::FishMarket | BusinessKind::SeafoodRestaurant | BusinessKind::Gallery => 36.0,
             _ => 24.0,
         }
     }
@@ -430,6 +657,23 @@ pub struct Business {
     /// the inspector's cash-flow sparkline. Written when the day closes.
     #[serde(default)]
     pub books: Vec<DayBook>,
+    /// [economy] Why it opened, in words, when something in the city asked
+    /// for it (a pressure, a dock the player built); `None` for businesses
+    /// the market picked (`World::why_business` explains those).
+    #[serde(default)]
+    pub origin: Option<String>,
+    /// [economy] Money given by visitors who loved the place (galleries).
+    #[serde(default)]
+    pub donations: f32,
+    /// [economy] Doing well enough to want the plots next door: the land
+    /// agent's hook for growth (a gallery into a museum). Nothing acts on
+    /// it yet.
+    #[serde(default)]
+    pub wants_expand: bool,
+    /// [camera] The resident who owns it, when one put their money in (a
+    /// taxi firm's founder). The inspector pins it among their places.
+    #[serde(default)]
+    pub owner: Option<crate::citizens::CitizenId>,
 }
 
 /// One closed day of a business's books.
@@ -467,7 +711,16 @@ impl Business {
             fleet_trucks: 0,
             fleet_log: Vec::new(),
             books: Vec::new(),
+            origin: None,
+            donations: 0.0,
+            wants_expand: false,
+            owner: None,
         }
+    }
+
+    /// [economy] Days of the last `n` closed that took less than they paid out.
+    pub fn losing_days(&self, n: usize) -> usize {
+        self.books.iter().rev().take(n).filter(|d| d.revenue < d.spend).count()
     }
 
     /// Days of books kept: a month is enough to read a trend, and the list

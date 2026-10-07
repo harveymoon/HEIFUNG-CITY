@@ -324,6 +324,10 @@ pub struct Building {
     /// too, beside its railway platforms and bus terminal.
     #[serde(default)]
     pub metro: bool,
+    /// [land] Extra plots it spans, the form it was built in and who owns
+    /// it (`crate::estate`). Default: one plot, independently owned.
+    #[serde(default)]
+    pub plot: crate::estate::Plot,
 }
 
 fn one() -> f32 {
@@ -371,6 +375,7 @@ impl Building {
             demolition: None,
             look: None,
             metro: false,
+            plot: Default::default(),
         };
         b.recompute_capacity();
         b.update_rent(land_value);
@@ -452,6 +457,18 @@ impl Building {
             LandUse::Civic => (0, f * 4),
             LandUse::Park => (0, 1),
         };
+        // [land] A one-storey row of cheap homes (shacks, a trailer park,
+        // huts) houses as many as the two-storey walk-up it replaces; a
+        // building over merged plots holds as much per plot; a McMansion or
+        // a mansion is one household's.
+        let (homes, jobs) = match self.plot.form {
+            Some(form) if form.owner_occupied() => (1, 0),
+            _ => {
+                let homes = if self.land_use == LandUse::Residential && self.tier == Tier::Low && self.floors == 1 { 6 } else { homes };
+                let k = 1 + self.plot.extra_lots.len() as u16;
+                (homes * k, jobs * k)
+            }
+        };
         self.homes = homes;
         self.jobs = jobs;
         // Towers bring their own parking; middle blocks squeeze in a few spaces.
@@ -480,6 +497,10 @@ impl Building {
     pub fn update_rent(&mut self, land_value: f32) {
         self.land_value = land_value;
         self.rent = self.tier.base_rent() * (0.6 + land_value) * (0.7 + 0.3 * self.condition);
+        // [land] Bought outright: the household that owns it pays no rent.
+        if self.plot.form.is_some_and(|f| f.owner_occupied()) {
+            self.rent = 0.0;
+        }
     }
 
     /// Daily wage for a job here.

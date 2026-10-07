@@ -572,3 +572,39 @@ fn the_ground_stays_under_the_lanes_where_ramps_join() {
     }
     assert!(worst.0 < 0.05, "the ground stands {:.2} m over the lanes at {:?}", worst.0, worst.1);
 }
+
+/// [render] A car written off in a tunnel, near its portal where the bore
+/// runs barely below the ground and pushed onto the shoulder, sits at the
+/// tunnel road's height and counts as in the tunnel (the depth view draws
+/// it with the Underground layer); one on the street outside does not.
+#[test]
+fn a_wreck_in_a_tunnel_sits_on_the_tunnel_road_and_in_the_tunnel() {
+    let (mut w, _) = tunnel_town();
+    let (s0, _, _) = w.roads.nearest_street(Vec2::new(-350.0, 0.0)).unwrap();
+    let (s1, _, _) = w.roads.nearest_street(Vec2::new(300.0, 400.0)).unwrap();
+    let (route, a, b) = w.traffic.net.find_route(s0, Vec2::new(-350.0, 0.0), s1, Vec2::new(300.0, 400.0)).unwrap();
+    let id = w.traffic.spawn_car(CitizenId::default(), None, route, a, b, 0);
+    assert!(!w.car_in_tunnel(&w.traffic.cars[id]), "on the street");
+    let in_tunnel = |w: &World| {
+        let c = &w.traffic.cars[id];
+        matches!(w.traffic.net.lanes[c.route[c.idx] as usize].kind, LaneKind::Road { segment, .. } if w.roads.segment(segment).tunnel)
+    };
+    for _ in 0..400 {
+        w.traffic.step(1.0, 2);
+        if in_tunnel(&w) && w.traffic.cars[id].s > 20.0 {
+            break;
+        }
+    }
+    assert!(in_tunnel(&w), "into the tunnel");
+    w.traffic.crash(vec![id], crate::traffic::CrashCause::OffRoad, 30.0);
+    w.traffic.step(1.0, 2);
+    assert!(w.traffic.push_aside(id), "onto the shoulder");
+    w.traffic.step(1.0, 2);
+    let c = &w.traffic.cars[id];
+    let LaneKind::Road { segment, .. } = w.traffic.net.lanes[c.route[c.idx] as usize].kind else { unreachable!() };
+    let (pa, pb) = w.roads.segment_points(segment);
+    let (t, _) = crate::geom::project_on_segment(c.pos, pa, pb);
+    assert!((w.car_height(c) - w.road_height(segment, t)).abs() < 0.05, "at the tunnel road's height: {} vs {}", w.car_height(c), w.road_height(segment, t));
+    assert!(w.car_height(c) < -0.5, "below the street");
+    assert!(w.car_in_tunnel(c), "in the tunnel layer");
+}

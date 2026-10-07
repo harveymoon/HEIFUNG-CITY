@@ -145,7 +145,10 @@ impl World {
         let mut fresh: Vec<(BuildingId, f32, f32)> = Vec::new();
         let empty: Vec<CitizenId> = Vec::new();
         for (bid, b) in self.buildings.iter() {
-            if b.land_use != lu || !b.serves_at(hour) {
+            // [economy] A night out also finds the restaurants, driving
+            // ranges, galleries and marina clubhouses on other land.
+            let outing = lu == LandUse::Entertainment && b.business.as_ref().is_some_and(|z| z.kind.is_outing() && z.kind != BusinessKind::Venue);
+            if (b.land_use != lu && !outing) || !b.serves_at(hour) {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };
@@ -160,7 +163,11 @@ impl World {
             }
             let inside = crowds.get(&bid).unwrap_or(&empty);
             let (regular_friends, friends_there) = self.friends_at(id, bid, inside);
-            let social = 0.08 * regular_friends.min(3) as f32 + 0.15 * friends_there.min(2) as f32;
+            let mut social = 0.08 * regular_friends.min(3) as f32 + 0.15 * friends_there.min(2) as f32;
+            // [economy] An opening tonight draws a crowd, and the guests most.
+            if let Some(o) = self.scene.opening_at(bid, tick) {
+                social += if o.invited.contains(&id) { 1.2 } else { 0.4 };
+            }
             match memory {
                 Some(m) => {
                     let u = 1.1 * m.score + if m.regular { 0.35 } else { 0.0 } + 0.1 + social - d / reach;

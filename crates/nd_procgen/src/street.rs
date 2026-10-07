@@ -19,7 +19,7 @@ use nd_sim::traffic::{LaneId, LaneKind, LaneNetwork};
 use nd_sim::zoning::SIDEWALK;
 use nd_sim::NodeId;
 use rand::Rng;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub struct StreetInput<'a> {
     pub roads: &'a RoadNetwork,
@@ -87,6 +87,105 @@ pub const TUNNEL_WALL: f32 = 0.8;
 const KERB_H: f32 = 0.16;
 const ASPHALT_Y: f32 = 0.05;
 const MARK_Y: f32 = 0.085;
+
+/// Spring line of a tunnel bore (`bore_shell`): the walls stand straight
+/// up to here, the vault springs from it.
+pub const BORE_SPRING: f32 = 2.6;
+/// Lining bands round the inside of a bore, this far apart along it.
+const BORE_RIB_EVERY: f32 = 14.0;
+
+/// The cross-section of a tunnel bore of carriageway half width `hw`, from
+/// the right foot up the wall, over the vault and down the left wall:
+/// (offset right of travel, height). A horseshoe: straight walls
+/// `TUNNEL_WALL` outside the carriageway to [`BORE_SPRING`], then a half
+/// ellipse whose rise grows with the width (a wide bore is not a slot).
+pub fn bore_profile(hw: f32) -> Vec<(f32, f32)> {
+    let r = hw + TUNNEL_WALL;
+    let rise = (r * 0.75).clamp(2.6, 4.6);
+    let n = 12;
+    let mut v = vec![(r, 0.0), (r, BORE_SPRING)];
+    for k in 1..n {
+        let a = std::f32::consts::PI * k as f32 / n as f32;
+        v.push((r * a.cos(), BORE_SPRING + rise * a.sin()));
+    }
+    v.push((-r, BORE_SPRING));
+    v.push((-r, 0.0));
+    v
+}
+
+/// The direction into the bore from a point (x, y) of its cross-section:
+/// straight in across the walls, towards the spring line's centre in the vault.
+fn bore_inward(x: f32, y: f32) -> Vec2 {
+    Vec2::new(-x, if y > BORE_SPRING { BORE_SPRING - y } else { 0.0 }).normalize_or_zero()
+}
+
+/// A tunnel bore as a tube along `walk`: a concrete lining, darker lining
+/// bands every [`BORE_RIB_EVERY`] metres and a lamp line along each wall.
+///
+/// Every face looks *into* the tube and the materials cull back faces, so
+/// whichever half of the tube is nearer the camera (its outside towards the
+/// viewer) is never drawn: the near side is cut away from any angle and the
+/// cars inside show, with the far wall and vault behind them. No per-frame
+/// work: the cut comes from the winding alone.
+pub fn bore_shell(g: &mut Geometry, walk: &[Vec2], hw: f32, lining: [f32; 4], rib: [f32; 4], lamp: [f32; 4]) {
+    if walk.len() < 2 {
+        return;
+    }
+    let profile = bore_profile(hw);
+    let lines: Vec<Vec<Vec2>> = profile.iter().map(|&(x, _)| offset_path(walk, x)).collect();
+    // A point of the section (profile index k) at walk point i.
+    let at = |k: usize, i: usize| {
+        let q = lines[k][i];
+        Vec3::new(q.x, profile[k].1, q.y)
+    };
+    let inward3 = |right: Vec2, x: f32, y: f32| {
+        let d = bore_inward(x, y);
+        Vec3::new(right.x * d.x, d.y, right.y * d.x)
+    };
+    for i in 0..walk.len() - 1 {
+        let d = (walk[i + 1] - walk[i]).normalize_or_zero();
+        let right = Vec2::new(-d.y, d.x);
+        for k in 0..profile.len() - 1 {
+            let (mx, my) = ((profile[k].0 + profile[k + 1].0) * 0.5, (profile[k].1 + profile[k + 1].1) * 0.5);
+            g.part(Concrete).quad_facing([at(k, i), at(k, i + 1), at(k + 1, i + 1), at(k + 1, i)], inward3(right, mx, my), lining);
+        }
+        // The invert under the carriageway and its kerbs.
+        let (l, r) = (lines[profile.len() - 1][i], lines[0][i]);
+        let (l1, r1) = (lines[profile.len() - 1][i + 1], lines[0][i + 1]);
+        g.part(Concrete).quad_facing([Vec3::new(l.x, 0.01, l.y), Vec3::new(l1.x, 0.01, l1.y), Vec3::new(r1.x, 0.01, r1.y), Vec3::new(r.x, 0.01, r.y)], Vec3::Y, rib);
+    }
+    // Lamp lines high on each wall, a hand's breadth proud of the lining.
+    for side in [-1.0f32, 1.0] {
+        let x = side * (hw + TUNNEL_WALL - 0.06);
+        let line = offset_path(walk, x);
+        for i in 0..line.len() - 1 {
+            let d = (walk[i + 1] - walk[i]).normalize_or_zero();
+            let into = Vec3::new(d.y * side, 0.0, -d.x * side);
+            let (a, b) = (line[i], line[i + 1]);
+            let (y0, y1) = (BORE_SPRING - 0.45, BORE_SPRING - 0.2);
+            g.part(Glow).quad_facing([Vec3::new(a.x, y0, a.y), Vec3::new(b.x, y0, b.y), Vec3::new(b.x, y1, b.y), Vec3::new(a.x, y1, a.y)], into, lamp);
+        }
+    }
+    // Lining bands: a ring of quads standing a little proud of the lining.
+    let len = path_length(walk);
+    let mut s = BORE_RIB_EVERY * 0.5;
+    while s < len - 1.0 {
+        let (p0, d0) = point_along(walk, (s - 0.35).max(0.0));
+        let (p1, d1) = point_along(walk, (s + 0.35).min(len));
+        let (r0, r1) = (Vec2::new(-d0.y, d0.x), Vec2::new(-d1.y, d1.x));
+        let ring = |p: Vec2, right: Vec2, k: usize| {
+            let (x, y) = profile[k];
+            let inset = bore_inward(x, y) * 0.14;
+            let q = p + right * (x + inset.x);
+            Vec3::new(q.x, y + inset.y, q.y)
+        };
+        for k in 0..profile.len() - 1 {
+            let (mx, my) = ((profile[k].0 + profile[k + 1].0) * 0.5, (profile[k].1 + profile[k + 1].1) * 0.5);
+            g.part(Concrete).quad_facing([ring(p0, r0, k), ring(p1, r1, k), ring(p1, r1, k + 1), ring(p0, r0, k + 1)], inward3(r0, mx, my), rib);
+        }
+        s += BORE_RIB_EVERY;
+    }
+}
 
 /// A chain of segments drawn as one road.
 struct Run {
@@ -484,20 +583,28 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
 
     let heights = inp.heights;
     let node_z = |n: NodeId| heights.get(n.0 as usize).copied().unwrap_or(0.0);
+    let runs = build_runs(roads);
+    // Each run's height profile (none on a flat run), kept for the junction
+    // corners, which are set on the profiles of the two runs they join.
+    let profiles: Vec<(Vec<Vec2>, Vec<f32>)> = if heights.is_empty() { Vec::new() } else { runs.iter().map(|r| run_profile(roads, r, &node_z, inp.inner)).collect() };
+    // Everything a street draws stands within its pavements and wires (or a
+    // ramp's gore): well inside this reach.
+    let lifts: Vec<Option<RunProfile>> = profiles.iter().map(|(p, z)| z.iter().any(|h| *h != 0.0).then(|| RunProfile::new(p, z, 40.0))).collect();
+    let run_z = |ri: usize, p: Vec2| lifts.get(ri).and_then(|l| l.as_ref()).map_or(0.0, |l| l.height(p));
+    let corners = junction_corners(roads, net, &runs);
+    let cuts = crossing_cuts(roads);
+    let kerb_cols = KerbColours { kerb: kerb_c, paving: paving_c, tactile: rgba(pal.tactile) };
     // The run drawn last and where its drawing began, to set it on its
     // profile once it is complete (runs end at several `continue`s).
-    let mut drawn: Option<(Vec<usize>, Vec<Vec2>, Vec<f32>)> = None;
-    let finish_run = |g: &mut Geometry, drawn: &mut Option<(Vec<usize>, Vec<Vec2>, Vec<f32>)>| {
-        if let Some((from, pts, z)) = drawn.take() {
-            if z.iter().any(|h| *h != 0.0) {
-                // Everything a street draws stands within its pavements and
-                // wires (or a ramp's gore): well inside this reach.
-                let profile = RunProfile::new(&pts, &z, 40.0);
+    let mut drawn: Option<(Vec<usize>, usize)> = None;
+    let finish_run = |g: &mut Geometry, drawn: &mut Option<(Vec<usize>, usize)>| {
+        if let Some((from, ri)) = drawn.take() {
+            if let Some(Some(profile)) = lifts.get(ri) {
                 lift_since(g, &from, |p| profile.height(p));
             }
         }
     };
-    for run in build_runs(roads) {
+    for (ri, run) in runs.iter().enumerate() {
         finish_run(&mut g, &mut drawn);
         if let Some(marks) = worn_from.take() {
             weather_tail(&mut g, marks);
@@ -510,9 +617,8 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         let dense = if heights.is_empty() {
             run.points.clone()
         } else {
-            let (pts, z) = run_profile(roads, &run, &node_z, inp.inner);
-            drawn = Some((marks(&g), pts.clone(), z));
-            pts
+            drawn = Some((marks(&g), ri));
+            profiles[ri].0.clone()
         };
         let seg = roads.segment(run.first);
         if !inp.layer.keeps(seg.tunnel) {
@@ -526,11 +632,11 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             continue;
         }
         if run.kind == RoadKind::Path {
-            footpath(&mut g, pal, roads, &run, pts, &mut rng);
+            footpath(&mut g, pal, roads, run, pts, &mut rng);
             continue;
         }
         if run.kind == RoadKind::Rail {
-            railway(&mut g, pal, &run);
+            railway(&mut g, pal, run);
             continue;
         }
         // Cheap streets are neglected: faded markings, potholes, cracked
@@ -566,20 +672,25 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             }
         }
 
-        // Kerbs and pavements stop short of the junction pads.
-        let d_start = degree(roads, run.start_node);
-        let d_end = degree(roads, run.end_node);
+        // Kerbs and pavements stop short of the junction pads, each side as
+        // far back as the rounded corner it runs into needs
+        // (`junction_corners`); street furniture keeps to this stretch.
         let t0 = node_r(run.start_node) + 0.6;
         let t1 = node_r(run.end_node) + 0.6;
         let walk = trim(pts, t0, t1);
         if walk.len() < 2 {
             continue;
         }
+        // A roundabout's ring has a kerb and pavement round its outside only,
+        // which the arms' corners run into; its inner edge is the mountable
+        // apron. The side of the run that faces out:
+        let ring_out = seg.ring.then(|| roads.ring_of_segment(run.first).and_then(|k| roads.rings.get(k))).flatten().map(|ring| {
+            let (mid, d) = point_along(pts, path_length(pts) * 0.5);
+            if (mid + Vec2::new(-d.y, d.x) * hw).distance(ring.center) > ring.radius { 1.0f32 } else { -1.0 }
+        });
         // Highways and ramps have hard shoulders, not pavements: a low
-        // barrier at the edge and lamps, nothing else beside them. So does
-        // a roundabout's ring: its inner edge is the mountable apron, and
-        // the arms' pavements meet round the outside.
-        let motorway = seg.is_motorway() || seg.ring;
+        // barrier at the edge and lamps, nothing else beside them.
+        let motorway = seg.is_motorway() || (seg.ring && ring_out.is_none());
         if motorway {
             let barrier = rgba(mul(pal.concrete(0), 0.8));
             // Where a ramp runs beside the carriageway to merge or diverge,
@@ -640,21 +751,39 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         if seg.tunnel {
             // The bore: like a ramp, a way for traffic only (nobody walks
             // or parks in it), so no pavements: a low safety kerb at the
-            // shoulder, the walls just past it, a lit strip overhead and no
-            // street furniture. `nd_procgen::terrain` sizes the portal arch
-            // to these walls (`TUNNEL_WALL`).
-            let wall = rgba(mul(pal.concrete(0), 0.7));
+            // shoulder, then the tube (`bore_shell`) with its lamp lines and
+            // no street furniture. `nd_procgen::terrain` sizes the portal
+            // arch to the tube's walls (`TUNNEL_WALL`).
             for side in [-1.0f32, 1.0] {
                 g.part(Concrete).path_box(&walk, side * (hw + 0.2), 0.4, 0.0, 0.35, kerb_c);
-                g.part(Concrete).path_box(&walk, side * (hw + TUNNEL_WALL - 0.2), 0.4, 0.0, 5.6, wall);
             }
-            g.part(Glow).path_box(&walk, 0.0, 0.25, 5.3, 5.4, rgba(mul(pal.street_lamp, 0.9)));
+            bore_shell(&mut g, &walk, hw, rgba(mul(pal.concrete(0), 0.75)), rgba(mul(pal.concrete(0), 0.5)), rgba(mul(pal.street_lamp, 0.9)));
             continue;
         }
+        // Kerbs and pavements, each side to its own corners, dropped
+        // wherever a crosswalk meets them.
+        let run_cuts: Vec<Cut> = run.nodes.windows(2).filter_map(|w| segment_between(roads, w[0], w[1])).flat_map(|s| cuts.get(&s.0).into_iter().flatten().copied()).collect();
         for side in [-1.0f32, 1.0] {
-            g.part(Concrete).path_box(&walk, side * (hw + 0.15), 0.3, 0.0, KERB_H, kerb_c);
-            let pw = SIDEWALK - 0.3;
-            g.part(Paving).path_box(&walk, side * (hw + 0.3 + pw * 0.5), pw, 0.0, KERB_H - 0.01, paving_c);
+            if ring_out.is_some_and(|o| o != side) {
+                continue;
+            }
+            let e0 = corners.trims.get(&(ri, true, side > 0.0)).copied().unwrap_or(t0);
+            let e1 = corners.trims.get(&(ri, false, side > 0.0)).copied().unwrap_or(t1);
+            let line = if (e0, e1) == (t0, t1) { walk.clone() } else { trim(pts, e0, e1) };
+            if line.len() >= 2 {
+                kerb_ribbon(&mut g, &offset_path(&line, side * hw), None, side, SIDEWALK, true, true, &run_cuts, &kerb_cols);
+            }
+        }
+        if let Some(side) = ring_out {
+            // Round the ring: lamps on the outer pavement, nothing else.
+            let len = path_length(&walk);
+            let mut s = 6.0;
+            while s < len - 4.0 {
+                let (p, d) = point_along(&walk, s);
+                lamp_post_world(&mut g, p + Vec2::new(-d.y, d.x) * side * (hw + 0.95), 7.0, pal.street_lamp);
+                s += 28.0;
+            }
+            continue;
         }
         // Furniture by arc length along the pavement.
         let len = path_length(&walk);
@@ -742,18 +871,6 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         }
         if grit {
             street_grit(&mut g, pal, &walk, hw, len, &mut rng);
-        }
-        // Bollards where the pavement meets a junction.
-        for (s_end, deg) in [(0.0, d_start), (len, d_end)] {
-            if deg < 3 {
-                continue;
-            }
-            for side in [-1.0f32, 1.0] {
-                for k in 0..2 {
-                    let (q, _, _) = at(s_end, side, hw + 0.9 + k as f32 * 1.1);
-                    bollard_world(&mut g, q, mul(pal.steel, 0.7));
-                }
-            }
         }
     }
 
@@ -875,6 +992,66 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         }
     }
 
+    // Junction corners: a rounded kerb from one arm's pavement round to the
+    // next, the paving behind it out to where the arms' pavements end, and
+    // asphalt out to where the kerb lines would have met, so no bare ground
+    // shows between the arms. The kerb drops where the arms' crosswalks
+    // cross it. Each corner is set on the heights of the two runs it joins,
+    // blended along it; a cheap junction's corners are worn like its streets.
+    for (&node, list) in corners.by_node.iter().filter(|_| inp.layer.keeps(false)) {
+        let nid = NodeId(node);
+        let centre = roads.node(nid).pos;
+        let worn: Vec<(Surface, usize, usize)> = [Asphalt, Paving, Concrete].iter().map(|s| (*s, g.get(*s).positions.len(), g.get(*s).indices.len())).collect();
+        for corner in list {
+            let from = marks(&g);
+            let corner_cuts: Vec<Cut> = corner.arms.iter().flat_map(|a| cuts.get(&a.2 .0).into_iter().flatten().copied()).collect();
+            kerb_ribbon(&mut g, &corner.kerb, Some(&corner.normals), -1.0, CORNER_RIBBON, false, corner.stub, &corner_cuts, &kerb_cols);
+            if corner.apron.len() >= 3 {
+                g.part(Asphalt).ground_polygon(&corner.apron, ASPHALT_Y + 0.01, asphalt_c);
+            }
+            if corner.fill.len() >= 3 {
+                g.part(Paving).ground_polygon(&corner.fill, KERB_H - 0.01, paving_c);
+                let mut edges: Vec<(Vec2, Vec2, Option<Vec2>)> = corner.rim.windows(2).map(|w| (w[0], w[1], None)).collect();
+                if corner.stub && !corner.rim.is_empty() {
+                    // Where the paving stops beside a link with none: its
+                    // two ends (one of them hidden under the other arm's).
+                    let (k0, k1) = (corner.kerb[0], corner.kerb[corner.kerb.len() - 1]);
+                    let back_last = corner.fill[corner.fill.len() - corner.rim.len() - 1];
+                    edges.push((back_last, corner.rim[0], Some(k1 - corner.kerb[corner.kerb.len() - 2])));
+                    edges.push((corner.rim[corner.rim.len() - 1], corner.fill[0], Some(k0 - corner.kerb[1])));
+                }
+                for (p, q, facing) in edges {
+                    let n = Vec2::new(-(q - p).y, (q - p).x);
+                    let towards = facing.unwrap_or((p + q) * 0.5 - centre);
+                    let n = if n.dot(towards) < 0.0 { -n } else { n };
+                    let y = KERB_H - 0.01;
+                    g.part(Paving).quad_facing([Vec3::new(p.x, 0.0, p.y), Vec3::new(q.x, 0.0, q.y), Vec3::new(q.x, y, q.y), Vec3::new(p.x, y, p.y)], Vec3::new(n.x, 0.0, n.y), paving_c);
+                }
+            }
+            // Bollards on the corner of a junction proper, behind the kerb
+            // where turning lorries cut it.
+            if degree(roads, nid) >= 3 && corner.turn < -0.5 {
+                let len = path_length(&corner.kerb);
+                for ds in [-0.7f32, 0.7] {
+                    let (p, d) = point_along(&corner.kerb, len * 0.5 + ds);
+                    bollard_world(&mut g, p + Vec2::new(d.y, -d.x) * 0.55, mul(pal.steel, 0.7));
+                }
+            }
+            if !lifts.is_empty() {
+                // Each run's profile is the node's height at the junction and
+                // rises along the run, so the two together are the height of
+                // the road beside either arm (the other contributing only
+                // the node's), and a plane through both slopes between.
+                let (ra, rb) = (corner.arms[0].0, corner.arms[1].0);
+                let z0 = node_z(nid);
+                lift_since(&mut g, &from, |p| run_z(ra, p) + run_z(rb, p) - z0);
+            }
+        }
+        if inp.land_value.at(centre) < 0.35 {
+            weather_tail(&mut g, worn);
+        }
+    }
+
     // [pedestrians] Mid-block zebras on long blocks, with a beacon post at
     // each kerb.
     for (sid, t) in nd_sim::walk::midblock_crossings(roads) {
@@ -911,7 +1088,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
 
     // [pedestrians] Walk / don't walk heads on signalised crosswalks: a
     // short pole at each kerb with a head facing across.
-    for post in ped_signal_posts(roads, net) {
+    for post in ped_signal_posts_at(roads, net, &corners) {
         // The junction the crosswalk belongs to decides the layer and the
         // height (not the nearest node, which may be another road's).
         let Some(node) = net.intersections.get(post.inter).map(|i| i.node) else { continue };
@@ -930,7 +1107,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
     }
 
     // Signal posts: pole at the kerb, arm over the approach, one head per lane.
-    for post in signal_groups(net) {
+    for post in signal_groups(net, &corners) {
         // Layer and height from the junction the approach feeds: two
         // nearest-node scans per post were O(nodes) each, and a node with
         // no live roads counted as underground (`all` of nothing).
@@ -1234,7 +1411,7 @@ fn feeders(net: &LaneNetwork) -> BTreeMap<LaneId, Vec<LaneId>> {
 
 /// Approaches to signalised junctions grouped by segment and direction, in
 /// segment order so the street mesh is the same every time it is built.
-fn signal_groups(net: &LaneNetwork) -> Vec<SignalGroup> {
+fn signal_groups(net: &LaneNetwork, corners: &Corners) -> Vec<SignalGroup> {
     let feeders = feeders(net);
     let mut groups: BTreeMap<(u32, bool), (NodeId, Vec<(u8, Vec2, Vec2)>)> = BTreeMap::new();
     for inter in &net.intersections {
@@ -1261,7 +1438,9 @@ fn signal_groups(net: &LaneNetwork) -> Vec<SignalGroup> {
         let right = Vec2::new(-d.y, d.x);
         let rightmost = lanes.iter().max_by_key(|(i, _, _)| *i).unwrap();
         let leftmost = lanes.iter().min_by_key(|(i, _, _)| *i).unwrap();
-        let pole = rightmost.1 + right * (LANE_WIDTH * 0.5 + SHOULDER + 0.45);
+        // On the pavement: behind the corner's kerb where the corner is
+        // rounded off past it.
+        let pole = behind_kerb(rightmost.1 + right * (LANE_WIDTH * 0.5 + SHOULDER + 0.45), corners.by_node.get(&node.0), 0.45);
         out.push(SignalGroup { node, pole, leftmost: leftmost.1 - right * (LANE_WIDTH * 0.2), heads: lanes.iter().map(|(_, p, _)| *p).collect(), heading: d.y.atan2(d.x) });
     }
     out
@@ -1272,6 +1451,10 @@ fn signal_groups(net: &LaneNetwork) -> Vec<SignalGroup> {
 /// The crosswalk sits where `nd_sim::walk` puts it, so the lamps stand at
 /// the kerbs walkers wait at.
 pub fn ped_signal_posts(roads: &RoadNetwork, net: &LaneNetwork) -> Vec<PedSignalPost> {
+    ped_signal_posts_at(roads, net, &junction_corners(roads, net, &build_runs(roads)))
+}
+
+fn ped_signal_posts_at(roads: &RoadNetwork, net: &LaneNetwork, corners: &Corners) -> Vec<PedSignalPost> {
     let mut out = Vec::new();
     for (k, inter) in net.intersections.iter().enumerate() {
         if !inter.signalized || roads.nodes.len() <= inter.node.0 as usize {
@@ -1291,7 +1474,7 @@ pub fn ped_signal_posts(roads: &RoadNetwork, net: &LaneNetwork) -> Vec<PedSignal
             let hw = seg.half_width();
             for sgn in [-1.0f32, 1.0] {
                 // Just outside the zebra, on the kerb, facing the far kerb.
-                let pole = mid + side * sgn * (hw + 0.35) + away * (nd_sim::walk::CROSSWALK_HALF + 0.35);
+                let pole = behind_kerb(mid + side * sgn * (hw + 0.35) + away * (nd_sim::walk::CROSSWALK_HALF + 0.35), corners.by_node.get(&inter.node.0), 0.35);
                 let facing = -side * sgn;
                 let lamp = Vec3::new(pole.x + facing.x * 0.3, PED_HEAD_Y, pole.y + facing.y * 0.3);
                 out.push(PedSignalPost { inter: k, approach: ap, pole, lamp, heading: facing.y.atan2(facing.x) });
@@ -1330,8 +1513,602 @@ pub fn signal_posts(net: &LaneNetwork) -> Vec<SignalPost> {
         .collect()
 }
 
+// ── kerbs, corners and curb cuts ────────────────────────────────────────────
+
+/// Kerb width; its road-side face is at the carriageway's half width.
+const KERB_W: f32 = 0.3;
+/// Top of a dropped kerb at a crossing: just proud of the asphalt.
+const KERB_LOW: f32 = ASPHALT_Y + 0.025;
+const KERB_DROP: f32 = KERB_H - KERB_LOW;
+/// Along the kerb, the sloped flare either side of a dropped kerb.
+const CUT_FLARE: f32 = 0.8;
+/// Behind a dropped kerb: the low landing the tactile pad lies on, then the
+/// ramp back up to the pavement.
+const CUT_LANDING: f32 = 0.9;
+const CUT_RAMP: f32 = 0.8;
+/// Depth of a tactile pad (the real ones are 0.8 m deep at a crossing).
+const TACTILE_DEPTH: f32 = 0.8;
+/// How deep a corner's kerb ribbon reaches into the pavement: to the top of
+/// a curb cut's ramp. The flat paving fill of the corner begins there.
+const CORNER_RIBBON: f32 = KERB_W + CUT_LANDING + CUT_RAMP;
+
+/// Where a crosswalk meets the kerbs of the street it crosses: a band
+/// `half` either side of `mid` along the street, as far out to either side
+/// as the street's pavements reach.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Cut {
+    /// On the street's centre line, in the middle of the crosswalk.
+    pub mid: Vec2,
+    /// Along the street.
+    pub along: Vec2,
+    pub half: f32,
+    /// How far across the street (from its centre line) the cut applies.
+    pub reach: f32,
+}
+
+impl Cut {
+    fn u(&self, p: Vec2) -> f32 {
+        (p - self.mid).dot(self.along)
+    }
+
+    fn near(&self, p: Vec2) -> bool {
+        (p - self.mid).perp_dot(self.along).abs() <= self.reach
+    }
+
+    /// How far the kerb at `p` is dropped: 1 across the crosswalk, falling
+    /// to 0 over the flares.
+    fn drop(&self, p: Vec2) -> f32 {
+        if !self.near(p) {
+            return 0.0;
+        }
+        let u = self.u(p).abs();
+        if u <= self.half {
+            1.0
+        } else {
+            (1.0 - (u - self.half) / CUT_FLARE).max(0.0)
+        }
+    }
+
+    fn on_pad(&self, p: Vec2) -> bool {
+        self.near(p) && self.u(p).abs() <= self.half + 1e-3
+    }
+}
+
+/// The segment joining two nodes, if one is alive.
+fn segment_between(roads: &RoadNetwork, na: NodeId, nb: NodeId) -> Option<SegmentId> {
+    roads.node(na).segments.iter().copied().find(|&s| {
+        let sg = roads.segment(s);
+        sg.alive && ((sg.a == na && sg.b == nb) || (sg.a == nb && sg.b == na))
+    })
+}
+
+/// Every place a marked crosswalk meets the kerbs, by the segment crossed:
+/// a junction's crosswalk across each arm (where `nd_sim::walk` puts it and
+/// the paint goes), mid-block zebras, and the zebra where a footpath
+/// crosses a street. The kerbs drop wherever these meet them.
+pub(crate) fn crossing_cuts(roads: &RoadNetwork) -> HashMap<u32, Vec<Cut>> {
+    let mut out: HashMap<u32, Vec<Cut>> = HashMap::new();
+    let mut add = |sid: SegmentId, mid: Vec2, along: Vec2, half: f32| {
+        let reach = roads.segment(sid).half_width() + SIDEWALK + 0.5;
+        out.entry(sid.0).or_default().push(Cut { mid, along, half, reach });
+    };
+    for (i, node) in roads.nodes.iter().enumerate() {
+        let nid = NodeId(i as u32);
+        let streets: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).collect();
+        if streets.is_empty() || node.segments.iter().any(|&s| roads.segment(s).alive && roads.segment(s).is_rail()) {
+            continue;
+        }
+        if streets.len() == 2 {
+            // A footpath over a street: the zebra across it at the node.
+            if node.segments.iter().any(|&s| roads.segment(s).alive && roads.segment(s).kind == RoadKind::Path) {
+                let (a, b) = roads.segment_points(streets[0]);
+                let d = (b - a).normalize_or_zero();
+                for &s in &streets {
+                    add(s, node.pos, d, 1.3);
+                }
+            }
+            continue;
+        }
+        if streets.len() < 3 {
+            continue;
+        }
+        // Nobody crosses a ring's own lanes on a marked crosswalk, nor a
+        // highway or a tunnel (`nd_sim::walk::WalkGraph::junction`).
+        let on_ring = roads.ring_of_node(nid).is_some();
+        for &sid in &streets {
+            let seg = roads.segment(sid);
+            if seg.fronts_nothing() || (on_ring && roads.ring_of_segment(sid).is_some()) {
+                continue;
+            }
+            let (a, b) = roads.segment_points(sid);
+            let away = (if seg.a == nid { b - a } else { a - b }).normalize_or_zero();
+            add(sid, node.pos + away * nd_sim::walk::crosswalk_setback(roads, nid, sid), away, nd_sim::walk::CROSSWALK_HALF);
+        }
+    }
+    for (sid, t) in nd_sim::walk::midblock_crossings(roads) {
+        let (a, b) = roads.segment_points(sid);
+        add(sid, a.lerp(b, t), (b - a).normalize_or_zero(), nd_sim::walk::CROSSWALK_HALF);
+    }
+    out
+}
+
+/// The colours a kerb ribbon is drawn in.
+struct KerbColours {
+    kerb: [f32; 4],
+    paving: [f32; 4],
+    tactile: [f32; 4],
+}
+
+/// A kerb and the pavement behind it along `face` (the kerb's road-side
+/// edge), with the pavement on the `out` side (+1 right of travel, as
+/// `offset_path` counts it) and `width` deep from the face. `back` closes
+/// the pavement's far edge and `caps` its two ends. `normals`, if given,
+/// are the exact directions into the pavement at each point of `face` (a
+/// rounded corner's: mitred offsets fold over on its short chords).
+///
+/// Wherever a crosswalk in `cuts` meets it, the kerb drops to just above
+/// the road across the crosswalk's width with a sloped flare either side;
+/// behind it the pavement dips to a landing and ramps back up, and a
+/// tactile pad lies on the landing. Heights are linear in position along
+/// each straight piece of the kerb, so a point wherever a cut's band or
+/// flare begins or ends is all the shape needs: a plain stretch is four
+/// quads a piece, a curb cut a few dozen triangles more.
+#[allow(clippy::too_many_arguments)]
+fn kerb_ribbon(g: &mut Geometry, face: &[Vec2], normals: Option<&[Vec2]>, out: f32, width: f32, back: bool, caps: bool, cuts: &[Cut], c: &KerbColours) {
+    if face.len() < 2 || normals.is_some_and(|n| n.len() != face.len()) {
+        return;
+    }
+    let mut pts: Vec<Vec2> = vec![face[0]];
+    let mut nrm: Vec<Vec2> = normals.map(|n| vec![n[0]]).unwrap_or_default();
+    for (wi, w) in face.windows(2).enumerate() {
+        let (a, b) = (w[0], w[1]);
+        let (na, nb) = normals.map_or((Vec2::ZERO, Vec2::ZERO), |n| (n[wi], n[wi + 1]));
+        let mut ts: Vec<f32> = Vec::new();
+        for k in cuts {
+            if !(k.near(a) || k.near(b)) {
+                continue;
+            }
+            let (ua, ub) = (k.u(a), k.u(b));
+            if (ub - ua).abs() < 1e-5 {
+                continue;
+            }
+            for thr in [-k.half - CUT_FLARE, -k.half, k.half, k.half + CUT_FLARE] {
+                let t = (thr - ua) / (ub - ua);
+                if t > 1e-3 && t < 1.0 - 1e-3 {
+                    ts.push(t);
+                }
+            }
+        }
+        ts.sort_by(f32::total_cmp);
+        let mut last = 0.0;
+        for t in ts {
+            if t - last > 1e-3 {
+                pts.push(a.lerp(b, t));
+                if normals.is_some() {
+                    nrm.push(na.lerp(nb, t).normalize_or_zero());
+                }
+                last = t;
+            }
+        }
+        if b.distance(*pts.last().unwrap()) > 1e-3 {
+            pts.push(b);
+            if normals.is_some() {
+                nrm.push(nb);
+            }
+        }
+    }
+    let n = pts.len();
+    if n < 2 {
+        return;
+    }
+    let f: Vec<f32> = pts.iter().map(|&p| cuts.iter().map(|k| k.drop(p)).fold(0.0, f32::max)).collect();
+    let pad: Vec<Option<usize>> = pts.iter().map(|&p| cuts.iter().position(|k| k.on_pad(p))).collect();
+    // Stations across: kerb face, kerb back, end of the landing, top of the
+    // ramp, and the pavement's far edge (when it reaches past the ramp).
+    let mut st = vec![0.0, KERB_W, KERB_W + CUT_LANDING, CORNER_RIBBON];
+    if width > CORNER_RIBBON + 0.01 {
+        st.push(width);
+    }
+    let off = |o: f32| if normals.is_some() { pts.iter().zip(&nrm).map(|(p, n)| *p + *n * o).collect() } else { offset_path(&pts, out * o) };
+    let lines: Vec<Vec<Vec2>> = st.iter().map(|&o| off(o)).collect();
+    let far = lines.len() - 1;
+    let pad_lines = [off(KERB_W + 0.03), off(KERB_W + 0.03 + TACTILE_DEPTH)];
+    let top = KERB_H - 0.01;
+    let kerb_y = |i: usize| KERB_H - KERB_DROP * f[i];
+    let low_y = |i: usize| top - KERB_DROP * f[i];
+    let v3 = |p: Vec2, y: f32| Vec3::new(p.x, y, p.y);
+    for i in 0..n - 1 {
+        let j = i + 1;
+        let d = (pts[j] - pts[i]).normalize_or_zero();
+        if d == Vec2::ZERO {
+            continue;
+        }
+        let inward = Vec2::new(-d.y, d.x) * out;
+        let inward3 = Vec3::new(inward.x, 0.0, inward.y);
+        let (l0, l1) = (&lines[0], &lines[1]);
+        g.part(Concrete).quad_facing([v3(l0[i], kerb_y(i)), v3(l0[j], kerb_y(j)), v3(l1[j], kerb_y(j)), v3(l1[i], kerb_y(i))], Vec3::Y, c.kerb);
+        g.part(Concrete).quad_facing([v3(l0[i], 0.0), v3(l0[j], 0.0), v3(l0[j], kerb_y(j)), v3(l0[i], kerb_y(i))], -inward3, c.kerb);
+        if f[i] == 0.0 && f[j] == 0.0 {
+            let lf = &lines[far];
+            g.part(Paving).quad_facing([v3(l1[i], top), v3(l1[j], top), v3(lf[j], top), v3(lf[i], top)], Vec3::Y, c.paving);
+        } else {
+            let (l2, l3) = (&lines[2], &lines[3]);
+            g.part(Paving).quad_facing([v3(l1[i], low_y(i)), v3(l1[j], low_y(j)), v3(l2[j], low_y(j)), v3(l2[i], low_y(i))], Vec3::Y, c.paving);
+            g.part(Paving).quad_facing([v3(l2[i], low_y(i)), v3(l2[j], low_y(j)), v3(l3[j], top), v3(l3[i], top)], Vec3::Y, c.paving);
+            if far > 3 {
+                let lf = &lines[far];
+                g.part(Paving).quad_facing([v3(l3[i], top), v3(l3[j], top), v3(lf[j], top), v3(lf[i], top)], Vec3::Y, c.paving);
+            }
+        }
+        if pad[i].is_some() && pad[i] == pad[j] {
+            let y = top - KERB_DROP + 0.006;
+            let (a, b) = (&pad_lines[0], &pad_lines[1]);
+            g.part(Tactile).quad_facing([v3(a[i], y), v3(a[j], y), v3(b[j], y), v3(b[i], y)], Vec3::Y, c.tactile);
+        }
+        if back {
+            let lf = &lines[far];
+            g.part(Paving).quad_facing([v3(lf[i], 0.0), v3(lf[j], 0.0), v3(lf[j], top), v3(lf[i], top)], inward3, c.paving);
+        }
+    }
+    if caps {
+        for (i, k) in [(0, 1), (n - 1, n - 2)] {
+            let away = (pts[i] - pts[k]).normalize_or_zero();
+            let (a, b) = (lines[0][i], lines[far][i]);
+            g.part(Paving).quad_facing([v3(a, 0.0), v3(b, 0.0), v3(b, top), v3(a, kerb_y(i))], Vec3::new(away.x, 0.0, away.y), c.paving);
+        }
+    }
+}
+
+/// One road arriving at a node where its run ends: where its kerbs and
+/// pavements begin, and which sides have them.
+struct ArmEnd {
+    run: usize,
+    /// The run starts at the node (else it ends there).
+    start: bool,
+    /// The segment at the node.
+    seg: SegmentId,
+    /// The run's points from the node outward.
+    path: Vec<Vec2>,
+    hw: f32,
+    /// Pavement on the counter-clockwise side of the way out (toward the
+    /// next arm round), and on the clockwise side.
+    pave_ccw: bool,
+    pave_cw: bool,
+    /// A one-way link with no pavements of its own (`Segment::ramp`): a
+    /// neighbour's kerb rounds the corner onto it and stops.
+    stub: bool,
+    ang: f32,
+}
+
+/// The kerb round one corner of a junction, from one arm's pavement to the
+/// next arm's counter-clockwise.
+pub(crate) struct Corner {
+    /// The kerb face, with the road on its left: from the first arm's kerb
+    /// in toward the junction, round, and out along the second arm's.
+    pub kerb: Vec<Vec2>,
+    /// At each point of the kerb, the direction into the pavement.
+    pub normals: Vec<Vec2>,
+    /// Asphalt between a rounded kerb and where the kerb lines would meet.
+    pub apron: Vec<Vec2>,
+    /// Flat paving behind the kerb's ribbon, out to the arms' back edges.
+    pub fill: Vec<Vec2>,
+    /// The fill's far edge, closed with a side face.
+    pub rim: Vec<Vec2>,
+    /// The two arms: (run, starts here, segment).
+    pub arms: [(usize, bool, SegmentId); 2],
+    /// Signed turn of the kerb at the corner: negative for an ordinary
+    /// corner rounded off, positive for one that wraps round the junction.
+    pub turn: f32,
+    /// One arm has no pavement: the kerb rounds onto it and ends there.
+    pub stub: bool,
+}
+
+/// Every junction corner, and how far each run's kerb on each side stays
+/// back from its end to meet it.
+pub(crate) struct Corners {
+    pub by_node: BTreeMap<u32, Vec<Corner>>,
+    /// (run, at its start, the run's +1 side) → distance from the node
+    /// along the run where that kerb begins.
+    pub trims: HashMap<(usize, bool, bool), f32>,
+}
+
+/// Is a closed polygon free of self-crossings?
+fn simple_polygon(poly: &[Vec2]) -> bool {
+    let n = poly.len();
+    if n < 3 {
+        return false;
+    }
+    let o = |p: Vec2, q: Vec2, r: Vec2| (q - p).perp_dot(r - p);
+    let crosses = |a: Vec2, b: Vec2, c: Vec2, d: Vec2| {
+        let (d1, d2, d3, d4) = (o(c, d, a), o(c, d, b), o(a, b, c), o(a, b, d));
+        d1 * d2 < 0.0 && d3 * d4 < 0.0
+    };
+    for i in 0..n {
+        for j in i + 2..n {
+            if i == 0 && j == n - 1 {
+                continue;
+            }
+            if crosses(poly[i], poly[(i + 1) % n], poly[j], poly[(j + 1) % n]) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// The corner between arm `a` and the next arm `b` counter-clockwise at a
+/// junction, their kerbs beginning no nearer than `base` to it. The kerb is
+/// rounded with a radius of 3 to 6 m by the size of the roads, and each
+/// arm's kerb is set back as far as the round needs: the junction's
+/// crosswalks then meet the curve itself, as they do at a real corner.
+/// Returns the corner and the two set-backs, or `None` where the arms are
+/// too close in angle (or too short) to round off.
+fn corner_between(a: &ArmEnd, b: &ArmEnd, base: f32) -> Option<(Corner, f32, f32)> {
+    let (lim_a, lim_b) = ((path_length(&a.path) * 0.45).min(base + 20.0), (path_length(&b.path) * 0.45).min(base + 20.0));
+    if base > lim_a || base > lim_b {
+        return None;
+    }
+    let narrow = a.hw.min(b.hw);
+    let mut r = (0.6 * narrow).clamp(3.0, 6.0);
+    for _ in 0..4 {
+        let (mut ea, mut eb) = (base, base);
+        for step in 0..5 {
+            let (pa, ta) = point_along(&a.path, ea);
+            let (pb, tb) = point_along(&b.path, eb);
+            let (na, nb) = (Vec2::new(-ta.y, ta.x), Vec2::new(tb.y, -tb.x));
+            let (ka, kb) = (pa + na * a.hw, pb + nb * b.hw);
+            let den = ta.perp_dot(tb);
+            let mut kerb: Vec<Vec2>;
+            let mut normals: Vec<Vec2>;
+            let mut apron = Vec::new();
+            let turn;
+            if den.abs() < 0.05 {
+                if ta.dot(tb) > 0.0 {
+                    return None; // two arms leaving the same way
+                }
+                // Straight on (a T's through side): the kerbs simply join.
+                kerb = vec![ka, kb];
+                normals = vec![na, nb];
+                turn = 0.0;
+            } else {
+                let w = kb - ka;
+                let (sa, sb) = (w.perp_dot(tb) / den, w.perp_dot(ta) / den);
+                let x = ka + ta * sa;
+                let (u1, u2) = (-ta, tb);
+                turn = u1.perp_dot(u2).atan2(u1.dot(u2));
+                // A corner wrapping round the junction (the outside of a Y)
+                // is rounded no wider than the roads, or it would cut into
+                // their carriageways.
+                let rr = if turn < 0.0 { r } else { r.min(narrow) };
+                let td = rr * (turn.abs() * 0.5).tan();
+                let (need_a, need_b) = (sa + td, sb + td);
+                if (need_a > 0.02 || need_b > 0.02) && step < 4 {
+                    ea += need_a.max(0.0);
+                    eb += need_b.max(0.0);
+                    if ea > lim_a || eb > lim_b {
+                        break;
+                    }
+                    continue;
+                }
+                let (ti, tj) = (x + ta * td, x + tb * td);
+                kerb = vec![ka, ti];
+                normals = vec![na, na];
+                let centre = ti + Vec2::new(-u1.y, u1.x) * rr * turn.signum();
+                let steps = (turn.abs() / 0.21).ceil().max(1.0) as usize;
+                for k in 1..steps {
+                    let q = centre + Vec2::from_angle(turn * k as f32 / steps as f32).rotate(ti - centre);
+                    kerb.push(q);
+                    // Toward the centre round an ordinary corner, away from
+                    // it round one wrapping the junction.
+                    normals.push((q - centre).normalize_or_zero() * turn.signum());
+                }
+                kerb.push(tj);
+                normals.push(nb);
+                if turn < 0.0 && td > 0.05 {
+                    apron.push(x);
+                    apron.extend(kerb[1..].iter().copied());
+                }
+                kerb.push(kb);
+                normals.push(nb);
+            }
+            if ea > lim_a || eb > lim_b {
+                break;
+            }
+            // Points closer than 2 cm are one (Ti is often the kerb's start).
+            let mut k = 1;
+            while k < kerb.len() {
+                if kerb[k].distance(kerb[k - 1]) < 0.02 {
+                    let at = if k == kerb.len() - 1 { k - 1 } else { k };
+                    kerb.remove(at);
+                    normals.remove(at);
+                } else {
+                    k += 1;
+                }
+            }
+            if kerb.len() < 2 {
+                return None;
+            }
+            let (oa, ob) = (pa + na * (a.hw + SIDEWALK), pb + nb * (b.hw + SIDEWALK));
+            let back: Vec<Vec2> = kerb.iter().zip(&normals).map(|(p, n)| *p + *n * CORNER_RIBBON).collect();
+            let mut rim = vec![ob];
+            if den.abs() >= 0.05 {
+                let w = ob - oa;
+                let (sa, sb) = (w.perp_dot(tb) / den, w.perp_dot(ta) / den);
+                // Where the arms' back edges meet. At an acute corner that
+                // is a little out past where their own pavements begin (the
+                // two pavements run into each other there anyway); much
+                // further and the fill stops short at the arms' ends.
+                if sa <= 6.0 && sb <= 6.0 {
+                    rim.push(oa + ta * sa);
+                }
+            }
+            rim.push(oa);
+            // The fill's far edge: the arms' back edges to where they meet;
+            // where they cross before that (a sharp corner), just the point
+            // they meet at; failing both, straight across.
+            let mut tries = vec![rim.clone()];
+            if rim.len() == 3 {
+                tries.push(vec![rim[1]]);
+                tries.push(vec![rim[0], rim[2]]);
+            }
+            let with = |rim: &[Vec2]| back.iter().chain(rim.iter()).copied().collect::<Vec<_>>();
+            let (fill, rim) = tries.into_iter().map(|r| (with(&r), r)).find(|(f, _)| simple_polygon(f)).unwrap_or_default();
+            let corner = Corner { kerb, normals, apron, fill, rim, arms: [(a.run, a.start, a.seg), (b.run, b.start, b.seg)], turn, stub: false };
+            return Some((corner, ea, eb));
+        }
+        r *= 0.6;
+        if r < 1.0 {
+            break;
+        }
+    }
+    None
+}
+
+/// The corners of every junction (and of every node where two different
+/// streets meet end to end) between roads with pavements: highways, ramps,
+/// tunnels and footpaths have none, and a roundabout's ring has one only
+/// round its outside.
+fn junction_corners(roads: &RoadNetwork, net: &LaneNetwork, runs: &[Run]) -> Corners {
+    let mut ends: BTreeMap<u32, Vec<ArmEnd>> = BTreeMap::new();
+    let pave = |sid: SegmentId| {
+        let s = roads.segment(sid);
+        s.is_street() && !s.is_motorway() && !s.tunnel
+    };
+    for (ri, run) in runs.iter().enumerate() {
+        let n = run.points.len();
+        if run.kind != RoadKind::Street || n < 2 {
+            continue;
+        }
+        for start in [true, false] {
+            let (node, path, seg) = if start {
+                (run.start_node, run.points.clone(), segment_between(roads, run.nodes[0], run.nodes[1]))
+            } else {
+                (run.end_node, run.points.iter().rev().copied().collect::<Vec<_>>(), segment_between(roads, run.nodes[n - 1], run.nodes[n - 2]))
+            };
+            let Some(seg) = seg else { continue };
+            let sg = roads.segment(seg);
+            let d = (path[1] - path[0]).normalize_or_zero();
+            if d == Vec2::ZERO {
+                continue;
+            }
+            let hw = sg.half_width();
+            let (mut ccw, mut cw) = (pave(seg), pave(seg));
+            if sg.ring {
+                // Only the outside of the ring has a pavement; its inside
+                // is the mountable apron.
+                match roads.ring_of_segment(seg).and_then(|k| roads.rings.get(k)) {
+                    Some(ring) => {
+                        let probe = path[0] + d * 2.0 + Vec2::new(-d.y, d.x) * hw;
+                        ccw = ccw && probe.distance(ring.center) > ring.radius;
+                        cw = cw && !ccw;
+                    }
+                    None => (ccw, cw) = (false, false),
+                }
+            }
+            let stub = sg.ramp && !sg.tunnel && !sg.ring && !sg.is_highway();
+            ends.entry(node.0).or_default().push(ArmEnd { run: ri, start, seg, path, hw, pave_ccw: ccw, pave_cw: cw, stub, ang: d.y.atan2(d.x) });
+        }
+    }
+    let mut out = Corners { by_node: BTreeMap::new(), trims: HashMap::new() };
+    for (node, mut arms) in ends {
+        let n = arms.len();
+        if n < 2 {
+            continue;
+        }
+        arms.sort_by(|x, y| x.ang.total_cmp(&y.ang).then(x.run.cmp(&y.run)).then(x.start.cmp(&y.start)));
+        let base = net.node_radius.get(node as usize).copied().unwrap_or(4.0) + 0.6;
+        for i in 0..n {
+            let (a, b) = (&arms[i], &arms[(i + 1) % n]);
+            // Two pavements meet round the corner; a pavement next to a
+            // one-way link without any rounds onto the link and ends, so
+            // the corner is not left bare either way.
+            let stub = !(a.pave_ccw && b.pave_cw);
+            if stub && !((a.pave_ccw && b.stub) || (a.stub && b.pave_cw)) {
+                continue;
+            }
+            let Some((mut corner, ea, eb)) = corner_between(a, b, base) else { continue };
+            corner.stub = stub;
+            // The counter-clockwise side of the way out is the run's +1
+            // side where the run starts here, its -1 side where it ends.
+            out.trims.insert((a.run, a.start, a.start), ea);
+            out.trims.insert((b.run, b.start, !b.start), eb);
+            out.by_node.entry(node).or_default().push(corner);
+        }
+    }
+    out
+}
+
+/// A pole meant to stand on the pavement by a junction, moved back behind
+/// a corner's kerb (by `clear`) if the rounded corner left it in the road.
+fn behind_kerb(p: Vec2, corners: Option<&Vec<Corner>>, clear: f32) -> Vec2 {
+    let mut best: Option<(f32, Vec2)> = None;
+    for corner in corners.into_iter().flatten() {
+        for w in corner.kerb.windows(2) {
+            let v = (w[1] - w[0]).normalize_or_zero();
+            if v == Vec2::ZERO {
+                continue;
+            }
+            let (_, q) = nd_sim::roads::project_on_segment(p, w[0], w[1]);
+            let dist = p.distance(q);
+            if dist > 4.0 || best.is_some_and(|(d, _)| d <= dist) {
+                continue;
+            }
+            // The pavement is on the kerb's right.
+            let block = Vec2::new(v.y, -v.x);
+            best = Some((dist, if (p - q).dot(block) < clear { q + block * clear } else { p }));
+        }
+    }
+    best.map(|(_, q)| q).unwrap_or(p)
+}
+
 #[cfg(test)]
 mod tests {
+    /// The tube's every face looks into it, so back-face culling cuts away
+    /// whichever half faces the camera; seen from straight above, nothing of
+    /// the vault is drawn over the carriageway, from the side the near
+    /// wall goes and the far one stays.
+    #[test]
+    fn bore_faces_look_inwards() {
+        let walk = vec![Vec2::new(0.0, 0.0), Vec2::new(40.0, 0.0), Vec2::new(80.0, 20.0)];
+        let hw = 4.0;
+        let mut g = Geometry::default();
+        bore_shell(&mut g, &walk, hw, [1.0; 4], [0.5, 0.5, 0.5, 1.0], [2.0; 4]);
+        let m = g.get(Concrete);
+        assert!(m.indices.len() > 100);
+        let axis = |p: Vec3| {
+            // The nearest point of the walk's axis at the spring line.
+            let q = Vec2::new(p.x, p.z);
+            let (_, c) = walk.windows(2).map(|w| nd_sim::roads::project_on_segment(q, w[0], w[1])).fold((f32::MAX, Vec2::ZERO), |best, (_, c)| if c.distance(q) < best.0 { (c.distance(q), c) } else { best });
+            Vec3::new(c.x, BORE_SPRING.min(p.y), c.y)
+        };
+        let (mut up, mut down) = (0, 0);
+        for t in m.indices.chunks(3) {
+            let [a, b, c] = [t[0], t[1], t[2]].map(|i| Vec3::from(m.positions[i as usize]));
+            let n = (b - a).cross(c - a);
+            if n.length() < 1e-6 {
+                continue;
+            }
+            let mid = (a + b + c) / 3.0;
+            if mid.y < 0.05 {
+                continue; // the invert, facing up
+            }
+            assert!(n.dot(axis(mid) - mid) > -1e-4, "a face of the bore looks out at {mid}");
+            // A camera straight above sees the faces whose front looks up.
+            if n.y > 1e-3 {
+                up += 1;
+            } else if n.y < -1e-3 {
+                down += 1;
+            }
+        }
+        // The vault looks down into the tube: from above it is culled.
+        assert!(down > 0 && up == 0, "vault faces up {up}, down {down}");
+        // The profile meets the walls the portal arch is sized to.
+        let p = bore_profile(hw);
+        assert_eq!(p.first().unwrap().0, hw + TUNNEL_WALL);
+        assert_eq!(p.last().unwrap().0, -(hw + TUNNEL_WALL));
+        assert!(p.iter().map(|q| q.1).fold(0.0, f32::max) > 5.0);
+    }
+
     use super::*;
     use nd_sim::roads::RoadNetwork;
 
@@ -1468,6 +2245,331 @@ mod tests {
         let (plain, ring) = (tris[0], tris[1]);
         assert!(plain.2 > 0 && ring.2 == 0, "the signals went with the junction: {plain:?} {ring:?}");
         assert_eq!(ring.1, plain.1, "no sculpture: the middle is open land");
+    }
+}
+
+#[cfg(test)]
+mod kerb_tests {
+    use super::*;
+
+    fn rich() -> LandValue {
+        let mut lv = LandValue::new(600.0, 50.0);
+        for v in &mut lv.values {
+            *v = 0.9;
+        }
+        lv
+    }
+
+    fn draw(roads: &RoadNetwork, net: &LaneNetwork, heights: &[f32]) -> Geometry {
+        let lv = rich();
+        let pal = Palette::default();
+        generate_street(&StreetInput { roads, net, land_value: &lv, palette: &pal, seed: 4, heights, inner: &[], layer: StreetLayer::All })
+    }
+
+    /// Junctions of every shape: a crossroads of a wide and a narrow street,
+    /// a T, a Y with an acute and two obtuse corners, and a long block with
+    /// mid-block zebras and a footpath crossing.
+    fn junctions() -> (RoadNetwork, LaneNetwork) {
+        let mut roads = RoadNetwork::default();
+        // Crossroads at the origin; its x street runs on through a T at
+        // (300, 0).
+        roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(480.0, 0.0)], 2, 2);
+        roads.add_polyline(&[Vec2::new(0.0, -200.0), Vec2::new(0.0, 200.0)], 1, 1);
+        roads.add_polyline(&[Vec2::new(300.0, -200.0), Vec2::new(300.0, 0.0)], 1, 1);
+        // A Y at (-300, 0): two arms 60 degrees apart.
+        let a = 150f32.to_radians();
+        roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(-300.0, 0.0) + Vec2::from_angle(a) * 200.0], 1, 1);
+        roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(-300.0, 0.0) + Vec2::from_angle(-a) * 200.0], 1, 1);
+        // A footpath over the crossroads' long y street.
+        roads.add_polyline_kind(&[Vec2::new(-80.0, 120.0), Vec2::new(80.0, 120.0)], 1, 1, RoadKind::Path);
+        let mut net = LaneNetwork::default();
+        net.rebuild(&roads);
+        (roads, net)
+    }
+
+    /// Upward faces of the street's ground-level surfaces, as triangles in
+    /// the plane with a bounding box each.
+    fn ground_tris(g: &Geometry) -> Vec<([Vec2; 3], Vec2, Vec2)> {
+        let mut out = Vec::new();
+        for s in [Asphalt, Paving, Concrete, Tactile, WornAsphalt, WornPaving, WornConcrete] {
+            let m = g.get(s);
+            for t in m.indices.chunks(3) {
+                let p = [t[0], t[1], t[2]].map(|i| Vec3::from(m.positions[i as usize]));
+                let n = (p[1] - p[0]).cross(p[2] - p[0]);
+                if n.length() < 1e-9 || n.normalize().y.abs() < 0.5 || p.iter().any(|q| q.y > 0.5) {
+                    continue;
+                }
+                let q = p.map(|v| Vec2::new(v.x, v.z));
+                out.push((q, q[0].min(q[1]).min(q[2]), q[0].max(q[1]).max(q[2])));
+            }
+        }
+        out
+    }
+
+    fn covered(tris: &[([Vec2; 3], Vec2, Vec2)], p: Vec2) -> bool {
+        tris.iter().any(|(t, lo, hi)| {
+            if p.x < lo.x - 1e-4 || p.y < lo.y - 1e-4 || p.x > hi.x + 1e-4 || p.y > hi.y + 1e-4 {
+                return false;
+            }
+            let s = |a: Vec2, b: Vec2| (b - a).perp_dot(p - a);
+            let (d0, d1, d2) = (s(t[0], t[1]), s(t[1], t[2]), s(t[2], t[0]));
+            let e = 1e-4;
+            (d0 >= -e && d1 >= -e && d2 >= -e) || (d0 <= e && d1 <= e && d2 <= e)
+        })
+    }
+
+    /// Round every junction, everything within the arms' pavements out to
+    /// 25 m from the centre is road, kerb or paving: the terrain used to
+    /// show in each corner between one pavement's end, the pad and the
+    /// next pavement.
+    #[test]
+    fn junction_corners_leave_no_bare_ground() {
+        let (roads, net) = junctions();
+        let g = draw(&roads, &net, &[]);
+        let tris = ground_tris(&g);
+        let mut checked = 0;
+        for (i, node) in roads.nodes.iter().enumerate() {
+            let arms: Vec<(Vec2, f32)> = node
+                .segments
+                .iter()
+                .filter(|&&s| roads.segment(s).alive && roads.segment(s).is_street())
+                .map(|&s| {
+                    let (a, b) = roads.segment_points(s);
+                    let seg = roads.segment(s);
+                    ((if seg.a.0 as usize == i { b - a } else { a - b }).normalize(), seg.half_width())
+                })
+                .collect();
+            if arms.len() < 3 {
+                continue;
+            }
+            let mut bare = Vec::new();
+            for gx in -60..=60 {
+                for gy in -60..=60 {
+                    let off = Vec2::new(gx as f32, gy as f32) * 0.4;
+                    let p = node.pos + off;
+                    let inside = arms.iter().any(|&(d, hw)| {
+                        let s = off.dot(d);
+                        s >= 0.0 && s <= 22.0 && off.perp_dot(d).abs() <= hw + SIDEWALK - 0.05
+                    });
+                    if !inside {
+                        continue;
+                    }
+                    checked += 1;
+                    if !covered(&tris, p) {
+                        bare.push(p);
+                    }
+                }
+            }
+            assert!(bare.is_empty(), "junction at {:?}: {} bare points, e.g. {:?}", node.pos, bare.len(), &bare[..bare.len().min(6)]);
+        }
+        assert!(checked > 3000, "{checked} points checked");
+        // The corners are rounded: at the crossroads no kerb stands at the
+        // sharp corner where the kerb lines meet, and the asphalt reaches it.
+        let wide = 2.0 * LANE_WIDTH + SHOULDER;
+        let narrow = LANE_WIDTH + SHOULDER;
+        let tip = Vec2::new(narrow, wide);
+        let kerb_near_tip = g.get(Concrete).positions.iter().any(|p| Vec2::new(p[0], p[2]).distance(tip) < 0.6);
+        assert!(!kerb_near_tip, "the crossroads' corner is rounded off");
+        assert!(g.get(Asphalt).positions.iter().any(|p| Vec2::new(p[0], p[2]).distance(tip) < 1e-3), "asphalt out to the old corner");
+    }
+
+    /// Every crosswalk end meets a dropped kerb with a tactile pad behind
+    /// it, and nowhere across the crosswalk does the kerb stand full height.
+    #[test]
+    fn every_crosswalk_end_gets_a_kerb_drop_and_a_tactile_pad() {
+        let (roads, net) = junctions();
+        let g = draw(&roads, &net, &[]);
+        let cuts = crossing_cuts(&roads);
+        let all: Vec<(u32, Cut)> = cuts.iter().flat_map(|(s, v)| v.iter().map(move |c| (*s, *c))).collect();
+        let kinds = (
+            all.iter().filter(|(_, c)| c.half == nd_sim::walk::CROSSWALK_HALF).count(),
+            all.iter().filter(|(_, c)| c.half == 1.3).count(),
+        );
+        assert!(kinds.0 >= 10 && kinds.1 >= 2, "junction, mid-block and path crossings: {kinds:?}");
+        assert!(!nd_sim::walk::midblock_crossings(&roads).is_empty(), "the long block has a mid-block zebra");
+        let kerb = g.get(Concrete);
+        let pads = g.get(Tactile);
+        // Ends with no kerb to meet: the crosswalks either side of the Y's
+        // acute corner end on the asphalt where its two arms run together.
+        let mut no_kerb = Vec::new();
+        for (sid, c) in &all {
+            let hw = roads.segment(SegmentId(*sid)).half_width();
+            for side in [-1.0f32, 1.0] {
+                // (u along the street, v out from its centre line on this side)
+                let local = |p: &[f32; 3]| {
+                    let q = Vec2::new(p[0], p[2]) - c.mid;
+                    (q.dot(c.along), -q.perp_dot(c.along) * side)
+                };
+                if !kerb.positions.iter().map(local).any(|(u, v)| u.abs() <= c.half + 0.01 && v > hw - 0.1 && v < hw + 2.0) {
+                    no_kerb.push((c.mid, side));
+                    continue;
+                }
+                let low = kerb.positions.iter().filter(|p| (p[1] - KERB_LOW).abs() < 0.004).map(local).filter(|&(u, v)| u.abs() <= c.half + 0.01 && v > hw - 0.1 && v < hw + 2.0).count();
+                assert!(low >= 2, "crosswalk at {:?} (side {side}): no dropped kerb", c.mid);
+                let high = kerb.positions.iter().filter(|p| (p[1] - KERB_H).abs() < 0.004).map(local).find(|&(u, v)| u.abs() < c.half - 0.05 && v > hw - 0.1 && v < hw + 0.4);
+                assert!(high.is_none(), "crosswalk at {:?} (side {side}): a full-height kerb across it at {high:?}", c.mid);
+                let pad = pads.positions.iter().map(local).filter(|&(u, v)| u.abs() <= c.half + 0.05 && v > hw && v < hw + 3.0).count();
+                assert!(pad >= 4, "crosswalk at {:?} (side {side}): no tactile pad", c.mid);
+            }
+        }
+        assert!(no_kerb.len() <= 2, "crosswalk ends that meet no kerb: {no_kerb:?}");
+        // The pads lie low, on the landing behind the dropped kerb.
+        assert!(pads.positions.iter().all(|p| p[1] < KERB_LOW + 0.01));
+    }
+
+    /// Curb cuts and corners are cheap: a pad is a couple of triangles (the
+    /// dots are in the texture), a curb cut a few dozen, a corner a couple
+    /// of hundred, so a city with thousands of crossings stays in budget.
+    #[test]
+    fn kerbs_stay_within_the_triangle_budget() {
+        let cols = KerbColours { kerb: [1.0; 4], paving: [1.0; 4], tactile: [1.0; 4] };
+        let face = [Vec2::new(0.0, 5.0), Vec2::new(60.0, 5.0)];
+        let mut plain = Geometry::default();
+        kerb_ribbon(&mut plain, &face, None, -1.0, SIDEWALK, true, true, &[], &cols);
+        let cut = Cut { mid: Vec2::new(30.0, 0.0), along: Vec2::X, half: nd_sim::walk::CROSSWALK_HALF, reach: 5.0 + SIDEWALK + 0.5 };
+        let mut dropped = Geometry::default();
+        kerb_ribbon(&mut dropped, &face, None, -1.0, SIDEWALK, true, true, &[cut], &cols);
+        let extra = dropped.triangle_count() - plain.triangle_count();
+        assert!(extra <= 60, "a curb cut costs {extra} triangles");
+        assert!(dropped.get(Tactile).indices.len() / 3 <= 4, "a pad is a quad or two");
+        assert!(plain.triangle_count() <= 12, "a plain kerb is a few quads: {}", plain.triangle_count());
+
+        let (roads, net) = junctions();
+        let runs = build_runs(&roads);
+        let corners = junction_corners(&roads, &net, &runs);
+        let n: usize = corners.by_node.values().map(|v| v.len()).sum();
+        assert!(n >= 4 + 3 + 3, "{n} corners");
+        let g = draw(&roads, &net, &[]);
+        let crossings: usize = crossing_cuts(&roads).values().map(|v| v.len()).sum();
+        let tactile = g.get(Tactile).indices.len() / 3;
+        assert!(tactile <= crossings * 2 * 8, "{tactile} pad triangles for {crossings} crossings");
+        for list in corners.by_node.values() {
+            for c in list {
+                let mut one = Geometry::default();
+                kerb_ribbon(&mut one, &c.kerb, Some(&c.normals), -1.0, CORNER_RIBBON, false, false, &[], &cols);
+                one.part(Paving).ground_polygon(&c.fill, KERB_H, [1.0; 4]);
+                one.part(Asphalt).ground_polygon(&c.apron, ASPHALT_Y, [1.0; 4]);
+                assert!(one.triangle_count() <= 220, "a corner costs {} triangles", one.triangle_count());
+            }
+        }
+    }
+
+    /// On a sloping street the corners stand at the road's height, not the
+    /// junction's: the kerb where a corner meets a run is at the run's
+    /// height, so there is no step or gap between them.
+    #[test]
+    fn corners_follow_the_slope_of_their_streets() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-100.0, 0.0), Vec2::new(100.0, 0.0)], 1, 1);
+        roads.add_polyline(&[Vec2::new(0.0, 0.0), Vec2::new(0.0, 100.0)], 1, 1);
+        let mut net = LaneNetwork::default();
+        net.rebuild(&roads);
+        // Rising 6 m over 100 m to the east, flat elsewhere.
+        let heights: Vec<f32> = roads.nodes.iter().map(|n| if n.pos.x > 50.0 { 6.0 } else { 0.0 }).collect();
+        let g = draw(&roads, &net, &heights);
+        for (s, m) in g.iter() {
+            assert!(m.positions.iter().all(|p| p.iter().all(|v| v.is_finite())), "{s:?}");
+        }
+        // Kerb tops round the east corners stand at the street's height
+        // there (6 m over 100 m), within a few centimetres.
+        let kerb = g.get(Concrete);
+        let mut seen = 0;
+        for p in kerb.positions.iter().filter(|p| p[0] > 6.0 && p[0] < 14.0 && (p[2].abs() - 5.0).abs() < 0.4) {
+            let road = p[0] / 100.0 * 6.0;
+            assert!(p[1] >= road - 0.05 && p[1] <= road + KERB_H + 0.05, "kerb at x {} stands at {} (road {road})", p[0], p[1]);
+            seen += 1;
+        }
+        assert!(seen > 4);
+    }
+
+    /// A roundabout's ring has a pavement round its outside that the arms'
+    /// pavements run into, and none on its inside.
+    #[test]
+    fn a_roundabout_ring_is_paved_round_the_outside() {
+        use nd_sim::plan::{Gesture, GestureId, Plan};
+        let mut plan = Plan::default();
+        plan.gestures.insert(GestureId(1), Gesture::Road { points: vec![Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        plan.gestures.insert(GestureId(2), Gesture::Road { points: vec![Vec2::new(0.0, -200.0), Vec2::new(0.0, 200.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        plan.gestures.insert(GestureId(3), Gesture::Roundabout { center: Vec2::ZERO, radius: 30.0, lanes: 1 });
+        let (built, rings) = plan.built_roads();
+        let mut roads = RoadNetwork::default();
+        roads.rings = rings;
+        for (_, pts, f, b, k) in built {
+            roads.add_polyline_kind(&pts, f, b, k);
+        }
+        let mut net = LaneNetwork::default();
+        net.rebuild(&roads);
+        let ring = roads.rings[0];
+        let g = draw(&roads, &net, &[]);
+        let tris = ground_tris(&g);
+        let out = ring.radius + ring.half_width() + 1.5;
+        let bare: Vec<Vec2> = (0..72).map(|k| ring.center + Vec2::from_angle(k as f32 * 5f32.to_radians()) * out).filter(|&p| !covered(&tris, p)).collect();
+        assert!(bare.is_empty(), "bare ground round the ring at {bare:?}");
+        let kerb_inside = g.get(Concrete).positions.iter().any(|p| {
+            let d = Vec2::new(p[0], p[2]).distance(ring.center);
+            d < ring.radius - ring.half_width() + 0.5 && d > ring.radius - ring.half_width() - 3.0
+        });
+        assert!(!kerb_inside, "no pavement inside the ring");
+    }
+
+    /// Prints the street triangles of a save, for comparing before and
+    /// after a change: `ND_STREET_SAVE=path cargo test --release -p
+    /// nd_procgen street_triangles_of_a_save -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn street_triangles_of_a_save() {
+        let Ok(path) = std::env::var("ND_STREET_SAVE") else { return };
+        let w = nd_sim::world::World::from_ron(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
+        let inner: &[Vec<(f32, f32)>] = if w.relief { &w.road_inner } else { &[] };
+        let pal = Palette::default();
+        let t = std::time::Instant::now();
+        let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: w.config.seed, heights, inner, layer: StreetLayer::Surface });
+        let ms = t.elapsed().as_millis();
+        let cuts: usize = crossing_cuts(&w.roads).values().map(|v| v.len()).sum();
+        let corners: usize = junction_corners(&w.roads, &w.traffic.net, &build_runs(&w.roads)).by_node.values().map(|v| v.len()).sum();
+        println!("street triangles {} (tactile {}), {cuts} crossings, {corners} corners, {ms} ms", g.triangle_count(), g.get(Tactile).indices.len() / 3);
+        if let Ok(n) = std::env::var("ND_STREET_NODE") {
+            let nid = NodeId(n.parse().unwrap());
+            let runs = build_runs(&w.roads);
+            for &s in &w.roads.node(nid).segments {
+                let sg = w.roads.segment(s);
+                println!("seg {} alive {} kind {:?} lanes {}+{} ramp {} ring {} tunnel {} hw {}", s.0, sg.alive, sg.kind, sg.lanes_fwd, sg.lanes_bwd, sg.ramp, sg.ring, sg.tunnel, sg.half_width());
+            }
+            let c = junction_corners(&w.roads, &w.traffic.net, &runs);
+            for (ri, r) in runs.iter().enumerate().filter(|(_, r)| r.start_node == nid || r.end_node == nid) {
+                println!("run {ri} len {} start {} trims {:?} {:?} {:?} {:?}", path_length(&r.points), r.start_node == nid, c.trims.get(&(ri, true, true)), c.trims.get(&(ri, true, false)), c.trims.get(&(ri, false, true)), c.trims.get(&(ri, false, false)));
+            }
+            println!("corners {}", c.by_node.get(&nid.0).map_or(0, |v| v.len()));
+        }
+        if std::env::var("ND_STREET_PLACES").is_ok() {
+            // Where to look: signalised junctions, Ts, mid-block zebras and
+            // crossings on a slope.
+            for i in w.traffic.net.intersections.iter().filter(|i| i.signalized).take(3) {
+                println!("signalised {:?}", w.roads.node(i.node).pos);
+            }
+            for (k, n) in w.roads.nodes.iter().enumerate().filter(|(k, _)| w.roads.street_degree(NodeId(*k as u32)) == 3).take(3) {
+                println!("T {:?} z {}", n.pos, heights.get(k).copied().unwrap_or(0.0));
+            }
+            for (s, t) in nd_sim::walk::midblock_crossings(&w.roads).into_iter().take(3) {
+                let (a, b) = w.roads.segment_points(s);
+                let sg = w.roads.segment(s);
+                let dz = (heights.get(sg.a.0 as usize).copied().unwrap_or(0.0) - heights.get(sg.b.0 as usize).copied().unwrap_or(0.0)).abs() / a.distance(b);
+                println!("zebra {:?} slope {dz}", a.lerp(b, t));
+            }
+            let mut steep: Vec<(f32, Vec2)> = crossing_cuts(&w.roads)
+                .iter()
+                .map(|(s, v)| {
+                    let sg = w.roads.segment(SegmentId(*s));
+                    let (a, b) = w.roads.segment_points(SegmentId(*s));
+                    ((heights.get(sg.a.0 as usize).copied().unwrap_or(0.0) - heights.get(sg.b.0 as usize).copied().unwrap_or(0.0)).abs() / a.distance(b).max(1.0), v[0].mid)
+                })
+                .collect();
+            steep.sort_by(|a, b| b.0.total_cmp(&a.0));
+            for (dz, p) in steep.iter().take(3) {
+                println!("sloped crossing {p:?} slope {dz}");
+            }
+        }
     }
 }
 

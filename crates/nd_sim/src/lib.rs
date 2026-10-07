@@ -18,12 +18,17 @@ pub mod crime;
 pub mod districts;
 pub mod economy;
 pub mod enforcement;
+/// [land] The land market: pressure, prices, owners, merged plots, the super-elite.
+pub mod estate;
 pub mod events;
 pub mod geom;
 pub mod history;
 pub mod homeless;
+/// [identity] The city's name and game id.
+pub mod identity;
 pub mod ground;
 pub mod industry;
+pub mod junctions;
 pub mod land_value;
 pub mod landscape;
 /// [looks] What citizens look like.
@@ -33,10 +38,12 @@ pub mod mind;
 pub mod names;
 pub mod park;
 pub mod pedestrians;
+pub mod pillars;
 pub mod places;
 pub mod plan;
 pub mod ports;
 pub mod power;
+pub mod pressure;
 /// Section timings for perf probes (`profile` feature only).
 pub mod prof;
 pub mod rail;
@@ -71,6 +78,7 @@ pub use land_value::LandValue;
 pub use market::{Business, BusinessKind, Hours, MarketStats, Resource};
 pub use citizens::{Activity, Citizen, CitizenId, Household, HouseholdId, LifeStage, Memory, Purpose};
 pub use clock::SimClock;
+pub use identity::CityIdentity;
 pub use economy::Economy;
 pub use events::SimEvent;
 pub use mind::{Decision, Intent, MindContext, MindProvider};
@@ -90,7 +98,10 @@ pub use subway::{MetroLine, MetroLineId, MetroTrain, MetroTrainId, Subway, Subwa
 pub use transit::{BusRoute, BusStop, RouteId, Transit, TransitStats};
 pub use rail::{Facility, FacilityId, Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
 pub use services::{BuildCategory, Incident, IncidentKind, Placeable, ServiceKind, ServiceSite, Services, ServiceStats, Unit, UnitId, UnitKind};
-pub use world::{GridAsset, PlantRow, World, WorldConfig};
+pub use world::{GridAsset, PlantRow, World, WorldConfig, RIGHTING_MIN};
+pub use world::{ApproachView, CrossingView, IntersectionView, PhaseView};
+/// [camera]
+pub use world::{Gift, Holding, GIFT_AMOUNT};
 pub use zoning::{LandUse, Lot, LotId, Parcel, ParcelKey, ParcelMap, Zone, ZoneId};
 
 pub use glam::Vec2;

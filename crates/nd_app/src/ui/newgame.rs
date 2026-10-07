@@ -1,8 +1,11 @@
 //! The New Game window: pick a landscape preset, adjust its levers (water,
 //! height variation, river branching, islands, seed, the starting highway)
-//! and watch a mini-map of the result before starting over on it.
+//! and watch a mini-map of the result before starting over on it. A
+//! starting town may be picked too: a whole example city generated on the
+//! landscape (`nd_procgen::citygen`), drawn on the mini-map.
 
 use bevy_egui::egui;
+use nd_procgen::citygen::CityPreset;
 use nd_sim::landscape::{Landscape, LandscapeParams, LandscapePreset, LAND_HALF};
 use nd_sim::Vec2 as SVec2;
 
@@ -34,8 +37,19 @@ pub fn toggle(ui: &mut egui::Ui) {
 #[derive(Clone)]
 struct Draft {
     params: LandscapeParams,
-    drawn: Option<(LandscapeParams, egui::TextureHandle, String)>,
+    /// The starting town to generate, or an empty map.
+    city: Option<CityPreset>,
+    drawn: Option<(LandscapeParams, Option<CityPreset>, egui::TextureHandle, String)>,
     confirm: bool,
+    /// [identity] The new city's name.
+    name: String,
+}
+
+/// [identity] A name to offer for a new city, different each time.
+pub fn suggest_name() -> String {
+    use rand::SeedableRng;
+    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
+    nd_sim::names::city_name(&mut rand::rngs::StdRng::seed_from_u64(seed))
 }
 
 pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
@@ -43,7 +57,7 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
         return;
     }
     let id = egui::Id::new("new_game_draft");
-    let mut draft: Draft = ctx.data(|d| d.get_temp(id)).unwrap_or_else(|| Draft { params: p.sim.world.landscape.params.clone(), drawn: None, confirm: false });
+    let mut draft: Draft = ctx.data(|d| d.get_temp(id)).unwrap_or_else(|| Draft { params: p.sim.world.landscape.params.clone(), city: None, drawn: None, confirm: false, name: suggest_name() });
     let mut open = true;
     egui::Window::new(egui::RichText::new("New game").color(GOLD))
         .open(&mut open)
@@ -59,6 +73,14 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
 }
 
 fn body(ui: &mut egui::Ui, p: &mut UiCtx, draft: &mut Draft) {
+    section(ui, "CITY NAME");
+    ui.horizontal(|ui| {
+        ui.add(egui::TextEdit::singleline(&mut draft.name).desired_width(220.0).hint_text("name your city"));
+        if ui.small_button("🎲").on_hover_text("another name").clicked() {
+            draft.name = suggest_name();
+        }
+    });
+    hint(ui, "Saves are listed under this name; it can be changed later in the City or Saves window.");
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(250.0);
@@ -90,11 +112,27 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, draft: &mut Draft) {
                     draft.params.seed = (draft.params.seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) >> 20) % 1_000_000;
                 }
             });
-            hint(ui, "Every map starts with the highway and the trunk line, edge to edge; the rest is yours to build.");
+            section(ui, "STARTING TOWN");
+            if ui.selectable_label(draft.city.is_none(), "Empty map").on_hover_text("Nothing but the highway and the trunk line").clicked() {
+                draft.city = None;
+            }
+            for city in CityPreset::ALL {
+                let on = draft.city == Some(city);
+                if ui.selectable_label(on, city.label()).on_hover_text(city.blurb()).clicked() && !on {
+                    // A town comes with the landscape it was made for; the
+                    // levers may still be changed after.
+                    draft.city = Some(city);
+                    draft.params = city.landscape(draft.params.seed);
+                }
+            }
+            match draft.city {
+                Some(city) => hint(ui, &format!("{} Streets, zoning, interchanges and a power plant are laid out; it grows from there.", city.blurb())),
+                None => hint(ui, "Every map starts with the highway and the trunk line, edge to edge; the rest is yours to build."),
+            }
         });
         ui.vertical(|ui| {
             refresh_preview(ui.ctx(), draft);
-            if let Some((_, tex, summary)) = &draft.drawn {
+            if let Some((_, _, tex, summary)) = &draft.drawn {
                 ui.add(egui::Image::new(tex).fit_to_exact_size(egui::vec2(PREVIEW as f32 * 1.4, PREVIEW as f32 * 1.4)));
                 hint(ui, summary);
             }
@@ -105,7 +143,8 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, draft: &mut Draft) {
         ui.colored_label(WARN, "This throws the current city away.");
         ui.horizontal(|ui| {
             if ui.button("Start the new city").clicked() {
-                start(p, draft.params.clone());
+                start(p, draft.params.clone(), draft.city, &draft.name);
+                draft.name = suggest_name();
                 draft.confirm = false;
                 set_open(ui.ctx(), false);
             }
@@ -115,7 +154,8 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, draft: &mut Draft) {
         });
     } else if ui.button(egui::RichText::new("Start").strong()).clicked() {
         if p.sim.world.buildings.is_empty() && p.sim.world.citizens.is_empty() {
-            start(p, draft.params.clone());
+            start(p, draft.params.clone(), draft.city, &draft.name);
+            draft.name = suggest_name();
             set_open(ui.ctx(), false);
         } else {
             draft.confirm = true;
@@ -123,24 +163,61 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, draft: &mut Draft) {
     }
 }
 
-fn start(p: &mut UiCtx, params: LandscapeParams) {
+fn start(p: &mut UiCtx, params: LandscapeParams, city: Option<CityPreset>, name: &str) {
     let label = params.preset.label();
-    p.sim.new_game(params);
+    match city {
+        Some(c) => {
+            p.sim.generate_city(c, params);
+        }
+        None => p.sim.new_game(params),
+    }
+    p.sim.set_city_name(name);
     *p.tools = crate::tools::ToolState::default();
     *p.selection = crate::tools::Selection::None;
     p.plan.invalidate();
-    p.flags.message = format!("New city: {label} landscape");
+    let named = p.sim.world.identity.display_name().to_string();
+    p.flags.message = match city {
+        Some(c) => format!("New city {named}: {} on a {label} landscape", c.label()),
+        None => format!("New city {named}: {label} landscape"),
+    };
 }
 
 /// Draw the mini-map for the current levers when they changed: water blue,
 /// land shaded by height, the highway and the railway, hot spots in yellow.
 fn refresh_preview(ctx: &egui::Context, draft: &mut Draft) {
-    if draft.drawn.as_ref().is_some_and(|(p, ..)| *p == draft.params) {
+    if draft.drawn.as_ref().is_some_and(|(p, c, ..)| *p == draft.params && *c == draft.city) {
         return;
     }
-    let (image, summary) = preview_image(&draft.params);
+    let (mut image, summary) = preview_image(&draft.params);
+    if let Some(city) = draft.city {
+        draw_city(&mut image, city, &draft.params);
+    }
     let tex = ctx.load_texture("new_game_preview", image, egui::TextureOptions::LINEAR);
-    draft.drawn = Some((draft.params.clone(), tex, summary));
+    draft.drawn = Some((draft.params.clone(), draft.city, tex, summary));
+}
+
+/// The generated town's streets over the mini-map.
+fn draw_city(image: &mut egui::ColorImage, city: CityPreset, params: &LandscapeParams) {
+    let land = Landscape::new(params);
+    let plan = nd_procgen::citygen::generate(city, params.seed, &land);
+    let span = LAND_HALF * 2.0;
+    for r in &plan.roads {
+        let c = match r.class {
+            nd_procgen::citygen::RoadClass::Arterial => egui::Color32::from_rgb(250, 225, 150),
+            _ => egui::Color32::from_rgb(215, 215, 205),
+        };
+        for w in r.points.windows(2) {
+            let steps = (w[0].distance(w[1]) / 6.0).ceil().max(1.0) as usize;
+            for k in 0..=steps {
+                let q = w[0].lerp(w[1], k as f32 / steps as f32);
+                let i = ((q.x + LAND_HALF) / span * PREVIEW as f32) as usize;
+                let j = ((LAND_HALF - q.y) / span * PREVIEW as f32) as usize;
+                if i < PREVIEW && j < PREVIEW {
+                    image.pixels[j * PREVIEW + i] = c;
+                }
+            }
+        }
+    }
 }
 
 /// The mini-map for a set of levers, and a one-line summary of the map.
