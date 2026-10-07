@@ -100,6 +100,75 @@ pub fn terrain_at(w: &World, p: SVec2) -> Value {
         // the walk network, and what that adds to (or takes off) a home's land value.
         "access": w.land_value.access_at(p).map(|a| json!({ "park_min": a.park_min.map(round), "nightlife_min": a.nightlife_min.map(round), "value_for_homes": round(a.value), "text": a.describe() })),
         "survey": w.survey_at(p).into_iter().map(|(l, v)| (l.key().to_string(), json!(round(v)))).collect::<serde_json::Map<String, Value>>(),
+        // [grid-weather] Wind and sun for power plants.
+        "resource": resource_at(w, p),
+    })
+}
+
+/// [grid-weather] The weather now: the sky, the wind (on the `0..1` drift
+/// scale and in m/s over open ground), the temperature, any spell and the
+/// climate it all comes from.
+pub fn weather_json(w: &World) -> Value {
+    let x = &w.weather;
+    json!({
+        "label": x.label(), "cloud": round(x.cloud), "wind": round(x.wind), "wind_ms": round(x.wind_ms()), "temp_c": round(x.temp_c),
+        "spell": x.spell.label(), "spell_hours_left": x.spell_hours, "climate": x.climate.label(),
+        "turbine": { "cut_in_ms": nd_sim::weather::CUT_IN_MS, "rated_ms": nd_sim::weather::RATED_MS, "cut_out_ms": nd_sim::weather::CUT_OUT_MS },
+    })
+}
+
+/// [grid-weather] The grid's hour: the time-of-use prices now, the demand
+/// now against the full (flat) draw, the next 24 hours if the weather
+/// holds, and the last 24 recorded hours of demand, price and temperature.
+pub fn grid_json(w: &World) -> Value {
+    let p = &w.economy.power;
+    let base = nd_sim::power::DemandBase::of(w.buildings.values());
+    let ahead: Vec<Value> = w
+        .grid_day_ahead()
+        .into_iter()
+        .map(|g| json!({ "hour": g.hour, "temp_c": round(g.temp_c), "demand_mw": round(g.demand_mw), "import_price": round(g.import_price), "export_price": round(g.export_price) }))
+        .collect();
+    let n = w.economy.history.hours.len();
+    let past: Vec<Value> = w
+        .economy
+        .history
+        .hours
+        .iter()
+        .skip(n.saturating_sub(24))
+        .map(|h| json!({ "day": h.day, "hour": h.hour, "demand_mw": round(h.demand_mw), "supply_mw": round(h.supply_mw), "imported_mw": round(h.imported_mw), "exported_mw": round(h.exported_mw), "import_price": round(h.import_price), "temp_c": round(h.temp_c) }))
+        .collect();
+    json!({
+        "hour": round(w.grid_hour()),
+        "import_price": round(p.import_price), "export_price": round(p.export_price), "mean_import_price": nd_sim::power::GRID_IMPORT_PRICE,
+        "demand_mw": round(p.demand_mw), "full_draw_mw": round(base.full()),
+        "demand_factor_now": round(if base.full() > 0.0 { p.demand_mw / base.full() } else { 0.0 }),
+        "weather": weather_json(w),
+        "day_ahead": ahead,
+        "last_24h": past,
+    })
+}
+
+/// [grid-weather] The wind and sun at a point: the wind field's site factor,
+/// the mean and current wind there, what a wind farm and a solar field
+/// there would make now and on an ordinary day.
+pub fn resource_at(w: &World, p: SVec2) -> Value {
+    let land = &w.landscape;
+    let site = w.site_resource_at(p);
+    let wind_now = w.weather.wind_ms() * site.wind;
+    let mean = nd_sim::weather::mean_wind_ms_at(land, p);
+    json!({
+        "at": v2(p),
+        "climate": land.params.climate.label(),
+        "water": land.is_water(p),
+        "wind": {
+            "site_factor": round(site.wind), "mean_ms": round(mean), "now_ms": round(wind_now),
+            "typical_yield": round(nd_sim::weather::wind_yield_at(land, p)), "yield_now": round(w.kind_availability_at(PowerPlantKind::Wind, p)),
+            "cut_out_now": wind_now >= nd_sim::weather::CUT_OUT_MS,
+        },
+        "solar": {
+            "site_factor": round(site.sun), "climate_sun": round(nd_sim::weather::profile(land.params.climate).sun), "sun": round(nd_sim::weather::sun_at(land, p)),
+            "yield_now": round(w.kind_availability_at(PowerPlantKind::Solar, p)),
+        },
     })
 }
 
@@ -125,6 +194,7 @@ pub fn summary(w: &World) -> Value {
     json!({
         "preset": land.params.preset.label(),
         "params": { "seed": land.params.seed, "water": round(land.params.water), "relief": round(land.params.relief), "branching": round(land.params.branching), "islands": land.params.islands, "highway": land.params.highway },
+        "climate": land.params.climate.label(),
         "rivers": rivers,
         "lakes": land.lakes.iter().map(|l| v2(l.center)).collect::<Vec<_>>(),
         "sea": land.sea.as_ref().map(|s| json!({ "islands": s.islands.len(), "coast": !s.coast.is_empty() })),

@@ -115,7 +115,8 @@ impl World {
     /// Every sim hour: hunger, eating at home, production, restocking through
     /// the market or imports, exporting surplus, and market statistics.
     pub(super) fn hourly_economy(&mut self) {
-        self.weather.step(&mut self.rng);
+        let (climate, seed) = (self.landscape.params.climate, self.landscape.params.seed);
+        self.weather.step(&mut self.rng, climate, self.clock.tick / 60, seed);
         self.allocate_power();
         self.sync_households();
         let exhausted = self.sleep_and_eat();

@@ -84,6 +84,8 @@ pub fn land_hue(layer: LandLayer) -> [f32; 3] {
         LandLayer::Sand => [1.0, 0.86, 0.38],
         LandLayer::Water => [0.08, 0.75, 1.0],
         LandLayer::Shipping => [0.25, 0.4, 1.0],
+        LandLayer::Wind => [0.55, 1.0, 0.85],
+        LandLayer::Solar => [1.0, 0.92, 0.12],
         LandLayer::Industry(k) => industry_hue(k),
         LandLayer::BestIndustry => [1.0, 1.0, 1.0],
     }
