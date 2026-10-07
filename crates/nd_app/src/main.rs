@@ -5,6 +5,7 @@ mod assets;
 mod camera;
 mod district_tool;
 mod flags;
+mod map_layers;
 mod remote;
 mod render;
 mod sim;
@@ -39,6 +40,7 @@ fn main() {
             flags::FlagsPlugin,
             remote::RemotePlugin,
             district_tool::DistrictToolPlugin,
+            map_layers::MapLayersPlugin,
         ))
         .run();
 }

@@ -30,6 +30,8 @@ pub enum Info {
     Lines,
     /// 911 calls, live and on record (ui/emergencies.rs).
     Emergencies,
+    /// The View window (once "Land"): the map layer picker, land value,
+    /// lighting. Titled "View"; the API still takes "land".
     Land,
     Saves,
     Help,
@@ -52,7 +54,7 @@ impl Info {
             Info::Transit => "Transit",
             Info::Lines => "Lines",
             Info::Emergencies => "Emergencies",
-            Info::Land => "Land",
+            Info::Land => "View",
             Info::Saves => "Saves",
             Info::Help => "Help",
             Info::Dev => "Dev",
@@ -363,19 +365,16 @@ fn taxis_and_freight(ui: &mut egui::Ui, w: &nd_sim::World) {
     }
 }
 
-/// Overlays, land value and class mix, and the lighting controls: the
-/// window about how the ground reads.
+/// The View window: the map layer (one at a time, with its key in the
+/// legend), what else is drawn, land value and class mix, and the lighting.
 pub(super) fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
-    section(ui, "LAYERS");
-    hint(ui, "L steps through the map layers one at a time; tick several to stack them.");
-    for (name, label, key) in crate::render::Overlays::LAYERS {
-        let text = if key.is_empty() { label.to_string() } else { format!("{label} [{key}]") };
-        if let Some(flag) = p.overlays.flag(name) {
-            ui.checkbox(flag, text);
-        }
-    }
+    section(ui, "MAP LAYER");
+    hint(ui, "One layer at a time, its key at the bottom right of the map. The Layer button in the top bar picks it too; V, O, P toggle theirs, L steps through the heat maps, K through the land layers.");
+    super::topbar::layer_list(ui, p.overlays, true);
+    section(ui, "ALSO DRAWN");
     ui.checkbox(&mut p.tools.show_routes, "Bus lines whatever the tool");
-    land_layers(ui, p);
+    ui.checkbox(&mut p.overlays.projects, "Other pending projects, dim");
+    ui.checkbox(&mut p.lighting.heat, "Drone heat vision [H]");
     let e = &p.sim.world.economy;
     section(ui, "LAND VALUE");
     row(ui, "average", format!("{:.2}", e.avg_land_value));
@@ -394,28 +393,6 @@ pub(super) fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
             }
         });
     }
-}
-
-/// The land survey picker: one resource or industry layer at a time (K
-/// steps through them), each a wash over the ground with its key in the
-/// legend.
-fn land_layers(ui: &mut egui::Ui, p: &mut UiCtx) {
-    use nd_sim::survey::LandLayer;
-    section(ui, "LAND AND RESOURCES");
-    hint(ui, "What the ground is good for. One at a time; K steps through them.");
-    let land = &mut p.overlays.land;
-    ui.horizontal_wrapped(|ui| {
-        ui.selectable_value(land, None, egui::RichText::new("Off").small());
-        for l in LandLayer::RESOURCES {
-            ui.selectable_value(land, Some(l), egui::RichText::new(l.label()).small()).on_hover_text(l.hint());
-        }
-    });
-    hint(ui, "Where a new industrial lot would go (the sim's own odds):");
-    ui.horizontal_wrapped(|ui| {
-        for l in LandLayer::ALL.into_iter().filter(|l| l.is_industry()) {
-            ui.selectable_value(land, Some(l), egui::RichText::new(l.label()).small()).on_hover_text(l.hint());
-        }
-    });
 }
 
 fn help_window(ui: &mut egui::Ui) {
