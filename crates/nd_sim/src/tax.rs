@@ -36,6 +36,11 @@ pub const BUSINESS_TAX: f32 = 0.05;
 pub const MAX_INCOME_TAX: f32 = 0.40;
 pub const MAX_BUSINESS_TAX: f32 = 0.30;
 pub const MAX_IMPORT_DUTY: f32 = 1.0;
+/// [clarity] Highest tourist tax (on a hotel night) the player may set.
+pub const MAX_TOURIST_TAX: f32 = 0.40;
+/// How hard a tourist tax over the standard (`tourism::TOURIST_TAX`) puts
+/// visitors off, per unit of rate (a 10-point rise: about a third fewer).
+const TOURIST_SENSITIVITY: f32 = 4.0;
 /// How strongly a rate away from the standard pushes a category, per unit
 /// of rate: residents feel income tax less sharply than firms feel a tax on
 /// takings (moving house is harder than not opening a shop).
@@ -277,6 +282,9 @@ pub struct TaxBook {
     pub yesterday: Vec<f32>,
     /// A running average of the daily take (about a week's memory).
     pub recent: Vec<f32>,
+    /// [clarity] The tax on a hotel night, as a share of its price; `None`
+    /// for the standard `tourism::TOURIST_TAX` (and old saves).
+    pub tourist_tax: Option<f32>,
     /// Import duty collected today and yesterday.
     pub duty_today: f32,
     pub duty_yesterday: f32,
@@ -310,6 +318,26 @@ impl TaxBook {
     pub fn reset(&mut self) {
         self.rates.clear();
         self.import_duty = 0.0;
+        self.tourist_tax = None;
+    }
+
+    /// [clarity] The tourist tax on a hotel night.
+    pub fn tourist_tax(&self) -> f32 {
+        self.tourist_tax.unwrap_or(crate::tourism::TOURIST_TAX)
+    }
+
+    /// [clarity] Set the tourist tax, clamped to `0..MAX_TOURIST_TAX`.
+    pub fn set_tourist_tax(&mut self, rate: f32) -> f32 {
+        let r = if rate.is_finite() { rate.clamp(0.0, MAX_TOURIST_TAX) } else { crate::tourism::TOURIST_TAX };
+        self.tourist_tax = Some(r);
+        r
+    }
+
+    /// [clarity] How the tourist tax pulls on visitors: 1 at the standard,
+    /// fewer come when it is higher, more when it is lower (bounded).
+    pub fn tourist_pull(&self) -> f32 {
+        let d = self.tourist_tax() - crate::tourism::TOURIST_TAX;
+        (-d * TOURIST_SENSITIVITY).exp().clamp(PULL_MIN, PULL_MAX)
     }
 
     /// The rate over the standard (negative under it): what reaches purses.

@@ -121,3 +121,37 @@ fn a_save_from_before_concerns_loads_with_none() {
     let back = World::from_ron(&old).unwrap();
     assert!(back.concerns.days.is_empty() && back.concerns.mood_days.is_empty());
 }
+
+// ── [clarity] dangerous streets and far hospitals ───────────────────────────
+
+#[test]
+fn crashes_piling_up_on_a_street_bring_dangerous_street_complaints() {
+    let (mut w, home) = town();
+    let at = w.building_lot(home).unwrap().car_point;
+    let seg = w.building_lot(home).unwrap().car_segment.unwrap();
+    for i in 0..crate::world::journeys::DANGEROUS_STREET {
+        w.journeys.crash_sites.push(crate::world::journeys::CrashSite { pos: at + Vec2::new(i as f32 * 3.0, 0.0), tick: 0 });
+    }
+    let per = w.crashes_per_segment();
+    assert_eq!(per.first().map(|p| p.0), Some(seg), "counted on the street out front: {per:?}");
+    assert_eq!(per[0].1, crate::world::journeys::DANGEROUS_STREET);
+    let today = w.clock.day();
+    w.daily_dangerous_streets();
+    assert!(w.concerns.count(Concern::DangerousStreets, today, today) >= 1, "the residents complain");
+    let q = w.concerns.quotes(Concern::DangerousStreets).next().unwrap();
+    assert!(q.text.contains("crashes"), "{}", q.text);
+}
+
+#[test]
+fn a_town_without_a_hospital_complains_of_healthcare() {
+    let (mut w, _) = town();
+    // A town big enough to expect one.
+    let first = w.citizens.values().next().unwrap().clone();
+    while w.citizens.len() < crate::world::journeys::HEALTHCARE_TOWN {
+        w.citizens.insert(first.clone());
+    }
+    let today = w.clock.day();
+    w.daily_healthcare();
+    assert!(w.concerns.count(Concern::Healthcare, today, today) >= 1);
+    assert!(w.concerns.quotes(Concern::Healthcare).next().unwrap().text.contains("hospital"));
+}

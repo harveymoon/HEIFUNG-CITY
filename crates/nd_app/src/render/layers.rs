@@ -90,11 +90,17 @@ fn spawn_layer<T: Component>(commands: &mut Commands, meshes: &mut Assets<Mesh>,
     commands.spawn((Mesh3d(meshes.add(to_mesh(m, false))), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, tag));
 }
 
-/// Traffic load per lane: a ribbon down each lane carrying cars, green to
-/// red with the load (fullness and slowness), drawn faintly on empty lanes
-/// so the network still reads. Rebuilt twice a second while on.
-pub(super) fn traffic_ribbons(w: &World) -> MeshData {
-    let mut m = MeshData::default();
+/// [clarity] Traffic load lines and crash markers, drawn over everything
+/// (depth bias -1) so buildings, trees and viaducts never hide them.
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub(super) struct LoadGizmos;
+
+/// [clarity] Traffic load per lane: a line down each lane carrying cars,
+/// green to red with the load (fullness and slowness), half clear, and a
+/// faint grey on empty lanes so the network still reads. Drawn on top of
+/// everything (`LoadGizmos`), at the lane's own height.
+pub(super) fn load_lines(w: &World) -> Vec<(Vec<Vec3>, Color)> {
+    let mut out = Vec::new();
     for lane in &w.traffic.net.lanes {
         if !matches!(lane.kind, LaneKind::Road { .. }) || lane.points.len() < 2 {
             continue;
@@ -102,20 +108,100 @@ pub(super) fn traffic_ribbons(w: &World) -> MeshData {
         let n = lane.cars.len();
         let mean_v = if n > 0 { lane.cars.iter().filter_map(|c| w.traffic.cars.get(*c)).map(|c| c.v).sum::<f32>() / n as f32 } else { 0.0 };
         let load = traffic_load(n, lane.length, mean_v, lane.speed_limit);
-        // Empty lanes are a faint grey so the network reads; lanes with
-        // traffic are coloured by load and widen as it builds.
-        // The cars themselves are lit up over the dimmed city (`focus`),
-        // so the ribbons stay a thin, half-clear guide beside them.
         let color = if n == 0 {
-            [0.45, 0.5, 0.6, 0.14]
+            Color::linear_rgba(0.45, 0.5, 0.6, 0.16)
         } else {
             let c = traffic_color(load);
-            [c[0], c[1], c[2], 0.5]
+            Color::linear_rgba(c[0] * 1.6, c[1] * 1.6, c[2] * 1.6, 0.42 + 0.3 * load)
         };
-        let width = if n == 0 { 0.8 } else { 1.0 + 1.0 * load };
-        m.ground_strip(&lane.points, width, 0.45, color);
+        let pts: Vec<Vec3> = lane.points.iter().map(|&q| Vec3::new(q.x, lane_height(w, lane, q) + 0.6, q.y)).collect();
+        out.push((pts, color));
     }
-    m
+    out
+}
+
+/// [clarity] The danger layer's colour for a street with `n` crashes on
+/// the record: amber for one, deep red from twice the complaint level.
+pub fn danger_color(n: u32) -> [f32; 3] {
+    let t = ((n.max(1) - 1) as f32 / (2 * nd_sim::world::journeys::DANGEROUS_STREET - 1) as f32).clamp(0.0, 1.0);
+    [1.0 + 1.6 * t, 0.85 * (1.0 - t) + 0.08, 0.1]
+}
+
+/// [clarity] The Traffic danger layer: every street segment with crashes
+/// on the record, thick and coloured by how many (amber to red), each
+/// crash a small ring where it happened; over everything. Refreshed every
+/// two seconds.
+pub(super) fn danger_gizmos(sim: Res<Sim>, overlays: Res<Overlays>, lighting: Res<super::Lighting>, time: Res<Time>, mut cache: Local<(f32, Vec<(Vec3, Vec3, Color)>, Vec<Vec3>)>, mut gizmos: Gizmos<LoadGizmos>) {
+    if lighting.heat || overlays.map || !overlays.danger {
+        cache.1.clear();
+        cache.2.clear();
+        return;
+    }
+    let w = &sim.world;
+    let now = time.elapsed_secs();
+    if (cache.1.is_empty() && cache.2.is_empty()) || now - cache.0 >= 2.0 || sim.full_rebuild {
+        cache.0 = now;
+        cache.1.clear();
+        for (sid, n) in w.crashes_per_segment() {
+            let Some(seg) = w.roads.try_segment(sid) else { continue };
+            if !seg.alive {
+                continue;
+            }
+            let (a, b) = w.roads.segment_points(sid);
+            let (za, zb) = (w.road_height(sid, 0.0), w.road_height(sid, 1.0));
+            let c = danger_color(n);
+            let col = Color::linear_rgba(c[0], c[1], c[2], 0.85);
+            // Thicker the worse: parallel strokes either side.
+            let d = (b - a).normalize_or_zero();
+            let side = SVec2::new(-d.y, d.x);
+            let strokes = 1 + (n.min(8) / 2) as i32;
+            for k in -strokes..=strokes {
+                let o = side * (k as f32 * 0.9);
+                cache.1.push((Vec3::new(a.x + o.x, za + 1.0, a.y + o.y), Vec3::new(b.x + o.x, zb + 1.0, b.y + o.y), col));
+            }
+        }
+        cache.2 = w.journeys.crash_sites.iter().map(|s| Vec3::new(s.pos.x, w.surface_height(s.pos) + 1.2, s.pos.y)).collect();
+    }
+    for (a, b, c) in &cache.1 {
+        gizmos.line(*a, *b, *c);
+    }
+    let ring = Color::linear_rgba(3.0, 0.5, 0.2, 0.7);
+    for p in &cache.2 {
+        gizmos.circle(ground_ring(*p), 2.5, ring);
+    }
+}
+
+/// [clarity] The Traffic load layer's lines (refreshed twice a second) and
+/// a big pulsing marker at every crash still in the road: a ring, a cross
+/// and a beacon up into the sky, all over everything.
+pub(super) fn load_gizmos(sim: Res<Sim>, overlays: Res<Overlays>, lighting: Res<super::Lighting>, time: Res<Time>, mut cache: Local<(f32, Vec<(Vec<Vec3>, Color)>)>, mut gizmos: Gizmos<LoadGizmos>) {
+    if lighting.heat || overlays.map || !overlays.traffic {
+        cache.1.clear();
+        return;
+    }
+    let w = &sim.world;
+    let now = time.elapsed_secs();
+    if cache.1.is_empty() || now - cache.0 >= 0.5 || sim.full_rebuild {
+        cache.0 = now;
+        cache.1 = load_lines(w);
+    }
+    for (pts, col) in &cache.1 {
+        gizmos.linestrip(pts.iter().copied(), *col);
+    }
+    let f = sim.frac();
+    for (i, car) in w.traffic.cars.values().filter(|c| c.crashed()).enumerate() {
+        let (p, _) = car.pose_at(f);
+        let y = w.car_height_at(car, p) + 0.8;
+        let at = Vec3::new(p.x, y, p.y);
+        let pulse = (now * 0.8 + i as f32 * 0.31).fract();
+        let red = Color::linear_rgb(3.5, 0.3, 0.15);
+        gizmos.circle(ground_ring(at), 12.0, red);
+        gizmos.circle(ground_ring(at), 12.0 + 22.0 * pulse, Color::linear_rgba(3.0, 0.4, 0.1, 1.0 - pulse));
+        let r = 8.0;
+        gizmos.line(at + Vec3::new(-r, 0.0, -r), at + Vec3::new(r, 0.0, r), red);
+        gizmos.line(at + Vec3::new(-r, 0.0, r), at + Vec3::new(r, 0.0, -r), red);
+        gizmos.line(at, at + Vec3::Y * 40.0, Color::linear_rgba(3.0, 0.5, 0.2, 0.8));
+    }
 }
 
 /// Where everyone is now: at home, at work, out shopping or on the
@@ -222,11 +308,8 @@ pub(super) fn sync_layers(
         timers[i] = now;
         shown[i] = true;
         match i {
-            0 => {
-                let mut m = traffic_ribbons(w);
-                lift(w, &mut m);
-                spawn_layer(&mut commands, &mut meshes, &mats, &m, TrafficLayerTag);
-            }
+            // [clarity] Drawn as lines over everything by `load_gizmos`.
+            0 => {}
             1 => {
                 if let Some(g) = people_grid(w) {
                     // Saturate a little below the peak so a few crowded

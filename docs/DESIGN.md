@@ -1207,7 +1207,15 @@ Citizens are rendered from their simulated positions every frame.
   site for longer than a span may be is a gap: the preview draws the deck red over it (and a red
   band on the ground), the sub-pane says why, and implementing is refused (`World::pillar_refusal`,
   also on a trial rebuild, so a ground road laid under a viaduct where its columns stood is refused
-  too). The preview shows the columns where they will stand, orange (with the lot outlined and the
+  too). The columns are planned on the way as the network lays it (`RoadNetwork::as_built`): an
+  end dropped on a road lands on it at that road's level, so a raised road ramps down to the road
+  it joins and needs no column at that end; an end left in the air needs one within 10 m, and its
+  refusal says so ("ends in the air over a road at ..."), apart from the span gaps. The plan view
+  runs the very check implementing runs (`World::project_check`, the trial rebuild included) on
+  the active project whenever it changes: what would be refused is red on the map with a red pin
+  and a label at the spot, and the toolbar says "Will be refused: ..." with a button that flies the
+  camera there; a refused implement reads "Project 1: 0 of 1 roads built, nothing changed. ...".
+  The preview shows the columns where they will stand, orange (with the lot outlined and the
   building named in the sub-pane) where one buys out a building. A deck at least 6 m up at both
   ends of a piece (`pillars::SPAN_LEVEL`, `RoadNetwork::spans_lots`) spans over the lots under it:
   it takes no corridor from the parcels; a building taller than fits under it (`floors_under`:

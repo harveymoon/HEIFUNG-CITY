@@ -48,6 +48,7 @@ mod haze;
 mod heat;
 /// Planned roads as holograms of the real thing; the depth view.
 mod holo;
+pub use holo::gap_spot;
 mod junction_view;
 mod layers;
 mod lights;
@@ -62,6 +63,7 @@ mod swap;
 /// [layers] Map view: a flat street map with names and pins.
 mod mapview;
 pub use focus::{POLICE_GLOW, TRAFFIC_BLUE};
+pub use layers::danger_color;
 pub use nights::road_wear_color;
 pub use mapview::{zone_tint as map_zone_tint, PIN_KEY as MAP_PIN_KEY, ROAD_KEY as MAP_ROAD_KEY};
 /// The sky dome: light pollution at night, glare round the sun by day.
@@ -173,6 +175,9 @@ pub struct Overlays {
     /// drawn flat like a street map with their names, the zones tinted and
     /// pins on the special buildings (`mapview`).
     pub map: bool,
+    /// [clarity] Traffic danger: crashes on the record per street segment,
+    /// drawn over everything (`layers::load_gizmos`).
+    pub danger: bool,
     /// [events] Road condition: every street piece green to red by its
     /// wear (`nights::sync_road_layer`).
     pub road_condition: bool,
@@ -184,7 +189,7 @@ pub struct Overlays {
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, road_condition: false, metro: false }
+        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false }
     }
 }
 
@@ -473,6 +478,10 @@ impl Plugin for RenderPlugin {
         app.add_plugins(look::LookPlugin);
         app.insert_gizmo_config(layers::XrayGizmos, bevy::gizmos::config::GizmoConfig { depth_bias: -1.0, line: bevy::gizmos::config::GizmoLineConfig { width: 3.0, ..default() }, ..default() });
         app.add_systems(Update, layers::layer_gizmos.in_set(SimSet::Sync).after(lift_movers));
+        // [clarity] Traffic load lines and crash markers over everything.
+        app.insert_gizmo_config(layers::LoadGizmos, bevy::gizmos::config::GizmoConfig { depth_bias: -1.0, line: bevy::gizmos::config::GizmoLineConfig { width: 5.0, ..default() }, ..default() });
+        app.add_systems(Update, layers::load_gizmos.in_set(SimSet::Sync).after(lift_movers));
+        app.add_systems(Update, layers::danger_gizmos.in_set(SimSet::Sync).after(lift_movers));
         app.add_plugins(mapview::MapViewPlugin);
         // [districts] The district layer; [tourism] visitors on foot, after
         // the citizens whose figure cache they share.
@@ -480,6 +489,8 @@ impl Plugin for RenderPlugin {
         // After every renderer, before the UI (which may load a city and set
         // the flag again for the next frame's renderers).
         app.add_systems(Update, clear_full_rebuild.after(SimSet::Sync));
+        // [tools] A label at each spot with no room for a column.
+        app.add_systems(bevy_egui::EguiPrimaryContextPass, holo::gap_labels);
         // [tools] Footbridges, and the Intersection editor's road view.
         app.init_resource::<junction_view::JunctionCam>()
             .add_systems(Update, (junction_view::sync_footbridges.after(sync_roads).before(lift_spawned), junction_view::sync_junction_camera).in_set(SimSet::Sync))
@@ -1890,18 +1901,34 @@ fn sync_citizens(
         }
     }
     let mut looks: HashSet<nd_procgen::people::PersonKey> = HashSet::new();
+    let down = w.down_on_street();
     for &(id, e, key, stature, _) in &outdoors {
         let Some(c) = w.citizens.get(id) else { continue };
         let Ok((mut tf, mut vis, _, mut mesh, _)) = q.get_mut(e) else { continue };
         *vis = Visibility::Visible;
         let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
         let heading = lerp_angle(c.prev_heading, c.heading, f);
-        let seated = matches!(c.activity, nd_sim::Activity::Sitting { .. });
+        // [clarity] Benches and kerbs sit; the hurt (and the homeless
+        // sleeping rough) lie flat on the ground.
+        let pose = w.pose_with(id, &down);
+        let seated = matches!(pose, nd_sim::world::Pose::Bench | nd_sim::world::Pose::SittingKerb);
+        let lying = pose == nd_sim::world::Pose::Lying;
+        // Thrown clear of the wreck: beside it, not under it.
+        let pos = if lying && down.contains(&id) { pos + SVec2::new(-c.heading.sin(), c.heading.cos()) * 2.6 } else { pos };
         // [tools] Up the stairs and over a footbridge (a raised walkway).
         let raised = w.walker_level(c, pos);
-        tf.translation = Vec3::new(pos.x, if seated { 0.02 } else { 0.16 } + raised, pos.y);
+        tf.translation = Vec3::new(pos.x, if lying { 0.12 } else if seated { 0.02 } else { 0.16 } + raised, pos.y);
         tf.rotation = Quat::from_rotation_y(-heading);
-        tf.scale = if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE } * stature;
+        if lying {
+            tf.rotation *= Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+        }
+        // On the kerb: lower, hunched forward over the knees.
+        let kerb = pose == nd_sim::world::Pose::SittingKerb;
+        if kerb {
+            tf.rotation *= Quat::from_rotation_x(0.35);
+            tf.translation.y -= 0.1;
+        }
+        tf.scale = if kerb { Vec3::new(1.05, 0.5, 1.25) } else if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE } * stature;
         looks.insert(key);
         let fallback = || if key.ride { mats.bike_mesh.clone() } else { mats.citizen_mesh.clone() };
         let wanted_mesh = if plain { fallback() } else { people.mesh_for(key, &mut meshes).unwrap_or_else(fallback) };

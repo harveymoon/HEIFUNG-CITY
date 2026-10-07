@@ -62,7 +62,9 @@ pub enum Site {
     EmptyLot(LotId),
     /// A grown building: bought out and pulled down.
     Buyout(LotId, BuildingId),
-    /// A road underneath, or something the city never removes.
+    /// A road, path or track underneath (with its pavements).
+    Road,
+    /// Something the city never removes.
     Blocked,
 }
 
@@ -72,7 +74,7 @@ impl Site {
             Site::Free => 1.0,
             Site::EmptyLot(_) => 14.0,
             Site::Buyout(..) => 70.0,
-            Site::Blocked => f32::INFINITY,
+            Site::Road | Site::Blocked => f32::INFINITY,
         }
     }
 }
@@ -101,9 +103,43 @@ pub struct PillarPlan {
     pub buyouts: Vec<(LotId, BuildingId)>,
     /// Empty lots a column stands on.
     pub lots: Vec<LotId>,
-    /// Stretches with no room for a column for longer than the structural
-    /// limit: from the last support to the next possible one.
-    pub gaps: Vec<(Vec2, Vec2)>,
+    /// Stretches with no room for a column: from the last support to the
+    /// next possible one, or to an end left in the air.
+    pub gaps: Vec<Gap>,
+}
+
+/// A stretch of raised way with no room for a column.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Gap {
+    /// From the last support...
+    pub a: Vec2,
+    /// ...to the next possible one, or (for an end) the end itself.
+    pub b: Vec2,
+    /// The way ends in the air here (a dead end, or where it meets another
+    /// raised way) with no column within `PILLAR_END_REACH` of its end.
+    pub end: bool,
+    /// What stands under that end is a road (else something the city keeps).
+    pub over_road: bool,
+    /// The deck's planned level over the stretch, metres above the ground.
+    pub level: f32,
+}
+
+impl Gap {
+    /// Why the way cannot be built, in words.
+    pub fn reason(&self) -> String {
+        if self.end {
+            let under = if self.over_road { "over a road" } else { "over something the city keeps" };
+            format!(
+                "the road ends in the air {under} at ({:.0}, {:.0}), with no room for a column within {:.0} m of its end. End it on the ground, connect it to another raised road, or end it past what is below",
+                self.b.x, self.b.y, PILLAR_END_REACH
+            )
+        } else {
+            format!(
+                "no room for a pillar between ({:.0}, {:.0}) and ({:.0}, {:.0}): roads or buildings the city keeps stand under the deck for more than the {:.0} m a span may be. Move the road, or raise it over a gap",
+                self.a.x, self.a.y, self.b.x, self.b.y, PILLAR_MAX_SPAN
+            )
+        }
+    }
 }
 
 impl PillarPlan {
@@ -113,11 +149,7 @@ impl PillarPlan {
 
     /// Why the way cannot be built, if it cannot.
     pub fn refusal(&self) -> Option<String> {
-        let (a, b) = *self.gaps.first()?;
-        Some(format!(
-            "no room for a pillar between ({:.0}, {:.0}) and ({:.0}, {:.0}): roads or buildings the city keeps stand under the deck for more than the {:.0} m a span may be. Move the road, or raise it over a gap",
-            a.x, a.y, b.x, b.y, PILLAR_MAX_SPAN
-        ))
+        self.gaps.first().map(Gap::reason)
     }
 
     pub fn append(&mut self, other: PillarPlan) {
@@ -217,7 +249,7 @@ pub fn plan(pts: &[Vec2], levels: &[f32], half_width: f32, way: u64, site: &dyn 
             }
         })
         .collect();
-    let support = |k: Kind| !matches!(k, Kind::Site(Site::Blocked));
+    let support = |k: Kind| !matches!(k, Kind::Site(Site::Blocked | Site::Road));
     let pillar_cost = |k: Kind| match k {
         Kind::Ground | Kind::Held => 0.0,
         Kind::Site(s) => s.cost(),
@@ -295,11 +327,35 @@ pub fn plan(pts: &[Vec2], levels: &[f32], half_width: f32, way: u64, site: &dyn 
             sm[i].p
         }
     };
+    // What stands under an end, for the message.
+    let road_near = |from: usize, step: i64| {
+        let mut i = from as i64;
+        while i >= 0 && (i as usize) < n && (sm[i as usize].s - sm[from].s).abs() <= PILLAR_END_REACH {
+            if kinds[i as usize] == Kind::Site(Site::Road) {
+                return true;
+            }
+            i += step;
+        }
+        false
+    };
+    let level_at = |s: f32| -> f32 {
+        let i = sm.partition_point(|x| x.s < s.clamp(0.0, total)).min(n - 1);
+        sm[i].level
+    };
     for w in chain.windows(2) {
         let (j, k) = (w[0], w[1]);
         let g = pos_s(k) - pos_s(j);
+        let level = level_at((pos_s(j) + pos_s(k)) * 0.5);
         if g > PILLAR_MAX_SPAN + 1e-3 {
-            out.gaps.push((point_at(pos_s(j)), point_at(pos_s(k))));
+            // A gap into the virtual end (or out of the virtual start) is
+            // an end in the air with no column in reach.
+            if k == m - 1 && kinds[n - 1] != Kind::Ground {
+                out.gaps.push(Gap { a: point_at(pos_s(j)), b: sm[n - 1].p, end: true, over_road: road_near(n - 1, -1), level });
+            } else if j == 0 && kinds[0] != Kind::Ground {
+                out.gaps.push(Gap { a: point_at(pos_s(k)), b: sm[0].p, end: true, over_road: road_near(0, 1), level });
+            } else {
+                out.gaps.push(Gap { a: point_at(pos_s(j)), b: point_at(pos_s(k)), end: false, over_road: false, level });
+            }
         }
     }
     for &k in &chain {
@@ -366,8 +422,8 @@ mod tests {
         let plan = plan(&p, &l, 6.0, 1, &|q: Vec2, _| if (50.0..120.0).contains(&q.x) { Site::Blocked } else { Site::Free }, &[]);
         assert!(!plan.ok());
         assert!(plan.refusal().is_some());
-        let (a, b) = plan.gaps[0];
-        assert!(a.x <= 50.0 && b.x >= 120.0, "{a} {b}");
+        let g = plan.gaps[0];
+        assert!(!g.end && g.a.x <= 50.0 && g.b.x >= 120.0, "{g:?}");
     }
 
     #[test]

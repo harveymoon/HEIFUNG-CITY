@@ -318,7 +318,7 @@ impl World {
         let plants: Vec<(BuildingId, f32)> = self
             .buildings
             .iter()
-            .filter_map(|(id, b)| b.plant.map(|k| (id, k.upkeep_per_day())).or(b.battery.as_ref().map(|bat| (id, bat.kind.upkeep_per_day()))))
+            .filter_map(|(id, b)| b.plant.map(|_| (id, self.plant_upkeep(b))).or(b.battery.as_ref().map(|bat| (id, bat.kind.upkeep_per_day()))))
             .collect();
         let upkeep: f32 = plants.iter().map(|(_, x)| x).sum();
         for (id, x) in plants {

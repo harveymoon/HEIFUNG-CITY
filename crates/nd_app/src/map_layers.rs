@@ -63,6 +63,8 @@ pub const MAP_LAYERS: &[MapLayer] = &[
     MapLayer { key: "districts", label: "Districts", group: "City", hotkey: "", hint: "Named districts: areas, borders and names", flag: |o| &mut o.districts, legend: legend_districts },
     MapLayer { key: "traffic", label: "Traffic load", group: "Traffic", hotkey: "L", hint: "Per lane: how full and how slow", flag: |o| &mut o.traffic, legend: legend_traffic },
     MapLayer { key: "traffic_types", label: "Traffic types", group: "Traffic", hotkey: "L", hint: "A disc under every vehicle by type", flag: |o| &mut o.traffic_types, legend: legend_traffic_types },
+    // [clarity] (render/layers.rs `danger_gizmos`)
+    MapLayer { key: "danger", label: "Traffic danger", group: "Traffic", hotkey: "", hint: "Crashes on the record per street: where accidents keep happening", flag: |o| &mut o.danger, legend: legend_danger },
     MapLayer { key: "paths", label: "Pedestrian network", group: "Traffic", hotkey: "P", hint: "Lot loops, alleys and gates people walk", flag: |o| &mut o.paths, legend: legend_paths },
     MapLayer { key: "people", label: "People", group: "People", hotkey: "L", hint: "Where everyone is right now", flag: |o| &mut o.people, legend: legend_people },
     MapLayer { key: "pollution", label: "Pollution and noise", group: "Environment", hotkey: "L", hint: "From plants, industry, nightlife and traffic", flag: |o| &mut o.pollution, legend: legend_pollution },
@@ -273,8 +275,16 @@ fn legend_districts(ui: &mut egui::Ui, cx: &LegendCtx) {
 fn legend_traffic(ui: &mut egui::Ui, _: &LegendCtx) {
     ramp(ui, |t| linear(traffic_color(t)), "free flow", "jammed");
     small(ui, "per lane: how full and how slow");
-    swatches(ui, &[(linear(crate::render::TRAFFIC_BLUE), "every vehicle".into()), (linear([0.25, 0.5, 1.0]), "tunnels, seen through".into())], false);
-    small(ui, "the city is dimmed; cars in tunnels are outlined through the ground");
+    swatches(ui, &[(linear(crate::render::TRAFFIC_BLUE), "every vehicle".into()), (linear([0.25, 0.5, 1.0]), "tunnels, seen through".into()), (linear([3.5, 0.3, 0.15]), "a crash in the road".into())], false);
+    small(ui, "the city is dimmed; load lines, crashes and cars in tunnels show through everything");
+}
+
+fn legend_danger(ui: &mut egui::Ui, ctx: &LegendCtx) {
+    let top = 2 * nd_sim::world::journeys::DANGEROUS_STREET;
+    ramp(ui, |t| linear(crate::render::danger_color(1 + (t * (top - 1) as f32).round() as u32)), "1 crash", &format!("{top}+ crashes"));
+    small(ui, &format!("per street, drawn over everything; rings are the crashes. From {} on a street, people living on it complain of a dangerous street", nd_sim::world::journeys::DANGEROUS_STREET));
+    let worst = ctx.world.crashes_per_segment().first().map_or(0, |x| x.1);
+    small(ui, &format!("{} crashes on the record; the worst street has {worst}", ctx.world.journeys.crash_sites.len()));
 }
 
 fn legend_crime(ui: &mut egui::Ui, _: &LegendCtx) {

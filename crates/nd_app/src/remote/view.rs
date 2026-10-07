@@ -351,6 +351,9 @@ pub fn citizen_detail(w: &World, id: CitizenId, c: &Citizen, favourite: bool) ->
     // literal above: it is at the json! macro's recursion limit).
     v["raised_level"] = json!(round(w.walker_level(c, c.pos)));
     v["appearance"] = appearance(c);
+    // [clarity] What they are doing in words, and their pose outdoors.
+    v["doing"] = json!(w.activity_line(id));
+    v["pose"] = json!(format!("{:?}", w.pose_of(id)).to_lowercase());
     v
 }
 
@@ -568,7 +571,23 @@ pub fn car_detail(w: &World, id: CarId, c: &Car) -> Value {
     m["driver"] = driver_json(w, c);
     // [inspector] Everyone aboard, as the inspector lists them.
     m["occupants"] = json!(crate::ui::occupants(w, id).iter().filter_map(|&p| w.citizens.get(p).map(|x| json!({ "id": key_str(p), "name": x.name }))).collect::<Vec<_>>());
+    m["journey"] = journey_json(w, id);
     m
+}
+
+/// [clarity] A vehicle's journey as the inspector shows it: `purpose`,
+/// `from` and `to` ({label, building, car, pos}; `to` null when it has no
+/// destination, like a police car patrolling), and `at_wheel`: a citizen,
+/// a crew of citizens, or `unknown` (a stranger from out of town).
+pub fn journey_json(w: &World, id: CarId) -> Value {
+    let Some(j) = w.car_journey(id) else { return Value::Null };
+    let place = |p: &nd_sim::world::Place| json!({ "label": p.label, "building": p.building.map(key_str), "car": p.car.map(key_str), "pos": p.pos.map(v2) });
+    let wheel = match &j.driver {
+        nd_sim::world::Driver::Citizen(c) => json!({ "citizen": key_str(*c), "name": w.citizens.get(*c).map(|x| x.name.clone()) }),
+        nd_sim::world::Driver::Crew(crew) => json!({ "crew": crew.iter().filter_map(|&c| w.citizens.get(c).map(|x| json!({ "id": key_str(c), "name": x.name, "work": x.work.map(key_str) }))).collect::<Vec<_>>() }),
+        nd_sim::world::Driver::Unknown(who) => json!({ "unknown": who }),
+    };
+    json!({ "purpose": j.purpose, "from": place(&j.from), "to": j.to.as_ref().map(place), "at_wheel": wheel })
 }
 
 /// [inspector] The driver card: who is at the wheel of a private car, why

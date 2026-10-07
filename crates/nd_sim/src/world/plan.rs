@@ -10,6 +10,19 @@
 
 use super::*;
 use crate::plan::{parcel_zoning, ParcelZoning};
+
+/// [tools] What implementing a project would refuse on (`World::project_check`).
+#[derive(Clone, Debug, Default)]
+pub struct ProjectCheck {
+    /// The city's own structures its roads would take.
+    pub blockers: Vec<BuildingId>,
+    /// Stretches of raised road with no room for a column.
+    pub pillar_gaps: Vec<crate::pillars::Gap>,
+    /// The first of them in words ("Not implemented: ...").
+    pub pillar_refusal: Option<String>,
+    /// Roads the project lays.
+    pub roads: usize,
+}
 use crate::zoning::{generate_parcels, inner_center, join_parcels, make_lot, Parcel, ParcelKey, ParcelMap};
 
 /// One pending project as the UI and the remote API list it.
@@ -695,54 +708,71 @@ impl World {
     /// itself would lose, found by implementing it on a copy of the world:
     /// a structure left with no street to front loses its lot too.
     pub fn implement_blockers(&self, project: &Project) -> Vec<BuildingId> {
-        self.implement_checks(project).0
+        self.project_check(project).blockers
     }
 
     /// [tools] Why `project` cannot be built for want of room for the
-    /// columns of a raised road, if so (`implement_checks`).
+    /// columns of a raised road, if so (`project_check`).
     pub fn pillar_refusal(&self, project: &Project) -> Option<String> {
-        self.implement_checks(project).1
+        self.project_check(project).pillar_refusal
     }
 
-    /// `implement_blockers`, and [tools] the pillar refusal: one of the
-    /// project's raised roads has a stretch with no site for a column for
-    /// longer than a span may be, or (found on the same trial rebuild) a
-    /// road it lays under a viaduct leaves the viaduct without one.
+    /// [tools] `project_check` of the active project (none: all clear).
+    pub fn active_project_check(&self) -> ProjectCheck {
+        match &self.project {
+            Some(p) if !p.is_empty() => self.project_check(p),
+            _ => ProjectCheck::default(),
+        }
+    }
+
     fn implement_checks(&self, project: &Project) -> (Vec<BuildingId>, Option<String>) {
-        let mut out = self.road_blockers(project);
+        let c = self.project_check(project);
+        (c.blockers, c.pillar_refusal)
+    }
+
+    /// Everything that would refuse `project`, as implementing checks it:
+    /// the structures its roads would take, and [tools] the stretches of
+    /// its raised roads (or of a viaduct a road it lays runs under) with no
+    /// room for a column. The raised roads are planned as the Road tool
+    /// previews them, then the whole project on a copy of the world (the
+    /// trial rebuild), so the plan view, the hologram and the refusal all
+    /// say the same thing.
+    pub fn project_check(&self, project: &Project) -> ProjectCheck {
+        let mut out = ProjectCheck { blockers: self.road_blockers(project), ..Default::default() };
         let pv = preview(&self.master, project);
         let roads_change = !pv.planned_roads.is_empty() || !pv.removed_roads.is_empty() || !pv.planned_rings.is_empty() || !pv.removed_rings.is_empty();
+        out.roads = pv.planned_roads.len();
         let raised_new = pv.planned_levels.iter().any(|l| crate::pillars::is_raised(l));
-        let mut pillars: Option<String> = None;
         if roads_change && raised_new {
             for ((_, pts, f, b, k), levels) in pv.planned_roads.iter().zip(&pv.planned_levels) {
-                if let Some(why) = self.road_pillar_plan(pts, levels, *f, *b, *k).refusal() {
-                    pillars = Some(format!("Not implemented: {why}."));
-                    break;
-                }
+                out.pillar_gaps.extend(self.road_pillar_plan(pts, levels, *f, *b, *k).gaps);
             }
         }
         let civic = self.buildings.values().any(Self::is_civic_structure);
-        let check_pillars = pillars.is_none() && (raised_new || !self.pillars.is_empty());
+        let check_pillars = raised_new || !self.pillars.is_empty();
         if roads_change && (civic || check_pillars) {
             let mut trial = self.clone();
             trial.project = None;
             trial.master = project.apply_to(&trial.master);
             trial.rebuild_from_master();
             for (id, b) in self.buildings.iter() {
-                if Self::is_civic_structure(b) && !trial.buildings.contains_key(id) && !out.contains(&id) {
-                    out.push(id);
+                if Self::is_civic_structure(b) && !trial.buildings.contains_key(id) && !out.blockers.contains(&id) {
+                    out.blockers.push(id);
                 }
             }
             if check_pillars {
-                if let Some(&(a, b)) = trial.pillar_gaps.first() {
-                    let plan = crate::pillars::PillarPlan { gaps: vec![(a, b)], ..Default::default() };
-                    pillars = plan.refusal().map(|why| format!("Not implemented: {why}."));
+                for g in &trial.pillar_gaps {
+                    if !out.pillar_gaps.iter().any(|o| o.a.distance(g.a) < 3.0 && o.b.distance(g.b) < 3.0) {
+                        out.pillar_gaps.push(*g);
+                    }
                 }
             }
         }
-        out.sort();
-        (out, pillars)
+        out.blockers.sort();
+        // An end left in the air is the plainer problem: say it first.
+        out.pillar_gaps.sort_by_key(|g| !g.end);
+        out.pillar_refusal = out.pillar_gaps.first().map(|g| format!("Not implemented: {}.", g.reason()));
+        out
     }
 
     /// The city's own structures whose lots the asphalt of one road would
@@ -894,9 +924,13 @@ impl World {
                 RoadKind::Street => (fwd, bwd),
                 RoadKind::Path | RoadKind::Rail => (0, 0),
             };
+            // [tools] Its ends as the network lays them (an end dropped on a
+            // road takes that road's level: a raised road ramps down to it),
+            // for its columns, before it is laid.
+            let landed = way.map(|_| roads.as_built(&points, &levels, kind));
             roads.add_polyline_levels(&points, &levels, fwd, bwd, kind);
-            if let Some(key) = way {
-                raised.push((key, points.clone(), levels.clone(), super::deck_half_width(kind, fwd, bwd)));
+            if let (Some(key), Some((pts, lv))) = (way, landed) {
+                raised.push((key, pts, lv, super::deck_half_width(kind, fwd, bwd)));
             }
         }
         // A zoning edit, or a facility fused onto what is there, gives back

@@ -170,13 +170,18 @@ fn pillars_dodge_the_roads_and_buildings_under_a_raised_road() {
 #[test]
 fn a_raised_road_with_no_room_for_pillars_is_refused() {
     let mut w = block();
-    // Straight along over the street at y = 0: every site is road.
-    let g = raised(&[Vec2::new(-250.0, 0.0), Vec2::new(250.0, 0.0)], &[12.0, 12.0], (1, 1));
-    let plan = w.road_pillar_plan(&[Vec2::new(-250.0, 0.0), Vec2::new(250.0, 0.0)], &[12.0, 12.0], 1, 1, RoadKind::Street);
+    // Straight along over the street at y = 0: every site is road. (Its
+    // ends come down past the street's ends: an end dropped on the street
+    // would land on it.)
+    let pts = [Vec2::new(-420.0, 0.0), Vec2::new(-340.0, 0.0), Vec2::new(340.0, 0.0), Vec2::new(420.0, 0.0)];
+    let levels = [0.0, 12.0, 12.0, 0.0];
+    let g = raised(&pts, &levels, (1, 1));
+    let plan = w.road_pillar_plan(&pts, &levels, 1, 1, RoadKind::Street);
+    assert!(plan.gaps.iter().any(|g| !g.end), "a mid-span gap: {:?}", plan.gaps);
     assert!(!plan.ok(), "the preview shows the gap");
     let segs = w.roads.alive_segments().count();
     let err = try_build(&mut w, g).expect_err("refused");
-    assert!(err.contains("pillar"), "{err}");
+    assert!(err.contains("pillar") || err.contains("column"), "{err}");
     assert!(w.project.is_some(), "the project stays pending");
     assert_eq!(w.roads.alive_segments().count(), segs, "nothing was built");
 }
@@ -195,7 +200,7 @@ fn pillars_never_take_a_protected_building() {
     assert!(plan.buyouts.iter().all(|(_, b)| !stations.contains(b)), "a depot would be bought out");
     assert!(!plan.ok(), "no room but on the depots");
     let err = try_build(&mut w, raised(&pts, &[12.0, 12.0], (1, 1))).expect_err("refused");
-    assert!(err.contains("pillar"), "{err}");
+    assert!(err.contains("pillar") || err.contains("column"), "{err}");
     for s in stations {
         assert!(w.buildings.contains_key(s), "the depot stands");
     }
@@ -545,4 +550,88 @@ fn a_save_from_before_the_tools_loads() {
     let w2 = World::from_ron(&old).expect("an old save loads");
     assert!(w2.pillars.is_empty() && w2.traffic.junction_rules.is_empty() && w2.crosswalks.rules.is_empty());
     assert_eq!(w2.roads.alive_segments().count(), w.roads.alive_segments().count());
+}
+
+/// [clarity] Walkers take the footbridge over the crosswalk when it costs
+/// only a little more, but not when it is a real detour: from the far side
+/// of the crosswalk (away from the stairs) they cross at grade.
+#[test]
+fn walkers_take_a_footbridge_only_when_it_is_no_big_detour() {
+    let (mut w, cr) = zebra_town();
+    w.economy.treasury = 1.0e6;
+    w.set_crossing_upgrade(cr, CrossingUpgrade::Footbridge).unwrap();
+    let cr = w.walk.crossings.iter().position(|c| c.bridged).unwrap() as u32;
+    let c = &w.walk.crossings[cr as usize];
+    let (a, b) = (w.walk.nodes[c.a as usize].pos, w.walk.nodes[c.b as usize].pos);
+    let fb = w.walk.footbridges[0].clone();
+    let along = (fb.foot[0] - fb.top[0]).normalize();
+    let climbs = |w: &World, from: Vec2, to: Vec2| {
+        let (_, nodes) = w.walk.route(from, to).expect("a way across");
+        nodes.iter().any(|&n| w.walk.nodes[n as usize].level > 0.0)
+    };
+    // On the stairs' side: a few metres more, so over the bridge.
+    assert!(climbs(&w, a + along * 15.0, b + along * 15.0), "takes the bridge when it is on the way");
+    // From the other side, the bridge would be a long way round.
+    assert!(!climbs(&w, a - along * 40.0, b - along * 40.0), "no big detour for a bridge");
+}
+
+/// Harvey's gesture 423, exactly: a raised street (6 m) whose last point
+/// is dropped on a highway carriageway. The network lands that end on the
+/// carriageway at its level, so the deck ramps down to it and needs no
+/// column at its end. The preview, the plan view's check and implementing
+/// agree: it is built, with no gap. (It used to be planned at the drawn
+/// 6 m to its end, which wanted a column over the carriageway and refused
+/// with a 16 m "gap" ending at the junction.)
+#[test]
+fn a_raised_street_ramping_down_onto_a_highway_carriageway_is_built() {
+    let mut w = flat();
+    // The highway: both carriageways, a slip road joining the westbound,
+    // and the carriageway piece the street lands on (as in his city).
+    w.add_road(&[Vec2::new(-1000.0, 429.0), Vec2::new(1000.0, 429.0)], 3, 0);
+    w.add_road(&[Vec2::new(1000.0, 411.0), Vec2::new(-1000.0, 411.0)], 3, 0);
+    w.add_road(&[Vec2::new(-298.66, 381.0), Vec2::new(-448.66, 411.0)], 1, 0);
+    w.add_road(&[Vec2::new(-250.0, 377.0), Vec2::new(-353.77, 369.26), Vec2::new(-480.0, 348.66), Vec2::new(-600.0, 329.0)], 3, 0);
+    // The street the gesture starts from.
+    w.add_road(&[Vec2::new(-400.34, 440.0), Vec2::new(-506.26, 470.83), Vec2::new(-600.0, 500.0)], 1, 1);
+    let pts = [Vec2::new(-506.26, 470.83), Vec2::new(-367.15, 457.9), Vec2::new(-383.77, 386.03), Vec2::new(-391.44, 363.54)];
+    let levels = [0.0, 6.0, 6.0, 6.0];
+    // Laid as built: the last point lands on the carriageway at grade.
+    let (_, built) = w.roads.as_built(&pts, &levels, RoadKind::Street);
+    assert!(built[3].abs() < 0.5, "the end lands at the carriageway's level: {built:?}");
+    let plan = w.road_pillar_plan(&pts, &levels, 1, 1, RoadKind::Street);
+    assert!(plan.ok(), "the preview finds room: {:?}", plan.gaps);
+    w.project = None;
+    w.add_gesture(raised(&pts, &levels, (1, 1)));
+    let check = w.active_project_check();
+    assert!(check.pillar_gaps.is_empty() && check.pillar_refusal.is_none(), "the plan view is clear: {:?}", check.pillar_gaps);
+    w.try_implement().expect("implemented");
+    assert!(w.pillar_gaps.is_empty(), "{:?}", w.pillar_gaps);
+    assert!(!w.pillars.is_empty(), "the raised part stands on columns");
+}
+
+/// An end left in the air with nothing to stand on near it is refused with
+/// that reason, and the preview, the plan view and implementing agree.
+#[test]
+fn an_end_in_the_air_is_flagged_everywhere_with_the_end_reason() {
+    let mut w = flat();
+    // A wide carriageway pair; the street ends between them at 6 m, more
+    // than a snap away from either, with no room for a column near its end.
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 4, 0);
+    w.add_road(&[Vec2::new(300.0, 20.0), Vec2::new(-300.0, 20.0)], 4, 0);
+    let pts = [Vec2::new(0.0, 220.0), Vec2::new(0.0, 120.0), Vec2::new(0.0, 40.0), Vec2::new(0.0, 10.0)];
+    let levels = [0.0, 6.0, 6.0, 6.0];
+    let (_, built) = w.roads.as_built(&pts, &levels, RoadKind::Street);
+    assert!((built[3] - 6.0).abs() < 1e-3, "the end stays in the air: {built:?}");
+    let plan = w.road_pillar_plan(&pts, &levels, 1, 1, RoadKind::Street);
+    let g = plan.gaps.iter().find(|g| g.end).expect("the end is flagged in the preview");
+    assert!(g.over_road && g.b.distance(Vec2::new(0.0, 10.0)) < 1.0, "{g:?}");
+    let why = plan.refusal().unwrap();
+    assert!(why.contains("ends in the air over a road") && why.contains("(0, 10)") && !why.contains("42 m"), "{why}");
+    w.project = None;
+    w.add_gesture(raised(&pts, &levels, (1, 1)));
+    let shown = w.active_project_check().pillar_refusal.expect("a reason before implementing");
+    assert!(shown.contains("ends in the air"), "{shown}");
+    let segs = w.roads.alive_segments().count();
+    assert_eq!(w.try_implement().expect_err("refused"), shown);
+    assert_eq!(w.roads.alive_segments().count(), segs, "nothing was built");
 }

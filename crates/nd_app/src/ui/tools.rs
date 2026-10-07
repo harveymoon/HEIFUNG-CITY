@@ -393,6 +393,9 @@ pub fn placeable_info(ui: &mut egui::Ui, sim: &mut Sim, what: Placeable) {
     }
     match what {
         Placeable::Plant(k) => {
+            if let Some(a) = k.reference_area() {
+                line += &format!(" (for a {a:.0} m² lot: output, cost and upkeep scale with the lot's size)");
+            }
             line += help::power_note(k);
             line += &format!(" Goes {}.", k.site_hint());
         }

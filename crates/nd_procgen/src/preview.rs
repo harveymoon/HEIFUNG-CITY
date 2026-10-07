@@ -132,7 +132,7 @@ pub fn road_preview_with(world: &World, points: &[Vec2], levels: &[f32], lanes_f
             crate::terrain::pillar_column(&mut geo, p.at, p.dir, top, ground(p.at), p.half_width, concrete);
         }
     }
-    let gaps: Vec<(Vec2, Vec2)> = pillars.map(|p| p.gaps.clone()).unwrap_or_default();
+    let gaps: Vec<(Vec2, Vec2)> = pillars.map(|p| p.gaps.iter().map(|g| (g.a, g.b)).collect()).unwrap_or_default();
     // Columns that buy out a building stand out in orange.
     let spots: Vec<Vec2> = pillars
         .map(|plan| plan.pillars.iter().filter(|p| plan.buyouts.iter().any(|(lot, _)| world.lots.get(*lot).is_some_and(|l| l.contains(p.at) || nd_sim::geom::distance_to_outline(p.at, &l.polygon) < nd_sim::pillars::PILLAR_RADIUS))).map(|p| p.at).collect())

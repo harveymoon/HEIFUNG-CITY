@@ -1194,6 +1194,7 @@ impl World {
             }
             // [benches] Neighbours may have got talking; the seat is free.
             self.stand_up(id, at, park);
+            self.note_left(id, park);
             self.citizens[id].activity = Activity::Idle;
         }
         let c = &mut self.citizens[id];
@@ -1203,6 +1204,8 @@ impl World {
                 b.visitors = b.visitors.saturating_sub(1);
             }
         }
+        // [clarity] Where the trip starts, for "coming from".
+        self.note_left(id, inside);
         self.building_entrance(inside)
     }
 
@@ -1325,7 +1328,7 @@ impl World {
     #[allow(clippy::too_many_arguments)]
     fn walk_or_ride(&mut self, id: CitizenId, target: BuildingId, purpose: Purpose, mode: TravelMode, from_node: NodeId, to_node: NodeId, walk_from: Vec2, entrance: Vec2, fresh: bool) -> bool {
         crate::prof_scope!("walk_or_ride");
-        let Some(nodes) = self.roads.path(from_node, to_node) else { return false };
+        let Some(nodes) = self.roads.foot_path(from_node, to_node) else { return false };
         let exit_pos = self.leave_building(id);
         let mut path = match mode {
             TravelMode::Walk => match self.walk_route_for(id, walk_from, entrance, purpose) {
@@ -1692,7 +1695,7 @@ impl World {
             }
             None => {
                 let end = NodeId(self.rng.random_range(0..self.roads.nodes.len() as u32));
-                let Some(nodes) = self.roads.path(start, end) else { return };
+                let Some(nodes) = self.roads.foot_path(start, end) else { return };
                 self.leave_building(id);
                 self.route_path(&nodes, mode)
             }
