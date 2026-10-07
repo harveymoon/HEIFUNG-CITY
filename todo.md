@@ -258,3 +258,5 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Hydro dam: curved arch dam with spillway, cooler look [feat/plant-groups]
 - [ ] Solar/wind output and cost follow plot size everywhere the player looks (they read as identical) [feat/plant-groups]
 - [ ] Adjacent solar lots merge into one Sunfield; adjacent wind lots into a Wind Park; small lot allowed if it joins a wind farm [feat/plant-groups]
+- [ ] Player-placed buildings (plants, services, depots, stations...) go on any usable parcel, zoned or not [feat/free-placement]
+- [ ] A placed building takes its parcel out of the zone and shows its own use (civic/utility), back to the zone when bulldozed [feat/free-placement]
