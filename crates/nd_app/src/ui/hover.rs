@@ -14,7 +14,11 @@ use crate::sim::Sim;
 pub fn card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
     let (Some(ground), Some(pointer)) = (cursor.ground, ctx.pointer_latest_pos()) else { return };
     let w = &sim.world;
-    let Some((_, lot)) = w.lots.iter().find(|(_, l)| point_in_polygon(ground, &l.polygon)) else { return };
+    let Some((_, lot)) = w.lots.iter().find(|(_, l)| point_in_polygon(ground, &l.polygon)) else {
+        // [events] Off the lots, on a street: its condition.
+        super::nights::road_card(ctx, w, ground, pointer);
+        return;
+    };
     let building = lot.building.and_then(|b| w.buildings.get(b));
     let value = w.land_value.at(lot.center);
     // [access] Walking time to parks and nightlife, and what it is worth to homes.

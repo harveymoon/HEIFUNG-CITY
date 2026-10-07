@@ -44,6 +44,8 @@ pub mod legend;
 pub mod junction;
 /// [lines] The Lines window.
 mod lines;
+/// [events] Street races, raves and road maintenance in the HUD.
+mod nights;
 mod toolbar;
 mod tools;
 mod topbar;
@@ -87,6 +89,8 @@ pub struct UiFlags {
     /// The message the toast is showing and the egui time it appeared, so a
     /// new message restarts the fade and an old one stays faded out.
     toast: Option<(String, f64)>,
+    /// [events] The last city news line toasted (`nights::news_toast`).
+    news_seen: u32,
 }
 
 pub struct UiPlugin;
@@ -206,6 +210,7 @@ pub(crate) fn side_panel(
     let fly_to = p.fly_to;
 
     flags.panel_rects = vec![top_rect, bottom_rect];
+    nights::news_toast(&sim.world, &mut flags);
     toast(ctx, &mut flags, bottom_rect.height());
     // The land layer's reading under the pointer, for the legend.
     let here = overlays.land.zip(cursor.ground).map(|(l, p)| legend::land_here(&sim.world, l, p));

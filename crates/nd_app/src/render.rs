@@ -62,6 +62,7 @@ mod swap;
 /// [layers] Map view: a flat street map with names and pins.
 mod mapview;
 pub use focus::{POLICE_GLOW, TRAFFIC_BLUE};
+pub use nights::road_wear_color;
 pub use mapview::{zone_tint as map_zone_tint, PIN_KEY as MAP_PIN_KEY, ROAD_KEY as MAP_ROAD_KEY};
 /// The sky dome: light pollution at night, glare round the sun by day.
 mod sky;
@@ -69,6 +70,8 @@ mod sky;
 mod people;
 pub use people::MESH_CAP as PEOPLE_MESH_CAP;
 mod stunts;
+/// [events] Rave lights, race markers, road cracks and the road condition layer.
+mod nights;
 mod survey;
 /// [subway] Metro tunnels and trains in the Underground view.
 mod subway;
@@ -170,11 +173,14 @@ pub struct Overlays {
     /// drawn flat like a street map with their names, the zones tinted and
     /// pins on the special buildings (`mapview`).
     pub map: bool,
+    /// [events] Road condition: every street piece green to red by its
+    /// wear (`nights::sync_road_layer`).
+    pub road_condition: bool,
 }
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false }
+        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, road_condition: false }
     }
 }
 
@@ -447,6 +453,8 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, stunts::sync_stunts.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // [land] billionaires' convoys and bodyguards
         app.init_resource::<convoys::ConvoyRender>().add_systems(Update, convoys::sync_convoys.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
+        // [events]
+        app.add_systems(Update, (nights::sync_road_wear, nights::sync_raves, nights::race_gizmos).in_set(SimSet::Sync).after(sync_cars).before(lift_movers));
         // [society] Skid row and the trash.
         app.init_resource::<society::SocietyRender>().add_systems(Update, society::sync_society.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
         // Drone taxis and helicopters, after the buildings whose pads they land on.

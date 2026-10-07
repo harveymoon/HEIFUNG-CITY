@@ -313,12 +313,12 @@ impl World {
     }
 
     /// The building nearest a point, to name a place on the street.
-    fn building_near(&self, p: Vec2) -> Option<BuildingId> {
+    pub(super) fn building_near(&self, p: Vec2) -> Option<BuildingId> {
         self.buildings.iter().filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, l.center.distance_squared(p)))).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(id, _)| id)
     }
 
     /// Somebody near enough to see it and call it in (not those in it).
-    fn witness(&self, p: Vec2, reach: f32, except: &[CitizenId]) -> Option<CitizenId> {
+    pub(super) fn witness(&self, p: Vec2, reach: f32, except: &[CitizenId]) -> Option<CitizenId> {
         self.citizens
             .iter()
             .filter(|(id, c)| !except.contains(id) && !c.asleep && c.age >= 12 && !matches!(c.activity, Activity::OnTrain { .. } | Activity::OnMetro { .. } | Activity::Arriving))
@@ -679,7 +679,7 @@ impl World {
 
     /// [services] Tow `car` now, or (no road away from it) queue it with
     /// the wrecks to be tried again (`step_wrecks`).
-    fn tow_or_queue(&mut self, car: CarId) {
+    pub(super) fn tow_or_queue(&mut self, car: CarId) {
         if self.tow(car) {
             return;
         }
@@ -871,7 +871,7 @@ impl World {
         let car = self.drive_from_spot(vid, segment, to_pt, cid, crate::vehicle::Errand::Trip)?;
         self.leave_building(cid);
         let tc = &mut self.traffic.cars[car];
-        tc.drive.gang = Some(GangRole { takeover: t.id, phase: GangPhase::Joining });
+        tc.drive.gang = Some(GangRole { takeover: t.id, phase: GangPhase::Joining, race: false });
         let (pos, model) = (tc.pos, tc.model);
         let c = &mut self.citizens[cid];
         c.pos = pos;
@@ -916,7 +916,7 @@ impl World {
             };
             let tc = &mut self.traffic.cars[car];
             tc.model = VehicleModel { class: VehicleClass::Expensive, body, wear: 0, tuned: !body.two_wheeler(), livery: Livery::None, paint: rng.random_range(0..crate::vehicle::PAINTS) };
-            tc.drive.gang = Some(GangRole { takeover: t.id, phase: GangPhase::Joining });
+            tc.drive.gang = Some(GangRole { takeover: t.id, phase: GangPhase::Joining, race: false });
             t.cars.push(car);
             t.outsiders += 1;
             t.to_spawn -= 1;

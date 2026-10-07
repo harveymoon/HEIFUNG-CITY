@@ -95,6 +95,11 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx, big: bool) {
     )).small());
     ui.label(egui::RichText::new(format!("homes covered: police {:.0}% · fire {:.0}% · health {:.0}% · schools {:.0}%", st.coverage[0] * 100.0, st.coverage[1] * 100.0, st.coverage[2] * 100.0, st.coverage[3] * 100.0)).small().weak());
 
+    // [events] Street races and raves: tonight and the news.
+    super::nights::news(ui, p);
+    let w = &p.sim.world;
+    let s = &w.services;
+
     let mut fly: Option<nd_sim::Vec2> = None;
     section(ui, "LIVE");
     let active: Vec<&Incident> = s.active().collect();

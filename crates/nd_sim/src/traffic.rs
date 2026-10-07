@@ -238,6 +238,10 @@ pub struct Lane {
     /// [tolls] A toll booth across this lane, set by the world after every
     /// rebuild (`World::apply_tolls`).
     pub toll: Option<LaneToll>,
+    /// [events] How rough the road surface is, `0..1` (worn streets,
+    /// `crate::road_wear`): set by the world after every rebuild and each
+    /// night. Drivers keep under the limit (`limit_at`) and misjudge more.
+    pub rough: f32,
 }
 
 /// [tolls] A toll booth on a lane: where along it, what it charges and how
@@ -268,7 +272,7 @@ impl Lane {
             cum.push(cum.last().unwrap() + w[0].distance(w[1]));
         }
         let length = *cum.last().unwrap();
-        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, limit_end: speed_limit, highway: false, ramp: false, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX, red_for: 0.0, blocked: false, toll: None }
+        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, limit_end: speed_limit, highway: false, ramp: false, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX, red_for: 0.0, blocked: false, toll: None, rough: 0.0 }
     }
 
     pub fn is_connector(&self) -> bool {
@@ -277,11 +281,13 @@ impl Lane {
 
     /// The speed limit `s` metres along the lane.
     pub fn limit_at(&self, s: f32) -> f32 {
+        // [events] A worn surface is driven under the limit.
+        let rough = if self.rough > 0.0 { crate::road_wear::slow_factor(self.rough) } else { 1.0 };
         if self.limit_end == self.speed_limit || self.length <= 0.0 {
-            return self.speed_limit;
+            return self.speed_limit * rough;
         }
         let t = (s / self.length).clamp(0.0, 1.0);
-        self.speed_limit + (self.limit_end - self.speed_limit) * t
+        (self.speed_limit + (self.limit_end - self.speed_limit) * t) * rough
     }
 
     /// Set one limit for the whole lane.
@@ -749,6 +755,17 @@ impl DriverProfile {
         self
     }
 
+    /// [events] A street racer flat out: faster than a takeover pack, hard
+    /// on the throttle, no lights, still able to drive.
+    pub fn racing(mut self) -> Self {
+        self = self.pack();
+        self.speed = 1.55;
+        self.accel = 3.0;
+        self.headway = 0.5;
+        self.skill = self.skill.max(0.8);
+        self
+    }
+
     /// [rage] This driver with `anger` (`0..1`) on top: closer to the car
     /// ahead, harder on the throttle, quicker to change lanes and overtake,
     /// a little faster, less inclined to stop for an amber, and sloppier
@@ -830,12 +847,19 @@ pub enum GangPhase {
     Show,
     /// Leaving in convoy.
     Leaving,
+    /// [events] Flat out along a street race's route; held at its end (the
+    /// finish) for the party instead of parking.
+    Racing,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct GangRole {
+    /// The takeover's id, or the race's (`race`).
     pub takeover: u32,
     pub phase: GangPhase,
+    /// [events] A street racer (`crate::street_events`), not a takeover crew.
+    #[serde(default)]
+    pub race: bool,
 }
 
 /// What a car in a takeover show does, off the lanes.
@@ -3314,7 +3338,7 @@ impl Traffic {
                         c.s = s_end.min(len);
                         c.v = 0.0;
                         // [driving] A takeover car waits at the meet for the show.
-                        if c.drive.gang.is_some_and(|g| g.phase == GangPhase::Joining) {
+                        if c.drive.gang.is_some_and(|g| matches!(g.phase, GangPhase::Joining | GangPhase::Racing)) {
                             continue;
                         }
                         if !arrived.contains(&cid) {
@@ -3657,11 +3681,13 @@ impl Traffic {
             if self.cars[id].crashed() {
                 continue;
             }
-            let (drunk, v, weave) = {
+            let (drunk, v, weave, rough) = {
                 let c = &self.cars[id];
-                (c.drive.profile.drunk, c.v, c.drive.weave)
+                (c.drive.profile.drunk, c.v, c.drive.weave, self.net.lanes[c.route[c.idx] as usize].rough)
             };
-            if drunk > 0.05 && self.roll() < 0.0012 * drunk * drunk * (v / 10.0) * dt {
+            // [events] Potholes and ruts: the same mishaps, a little likelier.
+            let worse = crate::road_wear::crash_factor(rough);
+            if drunk > 0.05 && self.roll() < 0.0012 * drunk * drunk * (v / 10.0) * dt * worse {
                 self.crash(vec![id], CrashCause::OffRoad, v);
                 continue;
             }
@@ -3676,7 +3702,7 @@ impl Traffic {
                 let (lc, c) = (&self.cars[l], &self.cars[id]);
                 let gap = lc.s - lc.length() - c.s;
                 let dv = c.v - lc.v;
-                if dv > 2.0 && gap < c.v * 0.8 && !lc.in_stunt() && self.roll() < 0.015 * (1.0 - skill) * (1.0 - skill) * dt {
+                if dv > 2.0 && gap < c.v * 0.8 && !lc.in_stunt() && self.roll() < 0.015 * (1.0 - skill) * (1.0 - skill) * dt * worse {
                     self.crash(vec![id, l], CrashCause::RearEnd, dv);
                     continue;
                 }

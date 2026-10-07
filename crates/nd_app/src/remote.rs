@@ -32,6 +32,8 @@ mod junction;
 mod land;
 mod list;
 mod map;
+// [events] street races, raves, road condition
+mod nights;
 /// [places] taste, favourite places, venue ratings.
 mod places;
 /// [land] Owners, prices, merged plots, pressure and the super-elite.
@@ -352,6 +354,10 @@ fn log_events(sim: Res<Sim>, flags: Res<UiFlags>, tools: Res<ToolState>, mut log
             }
             SimEvent::Takeover(id) => json!({ "kind": "Takeover", "takeover": id, "place": w.takeover().map(|t| t.place.clone()) }),
             SimEvent::TakeoverOver(id) => json!({ "kind": "TakeoverOver", "takeover": id }),
+            SimEvent::News(seq) => {
+                let n = w.street_events.news_item(*seq);
+                json!({ "kind": "News", "seq": seq, "event": n.map(|n| n.kind.label()), "headline": n.map(|n| n.headline.as_str()), "pos": n.map(|n| [n.pos.x, n.pos.y]) })
+            }
             SimEvent::StadiumEvent(b) => json!({ "kind": "StadiumEvent", "building": key_str(*b), "name": building_name(w, Some(*b)) }),
             SimEvent::NewThought(c) => {
                 let cit = w.citizens.get(*c);
@@ -545,6 +551,11 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "incident" => incident(cmd, ctx),
         "incidents" => incidents(cmd, ctx),
         "society" => society::command(cmd, &mut ctx.sim.world),
+        // [events]
+        "street_events" | "nights" => nights::command(cmd, &ctx.sim.world),
+        "race" => nights::race(cmd, &mut ctx.sim.world),
+        "rave" => nights::rave(cmd, &mut ctx.sim.world),
+        "roads" | "road_condition" | "road_budget" => nights::roads(cmd, &mut ctx.sim.world),
         "district" | "districts" => districts::district(cmd, &mut ctx.sim.world, &mut ctx.overlays, &mut ctx.tools),
         "tourism" | "tourists" => districts::tourism(cmd, &mut ctx.sim.world),
         "concerns" => concerns::command(cmd, &ctx.sim.world),
@@ -1907,6 +1918,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             "bridge": s.bridge, "viaduct": s.viaduct, "tunnel": s.tunnel,
             "nodes": [s.a.0, s.b.0], "junction_degrees": [w.roads.neighbors(s.a).count(), w.roads.neighbors(s.b).count()],
             "grade_crossings": crossings,
+            "condition": nights::segment_condition(w, sid),
         }}));
     }
     // No id: whatever is selected.
@@ -2464,6 +2476,10 @@ fn help() -> Value {
         "industry": { "lot": "lot id, or", "polygon": "[[x, y], ...] area, or", "pos": "[x, y] (query only)", "kind": "farming | oil | refinery | manufacturing | logistics | fishing | tech | none: sets the industry sub-zone bias (none hands the area back to the ground); omit to query the ground, contamination and industry weights of the lot" },
         "history": { "keys": "optional daily/hourly series names (default all)", "days": "last n days (default all kept, up to 365)" },
         "list": { "what": "businesses|buildings|citizens|lots|routes|plants|facilities", "sort": "column", "desc": "bool", "filter": "{column: substring | value | {min, max}}", "fields": "[columns] (id always kept)", "offset": "default 0", "limit": "default 50, max 1000" },
+        "street_events": { "limit": "rows of history and news (default 10)", "fresh": "bool: weigh the warehouses for a rave now (else the last 22:00 roll's)", "returns": "race (stage, meet, finish, route_m, racers with place and speed, crowd, incident, arrests, fines), race_planned, race_crew, rave (place, door, guests, queue, queue_at_door, inside, peak, complaints, incident, pull), rave_planned, rave_spots (warehouses with youth, artists, art_scene, neighbours, culture, has_scene, night_chance, why), history, news, totals" },
+        "race": { "at": "[x,y] optional: meet at the empty lot or surface car park nearest it", "returns": "race id and detail; errors if fewer than two locals with a fast car are free, or no lot pair 0.9-2.4 km apart" },
+        "rave": { "building": "id optional: the warehouse", "at": "[x,y] optional: the old warehouse nearest it", "returns": "rave id and detail (with no field: the warehouse with the strongest scene)" },
+        "roads": { "funding": "optional 0..1.5: road maintenance funding level (1 = what the network needs to stand still)", "age_days": "dev, optional: wear every street that many days at yesterday's traffic (the crews work each night unless crews: false; nothing is charged)", "near": "[x,y] optional: list the pieces nearest it", "limit": "pieces listed (default 10, worst first)", "returns": "pieces, lane_km, mean_wear, worn, crumbling, waiting_for_repair, mean_wear_by_land_value {cheap, middle, dear}, budget {funding, need_per_day, allowance_per_day, spent_yesterday, repaired_yesterday, repaired_land_value_yesterday, ledger_today/yesterday, repaired_total}, days, pieces_listed (wear, condition, label, speed_factor, crash_factor, land_value, repair_cost, queue_place, street)" },
         "taxes": { "set": "{line: rate, ...} where line is a key (residential_low|residential_mid|residential_high|grocery|bakery|gadget_shop|parking|nightlife_low|nightlife_mid|nightlife_high|farming|oil|refinery|manufacturing|logistics|fishing|tech) or a land use for its whole group; rate 0.2 or 20 (= 20%)", "category": "one line (with rate)", "import_duty": "share of import prices (0..1)", "reset": "bool: back to the standard rates", "returns": "every line: rate, default, pull, buildings, homes/jobs, today, yesterday, recent_per_day; by_land_use; duty" },
         "tolls": { "action": "list (default) | price | remove | inspect", "id": "booth id (or at: [x,y])", "price": "toll per car (lorries pay double)", "returns": "booths with cars and revenue today/yesterday/total, paid/free today, upkeep" },
         "export": { "path": "optional .json (see files); default exports/city-<unix>.json: report + map + history + every row of every list" },
