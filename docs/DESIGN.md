@@ -356,6 +356,25 @@ Citizens are rendered from their simulated positions every frame.
   lots the city runs (Buildings, Transit): small (12 spaces), large (30) or a multi-storey car park
   (120), on any lot with a street; the fee (default 2-3, `parking_price`) goes to the treasury
   (ledger "city parking fees"), attendants and upkeep are the city's.
+- **Tow this car** (`World::order_tow`, `order_tow_car`; inspector button, API `tow_car`): the
+  player can have any resident's car clamped. A car on the road pulls over into a free kerb slot
+  within 60 m (else the street's edge where it is), off the lanes so traffic passes; its driver and
+  passengers get out and walk on. An orange clamp (`ParkSpot::booted`) is drawn on the street-side
+  front wheel and the car cannot be driven, sold or taken out of town; a tow job (`TowReason::Ordered`)
+  goes to the nearest tow company, or one from out of town. The owner's mood drops, they remember it
+  and complain about parking, and they pay the fee at the pound as for any tow. Garaged, hooked and
+  impounded cars cannot be clamped; through traffic, lorries, buses, cabs and service vehicles neither.
+- **Passengers** (`crate::rides`, `world/rides.rs`): a car carries up to four passengers (a
+  motorcycle or scooter one). A passenger (`Activity::Passenger`) walks beside the driver to the car,
+  rides in it out of sight at its position (listed in `Car::occupants`), and when the driver parks
+  gets out there and walks on to their own destination; if the drive falls through they go their own
+  way. Rides come from a household member or coworker brought along on an outing or a date, from
+  coworkers who live at the driver's door and are due on shift (to work) or whose shift is over and
+  who live near the driver (home), family out at the same place going home, a parent at home with the
+  car driving a child to school (on the way to work, or now and then from home and back: the car stops
+  at the school, the child gets out, it drives on), and the mode choice: a seat in the car of family
+  or a coworker setting off by car from the same spot to within 300 m of where the trip goes is a
+  free, comfortable option (`ModePlan::Lift`).
 - **Parking businesses**: when the day's circling outruns free spaces, development opens a
   parking lot on a vacant lot near the last driver who could not find a space: a surface lot where
   land is cheap (about one space per 28 m², two jobs), a multi-storey car park on middle land
@@ -864,7 +883,18 @@ Citizens are rendered from their simulated positions every frame.
   (`nd_sim::ports`) stand on the shore with a pier and a street stub, take over grown lots, and work
   once their street reaches the city: freighters route by water (river centrelines, tributaries
   joining, mouths opening on the sea) from off the map to the berth and back, landing imports for
-  lorries; ferries run terminal to terminal or out to elsewhere with fares. Hydro (river current at
+  lorries; ferries run terminal to terminal or out to elsewhere with fares. A ferry terminal must
+  stand on water that reaches the map edge; it is given one or two towns off the map
+  (`ports::RemoteTerminal`, named from a list per edge) beyond the edges its water reaches
+  (`Landscape::water_routes_out`: a coast reaches only the edge its sea opens onto, so a terminal on a
+  west coast sails west; a river running off both sides reaches both). Its two ferries take turns
+  between those towns and the other terminals in town; a run off the map sails out over the edge
+  (hurried along out of sight), stands at the far pier and comes back. Visitors who come by water
+  ride in on it and step off when it ties up; on the morning boats commuters come for a shift at
+  businesses near the terminal short of staff (they count as staff, the business pays them 50, and
+  they walk back to the pier after five); residents living near a terminal take day trips out
+  (`Activity::Abroad`) and come back on an evening boat. Everyone leaving waits on the pier for the
+  next run out. One terminal is enough for all of it. Hydro (river current at
   least 0.8 m/s, output scales with current), tidal (sea shore, two tides a day) and geothermal (hot
   spot, scales with heat) plants extend `PowerPlantKind`.
 

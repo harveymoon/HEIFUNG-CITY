@@ -124,6 +124,8 @@ impl World {
         self.venue_tabs();
         // Production. Workers dead on their feet do half a shift's work.
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
+        // [ferries] Commuters off the boat work their shift too.
+        let ferry_staff = self.ferry_staff();
         for &bid in &ids {
             let b = &mut self.buildings[bid];
             if b.construction.is_some() {
@@ -131,7 +133,8 @@ impl World {
             }
             let tired = exhausted.get(&bid).copied().unwrap_or(0) as f32;
             let jobs = b.jobs;
-            let staffing = if jobs == 0 { 0.0 } else { ((b.workers.len() as f32 - tired * 0.5) / jobs as f32).clamp(0.0, 1.0) };
+            let staff = b.workers.len() as f32 + ferry_staff.get(&bid).copied().unwrap_or(0) as f32;
+            let staffing = if jobs == 0 { 0.0 } else { ((staff - tired * 0.5) / jobs as f32).clamp(0.0, 1.0) };
             if let Some(bz) = b.business.as_mut() {
                 if !bz.closed {
                     bz.produce(jobs, staffing * b.powered.clamp(0.0, 1.0));

@@ -1604,6 +1604,24 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
                         gizmos.line(at(p, alt), at(d.goal, d.goal_alt + 1.0), route);
                     }
                 }
+                // [passengers] In someone's car: the car and its route.
+                Activity::Passenger { driver, to, seated, .. } => {
+                    destination = to.or(destination);
+                    let car = w.citizens.get(*driver).and_then(|d| match d.activity {
+                        Activity::Driving { car, .. } => w.traffic.cars.get(car),
+                        _ => None,
+                    });
+                    match car.filter(|_| *seated) {
+                        Some(car) => {
+                            let (p, heading) = car.pose_at(f);
+                            vehicle_outline(gizmos, p, heading, car.length() + 0.6, 2.6, w.car_height(car) + 0.35, gold);
+                            car_route(gizmos, w, car, route);
+                        }
+                        None => person_outline(gizmos, at(here, 0.0), gold),
+                    }
+                }
+                // [ferries] Away off the map: nothing to draw.
+                Activity::Abroad { .. } => {}
                 Activity::Riding { bus } => {
                     if let Some(bus) = w.traffic.cars.get(*bus) {
                         let p = bus.pose_at(f).0;

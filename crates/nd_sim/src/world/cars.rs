@@ -355,6 +355,10 @@ impl World {
     }
 
     pub(super) fn launch(&mut self, vid: VehicleId, spot: ParkSpot, route: Vec<LaneId>, s0: f32, s1: f32, driver: CitizenId, errand: Errand) -> Option<CarId> {
+        // [boot] Clamped: it stays where it is until the tow truck comes.
+        if spot.booted {
+            return None;
+        }
         self.unpark(vid);
         let (model, color) = {
             let c = &self.vehicles.cars[vid];
@@ -490,7 +494,8 @@ impl World {
         let c = self.citizens.get(id).filter(|c| c.owns_car)?;
         let vid = c.car?;
         let spot = self.vehicles.cars.get(vid)?.spot()?;
-        (!matches!(spot.kind, ParkKind::Dealer | ParkKind::Hooked | ParkKind::Pound) && spot.pos.distance(near) <= CAR_REACH).then_some((vid, spot.pos))
+        // [boot] A clamped car goes nowhere.
+        (!matches!(spot.kind, ParkKind::Dealer | ParkKind::Hooked | ParkKind::Pound) && !spot.booted && spot.pos.distance(near) <= CAR_REACH).then_some((vid, spot.pos))
     }
 
     /// Get in and drive to `target`. False when the car cannot get there
@@ -654,6 +659,11 @@ impl World {
 
     /// A private car at the end of its route: park it, or go on looking.
     fn private_arrived(&mut self, car_id: CarId) {
+        // [passengers] A stop on the way (a child's school): let them out
+        // and drive on.
+        if self.traffic.cars.get(car_id).is_some_and(|c| c.errand == Errand::Trip) && self.drop_off(car_id) {
+            return;
+        }
         let (vid, driver, errand, pos) = {
             let c = &self.traffic.cars[car_id];
             (c.owned, c.citizen, c.errand, c.pos)
@@ -936,7 +946,7 @@ impl World {
     }
 
     /// Out of the car at `from`: walk to the destination, or be there.
-    fn walk_from_car(&mut self, id: CitizenId, from: Vec2) {
+    pub(super) fn walk_from_car(&mut self, id: CitizenId, from: Vec2) {
         let Some(c) = self.citizens.get(id) else { return };
         let (to, purpose) = match &c.activity {
             Activity::Driving { to, purpose, .. } => (*to, *purpose),
@@ -1100,7 +1110,7 @@ impl World {
         let car = self.vehicles.cars.get(vid)?;
         let spot = *car.spot()?;
         // [parking] Not while it is on a tow truck or in the pound.
-        if matches!(spot.kind, ParkKind::Hooked | ParkKind::Pound) {
+        if matches!(spot.kind, ParkKind::Hooked | ParkKind::Pound) || spot.booted {
             return None;
         }
         let worth = (car.model.price() * 0.5).min(400.0);
@@ -1141,6 +1151,9 @@ impl World {
             CarPlace::Parked(s) if s.kind == ParkKind::Hooked || (s.kind == ParkKind::Pound && s.building.is_none()) => {
                 self.drop_car(vid, CarEvent::Emigrated);
             }
+            // [boot] Clamped: left for the tow truck; unclaimed at the
+            // pound, it is auctioned and driven away.
+            CarPlace::Parked(s) if s.booted => {}
             CarPlace::Parked(_) => {
                 if self.drive_out_of_town(vid, Errand::Leave).is_none() {
                     // No road out: the car leaves the record with its owner.
@@ -1195,12 +1208,23 @@ impl World {
     /// it parks where it stood.
     pub(super) fn park_stranded(&mut self, vid: VehicleId, pos: Vec2) {
         let Some(car) = self.vehicles.cars.get(vid) else { return };
+        // [boot] A clamped car is only shifted along the kerb, clamp and all.
+        let booted = car.spot().is_some_and(|s| s.booted);
         if car.spot().is_some() {
             self.unpark(vid);
         }
         let home = self.citizens.get(self.vehicles.cars[vid].owner).and_then(|c| c.home);
-        let spot = self.place_near(pos, home).unwrap_or(ParkSpot { kind: ParkKind::Overflow, pos, slot: u16::MAX, since: self.clock.tick, ..Default::default() });
+        let near = if booted { self.boot_spot(pos) } else { self.place_near(pos, home) };
+        let mut spot = near.unwrap_or(ParkSpot { kind: ParkKind::Overflow, pos, slot: u16::MAX, since: self.clock.tick, ..Default::default() });
+        spot.booted = booted;
         self.park_at(vid, spot);
+    }
+
+    /// [boot] Where a car pulls over to be clamped: a free kerb slot close
+    /// by (legal or not), else the street's edge right here, off the lanes.
+    pub(super) fn boot_spot(&self, pos: Vec2) -> Option<ParkSpot> {
+        let k = self.free_kerb_near(pos, 60.0).or_else(|| self.free_illegal_slots_near(pos, 60.0, 1).into_iter().next())?;
+        Some(self.kerb_spot(k))
     }
 
     /// Roads changed: kerb slots on streets that are gone or reshaped are

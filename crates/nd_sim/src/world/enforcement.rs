@@ -47,6 +47,7 @@ impl World {
             s.release_fees_today = 0.0;
             s.auctioned_today = 0;
             s.city_lot_fees_today = 0.0;
+            s.boots_today = 0;
         }
         if tick % 10 == 3 {
             self.staff_patrols();
@@ -537,6 +538,7 @@ impl World {
     /// has the time) or, after `AUCTION_AFTER`, auctioned.
     pub(super) fn hourly_pound(&mut self) {
         let tick = self.clock.tick;
+        self.rebook_booted();
         let impounded: Vec<(VehicleId, ParkSpot)> = self.vehicles.cars.iter().filter_map(|(id, c)| c.spot().filter(|s| s.kind == ParkKind::Pound).map(|s| (id, *s))).collect();
         for (vid, spot) in impounded {
             // A yard that closed: its pound went to a company out of town.
@@ -620,6 +622,111 @@ impl World {
         let driven = spot.building.is_some() && self.drive_out_of_town(vid, Errand::Sale(BuildingId::default())).is_some();
         if !driven {
             self.drop_car(vid, CarEvent::Sold);
+        }
+    }
+
+    // ── [boot] clamped on the player's orders ──────────────────────────────
+
+    /// [boot] Have a private car clamped and towed: `vid` is its record.
+    /// On the road it pulls over first (`order_tow_car`). Returns the tow job.
+    pub fn order_tow(&mut self, vid: VehicleId) -> Result<u32, String> {
+        let car = self.vehicles.cars.get(vid).ok_or("no such car")?;
+        let spot = match car.place {
+            CarPlace::Driving(cid) => return self.order_tow_car(cid),
+            CarPlace::Parked(s) => s,
+        };
+        match spot.kind {
+            ParkKind::Hooked | ParkKind::Pound => return Err("it has already been towed".into()),
+            ParkKind::Dealer => return Err("it is on a dealer's forecourt".into()),
+            k if !k.on_street() => return Err(format!("it is parked off the street ({}); only cars at the kerb can be clamped", k.label())),
+            _ => {}
+        }
+        Ok(self.boot(vid))
+    }
+
+    /// [boot] The same for a car on the road: it pulls over to the kerb
+    /// (a free slot close by, else the edge of the street where it is),
+    /// off the lanes so traffic goes round it, and everyone gets out and
+    /// walks on.
+    pub fn order_tow_car(&mut self, car_id: CarId) -> Result<u32, String> {
+        let car = self.traffic.cars.get(car_id).ok_or("no such car")?;
+        if car.bus.is_some() || car.cargo.is_some() || car.siren || self.services.unit_of_car(car_id).is_some() {
+            return Err("only private cars can be towed".into());
+        }
+        let Some(vid) = car.owned.filter(|v| self.vehicles.cars.contains_key(*v)) else {
+            return Err("only residents' cars can be towed; this one is passing through".into());
+        };
+        match car.errand {
+            Errand::Trip | Errand::Search { .. } | Errand::ToLot(_) | Errand::ToKerb | Errand::Deliver => {}
+            Errand::Leave | Errand::Sale(_) => return Err("it is on its way out of town".into()),
+            _ => return Err("only private cars can be towed".into()),
+        }
+        let (pos, heading, driver) = (car.pos, car.heading, car.citizen);
+        // The kerb to the right of the lane, if no slot is free.
+        let dir = Vec2::new(heading.cos(), heading.sin());
+        let edge = pos + Vec2::new(dir.y, -dir.x) * 2.6;
+        let tick = self.clock.tick;
+        let spot = self.boot_spot(pos).unwrap_or_else(|| ParkSpot {
+            kind: ParkKind::Overflow,
+            segment: self.roads.nearest_street(pos).map(|(s, _, _)| s),
+            slot: u16::MAX,
+            pos: edge,
+            heading,
+            since: tick,
+            ..Default::default()
+        });
+        self.traffic.remove_car(car_id);
+        self.park_at(vid, spot);
+        // The driver gets out and walks the rest; passengers follow.
+        if self.citizens.get(driver).is_some_and(|c| matches!(c.activity, Activity::Driving { car, .. } if car == car_id)) {
+            let c = &mut self.citizens[driver];
+            c.commute.drive_since = 0;
+            c.commute.search_since = 0;
+            self.walk_from_car(driver, spot.pos);
+        }
+        Ok(self.boot(vid))
+    }
+
+    /// Clamp a car standing at the kerb and call the tow truck. The owner
+    /// is not pleased.
+    fn boot(&mut self, vid: VehicleId) -> u32 {
+        let tick = self.clock.tick;
+        let (owner, already) = {
+            let car = &mut self.vehicles.cars[vid];
+            let mut already = false;
+            if let CarPlace::Parked(s) = &mut car.place {
+                already = s.booted;
+                s.booted = true;
+            }
+            (car.owner, already)
+        };
+        let job = match self.enforcement.job_for(vid) {
+            Some(j) => j.id,
+            None => self.call_tow(vid, TowReason::Ordered).unwrap_or(u32::MAX),
+        };
+        // Clamped once: a second order changes nothing.
+        if already {
+            return job;
+        }
+        let s = &mut self.enforcement.stats;
+        s.boots_today += 1;
+        s.boots_total += 1;
+        if let Some(c) = self.citizens.get_mut(owner) {
+            c.remember(tick, "Somebody had my car clamped. Now it's getting towed and I'll have to pay to get it back.");
+            c.thought = "They clamped my car. Unbelievable.".to_string();
+            c.mood = (c.mood - 0.08).max(0.0);
+            c.commute.parking_pain += 1.0;
+            self.concerns.said(tick, owner, c, crate::concerns::Concern::Parking, 0.6, "They clamped my car and towed it.");
+        }
+        job
+    }
+
+    /// [boot] Clamped cars whose tow job was lost (a truck taken off the
+    /// road, roads rebuilt) get a fresh one.
+    fn rebook_booted(&mut self) {
+        let lost: Vec<VehicleId> = self.vehicles.cars.iter().filter(|(id, c)| c.spot().is_some_and(|s| s.booted) && self.enforcement.job_for(*id).is_none()).map(|(id, _)| id).collect();
+        for vid in lost {
+            self.call_tow(vid, TowReason::Ordered);
         }
     }
 

@@ -147,6 +147,24 @@ pub enum Activity {
     OnMetro {
         train: crate::subway::MetroTrainId,
     },
+    /// [passengers] Riding along in someone else's car (`world/rides.rs`):
+    /// walking beside `driver` to the car (`seated` false, drawn), then in
+    /// it (`seated`, out of sight, carried with it); out at the far end,
+    /// they walk on to `to` themselves.
+    Passenger {
+        driver: CitizenId,
+        to: Option<BuildingId>,
+        purpose: Purpose,
+        seated: bool,
+    },
+    /// [ferries] Away for the day in a town off the map (`town`: index
+    /// into the terminal's remote towns), back on a ferry into `terminal`
+    /// once `until` has passed.
+    Abroad {
+        terminal: BuildingId,
+        town: u8,
+        until: u64,
+    },
 }
 
 impl Activity {
@@ -163,6 +181,9 @@ impl Activity {
             Activity::OnTrain { .. } => "on the train",
             Activity::Flying { .. } => "in the air",
             Activity::OnMetro { .. } => "on the subway",
+            Activity::Passenger { seated: true, .. } => "riding in a car",
+            Activity::Passenger { .. } => "walking to the car",
+            Activity::Abroad { .. } => "away on a day trip",
             Activity::Traveling { purpose, .. } | Activity::Driving { purpose, .. } => match purpose {
                 Purpose::Home => "heading home",
                 Purpose::Work => "commuting",
@@ -176,7 +197,7 @@ impl Activity {
     }
 
     pub fn is_traveling(&self) -> bool {
-        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } | Activity::Flying { .. } | Activity::OnMetro { .. })
+        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } | Activity::Flying { .. } | Activity::OnMetro { .. } | Activity::Passenger { .. } | Activity::Abroad { .. })
     }
 }
 
@@ -550,7 +571,7 @@ impl Citizen {
     }
 
     pub fn is_visible(&self) -> bool {
-        matches!(self.activity, Activity::Traveling { .. } | Activity::Idle | Activity::Sitting { .. } | Activity::Waiting { .. })
+        matches!(self.activity, Activity::Traveling { .. } | Activity::Idle | Activity::Sitting { .. } | Activity::Waiting { .. } | Activity::Passenger { seated: false, .. })
     }
 }
 

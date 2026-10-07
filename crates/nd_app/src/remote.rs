@@ -528,6 +528,19 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "find" => find(cmd, ctx),
         "inspect" => inspect(cmd, ctx),
         "lane_use" => lane_use(cmd, ctx),
+        // [boot] Clamp a private car and have it towed: `car` (on the road:
+        // it pulls over first) or `vehicle` (its record, parked or driving).
+        "tow_car" | "tow" | "boot" => {
+            let w = &mut ctx.sim.world;
+            let job = if let Some(v) = field(cmd, "car") {
+                w.order_tow_car(key_from(v)?)?
+            } else {
+                let v = field(cmd, "vehicle").ok_or("car or vehicle is required")?;
+                w.order_tow(key_from(v)?)?
+            };
+            let j = w.enforcement.job(job).copied();
+            Ok(json!({ "tow_job": job, "vehicle": j.map(|j| key_str(j.car)), "company": j.and_then(|j| j.company).map(key_str), "out_of_town": j.is_some_and(|j| j.company.is_none()) }))
+        }
         "parking_price" => {
             // [parking] The fee at a lot the city runs.
             let id = key_from(field(cmd, "building").ok_or("missing building id")?)?;

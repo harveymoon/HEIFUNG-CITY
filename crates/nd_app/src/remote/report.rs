@@ -1376,6 +1376,16 @@ pub fn car_life(w: &World) -> Value {
         "commute_pain": pain, "parking_pain_mean_of_owners": r3(parking_pain),
         "fleet_parked_at_businesses": v.fleet_parked.values().map(|n| *n as u32).sum::<u32>(), "fleet_bought_total": st.fleet_bought_total, "fleet_returned_today": st.fleet_returned_today,
         "rule": "cars come only with arriving households or purchases and leave only when sold, scrapped or driven out of town; trips are never timed out",
+        // [passengers] People riding along in someone else's car.
+        "passengers": {
+            "riding_now": w.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Passenger { seated: true, .. })).count(),
+            "walking_to_a_car": w.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Passenger { seated: false, .. })).count(),
+            "cars_with_passengers": w.traffic.cars.values().filter(|c| !c.occupants.is_empty()).count(),
+            "today": w.rides.stats.passengers_today, "outings_today": w.rides.stats.outings_today, "carpools_today": w.rides.stats.carpools_today,
+            "school_runs_today": w.rides.stats.school_runs_today, "lifts_today": w.rides.stats.lifts_today,
+            "yesterday": w.rides.stats.passengers_yesterday, "total": w.rides.stats.passengers_total, "fullest_car": w.rides.stats.fullest_car,
+            "drop_offs_pending": w.rides.onward.len(),
+        },
     })
 }
 
@@ -1446,6 +1456,7 @@ pub fn parking_enforcement(w: &World) -> Value {
         "tickets_today": s.tickets_today, "fines_today": round(s.fines_today), "tickets_total": s.tickets_total, "fines_total": round(s.fines_total),
         "on_street_now": { "over_limit": over_limit, "ticketed": ticketed },
         "tows_today": s.tows_today, "tows_out_of_town_today": s.tows_out_of_town_today, "tows_total": s.tows_total, "tows_out_of_town_total": s.tows_out_of_town_total,
+        "boots_today": s.boots_today, "boots_total": s.boots_total,
         "tow_jobs_open": w.enforcement.jobs.len(), "tow_trucks_on_road": w.enforcement.jobs.iter().filter(|j| j.truck.is_some()).count(), "wrecks_towed_total": s.wrecks_towed_total,
         "pound": { "cars": impounded, "in_town": in_town, "out_of_town": impounded - in_town, "released_today": s.released_today, "release_fees_today": round(s.release_fees_today), "released_total": s.released_total, "auctioned_today": s.auctioned_today, "auctioned_total": s.auctioned_total },
         "tow_companies": companies,

@@ -50,6 +50,9 @@ pub const TOURIST_TAX: f32 = 0.12;
 pub const ARRIVALS_PER_POINT: f32 = 0.35;
 /// At most this many tourists in town at once (a bound on the work).
 pub const MAX_TOURISTS: usize = 1500;
+/// [ferries] Minutes a visitor sits aboard a ferry that never comes in
+/// (the terminal shut) before stepping ashore at the terminal anyway.
+pub const ABOARD_GIVE_UP: u64 = 300;
 /// Days a visitor stays: 1 + up to this many more.
 pub const MAX_EXTRA_NIGHTS: u32 = 3;
 /// Beyond this a leg is taken by taxi rather than walked.
@@ -154,6 +157,8 @@ pub enum Goal {
     Shop(BuildingId),
     /// Out of town by the way they came.
     Depart,
+    /// [ferries] A commuter off the boat, to the shift at this business.
+    Work(BuildingId),
 }
 
 /// What a tourist is doing.
@@ -169,6 +174,9 @@ pub enum TouristState {
     Sightseeing { kind: AttractionKind, until: u64 },
     /// Inside a shop or venue until `until`.
     Inside { building: BuildingId, until: u64 },
+    /// [ferries] On a ferry in from a town off the map, out of sight, to
+    /// step off at `terminal` when the boat comes in.
+    Aboard { terminal: BuildingId, since: u64 },
 }
 
 /// A visitor.
@@ -197,6 +205,11 @@ pub struct Tourist {
     pub next_tick: u64,
     /// Sights seen, for the inspector.
     pub sights: u16,
+    /// [ferries] Not a visitor but a commuter from over the water, here for
+    /// a shift at this business (`hotel` is the same building: no bed, no
+    /// night's bill); back to the boat when the shift is over.
+    #[serde(default)]
+    pub commuter: Option<BuildingId>,
 }
 
 impl Tourist {
@@ -212,9 +225,12 @@ impl Tourist {
             TouristState::Walking { goal: Goal::Sight(_), .. } => "walking to a sight",
             TouristState::Walking { goal: Goal::Shop(_), .. } => "walking to a shop",
             TouristState::Walking { goal: Goal::Depart, .. } => "leaving town",
+            TouristState::Walking { goal: Goal::Work(_), .. } => "walking to work",
             TouristState::Riding { .. } => "in a taxi",
             TouristState::Sightseeing { .. } => "sightseeing",
+            TouristState::Inside { .. } if self.commuter.is_some() => "at work",
             TouristState::Inside { .. } => "shopping",
+            TouristState::Aboard { .. } => "on the ferry in",
         }
     }
 
@@ -300,9 +316,15 @@ pub struct Tourism {
 }
 
 impl Tourism {
-    /// Tourists in town now (in a hotel, out or on their way).
+    /// Tourists in town now (in a hotel, out or on their way); commuters
+    /// off the ferry are not visitors.
     pub fn count(&self) -> usize {
-        self.tourists.len()
+        self.tourists.values().filter(|t| t.commuter.is_none()).count()
+    }
+
+    /// [ferries] Commuters from over the water in town now.
+    pub fn commuters(&self) -> usize {
+        self.tourists.values().filter(|t| t.commuter.is_some()).count()
     }
 
     pub fn visible(&self) -> impl Iterator<Item = (TouristId, &Tourist)> {

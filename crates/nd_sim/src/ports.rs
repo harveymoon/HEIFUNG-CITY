@@ -7,9 +7,18 @@
 //! or out to "elsewhere" when it is the only one, carrying passengers for a
 //! fare. Ships are drawn moving along their water route; they are not saved
 //! (the next sailing brings fresh ones).
+//!
+//! [ferries] A ferry terminal on water that reaches the edge of the map is
+//! also given one or two remote terminals in towns off the map
+//! (`RemoteTerminal`), across the edge its water leaves by: a terminal on a
+//! west coast only ever sails west. Its ferries alternate between the
+//! terminals in town and those towns, sailing out over the edge and back;
+//! visitors (`crate::tourism`) and day commuters come in on the returning
+//! boats, residents go out on day trips (`world/ferry.rs`). One terminal is
+//! enough for all of it.
 
 use crate::buildings::BuildingId;
-use crate::landscape::{Landscape, WaterKind};
+use crate::landscape::{Landscape, MapEdge, WaterKind};
 use crate::traffic::Cargo;
 use crate::zoning::LotId;
 use glam::Vec2;
@@ -43,6 +52,65 @@ pub const SHIP_IMPORT_FACTOR: f32 = 0.7;
 /// Export income multiplier for towns with a working shipping port.
 pub const SHIP_EXPORT_BONUS: f32 = 1.25;
 pub const MAX_SHIPS: usize = 12;
+/// [ferries] Ferries a terminal runs at once (one can be away off the map
+/// while the next sails).
+pub const FERRIES_PER_TERMINAL: usize = 2;
+/// [ferries] How much faster a ship goes once it is beyond the map edge,
+/// out of sight, so a run to the next town does not take half a day.
+pub const OFF_MAP_SPEEDUP: f32 = 6.0;
+/// [ferries] Minutes a ferry stands at its own pier after a run, letting
+/// people off.
+pub const FERRY_UNLOAD: u32 = 8;
+/// [ferries] What a day commuter from over the water costs the business
+/// they work a shift at (the wage leaves town with them).
+pub const COMMUTER_WAGE: f32 = 50.0;
+/// [ferries] Commuters a terminal brings in a morning at most.
+pub const MAX_COMMUTERS: u32 = 30;
+/// [ferries] Residents a terminal sends out on day trips per day at most.
+pub const MAX_DAY_TRIPS: u32 = 24;
+/// [ferries] How far from a terminal people live who think of a day trip,
+/// and businesses are that take on commuters off the boat.
+pub const FERRY_CATCHMENT: f32 = 1500.0;
+
+/// [ferries] Towns off the map a ferry may run to, by the edge they lie
+/// beyond. A terminal draws its one or two from the list for its edge.
+const REMOTE_TOWNS: [(MapEdge, [&str; 4]); 4] = [
+    (MapEdge::North, ["Port Harrow", "Kestrel Sound", "Northwick", "Grey Isles"]),
+    (MapEdge::East, ["Eastmere", "Lantern Quay", "Sunhaven", "Cobalt Bay"]),
+    (MapEdge::South, ["Saltmarsh", "Coralton", "Tidewater", "Southreach"]),
+    (MapEdge::West, ["Westholm", "Driftwood", "Amberport", "Rook Harbour"]),
+];
+
+/// [ferries] A terminal in a town off the map that a ferry runs to: its
+/// name, the edge of the map it lies beyond (the ferry sails out across
+/// it) and how far it is past the edge, for the panel.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RemoteTerminal {
+    pub name: String,
+    pub edge: MapEdge,
+    pub km: f32,
+}
+
+/// [ferries] The remote terminals for a terminal at `berth` whose water
+/// leaves the map across `edges` (nearest first): one on the nearest edge,
+/// and a second where the water reaches another edge or, half the time, a
+/// second town on the same one. Never an edge the water does not reach.
+/// Seeded by where the berth is, so the same dock always gets the same.
+pub fn remote_terminals(berth: Vec2, edges: &[MapEdge]) -> Vec<RemoteTerminal> {
+    use rand::{Rng, SeedableRng};
+    let Some(&first) = edges.first() else { return Vec::new() };
+    let seed = ((berth.x.round() as i64 as u64) << 32) ^ (berth.y.round() as i64 as u64) ^ 0xFE44_7000;
+    let mut rng = crate::SimRng::seed_from_u64(seed);
+    let town = |edge: MapEdge, k: usize| REMOTE_TOWNS.iter().find(|t| t.0 == edge).map_or("Elsewhere", |t| t.1[k % 4]).to_string();
+    let k0 = rng.random_range(0..4usize);
+    let mut out = vec![RemoteTerminal { name: town(first, k0), edge: first, km: rng.random_range(8.0..30.0f32).round() }];
+    if let Some(&second) = edges.get(1) {
+        out.push(RemoteTerminal { name: town(second, rng.random_range(0..4usize)), edge: second, km: rng.random_range(8.0..30.0f32).round() });
+    } else if rng.random_bool(0.5) {
+        out.push(RemoteTerminal { name: town(first, k0 + 1 + rng.random_range(0..3usize)), edge: first, km: rng.random_range(12.0..40.0f32).round() });
+    }
+    out
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PortKind {
@@ -132,6 +200,15 @@ pub struct Port {
     /// Last tick a ship was sent here.
     #[serde(default)]
     pub last_sailing: u64,
+    /// [ferries] Terminals in towns off the map this ferry terminal runs
+    /// to (one or two; none when its water does not reach the edge).
+    /// Given when the terminal is built, or on the first refresh of an
+    /// older save.
+    #[serde(default)]
+    pub remote: Vec<RemoteTerminal>,
+    /// [ferries] Sailings made, to take turns between destinations.
+    #[serde(default)]
+    pub sailings: u32,
 }
 
 impl Port {
@@ -205,7 +282,7 @@ impl Port {
         let root = shore.point - seaward * (back + 1.0);
         let tip = shore.point + seaward * reach;
         let berth = shore.point + seaward * (reach + if kind == PortKind::ShippingPort { 9.0 } else { 5.0 }).min(if w.width.is_finite() { w.width * 0.5 } else { f32::MAX });
-        let port = Port { kind, center, along, seaward, pier: [root, tip], berth, water: w.kind, building: None, lot: None, road_connected: false, reaches_elsewhere: false, last_sailing: 0 };
+        let port = Port { kind, center, along, seaward, pier: [root, tip], berth, water: w.kind, building: None, lot: None, road_connected: false, reaches_elsewhere: false, last_sailing: 0, remote: Vec::new(), sailings: 0 };
         for c in port.corners().iter().chain(std::iter::once(&center)) {
             if land.is_water(*c) {
                 return Err("the shore is too ragged here: part of the dock would stand in the water".into());
@@ -252,6 +329,13 @@ pub struct Ship {
     /// Index into the path where the berth is.
     pub berth_s: f32,
     pub color: u8,
+    /// [ferries] A run to the remote terminal with this index in the
+    /// port's `remote`: out over the edge and back to its own pier.
+    #[serde(default)]
+    pub remote: Option<u8>,
+    /// [ferries] Back at its own pier after the run, letting people off.
+    #[serde(default)]
+    pub home: bool,
 }
 
 impl Ship {
@@ -283,6 +367,22 @@ pub struct PortStats {
     pub ferry_fares_today: f32,
     /// Goods waiting at ports for the next freighter.
     pub waiting_cargo: u32,
+    /// [ferries] Runs to towns off the map today, and the people they
+    /// brought in and took out: visitors, commuters, residents on day trips.
+    #[serde(default)]
+    pub remote_sailings_today: u32,
+    #[serde(default)]
+    pub visitors_in_today: u32,
+    #[serde(default)]
+    pub visitors_out_today: u32,
+    #[serde(default)]
+    pub commuters_in_today: u32,
+    #[serde(default)]
+    pub commuters_out_today: u32,
+    #[serde(default)]
+    pub day_trips_today: u32,
+    #[serde(default)]
+    pub day_trippers_back_today: u32,
 }
 
 /// Every dock and the ships on the water.
@@ -296,6 +396,33 @@ pub struct Ports {
     pub inbound: Vec<(BuildingId, Cargo)>,
     #[serde(default)]
     pub stats: PortStats,
+    /// [ferries] People waiting at a terminal for the next boat out of
+    /// town (visitors going home, commuters after their shift): terminal →
+    /// count, taken aboard by the next run to a town off the map.
+    #[serde(default)]
+    pub boarding: std::collections::BTreeMap<BuildingId, u32>,
+    /// [ferries] Residents on their way to a terminal for a day trip.
+    /// On arrival they board.
+    #[serde(default)]
+    pub trippers: Vec<DayTrip>,
+    /// [ferries] Per terminal today: commuters brought in and day trips
+    /// set off, against the daily caps.
+    #[serde(default)]
+    pub commuters_today: std::collections::BTreeMap<BuildingId, u32>,
+    #[serde(default)]
+    pub trips_today: std::collections::BTreeMap<BuildingId, u32>,
+}
+
+/// [ferries] A resident heading for a terminal to take the ferry to a
+/// town off the map for the day (`town`: index into the port's `remote`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DayTrip {
+    pub citizen: crate::citizens::CitizenId,
+    pub terminal: BuildingId,
+    pub town: u8,
+    /// Tick they set off; a trip that has not reached the pier in four
+    /// hours is forgotten.
+    pub since: u64,
 }
 
 impl Ports {
@@ -310,5 +437,11 @@ impl Ports {
     /// Working shipping ports' buildings.
     pub fn working(&self, kind: PortKind) -> Vec<BuildingId> {
         self.ports.values().filter(|p| p.kind == kind && p.works()).filter_map(|p| p.building).collect()
+    }
+
+    /// [ferries] Working ferry terminals with a ferry to a town off the
+    /// map: the way in for visitors and commuters by water.
+    pub fn remote_terminals(&self) -> Vec<BuildingId> {
+        self.ports.values().filter(|p| p.kind == PortKind::FerryTerminal && p.works() && !p.remote.is_empty()).filter_map(|p| p.building).collect()
     }
 }

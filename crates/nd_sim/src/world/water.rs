@@ -779,6 +779,11 @@ impl World {
     /// Where a dock of `kind` would go for a click at `p`, or why not.
     pub fn plan_port(&self, kind: PortKind, p: Vec2) -> Result<Port, String> {
         let port = Port::plan(kind, p, &self.landscape)?;
+        // [ferries] A ferry terminal's boats run to towns off the map, so
+        // its water must reach the edge (a lake that does not is no good).
+        if kind == PortKind::FerryTerminal && self.landscape.water_routes_out(port.berth).is_empty() {
+            return Err("ferries need water that reaches the edge of the map: build the terminal on a river or the sea".into());
+        }
         let fp = port.footprint();
         // Grown buildings under it are bought out on placement; a civic
         // structure there stops it.
@@ -831,6 +836,10 @@ impl World {
         };
         let id = self.place_special(lot_id, name, kind.jobs(), kind.jobs() / 3, |b| b.port = Some(kind));
         self.ports.ports[pid].building = Some(id);
+        // [ferries] Its towns off the map, across the edges its water reaches.
+        if kind == PortKind::FerryTerminal {
+            self.link_remote_terminals(pid);
+        }
         self.ports.ports[pid].last_sailing = self.clock.tick.saturating_sub(ports::FREIGHT_HEADWAY);
         self.refresh_port_links();
         self.events.push(SimEvent::LotsChanged);
@@ -885,6 +894,10 @@ impl World {
             let p = &mut self.ports.ports[id];
             p.road_connected = road;
             p.reaches_elsewhere = out;
+            // [ferries] A terminal from a save before remote towns gets its own.
+            if p.kind == PortKind::FerryTerminal && p.remote.is_empty() && out {
+                self.link_remote_terminals(id);
+            }
         }
         // Goods waiting at a dock that no longer works go by road.
         let working: Vec<BuildingId> = self.ports.working(PortKind::ShippingPort);
@@ -936,6 +949,7 @@ impl World {
         let ids: Vec<crate::ports::ShipId> = self.ports.ships.keys().collect();
         let mut docked = Vec::new();
         let mut done = Vec::new();
+        let mut returned = Vec::new();
         for id in ids {
             let ship = &mut self.ports.ships[id];
             ship.prev_s = ship.s;
@@ -944,7 +958,26 @@ impl World {
                 continue;
             }
             let total = crate::geom::path_length(&ship.path);
-            ship.s += ship.speed;
+            if ship.home {
+                // [ferries] Unloaded at its own pier after a run: done.
+                done.push(id);
+                continue;
+            }
+            // [ferries] Out of sight beyond the map edge the run is hurried
+            // along, so the next town is hours away, not half a day.
+            let off_map = ship.remote.is_some() && {
+                let p = ship.pose().0;
+                p.x.abs().max(p.y.abs()) > crate::landscape::MAP_EDGE + 400.0
+            };
+            ship.s += ship.speed * if off_map { ports::OFF_MAP_SPEEDUP } else { 1.0 };
+            if ship.remote.is_some() && ship.docked && ship.s >= total {
+                // Back from the town off the map: tie up and let them off.
+                ship.s = total;
+                ship.home = true;
+                ship.dwell = ports::FERRY_UNLOAD;
+                returned.push(id);
+                continue;
+            }
             if !ship.docked && ship.s >= ship.berth_s {
                 ship.s = ship.berth_s;
                 ship.docked = true;
@@ -959,6 +992,14 @@ impl World {
         }
         for id in docked {
             self.ship_docked(id);
+        }
+        for id in returned {
+            let (port, town, passengers) = {
+                let s = &self.ports.ships[id];
+                (s.port, s.remote.unwrap_or(0), s.passengers)
+            };
+            let _ = passengers;
+            self.ferry_returned(port, town);
         }
         for id in done {
             self.ports.ships.remove(id);
@@ -981,7 +1022,14 @@ impl World {
             if self.buildings.get(b).is_none_or(|x| x.is_derelict()) {
                 continue;
             }
-            let busy = self.ports.ships.values().any(|s| s.port == b);
+            // [ferries] A terminal runs two boats, one away while the next
+            // sails, but never two at its pier at once.
+            let mine: Vec<&Ship> = self.ports.ships.values().filter(|s| s.port == b).collect();
+            let at_pier = mine.iter().any(|s| s.pose().0.distance(port.berth) < 40.0);
+            let busy = match port.kind {
+                PortKind::ShippingPort => !mine.is_empty(),
+                PortKind::FerryTerminal => at_pier || mine.len() >= ports::FERRIES_PER_TERMINAL,
+            };
             if busy {
                 continue;
             }
@@ -1004,40 +1052,57 @@ impl World {
                     };
                     let speed = self.config.metres_per_tick(ports::FREIGHTER_SPEED);
                     let color = self.rng.random_range(0..6);
-                    self.ports.ships.insert(Ship { kind: ShipKind::Freighter, path, s: 0.0, prev_s: 0.0, speed, dwell: 0, port: b, to: None, cargo, passengers: 0, docked: false, berth_s, color });
+                    self.ports.ships.insert(Ship { kind: ShipKind::Freighter, path, s: 0.0, prev_s: 0.0, speed, dwell: 0, port: b, to: None, cargo, passengers: 0, docked: false, berth_s, color, remote: None, home: false });
                     self.ports.ports[*pid].last_sailing = tick;
                 }
                 PortKind::FerryTerminal => {
                     if !(ports::FERRY_SERVICE_START..ports::FERRY_SERVICE_END).contains(&minute) || tick.saturating_sub(port.last_sailing) < ports::FERRY_HEADWAY {
                         continue;
                     }
-                    // To the next terminal on connected water, else out to elsewhere.
+                    // [ferries] Take turns: a run to a town off the map,
+                    // then one to the next terminal in town, and so on;
+                    // with only one kind, that kind every time.
                     let others: Vec<(BuildingId, Vec2)> = ports_now.iter().filter(|(oid, o)| oid != pid && o.kind == PortKind::FerryTerminal && o.works()).filter_map(|(_, o)| o.building.map(|ob| (ob, o.berth))).collect();
-                    let mut chosen: Option<(Option<BuildingId>, Vec<Vec2>)> = None;
-                    let start = (tick / ports::FERRY_HEADWAY) as usize;
-                    for k in 0..others.len() {
-                        let (ob, ob_berth) = others[(start + k) % others.len()];
-                        if let Some(route) = self.landscape.water_route(port.berth, Some(ob_berth)) {
-                            chosen = Some((Some(ob), route));
-                            break;
+                    let turn = port.sailings as usize;
+                    let remote_turn = !port.remote.is_empty() && (others.is_empty() || turn % 2 == 0);
+                    let mut chosen: Option<(Option<BuildingId>, Option<u8>, Vec<Vec2>)> = None;
+                    if remote_turn {
+                        let k = (turn / 2) % port.remote.len();
+                        let edge = port.remote[k].edge;
+                        chosen = self.landscape.water_routes_out(port.berth).into_iter().find(|(e, _)| *e == edge).map(|(_, r)| (None, Some(k as u8), r));
+                    }
+                    if chosen.is_none() {
+                        let start = turn / 2;
+                        for k in 0..others.len() {
+                            let (ob, ob_berth) = others[(start + k) % others.len()];
+                            if let Some(route) = self.landscape.water_route(port.berth, Some(ob_berth)) {
+                                chosen = Some((Some(ob), None, route));
+                                break;
+                            }
                         }
                     }
-                    if chosen.is_none() && port.reaches_elsewhere {
-                        chosen = self.landscape.water_route(port.berth, None).map(|r| (None, r));
-                    }
-                    let Some((to, route)) = chosen else { continue };
+                    let Some((to, remote, route)) = chosen else { continue };
                     let berth_s = crate::geom::path_length(&route);
                     let mut path = route.clone();
                     path.extend(route.iter().rev().skip(1).copied());
                     let speed = self.config.metres_per_tick(ports::FERRY_SPEED);
-                    let riders = self.ferry_riders(b, to);
+                    // Locals hopping across town, and on a run off the map
+                    // whoever is waiting at the pier to leave.
+                    let mut riders = self.ferry_riders(b, to);
+                    if remote.is_some() {
+                        let leaving = self.ports.boarding.remove(&b).unwrap_or(0);
+                        riders += leaving;
+                        self.ports.stats.remote_sailings_today += 1;
+                    }
+                    let riders = riders.min(ports::FERRY_CAPACITY);
                     let fares = riders as f32 * ports::FERRY_FARE;
                     // Ferry fares are public transport income, booked with the bus fares.
                     self.economy.credit_item(Flow::BusFares, fares, Item::Building(b));
                     self.ports.stats.ferry_riders_today += riders;
                     self.ports.stats.ferry_fares_today += fares;
-                    self.ports.ships.insert(Ship { kind: ShipKind::Ferry, path, s: 0.0, prev_s: 0.0, speed, dwell: ports::FERRY_DWELL, port: b, to, cargo: Vec::new(), passengers: riders, docked: false, berth_s, color: 0 });
+                    self.ports.ships.insert(Ship { kind: ShipKind::Ferry, path, s: 0.0, prev_s: 0.0, speed, dwell: ports::FERRY_DWELL, port: b, to, cargo: Vec::new(), passengers: riders, docked: false, berth_s, color: 0, remote, home: false });
                     self.ports.ports[*pid].last_sailing = tick;
+                    self.ports.ports[*pid].sailings += 1;
                 }
             }
         }
@@ -1047,8 +1112,9 @@ impl World {
     fn ferry_riders(&mut self, from: BuildingId, to: Option<BuildingId>) -> u32 {
         let ends: Vec<Vec2> = [Some(from), to].into_iter().flatten().filter_map(|b| self.building_entrance(b)).collect();
         let near = self.citizens.values().filter(|c| c.home.and_then(|h| self.building_entrance(h)).is_some_and(|p| ends.iter().any(|e| e.distance(p) < 500.0))).count() as u32;
-        // Out to elsewhere draws visitors and commuters from off the map.
-        let base = if to.is_none() { 8 } else { 2 };
+        // Out to elsewhere draws a few more locals (visitors, commuters
+        // and day trippers are counted as they board).
+        let base = if to.is_none() { 4 } else { 2 };
         (near / 12 + base + self.rng.random_range(0..6)).min(ports::FERRY_CAPACITY)
     }
 
@@ -1076,6 +1142,15 @@ impl World {
         s.freight_landed_today = 0;
         s.ferry_riders_today = 0;
         s.ferry_fares_today = 0.0;
+        s.remote_sailings_today = 0;
+        s.visitors_in_today = 0;
+        s.visitors_out_today = 0;
+        s.commuters_in_today = 0;
+        s.commuters_out_today = 0;
+        s.day_trips_today = 0;
+        s.day_trippers_back_today = 0;
+        self.ports.commuters_today.clear();
+        self.ports.trips_today.clear();
     }
 }
 

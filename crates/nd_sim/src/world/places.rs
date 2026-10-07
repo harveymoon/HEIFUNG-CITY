@@ -308,6 +308,13 @@ impl World {
             x.thought = format!("Going to {place} with {name}.");
             x.next_decision_tick = tick + 60;
         }
+        // [passengers] Setting off together from home by car: in the
+        // passenger seat. Otherwise they make their own way there.
+        if self.join_ride(mate, id, target, purpose, crate::rides::RideKind::Outing, true) {
+            self.places.outings_together_total += 1;
+            self.places.outings_together_today += 1;
+            return;
+        }
         self.travel_to(mate, Some(target), purpose);
         if self.citizens.get(mate).is_some_and(|x| x.activity.is_traveling() || x.to_car.is_some()) {
             self.places.outings_together_total += 1;
