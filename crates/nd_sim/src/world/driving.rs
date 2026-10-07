@@ -270,6 +270,28 @@ impl World {
         }
     }
 
+    /// [clarity] A stop on a multi-stop drive (a child dropped at school, a
+    /// delivery made, a cab's fare picked up): the next leg is timed afresh
+    /// from here against its own route, and the driver, having had a
+    /// breather at the kerb, calms down. A long round of stops is not one
+    /// endless late trip, so it never boils over into road rage.
+    pub(super) fn begin_leg(&mut self, id: CarId) {
+        let tick = self.clock.tick;
+        let secs = self.config.traffic_seconds_per_tick.max(0.1);
+        let net = &self.traffic.net;
+        let Some(car) = self.traffic.cars.get_mut(id) else { return };
+        if car.drive.expected_min <= 0.0 {
+            // Not timed yet: `step_rage` times it from here anyway.
+            return;
+        }
+        car.drive.trip_start = tick;
+        car.drive.expected_min = (car.expected_seconds(net) / secs).max(1.0);
+        car.drive.anger = 0.0;
+        if let Some(calm) = car.drive.calm {
+            car.drive.profile = calm;
+        }
+    }
+
     /// [rage] The drive under way: minutes so far and minutes it should
     /// have taken (judged from the route when it set off). `None` before
     /// the first tick has timed it.
@@ -1385,12 +1407,67 @@ mod tests {
         // An ambulance goes, the rider ends up in a hospital bed.
         let sent = tick(&mut w, 200, |w| w.services.units.values().any(|u| u.kind == UnitKind::Ambulance && u.incident == Some(medical) && u.state != UnitState::Idle));
         assert!(sent, "an ambulance was dispatched");
+        // [clarity] Its crew are the hospital's own staff, and it says where it goes.
+        if let Some((uid, amb)) = w.services.units.iter().find(|(_, u)| u.incident == Some(medical)).and_then(|(id, u)| Some((id, u.car?))) {
+            let j = w.car_journey(amb).expect("a journey");
+            assert!(j.purpose.starts_with("answering"), "{}", j.purpose);
+            let crew = w.unit_crew(uid);
+            assert_eq!(crew.len(), 2);
+            assert!(crew.iter().all(|c| w.citizens[*c].work == Some(hospital)), "medics are hospital staff");
+            assert_eq!(j.driver, crate::world::Driver::Crew(crew));
+            assert!(j.to.is_some_and(|p| p.pos.is_some_and(|p| p.distance(rec.pos) < 30.0)), "going to the crash");
+        }
         let admitted = tick(&mut w, 400, |w| matches!(w.citizens[rider].activity, Activity::Visiting(b) if b == hospital));
         assert!(admitted, "taken to hospital: {:?}", w.services.incident(medical).map(|i| i.stage));
         // The police clear the scene and the wreck is towed, not deleted.
         let towed = tick(&mut w, 400, |w| !w.traffic.cars.contains_key(car) && (w.driving.towed_total > 0 || !w.driving.tows.is_empty()));
         assert!(towed, "wreck towed");
         assert!(!w.services.incident(rec.incident.unwrap()).unwrap().active());
+    }
+
+    /// [clarity] Every vehicle says where it is coming from and going, and
+    /// why; a police car on patrol says so and shows its officers.
+    #[test]
+    fn vehicles_say_where_they_come_from_and_go() {
+        let mut w = town(7);
+        let folk: Vec<CitizenId> = w.citizens.keys().collect();
+        let police = station(&mut w, ServiceKind::Police, -450.0, &folk[0..4]);
+        // A driver leaving a neighbour's for home.
+        let c = folk[10];
+        let home = w.citizens[c].home.unwrap();
+        let other = w.buildings.iter().find(|(id, b)| b.land_use == LandUse::Residential && *id != home && w.building_entrance(*id).is_some()).map(|(id, _)| id).expect("another home");
+        {
+            let p = &mut w.citizens[c];
+            p.inside = Some(other);
+            p.activity = Activity::Visiting(other);
+            p.next_decision_tick = u64::MAX / 2;
+        }
+        let vid = w.give_car_parked(c, w.building_entrance(other).unwrap());
+        assert!(w.start_drive(c, vid, home, Purpose::Home), "set off");
+        let Activity::Driving { car, .. } = w.citizens[c].activity else { panic!("driving") };
+        tick(&mut w, 1, |_| false);
+        let j = w.car_journey(car).expect("a journey");
+        assert_eq!(j.purpose, "going home");
+        assert_eq!(j.from.building, Some(other), "coming from where they were");
+        assert_eq!(j.to.as_ref().and_then(|p| p.building), Some(home), "going home");
+        assert_eq!(j.driver, crate::world::Driver::Citizen(c));
+        let line = w.activity_line(c);
+        assert!(line.starts_with(&format!("going home to {}", w.buildings[home].name)), "{line}");
+        // A police car on patrol: no destination, its officers aboard.
+        let patrol = tick(&mut w, 600, |w| w.services.units.values().any(|u| u.kind == UnitKind::PoliceCar && u.state == UnitState::Patrol && u.car.is_some()));
+        assert!(patrol, "a police car went out on patrol");
+        let (uid, pcar) = w.services.units.iter().find(|(_, u)| u.kind == UnitKind::PoliceCar && u.state == UnitState::Patrol && u.car.is_some()).map(|(id, u)| (id, u.car.unwrap())).unwrap();
+        let j = w.car_journey(pcar).unwrap();
+        assert_eq!(j.purpose, "patrolling");
+        assert!(j.to.is_none());
+        let crew = w.unit_crew(uid);
+        assert!(!crew.is_empty() && crew.iter().all(|o| w.citizens[*o].work == Some(police)), "the officers are the station's staff");
+        assert_eq!(j.driver, crate::world::Driver::Crew(crew));
+        // Through traffic is a stranger from out of town.
+        if let Some((id, _)) = w.traffic.cars.iter().find(|(_, c)| c.errand == crate::vehicle::Errand::Through) {
+            let j = w.car_journey(id).unwrap();
+            assert_eq!(j.driver, crate::world::Driver::Unknown(crate::world::journeys::STRANGER.into()));
+        }
     }
 
     /// A seed whose personality makes a takeover regular.

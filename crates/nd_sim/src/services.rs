@@ -130,7 +130,10 @@ pub const HELD_HOURS: u64 = 6;
 /// With no crewed station of the kind but a dispatcher to ask, a unit from
 /// out of town comes: this many minutes after dispatch, for a fee.
 pub const OUT_OF_TOWN_TRAVEL: u64 = 45;
-pub const OUT_OF_TOWN_FEE: [f32; 3] = [1_500.0, 600.0, 800.0];
+/// [clarity] Per call, by incident kind (fire, crime, medical). An
+/// ambulance from the next town is dear: a few calls cost more than a
+/// clinic's upkeep for a week, so a town without one feels it.
+pub const OUT_OF_TOWN_FEE: [f32; 3] = [1_500.0, 600.0, 2_400.0];
 /// Police cars between calls patrol their station's district: they drive
 /// to a beat (a busy or crime-hit block) and park there this many ticks, a
 /// range, before moving on; ambulances post at a standby point near where

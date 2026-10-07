@@ -1875,17 +1875,25 @@ fn sync_citizens(
         }
     }
     let mut looks: HashSet<nd_procgen::people::PersonKey> = HashSet::new();
+    let down = w.down_on_street();
     for &(id, e, key, stature, _) in &outdoors {
         let Some(c) = w.citizens.get(id) else { continue };
         let Ok((mut tf, mut vis, _, mut mesh, _)) = q.get_mut(e) else { continue };
         *vis = Visibility::Visible;
         let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
         let heading = lerp_angle(c.prev_heading, c.heading, f);
-        let seated = matches!(c.activity, nd_sim::Activity::Sitting { .. });
+        // [clarity] Benches and kerbs sit; the hurt (and the homeless
+        // sleeping rough) lie flat on the ground.
+        let pose = w.pose_with(id, &down);
+        let seated = matches!(pose, nd_sim::world::Pose::Bench | nd_sim::world::Pose::SittingKerb);
+        let lying = pose == nd_sim::world::Pose::Lying;
         // [tools] Up the stairs and over a footbridge (a raised walkway).
         let raised = w.walker_level(c, pos);
-        tf.translation = Vec3::new(pos.x, if seated { 0.02 } else { 0.16 } + raised, pos.y);
+        tf.translation = Vec3::new(pos.x, if lying { 0.12 } else if seated { 0.02 } else { 0.16 } + raised, pos.y);
         tf.rotation = Quat::from_rotation_y(-heading);
+        if lying {
+            tf.rotation *= Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+        }
         tf.scale = if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE } * stature;
         looks.insert(key);
         let fallback = || if key.ride { mats.bike_mesh.clone() } else { mats.citizen_mesh.clone() };

@@ -384,6 +384,9 @@ impl World {
             if self.traffic.redirect(car_id, goal, s_end) {
                 self.traffic.cars[car_id].errand = crate::vehicle::Errand::Trip;
                 self.traffic.pull_in(car_id, 20.0);
+                // [clarity] A new leg, timed afresh, from the stop.
+                self.begin_leg(car_id);
+                self.car_departs_from(car_id, stop);
                 return true;
             }
         }

@@ -131,8 +131,13 @@ impl World {
         if needs_street && !lot.car_access() {
             return Some(format!("a {} needs a street out front", what.label()));
         }
-        if self.economy.treasury < what.cost() {
-            return Some(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, what.label(), what.cost()));
+        // [clarity] Solar and wind cost what the lot they fill makes them.
+        let cost = match what {
+            Placeable::Plant(k) => self.plant_cost_on(k, lot_id),
+            _ => what.cost(),
+        };
+        if self.economy.treasury < cost {
+            return Some(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, what.label(), cost));
         }
         None
     }

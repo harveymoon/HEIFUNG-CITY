@@ -1185,6 +1185,7 @@ impl World {
             }
             // [benches] Neighbours may have got talking; the seat is free.
             self.stand_up(id, at, park);
+            self.note_left(id, park);
             self.citizens[id].activity = Activity::Idle;
         }
         let c = &mut self.citizens[id];
@@ -1194,6 +1195,8 @@ impl World {
                 b.visitors = b.visitors.saturating_sub(1);
             }
         }
+        // [clarity] Where the trip starts, for "coming from".
+        self.note_left(id, inside);
         self.building_entrance(inside)
     }
 

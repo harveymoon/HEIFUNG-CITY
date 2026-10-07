@@ -126,7 +126,8 @@ impl World {
         self.tourism.attractiveness = out.iter().map(|a| a.score).sum();
         self.tourism.attractions = out;
         self.tourism.ways_in = self.tourist_ways_in();
-        self.tourism.demand_per_day = tm::demand_per_day(self.tourism.attractiveness, self.tourism.ways_in);
+        // [clarity] A dear tourist tax keeps some away; a cheap one draws more.
+        self.tourism.demand_per_day = tm::demand_per_day(self.tourism.attractiveness, self.tourism.ways_in) * self.economy.taxes.tourist_pull();
     }
 
     /// Which ways in work now, by `Arrival` index.
@@ -268,7 +269,7 @@ impl World {
             };
             let nights = 1 + rng.random_range(0..=tm::MAX_EXTRA_NIGHTS);
             let budget = Tourist::daily_budget(class) * (nights + 1) as f32 * rng.random_range(0.8..1.25);
-            let rooms = tm::night_price(self.buildings[hotel].tier) * (1.0 + tm::TOURIST_TAX) * nights as f32;
+            let rooms = tm::night_price(self.buildings[hotel].tier) * (1.0 + self.economy.taxes.tourist_tax()) * nights as f32;
             let start = port.and_then(|p| self.building_entrance(p)).or_else(|| self.building_entrance(hotel)).unwrap_or_default();
             let age = rng.random_range(19..72u8);
             let tourist = Tourist {
@@ -733,6 +734,7 @@ impl World {
         }
         let ids: Vec<TouristId> = self.tourism.tourists.keys().collect();
         let mut tax_total = 0.0;
+        let rate = self.economy.taxes.tourist_tax();
         for id in ids {
             if self.tourism.tourists[id].commuter.is_some() {
                 continue;
@@ -742,7 +744,7 @@ impl World {
             let price = tm::night_price(b.tier);
             let Some(bz) = b.business.as_mut().filter(|z| z.kind == BusinessKind::Hotel && !z.closed) else { continue };
             let t = &mut self.tourism.tourists[id];
-            let tax = price * tm::TOURIST_TAX;
+            let tax = price * rate;
             // Rooms are paid ahead (in their money from the start); a broke
             // visitor still has the room they booked.
             t.money -= price + tax;

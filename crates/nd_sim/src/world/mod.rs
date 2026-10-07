@@ -55,6 +55,8 @@ mod parking;
 mod pedestrians;
 mod plan;
 pub mod poses;
+/// [clarity] Origins and destinations, crews, crash sites.
+pub mod journeys;
 mod pillars;
 pub use pillars::deck_half_width;
 mod junctions;
@@ -146,6 +148,7 @@ use crate::ports::Ports;
 pub use industry_bridge::INDUSTRY_CHOICES;
 pub use districts::{DistrictStats, PolicyChange};
 pub use poses::Pose;
+pub use journeys::{Driver, Journey, Place};
 pub use pressure::{artist_seed, is_artist, BusinessStory};
 
 /// A parcel that loses or gains more than this share of its area under a
@@ -428,6 +431,9 @@ pub struct World {
     /// [driving] Crashes, wrecks, tow trucks and street takeovers.
     #[serde(default)]
     pub driving: Driving,
+    /// [clarity] Where trips came from, and the crash sites.
+    #[serde(default)]
+    pub journeys: journeys::Journeys,
     /// [pedestrians] Walkers' state and the day's jaywalking, near misses
     /// and people hit (`world/pedestrians.rs`).
     #[serde(default)]
@@ -593,6 +599,7 @@ impl World {
             bridge_metres: 0.0,
             bots: Default::default(),
             driving: Driving::default(),
+            journeys: Default::default(),
             peds: Default::default(),
             seats: Default::default(),
             crowds_cache: None,
@@ -942,6 +949,9 @@ impl World {
             crate::prof!("daily_subway", self.daily_subway());
             // [society] crime, the street and the bins settle their day.
             self.daily_society();
+            // [clarity] Dangerous streets and far hospitals, complained of.
+            self.daily_dangerous_streets();
+            self.daily_healthcare();
             self.daily_update();
             // [economy] the city's needs read and met, before the vehicles' day rolls
             crate::prof!("daily_pressure", self.daily_pressure());
@@ -1027,6 +1037,7 @@ impl World {
         self.step_air();
         self.step_taxis();
         self.step_driving();
+        self.step_journeys();
         self.step_enforcement();
         self.step_services();
         // [society] Trash trucks.

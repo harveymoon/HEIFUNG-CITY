@@ -1161,7 +1161,11 @@ pub(crate) fn tool_input(
                     tools.status = match sim.world.place_building(what, p) {
                         Ok(id) => {
                             *selection = Selection::Building(id);
-                            format!("{} built for {:.0}; {:.0}/day to run.", what.label(), what.cost(), what.upkeep())
+                            // [clarity] Solar and wind are sized to their lot.
+                            match sim.world.buildings.get(id).filter(|b| b.plant.is_some()) {
+                                Some(b) => format!("{} built: {:.0} MW for {:.0}; {:.0}/day to run.", what.label(), sim.world.plant_capacity_mw(b), what.cost() * sim.world.plant_scale(b), sim.world.plant_upkeep(b)),
+                                None => format!("{} built for {:.0}; {:.0}/day to run.", what.label(), what.cost(), what.upkeep()),
+                            }
                         }
                         Err(e) => format!("Cannot build: {e}."),
                     };

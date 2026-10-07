@@ -25,6 +25,8 @@ fn hint(c: Concern) -> &'static str {
         Concern::Nightlife => "places shut, packed or rough: more venues and shops, better ones (economy.venues)",
         Concern::Displacement => "homes demolished, expropriated or evicted: careful with road works through housing",
         Concern::Other => "see the quotes",
+        Concern::DangerousStreets => "crashes keep happening on the same streets: slow them down, add signals or roundabouts (map layer=danger)",
+        Concern::Healthcare => "no hospital nearby: build a clinic or hospital in reach of homes (Buildings > Services)",
     }
 }
 

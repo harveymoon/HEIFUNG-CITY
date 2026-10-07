@@ -367,7 +367,10 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
     }
     if let Some(kind) = b.plant {
         section(ui, "POWER PLANT");
-        ui.label(format!("{:.0} MW nameplate, {:.0}% available now, {:.0}/day upkeep", kind.capacity_mw(), kind.availability(&w.weather, w.clock.day_fraction()) * 100.0, kind.upkeep_per_day()));
+        ui.label(format!("{:.0} MW nameplate, {:.0}% available now, {:.0}/day upkeep", w.plant_capacity_mw(b), kind.availability(&w.weather, w.clock.day_fraction()) * 100.0, w.plant_upkeep(b)));
+        if kind.reference_area().is_some() {
+            hint(ui, &format!("sized to its lot: {:.0} m², {:.2}× a standard {}", w.lots.get(b.lot).map_or(0.0, |l| l.area()), w.plant_scale(b), kind.label()));
+        }
         if b.demolition.is_some() {
             ui.label(egui::RichText::new("clearing the lot: not on the grid yet").color(egui::Color32::from_rgb(255, 170, 80)));
         }

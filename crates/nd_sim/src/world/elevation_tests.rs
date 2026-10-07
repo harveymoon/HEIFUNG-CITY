@@ -285,13 +285,19 @@ fn a_tunnel_passes_under_streets_and_joins_by_its_portals() {
 #[test]
 fn walkers_and_bikes_never_route_through_a_tunnel() {
     let (mut w, _) = tunnel_town();
-    // A street round the east end: the long way on the surface.
+    {
+        // The tunnel is the only link between the two streets: cars use it,
+        // walkers and bikes have no way.
+        let a = w.roads.node_near(Vec2::new(-300.0, 0.0), 0.5).unwrap();
+        let b = w.roads.node_near(Vec2::new(150.0, 400.0), 0.5).unwrap();
+        assert!(w.roads.path(a, b).is_some(), "cars go through the tunnel");
+        assert!(w.roads.foot_path(a, b).is_none(), "nobody walks or cycles through it");
+    }
+    // A street round the east end: a way on the surface.
     w.add_road(&[Vec2::new(400.0, 0.0), Vec2::new(400.0, 400.0)], 1, 1);
     let a = w.roads.node_near(Vec2::new(-300.0, 0.0), 0.5).unwrap();
     let b = w.roads.node_near(Vec2::new(150.0, 400.0), 0.5).unwrap();
-    let cars = w.roads.path(a, b).unwrap();
     let in_bore = |p: &[NodeId]| p.windows(2).any(|q| w.roads.neighbors(q[0]).any(|(n, s)| n == q[1] && w.roads.segment(s).fronts_nothing()));
-    assert!(in_bore(&cars), "cars take the tunnel");
     let feet = w.roads.foot_path(a, b).expect("the surface way round");
     assert!(!in_bore(&feet), "walkers and bikes keep to the surface");
     // The rider's line stays on the surface streets.
