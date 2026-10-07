@@ -158,7 +158,7 @@ fn road_view(ui: &mut egui::Ui, st: &mut EditorState, v: &IntersectionView) {
             painter.image(tex, rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
         }
         None => {
-            painter.text(rect.center(), egui::Align2::CENTER_CENTER, "rendering the roads...", egui::FontId::proportional(14.0), egui::Color32::GRAY);
+            painter.text(rect.center(), egui::Align2::CENTER_CENTER, "rendering the roads...", crate::ui::theme::body(), egui::Color32::GRAY);
         }
     }
     let click = resp.clicked().then(|| resp.interact_pointer_pos()).flatten();
@@ -179,7 +179,7 @@ fn road_view(ui: &mut egui::Ui, st: &mut EditorState, v: &IntersectionView) {
         let c = st.to_view(rect, spot);
         let text = a.arrows.iter().map(|&x| arrow_text(x)).collect::<Vec<_>>().join(" | ");
         let sel = st.approach == Some(i);
-        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(15.0), if a.no_left { egui::Color32::from_rgb(255, 190, 90) } else { egui::Color32::WHITE });
+        let galley = painter.layout_no_wrap(text, crate::ui::theme::body(), if a.no_left { egui::Color32::from_rgb(255, 190, 90) } else { egui::Color32::WHITE });
         let size = galley.size() + egui::vec2(12.0, 8.0);
         // Kept inside the view when zoomed in.
         let c = egui::pos2(c.x.clamp(rect.left() + size.x * 0.5 + 2.0, rect.right() - size.x * 0.5 - 2.0), c.y.clamp(rect.top() + size.y * 0.5 + 2.0, rect.bottom() - size.y * 0.5 - 2.0));
@@ -215,14 +215,14 @@ fn road_view(ui: &mut egui::Ui, st: &mut EditorState, v: &IntersectionView) {
         painter.circle_filled(m, 9.0, egui::Color32::from_black_alpha(200));
         painter.circle_stroke(m, 9.0, egui::Stroke::new(1.5, col));
         if !label.is_empty() {
-            painter.text(m, egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(12.0), col);
+            painter.text(m, egui::Align2::CENTER_CENTER, label, crate::ui::theme::small(), col);
         }
         if click.is_some_and(|p| p.distance(m) < 12.0) {
             st.crossing = Some(c.index);
             st.approach = None;
         }
     }
-    painter.text(rect.left_bottom() + egui::vec2(6.0, -6.0), egui::Align2::LEFT_BOTTOM, format!("{:.0} m across \u{00b7} north up \u{00b7} wheel zooms", st.extent), egui::FontId::proportional(11.0), egui::Color32::from_gray(160));
+    painter.text(rect.left_bottom() + egui::vec2(6.0, -6.0), egui::Align2::LEFT_BOTTOM, format!("{:.0} m across \u{00b7} north up \u{00b7} wheel zooms", st.extent), crate::ui::theme::small(), egui::Color32::from_gray(160));
 }
 
 /// The settings beside the view.

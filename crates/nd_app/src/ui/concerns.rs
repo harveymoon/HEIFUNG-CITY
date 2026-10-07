@@ -73,7 +73,7 @@ pub fn tab(ui: &mut egui::Ui, p: &mut UiCtx) {
         return;
     }
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(format!("{:.0}%", now.mean * 100.0)).strong().size(18.0).color(mood_color(now.mean)));
+        ui.label(egui::RichText::new(format!("{:.0}%", now.mean * 100.0)).strong().font(crate::ui::theme::title()).color(mood_color(now.mean)));
         ui.label(egui::RichText::new(format!("mean mood   {:.0}% unhappy   {:.0}% happy", now.unhappy * 100.0, now.happy * 100.0)).small());
         if let Some(prev) = w.concerns.mood_days.back() {
             let d = (now.mean - prev.mean) * 100.0;
@@ -128,9 +128,9 @@ fn chart(ui: &mut egui::Ui, samples: &[MoodSample], range: Range) {
     let width = ui.available_width().max(260.0);
     let (resp, painter) = ui.allocate_painter(egui::vec2(width, 160.0), egui::Sense::hover());
     let rect = resp.rect;
-    let plot = egui::Rect::from_min_max(rect.min + egui::vec2(30.0, 6.0), rect.max - egui::vec2(8.0, 16.0));
+    let plot = egui::Rect::from_min_max(rect.min + egui::vec2(38.0, 8.0), rect.max - egui::vec2(8.0, 19.0));
     painter.rect_filled(plot, 2.0, PANEL);
-    let small = egui::FontId::proportional(10.0);
+    let small = crate::ui::theme::small();
     let grey = egui::Color32::from_gray(170);
     let y_of = |v: f32| plot.bottom() - plot.height() * v.clamp(0.0, 1.0);
     for (v, label) in [(0.0, "0"), (0.5, "50%"), (1.0, "100%")] {

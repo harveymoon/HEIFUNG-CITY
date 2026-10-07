@@ -19,7 +19,7 @@ pub fn show(ui: &mut egui::Ui, p: &mut UiCtx) {
     // line instead of drawing the camera switch over the window toggles.
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        ui.label(egui::RichText::new("DISTRICT 2040").color(GOLD).strong().size(15.0));
+        ui.label(egui::RichText::new("DISTRICT 2040").color(GOLD).strong().font(crate::ui::theme::lead()));
         ui.separator();
         clock_and_speed(ui, p);
         ui.separator();

@@ -508,7 +508,7 @@ pub fn city_name_row(ui: &mut egui::Ui, sim: &mut Sim, flags: &mut UiFlags) {
             }
         }
         None => {
-            ui.label(egui::RichText::new(sim.world.identity.display_name()).color(GOLD).strong().size(15.0));
+            ui.label(egui::RichText::new(sim.world.identity.display_name()).color(GOLD).strong().font(crate::ui::theme::lead()));
             if ui.small_button("Rename").on_hover_text("Change the city's name; saves from now on carry it").clicked() {
                 editing = Some(sim.world.identity.name.clone());
             }
