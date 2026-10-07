@@ -238,12 +238,19 @@ impl Traffic {
     }
 
     pub fn time_to_crossing(&self, lane: LaneId, s: f32, depth: f32) -> f32 {
+        self.time_to_crossing_above(lane, s, depth, 0.5)
+    }
+
+    /// [emergency] `time_to_crossing`, counting only vehicles moving at
+    /// `min_v` or more: with the walk light on, a jam crawling across the
+    /// crossing is something to weave through, not to wait for.
+    pub fn time_to_crossing_above(&self, lane: LaneId, s: f32, depth: f32, min_v: f32) -> f32 {
         let siren = |c: &Car| if c.siren { 0.25 } else { 1.0 };
         let mut best = f32::INFINITY;
         let Some(l) = self.net.lanes.get(lane as usize) else { return best };
         for &cid in &l.cars {
             let c = &self.cars[cid];
-            if c.v < 0.5 || c.s > s + depth + CAR_LENGTH {
+            if c.v < min_v || c.s > s + depth + CAR_LENGTH {
                 continue;
             }
             let t = if c.s >= s - 0.3 { 0.0 } else { (s - c.s) / c.v };
@@ -254,7 +261,7 @@ impl Traffic {
             let pl = &self.net.lanes[p as usize];
             for &cid in &pl.cars {
                 let c = &self.cars[cid];
-                if c.v < 0.5 || c.route.get(c.idx + 1) != Some(&lane) {
+                if c.v < min_v || c.route.get(c.idx + 1) != Some(&lane) {
                     continue;
                 }
                 best = best.min((pl.length - c.s + s) / c.v * siren(c));
@@ -266,7 +273,7 @@ impl Traffic {
                 let ppl = &self.net.lanes[pp as usize];
                 for &cid in &ppl.cars {
                     let c = &self.cars[cid];
-                    if c.v < 0.5 || c.route.get(c.idx + 1) != Some(&p) || c.route.get(c.idx + 2) != Some(&lane) {
+                    if c.v < min_v || c.route.get(c.idx + 1) != Some(&p) || c.route.get(c.idx + 2) != Some(&lane) {
                         continue;
                     }
                     let d = ppl.length - c.s + pl.length + s;

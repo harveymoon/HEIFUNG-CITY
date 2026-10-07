@@ -1337,6 +1337,9 @@ fn incident(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             };
             w.fall_ill(c).ok_or("that citizen is not indoors or is already a patient")?
         }
+        // [emergency] A car chase: a free police car comes for a suspect
+        // whose car is parked near home, and they run for it.
+        "chase" => w.stage_chase()?,
         // [driving] A crash: the car given (or the nearest to `at`) crashes
         // at `speed` m/s (25: written off). Processed on the next tick.
         "crash" => {
@@ -1388,6 +1391,7 @@ fn incidents(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "jail_occupancy": w.services.jail_occupancy().iter().map(|(b, n)| json!({ "jail": key_str(*b), "name": building_name(w, Some(*b)), "inmates": n })).collect::<Vec<_>>(),
         "held_at_stations": s.held_at_stations, "released_early_total": s.released_early_total,
         "out_of_town_calls_today": s.out_of_town_calls_today, "out_of_town_fees_today": round(s.out_of_town_fees_today),
+        "chases_now": w.services.chases.len(), "chases_today": s.chases_today, "chases_tagged_today": s.chases_tagged_today, "chases_lost_today": s.chases_lost_today, "chases_total": s.chases_total, "chases_tagged_total": s.chases_tagged_total,
         "incidents": rows,
     }))
 }
@@ -1403,6 +1407,7 @@ fn incident_row(w: &nd_sim::World, i: &nd_sim::Incident) -> Value {
         "people": i.people.iter().map(|p| json!({ "citizen": key_str(p.citizen), "name": p.name, "role": p.role, "taken_to": p.taken_to })).collect::<Vec<_>>(),
         "damage": i.damage.iter().map(|d| json!({ "building": key_str(d.building), "name": d.name, "condition_lost": round(d.lost), "destroyed": d.destroyed })).collect::<Vec<_>>(),
         "still_burning": i.active() && i.kind == nd_sim::IncidentKind::Fire && w.services.is_burning(i.building),
+        "chase": i.chase.as_ref().map(|c| json!({ "vehicle": c.vehicle, "started": c.started, "ended": c.ended, "result": c.result.map(|r| r.label()), "metres": round(c.metres), "closest_m": round(c.closest) })),
     })
 }
 
@@ -2315,7 +2320,7 @@ fn help() -> Value {
             "terrain_at": { "x": "f", "y": "f", "returns": "natural/ground/surface heights, slope, water (kind, current, width), nearest shore, hot spot, power sites and dock placement for the lot there, survey (every land layer's value 0..1 there: resources, and the chance of each industry kind)" },
             "grant": { "amount": "money added to the treasury (dev), default 100000" },
             "landscape": { "returns": "preset and levers, rivers (width, current, hydro_ok), lakes, sea, hot spots, highway ends and through cars, bridges, docks, ships" },
-            "incident": { "kind": "fire|crime|medical|crash|takeover", "building": "id (fire, crime; medical without citizen)", "citizen": "id (medical)", "car": "id (crash; default the car nearest at)", "at": "[x,y] (crash, takeover: the junction nearest)", "speed": "m/s (crash, default 25 = written off)" },
+            "incident": { "kind": "fire|crime|medical|crash|takeover|chase", "building": "id (fire, crime; medical without citizen)", "citizen": "id (medical)", "car": "id (crash; default the car nearest at)", "at": "[x,y] (crash, takeover: the junction nearest)", "speed": "m/s (crash, default 25 = written off)" },
             "incidents": { "active": "bool (only those under way)", "limit": "default 50, newest first", "kind": "fire|crime|medical" },
             "bus": { "action": "select|new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|rename|recolour|line|select_stop|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses", "name": "rename", "color": "0..7", "look": "select_stop: point the camera" },
             "find": { "what": "citizens|buildings|lots|parcels|cars|trains|drones|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },

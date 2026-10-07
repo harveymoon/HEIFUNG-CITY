@@ -882,6 +882,7 @@ fn emergency(w: &World) -> Value {
         "all_units_busy_now_min": per_kind(&|k| st.saturated_since[k].map_or(Value::Null, |t| json!(tick.saturating_sub(t)))),
         "unanswered_why_today": per_kind(&|k| { let u = &st.unanswered_why_today[k]; json!({ "all_units_busy": u.all_units_busy, "no_route": u.no_route, "no_station": u.no_station }) }),
         "mutual_aid_today": st.mutual_aid_today, "unreachable_today": st.unreachable_today, "diverted_today": st.diverted_today, "units_on_patrol": st.on_patrol,
+        "car_chases": { "now": s.chases.len(), "today": st.chases_today, "tagged_today": st.chases_tagged_today, "lost_today": st.chases_lost_today, "total": st.chases_total, "tagged_total": st.chases_tagged_total },
         "stadium_crowd_today": st.stadium_crowd_today, "tickets_today": round(st.tickets_today), "stadium_events_tonight": s.events_today.len(),
         "upkeep_per_day": round(st.upkeep_today), "education_wage_bonus_today": round(st.education_bonus_today), "pupils_today": st.pupils_today,
         "jailed": st.jailed, "held_at_stations": st.held_at_stations, "released_early_total": st.released_early_total,

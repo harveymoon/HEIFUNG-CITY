@@ -30,6 +30,7 @@ mod cargo_hubs;
 #[cfg(test)]
 mod cargo_hub_tests;
 mod cars;
+mod chases;
 mod enforcement;
 mod construction;
 mod history;
@@ -957,6 +958,10 @@ impl World {
         // [tolls] Before anyone arriving is taken off the road.
         self.settle_tolls();
         for car_id in arrived {
+            // [emergency] A fugitive got where it was running: on it runs.
+            if self.chase_car_arrived(car_id) {
+                continue;
+            }
             // Fire engines, police cars and ambulances: services handle them.
             if self.services.unit_of_car(car_id).is_some() {
                 self.unit_car_arrived(car_id);
