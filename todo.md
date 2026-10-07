@@ -231,11 +231,12 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [ ] - corner lots levelled to their front street can stand above a side street (left open by fix/terrain-cut)
 [ ] - about 100 cyclists stuck at one point beside a 5-arm signalised junction in a generated city (riders waiting on each other at crossings, world/riders.rs); seen by feat/tools
 [ ] - new economy building styles (Mechanic, FishStickFactory, ArtStudio) put windows in their frame's plane (coplanar test failing on main)   → economy agent fixing
+[ ] - a 10k-person city (saves/land_day18.ron on feat/land) loses about 400 people a day with homes free and no unemployment; not caused by buyouts (land market off: same). Suspect the power shortage (~80% supply); investigate
 [ ] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)
 
 ### Agent waves (4–5 at a time)
-- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera
-- Running: feat/events (C3: races, raves, infrastructure decay), feat/clarity (section A), feat/land (section C part 2)
+- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera, feat/land
+- Running: feat/events (C3: races, raves, infrastructure decay), feat/clarity (section A)
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
 - Next as slots free: dev-speed pass, then the review pass
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open
