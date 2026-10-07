@@ -58,14 +58,23 @@ impl World {
         self.building_entrance(station).map(|p| (p, reach))
     }
 
-    /// Lay a new line through `stations` in order and pay for its tunnels.
-    pub fn add_metro_line(&mut self, stations: &[BuildingId]) -> Result<MetroLineId, String> {
+    /// The stations of a line as given (in order; the first again at the
+    /// end closes a loop of three or more), checked: every one a metro
+    /// station, none twice. Returns the distinct stations and whether the
+    /// line is a loop.
+    fn metro_calls(&self, stations: &[BuildingId]) -> Result<(Vec<BuildingId>, bool), String> {
         let mut seen: Vec<BuildingId> = Vec::new();
-        for &s in stations {
+        let mut looped = false;
+        for (k, &s) in stations.iter().enumerate() {
             if self.metro_platform(s).is_none() {
                 return Err("every stop must be a metro station (or the Central Station)".into());
             }
             if seen.last() == Some(&s) {
+                continue;
+            }
+            // [metro-ux] Back to the first station as the last stop: a loop.
+            if k + 1 == stations.len() && seen.first() == Some(&s) && seen.len() >= 3 {
+                looped = true;
                 continue;
             }
             if seen.contains(&s) {
@@ -76,8 +85,80 @@ impl World {
         if seen.len() < 2 {
             return Err("a line needs at least two stations".into());
         }
+        Ok((seen, looped))
+    }
+
+    /// [metro-ux] What a line through `stations` would be (as
+    /// `add_metro_line` takes them), without laying it: its tunnel, length,
+    /// times, trains and cost, at the default headway.
+    pub fn metro_line_preview(&self, stations: &[BuildingId]) -> Result<metro::LinePreview, String> {
+        let (seen, looped) = self.metro_calls(stations)?;
         let pts: Vec<Vec2> = seen.iter().filter_map(|&s| self.metro_platform(s)).collect();
-        let (path, stops) = metro::lay_tunnel(&pts);
+        Ok(metro::preview(&pts, looped, metro::DEFAULT_HEADWAY, self.config.traffic_seconds_per_tick))
+    }
+
+    /// [metro-ux] The line tool's preview of a draft, however short (one
+    /// station: no tunnel yet).
+    pub fn metro_draft_preview(&self, draft: &metro::MetroDraft) -> metro::LinePreview {
+        let pts: Vec<Vec2> = draft.stations.iter().filter_map(|&s| self.metro_platform(s)).collect();
+        metro::preview(&pts, draft.looped, metro::DEFAULT_HEADWAY, self.config.traffic_seconds_per_tick)
+    }
+
+    /// [metro-ux] Click a station into a line being drawn. Tunnels are
+    /// bored station to station under anything (streets, buildings, water,
+    /// road tunnels: the metro runs deeper), so any two stations connect;
+    /// what can refuse a click is the order (the last stop again, a station
+    /// already on the line, a loop of two) and the money: a stop whose
+    /// tunnel the treasury could not pay for is refused with the sums.
+    pub fn metro_draft_add(&self, draft: &mut metro::MetroDraft, station: BuildingId) -> metro::DraftStep {
+        let Some(b) = self.buildings.get(station).filter(|_| self.metro_platform(station).is_some()) else {
+            return metro::DraftStep::Refused("that is not a metro station".into());
+        };
+        if b.is_derelict() {
+            return metro::DraftStep::Refused(format!("{} is derelict", b.name));
+        }
+        let mut next = draft.clone();
+        let step = next.push(station, |s| self.buildings.get(s).map_or_else(|| "that station".to_string(), |b| b.name.clone()));
+        if matches!(step, metro::DraftStep::Refused(_)) {
+            return step;
+        }
+        let p = self.metro_draft_preview(&next);
+        if p.tunnel_cost > self.economy.treasury {
+            return metro::DraftStep::Refused(format!(
+                "the treasury cannot pay the tunnel to {}: {:.0} m of line costs {:.0}, the treasury has {:.0}",
+                b.name, p.length_m, p.tunnel_cost, self.economy.treasury
+            ));
+        }
+        *draft = next;
+        step
+    }
+
+    /// [metro-ux] The metro station a click at `p` means: the one whose lot
+    /// it is on, else the nearest whose platform or entrance is within
+    /// `radius` (stations stand 160 m apart, so this is never ambiguous
+    /// below 80 m).
+    pub fn metro_station_at(&self, p: Vec2, radius: f32) -> Option<BuildingId> {
+        let stations = self.metro_stations();
+        if let Some(s) = stations.iter().copied().find(|&s| self.buildings.get(s).and_then(|b| self.lots.get(b.lot)).is_some_and(|l| crate::zoning::point_in_polygon(p, &l.polygon))) {
+            return Some(s);
+        }
+        stations
+            .into_iter()
+            .filter_map(|s| {
+                let d = [self.metro_platform(s), self.building_entrance(s)].into_iter().flatten().map(|q| q.distance(p)).fold(f32::INFINITY, f32::min);
+                (d <= radius).then_some((s, d))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(s, _)| s)
+    }
+
+    /// Lay a new line through `stations` in order and pay for its tunnels.
+    /// [metro-ux] The first station again at the end (three stations or
+    /// more) makes a loop.
+    pub fn add_metro_line(&mut self, stations: &[BuildingId]) -> Result<MetroLineId, String> {
+        let (seen, looped) = self.metro_calls(stations)?;
+        let pts: Vec<Vec2> = seen.iter().filter_map(|&s| self.metro_platform(s)).collect();
+        let (path, stops) = metro::lay_line(&pts, looped);
         let length = crate::geom::path_length(&path);
         let cost = length * metro::TUNNEL_COST_PER_M;
         if self.economy.treasury < cost {
@@ -86,7 +167,7 @@ impl World {
         self.economy.debit(Flow::Construction, cost);
         self.subway.next_line += 1;
         let n = self.subway.next_line;
-        let line = MetroLine { name: format!("Line {n}"), color: ((n - 1) % metro::LINE_COLOURS as u32) as u8, stations: seen, path, stops, headway: metro::DEFAULT_HEADWAY, last_dispatch: 0, riders_today: 0, riders_yesterday: 0, runs_today: 0 };
+        let line = MetroLine { name: format!("Line {n}"), color: ((n - 1) % metro::LINE_COLOURS as u32) as u8, stations: seen, path, stops, headway: metro::DEFAULT_HEADWAY, last_dispatch: 0, riders_today: 0, riders_yesterday: 0, runs_today: 0, looped };
         let id = self.subway.lines.insert(line);
         self.subway.version += 1;
         Ok(id)
@@ -140,8 +221,11 @@ impl World {
                 continue;
             }
             let pts: Vec<Vec2> = stations.iter().filter_map(|&s| self.metro_platform(s)).collect();
-            let (path, stops) = metro::lay_tunnel(&pts);
+            // A loop left with two stations runs end to end.
+            let looped = self.subway.lines[id].looped && pts.len() >= 3;
+            let (path, stops) = metro::lay_line(&pts, looped);
             let l = &mut self.subway.lines[id];
+            l.looped = looped;
             l.stations = stations;
             l.path = path;
             l.stops = stops;
@@ -580,5 +664,94 @@ mod tests {
         assert_eq!((l.headway, l.stations.len()), (7, 2));
         assert!(back.buildings.values().filter(|b| b.metro).count() == 2);
         assert!(!matches!(back.citizens[rider].activity, Activity::OnMetro { .. }), "nobody is left on a train that was not saved");
+    }
+
+    // [metro-ux] The line tool: clicking stations into a draft.
+
+    #[test]
+    fn clicks_pick_stations_and_a_draft_checks_them_against_the_city() {
+        let mut w = town();
+        let a = w.build_metro_station(lot_near(&w, Vec2::new(-900.0, 30.0))).unwrap();
+        let b = w.build_metro_station(lot_near(&w, Vec2::new(0.0, -30.0))).unwrap();
+        let c = w.build_metro_station(lot_near(&w, Vec2::new(900.0, 30.0))).unwrap();
+        // A click on the lot, or near the platform, picks the station;
+        // empty ground does not.
+        let pa = w.metro_platform(a).unwrap();
+        assert_eq!(w.metro_station_at(pa, 60.0), Some(a));
+        assert_eq!(w.metro_station_at(pa + Vec2::new(0.0, 50.0), 60.0), Some(a));
+        assert_eq!(w.metro_station_at(Vec2::new(-450.0, 400.0), 60.0), None);
+        // Something that is not a station is refused.
+        let home = BuildingId::default();
+        let mut d = metro::MetroDraft::default();
+        assert!(matches!(w.metro_draft_add(&mut d, home), metro::DraftStep::Refused(why) if why.contains("not a metro station")));
+        assert_eq!(w.metro_draft_add(&mut d, a), metro::DraftStep::Started);
+        assert_eq!(w.metro_draft_add(&mut d, b), metro::DraftStep::Added);
+        let two = w.metro_draft_preview(&d);
+        assert!(two.length_m > 850.0 && two.trains >= 2, "{two:?}");
+        assert_eq!(w.metro_draft_add(&mut d, c), metro::DraftStep::Added);
+        assert_eq!(w.metro_draft_add(&mut d, a), metro::DraftStep::Looped);
+        let p = w.metro_draft_preview(&d);
+        assert!(p.looped && p.length_m > 3400.0, "round and back: {:.0}", p.length_m);
+        assert_eq!(w.metro_line_preview(&d.calls()).unwrap(), p, "the preview is what will be laid");
+        // A treasury that cannot pay the next tunnel refuses the click and
+        // leaves the draft as it was.
+        let mut poor = metro::MetroDraft::default();
+        w.metro_draft_add(&mut poor, a);
+        w.economy.treasury = 1000.0;
+        let before = poor.clone();
+        assert!(matches!(w.metro_draft_add(&mut poor, c), metro::DraftStep::Refused(why) if why.contains("treasury")));
+        assert_eq!(poor, before);
+        w.economy.treasury = 1_000_000.0;
+        // The draft lays as a loop and the tunnel is paid.
+        let t0 = w.economy.treasury;
+        let line = w.add_metro_line(&d.calls()).expect("a loop line");
+        let l = &w.subway.lines[line];
+        assert!(l.looped && l.stations == vec![a, b, c]);
+        assert!(l.path[0].distance(*l.path.last().unwrap()) < 0.5, "the tunnel closes");
+        assert!((t0 - w.economy.treasury - l.length() * metro::TUNNEL_COST_PER_M).abs() < 1.0);
+        // A loop of two is still refused through the API path.
+        assert!(w.add_metro_line(&[a, b, a]).is_err());
+    }
+
+    #[test]
+    fn a_loop_line_runs_round_and_shrinks_to_a_plain_line() {
+        let mut w = town();
+        let mut mind = IdleMind;
+        let a = w.build_metro_station(lot_near(&w, Vec2::new(-900.0, 30.0))).unwrap();
+        let b = w.build_metro_station(lot_near(&w, Vec2::new(0.0, -30.0))).unwrap();
+        let c = w.build_metro_station(lot_near(&w, Vec2::new(900.0, 30.0))).unwrap();
+        let line = w.add_metro_line(&[a, b, c, a]).unwrap();
+        w.set_metro_headway(line, 6).unwrap();
+        // A rider from C home to A takes the loop forward (C, then A).
+        let at = w.building_entrance(c).unwrap();
+        let rider = walker(&mut w, at);
+        w.clock = SimClock::starting_at(0, 8, 0);
+        w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Subway { line, board: c, alight: a }, target: a, purpose: Purpose::Wander, since: w.clock.tick });
+        w.citizens[rider].activity = Activity::Waiting { at };
+        let mut rode = false;
+        for _ in 0..240 {
+            w.tick(&mut mind);
+            rode |= matches!(w.citizens[rider].activity, Activity::OnMetro { .. });
+            if rode && !matches!(w.citizens[rider].activity, Activity::OnMetro { .. }) {
+                break;
+            }
+        }
+        assert!(rode, "boarded the loop: {}", w.citizens[rider].activity.label());
+        assert!(!matches!(w.citizens[rider].activity, Activity::OnMetro { .. }), "and got off");
+        assert!(w.citizens[rider].pos.distance(w.building_entrance(a).unwrap()) < 400.0, "at A");
+        // Pulling down a station leaves two: the loop runs end to end.
+        w.demolish(b);
+        w.step_subway();
+        let l = &w.subway.lines[line];
+        assert!(!l.looped && l.stations == vec![a, c]);
+        assert!(l.path[0].distance(*l.path.last().unwrap()) > 1000.0);
+        // Loops survive a save.
+        let line2 = {
+            let d = w.build_metro_station(lot_near(&w, Vec2::new(-400.0, -30.0))).unwrap();
+            let e = w.build_metro_station(lot_near(&w, Vec2::new(400.0, -30.0))).unwrap();
+            w.add_metro_line(&[a, d, e, a]).unwrap()
+        };
+        let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+        assert!(back.subway.lines[line2].looped);
     }
 }
