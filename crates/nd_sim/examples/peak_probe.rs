@@ -485,6 +485,7 @@ fn main() {
     took.sort_by(|a, b| a.total_cmp(b));
     let ratio = trips.iter().map(|t| t.0 / t.1.max(1.0)).sum::<f32>() / trips.len().max(1) as f32;
     let q = |f: f32| took.get(((took.len() as f32 - 1.0) * f).max(0.0) as usize).copied().unwrap_or(0.0);
+    println!("CRASHES total {} (crash reports so far)", w.driving.crashes_total);
     println!("TRIPS timed private drives finished {} minutes mean {:.1} median {:.0} p90 {:.0} max {:.0} | mean actual/expected {:.2}", took.len(), took.iter().sum::<f32>() / took.len().max(1) as f32, q(0.5), q(0.9), q(1.0), ratio);
     println!(
         "SUMMARY {} samples: mean stuck>5m {:.1} max {} mean gridlocks {:.2} trips done {} on road at end {} | stuck behind heads {:?}",

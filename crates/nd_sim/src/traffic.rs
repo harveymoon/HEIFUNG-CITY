@@ -2676,7 +2676,9 @@ impl Traffic {
             }
             // The solid line before a junction: no changing lanes there.
             let zone = if self.net.rings.circulating.contains(&c.route[c.idx]) { SOLID_LINE_MIN } else { (SOLID_LINE_SECONDS * c.v).clamp(SOLID_LINE_MIN, SOLID_LINE_MAX) };
-            let solid = self.net.to_junction(&c.route, c.idx, c.s, zone + 1.0) <= zone;
+            // ([services] Lights and sirens cross the line: a missed turn
+            // would cost an ambulance minutes.)
+            let solid = !c.siren && self.net.to_junction(&c.route, c.idx, c.s, zone + 1.0) <= zone;
             if let Some(target) = c.change_pending(&self.net) {
                 if solid && c.cooldown <= 0.0 {
                     // Not in the lane its turn needs by the solid line: it
@@ -3097,7 +3099,9 @@ impl Traffic {
                     let mut by: Option<CarId> = None;
                     if let Some(cl) = lane_claims {
                         let ahead = lane.cars.get(k + 1).map_or(f32::MAX, |&l| self.cars[l].s);
-                        for &(at, len, owner) in cl.iter().filter(|&&(at, _, _)| at > car.s + 1.0 && at < ahead - 1.0) {
+                        // ([services] Lights and sirens do not stop to let a
+                        // car change lanes in front of them.)
+                        for &(at, len, owner) in cl.iter().filter(|&&(at, _, o)| at > car.s + 1.0 && at < ahead - 1.0 && !(car.siren && !self.cars[o].entering)) {
                             // Room for the whole vehicle (a bus is 12 m), not a car.
                             let room = at - len - IDM_MIN_GAP - car.s;
                             if room < gap && car.v * car.v < 2.0 * IDM_BRAKE * room.max(0.0) {
