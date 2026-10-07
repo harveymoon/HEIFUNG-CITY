@@ -82,7 +82,15 @@ impl Sim {
         world.economy.treasury = 60_000.0;
         world.economy.ledger = Default::default();
         world.drain_events();
+        // [identity] Every new game is a game of its own, unnamed until
+        // the player names it.
+        world.identity = nd_sim::CityIdentity { name: String::new(), game_id: crate::ui::saves::new_game_id() };
         world
+    }
+
+    /// [identity] Name the city (tidied, see `nd_sim::identity::clean_name`).
+    pub fn set_city_name(&mut self, name: &str) -> String {
+        crate::ui::saves::rename_city(&mut self.world, name)
     }
 
     /// Throw the city away and start again on a new landscape.

@@ -133,7 +133,9 @@ ring (see `events`).
 | `seed_demo` | | lays out and implements the demo district (works on any map) |
 | `save` | `name` or `path`, both optional | `name`: a named game, as Saves, Save as: `saves/<name>.ron` (the name made file-safe: ASCII letters, digits and `-` kept, the rest `_`, at most 48 characters), a sidecar `saves/<name>.meta.json` (name as typed, day, population, treasury, buildings, landscape, saved_unix) and a top-down map picture `saves/<name>.png`, rendered offscreen and written about half a second later. Reply `path`, `name`, `thumbnail`, `meta` (absolute). Neither: `saves/city.ron` plus a dated slot, like Quick save (with a sidecar and `saves/city.png`). `path`: just that file |
 | `load` | `path` (`.ron`, see the file rules) | as the Load button: tools and selection reset, the city comes up paused; closes the title screen |
-| `list_saves` | | `saves`, newest first: `path`, `name` (as typed for named games; "Latest quick save", "Autosave", "Quick save, day N" otherwise), `kind` (named / latest / autosave / dated), `modified_unix`, `bytes`, `day`, `population`, `treasury`, `buildings`, `landscape` (null for saves without a sidecar), `thumbnail` (absolute PNG path, or null) |
+| `list_saves` | | `saves`, newest first: `path`, `name` (as typed for named games; "Latest quick save", "Autosave", "Quick save, day N" otherwise), `kind` (named / latest / autosave / dated), `modified_unix`, `bytes`, `day`, `population`, `treasury`, `buildings`, `landscape` (null for saves without a sidecar), `thumbnail` (absolute PNG path, or null), `city` (the city's name, "Unnamed city" for none), `game_id` (null before ids); `by_city`: `[{city, saves: [path, ...]}]`, the grouping the title screen and the Saves window show |
+| `city_name` | `name` optional | without `name`: `name` (as kept, "" when unnamed), `display_name`, `game_id` (null for a save from before ids until it is next saved), `history_entries`. With `name`: renames the city (control characters dropped, spaces folded, at most 40 characters; "" leaves it unnamed); saves from then on carry it |
+| `game_history` | `action` list (default) / bookmark / unmark / mark / revert, and per action below | the running game's history of autosaves (below) |
 
 The **title screen** comes up at startup (unless `ND_TITLE=0`) over a paused city: the saved
 games as cards with their pictures, Continue, New game, Play this map. `load`, `new_game`,
@@ -145,6 +147,36 @@ Paths are limited to `saves/`, `screenshots/`, `exports/` and the temp folder (s
 [Who may call](#who-may-call)). Relative ones are taken from the game's working directory (the
 repo root under `cargo run`).
 
+**City name and game id.** Every world carries its city's name and a game id (saved with it,
+and repeated in each sidecar as `city` and `game_id`). `new_game` and `generate_city` make a
+fresh id and take an optional `name`; the New game window and the title screen ask for one.
+`status.identity` is `{name, display_name, game_id}`. A save from before ids loads as "Unnamed
+city" with no id and gets one the next time it is saved (any save, or the next autosave).
+
+**Game history.** Each daily autosave is also written to
+`saves/history/<game id>/<unix ms>-day<N>.ron` with its sidecar and picture; the newest 24
+unmarked entries of a game are kept, marked ones always. `game_history`:
+
+- `{}` or `{action: "list"}`, optional `game_id` (another game), `marked_only`: `entries` newest
+  first, each `path`, `file`, `day`, `population`, `treasury`, `buildings`, `saved_unix`, `city`,
+  `bookmark` (null when unmarked), `thumbnail`.
+- `{action: "bookmark", path | file, label}` names a moment (`unmark` or an empty label clears it).
+- `{action: "mark", label}` saves the city now into its history with that name.
+- `{action: "revert", path | file, confirm: true}` loads that entry as `load` does (tools reset,
+  paused). Without `confirm: true` it refuses and says what would be replaced. Newer entries stay
+  listed, so a revert can be undone the same way. Only entries of the running game are accepted.
+
+`window {name: "history"}` opens the Game history window (the Saves window's "Game history"
+button): the same list with pictures, Mark / Rename / Unmark, Revert with a confirmation, and
+"Mark this moment".
+
+```json
+{"cmd": "city_name", "name": "Cobalt Reach"}
+{"cmd": "game_history"}
+{"cmd": "game_history", "action": "bookmark", "file": "001759800000000-day12.ron", "label": "first metro line"}
+{"cmd": "game_history", "action": "revert", "file": "001759800000000-day12.ron", "confirm": true}
+```
+
 Every save is written to a temporary file and renamed over the target, so a crash mid-write
 leaves the old file whole. The daily autosave (`saves/autosave.ron`) copies the world on the
 main thread, then serialises and writes it on a worker thread.
@@ -153,8 +185,8 @@ main thread, then serialises and writes it on a worker thread.
 
 | Command | Fields | Reply |
 | --- | --- | --- |
-| `new_game` | `preset` river_valley (default) / islands / coast / delta / plains / flat, `seed`, `water` 0..1, `relief` 0..1 (height variation), `branching` 0..1, `islands` 0..8 (`highway` is ignored: every new game has the highway and the trunk line); omitted levers take the preset's | throws the city away and starts on the landscape; tools and selection reset. Reply as `landscape` |
-| `generate_city` | `preset` grid_plaza (default) / coastal_river / old_town / twin_centres, `seed` (default 1; seeds the landscape and the city), optional `landscape` (a `new_game` preset to lay the city on instead of the preset's own) and `water`, `relief`, `branching` levers | throws the city away and starts a new game with a whole generated city on it (below); tools and selection reset. Reply as `landscape` plus `city`: `preset`, `seed`, `arterial`/`collector`/`local` (`roads`, `length_m`), `zones`, `lots`, `interchanges`, `way_in`, `centres`, `took_ms` |
+| `new_game` | `preset` river_valley (default) / islands / coast / delta / plains / flat, `seed`, `water` 0..1, `relief` 0..1 (height variation), `branching` 0..1, `islands` 0..8 (`highway` is ignored: every new game has the highway and the trunk line); omitted levers take the preset's; optional `name` (the city's name) | throws the city away and starts on the landscape with a new game id; tools and selection reset. Reply as `landscape` plus `identity` |
+| `generate_city` | `preset` grid_plaza (default) / coastal_river / old_town / twin_centres, `seed` (default 1; seeds the landscape and the city), optional `landscape` (a `new_game` preset to lay the city on instead of the preset's own) and `water`, `relief`, `branching` levers, optional `name` | throws the city away and starts a new game with a whole generated city on it (below); tools and selection reset. Reply as `landscape` plus `city`: `preset`, `seed`, `arterial`/`collector`/`local` (`roads`, `length_m`), `zones`, `lots`, `interchanges`, `way_in`, `centres`, `took_ms` |
 | `landscape` | | preset and levers, `rivers` (kind river/stream, width, current_mps, hydro_ok, source, mouth, length), `lakes`, `sea`, `hot_spots`, `highway` (entries, exits, through_cars), `bridges` (count, metres, on the highway), `ports`, `ships`, `port_stats` |
 | `terrain_at` | `x`, `y` | `natural_height`, `ground_height` (graded under roads and lots), `surface_height` (bridge decks included), `slope`, `water` (kind, current, width, flow), `nearest_shore`, `hot_spot`, `lot`, `power_sites` (hydro/tidal/geothermal ok or why not, for the lot there), `docks` (whether a shipping port or ferry terminal would go there, or why not), `survey` (every land survey layer's value 0..1 there), `access` (`park_min`, `nightlife_min`: minutes on foot along the walk network to the nearest park / open entertainment, null when none can be walked to; `value_for_homes`: what that adds to a home's land value; `text`; the whole object is null off the walk network) |
 | `grant` | `amount` (default 100000) | dev: adds money to the treasury |

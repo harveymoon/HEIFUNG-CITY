@@ -480,6 +480,10 @@ pub struct World {
     /// on load.
     #[serde(default)]
     pub streets: crate::streets::StreetNames,
+    /// [identity] The city's name and its game's id. Saves from before
+    /// load unnamed and without an id (the app gives them one when saved).
+    #[serde(default)]
+    pub identity: crate::identity::CityIdentity,
 }
 
 impl World {
@@ -562,6 +566,7 @@ impl World {
             cargo_hubs: Default::default(),
             rides: Default::default(),
             streets: Default::default(),
+            identity: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();

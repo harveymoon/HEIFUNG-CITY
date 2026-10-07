@@ -10,10 +10,18 @@
 //!   builds and scripts know); every quick save also lands in a dated slot,
 //!   `saves/city-<unix seconds>-day<N>.ron`, of which the newest few are
 //!   kept. It gets a picture and a sidecar too.
-//! - **Autosave**: `saves/autosave.ron` at the start of each day.
+//! - **Autosave**: `saves/autosave.ron` at the start of each day, and the
+//!   same into the game's history (`ui/history.rs`).
+//!
+//! [identity] Every world carries its city's name and a game id
+//! (`nd_sim::CityIdentity`), and every sidecar repeats them. A new game
+//! gets an id at once ([`new_game_id`]); a save from before ids gets one
+//! when it is next saved ([`ensure_game_id`]) and is "Unnamed city" until
+//! named.
 //!
 //! The title screen (`ui/title.rs`) and the Saves window list them newest
-//! first. Saves from before sidecars show their file name and no figures.
+//! first, grouped by city name ([`group_by_city`]). Saves from before
+//! sidecars show their file name and no figures.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -48,6 +56,26 @@ pub struct SaveMeta {
     #[serde(default)]
     pub landscape: String,
     pub saved_unix: u64,
+    /// [identity] The city's name ("" for none: "Unnamed city").
+    #[serde(default)]
+    pub city: String,
+    /// [identity] The game the save belongs to ("" before ids).
+    #[serde(default)]
+    pub game_id: String,
+    /// [identity] A history entry's name for the moment, if marked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bookmark: Option<String>,
+}
+
+impl SaveMeta {
+    /// The city's name to show and group by.
+    pub fn city_name(&self) -> &str {
+        if self.city.trim().is_empty() {
+            nd_sim::identity::UNNAMED
+        } else {
+            &self.city
+        }
+    }
 }
 
 /// What kind of save a file is.
@@ -83,6 +111,11 @@ pub struct Slot {
 }
 
 impl Slot {
+    /// The city the save is of: its sidecar's, or "Unnamed city".
+    pub fn city(&self) -> &str {
+        self.meta.as_ref().map_or(nd_sim::identity::UNNAMED, |m| m.city_name())
+    }
+
     /// "Day 12 · 340 people · $ 52000" from the sidecar, or "" for an old save.
     pub fn figures(&self) -> String {
         self.meta.as_ref().map_or_else(String::new, |m| format!("Day {} · {} people · $ {:.0}", m.day, m.population, m.treasury))
@@ -108,12 +141,17 @@ pub struct Saves {
     pub name: String,
     /// The title screen is up (at startup unless `ND_TITLE=0`).
     pub title: bool,
+    /// [identity] Open (true) or close the Game history window on the next
+    /// UI pass (the remote API's `window {name: "history"}`).
+    pub history_requested: Option<bool>,
+    /// [identity] The name typed on the title screen for "Play this map".
+    pub new_city_name: String,
 }
 
 impl Default for Saves {
     fn default() -> Self {
         let title = !std::env::var("ND_TITLE").is_ok_and(|v| v == "0");
-        Self { slots: Vec::new(), dirty: true, pending_load: None, autosave: None, shots: Vec::new(), pictures: HashMap::new(), name: String::new(), title }
+        Self { slots: Vec::new(), dirty: true, pending_load: None, autosave: None, shots: Vec::new(), pictures: HashMap::new(), name: String::new(), title, history_requested: None, new_city_name: String::new() }
     }
 }
 
@@ -257,14 +295,64 @@ fn now_unix() -> u64 {
     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
+fn now_unix_ms() -> u64 {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+}
+
+/// [identity] A new game id: the time in milliseconds (hex) and 64 bits
+/// from a randomly keyed hasher over the time in nanoseconds, the process
+/// and a counter. File-safe (hex and one `-`), unique across games and
+/// processes without a random crate: `RandomState` is keyed from the OS.
+pub fn new_game_id() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(nanos);
+    h.write_u32(std::process::id());
+    h.write_u64(SEQ.fetch_add(1, Ordering::Relaxed));
+    format!("{:x}-{:016x}", nanos / 1_000_000, h.finish())
+}
+
+/// [identity] Give the world a game id if it has none (a save from before
+/// ids, loaded): done when it is next saved, so its saves from then on
+/// group under one game. True if one was made.
+pub fn ensure_game_id(world: &mut nd_sim::World) -> bool {
+    if world.identity.has_id() {
+        return false;
+    }
+    world.identity.game_id = new_game_id();
+    true
+}
+
+/// [identity] Name the city (tidied; "" leaves it unnamed). Returns the
+/// name kept.
+pub fn rename_city(world: &mut nd_sim::World, name: &str) -> String {
+    world.identity.name = nd_sim::identity::clean_name(name);
+    world.identity.name.clone()
+}
+
 /// The sidecar for the city as it stands.
 fn meta_of(sim: &Sim, name: &str) -> SaveMeta {
     let w = &sim.world;
-    SaveMeta { name: name.to_string(), day: w.clock.day() + 1, population: w.citizens.len(), treasury: w.economy.treasury, buildings: w.buildings.len(), landscape: w.landscape.params.preset.label().to_string(), saved_unix: now_unix() }
+    SaveMeta {
+        name: name.to_string(),
+        day: w.clock.day() + 1,
+        population: w.citizens.len(),
+        treasury: w.economy.treasury,
+        buildings: w.buildings.len(),
+        landscape: w.landscape.params.preset.label().to_string(),
+        saved_unix: now_unix(),
+        city: w.identity.name.clone(),
+        game_id: w.identity.game_id.clone(),
+        bookmark: None,
+    }
 }
 
 /// Write `path` (a .ron save), its sidecar, and ask for its picture.
-fn write_save(sim: &Sim, saves: &mut Saves, path: &Path, name: &str) -> Result<(), String> {
+fn write_save(sim: &mut Sim, saves: &mut Saves, path: &Path, name: &str) -> Result<(), String> {
+    ensure_game_id(&mut sim.world);
     let shown = path.to_string_lossy().replace('\\', "/");
     sim.save(&shown)?;
     if let Ok(text) = serde_json::to_string_pretty(&meta_of(sim, name)) {
@@ -277,7 +365,7 @@ fn write_save(sim: &Sim, saves: &mut Saves, path: &Path, name: &str) -> Result<(
 
 /// Save the city under a name: `saves/<file_stem(name)>.ron`, its sidecar
 /// and picture. Returns the save's path.
-pub fn save_as(sim: &Sim, saves: &mut Saves, flags: &mut UiFlags, name: &str) -> Result<PathBuf, String> {
+pub fn save_as(sim: &mut Sim, saves: &mut Saves, flags: &mut UiFlags, name: &str) -> Result<PathBuf, String> {
     let name = if name.trim().is_empty() { "City".to_string() } else { name.trim().to_string() };
     let path = PathBuf::from(DIR).join(format!("{}.ron", file_stem(&name)));
     match write_save(sim, saves, &path, &name) {
@@ -293,7 +381,7 @@ pub fn save_as(sim: &Sim, saves: &mut Saves, flags: &mut UiFlags, name: &str) ->
 }
 
 /// Write the latest slot and a dated copy of it.
-pub fn save_now(sim: &Sim, saves: &mut Saves, flags: &mut UiFlags) {
+pub fn save_now(sim: &mut Sim, saves: &mut Saves, flags: &mut UiFlags) {
     saves.dirty = true;
     flags.message = match write_save(sim, saves, Path::new(LATEST), "") {
         Ok(()) => {
@@ -328,6 +416,87 @@ pub fn load_now(path: &Path, sim: &mut Sim, tools: &mut ToolState, selection: &m
     };
 }
 
+/// [identity] Save the city now into its game history with a name for the
+/// moment ("Mark this moment"). Returns the entry's path.
+pub fn mark_now(sim: &mut Sim, saves: &mut Saves, label: &str) -> Result<PathBuf, String> {
+    ensure_game_id(&mut sim.world);
+    let dir = Path::new(DIR);
+    let w = &sim.world;
+    let path = super::history::entry_path(dir, &w.identity.game_id, w.clock.day() + 1, now_unix_ms());
+    sim.save(&path)?;
+    let mut meta = meta_of(sim, "");
+    meta.bookmark = Some(nd_sim::identity::clean_name(label)).filter(|l| !l.is_empty());
+    if let Ok(text) = serde_json::to_string_pretty(&meta) {
+        let _ = std::fs::write(meta_path(&path), text);
+    }
+    saves.shots.push(path.with_extension("png"));
+    saves.dirty = true;
+    Ok(path)
+}
+
+/// [identity] Go back to a moment of the game's history: load it as Load
+/// does (the city comes up paused). The caller has asked first.
+pub fn revert(path: &Path, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, plan: &mut EffectivePlan, saves: &mut Saves, flags: &mut UiFlags) {
+    let day = super::history::list(Path::new(DIR), &sim.world.identity.game_id).into_iter().find(|e| e.path == path).map(|e| e.meta.day);
+    load_now(path, sim, tools, selection, plan, flags);
+    saves.dirty = true;
+    if !flags.message.starts_with("load failed") {
+        flags.message = match day {
+            Some(d) => format!("reverted to day {d} (paused)"),
+            None => format!("reverted to {} (paused)", path.display()),
+        };
+    }
+}
+
+/// [identity] Slots grouped by city name: (city, indices into `slots`),
+/// the group with the newest save first and each group newest first (the
+/// order `slots` is in). "Unnamed city" collects saves without a name.
+pub fn group_by_city(slots: &[Slot]) -> Vec<(String, Vec<usize>)> {
+    let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
+    for (i, s) in slots.iter().enumerate() {
+        let city = s.city();
+        match groups.iter_mut().find(|(c, _)| c == city) {
+            Some((_, v)) => v.push(i),
+            None => groups.push((city.to_string(), vec![i])),
+        }
+    }
+    groups
+}
+
+/// [identity] The city's name with a Rename control: shown at the top of
+/// the City and Saves windows.
+pub fn city_name_row(ui: &mut egui::Ui, sim: &mut Sim, flags: &mut UiFlags) {
+    let id = egui::Id::new("city_rename");
+    let mut editing: Option<String> = ui.ctx().data(|d| d.get_temp(id));
+    ui.horizontal(|ui| match editing.as_mut() {
+        Some(text) => {
+            let r = ui.add(egui::TextEdit::singleline(text).desired_width(180.0).hint_text("name your city"));
+            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if ui.small_button("OK").clicked() || enter {
+                let kept = rename_city(&mut sim.world, text);
+                flags.message = format!("the city is now called {}", if kept.is_empty() { nd_sim::identity::UNNAMED } else { &kept });
+                editing = None;
+            } else if ui.small_button("Cancel").clicked() {
+                editing = None;
+            }
+        }
+        None => {
+            ui.label(egui::RichText::new(sim.world.identity.display_name()).color(GOLD).strong().size(15.0));
+            if ui.small_button("Rename").on_hover_text("Change the city's name; saves from now on carry it").clicked() {
+                editing = Some(sim.world.identity.name.clone());
+            }
+        }
+    });
+    ui.ctx().data_mut(|d| match &editing {
+        Some(t) => {
+            d.insert_temp(id, t.clone());
+        }
+        None => {
+            d.remove::<String>(id);
+        }
+    });
+}
+
 /// A PNG as an egui image.
 fn load_png(path: &Path) -> Option<egui::ColorImage> {
     use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
@@ -352,6 +521,11 @@ pub fn age(modified: Option<SystemTime>) -> String {
 /// The body of the Saves window: save as a name, quick save, the list with
 /// pictures, the load confirmation.
 pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, plan: &mut EffectivePlan, saves: &mut Saves, flags: &mut UiFlags) {
+    section(ui, "CITY");
+    city_name_row(ui, sim, flags);
+    if ui.button("Game history…").on_hover_text("This game's autosaves: mark key moments, revert to an earlier day").clicked() {
+        saves.history_requested = Some(true);
+    }
     section(ui, "SAVE AS");
     ui.horizontal(|ui| {
         let r = ui.add(egui::TextEdit::singleline(&mut saves.name).desired_width(170.0).hint_text("name your city"));
@@ -400,8 +574,15 @@ pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, selection:
         hint(ui, "No saves yet.");
     }
     let mut load: Option<PathBuf> = None;
+    let groups = group_by_city(saves.slots());
     let rows: Vec<(PathBuf, String, SlotKind, String, Option<SystemTime>, Option<PathBuf>)> = saves.slots().iter().map(|s| (s.path.clone(), s.label.clone(), s.kind, s.figures(), s.modified, s.picture.clone())).collect();
-    for (path, label, kind, figures, modified, picture) in rows {
+    let ordered: Vec<(Option<(String, usize)>, usize)> = groups.iter().flat_map(|(city, members)| members.iter().enumerate().map(move |(k, &i)| ((k == 0).then(|| (city.clone(), members.len())), i))).collect();
+    for (header, i) in ordered {
+        let (path, label, kind, figures, modified, picture) = rows[i].clone();
+        if let Some((city, n)) = header {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(format!("{city}  ({n})")).color(GOLD).small().strong());
+        }
         ui.horizontal(|ui| {
             let pic = picture.as_deref().and_then(|p| saves.picture(ui.ctx(), p));
             match pic {
@@ -443,13 +624,19 @@ pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, selection:
 /// happen on a worker thread, and the write is atomic. One autosave at a
 /// time: a day that turns while the last one is still writing (1024x on a
 /// slow disk) is skipped, and the next day catches up.
-pub fn autosave(sim: Res<Sim>, mut saves: ResMut<Saves>, mut flags: ResMut<UiFlags>) {
+pub fn autosave(mut sim: ResMut<Sim>, mut saves: ResMut<Saves>, mut flags: ResMut<UiFlags>) {
     if saves.autosave.as_ref().is_some_and(|j| j.is_finished()) {
         let job = saves.autosave.take().expect("checked above");
         saves.dirty = true;
         flags.message = match job.join() {
             Ok(Ok((day, ms))) => {
                 debug!("autosave of day {day} written in {ms:.0} ms off the main thread");
+                // [identity] The game's history keeps its newest autosaves
+                // and every marked one.
+                let pruned = super::history::prune(Path::new(DIR), &sim.world.identity.game_id, super::history::KEPT);
+                if pruned > 0 {
+                    debug!("game history: {pruned} old autosave(s) pruned");
+                }
                 format!("autosaved day {day} to {AUTOSAVE}")
             }
             Ok(Err(e)) => format!("autosave failed: {e}"),
@@ -463,14 +650,22 @@ pub fn autosave(sim: Res<Sim>, mut saves: ResMut<Saves>, mut flags: ResMut<UiFla
         warn!("autosave skipped: the previous one is still being written");
         return;
     }
+    ensure_game_id(&mut sim.world);
     let start = std::time::Instant::now();
     let world = sim.world.clone();
     let hitch = start.elapsed().as_secs_f64() * 1000.0;
     debug!("autosave: world copied in {hitch:.1} ms on the main thread");
     let day = world.clock.day() + 1;
+    // [identity] The same autosave into the game's history: serialised
+    // once, written twice.
+    let entry = super::history::entry_path(Path::new(DIR), &world.identity.game_id, day, now_unix_ms());
+    let entry_bg = entry.clone();
     let job = std::thread::Builder::new().name("nd-autosave".into()).spawn(move || {
         let t = std::time::Instant::now();
-        crate::sim::save_world(&world, Path::new(AUTOSAVE)).map(|()| (day, t.elapsed().as_secs_f64() * 1000.0))
+        let text = world.to_ron().map_err(|e| e.to_string())?;
+        crate::sim::write_atomic(&entry_bg, text.as_bytes()).map_err(|e| e.to_string())?;
+        crate::sim::write_atomic(Path::new(AUTOSAVE), text.as_bytes()).map_err(|e| e.to_string())?;
+        Ok((day, t.elapsed().as_secs_f64() * 1000.0))
     });
     match job {
         Ok(j) => saves.autosave = Some(j),
@@ -479,9 +674,14 @@ pub fn autosave(sim: Res<Sim>, mut saves: ResMut<Saves>, mut flags: ResMut<UiFla
     // [saves] The sidecar (name, day, population) and the map picture,
     // as every save gets; the picture is rendered a frame or two later.
     if let Ok(text) = serde_json::to_string_pretty(&meta_of(&sim, "")) {
-        let _ = std::fs::write(meta_path(Path::new(AUTOSAVE)), text);
+        let _ = std::fs::write(meta_path(Path::new(AUTOSAVE)), &text);
+        if let Some(parent) = entry.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(meta_path(&entry), text);
     }
     saves.shots.push(Path::new(AUTOSAVE).with_extension("png"));
+    saves.shots.push(entry.with_extension("png"));
     saves.dirty = true;
 }
 
@@ -498,6 +698,119 @@ mod tests {
         assert_eq!(file_stem("   "), "city");
         assert_eq!(file_stem("CON"), "CON_");
         assert!(file_stem(&"x".repeat(200)).len() <= 48);
+    }
+
+    /// [identity] Ids are unique, file-safe and not all alike in shape.
+    #[test]
+    fn game_ids_are_unique_and_file_safe() {
+        let ids: std::collections::HashSet<String> = (0..5000).map(|_| new_game_id()).collect();
+        assert_eq!(ids.len(), 5000);
+        for id in ids.iter().take(50) {
+            assert!(id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'), "{id}");
+            assert_eq!(file_stem(id), *id, "an id is its own file stem");
+            assert!(id.len() >= 20);
+        }
+    }
+
+    /// The RON of a world as a build from before identities wrote it.
+    fn legacy_ron(w: &nd_sim::World) -> String {
+        let ron = w.to_ron().unwrap();
+        let start = ron.rfind("identity: (").expect("identity is saved");
+        // To the matching close paren (names and ids hold none), and its comma.
+        let mut depth = 0;
+        let mut end = start;
+        for (k, c) in ron[start..].char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = start + k + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if ron[end..].starts_with(',') {
+            end += 1;
+        }
+        let legacy = format!("{}{}", &ron[..start], &ron[end..]);
+        assert!(!legacy.contains("game_id"));
+        legacy
+    }
+
+    /// [identity] A save from before identities loads as "Unnamed city"
+    /// without an id, gets one when next saved, and keeps it (and a name
+    /// given since) through a save and load.
+    #[test]
+    fn legacy_saves_load_unnamed_and_get_an_id_when_saved() {
+        let sim = Sim::new();
+        assert!(sim.world.identity.has_id(), "a new game has an id at once");
+        let mut w = nd_sim::World::from_ron(&legacy_ron(&sim.world)).expect("a legacy save loads");
+        assert_eq!(w.identity.display_name(), nd_sim::identity::UNNAMED);
+        assert!(!w.identity.has_id());
+        // Its sidecar from before identities reads as unnamed too.
+        let old_meta: SaveMeta = serde_json::from_str(r#"{"name":"Old","day":3,"population":10,"treasury":5.0,"saved_unix":1}"#).unwrap();
+        assert_eq!(old_meta.city_name(), nd_sim::identity::UNNAMED);
+        assert!(old_meta.game_id.is_empty() && old_meta.bookmark.is_none());
+        assert!(ensure_game_id(&mut w));
+        let id = w.identity.game_id.clone();
+        assert!(!ensure_game_id(&mut w), "an id is made once");
+        assert_eq!(rename_city(&mut w, "  Cobalt   Reach "), "Cobalt Reach");
+        let back = nd_sim::World::from_ron(&w.to_ron().unwrap()).unwrap();
+        assert_eq!(back.identity.game_id, id);
+        assert_eq!(back.identity.display_name(), "Cobalt Reach");
+    }
+
+    /// [identity] Grouping by city name: newest group first, unnamed saves
+    /// together.
+    #[test]
+    fn saves_group_by_city() {
+        let slot = |city: Option<&str>, n: &str| Slot {
+            path: PathBuf::from(format!("saves/{n}.ron")),
+            label: n.into(),
+            kind: SlotKind::Named,
+            modified: None,
+            meta: city.map(|c| SaveMeta { city: c.into(), ..Default::default() }),
+            picture: None,
+        };
+        let slots = vec![slot(Some("Neon Bay"), "a"), slot(None, "b"), slot(Some("Iron Vale"), "c"), slot(Some("Neon Bay"), "d"), slot(Some(""), "e")];
+        let g = group_by_city(&slots);
+        let names: Vec<&str> = g.iter().map(|(c, _)| c.as_str()).collect();
+        assert_eq!(names, vec!["Neon Bay", nd_sim::identity::UNNAMED, "Iron Vale"]);
+        assert_eq!(g[0].1, vec![0, 3]);
+        assert_eq!(g[1].1, vec![1, 4]);
+    }
+
+    /// [identity] Revert puts back the moment saved, with its game id, and
+    /// leaves the history as it was (the newer entries stay).
+    #[test]
+    fn revert_restores_an_earlier_autosave() {
+        let dir = std::env::temp_dir().join(format!("nd_revert_test_{}_{}", std::process::id(), new_game_id()));
+        let mut sim = Sim::new();
+        sim.set_city_name("Revert Town");
+        let game = sim.world.identity.game_id.clone();
+        sim.step_ticks(30);
+        let early_tick = sim.world.clock.tick;
+        let early = super::super::history::entry_path(&dir, &game, sim.world.clock.day() + 1, 1_000);
+        sim.save(&early).unwrap();
+        sim.step_ticks(90);
+        let late = super::super::history::entry_path(&dir, &game, sim.world.clock.day() + 1, 2_000);
+        sim.save(&late).unwrap();
+        sim.set_city_name("Renamed later");
+        assert_ne!(sim.world.clock.tick, early_tick);
+        let (mut tools, mut selection, mut plan, mut saves, mut flags) = (ToolState::default(), Selection::None, EffectivePlan::default(), Saves::default(), UiFlags::default());
+        let generation = sim.generation;
+        revert(&early, &mut sim, &mut tools, &mut selection, &mut plan, &mut saves, &mut flags);
+        assert!(flags.message.starts_with("reverted"), "{}", flags.message);
+        assert_eq!(sim.world.clock.tick, early_tick);
+        assert_eq!(sim.world.identity.game_id, game, "the same game");
+        assert_eq!(sim.world.identity.name, "Revert Town", "as it was then");
+        assert!(sim.paused);
+        assert!(sim.generation > generation, "renderers rebuild");
+        assert_eq!(super::super::history::list(&dir, &game).len(), 2, "the later entry stays");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
