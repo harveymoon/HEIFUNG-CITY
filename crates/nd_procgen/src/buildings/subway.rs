@@ -62,7 +62,7 @@ pub fn metro_entrance(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         for k in 0..3 {
             let p = back + Vec2::new((k as f32 - 1.0) * (w * 0.3), 0.0);
             if c.inside_local(p) && p.distance(at) > 4.0 {
-                tree(g, f, p, 5.0 + rng.random_range(0.0..2.0), 1.8, pal.bark, pal.foliage);
+                tree_in(g, f, pal, p, 5.0 + rng.random_range(0.0..2.0), 1.8, pal.foliage);
             }
         }
     }

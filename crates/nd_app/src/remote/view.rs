@@ -378,7 +378,7 @@ pub fn appearance(c: &Citizen) -> Value {
 
 pub fn building_row(w: &World, id: BuildingId, b: &Building) -> Value {
     json!({
-        "id": key_str(id), "name": b.name, "land_use": b.land_use.label(), "tier": b.tier.label(), "floors": b.floors,
+        "id": key_str(id), "name": b.name, "land_use": w.shown_use(id).label(), "use": b.land_use.label(), "tier": b.tier.label(), "floors": b.floors,
         "pos": w.lots.get(b.lot).map_or(Value::Null, |l| v2(l.center)), "lot": key_str(b.lot),
         "homes": b.homes, "residents": b.residents.len(), "jobs": b.jobs, "workers": b.workers.len(),
         "under_construction": b.construction.is_some() && !b.being_demolished(), "being_demolished": b.demolition.is_some(),
@@ -426,16 +426,30 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         })
     });
     let plant = b.plant.map(|k| {
+        // [plant-groups] This lot's own figures (sized to it), and its park.
+        let group = w.plant_group_of(id).map(|g| {
+            let members: Vec<&nd_sim::Building> = g.members.iter().filter_map(|m| w.buildings.get(*m)).collect();
+            json!({
+                "name": g.name, "anchor": key_str(g.anchor()), "members": g.members.iter().map(|m| key_str(*m)).collect::<Vec<_>>(),
+                "member_names": members.iter().map(|m| m.name.clone()).collect::<Vec<_>>(), "lots": g.lots.iter().map(|l| key_str(*l)).collect::<Vec<_>>(),
+                "area_m2": round(g.area), "capacity_mw": round(members.iter().map(|m| w.plant_capacity_mw(m)).sum::<f32>()),
+                "output_mw": round(members.iter().map(|m| w.plant_dispatched_mw(m)).sum::<f32>()), "upkeep_per_day": round(members.iter().map(|m| w.plant_upkeep(m)).sum::<f32>()),
+                "bonus": round(nd_sim::world::plant_groups::group_bonus(g.members.len())),
+            })
+        });
         let s = w.plant_resource(b);
-        json!({ "kind": plant_name(k), "label": k.label(), "capacity_mw": round(k.capacity_mw()), "availability": round(w.plant_availability(b)), "upkeep_per_day": round(k.upkeep_per_day()),
-            "site": { "wind_factor": round(s.wind), "sun_factor": round(s.sun) } })
+        json!({
+            "kind": plant_name(k), "label": k.label(), "capacity_mw": round(w.plant_capacity_mw(b)), "availability": round(w.plant_availability(b)),
+            "upkeep_per_day": round(w.plant_upkeep(b)), "output_mw": round(w.plant_dispatched_mw(b)), "area_m2": round(lot.map_or(0.0, |l| l.area())), "size_scale": round(w.plant_scale(b)),
+            "group": group, "site": { "wind_factor": round(s.wind), "sun_factor": round(s.sun) },
+        })
     });
     let park = lot.and_then(|l| l.park.as_ref()).map(|p| {
         json!({ "benches": p.benches.len(), "paths": p.paths.len(), "entrances": p.entrances.len(), "features": p.features.iter().map(|f| f.kind.label()).collect::<Vec<_>>(), "cluster_lots": p.cluster_lots, "cluster_area": round(p.cluster_area) })
     });
     let people = |ids: &[CitizenId]| ids.iter().filter_map(|&c| w.citizens.get(c).map(|x| json!({ "id": key_str(c), "name": x.name }))).collect::<Vec<_>>();
-    json!({
-        "id": key_str(id), "name": b.name, "land_use": b.land_use.label(), "tier": b.tier.label(), "style": style, "floors": b.floors,
+    let mut v = json!({
+        "id": key_str(id), "name": b.name, "land_use": w.shown_use(id).label(), "tier": b.tier.label(), "style": style, "floors": b.floors,
         "lot": key_str(b.lot), "pos": lot.map_or(Value::Null, |l| v2(l.center)), "built_day": b.built_tick / 1440 + 1,
         "under_construction": construction,
         "demolition": demolition,
@@ -458,7 +472,10 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         "taxis_and_freight": super::taxis::building_extra(w, id),
         // [economy] why the business is here and how it is doing
         "story": super::economy::story(w, id),
-    })
+    });
+    // [free-placement] The building's own use (power, wages, venues); `land_use` is Civic for a city building.
+    v["use"] = json!(b.land_use.label());
+    v
 }
 
 // ── lots ────────────────────────────────────────────────────────────────────
@@ -468,6 +485,7 @@ pub fn lot_row(w: &World, id: LotId, l: &Lot) -> Value {
         "id": key_str(id), "land_use": l.land_use.label(), "pos": v2(l.center), "area": round(l.area()),
         "building": opt_key(l.building), "vacant": l.building.is_none() && l.usable(), "landlocked": l.landlocked,
         "park": l.park.is_some(), "land_value": round(w.land_value.at(l.center)), "car_access": l.car_access(),
+        "city_ground": w.is_city_ground(l),
     })
 }
 
@@ -475,7 +493,7 @@ pub fn lot_detail(w: &World, id: LotId, l: &Lot) -> Value {
     let value = w.land_value.at(l.center);
     let zone = w.zones.get(l.zone).map(|z| json!({ "id": key_str(l.zone), "land_use": z.land_use.label(), "area": round(polygon_area(&z.polygon).abs()) }));
     json!({
-        "id": key_str(id), "land_use": l.land_use.label(), "pos": v2(l.center), "polygon": points(&l.polygon), "area": round(l.area()),
+        "id": key_str(id), "land_use": l.land_use.label(), "city_ground": w.is_city_ground(l), "pos": v2(l.center), "polygon": points(&l.polygon), "area": round(l.area()),
         "width": round(l.width()), "depth": round(l.depth()), "entrance": v2(l.entrance()), "front_dir": v2(l.front_dir),
         "front_segment": l.front_segment.0, "car_segment": l.car_segment.map(|s| s.0),
         "building": opt_key(l.building), "building_name": building_name(w, l.building),

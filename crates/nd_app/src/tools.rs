@@ -188,6 +188,15 @@ pub struct ToolState {
     pub drag: Option<(GestureId, usize)>,
     pub hover_point: Option<(GestureId, usize)>,
     pub hover_gesture: Option<GestureId>,
+    /// [free-placement] Bulldoze tool: the city building under the pointer
+    /// (a click bulldozes it).
+    pub hover_city_building: Option<nd_sim::BuildingId>,
+    /// [free-placement] Buildings tool: what a click here would do (true:
+    /// it can go down) and the site's outline.
+    pub build_here: Option<(bool, String, Vec<SVec2>)>,
+    /// [free-placement] The last site worked out, kept while the pointer
+    /// stays on its parcel: (item, parcel, parcels version, lots, site).
+    pub build_site: Option<(nd_sim::Placeable, usize, u64, usize, Result<nd_sim::PlacementSite, String>)>,
     /// Draw smooth roads through the clicked points.
     pub curved: bool,
     /// Road picked with the Edit tool for upgrading.
@@ -456,6 +465,9 @@ impl Default for ToolState {
             right_press: None,
             hover_point: None,
             hover_gesture: None,
+            hover_city_building: None,
+            build_here: None,
+            build_site: None,
             curved: false,
             selected_gesture: None,
             kind: RoadKind::Street,
@@ -1069,11 +1081,28 @@ pub(crate) fn tool_input(
         Tool::District => {}
         Tool::Bulldoze => {
             tools.hover_gesture = ground.and_then(|p| nearest_gesture(plan, p)).map(|(id, _)| id);
+            // [free-placement] A city building under the pointer is what a
+            // click takes, before the zone or road around it.
+            tools.hover_city_building = ground.and_then(|p| {
+                let w = &sim.world;
+                let l = w.lots.values().find(|l| l.contains(p))?;
+                l.building.filter(|&b| w.is_city_building(b) && w.buildings.get(b).is_some_and(|b| b.rail.is_none() && b.port.is_none()))
+            });
+            if tools.hover_city_building.is_some() {
+                tools.hover_gesture = None;
+            }
             // [tolls] A click on a toll booth takes the booth away, not the road.
             if click {
                 if let Some(booth) = ground.and_then(|p| sim.world.tolls.nearest(p, 8.0)).map(|b| (b.id, b.name.clone())) {
                     let _ = sim.world.remove_toll(booth.0);
                     tools.status = format!("{} removed.", booth.1);
+                    return;
+                }
+                if let Some(bid) = tools.hover_city_building.take() {
+                    tools.status = match sim.world.bulldoze_building(bid) {
+                        Ok(msg) => format!("{msg}; its ground goes back to the zoning plan."),
+                        Err(e) => format!("Cannot bulldoze: {e}."),
+                    };
                     return;
                 }
             }
@@ -1209,6 +1238,33 @@ pub(crate) fn tool_input(
             }
         }
         Tool::Buildings => {
+            // [free-placement] What a click here would do, for the panel and
+            // the outline: any lot, or unzoned ground with road access.
+            let what = tools.build_item();
+            tools.build_here = match (ground, what) {
+                (_, nd_sim::Placeable::Toll(_) | nd_sim::Placeable::Rail(_) | nd_sim::Placeable::Dock(_)) | (None, _) => None,
+                (Some(p), _) => {
+                    let w = &sim.world;
+                    // Joining unzoned parcels into a site is the dear part:
+                    // kept while the pointer stays on the same parcel.
+                    let key = w.parcels.at(p).map(|i| (what, i, w.parcels.version, w.lots.len()));
+                    let cached = match (&tools.build_site, key) {
+                        (Some((a, b, c, d, site)), Some(k)) if (*a, *b, *c, *d) == k => Some(site.clone()),
+                        _ => None,
+                    };
+                    let site = cached.unwrap_or_else(|| w.placement_site(what, p));
+                    if let Some((a, b, c, d)) = key {
+                        tools.build_site = Some((a, b, c, d, site.clone()));
+                    }
+                    Some(match site {
+                        Ok(site) => match w.site_problem(what, &site) {
+                            None => (true, site.note(), site.outline),
+                            Some(why) => (false, why, site.outline),
+                        },
+                        Err(why) => (false, why, Vec::new()),
+                    })
+                }
+            };
             if click {
                 if let Some(p) = ground {
                     let what = tools.build_item();
@@ -1220,13 +1276,23 @@ pub(crate) fn tool_input(
                         };
                         return;
                     }
+                    let before = sim.world.economy.treasury;
                     tools.status = match sim.world.place_building(what, p) {
                         Ok(id) => {
                             *selection = Selection::Building(id);
-                            // [clarity] Solar and wind are sized to their lot.
+                            // [clarity] Solar and wind are sized to their lot;
+                            // [plant-groups] the price is what was paid.
+                            let paid = before - sim.world.economy.treasury;
                             match sim.world.buildings.get(id).filter(|b| b.plant.is_some()) {
-                                Some(b) => format!("{} built: {:.0} MW for {:.0}; {:.0}/day to run.", what.label(), sim.world.plant_capacity_mw(b), what.cost() * sim.world.plant_scale(b), sim.world.plant_upkeep(b)),
-                                None => format!("{} built for {:.0}; {:.0}/day to run.", what.label(), what.cost(), what.upkeep()),
+                                Some(b) => {
+                                    let mut s = format!("{} built: {:.1} MW for {:.0}; {:.0}/day to run.", what.label(), sim.world.plant_capacity_mw(b), paid, sim.world.plant_upkeep(b));
+                                    if let Some(g) = sim.world.plant_group_of(id) {
+                                        let mw: f32 = g.members.iter().filter_map(|m| sim.world.buildings.get(*m)).map(|m| sim.world.plant_capacity_mw(m)).sum();
+                                        s += &format!(" Part of {}: {} lots, {:.0} MW.", g.name, g.members.len(), mw);
+                                    }
+                                    s
+                                }
+                                None => format!("{} built for {:.0}; {:.0}/day to run.", what.label(), paid, what.upkeep()),
                             }
                         }
                         Err(e) => format!("Cannot build: {e}."),
@@ -1588,6 +1654,14 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             }
         }
         Tool::Bulldoze => {
+            // [free-placement] The city building a click would bulldoze.
+            if let Some(l) = tools.hover_city_building.and_then(|b| sim.world.buildings.get(b)).and_then(|b| sim.world.lots.get(b.lot)) {
+                let mut pts: Vec<Vec3> = l.polygon.iter().map(|&p| lift(p)).collect();
+                if pts.len() >= 3 {
+                    pts.push(pts[0]);
+                    gizmos.linestrip(pts, red);
+                }
+            }
             if let Some(id) = tools.hover_gesture {
                 if let Some(g) = plan.gestures.get(&id) {
                     let mut pts: Vec<Vec3> = g.points().iter().map(|&p| lift(p)).collect();
@@ -1695,6 +1769,12 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
         Selection::Train(_) | Selection::Metro(_) => {}
         Selection::Building(b) => {
             lot_outline(gizmos, w, b, 1.6, gold);
+            // [plant-groups] A Sunfield or Wind Park is selected whole.
+            if let Some(g) = w.plant_group_of(b) {
+                for m in g.members.into_iter().filter(|&m| m != b) {
+                    lot_outline(gizmos, w, m, 1.6, gold);
+                }
+            }
             // [land] Everything its owner owns (a rich person's other homes
             // and businesses), outlined and tied to it by a line.
             let owned = w.owned_with(b);
@@ -2105,18 +2185,21 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
         gizmos.linestrip(pts, if blocked { red } else { green });
         return;
     }
-    let Some((id, lot)) = w.lots.iter().find(|(_, l)| point_in_polygon(c, &l.polygon)) else { return };
-    let ok = w.placement_problem(what, id).is_none();
-    let mut pts: Vec<Vec3> = lot.polygon.iter().map(|&p| lift(p)).collect();
-    if pts.len() >= 3 {
-        pts.push(pts[0]);
-        gizmos.linestrip(pts, if ok { green } else { red });
+    // [free-placement] The lot under the pointer, or the unzoned parcels a
+    // lot would be made of (worked out once a frame in `tool_input`).
+    let Some((ok, _, outline)) = &tools.build_here else { return };
+    if outline.len() < 3 {
+        return;
     }
+    let mut pts: Vec<Vec3> = outline.iter().map(|&p| lift(p)).collect();
+    pts.push(pts[0]);
+    gizmos.linestrip(pts, if *ok { green } else { red });
     let r = what.radius();
     if r > 0.0 {
+        let centre = nd_sim::zoning::inner_center(outline);
         let col = Color::linear_rgb(0.4, 1.4, 2.4);
-        gizmos.circle(Isometry3d::new(lift(lot.center), flat), r, col);
-        gizmos.circle(Isometry3d::new(lift(lot.center), flat), (r - nd_sim::services::COVERAGE_FADE).max(1.0), col.with_alpha(0.5));
+        gizmos.circle(Isometry3d::new(lift(centre), flat), r, col);
+        gizmos.circle(Isometry3d::new(lift(centre), flat), (r - nd_sim::services::COVERAGE_FADE).max(1.0), col.with_alpha(0.5));
     }
 }
 

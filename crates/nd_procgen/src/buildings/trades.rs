@@ -1167,7 +1167,7 @@ pub fn art_studio(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         for k in 0..2 {
             let p = Vec2::new(yard_r.u0 + 1.5 + k as f32 * (yard_r.w() - 3.0), yard_r.c().y);
             if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.5 {
-                tree(g, f, p, 4.0, 1.4, pal.bark, pal.foliage);
+                tree_in(g, f, pal, p, 4.0, 1.4, pal.foliage);
             }
         }
     } else if yard_r.d() > 3.0 {

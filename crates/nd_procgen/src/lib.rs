@@ -2,6 +2,10 @@
 //! be unit-tested and rendered by any engine.
 
 pub mod buildings;
+/// [climate] Each climate's ground, plants, water, snow and weather looks.
+pub mod climate;
+/// [plants] The hydro plant's arch dam.
+pub mod dam;
 pub mod footbridge;
 /// [mapgen] Whole example cities traced through a tensor field.
 pub mod citygen;

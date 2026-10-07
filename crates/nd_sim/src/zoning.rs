@@ -1153,6 +1153,36 @@ pub fn make_lot(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, roa
     })
 }
 
+/// [free-placement] The lot under a building the player placed: ground the
+/// city took out of the zoning. Its use is [`LandUse::Civic`]; its frontage
+/// is a street where it has one, else the footpath it lines (a metro
+/// entrance or a battery yard may stand on a path), so ground any zone could
+/// use is ground a city building can use.
+pub fn make_placed_lot(zone_id: ZoneId, poly: Vec<Vec2>, center: Vec2, roads: &RoadNetwork) -> Option<Lot> {
+    let street = make_lot(zone_id, LandUse::Civic, poly.clone(), center, roads);
+    let mut lot = match street {
+        Some(l) if !l.landlocked => l,
+        other => match make_lot(zone_id, LandUse::Residential, poly, center, roads) {
+            Some(l) if !l.landlocked => l,
+            fallback => other.or(fallback)?,
+        },
+    };
+    lot.land_use = LandUse::Civic;
+    Some(lot)
+}
+
+/// [free-placement] One outline for a set of touching parcels: their union
+/// (the largest piece, should they not all touch), straight runs merged so
+/// a frontage is one edge.
+pub fn joined_outline(polys: &[Vec<Vec2>]) -> Option<Vec<Vec2>> {
+    if polys.len() == 1 {
+        return Some(polys[0].clone());
+    }
+    let best = union_outlines(polys).into_iter().max_by(|a, b| polygon_area(a).abs().total_cmp(&polygon_area(b).abs()))?;
+    let simple = simplify_collinear(&best);
+    Some(if simple.len() >= 3 { simple } else { best })
+}
+
 /// A point inside the polygon: the area centroid, or for a concave shape
 /// whose centroid falls outside, an interior point.
 pub fn inner_center(poly: &[Vec2]) -> Vec2 {

@@ -142,7 +142,7 @@ pub fn library(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for k in 0..2 {
         let p = front.at((k as f32 - 0.5) * front.len * 0.7, -2.5);
         if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.9 {
-            tree(g, f, p, 4.0, 3.5, pal.bark, pal.foliage);
+            tree_in(g, f, pal, p, 4.0, 3.5, pal.foliage);
             bench_world(g, f.to_world(p.x + 2.0, p.y), f.yaw(), pal.wood, CHARCOAL);
         }
     }
@@ -265,7 +265,7 @@ pub fn monument(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         while u < hi.x {
             let p = Vec2::new(u, v);
             if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.6 && p.distance(center) > r * 3.6 + 2.0 && (pp.distance(p) > pw * 0.6 + 2.5) {
-                tree(g, f, p, 3.5, 3.0, pal.bark, pal.foliage);
+                tree_in(g, f, pal, p, 3.5, 3.0, pal.foliage);
                 if rng.random_bool(0.4) {
                     bench_world(g, f.to_world(p.x + 1.5, p.y), f.yaw(), pal.wood, CHARCOAL);
                 }

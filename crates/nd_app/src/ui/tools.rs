@@ -377,6 +377,11 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         }
     });
     placeable_info(ui, sim, tools.build_item());
+    // [free-placement] What a click under the pointer would do.
+    if let Some((ok, note, _)) = &tools.build_here {
+        let col = if *ok { egui::Color32::from_rgb(120, 230, 140) } else { egui::Color32::from_rgb(240, 110, 120) };
+        ui.label(egui::RichText::new(format!("Here: {note}")).small().color(col));
+    }
     // [grid-weather] Wind and solar: what the ground under the pointer gives.
     if let (Placeable::Plant(k @ (nd_sim::PowerPlantKind::Wind | nd_sim::PowerPlantKind::Solar)), Some(p)) = (tools.build_item(), tools.hover_ground) {
         hint(ui, &site_note(&sim.world, k, p));
@@ -418,7 +423,7 @@ pub fn placeable_info(ui: &mut egui::Ui, sim: &mut Sim, what: Placeable) {
     match what {
         Placeable::Plant(k) => {
             if let Some(a) = k.reference_area() {
-                line += &format!(" (for a {a:.0} m² lot: output, cost and upkeep scale with the lot's size)");
+                line += &format!(" (for a {a:.0} m² lot: output, cost and upkeep scale with the lot's size, up to {:.0}× on one lot). Touching lots of the same kind run as one {}; a lot too small on its own may join one next door.", nd_sim::power::MAX_LOT_SCALE, if k == nd_sim::PowerPlantKind::Solar { "Sunfield" } else { "Wind Park" });
             }
             line += help::power_note(k);
             line += &format!(" Goes {}.", k.site_hint());

@@ -51,7 +51,7 @@ pub fn rows(w: &World, what: &str) -> Result<Vec<Value>, String> {
             .iter()
             .map(|(id, b)| {
                 json!({
-                    "id": key_str(id), "name": b.name, "land_use": lu_key(b.land_use), "tier": b.tier.label(), "floors": b.floors,
+                    "id": key_str(id), "name": b.name, "land_use": lu_key(w.shown_use(id)), "tier": b.tier.label(), "floors": b.floors,
                     "homes": b.homes, "residents": b.residents.len(), "jobs": b.jobs, "workers": b.workers.len(), "staffing": r3(b.staffing()),
                     "rent": round(b.rent), "land_value": round(b.land_value), "condition": round(b.condition), "powered": round(b.powered),
                     "unpowered": b.powered < UNPOWERED_BELOW && nd_sim::power::demand_mw(b) > 0.0, "under_construction": b.construction.is_some(),
@@ -116,6 +116,7 @@ pub fn rows(w: &World, what: &str) -> Result<Vec<Value>, String> {
                 json!({
                     "id": key_str(id), "name": b.name, "kind": plant_name(k), "capacity_mw": round(w.plant_capacity_mw(b)), "available_mw": round(avail),
                     "upkeep_per_day": round(w.plant_upkeep(b)), "workers": b.workers.len(), "jobs": b.jobs, "derelict": b.is_derelict(), "pos": pos(b),
+                    "area_m2": round(w.lots.get(b.lot).map_or(0.0, |l| l.area())), "group": w.plant_group_of(id).map(|g| g.name),
                 })
             })
             .collect(),

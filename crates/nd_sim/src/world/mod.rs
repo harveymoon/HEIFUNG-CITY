@@ -54,6 +54,11 @@ mod market;
 mod parking;
 mod pedestrians;
 mod plan;
+/// [free-placement] City buildings on any usable parcel; their ground out of the zoning.
+mod placement;
+pub use placement::PlacementSite;
+#[cfg(test)]
+mod placement_tests;
 pub mod poses;
 /// [clarity] Origins and destinations, crews, crash sites.
 pub mod journeys;
@@ -69,6 +74,10 @@ mod industry_bridge;
 pub use plan::{ProjectCheck, ProjectInfo, ProjectPreview};
 mod power;
 pub use power::{GridAsset, GridHour, PlantRow};
+pub mod plant_groups;
+pub use plant_groups::{PlantGroup, PlantJoin, PlantPreview};
+#[cfg(test)]
+mod plant_groups_tests;
 mod services;
 mod society;
 mod survey;
@@ -712,6 +721,9 @@ impl World {
         if self.lots.values().any(|l| l.land_use == LandUse::Park && l.polygon.len() >= 3 && l.park.is_none()) {
             crate::park::plan_parks(&mut self.lots, &self.land_value);
         }
+        // [free-placement] A save from before city ground: the lots under
+        // the city's buildings leave their zones (nothing moves).
+        self.settle_city_ground(&[], false);
         self.walk = WalkGraph::build(&self.roads, &self.lots, &self.land_value, self.walk.version + 1);
         // [tools] Footbridges and push buttons on the crossings.
         self.walk.apply_upgrades(&self.crosswalks.rules, &self.roads);

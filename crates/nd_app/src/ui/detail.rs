@@ -189,7 +189,9 @@ pub fn plant_table(ui: &mut egui::Ui, w: &nd_sim::World, rows: &[nd_sim::PlantRo
             };
             let status = if r.pending { " (not yet working)" } else if r.derelict { " (derelict)" } else { "" };
             let name = ui.label(egui::RichText::new(&r.name).small().color(color));
-            name.on_hover_text(format!("{kind}{status}"));
+            // [plant-groups] A Sunfield or Wind Park: its lots.
+            let lots = if r.members.len() > 1 { format!(", {} lots, {:.0} m²", r.members.len(), r.area_m2) } else if r.area_m2 > 0.0 && matches!(r.asset, nd_sim::GridAsset::Plant(k) if k.reference_area().is_some()) { format!(", {:.0} m²", r.area_m2) } else { String::new() };
+            name.on_hover_text(format!("{kind}{lots}{status}"));
             let cost = r.cost_per_mwh.map_or("-".to_string(), |c| format!("{c:.1}"));
             let noise = r.noise_db.map_or("quiet".to_string(), |d| format!("{d:.0} dB"));
             match r.asset {
@@ -352,8 +354,11 @@ pub fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
                 }
                 match r.asset {
                     nd_sim::GridAsset::Plant(k) => {
-                        ui.label(egui::RichText::new(format!("{} · {}", r.name, k.label())).small().color(plant_color(k)));
-                        let s = [Series::new("output MW", plant_color(k), plant_hours(&log.hours, n)), Series::new("nameplate", Color32::from_gray(90), vec![r.capacity_mw; n])];
+                        // [plant-groups] A park's members summed hour by hour.
+                        let what = if r.members.len() > 1 { format!("{} lots of {}", r.members.len(), k.label()) } else { k.label().to_string() };
+                        ui.label(egui::RichText::new(format!("{} · {what}", r.name)).small().color(plant_color(k)));
+                        let summed = w.plant_row_hours(r).unwrap_or_default();
+                        let s = [Series::new("output MW", plant_color(k), plant_hours(&summed, n)), Series::new("nameplate", Color32::from_gray(90), vec![r.capacity_mw; n])];
                         pane::line_chart(ui, &hour_labels, &s, 56.0, &|x| format!("{x:.1} MW"));
                     }
                     nd_sim::GridAsset::Battery(k) => {
@@ -480,7 +485,8 @@ pub fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
             }
             ui.end_row();
             for lu in LandUse::ALL {
-                let lots: Vec<&nd_sim::Lot> = w.lots.values().filter(|l| l.land_use == lu).collect();
+                // [free-placement] City ground is out of the zones: its own row below.
+                let lots: Vec<&nd_sim::Lot> = w.lots.values().filter(|l| l.land_use == lu && !w.is_city_ground(l)).collect();
                 if lots.is_empty() {
                     continue;
                 }
@@ -489,6 +495,14 @@ pub fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
                 ui.label(egui::RichText::new(format!("{}", lots.len())).small());
                 ui.label(egui::RichText::new(format!("{built}")).small());
                 ui.label(egui::RichText::new(format!("{}", lots.iter().filter(|l| l.building.is_none() && l.usable()).count())).small());
+                ui.end_row();
+            }
+            let city = w.lots.values().filter(|l| w.is_city_ground(l)).count();
+            if city > 0 {
+                ui.label(egui::RichText::new("City buildings").small().color(zone_color32(p.assets.palette.zone_color(LandUse::Civic))));
+                ui.label(egui::RichText::new(format!("{city}")).small());
+                ui.label(egui::RichText::new(format!("{city}")).small());
+                ui.label(egui::RichText::new("0").small());
                 ui.end_row();
             }
         });

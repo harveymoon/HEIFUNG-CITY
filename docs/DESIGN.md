@@ -276,6 +276,27 @@ Citizens are rendered from their simulated positions every frame.
   neighbour) and industry and civic grounds fold in the backland behind them
   (`zoning::join_parcels`). Industrial strokes can carry an industry sub-zone that is
   set on implement.
+- **Free placement** (`world/placement.rs`, [free-placement]): everything the Build
+  window puts on a lot (plants, batteries, services and attractions, depots, metro
+  entrances, the cargo hub, city parking) goes on any lot, whatever its zone, or on
+  unzoned ground with road access: no zoning first. On unzoned ground a lot is made for
+  it on placement, from the parcel under the pointer, or joined with its unzoned
+  neighbours as civic ground would be when one parcel is too small
+  (`World::placement_site`). Only physical rules refuse: road access, a street out front
+  where vehicles come and go, the lot's size, the site (river, coast, hot spot), ground
+  under a station; parks are kept (but a metro entrance). The ground under a city
+  building (`World::is_city_building`) is the city's own: its lot's use is Civic with a
+  zone of its own outline (`take_for_city`), so the inspector and the API say "Civic"
+  (`World::shown_use`), zoned growth never claims it, zone tallies leave it out and the zone tools refuse to
+  paint it while the building stands. The building itself keeps its own use
+  (`World::city_use`, its `land_use`): plants, batteries, depots, the cargo hub and trash
+  depots work as industry, a stadium as entertainment (a night out), a city car park as
+  commercial, services and metro entrances as civic, whatever ground they stand on, so
+  their power draw, wages and venue role do not depend on where the player put them. Rebuilds keep it so (`build_lots_from_parcels`
+  pins one Civic lot per city building); an older save's city buildings are switched
+  over on load and on the first rebuild without moving anything. The Bulldoze tool (or
+  `World::bulldoze_building`) takes a city building down at once, and its lot goes back to
+  what the master plan has there, or is unzoned ground again (`release_city_lot`).
 - **Buildings**: a vacant lot develops when demand for its land use is high. Floors
   and capacity (homes or jobs) depend on land use and a seed. Geometry is generated
   from the seed, so a save stays small.
@@ -880,12 +901,13 @@ Citizens are rendered from their simulated positions every frame.
   railway station's canopied platform (`buildings::subway::central_station`, `rail::platform`).
 - **Power** (`nd_sim::power`): the city runs on electricity and the player supplies it.
   Every building draws megawatts by land use, floors and tier (industry most, homes
-  least, high tiers more); plants draw none. Four kinds of plant go on vacant lots with
-  the Power tool, paid from the treasury: coal (120 MW, cheap, steady, industrial land
-  only, a brown haze, ash on the ground and a heavy land value penalty for 360 m), solar (25 MW nameplate,
-  any land, output follows the sun and is dimmed by cloud), wind (40 MW nameplate, any
-  land, output follows the wind) and nuclear (400 MW, steady, very expensive to build and
-  run, industrial land only, a smaller penalty for the nervous neighbours). Weather is a
+  least, high tiers more); plants draw none. Four kinds of plant go on any lot or unzoned
+  ground by a road with the Power tool (no zoning needed: see Free placement below), paid
+  from the treasury: coal (120 MW, cheap, steady,
+  a brown haze, ash on the ground and a heavy land value penalty for 360 m), solar (25 MW nameplate,
+  output follows the sun and is dimmed by cloud), wind (40 MW nameplate,
+  output follows the wind) and nuclear (400 MW, steady, very expensive to build and
+  run, a smaller penalty for the nervous neighbours). Weather is a
   slow random walk of cloud and wind, stepped hourly. Each hour the supply is summed, the
   regional grid sells up to 60 MW at a price to cover any shortfall, and what is left is
   shared out highest tier first, so brownouts land on the cheap districts. A building
@@ -1587,6 +1609,20 @@ trait MindProvider {
   degrees, waking from flat as the sun clears the horizon and lying flat (stowed) at night. The
   rotation is rewritten only when the facing moves a fifth of a degree. The zoning wash leaves plant
   and battery yards out (it flooded a solar farm on a residential lot green).
+- [plant-groups] Solar and wind are sized to their lot (cost, upkeep and MW per m², capped at
+  6× the reference lot on one lot); the Build window quotes them per m² and a card by the pointer
+  gives the MW, cost and upkeep for the lot under it, and what it would join. Touching solar lots
+  run as one "<Name> Sunfield", touching wind lots as one "<Name> Wind Park"
+  (`world/plant_groups.rs`): derived from lot adjacency (an edge, or a lot line up to 2.5 m, never
+  across a road or path), named by the oldest member, one row in the plant table, one inspector
+  card, selected whole, +4% output per extra lot (up to +12%). A lot too small on its own may join
+  a park of its kind next door when the joined lots reach the minimum.
+- Hydro dam (`dam.rs`, drawn by `terrain::waterworks`): a concrete arch bowed upstream across the
+  river beside the plant, stepped in three tiers, abutment blocks in the banks, a crest road with
+  parapets and lamp posts, a spillway chute down the middle with radial gates, training walls and
+  streaked white water into a stilling basin of foam that fades downstream, and two intake towers
+  on the plant's side with a penstock to the turbine hall. Cyan light lines on the parapets, the
+  ledges and the chute walls, magenta on the gates and the towers.
 - Battery packs (`buildings/power.rs::battery`): container-sized white modules on plinths in rows
   (2 / 8 / up to 36 by size) with roof fans, door seams, an inverter skid at each row end, a control
   cabin and a fence; five status lights on each long face show fifths of charge, cyan charging,

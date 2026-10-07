@@ -38,6 +38,8 @@ pub enum PlantSite {
 /// [clarity] The lot area solar and wind nameplates are quoted for.
 pub const SOLAR_REFERENCE_AREA: f32 = 600.0;
 pub const WIND_REFERENCE_AREA: f32 = 800.0;
+/// [plant-groups] Most a single solar or wind lot makes of its nameplate.
+pub const MAX_LOT_SCALE: f32 = 6.0;
 
 impl PowerPlantKind {
     pub const ALL: [PowerPlantKind; 7] = [PowerPlantKind::Coal, PowerPlantKind::Solar, PowerPlantKind::Wind, PowerPlantKind::Nuclear, PowerPlantKind::Hydro, PowerPlantKind::Tidal, PowerPlantKind::Geothermal];
@@ -59,10 +61,8 @@ impl PowerPlantKind {
             PlantSite::River => "on a lot beside a river or stream with a current",
             PlantSite::Coast => "on a lot on the sea shore",
             PlantSite::HotSpot => "over a geothermal hot spot (steaming vents)",
-            PlantSite::Anywhere => match self {
-                PowerPlantKind::Coal | PowerPlantKind::Nuclear => "on industrial land",
-                _ => "on any land but parks and civic",
-            },
+            // [free-placement] No zoning needed.
+            PlantSite::Anywhere => "on any lot or unzoned ground by a road (not a park)",
         }
     }
 
@@ -210,7 +210,9 @@ impl PowerPlantKind {
     /// area over the reference area for solar and wind, 1 for the rest.
     pub fn size_scale(self, area: f32) -> f32 {
         match self.reference_area() {
-            Some(r) => (area.max(0.0) / r).max(0.05),
+            // [plant-groups] Capped: past six reference lots a single lot
+            // gains nothing more (join lots into a park to go bigger).
+            Some(r) => (area.max(0.0) / r).clamp(0.05, MAX_LOT_SCALE),
             None => 1.0,
         }
     }

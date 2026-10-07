@@ -641,6 +641,8 @@ pub fn power_json(w: &World, with_hours: bool) -> Value {
     for r in w.plant_rows() {
         let Some(b) = w.buildings.get(r.id) else { continue };
         let log = w.economy.history.plant(r.id);
+        // [plant-groups] A park's hours are its members' summed.
+        let summed = w.plant_row_hours(&r);
         let series = |v: Option<&std::collections::VecDeque<f32>>| v.map_or(Value::Null, |l| json!(l.iter().map(|x| round(*x)).collect::<Vec<_>>()));
         match r.asset {
             nd_sim::GridAsset::Plant(k) => {
@@ -651,14 +653,19 @@ pub fn power_json(w: &World, with_hours: bool) -> Value {
                     "air_index": round(r.air), "noise_db": r.noise_db.map(round), "noise_db_running": round(k.noise_db()),
                     "pollution_radius_m": r.nuisance.0, "pollution_land_value_effect": round(r.nuisance.1),
                     "workers": b.workers.len(), "jobs": b.jobs, "derelict": r.derelict, "pending": r.pending, "pos": building_pos(w, b).map_or(Value::Null, v2),
-                    "availability": round(w.plant_availability(b)),
+                    "availability": round(w.plant_availability(b)), "area_m2": round(r.area_m2), "size_scale": round(w.plant_scale(b)),
+                    "group": r.members.len() > 1, "members": r.members.iter().map(|m| key_str(*m)).collect::<Vec<_>>(), "lots": r.lots.iter().map(|l| key_str(*l)).collect::<Vec<_>>(),
+                    "member_names": r.members.iter().filter_map(|m| w.buildings.get(*m).map(|x| x.name.clone())).collect::<Vec<_>>(),
                 });
+                if r.members.len() > 1 {
+                    v["available_mw"] = json!(round(r.members.iter().filter_map(|m| w.buildings.get(*m)).map(|m| w.plant_output_mw(m)).sum::<f32>()));
+                }
                 if matches!(k, nd_sim::PowerPlantKind::Wind | nd_sim::PowerPlantKind::Solar) {
                     let s = w.plant_resource(b);
                     v["site"] = json!({ "wind_factor": round(s.wind), "sun_factor": round(s.sun) });
                 }
                 if with_hours {
-                    v["output_mw_hours"] = series(log.map(|l| &l.hours));
+                    v["output_mw_hours"] = series(summed.as_ref());
                     v["energy_mwh_days"] = series(log.map(|l| &l.days));
                 }
                 plants.push(v);
