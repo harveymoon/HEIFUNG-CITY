@@ -109,7 +109,7 @@ Every example is the POST body; the reply always carries `"ok"`.
 | Command | Fields | Reply |
 | --- | --- | --- |
 | `help` | | every command and its fields |
-| `status` | | clock, paused, speed, effective_speed, population, buildings, under_construction, lots, homes/jobs, treasury, ledger_yesterday, power, weather, land, market, demand, traffic, transit, rail, render (fps, ticks_per_frame, triangles), camera, tool, selection, project, overlays, lighting, message, tool_status, event_seq, favourites, `windows_open`, `window_expanded`, `build_window` {open, section}, `title_screen`, `alerts_top` (the first 5 of `report`'s alerts) |
+| `status` | | clock, paused, speed, effective_speed, population, buildings, under_construction, lots, homes/jobs, treasury, ledger_yesterday, power, weather, land, market, demand, traffic, transit, rail, render (fps, ticks_per_frame, triangles), camera, tool, selection, project, overlays, lighting, message, tool_status, event_seq, favourites, `windows_open`, `window_expanded`, `build_window` {open, section}, `title_screen`, `climate` {climate, label, precipitation: null or {kind rain/snow, intensity 0..1}}, `alerts_top` (the first 5 of `report`'s alerts) |
 | `pause` | `paused` bool (omit to toggle) | `paused` |
 | `speed` | `index` 0..5 (1×, 4×, 16×, 64×, 256×, 1024×), or `value`: a multiple of real time for what moves, snapped to the nearest step on a log scale. At 1× people walk at their true pace; the clock runs 15× faster than that | `speed_index`, `speed`, `ticks_per_second`, `label` |
 | `step` | `ticks` (default 1, max 100000) | `clock`, `took_ms` |
@@ -187,21 +187,34 @@ main thread, then serialises and writes it on a worker thread.
 
 | Command | Fields | Reply |
 | --- | --- | --- |
-| `new_game` | `preset` river_valley (default) / islands / coast / delta / plains / flat, `seed`, `water` 0..1, `relief` 0..1 (height variation), `branching` 0..1, `islands` 0..8 (`highway` is ignored: every new game has the highway and the trunk line); omitted levers take the preset's; optional `name` (the city's name) | throws the city away and starts on the landscape with a new game id; tools and selection reset. Reply as `landscape` plus `identity` |
-| `generate_city` | `preset` grid_plaza (default) / coastal_river / old_town / twin_centres, `seed` (default 1; seeds the landscape and the city), optional `landscape` (a `new_game` preset to lay the city on instead of the preset's own) and `water`, `relief`, `branching` levers, optional `name` | throws the city away and starts a new game with a whole generated city on it (below); tools and selection reset. Reply as `landscape` plus `city`: `preset`, `seed`, `arterial`/`collector`/`local` (`roads`, `length_m`), `zones`, `lots`, `interchanges`, `way_in`, `centres`, `took_ms` |
-| `landscape` | | preset and levers, `rivers` (kind river/stream, width, current_mps, hydro_ok, source, mouth, length), `lakes`, `sea`, `hot_spots`, `highway` (entries, exits, through_cars), `bridges` (count, metres, on the highway), `ports`, `ships`, `port_stats` |
+| `new_game` | `preset` river_valley (default) / islands / coast / delta / plains / flat, `seed`, `water` 0..1, `relief` 0..1 (height variation), `branching` 0..1, `islands` 0..8, `climate` temperate / desert (default) / tropical / arctic / volcanic (also `iceland`) (`highway` is ignored: every new game has the highway and the trunk line); omitted levers take the preset's; optional `name` (the city's name) | throws the city away and starts on the landscape with a new game id; tools and selection reset. Reply as `landscape` plus `identity` |
+| `generate_city` | `preset` grid_plaza (default) / coastal_river / old_town / twin_centres, `seed` (default 1; seeds the landscape and the city), optional `landscape` (a `new_game` preset to lay the city on instead of the preset's own) and `water`, `relief`, `branching` levers, optional `climate` (as `new_game`; default desert), optional `name` | throws the city away and starts a new game with a whole generated city on it (below); tools and selection reset. Reply as `landscape` plus `city`: `preset`, `seed`, `arterial`/`collector`/`local` (`roads`, `length_m`), `zones`, `lots`, `interchanges`, `way_in`, `centres`, `took_ms` |
+| `landscape` | | preset, `climate` and levers, `rivers` (kind river/stream, width, current_mps, hydro_ok, source, mouth, length), `lakes`, `sea`, `hot_spots`, `highway` (entries, exits, through_cars), `bridges` (count, metres, on the highway), `ports`, `ships`, `port_stats` |
 | `terrain_at` | `x`, `y` | `natural_height`, `ground_height` (graded under roads and lots), `surface_height` (bridge decks included), `slope`, `water` (kind, current, width, flow), `nearest_shore`, `hot_spot`, `lot`, `power_sites` (hydro/tidal/geothermal ok or why not, for the lot there), `docks` (whether a shipping port or ferry terminal would go there, or why not), `survey` (every land survey layer's value 0..1 there), `access` (`park_min`, `nightlife_min`: minutes on foot along the walk network to the nearest park / open entertainment, null when none can be walked to; `value_for_homes`: what that adds to a home's land value; `text`; the whole object is null off the walk network) |
 | `resource` | `x`, `y` (or `z` for `y`) | the wind and sun for power plants at a point: `climate`, `water`, `wind {site_factor` (the map's wind field there against open level ground, 0.35..1.8: windy on hills, ridges, high ground and by wide water, sheltered in valleys), `mean_ms` (ordinary-day wind there), `now_ms`, `typical_yield` (a wind farm's share of nameplate on an ordinary day), `yield_now`, `cut_out_now}` (the wind there is past the turbines' cut-out), `solar {site_factor, climate_sun, sun` (0..1.1, 1 = the desert's open ground), `yield_now}`. `terrain_at` carries the same under `resource` |
 | `weather` | | `label`, `cloud` 0..1, `wind` (the 0..1 drift), `wind_ms` (over open ground), `temp_c`, `spell` (normal / heat wave / cold snap / storm), `spell_hours_left`, `climate`, `turbine {cut_in_ms, rated_ms, cut_out_ms}` |
 | `grid` | | the time-of-use grid: `hour`, `import_price` and `export_price` now (per MWh), `mean_import_price`, `demand_mw` now, `full_draw_mw` (every building flat out, the old figure), `demand_factor_now`, `weather`, `day_ahead` (24 rows from this hour: `hour`, `temp_c`, `demand_mw`, `import_price`, `export_price`, if the weather holds), `last_24h` (recorded `day`, `hour`, `demand_mw`, `supply_mw`, `imported_mw`, `exported_mw`, `import_price`, `temp_c`) |
 | `grant` | `amount` (default 100000) | dev: adds money to the treasury |
+| `set_weather` | `cloud` 0..1, `wind` 0.05..1, `temp_c` | dev: sets the sky now (it drifts back toward the climate's hour by hour); reply `cloud`, `wind`, `temp_c`, `spell`, `label`, `climate`, `weather_climate`, `precipitation` |
 
 ```json
 {"cmd": "new_game", "preset": "delta", "seed": 12, "water": 0.7, "branching": 0.9}
+{"cmd": "new_game", "preset": "coast", "seed": 4, "climate": "arctic"}
 {"cmd": "terrain_at", "x": -420, "y": 100}
 {"cmd": "resource", "x": 300, "z": -650}
 {"cmd": "grid"}
 ```
+
+**Climates** (`nd_sim::Climate` on the landscape's levers; old saves are Desert). Each adds to
+the generated map from its own random stream, so the river, lakes and hot spots the preset makes
+stay where they are: Desert is the original generator (the driest); Temperate adds a stream or
+two and a lake; Tropical more streams, lakes and three more offshore islands; Arctic two more
+lakes (drawn frozen, with ice along the sea's edge: still water to every rule); Volcanic a field
+of four to six more geothermal hot spots. The look comes from one table
+(`nd_procgen::climate::look`): ground, shore, water, ice, plants (scrub, leafy trees, palms,
+conifers, moss and lava rock, in streets and parks too), snow on roofs, steam over hot spots, and
+rain (Temperate, Tropical) or snow (Arctic, Volcanic) round the camera when `cloud` is over 0.6
+(not at the Low graphics tier).
 
 #### Weather, demand and prices [grid-weather]
 
@@ -225,7 +238,7 @@ main thread, then serialises and writes it on a worker thread.
   mild day averaging the old 2.5/MWh. Exports earn a fifth of the import price at the hour.
 - The land survey has `wind` and `solar` layers (`overlay {land: "wind"}`).
 
-`window {name: "new_game"}` opens the New Game window (preset list, levers, mini-map, and a
+`window {name: "new_game"}` opens the New Game window (preset list, climate, levers, mini-map, and a
 starting town: an empty map or one of the generated cities, drawn on the mini-map).
 
 **Generated cities** (`nd_procgen::citygen`, after Chen et al. 2008, "Interactive Procedural

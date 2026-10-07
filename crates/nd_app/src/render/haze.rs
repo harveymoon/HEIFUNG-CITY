@@ -62,7 +62,7 @@ pub(super) struct HazeState {
 
 /// A soft round smoke texture: a gaussian falloff broken up by a few
 /// lumps, white, so the material colour tints it.
-fn puff_image() -> Image {
+pub(super) fn puff_image() -> Image {
     const N: usize = 64;
     let mut data = vec![0u8; N * N * 4];
     let lumps = [(0.32f32, 0.40f32, 0.22f32), (0.62, 0.35, 0.2), (0.5, 0.62, 0.26), (0.3, 0.64, 0.17), (0.7, 0.62, 0.17)];

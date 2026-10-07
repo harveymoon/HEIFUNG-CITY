@@ -225,6 +225,41 @@ impl Climate {
             Climate::Volcanic => "Volcanic",
         }
     }
+
+    /// One line for the New Game window.
+    pub fn blurb(self) -> &'static str {
+        match self {
+            Climate::Temperate => "Green grass and leafy trees, rain showers, a few more streams and lakes.",
+            Climate::Desert => "Dry, dusty scrub under a hard sun; the fewest streams.",
+            Climate::Tropical => "Lush green ground, palms, turquoise shallows, more islands, strong sun and downpours.",
+            Climate::Arctic => "Snow on the ground and roofs, frozen lakes and sea ice, conifers, snowfall.",
+            Climate::Volcanic => "Iceland-style: black basalt and moss, steaming vents, many geothermal hot spots.",
+        }
+    }
+
+    pub fn from_label(s: &str) -> Option<Climate> {
+        let s = s.trim().to_ascii_lowercase();
+        let s = match s.as_str() {
+            "iceland" | "icelandic" | "geothermal" => "volcanic",
+            "icy" | "ice" | "snow" | "polar" => "arctic",
+            "jungle" | "lush" => "tropical",
+            "dry" | "arid" => "desert",
+            "green" | "mild" => "temperate",
+            other => other,
+        };
+        Self::ALL.into_iter().find(|c| c.label().to_ascii_lowercase() == s)
+    }
+
+    /// Lowercase key for the remote API.
+    pub fn key(self) -> &'static str {
+        match self {
+            Climate::Temperate => "temperate",
+            Climate::Desert => "desert",
+            Climate::Tropical => "tropical",
+            Climate::Arctic => "arctic",
+            Climate::Volcanic => "volcanic",
+        }
+    }
 }
 
 /// What the New Game window's levers set.
@@ -558,6 +593,15 @@ fn polyline_distance(pts: &[Vec2], p: Vec2) -> f32 {
     pts.windows(2).map(|w| project_on_segment(p, w[0], w[1]).1.distance(p)).fold(f32::INFINITY, f32::min)
 }
 
+/// What one try at a tributary gave.
+enum Branch {
+    /// The main river is too short for tributaries.
+    Stop,
+    /// Too short to keep.
+    Skip,
+    Grown(River),
+}
+
 impl Landscape {
     /// Generate a landscape from its parameters. Deterministic.
     pub fn generate(params: &LandscapeParams) -> Self {
@@ -649,44 +693,11 @@ impl Landscape {
         let tributaries = (params.branching * 4.0).round() as usize;
         if !l.rivers.is_empty() {
             for _ in 0..tributaries {
-                let main = &l.rivers[0];
-                let n = main.points.len();
-                if n < 20 {
-                    break;
+                match l.grow_tributary(&mut rng) {
+                    Branch::Stop => break,
+                    Branch::Skip => continue,
+                    Branch::Grown(r) => l.rivers.push(r),
                 }
-                let j = rng.random_range(n / 8..n - n / 8);
-                let at = main.points[j];
-                let up = -main.flow(j);
-                let side = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
-                let mut d = Vec2::from_angle(side * rng.random_range(0.7..1.3)).rotate(up);
-                let big = params.branching > 0.55 && rng.random_bool(0.3);
-                let width = if big { 22.0 + water * 12.0 } else { 9.0 + water * 9.0 + rng.random_range(0.0..4.0) };
-                let length = rng.random_range(500.0..1400.0);
-                let mut p = at;
-                let mut line = vec![p];
-                let mut s = 0.0;
-                while s < length {
-                    d = Vec2::from_angle(rng.random_range(-0.16..0.16)).rotate(d).normalize();
-                    let guard = CLEAR_RADIUS + width * 0.5 + 50.0;
-                    if (p + d * 20.0).length() < guard {
-                        // Turn away from the middle of the map.
-                        let out = p.normalize_or(Vec2::X);
-                        d = (d + out * 0.9).normalize();
-                    }
-                    p += d * 20.0;
-                    s += 20.0;
-                    if p.x.abs() > LAND_HALF + 40.0 || p.y.abs() > LAND_HALF + 40.0 || l.sea.as_ref().is_some_and(|sea| sea.contains(p)) {
-                        break;
-                    }
-                    line.push(p);
-                }
-                if line.len() < 6 {
-                    continue;
-                }
-                line.reverse();
-                extend_off_map(&mut line);
-                let current = if big { 0.9 + params.relief * 1.5 } else { 1.2 + params.relief * 2.2 } + rng.random_range(0.0..0.6);
-                l.rivers.push(River { points: line, width, current, stream: !big });
             }
         }
         // A stream on the big island.
@@ -711,35 +722,136 @@ impl Landscape {
             LandscapePreset::Coast => (water * 1.5).round() as usize,
             _ => 0,
         };
+        l.add_lakes(&mut rng, lakes);
+        // Hot spots.
+        let spots = 1 + rng.random_range(0..2) + (params.relief > 0.5) as usize;
+        l.add_hot_spots(&mut rng, spots, 280.0..880.0, 300.0, 0.7..1.0);
+        l.climate_extras();
+        l
+    }
+
+    /// One tributary or stream off the main river. It draws exactly what
+    /// the generator always drew, so Desert maps (and old saves) are unchanged.
+    fn grow_tributary(&self, rng: &mut impl Rng) -> Branch {
+        let params = &self.params;
+        let water = params.water;
+        let main = &self.rivers[0];
+        let n = main.points.len();
+        if n < 20 {
+            return Branch::Stop;
+        }
+        let j = rng.random_range(n / 8..n - n / 8);
+        let at = main.points[j];
+        let up = -main.flow(j);
+        let side = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
+        let mut d = Vec2::from_angle(side * rng.random_range(0.7..1.3)).rotate(up);
+        let big = params.branching > 0.55 && rng.random_bool(0.3);
+        let width = if big { 22.0 + water * 12.0 } else { 9.0 + water * 9.0 + rng.random_range(0.0..4.0) };
+        let length = rng.random_range(500.0..1400.0);
+        let mut p = at;
+        let mut line = vec![p];
+        let mut s = 0.0;
+        while s < length {
+            d = Vec2::from_angle(rng.random_range(-0.16..0.16)).rotate(d).normalize();
+            let guard = CLEAR_RADIUS + width * 0.5 + 50.0;
+            if (p + d * 20.0).length() < guard {
+                // Turn away from the middle of the map.
+                let out = p.normalize_or(Vec2::X);
+                d = (d + out * 0.9).normalize();
+            }
+            p += d * 20.0;
+            s += 20.0;
+            if p.x.abs() > LAND_HALF + 40.0 || p.y.abs() > LAND_HALF + 40.0 || self.sea.as_ref().is_some_and(|sea| sea.contains(p)) {
+                break;
+            }
+            line.push(p);
+        }
+        if line.len() < 6 {
+            return Branch::Skip;
+        }
+        line.reverse();
+        extend_off_map(&mut line);
+        let current = if big { 0.9 + params.relief * 1.5 } else { 1.2 + params.relief * 2.2 } + rng.random_range(0.0..0.6);
+        Branch::Grown(River { points: line, width, current, stream: !big })
+    }
+
+    /// Lakes until there are `want` (or 60 tries), clear of the middle, the
+    /// highway, the railway, rivers, other lakes, the sea and hot spots.
+    fn add_lakes(&mut self, rng: &mut impl Rng, want: usize) {
+        let water = self.params.water;
         let mut tries = 0;
-        while l.lakes.len() < lakes && tries < 60 {
+        while self.lakes.len() < want && tries < 60 {
             tries += 1;
             let r = rng.random_range(50.0..(80.0 + water * 110.0));
             let c = Vec2::from_angle(rng.random_range(0.0..6.28)) * rng.random_range(380.0..1150.0);
             if c.length() - r < CLEAR_RADIUS + 40.0 || (c.y - HIGHWAY_Y).abs() < r + 60.0 || (c.y - crate::rail::TRUNK_Y).abs() < r + 50.0 {
                 continue;
             }
-            if l.rivers.iter().any(|rv| polyline_distance(&rv.points, c) < r * 1.25 + rv.width + 40.0) || l.lakes.iter().any(|o| o.center.distance(c) < r * 2.5 + 120.0) || l.sea.as_ref().is_some_and(|s| s.contains(c) || polyline_distance(&s.coast, c) < r * 1.3 + 60.0) {
+            if self.rivers.iter().any(|rv| polyline_distance(&rv.points, c) < r * 1.25 + rv.width + 40.0) || self.lakes.iter().any(|o| o.center.distance(c) < r * 2.5 + 120.0) || self.sea.as_ref().is_some_and(|s| s.contains(c) || polyline_distance(&s.coast, c) < r * 1.3 + 60.0) {
                 continue;
             }
-            let outline = blob(&mut rng, c, r, 0.2, 28);
-            l.lakes.push(Lake { outline, center: c });
+            // Only a climate's extra lakes can meet a hot spot: the
+            // generator's own are placed before there are any.
+            if self.hot_spots.iter().any(|h| h.pos.distance(c) < r + h.radius + 60.0) {
+                continue;
+            }
+            let outline = blob(rng, c, r, 0.2, 28);
+            self.lakes.push(Lake { outline, center: c });
         }
-        // Hot spots.
-        let spots = 1 + rng.random_range(0..2) + (params.relief > 0.5) as usize;
+    }
+
+    /// Hot spots until there are `want` (or the tries run out), `spacing`
+    /// apart, on dry ground clear of the water, the highway and the railway.
+    fn add_hot_spots(&mut self, rng: &mut impl Rng, want: usize, ring: std::ops::Range<f32>, spacing: f32, heat: std::ops::Range<f32>) {
         let mut tries = 0;
-        while l.hot_spots.len() < spots && tries < 60 {
+        let budget = (want * 15).max(60);
+        while self.hot_spots.len() < want && tries < budget {
             tries += 1;
-            let p = Vec2::from_angle(rng.random_range(0.0..6.28)) * rng.random_range(280.0..880.0);
-            if (p.y - HIGHWAY_Y).abs() < 70.0 || (p.y - crate::rail::TRUNK_Y).abs() < 60.0 || l.hot_spots.iter().any(|h| h.pos.distance(p) < 300.0) {
+            let p = Vec2::from_angle(rng.random_range(0.0..6.28)) * rng.random_range(ring.clone());
+            if (p.y - HIGHWAY_Y).abs() < 70.0 || (p.y - crate::rail::TRUNK_Y).abs() < 60.0 || self.hot_spots.iter().any(|h| h.pos.distance(p) < spacing) {
                 continue;
             }
-            if l.water_at(p).is_some() || l.nearest_shore(p, 90.0).is_some() {
+            if self.water_at(p).is_some() || self.nearest_shore(p, 90.0).is_some() {
                 continue;
             }
-            l.hot_spots.push(HotSpot { pos: p, radius: rng.random_range(45.0..70.0), heat: rng.random_range(0.7..1.0) });
+            self.hot_spots.push(HotSpot { pos: p, radius: rng.random_range(45.0..70.0), heat: rng.random_range(heat.clone()) });
         }
-        l
+    }
+
+    /// What the climate adds to the generator's map, from its own random
+    /// stream so the shared features stay where they were: more streams and
+    /// lakes where it is wet, lakes to freeze in the Arctic, a field of hot
+    /// ground on a volcanic map. Desert adds nothing: it is the original
+    /// generator, the driest of them.
+    fn climate_extras(&mut self) {
+        let params = self.params.clone();
+        let mut rng = crate::rng_for(params.seed, 0xC11_A7E0 + params.climate as u64);
+        let (streams, lakes) = match params.climate {
+            Climate::Desert => return,
+            Climate::Temperate => (1 + (params.branching * 2.0).round() as usize, 1 + (params.water * 1.5).round() as usize),
+            Climate::Tropical => (2 + (params.branching * 2.0).round() as usize, 1 + (params.water * 2.0).round() as usize),
+            Climate::Arctic => (0, 2),
+            Climate::Volcanic => (1, 1),
+        };
+        if !self.rivers.is_empty() {
+            for _ in 0..streams {
+                match self.grow_tributary(&mut rng) {
+                    Branch::Stop => break,
+                    Branch::Skip => {}
+                    Branch::Grown(r) => self.rivers.push(r),
+                }
+            }
+        }
+        // Lakes only where the preset has open land for them.
+        if !matches!(params.preset, LandscapePreset::Islands | LandscapePreset::Delta) {
+            let want = self.lakes.len() + lakes;
+            self.add_lakes(&mut rng, want);
+        }
+        if params.climate == Climate::Volcanic {
+            // Iceland: a field of vents and hot ground, several of them strong.
+            let want = self.hot_spots.len() + 4 + rng.random_range(0..3usize);
+            self.add_hot_spots(&mut rng, want, 260.0..1200.0, 220.0, 0.8..1.0);
+        }
     }
 
     fn coast_sea(rng: &mut impl Rng, coast_y: f32) -> Sea {
@@ -769,7 +881,8 @@ impl Landscape {
     /// sit on a river mouth.
     fn add_islands(&mut self) {
         let Some(sea) = self.sea.as_ref() else { return };
-        let want = self.params.islands as usize;
+        // A tropical sea is dotted with more of them.
+        let want = self.params.islands as usize + if self.params.climate == Climate::Tropical { 3 } else { 0 };
         if want == 0 {
             return;
         }
@@ -2407,6 +2520,87 @@ mod tests {
         assert!(delta.rivers.len() >= 3, "channels fan out");
         let flat = Landscape::new(&LandscapeParams::flat());
         assert!(flat.is_flat() && flat.height(Vec2::new(100.0, 50.0)) == 0.0);
+    }
+
+    /// A hash (FNV-1a, stable across toolchains) of everything a landscape
+    /// generates, to pin the output.
+    fn fingerprint(l: &Landscape) -> u64 {
+        let text = format!(
+            "{:?}|{:?}|{:?}|{:?}",
+            l.rivers.iter().map(|r| (r.points.clone(), r.width, r.current, r.stream)).collect::<Vec<_>>(),
+            l.lakes.iter().map(|k| k.outline.clone()).collect::<Vec<_>>(),
+            l.sea.as_ref().map(|s| (s.outline.clone(), s.islands.clone())),
+            l.hot_spots.iter().map(|s| (s.pos, s.radius, s.heat)).collect::<Vec<_>>()
+        );
+        text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
+    }
+
+    #[test]
+    fn desert_output_is_pinned() {
+        let mut all = 0u64;
+        for preset in LandscapePreset::ALL {
+            for seed in [1u64, 7, 42] {
+                let p = LandscapeParams { branching: 0.6, ..LandscapeParams::preset(preset, seed) };
+                all = all.rotate_left(7) ^ fingerprint(&Landscape::new(&p));
+                all = all.rotate_left(7) ^ fingerprint(&Landscape::new(&LandscapeParams::preset(preset, seed)));
+            }
+        }
+        assert_eq!(all, PINNED, "the Desert (default) landscape changed: old saves and tests depend on it");
+    }
+    const PINNED: u64 = 0x56b7_45ee_eb64_3b97;
+
+    #[test]
+    fn climates_are_deterministic_and_add_their_features() {
+        for climate in Climate::ALL {
+            for preset in LandscapePreset::ALL {
+                let p = LandscapeParams { climate, ..LandscapeParams::preset(preset, 11) };
+                let (a, b) = (Landscape::new(&p), Landscape::new(&p));
+                assert_eq!(fingerprint(&a), fingerprint(&b), "{climate:?} {preset:?}");
+                // The middle stays dry whatever the climate adds.
+                for k in 0..36 {
+                    let q = Vec2::from_angle(k as f32 * 0.1745) * (CLEAR_RADIUS - 10.0);
+                    assert!(!a.is_water(q), "{climate:?} {preset:?}: water at {q:?}");
+                }
+                for h in &a.hot_spots {
+                    assert!(!a.is_water(h.pos), "{climate:?} {preset:?}: hot spot in the water");
+                }
+            }
+        }
+        for seed in [1u64, 7, 42, 99] {
+            for preset in [LandscapePreset::RiverValley, LandscapePreset::Coast, LandscapePreset::Plains, LandscapePreset::Islands] {
+                let base = LandscapeParams::preset(preset, seed);
+                let desert = Landscape::new(&base);
+                let volcanic = Landscape::new(&LandscapeParams { climate: Climate::Volcanic, ..base.clone() });
+                assert!(volcanic.hot_spots.len() >= desert.hot_spots.len() + 3, "{preset:?} {seed}: {} vs {}", volcanic.hot_spots.len(), desert.hot_spots.len());
+                // The climate adds to the map; the generator's own features stay put.
+                assert_eq!(format!("{:?}", &volcanic.hot_spots[..desert.hot_spots.len()].iter().map(|h| h.pos).collect::<Vec<_>>()), format!("{:?}", desert.hot_spots.iter().map(|h| h.pos).collect::<Vec<_>>()));
+                let wet = Landscape::new(&LandscapeParams { climate: Climate::Tropical, ..base.clone() });
+                assert!(wet.rivers.len() + wet.lakes.len() >= desert.rivers.len() + desert.lakes.len(), "{preset:?} {seed}");
+            }
+        }
+        let isl = LandscapeParams::preset(LandscapePreset::Islands, 3);
+        let tropical = Landscape::new(&LandscapeParams { climate: Climate::Tropical, ..isl.clone() });
+        assert!(tropical.sea.as_ref().unwrap().islands.len() > Landscape::new(&isl).sea.as_ref().unwrap().islands.len(), "a tropical sea has more islands");
+    }
+
+    #[test]
+    fn a_new_world_takes_its_weather_from_the_landscape_climate() {
+        for climate in Climate::ALL {
+            let w = crate::World::new(crate::WorldConfig { landscape: LandscapeParams { climate, ..LandscapeParams::flat() }, emergencies: false, society: false, ..crate::WorldConfig::default() });
+            assert_eq!(w.landscape.params.climate, climate);
+            assert_eq!(w.weather.climate, climate, "the grid-weather climate matches the look");
+        }
+    }
+
+    #[test]
+    fn old_saves_without_a_climate_are_desert() {
+        let p: LandscapeParams = ron::from_str("(preset: Coast, seed: 5, water: 0.5, relief: 0.3, branching: 0.25, islands: 1, highway: true)").unwrap();
+        assert_eq!(p.climate, Climate::Desert);
+        assert_eq!(p.preset, LandscapePreset::Coast);
+        let p2: LandscapeParams = ron::from_str(&ron::to_string(&LandscapeParams { climate: Climate::Arctic, ..p.clone() }).unwrap()).unwrap();
+        assert_eq!(p2.climate, Climate::Arctic);
+        assert_eq!(Climate::from_label("Iceland"), Some(Climate::Volcanic));
+        assert_eq!(Climate::from_label("tropical"), Some(Climate::Tropical));
     }
 
     #[test]

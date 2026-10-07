@@ -252,8 +252,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [x] Weather by climate: temperature, heat waves, cold snaps, storms; cloud and wind drive solar/wind   → DONE [feat/grid-weather]: weather.rs (spells from hashes; same two RNG draws per hour)
 - [x] Wind field over the map (hills/coasts windy, valleys sheltered) and solar by climate; wind map layer   → DONE [feat/grid-weather]: weather::wind_site, Wind and Solar land layers (K), site note in the Buildings tool and inspector
 - [x] Turbines spin by their own farm's output; stop in storm cut-out   → DONE [feat/grid-weather]
-- [ ] New Game climate picker: Temperate, Desert, Tropical, Arctic, Volcanic (more hot spots) [feat/climates]
-- [ ] Climate looks: snow/ice and conifers, palms and lush ground, basalt and steam; rain/snowfall [feat/climates]
+- [x] New Game climate picker: Temperate, Desert, Tropical, Arctic, Volcanic (more hot spots) [feat/climates] → DONE [feat/climates]: picker + blurbs, climate extras in generation (Desert pinned), remote `climate` on new_game/generate_city/status/landscape
+- [x] Climate looks: snow/ice and conifers, palms and lush ground, basalt and steam; rain/snowfall [feat/climates] → DONE [feat/climates]: one table in nd_procgen::climate; snow on roofs, sea/lake ice, palms/conifers/moss, animated steam, rain/snow off at Low
 
 - [ ] Hydro dam: curved arch dam with spillway, cooler look [feat/plant-groups]
 - [ ] Solar/wind output and cost follow plot size everywhere the player looks (they read as identical) [feat/plant-groups]

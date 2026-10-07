@@ -668,7 +668,7 @@ pub fn courtyard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let cc = poly_center(&inner);
     let r = inradius(&inner);
     if r > 3.0 {
-        tree(g, f, cc, 4.5, 4.0, pal.bark, pal.foliage);
+        tree_in(g, f, pal, cc, 4.5, 4.0, pal.foliage);
         for k in 0..3 {
             let a = k as f32 / 3.0 * std::f32::consts::TAU;
             let p = cc + Vec2::new(a.cos(), a.sin()) * r * 0.55;
@@ -911,7 +911,7 @@ pub fn villas(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for _ in 0..rng.random_range(3..7) {
         if let Some(p) = c.random_inside(rng, 3.2) {
             if placed.iter().all(|(q, _)| q.distance(p) > 8.0) {
-                tree(g, f, p, rng.random_range(4.0..7.0), rng.random_range(3.5..6.0), pal.bark, pal.foliage);
+                tree_in(g, f, pal, p, rng.random_range(4.0..7.0), rng.random_range(3.5..6.0), pal.foliage);
             }
         }
     }

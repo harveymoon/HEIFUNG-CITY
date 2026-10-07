@@ -384,7 +384,7 @@ pub fn suburb(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             let p = Vec2::new(cu + rng.random_range(-bay * 0.3..bay * 0.3), back + 2.0);
             let canopy = rng.random_range(2.5..4.0);
             if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > canopy {
-                tree(g, f, p, rng.random_range(4.0..6.5), canopy, pal.bark, pal.foliage);
+                tree_in(g, f, pal, p, rng.random_range(4.0..6.5), canopy, pal.foliage);
             }
         }
         // A mailbox by the path.
@@ -482,7 +482,7 @@ pub fn mcmansion(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for _ in 0..rng.random_range(4..8) {
         if let Some(p) = c.random_inside(rng, 2.5) {
             if main.iter().all(|q| q.distance(p) > 4.0) && !point_in_poly(&loop_outer, p) {
-                tree(g, f, p, rng.random_range(3.5..6.0), rng.random_range(1.6..2.6), pal.bark, mul(pal.foliage, 1.1));
+                tree_in(g, f, pal, p, rng.random_range(3.5..6.0), rng.random_range(1.6..2.6), mul(pal.foliage, 1.1));
             }
         }
     }
@@ -588,7 +588,7 @@ pub fn mansion(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         for k in 0..4 {
             let p = Vec2::new(t * 7.0, front_v + 4.0 + k as f32 * (fore_v - front_v - 8.0).max(0.0) / 4.0);
             if c.inside_local(p) {
-                tree(g, f, p, 7.0, 1.4, pal.bark, mul(pal.foliage, 0.9));
+                tree_in(g, f, pal, p, 7.0, 1.4, mul(pal.foliage, 0.9));
             }
         }
     }
@@ -637,7 +637,7 @@ pub fn mansion(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for _ in 0..rng.random_range(6..12) {
         if let Some(p) = c.random_inside(rng, 3.0) {
             if main.iter().all(|q| q.distance(p) > 6.0) && !point_in_poly(&court, p) && !point_in_poly(&drive, p) {
-                tree(g, f, p, rng.random_range(6.0..10.0), rng.random_range(2.5..4.5), pal.bark, pal.foliage);
+                tree_in(g, f, pal, p, rng.random_range(6.0..10.0), rng.random_range(2.5..4.5), pal.foliage);
             }
         }
     }
@@ -835,7 +835,7 @@ pub fn museum(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for _ in 0..4 {
         if let Some(p) = c.random_inside(rng, 2.0) {
             if !point_in_poly(&hall, p) && !point_in_poly(&wing, p) {
-                tree(g, f, p, 5.0, 2.0, pal.bark, pal.foliage);
+                tree_in(g, f, pal, p, 5.0, 2.0, pal.foliage);
             }
         }
     }
