@@ -18,6 +18,8 @@ pub mod crime;
 pub mod districts;
 pub mod economy;
 pub mod enforcement;
+/// [land] The land market: pressure, prices, owners, merged plots, the super-elite.
+pub mod estate;
 pub mod events;
 pub mod geom;
 pub mod history;

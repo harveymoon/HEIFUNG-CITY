@@ -497,6 +497,34 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
   takings, `industry`, `books`: the last 30 days' revenue and spend, oldest first, needs and sells
   with stock and prices), park
 - lot: land use, polygon, area, land value and tier, `land_value_for_use` (as the lot's own land use feels it), `access` (as in `terrain_at`), zone, building, vacant/landlocked, footfall
+- [land] building `land`: `owner` ({id, name, properties, spent, detail {kind: firm (business) |
+  developer | household | elite (citizen)}}, or {kind: independent}), `sale_price`, `lots` (every
+  plot it spans, primary first), `merged`, `pending_lots` (bought, still clearing), `form`
+  (mcmansion | mansion | merged | mega_hotel | museum | null), `pressure` and `pressure_floors` at
+  its lot, `height_cap`, `wants_to_expand`, `owned_with` (every property of its owner)
+
+### Land market
+
+`ownership {building}`: the selection highlight's data: `owner` ({id, name, detail} or null for an
+independent owner) and `highlight`, every property the owner holds (the building itself first among
+them, `selected: true`): id, name, land_use, pos, `outline` (the merged footprint for a building over
+several plots), home, business, form. A billionaire's other homes and businesses are among them.
+
+`estate {action?}` (also `land_market`):
+
+| action | fields | reply |
+| --- | --- | --- |
+| `summary` (default) | | `stats` (buyouts_total/today, merges_total, branches_total, mcmansions_total, mansions_total, elites_total, priced_out_total, convoys_total), `pressure_samples`, `floors_histogram`, `elite_gate` {population, gini, top_over_median, open, cap, needs}, `elites` (name, net_worth, origin local/visitor, mansion and its pos, home, pos, activity, cars, escorts, police_escort, guards, properties, `convoy` {boss_car, boss_on_road, boss_pos, escorts [{car, pos}], police, guards_at}), `nimby` (center, radius, strength, mansion, price_out_left), `forms` (buildings built as a form, with lots and pending), `owners` (id, name, detail, properties), `reserved_lots` |
+| `pressure` | `at: [x, y]` (optional) | at a point: pressure, mobility, floors, the lot's height cap; else every cell with pressure >= 0.5 as `[pos, pressure, mobility]` |
+| `spawn_elite` | | dev: a billionaire now, skipping the disparity gate but not the quiet-land rules; the error says how many plots passed each test |
+| `expand` | `building` | dev: that firm opens a branch or buys the plot next door now |
+| `buyout` | `building` | dev: a developer buys it out and rebuilds bigger, if the new building is worth it |
+| `drive` | `citizen`, `to` (building) | dev: send someone there (a billionaire's car is brought round, so the convoy forms) |
+
+```json
+{"cmd": "ownership", "building": "146:1"}
+{"cmd": "estate", "action": "pressure", "at": [0, 0]}
+```
 
 ### Selection and the player's UI
 

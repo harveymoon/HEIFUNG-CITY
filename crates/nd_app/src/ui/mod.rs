@@ -17,6 +17,8 @@ mod districts;
 mod emergencies;
 /// [camera] Follow / Zoom to buttons, the gift button, the locked banner.
 pub mod follow;
+/// [land] Ownership, sale price and merged plots in the inspector.
+mod estate;
 mod help;
 /// [identity] The Game history window: autosaves, bookmarks, revert.
 pub mod history;

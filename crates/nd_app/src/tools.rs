@@ -1624,7 +1624,22 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
         Selection::None => {}
         // [camera] drawn by `crate::marks`, with its route and its shop.
         Selection::Bot(_) => {}
-        Selection::Building(b) => lot_outline(gizmos, w, b, 1.6, gold),
+        Selection::Building(b) => {
+            lot_outline(gizmos, w, b, 1.6, gold);
+            // [land] Everything its owner owns (a rich person's other homes
+            // and businesses), outlined and tied to it by a line.
+            let owned = w.owned_with(b);
+            if owned.len() > 1 {
+                let teal = Color::linear_rgb(0.4, 2.6, 2.2);
+                let from = w.footprint(b).map(|l| l.center);
+                for p in owned.into_iter().skip(1) {
+                    lot_outline(gizmos, w, p, 1.3, teal);
+                    if let (Some(a), Some(c)) = (from, w.footprint(p).map(|l| l.center)) {
+                        gizmos.line(at(a, 6.0), at(c, 6.0), teal);
+                    }
+                }
+            }
+        }
         Selection::Car(id) => {
             let Some(car) = w.traffic.cars.get(id) else { return };
             let (p, heading) = car.pose_at(f);
@@ -1829,7 +1844,8 @@ pub(crate) fn vehicle_outline(gizmos: &mut Gizmos, p: SVec2, heading: f32, lengt
 }
 
 pub(crate) fn lot_outline(gizmos: &mut Gizmos, w: &nd_sim::World, b: BuildingId, y: f32, col: Color) {
-    let Some(lot) = w.buildings.get(b).and_then(|b| w.lots.get(b.lot)) else { return };
+    // [land] the whole footprint of a building over merged plots
+    let Some(lot) = w.footprint(b) else { return };
     let mut pts: Vec<Vec3> = lot.polygon.iter().map(|&p| Vec3::new(p.x, y, p.y)).collect();
     if pts.len() >= 3 {
         pts.push(pts[0]);

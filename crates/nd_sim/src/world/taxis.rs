@@ -149,8 +149,9 @@ impl World {
             }
             if let Some(z) = self.buildings[company].business.as_mut() {
                 z.money += stake;
-                z.owner = Some(f);
             }
+            // [land] the founder's owner record (mirrored on the books)
+            self.set_business_owner(company, f);
             self.citizens[f].remember(tick, format!("Put my savings into a taxi firm: {name}. People here need cabs."));
         }
         self.taxis.latent_today = 0;

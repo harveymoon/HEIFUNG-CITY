@@ -117,6 +117,8 @@ impl World {
             }
         }
         self.events.push(SimEvent::BuildingChanged(bid));
+        // [land] The buyer moves in; a mansion starts its NIMBY pull.
+        self.estate_finished(bid);
     }
 }
 
@@ -225,7 +227,7 @@ impl World {
                 c.prev_pos = p;
             }
         }
-        self.buildings.remove(bid);
+        let plot = self.buildings.remove(bid).map(|b| b.plot).unwrap_or_default();
         if self.lots.get(lot).is_some_and(|l| l.building == Some(bid)) {
             self.lots[lot].building = None;
             let made_for_site = d.own_lot
@@ -239,6 +241,8 @@ impl World {
             }
         }
         self.events.push(SimEvent::BuildingRemoved(bid, lot));
+        // [land] Its extra plots are free; a plot someone bought joins them.
+        self.estate_building_gone(bid, &plot, lot);
     }
 
     /// Called by `demolish_with`: turn the building into a demolition site
@@ -424,7 +428,25 @@ impl World {
     pub(super) fn redevelop(&mut self, bid: BuildingId, tier: Tier, floors: u8, value: f32) {
         let Some(b) = self.buildings.get(bid) else { return };
         let memory = format!("{} was torn down and rebuilt for richer tenants. The rent went up with it.", b.name);
-        let old = Demolition::of(b, false);
+        self.redevelop_with(bid, tier, floors, value, memory, false);
+    }
+
+    /// [land] `redevelop` with the residents' `memory` given, and for a
+    /// firm rebuilding bigger, `keep_business` (no change of trade).
+    pub(super) fn redevelop_with(&mut self, bid: BuildingId, tier: Tier, floors: u8, value: f32, memory: String, keep_business: bool) {
+        let Some(b) = self.buildings.get(bid) else { return };
+        // A site already coming down keeps its demolition; a site still
+        // being built has only a storey to clear.
+        let old = match (&b.construction, &b.demolition) {
+            (_, Some(d)) => d.clone(),
+            (Some(_), None) => {
+                let mut d = Demolition::of(b, false);
+                d.floors = 1;
+                d.days = Demolition::days_for(1);
+                d
+            }
+            (None, None) => Demolition::of(b, false),
+        };
         self.vacate(bid, Some(memory), None);
         let seed = self.fresh_seed();
         let tick = self.clock.tick;
@@ -441,7 +463,9 @@ impl World {
         b.update_rent(value);
         // The business that reopens in it: the same one only if it paid its
         // way (decided now, as the old one closes for the works).
-        self.reopen_after_rebuild(bid);
+        if !keep_business {
+            self.reopen_after_rebuild(bid);
+        }
         self.events.push(SimEvent::BuildingChanged(bid));
     }
 

@@ -166,6 +166,7 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
             ui.separator();
             let w = &sim.world;
             citizen_summary(ui, w, &w.citizens[id]);
+            super::estate::citizen_line(ui, w, id);
             spotlight_toggle(ui, &mut sim.world, id, "Spotlight: route through the LLM mind");
             ui.separator();
             super::places::citizen_places(ui, &sim.world, id);

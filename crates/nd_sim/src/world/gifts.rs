@@ -93,10 +93,9 @@ impl World {
         if let Some(wk) = c.work {
             add(wk, Holding::Work, &mut out);
         }
-        // Owned businesses, in a stable order.
-        let mut owned: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.owner == Some(citizen))).map(|(id, _)| id).collect();
-        owned.sort();
-        for b in owned {
+        // [land] Everything they own, from the owner records (a
+        // billionaire's other homes and firms too), in a stable order.
+        for b in self.properties_of(citizen) {
             add(b, Holding::Owns, &mut out);
         }
         out

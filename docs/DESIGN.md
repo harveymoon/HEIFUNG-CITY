@@ -650,7 +650,60 @@ Citizens are rendered from their simulated positions every frame.
 - **Redevelopment and density**: a Low-tier building on High-value land for three days is
   rebuilt in place at the land's tier; rents rise and the displacement rules move people on.
   New buildings are capped at two floors plus one per ten neighbouring floors within 150 m,
-  so high-rises appear only where the block is already dense.
+  so high-rises appear only where the block is already dense; the land market below caps
+  them again by pressure.
+- **The land market** (`nd_sim::estate`, `world/estate.rs`, [land]). *Pressure*: every hour
+  (:13) each 64 m cell counts the people present (walkers twice: they are also moving
+  through) and the cars in it, folded into a running average (half a day to rise, two days
+  to fall; an old save's cold grid takes its first sample outright). *Mobility* per cell,
+  daily: 0.8 + 0.5 x transit (bus stops within 300 m, a station or metro entrance within
+  600 m) - 0.6 x the share of cars standing, clamped 0.5..1.5. A lot's pressure floors are
+  2 + (pressure - 4) / 2.5 x mobility (2..40), so height follows how well the city moves
+  people; `height_cap` is the lesser of that and the neighbour rule plus five floors. A new
+  game is low almost everywhere. Cheap homes on land held to two floors are one storey
+  (shacks, trailer parks, huts) with six homes, as many as the walk-up they replace.
+  *Prices and buyouts*: every building has a sale price (land at 25 + 400 x value per m²,
+  the structure by homes and jobs, tier and condition, a year of a business's recent profit
+  as goodwill; mansions x3). Daily, developers (a handful of fictional firms) buy the most
+  pressed low buildings (pressure floors at least twice the height and three more) while
+  demand for the use is over 0.2, a few a day (1 + buildings/400, at most 4), only when the
+  new building is worth 1.2 x the price: residents move out with a memory, a business
+  closes, and the existing redevelopment (demolition, then construction) builds bigger.
+  *Owners*: `Building::plot.owner` names an `Owner` (a firm, a developer, a household, a
+  billionaire) with its properties; none means an independent owner. Selecting a building
+  outlines everything its owner holds (`World::owned_with`). *Firms grow* (generic trigger
+  `World::wants_to_expand`: open six days, the last three days' takings over 1.1 x costs,
+  cash for the move, mostly staffed; two a day at a 20% roll): taxi companies, bakeries
+  (pizza) and tow yards open branches on vacant lots of their use as far as can be (450 m at
+  least) from the firm's other properties; other kinds buy the plot next door (two for oil
+  and farms), even landlocked backland, vacant first then cheapest, and rebuild across them
+  (`estate::expansion_form`: hotels as mega hotels, galleries as museums, the rest as a
+  bigger building of their kind; oil fields are one field over every plot). Plots stay
+  lots for zoning and each names the building (`plot.extra_lots`); a built neighbour is
+  demolished first and joins when its rubble is gone (`EstateMarket::reserved`). A merge
+  is refused unless the plots make a compact block (hull within 6% of their area); the
+  renderer draws the building on `World::footprint`, the merged outline. Rebuilds carry
+  extras; a building's removal frees them. *McMansions*: at most one a day (30% roll), one
+  per six households earning 220+, on two touching residential plots in a block held to
+  three floors on land worth 0.45+, bought by the richest such household, which moves in;
+  owner-occupied homes pay no rent. *The super-elite* (fictional people only, named by the
+  town's own generator): rare (5% a day, more with each one already here) and only with
+  extreme disparity (900+ people, Gini 0.40+, the top twentieth earning 3.5x the median),
+  one per 2,500 people, at most six. A local high earner made rich, or a visitor who stays
+  (put up in the best free home meanwhile), worth 1-45 billion, buys two to four touching
+  residential plots (1,400 m² at least) where pressure is under max(4, 0.3 x the town's
+  median), with no nuisance or fouled ground, no works or nightlife within 160 m and little
+  built round it; land value counts, parks hardly, other mansions within 650 m draw them.
+  Also one or two other homes, one to three businesses and two to six supercars
+  (`Class::Elite` above the three income classes; class counts and the Gini are unchanged).
+  The finished mansion starts a NIMBY pull: land value +0.22 fading 4% a day within 200 m
+  (260 at most), nothing redeveloped taller than three floors there, and up to two cheap
+  homes a day priced out (rebuilt middle tier), six per mansion at most. *Convoys*: when a
+  billionaire drives (never the bus or a bike), black escort SUVs (2 + 3 x log40 of their
+  billions, 2..5) spawn on their tail and the richest (20 billion+) gets a police car ahead;
+  escorts take the boss's driving style, follow every change of course and leave at the end
+  of the run. Guards (one per escort car) walk round them on foot and stand at the kerb for
+  an hour where the convoy stopped (drawn by `render/convoys.rs`).
 - **Railway** (`RoadKind::Rail`, `nd_sim::rail`): track is a third kind of way in the road
   network, single track 4.8 m wide. A trunk line crosses the map 480 m south of the
   centre from the start, edge to edge and on out of sight; the player lays branches off it with the Road tool's Rail

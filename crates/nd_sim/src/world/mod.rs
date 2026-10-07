@@ -38,6 +38,11 @@ mod enforcement;
 pub mod gifts;
 pub use gifts::{Gift, Holding, GIFT_AMOUNT};
 mod construction;
+/// [land] Pressure, prices, owners, merged plots and the super-elite.
+mod estate;
+#[cfg(test)]
+mod estate_tests;
+pub use estate::{escort_model, police_escort_model, supercar};
 mod history;
 mod develop;
 mod districts;
@@ -507,6 +512,11 @@ pub struct World {
     /// settings live with the traffic (`Traffic::junction_rules`).
     #[serde(default)]
     pub crosswalks: crate::junctions::Crosswalks,
+    /// [land] The land market: pressure, owners, merged plots, the
+    /// super-elite (`crate::estate`, `world/estate.rs`). Old saves start
+    /// with an empty one.
+    #[serde(default)]
+    pub estate: crate::estate::EstateMarket,
     /// [economy] Business pressure: the city's needs, read daily, and the
     /// trades opened to meet them (`crate::pressure`, `world/pressure.rs`).
     #[serde(default)]
@@ -604,10 +614,12 @@ impl World {
             pillars: Vec::new(),
             pillar_gaps: Vec::new(),
             crosswalks: Default::default(),
+            estate: Default::default(),
             pressure: Default::default(),
             scene: Default::default(),
             identity: Default::default(),
         };
+        w.estate.pressure = crate::estate::Pressure::new(half + 200.0);
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
         // The trunk line: a railway already crosses the map south of the
@@ -694,6 +706,12 @@ impl World {
             self.strand_driver(id, pos);
         }
         self.refresh_facility_cache();
+        // [land] A save from before the land market: a cold pressure grid
+        // (it warms on the first hourly sample); stale references dropped.
+        if !self.estate.pressure.ready() {
+            self.estate.pressure = crate::estate::Pressure::new(self.config.half_extent + 200.0);
+        }
+        self.prune_estate();
         self.subway_after_load();
         self.seats_after_load();
         self.update_economy();
@@ -860,7 +878,11 @@ impl World {
             .map(|(f, _)| f)
             .sum();
         let density = near_floors as f32 + lot.footfall_today as f32 / 40.0;
-        let cap = (2.0 + density / 10.0).min(255.0) as u8;
+        let neighbours = (2.0 + density / 10.0).min(255.0) as u8;
+        // [land] Pressure decides: quiet land stays low however much is
+        // built round it, and a busy, well-served block may rise a few
+        // floors over its neighbours (`estate::Pressure::floors_at`).
+        let cap = if self.pressure_active() { self.pressure_floors(lot_id).min(neighbours.saturating_add(crate::estate::PRESSURE_OVER_NEIGHBOURS)).max(1) } else { neighbours };
         // [tools] Under a deck spanning over the lot: what fits beneath it.
         match self.deck_cap(lot_id) {
             Some(deck) => cap.min(deck),
@@ -888,7 +910,13 @@ impl World {
             (_, Tier::Mid) => base + 1,
             (_, Tier::Low) => base.max(1),
         };
-        floors.clamp(1, self.height_cap(lot_id).max(1))
+        let floors = floors.clamp(1, self.height_cap(lot_id).max(1));
+        // [land] Cheap homes on quiet land: one storey (a row of shacks, a
+        // trailer park, huts) housing as many as the walk-up it replaces.
+        if lu == LandUse::Residential && tier == Tier::Low && floors <= 2 && self.pressure_active() && self.pressure_floors(lot_id) <= 2 {
+            return 1;
+        }
+        floors
     }
 
     fn available_land_uses(&self) -> [bool; 6] {
@@ -925,6 +953,8 @@ impl World {
             crate::prof!("daily_districts", self.daily_districts());
             crate::prof!("daily_tourism", self.daily_tourism());
             crate::prof!("close_day_record", self.close_day_record(record));
+            // [land] Buyouts, branches, merges, McMansions, billionaires.
+            self.daily_estate();
         }
         // Periodic work is staggered so no tick carries more than one heavy
         // job: the hour starts at :00, sites advance at :30, land value runs
@@ -938,6 +968,10 @@ impl World {
         }
         if tick % 60 == 30 {
             crate::prof!("step_construction", self.step_construction());
+        }
+        // [land] People present and moving, at :13 clear of the rest.
+        if tick % 60 == 13 {
+            crate::prof!("hourly_pressure", self.hourly_pressure());
         }
         let lv = tick % 120;
         if (LAND_VALUE_PHASE..LAND_VALUE_PHASE + LAND_VALUE_STRIPS).contains(&lv) {
@@ -986,6 +1020,8 @@ impl World {
             self.deferred_intents.retain(|_, (_, at)| tick.saturating_sub(*at) <= trips::DEFERRED_INTENT_TTL);
         }
         self.step_traffic();
+        // [land] Billionaires' convoys form and follow.
+        self.step_convoys();
         self.step_air();
         self.step_taxis();
         self.step_driving();
@@ -1053,6 +1089,10 @@ impl World {
         for car_id in arrived {
             // [emergency] A fugitive got where it was running: on it runs.
             if self.chase_car_arrived(car_id) {
+                continue;
+            }
+            // [land] A convoy's escort or police car at the end of its run.
+            if self.convoy_car_arrived(car_id) {
                 continue;
             }
             // Fire engines, police cars and ambulances: services handle them.
