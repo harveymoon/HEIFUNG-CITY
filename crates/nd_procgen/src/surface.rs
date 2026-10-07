@@ -62,10 +62,13 @@ pub enum Surface {
     /// markings fell to a third of their value by day and read dark grey
     /// on sunlit asphalt.
     Paint,
+    /// Tactile paving at a dropped kerb: a square grid of truncated domes
+    /// in the texture, so a pad is two triangles however many dots it has.
+    Tactile,
 }
 
 impl Surface {
-    pub const ALL: [Surface; 26] = [
+    pub const ALL: [Surface; 27] = [
         Surface::Concrete,
         Surface::Plaster,
         Surface::Brick,
@@ -92,6 +95,7 @@ impl Surface {
         Surface::Container,
         Surface::WornContainer,
         Surface::Paint,
+        Surface::Tactile,
     ];
 
     /// The surfaces that have a weathered variant, paired with it.
@@ -146,6 +150,8 @@ impl Surface {
             Surface::Glow => 1.0,
             // 20 corrugations of 0.28 m.
             Surface::Container => 5.6,
+            // 4 x 4 domes.
+            Surface::Tactile => 0.6,
             _ => 1.0,
         }
     }
@@ -207,6 +213,7 @@ impl Surface {
             Surface::Glass => 0.3,
             Surface::Matte => 0.2,
             Surface::Glow => 0.0,
+            Surface::Tactile => 2.2,
             _ => 0.5,
         }
     }
