@@ -377,6 +377,11 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         }
     });
     placeable_info(ui, sim, tools.build_item());
+    // [free-placement] What a click under the pointer would do.
+    if let Some((ok, note, _)) = &tools.build_here {
+        let col = if *ok { egui::Color32::from_rgb(120, 230, 140) } else { egui::Color32::from_rgb(240, 110, 120) };
+        ui.label(egui::RichText::new(format!("Here: {note}")).small().color(col));
+    }
     if tools.build_cat == BuildCategory::Services {
         let s = &sim.world.services.stats;
         hint(ui, &format!("Coverage of homes: police {:.0}% · fire {:.0}% · health {:.0}% · schools {:.0}% · {} incidents today · avg response {:.0} min · {}/{} units out · {} fires burning", s.coverage[0] * 100.0, s.coverage[1] * 100.0, s.coverage[2] * 100.0, s.coverage[3] * 100.0, s.incidents_today.iter().sum::<u32>(), s.avg_response(), s.units_busy, s.units, s.fires_burning));

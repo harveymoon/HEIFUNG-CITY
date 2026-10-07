@@ -67,8 +67,9 @@ impl World {
         if self.under_facility(lot.center) {
             return Err("that ground belongs to a station or yard".into());
         }
-        if !kind.allowed_on(lot.land_use) {
-            return Err(format!("a {} cannot go on {} land", kind.label(), lot.land_use.label().to_lowercase()));
+        // [free-placement] Any zone, or none: only park land is kept.
+        if !crate::services::Placeable::Plant(kind).allowed_on(lot.land_use) {
+            return Err(format!("that is park land: unzone it before putting a {} there", kind.label()));
         }
         if lot.area() < kind.min_area() {
             return Err(format!("too small: a {} needs {:.0} m²", kind.label(), kind.min_area()));
@@ -212,8 +213,13 @@ impl World {
     /// with the hot spot's heat, everything else 1. The Buildings tool calls
     /// this to show where the water and hot-ground plants may go.
     pub fn power_site(&self, lot_id: LotId, kind: PowerPlantKind) -> Result<f32, String> {
+        self.power_site_on(self.lots.get(lot_id).ok_or("no such lot")?, kind)
+    }
+
+    /// [free-placement] [`World::power_site`] for a lot that may not be
+    /// made yet (a site on unzoned ground).
+    pub fn power_site_on(&self, lot: &Lot, kind: PowerPlantKind) -> Result<f32, String> {
         use crate::power::PlantSite;
-        let lot = self.lots.get(lot_id).ok_or("no such lot")?;
         match kind.site() {
             PlantSite::Anywhere => Ok(1.0),
             PlantSite::River => {

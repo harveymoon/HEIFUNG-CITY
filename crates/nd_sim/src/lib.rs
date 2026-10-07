@@ -102,7 +102,7 @@ pub use subway::{MetroLine, MetroLineId, MetroTrain, MetroTrainId, Subway, Subwa
 pub use transit::{BusRoute, BusStop, RouteId, Transit, TransitStats};
 pub use rail::{Facility, FacilityId, Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
 pub use services::{BuildCategory, Incident, IncidentKind, Placeable, ServiceKind, ServiceSite, Services, ServiceStats, Unit, UnitId, UnitKind};
-pub use world::{GridAsset, PlantRow, World, WorldConfig, RIGHTING_MIN};
+pub use world::{GridAsset, PlacementSite, PlantRow, World, WorldConfig, RIGHTING_MIN};
 pub use world::{ApproachView, CrossingView, IntersectionView, PhaseView, ProjectCheck};
 /// [camera]
 pub use world::{Gift, Holding, GIFT_AMOUNT};

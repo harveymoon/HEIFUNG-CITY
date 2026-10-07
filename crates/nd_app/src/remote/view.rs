@@ -464,6 +464,7 @@ pub fn lot_row(w: &World, id: LotId, l: &Lot) -> Value {
         "id": key_str(id), "land_use": l.land_use.label(), "pos": v2(l.center), "area": round(l.area()),
         "building": opt_key(l.building), "vacant": l.building.is_none() && l.usable(), "landlocked": l.landlocked,
         "park": l.park.is_some(), "land_value": round(w.land_value.at(l.center)), "car_access": l.car_access(),
+        "city_ground": w.is_city_ground(l),
     })
 }
 
@@ -471,7 +472,7 @@ pub fn lot_detail(w: &World, id: LotId, l: &Lot) -> Value {
     let value = w.land_value.at(l.center);
     let zone = w.zones.get(l.zone).map(|z| json!({ "id": key_str(l.zone), "land_use": z.land_use.label(), "area": round(polygon_area(&z.polygon).abs()) }));
     json!({
-        "id": key_str(id), "land_use": l.land_use.label(), "pos": v2(l.center), "polygon": points(&l.polygon), "area": round(l.area()),
+        "id": key_str(id), "land_use": l.land_use.label(), "city_ground": w.is_city_ground(l), "pos": v2(l.center), "polygon": points(&l.polygon), "area": round(l.area()),
         "width": round(l.width()), "depth": round(l.depth()), "entrance": v2(l.entrance()), "front_dir": v2(l.front_dir),
         "front_segment": l.front_segment.0, "car_segment": l.car_segment.map(|s| s.0),
         "building": opt_key(l.building), "building_name": building_name(w, l.building),

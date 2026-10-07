@@ -15,6 +15,8 @@ impl World {
             return Err(problem);
         }
         self.take_over_lot(lot_id, size.label())?;
+        // [free-placement] The city's own lot: out of the zone.
+        self.take_for_city(lot_id);
         self.economy.debit_item(Flow::Construction, size.cost(), Item::Named(size.label().to_string()));
         let n = self.fresh_seed() % 90 + 1;
         let name = match size {

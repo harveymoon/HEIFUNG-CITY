@@ -23,7 +23,12 @@ pub fn card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
     let value = w.land_value.at(lot.center);
     // [access] Walking time to parks and nightlife, and what it is worth to homes.
     let access = w.land_value.access_at(lot.center);
-    let zone = w.zones.get(lot.zone).map_or_else(|| "no zone".to_string(), |z| format!("{} zone of {:.0} m²", z.land_use.label(), polygon_area(&z.polygon).abs()));
+    // [free-placement] Under a city building the ground is out of the zoning.
+    let zone = if w.is_city_ground(lot) {
+        "city ground, out of the zoning".to_string()
+    } else {
+        w.zones.get(lot.zone).map_or_else(|| "no zone".to_string(), |z| format!("{} zone of {:.0} m²", z.land_use.label(), polygon_area(&z.polygon).abs()))
+    };
     let small = |t: String| egui::RichText::new(t).small();
 
     // Keep the card on screen: flip to the other side of the pointer near the edges.

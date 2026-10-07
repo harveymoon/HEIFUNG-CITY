@@ -204,6 +204,12 @@ impl World {
         b.business = None;
         b.parking_capacity = parking;
         setup(&mut b);
+        // [free-placement] The city's own building: its ground leaves the
+        // zone (a station's or dock's own lot is in none and stays as it is).
+        if Self::is_civic_structure(&b) && self.zones.contains_key(self.lots[lot_id].zone) {
+            self.take_for_city(lot_id);
+            b.land_use = LandUse::Civic;
+        }
         // What the city took the lot over from is cleared first.
         b.demolition = self.take_clearing(lot_id);
         let id = self.buildings.insert(b);

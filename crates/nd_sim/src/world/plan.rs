@@ -483,23 +483,26 @@ impl World {
     /// Parcels from the roads, zoning from the master plan, a lot for every
     /// zoned parcel (or run of joined parcels). Zone polygons keep their
     /// zone; painted lots get a zone of their own outline.
-    /// `pins` are lots under city structures: their parcels keep that use
-    /// whatever is planned. `parks` are lots with a park: their parcels
+    /// `pins` are lots under city buildings: their parcels are the city's
+    /// ground whatever is planned, one Civic lot per pin with a zone of its
+    /// own (returned), out of the zoning until the building is bulldozed.
+    /// `parks` are lots with a park: their parcels
     /// stay park only where the plan leaves them unzoned (a park rezoned
     /// for building is left for development to clear).
-    fn build_lots_from_parcels(&mut self, pins: &[(Vec<Vec2>, LandUse)], parks: &[Vec<Vec2>]) {
+    fn build_lots_from_parcels(&mut self, pins: &[Vec<Vec2>], parks: &[Vec<Vec2>]) -> Vec<LotId> {
         let parcels = self.cut_parcels();
         self.parcels = ParcelMap::new(parcels, self.parcels.version + 1);
         self.zones.clear();
         let mut zoning = parcel_zoning(&self.parcels, &self.master);
-        // Ground under the city's own structures keeps the use it had,
-        // whatever zoning was painted or drawn over it since: those parcels
-        // change only once the structure is bulldozed.
+        // [free-placement] Ground under the city's own buildings is not the
+        // zone's, whatever zoning was painted or drawn over it since: those
+        // parcels change only once the building is bulldozed.
+        let mut pinned_to: Vec<Option<usize>> = vec![None; zoning.len()];
         for (i, z) in zoning.iter_mut().enumerate() {
             let c = self.parcels.parcels[i].center;
-            if let Some((_, lu)) = pins.iter().find(|(poly, _)| point_in_polygon(c, poly)) {
-                let gid = z.map_or(GestureId(u64::MAX), |(_, g)| g);
-                *z = Some((*lu, gid));
+            if let Some(k) = pins.iter().position(|poly| point_in_polygon(c, poly)) {
+                pinned_to[i] = Some(k);
+                *z = None;
             } else if z.is_none() && parks.iter().any(|poly| point_in_polygon(c, poly)) {
                 *z = Some((LandUse::Park, GestureId(u64::MAX)));
             }
@@ -536,7 +539,34 @@ impl World {
                 }
             }
         }
+        // [free-placement] One city lot per pin, from the parcels under it.
+        let mut pinned = Vec::new();
+        for k in 0..pins.len() {
+            let members: Vec<usize> = (0..pinned_to.len()).filter(|&i| pinned_to[i] == Some(k)).collect();
+            if members.is_empty() {
+                continue;
+            }
+            let polys: Vec<Vec<Vec2>> = members.iter().map(|&i| self.parcels.parcels[i].polygon.clone()).collect();
+            let Some(poly) = crate::zoning::joined_outline(&polys) else { continue };
+            let center = if members.len() == 1 { self.parcels.parcels[members[0]].center } else { inner_center(&poly) };
+            let zid = self.zones.insert(Zone { polygon: poly.clone(), land_use: LandUse::Civic });
+            let Some(mut lot) = crate::zoning::make_placed_lot(zid, poly, center, &self.roads) else {
+                self.zones.remove(zid);
+                continue;
+            };
+            if members.iter().any(|&i| self.parcels.parcels[i].rough) {
+                lot.landlocked = true;
+            }
+            let id = self.lots.insert(lot);
+            for &i in &members {
+                let p = &mut self.parcels.parcels[i];
+                p.lot = Some(id);
+                p.land_use = Some(LandUse::Civic);
+            }
+            pinned.push(id);
+        }
         self.refresh_planned_zoning();
+        pinned
     }
 
     /// Every change to master or project goes through here: the version
@@ -965,17 +995,13 @@ impl World {
         let old_lots = std::mem::replace(&mut self.lots, SlotMap::with_key());
         let lenient = !self.parcel_lots;
         self.parcel_lots = true;
-        let pins: Vec<(Vec<Vec2>, LandUse)> = old_lots
-            .values()
-            .filter(|l| l.building.and_then(|b| self.buildings.get(b)).is_some_and(Self::is_civic_structure))
-            .map(|l| (l.polygon.clone(), l.land_use))
-            .collect();
+        let pins: Vec<Vec<Vec2>> = old_lots.values().filter(|l| l.building.is_some_and(|b| self.is_city_building(b))).map(|l| l.polygon.clone()).collect();
         let parks: Vec<Vec<Vec2>> = old_lots
             .values()
             .filter(|l| l.building.and_then(|b| self.buildings.get(b)).is_some_and(|b| b.land_use == LandUse::Park))
             .map(|l| l.polygon.clone())
             .collect();
-        self.build_lots_from_parcels(&pins, &parks);
+        let pinned = self.build_lots_from_parcels(&pins, &parks);
         // Lots on ground too steep to level are left as rough land.
         self.grade_lots();
         // Facilities: their footprints are lots of their own, and zoned lots
@@ -992,7 +1018,7 @@ impl World {
             let drop: Vec<LotId> = self
                 .lots
                 .iter()
-                .filter(|(_, l)| l.land_use != LandUse::Park && !pins.iter().any(|(pp, _)| *pp == l.polygon))
+                .filter(|(id, l)| l.land_use != LandUse::Park && !pinned.contains(id))
                 .filter(|(_, l)| self.pillars_on(&l.polygon) || self.deck_cap_of(&l.polygon) == Some(0))
                 .map(|(id, _)| id)
                 .collect();
@@ -1045,7 +1071,9 @@ impl World {
                 .filter(|(_, d)| *d < 6.0)
                 .min_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|(id, _)| id);
-            let civic = self.buildings.get(bid).is_some_and(Self::is_civic_structure);
+            // [free-placement] City buildings (city parking too) stay on the
+            // city lot under them.
+            let civic = self.is_city_building(bid);
             let floors = self.buildings.get(bid).map_or(0, |b| b.floors);
             match found {
                 // [tools] Bought out for a column, or too tall for the deck
@@ -1056,7 +1084,7 @@ impl World {
                 // cannot keep its building, even if a lot is still there.
                 Some(new_lot)
                     if !lenient
-                        && !self.buildings.get(bid).is_some_and(Self::is_civic_structure)
+                        && !civic
                         && outlines_differ(&old.polygon, &self.lots[new_lot].polygon, EXPROPRIATE_AREA_TOL, EXPROPRIATE_DIST_TOL) =>
                 {
                     demolish.push((bid, old.center, true));
@@ -1092,6 +1120,10 @@ impl World {
 
         // Everything else that names a lot by key follows it to its new key.
         self.remap_lot_keys(&old_lots, &grid, &carried);
+        // [free-placement] City buildings' lots are the city's (an older
+        // save's first rebuild switches them); city ground whose building did
+        // not survive the works goes back to the plan.
+        self.settle_city_ground(&pinned, false);
 
         // Road heights and the ground they are graded into; new bridges are paid for.
         self.rebuild_ground();
@@ -1250,7 +1282,7 @@ impl World {
         if self.under_facility(p.center) {
             return true;
         }
-        self.lots.values().any(|l| l.contains(p.center) && l.building.and_then(|b| self.buildings.get(b)).is_some_and(Self::is_civic_structure))
+        self.lots.values().any(|l| l.contains(p.center) && self.is_city_ground(l))
     }
 
     /// Why parcel `i` cannot be zoned `lu` (or unzoned, with None): a city
@@ -1303,9 +1335,14 @@ impl World {
         if self.begin_demolition(bid, at, memory) {
             return;
         }
+        let city = self.is_city_building(bid);
         let Some(b) = self.buildings.remove(bid) else { return };
         if at.is_none() && self.lots.get(b.lot).is_some_and(|l| l.building == Some(bid)) {
             self.lots[b.lot].building = None;
+            // [free-placement] Its ground goes back to the plan.
+            if city {
+                self.release_city_lot(b.lot, true);
+            }
         }
         let tick = self.clock.tick;
         let center = self.lots.get(b.lot).map(|l| l.center).or(at).unwrap_or(Vec2::ZERO);

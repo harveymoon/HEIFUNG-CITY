@@ -532,7 +532,15 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "add_zone" => add_zone(cmd, ctx),
         "paint" => paint(cmd, ctx),
         "bulldoze" => {
-            let id = GestureId(opt_u64(cmd, "gesture_id")?.ok_or("missing gesture_id")?);
+            // [free-placement] A city building goes at once, its ground back
+            // to the zoning plan.
+            if let Some(v) = field(cmd, "building") {
+                let bid: nd_sim::BuildingId = key_from(v)?;
+                let msg = ctx.sim.world.bulldoze_building(bid)?;
+                ctx.tools.status = format!("{msg}; its ground goes back to the zoning plan.");
+                return Ok(json!({ "message": ctx.tools.status, "treasury": round(ctx.sim.world.economy.treasury) }));
+            }
+            let id = GestureId(opt_u64(cmd, "gesture_id")?.ok_or("missing gesture_id (or building)")?);
             if ctx.sim.world.gesture(id).is_none() {
                 return Err(format!("no gesture {}", id.0));
             }
@@ -1384,9 +1392,25 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         other => {
             let tier = opt_str(cmd, "tier")?.map(|t| nd_sim::services::parse_tier(t).ok_or_else(|| format!("unknown tier {t:?}; low, mid or high"))).transpose()?;
             let what = nd_sim::Placeable::parse(other, tier).ok_or_else(|| format!("unknown kind {other:?}; one of station, freight_yard, depot, parking, coal, solar, wind, nuclear, hydro, tidal, geothermal, battery_small, battery_medium, battery_large, police, fire, hospital (clinic), school, dispatch, monument, stadium, vertiport (services take tier low|mid|high or a :tier suffix)"))?;
-            let lot = lot_near(w, p).ok_or("no lot there: aim at a lot")?;
-            let id = w.place_on_lot(what, lot)?;
-            (id, format!("{} built for {:.0}; {:.0}/day", what.label(), what.cost(), what.upkeep()))
+            // [free-placement] Any lot or unzoned ground with road access at
+            // the point (a lot is made for it there); off both, the nearest
+            // vacant lot within 80 m. `check: true` only says what would happen.
+            let site = w.placement_site(what, p);
+            if opt_bool(cmd, "check")?.unwrap_or(false) {
+                return Ok(match (site, w.placement_problem_at(what, p)) {
+                    (Ok(site), Ok(_)) => json!({ "ok": true, "note": site.note(), "lot": site.lot.map(key_str), "parcels": site.parcels.len(), "leaves_zone": site.leaves_zone.map(|l| l.label()), "outline": points(&site.outline) }),
+                    (_, Err(why)) => json!({ "ok": false, "reason": why }),
+                    (Err(why), _) => json!({ "ok": false, "reason": why }),
+                });
+            }
+            let (id, here) = match site {
+                Ok(site) => (w.place_building(what, p)?, site.note()),
+                Err(_) => {
+                    let lot = lot_near(w, p).ok_or("no lot or usable parcel there: aim at ground along a road")?;
+                    (w.place_on_lot(what, lot)?, "nearest lot".into())
+                }
+            };
+            (id, format!("{} built for {:.0}; {:.0}/day ({here})", what.label(), what.cost(), what.upkeep()))
         }
     };
     *ctx.selection = Selection::Building(id);

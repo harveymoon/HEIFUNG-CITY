@@ -401,16 +401,6 @@ impl ServiceKind {
         base * [0.75, 1.0, 1.6][tier.index()]
     }
 
-    pub fn allowed_on(self, lu: LandUse) -> bool {
-        match self {
-            ServiceKind::Monument => lu != LandUse::Industrial,
-            ServiceKind::Stadium => matches!(lu, LandUse::Entertainment | LandUse::Civic | LandUse::Commercial),
-            ServiceKind::Jail | ServiceKind::TrashDepot => matches!(lu, LandUse::Civic | LandUse::Industrial),
-            ServiceKind::Fire | ServiceKind::Vertiport | ServiceKind::ParkingEnforcement => lu != LandUse::Park,
-            _ => lu != LandUse::Park && lu != LandUse::Industrial,
-        }
-    }
-
     /// Pull on the land value around it: (radius, weight). Coverage is the
     /// real benefit (lower risk); this is the reassurance of a station up
     /// the road, or the draw of a landmark.
@@ -688,20 +678,17 @@ impl Placeable {
         }
     }
 
-    /// Whether it goes on a lot of this land use (rail pieces go anywhere).
+    /// Whether it goes on a lot of this land use. [free-placement] The zone
+    /// is no bar to the city's own buildings: the ground leaves the zone
+    /// when one goes down (unzoned ground takes them too). Only park land
+    /// is kept, but for a metro entrance (a kiosk on a plaza fits in a
+    /// park); rail pieces, docks and tolls are not on lots at all. What
+    /// does matter physically is checked elsewhere: road access, a street
+    /// out front, the lot's size, the site (river, coast, hot spot).
     pub fn allowed_on(self, lu: LandUse) -> bool {
         match self {
-            Placeable::Plant(k) => k.allowed_on(lu),
-            Placeable::Battery(k) => k.allowed_on(lu),
-            Placeable::Service(k, _) => k.allowed_on(lu),
-            Placeable::BusDepot => !matches!(lu, LandUse::Residential | LandUse::Park),
-            Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_) => true,
-            // Any road-adjacent lot but a park.
-            Placeable::ParkingLot(_) => lu != LandUse::Park,
-            // An entrance plaza fits anywhere, parks included.
-            Placeable::MetroStation => true,
-            // Freight belongs on working land.
-            Placeable::CargoHub => !matches!(lu, LandUse::Residential | LandUse::Park),
+            Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_) | Placeable::MetroStation => true,
+            _ => lu != LandUse::Park,
         }
     }
 
