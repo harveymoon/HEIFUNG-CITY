@@ -31,6 +31,9 @@ use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
 
 /// Emergency vehicles, fires and rubble (render/emergency.rs).
+/// Offscreen renders: Build window thumbnails, save pictures.
+mod thumbs;
+pub use thumbs::Thumbs;
 mod air;
 /// [districts] The district layer; [tourism] visitors on foot.
 mod districts;
@@ -120,8 +123,9 @@ struct TollTag;
 #[derive(Component)]
 struct TrainTag;
 
-/// Toggleable data layers drawn over the ground.
-#[derive(Resource)]
+/// Data layers drawn over the ground, one at a time (`crate::map_layers`
+/// keeps them exclusive and lists them for the UI and the API).
+#[derive(Resource, Clone)]
 pub struct Overlays {
     pub land_value: bool,
     /// Pedestrian network: lot loops, alleys and gates.
@@ -153,49 +157,21 @@ impl Default for Overlays {
 }
 
 impl Overlays {
-    /// Every layer: API name, label, hotkey. The API's `overlay {layer, on}`
-    /// and the Land window's Layers section both go through this list.
-    pub const LAYERS: [(&'static str, &'static str, &'static str); 8] = [
-        ("land_value", "Land value", "V"),
-        ("traffic", "Traffic load", ""),
-        ("traffic_types", "Traffic types", ""),
-        ("people", "People", ""),
-        ("pollution", "Pollution and noise", ""),
-        ("paths", "Pedestrian network", "P"),
-        ("zoning", "Zoning layer", "O"),
-        ("districts", "Districts", ""),
-    ];
     /// The heat-map style layers the L key steps through, one at a time.
     pub const CYCLE: [&'static str; 5] = ["land_value", "traffic", "traffic_types", "people", "pollution"];
 
+    /// A layer's flag by API name (`crate::map_layers::MAP_LAYERS`), or the
+    /// "show other projects" switch, which is not a layer.
     pub fn flag(&mut self, layer: &str) -> Option<&mut bool> {
-        Some(match layer {
-            "land_value" => &mut self.land_value,
-            "paths" => &mut self.paths,
-            "zoning" => &mut self.zoning,
-            "projects" => &mut self.projects,
-            "traffic" => &mut self.traffic,
-            "traffic_types" => &mut self.traffic_types,
-            "people" => &mut self.people,
-            "pollution" => &mut self.pollution,
-            "districts" => &mut self.districts,
-            _ => return None,
-        })
+        if layer == "projects" {
+            return Some(&mut self.projects);
+        }
+        let entry = crate::map_layers::MAP_LAYERS.iter().find(|l| l.key == layer)?;
+        Some((entry.flag)(self))
     }
 
     pub fn get(&self, layer: &str) -> Option<bool> {
-        Some(match layer {
-            "land_value" => self.land_value,
-            "paths" => self.paths,
-            "zoning" => self.zoning,
-            "projects" => self.projects,
-            "traffic" => self.traffic,
-            "traffic_types" => self.traffic_types,
-            "people" => self.people,
-            "pollution" => self.pollution,
-            "districts" => self.districts,
-            _ => return None,
-        })
+        self.clone().flag(layer).map(|f| *f)
     }
 
     /// Step to the next land survey layer (K); after the last, none.
@@ -394,6 +370,7 @@ pub struct RenderPlugin;
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<people::PeopleRender>();
+        app.add_plugins(thumbs::ThumbsPlugin);
         app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().init_resource::<BuildingStyles>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_systems(Startup, (lights::add_shader, setup)).add_systems(
             Update,
             (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)

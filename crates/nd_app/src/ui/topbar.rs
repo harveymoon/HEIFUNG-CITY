@@ -5,7 +5,9 @@
 use bevy_egui::egui;
 
 use super::windows::Info;
-use super::{help, neon, UiCtx, GOLD, WARN};
+use super::{help, neon, section, UiCtx, GOLD, IVORY, WARN};
+use crate::map_layers::{self, LayerId};
+use crate::render::Overlays;
 use crate::camera::CameraMode;
 use crate::sim::SPEEDS;
 
@@ -22,6 +24,8 @@ pub fn show(ui: &mut egui::Ui, p: &mut UiCtx) {
         clock_and_speed(ui, p);
         ui.separator();
         treasury_and_population(ui, p);
+        ui.separator();
+        layer_button(ui, p);
         ui.separator();
         window_toggles(ui);
         ui.separator();
@@ -119,5 +123,56 @@ fn camera(ui: &mut egui::Ui, p: &mut UiCtx) {
     }
     if ui.selectable_label(!walking, "Orbit").on_hover_text(help::CAMERA_ORBIT).clicked() {
         *p.mode = CameraMode::Orbit;
+    }
+}
+
+/// The map layer button: the layer showing (or None), a dropdown to pick
+/// another. Layers are exclusive; the legend shows the key of the one on.
+fn layer_button(ui: &mut egui::Ui, p: &mut UiCtx) {
+    let active = map_layers::active(p.overlays);
+    let text = match active {
+        Some(l) => egui::RichText::new(format!("Layer: {}", l.label())).color(GOLD).strong(),
+        None => egui::RichText::new("Layer: none").color(IVORY),
+    };
+    egui::ComboBox::from_id_salt("map_layer")
+        .selected_text(text)
+        .width(170.0)
+        .height(620.0)
+        .show_ui(ui, |ui| layer_list(ui, p.overlays, false))
+        .response
+        .on_hover_text("The map layer: one data view at a time, with its colour key at the bottom right. V, O, P toggle theirs; L steps through the heat maps, K through the land layers.");
+}
+
+/// Every map layer under its group heading, the one on lit; a click shows
+/// it alone, "None" clears the map. `wrap` lays each group out in a
+/// wrapping row (the View window) rather than a column (the dropdown).
+pub fn layer_list(ui: &mut egui::Ui, overlays: &mut Overlays, wrap: bool) {
+    let active = map_layers::active(overlays);
+    let mut pick: Option<Option<LayerId>> = None;
+    if ui.selectable_label(active.is_none(), "None").on_hover_text("No data layer: the plain map").clicked() {
+        pick = Some(None);
+    }
+    let all = LayerId::all();
+    let mut i = 0;
+    while i < all.len() {
+        let group = all[i].group();
+        let members: Vec<LayerId> = all[i..].iter().copied().take_while(|l| l.group() == group).collect();
+        i += members.len();
+        section(ui, &group.to_uppercase());
+        let mut item = |ui: &mut egui::Ui, l: LayerId| {
+            let key = l.hotkey();
+            let label = if key.is_empty() || wrap { l.label().to_string() } else { format!("{}  [{key}]", l.label()) };
+            if ui.selectable_label(active == Some(l), label).on_hover_text(l.hint()).clicked() {
+                pick = Some(if active == Some(l) { None } else { Some(l) });
+            }
+        };
+        if wrap {
+            ui.horizontal_wrapped(|ui| members.iter().for_each(|l| item(ui, *l)));
+        } else {
+            members.iter().for_each(|l| item(ui, *l));
+        }
+    }
+    if let Some(l) = pick {
+        map_layers::set_active(overlays, l);
     }
 }

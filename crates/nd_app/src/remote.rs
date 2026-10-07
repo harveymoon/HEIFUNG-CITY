@@ -379,6 +379,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(json!({ "ticks": n, "clock": clock(&ctx.sim), "took_ms": start.elapsed().as_millis() as u64 }))
         }
         "seed_demo" => {
+            ctx.saves.title = false;
             ctx.sim.seed_demo_district();
             ctx.tools.status = "Demo district laid out around the centre".into();
             Ok(json!({ "buildings": ctx.sim.world.buildings.len(), "lots": ctx.sim.world.lots.len() }))
@@ -389,6 +390,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let Ctx { sim, tools, selection, eplan, flags, saves, follow, .. } = &mut *ctx;
             load_now(&path, sim, tools, selection, eplan, flags);
             saves.mark_dirty();
+            saves.title = false;
             follow.0 = None;
             if flags.message.starts_with("load failed") {
                 return Err(flags.message.clone());
@@ -398,6 +400,8 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         "new_game" => {
             let params = land::params_from(cmd)?;
+            ctx.saves.title = false;
+            ctx.sim.paused = false;
             ctx.sim.new_game(params);
             *ctx.tools = ToolState::default();
             *ctx.selection = Selection::None;
@@ -485,45 +489,75 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "tool" => tool(cmd, ctx),
         "camera" => camera(cmd, ctx),
         "overlay" => {
+            // Map layers are exclusive (`crate::map_layers`): turning one on
+            // turns every other off; turning the one showing off leaves none.
+            use crate::map_layers::{self as ml, LayerId};
             let o = &mut ctx.overlays;
-            // `{layer, on}` (on omitted toggles), and the older form with a
-            // bool per layer name.
+            let unknown = |k: &str| format!("unknown layer {k:?}; one of none, {}", ml::keys().join(", "));
+            let parse = |k: &str| -> Result<Option<LayerId>, String> {
+                if k.is_empty() || k.eq_ignore_ascii_case("none") || k.eq_ignore_ascii_case("off") {
+                    Ok(None)
+                } else {
+                    LayerId::parse(k).map(Some).ok_or_else(|| unknown(k))
+                }
+            };
+            let switch = |o: &mut Overlays, l: LayerId, on: bool| {
+                if on {
+                    ml::set_active(o, Some(l));
+                } else if ml::active(o) == Some(l) {
+                    ml::set_active(o, None);
+                }
+            };
+            // `{active: "traffic" | "none"}`: the layer to show.
+            match cmd.get("active") {
+                None => {}
+                Some(Value::Null) => ml::set_active(o, None),
+                Some(_) => {
+                    let k = opt_str(cmd, "active")?.unwrap_or("none");
+                    ml::set_active(o, parse(k)?);
+                }
+            }
+            // `{layer, on}` (on omitted toggles).
             if let Some(layer) = opt_str(cmd, "layer")? {
                 let on = opt_bool(cmd, "on")?;
-                if let Some(flag) = o.flag(layer) {
-                    *flag = on.unwrap_or(!*flag);
-                } else if let Some(l) = LandLayer::from_key(layer) {
-                    // Land survey layers are one at a time: on shows this
-                    // one (replacing any other), off hides it.
-                    let now = o.land == Some(l);
-                    o.land = if on.unwrap_or(!now) { Some(l) } else if now { None } else { o.land };
+                if layer == "projects" {
+                    o.projects = on.unwrap_or(!o.projects);
                 } else {
-                    return Err(format!(
-                        "unknown layer {layer:?}; one of {}, or a land layer: {}",
-                        Overlays::LAYERS.iter().map(|l| l.0).collect::<Vec<_>>().join(", "),
-                        LandLayer::ALL.iter().map(|l| l.key()).collect::<Vec<_>>().join(", ")
-                    ));
-                }
-            }
-            // `{land: "oil"}` picks the land layer, `"none"` (or null) hides it.
-            match cmd.get("land") {
-                None => {}
-                Some(Value::Null) => o.land = None,
-                Some(_) => {
-                    let k = opt_str(cmd, "land")?.unwrap_or("none");
-                    o.land = if k.eq_ignore_ascii_case("none") || k.eq_ignore_ascii_case("off") || k.is_empty() {
-                        None
-                    } else {
-                        Some(LandLayer::from_key(k).ok_or_else(|| format!("unknown land layer {k:?}; one of none, {}", LandLayer::ALL.iter().map(|l| l.key()).collect::<Vec<_>>().join(", ")))?)
-                    };
-                }
-            }
-            for (name, _, _) in Overlays::LAYERS {
-                if let Some(b) = opt_bool(cmd, name)? {
-                    if let Some(f) = o.flag(name) {
-                        *f = b;
+                    match parse(layer)? {
+                        Some(l) => {
+                            let now = ml::active(o) == Some(l);
+                            switch(o, l, on.unwrap_or(!now));
+                        }
+                        None => ml::set_active(o, None),
                     }
                 }
+            }
+            // `{land: "oil"}` shows a land layer, `"none"` (or null) hides
+            // whichever land layer shows.
+            match cmd.get("land") {
+                None => {}
+                Some(Value::Null) => {
+                    if o.land.is_some() {
+                        o.land = None;
+                    }
+                }
+                Some(_) => {
+                    let k = opt_str(cmd, "land")?.unwrap_or("none");
+                    match parse(k)? {
+                        Some(l @ LayerId::Land(_)) => ml::set_active(o, Some(l)),
+                        Some(_) => return Err(format!("{k:?} is not a land layer; one of none, {}", LandLayer::ALL.iter().map(|l| l.key()).collect::<Vec<_>>().join(", "))),
+                        None => o.land = None,
+                    }
+                }
+            }
+            // The older form, a bool per layer name: true shows it (alone).
+            for l in ml::MAP_LAYERS {
+                if let Some(b) = opt_bool(cmd, l.key)? {
+                    switch(o, LayerId::parse(l.key).expect("registry key"), b);
+                }
+            }
+            if let Some(b) = opt_bool(cmd, "projects")? {
+                o.projects = b;
             }
             Ok(overlays_json(o))
         }
@@ -609,6 +643,25 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let open = opt_bool(cmd, "open")?.unwrap_or(true);
             ctx.windows.new_game = Some(open);
             Ok(json!({ "window": "new game", "open": open }))
+        }
+        "window" if req_str(cmd, "name").is_ok_and(|n| n.trim().eq_ignore_ascii_case("build")) => {
+            // The Build window, optionally at a section.
+            let section = match opt_str(cmd, "section")? {
+                Some(k) => Some(crate::ui::build::Cat::parse(k).ok_or_else(|| format!("unknown section {k:?}; one of {}", crate::ui::build::Cat::ALL.iter().map(|c| c.key()).collect::<Vec<_>>().join(", ")))?),
+                None => None,
+            };
+            let open = opt_bool(cmd, "open")?.unwrap_or(if section.is_some() { true } else { !ctx.windows.build_open });
+            ctx.windows.build = Some((open, section));
+            Ok(json!({ "window": "build", "open": open, "section": section.map(|c| c.key()).or(ctx.windows.build_section) }))
+        }
+        "window" if req_str(cmd, "name").is_ok_and(|n| matches!(n.trim().to_ascii_lowercase().as_str(), "title" | "title_screen" | "title screen")) => {
+            let open = opt_bool(cmd, "open")?.unwrap_or(!ctx.saves.title);
+            ctx.saves.title = open;
+            if !open {
+                // As "Play this map": the city behind runs again.
+                ctx.sim.paused = false;
+            }
+            Ok(json!({ "window": "title", "open": open }))
         }
         "window" => {
             let info = window::info_of(req_str(cmd, "name")?)?;
@@ -858,6 +911,8 @@ fn status(ctx: &Ctx) -> Value {
     // Added after the literal: one `json!` this size hits the macro recursion limit.
     v["windows_open"] = json!(ctx.windows.open_names());
     v["window_expanded"] = json!(ctx.windows.expanded_name());
+    v["build_window"] = json!({ "open": ctx.windows.build_open, "section": ctx.windows.build_section });
+    v["title_screen"] = json!(ctx.saves.title);
     // [looks] The figure cache: meshes alive, people outdoors and their distinct looks.
     let st = &ctx.stats;
     v["render"]["people"] = json!({ "meshes": st.people_meshes, "mesh_cap": crate::render::PEOPLE_MESH_CAP, "visible": st.people_visible, "distinct_looks_visible": st.people_looks_visible, "built_total": st.people_built, "borrowed": st.people_borrowed, "materials": 1 });
@@ -873,6 +928,13 @@ fn status(ctx: &Ctx) -> Value {
 // ── saves ───────────────────────────────────────────────────────────────────
 
 fn save(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    if let Some(name) = opt_str(cmd, "name")? {
+        // A named game: saves/<file-safe name>.ron, its sidecar and picture.
+        let Ctx { sim, saves, flags, .. } = ctx;
+        let path = crate::ui::save_as(sim, saves, flags, name)?;
+        let p = slash(&path);
+        return Ok(json!({ "path": absolute(&p), "name": name.trim(), "thumbnail": absolute(&p.replace(".ron", ".png")), "meta": absolute(&p.replace(".ron", ".meta.json")), "note": "the thumbnail is written about half a second later (rendered offscreen)", "message": flags.message }));
+    }
     match opt_str(cmd, "path")? {
         Some(path) => {
             ctx.sim.save(path)?;
@@ -886,26 +948,39 @@ fn save(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             if flags.message.starts_with("save failed") {
                 return Err(flags.message.clone());
             }
-            Ok(json!({ "path": absolute(crate::ui::LATEST), "message": flags.message }))
+            Ok(json!({ "path": absolute(crate::ui::LATEST), "thumbnail": absolute("saves/city.png"), "message": flags.message }))
         }
     }
 }
 
+/// A path with forward slashes.
+fn slash(p: &std::path::Path) -> String {
+    p.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")
+}
+
+/// Every save, newest first, with what its sidecar knows and its picture.
 fn list_saves() -> Value {
-    let mut rows: Vec<(u64, Value)> = std::fs::read_dir("saves")
-        .map(|dir| {
-            dir.flatten()
-                .filter(|e| e.path().extension().is_some_and(|x| x == "ron"))
-                .map(|e| {
-                    let modified = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
-                    let size = e.metadata().map_or(0, |m| m.len());
-                    (modified, json!({ "path": e.path().to_string_lossy().replace('\\', "/"), "modified_unix": modified, "bytes": size }))
-                })
-                .collect()
+    let rows: Vec<Value> = crate::ui::saves::scan()
+        .into_iter()
+        .map(|s| {
+            let modified = s.modified.and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+            let bytes = std::fs::metadata(&s.path).map_or(0, |m| m.len());
+            json!({
+                "path": slash(&s.path),
+                "name": s.label,
+                "kind": s.kind.key(),
+                "modified_unix": modified,
+                "bytes": bytes,
+                "day": s.meta.as_ref().map(|m| m.day),
+                "population": s.meta.as_ref().map(|m| m.population),
+                "treasury": s.meta.as_ref().map(|m| round(m.treasury)),
+                "buildings": s.meta.as_ref().map(|m| m.buildings),
+                "landscape": s.meta.as_ref().map(|m| m.landscape.clone()),
+                "thumbnail": s.picture.as_ref().filter(|p| p.exists()).map(|p| absolute(&slash(p))),
+            })
         })
-        .unwrap_or_default();
-    rows.sort_by(|a, b| b.0.cmp(&a.0));
-    json!({ "saves": rows.into_iter().map(|(_, v)| v).collect::<Vec<_>>(), "latest": crate::ui::LATEST })
+        .collect();
+    json!({ "saves": rows, "latest": crate::ui::LATEST })
 }
 
 fn absolute(path: &str) -> String {
@@ -2077,9 +2152,9 @@ fn help() -> Value {
             "speed": { "index": "0..5", "value": "multiple of real time for what moves (1 = people walk at their true pace; the clock runs 15x faster than that), snapped to the nearest step" },
             "step": { "ticks": "advance n sim minutes now, even while paused (default 1, max 100000)" },
             "seed_demo": {},
-            "save": { "path": "optional; default writes saves/city.ron and a dated slot" },
+            "save": { "name": "optional: save as a named game, saves/<name>.ron (file-safe) with a sidecar <name>.meta.json and a map picture <name>.png", "path": "optional; neither: writes saves/city.ron and a dated slot (with a picture)" },
             "load": { "path": "a .ron save" },
-            "list_saves": {},
+            "list_saves": { "note": "newest first: path, name, kind (named|latest|autosave|dated), modified_unix, bytes, day, population, treasury, buildings, landscape (null for saves without a sidecar), thumbnail (absolute path of the PNG, or null)" },
             "plan": {},
             "add_roundabout": { "center": "[x,y] (snaps onto a junction within 12 m or a street within 6 m)", "radius": "m to the ring centreline, 12..120 (or diameter 24..240)", "lanes": "1|2|3 ring lanes", "implement": "bool", "returns": "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state" },
             "add_road": { "points": "[[x,y] or [x,y,level],...] (2+; level metres above ground, negative below)", "elevation": "level for points without one (number), or a list", "tunnel": "bool: default level -8 m", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true", "implement": "bool, default false (pending in the project)" },
@@ -2100,7 +2175,7 @@ fn help() -> Value {
             "select": { "citizen|building|car|vehicle": "id (vehicle: a parked car)", "at": "[x,y] picks like a click; nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
             "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
-            "overlay": { "layer": "land_value|traffic|traffic_types|people|pollution|paths|zoning, or a land survey layer (one at a time): farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech", "on": "bool, omitted toggles", "land": "a land survey layer key, or none", "<layer name>": "bool (older form, any number at once)" },
+            "overlay": { "active": "the map layer to show, or none (layers are exclusive: showing one hides the others)", "layer": "zoning|land_value|districts|traffic|traffic_types|paths|people|pollution, a land survey layer (farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech), or projects (the dim other-projects switch, not a layer)", "on": "bool, omitted toggles; on hides every other layer", "land": "a land survey layer key, or none", "<layer name>": "bool (older form): true shows it alone, false hides it if it shows" },
             "lighting": { "follow_clock": "bool", "hour": "0..24 (also unpins from the clock)" },
             "heat_vision": { "on": "bool, omitted toggles: the drone thermal camera view (also key H)" },
             "screenshot": { "path": "optional .png; default screenshots/shot-<unix>.png; written a frame or two later" },
@@ -2119,7 +2194,7 @@ fn help() -> Value {
         "taxes": { "set": "{line: rate, ...} where line is a key (residential_low|residential_mid|residential_high|grocery|bakery|gadget_shop|parking|nightlife_low|nightlife_mid|nightlife_high|farming|oil|refinery|manufacturing|logistics|fishing|tech) or a land use for its whole group; rate 0.2 or 20 (= 20%)", "category": "one line (with rate)", "import_duty": "share of import prices (0..1)", "reset": "bool: back to the standard rates", "returns": "every line: rate, default, pull, buildings, homes/jobs, today, yesterday, recent_per_day; by_land_use; duty" },
         "tolls": { "action": "list (default) | price | remove | inspect", "id": "booth id (or at: [x,y])", "price": "toll per car (lorries pay double)", "returns": "booths with cars and revenue today/yesterday/total, paid/free today, upkeep" },
         "export": { "path": "optional; default exports/city-<unix>.json: report + map + history + every row of every list" },
-        "window": { "name": "city|economy|taxes|market|people|power|transit|emergencies|land|districts|saves|help|dev", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns" },
+        "window": { "name": "city|economy|taxes|market|people|power|transit|emergencies|view (or land)|districts|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), or title (the title screen)", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns" },
         "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" }
     });
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), review.as_object()) {
@@ -2149,12 +2224,15 @@ fn help() -> Value {
     v
 }
 
-/// Every map layer and whether it is on.
+/// Every map layer and whether it is on, the one showing (`active`, null
+/// for none: they are exclusive) and the "show other projects" switch.
 fn overlays_json(o: &Overlays) -> Value {
     let mut m = serde_json::Map::new();
-    for (name, _, _) in Overlays::LAYERS {
-        m.insert(name.into(), json!(o.get(name).unwrap_or(false)));
+    for l in crate::map_layers::MAP_LAYERS {
+        m.insert(l.key.into(), json!(o.get(l.key).unwrap_or(false)));
     }
     m.insert("land".into(), json!(o.land.map(|l| l.key())));
+    m.insert("active".into(), json!(crate::map_layers::active(o).map(|l| l.key())));
+    m.insert("projects".into(), json!(o.projects));
     Value::Object(m)
 }

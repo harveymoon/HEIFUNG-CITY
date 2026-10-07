@@ -69,6 +69,26 @@ pub fn header(ui: &mut egui::Ui, info: Info, can_expand: bool) -> bool {
     keep
 }
 
+/// The same header for a window that is not an info window (the Build
+/// window, the title screen): its title, an optional weak note, and close.
+/// Returns whether the window should stay open.
+pub fn title_bar(ui: &mut egui::Ui, title: &str, note: Option<&str>) -> bool {
+    let mut keep = true;
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(title).color(GOLD).strong());
+        if let Some(n) = note {
+            ui.label(egui::RichText::new(n).small().weak());
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if close_button(ui).on_hover_text("Close").clicked() {
+                keep = false;
+            }
+        });
+    });
+    ui.separator();
+    keep
+}
+
 /// A painted cross: the default font has no multiplication-x glyph.
 fn close_button(ui: &mut egui::Ui) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());

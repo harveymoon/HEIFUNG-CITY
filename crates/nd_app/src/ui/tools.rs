@@ -26,30 +26,9 @@ pub fn sub_pane(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &
 }
 
 fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
-    ui.horizontal_wrapped(|ui| {
-        for (label, f, b, k) in ROAD_PRESETS {
-            let on = !tools.roundabout && !tools.tunnel && tools.kind == k && (k != RoadKind::Street || (tools.lanes_fwd == f && tools.lanes_bwd == b));
-            if icons::selectable(ui, on, label, |p, r, c| icons::road(p, r, k, f, b, c)).on_hover_text(preset_hint(label)).clicked() {
-                tools.pick_preset(label);
-            }
-        }
-        let (tf, tb) = (tools.lanes_fwd.max(1), tools.lanes_bwd);
-        if icons::selectable(ui, tools.tunnel && !tools.roundabout, "Tunnel", |p, r, c| {
-            icons::road(p, r, RoadKind::Street, tf, tb, c);
-            // The bore's arch over the lanes.
-            p.rect_stroke(r.shrink(r.width() * 0.08), r.width() * 0.3, egui::Stroke::new(1.5, egui::Color32::from_rgb(170, 160, 150)), egui::StrokeKind::Inside);
-        })
-        .on_hover_text(preset_hint("Tunnel"))
-        .clicked()
-        {
-            tools.pick_preset("Tunnel");
-        }
-        if icons::selectable(ui, tools.roundabout, "Roundabout", |p, r, c| icons::roundabout(p, r, c)).on_hover_text(preset_hint("Roundabout")).clicked() {
-            tools.roundabout = true;
-            tools.tunnel = false;
-            tools.points.clear();
-        }
-    });
+    // The preset (Path, Street, Avenue, Tunnel, Roundabout, ...) is picked in
+    // the Build window's Roads or Rail section; these are its parameters.
+    ui.label(egui::RichText::new(format!("Drawing: {}", road_label(tools))).strong());
     if tools.roundabout {
         ui.horizontal(|ui| {
             let mut d = tools.ring_radius * 2.0;
@@ -109,15 +88,11 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
 }
 
 fn zone(ui: &mut egui::Ui, sim: &Sim, tools: &mut ToolState, assets: &GameAssets) {
+    // The land use is picked in the Build window (Zoning, Parks).
     ui.horizontal_wrapped(|ui| {
-        for lu in LandUse::ALL {
-            let colour = zone_color32(assets.palette.zone_color(lu));
-            let text = egui::RichText::new(lu.label()).color(colour);
-            if icons::selectable(ui, tools.land_use == lu && !tools.unzone, text, |p, r, _| icons::land_use(p, r, lu, colour)).clicked() {
-                tools.land_use = lu;
-                tools.unzone = false;
-            }
-        }
+        let colour = zone_color32(assets.palette.zone_color(tools.land_use));
+        let text = if tools.unzone { egui::RichText::new("Unzoning").strong() } else { egui::RichText::new(format!("Zoning: {}", tools.land_use.label())).strong().color(colour) };
+        ui.label(text);
         if tools.zone_mode != ZoneMode::Polygon && ui.selectable_label(tools.unzone, "Unzone").on_hover_text("Left button erases parcels back to unzoned (the right button always does)").clicked() {
             tools.unzone = !tools.unzone;
         }
@@ -255,19 +230,12 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
 }
 
 fn transit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
-    ui.horizontal(|ui| {
-        for (m, label) in [(TransitMode::Route, "Lines"), (TransitMode::Depot, "Depot"), (TransitMode::Metro, "Metro")] {
-            if ui.selectable_label(tools.transit_mode == m, label).clicked() {
-                tools.transit_mode = m;
-                tools.route_sel = None;
-                tools.metro_draft.clear();
-            }
-        }
-        ui.checkbox(&mut tools.show_routes, "Always show lines");
-    });
+    // Bus lines, metro lines and depots are picked in the Build window's
+    // Transit section.
+    ui.checkbox(&mut tools.show_routes, "Always show bus lines");
     let t = &sim.world.economy.transit;
     if t.depots == 0 {
-        ui.label(egui::RichText::new(format!("No depot: buses cannot run. Place one with Depot on a vacant lot by a street ({:.0} to build, {:.0}/day, {} buses).", nd_sim::transit::DEPOT_COST, nd_sim::transit::DEPOT_UPKEEP_PER_DAY, nd_sim::transit::DEPOT_CAPACITY)).small().color(egui::Color32::from_rgb(255, 160, 90)));
+        ui.label(egui::RichText::new(format!("No depot: buses cannot run. Place one (Build window, Transit, Bus depot) on a vacant lot by a street ({:.0} to build, {:.0}/day, {} buses).", nd_sim::transit::DEPOT_COST, nd_sim::transit::DEPOT_UPKEEP_PER_DAY, nd_sim::transit::DEPOT_CAPACITY)).small().color(egui::Color32::from_rgb(255, 160, 90)));
     } else {
         hint(ui, &format!("{} depot{} for {} buses · {} out · {} waiting · {} riding · {} riders today · fares {:.0} · upkeep {:.0}/day", t.depots, if t.depots == 1 { "" } else { "s" }, t.depot_capacity, t.buses, t.waiting, t.riding, t.riders_today, t.fares_today, t.upkeep_today));
     }
@@ -358,20 +326,14 @@ fn route_row(ui: &mut egui::Ui, tools: &mut ToolState, id: nd_sim::RouteId, r: &
 }
 
 fn rail(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
-    ui.horizontal(|ui| {
-        for (k, label) in [(RailFacility::Station, "Passenger station"), (RailFacility::Central, "Central Station"), (RailFacility::FreightYard, "Freight yard")] {
-            if ui.selectable_label(tools.dock.is_none() && tools.rail_kind == k, label).clicked() {
-                tools.rail_kind = k;
-                tools.dock = None;
-            }
-        }
-    });
+    // The piece is picked in the Build window's Rail section.
     tools.dock = None;
+    ui.label(egui::RichText::new(format!("Placing: {}", tools.rail_kind.label())).strong());
     let r = &sim.world.rail.stats;
     let (w, d) = nd_sim::Facility::size(tools.rail_kind);
     hint(ui, &match tools.rail_kind {
         RailFacility::Station => format!("A piece with track along one side and a street along the other, {w:.0} by {d:.0} m. Click anywhere: set beside track or a street it fuses to them, otherwise it lays stubs for you to join. {:.0} to build, {:.0}/day. People ride between stations for trips over {:.0} m; newcomers arrive by train.", nd_sim::rail::STATION_COST, nd_sim::rail::STATION_UPKEEP_PER_DAY, nd_sim::rail::RAIL_TRIP_MIN),
-        RailFacility::Central => format!("The city's grand terminus, {w:.0} by {d:.0} m: intercity platforms under a vaulted glass hall, a metro station below (lay metro lines to it with the Buses tool's Metro mode) and a bus terminal at its front. People walk {:.0} m to it. One per city; {:.0} to build, {:.0}/day.", nd_sim::rail::CENTRAL_REACH, nd_sim::rail::CENTRAL_COST, nd_sim::rail::CENTRAL_UPKEEP_PER_DAY),
+        RailFacility::Central => format!("The city's grand terminus, {w:.0} by {d:.0} m: intercity platforms under a vaulted glass hall, a metro station below (lay metro lines to it with Transit, Metro lines) and a bus terminal at its front. People walk {:.0} m to it. One per city; {:.0} to build, {:.0}/day.", nd_sim::rail::CENTRAL_REACH, nd_sim::rail::CENTRAL_COST, nd_sim::rail::CENTRAL_UPKEEP_PER_DAY),
         RailFacility::FreightYard => format!("A yard with sidings along one side and a street for lorries along the other, {w:.0} by {d:.0} m, anywhere you like. {:.0} to build, {:.0}/day. Once connected, imports come by rail at {:.0}% of the price and exports earn {:.0}% more.", nd_sim::rail::YARD_COST, nd_sim::rail::YARD_UPKEEP_PER_DAY, nd_sim::rail::RAIL_IMPORT_FACTOR * 100.0, (nd_sim::rail::RAIL_EXPORT_BONUS - 1.0) * 100.0),
     });
     hint(ui, help::tool_hint(Tool::Rail));
@@ -381,27 +343,9 @@ fn rail(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
 /// The Buildings tool: a row of sub-categories, the items in the open one,
 /// a tier picker for services and attractions, and what it costs and does.
 fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
-    ui.horizontal(|ui| {
-        for cat in BuildCategory::ALL {
-            if ui.selectable_label(tools.build_cat == cat, cat.label()).clicked() && tools.build_cat != cat {
-                tools.build_cat = cat;
-                if let Some(first) = cat.items().first() {
-                    tools.build = *first;
-                }
-            }
-        }
-    });
+    // The item is picked in the Build window; the tier is a parameter.
     ui.horizontal_wrapped(|ui| {
-        for item in tools.build_cat.items() {
-            let on = std::mem::discriminant(&tools.build) == std::mem::discriminant(&item) && tools.build.with_tier(Tier::Mid) == item.with_tier(Tier::Mid);
-            let text = match item {
-                Placeable::Plant(k) => format!("{} {:.0} MW", k.label(), k.capacity_mw()),
-                other => other.menu_label().to_string(),
-            };
-            if ui.selectable_label(on, text).clicked() {
-                tools.build = item;
-            }
-        }
+        ui.label(egui::RichText::new(format!("Placing: {}", tools.build.menu_label())).strong());
         if tools.build.has_tiers() {
             ui.separator();
             for t in Tier::ALL {
@@ -411,7 +355,17 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
             }
         }
     });
-    let what = tools.build_item();
+    placeable_info(ui, sim, tools.build_item());
+    if tools.build_cat == BuildCategory::Services {
+        let s = &sim.world.services.stats;
+        hint(ui, &format!("Coverage of homes: police {:.0}% · fire {:.0}% · health {:.0}% · schools {:.0}% · {} incidents today · avg response {:.0} min · {}/{} units out · {} fires burning", s.coverage[0] * 100.0, s.coverage[1] * 100.0, s.coverage[2] * 100.0, s.coverage[3] * 100.0, s.incidents_today.iter().sum::<u32>(), s.avg_response(), s.units_busy, s.units, s.fires_burning));
+    }
+    hint(ui, help::tool_hint(Tool::Buildings));
+}
+
+/// What a placeable costs and does, in a line or two; for docks how the
+/// docks are doing.
+pub fn placeable_info(ui: &mut egui::Ui, sim: &mut Sim, what: Placeable) {
     let mut line = format!("{} · costs {:.0} to build, {:.0}/day to run, {} jobs", what.label(), what.cost(), what.upkeep(), what.jobs());
     if what.min_area() > 0.0 {
         line += &format!(", needs {:.0} m²", what.min_area());
@@ -436,9 +390,9 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
             line += help::service_note(k);
         }
         Placeable::BusDepot => line += &format!(". {}", help::TRANSIT_DEPOT),
-        Placeable::Rail(_) => line += ". Set beside track or a street it fuses to them; otherwise it lays stubs to join (see the Rail tool).",
+        Placeable::Rail(_) => line += ". Set beside track or a street it fuses to them; otherwise it lays stubs to join.",
         Placeable::Dock(_) => {}
-        Placeable::MetroStation => line += &format!(". An entrance on its plaza, the platform underground; join stations into lines with the Buses tool's Metro mode (tunnel {:.0}/m). Lifts land value round it.", nd_sim::subway::TUNNEL_COST_PER_M),
+        Placeable::MetroStation => line += &format!(". An entrance on its plaza, the platform underground; join stations into lines with Transit, Metro lines (tunnel {:.0}/m). Lifts land value round it.", nd_sim::subway::TUNNEL_COST_PER_M),
         Placeable::ParkingLot(s) => line += &format!(", {} spaces. Run by the city: drivers pay {:.1} a visit to the treasury (set the fee in the inspector or with the API).", s.capacity(), s.default_price()),
         // [tolls]
         Placeable::Toll(s) => {
@@ -465,11 +419,6 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
     if let Placeable::Dock(k) = what {
         dock_hint(ui, sim, k);
     }
-    if tools.build_cat == BuildCategory::Services {
-        let s = &sim.world.services.stats;
-        hint(ui, &format!("Coverage of homes: police {:.0}% · fire {:.0}% · health {:.0}% · schools {:.0}% · {} incidents today · avg response {:.0} min · {}/{} units out · {} fires burning", s.coverage[0] * 100.0, s.coverage[1] * 100.0, s.coverage[2] * 100.0, s.coverage[3] * 100.0, s.incidents_today.iter().sum::<u32>(), s.avg_response(), s.units_busy, s.units, s.fires_burning));
-    }
-    hint(ui, help::tool_hint(Tool::Buildings));
 }
 
 /// What a dock is and how the docks are doing (moved here from the Rail tool).
@@ -499,7 +448,28 @@ pub fn depth_switch(ui: &mut egui::Ui, tools: &mut ToolState) {
     });
 }
 
-fn preset_hint(label: &str) -> &'static str {
+/// What the Road tool draws now, for the options header.
+pub fn road_label(tools: &ToolState) -> String {
+    if tools.roundabout {
+        return "Roundabout".into();
+    }
+    if tools.tunnel {
+        return format!("Tunnel, {} + {} lanes", tools.lanes_fwd, tools.lanes_bwd);
+    }
+    match tools.kind {
+        RoadKind::Path => "Path".into(),
+        RoadKind::Rail => "Rail track".into(),
+        RoadKind::Street => {
+            let preset = ROAD_PRESETS.iter().find(|(_, f, b, k)| *k == RoadKind::Street && *f == tools.lanes_fwd && *b == tools.lanes_bwd).map(|p| p.0);
+            match preset {
+                Some(name) => name.to_string(),
+                None => format!("Street, {} + {} lanes", tools.lanes_fwd, tools.lanes_bwd),
+            }
+        }
+    }
+}
+
+pub fn preset_hint(label: &str) -> &'static str {
     match label {
         "Tunnel" => "A road 8 m under the ground: passes under streets, water and buildings without taking them; joins other tunnels; start or end it on a street to make a portal ramp. Switches to the underground view",
         "Path" => "Footpath: walkers and bikes only",
