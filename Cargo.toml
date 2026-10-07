@@ -32,3 +32,10 @@ opt-level = 3
 [profile.release]
 codegen-units = 1
 lto = "thin"
+
+# Optimised like release but quick to build: for tests and agents' test
+# instances (`cargo test --profile fast`). The playable exe stays on release.
+[profile.fast]
+inherits = "release"
+codegen-units = 16
+lto = false
