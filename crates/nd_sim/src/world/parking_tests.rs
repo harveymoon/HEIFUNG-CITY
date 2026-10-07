@@ -6,6 +6,7 @@ use crate::enforcement::*;
 use crate::mind::IdleMind;
 use crate::services::ServiceKind;
 use crate::vehicle::{CarEvent, CarPlace, ParkKind, VehicleId};
+use super::cars::HUNT_GIVE_UP;
 
 fn square(x0: f32, y0: f32, size: f32) -> Vec<Vec2> {
     vec![Vec2::new(x0, y0), Vec2::new(x0 + size, y0), Vec2::new(x0 + size, y0 + size), Vec2::new(x0, y0 + size)]
@@ -340,4 +341,70 @@ fn enforcement_runs_are_deterministic() {
     assert_eq!(places(&a), places(&b));
     assert_eq!(format!("{:?}", a.enforcement.stats), format!("{:?}", b.enforcement.stats));
     let _ = CarEvent::Sold;
+}
+
+/// [parking] The company from out of town does not send a truck per call:
+/// with its few trucks out, the other jobs wait their turn. (A city short
+/// of parking had 170 tow trucks on its roads.)
+#[test]
+fn the_out_of_town_tow_company_sends_only_its_few_trucks() {
+    let mut w = town();
+    let shop_front = w.lots.values().find(|l| l.land_use == LandUse::Commercial).map(|l| l.entrance()).unwrap();
+    w.refresh_no_kerb();
+    let n = OUT_OF_TOWN_TOW_TRUCKS + 2;
+    let mut cars = Vec::new();
+    let all: Vec<VehicleId> = (0..n).map(|_| parked_far(&mut w).1).collect();
+    for vid in all {
+        let k = w.free_illegal_slots_near(shop_front, 300.0, 1).into_iter().next().expect("a banned kerb");
+        w.unpark(vid);
+        let spot = w.kerb_spot(k);
+        w.park_at(vid, spot);
+        w.check_parked(vid);
+        assert!(w.enforcement.job_for(vid).is_some_and(|j| j.company.is_none()), "called from out of town");
+        cars.push(vid);
+    }
+    let mut most = 0;
+    for _ in 0..4000 {
+        run(&mut w, 1);
+        let out = w.enforcement.jobs.iter().filter(|j| j.truck.is_some_and(|t| w.traffic.cars.contains_key(t))).count();
+        most = most.max(out);
+        if cars.iter().all(|&v| w.vehicles.cars[v].spot().is_some_and(|s| s.kind == ParkKind::Pound)) {
+            break;
+        }
+    }
+    assert!(most <= OUT_OF_TOWN_TOW_TRUCKS, "{most} trucks out at once");
+    assert!(most > 0);
+    assert!(cars.iter().all(|&v| w.vehicles.cars[v].spot().is_some_and(|s| s.kind == ParkKind::Pound)), "every car towed in the end");
+    assert_no_car_lost(&w);
+}
+
+/// [parking] A driver who has hunted for a space for over an hour stops
+/// looking and leaves the car where it can, instead of being sent round
+/// the block again; one only just started goes on looking.
+#[test]
+fn an_hour_of_hunting_for_a_space_ends_with_the_car_left_somewhere() {
+    let mut w = town();
+    let (id, vid) = parked_far(&mut w);
+    let (id2, vid2) = parked_far(&mut w);
+    let (seg, pt) = w.roads.nearest_street(Vec2::new(-150.0, 0.0)).map(|(s, _, q)| (s, q)).unwrap();
+    let tick = w.clock.tick;
+    let drive = |w: &mut World, id: CitizenId, vid: VehicleId, since: u64| {
+        let car = w.drive_from_spot(vid, seg, pt, id, crate::vehicle::Errand::Search { tries: 1 }).expect("on the road");
+        w.citizens[id].commute.search_since = since;
+        // Out of its own space and along the shop street, where parking
+        // is banned, as if it had got there.
+        let (goal, s_end, _) = w.traffic.net.nearest_lane_on(seg, pt).unwrap();
+        w.traffic.cars[car].entering = false;
+        w.traffic.reroute(car, vec![goal], s_end, s_end);
+        w.traffic.cars[car].pos = pt;
+        car
+    };
+    let tired = drive(&mut w, id, vid, tick.saturating_sub(HUNT_GIVE_UP + 5).max(1));
+    let fresh = drive(&mut w, id2, vid2, tick);
+    assert!(w.vehicle_arrived(tired));
+    assert!(w.vehicle_arrived(fresh));
+    assert!(!w.traffic.cars.contains_key(tired), "the tired hunter left the car");
+    assert!(w.vehicles.cars[vid].spot().is_some(), "parked");
+    assert!(w.traffic.cars.contains_key(fresh) && w.vehicles.cars[vid2].spot().is_none(), "the fresh one drives on to look: {:?} {:?}", w.traffic.cars.get(fresh).map(|c| c.errand), w.vehicles.cars[vid2].spot().map(|s| (s.kind, s.pos)));
+    assert_no_car_lost(&w);
 }

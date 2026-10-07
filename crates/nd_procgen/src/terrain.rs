@@ -335,6 +335,10 @@ pub fn build_landscape_terrain(world: &World, palette: &Palette, cell: f32) -> M
             mesh.uvs.push([x, -z]);
         }
     }
+    keep_under_streets(world, cell, n, &mut heights);
+    for (p, h) in mesh.positions.iter_mut().zip(&heights) {
+        p[1] = *h;
+    }
     for j in 0..n {
         for i in 0..n {
             let h = |ii: isize, jj: isize| heights[(jj.clamp(0, n as isize - 1) as usize) * n + ii.clamp(0, n as isize - 1) as usize];
@@ -353,6 +357,44 @@ pub fn build_landscape_terrain(world: &World, palette: &Palette, cell: f32) -> M
         }
     }
     mesh
+}
+
+/// Lower the terrain mesh's vertices round every street on the ground so no
+/// triangle rises over its carriageway. The mesh is coarser than the built
+/// ground (`cell` against `GROUND_CELL`) and runs straight from vertex to
+/// vertex, so a vertex on a cutting's side slope, a lot's pad or the far
+/// side of a junction a few metres off the kerb drew a sheet of earth over
+/// the lanes beside it on any slope. Each vertex near enough for one of its
+/// triangles to reach the carriageway is held to the height of the way
+/// beside it (as if the road ran on sideways at its own height), a hair
+/// under: a triangle whose corners are all under that surface is under it
+/// everywhere between. Sunken roads between retaining walls, tunnels and
+/// decks are left alone: their walls and portals meet the ground as built.
+fn keep_under_streets(world: &World, cell: f32, n: usize, heights: &mut [f32]) {
+    let half = LAND_HALF;
+    let roads = &world.roads;
+    // A vertex reaches a point at most a cell's diagonal from it.
+    let reach = cell * std::f32::consts::SQRT_2;
+    let index = |v: f32| (((v + half) / cell).floor().max(0.0) as usize).min(n - 1);
+    for (sid, s) in roads.alive_segments() {
+        if !s.is_street() || s.bridge || s.viaduct || s.tunnel || roads.node(s.a).level < 0.0 || roads.node(s.b).level < 0.0 {
+            continue;
+        }
+        let (a, b) = roads.segment_points(sid);
+        let r = s.half_width() + reach;
+        let (lo, hi) = (a.min(b) - Vec2::splat(r), a.max(b) + Vec2::splat(r));
+        for j in index(lo.y)..=(index(hi.y) + 1).min(n - 1) {
+            for i in index(lo.x)..=(index(hi.x) + 1).min(n - 1) {
+                let p = Vec2::new(-half + i as f32 * cell, -half + j as f32 * cell);
+                let (t, q) = nd_sim::roads::project_on_segment(p, a, b);
+                if q.distance(p) > r {
+                    continue;
+                }
+                let k = j * n + i;
+                heights[k] = heights[k].min(world.road_height(sid, t) - 0.08);
+            }
+        }
+    }
 }
 
 /// The water surface: one flat sheet at the waterline over every cell near

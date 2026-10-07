@@ -175,6 +175,31 @@ fn bike_owners_cycle_long_trips_and_motion_is_tracked() {
 }
 
 #[test]
+fn a_turning_cyclist_keeps_to_the_kerb_and_never_crosses_the_lanes() {
+    // An L of street, ridden both ways: a turn one way, then the other.
+    for flip in [1.0, -1.0] {
+        let mut w = World::new(WorldConfig::test_town());
+        let pts = [Vec2::new(-150.0, 0.0), Vec2::new(0.0, 0.0), Vec2::new(0.0, 150.0 * flip)];
+        w.add_road(&pts, 1, 1);
+        let near = |p: Vec2| (0..w.roads.nodes.len() as u32).map(NodeId).min_by(|a, b| w.roads.node(*a).pos.distance(p).total_cmp(&w.roads.node(*b).pos.distance(p))).unwrap();
+        for (from, to) in [(pts[0], pts[2]), (pts[2], pts[0])] {
+            let nodes = w.roads.path(near(from), near(to)).expect("the L is one street");
+            let path = w.route_path(&nodes, TravelMode::Bike);
+            let half = w.roads.alive_segments().next().unwrap().1.half_width();
+            let kerb_line = half - crate::roads::SHOULDER * 0.5;
+            let centre = |p: Vec2| pts.windows(2).map(|s| {
+                let (a, b) = (s[0], s[1]);
+                let t = ((p - a).dot(b - a) / (b - a).length_squared()).clamp(0.0, 1.0);
+                p.distance(a + (b - a) * t)
+            }).fold(f32::MAX, f32::min);
+            for p in &path {
+                assert!(centre(*p) > kerb_line - 0.2, "flip {flip}: the rider's path passes {p} only {:.2} m off the centre line (kerb line {kerb_line:.2})", centre(*p));
+            }
+        }
+    }
+}
+
+#[test]
 fn park_visits_end_on_a_bench_and_people_leave_on_foot() {
     let mut w = World::new(WorldConfig::test_town());
     w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);

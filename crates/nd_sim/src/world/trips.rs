@@ -1596,7 +1596,12 @@ impl World {
         if nodes.len() < 2 {
             return nodes.iter().map(|&n| self.roads.node(n).pos).collect();
         }
-        let mut out = Vec::with_capacity(nodes.len() * 2);
+        // Each piece of street as a line offset to its kerb side, then
+        // joined at the corner where one piece's line meets the next. Ending
+        // one piece level with the junction's centre and starting the next
+        // from there sent a turning rider (or walker) through the middle of
+        // the road: on a right turn, back across the lanes they came in on.
+        let mut pieces: Vec<(Vec2, Vec2)> = Vec::with_capacity(nodes.len());
         for w in nodes.windows(2) {
             let a = self.roads.node(w[0]).pos;
             let b = self.roads.node(w[1]).pos;
@@ -1611,9 +1616,28 @@ impl World {
                 (RoadKind::Rail, _) => 0.0,
             };
             let off = right * offset;
-            out.push(a + off);
-            out.push(b + off);
+            pieces.push((a + off, b + off));
         }
+        let mut out = Vec::with_capacity(pieces.len() + 1);
+        out.push(pieces[0].0);
+        for (i, pair) in pieces.windows(2).enumerate() {
+            let ((p0, p1), (q0, q1)) = (pair[0], pair[1]);
+            let (d, e) = ((p1 - p0).normalize_or_zero(), (q1 - q0).normalize_or_zero());
+            let node = self.roads.node(nodes[i + 1]).pos;
+            let reach = p1.distance(node).max(q0.distance(node)) * 3.0 + 2.0;
+            let cross = d.perp_dot(e);
+            // The corner, unless the pieces run (nearly) straight on or back
+            // the way they came, or it lies implausibly far off the junction.
+            let corner = (cross.abs() > 0.05).then(|| p1 + d * (q0 - p1).perp_dot(e) / cross).filter(|c| c.distance(node) < reach);
+            match corner {
+                Some(c) => out.push(c),
+                None => {
+                    out.push(p1);
+                    out.push(q0);
+                }
+            }
+        }
+        out.push(pieces[pieces.len() - 1].1);
         out
     }
 

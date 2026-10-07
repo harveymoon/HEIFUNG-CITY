@@ -42,6 +42,8 @@ pub const OUT_OF_TOWN_TOW_FEE: f32 = 180.0;
 pub const STORAGE_PER_DAY: f32 = 15.0;
 /// Minutes before a truck from out of town sets off (it has far to come).
 pub const OUT_OF_TOWN_DELAY: u64 = 45;
+/// Tow trucks the out-of-town company has on the city's roads at once.
+pub const OUT_OF_TOWN_TOW_TRUCKS: usize = 4;
 /// Minutes a towed car waits in the pound before it is auctioned.
 pub const AUCTION_AFTER: u64 = 3 * 1440;
 /// Tow trucks a tow company runs per four staff (at least one).
