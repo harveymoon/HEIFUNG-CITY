@@ -243,7 +243,14 @@ would draw) and `building` (the kind standing there).
 | `remove_stop` | `route`, `index` (the last stop removes the line) |
 | `set_buses` | `route`, `n` |
 | `remove_route` | `route` |
+| `rename` | `route`, `name` |
+| `recolour` (or `recolor`) | `route`, `color` (0..7, the line and its buses) |
+| `line` | `route`: the Lines window's figures: per stop `on_today`, `off_today`, `on_yesterday`, `off_yesterday`, the leg to the next stop (`leg_m`, `leg_min`, `leg_timed`, `leg_runs`, `leg_broken`); `length_m`, `lap_min`; `buses_out` with `state` (on_line, last_lap, from_depot, to_depot), `next_stop`, `progress` (in stops: 2.4 is 40% from the third stop to the fourth), `passengers` |
+| `select_stop` | `route`, `index`, `look` (bool, point the camera there): mark the stop on the map as the Lines window's "show" does; no `route` clears it |
 | `list` | |
+
+Rows (`list`, and the `row` the edits return) carry `riders_yesterday` and each stop's
+`on_today`/`off_today`. The Lines window is `window {name: "lines"}`.
 
 ```json
 {"cmd": "bus", "action": "add_stop", "x": 0, "y": 136}
@@ -309,10 +316,11 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
 
 - citizen: name, personality, activity (label, destination, car/bus/train ids), home/work, mood,
   satiety, class, income, rent, savings, groceries, car/bike, thought, memories (newest first)
-- building: land use, tier, style, floors, built day, construction (progress, days left,
+- building: land use, tier, style (the style drawn, `nd_procgen::building_style`), floors, built day, construction (progress, days left,
   deliveries, materials), land value, rent, wage, condition, homes/jobs and the people,
   footfall, power (powered share, demand), parking, plant, depot, rail link, business (cash,
-  takings, needs and sells with stock and prices), park
+  takings, `industry`, `books`: the last 30 days' revenue and spend, oldest first, needs and sells
+  with stock and prices), park
 - lot: land use, polygon, area, land value and tier, zone, building, vacant/landlocked, footfall
 
 ### Selection and the player's UI
@@ -377,6 +385,11 @@ A car's detail (`inspect {car}`, `selected`) carries:
 - `trip`: `elapsed_min` on the road vs `expected_min` (from the route at departure, free flow plus
   a little per junction), `over_ratio`, `can_rage` (private drivers), `anger` and `anger_peak`
   (0..1), `patience`, `temper`.
+- `driver`: for a private car `citizen`, `name`, `age`, `mood`, `class`, `purpose`, `destination`,
+  `destination_name`, `anger`; for every vehicle `style` {`label`, `boldness` (-1 slow .. 0 normal ..
+  1 reckless, the inspector's slider), `calm_boldness`, `skill`, `speed`, `headway_s`, `aggression`,
+  `compliance`, `drunk`}.
+- `occupants`: everyone aboard (`id`, `name`): the driver of a private car, a bus's riders.
 - `lanes`: `lane` (id, road segment and index, or junction node and turn), `s_m`, `s_end_m`,
   `route_idx`, `route_len`, `ahead` (the next 12 lanes), `route_lanes` (ids from here), `ends_at`,
   `entering_from_kerb`, `blocked_by`.

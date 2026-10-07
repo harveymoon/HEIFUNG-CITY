@@ -457,7 +457,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(json!({ "building": key_str(id), "price": set }))
         }
         "select" => select(cmd, ctx),
-        "selected" => Ok(selected_detail(&ctx.sim.world, *ctx.selection, ctx.tools.route_sel, &ctx.assets, &ctx.tools.favorites)),
+        "selected" => Ok(selected_detail(&ctx.sim, *ctx.selection, ctx.tools.route_sel, &ctx.assets, &ctx.tools.favorites)),
         "flags" => flags_cmd(cmd, ctx),
         "flag" => {
             // Flag the current selection from the API, as F8 does in game.
@@ -465,7 +465,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let w = &ctx.sim.world;
             let sel = *ctx.selection;
             let look = ctx.cams.iter().next().map_or([0.0, 0.0], |c| [c.target.x, c.target.z]);
-            let snapshot = selected_detail(w, sel, ctx.tools.route_sel, &ctx.assets, &ctx.tools.favorites);
+            let snapshot = selected_detail(&ctx.sim, sel, ctx.tools.route_sel, &ctx.assets, &ctx.tools.favorites);
             let brief = selection_json_brief(w, sel);
             let f = ctx.claude.add(w.clock.tick, sel, brief, note, look, snapshot).clone();
             Ok(json!({ "flag": crate::flags::flag_json(&f, None) }))
@@ -1256,6 +1256,7 @@ fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 return Err("no such stop".into());
             }
             w.remove_bus_stop(id, idx);
+            ctx.tools.stop_sel = None;
             let alive = w.transit.routes.contains_key(id);
             if !alive && ctx.tools.route_sel == Some(id) {
                 ctx.tools.route_sel = None;
@@ -1277,7 +1278,43 @@ fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(json!({ "removed": key_str(id), "routes": w.transit.routes.len() }))
         }
         "list" => Ok(json!({ "routes": w.transit.routes.iter().map(|(id, r)| route_row(id, r)).collect::<Vec<_>>() })),
-        _ => Err(format!("unknown bus action {action:?}; one of new_route, add_stop, move_stop, remove_stop, set_buses, remove_route, list")),
+        // [lines] The Lines window's figures for one line.
+        "line" => {
+            let id = route_arg(w)?;
+            Ok(view::line_detail(w, id))
+        }
+        "rename" => {
+            let id = route_arg(w)?;
+            w.rename_bus_route(id, req_str(cmd, "name")?)?;
+            Ok(json!({ "route": key_str(id), "row": route_row(id, &w.transit.routes[id]) }))
+        }
+        "recolour" | "recolor" => {
+            let id = route_arg(w)?;
+            let c = opt_u64(cmd, "color")?.ok_or("missing color (0..7)")?;
+            w.recolour_bus_route(id, (c % nd_sim::vehicle::PAINTS as u64) as u8)?;
+            Ok(json!({ "route": key_str(id), "row": route_row(id, &w.transit.routes[id]) }))
+        }
+        // Mark a stop on the map as the Lines window's "show" does; no
+        // route clears the mark. look: true also points the camera at it.
+        "select_stop" => {
+            if field(cmd, "route").is_none() {
+                ctx.tools.stop_sel = None;
+                return Ok(json!({ "stop": Value::Null }));
+            }
+            let id = route_arg(w)?;
+            let idx = opt_u64(cmd, "index")?.ok_or("missing stop index")? as usize;
+            let pos = w.transit.routes[id].stops.get(idx).ok_or("no such stop")?.pos;
+            ctx.tools.route_sel = Some(id);
+            ctx.tools.stop_sel = Some((id, idx));
+            if cmd.get("look").and_then(Value::as_bool).unwrap_or(false) {
+                for mut cam in ctx.cams.iter_mut() {
+                    cam.target = bevy::prelude::Vec3::new(pos.x, 0.0, pos.y);
+                    cam.distance = cam.distance.min(120.0);
+                }
+            }
+            Ok(json!({ "route": key_str(id), "index": idx, "pos": [pos.x, pos.y] }))
+        }
+        _ => Err(format!("unknown bus action {action:?}; one of select, new_route, add_stop, move_stop, remove_stop, set_buses, remove_route, rename, recolour, line, select_stop, list")),
     }
 }
 
@@ -1505,7 +1542,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(v) = field(cmd, "building") {
         let id = key_from(v)?;
         let b = w.buildings.get(id).ok_or("no such building")?;
-        let mut v = building_detail(w, id, b, building_style(w, b, &ctx.assets));
+        let mut v = building_detail(w, id, b, building_style(&ctx.sim, id, &ctx.assets));
         v["place"] = places::building_place(w, id);
         return Ok(json!({ "building": v }));
     }
@@ -1596,23 +1633,18 @@ pub fn selection_json_brief(w: &nd_sim::World, sel: Selection) -> Value {
     selection(w, sel)
 }
 
-/// The building style label, as the inspector shows it.
-fn building_style(w: &nd_sim::World, b: &nd_sim::Building, assets: &GameAssets) -> &'static str {
-    let _ = w;
-    match b.service {
-        Some(s) => nd_procgen::buildings::Style::for_service(s.kind).label(),
-        // [subway]
-        None if b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::Central) => nd_procgen::buildings::Style::CentralStation.label(),
-        None if b.metro => nd_procgen::buildings::Style::MetroEntrance.label(),
-        None => b.port.map(|k| k.label()).or(b.plant.map(|k| k.label())).unwrap_or(assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11)).label()),
-    }
+/// The building style label, as the inspector shows it: the style the
+/// renderer draws (`nd_procgen::building_style`, one decision for both).
+pub fn building_style(sim: &crate::sim::Sim, id: nd_sim::BuildingId, assets: &GameAssets) -> &'static str {
+    nd_procgen::building_style(&sim.world, id, &assets.rules, Some(&sim.styles)).map_or("unknown", |s| s.label())
 }
 
 /// Everything about what the player has selected, as `inspect` gives it,
 /// in one reply: a car with why it stands, the jam in front of it, its trip
 /// and lanes; a citizen (and the car they are driving); a building; a
 /// parked car; plus the bus line picked in the Transit window, if any.
-pub fn selected_detail(w: &nd_sim::World, sel: Selection, route_sel: Option<nd_sim::RouteId>, assets: &GameAssets, favourites: &[nd_sim::CitizenId]) -> Value {
+pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<nd_sim::RouteId>, assets: &GameAssets, favourites: &[nd_sim::CitizenId]) -> Value {
+    let w = &sim.world;
     let detail = match sel {
         Selection::None => Value::Null,
         Selection::Car(id) => w.traffic.cars.get(id).map_or(Value::Null, |c| car_detail(w, id, c)),
@@ -1631,7 +1663,7 @@ pub fn selected_detail(w: &nd_sim::World, sel: Selection, route_sel: Option<nd_s
         },
         Selection::Building(id) => match w.buildings.get(id) {
             Some(b) => {
-                let mut v = building_detail(w, id, b, building_style(w, b, assets));
+                let mut v = building_detail(w, id, b, building_style(sim, id, assets));
                 v["place"] = places::building_place(w, id);
                 v
             }
@@ -1655,14 +1687,13 @@ pub fn selected_detail(w: &nd_sim::World, sel: Selection, route_sel: Option<nd_s
 /// with its snapshot and the selection's live detail now.
 fn flags_cmd(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let since = opt_u64(cmd, "since")?.unwrap_or(0) as u32;
-    let w = &ctx.sim.world;
     let rows: Vec<Value> = ctx
         .claude
         .list
         .iter()
         .filter(|f| f.id > since)
         .map(|f| {
-            let live = selected_detail(w, f.selection, None, &ctx.assets, &ctx.tools.favorites);
+            let live = selected_detail(&ctx.sim, f.selection, None, &ctx.assets, &ctx.tools.favorites);
             let now = (!live["detail"].is_null()).then_some(live["detail"].clone());
             crate::flags::flag_json(f, now)
         })
@@ -2093,7 +2124,7 @@ fn help() -> Value {
             "landscape": { "returns": "preset and levers, rivers (width, current, hydro_ok), lakes, sea, hot spots, highway ends and through cars, bridges, docks, ships" },
             "incident": { "kind": "fire|crime|medical", "building": "id", "citizen": "id (medical)" },
             "incidents": { "active": "bool (only those under way)", "limit": "default 50, newest first", "kind": "fire|crime|medical" },
-            "bus": { "action": "new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses" },
+            "bus": { "action": "select|new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|rename|recolour|line|select_stop|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses", "name": "rename", "color": "0..7", "look": "select_stop: point the camera" },
             "find": { "what": "citizens|buildings|lots|parcels|cars|trains|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
             "inspect": { "citizen|building|lot|car|train|route": "id", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "[x,y]: the road piece nearest a point, as segment" },
             "lane_use": { "junction": "[x,y]", "approach": "[x,y] on the arriving street", "lanes": "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default" },

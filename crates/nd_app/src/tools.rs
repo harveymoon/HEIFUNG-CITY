@@ -204,6 +204,9 @@ pub struct ToolState {
     /// The line being drawn or edited.
     pub route_sel: Option<nd_sim::RouteId>,
     pub hover_stop: Option<(nd_sim::RouteId, usize)>,
+    /// [lines] The stop picked in the Lines window (or with the remote
+    /// API's `bus select_stop`): marked on the map with a tall post.
+    pub stop_sel: Option<(nd_sim::RouteId, usize)>,
     /// Where the right button went down (window pixels); a right *click*
     /// (released within a few pixels) finishes a gesture, a right drag only
     /// orbits the camera. None when it went down over the UI.
@@ -395,6 +398,7 @@ impl Default for ToolState {
             transit_mode: TransitMode::Route,
             route_sel: None,
             hover_stop: None,
+            stop_sel: None,
             stop_drag: None,
             show_routes: false,
             rail_kind: nd_sim::RailFacility::Station,
@@ -1237,6 +1241,13 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 if sel {
                     gizmos.line(at, at + Vec3::Y * 9.0, col);
                     gizmos.circle(Isometry3d::new(at + Vec3::Y * 9.0, flat), 1.0, col);
+                }
+                // [lines] The stop picked in the Lines window: a pulsing
+                // white ring and a post three times as tall.
+                if tools.stop_sel == Some((id, i)) {
+                    gizmos.circle(Isometry3d::new(at, flat), 5.0 + 2.0 * pulse, white);
+                    gizmos.line(at, at + Vec3::Y * 28.0, white);
+                    gizmos.circle(Isometry3d::new(at + Vec3::Y * 28.0, flat), 2.0, white);
                 }
             }
             if sel {

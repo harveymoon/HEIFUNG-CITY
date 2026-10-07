@@ -354,6 +354,11 @@ fn route_row(ui: &mut egui::Ui, tools: &mut ToolState, id: nd_sim::RouteId, r: &
         if ui.small_button("delete").clicked() {
             *remove = Some(id);
         }
+        // [lines] Stop by stop: ridership, times between stops, buses.
+        if ui.small_button("stops…").on_hover_text("Open the line in the Lines window").clicked() {
+            tools.route_sel = Some(id);
+            super::Info::Lines.set_open(ui.ctx(), true);
+        }
     });
 }
 

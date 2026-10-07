@@ -21,10 +21,14 @@ pub mod pane;
 pub mod people;
 mod person;
 mod places;
+/// [inspector] Painted head-and-shoulders portraits of citizens.
+mod portrait;
 mod saves;
 mod taxes;
 mod icons;
 mod legend;
+/// [lines] The Lines window.
+mod lines;
 mod toolbar;
 mod tools;
 mod topbar;
@@ -43,6 +47,8 @@ use crate::tools::{EffectivePlan, Selection, Tool, ToolState};
 pub use saves::{load_now, save_now, Saves, LATEST};
 /// For the remote API's `window` command.
 pub use windows::Info;
+/// For the remote API's car detail: everyone aboard a vehicle.
+pub use inspector::occupants;
 
 /// What the UI wants the rest of the app to know about input this frame.
 #[derive(Resource, Default)]

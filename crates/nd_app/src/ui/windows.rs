@@ -25,6 +25,9 @@ pub enum Info {
     People,
     Power,
     Transit,
+    /// [lines] Bus lines one by one: a strip diagram of the picked line's
+    /// stops, legs and buses, with its editing controls (ui/lines.rs).
+    Lines,
     /// 911 calls, live and on record (ui/emergencies.rs).
     Emergencies,
     Land,
@@ -36,7 +39,7 @@ pub enum Info {
 }
 
 impl Info {
-    pub const ALL: [Info; 13] = [Info::City, Info::Economy, Info::Taxes, Info::Market, Info::People, Info::Power, Info::Transit, Info::Emergencies, Info::Land, Info::Districts, Info::Saves, Info::Help, Info::Dev];
+    pub const ALL: [Info; 14] = [Info::City, Info::Economy, Info::Taxes, Info::Market, Info::People, Info::Power, Info::Transit, Info::Lines, Info::Emergencies, Info::Land, Info::Districts, Info::Saves, Info::Help, Info::Dev];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -47,6 +50,7 @@ impl Info {
             Info::People => "People",
             Info::Power => "Power",
             Info::Transit => "Transit",
+            Info::Lines => "Lines",
             Info::Emergencies => "Emergencies",
             Info::Land => "Land",
             Info::Saves => "Saves",
@@ -62,6 +66,7 @@ impl Info {
             Info::People => 420.0,
             Info::Help => 440.0,
             Info::Emergencies => 480.0,
+            Info::Lines => 430.0,
             Info::Taxes => 470.0,
             Info::Dev => 300.0,
             _ => 380.0,
@@ -71,7 +76,7 @@ impl Info {
     /// Whether the window has an expanded view. Saves, Help and Dev are
     /// tools rather than reports and have nothing to chart.
     pub fn expandable(self) -> bool {
-        !matches!(self, Info::Saves | Info::Help | Info::Dev)
+        !matches!(self, Info::Saves | Info::Help | Info::Dev | Info::Lines)
     }
 
     fn id(self) -> egui::Id {
@@ -149,6 +154,7 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, info: Info, big: bool) {
         (Info::Power, true) => detail::power(ui, p),
         (Info::Transit, false) => transit(ui, p),
         (Info::Transit, true) => detail::transit(ui, p),
+        (Info::Lines, _) => super::lines::window(ui, p),
         (Info::Emergencies, _) => super::emergencies::window(ui, p, big),
         (Info::Land, false) => land(ui, p),
         (Info::Land, true) => detail::land(ui, p),
@@ -174,7 +180,7 @@ pub(super) fn city(ui: &mut egui::Ui, p: &mut UiCtx) {
     let sites = w.buildings.values().filter(|b| b.construction.is_some()).count();
     section(ui, "BUILDINGS & LOTS");
     row(ui, "buildings", format!("{}   under construction {}", w.buildings.len() - sites, sites));
-    row(ui, "lots", format!("{} ({} vacant, {} unusable)", w.lots.len(), w.lots.values().filter(|l| l.building.is_none() && l.usable()).count(), w.lots.values().filter(|l| l.landlocked).count()));
+    row(ui, "lots", format!("{} ({} vacant, {} unusable)", w.lots.len(), w.lots.values().filter(|l| l.building.is_none() && l.usable()).count(), w.lots.values().filter(|l| l.landlocked && l.park.is_none() && l.land_use != LandUse::Park).count()));
     if sites > 0 {
         row(ui, "sites will add", format!("{} homes and {} jobs", e.homes_building, e.jobs_building));
     }
@@ -242,6 +248,9 @@ pub(super) fn transit(ui: &mut egui::Ui, p: &mut UiCtx) {
     row(ui, "depots", format!("{} for {} buses   {} out on the lines", t.depots, t.depot_capacity, t.buses));
     row(ui, "riders", format!("{} waiting   {} riding   {} today", t.waiting, t.riding, t.riders_today));
     row(ui, "money", format!("fares {:.0} today   upkeep {:.0}/day", t.fares_today, t.upkeep_today));
+    if ui.small_button("Lines: stops, times and ridership…").on_hover_text("Open the Lines window to tune a line stop by stop").clicked() {
+        Info::Lines.set_open(ui.ctx(), true);
+    }
     if !w.transit.routes.is_empty() {
         hint(ui, "lines (the Buses tool adds and removes buses)");
         for (id, r) in &w.transit.routes {
