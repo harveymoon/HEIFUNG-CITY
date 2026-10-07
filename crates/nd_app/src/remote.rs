@@ -2234,6 +2234,11 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(c) = view::opt_vec2(cmd, "cursor")? {
         t.cursor_pin = Some(c);
     }
+    // [plot-hover] `hover`: the same pin, for the Buildings and Zone tools'
+    // plot highlight (the reply's `hover` says what a click there would do).
+    if let Some(c) = view::opt_vec2(cmd, "hover")? {
+        t.cursor_pin = Some(c);
+    }
     if let Some(kind) = opt_str(cmd, "kind")? {
         // `kind` means whatever the active tool chooses between.
         match t.tool {
@@ -2331,7 +2336,14 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(g) = opt_u64(cmd, "selected_gesture")? {
         t.selected_gesture = Some(GestureId(g));
     }
-    Ok(json!({ "tool": tool_state(t) }))
+    let mut v = json!({ "tool": tool_state(t) });
+    if let Some(p) = t.cursor_pin {
+        v["hover"] = match crate::render::hover_site(&ctx.sim.world, t, p) {
+            Some(s) => json!({ "at": v2(p), "ok": s.verdict.is_ok(), "note": s.verdict.as_ref().ok(), "reason": s.verdict.as_ref().err(), "outline": view::points(&s.outline) }),
+            None => Value::Null,
+        };
+    }
+    Ok(v)
 }
 
 fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {

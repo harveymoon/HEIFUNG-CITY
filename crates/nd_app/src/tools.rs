@@ -1241,7 +1241,8 @@ pub(crate) fn tool_input(
             // [free-placement] What a click here would do, for the panel and
             // the outline: any lot, or unzoned ground with road access.
             let what = tools.build_item();
-            tools.build_here = match (ground, what) {
+            // [plot-hover] The remote API's pin stands in for the pointer.
+            tools.build_here = match (tools.cursor_pin.or(ground), what) {
                 (_, nd_sim::Placeable::Toll(_) | nd_sim::Placeable::Rail(_) | nd_sim::Placeable::Dock(_)) | (None, _) => None,
                 (Some(p), _) => {
                     let w = &sim.world;
@@ -2187,13 +2188,12 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
     }
     // [free-placement] The lot under the pointer, or the unzoned parcels a
     // lot would be made of (worked out once a frame in `tool_input`).
-    let Some((ok, _, outline)) = &tools.build_here else { return };
+    // [plot-hover] Its outline and light wall are drawn by
+    // `render::plot_hover`; here only the coverage rings.
+    let Some((_, _, outline)) = &tools.build_here else { return };
     if outline.len() < 3 {
         return;
     }
-    let mut pts: Vec<Vec3> = outline.iter().map(|&p| lift(p)).collect();
-    pts.push(pts[0]);
-    gizmos.linestrip(pts, if *ok { green } else { red });
     let r = what.radius();
     if r > 0.0 {
         let centre = nd_sim::zoning::inner_center(outline);
