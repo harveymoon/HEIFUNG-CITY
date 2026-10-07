@@ -82,8 +82,9 @@
 [x] - ramps: smooth highway joins, painted direction arrows, piers when raised   → DONE (barrier fix at the taper not yet seen in game).
 [x] - terrain cliffs and spikes beside roads; highway carriageways at different heights   → DONE.
 [x] - emergency response: night desk, far-highway crashes, pile-ups, sirens clearing walkers, rear-end chains behind cars yielding to sirens   → DONE.
-[ ] - lane markings read dark grey in daylight; gore hatching hard to see; tunnel ramp crossing rail at a slope   → FOUND, not started.
-[ ] - long player streets have no intermediate height samples (would change parcel keys)   → FOUND, not started.
+[x] - lane markings read dark grey in daylight; gore hatching hard to see; tunnel ramp crossing rail at a slope   → DONE: markings checked white in daylight (Paint brightens by day); the gore is paved under its hatching (it lay on bare ground) with 0.6 m bright chevrons and solid outlines; a road meeting the railway off grade (a portal ramp part way down) is refused with what would work.
+[x] - long player streets have no intermediate height samples (would change parcel keys)   → DONE without new nodes: per-segment inner height samples every ~30 m (`World::road_inner`), used by cars, lots, the built ground and the street mesh; parcel keys unchanged.
+[x] - tunnels: entrances look like blobs; no walking, parking, RVs on them; cars parked on the ground above a tunnel; guardrails deleted over a tunnel   → DONE: concrete arch portals with a dark mouth; tunnels front nothing (no pavements, walk graph, kerb parking legal or not, RVs); barriers ignore ways at another height.
 [ ] - several people sitting on one park bench overlap; bikes ignore pedestrian rules at junctions   → FOUND, not started.
 
 [x] - zoning outlines hard to see: a bright zoning layer   → DONE: every zoned lot washed in a bright zone colour with a crisp edge (Zoning layer [O]).
@@ -126,3 +127,33 @@ Agents are named in brackets; each works in its own worktree.
 [ ] - H4: remote API accepts requests from any web page (no Origin/Host check)
 [ ] - medium and low findings: see docs/REVIEW2.md
 
+
+## From todo4.md (merged October 2026)
+
+Agents in brackets. Items extending running work went to those agents.
+
+[ ] - "tow car": click any car to boot it (orange wheel clamp), it can't move until towed, owner pays and is annoyed; traffic drives round it   → IN PROGRESS [gameplay]
+[ ] - solar farms sometimes show as a green building; make them futuristic: dense dark-blue hexagonal/octagonal panels that track the sun   → IN PROGRESS [power]
+[ ] - power pane: each plant's output over time, upkeep, power cost, air and noise pollution   → IN PROGRESS [power]
+[ ] - export surplus power   → IN PROGRESS [power]
+[ ] - battery packs in a few sizes that store and release power; graphs of when they work and how full they are   → IN PROGRESS [power]
+[ ] - car inspector shows the driver and occupants without an extra click; driver competency slider (slow / normal / reckless); cars carrying more than one person (families, dates)   → IN PROGRESS [inspector] (occupants: [gameplay])
+[ ] - tunnel portals look like blobs: concrete arches; tunnels like ramps (no walking, parking, trash, RVs); cars park illegally on the ground above tunnels; tunnels delete highway guardrails above them   → IN PROGRESS [fix-roads]
+[ ] - traffic load layer: all cars light blue, everything else dimmed, x-ray to cars in tunnels   → IN PROGRESS [layers]
+[ ] - crime layer: heat map of crime, police cars and their paths highlighted   → IN PROGRESS [layers]
+[ ] - one Build panel instead of Road/Buildings/Buses/Rail buttons: movable, scalable library tree (buildings, transit, power, services...) with a thumbnail grid and an info pane; no duplicates (rail in one place)   → IN PROGRESS [ui]
+[ ] - Land panel becomes "Map layers": one exclusive active layer (or none) chosen from a core button, always with a key   → IN PROGRESS [ui] (layer rendering: [layers])
+[ ] - benches: several seats, never sitting on each other, full parks send people elsewhere, bench neighbours may become friends   → IN PROGRESS [fix-sim]
+[ ] - adjacent park lots blend into one big park visually (plots stay)   → IN PROGRESS [layers]
+[ ] - ferry ports get one or two remote destinations off the map edge their water reaches; tourists, commuters and residents travel by ferry   → IN PROGRESS [gameplay]
+[ ] - building lights switch on and off together: randomise per light   → IN PROGRESS [layers]
+[ ] - crowds walk single file: path round each other, weave through a jammed crossing when the signal allows   → IN PROGRESS [emergency]
+[ ] - drivers pull over for emergency vehicles; emergency vehicles drive off-law (wrong side, round obstacles); police car chases, a suspect tagged by the police car stops and is arrested   → IN PROGRESS [emergency]
+[ ] - "unusable ground" still shown after zoning a parcel as park   → IN PROGRESS [inspector]
+[ ] - farms labelled "workshops" in the inspector: buildings must look like what they are   → IN PROGRESS [inspector]
+[ ] - building inspector cleanup: zone type, business type and name first; no homes section for businesses; small cash-flow graph; people inside as a grid of named portraits that select the person   → IN PROGRESS [inspector]
+[ ] - save under a name; landing page lists saved games with a map image of each city   → IN PROGRESS [ui]
+[ ] - transit panel: bus lines with buses' positions, edit/delete single stops, distance and time between stops, ridership per line and boardings per stop   → IN PROGRESS [inspector]
+[ ] - a new road deleted a bus depot: roads never delete special buildings; red outline in the preview, implementing refused until moved   → IN PROGRESS [fix-plan]
+[ ] - map view layer: roads like Google Maps with street names, zones lightly tinted, special buildings as labels/pins, buildings and people hidden   → IN PROGRESS [layers]
+[ ] - nights too dark: brighter city glow and light pollution, atmospheric scattering   → IN PROGRESS [layers]

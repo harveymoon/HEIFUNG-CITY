@@ -88,7 +88,9 @@ pub fn summary(w: &World) -> Value {
         .ports
         .ports
         .values()
-        .map(|p| json!({ "kind": p.kind.label(), "center": v2(p.center), "berth": v2(p.berth), "water": p.water.label(), "road_connected": p.road_connected, "reaches_elsewhere": p.reaches_elsewhere, "works": p.works(), "building": p.building.map(super::view::key_str) }))
+        .map(|p| json!({ "kind": p.kind.label(), "center": v2(p.center), "berth": v2(p.berth), "water": p.water.label(), "road_connected": p.road_connected, "reaches_elsewhere": p.reaches_elsewhere, "works": p.works(), "building": p.building.map(super::view::key_str),
+            "remote_towns": p.remote.iter().map(|t| json!({ "name": t.name, "edge": t.edge.label(), "km": round(t.km) })).collect::<Vec<_>>(), "sailings": p.sailings,
+            "waiting_to_board": p.building.and_then(|b| w.ports.boarding.get(&b)).copied().unwrap_or(0) }))
         .collect();
     let s = &w.ports.stats;
     json!({
@@ -101,8 +103,12 @@ pub fn summary(w: &World) -> Value {
         "highway": { "entries": entries.len(), "exits": exits.len(), "through_cars": w.through_cars() },
         "bridges": { "count": bridges.len(), "metres": round(bridges.iter().map(|b| b.0).sum::<f32>()), "highway": bridges.iter().filter(|b| b.1).count() },
         "ports": ports,
-        "ships": w.ports.ships.values().map(|sh| json!({ "kind": format!("{:?}", sh.kind).to_lowercase(), "at": v2(sh.pose().0), "docked": sh.docked, "passengers": sh.passengers, "cargo": sh.cargo.len() })).collect::<Vec<_>>(),
-        "port_stats": { "freight_landed_today": s.freight_landed_today, "waiting_cargo": s.waiting_cargo, "ferry_riders_today": s.ferry_riders_today, "ferry_fares_today": round(s.ferry_fares_today) },
+        "ships": w.ports.ships.values().map(|sh| json!({ "kind": format!("{:?}", sh.kind).to_lowercase(), "at": v2(sh.pose().0), "docked": sh.docked, "passengers": sh.passengers, "cargo": sh.cargo.len(),
+            "remote_town": sh.remote.map(|k| w.ferry_town_name(sh.port, k)), "back_home": sh.home })).collect::<Vec<_>>(),
+        "port_stats": { "freight_landed_today": s.freight_landed_today, "waiting_cargo": s.waiting_cargo, "ferry_riders_today": s.ferry_riders_today, "ferry_fares_today": round(s.ferry_fares_today),
+            "remote_sailings_today": s.remote_sailings_today, "visitors_in_today": s.visitors_in_today, "visitors_out_today": s.visitors_out_today, "commuters_in_today": s.commuters_in_today, "commuters_out_today": s.commuters_out_today,
+            "day_trips_today": s.day_trips_today, "day_trippers_back_today": s.day_trippers_back_today,
+            "abroad_now": w.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Abroad { .. })).count(), "commuters_in_town": w.tourism.commuters() },
     })
 }
 

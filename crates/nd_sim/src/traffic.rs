@@ -31,11 +31,15 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 
 mod crosswalk;
+mod remap;
 mod roundabout;
+mod siren;
 mod why;
 
 pub use crosswalk::{Hold, PedTraffic, PED_CLEARANCE};
+pub use remap::CarryReport;
 pub use roundabout::{RingLanes, RingNode, RING_CRITICAL_GAP, RING_SPEED};
+pub use siren::{pulls_over, OffLaw, OffLawMove, PURSUIT_SPEED_FACTOR};
 pub use why::{JamChain, StopReason};
 
 new_key_type! {
@@ -154,13 +158,10 @@ const TRUCK_SPEED_FACTOR: f32 = 0.85;
 /// Trips older than this (traffic seconds) end where the car stands. A bus
 /// is never ended this way (its riders would be teleported with it): it is
 /// re-planned from where it stands instead.
-/// [services] Emergency vehicles drive this much over the limit; cars this
-/// far ahead of one on its lane pull this far to the right.
+/// [services] Emergency vehicles drive this much over the limit; cars
+/// pulled over for one stand this far to the right (`traffic/siren.rs`).
 const SIREN_SPEED_FACTOR: f32 = 1.25;
-const SIREN_CLEAR: f32 = 40.0;
 const SIREN_PULL_ASIDE: f32 = 1.6;
-/// How hard a car pulling aside for a siren brakes (m/s per s).
-const SIREN_YIELD_BRAKE: f32 = 3.0;
 /// [carlife] A vehicle this long on one route (traffic seconds) looks for
 /// another way from where it stands; it is never taken off the road.
 const REPLAN_AFTER: f32 = 1800.0;
@@ -576,6 +577,10 @@ pub struct Car {
     pub toll_booth: u32,
     #[serde(default)]
     pub toll_paid: bool,
+    /// [passengers] Everyone riding along besides the driver (`citizen`),
+    /// kept by `World::step_passengers`.
+    #[serde(default)]
+    pub occupants: Vec<CitizenId>,
 }
 
 /// Why a car is not driving freely.
@@ -712,6 +717,22 @@ impl DriverProfile {
         (1.0 - self.skill) * 0.35 + self.drunk * 1.3 + if self.ignores_signals { 0.45 } else { 0.0 }
     }
 
+    /// Where the driver sits between slow (`-1`) and reckless (`1`), `0`
+    /// an ordinary driver: desired speed, eagerness to overtake, how
+    /// readily they stop for an amber, and how close they follow, each
+    /// measured from a by-the-book driver and averaged. The inspector's
+    /// slow–normal–reckless slider. Drink pushes it up through those.
+    pub fn boldness(&self) -> f32 {
+        if !self.assigned {
+            return 0.0;
+        }
+        let speed = (self.speed - 1.0) / 0.3;
+        let aggression = (self.aggression - 0.45) / 0.55;
+        let ambers = (0.85 - self.compliance) / 0.65;
+        let tailgating = (1.5 - self.headway) / 0.9;
+        ((speed + aggression + ambers + tailgating) / 4.0).clamp(-1.0, 1.0)
+    }
+
     pub fn label(&self) -> &'static str {
         if !self.assigned {
             "unassigned"
@@ -821,6 +842,17 @@ pub struct DriveState {
     /// this trip (fed into how the trip felt).
     pub anger: f32,
     pub anger_peak: f32,
+    /// [emergency] The move of a vehicle driving off-law (lights and
+    /// sirens, or fleeing them): round a queue, on the kerb, through a red
+    /// (`traffic/siren.rs`). Planned afresh every step.
+    #[serde(skip)]
+    pub offlaw: OffLaw,
+    /// [emergency] A suspect fleeing the police in this car: reckless,
+    /// off-law, never pulls over (`world/chases.rs`).
+    pub fleeing: bool,
+    /// [emergency] A police car in pursuit: the car it is chasing. It drives
+    /// at it rather than round it; touching it is the tag.
+    pub chasing: Option<CarId>,
 }
 
 /// [rage] How angry (`0..1`) a driver gets `elapsed` minutes into a drive
@@ -984,7 +1016,7 @@ impl Car {
     /// Desired speed on a lane with this limit.
     fn desired_speed(&self, limit: f32) -> f32 {
         if self.siren {
-            return limit * SIREN_SPEED_FACTOR;
+            return limit * if self.drive.chasing.is_some() { PURSUIT_SPEED_FACTOR } else { SIREN_SPEED_FACTOR };
         }
         let base = if self.cargo.is_some() { limit * TRUCK_SPEED_FACTOR } else { limit };
         base * self.drive.profile.speed
@@ -1071,6 +1103,15 @@ pub struct LaneUseRule {
     pub segment: SegmentId,
     pub node: NodeId,
     pub arrows: Vec<u8>,
+    /// Where the junction is and the unit direction the street leaves it
+    /// in: how the rule finds its approach again after a rebuild has
+    /// renumbered segments and nodes (`Traffic::anchor_lane_use`). None in
+    /// saves from before anchoring, and until the next rebuild for a rule
+    /// just set; those are matched by id on the network they were made on.
+    #[serde(default)]
+    pub at: Option<Vec2>,
+    #[serde(default)]
+    pub away: Option<Vec2>,
 }
 
 /// What a signal knows about one approach of its junction.
@@ -1865,12 +1906,9 @@ fn idm_with(v: f32, v0: f32, gap: f32, dv: f32, headway: f32, accel: f32) -> f32
 impl Traffic {
     pub fn rebuild(&mut self, roads: &RoadNetwork) {
         self.net.rebuild(roads);
-        for r in self.lane_use.clone() {
-            if let Some(ai) = self.net.approaches.iter().position(|a| a.segment == r.segment && a.node == r.node && a.lanes.len() == r.arrows.len()) {
-                self.net.approaches[ai].fixed = true;
-                self.net.set_arrows(ai, r.arrows.clone());
-            }
-        }
+        // Player arrows go back on their approaches by geometry
+        // (`traffic/remap.rs`): ids are renumbered by every rebuild.
+        self.resolve_lane_use(roads);
     }
 
     /// Drop every car; used when the road network changes shape.
@@ -1915,7 +1953,7 @@ impl Traffic {
         let lane = route[0];
         let (pos, dir) = self.net.lanes[lane as usize].point_at(s_start);
         let heading = dir.y.atan2(dir.x);
-        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, blocked_by: None, replans: 0, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), owned: None, errand: Default::default(), drive: DriveState::default(), toll_booth: 0, toll_paid: false });
+        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, blocked_by: None, replans: 0, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), owned: None, errand: Default::default(), drive: DriveState::default(), toll_booth: 0, toll_paid: false, occupants: Vec::new() });
         self.pull_out(id);
         id
     }
@@ -2378,7 +2416,7 @@ impl Traffic {
                     return Err("some exit would be reachable from no lane".into());
                 }
                 let a: Vec<u8> = a.iter().map(|&x| x & ap.exits).collect();
-                self.lane_use.push(LaneUseRule { segment, node, arrows: a.clone() });
+                self.lane_use.push(LaneUseRule { segment, node, arrows: a.clone(), at: None, away: None });
                 self.net.approaches[ai].fixed = true;
                 self.net.set_arrows(ai, a);
             }
@@ -2793,32 +2831,6 @@ impl Traffic {
         out
     }
 
-    /// Advance all cars by `seconds` in `substeps` steps. Returns cars that
-    /// reached their destination (they stay in `cars` until removed).
-    /// [services] Cars a little ahead of an emergency vehicle on its lane
-    /// pull to the right and slow to a crawl so it can pass.
-    fn yield_to_sirens(&mut self, dt: f32) {
-        let mut pull: Vec<CarId> = Vec::new();
-        for lane in &self.net.lanes {
-            for (k, &cid) in lane.cars.iter().enumerate() {
-                if !self.cars[cid].siren {
-                    continue;
-                }
-                let s = self.cars[cid].s;
-                pull.extend(lane.cars[k + 1..].iter().copied().filter(|&o| !self.cars[o].siren && self.cars[o].s - s < SIREN_CLEAR));
-            }
-        }
-        for id in pull {
-            let c = &mut self.cars[id];
-            c.lateral = c.lateral.max(SIREN_PULL_ASIDE);
-            // Slow to a crawl as a driver would, braking firmly but not
-            // stopping dead: a car snapped from 13 to 2 m/s was run into by
-            // the one behind once the siren had passed (most of the demo's
-            // rear-end crashes, and their police calls).
-            c.v = c.v.min((c.v - SIREN_YIELD_BRAKE * dt).max(2.0));
-        }
-    }
-
     /// A lane change at the very end of a route, on a lane that leads
     /// nowhere (a carriageway running off the map), is pointless: the car
     /// is gone at the end whichever lane it is in. Routes to a map exit end
@@ -2846,6 +2858,8 @@ impl Traffic {
         }
     }
 
+    /// Advance all cars by `seconds` in `substeps` steps. Returns cars that
+    /// reached their destination (they stay in `cars` until removed).
     pub fn step(&mut self, seconds: f32, substeps: usize) -> Vec<CarId> {
         let dt = seconds / substeps.max(1) as f32;
         self.drop_dead_end_changes();
@@ -2890,6 +2904,8 @@ impl Traffic {
                     }
                 }
             }
+            // [emergency] Sirens and fugitives plan their way round.
+            self.plan_offlaw(dt);
             let mut accs: Vec<Step> = Vec::with_capacity(self.cars.len());
             for (lane_id, lane) in self.net.lanes.iter().enumerate() {
                 let lane_claims = claims.get(&(lane_id as LaneId));
@@ -2924,9 +2940,10 @@ impl Traffic {
                         // On the shoulder: stop short of the crossing.
                         gap -= CROSSING_SETBACK;
                     }
-                    // [services] Lights and sirens: no leader, no red light.
-                    if car.siren {
-                        (gap, lead_v, why) = (LOOKAHEAD * 2.0, ROAD_SPEED, Wait::Free);
+                    // [emergency] Lights and sirens (and whoever flees them):
+                    // past what their move takes them round, no red light.
+                    if car.offlaw() {
+                        (gap, lead_v, why) = self.offlaw_gap(car, gap, lead_v, why);
                     }
                     if pending {
                         // Stop at the end of the lane until the change is made.
@@ -2980,6 +2997,9 @@ impl Traffic {
                         if let Some(cap) = self.toll_cap(car) {
                             v0 = v0.min(cap);
                         }
+                    }
+                    if let Some(cap) = Self::offlaw_cap(car) {
+                        v0 = v0.min(cap);
                     }
                     accs.push(Step { by, id: cid, acc: car.idm(v0, gap, car.v - seen), why, left_wait, seen, run });
                 }
@@ -3180,6 +3200,7 @@ impl Traffic {
                     }
                 }
             }
+            self.offlaw_reorder();
             self.collisions();
             self.crosswalk_conflicts();
             self.hazards(dt);
@@ -3375,7 +3396,9 @@ impl Traffic {
                 // [services] Nor into a car pulled onto the shoulder for a
                 // siren: the one behind (often tailgating the siren as it
                 // came through) squeezes past or settles behind it.
-                if !f.drive.profile.assigned || f.passing || f.siren || f.crashed() || f.lateral.abs() > 1.0 || l.lateral >= SIREN_PULL_ASIDE * 0.9 {
+                // [emergency] Nor while either is out of the lane on an
+                // off-law move (overtaking on the wrong side, on the kerb).
+                if !f.drive.profile.assigned || f.passing || f.siren || f.crashed() || f.lateral.abs() > 1.0 || l.lateral >= SIREN_PULL_ASIDE * 0.9 || f.drive.offlaw.side.abs() > 1.0 || l.drive.offlaw.side.abs() > 1.0 {
                     continue;
                 }
                 let gap = l.s - l.length() - f.s;
@@ -3586,7 +3609,8 @@ impl Traffic {
                 car.drive.weave * (1.0 - dt).max(0.0)
             };
             car.drive.weave = weave;
-            let mut side = car.lateral + weave;
+            // [emergency] Plus an off-law move's swing out of the lane.
+            let mut side = car.lateral + weave + car.drive.offlaw.side;
             if lane.is_connector() && lane.turn != 0 {
                 let swing = car.swing();
                 if swing > 0.0 {
@@ -3604,6 +3628,9 @@ impl Traffic {
                 let t = car.age * 0.45 + car.drive.profile.phase * 37.0;
                 let dw = amp * 0.45 * (0.75 * 0.9 * (t * 0.9).cos() + 0.25 * 2.3 * (t * 2.3 + 1.7).cos());
                 heading += dw.atan2(car.v.max(2.0));
+            }
+            if car.drive.offlaw.slew != 0.0 && car.v > 0.5 {
+                heading += car.drive.offlaw.slew.atan2(car.v.max(2.0));
             }
             car.heading = heading;
             car.drive.poses.push((car.pos, heading));
@@ -3665,6 +3692,22 @@ fn step_stunt(st: &mut Stunt, pos: Vec2, heading: f32, dt: f32) -> (Vec2, f32) {
 
 #[cfg(test)]
 mod tests {
+
+    /// [inspector] The slow–normal–reckless reading of a driver.
+    #[test]
+    fn boldness_runs_from_slow_to_reckless() {
+        let ordinary = DriverProfile::for_driver(40, 0.5, 0.3, 0.0, 0.5, 0.0).boldness();
+        let careful_old = DriverProfile::for_driver(85, 0.95, 0.05, 0.0, 0.5, 0.0).boldness();
+        let rebel = DriverProfile::for_driver(21, 0.05, 0.95, 0.0, 0.5, 0.0).boldness();
+        let drunk_rebel = DriverProfile::for_driver(21, 0.05, 0.95, 1.0, 0.5, 0.0).boldness();
+        assert!(ordinary.abs() < 0.25, "ordinary {ordinary}");
+        assert!(careful_old < -0.25, "careful pensioner {careful_old}");
+        assert!(rebel > 0.45, "rebel {rebel}");
+        assert!(drunk_rebel >= rebel);
+        assert!(DriverProfile::professional(0.0).boldness().abs() < 0.25);
+        assert_eq!(DriverProfile::default().boldness(), 0.0, "unassigned reads as normal");
+        assert!(DriverProfile::for_driver(40, 0.5, 0.3, 0.0, 0.5, 0.0).angry(1.0).boldness() > ordinary, "anger shows");
+    }
     use super::*;
 
     fn cross() -> RoadNetwork {

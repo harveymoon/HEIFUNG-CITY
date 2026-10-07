@@ -249,3 +249,210 @@ fn demo_city_parked_cars_never_overlap_and_towing_keeps_every_car() {
     let yards = world.buildings.values().filter(|b| b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::TowYard)).count();
     println!("closest street-parked pair {worst:.2} m | tickets {} fines {:.0} tows {} (out of town {}) released {} auctioned {} | tow companies {yards} | city lots {}", e.tickets_total, e.fines_total, e.tows_total, e.tows_out_of_town_total, e.released_total, e.auctioned_total, world.vehicles.city_lots.len());
 }
+
+// ── Regressions from review 2 (H1 and the player's lost depot) ────────────
+// A plan edit must not take the city's vehicles off the road. A zoning edit
+// leaves the roads as they are and every vehicle where it was; a road edit
+// carries each vehicle across to the rebuilt lanes (same lane geometry:
+// same place, same route). The city's own structures are never taken by
+// road works: a project that would take one is refused until it is moved.
+
+use nd_sim::CarId;
+
+fn busy_city() -> (World, RuleBasedMind) {
+    let mut world = demo_world();
+    let mut minds = RuleBasedMind::default();
+    let mut ticks = 0;
+    while world.traffic.cars.values().filter(|c| !World::is_through_car(c)).count() < 40 && ticks < 40_000 {
+        world.tick(&mut minds);
+        ticks += 1;
+    }
+    assert!(world.traffic.cars.values().filter(|c| !World::is_through_car(c)).count() >= 40, "the demo city gets busy");
+    (world, minds)
+}
+
+fn snapshot(w: &World) -> Vec<(CarId, Vec2)> {
+    w.traffic.cars.iter().map(|(id, c)| (id, c.pos)).collect()
+}
+
+#[test]
+fn a_zone_edit_leaves_every_vehicle_where_it_is() {
+    let (mut world, mut minds) = busy_city();
+    let before = snapshot(&world);
+    let lanes = world.traffic.net.version;
+    let c = Vec2::new(-260.0, 600.0);
+    let poly = vec![c, c + Vec2::new(30.0, 0.0), c + Vec2::new(30.0, 30.0), c + Vec2::new(0.0, 30.0)];
+    world.add_zone(poly, LandUse::Residential).unwrap();
+    let after = snapshot(&world);
+    println!("zone edit: cars {} -> {}", before.len(), after.len());
+    assert_eq!(before, after, "every vehicle still on the road, where it was");
+    assert_eq!(world.traffic.net.version, lanes, "the lanes were not even rebuilt");
+    // And it drives on.
+    for _ in 0..60 {
+        world.tick(&mut minds);
+    }
+}
+
+#[test]
+fn a_road_edit_carries_the_vehicles_across() {
+    let (mut world, mut minds) = busy_city();
+    let before = snapshot(&world);
+    // A new street splitting the north-east residential block, joining the
+    // grid at both ends (a T at each end reshapes the lanes there).
+    world.add_road(&[Vec2::new(210.0, 140.0), Vec2::new(210.0, 280.0)], 1, 1);
+    assert!(world.implement_refused.is_none(), "{:?}", world.implement_refused);
+    let after = snapshot(&world);
+    let kept = before.iter().filter(|(id, p)| after.iter().any(|(a, q)| a == id && q.distance(*p) < 0.5)).count();
+    let carried = before.iter().filter(|(id, _)| world.traffic.cars.contains_key(*id)).count();
+    println!("road edit: cars {} -> {} ({carried} carried, {kept} exactly where they were)", before.len(), after.len());
+    // Only a vehicle with no way on from where it stands may leave the
+    // road; before the fix every city vehicle did.
+    assert!(carried * 100 >= before.len() * 95, "{carried} of {} carried", before.len());
+    assert!(kept * 100 >= before.len() * 80, "{kept} of {} untouched", before.len());
+    // The lane lists agree with the cars, and the city drives on.
+    for (id, c) in world.traffic.cars.iter() {
+        if !c.entering && !c.in_stunt() {
+            assert!(world.traffic.net.lanes[c.route[c.idx] as usize].cars.contains(&id));
+        }
+    }
+    for _ in 0..600 {
+        world.tick(&mut minds);
+    }
+}
+
+#[test]
+fn road_works_never_take_a_civic_structure() {
+    let (mut world, _) = busy_city();
+    let depot = world.buildings.iter().find(|(_, b)| b.depot).map(|(id, _)| id).expect("the demo city has a depot");
+    let at = world.lots[world.buildings[depot].lot].center;
+    let n_before = world.buildings.len();
+    let master = world.master.clone();
+    // A road straight through the depot's yard.
+    world.start_project();
+    let gid = world.add_gesture(nd_sim::Gesture::Road { points: vec![at + Vec2::new(-80.0, 0.0), at + Vec2::new(80.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: nd_sim::roads::RoadKind::Street, elevation: Vec::new() });
+    let blockers = world.project_blockers();
+    assert!(blockers.contains(&depot), "outlined while planned: {blockers:?}");
+    let refused = world.try_implement().expect_err("refused");
+    println!("{refused}");
+    assert!(refused.contains(&world.buildings[depot].name));
+    assert!(world.project.is_some(), "the project stays pending");
+    assert_eq!(world.master.gestures, master.gestures, "nothing built");
+    assert!(world.buildings.contains_key(depot) && world.buildings.len() == n_before);
+    // Moved clear (far out of town), it goes through.
+    world.set_gesture(gid, nd_sim::Gesture::Road { points: vec![Vec2::new(-260.0, 600.0), Vec2::new(-100.0, 600.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: nd_sim::roads::RoadKind::Street, elevation: Vec::new() }, true);
+    assert!(world.project_blockers().is_empty());
+    world.try_implement().expect("implemented once moved");
+    assert!(world.buildings.contains_key(depot));
+}
+
+// ── Regression from review 2 (M4): late mind answers mid-trip ─────────────
+// `MindProvider::poll` answers (an LLM mind thinking it over) used to be
+// applied to citizens who were driving or riding: their car drove on
+// empty, or they left a bus still listing them. Now the thought lands at
+// once and the intent waits for their next decision.
+
+struct Late {
+    rules: RuleBasedMind,
+    queue: Vec<(nd_sim::CitizenId, nd_sim::Decision)>,
+}
+
+impl nd_sim::MindProvider for Late {
+    fn decide(&mut self, ctx: &nd_sim::MindContext) -> Option<nd_sim::Decision> {
+        self.rules.decide(ctx)
+    }
+    fn poll(&mut self) -> Vec<(nd_sim::CitizenId, nd_sim::Decision)> {
+        std::mem::take(&mut self.queue)
+    }
+    fn name(&self) -> &'static str {
+        "late"
+    }
+}
+
+/// (bus riders not riding it, cars driven by someone not in them, train
+/// riders not on it)
+fn ghosts(w: &World) -> (usize, usize, usize) {
+    use nd_sim::Activity;
+    let mut bus = 0;
+    let mut car_ghost = 0;
+    for (cid, car) in w.traffic.cars.iter() {
+        if let Some(b) = &car.bus {
+            bus += b.passengers.iter().filter(|p| !w.citizens.get(**p).is_some_and(|c| matches!(c.activity, Activity::Riding { bus } if bus == cid))).count();
+        }
+        if car.bus.is_none() && car.cargo.is_none() && car.owned.is_some() && w.citizens.get(car.citizen).is_some_and(|c| !matches!(c.activity, Activity::Driving { car, .. } if car == cid)) {
+            car_ghost += 1;
+        }
+    }
+    let train = w.rail.trains.iter().map(|(tid, t)| t.passengers.iter().filter(|p| !w.citizens.get(**p).is_some_and(|c| matches!(c.activity, Activity::OnTrain { train } if train == tid))).count()).sum();
+    (bus, car_ghost, train)
+}
+
+#[test]
+fn late_mind_answers_wait_until_the_trip_is_over() {
+    use nd_sim::{Activity, Decision, Intent};
+    let mut w = demo_world();
+    let mut m = Late { rules: RuleBasedMind::default(), queue: Vec::new() };
+    for _ in 0..1440 * 2 {
+        w.tick(&mut m);
+    }
+    let mut injected = 0;
+    let mut worst = (0, 0, 0);
+    for i in 0..720u64 {
+        if i % 5 == 0 {
+            let movers: Vec<nd_sim::CitizenId> = w.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. })).map(|(id, _)| id).take(2).collect();
+            for id in movers {
+                m.queue.push((id, Decision { intent: Intent::GoHome, thought: "model says: go home".into(), memory: None }));
+                injected += 1;
+            }
+        }
+        w.tick(&mut m);
+        let g = ghosts(&w);
+        worst = (worst.0.max(g.0), worst.1.max(g.1), worst.2.max(g.2));
+    }
+    println!("answers injected {injected}: worst ghosts {worst:?}");
+    assert!(injected > 50);
+    assert_eq!(worst, (0, 0, 0));
+    assert!(w.citizens.values().any(|c| c.thought == "model says: go home"), "the thought still lands");
+}
+
+// ── Regression from review 2 (M7): removing the stop a bus is bound for ───
+// The bus used to be re-aimed at the stop behind it and teleported there on
+// arrival. Now it keeps on to the stop after the removed one, from its lane.
+
+#[test]
+fn removing_the_next_stop_never_teleports_the_bus() {
+    let mut w = demo_world();
+    let mut minds = RuleBasedMind::default();
+    let mut found = None;
+    for _ in 0..30_000 {
+        w.tick(&mut minds);
+        found = w.traffic.cars.iter().find_map(|(id, c)| c.bus.as_ref().filter(|b| b.next_stop != usize::MAX && b.next_stop >= 2 && c.hold <= 0.0 && !c.entering).map(|b| (id, b.route, b.next_stop)));
+        if found.is_some() {
+            break;
+        }
+    }
+    let (car, route, k) = found.expect("a bus on its way to stop >= 2");
+    let n = w.transit.routes[route].stops.len();
+    w.remove_bus_stop(route, k);
+    assert_eq!(w.traffic.cars[car].bus.as_ref().unwrap().next_stop, if k + 1 >= n { 0 } else { k }, "bound for the stop after the removed one");
+    // A tick moves a vehicle at most as far as its speed takes it (4 s at
+    // up to a street's limit, with a margin for speeders); a teleport moves
+    // it without the speed to match.
+    let dt = w.config.traffic_seconds_per_tick;
+    let (mut last, mut last_v) = (w.traffic.cars[car].pos, w.traffic.cars[car].v);
+    let mut stops_made = 0;
+    let mut next = w.traffic.cars[car].bus.as_ref().unwrap().next_stop;
+    for t in 0..3000 {
+        w.tick(&mut minds);
+        let Some(c) = w.traffic.cars.get(car) else { break };
+        let jump = c.pos.distance(last);
+        let reach = last_v.max(c.v) * dt * 1.3 + 4.0;
+        assert!(jump <= reach, "tick {t}: bus jumped {jump:.0} m at {:.1}..{:.1} m/s", last_v, c.v);
+        (last, last_v) = (c.pos, c.v);
+        let now = c.bus.as_ref().unwrap().next_stop;
+        if now != next {
+            stops_made += 1;
+            next = now;
+        }
+    }
+    assert!(stops_made >= 1, "it served the next stop");
+}

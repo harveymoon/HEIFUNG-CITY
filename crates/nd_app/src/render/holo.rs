@@ -102,6 +102,17 @@ fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32],
         red.ground_polygon(&l.polygon, y, [WARN_TINT[0] * 0.25, WARN_TINT[1] * 0.25, WARN_TINT[2] * 0.25, 1.0]);
         red.ground_strip(&outline, 0.7, y + 0.02, [WARN_TINT[0], WARN_TINT[1], WARN_TINT[2], 1.0]);
     }
+    // The city's own structures in the way: implementing is refused until
+    // the road is moved (`World::try_implement`), so they get a wide,
+    // bright border that cannot be mistaken for an ordinary buy-out.
+    for bid in w.structures_in_way(pts, levels, f, b, kind) {
+        let Some(lot) = w.buildings.get(bid).map(|b| b.lot) else { continue };
+        let Some(l) = w.lots.get(lot) else { continue };
+        let y = w.lot_pad(lot) + 0.45;
+        let mut outline = l.polygon.clone();
+        outline.push(l.polygon[0]);
+        red.ground_strip(&outline, 2.4, y, [WARN_TINT[0] * 2.0, WARN_TINT[1] * 1.5, WARN_TINT[2] * 1.5, 1.0]);
+    }
     (pv.mesh, red)
 }
 
@@ -218,14 +229,16 @@ pub struct DepthHidden;
 /// entity to `Inherited` each frame above ground, which brought every
 /// citizen indoors back as a frozen, white, unclickable old-style figure.
 /// So it hides (and marks) what it must underground, and above ground
-/// only restores what it marked.
+/// only restores what it marked. The waterworks (decks, viaducts, tunnel
+/// portals and vent heads) are surface works too: a vent head used to
+/// float in the middle of the bore in the underground view.
 #[allow(clippy::type_complexity)]
 pub fn apply_depth(
     mut commands: Commands,
     tools: Res<ToolState>,
     sim: Res<Sim>,
     mut gizmos: Gizmos,
-    mut surface: Query<(Entity, &mut Visibility, Has<DepthHidden>, Has<CitizenTag>), (Or<(With<TerrainTag>, With<BuildingTag>, With<LotsTag>, With<ScatterTag>, With<ParkTag>, With<VacantTag>, With<RoadsTag>, With<WaterTag>, With<LaneArrowsTag>, With<PathsTag>, With<WalkDetailTag>, With<SignalTag>, With<CitizenTag>, With<HazeTag>)>, Without<TunnelTag>, Without<CarTag>)>,
+    mut surface: Query<(Entity, &mut Visibility, Has<DepthHidden>, Has<CitizenTag>), (Or<(With<TerrainTag>, With<BuildingTag>, With<LotsTag>, With<ScatterTag>, With<ParkTag>, With<VacantTag>, With<RoadsTag>, With<WaterTag>, With<WaterworksTag>, With<LaneArrowsTag>, With<PathsTag>, With<WalkDetailTag>, With<SignalTag>, With<CitizenTag>)>, Without<TunnelTag>, Without<CarTag>)>,
     mut tunnels: Query<&mut Visibility, (With<TunnelTag>, Without<CarTag>)>,
     mut cars: Query<(Entity, &Transform, &mut Visibility, Has<DepthHidden>), (With<CarTag>, Without<TunnelTag>)>,
 ) {

@@ -7,7 +7,13 @@
 //! small extension of the glow material that looks the building's lit share
 //! up in a 256 x 256 one-byte texture and discards windows ranked above it,
 //! uncovering the dark glass laid behind each one. Updating the lights is a
-//! 64 KB texture write a few times per sim hour; no mesh is touched.
+//! 64 KB texture write every few sim minutes; no mesh is touched.
+//!
+//! Nothing switches in step. Each building takes up its new share at its
+//! own minute and eases towards it a few windows at a time, and in the
+//! shader each window's threshold wanders a little on its own slow clock
+//! (someone going to the kitchen, a lamp switched off in the next room),
+//! so a block twinkles window by window instead of flipping at once.
 
 use bevy::asset::{uuid_handle, RenderAssetUsages};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
@@ -24,8 +30,12 @@ use crate::sim::Sim;
 
 /// Side of the square lit-share texture: one texel per building slot.
 pub(super) const LIGHT_TEX: u32 = 256;
-/// Sim minutes between light updates (four times an hour).
-const UPDATE_EVERY_TICKS: u64 = 15;
+/// Sim minutes between light updates. Each building picks up its target
+/// only on its own turn, one in [`STAGGER`] updates, so a building sees a
+/// new share every quarter hour but the city's buildings do not all see
+/// it on the same minute.
+const UPDATE_EVERY_TICKS: u64 = 3;
+const STAGGER: u64 = 5;
 
 pub(super) const WINDOW_SHADER: Handle<Shader> = uuid_handle!("6f0b8f9e-5d1c-4a87-9e43-1f7c2a9d3b51");
 
@@ -37,6 +47,12 @@ const WINDOW_SHADER_SRC: &str = r#"
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var lit_texture: texture_2d<f32>;
+// x: sim minutes (wrapped), for each window's own wandering.
+@group(#{MATERIAL_BIND_GROUP}) @binding(101) var<uniform> lights_clock: vec4<f32>;
+
+fn window_hash(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -48,8 +64,20 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let slot = u32(in.uv.x + 0.5);
         let dims = textureDimensions(lit_texture);
         let share = textureLoad(lit_texture, vec2<u32>(slot % dims.x, min(slot / dims.x, dims.y - 1u)), 0).r;
-        if in.uv.y >= share {
+        if share <= 0.004 {
             discard;
+        }
+        // Each window (its building slot and rank) re-rolls a small offset
+        // to its threshold every 40..180 sim minutes, at its own phase: the
+        // building's share holds on average while single rooms come and go.
+        if share < 0.996 {
+            let key = vec2(in.uv.x * 0.618 + 3.1, in.uv.y * 977.0);
+            let period = 40.0 + 140.0 * window_hash(key);
+            let epoch = floor(lights_clock.x / period + window_hash(key.yx + 1.7));
+            let jitter = (window_hash(key + vec2(epoch * 0.731, epoch * 1.37)) - 0.5) * 0.26;
+            if in.uv.y + jitter >= share {
+                discard;
+            }
         }
     }
 #endif
@@ -68,6 +96,9 @@ pub(super) type WindowMaterial = ExtendedMaterial<StandardMaterial, WindowLights
 pub(super) struct WindowLights {
     #[texture(100)]
     pub lit: Handle<Image>,
+    /// x: sim minutes, wrapped to keep f32 precision.
+    #[uniform(101)]
+    pub clock: Vec4,
 }
 
 impl MaterialExtension for WindowLights {
@@ -124,20 +155,39 @@ pub(super) fn tag_windows(g: &mut Geometry, slot: Option<u32>) {
     }
 }
 
-/// Recount who is in every building and rewrite the lit-share texture,
-/// every `UPDATE_EVERY_TICKS` sim minutes (and after a load).
+/// A stable per-building number for its turn and its pace.
+fn building_hash(slot: u32) -> u64 {
+    let mut h = (slot as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    h ^= h >> 31;
+    h.wrapping_mul(0xBF58_476D_1CE4_E5B9) >> 17
+}
+
+/// Recount who is in every building every `UPDATE_EVERY_TICKS` sim minutes
+/// (and after a load) and move each building's texel towards its new share
+/// on that building's own turn, a few windows at a time.
 pub(super) fn update_window_lights(
     sim: Res<Sim>,
     mats: Res<Materials>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<WindowMaterial>>,
     mut last: Local<Option<(u64, usize)>>,
+    mut minute: Local<u64>,
 ) {
     let w = &sim.world;
-    let key = (w.clock.tick / UPDATE_EVERY_TICKS, w.buildings.len());
+    // The windows' own clock, at most once a sim minute (a material
+    // write rebuilds its bind group).
+    if *minute != w.clock.tick || sim.full_rebuild {
+        *minute = w.clock.tick;
+        if let Some(mut m) = materials.get_mut(&mats.windows) {
+            m.extension.clock.x = (w.clock.tick % 1_000_000) as f32 + sim.frac();
+        }
+    }
+    let step = w.clock.tick / UPDATE_EVERY_TICKS;
+    let key = (step, w.buildings.len());
     if *last == Some(key) && !sim.full_rebuild {
         return;
     }
+    let first = last.is_none() || sim.full_rebuild;
     *last = Some(key);
     let n = (LIGHT_TEX * LIGHT_TEX) as usize;
     // awake at home, asleep at home, staff in
@@ -160,6 +210,11 @@ pub(super) fn update_window_lights(
     let Some(data) = img.data.as_mut() else { return };
     for (id, b) in w.buildings.iter() {
         let Some(slot) = slot_of(id) else { continue };
+        let bh = building_hash(slot);
+        // Not this building's turn: it keeps what it shows.
+        if !first && (step + bh) % STAGGER != 0 {
+            continue;
+        }
         let [awake, asleep, staff] = counts[slot as usize];
         let o = Occupancy {
             homes: b.homes,
@@ -172,7 +227,18 @@ pub(super) fn update_window_lights(
             hour,
             powered: b.powered,
         };
-        data[slot as usize] = (lit_share(&o) * 255.0).round() as u8;
+        let target = (lit_share(&o) * 255.0).round() as u8;
+        let cur = &mut data[slot as usize];
+        // A power cut is instant; otherwise ease over, at this building's
+        // own pace (12..44 of 255 a turn), so lights come on and go off a
+        // few windows at a time.
+        if first || (target == 0 && b.powered < 0.05) {
+            *cur = target;
+        } else {
+            let pace = 12 + (bh >> 8) % 33;
+            let d = target as i32 - *cur as i32;
+            *cur = (*cur as i32 + d.clamp(-(pace as i32), pace as i32)) as u8;
+        }
     }
     // Touch the material so its bind group picks up the new texture.
     let _ = materials.get_mut(&mats.windows);

@@ -147,6 +147,24 @@ pub enum Activity {
     OnMetro {
         train: crate::subway::MetroTrainId,
     },
+    /// [passengers] Riding along in someone else's car (`world/rides.rs`):
+    /// walking beside `driver` to the car (`seated` false, drawn), then in
+    /// it (`seated`, out of sight, carried with it); out at the far end,
+    /// they walk on to `to` themselves.
+    Passenger {
+        driver: CitizenId,
+        to: Option<BuildingId>,
+        purpose: Purpose,
+        seated: bool,
+    },
+    /// [ferries] Away for the day in a town off the map (`town`: index
+    /// into the terminal's remote towns), back on a ferry into `terminal`
+    /// once `until` has passed.
+    Abroad {
+        terminal: BuildingId,
+        town: u8,
+        until: u64,
+    },
 }
 
 impl Activity {
@@ -163,6 +181,9 @@ impl Activity {
             Activity::OnTrain { .. } => "on the train",
             Activity::Flying { .. } => "in the air",
             Activity::OnMetro { .. } => "on the subway",
+            Activity::Passenger { seated: true, .. } => "riding in a car",
+            Activity::Passenger { .. } => "walking to the car",
+            Activity::Abroad { .. } => "away on a day trip",
             Activity::Traveling { purpose, .. } | Activity::Driving { purpose, .. } => match purpose {
                 Purpose::Home => "heading home",
                 Purpose::Work => "commuting",
@@ -176,7 +197,7 @@ impl Activity {
     }
 
     pub fn is_traveling(&self) -> bool {
-        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } | Activity::Flying { .. } | Activity::OnMetro { .. })
+        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } | Activity::Flying { .. } | Activity::OnMetro { .. } | Activity::Passenger { .. } | Activity::Abroad { .. })
     }
 }
 
@@ -483,6 +504,20 @@ fn one() -> f32 {
 
 /// Wakefulness below this and a citizen heads home to sleep.
 pub const TIRED: f32 = 0.2;
+
+/// [lights] Whether `hour` is night for a citizen with this seed: everyone
+/// keeps their own hours, to bed between 21:00 and midnight and up between
+/// 05:00 and 07:00. With one bedtime for the whole city every home went
+/// dark on the same stroke of 22:00, which read as a switch, not a city.
+pub fn night_for(seed: u64, hour: u64) -> bool {
+    let mut h = seed ^ 0x5851_F42D_4C95_7F2D;
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+    h ^= h >> 29;
+    let bed = [21, 22, 22, 23, 23, 24][(h % 6) as usize];
+    let rise = [5, 6, 6, 7][((h >> 8) % 4) as usize];
+    hour >= bed || hour < rise
+}
 /// Wakefulness below this at work and the shift goes badly.
 pub const EXHAUSTED: f32 = 0.12;
 
@@ -550,12 +585,23 @@ impl Citizen {
     }
 
     pub fn is_visible(&self) -> bool {
-        matches!(self.activity, Activity::Traveling { .. } | Activity::Idle | Activity::Sitting { .. } | Activity::Waiting { .. })
+        matches!(self.activity, Activity::Traveling { .. } | Activity::Idle | Activity::Sitting { .. } | Activity::Waiting { .. } | Activity::Passenger { seated: false, .. })
     }
 }
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn bedtimes_differ_from_person_to_person() {
+        let share = |h: u64| (0..1000u64).filter(|s| night_for(s.wrapping_mul(0x9E37_79B9_7F4A_7C15), h)).count();
+        assert_eq!(share(3), 1000, "everyone sleeps at three in the morning");
+        assert_eq!(share(14), 0, "nobody's night at two in the afternoon");
+        let (at21, at22, at23) = (share(21), share(22), share(23));
+        assert!(at21 > 50 && at21 < at22 && at22 < at23 && at23 < 1000, "the city goes to bed over hours: {at21} {at22} {at23}");
+        assert!(share(5) > share(6) && share(6) > share(7) && share(5) < 1000, "and gets up over hours");
+    }
+
     use super::*;
 
     fn citizen_at(pos: Vec2) -> Citizen {

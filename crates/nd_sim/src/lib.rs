@@ -38,8 +38,11 @@ pub mod plan;
 pub mod ports;
 pub mod power;
 pub mod rail;
+pub mod rides;
 pub mod roads;
 pub mod services;
+/// Street names: chains of segments named once and kept across rebuilds.
+pub mod streets;
 pub mod takeover;
 /// [tax] Tax rates per land use and sub-type, and the import duty.
 pub mod tax;
@@ -75,8 +78,8 @@ pub use traffic::{Car, CarId, Cargo, LaneId, Traffic};
 pub use walk::WalkGraph;
 pub use vehicle::{BodyType, CarEvent, CarPlace, Errand, Livery, OwnedCar, ParkKind, ParkSpot, VehicleClass, VehicleId, VehicleModel, Vehicles};
 pub use bots::{BotId, Bots, DeliveryBot};
-pub use power::{PlantSite, PowerPlantKind, PowerStats, Weather};
-pub use landscape::{Landscape, LandscapeParams, LandscapePreset, WaterKind};
+pub use power::{Battery, BatteryKind, PlantSite, PowerPlantKind, PowerStats, Weather};
+pub use landscape::{Landscape, LandscapeParams, LandscapePreset, MapEdge, WaterKind};
 pub use ground::{Contamination, GroundSample, Soil};
 pub use industry::{IndustryKind, IndustrySite};
 pub use ports::{Port, PortId, PortKind, Ports, Ship, ShipKind};
@@ -85,7 +88,7 @@ pub use subway::{MetroLine, MetroLineId, MetroTrain, MetroTrainId, Subway, Subwa
 pub use transit::{BusRoute, BusStop, RouteId, Transit, TransitStats};
 pub use rail::{Facility, FacilityId, Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
 pub use services::{BuildCategory, Incident, IncidentKind, Placeable, ServiceKind, ServiceSite, Services, ServiceStats, Unit, UnitId, UnitKind};
-pub use world::{World, WorldConfig};
+pub use world::{GridAsset, PlantRow, World, WorldConfig};
 pub use zoning::{LandUse, Lot, LotId, Parcel, ParcelKey, ParcelMap, Zone, ZoneId};
 
 pub use glam::Vec2;

@@ -17,13 +17,13 @@ use crate::tools::ToolState;
 /// id or a name).
 fn district_id(cmd: &Value, w: &World) -> Result<Option<u16>, String> {
     if let Some(n) = opt_u64(cmd, "id")? {
-        return w.districts.get(n as u16).map(|d| Some(d.id)).ok_or_else(|| format!("no district {n}"));
+        return u16::try_from(n).ok().and_then(|n| w.districts.get(n)).map(|d| Some(d.id)).ok_or_else(|| format!("no district {n}"));
     }
     for key in ["district", "name"] {
         match field(cmd, key) {
             Some(Value::Number(n)) => {
-                let n = n.as_u64().unwrap_or(0) as u16;
-                return w.districts.get(n).map(|d| Some(d.id)).ok_or_else(|| format!("no district {n}"));
+                let n = n.as_u64().unwrap_or(0);
+                return u16::try_from(n).ok().and_then(|n| w.districts.get(n)).map(|d| Some(d.id)).ok_or_else(|| format!("no district {n}"));
             }
             Some(Value::String(s)) if key == "district" => return w.districts.find(s).map(Some).ok_or_else(|| format!("no district {s:?}")),
             _ => {}
@@ -185,7 +185,7 @@ pub fn tourism_json(w: &World, limit: usize) -> Value {
             };
             json!({ "id": key_str(id), "pos": [round(x.pos.x), round(x.pos.y)], "activity": x.activity_label(), "visible": x.is_visible(), "class": x.class.label(), "age": x.age,
                 "via": x.via.label(), "hotel": key_str(x.hotel), "money": round(x.money), "spent": round(x.spent), "sights": x.sights,
-                "arrived_day": x.arrived_tick / 1440 + 1, "leaves_day": x.leave_day + 1, "going_to": target })
+                "arrived_day": x.arrived_tick / 1440 + 1, "leaves_day": x.leave_day + 1, "going_to": target, "commuter_at": x.commuter.map(key_str) })
         })
         .collect();
     json!({
@@ -193,6 +193,7 @@ pub fn tourism_json(w: &World, limit: usize) -> Value {
         "demand_per_day": round(t.demand_per_day),
         "ways_in": Arrival::ALL.iter().map(|a| (a.label().to_string(), json!(t.ways_in[a.index()]))).collect::<serde_json::Map<_, _>>(),
         "tourists": t.count(),
+        "ferry_commuters": t.commuters(),
         "visible": t.tourists.values().filter(|x| x.is_visible()).count(),
         "hotel_demand": round(t.hotel_demand),
         "today": {

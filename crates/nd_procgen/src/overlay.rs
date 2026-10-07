@@ -45,6 +45,18 @@ pub fn pollution_color(t: f32) -> [f32; 4] {
     [c[0], c[1], c[2], a]
 }
 
+/// [layers] Crime: clear, a bruised violet where it is rare, through
+/// crimson to a hot orange where offences pile up. Kept clear of the police
+/// blue the Crime layer draws the patrol cars in.
+pub fn crime_color(t: f32) -> [f32; 4] {
+    let t = t.clamp(0.0, 1.0);
+    let c = ramp(&[(0.0, [0.35, 0.1, 0.6]), (0.4, [0.85, 0.08, 0.35]), (0.75, [1.2, 0.25, 0.08]), (1.0, [1.4, 0.75, 0.12])], t);
+    // Clear where there is little: the map must show where crime gathers,
+    // not tint the whole city.
+    let a = 0.75 * t.powf(1.7);
+    [c[0], c[1], c[2], a]
+}
+
 /// The colour of an industry kind on the survey layers: one hue each, kept
 /// apart so the "best industry" map reads as a patchwork.
 pub fn industry_hue(k: IndustryKind) -> [f32; 3] {
@@ -326,6 +338,8 @@ mod tests {
         r.splat_radius(Vec2::new(50.0, 50.0), 30.0, 1.0);
         assert!(r.at(5, 5) > 0.9 && r.at(0, 0) == 0.0, "radial falloff");
         assert_eq!(heat_color(0.0)[3], 0.0, "zero is clear");
+        assert_eq!(crime_color(0.0)[3], 0.0, "no crime is clear");
+        assert!(crime_color(1.0)[3] > crime_color(0.3)[3] && crime_color(1.0)[0] > crime_color(0.1)[0], "hot spots are stronger and redder");
     }
 
     #[test]

@@ -30,6 +30,9 @@ use crate::vehicle::{CarEvent, CarPlace, Errand, OwnedCar, ParkKind, ParkSpot, V
 pub(super) const CAR_REACH: f32 = 320.0;
 /// No kerb parking this close to either end of a street (the junction).
 const KERB_MARGIN: f32 = 12.0;
+/// [services] Seconds a vehicle with no road off the map waits at the kerb
+/// before it looks for one again (`retire_vehicle`).
+pub(super) const RETIRE_RETRY_SECONDS: f32 = 300.0;
 /// Length of a kerb slot.
 const KERB_PITCH: f32 = 6.5;
 /// How far from the destination a driver will park at a kerb.
@@ -70,7 +73,7 @@ impl World {
     /// and nightlife streets, whose kerbs are for loading: drivers going
     /// there use the lots.
     pub(super) fn kerb_allowed(&self, sid: SegmentId) -> bool {
-        self.roads.try_segment(sid).is_some_and(|s| s.alive && s.is_street() && !s.is_motorway() && !s.bridge && !s.tunnel && s.lanes() > 0 && s.lanes_fwd < 2 && s.lanes_bwd < 2)
+        self.roads.try_segment(sid).is_some_and(|s| s.alive && s.is_street() && !s.fronts_nothing() && !s.bridge && s.lanes() > 0 && s.lanes_fwd < 2 && s.lanes_bwd < 2)
             && !self.vehicles.no_kerb.1.contains(&sid)
             && !self.on_ring(sid)
     }
@@ -110,10 +113,11 @@ impl World {
     }
 
     /// [parking] Can a car physically stand along this street, legal or
-    /// not: every street but highways, bridges and roundabout rings (where
-    /// a parked car would sit in the traffic).
+    /// not: every street but highways, ramps, tunnels, bridges and
+    /// roundabout rings (where a parked car would sit in the traffic, or
+    /// be drawn on the ground over the bore).
     pub(super) fn kerb_physical(&self, sid: SegmentId) -> bool {
-        self.roads.try_segment(sid).is_some_and(|s| s.alive && s.is_street() && !s.is_motorway() && !s.bridge && s.lanes() > 0) && !self.on_ring(sid)
+        self.roads.try_segment(sid).is_some_and(|s| s.alive && s.is_street() && !s.fronts_nothing() && !s.bridge && s.lanes() > 0) && !self.on_ring(sid)
     }
 
     /// Slots along one side of a street, legal or not.
@@ -358,6 +362,10 @@ impl World {
     }
 
     pub(super) fn launch(&mut self, vid: VehicleId, spot: ParkSpot, route: Vec<LaneId>, s0: f32, s1: f32, driver: CitizenId, errand: Errand) -> Option<CarId> {
+        // [boot] Clamped: it stays where it is until the tow truck comes.
+        if spot.booted {
+            return None;
+        }
         self.unpark(vid);
         let (model, color) = {
             let c = &self.vehicles.cars[vid];
@@ -410,6 +418,55 @@ impl World {
         self.edge_exits(pos).into_iter().any(|(goal, s_end)| self.traffic.redirect(car, goal, s_end))
     }
 
+    /// [services] A city vehicle with nowhere left to go in town (its
+    /// station, office, depot or line is gone, or no road leads back to
+    /// it) drives off the map by the nearest exit it can reach, as
+    /// `Errand::Out`, and leaves the world there (`out_arrived`). With no
+    /// road out from where it stands it pulls in and tries again in a
+    /// while. Vehicles only ever leave the world at the map edge or into a
+    /// parking place or base: deleting one mid-street made fire engines,
+    /// buses and tow trucks blink out in front of the player.
+    pub(super) fn retire_vehicle(&mut self, car: CarId) {
+        let Some(c) = self.traffic.cars.get_mut(car) else { return };
+        c.siren = false;
+        c.errand = Errand::Out;
+        if !self.redirect_out(car) {
+            self.traffic.pull_in(car, RETIRE_RETRY_SECONDS);
+        }
+    }
+
+    /// [services] An `Errand::Out` vehicle at the end of its route: gone
+    /// at the map edge, else (a vehicle that could not route out and held)
+    /// it tries again from here.
+    pub(super) fn out_arrived(&mut self, car: CarId) {
+        if self.at_map_edge(car) {
+            self.traffic.remove_car(car);
+        } else {
+            self.retire_vehicle(car);
+        }
+    }
+
+    /// [services] Has `car` stopped where a route to `pt` on `seg` ends (the
+    /// lane `nearest_lane_on` gives for it, at that place), or within
+    /// `reach` metres of `pt`? Asked before a vehicle is taken off the road
+    /// "at" a base, so one re-aimed elsewhere drives on instead.
+    pub(super) fn car_at_stop(&self, car: CarId, seg: SegmentId, pt: Vec2, reach: f32) -> bool {
+        let Some(c) = self.traffic.cars.get(car) else { return true };
+        if c.pos.distance(pt) < reach {
+            return true;
+        }
+        self.traffic.net.nearest_lane_on(seg, pt).is_some_and(|(goal, s_end, _)| c.route.last() == Some(&goal) && (c.s - s_end).abs() < 3.0)
+    }
+
+    /// [services] A route off the map for a vehicle standing at `from` (a
+    /// unit parked on scene, a truck at a kerb): from the street beside it
+    /// to the nearest exit it can reach.
+    pub(super) fn route_out_from(&self, from: Vec2) -> Option<(Vec<LaneId>, f32, f32)> {
+        let (seg, _, q) = self.roads.nearest_street(from)?;
+        let (start, s0, _) = self.traffic.net.nearest_lane_on(seg, q)?;
+        self.edge_exits(from).into_iter().find_map(|(goal, s_end)| self.traffic.net.route_lanes(start, s0, goal, s_end))
+    }
+
     /// A route onto the map from out of town to `to` on `to_seg`: in on a
     /// highway carriageway entering the map when one leads there, else
     /// along a road from the city's edge.
@@ -444,7 +501,8 @@ impl World {
         let c = self.citizens.get(id).filter(|c| c.owns_car)?;
         let vid = c.car?;
         let spot = self.vehicles.cars.get(vid)?.spot()?;
-        (!matches!(spot.kind, ParkKind::Dealer | ParkKind::Hooked | ParkKind::Pound) && spot.pos.distance(near) <= CAR_REACH).then_some((vid, spot.pos))
+        // [boot] A clamped car goes nowhere.
+        (!matches!(spot.kind, ParkKind::Dealer | ParkKind::Hooked | ParkKind::Pound) && !spot.booted && spot.pos.distance(near) <= CAR_REACH).then_some((vid, spot.pos))
     }
 
     /// Get in and drive to `target`. False when the car cannot get there
@@ -539,6 +597,15 @@ impl World {
                 self.cab_arrived(car_id, cab);
                 true
             }
+            Errand::Out => {
+                self.out_arrived(car_id);
+                true
+            }
+            // Its route ends at a highway exit off the map.
+            Errand::Through => {
+                self.traffic.remove_car(car_id);
+                true
+            }
             Errand::Deliver | Errand::Trip | Errand::Search { .. } | Errand::ToLot(_) | Errand::ToKerb => {
                 if owned.is_some() || self.citizens.contains_key(citizen) {
                     self.private_arrived(car_id);
@@ -551,7 +618,8 @@ impl World {
     }
 
     /// A truck or van done with its job drives back to `base`, or out of
-    /// town. With nowhere to go it is parked at base (or gone) at once.
+    /// town. With no road to either it holds at the kerb and tries again
+    /// (`retire_vehicle`): it no longer vanishes where it stands.
     fn send_back(&mut self, car_id: CarId, base: Option<BuildingId>) {
         if let Some(b) = base.filter(|b| self.buildings.contains_key(*b)) {
             if let Some((seg, pt)) = self.truck_stop(b) {
@@ -563,15 +631,12 @@ impl World {
                     }
                 }
             }
-            self.traffic.remove_car(car_id);
-            *self.vehicles.fleet_parked.entry(b).or_insert(0) += 1;
-            return;
         }
         if self.redirect_out(car_id) {
             self.traffic.cars[car_id].errand = Errand::Leave;
             return;
         }
-        self.traffic.remove_car(car_id);
+        self.retire_vehicle(car_id);
     }
 
     /// The business a truck or van belongs to and returns to: the sender,
@@ -601,6 +666,11 @@ impl World {
 
     /// A private car at the end of its route: park it, or go on looking.
     fn private_arrived(&mut self, car_id: CarId) {
+        // [passengers] A stop on the way (a child's school): let them out
+        // and drive on.
+        if self.traffic.cars.get(car_id).is_some_and(|c| c.errand == Errand::Trip) && self.drop_off(car_id) {
+            return;
+        }
         let (vid, driver, errand, pos) = {
             let c = &self.traffic.cars[car_id];
             (c.owned, c.citizen, c.errand, c.pos)
@@ -899,7 +969,7 @@ impl World {
     }
 
     /// Out of the car at `from`: walk to the destination, or be there.
-    fn walk_from_car(&mut self, id: CitizenId, from: Vec2) {
+    pub(super) fn walk_from_car(&mut self, id: CitizenId, from: Vec2) {
         let Some(c) = self.citizens.get(id) else { return };
         let (to, purpose) = match &c.activity {
             Activity::Driving { to, purpose, .. } => (*to, *purpose),
@@ -1063,7 +1133,7 @@ impl World {
         let car = self.vehicles.cars.get(vid)?;
         let spot = *car.spot()?;
         // [parking] Not while it is on a tow truck or in the pound.
-        if matches!(spot.kind, ParkKind::Hooked | ParkKind::Pound) {
+        if matches!(spot.kind, ParkKind::Hooked | ParkKind::Pound) || spot.booted {
             return None;
         }
         let worth = (car.model.price() * 0.5).min(400.0);
@@ -1104,6 +1174,9 @@ impl World {
             CarPlace::Parked(s) if s.kind == ParkKind::Hooked || (s.kind == ParkKind::Pound && s.building.is_none()) => {
                 self.drop_car(vid, CarEvent::Emigrated);
             }
+            // [boot] Clamped: left for the tow truck; unclaimed at the
+            // pound, it is auctioned and driven away.
+            CarPlace::Parked(s) if s.booted => {}
             CarPlace::Parked(_) => {
                 if self.drive_out_of_town(vid, Errand::Leave).is_none() {
                     // No road out: the car leaves the record with its owner.
@@ -1158,12 +1231,23 @@ impl World {
     /// it parks where it stood.
     pub(super) fn park_stranded(&mut self, vid: VehicleId, pos: Vec2) {
         let Some(car) = self.vehicles.cars.get(vid) else { return };
+        // [boot] A clamped car is only shifted along the kerb, clamp and all.
+        let booted = car.spot().is_some_and(|s| s.booted);
         if car.spot().is_some() {
             self.unpark(vid);
         }
         let home = self.citizens.get(self.vehicles.cars[vid].owner).and_then(|c| c.home);
-        let spot = self.place_near(pos, home).unwrap_or(ParkSpot { kind: ParkKind::Overflow, pos, slot: u16::MAX, since: self.clock.tick, ..Default::default() });
+        let near = if booted { self.boot_spot(pos) } else { self.place_near(pos, home) };
+        let mut spot = near.unwrap_or(ParkSpot { kind: ParkKind::Overflow, pos, slot: u16::MAX, since: self.clock.tick, ..Default::default() });
+        spot.booted = booted;
         self.park_at(vid, spot);
+    }
+
+    /// [boot] Where a car pulls over to be clamped: a free kerb slot close
+    /// by (legal or not), else the street's edge right here, off the lanes.
+    pub(super) fn boot_spot(&self, pos: Vec2) -> Option<ParkSpot> {
+        let k = self.free_kerb_near(pos, 60.0).or_else(|| self.free_illegal_slots_near(pos, 60.0, 1).into_iter().next())?;
+        Some(self.kerb_spot(k))
     }
 
     /// Roads changed: kerb slots on streets that are gone or reshaped are

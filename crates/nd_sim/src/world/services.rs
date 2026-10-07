@@ -50,7 +50,7 @@ impl World {
     /// The services' own random stream, so fires, crimes and illness never
     /// shift what the other systems draw. Not saved: a loaded world reseeds
     /// it from the seed and the clock.
-    fn srng(&mut self) -> &mut crate::SimRng {
+    pub(super) fn srng(&mut self) -> &mut crate::SimRng {
         let (seed, tick) = (self.config.seed, self.clock.tick);
         self.services.rng.get_or_insert_with(|| crate::rng_for(seed ^ 0x5E7_1CE5, tick))
     }
@@ -77,6 +77,7 @@ impl World {
     pub fn place_on_lot(&mut self, what: Placeable, lot: LotId) -> Result<BuildingId, String> {
         match what {
             Placeable::Plant(k) => self.build_power(lot, k),
+            Placeable::Battery(k) => self.build_battery(lot, k),
             Placeable::BusDepot => self.build_depot(lot),
             Placeable::Service(k, t) => self.build_service(lot, k, t),
             Placeable::Rail(f) => {
@@ -169,7 +170,7 @@ impl World {
         let Some(uk) = kind.unit_kind() else { return };
         let have = self.services.units.values().filter(|u| u.station == station).count();
         for k in have..kind.units(tier) {
-            self.services.units.insert(Unit { kind: uk, station, number: k as u8 + 1, state: UnitState::Idle, car: None, incident: None, pos, heading: 0.0, hospital: None, patrol_until: 0 });
+            self.services.units.insert(Unit { kind: uk, station, number: k as u8 + 1, state: UnitState::Idle, car: None, incident: None, pos, heading: 0.0, hospital: None, patrol_until: 0, leaving: false });
         }
     }
 
@@ -333,6 +334,7 @@ impl World {
             people: Vec::new(),
             damage: Vec::new(),
             on_road: false,
+            chase: None,
         });
         if let Some(n) = self.services.stats.incidents_today.get_mut(kind.index()) {
             *n += 1;
@@ -621,12 +623,9 @@ impl World {
         let tick = self.clock.tick;
         if tick % 10 == 3 {
             // Stations come and go; roads change under them.
-            let buildings = &self.buildings;
-            let lost: Vec<UnitId> = self.services.units.iter().filter(|(_, u)| !buildings.get(u.station).is_some_and(|b| b.service.is_some())).map(|(id, _)| id).collect();
+            let lost: Vec<UnitId> = self.services.units.iter().filter(|(_, u)| !self.station_alive(u.station)).map(|(id, _)| id).collect();
             for id in lost {
-                if let Some(car) = self.services.units.remove(id).and_then(|u| u.car) {
-                    self.traffic.remove_car(car);
-                }
+                self.station_lost(id);
             }
             let stations: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.service.is_some_and(|s| s.kind.unit_kind().is_some())).map(|(id, _)| id).collect();
             for s in stations {
@@ -636,6 +635,8 @@ impl World {
                 self.refresh_coverage();
             }
         }
+        // [emergency] Car chases before lost units are looked for.
+        self.step_chases();
         self.recover_lost_units();
         // Lights and sirens pull up short of the kerb and the crew is out
         // while the car is still rolling to a stop: on scene within
@@ -727,6 +728,10 @@ impl World {
     /// Free for the next call: a unit in the station counts only while the
     /// station has a crew for one more vehicle; units already out have theirs.
     fn unit_available(&self, u: &Unit, out: &HashMap<BuildingId, usize>) -> bool {
+        // A unit leaving town with its station gone takes no more calls.
+        if u.leaving || !self.station_alive(u.station) {
+            return false;
+        }
         match u.state {
             UnitState::Idle => out.get(&u.station).copied().unwrap_or(0) < self.crewed_units(u.station),
             UnitState::Patrol | UnitState::Returning => true,
@@ -851,7 +856,7 @@ impl World {
     }
 
     /// Take a unit's car off the road, leaving the unit where the car was.
-    fn pull_off_road(&mut self, uid: UnitId) {
+    pub(super) fn pull_off_road(&mut self, uid: UnitId) {
         let Some(c) = self.services.units.get_mut(uid).and_then(|u| u.car.take()) else { return };
         if let Some(car) = self.traffic.remove_car(c) {
             let u = &mut self.services.units[uid];
@@ -953,6 +958,10 @@ impl World {
 
     /// Off patrol and back to the station.
     fn return_to_station(&mut self, uid: UnitId) {
+        if self.services.units.get(uid).is_some_and(|u| !self.station_alive(u.station)) {
+            self.unit_leaves_town(uid);
+            return;
+        }
         self.pull_off_road(uid);
         let Some(u) = self.services.units.get_mut(uid) else { return };
         u.incident = None;
@@ -1019,6 +1028,12 @@ impl World {
     fn recover_lost_units(&mut self) {
         let lost: Vec<UnitId> = self.services.units.iter().filter(|(_, u)| u.car.is_some_and(|c| !self.traffic.cars.contains_key(c))).map(|(id, _)| id).collect();
         for uid in lost {
+            // Leaving town with no station: its car was taken off the road
+            // (a rebuild), and with it the unit.
+            if self.services.units[uid].leaving {
+                self.services.units.remove(uid);
+                continue;
+            }
             let state = {
                 let u = &mut self.services.units[uid];
                 u.car = None;
@@ -1046,8 +1061,180 @@ impl World {
         }
     }
 
+    // ── stations that go, calls left without a unit ──────────────────────
+
+    /// The station still stands as a service building.
+    fn station_alive(&self, station: BuildingId) -> bool {
+        self.buildings.get(station).is_some_and(|b| b.service.is_some())
+    }
+
+    /// [services] Unit `uid`'s station is gone (bulldozed, or replaced). A
+    /// crew on scene or carrying a patient finishes the job first (`send_home`
+    /// then sees no station and sends it off); one still on its way hands
+    /// the call back to the queue for another unit; the rest leave town.
+    /// They used to be deleted with their car, and an incident still naming
+    /// the unit crashed the tick (`invalid SlotMap key`) when its scene work
+    /// finished.
+    fn station_lost(&mut self, uid: UnitId) {
+        let Some(u) = self.services.units.get(uid) else { return };
+        if u.leaving {
+            // Still parked where it could find no road out: try again.
+            if u.car.is_none() {
+                self.unit_leaves_town(uid);
+            }
+            return;
+        }
+        let job = u.incident.filter(|&i| self.services.incident(i).is_some_and(|x| x.active() && x.unit == Some(uid)));
+        match (u.state, job) {
+            (UnitState::OnScene | UnitState::Transporting, Some(_)) => {}
+            (UnitState::Responding, Some(i)) => {
+                self.requeue(i);
+                self.unit_leaves_town(uid);
+            }
+            _ => self.unit_leaves_town(uid),
+        }
+    }
+
+    /// [services] A unit with no station left drives off the map by the
+    /// nearest exit (`unit_car_arrived` takes it out of the world there),
+    /// without lights, taking no calls. A unit standing still (parked in the
+    /// station, on scene, on a beat) is put on the street beside it. With
+    /// no road out it waits and tries again (`station_lost`), except a unit
+    /// that was parked inside its station: that goes with the building.
+    fn unit_leaves_town(&mut self, uid: UnitId) {
+        let Some(u) = self.services.units.get_mut(uid) else { return };
+        let was_idle = u.state == UnitState::Idle && u.car.is_none();
+        u.leaving = true;
+        u.state = UnitState::Returning;
+        u.incident = None;
+        u.hospital = None;
+        let (car, pos) = (u.car, u.pos);
+        match car.filter(|c| self.traffic.cars.contains_key(*c)) {
+            Some(car) => {
+                self.traffic.cars[car].siren = false;
+                if !self.redirect_out(car) {
+                    self.traffic.pull_in(car, super::cars::RETIRE_RETRY_SECONDS);
+                }
+            }
+            None => {
+                self.services.units[uid].car = None;
+                match self.route_out_from(pos) {
+                    Some((lanes, s0, s1)) => {
+                        let car = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, 0);
+                        self.services.by_car.insert(car, uid);
+                        self.services.units[uid].car = Some(car);
+                    }
+                    None if was_idle => {
+                        self.services.units.remove(uid);
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+
+    /// [services] Back in the dispatch queue: the unit that had the call
+    /// is gone or was called off. A scene the air crew had (its work set to
+    /// "until the crew is done") gets the ground crew's time again.
+    pub(super) fn requeue(&mut self, id: u32) {
+        let tick = self.clock.tick;
+        let Some(i) = self.services.incident_mut(id) else { return };
+        i.stage = Stage::Reported;
+        i.unit = None;
+        i.dispatched = None;
+        i.arrived = None;
+        i.unit_name = None;
+        i.dispatch_at = Some(tick);
+        if i.work_left == f32::MAX {
+            i.work_left = match i.kind {
+                IncidentKind::Medical => MEDICAL_WORK,
+                IncidentKind::Crime => CRIME_WORK,
+                IncidentKind::Crash => CRASH_WORK,
+                IncidentKind::Fire => 0.0,
+            };
+        }
+    }
+
+    /// [services] Someone is on this job: the unit it names is out on it, or
+    /// an air ambulance has it.
+    fn incident_served(&self, inc: &Incident) -> bool {
+        let by_unit = inc.unit.and_then(|u| self.services.units.get(u)).is_some_and(|u| u.incident == Some(inc.id) && !u.leaving);
+        by_unit || self.air.drones.values().any(|d| matches!(d.job, crate::air::Job::Medic { incident, .. } if incident == inc.id))
+    }
+
+    /// [services] An active call whose unit or aircraft is gone: a patient
+    /// who was being driven to hospital is delivered to the nearest free bed
+    /// (or treated where they are); anything else goes back in the queue.
+    fn orphaned(&mut self, id: u32) {
+        let Some(inc) = self.services.incident(id).cloned() else { return };
+        if inc.stage == Stage::Transporting {
+            match (inc.citizen.filter(|c| self.citizens.contains_key(*c)), self.hospital_with_bed(inc.pos)) {
+                (Some(p), Some(h)) => self.admit(id, p, h),
+                _ => self.treat_on_site(id),
+            }
+            return;
+        }
+        self.requeue(id);
+    }
+
+    // ── repairs ────────────────────────────────────────────────────────────
+
+    /// [services] What one of the city's own structures cost to put up
+    /// (the base for its repair bill).
+    fn civic_value(b: &Building) -> f32 {
+        if let Some(s) = b.service {
+            s.kind.build_cost(s.tier)
+        } else if let Some(k) = b.plant {
+            Placeable::Plant(k).cost()
+        } else if let Some(r) = &b.rail {
+            Placeable::Rail(r.kind).cost()
+        } else if let Some(k) = b.port {
+            Placeable::Dock(k).cost()
+        } else if b.depot {
+            Placeable::BusDepot.cost()
+        } else if b.metro {
+            Placeable::MetroStation.cost()
+        } else {
+            Placeable::CargoHub.cost()
+        }
+    }
+
+    /// [services] Midnight: the city mends its own structures (stations,
+    /// plants, depots, docks...), `REPAIR_PER_DAY` of condition a day at
+    /// `REPAIR_SHARE` of the build price, while the treasury can pay. They
+    /// do not decay with age (`daily_update`: their upkeep keeps them), so
+    /// this is fire damage: a gutted station is out of service (derelict)
+    /// until the repairs bring it past that line.
+    fn repair_civic(&mut self) {
+        let jobs: Vec<(BuildingId, f32, f32, String)> = self
+            .buildings
+            .iter()
+            .filter(|(id, b)| Self::is_civic_structure(b) && b.construction.is_none() && b.condition < 1.0 && !self.services.is_burning(*id))
+            .map(|(id, b)| {
+                let amount = REPAIR_PER_DAY.min(1.0 - b.condition);
+                (id, amount, amount * REPAIR_SHARE * Self::civic_value(b), b.name.clone())
+            })
+            .collect();
+        for (id, amount, cost, name) in jobs {
+            if self.economy.treasury < cost {
+                continue;
+            }
+            self.economy.debit_item(Flow::ServiceUpkeep, cost, Item::Named(format!("repairs to {name}")));
+            let b = &mut self.buildings[id];
+            let was = b.is_derelict();
+            b.condition = (b.condition + amount).min(1.0);
+            if was != b.is_derelict() {
+                self.events.push(SimEvent::BuildingChanged(id));
+            }
+        }
+    }
+
     fn park_at_station(&mut self, uid: UnitId) {
         let Some(u) = self.services.units.get(uid) else { return };
+        if !self.station_alive(u.station) {
+            self.unit_leaves_town(uid);
+            return;
+        }
         let home = self.buildings.get(u.station).and_then(|b| self.lots.get(b.lot)).map(|l| l.car_point);
         let u = &mut self.services.units[uid];
         u.state = UnitState::Idle;
@@ -1063,6 +1250,15 @@ impl World {
         let Some(inc) = self.services.incident(id).cloned() else { return };
         if !inc.on_road && !self.buildings.contains_key(inc.building) {
             self.resolve(id, Outcome::Gone);
+            return;
+        }
+        // [services] The unit or aircraft on the job is gone (its station
+        // pulled down, a drone scrapped, a car lost): the call goes back in
+        // the queue, and a patient on the way to hospital is delivered.
+        // Such incidents used to stay active for ever, pinning the patient,
+        // the crime scene or the wrecks.
+        if !inc.outside && matches!(inc.stage, Stage::Dispatched | Stage::OnScene | Stage::Transporting) && !self.incident_served(&inc) {
+            self.orphaned(id);
             return;
         }
         if inc.kind == IncidentKind::Fire && self.step_fire(id) {
@@ -1141,10 +1337,13 @@ impl World {
             self.resolve(id, Outcome::Extinguished);
             return true;
         }
+        // [services] The city's own structures are gutted, never razed:
+        // their condition stops at the burned-down line.
+        let civic = Self::is_civic_structure(&self.buildings[bid]);
         let (before, after) = {
             let b = &mut self.buildings[bid];
             let before = b.condition;
-            b.condition = (b.condition - FIRE_DAMAGE * intensity * if fighting { 0.3 } else { 1.0 }).max(0.0);
+            b.condition = (b.condition - FIRE_DAMAGE * intensity * if fighting { 0.3 } else { 1.0 }).max(if civic { BURNED_DOWN } else { 0.0 });
             (before, b.condition)
         };
         if (before * 10.0).floor() != (after * 10.0).floor() {
@@ -1158,7 +1357,11 @@ impl World {
             }
         }
         if after <= BURNED_DOWN {
-            self.burn_down(id, bid);
+            if civic {
+                self.gutted(id, bid);
+            } else {
+                self.burn_down(id, bid);
+            }
             return true;
         }
         if intensity > SPREAD_INTENSITY && tick % SPREAD_EVERY == 0 {
@@ -1182,6 +1385,25 @@ impl World {
             }
         }
         false
+    }
+
+    /// [services] A civic structure (station, plant, depot, dock...) that
+    /// burned out: the fire is over, the building stands gutted and out of
+    /// service (derelict: no crews, no coverage) until the city's repairs
+    /// (`repair_civic`, paid daily) bring it back. Burning them down removed
+    /// the player's building outright and orphaned its units' calls.
+    fn gutted(&mut self, id: u32, bid: BuildingId) {
+        let tick = self.clock.tick;
+        let Some(b) = self.buildings.get(bid) else { return };
+        let name = b.name.clone();
+        let people: Vec<CitizenId> = b.workers.clone();
+        for p in people {
+            if let Some(c) = self.citizens.get_mut(p) {
+                c.remember(tick, format!("{name} burned out. Shut until the city fixes it."));
+            }
+        }
+        self.events.push(SimEvent::BuildingChanged(bid));
+        self.resolve(id, Outcome::Gutted);
     }
 
     fn burn_down(&mut self, id: u32, bid: BuildingId) {
@@ -1397,6 +1619,22 @@ impl World {
     /// An emergency vehicle reached the end of its route (called from
     /// `step_traffic`).
     pub(super) fn unit_car_arrived(&mut self, car_id: CarId) {
+        // [services] Leaving town: gone at the map edge, else (it held for
+        // want of a road out) it tries again from here.
+        if let Some(uid) = self.services.by_car.get(&car_id).copied().filter(|u| self.services.units.get(*u).is_some_and(|u| u.leaving)) {
+            if self.at_map_edge(car_id) {
+                self.services.by_car.remove(&car_id);
+                self.traffic.remove_car(car_id);
+                self.services.units.remove(uid);
+            } else if !self.redirect_out(car_id) {
+                self.traffic.pull_in(car_id, super::cars::RETIRE_RETRY_SECONDS);
+            }
+            return;
+        }
+        // [emergency] In pursuit: it stays on the road after its quarry.
+        if self.pursuit_arrived(car_id) {
+            return;
+        }
         let Some(uid) = self.services.by_car.remove(&car_id) else { return };
         let Some(car) = self.traffic.remove_car(car_id) else { return };
         let Some(u) = self.services.units.get_mut(uid) else { return };
@@ -1475,8 +1713,8 @@ impl World {
     }
 
     /// Drive a car for `uid` from where it stands to `to`. False if no road.
-    fn drive_unit(&mut self, uid: UnitId, to: (SegmentId, Vec2), siren: bool) -> bool {
-        let from = self.services.units[uid].pos;
+    pub(super) fn drive_unit(&mut self, uid: UnitId, to: (SegmentId, Vec2), siren: bool) -> bool {
+        let Some(from) = self.services.units.get(uid).map(|u| u.pos) else { return false };
         let Some((seg, _, q)) = self.roads.nearest_street(from) else { return false };
         let Some((lanes, s0, s1)) = self.traffic.net.find_route(seg, q, to.0, to.1) else { return false };
         let car = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, 0);
@@ -1489,8 +1727,12 @@ impl World {
     /// Back to the station, or teleported home when no road leads there.
     /// Police cars and ambulances with a crew go straight back on patrol or
     /// standby instead.
-    fn send_home(&mut self, uid: UnitId) {
+    pub(super) fn send_home(&mut self, uid: UnitId) {
         let Some(u) = self.services.units.get(uid) else { return };
+        if !self.station_alive(u.station) {
+            self.unit_leaves_town(uid);
+            return;
+        }
         if matches!(u.kind, UnitKind::PoliceCar | UnitKind::Ambulance) && u.car.is_none() {
             let out = self.units_out();
             if out.get(&u.station).copied().unwrap_or(0) <= self.crewed_units(u.station) && self.start_patrol(uid) {
@@ -1514,6 +1756,10 @@ impl World {
         let Some(inc) = self.services.incident(id).cloned() else { return };
         match inc.kind {
             IncidentKind::Crime => {
+                // [emergency] A suspect who can get to a car may run for it.
+                if self.try_chase(id) {
+                    return;
+                }
                 let quick = inc.arrived.unwrap_or(tick).saturating_sub(inc.started) <= QUICK_RESPONSE;
                 let caught = inc.suspect.is_some() && self.srng().random::<f32>() < if quick { ARREST_QUICK } else { ARREST_SLOW };
                 let bname = self.buildings.get(inc.building).map(|b| b.name.clone()).unwrap_or_default();
@@ -1607,10 +1853,7 @@ impl World {
 
     /// The ambulance is at the hospital door: the patient goes to a bed.
     fn deliver_patient(&mut self, uid: UnitId) {
-        let (inc, hospital) = {
-            let u = &self.services.units[uid];
-            (u.incident, u.hospital)
-        };
+        let Some((inc, hospital)) = self.services.units.get(uid).map(|u| (u.incident, u.hospital)) else { return };
         let patient = inc.and_then(|i| self.services.incident(i)).and_then(|i| i.citizen);
         match (inc, hospital, patient) {
             (Some(id), Some(h), Some(p)) if self.buildings.contains_key(h) && self.citizens.contains_key(p) => self.admit(id, p, h),
@@ -1848,7 +2091,10 @@ impl World {
             c.asleep = false;
             c.remember(tick, format!("Off to {name} for the day."));
             self.services.stats.pupils_today += 1;
-            self.travel_to(cid, Some(sid), Purpose::Visit(lu));
+            // [passengers] Driven there by a parent now and then.
+            if !self.school_run(cid, sid, Purpose::Visit(lu)) {
+                self.travel_to(cid, Some(sid), Purpose::Visit(lu));
+            }
         }
     }
 
@@ -1887,6 +2133,7 @@ impl World {
     /// Midnight: upkeep, the schooling wage bonus, tonight's games, and the
     /// day's counters roll over. Runs before `daily_update` closes the books.
     pub(super) fn daily_services(&mut self) {
+        self.repair_civic();
         let sites: Vec<(BuildingId, f32)> = self.buildings.iter().filter_map(|(id, b)| b.service.map(|s| (id, s.kind.upkeep_per_day(s.tier)))).collect();
         let upkeep: f32 = sites.iter().map(|(_, x)| x).sum();
         for (id, x) in sites {
@@ -1932,6 +2179,9 @@ impl World {
         st.unanswered_why_today = Default::default();
         st.mutual_aid_today = 0;
         st.diverted_today = 0;
+        st.chases_today = 0;
+        st.chases_tagged_today = 0;
+        st.chases_lost_today = 0;
         st.unreachable_today = 0;
         st.out_of_town_fees_today = 0.0;
         st.bills_paid_today = 0.0;
@@ -2564,5 +2814,102 @@ mod tests {
         let k = IncidentKind::Crash.slot();
         assert!(w.services.stats.saturated_min_today[k] >= SATURATED_ALERT_MIN, "saturated {} min", w.services.stats.saturated_min_today[k]);
         assert!(w.services.stats.queue_max_today[k] >= 2);
+    }
+    // ── [services] stations that go, civic fires, through traffic ─────────
+
+    /// Is `p` at one of the town's road ends (where a vehicle may leave)?
+    fn at_road_end(w: &World, p: Vec2) -> bool {
+        w.roads.leaf_nodes().into_iter().any(|n| w.roads.node(n).pos.distance(p) < 40.0)
+    }
+
+    #[test]
+    fn a_station_bulldozed_while_its_car_is_on_a_call_hands_the_call_back_and_drives_off_the_map() {
+        let (mut w, station, _) = one_car_town();
+        let shop = building_at(&mut w, 450.0);
+        let id = crime_now(&mut w, CrimeKind::Robbery, shop, None);
+        run_until(&mut w, 60, |w| stage(w, id) == Stage::Dispatched);
+        assert_eq!(stage(&w, id), Stage::Dispatched);
+        let uid = w.services.incident(id).unwrap().unit.unwrap();
+        let car = w.services.units[uid].car.unwrap();
+        assert!(!World::is_through_car(&w.traffic.cars[car]), "a police car is not through traffic");
+        w.demolish_with(station, None, None);
+        assert!(!w.buildings.contains_key(station), "a civic structure comes down at once");
+        run_until(&mut w, 12, |_| false);
+        let i = w.services.incident(id).unwrap();
+        assert!(i.unit.is_none() && matches!(i.stage, Stage::Reported | Stage::Dispatched | Stage::OnScene | Stage::Resolved), "the call went back to the queue: {:?} unit {:?}", i.stage, i.unit);
+        assert!(i.unit.is_none_or(|u| w.services.units.get(u).is_some_and(|x| !x.leaving)), "no call names a unit leaving town");
+        let u = &w.services.units[uid];
+        assert!(u.leaving && !u.lights(), "the car leaves town without lights");
+        let mut last = w.traffic.cars[car].pos;
+        assert!(!at_road_end(&w, last), "it was still in town when its station went");
+        let mut gone_at = None;
+        for _ in 0..600 {
+            w.tick(&mut IdleMind);
+            match w.services.units.get(uid).and_then(|u| u.car).and_then(|c| w.traffic.cars.get(c)) {
+                Some(c) => last = c.pos,
+                None if !w.services.units.contains_key(uid) => {
+                    gone_at = Some(last);
+                    break;
+                }
+                None => {}
+            }
+        }
+        let at = gone_at.expect("the unit left the world");
+        assert!(at_road_end(&w, at), "it left at a road end, not mid-street: {at}");
+        // The call was not orphaned: it ends one way or another.
+        run_until(&mut w, 3000, |w| !w.services.incident(id).unwrap().active());
+        assert!(!w.services.incident(id).unwrap().active(), "the call ends");
+    }
+
+    #[test]
+    fn a_call_whose_unit_vanished_goes_back_in_the_queue() {
+        let (mut w, _, _) = one_car_town();
+        let shop = building_at(&mut w, 450.0);
+        let id = crime_now(&mut w, CrimeKind::Theft, shop, None);
+        run_until(&mut w, 60, |w| stage(w, id) == Stage::Dispatched);
+        let uid = w.services.incident(id).unwrap().unit.unwrap();
+        // However it happened (a stale save, a bug elsewhere): the unit is gone.
+        if let Some(car) = w.services.units.remove(uid).and_then(|u| u.car) {
+            w.traffic.remove_car(car);
+        }
+        run_until(&mut w, 2, |_| false);
+        let i = w.services.incident(id).unwrap();
+        assert!(i.unit != Some(uid), "the incident no longer names the vanished unit");
+        assert!(!i.active() || i.unit.is_none_or(|u| w.services.units.contains_key(u)), "{:?}", i.stage);
+    }
+
+    #[test]
+    fn a_civic_fire_guts_the_station_and_the_city_repairs_it() {
+        let (mut w, station, _) = one_car_town();
+        w.config.emergencies = true;
+        w.economy.treasury = 50_000.0;
+        w.buildings[station].condition = BURNED_DOWN + 0.01;
+        let id = w.start_fire(station).unwrap();
+        run_until(&mut w, 400, |w| !w.services.incident(id).unwrap().active());
+        let i = w.services.incident(id).unwrap();
+        assert!(!i.active(), "the fire ends");
+        assert!(w.buildings.contains_key(station), "the station still stands");
+        assert_eq!(i.outcome, Some(Outcome::Gutted));
+        assert!(w.buildings[station].is_derelict() && w.crewed_units(station) == 0, "gutted: out of service");
+        assert!(!w.services.rubble.iter().any(|r| Some(r.0) == w.buildings.get(station).map(|b| b.lot)), "no rubble on a standing station");
+        let money = w.economy.treasury;
+        // Two midnights of repairs bring it back past the derelict line.
+        for _ in 0..2 {
+            run_until(&mut w, 1500, |w| w.clock.minute_of_day() == 0);
+            run_until(&mut w, 1, |_| false);
+        }
+        assert!(!w.buildings[station].is_derelict(), "repaired: condition {}", w.buildings[station].condition);
+        assert!(w.economy.treasury < money, "repairs cost money");
+    }
+
+    #[test]
+    fn civic_structures_do_not_decay() {
+        let (mut w, station, _) = one_car_town();
+        let before = w.buildings[station].condition;
+        for _ in 0..3 {
+            run_until(&mut w, 1500, |w| w.clock.minute_of_day() == 0);
+            run_until(&mut w, 1, |_| false);
+        }
+        assert!(w.buildings[station].condition >= before, "{} -> {}", before, w.buildings[station].condition);
     }
 }

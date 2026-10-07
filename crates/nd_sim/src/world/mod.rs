@@ -30,6 +30,7 @@ mod cargo_hubs;
 #[cfg(test)]
 mod cargo_hub_tests;
 mod cars;
+mod chases;
 mod enforcement;
 mod construction;
 mod history;
@@ -49,6 +50,7 @@ mod places_tests;
 mod industry_bridge;
 pub use plan::{ProjectInfo, ProjectPreview};
 mod power;
+pub use power::{GridAsset, PlantRow};
 mod services;
 mod society;
 mod survey;
@@ -68,6 +70,8 @@ mod edge_tests;
 mod concerns_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod gameplay_tests;
 mod taxes;
 pub use taxes::TaxRow;
 mod tolls;
@@ -78,6 +82,8 @@ mod trains;
 mod tourism;
 mod trips;
 mod water;
+mod ferry;
+mod rides;
 
 use crate::buildings::{Building, BuildingId, Construction, Tier};
 use crate::citizens::{Activity, Citizen, CitizenId, Household, HouseholdId, Purpose};
@@ -93,9 +99,9 @@ use crate::plan::{preview, Gesture, GestureId, Plan, PlanPreview, Project};
 use crate::roads::{NodeId, RoadNetwork, SegmentId};
 use crate::traffic::Traffic;
 use crate::walk::WalkGraph;
-use crate::power::{demand_mw, PowerPlantKind, Weather, GRID_IMPORT_MW, GRID_IMPORT_PRICE};
+use crate::power::{demand_mw, Battery, BatteryKind, PowerPlantKind, Weather, GRID_IMPORT_PRICE};
 use crate::traffic::{Bus, CarId};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use crate::transit::{self, BusStop, RouteId, Transit, TransitLeg, TransitTrip};
 use crate::rail::{self, Facility, FacilityId, Rail, RailFacility, RailLink, Train, TrainId, TrainKind};
 use crate::zoning::{outlines_differ, point_in_polygon, polygons_overlap};
@@ -279,6 +285,10 @@ pub struct World {
     /// pending project also changes.
     #[serde(skip)]
     pub plan_warnings: Vec<String>,
+    /// Why the last implement was refused (the project's roads would take
+    /// one of the city's own structures), cleared by the next that works.
+    #[serde(skip)]
+    pub implement_refused: Option<String>,
     /// Parcels along every street and path, zoned or not; derived from the
     /// roads and rebuilt with them.
     #[serde(skip)]
@@ -334,6 +344,12 @@ pub struct World {
     /// segments (index = node id), rebuilt with the roads.
     #[serde(skip)]
     road_component: Vec<u32>,
+    /// Late mind answers (`MindProvider::poll`) for citizens who were
+    /// travelling when they came, with the tick they came: acted on at the
+    /// citizen's next decision (`step_citizens`) if still fresh. Not saved:
+    /// an answer in flight is lost on load anyway.
+    #[serde(skip)]
+    deferred_intents: BTreeMap<CitizenId, (crate::mind::Intent, u64)>,
     /// Working stations and yards (connected and not derelict), refreshed
     /// when links, buildings or conditions change.
     #[serde(skip)]
@@ -363,6 +379,11 @@ pub struct World {
     /// eased to gentle grades and lifted onto bridge decks over water.
     #[serde(skip)]
     pub road_z: Vec<f32>,
+    /// Heights inside long streets and paths between their nodes, per
+    /// segment id: `(t, z)` in rising `t`, empty for a straight line
+    /// (`water::inner_heights`). Read through `road_height`.
+    #[serde(skip)]
+    pub road_inner: Vec<Vec<(f32, f32)>>,
     /// Anything stands off the flat datum: a landscape, a road above or
     /// below the ground, or a deck. False on the old flat map with every
     /// way at grade, where heights are all zero.
@@ -434,6 +455,15 @@ pub struct World {
     /// (`world/cargo_hubs.rs`).
     #[serde(default)]
     pub cargo_hubs: crate::cargo_hub::CargoHubs,
+    /// [passengers] Stops on the way and the counts of people riding
+    /// along in others' cars (`world/rides.rs`).
+    #[serde(default)]
+    pub rides: crate::rides::Rides,
+    /// Street names, kept across rebuilds by matching the new chains to
+    /// the old outlines (`streets.rs`). Saves from before names get them
+    /// on load.
+    #[serde(default)]
+    pub streets: crate::streets::StreetNames,
 }
 
 impl World {
@@ -460,6 +490,8 @@ impl World {
             next_gesture: 1,
             plan_version: 0,
             plan_cache: None,
+            implement_refused: None,
+            deferred_intents: BTreeMap::new(),
             roads: RoadNetwork::default(),
             zones: SlotMap::with_key(),
             lots: SlotMap::with_key(),
@@ -488,6 +520,7 @@ impl World {
             landscape: Landscape::default(),
             ports: Ports::default(),
             road_z: Vec::new(),
+            road_inner: Vec::new(),
             relief: false,
             ground: Ground::default(),
             bridge_metres: 0.0,
@@ -508,6 +541,8 @@ impl World {
             tolls: Default::default(),
             taxis: Default::default(),
             cargo_hubs: Default::default(),
+            rides: Default::default(),
+            streets: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -548,6 +583,7 @@ impl World {
         self.config.derive_speeds();
         self.config.landscape = self.landscape.params.clone();
         self.validate();
+        self.migrate_through_cars();
         // [people] Saves from before households: one per citizen. Detected
         // per citizen (no household), so no version bump is needed.
         self.migrate_households();
@@ -556,6 +592,7 @@ impl World {
         // a save from before the flags has them unset.
         self.roads.classify();
         self.rebuild_road_components();
+        self.streets.relink(&self.roads, self.config.seed);
         self.rebuild_ground();
         self.traffic.rebuild(&self.roads);
         self.apply_tolls();
@@ -570,6 +607,16 @@ impl World {
             self.strand_car(car);
         }
         self.vehicles_after_load();
+        // [services] Which car is which unit's is not saved: without it the
+        // first unit car to arrive after a load went unclaimed.
+        self.services.by_car = self.services.units.iter().filter_map(|(id, u)| u.car.map(|c| (c, id))).collect();
+        // [services] Docks retiered by the daily update before `is_special`
+        // knew them (an older save): their jobs back.
+        for b in self.buildings.values_mut() {
+            if let Some(kind) = b.port.filter(|_| b.construction.is_none()) {
+                b.jobs = kind.jobs();
+            }
+        }
         self.transit.refresh_legs(&self.traffic.net);
         let on_trains: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::OnTrain { .. })).map(|(id, _)| id).collect();
         for id in on_trains {
@@ -666,14 +713,39 @@ impl World {
                 c.next_decision_tick = tick + 1;
             }
         }
-        // Vehicles whose ends no longer exist, and riders who do not.
-        let cars: Vec<CarId> = self.traffic.cars.iter().filter(|(_, car)| car.cargo.is_some_and(|c| !buildings.contains_key(c.to) && !(industry::is_return_trip(&c) && c.to == BuildingId::default())) || car.bus.as_ref().is_some_and(|b| !routes.contains_key(b.route))).map(|(id, _)| id).collect();
-        for id in cars {
-            self.traffic.remove_car(id);
-        }
+        // Vehicles whose ends no longer exist are not deleted where they
+        // stand: a lorry bound for a building that is gone drives on when
+        // it gets there (`lorry_arrived` looks every building up), and a bus
+        // whose line is gone lets its riders off (`validate` above already
+        // set them to decide again) and heads for its depot when it reaches
+        // the end of this leg. Riders who no longer exist get off.
         for car in self.traffic.cars.values_mut() {
             if let Some(bus) = car.bus.as_mut() {
+                if !routes.contains_key(bus.route) {
+                    bus.passengers.clear();
+                    bus.to_depot = true;
+                    bus.next_stop = usize::MAX;
+                }
                 bus.passengers.retain(|p| self.citizens.contains_key(*p));
+            }
+        }
+    }
+
+    /// [services] Saves from before `Errand::Through` marked through traffic
+    /// only by having no driver, owner, cargo or bus, which also matched
+    /// service units, tow and garbage trucks and takeover outsiders. Those
+    /// tracked by their own system are left as they are; the rest are
+    /// through cars.
+    fn migrate_through_cars(&mut self) {
+        use crate::vehicle::Errand;
+        let mut tracked: std::collections::HashSet<CarId> = self.services.units.values().filter_map(|u| u.car).collect();
+        tracked.extend(self.society.trash.trucks.values().filter_map(|t| t.car));
+        tracked.extend(self.driving.tows.iter().map(|t| t.truck));
+        let citizens = &self.citizens;
+        for (id, car) in self.traffic.cars.iter_mut() {
+            let legacy = car.errand == Errand::Trip && !citizens.contains_key(car.citizen) && car.cargo.is_none() && car.bus.is_none() && car.owned.is_none() && !car.siren && car.drive.gang.is_none();
+            if legacy && !tracked.contains(&id) {
+                car.errand = Errand::Through;
             }
         }
     }
@@ -712,7 +784,7 @@ impl World {
         let near_floors: u32 = self
             .buildings
             .values()
-            .filter(|b| b.lot != lot_id && b.land_use != LandUse::Park && !b.is_parking() && b.plant.is_none() && !b.depot && b.rail.is_none() && b.service.is_none())
+            .filter(|b| b.lot != lot_id && b.land_use != LandUse::Park && !b.is_parking() && !b.is_power() && !b.depot && b.rail.is_none() && b.service.is_none())
             .filter_map(|b| self.lots.get(b.lot).map(|l| (b.floors as u32, l.center)))
             .filter(|(_, c)| c.distance(center) <= DENSITY_RADIUS)
             .map(|(f, _)| f)
@@ -769,6 +841,7 @@ impl World {
             self.daily_vehicles();
             self.industry_daily();
             self.daily_places();
+            self.rides.stats.roll();
             // [districts] facelifts; [tourism] hotel nights and the books.
             self.daily_districts();
             self.daily_tourism();
@@ -814,8 +887,12 @@ impl World {
         }
         for (id, decision) in minds.poll() {
             if self.citizens.contains_key(id) {
-                self.apply_decision(id, decision);
+                self.apply_late_decision(id, decision);
             }
+        }
+        // Late answers nobody came back for (they are still out, or gone).
+        if tick % 60 == 0 {
+            self.deferred_intents.retain(|_, (_, at)| tick.saturating_sub(*at) <= trips::DEFERRED_INTENT_TTL);
         }
         self.step_traffic();
         self.step_air();
@@ -830,6 +907,8 @@ impl World {
         self.step_rail();
         self.step_subway();
         self.step_ships();
+        // [ferries] Day trips out, and anyone stranded abroad.
+        self.step_ferry_people();
         self.step_cargo_hubs();
         if self.clock.minute_of_day() == 0 {
             self.bots.delivered_today = 0;
@@ -842,6 +921,8 @@ impl World {
         // [tourism] Arrivals on the hour, visitors' days, departures.
         self.step_tourism();
         self.step_citizens(minds);
+        // [passengers] With their drivers, in or out of the car.
+        self.step_passengers();
         // [concerns] Happiness on the hour and at midnight.
         self.step_concerns();
         // Every system that moves people has run: lay the breadcrumbs.
@@ -850,11 +931,37 @@ impl World {
         }
     }
 
+    /// A vehicle no system claimed reached the end of its route. Wreck tow
+    /// trucks are home at their yard (or off the map), takeover outsiders
+    /// and through cars from older saves are at their exit: they leave the
+    /// world. Anything else is not deleted where it stands (that used to
+    /// make vehicles vanish mid-street): it drives off the map
+    /// (`retire_vehicle`).
+    fn unclaimed_arrival(&mut self, car_id: CarId) {
+        let Some(car) = self.traffic.cars.get(car_id) else { return };
+        let gang = car.drive.gang.is_some();
+        let tow = self.driving.tows.iter().find(|t| t.truck == car_id).map(|t| t.yard);
+        let home = match tow {
+            Some(Some(yard)) => self.buildings.contains_key(yard),
+            Some(None) => true,
+            None => false,
+        };
+        if home || gang || self.at_map_edge(car_id) {
+            self.traffic.remove_car(car_id);
+        } else {
+            self.retire_vehicle(car_id);
+        }
+    }
+
     fn step_traffic(&mut self) {
         let arrived = self.traffic.step(self.config.traffic_seconds_per_tick, self.config.traffic_substeps);
         // [tolls] Before anyone arriving is taken off the road.
         self.settle_tolls();
         for car_id in arrived {
+            // [emergency] A fugitive got where it was running: on it runs.
+            if self.chase_car_arrived(car_id) {
+                continue;
+            }
             // Fire engines, police cars and ambulances: services handle them.
             if self.services.unit_of_car(car_id).is_some() {
                 self.unit_car_arrived(car_id);
@@ -880,8 +987,7 @@ impl World {
             if self.vehicle_arrived(car_id) {
                 continue;
             }
-            // Through traffic at the far edge of the map: gone on its way.
-            self.traffic.remove_car(car_id);
+            self.unclaimed_arrival(car_id);
         }
         // Keep citizen positions in sync with their cars for inspection.
         for (cid, car) in self.traffic.cars.iter() {

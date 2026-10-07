@@ -449,6 +449,10 @@ pub struct ParkSpot {
     /// [parking] In the pound: the tow fee owed (storage is added daily).
     #[serde(default)]
     pub fee: f32,
+    /// [boot] A wheel clamp is on: the car cannot be driven until the tow
+    /// truck has taken it (the hook replaces the spot, clamp and all).
+    #[serde(default)]
+    pub booted: bool,
 }
 
 /// Where a private car is: parked somewhere, or on the road.
@@ -485,7 +489,8 @@ impl OwnedCar {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Errand {
     /// An ordinary trip: a private car to its owner's destination, or a
-    /// through car to the far edge of the map.
+    /// city vehicle whose own system (services, trash, tow trucks) tracks
+    /// it by car id.
     #[default]
     Trip,
     /// A private car looking for a space: `tries` places checked so far.
@@ -513,6 +518,17 @@ pub enum Errand {
     /// [taxis] A cab of a taxi company (`crate::taxi`): what it does on
     /// arriving is in its record's job.
     Taxi(crate::taxi::CabId),
+    /// Through traffic from elsewhere to elsewhere along the highway. Set
+    /// only where through cars are made (`World::step_through_traffic`,
+    /// `resume_through_car`), so nothing else (a fire engine, a tow or
+    /// garbage truck, a takeover outsider) is counted, capped or re-spawned
+    /// as through traffic just because it has no driver or owner.
+    Through,
+    /// A city vehicle with nowhere left to go in town (its station, office,
+    /// depot or line was pulled down): it drives off the map by the nearest
+    /// exit it can reach and leaves the world there
+    /// (`World::retire_vehicle`). Vehicles never vanish mid-street.
+    Out,
 }
 
 /// Why a private car came into or left the city: the only ways it can.

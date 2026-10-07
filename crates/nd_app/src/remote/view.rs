@@ -282,6 +282,24 @@ fn activity(w: &World, c: &Citizen) -> Value {
         Activity::OnMetro { train } => {
             m.insert("metro_train".into(), json!(key_str(*train)));
         }
+        // [passengers] Riding along: whose car, where to.
+        Activity::Passenger { driver, to, purpose, seated } => {
+            m.insert("driver".into(), json!(key_str(*driver)));
+            m.insert("driver_name".into(), json!(w.citizens.get(*driver).map(|d| d.name.as_str())));
+            m.insert("in_car".into(), json!(seated));
+            if let Some(Activity::Driving { car, .. }) = w.citizens.get(*driver).map(|d| &d.activity) {
+                m.insert("car".into(), json!(key_str(*car)));
+            }
+            m.insert("to".into(), opt_key(*to));
+            m.insert("to_name".into(), name_of(*to));
+            m.insert("purpose".into(), json!(format!("{purpose:?}")));
+        }
+        // [ferries] Away for the day in a town off the map.
+        Activity::Abroad { terminal, town, until } => {
+            m.insert("terminal".into(), json!(key_str(*terminal)));
+            m.insert("town".into(), json!(w.ferry_town_name(*terminal, *town)));
+            m.insert("back_after_tick".into(), json!(until));
+        }
         Activity::Arriving | Activity::AtHome | Activity::Working | Activity::Idle | Activity::Waiting { .. } => {}
     }
     if let Some(t) = &c.transit {
@@ -389,7 +407,8 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
     let business = b.business.as_ref().map(|z| {
         let recipe = z.kind.recipe();
         json!({
-            "kind": z.kind.label(), "closed": z.closed, "money": round(z.money), "revenue_today": round(z.revenue_today),
+            "kind": z.kind.label(), "industry": z.kind.industry().map(|k| k.label()), "closed": z.closed, "money": round(z.money), "revenue_today": round(z.revenue_today),
+            "books": z.books.iter().map(|d| json!({ "revenue": round(d.revenue), "spend": round(d.spend) })).collect::<Vec<_>>(),
             "spend_today": round(z.spend_today), "deals": z.deals, "staffing": round(b.staffing()), "broke_days": z.broke_days,
             "needs": recipe.inputs.iter().map(|(r, _)| json!({ "resource": r.label(), "stock": round(z.stock_of(*r)), "target": round(z.target_input(*r, b.jobs)) })).collect::<Vec<_>>(),
             "sells": recipe.outputs.iter().map(|(r, _)| json!({ "resource": r.label(), "stock": round(z.stock_of(*r)), "price": round(z.sell_price(*r, b.jobs)) })).collect::<Vec<_>>(),
@@ -485,6 +504,9 @@ pub fn car_row(w: &World, id: CarId, c: &Car) -> Value {
     if kind == "car" {
         m["citizen"] = json!(key_str(c.citizen));
         m["citizen_name"] = json!(w.citizens.get(c.citizen).map(|x| x.name.as_str()));
+        // [passengers] Everyone riding along besides the driver.
+        m["occupants"] = json!(c.occupants.iter().filter_map(|&p| w.citizens.get(p).map(|x| json!({ "id": key_str(p), "name": x.name }))).collect::<Vec<_>>());
+        m["vehicle"] = json!(c.owned.map(key_str));
     }
     if let Some(bus) = &c.bus {
         m["route"] = json!(key_str(bus.route));
@@ -522,7 +544,31 @@ pub fn car_detail(w: &World, id: CarId, c: &Car) -> Value {
     m["jam"] = jam_json(w, id);
     m["trip"] = trip_json(w, id, c);
     m["lanes"] = lanes_json(w, c);
+    m["driver"] = driver_json(w, c);
+    // [inspector] Everyone aboard, as the inspector lists them.
+    m["occupants"] = json!(crate::ui::occupants(w, id).iter().filter_map(|&p| w.citizens.get(p).map(|x| json!({ "id": key_str(p), "name": x.name }))).collect::<Vec<_>>());
     m
+}
+
+/// [inspector] The driver card: who is at the wheel of a private car, why
+/// and where they drive, and their driving style, with `boldness` the
+/// inspector's slow (-1) .. normal (0) .. reckless (1) slider, now and calm.
+pub fn driver_json(w: &World, c: &Car) -> Value {
+    let p = &c.drive.profile;
+    let style = json!({
+        "label": p.label(), "boldness": round(p.boldness()), "calm_boldness": c.drive.calm.map(|x| round(x.boldness())),
+        "skill": round(p.skill), "speed": round(p.speed), "headway_s": round(p.headway), "aggression": round(p.aggression), "compliance": round(p.compliance), "drunk": round(p.drunk),
+    });
+    let Some(x) = w.citizens.get(c.citizen).filter(|_| c.bus.is_none() && c.cargo.is_none()) else { return json!({ "citizen": Value::Null, "style": style }) };
+    let (to, purpose) = match &x.activity {
+        Activity::Driving { to, purpose, .. } => (*to, Some(format!("{purpose:?}"))),
+        _ => (None, None),
+    };
+    json!({
+        "citizen": key_str(c.citizen), "name": x.name, "age": x.age, "mood": round(x.mood), "class": x.class().label(),
+        "purpose": purpose, "destination": to.map(key_str), "destination_name": to.and_then(|b| w.buildings.get(b)).map(|b| b.name.clone()),
+        "anger": round(c.drive.anger), "style": style,
+    })
 }
 
 /// Why a vehicle is held up: `reason` (a key), `text` (plain language,
@@ -684,9 +730,55 @@ pub fn train_row(w: &World, id: TrainId, t: &Train) -> Value {
 pub fn route_row(id: RouteId, r: &nd_sim::BusRoute) -> Value {
     json!({
         "id": key_str(id), "name": r.name, "color": r.color, "buses": r.buses, "fare": round(r.fare), "riders_today": r.riders_today,
-        "stops": r.stops.iter().map(|s| json!({ "pos": v2(s.pos), "segment": s.segment.0 })).collect::<Vec<_>>(),
+        "riders_yesterday": r.boardings_yesterday(),
+        "stops": r.stops.iter().map(|s| json!({ "pos": v2(s.pos), "segment": s.segment.0, "on_today": s.stats.on_today, "off_today": s.stats.off_today })).collect::<Vec<_>>(),
         "broken_legs": r.broken, "legs": r.legs.len(),
     })
+}
+
+/// [lines] One bus line as the Lines window shows it: per stop its
+/// boardings and alightings (today, yesterday), the leg to the next stop
+/// (metres, minutes and whether the buses timed it or it is an estimate),
+/// and every bus on the line with where it is along the loop (progress in
+/// stops: 2.4 is 40% of the way from the third stop to the fourth).
+pub fn line_detail(w: &World, id: RouteId) -> Value {
+    let Some(r) = w.transit.routes.get(id) else { return Value::Null };
+    let tsp = w.config.traffic_seconds_per_tick;
+    let n = r.stops.len();
+    let stops: Vec<Value> = r
+        .stops
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let (minutes, timed) = r.leg_minutes(i, tsp);
+            json!({
+                "index": i, "pos": v2(s.pos),
+                "on_today": s.stats.on_today, "off_today": s.stats.off_today, "on_yesterday": s.stats.on_yesterday, "off_yesterday": s.stats.off_yesterday,
+                "leg_to": (i + 1) % n.max(1), "leg_m": round(r.leg_length(i)), "leg_min": round(minutes), "leg_timed": timed, "leg_runs": s.stats.leg_runs,
+                "leg_broken": r.broken.contains(&i),
+            })
+        })
+        .collect();
+    let buses: Vec<Value> = w
+        .traffic
+        .cars
+        .iter()
+        .filter_map(|(cid, c)| c.bus.as_ref().filter(|b| b.route == id).map(|b| (cid, c, b)))
+        .map(|(cid, c, b)| {
+            let state = if b.next_stop == usize::MAX { "to_depot" } else if !w.transit.departures.contains_key(&cid) { "from_depot" } else if b.to_depot { "last_lap" } else { "on_line" };
+            json!({
+                "id": key_str(cid), "state": state, "next_stop": (b.next_stop != usize::MAX).then_some(b.next_stop),
+                "progress": if state == "on_line" || state == "last_lap" { r.bus_progress(b.next_stop, c.pos).map(round) } else { None },
+                "passengers": b.passengers.len(), "pos": v2(c.pos), "speed_kmh": round(c.v * 3.6),
+            })
+        })
+        .collect();
+    let mut v = route_row(id, r);
+    v["length_m"] = json!(round((0..n).map(|i| r.leg_length(i)).sum::<f32>()));
+    v["lap_min"] = json!(round((0..n).map(|i| r.leg_minutes(i, tsp).0).sum::<f32>()));
+    v["stops"] = json!(stops);
+    v["buses_out"] = json!(buses);
+    v
 }
 
 /// The remote-API name of something the Buildings tool places: a plant
@@ -694,6 +786,7 @@ pub fn route_row(id: RouteId, r: &nd_sim::BusRoute) -> Value {
 pub fn placeable_key(p: nd_sim::Placeable) -> String {
     match p {
         nd_sim::Placeable::Plant(k) => plant_name(k).to_string(),
+        nd_sim::Placeable::Battery(k) => k.key().to_string(),
         nd_sim::Placeable::Service(k, t) => format!("{}:{}", k.key(), tier_key(t)),
         nd_sim::Placeable::BusDepot => "depot".to_string(),
         nd_sim::Placeable::Rail(f) => rail_name(f).to_string(),
@@ -792,6 +885,8 @@ pub fn vehicle_spot(w: &World, vid: nd_sim::VehicleId, s: &nd_sim::ParkSpot) -> 
         v["limit_min"] = json!(w.kerb_limit(vid));
         v["illegal"] = json!(w.parked_illegally(s));
         v["ticketed_tick"] = if s.ticketed > 0 { json!(s.ticketed) } else { Value::Null };
+        // [boot] Clamped on the city's orders, waiting for the tow truck.
+        v["booted"] = json!(s.booted);
     }
     if s.kind == nd_sim::ParkKind::Pound {
         v["impounded"] = json!({ "pound": s.building.map(key_str), "out_of_town": s.building.is_none(), "release_fee": round(w.release_fee(s)), "auction_in_min": (s.since + nd_sim::enforcement::AUCTION_AFTER).saturating_sub(w.clock.tick) });

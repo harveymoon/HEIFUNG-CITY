@@ -5,7 +5,7 @@
 use bevy_egui::egui;
 
 use super::person::{citizen_summary, memory_line, spotlight_toggle};
-use super::{hint, neon, UiCtx, GOLD, WARN};
+use super::{hint, neon, section, UiCtx, GOLD, IVORY, WARN};
 use crate::assets::GameAssets;
 use crate::sim::Sim;
 use crate::tools::Selection;
@@ -58,148 +58,61 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             }
         }
         Selection::Building(id) => {
-            let Some(b) = sim.world.buildings.get(id) else {
+            if !sim.world.buildings.contains_key(id) {
                 *selection = Selection::None;
                 return;
-            };
-            neon(ui, &b.name);
-            let picked = assets.rules.pick_style(b.land_use, b.tier, &mut nd_sim::rng_for(b.seed, 11)).label();
-            // Docks, plants and services are drawn in their own style, not the land use's.
-            let style_label = match b.service {
-                Some(s) => nd_procgen::buildings::Style::for_service(s.kind).label(),
-                // [subway]
-                None if b.rail.as_ref().is_some_and(|l| l.kind == nd_sim::RailFacility::Central) => nd_procgen::buildings::Style::CentralStation.label(),
-                None if b.metro => nd_procgen::buildings::Style::MetroEntrance.label(),
-                None => b.port.map(|k| k.label()).or(b.plant.map(|k| k.label())).unwrap_or(picked),
-            };
-            if let Some(c) = &b.construction {
-                ui.label(format!("{}  ·  {} tier  ·  {}  ·  {} floors  ·  started day {}", b.land_use.label(), b.tier.label(), style_label, b.floors, b.built_tick / 1440 + 1));
-                let (homes, jobs) = b.planned_capacity();
-                let days_left = c.days_left();
-                let left = if days_left < 1.0 { format!("{:.0} hours left", (days_left * 24.0).ceil().max(1.0)) } else { format!("{:.1} days left", days_left) };
-                let status = if c.waiting_for_materials() { if c.ordered { ", waiting for materials (truck on its way)" } else { ", waiting for materials" } } else { "" };
-                ui.label(egui::RichText::new(format!("UNDER CONSTRUCTION, {:.0}%, {left}{status}", c.progress * 100.0)).color(egui::Color32::from_rgb(255, 200, 90)));
-                ui.label(format!("{} of {} deliveries in  ·  {:.1} days of work in all  ·  site crew {}/{}  ·  will have {} homes and {} jobs", c.deliveries, nd_sim::Construction::DELIVERIES, c.days, b.workers.len(), b.jobs, homes, jobs));
-            } else {
-                ui.label(format!("{}  ·  {} tier  ·  {}  ·  {} floors  ·  built day {}", b.land_use.label(), b.tier.label(), style_label, b.floors, b.built_tick / 1440 + 1));
             }
-            // [services] What the service does here: its units, beds and reach.
-            if let Some(s) = b.service {
-                let w = &sim.world;
-                let units: Vec<&nd_sim::Unit> = w.services.units.values().filter(|u| u.station == id).collect();
-                let mut line = format!("{}  ·  {:.0}/day", s.kind.tier_label(s.tier), s.kind.upkeep_per_day(s.tier));
-                if s.kind.radius(s.tier) > 0.0 {
-                    line += &format!("  ·  covers {:.0} m {}", s.kind.radius(s.tier), if s.kind == nd_sim::ServiceKind::TrashDepot { "around" } else { "by road" });
-                }
-                if !units.is_empty() {
-                    line += &format!("  ·  {} {}s, {} crewed, {} on calls, {} on patrol", units.len(), units[0].kind.label(), w.crewed_units(id), units.iter().filter(|u| u.busy()).count(), units.iter().filter(|u| u.state == nd_sim::services::UnitState::Patrol).count());
-                }
-                if s.kind == nd_sim::ServiceKind::Health {
-                    line += &format!("  ·  beds {}/{}", w.services.admissions.iter().filter(|a| a.hospital == id).count(), s.kind.capacity(s.tier));
-                }
-                ui.label(egui::RichText::new(line).color(egui::Color32::from_rgb(120, 200, 255)));
-            }
-            if sim.world.services.is_burning(id) {
-                ui.label(egui::RichText::new("ON FIRE").color(egui::Color32::from_rgb(255, 110, 60)));
-            }
-            ui.label(format!("land value {:.2}  ·  rent {:.0}/day  ·  wage {:.0}/day  ·  condition {:.0}%{}", b.land_value, b.rent, b.wage(), b.condition * 100.0, if b.is_derelict() { "  ·  DERELICT" } else { "" }));
-            ui.label(format!("homes {}/{} ({} residents)  ·  workers {}/{}  ·  visitors {}", b.households.len(), b.homes, b.residents.len(), b.workers.len(), b.jobs, b.visitors));
-            if let Some(lot) = sim.world.lots.get(b.lot) {
-                ui.label(format!("foot traffic today {}  ·  this hour {}{}", lot.footfall_today, lot.footfall_hour, if lot.car_access() { "" } else { "  ·  on a footpath: cars stop at the street, residents park nearby" }));
-                if let Some(park) = &lot.park {
-                    let features: Vec<&str> = park.features.iter().map(|f| f.kind.label()).collect();
-                    ui.label(format!("park: {} benches, {} paths, {} entrances{}; part of a {}-lot park of {:.0} m²", park.benches.len(), park.paths.len(), park.entrances.len(), if features.is_empty() { String::new() } else { format!(", {}", features.join(", ")) }, park.cluster_lots, park.cluster_area));
-                    let sitting = sim.world.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Sitting { park: p, .. } if Some(p) == lot.building)).count();
-                    if sitting > 0 {
-                        ui.label(format!("{sitting} sitting on the benches"));
-                    }
-                }
-            }
-            if let Some(link) = &b.rail {
-                let joined = if link.works() { "" } else if !link.rail_connected { " · NOT CONNECTED TO THE RAILWAY" } else { " · NOT CONNECTED TO THE ROADS" };
-                match link.kind {
-                    nd_sim::RailFacility::Station => ui.label(format!("railway station: platform {:.0} m, {} trains today, {} riders today across the line{joined}", link.platform[0].distance(link.platform[1]), sim.world.rail.stats.passenger_trains_today, sim.world.rail.stats.riders_today)),
-                    nd_sim::RailFacility::Central => ui.label(format!("Central Station: intercity platform {:.0} m, {} trains today, {} rail riders today; metro below, bus terminal in front{joined}", link.platform[0].distance(link.platform[1]), sim.world.rail.stats.passenger_trains_today, sim.world.rail.stats.riders_today)),
-                    nd_sim::RailFacility::FreightYard => ui.label(format!("freight yard: {} orders ({:.0} units) waiting for the next train, {:.0} units of exports on the apron{joined}", b.rail_inbound.len(), b.rail_inbound.iter().map(|c| c.amount).sum::<f32>(), b.rail_outbound)),
-                };
-            }
-            // [subway]
-            if b.metro {
-                let (today, yesterday) = sim.world.subway.boardings_at(id);
-                let lines: Vec<String> = sim.world.subway.lines_at(id).map(|(_, l)| format!("{} (every {} min)", l.name, l.headway)).collect();
-                let waiting = sim.world.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Waiting { .. }) && matches!(c.transit.map(|t| t.leg), Some(nd_sim::transit::TransitLeg::Subway { board, .. }) if board == id)).count();
-                ui.label(if lines.is_empty() { "metro station: no line calls here yet (Buses tool, Metro mode)".to_string() } else { format!("metro station: {} · {today} boarded today, {yesterday} yesterday · {waiting} on the platform", lines.join(", ")) });
-            }
-            if b.depot {
-                let out = sim.world.traffic.cars.values().filter(|c| c.bus.as_ref().is_some_and(|x| x.depot == id)).count();
-                ui.label(format!("bus depot: room for {} buses, {} out on the lines, {:.0}/day", nd_sim::transit::DEPOT_CAPACITY, out, nd_sim::transit::DEPOT_UPKEEP_PER_DAY));
-            }
-            if let Some(kind) = b.plant {
-                ui.label(format!("{}: {:.0} MW nameplate, {:.0}% available now, {:.0}/day upkeep", kind.label(), kind.capacity_mw(), kind.availability(&sim.world.weather, sim.world.clock.day_fraction()) * 100.0, kind.upkeep_per_day()));
-            } else if b.powered < 0.98 {
-                ui.label(egui::RichText::new(format!("UNDERPOWERED: {:.0}% of {:.1} MW, {} dark hours today", b.powered * 100.0, nd_sim::power::demand_mw(b), b.unpowered_hours_today)).color(WARN));
-            } else {
-                ui.label(format!("power {:.1} MW, fully served", nd_sim::power::demand_mw(b)));
-            }
-            if b.parking_capacity > 0 {
-                ui.label(format!("parking {}/{} spaces{}", b.parking_used, b.parking_capacity, if b.is_parking() { format!("  ·  {:.1} per visit", b.parking_price) } else { "  ·  for residents and workers".to_string() }));
-            }
-            if let Some(bz) = &b.business {
-                neon(ui, &format!("{}{}", bz.kind.label(), if bz.closed { "  (CLOSED)" } else { "" }));
-                ui.label(format!("cash {:.0}  ·  today +{:.0} / -{:.0}  ·  deals {}  ·  staffing {:.0}%", bz.money, bz.revenue_today, bz.spend_today, bz.deals, b.staffing() * 100.0));
-                let recipe = bz.kind.recipe();
-                for (r, _) in recipe.inputs {
-                    ui.label(egui::RichText::new(format!("needs {}: {:.0} in stock (target {:.0})", r.label(), bz.stock_of(*r), bz.target_input(*r, b.jobs))).small());
-                }
-                for (r, _) in recipe.outputs {
-                    ui.label(egui::RichText::new(format!("sells {}: {:.0} in stock at {:.1}", r.label(), bz.stock_of(*r), bz.sell_price(*r, b.jobs))).small());
-                }
-            }
-            super::places::building_place(ui, &sim.world, id);
-            hint(ui, "people here");
-            let names: Vec<&str> = b.residents.iter().chain(b.workers.iter()).filter_map(|&cid| sim.world.citizens.get(cid).map(|c| c.name.as_str())).take(10).collect();
-            for n in names {
-                ui.label(egui::RichText::new(n).small());
-            }
+            building(ui, sim, selection, assets, id);
         }
         Selection::Car(id) => {
-            let Some(car) = sim.world.traffic.cars.get(id) else {
+            let w = &sim.world;
+            let Some(car) = w.traffic.cars.get(id) else {
                 *selection = Selection::None;
                 return;
             };
+            let mut driver_shown = false;
             if let Some(bus) = &car.bus {
-                let line = sim.world.transit.routes.get(bus.route).map(|r| r.name.clone()).unwrap_or_else(|| "a line that was removed".into());
+                let line = w.transit.routes.get(bus.route).map(|r| r.name.clone()).unwrap_or_else(|| "a line that was removed".into());
                 neon(ui, &format!("Bus on {line}"));
                 let going = if bus.to_depot || bus.next_stop == usize::MAX { "heading back to the depot".to_string() } else { format!("next stop {}", bus.next_stop + 1) };
                 ui.label(format!("{} passenger{}  ·  {going}  ·  {:.0} km/h{}", bus.passengers.len(), if bus.passengers.len() == 1 { "" } else { "s" }, car.v * 3.6, if car.hold > 0.0 { "  ·  at a stop" } else { "" }));
-                hint(ui, "on board");
-                for n in bus.passengers.iter().filter_map(|&p| sim.world.citizens.get(p)).map(|c| c.name.as_str()).take(12) {
-                    ui.label(egui::RichText::new(n).small());
+                if ui.small_button("Open the line in the Lines window").clicked() {
+                    super::Info::Lines.set_open(ui.ctx(), true);
                 }
             } else if let Some(cargo) = &car.cargo {
                 neon(ui, "Delivery truck");
-                let name = |b| sim.world.buildings.get(b).map(|b| b.name.as_str()).unwrap_or("out of town");
+                let name = |b| w.buildings.get(b).map(|b| b.name.as_str()).unwrap_or("out of town");
                 ui.label(format!("{:.0} {} from {} to {}  ·  worth {:.0}  ·  {:.0} km/h", cargo.amount, cargo.resource.label(), name(cargo.from), name(cargo.to), cargo.price, car.v * 3.6));
             } else {
                 neon(ui, &format!("Car  ·  {}", car.model.body.label().replace('_', " ")));
-                let driver = sim.world.citizens.get(car.citizen).map(|c| (car.citizen, c.name.clone(), c.activity.clone()));
-                match driver {
-                    Some((cid, name, activity)) => {
-                        let going = match activity {
-                            nd_sim::Activity::Driving { to: Some(b), .. } => sim.world.buildings.get(b).map(|b| format!("  ·  to {}", b.name)).unwrap_or_default(),
-                            _ => String::new(),
-                        };
-                        ui.label(format!("{:.0} km/h{going}", car.v * 3.6));
-                        if ui.button(format!("Driver: {name}")).clicked() {
-                            *selection = Selection::Citizen(cid);
+                ui.label(format!("{:.0} km/h", car.v * 3.6));
+                driver_shown = driver_card(ui, w, id, selection);
+                if !driver_shown {
+                    hint(ui, "nobody we know at the wheel");
+                }
+                // [boot] Clamp it: it pulls over and waits for the tow truck.
+                if car.owned.is_some() && tow_button(ui) {
+                    let owned = car.owned;
+                    match sim.world.order_tow_car(id) {
+                        Ok(_) => {
+                            if let Some(v) = owned {
+                                *selection = Selection::Parked(v);
+                            }
                         }
+                        Err(e) => tow_refused(ui, e),
                     }
-                    None => {
-                        ui.label(format!("{:.0} km/h  ·  nobody we know at the wheel", car.v * 3.6));
-                    }
+                    return;
                 }
             }
-            why_and_trip(ui, &sim.world, id, selection);
+            // Everyone aboard but the driver, as faces that select them.
+            let riders: Vec<nd_sim::CitizenId> = occupants(w, id).into_iter().filter(|c| *c != car.citizen || !driver_shown).collect();
+            if !riders.is_empty() {
+                section(ui, &format!("{}  ·  {}", if car.bus.is_some() { "ON BOARD" } else { "PASSENGERS" }, riders.len()));
+                super::portrait::grid(ui, w, &riders, 24, selection);
+            } else if driver_shown {
+                hint(ui, "alone in the car");
+            }
+            why_and_trip(ui, w, id, selection, !driver_shown);
         }
         Selection::Parked(vid) => {
             let Some(owned) = sim.world.vehicles.cars.get(vid) else {
@@ -220,14 +133,416 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                     *selection = Selection::Citizen(owner);
                 }
             }
+            // [boot] Clamped and waiting, or the button to have it done.
+            if spot.booted {
+                let truck = sim.world.enforcement.job_for(vid).map(|j| if j.truck.is_some() { "the tow truck is on its way" } else if j.company.is_none() { "a tow truck is coming from out of town" } else { "waiting for a tow truck" }).unwrap_or("waiting for a tow truck");
+                ui.label(egui::RichText::new(format!("Clamped  ·  {truck}")).color(egui::Color32::from_rgb(255, 140, 20)));
+            } else if spot.kind.on_street() && tow_button(ui) {
+                if let Err(e) = sim.world.order_tow(vid) {
+                    tow_refused(ui, e);
+                }
+            }
+            show_tow_refusal(ui);
         }
     }
+}
+
+/// A selected building, most important first: its name, then what it is
+/// (zone, business, district, tier) as coloured tags, then only the
+/// sections that apply to it. A business shows its books and a cash-flow
+/// sparkline and no homes; a block of flats shows its homes; the people in
+/// it are a grid of faces that select them.
+fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets: &GameAssets, id: nd_sim::BuildingId) {
+    let w = &sim.world;
+    let b = &w.buildings[id];
+    // ── Header ──
+    ui.label(egui::RichText::new(&b.name).size(19.0).color(IVORY).strong());
+    let zone_col = super::zone_color32(assets.palette.zone_color(b.land_use));
+    let style = nd_procgen::building_style(w, id, &assets.rules, Some(&sim.styles));
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        tag(ui, b.land_use.label(), zone_col);
+        if let Some(bz) = &b.business {
+            tag(ui, &capitalise(bz.kind.label()), GOLD);
+            if let Some(ind) = bz.kind.industry() {
+                tag(ui, ind.label(), egui::Color32::from_gray(150));
+            }
+        } else if let Some(s) = b.service {
+            tag(ui, &capitalise(s.kind.label()), egui::Color32::from_rgb(120, 200, 255));
+        } else if let Some(k) = b.plant {
+            tag(ui, &capitalise(k.label()), super::detail::plant_color(k));
+        } else if b.depot {
+            tag(ui, "Bus depot", GOLD);
+        } else if b.homes > 0 {
+            tag(ui, "Homes", egui::Color32::from_gray(170));
+        }
+        tag(ui, &format!("{} tier", b.tier.label()), egui::Color32::from_gray(130));
+        if let Some(d) = w.district_of_lot(b.lot) {
+            tag(ui, &d.name, egui::Color32::from_rgb(200, 140, 230));
+        }
+    });
+    let started = if b.construction.is_some() { "started" } else { "built" };
+    hint(ui, &format!("{}  ·  {} floor{}  ·  {started} day {}", style.map_or("unknown style", |s| s.label()), b.floors, if b.floors == 1 { "" } else { "s" }, b.built_tick / 1440 + 1));
+    // Alarms, before anything else.
+    if w.services.is_burning(id) {
+        ui.label(egui::RichText::new("ON FIRE").strong().color(egui::Color32::from_rgb(255, 110, 60)));
+    }
+    if b.is_derelict() {
+        ui.label(egui::RichText::new("DERELICT").strong().color(WARN));
+    }
+    if let Some(c) = &b.construction {
+        let (homes, jobs) = b.planned_capacity();
+        let days_left = c.days_left();
+        let left = if days_left < 1.0 { format!("{:.0} hours left", (days_left * 24.0).ceil().max(1.0)) } else { format!("{:.1} days left", days_left) };
+        let status = if c.waiting_for_materials() { if c.ordered { ", waiting for materials (truck on its way)" } else { ", waiting for materials" } } else { "" };
+        ui.add(egui::ProgressBar::new(c.progress).desired_height(12.0).fill(egui::Color32::from_rgb(200, 150, 60)).text(format!("UNDER CONSTRUCTION {:.0}%, {left}{status}", c.progress * 100.0)));
+        ui.label(egui::RichText::new(format!("{} of {} deliveries in  ·  {:.1} days of work in all  ·  site crew {}/{}  ·  will have {} homes and {} jobs", c.deliveries, nd_sim::Construction::DELIVERIES, c.days, b.workers.len(), b.jobs, homes, jobs)).small());
+    }
+    if b.plant.is_none() && b.powered < 0.98 && b.construction.is_none() {
+        ui.label(egui::RichText::new(format!("UNDERPOWERED: {:.0}% of {:.1} MW, {} dark hours today", b.powered * 100.0, nd_sim::power::demand_mw(b), b.unpowered_hours_today)).color(WARN));
+    }
+
+    // ── The business ──
+    if let Some(bz) = &b.business {
+        section(ui, if bz.closed { "BUSINESS  ·  CLOSED" } else { "BUSINESS" });
+        ui.horizontal_wrapped(|ui| {
+            figure(ui, "cash", format!("{:.0}", bz.money), if bz.money < 0.0 { WARN } else { IVORY });
+            figure(ui, "today in", format!("+{:.0}", bz.revenue_today), GOOD);
+            figure(ui, "today out", format!("-{:.0}", bz.spend_today), WARN);
+            figure(ui, "staff", format!("{}/{}", b.workers.len(), b.jobs), IVORY);
+        });
+        cashflow(ui, &bz.books, (bz.revenue_today, bz.spend_today));
+        let recipe = bz.kind.recipe();
+        if !recipe.inputs.is_empty() || !recipe.outputs.is_empty() {
+            egui::CollapsingHeader::new(egui::RichText::new(format!("stock  ·  {} deals so far", bz.deals)).small()).id_salt(("inspector_stock", id)).show(ui, |ui| {
+                for (r, _) in recipe.inputs {
+                    ui.label(egui::RichText::new(format!("needs {}: {:.0} in stock (target {:.0})", r.label(), bz.stock_of(*r), bz.target_input(*r, b.jobs))).small());
+                }
+                for (r, _) in recipe.outputs {
+                    ui.label(egui::RichText::new(format!("sells {}: {:.0} in stock at {:.1}", r.label(), bz.stock_of(*r), bz.sell_price(*r, b.jobs))).small());
+                }
+            });
+        }
+    }
+
+    // ── Homes: only where people live and there is no business ──
+    if b.business.is_none() && b.homes > 0 {
+        section(ui, "HOMES");
+        ui.horizontal_wrapped(|ui| {
+            figure(ui, "homes let", format!("{}/{}", b.households.len(), b.homes), IVORY);
+            figure(ui, "residents", format!("{}", b.residents.len()), IVORY);
+            figure(ui, "rent/day", format!("{:.0}", b.rent), IVORY);
+        });
+    } else if b.business.is_none() && b.jobs > 0 && b.construction.is_none() {
+        section(ui, "JOBS");
+        ui.label(format!("{}/{} filled  ·  wage {:.0}/day", b.workers.len(), b.jobs, b.wage()));
+    }
+
+    // ── What the place does, where it applies ──
+    service_and_transit(ui, w, id, b);
+    if let Some(lot) = w.lots.get(b.lot) {
+        if let Some(park) = &lot.park {
+            section(ui, "PARK");
+            let features: Vec<&str> = park.features.iter().map(|f| f.kind.label()).collect();
+            ui.label(format!("{} benches, {} paths, {} entrances{}; part of a {}-lot park of {:.0} m²", park.benches.len(), park.paths.len(), park.entrances.len(), if features.is_empty() { String::new() } else { format!(", {}", features.join(", ")) }, park.cluster_lots, park.cluster_area));
+            let sitting = w.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Sitting { park: p, .. } if Some(p) == lot.building)).count();
+            if sitting > 0 {
+                ui.label(format!("{sitting} sitting on the benches"));
+            }
+        }
+    }
+    if b.parking_capacity > 0 {
+        ui.label(format!("parking {}/{} spaces{}", b.parking_used, b.parking_capacity, if b.is_parking() { format!("  ·  {:.1} per visit", b.parking_price) } else { "  ·  for residents and workers".to_string() }));
+    }
+    super::places::building_place(ui, w, id);
+
+    // ── People ──
+    let inside: Vec<nd_sim::CitizenId> = w.citizens.iter().filter(|(_, c)| c.inside == Some(id)).map(|(cid, _)| cid).collect();
+    let groups: [(&str, &[nd_sim::CitizenId]); 3] = [("LIVE HERE", &b.residents), ("WORK HERE", &b.workers), ("IN THE BUILDING NOW", &inside)];
+    for (title, ids) in groups {
+        if ids.is_empty() {
+            continue;
+        }
+        section(ui, &format!("{title}  ·  {}", ids.len()));
+        super::portrait::grid(ui, w, ids, 18, selection);
+    }
+
+    // ── The site, last and folded: figures the header does not need ──
+    egui::CollapsingHeader::new(egui::RichText::new("site").small()).id_salt(("inspector_site", id)).show(ui, |ui| {
+        ui.label(egui::RichText::new(format!("land value {:.2}  ·  rent {:.0}/day  ·  wage {:.0}/day  ·  condition {:.0}%", b.land_value, b.rent, b.wage(), b.condition * 100.0)).small());
+        ui.label(egui::RichText::new(format!("visitors {}  ·  power {:.1} MW ({:.0}% served)", b.visitors, nd_sim::power::demand_mw(b), b.powered * 100.0)).small());
+        if let Some(lot) = w.lots.get(b.lot) {
+            ui.label(egui::RichText::new(format!("foot traffic today {}  ·  this hour {}{}", lot.footfall_today, lot.footfall_hour, if lot.car_access() { "" } else { "  ·  on a footpath: cars stop at the street, residents park nearby" })).small());
+        }
+    });
+}
+
+/// Services, plants, rail, metro and depots: what the building does for
+/// the city, one line each, only where it applies.
+fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId, b: &nd_sim::Building) {
+    if let Some(s) = b.service {
+        let units: Vec<&nd_sim::Unit> = w.services.units.values().filter(|u| u.station == id).collect();
+        let mut line = format!("{}  ·  {:.0}/day", s.kind.tier_label(s.tier), s.kind.upkeep_per_day(s.tier));
+        if s.kind.radius(s.tier) > 0.0 {
+            line += &format!("  ·  covers {:.0} m {}", s.kind.radius(s.tier), if s.kind == nd_sim::ServiceKind::TrashDepot { "around" } else { "by road" });
+        }
+        if !units.is_empty() {
+            line += &format!("  ·  {} {}s, {} crewed, {} on calls, {} on patrol", units.len(), units[0].kind.label(), w.crewed_units(id), units.iter().filter(|u| u.busy()).count(), units.iter().filter(|u| u.state == nd_sim::services::UnitState::Patrol).count());
+        }
+        if s.kind == nd_sim::ServiceKind::Health {
+            line += &format!("  ·  beds {}/{}", w.services.admissions.iter().filter(|a| a.hospital == id).count(), s.kind.capacity(s.tier));
+        }
+        section(ui, "SERVICE");
+        ui.label(egui::RichText::new(line).color(egui::Color32::from_rgb(120, 200, 255)));
+    }
+    if let Some(kind) = b.plant {
+        section(ui, "POWER PLANT");
+        ui.label(format!("{:.0} MW nameplate, {:.0}% available now, {:.0}/day upkeep", kind.capacity_mw(), kind.availability(&w.weather, w.clock.day_fraction()) * 100.0, kind.upkeep_per_day()));
+        if b.demolition.is_some() {
+            ui.label(egui::RichText::new("clearing the lot: not on the grid yet").color(egui::Color32::from_rgb(255, 170, 80)));
+        }
+    } else if let Some(bat) = &b.battery {
+        // [power] a grid battery: charge, what it is doing, its limits
+        let k = bat.kind;
+        section(ui, "BATTERY");
+        let doing = if bat.flow_mw > 0.05 { format!("delivering {:.1} MW", bat.flow_mw) } else if bat.flow_mw < -0.05 { format!("charging {:.1} MW", -bat.flow_mw) } else { "holding".to_string() };
+        ui.label(format!("{}: {:.0} of {:.0} MWh ({:.0}%), {doing}; up to {:.0} MW, {:.0}/day upkeep", k.label(), bat.charge_mwh, k.capacity_mwh(), bat.level() * 100.0, k.max_mw(), k.upkeep_per_day()));
+        ui.add(egui::ProgressBar::new(bat.level()).desired_height(10.0).fill(super::detail::BATTERY.gamma_multiply(0.8)));
+    }
+    // [ferries] The towns off the map its boats run to.
+    if b.port == Some(nd_sim::ports::PortKind::FerryTerminal) {
+        section(ui, "FERRIES");
+        let towns = w.ferry_towns(id);
+        let waiting = w.ports.boarding.get(&id).copied().unwrap_or(0);
+        if towns.is_empty() {
+            ui.label("its water does not reach the edge of the map, so no boats run off it");
+        } else {
+            let list: Vec<String> = towns.iter().map(|t| format!("{} ({}, {:.0} km)", t.name, t.edge.label(), t.km)).collect();
+            ui.label(format!("ferries to {} · {waiting} waiting to board", list.join(", ")));
+        }
+    }
+    if let Some(link) = &b.rail {
+        let joined = if link.works() { "" } else if !link.rail_connected { " · NOT CONNECTED TO THE RAILWAY" } else { " · NOT CONNECTED TO THE ROADS" };
+        section(ui, "RAIL");
+        match link.kind {
+            nd_sim::RailFacility::Station => ui.label(format!("railway station: platform {:.0} m, {} trains today, {} riders today across the line{joined}", link.platform[0].distance(link.platform[1]), w.rail.stats.passenger_trains_today, w.rail.stats.riders_today)),
+            nd_sim::RailFacility::Central => ui.label(format!("Central Station: intercity platform {:.0} m, {} trains today, {} rail riders today; metro below, bus terminal in front{joined}", link.platform[0].distance(link.platform[1]), w.rail.stats.passenger_trains_today, w.rail.stats.riders_today)),
+            nd_sim::RailFacility::FreightYard => ui.label(format!("freight yard: {} orders ({:.0} units) waiting for the next train, {:.0} units of exports on the apron{joined}", b.rail_inbound.len(), b.rail_inbound.iter().map(|c| c.amount).sum::<f32>(), b.rail_outbound)),
+        };
+    }
+    // [subway]
+    if b.metro {
+        let (today, yesterday) = w.subway.boardings_at(id);
+        let lines: Vec<String> = w.subway.lines_at(id).map(|(_, l)| format!("{} (every {} min)", l.name, l.headway)).collect();
+        let waiting = w.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Waiting { .. }) && matches!(c.transit.map(|t| t.leg), Some(nd_sim::transit::TransitLeg::Subway { board, .. }) if board == id)).count();
+        section(ui, "METRO");
+        ui.label(if lines.is_empty() { "no line calls here yet (Buses tool, Metro mode)".to_string() } else { format!("{} · {today} boarded today, {yesterday} yesterday · {waiting} on the platform", lines.join(", ")) });
+    }
+    if b.depot {
+        let out = w.traffic.cars.values().filter(|c| c.bus.as_ref().is_some_and(|x| x.depot == id)).count();
+        section(ui, "BUS DEPOT");
+        ui.label(format!("room for {} buses, {} out on the lines, {:.0}/day", nd_sim::transit::DEPOT_CAPACITY, out, nd_sim::transit::DEPOT_UPKEEP_PER_DAY));
+    }
+}
+
+/// A small rounded tag in a colour: the header's zone, business, district.
+fn tag(ui: &mut egui::Ui, text: &str, col: egui::Color32) {
+    egui::Frame::new().fill(col.gamma_multiply(0.22)).stroke(egui::Stroke::new(1.0, col.gamma_multiply(0.8))).corner_radius(4.0).inner_margin(egui::Margin::symmetric(6, 1)).show(ui, |ui| {
+        ui.label(egui::RichText::new(text).color(col).strong());
+    });
+}
+
+/// A figure with a weak caption above it, for a row of headline numbers.
+fn figure(ui: &mut egui::Ui, caption: &str, value: String, col: egui::Color32) {
+    ui.vertical(|ui| {
+        ui.label(egui::RichText::new(caption).small().weak());
+        ui.label(egui::RichText::new(value).color(col).strong());
+    });
+    ui.add_space(6.0);
+}
+
+const GOOD: egui::Color32 = egui::Color32::from_rgb(110, 200, 140);
+
+/// The cash-flow sparkline: a pair of bars per day, takings up in green and
+/// spending down in red, with the net as a gold line; today, still open, is
+/// the last pair, drawn fainter. Hover a day for its figures.
+fn cashflow(ui: &mut egui::Ui, books: &[nd_sim::market::DayBook], today: (f32, f32)) {
+    let days: Vec<(f32, f32)> = books.iter().map(|d| (d.revenue, d.spend)).chain(std::iter::once(today)).collect();
+    if days.len() < 2 {
+        hint(ui, "cash flow: the first day's books close at midnight");
+        return;
+    }
+    let width = ui.available_width().min(320.0);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, 54.0), egui::Sense::hover());
+    let p = ui.painter_at(rect);
+    p.rect_filled(rect, 3.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 6));
+    let top = days.iter().map(|d| d.0.max(d.1)).fold(1.0f32, f32::max);
+    let mid = rect.center().y;
+    let half = rect.height() * 0.5 - 2.0;
+    let n = days.len();
+    let step = rect.width() / n as f32;
+    let bar = (step * 0.7).clamp(1.0, 9.0);
+    p.hline(rect.x_range(), mid, egui::Stroke::new(1.0, egui::Color32::from_gray(70)));
+    let mut net: Vec<egui::Pos2> = Vec::with_capacity(n);
+    for (i, (rev, spend)) in days.iter().enumerate() {
+        let x = rect.left() + step * (i as f32 + 0.5);
+        let fade = if i + 1 == n { 0.45 } else { 1.0 };
+        let up = half * rev / top;
+        let down = half * spend / top;
+        p.rect_filled(egui::Rect::from_min_max(egui::pos2(x - bar / 2.0, mid - up), egui::pos2(x + bar / 2.0, mid)), 0.0, GOOD.gamma_multiply(fade));
+        p.rect_filled(egui::Rect::from_min_max(egui::pos2(x - bar / 2.0, mid), egui::pos2(x + bar / 2.0, mid + down)), 0.0, WARN.gamma_multiply(fade));
+        net.push(egui::pos2(x, mid - half * (rev - spend) / top));
+    }
+    p.add(egui::Shape::line(net, egui::Stroke::new(1.5, GOLD)));
+    if let Some(pos) = resp.hover_pos() {
+        let i = (((pos.x - rect.left()) / step) as usize).min(n - 1);
+        let (rev, spend) = days[i];
+        let when = if i + 1 == n { "today so far".to_string() } else if i + 2 == n { "yesterday".to_string() } else { format!("{} days ago", n - 1 - i) };
+        resp.on_hover_text(format!("{when}: took {rev:.0}, spent {spend:.0}, net {:+.0}", rev - spend));
+    }
+    let closed = &days[..n - 1];
+    let total: f32 = closed.iter().map(|d| d.0 - d.1).sum();
+    hint(ui, &format!("cash flow, last {} day{}: net {total:+.0}  (green in, red out, gold net)", closed.len(), if closed.len() == 1 { "" } else { "s" }));
+}
+
+/// Everyone in a vehicle: the driver of a private car first, then its
+/// riders. Riders are a bus's passenger list and anyone whose activity says
+/// they ride in it; a private car's own passenger list, when the sim keeps
+/// one, belongs here too, so the inspector and its grid need no change.
+pub fn occupants(w: &nd_sim::World, id: nd_sim::CarId) -> Vec<nd_sim::CitizenId> {
+    let Some(car) = w.traffic.cars.get(id) else { return Vec::new() };
+    let mut out: Vec<nd_sim::CitizenId> = Vec::new();
+    if car.bus.is_none() && w.citizens.contains_key(car.citizen) {
+        out.push(car.citizen);
+    }
+    if let Some(bus) = &car.bus {
+        out.extend(bus.passengers.iter().copied());
+    }
+    for (cid, c) in &w.citizens {
+        if matches!(c.activity, nd_sim::Activity::Riding { bus } if bus == id) && !out.contains(&cid) {
+            out.push(cid);
+        }
+    }
+    out
+}
+
+/// Why someone is on the road, in a few words.
+fn purpose_label(p: &nd_sim::citizens::Purpose) -> String {
+    use nd_sim::citizens::Purpose as P;
+    match p {
+        P::Home => "going home".into(),
+        P::Work => "going to work".into(),
+        P::Visit(lu) => format!("out to the {}", lu.label().to_lowercase()),
+        P::Shop(r) => format!("shopping for {}", r.label()),
+        P::Wander => "wandering".into(),
+        P::Sit => "off to sit in a park".into(),
+        P::ToStop => "heading for a stop".into(),
+    }
+}
+
+/// The driver of a private car under the car's own details: a face that
+/// selects them, who they are, why and where they are driving, the drive
+/// so far against what it should take, their temper, and where they sit
+/// between slow and reckless. False when nobody known is at the wheel.
+fn driver_card(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selection: &mut Selection) -> bool {
+    let Some(car) = w.traffic.cars.get(id) else { return false };
+    let Some(c) = w.citizens.get(car.citizen) else { return false };
+    let cid = car.citizen;
+    section(ui, "DRIVER");
+    let mut pick = false;
+    ui.horizontal(|ui| {
+        pick |= super::portrait::button(ui, c, 52.0).clicked();
+        ui.vertical(|ui| {
+            pick |= ui.add(egui::Label::new(egui::RichText::new(&c.name).color(IVORY).strong()).sense(egui::Sense::click())).on_hover_text("Select the driver").clicked();
+            ui.label(egui::RichText::new(format!("{}  ·  {} class  ·  mood {:.0}%", c.age, c.class().label(), c.mood * 100.0)).small());
+            let (to, purpose) = match &c.activity {
+                nd_sim::Activity::Driving { to, purpose, .. } => (*to, Some(purpose)),
+                _ => (None, None),
+            };
+            let dest = to.and_then(|b| w.buildings.get(b)).map(|b| b.name.as_str());
+            let line = match (purpose, dest) {
+                (Some(p), Some(d)) => format!("{} · to {d}", purpose_label(p)),
+                (Some(p), None) => purpose_label(p),
+                (None, Some(d)) => format!("to {d}"),
+                (None, None) => c.activity.label().to_string(),
+            };
+            ui.label(egui::RichText::new(line).small());
+        });
+    });
+    if pick {
+        *selection = Selection::Citizen(cid);
+    }
+    if let Some((elapsed, expected)) = w.car_trip_minutes(id) {
+        let over = elapsed / expected.max(1.0);
+        let col = if over > 2.0 { WARN } else if over > 1.3 { GOLD } else { egui::Color32::LIGHT_GRAY };
+        ui.label(egui::RichText::new(format!("On the road {:.0} min  ·  should take {:.0} min", elapsed, expected)).color(col));
+    }
+    let d = &car.drive;
+    if d.calm.is_some() {
+        let word = match d.anger {
+            a if a >= 0.75 => "raging",
+            a if a >= 0.5 => "fuming",
+            a if a >= 0.25 => "losing patience",
+            a if a > 0.02 => "getting irritated",
+            _ => "calm",
+        };
+        // An empty bar still paints a dot of fill; calm is just said.
+        if d.anger > 0.02 {
+            ui.add(egui::ProgressBar::new(d.anger).desired_width(220.0).desired_height(12.0).fill(egui::Color32::from_rgb(200, 60, 40)).text(format!("anger: {word}  ·  {:.0}%", d.anger * 100.0)));
+        } else {
+            ui.label(egui::RichText::new(format!("{word} at the wheel")).small());
+        }
+    }
+    // The driver as they are now (anger included), on the slider; their
+    // calm self is marked too when anger has moved them.
+    temperament(ui, d.profile.boldness(), d.calm.map(|p| p.boldness()).filter(|b| (b - d.profile.boldness()).abs() > 0.03));
+    ui.label(egui::RichText::new(format!("{}  ·  skill {:.0}%  ·  {:.0}% of the limit  ·  {:.1} s gap{}", d.profile.label(), d.profile.skill * 100.0, d.profile.speed * 100.0, d.profile.headway, if d.profile.drunk > 0.05 { format!("  ·  drunk {:.0}%", d.profile.drunk * 100.0) } else { String::new() })).small().weak());
+    true
+}
+
+/// The slow–normal–reckless slider (read only): a track from blue through
+/// grey to red with a marker at `boldness` (`-1..1`), and a hollow one at
+/// the driver's calm self when anger has moved them.
+fn temperament(ui: &mut egui::Ui, boldness: f32, calm: Option<f32>) {
+    let width = ui.available_width().min(260.0);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::hover());
+    let p = ui.painter_at(rect);
+    let track = egui::Rect::from_min_max(egui::pos2(rect.left() + 6.0, rect.top() + 6.0), egui::pos2(rect.right() - 6.0, rect.top() + 12.0));
+    let slow = egui::Color32::from_rgb(90, 150, 255);
+    let normal = egui::Color32::from_gray(150);
+    let reckless = egui::Color32::from_rgb(255, 80, 60);
+    let n = 24;
+    for i in 0..n {
+        let t = i as f32 / (n - 1) as f32;
+        let col = if t < 0.5 { lerp(slow, normal, t * 2.0) } else { lerp(normal, reckless, t * 2.0 - 1.0) };
+        let x0 = track.left() + track.width() * i as f32 / n as f32;
+        let x1 = track.left() + track.width() * (i + 1) as f32 / n as f32;
+        p.rect_filled(egui::Rect::from_min_max(egui::pos2(x0, track.top()), egui::pos2(x1, track.bottom())), 0.0, col.gamma_multiply(0.7));
+    }
+    let x_of = |b: f32| track.left() + track.width() * (b.clamp(-1.0, 1.0) + 1.0) / 2.0;
+    if let Some(c) = calm {
+        p.circle_stroke(egui::pos2(x_of(c), track.center().y), 5.0, egui::Stroke::new(1.5, IVORY));
+    }
+    p.circle_filled(egui::pos2(x_of(boldness), track.center().y), 6.0, IVORY);
+    let font = egui::FontId::proportional(11.0);
+    let weak = egui::Color32::from_gray(150);
+    p.text(egui::pos2(track.left(), rect.bottom()), egui::Align2::LEFT_BOTTOM, "slow", font.clone(), weak);
+    p.text(egui::pos2(track.center().x, rect.bottom()), egui::Align2::CENTER_BOTTOM, "normal", font.clone(), weak);
+    p.text(egui::pos2(track.right(), rect.bottom()), egui::Align2::RIGHT_BOTTOM, "reckless", font, weak);
+    resp.on_hover_text(format!("Driving style {:+.2} (−1 slow and careful, 0 ordinary, +1 reckless): speed, overtaking, ambers and following distance{}", boldness, if calm.is_some() { "; the ring is how they drive when calm" } else { "" }));
+}
+
+fn lerp(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
+    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    egui::Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
 }
 
 /// Why the car is standing (or crawling), the car it waits for, the head of
 /// the jam it is in, and the drive so far against what it should take.
 /// Every car named is a button that selects it.
-fn why_and_trip(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selection: &mut Selection) {
+/// `trip`: also the drive so far and the driver's temper, for vehicles
+/// whose driver has no card of their own (buses, trucks, strangers).
+fn why_and_trip(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selection: &mut Selection, trip: bool) {
     use nd_sim::traffic::StopReason;
     let t = &w.traffic;
     let Some(car) = t.cars.get(id) else { return };
@@ -276,6 +591,9 @@ fn why_and_trip(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selecti
         let speed = t.cars.get(head).map_or(0.0, |h| h.v * 3.6);
         ui.label(egui::RichText::new(format!("— {}  ·  {speed:.0} km/h", hr.text(|c| w.car_label(c)))).color(colour(&hr)));
     }
+    if !trip {
+        return;
+    }
     // [rage] The drive so far.
     if let Some((elapsed, expected)) = w.car_trip_minutes(id) {
         let over = elapsed / expected.max(1.0);
@@ -293,6 +611,29 @@ fn why_and_trip(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selecti
         ui.add(egui::ProgressBar::new(d.anger).desired_width(220.0).fill(egui::Color32::from_rgb(200, 60, 40)).text(format!("Driver {word}  ·  {:.0}%", d.anger * 100.0)));
     }
     ui.label(egui::RichText::new(format!("Driver: {}", d.profile.label())).small().weak());
+}
+
+/// [boot] "Tow this car": a wheel clamp now, the tow truck after; the owner
+/// pays at the pound.
+fn tow_button(ui: &mut egui::Ui) -> bool {
+    ui.button(egui::RichText::new("Tow this car").color(egui::Color32::from_rgb(255, 140, 20)))
+        .on_hover_text("Clamp it where it stands (a moving car pulls over first) and call the tow truck; the owner pays to get it back from the pound")
+        .clicked()
+}
+
+/// Why the last tow order was refused, shown under the button for a while.
+fn tow_refused(ui: &egui::Ui, why: String) {
+    let until = ui.ctx().input(|i| i.time) + 4.0;
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("tow_refused"), (why, until)));
+}
+
+fn show_tow_refusal(ui: &mut egui::Ui) {
+    let now = ui.ctx().input(|i| i.time);
+    if let Some((why, until)) = ui.ctx().data(|d| d.get_temp::<(String, f64)>(egui::Id::new("tow_refused"))) {
+        if now < until {
+            ui.label(egui::RichText::new(format!("Can't tow: {why}")).color(WARN).small());
+        }
+    }
 }
 
 fn capitalise(s: &str) -> String {

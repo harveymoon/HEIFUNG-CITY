@@ -439,6 +439,9 @@ impl World {
         b.construction = Some(Construction::new(Construction::days_for(b.floors, tier)));
         b.recompute_capacity();
         b.update_rent(value);
+        // The business that reopens in it: the same one only if it paid its
+        // way (decided now, as the old one closes for the works).
+        self.reopen_after_rebuild(bid);
         self.events.push(SimEvent::BuildingChanged(bid));
     }
 

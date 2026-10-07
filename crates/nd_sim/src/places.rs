@@ -100,7 +100,7 @@ impl Vibe {
 /// Is `b` a place people pick and remember: a venue, a shop that serves
 /// at the door, or a park (not a service, school or stadium)?
 pub fn is_place(b: &Building) -> bool {
-    if b.service.is_some() || b.plant.is_some() || b.rail.is_some() || b.port.is_some() {
+    if b.service.is_some() || b.is_power() || b.rail.is_some() || b.port.is_some() {
         return false;
     }
     b.land_use == LandUse::Park || b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::Venue | BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop))

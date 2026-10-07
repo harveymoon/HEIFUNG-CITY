@@ -7,6 +7,10 @@ use crate::vehicle::{VehicleClass, VehicleModel};
 
 /// Most households in one arrival, however empty the town.
 const MAX_ARRIVALS: u32 = 12;
+/// How long (ticks) a late mind answer for someone on their way is still
+/// acted on once they arrive: an hour. Older, the moment it answered has
+/// passed and the citizen decides afresh.
+pub(super) const DEFERRED_INTENT_TTL: u64 = 60;
 /// Share of working-age adults out of work above which, with no job free,
 /// households mostly stop arriving.
 const JOBLESS_SLOWS_ARRIVALS: f32 = 0.05;
@@ -779,6 +783,14 @@ impl World {
             if self.citizens[id].next_decision_tick > tick || self.citizens[id].activity.is_traveling() {
                 continue;
             }
+            // A late answer that came while they were on their way.
+            if let Some((intent, at)) = self.deferred_intents.remove(&id) {
+                if tick.saturating_sub(at) <= DEFERRED_INTENT_TTL {
+                    self.citizens[id].next_decision_tick = tick + 20 + self.rng.random_range(0..40);
+                    self.apply_decision(id, Decision { intent, thought: String::new(), memory: None });
+                    continue;
+                }
+            }
             let decision = {
                 let c = &self.citizens[id];
                 let hh = c.household.and_then(|h| self.households.get(h));
@@ -833,7 +845,10 @@ impl World {
         if at_car && matches!(self.citizens[id].activity, Activity::Traveling { .. }) {
             if let Some(tc) = self.citizens[id].to_car.take() {
                 if !self.start_drive(id, tc.car, tc.to, tc.purpose) {
-                    self.travel_with(id, Some(tc.to), tc.purpose, true, false, false);
+                    // [passengers] A school run without the car: the
+                    // child goes alone, the parent where they were going after.
+                    let (to, purpose) = self.onward_after_failed_drive(id).unwrap_or((tc.to, tc.purpose));
+                    self.travel_with(id, Some(to), purpose, true, false, false);
                 }
                 return;
             }
@@ -853,6 +868,12 @@ impl World {
                 c.pending_footfall.clear();
                 c.thought = "It's gone. There's nothing here any more.".to_string();
                 c.next_decision_tick = tick + 1;
+                return;
+            }
+        }
+        // [ferries] At the terminal for a day out: aboard.
+        if let Some(b) = to {
+            if self.board_day_trip(id, b) {
                 return;
             }
         }
@@ -1000,6 +1021,30 @@ impl World {
         }
     }
 
+    /// A mind's late answer (`MindProvider::poll`, an LLM thinking it over
+    /// while the citizen carried on). Someone driving, riding or walking a
+    /// trip cannot act on it now: setting off on foot would leave their car
+    /// driving on empty or them still on the bus's list. So they think the
+    /// thought now and act at their next decision, if the answer is still
+    /// fresh then (`DEFERRED_INTENT_TTL`).
+    pub(super) fn apply_late_decision(&mut self, id: CitizenId, d: Decision) {
+        let busy = self.citizens.get(id).is_some_and(|c| c.activity.is_traveling() || c.to_car.is_some());
+        if !busy {
+            self.apply_decision(id, d);
+            return;
+        }
+        let tick = self.clock.tick;
+        let c = &mut self.citizens[id];
+        if !d.thought.is_empty() && d.thought != c.thought {
+            c.thought = d.thought;
+            self.events.push(SimEvent::NewThought(id));
+        }
+        if let Some(m) = d.memory {
+            c.remember(tick, m);
+        }
+        self.deferred_intents.insert(id, (d.intent, tick));
+    }
+
     pub(super) fn apply_decision(&mut self, id: CitizenId, d: Decision) {
         let tick = self.clock.tick;
         {
@@ -1115,6 +1160,7 @@ impl World {
     /// for the car), the next best is taken.
     pub(super) fn travel_with(&mut self, id: CitizenId, target: Option<BuildingId>, purpose: Purpose, allow_bus: bool, fresh: bool, allow_car: bool) {
         let Some(target) = target else { return };
+        let origin = self.citizens[id].inside;
         self.citizens[id].transit = None;
         self.citizens[id].to_car = None;
         if fresh && purpose != Purpose::Home {
@@ -1155,6 +1201,19 @@ impl World {
                     if at.distance(walk_from) > 25.0 {
                         self.walk_to_car(id, car, at, target, purpose, walk_from);
                     } else if !self.start_drive(id, car, target, purpose) {
+                        continue;
+                    }
+                    if fresh {
+                        self.begin_trip(id, opt.mode, dist);
+                        // [passengers] Coworkers and family setting off
+                        // from here the same way come along.
+                        self.pick_up(id, origin, target, purpose);
+                    }
+                    return;
+                }
+                // [passengers] A seat in someone else's car.
+                ModePlan::Lift { driver } => {
+                    if !self.join_ride(id, driver, target, purpose, crate::rides::RideKind::Lift, false) {
                         continue;
                     }
                 }
@@ -1307,6 +1366,16 @@ impl World {
                 };
                 // [tolls] The tolls a car trip has cost lately.
                 push(TripMode::Car, minutes, dist / 1000.0 * 0.5 + fee + c.commute.toll_avg, -4.0 - 8.0 * hedonism + bravado, ModePlan::Car { car, at });
+            }
+        }
+        // [passengers] A lift: family or a coworker setting off by car from
+        // right here to near where this trip goes has a seat. Free, a
+        // comfortable seat, and company the sociable enjoy; the drive's
+        // jams and the walk from wherever they park are the same.
+        if q.allow_car && dist >= self.config.drive_threshold * 0.5 {
+            if let Some((driver, dest)) = self.lift_on_offer(id, q) {
+                let minutes = dist * 1.3 / (9.0 * secs) + 3.0 + dest.distance(q.to) / walk;
+                push(TripMode::Car, minutes, 0.0, -6.0 - 6.0 * sociable, ModePlan::Lift { driver });
             }
         }
         // [taxis] A cab, when a company has one on duty within reach.
@@ -1545,6 +1614,8 @@ pub enum ModePlan {
     Subway { line: crate::subway::MetroLineId, board: BuildingId, alight: BuildingId, stop: Vec2 },
     /// The citizen's car, parked at `at`.
     Car { car: crate::vehicle::VehicleId, at: Vec2 },
+    /// [passengers] A seat in `driver`'s car, setting off from here.
+    Lift { driver: CitizenId },
     /// [taxis] Hail a cab: wait at `wait_at` for one coming to `at` on
     /// `segment` (`world/taxis.rs`).
     Taxi { segment: SegmentId, at: Vec2, wait_at: Vec2 },

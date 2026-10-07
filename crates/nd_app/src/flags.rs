@@ -136,7 +136,7 @@ fn flag_box(
         });
     if save {
         let look = cams.iter().next().map_or([0.0, 0.0], |c| [c.target.x, c.target.z]);
-        let snapshot = crate::remote::selected_detail(&sim.world, *selection, tools.route_sel, &assets, &tools.favorites);
+        let snapshot = crate::remote::selected_detail(&sim, *selection, tools.route_sel, &assets, &tools.favorites);
         let id = flags.add(sim.world.clock.tick, *selection, brief, note.trim().to_string(), look, snapshot).id;
         ui.message = format!("Flagged for Claude (#{id}): the remote API's `flags` command lists it");
     } else if !cancel {

@@ -42,7 +42,7 @@ pub fn card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
                         ui.label(small(format!("{}{}", bz.kind.label(), if bz.closed { "  (closed)" } else { "" })));
                     }
                 }
-                None => neon(ui, if lot.landlocked { "Unusable ground" } else if lot.park.is_some() { "Park" } else { "Vacant lot" }),
+                None => neon(ui, ground_label(lot)),
             }
             ui.label(small(format!("{}  ·  {zone}", lot.land_use.label())));
             ui.label(small(format!(
@@ -50,9 +50,27 @@ pub fn card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
                 lot.area(),
                 value,
                 Tier::for_land_value(value).label(),
-                if lot.landlocked { "  ·  landlocked" } else { "" },
+                if lot.landlocked && !is_park(lot) { "  ·  landlocked" } else { "" },
                 if lot.park.is_some() { "  ·  park" } else { "" }
             )));
         });
     });
+}
+
+/// A lot zoned for a park is a park, laid out or not, even where no street
+/// reaches it: parks are walked into, so "unusable" only describes landlocked
+/// ground nobody has given a use.
+fn is_park(lot: &nd_sim::Lot) -> bool {
+    lot.park.is_some() || lot.land_use == nd_sim::LandUse::Park
+}
+
+/// The card's title for a lot with no building on it.
+pub fn ground_label(lot: &nd_sim::Lot) -> &'static str {
+    if is_park(lot) {
+        "Park"
+    } else if lot.landlocked {
+        "Unusable ground"
+    } else {
+        "Vacant lot"
+    }
 }

@@ -32,6 +32,7 @@ impl World {
             if bz.closed {
                 // A shut business takes nothing and owes no tax; whatever
                 // the inspector still showed from its last day is cleared.
+                bz.close_books(0.0, 0.0);
                 bz.revenue_today = 0.0;
                 bz.spend_today = 0.0;
                 bz.broke_days = bz.broke_days.saturating_add(1);
@@ -69,6 +70,8 @@ impl World {
                 }
             }
             bz.days_open = bz.days_open.saturating_add(1);
+            let spent = bz.spend_today;
+            bz.close_books(revenue, spent);
             bz.revenue_today = 0.0;
             bz.spend_today = 0.0;
             if bz.money < -300.0 && !publicly_funded {
@@ -121,6 +124,8 @@ impl World {
         self.venue_tabs();
         // Production. Workers dead on their feet do half a shift's work.
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
+        // [ferries] Commuters off the boat work their shift too.
+        let ferry_staff = self.ferry_staff();
         for &bid in &ids {
             let b = &mut self.buildings[bid];
             if b.construction.is_some() {
@@ -128,7 +133,8 @@ impl World {
             }
             let tired = exhausted.get(&bid).copied().unwrap_or(0) as f32;
             let jobs = b.jobs;
-            let staffing = if jobs == 0 { 0.0 } else { ((b.workers.len() as f32 - tired * 0.5) / jobs as f32).clamp(0.0, 1.0) };
+            let staff = b.workers.len() as f32 + ferry_staff.get(&bid).copied().unwrap_or(0) as f32;
+            let staffing = if jobs == 0 { 0.0 } else { ((staff - tired * 0.5) / jobs as f32).clamp(0.0, 1.0) };
             if let Some(bz) = b.business.as_mut() {
                 if !bz.closed {
                     bz.produce(jobs, staffing * b.powered.clamp(0.0, 1.0));
@@ -366,11 +372,12 @@ impl World {
     pub(super) fn sleep_and_eat(&mut self) -> HashMap<BuildingId, u16> {
         let tick = self.clock.tick;
         let hour = self.clock.hour();
-        let night = !(6..22).contains(&hour);
         let mut exhausted: HashMap<BuildingId, u16> = HashMap::new();
         let buildings = &self.buildings;
         for c in self.citizens.values_mut() {
             let at_home = c.home.is_some() && c.inside == c.home && matches!(c.activity, Activity::AtHome);
+            // Each keeps their own bedtime, so the city goes dark home by home.
+            let night = crate::citizens::night_for(c.seed, hour);
             // [services] Night crews at round-the-clock emergency posts
             // (police, fire, ambulance, 911, jail) keep a night worker's
             // hours: up for a shift that is on or about to start, a sleep

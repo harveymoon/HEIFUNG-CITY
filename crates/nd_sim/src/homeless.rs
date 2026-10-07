@@ -283,7 +283,7 @@ impl World {
                 continue;
             }
             let Some(seg) = self.roads.try_segment(l.front_segment) else { continue };
-            if !seg.is_street() || seg.is_motorway() {
+            if !seg.is_street() || seg.fronts_nothing() {
                 continue;
             }
             let (a, b) = self.roads.segment_points(l.front_segment);

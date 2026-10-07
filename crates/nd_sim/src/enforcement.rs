@@ -14,6 +14,12 @@
 //! out of town comes from beyond the map edge, later and dearer. The owner
 //! pays the fee (plus storage by the day) and fetches the car, or after
 //! `AUCTION_AFTER` it is sold at auction. A car is never deleted.
+//!
+//! [boot] The player can have any private car clamped and towed
+//! (`World::order_tow`): a car on the road pulls over to the kerb first and
+//! its people get out and walk on; the clamp (`ParkSpot::booted`, drawn as
+//! an orange clamp on a wheel) keeps it there, off the lanes so traffic
+//! passes, until the tow truck takes it to the pound like any other.
 
 use crate::buildings::BuildingId;
 use crate::traffic::CarId;
@@ -54,6 +60,8 @@ pub enum TowReason {
     Overstay,
     /// Parked where parking is banned.
     Illegal,
+    /// [boot] The player had it clamped and towed (`World::order_tow`).
+    Ordered,
 }
 
 impl TowReason {
@@ -61,6 +69,7 @@ impl TowReason {
         match self {
             TowReason::Overstay => "over the time limit",
             TowReason::Illegal => "parked illegally",
+            TowReason::Ordered => "clamped on the city's orders",
         }
     }
 }
@@ -115,6 +124,9 @@ pub struct EnforcementStats {
     pub released_total: u32,
     pub auctioned_total: u32,
     pub wrecks_towed_total: u32,
+    /// [boot] Cars the player had clamped and towed.
+    pub boots_today: u32,
+    pub boots_total: u32,
 }
 
 /// Officers on patrol, tow jobs, and the counts.

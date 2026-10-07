@@ -24,6 +24,13 @@ pub const SOBER_RATE: f32 = 0.0022;
 const KEEP_CRASHES: usize = 60;
 /// Ticks before a wreck nobody reported is towed anyway.
 const TOW_UNREPORTED: u64 = 45;
+/// [services] Minutes between tries to tow a wreck no road leads away from.
+const TOW_RETRY: u64 = 15;
+/// [services] A wreck that no road has led away from for this long (a road
+/// cut off from the rest of the network) is lifted off by crane at last:
+/// the one place a vehicle still leaves the world mid-street, because the
+/// alternative is a road blocked for good.
+const TOW_GIVE_UP: u64 = 1440;
 
 /// A written-off car waiting for the scene to clear.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -32,6 +39,13 @@ pub struct Wreck {
     pub crash: u32,
     pub incident: Option<u32>,
     pub since: u64,
+    /// [services] No road led from the wreck to a yard or off the map when
+    /// the tow was due: the next try is not before this tick.
+    #[serde(default)]
+    pub retry_at: u64,
+    /// [services] When the first tow was due (0: not yet).
+    #[serde(default)]
+    pub due: u64,
 }
 
 /// A tow truck hauling a wreck to the yard (`model` is what it carries).
@@ -178,7 +192,7 @@ impl World {
             }
             if car.drive.expected_min <= 0.0 {
                 let expected = car.expected_seconds(&self.traffic.net) / secs;
-                let pro = car.siren || car.bus.is_some() || car.cargo.is_some() || car.drive.gang.is_some() || self.services.unit_of_car(id).is_some() || !matches!(car.errand, crate::vehicle::Errand::Trip | crate::vehicle::Errand::Search { .. } | crate::vehicle::Errand::ToLot(_) | crate::vehicle::Errand::ToKerb | crate::vehicle::Errand::Leave);
+                let pro = car.siren || car.bus.is_some() || car.cargo.is_some() || car.drive.gang.is_some() || self.services.unit_of_car(id).is_some() || !matches!(car.errand, crate::vehicle::Errand::Trip | crate::vehicle::Errand::Search { .. } | crate::vehicle::Errand::ToLot(_) | crate::vehicle::Errand::ToKerb | crate::vehicle::Errand::Leave | crate::vehicle::Errand::Through);
                 let (patience, temper) = match self.citizens.get(car.citizen) {
                     Some(c) => {
                         let (caution, hedonism) = driver_traits(c.seed);
@@ -323,7 +337,7 @@ impl World {
                 if let Some(vid) = owned {
                     self.drop_car(vid, crate::vehicle::CarEvent::Scrapped);
                 }
-                self.driving.wrecks.push(Wreck { car: c, crash: r.id, incident: None, since: tick });
+                self.driving.wrecks.push(Wreck { car: c, crash: r.id, incident: None, since: tick, retry_at: 0, due: 0 });
                 if let Some(p) = self.citizens.get_mut(driver) {
                     // Out of the car, standing (or lying) by it.
                     p.activity = Activity::Idle;
@@ -387,11 +401,21 @@ impl World {
                 Some(i) => self.services.incident(i).is_none_or(|i| !i.active()),
                 None => tick >= w.since + TOW_UNREPORTED,
             };
-            if cleared {
-                self.tow(w.car);
-            } else {
+            if !cleared || tick < w.retry_at {
                 keep.push(w);
+                continue;
             }
+            let due = if w.due == 0 { tick } else { w.due };
+            if self.tow(w.car) {
+                continue;
+            }
+            if tick >= due + TOW_GIVE_UP {
+                // See TOW_GIVE_UP: craned off where it lies.
+                self.traffic.remove_car(w.car);
+                self.driving.towed_total += 1;
+                continue;
+            }
+            keep.push(Wreck { retry_at: tick + TOW_RETRY, due, ..w });
         }
         self.driving.wrecks = keep;
         let before = self.driving.tows.len();
@@ -400,9 +424,11 @@ impl World {
         self.driving.towed_total += (before - self.driving.tows.len()) as u32;
     }
 
-    /// Replace a car with a tow truck carrying it to a yard.
-    fn tow(&mut self, car: CarId) {
-        let Some(c) = self.traffic.cars.get(car) else { return };
+    /// Replace a car with a tow truck carrying it to a yard. False (and the
+    /// wreck stays where it is) when no road leads to a yard or off the map
+    /// from it: it used to be deleted before the route was known.
+    fn tow(&mut self, car: CarId) -> bool {
+        let Some(c) = self.traffic.cars.get(car) else { return true };
         let (lane, s, model, pos) = (c.route[c.idx], c.s, c.model, c.pos);
         // [parking] The city's tow companies haul wrecks too; with none in
         // town, one from out of town takes it off the map.
@@ -417,9 +443,8 @@ impl World {
             let (gl, gs, _) = self.traffic.net.nearest_lane_on(seg, p)?;
             self.traffic.net.route_lanes(lane, s, gl, gs)
         });
+        let Some((route, s0, s1)) = route else { return false };
         self.traffic.remove_car(car);
-        self.driving.towed_total += route.is_none() as u32;
-        let Some((route, s0, s1)) = route else { return };
         let truck = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, 0);
         let t = &mut self.traffic.cars[truck];
         t.model = VehicleModel { class: VehicleClass::Mid, body: BodyType::Pickup, wear: 1, tuned: false, livery: Livery::Utility, paint: 3 };
@@ -428,6 +453,17 @@ impl World {
         t.drive.trip_start = self.clock.tick;
         t.drive.expected_min = (t.expected_seconds(&self.traffic.net) / self.config.traffic_seconds_per_tick.max(0.1)).max(1.0);
         self.driving.tows.push(Tow { truck, model, yard });
+        true
+    }
+
+    /// [services] Tow `car` now, or (no road away from it) queue it with
+    /// the wrecks to be tried again (`step_wrecks`).
+    fn tow_or_queue(&mut self, car: CarId) {
+        if self.tow(car) {
+            return;
+        }
+        let tick = self.clock.tick;
+        self.driving.wrecks.push(Wreck { car, crash: 0, incident: None, since: tick.saturating_sub(TOW_UNREPORTED), retry_at: tick + TOW_RETRY, due: tick });
     }
 
     /// Tow trucks on the road and what they carry.
@@ -832,7 +868,7 @@ impl World {
                 self.drop_car(vid, crate::vehicle::CarEvent::Scrapped);
             }
             t.cars.retain(|&c| c != car);
-            self.tow(car);
+            self.tow_or_queue(car);
             let place = t.place.clone();
             let c = &mut self.citizens[cid];
             c.activity = Activity::Idle;
@@ -889,7 +925,7 @@ impl World {
                         if let Some(vid) = self.traffic.cars[car].owned.take() {
                             self.drop_car(vid, crate::vehicle::CarEvent::Scrapped);
                         }
-                        self.tow(car);
+                        self.tow_or_queue(car);
                         if let Some(p) = self.citizens.get_mut(driver) {
                             p.activity = Activity::Idle;
                             p.next_decision_tick = tick + 1;

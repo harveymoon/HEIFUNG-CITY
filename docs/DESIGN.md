@@ -356,6 +356,25 @@ Citizens are rendered from their simulated positions every frame.
   lots the city runs (Buildings, Transit): small (12 spaces), large (30) or a multi-storey car park
   (120), on any lot with a street; the fee (default 2-3, `parking_price`) goes to the treasury
   (ledger "city parking fees"), attendants and upkeep are the city's.
+- **Tow this car** (`World::order_tow`, `order_tow_car`; inspector button, API `tow_car`): the
+  player can have any resident's car clamped. A car on the road pulls over into a free kerb slot
+  within 60 m (else the street's edge where it is), off the lanes so traffic passes; its driver and
+  passengers get out and walk on. An orange clamp (`ParkSpot::booted`) is drawn on the street-side
+  front wheel and the car cannot be driven, sold or taken out of town; a tow job (`TowReason::Ordered`)
+  goes to the nearest tow company, or one from out of town. The owner's mood drops, they remember it
+  and complain about parking, and they pay the fee at the pound as for any tow. Garaged, hooked and
+  impounded cars cannot be clamped; through traffic, lorries, buses, cabs and service vehicles neither.
+- **Passengers** (`crate::rides`, `world/rides.rs`): a car carries up to four passengers (a
+  motorcycle or scooter one). A passenger (`Activity::Passenger`) walks beside the driver to the car,
+  rides in it out of sight at its position (listed in `Car::occupants`), and when the driver parks
+  gets out there and walks on to their own destination; if the drive falls through they go their own
+  way. Rides come from a household member or coworker brought along on an outing or a date, from
+  coworkers who live at the driver's door and are due on shift (to work) or whose shift is over and
+  who live near the driver (home), family out at the same place going home, a parent at home with the
+  car driving a child to school (on the way to work, or now and then from home and back: the car stops
+  at the school, the child gets out, it drives on), and the mode choice: a seat in the car of family
+  or a coworker setting off by car from the same spot to within 300 m of where the trip goes is a
+  free, comfortable option (`ModePlan::Lift`).
 - **Parking businesses**: when the day's circling outruns free spaces, development opens a
   parking lot on a vacant lot near the last driver who could not find a space: a surface lot where
   land is cheap (about one space per 28 m², two jobs), a multi-storey car park on middle land
@@ -394,6 +413,13 @@ Citizens are rendered from their simulated positions every frame.
   aside for anyone else within 0.75 m (0.5 m in a crowd), using a 2 m grid of walkers per
   tick. `report.traffic.pedestrians` counts walkers waiting, jaywalkers, near misses and
   collisions today.
+  Crowds are not queues: each person walks at their own pace (0.86-1.14x) and prefers a place
+  across the path spread from left of centre to well right; the width they have is the pavement
+  between kerb and building line, the zebra's depth, or 2.6 m either side on lot paths, parks and
+  plazas (a crush spills 0.9 m further). Someone slower ahead is passed on the left (or right) where
+  it fits; walkers only fall in behind when boxed in. With the walk light on, cars standing or
+  crawling (under 2 m/s) across a crossing do not hold walkers back: they weave round the ends of
+  the stopped cars.
 - **Homes on paths**: in a residential zone a path counts as frontage, so houses and
   blocks line footpaths. Such lots have no car access: a resident's car trips start and
   end at the nearest street, the last stretch is walked over the pedestrian network,
@@ -563,7 +589,23 @@ Citizens are rendered from their simulated positions every frame.
   shared out highest tier first, so brownouts land on the cheap districts. A building
   below 60% power counts a dark hour: its businesses produce proportionally less, its
   windows go dark, the people inside lose mood and say so ("The power is out again."),
-  and the inspector marks it UNDERPOWERED. The treasury starts at 60,000, takes 12% of
+  and the inspector marks it UNDERPOWERED. Surplus and storage (`power::dispatch`, the merit order): a surplus
+  first charges the grid batteries, then is sold to the regional grid up to 120 MW at 0.5 a MWh (a
+  fifth of the import price; booked at midnight under the `grid export` flow), and what is left is
+  curtailed (every plant turns down by the same share); a shortfall first drains the batteries, then
+  is imported. Battery packs (Buildings, Power: small 20 MWh / 5 MW, medium 80 / 20, farm 240 / 80;
+  `BatteryKind`) charge and discharge at 95% each way (about 90% round trip); every pack takes or
+  gives the same share of its own headroom, so they fill and empty together; they work once their
+  lot is clear and run in slot order, so the dispatch is deterministic. Placing a plant or battery
+  refreshes who is powered but books no hour (no money, no battery energy, no dark hour); the hour is
+  booked once, on the hour. A plant does not feed the grid while the old building on its lot is
+  still being cleared; solar, wind and battery yards clear it at once. Each plant kind has an air
+  and noise model beside its land-value cone: CO2 per MWh (coal 0.95 t, geothermal 0.08, the rest
+  0), smog at the fence (coal 1, geothermal 0.15) and noise while running (coal 68 dB(A) down to
+  solar 38; batteries 40-48). `World::plant_rows` puts each plant's and battery's output, 24-hour
+  mean, upkeep, cost per MWh (upkeep over the last 24 hours' energy), CO2, smog and noise in one row
+  for the Power window and the API; `nd_sim::history` keeps a per-plant record (`PlantLog`: 72
+  hours of output, a battery's charge, 90 days of energy). The treasury starts at 60,000, takes 12% of
   incomes and 5% of business revenue each day (the standard rates; see Taxes), and pays plant upkeep
   and imported power.
 - **Services and emergencies** (`nd_sim::services`, `world/services.rs`): police, fire, health,
@@ -594,7 +636,28 @@ Citizens are rendered from their simulated positions every frame.
   taken, unit and whether it came from out of town, fee, fire damage per building), the last 500
   resolved ones on file, shown live in the Emergencies window and by the `incidents` API command.
   Services draw from their own random stream so the rest of the simulation is not perturbed.
-- **Air** (`nd_sim::air`, `world/air.rs`): the rich fly. Vertiports are placed under Transit (drone pad /
+- **Lights and sirens, and car chases** (`traffic/siren.rs`, `world/chases.rs`): drivers up to
+  60 m ahead of an emergency vehicle on its lane or the next lane of its route (and oncoming drivers
+  on a lane it overtakes in) pull right, onto the kerb edge from a kerb lane, and slow to a crawl,
+  stopping once it is within 20 m; drivers about to cross a junction it is running against the light
+  hold at the line. Whether a driver does is temperament (`traffic::pulls_over`: from compliance and
+  drink; about 95% of ordinary drivers, ~75% of the reckless, fewer drunks, no takeover crew).
+  Sirens drive off-law: someone in the way who will not pull over is passed in the lane to the left
+  or on the opposing lane when it is clear beyond the queue (oncoming speed counted), else up on the
+  kerb past standing traffic, else after 4 s stuck it squeezes past at a crawl; reds are taken at
+  6.5 m/s, holding at the line while cross traffic is moving in the junction. The swing is drawn on
+  top of the lane (`DriveState::offlaw`). *Chases*: when the police finish at a crime scene and the
+  suspect can get to their own car or motorbike (parked within 700 m, or the one they are driving),
+  half the time they run for it instead of the usual arrest roll: a reckless fleeing profile (fast,
+  through every light, round slower traffic the same way) heading for lots 250-1200 m off, away from
+  the police car, re-chosen every 8 minutes. The unit (`UnitState::Pursuing`, incident
+  `Stage::Pursuit`) chases at 1.4x the limit, re-routed every minute along the fugitive's own route
+  (a route ending just past it had it braking for its own stop). Tag rules: the police car touching
+  it (4.6 m centre to centre at any substep) ends it, the suspect stops, gets out and is arrested,
+  the car left at the kerb; more than 280 m apart for 6 minutes or 60 minutes in, they are lost and
+  drive home. Each chase is on its incident (`Incident::chase`: vehicle, metres, closest, result),
+  counted in `ServiceStats::chases_*`, shown in the Emergencies window and by `incidents`/`report`.
+: the rich fly. Vertiports are placed under Transit (drone pad /
   vertiport / skyport: 2 / 4 / 6 landing slots, decks at 0.4 / 7 / 15 m); rooftop pads are rare: a high-tier
   tower of 9+ floors on land worth 0.8+ qualifies when 8+ rich adults would fly from it (its own in full,
   those within 150 m at half), and only the most-demanded towers get one, about one per nine towers
@@ -773,8 +836,16 @@ Citizens are rendered from their simulated positions every frame.
   every waterline so a bridge is exactly the span; bridge segments are flagged, their ends set at deck
   height (water + 7 m) and every node raised until no segment is steeper than its grade (street 7%,
   rail 3%, path 10%); new bridge metres are charged on implement. `Ground` is a 4 m raster of the built
-  ground: terrain blended into each road's profile within 22 m and flattened to a pad under every lot
-  (the street's height at the frontage). The renderer draws the terrain from it, lifts flat-datum meshes
+  ground: terrain blended into each road's profile within 22 m (where two roads' cores overlap at
+  about one height, the lower holds, so the ground stays under both surfaces) and flattened to a pad
+  under every lot
+  (the street's height at the frontage). A long street or path leg at grade gets inner height
+  samples every ~30 m (`World::road_inner`, `(t, z)` per segment, read through
+  `landscape::way_height` by cars, lot pads, the built ground and the street mesh), each the land's
+  height held within the grade of both ends and its neighbours: it follows the hills between its
+  ends. They are not road nodes (the highway's and track's are, `sample_heights`): a street's
+  vertices cut its parcels, so parcel keys stay as they were. Decks, tunnels, cuttings, set levels
+  and ways in a grade crossing keep the straight line. The renderer draws the terrain from it, lifts flat-datum meshes
   onto it, raises buildings to their pad and movers to `surface_height` (decks over water). Water cuts
   parcels (`zoning::generate_lots_wet`); lots steeper than 0.2 are unusable. A one-way street of three
   or more lanes is a highway: 25 m/s, no frontage, grade-separated (crossings make no junction, only
@@ -803,10 +874,18 @@ Citizens are rendered from their simulated positions every frame.
   highway at grade passes under it with the highway on a lifted deck. A piece with an end 2.5 m
   or more up is a viaduct (`Segment::viaduct`, a bridge: a deck on columns and crossheads,
   parapets, no frontage, no kerb parking; the ground is graded only near its feet); one with
-  both ends 5 m or more down is a tunnel (`Segment::tunnel`: bored, no parcels cut, no
-  frontage, no pavements, nothing above it disturbed; it joins other tunnels at underground
-  junctions); between, an open cutting with retaining walls. Tunnels show on the surface as a
-  portal frame where they come out and a vent head every 150 m. Steep legs are warned about
+  both ends 5 m or more down is a tunnel (`Segment::tunnel`: bored, no parcels cut, nothing
+  above it disturbed; it joins other tunnels at underground junctions); between, an open cutting
+  with retaining walls. Like the highway and its ramps a tunnel is a way for traffic only
+  (`Segment::fronts_nothing`): no frontage, pavements, walk graph, crossings or kerb parking
+  (legal or not), no RVs or camps; its bore is a carriageway with a safety kerb and walls. Tunnels
+  show on the surface as a concrete arch portal where they come out (a headwall with an elliptical
+  arch over the opening, soffit, coping, a lit band and a dark mouth; the cutting's ground is held
+  at road level only `PORTAL_HOLD` (8 m) into the hill, under a lid, `terrain::portal_arch`) and a vent head
+  every 150 m. A road that would meet the railway at a level that is neither at grade (within
+  1 m) nor separated (a portal ramp part way down) is refused by the Road tool and the API with
+  what would work (`World::road_refusal`): the level-crossing node used to take the road's level
+  and drag the track into the cutting. Steep legs are warned about
   (`World::road_grade_warnings`, `steep_legs`) and still built: the ground end is raised or
   lowered to the grade. Cars ride the height of the way they are on (`car_height`), movers keep to
   the surface nearest the height they were at (`surface_height_near`), so a walker under a
@@ -814,7 +893,8 @@ Citizens are rendered from their simulated positions every frame.
 - **Depth view** (Underground / Ground / Sky, U cycles, top bar): Underground hides the terrain,
   water, buildings, lots, surface roads and walkers, draws surface roads as faint outlines and
   shows the tunnels (drawn as their own street layer, `StreetLayer::Underground`, with bore walls
-  and a lit strip) and the cars in them. The Tunnel preset switches to it, other presets back to
+  and a lit strip; each layer draws only its own roads' crossings, beacons and signal posts) and
+  the cars in them. The Tunnel preset switches to it, other presets back to
   Ground. Sky is a placeholder. The metro (see Subway) shows here: its bores, platforms, shafts and
   trains carry the tunnel tag.
 - **Highway and the map edge**: two carriageways cross the map at
@@ -831,7 +911,18 @@ Citizens are rendered from their simulated positions every frame.
   (`nd_sim::ports`) stand on the shore with a pier and a street stub, take over grown lots, and work
   once their street reaches the city: freighters route by water (river centrelines, tributaries
   joining, mouths opening on the sea) from off the map to the berth and back, landing imports for
-  lorries; ferries run terminal to terminal or out to elsewhere with fares. Hydro (river current at
+  lorries; ferries run terminal to terminal or out to elsewhere with fares. A ferry terminal must
+  stand on water that reaches the map edge; it is given one or two towns off the map
+  (`ports::RemoteTerminal`, named from a list per edge) beyond the edges its water reaches
+  (`Landscape::water_routes_out`: a coast reaches only the edge its sea opens onto, so a terminal on a
+  west coast sails west; a river running off both sides reaches both). Its two ferries take turns
+  between those towns and the other terminals in town; a run off the map sails out over the edge
+  (hurried along out of sight), stands at the far pier and comes back. Visitors who come by water
+  ride in on it and step off when it ties up; on the morning boats commuters come for a shift at
+  businesses near the terminal short of staff (they count as staff, the business pays them 50, and
+  they walk back to the pier after five); residents living near a terminal take day trips out
+  (`Activity::Abroad`) and come back on an evening boat. Everyone leaving waits on the pier for the
+  next run out. One terminal is enough for all of it. Hydro (river current at
   least 0.8 m/s, output scales with current), tidal (sea shore, two tides a day) and geothermal (hot
   spot, scales with heat) plants extend `PowerPlantKind`.
 
@@ -939,7 +1030,8 @@ trait MindProvider {
 - Ramps (`roads::is_ramp_spec`: one-way streets narrower than a highway): an end dropped on a
   highway gets a lead point `RAMP_LEAD` (40 m) before a merge or after a diverge, beside the
   carriageway (`roads::ease_ramp_ends`), so the ramp joins nearly tangent; the join is drawn as a
-  taper filled to the carriageway edge with edge lines and a chevron-hatched gore, no junction pad,
+  taper filled to the carriageway edge with edge lines and a chevron-hatched gore (0.6 m bright
+  strokes every 4 m between solid 0.3 m outlines, readable from the top-down camera), no junction pad,
   crossings or stop lines (`street::ramp_gore`). Every one-way road (ramps, highways, one-way
   streets) has an arrow painted in each lane every 45 m (`street::travel_arrows`), in the
   holograms too. A ramp that has to stand 2.5 m or more above the land after easing (climbing to
@@ -984,7 +1076,9 @@ trait MindProvider {
   manholes and steam vents, cables, lanterns and banners strung across cheap streets,
   puddles holding a smear of sign colour, scooters in the gutter, bin bags, crates,
   bikes, cones, planters, and cracks, stains and gum on the slabs. It is laid out per
-  road segment from its own seed, so props stay put as the walker moves.
+  road segment from its own seed, so props stay put as the walker moves, and set on that
+  segment's height (a viaduct's pavement, a street on a hillside); highways, ramps, rings and
+  tunnels get none.
 - Performance: the sim gets a real-time budget per frame (12 ms) and drops its
   backlog instead of stalling the renderer; shadows use three cascades out to 650 m;
   the HUD shows fps, meshes and triangles.
@@ -1074,7 +1168,7 @@ trait MindProvider {
   wheel with gondolas and a ticket booth, kiosk with café tables and parasols, flower
   beds, statue, dog run.
 - Power plants have their own styles: a coal station with a boiler hall, two stacks, a
-  coal pile and conveyor and a transformer yard; rows of tilted panels on posts; a wind farm
+  coal pile and conveyor and a transformer yard; a honeycomb of hexagonal sun trackers; a wind farm
   of helical vertical-axis turbines; a containment dome, hyperbolic cooling towers with steam
   and a double fence.
 - Wind farms (`buildings/power.rs`): turbines of one size (18 m gunmetal mast, 11 m rotor of
@@ -1085,6 +1179,20 @@ trait MindProvider {
   the same sites) and turns it about the vertical: still below wind 0.15, 0.6 to 4.2 rad/s
   above, easing up and down, stopped while paused. A red cap light and cyan tip lights trace
   the spin at night.
+- Solar farms (`buildings/power.rs`, `render/solar.rs`): dark blue hexagonal panels (2.2 m to a
+  corner, six cells with dark seams and a cyan rim light) on dual-axis trackers, a pedestal every
+  4.2 m on a triangular grid, flat sides facing their neighbours, so stowed panels tile the yard as a
+  honeycomb; touching parcels share one grid (`PlantField::solar_sites`). The generator draws the
+  pedestals (`solar_trackers` gives the same sites); the app puts a panel entity on each and turns
+  them all to face the sun the city is lit by (`nd_sim::power::sun_direction`), tilting at most 65
+  degrees, waking from flat as the sun clears the horizon and lying flat (stowed) at night. The
+  rotation is rewritten only when the facing moves a fifth of a degree. The zoning wash leaves plant
+  and battery yards out (it flooded a solar farm on a residential lot green).
+- Battery packs (`buildings/power.rs::battery`): container-sized white modules on plinths in rows
+  (2 / 8 / up to 36 by size) with roof fans, door seams, an inverter skid at each row end, a control
+  cabin and a fence; five status lights on each long face show fifths of charge, cyan charging,
+  amber delivering, green holding, with a light line in the same colour. The sim raises
+  `BuildingChanged` only when the lights would change (`Battery::status`).
 - Coal smoke (`render/haze.rs`): no geometry in the plant. Each stack (`coal_stacks`) emits
   18 camera-facing puffs with a soft generated texture that rise, drift downwind (the wind
   direction veers slowly over days, the distance grows with wind), swell and fade over 36 s;
@@ -1102,18 +1210,61 @@ trait MindProvider {
   and writes `lit_share`: homes light a room per awake household in, fewer by day, a night
   light when asleep, dark when out; workplaces light with the staff in and customers while
   open, security lights when closed; buildings without homes or jobs stay lit; all of it
-  scaled by the power share. No mesh is rebuilt.
+  scaled by the power share. No mesh is rebuilt. Nothing switches in step: citizens keep
+  their own bedtimes (21:00 to midnight, up 05:00 to 07:00, `citizens::night_for` from the
+  seed); the texture is refreshed every 3 sim minutes but each building takes its new share
+  only on its own turn (one in five, by a hash of its slot) and eases toward it 12..44/255 a
+  turn (a power cut is instant); and in the shader each window's threshold wanders by up to
+  ±0.13 on its own clock (re-rolled every 40..180 sim minutes at its own phase, a sim-time
+  uniform on the material), so blocks twinkle room by room.
 - Map layers (`render/layers.rs`, ramps and heat grid in `nd_procgen::overlay`): land value
   (V), traffic load (a ribbon per lane from cars per metre and speed against the limit, green
   to magenta), traffic types (a disc under every vehicle: cars cyan, trucks orange, buses
   green; emergency red once the sim has them), people (a heat map of everyone where they
   are, indoors at their building), pollution and noise (plants by pollution radius,
-  industry, nightlife, traffic), the pedestrian network (P) and zoning outlines (O). L steps
-  through the heat layers one at a time; the Land window's Layers section ticks any set; a
-  legend at the bottom right shows the key of every layer that is on. The `overlay` API and
-  `map {layer: "people"}` read the same data.
+  industry, nightlife, traffic), the pedestrian network (P), zoning outlines (O) and districts.
+  **One layer at a time** (`map_layers.rs`): the top bar's Layer button (a dropdown with None)
+  and the View window pick it, V, O and P toggle theirs, L steps through the heat layers, K
+  through the land layers; the legend at the bottom right always shows the key of the layer on.
+  Every layer is one `MapLayer` entry in `map_layers::MAP_LAYERS` (API key, label, picker group,
+  hotkey, hint, the `Overlays` flag the renderer reads, a legend function); the picker, the
+  legend, the `overlay` API and `status.overlays` follow the list, and `keep_exclusive` turns the
+  older layers off whenever any code switches a flag on, so adding a layer is a flag on
+  `Overlays` for its renderer plus one entry. The `overlay` API and `map {layer: "people"}` read
+  the same data.
+- Focus layers (`render/focus.rs`, the heat-vision material swap reused): with Traffic load on
+  the city is dimmed and every vehicle on the road turns one light blue; vehicles in bored
+  tunnels and the tunnels themselves are outlined through the ground (`layers::layer_gizmos`,
+  a gizmo group with depth bias -1). Crime (`overlay {layer: "crime"}`): a heat map of the
+  sim's hot spots plus open crime incidents (`crime_color`), the city dimmed a little less,
+  police cars lit blue-white (light bars keep their colours), each police car's route ahead
+  drawn over everything (flashing red and blue on a call, cyan on patrol) with a ring at its
+  goal, and pulsing rings on crimes not yet answered. Heat vision wins over a focus view.
+- Map view (`render/mapview.rs`, `overlay {layer: "map"}`): every mesh but water and the sky is
+  hidden (after all visibility owners, in `PostUpdate`), and a flat unlit map is drawn: dark land
+  (open over water), lots tinted by zone, roads as casing and fill ribbons by class (highway
+  amber, avenue gold, street grey, path, rail), tunnels dashed, joints rounded. Street names
+  (`nd_sim::streets`: the network cut into chains that carry straight on through junctions,
+  named from the seed and a serial, kept across rebuilds by matching new chains to the saved
+  outlines, saved with serde default) run along the roads, repeated along long streets and
+  decluttered on screen, main roads first; pins with a glyph and the name mark services,
+  plants, stations, ports, depots, civic buildings and big venues.
+- Parks merge visually: a park of several lots (`park::plan_parks` already plans one cluster)
+  lays its lawn up to the seams (no inset on shared edges), keeps trees and lamps clear of the
+  park's outside edges only, draws the zone outline only round the outside, and puts the
+  forecourt, gate pillars and name sign on one anchor lot (`ParkLayout::anchor`, the largest
+  lot on a street; serde default true for older saves). The plots stay separate lots.
+- Night and sky (`render/sky.rs`, `update_daylight`): a dome of vertex colours 30 km out (the
+  projection has no far plane), unlit and out of the fog, following the camera: the fog's
+  colour at the horizon (so distant ground dissolves into it without a line), a light-pollution
+  band above it at night (sodium orange under neon magenta, growing with the number of
+  buildings), a dark blue zenith, and glare round the sun by day and dusk, faint round the moon.
+  The fog itself is lit by the city at night and brightens toward the sun (`DistanceFog`
+  directional light colour); night ambient is a warm violet bounce that grows with the city;
+  moonlight is brighter; bloom rises at night (0.16) and falls by day (0.07).
 - Land survey layers (`nd_sim::survey`, `world/survey.rs`, drawn by `render/survey.rs`): what
-  the ground is good for, one wash at a time (K steps through them, the Land window has a picker,
+  the ground is good for, one wash at a time (K steps through them, the View window and the top
+  bar's Layer button list them,
   the legend shows the key, what the layer means and the reading under the pointer). Resources:
   farmland (fertility less contamination), oil, geothermal hot spots (solid where a plant
   works, a faint halo around), rock, sand, water access, and deep water for shipping ports (the
@@ -1128,6 +1279,14 @@ trait MindProvider {
 - Toolbar and sub-pane icons (`ui/icons.rs`) are painted with egui shapes: one per tool, a
   lane plan per road preset (lane arrows, centre line, rails, path paving, ramp curve), a
   glyph per land use in its zone colour.
+- Building thumbnails (`render/thumbs.rs`): a few frames after startup every placeable's
+  building is generated by the same grammar call the city uses (`generate_building` on a
+  made-up lot of its size), spawned far off the map on render layer 7 with its own key and fill
+  light, and filmed once by an orthographic camera into a 192 px image; the cameras and meshes
+  go after 150 frames (time for new pipelines to compile), the images stay as egui textures
+  (`Thumbs`) for the Build window. Save pictures: a straight-down orthographic camera over the
+  built-up area renders into a 512 px image for 20 frames and a `Screenshot` of that image is
+  written beside the save.
 - Paths (`RoadKind::Path`): 3.2 m ways with no car lanes, drawn as paving with edge stones,
   low lamps, benches and bollards where they meet a street; they cut parcels but give no
   frontage, and a path crossing a street mid-block gets a zebra.
@@ -1146,9 +1305,39 @@ trait MindProvider {
   heading every lift (`crane_slew` of `SimClock::work_minutes`), so cranes work 8:00 to 17:00
   and stand still overnight and while paused, at a capped on-screen rate at any speed.
 
+## The HUD: Build window, map layers, saves
+
+- **Bottom toolbar**: Inspect, Build, then the quick tools (Edit, Bulldoze, any tool that does
+  not build), and the project controls. The strip above shows the active tool's options, or
+  while the Build window is open just what is being built and how the last click went.
+- **Build window** (`ui/build.rs`): one movable, resizable window for everything the player can
+  put down. A tree of sections on the left (Roads, Zoning, Parks, Districts, Power, Services,
+  Transit, Rail, Water, Attractions; the selected one lists its sub-sections, e.g. Services:
+  Safety, Health and education, Sanitation; Transit: Buses, Metro, Air, Parking, Tolls,
+  Freight); a grid of thumbnails in the middle (building renders, icons for roads, zones and
+  lines); on the right the hovered or picked item's cost, upkeep, jobs, lot size, output or
+  coverage and notes, then the active tool's options (lanes, level, brush, tier, the bus and
+  metro line lists). Each thing is in one place: rail track and the stations and yards are all
+  under Rail (no Rail preset under Roads, no rail pieces under Buildings), the bus depot only
+  under Transit, the cargo hub under Transit, Freight. Picking an item picks the tool and preset
+  that place it (`build::activate`); the tools are unchanged, so the digit and letter hotkeys and
+  the API's `tool` command still work, and the window follows them: a building tool picked by
+  key opens the window at its section. Items come from the sim's `BuildCategory::items()`, so a
+  new placeable appears without UI changes (and gets a thumbnail).
+- **Map layers**: see Rendering; the top bar's Layer button is the core control, the View window
+  (once Land) also has lighting, land value and the dim-projects and bus-line switches.
+- **Saves and the title screen** (`ui/saves.rs`, `ui/title.rs`): Saves, Save as writes
+  `saves/<name>.ron` (the name made file-safe), a sidecar `<name>.meta.json` (name as typed, day,
+  population, treasury, buildings, landscape) and a top-down picture `<name>.png`; quick saves
+  and autosaves get a sidecar and picture too. At startup a title screen lists the saved games
+  newest first as cards with their picture, name, day and population: Continue loads the newest,
+  New game opens the landscape picker, Play this map starts on the landscape already loaded. The
+  city behind is paused while it is up; `ND_TITLE=0` skips it, and the API's `load`, `new_game`
+  and `seed_demo` close it.
+
 ## Info windows: compact and expanded
 
-Every info window (City, Economy, Market, People, Power, Transit, Emergencies, Land) has two
+Every info window (City, Economy, Market, People, Power, Transit, Emergencies, View) has two
 views behind one control: the corner-marks button at the right of the window's own header,
 beside close, the same widget in the same place on every window (`ui/pane.rs`). The *compact*
 view is the summary that sits beside the map; the *expanded* view is a large window (820 by 680
@@ -1171,14 +1360,19 @@ compact view's figures so nothing goes missing.
   in after the tax take as one more section function.
 - **People**: population, households, employed, unemployed, unhoused and waiting over time; the
   class mix stacked; Gini over time. The compact view keeps a 30-day population sparkline.
-- **Power**: the last 72 hours' supply stacked by kind of plant plus grid imports, under a
-  demand line; energy per day by kind; brownout hours and peak demand; every plant's output now
-  against its nameplate.
+- **Power**: the last 72 hours' supply stacked by source above the axis (each kind of plant,
+  batteries delivering, imports) and where a surplus went below it (into the batteries, exported),
+  under a demand line; the batteries' stored MWh against capacity with charging and delivering MW;
+  energy per day the same way; money for power per day (export income, import cost, upkeep);
+  brownout hours and peak demand; a table of plants and batteries (output now and 24-hour mean,
+  upkeep, cost per MWh, CO2 a day, smog, noise; batteries' charge and flow) and a 72-hour chart per
+  plant (output against nameplate) and per battery (stored MWh and flow). The compact view has the
+  hour's balance, the batteries' fill and the same table, narrower.
 - **Transit**: riders per day by mode; riders per bus line; fares against upkeep; who is waiting
   and riding hour by hour; a table of lines with today, yesterday, the average and fares.
 - **City**: homes and jobs (built and filled), buildings and sites, vehicles on the road by hour.
   **Market**: trade, businesses and deals, demand by land use, every good's price against its
-  base, how each kind of business pays. **Land**: land value and rents by tier over time, lots by
+  base, how each kind of business pays. **View**: land value and rents by tier over time, lots by
   land use. **Emergencies**: calls per day by kind, response time, unanswered and out-of-town calls.
 
 The numbers come from the sim, not the app. `nd_sim::history` keeps a daily ring (365 days) and
@@ -1190,6 +1384,50 @@ or a named item), one entry per item a day, so the lists are bounded by what sta
 Postings without an item stay in their row and show as "not itemised". All new fields are
 `serde(default)`; the history's ledger rows are `Vec`s so a new flow does not break old records.
 Recording reads the world and pushes; it draws no random numbers, so determinism is untouched.
+
+## The inspector and the Lines window
+
+The inspector reads top down in order of what the player asks first. A building opens with its
+name, then coloured tags for what it is: the zone (in the zone's colour), the business kind and its
+industry, or the service, plant, depot or "Homes"; the tier and the district. The style, floors and
+build day follow in small print, then alarms (on fire, derelict, under construction with progress,
+underpowered). Sections appear only when they apply: a business shows cash, today's takings and
+spending, staff and a cash-flow sparkline (takings up in green, spending down in red, net as a gold
+line, the last 30 closed days from `Business::books` plus today) and its stock folded away, and no
+homes section; homes show only where people live and there is no business. Services, plants, rail,
+metro, depots, parks and parking follow, then the people: who lives, works and is inside now, as a
+grid of painted head-and-shoulders portraits (`ui/portrait.rs`, from the citizen's look: skin, hair
+and greying, outfit in their two colours) with first names; a click selects the person. Land value,
+rent, wage, condition, power and footfall sit in a folded "site" section at the end.
+
+The style named is the style drawn. `nd_procgen::style_extras` collects every input that decides a
+building's style (plants, car parks and taxi yards, depots, rail, docks, services, metro, the
+business, a rooftop pad, the district look); the renderer builds its `Extras` on top of it, the
+`StyleBook` (kept in `Sim::styles`) resolves styles from it against older neighbours, and
+`nd_procgen::building_style` reads the book (or picks with the same inputs when the renderer has
+not drawn the building yet), so the inspector and the remote API name exactly what is on screen.
+Every farm business (grain, dairy, mill, vertical farm) is drawn as a farmstead.
+
+A car shows its driver under the car without a second click: a portrait (click to select them),
+name, age, class, mood, why and where they are driving, the drive so far against what it should
+take, their anger, and a slow - normal - reckless slider from `DriverProfile::boldness` (speed,
+overtaking, ambers and following distance against a by-the-book driver, -1..1; a ring marks their
+calm self when anger has moved them). Everyone else aboard is a portrait grid: a bus's riders, and
+anyone the sim says rides in the vehicle (`ui::occupants`, the one place a car's passenger list
+plugs in).
+
+The Lines window (top bar, or "Lines" in the Transit window and on a bus) lists every bus line
+with riders today and yesterday; picking one shows it on the map and opens its strip diagram: each
+stop in running order, named after the nearest building, with boardings and alightings today
+(yesterday on hover), and between stops the leg's length and minutes, timed by the buses where
+they have run it (`StopStats::leg_minutes`, arrival to arrival, smoothed) and estimated from the
+length otherwise. Buses sit on the strip where they are along the loop (`BusRoute::bus_progress`),
+grey on their last lap, and select on a click. Per stop, "show" flies the camera there and marks
+the stop with a tall post (`ToolState::stop_sel`), "delete" removes it. The line can be renamed,
+recoloured (its buses too), given more or fewer buses, or deleted (with a confirming second
+click). Stop counters live on the stops themselves (`BusStop::stats`, serde default), so they
+follow a stop when one before it is removed; a moved or removed stop forgets the timing of the
+legs it changed. Nothing here draws random numbers.
 
 ## Roadmap
 

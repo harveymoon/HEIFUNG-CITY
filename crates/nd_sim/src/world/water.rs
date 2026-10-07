@@ -20,6 +20,104 @@ pub const THROUGH_CHANCE: f64 = 0.45;
 /// How far a bridge deck reaches onto each bank.
 const ABUTMENT: f32 = 5.0;
 
+/// A way of `mine` kind at level `mine_level` meeting one of `theirs` kind
+/// at `their_level`, where one of them is the railway: refused (with the
+/// reason) unless they pass one over the other or meet at grade, within a
+/// metre. A level crossing has to be level: the track cannot follow a road
+/// down a portal ramp or up to a deck.
+fn rail_crossing_refusal(mine: RoadKind, theirs: RoadKind, highway: bool, mine_level: f32, their_highway: bool, their_level: f32) -> Option<String> {
+    if (mine == RoadKind::Rail) == (theirs == RoadKind::Rail) {
+        return None;
+    }
+    let gap = mine_level - their_level;
+    if crate::roads::grade_separated(highway, mine_level, their_highway, their_level) || gap.abs() < 1.0 {
+        return None;
+    }
+    let need = crate::roads::GRADE_SEPARATION - gap.abs();
+    let (what, other) = if mine == RoadKind::Rail { ("the track", "the road") } else { ("the road", "the railway") };
+    let (way, verb) = if gap < 0.0 { ("below", "lower") } else { ("above", "raise") };
+    Some(format!(
+        "{what} meets {other} {:.1} m {way} it: a level crossing must be at grade. {} {what} {need:.1} m more there to pass {} it, or start the ramp past the crossing",
+        gap.abs(),
+        if verb == "lower" { "Lower" } else { "Raise" },
+        if gap < 0.0 { "under" } else { "over" }
+    ))
+}
+
+/// Spacing of the inner height samples along a long street or path.
+pub const INNER_STEP: f32 = 30.0;
+
+/// Heights inside long streets and paths, between their nodes, so a street
+/// drawn as one long leg over a hill follows the land instead of running
+/// dead straight from end to end (and the ground under it is not cut and
+/// filled by metres to that straight line).
+///
+/// A street's vertices decide where its parcels are cut (parcel keys are
+/// their centres and frontages), so the samples cannot be new road nodes as
+/// the highway's and the track's are (`sample_heights`): they are kept per
+/// segment as `(t, z)` in rising `t`, every `INNER_STEP` or so, and read
+/// through [`crate::landscape::way_height`] by everything that sets things
+/// on a way (cars, lots, the built ground, the street mesh). Nothing about
+/// the network or the parcels changes.
+///
+/// Each sample takes the land's height there, held within the way's grade
+/// of both ends and of its neighbours (forward and back passes). Ways off
+/// the ground (decks, tunnels, cuttings, any level the player set), the
+/// highway and track (which have real vertices), and ways in a grade
+/// crossing (whose underpass is worked out on the straight line) keep the
+/// straight line, as does the flat map. An empty list is the straight line.
+fn inner_heights(land: &crate::landscape::Landscape, roads: &crate::roads::RoadNetwork, z: &[f32], floor: f32, crossings: &[crate::roads::Crossing]) -> Vec<Vec<(f32, f32)>> {
+    let mut out = vec![Vec::new(); roads.segments.len()];
+    if land.is_flat() {
+        return out;
+    }
+    let crossed: std::collections::BTreeSet<u32> = crossings.iter().flat_map(|c| [c.upper.0 .0, c.lower.0 .0]).collect();
+    let edge = crate::landscape::LAND_HALF;
+    for (sid, s) in roads.alive_segments() {
+        if s.bridge || s.viaduct || s.tunnel || s.is_rail() || s.is_highway() || s.ring || crossed.contains(&sid.0) {
+            continue;
+        }
+        if roads.node(s.a).level != 0.0 || roads.node(s.b).level != 0.0 {
+            continue;
+        }
+        let (a, b) = roads.segment_points(sid);
+        let len = a.distance(b);
+        if len < INNER_STEP * 1.5 {
+            continue;
+        }
+        let (za, zb) = (z.get(s.a.0 as usize).copied().unwrap_or(0.0), z.get(s.b.0 as usize).copied().unwrap_or(0.0));
+        let g = way_grade(s.kind);
+        let m = (len / INNER_STEP).round().max(2.0) as usize;
+        let ds = len / m as f32;
+        let mut h: Vec<f32> = (1..m)
+            .map(|k| {
+                let (t, sk) = (k as f32 / m as f32, k as f32 * ds);
+                let p = a.lerp(b, t).clamp(Vec2::splat(-edge), Vec2::splat(edge));
+                let lo = (za - g * sk).max(zb - g * (len - sk));
+                let hi = (za + g * sk).min(zb + g * (len - sk));
+                let line = za + (zb - za) * t;
+                if lo > hi { line } else { land.height(p).max(floor).clamp(lo, hi) }
+            })
+            .collect();
+        // Neighbour to neighbour within the grade, both ways.
+        let mut prev = za;
+        for v in h.iter_mut() {
+            *v = v.clamp(prev - g * ds, prev + g * ds);
+            prev = *v;
+        }
+        let mut next = zb;
+        for v in h.iter_mut().rev() {
+            *v = v.clamp(next - g * ds, next + g * ds);
+            next = *v;
+        }
+        let samples: Vec<(f32, f32)> = h.into_iter().enumerate().map(|(k, v)| ((k + 1) as f32 / m as f32, v)).collect();
+        if samples.iter().any(|&(t, v)| (v - (za + (zb - za) * t)).abs() > 0.05) {
+            out[sid.0 as usize] = samples;
+        }
+    }
+    out
+}
+
 /// Steepest grade a way of this kind keeps.
 pub fn way_grade(kind: RoadKind) -> f32 {
     match kind {
@@ -268,7 +366,8 @@ impl World {
         }
         self.relief = !flat || z.iter().any(|h| h.abs() > 1e-3) || self.roads.alive_segments().any(|(_, s)| s.bridge);
         self.road_z = z;
-        self.ground = crate::landscape::Ground::build(&self.landscape, &self.roads, &self.road_z, &self.lots, self.config.half_extent + 200.0);
+        self.road_inner = inner_heights(&self.landscape, &self.roads, &self.road_z, floor, &crossings);
+        self.ground = crate::landscape::Ground::build(&self.landscape, &self.roads, &self.road_z, &self.road_inner, &self.lots, self.config.half_extent + 200.0);
     }
 
     /// Legs (by their first point) of a road drawn along `points` at
@@ -320,15 +419,46 @@ impl World {
                 let mine = lv(i) + (lv(i + 1) - lv(i)) * t;
                 let theirs = self.roads.segment_level(sid, u);
                 let gap = (mine - theirs).abs();
-                if !crate::roads::grade_separated(highway, mine, s.is_highway(), theirs) && gap >= 1.0 {
+                // Off-grade railway crossings are refused: said once below.
+                if rail_crossing_refusal(kind, s.kind, highway, mine, s.is_highway(), theirs).is_some() {
+                    continue;
+                } else if !crate::roads::grade_separated(highway, mine, s.is_highway(), theirs) && gap >= 1.0 {
                     out.push(format!("meets a road {gap:.0} m below or above it at grade: raise or lower it {:.0} m more to pass over or under", crate::roads::GRADE_SEPARATION - gap));
                 } else if crate::roads::grade_separated(highway, mine, s.is_highway(), theirs) && gap > 0.0 && gap < UNDERPASS_CLEARANCE && (mine != 0.0 && theirs != 0.0) {
                     out.push(format!("only {gap:.1} m clear of the road it crosses (needs {UNDERPASS_CLEARANCE} m)"));
                 }
             }
         }
+        out.extend(self.road_refusal(points, levels, kind, lanes_fwd, lanes_bwd));
         out.dedup();
         out
+    }
+
+    /// Why a road drawn along `points` at `levels` cannot be built, if it
+    /// cannot: it meets the railway at a height that is neither at grade
+    /// nor clear of it. Such a crossing used to be built as a level
+    /// crossing at the road's height: the junction node took the road's
+    /// level, so a portal ramp halfway down to a tunnel dragged the track
+    /// down into its cutting (and a ramp up to a viaduct hoisted it).
+    /// The Road tool and the API refuse it instead, saying what would work.
+    pub fn road_refusal(&self, points: &[Vec2], levels: &[f32], kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> Option<String> {
+        let lv = |i: usize| levels.get(i).copied().filter(|l| l.is_finite()).unwrap_or(0.0);
+        let highway = crate::roads::is_highway_spec(kind, lanes_fwd, lanes_bwd);
+        for i in 0..points.len().saturating_sub(1) {
+            let (a, b) = (points[i], points[i + 1]);
+            for sid in self.roads.segments_in_box(a.min(b), a.max(b)) {
+                let (p0, p1) = self.roads.segment_points(sid);
+                // Closed: the track's height samples are vertices, and a
+                // crossing exactly at one is still a crossing.
+                let Some((t, u)) = crate::roads::segment_intersection_closed(a, b, p0, p1, 1e-3) else { continue };
+                let s = self.roads.segment(sid);
+                let mine = lv(i) + (lv(i + 1) - lv(i)) * t;
+                if let Some(why) = rail_crossing_refusal(kind, s.kind, highway, mine, s.is_highway(), self.roads.segment_level(sid, u)) {
+                    return Some(why);
+                }
+            }
+        }
+        None
     }
 
     /// Pay for bridge deck laid since the last rebuild.
@@ -369,10 +499,7 @@ impl World {
 
     /// Height of the road at a point on a segment.
     pub fn road_height(&self, sid: SegmentId, t: f32) -> f32 {
-        let Some(seg) = self.roads.try_segment(sid) else { return 0.0 };
-        let za = self.road_z.get(seg.a.0 as usize).copied().unwrap_or(0.0);
-        let zb = self.road_z.get(seg.b.0 as usize).copied().unwrap_or(0.0);
-        za + (zb - za) * t.clamp(0.0, 1.0)
+        crate::landscape::way_height(&self.roads, &self.road_z, &self.road_inner, sid, t)
     }
 
     /// The ground as built at a point: graded under roads and lots, the
@@ -462,7 +589,7 @@ impl World {
         if let Some(&h) = self.ground.pads.get(&lot) {
             return h;
         }
-        self.lots.get(lot).map_or(0.0, |l| crate::landscape::lot_pad(&self.roads, &self.road_z, l, &self.landscape))
+        self.lots.get(lot).map_or(0.0, |l| crate::landscape::lot_pad(&self.roads, &self.road_z, &self.road_inner, l, &self.landscape))
     }
 
     // ── the highway ─────────────────────────────────────────────────────
@@ -536,11 +663,14 @@ impl World {
         (entries, exits)
     }
 
-    /// Is this car passing through from elsewhere to elsewhere?
+    /// Is this car passing through from elsewhere to elsewhere? Only cars
+    /// made as through traffic carry `Errand::Through`: a test on "no
+    /// driver, no owner, no cargo" also caught fire engines, tow and garbage
+    /// trucks and takeover outsiders, which then ate the through-traffic cap
+    /// and were re-spawned as through cars on a rebuild while their own
+    /// system recovered them too (a duplicate).
     pub fn is_through_car(car: &crate::traffic::Car) -> bool {
-        // [carlife] Not a private car driven by the dealer or leaving town,
-        // nor a van or lorry on its way back to base.
-        car.citizen == CitizenId::default() && car.cargo.is_none() && car.bus.is_none() && car.owned.is_none() && car.errand == crate::vehicle::Errand::Trip
+        car.errand == crate::vehicle::Errand::Through && car.cargo.is_none() && car.bus.is_none()
     }
 
     pub fn through_cars(&self) -> usize {
@@ -576,6 +706,7 @@ impl World {
             let color = self.rng.random_range(0..8);
             let id = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, color);
             self.traffic.cars[id].model = crate::vehicle::VehicleModel::through(&mut crate::vehicle::model_rng(self.clock.tick, slotmap::Key::data(&id).as_ffi()));
+            self.traffic.cars[id].errand = crate::vehicle::Errand::Through;
             live += 1;
         }
     }
@@ -604,6 +735,7 @@ impl World {
                 let id = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, car.color);
                 let c = &mut self.traffic.cars[id];
                 c.model = car.model;
+                c.errand = crate::vehicle::Errand::Through;
                 c.v = car.v;
                 c.prev_pos = car.prev_pos;
                 c.prev_heading = car.prev_heading;
@@ -647,6 +779,11 @@ impl World {
     /// Where a dock of `kind` would go for a click at `p`, or why not.
     pub fn plan_port(&self, kind: PortKind, p: Vec2) -> Result<Port, String> {
         let port = Port::plan(kind, p, &self.landscape)?;
+        // [ferries] A ferry terminal's boats run to towns off the map, so
+        // its water must reach the edge (a lake that does not is no good).
+        if kind == PortKind::FerryTerminal && self.landscape.water_routes_out(port.berth).is_empty() {
+            return Err("ferries need water that reaches the edge of the map: build the terminal on a river or the sea".into());
+        }
         let fp = port.footprint();
         // Grown buildings under it are bought out on placement; a civic
         // structure there stops it.
@@ -699,6 +836,10 @@ impl World {
         };
         let id = self.place_special(lot_id, name, kind.jobs(), kind.jobs() / 3, |b| b.port = Some(kind));
         self.ports.ports[pid].building = Some(id);
+        // [ferries] Its towns off the map, across the edges its water reaches.
+        if kind == PortKind::FerryTerminal {
+            self.link_remote_terminals(pid);
+        }
         self.ports.ports[pid].last_sailing = self.clock.tick.saturating_sub(ports::FREIGHT_HEADWAY);
         self.refresh_port_links();
         self.events.push(SimEvent::LotsChanged);
@@ -753,6 +894,10 @@ impl World {
             let p = &mut self.ports.ports[id];
             p.road_connected = road;
             p.reaches_elsewhere = out;
+            // [ferries] A terminal from a save before remote towns gets its own.
+            if p.kind == PortKind::FerryTerminal && p.remote.is_empty() && out {
+                self.link_remote_terminals(id);
+            }
         }
         // Goods waiting at a dock that no longer works go by road.
         let working: Vec<BuildingId> = self.ports.working(PortKind::ShippingPort);
@@ -804,6 +949,7 @@ impl World {
         let ids: Vec<crate::ports::ShipId> = self.ports.ships.keys().collect();
         let mut docked = Vec::new();
         let mut done = Vec::new();
+        let mut returned = Vec::new();
         for id in ids {
             let ship = &mut self.ports.ships[id];
             ship.prev_s = ship.s;
@@ -812,7 +958,26 @@ impl World {
                 continue;
             }
             let total = crate::geom::path_length(&ship.path);
-            ship.s += ship.speed;
+            if ship.home {
+                // [ferries] Unloaded at its own pier after a run: done.
+                done.push(id);
+                continue;
+            }
+            // [ferries] Out of sight beyond the map edge the run is hurried
+            // along, so the next town is hours away, not half a day.
+            let off_map = ship.remote.is_some() && {
+                let p = ship.pose().0;
+                p.x.abs().max(p.y.abs()) > crate::landscape::MAP_EDGE + 400.0
+            };
+            ship.s += ship.speed * if off_map { ports::OFF_MAP_SPEEDUP } else { 1.0 };
+            if ship.remote.is_some() && ship.docked && ship.s >= total {
+                // Back from the town off the map: tie up and let them off.
+                ship.s = total;
+                ship.home = true;
+                ship.dwell = ports::FERRY_UNLOAD;
+                returned.push(id);
+                continue;
+            }
             if !ship.docked && ship.s >= ship.berth_s {
                 ship.s = ship.berth_s;
                 ship.docked = true;
@@ -827,6 +992,14 @@ impl World {
         }
         for id in docked {
             self.ship_docked(id);
+        }
+        for id in returned {
+            let (port, town, passengers) = {
+                let s = &self.ports.ships[id];
+                (s.port, s.remote.unwrap_or(0), s.passengers)
+            };
+            let _ = passengers;
+            self.ferry_returned(port, town);
         }
         for id in done {
             self.ports.ships.remove(id);
@@ -849,7 +1022,14 @@ impl World {
             if self.buildings.get(b).is_none_or(|x| x.is_derelict()) {
                 continue;
             }
-            let busy = self.ports.ships.values().any(|s| s.port == b);
+            // [ferries] A terminal runs two boats, one away while the next
+            // sails, but never two at its pier at once.
+            let mine: Vec<&Ship> = self.ports.ships.values().filter(|s| s.port == b).collect();
+            let at_pier = mine.iter().any(|s| s.pose().0.distance(port.berth) < 40.0);
+            let busy = match port.kind {
+                PortKind::ShippingPort => !mine.is_empty(),
+                PortKind::FerryTerminal => at_pier || mine.len() >= ports::FERRIES_PER_TERMINAL,
+            };
             if busy {
                 continue;
             }
@@ -872,40 +1052,57 @@ impl World {
                     };
                     let speed = self.config.metres_per_tick(ports::FREIGHTER_SPEED);
                     let color = self.rng.random_range(0..6);
-                    self.ports.ships.insert(Ship { kind: ShipKind::Freighter, path, s: 0.0, prev_s: 0.0, speed, dwell: 0, port: b, to: None, cargo, passengers: 0, docked: false, berth_s, color });
+                    self.ports.ships.insert(Ship { kind: ShipKind::Freighter, path, s: 0.0, prev_s: 0.0, speed, dwell: 0, port: b, to: None, cargo, passengers: 0, docked: false, berth_s, color, remote: None, home: false });
                     self.ports.ports[*pid].last_sailing = tick;
                 }
                 PortKind::FerryTerminal => {
                     if !(ports::FERRY_SERVICE_START..ports::FERRY_SERVICE_END).contains(&minute) || tick.saturating_sub(port.last_sailing) < ports::FERRY_HEADWAY {
                         continue;
                     }
-                    // To the next terminal on connected water, else out to elsewhere.
+                    // [ferries] Take turns: a run to a town off the map,
+                    // then one to the next terminal in town, and so on;
+                    // with only one kind, that kind every time.
                     let others: Vec<(BuildingId, Vec2)> = ports_now.iter().filter(|(oid, o)| oid != pid && o.kind == PortKind::FerryTerminal && o.works()).filter_map(|(_, o)| o.building.map(|ob| (ob, o.berth))).collect();
-                    let mut chosen: Option<(Option<BuildingId>, Vec<Vec2>)> = None;
-                    let start = (tick / ports::FERRY_HEADWAY) as usize;
-                    for k in 0..others.len() {
-                        let (ob, ob_berth) = others[(start + k) % others.len()];
-                        if let Some(route) = self.landscape.water_route(port.berth, Some(ob_berth)) {
-                            chosen = Some((Some(ob), route));
-                            break;
+                    let turn = port.sailings as usize;
+                    let remote_turn = !port.remote.is_empty() && (others.is_empty() || turn % 2 == 0);
+                    let mut chosen: Option<(Option<BuildingId>, Option<u8>, Vec<Vec2>)> = None;
+                    if remote_turn {
+                        let k = (turn / 2) % port.remote.len();
+                        let edge = port.remote[k].edge;
+                        chosen = self.landscape.water_routes_out(port.berth).into_iter().find(|(e, _)| *e == edge).map(|(_, r)| (None, Some(k as u8), r));
+                    }
+                    if chosen.is_none() {
+                        let start = turn / 2;
+                        for k in 0..others.len() {
+                            let (ob, ob_berth) = others[(start + k) % others.len()];
+                            if let Some(route) = self.landscape.water_route(port.berth, Some(ob_berth)) {
+                                chosen = Some((Some(ob), None, route));
+                                break;
+                            }
                         }
                     }
-                    if chosen.is_none() && port.reaches_elsewhere {
-                        chosen = self.landscape.water_route(port.berth, None).map(|r| (None, r));
-                    }
-                    let Some((to, route)) = chosen else { continue };
+                    let Some((to, remote, route)) = chosen else { continue };
                     let berth_s = crate::geom::path_length(&route);
                     let mut path = route.clone();
                     path.extend(route.iter().rev().skip(1).copied());
                     let speed = self.config.metres_per_tick(ports::FERRY_SPEED);
-                    let riders = self.ferry_riders(b, to);
+                    // Locals hopping across town, and on a run off the map
+                    // whoever is waiting at the pier to leave.
+                    let mut riders = self.ferry_riders(b, to);
+                    if remote.is_some() {
+                        let leaving = self.ports.boarding.remove(&b).unwrap_or(0);
+                        riders += leaving;
+                        self.ports.stats.remote_sailings_today += 1;
+                    }
+                    let riders = riders.min(ports::FERRY_CAPACITY);
                     let fares = riders as f32 * ports::FERRY_FARE;
                     // Ferry fares are public transport income, booked with the bus fares.
                     self.economy.credit_item(Flow::BusFares, fares, Item::Building(b));
                     self.ports.stats.ferry_riders_today += riders;
                     self.ports.stats.ferry_fares_today += fares;
-                    self.ports.ships.insert(Ship { kind: ShipKind::Ferry, path, s: 0.0, prev_s: 0.0, speed, dwell: ports::FERRY_DWELL, port: b, to, cargo: Vec::new(), passengers: riders, docked: false, berth_s, color: 0 });
+                    self.ports.ships.insert(Ship { kind: ShipKind::Ferry, path, s: 0.0, prev_s: 0.0, speed, dwell: ports::FERRY_DWELL, port: b, to, cargo: Vec::new(), passengers: riders, docked: false, berth_s, color: 0, remote, home: false });
                     self.ports.ports[*pid].last_sailing = tick;
+                    self.ports.ports[*pid].sailings += 1;
                 }
             }
         }
@@ -915,8 +1112,9 @@ impl World {
     fn ferry_riders(&mut self, from: BuildingId, to: Option<BuildingId>) -> u32 {
         let ends: Vec<Vec2> = [Some(from), to].into_iter().flatten().filter_map(|b| self.building_entrance(b)).collect();
         let near = self.citizens.values().filter(|c| c.home.and_then(|h| self.building_entrance(h)).is_some_and(|p| ends.iter().any(|e| e.distance(p) < 500.0))).count() as u32;
-        // Out to elsewhere draws visitors and commuters from off the map.
-        let base = if to.is_none() { 8 } else { 2 };
+        // Out to elsewhere draws a few more locals (visitors, commuters
+        // and day trippers are counted as they board).
+        let base = if to.is_none() { 4 } else { 2 };
         (near / 12 + base + self.rng.random_range(0..6)).min(ports::FERRY_CAPACITY)
     }
 
@@ -944,6 +1142,15 @@ impl World {
         s.freight_landed_today = 0;
         s.ferry_riders_today = 0;
         s.ferry_fares_today = 0.0;
+        s.remote_sailings_today = 0;
+        s.visitors_in_today = 0;
+        s.visitors_out_today = 0;
+        s.commuters_in_today = 0;
+        s.commuters_out_today = 0;
+        s.day_trips_today = 0;
+        s.day_trippers_back_today = 0;
+        self.ports.commuters_today.clear();
+        self.ports.trips_today.clear();
     }
 }
 

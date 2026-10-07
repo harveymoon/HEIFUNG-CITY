@@ -10,7 +10,6 @@
 //! `rng_for` on the tick and the visitor's seed, never the world's stream.
 
 use super::*;
-use crate::ports::PortKind;
 use crate::services::ServiceKind;
 use crate::tourism::{self as tm, Arrival, Attraction, AttractionKind, Goal, Tourist, TouristId, TouristState};
 
@@ -33,7 +32,7 @@ impl World {
     /// Visitors booked into each hotel.
     pub fn hotel_guests(&self) -> HashMap<BuildingId, u16> {
         let mut out: HashMap<BuildingId, u16> = HashMap::new();
-        for t in self.tourism.tourists.values() {
+        for t in self.tourism.tourists.values().filter(|t| t.commuter.is_none()) {
             *out.entry(t.hotel).or_default() += 1;
         }
         out
@@ -134,7 +133,8 @@ impl World {
     fn tourist_ways_in(&self) -> [bool; 4] {
         let road = self.entry_node_const().is_some();
         let rail = !self.stations.is_empty();
-        let ferry = !self.ports.working(PortKind::FerryTerminal).is_empty();
+        // [ferries] A terminal with a boat to a town off the map is enough.
+        let ferry = !self.ports.remote_terminals().is_empty();
         let air = !self.vertiports().is_empty();
         [road, rail, ferry, air]
     }
@@ -185,7 +185,7 @@ impl World {
         let ways = t.ways_in;
         let mut free: Vec<(BuildingId, i32, Tier)> = self.hotels().into_iter().filter(|(_, beds, _)| *beds > 0).map(|(id, beds, guests)| (id, beds as i32 - guests as i32, self.buildings[id].tier)).collect();
         let stations: Vec<BuildingId> = self.stations.clone();
-        let ferries = self.ports.working(PortKind::FerryTerminal);
+        let ferries = self.ports.remote_terminals();
         let pads = self.vertiports();
         let tick = self.clock.tick;
         for k in 0..n {
@@ -289,13 +289,20 @@ impl World {
                 state: TouristState::InHotel,
                 next_tick: tick + 1,
                 sights: 0,
+                commuter: None,
             };
             let id = self.tourism.tourists.insert(tourist);
             let s = &mut self.tourism.stats;
             s.arrivals_today += 1;
             s.arrivals_total += 1;
             s.arrivals_by_mode_today[via.index()] += 1;
-            if port.is_some() {
+            if let (Arrival::Ferry, Some(terminal)) = (via, port) {
+                // [ferries] On the next boat in from the town over the
+                // water; they step off when it ties up (`ferry_returned`).
+                let t = &mut self.tourism.tourists[id];
+                t.state = TouristState::Aboard { terminal, since: tick };
+                t.next_tick = tick + tm::ABOARD_GIVE_UP;
+            } else if port.is_some() {
                 // Off the train, boat or drone: to the hotel first.
                 let to = self.building_entrance(hotel).unwrap_or(start);
                 self.tourist_leg(id, Goal::Hotel, to);
@@ -359,7 +366,7 @@ impl World {
 
     /// Send a visitor to `to`: on foot over the pedestrian network when it
     /// is near and a way exists, otherwise by taxi (out of sight).
-    fn tourist_leg(&mut self, id: TouristId, goal: Goal, to: Vec2) {
+    pub(super) fn tourist_leg(&mut self, id: TouristId, goal: Goal, to: Vec2) {
         let tick = self.clock.tick;
         let Some(t) = self.tourism.tourists.get(id) else { return };
         let from = t.pos;
@@ -453,9 +460,23 @@ impl World {
             }
             Goal::Shop(b) => self.tourist_shop(id, b),
             Goal::Depart => {
-                self.tourism.tourists.remove(id);
-                self.tourism.stats.departures_today += 1;
+                // [ferries] At the terminal: wait on the pier for the next
+                // boat out (`Ports::boarding`).
+                if let Some(t) = self.tourism.tourists.remove(id) {
+                    if let (Arrival::Ferry, Some(p)) = (t.via, t.port) {
+                        *self.ports.boarding.entry(p).or_insert(0) += 1;
+                        if t.commuter.is_some() {
+                            self.ports.stats.commuters_out_today += 1;
+                        } else {
+                            self.ports.stats.visitors_out_today += 1;
+                        }
+                    }
+                    if t.commuter.is_none() {
+                        self.tourism.stats.departures_today += 1;
+                    }
+                }
             }
+            Goal::Work(b) => self.commuter_at_work(id, b),
         }
     }
 
@@ -527,11 +548,24 @@ impl World {
         let Some(t) = self.tourism.tourists.get(id).cloned() else { return };
         let mut rng = crate::rng_for(t.seed, tick ^ SALT ^ 0xDEC1);
         // The hotel is gone (pulled down, burnt, closed): home early.
-        if self.hotel_beds(t.hotel) == 0 && !matches!(t.state, TouristState::Walking { goal: Goal::Depart, .. } | TouristState::Riding { goal: Goal::Depart, .. }) {
+        let leaving = matches!(t.state, TouristState::Walking { goal: Goal::Depart, .. } | TouristState::Riding { goal: Goal::Depart, .. } | TouristState::Aboard { .. });
+        if t.commuter.is_none() && self.hotel_beds(t.hotel) == 0 && !leaving {
             self.tourist_depart(id);
             return;
         }
         match t.state {
+            TouristState::Aboard { terminal, .. } => {
+                // [ferries] The boat never came (the terminal shut, the
+                // water route lost): ashore here anyway after a long wait.
+                self.disembark(id, terminal);
+            }
+            TouristState::Inside { until, .. } if t.commuter.is_some() => {
+                if tick < until {
+                    self.tourism.tourists[id].next_tick = until;
+                } else {
+                    self.commuter_off_shift(id);
+                }
+            }
             TouristState::Riding { goal, to, .. } => {
                 self.tourism.tourists[id].pos = to;
                 self.tourism.tourists[id].prev_pos = to;
@@ -675,7 +709,7 @@ impl World {
 
     /// Home: back to the station, terminal or pad they came by, or into a
     /// taxi at the hotel door for the highway.
-    fn tourist_depart(&mut self, id: TouristId) {
+    pub(super) fn tourist_depart(&mut self, id: TouristId) {
         let Some(t) = self.tourism.tourists.get(id) else { return };
         match t.port.filter(|p| self.buildings.contains_key(*p)).and_then(|p| self.building_entrance(p)) {
             Some(to) => self.tourist_leg(id, Goal::Depart, to),
@@ -700,6 +734,9 @@ impl World {
         let ids: Vec<TouristId> = self.tourism.tourists.keys().collect();
         let mut tax_total = 0.0;
         for id in ids {
+            if self.tourism.tourists[id].commuter.is_some() {
+                continue;
+            }
             let hotel = self.tourism.tourists[id].hotel;
             let Some(b) = self.buildings.get_mut(hotel) else { continue };
             let price = tm::night_price(b.tier);

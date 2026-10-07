@@ -318,17 +318,59 @@ fn buses_need_a_depot_run_a_loop_and_carry_riders() {
     assert!(waited && rode && arrived, "waited {waited} rode {rode} arrived {arrived}: {}", w.citizens[c].activity.label());
     assert!(w.citizens[c].savings < 50.0, "paid the fare");
     assert!(w.transit.routes[route].riders_today >= 1 && w.economy.transit.fares_today > 0.0);
+    // [lines] Every boarding is counted at its stop, the rider's alighting
+    // too, and the buses have timed legs of the loop.
+    let r = &w.transit.routes[route];
+    assert_eq!(r.stops.iter().map(|s| s.stats.on_today).sum::<u32>(), r.riders_today, "boardings by stop add up to the line's riders");
+    assert!(r.stops.iter().map(|s| s.stats.off_today).sum::<u32>() >= 1, "the rider got off somewhere");
+    assert!(r.stops.iter().any(|s| s.stats.leg_runs > 0 && s.stats.leg_minutes > 0.0), "a leg was timed");
+    for i in 0..r.stops.len() {
+        assert!(r.leg_minutes(i, w.config.traffic_seconds_per_tick).0 > 0.0);
+    }
     // Editing: moving and removing stops keeps the line sane; removing the
     // last stop removes the line and its buses.
     assert!(w.move_bus_stop(route, 1, Vec2::new(250.0, 4.0)));
     assert!(w.transit.routes[route].runnable());
+    assert_eq!(w.transit.routes[route].stops[1].stats.leg_runs, 0, "a moved stop's leg is timed afresh");
+    let fourth = w.transit.routes[route].stops[4].stats;
     w.remove_bus_stop(route, 3);
     assert_eq!(w.transit.routes[route].stops.len(), 5);
+    let moved = w.transit.routes[route].stops[3].stats;
+    assert_eq!((moved.on_today, moved.off_today), (fourth.on_today, fourth.off_today), "a stop's counts follow it when one before it goes");
+    assert_eq!(w.transit.routes[route].stops[2].stats.leg_runs, 0, "the stop before the removed one now drives a new leg");
+    assert!(w.rename_bus_route(route, "  ").is_err());
+    w.rename_bus_route(route, "Harbour Loop").unwrap();
+    w.recolour_bus_route(route, 3).unwrap();
+    assert_eq!((w.transit.routes[route].name.as_str(), w.transit.routes[route].color), ("Harbour Loop", 3));
+    assert!(w.traffic.cars.values().filter(|c| c.bus.as_ref().is_some_and(|b| b.route == route)).all(|c| c.model.paint == 3), "buses on the road take the new colour");
     w.set_route_buses(route, 2);
     assert_eq!(w.transit.routes[route].buses, 2);
     w.remove_bus_route(route);
     assert!(w.transit.routes.is_empty());
+    // [services] Its buses let their riders off and drive home to the
+    // depot (they used to vanish where they stood), then are gone.
+    let out: Vec<CarId> = w.traffic.cars.iter().filter(|(_, c)| c.bus.is_some()).map(|(id, _)| id).collect();
+    for &b in &out {
+        let bus = w.traffic.cars[b].bus.as_ref().unwrap();
+        assert!(bus.passengers.is_empty() && bus.to_depot && bus.next_stop == usize::MAX && bus.depot == depot, "heading home empty");
+    }
+    let depot_at = w.building_lot(depot).unwrap().car_point;
+    let mut last: std::collections::HashMap<CarId, Vec2> = std::collections::HashMap::new();
+    for _ in 0..600 {
+        for &b in &out {
+            if let Some(c) = w.traffic.cars.get(b) {
+                last.insert(b, c.pos);
+            }
+        }
+        w.tick(&mut minds);
+        if w.traffic.cars.values().all(|c| c.bus.is_none()) {
+            break;
+        }
+    }
     assert_eq!(w.traffic.cars.values().filter(|c| c.bus.is_some()).count(), 0);
+    for (b, p) in &last {
+        assert!(p.distance(depot_at) < 40.0, "bus {b:?} left the road at its depot, not at {p}");
+    }
     // Round trip keeps the depot.
     let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
     assert!(back.buildings[depot].depot);

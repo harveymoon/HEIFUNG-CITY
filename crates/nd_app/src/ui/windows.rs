@@ -25,8 +25,13 @@ pub enum Info {
     People,
     Power,
     Transit,
+    /// [lines] Bus lines one by one: a strip diagram of the picked line's
+    /// stops, legs and buses, with its editing controls (ui/lines.rs).
+    Lines,
     /// 911 calls, live and on record (ui/emergencies.rs).
     Emergencies,
+    /// The View window (once "Land"): the map layer picker, land value,
+    /// lighting. Titled "View"; the API still takes "land".
     Land,
     Saves,
     Help,
@@ -36,7 +41,7 @@ pub enum Info {
 }
 
 impl Info {
-    pub const ALL: [Info; 13] = [Info::City, Info::Economy, Info::Taxes, Info::Market, Info::People, Info::Power, Info::Transit, Info::Emergencies, Info::Land, Info::Districts, Info::Saves, Info::Help, Info::Dev];
+    pub const ALL: [Info; 14] = [Info::City, Info::Economy, Info::Taxes, Info::Market, Info::People, Info::Power, Info::Transit, Info::Lines, Info::Emergencies, Info::Land, Info::Districts, Info::Saves, Info::Help, Info::Dev];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -47,8 +52,9 @@ impl Info {
             Info::People => "People",
             Info::Power => "Power",
             Info::Transit => "Transit",
+            Info::Lines => "Lines",
             Info::Emergencies => "Emergencies",
-            Info::Land => "Land",
+            Info::Land => "View",
             Info::Saves => "Saves",
             Info::Help => "Help",
             Info::Dev => "Dev",
@@ -62,6 +68,7 @@ impl Info {
             Info::People => 420.0,
             Info::Help => 440.0,
             Info::Emergencies => 480.0,
+            Info::Lines => 430.0,
             Info::Taxes => 470.0,
             Info::Dev => 300.0,
             _ => 380.0,
@@ -71,7 +78,7 @@ impl Info {
     /// Whether the window has an expanded view. Saves, Help and Dev are
     /// tools rather than reports and have nothing to chart.
     pub fn expandable(self) -> bool {
-        !matches!(self, Info::Saves | Info::Help | Info::Dev)
+        !matches!(self, Info::Saves | Info::Help | Info::Dev | Info::Lines)
     }
 
     fn id(self) -> egui::Id {
@@ -149,6 +156,7 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, info: Info, big: bool) {
         (Info::Power, true) => detail::power(ui, p),
         (Info::Transit, false) => transit(ui, p),
         (Info::Transit, true) => detail::transit(ui, p),
+        (Info::Lines, _) => super::lines::window(ui, p),
         (Info::Emergencies, _) => super::emergencies::window(ui, p, big),
         (Info::Land, false) => land(ui, p),
         (Info::Land, true) => detail::land(ui, p),
@@ -174,7 +182,7 @@ pub(super) fn city(ui: &mut egui::Ui, p: &mut UiCtx) {
     let sites = w.buildings.values().filter(|b| b.construction.is_some()).count();
     section(ui, "BUILDINGS & LOTS");
     row(ui, "buildings", format!("{}   under construction {}", w.buildings.len() - sites, sites));
-    row(ui, "lots", format!("{} ({} vacant, {} unusable)", w.lots.len(), w.lots.values().filter(|l| l.building.is_none() && l.usable()).count(), w.lots.values().filter(|l| l.landlocked).count()));
+    row(ui, "lots", format!("{} ({} vacant, {} unusable)", w.lots.len(), w.lots.values().filter(|l| l.building.is_none() && l.usable()).count(), w.lots.values().filter(|l| l.landlocked && l.park.is_none() && l.land_use != LandUse::Park).count()));
     if sites > 0 {
         row(ui, "sites will add", format!("{} homes and {} jobs", e.homes_building, e.jobs_building));
     }
@@ -221,15 +229,47 @@ pub(super) fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
     let pw = &w.economy.power;
     section(ui, "GRID");
     ui.add(egui::ProgressBar::new(pw.served).text(format!("served {:.0}%", pw.served * 100.0)).fill(if pw.served < 0.98 { WARN.gamma_multiply(0.8) } else { egui::Color32::from_rgb(110, 200, 140).gamma_multiply(0.8) }).desired_height(14.0));
-    row(ui, "supply", format!("{:.0} MW from {} plant{}   + {:.0} MW imported", pw.supply_mw, pw.plants, if pw.plants == 1 { "" } else { "s" }, pw.imported_mw));
+    row(ui, "supply", format!("{:.0} MW from {} plant{}", pw.supply_mw, pw.plants, if pw.plants == 1 { "" } else { "s" }));
     row(ui, "demand", format!("{:.0} MW", pw.demand_mw));
+    // Where the balance went this hour: the merit order of `power::dispatch`.
+    let mut balance = Vec::new();
+    if pw.battery_out_mw > 0.0 {
+        balance.push(format!("batteries give {:.0} MW", pw.battery_out_mw));
+    }
+    if pw.battery_in_mw > 0.0 {
+        balance.push(format!("batteries take {:.0} MW", pw.battery_in_mw));
+    }
+    if pw.imported_mw > 0.0 {
+        balance.push(format!("imported {:.0} MW", pw.imported_mw));
+    }
+    if pw.exported_mw > 0.0 {
+        balance.push(format!("exported {:.0} MW", pw.exported_mw));
+    }
+    if pw.curtailed_mw > 0.5 {
+        balance.push(format!("{:.0} MW turned down", pw.curtailed_mw));
+    }
+    if !balance.is_empty() {
+        row(ui, "balance", balance.join("   "));
+    }
     row(ui, "in the dark", warn_if(pw.unpowered_buildings > 0, format!("{} buildings   {} brownout hours today", pw.unpowered_buildings, pw.brownout_hours_today)));
+    if pw.batteries > 0 {
+        section(ui, "BATTERIES");
+        let level = if pw.battery_capacity_mwh > 0.0 { pw.battery_charge_mwh / pw.battery_capacity_mwh } else { 0.0 };
+        let state = if pw.battery_out_mw > 0.0 { format!("delivering {:.0} MW", pw.battery_out_mw) } else if pw.battery_in_mw > 0.0 { format!("charging {:.0} MW", pw.battery_in_mw) } else { "holding".to_string() };
+        ui.add(egui::ProgressBar::new(level).text(format!("{:.0} of {:.0} MWh · {state}", pw.battery_charge_mwh, pw.battery_capacity_mwh)).fill(detail::BATTERY.gamma_multiply(0.8)).desired_height(14.0));
+    }
+    let rows = w.plant_rows();
+    if !rows.is_empty() {
+        section(ui, "PLANTS");
+        detail::plant_table(ui, w, &rows, false);
+    }
     section(ui, "COSTS");
-    row(ui, "plant upkeep", format!("{:.0}/day", pw.upkeep_today));
-    row(ui, "grid import", format!("{:.0} today ({:.0} MW at {:.1} each)", pw.import_cost_today, nd_sim::power::GRID_IMPORT_MW, nd_sim::power::GRID_IMPORT_PRICE));
+    row(ui, "upkeep", format!("{:.0}/day (plants and batteries)", pw.upkeep_today));
+    row(ui, "grid import", format!("{:.0} today (up to {:.0} MW at {:.1}/MWh)", pw.import_cost_today, nd_sim::power::GRID_IMPORT_MW, nd_sim::power::GRID_IMPORT_PRICE));
+    row(ui, "grid export", format!("+{:.0} today, +{:.0} yesterday (up to {:.0} MW at {:.1}/MWh)", pw.export_income_today, w.economy.ledger.yesterday_of(nd_sim::economy::Flow::GridExport), nd_sim::power::GRID_EXPORT_MW, nd_sim::power::GRID_EXPORT_PRICE));
     section(ui, "WEATHER");
     row(ui, w.weather.label(), format!("cloud {:.0}%   wind {:.0}%", w.weather.cloud * 100.0, w.weather.wind * 100.0));
-    hint(ui, "Solar dims under cloud and stops at night; wind follows the wind. Coal and nuclear are steady.");
+    hint(ui, "Solar dims under cloud and stops at night; wind follows the wind. Surplus charges the batteries, then is sold; a shortfall drains them, then is bought.");
 }
 
 pub(super) fn transit(ui: &mut egui::Ui, p: &mut UiCtx) {
@@ -242,6 +282,9 @@ pub(super) fn transit(ui: &mut egui::Ui, p: &mut UiCtx) {
     row(ui, "depots", format!("{} for {} buses   {} out on the lines", t.depots, t.depot_capacity, t.buses));
     row(ui, "riders", format!("{} waiting   {} riding   {} today", t.waiting, t.riding, t.riders_today));
     row(ui, "money", format!("fares {:.0} today   upkeep {:.0}/day", t.fares_today, t.upkeep_today));
+    if ui.small_button("Lines: stops, times and ridership…").on_hover_text("Open the Lines window to tune a line stop by stop").clicked() {
+        Info::Lines.set_open(ui.ctx(), true);
+    }
     if !w.transit.routes.is_empty() {
         hint(ui, "lines (the Buses tool adds and removes buses)");
         for (id, r) in &w.transit.routes {
@@ -322,19 +365,16 @@ fn taxis_and_freight(ui: &mut egui::Ui, w: &nd_sim::World) {
     }
 }
 
-/// Overlays, land value and class mix, and the lighting controls: the
-/// window about how the ground reads.
+/// The View window: the map layer (one at a time, with its key in the
+/// legend), what else is drawn, land value and class mix, and the lighting.
 pub(super) fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
-    section(ui, "LAYERS");
-    hint(ui, "L steps through the map layers one at a time; tick several to stack them.");
-    for (name, label, key) in crate::render::Overlays::LAYERS {
-        let text = if key.is_empty() { label.to_string() } else { format!("{label} [{key}]") };
-        if let Some(flag) = p.overlays.flag(name) {
-            ui.checkbox(flag, text);
-        }
-    }
+    section(ui, "MAP LAYER");
+    hint(ui, "One layer at a time, its key at the bottom right of the map. The Layer button in the top bar picks it too; V, O, P toggle theirs, L steps through the heat maps, K through the land layers.");
+    super::topbar::layer_list(ui, p.overlays, true);
+    section(ui, "ALSO DRAWN");
     ui.checkbox(&mut p.tools.show_routes, "Bus lines whatever the tool");
-    land_layers(ui, p);
+    ui.checkbox(&mut p.overlays.projects, "Other pending projects, dim");
+    ui.checkbox(&mut p.lighting.heat, "Drone heat vision [H]");
     let e = &p.sim.world.economy;
     section(ui, "LAND VALUE");
     row(ui, "average", format!("{:.2}", e.avg_land_value));
@@ -353,28 +393,6 @@ pub(super) fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
             }
         });
     }
-}
-
-/// The land survey picker: one resource or industry layer at a time (K
-/// steps through them), each a wash over the ground with its key in the
-/// legend.
-fn land_layers(ui: &mut egui::Ui, p: &mut UiCtx) {
-    use nd_sim::survey::LandLayer;
-    section(ui, "LAND AND RESOURCES");
-    hint(ui, "What the ground is good for. One at a time; K steps through them.");
-    let land = &mut p.overlays.land;
-    ui.horizontal_wrapped(|ui| {
-        ui.selectable_value(land, None, egui::RichText::new("Off").small());
-        for l in LandLayer::RESOURCES {
-            ui.selectable_value(land, Some(l), egui::RichText::new(l.label()).small()).on_hover_text(l.hint());
-        }
-    });
-    hint(ui, "Where a new industrial lot would go (the sim's own odds):");
-    ui.horizontal_wrapped(|ui| {
-        for l in LandLayer::ALL.into_iter().filter(|l| l.is_industry()) {
-            ui.selectable_value(land, Some(l), egui::RichText::new(l.label()).small()).on_hover_text(l.hint());
-        }
-    });
 }
 
 fn help_window(ui: &mut egui::Ui) {

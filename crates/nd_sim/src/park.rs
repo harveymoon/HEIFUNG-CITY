@@ -110,6 +110,22 @@ pub struct ParkLayout {
     /// The connected park this lot belongs to.
     pub cluster_lots: u32,
     pub cluster_area: f32,
+    /// The park's main lot (the largest on a street): the one that gets
+    /// the forecourt, the gate pillars and the name sign, so a park of
+    /// many lots reads as one park with one entrance rather than a row of
+    /// small ones. Saves from before have every lot as its own anchor.
+    #[serde(default = "anchor_default")]
+    pub anchor: bool,
+    /// Every stretch of this lot's outline that the park's other lots also
+    /// border, world coordinates: the park carries on over these, so trees
+    /// may lean across them (an edge in `shared_edges` may be shared only
+    /// in part; these are the exact parts). Empty for older saves.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub seams: Vec<(Vec2, Vec2)>,
+}
+
+fn anchor_default() -> bool {
+    true
 }
 
 impl ParkLayout {
@@ -117,6 +133,9 @@ impl ParkLayout {
         self.features.iter().any(|f| f.kind == kind)
     }
 }
+
+/// How far apart two lot edges may lie and still be one seam of a park.
+const SEAM_TOL: f32 = 0.3;
 
 /// Minimum shared boundary for two park lots to count as one park.
 const SHARED_MIN: f32 = 4.0;
@@ -134,9 +153,14 @@ pub fn plan_parks(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue) {
     // Adjacency: lots sharing a few metres of edge, with the gap's midpoint.
     let mut adj: Vec<Vec<(usize, Vec2)>> = vec![Vec::new(); n];
     let mut shared: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut seams: Vec<Vec<(Vec2, Vec2)>> = vec![Vec::new(); n];
     for i in 0..n {
         for j in (i + 1)..n {
             if let Some((mid, ei, ej)) = shared_edge(&lots[ids[i]].polygon, &lots[ids[j]].polygon) {
+                for s in shared_stretches(&lots[ids[i]].polygon, &lots[ids[j]].polygon) {
+                    seams[i].push(s);
+                    seams[j].push(s);
+                }
                 adj[i].push((j, mid));
                 adj[j].push((i, mid));
                 shared[i].push(ei);
@@ -167,6 +191,7 @@ pub fn plan_parks(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue) {
         let layouts = plan_cluster(&members, &ids, &adj, lots, land_value);
         for (i, mut layout) in members.iter().zip(layouts) {
             layout.shared_edges = shared[*i].clone();
+            layout.seams = seams[*i].clone();
             lots[ids[*i]].park = Some(layout);
         }
     }
@@ -234,10 +259,16 @@ fn plan_cluster(members: &[usize], ids: &[LotId], adj: &[Vec<(usize, Vec2)>], lo
             }
         }
     }
+    // The anchor: the largest lot on a street (any lot if none is).
+    let anchor = (0..members.len()).max_by(|&a, &b| {
+        let on_street = |m: usize| !lots[ids[members[m]]].landlocked;
+        on_street(a).cmp(&on_street(b)).then(areas[a].total_cmp(&areas[b])).then(b.cmp(&a))
+    });
     for (m, l) in layouts.iter_mut().enumerate() {
         finish_lot(&lots[ids[members[m]]], l);
         l.cluster_lots = members.len() as u32;
         l.cluster_area = total;
+        l.anchor = Some(m) == anchor;
     }
     layouts
 }
@@ -363,7 +394,7 @@ fn plan_lot_paths(lot: &Lot, gaps: &[Vec2], has_gate: bool) -> ParkLayout {
         let b = pull_inside(poly, hub - side * 0.8 + (out - hub) * 0.5, hub);
         paths.push(vec![hub, a, out, b, hub]);
     }
-    ParkLayout { tier: Tier::Mid, paths, benches: Vec::new(), features: Vec::new(), entrances, shared_edges: Vec::new(), cluster_lots: 1, cluster_area: polygon_area(poly).abs() }
+    ParkLayout { tier: Tier::Mid, paths, benches: Vec::new(), features: Vec::new(), entrances, shared_edges: Vec::new(), cluster_lots: 1, cluster_area: polygon_area(poly).abs(), anchor: true, seams: Vec::new() }
 }
 
 /// Spurs to the features, bends around them, then benches along every path
@@ -601,6 +632,32 @@ pub fn pull_inside(poly: &[Vec2], p: Vec2, anchor: Vec2) -> Vec2 {
 
 /// Midpoint of the stretch two polygons share, if it is long enough, with
 /// the edge index on each side.
+/// Every stretch (a metre or more) of `a`'s outline that `b`'s outline runs
+/// along, as world segments.
+fn shared_stretches(a: &[Vec2], b: &[Vec2]) -> Vec<(Vec2, Vec2)> {
+    let mut out = Vec::new();
+    for i in 0..a.len() {
+        let (p, q) = (a[i], a[(i + 1) % a.len()]);
+        let dir = (q - p).normalize_or_zero();
+        for j in 0..b.len() {
+            let (r, s) = (b[j], b[(j + 1) % b.len()]);
+            // Only edges that truly meet (touching lots may otherwise stand
+            // up to a metre apart, and a canopy leaning over would hang
+            // over the gap).
+            let off = |x: Vec2| (x - p).perp_dot(dir).abs();
+            if off(r) > SEAM_TOL || off(s) > SEAM_TOL {
+                continue;
+            }
+            if let Some((lo, hi)) = shared_stretch(p, q, r, s) {
+                if hi - lo >= 1.0 {
+                    out.push((p + dir * lo, p + dir * hi));
+                }
+            }
+        }
+    }
+    out
+}
+
 fn shared_edge(a: &[Vec2], b: &[Vec2]) -> Option<(Vec2, usize, usize)> {
     let mut best: Option<(f32, (Vec2, usize, usize))> = None;
     for i in 0..a.len() {

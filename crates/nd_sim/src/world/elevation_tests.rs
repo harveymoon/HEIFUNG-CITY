@@ -406,3 +406,148 @@ fn the_highway_follows_the_land_and_its_carriageways_stay_side_by_side() {
     let ((ze, _), (zw, _)) = (at(hy + half, -120.0), at(hy - half, -120.0));
     assert!((ze - zw).abs() < 3.0, "at x = -120: {ze} / {zw}");
 }
+
+/// A road on its way down to a tunnel that meets the railway part way down
+/// would have made a level crossing at the road's height, dragging the
+/// track down into the cutting. It is refused, saying what would work;
+/// at grade, or deep enough to pass under, it is fine.
+#[test]
+fn a_portal_ramp_meeting_the_railway_off_grade_is_refused() {
+    let mut w = flat_world();
+    build(&mut w, road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], (0, 0), RoadKind::Rail, &[]));
+    let ramp = [Vec2::new(0.0, -150.0), Vec2::new(0.0, 150.0)];
+    let why = w.road_refusal(&ramp, &[0.0, T], RoadKind::Street, 1, 1).expect("a ramp halfway down at the track is refused");
+    assert!(why.contains("level crossing") && why.contains("under"), "{why}");
+    // The other way round: track laid over a portal ramp that is there.
+    build(&mut w, road(&[Vec2::new(200.0, -150.0), Vec2::new(200.0, 150.0)], (1, 1), RoadKind::Street, &[0.0, T]));
+    assert!(w.road_refusal(&[Vec2::new(150.0, 40.0), Vec2::new(250.0, 40.0)], &[], RoadKind::Rail, 0, 0).is_some(), "track over the ramp at its middle");
+    // Its warnings say so too, while drawing.
+    assert!(w.road_grade_warnings(&ramp, &[0.0, T], RoadKind::Street, 1, 1).iter().any(|m| m.contains("level crossing")));
+    // At grade: a level crossing. Deep: under the track. Both fine.
+    assert!(w.road_refusal(&ramp, &[], RoadKind::Street, 1, 1).is_none());
+    assert!(w.road_refusal(&ramp, &[T, T], RoadKind::Street, 1, 1).is_none());
+    // A street that starts its ramp past the track is fine too.
+    assert!(w.road_refusal(&[Vec2::new(-100.0, -150.0), Vec2::new(-100.0, 20.0), Vec2::new(-100.0, 150.0)], &[0.0, 0.0, T], RoadKind::Street, 1, 1).is_none());
+}
+
+/// Tunnels are ways for traffic only, like the highway's ramps: no kerb
+/// parking (legal or not: a car parked at a tunnel's kerb stood on the
+/// ground above it), no lots fronting them, no mid-block crossings.
+#[test]
+fn tunnels_front_nothing_and_take_no_parking() {
+    let (w, _) = tunnel_town();
+    let tunnels: Vec<SegmentId> = w.roads.alive_segments().filter(|(_, s)| s.tunnel).map(|(id, _)| id).collect();
+    assert!(!tunnels.is_empty());
+    for &sid in &tunnels {
+        assert!(w.roads.segment(sid).fronts_nothing());
+        assert!(!w.kerb_physical(sid) && !w.kerb_allowed(sid), "kerb parking in tunnel {sid:?}");
+    }
+    assert!(w.lots.values().all(|l| !tunnels.contains(&l.front_segment)), "a lot fronts a tunnel");
+    assert!(crate::walk::midblock_crossings(&w.roads).iter().all(|(s, _)| !tunnels.contains(s)));
+}
+
+/// A long street drawn as one leg over the hills follows the land through
+/// its inner height samples, within its grade, without a single new node
+/// (so its parcels are cut exactly as before), and the built ground and
+/// the lots along it are set on that profile.
+#[test]
+fn long_streets_follow_the_land_between_their_ends() {
+    let mut w = World::new(WorldConfig::default());
+    assert!(!w.landscape.is_flat());
+    // Candidate legs across the middle of the map, on dry land all along;
+    // the one whose land strays most from the straight line is built.
+    let floor = crate::landscape::BANK_HEIGHT;
+    let land = w.landscape.clone();
+    let h = |p: Vec2| land.height(p).max(floor);
+    let mut pick: Option<(f32, Vec2, Vec2)> = None;
+    for cx in -4..=4 {
+        for cy in -4..=4 {
+            for k in 0..4 {
+                let c = Vec2::new(cx as f32 * 120.0, cy as f32 * 120.0);
+                let d = Vec2::from_angle(k as f32 * 0.785 + 0.1) * 210.0;
+                let (a, b) = (c - d, c + d);
+                if (0..=30).any(|i| land.is_water(a.lerp(b, i as f32 / 30.0)) || land.water_distance(a.lerp(b, i as f32 / 30.0)) < 30.0) {
+                    continue;
+                }
+                let stray = (1..30).map(|i| i as f32 / 30.0).map(|t| (h(a.lerp(b, t)) - (h(a) + (h(b) - h(a)) * t)).abs()).fold(0.0, f32::max);
+                if pick.is_none_or(|(s, _, _)| stray > s) {
+                    pick = Some((stray, a, b));
+                }
+            }
+        }
+    }
+    let (_, a, b) = pick.expect("a dry line");
+    let before = w.roads.nodes.len();
+    w.add_road(&[a, b], 1, 1);
+    let segs: Vec<SegmentId> = w.roads.alive_segments().filter(|(id, _)| { let (p, q) = w.roads.segment_points(*id); p.distance(a) < 1.0 && q.distance(b) < 1.0 }).map(|(id, _)| id).collect();
+    assert_eq!(segs.len(), 1, "one leg, one segment: no height vertices on a street");
+    assert!(w.roads.nodes.len() <= before + 2);
+    let sid = segs[0];
+    let za = w.road_z[w.roads.segment(sid).a.0 as usize];
+    let zb = w.road_z[w.roads.segment(sid).b.0 as usize];
+    let stray = (1..30).map(|i| i as f32 / 30.0).map(|t| (h(a.lerp(b, t)) - (za + (zb - za) * t)).abs()).fold(0.0, f32::max);
+    let best = Some((stray, sid));
+    let (stray, sid) = best.expect("a dry line");
+    assert!(stray > 1.0, "no hills to test on ({stray} m)");
+    let inner = &w.road_inner[sid.0 as usize];
+    assert!(!inner.is_empty(), "a street {stray:.1} m off the land got no inner heights");
+    let (a, b) = w.roads.segment_points(sid);
+    let len = a.distance(b);
+    // Within the street's grade everywhere, nearer the land than the line.
+    let (mut off_line, mut off_profile) = (0.0f32, 0.0f32);
+    let mut prev = w.road_height(sid, 0.0);
+    for i in 1..=60 {
+        let t = i as f32 / 60.0;
+        let z = w.road_height(sid, t);
+        assert!((z - prev).abs() <= water::STREET_GRADE * len / 60.0 + 1e-3, "too steep at t = {t}");
+        prev = z;
+        let land = w.landscape.height(a.lerp(b, t)).max(crate::landscape::BANK_HEIGHT);
+        let za = w.road_z[w.roads.segment(sid).a.0 as usize];
+        let zb = w.road_z[w.roads.segment(sid).b.0 as usize];
+        off_line += (land - (za + (zb - za) * t)).abs();
+        off_profile += (land - z).abs();
+        // The built ground is graded to the profile under the road.
+        let g = w.ground_height(a.lerp(b, t));
+        assert!((g - z).abs() < 0.6, "ground {g} under the road at {z} (t = {t})");
+    }
+    assert!(off_profile < off_line * 0.8, "profile {off_profile} vs line {off_line}");
+    // Lots along it stand on its profile at their frontage.
+    for (id, l) in w.lots.iter().filter(|(_, l)| l.front_segment == sid && !l.landlocked) {
+        assert!((w.lot_pad(id) - w.road_height(sid, l.front_t)).abs() < 1e-3);
+    }
+}
+
+/// Where a ramp's corridor overlaps the carriageway it joins, the built
+/// ground stays under the carriageway's surface: the higher way used to
+/// hold the shared cells, and a ramp a few centimetres above the lanes
+/// raised the ground through their asphalt (a bare wedge in the gore).
+#[test]
+fn the_ground_stays_under_the_lanes_where_ramps_join() {
+    let mut w = World::new(WorldConfig::default());
+    w.add_road(&[Vec2::new(0.0, 100.0), Vec2::new(0.0, crate::landscape::HIGHWAY_Y - 200.0)], 1, 1);
+    w.link_to_highway(Vec2::new(0.0, crate::landscape::HIGHWAY_Y - 200.0));
+    let mut worst = (0.0f32, Vec2::ZERO);
+    for (sid, s) in w.roads.alive_segments().filter(|(_, s)| s.is_highway() && !s.bridge) {
+        let (a, b) = w.roads.segment_points(sid);
+        if a.x.abs().max(b.x.abs()) > 400.0 {
+            continue;
+        }
+        let d = (b - a).normalize_or_zero();
+        let side = Vec2::new(-d.y, d.x);
+        let half = s.lanes() as f32 * crate::roads::LANE_WIDTH * 0.5 - 0.3;
+        for i in 0..=40 {
+            let t = i as f32 / 40.0;
+            for k in [-1.0f32, -0.5, 0.0, 0.5, 1.0] {
+                let p = a.lerp(b, t) + side * half * k;
+                if w.ground.underpasses.iter().any(|u| u.at.distance(p) < 40.0) {
+                    continue;
+                }
+                let over = w.ground_height(p) - w.road_height(sid, t);
+                if over > worst.0 {
+                    worst = (over, p);
+                }
+            }
+        }
+    }
+    assert!(worst.0 < 0.05, "the ground stands {:.2} m over the lanes at {:?}", worst.0, worst.1);
+}

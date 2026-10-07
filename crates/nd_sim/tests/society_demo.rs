@@ -156,6 +156,9 @@ fn run(services: bool) -> Day8 {
             r.2.push(t as u16);
         }
     }
+    // [emergency] Car chases over the run, and how they ended.
+    let chases: Vec<String> = world.services.incidents.iter().filter_map(|i| i.chase.as_ref().map(|c| format!("{}: {:?} {:.0} m {} min", i.id, c.result, c.metres, c.ended.unwrap_or(world.clock.tick).saturating_sub(c.started)))).collect();
+    println!("[{label}] chases {} (tagged {}): {:?}", world.services.stats.chases_total, world.services.stats.chases_tagged_total, chases);
     let s = &world.society;
     Day8 {
         response,

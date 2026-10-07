@@ -208,7 +208,7 @@ fn toggle_key(keys: Res<ButtonInput<KeyCode>>, flags: Res<UiFlags>, mut lighting
 /// camera, black sky and fog, no sun shadows; all put back when it ends
 /// (the daylight is recomputed from scratch).
 #[allow(clippy::too_many_arguments)]
-fn apply_heat(
+pub(super) fn apply_heat(
     mut commands: Commands,
     lighting: Res<Lighting>,
     time: Res<Time>,

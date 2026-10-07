@@ -26,9 +26,21 @@ pub struct WindowRequests {
     pub expand: Option<(Info, bool)>,
     /// The expanded window at the end of the last egui pass.
     pub expanded: Option<&'static str>,
+    /// Open (true) or close the Build window, optionally at a section.
+    pub build: Option<(bool, Option<crate::ui::build::Cat>)>,
+    /// Whether the Build window was open at the end of the last egui pass,
+    /// and the section it showed.
+    pub build_open: bool,
+    pub build_section: Option<&'static str>,
 }
 
 pub fn info_of(name: &str) -> Result<Info, String> {
+    // The View window was the Land window; its old name and a few obvious
+    // ones still find it.
+    let n = name.trim().to_ascii_lowercase().replace('_', " ");
+    if matches!(n.as_str(), "land" | "layers" | "map" | "map layers") {
+        return Ok(Info::Land);
+    }
     Info::ALL
         .into_iter()
         .find(|i| i.title().eq_ignore_ascii_case(name.trim()))
@@ -72,9 +84,17 @@ pub fn apply_window_requests(mut contexts: EguiContexts, mut req: ResMut<WindowR
         let open = open.unwrap_or(!info.is_open(ctx));
         info.set_open(ctx, open);
     }
+    if let Some((open, section)) = req.build.take() {
+        match (open, section) {
+            (true, Some(cat)) => crate::ui::build::show_section(ctx, cat),
+            (open, _) => crate::ui::build::set_open(ctx, open),
+        }
+    }
     if let Some((info, on)) = req.expand.take() {
         crate::ui::pane::set_expanded(ctx, info, on);
     }
     req.expanded = crate::ui::pane::expanded(ctx).filter(|i| i.is_open(ctx)).map(|i| i.title());
     req.open = Info::ALL.into_iter().filter(|i| i.is_open(ctx)).map(|i| i.title()).collect();
+    req.build_open = crate::ui::build::is_open(ctx);
+    req.build_section = crate::ui::build::section_of(ctx).map(|c| c.key());
 }

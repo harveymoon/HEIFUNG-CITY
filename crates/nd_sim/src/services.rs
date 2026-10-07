@@ -57,6 +57,14 @@ pub const ENGINE_RATE: f32 = 0.012;
 pub const FIRE_DAMAGE: f32 = 0.0012;
 /// At or below this condition a burning building is gone.
 pub const BURNED_DOWN: f32 = 0.08;
+/// [services] Condition the city restores on one of its own structures
+/// (stations, plants, depots, docks...) per day while it is damaged: a
+/// gutted station is back in service in about a day and a half (past the
+/// derelict line) and fully repaired in under four.
+pub const REPAIR_PER_DAY: f32 = 0.25;
+/// [services] What repairs cost: this share of the structure's build price
+/// for the whole of its condition (a gutted hospital about half its price).
+pub const REPAIR_SHARE: f32 = 0.5;
 /// Fires above this intensity can jump to buildings this close (lot
 /// centres), checked every `SPREAD_EVERY` ticks with `SPREAD_CHANCE` x
 /// intensity per neighbour.
@@ -453,6 +461,8 @@ pub struct ServiceSite {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Placeable {
     Plant(PowerPlantKind),
+    /// [power] A grid battery pack (`crate::power::BatteryKind`).
+    Battery(crate::power::BatteryKind),
     Service(ServiceKind, Tier),
     BusDepot,
     Rail(RailFacility),
@@ -511,7 +521,7 @@ impl BuildCategory {
     /// tier; the tier is picked separately).
     pub fn items(self) -> Vec<Placeable> {
         match self {
-            BuildCategory::Power => PowerPlantKind::ALL.iter().map(|&k| Placeable::Plant(k)).collect(),
+            BuildCategory::Power => PowerPlantKind::ALL.iter().map(|&k| Placeable::Plant(k)).chain(crate::power::BatteryKind::ALL.iter().map(|&k| Placeable::Battery(k))).collect(),
             BuildCategory::Services => [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch, ServiceKind::Jail, ServiceKind::TrashDepot, ServiceKind::ParkingEnforcement].iter().map(|&k| Placeable::Service(k, Tier::Mid)).collect(),
             BuildCategory::Transit => {
                 let mut v = vec![Placeable::BusDepot, Placeable::MetroStation, Placeable::Service(ServiceKind::Vertiport, Tier::Mid)];
@@ -529,7 +539,7 @@ impl BuildCategory {
 impl Placeable {
     pub fn category(self) -> BuildCategory {
         match self {
-            Placeable::Plant(_) => BuildCategory::Power,
+            Placeable::Plant(_) | Placeable::Battery(_) => BuildCategory::Power,
             Placeable::Service(k, _) if k.is_attraction() => BuildCategory::Attractions,
             Placeable::Service(ServiceKind::Vertiport, _) => BuildCategory::Transit,
             Placeable::Service(..) => BuildCategory::Services,
@@ -558,6 +568,7 @@ impl Placeable {
     pub fn label(self) -> String {
         match self {
             Placeable::Plant(k) => k.label().to_string(),
+            Placeable::Battery(k) => k.label().to_string(),
             Placeable::Service(k, t) => k.tier_label(t).to_string(),
             Placeable::BusDepot => "bus depot".into(),
             Placeable::Rail(f) => f.label().to_lowercase(),
@@ -573,6 +584,9 @@ impl Placeable {
     pub fn menu_label(self) -> &'static str {
         match self {
             Placeable::Plant(k) => k.label(),
+            Placeable::Battery(crate::power::BatteryKind::Small) => "Battery pack, small",
+            Placeable::Battery(crate::power::BatteryKind::Medium) => "Battery pack, medium",
+            Placeable::Battery(crate::power::BatteryKind::Large) => "Battery farm, large",
             Placeable::Service(k, _) => match k {
                 ServiceKind::Police => "Police",
                 ServiceKind::Fire => "Fire",
@@ -602,6 +616,7 @@ impl Placeable {
     pub fn cost(self) -> f32 {
         match self {
             Placeable::Plant(k) => k.build_cost(),
+            Placeable::Battery(k) => k.build_cost(),
             Placeable::Service(k, t) => k.build_cost(t),
             Placeable::BusDepot => crate::transit::DEPOT_COST,
             Placeable::Rail(f) => f.cost(),
@@ -616,6 +631,7 @@ impl Placeable {
     pub fn upkeep(self) -> f32 {
         match self {
             Placeable::Plant(k) => k.upkeep_per_day(),
+            Placeable::Battery(k) => k.upkeep_per_day(),
             Placeable::Service(k, t) => k.upkeep_per_day(t),
             Placeable::BusDepot => crate::transit::DEPOT_UPKEEP_PER_DAY,
             Placeable::Rail(f) => f.upkeep_per_day(),
@@ -630,6 +646,7 @@ impl Placeable {
     pub fn jobs(self) -> u16 {
         match self {
             Placeable::Plant(k) => k.jobs(),
+            Placeable::Battery(k) => k.jobs(),
             Placeable::Service(k, t) => k.jobs(t),
             Placeable::BusDepot => crate::transit::DEPOT_JOBS,
             Placeable::Rail(f) => f.jobs(),
@@ -654,6 +671,7 @@ impl Placeable {
     pub fn min_area(self) -> f32 {
         match self {
             Placeable::Plant(k) => k.min_area(),
+            Placeable::Battery(k) => k.min_area(),
             Placeable::Service(k, t) => k.min_area(t),
             Placeable::BusDepot => crate::transit::DEPOT_MIN_AREA,
             Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_) => 0.0,
@@ -667,6 +685,7 @@ impl Placeable {
     pub fn allowed_on(self, lu: LandUse) -> bool {
         match self {
             Placeable::Plant(k) => k.allowed_on(lu),
+            Placeable::Battery(k) => k.allowed_on(lu),
             Placeable::Service(k, _) => k.allowed_on(lu),
             Placeable::BusDepot => !matches!(lu, LandUse::Residential | LandUse::Park),
             Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_) => true,
@@ -697,6 +716,12 @@ impl Placeable {
             "hydro" => Some(Placeable::Plant(PowerPlantKind::Hydro)),
             "tidal" => Some(Placeable::Plant(PowerPlantKind::Tidal)),
             "geothermal" => Some(Placeable::Plant(PowerPlantKind::Geothermal)),
+            "battery" => Some(Placeable::Battery(match tier {
+                Some(Tier::Low) => crate::power::BatteryKind::Small,
+                Some(Tier::High) => crate::power::BatteryKind::Large,
+                _ => crate::power::BatteryKind::Medium,
+            })),
+            other if crate::power::BatteryKind::from_key(other).is_some() => crate::power::BatteryKind::from_key(other).map(Placeable::Battery),
             "shipping_port" | "port" => Some(Placeable::Dock(PortKind::ShippingPort)),
             "ferry_terminal" | "ferry" => Some(Placeable::Dock(PortKind::FerryTerminal)),
             "depot" | "bus_depot" => Some(Placeable::BusDepot),
@@ -874,6 +899,8 @@ pub enum Stage {
     /// An ambulance carrying the patient to hospital.
     Transporting,
     Resolved,
+    /// [emergency] The suspect fled by car and the police are after them.
+    Pursuit,
 }
 
 impl Stage {
@@ -885,6 +912,7 @@ impl Stage {
             Stage::OnScene => "unit on scene",
             Stage::Transporting => "to hospital",
             Stage::Resolved => "resolved",
+            Stage::Pursuit => "car chase",
         }
     }
 }
@@ -908,6 +936,9 @@ pub enum Outcome {
     Gone,
     /// [driving] Crash scene cleared, wrecks towed.
     Cleared,
+    /// [services] A civic structure burned out: it stands, out of service,
+    /// until the city has repaired it (civic buildings never burn down).
+    Gutted,
 }
 
 impl Outcome {
@@ -923,6 +954,7 @@ impl Outcome {
             Outcome::Recovered => "recovered without help",
             Outcome::Gone => "gone",
             Outcome::Cleared => "scene cleared",
+            Outcome::Gutted => "gutted, under repair",
         }
     }
 }
@@ -983,6 +1015,9 @@ pub struct Incident {
     /// one, a takeover), not inside `building`, which only names the place.
     #[serde(default)]
     pub on_road: bool,
+    /// [emergency] The car chase, if the suspect fled by car.
+    #[serde(default)]
+    pub chase: Option<ChaseRecord>,
 }
 
 impl Incident {
@@ -1052,6 +1087,8 @@ pub enum UnitState {
     /// Police on patrol, ambulances on standby: crewed and free, out in the
     /// district (driving to the next beat, or parked on it).
     Patrol,
+    /// [emergency] Chasing a suspect's car (`Services::chases`).
+    Pursuing,
 }
 
 impl UnitState {
@@ -1063,6 +1100,7 @@ impl UnitState {
             UnitState::OnScene => "on scene",
             UnitState::Transporting => "transporting",
             UnitState::Returning => "returning",
+            UnitState::Pursuing => "in pursuit",
         }
     }
 }
@@ -1086,13 +1124,17 @@ pub struct Unit {
     /// On patrol, parked on a beat: when it moves on.
     #[serde(default)]
     pub patrol_until: u64,
+    /// [services] Its station is gone: it is driving off the map, where it
+    /// leaves the world (it takes no calls any more).
+    #[serde(default)]
+    pub leaving: bool,
 }
 
 impl Unit {
     /// On a job: responding, on scene, transporting. Units in the station,
     /// on patrol or driving home are free for the next call.
     pub fn busy(&self) -> bool {
-        matches!(self.state, UnitState::Responding | UnitState::OnScene | UnitState::Transporting)
+        matches!(self.state, UnitState::Responding | UnitState::OnScene | UnitState::Transporting | UnitState::Pursuing)
     }
 
     /// Out of the station (so a crew is aboard).
@@ -1102,7 +1144,7 @@ impl Unit {
 
     /// Lights and sirens: on the way to a job or carrying a patient.
     pub fn lights(&self) -> bool {
-        matches!(self.state, UnitState::Responding | UnitState::Transporting | UnitState::OnScene)
+        matches!(self.state, UnitState::Responding | UnitState::Transporting | UnitState::OnScene | UnitState::Pursuing)
     }
 }
 
@@ -1183,6 +1225,13 @@ pub struct ServiceStats {
     pub on_patrol: u32,
     /// Calls no free unit of ours had a road to (handed to the next town), today.
     pub unreachable_today: u32,
+    /// [emergency] Car chases started today, ended by a tag (caught) and
+    /// lost, and ever.
+    pub chases_today: u32,
+    pub chases_tagged_today: u32,
+    pub chases_lost_today: u32,
+    pub chases_total: u32,
+    pub chases_tagged_total: u32,
 }
 
 /// Why calls went unanswered.
@@ -1220,6 +1269,89 @@ impl ServiceStats {
     }
 }
 
+// ── [emergency] car chases ─────────────────────────────────────────────────
+
+/// Share of suspects about to be picked up who have a vehicle within reach
+/// and run for it instead.
+pub const CHASE_CHANCE: f32 = 0.5;
+/// How far from the scene the suspect's own parked car (or motorbike) may
+/// be for them to get to it, metres.
+pub const CHASE_REACH: f32 = 700.0;
+/// Centre to centre (m) at which a police car touches the car it chases:
+/// tag, the suspect stops and gets out.
+pub const TAG_REACH: f32 = 4.6;
+/// Further apart than this (m) the police are losing them; that many
+/// minutes running and they are gone. A chase is given up after
+/// `CHASE_MAX` minutes in any case.
+pub const CHASE_LOSE_DIST: f32 = 280.0;
+pub const CHASE_LOSE_TICKS: u32 = 6;
+pub const CHASE_MAX: u64 = 60;
+/// Minutes between the fugitive's fresh looks for somewhere away from the
+/// police (also on reaching where it was heading).
+pub const FLEE_REPLAN: u64 = 8;
+/// How far off a fugitive heads (metres from where it is).
+pub const FLEE_RANGE: (f32, f32) = (250.0, 1200.0);
+
+/// How a chase ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChaseResult {
+    /// The police car touched it: the suspect stopped, got out, arrested.
+    Tagged,
+    /// Out of sight for too long, or the chase went on too long.
+    Lost,
+    /// Called off: the unit or the car went (a rebuild, a sale, a wreck).
+    CalledOff,
+}
+
+impl ChaseResult {
+    pub fn label(self) -> &'static str {
+        match self {
+            ChaseResult::Tagged => "tagged and arrested",
+            ChaseResult::Lost => "lost them",
+            ChaseResult::CalledOff => "called off",
+        }
+    }
+}
+
+/// A chase as kept on the incident's record.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ChaseRecord {
+    pub started: u64,
+    pub ended: Option<u64>,
+    /// What the suspect drove ("an old motorcycle").
+    pub vehicle: String,
+    pub result: Option<ChaseResult>,
+    /// Metres the fugitive drove, and the closest the police got after the
+    /// start (m).
+    pub metres: f32,
+    pub closest: f32,
+}
+
+/// A chase under way: the police unit after the suspect's car.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Chase {
+    /// The incident (a crime) it is part of.
+    pub incident: u32,
+    pub unit: UnitId,
+    pub suspect: CitizenId,
+    /// The fugitive's car on the road, and the vehicle it is, if theirs.
+    pub car: CarId,
+    #[serde(default)]
+    pub vehicle: Option<crate::vehicle::VehicleId>,
+    pub started: u64,
+    /// Minutes in a row the police have been further off than
+    /// `CHASE_LOSE_DIST`.
+    #[serde(default)]
+    pub out_of_touch: u32,
+    /// When the fugitive last chose where to run.
+    #[serde(default)]
+    pub planned: u64,
+    /// Where the fugitive was last tick (for the distance driven).
+    #[serde(default)]
+    pub last: Vec2,
+}
+
 /// Everything the services system owns.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -1254,6 +1386,8 @@ pub struct Services {
     /// The services' own random stream (see `World::srng`).
     #[serde(skip)]
     pub rng: Option<crate::SimRng>,
+    /// [emergency] Car chases under way.
+    pub chases: Vec<Chase>,
 }
 
 impl Services {
@@ -1267,6 +1401,11 @@ impl Services {
 
     pub fn active(&self) -> impl Iterator<Item = &Incident> {
         self.incidents.iter().filter(|i| i.active())
+    }
+
+    /// [emergency] The chase `car` is in, as the fugitive or the police.
+    pub fn chase_of_car(&self, car: CarId) -> Option<&Chase> {
+        self.chases.iter().find(|c| c.car == car || self.units.get(c.unit).is_some_and(|u| u.car == Some(car)))
     }
 
     /// The unit driving `car`, if it is an emergency vehicle.
@@ -1336,8 +1475,8 @@ mod tests {
                 seen.push(p);
             }
         }
-        // Power is a sub-category with every plant; every service kind is somewhere.
-        assert_eq!(BuildCategory::Power.items().len(), PowerPlantKind::ALL.len());
+        // Power is a sub-category with every plant and every battery size; every service kind is somewhere.
+        assert_eq!(BuildCategory::Power.items().len(), PowerPlantKind::ALL.len() + crate::power::BatteryKind::ALL.len());
         for k in ServiceKind::ALL {
             assert!(seen.iter().any(|p| matches!(p, Placeable::Service(s, _) if *s == k)), "{k:?} is not on the menu");
         }
