@@ -52,6 +52,9 @@ const HUNT_DESPERATE: u64 = 20;
 /// leaves the car where it can: a banned kerb nearby, a free one further
 /// off, else squeezed in where it stands.
 pub(super) const HUNT_GIVE_UP: u64 = 60;
+/// [parking] Seconds a worn-out hunter stands in a queue before it leaves
+/// the car where it is (`World::hunters_give_up`).
+const HUNT_STUCK: f32 = 120.0;
 /// Walking the last stretch from the car below this is just getting out.
 const GET_OUT: f32 = 20.0;
 
@@ -730,6 +733,33 @@ impl World {
             }
         }
         self.look_for_space(car_id, vid, driver, target, tries);
+    }
+
+    /// [parking] A driver who has hunted for a space past `HUNT_GIVE_UP`
+    /// and is standing in a queue (`HUNT_STUCK` seconds) does not wait to
+    /// reach the street it was making for: it leaves the car at the kerb
+    /// where it is (a banned kerb nearby, a free one, else squeezed in).
+    /// Hunters going round the same blocks filled a dead-end street and
+    /// its junction solid in a player's city, each waiting for the next,
+    /// for hours; every one that gives up leaves the gap the rest need.
+    pub(super) fn hunters_give_up(&mut self) {
+        let tick = self.clock.tick;
+        let stuck: Vec<CarId> = self
+            .traffic
+            .cars
+            .iter()
+            .filter(|(_, c)| matches!(c.errand, Errand::Search { .. } | Errand::ToKerb | Errand::ToLot(_)) && !c.entering && c.hold <= 0.0 && !c.crashed() && c.v < 0.5 && c.stalled > HUNT_STUCK)
+            .filter(|(_, c)| self.citizens.get(c.citizen).is_some_and(|z| z.commute.search_since > 0 && tick.saturating_sub(z.commute.search_since) > HUNT_GIVE_UP))
+            .map(|(id, _)| id)
+            .collect();
+        for id in stuck {
+            if let Some(c) = self.traffic.cars.get_mut(id) {
+                // Not at the lot or the slot it was making for: a search
+                // from here.
+                c.errand = Errand::Search { tries: MAX_TRIES };
+                self.private_arrived(id);
+            }
+        }
     }
 
     pub(super) fn lot_open(&self, b: BuildingId) -> bool {

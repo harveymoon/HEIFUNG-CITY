@@ -133,7 +133,7 @@ const SOLID_LINE_SECONDS: f32 = 2.0;
 const SOLID_LINE_MAX: f32 = 32.0;
 /// A lane change glides over this many seconds of driving (at least
 /// `GLIDE_MIN` metres, at most `GLIDE_MAX`).
-const GLIDE_SECONDS: f32 = 2.5;
+const GLIDE_SECONDS: f32 = 3.0;
 const GLIDE_MIN: f32 = 8.0;
 const GLIDE_MAX: f32 = 45.0;
 /// Metres a second a stopped car mid-change still creeps across by.
@@ -2680,7 +2680,10 @@ impl Traffic {
             // would cost an ambulance minutes.)
             let solid = !c.siren && self.net.to_junction(&c.route, c.idx, c.s, zone + 1.0) <= zone;
             if let Some(target) = c.change_pending(&self.net) {
-                if solid && c.cooldown <= 0.0 {
+                // (Retried every `SOLID_RETRY` when there was no other way;
+                // a longer back-off from elsewhere does not hold it at the
+                // line.)
+                if solid && !(c.cooldown > 0.0 && c.cooldown <= SOLID_RETRY) {
                     // Not in the lane its turn needs by the solid line: it
                     // carries on in its own lane and finds another way (it
                     // misses the turn) rather than stopping at the line to
