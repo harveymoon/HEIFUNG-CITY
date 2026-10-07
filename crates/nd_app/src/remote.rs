@@ -510,6 +510,17 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(v)
         }
         "terrain_at" => Ok(land::terrain_at(&ctx.sim.world, req_point(cmd)?)),
+        // [grid-weather] Wind and sun at a point; y may be given as z (the
+        // renderer's name for the sim's y).
+        "resource" => {
+            let p = match (opt_f32(cmd, "x")?, opt_f32(cmd, "y")?.or(opt_f32(cmd, "z")?)) {
+                (Some(x), Some(y)) => SVec2::new(x, y),
+                _ => req_point(cmd)?,
+            };
+            Ok(land::resource_at(&ctx.sim.world, p))
+        }
+        "grid" => Ok(land::grid_json(&ctx.sim.world)),
+        "weather" => Ok(land::weather_json(&ctx.sim.world)),
         "landscape" => Ok(land::summary(&ctx.sim.world)),
         "grant" => {
             // Dev: money for trying things out.
@@ -1061,10 +1072,11 @@ fn status(ctx: &Ctx) -> Value {
             "supply_mw": round(p.supply_mw), "imported_mw": round(p.imported_mw), "exported_mw": round(p.exported_mw), "demand_mw": round(p.demand_mw), "served": round(p.served),
             "plants": p.plants, "unpowered_buildings": p.unpowered_buildings, "brownout_hours_today": p.brownout_hours_today, "upkeep_today": round(p.upkeep_today),
             "import_cost_today": round(p.import_cost_today), "export_income_today": round(p.export_income_today),
+            "import_price": round(p.import_price), "export_price": round(p.export_price),
             "batteries": { "count": p.batteries, "charge_mwh": round(p.battery_charge_mwh), "capacity_mwh": round(p.battery_capacity_mwh), "charging_mw": round(p.battery_in_mw), "discharging_mw": round(p.battery_out_mw) },
             "rows": { "plants": power_rows["plants"], "batteries": power_rows["batteries"] },
         },
-        "weather": { "label": w.weather.label(), "cloud": round(w.weather.cloud), "wind": round(w.weather.wind) },
+        "weather": land::weather_json(w),
         "land": { "avg_land_value": round(e.avg_land_value), "gini": round(e.gini), "displaced_total": e.displaced_total, "emigrated_total": e.emigrated_total, "priced_out_total": e.priced_out_total, "tier_counts": e.tier_counts, "class_counts": e.class_counts, "avg_rent": e.avg_rent.map(round) },
         "market": { "businesses": e.market.businesses, "deals_today": e.market.deals_today, "imports_today": round(e.market.imports_today), "exports_today": round(e.market.exports_today), "meals_sold_today": e.market.meals_sold_today, "hungry": e.market.hungry, "closed_total": e.market.closed_total },
         "demand": nd_sim::LandUse::ALL.iter().map(|&lu| (lu.label().to_string(), json!(round(e.demand_for(lu))))).collect::<serde_json::Map<_, _>>(),
@@ -2470,6 +2482,10 @@ fn help() -> Value {
     // Kept out of the literal above: it is at the json! recursion limit.
     v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
     v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
+    // [grid-weather]
+    v["commands"]["resource"] = json!({ "x": "f", "y": "f (or z)", "returns": "wind (site_factor, mean_ms, now_ms, typical_yield, yield_now, cut_out_now) and solar (site_factor, climate_sun, sun, yield_now) at the point, and the climate" });
+    v["commands"]["grid"] = json!({ "returns": "time-of-use import/export price now, demand now vs the full draw, weather, day_ahead (24 h: hour, temp_c, demand_mw, import_price, export_price if the weather holds), last_24h (recorded demand, supply, imports, exports, price, temperature)" });
+    v["commands"]["weather"] = json!({ "returns": "label, cloud, wind (0..1), wind_ms, temp_c, spell (normal|heat wave|cold snap|storm), spell_hours_left, climate, turbine cut-in/rated/cut-out m/s" });
     // [camera]
     v["commands"]["follow"] = json!({ "citizen|car|bot|building|vehicle": "id, or the selection", "stop": "bool: end the follow (also on: false)", "pov": "bool: look through their eyes (Walk view) or back to orbit", "fly": "bool, default true: fly in smoothly first", "note": "the camera stays on it (pan locked, rotate and zoom free) until stopped, Esc, or it is gone" });
     v["commands"]["zoom_to"] = json!({ "citizen|car|bot|building|vehicle": "id, or the selection", "at": "[x,y] instead of a thing", "distance": "m (default by kind)", "pitch": "rad (default 0.62)", "note": "a smooth move of 0.7..2.2 s; replies at once" });

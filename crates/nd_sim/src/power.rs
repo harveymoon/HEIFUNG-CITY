@@ -5,8 +5,9 @@
 
 use crate::buildings::{Building, Tier};
 use crate::zoning::LandUse;
-use rand::Rng;
 use serde::{Deserialize, Serialize};
+
+pub use crate::weather::{SiteResource, Spell, Weather};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PowerPlantKind {
@@ -276,48 +277,23 @@ impl PowerPlantKind {
         }
     }
 
-    /// Share of nameplate output right now.
-    pub fn availability(self, weather: &Weather, day_fraction: f32) -> f32 {
+    /// Share of nameplate output right now, for a plant on a site with
+    /// these resources (`SiteResource::default()`: open, level ground).
+    /// [grid-weather] Solar follows the sun's height, the cloud, the
+    /// climate's sun and the site's, less a little in the heat; wind runs
+    /// the turbines' power curve on the wind at the site (nothing above
+    /// cut-out in a storm).
+    pub fn availability(self, weather: &Weather, day_fraction: f32, site: SiteResource) -> f32 {
         match self {
             PowerPlantKind::Coal | PowerPlantKind::Nuclear | PowerPlantKind::Hydro | PowerPlantKind::Geothermal => 1.0,
             // Two tides a day; the race runs on the flood and the ebb.
             PowerPlantKind::Tidal => 0.2 + 0.8 * (day_fraction * 2.0 * std::f32::consts::TAU).sin().abs(),
             PowerPlantKind::Solar => {
                 let elev = ((day_fraction - 0.25) * std::f32::consts::TAU).sin().max(0.0);
-                elev * (1.0 - 0.75 * weather.cloud)
+                let sky = 1.0 - 0.75 * weather.cloud;
+                (elev * sky * weather.profile().sun * site.sun * crate::weather::panel_derate(weather.temp_c)).clamp(0.0, 1.0)
             }
-            PowerPlantKind::Wind => 0.12 + 0.88 * weather.wind,
-        }
-    }
-}
-
-/// Sky and wind, drifting slowly. Cloud dims solar; wind drives turbines.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Weather {
-    pub cloud: f32,
-    pub wind: f32,
-}
-
-impl Default for Weather {
-    fn default() -> Self {
-        Self { cloud: 0.3, wind: 0.5 }
-    }
-}
-
-impl Weather {
-    /// One hour of drift.
-    pub fn step(&mut self, rng: &mut impl Rng) {
-        self.cloud = (self.cloud + rng.random_range(-0.08..0.08)).clamp(0.0, 1.0);
-        self.wind = (self.wind + rng.random_range(-0.07..0.07)).clamp(0.05, 1.0);
-    }
-
-    pub fn label(&self) -> &'static str {
-        match (self.cloud, self.wind) {
-            (c, _) if c > 0.75 => "overcast",
-            (c, w) if c > 0.45 && w > 0.6 => "blustery",
-            (c, _) if c > 0.45 => "cloudy",
-            (_, w) if w > 0.7 => "windy",
-            _ => "clear",
+            PowerPlantKind::Wind => crate::weather::turbine_curve(weather.wind_ms() * site.wind),
         }
     }
 }
@@ -366,14 +342,22 @@ pub struct PowerStats {
     pub battery_in_mw: f32,
     #[serde(default)]
     pub battery_out_mw: f32,
+    /// [grid-weather] The regional grid's prices this hour, per MWh
+    /// ([`import_price`], [`export_price`]).
+    #[serde(default)]
+    pub import_price: f32,
+    #[serde(default)]
+    pub export_price: f32,
 }
 
-/// Power the regional grid will sell the city, in megawatts, and its price
-/// per megawatt-hour. Enough for a village, not a city.
+/// Power the regional grid will sell the city, in megawatts, and its mean
+/// price per megawatt-hour (the price moves with the hour and the weather:
+/// [`import_price`]). Enough for a village, not a city.
 pub const GRID_IMPORT_MW: f32 = 60.0;
 pub const GRID_IMPORT_PRICE: f32 = 2.5;
 /// What the regional grid will take off the city's hands, in megawatts,
-/// and what it pays per megawatt-hour: well under the import price (the
+/// and what it pays per megawatt-hour on average ([`export_price`]): well
+/// under the import price (the
 /// region buys at wholesale and sells at retail), so exporting pays for a
 /// surplus but buying to sell back never does.
 pub const GRID_EXPORT_MW: f32 = 120.0;
@@ -628,6 +612,159 @@ pub fn demand_mw(b: &Building) -> f32 {
     per_floor * b.floors.max(1) as f32 * tier
 }
 
+// ── [grid-weather] the daily load curve ─────────────────────────────────────
+
+/// Share of a building's full draw (`demand_mw`) it uses at each hour of
+/// the day, by land use: homes have a morning bump and the big evening
+/// peak when people get home, cook and switch everything on; shops and
+/// offices run through the working day; industry runs shifts round the
+/// clock and dips at night; nightlife peaks late; parks are their lamps.
+const PROFILE: [[f32; 24]; 6] = [
+    // Residential
+    [0.48, 0.44, 0.42, 0.42, 0.44, 0.52, 0.72, 0.88, 0.80, 0.66, 0.60, 0.60, 0.62, 0.60, 0.60, 0.64, 0.76, 0.92, 1.06, 1.12, 1.10, 0.98, 0.80, 0.60],
+    // Commercial
+    [0.32, 0.30, 0.30, 0.30, 0.32, 0.36, 0.50, 0.74, 0.94, 1.04, 1.08, 1.10, 1.10, 1.10, 1.08, 1.06, 1.04, 0.98, 0.88, 0.74, 0.60, 0.50, 0.42, 0.36],
+    // Industrial
+    [0.76, 0.74, 0.73, 0.73, 0.76, 0.82, 0.94, 1.03, 1.06, 1.06, 1.06, 1.05, 1.02, 1.05, 1.06, 1.04, 1.00, 0.95, 0.90, 0.86, 0.83, 0.81, 0.79, 0.77],
+    // Entertainment
+    [0.90, 0.74, 0.54, 0.38, 0.32, 0.30, 0.32, 0.38, 0.45, 0.54, 0.62, 0.70, 0.76, 0.76, 0.76, 0.78, 0.84, 0.94, 1.05, 1.12, 1.16, 1.14, 1.08, 1.00],
+    // Civic
+    [0.45, 0.44, 0.44, 0.44, 0.45, 0.50, 0.62, 0.80, 0.96, 1.02, 1.04, 1.04, 1.04, 1.04, 1.02, 1.00, 0.96, 0.88, 0.76, 0.64, 0.56, 0.50, 0.47, 0.46],
+    // Park
+    [1.00, 1.00, 1.00, 1.00, 1.00, 0.90, 0.55, 0.30, 0.30, 0.30, 0.30, 0.30, 0.30, 0.30, 0.30, 0.30, 0.30, 0.40, 0.70, 0.95, 1.00, 1.00, 1.00, 1.00],
+];
+
+fn use_index(lu: LandUse) -> usize {
+    match lu {
+        LandUse::Residential => 0,
+        LandUse::Commercial => 1,
+        LandUse::Industrial => 2,
+        LandUse::Entertainment => 3,
+        LandUse::Civic => 4,
+        LandUse::Park => 5,
+    }
+}
+
+/// The hour-of-day share of a building's full draw, interpolated between
+/// the hours (`hour` in `0..24`, wrapping).
+pub fn hourly_load(lu: LandUse, hour: f32) -> f32 {
+    let row = &PROFILE[use_index(lu)];
+    let h = hour.rem_euclid(24.0);
+    let i = h.floor() as usize % 24;
+    let t = h - h.floor();
+    row[i] + (row[(i + 1) % 24] - row[i]) * t
+}
+
+/// Share of a building's draw that goes on air conditioning at full blast,
+/// and on electric heating at full blast.
+fn climate_shares(lu: LandUse) -> (f32, f32) {
+    match lu {
+        LandUse::Residential => (0.22, 0.18),
+        LandUse::Commercial => (0.28, 0.12),
+        LandUse::Industrial => (0.06, 0.05),
+        LandUse::Entertainment => (0.22, 0.10),
+        LandUse::Civic => (0.22, 0.14),
+        LandUse::Park => (0.0, 0.0),
+    }
+}
+
+/// How hard air conditioning runs at `temp_c`, `0..1.4`: from 24 °C up.
+pub fn cooling(temp_c: f32) -> f32 {
+    ((temp_c - 24.0) / 14.0).clamp(0.0, 1.4)
+}
+
+/// How hard heating runs at `temp_c`, `0..1.4`: from 15 °C down.
+pub fn heating(temp_c: f32) -> f32 {
+    ((15.0 - temp_c) / 22.0).clamp(0.0, 1.4)
+}
+
+/// What the weather puts on a building's draw: `1` in mild air, more for
+/// cooling in the heat and heating in the cold.
+pub fn weather_load(lu: LandUse, temp_c: f32) -> f32 {
+    let (ac, heat) = climate_shares(lu);
+    1.0 + ac * cooling(temp_c) + heat * heating(temp_c)
+}
+
+/// The full load factor for a land use at an hour and temperature.
+pub fn load_factor(lu: LandUse, hour: f32, temp_c: f32) -> f32 {
+    hourly_load(lu, hour) * weather_load(lu, temp_c)
+}
+
+/// Megawatts a building draws at `hour` in air of `temp_c`: its full draw
+/// shaped by the day and the weather. A building site draws its flat
+/// floodlights-and-mixer figure; plants and batteries nothing.
+pub fn demand_at(b: &Building, hour: f32, temp_c: f32) -> f32 {
+    let full = demand_mw(b);
+    if full <= 0.0 || b.construction.is_some() {
+        return full;
+    }
+    full * load_factor(b.land_use, hour, temp_c)
+}
+
+/// Full draw per land use (`LandUse::ALL` order) and of the building sites:
+/// what [`demand_at`] summed over the city multiplies, so a whole day's
+/// curve is 24 multiplications, not 24 passes over the buildings.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DemandBase {
+    pub by_use: [f32; 6],
+    pub sites: f32,
+}
+
+impl DemandBase {
+    pub fn of<'a>(buildings: impl Iterator<Item = &'a Building>) -> Self {
+        let mut d = DemandBase::default();
+        for b in buildings {
+            let full = demand_mw(b);
+            if full <= 0.0 {
+                continue;
+            }
+            if b.construction.is_some() {
+                d.sites += full;
+            } else {
+                d.by_use[use_index(b.land_use)] += full;
+            }
+        }
+        d
+    }
+
+    /// The city's demand at `hour` in air of `temp_c`, MW.
+    pub fn at(&self, hour: f32, temp_c: f32) -> f32 {
+        LandUse::ALL.iter().map(|lu| self.by_use[use_index(*lu)] * load_factor(*lu, hour, temp_c)).sum::<f32>() + self.sites
+    }
+
+    /// Full draw of everything, MW (the old flat figure).
+    pub fn full(&self) -> f32 {
+        self.by_use.iter().sum::<f32>() + self.sites
+    }
+}
+
+// ── [grid-weather] time-of-use prices ───────────────────────────────────────
+
+/// The regional grid's load at `hour` in air of `temp_c`, against a mild
+/// day's peak: the region is mostly homes and offices with some industry,
+/// so its evening peak and its heat-wave afternoons are the city's too.
+pub fn regional_load(hour: f32, temp_c: f32) -> f32 {
+    0.45 * load_factor(LandUse::Residential, hour, temp_c) + 0.35 * load_factor(LandUse::Commercial, hour, temp_c) + 0.20 * load_factor(LandUse::Industrial, hour, temp_c)
+}
+
+/// The regional load the price is quoted at: the mean price of a mild day
+/// comes out near [`GRID_IMPORT_PRICE`].
+const PRICE_LOAD: f32 = 0.82;
+
+/// What the regional grid charges per MWh at `hour` in air of `temp_c`:
+/// with the square of its load, so cheap at night, dear in the evening
+/// peak, dearest on a heat-wave evening (or a cold snap's).
+pub fn import_price(hour: f32, temp_c: f32) -> f32 {
+    let l = regional_load(hour, temp_c) / PRICE_LOAD;
+    (GRID_IMPORT_PRICE * l * l).clamp(GRID_IMPORT_PRICE * 0.3, GRID_IMPORT_PRICE * 3.5)
+}
+
+/// What the regional grid pays per MWh at `hour`: the wholesale price, a
+/// fixed share of the retail one, so selling back never pays for buying.
+pub fn export_price(hour: f32, temp_c: f32) -> f32 {
+    import_price(hour, temp_c) * (GRID_EXPORT_PRICE / GRID_IMPORT_PRICE)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -678,6 +815,95 @@ mod tests {
         for k in BatteryKind::ALL {
             assert!(k.capacity_mwh() / k.max_mw() >= 3.0, "{k:?} holds at least three hours at full power");
             assert_eq!(BatteryKind::from_key(k.key()), Some(k));
+        }
+    }
+
+    /// A city's mix of full draw: homes, shops, some industry, a little
+    /// nightlife and civic.
+    fn city() -> DemandBase {
+        DemandBase { by_use: [40.0, 25.0, 25.0, 5.0, 5.0, 0.5], sites: 0.0 }
+    }
+
+    fn day(base: &DemandBase, temp: impl Fn(f32) -> f32) -> Vec<f32> {
+        (0..24).map(|h| base.at(h as f32, temp(h as f32))).collect()
+    }
+
+    #[test]
+    fn demand_peaks_in_the_evening_and_dips_at_night() {
+        let mild = |_| 18.0;
+        // Homes: a morning bump, a midday lull and the big evening peak.
+        let res = |h: f32| hourly_load(LandUse::Residential, h);
+        assert!(res(7.0) > res(3.0) && res(7.0) > res(11.0), "morning bump");
+        assert!(res(19.0) > res(7.0) && res(19.0) > res(12.0), "evening peak");
+        let peak_hour = (0..24).max_by(|a, b| res(*a as f32).total_cmp(&res(*b as f32))).unwrap();
+        assert!((18..=21).contains(&peak_hour), "homes peak when people get home: {peak_hour}");
+        // Offices run in the day, nightlife at night, industry flat.
+        assert!(hourly_load(LandUse::Commercial, 12.0) > 2.5 * hourly_load(LandUse::Commercial, 3.0));
+        assert!(hourly_load(LandUse::Entertainment, 21.0) > 2.5 * hourly_load(LandUse::Entertainment, 6.0));
+        let ind: Vec<f32> = (0..24).map(|h| hourly_load(LandUse::Industrial, h as f32)).collect();
+        let (lo, hi) = ind.iter().fold((9.0f32, 0.0f32), |(a, b), v| (a.min(*v), b.max(*v)));
+        assert!(hi / lo < 1.6, "industry runs shifts round the clock");
+        assert!(hourly_load(LandUse::Park, 23.0) > 2.0 * hourly_load(LandUse::Park, 12.0), "park lamps at night");
+        // Interpolated smoothly between the hours, wrapping at midnight.
+        assert!((hourly_load(LandUse::Residential, 23.5) - (PROFILE[0][23] + PROFILE[0][0]) / 2.0).abs() < 1e-5);
+        // The city: evening peak over the night trough, and no more than a
+        // touch above the old flat draw, so a city that had power has it.
+        let base = city();
+        let d = day(&base, mild);
+        let (lo, hi) = d.iter().fold((f32::MAX, 0.0f32), |(a, b), v| (a.min(*v), b.max(*v)));
+        let mean = d.iter().sum::<f32>() / 24.0;
+        let peak = d.iter().position(|v| *v == hi).unwrap();
+        assert!(hi / lo > 1.6 && hi / lo < 2.4, "peak/trough {}", hi / lo);
+        assert!((10..=20).contains(&peak), "the city peaks in the day or evening: {peak}");
+        assert!(hi <= base.full() * 1.05, "a mild day's peak stays near the old flat draw: {hi} vs {}", base.full());
+        assert!(mean < base.full() * 0.9, "the day uses less than running flat out: {mean}");
+    }
+
+    #[test]
+    fn heat_and_cold_add_load() {
+        let base = city();
+        let mild = base.at(15.0, 20.0);
+        assert!(base.at(15.0, 40.0) > mild * 1.12, "air conditioning on a hot afternoon");
+        assert!(base.at(15.0, -15.0) > mild * 1.12, "heating in the cold");
+        assert_eq!(weather_load(LandUse::Park, 45.0), 1.0);
+        // Desert, ordinary day: the evening peak with its AC still within
+        // a sixth of the old flat draw (no blackouts every evening for a
+        // city that had enough before).
+        let w = Weather::for_climate(crate::landscape::Climate::Desert);
+        let d = day(&base, |h| w.temp_at(h));
+        let hi = d.iter().cloned().fold(0.0f32, f32::max);
+        assert!(hi < base.full() * 1.15, "desert peak {hi} vs flat {}", base.full());
+        // A heat wave pushes it up.
+        let hot = Weather { spell: Spell::HeatWave, ..w.clone() };
+        let dh = day(&base, |h| hot.temp_at(h));
+        assert!(dh.iter().cloned().fold(0.0f32, f32::max) > hi * 1.05);
+        // A demand_at for one building follows the same curve.
+        let mut b = Building::new(crate::LotId::default(), LandUse::Residential, 10, Tier::Mid, 1, "test".into(), 0, 0.5);
+        assert!((demand_at(&b, 19.0, 20.0) - demand_mw(&b) * load_factor(LandUse::Residential, 19.0, 20.0)).abs() < 1e-6);
+        b.construction = Some(crate::buildings::Construction::new(1.0));
+        assert_eq!(demand_at(&b, 19.0, 40.0), demand_mw(&b), "a site draws its flat figure");
+    }
+
+    #[test]
+    fn power_is_cheap_at_night_dear_in_the_evening_and_dearer_in_a_heat_wave() {
+        let mild = Weather::for_climate(crate::landscape::Climate::Temperate);
+        let prices: Vec<f32> = (0..24).map(|h| import_price(h as f32, mild.temp_at(h as f32))).collect();
+        let mean = prices.iter().sum::<f32>() / 24.0;
+        let (lo, hi) = prices.iter().fold((f32::MAX, 0.0f32), |(a, b), v| (a.min(*v), b.max(*v)));
+        let cheapest = prices.iter().position(|v| *v == lo).unwrap();
+        let dearest = prices.iter().position(|v| *v == hi).unwrap();
+        assert!(cheapest <= 5, "cheapest in the small hours: {cheapest}");
+        assert!((16..=21).contains(&dearest), "dearest late afternoon or evening: {dearest}");
+        assert!(hi > 2.0 * lo, "a real spread: {lo}..{hi}");
+        assert!((mean - GRID_IMPORT_PRICE).abs() < 0.5, "a mild day averages the old price: {mean}");
+        // Heat wave evenings cost more.
+        let hot = Weather { spell: Spell::HeatWave, ..Weather::for_climate(crate::landscape::Climate::Desert) };
+        assert!(import_price(18.0, hot.temp_at(18.0)) > hi * 1.15);
+        // Exports always earn less than imports cost.
+        for h in 0..24 {
+            for t in [-20.0, 10.0, 30.0, 45.0] {
+                assert!(export_price(h as f32, t) < import_price(h as f32, t));
+            }
         }
     }
 

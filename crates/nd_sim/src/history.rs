@@ -156,6 +156,10 @@ pub struct HourRecord {
     pub battery_charge_mwh: f32,
     pub battery_capacity_mwh: f32,
     pub served: f32,
+    /// [grid-weather] The regional grid's import price this hour, per MWh,
+    /// and the air temperature, °C.
+    pub import_price: f32,
+    pub temp_c: f32,
     pub bus_waiting: u32,
     pub bus_riding: u32,
     pub rail_riding: u32,

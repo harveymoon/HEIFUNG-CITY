@@ -604,13 +604,14 @@ fn power_is_rationed_rich_first_and_plants_fix_it() {
     assert!(w.buildings.values().all(|b| b.powered >= 0.999));
     // Weather only matters to solar and wind.
     let noon = 0.5;
-    assert_eq!(PowerPlantKind::Nuclear.availability(&w.weather, noon), 1.0);
+    let open = crate::weather::SiteResource::default();
+    assert_eq!(PowerPlantKind::Nuclear.availability(&w.weather, noon, open), 1.0);
     let mut clear = w.weather.clone();
     clear.cloud = 0.0;
     let mut dull = clear.clone();
     dull.cloud = 1.0;
-    assert!(PowerPlantKind::Solar.availability(&clear, noon) > PowerPlantKind::Solar.availability(&dull, noon));
-    assert_eq!(PowerPlantKind::Solar.availability(&clear, 0.0), 0.0, "no sun at midnight");
+    assert!(PowerPlantKind::Solar.availability(&clear, noon, open) > PowerPlantKind::Solar.availability(&dull, noon, open));
+    assert_eq!(PowerPlantKind::Solar.availability(&clear, 0.0, open), 0.0, "no sun at midnight");
     // Round trip keeps the plant.
     let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
     assert_eq!(back.buildings[plant].plant, Some(PowerPlantKind::Nuclear));

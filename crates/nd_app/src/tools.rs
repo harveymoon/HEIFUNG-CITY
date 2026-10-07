@@ -234,6 +234,9 @@ pub struct ToolState {
     pub stroke: Option<PaintStroke>,
     /// Parcel under the pointer (index into `World::parcels`).
     pub hover_parcel: Option<usize>,
+    /// [grid-weather] Where the pointer meets the ground, for the Buildings
+    /// tool's reading of the wind and sun under it.
+    pub hover_ground: Option<SVec2>,
     /// A project being renamed in the toolbar: its id and the name so far.
     pub rename: Option<(u64, String)>,
     /// Zone tool, industrial land: the sub-zone painting sets (a key of
@@ -475,6 +478,7 @@ impl Default for ToolState {
             unzone: false,
             stroke: None,
             hover_parcel: None,
+            hover_ground: None,
             rename: None,
             industry: "auto",
             roundabout: false,
@@ -866,6 +870,7 @@ pub(crate) fn tool_input(
     let click = buttons.just_pressed(MouseButton::Left) && !shift && !flags.pointer_over_ui;
     let shift_click = buttons.just_pressed(MouseButton::Left) && shift && !flags.pointer_over_ui;
     let ground = cursor.ground;
+    tools.hover_ground = ground;
 
     match tools.tool {
         Tool::Road if tools.roundabout => {

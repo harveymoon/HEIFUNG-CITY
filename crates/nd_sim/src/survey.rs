@@ -44,6 +44,13 @@ pub enum LandLayer {
     Water,
     /// Shore where a shipping port could go: the sea or a river wide enough.
     Shipping,
+    /// [grid-weather] What a wind farm would make on an ordinary day: the
+    /// map's wind field times the climate's mean wind, through the
+    /// turbines' power curve.
+    Wind,
+    /// [grid-weather] The sun a solar field would get: the climate's, a
+    /// little more on high open ground.
+    Solar,
     /// The chance a new industrial lot here takes this kind.
     Industry(IndustryKind),
     /// The kind of industry the ground favours most, coloured by kind.
@@ -52,10 +59,10 @@ pub enum LandLayer {
 
 impl LandLayer {
     /// The resource layers, in picker order.
-    pub const RESOURCES: [LandLayer; 7] = [LandLayer::Farmland, LandLayer::Oil, LandLayer::Geothermal, LandLayer::Rock, LandLayer::Sand, LandLayer::Water, LandLayer::Shipping];
+    pub const RESOURCES: [LandLayer; 9] = [LandLayer::Farmland, LandLayer::Oil, LandLayer::Geothermal, LandLayer::Rock, LandLayer::Sand, LandLayer::Water, LandLayer::Shipping, LandLayer::Wind, LandLayer::Solar];
 
     /// Every layer, in the order the K key steps through them.
-    pub const ALL: [LandLayer; 16] = [
+    pub const ALL: [LandLayer; 18] = [
         LandLayer::Farmland,
         LandLayer::Oil,
         LandLayer::Geothermal,
@@ -63,6 +70,8 @@ impl LandLayer {
         LandLayer::Sand,
         LandLayer::Water,
         LandLayer::Shipping,
+        LandLayer::Wind,
+        LandLayer::Solar,
         LandLayer::BestIndustry,
         LandLayer::Industry(IndustryKind::Farming),
         LandLayer::Industry(IndustryKind::OilExtraction),
@@ -84,6 +93,8 @@ impl LandLayer {
             LandLayer::Sand => "sand",
             LandLayer::Water => "water",
             LandLayer::Shipping => "shipping",
+            LandLayer::Wind => "wind",
+            LandLayer::Solar => "solar",
             LandLayer::BestIndustry => "best_industry",
             LandLayer::Industry(k) => match k {
                 IndustryKind::Farming => "best_farming",
@@ -110,6 +121,8 @@ impl LandLayer {
             "quarry" => Some(LandLayer::Rock),
             "fishing" | "ferry" => Some(LandLayer::Water),
             "port" | "ports" | "docks" => Some(LandLayer::Shipping),
+            "wind_resource" | "winds" | "wind_map" => Some(LandLayer::Wind),
+            "sun" | "solar_resource" | "sunshine" => Some(LandLayer::Solar),
             "industry" | "best" => Some(LandLayer::BestIndustry),
             _ => s.strip_prefix("best_").and_then(IndustryKind::from_key).map(LandLayer::Industry),
         }
@@ -124,6 +137,8 @@ impl LandLayer {
             LandLayer::Sand => "Beach sand",
             LandLayer::Water => "Water access",
             LandLayer::Shipping => "Deep water (shipping)",
+            LandLayer::Wind => "Wind resource",
+            LandLayer::Solar => "Solar resource",
             LandLayer::BestIndustry => "Best industry here",
             LandLayer::Industry(k) => match k {
                 IndustryKind::Farming => "Best for farming",
@@ -148,6 +163,8 @@ impl LandLayer {
             LandLayer::Sand => "beach and dune on the sea shore: poor farming",
             LandLayer::Water => "fishing wants the shore; ferries need water 16 m wide",
             LandLayer::Shipping => "a shipping port fits on the sea or a river 40 m wide; logistics and refineries follow ports",
+            LandLayer::Wind => "what a wind farm makes on an ordinary day: windy on hills, ridges and by wide water, sheltered in valleys; storms shut exposed farms down",
+            LandLayer::Solar => "the sun a solar field gets: set by the climate, a little more on high open ground",
             LandLayer::BestIndustry => "the kind a new industrial lot here is most likely to take",
             LandLayer::Industry(k) => match k {
                 IndustryKind::Farming => "chance a new industrial lot farms: good soil, clean and cheap ground",
@@ -217,6 +234,10 @@ pub struct LandSurvey {
     pub ground: Vec<GroundSample>,
     pub heat: Vec<f32>,
     pub shipping: Vec<f32>,
+    /// [grid-weather] The wind and solar layers' values (`wind_value`,
+    /// `solar_value`).
+    pub wind: Vec<f32>,
+    pub solar: Vec<f32>,
     /// Corners in the water (nothing is built there; the layers stay clear).
     pub wet: Vec<bool>,
 }
@@ -233,7 +254,7 @@ impl LandSurvey {
         let cols = (size.x / cell).ceil() as usize;
         let rows = (size.y / cell).ceil() as usize;
         let n = (cols + 1) * (rows + 1);
-        let mut s = Self { origin: lo, cell, cols, rows, ground: Vec::with_capacity(n), heat: Vec::with_capacity(n), shipping: Vec::with_capacity(n), wet: Vec::with_capacity(n) };
+        let mut s = Self { origin: lo, cell, cols, rows, ground: Vec::with_capacity(n), heat: Vec::with_capacity(n), shipping: Vec::with_capacity(n), wind: Vec::with_capacity(n), solar: Vec::with_capacity(n), wet: Vec::with_capacity(n) };
         for j in 0..=rows {
             for i in 0..=cols {
                 let p = s.corner(i, j);
@@ -242,6 +263,8 @@ impl LandSurvey {
                 s.ground.push(if wet { GroundSample::default() } else { ground::sample(land, p) });
                 s.heat.push(if wet { 0.0 } else { geothermal_at(land, p) });
                 s.shipping.push(if wet { 0.0 } else { shipping_at(land, p) });
+                s.wind.push(if wet { 0.0 } else { wind_value(land, p) });
+                s.solar.push(if wet { 0.0 } else { solar_value(land, p) });
             }
         }
         s
@@ -273,11 +296,35 @@ impl LandSurvey {
     }
 }
 
-/// A resource layer's value from the ground at a point, `0..1`. `heat` and
-/// `shipping` are [`geothermal_at`] and [`shipping_at`] there and
-/// `contamination` the fouling of the ground. Industry layers are not
-/// resource layers and read 0 here.
-pub fn resource_value(layer: LandLayer, g: &GroundSample, heat: f32, shipping: f32, contamination: f32) -> f32 {
+/// [grid-weather] The wind layer at `p`, `0..1`: a typical wind farm's
+/// share of nameplate there on an ordinary day.
+pub fn wind_value(land: &Landscape, p: Vec2) -> f32 {
+    crate::weather::wind_yield_at(land, p)
+}
+
+/// [grid-weather] The solar layer at `p`, `0..1`: the sun with its climate
+/// (1 for the desert's open ground).
+pub fn solar_value(land: &Landscape, p: Vec2) -> f32 {
+    crate::weather::sun_at(land, p).clamp(0.0, 1.0)
+}
+
+/// The figures at a point the resource layers read beyond the ground:
+/// [`geothermal_at`], [`shipping_at`], [`wind_value`], [`solar_value`] and
+/// the contamination.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PointResources {
+    pub heat: f32,
+    pub shipping: f32,
+    pub wind: f32,
+    pub solar: f32,
+    pub contamination: f32,
+}
+
+/// A resource layer's value from the ground at a point, `0..1`, given the
+/// other figures there (`r`). Industry layers are not resource layers and
+/// read 0 here.
+pub fn resource_value(layer: LandLayer, g: &GroundSample, r: PointResources) -> f32 {
+    let PointResources { heat, shipping, wind, solar, contamination } = r;
     let clean = (1.0 - contamination).clamp(0.0, 1.0);
     match layer {
         // Farms yield by fertility and lose it to contamination, the same
@@ -289,6 +336,8 @@ pub fn resource_value(layer: LandLayer, g: &GroundSample, heat: f32, shipping: f
         LandLayer::Sand => g.sand,
         LandLayer::Water => g.water,
         LandLayer::Shipping => shipping,
+        LandLayer::Wind => wind,
+        LandLayer::Solar => solar,
         LandLayer::Industry(_) | LandLayer::BestIndustry => 0.0,
     }
 }
@@ -363,12 +412,15 @@ mod tests {
     #[test]
     fn resource_values_follow_the_ground() {
         let g = GroundSample { fertility: 0.8, oil: 0.3, rock: 0.1, sand: 0.0, water: 0.5 };
-        assert!((resource_value(LandLayer::Farmland, &g, 0.0, 0.0, 0.0) - 0.8).abs() < 1e-6);
-        assert!(resource_value(LandLayer::Farmland, &g, 0.0, 0.0, 0.5) < 0.5, "contamination spoils farmland");
-        assert_eq!(resource_value(LandLayer::Oil, &g, 0.0, 0.0, 0.0), 0.3);
-        assert_eq!(resource_value(LandLayer::Geothermal, &g, 0.9, 0.0, 0.0), 0.9);
-        assert_eq!(resource_value(LandLayer::Shipping, &g, 0.0, 0.7, 0.0), 0.7);
-        assert_eq!(resource_value(LandLayer::BestIndustry, &g, 1.0, 1.0, 0.0), 0.0);
+        let r = |heat, shipping, contamination| PointResources { heat, shipping, contamination, ..Default::default() };
+        assert!((resource_value(LandLayer::Farmland, &g, r(0.0, 0.0, 0.0)) - 0.8).abs() < 1e-6);
+        assert!(resource_value(LandLayer::Farmland, &g, r(0.0, 0.0, 0.5)) < 0.5, "contamination spoils farmland");
+        assert_eq!(resource_value(LandLayer::Oil, &g, r(0.0, 0.0, 0.0)), 0.3);
+        assert_eq!(resource_value(LandLayer::Geothermal, &g, r(0.9, 0.0, 0.0)), 0.9);
+        assert_eq!(resource_value(LandLayer::Shipping, &g, r(0.0, 0.7, 0.0)), 0.7);
+        assert_eq!(resource_value(LandLayer::BestIndustry, &g, r(1.0, 1.0, 0.0)), 0.0);
+        assert_eq!(resource_value(LandLayer::Wind, &g, PointResources { wind: 0.6, ..Default::default() }), 0.6);
+        assert_eq!(resource_value(LandLayer::Solar, &g, PointResources { solar: 0.9, ..Default::default() }), 0.9);
         let sh = shares(&[1.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
         assert!((sh[1] - 0.75).abs() < 1e-6 && (sh.iter().sum::<f32>() - 1.0).abs() < 1e-6);
         assert_eq!(shares(&[0.0; crate::industry::IndustryKind::COUNT]), [0.0; crate::industry::IndustryKind::COUNT]);
