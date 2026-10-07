@@ -58,7 +58,8 @@ impl World {
     // ── placing ────────────────────────────────────────────────────────────
 
     /// Put down anything the Buildings tool offers at `p`: a rail piece
-    /// where clicked, everything else on the lot under `p`.
+    /// where clicked, everything else on the lot under `p` or, on unzoned
+    /// ground, on a lot made for the parcels there ([free-placement]).
     pub fn place_building(&mut self, what: Placeable, p: Vec2) -> Result<BuildingId, String> {
         if let Placeable::Rail(f) = what {
             return self.place_rail_facility(f, p);
@@ -69,8 +70,7 @@ impl World {
         if let Placeable::Toll(_) = what {
             return Err("a toll booth goes on a road, not a lot (World::place_toll)".into());
         }
-        let lot = self.lots.iter().find(|(_, l)| point_in_polygon(p, &l.polygon)).map(|(id, _)| id).ok_or("click a vacant lot")?;
-        self.place_on_lot(what, lot)
+        self.place_on_site(what, p)
     }
 
     /// Put down `what` on a lot (rail pieces at the lot's centre).
@@ -97,13 +97,19 @@ impl World {
 
     /// Why `what` cannot go on `lot`, for the placement preview; None if it can.
     pub fn placement_problem(&self, what: Placeable, lot_id: LotId) -> Option<String> {
+        let Some(lot) = self.lots.get(lot_id) else { return Some("no such lot".into()) };
+        self.lot_problem(what, lot, Some(lot_id))
+    }
+
+    /// [free-placement] [`World::placement_problem`] for a lot that may not
+    /// exist yet (`lot_id` None: one about to be made on unzoned ground).
+    pub(super) fn lot_problem(&self, what: Placeable, lot: &Lot, lot_id: Option<LotId>) -> Option<String> {
         if matches!(what, Placeable::Rail(_) | Placeable::Dock(_)) {
             return None;
         }
         if matches!(what, Placeable::Toll(_)) {
             return Some("a toll booth goes on a road".into());
         }
-        let Some(lot) = self.lots.get(lot_id) else { return Some("no such lot".into()) };
         // Whatever grew there is bought out; another civic structure is not.
         if let Some(b) = lot.building.and_then(|b| self.buildings.get(b)) {
             if Self::is_civic_structure(b) {
@@ -116,16 +122,17 @@ impl World {
         if self.under_facility(lot.center) {
             return Some("that ground belongs to a station or yard".into());
         }
+        // [free-placement] Zoning is no bar: only a park is kept.
         if !what.allowed_on(lot.land_use) {
-            return Some(format!("a {} cannot go on {} land", what.label(), lot.land_use.label().to_lowercase()));
+            return Some(format!("that is park land: unzone it before putting a {} there", what.label()));
         }
         // [plant-groups] A small lot may join the solar or wind farm next door.
-        let joins = matches!(what, Placeable::Plant(k) if self.small_plant_lot_joins(k, lot_id).is_some());
+        let joins = matches!(what, Placeable::Plant(k) if lot_id.is_some_and(|id| self.small_plant_lot_joins(k, id).is_some()));
         if lot.area() < what.min_area() && !joins {
             return Some(format!("too small: a {} needs {:.0} m² (this lot is {:.0})", what.label(), what.min_area(), lot.area()));
         }
         if let Placeable::Plant(k) = what {
-            if let Err(e) = self.power_site(lot_id, k) {
+            if let Err(e) = self.power_site_on(lot, k) {
                 return Some(e);
             }
         }
@@ -134,8 +141,9 @@ impl World {
             return Some(format!("a {} needs a street out front", what.label()));
         }
         // [clarity] Solar and wind cost what the lot they fill makes them.
-        let cost = match what {
-            Placeable::Plant(k) => self.plant_cost_on(k, lot_id),
+        let cost = match (what, lot_id) {
+            (Placeable::Plant(k), Some(id)) => self.plant_cost_on(k, id),
+            (Placeable::Plant(k), None) => k.build_cost() * k.size_scale(lot.area()),
             _ => what.cost(),
         };
         if self.economy.treasury < cost {

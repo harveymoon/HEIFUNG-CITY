@@ -22,8 +22,9 @@ impl World {
         if self.under_facility(lot.center) {
             return Err("that ground belongs to a station or yard".into());
         }
-        if matches!(lot.land_use, LandUse::Residential | LandUse::Park) {
-            return Err("a depot cannot go on homes or parks".into());
+        // [free-placement] Any zone, or none: only park land is kept.
+        if !crate::services::Placeable::BusDepot.allowed_on(lot.land_use) {
+            return Err("that is park land: unzone it before putting a depot there".into());
         }
         if lot.area() < transit::DEPOT_MIN_AREA {
             return Err(format!("too small: a depot needs {:.0} m²", transit::DEPOT_MIN_AREA));

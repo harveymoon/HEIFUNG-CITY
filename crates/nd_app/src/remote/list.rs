@@ -51,7 +51,7 @@ pub fn rows(w: &World, what: &str) -> Result<Vec<Value>, String> {
             .iter()
             .map(|(id, b)| {
                 json!({
-                    "id": key_str(id), "name": b.name, "land_use": lu_key(b.land_use), "tier": b.tier.label(), "floors": b.floors,
+                    "id": key_str(id), "name": b.name, "land_use": lu_key(w.shown_use(id)), "tier": b.tier.label(), "floors": b.floors,
                     "homes": b.homes, "residents": b.residents.len(), "jobs": b.jobs, "workers": b.workers.len(), "staffing": r3(b.staffing()),
                     "rent": round(b.rent), "land_value": round(b.land_value), "condition": round(b.condition), "powered": round(b.powered),
                     "unpowered": b.powered < UNPOWERED_BELOW && nd_sim::power::demand_mw(b) > 0.0, "under_construction": b.construction.is_some(),

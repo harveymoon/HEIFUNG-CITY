@@ -15,6 +15,8 @@ impl World {
             return Err(problem);
         }
         self.take_over_lot(lot_id, size.label())?;
+        // [free-placement] The city's own lot: out of the zone.
+        self.take_for_city(lot_id);
         self.economy.debit_item(Flow::Construction, size.cost(), Item::Named(size.label().to_string()));
         let n = self.fresh_seed() % 90 + 1;
         let name = match size {
@@ -29,6 +31,8 @@ impl World {
             b.floors = size.floors();
             b.business = Some(bz);
             b.parking_price = price;
+            // [free-placement] Its own use (the ground is the city's).
+            b.land_use = LandUse::Commercial;
         });
         self.vehicles.city_lots.insert(id, crate::enforcement::CityLot { size, price });
         Ok(id)

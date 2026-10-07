@@ -485,7 +485,8 @@ pub fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
             }
             ui.end_row();
             for lu in LandUse::ALL {
-                let lots: Vec<&nd_sim::Lot> = w.lots.values().filter(|l| l.land_use == lu).collect();
+                // [free-placement] City ground is out of the zones: its own row below.
+                let lots: Vec<&nd_sim::Lot> = w.lots.values().filter(|l| l.land_use == lu && !w.is_city_ground(l)).collect();
                 if lots.is_empty() {
                     continue;
                 }
@@ -494,6 +495,14 @@ pub fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
                 ui.label(egui::RichText::new(format!("{}", lots.len())).small());
                 ui.label(egui::RichText::new(format!("{built}")).small());
                 ui.label(egui::RichText::new(format!("{}", lots.iter().filter(|l| l.building.is_none() && l.usable()).count())).small());
+                ui.end_row();
+            }
+            let city = w.lots.values().filter(|l| w.is_city_ground(l)).count();
+            if city > 0 {
+                ui.label(egui::RichText::new("City buildings").small().color(zone_color32(p.assets.palette.zone_color(LandUse::Civic))));
+                ui.label(egui::RichText::new(format!("{city}")).small());
+                ui.label(egui::RichText::new(format!("{city}")).small());
+                ui.label(egui::RichText::new("0").small());
                 ui.end_row();
             }
         });
