@@ -136,9 +136,9 @@ ring (see `events`).
 | `list_saves` | | `saves`, newest first: `path`, `name` (as typed for named games; "Latest quick save", "Autosave", "Quick save, day N" otherwise), `kind` (named / latest / autosave / dated), `modified_unix`, `bytes`, `day`, `population`, `treasury`, `buildings`, `landscape` (null for saves without a sidecar), `thumbnail` (absolute PNG path, or null) |
 
 The **title screen** comes up at startup (unless `ND_TITLE=0`) over a paused city: the saved
-games as cards with their pictures, Continue, New game, Play this map. `load`, `new_game` and
-`seed_demo` close it; `window {name: "title", open: false}` closes it and runs the city (as Play
-this map), `open: true` brings it back. `status.title_screen` says whether it is up. Scripts that
+games as cards with their pictures, Continue, New game, Play this map. `load`, `new_game`,
+`generate_city` and `seed_demo` close it; `window {name: "title", open: false}` closes it and runs
+the city (as Play this map), `open: true` brings it back. `status.title_screen` says whether it is up. Scripts that
 screenshot the city should close it first.
 
 Paths are limited to `saves/`, `screenshots/`, `exports/` and the temp folder (see
@@ -154,6 +154,7 @@ main thread, then serialises and writes it on a worker thread.
 | Command | Fields | Reply |
 | --- | --- | --- |
 | `new_game` | `preset` river_valley (default) / islands / coast / delta / plains / flat, `seed`, `water` 0..1, `relief` 0..1 (height variation), `branching` 0..1, `islands` 0..8 (`highway` is ignored: every new game has the highway and the trunk line); omitted levers take the preset's | throws the city away and starts on the landscape; tools and selection reset. Reply as `landscape` |
+| `generate_city` | `preset` grid_plaza (default) / coastal_river / old_town / twin_centres, `seed` (default 1; seeds the landscape and the city), optional `landscape` (a `new_game` preset to lay the city on instead of the preset's own) and `water`, `relief`, `branching` levers | throws the city away and starts a new game with a whole generated city on it (below); tools and selection reset. Reply as `landscape` plus `city`: `preset`, `seed`, `arterial`/`collector`/`local` (`roads`, `length_m`), `zones`, `lots`, `interchanges`, `way_in`, `centres`, `took_ms` |
 | `landscape` | | preset and levers, `rivers` (kind river/stream, width, current_mps, hydro_ok, source, mouth, length), `lakes`, `sea`, `hot_spots`, `highway` (entries, exits, through_cars), `bridges` (count, metres, on the highway), `ports`, `ships`, `port_stats` |
 | `terrain_at` | `x`, `y` | `natural_height`, `ground_height` (graded under roads and lots), `surface_height` (bridge decks included), `slope`, `water` (kind, current, width, flow), `nearest_shore`, `hot_spot`, `lot`, `power_sites` (hydro/tidal/geothermal ok or why not, for the lot there), `docks` (whether a shipping port or ferry terminal would go there, or why not), `survey` (every land survey layer's value 0..1 there), `access` (`park_min`, `nightlife_min`: minutes on foot along the walk network to the nearest park / open entertainment, null when none can be walked to; `value_for_homes`: what that adds to a home's land value; `text`; the whole object is null off the walk network) |
 | `grant` | `amount` (default 100000) | dev: adds money to the treasury |
@@ -163,7 +164,32 @@ main thread, then serialises and writes it on a worker thread.
 {"cmd": "terrain_at", "x": -420, "y": 100}
 ```
 
-`window {name: "new_game"}` opens the New Game window (preset list, levers, mini-map).
+`window {name: "new_game"}` opens the New Game window (preset list, levers, mini-map, and a
+starting town: an empty map or one of the generated cities, drawn on the mini-map).
+
+**Generated cities** (`nd_procgen::citygen`, after Chen et al. 2008, "Interactive Procedural
+Street Modeling", the method ProbableTrain's MapGenerator uses). Streets are traced through a
+tensor field blended from grids, radial centres and the lines of the land (rivers, the coast, the
+highway, the railway): arterials about 330 m apart, collectors about 165 m, local streets 64 x
+108 m, a waterfront street along each river bank and the coast. Dangling ends are joined to the
+street ahead, and the network is cleaned to the game's rules (junctions at least 22 m apart and
+32 degrees, no sliver blocks, one network) before it is laid as road gestures (arterials 2+2
+lanes, collectors and locals 1+1; curves sampled every 7 m, straight into every junction). The
+blocks are zoned by a land-use model: shops round the centres and along the arterials, works by
+the railway, the highway and the edge of town, parks on the waterfronts and plazas, homes
+between. Up to two interchanges join the town to the highway, and a coal plant goes on the
+biggest works lot. The city stays south of the highway (up to y 340) inside the buildable square.
+
+| Preset | Landscape | Plan |
+| --- | --- | --- |
+| `grid_plaza` | plains | one grid round a radial plaza |
+| `coastal_river` | coast, sea close in | streets follow the shore and the river; the port centre at the river mouth |
+| `old_town` | river valley | a twisting radial old town, modern grids at other angles either side |
+| `twin_centres` | plains | two radial centres, each with its own grid, grown together |
+
+```json
+{"cmd": "generate_city", "preset": "old_town", "seed": 3}
+```
 
 ### Planning: roads, zones, parcels, projects
 

@@ -91,6 +91,17 @@ impl Sim {
         self.city_replaced();
     }
 
+    /// Throw the city away and start again with a whole example city
+    /// generated on `landscape` (`nd_procgen::citygen`): its streets, its
+    /// zoning, its interchanges and a power plant, ready to grow.
+    pub fn generate_city(&mut self, preset: nd_procgen::citygen::CityPreset, landscape: nd_sim::LandscapeParams) -> (nd_procgen::citygen::CityPlan, nd_procgen::citygen::LaidCity) {
+        self.new_game(landscape);
+        let seed = self.world.landscape.params.seed;
+        let plan = nd_procgen::citygen::generate(preset, seed, &self.world.landscape);
+        let laid = nd_procgen::citygen::lay_city(&mut self.world, &plan);
+        (plan, laid)
+    }
+
     /// The demo district is laid out blind over the centre of the map, so
     /// the hotkey only fires on an empty city; the panel button may add it to
     /// an existing one deliberately.
