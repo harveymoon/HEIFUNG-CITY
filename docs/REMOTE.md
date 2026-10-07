@@ -19,7 +19,7 @@ server (see [`tools/mcp/README.md`](../tools/mcp/README.md)). The code is `crate
   - 504: the game did not take the command within 5 s (frame stalled, window closing). The command
     is **withdrawn and does not run**, so retrying is safe. A command the game had already started
     (a long `step`) is waited for, up to 5 minutes.
-- Environment: `ND_REMOTE_PORT` picks the port (default 4817); `ND_REMOTE=0` disables the server.
+- Environment: `ND_REMOTE_PORT` picks the port (default 4817); `ND_REMOTE=0` disables the server. `ND_WINDOW=WxH` sets the starting window size (default 1600x900), and `ND_UI_SCALE` the text size, for layout checks.
   If the port is taken the game logs a warning and runs without the API.
 
 ```sh
