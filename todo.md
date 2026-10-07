@@ -236,6 +236,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 [x] - metro lines aren't self-explanatory: the metro tool switches to a Metro map layer with highlighted stations; build a line by clicking stations in order, with step hints   → DONE [feat/metro-ux]: Metro layer (key M), click stations in order, loops, hint panel with cost and round trip; API metro_line
 [x] - Build window: sections centred, sub-sections left-aligned   → FIXED [main 2b9550b]: sections left-aligned, sub-sections indented
+[x] - Build window: closing it switches to Inspect; Inspect, Edit or Bulldoze close it   → DONE [fix/build-pane]
 [x] - flag: a raised bridge over a highway shows blue in the plan but implement refuses "no room for a pillar" (the implement check ignores the downramp to a ground junction); refusals must show red at the spot first   → DONE [feat/tools 21bbb70]: RoadNetwork::as_built levels for preview, rebuild and implement; plan view runs project_check (red band, pin, label, "show" button); clearer refusal text
 
 ### Agent waves (4–5 at a time)
