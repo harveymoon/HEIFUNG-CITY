@@ -1,7 +1,9 @@
 //! The title screen: the first thing at startup (unless `ND_TITLE=0`). The
-//! saved games newest first, each a card with its map picture, name, day
-//! and population; Continue loads the newest, New game opens the landscape
-//! picker, "Play this map" starts on the fresh landscape already loaded.
+//! saved games newest first, grouped by city name, each a card with its map
+//! picture, name, day and population; Continue loads the newest, New game
+//! opens the landscape picker (which asks for the city's name), "Play this
+//! map" starts on the fresh landscape already loaded under the name typed
+//! beside it.
 //! The city behind stays paused while it is up. The Saves window's "title
 //! screen" button and the remote API (`window {name: "title"}`) bring it
 //! back.
@@ -10,7 +12,7 @@ use std::path::PathBuf;
 
 use bevy_egui::egui::{self, Color32, Rect};
 
-use super::saves::{age, SlotKind};
+use super::saves::{age, group_by_city, SlotKind};
 use super::{hint, section, UiCtx, GOLD, IVORY};
 
 const CARD: egui::Vec2 = egui::vec2(208.0, 262.0);
@@ -21,6 +23,9 @@ pub fn screen(ctx: &egui::Context, p: &mut UiCtx) {
         return;
     }
     p.sim.paused = true;
+    if p.saves.new_city_name.is_empty() {
+        p.saves.new_city_name = super::newgame::suggest_name();
+    }
     let view = ctx.viewport_rect();
     let mut load: Option<PathBuf> = None;
     let mut close = false;
@@ -53,8 +58,12 @@ pub fn screen(ctx: &egui::Context, p: &mut UiCtx) {
                 if ui.add(big("New game…")).on_hover_text("Pick a landscape and start a new city").clicked() {
                     new_game = true;
                 }
-                if ui.add(big("Play this map")).on_hover_text("Start building on the landscape that is loaded (a river valley with the highway)").clicked() {
+                if ui.add(big("Play this map")).on_hover_text("Start building on the landscape that is loaded (a river valley with the highway), under the name beside it").clicked() {
                     close = true;
+                }
+                ui.add(egui::TextEdit::singleline(&mut p.saves.new_city_name).desired_width(170.0).hint_text("city name").font(egui::TextStyle::Heading));
+                if ui.small_button("🎲").on_hover_text("another name").clicked() {
+                    p.saves.new_city_name = super::newgame::suggest_name();
                 }
             });
             if let Some((_, label)) = &newest {
@@ -62,21 +71,32 @@ pub fn screen(ctx: &egui::Context, p: &mut UiCtx) {
             }
             ui.add_space(14.0);
             section(ui, "SAVED GAMES");
-            let rows: Vec<(PathBuf, String, SlotKind, String, Option<std::time::SystemTime>, Option<PathBuf>)> =
-                p.saves.slots().iter().filter(|s| s.kind != SlotKind::Dated).map(|s| (s.path.clone(), s.label.clone(), s.kind, s.figures(), s.modified, s.picture.clone())).collect();
-            if rows.is_empty() {
+            // [identity] One row of cards per city, the city played last first.
+            let groups: Vec<(String, Vec<(PathBuf, String, SlotKind, String, Option<std::time::SystemTime>, Option<PathBuf>)>)> = {
+                let slots = p.saves.slots();
+                group_by_city(slots)
+                    .into_iter()
+                    .map(|(city, members)| (city, members.into_iter().map(|i| &slots[i]).filter(|s| s.kind != SlotKind::Dated).map(|s| (s.path.clone(), s.label.clone(), s.kind, s.figures(), s.modified, s.picture.clone())).collect::<Vec<_>>()))
+                    .filter(|(_, rows)| !rows.is_empty())
+                    .collect()
+            };
+            if groups.is_empty() {
                 hint(ui, "No saved games yet: start one, then Saves, Save as, to keep it under a name.");
             }
             egui::ScrollArea::vertical().id_salt("title_saves").auto_shrink([false, false]).show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
-                    for (path, label, kind, figures, modified, picture) in rows {
-                        let pic = picture.as_deref().and_then(|x| p.saves.picture(ui.ctx(), x));
-                        if card(ui, &label, kind, &figures, &age(modified), pic.as_ref()).clicked() {
-                            load = Some(path);
+                for (city, rows) in groups {
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new(city).color(GOLD).strong().size(17.0));
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
+                        for (path, label, kind, figures, modified, picture) in rows {
+                            let pic = picture.as_deref().and_then(|x| p.saves.picture(ui.ctx(), x));
+                            if card(ui, &label, kind, &figures, &age(modified), pic.as_ref()).clicked() {
+                                load = Some(path);
+                            }
                         }
-                    }
-                });
+                    });
+                }
             });
         });
     });
@@ -92,6 +112,12 @@ pub fn screen(ctx: &egui::Context, p: &mut UiCtx) {
     if close {
         p.saves.title = false;
         p.sim.paused = false;
+        // [identity] The map loaded at startup is a new game: it takes the
+        // name typed beside the button.
+        if p.sim.world.clock.tick == 0 && p.sim.world.identity.name.is_empty() {
+            let name = std::mem::take(&mut p.saves.new_city_name);
+            p.sim.set_city_name(&name);
+        }
     }
 }
 

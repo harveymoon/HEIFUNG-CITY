@@ -41,6 +41,15 @@ struct Draft {
     city: Option<CityPreset>,
     drawn: Option<(LandscapeParams, Option<CityPreset>, egui::TextureHandle, String)>,
     confirm: bool,
+    /// [identity] The new city's name.
+    name: String,
+}
+
+/// [identity] A name to offer for a new city, different each time.
+pub fn suggest_name() -> String {
+    use rand::SeedableRng;
+    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
+    nd_sim::names::city_name(&mut rand::rngs::StdRng::seed_from_u64(seed))
 }
 
 pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
@@ -48,7 +57,7 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
         return;
     }
     let id = egui::Id::new("new_game_draft");
-    let mut draft: Draft = ctx.data(|d| d.get_temp(id)).unwrap_or_else(|| Draft { params: p.sim.world.landscape.params.clone(), city: None, drawn: None, confirm: false });
+    let mut draft: Draft = ctx.data(|d| d.get_temp(id)).unwrap_or_else(|| Draft { params: p.sim.world.landscape.params.clone(), city: None, drawn: None, confirm: false, name: suggest_name() });
     let mut open = true;
     egui::Window::new(egui::RichText::new("New game").color(GOLD))
         .open(&mut open)
@@ -64,6 +73,14 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
 }
 
 fn body(ui: &mut egui::Ui, p: &mut UiCtx, draft: &mut Draft) {
+    section(ui, "CITY NAME");
+    ui.horizontal(|ui| {
+        ui.add(egui::TextEdit::singleline(&mut draft.name).desired_width(220.0).hint_text("name your city"));
+        if ui.small_button("🎲").on_hover_text("another name").clicked() {
+            draft.name = suggest_name();
+        }
+    });
+    hint(ui, "Saves are listed under this name; it can be changed later in the City or Saves window.");
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(250.0);
@@ -126,7 +143,8 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, draft: &mut Draft) {
         ui.colored_label(WARN, "This throws the current city away.");
         ui.horizontal(|ui| {
             if ui.button("Start the new city").clicked() {
-                start(p, draft.params.clone(), draft.city);
+                start(p, draft.params.clone(), draft.city, &draft.name);
+                draft.name = suggest_name();
                 draft.confirm = false;
                 set_open(ui.ctx(), false);
             }
@@ -136,7 +154,8 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, draft: &mut Draft) {
         });
     } else if ui.button(egui::RichText::new("Start").strong()).clicked() {
         if p.sim.world.buildings.is_empty() && p.sim.world.citizens.is_empty() {
-            start(p, draft.params.clone(), draft.city);
+            start(p, draft.params.clone(), draft.city, &draft.name);
+            draft.name = suggest_name();
             set_open(ui.ctx(), false);
         } else {
             draft.confirm = true;
@@ -144,7 +163,7 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, draft: &mut Draft) {
     }
 }
 
-fn start(p: &mut UiCtx, params: LandscapeParams, city: Option<CityPreset>) {
+fn start(p: &mut UiCtx, params: LandscapeParams, city: Option<CityPreset>, name: &str) {
     let label = params.preset.label();
     match city {
         Some(c) => {
@@ -152,12 +171,14 @@ fn start(p: &mut UiCtx, params: LandscapeParams, city: Option<CityPreset>) {
         }
         None => p.sim.new_game(params),
     }
+    p.sim.set_city_name(name);
     *p.tools = crate::tools::ToolState::default();
     *p.selection = crate::tools::Selection::None;
     p.plan.invalidate();
+    let named = p.sim.world.identity.display_name().to_string();
     p.flags.message = match city {
-        Some(c) => format!("New city: {} on a {label} landscape", c.label()),
-        None => format!("New city: {label} landscape"),
+        Some(c) => format!("New city {named}: {} on a {label} landscape", c.label()),
+        None => format!("New city {named}: {label} landscape"),
     };
 }
 

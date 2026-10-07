@@ -205,10 +205,10 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 ### D. Look and tools
 [x] - look-dev pass, grounded neon   → DONE [feat/look]: roughness/metal maps, sky-light reflections, distance-scaled SSAO, volumetric haze, TAA, Auto/Low/Medium/High with a frame-time throttler (View window; `graphics` remote command). Left: street lamps don't cast light, no wet roads.   Was: PBR materials with roughness and normal maps on roads, buildings and cars; SSAO; sky/atmosphere, distance and volumetric fog; TAA; a dynamic performance throttler that scales effects to hold the frame rate
-[ ] - underground view: tunnels as tubes, near side cut away so the cars inside show
+[x] - underground view: tunnels as tubes, near side cut away so the cars inside show   → DONE [feat/identity]: inward-facing concrete tube (street::bore_shell), back-face culling cuts the near half. Left: metro bores unchanged
 [x] - [ and ] raise or lower a road while drawing; pillars hold it up; pillars avoid buildings and roads underneath (refuse if there's no room for them); the preview shows clearly what pillars would remove   → DONE [feat/tools]: ] / [ step the next point 2 m (Shift: the whole road drawn), the camera's bracket zoom yields to the Road tool; columns planned along the way (24 m aimed, 42 m limit), shifted off roads, junction corners and buildings (empty lots and open ground first, grown buildings bought out last, the city's own structures never); no room = deck red in the preview + refusal; buyouts orange; decks 6 m+ span over lots (buildings that fit stay, growth capped under them)
 [x] - intersection editor (Edit mode, click a junction or crosswalk): top-down orthographic view without buildings; lane permissions, left turns, signal timing; crosswalk upgrades: push-button signal, or a pedestrian bridge (raised walkways with steps that connect into a skywalk network)   → DONE [feat/tools]: modal with a road-layer render (wheel zooms), lane L/S/R per lane, left turns per street or all, signals auto/on/none, phase greens, protected left auto/always/never + length; push-button crossings (red only when pressed) and footbridges (raised walk edges `WalkEdge::raised`, walkers prefer them, never hold traffic); `intersection` remote command; saved
-[ ] - new game asks for a city name (changeable) and makes a unique game id; saves and loads list by city name; autosaves keep a history with a "game history" viewer to mark key moments and revert
+[x] - new game asks for a city name (changeable) and makes a unique game id; saves and loads list by city name; autosaves keep a history with a "game history" viewer to mark key moments and revert   → DONE [feat/identity]: World::identity, saves/history/<game id>/, Game history window, API city_name / game_history
 
 ### E. Housekeeping
 [x] - stale IN PROGRESS statuses verified against merged branches and code (2026-10-07)
@@ -229,11 +229,13 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [x] - flag: kerbs turn to dirt at corners   → DONE [feat/kerbs]: rounded kerbed corners with paving (rings paved outside), dropped kerbs at every crosswalk end with yellow domed tactile pads; street triangles slightly down. Left: very sharp (~60°) corners get no cut; one-way ramp streets still have no pavements
 [x] - realistic example maps   → DONE [feat/mapgen]: nd_procgen::citygen tensor-field streets, zoning, presets grid_plaza / coastal_river / old_town / twin_centres; generate_city remote command; "Starting town" in New game; tests per preset. Roundabouts dropped from plazas (they jammed by day 4)
 [ ] - corner lots levelled to their front street can stand above a side street (left open by fix/terrain-cut)
+[ ] - about 100 cyclists stuck at one point beside a 5-arm signalised junction in a generated city (riders waiting on each other at crossings, world/riders.rs); seen by feat/tools
+[ ] - new economy building styles (Mechanic, FishStickFactory, ArtStudio) put windows in their frame's plane (coplanar test failing on main)   → economy agent fixing
 [ ] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)
 
 ### Agent waves (4–5 at a time)
-- Merged: fix/flags, feat/kerbs, feat/look, feat/economy
-- Running: feat/camera (section B), feat/identity (D: tunnel tubes, city name / game id / game history), feat/clarity (section A), feat/land (section C part 2), feat/tools ([ ] road raising, intersection editor, footbridges)
+- Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity
+- Running: feat/events (C3: races, raves, infrastructure decay), feat/camera (section B), feat/clarity (section A), feat/land (section C part 2), feat/tools ([ ] road raising, intersection editor, footbridges)
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
-- Next as slots free: C3 events (races, raves) and infrastructure decay · E verify stale statuses
+- Next as slots free: dev-speed pass, then the review pass
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open
