@@ -85,14 +85,14 @@
 [x] - lane markings read dark grey in daylight; gore hatching hard to see; tunnel ramp crossing rail at a slope   → DONE: markings checked white in daylight (Paint brightens by day); the gore is paved under its hatching (it lay on bare ground) with 0.6 m bright chevrons and solid outlines; a road meeting the railway off grade (a portal ramp part way down) is refused with what would work.
 [x] - long player streets have no intermediate height samples (would change parcel keys)   → DONE without new nodes: per-segment inner height samples every ~30 m (`World::road_inner`), used by cars, lots, the built ground and the street mesh; parcel keys unchanged.
 [x] - tunnels: entrances look like blobs; no walking, parking, RVs on them; cars parked on the ground above a tunnel; guardrails deleted over a tunnel   → DONE: concrete arch portals with a dark mouth; tunnels front nothing (no pavements, walk graph, kerb parking legal or not, RVs); barriers ignore ways at another height.
-[ ] - several people sitting on one park bench overlap; bikes ignore pedestrian rules at junctions   → FOUND, not started.
+[x] - several people sitting on one park bench overlap; bikes ignore pedestrian rules at junctions   → DONE: fixed [fix-sim]: bench seats; cyclists keep the rules; turning cyclists keep to the kerb (main, 2026-10-07).
 
 [x] - zoning outlines hard to see: a bright zoning layer   → DONE: every zoned lot washed in a bright zone colour with a crisp edge (Zoning layer [O]).
 [x] - delivery trucks vanish after the drop-off   → DONE: the same lorry unloads at the kerb for 90 s, then drives to a truck lot, home or out of town; never deleted.
 [x] - cars on one street fed by highway off-ramps seem to jump through it instead of driving it   → FIXED (likely causes; not reproduced): cars were lifted to the road height of their end-of-tick spot while drawn sliding along (hops of up to 6 m on grades), crossed only one short lane per physics step (stood, then sprang ahead), and stopped dead entering a ramp (a 6 m/s junction turn). Please check the street again.
 [x] - cars freezing for hours just after turning onto a roundabout   → DONE (root cause): rings are made of ~9 m pieces; a car moving into the next piece could land on the tail of the car just ahead, the overlap fix shoved the car behind back to the start of its piece, and cars piled up there (ring 2 of the player's city held 107 cars on 490 m, 35 overlapping). Cars now wait at the end of their piece until there is room; a car squeezed back past the start goes back onto the lane behind, and one standing right on another pulls aside and rejoins when there is room. On the player's snapshot the piles clear at once and the selected car drives off.
-[ ] - heavy traffic still packs a busy ring solid now and then (its exits full, entries filling every gap)   → OPEN: going round again at a full exit and capping entries at 60% occupancy were tried on the snapshot and did not help; the jam is city-wide (300+ cars stuck at the morning peak).
-[ ] - land value and long trips to parks/entertainment   → ANSWERED: parks and entertainment only lift value within a straight-line radius (parks 180 m, entertainment 110 m); trip time to them is not counted yet.
+[x] - heavy traffic still packs a busy ring solid now and then (its exits full, entries filling every gap)   → DONE: fixed [fix-traffic] 2026-10-07: swap/zip, solid line before junctions, junction box, ring bail-off, parking give-up, tow cap. FourRingCity stuck cars 5.4 → 0.3. Remaining jams are road design (dead ends, close junctions).
+[x] - land value and long trips to parks/entertainment   → DONE: done [fix-sim]: land value uses walking time to parks and nightlife.
 
 ## From todo3.md (merged October 2026)
 
@@ -120,43 +120,43 @@ Agents are named in brackets; each works in its own worktree.
 
 ## From the October review (docs/REVIEW2.md), open
 
-[ ] - C1: an ambulance on scene when its hospital is removed panics the tick (stale unit key)
-[ ] - H1: any plan edit takes every city vehicle off the road (clear_cars/strand_car)
-[ ] - H2: police stations, hospitals and power plants burn down and are removed outright
-[ ] - H3: incidents whose unit is gone stay active forever (wrecks never towed)
-[ ] - H4: remote API accepts requests from any web page (no Origin/Host check)
-[ ] - medium and low findings: see docs/REVIEW2.md
+[x] - C1: an ambulance on scene when its hospital is removed panics the tick (stale unit key)   → DONE: fixed [fix-services]: stations that go no longer strand their units.
+[x] - H1: any plan edit takes every city vehicle off the road (clear_cars/strand_car)   → DONE: fixed [fix-plan]: plan edits keep traffic and lot keys.
+[x] - H2: police stations, hospitals and power plants burn down and are removed outright   → DONE: fixed [fix-services]: civic fires are repaired, not removed.
+[x] - H3: incidents whose unit is gone stay active forever (wrecks never towed)   → DONE: fixed [fix-services] and [fix-traffic]: orphaned incidents close; tows capped and always dispatched.
+[x] - H4: remote API accepts requests from any web page (no Origin/Host check)   → DONE: fixed [fix-app]: Host/Origin checks, JSON content type, paths confined.
+[~] - medium and low findings (docs/REVIEW2.md): fixed per merged commits M1, M2, M3, M5, M6, M8–M11, M13–M15; still unverified M4 (async mind answers mid-trip), M7 (removed bus stop teleports bus), M12 (full_rebuild cleared early) and the LOW list
 
 
 ## From todo4.md (merged October 2026)
 
 Agents in brackets. Items extending running work went to those agents.
 
-[ ] - "tow car": click any car to boot it (orange wheel clamp), it can't move until towed, owner pays and is annoyed; traffic drives round it   → IN PROGRESS [gameplay]
-[ ] - solar farms sometimes show as a green building; make them futuristic: dense dark-blue hexagonal/octagonal panels that track the sun   → IN PROGRESS [power]
-[ ] - power pane: each plant's output over time, upkeep, power cost, air and noise pollution   → IN PROGRESS [power]
-[ ] - export surplus power   → IN PROGRESS [power]
-[ ] - battery packs in a few sizes that store and release power; graphs of when they work and how full they are   → IN PROGRESS [power]
-[ ] - car inspector shows the driver and occupants without an extra click; driver competency slider (slow / normal / reckless); cars carrying more than one person (families, dates)   → IN PROGRESS [inspector] (occupants: [gameplay])
-[ ] - tunnel portals look like blobs: concrete arches; tunnels like ramps (no walking, parking, trash, RVs); cars park illegally on the ground above tunnels; tunnels delete highway guardrails above them   → IN PROGRESS [fix-roads]
-[ ] - traffic load layer: all cars light blue, everything else dimmed, x-ray to cars in tunnels   → IN PROGRESS [layers]
-[ ] - crime layer: heat map of crime, police cars and their paths highlighted   → IN PROGRESS [layers]
-[ ] - one Build panel instead of Road/Buildings/Buses/Rail buttons: movable, scalable library tree (buildings, transit, power, services...) with a thumbnail grid and an info pane; no duplicates (rail in one place)   → IN PROGRESS [ui]
-[ ] - Land panel becomes "Map layers": one exclusive active layer (or none) chosen from a core button, always with a key   → IN PROGRESS [ui] (layer rendering: [layers])
-[ ] - benches: several seats, never sitting on each other, full parks send people elsewhere, bench neighbours may become friends   → IN PROGRESS [fix-sim]
-[ ] - adjacent park lots blend into one big park visually (plots stay)   → IN PROGRESS [layers]
-[ ] - ferry ports get one or two remote destinations off the map edge their water reaches; tourists, commuters and residents travel by ferry   → IN PROGRESS [gameplay]
-[ ] - building lights switch on and off together: randomise per light   → IN PROGRESS [layers]
-[ ] - crowds walk single file: path round each other, weave through a jammed crossing when the signal allows   → IN PROGRESS [emergency]
-[ ] - drivers pull over for emergency vehicles; emergency vehicles drive off-law (wrong side, round obstacles); police car chases, a suspect tagged by the police car stops and is arrested   → IN PROGRESS [emergency]
-[ ] - "unusable ground" still shown after zoning a parcel as park   → IN PROGRESS [inspector]
-[ ] - farms labelled "workshops" in the inspector: buildings must look like what they are   → IN PROGRESS [inspector]
-[ ] - building inspector cleanup: zone type, business type and name first; no homes section for businesses; small cash-flow graph; people inside as a grid of named portraits that select the person   → IN PROGRESS [inspector]
-[ ] - save under a name; landing page lists saved games with a map image of each city   → IN PROGRESS [ui]
-[ ] - transit panel: bus lines with buses' positions, edit/delete single stops, distance and time between stops, ridership per line and boardings per stop   → IN PROGRESS [inspector]
-[ ] - a new road deleted a bus depot: roads never delete special buildings; red outline in the preview, implementing refused until moved   → IN PROGRESS [fix-plan]
-[ ] - map view layer: roads like Google Maps with street names, zones lightly tinted, special buildings as labels/pins, buildings and people hidden   → IN PROGRESS [layers]
-[ ] - nights too dark: brighter city glow and light pollution, atmospheric scattering   → IN PROGRESS [layers]
+[x] - "tow car": click any car to boot it (orange wheel clamp), it can't move until towed, owner pays and is annoyed; traffic drives round it   → DONE: merged [gameplay]: orange wheel clamp, owner fined, traffic passes.
+[x] - solar farms sometimes show as a green building; make them futuristic: dense dark-blue hexagonal/octagonal panels that track the sun   → DONE: merged [power]: sun-tracking hex panels.
+[x] - power pane: each plant's output over time, upkeep, power cost, air and noise pollution   → DONE: merged [power]: per-plant table and charts.
+[x] - export surplus power   → DONE: merged [power]: grid export earns money.
+[x] - battery packs in a few sizes that store and release power; graphs of when they work and how full they are   → DONE: merged [power].
+[x] - car inspector shows the driver and occupants without an extra click; driver competency slider (slow / normal / reckless); cars carrying more than one person (families, dates)   → DONE: merged [inspector]/[gameplay]: driver and occupants shown, competency slider, shared rides.
+[x] - tunnel portals look like blobs: concrete arches; tunnels like ramps (no walking, parking, trash, RVs); cars park illegally on the ground above tunnels; tunnels delete highway guardrails above them   → DONE: merged [fix-roads]: arch portals, tunnels traffic-only; parked cars over tunnels and guardrails fixed.
+[x] - traffic load layer: all cars light blue, everything else dimmed, x-ray to cars in tunnels   → DONE: merged [layers].
+[x] - crime layer: heat map of crime, police cars and their paths highlighted   → DONE: merged [layers].
+[x] - one Build panel instead of Road/Buildings/Buses/Rail buttons: movable, scalable library tree (buildings, transit, power, services...) with a thumbnail grid and an info pane; no duplicates (rail in one place)   → DONE: merged [ui]: Build window with library tree, thumbnails, info pane.
+[x] - Land panel becomes "Map layers": one exclusive active layer (or none) chosen from a core button, always with a key   → DONE: merged [ui]: exclusive map layers with a key.
+[x] - benches: several seats, never sitting on each other, full parks send people elsewhere, bench neighbours may become friends   → DONE: merged [fix-sim].
+[x] - adjacent park lots blend into one big park visually (plots stay)   → DONE: merged [layers].
+[x] - ferry ports get one or two remote destinations off the map edge their water reaches; tourists, commuters and residents travel by ferry   → DONE: merged [gameplay].
+[x] - building lights switch on and off together: randomise per light   → DONE: merged [layers]: staggered per light.
+[x] - crowds walk single file: path round each other, weave through a jammed crossing when the signal allows   → DONE: merged [emergency].
+[x] - drivers pull over for emergency vehicles; emergency vehicles drive off-law (wrong side, round obstacles); police car chases, a suspect tagged by the police car stops and is arrested   → DONE: merged [emergency]: pull over, off-law sirens, chases and arrests.
+[x] - "unusable ground" still shown after zoning a parcel as park   → DONE: merged [inspector].
+[x] - farms labelled "workshops" in the inspector: buildings must look like what they are   → DONE: merged [inspector].
+[x] - building inspector cleanup: zone type, business type and name first; no homes section for businesses; small cash-flow graph; people inside as a grid of named portraits that select the person   → DONE: merged [inspector].
+[x] - save under a name; landing page lists saved games with a map image of each city   → DONE: merged [ui]: named saves with map thumbnails and a title screen.
+[x] - transit panel: bus lines with buses' positions, edit/delete single stops, distance and time between stops, ridership per line and boardings per stop   → DONE: merged [inspector].
+[x] - a new road deleted a bus depot: roads never delete special buildings; red outline in the preview, implementing refused until moved   → DONE: merged [fix-plan]: road works never take city structures.
+[x] - map view layer: roads like Google Maps with street names, zones lightly tinted, special buildings as labels/pins, buildings and people hidden   → DONE: merged [layers].
+[x] - nights too dark: brighter city glow and light pollution, atmospheric scattering   → DONE: merged [layers]: night sky glow.
 
 ## Dev speed (after the current agents finish; Harvey asked 2026-10-07)
 - [ ] Build speed: sccache shared across worktrees, rust-lld linker, a fast dev/test profile (keep full release for the playable exe).
@@ -211,7 +211,25 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [ ] - new game asks for a city name (changeable) and makes a unique game id; saves and loads list by city name; autosaves keep a history with a "game history" viewer to mark key moments and revert
 
 ### E. Housekeeping
-[ ] - many todo4 items above still say IN PROGRESS although their branches were merged: verify each in code and mark done or reopen
+[x] - stale IN PROGRESS statuses verified against merged branches and code (2026-10-07)
+
+### Done on main this session (2026-10-06/07)
+[x] - underground view: clicks pick only what it draws; parked cars, trash, stops and bots hidden; surface streets see-through
+[x] - dev cheat: hold the treasury figure 10 s for +$1M
+[x] - crosswalks: drivers stop only at marked crossings; off a crosswalk, emergency braking only and an honest "jaywalker" stop reason
+[x] - terrain no longer buries sloped streets (lanes drawn on their height profile, terrain kept under streets, lot pads stop at the pavement) [fix/terrain-cut]
+[x] - app logo and window/exe icon; FourRingCity save compatibility (padded arrays)
+[x] - off-ramp street "teleport" to the next turn; cars freezing after the right turn into a roundabout; rings of up to three lanes (outer lane for outer arms)
+[x] - flag: cars changing into each other's lane at a roundabout entry; truck turning left from the right lane at a circle (no lane changes near junctions, glide, missed turns re-route) [fix/traffic]
+[x] - flag: 79-car jam behind a "2-hour red light" (really full exits from parking hunters; the stop reason now names the exit) [fix/traffic]
+[x] - flag: cyclist turning right swings into the middle of the road [main]
+[~] - flag: windows z-fighting on Aurora Block (stepped terraces)   → fixed on fix/flags, not merged yet
+[~] - flag: crashed motorcycle in a one-way tunnel waits hours for a tow and blocks traffic; wreck drawn above ground   → IN PROGRESS [fix/flags]
+[~] - heat vision toggled off left motion blur and odd light colours   → waiting for a repro; feat/look must guarantee a clean restore
+[~] - flag: kerbs turn to dirt at corners; curb cuts with tactile paving wanted   → IN PROGRESS [feat/kerbs]
+[~] - realistic example maps (tensor-field street generator, zoned, run as tests)   → IN PROGRESS [feat/mapgen]
+[ ] - corner lots levelled to their front street can stand above a side street (left open by fix/terrain-cut)
+[ ] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)
 
 ### Agent waves (4–5 at a time)
 - Running: fix/flags (wreck/tow plus the tow items from section A), feat/kerbs, feat/mapgen, feat/clarity (section A), feat/look (section D look-dev)
