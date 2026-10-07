@@ -188,3 +188,16 @@ fn older_saves_plants_keep_their_output() {
     let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
     assert_eq!(back.plant_capacity_mw(&back.buildings[coal]), new_mw);
 }
+
+#[test]
+fn a_coal_plant_is_not_put_on_a_strip_along_the_kerb() {
+    let strip = square(0.0, 0.0, 54.0, 12.0);
+    assert!(crate::zoning::site_thickness(&strip) < PowerPlantKind::Coal.min_thickness());
+    assert!(crate::zoning::site_thickness(&square(0.0, 0.0, 24.0, 25.0)) >= PowerPlantKind::Coal.min_thickness(), "a 600 m² square will do");
+    let w = town();
+    for p in unzoned_points(&w) {
+        if let Ok(site) = w.placement_problem_at(Placeable::Plant(PowerPlantKind::Coal), p) {
+            assert!(crate::zoning::site_thickness(&site.outline) >= PowerPlantKind::Coal.min_thickness(), "a coal site at {p} is a strip");
+        }
+    }
+}

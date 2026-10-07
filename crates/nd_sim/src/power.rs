@@ -251,6 +251,18 @@ impl PowerPlantKind {
         }
     }
 
+    /// [plant-scale] How thick a site must be, m: twice its area over its
+    /// perimeter (a 20 by 20 m square is 10, a 54 by 12 m strip 9.8), so a
+    /// coal station is not put on a strip along the kerb. 0: any shape.
+    pub fn min_thickness(self) -> f32 {
+        match self {
+            PowerPlantKind::Coal => 10.0,
+            PowerPlantKind::Nuclear => 13.0,
+            PowerPlantKind::Geothermal => 7.0,
+            _ => 0.0,
+        }
+    }
+
     /// [plant-scale] The range of `size_scale`: (smallest, largest) share of
     /// the nameplate one plant can be. (1, 1) for the fixed-size kinds.
     pub fn size_range(self) -> (f32, f32) {

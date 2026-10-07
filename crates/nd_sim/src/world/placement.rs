@@ -87,7 +87,7 @@ impl World {
         // A parcel big enough on its own is the site, however big: a plant
         // there is no bigger than its kind's largest (`size_scale`) and
         // stands on part of it.
-        if parcel.path_frontage && parcel.area >= need {
+        if parcel.path_frontage && parcel.area >= need && crate::zoning::site_thickness(&parcel.polygon) >= what.min_thickness() {
             return Ok(PlacementSite { lot: None, parcels: vec![i], outline: parcel.polygon.clone(), leaves_zone: None });
         }
         // [plant-scale] Too small on its own (or backland): it joins just
@@ -100,7 +100,7 @@ impl World {
         let Some(me) = near.iter().position(|&k| k == i) else {
             return Ok(PlacementSite { lot: None, parcels: vec![i], outline: parcel.polygon.clone(), leaves_zone: None });
         };
-        let (idx, outline) = grow_site(&polys, me, need, what.max_site_area().max(need), &self.roads);
+        let (idx, outline) = grow_site(&polys, me, need, what.min_thickness(), what.max_site_area().max(need), &self.roads);
         Ok(PlacementSite { lot: None, parcels: idx.iter().map(|&k| near[k]).collect(), outline, leaves_zone: None })
     }
 

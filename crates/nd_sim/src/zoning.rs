@@ -1650,6 +1650,13 @@ fn simplify_collinear(poly: &[Vec2]) -> Vec<Vec2> {
     }
 }
 
+/// [plant-scale] How thick a piece of ground is: twice its area over its
+/// perimeter (a square's half side, a long strip's width).
+pub fn site_thickness(poly: &[Vec2]) -> f32 {
+    let per = perimeter(poly);
+    if per <= 0.0 { 0.0 } else { 2.0 * polygon_area(poly).abs() / per }
+}
+
 /// [plant-scale] A site for a building the player puts on unzoned ground:
 /// parcel `start` joined with as few of its neighbours in `polys` as it
 /// takes to reach `need` square metres with a frontage (a street or a
@@ -1658,8 +1665,9 @@ fn simplify_collinear(poly: &[Vec2]) -> Vec<Vec2> {
 /// (compact sites, not strings of parcels); the joined outline stays one
 /// convex-ish piece. Returns the members (indices into `polys`, sorted) and
 /// the outline; short of `need` when the neighbours run out.
-pub fn grow_site(polys: &[Vec<Vec2>], start: usize, need: f32, cap: f32, roads: &RoadNetwork) -> (Vec<usize>, Vec<Vec2>) {
-    let fronted = |p: &[Vec2]| frontage_width(p, PARCEL_USE, roads).is_some();
+pub fn grow_site(polys: &[Vec<Vec2>], start: usize, need: f32, min_thick: f32, cap: f32, roads: &RoadNetwork) -> (Vec<usize>, Vec<Vec2>) {
+    // [plant-scale] "Fronted" also means thick enough to build on.
+    let fronted = |p: &[Vec2]| frontage_width(p, PARCEL_USE, roads).is_some() && site_thickness(p) >= min_thick;
     let mut members = vec![start];
     let mut outline = polys[start].clone();
     for _ in 0..12 {

@@ -45,10 +45,10 @@ pub const ASSETS_RELOAD: &str = "assets/palette.ron and assets/rules/buildings.r
 
 pub fn power_note(k: PowerPlantKind) -> &'static str {
     match k {
-        PowerPlantKind::Coal => ". Industrial land only. Cheap and steady; the haze drags land value down for hundreds of metres.",
+        PowerPlantKind::Coal => ". Cheap and steady; the haze drags land value down for hundreds of metres.",
         PowerPlantKind::Solar => ". Any lot but parks and civic. Hexagonal panels on trackers that turn to face the sun; clean, but only by day and dimmed by cloud.",
         PowerPlantKind::Wind => ". Any vacant lot. Clean; output follows the wind.",
-        PowerPlantKind::Nuclear => ". Industrial land only. Enormous, steady, expensive, and the neighbours are nervous.",
+        PowerPlantKind::Nuclear => ". Enormous, steady, expensive, and the neighbours are nervous.",
         PowerPlantKind::Hydro => ". On a lot beside a river or stream with a current of 0.8 m/s or more; output follows the current. A weir is built across the water.",
         PowerPlantKind::Tidal => ". On the sea shore. Clean; output rises and falls with the two tides a day.",
         PowerPlantKind::Geothermal => ". Over a geothermal hot spot (yellow ground, steaming vents). Steady; output follows the heat.",

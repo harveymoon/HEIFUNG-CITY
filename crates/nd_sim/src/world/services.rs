@@ -132,6 +132,11 @@ impl World {
         if lot.area() < what.min_area() && !joins {
             return Some(format!("too small: a {} needs {:.0} m² (this lot is {:.0})", what.label(), what.min_area(), lot.area()));
         }
+        // [plant-scale] A heavy plant is not put on a strip along the kerb.
+        let thick = crate::zoning::site_thickness(&lot.polygon);
+        if thick < what.min_thickness() {
+            return Some(format!("too narrow: a {} needs ground about {:.0} m deep and wide (this is a strip {:.0} m across)", what.label(), what.min_thickness() * 2.0, thick * 2.0));
+        }
         if let Placeable::Plant(k) = what {
             if let Err(e) = self.power_site_on(lot, k) {
                 return Some(e);

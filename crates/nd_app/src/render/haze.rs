@@ -27,10 +27,10 @@ const PLUME_LIFE: f32 = 36.0;
 /// Alpha steps the puff materials come in.
 const ALPHA_STEPS: usize = 12;
 /// Most opaque a plume puff gets (at full output, just out of the stack).
-const PLUME_ALPHA: f32 = 0.85;
+const PLUME_ALPHA: f32 = 0.92;
 /// Plume colour: [plant-scale] a dark sooty grey, heavy against the sky
 /// (still lighter than the black plant under it).
-const PLUME_RGB: [f32; 3] = [0.30, 0.285, 0.27];
+const PLUME_RGB: [f32; 3] = [0.19, 0.18, 0.17];
 /// Steam from a coal station's cooling towers: white.
 const STEAM_RGB: [f32; 3] = [0.86, 0.87, 0.9];
 const STEAM_ALPHA: f32 = 0.7;
@@ -147,8 +147,11 @@ pub(super) fn sync_haze(
         for (i, h) in state.materials.iter().enumerate() {
             let (rgb, top) = [(PLUME_RGB, PLUME_ALPHA), (SMOG_RGB, SMOG_ALPHA), (STEAM_RGB, STEAM_ALPHA)][(i / ALPHA_STEPS).min(2)];
             let a = top * ((i % ALPHA_STEPS) + 1) as f32 / ALPHA_STEPS as f32;
+            // [plant-scale] At night the stack smoke picks up the furnace
+            // and sodium glow from below: a dim rust-orange.
+            let warm = if i < ALPHA_STEPS { (1.0 - light) * 0.07 } else { 0.0 };
             if let Some(mut m) = materials.get_mut(h) {
-                m.base_color = Color::linear_rgba(rgb[0] * light, rgb[1] * light * 0.97, rgb[2] * light * 0.92, a);
+                m.base_color = Color::linear_rgba(rgb[0] * light + warm, rgb[1] * light * 0.97 + warm * 0.4, rgb[2] * light * 0.92 + warm * 0.1, a);
             }
         }
     }
@@ -238,7 +241,7 @@ pub(super) fn sync_haze(
                 let (size, alpha) = if vent.steam {
                     (vent.r * 1.6 + 40.0 * age.powf(0.7), smoothstep(0.0, 0.05, age) * (1.0 - age).powf(2.4))
                 } else {
-                    (5.0 * girth + 44.0 * girth.sqrt() * age.powf(0.8), smoothstep(0.0, 0.06, age) * (1.0 - age).powf(1.2))
+                    (6.0 * girth + 54.0 * girth.sqrt() * age.powf(0.75), smoothstep(0.0, 0.05, age) * (1.0 - age).powf(1.1))
                 };
                 (pos, size, alpha, if vent.steam { 2 } else { 0 })
             }

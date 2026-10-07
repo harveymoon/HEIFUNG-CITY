@@ -13,10 +13,10 @@ use rand::Rng;
 // ── coal: a station composed of units, not stretched ─────────────────────
 
 /// [plant-scale] Near-black, sooty materials of the coal station.
-const SOOT_CONCRETE: [f32; 3] = [0.085, 0.08, 0.078];
-const BLACK_STEEL: [f32; 3] = [0.06, 0.062, 0.068];
-const COAL_BLACK: [f32; 3] = [0.022, 0.021, 0.024];
-const RUST_DARK: [f32; 3] = [0.19, 0.08, 0.04];
+const SOOT_CONCRETE: [f32; 3] = [0.034, 0.032, 0.031];
+const BLACK_STEEL: [f32; 3] = [0.022, 0.023, 0.026];
+const COAL_BLACK: [f32; 3] = [0.012, 0.011, 0.013];
+const RUST_DARK: [f32; 3] = [0.075, 0.03, 0.017];
 /// Firelight through the boiler house slits: a dim orange glow.
 const EMBER: [f32; 3] = [1.6, 0.42, 0.07];
 
@@ -292,11 +292,11 @@ fn boiler_house(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, h: Vec2,
     let f = &c.frame;
     let body = rect(p.x, p.y, h.x, h.y);
     let tone = rng.random_range(0.85..1.2);
-    extrude(g, f, Metal, &body, 0.0, bh, mul(BLACK_STEEL, tone));
+    extrude(g, f, Matte, &body, 0.0, bh, mul(BLACK_STEEL, tone));
     extrude(g, f, Concrete, &rect(p.x, p.y, h.x + 0.3, h.y + 0.3), 0.0, 3.0, mul(SOOT_CONCRETE, 1.2));
     // Penthouse and the fans on the roof.
     let ph = rect(p.x + rng.random_range(-1.0..1.0), p.y, h.x * 0.6, h.y * 0.5);
-    extrude(g, f, Metal, &ph, bh, bh + 3.5, mul(BLACK_STEEL, 0.8));
+    extrude(g, f, Matte, &ph, bh, bh + 3.5, mul(BLACK_STEEL, 0.8));
     for k in 0..2 {
         let q = Vec2::new(p.x + (k as f32 - 0.5) * h.x * 0.9, p.y - h.y * 0.6);
         vent_stack(g, f, q, bh, 0.5, 2.5, mul(BLACK_STEEL, 0.7));
@@ -338,7 +338,7 @@ fn boiler_house(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, h: Vec2,
 fn cooling_tower(g: &mut Geometry, f: &super::Frame, p: Vec2, rb: f32, th: f32) {
     let w = f.to_world(p.x, p.y);
     let profile = [(0.0f32, 1.0f32), (0.12, 0.9), (0.3, 0.77), (0.55, 0.64), (0.78, 0.6), (0.92, 0.63), (1.0, 0.66)];
-    let shade = |t: f32| mul(SOOT_CONCRETE, 2.2 - 1.2 * t * t);
+    let shade = |t: f32| mul(SOOT_CONCRETE, 2.6 - 1.6 * t * t);
     for seg in profile.windows(2) {
         let a = MeshData::ngon(w, rb * seg[0].1, 24, 0.0, th * seg[0].0);
         let b = MeshData::ngon(w, rb * seg[1].1, 24, 0.0, th * seg[1].0);
@@ -353,7 +353,8 @@ pub fn coal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
     let lay = coal_layout(&c.lot_poly, c.seed, c.plant_scale);
-    let yard = yard(g, c, 0.5, Asphalt, mul(pal.asphalt, 0.7));
+    // Ground black with coal dust.
+    let yard = yard(g, c, 0.5, Dirt, [0.03, 0.028, 0.027]);
     // Coal heaps: long black windrows on their own dust.
     for &(p, h, hh) in &lay.heaps {
         let dust: Vec<Vec2> = (0..16)
@@ -398,7 +399,7 @@ pub fn coal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Turbine hall: long and low, a monitor along the roof glowing dimly.
     if let Some((p, h, th)) = lay.turbine {
         let hall = rect(p.x, p.y, h.x, h.y);
-        extrude(g, f, Metal, &hall, 0.0, th, mul(BLACK_STEEL, 1.3));
+        extrude(g, f, Concrete, &hall, 0.0, th, mul(SOOT_CONCRETE, 1.1));
         cornice(g, c, &hall, th - 0.4, 0.8, 0.25, Metal, mul(BLACK_STEEL, 0.7));
         let monitor = rect(p.x, p.y, h.x * 0.85, h.y * 0.22);
         extrude(g, f, Metal, &monitor, th, th + 1.8, mul(BLACK_STEEL, 0.9));
@@ -435,7 +436,7 @@ pub fn coal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         let a = f.at(foot.x, 3.0, foot.y);
         let top = f.at(side.x, bh - 3.0, side.y);
-        g.part(Metal).beam(a, top, 2.0, rgba(mul(RUST_DARK, 0.8)));
+        g.part(Metal).beam(a, top, 1.5, rgba(mul(RUST_DARK, 0.9)));
         f.bx(g, Metal, foot.x, 2.0, foot.y, Vec3::new(3.0, 4.0, 3.0), mul(BLACK_STEEL, 1.1));
         let n = ((a.distance(top) / 12.0).floor() as i32).max(1);
         for k in 1..=n {

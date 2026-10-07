@@ -53,7 +53,10 @@ pub fn lay_city(world: &mut World, plan: &CityPlan) -> LaidCity {
     // A starting town has the money for its plant.
     world.economy.treasury = world.economy.treasury.max(150_000.0);
     if !world.buildings.values().any(|b| b.plant.is_some()) {
-        let lot = world.lots.iter().filter(|(_, l)| l.usable() && l.car_access() && l.land_use == LandUse::Industrial && l.building.is_none() && l.area() >= 600.0).max_by(|a, b| a.1.area().total_cmp(&b.1.area()).then(b.1.center.x.total_cmp(&a.1.center.x))).map(|(id, _)| id);
+        // [plant-scale] A standard-size plant: the lot nearest the coal
+        // plant's reference area (a bigger lot would be a bigger, dearer one).
+        let off = |a: f32| (a - nd_sim::power::COAL_REFERENCE_AREA).abs();
+        let lot = world.lots.iter().filter(|(_, l)| l.usable() && l.car_access() && l.land_use == LandUse::Industrial && l.building.is_none() && l.area() >= PowerPlantKind::Coal.min_area()).min_by(|a, b| off(a.1.area()).total_cmp(&off(b.1.area())).then(b.1.center.x.total_cmp(&a.1.center.x))).map(|(id, _)| id);
         if let Some(lot) = lot {
             let _ = world.build_power(lot, PowerPlantKind::Coal);
         }

@@ -678,6 +678,15 @@ impl Placeable {
         }
     }
 
+    /// [plant-scale] How thick its site must be (twice the area over the
+    /// perimeter), m; 0 for any shape.
+    pub fn min_thickness(self) -> f32 {
+        match self {
+            Placeable::Plant(k) => k.min_thickness(),
+            _ => 0.0,
+        }
+    }
+
     /// [plant-scale] Most unzoned ground free placement joins into a site
     /// for it, m²: a plant's [`crate::power::PowerPlantKind::max_area`],
     /// for anything else three times what it needs (a works yard at least).
