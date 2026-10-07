@@ -234,9 +234,12 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 [x] - a 10k-person city (saves/land_day18.ron on feat/land) loses about 400 people a day with homes free and no unemployment; not caused by buyouts (land market off: same). Suspect the power shortage (~80% supply); investigate   → DONE [fix/review]: not power. ~400/day left over hunger: 1,000+ cyclists stood for good at a five-arm signalised junction (a rider obeyed a neighbouring arm's light too) and never got home to eat. Fixed in world/riders.rs; leave reasons now counted (economy.emigrated_by) and shown in the People window and the remote report.
 [x] - Â· mojibake in the personality line of the citizen inspector (a "·" double-encoded)   → DONE [fix/review]: the inspector strings were already clean (d8dbe8d); last mojibake comments re-encoded; tests/source_encoding.rs guards it.
 
+[ ] - metro lines aren't self-explanatory: the metro tool switches to a Metro map layer with highlighted stations; build a line by clicking stations in order, with step hints   → IN PROGRESS [feat/metro-ux]
+[ ] - flag: a raised bridge over a highway shows blue in the plan but implement refuses "no room for a pillar" (the implement check ignores the downramp to a ground junction); refusals must show red at the spot first   → IN PROGRESS [feat/tools follow-up]
+
 ### Agent waves (4–5 at a time)
 - Merged: fix/flags, feat/kerbs, feat/look, feat/economy, feat/identity, feat/tools, feat/camera, feat/land, feat/events, fix/review
-- Running: feat/clarity (section A), feat/tools follow-up (pillar check must match the preview; Harvey's bridge)
+- Running: feat/metro-ux (metro line tool), feat/clarity (section A), feat/tools follow-up (pillar check must match the preview; Harvey's bridge)
 - Builds go to O:/nd_targets/<branch> (drive C: filled up on 2026-10-07)
 - Next as slots free: dev-speed pass, then the review pass
 - After all: dev-speed pass (sccache config, rust-lld, CLAUDE.md, LSP), then a review pass of everything still open
