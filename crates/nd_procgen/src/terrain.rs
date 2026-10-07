@@ -566,9 +566,12 @@ fn underpasses(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32;
 }
 
 /// Roads the player raised off the ground: a deck the width of the road
-/// and its pavements under the street mesh, parapets and rails, and a
-/// column on a footing every 24 m or so wherever the deck stands clear of
-/// the ground (a ramp runs down onto it at the end).
+/// and its pavements under the street mesh, parapets and rails, and the
+/// concrete columns under it. A way the player drew raised stands on the
+/// columns placed for it (`World::pillars`: shifted along it to clear the
+/// roads and buildings underneath); a way hoisted by the grading alone (a
+/// highway lifted over a street) gets one every 24 m or so wherever the
+/// deck stands clear of the ground.
 pub fn viaducts(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32; 3]) {
     let roads = &world.roads;
     for (sid, seg) in roads.alive_segments() {
@@ -581,8 +584,43 @@ pub fn viaducts(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32
         // Highways and ramps have no pavements: the deck is the lanes and shoulders.
         let motorway = seg.is_motorway() || seg.ring;
         let hw = seg.half_width() + if seg.is_street() && !motorway { nd_sim::zoning::SIDEWALK } else { 0.6 };
-        viaduct_span(g, a, b, za, zb, hw, &|p| world.ground_height(p), concrete, steel, true);
+        let planned = roads.node(seg.a).level.max(roads.node(seg.b).level) >= nd_sim::roads::VIADUCT_LEVEL && !world.pillars.is_empty();
+        viaduct_span(g, a, b, za, zb, hw, &|p| world.ground_height(p), concrete, steel, !planned);
     }
+    for p in &world.pillars {
+        // The deck over it: the raised way it carries, nearest first.
+        let deck = roads
+            .segments_in_box(p.at - Vec2::splat(p.half_width + 2.0), p.at + Vec2::splat(p.half_width + 2.0))
+            .filter(|&s| roads.segment(s).viaduct)
+            .map(|s| {
+                let (a, b) = roads.segment_points(s);
+                let (t, q) = nd_sim::roads::project_on_segment(p.at, a, b);
+                (s, t, q.distance(p.at))
+            })
+            .filter(|&(_, _, d)| d < p.half_width)
+            .min_by(|x, y| x.2.total_cmp(&y.2));
+        let Some((sid, t, _)) = deck else { continue };
+        let top = world.road_height(sid, t) - 1.2;
+        let foot = world.ground_height(p.at);
+        pillar_column(g, p.at, p.dir, top, foot, p.half_width, concrete);
+    }
+}
+
+/// One column on its footing from the ground at `foot` up to the deck's
+/// underside at `top`, with a crosshead under the deck (`hw` its half
+/// width) lying across the way (`dir` along it).
+pub fn pillar_column(g: &mut Geometry, at: Vec2, dir: Vec2, top: f32, foot: f32, hw: f32, concrete: [f32; 3]) {
+    use glam::Vec3;
+    if top - foot < 1.0 {
+        return;
+    }
+    let yaw = dir.y.atan2(dir.x);
+    let w = (hw * 0.35).clamp(1.2, 3.0);
+    g.part(Surface::Concrete).boxed(Vec3::new(at.x, (top + foot) * 0.5, at.y), Vec3::new(1.6, top - foot, w), -yaw, rgba(mul(concrete, 0.8)));
+    // The footing, just showing above the ground.
+    g.part(Surface::Concrete).boxed(Vec3::new(at.x, foot + 0.15, at.y), Vec3::new(2.6, 0.3, w + 1.0), -yaw, rgba(mul(concrete, 0.7)));
+    // A crosshead under the deck.
+    g.part(Surface::Concrete).boxed(Vec3::new(at.x, top - 0.35, at.y), Vec3::new(1.9, 0.7, hw * 1.7), -yaw, rgba(mul(concrete, 0.85)));
 }
 
 /// What shows of the tunnels: a portal frame where each tunnel comes out
@@ -765,7 +803,8 @@ const PORTAL_HOLD: f32 = nd_sim::landscape::PORTAL_HOLD;
 /// `hw` either side of the centreline, standing on `ground`. Shared with
 /// the plan preview.
 #[allow(clippy::too_many_arguments)]
-pub fn viaduct_span(g: &mut Geometry, a: Vec2, b: Vec2, za: f32, zb: f32, hw: f32, ground: &dyn Fn(Vec2) -> f32, concrete: [f32; 3], steel: [f32; 3], parapets: bool) {
+pub fn viaduct_span(g: &mut Geometry, a: Vec2, b: Vec2, za: f32, zb: f32, hw: f32, ground: &dyn Fn(Vec2) -> f32, concrete: [f32; 3], steel: [f32; 3], columns: bool) {
+    let parapets = true;
     use glam::Vec3;
     let len = a.distance(b);
     if len < 0.3 {
@@ -784,7 +823,11 @@ pub fn viaduct_span(g: &mut Geometry, a: Vec2, b: Vec2, za: f32, zb: f32, hw: f3
         }
     }
     // Columns where the deck stands clear of the ground, one at each end
-    // too unless the end is near the ground (a ramp foot).
+    // too unless the end is near the ground (a ramp foot): only for a deck
+    // whose columns were not placed for it (`World::pillars`).
+    if !columns {
+        return;
+    }
     let spans = (len / 24.0).ceil().max(1.0) as i32;
     let yaw = dir.y.atan2(dir.x);
     for k in 0..=spans {

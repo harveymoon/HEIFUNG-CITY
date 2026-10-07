@@ -46,6 +46,7 @@ mod haze;
 mod heat;
 /// Planned roads as holograms of the real thing; the depth view.
 mod holo;
+mod junction_view;
 mod layers;
 mod lights;
 /// [look] Graphics quality, camera effects (SSAO, TAA, volumetric fog,
@@ -460,6 +461,10 @@ impl Plugin for RenderPlugin {
         // After every renderer, before the UI (which may load a city and set
         // the flag again for the next frame's renderers).
         app.add_systems(Update, clear_full_rebuild.after(SimSet::Sync));
+        // [tools] Footbridges, and the Intersection editor's road view.
+        app.init_resource::<junction_view::JunctionCam>()
+            .add_systems(Update, (junction_view::sync_footbridges.after(sync_roads).before(lift_spawned), junction_view::sync_junction_camera).in_set(SimSet::Sync))
+            .add_systems(PostUpdate, junction_view::tag_road_layers);
     }
 }
 
@@ -1870,7 +1875,9 @@ fn sync_citizens(
         let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
         let heading = lerp_angle(c.prev_heading, c.heading, f);
         let seated = matches!(c.activity, nd_sim::Activity::Sitting { .. });
-        tf.translation = Vec3::new(pos.x, if seated { 0.02 } else { 0.16 }, pos.y);
+        // [tools] Up the stairs and over a footbridge (a raised walkway).
+        let raised = w.walker_level(c, pos);
+        tf.translation = Vec3::new(pos.x, if seated { 0.02 } else { 0.16 } + raised, pos.y);
         tf.rotation = Quat::from_rotation_y(-heading);
         tf.scale = if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE } * stature;
         looks.insert(key);

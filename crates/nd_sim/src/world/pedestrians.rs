@@ -11,7 +11,7 @@
 
 use super::*;
 use crate::citizens::{driver_traits, DRUNK};
-use crate::pedestrians::{gap_needed, hash01, jaywalk_chance, CrossingInfo, PedIncident, Walker, CROWD, CROWD_SPACE, CRUSH_SPILL, JAM_CRAWL, KEEP_INCIDENTS, KEEP_SPREAD, KERB_MARGIN, LAWFUL_GAP, OPEN_ROOM, PACE, PERSONAL_SPACE, SIDESTEP_MAX, HURT_SPEED};
+use crate::pedestrians::{ButtonLight, gap_needed, hash01, jaywalk_chance, CrossingInfo, PedIncident, Walker, CROWD, CROWD_SPACE, CRUSH_SPILL, JAM_CRAWL, KEEP_INCIDENTS, KEEP_SPREAD, KERB_MARGIN, LAWFUL_GAP, OPEN_ROOM, PACE, PERSONAL_SPACE, SIDESTEP_MAX, HURT_SPEED};
 use crate::traffic::{Hold, LaneId};
 use crate::walk::{CrossingKind, CROSSWALK_HALF};
 use std::collections::BTreeMap;
@@ -39,6 +39,8 @@ pub(super) struct Feet {
     /// Walk calls per intersection and approach.
     pub(super) calls: Vec<Vec<bool>>,
     waiting: u32,
+    /// [tools] Push-button crossings someone pressed the button of.
+    presses: Vec<u32>,
 }
 
 fn cell(p: Vec2) -> (i32, i32) {
@@ -84,7 +86,11 @@ impl World {
             }
         }
         let calls = self.traffic.net.intersections.iter().map(|i| vec![false; i.approaches]).collect();
-        Feet { grid, riders_waiting: 0, queue: HashMap::new(), occupied: Vec::new(), calls, waiting: 0 }
+        if self.peds.buttons_key != self.walk.version {
+            self.peds.buttons.clear();
+            self.peds.buttons_key = self.walk.version;
+        }
+        Feet { grid, riders_waiting: 0, queue: HashMap::new(), occupied: Vec::new(), calls, waiting: 0, presses: Vec::new() }
     }
 
     /// After the walkers moved: the crossings in use become stop points for
@@ -112,6 +118,36 @@ impl World {
                 }
             }
         }
+        // [tools] Push-button crossings: a press starts the cycle; while
+        // the light is red, traffic stops before the crossing whether or
+        // not anyone is on it yet.
+        let dt = self.config.traffic_seconds_per_tick;
+        for &cr in &feet.presses {
+            let light = self.peds.buttons.entry(cr).or_default();
+            let was = *light;
+            *light = light.press();
+            if was == ButtonLight::Idle {
+                self.peds.button_presses_total += 1;
+            }
+        }
+        let mut reds = 0;
+        for (&cr, light) in self.peds.buttons.iter_mut() {
+            if light.step(dt) {
+                reds += 1;
+            }
+            if light.red() {
+                if let Some(info) = self.peds.crossings.get(cr as usize) {
+                    for &(lane, s) in &info.lanes {
+                        let v = holds.entry(lane).or_default();
+                        if !v.iter().any(|h| h.crossing == cr) {
+                            v.push(Hold { s, depth: HOLD_DEPTH, crossing: cr });
+                        }
+                    }
+                }
+            }
+        }
+        self.peds.buttons.retain(|_, l| *l != ButtonLight::Idle);
+        self.peds.button_reds_total += reds;
         self.peds.occupants = occ;
         self.peds.waiting_now = feet.waiting;
         self.peds.riders_waiting_now = feet.riders_waiting;
@@ -122,6 +158,13 @@ impl World {
     /// Match the walk graph's crossings to the lane network: which are
     /// signalised (and across which approach), and where each lane meets
     /// them. Also the stop lines before signalised crosswalks.
+    /// [tools] `refresh_crossings` now, after junction signals or the
+    /// crossings changed without a rebuild of either network.
+    pub(super) fn refresh_crossings_now(&mut self) {
+        self.peds.key = (u64::MAX, u64::MAX);
+        self.refresh_crossings();
+    }
+
     fn refresh_crossings(&mut self) {
         let key = (self.walk.version, self.traffic.net.version);
         if self.peds.key == key && self.peds.crossings.len() == self.walk.crossings.len() {
@@ -170,6 +213,11 @@ impl World {
             }),
         );
         self.traffic.peds.stop_lines = stop_lines;
+    }
+
+    /// [tools] The light of push-button crossing `cr` for traffic.
+    pub fn button_light(&self, cr: u32) -> ButtonLight {
+        self.peds.buttons.get(&cr).copied().unwrap_or_default()
     }
 
     /// [services] A siren vehicle is coming up to crossing `cr`: walkers
@@ -270,14 +318,17 @@ impl World {
     fn may_cross(&self, id: CitizenId, w: &Walker, cr: u32, since: u64, late: bool) -> Option<bool> {
         let crossing = &self.walk.crossings[cr as usize];
         let signal = self.peds.crossings.get(cr as usize).and_then(|i| i.signal);
+        let button = crossing.button && signal.is_none();
         let lawful = match (crossing.kind, signal) {
             (CrossingKind::Jay, _) => false,
             (_, Some((k, ap))) => self.traffic.peds.walk_shown(k as usize, ap as usize),
+            // [tools] A push-button crossing: across on the walk light.
+            _ if button => self.button_light(cr).walk(),
             _ => true,
         };
         // With the walk light on, a jam standing or crawling across the
         // crossing is walked through (between the cars), not waited for.
-        let gap = self.crossing_gap(cr, if lawful && signal.is_some() { JAM_CRAWL } else { 0.5 });
+        let gap = self.crossing_gap(cr, if lawful && (signal.is_some() || button) { JAM_CRAWL } else { 0.5 });
         if lawful && crossing.marked() {
             // Look first: nobody too close to stop.
             return (gap >= LAWFUL_GAP).then_some(false);
@@ -440,6 +491,10 @@ impl World {
                 if let Some(x) = feet.calls.get_mut(k as usize).and_then(|v| v.get_mut(ap as usize)) {
                     *x = true;
                 }
+            } else if crossing.button {
+                // [tools] Press the button and wait for the light: drivers
+                // do not give way to someone waiting here.
+                feet.presses.push(cr);
             } else if crossing.marked() && !self.siren_at_crossing(cr) {
                 // About to step onto a zebra: drivers give way (but not to
                 // someone standing back for lights and sirens).

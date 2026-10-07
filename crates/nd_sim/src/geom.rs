@@ -554,3 +554,13 @@ mod tests {
         assert!(Grid::new(10.0, std::iter::empty()).nearest(Vec2::ZERO, |_| 0.0).is_none());
     }
 }
+
+/// Shortest distance between segments `p0`-`p1` and `q0`-`q1` (0 when
+/// they cross).
+pub fn segment_distance_between(p0: Vec2, p1: Vec2, q0: Vec2, q1: Vec2) -> f32 {
+    if crate::roads::segment_intersection(p0, p1, q0, q1).is_some() {
+        return 0.0;
+    }
+    let d = |p: Vec2, a: Vec2, b: Vec2| project_on_segment(p, a, b).1.distance(p);
+    d(p0, q0, q1).min(d(p1, q0, q1)).min(d(q0, p0, p1)).min(d(q1, p0, p1))
+}

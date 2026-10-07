@@ -26,6 +26,7 @@ mod guard;
 mod history;
 /// [identity] `city_name` and `game_history`.
 mod identity;
+mod junction;
 mod land;
 mod list;
 mod map;
@@ -538,6 +539,14 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             ctx.sim.world.economy.treasury += amount;
             Ok(json!({ "treasury": round(ctx.sim.world.economy.treasury) }))
         }
+        "walk_to" => {
+            // Dev: send a citizen out on foot (to try crossings and footbridges).
+            let id = key_from(field(cmd, "citizen").ok_or("missing field \"citizen\": id")?)?;
+            let to = opt_vec2(cmd, "to")?.ok_or("missing field \"to\": [x, y]")?;
+            let from = opt_vec2(cmd, "from")?;
+            let n = ctx.sim.world.dev_walk(id, from, to)?;
+            Ok(json!({ "citizen": key_str(id), "route_points": n }))
+        }
         "list_saves" => Ok(list_saves()),
         "plan" => Ok(plan(ctx)),
         "add_road" => add_road(cmd, ctx),
@@ -573,6 +582,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "find" => find(cmd, ctx),
         "inspect" => inspect(cmd, ctx),
         "lane_use" => lane_use(cmd, ctx),
+        "intersection" => junction::command(cmd, &mut ctx.sim.world, &mut ctx.tools),
         // [boot] Clamp a private car and have it towed: `car` (on the road:
         // it pulls over first) or `vehicle` (its record, parked or driving).
         "tow_car" | "tow" | "boot" => {
@@ -880,6 +890,7 @@ fn tool_state(t: &ToolState) -> Value {
         "transit_mode": transit_mode_name(t.transit_mode), "route": opt_key(t.route_sel), "show_routes": t.show_routes,
         "pending_points": t.points.len(), "selected_gesture": t.selected_gesture.map(|g| g.0), "status": t.status,
         "elevation": t.elevation, "elevation_label": crate::tools::elevation_label(t.elevation), "point_levels": t.levels(), "tunnel": t.tunnel, "depth": t.depth.label(), "grade_warnings": t.grade_warnings,
+        "pillars": junction::pillars_json(&t.pillars), "intersection_editor": t.junction_editor.as_ref().map(|e| v2(e.at)),
     })
 }
 
@@ -2457,6 +2468,8 @@ fn help() -> Value {
     v["commands"]["parking_price"] = json!({ "building": "id of a parking lot the city runs", "price": "the fee, 0..50", "returns": "building, price (as set, clamped)" });
     v["commands"]["flags"] = json!({ "since": "flag id: only newer ones", "clear": "bool: empty the list after reading" });
     v["commands"]["flag"] = json!({ "note": "text: flag the current selection, as F8 does in game" });
+    v["commands"]["walk_to"] = json!({ "citizen": "id", "to": "[x,y]", "from": "[x,y] (default: where they are)", "note": "dev: sends the citizen out on foot by the walk graph (footbridges included)" });
+    v["commands"]["intersection"] = json!({ "at": "[x,y] near a junction or crosswalk (default: the editor's)", "signal": "auto|signals|none", "greens": "[seconds per phase, ...] (phases as listed) or \"default\"", "left_arrow": "auto|always|never", "arrow_seconds": "3..30", "left_turns": "bool: allow (true) or forbid every left", "no_left": "[approach index or [x,y], ...]: approaches with the left forbidden (the rest allowed)", "approach": "index or [x,y] (with lanes)", "lanes": "[\"L\", \"S+R\", ...] leftmost first, or \"reset\"", "crossing": "index or [x,y]", "upgrade": "none|button|footbridge (with crossing)", "open": "bool: show the Intersection editor modal", "close": "bool", "select_approach": "index (open)", "select_crossing": "walk crossing index (open)", "returns": "intersection: at, signalized, rule, approaches (lanes, offered, left_forbidden), phases (green_s, running), crossings (upgrade, signalised, button_light); done; editor_open" });
     v["commands"]["society"] = json!({ "action": "report (default)|evict|offend|trash", "building": "id (evict: its households go on the street; offend: the target; trash: one building's bins)", "citizen": "id (offend)", "kind": "theft|burglary|assault|murder|vandalism (offend, with building)", "kg": "trash to add, default 100" });
     // Planning: several projects, and painting parcels.
     let planning = json!({

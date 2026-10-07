@@ -346,6 +346,9 @@ pub fn citizen_detail(w: &World, id: CitizenId, c: &Citizen, favourite: bool) ->
         "thought": c.thought, "spotlight": c.spotlight, "favourite": favourite,
         "memories": c.memories.iter().rev().map(|m| { let mut t = tick_time(m.tick); t["text"] = json!(m.text); t }).collect::<Vec<_>>(),
     });
+    // [tools] On a raised walkway (a footbridge), how high (outside the
+    // literal above: it is at the json! macro's recursion limit).
+    v["raised_level"] = json!(round(w.walker_level(c, c.pos)));
     v["appearance"] = appearance(c);
     v
 }
