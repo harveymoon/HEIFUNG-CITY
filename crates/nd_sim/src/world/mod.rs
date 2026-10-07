@@ -93,6 +93,11 @@ mod trips;
 mod water;
 mod ferry;
 mod rides;
+// [economy] business pressure, the new trades, the waterfront and the art scene
+mod pressure;
+mod waterfront;
+#[cfg(test)]
+mod economy_tests;
 
 use crate::buildings::{Building, BuildingId, Construction, Tier};
 use crate::citizens::{Activity, Citizen, CitizenId, Household, HouseholdId, Purpose};
@@ -131,6 +136,7 @@ use crate::landscape::{Ground, Landscape, LandscapeParams};
 use crate::ports::Ports;
 pub use industry_bridge::INDUSTRY_CHOICES;
 pub use districts::{DistrictStats, PolicyChange};
+pub use pressure::{artist_seed, is_artist, BusinessStory};
 
 /// A parcel that loses or gains more than this share of its area under a
 /// building is treated as a new parcel: the building goes.
@@ -498,6 +504,14 @@ pub struct World {
     /// settings live with the traffic (`Traffic::junction_rules`).
     #[serde(default)]
     pub crosswalks: crate::junctions::Crosswalks,
+    /// [economy] Business pressure: the city's needs, read daily, and the
+    /// trades opened to meet them (`crate::pressure`, `world/pressure.rs`).
+    #[serde(default)]
+    pub pressure: crate::pressure::PressureState,
+    /// [economy] Waterfront boats, gallery openings and the art scene
+    /// (`world/waterfront.rs`, `world/pressure.rs`).
+    #[serde(default)]
+    pub scene: crate::pressure::Scene,
 }
 
 impl World {
@@ -583,6 +597,8 @@ impl World {
             pillars: Vec::new(),
             pillar_gaps: Vec::new(),
             crosswalks: Default::default(),
+            pressure: Default::default(),
+            scene: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -889,6 +905,8 @@ impl World {
             // [society] crime, the street and the bins settle their day.
             self.daily_society();
             self.daily_update();
+            // [economy] the city's needs read and met, before the vehicles' day rolls
+            crate::prof!("daily_pressure", self.daily_pressure());
             self.daily_vehicles();
             self.industry_daily();
             self.daily_places();
@@ -906,6 +924,8 @@ impl World {
         if tick % 60 == 0 {
             crate::prof!("hourly_economy", self.hourly_economy());
             crate::prof!("industry_hourly", self.industry_hourly());
+            // [economy] repair shops, bike shops, galleries and boats
+            crate::prof!("trades_hourly", self.trades_hourly());
             crate::prof!("record_hour", self.record_hour());
         }
         if tick % 60 == 30 {
@@ -970,6 +990,8 @@ impl World {
         self.step_rail();
         self.step_subway();
         self.step_ships();
+        // [economy] marina and fishing boats out on the water
+        self.step_boats();
         // [ferries] Day trips out, and anyone stranded abroad.
         self.step_ferry_people();
         self.step_cargo_hubs();

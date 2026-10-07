@@ -323,11 +323,12 @@ pub fn citizen_detail(w: &World, id: CitizenId, c: &Citizen, favourite: bool) ->
         "id": key_str(id), "name": c.name, "personality": Personality::from_seed(c.seed).summary(),
         "activity": activity(w, c), "pos": v2(c.pos), "heading": round(c.heading), "visible": c.is_visible(),
         "mode": if c.mode == TravelMode::Bike { "bike" } else { "walk" },
-        "raised_level": round(w.walker_level(c, c.pos)),
         "home": opt_key(c.home), "home_name": building_name(w, c.home),
         "work": opt_key(c.work), "work_name": building_name(w, c.work),
         "inside": opt_key(c.inside), "parked_at": opt_key(c.parked_at),
         "class": c.class().label(), "mood": round(c.mood), "satiety": round(c.satiety),
+        // [economy] an artist's calling (the art scene)
+        "artist": nd_sim::world::is_artist(c),
         "arrived_day": c.arrived_tick / 1440 + 1,
         "income": round(c.income), "rent": round(rent), "savings": round(c.savings), "rent_stress_days": c.rent_stress_days,
         "groceries": round(c.groceries), "hungry_days": c.hungry_days, "owns_car": c.owns_car, "owns_bike": c.owns_bike,
@@ -345,6 +346,9 @@ pub fn citizen_detail(w: &World, id: CitizenId, c: &Citizen, favourite: bool) ->
         "thought": c.thought, "spotlight": c.spotlight, "favourite": favourite,
         "memories": c.memories.iter().rev().map(|m| { let mut t = tick_time(m.tick); t["text"] = json!(m.text); t }).collect::<Vec<_>>(),
     });
+    // [tools] On a raised walkway (a footbridge), how high (outside the
+    // literal above: it is at the json! macro's recursion limit).
+    v["raised_level"] = json!(round(w.walker_level(c, c.pos)));
     v["appearance"] = appearance(c);
     v
 }
@@ -444,6 +448,8 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         })),
         "plant": plant, "depot": b.depot, "rail": rail, "business": business, "park": park,
         "taxis_and_freight": super::taxis::building_extra(w, id),
+        // [economy] why the business is here and how it is doing
+        "story": super::economy::story(w, id),
     })
 }
 
@@ -806,6 +812,10 @@ pub fn placeable_key(p: nd_sim::Placeable) -> String {
         nd_sim::Placeable::Rail(f) => rail_name(f).to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::ShippingPort) => "shipping_port".to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::FerryTerminal) => "ferry_terminal".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::MarinaSmall) => "marina_small".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::MarinaLarge) => "marina_large".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::FishingPortSmall) => "fishing_port_small".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::FishingPortLarge) => "fishing_port_large".to_string(),
         nd_sim::Placeable::ParkingLot(s) => s.key().to_string(),
         nd_sim::Placeable::MetroStation => "metro_station".to_string(),
         nd_sim::Placeable::Toll(s) => s.key().to_string(),

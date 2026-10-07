@@ -21,7 +21,7 @@ fn squash(poly: &[Vec2], axis: Vec2, k: f32) -> Vec<Vec2> {
         .collect()
 }
 
-fn gable_roof(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32, ridge: f32, color: [f32; 3]) {
+pub(super) fn gable_roof(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32, ridge: f32, color: [f32; 3]) {
     let f = &c.frame;
     let front = c.front_face(poly);
     let axis = front.out;
@@ -312,7 +312,7 @@ pub fn factory(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
 }
 
 /// Part of a lot-local polygon between two `v` values.
-fn clip_v(poly: &[Vec2], v0: f32, v1: f32) -> Vec<Vec2> {
+pub(super) fn clip_v(poly: &[Vec2], v0: f32, v1: f32) -> Vec<Vec2> {
     use nd_sim::zoning::clip_halfplane;
     let a = clip_halfplane(poly, Vec2::new(0.0, v0), Vec2::new(0.0, 1.0));
     clip_halfplane(&a, Vec2::new(0.0, v1), Vec2::new(0.0, -1.0))
@@ -604,7 +604,7 @@ fn bands(poly: &[Vec2], width: f32, gap: f32) -> Vec<Vec<Vec2>> {
 }
 
 /// A pitched-roof shed: walls, a gable roof and a door on its front.
-fn shed(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], h: f32, wall: [f32; 3], s: crate::surface::Surface) {
+pub(super) fn shed(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], h: f32, wall: [f32; 3], s: crate::surface::Surface) {
     let f = &c.frame;
     extrude(g, f, s, poly, 0.0, h, wall);
     gable_roof(g, c, poly, h, (inradius(poly) * 0.45).clamp(1.0, 3.5), mul(wall, 0.7));

@@ -146,6 +146,11 @@ pub fn dock_of(s: &str) -> Option<PortKind> {
     match s {
         "port" | "shipping_port" | "harbour" | "harbor" => Some(PortKind::ShippingPort),
         "ferry" | "ferry_terminal" => Some(PortKind::FerryTerminal),
+        // [economy]
+        "marina" | "marina_small" | "small_marina" => Some(PortKind::MarinaSmall),
+        "marina_large" | "large_marina" | "yacht_club" => Some(PortKind::MarinaLarge),
+        "fishing_port" | "fishing_port_small" | "small_fishing_port" | "fish_quay" => Some(PortKind::FishingPortSmall),
+        "fishing_port_large" | "large_fishing_port" | "fishing_harbour" | "fishing_harbor" => Some(PortKind::FishingPortLarge),
         _ => None,
     }
 }

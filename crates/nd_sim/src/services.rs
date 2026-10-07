@@ -609,6 +609,10 @@ impl Placeable {
             Placeable::MetroStation => "Metro station",
             Placeable::Dock(PortKind::ShippingPort) => "Shipping port",
             Placeable::Dock(PortKind::FerryTerminal) => "Ferry terminal",
+            Placeable::Dock(PortKind::MarinaSmall) => "Marina, small",
+            Placeable::Dock(PortKind::MarinaLarge) => "Marina, large (yachts)",
+            Placeable::Dock(PortKind::FishingPortSmall) => "Fishing port, small",
+            Placeable::Dock(PortKind::FishingPortLarge) => "Fishing port, large",
             Placeable::CargoHub => "Cargo hub",
         }
     }

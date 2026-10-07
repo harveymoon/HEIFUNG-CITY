@@ -216,6 +216,8 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             figure(ui, "staff", format!("{}/{}", b.workers.len(), b.jobs), IVORY);
         });
         cashflow(ui, &bz.books, (bz.revenue_today, bz.spend_today));
+        // [economy] why it is here and how it is doing
+        super::pressure::business_story(ui, w, id);
         let recipe = bz.kind.recipe();
         if !recipe.inputs.is_empty() || !recipe.outputs.is_empty() {
             egui::CollapsingHeader::new(egui::RichText::new(format!("stock  ·  {} deals so far", bz.deals)).small()).id_salt(("inspector_stock", id)).show(ui, |ui| {

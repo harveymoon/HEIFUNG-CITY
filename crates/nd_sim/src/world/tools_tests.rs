@@ -495,3 +495,54 @@ fn walkers_on_a_footbridge_never_hold_traffic() {
     assert!(up > 3.0, "the walker climbed onto the bridge: {up}");
     let _ = (car, mid);
 }
+
+/// A save from before this branch (no pillars, junction rules, crosswalk
+/// upgrades or button counts) still loads.
+#[test]
+fn a_save_from_before_the_tools_loads() {
+    let w = crossroads();
+    let text = w.to_ron().unwrap();
+    // Drop each field (its value up to the comma at its own depth).
+    fn drop_field(text: &str, key: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        let pat = format!("{key}:");
+        while let Some(i) = rest.find(&pat) {
+            let before_ok = i == 0 || !rest[..i].ends_with(|c: char| c.is_alphanumeric() || c == '_');
+            if !before_ok {
+                out.push_str(&rest[..i + pat.len()]);
+                rest = &rest[i + pat.len()..];
+                continue;
+            }
+            out.push_str(&rest[..i]);
+            let mut depth = 0i32;
+            let mut end = rest.len();
+            for (j, c) in rest[i..].char_indices() {
+                match c {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' if depth == 0 => {
+                        end = i + j;
+                        break;
+                    }
+                    ')' | ']' | '}' => depth -= 1,
+                    ',' if depth == 0 => {
+                        end = i + j + 1;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            rest = &rest[end..];
+        }
+        out.push_str(rest);
+        out
+    }
+    let mut old = text.clone();
+    for key in ["pillars", "junction_rules", "crosswalks", "button_presses_total", "button_reds_total"] {
+        old = drop_field(&old, key);
+    }
+    assert!(!old.contains("junction_rules") && !old.contains("crosswalks"), "the fields were dropped");
+    let w2 = World::from_ron(&old).expect("an old save loads");
+    assert!(w2.pillars.is_empty() && w2.traffic.junction_rules.is_empty() && w2.crosswalks.rules.is_empty());
+    assert_eq!(w2.roads.alive_segments().count(), w.roads.alive_segments().count());
+}

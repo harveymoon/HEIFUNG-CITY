@@ -976,6 +976,10 @@ pub enum Parked {
     Truck,
     Wreck,
     Bus,
+    /// [economy] Always a garbage truck (trash company yards).
+    GarbageTruck,
+    /// [economy] Always a box-bodied lorry (reefers at fish docks).
+    Lorry,
 }
 
 /// Draw a parked vehicle into building geometry: at world-plane point `at`
@@ -992,6 +996,8 @@ pub fn draw_parked(g: &mut Geometry, pal: &Palette, rng: &mut impl Rng, at: Vec2
         }
         Parked::Van => (if rng.random_bool(0.6) { BodyType::DeliveryVan } else { BodyType::BoxVan }, VehicleClass::Mid, 1, Livery::None),
         Parked::Truck => (if rng.random_bool(0.5) { BodyType::PanelTruck } else { BodyType::GarbageTruck }, VehicleClass::Mid, 1, Livery::None),
+        Parked::GarbageTruck => (BodyType::GarbageTruck, VehicleClass::Mid, 1, Livery::None),
+        Parked::Lorry => (BodyType::PanelTruck, VehicleClass::Mid, 1, Livery::None),
         Parked::Bus => (BodyType::BubbleBus, VehicleClass::Expensive, 0, Livery::Transit),
         Parked::Wreck => (if rng.random_bool(0.5) { BodyType::Sedan } else { BodyType::Hatchback }, VehicleClass::Cheap, 2, Livery::None),
     };

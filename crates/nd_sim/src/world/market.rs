@@ -449,7 +449,17 @@ impl World {
                 continue;
             }
             let Some(bz) = bld.business.as_mut() else { continue };
-            if bz.kind != BusinessKind::Venue || bz.closed {
+            // [economy] Every place to go out charges, each at its own rate.
+            if !bz.kind.is_outing() || bz.closed {
+                continue;
+            }
+            let mut tab = tab * bz.kind.tab_factor();
+            // [economy] A seafood restaurant cooks the catch: a diner's hour
+            // takes fillets, and with none the menu is short.
+            if bz.kind == BusinessKind::SeafoodRestaurant && bz.take(Resource::Fillets, 0.3) < 0.3 {
+                tab *= 0.5;
+            }
+            if c.savings < tab {
                 continue;
             }
             c.savings -= tab;

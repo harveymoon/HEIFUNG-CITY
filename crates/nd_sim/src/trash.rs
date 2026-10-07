@@ -22,6 +22,14 @@
 //! bins and drives the trash out of town. As the city's coverage grows its
 //! clients cancel: its demand is whatever the city does not cover. Everyone
 //! else's trash piles up.
+//!
+//! [economy] Where the city's rounds leave many buildings out, local trash
+//! companies open (`crate::pressure`): a yard of trucks on industrial land.
+//! A local company serves every building out of the city's reach within
+//! `COMPANY_REACH` of its yard, not only the rich, for a fee that falls the
+//! more companies compete there (`company_fee`); a building takes the
+//! nearest. The fees are the company's takings; it goes under like any
+//! business that cannot pay its crews.
 
 use crate::buildings::{BuildingId, Tier};
 use crate::citizens::{CitizenId, HouseholdId};
@@ -83,6 +91,21 @@ pub const PRIVATE_FEE_JOB: f32 = 0.12;
 pub const CLIENTS_PER_TRUCK: usize = 20;
 pub const MAX_PRIVATE_TRUCKS: usize = 5;
 pub const COMPANY: &str = "Haul-Away Waste Co.";
+/// [economy] A local trash company serves buildings this far from its yard.
+pub const COMPANY_REACH: f32 = 1800.0;
+/// [economy] Trucks a local company runs at most.
+pub const COMPANY_TRUCKS: usize = 4;
+/// [economy] Households in cheap buildings sign up only at a fee this low.
+pub const LOW_INCOME_FEE: f32 = 1.0;
+
+/// [economy] A household's daily fee with `rivals` local companies within
+/// reach: competition brings it down from the out-of-town hauler's.
+pub fn company_fee(rivals: usize) -> f32 {
+    if rivals == 0 {
+        return PRIVATE_FEE_HOUSEHOLD;
+    }
+    (PRIVATE_FEE_HOUSEHOLD * 0.8 / (1.0 + 0.3 * (rivals as f32 - 1.0))).max(PRIVATE_FEE_HOUSEHOLD * 0.4)
+}
 /// Overflow: mood lost a day by the residents (per level, up to two levels),
 /// by homes within `SMELL_RADIUS`, and the hourly chance a resident inside
 /// falls ill per level (rats).
@@ -101,6 +124,8 @@ pub enum Hauler {
     City(BuildingId),
     /// The private company, from out of town.
     Private,
+    /// [economy] A local trash company, from its yard.
+    Company(BuildingId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,6 +184,11 @@ pub struct Bin {
     pub private: bool,
     pub overflow_days: u8,
     pub last_pickup: u64,
+    /// [economy] The local trash company it pays, if any (else the hauler
+    /// from out of town when `private`).
+    pub company: Option<BuildingId>,
+    /// [economy] Its daily fee per household.
+    pub fee: f32,
 }
 
 impl Bin {
@@ -201,6 +231,10 @@ pub struct TrashStats {
     pub complaints_today: u32,
     pub complaints_yesterday: u32,
     pub rat_illness_total: u32,
+    /// [economy] Buildings signed with a local company, and the mean
+    /// household fee they pay.
+    pub local_clients: u32,
+    pub local_fee: f32,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -236,6 +270,11 @@ pub fn truck_model(h: Hauler, number: u8) -> VehicleModel {
         }
         Hauler::Private => {
             m.paint = 3 + number % 3;
+        }
+        // [economy] Each local company in its own colour.
+        Hauler::Company(b) => {
+            m.paint = (slotmap::Key::data(&b).as_ffi() % 6) as u8;
+            m.wear = 1;
         }
     }
     m
@@ -286,6 +325,15 @@ impl World {
         (daily, (daily * BIN_DAYS).max(MIN_BIN))
     }
 
+    /// [economy] Open local trash companies: (yard, centre, trucks it can crew).
+    pub fn trash_companies(&self) -> Vec<(BuildingId, Vec2, usize)> {
+        self.buildings
+            .iter()
+            .filter(|(_, b)| b.construction.is_none() && !b.is_derelict() && b.business.as_ref().is_some_and(|z| z.kind == crate::market::BusinessKind::TrashCompany && !z.closed))
+            .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, l.center, (b.workers.len() / TRUCK_CREW).min(COMPANY_TRUCKS))))
+            .collect()
+    }
+
     /// A rich building that would pay the private hauler.
     pub(crate) fn rich_client(&self, id: BuildingId) -> bool {
         let Some(b) = self.buildings.get(id) else { return false };
@@ -314,9 +362,11 @@ impl World {
     pub(crate) fn hourly_trash(&mut self) {
         crate::prof_scope!("hourly_trash");
         let depots = self.trash_depots();
+        let companies = self.trash_companies();
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         let mut produced = 0.0;
         let (mut covered_n, mut clients, mut overflowing) = (0u32, 0u32, 0u32);
+        let (mut local_n, mut local_fees) = (0u32, 0.0f32);
         for id in ids {
             let (daily, capacity) = self.trash_rate(id);
             if capacity <= 0.0 {
@@ -325,13 +375,34 @@ impl World {
             }
             let at = self.building_lot(id).map_or(Vec2::ZERO, |l| l.center);
             let covered = depots.iter().any(|d| d.3 > 0 && d.1.distance(at) <= d.2);
-            let private = !covered && self.rich_client(id);
+            // [economy] Out of the city's reach: the nearest local company,
+            // at the fee the competition there sets; the rich take the
+            // hauler from out of town when no company comes this far.
+            let (company, fee) = if covered {
+                (None, 0.0)
+            } else {
+                let mut near: Vec<(f32, BuildingId)> = companies.iter().map(|c| (c.1.distance(at), c.0)).filter(|(d, _)| *d <= COMPANY_REACH).collect();
+                near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+                let fee = company_fee(near.len());
+                let cheap = self.buildings.get(id).is_some_and(|b| b.tier == Tier::Low && b.homes > 0);
+                match near.first() {
+                    Some(&(_, c)) if !cheap || fee <= LOW_INCOME_FEE || self.rich_client(id) => (Some(c), fee),
+                    _ => (None, PRIVATE_FEE_HOUSEHOLD),
+                }
+            };
+            let private = !covered && (company.is_some() || self.rich_client(id));
+            if company.is_some() {
+                local_n += 1;
+                local_fees += fee;
+            }
             let bin = self.society.trash.bins.entry(id).or_default();
             bin.daily = daily;
             bin.capacity = capacity;
             bin.stored += daily / 24.0;
             bin.covered = covered;
             bin.private = private;
+            bin.company = company;
+            bin.fee = if private { fee } else { 0.0 };
             produced += daily / 24.0;
             covered_n += covered as u32;
             clients += private as u32;
@@ -348,6 +419,8 @@ impl World {
         s.covered_buildings = covered_n;
         s.private_clients = clients;
         s.overflowing_buildings = overflowing;
+        s.local_clients = local_n;
+        s.local_fee = if local_n > 0 { local_fees / local_n as f32 } else { 0.0 };
         // Rats: people inside an overflowing building may fall ill.
         if self.config.emergencies {
             let sick: Vec<(BuildingId, f32)> = self.society.trash.bins.iter().filter(|(_, b)| b.overflow() > 0.0).map(|(id, b)| (*id, b.overflow().min(3.0))).collect();
@@ -444,9 +517,38 @@ impl World {
                 }
             }
         }
+        // [economy] Local companies crew their trucks from their yards;
+        // trucks of a company gone or short of crew go once parked.
+        let companies = self.trash_companies();
+        let mut count: BTreeMap<BuildingId, usize> = BTreeMap::new();
+        let mut drop: Vec<TruckId> = Vec::new();
+        for (id, t) in self.society.trash.trucks.iter() {
+            if let Hauler::Company(c) = t.hauler {
+                let n = count.entry(c).or_default();
+                *n += 1;
+                let crewed = companies.iter().find(|x| x.0 == c).map_or(0, |x| x.2);
+                if self.buildings.contains_key(c) && *n > crewed && t.car.is_none() && matches!(t.state, TruckState::Idle) {
+                    drop.push(id);
+                }
+            }
+        }
+        for id in drop {
+            self.society.trash.trucks.remove(id);
+        }
+        if self.in_shift(PRIVATE_SHIFT) {
+            for (c, at, crewed) in companies {
+                let due = self.society.trash.bins.values().filter(|b| b.company == Some(c) && b.fill() >= PICKUP_FILL).count();
+                let wanted = due.div_ceil(CLIENTS_PER_TRUCK).min(crewed);
+                let have = self.society.trash.trucks.values().filter(|t| t.hauler == Hauler::Company(c)).count();
+                let home = self.kerb_of(c).map_or(at, |k| k.1);
+                for k in have..wanted {
+                    self.society.trash.trucks.insert(TrashTruck { hauler: Hauler::Company(c), number: k as u8 + 1, state: TruckState::Idle, car: None, pos: home, heading: 0.0, dest: home, target: None, load: 0.0, wait: 0, stops_today: 0 });
+                }
+            }
+        }
         // The private hauler, from the edge of town.
         if self.in_shift(PRIVATE_SHIFT) {
-            let due = self.society.trash.bins.values().filter(|b| b.private && b.fill() >= PICKUP_FILL).count();
+            let due = self.society.trash.bins.values().filter(|b| b.private && b.company.is_none() && b.fill() >= PICKUP_FILL).count();
             let wanted = due.div_ceil(CLIENTS_PER_TRUCK).min(MAX_PRIVATE_TRUCKS);
             let have = self.society.trash.trucks.values().filter(|t| t.hauler == Hauler::Private).count();
             if have < wanted {
@@ -476,7 +578,7 @@ impl World {
                 let s = b.service?;
                 Some((self.lots.get(b.lot)?.center, s.kind.radius(s.tier)))
             }
-            Hauler::Private => None,
+            Hauler::Private | Hauler::Company(_) => None,
         };
         let mut best: Option<(f32, BuildingId)> = None;
         for (bid, bin) in &self.society.trash.bins {
@@ -484,9 +586,12 @@ impl World {
                 continue;
             }
             let Some(at) = self.building_lot(*bid).map(|l| l.center) else { continue };
-            let ok = match reach {
-                Some((c, r)) => bin.covered && c.distance(at) <= r,
-                None => bin.private,
+            let ok = match (reach, t.hauler) {
+                (Some((c, r)), _) => bin.covered && c.distance(at) <= r,
+                // [economy] A local company's own clients; the hauler from
+                // out of town the rest.
+                (None, Hauler::Company(c)) => bin.private && bin.company == Some(c),
+                (None, _) => bin.private && bin.company.is_none(),
             };
             if !ok {
                 continue;
@@ -535,7 +640,7 @@ impl World {
         let Some(t) = self.society.trash.trucks.get(id) else { return };
         let hauler = t.hauler;
         // [services] A city truck whose depot is gone has no round to run.
-        if let Hauler::City(d) = hauler {
+        if let Hauler::City(d) | Hauler::Company(d) = hauler {
             if !self.buildings.contains_key(d) {
                 self.truck_home(id);
                 return;
@@ -543,7 +648,7 @@ impl World {
         }
         let on = match hauler {
             Hauler::City(_) => self.in_shift(SHIFT),
-            Hauler::Private => self.in_shift(PRIVATE_SHIFT),
+            Hauler::Private | Hauler::Company(_) => self.in_shift(PRIVATE_SHIFT),
         };
         let stop = if on && t.load < TRUCK_CAPACITY * TRUCK_FULL { self.pick_stop(id) } else { None };
         match stop.and_then(|b| self.kerb_of(b).map(|k| (b, k))) {
@@ -560,7 +665,7 @@ impl World {
         let Some(t) = self.society.trash.trucks.get_mut(id) else { return };
         t.target = None;
         match t.hauler {
-            Hauler::City(d) => {
+            Hauler::City(d) | Hauler::Company(d) => {
                 let at_depot = self.kerb_of(d);
                 let t = &self.society.trash.trucks[id];
                 match at_depot {
@@ -644,7 +749,7 @@ impl World {
                 s.collected_city_today += take;
                 s.collected_city_total += take;
             }
-            Hauler::Private => {
+            Hauler::Private | Hauler::Company(_) => {
                 s.collected_private_today += take;
                 s.collected_private_total += take;
             }
@@ -726,26 +831,35 @@ impl World {
             }
         }
         // The private hauler bills its clients; those who cannot pay drop out.
+        // [economy] A local company bills its own, at its fee, as takings.
         let mut revenue = 0.0;
-        let clients: Vec<BuildingId> = self.society.trash.bins.iter().filter(|(_, b)| b.private).map(|(id, _)| *id).collect();
-        for bid in clients {
+        let clients: Vec<(BuildingId, Option<BuildingId>, f32)> = self.society.trash.bins.iter().filter(|(_, b)| b.private).map(|(id, b)| (*id, b.company, if b.fee > 0.0 { b.fee } else { PRIVATE_FEE_HOUSEHOLD })).collect();
+        for (bid, company, fee_hh) in clients {
             let Some(b) = self.buildings.get(bid) else { continue };
             let hhs: Vec<HouseholdId> = b.households.clone();
             let jobs = b.workers.len() as f32;
+            let mut paid = 0.0;
             for h in hhs {
                 if let Some(hh) = self.households.get_mut(h) {
-                    if hh.money > PRIVATE_FEE_HOUSEHOLD * 10.0 {
-                        hh.money -= PRIVATE_FEE_HOUSEHOLD;
-                        revenue += PRIVATE_FEE_HOUSEHOLD;
+                    if hh.money > fee_hh * 10.0 {
+                        hh.money -= fee_hh;
+                        paid += fee_hh;
                     }
                 }
             }
+            let job_fee = PRIVATE_FEE_JOB * jobs * fee_hh / PRIVATE_FEE_HOUSEHOLD;
             if let Some(z) = self.buildings.get_mut(bid).and_then(|b| b.business.as_mut()) {
-                let fee = PRIVATE_FEE_JOB * jobs;
-                if z.money > fee {
-                    z.money -= fee;
-                    revenue += fee;
+                if z.money > job_fee {
+                    z.money -= job_fee;
+                    paid += job_fee;
                 }
+            }
+            match company.and_then(|c| self.buildings.get_mut(c)).and_then(|b| b.business.as_mut()) {
+                Some(z) => {
+                    z.money += paid;
+                    z.revenue_today += paid;
+                }
+                None => revenue += paid,
             }
         }
         let s = &mut self.society.trash.stats;
