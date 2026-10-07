@@ -18,6 +18,8 @@
 mod concerns;
 /// [districts] [tourism] `district` and `tourism`.
 mod districts;
+/// [economy] business pressure: what the city's businesses want
+mod economy;
 /// Request checks (Host, Origin, content type, body size) and the folders
 /// file commands may use.
 mod guard;
@@ -552,6 +554,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "district" | "districts" => districts::district(cmd, &mut ctx.sim.world, &mut ctx.overlays, &mut ctx.tools),
         "tourism" | "tourists" => districts::tourism(cmd, &mut ctx.sim.world),
         "concerns" => concerns::command(cmd, &ctx.sim.world),
+        "pressure" | "pressures" => economy::command(cmd, &mut ctx.sim.world),
         "bus" => bus(cmd, ctx),
         "subway" | "metro" => subway::command(cmd, &mut ctx.sim.world),
         "find" => find(cmd, ctx),

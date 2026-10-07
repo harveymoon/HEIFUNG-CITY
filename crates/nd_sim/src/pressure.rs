@@ -37,8 +37,14 @@ pub const OPEN_GAP: f32 = 0.75;
 pub const OPEN_DAYS: u8 = 2;
 /// Days a kind waits after one of it closed broke.
 pub const COOLDOWN_DAYS: u16 = 10;
+/// Days after one of a kind opened (and while one is still being built)
+/// before the pressure may open another: time to see the effect, as the
+/// smoothed cause takes a few days to fall.
+pub const SETTLE_DAYS: u64 = 4;
 /// How fast the daily signals follow the day's counts (share of today).
 pub const SMOOTHING: f32 = 0.4;
+/// The same when the day's count is lower: needs fade faster than they grow.
+pub const SMOOTHING_DOWN: f32 = 0.75;
 
 /// Tows a day one local tow company takes off the out-of-town firms.
 pub const TOWS_PER_COMPANY: f32 = 6.0;
@@ -57,11 +63,11 @@ pub const RIDERS_PER_BIKE_SHOP: f32 = 220.0;
 /// Long walks a day that would sell a bike shop's worth of bikes.
 pub const WALKS_PER_BIKE_SHOP: f32 = 60.0;
 /// Livestock a day one slaughterhouse takes.
-pub const LIVESTOCK_PER_SLAUGHTERHOUSE: f32 = 50.0;
+pub const LIVESTOCK_PER_SLAUGHTERHOUSE: f32 = 110.0;
 /// Fish a day one gutting shed takes.
-pub const FISH_PER_GUTTING: f32 = 45.0;
+pub const FISH_PER_GUTTING: f32 = 90.0;
 /// Fillets a day one fish-stick factory takes.
-pub const FILLETS_PER_FACTORY: f32 = 40.0;
+pub const FILLETS_PER_FACTORY: f32 = 80.0;
 /// Comfortable and rich adults per driving range.
 pub const GOLFERS_PER_RANGE: f32 = 650.0;
 /// Artists per studio building.
@@ -253,8 +259,9 @@ impl Signals {
     /// Blend today's reading into the smoothed one: the flows (per day)
     /// smooth, the stocks (counts) are taken as they are.
     pub fn blend(&mut self, today: &Signals) {
-        let k = SMOOTHING;
-        let mix = |old: &mut f32, new: f32| *old += (new - *old) * k;
+        // A need builds up over days and fades fast once it is met, so a
+        // trade that just opened is not followed by another on old news.
+        let mix = |old: &mut f32, new: f32| *old += (new - *old) * if new < *old { SMOOTHING_DOWN } else { SMOOTHING };
         mix(&mut self.outside_tows, today.outside_tows);
         mix(&mut self.local_tows, today.local_tows);
         mix(&mut self.crashes, today.crashes);
@@ -372,9 +379,10 @@ pub fn assess(s: &Signals, supply: &Supply) -> Vec<Pressure> {
         let ht = have_text(have, kind.label());
         let (wanted, why) = match kind {
             PressureKind::TowCompany => {
-                // The local companies take the jobs they can; what the
-                // firm from out of town still does is the unmet part.
-                let wanted = have as f32 + s.outside_tows / TOWS_PER_COMPANY;
+                // The open local companies take the jobs they can; what the
+                // firm from out of town still does is the unmet part (a
+                // company still being built takes none yet).
+                let wanted = supply.open[BusinessKind::TowYard.index()] as f32 + s.outside_tows / TOWS_PER_COMPANY;
                 (wanted, format!("{} a day towed by the company from out of town ({} local); {ht}", plural(s.outside_tows, "car", "cars"), plural(s.local_tows, "tow", "tows")))
             }
             PressureKind::Mechanic => {
@@ -475,6 +483,8 @@ pub struct PressureState {
     pub last_crashes: u32,
     pub last_bought: u32,
     pub last_bought_outside: u32,
+    /// The day one of each kind last opened (`PressureKind::index`).
+    pub last_opened_day: Vec<u64>,
     /// Walks of 25 minutes or more today (`World::end_trip`).
     pub long_walks_today: u32,
     /// Set once the running totals have been read: the first reading of a
@@ -498,6 +508,13 @@ impl PressureState {
         let n = PressureKind::ALL.len();
         self.held_days.resize(n, 0);
         self.cooldown.resize(n, 0);
+        self.last_opened_day.resize(n, 0);
+    }
+
+    /// Still waiting to see what the last one it opened does.
+    pub fn settling(&self, k: PressureKind, day: u64, sites: u32) -> bool {
+        let last = self.last_opened_day.get(k.index()).copied().unwrap_or(0);
+        sites > 0 || (last > 0 && day < last + SETTLE_DAYS)
     }
 }
 
@@ -601,9 +618,9 @@ mod tests {
             (Signals { rich_households: 160.0, cars_bought: 2.0, ..Default::default() }, PressureKind::CarDealer),
             (Signals { trash_uncovered: 120.0, ..Default::default() }, PressureKind::TrashCompany),
             (Signals { bike_owners: 300.0, long_walks: 50.0, ..Default::default() }, PressureKind::BikeShop),
-            (Signals { livestock: 80.0, ..Default::default() }, PressureKind::Slaughterhouse),
-            (Signals { fish: 70.0, ..Default::default() }, PressureKind::FishGutting),
-            (Signals { fillets: 60.0, ..Default::default() }, PressureKind::FishStickFactory),
+            (Signals { livestock: 160.0, ..Default::default() }, PressureKind::Slaughterhouse),
+            (Signals { fish: 140.0, ..Default::default() }, PressureKind::FishGutting),
+            (Signals { fillets: 120.0, ..Default::default() }, PressureKind::FishStickFactory),
             (Signals { fishing_large: 1.0, ..Default::default() }, PressureKind::FishMarket),
             (Signals { marinas_large: 1.0, ..Default::default() }, PressureKind::SeafoodRestaurant),
             (Signals { comfortable_adults: 1500.0, ..Default::default() }, PressureKind::GolfRange),

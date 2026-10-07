@@ -274,15 +274,11 @@ impl World {
     pub(super) fn daily_pressure(&mut self) {
         self.pressure.pad();
         self.settle_trade_bills();
-        // Businesses that went under today cool their kind down.
-        let closed: Vec<BusinessKind> = self
-            .events
-            .iter()
-            .filter_map(|e| match e {
-                SimEvent::BusinessClosed(b) => self.buildings.get(*b).and_then(|x| x.business.as_ref()).map(|z| z.kind),
-                _ => None,
-            })
-            .collect();
+        // Businesses that went under today cool their kind down: shut
+        // tonight, their count of days shut not yet started
+        // (`daily_businesses` closes with `broke_days` reset to 0 and counts
+        // it up each night after).
+        let closed: Vec<BusinessKind> = self.buildings.values().filter_map(|b| b.business.as_ref()).filter(|z| z.closed && z.broke_days == 0).map(|z| z.kind).collect();
         for k in closed {
             if let Some(p) = PressureKind::of_business(k) {
                 self.pressure.cooldown[p.index()] = pressure::COOLDOWN_DAYS;
@@ -390,11 +386,17 @@ impl World {
     /// one opened.
     pub(super) fn open_by_pressure(&mut self, vacant: &[LotId]) -> bool {
         self.pressure.pad();
+        if self.pressure.readings.iter().all(|r| !r.wants_more()) {
+            return false;
+        }
+        let day = self.clock.day();
+        let sites = self.pressure_supply().building;
         let mut order: Vec<(f32, PressureKind)> = self
             .pressure
             .readings
             .iter()
             .filter(|r| r.wants_more() && !r.kind.player_placed() && self.pressure.held_days[r.kind.index()] >= pressure::OPEN_DAYS && self.pressure.cooldown[r.kind.index()] == 0)
+            .filter(|r| !self.pressure.settling(r.kind, day + 1, r.kind.business().map_or(0, |b| sites[b.index()])))
             .map(|r| (r.gap, r.kind))
             .collect();
         order.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
@@ -413,6 +415,7 @@ impl World {
             }
             *self.pressure.opened_total.entry(kind.key().to_string()).or_insert(0) += 1;
             self.pressure.held_days[kind.index()] = 0;
+            self.pressure.last_opened_day[kind.index()] = day + 1;
             if let Some(r) = self.pressure.readings.iter_mut().find(|r| r.kind == kind) {
                 r.have += 1;
                 r.gap -= 1.0;

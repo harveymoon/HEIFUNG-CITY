@@ -55,7 +55,7 @@ impl LandLayer {
     pub const RESOURCES: [LandLayer; 7] = [LandLayer::Farmland, LandLayer::Oil, LandLayer::Geothermal, LandLayer::Rock, LandLayer::Sand, LandLayer::Water, LandLayer::Shipping];
 
     /// Every layer, in the order the K key steps through them.
-    pub const ALL: [LandLayer; 15] = [
+    pub const ALL: [LandLayer; 16] = [
         LandLayer::Farmland,
         LandLayer::Oil,
         LandLayer::Geothermal,
@@ -71,6 +71,7 @@ impl LandLayer {
         LandLayer::Industry(IndustryKind::Logistics),
         LandLayer::Industry(IndustryKind::Fishing),
         LandLayer::Industry(IndustryKind::Tech),
+        LandLayer::Industry(IndustryKind::Mining),
     ];
 
     /// Name for the API (`overlay {layer}`) and settings.
@@ -368,7 +369,7 @@ mod tests {
         assert_eq!(resource_value(LandLayer::Geothermal, &g, 0.9, 0.0, 0.0), 0.9);
         assert_eq!(resource_value(LandLayer::Shipping, &g, 0.0, 0.7, 0.0), 0.7);
         assert_eq!(resource_value(LandLayer::BestIndustry, &g, 1.0, 1.0, 0.0), 0.0);
-        let sh = shares(&[1.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        let sh = shares(&[1.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
         assert!((sh[1] - 0.75).abs() < 1e-6 && (sh.iter().sum::<f32>() - 1.0).abs() < 1e-6);
         assert_eq!(shares(&[0.0; crate::industry::IndustryKind::COUNT]), [0.0; crate::industry::IndustryKind::COUNT]);
     }

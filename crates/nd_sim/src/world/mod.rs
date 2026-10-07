@@ -90,6 +90,8 @@ mod rides;
 // [economy] business pressure, the new trades, the waterfront and the art scene
 mod pressure;
 mod waterfront;
+#[cfg(test)]
+mod economy_tests;
 
 use crate::buildings::{Building, BuildingId, Construction, Tier};
 use crate::citizens::{Activity, Citizen, CitizenId, Household, HouseholdId, Purpose};

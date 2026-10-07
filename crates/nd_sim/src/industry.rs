@@ -193,6 +193,9 @@ pub struct IndustrySite {
     /// [economy] Cattle and chicken farms within [`LIVESTOCK_REACH`]: a
     /// slaughterhouse wants to be near them.
     pub livestock_farms: u32,
+    /// [economy] Slaughterhouses already within [`LIVESTOCK_REACH`]: two
+    /// farms keep one busy, no more.
+    pub slaughterhouses: u32,
     /// [economy] A working fishing port (`0..1`, 1 on the quay): gutting
     /// sheds and the fish-stick factory gather round the catch.
     pub fishing_port: f32,
@@ -340,9 +343,9 @@ pub fn business_weights(kind: IndustryKind, site: &IndustrySite) -> Vec<(Busines
                 (BusinessKind::VertFarm, 0.9),
                 (BusinessKind::ProteinVat, 0.8),
                 (BusinessKind::Mill, 0.7),
-                (BusinessKind::CowFarm, field * 0.35),
-                (BusinessKind::ChickenFarm, 0.3),
-                (BusinessKind::Slaughterhouse, if farms > 0.0 { 0.15 + 0.35 * farms } else { 0.0 }),
+                (BusinessKind::CowFarm, field * 0.12),
+                (BusinessKind::ChickenFarm, 0.1),
+                (BusinessKind::Slaughterhouse, if site.livestock_farms >= 2 * (site.slaughterhouses + 1) { 0.15 + 0.35 * farms } else { 0.0 }),
             ]
         }
         IndustryKind::Logistics => {

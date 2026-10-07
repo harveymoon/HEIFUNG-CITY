@@ -894,6 +894,7 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
                 g.part(Surface::Metal).cylinder(p, 0.08, 0.08, WATER_LEVEL + 1.0, WATER_LEVEL + 5.0, 6, rgba([0.2, 0.2, 0.22]));
                 g.part(Surface::Glow).boxed(Vec3::new(p.x, WATER_LEVEL + 5.1, p.y), Vec3::new(0.4, 0.25, 0.4), 0.0, rgba(palette.lamp));
             }
+            _ => {}
         }
     }
     // Plants that work the water.

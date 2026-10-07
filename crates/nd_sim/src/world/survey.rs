@@ -26,6 +26,7 @@ pub struct SiteContext {
     others: Vec<(LotId, Vec2, Option<IndustryKind>, bool, bool)>,
     /// [economy] Working cattle and chicken farms, and fishing ports.
     livestock: Vec<(LotId, Vec2)>,
+    slaughterhouses: Vec<(LotId, Vec2)>,
     fishing_ports: Vec<Vec2>,
 }
 
@@ -63,8 +64,9 @@ impl SiteContext {
         }
         neighbours.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
         let livestock_farms = self.livestock.iter().filter(|(lot, at)| Some(*lot) != exclude && at.distance(c) < industry::LIVESTOCK_REACH).count() as u32;
+        let slaughterhouses = self.slaughterhouses.iter().filter(|(lot, at)| Some(*lot) != exclude && at.distance(c) < industry::LIVESTOCK_REACH).count() as u32;
         let fishing_port = near(nearest(&self.fishing_ports), 120.0, 700.0);
-        IndustrySite { ground, contamination, land_value: w.land_value.at(c), port, yard, highway, depot, neighbours, fleet_lot_near, crude_wells, livestock_farms, fishing_port }
+        IndustrySite { ground, contamination, land_value: w.land_value.at(c), port, yard, highway, depot, neighbours, fleet_lot_near, crude_wells, livestock_farms, slaughterhouses, fishing_port }
     }
 }
 
@@ -78,6 +80,7 @@ impl World {
         let highway = self.roads.alive_segments().filter(|(_, s)| s.is_highway()).map(|(sid, _)| self.roads.segment_points(sid)).collect();
         let mut others = Vec::new();
         let mut livestock = Vec::new();
+        let mut slaughterhouses = Vec::new();
         let fishing_ports = self.ports.ports.values().filter(|p| p.kind.is_fishing() && p.works()).filter_map(|p| p.building).filter_map(centre).collect();
         for b in self.buildings.values() {
             let Some(l) = self.lots.get(b.lot) else { continue };
@@ -95,8 +98,11 @@ impl World {
             if b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::CowFarm | BusinessKind::ChickenFarm) && !z.closed) {
                 livestock.push((b.lot, l.center));
             }
+            if b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Slaughterhouse && !z.closed) {
+                slaughterhouses.push((b.lot, l.center));
+            }
         }
-        SiteContext { ports, yards, depots, highway, others, livestock, fishing_ports }
+        SiteContext { ports, yards, depots, highway, others, livestock, slaughterhouses, fishing_ports }
     }
 
     /// The ground's industry weights at every corner of the survey, in
