@@ -45,7 +45,9 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
         egui::Window::new(egui::RichText::new("Road").color(GOLD).strong())
             .id(egui::Id::new("road_card_edit"))
             .open(&mut open)
-            .default_pos(egui::pos2(content.right() - 372.0, content.bottom() - 420.0))
+            // Bottom right, just above the toolbar and its ROAD UPGRADE panel.
+            .pivot(egui::Align2::RIGHT_BOTTOM)
+            .default_pos(egui::pos2(content.right() - 12.0, content.bottom() - 12.0))
             .default_width(340.0)
             .constrain_to(content)
             .max_height(content.height() - 24.0)
