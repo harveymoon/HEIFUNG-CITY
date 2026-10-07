@@ -12,7 +12,7 @@
 //! (triangles, slivers, concave corners) get the same treatment as a
 //! rectangle without spilling onto the street.
 
-use crate::buildings::parts::{bench_world, bin_world, coin, distance_to_boundary, graffiti_world, mix, mul, ngon, offset_poly, pick, random_in_poly, rgba, rock_world, scrub_world, tree_world, CHARCOAL, DARK};
+use crate::buildings::parts::{bench_world, bin_world, coin, distance_to_boundary, graffiti_world, mix, mul, ngon, offset_poly, pick, random_in_poly, rgba, rock_world, scrub_world, CHARCOAL, DARK};
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
@@ -350,7 +350,7 @@ fn wild(g: &mut Geometry, site: &Site, rng: &mut impl Rng, pal: &Palette) {
             5..=7 => rock_world(g, rng, p, 0.0, 0.3 + size * 0.6, mul(pal.stone, 0.9 + tint * 0.3)),
             _ if trees < 2 && site.inside(p, 2.0) => {
                 trees += 1;
-                tree_world(g, p, rng.random_range(2.2..3.4), rng.random_range(1.8..2.8), pal.bark, mul(pal.foliage, rng.random_range(0.85..1.1)));
+                crate::climate::climate_tree(g, pal, p, rng.random_range(2.2..3.4), rng.random_range(1.8..2.8), mul(pal.foliage, rng.random_range(0.85..1.1)));
             }
             _ => {}
         }
@@ -439,7 +439,7 @@ fn parklet(g: &mut Geometry, site: &Site, rng: &mut impl Rng, pal: &Palette) {
         let p = spots.swap_remove(idx);
         taken.push(p);
         placed += 1;
-        tree_world(g, p, rng.random_range(2.8..4.2), rng.random_range(2.4..3.4), pal.bark, mul(pal.foliage, rng.random_range(0.9..1.15)));
+        crate::climate::climate_tree(g, pal, p, rng.random_range(2.8..4.2), rng.random_range(2.4..3.4), mul(pal.foliage, rng.random_range(0.9..1.15)));
         // A tidy ring of bark around the trunk.
         patch(g, site, Dirt, p, 0.7, 0.04, rng, mul(pal.dirt, 0.8));
     }

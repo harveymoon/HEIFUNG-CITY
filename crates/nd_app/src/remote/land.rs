@@ -1,7 +1,7 @@
 //! Remote commands for the landscape: start a new game on one, read the
 //! ground at a point, and summarise the water, highway, bridges and docks.
 
-use nd_sim::landscape::{LandscapeParams, LandscapePreset, MIN_HYDRO_CURRENT};
+use nd_sim::landscape::{Climate, LandscapeParams, LandscapePreset, MIN_HYDRO_CURRENT};
 use nd_sim::{PortKind, PowerPlantKind, Vec2 as SVec2, World};
 use serde_json::{json, Value};
 
@@ -30,7 +30,16 @@ pub fn params_from(cmd: &Value) -> Result<LandscapeParams, String> {
     if let Some(v) = opt_bool(cmd, "highway")? {
         p.highway = v;
     }
+    p.climate = climate_from(cmd)?.unwrap_or(p.climate);
     Ok(p)
+}
+
+/// [climate] The `climate` field, if given.
+pub fn climate_from(cmd: &Value) -> Result<Option<Climate>, String> {
+    match opt_str(cmd, "climate")? {
+        Some(s) => Climate::from_label(s).map(Some).ok_or_else(|| format!("unknown climate {s:?}; one of temperate, desert, tropical, arctic, volcanic")),
+        None => Ok(None),
+    }
 }
 
 /// `generate_city`'s fields: the city preset and the landscape it is laid
@@ -56,6 +65,7 @@ pub fn city_params_from(cmd: &Value) -> Result<(nd_procgen::citygen::CityPreset,
     if let Some(v) = opt_f32(cmd, "branching")? {
         p.branching = v.clamp(0.0, 1.0);
     }
+    p.climate = climate_from(cmd)?.unwrap_or(p.climate);
     Ok((preset, p))
 }
 
@@ -124,6 +134,7 @@ pub fn summary(w: &World) -> Value {
     let s = &w.ports.stats;
     json!({
         "preset": land.params.preset.label(),
+        "climate": land.params.climate.key(),
         "params": { "seed": land.params.seed, "water": round(land.params.water), "relief": round(land.params.relief), "branching": round(land.params.branching), "islands": land.params.islands, "highway": land.params.highway },
         "rivers": rivers,
         "lakes": land.lakes.iter().map(|l| v2(l.center)).collect::<Vec<_>>(),

@@ -44,6 +44,8 @@ mod far;
 /// [layers] Traffic and Crime focus views: the city dimmed, vehicles lit.
 mod focus;
 mod haze;
+/// [climate] Rain, snow and hot-spot steam.
+pub mod climate;
 /// Drone heat vision (render/heat.rs).
 mod heat;
 /// Planned roads as holograms of the real thing; the depth view.
@@ -447,6 +449,7 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, holo::apply_depth.in_set(SimSet::Sync).after(lift_movers));
         app.add_systems(Update, (subway::sync_metro_tunnels, subway::sync_metro_trains).in_set(SimSet::Sync).after(sync_trains).before(holo::apply_depth));
         app.add_systems(Update, (turbines::sync_turbines, solar::sync_solar, haze::sync_haze, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
+        app.add_systems(Update, (climate::sync_precipitation, climate::sync_steam).in_set(SimSet::Sync).after(sync_landscape));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
         // The ground and water out past the map, into the fog.
         app.init_resource::<far::FarRender>().add_systems(Update, far::sync_far.in_set(SimSet::Sync).after(sync_landscape));
@@ -924,7 +927,8 @@ fn sync_scatter(
         }
         !ways.near(p)
     };
-    let geo = scatter_nature(&cfg, &assets.palette, w.config.seed, &clear);
+    let mut geo = scatter_nature(&cfg, &assets.palette, w.config.seed, &clear);
+    nd_procgen::climate::snow_cover(&mut geo, assets.palette.snow);
     spawn_geometry(&mut commands, &mut meshes, &mats, &geo, ScatterTag);
 }
 
@@ -1442,7 +1446,8 @@ fn sync_parks(
         let Some(layout) = &lot.park else { continue };
         let seed = (lot.center.x * 31.0 + lot.center.y * 17.0).abs() as u64;
         let extras = Extras { park: Some(layout), ..Extras::default() };
-        let geo = generate_building(lot, nd_sim::LandUse::Park, 1, layout.tier, 1.0, seed, &assets.rules, &assets.palette, &extras);
+        let mut geo = generate_building(lot, nd_sim::LandUse::Park, 1, layout.tier, 1.0, seed, &assets.rules, &assets.palette, &extras);
+        nd_procgen::climate::snow_cover(&mut geo, assets.palette.snow);
         let ents = spawn_geometry(&mut commands, &mut meshes, &mats, &geo, ParkTag);
         state.parks.insert(id, (key, ents));
     }
@@ -1567,6 +1572,8 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         }
         None => generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras),
     };
+    // [climate] Snow on the roofs in a cold climate.
+    nd_procgen::climate::snow_cover(&mut g, assets.palette.snow);
     lights::tag_windows(&mut g, lights::slot_of(id));
     // Every building stands on its lot's levelled pad.
     nd_procgen::terrain::raise_geometry(&mut g, world.lot_pad(b.lot));

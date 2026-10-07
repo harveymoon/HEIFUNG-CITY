@@ -452,7 +452,7 @@ fn trees(g: &mut Geometry, rng: &mut impl Rng, park: &Park, pal: &Palette) {
                     for side in [-1.0f32, 1.0] {
                         let w = a + d * s + right * side * (park.path_width * 0.5 + 2.4);
                         if park.inside_world(w, 2.6) && park.clear_of_features(w, 1.5) && park.clear_of_benches(w, 1.6) && placed.iter().all(|(p, _)| p.distance(w) > 5.0) && park.path_distance(w) > park.path_width * 0.5 + 1.6 {
-                            tree_world(g, w, 5.5, 2.4, pal.bark, mul(pal.foliage, 0.95));
+                            crate::climate::climate_tree(g, pal, w, 5.5, 2.4, mul(pal.foliage, 0.95));
                             placed.push((w, 2.4));
                         }
                     }
@@ -517,7 +517,11 @@ fn trees(g: &mut Geometry, rng: &mut impl Rng, park: &Park, pal: &Palette) {
             3 => (TreeKind::Palm, mul(pal.foliage, 1.1)),
             _ => (TreeKind::Round, mul(pal.foliage, rng.random_range(0.8..1.15))),
         };
-        tree_kind(g, w, 0.0, tk, h, canopy, if tk == TreeKind::Dead { mul(pal.bark, 0.8) } else { pal.bark }, leaf);
+        if tk == TreeKind::Round {
+            crate::climate::climate_tree(g, pal, w, h, canopy, leaf);
+        } else {
+            tree_kind(g, w, 0.0, tk, h, canopy, if tk == TreeKind::Dead { mul(pal.bark, 0.8) } else { pal.bark }, leaf);
+        }
         placed.push((w, canopy));
         count += 1;
     }
@@ -757,7 +761,7 @@ fn water(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, tier: Tier, pal:
         g.part(Wood).boxed(Vec3::new(boat.x, 0.25, boat.y), Vec3::new(1.1, 0.35, 3.0), a, rgba(mul(pick(rng, &pal.awning_colors), 0.9)));
         let island = w + Vec2::from_angle(a + PI) * (r * 0.45);
         g.part(Dirt).cylinder(island, 2.2, 2.2, 0.1, 0.28, 10, rgba(pal.dirt));
-        tree_world(g, island, 5.0, 2.6, pal.bark, pal.foliage);
+        crate::climate::climate_tree(g, pal, island, 5.0, 2.6, pal.foliage);
     }
 }
 
