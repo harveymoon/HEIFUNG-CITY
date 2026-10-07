@@ -374,6 +374,11 @@ pub struct World {
     /// eased to gentle grades and lifted onto bridge decks over water.
     #[serde(skip)]
     pub road_z: Vec<f32>,
+    /// Heights inside long streets and paths between their nodes, per
+    /// segment id: `(t, z)` in rising `t`, empty for a straight line
+    /// (`water::inner_heights`). Read through `road_height`.
+    #[serde(skip)]
+    pub road_inner: Vec<Vec<(f32, f32)>>,
     /// Anything stands off the flat datum: a landscape, a road above or
     /// below the ground, or a deck. False on the old flat map with every
     /// way at grade, where heights are all zero.
@@ -501,6 +506,7 @@ impl World {
             landscape: Landscape::default(),
             ports: Ports::default(),
             road_z: Vec::new(),
+            road_inner: Vec::new(),
             relief: false,
             ground: Ground::default(),
             bridge_metres: 0.0,

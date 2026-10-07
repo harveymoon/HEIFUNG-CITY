@@ -789,8 +789,16 @@ Citizens are rendered from their simulated positions every frame.
   every waterline so a bridge is exactly the span; bridge segments are flagged, their ends set at deck
   height (water + 7 m) and every node raised until no segment is steeper than its grade (street 7%,
   rail 3%, path 10%); new bridge metres are charged on implement. `Ground` is a 4 m raster of the built
-  ground: terrain blended into each road's profile within 22 m and flattened to a pad under every lot
-  (the street's height at the frontage). The renderer draws the terrain from it, lifts flat-datum meshes
+  ground: terrain blended into each road's profile within 22 m (where two roads' cores overlap at
+  about one height, the lower holds, so the ground stays under both surfaces) and flattened to a pad
+  under every lot
+  (the street's height at the frontage). A long street or path leg at grade gets inner height
+  samples every ~30 m (`World::road_inner`, `(t, z)` per segment, read through
+  `landscape::way_height` by cars, lot pads, the built ground and the street mesh), each the land's
+  height held within the grade of both ends and its neighbours: it follows the hills between its
+  ends. They are not road nodes (the highway's and track's are, `sample_heights`): a street's
+  vertices cut its parcels, so parcel keys stay as they were. Decks, tunnels, cuttings, set levels
+  and ways in a grade crossing keep the straight line. The renderer draws the terrain from it, lifts flat-datum meshes
   onto it, raises buildings to their pad and movers to `surface_height` (decks over water). Water cuts
   parcels (`zoning::generate_lots_wet`); lots steeper than 0.2 are unusable. A one-way street of three
   or more lanes is a highway: 25 m/s, no frontage, grade-separated (crossings make no junction, only
@@ -819,10 +827,18 @@ Citizens are rendered from their simulated positions every frame.
   highway at grade passes under it with the highway on a lifted deck. A piece with an end 2.5 m
   or more up is a viaduct (`Segment::viaduct`, a bridge: a deck on columns and crossheads,
   parapets, no frontage, no kerb parking; the ground is graded only near its feet); one with
-  both ends 5 m or more down is a tunnel (`Segment::tunnel`: bored, no parcels cut, no
-  frontage, no pavements, nothing above it disturbed; it joins other tunnels at underground
-  junctions); between, an open cutting with retaining walls. Tunnels show on the surface as a
-  portal frame where they come out and a vent head every 150 m. Steep legs are warned about
+  both ends 5 m or more down is a tunnel (`Segment::tunnel`: bored, no parcels cut, nothing
+  above it disturbed; it joins other tunnels at underground junctions); between, an open cutting
+  with retaining walls. Like the highway and its ramps a tunnel is a way for traffic only
+  (`Segment::fronts_nothing`): no frontage, pavements, walk graph, crossings or kerb parking
+  (legal or not), no RVs or camps; its bore is a carriageway with a safety kerb and walls. Tunnels
+  show on the surface as a concrete arch portal where they come out (a headwall with an elliptical
+  arch over the opening, soffit, coping, a lit band and a dark mouth; the cutting's ground is held
+  at road level only `PORTAL_HOLD` (8 m) into the hill, under a lid, `terrain::portal_arch`) and a vent head
+  every 150 m. A road that would meet the railway at a level that is neither at grade (within
+  1 m) nor separated (a portal ramp part way down) is refused by the Road tool and the API with
+  what would work (`World::road_refusal`): the level-crossing node used to take the road's level
+  and drag the track into the cutting. Steep legs are warned about
   (`World::road_grade_warnings`, `steep_legs`) and still built: the ground end is raised or
   lowered to the grade. Cars ride the height of the way they are on (`car_height`), movers keep to
   the surface nearest the height they were at (`surface_height_near`), so a walker under a
@@ -830,7 +846,8 @@ Citizens are rendered from their simulated positions every frame.
 - **Depth view** (Underground / Ground / Sky, U cycles, top bar): Underground hides the terrain,
   water, buildings, lots, surface roads and walkers, draws surface roads as faint outlines and
   shows the tunnels (drawn as their own street layer, `StreetLayer::Underground`, with bore walls
-  and a lit strip) and the cars in them. The Tunnel preset switches to it, other presets back to
+  and a lit strip; each layer draws only its own roads' crossings, beacons and signal posts) and
+  the cars in them. The Tunnel preset switches to it, other presets back to
   Ground. Sky is a placeholder. The metro (see Subway) shows here: its bores, platforms, shafts and
   trains carry the tunnel tag.
 - **Highway and the map edge**: two carriageways cross the map at
@@ -955,7 +972,8 @@ trait MindProvider {
 - Ramps (`roads::is_ramp_spec`: one-way streets narrower than a highway): an end dropped on a
   highway gets a lead point `RAMP_LEAD` (40 m) before a merge or after a diverge, beside the
   carriageway (`roads::ease_ramp_ends`), so the ramp joins nearly tangent; the join is drawn as a
-  taper filled to the carriageway edge with edge lines and a chevron-hatched gore, no junction pad,
+  taper filled to the carriageway edge with edge lines and a chevron-hatched gore (0.6 m bright
+  strokes every 4 m between solid 0.3 m outlines, readable from the top-down camera), no junction pad,
   crossings or stop lines (`street::ramp_gore`). Every one-way road (ramps, highways, one-way
   streets) has an arrow painted in each lane every 45 m (`street::travel_arrows`), in the
   holograms too. A ramp that has to stand 2.5 m or more above the land after easing (climbing to
@@ -1000,7 +1018,9 @@ trait MindProvider {
   manholes and steam vents, cables, lanterns and banners strung across cheap streets,
   puddles holding a smear of sign colour, scooters in the gutter, bin bags, crates,
   bikes, cones, planters, and cracks, stains and gum on the slabs. It is laid out per
-  road segment from its own seed, so props stay put as the walker moves.
+  road segment from its own seed, so props stay put as the walker moves, and set on that
+  segment's height (a viaduct's pavement, a street on a hillside); highways, ramps, rings and
+  tunnels get none.
 - Performance: the sim gets a real-time budget per frame (12 ms) and drops its
   backlog instead of stalling the renderer; shadows use three cascades out to 650 m;
   the HUD shows fps, meshes and triangles.

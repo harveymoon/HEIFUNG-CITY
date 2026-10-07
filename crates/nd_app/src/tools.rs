@@ -795,11 +795,21 @@ pub(crate) fn tool_input(
                     let kind = tools.kind;
                     let (lf, lb) = if kind != RoadKind::Street { (0, 0) } else { (tools.lanes_fwd, tools.lanes_bwd) };
                     let levels = tools.levels();
-                    let elevation = if levels.iter().any(|l| *l != 0.0) { levels } else { Vec::new() };
-                    let g = Gesture::Road { points: tools.points.clone(), lanes_fwd: lf, lanes_bwd: lb, curved: tools.curved && tools.points.len() >= 3, kind, elevation };
-                    sim.world.add_gesture(g);
-                    let warn = if tools.grade_warnings.is_empty() { String::new() } else { format!(" Warning: {}.", tools.grade_warnings.join("; ")) };
-                    tools.status = format!("{} {} added to project ({} points). Ctrl+Enter implements.{warn}", if tools.curved { "Curved" } else { "Straight" }, match kind { RoadKind::Path => "path", RoadKind::Rail => "track", RoadKind::Street if tools.tunnel => "tunnel", RoadKind::Street => "road" }, tools.points.len());
+                    let elevation = if levels.iter().any(|l| *l != 0.0) { levels.clone() } else { Vec::new() };
+                    let curved = tools.curved && tools.points.len() >= 3;
+                    // A crossing with the railway that is neither at grade
+                    // nor clear of it is refused, not built as a crossing
+                    // the track would have to dip or climb to.
+                    let built = if curved { nd_sim::plan::sample_curve(&tools.points) } else { tools.points.clone() };
+                    let built_levels = if curved { nd_sim::plan::sample_curve_levels(&tools.points, &levels) } else { levels.clone() };
+                    if let Some(why) = sim.world.road_refusal(&built, &built_levels, kind, lf, lb) {
+                        tools.status = format!("Not added: {why}.");
+                    } else {
+                        let g = Gesture::Road { points: tools.points.clone(), lanes_fwd: lf, lanes_bwd: lb, curved, kind, elevation };
+                        sim.world.add_gesture(g);
+                        let warn = if tools.grade_warnings.is_empty() { String::new() } else { format!(" Warning: {}.", tools.grade_warnings.join("; ")) };
+                        tools.status = format!("{} {} added to project ({} points). Ctrl+Enter implements.{warn}", if tools.curved { "Curved" } else { "Straight" }, match kind { RoadKind::Path => "path", RoadKind::Rail => "track", RoadKind::Street if tools.tunnel => "tunnel", RoadKind::Street => "road" }, tools.points.len());
+                    }
                 }
                 tools.points.clear();
                 tools.point_levels.clear();

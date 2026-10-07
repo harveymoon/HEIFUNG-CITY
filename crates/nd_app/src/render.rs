@@ -836,7 +836,7 @@ fn sync_roads(
     // Each run is set on its own height profile here (a viaduct over a
     // street, the street under it), so the roads are not lifted again.
     let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
-    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, layer: nd_procgen::street::StreetLayer::Surface });
+    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Surface });
     stats.street_triangles = geo.triangle_count();
     for (s, data) in geo.iter() {
         let mut e = commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, RoadsTag));
@@ -846,7 +846,7 @@ fn sync_roads(
     }
     // The tunnels on their own, shown in the underground view.
     if w.roads.alive_segments().any(|(_, s)| s.tunnel) {
-        let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, layer: nd_procgen::street::StreetLayer::Underground });
+        let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Underground });
         stats.street_triangles += geo.triangle_count();
         for (s, data) in geo.iter() {
             commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, holo::TunnelTag, Visibility::Hidden, NotShadowCaster));

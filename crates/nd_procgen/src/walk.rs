@@ -66,7 +66,10 @@ pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> G
     }
     let near = |p: Vec2| p.distance(centre) < radius;
     for (sid, seg) in roads.alive_segments() {
-        if seg.kind != RoadKind::Street {
+        // Only streets with pavements: the highway, its ramps and a
+        // roundabout's ring have hard shoulders (nobody walks them), and a
+        // tunnel's bore has no shops, carts or cables strung overhead.
+        if seg.kind != RoadKind::Street || seg.is_motorway() || seg.ring || seg.tunnel {
             continue;
         }
         let (a, b) = roads.segment_points(sid);
@@ -91,6 +94,11 @@ pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> G
         let segment_fronts = fronts.get(&sid.0).map(|v| v.as_slice()).unwrap_or(&[]);
         let frontage = |s: f32, side: f32| segment_fronts.iter().find(|f| f.side == side && s >= f.s0 - 1.0 && s <= f.s1 + 1.0).copied();
         let lv_mid = world.land_value.at((a + b) * 0.5);
+        // Everything below is drawn on a flat datum and then set on the
+        // road's own height along the segment (`World::road_height`), so a
+        // viaduct's pavement carries its clutter up with it and a street on
+        // a hillside is not buried. The renderer does not lift this mesh.
+        let from = crate::street::marks(&g);
 
         // Things on the pavement, both sides, every few metres.
         for side in [-1.0f32, 1.0] {
@@ -225,6 +233,9 @@ pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> G
                 }
                 s += rng.random_range(10.0..26.0);
             }
+        }
+        if world.relief {
+            crate::street::lift_since(&mut g, &from, |p| world.road_height(sid, nd_sim::roads::project_on_segment(p, a, b).0));
         }
     }
     g
@@ -499,12 +510,14 @@ mod tests {
         let tris = a.triangle_count();
         assert!(tris > 500, "a commercial crossing should have street life: {tris} triangles");
         assert!(tris < 60_000, "walk detail over budget: {tris} triangles");
+        // Set on the streets' heights (this town stands on the hills).
+        let (lo, hi) = w.road_z.iter().fold((f32::MAX, f32::MIN), |(lo, hi), z| (lo.min(*z), hi.max(*z)));
         for (s, m) in a.iter() {
             assert!(m.positions.iter().all(|p| p.iter().all(|v| v.is_finite())), "{s:?} has NaN");
             assert!(m.indices.iter().all(|&i| (i as usize) < m.positions.len()), "{s:?} bad index");
             for p in &m.positions {
                 assert!(Vec2::new(p[0], p[2]).distance(here) < WALK_RADIUS + 25.0, "{s:?} drawn far from the walker");
-                assert!(p[1] > -0.05 && p[1] < 12.0, "{s:?} at height {}", p[1]);
+                assert!(p[1] > lo - 0.05 && p[1] < hi + 12.0, "{s:?} at height {} (streets {lo}..{hi})", p[1]);
             }
         }
         // Walking along keeps what was already there: the overlap of two

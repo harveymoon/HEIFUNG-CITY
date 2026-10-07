@@ -20,6 +20,104 @@ pub const THROUGH_CHANCE: f64 = 0.45;
 /// How far a bridge deck reaches onto each bank.
 const ABUTMENT: f32 = 5.0;
 
+/// A way of `mine` kind at level `mine_level` meeting one of `theirs` kind
+/// at `their_level`, where one of them is the railway: refused (with the
+/// reason) unless they pass one over the other or meet at grade, within a
+/// metre. A level crossing has to be level: the track cannot follow a road
+/// down a portal ramp or up to a deck.
+fn rail_crossing_refusal(mine: RoadKind, theirs: RoadKind, highway: bool, mine_level: f32, their_highway: bool, their_level: f32) -> Option<String> {
+    if (mine == RoadKind::Rail) == (theirs == RoadKind::Rail) {
+        return None;
+    }
+    let gap = mine_level - their_level;
+    if crate::roads::grade_separated(highway, mine_level, their_highway, their_level) || gap.abs() < 1.0 {
+        return None;
+    }
+    let need = crate::roads::GRADE_SEPARATION - gap.abs();
+    let (what, other) = if mine == RoadKind::Rail { ("the track", "the road") } else { ("the road", "the railway") };
+    let (way, verb) = if gap < 0.0 { ("below", "lower") } else { ("above", "raise") };
+    Some(format!(
+        "{what} meets {other} {:.1} m {way} it: a level crossing must be at grade. {} {what} {need:.1} m more there to pass {} it, or start the ramp past the crossing",
+        gap.abs(),
+        if verb == "lower" { "Lower" } else { "Raise" },
+        if gap < 0.0 { "under" } else { "over" }
+    ))
+}
+
+/// Spacing of the inner height samples along a long street or path.
+pub const INNER_STEP: f32 = 30.0;
+
+/// Heights inside long streets and paths, between their nodes, so a street
+/// drawn as one long leg over a hill follows the land instead of running
+/// dead straight from end to end (and the ground under it is not cut and
+/// filled by metres to that straight line).
+///
+/// A street's vertices decide where its parcels are cut (parcel keys are
+/// their centres and frontages), so the samples cannot be new road nodes as
+/// the highway's and the track's are (`sample_heights`): they are kept per
+/// segment as `(t, z)` in rising `t`, every `INNER_STEP` or so, and read
+/// through [`crate::landscape::way_height`] by everything that sets things
+/// on a way (cars, lots, the built ground, the street mesh). Nothing about
+/// the network or the parcels changes.
+///
+/// Each sample takes the land's height there, held within the way's grade
+/// of both ends and of its neighbours (forward and back passes). Ways off
+/// the ground (decks, tunnels, cuttings, any level the player set), the
+/// highway and track (which have real vertices), and ways in a grade
+/// crossing (whose underpass is worked out on the straight line) keep the
+/// straight line, as does the flat map. An empty list is the straight line.
+fn inner_heights(land: &crate::landscape::Landscape, roads: &crate::roads::RoadNetwork, z: &[f32], floor: f32, crossings: &[crate::roads::Crossing]) -> Vec<Vec<(f32, f32)>> {
+    let mut out = vec![Vec::new(); roads.segments.len()];
+    if land.is_flat() {
+        return out;
+    }
+    let crossed: std::collections::BTreeSet<u32> = crossings.iter().flat_map(|c| [c.upper.0 .0, c.lower.0 .0]).collect();
+    let edge = crate::landscape::LAND_HALF;
+    for (sid, s) in roads.alive_segments() {
+        if s.bridge || s.viaduct || s.tunnel || s.is_rail() || s.is_highway() || s.ring || crossed.contains(&sid.0) {
+            continue;
+        }
+        if roads.node(s.a).level != 0.0 || roads.node(s.b).level != 0.0 {
+            continue;
+        }
+        let (a, b) = roads.segment_points(sid);
+        let len = a.distance(b);
+        if len < INNER_STEP * 1.5 {
+            continue;
+        }
+        let (za, zb) = (z.get(s.a.0 as usize).copied().unwrap_or(0.0), z.get(s.b.0 as usize).copied().unwrap_or(0.0));
+        let g = way_grade(s.kind);
+        let m = (len / INNER_STEP).round().max(2.0) as usize;
+        let ds = len / m as f32;
+        let mut h: Vec<f32> = (1..m)
+            .map(|k| {
+                let (t, sk) = (k as f32 / m as f32, k as f32 * ds);
+                let p = a.lerp(b, t).clamp(Vec2::splat(-edge), Vec2::splat(edge));
+                let lo = (za - g * sk).max(zb - g * (len - sk));
+                let hi = (za + g * sk).min(zb + g * (len - sk));
+                let line = za + (zb - za) * t;
+                if lo > hi { line } else { land.height(p).max(floor).clamp(lo, hi) }
+            })
+            .collect();
+        // Neighbour to neighbour within the grade, both ways.
+        let mut prev = za;
+        for v in h.iter_mut() {
+            *v = v.clamp(prev - g * ds, prev + g * ds);
+            prev = *v;
+        }
+        let mut next = zb;
+        for v in h.iter_mut().rev() {
+            *v = v.clamp(next - g * ds, next + g * ds);
+            next = *v;
+        }
+        let samples: Vec<(f32, f32)> = h.into_iter().enumerate().map(|(k, v)| ((k + 1) as f32 / m as f32, v)).collect();
+        if samples.iter().any(|&(t, v)| (v - (za + (zb - za) * t)).abs() > 0.05) {
+            out[sid.0 as usize] = samples;
+        }
+    }
+    out
+}
+
 /// Steepest grade a way of this kind keeps.
 pub fn way_grade(kind: RoadKind) -> f32 {
     match kind {
@@ -268,7 +366,8 @@ impl World {
         }
         self.relief = !flat || z.iter().any(|h| h.abs() > 1e-3) || self.roads.alive_segments().any(|(_, s)| s.bridge);
         self.road_z = z;
-        self.ground = crate::landscape::Ground::build(&self.landscape, &self.roads, &self.road_z, &self.lots, self.config.half_extent + 200.0);
+        self.road_inner = inner_heights(&self.landscape, &self.roads, &self.road_z, floor, &crossings);
+        self.ground = crate::landscape::Ground::build(&self.landscape, &self.roads, &self.road_z, &self.road_inner, &self.lots, self.config.half_extent + 200.0);
     }
 
     /// Legs (by their first point) of a road drawn along `points` at
@@ -320,15 +419,46 @@ impl World {
                 let mine = lv(i) + (lv(i + 1) - lv(i)) * t;
                 let theirs = self.roads.segment_level(sid, u);
                 let gap = (mine - theirs).abs();
-                if !crate::roads::grade_separated(highway, mine, s.is_highway(), theirs) && gap >= 1.0 {
+                // Off-grade railway crossings are refused: said once below.
+                if rail_crossing_refusal(kind, s.kind, highway, mine, s.is_highway(), theirs).is_some() {
+                    continue;
+                } else if !crate::roads::grade_separated(highway, mine, s.is_highway(), theirs) && gap >= 1.0 {
                     out.push(format!("meets a road {gap:.0} m below or above it at grade: raise or lower it {:.0} m more to pass over or under", crate::roads::GRADE_SEPARATION - gap));
                 } else if crate::roads::grade_separated(highway, mine, s.is_highway(), theirs) && gap > 0.0 && gap < UNDERPASS_CLEARANCE && (mine != 0.0 && theirs != 0.0) {
                     out.push(format!("only {gap:.1} m clear of the road it crosses (needs {UNDERPASS_CLEARANCE} m)"));
                 }
             }
         }
+        out.extend(self.road_refusal(points, levels, kind, lanes_fwd, lanes_bwd));
         out.dedup();
         out
+    }
+
+    /// Why a road drawn along `points` at `levels` cannot be built, if it
+    /// cannot: it meets the railway at a height that is neither at grade
+    /// nor clear of it. Such a crossing used to be built as a level
+    /// crossing at the road's height: the junction node took the road's
+    /// level, so a portal ramp halfway down to a tunnel dragged the track
+    /// down into its cutting (and a ramp up to a viaduct hoisted it).
+    /// The Road tool and the API refuse it instead, saying what would work.
+    pub fn road_refusal(&self, points: &[Vec2], levels: &[f32], kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> Option<String> {
+        let lv = |i: usize| levels.get(i).copied().filter(|l| l.is_finite()).unwrap_or(0.0);
+        let highway = crate::roads::is_highway_spec(kind, lanes_fwd, lanes_bwd);
+        for i in 0..points.len().saturating_sub(1) {
+            let (a, b) = (points[i], points[i + 1]);
+            for sid in self.roads.segments_in_box(a.min(b), a.max(b)) {
+                let (p0, p1) = self.roads.segment_points(sid);
+                // Closed: the track's height samples are vertices, and a
+                // crossing exactly at one is still a crossing.
+                let Some((t, u)) = crate::roads::segment_intersection_closed(a, b, p0, p1, 1e-3) else { continue };
+                let s = self.roads.segment(sid);
+                let mine = lv(i) + (lv(i + 1) - lv(i)) * t;
+                if let Some(why) = rail_crossing_refusal(kind, s.kind, highway, mine, s.is_highway(), self.roads.segment_level(sid, u)) {
+                    return Some(why);
+                }
+            }
+        }
+        None
     }
 
     /// Pay for bridge deck laid since the last rebuild.
@@ -369,10 +499,7 @@ impl World {
 
     /// Height of the road at a point on a segment.
     pub fn road_height(&self, sid: SegmentId, t: f32) -> f32 {
-        let Some(seg) = self.roads.try_segment(sid) else { return 0.0 };
-        let za = self.road_z.get(seg.a.0 as usize).copied().unwrap_or(0.0);
-        let zb = self.road_z.get(seg.b.0 as usize).copied().unwrap_or(0.0);
-        za + (zb - za) * t.clamp(0.0, 1.0)
+        crate::landscape::way_height(&self.roads, &self.road_z, &self.road_inner, sid, t)
     }
 
     /// The ground as built at a point: graded under roads and lots, the
@@ -462,7 +589,7 @@ impl World {
         if let Some(&h) = self.ground.pads.get(&lot) {
             return h;
         }
-        self.lots.get(lot).map_or(0.0, |l| crate::landscape::lot_pad(&self.roads, &self.road_z, l, &self.landscape))
+        self.lots.get(lot).map_or(0.0, |l| crate::landscape::lot_pad(&self.roads, &self.road_z, &self.road_inner, l, &self.landscape))
     }
 
     // ── the highway ─────────────────────────────────────────────────────

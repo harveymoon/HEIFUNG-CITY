@@ -66,7 +66,7 @@ impl World {
     /// and nightlife streets, whose kerbs are for loading: drivers going
     /// there use the lots.
     pub(super) fn kerb_allowed(&self, sid: SegmentId) -> bool {
-        self.roads.try_segment(sid).is_some_and(|s| s.alive && s.is_street() && !s.is_motorway() && !s.bridge && !s.tunnel && s.lanes() > 0 && s.lanes_fwd < 2 && s.lanes_bwd < 2)
+        self.roads.try_segment(sid).is_some_and(|s| s.alive && s.is_street() && !s.fronts_nothing() && !s.bridge && s.lanes() > 0 && s.lanes_fwd < 2 && s.lanes_bwd < 2)
             && !self.vehicles.no_kerb.1.contains(&sid)
             && !self.on_ring(sid)
     }
@@ -106,10 +106,11 @@ impl World {
     }
 
     /// [parking] Can a car physically stand along this street, legal or
-    /// not: every street but highways, bridges and roundabout rings (where
-    /// a parked car would sit in the traffic).
+    /// not: every street but highways, ramps, tunnels, bridges and
+    /// roundabout rings (where a parked car would sit in the traffic, or
+    /// be drawn on the ground over the bore).
     pub(super) fn kerb_physical(&self, sid: SegmentId) -> bool {
-        self.roads.try_segment(sid).is_some_and(|s| s.alive && s.is_street() && !s.is_motorway() && !s.bridge && s.lanes() > 0) && !self.on_ring(sid)
+        self.roads.try_segment(sid).is_some_and(|s| s.alive && s.is_street() && !s.fronts_nothing() && !s.bridge && s.lanes() > 0) && !self.on_ring(sid)
     }
 
     /// Slots along one side of a street, legal or not.
