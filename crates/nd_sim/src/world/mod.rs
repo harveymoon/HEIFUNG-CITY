@@ -46,6 +46,7 @@ mod market;
 mod parking;
 mod pedestrians;
 mod plan;
+pub mod poses;
 mod riders;
 mod places;
 #[cfg(test)]
@@ -125,6 +126,7 @@ use crate::landscape::{Ground, Landscape, LandscapeParams};
 use crate::ports::Ports;
 pub use industry_bridge::INDUSTRY_CHOICES;
 pub use districts::{DistrictStats, PolicyChange};
+pub use poses::Pose;
 
 /// A parcel that loses or gains more than this share of its area under a
 /// building is treated as a new parcel: the building goes.

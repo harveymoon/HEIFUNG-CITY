@@ -1158,6 +1158,9 @@ mod tests {
         assert!(crash.on_road && crash.pos.distance(rec.pos) < 1.0);
         assert!(!w.citizens[rider].owns_car && w.citizens[rider].car.is_none() && !w.vehicles.cars.contains_key(vid), "the bike is written off (scrapped)");
         let medical = w.services.incidents.iter().find(|i| i.kind == IncidentKind::Medical && i.citizen == Some(rider)).expect("a medical call").id;
+        // [clarity] Lying in the road until the paramedics take them.
+        assert!(w.citizens[rider].is_visible(), "the rider is out on the street");
+        assert_eq!(w.pose_of(rider), crate::world::Pose::Lying, "the hurt lie on the ground");
         // An ambulance goes, the rider ends up in a hospital bed.
         let sent = tick(&mut w, 200, |w| w.services.units.values().any(|u| u.kind == UnitKind::Ambulance && u.incident == Some(medical) && u.state != UnitState::Idle));
         assert!(sent, "an ambulance was dispatched");
