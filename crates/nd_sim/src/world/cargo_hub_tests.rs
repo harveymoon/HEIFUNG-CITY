@@ -119,10 +119,12 @@ fn a_closed_hub_sends_on_everything_it_held() {
 }
 
 #[test]
-fn hub_placement_is_refused_on_homes_and_needs_money() {
+fn hub_placement_is_refused_on_parks_and_needs_money() {
     let (mut w, _, site) = town();
     w.economy.treasury = 10.0;
     assert!(w.build_cargo_hub(site).is_err());
-    assert!(!crate::services::Placeable::CargoHub.allowed_on(LandUse::Residential));
+    // [free-placement] Homes are no bar any more (the ground leaves the zone); parks are.
+    assert!(crate::services::Placeable::CargoHub.allowed_on(LandUse::Residential));
+    assert!(!crate::services::Placeable::CargoHub.allowed_on(LandUse::Park));
     assert_eq!(crate::services::Placeable::parse("cargo_hub", None), Some(crate::services::Placeable::CargoHub));
 }

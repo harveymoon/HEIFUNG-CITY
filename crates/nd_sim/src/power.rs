@@ -61,10 +61,8 @@ impl PowerPlantKind {
             PlantSite::River => "on a lot beside a river or stream with a current",
             PlantSite::Coast => "on a lot on the sea shore",
             PlantSite::HotSpot => "over a geothermal hot spot (steaming vents)",
-            PlantSite::Anywhere => match self {
-                PowerPlantKind::Coal | PowerPlantKind::Nuclear => "on industrial land",
-                _ => "on any land but parks and civic",
-            },
+            // [free-placement] No zoning needed.
+            PlantSite::Anywhere => "on any lot or unzoned ground by a road (not a park)",
         }
     }
 

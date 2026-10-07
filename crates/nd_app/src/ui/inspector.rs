@@ -230,6 +230,15 @@ fn bot(ui: &mut egui::Ui, w: &nd_sim::World, selection: &mut Selection, id: nd_s
 /// sparkline and no homes; a block of flats shows its homes; the people in
 /// it are a grid of faces that select them.
 fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets: &GameAssets, id: nd_sim::BuildingId) {
+    // [free-placement] A bulldoze confirmed last frame: it goes, and its
+    // ground back to the zoning plan.
+    let bulldoze = egui::Id::new(("inspector_bulldoze", id));
+    if ui.ctx().data_mut(|d| d.remove_temp::<bool>(bulldoze.with("go"))).unwrap_or(false) {
+        if sim.world.bulldoze_building(id).is_ok() {
+            *selection = Selection::None;
+            return;
+        }
+    }
     let w = &sim.world;
     let b = &w.buildings[id];
     // ── Header ──
@@ -244,11 +253,13 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             ui.label(egui::RichText::new(&b.name).font(crate::ui::theme::title()).color(IVORY).strong());
         }
     }
-    let zone_col = super::zone_color32(assets.palette.zone_color(b.land_use));
+    // [free-placement] A city building reads Civic (its ground is out of the zoning).
+    let shown = w.shown_use(id);
+    let zone_col = super::zone_color32(assets.palette.zone_color(shown));
     let style = nd_procgen::building_style(w, id, &assets.rules, Some(&sim.styles));
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        tag(ui, b.land_use.label(), zone_col);
+        tag(ui, shown.label(), zone_col);
         if let Some(bz) = &b.business {
             tag(ui, &capitalise(bz.kind.label()), GOLD);
             if let Some(ind) = bz.kind.industry() {
@@ -270,6 +281,29 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
     });
     let started = if b.construction.is_some() { "started" } else { "built" };
     hint(ui, &format!("{}  ·  {} floor{}  ·  {started} day {}", style.map_or("unknown style", |s| s.label()), b.floors, if b.floors == 1 { "" } else { "s" }, b.built_tick / 1440 + 1));
+    // [free-placement] The city's own: its ground is out of the zoning, and
+    // the player may bulldoze it (a second click confirms).
+    if w.is_city_building(id) && b.rail.is_none() && b.port.is_none() {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("City ground, out of the zoning").small().weak());
+            let armed = ui.ctx().data(|d| d.get_temp::<bool>(bulldoze)).unwrap_or(false);
+            if !armed {
+                if ui.small_button("Bulldoze").on_hover_text("Pull it down; its ground goes back to whatever the zoning plan has there").clicked() {
+                    ui.ctx().data_mut(|d| d.insert_temp(bulldoze, true));
+                }
+            } else {
+                if ui.small_button(egui::RichText::new("Confirm bulldoze").color(WARN)).clicked() {
+                    ui.ctx().data_mut(|d| {
+                        d.remove::<bool>(bulldoze);
+                        d.insert_temp(bulldoze.with("go"), true);
+                    });
+                }
+                if ui.small_button("Cancel").clicked() {
+                    ui.ctx().data_mut(|d| d.remove::<bool>(bulldoze));
+                }
+            }
+        });
+    }
     // [events] A rave on tonight (or the scene round an old warehouse).
     super::nights::rave_line(ui, w, id);
     // Alarms, before anything else.

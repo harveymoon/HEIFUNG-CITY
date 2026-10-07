@@ -279,7 +279,7 @@ them a land use.
 | `add_road` | `points` `[[x,y],...]` or `[[x,y,level],...]` (2+; level metres above the ground, negative below), `elevation` (a level for every point without its own, or a list), `tunnel` (default level -8 m), `kind` street (default) / path / rail, `lanes_fwd`, `lanes_bwd` (0..4, default 1/1, streets only), `curved`, `snap` (default true: points snap to a road at about their level; an end with no level of its own snaps to any road and takes its level), `implement`. Reply adds `grade_warnings` (too steep, crossing at an awkward height). Refused (400) if it would meet the railway at a level neither at grade nor clear of it, e.g. a portal ramp part way down: the error says how far to lower or raise it |
 | `add_roundabout` | `center` `[x,y]` (or `pos` / `x`,`y`; snaps onto a junction within 12 m or a street within 6 m), `radius` 12..120 m to the ring centreline or `diameter` 24..240 (default the tool's), `lanes` 1 / 2 / 3, `implement`. Reply adds `roundabout` {`center`, `radius`, `diameter`, `lanes`, `joins`, `cuts_roads` (gesture ids), `takes_buildings`}; refused where it would partly overlap another roundabout (nesting one wholly inside another, with a lane and pavement between, is fine) |
 | `add_zone` | `polygon` `[[x,y],...]` (3+), `land_use` residential / commercial / industrial / entertainment / civic / park, `implement` |
-| `bulldoze` | `gesture_id`, `implement` |
+| `bulldoze` | `gesture_id`, `implement`; or `building` (id): a city building (plant, battery, service, attraction, depot, metro station, cargo hub, city parking) goes at once and its lot goes back to the zoning plan (or unzoned ground). Grown buildings, stations, yards and docks refuse |
 | `paint` | `land_use` (or `none` to unzone), then `at` `[x,y]` + `radius` (the brush), `rect` `[[x0,y0],[x1,y1]]` (the marquee) or `polygon`; `industry` (industrial only: auto / farming / oil / refinery / manufacturing / logistics / fishing / tech), `implement`. Reply: `painted`, `touched`, `refused` (`[{parcel, center, why}]`), `gesture_id` |
 | `project` | `action`: list / new / switch / rename / delete / park / start / implement / undo / redo / discard; `id` (default the active project) or `name` to pick one; `name` for new and rename. Reply: `projects` (`id`, `name`, `active`, `steps`, `redo`, `conflicts` `[{gesture, project}]`, `shared_parcels`), `warnings` from the last implement |
 | `find` `{what: "parcels"}` | per parcel: `index`, `center`, `area`, `land_use` (built), `planned`, `landlocked`, `street`, `rough`, `accepts`, `lot`; filter `land_use`, `zoned`, `landlocked` |
@@ -301,6 +301,23 @@ Road works never take the city's own structures (depots, stations, yards, plants
 
 `place {kind, x, y}` (or `pos: [x, y]`):
 
+[free-placement] Everything that goes on a lot goes on any lot, whatever its zone, or on
+unzoned ground with road access at the point: no zoning first (`World::place_building`,
+`World::placement_site`). On unzoned ground a lot is made for it from the parcel there, or
+the parcel joined with its unzoned neighbours when one is too small. Only physical rules
+refuse: no road access, a street out front where it needs one, the lot's size, the site
+(river, coast, hot spot), a station's ground, another city building ("bulldoze it first"),
+park land (but for a metro station), the treasury. The ground under the new building leaves its
+zone: the lot's and the building's `land_use` read `Civic` (building rows add `use`, the
+building's own use for power, wages and venues: industrial for plants and depots,
+entertainment for a stadium, ...) and lot rows carry `city_ground: true`, zone tallies leave it out, `paint` refuses it while the building stands, and `bulldoze
+{building}` gives it back to the plan. The reply's `message` ends with what happened to the
+zoning ("unzoned parcel: fine, a lot is made for it", "takes this lot out of the residential
+zone"). With `check: true` nothing is built: the reply is `{ok, note, lot, parcels,
+leaves_zone, outline}` or `{ok: false, reason}`. Off any lot or parcel the nearest vacant lot
+within 80 m is used, as before.
+
+
 - `station`, `freight_yard`, `central_station` (also `central`, `main_station`): rail pieces, placed
   anywhere (`World::place_rail_facility`); the reply message says whether track and street are
   joined. The Central Station (one per city) is also a metro station and a bus terminal (a depot).
@@ -315,7 +332,7 @@ Road works never take the city's own structures (depots, stations, yards, plants
   80 MW, cost 6,000 / 20,000 / 55,000, upkeep 30 / 90 / 240 a day, lots of 150 / 350 / 800 m², any
   land but parks). Like solar and wind, whatever stood there is cleared at once.
 - `depot`, `parking`, `coal`, `solar`, `wind`, `nuclear`, `hydro`, `tidal`, `geothermal`: on the lot
-  under the point, or the nearest vacant lot within 80 m (`build_depot`, `build_parking`,
+  under the point (or unzoned ground there), else the nearest vacant lot within 80 m (`build_depot`, `build_parking`,
   `build_power`). Hydro needs a lot within 30 m of a river or stream running at 0.8 m/s or more,
   tidal a lot on the sea shore, geothermal a lot over a hot spot (`terrain_at` says which apply).
   Solar and wind are sized to the lot: nameplate, cost and upkeep scale with its area (600 / 800 m²
@@ -340,9 +357,9 @@ Road works never take the city's own structures (depots, stations, yards, plants
   lot but parks; works once the old building on the lot is cleared.
 - Services and attractions: `police`, `fire`, `hospital` (`clinic` is a low-tier hospital), `school`, `jail`,
   `dispatch`, `monument`, `stadium`, with `tier` low / mid / high (default mid) or a suffix
-  (`"fire:high"`), on the lot under the point (`World::place_on_lot`, `build_service`). Whatever grew
+  (`"fire:high"`), on the lot or unzoned ground under the point (`World::place_building`, `build_service`). Whatever grew
   on the lot is bought out and pulled down; another civic building refuses ("bulldoze it first").
-  Refusals name the reason: land use, lot area, no street out front (police, fire, health, stadium),
+  Refusals name the reason: park land, lot area, no street out front (police, fire, health, stadium),
   treasury. Costs, upkeep, jobs, coverage radius, vehicles and capacity per tier are in
   `nd_sim::services::ServiceKind`.
 
@@ -1167,7 +1184,7 @@ revenue}}, and the details under `crime` (hot spots, custody, releases, reformed
 `society {action}`: `report` (default) returns the section; `evict {building}` puts its households
 on the street (camps form on cheap land); `offend {citizen, building?, kind?}` makes a citizen a
 criminal and has them strike; `trash {kg, building?}` adds trash to bins. `place {kind:
-"trash_depot"}` (also `trash`, `garbage`) puts down a depot (industrial or civic land, a street out
+"trash_depot"}` (also `trash`, `garbage`) puts down a depot (any lot or unzoned ground, a street out
 front). Garbage trucks are cars in `find {what: "cars"}` with a garbage truck body.
 
 ## Business pressure, the waterfront and the art scene
