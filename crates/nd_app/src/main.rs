@@ -8,6 +8,8 @@ mod flags;
 mod map_layers;
 /// [camera] Favourites' gold, a person's place posts, a robot's route.
 mod marks;
+/// [metro-ux] The Metro map layer and drawing lines station to station.
+mod metro_ux;
 mod remote;
 mod render;
 mod sim;
@@ -45,6 +47,7 @@ fn main() {
             district_tool::DistrictToolPlugin,
             map_layers::MapLayersPlugin,
             marks::MarksPlugin,
+            metro_ux::MetroUxPlugin,
         ))
         .run();
 }

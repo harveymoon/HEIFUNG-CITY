@@ -71,6 +71,8 @@ pub const MAP_LAYERS: &[MapLayer] = &[
     // [events] (render/nights.rs)
     MapLayer { key: "road_condition", label: "Road condition", group: "Traffic", hotkey: "", hint: "Wear on every street: green is smooth, red is crumbling; crews fix dear land first", flag: |o| &mut o.road_condition, legend: legend_road_condition },
     MapLayer { key: "map", label: "Map view", group: "City", hotkey: "L", hint: "A street map: roads, street names, zones and pins, buildings and people hidden", flag: |o| &mut o.map, legend: legend_map },
+    // [metro-ux] (metro_ux.rs, render/focus.rs) The metro line tool shows it.
+    MapLayer { key: "metro", label: "Metro", group: "Transit", hotkey: "M", hint: "The metro: tunnels and lines in their colours, every station a named marker, over a dimmed city", flag: |o| &mut o.metro, legend: legend_metro },
 ];
 
 /// A layer: a flag entry of [`MAP_LAYERS`] or a land survey layer.
@@ -312,6 +314,19 @@ fn legend_map(ui: &mut egui::Ui, _: &LegendCtx) {
     let pins: Vec<(Color32, String)> = crate::render::MAP_PIN_KEY.iter().map(|(g, c, l)| (Color32::from_rgb(c[0], c[1], c[2]), format!("{g} {l}"))).collect();
     swatches(ui, &pins, true);
     small(ui, "street names along the roads; tunnels dashed");
+}
+
+/// [metro-ux]
+fn legend_metro(ui: &mut egui::Ui, cx: &LegendCtx) {
+    let w = cx.world;
+    let lines: Vec<(Color32, String)> = w.subway.lines.values().map(|l| (linear(nd_procgen::metro::line_colour(l.color)), format!("{}{}", l.name, if l.looped { " (loop)" } else { "" }))).collect();
+    if lines.is_empty() {
+        small(ui, "no metro line yet");
+    } else {
+        swatches(ui, &lines, false);
+    }
+    swatches(ui, &[(Color32::from_rgb(120, 235, 255), format!("{} stations", w.metro_stations().len())), (Color32::WHITE, "line being drawn".into())], true);
+    small(ui, "Build window, Transit, Metro: Metro station places them, Metro lines joins them");
 }
 
 fn legend_traffic_types(ui: &mut egui::Ui, _: &LegendCtx) {

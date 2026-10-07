@@ -565,6 +565,8 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "pressure" | "pressures" => economy::command(cmd, &mut ctx.sim.world),
         "bus" => bus(cmd, ctx),
         "subway" | "metro" => subway::command(cmd, &mut ctx.sim.world),
+        // [metro-ux] The metro line tool, click by click.
+        "metro_line" => subway::metro_line(cmd, &mut ctx.sim.world, &mut ctx.tools),
         "find" => find(cmd, ctx),
         "inspect" => inspect(cmd, ctx),
         "lane_use" => lane_use(cmd, ctx),
@@ -2499,7 +2501,9 @@ fn help() -> Value {
     v["commands"]["tourism"] = json!({ "action": "refresh (re-read attractions now)", "limit": "tourists listed, default 20", "returns": "attractiveness, demand, ways in, today's and yesterday's arrivals, spending and tourist tax, hotels, attractions, tourists" });
     // [society]
     // [subway]
-    v["commands"]["subway"] = json!({ "action": "status (default)|station|line|headway|remove_line|inspect_line|inspect_station", "x": "f (station)", "y": "f (station)", "stations": "[id or [x,y], ...] (line)", "points": "[[x,y], ...] (line: places stations where none is near)", "line": "id", "minutes": "headway", "headway": "minutes (line)", "station": "id or [x,y]" });
+    v["commands"]["subway"] = json!({ "action": "status (default)|station|line|preview|headway|remove_line|inspect_line|inspect_station", "x": "f (station)", "y": "f (station)", "stations": "[id or [x,y], ...] (line, preview)", "points": "[[x,y], ...] (line: places stations where none is near)", "loop": "bool (line, preview): back to the first station", "line": "id", "minutes": "headway", "headway": "minutes (line)", "station": "id or [x,y]" });
+    // [metro-ux]
+    v["commands"]["metro_line"] = json!({ "stations": "[id or [x,y], ...]: clicked in order, as the player does", "click": "id or [x,y]: one more", "loop": "bool: click the first station again", "undo": "bool or n: take back stops", "finish": "bool: lay the line", "cancel": "bool: drop the draft first", "headway": "minutes (finish)", "tool": "bool (default true): pick the metro line tool, which shows the Metro layer" });
     // The player's selection and flags (added here: the big literal above
     // is at the json! macro's recursion limit).
     v["commands"]["selected"] = json!({ "": "full detail of what the player has selected: a car with why (reason, text, by), jam (chain to the head of the queue, head_reason, cycle), trip (elapsed_min, expected_min, anger), lanes, driver, cargo; a citizen (and driving_car); a building; a parked car; the bus line picked (bus_line)" });

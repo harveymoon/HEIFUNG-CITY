@@ -310,7 +310,7 @@ pub(super) fn transit(ui: &mut egui::Ui, p: &mut UiCtx) {
     let s = &w.subway.stats;
     section(ui, "METRO");
     if s.lines == 0 {
-        hint(ui, "No metro line yet: the Buses tool's Metro mode places stations and lays lines.");
+        hint(ui, "No metro line yet: place metro stations (Build window, Transit, Metro), then Metro lines joins them station by station.");
     }
     row(ui, "network", format!("{} station{}   {} line{}   {:.1} km   {} train{} running", s.stations, if s.stations == 1 { "" } else { "s" }, s.lines, if s.lines == 1 { "" } else { "s" }, s.tunnel_m / 1000.0, s.trains, if s.trains == 1 { "" } else { "s" }));
     row(ui, "riders", format!("{} waiting   {} riding   {} today   {} yesterday", s.waiting, s.riding, s.riders_today, s.riders_yesterday));

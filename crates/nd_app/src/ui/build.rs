@@ -705,8 +705,12 @@ fn info(ui: &mut egui::Ui, p: &mut UiCtx, item: Item, hovered: bool) {
         }
         Item::MetroLines => {
             let s = &p.sim.world.subway.stats;
-            row(ui, "network", format!("{} stations · {} lines · {:.1} km", s.stations, s.lines, s.tunnel_m / 1000.0));
-            hint(ui, "Click lots for stations (or pick standing ones and the Central Station) in order; Enter or right-click lays the line through tunnels. U shows the underground.");
+            row(ui, "network", format!("{} stations · {} lines · {:.1} km", s.stations, s.lines, s.tunnel_m / 1000.0 + 0.0));
+            // [metro-ux]
+            hint(ui, "Click stations in order on the Metro layer (M); the tunnel to each is drawn as you go. Click the first station again for a loop; Enter or Finish lays the line.");
+            if s.stations < 2 {
+                hint(ui, "Place two metro stations first: Transit, Metro, Metro station.");
+            }
         }
     }
 }

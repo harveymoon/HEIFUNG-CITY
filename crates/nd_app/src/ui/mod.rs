@@ -93,6 +93,16 @@ pub struct UiFlags {
     news_seen: u32,
 }
 
+impl UiFlags {
+    /// [metro-ux] The map between the top bar and the bottom toolbar (with
+    /// its sub-pane) as laid out last pass, for painting over the map only.
+    pub fn map_rect(&self, full: egui::Rect) -> egui::Rect {
+        let top = self.panel_rects.first().map_or(full.top(), |r| r.bottom());
+        let bottom = self.panel_rects.get(1).map_or(full.bottom(), |r| r.top());
+        egui::Rect::from_min_max(egui::pos2(full.left(), top), egui::pos2(full.right(), bottom.max(top + 1.0)))
+    }
+}
+
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {

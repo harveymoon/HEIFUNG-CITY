@@ -401,20 +401,58 @@ Rows (`list`, and the `row` the edits return) carry `riders_yesterday` and each 
 | --- | --- |
 | `status` (default) | the `subway` report section (below) |
 | `station` | `x`, `y`: a station on the lot under the point (or the nearest usable lot within 80 m) |
-| `line` | `stations: [id or [x, y], ...]` in order (a point picks the station within 120 m), or `points: [[x, y], ...]` (a station is placed on the lot at each point that has none within 120 m); optional `headway` minutes. Pays the tunnel |
+| `line` | `stations: [id or [x, y], ...]` in order (a point picks the station within 120 m), or `points: [[x, y], ...]` (a station is placed on the lot at each point that has none within 120 m); optional `headway` minutes; `loop: true` (or the first station again at the end, three stations or more) closes the line into a loop. Pays the tunnel |
+| `preview` | `stations` (as for `line`), `loop`: what the line would be, without laying it: `preview` {stops, looped, length_m, legs_m, run_min, round_trip_min, trains, headway_min, tunnel_cost, upkeep_per_day}, `affordable`, `treasury` |
 | `headway` | `line`, `minutes` (4..60): minutes between trains each way |
 | `remove_line` | `line`: its trains are taken off (riders set down at the next platform) and people waiting walk instead |
 | `inspect_line` | `line`: the row plus `path` (every fourth point) and `trains_detail` (id, forward, at, passengers, dwelling, next_stop) |
 | `inspect_station` | `station`: id or `[x, y]` |
 
-Line rows: id, name, colour, headway_min, length_m, stations (id, name), trains, waiting, riding,
-riders_today, riders_yesterday, runs_today. Station rows: id, name, central, entrance, platform,
-lines, boardings_today, boardings_yesterday, waiting.
+Line rows: id, name, colour, headway_min, looped, length_m, stations (id, name), trains, waiting,
+riding, riders_today, riders_yesterday, runs_today. Station rows: id, name, central, entrance,
+platform, lines, boardings_today, boardings_yesterday, waiting.
 
 ```json
 {"cmd": "subway", "action": "line", "points": [[300, -440], [210, -160], [90, -25], [-90, 25], [-210, 160]], "headway": 8}
+{"cmd": "subway", "action": "line", "stations": ["17:1", "18:1", "19:1", "20:1"], "loop": true}
+{"cmd": "subway", "action": "preview", "stations": [[-243, -160], [160, -200], [250, 160]], "loop": true}
 {"cmd": "subway", "action": "headway", "line": "1:1", "minutes": 6}
 {"cmd": "subway"}
+```
+
+#### The metro line tool: `metro_line`
+
+`metro_line {stations?, click?, loop?, undo?, finish?, cancel?, headway?, tool?}` drives the
+game's metro line tool exactly as the player does (`nd_app/src/metro_ux.rs`), so the screen shows
+it: the tool is picked (Build window, Transit, Metro lines), which switches the map to the Metro
+layer, unless `tool: false`. Fields run in this order:
+
+| field | does |
+| --- | --- |
+| `cancel` | drop the line being drawn first (Esc) |
+| `stations` | `[id or [x, y], ...]`: each clicked in turn. A point picks the station whose lot it is on, or whose platform or entrance is within 75 m; a point on no station does nothing but say so (as a click off a station does) |
+| `click` (also `add`) | one more station, as above |
+| `loop` | click the first station again: closes a loop (three stations or more) |
+| `undo` | `true` or a count: take back the last stop(s) (right-click / Backspace); a closed loop opens first |
+| `finish` | lay the line (Enter / Finish), with `headway` minutes if given. Fails (400) with the reason when there is nothing to lay or the treasury is short |
+
+A refused click does not fail the command. Reply: `clicks` [{at, station, taken, message}] (the
+message is the status line the player sees: why a click was not taken, e.g. "Foundry is already the
+last stop", "a loop needs three stations or more", "the treasury cannot pay the tunnel to Mirror
+Lake: 695 m of line costs 15284, the treasury has 3598"), `draft` {stations [{id, name}], looped,
+ready, preview (as `subway preview`), hover (the station under the pointer), tool_active,
+stations_in_city}, `status`, `line` (the new line's row after `finish`, else null), `treasury`.
+
+Tunnels are bored straight from station to station under everything, so any two stations connect;
+only the order (the last stop again, a station already on the line, a loop of two) and the money
+can refuse a click.
+
+```json
+{"cmd": "metro_line", "stations": ["17:1", [160, -200], [250, 160]]}
+{"cmd": "metro_line", "click": [-160, 205], "loop": true}
+{"cmd": "metro_line", "undo": 1}
+{"cmd": "metro_line", "finish": true, "headway": 6}
+{"cmd": "metro_line", "cancel": true}
 ```
 
 ### Finding and inspecting
@@ -538,8 +576,8 @@ several plots), home, business, form. A billionaire's other homes and businesses
 | `flags` / `flag` | the player's "Flag for Claude" bookmarks (see below) |
 | `favourite` | `citizen`, `on` (omit to toggle). Favourites wear a gold ring and diamond in the world (their car, driving or parked, a gold box) |
 | `gift` | `citizen` (default: the selected citizen), `amount` (default 1000): money from the treasury to their household (their savings if they have none), as the person pane's "Gift $1000". Refused when the treasury cannot pay. Booked as `gifts_to_residents`, itemised by name; they remember it. Reply `amount`, `household`, `household_money`, `savings`, `treasury` |
-| `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail, district; the building ones are what the Build window's items pick: road and its presets for Roads and Rail track, zone for Zoning and Parks, buildings for Power, Services, Transit placeables, Water and Attractions, rail for stations and yards, transit for bus and metro lines), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway, Roundabout), `diameter` and `ring_lanes` (roundabout), `ring_at` `[x,y]` (show the roundabout preview there as if hovered, until the mouse is used), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry` (zone, industrial: auto / farming / oil / ...), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture`, `elevation` (the Road tool's level for the next point, m), `depth` (underground / ground / sky: the view layer; the Tunnel preset switches to underground, other presets back), `draw` `[[x,y,level?],...]` (the road being drawn, as if clicked, so its hologram shows), `cursor` `[x,y]` (where the pointer stands for that hologram until the mouse is used). The reply's tool state has `elevation`, `elevation_label`, `point_levels`, `tunnel`, `depth`, `grade_warnings`, and (refreshed with the road preview, a frame later) `pillars` {count, at, buyouts (building names a pillar would buy out), empty_lots, gaps ([[x,y],[x,y]] stretches with no room for a pillar), refusal}, and `intersection_editor` (where the editor is open, or null) |
-| `overlay` | **Map layers are exclusive**: one shows at a time (as the top bar's Layer button), with its key in the legend. `active` a layer key or `none`: show it alone. `layer` (zoning, land_value, districts, traffic, traffic_types, paths, people, pollution, crime, map, or a land survey layer, below; `traffic` and `crime` also dim the city and light up the vehicles they are about, `map` is the street map view with street names and pins) with `on` (bool; omitted toggles): on shows it and hides every other, off hides it if it shows. `land` a land survey layer key (shown alone) or `none`. Older form, a bool per layer name: true shows that layer alone (several trues: the last listed in the registry wins), false hides it if it shows. `projects` (bool, or `layer: "projects"`) is the dim other-projects switch, not a layer, and is left alone by the rest. Reply: every flag layer and whether it is on, `land` (the survey layer shown, or null), `active` (the key of the layer showing, or null) and `projects` (also in `status.overlays`). New layers are added as one entry in `crate::map_layers::MAP_LAYERS` and appear here by their key |
+| `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail, district; the building ones are what the Build window's items pick: road and its presets for Roads and Rail track, zone for Zoning and Parks, buildings for Power, Services, Transit placeables, Water and Attractions, rail for stations and yards, transit for bus and metro lines; the metro line tool is `tool {name: transit, kind: metro}`, see `metro_line`), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway, Roundabout), `diameter` and `ring_lanes` (roundabout), `ring_at` `[x,y]` (show the roundabout preview there as if hovered, until the mouse is used), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry` (zone, industrial: auto / farming / oil / ...), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture`, `elevation` (the Road tool's level for the next point, m), `depth` (underground / ground / sky: the view layer; the Tunnel preset switches to underground, other presets back), `draw` `[[x,y,level?],...]` (the road being drawn, as if clicked, so its hologram shows), `cursor` `[x,y]` (where the pointer stands for that hologram until the mouse is used). The reply's tool state has `elevation`, `elevation_label`, `point_levels`, `tunnel`, `depth`, `grade_warnings`, and (refreshed with the road preview, a frame later) `pillars` {count, at, buyouts (building names a pillar would buy out), empty_lots, gaps ([[x,y],[x,y]] stretches with no room for a pillar), refusal}, and `intersection_editor` (where the editor is open, or null) |
+| `overlay` | **Map layers are exclusive**: one shows at a time (as the top bar's Layer button), with its key in the legend. `active` a layer key or `none`: show it alone. `layer` (zoning, land_value, districts, traffic, traffic_types, paths, people, pollution, crime, map, metro, or a land survey layer, below; `traffic` and `crime` also dim the city and light up the vehicles they are about, `map` is the street map view with street names and pins; `metro` dims the city and shows the metro lines in their colours and every station as a named marker, and picking the metro line tool switches to it, leaving it puts back the layer before) with `on` (bool; omitted toggles): on shows it and hides every other, off hides it if it shows. `land` a land survey layer key (shown alone) or `none`. Older form, a bool per layer name: true shows that layer alone (several trues: the last listed in the registry wins), false hides it if it shows. `projects` (bool, or `layer: "projects"`) is the dim other-projects switch, not a layer, and is left alone by the rest. Reply: every flag layer and whether it is on, `land` (the survey layer shown, or null), `active` (the key of the layer showing, or null) and `projects` (also in `status.overlays`). New layers are added as one entry in `crate::map_layers::MAP_LAYERS` and appear here by their key |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
 | `heat_vision` (alias `heat`) | `on` (bool; omitted toggles). Drone heat vision: buildings, ground and roads go near-black, people, vehicles, fires and drones glow by temperature (lights and engines white-hot), with motion blur, scanlines, noise, a vignette and a reticle. Same as key H and the top bar's Heat button. Reply `heat_vision`; also `status.lighting.heat_vision` |
 | `graphics` (alias `quality`) | `quality` auto / low / medium / high. Pins the graphics tier (Low: MSAA, no SSAO or haze; Medium: TAA, light SSAO; High: TAA, full SSAO, volumetric haze, big shadows) or hands it back to the frame-rate throttler (Auto). Pin one before screenshots that must compare. Reply `quality`, `tier` (in force from the next frame), `frame_ms` (smoothed), `sim_ms`, `auto_steps`, `reason`, `effects`; also `status.render.graphics`. `ND_QUALITY` sets the starting setting |
