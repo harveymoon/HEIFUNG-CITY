@@ -1949,7 +1949,7 @@ fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Parked(id)
     } else if let Some(p) = opt_vec2(cmd, "at")? {
         // Pick exactly as a click with the Inspect tool does.
-        crate::tools::pick(&*ctx.sim, p)
+        crate::tools::pick(&*ctx.sim, p, ctx.tools.depth)
     } else {
         Selection::None
     };
