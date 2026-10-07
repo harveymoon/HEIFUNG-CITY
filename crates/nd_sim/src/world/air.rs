@@ -222,6 +222,7 @@ impl World {
     /// when a taxi pad is within walking reach of both ends, the fare is in
     /// the purse and the flight beats the road.
     pub(super) fn consider_air(&mut self, id: CitizenId, target: BuildingId, purpose: Purpose, from: Vec2, to: Vec2) -> Option<AirPlan> {
+        crate::prof_scope!("consider_air");
         if self.air.taxis() == 0 || !self.air_service_on() || matches!(purpose, Purpose::Wander | Purpose::Sit | Purpose::ToStop) {
             return None;
         }

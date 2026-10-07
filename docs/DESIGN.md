@@ -234,6 +234,15 @@ Citizens are rendered from their simulated positions every frame.
   0.30/220 m, logistics 0.18, fishing 0.14, farming 0.08, clean tech 0.05. Working industry
   also lifts run-down land (up to +0.1, fading to nothing at 0.35): jobs bring activity.
   Contaminated ground costs everyone up to 0.6.
+  **Walking access** (the player's rule: a long way to any park or night out makes a
+  neighbourhood cheaper): with the strips, two multi-source Dijkstras over the walk network
+  (from every node in or fronting a park, and an open entertainment lot) give each cell the
+  minutes on foot to the nearest of each (`LandValue::park_min` / `nightlife_min`; a cell
+  with no walk node within 48 m has none). Homes get +0.03 for a park within 4 minutes,
+  nothing at 10, -0.06 from 20 or out of reach; nightlife +0.02 / 5, 0 / 12, -0.04 / 25
+  (`land_value::access_value`). It is in the grid, and `for_use` takes it back out for every
+  use but homes. The hover card, `terrain_at` and a lot's `inspect` show it ("parks 4 min
+  walk · nightlife 12 min").
 - **Tiers and rent**: buildings are low, middle or high tier. New construction takes
   the tier the land value supports (pulled down when people are waiting for something
   affordable). Full buildings on rising land upgrade; buildings on falling land decay.
@@ -420,6 +429,14 @@ Citizens are rendered from their simulated positions every frame.
   it fits; walkers only fall in behind when boxed in. With the walk light on, cars standing or
   crawling (under 2 m/s) across a crossing do not hold walkers back: they weave round the ends of
   the stopped cars.
+
+  Cyclists (`world/riders.rs`) ride the road shoulder and keep the rules too: into a
+  signalised junction they stop short of the crosswalk while their approach has red (and call
+  their phase, as a detector would), anywhere they give way to people on a crosswalk they are
+  about to ride over, and straight over a street on a footpath's line they cross like a walker
+  (walk light or a gap at a zebra, and drivers stop for them on it). The rebellious, drunk or
+  late may run a red when the cross traffic leaves a gap (`red_lights_run_today`); the
+  cautious, old and young never do.
 - **Homes on paths**: in a residential zone a path counts as frontage, so houses and
   blocks line footpaths. Such lots have no car access: a resident's car trips start and
   end at the nearest street, the last stretch is walked over the pedestrian network,
@@ -443,7 +460,12 @@ Citizens are rendered from their simulated positions every frame.
   cost 8% less than pavement, so walkers cut through parks on the way elsewhere. A park
   visit no longer vanishes into a building: the visitor walks the paths to a bench and
   sits (`Activity::Sitting`, drawn seated, visible, facing the path or the water),
-  then walks off the bench when the next decision comes.
+  then walks off the bench when the next decision comes. A bench has three seats
+  0.6 m apart (`world/benches.rs`); a visitor claims a free seat when they reach the park
+  and holds it until they get up, so nobody sits on anybody. A park with every seat taken
+  sends the visitor to the nearest park with room within 600 m, or home. Strangers who sat
+  side by side for 15 minutes or more may get talking (10% plus 30% of their mean sociability)
+  and become acquaintances (`PlaceBook::meet`), as regulars of a bar do.
 - **Construction** (`buildings::Construction`): nothing pops into existence. `build_on` opens
   a site with a build time of (1 + 0.4 × floors) days scaled by tier, clamped to 1–12 days;
   it offers no homes and a temporary crew of jobs that the unemployed commute to. Progress

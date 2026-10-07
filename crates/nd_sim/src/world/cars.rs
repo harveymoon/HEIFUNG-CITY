@@ -508,6 +508,7 @@ impl World {
     /// Get in and drive to `target`. False when the car cannot get there
     /// (no route); the citizen is then left as they were.
     pub(super) fn start_drive(&mut self, id: CitizenId, vid: VehicleId, target: BuildingId, purpose: Purpose) -> bool {
+        crate::prof_scope!("start_drive");
         let Some(lot) = self.building_lot(target) else { return false };
         let Some((ct_seg, ct_pt)) = lot.car_segment.map(|s| (s, lot.car_point)) else { return false };
         let spot = self.vehicles.cars.get(vid).and_then(|c| c.spot().copied());
@@ -537,6 +538,7 @@ impl World {
 
     /// Walk to the parked car first, then drive (`arrive` picks it up).
     pub(super) fn walk_to_car(&mut self, id: CitizenId, vid: VehicleId, at: Vec2, target: BuildingId, purpose: Purpose, from: Vec2) {
+        crate::prof_scope!("walk_to_car");
         let exit = self.leave_building(id);
         let start = exit.unwrap_or(from);
         let mut path = match self.walk.route(start, at) {
@@ -1422,6 +1424,7 @@ impl World {
 
     /// The trip under way began: note its mode and when.
     pub(super) fn begin_trip(&mut self, id: CitizenId, mode: TripMode, distance: f32) {
+        crate::prof_scope!("begin_trip");
         let tick = self.clock.tick;
         let c = &mut self.citizens[id];
         c.commute.mode = Some(mode);

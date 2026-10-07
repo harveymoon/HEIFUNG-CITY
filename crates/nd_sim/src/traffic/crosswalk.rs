@@ -60,6 +60,10 @@ pub struct PedTraffic {
     pub calls: Vec<Vec<bool>>,
     /// Occupied crossings, per lane passing over them.
     pub holds: BTreeMap<LaneId, Vec<Hold>>,
+    /// Unmarked crossings someone is on (a roundabout's lanes, a dead end,
+    /// jaywalking): drivers do not stop for them, but a car that goes over
+    /// one with someone on it is still a near miss or worse.
+    pub watch: BTreeMap<LaneId, Vec<Hold>>,
     /// Stop lines before signalised crosswalks, per incoming lane: where
     /// a car waiting at a red stops.
     pub stop_lines: HashMap<LaneId, f32>,
@@ -82,11 +86,18 @@ impl Traffic {
     /// walk calls. Conflicts already reported last tick are forgotten.
     pub fn set_pedestrians(&mut self, holds: BTreeMap<LaneId, Vec<Hold>>, calls: Vec<Vec<bool>>) {
         self.peds.holds = holds;
+        self.peds.watch.clear();
         self.peds.calls = calls;
         self.peds.seen.retain_mut(|x| {
             x.2 += 1;
             x.2 < 2
         });
+    }
+
+    /// The unmarked crossings in use this step (see `PedTraffic::watch`);
+    /// set after `set_pedestrians`.
+    pub fn set_unmarked(&mut self, watch: BTreeMap<LaneId, Vec<Hold>>) {
+        self.peds.watch = watch;
     }
 
     /// Walkers waiting at a crosswalk call every phase that would give
@@ -183,11 +194,11 @@ impl Traffic {
 
     /// Cars driving over an occupied crossing at speed, after a substep.
     pub(super) fn crosswalk_conflicts(&mut self) {
-        if self.peds.holds.is_empty() {
+        if self.peds.holds.is_empty() && self.peds.watch.is_empty() {
             return;
         }
         let mut found: Vec<(CarId, u32, f32)> = Vec::new();
-        for (&lane, hs) in &self.peds.holds {
+        for (&lane, hs) in self.peds.holds.iter().chain(self.peds.watch.iter()) {
             let Some(l) = self.net.lanes.get(lane as usize) else { continue };
             for h in hs {
                 for &cid in &l.cars {
@@ -305,6 +316,30 @@ mod tests {
         let (ts, _, _) = roads.nearest_street(to).unwrap();
         let (route, s0, s1) = t.net.find_route(fs, from, ts, to).expect("route");
         t.spawn_car(CitizenId::default(), None, route, s0, s1, 0)
+    }
+
+    #[test]
+    fn nobody_stops_for_someone_on_an_unmarked_crossing_but_going_over_them_counts() {
+        let roads = roads(false);
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let w = LANE_WIDTH;
+        let car = send(&mut t, &roads, Vec2::new(-300.0, 0.5 * w), Vec2::new(300.0, 0.5 * w));
+        let lane = t.cars[car].route[t.cars[car].idx];
+        let hold = t.net.lanes[lane as usize].project(Vec2::new(0.0, 0.5 * w)).0 - 1.5;
+        let watch: BTreeMap<LaneId, Vec<Hold>> = [(lane, vec![Hold { s: hold, depth: 3.0, crossing: 7 }])].into_iter().collect();
+        let mut passed = false;
+        for _ in 0..60 {
+            t.set_pedestrians(BTreeMap::new(), Vec::new());
+            t.set_unmarked(watch.clone());
+            t.step(1.0, 4);
+            passed |= t.cars.get(car).is_none_or(|c| c.route[c.idx] != lane || c.s > hold + 5.0);
+            if passed {
+                break;
+            }
+        }
+        assert!(passed, "drove on over the unmarked crossing");
+        assert!(t.peds.conflicts.iter().any(|c| c.0 == car && c.1 == 7), "and that counts as a near miss or worse: {:?}", t.peds.conflicts);
     }
 
     #[test]

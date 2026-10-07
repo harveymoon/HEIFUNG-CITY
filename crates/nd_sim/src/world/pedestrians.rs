@@ -30,12 +30,14 @@ const SIREN_HURRY: f32 = 2.5;
 pub(super) struct Feet {
     /// Walkers by grid cell of where they stand now.
     grid: HashMap<(i32, i32), Vec<CitizenId>>,
+    /// [cyclists] Riders stopped at a light or for a walker.
+    pub(super) riders_waiting: u32,
     /// Walkers already waiting at each end of each crossing this tick.
     queue: HashMap<(u32, u32), u32>,
     /// Crossings someone is on, stepping onto, or waiting at (a zebra).
-    occupied: Vec<(u32, CitizenId)>,
+    pub(super) occupied: Vec<(u32, CitizenId)>,
     /// Walk calls per intersection and approach.
-    calls: Vec<Vec<bool>>,
+    pub(super) calls: Vec<Vec<bool>>,
     waiting: u32,
 }
 
@@ -62,13 +64,16 @@ impl World {
     /// Before the walkers move: the day's counts, crossings matched to the
     /// lane network, last tick's conflicts, and the spatial grid.
     pub(super) fn feet_begin(&mut self) -> Feet {
+        crate::prof_scope!("feet_begin");
         if self.clock.minute_of_day() == 0 {
             let p = &mut self.peds;
             p.jaywalkers_today = 0;
             p.near_misses_today = 0;
             p.collisions_today = 0;
+            p.red_lights_run_today = 0;
             let citizens = &self.citizens;
             p.walkers.retain(|id, _| citizens.contains_key(*id));
+            p.riders.retain(|id, _| citizens.contains_key(*id));
         }
         self.refresh_crossings();
         self.handle_ped_conflicts();
@@ -79,31 +84,39 @@ impl World {
             }
         }
         let calls = self.traffic.net.intersections.iter().map(|i| vec![false; i.approaches]).collect();
-        Feet { grid, queue: HashMap::new(), occupied: Vec::new(), calls, waiting: 0 }
+        Feet { grid, riders_waiting: 0, queue: HashMap::new(), occupied: Vec::new(), calls, waiting: 0 }
     }
 
     /// After the walkers moved: the crossings in use become stop points for
     /// drivers, and the walk calls go to the signals.
     pub(super) fn feet_end(&mut self, feet: Feet) {
+        crate::prof_scope!("feet_end");
         let mut occ = feet.occupied;
         occ.sort();
         occ.dedup();
+        // Drivers stop only for painted crossings; unmarked ones in use are
+        // watched for cars going over someone.
         let mut holds: BTreeMap<LaneId, Vec<Hold>> = BTreeMap::new();
+        let mut watch: BTreeMap<LaneId, Vec<Hold>> = BTreeMap::new();
         let mut last = u32::MAX;
         for &(cr, _) in &occ {
             if cr == last {
                 continue;
             }
             last = cr;
+            let marked = self.walk.crossings.get(cr as usize).is_some_and(|c| c.marked());
             if let Some(info) = self.peds.crossings.get(cr as usize) {
+                let into = if marked { &mut holds } else { &mut watch };
                 for &(lane, s) in &info.lanes {
-                    holds.entry(lane).or_default().push(Hold { s, depth: HOLD_DEPTH, crossing: cr });
+                    into.entry(lane).or_default().push(Hold { s, depth: HOLD_DEPTH, crossing: cr });
                 }
             }
         }
         self.peds.occupants = occ;
         self.peds.waiting_now = feet.waiting;
+        self.peds.riders_waiting_now = feet.riders_waiting;
         self.traffic.set_pedestrians(holds, feet.calls);
+        self.traffic.set_unmarked(watch);
     }
 
     /// Match the walk graph's crossings to the lane network: which are
@@ -148,6 +161,14 @@ impl World {
             })
             .collect();
         self.peds.crossings = infos;
+        let nodes = &self.walk.nodes;
+        self.peds.cross_grid = crate::geom::Grid::new(
+            16.0,
+            self.walk.crossings.iter().map(|c| {
+                let (a, b) = (nodes[c.a as usize].pos, nodes[c.b as usize].pos);
+                (a.min(b), a.max(b))
+            }),
+        );
         self.traffic.peds.stop_lines = stop_lines;
     }
 
@@ -159,7 +180,7 @@ impl World {
 
     /// Seconds before the first vehicle moving at `min_v` or more reaches
     /// crossing `cr`.
-    fn crossing_gap(&self, cr: u32, min_v: f32) -> f32 {
+    pub(super) fn crossing_gap(&self, cr: u32, min_v: f32) -> f32 {
         let Some(info) = self.peds.crossings.get(cr as usize) else { return f32::INFINITY };
         info.lanes.iter().map(|&(l, s)| self.traffic.time_to_crossing_above(l, s, HOLD_DEPTH, min_v)).fold(f32::INFINITY, f32::min)
     }
@@ -238,6 +259,7 @@ impl World {
     /// A walking route for this citizen: a jaywalker may plan to cut
     /// straight over the street mid-block.
     pub(super) fn walk_route_for(&self, id: CitizenId, from: Vec2, to: Vec2, purpose: Purpose) -> Option<(Vec<Vec2>, Vec<u32>)> {
+        crate::prof_scope!("walk_route_for");
         let p = self.jaywalk_chance_of(id, self.late_for_work(id, purpose));
         let jay = p > 0.0 && hash01(self.citizens[id].seed, self.clock.tick, 0x7a17) < p;
         self.walk.route_with(from, to, jay)
@@ -256,9 +278,14 @@ impl World {
         // With the walk light on, a jam standing or crawling across the
         // crossing is walked through (between the cars), not waited for.
         let gap = self.crossing_gap(cr, if lawful && signal.is_some() { JAM_CRAWL } else { 0.5 });
-        if lawful {
+        if lawful && crossing.marked() {
             // Look first: nobody too close to stop.
             return (gap >= LAWFUL_GAP).then_some(false);
+        }
+        if lawful {
+            // Unmarked (a dead end, a roundabout's lanes): nobody gives way,
+            // so a real gap, judged as carefully as the walker is careful.
+            return (gap >= gap_needed(w.caution, late)).then_some(false);
         }
         if crossing.kind != CrossingKind::Jay && !w.bold {
             return None;
@@ -272,6 +299,7 @@ impl World {
     /// One tick of walking for `id` (on foot, `Activity::Traveling`): true
     /// once the path is done.
     pub(super) fn step_walker(&mut self, id: CitizenId, feet: &mut Feet) -> bool {
+        crate::prof_scope!("step_walker");
         let tick = self.clock.tick;
         let speed = self.config.walk_speed;
         let (seed, start) = {
@@ -409,7 +437,7 @@ impl World {
                 if let Some(x) = feet.calls.get_mut(k as usize).and_then(|v| v.get_mut(ap as usize)) {
                     *x = true;
                 }
-            } else if crossing.lawful() && !self.siren_at_crossing(cr) {
+            } else if crossing.marked() && !self.siren_at_crossing(cr) {
                 // About to step onto a zebra: drivers give way (but not to
                 // someone standing back for lights and sirens).
                 feet.occupied.push((cr, id));

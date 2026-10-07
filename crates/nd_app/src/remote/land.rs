@@ -70,6 +70,9 @@ pub fn terrain_at(w: &World, p: SVec2) -> Value {
         "power_sites": sites,
         "docks": docks,
         // The land survey layers at this point (what the K layers show).
+        // [access] Minutes on foot to the nearest park and night out, along
+        // the walk network, and what that adds to (or takes off) a home's land value.
+        "access": w.land_value.access_at(p).map(|a| json!({ "park_min": a.park_min.map(round), "nightlife_min": a.nightlife_min.map(round), "value_for_homes": round(a.value), "text": a.describe() })),
         "survey": w.survey_at(p).into_iter().map(|(l, v)| (l.key().to_string(), json!(round(v)))).collect::<serde_json::Map<String, Value>>(),
     })
 }

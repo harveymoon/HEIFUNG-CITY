@@ -70,6 +70,20 @@ impl World {
         out
     }
 
+    /// This tick's crowds, from the cache or freshly counted; hand them
+    /// back with [`keep_crowds`](Self::keep_crowds).
+    fn take_crowds(&mut self) -> Crowds {
+        let tick = self.clock.tick;
+        match self.crowds_cache.take() {
+            Some((t, c)) if t == tick => c,
+            _ => self.crowds(),
+        }
+    }
+
+    fn keep_crowds(&mut self, crowds: Crowds) {
+        self.crowds_cache = Some((self.clock.tick, crowds));
+    }
+
     fn surroundings_with(&self, b: BuildingId, inside: &[CitizenId]) -> Surroundings {
         let class: Vec<f32> = inside.iter().filter_map(|c| self.citizens.get(*c)).map(|c| c.class().index() as f32).collect();
         let at = self.building_lot(b).map_or(Vec2::ZERO, |l| l.center);
@@ -115,11 +129,12 @@ impl World {
     /// new; `explore` looks only at unknown places near by first ("looking
     /// for a drink"). Open places with room only, never a sworn-off one.
     pub(super) fn choose_place(&mut self, id: CitizenId, lu: LandUse, explore: bool) -> Option<BuildingId> {
+        crate::prof_scope!("choose_place");
         let hour = self.clock.hour() as u8;
         let tick = self.clock.tick;
         let here = self.citizens.get(id)?.pos;
         let taste = self.taste_of(id)?;
-        let crowds = self.crowds();
+        let crowds = self.take_crowds();
         let reach = match lu {
             LandUse::Park => REACH_PARK,
             LandUse::Entertainment => REACH_NIGHT,
@@ -134,6 +149,10 @@ impl World {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };
+            // [benches] A park with every seat taken is no place to go now.
+            if lu == LandUse::Park && self.park_full(b.lot) {
+                continue;
+            }
             let d = lot.center.distance(here);
             let memory = self.citizens[id].places.get(bid);
             if memory.is_some_and(|m| m.never) {
@@ -154,6 +173,7 @@ impl World {
                 }
             }
         }
+        self.keep_crowds(crowds);
         if known.is_empty() && fresh.is_empty() {
             return None;
         }
@@ -324,6 +344,7 @@ impl World {
 
     /// Rate a visit just begun at `b` (a venue, shop or park).
     pub(super) fn rate_visit(&mut self, id: CitizenId, b: BuildingId) {
+        crate::prof_scope!("rate_visit");
         let tick = self.clock.tick;
         let Some(bld) = self.buildings.get(b) else { return };
         if !places::is_place(bld) {
@@ -331,12 +352,11 @@ impl World {
         }
         let (name, lu, is_venue, bseed) = (bld.name.clone(), bld.land_use, bld.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Venue), bld.seed);
         let Some(taste) = self.taste_of(id) else { return };
-        let inside: Vec<CitizenId> = self
-            .citizens
-            .iter()
-            .filter(|(cid, c)| *cid != id && matches!(c.activity, Activity::Visiting(x) | Activity::Sitting { park: x, .. } if x == b))
-            .map(|(cid, _)| cid)
-            .collect();
+        let crowds = self.take_crowds();
+        // Still there (the cache is from the start of the tick).
+        let here = |cid: CitizenId| self.citizens.get(cid).is_some_and(|c| matches!(c.activity, Activity::Visiting(x) | Activity::Sitting { park: x, .. } if x == b));
+        let inside: Vec<CitizenId> = crowds.get(&b).map_or(Vec::new(), |v| v.iter().copied().filter(|&cid| cid != id && here(cid)).collect());
+        self.keep_crowds(crowds);
         let ch = places::character(&self.buildings[b], self.surroundings_with(b, &inside));
         let c = &self.citizens[id];
         let family: Vec<CitizenId> = c.household.and_then(|h| self.households.get(h)).map_or(Vec::new(), |h| h.members.clone());
@@ -435,6 +455,7 @@ impl World {
     /// Midnight: forget places that are gone, count each place's regulars
     /// and sworn-off customers, start the day's tallies.
     pub(super) fn daily_places(&mut self) {
+        crate::prof_scope!("daily_places");
         let buildings = &self.buildings;
         let alive = |b: BuildingId| buildings.get(b).is_some_and(places::is_place);
         for c in self.citizens.values_mut() {

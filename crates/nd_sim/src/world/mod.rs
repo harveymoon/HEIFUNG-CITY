@@ -25,6 +25,8 @@
 //! - `tests`: the world-level tests
 
 mod air;
+/// [benches] Seats on park benches.
+pub mod benches;
 mod buses;
 mod cargo_hubs;
 #[cfg(test)]
@@ -44,6 +46,7 @@ mod market;
 mod parking;
 mod pedestrians;
 mod plan;
+mod riders;
 mod places;
 #[cfg(test)]
 mod places_tests;
@@ -238,8 +241,10 @@ impl WorldConfig {
 /// A land value recomputation in progress, spread over a few ticks so one
 /// tick does not carry the whole grid. Cloning a world mid-update drops the
 /// partial work: the next cycle starts afresh and the grid merely stays a
-/// little older for two hours.
-#[derive(Default)]
+/// little older for two hours. A save keeps it (REVIEW2 L7), so a game
+/// saved mid-cycle finishes the same grid after loading.
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
 struct LandValueWork {
     builder: Option<LandValueBuilder>,
 }
@@ -260,7 +265,7 @@ impl std::fmt::Debug for LandValueWork {
 /// from the hourly tick (0) and the development ticks so no single tick
 /// does everything.
 const LAND_VALUE_PHASE: u64 = 20;
-const LAND_VALUE_STRIPS: u64 = 5;
+const LAND_VALUE_STRIPS: u64 = 6;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct World {
@@ -335,7 +340,7 @@ pub struct World {
     #[serde(default)]
     pub services: crate::services::Services,
     pub land_value: LandValue,
-    #[serde(skip)]
+    #[serde(default)]
     land_value_work: LandValueWork,
     #[serde(skip)]
     pub events: Vec<SimEvent>,
@@ -405,6 +410,17 @@ pub struct World {
     /// and people hit (`world/pedestrians.rs`).
     #[serde(default)]
     pub peds: crate::pedestrians::Pedestrians,
+    /// [perf] Who is inside each place, built at most once a tick for
+    /// everyone choosing or rating a place (`world/places.rs`), instead of a
+    /// scan of every citizen per decision. Arrivals later in the same tick
+    /// show from the next one.
+    #[serde(skip)]
+    waiting_cache: Option<(u64, Vec<CitizenId>)>,
+    #[serde(skip)]
+    crowds_cache: Option<(u64, HashMap<BuildingId, Vec<CitizenId>>)>,
+    /// [benches] Who sits (or is on the way to sit) on which park bench seat.
+    #[serde(default)]
+    pub seats: benches::Seats,
     /// [society] Crime, homelessness and trash (`world/society.rs`).
     #[serde(default)]
     pub society: crate::society::Society,
@@ -527,6 +543,9 @@ impl World {
             bots: Default::default(),
             driving: Driving::default(),
             peds: Default::default(),
+            seats: Default::default(),
+            crowds_cache: None,
+            waiting_cache: None,
             society: Default::default(),
             vehicles: Default::default(),
             enforcement: Default::default(),
@@ -626,6 +645,7 @@ impl World {
         }
         self.refresh_facility_cache();
         self.subway_after_load();
+        self.seats_after_load();
         self.update_economy();
         // A save from before named projects: number and name the one it has.
         self.name_active_project();
@@ -832,9 +852,9 @@ impl World {
             // The day's counters, read before anything below resets them.
             let record = self.open_day_record();
             // Services settle their upkeep before the books close.
-            self.daily_services();
+            crate::prof!("daily_services", self.daily_services());
             // [subway] Upkeep before the books close.
-            self.daily_subway();
+            crate::prof!("daily_subway", self.daily_subway());
             // [society] crime, the street and the bins settle their day.
             self.daily_society();
             self.daily_update();
@@ -842,49 +862,56 @@ impl World {
             self.industry_daily();
             self.daily_places();
             self.rides.stats.roll();
+            // [benches] seats and bench-neighbour tallies
+            self.daily_benches();
             // [districts] facelifts; [tourism] hotel nights and the books.
-            self.daily_districts();
-            self.daily_tourism();
-            self.close_day_record(record);
+            crate::prof!("daily_districts", self.daily_districts());
+            crate::prof!("daily_tourism", self.daily_tourism());
+            crate::prof!("close_day_record", self.close_day_record(record));
         }
         // Periodic work is staggered so no tick carries more than one heavy
         // job: the hour starts at :00, sites advance at :30, land value runs
         // in strips from :20, development and immigration sit between.
         if tick % 60 == 0 {
-            self.hourly_economy();
-            self.industry_hourly();
-            self.record_hour();
+            crate::prof!("hourly_economy", self.hourly_economy());
+            crate::prof!("industry_hourly", self.industry_hourly());
+            crate::prof!("record_hour", self.record_hour());
         }
         if tick % 60 == 30 {
-            self.step_construction();
+            crate::prof!("step_construction", self.step_construction());
         }
         let lv = tick % 120;
         if (LAND_VALUE_PHASE..LAND_VALUE_PHASE + LAND_VALUE_STRIPS).contains(&lv) {
-            self.update_land_value_strip((lv - LAND_VALUE_PHASE) as u8);
+            crate::prof!("update_land_value_strip", self.update_land_value_strip((lv - LAND_VALUE_PHASE) as u8));
         }
         if tick % 10 == 7 {
-            self.update_economy();
+            crate::prof!("update_economy", self.update_economy());
         }
         if (tick + 5) % self.config.development_interval == 0 {
-            self.develop();
+            crate::prof!("develop", self.develop());
         }
         if (tick + 15) % self.config.immigration_interval == 0 {
-            self.immigrate();
+            crate::prof!("immigrate", self.immigrate());
         }
         if tick % 120 == 90 {
-            self.job_search();
+            crate::prof!("job_search", self.job_search());
         }
         // Fires, crimes and illness roll hourly at :50, clear of the rest.
         if tick % 60 == 50 {
-            self.hourly_services();
+            crate::prof!("hourly_services", self.hourly_services());
         }
         // [society] Bins, camps and crime at :40.
         if tick % 60 == 40 {
-            self.hourly_society();
+            crate::prof!("hourly_society", self.hourly_society());
         }
         if tick % 60 == 45 {
-            self.hourly_vehicles();
+            crate::prof!("hourly_vehicles", self.hourly_vehicles());
         }
+        // Answers a mind worked out in the background (an LLM's) land
+        // whenever they are ready. Someone mid-journey (driving, on a bus or
+        // train, waiting at the stop) keeps going: only the thought and the
+        // memory are taken now, and the next decision asks again (REVIEW2
+        // M4: acting on it stranded cars and bus riders).
         for (id, decision) in minds.poll() {
             if self.citizens.contains_key(id) {
                 self.apply_late_decision(id, decision);
@@ -915,16 +942,16 @@ impl World {
             self.bots.van_orders_today = 0;
         }
         if tick % crate::bots::ROUND_TICKS == 11 {
-            self.dispatch_deliveries();
+            crate::prof!("dispatch_deliveries", self.dispatch_deliveries());
         }
-        self.step_bots();
+        crate::prof!("step_bots", self.step_bots());
         // [tourism] Arrivals on the hour, visitors' days, departures.
         self.step_tourism();
         self.step_citizens(minds);
         // [passengers] With their drivers, in or out of the car.
         self.step_passengers();
         // [concerns] Happiness on the hour and at midnight.
-        self.step_concerns();
+        crate::prof!("step_concerns", self.step_concerns());
         // Every system that moves people has run: lay the breadcrumbs.
         for c in self.citizens.values_mut() {
             c.push_trail();

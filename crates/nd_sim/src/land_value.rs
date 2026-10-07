@@ -23,6 +23,93 @@ pub struct LandValue {
     /// use that shrugs off nuisance still feels everything else.
     #[serde(default)]
     pub under: Vec<f32>,
+    /// Minutes on foot from each cell to the nearest park, along the walk
+    /// network: [`NO_DATA`] off the network (open country, the far side of
+    /// the river), [`NONE_REACHABLE`] when no park can be walked to.
+    /// Empty in old saves until the next update.
+    #[serde(default)]
+    pub park_min: Vec<f32>,
+    /// The same to the nearest place to go out (entertainment).
+    #[serde(default)]
+    pub nightlife_min: Vec<f32>,
+    /// What that access adds to (or takes off) each cell's value, already
+    /// included in `values`; homes feel all of it, other uses take it back
+    /// out in [`LandValue::for_use`] by [`access_sensitivity`].
+    #[serde(default)]
+    pub access: Vec<f32>,
+}
+
+/// `LandValue::park_min` / `nightlife_min` of a cell with no walk node near.
+pub const NO_DATA: f32 = -1.0;
+/// ... of a cell from which no such place can be walked to at all.
+pub const NONE_REACHABLE: f32 = 999.0;
+/// A cell centre further than this from every walk node is off the network.
+pub const ACCESS_SNAP: f32 = 48.0;
+
+/// Accessibility of a point: how many minutes' walk to the nearest park
+/// and the nearest night out (`None`: none can be reached), and what that
+/// is worth to a home there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Access {
+    pub park_min: Option<f32>,
+    pub nightlife_min: Option<f32>,
+    pub value: f32,
+}
+
+impl Access {
+    /// "parks 4 min walk · nightlife 12 min", for read-outs.
+    pub fn describe(&self) -> String {
+        let one = |m: Option<f32>, what: &str, walk: &str| match m {
+            Some(m) => format!("{what} {} min{walk}", m.round().max(1.0) as i32),
+            None => format!("no {what} within walking reach"),
+        };
+        format!("{} · {}", one(self.park_min, "parks", " walk"), one(self.nightlife_min, "nightlife", ""))
+    }
+}
+
+/// Most a park on the doorstep adds to a home's land value, and most a
+/// home with no park within reach loses. The loss is the larger: the rule
+/// is about the long walk making a place cheaper, and a city where every
+/// home is near a park should not simply inflate every rent (the demo's
+/// homes average about +0.05 with these).
+pub const PARK_ACCESS_BONUS: f32 = 0.03;
+pub const PARK_ACCESS_PENALTY: f32 = 0.06;
+/// The same for somewhere to go out: smaller, because nightlife next door
+/// is also noise (the entertainment splat already takes some back).
+pub const NIGHTLIFE_ACCESS_BONUS: f32 = 0.02;
+pub const NIGHTLIFE_ACCESS_PENALTY: f32 = 0.04;
+
+/// A piecewise-linear curve: the full `bonus` up to `good` minutes, nothing
+/// at `fair`, the full `penalty` from `poor` on (and when unreachable).
+fn access_curve(min: Option<f32>, good: f32, fair: f32, poor: f32, bonus: f32, penalty: f32) -> f32 {
+    let Some(m) = min else { return -penalty };
+    if m <= good {
+        bonus
+    } else if m <= fair {
+        bonus * (fair - m) / (fair - good)
+    } else if m < poor {
+        -penalty * (m - fair) / (poor - fair)
+    } else {
+        -penalty
+    }
+}
+
+/// What walking access to parks and nightlife is worth to a home (the
+/// player's rule: a long way to any park or any night out makes a
+/// neighbourhood cheaper). A park within 4 minutes is the full bonus, 10
+/// minutes is neutral, 20 or more the full penalty; nightlife 5 / 12 / 25.
+pub fn access_value(park_min: Option<f32>, nightlife_min: Option<f32>) -> f32 {
+    access_curve(park_min, 4.0, 10.0, 20.0, PARK_ACCESS_BONUS, PARK_ACCESS_PENALTY) + access_curve(nightlife_min, 5.0, 12.0, 25.0, NIGHTLIFE_ACCESS_BONUS, NIGHTLIFE_ACCESS_PENALTY)
+}
+
+/// How much a land use cares about walking access to parks and nightlife:
+/// homes fully; shops, works and civic buildings not at all (their value is
+/// about customers, freight and the public, which other terms carry).
+pub fn access_sensitivity(lu: LandUse) -> f32 {
+    match lu {
+        LandUse::Residential => 1.0,
+        _ => 0.0,
+    }
 }
 
 /// How much a land use minds the nuisance part of land value: 1 is the
@@ -40,13 +127,43 @@ pub fn nuisance_sensitivity(lu: LandUse) -> f32 {
 impl LandValue {
     pub fn new(half: f32, cell: f32) -> Self {
         let n = ((half * 2.0) / cell).ceil() as usize;
-        Self { cell, half, n, values: vec![0.3; n * n], version: 0, nuisance: Vec::new(), under: Vec::new() }
+        Self { cell, half, n, values: vec![0.3; n * n], version: 0, nuisance: Vec::new(), under: Vec::new(), park_min: Vec::new(), nightlife_min: Vec::new(), access: Vec::new() }
     }
 
     /// Set every cell (tests and scenarios).
     pub fn fill(&mut self, v: f32) {
         self.values.iter_mut().for_each(|x| *x = v);
         self.version += 1;
+    }
+
+    /// Index of the cell holding `p` (edge cells extend outward).
+    fn index(&self, p: Vec2) -> usize {
+        let (x, y) = self.coords(p);
+        y.clamp(0, self.n as i32 - 1) as usize * self.n + x.clamp(0, self.n as i32 - 1) as usize
+    }
+
+    /// Walking access to parks and nightlife at `p`, `None` before the
+    /// first update or off the walk network.
+    pub fn access_at(&self, p: Vec2) -> Option<Access> {
+        let len = self.n * self.n;
+        if self.park_min.len() != len || self.nightlife_min.len() != len || self.access.len() != len {
+            return None;
+        }
+        let i = self.index(p);
+        let (pm, nm) = (self.park_min[i], self.nightlife_min[i]);
+        if pm == NO_DATA || nm == NO_DATA {
+            return None;
+        }
+        let some = |m: f32| (m < NONE_REACHABLE).then_some(m);
+        Some(Access { park_min: some(pm), nightlife_min: some(nm), value: self.access[i] })
+    }
+
+    /// The access term (see [`access_value`]) included in the cell at `p`.
+    pub fn access_value_at(&self, p: Vec2) -> f32 {
+        if self.access.len() != self.n * self.n {
+            return 0.0;
+        }
+        self.access[self.index(p)]
     }
 
     fn coords(&self, p: Vec2) -> (i32, i32) {
@@ -86,7 +203,9 @@ impl LandValue {
         } else {
             0.0
         };
-        (self.at(p) + under + n * (1.0 - nuisance_sensitivity(lu))).clamp(0.0, 1.0)
+        // Homes keep the access term; other uses take it back out.
+        let access = self.access_value_at(p) * (1.0 - access_sensitivity(lu));
+        (self.at(p) + under + n * (1.0 - nuisance_sensitivity(lu)) - access).clamp(0.0, 1.0)
     }
 
     pub fn average(&self) -> f32 {
@@ -100,7 +219,9 @@ impl LandValue {
 /// Most the activity of working industry can lift run-down land.
 pub const MAX_LIFT: f32 = 0.1;
 
-/// Accumulates influences and produces the next value grid.
+/// Accumulates influences and produces the next value grid. Saved with
+/// the world when a save falls mid-cycle.
+#[derive(Serialize, Deserialize)]
 pub struct LandValueBuilder {
     n: usize,
     cell: f32,
@@ -108,11 +229,31 @@ pub struct LandValueBuilder {
     acc: Vec<f32>,
     nuisance: Vec<f32>,
     lift: Vec<f32>,
+    /// Minutes to the nearest park and night out per cell, once
+    /// [`set_access`](Self::set_access) ran (empty: no access term).
+    park_min: Vec<f32>,
+    nightlife_min: Vec<f32>,
 }
 
 impl LandValueBuilder {
     pub fn new(lv: &LandValue) -> Self {
-        Self { n: lv.n, cell: lv.cell, half: lv.half, acc: vec![0.0; lv.n * lv.n], nuisance: vec![0.0; lv.n * lv.n], lift: vec![0.0; lv.n * lv.n] }
+        Self { n: lv.n, cell: lv.cell, half: lv.half, acc: vec![0.0; lv.n * lv.n], nuisance: vec![0.0; lv.n * lv.n], lift: vec![0.0; lv.n * lv.n], park_min: Vec::new(), nightlife_min: Vec::new() }
+    }
+
+    /// The grid's side in cells, cell size and half extent, for whoever
+    /// fills per-cell terms.
+    pub fn cells(&self) -> (usize, f32, f32) {
+        (self.n, self.cell, self.half)
+    }
+
+    /// Walking minutes per cell (row-major, `n * n`) to the nearest park and
+    /// night out, with [`NO_DATA`] and [`NONE_REACHABLE`] as in `LandValue`.
+    /// Ignored unless both are the size of the grid.
+    pub fn set_access(&mut self, park_min: Vec<f32>, nightlife_min: Vec<f32>) {
+        if park_min.len() == self.n * self.n && nightlife_min.len() == self.n * self.n {
+            self.park_min = park_min;
+            self.nightlife_min = nightlife_min;
+        }
     }
 
     /// Add `weight` at `center`, falling off linearly to zero at `radius`.
@@ -184,6 +325,15 @@ impl LandValueBuilder {
         let acc = Self::blurred(n, &self.acc);
         let lift = Self::blurred(n, &self.lift);
         let nuisance = Self::blurred(n, &self.nuisance);
+        // Walking access is per cell already (a walk, not a radius), so it
+        // goes in after the blur, unsmoothed.
+        let some = |m: f32| (m < NONE_REACHABLE).then_some(m);
+        let access: Vec<f32> = if self.park_min.len() == n * n {
+            self.park_min.iter().zip(&self.nightlife_min).map(|(&p, &q)| if p == NO_DATA || q == NO_DATA { 0.0 } else { access_value(some(p), some(q)) }).collect()
+        } else {
+            Vec::new()
+        };
+        let acc: Vec<f32> = if access.is_empty() { acc } else { acc.iter().zip(&access).map(|(a, x)| a + x).collect() };
         lv.under = acc.iter().map(|a| (base + a).min(0.0)).collect();
         let out: Vec<f32> = acc
             .iter()
@@ -196,6 +346,9 @@ impl LandValueBuilder {
             .collect();
         lv.values = out;
         lv.nuisance = nuisance.into_iter().map(|x| x.clamp(0.0, 1.0)).collect();
+        lv.access = access;
+        lv.park_min = self.park_min;
+        lv.nightlife_min = self.nightlife_min;
         lv.version += 1;
     }
 }
@@ -266,5 +419,51 @@ mod tests {
         assert!(dear > 0.5 && dear < 0.75, "{dear}");
         let cheap = lv.at(Vec2::new(0.0, -300.0));
         assert!(cheap > 0.3 && cheap <= 0.3 + MAX_LIFT, "{cheap}");
+    }
+
+    #[test]
+    fn walking_access_lifts_homes_near_parks_and_costs_homes_far_from_any() {
+        // The curve: a bonus close by, nothing at "fair", a penalty far off
+        // or out of reach, never worth more for being further.
+        assert!((access_value(Some(2.0), Some(3.0)) - (PARK_ACCESS_BONUS + NIGHTLIFE_ACCESS_BONUS)).abs() < 1e-6);
+        assert!(access_value(Some(10.0), Some(12.0)).abs() < 1e-6);
+        assert!((access_value(None, None) + PARK_ACCESS_PENALTY + NIGHTLIFE_ACCESS_PENALTY).abs() < 1e-6);
+        let mut last = f32::INFINITY;
+        for m in 0..60 {
+            let v = access_value(Some(m as f32), Some(m as f32));
+            assert!(v <= last + 1e-6, "{m} min worth more than {} min", m - 1);
+            last = v;
+        }
+        assert!(access_value(Some(60.0), Some(60.0)) == access_value(None, None));
+
+        // Through the builder: homes feel it, shops not at all.
+        let mut lv = LandValue::new(400.0, 32.0);
+        let mut b = LandValueBuilder::new(&lv);
+        let (n, _, _) = b.cells();
+        let (near, far, off) = (Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0), Vec2::new(0.0, 300.0));
+        let mut park = vec![2.0; n * n];
+        let mut night = vec![3.0; n * n];
+        park[lv.index(far)] = NONE_REACHABLE;
+        night[lv.index(far)] = 40.0;
+        park[lv.index(off)] = NO_DATA;
+        night[lv.index(off)] = NO_DATA;
+        b.set_access(park, night);
+        b.finish(0.4, &mut lv);
+        assert!((lv.for_use(near, LandUse::Residential) - 0.45).abs() < 1e-4, "homes near both: {}", lv.for_use(near, LandUse::Residential));
+        assert!((lv.for_use(near, LandUse::Commercial) - 0.4).abs() < 1e-4, "shops do not care");
+        assert!((lv.for_use(far, LandUse::Residential) - 0.3).abs() < 1e-4, "homes far from both: {}", lv.for_use(far, LandUse::Residential));
+        assert!((lv.for_use(far, LandUse::Industrial) - 0.4).abs() < 1e-4);
+        assert!((lv.for_use(off, LandUse::Residential) - 0.4).abs() < 1e-4, "off the walk network: no term");
+        let a = lv.access_at(near).unwrap();
+        assert_eq!((a.park_min, a.nightlife_min), (Some(2.0), Some(3.0)));
+        assert_eq!(a.describe(), "parks 2 min walk · nightlife 3 min");
+        let a = lv.access_at(far).unwrap();
+        assert_eq!((a.park_min, a.nightlife_min), (None, Some(40.0)));
+        assert!(a.describe().starts_with("no parks within walking reach"));
+        assert!(lv.access_at(off).is_none());
+        // An old save: no access data at all.
+        let old = LandValue::new(400.0, 32.0);
+        assert!(old.access_at(near).is_none() && old.access_value_at(near) == 0.0);
+        assert_eq!(old.for_use(near, LandUse::Residential), 0.3);
     }
 }
