@@ -536,6 +536,8 @@ pub enum Selection {
     Car(CarId),
     /// A private car standing parked (`world.vehicles`).
     Parked(nd_sim::VehicleId),
+    /// [camera] A pavement delivery robot (`world.bots`).
+    Bot(nd_sim::BotId),
 }
 
 pub struct ToolsPlugin;
@@ -1169,6 +1171,20 @@ pub(crate) fn pick(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
         .map(|(id, c)| (c.prev_pos.lerp(c.pos, f).distance(p), id))
         .filter(|(d, _)| *d < 6.0)
         .min_by(|a, b| a.0.total_cmp(&b.0));
+    // [camera] Pavement delivery robots: small, so a click must be close,
+    // and nearer than any car or person it might be standing by.
+    let bot = w
+        .bots
+        .bots
+        .iter()
+        .map(|(id, b)| ((if b.prev_pos.distance(b.pos) < 30.0 { b.prev_pos.lerp(b.pos, f) } else { b.pos }).distance(p), id))
+        .filter(|(d, _)| *d < 2.0)
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    if let Some((db, id)) = bot {
+        if car.is_none_or(|c| c.0 > db) && person.is_none_or(|q| q.0 > db) {
+            return Selection::Bot(id);
+        }
+    }
     match (car, person) {
         (Some((dc, id, _)), Some((dp, _))) if dc <= dp + 1.0 => return Selection::Car(id),
         (Some((_, id, _)), None) => return Selection::Car(id),
@@ -1196,10 +1212,15 @@ pub(crate) fn pick(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
     Selection::None
 }
 
-fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, selection: Res<Selection>, mut eplan: ResMut<EffectivePlan>, cams: Query<&OrbitCamera>, time: Res<Time>) {
+#[allow(clippy::too_many_arguments)]
+fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, selection: Res<Selection>, mut eplan: ResMut<EffectivePlan>, cams: Query<&OrbitCamera>, time: Res<Time>, (cam_mode, follow): (Res<crate::camera::CameraMode>, Res<crate::camera::CameraFollow>)) {
     // Re-sync so a point dragged by `tool_input` this frame draws where it is.
     let plan = eplan.sync(&sim.world);
-    draw_selection(&mut gizmos, &sim, *selection);
+    // [camera] Not from inside the followed vehicle: its outline box would
+    // be drawn round the eye.
+    if !follow.pov_in_vehicle(&sim, *cam_mode) {
+        draw_selection(&mut gizmos, &sim, *selection);
+    }
     let cyan = Color::linear_rgb(1.4, 1.6, 1.8);
     let red = Color::linear_rgb(3.0, 0.2, 0.4);
     let white = Color::linear_rgb(3.0, 3.0, 3.0);
@@ -1527,6 +1548,8 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
 
     match selection {
         Selection::None => {}
+        // [camera] drawn by `crate::marks`, with its route and its shop.
+        Selection::Bot(_) => {}
         Selection::Building(b) => lot_outline(gizmos, w, b, 1.6, gold),
         Selection::Car(id) => {
             let Some(car) = w.traffic.cars.get(id) else { return };
@@ -1718,7 +1741,7 @@ fn person_outline(gizmos: &mut Gizmos, base: Vec3, col: Color) {
 
 /// A rectangle round a vehicle's body, a little above the road, drawn twice
 /// so it reads as a box.
-fn vehicle_outline(gizmos: &mut Gizmos, p: SVec2, heading: f32, length: f32, width: f32, y: f32, col: Color) {
+pub(crate) fn vehicle_outline(gizmos: &mut Gizmos, p: SVec2, heading: f32, length: f32, width: f32, y: f32, col: Color) {
     let fwd = SVec2::new(heading.cos(), heading.sin());
     let right = SVec2::new(-fwd.y, fwd.x);
     let (hl, hw) = (length * 0.5, width * 0.5);
@@ -1731,7 +1754,7 @@ fn vehicle_outline(gizmos: &mut Gizmos, p: SVec2, heading: f32, length: f32, wid
     gizmos.linestrip(pts.iter().map(|v| *v + Vec3::Y * 1.4), col);
 }
 
-fn lot_outline(gizmos: &mut Gizmos, w: &nd_sim::World, b: BuildingId, y: f32, col: Color) {
+pub(crate) fn lot_outline(gizmos: &mut Gizmos, w: &nd_sim::World, b: BuildingId, y: f32, col: Color) {
     let Some(lot) = w.buildings.get(b).and_then(|b| w.lots.get(b.lot)) else { return };
     let mut pts: Vec<Vec3> = lot.polygon.iter().map(|&p| Vec3::new(p.x, y, p.y)).collect();
     if pts.len() >= 3 {

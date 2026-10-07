@@ -283,19 +283,30 @@ fn favourites(ui: &mut egui::Ui, p: &mut UiCtx) {
         return;
     }
     let mut pick: Option<CitizenId> = None;
-    let mut jump: Option<nd_sim::Vec2> = None;
+    let mut jump: Option<CitizenId> = None;
     let mut drop: Option<CitizenId> = None;
+    let mut follow: Option<CitizenId> = None;
+    let mut gift: Option<CitizenId> = None;
+    let can_gift = w.economy.treasury >= nd_sim::GIFT_AMOUNT;
     for &id in &p.tools.favorites {
         let Some(c) = w.citizens.get(id) else { continue };
         ui.horizontal(|ui| {
             let sel = *p.selection == Selection::Citizen(id);
-            if ui.selectable_label(sel, &c.name).clicked() {
+            // [camera] Favourites wear gold, here as in the city.
+            if ui.selectable_label(sel, egui::RichText::new(&c.name).color(super::GOLD)).clicked() {
                 pick = Some(id);
             }
             hint(ui, c.activity.label());
-            if ui.small_button("go").on_hover_text("Select and fly the camera to them").clicked() {
+            if ui.small_button("go").on_hover_text("Select them and fly the camera there smoothly").clicked() {
                 pick = Some(id);
-                jump = Some(c.pos);
+                jump = Some(id);
+            }
+            let following = p.follow.is(Selection::Citizen(id));
+            if ui.add(egui::Button::new(if following { "stop" } else { "follow" }).small().selected(following)).on_hover_text(if following { "Stop following" } else { "Follow them with the camera" }).clicked() {
+                follow = Some(id);
+            }
+            if ui.add_enabled(can_gift, egui::Button::new("$").small()).on_hover_text(format!("Gift ${:.0} from the treasury to their household", nd_sim::GIFT_AMOUNT)).clicked() {
+                gift = Some(id);
             }
             if ui.small_button("★").on_hover_text("Remove from favourites").clicked() {
                 drop = Some(id);
@@ -308,7 +319,21 @@ fn favourites(ui: &mut egui::Ui, p: &mut UiCtx) {
     if let Some(id) = drop {
         p.tools.favorites.retain(|f| *f != id);
     }
-    if let Some(pos) = jump {
-        p.fly_to = Some(Vec2::new(pos.x, pos.y));
+    if let Some(id) = jump {
+        super::follow::zoom_to(p.sim, Selection::Citizen(id), p.follow, p.fly, p.mode);
+    }
+    if let Some(id) = follow {
+        if p.follow.is(Selection::Citizen(id)) {
+            p.follow.stop();
+        } else {
+            super::follow::start_follow(p.sim, Selection::Citizen(id), p.follow, p.fly, None);
+        }
+    }
+    if let Some(id) = gift {
+        let name = p.sim.world.citizens.get(id).map(|c| c.name.clone()).unwrap_or_default();
+        p.flags.message = match p.sim.world.gift(id, nd_sim::GIFT_AMOUNT) {
+            Ok(g) => format!("Gave ${:.0} to {name}'s household. Treasury {:.0}.", g.amount, g.treasury),
+            Err(e) => format!("No gift: {e}."),
+        };
     }
 }

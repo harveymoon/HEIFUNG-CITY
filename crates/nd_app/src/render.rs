@@ -1958,6 +1958,8 @@ struct VehicleRender {
     /// bike: trail meshes are never removed from `Assets<Mesh>`.
     spare_trails: Vec<(Entity, Handle<Mesh>)>,
     bots: HashMap<nd_sim::BotId, Vec<Entity>>,
+    /// [camera] Each shop's robot fleet in its own paint (`bots::fleet_colour`).
+    fleet_paint: HashMap<nd_sim::BuildingId, Handle<StandardMaterial>>,
 }
 
 impl VehicleRender {
@@ -2403,6 +2405,7 @@ fn sync_bots(
     vr.ensure_materials(&mut materials);
     if sim.full_rebuild {
         // Bot ids are reused by a loaded world; the livery would be stale.
+        vr.fleet_paint.clear();
         for (_, ents) in vr.bots.drain() {
             for e in ents {
                 commands.entity(e).despawn();
@@ -2414,13 +2417,20 @@ fn sync_bots(
         if vr.bots.contains_key(&id) {
             continue;
         }
-        let livery = w.buildings.get(bot.shop).and_then(|b| b.business.as_ref()).map_or(nd_sim::Livery::None, |bz| nd_sim::Livery::for_business(bz.kind));
-        let model = nd_sim::VehicleModel { body: nd_sim::BodyType::DeliveryBot, livery, ..Default::default() };
+        // [camera] A plain light shell painted in the company's colour, so
+        // each shop's fleet reads as its own (all grocers' robots used to
+        // share the grocery livery).
+        let paint = (slotmap::Key::data(&bot.shop).as_ffi() % nd_sim::vehicle::PAINTS as u64) as u8;
+        let model = nd_sim::VehicleModel { body: nd_sim::BodyType::DeliveryBot, livery: nd_sim::Livery::None, paint, ..Default::default() };
         let v = vr.variant(&mut meshes, &model);
+        let finish = vr.fleet_paint.entry(bot.shop).or_insert_with(|| {
+            let [r, g, b] = nd_sim::bots::fleet_colour(bot.shop);
+            materials.add(StandardMaterial { base_color: Color::srgb(r, g, b), perceptual_roughness: 0.45, metallic: 0.2, reflectance: 0.5, ..default() })
+        }).clone();
         // [carlife] Spawned where it is, not at the origin (see `sync_cars`).
         let pose = Transform::from_translation(Vec3::new(bot.pos.x, 0.16, bot.pos.y)).with_rotation(Quat::from_rotation_y(-bot.heading));
         let mut ents = vec![
-            commands.spawn((Mesh3d(v.body), MeshMaterial3d(vr.finish[1].clone()), pose, NotShadowCaster, BotTag, Grounded)).id(),
+            commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, BotTag, Grounded)).id(),
             commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), pose, NotShadowCaster, NotShadowReceiver, BotTag, Grounded)).id(),
         ];
         if let (Some(fx), Some(mat)) = (v.fx, vr.fx.clone()) {

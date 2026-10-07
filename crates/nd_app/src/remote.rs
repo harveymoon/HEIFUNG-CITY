@@ -20,6 +20,8 @@ mod concerns;
 mod districts;
 /// [economy] business pressure: what the city's businesses want
 mod economy;
+/// [camera] `follow`, `zoom_to`, `gift`; delivery robots' detail.
+mod follow;
 /// Request checks (Host, Origin, content type, body size) and the folders
 /// file commands may use.
 mod guard;
@@ -104,11 +106,10 @@ impl Plugin for RemotePlugin {
         }
         app.insert_resource(Inbox(Mutex::new(rx)))
             .init_resource::<EventLog>()
-            .init_resource::<Follow>()
             .init_resource::<History>()
             .init_resource::<WindowRequests>()
             .add_systems(Update, remote_commands.in_set(SimSet::Input).before(crate::tools::tool_input))
-            .add_systems(Update, (log_events, follow_target, record_history).in_set(SimSet::Sync))
+            .add_systems(Update, (log_events, record_history).in_set(SimSet::Sync))
             // Before the panel draws, so a request shows the same frame.
             .add_systems(bevy_egui::EguiPrimaryContextPass, window::apply_window_requests.before(crate::ui::side_panel));
     }
@@ -160,11 +161,6 @@ impl EventLog {
     }
 }
 
-/// `camera {follow: id}` keeps the orbit target on a moving thing until the
-/// next camera command. The second field is the `Sim::generation` the
-/// target belongs to.
-#[derive(Resource, Default)]
-struct Follow(Option<Selection>, u64);
 
 // ── HTTP thread ─────────────────────────────────────────────────────────────
 
@@ -269,7 +265,10 @@ struct Ctx<'w, 's> {
     lighting: ResMut<'w, Lighting>,
     mode: ResMut<'w, CameraMode>,
     walk: ResMut<'w, WalkState>,
-    follow: ResMut<'w, Follow>,
+    /// [camera] The camera's follow (shared with the inspector's button)
+    /// and its smooth moves.
+    follow: ResMut<'w, crate::camera::CameraFollow>,
+    fly: ResMut<'w, crate::camera::CameraFly>,
     log: ResMut<'w, EventLog>,
     history: ResMut<'w, History>,
     windows: ResMut<'w, WindowRequests>,
@@ -375,38 +374,6 @@ fn record_history(sim: Res<Sim>, mut history: ResMut<History>) {
     history.observe(&sim.world);
 }
 
-/// Keep the orbit target on the followed citizen or car; drop the follow
-/// when they are gone.
-fn follow_target(sim: Res<Sim>, mut follow: ResMut<Follow>, mut cams: Query<&mut OrbitCamera>) {
-    // A loaded city reuses ids: the followed one would be someone else.
-    if follow.1 != sim.generation {
-        *follow = Follow(None, sim.generation);
-    }
-    let Some(sel) = follow.0 else { return };
-    let w = &sim.world;
-    // Where the car is drawn this frame, not where it ends the tick: the
-    // camera held still between ticks and jumped ahead of the car at each.
-    let f = sim.frac();
-    let pos = match sel {
-        Selection::Citizen(id) => w.citizens.get(id).map(|c| match &c.activity {
-            nd_sim::Activity::Driving { car, .. } => w.traffic.cars.get(*car).map_or(c.pos, |car| car.pose_at(f).0),
-            nd_sim::Activity::Riding { bus } => w.traffic.cars.get(*bus).map_or(c.pos, |car| car.pose_at(f).0),
-            _ => c.pos,
-        }),
-        Selection::Car(id) => w.traffic.cars.get(id).map(|c| c.pose_at(f).0),
-        Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|c| c.spot()).map(|s| s.pos),
-        Selection::Building(id) => w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map(|l| l.center),
-        Selection::None => None,
-    };
-    match pos {
-        Some(p) => {
-            for mut cam in &mut cams {
-                cam.target = Vec3::new(p.x, 0.0, p.y);
-            }
-        }
-        None => follow.0 = None,
-    }
-}
 
 // ── dispatch ────────────────────────────────────────────────────────────────
 
@@ -464,11 +431,12 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "save" => save(cmd, ctx),
         "load" => {
             let path = allowed_path(req_str(cmd, "path")?, "ron", false)?;
-            let Ctx { sim, tools, selection, eplan, flags, saves, follow, .. } = &mut *ctx;
+            let Ctx { sim, tools, selection, eplan, flags, saves, follow, fly, .. } = &mut *ctx;
             load_now(&path, sim, tools, selection, eplan, flags);
             saves.mark_dirty();
             saves.title = false;
-            follow.0 = None;
+            follow.stop();
+            fly.flight = None;
             if flags.message.starts_with("load failed") {
                 return Err(flags.message.clone());
             }
@@ -483,7 +451,8 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             *ctx.tools = ToolState::default();
             *ctx.selection = Selection::None;
             ctx.eplan.invalidate();
-            ctx.follow.0 = None;
+            ctx.follow.stop();
+            ctx.fly.flight = None;
             ctx.tools.status = format!("New city: {} landscape", ctx.sim.world.landscape.params.preset.label());
             ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "new game");
             Ok(land::summary(&ctx.sim.world))
@@ -497,7 +466,8 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             *ctx.tools = ToolState::default();
             *ctx.selection = Selection::None;
             ctx.eplan.invalidate();
-            ctx.follow.0 = None;
+            ctx.follow.stop();
+            ctx.fly.flight = None;
             ctx.tools.status = format!("New city: {} on a {} landscape", preset.label(), ctx.sim.world.landscape.params.preset.label());
             ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "generated city");
             let mut v = land::summary(&ctx.sim.world);
@@ -608,6 +578,10 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         "tool" => tool(cmd, ctx),
         "camera" => camera(cmd, ctx),
+        // [camera] The inspector's Follow, Zoom to and gift buttons.
+        "follow" => follow::follow(cmd, ctx),
+        "zoom_to" | "zoom" => follow::zoom_to(cmd, ctx),
+        "gift" => follow::gift(cmd, ctx),
         "overlay" => {
             // Map layers are exclusive (`crate::map_layers`): turning one on
             // turns every other off; turning the one showing off leaves none.
@@ -1054,6 +1028,8 @@ fn status(ctx: &Ctx) -> Value {
         "message": ctx.flags.message, "tool_status": ctx.tools.status, "event_seq": ctx.log.seq,
         "favourites": ctx.tools.favorites.iter().map(|&f| key_str(f)).collect::<Vec<_>>(),
     });
+    // [camera] What the camera is locked on, if anything.
+    v["following"] = json!(ctx.follow.target.map(|s| selection(w, s)));
     // [subway] Added apart: the literal above is at serde_json's macro depth.
     let ss = &w.subway.stats;
     v["subway"] = json!({ "stations": ss.stations, "lines": ss.lines, "trains": ss.trains, "waiting": ss.waiting, "riding": ss.riding, "riders_today": ss.riders_today, "riders_yesterday": ss.riders_yesterday, "fares_today": round(ss.fares_today) });
@@ -1684,6 +1660,19 @@ fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
             }
         }
+        // [camera] Pavement delivery robots; `filter.shop` matches the shop's name.
+        "bots" | "bot" | "delivery_bots" => {
+            let f_shop = str_filter(filter, "shop");
+            for (id, b) in w.bots.bots.iter() {
+                let shop = w.buildings.get(b.shop).map_or("", |s| s.name.as_str());
+                if !contains(shop, &f_shop) {
+                    continue;
+                }
+                if let Some(d) = within(b.pos) {
+                    rows.push((d, follow::bot_row(w, id)));
+                }
+            }
+        }
         "drones" | "drone" | "aircraft" => {
             let f_kind = str_filter(filter, "kind");
             for (id, d) in w.air.drones.iter() {
@@ -1816,6 +1805,10 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         let id = key_from(v)?;
         return Ok(json!({ "vehicle": view::vehicle_detail(w, id).ok_or("no such vehicle")? }));
     }
+    if let Some(v) = field(cmd, "bot") {
+        let id = key_from(v)?;
+        return Ok(json!({ "bot": follow::bot_detail(w, id).ok_or("no such delivery bot")? }));
+    }
     if let Some(v) = field(cmd, "junction") {
         let k = view::junction_near(w, vec2_of(v)?).ok_or("no junctions")?;
         return Ok(json!({ "junction": view::junction_detail(w, k) }));
@@ -1875,7 +1868,8 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Building(id) => inspect(&json!({ "building": key_str(id) }), ctx),
         Selection::Car(id) => inspect(&json!({ "car": key_str(id) }), ctx),
         Selection::Parked(id) => inspect(&json!({ "vehicle": key_str(id) }), ctx),
-        Selection::None => Err("inspect needs one of citizen, building, lot, car, train, route, gesture (an id), or a selection".into()),
+        Selection::Bot(id) => inspect(&json!({ "bot": key_str(id) }), ctx),
+        Selection::None => Err("inspect needs one of citizen, building, lot, car, bot, train, route, gesture (an id), or a selection".into()),
     }
 }
 
@@ -1926,6 +1920,7 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
             None => Value::Null,
         },
         Selection::Parked(id) => view::vehicle_detail(w, id).unwrap_or(Value::Null),
+        Selection::Bot(id) => follow::bot_detail(w, id).unwrap_or(Value::Null),
     };
     let bus_line = route_sel.and_then(|r| w.transit.routes.get(r).map(|route| {
         let mut v = route_row(r, route);
@@ -1987,6 +1982,12 @@ fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             return Err("no such parked vehicle".into());
         }
         Selection::Parked(id)
+    } else if let Some(v) = field(cmd, "bot") {
+        let id = key_from(v)?;
+        if !w.bots.bots.contains_key(id) {
+            return Err("no such delivery bot".into());
+        }
+        Selection::Bot(id)
     } else if let Some(p) = opt_vec2(cmd, "at")? {
         // Pick exactly as a click with the Inspect tool does.
         crate::tools::pick(&*ctx.sim, p, ctx.tools.depth)
@@ -2152,8 +2153,10 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
 }
 
 fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
-    // Any explicit pose ends a follow; `follow` below may start a new one.
-    ctx.follow.0 = None;
+    // Any explicit pose ends a follow and a flight; `follow` below may
+    // start a new one.
+    ctx.follow.stop();
+    ctx.fly.flight = None;
     if let Some(mode) = opt_str(cmd, "mode")? {
         *ctx.mode = match mode.to_ascii_lowercase().as_str() {
             "orbit" => CameraMode::Orbit,
@@ -2196,7 +2199,14 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
                 Selection::Building(id)
             }
-            _ => return Err("follow: one of citizen, car, building".into()),
+            "bot" => {
+                let id = key_from(id)?;
+                if !w.bots.bots.contains_key(id) {
+                    return Err("follow: no such delivery bot".into());
+                }
+                Selection::Bot(id)
+            }
+            _ => return Err("follow: one of citizen, car, bot, building".into()),
         });
     }
     let look_at = opt_vec2(cmd, "look_at")?;
@@ -2227,13 +2237,7 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         if let Some(sel) = follow {
             // Start on the thing right away rather than one frame later.
-            let p = match sel {
-                Selection::Citizen(id) => w.citizens.get(id).map(|c| c.pos),
-                Selection::Car(id) => w.traffic.cars.get(id).map(|c| c.pos),
-        Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|c| c.spot()).map(|s| s.pos),
-                Selection::Building(id) => w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map(|l| l.center),
-                Selection::None => None,
-            };
+            let p = crate::camera::thing_pose(&ctx.sim, sel).map(|t| t.pos);
             if let Some(p) = p {
                 cam.target = Vec3::new(p.x, 0.0, p.y);
                 if distance.is_none() {
@@ -2266,8 +2270,10 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             walk.pitch = p.clamp(-1.35, 1.35);
         }
     }
-    ctx.follow.0 = follow;
-    ctx.follow.1 = ctx.sim.generation;
+    if let Some(sel) = follow {
+        let generation = ctx.sim.generation;
+        ctx.follow.start(sel, generation);
+    }
     Ok(json!({ "camera": camera_pose(ctx), "following": follow.map(|s| selection(&ctx.sim.world, s)) }))
 }
 
@@ -2380,9 +2386,9 @@ fn help() -> Value {
             "find": { "what": "citizens|buildings|lots|parcels|cars|trains|drones|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
             "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "[x,y]: the road piece nearest a point, as segment" },
             "lane_use": { "junction": "[x,y]", "approach": "[x,y] on the arriving street", "lanes": "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default" },
-            "select": { "citizen|building|car|vehicle": "id (vehicle: a parked car)", "at": "[x,y] picks like a click; nothing clears" },
+            "select": { "citizen|building|car|vehicle|bot": "id (vehicle: a parked car; bot: a delivery robot)", "at": "[x,y] picks like a click; nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
-            "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
+            "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|bot|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
             "overlay": { "active": "the map layer to show, or none (layers are exclusive: showing one hides the others)", "layer": "zoning|land_value|districts|traffic|traffic_types|paths|people|pollution, a land survey layer (farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech), or projects (the dim other-projects switch, not a layer)", "on": "bool, omitted toggles; on hides every other layer", "land": "a land survey layer key, or none", "<layer name>": "bool (older form): true shows it alone, false hides it if it shows" },
             "lighting": { "follow_clock": "bool", "hour": "0..24 (also unpins from the clock)" },
             "heat_vision": { "on": "bool, omitted toggles: the drone thermal camera view (also key H)" },
@@ -2394,6 +2400,10 @@ fn help() -> Value {
     // Kept out of the literal above: it is at the json! recursion limit.
     v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
     v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
+    // [camera]
+    v["commands"]["follow"] = json!({ "citizen|car|bot|building|vehicle": "id, or the selection", "stop": "bool: end the follow (also on: false)", "pov": "bool: look through their eyes (Walk view) or back to orbit", "fly": "bool, default true: fly in smoothly first", "note": "the camera stays on it (pan locked, rotate and zoom free) until stopped, Esc, or it is gone" });
+    v["commands"]["zoom_to"] = json!({ "citizen|car|bot|building|vehicle": "id, or the selection", "at": "[x,y] instead of a thing", "distance": "m (default by kind)", "pitch": "rad (default 0.62)", "note": "a smooth move of 0.7..2.2 s; replies at once" });
+    v["commands"]["gift"] = json!({ "citizen": "id, or the selected citizen", "amount": "default 1000", "note": "from the treasury to their household (booked as gifts to residents)" });
     v["commands"]["graphics"] = json!({ "quality": "auto|low|medium|high: pin the graphics tier (pin one before screenshots that must compare) or hand it back to the frame-rate throttler; omitted reports the setting, the tier in force, the smoothed frame time and the effects on the camera" });
     // The review commands, added separately: one `json!` this size hits the
     // macro recursion limit.
