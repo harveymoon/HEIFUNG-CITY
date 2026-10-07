@@ -469,7 +469,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             ctx.eplan.invalidate();
             ctx.follow.stop();
             ctx.fly.flight = None;
-            ctx.tools.status = format!("New city: {} landscape", ctx.sim.world.landscape.params.preset.label());
+            ctx.tools.status = format!("New city: {} {} landscape", ctx.sim.world.landscape.params.climate.label(), ctx.sim.world.landscape.params.preset.label());
             ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "new game");
             let mut v = land::summary(&ctx.sim.world);
             v["identity"] = identity::identity_json(&ctx.sim.world);
@@ -522,6 +522,20 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "grid" => Ok(land::grid_json(&ctx.sim.world)),
         "weather" => Ok(land::weather_json(&ctx.sim.world)),
         "landscape" => Ok(land::summary(&ctx.sim.world)),
+        // [climate] Dev: set the sky, to see rain, snow or sun on demand.
+        "set_weather" => {
+            let w = &mut ctx.sim.world;
+            if let Some(c) = opt_f32(cmd, "cloud")? {
+                w.weather.cloud = c.clamp(0.0, 1.0);
+            }
+            if let Some(v) = opt_f32(cmd, "wind")? {
+                w.weather.wind = v.clamp(0.05, 1.0);
+            }
+            if let Some(t) = opt_f32(cmd, "temp_c")? {
+                w.weather.temp_c = t.clamp(-50.0, 55.0);
+            }
+            Ok(json!({ "cloud": round(w.weather.cloud), "wind": round(w.weather.wind), "temp_c": round(w.weather.temp_c), "spell": format!("{:?}", w.weather.spell).to_lowercase(), "label": w.weather.label(), "climate": w.landscape.params.climate.key(), "weather_climate": w.weather.climate.key(), "precipitation": crate::render::climate::precip_now(w).map(|(k, i)| json!({ "kind": k, "intensity": round(i) })) }))
+        }
         "grant" => {
             // Dev: money for trying things out.
             let amount = opt_f32(cmd, "amount")?.unwrap_or(100_000.0);
@@ -556,6 +570,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         "project" => project(cmd, ctx),
         "place" => place(cmd, ctx),
+        "plant_preview" => plant_preview(cmd, ctx),
         // [tax] [tolls]
         "taxes" | "tax" => taxes::command(cmd, &mut ctx.sim.world),
         "tolls" | "toll" => taxes::tolls(cmd, &mut ctx.sim.world),
@@ -1101,6 +1116,8 @@ fn status(ctx: &Ctx) -> Value {
     v["window_expanded"] = json!(ctx.windows.expanded_name());
     v["build_window"] = json!({ "open": ctx.windows.build_open, "section": ctx.windows.build_section });
     v["title_screen"] = json!(ctx.saves.title);
+    // [climate] The map's climate and what its weather is doing to the view.
+    v["climate"] = json!({ "climate": w.landscape.params.climate.key(), "label": w.landscape.params.climate.label(), "precipitation": crate::render::climate::precip_now(w).map(|(k, i)| json!({ "kind": k, "intensity": round(i) })) });
     // [identity]
     v["identity"] = identity::identity_json(w);
     // [looks] The figure cache: meshes alive, people outdoors and their distinct looks.
@@ -1397,14 +1414,45 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let tier = opt_str(cmd, "tier")?.map(|t| nd_sim::services::parse_tier(t).ok_or_else(|| format!("unknown tier {t:?}; low, mid or high"))).transpose()?;
             let what = nd_sim::Placeable::parse(other, tier).ok_or_else(|| format!("unknown kind {other:?}; one of station, freight_yard, depot, parking, coal, solar, wind, nuclear, hydro, tidal, geothermal, battery_small, battery_medium, battery_large, police, fire, hospital (clinic), school, dispatch, monument, stadium, vertiport (services take tier low|mid|high or a :tier suffix)"))?;
             let lot = lot_near(w, p).ok_or("no lot there: aim at a lot")?;
+            let before = w.economy.treasury;
             let id = w.place_on_lot(what, lot)?;
-            (id, format!("{} built for {:.0}; {:.0}/day", what.label(), what.cost(), what.upkeep()))
+            // [plant-groups] What was paid, and a plant's MW on its lot and its park.
+            let paid = before - w.economy.treasury;
+            let note = match w.buildings.get(id).filter(|b| b.plant.is_some()) {
+                Some(b) => {
+                    let mut s = format!("{} built: {:.1} MW for {:.0}; {:.0}/day", what.label(), w.plant_capacity_mw(b), paid, w.plant_upkeep(b));
+                    if let Some(g) = w.plant_group_of(id) {
+                        s += &format!("; part of {} ({} lots)", g.name, g.members.len());
+                    }
+                    s
+                }
+                None => format!("{} built for {:.0}; {:.0}/day", what.label(), paid, what.upkeep()),
+            };
+            (id, note)
         }
     };
     *ctx.selection = Selection::Building(id);
     ctx.tools.status = note.clone();
     let b = ctx.sim.world.buildings.get(id).map(|b| building_row(&ctx.sim.world, id, b)).unwrap_or(Value::Null);
     Ok(json!({ "building": key_str(id), "message": note, "row": b, "treasury": round(ctx.sim.world.economy.treasury) }))
+}
+
+/// [plant-groups] What a plant `kind` would be on the lot at `x`,`y`
+/// before placing it: its MW, cost and upkeep there, the Sunfield or Wind
+/// Park it would join, and why it cannot go (if not). Read-only.
+fn plant_preview(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let kind = req_str(cmd, "kind")?.trim().to_ascii_lowercase();
+    let p = req_point(cmd)?;
+    let w = &ctx.sim.world;
+    let Some(nd_sim::Placeable::Plant(k)) = nd_sim::Placeable::parse(&kind, None) else { return Err(format!("{kind:?} is not a power plant")) };
+    let lot = lot_near(w, p).ok_or("no lot there: aim at a lot")?;
+    let v = w.plant_preview(k, lot).ok_or("no such lot")?;
+    Ok(json!({
+        "lot": key_str(lot), "kind": kind, "area_m2": round(v.area), "size_scale": round(k.size_scale(v.area)), "capacity_mw": round(v.capacity_mw), "site": round(v.site), "now_mw": round(v.now_mw),
+        "cost": round(v.cost), "upkeep_per_day": round(v.upkeep_per_day), "min_area": k.min_area(), "small_lot_joins": v.small_lot_joins,
+        "joins": v.join.as_ref().and_then(|j| j.joins.clone()), "joined_lots": v.join.as_ref().map(|j| j.members.len() + 1), "joined_area_m2": v.join.as_ref().map(|j| round(j.area)), "joined_capacity_mw": v.join.as_ref().map(|j| round(j.capacity_mw)),
+        "ok": v.problem.is_none(), "problem": v.problem,
+    }))
 }
 
 /// Start an emergency by hand, for testing and demos: `kind` fire / crime
@@ -2470,7 +2518,7 @@ fn help() -> Value {
             "bulldoze": { "gesture_id": "int", "implement": "bool" },
             "project": { "action": "start|implement|undo|redo|discard" },
             "place": { "kind": "toll_booth|toll_plaza (on a road: across the carriageway)|station|freight_yard|depot|parking|coal|solar|wind|nuclear|hydro|tidal|geothermal|shipping_port|ferry_terminal|police|fire|hospital|clinic|school|dispatch|monument|stadium|jail|trash_depot (services: tier or kind:tier)", "tier": "low|mid|high", "x": "f", "y": "f", "note": "hydro beside a river or stream with a current >= 0.8 m/s, tidal on the sea shore, geothermal over a hot spot; docks at the water's edge (they build a pier and a street stub)" },
-            "new_game": { "preset": "river_valley|islands|coast|delta|plains|flat (default river_valley)", "seed": "u64", "water": "0..1", "relief": "0..1 height variation", "branching": "0..1", "islands": "0..8", "highway": "ignored: every new game has the highway and the trunk line", "note": "throws the city away; omitted levers take the preset's" },
+            "new_game": { "preset": "river_valley|islands|coast|delta|plains|flat (default river_valley)", "seed": "u64", "water": "0..1", "relief": "0..1 height variation", "branching": "0..1", "islands": "0..8", "climate": "temperate|desert|tropical|arctic|volcanic (default desert; iceland = volcanic)", "highway": "ignored: every new game has the highway and the trunk line", "note": "throws the city away; omitted levers take the preset's" },
             "terrain_at": { "x": "f", "y": "f", "returns": "natural/ground/surface heights, slope, water (kind, current, width), nearest shore, hot spot, power sites and dock placement for the lot there, survey (every land layer's value 0..1 there: resources, and the chance of each industry kind)" },
             "grant": { "amount": "money added to the treasury (dev), default 100000" },
             "landscape": { "returns": "preset and levers, rivers (width, current, hydro_ok), lakes, sea, hot spots, highway ends and through cars, bridges, docks, ships" },
@@ -2494,6 +2542,8 @@ fn help() -> Value {
     // Kept out of the literal above: it is at the json! recursion limit.
     v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
     v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
+    // [plant-groups]
+    v["commands"]["plant_preview"] = json!({ "kind": "solar|wind|coal|...", "x": "f", "y": "f", "note": "read-only: MW, cost and upkeep on the lot there, the Sunfield / Wind Park it would join, and any problem" });
     // [grid-weather]
     v["commands"]["resource"] = json!({ "x": "f", "y": "f (or z)", "returns": "wind (site_factor, mean_ms, now_ms, typical_yield, yield_now, cut_out_now) and solar (site_factor, climate_sun, sun, yield_now) at the point, and the climate" });
     v["commands"]["grid"] = json!({ "returns": "time-of-use import/export price now, demand now vs the full draw, weather, day_ahead (24 h: hour, temp_c, demand_mw, import_price, export_price if the weather holds), last_24h (recorded demand, supply, imports, exports, price, temperature)" });
@@ -2531,7 +2581,8 @@ fn help() -> Value {
     // [land]
     v["commands"]["estate"] = json!({ "action": "summary (default: counters, floors histogram, the billionaire gate, elites with their convoys, NIMBY zones, forms, owners) | pressure ({at: [x,y]} for one point, else every busy cell) | spawn_elite (dev: a billionaire now, needs quiet land) | expand {building} (dev: branch or merge now) | buyout {building} (dev) | drive {citizen, to} (dev)" });
     v["commands"]["ownership"] = json!({ "building": "id: what to highlight when it is selected: the owner and every property with its outline (a rich person's other homes and businesses too)" });
-    v["commands"]["generate_city"] = json!({ "preset": "grid_plaza|coastal_river|old_town|twin_centres (default grid_plaza)", "seed": "u64 (default 1): the city and its landscape", "landscape": "optional landscape preset to lay it on instead of the city preset's own (river_valley|islands|coast|delta|plains|flat)", "water": "0..1", "relief": "0..1", "branching": "0..1", "note": "throws the city away: a new game with a whole generated city (tensor-field streets, zoning, highway interchanges, a coal plant); returns the landscape summary and city {arterial, collector, local, zones, lots, interchanges, way_in, centres}" });
+    v["commands"]["set_weather"] = json!({ "cloud": "0..1 (rain or snow above 0.6, by climate)", "wind": "0.05..1", "temp_c": "-50..55", "note": "dev: sets the sky now; it drifts again hour by hour" });
+    v["commands"]["generate_city"] = json!({ "preset": "grid_plaza|coastal_river|old_town|twin_centres (default grid_plaza)", "seed": "u64 (default 1): the city and its landscape", "landscape": "optional landscape preset to lay it on instead of the city preset's own (river_valley|islands|coast|delta|plains|flat)", "water": "0..1", "relief": "0..1", "branching": "0..1", "climate": "temperate|desert|tropical|arctic|volcanic (default: the city preset's, desert)", "note": "throws the city away: a new game with a whole generated city (tensor-field streets, zoning, highway interchanges, a coal plant); returns the landscape summary and city {arterial, collector, local, zones, lots, interchanges, way_in, centres}" });
     // [districts] [tourism]
     v["commands"]["district"] = json!({ "action": "list (default)|create|paint|erase|set|remove|at|select|layer", "id": "district id (or district: id or name)", "at": "[x,y] brush centre", "radius": "m, default 40", "polygon": "[[x,y],...]", "rect": "[[x0,y0],[x1,y1]]", "residential": "kowloon|suburban|eco|none", "commercial": "neon_strip|tech_campus|night_market|tourist|none", "industry": "farming|oil|refinery|manufacturing|logistics|fishing|tech|none", "historic": "bool", "rename": "new name", "on": "bool (layer)" });
     v["commands"]["tourism"] = json!({ "action": "refresh (re-read attractions now)", "limit": "tourists listed, default 20", "returns": "attractiveness, demand, ways in, today's and yesterday's arrivals, spending and tourist tax, hotels, attractions, tourists" });

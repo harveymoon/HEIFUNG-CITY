@@ -2,6 +2,7 @@
 //! a scatter pass that puts rocks, scrub and dead trees on the open ground.
 
 use crate::buildings::parts::{mix, mul, ngon, rgba, rock_world, scrub_world, tree_kind, TreeKind};
+use crate::climate::{self, Flora};
 use crate::mesh::MeshData;
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface};
@@ -157,13 +158,16 @@ pub fn scatter_nature(cfg: &TerrainConfig, palette: &Palette, seed: u64, clear: 
     let dry = palette.foliage_dry;
     let rock = mix(palette.stone, palette.hills, 0.3);
     let mut count = 0;
+    // [climate] Lusher climates grow more, and may draw more pieces.
+    let growth = palette.flora.growth();
+    let cap = (CAP as f32 * growth) as usize;
     for j in 0..n {
         for i in 0..n {
             let mut rng = rng_for(seed, 41 + ((i as u64) << 20 | j as u64) * 0x9E37);
             let x = -cfg.half_size + 20.0 + (i as f32 + 0.5 + rng.random_range(-0.45..0.45)) * STEP;
             let z = -cfg.half_size + 20.0 + (j as f32 + 0.5 + rng.random_range(-0.45..0.45)) * STEP;
             let d = density.get([x as f64 * 0.004, z as f64 * 0.004]) as f32 * 0.5 + 0.5;
-            let chance = ((d - 0.35) * 0.45).clamp(0.0, 0.4);
+            let chance = ((d - 0.35) * 0.45).clamp(0.0, 0.4) * growth;
             if !rng.random_bool(chance as f64) {
                 continue;
             }
@@ -176,17 +180,41 @@ pub fn scatter_nature(cfg: &TerrainConfig, palette: &Palette, seed: u64, clear: 
             let kind = rng.random_range(0..10);
             let size: f32 = rng.random();
             let tint: f32 = rng.random();
-            match kind {
-                0..=4 => scrub_world(&mut g, &mut rng, p, y, 0.7 + size * 0.9, mix(dry, palette.foliage, tint * 0.4)),
-                5..=7 => rock_world(&mut g, &mut rng, p, y, 0.4 + size * 1.2, mul(rock, 0.85 + tint * 0.4)),
-                8 => tree_kind(&mut g, p, y, TreeKind::Dead, 3.0 + size * 3.0, 0.0, mul(palette.bark, 0.8), dry),
-                _ => {
-                    let rot = tint * std::f32::consts::TAU;
-                    g.part(Surface::Foliage).ground_polygon(&ngon(x, z, 0.8 + size * 1.2, 6, rot), y + 0.12, rgba(mul(dry, 0.9)));
-                }
+            let leaf = palette.foliage;
+            let tuft = |g: &mut Geometry, c: [f32; 3], r: f32| {
+                let rot = tint * std::f32::consts::TAU;
+                g.part(Surface::Foliage).ground_polygon(&ngon(x, z, r, 6, rot), y + 0.12, rgba(c));
+            };
+            match (palette.flora, kind) {
+                (Flora::Dry, 0..=4) => scrub_world(&mut g, &mut rng, p, y, 0.7 + size * 0.9, mix(dry, palette.foliage, tint * 0.4)),
+                (Flora::Dry, 5..=7) => rock_world(&mut g, &mut rng, p, y, 0.4 + size * 1.2, mul(rock, 0.85 + tint * 0.4)),
+                (Flora::Dry, 8) => tree_kind(&mut g, p, y, TreeKind::Dead, 3.0 + size * 3.0, 0.0, mul(palette.bark, 0.8), dry),
+                (Flora::Dry, _) => tuft(&mut g, mul(dry, 0.9), 0.8 + size * 1.2),
+                // Meadow and woodland: leafy trees in clumps, bushes, grass.
+                (Flora::Leafy, 0..=3) => scrub_world(&mut g, &mut rng, p, y, 0.8 + size * 1.0, mul(mix(leaf, dry, tint * 0.3), 0.9 + tint * 0.3)),
+                (Flora::Leafy, 4) => rock_world(&mut g, &mut rng, p, y, 0.4 + size * 1.0, mul(rock, 0.85 + tint * 0.3)),
+                (Flora::Leafy, 5..=7) => tree_kind(&mut g, p, y, TreeKind::Round, 3.5 + size * 4.0, 3.0 + size * 2.5, palette.bark, mul(leaf, 0.8 + tint * 0.45)),
+                (Flora::Leafy, 8) => tree_kind(&mut g, p, y, TreeKind::Conifer, 6.0 + size * 5.0, 2.2 + size, palette.bark, mul(leaf, 0.7)),
+                (Flora::Leafy, _) => tuft(&mut g, mul(leaf, 0.8 + tint * 0.3), 1.0 + size * 1.6),
+                // Jungle edge: palms, broad trees and dense undergrowth.
+                (Flora::Palms, 0..=2) => scrub_world(&mut g, &mut rng, p, y, 1.0 + size * 1.3, mul(leaf, 0.85 + tint * 0.4)),
+                (Flora::Palms, 3..=5) => tree_kind(&mut g, p, y, TreeKind::Palm, 6.0 + size * 6.0, 0.0, mul(palette.bark, 1.4), mul(leaf, 0.9 + tint * 0.4)),
+                (Flora::Palms, 6..=7) => tree_kind(&mut g, p, y, TreeKind::Round, 4.0 + size * 4.0, 3.5 + size * 3.0, palette.bark, mul(leaf, 0.75 + tint * 0.4)),
+                (Flora::Palms, 8) => rock_world(&mut g, &mut rng, p, y, 0.4 + size * 0.8, mul(rock, 0.8)),
+                (Flora::Palms, _) => tuft(&mut g, mul(leaf, 0.9 + tint * 0.3), 1.2 + size * 1.8),
+                // Taiga: spruce, boulders, the odd bare birch, low dark shrubs.
+                (Flora::Conifers, 0..=4) => tree_kind(&mut g, p, y, TreeKind::Conifer, 5.0 + size * 7.0, 1.6 + size * 1.4, palette.bark, mul(leaf, 0.8 + tint * 0.4)),
+                (Flora::Conifers, 5..=6) => rock_world(&mut g, &mut rng, p, y, 0.5 + size * 1.4, mul(rock, 0.8 + tint * 0.3)),
+                (Flora::Conifers, 7) => tree_kind(&mut g, p, y, TreeKind::Dead, 3.0 + size * 3.0, 0.0, [0.5, 0.48, 0.45], dry),
+                (Flora::Conifers, _) => scrub_world(&mut g, &mut rng, p, y, 0.6 + size * 0.7, mul(leaf, 0.9)),
+                // Lava field: moss cushions over black rock, a stunted tree or two.
+                (Flora::Moss, 0..=4) => tuft(&mut g, mul(mix(leaf, dry, tint * 0.4), 0.8 + tint * 0.4), 1.4 + size * 2.4),
+                (Flora::Moss, 5..=7) => rock_world(&mut g, &mut rng, p, y, 0.5 + size * 1.6, mul(palette.ground, 1.6 + tint)),
+                (Flora::Moss, 8) => tree_kind(&mut g, p, y, TreeKind::Round, 2.0 + size * 1.5, 1.4 + size, [0.55, 0.53, 0.5], mul(leaf, 0.9)),
+                (Flora::Moss, _) => scrub_world(&mut g, &mut rng, p, y, 0.5 + size * 0.6, mul(leaf, 0.7)),
             }
             count += 1;
-            if count >= CAP {
+            if count >= cap {
                 return g;
             }
         }
@@ -300,9 +328,11 @@ pub fn build_landscape_terrain(world: &World, palette: &Palette, cell: f32) -> M
     let detail = Fbm::<Perlin>::new(land.params.seed as u32 ^ 99).set_octaves(3);
     let mut mesh = MeshData::default();
     let mut heights = vec![0.0f32; n * n];
-    let sand = mix(palette.ground, [0.62, 0.56, 0.42], 0.6);
+    // [climate] The shore and the hot ground from the climate's row.
+    let look = climate::look(land.params.climate);
+    let sand = look.shore.unwrap_or_else(|| mix(palette.ground, [0.62, 0.56, 0.42], 0.6));
     let mud = mul(mix(palette.ground, [0.25, 0.22, 0.16], 0.6), 0.7);
-    let sulphur = [0.62, 0.55, 0.22];
+    let sulphur = look.hot_ground;
     for j in 0..n {
         for i in 0..n {
             let x = -half + i as f32 * cell;
@@ -410,8 +440,14 @@ pub fn build_water(world: &World, palette: &Palette) -> MeshData {
     let cell = 10.0;
     let half = LAND_HALF + 400.0;
     let n = ((half * 2.0) / cell) as i32;
-    let deep = mul(palette.water, 0.22);
-    let shallow = mix(mul(palette.water, 0.45), [0.2, 0.3, 0.28], 0.4);
+    let look = climate::look(land.params.climate);
+    let (shallow, deep) = look.water.unwrap_or((mix(mul(palette.water, 0.45), [0.2, 0.3, 0.28], 0.4), mul(palette.water, 0.22)));
+    // [climate] Still water frozen over: lakes, and the sea out to
+    // `sea_ice` from the shore. Rivers and streams keep running.
+    let crack = Fbm::<Perlin>::new(land.params.seed as u32 ^ 0x1CE).set_octaves(3);
+    let frozen = |p: Vec2, d: f32| -> bool {
+        look.ice.is_some() && (land.lakes.iter().any(|l| l.center.distance(p) < 400.0 && nd_sim::geom::point_in_polygon(p, &l.outline)) || (d > -look.sea_ice * (0.5 + 0.9 * (crack.get([p.x as f64 * 0.004, p.y as f64 * 0.004]) as f32 * 0.5 + 0.5)) && p.x.abs() < LAND_HALF && p.y.abs() < LAND_HALF && land.sea.as_ref().is_some_and(|s| s.contains(p))))
+    };
     let wet = |p: Vec2| -> Option<f32> {
         if p.x.abs() > LAND_HALF || p.y.abs() > LAND_HALF {
             return if land.is_water(p) { Some(-60.0) } else { None };
@@ -429,13 +465,33 @@ pub fn build_water(world: &World, palette: &Palette) -> MeshData {
                 continue;
             }
             let base = mesh.positions.len() as u32;
+            // Ice per corner, so its edge fades over a cell into open water
+            // instead of stepping; corners on the bank follow the cell's water.
+            let mut fr = [false; 4];
+            if look.ice.is_some() {
+                for (k, c) in corners.iter().enumerate() {
+                    fr[k] = ds[k].is_some_and(|d| d < 0.0 && frozen(*c, d));
+                }
+                let any = fr.iter().any(|f| *f);
+                for k in 0..4 {
+                    if ds[k].is_none_or(|d| d >= 0.0) {
+                        fr[k] = any;
+                    }
+                }
+            }
             for (k, c) in corners.iter().enumerate() {
                 let d = ds[k].unwrap_or(12.0);
                 let t = ((-d) / 25.0).clamp(0.0, 1.0);
-                let rgb = mix(shallow, deep, t);
+                let (rgb, a) = match look.ice.filter(|_| fr[k]) {
+                    Some(ice) => {
+                        let v = crack.get([c.x as f64 * 0.03, c.y as f64 * 0.03]) as f32;
+                        (mul(ice, 0.85 + 0.3 * v.abs() + 0.15 * (1.0 - t)), 0.97)
+                    }
+                    None => (mix(shallow, deep, t), 0.86),
+                };
                 mesh.positions.push([c.x, WATER_LEVEL, c.y]);
                 mesh.normals.push([0.0, 1.0, 0.0]);
-                mesh.colors.push([rgb[0], rgb[1], rgb[2], 0.86]);
+                mesh.colors.push([rgb[0], rgb[1], rgb[2], a]);
                 mesh.uvs.push([c.x, -c.y]);
             }
             mesh.indices.extend_from_slice(&[base, base + 3, base + 1, base + 1, base + 3, base + 2]);
@@ -454,7 +510,7 @@ pub fn build_far_water(world: &World, palette: &Palette) -> MeshData {
         return mesh;
     }
     let half = LAND_HALF + 400.0;
-    let deep = mul(palette.water, 0.22);
+    let deep = climate::look(land.params.climate).water.map_or(mul(palette.water, 0.22), |w| w.1);
     let far_cell = 40.0;
     // On the same grid as the fine sheet's edge, so the two meet exactly.
     let outer = half + ((nd_sim::landscape::FAR_GROUND - half) / far_cell).ceil() * far_cell;
@@ -985,23 +1041,11 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
         let Some(lot) = world.lots.get(b.lot) else { continue };
         match kind {
             PowerPlantKind::Hydro => {
-                // A weir across the river beside the plant.
+                // [plant-groups] A curved arch dam across the river beside the plant.
                 if let Some((ri, _, bank)) = land.river_beside(&lot.polygon, 40.0) {
                     let r = &land.rivers[ri];
                     let (seg, c, _) = r.nearest(bank);
-                    let flow = r.flow(seg);
-                    let across = Vec2::new(-flow.y, flow.x);
-                    let half = r.width * 0.5 + 4.0;
-                    let (p0, p1) = (c - across * half, c + across * half);
-                    let top = BANK_HEIGHT + 1.2;
-                    g.part(Surface::Concrete).slab(Vec3::new(p0.x, top, p0.y), Vec3::new(p1.x, top, p1.y), 4.0, top + 3.0, rgba(concrete));
-                    // Spillway foam below it.
-                    let foam = c + flow * 6.0;
-                    g.part(Surface::Matte).ground_strip(&[foam - across * (half - 4.0), foam + across * (half - 4.0)], 7.0, WATER_LEVEL + 0.08, rgba([0.86, 0.9, 0.92]));
-                    for k in 0..(r.width / 6.0) as i32 {
-                        let p = p0 + across * (4.0 + k as f32 * 6.0);
-                        g.part(Surface::Metal).boxed(Vec3::new(p.x, top + 1.6, p.y), Vec3::new(1.0, 2.0, 1.0), 0.0, rgba(steel));
-                    }
+                    crate::dam::hydro_dam(&mut g, c, r.flow(seg), r.width, lot.center, &|p| world.ground_height(p), concrete, steel);
                 }
             }
             PowerPlantKind::Tidal => {
@@ -1019,18 +1063,20 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
             _ => {}
         }
     }
-    // Steaming vents at the hot spots.
+    // Vents at the hot spots: crusted rocks round a pale sinter ring, on
+    // open ground only (the city may have been laid over a hot spot). The
+    // steam itself is animated by the renderer.
     for (k, s) in land.hot_spots.iter().enumerate() {
         let mut rng = rng_for(land.params.seed, 900 + k as u64);
         for _ in 0..7 {
             let p = s.pos + Vec2::from_angle(rng.random_range(0.0..6.28)) * rng.random_range(0.0..s.radius * 0.8);
-            let y = world.ground_height(p);
             let size = 0.8 + rng.random::<f32>();
-            rock_world(&mut g, &mut rng, p, y - 0.1, size, mul(palette.stone, 0.7));
-            for q in 0..4 {
-                let yy = y + 0.5 + q as f32 * 1.6;
-                g.part(Surface::Matte).cylinder(p + Vec2::splat(q as f32 * 0.25), 0.4 + q as f32 * 0.35, 0.6 + q as f32 * 0.35, yy, yy + 1.4, 7, rgba([0.88, 0.88, 0.86]));
+            if !climate::vent_clear(world, p) {
+                continue;
             }
+            let y = world.ground_height(p);
+            rock_world(&mut g, &mut rng, p, y - 0.1, size, mul(palette.stone, 0.7));
+            g.part(Surface::Stone).ground_polygon(&ngon(p.x, p.y, size * 2.2, 9, 0.0), y + 0.06, rgba([0.62, 0.58, 0.46]));
         }
     }
     g

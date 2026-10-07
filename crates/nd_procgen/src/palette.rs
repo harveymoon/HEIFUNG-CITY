@@ -106,6 +106,13 @@ pub struct Palette {
     /// Tactile paving at a dropped kerb: the classic warning yellow, lit
     /// like the slabs round it (not a glow).
     pub tactile: [f32; 3],
+    /// [climate] What grows in streets, parks and on open ground; set from
+    /// the map's climate by `climate::palette_for`, never from the file.
+    #[serde(skip)]
+    pub flora: crate::climate::Flora,
+    /// [climate] 0..1 snow on roofs and up-facing surfaces (from the climate).
+    #[serde(skip)]
+    pub snow: f32,
 }
 
 impl Default for Palette {
@@ -226,6 +233,8 @@ impl Default for Palette {
             police_light: [0.3, 0.6, 2.6],
             platform_line: [1.4, 1.2, 0.2],
             tactile: [0.78, 0.52, 0.04],
+            flora: crate::climate::Flora::Dry,
+            snow: 0.0,
         }
     }
 }

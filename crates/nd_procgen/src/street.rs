@@ -7,7 +7,7 @@
 //! continuous, mitred carriageway and pavement, so a curved road reads as
 //! one road instead of a string of pieces.
 
-use crate::buildings::parts::{bench_world, bin_world, bollard_world, lamp_post_world, mul, pick, railway_track, rgba, tree_world, CHARCOAL, DARK};
+use crate::buildings::parts::{bench_world, bin_world, bollard_world, lamp_post_world, mul, pick, railway_track, rgba, CHARCOAL, DARK};
 use crate::mesh::{offset_path, path_length, point_along};
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface, Surface::*};
@@ -930,7 +930,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
                     }
                     let (p, d, _) = at(s, side, back_off);
                     g.part(Concrete).boxed(Vec3::new(p.x, KERB_H + 0.2, p.y), Vec3::new(1.3, 0.4, 1.3), d.y.atan2(d.x), rgba(mul(pal.paving, 1.1)));
-                    tree_world(&mut g, p, rng.random_range(3.0..4.5), rng.random_range(2.8..4.0), pal.bark, mul(pal.foliage, rng.random_range(0.85..1.15)));
+                    crate::climate::climate_tree(&mut g, pal, p, rng.random_range(3.0..4.5), rng.random_range(2.8..4.0), mul(pal.foliage, rng.random_range(0.85..1.15)));
                 }
                 s += 13.0 + rng.random_range(0.0..3.0);
             }

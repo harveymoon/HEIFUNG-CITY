@@ -935,6 +935,12 @@ pub fn chiller(g: &mut Geometry, c: &Ctx, p: Vec2, y: f32, w: f32, d: f32, yaw: 
 
 // ── site ─────────────────────────────────────────────────────────────────────
 
+/// A tree on the lot for the palette's climate (round where it is dry or
+/// mild, palms, conifers or birches elsewhere).
+pub fn tree_in(g: &mut Geometry, f: &Frame, pal: &crate::palette::Palette, p: Vec2, h: f32, canopy: f32, leaf: [f32; 3]) {
+    crate::climate::climate_tree(g, pal, f.to_world(p.x, p.y), h, canopy, leaf);
+}
+
 pub fn tree(g: &mut Geometry, f: &Frame, p: Vec2, h: f32, canopy: f32, bark: [f32; 3], leaf: [f32; 3]) {
     tree_world(g, f.to_world(p.x, p.y), h, canopy, bark, leaf);
 }

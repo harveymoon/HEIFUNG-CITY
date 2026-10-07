@@ -1,12 +1,12 @@
-//! The New Game window: pick a landscape preset, adjust its levers (water,
-//! height variation, river branching, islands, seed, the starting highway)
+//! The New Game window: pick a landscape preset and a climate, adjust its
+//! levers (water, height variation, river branching, islands, seed, the starting highway)
 //! and watch a mini-map of the result before starting over on it. A
 //! starting town may be picked too: a whole example city generated on the
 //! landscape (`nd_procgen::citygen`), drawn on the mini-map.
 
 use bevy_egui::egui;
 use nd_procgen::citygen::CityPreset;
-use nd_sim::landscape::{Landscape, LandscapeParams, LandscapePreset, LAND_HALF};
+use nd_sim::landscape::{Climate, Landscape, LandscapeParams, LandscapePreset, LAND_HALF};
 use nd_sim::Vec2 as SVec2;
 
 use super::{hint, section, UiCtx, GOLD, WARN};
@@ -88,11 +88,21 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, draft: &mut Draft) {
             for preset in LandscapePreset::ALL {
                 let on = draft.params.preset == preset;
                 if ui.selectable_label(on, preset.label()).on_hover_text(preset.blurb()).clicked() && !on {
-                    // A preset sets its own levers; the seed stays.
-                    draft.params = LandscapeParams::preset(preset, draft.params.seed);
+                    // A preset sets its own levers; the seed and the climate stay.
+                    draft.params = LandscapeParams { climate: draft.params.climate, ..LandscapeParams::preset(preset, draft.params.seed) };
                 }
             }
             hint(ui, draft.params.preset.blurb());
+            section(ui, "CLIMATE");
+            ui.horizontal_wrapped(|ui| {
+                for climate in Climate::ALL {
+                    let on = draft.params.climate == climate;
+                    if ui.selectable_label(on, climate.label()).on_hover_text(climate.blurb()).clicked() {
+                        draft.params.climate = climate;
+                    }
+                }
+            });
+            hint(ui, draft.params.climate.blurb());
             if draft.params.preset != LandscapePreset::Flat {
                 section(ui, "LEVERS");
                 ui.add(egui::Slider::new(&mut draft.params.water, 0.0..=1.0).text("water"));
@@ -122,7 +132,7 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, draft: &mut Draft) {
                     // A town comes with the landscape it was made for; the
                     // levers may still be changed after.
                     draft.city = Some(city);
-                    draft.params = city.landscape(draft.params.seed);
+                    draft.params = LandscapeParams { climate: draft.params.climate, ..city.landscape(draft.params.seed) };
                 }
             }
             match draft.city {
@@ -164,7 +174,7 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, draft: &mut Draft) {
 }
 
 fn start(p: &mut UiCtx, params: LandscapeParams, city: Option<CityPreset>, name: &str) {
-    let label = params.preset.label();
+    let label = format!("{} {}", params.climate.label().to_lowercase(), params.preset.label().to_lowercase());
     match city {
         Some(c) => {
             p.sim.generate_city(c, params);
@@ -231,6 +241,10 @@ pub fn preview_image(params: &LandscapeParams) -> (egui::ColorImage, String) {
             let p = SVec2::new(-LAND_HALF + (i as f32 + 0.5) / PREVIEW as f32 * span, LAND_HALF - (j as f32 + 0.5) / PREVIEW as f32 * span);
             let c = if let Some(hit) = land.water_at(p) {
                 match hit.kind {
+                    // Frozen lakes and the sea's edge in the Arctic.
+                    nd_sim::WaterKind::Lake if params.climate == Climate::Arctic => [190, 210, 225],
+                    nd_sim::WaterKind::Sea if params.climate == Climate::Arctic && land.water_distance(p) > -70.0 => [190, 210, 225],
+                    nd_sim::WaterKind::Sea | nd_sim::WaterKind::Lake if params.climate == Climate::Tropical && land.water_distance(p) > -60.0 => [40, 170, 170],
                     nd_sim::WaterKind::Stream => [70, 140, 190],
                     nd_sim::WaterKind::River => [40, 105, 170],
                     nd_sim::WaterKind::Lake => [45, 110, 160],
@@ -246,7 +260,15 @@ pub fn preview_image(params: &LandscapeParams) -> (egui::ColorImage, String) {
                 let h = land.base_height(p);
                 let t = (h / 60.0).clamp(0.0, 1.0);
                 let basin = if p.length() < 900.0 { 1.0 } else { 0.85 };
-                let g = [(70.0 + 90.0 * t) * basin, (95.0 + 70.0 * t) * basin, (55.0 + 60.0 * t) * basin];
+                // The climate's ground: from dark rock to snow.
+                let (lo, hi) = match params.climate {
+                    Climate::Desert => ([120.0, 105.0, 70.0], [175.0, 160.0, 120.0]),
+                    Climate::Temperate => ([70.0, 95.0, 55.0], [160.0, 165.0, 115.0]),
+                    Climate::Tropical => ([40.0, 120.0, 45.0], [110.0, 175.0, 90.0]),
+                    Climate::Arctic => ([200.0, 208.0, 220.0], [240.0, 244.0, 250.0]),
+                    Climate::Volcanic => ([45.0, 50.0, 48.0], [95.0, 110.0, 85.0]),
+                };
+                let g = [(lo[0] + (hi[0] - lo[0]) * t) * basin, (lo[1] + (hi[1] - lo[1]) * t) * basin, (lo[2] + (hi[2] - lo[2]) * t) * basin];
                 [g[0] as u8, g[1] as u8, g[2] as u8]
             };
             pixels.push(egui::Color32::from_rgb(c[0], c[1], c[2]));

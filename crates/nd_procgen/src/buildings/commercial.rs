@@ -230,7 +230,7 @@ pub fn podium_office(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for k in 0..2 {
         let p = front.at((k as f32 - 0.5) * front.len * 0.6, -1.4);
         if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.6 {
-            tree(g, f, p, 3.5, 3.0, pal.bark, pal.foliage);
+            tree_in(g, f, pal, p, 3.5, 3.0, pal.foliage);
         }
     }
 }

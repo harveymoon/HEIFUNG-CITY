@@ -12,7 +12,13 @@ pub const RULES_PATH: &str = "assets/rules/buildings.ron";
 
 #[derive(Resource)]
 pub struct GameAssets {
+    /// The palette every renderer draws with: the file's, with the map's
+    /// climate (ground, plants, water, snow) put in by `follow_climate`.
     pub palette: Palette,
+    /// [climate] `assets/palette.ron` as loaded, before the climate.
+    pub file_palette: Palette,
+    /// [climate] The climate `palette` was made for.
+    pub climate: nd_sim::Climate,
     pub rules: BuildingRules,
     palette_mtime: Option<SystemTime>,
     rules_mtime: Option<SystemTime>,
@@ -30,7 +36,9 @@ impl Plugin for GameAssetsPlugin {
         // Before the sim and the renderers: the change flags it sets (and
         // clears) hold for one whole frame of `SimSet::Sync`, so no
         // renderer misses a hot reload by running before it.
-        app.insert_resource(GameAssets::load()).add_systems(Update, poll_assets.before(crate::sim::SimSet::Input));
+        app.insert_resource(GameAssets::load())
+            .add_systems(Update, poll_assets.before(crate::sim::SimSet::Input))
+            .add_systems(Update, follow_climate.after(crate::sim::SimSet::Step).before(crate::sim::SimSet::Sync));
     }
 }
 
@@ -65,7 +73,9 @@ impl GameAssets {
         let (palette, palette_mtime, e1) = load_or_write::<Palette>(PALETTE_PATH);
         let (rules, rules_mtime, e2) = load_or_write::<BuildingRules>(RULES_PATH);
         Self {
-            palette,
+            file_palette: palette.clone(),
+            climate: nd_sim::Climate::default(),
+            palette: nd_procgen::climate::palette_for(&palette, nd_sim::Climate::default()),
             rules,
             palette_mtime,
             rules_mtime,
@@ -91,7 +101,8 @@ fn poll_assets(time: Res<Time>, mut assets: ResMut<GameAssets>) {
         assets.palette_mtime = pm;
         match std::fs::read_to_string(PALETTE_PATH).map_err(|e| e.to_string()).and_then(|t| ron::from_str::<Palette>(&t).map_err(|e| e.to_string())) {
             Ok(p) => {
-                assets.palette = p;
+                assets.palette = nd_procgen::climate::palette_for(&p, assets.climate);
+                assets.file_palette = p;
                 assets.palette_changed = true;
                 assets.last_error = None;
                 info!("palette reloaded");
@@ -112,4 +123,17 @@ fn poll_assets(time: Res<Time>, mut assets: ResMut<GameAssets>) {
             Err(e) => assets.last_error = Some(format!("rules: {e}")),
         }
     }
+}
+
+/// [climate] When the map's climate changes (a new game, a load), redo the
+/// palette from the file's and flag it changed for this frame, so every
+/// renderer rebuilds in the climate's colours and plants.
+fn follow_climate(sim: Res<crate::sim::Sim>, mut assets: ResMut<GameAssets>) {
+    let climate = sim.world.landscape.params.climate;
+    if climate == assets.climate {
+        return;
+    }
+    assets.climate = climate;
+    assets.palette = nd_procgen::climate::palette_for(&assets.file_palette, climate);
+    assets.palette_changed = true;
 }

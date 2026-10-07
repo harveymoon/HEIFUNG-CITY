@@ -251,7 +251,7 @@ pub fn hospital(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for k in 0..3 {
         let p = front.at(-front.len * 0.4 + k as f32 * 3.0, -3.0);
         if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.5 && !nd_sim::zoning::point_in_polygon(p, &podium) {
-            tree(g, f, p, 3.5, 2.4, pal.bark, pal.foliage);
+            tree_in(g, f, pal, p, 3.5, 2.4, pal.foliage);
         }
     }
 }
@@ -298,7 +298,7 @@ pub fn school(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for k in 0..6 {
         let p = Vec2::new(llo.x + 2.5 + k as f32 * (lhi.x - llo.x - 5.0) / 5.0, lhi.y - 2.5);
         if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.6 && !nd_sim::zoning::point_in_polygon(p, &wing) && !nd_sim::zoning::point_in_polygon(p, &court) {
-            tree(g, f, p, 4.0, 2.6, pal.bark, pal.foliage);
+            tree_in(g, f, pal, p, 4.0, 2.6, pal.foliage);
         }
     }
     let _ = lo;
@@ -421,7 +421,7 @@ pub fn landmark(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let p = center + Vec2::new(a.cos(), a.sin()) * (room * 0.7);
         if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.6 {
             if k % 2 == 0 {
-                tree(g, f, p, 4.0, 2.8, pal.bark, pal.foliage);
+                tree_in(g, f, pal, p, 4.0, 2.8, pal.foliage);
             } else {
                 bench_world(g, f.to_world(p.x, p.y), f.yaw() + a, pal.wood, CHARCOAL);
             }
