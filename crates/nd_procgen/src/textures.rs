@@ -486,6 +486,43 @@ pub fn generate_wear(surface: Surface, size: usize, wear: f32) -> Option<Texture
     Some(Texture { size, color, normal })
 }
 
+/// [look] A metallic-roughness map for a surface's texture (RGBA8, linear;
+/// green is the perceptual roughness, blue scales the metalness, as Bevy's
+/// `metallic_roughness_texture` reads them), so a material's sheen varies
+/// over it instead of being one number: grime, stains and cracks (the
+/// darker texels) are rougher, clean and worn-smooth spots glossier;
+/// on metal the darkest marks (rust, scorching) also lose their metalness.
+/// The material's own roughness is the map's average, so the look from a
+/// distance is unchanged.
+pub fn roughness_map(surface: Surface, tex: &Texture) -> Vec<u8> {
+    let n = tex.size * tex.size;
+    let lum = |i: usize| {
+        let p = &tex.color[i * 4..i * 4 + 3];
+        (0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32) / 255.0
+    };
+    let mean = (0..n).map(lum).sum::<f32>() / n.max(1) as f32;
+    let base = surface.roughness();
+    // How strongly the texture's light and dark modulate the sheen.
+    let k = match surface.base() {
+        Surface::Glass => 0.15,
+        Surface::Metal | Surface::Container | Surface::Panel => 0.9,
+        Surface::Asphalt | Surface::Paving | Surface::Concrete => 0.7,
+        _ => 0.5,
+    };
+    let metal = surface.base() == Surface::Metal || surface.base() == Surface::Container || surface.base() == Surface::Rust;
+    let mut out = vec![0u8; n * 4];
+    for i in 0..n {
+        let d = mean - lum(i);
+        let r = (base + d * k * 1.5).clamp(0.04, 1.0);
+        let m = if metal { (1.0 - (d * 2.5).max(0.0)).clamp(0.3, 1.0) } else { 1.0 };
+        out[i * 4] = 255;
+        out[i * 4 + 1] = (r * 255.0).round() as u8;
+        out[i * 4 + 2] = (m * 255.0).round() as u8;
+        out[i * 4 + 3] = 255;
+    }
+    out
+}
+
 /// Box-filtered mip chain for a square RGBA8 image, concatenated from the
 /// full-size level down to 1x1. Returns the data and the level count.
 pub fn mip_chain(size: usize, rgba: &[u8]) -> (Vec<u8>, u32) {
@@ -518,6 +555,22 @@ pub fn mip_chain(size: usize, rgba: &[u8]) -> (Vec<u8>, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The roughness map varies over the texture but averages out near the
+    /// surface's own roughness, so the material reads the same from afar.
+    #[test]
+    fn roughness_map_varies_round_the_surface_roughness() {
+        for s in [Surface::Asphalt, Surface::Brick, Surface::Metal, Surface::Glass] {
+            let t = generate(s, 64).unwrap();
+            let m = roughness_map(s, &t);
+            assert_eq!(m.len(), t.color.len());
+            let g: Vec<f32> = m.chunks(4).map(|p| p[1] as f32 / 255.0).collect();
+            let avg = g.iter().sum::<f32>() / g.len() as f32;
+            let (lo, hi) = g.iter().fold((1.0f32, 0.0f32), |(lo, hi), &x| (lo.min(x), hi.max(x)));
+            assert!((avg - s.roughness()).abs() < 0.08, "{s:?}: average {avg} vs {}", s.roughness());
+            assert!(hi > lo, "{s:?}: no variation");
+        }
+    }
 
     /// The slope the normal map encodes should not depend on how many
     /// pixels the texture has.
