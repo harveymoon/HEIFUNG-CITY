@@ -192,7 +192,7 @@ impl MetroLine {
                 stops.push((first, total));
             }
         }
-        Train { kind: TrainKind::Passenger, cars: CARS, nodes: Vec::new(), poly, s: 0.0, prev_s: 0.0, speed: SPEED, stops, next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo: Vec::new(), color, held: false, branch: None }
+        Train { kind: TrainKind::Passenger, cars: CARS, nodes: Vec::new(), poly, s: 0.0, prev_s: 0.0, speed: SPEED, stops, next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo: Vec::new(), color, held: false, branch: None, exports: 0.0, unloaded: 0.0 }
     }
 }
 

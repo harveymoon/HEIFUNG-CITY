@@ -46,6 +46,7 @@ mod subway;
 mod taxes;
 /// [taxis] Taxi companies and cargo hubs in the report and inspector.
 mod taxis;
+mod trains;
 mod view;
 mod window;
 
@@ -1737,6 +1738,14 @@ fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
             }
         }
+        // [train-inspect] Metro trains in their tunnels.
+        "metro_trains" | "metro_train" | "metros" => {
+            for (id, t) in w.subway.trains.iter() {
+                if let Some(d) = within(t.head()) {
+                    rows.push((d, trains::metro_row(w, id)));
+                }
+            }
+        }
         // [camera] Pavement delivery robots; `filter.shop` matches the shop's name.
         "bots" | "bot" | "delivery_bots" => {
             let f_shop = str_filter(filter, "shop");
@@ -1798,7 +1807,7 @@ fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
             }
         }
-        other => return Err(format!("unknown what {other:?}; one of citizens, buildings, lots, parcels, cars, trains, routes, gestures")),
+        other => return Err(format!("unknown what {other:?}; one of citizens, buildings, lots, parcels, cars, trains, metro_trains, routes, gestures")),
     }
     let total = rows.len();
     if near.is_some() {
@@ -1899,8 +1908,11 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     }
     if let Some(v) = field(cmd, "train") {
         let id = key_from(v)?;
-        let t = w.rail.trains.get(id).ok_or("no such train")?;
-        return Ok(json!({ "train": train_row(w, id, t) }));
+        return Ok(json!({ "train": trains::train_detail(w, id, &ctx.assets.palette.car_colors).ok_or("no such train")? }));
+    }
+    if let Some(v) = field(cmd, "metro") {
+        let id = key_from(v)?;
+        return Ok(json!({ "metro": trains::metro_detail(w, id).ok_or("no such metro train")? }));
     }
     if let Some(v) = field(cmd, "route") {
         let id = key_from(v)?;
@@ -1950,7 +1962,9 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Car(id) => inspect(&json!({ "car": key_str(id) }), ctx),
         Selection::Parked(id) => inspect(&json!({ "vehicle": key_str(id) }), ctx),
         Selection::Bot(id) => inspect(&json!({ "bot": key_str(id) }), ctx),
-        Selection::None => Err("inspect needs one of citizen, building, lot, car, bot, train, route, gesture (an id), or a selection".into()),
+        Selection::Train(id) => inspect(&json!({ "train": key_str(id) }), ctx),
+        Selection::Metro(id) => inspect(&json!({ "metro": key_str(id) }), ctx),
+        Selection::None => Err("inspect needs one of citizen, building, lot, car, bot, train, metro, route, gesture (an id), or a selection".into()),
     }
 }
 
@@ -2003,6 +2017,8 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
         },
         Selection::Parked(id) => view::vehicle_detail(w, id).unwrap_or(Value::Null),
         Selection::Bot(id) => follow::bot_detail(w, id).unwrap_or(Value::Null),
+        Selection::Train(id) => trains::train_detail(w, id, &assets.palette.car_colors).unwrap_or(Value::Null),
+        Selection::Metro(id) => trains::metro_detail(w, id).unwrap_or(Value::Null),
     };
     let bus_line = route_sel.and_then(|r| w.transit.routes.get(r).map(|route| {
         let mut v = route_row(r, route);
@@ -2070,6 +2086,18 @@ fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             return Err("no such delivery bot".into());
         }
         Selection::Bot(id)
+    } else if let Some(v) = field(cmd, "train") {
+        let id = key_from(v)?;
+        if !w.rail.trains.contains_key(id) {
+            return Err("no such train".into());
+        }
+        Selection::Train(id)
+    } else if let Some(v) = field(cmd, "metro") {
+        let id = key_from(v)?;
+        if !w.subway.trains.contains_key(id) {
+            return Err("no such metro train".into());
+        }
+        Selection::Metro(id)
     } else if let Some(p) = opt_vec2(cmd, "at")? {
         // Pick exactly as a click with the Inspect tool does.
         crate::tools::pick(&*ctx.sim, p, ctx.tools.depth)
@@ -2288,7 +2316,22 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
                 Selection::Bot(id)
             }
-            _ => return Err("follow: one of citizen, car, bot, building".into()),
+            // [train-inspect]
+            "train" => {
+                let id = key_from(id)?;
+                if !w.rail.trains.contains_key(id) {
+                    return Err("follow: no such train".into());
+                }
+                Selection::Train(id)
+            }
+            "metro" => {
+                let id = key_from(id)?;
+                if !w.subway.trains.contains_key(id) {
+                    return Err("follow: no such metro train".into());
+                }
+                Selection::Metro(id)
+            }
+            _ => return Err("follow: one of citizen, car, bot, building, train, metro".into()),
         });
     }
     let look_at = opt_vec2(cmd, "look_at")?;

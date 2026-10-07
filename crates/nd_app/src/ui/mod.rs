@@ -51,6 +51,7 @@ mod nights;
 mod toolbar;
 mod tools;
 mod topbar;
+pub mod train;
 mod windows;
 
 use bevy::diagnostic::DiagnosticsStore;

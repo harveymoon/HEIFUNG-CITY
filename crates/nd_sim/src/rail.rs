@@ -425,6 +425,13 @@ pub struct Train {
     /// Arc range of the route that is off the trunk. Branches are single
     /// track with no passing loops, so one train holds the branch at a time.
     pub branch: Option<(f32, f32)>,
+    /// [train-inspect] Units of the town's exports a freight train has
+    /// picked up at the yards it called at, on their way out of town.
+    #[serde(default)]
+    pub exports: f32,
+    /// [train-inspect] Units of imports a freight train has set down so far.
+    #[serde(default)]
+    pub unloaded: f32,
 }
 
 impl Train {
@@ -474,6 +481,150 @@ impl Train {
     }
 }
 
+/// [train-inspect] A call a train has still to make: the stop, where it is
+/// along the route, and about how many sim minutes until the train is there
+/// (running time at line speed plus the stand at each call on the way; a
+/// signal or a busy branch can make it later).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Call {
+    pub stop: BuildingId,
+    pub s: f32,
+    pub minutes: f32,
+}
+
+/// [train-inspect] What a train is doing right now.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TrainState {
+    /// Standing at a stop, with this many traffic seconds left.
+    Dwelling { at: BuildingId, left: f32 },
+    /// Stopped at a signal: the block ahead is taken (by this train, when
+    /// it can be told).
+    HeldBlock { by: Option<TrainId> },
+    /// Waiting at the switch while another train is on the single-track branch.
+    HeldBranch,
+    /// Under way to its next call.
+    Running,
+    /// Every call made: running on out of town at the end of the line.
+    Leaving,
+}
+
+impl Train {
+    /// The calls still ahead, in order, skipping stops `alive` says are gone
+    /// (the train runs past those). A stop the train stands at now is done,
+    /// not ahead. `dwell` is the stand at each call in traffic seconds (the
+    /// railway's [`DWELL_SECONDS`], the metro's own), and `seconds_per_tick`
+    /// turns traffic seconds into sim minutes.
+    pub fn calls_ahead(&self, dwell: f32, seconds_per_tick: f32, alive: impl Fn(BuildingId) -> bool) -> Vec<Call> {
+        self.timetable(dwell, seconds_per_tick, alive).0
+    }
+
+    /// Sim minutes until the train runs off the end of its route, at line
+    /// speed with a stand at each call on the way.
+    pub fn minutes_to_end(&self, dwell: f32, seconds_per_tick: f32, alive: impl Fn(BuildingId) -> bool) -> f32 {
+        self.timetable(dwell, seconds_per_tick, alive).1
+    }
+
+    fn timetable(&self, dwell: f32, seconds_per_tick: f32, alive: impl Fn(BuildingId) -> bool) -> (Vec<Call>, f32) {
+        let tick = seconds_per_tick.max(0.01);
+        let speed = self.speed.max(0.1);
+        let mut secs = 0.0f32;
+        let mut s = self.s;
+        let mut first = self.next_stop;
+        if self.dwell > 0.0 {
+            secs += self.dwell;
+            first += 1;
+        }
+        let mut calls = Vec::new();
+        for &(stop, at) in self.stops.iter().skip(first) {
+            if !alive(stop) {
+                continue;
+            }
+            secs += (at - s).max(0.0) / speed;
+            calls.push(Call { stop, s: at, minutes: secs / tick });
+            secs += dwell;
+            s = s.max(at);
+        }
+        secs += (self.total() - s).max(0.0) / speed;
+        (calls, secs / tick)
+    }
+
+    /// The stop the train stands at, if it is standing at one.
+    pub fn dwelling_at(&self) -> Option<BuildingId> {
+        (self.dwell > 0.0).then(|| self.stops.get(self.next_stop).map(|s| s.0)).flatten()
+    }
+
+    /// The stops already called at (or run past), in order.
+    pub fn calls_made(&self) -> &[(BuildingId, f32)] {
+        &self.stops[..self.next_stop.min(self.stops.len())]
+    }
+
+    /// The rest of the route from the head at `s` to the end, and the part
+    /// already run from the start to `s`.
+    pub fn route_ahead(&self, s: f32) -> Vec<Vec2> {
+        sub_path(&self.poly, s, self.total())
+    }
+
+    pub fn route_behind(&self, s: f32) -> Vec<Vec2> {
+        sub_path(&self.poly, 0.0, s)
+    }
+}
+
+/// [train-inspect] One load of goods a freight train brings in from out of
+/// town: what and how much, the yard it comes off at, and who it is for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FreightLoad {
+    pub resource: crate::market::Resource,
+    pub amount: f32,
+    /// What the buyer pays for it.
+    pub price: f32,
+    /// The yard it is set down at.
+    pub yard: BuildingId,
+    /// The business that ordered it.
+    pub buyer: BuildingId,
+    /// The cargo hub it passes through on the way to the buyer, if any.
+    pub hub: Option<BuildingId>,
+}
+
+/// [train-inspect] Everything on a freight train and still to be picked up.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FreightManifest {
+    /// Imports aboard, to be set down at the yards ahead, in call order.
+    pub loads: Vec<FreightLoad>,
+    /// Units of the town's exports aboard, going out of town.
+    pub exports_aboard: f32,
+    /// Exports waiting at the yards ahead, picked up when it calls.
+    pub exports_to_collect: Vec<(BuildingId, f32)>,
+    /// Units of imports already set down at the yards it called at.
+    pub unloaded: f32,
+}
+
+impl FreightManifest {
+    pub fn import_units(&self) -> f32 {
+        self.loads.iter().map(|l| l.amount).sum()
+    }
+}
+
+/// [train-inspect] The stretch of a polyline between arc lengths `s0` and
+/// `s1` (clamped to it, in order): the points at both ends and every vertex
+/// strictly between.
+pub fn sub_path(pts: &[Vec2], s0: f32, s1: f32) -> Vec<Vec2> {
+    if pts.is_empty() {
+        return Vec::new();
+    }
+    let total = path_length(pts);
+    let (s0, s1) = (s0.min(s1).clamp(0.0, total), s0.max(s1).clamp(0.0, total));
+    let mut out = vec![point_along(pts, s0).0];
+    let mut acc = 0.0;
+    for w in pts.windows(2) {
+        acc += w[0].distance(w[1]);
+        if acc > s0 && acc < s1 {
+            out.push(w[1]);
+        }
+    }
+    out.push(point_along(pts, s1).0);
+    out
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RailStats {
     pub trains: u32,
@@ -520,7 +671,13 @@ impl Rail {
     /// one end to the other. A route that did fold back on itself could
     /// pick the wrong pass and miss a block.
     pub fn blocked(&self, id: TrainId) -> bool {
-        let Some(me) = self.trains.get(id) else { return false };
+        self.blocked_by(id).is_some()
+    }
+
+    /// [train-inspect] The train whose head or tail stands in `id`'s block
+    /// (see [`Rail::blocked`]).
+    pub fn blocked_by(&self, id: TrainId) -> Option<TrainId> {
+        let me = self.trains.get(id)?;
         for (oid, other) in &self.trains {
             if oid == id {
                 continue;
@@ -530,12 +687,31 @@ impl Rail {
             for p in [head, tail] {
                 if let Some((s, d)) = project_on_poly(&me.poly, p) {
                     if d < 3.0 && s > me.s && s < me.s + BLOCK {
-                        return true;
+                        return Some(oid);
                     }
                 }
             }
         }
-        false
+        None
+    }
+
+    /// [train-inspect] What train `id` is doing: standing at a stop, held
+    /// at a signal or at the branch switch, running, or leaving town.
+    pub fn state(&self, id: TrainId) -> Option<TrainState> {
+        let t = self.trains.get(id)?;
+        if let Some(at) = t.dwelling_at() {
+            return Some(TrainState::Dwelling { at, left: t.dwell });
+        }
+        if t.held {
+            if let Some(by) = self.blocked_by(id) {
+                return Some(TrainState::HeldBlock { by: Some(by) });
+            }
+            if t.branch.is_some_and(|(a, _)| t.s <= a + 0.5) {
+                return Some(TrainState::HeldBranch);
+            }
+            return Some(TrainState::HeldBlock { by: None });
+        }
+        Some(if t.next_stop >= t.stops.len() { TrainState::Leaving } else { TrainState::Running })
     }
 }
 
@@ -661,7 +837,7 @@ mod tests {
     }
 
     fn train(poly: Vec<Vec2>, s: f32, branch: Option<(f32, f32)>) -> Train {
-        Train { kind: TrainKind::Passenger, cars: 2, nodes: Vec::new(), poly, s, prev_s: s, speed: 0.0, stops: Vec::new(), next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo: Vec::new(), color: 0, held: false, branch }
+        Train { kind: TrainKind::Passenger, cars: 2, nodes: Vec::new(), poly, s, prev_s: s, speed: 0.0, stops: Vec::new(), next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo: Vec::new(), color: 0, held: false, branch, exports: 0.0, unloaded: 0.0 }
     }
 
     #[test]
@@ -681,6 +857,89 @@ mod tests {
         assert!(!rail.blocked(behind));
         assert!(!rail.blocked(beside));
         assert!(!rail.blocked(TrainId::default()), "an unknown train is never blocked");
+    }
+
+    #[test]
+    fn calls_ahead_time_the_run_and_skip_what_is_done_or_gone() {
+        use slotmap::SlotMap;
+        let mut ids: SlotMap<BuildingId, ()> = SlotMap::with_key();
+        let (a, b, c) = (ids.insert(()), ids.insert(()), ids.insert(()));
+        let mut t = train(vec![Vec2::ZERO, Vec2::new(1000.0, 0.0)], 100.0, None);
+        t.speed = 10.0;
+        t.stops = vec![(a, 100.0), (b, 400.0), (c, 700.0)];
+        // Running towards A (1 s per tick: minutes are seconds here).
+        t.s = 50.0;
+        let calls = t.calls_ahead(30.0, 1.0, |_| true);
+        assert_eq!(calls.iter().map(|c| c.stop).collect::<Vec<_>>(), vec![a, b, c]);
+        assert!((calls[0].minutes - 5.0).abs() < 1e-3, "50 m at 10 m/s");
+        assert!((calls[1].minutes - (5.0 + 30.0 + 30.0)).abs() < 1e-3, "then a stand and 300 m");
+        assert!((calls[2].minutes - (65.0 + 30.0 + 30.0)).abs() < 1e-3);
+        assert!((t.minutes_to_end(30.0, 1.0, |_| true) - (125.0 + 30.0 + 30.0)).abs() < 1e-3, "and 300 m on to the end");
+        // Four traffic seconds a minute make a quarter of the minutes.
+        assert!((t.calls_ahead(30.0, 4.0, |_| true)[0].minutes - 1.25).abs() < 1e-3);
+        // Standing at A: A is done, B comes after the rest of the stand.
+        t.s = 100.0;
+        t.dwell = 12.0;
+        assert_eq!(t.dwelling_at(), Some(a));
+        let calls = t.calls_ahead(30.0, 1.0, |_| true);
+        assert_eq!(calls.iter().map(|c| c.stop).collect::<Vec<_>>(), vec![b, c]);
+        assert!((calls[0].minutes - (12.0 + 30.0)).abs() < 1e-3);
+        // A stop pulled down is run past: no stand there.
+        let calls = t.calls_ahead(30.0, 1.0, |s| s != b);
+        assert_eq!(calls.iter().map(|c| c.stop).collect::<Vec<_>>(), vec![c]);
+        assert!((calls[0].minutes - (12.0 + 60.0)).abs() < 1e-3);
+        // Past every call: nothing ahead, the run out of town remains.
+        t.dwell = 0.0;
+        t.next_stop = 3;
+        t.s = 900.0;
+        assert!(t.calls_ahead(30.0, 1.0, |_| true).is_empty());
+        assert_eq!(t.calls_made().len(), 3);
+        assert!((t.minutes_to_end(30.0, 1.0, |_| true) - 10.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_route_splits_at_the_head_into_run_and_still_to_run() {
+        let poly = vec![Vec2::ZERO, Vec2::new(100.0, 0.0), Vec2::new(100.0, 100.0)];
+        let t = train(poly.clone(), 150.0, None);
+        let ahead = t.route_ahead(150.0);
+        let behind = t.route_behind(150.0);
+        assert_eq!(ahead, vec![Vec2::new(100.0, 50.0), Vec2::new(100.0, 100.0)]);
+        assert_eq!(behind, vec![Vec2::ZERO, Vec2::new(100.0, 0.0), Vec2::new(100.0, 50.0)]);
+        assert!((path_length(&ahead) + path_length(&behind) - 200.0).abs() < 1e-3);
+        // Out of range clamps; reversed bounds are put in order; nothing in, nothing out.
+        assert_eq!(sub_path(&poly, -10.0, 1e6).len(), 3);
+        assert_eq!(sub_path(&poly, 120.0, 20.0), vec![Vec2::new(20.0, 0.0), Vec2::new(100.0, 0.0), Vec2::new(100.0, 20.0)]);
+        assert!(sub_path(&[], 0.0, 1.0).is_empty());
+    }
+
+    #[test]
+    fn state_says_dwelling_held_running_or_leaving() {
+        let line = vec![Vec2::ZERO, Vec2::new(2000.0, 0.0)];
+        let mut rail = Rail::default();
+        let stop = BuildingId::default();
+        let mut t = train(line.clone(), 200.0, Some((600.0, 900.0)));
+        t.stops = vec![(stop, 1500.0)];
+        let me = rail.trains.insert(t);
+        assert_eq!(rail.state(me), Some(TrainState::Running));
+        // Held with a train in the block: the signal, naming that train.
+        let ahead = rail.trains.insert(train(line.clone(), 200.0 + BLOCK * 0.5, None));
+        rail.trains[me].held = true;
+        assert_eq!(rail.blocked_by(me), Some(ahead));
+        assert_eq!(rail.state(me), Some(TrainState::HeldBlock { by: Some(ahead) }));
+        // Held at the switch with the block clear: waiting for the branch.
+        rail.trains.remove(ahead);
+        rail.trains[me].s = 600.0;
+        assert_eq!(rail.state(me), Some(TrainState::HeldBranch));
+        // Standing at its stop.
+        rail.trains[me].held = false;
+        rail.trains[me].s = 1500.0;
+        rail.trains[me].dwell = 10.0;
+        assert_eq!(rail.state(me), Some(TrainState::Dwelling { at: stop, left: 10.0 }));
+        // Done calling: leaving town.
+        rail.trains[me].dwell = 0.0;
+        rail.trains[me].next_stop = 1;
+        assert_eq!(rail.state(me), Some(TrainState::Leaving));
+        assert_eq!(rail.state(TrainId::default()), None);
     }
 
     #[test]

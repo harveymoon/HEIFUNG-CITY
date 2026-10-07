@@ -537,16 +537,31 @@ fn trains_call_at_stations_and_yards_bring_freight() {
     assert!(w.buildings[lone].rail_inbound.is_empty(), "the unconnected yard gets nothing");
     assert!((w.buildings[buyer].business.as_ref().unwrap().money - money0 - 20.0).abs() < 0.01, "rail import refunds a fifth");
     let mut freight_seen = false;
+    // [train-inspect] While it is on its way the train's manifest lists the
+    // load: for the shop, off at the yard; a passenger train has none.
+    let mut manifest_seen = false;
     for _ in 0..900 {
         w.tick(&mut minds);
-        if w.rail.trains.values().any(|t| t.kind == TrainKind::Freight) {
+        if let Some((tid, _)) = w.rail.trains.iter().find(|(_, t)| t.kind == TrainKind::Freight) {
             freight_seen = true;
+            if !w.buildings[yard].rail_inbound.is_empty() {
+                let m = w.freight_manifest(tid).expect("a freight train has a manifest");
+                manifest_seen |= m.loads.iter().any(|l| l.buyer == buyer && l.yard == yard && l.resource == Resource::Parts && (l.amount - 10.0).abs() < 0.01 && l.hub.is_none());
+            }
+        }
+        if let Some((pid, _)) = w.rail.trains.iter().find(|(_, t)| t.kind == TrainKind::Passenger) {
+            assert!(w.freight_manifest(pid).is_none());
         }
         if w.buildings[yard].rail_inbound.is_empty() && freight_seen {
             break;
         }
     }
     assert!(freight_seen && w.buildings[yard].rail_inbound.is_empty(), "freight train {freight_seen}, waiting {}", w.buildings[yard].rail_inbound.len());
+    assert!(manifest_seen, "the freight train's manifest listed the shop's parts");
+    if let Some((tid, _)) = w.rail.trains.iter().find(|(_, t)| t.kind == TrainKind::Freight) {
+        let m = w.freight_manifest(tid).unwrap();
+        assert!(m.unloaded >= 10.0 && m.loads.iter().all(|l| l.yard != yard), "set down at the yard: {m:?}");
+    }
     assert!(w.rail.stats.freight_in_today >= 10.0);
     // Round trip keeps the facilities and their lots.
     let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
