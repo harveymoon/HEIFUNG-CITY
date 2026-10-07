@@ -71,7 +71,7 @@ pub fn activity_heading(ui: &mut egui::Ui, w: &World, id: CitizenId) -> Option<n
     }
     let mut pick = None;
     let col = egui::Color32::from_rgb(120, 220, 255);
-    ui.label(egui::RichText::new(capital(&line)).size(16.0).color(col).strong());
+    ui.label(egui::RichText::new(capital(&line)).font(crate::ui::theme::lead()).color(col).strong());
     let from = w.citizen_origin(id);
     let to = w.citizen_destination(id);
     if from.is_some() || to.is_some() {

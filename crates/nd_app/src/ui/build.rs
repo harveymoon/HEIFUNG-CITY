@@ -447,9 +447,9 @@ pub fn follow_tools(ctx: &egui::Context, tools: &ToolState) {
 // ── the window ──────────────────────────────────────────────────────────────
 
 /// Tile size in the grid.
-const TILE: egui::Vec2 = egui::vec2(104.0, 128.0);
+const TILE: egui::Vec2 = egui::vec2(104.0, 140.0);
 const THUMB: f32 = 96.0;
-const TREE_WIDTH: f32 = 150.0;
+const TREE_WIDTH: f32 = 172.0;
 const INFO_WIDTH: f32 = 330.0;
 
 pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: Rect) {
@@ -529,7 +529,7 @@ fn tree(ui: &mut egui::Ui, st: &mut State) {
         let text = egui::RichText::new(cat.label()).strong();
         // Left-aligned rows the width of the tree: a grow atom after the
         // label keeps it at the left edge (add_sized would centre it).
-        let main = egui::Button::selectable(on && st.sub.is_none(), if on { text.color(GOLD) } else { text }).right_text("").min_size(egui::vec2(TREE_WIDTH - 14.0, 22.0));
+        let main = egui::Button::selectable(on && st.sub.is_none(), if on { text.color(GOLD) } else { text }).right_text("").min_size(egui::vec2(TREE_WIDTH - 14.0, 26.0));
         if ui.add(main).clicked() {
             st.cat = Some(cat);
             st.sub = None;
@@ -540,7 +540,7 @@ fn tree(ui: &mut egui::Ui, st: &mut State) {
                 for g in &groups {
                     ui.horizontal(|ui| {
                         ui.add_space(SUB_INDENT);
-                        let sub = egui::Button::selectable(st.sub == Some(g.name), egui::RichText::new(g.name).small()).right_text("").min_size(egui::vec2(TREE_WIDTH - 14.0 - SUB_INDENT, 18.0));
+                        let sub = egui::Button::selectable(st.sub == Some(g.name), egui::RichText::new(g.name).small()).right_text("").min_size(egui::vec2(TREE_WIDTH - 14.0 - SUB_INDENT, 22.0));
                         if ui.add(sub).clicked() {
                             st.sub = if st.sub == Some(g.name) { None } else { Some(g.name) };
                         }
@@ -608,10 +608,10 @@ fn tile(ui: &mut egui::Ui, p: &UiCtx, item: Item, on: bool) -> egui::Response {
     }
     let name = item.label();
     let price = item.placeable().map(|pl| format!("{:.0}", pl.cost()));
-    let font = egui::FontId::proportional(11.0);
-    painter.text(egui::pos2(rect.center().x, img.bottom() + 3.0), egui::Align2::CENTER_TOP, elide(&name, 17), font.clone(), if on { Color32::WHITE } else { IVORY });
+    let font = crate::ui::theme::small();
+    painter.text(egui::pos2(rect.center().x, img.bottom() + 3.0), egui::Align2::CENTER_TOP, elide(&name, 14), font.clone(), if on { Color32::WHITE } else { IVORY });
     if let Some(price) = price {
-        painter.text(egui::pos2(rect.center().x, img.bottom() + 15.0), egui::Align2::CENTER_TOP, format!("$ {price}"), egui::FontId::proportional(10.0), Color32::from_rgb(170, 160, 140));
+        painter.text(egui::pos2(rect.center().x, img.bottom() + 20.0), egui::Align2::CENTER_TOP, format!("$ {price}"), crate::ui::theme::small(), Color32::from_rgb(170, 160, 140));
     }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -664,7 +664,7 @@ fn icon(painter: &egui::Painter, r: Rect, item: Item, p: &UiCtx, col: Color32) {
         // A building whose thumbnail is still rendering.
         Item::Place(_) | Item::RailPiece(_) => {
             painter.rect_stroke(r.shrink(6.0), 2.0, egui::Stroke::new(1.0, col.gamma_multiply(0.5)), egui::StrokeKind::Inside);
-            painter.text(r.center(), egui::Align2::CENTER_CENTER, "…", egui::FontId::proportional(18.0), col);
+            painter.text(r.center(), egui::Align2::CENTER_CENTER, "…", crate::ui::theme::heading(), col);
         }
     }
 }
@@ -672,7 +672,7 @@ fn icon(painter: &egui::Painter, r: Rect, item: Item, p: &UiCtx, col: Color32) {
 /// What an item costs and does: the hovered one, else the one picked.
 fn info(ui: &mut egui::Ui, p: &mut UiCtx, item: Item, hovered: bool) {
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(item.label()).color(GOLD).strong().size(15.0));
+        ui.label(egui::RichText::new(item.label()).color(GOLD).strong().font(crate::ui::theme::lead()));
         if !hovered {
             ui.label(egui::RichText::new("· picked").small().weak());
         }
@@ -709,7 +709,7 @@ fn info(ui: &mut egui::Ui, p: &mut UiCtx, item: Item, hovered: bool) {
         Item::Zone(lu) => {
             let demand = p.sim.world.economy.demand_for(lu);
             let col = zone_color32(p.assets.palette.zone_color(lu));
-            ui.add(egui::ProgressBar::new(demand).text(format!("demand {:.0}%", demand * 100.0)).fill(col.gamma_multiply(0.7)).desired_height(12.0));
+            ui.add(egui::ProgressBar::new(demand).text(format!("demand {:.0}%", demand * 100.0)).fill(col.gamma_multiply(0.7)).desired_height(18.0));
             hint(ui, zone_note(lu));
         }
         Item::District => hint(ui, super::districts::TOOL_HINT),

@@ -304,7 +304,7 @@ fn station_labels(mut contexts: EguiContexts, sim: Res<Sim>, tools: Res<ToolStat
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("metro_labels"))).with_clip_rect(screen);
     let to_screen = |p: SVec2| -> Option<egui::Pos2> {
         let v = camera.world_to_viewport(gt, Vec3::new(p.x, w.surface_height(p) + 3.0, p.y)).ok()?;
-        Some(egui::pos2(v.x, v.y))
+        Some(crate::ui::theme::to_points(ctx, v))
     };
     let pulse = (time.elapsed_secs() * 2.2).sin() * 0.5 + 0.5;
     paint_lines(&painter, &to_screen, w, &tools, cursor.ground, pulse);
@@ -313,7 +313,7 @@ fn station_labels(mut contexts: EguiContexts, sim: Res<Sim>, tools: Res<ToolStat
     for s in w.metro_stations() {
         let Some(p) = w.metro_platform(s) else { continue };
         let Ok(v) = camera.world_to_viewport(gt, Vec3::new(p.x, w.surface_height(p) + 3.2, p.y)) else { continue };
-        let at = egui::pos2(v.x, v.y);
+        let at = crate::ui::theme::to_points(ctx, v);
         if !screen.contains(at) {
             continue;
         }
@@ -323,12 +323,12 @@ fn station_labels(mut contexts: EguiContexts, sim: Res<Sim>, tools: Res<ToolStat
         let ring = if hovered { egui::Color32::WHITE } else if order.is_some() { egui::Color32::from_rgb(255, 230, 150) } else { cyan };
         painter.circle(at, r + 3.0, egui::Color32::from_black_alpha(150), egui::Stroke::NONE);
         painter.circle(at, r, egui::Color32::from_rgb(14, 24, 40), egui::Stroke::new(3.0, ring));
-        painter.text(at, egui::Align2::CENTER_CENTER, "M", egui::FontId::proportional(if hovered { 17.0 } else { 15.0 }), ring);
+        painter.text(at, egui::Align2::CENTER_CENTER, "M", crate::ui::theme::display(if hovered { 19.0 } else { 17.0 }), ring);
         // Its place in the line being drawn.
         if let Some(i) = order {
             let badge = at + egui::vec2(-r, -r);
             painter.circle(badge, 8.5, GOLD, egui::Stroke::new(1.0, egui::Color32::BLACK));
-            painter.text(badge, egui::Align2::CENTER_CENTER, format!("{}", i + 1), egui::FontId::proportional(11.0), egui::Color32::BLACK);
+            painter.text(badge, egui::Align2::CENTER_CENTER, format!("{}", i + 1), crate::ui::theme::small(), egui::Color32::BLACK);
         }
         // The name, with a dot per line calling there.
         let lines: Vec<egui::Color32> = w.subway.lines_at(s).map(|(_, l)| {
@@ -336,7 +336,7 @@ fn station_labels(mut contexts: EguiContexts, sim: Res<Sim>, tools: Res<ToolStat
             egui::Color32::from(egui::Rgba::from_rgb(c[0].min(1.0), c[1].min(1.0), c[2].min(1.0)))
         }).collect();
         let text = name(w, s);
-        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(if hovered { 14.0 } else { 13.0 }), IVORY);
+        let galley = painter.layout_no_wrap(text, if hovered { crate::ui::theme::body() } else { crate::ui::theme::small() }, IVORY);
         let pos = at + egui::vec2(r + 8.0, -galley.size().y * 0.5);
         let dots = lines.len() as f32 * 10.0;
         let bg = egui::Rect::from_min_size(pos - egui::vec2(5.0, 2.0), galley.size() + egui::vec2(10.0 + dots, 4.0));

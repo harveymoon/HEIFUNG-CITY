@@ -3936,6 +3936,7 @@ dependencies = [
  "serde_json",
  "slotmap",
  "tiny_http",
+ "ttf-parser",
  "winit",
 ]
 

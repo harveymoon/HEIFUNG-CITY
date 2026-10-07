@@ -74,8 +74,8 @@ fn build_button(ui: &mut egui::Ui, open: bool, building: bool) -> egui::Response
     let icon = egui::Rect::from_center_size(egui::pos2(rect.left() + 8.0 + ICON * 0.5, rect.center().y), egui::vec2(ICON, ICON));
     icons::tool(painter, icon, Tool::Buildings, if building { egui::Color32::WHITE } else { GOLD });
     let mid = egui::pos2((icon.right() + rect.right()) * 0.5, rect.center().y);
-    painter.text(mid - egui::vec2(0.0, 6.0), egui::Align2::CENTER_CENTER, "Build", egui::FontId::proportional(15.0), text);
-    painter.text(mid + egui::vec2(0.0, 11.0), egui::Align2::CENTER_CENTER, "R Z N T Y", egui::FontId::proportional(10.0), egui::Color32::from_rgb(170, 160, 140));
+    painter.text(mid - egui::vec2(0.0, 7.0), egui::Align2::CENTER_CENTER, "Build", crate::ui::theme::button(), text);
+    painter.text(mid + egui::vec2(0.0, 10.0), egui::Align2::CENTER_CENTER, "R Z N T Y", crate::ui::theme::small(), egui::Color32::from_rgb(170, 160, 140));
     resp.on_hover_text("Everything you can build: roads, zones, parks, districts, power, services, transit, rail, water, attractions. Their keys (2 R road, 3 Z zone, 6 N buildings, 7 T transit, 8 Y rail, 9 districts) open it at their section.")
 }
 
@@ -130,8 +130,8 @@ fn tool_button(ui: &mut egui::Ui, tool: Tool, active: bool) -> egui::Response {
     let icon = egui::Rect::from_center_size(egui::pos2(rect.left() + 8.0 + ICON * 0.5, rect.center().y), egui::vec2(ICON, ICON));
     icons::tool(painter, icon, tool, if active { egui::Color32::WHITE } else { GOLD });
     let mid = egui::pos2((icon.right() + rect.right()) * 0.5, rect.center().y);
-    painter.text(mid - egui::vec2(0.0, 6.0), egui::Align2::CENTER_CENTER, tool.label(), egui::FontId::proportional(15.0), text);
-    painter.text(mid + egui::vec2(0.0, 11.0), egui::Align2::CENTER_CENTER, tool.hotkey(), egui::FontId::proportional(10.0), egui::Color32::from_rgb(170, 160, 140));
+    painter.text(mid - egui::vec2(0.0, 7.0), egui::Align2::CENTER_CENTER, tool.label(), crate::ui::theme::button(), text);
+    painter.text(mid + egui::vec2(0.0, 10.0), egui::Align2::CENTER_CENTER, tool.hotkey(), crate::ui::theme::small(), egui::Color32::from_rgb(170, 160, 140));
     resp.on_hover_text(help::tool_hint(tool))
 }
 

@@ -178,7 +178,7 @@ fn bot(ui: &mut egui::Ui, w: &nd_sim::World, selection: &mut Selection, id: nd_s
     };
     let [r, g, bl] = nd_sim::bots::fleet_colour(b.shop);
     let fleet = egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (bl * 255.0) as u8);
-    ui.label(egui::RichText::new(nd_sim::bots::bot_name(w, id)).size(17.0).color(IVORY).strong());
+    ui.label(egui::RichText::new(nd_sim::bots::bot_name(w, id)).font(crate::ui::theme::lead()).color(IVORY).strong());
     let size = w.bots.fleet_of(b.shop).len();
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
@@ -233,7 +233,7 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
     let w = &sim.world;
     let b = &w.buildings[id];
     // ── Header ──
-    ui.label(egui::RichText::new(&b.name).size(19.0).color(IVORY).strong());
+    ui.label(egui::RichText::new(&b.name).font(crate::ui::theme::title()).color(IVORY).strong());
     let zone_col = super::zone_color32(assets.palette.zone_color(b.land_use));
     let style = nd_procgen::building_style(w, id, &assets.rules, Some(&sim.styles));
     ui.horizontal_wrapped(|ui| {
@@ -274,7 +274,7 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
         let days_left = c.days_left();
         let left = if days_left < 1.0 { format!("{:.0} hours left", (days_left * 24.0).ceil().max(1.0)) } else { format!("{:.1} days left", days_left) };
         let status = if c.waiting_for_materials() { if c.ordered { ", waiting for materials (truck on its way)" } else { ", waiting for materials" } } else { "" };
-        ui.add(egui::ProgressBar::new(c.progress).desired_height(12.0).fill(egui::Color32::from_rgb(200, 150, 60)).text(format!("UNDER CONSTRUCTION {:.0}%, {left}{status}", c.progress * 100.0)));
+        ui.add(egui::ProgressBar::new(c.progress).desired_height(18.0).fill(egui::Color32::from_rgb(200, 150, 60)).text(format!("UNDER CONSTRUCTION {:.0}%, {left}{status}", c.progress * 100.0)));
         ui.label(egui::RichText::new(format!("{} of {} deliveries in  ·  {:.1} days of work in all  ·  site crew {}/{}  ·  will have {} homes and {} jobs", c.deliveries, nd_sim::Construction::DELIVERIES, c.days, b.workers.len(), b.jobs, homes, jobs)).small());
     }
     if b.plant.is_none() && b.powered < 0.98 && b.construction.is_none() {
@@ -523,7 +523,7 @@ fn journey_card(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selecti
     let Some(j) = w.car_journey(id) else { return false };
     let mut picked: Option<Selection> = None;
     ui.add_space(2.0);
-    ui.label(egui::RichText::new(capitalise(&j.purpose)).size(15.0).color(egui::Color32::from_rgb(120, 220, 255)).strong());
+    ui.label(egui::RichText::new(capitalise(&j.purpose)).font(crate::ui::theme::lead()).color(egui::Color32::from_rgb(120, 220, 255)).strong());
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         ui.label(egui::RichText::new("coming from").small().weak());
@@ -623,7 +623,7 @@ fn driver_card(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selectio
         };
         // An empty bar still paints a dot of fill; calm is just said.
         if d.anger > 0.02 {
-            ui.add(egui::ProgressBar::new(d.anger).desired_width(220.0).desired_height(12.0).fill(egui::Color32::from_rgb(200, 60, 40)).text(format!("anger: {word}  ·  {:.0}%", d.anger * 100.0)));
+            ui.add(egui::ProgressBar::new(d.anger).desired_width(220.0).desired_height(18.0).fill(egui::Color32::from_rgb(200, 60, 40)).text(format!("anger: {word}  ·  {:.0}%", d.anger * 100.0)));
         } else {
             ui.label(egui::RichText::new(format!("{word} at the wheel")).small());
         }
@@ -659,7 +659,7 @@ fn temperament(ui: &mut egui::Ui, boldness: f32, calm: Option<f32>) {
         p.circle_stroke(egui::pos2(x_of(c), track.center().y), 5.0, egui::Stroke::new(1.5, IVORY));
     }
     p.circle_filled(egui::pos2(x_of(boldness), track.center().y), 6.0, IVORY);
-    let font = egui::FontId::proportional(11.0);
+    let font = crate::ui::theme::small();
     let weak = egui::Color32::from_gray(150);
     p.text(egui::pos2(track.left(), rect.bottom()), egui::Align2::LEFT_BOTTOM, "slow", font.clone(), weak);
     p.text(egui::pos2(track.center().x, rect.bottom()), egui::Align2::CENTER_BOTTOM, "normal", font.clone(), weak);

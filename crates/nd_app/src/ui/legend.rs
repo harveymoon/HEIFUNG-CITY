@@ -23,11 +23,11 @@ pub fn show(ctx: &egui::Context, o: &Overlays, assets: &GameAssets, world: &nd_s
     egui::Area::new(egui::Id::new("map_legend"))
         .order(egui::Order::Middle)
         .interactable(false)
-        .fixed_pos(egui::pos2(area.right() - 216.0, area.bottom() - 12.0))
+        .fixed_pos(egui::pos2(area.right() - 246.0, area.bottom() - 12.0))
         .pivot(egui::Align2::LEFT_BOTTOM)
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style()).fill(Color32::from_rgba_unmultiplied(8, 10, 20, 225)).show(ui, |ui| {
-                ui.set_width(186.0);
+                ui.set_width(216.0);
                 if let LayerId::Flag(_) = layer {
                     section(ui, &layer.label().to_uppercase());
                 }
