@@ -507,11 +507,17 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: Rect) {
     }
 }
 
+/// How far a sub-section sits in under its section in the tree.
+const SUB_INDENT: f32 = 16.0;
+
 fn tree(ui: &mut egui::Ui, st: &mut State) {
     for cat in Cat::ALL {
         let on = st.cat == Some(cat);
         let text = egui::RichText::new(cat.label()).strong();
-        if ui.add_sized(egui::vec2(TREE_WIDTH - 14.0, 22.0), egui::Button::selectable(on && st.sub.is_none(), if on { text.color(GOLD) } else { text })).clicked() {
+        // Left-aligned rows the width of the tree: a grow atom after the
+        // label keeps it at the left edge (add_sized would centre it).
+        let main = egui::Button::selectable(on && st.sub.is_none(), if on { text.color(GOLD) } else { text }).right_text("").min_size(egui::vec2(TREE_WIDTH - 14.0, 22.0));
+        if ui.add(main).clicked() {
             st.cat = Some(cat);
             st.sub = None;
         }
@@ -520,8 +526,9 @@ fn tree(ui: &mut egui::Ui, st: &mut State) {
             if groups.len() > 1 {
                 for g in &groups {
                     ui.horizontal(|ui| {
-                        ui.add_space(14.0);
-                        if ui.selectable_label(st.sub == Some(g.name), egui::RichText::new(g.name).small()).clicked() {
+                        ui.add_space(SUB_INDENT);
+                        let sub = egui::Button::selectable(st.sub == Some(g.name), egui::RichText::new(g.name).small()).right_text("").min_size(egui::vec2(TREE_WIDTH - 14.0 - SUB_INDENT, 18.0));
+                        if ui.add(sub).clicked() {
                             st.sub = if st.sub == Some(g.name) { None } else { Some(g.name) };
                         }
                     });
