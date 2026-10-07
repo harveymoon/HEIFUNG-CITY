@@ -34,7 +34,9 @@ pub fn screen(ctx: &egui::Context, p: &mut UiCtx) {
         let column = Rect::from_min_size(egui::pos2(view.center().x - width * 0.5, view.top() + 40.0), egui::vec2(width, view.height() - 60.0));
         ui.scope_builder(egui::UiBuilder::new().max_rect(column), |ui| {
             ui.vertical_centered(|ui| {
-                ui.label(egui::RichText::new("DISTRICT 2040").color(GOLD).strong().size(42.0));
+                // The logo (assets/brand/logo.svg, rendered by make_logo.py).
+                let w = (width * 0.62).min(700.0);
+                ui.add(egui::Image::new(&logo_texture(ui.ctx())).fit_to_exact_size(egui::vec2(w, w * 0.35)));
                 ui.label(egui::RichText::new("a neon city builder").color(IVORY).italics().size(15.0));
             });
             ui.add_space(18.0);
@@ -122,4 +124,17 @@ fn card(ui: &mut egui::Ui, label: &str, kind: SlotKind, figures: &str, age: &str
         painter.text(egui::pos2(rect.left() + 10.0, y), egui::Align2::LEFT_TOP, age, egui::FontId::proportional(10.0), Color32::from_gray(130));
     }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// The title logo as an egui texture, uploaded once and kept in egui's memory.
+fn logo_texture(ctx: &egui::Context) -> egui::TextureHandle {
+    let id = egui::Id::new("brand_logo");
+    if let Some(t) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
+        return t;
+    }
+    const RGBA: &[u8] = include_bytes!("../../../../assets/brand/logo_800x280.rgba");
+    let image = egui::ColorImage::from_rgba_unmultiplied([800, 280], RGBA);
+    let t = ctx.load_texture("brand_logo", image, egui::TextureOptions::LINEAR);
+    ctx.data_mut(|d| d.insert_temp(id, t.clone()));
+    t
 }
