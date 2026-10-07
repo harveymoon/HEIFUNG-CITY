@@ -51,13 +51,16 @@ pub enum Flow {
     /// [power] Surplus electricity sold to the regional grid
     /// (`crate::power::GRID_EXPORT_PRICE`).
     GridExport,
+    /// [camera] Money the player gave a household from the treasury (the
+    /// inspector's "gift $1000").
+    Gifts,
 }
 
 /// Number of `Flow`s; the ledger's row length.
-pub const FLOWS: usize = 20;
+pub const FLOWS: usize = 21;
 
 impl Flow {
-    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport];
+    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport, Flow::Gifts];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -81,6 +84,7 @@ impl Flow {
             Flow::Tolls => "road tolls",
             Flow::TollUpkeep => "toll booth upkeep",
             Flow::GridExport => "grid export",
+            Flow::Gifts => "gifts to residents",
         }
     }
 

@@ -34,6 +34,9 @@ mod cargo_hub_tests;
 mod cars;
 mod chases;
 mod enforcement;
+/// [camera] Gifts from the treasury; the places that are someone's.
+pub mod gifts;
+pub use gifts::{Gift, Holding, GIFT_AMOUNT};
 mod construction;
 mod history;
 mod develop;

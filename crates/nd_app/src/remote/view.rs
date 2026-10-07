@@ -227,6 +227,7 @@ pub fn selection(w: &World, sel: Selection) -> Value {
         Selection::Building(id) => json!({ "kind": "building", "id": key_str(id), "name": w.buildings.get(id).map(|b| b.name.as_str()) }),
         Selection::Car(id) => json!({ "kind": "car", "id": key_str(id), "label": w.car_label(id), "why": w.traffic.cars.contains_key(id).then(|| w.traffic.stop_reason(id).text(|c| w.car_label(c))) }),
         Selection::Parked(id) => json!({ "kind": "parked_car", "id": key_str(id) }),
+        Selection::Bot(id) => json!({ "kind": "bot", "id": key_str(id), "name": nd_sim::bots::bot_name(w, id) }),
     }
 }
 

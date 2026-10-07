@@ -428,6 +428,8 @@ defaults to 100 m then. Filters (substring match on strings, case-insensitive):
   `under_construction`, `plant`, `rail`, `depot`, `derelict`
 - lots: `land_use`, `vacant`, `park`, `min_area`
 - cars: `kind` (car, bus, truck); trains: `kind` (passenger, freight)
+- bots (also `delivery_bots`): `shop` (the owning shop's name). Rows: `id`, `name` ("Lucky Bodega bot #2"),
+  `shop`, `pos`, `returning`.
 
 Reply: `total` (matches), `returned`, `rows`.
 
@@ -500,10 +502,11 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
 
 | Command | Fields |
 | --- | --- |
-| `select` | `citizen` / `building` / `car` / `vehicle` (a parked car) id, or `at: [x, y]` (picks like a click), or nothing to clear |
+| `select` | `citizen` / `building` / `car` / `vehicle` (a parked car) / `bot` (a delivery robot) id, or `at: [x, y]` (picks like a click), or nothing to clear |
 | `selected` | full detail of the player's selection (see below) |
 | `flags` / `flag` | the player's "Flag for Claude" bookmarks (see below) |
-| `favourite` | `citizen`, `on` (omit to toggle) |
+| `favourite` | `citizen`, `on` (omit to toggle). Favourites wear a gold ring and diamond in the world (their car, driving or parked, a gold box) |
+| `gift` | `citizen` (default: the selected citizen), `amount` (default 1000): money from the treasury to their household (their savings if they have none), as the person pane's "Gift $1000". Refused when the treasury cannot pay. Booked as `gifts_to_residents`, itemised by name; they remember it. Reply `amount`, `household`, `household_money`, `savings`, `treasury` |
 | `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail, district; the building ones are what the Build window's items pick: road and its presets for Roads and Rail track, zone for Zoning and Parks, buildings for Power, Services, Transit placeables, Water and Attractions, rail for stations and yards, transit for bus and metro lines), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway, Roundabout), `diameter` and `ring_lanes` (roundabout), `ring_at` `[x,y]` (show the roundabout preview there as if hovered, until the mouse is used), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry` (zone, industrial: auto / farming / oil / ...), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture`, `elevation` (the Road tool's level for the next point, m), `depth` (underground / ground / sky: the view layer; the Tunnel preset switches to underground, other presets back), `draw` `[[x,y,level?],...]` (the road being drawn, as if clicked, so its hologram shows), `cursor` `[x,y]` (where the pointer stands for that hologram until the mouse is used). The reply's tool state has `elevation`, `elevation_label`, `point_levels`, `tunnel`, `depth`, `grade_warnings`, and (refreshed with the road preview, a frame later) `pillars` {count, at, buyouts (building names a pillar would buy out), empty_lots, gaps ([[x,y],[x,y]] stretches with no room for a pillar), refusal}, and `intersection_editor` (where the editor is open, or null) |
 | `overlay` | **Map layers are exclusive**: one shows at a time (as the top bar's Layer button), with its key in the legend. `active` a layer key or `none`: show it alone. `layer` (zoning, land_value, districts, traffic, traffic_types, paths, people, pollution, crime, map, or a land survey layer, below; `traffic` and `crime` also dim the city and light up the vehicles they are about, `map` is the street map view with street names and pins) with `on` (bool; omitted toggles): on shows it and hides every other, off hides it if it shows. `land` a land survey layer key (shown alone) or `none`. Older form, a bool per layer name: true shows that layer alone (several trues: the last listed in the registry wins), false hides it if it shows. `projects` (bool, or `layer: "projects"`) is the dim other-projects switch, not a layer, and is left alone by the rest. Reply: every flag layer and whether it is on, `land` (the survey layer shown, or null), `active` (the key of the layer showing, or null) and `projects` (also in `status.overlays`). New layers are added as one entry in `crate::map_layers::MAP_LAYERS` and appear here by their key |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
@@ -594,6 +597,45 @@ selection from the API. Flags live in the running game and are also appended to
 - `mode`: orbit / walk (in walk mode `look_at`/`x`/`z` place the eye, yaw/pitch turn the head).
 
 Reply: the pose (`mode`, `target`, `distance`, `yaw`, `pitch`, `eye`), and `following`.
+A `follow` here is the same follow as the inspector's Follow button (below).
+
+`follow {citizen|car|bot|building|vehicle?, stop?, on?, pov?, fly?}` is the inspector's **Follow**
+button: the camera stays on the thing (default: the selection) until stopped. Pan (WASD, middle or
+shift drag) and the F-key jumps are locked; rotate and zoom still work. In game a banner says
+"CAMERA LOCKED" with **Stop following (Esc)** and a gold frame holds the map; Esc stops it (and
+is used up: a second Esc clears the selection). `stop: true` or `on: false` stops it. `pov: true`
+looks through their eyes (Walk view: a walker's eyes, a driver's seat, a robot's camera; right-drag
+looks around and springs back; Tab in game), `pov: false` back to the orbit camera; a building has
+no point of view. The camera flies in smoothly first unless `fly: false`. A followed car that parks
+hands the follow (and the selection) to its driver on foot; anything else that is gone ends it.
+Any `camera` command ends a follow. Reply `following`, `pov`, `at`, `flying`, `camera`;
+`status.following` names what is followed (or null).
+
+`zoom_to {citizen|car|bot|building|vehicle?, at?, distance?, pitch?}` (alias `zoom`) is the
+inspector's **Zoom to**: a smooth flight (0.7 to 2.2 s, a hop out over long trips) onto the thing
+(default: the selection; a moving thing is tracked while the camera travels) or the point `at`.
+`distance` defaults by kind (a person 32 m, a car 40, a bus or truck 55, a robot 22, a building by
+its size); `pitch` 0.62. Ends a follow of anything else. The reply comes at once: `to`, `at`,
+`distance`, `seconds`; screenshot after `seconds`.
+
+```json
+{"cmd": "follow", "citizen": "12:3", "pov": true}
+{"cmd": "follow", "stop": true}
+{"cmd": "zoom_to", "bot": "4:2"}
+{"cmd": "gift", "citizen": "12:3"}
+```
+
+**Delivery bots.** `select {bot}` selects one, `inspect {bot}` (or `selected`) gives `id`, `code`
+("B-4"), `name`, `serial` (its number in the shop's fleet), `owner` {building, name, business_kind,
+`fleet_colour` (each company's fleet is painted its own colour), fleet_size}, `state` (delivering /
+returning to the shop), `cargo` {resource, amount} (null on the way back), `destination`,
+`customer` {building, name, household}, `pos`, `metres_left`, `minutes_left`, `minutes_out` and
+`route` (the pavement ahead, sampled). The map draws the route in the fleet colour.
+
+**A person's places.** A selected citizen's `holdings` are their home, work and every business they
+own (a taxi firm's founder owns it: `business.owner`); in game each is a big clickable pin (HOME,
+WORK, OWNS) over its building, held at the screen edge when off screen, and a button in the person
+pane; clicking either selects the building.
 
 ```json
 {"cmd": "camera", "look_at": [0, 0], "distance": 400, "pitch": 0.9}

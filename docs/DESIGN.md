@@ -1701,6 +1701,39 @@ click). Stop counters live on the stops themselves (`BusStop::stats`, serde defa
 follow a stop when one before it is removed; a moved or removed stop forgets the timing of the
 legs it changed. Nothing here draws random numbers.
 
+## Following, zooming and the people you care about
+
+- **Follow** (inspector, person pane, favourites; API `follow`): `camera::CameraFollow` locks the
+  orbit target on a person, vehicle, delivery robot or building. It is applied after the sim has
+  stepped (`follow_and_fly`, after `SimSet::Sync`), so the camera sits on the thing where it is
+  drawn this frame, with no lag. Pan keys, pan drags and the F-key jumps are locked; rotate and
+  zoom stay free. A banner ("CAMERA LOCKED ... Stop following (Esc)") and a gold viewfinder frame
+  round the map say so. Esc ends it and is used up, so a second Esc clears the selection. A
+  followed car that parks hands the follow, and the selection, to its driver on foot.
+- **Point of view**: Walk view while following looks through their eyes (a walker's head, a
+  driver's seat, a bus window, a robot's camera), turning with them (smoothed) and right-drag
+  looks around, springing back. The pointer stays free for the banner. The selection's outline
+  box is not drawn from inside the vehicle.
+- **Zoom to** (`camera::CameraFly`): a smooth flight of target, distance (in log space) and pitch,
+  0.7 to 2.2 s by length, hopping out over long trips; a moving goal is tracked while the camera
+  travels. Every "go" and "fly there" button in the HUD now flies the same way.
+- **A person's places**: `World::holdings_of` is their home, work and every business they own
+  (`Business::owner`; taxi founders own their firm). Each is a big clickable pin (HOME, WORK,
+  OWNS, `ui/pins.rs`) over its building on a post (`marks.rs`), held at the screen edge when off
+  screen, and a button in the person pane. Either selects the building. Multiple homes have no
+  data yet; when they do, `holdings_of` lists them and they get pins with no UI change.
+- **Favourites** wear gold in the world: a ring and a diamond over the head, and a gold box round
+  the car they drive or ride in and their parked car (`marks.rs`). The People window's list has
+  go (a smooth flight), follow and a "$" gift.
+- **Gift**: `World::gift` moves money (the button gives $1000) from the treasury to the
+  household, or the savings of someone without one. It is booked as the `Gifts` flow, itemised
+  by name. They remember it and cheer up. Refused when the treasury cannot pay.
+- **Delivery robots** are selectable (`Selection::Bot`). The inspector shows their name ("Lucky
+  Bodega bot #2": `DeliveryBot::serial`, the lowest free number in the shop's fleet), code, the
+  owning shop, what they carry (`amount`, `household`), where they are going, the metres and
+  minutes left, and the route on the map in the fleet colour. Each company's fleet is painted
+  its own colour (`bots::fleet_colour`, a golden-ratio hue per shop).
+
 ## Roadmap
 
 - v0 (done): roads, zones, lots, procedural buildings, immigration, schedules,

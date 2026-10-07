@@ -53,6 +53,49 @@ pub struct DeliveryBot {
     pub returning: bool,
     /// Ticks on the way; a bot that cannot finish is recalled.
     pub age: u32,
+    /// [camera] Its number in the shop's fleet, from 1 (the lowest free one
+    /// when it set out). 0 on robots from older saves.
+    #[serde(default)]
+    pub serial: u32,
+    /// [camera] How much of `resource` it carries to the door (nothing on
+    /// the way back).
+    #[serde(default)]
+    pub amount: f32,
+    /// [camera] The household that ordered.
+    #[serde(default)]
+    pub household: Option<HouseholdId>,
+}
+
+impl DeliveryBot {
+    /// Where it is heading now: the customer's door, or back to the shop.
+    pub fn destination(&self) -> BuildingId {
+        if self.returning {
+            self.shop
+        } else {
+            self.home
+        }
+    }
+
+    /// What is in its hold: the order on the way out, nothing on the way back.
+    pub fn cargo(&self) -> Option<(Resource, f32)> {
+        (!self.returning && self.amount > 0.0).then_some((self.resource, self.amount))
+    }
+
+    /// Metres of pavement left to where it is heading.
+    pub fn metres_left(&self) -> f32 {
+        let mut d = 0.0;
+        let mut at = self.pos;
+        for &p in self.path.iter().skip(self.idx) {
+            d += at.distance(p);
+            at = p;
+        }
+        d
+    }
+
+    /// The pavement still ahead, from where it stands.
+    pub fn path_ahead(&self) -> Vec<Vec2> {
+        std::iter::once(self.pos).chain(self.path.iter().skip(self.idx).copied()).collect()
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -73,9 +116,65 @@ fn order_of(kind: BusinessKind) -> Option<(Resource, f32)> {
 }
 
 impl Bots {
+    /// [camera] The robots out from `shop`, by fleet number.
+    pub fn fleet_of(&self, shop: BuildingId) -> Vec<BotId> {
+        let mut v: Vec<(u32, BotId)> = self.bots.iter().filter(|(_, b)| b.shop == shop).map(|(id, b)| (b.serial, id)).collect();
+        v.sort();
+        v.into_iter().map(|(_, id)| id).collect()
+    }
+
+    /// [camera] The lowest fleet number free at `shop`, from 1.
+    pub fn next_serial(&self, shop: BuildingId) -> u32 {
+        let used: Vec<u32> = self.bots.values().filter(|b| b.shop == shop).map(|b| b.serial).collect();
+        (1..).find(|n| !used.contains(n)).unwrap_or(1)
+    }
+
     /// Delivery vans on the road now: liveried cars without driver or cargo.
     pub fn vans(w: &World) -> usize {
         w.traffic.cars.values().filter(|c| c.cargo.is_none() && c.bus.is_none() && c.citizen == CitizenId::default() && is_delivery(&c.model)).count()
+    }
+}
+
+/// [camera] A robot's short id, from its slot: "B-12".
+pub fn bot_code(id: BotId) -> String {
+    use slotmap::Key;
+    format!("B-{}", id.data().as_ffi() & 0xffff_ffff)
+}
+
+/// [camera] A robot's name: the shop's name and its number in the fleet,
+/// "Corner Grocer bot #2" (its code on robots from older saves).
+pub fn bot_name(w: &World, id: BotId) -> String {
+    let Some(b) = w.bots.bots.get(id) else { return bot_code(id) };
+    let shop = w.buildings.get(b.shop).map_or("A shop's", |s| s.name.as_str());
+    if b.serial > 0 {
+        format!("{shop} bot #{}", b.serial)
+    } else {
+        format!("{shop} bot {}", bot_code(id))
+    }
+}
+
+/// [camera] The livery colour of a shop's robot fleet, as sRGB 0..1: a hue
+/// of its own per company (golden-ratio steps over the building's slot, so
+/// neighbouring shops differ), bright and saturated so it reads on the
+/// pavement. Stable across saves, since building ids are.
+pub fn fleet_colour(shop: BuildingId) -> [f32; 3] {
+    use slotmap::Key;
+    let slot = (shop.data().as_ffi() & 0xffff_ffff) as u32;
+    let hue = (slot as f32 * 0.618_034 + 0.13).fract();
+    hsv(hue, 0.78, 0.95)
+}
+
+fn hsv(h: f32, s: f32, v: f32) -> [f32; 3] {
+    let i = (h * 6.0).floor();
+    let f = h * 6.0 - i;
+    let (p, q, t) = (v * (1.0 - s), v * (1.0 - f * s), v * (1.0 - (1.0 - f) * s));
+    match i as i32 % 6 {
+        0 => [v, t, p],
+        1 => [q, v, p],
+        2 => [p, v, t],
+        3 => [p, q, v],
+        4 => [t, p, v],
+        _ => [v, p, q],
     }
 }
 
@@ -138,7 +237,8 @@ impl World {
                 let Some((mut path, _)) = self.walk.route(at, door) else { continue };
                 path.push(door);
                 let start = path[0];
-                self.bots.bots.insert(DeliveryBot { shop, home, resource, pos: start, prev_pos: start, heading: 0.0, prev_heading: 0.0, path, idx: 0, returning: false, age: 0 });
+                let serial = self.bots.next_serial(shop);
+                self.bots.bots.insert(DeliveryBot { shop, home, resource, pos: start, prev_pos: start, heading: 0.0, prev_heading: 0.0, path, idx: 0, returning: false, age: 0, serial, amount, household: Some(hh) });
             } else {
                 if vans >= MAX_VANS {
                     continue;
@@ -222,6 +322,7 @@ impl World {
                     done.push(id);
                 } else {
                     bot.returning = true;
+                    bot.amount = 0.0;
                     bot.path.reverse();
                     bot.idx = 0;
                     self.bots.delivered_today += 1;
