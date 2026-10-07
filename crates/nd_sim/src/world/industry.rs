@@ -130,7 +130,7 @@ impl World {
         let ids: Vec<BuildingId> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.land_use == LandUse::Industrial && b.plant.is_none() && !b.depot && b.rail.is_none() && b.port.is_none())
+            .filter(|(_, b)| b.land_use == LandUse::Industrial && !b.is_power() && !b.depot && b.rail.is_none() && b.port.is_none())
             .filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind.industry() != Some(kind) && z.kind != BusinessKind::Parking))
             .filter(|(_, b)| self.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &polygon)))
             .map(|(id, _)| id)
@@ -214,7 +214,7 @@ impl World {
     /// An industrial building's pull on the land: a nuisance by its kind
     /// (homes feel it most) and, where land is cheap, the lift of the jobs.
     pub(super) fn splat_industry(b: &mut LandValueBuilder, bld: &Building, c: Vec2) {
-        if bld.plant.is_some() {
+        if bld.is_power() {
             // Plants carry their own figures (`PowerPlantKind::pollution`).
             return;
         }

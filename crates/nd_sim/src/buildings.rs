@@ -280,6 +280,9 @@ pub struct Building {
     /// A power plant placed by the player.
     #[serde(default)]
     pub plant: Option<crate::power::PowerPlantKind>,
+    /// A grid battery pack placed by the player, with its charge.
+    #[serde(default)]
+    pub battery: Option<crate::power::Battery>,
     /// Share of its electricity demand met this hour.
     #[serde(default = "one")]
     pub powered: f32,
@@ -355,6 +358,7 @@ impl Building {
             parking_used: 0,
             parking_price: 0.0,
             plant: None,
+            battery: None,
             powered: 1.0,
             unpowered_hours_today: 0,
             depot: false,
@@ -377,12 +381,18 @@ impl Building {
         self.business.as_ref().map_or(false, |b| b.kind == Business::PARKING_KIND)
     }
 
-    /// Placed by the player: a plant, depot, station, yard, dock, service or
+    /// A power plant or a grid battery: part of the grid, not a place
+    /// anyone lives, shops or visits.
+    pub fn is_power(&self) -> bool {
+        self.plant.is_some() || self.battery.is_some()
+    }
+
+    /// Placed by the player: a plant, battery, depot, station, yard, dock, service or
     /// attraction. Never upgraded, redeveloped or counted towards density.
     /// (A dock was missing here: the daily market update retiered shipping
     /// ports and recomputed their jobs as an ordinary industrial building.)
     pub fn is_special(&self) -> bool {
-        self.plant.is_some() || self.depot || self.rail.is_some() || self.port.is_some() || self.service.is_some() || self.metro
+        self.is_power() || self.depot || self.rail.is_some() || self.port.is_some() || self.service.is_some() || self.metro
     }
 
     pub fn parking_free(&self) -> u16 {

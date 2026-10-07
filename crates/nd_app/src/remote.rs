@@ -917,6 +917,7 @@ fn status(ctx: &Ctx) -> Value {
     let sites = w.buildings.values().filter(|b| b.construction.is_some()).count();
     let fps = ctx.diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
     let ledger: serde_json::Map<String, Value> = e.ledger.yesterday_sorted().into_iter().map(|(f, x)| (f.label().to_string(), json!(round(x)))).collect();
+    let power_rows = report::power_json(w, false);
     let mut v = json!({
         "clock": clock(sim), "paused": sim.paused, "speed_index": sim.speed_index, "speed": sim.speed(), "speed_label": SPEEDS[sim.speed_index].0,
         "effective_speed": round(sim.effective_speed), "ticks_last_frame": sim.ticks_last_frame,
@@ -925,7 +926,13 @@ fn status(ctx: &Ctx) -> Value {
         "homes": { "used": e.homes_total - e.homes_free, "total": e.homes_total }, "jobs": { "used": e.jobs_total - e.jobs_free, "total": e.jobs_total },
         "waiting_immigrants": e.waiting_immigrants, "unhoused": e.unhoused, "unemployed": e.unemployed,
         "treasury": round(e.treasury), "tax_today": round(e.tax_today), "ledger_yesterday": ledger,
-        "power": { "supply_mw": round(p.supply_mw), "imported_mw": round(p.imported_mw), "demand_mw": round(p.demand_mw), "served": round(p.served), "plants": p.plants, "unpowered_buildings": p.unpowered_buildings, "brownout_hours_today": p.brownout_hours_today, "upkeep_today": round(p.upkeep_today), "import_cost_today": round(p.import_cost_today) },
+        "power": {
+            "supply_mw": round(p.supply_mw), "imported_mw": round(p.imported_mw), "exported_mw": round(p.exported_mw), "demand_mw": round(p.demand_mw), "served": round(p.served),
+            "plants": p.plants, "unpowered_buildings": p.unpowered_buildings, "brownout_hours_today": p.brownout_hours_today, "upkeep_today": round(p.upkeep_today),
+            "import_cost_today": round(p.import_cost_today), "export_income_today": round(p.export_income_today),
+            "batteries": { "count": p.batteries, "charge_mwh": round(p.battery_charge_mwh), "capacity_mwh": round(p.battery_capacity_mwh), "charging_mw": round(p.battery_in_mw), "discharging_mw": round(p.battery_out_mw) },
+            "rows": { "plants": power_rows["plants"], "batteries": power_rows["batteries"] },
+        },
         "weather": { "label": w.weather.label(), "cloud": round(w.weather.cloud), "wind": round(w.weather.wind) },
         "land": { "avg_land_value": round(e.avg_land_value), "gini": round(e.gini), "displaced_total": e.displaced_total, "emigrated_total": e.emigrated_total, "priced_out_total": e.priced_out_total, "tier_counts": e.tier_counts, "class_counts": e.class_counts, "avg_rent": e.avg_rent.map(round) },
         "market": { "businesses": e.market.businesses, "deals_today": e.market.deals_today, "imports_today": round(e.market.imports_today), "exports_today": round(e.market.exports_today), "meals_sold_today": e.market.meals_sold_today, "hungry": e.market.hungry, "closed_total": e.market.closed_total },
@@ -1202,7 +1209,7 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         other => {
             let tier = opt_str(cmd, "tier")?.map(|t| nd_sim::services::parse_tier(t).ok_or_else(|| format!("unknown tier {t:?}; low, mid or high"))).transpose()?;
-            let what = nd_sim::Placeable::parse(other, tier).ok_or_else(|| format!("unknown kind {other:?}; one of station, freight_yard, depot, parking, coal, solar, wind, nuclear, police, fire, hospital (clinic), school, dispatch, monument, stadium, vertiport (services take tier low|mid|high or a :tier suffix)"))?;
+            let what = nd_sim::Placeable::parse(other, tier).ok_or_else(|| format!("unknown kind {other:?}; one of station, freight_yard, depot, parking, coal, solar, wind, nuclear, hydro, tidal, geothermal, battery_small, battery_medium, battery_large, police, fire, hospital (clinic), school, dispatch, monument, stadium, vertiport (services take tier low|mid|high or a :tier suffix)"))?;
             let lot = lot_near(w, p).ok_or("no lot there: aim at a lot")?;
             let id = w.place_on_lot(what, lot)?;
             (id, format!("{} built for {:.0}; {:.0}/day", what.label(), what.cost(), what.upkeep()))

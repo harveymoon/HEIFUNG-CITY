@@ -47,6 +47,7 @@ pub fn flow_color(f: Flow) -> Color32 {
         Flow::ImportDuty => Color32::from_rgb(190, 230, 90),
         Flow::Tolls => Color32::from_rgb(250, 190, 60),
         Flow::TollUpkeep => Color32::from_rgb(180, 110, 70),
+        Flow::GridExport => Color32::from_rgb(120, 225, 245),
     }
 }
 
@@ -61,8 +62,8 @@ pub fn flow_note(f: Flow) -> &'static str {
         Flow::Tickets => "Stadium game-night tickets, by stadium.",
         Flow::ParkingFines => "Tickets the parking wardens write.",
         Flow::ParkingFees => "Fees at the car parks the city runs, by car park.",
-        Flow::PlantUpkeep => "Each power plant's running cost, paid at midnight.",
-        Flow::GridImport => "Electricity bought from the regional grid when the plants fall short; the Power window shows when.",
+        Flow::PlantUpkeep => "Each power plant's and battery pack's running cost, paid at midnight.",
+        Flow::GridImport => "Electricity bought from the regional grid when the plants and batteries fall short; the Power window shows when.",
         Flow::TransitUpkeep => "The buses on the lines and each depot, and each port or ferry terminal, paid at midnight.",
         Flow::RailUpkeep => "Each station and freight yard, paid at midnight.",
         Flow::Construction => "One-off costs of what the city builds: plants, services, depots, stations, ports, car parks, bridges.",
@@ -73,6 +74,7 @@ pub fn flow_note(f: Flow) -> &'static str {
         Flow::ImportDuty => "The duty on every import from outside (the rate is in the Taxes window).",
         Flow::Tolls => "Tolls paid at the city's toll booths and plazas.",
         Flow::TollUpkeep => "Staff and upkeep of each toll booth and plaza, paid at midnight.",
+        Flow::GridExport => "Surplus electricity sold to the regional grid (what the batteries had no room for), paid at midnight at the export price; the Power window shows when.",
     }
 }
 
@@ -82,7 +84,7 @@ pub fn compact(ui: &mut egui::Ui, p: &mut UiCtx) {
     section(ui, "TREASURY");
     row(ui, "balance", warn_if(e.treasury < 0.0, format!("{:.0}", e.treasury)).strong());
     row(ui, "taxes so far today", format!("{:.0}", e.tax_today));
-    row(ui, "plant upkeep", format!("{:.0}/day   imported power {:.0} today", e.power.upkeep_today, e.power.import_cost_today));
+    row(ui, "plant upkeep", format!("{:.0}/day   imported power {:.0} today   exported {:.0} today", e.power.upkeep_today, e.power.import_cost_today, e.power.export_income_today));
     let today: f32 = e.ledger.today.iter().sum();
     row(ui, "net today so far", warn_if(today < 0.0, format!("{today:+.0}")));
 

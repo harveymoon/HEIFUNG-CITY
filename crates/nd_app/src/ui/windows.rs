@@ -227,15 +227,47 @@ pub(super) fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
     let pw = &w.economy.power;
     section(ui, "GRID");
     ui.add(egui::ProgressBar::new(pw.served).text(format!("served {:.0}%", pw.served * 100.0)).fill(if pw.served < 0.98 { WARN.gamma_multiply(0.8) } else { egui::Color32::from_rgb(110, 200, 140).gamma_multiply(0.8) }).desired_height(14.0));
-    row(ui, "supply", format!("{:.0} MW from {} plant{}   + {:.0} MW imported", pw.supply_mw, pw.plants, if pw.plants == 1 { "" } else { "s" }, pw.imported_mw));
+    row(ui, "supply", format!("{:.0} MW from {} plant{}", pw.supply_mw, pw.plants, if pw.plants == 1 { "" } else { "s" }));
     row(ui, "demand", format!("{:.0} MW", pw.demand_mw));
+    // Where the balance went this hour: the merit order of `power::dispatch`.
+    let mut balance = Vec::new();
+    if pw.battery_out_mw > 0.0 {
+        balance.push(format!("batteries give {:.0} MW", pw.battery_out_mw));
+    }
+    if pw.battery_in_mw > 0.0 {
+        balance.push(format!("batteries take {:.0} MW", pw.battery_in_mw));
+    }
+    if pw.imported_mw > 0.0 {
+        balance.push(format!("imported {:.0} MW", pw.imported_mw));
+    }
+    if pw.exported_mw > 0.0 {
+        balance.push(format!("exported {:.0} MW", pw.exported_mw));
+    }
+    if pw.curtailed_mw > 0.5 {
+        balance.push(format!("{:.0} MW turned down", pw.curtailed_mw));
+    }
+    if !balance.is_empty() {
+        row(ui, "balance", balance.join("   "));
+    }
     row(ui, "in the dark", warn_if(pw.unpowered_buildings > 0, format!("{} buildings   {} brownout hours today", pw.unpowered_buildings, pw.brownout_hours_today)));
+    if pw.batteries > 0 {
+        section(ui, "BATTERIES");
+        let level = if pw.battery_capacity_mwh > 0.0 { pw.battery_charge_mwh / pw.battery_capacity_mwh } else { 0.0 };
+        let state = if pw.battery_out_mw > 0.0 { format!("delivering {:.0} MW", pw.battery_out_mw) } else if pw.battery_in_mw > 0.0 { format!("charging {:.0} MW", pw.battery_in_mw) } else { "holding".to_string() };
+        ui.add(egui::ProgressBar::new(level).text(format!("{:.0} of {:.0} MWh · {state}", pw.battery_charge_mwh, pw.battery_capacity_mwh)).fill(detail::BATTERY.gamma_multiply(0.8)).desired_height(14.0));
+    }
+    let rows = w.plant_rows();
+    if !rows.is_empty() {
+        section(ui, "PLANTS");
+        detail::plant_table(ui, w, &rows, false);
+    }
     section(ui, "COSTS");
-    row(ui, "plant upkeep", format!("{:.0}/day", pw.upkeep_today));
-    row(ui, "grid import", format!("{:.0} today ({:.0} MW at {:.1} each)", pw.import_cost_today, nd_sim::power::GRID_IMPORT_MW, nd_sim::power::GRID_IMPORT_PRICE));
+    row(ui, "upkeep", format!("{:.0}/day (plants and batteries)", pw.upkeep_today));
+    row(ui, "grid import", format!("{:.0} today (up to {:.0} MW at {:.1}/MWh)", pw.import_cost_today, nd_sim::power::GRID_IMPORT_MW, nd_sim::power::GRID_IMPORT_PRICE));
+    row(ui, "grid export", format!("+{:.0} today, +{:.0} yesterday (up to {:.0} MW at {:.1}/MWh)", pw.export_income_today, w.economy.ledger.yesterday_of(nd_sim::economy::Flow::GridExport), nd_sim::power::GRID_EXPORT_MW, nd_sim::power::GRID_EXPORT_PRICE));
     section(ui, "WEATHER");
     row(ui, w.weather.label(), format!("cloud {:.0}%   wind {:.0}%", w.weather.cloud * 100.0, w.weather.wind * 100.0));
-    hint(ui, "Solar dims under cloud and stops at night; wind follows the wind. Coal and nuclear are steady.");
+    hint(ui, "Solar dims under cloud and stops at night; wind follows the wind. Surplus charges the batteries, then is sold; a shortfall drains them, then is bought.");
 }
 
 pub(super) fn transit(ui: &mut egui::Ui, p: &mut UiCtx) {

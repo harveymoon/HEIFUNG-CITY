@@ -765,6 +765,7 @@ pub fn line_detail(w: &World, id: RouteId) -> Value {
 pub fn placeable_key(p: nd_sim::Placeable) -> String {
     match p {
         nd_sim::Placeable::Plant(k) => plant_name(k).to_string(),
+        nd_sim::Placeable::Battery(k) => k.key().to_string(),
         nd_sim::Placeable::Service(k, t) => format!("{}:{}", k.key(), tier_key(t)),
         nd_sim::Placeable::BusDepot => "depot".to_string(),
         nd_sim::Placeable::Rail(f) => rail_name(f).to_string(),

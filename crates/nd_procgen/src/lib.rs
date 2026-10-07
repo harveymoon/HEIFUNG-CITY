@@ -24,7 +24,7 @@ pub mod walk;
 
 pub use buildings::transit::bus_stops;
 pub use toll::{toll_booths, TollDraw};
-pub use buildings::{building_style, style_extras, coal_stacks, generate_building, wind_rotor, wind_turbines, BuildingRules, PlantField, CraneRig, crane_slew, Extras, LandUseRules, Neighbour, Style, StyleBook, Turbine, WINDOW_LIGHT_MARK};
+pub use buildings::{battery_lights, solar_head, solar_trackers, SolarTracker, SOLAR_HUB, SOLAR_MAX_TILT, building_style, style_extras, coal_stacks, generate_building, wind_rotor, wind_turbines, BuildingRules, PlantField, CraneRig, crane_slew, Extras, LandUseRules, Neighbour, Style, StyleBook, Turbine, WINDOW_LIGHT_MARK};
 pub use mesh::MeshData;
 pub use palette::Palette;
 pub use surface::{Geometry, Surface};

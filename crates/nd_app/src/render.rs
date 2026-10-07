@@ -52,6 +52,7 @@ mod survey;
 mod subway;
 /// [society] Camps, RVs and overflowing bins.
 mod society;
+mod solar;
 mod turbines;
 /// [taxis] Cabs in their yards, at ranks and kerbs; yard signs.
 mod taxis;
@@ -385,7 +386,7 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, (holo::sync_draw_hologram, holo::sync_plan_holograms).in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
         app.add_systems(Update, holo::apply_depth.in_set(SimSet::Sync).after(lift_movers));
         app.add_systems(Update, (subway::sync_metro_tunnels, subway::sync_metro_trains).in_set(SimSet::Sync).after(sync_trains).before(holo::apply_depth));
-        app.add_systems(Update, (turbines::sync_turbines, haze::sync_haze, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
+        app.add_systems(Update, (turbines::sync_turbines, solar::sync_solar, haze::sync_haze, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
         // The ground and water out past the map, into the fog.
         app.init_resource::<far::FarRender>().add_systems(Update, far::sync_far.in_set(SimSet::Sync).after(sync_landscape));
@@ -1230,7 +1231,13 @@ fn sync_lots(
             }
             let c = zone_layer_color(lot.land_use);
             let alpha = if lot.building.is_some() { 0.5 } else { 0.72 };
-            wash.ground_polygon(&lot.polygon, 0.35, [c[0], c[1], c[2], alpha]);
+            // A plant or battery field is a flat yard: the wash would flood
+            // it in the zone's colour (a solar farm on a residential lot
+            // read as a green block), so it keeps only the outline.
+            let power = lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.is_power());
+            if !power {
+                wash.ground_polygon(&lot.polygon, 0.35, [c[0], c[1], c[2], alpha]);
+            }
             let mut edge = lot.polygon.clone();
             edge.push(lot.polygon[0]);
             glow.ground_strip(&edge, 0.35, 0.4, scale(c, 1.3));

@@ -1122,7 +1122,7 @@ impl World {
     }
 
     pub(super) fn is_civic_structure(b: &Building) -> bool {
-        b.plant.is_some() || b.depot || b.rail.is_some() || b.port.is_some() || b.service.is_some() || b.metro || b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::CargoHub)
+        b.is_power() || b.depot || b.rail.is_some() || b.port.is_some() || b.service.is_some() || b.metro || b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::CargoHub)
     }
 
     /// The city takes a lot for one of its own structures: whatever grew

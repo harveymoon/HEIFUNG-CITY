@@ -275,6 +275,16 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
     if let Some(kind) = b.plant {
         section(ui, "POWER PLANT");
         ui.label(format!("{:.0} MW nameplate, {:.0}% available now, {:.0}/day upkeep", kind.capacity_mw(), kind.availability(&w.weather, w.clock.day_fraction()) * 100.0, kind.upkeep_per_day()));
+        if b.demolition.is_some() {
+            ui.label(egui::RichText::new("clearing the lot: not on the grid yet").color(egui::Color32::from_rgb(255, 170, 80)));
+        }
+    } else if let Some(bat) = &b.battery {
+        // [power] a grid battery: charge, what it is doing, its limits
+        let k = bat.kind;
+        section(ui, "BATTERY");
+        let doing = if bat.flow_mw > 0.05 { format!("delivering {:.1} MW", bat.flow_mw) } else if bat.flow_mw < -0.05 { format!("charging {:.1} MW", -bat.flow_mw) } else { "holding".to_string() };
+        ui.label(format!("{}: {:.0} of {:.0} MWh ({:.0}%), {doing}; up to {:.0} MW, {:.0}/day upkeep", k.label(), bat.charge_mwh, k.capacity_mwh(), bat.level() * 100.0, k.max_mw(), k.upkeep_per_day()));
+        ui.add(egui::ProgressBar::new(bat.level()).desired_height(10.0).fill(super::detail::BATTERY.gamma_multiply(0.8)));
     }
     if let Some(link) = &b.rail {
         let joined = if link.works() { "" } else if !link.rail_connected { " · NOT CONNECTED TO THE RAILWAY" } else { " · NOT CONNECTED TO THE ROADS" };

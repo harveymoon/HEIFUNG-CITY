@@ -306,6 +306,8 @@ fn role(b: &nd_sim::Building) -> u8 {
         2
     } else if b.plant.is_some() {
         3
+    } else if b.battery.is_some() {
+        5
     } else if b.parking_visual().is_some() {
         4
     } else {
@@ -406,6 +408,8 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
     Extras {
         parking: b.parking_visual().or(taxi_yard.then_some(0.0)),
         plant: b.plant,
+        // [power] grid battery: size, share full and flow
+        battery: b.battery.as_ref().map(|x| (x.kind, x.level(), x.flow_mw)),
         depot: b.depot,
         rail: b.rail.as_ref(),
         port: b.port,

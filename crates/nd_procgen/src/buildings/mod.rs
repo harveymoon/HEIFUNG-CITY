@@ -37,7 +37,7 @@ mod services;
 mod sanitation;
 pub use parts::WINDOW_LIGHT_MARK;
 pub use construction::{crane_paint, crane_slew, CraneRig, CRANE_LIFT_MINUTES, CRANE_SLEW_RANGE};
-pub use power::{coal_stacks, wind_rotor, wind_turbines, PlantField, Turbine, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};
+pub use power::{battery_lights, coal_stacks, solar_head, solar_trackers, wind_rotor, wind_turbines, PlantField, SolarTracker, Turbine, SOLAR_HUB, SOLAR_MAX_TILT, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};
 pub use parking::surface_lot_bays_world;
 
 use crate::palette::Palette;
@@ -199,6 +199,8 @@ pub enum Style {
     // [subway] metro entrances and the Central Station
     MetroEntrance,
     CentralStation,
+    // [power] grid battery packs, placed by the player
+    PowerBattery,
 }
 
 impl Style {
@@ -207,7 +209,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 79] = [
+    pub const ALL: [Style; 80] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -287,6 +289,7 @@ impl Style {
         Style::Vertiport,
         Style::MetroEntrance,
         Style::CentralStation,
+        Style::PowerBattery,
     ];
 
     /// The railway piece a style is drawn beside, if it is one.
@@ -367,6 +370,7 @@ impl Style {
             Style::PowerSolar => "solar farm",
             Style::PowerWind => "wind farm",
             Style::PowerNuclear => "nuclear plant",
+            Style::PowerBattery => "battery pack",
             Style::BusDepot => "bus depot",
             Style::Station => "railway station",
             Style::MetroEntrance => "metro entrance",
@@ -884,6 +888,9 @@ pub struct Ctx<'a> {
     /// every window is drawn as a marked light over its glass (see
     /// `parts::window_light`), and `lit_chance` ignores power.
     pub dynamic_lights: bool,
+    /// A grid battery: its size, share full and flow (MW, positive
+    /// delivering), for the module count and the status lights.
+    pub battery: Option<(nd_sim::BatteryKind, f32, f32)>,
 }
 
 /// Per-building state that changes the look beyond style and condition.
@@ -932,11 +939,14 @@ pub struct Extras<'a> {
     /// [districts] The district architecture the building was put up in:
     /// its own style menu and palette.
     pub look: Option<nd_sim::districts::Look>,
+    /// [power] A grid battery: size, share full and flow (see
+    /// [`Ctx::battery`]).
+    pub battery: Option<(nd_sim::BatteryKind, f32, f32)>,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None }
     }
 }
 
@@ -1050,6 +1060,7 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         _ if extras.port == Some(nd_sim::ports::PortKind::FerryTerminal) => Style::FerryTerminal,
         _ if extras.rail.is_some_and(|r| r.kind == RailFacility::Station) => Style::Station,
         _ if extras.rail.is_some_and(|r| r.kind == RailFacility::FreightYard) => Style::FreightYard,
+        _ if extras.battery.is_some() => Style::PowerBattery,
         (Some(PowerPlantKind::Coal), _) => Style::PowerCoal,
         (Some(PowerPlantKind::Solar), _) => Style::PowerSolar,
         (Some(PowerPlantKind::Wind), _) => Style::PowerWind,
@@ -1204,6 +1215,7 @@ fn generate_styled_extras(
         field: extras.field,
         animated_cranes: extras.animated_cranes,
         dynamic_lights: extras.dynamic_lights,
+        battery: extras.battery,
     };
     if let Some(progress) = extras.demolition {
         let mut g = generate_styled_extras(lot, land_use, floors, tier, condition, seed, style, rules, palette, &Extras { demolition: None, construction: None, ..*extras });
@@ -1259,6 +1271,7 @@ fn generate_styled_extras(
         Style::PowerSolar => power::solar(&mut g, &ctx, &mut rng),
         Style::PowerWind => power::wind(&mut g, &ctx, &mut rng),
         Style::PowerNuclear => power::nuclear(&mut g, &ctx, &mut rng),
+        Style::PowerBattery => power::battery(&mut g, &ctx, &mut rng),
         Style::BusDepot => transit::bus_depot(&mut g, &ctx, &mut rng),
         Style::Station => rail::station(&mut g, &ctx, &mut rng),
         Style::FreightYard => rail::freight_yard(&mut g, &ctx, &mut rng),
@@ -1380,10 +1393,12 @@ mod tests {
         }
     }
 
-    /// Two touching solar parcels drawn as one field: rows run across the
-    /// seam, no panel is drawn twice, and the pair holds at least as many
-    /// panels as the two lone plants did. Two touching wind farms share one
-    /// turbine grid that keeps its spacing across the seam.
+    /// Two touching solar parcels drawn as one field: the tracker grid runs
+    /// across the seam, no tracker is placed twice or too close, and the
+    /// pair holds at least as many as the two lone plants did; the
+    /// generator draws a pedestal under every tracker the renderer turns.
+    /// Two touching wind farms share one turbine grid that keeps its
+    /// spacing across the seam.
     #[test]
     fn touching_plants_are_drawn_as_one_field() {
         use nd_sim::geom::shared_boundary;
@@ -1399,23 +1414,26 @@ mod tests {
         let pair = [a, b];
         let fields: Vec<PlantField> = (0..2).map(|i| PlantField::new(&pair, i, 7).unwrap()).collect();
         assert!(PlantField::new(&pair[..1], 0, 7).is_none(), "a field of one is a lone plant");
-        let panels = |g: &Geometry| -> Vec<Vec3> {
-            let m = g.get(Surface::Glass);
-            m.positions.chunks(4).map(|q| q.iter().fold(Vec3::ZERO, |s, p| s + Vec3::from(*p)) / 4.0).collect()
-        };
         let draw = |lot: &Lot, kind: PowerPlantKind, field: Option<&PlantField>| {
             let extras = Extras { plant: Some(kind), animated_rotors: true, field, ..Extras::default() };
             generate_building(lot, LandUse::Industrial, 1, Tier::Mid, 1.0, 11, &rules, &pal, &extras)
         };
-        let lone: usize = pair.iter().map(|l| panels(&draw(l, PowerPlantKind::Solar, None)).len()).sum();
+        let lone: usize = pair.iter().map(|l| solar_trackers(l, None).len()).sum();
         let merged: Vec<Vec3> = (0..2).flat_map(|i| {
             let g = draw(pair[i], PowerPlantKind::Solar, Some(&fields[i]));
             check_mesh(&g, "solar field");
-            panels(&g)
+            // Pedestals only: the panels are the renderer's.
+            assert!(g.get(Surface::Glow).positions.len() < 400, "animated panels and their rim lights are left out");
+            solar_trackers(pair[i], Some(&fields[i])).into_iter().map(|t| Vec3::new(t.pos.x, 0.0, t.pos.y)).collect::<Vec<_>>()
         }).collect();
-        assert!(merged.len() >= lone, "a field holds {} panels, the two plants alone {lone}", merged.len());
+        assert!(merged.len() >= lone, "a field holds {} trackers, the two plants alone {lone}", merged.len());
         for (i, p) in merged.iter().enumerate() {
-            assert!(merged[i + 1..].iter().all(|q| q.distance(*p) > 1.0), "panel at {p} drawn twice");
+            assert!(merged[i + 1..].iter().all(|q| q.distance(*p) > power::SOLAR_PITCH * 0.95), "trackers at {p} too close or placed twice");
+        }
+        // Every tracker stands on one of the pair and its panel stays on it.
+        for p in &merged {
+            let q = Vec2::new(p.x, p.z);
+            assert!(pair.iter().any(|l| nd_sim::zoning::point_in_polygon(q, &l.polygon)));
         }
         // Some panel row crosses the seam: panels on both sides within a
         // pitch of it, on the same row line.
@@ -1423,7 +1441,7 @@ mod tests {
             let n = a.polygon.len();
             (0..n).map(|k| (a.polygon[k], a.polygon[(k + 1) % n])).find(|(p, q)| fields[0].is_seam(*p, *q)).map(|(p, q)| (p + q) * 0.5).expect("a seam")
         };
-        assert!(merged.iter().filter(|p| Vec2::new(p.x, p.z).distance(seam_mid) < 40.0).count() >= 4, "panels run up to the seam");
+        assert!(merged.iter().filter(|p| Vec2::new(p.x, p.z).distance(seam_mid) < 40.0).count() >= 4, "trackers run up to the seam");
 
         let sites: Vec<Turbine> = (0..2).flat_map(|i| wind_turbines(pair[i], 5, Some(&fields[i]))).collect();
         let lone_sites: usize = pair.iter().map(|l| wind_turbines(l, 5, None).len()).sum();
@@ -2020,6 +2038,7 @@ mod tests {
             field: None,
             animated_cranes: false,
             dynamic_lights: false,
+            battery: None,
         }
     }
 

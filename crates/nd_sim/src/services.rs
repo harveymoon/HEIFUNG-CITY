@@ -461,6 +461,8 @@ pub struct ServiceSite {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Placeable {
     Plant(PowerPlantKind),
+    /// [power] A grid battery pack (`crate::power::BatteryKind`).
+    Battery(crate::power::BatteryKind),
     Service(ServiceKind, Tier),
     BusDepot,
     Rail(RailFacility),
@@ -519,7 +521,7 @@ impl BuildCategory {
     /// tier; the tier is picked separately).
     pub fn items(self) -> Vec<Placeable> {
         match self {
-            BuildCategory::Power => PowerPlantKind::ALL.iter().map(|&k| Placeable::Plant(k)).collect(),
+            BuildCategory::Power => PowerPlantKind::ALL.iter().map(|&k| Placeable::Plant(k)).chain(crate::power::BatteryKind::ALL.iter().map(|&k| Placeable::Battery(k))).collect(),
             BuildCategory::Services => [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch, ServiceKind::Jail, ServiceKind::TrashDepot, ServiceKind::ParkingEnforcement].iter().map(|&k| Placeable::Service(k, Tier::Mid)).collect(),
             BuildCategory::Transit => {
                 let mut v = vec![Placeable::BusDepot, Placeable::MetroStation, Placeable::Service(ServiceKind::Vertiport, Tier::Mid)];
@@ -537,7 +539,7 @@ impl BuildCategory {
 impl Placeable {
     pub fn category(self) -> BuildCategory {
         match self {
-            Placeable::Plant(_) => BuildCategory::Power,
+            Placeable::Plant(_) | Placeable::Battery(_) => BuildCategory::Power,
             Placeable::Service(k, _) if k.is_attraction() => BuildCategory::Attractions,
             Placeable::Service(ServiceKind::Vertiport, _) => BuildCategory::Transit,
             Placeable::Service(..) => BuildCategory::Services,
@@ -566,6 +568,7 @@ impl Placeable {
     pub fn label(self) -> String {
         match self {
             Placeable::Plant(k) => k.label().to_string(),
+            Placeable::Battery(k) => k.label().to_string(),
             Placeable::Service(k, t) => k.tier_label(t).to_string(),
             Placeable::BusDepot => "bus depot".into(),
             Placeable::Rail(f) => f.label().to_lowercase(),
@@ -581,6 +584,9 @@ impl Placeable {
     pub fn menu_label(self) -> &'static str {
         match self {
             Placeable::Plant(k) => k.label(),
+            Placeable::Battery(crate::power::BatteryKind::Small) => "Battery pack, small",
+            Placeable::Battery(crate::power::BatteryKind::Medium) => "Battery pack, medium",
+            Placeable::Battery(crate::power::BatteryKind::Large) => "Battery farm, large",
             Placeable::Service(k, _) => match k {
                 ServiceKind::Police => "Police",
                 ServiceKind::Fire => "Fire",
@@ -610,6 +616,7 @@ impl Placeable {
     pub fn cost(self) -> f32 {
         match self {
             Placeable::Plant(k) => k.build_cost(),
+            Placeable::Battery(k) => k.build_cost(),
             Placeable::Service(k, t) => k.build_cost(t),
             Placeable::BusDepot => crate::transit::DEPOT_COST,
             Placeable::Rail(f) => f.cost(),
@@ -624,6 +631,7 @@ impl Placeable {
     pub fn upkeep(self) -> f32 {
         match self {
             Placeable::Plant(k) => k.upkeep_per_day(),
+            Placeable::Battery(k) => k.upkeep_per_day(),
             Placeable::Service(k, t) => k.upkeep_per_day(t),
             Placeable::BusDepot => crate::transit::DEPOT_UPKEEP_PER_DAY,
             Placeable::Rail(f) => f.upkeep_per_day(),
@@ -638,6 +646,7 @@ impl Placeable {
     pub fn jobs(self) -> u16 {
         match self {
             Placeable::Plant(k) => k.jobs(),
+            Placeable::Battery(k) => k.jobs(),
             Placeable::Service(k, t) => k.jobs(t),
             Placeable::BusDepot => crate::transit::DEPOT_JOBS,
             Placeable::Rail(f) => f.jobs(),
@@ -662,6 +671,7 @@ impl Placeable {
     pub fn min_area(self) -> f32 {
         match self {
             Placeable::Plant(k) => k.min_area(),
+            Placeable::Battery(k) => k.min_area(),
             Placeable::Service(k, t) => k.min_area(t),
             Placeable::BusDepot => crate::transit::DEPOT_MIN_AREA,
             Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_) => 0.0,
@@ -675,6 +685,7 @@ impl Placeable {
     pub fn allowed_on(self, lu: LandUse) -> bool {
         match self {
             Placeable::Plant(k) => k.allowed_on(lu),
+            Placeable::Battery(k) => k.allowed_on(lu),
             Placeable::Service(k, _) => k.allowed_on(lu),
             Placeable::BusDepot => !matches!(lu, LandUse::Residential | LandUse::Park),
             Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_) => true,
@@ -705,6 +716,12 @@ impl Placeable {
             "hydro" => Some(Placeable::Plant(PowerPlantKind::Hydro)),
             "tidal" => Some(Placeable::Plant(PowerPlantKind::Tidal)),
             "geothermal" => Some(Placeable::Plant(PowerPlantKind::Geothermal)),
+            "battery" => Some(Placeable::Battery(match tier {
+                Some(Tier::Low) => crate::power::BatteryKind::Small,
+                Some(Tier::High) => crate::power::BatteryKind::Large,
+                _ => crate::power::BatteryKind::Medium,
+            })),
+            other if crate::power::BatteryKind::from_key(other).is_some() => crate::power::BatteryKind::from_key(other).map(Placeable::Battery),
             "shipping_port" | "port" => Some(Placeable::Dock(PortKind::ShippingPort)),
             "ferry_terminal" | "ferry" => Some(Placeable::Dock(PortKind::FerryTerminal)),
             "depot" | "bus_depot" => Some(Placeable::BusDepot),
@@ -1352,8 +1369,8 @@ mod tests {
                 seen.push(p);
             }
         }
-        // Power is a sub-category with every plant; every service kind is somewhere.
-        assert_eq!(BuildCategory::Power.items().len(), PowerPlantKind::ALL.len());
+        // Power is a sub-category with every plant and every battery size; every service kind is somewhere.
+        assert_eq!(BuildCategory::Power.items().len(), PowerPlantKind::ALL.len() + crate::power::BatteryKind::ALL.len());
         for k in ServiceKind::ALL {
             assert!(seen.iter().any(|p| matches!(p, Placeable::Service(s, _) if *s == k)), "{k:?} is not on the menu");
         }
