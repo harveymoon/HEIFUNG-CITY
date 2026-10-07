@@ -1222,14 +1222,18 @@ impl World {
         // quicker to close up, a short headway, and through an amber when
         // the supercar went.
         for conv in &self.estate.convoys {
-            let Some(boss) = self.traffic.cars.get(conv.boss).map(|b| b.drive.profile) else { continue };
+            let Some((boss, at)) = self.traffic.cars.get(conv.boss).map(|b| (b.drive.profile, b.pos)) else { continue };
             if !boss.assigned {
                 continue;
             }
             for id in conv.escorts.iter().chain(conv.police.iter()) {
                 if let Some(car) = self.traffic.cars.get_mut(*id) {
                     let mut p = boss;
-                    p.speed = boss.speed * 1.06;
+                    // A detail keeps together through the lights, and one
+                    // left behind closes up fast.
+                    let behind = car.pos.distance(at);
+                    p.speed = boss.speed * if behind > 60.0 { 1.3 } else { 1.06 };
+                    p.ignores_signals = true;
                     p.headway = (boss.headway * 0.7).max(0.8);
                     p.accel = boss.accel * 1.1;
                     p.reaction = 0.4;
