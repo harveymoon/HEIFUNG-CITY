@@ -1774,6 +1774,10 @@ impl Ground {
             // Where this way passes over another, the ground under it is the
             // other's.
             let dir = (b - a).normalize_or_zero();
+            // A tunnel portal at either end: the cutting's ground stops a
+            // little way into the hill there (`PORTAL_HOLD`).
+            let portal = |n: crate::roads::NodeId| walled && roads.node(n).segments.iter().any(|&o| roads.segment(o).alive && roads.segment(o).tunnel);
+            let (portal_a, portal_b) = (portal(seg.a), portal(seg.b));
             let cuts: Vec<&Underpass> = underpasses.iter().filter(|u| u.over_dir.dot(dir).abs() > 0.999 && project_on_segment(u.at, a, b).1.distance(u.at) < 0.5).collect();
             let (i0, i1) = range(a.x.min(b.x) - reach, a.x.max(b.x) + reach);
             let (j0, j1) = range(a.y.min(b.y) - reach, a.y.max(b.y) + reach);
@@ -1783,6 +1787,12 @@ impl Ground {
                     let (t, q) = project_on_segment(p, a, b);
                     let d = q.distance(p);
                     if d > reach || cuts.iter().any(|u| u.in_cut(p)) {
+                        continue;
+                    }
+                    // Past a portal only the road's own corridor is held,
+                    // and only `PORTAL_HOLD` in, under the portal's lid.
+                    let past = if portal_b { (p - b).dot(dir) } else { f32::MIN }.max(if portal_a { (a - p).dot(dir) } else { f32::MIN });
+                    if past > 0.0 && (past > PORTAL_HOLD || d > corridor_half_width(seg) + 0.5) {
                         continue;
                     }
                     let k = j * n + i;
@@ -1795,8 +1805,18 @@ impl Ground {
                     }
                     let z = floor_at(p, z);
                     if d <= core {
-                        // Where cores overlap (a junction, a merge) the higher way holds.
-                        if fix[k] == Fix::Free || fix[k] == Fix::Wall || z > set[k] {
+                        // Where cores overlap at about one height (a junction,
+                        // a ramp merging) the lower way holds, so the ground
+                        // stays under both surfaces: the higher one held, and
+                        // a ramp a few centimetres above the carriageway it
+                        // joins raised the ground through the carriageway's
+                        // asphalt (the bare wedge in the gore). Ways well
+                        // apart (an embankment beside a road) keep the higher.
+                        if fix[k] == Fix::Free || fix[k] == Fix::Wall {
+                            set[k] = z;
+                        } else if (z - set[k]).abs() < 1.5 {
+                            set[k] = set[k].min(z);
+                        } else if z > set[k] {
                             set[k] = z;
                         }
                         fix[k] = if walled && fix[k] != Fix::Road { Fix::Wall } else { Fix::Road };
@@ -1997,6 +2017,13 @@ impl Ground {
         self.n == 0
     }
 }
+
+/// How far past a tunnel portal the open cutting's ground is held at the
+/// road's level: two cells, so the height field's slope up into the hill
+/// starts behind the portal's dark mouth (`nd_procgen::terrain`), which
+/// closes the stretch with a lid. Before, the cutting's core held a disc
+/// some 14 m into the hill and the hillside showed through the arch.
+pub const PORTAL_HOLD: f32 = GROUND_CELL * 2.0;
 
 /// The level a lot is graded to: its street's height at the frontage.
 pub fn lot_pad(roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], lot: &Lot, land: &Landscape) -> f32 {

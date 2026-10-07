@@ -573,7 +573,9 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
                 let far = roads.node(if os.a == n { os.b } else { os.a }).pos;
                 let out = (far - p).normalize_or_zero();
                 // The bore has no pavements: the arch spans its walls.
-                portal_arch(g, p, out, z, seg.half_width() + crate::street::TUNNEL_WALL, wall, coping, rgba(mul(steel, 2.2)));
+                let behind = p - out * (PORTAL_HOLD * 0.5);
+                let hill = world.landscape.height(behind).max(if world.landscape.is_flat() { 0.0 } else { BANK_HEIGHT });
+                portal_arch(g, p, out, z, seg.half_width() + crate::street::TUNNEL_WALL, hill, wall, coping, rgba(mul(steel, 2.2)));
             }
             // Vent shafts on the surface along the bore.
             let vents = (len / 150.0).floor() as i32;
@@ -615,10 +617,11 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
 /// `out` (towards the open ramp), with an elliptical arch over the opening,
 /// the arch's soffit run back through the wall's thickness, a coping along
 /// the top and a lit band under the crown. The opening clears the
-/// carriageway and pavements (`hw` either side) and the bore's 5.6 m walls.
+/// carriageway and its shoulders (`hw` either side); the bore's walls stand
+/// behind the dark mouth.
 /// Two posts and a lintel box stood here before and read as a blob.
 #[allow(clippy::too_many_arguments)]
-fn portal_arch(g: &mut Geometry, p: Vec2, out: Vec2, z: f32, hw: f32, wall: [f32; 4], coping: [f32; 4], lamp: [f32; 4]) {
+fn portal_arch(g: &mut Geometry, p: Vec2, out: Vec2, z: f32, hw: f32, hill: f32, wall: [f32; 4], coping: [f32; 4], lamp: [f32; 4]) {
     use glam::Vec3;
     if out == Vec2::ZERO {
         return;
@@ -626,10 +629,12 @@ fn portal_arch(g: &mut Geometry, p: Vec2, out: Vec2, z: f32, hw: f32, wall: [f32
     let side = Vec2::new(-out.y, out.x);
     // Opening: half width, spring line and rise; the wall around it.
     let r = hw + 0.2;
-    let spring = 5.4;
-    let rise = (r * 0.45).clamp(1.2, 2.4);
+    // Low enough that a tunnel drawn at the Tunnel preset's 8 m keeps its
+    // headwall and lid at about the hill's surface.
+    let spring = 4.4;
+    let rise = (r * 0.3).clamp(1.0, 1.6);
     let wall_half = r + 1.6;
-    let wall_top = spring + rise + 1.1;
+    let wall_top = spring + rise + 0.9;
     let foot = -0.4;
     let thick = 0.9;
     // A point of the headwall at `x` across (right of `out` positive) and
@@ -691,7 +696,27 @@ fn portal_arch(g: &mut Geometry, p: Vec2, out: Vec2, z: f32, hw: f32, wall: [f32
     // A lit band under the crown, just inside the mouth.
     let lit = p - out * (thick * 0.5 + 0.3);
     g.part(Surface::Glow).boxed(Vec3::new(lit.x, z + spring + rise - 0.35, lit.y), Vec3::new(0.08, 0.2, r * 1.2), -yaw, lamp);
+    // The dark of the bore, across the opening just behind the wall: the
+    // built ground is a height field and cannot overhang, so through the
+    // arch one saw the hillside the tunnel runs into. The ground is held
+    // at the road's level for a few metres in (`Ground::build`), out of
+    // sight behind this, and a lid over that stretch, at the wall's top,
+    // closes it from above.
+    let back = -thick * 0.5 - 0.05;
+    let dark = crate::buildings::parts::rgba(crate::buildings::parts::DARK);
+    g.part(Surface::Matte).quad_facing([at(-r - 0.1, foot, back), at(r + 0.1, foot, back), at(r + 0.1, spring + rise + 0.1, back), at(-r - 0.1, spring + rise + 0.1, back)], o3, dark);
+    // The lid lies at the hill's surface (`hill`, the natural ground over
+    // the bore), never lower than the arch nor higher than the wall, and
+    // reaches a cell past the held ground, over the slope up to the hill.
+    let reach = PORTAL_HOLD + nd_sim::landscape::GROUND_CELL;
+    let lid = p - out * (thick * 0.5 + reach * 0.5);
+    let top = (hill - z).clamp(spring + rise + 0.4, wall_top);
+    g.part(Surface::Concrete).boxed(Vec3::new(lid.x, z + top - 0.3, lid.y), Vec3::new(reach, 0.6, wall_half * 2.0 + 2.0), -yaw, coping);
 }
+
+/// How far into the hill behind a tunnel portal the built ground is held at
+/// the road's level (`nd_sim::landscape::PORTAL_HOLD`), lidded by the portal.
+const PORTAL_HOLD: f32 = nd_sim::landscape::PORTAL_HOLD;
 
 /// One span of viaduct deck from `a` at height `za` to `b` at `zb`,
 /// `hw` either side of the centreline, standing on `ground`. Shared with

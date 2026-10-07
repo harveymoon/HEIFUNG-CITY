@@ -82,8 +82,9 @@
 [x] - ramps: smooth highway joins, painted direction arrows, piers when raised   → DONE (barrier fix at the taper not yet seen in game).
 [x] - terrain cliffs and spikes beside roads; highway carriageways at different heights   → DONE.
 [x] - emergency response: night desk, far-highway crashes, pile-ups, sirens clearing walkers, rear-end chains behind cars yielding to sirens   → DONE.
-[ ] - lane markings read dark grey in daylight; gore hatching hard to see; tunnel ramp crossing rail at a slope   → FOUND, not started.
-[ ] - long player streets have no intermediate height samples (would change parcel keys)   → FOUND, not started.
+[x] - lane markings read dark grey in daylight; gore hatching hard to see; tunnel ramp crossing rail at a slope   → DONE: markings checked white in daylight (Paint brightens by day); the gore is paved under its hatching (it lay on bare ground) with 0.6 m bright chevrons and solid outlines; a road meeting the railway off grade (a portal ramp part way down) is refused with what would work.
+[x] - long player streets have no intermediate height samples (would change parcel keys)   → DONE without new nodes: per-segment inner height samples every ~30 m (`World::road_inner`), used by cars, lots, the built ground and the street mesh; parcel keys unchanged.
+[x] - tunnels: entrances look like blobs; no walking, parking, RVs on them; cars parked on the ground above a tunnel; guardrails deleted over a tunnel   → DONE: concrete arch portals with a dark mouth; tunnels front nothing (no pavements, walk graph, kerb parking legal or not, RVs); barriers ignore ways at another height.
 [ ] - several people sitting on one park bench overlap; bikes ignore pedestrian rules at junctions   → FOUND, not started.
 
 [x] - zoning outlines hard to see: a bright zoning layer   → DONE: every zoned lot washed in a bright zone colour with a crisp edge (Zoning layer [O]).

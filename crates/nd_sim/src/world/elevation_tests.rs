@@ -516,3 +516,38 @@ fn long_streets_follow_the_land_between_their_ends() {
         assert!((w.lot_pad(id) - w.road_height(sid, l.front_t)).abs() < 1e-3);
     }
 }
+
+/// Where a ramp's corridor overlaps the carriageway it joins, the built
+/// ground stays under the carriageway's surface: the higher way used to
+/// hold the shared cells, and a ramp a few centimetres above the lanes
+/// raised the ground through their asphalt (a bare wedge in the gore).
+#[test]
+fn the_ground_stays_under_the_lanes_where_ramps_join() {
+    let mut w = World::new(WorldConfig::default());
+    w.add_road(&[Vec2::new(0.0, 100.0), Vec2::new(0.0, crate::landscape::HIGHWAY_Y - 200.0)], 1, 1);
+    w.link_to_highway(Vec2::new(0.0, crate::landscape::HIGHWAY_Y - 200.0));
+    let mut worst = (0.0f32, Vec2::ZERO);
+    for (sid, s) in w.roads.alive_segments().filter(|(_, s)| s.is_highway() && !s.bridge) {
+        let (a, b) = w.roads.segment_points(sid);
+        if a.x.abs().max(b.x.abs()) > 400.0 {
+            continue;
+        }
+        let d = (b - a).normalize_or_zero();
+        let side = Vec2::new(-d.y, d.x);
+        let half = s.lanes() as f32 * crate::roads::LANE_WIDTH * 0.5 - 0.3;
+        for i in 0..=40 {
+            let t = i as f32 / 40.0;
+            for k in [-1.0f32, -0.5, 0.0, 0.5, 1.0] {
+                let p = a.lerp(b, t) + side * half * k;
+                if w.ground.underpasses.iter().any(|u| u.at.distance(p) < 40.0) {
+                    continue;
+                }
+                let over = w.ground_height(p) - w.road_height(sid, t);
+                if over > worst.0 {
+                    worst = (over, p);
+                }
+            }
+        }
+    }
+    assert!(worst.0 < 0.05, "the ground stands {:.2} m over the lanes at {:?}", worst.0, worst.1);
+}

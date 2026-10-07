@@ -291,6 +291,14 @@ fn ramp_gore(g: &mut Geometry, roads: &RoadNetwork, node: NodeId, ramp: SegmentI
         g.part(Paint).ground_strip(&fill, 0.3, MARK_Y + 0.002, paint);
         g.part(Paint).ground_strip(&back, 0.3, MARK_Y + 0.002, paint);
     }
+    // The gore itself is paved to the end of the hatching: the chevrons
+    // used to lie on bare ground (the terrain showed between the ramp and
+    // the carriageway), which is most of why they could not be read.
+    if side_h.len() >= 2 {
+        let mut poly = side_h.clone();
+        poly.extend(side_r.iter().rev());
+        g.part(Asphalt).ground_polygon(&poly, ASPHALT_Y + 0.004, asphalt);
+    }
     for side in [&side_h, &side_r] {
         if side.len() >= 2 {
             g.part(Paint).ground_strip(side, 0.3, MARK_Y + 0.002, paint);

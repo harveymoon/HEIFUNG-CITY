@@ -773,7 +773,9 @@ Citizens are rendered from their simulated positions every frame.
   every waterline so a bridge is exactly the span; bridge segments are flagged, their ends set at deck
   height (water + 7 m) and every node raised until no segment is steeper than its grade (street 7%,
   rail 3%, path 10%); new bridge metres are charged on implement. `Ground` is a 4 m raster of the built
-  ground: terrain blended into each road's profile within 22 m and flattened to a pad under every lot
+  ground: terrain blended into each road's profile within 22 m (where two roads' cores overlap at
+  about one height, the lower holds, so the ground stays under both surfaces) and flattened to a pad
+  under every lot
   (the street's height at the frontage). A long street or path leg at grade gets inner height
   samples every ~30 m (`World::road_inner`, `(t, z)` per segment, read through
   `landscape::way_height` by cars, lot pads, the built ground and the street mesh), each the land's
@@ -815,7 +817,8 @@ Citizens are rendered from their simulated positions every frame.
   (`Segment::fronts_nothing`): no frontage, pavements, walk graph, crossings or kerb parking
   (legal or not), no RVs or camps; its bore is a carriageway with a safety kerb and walls. Tunnels
   show on the surface as a concrete arch portal where they come out (a headwall with an elliptical
-  arch over the opening, soffit, coping and a lit band, `terrain::portal_arch`) and a vent head
+  arch over the opening, soffit, coping, a lit band and a dark mouth; the cutting's ground is held
+  at road level only `PORTAL_HOLD` (8 m) into the hill, under a lid, `terrain::portal_arch`) and a vent head
   every 150 m. A road that would meet the railway at a level that is neither at grade (within
   1 m) nor separated (a portal ramp part way down) is refused by the Road tool and the API with
   what would work (`World::road_refusal`): the level-crossing node used to take the road's level
