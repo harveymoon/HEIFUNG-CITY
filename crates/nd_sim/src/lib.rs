@@ -24,6 +24,8 @@ pub mod events;
 pub mod geom;
 pub mod history;
 pub mod homeless;
+/// [identity] The city's name and game id.
+pub mod identity;
 pub mod ground;
 pub mod industry;
 pub mod land_value;
@@ -74,6 +76,7 @@ pub use land_value::LandValue;
 pub use market::{Business, BusinessKind, Hours, MarketStats, Resource};
 pub use citizens::{Activity, Citizen, CitizenId, Household, HouseholdId, LifeStage, Memory, Purpose};
 pub use clock::SimClock;
+pub use identity::CityIdentity;
 pub use economy::Economy;
 pub use events::SimEvent;
 pub use mind::{Decision, Intent, MindContext, MindProvider};

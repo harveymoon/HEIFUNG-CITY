@@ -18,6 +18,8 @@ mod emergencies;
 /// [land] Ownership, sale price and merged plots in the inspector.
 mod estate;
 mod help;
+/// [identity] The Game history window: autosaves, bookmarks, revert.
+pub mod history;
 mod hover;
 mod inspector;
 pub mod newgame;
@@ -185,6 +187,7 @@ pub(crate) fn side_panel(
     build::window(ctx, &mut p, content);
     inspector::window(ctx, &mut p, content);
     newgame::window(ctx, &mut p, content);
+    history::window(ctx, &mut p, content);
     title::screen(ctx, &mut p);
     let fly_to = p.fly_to;
 

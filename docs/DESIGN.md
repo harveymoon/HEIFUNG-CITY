@@ -1107,8 +1107,16 @@ Citizens are rendered from their simulated positions every frame.
   viaduct stays under it. Elevated roads pass roundabouts by.
 - **Depth view** (Underground / Ground / Sky, U cycles, top bar): Underground hides the terrain,
   water, buildings, lots, surface roads and walkers, draws surface roads as faint outlines and
-  shows the tunnels (drawn as their own street layer, `StreetLayer::Underground`, with bore walls
-  and a lit strip; each layer draws only its own roads' crossings, beacons and signal posts) and
+  shows the tunnels (drawn as their own street layer, `StreetLayer::Underground`; each layer draws
+  only its own roads' crossings, beacons and signal posts). A road tunnel is a tube
+  (`street::bore_shell`): a horseshoe of concrete lining (straight walls to a 2.6 m spring line,
+  then a half ellipse whose rise grows with the width, up to 4.6 m), darker lining bands every
+  14 m, an invert under the carriageway and a lamp line high on each wall. Every face of it looks
+  into the tube and the materials cull back faces, so the half nearer the camera is never drawn:
+  from above the vault is cut away, from the side the near wall, from any angle, and the cars
+  inside show against the far wall. It is built with the rest of the street meshes when the
+  roads change (no per-frame work) and wears the shared Concrete material, so heat vision and the
+  focus views swap it like everything else (`render/swap.rs`). Its traffic shows too:
   the cars in them: a car is in the tunnel layer by the lane it is on (`World::car_in_tunnel`),
   hidden above ground and shown below, not by its height (near a portal, where the cutting is
   graded down to the road, cars and wrecks used to show above ground and vanish below). The Tunnel preset switches to it, other presets back to
@@ -1574,12 +1582,28 @@ trait MindProvider {
   (once Land) also has lighting, land value and the dim-projects and bus-line switches.
 - **Saves and the title screen** (`ui/saves.rs`, `ui/title.rs`): Saves, Save as writes
   `saves/<name>.ron` (the name made file-safe), a sidecar `<name>.meta.json` (name as typed, day,
-  population, treasury, buildings, landscape) and a top-down picture `<name>.png`; quick saves
-  and autosaves get a sidecar and picture too. At startup a title screen lists the saved games
-  newest first as cards with their picture, name, day and population: Continue loads the newest,
-  New game opens the landscape picker, Play this map starts on the landscape already loaded. The
-  city behind is paused while it is up; `ND_TITLE=0` skips it, and the API's `load`, `new_game`
-  and `seed_demo` close it.
+  population, treasury, buildings, landscape, city name, game id) and a top-down picture
+  `<name>.png`; quick saves and autosaves get a sidecar and picture too. At startup a title
+  screen lists the saved games newest first as cards with their picture, name, day and
+  population, one row per city name: Continue loads the newest, New game opens the landscape
+  picker, Play this map starts on the landscape already loaded under the name typed beside it.
+  The city behind is paused while it is up; `ND_TITLE=0` skips it, and the API's `load`,
+  `new_game` and `seed_demo` close it.
+- **City identity** (`nd_sim::identity`, `World::identity`): the city's name and a game id, saved
+  with the world. A new game gets an id at once (`saves::new_game_id`: the time and 64 bits from a
+  randomly keyed hasher, so the sim stays deterministic); the New game window and the title
+  screen ask for the name (a suggestion from `names::city_name` is offered), and the City and
+  Saves windows rename it. A save from before identities gets an id when it is next saved; a
+  named one takes the name it was saved under as the city's (`saves::legacy_city_name`), quick
+  saves and the autosave load as "Unnamed city". The Saves window and the title screen group saves by city name.
+- **Game history** (`ui/history.rs`): every daily autosave is also written to
+  `saves/history/<game id>/<unix ms>-day<N>.ron` (serialised once on the worker thread, written
+  there and to `saves/autosave.ron`), with its sidecar and picture. The Game history window
+  (Saves, Game history) lists the running game's entries newest first with their pictures; the
+  player can name a moment (a bookmark, kept in the entry's sidecar), "Mark this moment" (save
+  now, named), and Revert to an entry after a confirmation, which loads it like Load. Entries
+  after the one reverted to stay, so a revert can be undone. The newest 24 unmarked entries of a
+  game are kept; marked ones are never pruned.
 
 ## Info windows: compact and expanded
 
