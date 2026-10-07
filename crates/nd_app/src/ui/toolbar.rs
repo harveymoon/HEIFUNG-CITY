@@ -224,9 +224,15 @@ fn project(ui: &mut egui::Ui, p: &mut UiCtx) {
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
             if ui.add(egui::Button::new(egui::RichText::new("Implement").strong()).min_size(egui::vec2(78.0, 0.0))).on_hover_text("Ctrl+Enter").clicked() {
+                let roads = sim.world.preview().planned_roads.len();
                 let warnings = sim.world.implement_project(i.id).unwrap_or_default();
                 tools.points.clear();
-                tools.status = if warnings.is_empty() { format!("{} implemented.", i.name) } else { format!("{} implemented. {}", i.name, warnings.join(" ")) };
+                // [tools] A refusal is not a warning: nothing was built.
+                tools.status = match sim.world.implement_refused.clone() {
+                    Some(why) => crate::tools::refused_text(&i.name, roads, &why),
+                    None if warnings.is_empty() => format!("{} implemented.", i.name),
+                    None => format!("{} implemented. {}", i.name, warnings.join(" ")),
+                };
             }
             if ui.add(egui::Button::new("Discard").min_size(egui::vec2(60.0, 0.0))).on_hover_text("Throw the active project away").clicked() {
                 sim.world.discard_project();
@@ -234,6 +240,21 @@ fn project(ui: &mut egui::Ui, p: &mut UiCtx) {
                 tools.status = format!("{} discarded.", i.name);
             }
         });
+        // [tools] What implementing would refuse on, before it is tried
+        // (the plan view marks the spot red with a pin).
+        if let Some(check) = tools.plan_check.as_ref() {
+            if let Some(why) = &check.pillar_refusal {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(format!("Will be refused: {}", why.trim_start_matches("Not implemented: "))).small().color(WARN));
+                    if let Some(g) = check.pillar_gaps.first() {
+                        if ui.small_button("show").on_hover_text("Fly to the red pin").clicked() {
+                            let s = crate::render::gap_spot(g);
+                            p.fly_to = Some(bevy::math::Vec2::new(s.x, s.y));
+                        }
+                    }
+                });
+            }
+        }
         ui.horizontal(|ui| {
             if ui.add(egui::Button::new("Undo").min_size(egui::vec2(78.0, 0.0))).on_hover_text("Ctrl+Z").clicked() {
                 sim.world.undo();
