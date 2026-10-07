@@ -125,7 +125,7 @@ use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
 pub use crate::rail::TRUNK_Y;
-pub use driving::{CrashRecord, Driving, Tow, Wreck};
+pub use driving::{CrashRecord, Driving, Tow, Wreck, RIGHTING_MIN};
 pub use industry::{is_return_trip, return_cargo, IndustryArea};
 use crate::landscape::{Ground, Landscape, LandscapeParams};
 use crate::ports::Ports;

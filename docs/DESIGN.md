@@ -161,7 +161,22 @@ Citizens are rendered from their simulated positions every frame.
   ones stop both cars a minute or three; bad ones (closing speed) write cars off and may hurt
   people: a witness calls 911, a `Crash` incident brings the police (who may arrest a drunk or
   red-light driver) and each injured person gets an on-road `Medical` incident and an ambulance;
-  once the scene clears a tow truck hauls the wreck to the nearest industrial yard. Street
+  a crashed car is pushed onto the shoulder of a kerb lane and the traffic behind eases past it at
+  a crawl where its body fits beside it (`traffic/hazard.rs`; no room, as for a crash in an inner
+  lane or a junction, and it changes lanes or waits and re-routes). Once the police are on scene
+  (or have gone, or 45 minutes after a crash nobody reported) the nearest tow company with a truck
+  free sends a recovery truck (with none in town, one from out of town comes in from the map edge,
+  by any road end that reaches the wreck). It drives there with amber beacons (no siren: nobody
+  pulls over), and within 250 m (or 1 km to go along its route) takes the siren's off-law moves
+  round the queue (the opposing lane when clear, the kerb past standing traffic; never a red
+  light), stops just behind the wreck (on the lane before when there is no room on its own) and
+  hauls it to the yard or off the map. A bad crash can roll a car onto its side or roof (drawn
+  so); the crew rights it (`RIGHTING_MIN`) before hooking it. A crash whose call stays open two
+  hours has its tow called anyway. The inspector shows a wreck's wait ("Waiting for a tow"), then
+  "Truck inbound" with a locate button, and draws the truck's road to it while it is selected. A truck not there within an hour is called off and the
+  wreck hooked where it lies (a truck from the far side); only a wreck no road leads away from is
+  craned off after a day. (The out-of-town tow used to aim only for the nearest road end, often
+  behind the wreck with no way to turn, so wrecks stood for a day.) Street
   takeovers: on ~30 % of nights (with a crew) at 22:00 a meet is planned; rebellious young locals
   drive over, outsiders roll in off the highway as a pack ignoring lights, the junction is closed,
   cars ring it and the flashiest spin donuts in tyre smoke, a crowd walks over, a neighbour calls
@@ -985,7 +1000,9 @@ Citizens are rendered from their simulated positions every frame.
   water, buildings, lots, surface roads and walkers, draws surface roads as faint outlines and
   shows the tunnels (drawn as their own street layer, `StreetLayer::Underground`, with bore walls
   and a lit strip; each layer draws only its own roads' crossings, beacons and signal posts) and
-  the cars in them. The Tunnel preset switches to it, other presets back to
+  the cars in them: a car is in the tunnel layer by the lane it is on (`World::car_in_tunnel`),
+  hidden above ground and shown below, not by its height (near a portal, where the cutting is
+  graded down to the road, cars and wrecks used to show above ground and vanish below). The Tunnel preset switches to it, other presets back to
   Ground. Sky is a placeholder. The metro (see Subway) shows here: its bores, platforms, shafts and
   trains carry the tunnel tag.
 - **Highway and the map edge**: two carriageways cross the map at
@@ -1173,6 +1190,30 @@ trait MindProvider {
 - Performance: the sim gets a real-time budget per frame (12 ms) and drops its
   backlog instead of stalling the renderer; shadows use three cascades out to 650 m;
   the HUD shows fps, meshes and triangles.
+- Look ("grounded neon", `render/look.rs`): realistic light under the neon. Surfaces carry a
+  metallic-roughness map beside their colour and normal maps (`textures::roughness_map`: grime
+  and cracks rougher, clean spots glossier, rust less metallic); expensive car paint has a
+  clear coat. The dome's colours are painted, prefiltered on the CPU, into two small cubemaps
+  (reflection levels and diffuse) for an environment light, repainted at most twice a second,
+  so glass, paint and wet-looking asphalt reflect the sky and the city's glow and shadowed
+  sides take the sky's colour; the flat ambient is cut to what that leaves. Screen-space
+  ambient occlusion uses Bevy's shader with a radius that grows with view depth
+  (`ssao_city.wgsl`, 0.73 to 5 m) so buildings darken the street at their feet from the
+  orbit camera. TAA stops lamp posts and lane markings shimmering (window lights are in the
+  depth prepass with the same discard, so dark windows leave no depth). Volumetric fog fills
+  a 140 m slab of haze round the camera, lit by the sun or moon (light shafts) and by the
+  horizon's colour, so it fades into the distance fog and the dome. Bevy's `Atmosphere` was
+  not used: it needs physical sun units and a black night sky, and the dome's light-pollution
+  band is the night's identity.
+- Graphics tiers: Low (MSAA 4x, 1024 shadows), Medium (TAA, light SSAO, 2048 shadows), High
+  (TAA, full SSAO, volumetric haze, 4096 shadows). The setting (View window, `graphics` API,
+  `ND_QUALITY`) is Auto or a tier. Auto starts at High and steps down when the smoothed frame
+  time stays over 18.8 ms for 2 s, up when it stays under 17.2 ms for 8 s; a step up taken
+  back doubles the next wait (up to 4 min), changes are followed by 3 s of settling while
+  pipelines compile, and it holds when the sim, not the renderer, fills the frame. One system
+  derives the camera's components from the tier and the view (heat vision adds motion blur,
+  drops the haze) and touches the camera only when that set changes, so nothing has to be
+  put back. The Dev window shows the tier, the frame time and the effects.
 - Citizens: small figures that walk the pavements, or ride a bike mesh when cycling; positions
   are interpolated between ticks from the previous pose so nothing jumps. Cars and trucks have wheels.
 - Vehicles (`nd_procgen::vehicles`): one parametric generator draws every road vehicle from a
@@ -1294,7 +1335,9 @@ trait MindProvider {
 - Window lights follow occupancy (`render/lights.rs`, `nd_procgen::lights`). In the app every
   window light is generated (`Extras::dynamic_lights`, about 92% of windows) through
   `parts::window_light`, which ranks it by a hash of its position and lays dark glass just
-  behind it. When chunks are built, the rank and the building's slot go into the glow
+  behind it (`LIGHT_GLASS_BEHIND`, 13 mm: off the whole-centimetre grid the decals stand on, so
+  it never shares a plane with a window frame; at 2 cm it lay in the frame's plane and the
+  windows z-fought with the lights off; `buildings/coplanar_tests.rs` checks every style). When chunks are built, the rank and the building's slot go into the glow
   vertices' UVs, and chunk glow is drawn with a material extension that reads the building's
   lit share from a 256 by 256 one-byte texture and discards windows ranked above it. Four
   times a sim hour the app counts who is in every building (awake or asleep at home, staff)
@@ -1387,6 +1430,9 @@ trait MindProvider {
   parked cars lukewarm); a `FullscreenMaterial` pass after motion blur and before bloom maps
   brightness through a teal-magenta-white thermal palette with scanlines, noise, a vignette
   and a reticle, and Bevy's `MotionBlur` smears what moves. Off puts every original back.
+  The material swap is shared with the focus views (`render/swap.rs`): one original per
+  entity whatever the view, stand-ins always derived from it, so heat vision toggled with
+  the Traffic or Crime layer on can no longer leave heat's materials behind.
 - Plant fields: touching solar or wind plants (`World::plant_cluster`, parcels sharing 4 m+
   of boundary) are drawn as one installation (`nd_procgen::PlantField`): each parcel lays its
   panel rows or turbine grid out in the anchor parcel's frame against the whole field's

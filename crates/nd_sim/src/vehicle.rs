@@ -515,6 +515,9 @@ pub enum Errand {
     Patrol(crate::buildings::BuildingId),
     /// [parking] A tow truck on job `n` (`crate::enforcement::TowJob`).
     Tow(u32),
+    /// [services] A tow truck on its way to the wreck `CarId` (a crash
+    /// written off in the road, `World::step_wrecks`), ambers flashing.
+    Recover(crate::traffic::CarId),
     /// [taxis] A cab of a taxi company (`crate::taxi`): what it does on
     /// arriving is in its record's job.
     Taxi(crate::taxi::CabId),

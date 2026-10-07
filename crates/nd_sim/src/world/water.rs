@@ -545,6 +545,30 @@ impl World {
         self.car_height_at(car, car.pos)
     }
 
+    /// [render] Is the vehicle in a tunnel: on a tunnel's lane, or in a
+    /// junction between tunnels? The depth view draws it with the
+    /// Underground layer and hides it above ground, whatever its height: a
+    /// wreck near a portal, where the cutting is graded down to the road,
+    /// used to show above ground and vanish in the Underground view (which
+    /// went by height alone).
+    pub fn car_in_tunnel(&self, car: &crate::traffic::Car) -> bool {
+        let lanes = &self.traffic.net.lanes;
+        let tunnel = |lane: crate::traffic::LaneId| match lanes.get(lane as usize).map(|l| &l.kind) {
+            Some(crate::traffic::LaneKind::Road { segment, .. }) => Some(self.roads.try_segment(*segment).is_some_and(|s| s.tunnel)),
+            _ => None,
+        };
+        let Some(&here) = car.route.get(car.idx) else { return false };
+        match tunnel(here) {
+            Some(t) => t,
+            // A connector: in the tunnel when the ways on both sides are.
+            None => {
+                let before = car.idx.checked_sub(1).and_then(|k| car.route.get(k)).copied().and_then(tunnel);
+                let after = car.route.get(car.idx + 1).copied().and_then(tunnel);
+                before.unwrap_or(false) && after.unwrap_or(before.unwrap_or(false))
+            }
+        }
+    }
+
     /// The height of the road under a car drawn at `p` somewhere along the
     /// last tick: the road of whichever lane it was on there (the lanes it
     /// passed this tick, and the one ahead), the nearest that `p` lies on.

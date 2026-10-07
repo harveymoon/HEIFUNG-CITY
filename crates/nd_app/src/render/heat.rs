@@ -10,16 +10,19 @@
 //!   the streets stay readable), while cars, people, trains, drones,
 //!   emergency units and fires emit a flat grey at their "temperature",
 //!   lights and engines hottest. The stand-ins are derived once per
-//!   original material and class and cached; the original handle is kept
-//!   on the entity ([`HeatOriginal`]) and put back when the mode goes off.
-//!   Systems that set a material while the mode is on (a citizen going
-//!   indoors, a signal changing) are caught by change detection and
+//!   original material and class and cached; the swapping itself is
+//!   shared with the focus views (`render/swap.rs`), which keeps the
+//!   original handle on the entity and puts it back when the mode goes
+//!   off. Systems that set a material while the mode is on (a citizen
+//!   going indoors, a signal changing) are caught by change detection and
 //!   swapped again.
 //! - **How it looks.** A fullscreen pass ([`HeatPost`], before bloom, after
 //!   motion blur) maps the frame's brightness, which is now temperature,
 //!   through a cold-teal to magenta to white-hot palette and adds faint
 //!   scanlines, sensor noise, a vignette and a targeting reticle. Bevy's
-//!   per-object [`MotionBlur`] smears whatever moves. The sun's shadows
+//!   per-object motion blur smears whatever moves (put on the camera by
+//!   `look::apply_camera_effects`, which derives the camera's effects
+//!   from the quality tier and this mode every frame). The sun's shadows
 //!   are switched off meanwhile (nothing lit by it shows), and the sky and
 //!   fog go black.
 
@@ -30,14 +33,12 @@ use bevy::ecs::schedule::ScheduleConfigs;
 use bevy::ecs::system::BoxedSystem;
 use bevy::pbr::DistanceFog;
 use bevy::post_process::bloom::Bloom;
-use bevy::post_process::motion_blur::MotionBlur;
 use bevy::prelude::*;
 use bevy::render::extract_component::ExtractComponent;
 use bevy::render::render_resource::ShaderType;
 use bevy::shader::{Shader, ShaderRef};
-use std::collections::{HashMap, HashSet};
 
-use super::{lights::WindowMaterial, BotTag, CarTag, CitizenTag, Lighting, ParkedTag, RenderState, ShipTag, SunTag, TrainTag};
+use super::{Lighting, RenderState, SunTag};
 use crate::ui::UiFlags;
 
 const HEAT_SHADER: Handle<Shader> = uuid_handle!("2c7d4e1a-8b3f-4f6a-9d25-7e1c0b8a4f93");
@@ -48,7 +49,7 @@ const COOL_LIT: f32 = 0.035;
 const COOL_GLOW: f32 = 0.02;
 const COOL_CLEAR: f32 = 0.02;
 /// Window lights: a building's lit rooms leak a little warmth.
-const COOL_WINDOW: f32 = 0.05;
+pub(super) const COOL_WINDOW: f32 = 0.05;
 
 /// Bloom while the camera sees heat: hot bodies bleed a little into the
 /// cold around them, as on a real sensor.
@@ -155,31 +156,10 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 
 /// What the stand-in for a material is derived as.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum HeatClass {
+pub(super) enum HeatClass {
     Cool,
     /// Emitting at this temperature (in thousandths, for hashing).
     Hot(u32),
-}
-
-/// The material an entity had before heat vision, to put back after.
-#[derive(Component)]
-pub(super) struct HeatOriginal(pub(super) Handle<StandardMaterial>);
-
-#[derive(Component)]
-pub(super) struct HeatOriginalWindow(Handle<WindowMaterial>);
-
-#[derive(Resource, Default)]
-pub(super) struct HeatState {
-    /// Whether the world is drawn in heat now.
-    active: bool,
-    /// Stand-ins by original material and class.
-    derived: HashMap<(AssetId<StandardMaterial>, HeatClass), Handle<StandardMaterial>>,
-    /// Every stand-in, to tell them from originals.
-    stand_ins: HashSet<AssetId<StandardMaterial>>,
-    windows: HashMap<AssetId<WindowMaterial>, Handle<WindowMaterial>>,
-    window_stand_ins: HashSet<AssetId<WindowMaterial>>,
-    /// The camera's bloom before the mode came on.
-    bloom: Option<f32>,
 }
 
 pub(super) struct HeatPlugin;
@@ -187,10 +167,9 @@ pub(super) struct HeatPlugin;
 impl Plugin for HeatPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FullscreenMaterialPlugin::<HeatPost>::default())
-            .init_resource::<HeatState>()
             .add_systems(Startup, add_shader)
             .add_systems(Update, toggle_key)
-            .add_systems(PostUpdate, (apply_heat, swap_materials).chain());
+            .add_systems(PostUpdate, apply_heat);
     }
 }
 
@@ -204,18 +183,20 @@ fn toggle_key(keys: Res<ButtonInput<KeyCode>>, flags: Res<UiFlags>, mut lighting
     }
 }
 
-/// Camera, sky and sun for the mode: the post pass and motion blur on the
-/// camera, black sky and fog, no sun shadows; all put back when it ends
-/// (the daylight is recomputed from scratch).
-#[allow(clippy::too_many_arguments)]
+/// Camera, sky and sun for the mode: the post pass on the camera, black
+/// sky and fog, hot bloom, no sun shadows. Everything else the mode needs
+/// on the camera (motion blur, no volumetric fog) is derived from
+/// [`Lighting::heat`] by `look::apply_camera_effects`, so nothing is stored
+/// here to be put back: when the mode ends the post pass comes off and the
+/// daylight pass rewrites the sky, fog, bloom and sun from scratch.
 pub(super) fn apply_heat(
     mut commands: Commands,
     lighting: Res<Lighting>,
     time: Res<Time>,
-    mut state: ResMut<HeatState>,
+    mut was_on: Local<bool>,
     mut render: ResMut<RenderState>,
     mut clear: ResMut<ClearColor>,
-    mut cams: Query<(Entity, &mut Bloom, &mut DistanceFog, Option<&mut HeatPost>), With<Camera3d>>,
+    mut cams: Query<(Entity, &mut Bloom, &mut DistanceFog, Option<&mut HeatPost>), With<crate::camera::OrbitCamera>>,
     mut sun: Query<&mut DirectionalLight, With<SunTag>>,
 ) {
     let on = lighting.heat;
@@ -223,40 +204,39 @@ pub(super) fn apply_heat(
         clear.0 = Color::BLACK;
         for (e, mut bloom, mut fog, post) in &mut cams {
             fog.color = Color::BLACK;
+            bloom.intensity = HEAT_BLOOM;
             match post {
                 Some(mut p) => p.time = time.elapsed_secs_wrapped(),
                 None => {
-                    state.bloom.get_or_insert(bloom.intensity);
-                    bloom.intensity = HEAT_BLOOM;
-                    commands.entity(e).insert((HeatPost { time: time.elapsed_secs_wrapped(), grain: 1.0, _pad: Vec2::ZERO }, MotionBlur { shutter_angle: 1.25, samples: 3 }));
+                    commands.entity(e).insert(HeatPost { time: time.elapsed_secs_wrapped(), grain: 1.0, _pad: Vec2::ZERO });
                 }
             }
         }
         for mut s in &mut sun {
             s.shadow_maps_enabled = false;
         }
-    } else if state.active {
-        for (e, mut bloom, _, post) in &mut cams {
+    } else {
+        for (e, _, _, post) in &mut cams {
             if post.is_some() {
-                commands.entity(e).remove::<(HeatPost, MotionBlur, bevy::core_pipeline::prepass::MotionVectorPrepass)>();
-            }
-            if let Some(b) = state.bloom.take() {
-                bloom.intensity = b;
+                commands.entity(e).remove::<HeatPost>();
             }
         }
-        for mut s in &mut sun {
-            s.shadow_maps_enabled = true;
+        if *was_on {
+            for mut s in &mut sun {
+                s.shadow_maps_enabled = true;
+            }
+            // Sky, fog, bloom and glow are rewritten on the next daylight pass.
+            render.daylight_key = None;
+            render.glow_key = None;
         }
-        // Sky, fog and glow are rewritten on the next daylight pass.
-        render.daylight_key = None;
-        render.glow_key = None;
     }
+    *was_on = on;
 }
 
 /// How hot an entity's body and its lights are, by what it is; `None` for
 /// the cold world.
 #[allow(clippy::type_complexity)]
-fn temperature(tags: (bool, bool, bool, bool, bool, bool, bool, bool, bool, bool)) -> Option<(f32, f32)> {
+pub(super) fn temperature(tags: (bool, bool, bool, bool, bool, bool, bool, bool, bool, bool)) -> Option<(f32, f32)> {
     let (car, citizen, bot, train, parked, ship, emergency, stunt, air, puff) = tags;
     Some(if citizen {
         (1.5, 1.5)
@@ -284,7 +264,7 @@ fn temperature(tags: (bool, bool, bool, bool, bool, bool, bool, bool, bool, bool
     })
 }
 
-fn class_of(o: &StandardMaterial, temp: Option<(f32, f32)>) -> HeatClass {
+pub(super) fn class_of(o: &StandardMaterial, temp: Option<(f32, f32)>) -> HeatClass {
     match temp {
         None => HeatClass::Cool,
         Some((body, lights)) => {
@@ -298,7 +278,7 @@ fn class_of(o: &StandardMaterial, temp: Option<(f32, f32)>) -> HeatClass {
 /// The stand-in for `o`: cold surfaces keep their texture and vertex
 /// colours, dimmed and unlit; hot ones emit their temperature flat, so a
 /// red car and a white one read the same.
-fn stand_in(o: &StandardMaterial, class: HeatClass) -> StandardMaterial {
+pub(super) fn stand_in(o: &StandardMaterial, class: HeatClass) -> StandardMaterial {
     let alpha = o.base_color.alpha();
     let base = StandardMaterial { alpha_mode: o.alpha_mode, double_sided: o.double_sided, cull_mode: o.cull_mode, fog_enabled: o.fog_enabled, ..default() };
     match class {
@@ -317,99 +297,5 @@ fn stand_in(o: &StandardMaterial, class: HeatClass) -> StandardMaterial {
             // Emissive alpha 0: not scaled by the camera's exposure.
             StandardMaterial { base_color: Color::linear_rgba(0.0, 0.0, 0.0, alpha), emissive: LinearRgba::new(t, t, t, 0.0), perceptual_roughness: 1.0, metallic: 0.0, reflectance: 0.0, unlit: false, ..base }
         }
-    }
-}
-
-/// Swap every mesh's material for its stand-in while the mode is on, and
-/// back after.
-#[allow(clippy::type_complexity)]
-fn swap_materials(
-    mut commands: Commands,
-    lighting: Res<Lighting>,
-    mut state: ResMut<HeatState>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut window_materials: ResMut<Assets<WindowMaterial>>,
-    mut q: Query<
-        (
-            Entity,
-            &mut MeshMaterial3d<StandardMaterial>,
-            Option<&HeatOriginal>,
-            (Has<CarTag>, Has<CitizenTag>, Has<BotTag>, Has<TrainTag>, Has<ParkedTag>, Has<ShipTag>, Has<super::emergency::EmergencyTag>, Has<super::stunts::StuntTag>, Has<super::air::AirTag>, Has<super::haze::Puff>),
-        ),
-    >,
-    mut windows: Query<(Entity, &mut MeshMaterial3d<WindowMaterial>, Option<&HeatOriginalWindow>)>,
-) {
-    let on = lighting.heat;
-    if !on {
-        if !state.active {
-            return;
-        }
-        for (e, mut mat, orig, _) in &mut q {
-            if let Some(o) = orig {
-                if state.stand_ins.contains(&mat.0.id()) {
-                    mat.0 = o.0.clone();
-                }
-                commands.entity(e).remove::<HeatOriginal>();
-            }
-        }
-        for (e, mut mat, orig) in &mut windows {
-            if let Some(o) = orig {
-                if state.window_stand_ins.contains(&mat.0.id()) {
-                    mat.0 = o.0.clone();
-                }
-                commands.entity(e).remove::<HeatOriginalWindow>();
-            }
-        }
-        state.active = false;
-        return;
-    }
-    let first = !state.active;
-    state.active = true;
-    for (e, mut mat, orig, tags) in &mut q {
-        // Already showing a stand-in, untouched since: nothing to do.
-        if !first && orig.is_some() && !mat.is_changed() {
-            continue;
-        }
-        let id = mat.0.id();
-        if state.stand_ins.contains(&id) {
-            continue;
-        }
-        let Some(o) = materials.get(id) else { continue };
-        let class = class_of(o, temperature(tags));
-        let handle = match state.derived.get(&(id, class)) {
-            Some(h) => h.clone(),
-            None => {
-                let m = stand_in(o, class);
-                let h = materials.add(m);
-                state.stand_ins.insert(h.id());
-                state.derived.insert((id, class), h.clone());
-                h
-            }
-        };
-        commands.entity(e).insert(HeatOriginal(mat.0.clone()));
-        mat.0 = handle;
-    }
-    for (e, mut mat, orig) in &mut windows {
-        if !first && orig.is_some() && !mat.is_changed() {
-            continue;
-        }
-        let id = mat.0.id();
-        if state.window_stand_ins.contains(&id) {
-            continue;
-        }
-        let handle = match state.windows.get(&id) {
-            Some(h) => h.clone(),
-            None => {
-                let Some(o) = window_materials.get(id) else { continue };
-                let mut m = o.clone();
-                m.base.base_color = Color::linear_rgb(COOL_WINDOW, COOL_WINDOW, COOL_WINDOW);
-                let h = window_materials.add(m);
-                state.window_stand_ins.insert(h.id());
-                state.windows.insert(id, h.clone());
-                h
-            }
-        };
-        commands.entity(e).insert(HeatOriginalWindow(mat.0.clone()));
-        mat.0 = handle;
     }
 }

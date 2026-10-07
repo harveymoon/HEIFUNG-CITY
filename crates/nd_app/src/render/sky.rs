@@ -39,21 +39,25 @@ pub(super) struct SkyLook {
     /// Toward the sun (or moon): direction and the glare colour round it.
     pub sun_dir: Vec3,
     pub sun_glare: [f32; 3],
+    /// [look] How much day it is, `0..1` (night to full day): the haze's
+    /// density and colour follow it.
+    pub daylight: f32,
     /// Bumped on every change so the dome is repainted.
     pub version: u64,
 }
 
 impl Default for SkyLook {
     fn default() -> Self {
-        Self { zenith: [0.01, 0.01, 0.03], horizon: [0.05, 0.045, 0.06], glow: [0.05, 0.045, 0.06], glow_height: 0.2, sun_dir: Vec3::Y, sun_glare: [0.0; 3], version: 0 }
+        Self { zenith: [0.01, 0.01, 0.03], horizon: [0.05, 0.045, 0.06], glow: [0.05, 0.045, 0.06], glow_height: 0.2, sun_dir: Vec3::Y, sun_glare: [0.0; 3], daylight: 1.0, version: 0 }
     }
 }
 
 #[derive(Component)]
 pub(super) struct SkyDome;
 
-/// Colour of the dome in direction `d` (unit vector, y up).
-fn sky_color(l: &SkyLook, d: Vec3) -> [f32; 3] {
+/// Colour of the dome in direction `d` (unit vector, y up). Also paints
+/// the cubemap the sky's reflections come from (`look`).
+pub(super) fn sky_color(l: &SkyLook, d: Vec3) -> [f32; 3] {
     if d.y < 0.0 {
         // Below the horizon: the fog, so a glimpse under the ground's edge
         // is the haze the ground fades into.
