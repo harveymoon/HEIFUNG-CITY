@@ -16,6 +16,9 @@ mod dense;
 /// [districts] District looks: style menus and palettes, hotels.
 pub mod district;
 mod entertainment;
+/// [land] Shacks, trailer parks, huts, suburbs, McMansions, mansions, mega
+/// hotels and museums.
+mod estates;
 mod industrial;
 pub mod kit;
 mod park;
@@ -201,6 +204,25 @@ pub enum Style {
     CentralStation,
     // [power] grid battery packs, placed by the player
     PowerBattery,
+    // -- [land] homes by class and density, and the forms bought and merged
+    // plots are built in (`buildings/estates.rs`). One block at the end so
+    // `ALL` keeps its order. --
+    /// One-storey shacks of tin and tarp: the poor on quiet land.
+    Shacks,
+    /// Mobile homes off a gravel lane.
+    TrailerPark,
+    /// Round thatched huts round a fire pit.
+    Huts,
+    /// Detached houses on lawns: the middle class's suburb.
+    Suburb,
+    /// Two plots, one big house and a pool (`estate::Form::McMansion`).
+    McMansion,
+    /// A billionaire's estate (`estate::Form::Mansion`).
+    Mansion,
+    /// Towers on a podium with valet parking, a roof pool and sky-bridges.
+    MegaHotel,
+    /// A gallery grown into a museum.
+    Museum,
 }
 
 impl Style {
@@ -209,7 +231,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 80] = [
+    pub const ALL: [Style; 88] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -290,7 +312,28 @@ impl Style {
         Style::MetroEntrance,
         Style::CentralStation,
         Style::PowerBattery,
+        Style::Shacks,
+        Style::TrailerPark,
+        Style::Huts,
+        Style::Suburb,
+        Style::McMansion,
+        Style::Mansion,
+        Style::MegaHotel,
+        Style::Museum,
     ];
+
+    /// [land] The style a building's form forces (`nd_sim::estate::Form`);
+    /// `None` for merged plots, which keep their kind's own looks.
+    pub fn for_form(form: Option<nd_sim::estate::Form>) -> Option<Style> {
+        use nd_sim::estate::Form;
+        match form? {
+            Form::McMansion => Some(Style::McMansion),
+            Form::Mansion => Some(Style::Mansion),
+            Form::MegaHotel => Some(Style::MegaHotel),
+            Form::Museum => Some(Style::Museum),
+            Form::Merged => None,
+        }
+    }
 
     /// The railway piece a style is drawn beside, if it is one.
     pub fn rail_kind(self) -> Option<RailFacility> {
@@ -409,6 +452,14 @@ impl Style {
             Style::TruckLot => "truck and bus lot",
             Style::TrashDepot => "trash depot",
             Style::Vertiport => "vertiport",
+            Style::Shacks => "shacks",
+            Style::TrailerPark => "trailer park",
+            Style::Huts => "huts",
+            Style::Suburb => "suburban houses",
+            Style::McMansion => "McMansion",
+            Style::Mansion => "mansion",
+            Style::MegaHotel => "mega hotel",
+            Style::Museum => "museum",
         }
     }
 }
@@ -685,6 +736,14 @@ impl Default for BuildingRules {
                 w(Entertainment, Mid, Style::NeonTower, 0.5),
                 w(Entertainment, High, Style::NeonTower, 0.3),
                 w(Entertainment, High, Style::Megastructure, 0.15),
+                // [land] low density by class: only fitting one- and
+                // two-storey sites (`adjacency::site_fit`)
+                w(Residential, Low, Style::Shacks, 0.9),
+                w(Residential, Low, Style::TrailerPark, 0.7),
+                w(Residential, Low, Style::Huts, 0.35),
+                w(Residential, Low, Style::Suburb, 0.25),
+                w(Residential, Mid, Style::Suburb, 1.2),
+                w(Residential, High, Style::Suburb, 0.5),
             ],
         }
     }
@@ -934,6 +993,9 @@ pub struct Extras<'a> {
     pub business: Option<nd_sim::BusinessKind>,
     /// [subway] A metro station: drawn as its entrance plaza.
     pub metro: bool,
+    /// [land] The form bought or merged plots were built in: McMansions,
+    /// mansions, mega hotels and museums have their own style.
+    pub form: Option<nd_sim::estate::Form>,
     /// A truck and bus lot: share of its bays in use.
     pub fleet: f32,
     /// [districts] The district architecture the building was put up in:
@@ -946,7 +1008,7 @@ pub struct Extras<'a> {
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None }
+        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None }
     }
 }
 
@@ -1052,6 +1114,8 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
     let mut rng = rng_for(seed, 11);
     match (extras.plant, extras.parking) {
         _ if extras.service.is_some() => Style::for_service(extras.service.unwrap()),
+        // [land] McMansions, mansions, mega hotels and museums.
+        _ if Style::for_form(extras.form).is_some() => Style::for_form(extras.form).unwrap(),
         // [subway] Before the depot: the Central Station is a bus terminal too.
         _ if extras.rail.is_some_and(|r| r.kind == RailFacility::Central) => Style::CentralStation,
         _ if extras.metro => Style::MetroEntrance,
@@ -1310,6 +1374,14 @@ fn generate_styled_extras(
         Style::TruckLot => industrial::truck_lot(&mut g, &ctx, &mut rng),
         Style::TrashDepot => sanitation::trash_depot(&mut g, &ctx, &mut rng),
         Style::Vertiport => air::vertiport(&mut g, &ctx, &mut rng),
+        Style::Shacks => estates::shacks(&mut g, &ctx, &mut rng),
+        Style::TrailerPark => estates::trailer_park(&mut g, &ctx, &mut rng),
+        Style::Huts => estates::huts(&mut g, &ctx, &mut rng),
+        Style::Suburb => estates::suburb(&mut g, &ctx, &mut rng),
+        Style::McMansion => estates::mcmansion(&mut g, &ctx, &mut rng),
+        Style::Mansion => estates::mansion(&mut g, &ctx, &mut rng),
+        Style::MegaHotel => estates::mega_hotel(&mut g, &ctx, &mut rng),
+        Style::Museum => estates::museum(&mut g, &ctx, &mut rng),
     }
     if extras.rooftop_pad && style.pad_capable() && g.pads.is_empty() {
         air::rooftop_deck(&mut g, &ctx);

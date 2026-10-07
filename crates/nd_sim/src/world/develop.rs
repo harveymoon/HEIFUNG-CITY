@@ -154,6 +154,10 @@ impl World {
                 self.splat_contamination(&mut b);
                 // [districts] eco and historic districts lift the land
                 self.splat_districts(&mut b);
+                // [land] NIMBY: the land round a mansion jumps, fading.
+                for n in &self.estate.nimby {
+                    b.splat(n.center, n.radius, n.strength);
+                }
             }
             4 => {
                 // The player's rule: a long walk to any park or night out
@@ -690,7 +694,13 @@ impl World {
     }
 
     pub fn build_on(&mut self, lot_id: LotId) {
-        let Some(lot) = self.lots.get(lot_id) else { return };
+        self.build_on_as(lot_id, None);
+    }
+
+    /// [land] `build_on`, opening as `kind` when given (a firm's branch)
+    /// instead of what the market picks. The new site, if one opened.
+    pub fn build_on_as(&mut self, lot_id: LotId, kind: Option<BusinessKind>) -> Option<BuildingId> {
+        let Some(lot) = self.lots.get(lot_id) else { return None };
         // A park on ground rezoned for building goes when building begins.
         if let Some(park) = self.rezoned_park(lot) {
             self.vacate(park, Some("The park was cleared for new building after a rezoning.".to_string()), None);
@@ -699,9 +709,9 @@ impl World {
             self.lots[lot_id].park = None;
             self.events.push(SimEvent::BuildingRemoved(park, lot_id));
         }
-        let Some(lot) = self.lots.get(lot_id) else { return };
-        if lot.landlocked || lot.building.is_some() || self.under_facility(lot.center) || self.services.is_rubble(lot_id) {
-            return;
+        let Some(lot) = self.lots.get(lot_id) else { return None };
+        if lot.landlocked || lot.building.is_some() || self.under_facility(lot.center) || self.services.is_rubble(lot_id) || self.estate.reserved.contains_key(&lot_id) {
+            return None;
         }
         let lu = self.lots[lot_id].land_use;
         // [industry] land value as the land use feels it
@@ -727,7 +737,12 @@ impl World {
         if !self.lots[lot_id].car_access() {
             b.parking_capacity = 0;
         }
-        if let Some(kind) = self.business_for_new_building(lot_id, lu, b.jobs) {
+        let forced = kind.filter(|_| lu != LandUse::Residential);
+        let chosen = match forced {
+            Some(k) => Some(k),
+            None => self.business_for_new_building(lot_id, lu, b.jobs),
+        };
+        if let Some(kind) = chosen {
             // [industry] some sub-zones build low: wells, fields, yards
             if let Some(ik) = kind.industry() {
                 b.floors = b.floors.min(ik.max_floors()).max(1);
@@ -743,6 +758,7 @@ impl World {
         self.lots[lot_id].building = Some(id);
         self.events.push(SimEvent::BuildingBuilt(id));
         self.order_materials(id);
+        Some(id)
     }
 }
 

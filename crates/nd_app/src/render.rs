@@ -38,6 +38,8 @@ mod air;
 /// [districts] The district layer; [tourism] visitors on foot.
 mod districts;
 mod emergency;
+/// [land] Police light bars on convoys, bodyguards on foot.
+mod convoys;
 mod far;
 /// [layers] Traffic and Crime focus views: the city dimmed, vehicles lit.
 mod focus;
@@ -396,6 +398,8 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, emergency::sync_emergency.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // [driving] Tyre smoke, skid marks, wrecks and tows.
         app.add_systems(Update, stunts::sync_stunts.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
+        // [land] billionaires' convoys and bodyguards
+        app.init_resource::<convoys::ConvoyRender>().add_systems(Update, convoys::sync_convoys.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // [society] Skid row and the trash.
         app.init_resource::<society::SocietyRender>().add_systems(Update, society::sync_society.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
         // Drone taxis and helicopters, after the buildings whose pads they land on.
@@ -1453,7 +1457,10 @@ const PLANT_FIELD_REACH: f32 = 300.0;
 
 fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<()> {
     let b = world.buildings.get(id)?;
-    let lot = world.lots.get(b.lot)?;
+    // [land] A building over merged plots is drawn on their combined
+    // footprint (`World::footprint`): one building, no seams.
+    let footprint = world.footprint(id)?;
+    let lot: &nd_sim::Lot = &footprint;
     let field = if b.construction.is_none() && b.demolition.is_none() { plant_field(world, id) } else { None };
     // What decides the style comes from `style_extras`, the same inputs the
     // style book and the inspector's label use (a taxi company's yard is a

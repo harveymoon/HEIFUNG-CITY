@@ -27,6 +27,8 @@ mod list;
 mod map;
 /// [places] taste, favourite places, venue ratings.
 mod places;
+/// [land] Owners, prices, merged plots, pressure and the super-elite.
+mod property;
 mod report;
 /// [society] crime, homelessness and trash.
 mod society;
@@ -552,6 +554,9 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "district" | "districts" => districts::district(cmd, &mut ctx.sim.world, &mut ctx.overlays, &mut ctx.tools),
         "tourism" | "tourists" => districts::tourism(cmd, &mut ctx.sim.world),
         "concerns" => concerns::command(cmd, &ctx.sim.world),
+        // [land] the land market; ownership highlight data
+        "estate" | "land_market" => property::command(cmd, &mut ctx.sim.world),
+        "ownership" => property::ownership(cmd, &ctx.sim.world),
         "bus" => bus(cmd, ctx),
         "subway" | "metro" => subway::command(cmd, &mut ctx.sim.world),
         "find" => find(cmd, ctx),
@@ -1789,6 +1794,8 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         let b = w.buildings.get(id).ok_or("no such building")?;
         let mut v = building_detail(w, id, b, building_style(&ctx.sim, id, &ctx.assets));
         v["place"] = places::building_place(w, id);
+        // [land] owner, sale price, plots, form, pressure
+        v["land"] = property::building_land(w, id);
         return Ok(json!({ "building": v }));
     }
     if let Some(v) = field(cmd, "lot") {
@@ -2387,6 +2394,9 @@ fn help() -> Value {
         c.extend(r.clone());
     }
     // [mapgen] (out of the literal above: it is at the json! recursion limit)
+    // [land]
+    v["commands"]["estate"] = json!({ "action": "summary (default: counters, floors histogram, the billionaire gate, elites with their convoys, NIMBY zones, forms, owners) | pressure ({at: [x,y]} for one point, else every busy cell) | spawn_elite (dev: a billionaire now, needs quiet land) | expand {building} (dev: branch or merge now) | buyout {building} (dev) | drive {citizen, to} (dev)" });
+    v["commands"]["ownership"] = json!({ "building": "id: what to highlight when it is selected: the owner and every property with its outline (a rich person's other homes and businesses too)" });
     v["commands"]["generate_city"] = json!({ "preset": "grid_plaza|coastal_river|old_town|twin_centres (default grid_plaza)", "seed": "u64 (default 1): the city and its landscape", "landscape": "optional landscape preset to lay it on instead of the city preset's own (river_valley|islands|coast|delta|plains|flat)", "water": "0..1", "relief": "0..1", "branching": "0..1", "note": "throws the city away: a new game with a whole generated city (tensor-field streets, zoning, highway interchanges, a coal plant); returns the landscape summary and city {arterial, collector, local, zones, lots, interchanges, way_in, centres}" });
     // [districts] [tourism]
     v["commands"]["district"] = json!({ "action": "list (default)|create|paint|erase|set|remove|at|select|layer", "id": "district id (or district: id or name)", "at": "[x,y] brush centre", "radius": "m, default 40", "polygon": "[[x,y],...]", "rect": "[[x0,y0],[x1,y1]]", "residential": "kowloon|suburban|eco|none", "commercial": "neon_strip|tech_campus|night_market|tourist|none", "industry": "farming|oil|refinery|manufacturing|logistics|fishing|tech|none", "historic": "bool", "rename": "new name", "on": "bool (layer)" });

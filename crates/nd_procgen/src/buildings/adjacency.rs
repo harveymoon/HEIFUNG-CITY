@@ -248,7 +248,12 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         Style::Villas | Style::Fortress => low(8.0) * if w > 24.0 { 1.3 } else { 1.0 },
         Style::Shophouse | Style::Tenement | Style::ShackBar | Style::NightMarket => low(5.0),
         Style::HillsideSteps => if w > 0.0 && w < 14.0 { 0.5 } else { 1.0 },
-        Style::WalledCity | Style::Stacks => 1.0,
+        Style::WalledCity | Style::Stacks => if f <= 1.0 { 0.12 } else { 1.0 },
+        // [land] Low density: shacks, trailers and huts are one storey; the
+        // walk-ups and capsule piles they stand in for are not.
+        Style::Shacks | Style::TrailerPark | Style::Huts => if f <= 1.0 { 1.0 } else { 0.0 },
+        Style::Suburb => if f <= 2.0 { 1.0 } else { 0.0 },
+        Style::CapsuleHotel => if f <= 1.0 { 0.12 } else { 1.0 },
         _ => 1.0,
     }
 }
@@ -283,6 +288,10 @@ pub struct StyleBook {
 /// [`style_extras`] passes that can force a style has its own value here,
 /// so a building that gains or loses one is styled again.
 fn role(b: &nd_sim::Building) -> u8 {
+    // [land] A McMansion, mansion, mega hotel or museum is its own look.
+    if let Some(f) = b.plot.form {
+        return 90 + f as u8;
+    }
     if let Some(s) = b.service {
         return 50 + nd_sim::ServiceKind::ALL.iter().position(|k| *k == s.kind).unwrap_or(0) as u8;
     }
@@ -420,6 +429,7 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
         business: b.business.as_ref().map(|z| z.kind),
         look: b.look,
         metro: b.metro,
+        form: b.plot.form,
         ..Extras::default()
     }
 }

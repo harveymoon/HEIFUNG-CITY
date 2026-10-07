@@ -49,6 +49,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             }
             neon(ui, &sim.world.citizens[id].name);
             citizen_summary(ui, &sim.world, &sim.world.citizens[id]);
+            super::estate::citizen_line(ui, &sim.world, id);
             ui.add_space(4.0);
             spotlight_toggle(ui, &mut sim.world, id, "Spotlight: route this citizen through the LLM mind");
             super::places::citizen_places(ui, &sim.world, id);
@@ -257,6 +258,8 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
         ui.label(format!("parking {}/{} spaces{}", b.parking_used, b.parking_capacity, if b.is_parking() { format!("  ·  {:.1} per visit", b.parking_price) } else { "  ·  for residents and workers".to_string() }));
     }
     super::places::building_place(ui, w, id);
+    // [land] owner, price, plots and the owner's other properties
+    super::estate::building_section(ui, w, id, selection);
 
     // ── People ──
     let inside: Vec<nd_sim::CitizenId> = w.citizens.iter().filter(|(_, c)| c.inside == Some(id)).map(|(cid, _)| cid).collect();

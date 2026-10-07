@@ -907,8 +907,25 @@ impl World {
         let mut demolish: Vec<(BuildingId, Vec2, bool)> = Vec::new();
         // Old lot key to the new lot its building moved onto.
         let mut carried: HashMap<LotId, LotId> = HashMap::new();
+        // [land] A building over merged plots names each of them; only its
+        // primary lot moves the building, the others follow as extras.
+        let primary_of: HashMap<BuildingId, LotId> = self.buildings.iter().map(|(id, b)| (id, b.lot)).collect();
+        let mut extras: HashMap<BuildingId, Vec<LotId>> = HashMap::new();
         for (old_id, old) in old_lots.iter() {
             let Some(bid) = old.building else { continue };
+            if primary_of.get(&bid).is_some_and(|p| *p != old_id) {
+                let found = grid
+                    .near(old.center, 6.0)
+                    .into_iter()
+                    .filter(|id| self.lots[*id].building.is_none() && self.lots[*id].contains(old.center))
+                    .find(|id| !outlines_differ(&old.polygon, &self.lots[*id].polygon, EXPROPRIATE_AREA_TOL, EXPROPRIATE_DIST_TOL));
+                if let Some(new_lot) = found {
+                    carried.insert(old_id, new_lot);
+                    self.lots[new_lot].building = Some(bid);
+                    extras.entry(bid).or_default().push(new_lot);
+                }
+                continue;
+            }
             let found = grid
                 .near(old.center, 6.0)
                 .into_iter()
@@ -938,6 +955,13 @@ impl World {
                 None => demolish.push((bid, old.center, false)),
             }
         }
+        // [land] Extras follow their building; bought plots still waiting
+        // are let go (the works changed them).
+        for (bid, b) in self.buildings.iter_mut() {
+            b.plot.extra_lots = extras.remove(&bid).unwrap_or_default();
+            b.plot.pending_lots.clear();
+        }
+        self.estate.reserved.clear();
         for (bid, at, expropriated) in demolish {
             if expropriated {
                 let lot = self.buildings.get(bid).map(|b| b.lot);
@@ -1209,6 +1233,9 @@ impl World {
             self.refresh_facility_cache();
         }
         self.events.push(SimEvent::BuildingRemoved(bid, b.lot));
+        // [land] Extra plots freed, a bought plot handed over.
+        let lot = if at.is_none() { b.lot } else { LotId::default() };
+        self.estate_building_gone(bid, &b.plot, lot);
     }
 
     /// Someone loses their job: back to gig money, with a note if there is

@@ -15,6 +15,8 @@ mod economy;
 /// [districts] The District tool's pane and the Districts window.
 mod districts;
 mod emergencies;
+/// [land] Ownership, sale price and merged plots in the inspector.
+mod estate;
 mod help;
 mod hover;
 mod inspector;
