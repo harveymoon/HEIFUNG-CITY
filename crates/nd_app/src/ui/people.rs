@@ -88,6 +88,18 @@ fn overview(ui: &mut egui::Ui, p: &mut UiCtx, big: bool) {
         ui.label(egui::RichText::new("pushed out").weak());
         ui.label(warn_if(e.displaced_total > 0, format!("{} displaced   {} left town   {} priced out", e.displaced_total, e.emigrated_total, e.priced_out_total)).small());
     });
+    // [review] Why they left, biggest reason first.
+    if e.emigrated_total > 0 {
+        let mut why: Vec<(u32, &str)> = nd_sim::economy::LeaveReason::ALL.iter().map(|r| (e.emigrated_by[r.index()], r.key())).filter(|(n, _)| *n > 0).collect();
+        why.sort_by(|a, b| b.0.cmp(&a.0));
+        if !why.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("left over").weak());
+                ui.label(egui::RichText::new(why.iter().map(|(n, k)| format!("{k} {n}")).collect::<Vec<_>>().join("   ")).small());
+                hint(ui, "people who left town, by reason (since this was counted)");
+            });
+        }
+    }
 
     section(ui, "INCOME INEQUALITY");
     inequality(ui, &p.sim.world);

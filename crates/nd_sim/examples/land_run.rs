@@ -14,6 +14,7 @@ fn main() {
     let start = w.clock.day();
     println!("day {start}: pop {} buildings {}", w.citizens.len(), w.buildings.len());
     let t0 = std::time::Instant::now();
+    let mut left = w.economy.emigrated_by;
     while w.clock.day() < start + days {
         let d = w.clock.day();
         while w.clock.day() == d {
@@ -40,5 +41,12 @@ fn main() {
             w.economy.displaced_total,
             t0.elapsed().as_secs_f32()
         );
+        // [review] Why they left today.
+        let why: Vec<String> = nd_sim::economy::LeaveReason::ALL
+            .iter()
+            .map(|r| format!("{} {}", r.key(), w.economy.emigrated_by[r.index()] - left[r.index()]))
+            .collect();
+        left = w.economy.emigrated_by;
+        println!("    left today: {} | power supply {:.0}%", why.join(", "), 100.0 * w.economy.power.served);
     }
 }

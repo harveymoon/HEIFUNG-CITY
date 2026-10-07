@@ -525,7 +525,7 @@ impl World {
                     }
                 }
                 self.society.homeless.stats.left_town_total += members.len() as u32;
-                self.society_emigrate_household(hid);
+                self.society_emigrate_household(hid, crate::economy::LeaveReason::Homeless);
             }
         }
         let camps = self.society.homeless.camps.len() as u32;
