@@ -71,6 +71,8 @@ impl Info {
             Info::Lines => 430.0,
             Info::Taxes => 470.0,
             Info::Dev => 300.0,
+            // [identity] Room for the city name row and the grouped list.
+            Info::Saves => 460.0,
             _ => 380.0,
         }
     }
@@ -177,6 +179,8 @@ fn row(ui: &mut egui::Ui, label: &str, value: impl Into<egui::RichText>) {
 }
 
 pub(super) fn city(ui: &mut egui::Ui, p: &mut UiCtx) {
+    // [identity] The city's name, renamable.
+    super::saves::city_name_row(ui, p.sim, p.flags);
     let w = &p.sim.world;
     let e = &w.economy;
     let sites = w.buildings.values().filter(|b| b.construction.is_some()).count();
