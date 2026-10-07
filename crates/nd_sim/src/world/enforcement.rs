@@ -346,7 +346,27 @@ impl World {
         let Some(spot) = self.vehicles.cars.get(job.car).and_then(|c| c.spot().copied()) else { return };
         let Some((seg, pt)) = self.spot_exit(&spot) else { return };
         // A company busy elsewhere meanwhile: look again.
-        let company = job.company.filter(|c| self.tow_trucks(*c) > 0).or_else(|| self.tow_company_near(spot.pos));
+        // (A company counts its trucks out on other jobs: the one it had
+        // free when the call came may have gone since.)
+        let free = |c: BuildingId| {
+            let out = self.enforcement.jobs.iter().filter(|j| j.id != job_id && j.company == Some(c) && j.truck.is_some()).count();
+            self.tow_trucks(c) > out
+        };
+        let company = job.company.filter(|&c| free(c)).or_else(|| self.tow_company_near(spot.pos));
+        // The company from out of town has a fleet of its own, not one
+        // lorry per call: with every truck out, the job waits. Uncapped, a
+        // city short of parking (every overflow car a tow call) had 170 tow
+        // trucks on its roads, two thirds of them stuck in the jam they
+        // were feeding.
+        if company.is_none() {
+            let out = self.enforcement.jobs.iter().filter(|j| j.company.is_none() && j.truck.is_some_and(|t| self.traffic.cars.contains_key(t))).count();
+            if out >= OUT_OF_TOWN_TOW_TRUCKS {
+                if let Some(j) = self.enforcement.jobs.iter_mut().find(|j| j.id == job_id) {
+                    j.state = TowState::Waiting { until: tick + 10 };
+                }
+                return;
+            }
+        }
         let route = match company {
             Some(c) => self.truck_stop(c).and_then(|(fs, fp)| self.route_any_lane(fs, fp, seg, pt)),
             None => self.route_from_edge(seg, pt),

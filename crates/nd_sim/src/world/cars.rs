@@ -45,6 +45,16 @@ const SEARCH_RADIUS: f32 = 240.0;
 const MAX_TRIES: u8 = 4;
 /// [parking] Rounds after which the driver takes any free slot at all.
 const GIVE_UP: u8 = 10;
+/// [parking] Ticks (sim minutes) of hunting after which a driver looks
+/// further and at banned kerbs, however few places it has tried.
+const HUNT_DESPERATE: u64 = 20;
+/// [parking] Ticks of hunting after which a driver stops looking and
+/// leaves the car where it can: a banned kerb nearby, a free one further
+/// off, else squeezed in where it stands.
+pub(super) const HUNT_GIVE_UP: u64 = 60;
+/// [parking] Seconds a worn-out hunter stands in a queue before it leaves
+/// the car where it is (`World::hunters_give_up`).
+const HUNT_STUCK: f32 = 120.0;
 /// Walking the last stretch from the car below this is just getting out.
 const GET_OUT: f32 = 20.0;
 
@@ -725,6 +735,33 @@ impl World {
         self.look_for_space(car_id, vid, driver, target, tries);
     }
 
+    /// [parking] A driver who has hunted for a space past `HUNT_GIVE_UP`
+    /// and is standing in a queue (`HUNT_STUCK` seconds) does not wait to
+    /// reach the street it was making for: it leaves the car at the kerb
+    /// where it is (a banned kerb nearby, a free one, else squeezed in).
+    /// Hunters going round the same blocks filled a dead-end street and
+    /// its junction solid in a player's city, each waiting for the next,
+    /// for hours; every one that gives up leaves the gap the rest need.
+    pub(super) fn hunters_give_up(&mut self) {
+        let tick = self.clock.tick;
+        let stuck: Vec<CarId> = self
+            .traffic
+            .cars
+            .iter()
+            .filter(|(_, c)| matches!(c.errand, Errand::Search { .. } | Errand::ToKerb | Errand::ToLot(_)) && !c.entering && c.hold <= 0.0 && !c.crashed() && c.v < 0.5 && c.stalled > HUNT_STUCK)
+            .filter(|(_, c)| self.citizens.get(c.citizen).is_some_and(|z| z.commute.search_since > 0 && tick.saturating_sub(z.commute.search_since) > HUNT_GIVE_UP))
+            .map(|(id, _)| id)
+            .collect();
+        for id in stuck {
+            if let Some(c) = self.traffic.cars.get_mut(id) {
+                // Not at the lot or the slot it was making for: a search
+                // from here.
+                c.errand = Errand::Search { tries: MAX_TRIES };
+                self.private_arrived(id);
+            }
+        }
+    }
+
     pub(super) fn lot_open(&self, b: BuildingId) -> bool {
         self.buildings.get(b).is_some_and(|bld| bld.is_parking() && bld.parking_free() > 0 && bld.business.as_ref().is_some_and(|z| !z.closed))
     }
@@ -757,12 +794,20 @@ impl World {
         let drive = 9.0 * self.config.traffic_seconds_per_tick;
         let money_w = self.money_weight(driver);
         let mut options: Vec<(f32, Vec<LaneId>, f32, Errand, Option<KerbSlot>)> = Vec::new();
-        // After a few fruitless rounds the driver looks further, and at
-        // slots where parking is banned (a fine, maybe the tow truck).
-        let desperate = tries >= MAX_TRIES;
+        // [parking] How long this driver has been at it. A driver sent to a
+        // kerb slot or a lot that was taken on arrival starts that leg at
+        // one try again, so only the clock tells how long the hunt has run.
+        let hunted = self.citizens.get(driver).filter(|c| c.commute.search_since > 0).map_or(0, |c| self.clock.tick.saturating_sub(c.commute.search_since));
+        // After a few fruitless rounds (or a while at it) the driver looks
+        // further, and at slots where parking is banned (a fine, maybe the
+        // tow truck).
+        let desperate = tries >= MAX_TRIES || hunted > HUNT_DESPERATE;
+        // [parking] Hours of circling help nobody: past `HUNT_GIVE_UP` the
+        // driver stops looking and leaves the car wherever it can.
+        let worn_out = hunted > HUNT_GIVE_UP;
         let reach = if desperate { KERB_WALK * 2.0 } else { KERB_WALK };
-        let mut slots: Vec<(KerbSlot, f32)> = self.free_kerbs_near(target, reach, 5).into_iter().map(|k| (k, 0.0)).collect();
-        if desperate {
+        let mut slots: Vec<(KerbSlot, f32)> = if worn_out { Vec::new() } else { self.free_kerbs_near(target, reach, 5).into_iter().map(|k| (k, 0.0)).collect() };
+        if desperate && !worn_out {
             slots.extend(self.free_illegal_slots_near(target, KERB_WALK, 3).into_iter().map(|k| (k, 12.0)));
         }
         for (k, risk) in slots {
@@ -782,7 +827,7 @@ impl World {
             .iter()
             .filter(|(id, _)| self.lot_open(*id))
             .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (l.center.distance(target), id, b.parking_price)))
-            .filter(|(d, _, _)| *d <= LOT_WALK)
+            .filter(|(d, _, _)| *d <= LOT_WALK && !worn_out)
             .collect();
         lots.sort_by(|a, b| a.0.total_cmp(&b.0));
         for (d, b, fee) in lots.into_iter().take(3) {
@@ -807,7 +852,7 @@ impl World {
         // Nothing free in sight (or no way to it from here: lanes never
         // lead back onto the one the car is on): drive round the block
         // and look again.
-        if tries < GIVE_UP {
+        if tries < GIVE_UP && !worn_out {
             let r = if desperate { SEARCH_RADIUS * 2.0 } else { SEARCH_RADIUS };
             let mut segs: Vec<SegmentId> = self.roads.segments_in_box(target - Vec2::splat(r), target + Vec2::splat(r)).filter(|&s| self.roads.try_segment(s).is_some_and(|g| g.is_street() && !g.is_highway() && g.lanes() > 0)).collect();
             segs.sort_by_key(|s| s.0);
@@ -838,12 +883,20 @@ impl World {
         }
         match self.overflow_spot(pos) {
             Some(spot) => self.finish_park(car_id, vid, spot, target, tries.max(1)),
-            None => {
+            None if !worn_out => {
                 // Not one free slot within reach: keep driving round.
                 if let Some(c) = self.traffic.cars.get_mut(car_id) {
                     c.errand = Errand::Search { tries: MAX_TRIES };
                 }
                 self.circle(car_id, target);
+            }
+            None => {
+                // An hour of it and not one slot free within 700 m: the car
+                // is left where it stands, squeezed in at the kerb (it used
+                // to drive round for good: drivers hunting two to ten hours
+                // for a space, through the jam they were part of).
+                let spot = ParkSpot { kind: ParkKind::Overflow, pos, slot: u16::MAX, since: self.clock.tick, ..Default::default() };
+                self.finish_park(car_id, vid, spot, target, tries.max(1));
             }
         }
     }
