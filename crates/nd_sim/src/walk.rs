@@ -50,6 +50,10 @@ pub const MIDBLOCK_EVERY: f32 = 120.0;
 /// along it, and cost this many metres extra (the look and the dash).
 const JAY_REACH: f32 = 12.0;
 const JAY_PENALTY: f32 = 4.0;
+/// [tools] What crossing at grade under a footbridge costs a walker over
+/// its length, in metres: the wait for a gap or the light. Walkers take the
+/// bridge when its stairs cost no more than this extra (`route_nodes_with`).
+pub const BRIDGED_GRADE_PENALTY: f32 = 30.0;
 /// `WalkEdge::cross` of an edge that crosses no street.
 pub const NO_CROSSING: u32 = u32::MAX;
 
@@ -60,6 +64,9 @@ pub struct WalkNode {
     pub lot: Option<LotId>,
     /// Lots whose frontage this node passes, for footfall.
     pub near: Vec<LotId>,
+    /// [tools] Height above the ground, metres: 0 at grade, the walkway's
+    /// height on a raised walkway (a footbridge, later a skywalk).
+    pub level: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -72,6 +79,10 @@ pub struct WalkEdge {
     pub park: bool,
     /// Index into `WalkGraph::crossings` when the edge crosses a street.
     pub cross: u32,
+    /// [tools] Part of a raised walkway (its deck or its stairs): off the
+    /// street, so nobody on it holds up traffic. Footbridges are the first;
+    /// skywalks between buildings can join them (`WalkGraph::raised`).
+    pub raised: bool,
 }
 
 /// What kind of place a walker crosses a street.
@@ -100,6 +111,11 @@ pub struct Crossing {
     pub kind: CrossingKind,
     /// Its middle, on the street's centre line.
     pub mid: Vec2,
+    /// [tools] A push-button signal: drivers get a red only after a walker
+    /// presses the button (`traffic::crosswalk`, `world/pedestrians.rs`).
+    pub button: bool,
+    /// [tools] A footbridge spans it: walkers prefer the bridge.
+    pub bridged: bool,
 }
 
 impl Crossing {
@@ -135,6 +151,27 @@ pub struct WalkGraph {
     /// Indices into `benches` by lot, built with them, so a park's seats
     /// are counted without a scan of every bench in town.
     bench_lots: HashMap<LotId, Vec<u32>>,
+    /// [tools] Every raised walkway edge once (lower node first), for
+    /// drawing and for how high a walker on one stands.
+    pub raised: Vec<(u32, u32)>,
+    /// [tools] The footbridges: one per bridged crossing.
+    pub footbridges: Vec<Footbridge>,
+    /// [tools] Level of each raised node by its exact position.
+    raised_at: HashMap<(u32, u32), f32>,
+}
+
+/// [tools] A footbridge over a crossing: its walkway from `top[0]` to
+/// `top[1]` at `level` above the street, and the stairs down from each end
+/// to `foot[0]` and `foot[1]` on the pavements.
+#[derive(Clone, Debug)]
+pub struct Footbridge {
+    pub crossing: u32,
+    pub top: [Vec2; 2],
+    pub foot: [Vec2; 2],
+    pub level: f32,
+    pub width: f32,
+    /// Walk nodes: the two feet and the two tops.
+    pub nodes: [u32; 4],
 }
 
 /// Can people walk through this lot to the next one?
@@ -262,7 +299,7 @@ type End = (u32, SegmentId, i8);
 
 impl WalkGraph {
     fn add_node(&mut self, pos: Vec2, lot: Option<LotId>) -> u32 {
-        self.nodes.push(WalkNode { pos, lot, near: Vec::new() });
+        self.nodes.push(WalkNode { pos, lot, near: Vec::new(), level: 0.0 });
         self.adj.push(Vec::new());
         (self.nodes.len() - 1) as u32
     }
@@ -276,8 +313,8 @@ impl WalkGraph {
             return;
         }
         let len = self.nodes[a as usize].pos.distance(self.nodes[b as usize].pos).max(0.05);
-        self.adj[a as usize].push(WalkEdge { to: b, len, interior, park, cross: NO_CROSSING });
-        self.adj[b as usize].push(WalkEdge { to: a, len, interior, park, cross: NO_CROSSING });
+        self.adj[a as usize].push(WalkEdge { to: b, len, interior, park, cross: NO_CROSSING, raised: false });
+        self.adj[b as usize].push(WalkEdge { to: a, len, interior, park, cross: NO_CROSSING, raised: false });
     }
 
     /// Join two pavement nodes across a street.
@@ -290,10 +327,10 @@ impl WalkGraph {
         let (s0, s1) = roads.segment_points(segment);
         let mid = geom::project_on_segment((pa + pb) * 0.5, s0, s1).1;
         let k = self.crossings.len() as u32;
-        self.crossings.push(Crossing { a, b, segment, node, kind, mid });
+        self.crossings.push(Crossing { a, b, segment, node, kind, mid, button: false, bridged: false });
         let len = pa.distance(pb).max(0.05);
-        self.adj[a as usize].push(WalkEdge { to: b, len, interior: false, park: false, cross: k });
-        self.adj[b as usize].push(WalkEdge { to: a, len, interior: false, park: false, cross: k });
+        self.adj[a as usize].push(WalkEdge { to: b, len, interior: false, park: false, cross: k, raised: false });
+        self.adj[b as usize].push(WalkEdge { to: a, len, interior: false, park: false, cross: k, raised: false });
     }
 
     /// The crossing a walker takes going from `p` to `q`, two consecutive
@@ -721,16 +758,149 @@ impl WalkGraph {
                 g.benches.push((n, lid, *facing));
             }
         }
-        g.index = Grid::new(NODE_CELL, g.nodes.iter().map(|n| (n.pos, n.pos)));
         for (k, b) in g.benches.iter().enumerate() {
             g.bench_lots.entry(b.1).or_default().push(k as u32);
         }
-        for (k, c) in g.crossings.iter().enumerate() {
-            let (pa, pb) = (g.nodes[c.a as usize].pos, g.nodes[c.b as usize].pos);
-            g.cross_at.insert(pos_key(pa, pb), k as u32);
-            g.cross_at.insert(pos_key(pb, pa), k as u32);
-        }
+        g.reindex();
         g
+    }
+
+    /// The node grid and the crossing lookup, after nodes were added.
+    fn reindex(&mut self) {
+        self.index = Grid::new(NODE_CELL, self.nodes.iter().map(|n| (n.pos, n.pos)));
+        self.cross_at.clear();
+        for (k, c) in self.crossings.iter().enumerate() {
+            let (pa, pb) = (self.nodes[c.a as usize].pos, self.nodes[c.b as usize].pos);
+            self.cross_at.insert(pos_key(pa, pb), k as u32);
+            self.cross_at.insert(pos_key(pb, pa), k as u32);
+        }
+        self.raised_at = self.nodes.iter().filter(|n| n.level != 0.0).map(|n| ((n.pos.x.to_bits(), n.pos.y.to_bits()), n.level)).collect();
+    }
+
+    /// [tools] Put the Intersection editor's crosswalk upgrades on the
+    /// crossings they were made for (matched by position and the street's
+    /// direction): a push button, or a footbridge with its raised walkway.
+    pub fn apply_upgrades(&mut self, rules: &[crate::junctions::CrossingRule], roads: &RoadNetwork) {
+        use crate::junctions::CrossingUpgrade;
+        if rules.is_empty() {
+            return;
+        }
+        for k in 0..self.crossings.len() {
+            let c = &self.crossings[k];
+            if c.kind == CrossingKind::Jay || roads.try_segment(c.segment).is_none() {
+                continue;
+            }
+            let (s0, s1) = roads.segment_points(c.segment);
+            let dir = (s1 - s0).normalize_or_zero();
+            let Some(rule) = rules.iter().find(|r| r.at.distance(c.mid) < 2.0 && r.dir.dot(dir).abs() > 0.9) else { continue };
+            match rule.upgrade {
+                CrossingUpgrade::None => {}
+                CrossingUpgrade::Button => self.crossings[k].button = true,
+                CrossingUpgrade::Footbridge => {
+                    let along = Self::stair_dir(c, dir, roads);
+                    self.add_footbridge(k as u32, along);
+                }
+            }
+        }
+        self.reindex();
+    }
+
+    /// A footbridge over crossing `k`: the walkway a little to one side of
+    /// the crosswalk at `FOOTBRIDGE_LEVEL`, stairs from each end along the
+    /// pavement (`along`), and the feet joined to the pavement both ways.
+    /// [tools] Where a footbridge over crossing `k` would stand: its
+    /// walkway's ends and the stairs' feet (`add_footbridge`).
+    pub fn footbridge_shape(&self, k: u32, roads: &RoadNetwork) -> Option<([Vec2; 2], [Vec2; 2])> {
+        use crate::junctions::{FOOTBRIDGE_RUN, FOOTBRIDGE_WIDTH};
+        let c = self.crossings.get(k as usize)?;
+        roads.try_segment(c.segment)?;
+        let (s0, s1) = roads.segment_points(c.segment);
+        let dir = (s1 - s0).normalize_or_zero();
+        let along = Self::stair_dir(c, dir, roads);
+        let top = [self.nodes[c.a as usize].pos + along * (FOOTBRIDGE_WIDTH + 0.5), self.nodes[c.b as usize].pos + along * (FOOTBRIDGE_WIDTH + 0.5)];
+        Some((top, [top[0] + along * FOOTBRIDGE_RUN, top[1] + along * FOOTBRIDGE_RUN]))
+    }
+
+    /// The way a footbridge's stairs run: along the street away from the
+    /// junction (or either way mid-block).
+    fn stair_dir(c: &Crossing, dir: Vec2, roads: &RoadNetwork) -> Vec2 {
+        match c.node {
+            Some(n) if (c.mid - roads.node(n).pos).dot(dir) < 0.0 => -dir,
+            _ => dir,
+        }
+    }
+
+    fn add_footbridge(&mut self, k: u32, along: Vec2) {
+        use crate::junctions::{FOOTBRIDGE_LEVEL, FOOTBRIDGE_RUN, FOOTBRIDGE_WIDTH};
+        let c = self.crossings[k as usize].clone();
+        let ends = [c.a, c.b];
+        let mut nodes = [0u32; 4];
+        let mut tops = [Vec2::ZERO; 2];
+        let mut feet = [Vec2::ZERO; 2];
+        for (i, &end) in ends.iter().enumerate() {
+            let p = self.nodes[end as usize].pos;
+            let top = p + along * (FOOTBRIDGE_WIDTH + 0.5);
+            let foot = top + along * FOOTBRIDGE_RUN;
+            let t = self.add_node(top, None);
+            self.nodes[t as usize].level = FOOTBRIDGE_LEVEL;
+            let f = self.add_node(foot, None);
+            // The stairs.
+            self.link_raised(f, t);
+            // The foot on the pavement: back to the crosswalk's end, and on
+            // to the next pavement node beyond it, so nobody doubles back.
+            self.link(f, end, false);
+            let beyond = self.adj[end as usize]
+                .iter()
+                .filter(|e| e.cross == NO_CROSSING && !e.raised && e.to != f)
+                .map(|e| (e.to, (self.nodes[e.to as usize].pos - p).dot(along), self.nodes[e.to as usize].pos.distance(p)))
+                .filter(|&(_, d, _)| d > FOOTBRIDGE_RUN * 0.5)
+                .min_by(|a, b| a.2.total_cmp(&b.2));
+            if let Some((q, _, _)) = beyond {
+                self.link(f, q, false);
+            }
+            nodes[i * 2] = f;
+            nodes[i * 2 + 1] = t;
+            tops[i] = top;
+            feet[i] = foot;
+        }
+        // The walkway.
+        self.link_raised(nodes[1], nodes[3]);
+        self.crossings[k as usize].bridged = true;
+        self.footbridges.push(Footbridge { crossing: k, top: tops, foot: feet, level: FOOTBRIDGE_LEVEL, width: FOOTBRIDGE_WIDTH, nodes: [nodes[0], nodes[2], nodes[1], nodes[3]] });
+    }
+
+    /// Join two nodes by a raised walkway edge (a deck or a flight of
+    /// stairs), its length the walk along the slope.
+    fn link_raised(&mut self, a: u32, b: u32) {
+        if a == b {
+            return;
+        }
+        let (na, nb) = (&self.nodes[a as usize], &self.nodes[b as usize]);
+        let len = (na.pos.distance(nb.pos).powi(2) + (na.level - nb.level).powi(2)).sqrt().max(0.05);
+        let (lo, hi) = if na.level <= nb.level { (a, b) } else { (b, a) };
+        self.adj[a as usize].push(WalkEdge { to: b, len, interior: false, park: false, cross: NO_CROSSING, raised: true });
+        self.adj[b as usize].push(WalkEdge { to: a, len, interior: false, park: false, cross: NO_CROSSING, raised: true });
+        self.raised.push((lo, hi));
+    }
+
+    /// [tools] Height above the ground of a walk node at exactly `p` (a
+    /// point of a walker's path): 0 off the raised walkways.
+    pub fn level_at_node(&self, p: Vec2) -> f32 {
+        if self.raised_at.is_empty() {
+            return 0.0;
+        }
+        self.raised_at.get(&(p.x.to_bits(), p.y.to_bits())).copied().unwrap_or(0.0)
+    }
+
+    /// [tools] How high a walker at `pos` stands on the leg of its path
+    /// from `a` to `b` (node positions): along the stairs, up on the deck.
+    pub fn level_on_leg(&self, a: Vec2, b: Vec2, pos: Vec2) -> f32 {
+        let (la, lb) = (self.level_at_node(a), self.level_at_node(b));
+        if la == 0.0 && lb == 0.0 {
+            return 0.0;
+        }
+        let (t, _) = geom::project_on_segment(pos, a, b);
+        la + (lb - la) * t
     }
 
     /// The benches in a lot (node, lot, facing), in the order they were laid.
@@ -754,9 +924,10 @@ impl WalkGraph {
 
     /// Nearest node within `max_dist`; exact ties go to the lower index.
     pub fn nearest(&self, p: Vec2, max_dist: f32) -> Option<u32> {
+        // Raised walkways are reached by their stairs, never snapped onto.
         let within = |i: usize| {
             let d = self.nodes[i].pos.distance(p);
-            if d <= max_dist { d } else { f32::INFINITY }
+            if d <= max_dist && self.nodes[i].level == 0.0 { d } else { f32::INFINITY }
         };
         if self.index.len() == self.nodes.len() {
             return self.index.nearest(p, |i| within(i as usize)).map(|(i, _)| i);
@@ -782,7 +953,7 @@ impl WalkGraph {
         let mut best: Option<(f32, u32)> = None;
         for i in self.index.in_box(p - Vec2::splat(r), p + Vec2::splat(r)) {
             let d = self.nodes[i as usize].pos.distance(p);
-            if d <= r && best.is_none_or(|(bd, _)| d < bd) {
+            if d <= r && self.nodes[i as usize].level == 0.0 && best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, i));
             }
         }
@@ -833,6 +1004,11 @@ impl WalkGraph {
                         continue;
                     }
                     cost += JAY_PENALTY;
+                }
+                // [tools] At grade under a footbridge: the bridge is worth
+                // a little climbing.
+                if e.cross != NO_CROSSING && self.crossings[e.cross as usize].bridged {
+                    cost += BRIDGED_GRADE_PENALTY;
                 }
                 let nd = du + cost;
                 if nd < dist[e.to as usize] {

@@ -350,14 +350,16 @@ fn road_chains(roads: &RoadNetwork) -> Vec<(Vec<Vec2>, f32, bool, bool, SegmentI
             return None;
         }
         let other = roads.node(node).segments.iter().copied().find(|&s| s != from && roads.segment(s).alive)?;
-        ((hw_of(other) - hw_of(from)).abs() < 0.01 && roads.segment(other).tunnel == roads.segment(from).tunnel).then_some(other)
+        ((hw_of(other) - hw_of(from)).abs() < 0.01 && roads.segment(other).tunnel == roads.segment(from).tunnel && roads.spans_lots(other) == roads.spans_lots(from)).then_some(other)
     };
     let far = |s: SegmentId, from: NodeId| { let seg = roads.segment(s); if seg.a == from { seg.b } else { seg.a } };
     let mut used = std::collections::HashSet::new();
     let mut out = Vec::new();
     for (sid, seg) in roads.alive_segments() {
-        // Tunnels take no ground: the parcels above them are whole.
-        if used.contains(&sid.0) || seg.tunnel {
+        // Tunnels take no ground: the parcels above them are whole. Nor
+        // does a viaduct high enough to span over them (its columns find
+        // room between the buildings).
+        if used.contains(&sid.0) || seg.tunnel || roads.spans_lots(sid) {
             continue;
         }
         // Walk back to the chain start.

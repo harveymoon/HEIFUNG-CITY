@@ -31,6 +31,7 @@ mod taxes;
 mod title;
 mod icons;
 pub mod legend;
+pub mod junction;
 /// [lines] The Lines window.
 mod lines;
 mod toolbar;
@@ -182,6 +183,8 @@ pub(crate) fn side_panel(
     inspector::window(ctx, &mut p, content);
     newgame::window(ctx, &mut p, content);
     title::screen(ctx, &mut p);
+    // [tools] The Intersection editor (a modal).
+    junction::window(ctx, &mut p);
     let fly_to = p.fly_to;
 
     flags.panel_rects = vec![top_rect, bottom_rect];

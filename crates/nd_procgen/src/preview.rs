@@ -34,6 +34,14 @@ pub struct RoadPreview {
 /// the hologram and conflict colours, `alpha` its opacity.
 #[allow(clippy::too_many_arguments)]
 pub fn road_preview(world: &World, points: &[Vec2], levels: &[f32], lanes_fwd: u8, lanes_bwd: u8, kind: RoadKind, palette: &Palette, steep: &[usize], tint: [f32; 3], warn: [f32; 3], alpha: f32) -> RoadPreview {
+    road_preview_with(world, points, levels, lanes_fwd, lanes_bwd, kind, palette, steep, tint, warn, alpha, None)
+}
+
+/// [tools] `road_preview` with the columns where the pillar plan puts them
+/// (`World::road_pillar_plan`) instead of evenly spaced, and its gaps (no
+/// room for a column) tinted as conflicts.
+#[allow(clippy::too_many_arguments)]
+pub fn road_preview_with(world: &World, points: &[Vec2], levels: &[f32], lanes_fwd: u8, lanes_bwd: u8, kind: RoadKind, palette: &Palette, steep: &[usize], tint: [f32; 3], warn: [f32; 3], alpha: f32, pillars: Option<&nd_sim::pillars::PillarPlan>) -> RoadPreview {
     let mut out = RoadPreview::default();
     if points.len() < 2 {
         return out;
@@ -106,8 +114,29 @@ pub fn road_preview(world: &World, points: &[Vec2], levels: &[f32], lanes_fwd: u
         }
         let (a, b) = mini.segment_points(sid);
         let hw = s.half_width() + if s.is_street() { nd_sim::zoning::SIDEWALK } else { 0.6 };
-        crate::terrain::viaduct_span(&mut geo, a, b, z[s.a.0 as usize], z[s.b.0 as usize], hw, &ground, concrete, palette.steel, true);
+        crate::terrain::viaduct_span(&mut geo, a, b, z[s.a.0 as usize], z[s.b.0 as usize], hw, &ground, concrete, palette.steel, pillars.is_none());
     }
+    // [tools] The planned columns, at the deck's height over each.
+    if let Some(plan) = pillars {
+        for p in &plan.pillars {
+            let deck = mini
+                .alive_segments()
+                .filter(|(_, s)| s.viaduct)
+                .map(|(sid, s)| {
+                    let (a, b) = mini.segment_points(sid);
+                    let (t, q) = nd_sim::roads::project_on_segment(p.at, a, b);
+                    (z[s.a.0 as usize] + (z[s.b.0 as usize] - z[s.a.0 as usize]) * t, q.distance(p.at))
+                })
+                .min_by(|x, y| x.1.total_cmp(&y.1));
+            let top = deck.map_or(ground(p.at) + p.level, |d| d.0) - 1.2;
+            crate::terrain::pillar_column(&mut geo, p.at, p.dir, top, ground(p.at), p.half_width, concrete);
+        }
+    }
+    let gaps: Vec<(Vec2, Vec2)> = pillars.map(|p| p.gaps.clone()).unwrap_or_default();
+    // Columns that buy out a building stand out in orange.
+    let spots: Vec<Vec2> = pillars
+        .map(|plan| plan.pillars.iter().filter(|p| plan.buyouts.iter().any(|(lot, _)| world.lots.get(*lot).is_some_and(|l| l.contains(p.at) || nd_sim::geom::distance_to_outline(p.at, &l.polygon) < nd_sim::pillars::PILLAR_RADIUS))).map(|p| p.at).collect())
+        .unwrap_or_default();
     // Pads where it will make junctions.
     let mut pads = MeshData::default();
     for &j in &out.junctions {
@@ -116,26 +145,36 @@ pub fn road_preview(world: &World, points: &[Vec2], levels: &[f32], lanes_fwd: u
         let poly: Vec<Vec2> = (0..20).map(|k| j + Vec2::from_angle(k as f32 / 20.0 * std::f32::consts::TAU) * r).collect();
         pads.ground_polygon(&poly, h + 0.3, [1.0, 1.0, 1.0, 1.0]);
     }
-    out.mesh = tint_hologram(&geo, &pads, points, steep, tint, warn, alpha);
+    out.mesh = tint_hologram(&geo, &pads, points, steep, &gaps, &spots, tint, warn, alpha);
     out
 }
 
 /// One translucent mesh from the generated road: markings and lights
-/// bright, surfaces dim, everything near a steep leg in the warning colour.
-fn tint_hologram(geo: &Geometry, pads: &MeshData, points: &[Vec2], steep: &[usize], tint: [f32; 3], warn: [f32; 3], alpha: f32) -> MeshData {
+/// bright, surfaces dim, everything near a steep leg or a stretch with no
+/// room for a column (`gaps`) in the warning colour.
+#[allow(clippy::too_many_arguments)]
+fn tint_hologram(geo: &Geometry, pads: &MeshData, points: &[Vec2], steep: &[usize], gaps: &[(Vec2, Vec2)], spots: &[Vec2], tint: [f32; 3], warn: [f32; 3], alpha: f32) -> MeshData {
+    const BUYOUT: [f32; 3] = [1.7, 0.75, 0.1];
     let mut out = MeshData::default();
     let near_steep = |p: Vec2| {
         steep.iter().any(|&i| {
             let (Some(&a), Some(&b)) = (points.get(i), points.get(i + 1)) else { return false };
             nd_sim::roads::project_on_segment(p, a, b).1.distance(p) < 14.0
-        })
+        }) || gaps.iter().any(|&(a, b)| nd_sim::roads::project_on_segment(p, a, b).1.distance(p) < 12.0)
     };
     let mut add = |m: &MeshData, bright: f32, a: f32| {
         let base = out.positions.len();
         out.append(m);
         for k in base..out.positions.len() {
             let p = out.positions[k];
-            let c = if near_steep(Vec2::new(p[0], p[2])) { warn } else { tint };
+            let q = Vec2::new(p[0], p[2]);
+            let c = if near_steep(q) {
+                warn
+            } else if p[1] > 0.2 && spots.iter().any(|s| s.distance(q) < 3.2) {
+                BUYOUT
+            } else {
+                tint
+            };
             let lum = { let s = m.colors.get(k - base).copied().unwrap_or([1.0; 4]); (s[0] + s[1] + s[2]) / 3.0 };
             let f = bright * (0.55 + lum * 0.6);
             out.colors[k] = [c[0] * f, c[1] * f, c[2] * f, a];

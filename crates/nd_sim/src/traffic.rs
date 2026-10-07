@@ -31,6 +31,7 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 
 mod crosswalk;
+mod junction;
 mod remap;
 mod roundabout;
 mod siren;
@@ -380,6 +381,31 @@ pub struct Intersection {
     /// Road lanes ending here, with their approach index.
     pub incoming: Vec<(LaneId, usize)>,
     pub signalized: bool,
+    /// [tools] Green seconds per phase (the player's, from the
+    /// Intersection editor; `GREEN_SECONDS` by default).
+    pub greens: Vec<f32>,
+    /// [tools] When the protected left arrow runs, and for how long.
+    pub arrow_mode: crate::junctions::LeftArrow,
+    pub arrow_len: f32,
+    /// [tools] Set by a junction rule: the player chose signals or none.
+    pub ruled: bool,
+}
+
+impl Intersection {
+    /// Green seconds of the phase now running.
+    pub fn green(&self) -> f32 {
+        self.green_of(self.phase)
+    }
+
+    /// Green seconds of phase `k`.
+    pub fn green_of(&self, k: usize) -> f32 {
+        self.greens.get(k).copied().filter(|g| *g > 0.0).unwrap_or(GREEN_SECONDS)
+    }
+
+    /// The default green, for the editor.
+    pub const DEFAULT_GREEN: f32 = GREEN_SECONDS;
+    /// The default protected arrow, for the editor.
+    pub const DEFAULT_ARROW: f32 = ARROW_SECONDS;
 }
 
 /// The lanes of one street arriving at a junction, with their arrows.
@@ -1132,6 +1158,11 @@ pub struct Traffic {
     /// last drained them.
     #[serde(skip)]
     pub toll_passes: Vec<TollPass>,
+    /// [tools] The player's junction settings (signals, phase greens, the
+    /// left arrow, banned left turns), reapplied on every rebuild by
+    /// position (`traffic/junction.rs`).
+    #[serde(default)]
+    pub junction_rules: Vec<crate::junctions::JunctionRule>,
 }
 
 /// Arrows for the lanes (leftmost first) of `segment` arriving at `node`.
@@ -1470,7 +1501,8 @@ impl LaneNetwork {
             self.node_intersection.resize(roads.nodes.len().max(self.node_intersection.len()), usize::MAX);
             self.node_intersection[ni] = self.intersections.len();
             let incoming = incoming.iter().map(|&(l, s)| (l, approaches.iter().position(|&a| a == s).unwrap_or(0))).collect();
-            self.intersections.push(Intersection { node: nid, radius, approaches: approaches.len(), phases, phase: 0, opposite, arrow: 0.0, left_turns: 0, left_wait_sum: 0.0, left_wait_max: 0.0, timer: 0.0, connectors, incoming, signalized });
+            let greens = vec![GREEN_SECONDS; phases.len()];
+            self.intersections.push(Intersection { node: nid, radius, approaches: approaches.len(), phases, phase: 0, opposite, arrow: 0.0, left_turns: 0, left_wait_sum: 0.0, left_wait_max: 0.0, timer: 0.0, connectors, incoming, signalized, greens, arrow_mode: Default::default(), arrow_len: ARROW_SECONDS, ruled: false });
         }
         let _ = road_lane_count;
         for id in 0..self.lanes.len() {
@@ -1694,7 +1726,7 @@ impl LaneNetwork {
                     // Protected arrow: left turns only.
                     self.lanes[lane as usize].turn < 0
                 } else {
-                    inter.timer < inter.arrow + GREEN_SECONDS
+                    inter.timer < inter.arrow + inter.green()
                 };
                 self.lanes[lane as usize].green = !inter.signalized || (mine && open);
             }
@@ -1728,7 +1760,7 @@ impl LaneNetwork {
                 if inter.timer < inter.arrow && inter.timer >= ARROW_MIN && inter.phases[inter.phase].iter().all(|&ap| d.left_queue[ap] == 0) {
                     inter.arrow = inter.timer;
                 }
-                let green_end = inter.arrow + GREEN_SECONDS;
+                let green_end = inter.arrow + inter.green();
                 // A left turner starving in an endless oncoming stream: end
                 // this green so the next one can open with an arrow.
                 let starving = inter.phases[inter.phase].iter().any(|&ap| d.left_starved[ap]);
@@ -1740,7 +1772,7 @@ impl LaneNetwork {
                     }
                 }
             }
-            if inter.timer >= inter.arrow + GREEN_SECONDS + CLEARANCE_SECONDS {
+            if inter.timer >= inter.arrow + inter.green() + CLEARANCE_SECONDS {
                 inter.timer = 0.0;
                 let n = inter.phases.len();
                 let mut next = (inter.phase + 1) % n;
@@ -1753,8 +1785,11 @@ impl LaneNetwork {
                 // A protected left where opposed lefts queue in a lane of
                 // their own, or a left turner has waited too long.
                 let g = &inter.phases[next];
-                inter.arrow = match d {
-                    Some(d) if g.len() > 1 && g.iter().any(|&ap| (d.dedicated[ap] && d.left_queue[ap] >= 3 && d.left_yielding[ap]) || d.left_starved[ap]) => ARROW_SECONDS,
+                // [tools] The player may have the arrow always or never.
+                inter.arrow = match (inter.arrow_mode, d) {
+                    (crate::junctions::LeftArrow::Never, _) => 0.0,
+                    (crate::junctions::LeftArrow::Always, _) if g.len() > 1 => inter.arrow_len,
+                    (crate::junctions::LeftArrow::Auto, Some(d)) if g.len() > 1 && g.iter().any(|&ap| (d.dedicated[ap] && d.left_queue[ap] >= 3 && d.left_yielding[ap]) || d.left_starved[ap]) => inter.arrow_len,
                     _ => 0.0,
                 };
             }
@@ -2015,6 +2050,9 @@ fn idm_with(v: f32, v0: f32, gap: f32, dv: f32, headway: f32, accel: f32) -> f32
 impl Traffic {
     pub fn rebuild(&mut self, roads: &RoadNetwork) {
         self.net.rebuild(roads);
+        // [tools] The player's junction settings first: a banned left
+        // takes the movement away before the arrows are fitted.
+        self.apply_junction_rules(roads);
         // Player arrows go back on their approaches by geometry
         // (`traffic/remap.rs`): ids are renumbered by every rebuild.
         self.resolve_lane_use(roads);

@@ -926,6 +926,61 @@ Citizens are rendered from their simulated positions every frame.
   lowered to the grade. Cars ride the height of the way they are on (`car_height`), movers keep to
   the surface nearest the height they were at (`surface_height_near`), so a walker under a
   viaduct stays under it. Elevated roads pass roundabouts by.
+- **Raising roads while drawing, and pillars** [tools]: with the Road tool, `]` raises and `[`
+  lowers the next point by 2 m (as Page Up / Page Down; the camera's bracket zoom gives way while
+  the Road tool is out); `Shift+]` / `Shift+[` move the whole road drawn so far, its placed points
+  and the next one, together. A raised way stands on concrete columns planned along its built
+  polyline (`nd_sim::pillars::plan`, a shortest path over 1 m samples): about 24 m apart
+  (`PILLAR_SPAN`), never more than 42 m between supports (`PILLAR_MAX_SPAN`, the structural
+  limit; a raised end needs one within 10 m), none where the deck is under 2.5 m up (it lands on
+  its ramp). Each sample is a site (`World::pillar_site`): a road, path or track below the deck
+  (with its pavements and a junction's corners, 1.6 m footing clearance) or a facility or one of
+  the city's own structures (plants, depots, stations, services, docks, hubs) or a park blocks a
+  column; an empty lot is taken (it leaves the zoning); a grown building is bought out, and costs
+  the most, so the plan shifts columns onto open ground or empty lots first. A stretch with no
+  site for longer than a span may be is a gap: the preview draws the deck red over it (and a red
+  band on the ground), the sub-pane says why, and implementing is refused (`World::pillar_refusal`,
+  also on a trial rebuild, so a ground road laid under a viaduct where its columns stood is refused
+  too). The preview shows the columns where they will stand, orange (with the lot outlined and the
+  building named in the sub-pane) where one buys out a building. A deck at least 6 m up at both
+  ends of a piece (`pillars::SPAN_LEVEL`, `RoadNetwork::spans_lots`) spans over the lots under it:
+  it takes no corridor from the parcels; a building taller than fits under it (`floors_under`:
+  deck, roof and 3.6 m storeys) is bought out, growth there is capped to what fits
+  (`World::deck_cap`, in `height_cap`), and a lot under a deck too low for a storey goes. One of the
+  city's own structures under a deck refuses the road unless it is a building of storeys that fits
+  (a plant, a station or a dock never). Columns are kept on the world (`World::pillars`, serde
+  default) with the key of the way they carry, so a way drawn again the same keeps them where they
+  stood while each is still clear; a save from before pillars plans them on load without pulling
+  anything down. `terrain::viaducts` draws each column at its deck's height (a highway hoisted by
+  the grading alone keeps its evenly spaced columns).
+- **Intersection editor** [tools]: Edit mode, click a junction or a crosswalk (Ctrl+click still
+  grabs a control point there). A modal (`ui::junction`) with a top-down orthographic render of the
+  roads only (`render::junction_view`: a camera on its own render layer, which the road, lane-arrow,
+  path and footbridge meshes are on as well as the main one, filming into an image egui shows; the
+  wheel zooms) with each arriving street's lane arrows and the crosswalks over it, clickable, and
+  beside it: signals (auto / signals / none), each phase's green (5..90 s), the protected left
+  (when needed / always / never, 3..30 s), left turns allowed or forbidden for the whole junction
+  or per street, lane permissions per lane (L, S, R toggles: the player's lane arrows, checked as
+  `set_lane_use` checks them), and per crosswalk an upgrade. The junction's settings are a
+  `junctions::JunctionRule` kept by the traffic (`Traffic::junction_rules`, anchored by the
+  junction's position and the directions its streets leave it, applied on every lane rebuild
+  before the player's arrows: a forced signal, the greens on `Intersection::greens`, the arrow mode
+  and length, and banned lefts taken out of the approach's offered movements). Crosswalk upgrades
+  are `junctions::CrossingRule`s on the world (`World::crosswalks`), applied to the walk graph after
+  every build (`WalkGraph::apply_upgrades`):
+  - a push-button signal (`Crossing::button`): a walker at the kerb presses it and waits; 3 s later
+    traffic gets a red (a hold on every lane over the crossing) for 12 s, then at least 20 s of
+    green (`pedestrians::ButtonLight`). Nobody pressing, nobody stopped;
+  - a footbridge (`walk::Footbridge`): a walkway 6 m up a little to the side of the crosswalk and
+    stairs from each end along the pavement, away from the junction. The walk graph gets raised
+    nodes (`WalkNode::level`) and raised edges (`WalkEdge::raised`, listed in `WalkGraph::raised`):
+    generic, so skywalks between buildings can join the same network. Raised nodes are never
+    snapped onto (their stairs reach them). A walker on the bridge crosses no street, so holds no
+    one up; crossing at grade under a bridge costs `BRIDGED_GRADE_PENALTY` (30 m) more in the
+    route search, so walkers take the bridge when it costs them only a little more. Walkers are
+    drawn at their level on the leg they walk (`World::walker_level`); the bridge itself is
+    `nd_procgen::footbridge` (deck on columns, glass balustrades, steel rails, neon strips, stairs).
+  The remote API's `intersection` command reads and sets all of it.
 - **Depth view** (Underground / Ground / Sky, U cycles, top bar): Underground hides the terrain,
   water, buildings, lots, surface roads and walkers, draws surface roads as faint outlines and
   shows the tunnels (drawn as their own street layer, `StreetLayer::Underground`, with bore walls

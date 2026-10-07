@@ -1,0 +1,497 @@
+//! [tools] Raised roads on pillars, and the Intersection editor's edits:
+//! lane permissions, banned lefts, signal timing, push-button crossings
+//! and footbridges.
+
+use super::*;
+use crate::junctions::{CrossingUpgrade, JunctionRule, LeftArrow, SignalMode};
+use crate::mind::IdleMind;
+use crate::pillars::PILLAR_RADIUS;
+use crate::traffic::{LaneKind, LEFT, RIGHT, STRAIGHT};
+
+fn flat() -> World {
+    World::new(WorldConfig { emergencies: false, society: false, landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::test_town() })
+}
+
+fn square(x0: f32, y0: f32, w: f32, h: f32) -> Vec<Vec2> {
+    vec![Vec2::new(x0, y0), Vec2::new(x0 + w, y0), Vec2::new(x0 + w, y0 + h), Vec2::new(x0, y0 + h)]
+}
+
+fn raised(points: &[Vec2], levels: &[f32], lanes: (u8, u8)) -> Gesture {
+    Gesture::Road { points: points.to_vec(), lanes_fwd: lanes.0, lanes_bwd: lanes.1, curved: false, kind: RoadKind::Street, elevation: levels.to_vec() }
+}
+
+/// Plan a gesture in a project of its own and implement it.
+fn try_build(w: &mut World, g: Gesture) -> Result<(), String> {
+    w.project = None;
+    w.add_gesture(g);
+    w.try_implement()
+}
+
+fn run(w: &mut World, ticks: usize) {
+    let mut minds = IdleMind;
+    for _ in 0..ticks {
+        w.tick(&mut minds);
+    }
+}
+
+/// Streets at y = 0 and x = 0, a residential block north-east of the
+/// crossroads, every third lot built on (one-storey buildings).
+fn block() -> World {
+    let mut w = flat();
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    w.add_road(&[Vec2::new(0.0, -300.0), Vec2::new(0.0, 300.0)], 1, 1);
+    w.add_zone(square(8.0, 8.0, 200.0, 200.0), LandUse::Residential);
+    let mut lots: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none()).map(|(id, _)| id).collect();
+    lots.sort_by(|a, b| w.lots[*a].center.x.total_cmp(&w.lots[*b].center.x).then(w.lots[*a].center.y.total_cmp(&w.lots[*b].center.y)));
+    for (i, lot) in lots.into_iter().enumerate() {
+        if i % 3 == 0 {
+            w.build_on(lot);
+        }
+    }
+    let sites: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.construction.is_some()).map(|(id, _)| id).collect();
+    for id in sites {
+        w.finish_construction(id);
+    }
+    for b in w.buildings.values_mut() {
+        b.floors = 1;
+    }
+    w
+}
+
+/// The row of lots along the north side of the street at y = 0: the y of
+/// a line through their middles.
+fn row_y(w: &World) -> f32 {
+    let mut ys: Vec<f32> = w.lots.values().filter(|l| l.usable() && l.center.y > 0.0 && l.center.y < 60.0 && l.center.x > 20.0).map(|l| l.center.y).collect();
+    assert!(ys.len() >= 4, "a row of lots: {}", ys.len());
+    ys.sort_by(f32::total_cmp);
+    ys[ys.len() / 2]
+}
+
+/// Lots the line y = `y` crosses between `x0` and `x1`, west to east.
+fn lots_on_line(w: &World, y: f32, x0: f32, x1: f32) -> Vec<LotId> {
+    let mut lots: Vec<LotId> = w
+        .lots
+        .iter()
+        .filter(|(_, l)| l.usable() && l.center.x > x0 && l.center.x < x1)
+        .filter(|(_, l)| l.polygon.iter().map(|p| p.y).fold(f32::MAX, f32::min) < y - 1.0 && l.polygon.iter().map(|p| p.y).fold(f32::MIN, f32::max) > y + 1.0)
+        .map(|(id, _)| id)
+        .collect();
+    lots.sort_by(|a, b| w.lots[*a].center.x.total_cmp(&w.lots[*b].center.x));
+    lots
+}
+
+/// Make up to `n` of `lots` hold one of the city's own structures (a bus
+/// depot): built on if empty, then flagged.
+fn protect(w: &mut World, lots: &[LotId], n: usize) -> Vec<BuildingId> {
+    let mut out = Vec::new();
+    for &lot in lots.iter().take(n) {
+        if w.lots[lot].building.is_none() {
+            w.build_on(lot);
+        }
+        let Some(b) = w.lots[lot].building else { continue };
+        if w.buildings[b].construction.is_some() {
+            w.finish_construction(b);
+        }
+        let bb = &mut w.buildings[b];
+        bb.depot = true;
+        bb.floors = 1;
+        out.push(b);
+    }
+    out
+}
+
+fn ground_street_clearance(w: &World, p: Vec2) -> f32 {
+    w.roads
+        .alive_segments()
+        .filter(|(sid, _)| w.roads.segment_level(*sid, 0.5) < 2.0)
+        .map(|(sid, s)| {
+            let (a, b) = w.roads.segment_points(sid);
+            crate::roads::project_on_segment(p, a, b).1.distance(p) - s.half_width() - crate::zoning::SIDEWALK
+        })
+        .fold(f32::INFINITY, f32::min)
+}
+
+#[test]
+fn pillars_dodge_the_roads_and_buildings_under_a_raised_road() {
+    let mut w = block();
+    let y = row_y(&w);
+    let row = lots_on_line(&w, y, 0.0, 220.0);
+    assert!(row.len() >= 5, "lots under the line: {}", row.len());
+    // A depot (one of the city's own structures) on one of them.
+    let depot = protect(&mut w, &row[2..], 1).into_iter().next();
+    let built: Vec<BuildingId> = w.buildings.keys().collect();
+    assert!(row.iter().filter(|&&l| w.lots[l].building.is_some()).count() >= 2, "buildings under the road");
+    // East-west over the row, over the street at x = 0, ramps at both ends.
+    // (The ramps come down well clear of the block: a ramp at grade cuts
+    // the parcels it passes like any street.)
+    let pts = [Vec2::new(-330.0, y), Vec2::new(-230.0, y), Vec2::new(330.0, y), Vec2::new(430.0, y)];
+    let levels = [0.0, 12.0, 12.0, 0.0];
+    let preview = w.road_pillar_plan(&pts, &levels, 1, 1, RoadKind::Street);
+    assert!(preview.ok(), "room for the columns: {:?}", preview.refusal());
+    assert!(preview.buyouts.is_empty(), "empty lots and open ground were in reach: {:?}", preview.buyouts);
+    // Columns at a plain 24 m spacing would have stood on a building or
+    // the street: the plan moved them.
+    let naive_hit = (0..=20).map(|k| -230.0 + k as f32 * 24.0).filter(|x| *x < 330.0).any(|x| {
+        let p = Vec2::new(x, y);
+        ground_street_clearance(&w, p) < PILLAR_RADIUS || w.lots.values().any(|l| l.building.is_some() && l.contains(p))
+    });
+    assert!(naive_hit, "the test needs obstacles in the way of a plain spacing");
+    let before = w.buildings.len();
+    try_build(&mut w, raised(&pts, &levels, (1, 1))).expect("implemented");
+    assert!(w.pillars.len() >= 15, "columns along it: {}", w.pillars.len());
+    for p in &w.pillars {
+        assert!(ground_street_clearance(&w, p.at) > PILLAR_RADIUS - 0.01, "a column on the street at {}", p.at);
+        for (_, l) in w.lots.iter().filter(|(_, l)| l.building.is_some()) {
+            assert!(!l.contains(p.at), "a column on a building's lot at {}", p.at);
+        }
+    }
+    // The low buildings under the deck stand, the depot too.
+    assert_eq!(w.buildings.len(), before, "nothing was pulled down");
+    for b in built {
+        assert!(w.buildings.contains_key(b));
+    }
+    if let Some(d) = depot {
+        let lot = w.buildings[d].lot;
+        assert!(!w.pillars_on(&w.lots[lot].polygon), "no column on the depot's lot");
+    }
+    // Spans within the structural limit.
+    let mut xs: Vec<f32> = w.pillars.iter().map(|p| p.at.x).collect();
+    xs.sort_by(f32::total_cmp);
+    for k in xs.windows(2) {
+        assert!(k[1] - k[0] <= crate::pillars::PILLAR_MAX_SPAN + 0.01, "{xs:?}");
+    }
+    // A building too tall for the deck goes (bought out), and growth under
+    // it is held to what fits.
+    let lot = row.iter().copied().find(|&l| w.lots.get(l).is_some_and(|l| l.building.is_none())).expect("an empty lot under the deck");
+    assert!(w.deck_cap(lot).is_some_and(|c| c <= crate::pillars::floors_under(12.0)), "{:?}", w.deck_cap(lot));
+    assert!(w.height_cap(lot) <= crate::pillars::floors_under(12.0));
+}
+
+#[test]
+fn a_raised_road_with_no_room_for_pillars_is_refused() {
+    let mut w = block();
+    // Straight along over the street at y = 0: every site is road.
+    let g = raised(&[Vec2::new(-250.0, 0.0), Vec2::new(250.0, 0.0)], &[12.0, 12.0], (1, 1));
+    let plan = w.road_pillar_plan(&[Vec2::new(-250.0, 0.0), Vec2::new(250.0, 0.0)], &[12.0, 12.0], 1, 1, RoadKind::Street);
+    assert!(!plan.ok(), "the preview shows the gap");
+    let segs = w.roads.alive_segments().count();
+    let err = try_build(&mut w, g).expect_err("refused");
+    assert!(err.contains("pillar"), "{err}");
+    assert!(w.project.is_some(), "the project stays pending");
+    assert_eq!(w.roads.alive_segments().count(), segs, "nothing was built");
+}
+
+#[test]
+fn pillars_never_take_a_protected_building() {
+    let mut w = block();
+    let y = row_y(&w);
+    // Depots on every lot along 60 to 200 m east: no room there but on
+    // them (and on the street at the far end).
+    let row = lots_on_line(&w, y, 40.0, 215.0);
+    let stations = protect(&mut w, &row, usize::MAX);
+    assert!(stations.len() >= 4, "{}", stations.len());
+    let pts = [Vec2::new(60.0, y), Vec2::new(200.0, y)];
+    let plan = w.road_pillar_plan(&pts, &[12.0, 12.0], 1, 1, RoadKind::Street);
+    assert!(plan.buyouts.iter().all(|(_, b)| !stations.contains(b)), "a depot would be bought out");
+    assert!(!plan.ok(), "no room but on the depots");
+    let err = try_build(&mut w, raised(&pts, &[12.0, 12.0], (1, 1))).expect_err("refused");
+    assert!(err.contains("pillar"), "{err}");
+    for s in stations {
+        assert!(w.buildings.contains_key(s), "the depot stands");
+    }
+    // With the grown buildings instead, the same road is built: columns
+    // buy out what is in the way.
+    let mut w = block();
+    let row = lots_on_line(&w, y, 40.0, 215.0);
+    for &lot in &row {
+        if w.lots[lot].building.is_none() {
+            w.build_on(lot);
+            if let Some(b) = w.lots[lot].building {
+                w.finish_construction(b);
+            }
+        }
+    }
+    let plan = w.road_pillar_plan(&pts, &[12.0, 12.0], 1, 1, RoadKind::Street);
+    assert!(plan.ok() && !plan.buyouts.is_empty(), "grown buildings are bought out: {:?}", plan.refusal());
+    let taken: Vec<BuildingId> = plan.buyouts.iter().map(|x| x.1).collect();
+    try_build(&mut w, raised(&pts, &[12.0, 12.0], (1, 1))).expect("built");
+    for b in taken {
+        assert!(!w.buildings.contains_key(b), "bought out for a column");
+    }
+}
+
+#[test]
+fn pillars_and_intersection_settings_survive_save_and_load() {
+    let mut w = block();
+    let y = row_y(&w);
+    try_build(&mut w, raised(&[Vec2::new(-330.0, y), Vec2::new(-230.0, y), Vec2::new(330.0, y), Vec2::new(430.0, y)], &[0.0, 12.0, 12.0, 0.0], (1, 1))).unwrap();
+    assert!(!w.pillars.is_empty());
+    let k = w.junction_at(Vec2::ZERO, 2.0).expect("the crossroads");
+    let mut rule = w.junction_view(k).rule;
+    rule.signal = SignalMode::Signals;
+    rule.left_arrow = LeftArrow::Always;
+    rule.arrow_seconds = 9.0;
+    rule.set_green(Vec2::new(1.0, 0.0), Some(33.0));
+    w.set_junction_rule(rule.clone()).unwrap();
+    w.economy.treasury = 1.0e6;
+    let cr = w.junction_view(k).crossings[0].index;
+    w.set_crossing_upgrade(cr, CrossingUpgrade::Footbridge).unwrap();
+    let pillars = w.pillars.clone();
+    let text = w.to_ron().unwrap();
+    let w2 = World::from_ron(&text).unwrap();
+    assert_eq!(w2.pillars, pillars);
+    assert_eq!(w2.traffic.junction_rules, vec![rule]);
+    assert_eq!(w2.crosswalks.rules.len(), 1);
+    assert_eq!(w2.walk.footbridges.len(), 1, "the footbridge is back on the walk graph");
+    let k2 = w2.junction_at(Vec2::ZERO, 2.0).unwrap();
+    let inter = &w2.traffic.net.intersections[k2];
+    assert!(inter.signalized && inter.arrow_mode == LeftArrow::Always && (inter.arrow_len - 9.0).abs() < 1e-3);
+    assert!(inter.greens.iter().any(|g| (*g - 33.0).abs() < 1e-3), "{:?}", inter.greens);
+}
+
+/// A crossroads of two-lane-each-way streets.
+fn crossroads() -> World {
+    let mut w = flat();
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 2, 2);
+    w.add_road(&[Vec2::new(0.0, -300.0), Vec2::new(0.0, 300.0)], 2, 2);
+    w
+}
+
+fn west_arm(w: &World) -> (usize, SegmentId, NodeId) {
+    let k = w.junction_at(Vec2::ZERO, 2.0).expect("a junction");
+    let v = w.junction_view(k);
+    let a = v.approaches.iter().find(|a| a.dir.x < -0.9).expect("the west arm");
+    (k, a.segment, v.node.unwrap())
+}
+
+/// The route from the west arm to the `to` arm, and the turns its
+/// connectors make (and from which lane index).
+fn route_turns(w: &World, to: Vec2) -> Option<Vec<(i8, u8)>> {
+    // (Right-hand traffic with the right of heading d at (-d.y, d.x):
+    // eastbound lanes lie north of the centre line.)
+    let (from_seg, _, _) = w.roads.nearest_where(Vec2::new(-150.0, 2.0), |s| s.is_street())?;
+    let (to_seg, _, _) = w.roads.nearest_where(to, |s| s.is_street())?;
+    let (route, _, _) = w.traffic.net.find_route(from_seg, Vec2::new(-150.0, 4.0), to_seg, to)?;
+    let lanes = &w.traffic.net.lanes;
+    Some(
+        route
+            .windows(2)
+            .filter(|p| matches!(lanes[p[1] as usize].kind, LaneKind::Connector { .. }))
+            .map(|p| (lanes[p[1] as usize].turn, match lanes[p[0] as usize].kind { LaneKind::Road { index, .. } => index, _ => 99 }))
+            .collect(),
+    )
+}
+
+#[test]
+fn edited_lane_permissions_and_a_banned_left_change_routing() {
+    let mut w = crossroads();
+    let (k, west, _) = west_arm(&w);
+    // Eastbound, a left turn goes to -y (southbound lanes at x > 0).
+    let south = Vec2::new(4.0, -150.0);
+    let east = Vec2::new(150.0, 4.0);
+    let left = route_turns(&w, south).expect("a route south");
+    assert!(left.first().is_some_and(|&(t, _)| t < 0), "eastbound to the south arm turns left: {left:?}");
+    // Default two-lane arrows: L on the left lane, S+R on the right. Make
+    // the left lane L+S and the right lane R only: straight on now goes
+    // from the left lane.
+    let straight = route_turns(&w, east).unwrap();
+    assert!(straight.iter().any(|&(t, i)| t == 0 && i == 1), "straight from the right lane by default: {straight:?}");
+    w.set_lane_permissions(k, west, Some(vec![LEFT | STRAIGHT, RIGHT])).unwrap();
+    let straight = route_turns(&w, east).unwrap();
+    assert!(straight.iter().all(|&(t, i)| t != 0 || i == 0), "straight only from the left lane now: {straight:?}");
+    // Ban the left from the west arm: the route north no longer turns
+    // left there (it finds another way or none).
+    let mut rule = w.junction_view(k).rule;
+    rule.set_left_forbidden(Vec2::new(-1.0, 0.0), true);
+    w.set_junction_rule(rule).unwrap();
+    let v = w.junction_view(k);
+    let wa = v.approaches.iter().find(|a| a.segment == west).unwrap();
+    assert!(wa.no_left && wa.exits & LEFT == 0 && wa.arrows.iter().all(|a| a & LEFT == 0), "{:?}", wa.arrows);
+    assert!(wa.arrows.iter().any(|a| a & STRAIGHT != 0) && wa.arrows.iter().any(|a| a & RIGHT != 0));
+    match route_turns(&w, south) {
+        None => {}
+        Some(t) => assert!(!t.first().is_some_and(|&(turn, _)| turn < 0), "turned left at the banned junction: {t:?}"),
+    }
+}
+
+#[test]
+fn signal_timing_edits_change_the_phases() {
+    let mut w = crossroads();
+    let (k, _, _) = west_arm(&w);
+    assert!(w.traffic.net.intersections[k].signalized);
+    let measure = |w: &mut World| -> f32 {
+        // Seconds the east-west phase holds its green, on the fixed cycle.
+        let inter = &w.traffic.net.intersections[k];
+        let dirs = w.traffic.net.approach_dirs(&w.roads, k);
+        let ew = inter.phases.iter().position(|g| g.iter().any(|&ap| dirs[ap].1.x.abs() > 0.9)).unwrap();
+        // Wait for another phase, then time the next east-west green.
+        for _ in 0..2000 {
+            if w.traffic.net.intersections[k].phase != ew {
+                break;
+            }
+            w.traffic.step(0.5, 1);
+        }
+        let mut green = 0.0;
+        let mut seen = false;
+        for _ in 0..2000 {
+            w.traffic.step(0.5, 1);
+            let inter = &w.traffic.net.intersections[k];
+            if inter.phase == ew && inter.timer < inter.arrow + inter.green() {
+                green += 0.5;
+                seen = true;
+            } else if seen {
+                break;
+            }
+        }
+        green
+    };
+    let before = measure(&mut w);
+    let mut rule = w.junction_view(k).rule;
+    rule.set_green(Vec2::new(1.0, 0.0), Some(40.0));
+    rule.set_green(Vec2::new(-1.0, 0.0), Some(40.0));
+    rule.left_arrow = LeftArrow::Never;
+    w.set_junction_rule(rule.clone()).unwrap();
+    let after = measure(&mut w);
+    assert!(after > before + 15.0, "the green grew: {before} -> {after}");
+    let v = w.junction_view(k);
+    assert!(v.phases.iter().any(|p| (p.green - 40.0).abs() < 1e-3));
+    // Unsignalised: no signal at all.
+    rule.signal = SignalMode::Unsignalised;
+    w.set_junction_rule(rule.clone()).unwrap();
+    assert!(!w.traffic.net.intersections[k].signalized);
+    assert!(w.traffic.net.lanes.iter().all(|l| l.green), "every light green (none) at an unsignalised junction");
+    // Back to auto.
+    w.set_junction_rule(JunctionRule::new(rule.at)).unwrap();
+    assert!(w.traffic.net.intersections[k].signalized);
+    assert!(w.traffic.junction_rules.is_empty());
+}
+
+/// A long street with a mid-block zebra and lots to walk between.
+fn zebra_town() -> (World, u32) {
+    let mut w = flat();
+    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    w.add_zone(square(-200.0, 8.0, 400.0, 60.0), LandUse::Residential);
+    w.add_zone(square(-200.0, -68.0, 400.0, 60.0), LandUse::Residential);
+    let lots: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable()).map(|(id, _)| id).collect();
+    for lot in lots {
+        w.build_on(lot);
+    }
+    let sites: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.construction.is_some()).map(|(id, _)| id).collect();
+    for id in sites {
+        w.finish_construction(id);
+    }
+    let mut guard = 0;
+    while w.citizens.is_empty() && guard < 48 {
+        run(&mut w, 60);
+        guard += 1;
+    }
+    assert!(!w.citizens.is_empty(), "people moved in");
+    // Everyone stays in: only the test's own walker moves.
+    for c in w.citizens.values_mut() {
+        if let Some(h) = c.home {
+            c.activity = Activity::AtHome;
+            c.inside = Some(h);
+        }
+        c.next_decision_tick = u64::MAX;
+    }
+    let cars: Vec<CarId> = w.traffic.cars.keys().collect();
+    for c in cars {
+        w.traffic.remove_car(c);
+    }
+    let cr = w.walk.crossings.iter().position(|c| c.kind == crate::walk::CrossingKind::Zebra).expect("a mid-block zebra") as u32;
+    (w, cr)
+}
+
+/// A car driving east along y = 0 from x = -350.
+fn east_car(w: &mut World) -> CarId {
+    let (seg, _, _) = w.roads.nearest_where(Vec2::new(-350.0, 0.0), |s| s.is_street()).unwrap();
+    let (goal, _, _) = w.roads.nearest_where(Vec2::new(350.0, 0.0), |s| s.is_street()).unwrap();
+    let (route, s0, s1) = w.traffic.net.find_route(seg, Vec2::new(-350.0, 2.0), goal, Vec2::new(350.0, 2.0)).expect("a route east");
+    let citizen = w.citizens.keys().next().unwrap_or_default();
+    w.traffic.spawn_car(citizen, None, route, s0, s1, 0)
+}
+
+#[test]
+fn a_push_button_crossing_stops_traffic_only_when_pressed() {
+    let (mut w, cr) = zebra_town();
+    w.economy.treasury = 1.0e6;
+    w.set_crossing_upgrade(cr, CrossingUpgrade::Button).unwrap();
+    let cr = w.walk.crossings.iter().position(|c| c.button).expect("the button crossing") as u32;
+    // Nobody at it: traffic is never held.
+    run(&mut w, 2);
+    let car = east_car(&mut w);
+    let mut slowest = f32::MAX;
+    for _ in 0..40 {
+        run(&mut w, 1);
+        assert!(w.traffic.peds.holds.values().all(|h| h.iter().all(|x| x.crossing != cr)), "held with nobody there");
+        if let Some(c) = w.traffic.cars.get(car) {
+            if c.pos.x > -150.0 && c.pos.x < 150.0 {
+                slowest = slowest.min(c.v);
+            }
+        }
+    }
+    assert!(slowest > 3.0, "the car never slowed for the empty crossing: {slowest}");
+    // Someone presses: the light goes red and traffic is held.
+    let c = &w.walk.crossings[cr as usize];
+    let (a, b) = (w.walk.nodes[c.a as usize].pos, w.walk.nodes[c.b as usize].pos);
+    let id = w.citizens.keys().next().expect("someone lives here");
+    {
+        let ci = &mut w.citizens[id];
+        ci.inside = None;
+        ci.mode = TravelMode::Walk;
+        ci.pos = a;
+        ci.prev_pos = a;
+        ci.activity = Activity::Traveling { to: None, purpose: Purpose::Wander, path: vec![a, a, b], idx: 1 };
+        ci.next_decision_tick = u64::MAX;
+    }
+    let mut red = false;
+    let mut held = false;
+    for _ in 0..20 {
+        run(&mut w, 1);
+        red |= w.button_light(cr).red();
+        held |= w.traffic.peds.holds.values().any(|h| h.iter().any(|x| x.crossing == cr));
+    }
+    assert!(w.peds.button_presses_total >= 1, "the button was pressed");
+    assert!(red && held, "red {red}, traffic held {held}");
+}
+
+#[test]
+fn walkers_on_a_footbridge_never_hold_traffic() {
+    let (mut w, cr) = zebra_town();
+    w.economy.treasury = 1.0e6;
+    let mid = w.walk.crossings[cr as usize].mid;
+    w.set_crossing_upgrade(cr, CrossingUpgrade::Footbridge).unwrap();
+    assert_eq!(w.walk.footbridges.len(), 1);
+    assert!(w.walk.raised.len() >= 3, "stairs, deck, stairs");
+    assert!(w.walk.nodes.iter().any(|n| n.level >= crate::junctions::FOOTBRIDGE_LEVEL - 0.01));
+    let cr = w.walk.crossings.iter().position(|c| c.bridged).unwrap() as u32;
+    let c = &w.walk.crossings[cr as usize];
+    let (a, b) = (w.walk.nodes[c.a as usize].pos, w.walk.nodes[c.b as usize].pos);
+    // From one side of the street to the other near the bridge: the route
+    // climbs over it rather than crossing at grade.
+    let fb = w.walk.footbridges[0].clone();
+    let along = (fb.foot[0] - fb.top[0]).normalize();
+    let (path, nodes) = w.walk.route(a + along * 20.0, b + along * 20.0).expect("a route over");
+    assert!(nodes.iter().any(|&n| w.walk.nodes[n as usize].level > 0.0), "over the bridge: {path:?}");
+    assert!(path.windows(2).all(|p| w.walk.crossing_between(p[0], p[1]) != Some(cr)), "not across the zebra");
+    let id = w.citizens.keys().next().unwrap();
+    {
+        let ci = &mut w.citizens[id];
+        ci.inside = None;
+        ci.mode = TravelMode::Walk;
+        ci.pos = path[0];
+        ci.prev_pos = path[0];
+        ci.activity = Activity::Traveling { to: None, purpose: Purpose::Wander, path: path.clone(), idx: 0 };
+        ci.next_decision_tick = u64::MAX;
+    }
+    let car = east_car(&mut w);
+    let mut up = 0.0f32;
+    for _ in 0..30 {
+        run(&mut w, 1);
+        assert!(w.traffic.peds.holds.values().all(|h| h.iter().all(|x| x.crossing != cr)), "a walker on the bridge held traffic");
+        let ci = &w.citizens[id];
+        up = up.max(w.walker_level(ci, ci.pos));
+    }
+    assert!(up > 3.0, "the walker climbed onto the bridge: {up}");
+    let _ = (car, mid);
+}

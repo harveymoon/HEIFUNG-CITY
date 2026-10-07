@@ -323,6 +323,7 @@ pub fn citizen_detail(w: &World, id: CitizenId, c: &Citizen, favourite: bool) ->
         "id": key_str(id), "name": c.name, "personality": Personality::from_seed(c.seed).summary(),
         "activity": activity(w, c), "pos": v2(c.pos), "heading": round(c.heading), "visible": c.is_visible(),
         "mode": if c.mode == TravelMode::Bike { "bike" } else { "walk" },
+        "raised_level": round(w.walker_level(c, c.pos)),
         "home": opt_key(c.home), "home_name": building_name(w, c.home),
         "work": opt_key(c.work), "work_name": building_name(w, c.work),
         "inside": opt_key(c.inside), "parked_at": opt_key(c.parked_at),

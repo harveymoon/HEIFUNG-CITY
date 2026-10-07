@@ -313,10 +313,11 @@ fn control_camera(
         let speed = cam.distance * 0.9 * dt;
         cam.target += (right * pan.x + forward * pan.y) * speed;
     }
-    if held(KeyCode::BracketLeft) {
+    // [tools] The Road tool raises and lowers with [ and ]: no zoom then.
+    if held(KeyCode::BracketLeft) && !tools.captures_brackets() {
         cam.distance = (cam.distance * (1.0 - 1.5 * dt)).max(12.0);
     }
-    if held(KeyCode::BracketRight) {
+    if held(KeyCode::BracketRight) && !tools.captures_brackets() {
         cam.distance = (cam.distance * (1.0 + 1.5 * dt)).min(2500.0);
     }
     if held(KeyCode::KeyQ) {

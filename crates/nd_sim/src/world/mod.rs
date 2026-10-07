@@ -46,6 +46,10 @@ mod market;
 mod parking;
 mod pedestrians;
 mod plan;
+mod pillars;
+pub use pillars::deck_half_width;
+mod junctions;
+pub use junctions::{ApproachView, CrossingView, IntersectionView, PhaseView};
 mod riders;
 mod places;
 #[cfg(test)]
@@ -63,6 +67,8 @@ mod subway;
 mod car_tests;
 #[cfg(test)]
 mod elevation_tests;
+#[cfg(test)]
+mod tools_tests;
 #[cfg(test)]
 mod ramp_tests;
 #[cfg(test)]
@@ -480,6 +486,18 @@ pub struct World {
     /// on load.
     #[serde(default)]
     pub streets: crate::streets::StreetNames,
+    /// [tools] The columns under the raised roads (`world/pillars.rs`).
+    #[serde(default)]
+    pub pillars: Vec<crate::pillars::Pillar>,
+    /// [tools] Stretches of raised road with no room for a column, from the
+    /// last rebuild (the trial rebuild of a project refuses on them).
+    #[serde(skip)]
+    pub pillar_gaps: Vec<(Vec2, Vec2)>,
+    /// [tools] Crosswalk upgrades from the Intersection editor (push-button
+    /// signals, footbridges): `world/junctions.rs`. The junctions' own
+    /// settings live with the traffic (`Traffic::junction_rules`).
+    #[serde(default)]
+    pub crosswalks: crate::junctions::Crosswalks,
 }
 
 impl World {
@@ -562,6 +580,9 @@ impl World {
             cargo_hubs: Default::default(),
             rides: Default::default(),
             streets: Default::default(),
+            pillars: Vec::new(),
+            pillar_gaps: Vec::new(),
+            crosswalks: Default::default(),
         };
         w.landscape = Landscape::new(&w.config.landscape);
         w.plan_changed();
@@ -582,6 +603,7 @@ impl World {
     fn rebuild_walk(&mut self) {
         crate::park::plan_parks(&mut self.lots, &self.land_value);
         self.walk = WalkGraph::build(&self.roads, &self.lots, &self.land_value, self.walk.version + 1);
+        self.walk.apply_upgrades(&self.crosswalks.rules, &self.roads);
     }
 
     pub fn to_ron(&self) -> Result<String, ron::Error> {
@@ -622,6 +644,10 @@ impl World {
             crate::park::plan_parks(&mut self.lots, &self.land_value);
         }
         self.walk = WalkGraph::build(&self.roads, &self.lots, &self.land_value, self.walk.version + 1);
+        // [tools] Footbridges and push buttons on the crossings.
+        self.walk.apply_upgrades(&self.crosswalks.rules, &self.roads);
+        // [tools] Columns for raised roads from a save without them.
+        self.pillars_after_load();
         for (_, car) in self.traffic.reattach_cars() {
             self.strand_car(car);
         }
@@ -810,7 +836,12 @@ impl World {
             .map(|(f, _)| f)
             .sum();
         let density = near_floors as f32 + lot.footfall_today as f32 / 40.0;
-        (2.0 + density / 10.0).min(255.0) as u8
+        let cap = (2.0 + density / 10.0).min(255.0) as u8;
+        // [tools] Under a deck spanning over the lot: what fits beneath it.
+        match self.deck_cap(lot_id) {
+            Some(deck) => cap.min(deck),
+            None => cap,
+        }
     }
 
     /// Floors for a new building on `lot_id`: the tier's range, held down

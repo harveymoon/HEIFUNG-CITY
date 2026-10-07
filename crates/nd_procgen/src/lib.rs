@@ -2,6 +2,7 @@
 //! be unit-tested and rendered by any engine.
 
 pub mod buildings;
+pub mod footbridge;
 /// [mapgen] Whole example cities traced through a tensor field.
 pub mod citygen;
 pub mod lights;
