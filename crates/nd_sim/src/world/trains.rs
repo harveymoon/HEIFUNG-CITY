@@ -237,6 +237,7 @@ impl World {
     /// whether this is the start of a journey (its footfall is noted) or
     /// the continuation of one.
     pub(super) fn walk_to_transit(&mut self, id: CitizenId, stop: Vec2, leg: TransitLeg, target: BuildingId, purpose: Purpose, count: bool) {
+        crate::prof_scope!("walk_to_transit");
         let exit_pos = self.leave_building(id);
         let start = exit_pos.unwrap_or(self.citizens[id].pos);
         let mut path = match self.walk.route(start, stop) {
@@ -530,7 +531,21 @@ impl World {
     pub(super) fn board_waiting(&mut self, pred: impl Fn(&TransitLeg) -> bool, capacity: usize, fare: f32, flow: Flow, item: Item, memory: &str) -> Vec<CitizenId> {
         crate::prof_scope!("board_waiting");
         let tick = self.clock.tick;
-        let boarding: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.as_ref().is_some_and(|t| pred(&t.leg))).map(|(id, _)| id).take(capacity).collect();
+        // [perf] Everyone waiting for anything, listed once a tick (in slot
+        // order, as a scan of every citizen would find them), instead of a
+        // scan of the whole town at every stop a bus or train calls at.
+        // Each is checked again here: they may have boarded or given up.
+        let waiting = match self.waiting_cache.take() {
+            Some((t, v)) if t == tick => v,
+            _ => self.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. })).map(|(id, _)| id).collect(),
+        };
+        let boarding: Vec<CitizenId> = waiting
+            .iter()
+            .copied()
+            .filter(|&id| self.citizens.get(id).is_some_and(|c| matches!(c.activity, Activity::Waiting { .. }) && c.transit.as_ref().is_some_and(|t| pred(&t.leg))))
+            .take(capacity)
+            .collect();
+        self.waiting_cache = Some((tick, waiting));
         for &p in &boarding {
             let c = &mut self.citizens[p];
             c.savings -= fare;

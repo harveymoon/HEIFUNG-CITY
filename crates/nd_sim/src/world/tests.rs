@@ -209,7 +209,7 @@ fn park_visits_end_on_a_bench_and_people_leave_on_foot() {
     }
     assert!(sat, "the visitor ends up on a bench: {:?}", w.citizens[c].activity.label());
     let at = w.citizens[c].pos;
-    assert!(w.lots[park_lot].park.as_ref().unwrap().benches.iter().any(|(b, _)| b.distance(at) < 0.5), "sitting on a planned bench");
+    assert!(w.lots[park_lot].park.as_ref().unwrap().benches.iter().any(|(b, _)| b.distance(at) < 0.95), "sitting on a planned bench (a seat along it)");
     assert!(w.citizens[c].is_visible() && w.citizens[c].inside.is_none());
     assert_eq!(w.buildings[park].visitors, 1);
     // Leaving: on foot from the bench, no jump.
@@ -2522,4 +2522,47 @@ fn touching_solar_and_wind_plants_form_one_field() {
     // A site still being cleared is not part of the field yet.
     w.buildings[pc].demolition = Some(crate::buildings::Demolition { progress: 0.5, days: 1.0, loads: 0, floors: 1, tier: Tier::Low, land_use: LandUse::Industrial, seed: 1, condition: 1.0, clear_lot: false, own_lot: false, look: None });
     assert_eq!(w.plant_cluster(pa), both);
+}
+
+/// [access] The player's rule: a long walk to any park makes homes
+/// cheaper, measured along the walk network, not as the crow flies.
+#[test]
+fn land_value_counts_the_walk_to_a_park_not_the_crow_flight() {
+    let mut w = World::new(WorldConfig { emergencies: false, society: false, ..WorldConfig::test_town() });
+    // Two streets that never meet, 200 m apart.
+    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    w.add_road(&[Vec2::new(-400.0, 200.0), Vec2::new(400.0, 200.0)], 1, 1);
+    w.add_zone(square(-390.0, 10.0, 60.0), LandUse::Park);
+    w.add_zone(vec![Vec2::new(-320.0, 10.0), Vec2::new(390.0, 10.0), Vec2::new(390.0, 60.0), Vec2::new(-320.0, 60.0)], LandUse::Residential);
+    w.add_zone(vec![Vec2::new(-390.0, 140.0), Vec2::new(-250.0, 140.0), Vec2::new(-250.0, 190.0), Vec2::new(-390.0, 140.0 + 50.0)], LandUse::Residential);
+    let park_lot = w.lots.iter().find(|(_, l)| l.usable() && l.land_use == LandUse::Park).map(|(id, _)| id).expect("a park lot");
+    w.build_on(park_lot);
+    let park = w.lots[park_lot].building.unwrap();
+    w.finish_construction(park);
+    w.update_land_value();
+    let homes: Vec<(LotId, Vec2)> = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Residential).map(|(id, l)| (id, l.center)).collect();
+    let near = homes.iter().filter(|h| h.1.y < 100.0).min_by(|a, b| a.1.x.total_cmp(&b.1.x)).unwrap();
+    let far = homes.iter().filter(|h| h.1.y < 100.0).max_by(|a, b| a.1.x.total_cmp(&b.1.x)).unwrap();
+    let across = homes.iter().filter(|h| h.1.y > 100.0).min_by(|a, b| a.1.distance(w.lots[park_lot].center).total_cmp(&b.1.distance(w.lots[park_lot].center))).expect("a home on the other street");
+    let access = |p: Vec2| w.land_value.access_at(p).expect("on the walk network");
+    let (an, af, ax) = (access(near.1), access(far.1), access(across.1));
+    let pn = an.park_min.expect("the park is a walk away");
+    let pf = af.park_min.expect("the far end can walk there too");
+    assert!(pn < 3.0, "next to the park: {pn} min");
+    assert!(pf > pn + 5.0, "the far end of the street walks further: {pf} vs {pn} min");
+    // About the street's length on foot.
+    let metres = (far.1.x - w.lots[park_lot].center.x).abs();
+    assert!(pf >= metres / (WALK_MPS * 60.0) * 0.8, "{pf} min for {metres} m");
+    assert!(w.lots[park_lot].center.distance(across.1) < 250.0, "close as the crow flies");
+    assert_eq!(ax.park_min, None, "but no way to walk there from the other street");
+    assert!(an.nightlife_min.is_none(), "no nightlife anywhere yet");
+    // Homes feel it; the grid includes it.
+    assert!(an.value > af.value && af.value > ax.value, "{} {} {}", an.value, af.value, ax.value);
+    assert!(w.lot_value(near.0) > w.lot_value(across.0));
+    // Old saves have no access data and load fine; the next update fills it.
+    let mut old = w.land_value.clone();
+    old.park_min.clear();
+    old.nightlife_min.clear();
+    old.access.clear();
+    assert!(old.access_at(near.1).is_none());
 }

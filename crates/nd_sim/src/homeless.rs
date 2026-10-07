@@ -368,7 +368,6 @@ impl World {
     // ── the hourly round ───────────────────────────────────────────────────
 
     pub(crate) fn hourly_homeless(&mut self) {
-
         crate::prof_scope!("hourly_homeless");
         let tick = self.clock.tick;
         let hour = self.clock.hour();
@@ -379,8 +378,11 @@ impl World {
         let h = &mut self.society.homeless;
         let before: Vec<HouseholdId> = h.since.iter().map(|s| s.0).collect();
         let mut rehoused = 0;
+        // [perf] A set for the lookups below: `Vec::contains` made this
+        // homeless x homeless every hour.
+        let on_street: std::collections::HashSet<HouseholdId> = homeless.iter().copied().collect();
         for hid in before {
-            if homeless.contains(&hid) {
+            if on_street.contains(&hid) {
                 continue;
             }
             h.since.retain(|s| s.0 != hid);
@@ -492,7 +494,6 @@ impl World {
     // ── midnight ───────────────────────────────────────────────────────────
 
     pub(crate) fn daily_homeless(&mut self) {
-
         crate::prof_scope!("daily_homeless");
         let tick = self.clock.tick;
         let day = tick / 1440;

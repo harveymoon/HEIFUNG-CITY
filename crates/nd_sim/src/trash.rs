@@ -651,6 +651,13 @@ impl World {
         let over: Vec<(BuildingId, f32)> = self.society.trash.bins.iter().filter(|(_, b)| b.overflow() > 0.0).map(|(id, b)| (*id, b.overflow())).collect();
         let mut complaints = 0;
         let homes: Vec<(BuildingId, Vec2)> = self.buildings.iter().filter(|(_, b)| !b.residents.is_empty()).filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, l.center))).collect();
+        // [perf] Homes bucketed by `SMELL_RADIUS` cells: each overflowing
+        // bin looks at the homes in nine cells, not at every home in town.
+        let smell_cell = |p: Vec2| ((p.x / SMELL_RADIUS).floor() as i32, (p.y / SMELL_RADIUS).floor() as i32);
+        let mut home_cells: std::collections::HashMap<(i32, i32), Vec<usize>> = std::collections::HashMap::new();
+        for (k, (_, p)) in homes.iter().enumerate() {
+            home_cells.entry(smell_cell(*p)).or_default().push(k);
+        }
         for (bid, level) in &over {
             if let Some(bin) = self.society.trash.bins.get_mut(bid) {
                 bin.overflow_days = bin.overflow_days.saturating_add(1);
@@ -669,7 +676,18 @@ impl World {
                     complaints += 1;
                 }
             }
-            for (hb, hp) in &homes {
+            let (cx, cy) = smell_cell(at);
+            let mut near: Vec<usize> = Vec::new();
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    if let Some(v) = home_cells.get(&(cx + dx, cy + dy)) {
+                        near.extend_from_slice(v);
+                    }
+                }
+            }
+            // The order a scan of every home would visit them in.
+            near.sort_unstable();
+            for (hb, hp) in near.into_iter().map(|k| &homes[k]) {
                 if hb == bid || hp.distance(at) > SMELL_RADIUS {
                     continue;
                 }

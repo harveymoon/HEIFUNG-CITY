@@ -34,6 +34,7 @@ use glam::Vec2;
 use rand::seq::IndexedRandom;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 // ── balance ────────────────────────────────────────────────────────────────
 
@@ -299,9 +300,15 @@ impl World {
 
     /// The pressures on one citizen right now.
     pub fn crime_pressure(&self, cid: CitizenId) -> Option<Pressure> {
-        let c = self.citizens.get(cid)?;
         let at = self.home_point(cid)?;
         let peers = self.society.crime.offenders.iter().filter(|o| o.citizen != cid).filter_map(|o| self.home_point(o.citizen)).filter(|p| p.distance(at) < PEER_RADIUS).count() as u32;
+        self.pressure_with(cid, at, peers)
+    }
+
+    /// [`crime_pressure`](Self::crime_pressure) with the home point and the
+    /// offenders living near it already known.
+    fn pressure_with(&self, cid: CitizenId, at: Vec2, peers: u32) -> Option<Pressure> {
+        let c = self.citizens.get(cid)?;
         Some(Pressure {
             class: c.class(),
             jobless: c.work.is_none() && c.can_work(),
@@ -333,7 +340,6 @@ impl World {
     // ── the hourly round ───────────────────────────────────────────────────
 
     pub(crate) fn hourly_crime(&mut self) {
-
         crate::prof_scope!("hourly_crime");
         self.track_custody();
         self.recruit_offenders();
@@ -400,31 +406,54 @@ impl World {
     }
 
     pub(crate) fn recruit_offenders(&mut self) {
-
         crate::prof_scope!("recruit_offenders");
         let adults = self.citizens.values().filter(|c| c.stage() == LifeStage::Adult).count();
         let cap = (adults as f32 * MAX_SHARE).ceil() as usize;
         let ids: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.stage() == LifeStage::Adult && !matches!(c.activity, Activity::Arriving)).map(|(id, _)| id).collect();
+        // [perf] Offenders' homes bucketed by `PEER_RADIUS` cells, so each
+        // adult counts the offenders near home from nine buckets rather
+        // than the whole list (adults x offenders every hour). Buckets are
+        // only counted, so their order does not matter; newly recruited
+        // offenders join them as the old scan would have seen them.
+        let cell_of = |p: Vec2| ((p.x / PEER_RADIUS).floor() as i32, (p.y / PEER_RADIUS).floor() as i32);
+        let mut homes: HashMap<(i32, i32), Vec<(CitizenId, Vec2)>> = HashMap::new();
+        let mut offenders: HashSet<CitizenId> = HashSet::new();
+        for o in &self.society.crime.offenders {
+            offenders.insert(o.citizen);
+            if let Some(p) = self.home_point(o.citizen) {
+                homes.entry(cell_of(p)).or_default().push((o.citizen, p));
+            }
+        }
         for cid in ids {
             if self.society.crime.offenders.len() >= cap {
                 break;
             }
-            if self.society.crime.is_offender(cid) || self.services.in_custody(cid) {
+            if offenders.contains(&cid) || self.services.in_custody(cid) {
                 continue;
             }
-            let Some(p) = self.crime_pressure(cid) else { continue };
+            let Some(at) = self.home_point(cid) else { continue };
+            let (cx, cy) = cell_of(at);
+            let mut peers = 0u32;
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    if let Some(v) = homes.get(&(cx + dx, cy + dy)) {
+                        peers += v.iter().filter(|(o, p)| *o != cid && p.distance(at) < PEER_RADIUS).count() as u32;
+                    }
+                }
+            }
+            let Some(p) = self.pressure_with(cid, at, peers) else { continue };
             let chance = recruit_chance(&p) / 24.0;
             if chance <= 0.0 {
                 continue;
             }
-            if self.society_rng().random::<f32>() < chance {
-                self.turn_to_crime(cid);
+            if self.society_rng().random::<f32>() < chance && self.turn_to_crime(cid) {
+                offenders.insert(cid);
+                homes.entry(cell_of(at)).or_default().push((cid, at));
             }
         }
     }
 
     fn commit_offences(&mut self) {
-
         crate::prof_scope!("commit_offences");
         let hour = self.clock.hour();
         let night = !(6..21).contains(&hour);
@@ -655,7 +684,6 @@ impl World {
     // ── midnight ───────────────────────────────────────────────────────────
 
     pub(crate) fn daily_crime(&mut self) {
-
         crate::prof_scope!("daily_crime");
         let tick = self.clock.tick;
         // Some give it up: a job helps, a decent wage more.

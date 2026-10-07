@@ -742,8 +742,12 @@ impl World {
         for id in ids {
             // Walking.
             let on_foot = self.citizens[id].mode == TravelMode::Walk && matches!(self.citizens[id].activity, Activity::Traveling { .. });
+            // [cyclists] Bikes stop for red lights and people on crossings.
+            let riding = self.citizens[id].mode == TravelMode::Bike && matches!(self.citizens[id].activity, Activity::Traveling { .. });
             let arrived = if on_foot {
                 self.step_walker(id, &mut feet)
+            } else if riding {
+                self.step_rider(id, &mut feet)
             } else {
                 let c = &mut self.citizens[id];
                 c.prev_pos = c.pos;
@@ -821,7 +825,6 @@ impl World {
     }
 
     pub(super) fn arrive(&mut self, id: CitizenId) {
-
         crate::prof_scope!("arrive");
         let tick = self.clock.tick;
         let (to, purpose) = match &self.citizens[id].activity {
@@ -863,19 +866,55 @@ impl World {
         if purpose != Purpose::ToStop {
             self.settle_footfall(id);
         }
-        // A park is not a building to go inside: walk its paths to a bench.
+        // A park is not a building to go inside: walk its paths to a free
+        // seat on a bench ([benches]), held from now so nobody else takes it.
         if let (Purpose::Visit(LandUse::Park), Some(b)) = (purpose, to) {
             let lot = self.buildings.get(b).map(|bld| bld.lot);
             let pick = self.rng.random_range(0..64usize);
-            if let Some(bench) = lot.and_then(|l| self.walk.bench_in(l, pick)) {
+            let has_benches = lot.is_some_and(|l| self.walk.benches_in(l).next().is_some());
+            if let Some((seat, facing, bench)) = lot.and_then(|l| self.free_seat(l, pick)) {
                 let here = self.citizens[id].pos;
-                let path = match self.walk.route(here, bench.0) {
+                let mut path = match self.walk.route(here, seat) {
                     Some((pts, _)) => pts,
-                    None => vec![bench.0],
+                    None => Vec::new(),
                 };
+                // The route ends at the bench's node; the seat is beside it.
+                if path.last().is_none_or(|p| p.distance(seat) > 1e-3) {
+                    path.push(seat);
+                }
+                self.claim_seat(id, seat, facing, bench);
                 let c = &mut self.citizens[id];
                 c.mode = TravelMode::Walk;
                 c.activity = Activity::Traveling { to: Some(b), purpose: Purpose::Sit, path, idx: 0 };
+                return;
+            }
+            if has_benches {
+                // Every seat taken: on to the nearest park with room, or home.
+                self.seats.full_today += 1;
+                self.seats.full_total += 1;
+                let name = self.buildings[b].name.clone();
+                // One more try, not a tour of every park in town: someone
+                // turned away in the last hour gives up.
+                let tried = self.seats.turned_away.get(&id).is_some_and(|&t| tick < t + benches::TRY_AGAIN_AFTER);
+                self.seats.turned_away.insert(id, tick);
+                if let Some(other) = (!tried).then(|| self.park_with_room(id, b)).flatten() {
+                    let other_name = self.buildings[other].name.clone();
+                    let c = &mut self.citizens[id];
+                    c.thought = format!("Not a free bench in {name}. Trying {other_name}.");
+                    c.activity = Activity::Idle;
+                    self.travel_to(id, Some(other), Purpose::Visit(LandUse::Park));
+                    if self.citizens[id].activity.is_traveling() {
+                        return;
+                    }
+                }
+                let c = &mut self.citizens[id];
+                c.remember(tick, format!("Every bench in {name} was taken."));
+                c.thought = "Not a free bench anywhere. Another day.".to_string();
+                c.mood = (c.mood - 0.02).max(0.0);
+                c.activity = Activity::Idle;
+                c.inside = None;
+                // Not straight back to the park: give it half an hour.
+                c.next_decision_tick = tick + 30;
                 return;
             }
         }
@@ -907,6 +946,26 @@ impl World {
                 return;
             }
         }
+        // [benches] The seat a sitter holds (the end of the walk, which the
+        // walker reached a step to the side of, keeping right) is where they
+        // sit and says which way they face.
+        let (seat_facing, seat_at) = match (purpose, to) {
+            (Purpose::Sit, Some(b)) => {
+                let end = match &self.citizens[id].activity {
+                    Activity::Traveling { path, .. } => path.last().copied(),
+                    _ => None,
+                };
+                match end.and_then(|e| self.sit_down(id, e).map(|f| (f, e))) {
+                    Some((f, e)) => (Some(f), Some(e)),
+                    None => {
+                        let at = self.citizens[id].pos;
+                        let lot = self.buildings.get(b).map(|bld| bld.lot);
+                        (lot.and_then(|l| self.lots.get(l)).and_then(|l| l.park.as_ref()).and_then(|p| p.benches.iter().min_by(|x, y| x.0.distance(at).total_cmp(&y.0.distance(at)))).map(|b| b.1), None)
+                    }
+                }
+            }
+            _ => (None, None),
+        };
         let c = &mut self.citizens[id];
         match (purpose, to) {
             (Purpose::ToStop, Some(_)) => {
@@ -919,9 +978,12 @@ impl World {
                 return;
             }
             (Purpose::Sit, Some(b)) => {
-                let lot = self.buildings.get(b).map(|bld| bld.lot);
-                let facing = lot.and_then(|l| self.lots.get(l)).and_then(|l| l.park.as_ref()).and_then(|p| p.benches.iter().min_by(|x, y| x.0.distance(c.pos).total_cmp(&y.0.distance(c.pos)))).map(|b| b.1);
-                c.activity = Activity::Sitting { at: c.pos, park: b };
+                if let Some(seat) = seat_at {
+                    c.pos = seat;
+                }
+                let at = c.pos;
+                let facing = seat_facing;
+                c.activity = Activity::Sitting { at, park: b };
                 c.inside = None;
                 if let Some(h) = facing {
                     c.heading = h;
@@ -1072,10 +1134,12 @@ impl World {
         if matches!(self.citizens[id].activity, Activity::Waiting { .. }) {
             self.citizens[id].activity = Activity::Idle;
         }
-        if let Activity::Sitting { park, .. } = self.citizens[id].activity {
+        if let Activity::Sitting { park, at } = self.citizens[id].activity {
             if let Some(b) = self.buildings.get_mut(park) {
                 b.visitors = b.visitors.saturating_sub(1);
             }
+            // [benches] Neighbours may have got talking; the seat is free.
+            self.stand_up(id, at, park);
             self.citizens[id].activity = Activity::Idle;
         }
         let c = &mut self.citizens[id];
@@ -1090,6 +1154,7 @@ impl World {
 
     /// Where a citizen currently touches the road network: segment, point, node.
     pub(super) fn origin_for(&self, id: CitizenId) -> Option<(SegmentId, Vec2, NodeId)> {
+        crate::prof_scope!("origin_for");
         let c = &self.citizens[id];
         if let Some(b) = c.inside {
             let lot = self.building_lot(b)?;
@@ -1191,6 +1256,7 @@ impl World {
     /// On foot or by bike along the streets (walkers through the blocks).
     #[allow(clippy::too_many_arguments)]
     fn walk_or_ride(&mut self, id: CitizenId, target: BuildingId, purpose: Purpose, mode: TravelMode, from_node: NodeId, to_node: NodeId, walk_from: Vec2, entrance: Vec2, fresh: bool) -> bool {
+        crate::prof_scope!("walk_or_ride");
         let Some(nodes) = self.roads.path(from_node, to_node) else { return false };
         let exit_pos = self.leave_building(id);
         let mut path = match mode {
@@ -1324,6 +1390,7 @@ impl World {
     /// [carlife] The options ranked best first, with a little day-to-day
     /// whim so habits are not clockwork.
     pub fn choose_mode(&mut self, id: CitizenId, q: &TripQuery) -> Vec<ModeOption> {
+        crate::prof_scope!("choose_mode");
         let mut options = self.mode_options(id, q);
         for o in &mut options {
             o.cost *= self.rng.random_range(0.85..1.15f32);
@@ -1410,6 +1477,7 @@ impl World {
     /// Someone leaving home takes a meal from the pantry for later, if the
     /// pantry has one to spare.
     pub(super) fn pack_meal(&mut self, id: CitizenId) {
+        crate::prof_scope!("pack_meal");
         let c = &self.citizens[id];
         if c.packed_meal >= 1.0 || c.home.is_none() || c.inside != c.home {
             return;
@@ -1427,6 +1495,7 @@ impl World {
     /// Remember which lots a journey on foot will pass; they are counted
     /// when the walker gets there.
     pub(super) fn note_footfall(&mut self, id: CitizenId, walk_nodes: &[u32]) {
+        crate::prof_scope!("note_footfall");
         let lots = self.walk.lots_passed(walk_nodes);
         if let Some(c) = self.citizens.get_mut(id) {
             c.pending_footfall = lots;
@@ -1436,6 +1505,7 @@ impl World {
     /// Everyone on foot who passes a lot is a potential customer: credit
     /// the lots of the journey just completed, once.
     pub(super) fn settle_footfall(&mut self, id: CitizenId) {
+        crate::prof_scope!("settle_footfall");
         let Some(c) = self.citizens.get_mut(id) else { return };
         let lots = std::mem::take(&mut c.pending_footfall);
         if lots.is_empty() {

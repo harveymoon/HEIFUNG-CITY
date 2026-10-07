@@ -30,12 +30,14 @@ const SIREN_HURRY: f32 = 2.5;
 pub(super) struct Feet {
     /// Walkers by grid cell of where they stand now.
     grid: HashMap<(i32, i32), Vec<CitizenId>>,
+    /// [cyclists] Riders stopped at a light or for a walker.
+    pub(super) riders_waiting: u32,
     /// Walkers already waiting at each end of each crossing this tick.
     queue: HashMap<(u32, u32), u32>,
     /// Crossings someone is on, stepping onto, or waiting at (a zebra).
-    occupied: Vec<(u32, CitizenId)>,
+    pub(super) occupied: Vec<(u32, CitizenId)>,
     /// Walk calls per intersection and approach.
-    calls: Vec<Vec<bool>>,
+    pub(super) calls: Vec<Vec<bool>>,
     waiting: u32,
 }
 
@@ -63,8 +65,10 @@ impl World {
             p.jaywalkers_today = 0;
             p.near_misses_today = 0;
             p.collisions_today = 0;
+            p.red_lights_run_today = 0;
             let citizens = &self.citizens;
             p.walkers.retain(|id, _| citizens.contains_key(*id));
+            p.riders.retain(|id, _| citizens.contains_key(*id));
         }
         self.refresh_crossings();
         self.handle_ped_conflicts();
@@ -75,7 +79,7 @@ impl World {
             }
         }
         let calls = self.traffic.net.intersections.iter().map(|i| vec![false; i.approaches]).collect();
-        Feet { grid, queue: HashMap::new(), occupied: Vec::new(), calls, waiting: 0 }
+        Feet { grid, riders_waiting: 0, queue: HashMap::new(), occupied: Vec::new(), calls, waiting: 0 }
     }
 
     /// After the walkers moved: the crossings in use become stop points for
@@ -100,6 +104,7 @@ impl World {
         }
         self.peds.occupants = occ;
         self.peds.waiting_now = feet.waiting;
+        self.peds.riders_waiting_now = feet.riders_waiting;
         self.traffic.set_pedestrians(holds, feet.calls);
     }
 
@@ -145,6 +150,14 @@ impl World {
             })
             .collect();
         self.peds.crossings = infos;
+        let nodes = &self.walk.nodes;
+        self.peds.cross_grid = crate::geom::Grid::new(
+            16.0,
+            self.walk.crossings.iter().map(|c| {
+                let (a, b) = (nodes[c.a as usize].pos, nodes[c.b as usize].pos);
+                (a.min(b), a.max(b))
+            }),
+        );
         self.traffic.peds.stop_lines = stop_lines;
     }
 
@@ -155,7 +168,7 @@ impl World {
     }
 
     /// Seconds before the first moving vehicle reaches crossing `cr`.
-    fn crossing_gap(&self, cr: u32) -> f32 {
+    pub(super) fn crossing_gap(&self, cr: u32) -> f32 {
         let Some(info) = self.peds.crossings.get(cr as usize) else { return f32::INFINITY };
         info.lanes.iter().map(|&(l, s)| self.traffic.time_to_crossing(l, s, HOLD_DEPTH)).fold(f32::INFINITY, f32::min)
     }
@@ -180,6 +193,7 @@ impl World {
     /// A walking route for this citizen: a jaywalker may plan to cut
     /// straight over the street mid-block.
     pub(super) fn walk_route_for(&self, id: CitizenId, from: Vec2, to: Vec2, purpose: Purpose) -> Option<(Vec<Vec2>, Vec<u32>)> {
+        crate::prof_scope!("walk_route_for");
         let p = self.jaywalk_chance_of(id, self.late_for_work(id, purpose));
         let jay = p > 0.0 && hash01(self.citizens[id].seed, self.clock.tick, 0x7a17) < p;
         self.walk.route_with(from, to, jay)

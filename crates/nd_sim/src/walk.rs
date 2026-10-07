@@ -124,6 +124,9 @@ pub struct WalkGraph {
     /// Crossing by the exact positions of its two ends, either way round,
     /// so a walker's path (a list of node positions) can find its crossings.
     cross_at: HashMap<[u32; 4], u32>,
+    /// Indices into `benches` by lot, built with them, so a park's seats
+    /// are counted without a scan of every bench in town.
+    bench_lots: HashMap<LotId, Vec<u32>>,
 }
 
 /// Can people walk through this lot to the next one?
@@ -709,12 +712,24 @@ impl WalkGraph {
             }
         }
         g.index = Grid::new(NODE_CELL, g.nodes.iter().map(|n| (n.pos, n.pos)));
+        for (k, b) in g.benches.iter().enumerate() {
+            g.bench_lots.entry(b.1).or_default().push(k as u32);
+        }
         for (k, c) in g.crossings.iter().enumerate() {
             let (pa, pb) = (g.nodes[c.a as usize].pos, g.nodes[c.b as usize].pos);
             g.cross_at.insert(pos_key(pa, pb), k as u32);
             g.cross_at.insert(pos_key(pb, pa), k as u32);
         }
         g
+    }
+
+    /// The benches in a lot (node, lot, facing), in the order they were laid.
+    pub fn benches_in(&self, lot: LotId) -> impl Iterator<Item = &(u32, LotId, f32)> + '_ {
+        let idx: &[u32] = self.bench_lots.get(&lot).map_or(&[], |v| v.as_slice());
+        let indexed = !self.bench_lots.is_empty() || self.benches.is_empty();
+        // A graph put together by hand (tests) has no index: scan it.
+        let scan = (!indexed).then(|| self.benches.iter().filter(move |b| b.1 == lot)).into_iter().flatten();
+        idx.iter().map(|&k| &self.benches[k as usize]).chain(scan)
     }
 
     /// A bench in a lot, as a position and facing; `pick` chooses which.
@@ -741,6 +756,24 @@ impl WalkGraph {
             let d = within(i);
             if d.is_finite() && best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, i as u32));
+            }
+        }
+        best.map(|(_, i)| i)
+    }
+
+    /// Nearest node within `r` by a box query: unlike [`nearest`](Self::nearest)
+    /// it never searches further out when nothing is that close, so asking
+    /// about open country is as cheap as asking about a street. Exact ties
+    /// go to the lower index.
+    pub fn nearest_within(&self, p: Vec2, r: f32) -> Option<u32> {
+        if self.index.len() != self.nodes.len() {
+            return self.nearest(p, r);
+        }
+        let mut best: Option<(f32, u32)> = None;
+        for i in self.index.in_box(p - Vec2::splat(r), p + Vec2::splat(r)) {
+            let d = self.nodes[i as usize].pos.distance(p);
+            if d <= r && best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, i));
             }
         }
         best.map(|(_, i)| i)
@@ -828,6 +861,54 @@ impl WalkGraph {
         let nodes = self.route_nodes_with(a, b, jaywalk)?;
         let pts = nodes.iter().map(|&i| self.nodes[i as usize].pos).collect();
         Some((pts, nodes))
+    }
+
+    /// Metres on foot from the nearest of `sources` to every node: one
+    /// multi-source Dijkstra over the lawful edges (no jaywalking), plain
+    /// lengths without the route preferences, `f32::INFINITY` where none of
+    /// them can be reached. Used for how far a home is from the nearest
+    /// park or night out (`LandValue::access_at`), so it costs one pass
+    /// per kind of amenity however many there are.
+    pub fn distances_from(&self, sources: &[u32]) -> Vec<f32> {
+        #[derive(PartialEq)]
+        struct Item(f32, u32);
+        impl Eq for Item {}
+        impl PartialOrd for Item {
+            fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(o))
+            }
+        }
+        impl Ord for Item {
+            // Min-heap on distance; ties by node index so the order of
+            // equal pops never depends on how the heap was filled.
+            fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+                o.0.total_cmp(&self.0).then(o.1.cmp(&self.1))
+            }
+        }
+        let mut dist = vec![f32::INFINITY; self.nodes.len()];
+        let mut heap = BinaryHeap::new();
+        for &s in sources {
+            if (s as usize) < dist.len() && dist[s as usize] > 0.0 {
+                dist[s as usize] = 0.0;
+                heap.push(Item(0.0, s));
+            }
+        }
+        while let Some(Item(d, u)) = heap.pop() {
+            if d > dist[u as usize] {
+                continue;
+            }
+            for e in &self.adj[u as usize] {
+                if e.cross != NO_CROSSING && self.crossings[e.cross as usize].kind == CrossingKind::Jay {
+                    continue;
+                }
+                let nd = d + e.len;
+                if nd < dist[e.to as usize] {
+                    dist[e.to as usize] = nd;
+                    heap.push(Item(nd, e.to));
+                }
+            }
+        }
+        dist
     }
 
     /// Lots passed by a route, each once.
@@ -1049,5 +1130,25 @@ mod tests {
 ", s.join(";")));
         }
         let _ = std::fs::write(path, out);
+    }
+
+    #[test]
+    fn distances_from_the_nearest_of_several_sources_along_the_graph() {
+        let mut g = WalkGraph::default();
+        // a - b - c - d in a line 10 m apart, and e on its own.
+        let ids: Vec<u32> = [0.0, 10.0, 20.0, 30.0, 100.0].iter().map(|&x| g.add_node(Vec2::new(x, 0.0), None)).collect();
+        g.link(ids[0], ids[1], false);
+        g.link(ids[1], ids[2], false);
+        g.link(ids[2], ids[3], true);
+        let d = g.distances_from(&[ids[0], ids[3]]);
+        assert_eq!(d[0], 0.0);
+        assert!((d[1] - 10.0).abs() < 1e-4 && (d[2] - 10.0).abs() < 1e-4, "{d:?}");
+        assert_eq!(d[3], 0.0);
+        assert!(d[4].is_infinite(), "unreachable stays infinite");
+        assert!(g.distances_from(&[]).iter().all(|x| x.is_infinite()));
+        // A nearest lookup that finds nothing near does not wander off.
+        g.index = Grid::new(NODE_CELL, g.nodes.iter().map(|n| (n.pos, n.pos)));
+        assert_eq!(g.nearest_within(Vec2::new(12.0, 3.0), 5.0), Some(ids[1]));
+        assert_eq!(g.nearest_within(Vec2::new(60.0, 0.0), 20.0), None);
     }
 }

@@ -25,6 +25,8 @@
 //! - `tests`: the world-level tests
 
 mod air;
+/// [benches] Seats on park benches.
+pub mod benches;
 mod buses;
 mod cargo_hubs;
 #[cfg(test)]
@@ -43,6 +45,7 @@ mod market;
 mod parking;
 mod pedestrians;
 mod plan;
+mod riders;
 mod places;
 #[cfg(test)]
 mod places_tests;
@@ -232,8 +235,10 @@ impl WorldConfig {
 /// A land value recomputation in progress, spread over a few ticks so one
 /// tick does not carry the whole grid. Cloning a world mid-update drops the
 /// partial work: the next cycle starts afresh and the grid merely stays a
-/// little older for two hours.
-#[derive(Default)]
+/// little older for two hours. A save keeps it (REVIEW2 L7), so a game
+/// saved mid-cycle finishes the same grid after loading.
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
 struct LandValueWork {
     builder: Option<LandValueBuilder>,
 }
@@ -254,7 +259,7 @@ impl std::fmt::Debug for LandValueWork {
 /// from the hourly tick (0) and the development ticks so no single tick
 /// does everything.
 const LAND_VALUE_PHASE: u64 = 20;
-const LAND_VALUE_STRIPS: u64 = 5;
+const LAND_VALUE_STRIPS: u64 = 6;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct World {
@@ -325,7 +330,7 @@ pub struct World {
     #[serde(default)]
     pub services: crate::services::Services,
     pub land_value: LandValue,
-    #[serde(skip)]
+    #[serde(default)]
     land_value_work: LandValueWork,
     #[serde(skip)]
     pub events: Vec<SimEvent>,
@@ -384,6 +389,17 @@ pub struct World {
     /// and people hit (`world/pedestrians.rs`).
     #[serde(default)]
     pub peds: crate::pedestrians::Pedestrians,
+    /// [perf] Who is inside each place, built at most once a tick for
+    /// everyone choosing or rating a place (`world/places.rs`), instead of a
+    /// scan of every citizen per decision. Arrivals later in the same tick
+    /// show from the next one.
+    #[serde(skip)]
+    waiting_cache: Option<(u64, Vec<CitizenId>)>,
+    #[serde(skip)]
+    crowds_cache: Option<(u64, HashMap<BuildingId, Vec<CitizenId>>)>,
+    /// [benches] Who sits (or is on the way to sit) on which park bench seat.
+    #[serde(default)]
+    pub seats: benches::Seats,
     /// [society] Crime, homelessness and trash (`world/society.rs`).
     #[serde(default)]
     pub society: crate::society::Society,
@@ -494,6 +510,9 @@ impl World {
             bots: Default::default(),
             driving: Driving::default(),
             peds: Default::default(),
+            seats: Default::default(),
+            crowds_cache: None,
+            waiting_cache: None,
             society: Default::default(),
             vehicles: Default::default(),
             enforcement: Default::default(),
@@ -579,6 +598,7 @@ impl World {
         }
         self.refresh_facility_cache();
         self.subway_after_load();
+        self.seats_after_load();
         self.update_economy();
         // A save from before named projects: number and name the one it has.
         self.name_active_project();
@@ -769,6 +789,7 @@ impl World {
             crate::prof!("daily_vehicles", self.daily_vehicles());
             crate::prof!("industry_daily", self.industry_daily());
             crate::prof!("daily_places", self.daily_places());
+            self.daily_benches();
             // [districts] facelifts; [tourism] hotel nights and the books.
             crate::prof!("daily_districts", self.daily_districts());
             crate::prof!("daily_tourism", self.daily_tourism());
@@ -812,10 +833,16 @@ impl World {
         if tick % 60 == 45 {
             crate::prof!("hourly_vehicles", self.hourly_vehicles());
         }
+        // Answers a mind worked out in the background (an LLM's) land
+        // whenever they are ready. Someone mid-journey (driving, on a bus or
+        // train, waiting at the stop) keeps going: only the thought and the
+        // memory are taken now, and the next decision asks again (REVIEW2
+        // M4: acting on it stranded cars and bus riders).
         for (id, decision) in minds.poll() {
-            if self.citizens.contains_key(id) {
-                crate::prof!("apply_decision", self.apply_decision(id, decision));
-            }
+            let Some(c) = self.citizens.get(id) else { continue };
+            let mid_trip = c.activity.is_traveling() || matches!(c.activity, Activity::Waiting { .. } | Activity::Arriving) || c.to_car.is_some();
+            let decision = if mid_trip { Decision { intent: Intent::Stay, ..decision } } else { decision };
+            crate::prof!("apply_decision", self.apply_decision(id, decision));
         }
         crate::prof!("step_traffic", self.step_traffic());
         crate::prof!("step_air", self.step_air());

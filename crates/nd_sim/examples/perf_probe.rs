@@ -60,14 +60,20 @@ fn main() {
             let out = args.get(3).cloned().unwrap_or_else(|| "perf_city.ron".into());
             let mut w = big_city();
             let t0 = Instant::now();
+            let mut settle = None;
             for day in 0..60 {
                 for _ in 0..1440 {
                     w.tick(&mut minds);
+                    // At the target: no more newcomers, and a day to settle in.
+                    if settle.is_none() && w.citizens.len() >= target {
+                        w.config.immigration_interval = u64::MAX / 4;
+                        settle = Some(day + 1);
+                    }
                 }
                 w.economy.treasury = w.economy.treasury.max(1_000_000.0);
                 let _ = nd_sim::prof::take();
                 println!("day {:>2}: pop {:>5} buildings {:>4} cars {:>4} ({:.0} s)", day + 1, w.citizens.len(), w.buildings.len(), w.traffic.cars.len(), t0.elapsed().as_secs_f64());
-                if w.citizens.len() >= target {
+                if settle.is_some_and(|d| day >= d) {
                     break;
                 }
             }
@@ -91,6 +97,7 @@ fn main() {
             sorted.sort_by(f64::total_cmp);
             let pct = |q: f64| sorted[((sorted.len() - 1) as f64 * q) as usize];
             println!("ticks {ticks}: mean {:.2} ms, p50 {:.2}, p99 {:.2}, max {:.2} ms; pop now {}", total / ticks as f64, pct(0.5), pct(0.99), pct(1.0), w.citizens.len());
+            println!("parks found full {} | bench meetings {} | cyclists ran reds {}", w.seats.full_total, w.seats.met_total, w.peds.red_lights_run_total);
             let mut rows: Vec<_> = nd_sim::prof::take().into_iter().collect();
             rows.sort_by(|a, b| b.1.total.total_cmp(&a.1.total));
             println!("{:<26} {:>8} {:>10} {:>10} {:>9}", "section", "calls", "total ms", "ms/tick", "max ms");

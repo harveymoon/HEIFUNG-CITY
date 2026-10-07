@@ -274,6 +274,7 @@ impl World {
     /// A trip that chose something else because no cab was in reach, yet
     /// a cab would have beaten the best way it had: demand nobody served.
     pub(super) fn note_taxi_demand(&mut self, id: CitizenId, q: &TripQuery, ranked: &[ModeOption]) {
+        crate::prof_scope!("note_taxi_demand");
         if !q.allow_transit || ranked.iter().any(|o| o.mode == TripMode::Taxi) {
             return;
         }
@@ -302,6 +303,7 @@ impl World {
     /// Walk to the kerb and wait; the dispatcher sends a cab.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn hail_taxi(&mut self, id: CitizenId, segment: SegmentId, at: Vec2, wait_at: Vec2, target: BuildingId, purpose: Purpose, fresh: bool) {
+        crate::prof_scope!("hail_taxi");
         self.walk_to_transit(id, wait_at, TransitLeg::Taxi, target, purpose, fresh);
         let tick = self.clock.tick;
         // Booked: no second thoughts until the cab comes or they give up.

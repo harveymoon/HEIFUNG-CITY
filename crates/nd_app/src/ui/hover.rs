@@ -17,11 +17,13 @@ pub fn card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
     let Some((_, lot)) = w.lots.iter().find(|(_, l)| point_in_polygon(ground, &l.polygon)) else { return };
     let building = lot.building.and_then(|b| w.buildings.get(b));
     let value = w.land_value.at(lot.center);
+    // [access] Walking time to parks and nightlife, and what it is worth to homes.
+    let access = w.land_value.access_at(lot.center);
     let zone = w.zones.get(lot.zone).map_or_else(|| "no zone".to_string(), |z| format!("{} zone of {:.0} m²", z.land_use.label(), polygon_area(&z.polygon).abs()));
     let small = |t: String| egui::RichText::new(t).small();
 
     // Keep the card on screen: flip to the other side of the pointer near the edges.
-    let size = egui::vec2(300.0, if building.is_some() { 120.0 } else { 80.0 });
+    let size = egui::vec2(300.0, if building.is_some() { 120.0 } else { 80.0 } + if access.is_some() { 18.0 } else { 0.0 });
     let view = ctx.viewport_rect();
     let mut at = pointer + egui::vec2(18.0, 18.0);
     if at.x + size.x > view.right() {
@@ -53,6 +55,9 @@ pub fn card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
                 if lot.landlocked { "  ·  landlocked" } else { "" },
                 if lot.park.is_some() { "  ·  park" } else { "" }
             )));
+            if let Some(a) = access {
+                ui.label(small(format!("{}  ·  {:+.2} for homes", a.describe(), a.value)));
+            }
         });
     });
 }

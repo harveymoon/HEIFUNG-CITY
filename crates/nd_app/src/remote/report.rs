@@ -757,6 +757,10 @@ fn services(w: &World) -> Value {
                 "walking_now": w.citizens.values().filter(|c| c.mode == nd_sim::citizens::TravelMode::Walk && matches!(c.activity, nd_sim::Activity::Traveling { .. })).count(),
                 "walk_lights_on_now": w.traffic.peds.walk.iter().flatten().filter(|&&x| x).count(),
                 "jaywalks_total": w.peds.jaywalks_total, "near_misses_total": w.peds.near_misses_total, "ped_collisions_total": w.peds.collisions_total,
+                // [cyclists] Riders held at a red or for a walker, and lights run.
+                "cyclists_waiting_now": w.peds.riders_waiting_now, "cyclist_red_lights_run_today": w.peds.red_lights_run_today, "cyclist_red_lights_run_total": w.peds.red_lights_run_total,
+                // [benches] Bench neighbours who got talking; visitors who found a park full.
+                "bench_meetings_today": w.seats.met_today, "bench_meetings_total": w.seats.met_total, "parks_full_today": w.seats.full_today, "parks_full_total": w.seats.full_total,
             },
             "left_turn_wait_mean_s": round(w.traffic.left_wait_stats().0), "left_turn_wait_max_s": round(w.traffic.left_wait_stats().1),
             "left_turns_measured": w.traffic.left_wait_stats().2, "protected_left_arrows_now": w.traffic.net.intersections.iter().filter(|i| i.timer < i.arrow).count(),

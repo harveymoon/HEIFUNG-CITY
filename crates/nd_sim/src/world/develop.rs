@@ -109,8 +109,8 @@ impl World {
     /// Sum accessibility, amenities, nuisances, traffic and neighbours into the
     /// land value grid, then refresh the rent of every building. Done in
     /// `LAND_VALUE_STRIPS` strips on consecutive ticks: roads, then the
-    /// buildings in two halves, then lots and cars, then the blur and the
-    /// rents. Buildings a strip boundary falls between are seen by exactly
+    /// buildings in two halves, then lots and cars, then walking access to
+    /// parks and nightlife, then the blur and the rents. Buildings a strip boundary falls between are seen by exactly
     /// one strip, in slot order, so the result does not depend on timing.
     pub(super) fn update_land_value_strip(&mut self, strip: u8) {
         if strip == 0 {
@@ -155,6 +155,13 @@ impl World {
                 // [districts] eco and historic districts lift the land
                 self.splat_districts(&mut b);
             }
+            4 => {
+                // The player's rule: a long walk to any park or night out
+                // makes a neighbourhood cheaper (`land_value::access_value`).
+                let (n, cell, half) = b.cells();
+                let (park, night) = self.amenity_minutes(n, cell, half);
+                b.set_access(park, night);
+            }
             _ => {
                 b.finish(0.25, &mut self.land_value);
                 let lv = &self.land_value;
@@ -175,6 +182,62 @@ impl World {
         for strip in 0..LAND_VALUE_STRIPS as u8 {
             self.update_land_value_strip(strip);
         }
+    }
+
+    /// Minutes on foot from every land value cell to the nearest park and
+    /// the nearest open place to go out, along the walk network rather than
+    /// as the crow flies: a park across a river or a motorway with no way
+    /// over is far. Two multi-source Dijkstras over the walk graph (from
+    /// every node in or fronting such a lot), then each cell takes the
+    /// nearest node within `ACCESS_SNAP` plus the straight bit to it.
+    /// Cells with no node near are `NO_DATA` (no access term at all), cells
+    /// that reach none `NONE_REACHABLE`. Cost: O(nodes log nodes) twice and
+    /// one grid lookup per cell, so it stays cheap in a big city.
+    pub(super) fn amenity_minutes(&self, n: usize, cell: f32, half: f32) -> (Vec<f32>, Vec<f32>) {
+        crate::prof_scope!("amenity_minutes");
+        use crate::land_value::{ACCESS_SNAP, NONE_REACHABLE, NO_DATA};
+        // 1 = park, 2 = nightlife, by lot.
+        let mut kind: slotmap::SecondaryMap<LotId, u8> = slotmap::SecondaryMap::new();
+        for b in self.buildings.values() {
+            if b.construction.is_some() || b.demolition.is_some() {
+                continue;
+            }
+            let bit = match b.land_use {
+                LandUse::Park => 1,
+                LandUse::Entertainment if !b.is_derelict() && b.business.as_ref().is_none_or(|z| !z.closed) => 2,
+                _ => continue,
+            };
+            if self.lots.contains_key(b.lot) {
+                *kind.entry(b.lot).unwrap().or_insert(0) |= bit;
+            }
+        }
+        let mut parks: Vec<u32> = Vec::new();
+        let mut nights: Vec<u32> = Vec::new();
+        for (i, node) in self.walk.nodes.iter().enumerate() {
+            let bits = node.lot.iter().chain(node.near.iter()).fold(0u8, |acc, l| acc | kind.get(*l).copied().unwrap_or(0));
+            if bits & 1 != 0 {
+                parks.push(i as u32);
+            }
+            if bits & 2 != 0 {
+                nights.push(i as u32);
+            }
+        }
+        let dp = self.walk.distances_from(&parks);
+        let dn = self.walk.distances_from(&nights);
+        let per_min = WALK_MPS * 60.0;
+        let mut park = vec![NO_DATA; n * n];
+        let mut night = vec![NO_DATA; n * n];
+        for y in 0..n {
+            for x in 0..n {
+                let c = Vec2::new(-half + (x as f32 + 0.5) * cell, -half + (y as f32 + 0.5) * cell);
+                let Some(k) = self.walk.nearest_within(c, ACCESS_SNAP) else { continue };
+                let off = self.walk.nodes[k as usize].pos.distance(c);
+                let minutes = |d: &[f32]| if d[k as usize].is_finite() { ((d[k as usize] + off) / per_min).min(NONE_REACHABLE - 1.0) } else { NONE_REACHABLE };
+                park[y * n + x] = minutes(&dp);
+                night[y * n + x] = minutes(&dn);
+            }
+        }
+        (park, night)
     }
 
     /// One building's pull on the land around it.
