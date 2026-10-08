@@ -437,6 +437,9 @@ pub struct LaneNetwork {
     pub intersections: Vec<Intersection>,
     pub segment_lanes: HashMap<SegmentId, Vec<LaneId>>,
     pub node_radius: Vec<f32>,
+    /// [interchange] Lanes of an arm ending further out than its node's
+    /// radius (`walk::stop_back`: a sharp fork's stop line), by (node, arm).
+    pub stop_back: HashMap<(NodeId, SegmentId), f32>,
     /// Index into `intersections` per node, `usize::MAX` for none.
     pub node_intersection: Vec<usize>,
     pub approaches: Vec<Approach>,
@@ -1334,6 +1337,7 @@ impl LaneNetwork {
         self.segment_lanes.clear();
         self.node_intersection = vec![usize::MAX; roads.nodes.len()];
         self.approaches.clear();
+        self.stop_back.clear();
         self.version += 1;
         self.arrows_version += 1;
 
@@ -1374,8 +1378,18 @@ impl LaneNetwork {
                 continue;
             }
             let dir = (pb - pa) / len;
-            let mut ra = self.node_radius[seg.a.0 as usize];
-            let mut rb = self.node_radius[seg.b.0 as usize];
+            // [interchange] At a sharp fork the lanes end at the painted stop
+            // line's distance, as at any junction.
+            let back_a = crate::walk::stop_back(roads, seg.a, sid, self.node_radius[seg.a.0 as usize]);
+            let back_b = crate::walk::stop_back(roads, seg.b, sid, self.node_radius[seg.b.0 as usize]);
+            if back_a > 0.0 {
+                self.stop_back.insert((seg.a, sid), back_a);
+            }
+            if back_b > 0.0 {
+                self.stop_back.insert((seg.b, sid), back_b);
+            }
+            let mut ra = self.node_radius[seg.a.0 as usize] + back_a;
+            let mut rb = self.node_radius[seg.b.0 as usize] + back_b;
             if len - ra - rb < 2.0 {
                 let k = ((len - 2.0) / (ra + rb).max(1e-3)).clamp(0.0, 1.0);
                 ra *= k;

@@ -468,6 +468,8 @@ struct GoreLines {
     /// carriageway's (its own strip begins).
     parted: f32,
     clear: f32,
+    /// [interchange] Length of the ramp's first piece (its straight lead).
+    len: f32,
 }
 
 impl GoreLines {
@@ -507,8 +509,8 @@ fn gore_lines(roads: &RoadNetwork, node: NodeId, ramp: SegmentId) -> Option<Gore
     let (hh, hr) = (roads.segment(hw_seg).half_width() - SHOULDER * 0.5, hw_r - SHOULDER * 0.5);
     let nh = { let n = Vec2::new(-dh.y, dh.x); if n.dot(dr) >= 0.0 { n } else { -n } };
     let nr = { let n = Vec2::new(-dr.y, dr.x); if n.dot(dh) >= 0.0 { n } else { -n } };
-    let mut g = GoreLines { at, dh, dr, nh, nr, hh, hr, hw_r, parted: f32::INFINITY, clear: f32::INFINITY };
     let len = { let (a, b) = roads.segment_points(ramp); a.distance(b) };
+    let mut g = GoreLines { at, dh, dr, nh, nr, hh, hr, hw_r, parted: f32::INFINITY, clear: f32::INFINITY, len };
     let mut s = 0.0f32;
     while s <= len.min(150.0) {
         let gap = g.out(s, g.er(s));
@@ -566,7 +568,12 @@ fn ramp_gore(g: &mut Geometry, roads: &RoadNetwork, node: NodeId, ramp: SegmentI
     // in solid wide lines and hatched with chevrons.
     let (mut side_h, mut side_r): (Vec<Vec2>, Vec<Vec2>) = (Vec::new(), Vec::new());
     let mut s = gl.parted;
-    while s <= gl.parted + 40.0 {
+    // [interchange] No further than the ramp's first piece runs straight:
+    // past its bend the gore's lines ran on over the grass (a short ramp's
+    // lead piece is 20 m, the hatching 40 m), a big chevron triangle beside
+    // a ramp already turning away.
+    let gore_end = (gl.parted + 40.0).min(gl.len);
+    while s <= gore_end {
         let (eh, er) = (gl.eh(s), gl.er(s));
         let gap = gl.out(s, er);
         side_h.push(eh);
@@ -1516,17 +1523,31 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         }
         let from = marks(&g);
         let base = post.pole;
-        let pole_h = 5.6;
+        // [interchange] The arm keeps its clearance over the lanes it hangs
+        // over: on an approach climbing to the junction from below (or
+        // falling to it) the road under the heads stands higher than the
+        // junction the post is set on, and the arm hung 3.2 m over it.
+        let z = node_z(post.node);
+        let rise = if heights.is_empty() {
+            0.0
+        } else {
+            let (sa, sb) = roads.segment_points(post.seg);
+            let len = sa.distance(sb).max(1e-3);
+            post.heads.iter().chain(std::iter::once(&post.leftmost)).map(|&h| {
+                let t = nd_sim::roads::project_on_segment(h, sa, sb).0;
+                nd_sim::landscape::way_height(roads, heights, inp.inner, post.seg, t) - z
+            }).fold(0.0f32, f32::max).min(len)
+        };
+        let pole_h = 5.6 + rise;
         g.part(Matte).cylinder(base, 0.16, 0.12, 0.0, pole_h, 8, rgba(CHARCOAL));
         let a = Vec3::new(base.x, pole_h - 0.2, base.y);
         let b = Vec3::new(post.leftmost.x, pole_h - 0.2, post.leftmost.y);
         g.part(Matte).beam(a, b, 0.18, rgba(CHARCOAL));
         for lamp in &post.heads {
-            let head = Vec3::new(lamp.x, 4.75, lamp.y);
+            let head = Vec3::new(lamp.x, 4.75 + rise, lamp.y);
             g.part(Matte).boxed(head, Vec3::new(0.35, 1.1, 0.4), -post.heading, rgba(DARK));
             g.part(Matte).beam(Vec3::new(lamp.x, pole_h - 0.2, lamp.y), head + Vec3::Y * 0.55, 0.08, rgba(CHARCOAL));
         }
-        let z = node_z(post.node);
         if z != 0.0 {
             lift_since(&mut g, &from, |_| z);
         }
@@ -1831,6 +1852,8 @@ pub fn shelter(g: &mut Geometry, pal: &Palette, p: Vec2, d: Vec2, out: Vec2) {
 struct SignalGroup {
     /// The junction the approach feeds.
     node: NodeId,
+    /// [interchange] The approach.
+    seg: SegmentId,
     pole: Vec2,
     leftmost: Vec2,
     heads: Vec<Vec2>,
@@ -1888,7 +1911,7 @@ fn signal_groups(roads: &RoadNetwork, net: &LaneNetwork, corners: &Corners) -> V
         // rounded off past it.
         let pole = behind_kerb(rightmost.1 + right * (LANE_WIDTH * 0.5 + SHOULDER + 0.45), corners.by_node.get(&node.0), 0.45);
         let pole = if pad_node(roads, node) { junction::place_pole(roads.node(node).pos, arms.entry(node.0).or_insert_with(|| mouths(roads, net, node)), SegmentId(seg), pole, 0.45) } else { pole };
-        out.push(SignalGroup { node, pole, leftmost: leftmost.1 - right * (LANE_WIDTH * 0.2), heads: lanes.iter().map(|(_, p, _)| *p).collect(), heading: d.y.atan2(d.x) });
+        out.push(SignalGroup { node, seg: SegmentId(seg), pole, leftmost: leftmost.1 - right * (LANE_WIDTH * 0.2), heads: lanes.iter().map(|(_, p, _)| *p).collect(), heading: d.y.atan2(d.x) });
     }
     out
 }
@@ -3141,20 +3164,23 @@ pub fn lane_arrows(roads: &RoadNetwork, net: &LaneNetwork, heights: &[f32], inne
     let y = MARK_Y + 0.003;
     let cuts = crossing_cuts(roads);
     let radius = |n: NodeId| net.node_radius.get(n.0 as usize).copied().unwrap_or(4.0);
+    // [interchange] Where an arm's lanes end at a node (further out at a
+    // sharp fork: `LaneNetwork::stop_back`).
+    let lane_end = |n: NodeId, s: SegmentId| radius(n) + net.stop_back.get(&(n, s)).copied().unwrap_or(0.0);
     for ap in &net.approaches {
         // How far the painted stop line stands before the lane's end (the
         // lanes end at the junction's radius; the line is drawn beyond the
         // crosswalk, `junction::mouths`), and how much of the lane's start
         // the junction behind it takes.
         let ahead = if pad_node(roads, ap.node) {
-            mouths(roads, net, ap.node).iter().find(|m| m.seg == ap.segment).map_or(0.0, |m| (m.marks - radius(ap.node)).max(0.0))
+            mouths(roads, net, ap.node).iter().find(|m| m.seg == ap.segment).map_or(0.0, |m| (m.marks - lane_end(ap.node, ap.segment)).max(0.0))
         } else {
             0.0
         };
         let seg = roads.segment(ap.segment);
         let from = if seg.a == ap.node { seg.b } else { seg.a };
         let behind = if pad_node(roads, from) {
-            mouths(roads, net, from).iter().find(|m| m.seg == ap.segment).map_or(0.0, |m| (m.marks - radius(from)).max(0.0))
+            mouths(roads, net, from).iter().find(|m| m.seg == ap.segment).map_or(0.0, |m| (m.marks - lane_end(from, ap.segment)).max(0.0))
         } else {
             0.0
         };

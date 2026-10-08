@@ -331,7 +331,9 @@ pub(crate) fn extra_stop_back(roads: &RoadNetwork, net: &LaneNetwork, n: NodeId,
     if !pad_node(roads, n) {
         return 0.0;
     }
-    let r = net.node_radius.get(n.0 as usize).copied().unwrap_or(4.0);
+    // [interchange] Where the lanes end: the node's radius, further out at a
+    // sharp fork (`walk::stop_back`, where the sim now stops cars).
+    let r = net.node_radius.get(n.0 as usize).copied().unwrap_or(4.0) + net.stop_back.get(&(n, seg)).copied().unwrap_or(0.0);
     mouths(roads, net, n).iter().find(|m| m.seg == seg).map_or(0.0, |m| (m.marks - r - 4.0).max(0.0))
 }
 
@@ -641,5 +643,92 @@ mod tests {
         }
         assert!(g.get(Dirt).positions.iter().any(|p| p[0] > hw + 1.0), "the track runs on beyond");
         assert!(!g.get(Paving).positions.iter().any(|p| p[0].abs() < LANE_WIDTH + SHOULDER - 0.05 && (p[2] - 50.0).abs() < 1.5), "path paving over the carriageway");
+    }
+
+    /// [interchange] Two diamonds: the Interchange tool's, and Harvey's own
+    /// short one drawn by hand (ramps first, then the street through their
+    /// ends and under the highway).
+    fn diamonds() -> Vec<(&'static str, nd_sim::World)> {
+        use nd_sim::{World, WorldConfig};
+        let flat = || World::new(WorldConfig { landscape: nd_sim::landscape::LandscapeParams::flat(), ..WorldConfig::default() });
+        let mut tool = flat();
+        tool.add_road(&[Vec2::new(-1500.0, 9.0), Vec2::new(1500.0, 9.0)], 3, 0);
+        tool.add_road(&[Vec2::new(1500.0, -9.0), Vec2::new(-1500.0, -9.0)], 3, 0);
+        tool.add_diamond(Vec2::new(0.0, -220.0), Vec2::new(0.0, 220.0), (2, 2)).expect("a diamond fits");
+        tool.try_implement().expect("built");
+        let mut hand = flat();
+        hand.add_road(&[Vec2::new(-1500.0, 429.0), Vec2::new(1500.0, 429.0)], 3, 0);
+        hand.add_road(&[Vec2::new(1500.0, 411.0), Vec2::new(-1500.0, 411.0)], 3, 0);
+        hand.add_road(&[Vec2::new(682.92, 411.0), Vec2::new(632.09, 371.7)], 1, 0);
+        hand.add_road(&[Vec2::new(633.51, 371.73), Vec2::new(578.58, 411.0)], 1, 0);
+        hand.add_road(&[Vec2::new(566.81, 429.0), Vec2::new(608.12, 472.8)], 1, 0);
+        hand.add_road(&[Vec2::new(606.72, 471.3), Vec2::new(668.46, 429.0)], 1, 0);
+        hand.add_road(&[Vec2::new(608.12, 472.8), Vec2::new(632.09, 371.7), Vec2::new(635.78, 269.71)], 2, 2);
+        vec![("tool", tool), ("hand", hand)]
+    }
+
+    /// [interchange] Where ramps meet the cross street and the highway the
+    /// drawing is clean: no lane lines inside the terminal junctions, no
+    /// paint out on the grass (a gore's hatching used to run on 40 m
+    /// straight past a short ramp's bend), and no two asphalt surfaces at
+    /// one height over the same spot at a terminal or a join.
+    #[test]
+    fn ramp_terminals_and_joins_draw_clean() {
+        for (name, w) in diamonds() {
+            let (roads, net) = (&w.roads, &w.traffic.net);
+            let g = draw(roads, net);
+            let terminals: Vec<NodeId> = (0..roads.nodes.len() as u32).map(NodeId).filter(|&n| {
+                let segs: Vec<_> = roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive).map(|&s| roads.segment(s)).collect();
+                segs.iter().any(|s| s.ramp) && segs.iter().any(|s| s.lanes_fwd > 0 && s.lanes_bwd > 0)
+            }).collect();
+            assert_eq!(terminals.len(), 2, "{name}: two terminals");
+            let joins: Vec<NodeId> = (0..roads.nodes.len() as u32).map(NodeId).filter(|&n| gore_ramp(roads, n).is_some()).collect();
+            assert_eq!(joins.len(), 4, "{name}: four joins");
+            let paint = g.get(Paint);
+            for &n in &terminals {
+                assert!(pad_node(roads, n), "{name}: the terminal is a junction with a pad");
+                let r = net.node_radius[n.0 as usize] - 0.3;
+                let at = roads.node(n).pos;
+                let inside = paint.positions.iter().filter(|p| (p[1] - MARK_Y).abs() < 1e-4 && Vec2::new(p[0], p[2]).distance(at) < r).count();
+                assert_eq!(inside, 0, "{name}: lane lines inside the terminal at {at:?}");
+            }
+            // Paint near the ways only (the gore between two edge lines is
+            // at most a few metres off either carriageway).
+            for p in &paint.positions {
+                let q = Vec2::new(p[0], p[2]);
+                let off = outside_carriageways(roads, q);
+                assert!(off < 6.0, "{name}: paint {off:.1} m out on the grass at {q:?}");
+            }
+            // No coplanar asphalt round the terminals and the joins (the
+            // tool's diamond: Harvey's own leaves its on-ramp 20 degrees off
+            // the street at the north terminal, and a piece of the ramp's
+            // curve is shorter than the fork needs to part; see the QA notes).
+            if name != "tool" {
+                continue;
+            }
+            let m = g.get(Asphalt);
+            let tris: Vec<([Vec2; 3], f32)> = m.indices.chunks(3).filter_map(|t| {
+                let p = [t[0], t[1], t[2]].map(|i| m.positions[i as usize]);
+                let flat = (p[0][1] - p[1][1]).abs() < 1e-4 && (p[1][1] - p[2][1]).abs() < 1e-4;
+                flat.then(|| (p.map(|v| Vec2::new(v[0], v[2])), p[0][1]))
+            }).collect();
+            let inside = |t: &[Vec2; 3], q: Vec2| {
+                let s = |a: Vec2, b: Vec2| (b - a).perp_dot(q - a);
+                let (d0, d1, d2) = (s(t[0], t[1]), s(t[1], t[2]), s(t[2], t[0]));
+                (d0 > 1e-3 && d1 > 1e-3 && d2 > 1e-3) || (d0 < -1e-3 && d1 < -1e-3 && d2 < -1e-3)
+            };
+            for &n in terminals.iter().chain(&joins) {
+                let at = roads.node(n).pos;
+                for gx in -30..=30 {
+                    for gy in -30..=30 {
+                        let q = at + Vec2::new(gx as f32, gy as f32) * 0.8 + Vec2::splat(0.013);
+                        let ys: Vec<f32> = tris.iter().filter(|(t, _)| inside(t, q)).map(|(_, y)| *y).collect();
+                        for (i, a) in ys.iter().enumerate() {
+                            assert!(!ys[i + 1..].iter().any(|b| (a - b).abs() < 5e-4), "{name}: two asphalt surfaces at {a} over {q:?} near {at:?}");
+                        }
+                    }
+                }
+            }
+        }
     }
 }
