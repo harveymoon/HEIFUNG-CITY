@@ -16,13 +16,37 @@ pub fn sub_pane(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &
         Tool::Road => road(ui, tools),
         Tool::Zone => zone(ui, sim, tools, assets),
         Tool::Edit => edit(ui, sim, tools, plan),
-        Tool::Bulldoze => hint(ui, help::tool_hint(Tool::Bulldoze)),
+        Tool::Bulldoze => bulldoze(ui, sim, tools),
         Tool::Inspect => hint(ui, help::tool_hint(Tool::Inspect)),
         Tool::Transit => transit(ui, sim, tools),
         Tool::Rail => rail(ui, sim, tools),
         Tool::Buildings => buildings(ui, sim, tools),
         Tool::District => super::districts::sub_pane(ui, sim, tools),
     }
+}
+
+/// [dirty-industry] The Bulldoze tool: remove things, or clean up
+/// contaminated ground over a circle (the hover label quotes the cost).
+fn bulldoze(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
+    ui.horizontal(|ui| {
+        if ui.selectable_label(!tools.cleanup, "Remove").on_hover_text("Roads, zones and the city's own buildings").clicked() {
+            tools.cleanup = false;
+        }
+        if ui.selectable_label(tools.cleanup, "Clean up ground").on_hover_text("Send a crew to dig out contaminated ground, paid up front").clicked() {
+            tools.cleanup = true;
+        }
+    });
+    if !tools.cleanup {
+        hint(ui, help::tool_hint(Tool::Bulldoze));
+        return;
+    }
+    ui.add(egui::Slider::new(&mut tools.cleanup_radius, nd_sim::world::CLEANUP_MIN_RADIUS..=nd_sim::world::CLEANUP_MAX_RADIUS).step_by(5.0).suffix(" m").text("radius"));
+    let w = &sim.world;
+    if !w.cleanups.is_empty() {
+        let jobs: Vec<String> = w.cleanups.iter().map(|j| format!("{:.0} m at ({:.0}, {:.0}) {:.0}%", j.radius, j.center.x, j.center.y, j.progress() * 100.0)).collect();
+        hint(ui, &format!("Crews at work: {}", jobs.join(" · ")));
+    }
+    hint(ui, &format!("Click contaminated ground: a crew digs it out from the middle over 2 to 6 days, {:.0} per cell of full contamination, paid when sent. The pointer shows the area, the cost and the days (red when the ground is clean or the treasury short). The Contamination layer (K) shows where.", nd_sim::world::CLEANUP_COST));
 }
 
 fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
@@ -147,7 +171,7 @@ fn zone(ui: &mut egui::Ui, sim: &Sim, tools: &mut ToolState, assets: &GameAssets
         let built = p.land_use.map_or("unzoned", |l| l.label());
         let planned = tools.hover_parcel.and_then(|i| sim.world.planned_zoning().get(i).copied()).flatten();
         let plan_note = if planned != p.land_use { format!(" → {} planned", planned.map_or("unzoned", |l| l.label())) } else { String::new() };
-        let front = if p.rough { "rough ground" } else if p.street_frontage { "street frontage" } else if p.path_frontage { "footpath frontage" } else { "landlocked backland" };
+        let front = if p.rough { p.rough_why.unwrap_or("rough ground") } else if p.street_frontage { "street frontage" } else if p.path_frontage { "footpath frontage" } else { "landlocked backland" };
         let verdict = if tools.unzone { String::new() } else {
             match tools.hover_parcel.and_then(|i| sim.world.parcel_refusal(i, Some(tools.land_use))).or_else(|| p.refusal(tools.land_use)) {
                 None => format!(" · takes {}", tools.land_use.label()),
@@ -464,7 +488,7 @@ pub fn placeable_info(ui: &mut egui::Ui, sim: &mut Sim, what: Placeable) {
         // [tolls]
         Placeable::Toll(s) => {
             line += &format!(
-                ". Click a road: it sits across the carriageway (both ways) on a straight run of {:.0} m or more. Every car pays {:.1} (lorries double, buses and emergencies free) and slows to {:.0} km/h through it; drivers weigh the toll and some take another way. Set prices in the Taxes window.",
+                ". Click a road: it sits across the carriageway (both ways) on a straight run of {:.0} m or more. Every car pays {:.1} (lorries double, buses and emergencies free) and slows to {:.0} km/h through it; drivers weigh the toll and some take another way. Set prices in City Data, Economy, Taxes.",
                 s.clearance() * 2.0 + 2.0,
                 s.default_price(),
                 s.speed() * 3.6

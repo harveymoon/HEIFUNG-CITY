@@ -34,8 +34,18 @@ pub const BASIN_RADIUS: f32 = 1000.0;
 pub const OUTER_HILLS: f32 = 160.0;
 /// The middle of the map stays dry so a new city always has room to start.
 pub const CLEAR_RADIUS: f32 = 240.0;
-/// Steepest ground a lot may be built on (rise over run across the lot).
+/// Steepest bank a dock or port may stand on (rise over run across its
+/// footprint). Lots go steeper: see [`MAX_GRADED_SLOPE`].
 pub const MAX_LOT_SLOPE: f32 = 0.2;
+/// [island-lots] Steepest ground a lot is still built on (rise over run
+/// between any two points of it): its pad is levelled to its street and
+/// the ground round it cut and filled (`Ground`), terraced down a hillside
+/// lot by lot. Anything steeper is a cliff.
+pub const MAX_GRADED_SLOPE: f32 = 0.7;
+/// [island-lots] Most the natural ground may rise or fall across one lot
+/// and still be levelled into a terrace: on a steep hillside only shallow
+/// lots fit, on gentle ground deep yards do.
+pub const MAX_LOT_RELIEF: f32 = 18.0;
 /// Slowest water a hydro plant can use, in metres per second.
 pub const MIN_HYDRO_CURRENT: f32 = 0.8;
 /// Height of a bridge deck above the water.
@@ -1009,6 +1019,22 @@ impl Landscape {
         self.raster.get_or_init(|| self.build_raster())
     }
 
+    /// [island-lots] Tests: replace the natural heights with `f(point,
+    /// generated height)` (the water stays where it was generated).
+    #[cfg(test)]
+    pub(crate) fn reshape_for_test(&mut self, f: impl Fn(Vec2, f32) -> f32) {
+        let mut r = self.raster().clone();
+        let n = r.n;
+        for j in 0..n {
+            for i in 0..n {
+                let p = Vec2::new(-LAND_HALF + i as f32 * CELL, -LAND_HALF + j as f32 * CELL);
+                r.h[j * n + i] = f(p, r.h[j * n + i]);
+            }
+        }
+        self.raster = OnceLock::new();
+        let _ = self.raster.set(r);
+    }
+
     fn build_raster(&self) -> Raster {
         let n = (LAND_HALF * 2.0 / CELL) as usize + 1;
         let at = |i: usize, j: usize| Vec2::new(-LAND_HALF + i as f32 * CELL, -LAND_HALF + j as f32 * CELL);
@@ -1185,6 +1211,35 @@ impl Landscape {
         self.sample(|r| &r.d, p)
     }
 
+    /// [island-lots] Why a lot (or parcel) with outline `polygon` and
+    /// inner point `center` cannot be built on, in plain words, or None if
+    /// it can be levelled: standing in the water, a cliff steeper than
+    /// [`MAX_GRADED_SLOPE`], or more than [`MAX_LOT_RELIEF`] of rise across
+    /// it to cut and fill. Ordinary hillsides pass: their lots are graded.
+    pub fn lot_ground_problem(&self, polygon: &[Vec2], center: Vec2) -> Option<&'static str> {
+        if self.is_flat() {
+            return None;
+        }
+        if self.is_water(center) {
+            return Some("under water");
+        }
+        let n = polygon.len();
+        let mut pts: Vec<Vec2> = Vec::with_capacity(n * 2 + 1);
+        for k in 0..n {
+            pts.push(polygon[k]);
+            pts.push(polygon[k].lerp(polygon[(k + 1) % n], 0.5));
+        }
+        pts.push(center);
+        if self.slope_over(&pts) > MAX_GRADED_SLOPE {
+            return Some("a cliff: too steep to level for building");
+        }
+        let (lo, hi) = pts.iter().map(|p| self.height(*p)).fold((f32::MAX, f32::MIN), |(lo, hi), h| (lo.min(h), hi.max(h)));
+        if hi - lo > MAX_LOT_RELIEF {
+            return Some("the hillside drops too far across this ground to terrace it");
+        }
+        None
+    }
+
     /// Steepest rise over run between any two of `pts`.
     pub fn slope_over(&self, pts: &[Vec2]) -> f32 {
         let hs: Vec<f32> = pts.iter().map(|p| self.height(*p)).collect();
@@ -1278,6 +1333,135 @@ impl Landscape {
     pub fn water_routes_out(&self, from: Vec2) -> Vec<(MapEdge, Vec<Vec2>)> {
         let g = WaterGraph::build(self);
         g.routes_out(self, from)
+    }
+
+    /// [ferry-routes] Many routes at once on one water graph (built once):
+    /// `water_route` for each pair and `water_routes_out` for each point.
+    pub fn water_routes_batch(&self, pairs: &[(Vec2, Option<Vec2>)], outs: &[Vec2]) -> (Vec<Option<Vec<Vec2>>>, Vec<Vec<(MapEdge, Vec<Vec2>)>>) {
+        if pairs.is_empty() && outs.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+        let g = WaterGraph::build(self);
+        (pairs.iter().map(|(a, b)| g.route(self, *a, *b)).collect(), outs.iter().map(|p| g.routes_out(self, *p)).collect())
+    }
+
+    /// [ferry-routes] Is the straight line from `a` to `b` on water (or
+    /// off the map) the whole way?
+    fn clear_water(&self, a: Vec2, b: Vec2) -> bool {
+        let n = (a.distance(b) / 4.0).ceil().max(1.0) as usize;
+        (0..=n).all(|i| {
+            let p = a.lerp(b, i as f32 / n as f32);
+            chebyshev(p) > LAND_HALF || self.is_water(p)
+        })
+    }
+
+    /// [ferry-routes] A way over open water from `a` to `b` that keeps off
+    /// the land: straight when nothing is in the way, else round the
+    /// islands and headlands on a grid of water cells, pulled taut. Ships
+    /// used to sail straight across the sea, islands and all.
+    pub fn sea_way(&self, a: Vec2, b: Vec2) -> Vec<Vec2> {
+        if self.clear_water(a, b) {
+            return vec![a, b];
+        }
+        const CELL: f32 = 30.0;
+        let half = LAND_HALF + 2.0 * CELL;
+        let n = (2.0 * half / CELL).ceil() as i32;
+        let centre = |i: i32, j: i32| Vec2::new(-half + (i as f32 + 0.5) * CELL, -half + (j as f32 + 0.5) * CELL);
+        let water = |p: Vec2| chebyshev(p) > LAND_HALF || self.is_water(p);
+        // A cell is open water when its centre and all four corners are, so
+        // a hop between neighbours never clips a point of land.
+        let corner: Vec<bool> = (0..(n + 1) * (n + 1)).map(|k| water(Vec2::new(-half + (k % (n + 1)) as f32 * CELL, -half + (k / (n + 1)) as f32 * CELL))).collect();
+        let wet: Vec<bool> = (0..n * n)
+            .map(|k| {
+                let (i, j) = (k % n, k / n);
+                let c = |di: i32, dj: i32| corner[((i + di) + (j + dj) * (n + 1)) as usize];
+                c(0, 0) && c(1, 0) && c(0, 1) && c(1, 1) && water(centre(i, j))
+            })
+            .collect();
+        let cell_of = |p: Vec2| (((p.x + half) / CELL).floor() as i32).clamp(0, n - 1) + (((p.y + half) / CELL).floor() as i32).clamp(0, n - 1) * n;
+        // The nearest wet cell to a point (a berth may sit in a cell whose
+        // centre is on the bank).
+        let snap = |p: Vec2| -> Option<i32> {
+            let c = cell_of(p);
+            let (ci, cj) = (c % n, c / n);
+            let mut best: Option<(f32, i32)> = None;
+            for dj in -4..=4 {
+                for di in -4..=4 {
+                    let (i, j) = (ci + di, cj + dj);
+                    if i < 0 || j < 0 || i >= n || j >= n || !wet[(i + j * n) as usize] {
+                        continue;
+                    }
+                    let d = centre(i, j).distance(p);
+                    if best.is_none_or(|(bd, _)| d < bd) {
+                        best = Some((d, i + j * n));
+                    }
+                }
+            }
+            best.map(|b| b.1)
+        };
+        let (Some(start), Some(goal)) = (snap(a), snap(b)) else { return vec![a, b] };
+        // A* over the cells, eight ways (no corner cutting).
+        let total = (n * n) as usize;
+        let mut cost = vec![u32::MAX; total];
+        let mut prev = vec![u32::MAX; total];
+        let (gi, gj) = (goal % n, goal / n);
+        let h = |k: i32| {
+            let (di, dj) = (((k % n) - gi).unsigned_abs(), ((k / n) - gj).unsigned_abs());
+            10 * di.max(dj) + 4 * di.min(dj)
+        };
+        let mut open = std::collections::BinaryHeap::new();
+        cost[start as usize] = 0;
+        open.push(std::cmp::Reverse((h(start), start)));
+        while let Some(std::cmp::Reverse((_, k))) = open.pop() {
+            if k == goal {
+                break;
+            }
+            let (i, j) = (k % n, k / n);
+            for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
+                let (x, y) = (i + di, j + dj);
+                if x < 0 || y < 0 || x >= n || y >= n || !wet[(x + y * n) as usize] {
+                    continue;
+                }
+                if di != 0 && dj != 0 && !(wet[(x + j * n) as usize] && wet[(i + y * n) as usize]) {
+                    continue;
+                }
+                let m = x + y * n;
+                let c = cost[k as usize] + if di != 0 && dj != 0 { 14 } else { 10 };
+                if c < cost[m as usize] {
+                    cost[m as usize] = c;
+                    prev[m as usize] = k as u32;
+                    open.push(std::cmp::Reverse((c + h(m), m)));
+                }
+            }
+        }
+        if cost[goal as usize] == u32::MAX {
+            return vec![a, b];
+        }
+        let mut cells = vec![goal];
+        while let Some(&c) = cells.last() {
+            let p = prev[c as usize];
+            if p == u32::MAX {
+                break;
+            }
+            cells.push(p as i32);
+        }
+        cells.reverse();
+        let mut pts = vec![a];
+        pts.extend(cells.iter().map(|&k| centre(k % n, k / n)));
+        pts.push(b);
+        // Pull it taut: from each corner, straight to the farthest point
+        // still in clear water.
+        let mut out = vec![a];
+        let mut i = 0;
+        while i + 1 < pts.len() {
+            let mut j = pts.len() - 1;
+            while j > i + 1 && !self.clear_water(pts[i], pts[j]) {
+                j -= 1;
+            }
+            out.push(pts[j]);
+            i = j;
+        }
+        out
     }
 }
 
@@ -1467,7 +1651,7 @@ impl WaterGraph {
         if in_sea(from) {
             let Some(sea) = l.sea.as_ref() else { return Vec::new() };
             let out = sea.exit_from(from);
-            return vec![(MapEdge::of(out), vec![from, out])];
+            return vec![(MapEdge::of(out), l.sea_way(from, out))];
         }
         let Some(start) = self.nearest(l, from) else { return Vec::new() };
         let (dist, prev) = self.tree(start);
@@ -1508,7 +1692,8 @@ impl WaterGraph {
                 let mut pts = vec![from];
                 pts.extend(path.iter().map(|&i| self.nodes[i]));
                 if self.sea[k] {
-                    pts.push(out);
+                    let last = *pts.last().unwrap_or(&from);
+                    pts.extend(l.sea_way(last, out).into_iter().skip(1));
                 } else {
                     // Carry on past the edge, as `route` does.
                     let q = path.len().checked_sub(2).map_or(out, |i| self.nodes[path[i]]);
@@ -1524,11 +1709,14 @@ impl WaterGraph {
         let lake_of = |p: Vec2| l.lakes.iter().position(|k| point_in_polygon(p, &k.outline));
         // The sea and lakes are crossed straight.
         if let Some(t) = to {
-            if (in_sea(from) && in_sea(t)) || lake_of(from).is_some_and(|a| lake_of(t) == Some(a)) {
+            if in_sea(from) && in_sea(t) {
+                return Some(l.sea_way(from, t));
+            }
+            if lake_of(from).is_some_and(|a| lake_of(t) == Some(a)) {
                 return Some(vec![from, t]);
             }
         } else if in_sea(from) {
-            return Some(vec![from, l.sea.as_ref()?.exit_from(from)]);
+            return Some(l.sea_way(from, l.sea.as_ref()?.exit_from(from)));
         }
         let start = self.nearest(l, from);
         let mut out = vec![from];
@@ -1552,7 +1740,7 @@ impl WaterGraph {
                 let last = *path.last()?;
                 if self.sea[last] {
                     let p = self.nodes[last];
-                    out.push(l.sea.as_ref()?.exit_from(p));
+                    out.extend(l.sea_way(p, l.sea.as_ref()?.exit_from(p)).into_iter().skip(1));
                 } else {
                     // Carry on past the edge.
                     let p = self.nodes[last];
@@ -1564,12 +1752,14 @@ impl WaterGraph {
                 if in_sea(t) {
                     let path = self.search(start, |k| self.sea[k])?;
                     out.extend(path.iter().map(|&k| self.nodes[k]));
+                    let last = *out.last().unwrap_or(&from);
+                    out.extend(l.sea_way(last, t).into_iter().skip(1));
                 } else {
                     let goal = self.nearest(l, t)?;
                     let path = self.search(start, |k| k == goal)?;
                     out.extend(path.iter().map(|&k| self.nodes[k]));
+                    out.push(t);
                 }
-                out.push(t);
             }
         }
         Some(out)
@@ -2786,7 +2976,7 @@ mod tests {
     fn built_ground_has_no_cliffs_spikes_or_seams() {
         let w = demo_ground_world();
         let t0 = std::time::Instant::now();
-        let again = Ground::build(&w.landscape, &w.roads, &w.road_z, &w.road_inner, &w.lots, w.config.half_extent + 200.0);
+        let again = Ground::build(&w.landscape, &w.roads, &w.road_z, &w.road_inner, &w.lots, w.ground_half());
         println!("ground built in {:?}", t0.elapsed());
         assert_eq!(again.h, w.ground.h);
         let g = &w.ground;

@@ -211,7 +211,8 @@ fn road_view(ui: &mut egui::Ui, st: &mut EditorState, v: &IntersectionView) {
         }
         let a = st.to_view(rect, c.ends[0]);
         let b = st.to_view(rect, c.ends[1]);
-        painter.line_segment([a, b], egui::Stroke::new(if st.crossing == Some(c.index) { 4.0 } else { 2.0 }, col.gamma_multiply(0.8)));
+        // [footbridge] A crosswalk its bridge replaced, faint.
+        painter.line_segment([a, b], egui::Stroke::new(if st.crossing == Some(c.index) { 4.0 } else { 2.0 }, col.gamma_multiply(if c.closed { 0.25 } else { 0.8 })));
         painter.circle_filled(m, 9.0, egui::Color32::from_black_alpha(200));
         painter.circle_stroke(m, 9.0, egui::Stroke::new(1.5, col));
         if !label.is_empty() {
@@ -269,9 +270,23 @@ fn controls(ui: &mut egui::Ui, p: &mut UiCtx, st: &mut EditorState, v: &Intersec
         if c.signalised && c.upgrade == CrossingUpgrade::None {
             ui.label(egui::RichText::new("    walk lights run with the junction's signals").small().weak());
         }
+        // [footbridge] The crosswalk under a footbridge goes, unless kept.
+        if c.upgrade == CrossingUpgrade::Footbridge {
+            let mut keep = c.kept;
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.checkbox(&mut keep, "Keep the crosswalk under it").on_hover_text("Off: the footbridge replaces the crosswalk (its paint and walk lights go) and everyone crossing here climbs over. On: the crosswalk stays at grade and walkers take the bridge only when it is no real detour.");
+            });
+            if keep != c.kept {
+                st.message = Some(match w.set_crosswalk_kept(c.index, keep) {
+                    Ok(()) => (format!("Crosswalk across {street}: {}.", if keep { "kept under the footbridge" } else { "replaced by the footbridge" }), true),
+                    Err(e) => (format!("Not done: {e}."), false),
+                });
+            }
+        }
     }
     ui.add_space(4.0);
-    ui.label(egui::RichText::new("A push button stops traffic only when someone presses it. A footbridge lets walkers climb over without holding anyone up; they take it when it costs them only a little more time.").small().weak());
+    ui.label(egui::RichText::new("A push button stops traffic only when someone presses it. A footbridge replaces the crosswalk: walkers climb over without holding anyone up (keep the crosswalk to let them choose).").small().weak());
 }
 
 fn upgrade_label(u: CrossingUpgrade) -> &'static str {

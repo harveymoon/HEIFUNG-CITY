@@ -31,6 +31,8 @@ mod buses;
 mod cargo_hubs;
 #[cfg(test)]
 mod cargo_hub_tests;
+#[cfg(test)]
+mod island_lots_tests;
 mod cars;
 mod chases;
 mod enforcement;
@@ -59,9 +61,14 @@ mod placement;
 pub use placement::PlacementSite;
 #[cfg(test)]
 mod placement_tests;
+#[cfg(test)]
+mod dock_access_tests;
 pub mod poses;
 /// [clarity] Origins and destinations, crews, crash sites.
 pub mod journeys;
+mod kerbside;
+#[cfg(test)]
+mod ped_highway_tests;
 mod pillars;
 pub use pillars::deck_half_width;
 mod junctions;
@@ -118,6 +125,8 @@ mod tourism;
 mod trips;
 mod water;
 mod ferry;
+/// [ferry-routes] Ferry routes and shipping lanes as lines on the water.
+pub mod ferry_routes;
 mod rides;
 // [economy] business pressure, the new trades, the waterfront and the art scene
 mod pressure;
@@ -126,7 +135,7 @@ mod waterfront;
 mod nights;
 mod roadworks;
 mod dirt;
-pub use dirt::{DirtyNeighbour, ADJACENCY_OUTPUT_HIT, ADJACENCY_VALUE_HIT};
+pub use dirt::{CleanupJob, CleanupQuote, DirtyNeighbour, ADJACENCY_OUTPUT_HIT, ADJACENCY_VALUE_HIT, CLEANUP_COST, CLEANUP_MAX_RADIUS, CLEANUP_MIN_RADIUS};
 // [road-inspect] the road inspector's traffic counts, live read-out and Repair now
 mod road_inspect;
 #[cfg(test)]
@@ -416,6 +425,10 @@ pub struct World {
     stations: Vec<BuildingId>,
     #[serde(skip)]
     yards: Vec<BuildingId>,
+    /// [dock-access] Passenger stations on the railway whose street does not
+    /// reach the city yet: trains call there, nobody gets on or off.
+    #[serde(skip)]
+    halts: Vec<BuildingId>,
     /// Businesses selling each resource, with their lot centres, for the
     /// hour `seller_index_hour` was built in.
     #[serde(skip)]
@@ -498,6 +511,10 @@ pub struct World {
     /// spreads and fades daily. Old saves load clean.
     #[serde(default)]
     pub contamination: crate::ground::Contamination,
+    /// [dirty-industry] Clean-up crews digging out poisoned ground, paid
+    /// for up front (`world/dirt.rs`, `World::start_cleanup`).
+    #[serde(default)]
+    pub cleanups: Vec<dirt::CleanupJob>,
     /// The player's industry sub-zone bias over areas, newest last.
     #[serde(default)]
     pub industry_bias: Vec<crate::industry::IndustryBias>,
@@ -593,6 +610,11 @@ pub struct World {
     /// [social] The city's concern of the week, for small talk (hourly).
     #[serde(skip)]
     social_concern: Option<crate::concerns::Concern>,
+    /// [committee] The mayor's committee: the pool, the seats, alerts,
+    /// meetings and their projects (`crate::committee`). The sim never
+    /// reads it; old saves load with none and set one up when first used.
+    #[serde(default)]
+    pub committee: crate::committee::Committee,
 }
 
 impl World {
@@ -641,6 +663,7 @@ impl World {
             road_component: Vec::new(),
             stations: Vec::new(),
             yards: Vec::new(),
+            halts: Vec::new(),
             seller_index: HashMap::new(),
             seller_index_hour: None,
             available: [false; 6],
@@ -665,6 +688,7 @@ impl World {
             enforcement: Default::default(),
             air: Default::default(),
             contamination: crate::ground::Contamination::new(half + 200.0, crate::ground::CONTAMINATION_CELL),
+            cleanups: Vec::new(),
             industry_bias: Vec::new(),
             places: Default::default(),
             concerns: Default::default(),
@@ -689,6 +713,7 @@ impl World {
             road_log: Default::default(),
             social: Default::default(),
             social_concern: None,
+            committee: Default::default(),
         };
         w.estate.pressure = crate::estate::Pressure::new(half + 200.0);
         w.landscape = Landscape::new(&w.config.landscape);
@@ -740,6 +765,14 @@ impl World {
         // [people] Saves from before households: one per citizen. Detected
         // per citizen (no household), so no version bump is needed.
         self.migrate_households();
+        // A parking lot the player placed before the flag existed is one of
+        // the city's own: roads stop at it instead of buying it out.
+        let city_lots: Vec<BuildingId> = self.vehicles.city_lots.keys().copied().collect();
+        for id in city_lots {
+            if let Some(b) = self.buildings.get_mut(id) {
+                b.city_parking = true;
+            }
+        }
         self.version = SAVE_VERSION;
         // Ring pieces and slip roads are flagged from the network's shape;
         // a save from before the flags has them unset.
@@ -786,6 +819,9 @@ impl World {
             self.citizens[id].transit = None;
             self.strand_driver(id, pos);
         }
+        // [ped-highway] People a save left standing on a highway or ramp
+        // walk to the pavement.
+        self.rescue_stranded();
         self.refresh_facility_cache();
         // [land] A save from before the land market: a cold pressure grid
         // (it warms on the first hourly sample); stale references dropped.
@@ -1066,6 +1102,8 @@ impl World {
         if tick % 60 == 0 {
             crate::prof!("hourly_economy", self.hourly_economy());
             crate::prof!("industry_hourly", self.industry_hourly());
+            // [dirty-industry] Clean-up crews dig on.
+            self.hourly_cleanups();
             // [economy] repair shops, bike shops, galleries and boats
             crate::prof!("trades_hourly", self.trades_hourly());
             crate::prof!("record_hour", self.record_hour());
@@ -1136,6 +1174,10 @@ impl World {
         self.step_convoys();
         self.step_air();
         self.step_taxis();
+        // [ped-highway] Nobody stands about on a highway or ramp.
+        if tick % kerbside::STRANDED_SWEEP_EVERY == 7 {
+            self.rescue_stranded();
+        }
         self.step_driving();
         self.step_journeys();
         // [events] Street races and warehouse raves.

@@ -5,6 +5,8 @@ mod assets;
 /// [build-highlight] A Build window section's buildings and service areas on the map.
 mod build_highlight;
 mod camera;
+/// [committee] The mayor's AI committee in the running game.
+mod committee;
 mod district_tool;
 mod fire_scene;
 mod flags;
@@ -20,8 +22,12 @@ mod road_select;
 mod remote;
 mod render;
 mod sim;
+/// [dock-access] "Connect here" marks on unjoined dock and station street stubs.
+mod stub_marks;
 mod tools;
 mod train_select;
+/// [ferry-routes] Ferry routes on the water when a terminal or ship is selected.
+mod ferry_select;
 mod ui;
 
 use bevy::prelude::*;
@@ -67,8 +73,9 @@ fn main() {
             map_layers::MapLayersPlugin,
             marks::MarksPlugin,
             metro_ux::MetroUxPlugin,
-            build_highlight::BuildHighlightPlugin,
         ))
+        // A plugin tuple holds at most 15: the rest go in a second one.
+        .add_plugins((committee::CommitteePlugin, build_highlight::BuildHighlightPlugin, stub_marks::StubMarksPlugin, ferry_select::FerrySelectPlugin))
         .run();
 }
 

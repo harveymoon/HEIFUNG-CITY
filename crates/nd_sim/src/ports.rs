@@ -30,6 +30,13 @@ new_key_type! {
     pub struct ShipId;
 }
 
+/// [dock-access] Length of a dock's access road, gate to free end; it is
+/// shortened (down to `STUB_MIN`) or turned where water, a building or
+/// another dock is in the way.
+pub const STUB_LENGTH: f32 = 32.0;
+pub const STUB_MIN: f32 = 14.0;
+/// [dock-access] The access road starts this far off the yard's landward edge.
+pub const STUB_GATE: f32 = 3.0;
 /// How far from the water's edge a click may be and still find it.
 pub const SHORE_REACH: f32 = 90.0;
 /// Gap between the footprint and the waterline.
@@ -292,9 +299,25 @@ pub struct Port {
     /// [ferries] Sailings made, to take turns between destinations.
     #[serde(default)]
     pub sailings: u32,
+    /// [dock-access] The access road laid with the dock: from its gate
+    /// (`[0]`) inland to a free end (`[1]`) that roads are drawn onto to
+    /// join it to the network. None when the dock fronted a street already
+    /// or came from a save that laid the old street along its landward side.
+    #[serde(default)]
+    pub stub: Option<[Vec2; 2]>,
 }
 
 impl Port {
+    /// [dock-access] Ships sail from it: a ferry terminal runs its boats on
+    /// the water alone (carrying no one until people can reach it); a
+    /// port, marina or fishing port needs the roads for what it lands.
+    pub fn sails(&self) -> bool {
+        match self.kind {
+            PortKind::FerryTerminal => true,
+            _ => self.works(),
+        }
+    }
+
     /// Works when the street reaches the city and ships can get to it.
     pub fn works(&self) -> bool {
         // [economy] Marinas and fishing ports work any water they are on.
@@ -324,8 +347,19 @@ impl Port {
         self.center - self.seaward * (self.kind.size().1 * 0.5)
     }
 
-    /// The street stub along the landward side, reaching past both ends.
+    /// [dock-access] The dock's street stub: its access road from the gate
+    /// inland (`[1]` the free end), or for a dock from an older save the
+    /// street along the landward side, reaching past both ends.
     pub fn road_line(&self) -> [Vec2; 2] {
+        if let Some(stub) = self.stub {
+            return stub;
+        }
+        self.front_line()
+    }
+
+    /// The street along the landward side, reaching past both ends (what a
+    /// dock laid before it had an access road of its own).
+    pub fn front_line(&self) -> [Vec2; 2] {
         let (w, _) = self.kind.size();
         let mid = self.front_mid() - self.seaward * crate::rail::ROAD_GAP;
         [mid - self.along * (w * 0.5 + crate::rail::STUB_LEAD), mid + self.along * (w * 0.5 + crate::rail::STUB_LEAD)]
@@ -366,7 +400,7 @@ impl Port {
         let root = shore.point - seaward * (back + 1.0);
         let tip = shore.point + seaward * reach;
         let berth = shore.point + seaward * (reach + if matches!(kind, PortKind::ShippingPort | PortKind::FishingPortLarge) { 9.0 } else { 5.0 }).min(if w.width.is_finite() { w.width * 0.5 } else { f32::MAX });
-        let port = Port { kind, center, along, seaward, pier: [root, tip], berth, water: w.kind, building: None, lot: None, road_connected: false, reaches_elsewhere: false, last_sailing: 0, remote: Vec::new(), sailings: 0 };
+        let port = Port { kind, center, along, seaward, pier: [root, tip], berth, water: w.kind, building: None, lot: None, road_connected: false, reaches_elsewhere: false, last_sailing: 0, remote: Vec::new(), sailings: 0, stub: None };
         for c in port.corners().iter().chain(std::iter::once(&center)) {
             if land.is_water(*c) {
                 return Err("the shore is too ragged here: part of the dock would stand in the water".into());
@@ -504,6 +538,20 @@ pub struct Ports {
     pub commuters_today: std::collections::BTreeMap<BuildingId, u32>,
     #[serde(default)]
     pub trips_today: std::collections::BTreeMap<BuildingId, u32>,
+    /// [ferry-routes] People carried today on each ferry route, by the
+    /// terminal a run sailed from and where it went (`world/ferry_routes.rs`).
+    #[serde(default)]
+    pub line_riders: Vec<LineRiders>,
+}
+
+/// [ferry-routes] Riders today on the runs from `from` to another
+/// terminal (`to`) or to a town off the map (`town`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LineRiders {
+    pub from: BuildingId,
+    pub to: Option<BuildingId>,
+    pub town: Option<u8>,
+    pub riders: u32,
 }
 
 /// [ferries] A resident heading for a terminal to take the ferry to a
@@ -519,12 +567,26 @@ pub struct DayTrip {
 }
 
 impl Ports {
+    /// [ferry-routes] Count `n` riders on a run from `from` to `to` (a
+    /// terminal) or `town` (off the map).
+    pub fn count_line_riders(&mut self, from: BuildingId, to: Option<BuildingId>, town: Option<u8>, n: u32) {
+        match self.line_riders.iter_mut().find(|l| l.from == from && l.to == to && l.town == town) {
+            Some(l) => l.riders += n,
+            None => self.line_riders.push(LineRiders { from, to, town, riders: n }),
+        }
+    }
+
     pub fn port_of(&self, b: BuildingId) -> Option<&Port> {
         self.ports.values().find(|p| p.building == Some(b))
     }
 
     pub fn kind_of(&self, b: BuildingId) -> Option<PortKind> {
         self.port_of(b).map(|p| p.kind)
+    }
+
+    /// [dock-access] Ferry terminals whose boats run (on the water alone).
+    pub fn sailing(&self, kind: PortKind) -> Vec<BuildingId> {
+        self.ports.values().filter(|p| p.kind == kind && p.sails()).filter_map(|p| p.building).collect()
     }
 
     /// Working shipping ports' buildings.

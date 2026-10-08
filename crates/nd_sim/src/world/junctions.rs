@@ -65,6 +65,12 @@ pub struct CrossingView {
     /// Its footbridge, if it has one: the walkway's ends, the stairs' feet
     /// and the width.
     pub footbridge: Option<([Vec2; 2], [Vec2; 2], f32)>,
+    /// [footbridge] Under a footbridge: the crosswalk kept at grade (the
+    /// player's choice) rather than replaced by the bridge.
+    pub kept: bool,
+    /// [footbridge] Replaced by its footbridge: no paint, no walk light,
+    /// nobody crosses here at grade.
+    pub closed: bool,
 }
 
 /// What the Intersection editor shows and edits.
@@ -158,7 +164,35 @@ impl World {
             kind: c.kind,
             light: c.button.then(|| self.button_light(k)),
             footbridge: self.walk.footbridges.iter().find(|f| f.crossing == k).map(|f| (f.top, f.foot, f.width)),
+            kept: c.bridged && !c.closed,
+            closed: c.closed,
         })
+    }
+
+    /// [footbridge] Keep crosswalk `k` at grade under its footbridge, or
+    /// let the bridge replace it (the default). Free either way.
+    pub fn set_crosswalk_kept(&mut self, k: u32, keep: bool) -> Result<(), String> {
+        let v = self.crossing_view(k).ok_or("no such crosswalk")?;
+        if v.upgrade != CrossingUpgrade::Footbridge {
+            return Err("only a crosswalk under a footbridge can be kept or removed".into());
+        }
+        if v.kept == keep {
+            return Ok(());
+        }
+        if !self.crosswalks.set_keep_crosswalk(v.mid, v.dir, keep) {
+            return Err("no footbridge rule there".into());
+        }
+        self.rebuild_walk();
+        self.peds.buttons.clear();
+        self.refresh_crossings_now();
+        self.events.push(SimEvent::RoadsChanged);
+        Ok(())
+    }
+
+    /// [footbridge] Middles of the crosswalks replaced by footbridges: the
+    /// street painter leaves their zebras (and walk lights) out.
+    pub fn closed_crosswalks(&self) -> Vec<Vec2> {
+        self.walk.crossings.iter().filter(|c| c.closed).map(|c| c.mid).collect()
     }
 
     fn crosswalk_view(&self, k: u32) -> IntersectionView {
@@ -308,6 +342,62 @@ impl World {
         c.activity = Activity::Traveling { to: None, purpose: Purpose::Wander, path, idx: 0 };
         c.next_decision_tick = self.clock.tick + 120;
         Ok(n)
+    }
+
+    /// [footbridge] The height (absolute, as `road_height`) of the raised
+    /// way a walker or rider at `pos` is going along: an elevated path or
+    /// street, a viaduct, a bridge over the water, a cutting. None at grade
+    /// (and in a flat city), where they stand on the ground as before.
+    ///
+    /// Harvey's flag: people on an elevated path were drawn on the ground
+    /// (on the water) beside it. They were lifted onto whatever surface was
+    /// nearest their last height, so whoever came onto the path where it
+    /// was already up, or stepped half a metre off its narrow deck,
+    /// stayed down. Now the leg they walk names the way: a raised way
+    /// running along the leg, with them on its corridor.
+    pub fn walker_way_height(&self, c: &Citizen, pos: Vec2) -> Option<f32> {
+        let Activity::Traveling { path, idx, .. } = &c.activity else { return None };
+        let to = *path.get(*idx)?;
+        let from = if *idx > 0 { path[*idx - 1] } else { pos };
+        self.way_height_on_leg(from, to, pos)
+    }
+
+    /// [footbridge] `walker_way_height` for someone at `pos` on the leg
+    /// from `from` to `to`.
+    pub fn way_height_on_leg(&self, from: Vec2, to: Vec2, pos: Vec2) -> Option<f32> {
+        if !self.relief {
+            return None;
+        }
+        let leg = to - from;
+        let len = leg.length();
+        let dir = (len > 0.5).then(|| leg / len);
+        let mut best: Option<(f32, f32)> = None;
+        for sid in self.roads.segments_near(pos, 12.0) {
+            let s = self.roads.segment(sid);
+            if s.is_rail() || s.tunnel {
+                continue;
+            }
+            let (na, nb) = (self.roads.node(s.a), self.roads.node(s.b));
+            if !(s.bridge || s.viaduct || na.level.abs() > 0.3 || nb.level.abs() > 0.3) {
+                continue;
+            }
+            let (a, b) = self.roads.segment_points(sid);
+            let along = (b - a).normalize_or_zero();
+            // Along the way, not across it (a street under a viaduct).
+            if dir.is_some_and(|d| d.dot(along).abs() < 0.7) {
+                continue;
+            }
+            let reach = s.half_width() + if s.is_street() { crate::zoning::SIDEWALK } else { 0.0 } + 1.5;
+            let (t, q) = crate::geom::project_on_segment(pos, a, b);
+            let d = q.distance(pos);
+            if d > reach {
+                continue;
+            }
+            if best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, self.road_height(sid, t)));
+            }
+        }
+        best.map(|(_, z)| z)
     }
 
     /// How high a walker stands above the ground: up the stairs and on the

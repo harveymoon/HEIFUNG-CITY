@@ -13,7 +13,7 @@ use crate::tools::Selection;
 /// The inspector window on a selected building or car, on the right where
 /// the person pane opens too. Closing it deselects.
 pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
-    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_)) {
+    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_) | Selection::Ship(_)) {
         return;
     }
     let mut open = true;
@@ -27,6 +27,10 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
         .vscroll(true)
         .show(ctx, |ui| {
             show(ui, p.sim, p.selection, p.assets);
+            // [ferry-routes] A click on a route flies to its far end.
+            if let Some(at) = super::ferry::take_fly(ui.ctx()) {
+                p.fly_to = Some(at);
+            }
             ui.separator();
             // [camera] Follow it, or fly to it.
             super::follow::camera_buttons(ui, p.sim, *p.selection, p.follow, p.fly, p.mode);
@@ -143,6 +147,8 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
         Selection::Bot(id) => bot(ui, &sim.world, selection, id),
         // [fire-scene]
         Selection::Unit(id) => unit(ui, sim, selection, assets, id),
+        // [ferry-routes]
+        Selection::Ship(id) => super::ferry::ship_card(ui, &sim.world, selection, id),
         // [train-inspect]
         Selection::Train(_) | Selection::Metro(_) => super::train::show(ui, &sim.world, selection, assets),
         Selection::Parked(vid) => {
@@ -625,18 +631,16 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
         ui.label(format!("{}: {:.0} of {:.0} MWh ({:.0}%), {doing}; up to {:.0} MW, {:.0}/day upkeep", k.label(), bat.charge_mwh, k.capacity_mwh(), bat.level() * 100.0, k.max_mw(), k.upkeep_per_day()));
         ui.add(egui::ProgressBar::new(bat.level()).desired_height(10.0).fill(super::detail::BATTERY.gamma_multiply(0.8)));
     }
-    // [ferries] The towns off the map its boats run to.
-    if b.port == Some(nd_sim::ports::PortKind::FerryTerminal) {
-        section(ui, "FERRIES");
-        let towns = w.ferry_towns(id);
-        let waiting = w.ports.boarding.get(&id).copied().unwrap_or(0);
-        if towns.is_empty() {
-            ui.label("its water does not reach the edge of the map, so no boats run off it");
-        } else {
-            let list: Vec<String> = towns.iter().map(|t| format!("{} ({}, {:.0} km)", t.name, t.edge.label(), t.km)).collect();
-            ui.label(format!("ferries to {} · {waiting} waiting to board", list.join(", ")));
-        }
+    // [dock-access] A dock or station off the roads: say so, loud, and what to do.
+    if let Some(problem) = w.access_problem(id) {
+        section(ui, "ROAD ACCESS");
+        ui.label(egui::RichText::new("NOT CONNECTED TO THE ROAD NETWORK").color(egui::Color32::from_rgb(255, 170, 80)).strong());
+        let todo = if w.stub_ends_of(id).is_empty() { "Its street is joined to roads that reach neither the city nor a way out of town: carry them on to the network." } else { "Draw a road to the marked end of its street stub (the amber ring); it snaps on like any road end." };
+        hint(ui, todo);
+        hint(ui, problem.split("; ").nth(1).unwrap_or(""));
     }
+    // [ferries] [ferry-routes] Its routes: where to, the boats, the next one.
+    super::ferry::dock_routes(ui, w, id);
     if let Some(link) = &b.rail {
         let joined = if link.works() { "" } else if !link.rail_connected { " · NOT CONNECTED TO THE RAILWAY" } else { " · NOT CONNECTED TO THE ROADS" };
         section(ui, "RAIL");
@@ -1119,6 +1123,11 @@ fn dirt_lines(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId) -> O
             };
             let what = if share > 0.0 { format!(" · output −{:.0}%", c * share * 100.0) } else { String::new() };
             ui.label(egui::RichText::new(format!("Ground contamination {:.0}%{what}", c * 100.0)).small().color(col));
+            // [dirty-industry] How to get rid of it.
+            match w.cleanups.iter().find(|j| j.center.distance(l.center) <= j.radius) {
+                Some(j) => hint(ui, &format!("a clean-up crew is digging here: {:.0}% done", j.progress() * 100.0)),
+                None => hint(ui, "Bulldoze (B) → Clean up ground digs it out"),
+            }
         }
     }
     clicked

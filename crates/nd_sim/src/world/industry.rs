@@ -356,6 +356,9 @@ impl World {
     /// and the neighbours of dirty industry feel it (`world/dirt.rs`).
     pub(super) fn industry_daily(&mut self) {
         self.contamination.daily();
+        // [dirty-industry] Dust blows downwind, rivers carry it downstream.
+        let wind = crate::weather::wind_dir(self.clock.tick) * self.weather.wind.clamp(0.0, 1.0);
+        self.contamination.drift(wind, &self.landscape.rivers);
         self.daily_dirt();
     }
 

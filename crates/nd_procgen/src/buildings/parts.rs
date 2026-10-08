@@ -1032,6 +1032,7 @@ pub fn lamp_post_world(g: &mut Geometry, w: Vec2, h: f32, glow: [f32; 3]) {
     g.part(Matte).cylinder(w, 0.12, 0.08, 0.0, h, 8, rgba(CHARCOAL));
     g.part(Matte).boxed(Vec3::new(w.x, h + 0.15, w.y), Vec3::new(0.6, 0.3, 0.6), 0.0, rgba(CHARCOAL));
     g.part(Glow).boxed(Vec3::new(w.x, h - 0.05, w.y), Vec3::new(0.5, 0.15, 0.5), 0.0, rgba(glow));
+    g.lamps.push(Vec3::new(w.x, h - 0.2, w.y));
 }
 
 pub fn bench_world(g: &mut Geometry, w: Vec2, yaw: f32, wood: [f32; 3], metal: [f32; 3]) {

@@ -310,3 +310,87 @@ fn saves_from_before_dirty_industry_load() {
     assert_eq!(IndustryKind::ALL[7], IndustryKind::Mining);
     assert_eq!(Resource::ALL[17], Resource::Art);
 }
+
+/// [dirty-industry] The Bulldoze tool's clean-up: the quote names area, cost
+/// and days before the click; the crew digs the stain out ring by ring over
+/// those days and leaves; a second order on the same spot is refused.
+#[test]
+fn a_cleanup_crew_digs_the_ground_out_over_a_few_days() {
+    let mut w = flat();
+    let spot = Vec2::new(100.0, 100.0);
+    assert!(w.cleanup_quote(spot, 80.0).is_err(), "clean ground: nothing to quote");
+    w.contamination.add(spot, 90.0, 0.8);
+    let before = w.contamination.within(spot, 80.0);
+    let q = w.cleanup_quote(spot, 80.0).expect("a quote");
+    assert!((q.cost - before * CLEANUP_COST).abs() < 1.0, "450 per cell of full contamination: {q:?}");
+    assert!(q.cells > 0 && (2..=6).contains(&q.days), "{q:?}");
+    // Too dear: refused before the click, and saying why.
+    let t = w.economy.treasury;
+    w.economy.treasury = q.cost * 0.5;
+    assert!(w.cleanup_quote(spot, 80.0).unwrap_err().contains("costs"));
+    w.economy.treasury = t;
+    let placed = w.start_cleanup(spot, 80.0).expect("ordered");
+    assert_eq!(placed, q);
+    assert!((t - w.economy.treasury - q.cost).abs() < 1.0, "paid up front");
+    assert_eq!(w.cleanups.len(), 1);
+    assert!(w.cleanup_quote(spot + Vec2::new(10.0, 0.0), 60.0).unwrap_err().contains("already"));
+    // Half way: the middle is clean, the rim not yet.
+    for _ in 0..q.days * 12 {
+        w.hourly_cleanups();
+    }
+    let j = w.cleanups[0].clone();
+    assert!(j.progress() > 0.45 && j.progress() < 0.55);
+    assert_eq!(w.contamination.at(spot), 0.0, "dug out from the middle");
+    assert!(w.contamination.within(spot, 80.0) > 0.0, "the rim is still to do");
+    for _ in 0..q.days * 12 {
+        w.hourly_cleanups();
+    }
+    assert!(w.cleanups.is_empty(), "the crew has left");
+    assert!(w.contamination.within(spot, 80.0) < 0.01, "clean: {}", w.contamination.within(spot, 80.0));
+    // Saved and loaded mid-job.
+    w.contamination.add(spot, 60.0, 0.5);
+    w.start_cleanup(spot, 60.0).unwrap();
+    let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+    assert_eq!(back.cleanups, w.cleanups);
+}
+
+/// [dirty-industry] Contamination drifts a little downwind and down rivers:
+/// bounded (nothing is made), deterministic, and only where it lies.
+#[test]
+fn contamination_drifts_downwind_and_downstream() {
+    use crate::ground::Contamination;
+    use crate::landscape::River;
+    let spot = Vec2::new(0.0, 0.0);
+    let east = Vec2::new(96.0, 0.0);
+    let west = Vec2::new(-96.0, 0.0);
+    // Wind to the east: more lands east than west.
+    let mut c = Contamination::new(600.0, 32.0);
+    c.add(spot, 40.0, 0.9);
+    let total = c.total();
+    let mut d = c.clone();
+    for _ in 0..20 {
+        c.daily();
+        c.drift(Vec2::new(0.8, 0.0), &[]);
+        d.daily();
+        d.drift(Vec2::new(0.8, 0.0), &[]);
+    }
+    assert_eq!(c, d, "deterministic");
+    assert!(c.at(east) > c.at(west) * 1.2, "downwind {} vs upwind {}", c.at(east), c.at(west));
+    assert!(c.total() <= total, "drift makes nothing");
+    // A river flowing north carries it north, not south.
+    let river = River { points: vec![Vec2::new(0.0, -500.0), Vec2::new(0.0, 500.0)], width: 30.0, current: 0.8, stream: false };
+    let mut r = Contamination::new(600.0, 32.0);
+    r.add(spot, 20.0, 0.9);
+    for _ in 0..15 {
+        r.daily();
+        r.drift(Vec2::ZERO, std::slice::from_ref(&river));
+    }
+    let (north, south) = (r.at(Vec2::new(0.0, 160.0)), r.at(Vec2::new(0.0, -160.0)));
+    assert!(north > south * 2.0 && north > 0.0, "downstream {north} vs upstream {south}");
+    // Far off the river and with no wind, drift does nothing.
+    let mut still = Contamination::new(600.0, 32.0);
+    still.add(Vec2::new(300.0, 300.0), 30.0, 0.9);
+    let before = still.clone();
+    still.drift(Vec2::ZERO, std::slice::from_ref(&river));
+    assert_eq!(still.cells, before.cells);
+}

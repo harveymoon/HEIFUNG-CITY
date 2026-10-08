@@ -1,75 +1,34 @@
-//! What every info window shares: the header with its expand and close
-//! buttons, which window is expanded, the time-range picker, and the
-//! charts the expanded views draw.
+//! What the data pages and the tool windows share: the tool windows' header
+//! (title and close), the City Data view's page furniture (page title,
+//! headline cards, section headings, figure rows, tables), the time-range
+//! picker, and the charts.
 //!
-//! Each info window has two views. The *compact* view is the summary that
-//! fits beside the map; the *expanded* view is a large window with charts
-//! over time and a drill-down of every figure. The switch is the same
-//! button in the same place on every window (the header's right, beside
-//! close), and only one window is expanded at a time: expanding another
-//! puts the first back to compact, so the map is never buried under two
-//! large windows. Which window is expanded lives in egui memory, like
-//! whether a window is open, so the UI carries no state of its own.
+//! Every City Data page (`ui/city_data.rs`) is laid out the same way, top
+//! to bottom: a page title with a line saying what the page is for, a row
+//! of headline figures as cards (`kpi`), then sections under one kind of
+//! heading (`heading`), each with full-width charts (`line_chart`,
+//! `stacked_bars`, a `legend` under them), tables (`table`) and labelled
+//! figures (`row`). The sizes come from `ui/theme.rs`.
 //!
 //! The charts are painted by hand (no plotting crate): a line chart and a
 //! diverging stacked-bar chart, both with a hover readout of every series
 //! at the day under the pointer. A few hundred shapes a frame, and only
-//! while an expanded window is showing.
+//! while a page with charts is showing.
 
 use bevy_egui::egui::{self, Color32, Pos2, Rect, Stroke};
 use nd_sim::history::{DayRecord, HourRecord, History};
 
 use super::{Info, GOLD, IVORY};
 
-// ── expanded state ─────────────────────────────────────────────────────────
+// ── tool window header ─────────────────────────────────────────────────────
 
-fn expanded_id() -> egui::Id {
-    egui::Id::new("info_window_expanded")
+/// A tool window's header: its title and, at the right, close. Returns
+/// whether the window should stay open.
+pub fn header(ui: &mut egui::Ui, info: Info) -> bool {
+    title_bar(ui, info.title(), None)
 }
 
-/// The one expanded window, if any.
-pub fn expanded(ctx: &egui::Context) -> Option<Info> {
-    ctx.data(|d| d.get_temp::<Option<Info>>(expanded_id()).flatten())
-}
-
-/// Expand `info` (collapsing whichever was expanded) or, with `false`, put
-/// it back to compact if it is the expanded one.
-pub fn set_expanded(ctx: &egui::Context, info: Info, on: bool) {
-    let now = expanded(ctx);
-    let next = if on { Some(info) } else if now == Some(info) { None } else { now };
-    ctx.data_mut(|d| d.insert_temp(expanded_id(), next));
-}
-
-// ── header ─────────────────────────────────────────────────────────────────
-
-/// The window's header: its title, and at the right the expand toggle and
-/// close. The same widget for every info window. Returns whether the
-/// window should stay open.
-pub fn header(ui: &mut egui::Ui, info: Info, can_expand: bool) -> bool {
-    let mut keep = true;
-    let is_expanded = expanded(ui.ctx()) == Some(info);
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(info.title()).color(GOLD).strong());
-        if is_expanded {
-            ui.label(egui::RichText::new("· detail").small().weak());
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if close_button(ui).on_hover_text("Close").clicked() {
-                keep = false;
-            }
-            if can_expand {
-                let tip = if is_expanded { "Back to the summary" } else { "Expand: charts over time and the detail behind every figure" };
-                if expand_button(ui, is_expanded).on_hover_text(tip).clicked() {
-                    set_expanded(ui.ctx(), info, !is_expanded);
-                }
-            }
-        });
-    });
-    ui.separator();
-    keep
-}
-
-/// The same header for a window that is not an info window (the Build
+/// The same header for a window that is not an `Info` window (the Build
 /// window, the title screen): its title, an optional weak note, and close.
 /// Returns whether the window should stay open.
 pub fn title_bar(ui: &mut egui::Ui, title: &str, note: Option<&str>) -> bool {
@@ -90,7 +49,7 @@ pub fn title_bar(ui: &mut egui::Ui, title: &str, note: Option<&str>) -> bool {
 }
 
 /// A painted cross: the default font has no multiplication-x glyph.
-fn close_button(ui: &mut egui::Ui) -> egui::Response {
+pub fn close_button(ui: &mut egui::Ui) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
     let p = ui.painter();
     if resp.hovered() {
@@ -103,26 +62,93 @@ fn close_button(ui: &mut egui::Ui) -> egui::Response {
     resp
 }
 
-/// Four corner marks pointing out (expand) or in (collapse), painted so it
-/// looks the same on every window and needs no icon font.
-fn expand_button(ui: &mut egui::Ui, is_expanded: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
-    let p = ui.painter();
-    if resp.hovered() {
-        p.rect_filled(rect, 3.0, ui.visuals().widgets.hovered.bg_fill);
-    }
-    let col = if resp.hovered() || is_expanded { GOLD } else { Color32::from_gray(190) };
-    let stroke = Stroke::new(1.5, col);
-    let r = rect.shrink(4.0);
-    let k = 3.5;
-    for (corner, sx, sy) in [(r.left_top(), 1.0, 1.0), (r.right_top(), -1.0, 1.0), (r.left_bottom(), 1.0, -1.0), (r.right_bottom(), -1.0, -1.0)] {
-        // Expanded: the marks sit inward, pointing at the centre (shrink).
-        let c = if is_expanded { corner + egui::vec2(sx * k, sy * k) } else { corner };
-        let (dx, dy) = if is_expanded { (-sx * k, -sy * k) } else { (sx * k, sy * k) };
-        p.line_segment([c, c + egui::vec2(dx, 0.0)], stroke);
-        p.line_segment([c, c + egui::vec2(0.0, dy)], stroke);
-    }
-    resp
+// ── page furniture ─────────────────────────────────────────────────────────
+
+/// A card's fill and edge: a shade lighter than the page.
+const CARD_BG: Color32 = Color32::from_rgb(18, 21, 33);
+const CARD_EDGE: Color32 = Color32::from_rgb(52, 46, 38);
+/// Table and figure captions: quieter than the figures.
+pub const CAPTION: Color32 = Color32::from_gray(160);
+/// Width of a figure row's label column, so the values line up.
+const ROW_LABEL: f32 = 190.0;
+
+/// The page's title and one line on what it is for.
+pub fn page_head(ui: &mut egui::Ui, title: &str, blurb: &str) {
+    ui.label(egui::RichText::new(title).font(crate::ui::theme::title()).color(GOLD));
+    ui.label(egui::RichText::new(blurb).color(CAPTION));
+    ui.add_space(6.0);
+}
+
+/// A section heading: the display face over a hairline rule, with air above.
+pub fn heading(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(14.0);
+    ui.label(egui::RichText::new(text).font(crate::ui::theme::lead()).color(GOLD));
+    let y = ui.cursor().top() + 1.0;
+    let x = ui.max_rect().x_range();
+    ui.painter().hline(x, y, Stroke::new(1.0, CARD_EDGE));
+    ui.add_space(6.0);
+}
+
+/// A headline figure as a card: the figure big, a caption under it. Lay
+/// them out in a `ui.horizontal_wrapped` row at the top of a page.
+pub fn kpi(ui: &mut egui::Ui, caption: &str, value: egui::RichText) {
+    egui::Frame::new().fill(CARD_BG).stroke(Stroke::new(1.0, CARD_EDGE)).corner_radius(4.0).inner_margin(egui::Margin::symmetric(12, 7)).show(ui, |ui| {
+        ui.set_min_width(118.0);
+        ui.vertical(|ui| {
+            ui.label(value.font(egui::FontId::proportional(crate::ui::theme::HEADING)).strong());
+            ui.label(egui::RichText::new(caption).small().color(CAPTION));
+        });
+    });
+}
+
+/// The row of headline cards.
+pub fn cards(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+        add(ui);
+    });
+}
+
+/// A labelled figure on one line: the label in a fixed column, quiet; the
+/// value plain.
+pub fn row(ui: &mut egui::Ui, label: &str, value: impl Into<egui::RichText>) {
+    let value = value.into();
+    row_with(ui, label, |ui| {
+        ui.label(value);
+    });
+}
+
+/// A labelled line whose right side `add` lays out (several coloured
+/// figures, a button).
+pub fn row_with(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        let h = ui.spacing().interact_size.y;
+        ui.allocate_ui_with_layout(egui::vec2(ROW_LABEL, h), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.set_min_width(ROW_LABEL);
+            ui.add(egui::Label::new(egui::RichText::new(label).color(CAPTION)).truncate());
+        });
+        add(ui);
+    });
+}
+
+/// A column heading in a `table`.
+pub fn th(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.label(egui::RichText::new(text).small().strong().color(CAPTION))
+}
+
+/// A table: striped rows, the same spacing everywhere, the headings first.
+/// `body` adds the rows (cells, then `ui.end_row()`).
+pub fn table<R>(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, heads: &[&str], body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Grid::new(id).num_columns(heads.len().max(1)).spacing(egui::vec2(16.0, 4.0)).striped(true).show(ui, |ui| {
+        if !heads.is_empty() {
+            for h in heads {
+                th(ui, h);
+            }
+            ui.end_row();
+        }
+        body(ui)
+    })
+    .inner
 }
 
 // ── time range ─────────────────────────────────────────────────────────────
@@ -165,12 +191,13 @@ impl Span {
     }
 }
 
-/// The range buttons, one setting per window (kept in egui memory).
-pub fn span_picker(ui: &mut egui::Ui, info: Info) -> Span {
-    let id = egui::Id::new(("info_span", info.title()));
+/// The range buttons. `key` names whose setting it is (the City Data view
+/// keeps one for all its pages, in egui memory).
+pub fn span_picker(ui: &mut egui::Ui, key: &str) -> Span {
+    let id = egui::Id::new(("info_span", key));
     let mut span: Span = ui.ctx().data(|d| d.get_temp(id)).unwrap_or_default();
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("range").small().weak());
+        ui.label(egui::RichText::new("range").small().color(CAPTION));
         for s in Span::ALL {
             ui.selectable_value(&mut span, s, egui::RichText::new(s.label()).small());
         }
@@ -178,6 +205,14 @@ pub fn span_picker(ui: &mut egui::Ui, info: Info) -> Span {
     ui.ctx().data_mut(|d| d.insert_temp(id, span));
     span
 }
+
+/// The range the City Data view's charts show, as last picked.
+pub fn data_span(ctx: &egui::Context) -> Span {
+    ctx.data(|d| d.get_temp(egui::Id::new(("info_span", DATA_SPAN)))).unwrap_or_default()
+}
+
+/// The City Data view's one range setting.
+pub const DATA_SPAN: &str = "city_data";
 
 /// The days a daily chart shows, oldest first.
 pub fn days(h: &History, span: Span) -> Vec<&DayRecord> {
@@ -454,16 +489,6 @@ pub fn col<'a>(days: &[&'a DayRecord], f: impl Fn(&'a DayRecord) -> f32) -> Vec<
 /// Values of an hour field over the hours.
 pub fn hcol<'a>(hours: &[&'a HourRecord], f: impl Fn(&'a HourRecord) -> f32) -> Vec<f32> {
     hours.iter().map(|h| f(h)).collect()
-}
-
-/// A bold figure with a weak caption under it, for the KPI row at the top
-/// of an expanded view.
-pub fn kpi(ui: &mut egui::Ui, caption: &str, value: egui::RichText) {
-    ui.vertical(|ui| {
-        ui.label(value.font(crate::ui::theme::lead()).strong());
-        ui.label(egui::RichText::new(caption).small().weak());
-    });
-    ui.add_space(14.0);
 }
 
 /// Fixed colours for up to a dozen series in order (lines, routes).
