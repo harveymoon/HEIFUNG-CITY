@@ -206,10 +206,11 @@ pub fn taxes(ui: &mut egui::Ui, p: &mut UiCtx) {
 fn headline(ui: &mut egui::Ui, w: &World, days: &[&DayRecord]) {
     let e = &w.economy;
     let n = days.len().max(1) as f32;
-    let avg_net = days.iter().map(|d| d.net()).sum::<f32>() / n;
-    let income = days.iter().map(|d| d.income()).sum::<f32>() / n;
-    let spending = days.iter().map(|d| d.spending()).sum::<f32>() / n;
-    let yesterday: f32 = e.ledger.yesterday.iter().sum();
+    // `+ 0.0`: an empty f32 sum is -0.0, which prints "-0".
+    let avg_net = days.iter().map(|d| d.net()).sum::<f32>() / n + 0.0;
+    let income = days.iter().map(|d| d.income()).sum::<f32>() / n + 0.0;
+    let spending = days.iter().map(|d| d.spending()).sum::<f32>() / n + 0.0;
+    let yesterday: f32 = e.ledger.yesterday.iter().sum::<f32>() + 0.0;
     pane::cards(ui, |ui| {
         pane::kpi(ui, "treasury", warn_if(e.treasury < 0.0, format!("{:.0}", e.treasury)).color(if e.treasury < 0.0 { WARN } else { GOLD }));
         pane::kpi(ui, "net yesterday", warn_if(yesterday < 0.0, format!("{yesterday:+.0}")));
