@@ -335,12 +335,27 @@ impl Tourism {
     }
 
     /// Pull of attractions by kind.
-    pub fn score_by_kind(&self) -> [f32; 6] {
-        let mut out = [0.0; 6];
+    pub fn score_by_kind(&self) -> [f32; AttractionKind::ALL.len()] {
+        // Sized from the kinds, so a new kind (beaches were the 7th) can
+        // never index past the end.
+        let mut out = [0.0; AttractionKind::ALL.len()];
         for a in &self.attractions {
             out[a.kind.index()] += a.score;
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod by_kind_tests {
+    use super::*;
+
+    #[test]
+    fn every_attraction_kind_has_a_slot() {
+        for k in AttractionKind::ALL {
+            assert!(k.index() < AttractionKind::ALL.len(), "{k:?}");
+        }
+        assert_eq!(Tourism::default().score_by_kind().len(), AttractionKind::ALL.len());
     }
 }
 
