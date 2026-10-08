@@ -22,6 +22,8 @@ mod road_select;
 mod remote;
 mod render;
 mod sim;
+/// [dock-access] "Connect here" marks on unjoined dock and station street stubs.
+mod stub_marks;
 mod tools;
 mod train_select;
 mod ui;
@@ -71,6 +73,7 @@ fn main() {
             metro_ux::MetroUxPlugin,
             committee::CommitteePlugin,
             build_highlight::BuildHighlightPlugin,
+            stub_marks::StubMarksPlugin,
         ))
         .run();
 }

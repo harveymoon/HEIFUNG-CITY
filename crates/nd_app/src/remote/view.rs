@@ -478,6 +478,14 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
     });
     // [free-placement] The building's own use (power, wages, venues); `land_use` is Civic for a city building.
     v["use"] = json!(b.land_use.label());
+    // [dock-access] A dock, station or yard: on the road network or not, and
+    // where to draw a road to join it.
+    if let Some(connected) = w.road_access(id) {
+        v["road_access"] = access_json(w, id, connected);
+    }
+    if let Some(p) = w.ports.port_of(id) {
+        v["dock"] = json!({ "kind": p.kind.label(), "road_connected": p.road_connected, "reaches_elsewhere": p.reaches_elsewhere, "works": p.works(), "ferries_sail": p.sails(), "berth": v2(p.berth), "stub": points(&p.road_line()) });
+    }
     v["dirt"] = dirt_json(w, id);
     v
 }
@@ -992,4 +1000,15 @@ pub fn vehicle_detail(w: &World, vid: nd_sim::VehicleId) -> Option<Value> {
         nd_sim::CarPlace::Driving(cid) => json!({ "driving": key_str(cid), "errand": format!("{:?}", w.traffic.cars.get(cid).map(|t| t.errand)) }),
     };
     Some(json!({ "id": key_str(vid), "owner": key_str(car.owner), "owner_name": w.citizens.get(car.owner).map(|c| c.name.clone()), "body": car.model.body.label(), "class": format!("{:?}", car.model.class), "price": round(car.model.price()), "place": place }))
+}
+
+/// [dock-access] A dock's or station's road connection for the API: whether
+/// it is on the network, the free ends of its street stub to draw a road
+/// onto, and what is held up meanwhile.
+pub fn access_json(w: &World, id: nd_sim::BuildingId, connected: bool) -> Value {
+    json!({
+        "connected": connected,
+        "stub_ends": w.stub_ends_of(id).into_iter().map(v2).collect::<Vec<_>>(),
+        "problem": w.access_problem(id),
+    })
 }

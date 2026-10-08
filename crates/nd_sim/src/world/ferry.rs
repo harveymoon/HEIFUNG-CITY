@@ -69,6 +69,22 @@ impl World {
     /// steps off.
     pub(super) fn ferry_returned(&mut self, terminal: BuildingId, town: u8) {
         let tick = self.clock.tick;
+        // [dock-access] A terminal off the roads (never joined, or cut off
+        // since): nobody can walk away from its pier. Visitors on board
+        // stay on and go home with the boat, no commuters come, and
+        // residents back from a day out are set down at home.
+        if !self.ports.port_of(terminal).is_some_and(|p| p.works()) {
+            let aboard: Vec<TouristId> = self.tourism.tourists.iter().filter(|(_, t)| matches!(t.state, TouristState::Aboard { terminal: x, .. } if x == terminal)).map(|(id, _)| id).collect();
+            for id in aboard {
+                self.tourism.tourists.remove(id);
+                self.tourism.stats.departures_today += 1;
+            }
+            let back: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::Abroad { terminal: x, until, .. } if x == terminal && until <= tick)).map(|(id, _)| id).collect();
+            for id in back {
+                self.home_from_day_trip(id);
+            }
+            return;
+        }
         let aboard: Vec<TouristId> = self.tourism.tourists.iter().filter(|(_, t)| matches!(t.state, TouristState::Aboard { terminal: x, .. } if x == terminal)).map(|(id, _)| id).collect();
         for id in aboard {
             self.disembark(id, terminal);
@@ -361,12 +377,17 @@ impl World {
         c.mood = (c.mood + 0.06).min(1.0);
         c.thought = format!("Good day out in {name}.");
         c.next_decision_tick = tick + 1;
-        if self.buildings.contains_key(terminal) {
+        if self.buildings.contains_key(terminal) && self.ports.port_of(terminal).is_some_and(|p| p.works()) {
             self.travel_to(id, home, Purpose::Home);
         } else if let Some(h) = home {
+            let door = self.building_entrance(h);
             let c = &mut self.citizens[id];
             c.activity = Activity::AtHome;
             c.inside = Some(h);
+            if let Some(p) = door {
+                c.pos = p;
+                c.prev_pos = p;
+            }
         }
     }
 }

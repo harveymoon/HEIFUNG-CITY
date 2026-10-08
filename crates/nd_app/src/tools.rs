@@ -1106,7 +1106,7 @@ pub(crate) fn tool_input(
             tools.hover_city_building = ground.and_then(|p| {
                 let w = &sim.world;
                 let l = w.lots.values().find(|l| l.contains(p))?;
-                l.building.filter(|&b| w.is_city_building(b) && w.buildings.get(b).is_some_and(|b| b.rail.is_none() && b.port.is_none()))
+                l.building.filter(|&b| w.is_city_building(b) && w.buildings.get(b).is_some_and(|b| b.rail.is_none()))
             });
             if tools.hover_city_building.is_some() {
                 tools.hover_gesture = None;
@@ -1229,7 +1229,7 @@ pub(crate) fn tool_input(
                         *selection = Selection::Building(id);
                         match sim.world.ports.port_of(id) {
                             Some(port) if port.works() => format!("{} built with its pier. Ships call from the next sailing.", dock.label()),
-                            Some(port) if !port.road_connected => format!("{} built with its pier. Join its street stub to the city's roads and it opens.", dock.label()),
+                            Some(port) if !port.road_connected => format!("{} built with its pier and an access road. Not connected to the road network yet: draw a road to the marked end.", dock.label()),
                             _ => format!("{} built, but no ship can reach it from off the map.", dock.label()),
                         }
                     }
@@ -1246,7 +1246,7 @@ pub(crate) fn tool_input(
                             let link = sim.world.buildings.get(id).and_then(|b| b.rail.as_ref()).map(|l| (l.rail_connected, l.road_connected));
                             match link {
                                 Some((true, true)) => format!("{} placed and connected. Trains call from the next headway.", kind.label()),
-                                Some((true, false)) => format!("{} placed on the track. Join a road to its street stub and it opens.", kind.label()),
+                                Some((true, false)) => format!("{} placed on the track; trains call. Not connected to the road network yet: draw a road to the marked end.", kind.label()),
                                 Some((false, true)) => format!("{} placed by the street. Lay track onto its rail stub and it opens.", kind.label()),
                                 Some((false, false)) => format!("{} placed. Lay track to its rail stub and a road to its street stub.", kind.label()),
                                 None => format!("{} placed, but it reports no rail link; select it to check.", kind.label()),
@@ -1327,6 +1327,8 @@ pub(crate) fn tool_input(
                                     }
                                     s
                                 }
+                                // [dock-access] A dock or station off the roads says so.
+                                None if sim.world.road_access(id) == Some(false) => format!("{} built for {:.0}. Not connected to the road network yet: draw a road to the marked end of its street stub.", what.label(), paid),
                                 None => format!("{} built for {:.0}; {:.0}/day to run.", what.label(), paid, what.upkeep()),
                             }
                         }
@@ -1746,8 +1748,10 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                         let [a, b] = port.pier;
                         gizmos.line(lift(a), lift(b), white);
                         gizmos.line(lift(b), lift(port.berth), cyan);
-                        let [sa, sb] = port.road_line();
+                        // [dock-access] The access road it would lay inland.
+                        let [sa, sb] = sim.world.dock_stub(&port);
                         gizmos.line(lift(sa), lift(sb), cyan);
+                        gizmos.circle(Isometry3d::new(lift(sb), flat), 6.0, cyan);
                     }
                     Err(_) => {
                         gizmos.circle(Isometry3d::new(lift(c), flat), 12.0, red);
@@ -2229,6 +2233,14 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
                 gizmos.linestrip(pts, green);
                 let [a, b] = port.pier;
                 gizmos.line(lift(a), lift(b), Color::linear_rgb(3.0, 3.0, 3.0));
+                // [dock-access] The access road it would lay, and its free end.
+                let probe = port.front_mid() - port.seaward * nd_sim::rail::ROAD_GAP;
+                if !w.roads.nearest_street(probe).is_some_and(|(_, _, q)| q.distance(probe) <= nd_sim::rail::ROAD_EDGE_FUSE) {
+                    let [sa, sb] = w.dock_stub(&port);
+                    let cyan = Color::linear_rgb(0.3, 2.0, 3.0);
+                    gizmos.line(lift(sa), lift(sb), cyan);
+                    gizmos.circle(Isometry3d::new(lift(sb), flat), 6.0, cyan);
+                }
             }
             Err(_) => {
                 gizmos.circle(Isometry3d::new(lift(c), flat), 12.0, red);

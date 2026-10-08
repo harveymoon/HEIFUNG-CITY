@@ -625,6 +625,14 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
         ui.label(format!("{}: {:.0} of {:.0} MWh ({:.0}%), {doing}; up to {:.0} MW, {:.0}/day upkeep", k.label(), bat.charge_mwh, k.capacity_mwh(), bat.level() * 100.0, k.max_mw(), k.upkeep_per_day()));
         ui.add(egui::ProgressBar::new(bat.level()).desired_height(10.0).fill(super::detail::BATTERY.gamma_multiply(0.8)));
     }
+    // [dock-access] A dock or station off the roads: say so, loud, and what to do.
+    if let Some(problem) = w.access_problem(id) {
+        section(ui, "ROAD ACCESS");
+        ui.label(egui::RichText::new("NOT CONNECTED TO THE ROAD NETWORK").color(egui::Color32::from_rgb(255, 170, 80)).strong());
+        let todo = if w.stub_ends_of(id).is_empty() { "Its street is joined to roads that reach neither the city nor a way out of town: carry them on to the network." } else { "Draw a road to the marked end of its street stub (the amber ring); it snaps on like any road end." };
+        hint(ui, todo);
+        hint(ui, problem.split("; ").nth(1).unwrap_or(""));
+    }
     // [ferries] The towns off the map its boats run to.
     if b.port == Some(nd_sim::ports::PortKind::FerryTerminal) {
         section(ui, "FERRIES");

@@ -1,0 +1,87 @@
+//! [dock-access] "Connect here" marks on the free ends of the street stubs
+//! of docks and stations that are not on the road network yet: a pulsing
+//! ring and post at each end (gizmos) and a short label over it (egui).
+//! Draw a road onto the ring with the Road tool and it snaps to the stub's
+//! end like any other road end.
+
+use bevy::prelude::*;
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use nd_sim::Vec2 as SVec2;
+
+use crate::sim::Sim;
+use crate::ui::UiFlags;
+
+pub struct StubMarksPlugin;
+
+impl Plugin for StubMarksPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Update, stub_rings.after(crate::sim::SimSet::Sync)).add_systems(EguiPrimaryContextPass, stub_labels);
+    }
+}
+
+/// The marks' colour: the amber of an unfinished connection.
+fn amber(pulse: f32) -> Color {
+    Color::linear_rgb(3.6 + pulse, 1.6 + pulse * 0.5, 0.2)
+}
+
+fn stub_rings(mut gizmos: Gizmos, sim: Res<Sim>, time: Res<Time>) {
+    let w = &sim.world;
+    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    let t = time.elapsed_secs();
+    let pulse = (t * 2.6).sin() * 0.5 + 0.5;
+    let col = amber(pulse);
+    for (b, ends) in w.unjoined_stubs() {
+        let gate = w.building_entrance(b);
+        for e in ends {
+            let y = w.surface_height(e) + 0.4;
+            let at = Vec3::new(e.x, y, e.y);
+            // A steady ring the size of a road end, and one that swells
+            // out from it like a sonar ping.
+            gizmos.circle(Isometry3d::new(at, flat), 6.0, col);
+            let ping = (t * 0.9).fract();
+            gizmos.circle(Isometry3d::new(at, flat), 6.0 + 12.0 * ping, Color::linear_rgba(3.6, 1.6, 0.2, 1.0 - ping));
+            gizmos.line(at, at + Vec3::Y * (14.0 + 2.0 * pulse), col);
+            // A dotted lead from the gate along the stub, so the end reads as
+            // belonging to that dock or station.
+            if let Some(g) = gate {
+                let n = (g.distance(e) / 4.0).ceil().max(1.0) as usize;
+                for i in (0..n).step_by(2) {
+                    let (a, c) = (g.lerp(e, i as f32 / n as f32), g.lerp(e, ((i + 1) as f32 / n as f32).min(1.0)));
+                    gizmos.line(Vec3::new(a.x, w.surface_height(a) + 0.5, a.y), Vec3::new(c.x, w.surface_height(c) + 0.5, c.y), col.with_alpha(0.6));
+                }
+            }
+        }
+    }
+}
+
+fn stub_labels(mut contexts: EguiContexts, sim: Res<Sim>, flags: Res<UiFlags>, cams: Query<(&Camera, &GlobalTransform), With<crate::camera::OrbitCamera>>) -> Result {
+    let w = &sim.world;
+    let stubs = w.unjoined_stubs();
+    if stubs.is_empty() {
+        return Ok(());
+    }
+    let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
+    let ctx = contexts.ctx_mut()?;
+    let screen = flags.map_rect(ctx.viewport_rect());
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("stub_labels"))).with_clip_rect(screen);
+    let to_screen = |p: SVec2, up: f32| -> Option<egui::Pos2> {
+        let v = camera.world_to_viewport(gt, Vec3::new(p.x, w.surface_height(p) + up, p.y)).ok()?;
+        Some(crate::ui::theme::to_points(ctx, v))
+    };
+    let text_col = egui::Color32::from_rgb(255, 196, 90);
+    for (b, ends) in stubs {
+        let name = w.buildings.get(b).map_or("", |x| x.name.as_str());
+        for e in ends {
+            let Some(at) = to_screen(e, 16.0) else { continue };
+            if !screen.contains(at) {
+                continue;
+            }
+            let text = format!("connect a road here\n{name}: not on the road network");
+            for off in [egui::vec2(1.0, 1.0), egui::vec2(-1.0, 1.0), egui::vec2(1.0, -1.0), egui::vec2(-1.0, -1.0)] {
+                painter.text(at + off, egui::Align2::CENTER_BOTTOM, &text, crate::ui::theme::small(), egui::Color32::BLACK);
+            }
+            painter.text(at, egui::Align2::CENTER_BOTTOM, &text, crate::ui::theme::small(), text_col);
+        }
+    }
+    Ok(())
+}

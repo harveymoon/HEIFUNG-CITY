@@ -844,6 +844,113 @@ impl World {
         !comps.is_empty() && !self.city_leaves().is_empty()
     }
 
+    /// [dock-access] The road network a dock or station joins: the road
+    /// components that hold zoned lots (a city at the other end) or reach
+    /// off the map (the highway, a road out to elsewhere). A street in an
+    /// empty field is neither.
+    pub(super) fn network_components(&self) -> std::collections::HashSet<u32> {
+        let mut comps: std::collections::HashSet<u32> = self.lots.values().filter(|l| self.zones.contains_key(l.zone) && l.zone != ZoneId::default()).filter_map(|l| self.road_component(l.access_node)).collect();
+        comps.extend(self.roads.leaf_nodes().into_iter().filter(|&n| crate::landscape::is_elsewhere(self.roads.node(n).pos)).filter_map(|n| self.road_component(n)));
+        comps
+    }
+
+    /// [dock-access] For a dock, station or yard: whether its street
+    /// reaches the road network (`network_components`). None for any other
+    /// building.
+    pub fn road_access(&self, b: BuildingId) -> Option<bool> {
+        if let Some(p) = self.ports.port_of(b) {
+            return Some(p.road_connected);
+        }
+        self.buildings.get(b).and_then(|x| x.rail.as_ref()).map(|l| l.road_connected)
+    }
+
+    /// [dock-access] What the player is told about a dock or station off
+    /// the roads, for the inspector, the alerts and the API.
+    pub fn access_problem(&self, b: BuildingId) -> Option<String> {
+        if self.road_access(b)? {
+            return None;
+        }
+        let joined = self.stub_ends_of(b).is_empty();
+        let what = if self.ports.port_of(b).is_some_and(|p| p.kind == PortKind::FerryTerminal) {
+            "ferries sail, but carry no one until people can get to the pier"
+        } else if self.ports.port_of(b).is_some() {
+            "nothing lands or is sold until lorries can reach it"
+        } else if self.buildings.get(b).and_then(|x| x.rail.as_ref()).is_some_and(|l| l.kind.is_passenger() && l.rail_connected) {
+            "trains call, but nobody gets on or off until it is on the roads"
+        } else {
+            "it opens once it is on the roads"
+        };
+        Some(if joined {
+            format!("not connected to the road network: its street does not reach the city or a way out of town yet; {what}")
+        } else {
+            format!("not connected to the road network: draw a road to the marked end of its street stub; {what}")
+        })
+    }
+
+    /// [dock-access] The free ends of a dock's or station's street stub
+    /// that a road can be drawn onto: dead ends of the street it laid (a
+    /// dock's access road: its far end only). Empty once joined.
+    pub fn stub_ends_of(&self, b: BuildingId) -> Vec<Vec2> {
+        let ends: Vec<Vec2> = if let Some(p) = self.ports.port_of(b) {
+            match p.stub {
+                Some(s) => vec![s[1]],
+                None => p.front_line().to_vec(),
+            }
+        } else if let Some(f) = self.facilities.values().find(|f| f.building == Some(b)) {
+            f.road_line().to_vec()
+        } else {
+            return Vec::new();
+        };
+        ends.into_iter()
+            .filter_map(|e| self.roads.node_near(e, 2.5))
+            .filter(|&n| self.roads.node(n).segments.iter().filter(|&&s| self.roads.segment(s).alive).count() == 1)
+            .map(|n| self.roads.node(n).pos)
+            .collect()
+    }
+
+    /// [dock-access] Docks and stations off the roads with the free ends
+    /// of their stubs, for the "connect here" markers.
+    pub fn unjoined_stubs(&self) -> Vec<(BuildingId, Vec<Vec2>)> {
+        let docks = self.ports.ports.values().filter(|p| !p.road_connected).filter_map(|p| p.building);
+        let rail = self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| !l.road_connected)).map(|(id, _)| id);
+        docks.chain(rail).filter(|b| self.buildings.contains_key(*b)).map(|b| (b, self.stub_ends_of(b))).collect()
+    }
+
+    /// [dock-access] The Build tool's verdict for a dock or a rail piece at
+    /// `p`: what placing it there would do (`Ok`), or why it cannot go
+    /// (`Err`). None for anything else. Neither needs a road: a dock needs
+    /// the water's edge, a station or yard nothing but room; what is not
+    /// there yet is laid as stubs to join later.
+    pub fn piece_verdict(&self, what: crate::services::Placeable, p: Vec2) -> Option<Result<String, String>> {
+        use crate::services::Placeable;
+        let cost = what.cost();
+        let afford = |v: Result<String, String>| if self.economy.treasury < cost { Err(format!("the treasury has {:.0}; it costs {:.0}", self.economy.treasury, cost)) } else { v };
+        match what {
+            Placeable::Dock(kind) => Some(afford(self.plan_port(kind, p).map(|port| {
+                let probe = port.front_mid() - port.seaward * rail::ROAD_GAP;
+                if self.roads.nearest_street(probe).is_some_and(|(_, _, q)| q.distance(probe) <= rail::ROAD_EDGE_FUSE) {
+                    "on the water's edge, fronting the street here".to_string()
+                } else {
+                    let ferry = if kind == PortKind::FerryTerminal { " (its ferries sail meanwhile, carrying no one)" } else { "" };
+                    format!("on the water's edge; no road needed: it lays a short access road inland. Draw a road to its marked end to put it on the road network{ferry}")
+                }
+            }))),
+            Placeable::Rail(kind) => {
+                let (f, rail_fused, road_fused) = rail::Facility::plan(kind, p, &self.roads);
+                Some(afford(match self.rail_piece_problem(&f) {
+                    Some(why) => Err(why),
+                    None => Ok(match (rail_fused, road_fused) {
+                        (true, true) => "on the track, fronting the street".to_string(),
+                        (true, false) => "on the track; no road needed: it lays a street stub. Draw a road to its marked end to connect it (trains call meanwhile; nobody gets on or off)".to_string(),
+                        (false, true) => "by the street; it lays a rail stub: lay track onto it".to_string(),
+                        (false, false) => "in open ground; it lays a rail stub and a street stub to join to the track and the roads".to_string(),
+                    }),
+                }))
+            }
+            _ => None,
+        }
+    }
+
     // ── docks ───────────────────────────────────────────────────────────
 
     /// Where a dock of `kind` would go for a click at `p`, or why not.
@@ -880,10 +987,17 @@ impl World {
         self.economy.debit_item(Flow::Construction, kind.cost(), Item::Named(kind.label().to_string()));
         let probe = port.front_mid() - port.seaward * rail::ROAD_GAP;
         let fused = self.roads.nearest_street(probe).is_some_and(|(_, _, q)| q.distance(probe) <= rail::ROAD_EDGE_FUSE);
-        let stub = port.road_line();
+        // [dock-access] No road needed: a dock not set down by a street gets
+        // a short access road of its own from its gate inland, a dead end
+        // the player draws a road onto to join it to the network.
+        let mut port = port;
+        if !fused {
+            port.stub = Some(self.dock_stub(&port));
+        }
+        let stub = port.stub;
         let pid = self.ports.ports.insert(port);
         let had_project = self.project.take();
-        if !fused {
+        if let Some(stub) = stub {
             self.add_gesture(Gesture::Road { points: stub.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
         }
         if self.project.is_some() {
@@ -910,6 +1024,10 @@ impl World {
             }
         };
         let id = self.place_special(lot_id, name, kind.jobs(), kind.jobs() / 3, |b| b.port = Some(kind));
+        // [dock-access] A dock stands on its own footprint and is drawn as
+        // itself from the start: what it bought out is cleared at once,
+        // never shown as the old building (in the zone's lot shape) coming down.
+        self.buildings[id].demolition = None;
         // [economy] A marina or fishing port is run by an operator on the
         // city's quay (`world/waterfront.rs`).
         self.lease_dock(id, kind, false);
@@ -922,6 +1040,68 @@ impl World {
         self.refresh_port_links();
         self.events.push(SimEvent::LotsChanged);
         Ok(id)
+    }
+
+    /// [dock-access] The access road for a dock: from just off the middle
+    /// of its landward side, straight inland if that is clear, else turned
+    /// up to 60 degrees either way, else shorter. Clear means dry ground,
+    /// not too steep, off every other dock's and station's footprint and
+    /// off the lots of standing buildings (all but those the dock takes
+    /// over). Falls back to the shortest straight one.
+    pub fn dock_stub(&self, port: &Port) -> [Vec2; 2] {
+        let gate = port.front_mid() - port.seaward * ports::STUB_GATE;
+        let inland = -port.seaward;
+        let own = port.footprint();
+        let blocked_lots: Vec<Vec<Vec2>> = self
+            .buildings
+            .values()
+            .filter_map(|b| self.lots.get(b.lot))
+            .filter(|l| !(point_in_polygon(l.center, &own) || polygons_overlap(&own, &l.polygon)))
+            .map(|l| l.polygon.clone())
+            .collect();
+        let others: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect();
+        let clear = |end: Vec2| {
+            let n = (gate.distance(end) / 3.0).ceil().max(1.0) as usize;
+            (0..=n).all(|i| {
+                let q = gate.lerp(end, i as f32 / n as f32);
+                !self.landscape.is_water(q) && !others.iter().any(|fp| point_in_polygon(q, fp)) && !blocked_lots.iter().any(|lp| point_in_polygon(q, lp)) && (i == 0 || !point_in_polygon(q, &own))
+            }) && self.landscape.slope_over(&[gate, end]) <= crate::landscape::MAX_LOT_SLOPE * 1.5
+        };
+        let turn = |deg: f32| {
+            let (s, c) = deg.to_radians().sin_cos();
+            Vec2::new(inland.x * c - inland.y * s, inland.x * s + inland.y * c)
+        };
+        for len in [ports::STUB_LENGTH, ports::STUB_LENGTH * 0.7, ports::STUB_MIN] {
+            for deg in [0.0f32, 25.0, -25.0, 45.0, -45.0, 60.0, -60.0] {
+                let end = gate + turn(deg) * len;
+                if clear(end) {
+                    return [gate, end];
+                }
+            }
+        }
+        [gate, gate + inland * ports::STUB_MIN]
+    }
+
+    /// [dock-access] Pull down a dock and its pier: its ships and the goods
+    /// and people waiting there go, and the zoned lots under its footprint
+    /// come back from the plan. Its street stays.
+    pub(super) fn bulldoze_dock(&mut self, bid: BuildingId) -> Result<String, String> {
+        let pid = self.ports.ports.iter().find(|(_, p)| p.building == Some(bid)).map(|(id, _)| id).ok_or("no such dock")?;
+        let name = self.buildings.get(bid).map(|b| b.name.clone()).unwrap_or_default();
+        self.ports.ports.remove(pid);
+        self.ports.ships.retain(|_, s| s.port != bid && s.to != Some(bid));
+        let stranded: Vec<Cargo> = self.ports.inbound.iter().filter(|(p, _)| *p == bid).map(|(_, c)| *c).collect();
+        self.ports.inbound.retain(|(p, _)| *p != bid);
+        self.ports.boarding.remove(&bid);
+        self.demolish(bid);
+        let had_project = self.project.take();
+        self.rebuild_from_master();
+        self.project = had_project;
+        for c in stranded {
+            self.dispatch_truck(super::market::TruckOrigin::CityEdge, c, 6);
+        }
+        self.events.push(SimEvent::LotsChanged);
+        Ok(format!("{name} bulldozed with its pier"))
     }
 
     /// Buildings whose lots lie under or across a footprint.
@@ -963,7 +1143,7 @@ impl World {
         for id in gone {
             self.ports.ports.remove(id);
         }
-        let comps: std::collections::HashSet<u32> = self.lots.values().filter(|l| self.zones.contains_key(l.zone)).filter_map(|l| self.road_component(l.access_node)).collect();
+        let comps = self.network_components();
         let ids: Vec<PortId> = self.ports.ports.keys().collect();
         for id in ids {
             let (lot, berth) = (self.ports.ports[id].lot, self.ports.ports[id].berth);
@@ -1103,7 +1283,8 @@ impl World {
             if !matches!(port.kind, PortKind::ShippingPort | PortKind::FerryTerminal) {
                 continue;
             }
-            if !port.works() || big_ships >= ports::MAX_SHIPS {
+            // [dock-access] A ferry terminal's boats run on the water alone.
+            if !port.sails() || big_ships >= ports::MAX_SHIPS {
                 continue;
             }
             let Some(b) = port.building else { continue };
@@ -1153,7 +1334,7 @@ impl World {
                     // [ferries] Take turns: a run to a town off the map,
                     // then one to the next terminal in town, and so on;
                     // with only one kind, that kind every time.
-                    let others: Vec<(BuildingId, Vec2)> = ports_now.iter().filter(|(oid, o)| oid != pid && o.kind == PortKind::FerryTerminal && o.works()).filter_map(|(_, o)| o.building.map(|ob| (ob, o.berth))).collect();
+                    let others: Vec<(BuildingId, Vec2)> = ports_now.iter().filter(|(oid, o)| oid != pid && o.kind == PortKind::FerryTerminal && o.sails()).filter_map(|(_, o)| o.building.map(|ob| (ob, o.berth))).collect();
                     let turn = port.sailings as usize;
                     let remote_turn = !port.remote.is_empty() && (others.is_empty() || turn % 2 == 0);
                     let mut chosen: Option<(Option<BuildingId>, Option<u8>, Vec<Vec2>)> = None;
@@ -1179,7 +1360,10 @@ impl World {
                     let speed = self.config.metres_per_tick(ports::FERRY_SPEED);
                     // Locals hopping across town, and on a run off the map
                     // whoever is waiting at the pier to leave.
-                    let mut riders = self.ferry_riders(b, to);
+                    // [dock-access] Nobody can get to or away from a pier
+                    // whose terminal is off the roads: those boats sail empty.
+                    let reachable = |x: BuildingId| ports_now.iter().any(|(_, o)| o.building == Some(x) && o.works());
+                    let mut riders = if reachable(b) && to.is_none_or(reachable) { self.ferry_riders(b, to) } else { 0 };
                     if remote.is_some() {
                         let leaving = self.ports.boarding.remove(&b).unwrap_or(0);
                         riders += leaving;
