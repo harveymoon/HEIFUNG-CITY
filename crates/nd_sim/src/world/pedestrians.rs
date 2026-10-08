@@ -392,7 +392,8 @@ impl World {
             w.room_leg = usize::MAX;
         }
         // [emergency] Everyone at their own pace.
-        let speed = speed * w.pace;
+        // [social] Walking with a friend: the slower one sets the pace.
+        let speed = speed * self.social_pace(id, w.pace);
         let mut heading = self.citizens[id].heading;
         let mut dir = Vec2::from_angle(heading);
         let mut budget = speed;

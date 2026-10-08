@@ -148,6 +148,8 @@ impl World {
                 }
                 // [society] Crime hot spots, camps and overflowing bins.
                 self.splat_society(&mut b);
+                // [social] murals and community gardens
+                self.splat_social(&mut b);
                 // Rotor noise under busy flight paths and round the pads.
                 self.splat_air_noise(&mut b);
                 // [industry] fouled ground
