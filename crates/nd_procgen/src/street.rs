@@ -41,6 +41,15 @@ pub struct StreetInput<'a> {
     /// Which roads to draw: all, those on and above the ground, or only the
     /// tunnels (shown on their own in the underground view).
     pub layer: StreetLayer,
+    /// [footbridge] Middles of the crosswalks a footbridge replaced
+    /// (`World::closed_crosswalks`): no zebra, beacons or walk lights there.
+    pub closed: &'a [Vec2],
+}
+
+/// [footbridge] Is the crosswalk with its middle at `mid` one a footbridge
+/// replaced?
+pub fn crosswalk_closed(closed: &[Vec2], mid: Vec2) -> bool {
+    closed.iter().any(|c| c.distance(mid) < 2.0)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -75,6 +84,8 @@ pub struct SignalPost {
 pub struct PedSignalPost {
     pub inter: usize,
     pub approach: usize,
+    /// [footbridge] The middle of the crosswalk it serves.
+    pub crosswalk: Vec2,
     /// Foot of the pole, at the kerb.
     pub pole: Vec2,
     pub lamp: Vec3,
@@ -1260,7 +1271,11 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             continue;
         }
         if alive.len() == 2 && paths_here > 0 {
-            // A path crossing a street: zebra across the carriageway.
+            // A path crossing a street: zebra across the carriageway (none
+            // where a footbridge replaced it).
+            if crosswalk_closed(inp.closed, node.pos) {
+                continue;
+            }
             let sid = alive[0];
             let seg = roads.segment(sid);
             let (a, b) = roads.segment_points(sid);
@@ -1363,7 +1378,9 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             // drop): it used to be painted at the junction's radius whatever
             // the set-back, so at a sharp corner the paint and the curb cut
             // were metres apart and two arms' zebras overlapped.
-            let stop = if junction::has_crosswalk(roads, nid, sid) {
+            // [footbridge] None where a footbridge replaced the crosswalk:
+            // the stop line moves up to the junction's mouth.
+            let stop = if junction::has_crosswalk(roads, nid, sid) && !crosswalk_closed(inp.closed, node.pos + d * nd_sim::walk::crosswalk_setback(roads, nid, sid)) {
                 let mid = nd_sim::walk::crosswalk_setback(roads, nid, sid);
                 let half = nd_sim::walk::CROSSWALK_HALF;
                 let (c0, c1) = (node.pos + d * (mid - half), node.pos + d * (mid + half));
@@ -1467,6 +1484,9 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         let right = Vec2::new(-d.y, d.x);
         let hw = seg.half_width();
         let at = a.lerp(b, t);
+        if crosswalk_closed(inp.closed, at) {
+            continue;
+        }
         // [elevation] At the road's own height along the segment.
         let from = marks(&g);
         let z = nd_sim::landscape::way_height(roads, heights, inp.inner, sid, t);
@@ -1488,7 +1508,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
 
     // [pedestrians] Walk / don't walk heads on signalised crosswalks: a
     // short pole at each kerb with a head facing across.
-    for post in ped_signal_posts_at(roads, net, &corners) {
+    for post in ped_signal_posts_at(roads, net, &corners).into_iter().filter(|p| !crosswalk_closed(inp.closed, p.crosswalk)) {
         // The junction the crosswalk belongs to decides the layer and the
         // height (not the nearest node, which may be another road's).
         let Some(node) = net.intersections.get(post.inter).map(|i| i.node) else { continue };
@@ -1928,7 +1948,7 @@ fn ped_signal_posts_at(roads: &RoadNetwork, net: &LaneNetwork, corners: &Corners
                 let pole = junction::place_pole(node.pos, &mouth_list, sid, pole, 0.35);
                 let facing = -side * sgn;
                 let lamp = Vec3::new(pole.x + facing.x * 0.3, PED_HEAD_Y, pole.y + facing.y * 0.3);
-                out.push(PedSignalPost { inter: k, approach: ap, pole, lamp, heading: facing.y.atan2(facing.x) });
+                out.push(PedSignalPost { inter: k, approach: ap, crosswalk: mid, pole, lamp, heading: facing.y.atan2(facing.x) });
             }
         }
     }
@@ -2631,7 +2651,7 @@ mod tests {
         net.rebuild(&roads);
         let lv = LandValue::new(400.0, 50.0);
         let pal = Palette::default();
-        let g = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 3, heights: &[], inner: &[], layer: StreetLayer::All });
+        let g = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 3, heights: &[], inner: &[], layer: StreetLayer::All, closed: &[] });
         for (_, m) in g.iter() {
             assert!(m.positions.iter().all(|p| p.iter().all(|v| v.is_finite())));
         }
@@ -2656,7 +2676,7 @@ mod tests {
         net.rebuild(&roads);
         let lv = LandValue::new(400.0, 50.0);
         let pal = Palette::default();
-        let g = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 3, heights: &[], inner: &[], layer: StreetLayer::All });
+        let g = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 3, heights: &[], inner: &[], layer: StreetLayer::All, closed: &[] });
         let lanes = |p: Vec2| {
             roads.alive_segments().any(|(sid, s)| {
                 let (a, b) = roads.segment_points(sid);
@@ -2676,7 +2696,7 @@ mod tests {
         let (roads, net) = network();
         let lv = LandValue::new(400.0, 50.0);
         let pal = Palette::default();
-        let inp = StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 5, heights: &[], inner: &[], layer: StreetLayer::All };
+        let inp = StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 5, heights: &[], inner: &[], layer: StreetLayer::All, closed: &[] };
         let a = generate_street(&inp);
         assert!(a.triangle_count() > 1000, "{} triangles is not a street network", a.triangle_count());
         for (s, m) in a.iter() {
@@ -2726,7 +2746,7 @@ mod tests {
             }
             let mut net = LaneNetwork::default();
             net.rebuild(&roads);
-            let geo = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 9, heights: &[], inner: &[], layer: StreetLayer::All });
+            let geo = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 9, heights: &[], inner: &[], layer: StreetLayer::All, closed: &[] });
             for (s, m) in geo.iter() {
                 assert!(m.positions.iter().all(|p| p.iter().all(|v| v.is_finite()) && p[1] < 20.0), "{s:?}");
             }
@@ -2753,7 +2773,7 @@ mod kerb_tests {
     fn draw(roads: &RoadNetwork, net: &LaneNetwork, heights: &[f32]) -> Geometry {
         let lv = rich();
         let pal = Palette::default();
-        generate_street(&StreetInput { roads, net, land_value: &lv, palette: &pal, seed: 4, heights, inner: &[], layer: StreetLayer::All })
+        generate_street(&StreetInput { roads, net, land_value: &lv, palette: &pal, seed: 4, heights, inner: &[], layer: StreetLayer::All, closed: &[] })
     }
 
     /// Junctions of every shape: a crossroads of a wide and a narrow street,
@@ -3073,7 +3093,7 @@ mod kerb_tests {
         let inner: &[Vec<(f32, f32)>] = if w.relief { &w.road_inner } else { &[] };
         let pal = Palette::default();
         let t = std::time::Instant::now();
-        let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: w.config.seed, heights, inner, layer: StreetLayer::Surface });
+        let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: w.config.seed, heights, inner, layer: StreetLayer::Surface, closed: &[] });
         let ms = t.elapsed().as_millis();
         let cuts: usize = crossing_cuts(&w.roads).values().map(|v| v.len()).sum();
         let corners: usize = junction_corners(&w.roads, &w.traffic.net, &build_runs(&w.roads)).by_node.values().map(|v| v.len()).sum();

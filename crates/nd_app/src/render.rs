@@ -382,6 +382,10 @@ struct ChunkMeshes {
 struct RenderState {
     roads_version: u64,
     lanes_version: u64,
+    /// [footbridge] Hash of the crosswalks footbridges replaced, as the
+    /// streets (their paint) and the walk lamps were last drawn for.
+    closed_roads: u64,
+    closed_signals: u64,
     /// What the project holograms were built for: plan version, parcels
     /// version, whether parked projects are shown.
     preview_key: Option<(u64, u64, bool)>,
@@ -974,6 +978,17 @@ fn sync_scatter(
     spawn_geometry(&mut commands, &mut meshes, &mats, &geo, ScatterTag);
 }
 
+/// [footbridge] A key for the set of crosswalks footbridges replaced.
+fn closed_hash(closed: &[SVec2]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for p in closed {
+        (p.x.to_bits(), p.y.to_bits()).hash(&mut h);
+    }
+    closed.len().hash(&mut h);
+    h.finish()
+}
+
 fn sync_roads(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -986,16 +1001,21 @@ fn sync_roads(
     existing: Query<Entity, Or<(With<RoadsTag>, With<holo::TunnelTag>, With<holo::GhostRoadTag>)>>,
 ) {
     let version = sim.world.roads.version;
-    if version == state.roads_version && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
+    // [footbridge] A footbridge built (or its crosswalk kept) repaints the
+    // streets: its zebra goes or comes back.
+    let closed = sim.world.closed_crosswalks();
+    let closed_key = closed_hash(&closed);
+    if version == state.roads_version && closed_key == state.closed_roads && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
     state.roads_version = version;
+    state.closed_roads = closed_key;
     despawn_all(&mut commands, &existing);
     let w = &sim.world;
     // Each run is set on its own height profile here (a viaduct over a
     // street, the street under it), so the roads are not lifted again.
     let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
-    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Surface });
+    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Surface, closed: &closed });
     stats.street_triangles = geo.triangle_count();
     lamps.lamps.clone_from(&geo.lamps);
     for (s, data) in geo.iter() {
@@ -1010,7 +1030,7 @@ fn sync_roads(
     }
     // The tunnels on their own, shown in the underground view.
     if w.roads.alive_segments().any(|(_, s)| s.tunnel) {
-        let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Underground });
+        let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Underground, closed: &closed });
         stats.street_triangles += geo.triangle_count();
         for (s, data) in geo.iter() {
             commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, holo::TunnelTag, Visibility::Hidden, NotShadowCaster));
@@ -1053,8 +1073,11 @@ fn sync_signals(
     mut q: Query<(&SignalTag, Option<&PedSignalTag>, &mut MeshMaterial3d<StandardMaterial>, Option<&swap::SwapOriginal>)>,
 ) {
     let net = &sim.world.traffic.net;
-    if net.version != state.lanes_version || sim.full_rebuild {
+    let closed = sim.world.closed_crosswalks();
+    let closed_key = closed_hash(&closed);
+    if net.version != state.lanes_version || closed_key != state.closed_signals || sim.full_rebuild {
         state.lanes_version = net.version;
+        state.closed_signals = closed_key;
         despawn_all(&mut commands, &existing);
         for post in signal_posts(&sim.world.roads, net) {
             commands.spawn((
@@ -1065,7 +1088,7 @@ fn sync_signals(
                 SignalTag(post.lane),
             ));
         }
-        for post in nd_procgen::street::ped_signal_posts(&sim.world.roads, net) {
+        for post in nd_procgen::street::ped_signal_posts(&sim.world.roads, net).into_iter().filter(|p| !nd_procgen::street::crosswalk_closed(&closed, p.crosswalk)) {
             commands.spawn((
                 Mesh3d(mats.signal_mesh.clone()),
                 MeshMaterial3d(mats.ped_stop.clone()),
@@ -1939,7 +1962,7 @@ fn sync_citizens(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
-    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d, Option<&swap::SwapOriginal>), With<CitizenTag>>,
+    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d, Option<&swap::SwapOriginal>, Option<&mut WayHeight>), With<CitizenTag>>,
 ) {
     let w = &sim.world;
     let f = sim.frac();
@@ -1951,7 +1974,7 @@ fn sync_citizens(
     for (id, _) in w.citizens.iter() {
         if !state.citizens.contains_key(&id) {
             let e = commands
-                .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(look_mat.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CitizenTag))
+                .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(look_mat.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CitizenTag, WayHeight::default()))
                 .id();
             state.citizens.insert(id, e);
         }
@@ -1986,7 +2009,7 @@ fn sync_citizens(
     let down = w.down_on_street();
     for &(id, e, key, stature, _) in &outdoors {
         let Some(c) = w.citizens.get(id) else { continue };
-        let Ok((mut tf, mut vis, _, mut mesh, _)) = q.get_mut(e) else { continue };
+        let Ok((mut tf, mut vis, _, mut mesh, _, way)) = q.get_mut(e) else { continue };
         *vis = Visibility::Visible;
         let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
         let heading = lerp_angle(c.prev_heading, c.heading, f);
@@ -1999,6 +2022,10 @@ fn sync_citizens(
         let pos = if lying && down.contains(&id) { pos + SVec2::new(-c.heading.sin(), c.heading.cos()) * 2.6 } else { pos };
         // [tools] Up the stairs and over a footbridge (a raised walkway).
         let raised = w.walker_level(c, pos);
+        // [footbridge] On an elevated path, a viaduct or a bridge: on its deck.
+        if let Some(mut way) = way {
+            way.0 = w.walker_way_height(c, pos);
+        }
         tf.translation = Vec3::new(pos.x, if lying { 0.12 } else if seated { 0.02 } else { 0.16 } + raised, pos.y);
         tf.rotation = Quat::from_rotation_y(-heading);
         if lying {
@@ -2023,7 +2050,7 @@ fn sync_citizens(
     }
     for (id, &e) in state.citizens.iter() {
         let Some(c) = w.citizens.get(*id) else { continue };
-        let Ok((_, mut vis, mut mat, mut mesh, heat_original)) = q.get_mut(e) else { continue };
+        let Ok((_, mut vis, mut mat, mut mesh, heat_original, _)) = q.get_mut(e) else { continue };
         if !c.is_visible() {
             *vis = Visibility::Hidden;
             // Indoors: let go of the figure so the cache can drop it.
@@ -2989,6 +3016,13 @@ struct Lifted {
     lift: f32,
 }
 
+/// [footbridge] The height of the raised way (elevated path, viaduct,
+/// bridge) a walker or rider is going along this frame, if any
+/// (`World::walker_way_height`): `lift_movers` puts them on it rather than
+/// on whatever surface is nearest their last height.
+#[derive(Component, Default)]
+pub struct WayHeight(pub Option<f32>);
+
 #[derive(Component)]
 struct WaterTag;
 #[derive(Component, Clone)]
@@ -3167,12 +3201,12 @@ fn lift_spawned(
 
 /// Raise movers onto the ground after their poses are written.
 #[allow(clippy::type_complexity)]
-fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>) {
+fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>, Option<&WayHeight>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>) {
     let w = &sim.world;
     if !w.relief {
         return;
     }
-    for (e, mut tf, lifted) in &mut q {
+    for (e, mut tf, lifted, way) in &mut q {
         let base = match &lifted {
             // Not rewritten since the last lift: take the old lift off.
             Some(l) if tf.translation.y == l.after => tf.translation.y - l.lift,
@@ -3180,9 +3214,11 @@ fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut
         };
         // Keep to the level it was on: under a viaduct or on it.
         let at = SVec2::new(tf.translation.x, tf.translation.z);
-        let lift = match &lifted {
-            Some(l) => w.surface_height_near(at, l.lift),
-            None => w.surface_height_near(at, w.ground_height(at)),
+        let lift = match (way.and_then(|h| h.0), &lifted) {
+            // [footbridge] On a raised way: its deck, whatever was nearest.
+            (Some(h), _) => h,
+            (None, Some(l)) => w.surface_height_near(at, l.lift),
+            (None, None) => w.surface_height_near(at, w.ground_height(at)),
         };
         tf.translation.y = base + lift;
         let after = tf.translation.y;

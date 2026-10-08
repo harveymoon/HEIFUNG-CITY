@@ -339,6 +339,12 @@ impl RoadNetwork {
         let (t, q) = project_on_segment(p, a, b);
         Some((sid, t, q))
     }
+    /// [footbridge] Live segments whose bounding box comes within `r` of
+    /// `p` (a box query on the segment grid: never searches further out).
+    pub fn segments_near(&self, p: Vec2, r: f32) -> Vec<SegmentId> {
+        self.grid().in_box(p - Vec2::splat(r), p + Vec2::splat(r)).into_iter().filter(|&i| self.segments[i as usize].alive).map(SegmentId).collect()
+    }
+
     pub fn node(&self, id: NodeId) -> &Node {
         &self.nodes[id.0 as usize]
     }
