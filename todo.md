@@ -319,6 +319,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 - [x] (→ DONE [main]: Aramund, Vellane, Koridan, Namara) names.rs business tables include names borrowed from films/games (Nakatomi, Arasaka, Tessier, Kiroshi): replace with original generated names
 
+- [ ] An instance crashed once with no panic text (waterfront agent) — the memory agent is investigating crashes; add a panic hook that writes a crash log next to the saves
+
 ## Follow-ups noted in agent reports (not started)
 - [ ] Waterfront leftovers: the fishing fleet (world/fishing.rs) does not sail a trawler from a private fishing jetty yet (berth is `Jetty::berth`); cargo-quay coasters are not drawn sailing; old saves keep their parcels unless `waterfront_parcels {on}` (no in-game toggle); beach crowds beyond the sim's own visitors are drawn as props (feat/waterfront)
 - [x] Freight trains really carry their cargo instead of yards handing it to any train (train-inspect) → DONE [feat/freight]: rail orders wait out of town (`Rail::orders`, saved) and are loaded at the map edge into 50-unit wagons (5–12, oldest first), ride in and come off at their yard; exports picked up as room allows; the train inspector's manifest is what is aboard (wagons, units of capacity); an extra train 45 min after the last when goods are left behind; old saves' yard orders migrate to the queue; `examples/freight_probe` (demo: longest wait 2 h)
@@ -349,6 +351,5 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [x] Old todo2.md–todo5.md deleted after checking every request is in todo.md
 
 ## Agents running (update when starting/merging; survives context compaction)
-- feat/waterfront: waterfront parcels, beach businesses, private jetties, public beach zone (started 2026-10-08, from the queue)
 - fix/under-construction: buildings under construction don't function (started 2026-10-08)
 - fix/memory: memory growth / 256 MiB allocation crash (started 2026-10-08)
