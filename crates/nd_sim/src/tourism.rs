@@ -102,10 +102,12 @@ pub enum AttractionKind {
     District,
     /// The waterfront: built lots along the sea, a lake or a river.
     Coast,
+    /// [waterfront] A public beach, open and reachable.
+    Beach,
 }
 
 impl AttractionKind {
-    pub const ALL: [AttractionKind; 6] = [AttractionKind::Monument, AttractionKind::Stadium, AttractionKind::Park, AttractionKind::Nightlife, AttractionKind::District, AttractionKind::Coast];
+    pub const ALL: [AttractionKind; 7] = [AttractionKind::Monument, AttractionKind::Stadium, AttractionKind::Park, AttractionKind::Nightlife, AttractionKind::District, AttractionKind::Coast, AttractionKind::Beach];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -115,6 +117,7 @@ impl AttractionKind {
             AttractionKind::Nightlife => "nightlife",
             AttractionKind::District => "landmark district",
             AttractionKind::Coast => "waterfront",
+            AttractionKind::Beach => "beach",
         }
     }
 
@@ -381,6 +384,15 @@ pub fn district_score(buildings: usize, historic: bool) -> f32 {
 pub fn coast_score(waterfront_lots: usize) -> f32 {
     (waterfront_lots as f32 * 0.25).min(16.0)
 }
+
+/// [waterfront] A public beach's pull: its sand, scaled by how inviting
+/// this week's afternoons are (`shore::beach_weather`); nothing in the cold.
+pub fn beach_score(area_m2: f32, appeal: f32) -> f32 {
+    ((1.5 + area_m2 / 900.0).min(9.0) * appeal).max(0.0)
+}
+
+/// [waterfront] A beach resort's night over a hotel's of its tier.
+pub const RESORT_PREMIUM: f32 = 1.6;
 
 /// Tourists per day the city would draw: attractiveness times the share
 /// of the world that can reach it (a road in matters most; rail, ferries

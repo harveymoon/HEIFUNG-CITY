@@ -129,6 +129,7 @@ impl World {
             car_segment: Some(front_segment),
             car_point,
             park: None,
+            shore: Default::default(),
         })
     }
 

@@ -641,6 +641,8 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
     }
     // [ferries] [ferry-routes] Its routes: where to, the boats, the next one.
     super::ferry::dock_routes(ui, w, id);
+    // [waterfront] its edge on the water, a beach, a private jetty
+    super::shore::lines(ui, w, id);
     if let Some(link) = &b.rail {
         let joined = if link.works() { "" } else if !link.rail_connected { " · NOT CONNECTED TO THE RAILWAY" } else { " · NOT CONNECTED TO THE ROADS" };
         section(ui, "RAIL");

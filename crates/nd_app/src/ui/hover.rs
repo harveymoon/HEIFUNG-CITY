@@ -14,7 +14,7 @@ use crate::sim::Sim;
 pub fn card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
     let (Some(ground), Some(pointer)) = (cursor.ground, ctx.pointer_latest_pos()) else { return };
     let w = &sim.world;
-    let Some((_, lot)) = w.lots.iter().find(|(_, l)| point_in_polygon(ground, &l.polygon)) else {
+    let Some((lot_id, lot)) = w.lots.iter().find(|(_, l)| point_in_polygon(ground, &l.polygon)) else {
         // [events] Off the lots, on a street: its condition.
         super::nights::road_card(ctx, w, ground, pointer);
         return;
@@ -67,6 +67,21 @@ pub fn card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
             if let Some(a) = access {
                 ui.label(small(format!("{}  ·  {:+.2} for homes", a.describe(), a.value)));
             }
+            // [waterfront] On the water: its frontage; a beach's state.
+            if lot.shore.is_waterfront() && !lot.shore.beach {
+                ui.label(small(format!("waterfront  ·  {:.0} m on the water", lot.shore.frontage)).color(egui::Color32::from_rgb(110, 200, 240)));
+            }
+            if let Some((_, s)) = w.beach_on(lot_id) {
+                let line = match &s.note {
+                    Some(n) if !s.access => small(format!("{} — {n}", s.name)).color(egui::Color32::from_rgb(255, 150, 90)),
+                    Some(n) if !s.open => small(format!("{} — {n}", s.name)).color(egui::Color32::from_rgb(255, 110, 100)),
+                    Some(n) => small(format!("{}: {n}", s.name)),
+                    None => small(format!("{}: {} on the sand, {} swimming{}", s.name, s.visitors, s.swimmers, if s.crowded() { "  ·  crowded" } else { "" })).color(egui::Color32::from_rgb(240, 210, 140)),
+                };
+                ui.label(line);
+            } else if lot.shore.beach {
+                ui.label(small("public beach (being laid out)".to_string()));
+            }
         });
     });
 }
@@ -80,7 +95,9 @@ fn is_park(lot: &nd_sim::Lot) -> bool {
 
 /// The card's title for a lot with no building on it.
 pub fn ground_label(lot: &nd_sim::Lot) -> &'static str {
-    if is_park(lot) {
+    if lot.shore.beach {
+        "Public beach"
+    } else if is_park(lot) {
         "Park"
     } else if lot.landlocked {
         "Unusable ground"

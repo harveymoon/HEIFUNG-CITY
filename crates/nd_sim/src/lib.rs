@@ -56,6 +56,8 @@ pub mod road_wear;
 pub mod road_traffic;
 pub mod roads;
 pub mod services;
+/// [waterfront] Waterfront lots, public beaches and private jetties.
+pub mod shore;
 /// Street names: chains of segments named once and kept across rebuilds.
 pub mod streets;
 /// [events] Street races and warehouse raves.

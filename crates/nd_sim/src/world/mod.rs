@@ -131,6 +131,10 @@ mod rides;
 // [economy] business pressure, the new trades, the waterfront and the art scene
 mod pressure;
 mod waterfront;
+/// [waterfront] Waterfront lots, public beaches and private jetties.
+mod shore;
+#[cfg(test)]
+mod shore_tests;
 // [events] street races and warehouse raves; road wear and maintenance
 mod nights;
 mod roadworks;
@@ -611,6 +615,11 @@ pub struct World {
     /// reads it; old saves load with none and set one up when first used.
     #[serde(default)]
     pub committee: crate::committee::Committee,
+    /// [waterfront] Waterfront parcels, public beaches and private jetties
+    /// (`crate::shore`, `world/shore.rs`). Old saves load with none, and
+    /// keep the parcels they were cut with.
+    #[serde(default)]
+    pub shore: crate::shore::ShoreState,
 }
 
 impl World {
@@ -709,6 +718,7 @@ impl World {
             social: Default::default(),
             social_concern: None,
             committee: Default::default(),
+            shore: crate::shore::ShoreState { reach_water: true, ..Default::default() },
         };
         w.estate.pressure = crate::estate::Pressure::new(half + 200.0);
         w.landscape = Landscape::new(&w.config.landscape);
@@ -835,6 +845,8 @@ impl World {
         // A save from before named projects: number and name the one it has.
         self.name_active_project();
         self.recut_parcels();
+        // [waterfront] frontage on the water, for a save from before
+        self.mark_shore_lots();
         self.plan_changed();
         self.events.push(SimEvent::PlanChanged);
     }
@@ -1078,6 +1090,8 @@ impl World {
             // [districts] facelifts; [tourism] hotel nights and the books.
             crate::prof!("daily_districts", self.daily_districts());
             crate::prof!("daily_tourism", self.daily_tourism());
+            // [waterfront] beach tallies, and the households near a good one
+            self.daily_shore();
             crate::prof!("close_day_record", self.close_day_record(record));
             // [land] Buyouts, branches, merges, McMansions, billionaires.
             self.daily_estate();
@@ -1096,6 +1110,10 @@ impl World {
         }
         if tick % 60 == 30 {
             crate::prof!("step_construction", self.step_construction());
+        }
+        // [waterfront] beaches (access, weather, crowds), private jetties
+        if tick % 60 == 33 {
+            crate::prof!("hourly_shore", self.hourly_shore());
         }
         // [land] People present and moving, at :13 clear of the rest.
         if tick % 60 == 13 {

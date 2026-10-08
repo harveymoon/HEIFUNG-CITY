@@ -297,7 +297,7 @@ them a land use.
 | `add_roundabout` | `center` `[x,y]` (or `pos` / `x`,`y`; snaps onto a junction within 12 m or a street within 6 m), `radius` 12..120 m to the ring centreline or `diameter` 24..240 (default the tool's), `lanes` 1 / 2 / 3, `implement`. Reply adds `roundabout` {`center`, `radius`, `diameter`, `lanes`, `joins`, `cuts_roads` (gesture ids), `takes_buildings`}; refused where it would partly overlap another roundabout (nesting one wholly inside another, with a lane and pavement between, is fine) |
 | `add_zone` | `polygon` `[[x,y],...]` (3+), `land_use` residential / commercial / industrial / entertainment / civic / park, `implement` |
 | `bulldoze` | `gesture_id`, `implement`; or `building` (id): a city building (plant, battery, service, attraction, depot, metro station, cargo hub, city parking) goes at once and its lot goes back to the zoning plan (or unzoned ground). Grown buildings, stations, yards and docks refuse |
-| `paint` | `land_use` (or `none` to unzone), then `at` `[x,y]` + `radius` (the brush), `rect` `[[x0,y0],[x1,y1]]` (the marquee) or `polygon`; `industry` (industrial only: auto / farming / oil / refinery / manufacturing / logistics / fishing / tech), `implement`. Reply: `painted`, `touched`, `refused` (`[{parcel, center, why}]`), `gesture_id`; `no_parcel` (why, when `at` touched no parcel: water, too far from a road, past the buildable land) |
+| `paint` | `land_use` (or `none` to unzone; `beach` paints a public beach, see the waterfront section), then `at` `[x,y]` + `radius` (the brush), `rect` `[[x0,y0],[x1,y1]]` (the marquee) or `polygon`; `industry` (industrial only: auto / farming / oil / refinery / manufacturing / logistics / fishing / tech), `implement`. Reply: `painted`, `touched`, `refused` (`[{parcel, center, why}]`), `gesture_id`; `no_parcel` (why, when `at` touched no parcel: water, too far from a road, past the buildable land) |
 | `project` | `action`: list / new / switch / rename / delete / park / start / implement / undo / redo / discard; `id` (default the active project) or `name` to pick one; `name` for new and rename. Reply: `projects` (`id`, `name`, `active`, `steps`, `redo`, `conflicts` `[{gesture, project}]`, `shared_parcels`), `warnings` from the last implement |
 | `find` `{what: "parcels"}` | per parcel: `index`, `center`, `area`, `land_use` (built), `planned`, `landlocked`, `street`, `rough`, `accepts`, `lot`; filter `land_use`, `zoned`, `landlocked` |
 
@@ -1374,7 +1374,7 @@ front). Garbage trucks are cars in `find {what: "cars"}` with a garbage truck bo
 `report {sections: ["pressure"]}` (also the `pressure` command with no fields): `pressures` (every
 pressure, strongest first: `kind` (tow_company, mechanic, car_dealer, trash_company, bike_shop,
 slaughterhouse, fish_gutting, fish_stick_factory, fish_market, seafood_restaurant, golf_range,
-art_studio, gallery, marina), `label`, `business` (the business kind key it opens), `strength`
+art_studio, gallery, marina, and [waterfront] beach_resort, pier_restaurant, beach_bar, boat_rental), `label`, `business` (the business kind key it opens), `strength`
 0..1, `wanted`, `have` (open and being built), `gap`, `struggling`, `wants_more`, `why` (the
 cause in words), `held` (why nothing opens despite the gap: cooling down after one closed, no
 lot, a player-placed kind), `player_placed`), `opened_total` (by kind), `signals` (the smoothed
@@ -1382,7 +1382,8 @@ causes: outside and local tows a day, crashes a day, cars, rich households, cars
 of them out of town, buildings out of the city's trash rounds, overflowing bins, depots, bike
 owners, bikes bought, long walks a day, livestock, fish and fillets a day, fishing ports and
 marinas [small, large], comfortable adults, artists, artists of middle income, rich adults, rich
-households near the water, has_water, art_scene), `trash` {local_companies, local_clients,
+households near the water, has_water, art_scene; [waterfront] tourists, beach_visits, beaches_open,
+beach_appeal, waterfront_sites), `trash` {local_companies, local_clients,
 local_fee, out_of_town_fee}, `art` {openings_total, donations_total, art_sold_total, openings (the
 last six: gallery, name, from/until tick, on_now, invited, visitors, donations, sales),
 galleries_wanting_to_expand}, `waterfront` {boats_out, berth_fees_last_night, docks: kind, label,
@@ -1392,7 +1393,8 @@ building, pos, works, berths, boats_out, open}, `repairs_today`, `bike_repairs_t
 variant name: `mechanic` (`car_repair_shop`), `car_dealer` (`car_dealership`), `trash_company`,
 `bike_shop`, `cow_farm` (`cattle_farm`), `chicken_farm`, `slaughterhouse`, `strip_mine`,
 `fish_gutting` (`fish_gutting_shed`), `fish_stick_factory`, `fish_market`, `seafood_restaurant`,
-`golf_range` (`golf_driving_range`), `art_studio` (`artists_studios`), `gallery`, and the older
+ `beach_resort`,
+`pier_restaurant`, `beach_bar`, `boat_rental` (these only on a lot that runs down to the water), and the older
 kinds) on the vacant lot under or nearest the point (within 150 m), as a pressure would; `finish:
 true` builds it at once. Reply `building`, `kind`, `lot`, `finished`, `story`. Marinas and fishing
 ports are docks: use `place`.
@@ -1409,6 +1411,52 @@ of its kind than the city needs, competitors, donations, an opening tonight), `s
 pressure key when its kind is one a pressure opens), `donations`, `opening_now` {invited,
 visitors, donations}. Boats are port ships of kinds `FishingBoat`, `Yacht` and `Sailboat` besides
 the freighters and ferries.
+
+### Waterfront lots, public beaches and private jetties [waterfront]
+
+Where a street or path runs within 80 m of a river, lake or the sea, the land between it and the
+water is parcelled the whole way down to the waterline: those lots run from the road to the shore
+(new cities; a save from before keeps the parcels it was cut with, see `waterfront_parcels`).
+Every lot knows its edge on the water: lot rows (`find`, `list`) carry `waterfront`,
+`water_frontage_m` and `beach`; parcel rows `water_frontage_m`; a lot's `inspect` has `shore`
+{waterfront, frontage_m, seaward, beach, beach_state}. Waterfront lots carry a land value premium
+by their frontage; open beaches lift the land around them.
+
+| Command | Fields | Reply |
+|---|---|---|
+| `shore` (alias `waterfront`) | | `parcels_reach_water`, `waterfront_lots`, `waterfront_vacant`, `waterfront_frontage_m`, `beaches`, `beaches_open`, `bathers_now`, `jetties`, `trades` {beach_resorts, pier_restaurants, beach_bars, boat_rentals, waterfront_hotels}, `pressures` (the waterfront trades' readings: kind, wanted, have, gap, why, held) |
+| `beaches` | | `beaches` [{building, name, pos, area_m2, access, open, usable, note (no access, closed, too cold, a storm, ...), visitors, swimmers, people_here (the sim's own citizens and tourists on the sand), draw (the hour's crowd before rounding), capacity, crowded, catchment (residents within reach), appeal (weather and hour, 0..1), contamination, peak_today, visits_today, visits_yesterday, towel_spots}], `bathers_now`, `appeal_now`, `appeal_season` |
+| `jetties` | | `jetties` [{building, name, business, kind (fishing jetty, cargo quay, restaurant pier, boat pontoon), root, tip, berth, water, berths, built_day, loads_landed, loads_coming}] |
+| `waterfront_parcels` | `on` (bool; omitted reads) | `on`, `parcels_on_water`, `note`. Re-cuts the parcels now; lots follow at the next implement, and a building whose parcel changes shape is pulled down |
+
+A **public beach** is a park sub-zone: `paint {land_use: "beach", ...}` (or the Zone tool after
+Build > Parks > Public beach) on parcels that run down to the water (others are refused: "a beach
+must run down to the water"); painting plain `park` over it makes it a park again. Its lot is laid
+out as sand with a boardwalk and towel spots (the park's benches: people walk to one and lie down)
+and gets a park building named for the beach. It joins the walk graph only through a street or path
+it fronts, or a park next to it (never across a private lot); without either it stays empty with
+the note "no access: connect a path or a road, or a park next to it". The crowd follows the
+weather and the hour (`shore::beach_weather`: nobody under 12 °C, in a storm or at night, few in
+the rain; Arctic beaches stay deserted) and the residents within 1.5 km; past its capacity it is
+crowded. Contamination over the sand or the water off it at 20% closes it (a red sign and tape)
+until it falls under 12%. Open beaches are tourist sights (attraction kind `beach`), cheer the
+households within 700 m at midnight, and bring beach bars (pressure `beach_bar`).
+
+A building's `inspect` adds `beach` (the row above) for a beach's park building, `jetty` for a
+business with a private jetty, and `shore` for any building on the water.
+
+**Waterfront trades** open by pressure on vacant waterfront lots only: `beach_resort` (lodging: two
+beds a floor more than a hotel's, 1.6× the night), `pier_restaurant` (a place to go out at 2.4×
+a venue's tab; its deck over the water is its jetty), `beach_bar`, `boat_rental` (its pontoon is
+its jetty). A hotel opening for want of beds prefers a waterfront lot and is drawn as a waterfront
+hotel.
+
+**Private jetties**: a fishing company or fish works (fishery, fish plant, gutting shed, fish-stick
+factory, fish market) or a works that ships (container yard, refinery, smelter, chemical works,
+mill, parts fab, assembly plant, cargo hub) on a waterfront lot builds a small jetty of its own for
+600 when it has the money and the water off it is navigable (the sea, a lake, a river at least 18 m
+wide; never a stream). A fishing jetty is a trawler's berth; a cargo quay lands the business's
+imports by its own coaster at the sea price (5 hours on; `loads_coming`).
 
 ## Street races, raves and the roads
 

@@ -185,6 +185,32 @@ pub struct Lot {
     /// This lot's share of a park: paths, benches and features.
     #[serde(default)]
     pub park: Option<crate::park::ParkLayout>,
+    /// [waterfront] Where the lot meets the water, if it does: frontage
+    /// on the shoreline, which way the water lies, and whether the lot is
+    /// a public beach (`crate::shore`).
+    #[serde(default)]
+    pub shore: LotShore,
+}
+
+/// [waterfront] A lot's edge on the water. Zero frontage: not waterfront.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LotShore {
+    /// Metres of the outline that run along the waterline.
+    pub frontage: f32,
+    /// Unit vector from the lot out over the water (zero when inland).
+    pub seaward: Vec2,
+    /// A public beach (a park painted as one with the Zone tool).
+    pub beach: bool,
+}
+
+impl LotShore {
+    /// Frontage that makes a lot a waterfront lot, metres.
+    pub const MIN_FRONTAGE: f32 = 6.0;
+
+    pub fn is_waterfront(&self) -> bool {
+        self.frontage >= Self::MIN_FRONTAGE
+    }
 }
 
 impl Lot {
@@ -656,6 +682,13 @@ fn thickness(p: &Polygon<f64>) -> f32 {
 /// across at lot width, perpendicular to the local road. Whatever has no
 /// frontage stays as unusable ground.
 fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut impl Rng, depth: u32, out: &mut Vec<Vec<Vec2>>) {
+    subdivide_sized(poly, lu, (lu.lot_width(), lu.lot_depth()), roads, rng, depth, out);
+}
+
+/// [`subdivide`] with the lot size given: `(width, depth)` of a typical
+/// lot ([waterfront] lots run the whole way from the road to the water).
+#[allow(clippy::too_many_arguments)]
+fn subdivide_sized(poly: Polygon<f64>, lu: LandUse, (lw, ld): (f32, f32), roads: &RoadNetwork, rng: &mut impl Rng, depth: u32, out: &mut Vec<Vec<Vec2>>) {
     let area = area_f(&poly);
     if area < MIN_AREA {
         return;
@@ -677,7 +710,7 @@ fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
                 return;
             }
             for piece in pieces {
-                subdivide(piece, lu, roads, rng, depth + 1, out);
+                subdivide_sized(piece, lu, (lw, ld), roads, rng, depth + 1, out);
             }
             return;
         }
@@ -692,14 +725,12 @@ fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
         let pieces = cut(&poly, b, normal);
         if pieces.len() >= 2 {
             for piece in pieces {
-                subdivide(piece, lu, roads, rng, depth + 1, out);
+                subdivide_sized(piece, lu, (lw, ld), roads, rng, depth + 1, out);
             }
             return;
         }
     }
 
-    let lw = lu.lot_width();
-    let ld = lu.lot_depth();
     let allow = lu.fronts_paths();
     let runs = frontage_runs(&pts, roads, allow);
     let Some((chain, chain_len)) = runs.first().cloned() else {
@@ -742,7 +773,7 @@ fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
     if core_area >= MIN_AREA && band_area >= MIN_AREA && band_area < area * 0.995 {
         for band in bands {
             for piece in band.0 {
-                subdivide(piece, lu, roads, rng, depth + 1, out);
+                subdivide_sized(piece, lu, (lw, ld), roads, rng, depth + 1, out);
             }
         }
         for piece in core.0 {
@@ -774,12 +805,15 @@ fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
             let (v0, v1) = extents(&pts, perp);
             let long = u1 - u0;
             let short = v1 - v0;
-            if chain_len < lw * 1.7 && long > lw * 2.2 && long > short * 2.5 {
+            // [waterfront] A lot that runs down to the water is meant to be
+            // deep: never halve it across.
+            let shore_deep = ld > lu.lot_depth() * 1.6;
+            if !shore_deep && chain_len < lw * 1.7 && long > lw * 2.2 && long > short * 2.5 {
                 let origin = axis * ((u0 + u1) * 0.5) + perp * ((v0 + v1) * 0.5);
                 let pieces = cut(&poly, origin, axis);
                 if pieces.len() >= 2 {
                     for piece in pieces {
-                        subdivide(piece, lu, roads, rng, depth + 1, out);
+                        subdivide_sized(piece, lu, (lw, ld), roads, rng, depth + 1, out);
                     }
                     return;
                 }
@@ -796,7 +830,7 @@ fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
             let pieces = cut_along_run(&poly, &pts, &chain, chain_len * rng.random_range(0.45..0.55), rng);
             if pieces.len() >= 2 && pieces.iter().all(|p| area_f(p) >= MIN_AREA) {
                 for piece in pieces {
-                    subdivide(piece, lu, roads, rng, depth + 1, out);
+                    subdivide_sized(piece, lu, (lw, ld), roads, rng, depth + 1, out);
                 }
                 return;
             }
@@ -829,7 +863,7 @@ fn subdivide(poly: Polygon<f64>, lu: LandUse, roads: &RoadNetwork, rng: &mut imp
                 });
                 if (small >= target * 0.75 || (small >= MIN_AREA * 1.6 && wide_enough)) && compact_ok && frontage_ok {
                     for piece in pieces {
-                        subdivide(piece, lu, roads, rng, depth + 1, out);
+                        subdivide_sized(piece, lu, (lw, ld), roads, rng, depth + 1, out);
                     }
                     return;
                 }
@@ -968,6 +1002,59 @@ impl WaterMask {
 
     pub fn is_empty(&self) -> bool {
         self.polys.is_empty()
+    }
+
+    /// [waterfront] Is `p` in the water?
+    pub fn contains(&self, p: Vec2) -> bool {
+        use geo::Contains;
+        let c = geo::Point::new(p.x as f64, p.y as f64);
+        self.polys.iter().any(|((lo, hi), poly)| p.x >= lo.x && p.y >= lo.y && p.x <= hi.x && p.y <= hi.y && poly.contains(&c))
+    }
+
+    /// [waterfront] Does an outline touch the water: a vertex with water
+    /// within `tol` metres of it (four probes round it)?
+    pub fn touches(&self, poly: &[Vec2], tol: f32) -> bool {
+        if self.polys.is_empty() || poly.is_empty() {
+            return false;
+        }
+        let (lo, hi) = bounds_of(poly);
+        if !self.polys.iter().any(|(b, _)| boxes_overlap(*b, (lo, hi), tol + 1.0)) {
+            return false;
+        }
+        let d = tol * std::f32::consts::FRAC_1_SQRT_2;
+        poly.iter().any(|&p| [Vec2::new(d, d), Vec2::new(-d, d), Vec2::new(d, -d), Vec2::new(-d, -d)].iter().any(|o| self.contains(p + *o)))
+    }
+
+    /// [waterfront] How much of an outline runs along the water (metres),
+    /// and which way the water lies (unit, frontage weighted; zero when
+    /// none). Each edge is probed a little outside it at three points.
+    pub fn shoreline(&self, poly: &[Vec2]) -> (f32, Vec2) {
+        if self.polys.is_empty() || poly.len() < 3 {
+            return (0.0, Vec2::ZERO);
+        }
+        let (lo, hi) = bounds_of(poly);
+        if !self.polys.iter().any(|(b, _)| boxes_overlap(*b, (lo, hi), 3.0)) {
+            return (0.0, Vec2::ZERO);
+        }
+        let poly = ccw(poly);
+        let n = poly.len();
+        let (mut len, mut dir) = (0.0f32, Vec2::ZERO);
+        for i in 0..n {
+            let (a, b) = (poly[i], poly[(i + 1) % n]);
+            let l = a.distance(b);
+            if l < 0.5 {
+                continue;
+            }
+            let d = (b - a) / l;
+            let out = Vec2::new(d.y, -d.x);
+            let wet = [0.2f32, 0.5, 0.8].iter().filter(|&&t| self.contains(a.lerp(b, t) + out * 1.5)).count();
+            if wet > 0 {
+                let part = l * wet as f32 / 3.0;
+                len += part;
+                dir += out * part;
+            }
+        }
+        (len, dir.normalize_or_zero())
     }
 
     /// The water touching a box, as one multipolygon.
@@ -1150,6 +1237,7 @@ pub fn make_lot(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, roa
         car_segment,
         car_point,
         park: None,
+        shore: LotShore::default(),
     })
 }
 
@@ -1247,6 +1335,8 @@ pub struct Parcel {
     pub center: Vec2,
     pub front_edge: [Vec2; 2],
     pub area: f32,
+    /// [waterfront] Metres of the outline on the waterline (0 inland).
+    pub water_frontage: f32,
     /// Has a frontage a home may use (a street or a footpath).
     pub path_frontage: bool,
     /// Has a street frontage, which shops, industry and the rest need.
@@ -1373,12 +1463,30 @@ impl ParcelMap {
 /// elsewhere never move a parcel here: the same road gives the same
 /// parcels.
 pub fn generate_parcels(roads: &RoadNetwork, water: &WaterMask, clip: Option<(Vec2, Vec2)>) -> Vec<Parcel> {
+    generate_parcels_with(roads, water, clip, None)
+}
+
+/// [waterfront] How far behind a road's corridor its parcels may reach to
+/// meet the water: where a street or path runs within this of a river,
+/// lake or the sea, the land between it and the water is all parcelled,
+/// lots running the whole way down to the waterline.
+pub const SHORE_REACH: f32 = 80.0;
+
+/// [`generate_parcels`], and with `shore_reach` ([waterfront]) the land
+/// between a road and water within that reach of its corridor is
+/// parcelled too, and blocks that touch the water are cut into lots that
+/// run from the road the whole way to the shore (frontage-wide slices, not
+/// rows a lot deep). Every parcel learns its frontage on the water.
+pub fn generate_parcels_with(roads: &RoadNetwork, water: &WaterMask, clip: Option<(Vec2, Vec2)>, shore_reach: Option<f32>) -> Vec<Parcel> {
     let mut out = Vec::new();
     if roads.is_empty() {
         return out;
     }
+    let shore_reach = shore_reach.filter(|r| *r > PARCEL_REACH && !water.is_empty());
     let mut corridors: Vec<Polygon<f64>> = Vec::new();
     let mut reach: Vec<Polygon<f64>> = Vec::new();
+    // [waterfront] The wider reach, kept only where it meets the water.
+    let mut wide: Vec<Polygon<f64>> = Vec::new();
     let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
     for (pts, hw, ext_a, ext_b, sid) in road_chains(roads) {
         if let Some(c) = chain_corridor(&pts, hw, ext_a, ext_b) {
@@ -1390,17 +1498,40 @@ pub fn generate_parcels(roads: &RoadNetwork, water: &WaterMask, clip: Option<(Ve
         if seg.is_rail() || seg.fronts_nothing() {
             continue;
         }
-        let r = hw + PARCEL_REACH;
+        let r = hw + shore_reach.unwrap_or(PARCEL_REACH);
         for p in &pts {
             lo = lo.min(*p - Vec2::splat(r + hw));
             hi = hi.max(*p + Vec2::splat(r + hw));
         }
-        reach_pieces(&pts, hw, r, ext_a, ext_b, &mut reach);
+        reach_pieces(&pts, hw, hw + PARCEL_REACH, ext_a, ext_b, &mut reach);
+        if shore_reach.is_some() {
+            reach_pieces(&pts, hw, r, ext_a, ext_b, &mut wide);
+        }
     }
     if reach.is_empty() {
         return out;
     }
     let mut region: MultiPolygon<f64> = geo::unary_union(&reach);
+    // [waterfront] Land past the usual reach that runs down to the water
+    // (nothing else in the way) joins the region: between a road and the
+    // shore, every metre is somebody's lot.
+    let mut shore_land: Option<MultiPolygon<f64>> = None;
+    if !wide.is_empty() {
+        let wide: MultiPolygon<f64> = geo::unary_union(&wide);
+        let mut extra = wide.difference(&region);
+        if let Some(w) = water.near(lo, hi) {
+            extra = extra.difference(&w);
+        }
+        // Only land that also borders the road's own reach: not the far
+        // bank across the water.
+        use geo::Intersects;
+        let keep: Vec<Polygon<f64>> = extra.0.into_iter().filter(|p| area_f(p) >= MIN_AREA && water.touches(&from_geo(p), 1.2) && region.intersects(p)).collect();
+        if !keep.is_empty() {
+            let keep = MultiPolygon(keep);
+            region = region.union(&keep);
+            shore_land = Some(keep);
+        }
+    }
     // Ground the reach does not quite get to but that roads close round
     // (the middle of a big block) is still that block's: fill such holes,
     // or the block would be split around a speck of nobody's land.
@@ -1431,18 +1562,60 @@ pub fn generate_parcels(roads: &RoadNetwork, water: &WaterMask, clip: Option<(Ve
             let chunk = canonical(chunk);
             let mut rng = crate::rng_for(block_seed(&chunk), 5);
             let mut pieces: Vec<Vec<Vec2>> = Vec::new();
-            subdivide(chunk, PARCEL_USE, roads, &mut rng, 0, &mut pieces);
+            // [waterfront] A chunk on the water that took in shore land is
+            // sliced into lots running from the road to the waterline.
+            match shore_land.as_ref().and_then(|s| shore_lot_size(&chunk, s, water, roads)) {
+                Some(size) => subdivide_sized(chunk, PARCEL_USE, size, roads, &mut rng, 0, &mut pieces),
+                None => subdivide(chunk, PARCEL_USE, roads, &mut rng, 0, &mut pieces),
+            }
             for piece in merge_backland(pieces, PARCEL_USE, roads) {
                 chop_backland(piece, roads, 0, &mut polys);
             }
         }
     }
     for poly in polys {
-        if let Some(p) = parcel_of(poly, roads) {
+        if let Some(mut p) = parcel_of(poly, roads) {
+            if shore_reach.is_some() || !water.is_empty() {
+                p.water_frontage = water.shoreline(&p.polygon).0;
+            }
             out.push(p);
         }
     }
     out
+}
+
+/// [waterfront] The lot size for a chunk of land on the water that took
+/// in shore land past the usual reach: as deep as the chunk runs back from
+/// its road (so one row reaches the water), and wide in proportion. None
+/// for a chunk off the water, or with no road to measure from.
+fn shore_lot_size(chunk: &Polygon<f64>, shore: &MultiPolygon<f64>, water: &WaterMask, roads: &RoadNetwork) -> Option<(f32, f32)> {
+    let pts = from_geo(chunk);
+    if pts.len() < 3 || !water.touches(&pts, 1.2) {
+        return None;
+    }
+    let (clo, chi) = bounds_of(&pts);
+    let near: Vec<Polygon<f64>> = shore.0.iter().filter(|s| boxes_overlap(bounds_of(&from_geo(s)), (clo, chi), 0.5)).cloned().collect();
+    if near.is_empty() || MultiPolygon(vec![chunk.clone()]).intersection(&MultiPolygon(near)).unsigned_area() < 1.0 {
+        return None;
+    }
+    let runs = frontage_runs(&pts, roads, true);
+    let (chain, _) = runs.first()?;
+    let n = pts.len();
+    let &edge = chain.iter().max_by(|&&a, &&b| pts[a].distance(pts[(a + 1) % n]).total_cmp(&pts[b].distance(pts[(b + 1) % n])))?;
+    let (a, b) = (pts[edge], pts[(edge + 1) % n]);
+    let d = (b - a).normalize_or_zero();
+    if d == Vec2::ZERO {
+        return None;
+    }
+    let inward = Vec2::new(-d.y, d.x);
+    let deep = pts.iter().map(|p| (*p - a).dot(inward)).fold(0.0f32, f32::max);
+    if deep <= PARCEL_USE.lot_depth() * 1.8 {
+        return None;
+    }
+    // One band (1.15 of the depth) takes the whole chunk.
+    let ld = deep / 1.1;
+    let lw = (deep * 0.38).clamp(PARCEL_USE.lot_width(), 36.0);
+    Some((lw, ld))
 }
 
 /// Cut a block across every long straight frontage edge where the
@@ -1598,6 +1771,7 @@ fn parcel_of(poly: Vec<Vec2>, roads: &RoadNetwork) -> Option<Parcel> {
         street_frontage: street,
         rough: false,
         rough_why: None,
+        water_frontage: 0.0,
         land_use: None,
         lot: None,
         polygon: poly,

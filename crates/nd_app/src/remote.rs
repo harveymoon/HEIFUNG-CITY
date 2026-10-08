@@ -61,6 +61,8 @@ mod view;
 mod window;
 /// [ferry-routes] A dock's routes and `inspect {ship}`.
 mod ferry;
+/// [waterfront] Waterfront lots, public beaches and private jetties.
+mod shore;
 
 use std::collections::VecDeque;
 use std::io::Read;
@@ -637,6 +639,8 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "estate" | "land_market" => property::command(cmd, &mut ctx.sim.world),
         "ownership" => property::ownership(cmd, &ctx.sim.world),
         "pressure" | "pressures" => economy::command(cmd, &mut ctx.sim.world),
+        // [waterfront] waterfront lots, beaches and private jetties
+        "shore" | "waterfront" | "beaches" | "jetties" | "waterfront_parcels" => shore::command(name, cmd, &mut ctx.sim.world),
         "bus" => bus(cmd, ctx),
         "subway" | "metro" => subway::command(cmd, &mut ctx.sim.world),
         // [metro-ux] The metro line tool, click by click.
@@ -1108,6 +1112,8 @@ fn paint(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let lu_s = req_str(cmd, "land_use")?;
     let land_use = match lu_s.trim().to_ascii_lowercase().as_str() {
         "none" | "unzoned" | "erase" => None,
+        // [waterfront] a public beach: a park on parcels down to the water
+        "beach" | "public_beach" | "public beach" => Some(nd_sim::LandUse::Park),
         other => Some(land_use_of(other)?),
     };
     let w = &mut ctx.sim.world;
@@ -1123,14 +1129,16 @@ fn paint(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     } else {
         return Err("give at (+ radius), rect or polygon".into());
     };
+    let beach = matches!(lu_s.trim().to_ascii_lowercase().as_str(), "beach" | "public_beach" | "public beach");
     let refused: Vec<Value> = match land_use {
-        Some(lu) => ids.iter().filter_map(|&i| w.parcel_refusal(i, Some(lu)).map(|why| json!({ "parcel": i, "center": v2(w.parcels.parcels[i].center), "why": why }))).collect(),
+        Some(lu) => ids.iter().filter_map(|&i| (if beach { w.beach_refusal(i) } else { w.parcel_refusal(i, Some(lu)) }).map(|why| json!({ "parcel": i, "center": v2(w.parcels.parcels[i].center), "why": why }))).collect(),
         None => Vec::new(),
     };
     // [island-lots] Nothing under the brush: why (water, too far from a
     // road, past the buildable land), as the hover says at the cursor.
     let none_why = if ids.is_empty() { opt_vec2(cmd, "at")?.and_then(|at| w.no_parcel_why(at)) } else { None };
     let industry = match opt_str(cmd, "industry")? {
+        _ if beach => Some(nd_sim::shore::BEACH_SUBZONE),
         Some(k) => Some(nd_sim::world::INDUSTRY_CHOICES.iter().map(|(key, _)| *key).find(|key| key.eq_ignore_ascii_case(k.trim())).ok_or_else(|| format!("unknown industry {k:?}; one of {}", nd_sim::world::INDUSTRY_CHOICES.map(|c| c.0).join(", ")))?),
         None => None,
     };
@@ -1961,7 +1969,7 @@ fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     let plan = planned.get(i).copied().flatten().map_or("unzoned", |l| l.label());
                     rows.push((d, json!({
                         "index": i, "center": v2(p.center), "area": round(p.area), "land_use": built, "planned": plan,
-                        "landlocked": p.landlocked(), "street": p.street_frontage, "rough": p.rough, "rough_why": p.rough_why, "accepts": accepts,
+                        "landlocked": p.landlocked(), "street": p.street_frontage, "rough": p.rough, "rough_why": p.rough_why, "accepts": accepts, "water_frontage_m": round(p.water_frontage),
                         "lot": p.lot.map(key_str), "key": [p.key.center.0, p.key.center.1],
                     })));
                 }
@@ -2442,7 +2450,15 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             }
             Tool::Zone => match ZoneMode::parse(kind) {
                 Some(m) => t.zone_mode = m,
-                None => t.land_use = land_use_of(kind)?,
+                // [waterfront] "beach": parks painted as public beaches
+                None if kind.eq_ignore_ascii_case("beach") => {
+                    t.land_use = nd_sim::LandUse::Park;
+                    t.beach = true;
+                }
+                None => {
+                    t.land_use = land_use_of(kind)?;
+                    t.beach = false;
+                }
             },
             Tool::District => {
                 t.district.mode = match kind.to_ascii_lowercase().as_str() {
@@ -2458,7 +2474,10 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         if lu.eq_ignore_ascii_case("none") || lu.eq_ignore_ascii_case("unzoned") {
             t.unzone = true;
         } else {
-            t.land_use = land_use_of(lu)?;
+            // [waterfront] "beach": parks painted as public beaches
+            let beach = lu.eq_ignore_ascii_case("beach") || lu.eq_ignore_ascii_case("public_beach");
+            t.land_use = if beach { nd_sim::LandUse::Park } else { land_use_of(lu)? };
+            t.beach = beach;
             t.unzone = false;
         }
     }
@@ -2910,7 +2929,11 @@ fn help() -> Value {
     let planning = json!({
         "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway|Tunnel|Roundabout (Tunnel switches the view underground, the others back to ground)", "elevation": "road tool level for the next point, m (-20..24)", "depth": "underground|ground|sky: the view layer", "draw": "[[x,y,level?],...]: the road being drawn, for its preview", "cursor": "[x,y]: where the pointer stands for the road preview (until the mouse is used)", "diameter": "roundabout 24..240 m", "ring_lanes": "roundabout 1|2|3", "ring_at": "[x,y]: show the roundabout preview there as if hovered (until the mouse is used)", "kind": "sub-mode of the active tool", "mode": "zone tool: polygon|brush|marquee", "radius": "zone brush radius m", "unzone": "bool", "industry": "zone tool sub-zone for industrial land: auto|farming|oil|...", "land_use": "(or none: the brush unzones)", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
         "project": { "action": "list|new|switch|rename|delete|park|start|implement|undo|redo|discard", "id": "project id (default: the active one)", "name": "for new/rename, or to pick a project by name", "note": "several named projects; the active one is edited, the rest previewed dim; implement builds one at a time, the later one wins where two change the same gesture or parcel (warnings in the reply)" },
-        "paint": { "land_use": "residential|...|park, or none to unzone", "at": "[x,y] brush centre", "radius": "m (default the tool's)", "industry": "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech|mining|smelting|factory_farming, the sub-zone set on implement", "rect": "[[x0,y0],[x1,y1]] marquee", "polygon": "[[x,y],...]", "implement": "bool", "note": "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step" }
+        "shore": { "returns": "[waterfront] waterfront lots (vacant ones), their frontage, public beaches (open, bathers now), private jetties, the waterfront trades open (beach resorts, pier restaurants, beach bars, boat rentals, waterfront hotels) and their pressures; whether parcels reach the water" },
+        "beaches": { "returns": "[waterfront] every public beach: access, open (fouled water closes it), note, visitors, swimmers, people_here (the sim's own), draw, capacity, crowded, catchment, appeal (weather and hour), contamination, today's peak and visits" },
+        "jetties": { "returns": "[waterfront] every private jetty: owner, kind (fishing jetty, cargo quay, restaurant pier, boat pontoon), root, tip, berth, water, loads landed and coming" },
+        "waterfront_parcels": { "on": "bool, omitted reads: parcels along a road near the water run down to it (on for new cities; a save from before has it off; lots follow at the next implement)" },
+        "paint": { "land_use": "residential|...|park, beach (a public beach: a park on parcels that run down to the water), or none to unzone", "at": "[x,y] brush centre", "radius": "m (default the tool's)", "industry": "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech|mining|smelting|factory_farming, the sub-zone set on implement", "rect": "[[x0,y0],[x1,y1]] marquee", "polygon": "[[x,y],...]", "implement": "bool", "note": "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step" }
     });
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), planning.as_object()) {
         c.extend(r.clone());

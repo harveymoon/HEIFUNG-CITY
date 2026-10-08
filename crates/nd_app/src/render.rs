@@ -95,6 +95,8 @@ mod solar;
 mod turbines;
 /// [taxis] Cabs in their yards, at ranks and kerbs; yard signs.
 mod taxis;
+/// [waterfront] Private jetties off waterfront lots.
+mod shore;
 
 
 /// Side of the square cells that buildings and vacant-lot dressing are
@@ -480,6 +482,8 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, (nights::sync_road_wear, nights::sync_raves, nights::race_gizmos).in_set(SimSet::Sync).after(sync_cars).before(lift_movers));
         // [society] Skid row and the trash.
         app.init_resource::<society::SocietyRender>().add_systems(Update, society::sync_society.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
+        // [waterfront] jetties, piers and pontoons off the waterfront lots
+        app.init_resource::<shore::JettyRender>().add_systems(Update, shore::sync_jetties.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
         // [social] Murals and gardens.
         app.init_resource::<social::SocialRender>().add_systems(Update, social::sync_social.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
         // Drone taxis and helicopters, after the buildings whose pads they land on.
@@ -1132,17 +1136,21 @@ fn sync_preview(
     let w = &sim.world;
     let unzoned = [0.55f32, 0.55, 0.6];
     // Parcels the active project re-zones.
+    // [waterfront] Public beaches painted or unpainted show as sand.
+    let beaches = w.planned_beaches();
     let planned = w.planned_zoning();
     for (i, p) in w.parcels.parcels.iter().enumerate() {
         let Some(&want) = planned.get(i) else { break };
-        if want == p.land_use {
+        let beach_want = beaches.get(i).copied().unwrap_or(false);
+        let beach_now = p.lot.and_then(|l| w.lots.get(l)).is_some_and(|l| l.shore.beach);
+        if want == p.land_use && beach_want == beach_now {
             continue;
         }
         let mut outline = p.polygon.clone();
         outline.push(p.polygon[0]);
         match want {
             Some(lu) => {
-                let c = pal.zone_color(lu);
+                let c = if beach_want { BEACH_TINT } else { pal.zone_color(lu) };
                 glow.ground_polygon(&p.polygon, 0.05, scale(c, 0.22));
                 glow.ground_strip(&outline, 0.45, 0.21, scale(c, 1.2));
             }
@@ -1375,7 +1383,7 @@ fn sync_lots(
             if lot.polygon.len() < 3 || lot.landlocked {
                 continue;
             }
-            let c = zone_layer_color(lot.land_use);
+            let c = if lot.shore.beach { BEACH_TINT } else { zone_layer_color(lot.land_use) };
             let alpha = if lot.building.is_some() { 0.5 } else { 0.72 };
             // A plant or battery field is a flat yard: the wash would flood
             // it in the zone's colour (a solar farm on a residential lot
@@ -1422,6 +1430,9 @@ fn sync_lots(
         spawn_overlay(&mut commands, &mut meshes, &mats, &wash, LotsTag);
     }
 }
+
+/// [waterfront] Public beaches on the zoning layer and in previews: sand.
+const BEACH_TINT: [f32; 3] = [1.15, 0.9, 0.45];
 
 /// The zoning layer's colours: fixed, saturated and far apart (as city
 /// builders use them), not the palette's subdued tints, so zones read at a

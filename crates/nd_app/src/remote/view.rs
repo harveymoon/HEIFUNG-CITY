@@ -488,6 +488,8 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         v["dock"] = json!({ "kind": p.kind.label(), "road_connected": p.road_connected, "reaches_elsewhere": p.reaches_elsewhere, "works": p.works(), "ferries_sail": p.sails(), "berth": v2(p.berth), "stub": points(&p.road_line()) });
     }
     v["dirt"] = dirt_json(w, id);
+    // [waterfront] its beach, its jetty, its edge on the water
+    super::shore::building_extra(w, id, &mut v);
     v
 }
 
@@ -516,6 +518,7 @@ pub fn lot_row(w: &World, id: LotId, l: &Lot) -> Value {
         "building": opt_key(l.building), "vacant": l.building.is_none() && l.usable(), "landlocked": l.landlocked,
         "park": l.park.is_some(), "land_value": round(w.land_value.at(l.center)), "car_access": l.car_access(),
         "city_ground": w.is_city_ground(l),
+        "waterfront": l.shore.is_waterfront(), "water_frontage_m": round(l.shore.frontage), "beach": l.shore.beach,
     })
 }
 
@@ -531,6 +534,8 @@ pub fn lot_detail(w: &World, id: LotId, l: &Lot) -> Value {
         "park": l.park.is_some(), "land_value": round(value), "land_tier": Tier::for_land_value(value).label(),
         "land_value_for_use": round(w.lot_value(id)), "access": w.land_value.access_at(l.center).map(|a| json!({ "park_min": a.park_min.map(round), "nightlife_min": a.nightlife_min.map(round), "value_for_homes": round(a.value), "text": a.describe() })),
         "footfall_today": l.footfall_today, "footfall_hour": l.footfall_hour, "zone": zone,
+        // [waterfront] its edge on the water, and a beach's state
+        "shore": super::shore::lot_shore(w, id),
     })
 }
 

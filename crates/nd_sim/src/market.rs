@@ -245,6 +245,19 @@ pub enum BusinessKind {
     /// Chemical works (chlor-alkali, mercury cells): crude in, chemicals
     /// (plastics) out; the dirtiest neighbour of all.
     ChemicalWorks,
+    // -- [waterfront] trades that live on the water, opened by pressure on
+    // waterfront lots (`crate::shore`). Appended so saved kinds keep their
+    // order. --
+    /// A beach resort: low wings round pools and gardens down to the sand,
+    /// cabanas; tourists sleep here and pay well by the night.
+    BeachResort,
+    /// A fancy restaurant on a deck out over the water: a place to go out,
+    /// dear.
+    PierRestaurant,
+    /// A beach bar: a shack, a deck, stools and string lights.
+    BeachBar,
+    /// Boat rental: kayaks, pedalos and small motorboats off a pontoon.
+    BoatRental,
 }
 
 /// Opening hours on the clock, `open..close`; a close earlier than the open
@@ -318,7 +331,7 @@ pub struct Recipe {
 }
 
 impl BusinessKind {
-    pub const COUNT: usize = 43;
+    pub const COUNT: usize = 47;
     /// Every kind, in `index` order.
     pub const ALL: [BusinessKind; Self::COUNT] = [
         BusinessKind::VertFarm,
@@ -364,6 +377,10 @@ impl BusinessKind {
         BusinessKind::Smelter,
         BusinessKind::Feedlot,
         BusinessKind::ChemicalWorks,
+        BusinessKind::BeachResort,
+        BusinessKind::PierRestaurant,
+        BusinessKind::BeachBar,
+        BusinessKind::BoatRental,
     ];
 
     pub fn index(self) -> usize {
@@ -415,6 +432,10 @@ impl BusinessKind {
             BusinessKind::Smelter => "smelter",
             BusinessKind::Feedlot => "factory farm",
             BusinessKind::ChemicalWorks => "chemical works",
+            BusinessKind::BeachResort => "beach resort",
+            BusinessKind::PierRestaurant => "pier restaurant",
+            BusinessKind::BeachBar => "beach bar",
+            BusinessKind::BoatRental => "boat rental",
         }
     }
 
@@ -504,6 +525,13 @@ impl BusinessKind {
             // selling out of town.
             BusinessKind::Feedlot => Recipe { inputs: &[(Resource::Grain, 2.0)], outputs: &[(Resource::Livestock, 12.0)] },
             BusinessKind::ChemicalWorks => Recipe { inputs: &[(Resource::Crude, 1.2)], outputs: &[(Resource::Plastics, 0.7)] },
+            // [waterfront] Breakfasts and the bar; rooms are paid by the night
+            // (`World::daily_tourism`).
+            BusinessKind::BeachResort => Recipe { inputs: &[(Resource::Groceries, 0.25)], outputs: &[] },
+            // Diners, drinkers and renters pay at the door (`World::venue_tabs`).
+            BusinessKind::PierRestaurant => Recipe { inputs: &[(Resource::Groceries, 0.35)], outputs: &[] },
+            BusinessKind::BeachBar => Recipe { inputs: &[(Resource::Groceries, 0.2)], outputs: &[] },
+            BusinessKind::BoatRental => Recipe { inputs: &[(Resource::Fuel, 0.05)], outputs: &[] },
         }
     }
 
@@ -571,6 +599,11 @@ impl BusinessKind {
             BusinessKind::Refinery | BusinessKind::FishPlant => Hours::new(6, 22),
             // Plants run two shifts.
             BusinessKind::VertFarm | BusinessKind::GrainFarm | BusinessKind::ProteinVat | BusinessKind::Dairy | BusinessKind::Mill | BusinessKind::Fab | BusinessKind::Assembly => Hours::new(6, 22),
+            // [waterfront]
+            BusinessKind::BeachResort => Hours::ALWAYS,
+            BusinessKind::PierRestaurant => Hours::new(12, 24),
+            BusinessKind::BeachBar => Hours::new(10, 2),
+            BusinessKind::BoatRental => Hours::new(8, 20),
         }
     }
 
@@ -583,8 +616,23 @@ impl BusinessKind {
             BusinessKind::FishMarket | BusinessKind::BikeShop => Some(3),
             BusinessKind::SeafoodRestaurant | BusinessKind::GolfRange => Some(6),
             BusinessKind::Gallery => Some(8),
+            BusinessKind::PierRestaurant => Some(6),
+            BusinessKind::BeachBar => Some(10),
+            BusinessKind::BoatRental => Some(5),
             _ => None,
         }
+    }
+
+    /// [waterfront] Sleeps visitors from out of town (`crate::tourism`):
+    /// hotels and beach resorts.
+    pub fn is_lodging(self) -> bool {
+        matches!(self, BusinessKind::Hotel | BusinessKind::BeachResort)
+    }
+
+    /// [waterfront] Opens only on a lot that runs down to the water
+    /// (`Lot::shore`): the trades that live on the view.
+    pub fn wants_waterfront(self) -> bool {
+        matches!(self, BusinessKind::BeachResort | BusinessKind::PierRestaurant | BusinessKind::BeachBar | BusinessKind::BoatRental)
     }
 
     /// Part of the food chain, from farm to shelf: staffed first, and
@@ -616,13 +664,18 @@ impl BusinessKind {
     /// (`World::venue_tabs`): venues, and the restaurants, ranges and
     /// galleries that open by pressure on whatever land suits them.
     pub fn is_outing(self) -> bool {
-        matches!(self, BusinessKind::Venue | BusinessKind::SeafoodRestaurant | BusinessKind::GolfRange | BusinessKind::Gallery | BusinessKind::Marina)
+        matches!(self, BusinessKind::Venue | BusinessKind::SeafoodRestaurant | BusinessKind::GolfRange | BusinessKind::Gallery | BusinessKind::Marina | BusinessKind::PierRestaurant | BusinessKind::BeachBar | BusinessKind::BoatRental)
     }
 
     /// [economy] What an hour's tab costs here against a venue's.
     pub fn tab_factor(self) -> f32 {
         match self {
             BusinessKind::SeafoodRestaurant => 1.5,
+            // [waterfront] White tablecloths over the water; a drink in the
+            // sand; an hour in a pedalo.
+            BusinessKind::PierRestaurant => 2.4,
+            BusinessKind::BeachBar => 1.1,
+            BusinessKind::BoatRental => 1.8,
             BusinessKind::GolfRange => 1.7,
             // A drink at the clubhouse or the marina café.
             BusinessKind::Marina => 1.3,
@@ -657,6 +710,10 @@ impl BusinessKind {
                 | BusinessKind::Smelter
                 | BusinessKind::Feedlot
                 | BusinessKind::ChemicalWorks
+                | BusinessKind::BeachResort
+                | BusinessKind::PierRestaurant
+                | BusinessKind::BeachBar
+                | BusinessKind::BoatRental
         )
     }
 
@@ -668,6 +725,10 @@ impl BusinessKind {
             BusinessKind::Smelter | BusinessKind::ChemicalWorks => 2,
             BusinessKind::FishMarket | BusinessKind::SeafoodRestaurant | BusinessKind::ArtStudio | BusinessKind::Gallery | BusinessKind::FishGutting => 2,
             BusinessKind::Slaughterhouse | BusinessKind::FishStickFactory => 3,
+            // [waterfront] Low on the shore: a resort spreads, it does not climb.
+            BusinessKind::BeachBar | BusinessKind::BoatRental => 1,
+            BusinessKind::PierRestaurant => 2,
+            BusinessKind::BeachResort => 5,
             _ => return None,
         })
     }
@@ -705,7 +766,7 @@ impl BusinessKind {
     /// Stock a business tries to keep of each input, in hours of production.
     pub fn target_hours(self) -> f32 {
         match self {
-            BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Venue | BusinessKind::FishMarket | BusinessKind::SeafoodRestaurant | BusinessKind::Gallery => 36.0,
+            BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Venue | BusinessKind::FishMarket | BusinessKind::SeafoodRestaurant | BusinessKind::Gallery | BusinessKind::PierRestaurant | BusinessKind::BeachBar => 36.0,
             _ => 24.0,
         }
     }

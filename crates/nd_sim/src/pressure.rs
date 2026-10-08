@@ -82,6 +82,16 @@ pub const SCENE_MIN_ARTISTS: f32 = 4.0;
 pub const SCENE_MIN_AUDIENCE: f32 = 20.0;
 /// Wealthy households near the water per marina berth's worth of demand.
 pub const RICH_PER_MARINA: f32 = 150.0;
+/// [waterfront] Visitors in town per beach resort's worth of guests.
+pub const TOURISTS_PER_RESORT: f32 = 60.0;
+/// [waterfront] Comfortable adults, and visitors, per restaurant on a pier.
+pub const DINERS_PER_PIER: f32 = 900.0;
+pub const TOURISTS_PER_PIER: f32 = 80.0;
+/// [waterfront] Bather-hours a day per beach bar.
+pub const BATHERS_PER_BAR: f32 = 160.0;
+/// [waterfront] Visitors, and wealthy households near the water, per boat rental.
+pub const TOURISTS_PER_RENTAL: f32 = 90.0;
+pub const RICH_PER_RENTAL: f32 = 300.0;
 /// A pressure never asks for more than this many of a kind at once.
 pub const MAX_WANTED: f32 = 8.0;
 
@@ -103,10 +113,15 @@ pub enum PressureKind {
     Gallery,
     /// Advisory: the player places marinas (Build > Water).
     Marina,
+    // -- [waterfront] trades on lots that run down to the water --
+    BeachResort,
+    PierRestaurant,
+    BeachBar,
+    BoatRental,
 }
 
 impl PressureKind {
-    pub const ALL: [PressureKind; 14] = [
+    pub const ALL: [PressureKind; 18] = [
         PressureKind::TowCompany,
         PressureKind::Mechanic,
         PressureKind::CarDealer,
@@ -121,6 +136,10 @@ impl PressureKind {
         PressureKind::ArtStudio,
         PressureKind::Gallery,
         PressureKind::Marina,
+        PressureKind::BeachResort,
+        PressureKind::PierRestaurant,
+        PressureKind::BeachBar,
+        PressureKind::BoatRental,
     ];
 
     pub fn index(self) -> usize {
@@ -144,6 +163,10 @@ impl PressureKind {
             PressureKind::ArtStudio => BusinessKind::ArtStudio,
             PressureKind::Gallery => BusinessKind::Gallery,
             PressureKind::Marina => BusinessKind::Marina,
+            PressureKind::BeachResort => BusinessKind::BeachResort,
+            PressureKind::PierRestaurant => BusinessKind::PierRestaurant,
+            PressureKind::BeachBar => BusinessKind::BeachBar,
+            PressureKind::BoatRental => BusinessKind::BoatRental,
         })
     }
 
@@ -173,6 +196,10 @@ impl PressureKind {
             PressureKind::ArtStudio => "artists' studios",
             PressureKind::Gallery => "gallery",
             PressureKind::Marina => "marina",
+            PressureKind::BeachResort => "beach resort",
+            PressureKind::PierRestaurant => "pier restaurant",
+            PressureKind::BeachBar => "beach bar",
+            PressureKind::BoatRental => "boat rental",
         }
     }
 
@@ -193,6 +220,10 @@ impl PressureKind {
             PressureKind::ArtStudio => "art_studio",
             PressureKind::Gallery => "gallery",
             PressureKind::Marina => "marina",
+            PressureKind::BeachResort => "beach_resort",
+            PressureKind::PierRestaurant => "pier_restaurant",
+            PressureKind::BeachBar => "beach_bar",
+            PressureKind::BoatRental => "boat_rental",
         }
     }
 
@@ -255,6 +286,16 @@ pub struct Signals {
     pub rich_near_water: f32,
     /// Shoreline the player could build on (any water at all).
     pub has_water: bool,
+    /// [waterfront] Visitors from out of town in town now.
+    pub tourists: f32,
+    /// [waterfront] Bather-hours on the public beaches yesterday (a flow).
+    pub beach_visits: f32,
+    /// [waterfront] Public beaches open and reachable.
+    pub beaches_open: f32,
+    /// [waterfront] How inviting a beach is this week, `0..1`.
+    pub beach_appeal: f32,
+    /// [waterfront] Vacant lots on the water to build on.
+    pub waterfront_sites: f32,
 }
 
 impl Signals {
@@ -274,6 +315,7 @@ impl Signals {
         mix(&mut self.livestock, today.livestock);
         mix(&mut self.fish, today.fish);
         mix(&mut self.fillets, today.fillets);
+        mix(&mut self.beach_visits, today.beach_visits);
         self.cars = today.cars;
         self.rich_households = today.rich_households;
         self.trash_uncovered = today.trash_uncovered;
@@ -290,6 +332,10 @@ impl Signals {
         self.rich_adults = today.rich_adults;
         self.rich_near_water = today.rich_near_water;
         self.has_water = today.has_water;
+        self.tourists = today.tourists;
+        self.beaches_open = today.beaches_open;
+        self.beach_appeal = today.beach_appeal;
+        self.waterfront_sites = today.waterfront_sites;
     }
 
     /// Is there an art scene: enough artists getting by and enough money
@@ -444,6 +490,23 @@ pub fn assess(s: &Signals, supply: &Supply) -> Vec<Pressure> {
                 let wanted = wanted.max(0.0);
                 let why = if s.has_water { format!("{} wealthy households near the water would keep a boat; {} marinas", s.rich_near_water.round(), have.round()) } else { "no water to build a marina on".to_string() };
                 (wanted, why)
+            }
+            // [waterfront] The trades of the shore, only where there is one.
+            PressureKind::BeachResort => {
+                let wanted = if s.has_water { (s.tourists / TOURISTS_PER_RESORT + 0.4 * s.beaches_open) * (0.25 + 0.75 * s.beach_appeal) } else { 0.0 };
+                (wanted, format!("{} visitors in town, {} public beaches open, beach weather {:.0}%; {ht}", s.tourists.round(), s.beaches_open, s.beach_appeal * 100.0))
+            }
+            PressureKind::PierRestaurant => {
+                let wanted = if s.has_water { s.comfortable_adults / DINERS_PER_PIER + s.tourists / TOURISTS_PER_PIER } else { 0.0 };
+                (wanted, format!("{} comfortable adults and {} visitors would dine over the water; {ht}", s.comfortable_adults.round(), s.tourists.round()))
+            }
+            PressureKind::BeachBar => {
+                let wanted = if s.has_water { s.beach_visits / BATHERS_PER_BAR + 0.5 * s.beaches_open * s.beach_appeal } else { 0.0 };
+                (wanted, format!("{} bather-hours a day on {} public beaches; {ht}", s.beach_visits.round(), s.beaches_open))
+            }
+            PressureKind::BoatRental => {
+                let wanted = if s.has_water { (s.tourists / TOURISTS_PER_RENTAL + s.rich_near_water / RICH_PER_RENTAL) * (0.4 + 0.6 * s.beach_appeal) } else { 0.0 };
+                (wanted, format!("{} visitors and {} wealthy households near the water want to get out on it; {ht}", s.tourists.round(), s.rich_near_water.round()))
             }
         };
         let mut p = Pressure::new(kind, wanted, supply, why);

@@ -106,7 +106,7 @@ fn zone(ui: &mut egui::Ui, sim: &Sim, tools: &mut ToolState, assets: &GameAssets
     // The land use is picked in the Build window (Zoning, Parks).
     ui.horizontal_wrapped(|ui| {
         let colour = zone_color32(assets.palette.zone_color(tools.land_use));
-        let text = if tools.unzone { egui::RichText::new("Unzoning").strong() } else { egui::RichText::new(format!("Zoning: {}", tools.land_use.label())).strong().color(colour) };
+        let text = if tools.unzone { egui::RichText::new("Unzoning").strong() } else { egui::RichText::new(format!("Zoning: {}", if tools.painting_beach() { "Public beach" } else { tools.land_use.label() })).strong().color(colour) };
         ui.label(text);
         if tools.zone_mode != ZoneMode::Polygon && ui.selectable_label(tools.unzone, "Unzone").on_hover_text("Left button erases parcels back to unzoned (the right button always does)").clicked() {
             tools.unzone = !tools.unzone;
@@ -148,13 +148,25 @@ fn zone(ui: &mut egui::Ui, sim: &Sim, tools: &mut ToolState, assets: &GameAssets
         let planned = tools.hover_parcel.and_then(|i| sim.world.planned_zoning().get(i).copied()).flatten();
         let plan_note = if planned != p.land_use { format!(" → {} planned", planned.map_or("unzoned", |l| l.label())) } else { String::new() };
         let front = if p.rough { p.rough_why.unwrap_or("rough ground") } else if p.street_frontage { "street frontage" } else if p.path_frontage { "footpath frontage" } else { "landlocked backland" };
-        let verdict = if tools.unzone { String::new() } else {
+        // [waterfront] On the water: its frontage, and a beach's verdict.
+        let water = if p.water_frontage >= nd_sim::zoning::LotShore::MIN_FRONTAGE { format!(" · waterfront {:.0} m", p.water_frontage) } else { String::new() };
+        let verdict = if tools.unzone {
+            String::new()
+        } else if tools.painting_beach() {
+            match tools.hover_parcel.and_then(|i| sim.world.beach_refusal(i)) {
+                None => " · takes a public beach".to_string(),
+                Some(why) => format!(" · no beach: {why}"),
+            }
+        } else {
             match tools.hover_parcel.and_then(|i| sim.world.parcel_refusal(i, Some(tools.land_use))).or_else(|| p.refusal(tools.land_use)) {
                 None => format!(" · takes {}", tools.land_use.label()),
                 Some(why) => format!(" · no {}: {why}", tools.land_use.label()),
             }
         };
-        hint(ui, &format!("Parcel {:.0} m² · {front} · {built}{plan_note}{verdict}", p.area));
+        hint(ui, &format!("Parcel {:.0} m² · {front} · {built}{plan_note}{water}{verdict}", p.area));
+        if let Some((_, s)) = p.lot.and_then(|l| sim.world.beach_on(l)) {
+            hint(ui, &format!("{}: {}", s.name, s.note.clone().unwrap_or_else(|| format!("{} on the sand", s.visitors))));
+        }
         if tools.land_use == LandUse::Industrial {
             let i = tools.hover_parcel.unwrap_or_default();
             let ground = sim.world.suggested_industry(i).map_or_else(String::new, |k| format!("the ground suggests {k}"));

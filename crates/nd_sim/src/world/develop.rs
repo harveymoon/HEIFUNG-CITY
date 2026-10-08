@@ -156,6 +156,8 @@ impl World {
                 self.splat_contamination(&mut b);
                 // [districts] eco and historic districts lift the land
                 self.splat_districts(&mut b);
+                // [waterfront] beaches, and lots on the water
+                self.splat_shore(&mut b);
                 // [land] NIMBY: the land round a mansion jumps, fading.
                 for n in &self.estate.nimby {
                     b.splat(n.center, n.radius, n.strength);
