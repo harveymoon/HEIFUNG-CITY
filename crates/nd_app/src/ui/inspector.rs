@@ -1118,6 +1118,11 @@ fn dirt_lines(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId) -> O
             };
             let what = if share > 0.0 { format!(" · output −{:.0}%", c * share * 100.0) } else { String::new() };
             ui.label(egui::RichText::new(format!("Ground contamination {:.0}%{what}", c * 100.0)).small().color(col));
+            // [dirty-industry] How to get rid of it.
+            match w.cleanups.iter().find(|j| j.center.distance(l.center) <= j.radius) {
+                Some(j) => hint(ui, &format!("a clean-up crew is digging here: {:.0}% done", j.progress() * 100.0)),
+                None => hint(ui, "Bulldoze (B) → Clean up ground digs it out"),
+            }
         }
     }
     clicked

@@ -91,6 +91,8 @@ mod subway;
 mod society;
 /// [social] Murals and community gardens.
 mod social;
+/// [dirty-industry] Clean-up crews digging out contaminated ground.
+mod cleanup;
 mod solar;
 mod turbines;
 /// [taxis] Cabs in their yards, at ranks and kerbs; yard signs.
@@ -481,7 +483,9 @@ impl Plugin for RenderPlugin {
         // [society] Skid row and the trash.
         app.init_resource::<society::SocietyRender>().add_systems(Update, society::sync_society.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
         // [social] Murals and gardens.
-        app.init_resource::<social::SocialRender>().add_systems(Update, social::sync_social.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
+        app.init_resource::<social::SocialRender>().add_systems(Update, social::sync_social.after(sync_vacant).after(sync_buildings).before(update_daylight).in_set(SimSet::Sync));
+        // [dirty-industry] Clean-up crews.
+        app.init_resource::<cleanup::CleanupRender>().add_systems(Update, cleanup::sync_cleanup.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
         // Drone taxis and helicopters, after the buildings whose pads they land on.
         app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, check_car_bodies.after(lift_movers).in_set(SimSet::Sync));
@@ -1602,6 +1606,21 @@ fn mass_top(g: &Geometry) -> f32 {
 
 fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<f32> {
     let b = world.buildings.get(id)?;
+    let mut g = building_geometry(world, assets, styles, id)?;
+    // [climate] Snow on the roofs in a cold climate.
+    nd_procgen::climate::snow_cover(&mut g, assets.palette.snow);
+    lights::tag_windows(&mut g, lights::slot_of(id));
+    let top = mass_top(&g);
+    // Every building stands on its lot's levelled pad.
+    nd_procgen::terrain::raise_geometry(&mut g, world.lot_pad(b.lot));
+    geo.append(&g);
+    Some(top)
+}
+
+/// One building's geometry as drawn, before it is raised onto its lot's
+/// pad (`World::lot_pad`); [social] murals read their wall off it.
+pub(crate) fn building_geometry(world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<Geometry> {
+    let b = world.buildings.get(id)?;
     // [land] A building over merged plots is drawn on their combined
     // footprint (`World::footprint`): one building, no seams.
     let footprint = world.footprint(id)?;
@@ -1623,7 +1642,7 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
         ..nd_procgen::style_extras(world, id, styles.neighbours(id))
     };
-    let mut g = match &b.demolition {
+    let g = match &b.demolition {
         // Coming down: what stood there (which, during a redevelopment or a
         // civic take-over, is not what the building's own fields describe),
         // cut down to what is left, with the demolition site around it.
@@ -1633,14 +1652,7 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         }
         None => generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras),
     };
-    // [climate] Snow on the roofs in a cold climate.
-    nd_procgen::climate::snow_cover(&mut g, assets.palette.snow);
-    lights::tag_windows(&mut g, lights::slot_of(id));
-    let top = mass_top(&g);
-    // Every building stands on its lot's levelled pad.
-    nd_procgen::terrain::raise_geometry(&mut g, world.lot_pad(b.lot));
-    geo.append(&g);
-    Some(top)
+    Some(g)
 }
 
 /// The chunk a building is drawn in: by its lot centre, so a building and
