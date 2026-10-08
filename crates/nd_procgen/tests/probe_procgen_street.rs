@@ -44,17 +44,17 @@ fn street_layers_keep_to_their_own_roads() {
     let lv = LandValue::new(1000.0, 50.0);
     let pal = Palette::default();
     let heights = vec![0.0; roads.nodes.len()];
-    let under = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 1, heights: &heights, inner: &[], layer: StreetLayer::Underground });
+    let under = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 1, heights: &heights, inner: &[], layer: StreetLayer::Underground, closed: &[] });
     assert_sound("underground", &under);
     assert!(under.triangle_count() > 20, "the tunnel is drawn underground");
     let leaked: Vec<(String, [f32; 3])> = under.iter().flat_map(|(s, m)| m.positions.iter().filter(|p| p[2].abs() < 250.0).map(move |p| (format!("{s:?}"), *p))).collect();
     assert!(leaked.is_empty(), "{} underground vertices on the surface streets, e.g. {:?}", leaked.len(), leaked.first());
-    let surf = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 1, heights: &heights, inner: &[], layer: StreetLayer::Surface });
+    let surf = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 1, heights: &heights, inner: &[], layer: StreetLayer::Surface, closed: &[] });
     assert_sound("surface", &surf);
     let over_tunnel: usize = surf.iter().map(|(_, m)| m.positions.iter().filter(|p| (p[2] - 600.0).abs() < 30.0).count()).sum();
     assert_eq!(over_tunnel, 0, "surface vertices along the tunnel");
     // The two layers together are the whole street, nothing more or less.
-    let all = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 1, heights: &heights, inner: &[], layer: StreetLayer::All });
+    let all = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 1, heights: &heights, inner: &[], layer: StreetLayer::All, closed: &[] });
     assert_eq!(all.triangle_count(), surf.triangle_count() + under.triangle_count(), "All = Surface + Underground");
 }
 
@@ -79,7 +79,7 @@ fn elevated_streets_are_sound_and_deterministic() {
     assert!(w.roads.alive_segments().any(|(_, s)| s.tunnel) && w.roads.alive_segments().any(|(_, s)| s.viaduct));
     let pal = Palette::default();
     for layer in [StreetLayer::All, StreetLayer::Surface, StreetLayer::Underground] {
-        let inp = StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: 3, heights: &w.road_z, inner: &w.road_inner, layer };
+        let inp = StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: 3, heights: &w.road_z, inner: &w.road_inner, layer, closed: &[] };
         let a = generate_street(&inp);
         assert_sound(&format!("{layer:?}"), &a);
         assert!(a == generate_street(&inp), "{layer:?} is not deterministic");
@@ -161,7 +161,7 @@ fn heights_cost_little_and_change_nothing() {
     let zeros = vec![0.0f32; w.roads.nodes.len()];
     // Heights that vary node to node, so every run is lifted.
     let hills: Vec<f32> = w.roads.nodes.iter().map(|nd| 1.0 + (nd.pos.x * 0.01).sin() * 3.0 + (nd.pos.y * 0.013).cos() * 2.0).collect();
-    let gen = |hs: &[f32]| generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: 3, heights: hs, inner: &[], layer: StreetLayer::Surface });
+    let gen = |hs: &[f32]| generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: 3, heights: hs, inner: &[], layer: StreetLayer::Surface, closed: &[] });
     let flat = best_of_three(|| {
         gen(&zeros);
     });

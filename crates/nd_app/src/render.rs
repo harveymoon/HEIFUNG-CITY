@@ -377,6 +377,10 @@ struct ChunkMeshes {
 struct RenderState {
     roads_version: u64,
     lanes_version: u64,
+    /// [footbridge] Hash of the crosswalks footbridges replaced, as the
+    /// streets (their paint) and the walk lamps were last drawn for.
+    closed_roads: u64,
+    closed_signals: u64,
     /// What the project holograms were built for: plan version, parcels
     /// version, whether parked projects are shown.
     preview_key: Option<(u64, u64, bool)>,
@@ -944,6 +948,17 @@ fn sync_scatter(
     spawn_geometry(&mut commands, &mut meshes, &mats, &geo, ScatterTag);
 }
 
+/// [footbridge] A key for the set of crosswalks footbridges replaced.
+fn closed_hash(closed: &[SVec2]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for p in closed {
+        (p.x.to_bits(), p.y.to_bits()).hash(&mut h);
+    }
+    closed.len().hash(&mut h);
+    h.finish()
+}
+
 fn sync_roads(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -955,16 +970,21 @@ fn sync_roads(
     existing: Query<Entity, Or<(With<RoadsTag>, With<holo::TunnelTag>, With<holo::GhostRoadTag>)>>,
 ) {
     let version = sim.world.roads.version;
-    if version == state.roads_version && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
+    // [footbridge] A footbridge built (or its crosswalk kept) repaints the
+    // streets: its zebra goes or comes back.
+    let closed = sim.world.closed_crosswalks();
+    let closed_key = closed_hash(&closed);
+    if version == state.roads_version && closed_key == state.closed_roads && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
     state.roads_version = version;
+    state.closed_roads = closed_key;
     despawn_all(&mut commands, &existing);
     let w = &sim.world;
     // Each run is set on its own height profile here (a viaduct over a
     // street, the street under it), so the roads are not lifted again.
     let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
-    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Surface });
+    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Surface, closed: &closed });
     stats.street_triangles = geo.triangle_count();
     for (s, data) in geo.iter() {
         let mesh = meshes.add(to_mesh(data, !s.is_glow()));
@@ -978,7 +998,7 @@ fn sync_roads(
     }
     // The tunnels on their own, shown in the underground view.
     if w.roads.alive_segments().any(|(_, s)| s.tunnel) {
-        let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Underground });
+        let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Underground, closed: &closed });
         stats.street_triangles += geo.triangle_count();
         for (s, data) in geo.iter() {
             commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, holo::TunnelTag, Visibility::Hidden, NotShadowCaster));
@@ -1021,8 +1041,11 @@ fn sync_signals(
     mut q: Query<(&SignalTag, Option<&PedSignalTag>, &mut MeshMaterial3d<StandardMaterial>, Option<&swap::SwapOriginal>)>,
 ) {
     let net = &sim.world.traffic.net;
-    if net.version != state.lanes_version || sim.full_rebuild {
+    let closed = sim.world.closed_crosswalks();
+    let closed_key = closed_hash(&closed);
+    if net.version != state.lanes_version || closed_key != state.closed_signals || sim.full_rebuild {
         state.lanes_version = net.version;
+        state.closed_signals = closed_key;
         despawn_all(&mut commands, &existing);
         for post in signal_posts(&sim.world.roads, net) {
             commands.spawn((
@@ -1033,7 +1056,7 @@ fn sync_signals(
                 SignalTag(post.lane),
             ));
         }
-        for post in nd_procgen::street::ped_signal_posts(&sim.world.roads, net) {
+        for post in nd_procgen::street::ped_signal_posts(&sim.world.roads, net).into_iter().filter(|p| !nd_procgen::street::crosswalk_closed(&closed, p.crosswalk)) {
             commands.spawn((
                 Mesh3d(mats.signal_mesh.clone()),
                 MeshMaterial3d(mats.ped_stop.clone()),

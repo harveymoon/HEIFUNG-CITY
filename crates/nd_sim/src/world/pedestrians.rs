@@ -179,7 +179,9 @@ impl World {
             .crossings
             .iter()
             .map(|c| {
-                let signal = c.node.filter(|_| c.kind == CrossingKind::Junction).and_then(|n| {
+                // [footbridge] A crosswalk its footbridge replaced has no
+                // walk light (nobody calls the phase) and no stop line.
+                let signal = c.node.filter(|_| c.kind == CrossingKind::Junction && !c.closed).and_then(|n| {
                     let k = *net.node_intersection.get(n.0 as usize)?;
                     let inter = net.intersections.get(k)?;
                     if !inter.signalized || roads.nodes.len() <= n.0 as usize {

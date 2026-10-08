@@ -276,7 +276,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [x] Build pane category highlights existing buildings of that kind with icons, plus their service areas, coverage % and gaps [feat/build-highlight]  → DONE [feat/build-highlight]: outlines + markers per kind, road-network service areas (additive overlap, homes left out in red), radius reaches, bus stop catchments, power output labels, summary with fly-to gaps, API build_highlight
 - [ ] FLAG (day 23): pedestrians and taxis stuck on the highway near (590, 408); Cass Baptiste waits for a cab that never comes for days [fix/ped-highway]
 - [ ] FLAG (day 23): interchange with a street underpass came out as garbage, ramps re-routed, artifacts; clean interchanges (maybe a diamond tool) [fix/interchange]
-- [ ] FLAG (day 23): footbridge over Umbra Parade left the crosswalk; nobody uses the bridge; cars stop for people on it [fix/footbridge]
+- [x] FLAG (day 23): footbridge over Umbra Parade left the crosswalk; nobody uses the bridge; cars stop for people on it [fix/footbridge] → DONE [fix/footbridge]: a footbridge now replaces the crosswalk under it (at-grade walk edge, zebra paint and beacons, walk lights and stop line go; walkers must climb over); "Keep the crosswalk under it" checkbox / `keep_crosswalk` keeps the old behaviour; old saves lose the crosswalk on load; road card counts a footpath zebra on both pieces
 
 ## Agents running (update when starting/merging; survives context compaction)
 - feat/fire-scene: fire scene crews, hoses, ladder (started 2026-10-07 evening)

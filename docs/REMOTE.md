@@ -655,7 +655,8 @@ in this order, and the reply is the state after:
 | `left_turns` | `true` allows the left from every street, `false` forbids it from every street |
 | `no_left` | `[approach index or [x,y], ...]`: those streets forbid the left, the others allow it. A banned left is taken out of what the junction offers there, so its lane arrows lose it and no route turns left there |
 | `approach` + `lanes` | lane permissions of one arriving street (index, or a point on it): `["L+S", "S+R"]` leftmost first, or `"reset"` (as `lane_use`) |
-| `crossing` + `upgrade` | a crosswalk (walk-graph index from `crossings`, or a point near it): `none`, `button` (a push-button signal: traffic gets a red only after someone presses it; not on a crosswalk that already has walk lights) or `footbridge` (a raised walkway with stairs at both ends; refused where it would stand in another's way). Paid for: 1,500 and 18,000 |
+| `crossing` + `upgrade` | a crosswalk (walk-graph index from `crossings`, or a point near it): `none`, `button` (a push-button signal: traffic gets a red only after someone presses it; not on a crosswalk that already has walk lights) or `footbridge` (a raised walkway with stairs at both ends; refused where it would stand in another's way). A footbridge replaces the crosswalk under it: its paint, walk lights and at-grade walk edge go, so everyone crossing there climbs over and nobody holds up traffic. Paid for: 1,500 and 18,000 |
+| `crossing` + `keep_crosswalk` | [footbridge] `true` keeps the crosswalk at grade under its footbridge (walkers then take the bridge when it costs them at most 30 m more); `false` (the default, also for footbridges from older saves) lets the bridge replace it. Free |
 | `open`, `extent`, `select_approach`, `select_crossing` | show the editor modal (and its road view's width in metres, 30..300; which street or crosswalk is picked) |
 | `close` | hide it |
 
@@ -664,7 +665,7 @@ Reply: `intersection` {`at`, `junction` (false for a lone crosswalk), `node`, `r
 `approaches` [{index, segment, street, dir (the way it leaves the junction), from, lanes, offered,
 set_by_player, left_forbidden, left_possible, queued}], `phases` [{index, approaches, green_s,
 running}], `crossings` [{index, mid, ends, upgrade, signalised, kind, button_light, footbridge
-{walkway, stair_feet, width}}], `footbridges` (in the city), `button_presses_total`}, `done` (what
+{walkway, stair_feet, width}, crosswalk_kept, crosswalk_removed}], `footbridges` (in the city), `button_presses_total`}, `done` (what
 was changed) and `editor_open`. Everything is saved with the city (`Traffic::junction_rules`,
 `World::crosswalks`, serde defaults) and found again by position after the roads are rebuilt.
 

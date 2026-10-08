@@ -65,6 +65,12 @@ pub struct CrossingView {
     /// Its footbridge, if it has one: the walkway's ends, the stairs' feet
     /// and the width.
     pub footbridge: Option<([Vec2; 2], [Vec2; 2], f32)>,
+    /// [footbridge] Under a footbridge: the crosswalk kept at grade (the
+    /// player's choice) rather than replaced by the bridge.
+    pub kept: bool,
+    /// [footbridge] Replaced by its footbridge: no paint, no walk light,
+    /// nobody crosses here at grade.
+    pub closed: bool,
 }
 
 /// What the Intersection editor shows and edits.
@@ -158,7 +164,35 @@ impl World {
             kind: c.kind,
             light: c.button.then(|| self.button_light(k)),
             footbridge: self.walk.footbridges.iter().find(|f| f.crossing == k).map(|f| (f.top, f.foot, f.width)),
+            kept: c.bridged && !c.closed,
+            closed: c.closed,
         })
+    }
+
+    /// [footbridge] Keep crosswalk `k` at grade under its footbridge, or
+    /// let the bridge replace it (the default). Free either way.
+    pub fn set_crosswalk_kept(&mut self, k: u32, keep: bool) -> Result<(), String> {
+        let v = self.crossing_view(k).ok_or("no such crosswalk")?;
+        if v.upgrade != CrossingUpgrade::Footbridge {
+            return Err("only a crosswalk under a footbridge can be kept or removed".into());
+        }
+        if v.kept == keep {
+            return Ok(());
+        }
+        if !self.crosswalks.set_keep_crosswalk(v.mid, v.dir, keep) {
+            return Err("no footbridge rule there".into());
+        }
+        self.rebuild_walk();
+        self.peds.buttons.clear();
+        self.refresh_crossings_now();
+        self.events.push(SimEvent::RoadsChanged);
+        Ok(())
+    }
+
+    /// [footbridge] Middles of the crosswalks replaced by footbridges: the
+    /// street painter leaves their zebras (and walk lights) out.
+    pub fn closed_crosswalks(&self) -> Vec<Vec2> {
+        self.walk.crossings.iter().filter(|c| c.closed).map(|c| c.mid).collect()
     }
 
     fn crosswalk_view(&self, k: u32) -> IntersectionView {

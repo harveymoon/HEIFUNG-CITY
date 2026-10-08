@@ -555,11 +555,15 @@ fn a_save_from_before_the_tools_loads() {
 /// [clarity] Walkers take the footbridge over the crosswalk when it costs
 /// only a little more, but not when it is a real detour: from the far side
 /// of the crosswalk (away from the stairs) they cross at grade.
+/// [footbridge] Only where the player kept the crosswalk under it.
 #[test]
 fn walkers_take_a_footbridge_only_when_it_is_no_big_detour() {
     let (mut w, cr) = zebra_town();
     w.economy.treasury = 1.0e6;
     w.set_crossing_upgrade(cr, CrossingUpgrade::Footbridge).unwrap();
+    w.set_crosswalk_kept(cr, true).unwrap();
+    assert!(!w.walk.crossings[cr as usize].closed && w.walk.crossings[cr as usize].marked(), "the crosswalk kept");
+    assert!(w.closed_crosswalks().is_empty());
     let cr = w.walk.crossings.iter().position(|c| c.bridged).unwrap() as u32;
     let c = &w.walk.crossings[cr as usize];
     let (a, b) = (w.walk.nodes[c.a as usize].pos, w.walk.nodes[c.b as usize].pos);
@@ -573,6 +577,159 @@ fn walkers_take_a_footbridge_only_when_it_is_no_big_detour() {
     assert!(climbs(&w, a + along * 15.0, b + along * 15.0), "takes the bridge when it is on the way");
     // From the other side, the bridge would be a long way round.
     assert!(!climbs(&w, a - along * 40.0, b - along * 40.0), "no big detour for a bridge");
+}
+
+/// The crossing's at-grade walk edges (either way round).
+fn grade_edges(w: &World, cr: u32) -> usize {
+    w.walk.adj.iter().flatten().filter(|e| e.cross == cr).count()
+}
+
+/// [footbridge] Harvey's flag: "I added a footbridge but the crosswalk is
+/// still there and no one is using the bridge and traffic is still
+/// stopping for people". A footbridge replaces the crosswalk under it: the
+/// at-grade edge leaves the walk graph (so every route over the street
+/// there climbs the bridge, even from the side away from the stairs), the
+/// zebra is not painted and drivers have nothing to give way at.
+#[test]
+fn a_footbridge_replaces_the_zebra_under_it() {
+    let (mut w, cr) = zebra_town();
+    w.economy.treasury = 1.0e6;
+    assert_eq!(grade_edges(&w, cr), 2, "a zebra to start with");
+    let mid = w.walk.crossings[cr as usize].mid;
+    w.set_crossing_upgrade(cr, CrossingUpgrade::Footbridge).unwrap();
+    let c = w.walk.crossings[cr as usize].clone();
+    assert!(c.bridged && c.closed && !c.marked(), "replaced: {c:?}");
+    assert_eq!(grade_edges(&w, cr), 0, "no way across at grade");
+    assert_eq!(w.closed_crosswalks(), vec![mid], "the painter leaves it out");
+    let v = w.intersection_view(mid).unwrap();
+    assert!(v.crossings.iter().any(|x| x.index == cr && x.closed && !x.kept && x.upgrade == CrossingUpgrade::Footbridge));
+    let (a, b) = (w.walk.nodes[c.a as usize].pos, w.walk.nodes[c.b as usize].pos);
+    let fb = w.walk.footbridges[0].clone();
+    let along = (fb.foot[0] - fb.top[0]).normalize();
+    for (from, to) in [(a + along * 15.0, b + along * 15.0), (a - along * 40.0, b - along * 40.0), (a, b)] {
+        let (path, nodes) = w.walk.route(from, to).expect("a way across");
+        assert!(nodes.iter().any(|&n| w.walk.nodes[n as usize].level > 0.0), "over the bridge from {from}: {path:?}");
+        assert!(path.windows(2).all(|p| w.walk.crossing_between(p[0], p[1]) != Some(cr)), "never across at grade");
+    }
+    // Kept again on request, and replaced again.
+    w.set_crosswalk_kept(cr, true).unwrap();
+    assert_eq!(grade_edges(&w, cr), 2);
+    assert!(w.closed_crosswalks().is_empty());
+    w.set_crosswalk_kept(cr, false).unwrap();
+    assert_eq!(grade_edges(&w, cr), 0);
+    // Taking the bridge away brings the zebra back.
+    w.set_crossing_upgrade(cr, CrossingUpgrade::None).unwrap();
+    assert_eq!(grade_edges(&w, cr), 2);
+    assert!(w.walk.footbridges.is_empty() && w.closed_crosswalks().is_empty());
+}
+
+/// [footbridge] At a signalised crossroads of avenues (two lanes each way),
+/// a footbridge over one arm takes that arm's crosswalk away with its walk
+/// light and stop line; walkers from corner to corner climb over, and the
+/// other arms keep theirs.
+#[test]
+fn a_footbridge_over_an_avenue_arm_replaces_the_junction_crosswalk() {
+    let mut w = crossroads();
+    let (k, west, node) = west_arm(&w);
+    let mut rule = w.junction_view(k).rule;
+    rule.signal = SignalMode::Signals;
+    w.set_junction_rule(rule).unwrap();
+    run(&mut w, 1);
+    let v = w.junction_view(k);
+    assert!(v.signalized);
+    let west_cross = v.crossings.iter().find(|c| w.walk.crossings[c.index as usize].segment == west).expect("the west arm's crosswalk");
+    let cr = west_cross.index;
+    assert!(west_cross.signalised, "it had walk lights");
+    let lanes: Vec<_> = w.peds.crossings[cr as usize].lanes.iter().map(|x| x.0).collect();
+    assert!(lanes.iter().any(|l| w.traffic.peds.stop_lines.contains_key(l)), "and a stop line");
+    w.economy.treasury = 1.0e6;
+    w.set_crossing_upgrade(cr, CrossingUpgrade::Footbridge).unwrap();
+    run(&mut w, 1);
+    let c = w.walk.crossings[cr as usize].clone();
+    assert!(c.closed && c.node == Some(node) && c.kind == crate::walk::CrossingKind::Junction);
+    assert_eq!(grade_edges(&w, cr), 0);
+    assert!(w.peds.crossings[cr as usize].signal.is_none(), "no walk light");
+    assert!(lanes.iter().all(|l| !w.traffic.peds.stop_lines.contains_key(l)), "no stop line before it");
+    let v = w.junction_view(k);
+    assert!(v.crossings.iter().filter(|x| x.index != cr).all(|x| !x.closed && x.signalised), "the other arms keep theirs");
+    let (a, b) = (w.walk.nodes[c.a as usize].pos, w.walk.nodes[c.b as usize].pos);
+    let (path, nodes) = w.walk.route(a, b).expect("corner to corner");
+    assert!(nodes.iter().any(|&n| w.walk.nodes[n as usize].level > 0.0), "over the bridge: {path:?}");
+    assert!(path.windows(2).all(|p| w.walk.crossing_between(p[0], p[1]) != Some(cr)));
+}
+
+/// [footbridge] Cars never give way to someone up on the deck, though the
+/// deck stands right over the lanes (the walker's 2D position is on the
+/// street; only crossings at grade hold traffic).
+#[test]
+fn cars_do_not_yield_to_a_walker_on_the_deck() {
+    let (mut w, cr) = zebra_town();
+    w.economy.treasury = 1.0e6;
+    w.set_crossing_upgrade(cr, CrossingUpgrade::Footbridge).unwrap();
+    let fb = w.walk.footbridges[0].clone();
+    let (t0, t1) = (w.walk.nodes[fb.nodes[2] as usize].pos, w.walk.nodes[fb.nodes[3] as usize].pos);
+    // To and fro on the deck the whole time.
+    let mut path = Vec::new();
+    for _ in 0..30 {
+        path.push(t0);
+        path.push(t1);
+    }
+    let id = w.citizens.keys().next().unwrap();
+    {
+        let ci = &mut w.citizens[id];
+        ci.inside = None;
+        ci.mode = TravelMode::Walk;
+        ci.pos = t0;
+        ci.prev_pos = t0;
+        ci.activity = Activity::Traveling { to: None, purpose: Purpose::Wander, path, idx: 1 };
+        ci.next_decision_tick = u64::MAX;
+    }
+    let car = east_car(&mut w);
+    let mid = w.walk.crossings[cr as usize].mid;
+    let mut passed = false;
+    let mut slowest_near = f32::MAX;
+    for _ in 0..200 {
+        run(&mut w, 1);
+        assert!(w.traffic.peds.holds.is_empty() && w.traffic.peds.watch.is_empty(), "held for someone on the deck: {:?}", w.traffic.peds.holds);
+        let ci = &w.citizens[id];
+        assert!(w.walker_level(ci, ci.pos) > crate::junctions::FOOTBRIDGE_LEVEL - 0.01, "up on the deck");
+        match w.traffic.cars.get(car) {
+            Some(c) if c.pos.x < mid.x + 5.0 => {
+                if c.pos.x > mid.x - 30.0 {
+                    slowest_near = slowest_near.min(c.v);
+                }
+            }
+            _ => {
+                passed = true;
+                break;
+            }
+        }
+    }
+    assert!(passed, "the car drove under the bridge");
+    assert!(slowest_near > 3.0, "it did not slow for the walker overhead: {slowest_near}");
+}
+
+/// [footbridge] A footbridge from a save made before it replaced its
+/// crosswalk (no `keep_crosswalk` on its rule) loads with the crosswalk
+/// gone.
+#[test]
+fn an_old_saves_footbridge_loses_its_crosswalk_on_load() {
+    let (mut w, cr) = zebra_town();
+    w.economy.treasury = 1.0e6;
+    w.set_crossing_upgrade(cr, CrossingUpgrade::Footbridge).unwrap();
+    let text = w.to_ron().unwrap();
+    assert!(text.contains("keep_crosswalk"));
+    let old: String = text.lines().filter(|l| !l.contains("keep_crosswalk")).collect::<Vec<_>>().join("\n");
+    assert!(!old.contains("keep_crosswalk"), "the field was dropped");
+    let w2 = World::from_ron(&old).expect("an old save loads");
+    assert_eq!(w2.walk.footbridges.len(), 1);
+    let c = &w2.walk.crossings[cr as usize];
+    assert!(c.bridged && c.closed, "the crosswalk went on load");
+    assert_eq!(grade_edges(&w2, cr), 0);
+    // A kept crosswalk stays kept through a save.
+    w.set_crosswalk_kept(cr, true).unwrap();
+    let w3 = World::from_ron(&w.to_ron().unwrap()).unwrap();
+    assert!(!w3.walk.crossings[cr as usize].closed && grade_edges(&w3, cr) == 2);
 }
 
 /// Harvey's gesture 423, exactly: a raised street (6 m) whose last point
