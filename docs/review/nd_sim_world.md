@@ -13,33 +13,33 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 ## Top 20 actions
 
 ### (a) Bug fixes
-1. **H. Friend loans can never happen.** `social.rs:1162-1213` runs after `daily_household` (`trips.rs:117-125`) has pooled every pocket into the household purse. After that, savings are at most 40, so the borrower and lender conditions can never be met. Move `loans` before `daily_update`, or base it on household money. (§1.2)
-2. **H. Taking over a merged building leaves dangling ids.** `take_clearing` (`construction.rs:497-513`) removes the building without calling `estate_building_gone`. Its extra lots, owner properties, reservations and the mansion entry keep the dead id, and indexing them can panic later. (§1.1)
-3. **H. Campus annexes never get built on plots that had a building.** The cleared lot is claimed by `claim_reserved` into the **main** university building (`campus.rs:422` and `estate.rs:429-446`). The `pending` entry then stays forever and counts toward `ANNEX_CAP`. Give campus reservations their own kind. (§1.4)
-4. **H. Rebuilds leave stale lot keys.** `remap_lot_keys` (`plan.rs:1358`) does not remap campus `pending`, social gardens and murals, or street-event race `Spot.lot`. After any road or zoning implement, those keys name unrelated new lots. `demolish_with` (`plan.rs:1553`) places evacuees at the stale `b.lot` centre instead of `at`. The `Expropriated` and `BuildingRemoved` events carry stale keys out to the remote API. (§1.1)
-5. **H. Newcomers inherit a stranger's state.** `elite_visitor` (`estate.rs:1068-1106`) and `student_arrives` (`campus.rs:273-311`) build citizens from `..template`, a clone of a random adult. They copy `drunk`, `asleep`, `wakefulness`, `packed_meal` and `commute`. Add a `Citizen::newcomer(...)` constructor and use it in `immigrate` too. (§1.4)
-6. **M. Corp levy double-counts the skim** (`corp.rs:450-453`). It should be `levy.min(c.cash.max(0.0))`.
-7. **M. Ferry day-trippers are charged three fares for two legs.** `ferry.rs:350` books both legs, then `water.rs:1427-1433` books the return again. (§1.6)
+1. **H. Friend loans can never happen.** `social.rs:1162-1213` runs after `daily_household` (`trips.rs:117-125`) has pooled every pocket into the household purse. After that, savings are at most 40, so the borrower and lender conditions can never be met. Move `loans` before `daily_update`, or base it on household money. (§1.2) **FIXED 36a7595**
+2. **H. Taking over a merged building leaves dangling ids.** `take_clearing` (`construction.rs:497-513`) removes the building without calling `estate_building_gone`. Its extra lots, owner properties, reservations and the mansion entry keep the dead id, and indexing them can panic later. (§1.1) **FIXED 36a7595**
+3. **H. Campus annexes never get built on plots that had a building.** The cleared lot is claimed by `claim_reserved` into the **main** university building (`campus.rs:422` and `estate.rs:429-446`). The `pending` entry then stays forever and counts toward `ANNEX_CAP`. Give campus reservations their own kind. (§1.4) **FIXED 36a7595**
+4. **H. Rebuilds leave stale lot keys.** `remap_lot_keys` (`plan.rs:1358`) does not remap campus `pending`, social gardens and murals, or street-event race `Spot.lot`. After any road or zoning implement, those keys name unrelated new lots. `demolish_with` (`plan.rs:1553`) places evacuees at the stale `b.lot` centre instead of `at`. The `Expropriated` and `BuildingRemoved` events carry stale keys out to the remote API. (§1.1) **FIXED 36a7595**
+5. **H. Newcomers inherit a stranger's state.** `elite_visitor` (`estate.rs:1068-1106`) and `student_arrives` (`campus.rs:273-311`) build citizens from `..template`, a clone of a random adult. They copy `drunk`, `asleep`, `wakefulness`, `packed_meal` and `commute`. Add a `Citizen::newcomer(...)` constructor and use it in `immigrate` too. (§1.4) **FIXED 36a7595**
+6. **M. Corp levy double-counts the skim** (`corp.rs:450-453`). It should be `levy.min(c.cash.max(0.0))`. **FIXED 36a7595**
+7. **M. Ferry day-trippers are charged three fares for two legs.** `ferry.rs:350` books both legs, then `water.rs:1427-1433` books the return again. (§1.6) **FIXED 36a7595**
 8. **M. Some taxi, crash and parking bugs:**
-   - A cab parked at a full rank keeps `job = ToRank` and is never re-rota'd (`taxis.rs:779-786`).
-   - Crash blame takes the citizen from `drivers` but the cause from `cars[0]`, so the wrong person is arrested (`driving.rs:441`).
-   - Injured drivers of cars that were not written off keep driving (`driving.rs:394-406`).
-   - One parking search is counted twice in `parking_street_today`, so lots open early (`cars.rs:901` and `922`). (§1.5)
-9. **M. `INDUSTRY_CHOICES` is missing Mining, Smelting and FactoryFarming** (`industry_bridge.rs:12`). The remote API rejects them and the Zone tool never offers them. Build the list from `IndustryKind::ALL`.
+   - A cab parked at a full rank keeps `job = ToRank` and is never re-rota'd (`taxis.rs:779-786`). **FIXED 36a7595**
+   - Crash blame takes the citizen from `drivers` but the cause from `cars[0]`, so the wrong person is arrested (`driving.rs:441`). **FIXED 36a7595**
+   - Injured drivers of cars that were not written off keep driving (`driving.rs:394-406`). **FIXED 36a7595**
+   - One parking search is counted twice in `parking_street_today`, so lots open early (`cars.rs:901` and `922`). (§1.5) **FIXED 36a7595**
+9. **M. `INDUSTRY_CHOICES` is missing Mining, Smelting and FactoryFarming** (`industry_bridge.rs:12`). The remote API rejects them and the Zone tool never offers them. Build the list from `IndustryKind::ALL`. **FIXED 36a7595**
 10. **M. Two placement paths skip site checks.**
-    - `build_power` skips the `min_thickness` check, so heavy plants can go on kerb strips (`power.rs:68-88`). Call `placement_problem` first.
-    - `build_parking` and `build_taxi_company` ignore `estate.reserved` and rubble (`parking.rs:47`, `taxis.rs:57`; the `vacant` list in `develop.rs:531` does not filter either). They can build on a plot an owner bought.
+    - `build_power` skips the `min_thickness` check, so heavy plants can go on kerb strips (`power.rs:68-88`). Call `placement_problem` first. **FIXED 36a7595**
+    - `build_parking` and `build_taxi_company` ignore `estate.reserved` and rubble (`parking.rs:47`, `taxis.rs:57`; the `vacant` list in `develop.rs:531` does not filter either). They can build on a plot an owner bought. **FIXED 36a7595**
 
 ### (b) Safe refactors (behaviour identical)
-11. **One building-classification module.** Replace `Building::is_special`, `World::is_civic_structure`, `is_city_building`, `city_use` and about 8 inline chains with explicit, documented predicates. Doing this exposes the drift listed in §2.1, which can then be fixed in deliberate follow-up commits.
-12. **One "vacant buildable lot" or "site plot ok" predicate** in place of about 20 copies that disagree on reserved, rubble, frozen and under-facility (§2.2). The disagreements are what cause item 10.
-13. **One `crate::hash` module.** It replaces 9 copies of `mix`, `unit`, `key_of` and `hash01`, plus a `Stream` salt registry for the 6 ad-hoc sub-RNGs (`erng`, `srng`, `society_rng`, `arng`, `trng`, `rng_for`). This also removes the `erng(4)` collision between `rich.rs:66` and `estate.rs:965`. (§2.3)
-14. **Integration-test fixture.** Move `demo_world` and its helpers into `tests/common/mod.rs`. Today `demo_city.rs` is pulled in with `#[path]` by 4 other test files, so its 8 tests run in **5 binaries**. Also add a `world/test_support.rs` (§5.3).
+11. **One building-classification module.** Replace `Building::is_special`, `World::is_civic_structure`, `is_city_building`, `city_use` and about 8 inline chains with explicit, documented predicates. Doing this exposes the drift listed in §2.1, which can then be fixed in deliberate follow-up commits. **FIXED 36a7595 (the three city-building checks: `Building::is_city_structure`; the inline chains remain)**
+12. **One "vacant buildable lot" or "site plot ok" predicate** in place of about 20 copies that disagree on reserved, rubble, frozen and under-facility (§2.2). The disagreements are what cause item 10. **FIXED 36a7595 (`World::site_clear` / `lot_free_for` with a `SiteRule`)**
+13. **One `crate::hash` module.** It replaces 9 copies of `mix`, `unit`, `key_of` and `hash01`, plus a `Stream` salt registry for the 6 ad-hoc sub-RNGs (`erng`, `srng`, `society_rng`, `arng`, `trng`, `rng_for`). This also removes the `erng(4)` collision between `rich.rs:66` and `estate.rs:965`. (§2.3) **FIXED 36a7595 (the `erng(4)` collision only: `estate::erng_salt`)**
+14. **Integration-test fixture.** Move `demo_world` and its helpers into `tests/common/mod.rs`. Today `demo_city.rs` is pulled in with `#[path]` by 4 other test files, so its 8 tests run in **5 binaries**. Also add a `world/test_support.rs` (§5.3). **FIXED 7a2ba59 (`tests/common`; `world/test_support.rs` not yet)**
 15. **Remove dead code and fix wrong comments** (§3.3 and §3.4).
 
 ### (c) Bigger restructures
 16. **Move world-RNG draws off the shared stream** (§4.1 and §5.2). First: the weather (`market.rs:127`, which every system then feels), through-traffic (`water.rs:787-804`, every tick), per-citizen trip draws (`trips.rs`, 34 sites), `power.rs:556`, parking (`cars.rs:907`, `952`, `982`, `1014`), `enforcement.rs:98` and `market.rs:818`. This is the root cause of the flaky demo tests.
-17. **Save the per-system RNG streams.** `Services`, `Society` and `Air` hold `Option<SimRng>` streams marked `serde(skip)`, so a save/load mid-run diverges from an uninterrupted run. Then add a save → load → continue determinism test and an exhaustive `from_ron(to_ron(w)).to_ron() == to_ron(w)` round-trip test (§5.4).
+17. **Save the per-system RNG streams.** `Services`, `Society` and `Air` hold `Option<SimRng>` streams marked `serde(skip)`, so a save/load mid-run diverges from an uninterrupted run. Then add a save → load → continue determinism test and an exhaustive `from_ron(to_ron(w)).to_ron() == to_ron(w)` round-trip test (§5.4). **FIXED b96a96e+fd6698e (streams saved; the save/load/continue test is in `tests/determinism.rs` but `#[ignore]`d: traffic, rail and land-value work in progress are not saved yet)**
 18. **Make the multi-seed harness robust.** Pool the society_demo 911 drill over 5 clones of a day-7 world, and run demo_city over 5 seeds, instead of tuning thresholds against a single seed (§5.1).
 19. **Speed up the per-frame and per-hour hot spots** (§4):
     - `project_check` clones the whole `World` and rebuilds on every `plan_version` bump, and `holo.rs` calls it.
@@ -56,10 +56,10 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 
 | Sev | Where | Problem | Fix |
 |---|---|---|---|
-| H [V] | `construction.rs:497-513` `take_clearing` | Calls `buildings.remove(old)` directly. `estate_building_gone` never runs, so `extra_lots` keep `building = Some(dead)`, and `owner.properties`, `reserved`, nimby and `mansion` dangle. Reached via `take_over_lot` → `begin_demolition` → `place_special` (`trains.rs:246`). | Take `plot` out of the old building and call `estate_building_gone(old, &plot, ..)`, or route through one `remove_building_record(bid)`. |
-| H [V] | `plan.rs:1358` `remap_lot_keys` | The doc says every kept key follows its lot, but it only remaps rubble, camps and `pending_footfall`. These are not remapped: campus `pending` (`corp.rs:550`), `social.gardens` and `murals` (`social.rs:785`, `804`; `social.rs:1616-1628` only checks `contains_key`), and race `Spot.lot` (`street_events.rs:214`, used at `nights.rs:156` and `262`). A fresh SlotMap re-issues the same keys, so all of these silently point at other lots. | Remap them with the same `map`. Add a test that rebuilds and checks every stored `LotId` still names a lot at the old position. |
-| M [V] | `plan.rs:1553` `demolish_with` | `center = lots.get(b.lot).map(center).or(at)` prefers the stale old key over `at` during a rebuild, so evacuees are put on an unrelated lot. | `at.or_else(\|\| lots.get(b.lot).map(..))`. |
-| M [V] | `plan.rs:1263-1265`, `1595` | `Expropriated(bid, b.lot)` and `BuildingRemoved(bid, b.lot)` carry the old key after a rebuild. The remote API exports them (`nd_app/src/remote.rs:362`). | Emit `LotId::default()` (or map through `carried`) when `at.is_some()`. |
+| H [V] | `construction.rs:497-513` `take_clearing` | Calls `buildings.remove(old)` directly. `estate_building_gone` never runs, so `extra_lots` keep `building = Some(dead)`, and `owner.properties`, `reserved`, nimby and `mansion` dangle. Reached via `take_over_lot` → `begin_demolition` → `place_special` (`trains.rs:246`). | Take `plot` out of the old building and call `estate_building_gone(old, &plot, ..)`, or route through one `remove_building_record(bid)`. **FIXED 36a7595** |
+| H [V] | `plan.rs:1358` `remap_lot_keys` | The doc says every kept key follows its lot, but it only remaps rubble, camps and `pending_footfall`. These are not remapped: campus `pending` (`corp.rs:550`), `social.gardens` and `murals` (`social.rs:785`, `804`; `social.rs:1616-1628` only checks `contains_key`), and race `Spot.lot` (`street_events.rs:214`, used at `nights.rs:156` and `262`). A fresh SlotMap re-issues the same keys, so all of these silently point at other lots. | Remap them with the same `map`. Add a test that rebuilds and checks every stored `LotId` still names a lot at the old position. **FIXED 36a7595** |
+| M [V] | `plan.rs:1553` `demolish_with` | `center = lots.get(b.lot).map(center).or(at)` prefers the stale old key over `at` during a rebuild, so evacuees are put on an unrelated lot. | `at.or_else(\|\| lots.get(b.lot).map(..))`. **FIXED 36a7595** |
+| M [V] | `plan.rs:1263-1265`, `1595` | `Expropriated(bid, b.lot)` and `BuildingRemoved(bid, b.lot)` carry the old key after a rebuild. The remote API exports them (`nd_app/src/remote.rs:362`). | Emit `LotId::default()` (or map through `carried`) when `at.is_some()`. **FIXED 36a7595** |
 | M [V] | `plan.rs:93-99`, `1024-1051` `add_road`, `add_rail`, `add_path`, `add_zone` | They restore `self.project` without calling `plan_changed()`. `effective_plan()` and `planned_zoning` then ignore the active project while `preview()` does not. A refused implement silently drops the scratch project. Each call burns a project number. | Call `plan_changed()` after restoring. Return `Option<GestureId>` when `implement_refused` is set. |
 | M [V] | `plan.rs:289-303` + `767` | `implement_project` moves the active project aside, so `conflict_warnings` never sees it. | Pass the parked-aside project into `conflict_warnings`. |
 | M [V] | `placement.rs:279-284` `release_city_lot` | Replaces the lot with a fresh `make_lot`, so `shore` is reset. This runs after `mark_shore_lots` in a rebuild. | Carry `shore` over, as `landlocked` already is. |
@@ -70,14 +70,14 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 | L [V] | `pillars.rs:285-297` | `pillars_after_load` follows the drawn points, while a rebuild follows smoothed, water-split and sampled points. `pillar_gaps` (`serde(skip)`) are lost on load. | Extract `built_way_points(...)` and use it in both places. |
 | L [V] | `mod.rs:957` `validate` | Checks lot → building but not building → lot. `ports[*].lot` is not validated. | Re-link or drop buildings whose `b.lot` does not point back. |
 | L [S] | `grounds.rs:163` `settle_path_links` | Rebuilds without `project_check`. A structure fronting only the trimmed path is removed, and `demolish_with` never calls `refresh_power` or bumps the subway version. | Refresh the power and subway state in `demolish_with` for power and metro buildings. |
-| L [V] | `develop.rs:751-757` `build_on_named` | A rezoned park is removed with `buildings.remove` directly, bypassing `estate_building_gone`. | Same helper as `take_clearing`. |
+| L [V] | `develop.rs:751-757` `build_on_named` | A rezoned park is removed with `buildings.remove` directly, bypassing `estate_building_gone`. | Same helper as `take_clearing`. **FIXED 36a7595** |
 
 ### 1.2 People, social, trips, places
 
 | Sev | Where | Problem | Fix |
 |---|---|---|---|
-| H [V] | `social.rs:1162-1213` `loans` | Can never fire. See action 1. Existing debts are never repaid either. | Run before `daily_update`, or use `households[h].money`. Add a test. |
-| M [V] | `mod.rs:671` `social_concern` | `serde(skip)` and only set at :25 in `hourly_social` (`social.rs:711`). After a load, `pick_topic` has no `Topic::City`, so conversations diverge. | Set it in `after_load`. |
+| H [V] | `social.rs:1162-1213` `loans` | Can never fire. See action 1. Existing debts are never repaid either. | Run before `daily_update`, or use `households[h].money`. Add a test. **FIXED 36a7595** |
+| M [V] | `mod.rs:671` `social_concern` | `serde(skip)` and only set at :25 in `hourly_social` (`social.rs:711`). After a load, `pick_topic` has no `Topic::City`, so conversations diverge. | Set it in `after_load`. **FIXED b96a96e+fd6698e (saved; read in `after_load` for older saves)** |
 | M [V] | `trips.rs:210`, `social.rs:1146` | The "move up a tier" search and the friend flat tip-off don't filter `b.annex`, so households can move into dorms or frat houses. They also compare `b.rent`, not `rent_due`. | Add a shared `Building::is_free_home()` (§2.2). |
 | M [V] | `benches.rs:138`, `social.rs:762-768` | `park_with_room` and `shared_place` skip `park_open_for_visits`, so people are sent to shut beaches. | Add a `park_visitable(lot)` helper. |
 | M [V] | `social.rs:767` | Comment says "Never where an enemy of either is now". No such check exists. | Implement it via `take_crowds`, or drop the comment. |
@@ -95,8 +95,8 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 
 | Sev | Where | Problem | Fix |
 |---|---|---|---|
-| H [V] | `services.rs:1328` `civic_value` | Batteries and city parking (both `is_civic_structure`) fall through to `Placeable::CargoHub.cost()`. Plants use base `cost()`, not site-scaled `cost_at`. Repair bills are therefore wrong. | Use `self.placed_as(id).map_or(0.0, \|p\| p.cost())` (`services.rs:362`). |
-| M [V] | `services.rs:447`, `2245` | `incidents_today` and `resolved_today` are `[u32; 3]` indexed by `kind.index()`. Crash is 3, so `get_mut` silently drops crashes, while `unanswered_today` counts them. | Index by `kind.slot()`, or use `[u32; 4]`. |
+| H [V] | `services.rs:1328` `civic_value` | Batteries and city parking (both `is_civic_structure`) fall through to `Placeable::CargoHub.cost()`. Plants use base `cost()`, not site-scaled `cost_at`. Repair bills are therefore wrong. | Use `self.placed_as(id).map_or(0.0, \|p\| p.cost())` (`services.rs:362`). **FIXED 36a7595** |
+| M [V] | `services.rs:447`, `2245` | `incidents_today` and `resolved_today` are `[u32; 3]` indexed by `kind.index()`. Crash is 3, so `get_mut` silently drops crashes, while `unanswered_today` counts them. | Index by `kind.slot()`, or use `[u32; 4]`. **FIXED 36a7595 (by `slot()`: crashes count with the police)** |
 | M [V] | `chases.rs:281-318` | A homicide suspect tagged after a chase is arrested, but `homicide_solved` never runs: no news, the family never hears. | Call `homicide_solved` in the tag branch. |
 | M [V] | `air.rs:436`, `867` | Air ambulances are sent to on-road crash victims. `parked` tests `c.inside == Some(building)`, so the incident resolves `Gone` with no transport. | Skip `on_road`, or land at `inc.pos` and use the on-road presence test. |
 | M [S] | `services.rs:2383-2394` | `daily_services` overwrites `c.income` for every employed citizen before `daily_update`. Elites' incomes are restored only later, in `daily_estate`. | Apply the bonus separately, or move the pass. |
@@ -112,15 +112,15 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 
 | Sev | Where | Problem | Fix |
 |---|---|---|---|
-| H [V] | `campus.rs:422` + `estate.rs:429-446` | Annex plot reservations are claimed into the main university building (action 3). `campus_grow_now` takes the same path. | Use a separate reservation kind; `claim_pending` builds the annex. |
-| H [V] | `estate.rs:1068-1106`, `campus.rs:273-311` | `..template` newcomers (action 5). They also return `None` in a town with no adults. | Add `Citizen::newcomer`. |
-| H [V] | `corp.rs:450-453` | `levy.min(c.cash.max(0.0) + skim)` after `c.cash += skim` counts the skim twice. | `levy.min(c.cash.max(0.0))`. |
-| M [V] | `towers.rs:411-418`, `440-446` `break_ground` | Redevelops the primary plot without `pack_business`, so its business (cash and staff) is lost. | Call `pack_business` first, as the other three acquire flows do. |
+| H [V] | `campus.rs:422` + `estate.rs:429-446` | Annex plot reservations are claimed into the main university building (action 3). `campus_grow_now` takes the same path. | Use a separate reservation kind; `claim_pending` builds the annex. **FIXED 36a7595** |
+| H [V] | `estate.rs:1068-1106`, `campus.rs:273-311` | `..template` newcomers (action 5). They also return `None` in a town with no adults. | Add `Citizen::newcomer`. **FIXED 36a7595** |
+| H [V] | `corp.rs:450-453` | `levy.min(c.cash.max(0.0) + skim)` after `c.cash += skim` counts the skim twice. | `levy.min(c.cash.max(0.0))`. **FIXED 36a7595** |
+| M [V] | `towers.rs:411-418`, `440-446` `break_ground` | Redevelops the primary plot without `pack_business`, so its business (cash and staff) is lost. | Call `pack_business` first, as the other three acquire flows do. **FIXED 36a7595** |
 | M [V] | `corp.rs:469-499` + `towers.rs:381` | A corp's league-tower HQ is paid out of a tower developer's capital and given to the corp for 0. It sets `last_start_day`, which blocks market towers. A non-commercial fallback site gives an HQ with no Office. | Add a `TowerOrder` path that charges corp cash, is limited to Commercial, and leaves the gap alone. |
-| M [V] | `estate.rs:213-225` `give_to`, `301-323` `buyable` | Sellers are never paid. `Person`, `Firm` and `Developer` holdings are buyable, so an investor's second home (bought with a real deposit, `rich.rs:90`) can be taken for nothing by a firm expansion, a tower, an HQ, or the remote `buy_out_and_rebuild`. | Pay the previous owner in `give_to`, or make Person-owned property unbuyable. |
-| M [V] | `estate.rs:362-363`, `390` `prune_estate` | The keep-list is built before dead elites are pruned. A dead billionaire's Elite owner keeps the mansion and firms forever (unbuyable), the NIMBY entry stays, and the police escort is never reassigned. | Release the elite's properties, drop the NIMBY entry, and call `refresh_police_escort()`. |
+| M [V] | `estate.rs:213-225` `give_to`, `301-323` `buyable` | Sellers are never paid. `Person`, `Firm` and `Developer` holdings are buyable, so an investor's second home (bought with a real deposit, `rich.rs:90`) can be taken for nothing by a firm expansion, a tower, an HQ, or the remote `buy_out_and_rebuild`. | Pay the previous owner in `give_to`, or make Person-owned property unbuyable. **FIXED 36a7595 (`settle_sale` at every market buyout)** |
+| M [V] | `estate.rs:362-363`, `390` `prune_estate` | The keep-list is built before dead elites are pruned. A dead billionaire's Elite owner keeps the mansion and firms forever (unbuyable), the NIMBY entry stays, and the police escort is never reassigned. | Release the elite's properties, drop the NIMBY entry, and call `refresh_police_escort()`. **FIXED 36a7595** |
 | M [V] | `campus.rs:119` | `prune_campuses` leaves the University owner holding the annexes (unbuyable, still tagged) and the reservations in place. | Release them on prune. |
-| M [V] | `districts.rs:301-339` `district_stats` | Iterates lots, so merged buildings are counted once per extra lot (2-4×). | Skip unless `b.lot == lot_id`. |
+| M [V] | `districts.rs:301-339` `district_stats` | Iterates lots, so merged buildings are counted once per extra lot (2-4×). | Skip unless `b.lot == lot_id`. **FIXED 36a7595** |
 | L [V] | `market.rs:818` | World-RNG draw on every purchase. | Use a hash. |
 | L [V] | `corp.rs:456` | The levy is booked as `BusinessTax` but not added to `economy.tax_today`. | Add it. |
 | L [V] | `corp.rs:811-829` `divest` | Can sell the flagship while `corp.flagship` still points at it. | Skip the flagship, or clear it. |
@@ -128,16 +128,16 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 | L [V] | `districts.rs:227-250` | The industry retool runs in Historic districts, against the module doc. | Check Historic first. |
 | L [V] | `tourism.rs:276-279` | `break` with no way in drops the hour's remaining arrivals uncounted. | Add them to `turned_away_today`. |
 | L [V] | `estate.rs:1002-1006`, `1066`, `rich.rs:90`, `181`, `campus.rs:236`, `270`, `pressure.rs:352`, `estate.rs:701`, `762` | Money appears or vanishes with no ledger flow (elite seed money, the investor rent share, student stipends, branch and merge fees). The branch fee can push a business negative. | Book it through `economy` flows, or document it as intentional. |
-| L [V] | `rich.rs:66` + `estate.rs:965` | Both use `erng(4)` on the same midnight tick, so an elite spawn day is always an invest day too. | Use distinct salts (part of the §2.3 registry). |
+| L [V] | `rich.rs:66` + `estate.rs:965` | Both use `erng(4)` on the same midnight tick, so an elite spawn day is always an invest day too. | Use distinct salts (part of the §2.3 registry). **FIXED 36a7595** |
 
 ### 1.5 Vehicles and transit
 
 | Sev | Where | Problem | Fix |
 |---|---|---|---|
-| M [V] | `driving.rs:441` | `at_fault` takes the cause from `cars.first()` but the person from `drivers.first()` (citizens only). A stranger's red-light crash gets the citizen victim arrested. | Use `traffic.cars[cars[0]].citizen` if that is a citizen. |
-| M [V] | `cars.rs:901-904` + `922-925` | One search increments `parking_street_today` twice (circling, then gave up). That counter drives `maybe_open_parking`. | Count once. |
-| M [V] | `taxis.rs:779-786` | Rank full → `park_cab_at_kerb` keeps `job = ToRank`. The cab blocks the rank in `at_rank` and `run_rota` never moves it again. | Set `job = Idle` in the fallback. |
-| M [V] | `driving.rs:394-406` | Injured drivers whose car was not wrecked keep `Activity::Driving`, while a Medical incident is opened at the crash. | Stop and unseat them, as the wreck branch does. |
+| M [V] | `driving.rs:441` | `at_fault` takes the cause from `cars.first()` but the person from `drivers.first()` (citizens only). A stranger's red-light crash gets the citizen victim arrested. | Use `traffic.cars[cars[0]].citizen` if that is a citizen. **FIXED 36a7595** |
+| M [V] | `cars.rs:901-904` + `922-925` | One search increments `parking_street_today` twice (circling, then gave up). That counter drives `maybe_open_parking`. | Count once. **FIXED 36a7595** |
+| M [V] | `taxis.rs:779-786` | Rank full → `park_cab_at_kerb` keeps `job = ToRank`. The cab blocks the rank in `at_rank` and `run_rota` never moves it again. | Set `job = Idle` in the fallback. **FIXED 36a7595** |
+| M [V] | `driving.rs:394-406` | Injured drivers whose car was not wrecked keep `Activity::Driving`, while a Medical incident is opened at the crash. | Stop and unseat them, as the wreck branch does. **FIXED 36a7595 (a hurt driver's car is written off: they wait by it)** |
 | M [S] | `driving.rs:371-378` + `taxis.rs:404` | A cab can be written off with a fare aboard. The rider stays `Riding` until the tow, the rider is never rolled for injury, and the cab is "recovered" to its yard. | Set the rider down, roll for injury, and remove the cab. |
 | L [V] | `moto.rs:338`, `nights.rs:603` | Clearing `profile.assigned` re-runs `assign_drivers`: drunk trips are double-counted and the memory is written twice. | Restore the stored profile instead. |
 | L [V] | `taxis.rs:935-939` `sell_cab` | Removes an on-road cab mid-street. | Use `retire_vehicle`. |
@@ -152,13 +152,13 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 
 | Sev | Where | Problem | Fix |
 |---|---|---|---|
-| M [V] | `ferry.rs:350-354` + `water.rs:1427-1433` | Day-trippers pay 2 fares at boarding and are charged again from `boarding` when the ferry sails. | Keep a separate carried-but-not-charged count. |
-| M [V] | `industry_bridge.rs:12` | 8 of 10 industry kinds are listed (action 9). | Derive the list from `IndustryKind::ALL`, and test that it covers every kind. |
-| M [V] | `power.rs:68-88` `build_power` | Re-implements `lot_problem` minus `min_thickness`. Reached directly from `place_on_lot` and the remote API. | Call `placement_problem` first and delete the inline copy. |
+| M [V] | `ferry.rs:350-354` + `water.rs:1427-1433` | Day-trippers pay 2 fares at boarding and are charged again from `boarding` when the ferry sails. | Keep a separate carried-but-not-charged count. **FIXED 36a7595** |
+| M [V] | `industry_bridge.rs:12` | 8 of 10 industry kinds are listed (action 9). | Derive the list from `IndustryKind::ALL`, and test that it covers every kind. **FIXED 36a7595** |
+| M [V] | `power.rs:68-88` `build_power` | Re-implements `lot_problem` minus `min_thickness`. Reached directly from `place_on_lot` and the remote API. | Call `placement_problem` first and delete the inline copy. **FIXED 36a7595** |
 | L-M [V] | `power.rs:182`, `202` `plant_rows` | `pending: construction.is_some()`, but a heavy plant clearing its lot has `demolition` set instead, so it shows as running at 0 MW. | Use `!b.operating()`, as the battery rows do. |
 | L [V] | `water.rs:1039-1066` `place_port` | Debits and expropriates before the "no street" failure, which keeps the money and the takings. | Check first, or roll back. |
 | L [V] | `fishing.rs:339-347` | Stats count the full catch while only `min(room)` reaches the stock. | Record the amount actually stored. |
-| L [V] | `water.rs:1431` | Ferry overflow riders vanish (`riders.min(CAPACITY)` after removing all of `boarding`). | Put the remainder back. |
+| L [V] | `water.rs:1431` | Ferry overflow riders vanish (`riders.min(CAPACITY)` after removing all of `boarding`). | Put the remainder back. **FIXED 36a7595** |
 | L [S] | `power.rs:584` `plant_cluster` | `self.lots[field[0]]` unchecked. The renderer calls it every frame. | Guard with `get`. |
 | L [V] | `ferry.rs:377` | `ferry_riders_today` is counted on the stranded sweep, when no boat ran. | Count only real sailings. |
 | L [V] | `shore.rs:540-544` | A jetty load whose buyer is gone is dropped. The dock paths re-dispatch it. | Make jetties consistent with docks. |
@@ -167,7 +167,7 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 ### 1.7 Save/load and `#[serde(default)]`
 
 - Every `World` field added since v1 has `#[serde(default)]`. The fields without it (`config`, `clock`, `rng`, `master`, `next_gesture`, `plan_version`, `roads`, `zones`, `lots`, `buildings`, `citizens`, `traffic`, `economy`, `land_value`, `next_seed`) are original v1 fields. **No missing defaults were found on World.**
-- **H. Per-system RNG streams are not saved.** `Services::rng`, `Society::rng` and `Air::rng` are `Option<SimRng>` with `serde(skip)`, re-seeded from `(seed, load tick)` by `srng` (`services.rs:54`), `society_rng` (`society.rs:10`) and `arng` (`air.rs:30`). A loaded game diverges from the same run left going. `Air::grumbled` is skipped too, so people grumble twice a day across a load. Save them with an `Option` variant of `rng_serde` (`mod.rs:1445`).
+- **H. Per-system RNG streams are not saved.** `Services::rng`, `Society::rng` and `Air::rng` are `Option<SimRng>` with `serde(skip)`, re-seeded from `(seed, load tick)` by `srng` (`services.rs:54`), `society_rng` (`society.rs:10`) and `arng` (`air.rs:30`). A loaded game diverges from the same run left going. **FIXED b96a96e+fd6698e (streams: fix/review-sim-core `rng_save`, the world stream folded into it; `Transit::departures` saved too; `Air::grumbled` still skipped)** `Air::grumbled` is skipped too, so people grumble twice a day across a load. Save them with an `Option` variant of `rng_serde` (`mod.rs:1445`).
 - **Not repaired on load.** `after_load` does not call `prune_social`, `prune_corps` or `prune_campuses`, which only run at midnight. Nothing cleans incidents or units, society offenders and camps, taxis, cargo hubs or fishing that point at missing ids. `validate` covers only the original systems.
 - **Pruned only daily.** `social_concern` and `bridge_metres`: see the tables above.
 
@@ -183,7 +183,7 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
   - `city_use` (`placement.rs:213`) and `civic_value` (`services.rs:1328`): each has its own case list, and the latter has the bug above.
 - **Inline "ordinary grown building" chains, each slightly different:** `mod.rs:1114` (`height_cap`; misses port, metro and cargo hub, so docks count towards density), `air.rs:171-183`, `industry.rs:142`, `services.rs:2737`, `plan.rs:973`, `corp.rs:124`, `corp.rs:278`, `towers.rs:203`, `districts.rs:217` (redundant `port` check), `develop.rs:435`, `estate.rs:303`.
 - **Working depot:** `b.depot && !b.is_derelict() && b.operating()` appears 4 times (`buses.rs:238`, `308`, `develop.rs:96`, `survey.rs:92`). `committee/report.rs:277` and `proposals.rs:301` drop `!is_derelict`.
-- **Home:** a `world/kinds.rs` (or methods on `Building`) with `is_city_structure()`, `is_grown()`, `counts_for_density()`, `working_depot()`, `is_free_home()` and `placed_as()`. Make `city_parking` the only source of truth and keep `vehicles.city_lots` for its data only.
+- **Home:** a `world/kinds.rs` (or methods on `Building`) with `is_city_structure()`, `is_grown()`, `counts_for_density()`, `working_depot()`, `is_free_home()` and `placed_as()`. Make `city_parking` the only source of truth and keep `vehicles.city_lots` for its data only. **FIXED 36a7595 (`is_city_structure`, `is_special`, `is_civic_structure`, `is_city_building` now agree)**
 
 ### 2.2 "Can something be built or bought here?"
 - **Vacant buildable lot:** about 20 copies. Some forget `reserved`, `is_rubble`, `district_frozen` or `landlocked`:
@@ -198,7 +198,7 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 - **Free home:** 6 copies: `trips.rs:210`, `241`, `social.rs:1146`, `campus.rs:722`, `pressure.rs:885`, `estate.rs:1059`.
 - **Placement checks:** `build_power` (`power.rs:68-88`) copies `lot_problem` (`services.rs:124`). `structures_in_way_at` (`plan.rs:936`), `road_takes` (`pillars.rs:241`) and `roundabout_takes` (`plan.rs:509`) use three different road widths. Use `deck_half_width` with one `lots_under_way(..)`.
 - **Facility and port footprints:** the footprint union appears at `plan.rs:473`, `1155` and `pillars.rs:116`. `under_facility` (`mod.rs:1099`) rebuilds every footprint per call and ignores ports; `no_parcel_why` adds ports by hand.
-- **Home:** `fn lot_free_for(&self, lid, &SiteRule) -> bool` in `world/placement.rs`, plus cached `structure_footprints()` in `refresh_facility_cache`.
+- **Home:** `fn lot_free_for(&self, lid, &SiteRule) -> bool` in `world/placement.rs`, plus cached `structure_footprints()` in `refresh_facility_cache`. **FIXED 36a7595 (`site_clear` / `lot_free_for`; footprints not cached yet)**
 
 ### 2.3 Hashing and RNG
 - **Splitmix-style mixers:** `committee/mod.rs:968`, `corp.rs:319`, `streets.rs:91`, `world/nights.rs:14` and `world/social.rs:108` are identical. `fishing.rs:249`, `shore.rs:137` and `world/waterfront.rs:52` are another identical trio. `world/pressure.rs:47` is a murmur variant. `pedestrians.rs:92` has `hash01`.
@@ -419,7 +419,7 @@ Caches checked and fine: `crowds_cache` and `waiting_cache` are keyed by tick. `
 - **H. demo_city runs 5 times.** `tests/demo_city.rs` (8 tests) is `#[path]`-included by `society_demo.rs`, `sim_checks.rs`, `probe_society_civic.rs` and `probe_society_units.rs`, so its tests run in 5 binaries. That is 5 chances to flake and about 7 eight-day demo runs per full suite. `busy_city()` (up to 40k ticks) is built up to 15 times. Fix:
   - Move `demo_world`, `Late`, `ghosts`, `place` and `place_near` into `tests/common/mod.rs`.
   - Keep one copy of the M4 late-mind test; `demo_city.rs:393` and `sim_checks.rs:52` duplicate each other.
-  - Share `busy_city` via `OnceLock` and clone it per test.
+  - Share `busy_city` via `OnceLock` and clone it per test. **FIXED 7a2ba59**
 - **Duplicated unit-test helpers.** Proposed home: `world/test_support.rs` (`#[cfg(test)]`). Copies:
   - `square`: about 25 copies with two different signatures
   - `rect`: 5 copies
@@ -432,13 +432,13 @@ Caches checked and fine: `crowds_cache` and `waiting_cache` are keyed by tick. `
 
   `test_support.rs` should also provide `quiet_config` and `full_config`, `HOUR` and `DAY`, and a crate-wide `World::check_invariants()`, promoted from `car_tests.rs:84`, run by `run()` in debug.
 - **Systems on by default.** No test sets `social: false`. 36 worlds in `tests.rs` run with emergencies, society and social on (e.g. the 5-day runs at `tests.rs:111` and `838`), so random fires can hit unrelated assertions.
-- **Tests that pass without testing.** `corp_tests.rs:544`, `economy_tests.rs:352`, `estate_tests.rs:504` and `towers_tests.rs:236` read `saves/flags/flag_patch.ron` (gitignored) and pass with "skipped" when it is missing. `rebuild_regressions.rs:125` passes when `ND_SAVE` is unset. Commit a trimmed legacy fixture under `tests/fixtures/`, and make the env-gated test panic with a hint.
+- **Tests that pass without testing.** `corp_tests.rs:544`, `economy_tests.rs:352`, `estate_tests.rs:504` and `towers_tests.rs:236` read `saves/flags/flag_patch.ron` (gitignored) and pass with "skipped" when it is missing. `rebuild_regressions.rs:125` passes when `ND_SAVE` is unset. Commit a trimmed legacy fixture under `tests/fixtures/`, and make the env-gated test panic with a hint. **FIXED 7a2ba59**
 - **Magic tick counts:** `events_tests.rs:273`, `sim_checks.rs:93`, `society_demo.rs:98`, `110`, `121`, `166`.
 - **Slow unit tests** (multi-day): `tests.rs:111`, `838`, `districts_tests.rs:198`, `economy_tests.rs:289`, `estate_tests.rs:142`, `towers_tests.rs:197`, among others.
 
 ### 5.4 Important behaviour with no test
-- **H. Save → load → continue.** Run A, round-trip into B, run both M ticks, compare `to_ron()`. This fails today because of the unsaved streams (§1.7).
-- **H. Whole-world determinism** on the demo world with RuleBasedMind (2 days twice → identical RON). Only per-subsystem determinism tests exist.
+- **H. Save → load → continue.** Run A, round-trip into B, run both M ticks, compare `to_ron()`. This fails today because of the unsaved streams (§1.7). **FIXED 7a2ba59 (`#[ignore]`d with the reasons: state outside `world/` is not saved yet)**
+- **H. Whole-world determinism** on the demo world with RuleBasedMind (2 days twice → identical RON). Only per-subsystem determinism tests exist. **FIXED 7a2ba59**
 - **M. Exhaustive round trip.** Assert `from_ron(w.to_ron()).to_ron() == w.to_ron()` on a world with one of every feature. These fields have no round-trip test: `taxis`, `cargo_hubs`, `services` (incidents, units), `driving`, `journeys`, `scene`, `identity`, `rides`, `crosswalks`, `road_log`, `air`, `pillars`, `streets`.
 - **M. Dangling ids.** Inject one ghost id per system, load, and run 1440 ticks under `check_invariants()`. Also call `prune_social`, `prune_corps` and `prune_campuses` from `after_load`.
 - **Regression tests, one per bug fixed** (each also lists its test in the slice tables above):
