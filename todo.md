@@ -290,6 +290,16 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [x] Speech bubbles around town off → DONE [main 2b7c892]: off by default, View window checkbox, saved in settings.ron
 - [ ] FLAG (new city day 3): blue plan near Pylon Drive refused on Implement, "would take" a far-away geothermal plant, nothing outlined [fix/false-block]
 
+## Queued (Harvey 2026-10-08: add new requests here; start agents only as running ones finish)
+- [ ] Mega-corps: a company that grows big enough becomes a mega-corp (fictional), buys land in every kind of area and owns many industries and companies; procedural logo and colour shown on its skyscrapers, trucks and other buildings; owns employee housing; builds a headquarters tower; buys first what is closest by driving distance to HQ
+- [ ] Universities act like mega-corps around campus: buy nearby residential plots for dorms, build admin offices, theatres, sports facilities, frat houses on nearby plots, claim nearby parks as campus plaza; adjacency bonus with pizza shops and bars for students
+- [ ] Schools raise the desirability of nearby homes for families with children
+- [ ] Supertall league: much taller buildings on high-density, high-value land; mega-tall towers buy out adjacent lots for a big footprint (Empire State → Burj Khalifa scale); developers keep out-building each other for the city's tallest if city rules allow (height caps)
+- [ ] Waterfront: parcels along a road near the water reach all the way to the water's edge; waterfront businesses that thrive there (beach resorts, hotels, fancy on-the-water restaurants); fishing and shipping industries with water access can build their own small ports
+- [ ] Park paths are real paths (Cities: Skylines style): parks and some buildings/structures with grounds (plazas, campuses, stations, stadiums) expose path junction points on their internal walkways; the path tool snaps to them so a player path connects straight into the park's walkway network, which joins the walk graph. When the park/building changes or goes, the player path segment attached to a vanished junction is removed (or left dead-ended with a clear marker).
+- [ ] LAST, after every other item: a comprehensive code review and refactor of the whole codebase (Harvey 2026-10-08)
+- [ ] "Public beach" zone paintable on any waterfront; people walk/relax on it if they can reach it (from a park, a road or a path)
+
 ## Follow-ups noted in agent reports (not started)
 - [ ] Batteries charge on cheap night power and discharge at the evening peak (grid-weather)
 - [ ] Freight trains really carry their cargo instead of yards handing it to any train (train-inspect)
@@ -312,7 +322,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] A bought-out business moves to a new location instead of only closing (todo5)
 
 ## Questions for Harvey (unanswered)
-- [ ] Should parking lots the player places stop a road (like stations/plants) instead of being bought out?
+- [x] Player-placed parking lots stop a road like other city buildings → DONE [main]: `city_parking` flag, old saves migrate (Harvey: any user-placed building must not be demolished by a road)
 - [x] Cranes stand still 17:00–08:00 by design → ANSWERED 2026-10-08: keep as is.
 - [ ] Delete old todo2.md–todo5.md (their items were carried into todo.md)?
 
