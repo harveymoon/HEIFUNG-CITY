@@ -900,7 +900,7 @@ Citizens are rendered from their simulated positions every frame.
   sold when the owner is gone.
 - **Mega-corps** (`nd_sim::corp`, `world/corp.rs`, [megacorp]). *Growing into one*: daily (25%
   roll) the biggest company (an owner record of a firm or a founder, or a lone business) whose
-  holdings take 2,500 a day (last three days' average), employ 40 and number two (or twice the
+  holdings take 9,000 a day (last three days' average), employ 30 and number two (or twice the
   takings and staff in one building) becomes a mega-corp, in a town of 600 people or more, one
   per 3,000 people, four at most. It gets a coined fictional name (two syllables nobody trades
   under and a sector word), a brand colour (12, a free one first) and a logo: a shape (circle,
@@ -911,10 +911,10 @@ Citizens are rendered from their simulated positions every frame.
   can assemble (up to three touching, 900 m²) and raises a tower there (pressure floors + 10,
   18..40 floors; hook for feat/supertall: order it as a league tower when the city's height
   limit allows). It buys up to three things a day nearest its HQ *by road* (one Dijkstra per HQ,
-  cached against the road network's version): businesses in profit of any kind (a kind it does
+  cached against the road network's version): businesses in profit (over their last three days) of any kind (a kind it does
   not own counts as 30% nearer, so it spreads into every industry), blocks of homes for its staff
   while it has under 0.6 homes a head, and vacant land of any zoning (a branded office, shop,
-  bar or works on it). Staff move into its housing (six households a day, nearest their work)
+  hotel, bar or works on it, a kind it lacks first; at most one buy in four is land). Staff move into its housing (six households a day, nearest their work)
   and pay 30% less rent. *Balance*: the player caps how much of the town's ordinary buildings
   one corp may own (8% by default, 2-25%, at least four) and sets a levy (0-20% of its daily
   takings, booked as business tax) or bans new corps (City Data › Economy › Corporations); a

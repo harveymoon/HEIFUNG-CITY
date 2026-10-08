@@ -28,9 +28,9 @@ use std::collections::HashMap;
 
 /// A company becomes a mega-corp when its businesses take this much a day
 /// (the last three days' average, summed over its holdings)...
-pub const PROMOTE_REVENUE: f32 = 2_500.0;
+pub const PROMOTE_REVENUE: f32 = 9_000.0;
 /// ...employ this many...
-pub const PROMOTE_STAFF: usize = 40;
+pub const PROMOTE_STAFF: usize = 30;
 /// ...and it holds this many properties (or twice the staff and revenue
 /// in one big building).
 pub const PROMOTE_HOLDINGS: usize = 2;
@@ -60,7 +60,7 @@ pub const SKIM_FLOOR: f32 = 500.0;
 /// The corp's deposit on a purchase: this share of the price at the
 /// estate's scale (the rest is the bank's), and at least this much cash
 /// in hand to buy at all.
-pub const DEPOSIT_SHARE: f64 = 0.01;
+pub const DEPOSIT_SHARE: f64 = 0.004;
 pub const BUY_MIN_CASH: f64 = 400.0;
 /// Purchases a day at most.
 pub const BUYS_PER_DAY: usize = 3;
@@ -408,6 +408,9 @@ pub struct MegaCorp {
     pub bought_total: u32,
     #[serde(default)]
     pub housed_total: u32,
+    /// Of `bought_total`, how many were vacant land it built on.
+    #[serde(default)]
+    pub built_total: u32,
     /// The levy paid, all time.
     #[serde(default)]
     pub levy_total: f64,

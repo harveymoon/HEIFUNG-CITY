@@ -28,29 +28,22 @@ fn lit(m: &BrandMark, k: f32) -> [f32; 3] {
     mul(m.colour, k)
 }
 
-/// The top of the building's mass and the extent (lot-local) of its upper
-/// half: walls, glass and roofs drawn so far.
-fn mass(g: &Geometry, c: &Ctx) -> Option<(f32, Vec2, Vec2)> {
-    use Surface as S;
-    let surfaces = [S::Concrete, S::Plaster, S::Brick, S::Stone, S::Panel, S::Glass, S::Metal, S::WornConcrete, S::WornPlaster, S::WornBrick, S::WornPanel, S::Wood];
-    let mut top = 0.0f32;
-    for s in surfaces {
-        if let Some(m) = g.parts.get(s.index()) {
-            for p in &m.positions {
-                top = top.max(p[1]);
-            }
-        }
-    }
-    if top < 2.0 {
-        return None;
-    }
-    let band = top * 0.5;
+/// Surfaces that make a building's mass (walls, glass, roofs; not masts).
+const MASS: [Surface; 10] = [Concrete, Plaster, Brick, Stone, Panel, Glass, WornConcrete, WornPlaster, WornBrick, WornPanel];
+
+/// The top of the building's mass.
+fn mass_top(g: &Geometry) -> f32 {
+    MASS.iter().filter_map(|s| g.parts.get(s.index())).flat_map(|m| m.positions.iter().map(|p| p[1])).fold(0.0, f32::max)
+}
+
+/// The extent (lot-local) of the mass between heights `y0` and `y1`.
+fn extent(g: &Geometry, c: &Ctx, y0: f32, y1: f32) -> Option<(Vec2, Vec2)> {
     let mut lo = Vec2::splat(f32::MAX);
     let mut hi = Vec2::splat(f32::MIN);
-    for s in surfaces {
+    for s in MASS {
         if let Some(m) = g.parts.get(s.index()) {
             for p in &m.positions {
-                if p[1] >= band {
+                if p[1] >= y0 && p[1] <= y1 {
                     let l = c.frame.to_local(Vec2::new(p[0], p[2]));
                     lo = lo.min(l);
                     hi = hi.max(l);
@@ -58,7 +51,17 @@ fn mass(g: &Geometry, c: &Ctx) -> Option<(f32, Vec2, Vec2)> {
             }
         }
     }
-    (lo.x < hi.x && lo.y < hi.y).then_some((top, lo, hi))
+    (lo.x < hi.x && lo.y < hi.y).then_some((lo, hi))
+}
+
+/// The top of the building's mass and the extent of its upper half.
+fn mass(g: &Geometry, c: &Ctx) -> Option<(f32, Vec2, Vec2)> {
+    let top = mass_top(g);
+    if top < 2.0 {
+        return None;
+    }
+    let (lo, hi) = extent(g, c, top * 0.5, top + 0.01)?;
+    Some((top, lo, hi))
 }
 
 /// The logo, `size` metres square, standing in the vertical plane through
@@ -150,10 +153,10 @@ fn crown(g: &mut Geometry, c: &Ctx, m: &BrandMark, top: f32, lo: Vec2, hi: Vec2)
     let mid = (lo + hi) * 0.5;
     for (k, y) in [top - 1.2, top + 0.4].into_iter().enumerate() {
         let col = lit(m, if k == 0 { 1.4 } else { 2.2 });
-        f.bx(g, Glow, mid.x, y, lo.y - 0.12, Vec3::new(w + 0.3, 0.3, 0.12), col);
-        f.bx(g, Glow, mid.x, y, hi.y + 0.12, Vec3::new(w + 0.3, 0.3, 0.12), col);
-        f.bx(g, Glow, lo.x - 0.12, y, mid.y, Vec3::new(0.12, 0.3, d + 0.3), col);
-        f.bx(g, Glow, hi.x + 0.12, y, mid.y, Vec3::new(0.12, 0.3, d + 0.3), col);
+        f.bx(g, Glow, mid.x, y, lo.y - 0.12, Vec3::new(w + 0.3, 0.8, 0.12), col);
+        f.bx(g, Glow, mid.x, y, hi.y + 0.12, Vec3::new(w + 0.3, 0.8, 0.12), col);
+        f.bx(g, Glow, lo.x - 0.12, y, mid.y, Vec3::new(0.12, 0.8, d + 0.3), col);
+        f.bx(g, Glow, hi.x + 0.12, y, mid.y, Vec3::new(0.12, 0.8, d + 0.3), col);
     }
     // A screen wall round the roof carrying the logo on all four sides.
     let size = (w.min(d) * 0.7).clamp(4.0, 14.0);
@@ -219,9 +222,22 @@ pub fn decorate(g: &mut Geometry, c: &Ctx, m: &BrandMark) {
     let down = Vec2::new(0.0, -1.0);
     match m.role {
         BrandRole::Headquarters => {
-            crown(g, c, m, top, lo, hi);
-            banner(g, c, m, front + Vec2::new(-w * 0.3, 0.0), down, top * 0.2, top * 0.8, (w * 0.12).clamp(2.0, 5.0));
-            banner(g, c, m, front + Vec2::new(w * 0.3, 0.0), down, top * 0.2, top * 0.8, (w * 0.12).clamp(2.0, 5.0));
+            // The crown wraps the top of the shaft.
+            let (clo, chi) = extent(g, c, top * 0.9, top + 0.01).unwrap_or((lo, hi));
+            crown(g, c, m, top, clo, chi);
+            // Banners down the upper shaft, on its own face.
+            let (blo, bhi) = extent(g, c, top * 0.55, top * 0.9).unwrap_or((lo, hi));
+            let bw = bhi.x - blo.x;
+            let bf = Vec2::new((blo.x + bhi.x) * 0.5, blo.y);
+            let s = (bw * 0.14).clamp(2.0, 6.0);
+            banner(g, c, m, bf + Vec2::new(-bw * 0.28, 0.0), down, top * 0.58, top * 0.86, s);
+            banner(g, c, m, bf + Vec2::new(bw * 0.28, 0.0), down, top * 0.58, top * 0.86, s);
+            // The logo big over the entrance, for the street.
+            if let Some((plo, phi)) = extent(g, c, 0.5, 14.0) {
+                let pw = phi.x - plo.x;
+                let size = (pw * 0.35).clamp(3.0, 9.0);
+                logo(g, c, m, Vec2::new((plo.x + phi.x) * 0.5, plo.y - 0.1), down, 6.0 + size * 0.5, size);
+            }
         }
         BrandRole::Holding => {
             let size = (w.min(d) * 0.55).clamp(2.2, 9.0);
@@ -231,7 +247,7 @@ pub fn decorate(g: &mut Geometry, c: &Ctx, m: &BrandMark) {
             }
         }
         BrandRole::Housing => {
-            let s = (w * 0.12).clamp(1.4, 2.4);
+            let s = (w * 0.16).clamp(1.8, 3.2);
             banner(g, c, m, front + Vec2::new(-w * 0.35, 0.0), down, (top * 0.35).max(2.5), top * 0.9, s);
         }
         BrandRole::Campus => {
@@ -240,7 +256,7 @@ pub fn decorate(g: &mut Geometry, c: &Ctx, m: &BrandMark) {
             banner(g, c, m, front + Vec2::new(w * 0.38, 0.0), down, top * 0.25, top * 0.95, s);
         }
         BrandRole::Annex(_) => {
-            let s = (w * 0.12).clamp(1.4, 2.6);
+            let s = (w * 0.16).clamp(1.8, 3.4);
             banner(g, c, m, front + Vec2::new(w * 0.36, 0.0), down, (top * 0.3).max(1.5), top * 0.95, s);
             if top < 12.0 {
                 roof_sign(g, c, m, mid, down, top, (w.min(d) * 0.35).clamp(1.8, 4.0));

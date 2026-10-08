@@ -368,7 +368,7 @@ impl World {
             self.events.push(SimEvent::BuildingChanged(p));
         }
         let day = self.clock.day() as u32;
-        self.corps.corps.push(MegaCorp { owner, brand, origin: kind, origin_name: origin_name.clone(), flagship: Some(bid), hq: None, cash: 2_000.0, founded_day: day, bought_total: 0, housed_total: 0, levy_total: 0.0, revenue_yesterday: 0.0 });
+        self.corps.corps.push(MegaCorp { owner, brand, origin: kind, origin_name: origin_name.clone(), flagship: Some(bid), hq: None, cash: 2_000.0, founded_day: day, bought_total: 0, housed_total: 0, built_total: 0, levy_total: 0.0, revenue_yesterday: 0.0 });
         self.corps.stats.promotions_total += 1;
         let tick = self.clock.tick;
         self.social.push_news(tick, format!("🏢 {origin_name} is now {name}, a mega-corp. Its tower is coming downtown."), pos, None);
@@ -637,11 +637,13 @@ impl World {
             let Some(lot) = self.lots.get(b.lot) else { continue };
             let weight = match &b.business {
                 Some(z) => {
-                    if z.closed || z.books.len() < 3 || matches!(z.kind, BusinessKind::Parking | BusinessKind::TaxiCompany | BusinessKind::CargoHub) {
+                    // A going concern: two days open at least, in profit over
+                    // its last three.
+                    if z.closed || z.books.len() < 2 || matches!(z.kind, BusinessKind::Parking | BusinessKind::TaxiCompany | BusinessKind::CargoHub) {
                         continue;
                     }
-                    let last = &z.books[z.books.len() - 3..];
-                    if !last.iter().all(|d| d.revenue > d.spend) {
+                    let last = &z.books[z.books.len().saturating_sub(3)..];
+                    if last.iter().map(|d| d.revenue - d.spend).sum::<f32>() <= 0.0 {
                         continue;
                     }
                     if kinds.contains(&z.kind) {
@@ -659,8 +661,14 @@ impl World {
             }
         }
         // Vacant land of any zoning: a branded business opens on it. It
-        // counts as a little further off than a going concern.
+        // counts as further off than a going concern, and at most one buy
+        // in four is land (the corp buys up the town, it does not fill it).
+        let c = &self.corps.corps[ci];
+        let land_ok = c.built_total * 4 <= c.bought_total;
         for (lid, l) in self.lots.iter() {
+            if !land_ok {
+                break;
+            }
             if l.building.is_some() || !l.usable() || l.landlocked || l.land_use == LandUse::Park || self.estate.reserved.contains_key(&lid) || self.under_facility(l.center) || self.district_frozen(lid) || self.services.is_rubble(lid) {
                 continue;
             }
@@ -669,7 +677,7 @@ impl World {
             }
             let d = self.drive_to_lot(&table, oseg, l);
             if d.is_finite() && d <= MAX_DRIVE_M {
-                out.push((d * 1.25 + 60.0, Buy::Land(lid)));
+                out.push((d * 1.6 + 250.0, Buy::Land(lid)));
             }
         }
         out.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| buy_key(&a.1).cmp(&buy_key(&b.1))));
@@ -707,6 +715,7 @@ impl World {
             }
             Buy::Land(lid) => {
                 let Some(bid) = self.corp_build_on(lid, ci) else { return false };
+                self.corps.corps[ci].built_total += 1;
                 (bid, 0.0)
             }
         };
@@ -737,7 +746,12 @@ impl World {
         let h = mix(self.config.seed ^ 0xC0_B1, lid.data().as_ffi() ^ self.clock.tick);
         let kind = match lu {
             LandUse::Residential => None,
-            LandUse::Commercial => Some([BusinessKind::Office, BusinessKind::GadgetShop, BusinessKind::Grocery, BusinessKind::Bakery][(h % 4) as usize]),
+            LandUse::Commercial => {
+                let opts = [BusinessKind::Office, BusinessKind::GadgetShop, BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::Hotel];
+                let owned: Vec<BusinessKind> = self.estate.owners.get(self.corps.corps[ci].owner).map(|o| o.properties.iter().filter_map(|p| self.buildings.get(*p)?.business.as_ref().map(|z| z.kind)).collect()).unwrap_or_default();
+                let start = (h % opts.len() as u64) as usize;
+                Some((0..opts.len()).map(|k| opts[(start + k) % opts.len()]).find(|k| !owned.contains(k)).unwrap_or(opts[start]))
+            }
             LandUse::Entertainment => Some(BusinessKind::Venue),
             LandUse::Industrial => Some(match self.corps.corps[ci].origin {
                 k if k.industry().is_some() && !k.needs_site() => k,
@@ -866,9 +880,13 @@ impl World {
     /// next, now (cash topped up). Its index and what it bought.
     pub fn corp_buy_now(&mut self, owner: OwnerId) -> Result<Option<BuildingId>, String> {
         let ci = self.corp_index(owner).ok_or("no such corp")?;
-        self.corps.corps[ci].cash = self.corps.corps[ci].cash.max(BUY_MIN_CASH * 10.0);
+        // Dev: the deposit is waived, the purse left as it was.
+        let keep = self.corps.corps[ci].cash;
+        self.corps.corps[ci].cash = 1e12;
         let before: Vec<BuildingId> = self.estate.owners.get(owner).map(|o| o.properties.clone()).unwrap_or_default();
-        if !self.corp_buy(ci) {
+        let bought = self.corp_buy(ci);
+        self.corps.corps[ci].cash = keep;
+        if !bought {
             return Ok(None);
         }
         Ok(self.estate.owners.get(owner).and_then(|o| o.properties.iter().copied().find(|p| !before.contains(p))))
