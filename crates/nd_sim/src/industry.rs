@@ -257,6 +257,9 @@ pub struct IndustrySite {
     /// [dirty-industry] Working strip mines within [`ORE_REACH`]: a smelter
     /// wants ore close by.
     pub ore_mines: u32,
+    /// [dirty-industry] Smelters already within [`ORE_REACH`]: two to a
+    /// mine, no more.
+    pub smelters: u32,
     /// [dirty-industry] Dirty plants whose reach covers the site: kind and
     /// distance (see [`exposure`]). Unlike `neighbours` this reaches as far
     /// as each plant's [`IndustryKind::dirt_reach`].
@@ -288,7 +291,7 @@ pub fn dirt_reach(d: f32) -> f32 {
     if d < DIRTY {
         0.0
     } else {
-        250.0 + 330.0 * d
+        150.0 + 250.0 * d
     }
 }
 
@@ -349,7 +352,7 @@ pub fn hit(level: f32, reach: f32, sens: f32, d: f32) -> f32 {
     if reach <= 0.0 || d >= reach || !d.is_finite() {
         return 0.0;
     }
-    (level * sens * (1.0 - d / reach).max(0.0).powf(1.2)).clamp(0.0, 1.0)
+    (level * sens * (1.0 - d / reach).max(0.0).powf(1.5)).clamp(0.0, 1.0)
 }
 
 /// [dirty-industry] Several hits combined: each takes its share of what
@@ -393,8 +396,8 @@ pub fn affinity(kind: IndustryKind, other: IndustryKind) -> f32 {
             Manufacturing => 0.3,
             Tech => 0.35,
             Mining => 0.5,
-            Smelting => 0.4,
-            FactoryFarming => 0.3,
+            Smelting => 0.1,
+            FactoryFarming => 0.2,
         };
     }
     match (kind, other) {
@@ -455,7 +458,9 @@ pub fn weights(site: &IndustrySite) -> [f32; IndustryKind::COUNT] {
     w[Mining.index()] = 2.4 * smoothstep(0.62, 0.9, g.rock);
     // [dirty-industry] A smelter only with ore to hand: mines in reach or
     // a port to land it.
-    w[Smelting.index()] = if site.ore_mines == 0 && site.port <= 0.0 { 0.0 } else { 0.05 + 0.5 * (site.ore_mines.min(3) as f32) + 0.2 * site.port };
+    // One smelter or two per mine: imported ore costs more than the
+    // ingots fetch out of town.
+    w[Smelting.index()] = if site.ore_mines == 0 || site.smelters >= 2 * site.ore_mines { 0.0 } else { 0.05 + 0.5 * (site.ore_mines.min(3) as f32) + 0.2 * site.port };
     // Feedlots: cheap open country, near the grain; a sideline next to
     // ordinary farming, never the bread and butter.
     w[FactoryFarming.index()] = 0.12 + 0.3 * g.fertility * clean;

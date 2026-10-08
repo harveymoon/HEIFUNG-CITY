@@ -62,12 +62,12 @@ fn the_table_sets_who_suffers() {
     for clean in [K::Farming, K::Tech, K::Fishing, K::Logistics, K::Manufacturing] {
         assert!(!clean.is_dirty() && sensitivity(N::Industry(K::Farming), clean) == 0.0, "{clean:?}");
     }
-    // A farm 120 m from a smelter is badly hit; 600 m away it is not.
-    let near = exposure(N::Industry(K::Farming), &[(K::Smelting, 120.0)]);
-    let far = exposure(N::Industry(K::Farming), &[(K::Smelting, 600.0)]);
+    // A farm 80 m from a smelter is badly hit; 450 m away it is not.
+    let near = exposure(N::Industry(K::Farming), &[(K::Smelting, 80.0)]);
+    let far = exposure(N::Industry(K::Farming), &[(K::Smelting, 450.0)]);
     assert!(near > 0.5 && far == 0.0, "{near} {far}");
     // Two plants are worse than one, never past the cap.
-    let two = exposure(N::Industry(K::Farming), &[(K::Smelting, 120.0), (K::Refinery, 100.0)]);
+    let two = exposure(N::Industry(K::Farming), &[(K::Smelting, 80.0), (K::Refinery, 100.0)]);
     assert!(two > near && two <= crate::industry::MAX_EXPOSURE);
     // A mercury works is the dirtiest neighbour.
     assert!(BusinessKind::ChemicalWorks.dirtiness() > BusinessKind::Refinery.dirtiness());
@@ -178,6 +178,10 @@ fn smelters_follow_the_mines() {
     make(&mut w, ind[0], BusinessKind::StripMine);
     let some = w.industry_weights(lot).unwrap()[IndustryKind::Smelting.index()];
     assert!(some > 0.0, "a mine in reach: {some}");
+    // Two smelters to a mine, no more.
+    make(&mut w, ind[1], BusinessKind::Smelter);
+    make(&mut w, ind[2], BusinessKind::Smelter);
+    assert_eq!(w.industry_weights(lot).unwrap()[IndustryKind::Smelting.index()], 0.0, "the mine's ore is spoken for");
 }
 
 #[test]

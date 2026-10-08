@@ -24,8 +24,10 @@ pub struct SiteContext {
     highway: Vec<(Vec2, Vec2)>,
     /// Lot, centre, the industry kind it reads as, a working oil well, a fleet lot.
     others: Vec<(LotId, Vec2, Option<IndustryKind>, bool, bool)>,
-    /// [dirty-industry] Working strip mines (ore for a smelter).
+    /// [dirty-industry] Working strip mines (ore for a smelter), and the
+    /// smelters standing.
     mines: Vec<(LotId, Vec2)>,
+    smelters: Vec<(LotId, Vec2)>,
     /// [economy] Working cattle and chicken farms, and fishing ports.
     livestock: Vec<(LotId, Vec2)>,
     slaughterhouses: Vec<(LotId, Vec2)>,
@@ -72,10 +74,11 @@ impl SiteContext {
         neighbours.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
         dirty.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
         let ore_mines = self.mines.iter().filter(|(lot, at)| Some(*lot) != exclude && at.distance(c) < industry::ORE_REACH).count() as u32;
+        let smelters = self.smelters.iter().filter(|(lot, at)| Some(*lot) != exclude && at.distance(c) < industry::ORE_REACH).count() as u32;
         let livestock_farms = self.livestock.iter().filter(|(lot, at)| Some(*lot) != exclude && at.distance(c) < industry::LIVESTOCK_REACH).count() as u32;
         let slaughterhouses = self.slaughterhouses.iter().filter(|(lot, at)| Some(*lot) != exclude && at.distance(c) < industry::LIVESTOCK_REACH).count() as u32;
         let fishing_port = near(nearest(&self.fishing_ports), 120.0, 700.0);
-        IndustrySite { ground, contamination, land_value: w.land_value.at(c), port, yard, highway, depot, neighbours, fleet_lot_near, crude_wells, livestock_farms, slaughterhouses, fishing_port, ore_mines, dirty }
+        IndustrySite { ground, contamination, land_value: w.land_value.at(c), port, yard, highway, depot, neighbours, fleet_lot_near, crude_wells, livestock_farms, slaughterhouses, fishing_port, ore_mines, smelters, dirty }
     }
 }
 
@@ -91,6 +94,7 @@ impl World {
         let mut livestock = Vec::new();
         let mut slaughterhouses = Vec::new();
         let mut mines = Vec::new();
+        let mut smelters = Vec::new();
         let fishing_ports = self.ports.ports.values().filter(|p| p.kind.is_fishing() && p.works()).filter_map(|p| p.building).filter_map(centre).collect();
         for b in self.buildings.values() {
             let Some(l) = self.lots.get(b.lot) else { continue };
@@ -108,6 +112,9 @@ impl World {
             if b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::StripMine && !z.closed) {
                 mines.push((b.lot, l.center));
             }
+            if b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Smelter) {
+                smelters.push((b.lot, l.center));
+            }
             if b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::CowFarm | BusinessKind::ChickenFarm | BusinessKind::Feedlot) && !z.closed) {
                 livestock.push((b.lot, l.center));
             }
@@ -115,7 +122,7 @@ impl World {
                 slaughterhouses.push((b.lot, l.center));
             }
         }
-        SiteContext { ports, yards, depots, highway, others, mines, livestock, slaughterhouses, fishing_ports }
+        SiteContext { ports, yards, depots, highway, others, mines, smelters, livestock, slaughterhouses, fishing_ports }
     }
 
     /// The ground's industry weights at every corner of the survey, in

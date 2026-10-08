@@ -120,7 +120,17 @@ impl Resource {
             Resource::Art => 30.0,
             // Dear enough that a smelter on local ore pays its way shipping
             // ingots out of town at the export discount.
-            Resource::Metal => 40.0,
+            Resource::Metal => 75.0,
+        }
+    }
+
+    /// Hours of its own output a business keeps before shipping the rest
+    /// out of town. [dirty-industry] Ingots have no local buyer: they go
+    /// as soon as a lorryload stands in the yard.
+    pub fn export_keep_hours(self) -> f32 {
+        match self {
+            Resource::Metal => 8.0,
+            _ => 48.0,
         }
     }
 
@@ -484,12 +494,15 @@ impl BusinessKind {
             BusinessKind::ArtStudio => Recipe { inputs: &[], outputs: &[(Resource::Art, 0.5)] },
             // Hangs art bought from the studios; sells it to visitors.
             BusinessKind::Gallery => Recipe { inputs: &[(Resource::Art, 0.1)], outputs: &[] },
-            // [dirty-industry] Two of ore (12 at base) and a little fuel make
-            // an ingot (40): about 7 an hour of value added per job at
-            // `JOB_RATE`, like the mine that feeds it.
-            BusinessKind::Smelter => Recipe { inputs: &[(Resource::Ore, 2.0), (Resource::Fuel, 0.1)], outputs: &[(Resource::Metal, 1.0)] },
-            // Intensive: more livestock per hand than a cattle farm.
-            BusinessKind::Feedlot => Recipe { inputs: &[(Resource::Grain, 1.4)], outputs: &[(Resource::Livestock, 3.0)] },
+            // [dirty-industry] One and a half of ore (9 at base) and a little
+            // fuel make an ingot (75): exported at the discount (34) it
+            // clears local ore and the wages, as the mine's ore does; on
+            // imported ore the margin is thin, so smelters stay by the mines.
+            BusinessKind::Smelter => Recipe { inputs: &[(Resource::Ore, 1.5), (Resource::Fuel, 0.1)], outputs: &[(Resource::Metal, 1.0)] },
+            // Intensive: five times the livestock per hand of a cattle
+            // farm (the whole point of it), so it pays its way even
+            // selling out of town.
+            BusinessKind::Feedlot => Recipe { inputs: &[(Resource::Grain, 2.0)], outputs: &[(Resource::Livestock, 12.0)] },
             BusinessKind::ChemicalWorks => Recipe { inputs: &[(Resource::Crude, 1.2)], outputs: &[(Resource::Plastics, 0.7)] },
         }
     }
@@ -553,8 +566,7 @@ impl BusinessKind {
             BusinessKind::ArtStudio => Hours::new(10, 20),
             BusinessKind::Gallery => Hours::new(11, 22),
             BusinessKind::CowFarm | BusinessKind::ChickenFarm | BusinessKind::Slaughterhouse | BusinessKind::StripMine | BusinessKind::FishStickFactory | BusinessKind::Feedlot => Hours::new(6, 22),
-            // [dirty-industry] Furnaces and reactors are never let go cold.
-            BusinessKind::Smelter | BusinessKind::ChemicalWorks => Hours::ALWAYS,
+            BusinessKind::Smelter | BusinessKind::ChemicalWorks => Hours::new(6, 22),
             BusinessKind::Fishery => Hours::new(4, 16),
             BusinessKind::Refinery | BusinessKind::FishPlant => Hours::new(6, 22),
             // Plants run two shifts.
@@ -772,7 +784,10 @@ impl Business {
         Self {
             kind,
             stock: BTreeMap::new(),
-            money: 150.0 + jobs as f32 * 40.0,
+            // [dirty-industry] Heavy plant that sells out of town opens
+            // with an investor's money: its first loads only leave once two
+            // days of output stand in the yard.
+            money: (150.0 + jobs as f32 * 40.0) * if matches!(kind, BusinessKind::Smelter | BusinessKind::Feedlot | BusinessKind::ChemicalWorks) { 5.0 } else { 1.0 },
             revenue_today: 0.0,
             spend_today: 0.0,
             deals: 0,

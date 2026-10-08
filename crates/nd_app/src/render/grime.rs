@@ -39,7 +39,7 @@ const STAIN_REBUILD_SECS: f32 = 4.0;
 /// Look of each kind of vent: colour, most alpha, puffs per vent.
 fn vent_look(k: VentKind) -> ([f32; 3], f32, usize) {
     match k {
-        VentKind::Soot => ([0.17, 0.155, 0.14], 0.8, 14),
+        VentKind::Soot => ([0.17, 0.155, 0.14], 0.7, 14),
         VentKind::Fumes => ([0.66, 0.72, 0.26], 0.5, 10),
         VentKind::Dust => ([0.58, 0.49, 0.36], 0.32, 8),
         VentKind::Stench => ([0.36, 0.28, 0.15], 0.22, 6),

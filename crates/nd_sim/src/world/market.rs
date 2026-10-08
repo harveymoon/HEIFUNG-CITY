@@ -317,7 +317,7 @@ impl World {
                 if r.is_retail() {
                     continue;
                 }
-                let keep = per * jobs as f32 * crate::market::JOB_RATE * 48.0;
+                let keep = per * jobs as f32 * crate::market::JOB_RATE * r.export_keep_hours();
                 let have = bz.stock_of(*r);
                 if have > keep * 1.2 {
                     let surplus = have - keep;

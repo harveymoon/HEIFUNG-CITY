@@ -957,8 +957,15 @@ fn dirt_lines(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId) -> O
         let c = w.contamination.over(l.center, &l.polygon);
         if c >= 0.02 {
             let col = if c > 0.3 { WARN } else { egui::Color32::from_rgb(200, 200, 120) };
-            let farm = b.business.as_ref().is_some_and(|z| z.kind.is_food());
-            let what = if farm { format!(" · crops −{:.0}%", c * 90.0) } else { String::new() };
+            // What the soil costs this farm (`World::industry_hourly`).
+            use nd_sim::BusinessKind as K;
+            let share = match b.business.as_ref().map(|z| z.kind) {
+                Some(K::GrainFarm) => 0.9,
+                Some(K::CowFarm | K::Dairy) => 0.7,
+                Some(K::VertFarm | K::Fishery | K::ChickenFarm) => 0.5,
+                _ => 0.0,
+            };
+            let what = if share > 0.0 { format!(" · output −{:.0}%", c * share * 100.0) } else { String::new() };
             ui.label(egui::RichText::new(format!("Ground contamination {:.0}%{what}", c * 100.0)).small().color(col));
         }
     }

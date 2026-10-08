@@ -77,7 +77,7 @@ impl World {
                     continue;
                 }
                 let staffing = if b.jobs == 0 { 0.0 } else { (b.workers.len() as f32 / b.jobs as f32).clamp(0.0, 1.0) };
-                let activity = if z.closed || b.is_derelict() { 0.5 } else { 0.6 + 0.4 * staffing };
+                let activity = if z.closed || b.is_derelict() { 0.35 } else { 0.6 + 0.4 * staffing };
                 (k, d, activity)
             } else {
                 continue;

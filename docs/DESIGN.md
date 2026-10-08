@@ -502,12 +502,12 @@ Citizens are rendered from their simulated positions every frame.
   job hour, more near a port or yard), truck lots a bay fee per parked lorry.
 - **Dirty industry** (`industry::IndustryKind::dirtiness`, `world/dirt.rs`): strip mining
   (0.75), oil extraction (0.55), refineries (0.8; a chemical works with mercury cells 1.0),
-  smelting (0.9: smelters turn 2 ore and 0.1 fuel into 1 metal, base 40, exported) and factory
-  farming (0.6: feedlots turn 1.4 grain into 3 livestock; still food) are dirty, and so is a
-  coal plant (0.7, read as a refinery). A dirty plant is felt out to 250 + 330 x dirtiness
-  metres (about 450..580 m); what a neighbour suffers is level x sensitivity x (1 - d/reach)^1.2
+  smelting (0.9: smelters turn 1.5 ore and 0.1 fuel into 1 metal, base 75, shipped out as soon as 8 hours of it stand in the yard) and factory
+  farming (0.6: feedlots turn 2 grain into 12 livestock; still food) are dirty, and so is a
+  coal plant (0.7, read as a refinery). A dirty plant is felt out to 150 + 250 x dirtiness
+  metres (about 290..400 m); what a neighbour suffers is level x sensitivity x (1 - d/reach)^1.5
   per plant, combined as 1 - prod(1 - hit), capped at 0.9 (its *exposure*). Level is the
-  dirtiness times 0.6 + 0.4 x staffing (0.5 when shut). The compatibility table
+  dirtiness times 0.6 + 0.4 x staffing (0.35 when shut). The compatibility table
   (`industry::sensitivity`): farming 1.0 (0.6 against a feedlot), fishing 0.9, clean tech 0.8,
   factory farming 0.3, manufacturing 0.25, logistics 0.1, the dirty kinds 0; homes 1.0, shops
   0.7, nightlife and civic 0.6, parks 0.5. Exposure takes up to 0.3 off a lot's value (so rent
@@ -515,7 +515,7 @@ Citizens are rendered from their simulated positions every frame.
   or nightlife are built on a lot; new industry squares its weights by (1 - exposure), so a farm
   by a smelter is rare and a fab or a yard is not. Residents of exposed or poisoned homes (over
   0.12) lose up to 0.04 mood a day and some complain (Noise & pollution). Smelters only come
-  with strip mines within 1500 m or a shipping port. Loaded lorries wear the road by their load:
+  with a working strip mine within 1500 m, two to a mine at most. Loaded lorries wear the road by their load:
   ore and metal 2.5, crude 2, livestock 1.6 times an ordinary lorry (`road_wear::vehicle_load`).
   The looks: sooty stained yards, slag and ore heaps, a manure lagoon, a poisoned settling pond,
   smoke, fumes and dust from their vents, and the contamination stains the ground in the city
