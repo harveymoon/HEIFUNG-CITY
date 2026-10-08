@@ -275,9 +275,11 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Fire scene: units on scene clickable with an inspector; crews climb out in turnout gear, hose lines and water streams, the engine's ladder raises and extends toward the fire [feat/fire-scene]
 - [ ] Build pane category highlights existing buildings of that kind with icons, plus their service areas, coverage % and gaps [feat/build-highlight]
 - [ ] FLAG (day 23): pedestrians and taxis stuck on the highway near (590, 408); Cass Baptiste waits for a cab that never comes for days [fix/ped-highway]
+- [ ] FLAG (day 23): interchange with a street underpass came out as garbage, ramps re-routed, artifacts; clean interchanges (maybe a diamond tool) [fix/interchange]
 
 ## Agents running (update when starting/merging; survives context compaction)
 - feat/fire-scene: fire scene crews, hoses, ladder (started 2026-10-07 evening)
 - feat/build-highlight: category highlights and service areas (started 2026-10-07 evening)
 - feat/committee: AI committee, mock backend first, Ollama/Claude connectors (started 2026-10-07 evening)
 - fix/ped-highway: pedestrians/taxis stranded on the highway (started 2026-10-07 23:20)
+- fix/interchange: clean interchanges, ramp+street logic (started 2026-10-07 23:25)
