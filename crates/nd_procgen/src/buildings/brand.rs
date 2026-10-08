@@ -324,9 +324,16 @@ pub fn university(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let quad = fit_inside(c, &rect((lo.x + hi.x) * 0.5, (qv0 + qv1) * 0.5, w * 0.46, (qv1 - qv0) * 0.5));
         if quad.len() >= 3 {
             ground(g, f, Matte, &quad, 0.05, lawn);
-            let qc = poly_center(&quad);
-            f.flat(g, Paving, qc.x, 0.08, qc.y, 2.4, qv1 - qv0, std::f32::consts::FRAC_PI_2, mul(pal.paving, 1.15));
-            f.flat(g, Paving, qc.x, 0.08, qc.y, w * 0.85, 2.0, 0.0, mul(pal.paving, 1.15));
+            let (qlo, qhi) = bounds(&quad);
+            let qc = (qlo + qhi) * 0.5;
+            // Crossing paths, kept on the lawn.
+            let cross_v = fit_inside(c, &rect(qc.x, qc.y, 1.2, (qhi.y - qlo.y) * 0.48));
+            let cross_u = fit_inside(c, &rect(qc.x, qc.y, (qhi.x - qlo.x) * 0.48, 1.0));
+            for p in [cross_v, cross_u] {
+                if p.len() >= 3 {
+                    ground(g, f, Paving, &p, 0.08, mul(pal.paving, 1.15));
+                }
+            }
             for k in 0..6 {
                 let p = Vec2::new(lo.x + 3.0 + k as f32 * (w - 6.0) / 5.0, qc.y + if k % 2 == 0 { 3.5 } else { -3.5 });
                 if c.inside_local(p) && (p.x - qc.x).abs() > 2.5 {
