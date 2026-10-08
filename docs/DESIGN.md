@@ -1297,6 +1297,34 @@ Citizens are rendered from their simulated positions every frame.
   lowered to the grade. Cars ride the height of the way they are on (`car_height`), movers keep to
   the surface nearest the height they were at (`surface_height_near`), so a walker under a
   viaduct stays under it. Elevated roads pass roundabouts by.
+- **Interchanges** [interchange]: slip roads (`Segment::ramp`) are grade-separated from what
+  merely crosses them, like the highway (`roads::WayClass`, `roads::separated`): a street or the
+  railway crossing a ramp passes under it (the ramp's vertex over it is lifted), so a street drawn
+  under a highway with ramps no longer cuts the ramps into junctions (which ended the ramp there
+  and made the rest a town street). A ramp meets the highway only by its ends, other ramps (forks
+  and merges, and one-way streets being laid), and paths at grade (people cross a slip road at its
+  foot); a street meets a ramp where an end is dropped on it or a control point is put right on
+  one of its nodes (`SNAP_EXACT`, 1 m: a street drawn through a ramp's end is its terminal). Road
+  ends (`RoadNetwork::end_target`) prefer a way at their own level (within 4.5 m) of everything in
+  reach, so an end dropped where a viaduct passes over a street joins the one at its level; only
+  with none at its level does it come up or down to another (a raised road ramps down to the
+  road it is dropped on). A path end lands on the highway or a ramp only with no other way in reach. Ramp easing
+  (`ease_ramp_ends`) scales the lead to the ramp: 45% of how far the ramp's next point lies along
+  the highway, 15 to 40 m, then rounds the bend with a few points; it is idempotent and the
+  holograms ease what they draw (`ease_ramp_way`), so the preview is what is built (a fixed 40 m
+  lead on a short diamond ran each ramp alongside the highway up to the street under it and then
+  hairpinned onto it over the street's asphalt). A gore's hatching stops where the ramp's first
+  piece ends. The Road tool's **Interchange** preset (Build window, Roads > Highways) lays a diamond
+  from two clicks across the highway (`World::plan_diamond`, `add_diamond`): the cross street
+  under the highway (kept if one runs there already), and per carriageway an off-ramp leaving it
+  150 m before the crossing and an on-ramp joining 150 m after (`DIAMOND_SPAN`), on its outer
+  side, meeting the street at one signalled junction 55 m out (`DIAMOND_TERMINAL`), with a 40 m
+  lead beside the carriageway and an easy S into the street square. The hologram is the whole
+  diamond; it is refused, with a red pin and label at the spot, when the line does not cross the
+  highway or crosses it more than 40 degrees off square, the street is too short for the
+  terminals, the highway bends or ends near a join, a ramp would cross another road, or another
+  road already joins the highway there. Remote: `add_interchange {from, to, check?, implement?}`;
+  dev `rebuild_roads` lays the roads again from the plan with the current rules.
 - **Raising roads while drawing, and pillars** [tools]: with the Road tool, `]` raises and `[`
   lowers the next point by 2 m (as Page Up / Page Down; the camera's bracket zoom gives way while
   the Road tool is out); `Shift+]` / `Shift+[` move the whole road drawn so far, its placed points

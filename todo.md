@@ -275,8 +275,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [x] Fire scene: units on scene clickable with an inspector; crews climb out in turnout gear, hose lines and water streams, the engine's ladder raises and extends toward the fire [feat/fire-scene] → DONE [feat/fire-scene]: Selection::Unit + inspector/remote `units`/`inspect {unit}`; firefighter figures, hoses, instanced water, ladder rig with outriggers; 3-minute pack-up before leaving
 - [x] Build pane category highlights existing buildings of that kind with icons, plus their service areas, coverage % and gaps [feat/build-highlight]  → DONE [feat/build-highlight]: outlines + markers per kind, road-network service areas (additive overlap, homes left out in red), radius reaches, bus stop catchments, power output labels, summary with fly-to gaps, API build_highlight
 - [ ] FLAG (day 23): pedestrians and taxis stuck on the highway near (590, 408); Cass Baptiste waits for a cab that never comes for days [fix/ped-highway]
-- [ ] FLAG (day 23): interchange with a street underpass came out as garbage, ramps re-routed, artifacts; clean interchanges (maybe a diamond tool) [fix/interchange]
 - [x] FLAG (day 23): footbridge over Umbra Parade left the crosswalk; nobody uses the bridge; cars stop for people on it [fix/footbridge] → DONE [fix/footbridge]: a footbridge now replaces the crosswalk under it (at-grade walk edge, zebra paint and beacons, walk lights and stop line go; walkers must climb over); "Keep the crosswalk under it" checkbox / `keep_crosswalk` keeps the old behaviour; old saves lose the crosswalk on load; road card counts a footpath zebra on both pieces
+- [x] FLAG (day 23): interchange with a street underpass came out as garbage, ramps re-routed, artifacts; clean interchanges (maybe a diamond tool) [fix/interchange] → DONE [fix/interchange]: ramp leads scale to the ramp (a fixed 40 m lead hairpinned short ramps onto the street under the highway), previews ease ramps as built, gore hatching stops with the ramp; streets crossing ramps pass under them; ends prefer their own level; paths never land on ramps; Road tool Interchange preset (diamond in two clicks, refusals pinned)
 - [x] One full-screen City Data pane (tabs City/Economy/Market/People/... with sub-tabs), consistent page style; tools stay floating → DONE [feat/city-data]: City Data view (J, top bar), 5 tabs × 19 pages, one page style in ui/pane.rs; Lines/View/Saves/Help/Dev stay windows; API city_data {tab, sub, open, scroll}, old window names map to pages
 - [x] High quality: near-camera geometry washes out white in walk/close orbit [fix/haze] → DONE [fix/haze]: Bevy's volumetric fog painted its full unexposed ambient over anything a few metres from the camera; patched shader (render/volumetric_fog_city.wgsl). Also smoke/steam puffs fade out round the camera (no wash walking through smog). Look-dev follow-up on the same branch: street lamps cast light near the camera at night (40 High / 18 Medium / 0 Low), wet glossy roads in rain, fog tint and reach by climate/weather/mode, a thicker coal plume. Not done: Bevy Atmosphere (would mean retuning every light to physical units; the dome stays)
 - [ ] Fire engines park mid-road/junction at a scene; crew stand in traffic (from feat/fire-scene leftovers)
@@ -307,15 +307,18 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Dock/station joined only by a footpath counts as unconnected; zoning layer tints a dock's own lot civic blue (dock-access leftovers)
 - [ ] Ferry headway/next departure are estimates; two towns on the same map edge draw overlapping route bands (ferry-routes leftovers)
 
+- [ ] Interchange leftovers: hand-drawn ramps at sharp angles still overlap the street briefly; Interchange tool ignores roads pending in a project; only the diamond (no parclo/cloverleaf, no street over the highway); concrete band at a junction edge on river_valley slopes
+- [x] Road-polish leftovers → DONE [fix/interchange]: bridge abutments, signal arms on climbs, stop line at sharp forks; gore deck partly; town street tapers already existed
+
 ## Follow-ups noted in agent reports (not started)
 - [ ] Batteries charge on cheap night power and discharge at the evening peak (grid-weather)
 - [x] Freight trains really carry their cargo instead of yards handing it to any train (train-inspect) → DONE [feat/freight]: rail orders wait out of town (`Rail::orders`, saved) and are loaded at the map edge into 50-unit wagons (5–12, oldest first), ride in and come off at their yard; exports picked up as room allows; the train inspector's manifest is what is aboard (wagons, units of capacity); an extra train 45 min after the last when goods are left behind; old saves' yard orders migrate to the queue; `examples/freight_probe` (demo: longest wait 2 h)
 - [x] In-game Clean up button for contaminated land (API only now); contamination along rivers/downwind (dirty-industry) → DONE [feat/mural-cleanup]: Bulldoze → Clean up ground (radius, red/green hover with cells, cost, days), crews dig over 2-6 days with a visible site; daily drift downwind (smoke wind) and downstream
 - [x] Murals painted on the building facade, not a free-standing wall → DONE [feat/mural-cleanup]: painted on the drawn street wall clear of windows, procedural per crew (motif, palette, tag), floodlit night copy; wall only on vacant lots/glass fronts
 - [x] LLM dialogue for spotlit citizens and on-demand diaries → DONE [feat/committee]: through the pluggable backend, display only
-- [ ] Bridge deck ends need abutments; ramp gore on a highway bridge has no deck; low signal arms on steep approaches; cars stop short of the stop line at sharp forks (road-polish)
+- [x] Bridge abutments, signal arms, stop line → DONE [fix/interchange]
 - [x] Hydro/tidal still fixed size; huge 2-tower coal plant only seen in a unit test (plant-scale) → DONE [feat/freight] (hydro/tidal part): sized to their site like coal (700 m² per nameplate, 1–8 turbine bays, size kept on the plant, old plants keep 70/60 MW); halls/houses grow by 8/7 m bays (second row on a narrow lot), dam adds intake towers and gates, tidal barrage a caisson per bay; Build hover shows MW/cost/scale. The huge coal plant in play is not checked here
-- [ ] Town streets 2+2 into 1+1 step at the kerbs instead of tapering (lane-join)
+- [x] Town street tapers → already on main (road-polish #14)
 - [ ] One engine per fire; crew are station payroll names (fire-scene)
 - [ ] Wind small-lot exception on unzoned sites with no lot yet (fixed in plant-scale? verify)
 - [ ] Tow trucks on a job may drive against one-ways and make U-turns (todo5; noted not done)
@@ -336,12 +339,10 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Delete old todo2.md–todo5.md (their items were carried into todo.md)?
 
 ## Agents running (update when starting/merging; survives context compaction)
-- fix/interchange: clean interchanges, ramp+street logic (started 2026-10-07 23:25)
 - feat/fishing: fishing trips (started 2026-10-08 00:35)
 - feat/econ-followups: batteries arbitrage, parking pressure → lots, industry lifts cheap land, relocating businesses, rich owners' holdings, wind small-lot check (started 2026-10-08)
 - feat/street-followups: tow trucks on a job (one-ways/U-turns), booted cars towed, murder, moto packs, fire engines park at the kerb (started 2026-10-08)
 - feat/freight: freight trains carry cargo, hydro/tidal scale (started 2026-10-08)
-- fix/interchange (extended): + road-polish leftovers: abutments, gore deck, signal arms, stop line, town street tapers
 - fix/false-block: false road refusal by a far plant; blockers in the plan preview (started 2026-10-08)
 - feat/supertall: supertall league (started 2026-10-08, from the queue)
 - feat/waterfront: waterfront parcels, beach businesses, private jetties, public beach zone (started 2026-10-08, from the queue)

@@ -886,6 +886,36 @@ const PORTAL_HOLD: f32 = nd_sim::landscape::PORTAL_HOLD;
 /// `hw` either side of the centreline, standing on `ground`. Shared with
 /// the plan preview.
 #[allow(clippy::too_many_arguments)]
+/// [interchange] A bridge's abutment on the bank at `p`, the deck running
+/// out over the water along `out` at height `z` (`hw` its half width): a
+/// bank seat under the deck's end and wing walls running back along the
+/// approach, down into the ground at `ground`.
+pub fn abutment(g: &mut Geometry, p: Vec2, out: Vec2, z: f32, hw: f32, ground: f32, concrete: [f32; 3]) {
+    use glam::Vec3;
+    let top = z - 1.4;
+    let foot = ground - 1.0;
+    if top - foot < 0.6 {
+        return;
+    }
+    let yaw = out.y.atan2(out.x);
+    // The seat: from just behind the deck's end to under it.
+    let seat = p + out * 0.6;
+    g.part(Surface::Concrete).boxed(Vec3::new(seat.x, (top + foot) * 0.5, seat.y), Vec3::new(2.4, top - foot, hw * 2.0 + 0.8), -yaw, rgba(mul(concrete, 0.82)));
+    // The wing walls, stepping down as they run back into the embankment.
+    let side = Vec2::new(-out.y, out.x);
+    for sgn in [-1.0f32, 1.0] {
+        for k in 0..3 {
+            let back = 1.5 + k as f32 * 2.5;
+            let c = p - out * back + side * sgn * (hw + 0.25);
+            let h = (z - 0.1 - foot) * (1.0 - k as f32 * 0.3);
+            if h < 0.3 {
+                continue;
+            }
+            g.part(Surface::Concrete).boxed(Vec3::new(c.x, foot + h * 0.5, c.y), Vec3::new(2.5, h, 0.5), -yaw, rgba(mul(concrete, 0.86)));
+        }
+    }
+}
+
 pub fn viaduct_span(g: &mut Geometry, a: Vec2, b: Vec2, za: f32, zb: f32, hw: f32, ground: &dyn Fn(Vec2) -> f32, concrete: [f32; 3], steel: [f32; 3], columns: bool) {
     let parapets = true;
     use glam::Vec3;
@@ -972,6 +1002,44 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
             let off = Vec3::new(side.x * s, 0.0, side.y * s);
             g.part(Surface::Metal).beam(a3 + off + Vec3::Y * 1.0, b3 + off + Vec3::Y * 1.0, 0.15, rgba(steel));
             g.part(Surface::Concrete).slab(a3 + off + Vec3::Y * 0.45, b3 + off + Vec3::Y * 0.45, 0.35, 0.5, rgba(mul(concrete, 0.9)));
+        }
+        // [interchange] An abutment at each end on the bank (no other bridge
+        // piece goes on from it): a bank seat under the deck's end and wing
+        // walls back along the approach into the embankment. The deck used
+        // to simply stop, a concrete block standing on the bank.
+        for (n, p, out, z) in [(seg.a, a, dir, za), (seg.b, b, -dir, zb)] {
+            let goes_on = roads.node(n).segments.iter().any(|&o| o != sid && roads.segment(o).alive && roads.segment(o).bridge && !roads.segment(o).viaduct);
+            if !goes_on {
+                abutment(&mut g, p, out, z, hw, land.height(p).max(WATER_LEVEL - 1.0), concrete);
+            }
+        }
+        // [interchange] A ramp leaving (or joining) a highway on the bridge:
+        // deck under the gore between the two, which used to be a thin
+        // asphalt sheet over the water.
+        let seg_len = a.distance(b);
+        if seg.ramp {
+            for (n, p, out) in [(seg.a, a, dir), (seg.b, b, -dir)] {
+                let hw_seg = roads.node(n).segments.iter().copied().find(|&o| o != sid && roads.segment(o).alive && roads.segment(o).is_highway() && roads.segment(o).bridge);
+                let Some(h) = hw_seg else { continue };
+                let (h0, h1) = roads.segment_points(h);
+                let hd = if h0.distance(p) < h1.distance(p) { (h1 - h0).normalize_or_zero() } else { (h0 - h1).normalize_or_zero() };
+                let run = seg_len.min(40.0);
+                let z0 = world.road_z.get(n.0 as usize).copied().unwrap_or(0.0);
+                let z1 = if n == seg.a { za + (zb - za) * (run / seg_len.max(1e-3)) } else { zb + (za - zb) * (run / seg_len.max(1e-3)) };
+                let mut s = 0.0f32;
+                while s < run {
+                    let r = p + out * (s + 2.0);
+                    let q = p + hd * (r - p).dot(hd);
+                    let gap = r.distance(q);
+                    if gap > 0.5 {
+                        let mid = (r + q) * 0.5;
+                        let zz = z0 + (z1 - z0) * (s + 2.0) / run.max(1e-3) - 0.05;
+                        let yaw = hd.y.atan2(hd.x);
+                        g.part(Surface::Concrete).boxed(Vec3::new(mid.x, zz - 0.7, mid.y), Vec3::new(4.2, 1.4, gap), -yaw, rgba(concrete));
+                    }
+                    s += 4.0;
+                }
+            }
         }
         // Piers down to the bed every 28 m or so.
         let len = a.distance(b);

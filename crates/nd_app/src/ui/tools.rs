@@ -69,6 +69,23 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
         hint(ui, help::ROAD_ROUNDABOUT);
         return;
     }
+    // [interchange] The cross street's lanes and what would stop it.
+    if tools.interchange {
+        ui.horizontal(|ui| {
+            ui.label("cross street");
+            for (f, b, name) in [(1u8, 1u8, "Lane"), (2, 2, "Street"), (3, 3, "Avenue")] {
+                if ui.selectable_label(tools.lanes_fwd == f && tools.lanes_bwd == b, name).clicked() {
+                    tools.lanes_fwd = f;
+                    tools.lanes_bwd = b;
+                }
+            }
+        });
+        if let Some((why, at)) = &tools.interchange_refusal {
+            ui.label(egui::RichText::new(format!("! Cannot be built: {why} (red pin at {:.0}, {:.0}).", at.x, at.y)).color(WARN).small());
+        }
+        hint(ui, help::ROAD_INTERCHANGE);
+        return;
+    }
     // Lanes and curvature share a row so the bar stays shallow.
     ui.horizontal(|ui| {
         if tools.kind == RoadKind::Street {
@@ -547,6 +564,9 @@ pub fn road_label(tools: &ToolState) -> String {
     if tools.roundabout {
         return "Roundabout".into();
     }
+    if tools.interchange {
+        return format!("Interchange (diamond), cross street {} + {} lanes", tools.lanes_fwd, tools.lanes_bwd);
+    }
     if tools.tunnel {
         return format!("Tunnel, {} + {} lanes", tools.lanes_fwd, tools.lanes_bwd);
     }
@@ -575,6 +595,7 @@ pub fn preset_hint(label: &str) -> &'static str {
         "Ramp" => "One lane, one direction: slip roads onto a highway",
         "Highway" => "Four lanes one way: 25 m/s, no frontage, grade-separated",
         "Roundabout" => "A one-way ring with give-way entries: click to stamp it over roads and junctions",
+        "Interchange" => "A diamond interchange: click across the highway; a street under it, four ramps, a signalled junction each side",
         _ => "",
     }
 }
