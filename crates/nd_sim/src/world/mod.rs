@@ -879,6 +879,15 @@ impl World {
             b.workers.retain(|c| self.citizens.contains_key(*c));
             b.rail_inbound.retain(|c| building_ids.contains(&c.to));
         }
+        self.rail.orders.retain(|o| building_ids.contains(&o.cargo.to));
+        // [freight] Saves from before freight rode the trains kept rail
+        // orders on the yard, waiting for any train to call: they are out of
+        // town now, first in the queue for the next freight train.
+        let mut legacy: Vec<crate::rail::RailOrder> = Vec::new();
+        for (_, b) in self.buildings.iter_mut() {
+            legacy.extend(std::mem::take(&mut b.rail_inbound).into_iter().map(|cargo| crate::rail::RailOrder { cargo, since: tick }));
+        }
+        self.rail.orders.extend(legacy);
         for f in self.facilities.values_mut() {
             if f.building.is_some_and(|b| !self.buildings.contains_key(b)) {
                 f.building = None;

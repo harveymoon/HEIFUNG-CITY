@@ -111,13 +111,16 @@ fn a_save_mid_walk_and_mid_land_value_cycle_keeps_both() {
     assert_eq!(b.land_value.version, v + 1, "and finished after the load too, rather than being dropped");
 }
 
-/// [benches] Through a day of the demo, nobody shares a seat.
+/// [benches] Through a day of the demo, nobody shares a seat. [freight] Run
+/// into the third day: the demo's parks fill from the morning of day 3
+/// (until then only the odd night owl sits down, so a two-day window passed
+/// or failed on when one stray sitter came, which rail import timing moves).
 #[test]
 fn park_benches_seat_one_person_per_seat() {
     let mut w = demo::demo_world();
     let mut m = RuleBasedMind::default();
     let mut most = 0;
-    for t in 0..1440 * 2 {
+    for t in 0..1440 * 2 + 720 {
         w.tick(&mut m);
         let mut seats: Vec<(i32, i32)> = w.citizens.values().filter_map(|c| if let Activity::Sitting { at, .. } = c.activity { Some(((at.x * 10.0).round() as i32, (at.y * 10.0).round() as i32)) } else { None }).collect();
         let n = seats.len();

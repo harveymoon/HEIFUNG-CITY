@@ -312,12 +312,12 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 ## Follow-ups noted in agent reports (not started)
 - [ ] Batteries charge on cheap night power and discharge at the evening peak (grid-weather)
-- [ ] Freight trains really carry their cargo instead of yards handing it to any train (train-inspect)
+- [x] Freight trains really carry their cargo instead of yards handing it to any train (train-inspect) → DONE [feat/freight]: rail orders wait out of town (`Rail::orders`, saved) and are loaded at the map edge into 50-unit wagons (5–12, oldest first), ride in and come off at their yard; exports picked up as room allows; the train inspector's manifest is what is aboard (wagons, units of capacity); an extra train 45 min after the last when goods are left behind; old saves' yard orders migrate to the queue; `examples/freight_probe` (demo: longest wait 2 h)
 - [x] In-game Clean up button for contaminated land (API only now); contamination along rivers/downwind (dirty-industry) → DONE [feat/mural-cleanup]: Bulldoze → Clean up ground (radius, red/green hover with cells, cost, days), crews dig over 2-6 days with a visible site; daily drift downwind (smoke wind) and downstream
 - [x] Murals painted on the building facade, not a free-standing wall → DONE [feat/mural-cleanup]: painted on the drawn street wall clear of windows, procedural per crew (motif, palette, tag), floodlit night copy; wall only on vacant lots/glass fronts
 - [x] LLM dialogue for spotlit citizens and on-demand diaries → DONE [feat/committee]: through the pluggable backend, display only
 - [x] Bridge abutments, signal arms, stop line → DONE [fix/interchange]
-- [ ] Hydro/tidal still fixed size; huge 2-tower coal plant only seen in a unit test (plant-scale)
+- [x] Hydro/tidal still fixed size; huge 2-tower coal plant only seen in a unit test (plant-scale) → DONE [feat/freight] (hydro/tidal part): sized to their site like coal (700 m² per nameplate, 1–8 turbine bays, size kept on the plant, old plants keep 70/60 MW); halls/houses grow by 8/7 m bays (second row on a narrow lot), dam adds intake towers and gates, tidal barrage a caisson per bay; Build hover shows MW/cost/scale. The huge coal plant in play is not checked here
 - [x] Town street tapers → already on main (road-polish #14)
 - [x] One engine per fire; crew are station payroll names (fire-scene)   → DONE [feat/street-followups]: engines pull in to the kerb on the building's side clear of junctions, hose crew stays on the pavement side, traffic crawls and eases round the scene; a second alarm (fire ≥ 0.6) brings a second engine with its own crew. Crew names still from the station payroll (by design)
 - [ ] Wind small-lot exception on unzoned sites with no lot yet (fixed in plant-scale? verify)
@@ -341,7 +341,6 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 ## Agents running (update when starting/merging; survives context compaction)
 - feat/econ-followups: batteries arbitrage, parking pressure → lots, industry lifts cheap land, relocating businesses, rich owners' holdings, wind small-lot check (started 2026-10-08)
 - feat/street-followups: tow trucks on a job (one-ways/U-turns), booted cars towed, murder, moto packs, fire engines park at the kerb (started 2026-10-08)
-- feat/freight: freight trains carry cargo, hydro/tidal scale (started 2026-10-08)
 - feat/supertall: supertall league (started 2026-10-08, from the queue)
 - feat/waterfront: waterfront parcels, beach businesses, private jetties, public beach zone (started 2026-10-08, from the queue)
 - feat/park-paths: park walkways in the walk graph, junctions for the path tool (started 2026-10-08, from the queue)

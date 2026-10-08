@@ -1150,18 +1150,22 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
                 if let Some((ri, _, bank)) = land.river_beside(&lot.polygon, 40.0) {
                     let r = &land.rivers[ri];
                     let (seg, c, _) = r.nearest(bank);
-                    crate::dam::hydro_dam(&mut g, c, r.flow(seg), r.width, lot.center, &|p| world.ground_height(p), concrete, steel);
+                    crate::dam::hydro_dam(&mut g, c, r.flow(seg), r.width, lot.center, world.plant_scale(b), &|p| world.ground_height(p), concrete, steel);
                 }
             }
             PowerPlantKind::Tidal => {
                 if let Some(shore) = lot.polygon.iter().filter_map(|p| land.nearest_shore(*p, 50.0)).find(|s| s.water.kind == WaterKind::Sea) {
-                    for k in 0..5 {
+                    // [freight] A turbine caisson per turbine bay and two
+                    // more out at the head (five at the nameplate): a bigger
+                    // plant runs further out to sea, the caissons the same size.
+                    let caissons = PowerPlantKind::turbine_bays(world.plant_scale(b)) + 2;
+                    for k in 0..caissons {
                         let p = shore.point + shore.seaward * (12.0 + k as f32 * 11.0);
                         g.part(Surface::Concrete).boxed(Vec3::new(p.x, WATER_LEVEL, p.y), Vec3::new(7.0, 4.0, 7.0), 0.0, rgba(concrete));
                         g.part(Surface::Metal).boxed(Vec3::new(p.x, WATER_LEVEL + 2.8, p.y), Vec3::new(2.0, 1.6, 2.0), 0.0, rgba(mul(palette.metal_paint(3), 0.9)));
                     }
                     let a = shore.point - shore.seaward * 2.0;
-                    let b = shore.point + shore.seaward * 60.0;
+                    let b = shore.point + shore.seaward * (16.0 + (caissons - 1) as f32 * 11.0);
                     g.part(Surface::Concrete).slab(Vec3::new(a.x, BANK_HEIGHT + 0.8, a.y), Vec3::new(b.x, BANK_HEIGHT + 0.8, b.y), 3.0, 0.6, rgba(mul(concrete, 0.9)));
                 }
             }

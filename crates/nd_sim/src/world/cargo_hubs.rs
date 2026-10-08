@@ -79,7 +79,7 @@ impl World {
             }
             (Via::Rail, _, Some(y)) => {
                 state.inbound.push(load);
-                self.buildings[y].rail_inbound.push(Cargo { from: y, ..to_hub });
+                self.rail.orders.push(rail::RailOrder { cargo: Cargo { from: y, ..to_hub }, since: tick });
             }
             _ => state.waiting.push(load),
         }
@@ -293,16 +293,9 @@ impl World {
                     done = true;
                 }
             }
-            for y in self.yards.clone() {
-                if done {
-                    break;
-                }
-                if let Some(b) = self.buildings.get_mut(y) {
-                    for c in b.rail_inbound.iter_mut() {
-                        if !done && retarget(c) {
-                            done = true;
-                        }
-                    }
+            for o in self.rail.orders.iter_mut() {
+                if !done && retarget(&mut o.cargo) {
+                    done = true;
                 }
             }
             for ship in self.ports.ships.values_mut() {

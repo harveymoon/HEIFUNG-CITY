@@ -305,7 +305,9 @@ pub struct Building {
     #[serde(default)]
     pub rail: Option<crate::rail::RailLink>,
     /// Goods ordered by rail, waiting for the next freight train (yards).
-    #[serde(default)]
+    /// [freight] Legacy: only read from old saves, whose orders move to
+    /// `Rail::orders` on load (`World::validate`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rail_inbound: Vec<crate::traffic::Cargo>,
     /// Export units waiting on the apron (yards).
     #[serde(default)]

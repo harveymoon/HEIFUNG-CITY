@@ -46,6 +46,10 @@ pub const MAX_LOT_SCALE: f32 = 6.0;
 pub const COAL_REFERENCE_AREA: f32 = 1000.0;
 pub const NUCLEAR_REFERENCE_AREA: f32 = 1500.0;
 pub const GEOTHERMAL_REFERENCE_AREA: f32 = 700.0;
+/// [freight] Hydro and tidal plants are sized to their site too: a lot of
+/// this many m² holds the nameplate station (three turbine bays).
+pub const HYDRO_REFERENCE_AREA: f32 = 700.0;
+pub const TIDAL_REFERENCE_AREA: f32 = 700.0;
 
 impl PowerPlantKind {
     pub const ALL: [PowerPlantKind; 7] = [PowerPlantKind::Coal, PowerPlantKind::Solar, PowerPlantKind::Wind, PowerPlantKind::Nuclear, PowerPlantKind::Hydro, PowerPlantKind::Tidal, PowerPlantKind::Geothermal];
@@ -210,12 +214,12 @@ impl PowerPlantKind {
     /// [clarity] Panels and turbines fill the lot they stand on: a solar
     /// field or wind farm's output, build cost and upkeep scale with the
     /// lot's area, so every megawatt costs the same whatever the lot. The
-    /// nameplate figures (`capacity_mw`, `build_cost`, `upkeep_per_day`)
     /// are for a lot of this many square metres. [plant-scale] Coal,
     /// nuclear and geothermal plants are sized to their site too, in a
     /// narrower range ([`Self::size_range`]), fixed when they are built
-    /// ([`Self::sized_when_built`]). `None`: a plant of fixed size (hydro
-    /// and tidal, sized by their water).
+    /// ([`Self::sized_when_built`]); [freight] so are hydro and tidal
+    /// (more turbine bays on a bigger site; hydro's output still follows
+    /// the river's current as well). `None`: a plant of fixed size.
     pub fn reference_area(self) -> Option<f32> {
         match self {
             PowerPlantKind::Solar => Some(SOLAR_REFERENCE_AREA),
@@ -223,7 +227,8 @@ impl PowerPlantKind {
             PowerPlantKind::Coal => Some(COAL_REFERENCE_AREA),
             PowerPlantKind::Nuclear => Some(NUCLEAR_REFERENCE_AREA),
             PowerPlantKind::Geothermal => Some(GEOTHERMAL_REFERENCE_AREA),
-            PowerPlantKind::Hydro | PowerPlantKind::Tidal => None,
+            PowerPlantKind::Hydro => Some(HYDRO_REFERENCE_AREA),
+            PowerPlantKind::Tidal => Some(TIDAL_REFERENCE_AREA),
         }
     }
 
@@ -231,9 +236,16 @@ impl PowerPlantKind {
     /// worked out from its site when it is built and kept on the building
     /// (`Building::plant_scale`), so it never changes under it; a plant from
     /// an older save, built at the fixed size, keeps that (scale 1). Solar
-    /// and wind follow their lot's area as they always have.
+    /// and wind follow their lot's area as they always have. [freight]
+    /// Hydro and tidal stations too.
     pub fn sized_when_built(self) -> bool {
-        matches!(self, PowerPlantKind::Coal | PowerPlantKind::Nuclear | PowerPlantKind::Geothermal)
+        matches!(self, PowerPlantKind::Coal | PowerPlantKind::Nuclear | PowerPlantKind::Geothermal | PowerPlantKind::Hydro | PowerPlantKind::Tidal)
+    }
+
+    /// [freight] Turbine bays in a hydro or tidal station of this size:
+    /// three at the nameplate, one more for each further third of it.
+    pub fn turbine_bays(scale: f32) -> u32 {
+        ((scale * 3.0).round() as u32).clamp(1, 8)
     }
 
     /// [plant-scale] Most ground a plant of this kind puts to use, m²: a
@@ -246,8 +258,8 @@ impl PowerPlantKind {
             PowerPlantKind::Geothermal => 1600.0,
             PowerPlantKind::Solar => SOLAR_REFERENCE_AREA * MAX_LOT_SCALE,
             PowerPlantKind::Wind => WIND_REFERENCE_AREA * MAX_LOT_SCALE,
-            // Fixed size: a works yard's worth.
-            PowerPlantKind::Hydro | PowerPlantKind::Tidal => 1500.0,
+            // [freight] Up to eight turbine bays (2.67× the nameplate).
+            PowerPlantKind::Hydro | PowerPlantKind::Tidal => 1866.0,
         }
     }
 
@@ -264,7 +276,7 @@ impl PowerPlantKind {
     }
 
     /// [plant-scale] The range of `size_scale`: (smallest, largest) share of
-    /// the nameplate one plant can be. (1, 1) for the fixed-size kinds.
+    /// the nameplate one plant can be. (1, 1) for a fixed-size kind.
     pub fn size_range(self) -> (f32, f32) {
         match self.reference_area() {
             Some(r) if self.sized_when_built() => (self.min_area() / r, self.max_area() / r),
@@ -274,8 +286,8 @@ impl PowerPlantKind {
     }
 
     /// [clarity] What a lot of `area` square metres makes of the nameplate:
-    /// area over the reference area, within [`Self::size_range`]; 1 for
-    /// hydro and tidal.
+    /// area over the reference area, within [`Self::size_range`]; 1 for a
+    /// fixed-size kind.
     pub fn size_scale(self, area: f32) -> f32 {
         match self.reference_area() {
             // [plant-groups] Capped: past six reference lots a single lot
@@ -304,7 +316,8 @@ impl PowerPlantKind {
     }
 
     /// [plant-scale] Jobs at a plant of this size: a bigger plant has more
-    /// shifts on the boilers and the coal yard (never fewer than a third).
+    /// shifts on the boilers and the coal yard, or more turbines to mind
+    /// (never fewer than a third).
     pub fn jobs_at(self, scale: f32) -> u16 {
         if !self.sized_when_built() {
             return self.jobs();

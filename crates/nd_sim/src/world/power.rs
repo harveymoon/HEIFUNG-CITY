@@ -145,8 +145,9 @@ impl World {
 
     /// [clarity] How much of its kind's nameplate a plant is: its lot's
     /// area over the reference for solar and wind; [plant-scale] the size
-    /// fixed when it was built for coal, nuclear and geothermal (1 for one
-    /// from an older save, built at the fixed size); 1 for hydro and tidal.
+    /// fixed when it was built for coal, nuclear, geothermal, [freight]
+    /// hydro and tidal (1 for one from an older save, built at the fixed
+    /// size).
     pub fn plant_scale(&self, b: &Building) -> f32 {
         let Some(k) = b.plant else { return 1.0 };
         if k.sized_when_built() {
