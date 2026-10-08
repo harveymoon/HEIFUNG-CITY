@@ -219,6 +219,10 @@ pub struct District {
     pub historic: bool,
     #[serde(default)]
     pub created_tick: u64,
+    /// [supertall] Nothing new rises over this (m) here; `None` follows
+    /// the city's limit.
+    #[serde(default)]
+    pub height_limit: Option<f32>,
 }
 
 impl District {
@@ -543,7 +547,7 @@ impl Districts {
         self.next_id = self.next_id.max(self.list.iter().map(|d| d.id).max().unwrap_or(0)) + 1;
         let id = self.next_id;
         let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| default_name(seed, id));
-        self.list.push(District { id, name, color: ((id - 1) as usize % COLORS.len()) as u8, residential: None, commercial: None, industry: None, historic: false, created_tick: tick });
+        self.list.push(District { id, name, color: ((id - 1) as usize % COLORS.len()) as u8, residential: None, commercial: None, industry: None, historic: false, created_tick: tick, height_limit: None });
         self.version += 1;
         Some(id)
     }

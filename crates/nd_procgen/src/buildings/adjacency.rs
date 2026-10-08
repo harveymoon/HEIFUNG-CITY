@@ -459,6 +459,7 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
         look: b.look,
         metro: b.metro,
         form: b.plot.form,
+        tower: b.plot.tower,
         ..Extras::default()
     }
 }

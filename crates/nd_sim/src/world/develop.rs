@@ -168,6 +168,8 @@ impl World {
                 for n in &self.estate.nimby {
                     b.splat(n.center, n.radius, n.strength);
                 }
+                // [supertall] an address by a landmark tower
+                self.splat_towers(&mut b);
             }
             4 => {
                 // The player's rule: a long walk to any park or night out
@@ -419,6 +421,8 @@ impl World {
                 let value = if self.lots.contains_key(b.lot) { self.lot_value(b.lot) } else { b.land_value };
                 // [districts] a Historic district holds what stands as it is
                 let special = b.is_parking() || b.is_special() || self.district_frozen(b.lot)
+                    // [supertall] a league tower is never torn down for a tier
+                    || b.plot.tower.is_some()
                     // [taxis] a taxi yard and a cargo hub are what they are
                     || b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::TaxiCompany | BusinessKind::CargoHub));
                 (b.land_use, b.tier, value, b.is_derelict(), full, special)

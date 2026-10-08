@@ -482,6 +482,19 @@ impl Building {
         // a mansion is one household's.
         let (homes, jobs) = match self.plot.form {
             Some(form) if form.owner_occupied() => (1, 0),
+            // [supertall] A league tower: homes or offices by its floors,
+            // with diminishing returns up the shaft and a hard cap, plus a
+            // little for the podium on each extra plot; one tower should
+            // not swamp a city's balance.
+            Some(crate::estate::Form::Tower) if self.plot.tower.is_some() => {
+                let eff = crate::towers::effective_floors(self.floors);
+                let podium = self.plot.extra_lots.len() as f32;
+                match self.land_use {
+                    LandUse::Residential => ((eff * 2.0 + podium * 6.0).min(900.0) as u16, 0),
+                    LandUse::Commercial => (0, (eff * 6.0 + podium * 12.0).min(1500.0) as u16),
+                    _ => (homes, jobs),
+                }
+            }
             _ => {
                 let homes = if self.land_use == LandUse::Residential && self.tier == Tier::Low && self.floors == 1 { 6 } else { homes };
                 let k = 1 + self.plot.extra_lots.len() as u16;

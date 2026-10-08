@@ -124,7 +124,12 @@ mod tests;
 mod gameplay_tests;
 mod taxes;
 pub use taxes::TaxRow;
+pub use towers::{TowerOrder, TowerSite};
 mod tolls;
+/// [supertall] The skyscraper league on the `World`.
+mod towers;
+#[cfg(test)]
+mod towers_tests;
 mod taxis;
 #[cfg(test)]
 mod taxi_tests;
@@ -594,6 +599,11 @@ pub struct World {
     /// with an empty one.
     #[serde(default)]
     pub estate: crate::estate::EstateMarket,
+    /// [supertall] The skyscraper league: height limits, the tower
+    /// developers' money, the record book and its news (`crate::towers`,
+    /// `world/towers.rs`). Old saves load with no limit and no records.
+    #[serde(default)]
+    pub skyline: crate::towers::Skyline,
     /// [economy] Business pressure: the city's needs, read daily, and the
     /// trades opened to meet them (`crate::pressure`, `world/pressure.rs`).
     #[serde(default)]
@@ -727,6 +737,7 @@ impl World {
             pillar_gaps: Vec::new(),
             crosswalks: Default::default(),
             estate: Default::default(),
+            skyline: Default::default(),
             pressure: Default::default(),
             scene: Default::default(),
             identity: Default::default(),
@@ -1037,6 +1048,12 @@ impl World {
         // built round it, and a busy, well-served block may rise a few
         // floors over its neighbours (`estate::Pressure::floors_at`).
         let cap = if self.pressure_active() { self.pressure_floors(lot_id).min(neighbours.saturating_add(crate::estate::PRESSURE_OVER_NEIGHBOURS)).max(1) } else { neighbours };
+        // [supertall] The city's or the district's height limit holds
+        // ordinary buildings too.
+        let cap = match self.height_limit_at(lot_id) {
+            Some(m) => cap.min((m / crate::towers::FLOOR_M[lot.land_use.index()]).floor().clamp(1.0, 255.0) as u8),
+            None => cap,
+        };
         // [tools] Under a deck spanning over the lot: what fits beneath it.
         match self.deck_cap(lot_id) {
             Some(deck) => cap.min(deck),
@@ -1118,6 +1135,8 @@ impl World {
             crate::prof!("close_day_record", self.close_day_record(record));
             // [land] Buyouts, branches, merges, McMansions, billionaires.
             self.daily_estate();
+            // [supertall] Tower developers' money, and maybe a new project.
+            crate::prof!("daily_towers", self.daily_towers());
         }
         // Periodic work is staggered so no tick carries more than one heavy
         // job: the hour starts at :00, sites advance at :30, land value runs

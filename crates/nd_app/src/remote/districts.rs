@@ -74,6 +74,7 @@ pub fn district_json(w: &World) -> Value {
                 "commercial": d.and_then(|d| d.commercial).map(|x| x.key()),
                 "industry": d.and_then(|d| d.industry).map(|x| x.label()),
                 "historic": d.is_some_and(|d| d.historic),
+                "height_limit": d.and_then(|d| d.height_limit),
                 "landmark": d.is_some_and(|d| d.is_landmark()),
                 "color": d.map(|d| d.color),
                 "area_m2": round(s.area_m2), "centroid": s.centroid.map(round),
@@ -130,6 +131,12 @@ pub fn district(cmd: &Value, w: &mut World, overlays: &mut Overlays, tools: &mut
                 commercial: spec(cmd, "commercial", CommercialSpec::parse, "neon_strip, tech_campus, night_market, tourist")?,
                 industry: spec(cmd, "industry", industry_of, "farming, oil, refinery, manufacturing, logistics, fishing, tech")?,
                 historic: opt_bool(cmd, "historic")?,
+                // [supertall] metres; null or 0 lifts it
+                height_limit: match field(cmd, "height_limit") {
+                    None => None,
+                    Some(v) if v.is_null() => Some(None),
+                    Some(v) => Some(v.as_f64().filter(|m| *m > 0.0).map(|m| m as f32)),
+                },
                 name: opt_str(cmd, "rename")?.or(if field(cmd, "id").is_some() { opt_str(cmd, "name")? } else { None }).map(str::to_string),
             };
             w.set_district_policy(id, change)?;
