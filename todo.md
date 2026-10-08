@@ -290,6 +290,9 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [x] Speech bubbles around town off → DONE [main 2b7c892]: off by default, View window checkbox, saved in settings.ron
 - [ ] FLAG (new city day 3): blue plan near Pylon Drive refused on Implement, "would take" a far-away geothermal plant, nothing outlined [fix/false-block]
 
+## Queued (Harvey 2026-10-08: add new requests here; start agents only as running ones finish)
+- (none yet)
+
 ## Follow-ups noted in agent reports (not started)
 - [ ] Batteries charge on cheap night power and discharge at the evening peak (grid-weather)
 - [ ] Freight trains really carry their cargo instead of yards handing it to any train (train-inspect)
