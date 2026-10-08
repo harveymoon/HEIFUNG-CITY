@@ -75,8 +75,8 @@ fn main() {
             metro_ux::MetroUxPlugin,
             committee::CommitteePlugin,
             build_highlight::BuildHighlightPlugin,
-            stub_marks::StubMarksPlugin,
-            ferry_select::FerrySelectPlugin,
+            // Bevy takes tuples of at most 15 plugins.
+            (stub_marks::StubMarksPlugin, ferry_select::FerrySelectPlugin),
         ))
         .run();
 }
