@@ -28,7 +28,7 @@ use crate::vehicle::{CarEvent, CarPlace, OwnedCar, ParkKind, VehicleId, VehicleM
 /// Daily household income from which a family invests (the McMansion bar).
 pub const RICH_INCOME: f32 = 220.0;
 /// Cash a household must hold before it buys.
-pub const INVEST_CASH: f32 = 2_500.0;
+pub const INVEST_CASH: f32 = 1_000.0;
 /// Share of its cash a household puts down on a purchase.
 pub const INVEST_DEPOSIT: f32 = 0.3;
 

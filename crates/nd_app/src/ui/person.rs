@@ -284,7 +284,9 @@ fn places_row(ui: &mut egui::Ui, w: &World, id: CitizenId) -> Option<nd_sim::Bui
         let garage = spares.first().and_then(|v| w.vehicles.cars.get(*v)).and_then(|c| c.spot()).and_then(|s| s.building).and_then(|b| w.buildings.get(b)).map(|b| b.name.clone());
         let mut bits = vec![format!("owns {owns} propert{} (pinned on the map)", if owns == 1 { "y" } else { "ies" })];
         if !spares.is_empty() {
-            bits.push(format!("{} car{}: {}{} in the garage{}", spares.len() + drives as usize, if spares.len() + drives as usize == 1 { "" } else { "s" }, if drives { "one driven, " } else { "" }, spares.len(), garage.map_or(String::new(), |g| format!(" at {g}"))));
+            let at = garage.map_or(String::new(), |g| format!(" at {g}"));
+            let k = spares.len();
+            bits.push(if drives { format!("{} cars: one driven, {k} in the garage{at}", k + 1) } else { format!("{k} car{} in the garage{at}", if k == 1 { "" } else { "s" }) });
         }
         ui.label(egui::RichText::new(bits.join("  ·  ")).small().color(egui::Color32::from_rgb(255, 215, 120)));
     }

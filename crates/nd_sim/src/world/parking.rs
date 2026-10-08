@@ -131,14 +131,17 @@ impl World {
             return None;
         }
         let tick = self.clock.tick;
-        let fresh = self.buildings.values().any(|b| b.is_parking() && tick.saturating_sub(b.built_tick) < 2 * 1440 && self.lots.get(b.lot).is_some_and(|l| l.center.distance(at) < PARKING_SPACING));
-        if fresh {
+        // Every parking business, and whether it opened these two days.
+        let lots: Vec<(Vec2, bool)> = self.buildings.values().filter(|b| b.is_parking()).filter_map(|b| self.lots.get(b.lot).map(|l| (l.center, tick.saturating_sub(b.built_tick) < 2 * 1440))).collect();
+        if lots.iter().any(|(p, fresh)| *fresh && p.distance(at) < PARKING_SPACING) {
             return None;
         }
+        // Never right beside another lot, nor near one just opened.
+        let crowded = |p: Vec2| lots.iter().any(|(q, fresh)| q.distance(p) < if *fresh { PARKING_SPACING } else { PARKING_NEIGHBOUR });
         vacant
             .iter()
             .copied()
-            .filter(|&l| self.lots.get(l).is_some_and(|lot| lot.building.is_none() && !matches!(lot.land_use, LandUse::Park | LandUse::Civic)))
+            .filter(|&l| self.lots.get(l).is_some_and(|lot| lot.building.is_none() && !matches!(lot.land_use, LandUse::Park | LandUse::Civic) && !crowded(lot.center)))
             .filter(|&l| Tier::for_land_value(self.land_value.at(self.lots[l].center)) != Tier::High)
             .map(|l| (self.lots[l].center.distance(at), l))
             .filter(|(d, _)| *d <= 220.0)
@@ -238,6 +241,8 @@ pub const PARKING_SLACK: f32 = 0.4;
 pub const PARKING_CIRCLING: u32 = 4;
 /// Paid spaces stop growing once they match the town's cars (or this many).
 pub const PARKING_MIN_CAP: usize = 60;
+/// No new lot this near any other parking business, m.
+pub const PARKING_NEIGHBOUR: f32 = 70.0;
 /// No new lot this near one opened in the last two days, m.
 pub const PARKING_SPACING: f32 = 150.0;
 /// What a founder must have to open a surface lot or a car park.

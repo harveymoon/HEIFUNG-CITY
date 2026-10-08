@@ -830,7 +830,7 @@ Citizens are rendered from their simulated positions every frame.
   news line. It looks for two days, then is gone. Kinds tied to their ground (farms, wells,
   fishing, marinas) and parking, taxi yards and cargo hubs close as before.
   *The well-off invest* (`world/rich.rs`): daily (35% roll) the richest household earning 220+ a
-  day with 2,500 in the bank, not a billionaire's, buys in its top earner's name a business in
+  day with 1,000 in the bank, not a billionaire's, buys in its top earner's name a business in
   profit (if it owns none) or else a second home in a middle or high block of up to 24 homes,
   putting 30% of its cash down; at most one property per 220 of daily income (four at most).
   *Garages*: a finished mansion takes the billionaire's supercars beyond the one they drive, a
