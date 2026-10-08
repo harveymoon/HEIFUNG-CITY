@@ -18,8 +18,9 @@ use std::collections::HashMap;
 use super::{smoothstep, Lighting};
 use crate::sim::Sim;
 
-/// Puffs in flight per stack.
-const PLUME_PUFFS: usize = 18;
+/// Puffs in flight per stack: [look] enough that they overlap into one
+/// column rather than a string of beads (seen from the street most of all).
+const PLUME_PUFFS: usize = 30;
 /// Wide puffs of ground-level smog per plant.
 const SMOG_PUFFS: usize = 14;
 /// Seconds a plume puff takes from the stack top to gone.
@@ -93,6 +94,15 @@ pub(super) fn puff_image() -> Image {
     img
 }
 
+/// [haze] How much of a billboard puff of `size` metres centred `d`
+/// metres from the camera to draw: none when the camera is inside it, all
+/// from about its own size away. A camera in the smog sees the smog round
+/// it in the puffs further off; a puff right on the lens would lay its whole
+/// colour over the view (the brown or white wash of a walk through smoke).
+pub(super) fn near_fade(d: f32, size: f32) -> f32 {
+    smoothstep(0.3 * size, 0.95 * size, d)
+}
+
 /// Prevailing wind direction (unit, sim plane): veers slowly over the days.
 pub(super) fn wind_dir(tick: u64) -> SVec2 {
     let a = 0.55 + 0.9 * ((tick as f32 / 1440.0) * 0.7).sin();
@@ -114,7 +124,7 @@ pub(super) fn sync_haze(
     lighting: Res<Lighting>,
     time: Res<Time>,
     mut state: Local<HazeState>,
-    cams: Query<&GlobalTransform, With<Camera3d>>,
+    cams: Query<&GlobalTransform, With<crate::camera::OrbitCamera>>,
     mut puffs: Query<(&Puff, &mut Transform, &mut MeshMaterial3d<StandardMaterial>, &mut Visibility)>,
 ) {
     let w = &sim.world;
@@ -217,6 +227,7 @@ pub(super) fn sync_haze(
     // Move every puff: billboards facing the camera.
     let Some(cam) = cams.iter().next() else { return };
     let face = cam.compute_transform().rotation;
+    let eye = cam.translation();
     let now = time.elapsed_secs();
     let dir = wind_dir(w.clock.tick);
     let wind = w.weather.wind.clamp(0.05, 1.0);
@@ -241,7 +252,7 @@ pub(super) fn sync_haze(
                 let (size, alpha) = if vent.steam {
                     (vent.r * 1.6 + 40.0 * age.powf(0.7), smoothstep(0.0, 0.05, age) * (1.0 - age).powf(2.4))
                 } else {
-                    (6.0 * girth + 54.0 * girth.sqrt() * age.powf(0.75), smoothstep(0.0, 0.05, age) * (1.0 - age).powf(1.1))
+                    (9.0 * girth + 58.0 * girth.sqrt() * age.powf(0.75), smoothstep(0.0, 0.05, age) * (1.0 - age).powf(1.1))
                 };
                 (pos, size, alpha, if vent.steam { 2 } else { 0 })
             }
@@ -259,7 +270,7 @@ pub(super) fn sync_haze(
                 (pos, size, alpha, 1)
             }
         };
-        let a = alpha * plant.intensity;
+        let a = alpha * plant.intensity * near_fade(eye.distance(pos), size);
         if a < 0.5 / ALPHA_STEPS as f32 {
             *vis = Visibility::Hidden;
             continue;
@@ -281,5 +292,20 @@ impl Puff {
     fn plant_seed(&self) -> u64 {
         use slotmap::Key;
         self.plant.data().as_ffi()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// [haze] A puff the camera is inside is not drawn; one its own size
+    /// away is drawn in full.
+    #[test]
+    fn puffs_fade_out_round_the_camera() {
+        assert_eq!(near_fade(0.0, 50.0), 0.0);
+        assert_eq!(near_fade(10.0, 50.0), 0.0);
+        assert!(near_fade(30.0, 50.0) > 0.0 && near_fade(30.0, 50.0) < 1.0);
+        assert_eq!(near_fade(60.0, 50.0), 1.0);
     }
 }

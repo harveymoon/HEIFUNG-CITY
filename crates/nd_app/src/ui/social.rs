@@ -1,6 +1,6 @@
 //! [social] People's lives together in the HUD: a person's friends, rivals,
-//! groups and recent conversations in their pane; the People window's
-//! Social tab (the day's friendships and feuds, every crew and club with
+//! groups and recent conversations in their pane; City Data's People,
+//! Social page (the day's friendships and feuds, every crew and club with
 //! its members and what it made, petitions to the player, the news); the
 //! toast for social news; and speech bubbles over people talking when the
 //! camera is close.
@@ -11,7 +11,8 @@ use nd_sim::social::{Bond, Group, Outcome, PetitionState, Setting, Work};
 use nd_sim::{BuildingId, CitizenId, World};
 
 use super::pane;
-use super::{hint, section, UiCtx, UiFlags, GOLD, IVORY, WARN};
+use super::pane::heading;
+use super::{hint, UiCtx, UiFlags, GOLD, IVORY, WARN};
 use crate::camera::{CameraMode, OrbitCamera};
 use crate::sim::Sim;
 use crate::tools::Selection;
@@ -133,21 +134,33 @@ fn work_line(w: &World, x: &Work) -> String {
     }
 }
 
-/// The People window's Social tab.
+/// City Data's People, Social page.
 pub fn tab(ui: &mut egui::Ui, p: &mut UiCtx) {
     let w = &p.sim.world;
     let s = &w.social;
     let t = &s.today;
     let y = s.yesterday();
-    section(ui, "TODAY");
+    let open_petitions = s.petitions.iter().filter(|x| matches!(x.state, PetitionState::Open | PetitionState::Protested)).count();
+    pane::cards(ui, |ui| {
+        pane::kpi(ui, "conversations today", egui::RichText::new(format!("{}", t.talks)).color(GOLD));
+        pane::kpi(ui, "friendships made today", egui::RichText::new(format!("{}", t.friendships)).color(bond_color(Bond::Friend)));
+        pane::kpi(ui, "feuds today", egui::RichText::new(format!("{}", t.feuds)).color(bond_color(Bond::Rival)));
+        pane::kpi(ui, "crews and clubs", egui::RichText::new(format!("{}", s.active_groups().count())));
+        pane::kpi(ui, "petitions open", egui::RichText::new(format!("{open_petitions}")).color(if open_petitions > 0 { WARN } else { IVORY }));
+    });
+    heading(ui, "Today");
     let vs = |now: u32, then: Option<u32>| then.map_or(format!("{now}"), |x| format!("{now} (yesterday {x})"));
     ui.label(egui::RichText::new(format!("{} conversations · {} warm · {} sour", t.talks, t.good_talks, t.bad_talks)).small());
     ui.label(egui::RichText::new(format!("friendships made {} · close {} · couples {}", vs(t.friendships, y.map(|d| d.friendships)), t.close_friendships, t.couples)).small().color(bond_color(Bond::Friend)));
     ui.label(egui::RichText::new(format!("feuds {} · fights {}", vs(t.feuds, y.map(|d| d.feuds)), t.fights)).small().color(bond_color(Bond::Rival)));
     ui.label(egui::RichText::new(format!("meet-ups {} · home visits {} · jobs through friends {} · flats {} · loans {} · moved in together {}", t.meetups, t.home_visits, t.jobs_found, t.homes_found, t.loans, t.moved_in)).small());
     let fr: Vec<f32> = s.history.iter().rev().take(30).rev().map(|d| d.friendships as f32).chain(std::iter::once(t.friendships as f32)).collect();
+    heading(ui, "Friendships made per day");
     if fr.len() > 1 {
-        pane::sparkline(ui, &fr, bond_color(Bond::CloseFriend), 32.0, "friendships made each day, and today so far");
+        let labels: Vec<String> = (0..fr.len()).map(|i| if i + 1 == fr.len() { "today".to_string() } else { format!("{} days ago", fr.len() - 1 - i) }).collect();
+        pane::line_chart(ui, &labels, &[pane::Series::new("friendships made", bond_color(Bond::CloseFriend), fr.clone())], 110.0, &|x| format!("{x:.0}"));
+    } else {
+        hint(ui, "The chart fills in day by day.");
     }
     let counts = s.bond_counts();
     let n = |b: Bond| counts.get(&b).copied().unwrap_or(0) / 2;
@@ -162,7 +175,7 @@ pub fn tab(ui: &mut egui::Ui, p: &mut UiCtx) {
     let mut fly: Option<nd_sim::Vec2> = None;
     let mut groups: Vec<&Group> = s.active_groups().collect();
     groups.sort_by(|a, b| (b.reputation + b.members.len() as f32 * 0.05).total_cmp(&(a.reputation + a.members.len() as f32 * 0.05)).then(a.id.cmp(&b.id)));
-    section(ui, &format!("GROUPS ({})", groups.len()));
+    heading(ui, &format!("Groups ({})", groups.len()));
     if groups.is_empty() {
         hint(ui, "No crews or clubs yet: friends with a passion in common start them.");
     }
@@ -207,7 +220,7 @@ pub fn tab(ui: &mut egui::Ui, p: &mut UiCtx) {
 
     let open: Vec<&nd_sim::social::Petition> = s.petitions.iter().filter(|x| matches!(x.state, PetitionState::Open | PetitionState::Protested)).collect();
     if !open.is_empty() {
-        section(ui, "PETITIONS TO YOU");
+        heading(ui, "Petitions to you");
         for x in open.iter().rev().take(5) {
             ui.horizontal_wrapped(|ui| {
                 if ui.small_button("go").clicked() {
@@ -223,7 +236,7 @@ pub fn tab(ui: &mut egui::Ui, p: &mut UiCtx) {
     if murals + gardens > 0 {
         hint(ui, &format!("{murals} murals · {gardens} community gardens"));
     }
-    section(ui, "NEWS");
+    heading(ui, "News");
     if s.news.is_empty() {
         hint(ui, "Nothing yet.");
     }
@@ -268,6 +281,10 @@ const MAX_BUBBLES: usize = 40;
 pub fn bubbles(mut contexts: EguiContexts, sim: Res<Sim>, voices: Res<crate::committee::CommitteeRt>, mode: Res<CameraMode>, flags: Res<UiFlags>, cams: Query<(&Camera, &GlobalTransform, &OrbitCamera)>, mut seen: Local<std::collections::BTreeMap<u64, f64>>) -> Result {
     let Some((camera, gt, orbit)) = cams.iter().next() else { return Ok(()) };
     let ctx = contexts.ctx_mut()?;
+    // [city-data] The map is covered: nothing to label.
+    if crate::ui::city_data::is_open(ctx) {
+        return Ok(());
+    }
     let now = ctx.input(|i| i.time);
     let w = &sim.world;
     let eye = gt.translation();

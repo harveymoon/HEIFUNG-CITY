@@ -24,6 +24,10 @@ pub fn map_pins(mut contexts: EguiContexts, sim: Res<Sim>, mut selection: ResMut
         return Ok(());
     }
     let ctx = contexts.ctx_mut()?;
+    // [city-data] The map is covered: nothing to label.
+    if crate::ui::city_data::is_open(ctx) {
+        return Ok(());
+    }
     let screen = ctx.content_rect();
     let mut pick = None;
     for (b, h) in holdings {

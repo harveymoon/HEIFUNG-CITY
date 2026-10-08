@@ -212,9 +212,7 @@ fn a_rider_no_cab_comes_for_gives_up_and_goes_another_way() {
 
 #[test]
 fn a_trip_beside_a_footpath_dropped_onto_a_ramp_does_not_start_on_the_ramp() {
-    let mut w = interchange();
-    run(&mut w, 2 * 60);
-    assert!(!w.citizens.is_empty());
+    let mut w = lived_in();
     // Beside the footpath, a few metres short of where it meets the ramp.
     let id = w.citizens.keys().next().unwrap();
     let p = Vec2::new(-160.0, -62.0);

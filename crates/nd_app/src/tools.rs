@@ -235,7 +235,7 @@ pub struct ToolState {
     pub rail_kind: nd_sim::RailFacility,
     /// Rail tool: a dock instead of a station or yard.
     pub dock: Option<nd_sim::PortKind>,
-    /// People starred in the person pane; listed in the People window.
+    /// People starred in the person pane; listed in City Data, People, Favourites.
     pub favorites: Vec<CitizenId>,
     /// Zone tool: polygon, brush or marquee.
     pub zone_mode: ZoneMode,
@@ -799,7 +799,7 @@ pub(crate) fn tool_input(
             tools.stroke = None;
         }
     }
-    if key(KeyCode::Escape) {
+    if key(KeyCode::Escape) && !flags.data_view {
         tools.points.clear();
         tools.drag = None;
         // A stroke already painted stays (Ctrl+Z takes it back); a marquee
@@ -1306,7 +1306,7 @@ pub(crate) fn tool_input(
                     // [tolls] A toll booth goes across the road, not on a lot.
                     if let nd_sim::Placeable::Toll(size) = what {
                         tools.status = match sim.world.place_toll(p, size) {
-                            Ok(_) => format!("{} built for {:.0}; {:.0}/day to run. Toll {:.1} a car (set it in the Taxes window).", what.label(), what.cost(), what.upkeep(), size.default_price()),
+                            Ok(_) => format!("{} built for {:.0}; {:.0}/day to run. Toll {:.1} a car (set it in City Data, Economy, Taxes).", what.label(), what.cost(), what.upkeep(), size.default_price()),
                             Err(e) => format!("Cannot build: {e}."),
                         };
                         return;
@@ -1515,7 +1515,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
 
     // Bus lines: the lane path of every leg in the line's colour, stops as
     // rings, broken legs red. With the Buses tool or the toggle every line
-    // shows; otherwise only a selected one (picked in the Transit window,
+    // shows; otherwise only a selected one (picked in City Data's Services, Transit,
     // the Buses list or by clicking one of its buses), drawn bright with
     // marker posts at its stops and a pulsing ring over each of its buses.
     // [metro-ux] Not while drawing a metro line: the Metro layer is about the metro.

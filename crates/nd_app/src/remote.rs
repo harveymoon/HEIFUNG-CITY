@@ -896,34 +896,56 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             }
             Ok(json!({ "window": "title", "open": open }))
         }
+        "window" if req_str(cmd, "name").is_ok_and(|n| crate::ui::city_data::Page::from_window(n).is_some()) => {
+            // [city-data] The report windows are City Data pages now: the old
+            // name opens its tab (at its last sub-tab) or its page; People's
+            // old `tab` and a `sub` pick a sub-tab. `expanded` is accepted and
+            // means open: every page is full size.
+            use crate::ui::city_data::{Page, Target};
+            let name = req_str(cmd, "name")?;
+            let mut target = Page::from_window(name).ok_or("unreachable")?;
+            if let Some(sub) = opt_str(cmd, "sub")?.or(opt_str(cmd, "tab")?) {
+                let tab = match target {
+                    Target::Tab(t) => t,
+                    Target::Page(p) => p.tab(),
+                };
+                let sub = if sub.trim().eq_ignore_ascii_case("overview") && tab == crate::ui::city_data::Tab::People { "population" } else { sub };
+                target = Target::Page(Page::parse(None, tab.key(), Some(sub))?);
+            }
+            let open = if opt_bool(cmd, "expanded")? == Some(true) { Some(true) } else { opt_bool(cmd, "open")? };
+            let mut v = ctx.windows.request_data(Some(target), open);
+            v["window"] = json!("city data");
+            v["note"] = json!("the report windows are tabs of the City Data view now; see city_data");
+            Ok(v)
+        }
         "window" => {
             let info = window::info_of(req_str(cmd, "name")?)?;
-            // [concerns] The People window's tabs.
-            if let Some(tab) = opt_str(cmd, "tab")? {
-                ctx.windows.people_tab = Some(match tab.trim().to_ascii_lowercase().as_str() {
-                    "overview" => crate::ui::people::Tab::Overview,
-                    "concerns" | "complaints" => crate::ui::people::Tab::Concerns,
-                    "social" => crate::ui::people::Tab::Social,
-                    other => return Err(format!("unknown tab {other:?}; people has overview, concerns, social")),
-                });
+            let (open, list) = ctx.windows.request(info, opt_bool(cmd, "open")?);
+            Ok(json!({ "window": info.title().to_ascii_lowercase(), "open": open, "windows_open": list }))
+        }
+        "city_data" => {
+            // [city-data] The full-screen City Data view.
+            use crate::ui::city_data::{Page, Target};
+            let tab = opt_str(cmd, "tab")?;
+            let sub = opt_str(cmd, "sub")?;
+            let open = opt_bool(cmd, "open")?;
+            if let Some(y) = opt_f32(cmd, "scroll")? {
+                ctx.windows.data_scroll = Some(y.max(0.0));
             }
-            // Expanding opens the window too; only one is expanded at a time.
-            let expand = opt_bool(cmd, "expanded")?;
-            if expand.is_some() && !info.expandable() {
-                return Err(format!("{} has no expanded view", info.title()));
+            if tab.is_none() && sub.is_some() {
+                return Err("sub needs a tab".into());
             }
-            let open_arg = if expand == Some(true) { Some(true) } else { opt_bool(cmd, "open")? };
-            let (open, list) = ctx.windows.request(info, open_arg);
-            let mut expanded = ctx.windows.expanded_name();
-            if let Some(on) = expand {
-                ctx.windows.expand = Some((info, on));
-                let me = info.title().to_ascii_lowercase();
-                expanded = if on { Some(me) } else if expanded.as_deref() == Some(me.as_str()) { None } else { expanded };
+            if tab.is_none() && open.is_none() {
+                return Ok(ctx.windows.data_json());
             }
-            if !open && expanded.as_deref() == Some(info.title().to_ascii_lowercase().as_str()) {
-                expanded = None;
-            }
-            Ok(json!({ "window": info.title().to_ascii_lowercase(), "open": open, "expanded": expanded, "windows_open": list }))
+            let target = match (tab, sub) {
+                (Some(t), Some(s)) => Some(Target::Page(Page::parse(None, t, Some(s))?)),
+                (Some(t), None) => Some(Target::Tab(crate::ui::city_data::Tab::parse(t).ok_or_else(|| format!("unknown tab {t:?}; one of city, economy, market, people, services"))?)),
+                _ => None,
+            };
+            // Naming a page opens it unless told otherwise.
+            let open = open.or(target.map(|_| true));
+            Ok(ctx.windows.request_data(target, open))
         }
         other => Err(format!("unknown command {other:?}; try {{\"cmd\": \"help\"}}")),
     }
@@ -1178,7 +1200,7 @@ fn status(ctx: &Ctx) -> Value {
     v["subway"] = json!({ "stations": ss.stations, "lines": ss.lines, "trains": ss.trains, "waiting": ss.waiting, "riding": ss.riding, "riders_today": ss.riders_today, "riders_yesterday": ss.riders_yesterday, "fares_today": round(ss.fares_today) });
     // Added after the literal: one `json!` this size hits the macro recursion limit.
     v["windows_open"] = json!(ctx.windows.open_names());
-    v["window_expanded"] = json!(ctx.windows.expanded_name());
+    v["city_data"] = ctx.windows.data_status();
     v["build_window"] = json!({ "open": ctx.windows.build_open, "section": ctx.windows.build_section });
     v["title_screen"] = json!(ctx.saves.title);
     // [climate] The map's climate and what its weather is doing to the view.
@@ -1663,7 +1685,7 @@ fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     };
     match action {
         // Highlight a line on the map (its path, stops and buses), as
-        // clicking it in the Transit window does; no route clears it.
+        // clicking it in City Data's Services, Transit does; no route clears it.
         "select" => {
             let id = match field(cmd, "route") {
                 Some(_) => Some(route_arg(w)?),
@@ -2150,7 +2172,7 @@ pub fn building_style(sim: &crate::sim::Sim, id: nd_sim::BuildingId, assets: &Ga
 /// Everything about what the player has selected, as `inspect` gives it,
 /// in one reply: a car with why it stands, the jam in front of it, its trip
 /// and lanes; a citizen (and the car they are driving); a building; a
-/// parked car; plus the bus line picked in the Transit window, if any.
+/// parked car; plus the bus line picked in City Data's Services, Transit, if any.
 pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<nd_sim::RouteId>, assets: &GameAssets, favourites: &[nd_sim::CitizenId]) -> Value {
     let w = &sim.world;
     let detail = match sel {
@@ -2826,7 +2848,8 @@ fn help() -> Value {
         "tolls": { "action": "list (default) | price | remove | inspect", "id": "booth id (or at: [x,y])", "price": "toll per car (lorries pay double)", "returns": "booths with cars and revenue today/yesterday/total, paid/free today, upkeep" },
         "export": { "path": "optional .json (see files); default exports/city-<unix>.json: report + map + history + every row of every list" },
         "build_highlight": { "category": "a Build section (power|services|transit|rail|water|attractions), a sub-section (safety, health and education, sanitation, parking, metro, buses...) or a kind (health, police, fire, school, metro_station, coal...): opens the Build window there (a kind also picks it, as a click on its tile) and highlights those buildings on the map with their service areas", "off": "bool: close the Build window (the highlight goes with it)", "note": "no fields: what is highlighted now and the summary (worked out the frame after a change)" },
-        "window": { "name": "city|economy|taxes|market|people|power|transit|emergencies|view (or land)|districts|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), or title (the title screen), or history (the Game history window)", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns|social" },
+        "window": { "name": "a tool window: lines|view (or land)|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), new_game, title (the title screen), history (the Game history window); the old report names city|economy|taxes|market|people|power|transit|emergencies|districts|tourism open their City Data tab or page", "open": "bool, omitted toggles", "sub": "with a City Data name: the sub-tab (people's old tab overview|concerns|social works too)" },
+        "city_data": { "tab": "city|economy|market|people|services (omitted with open: the page it was on)", "sub": "the tab's sub-tab: city overview|land|districts|tourism; economy overview|cash_flow|ledger|taxes; market goods|businesses|trade; people population|inequality|concerns|social|favourites; services power|transit|emergencies (omitted: the tab's last one)", "open": "bool; omitted with a tab opens; no fields reports the view and the list of tabs", "scroll": "points from the page's top to scroll to (for screenshots of long pages)", "note": "the full-screen City Data view (J in the game, Esc closes); status.city_data says what it shows" },
         "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" },
         "social": { "days": "daily history to include (default 7)", "talks": "latest conversations to list (default 10)", "group": "optional group id: that group in full, with its members", "note": "people talking: today's and yesterday's conversations, friendships, feuds, fights, meet-ups, jobs and flats through friends, couples moving in; pairs by bond city-wide; every crew and club with momentum, reputation, base and works (gigs, matches, readings, murals, gardens, businesses, petitions, protests); petitions to the player; murals, gardens, gigs; news. inspect {citizen} has a social block (ties with bond and how they met, groups, recent conversations)" }
     });
