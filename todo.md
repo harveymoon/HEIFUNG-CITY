@@ -274,8 +274,10 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [x] Visual QA pass on road structures: walk + orbit survey of junctions, overpasses, underpasses, bridges, ramps, tunnels; fix artifacts at the root, before/after shots [fix/road-polish] → DONE [fix/road-polish]: docs/qa/road_artifacts_2026-10-07.md (36 artifacts, 29 fixed: lane lines through junctions, pad discs, ramp X lines, fork corners, poles and furniture in lanes, level crossings, paths, dead ends, tapers, roundabout facets, bridge parapets, vents; open: High-tier haze whiteout, flat-map cuttings, bridge abutments, signal arms on slopes)
 - [ ] Fire scene: units on scene clickable with an inspector; crews climb out in turnout gear, hose lines and water streams, the engine's ladder raises and extends toward the fire [feat/fire-scene]
 - [ ] Build pane category highlights existing buildings of that kind with icons, plus their service areas, coverage % and gaps [feat/build-highlight]
+- [ ] FLAG (day 23): pedestrians and taxis stuck on the highway near (590, 408); Cass Baptiste waits for a cab that never comes for days [fix/ped-highway]
 
 ## Agents running (update when starting/merging; survives context compaction)
 - feat/fire-scene: fire scene crews, hoses, ladder (started 2026-10-07 evening)
 - feat/build-highlight: category highlights and service areas (started 2026-10-07 evening)
 - feat/committee: AI committee, mock backend first, Ollama/Claude connectors (started 2026-10-07 evening)
+- fix/ped-highway: pedestrians/taxis stranded on the highway (started 2026-10-07 23:20)
