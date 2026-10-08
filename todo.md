@@ -346,3 +346,5 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 ## Agents running (update when starting/merging; survives context compaction)
 - feat/waterfront: waterfront parcels, beach businesses, private jetties, public beach zone (started 2026-10-08, from the queue)
 - feat/megacorp: mega-corps, universities, schools near families (started 2026-10-08, from the queue)
+- fix/under-construction: buildings under construction don't function (started 2026-10-08)
+- feat/directory: City Data directory of businesses and citizens (started 2026-10-08)
