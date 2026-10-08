@@ -277,7 +277,7 @@ pub fn bubbles(mut contexts: EguiContexts, sim: Res<Sim>, mode: Res<CameraMode>,
         seen.entry(t.serial).or_insert(now);
     }
     seen.retain(|_, at| now - *at < BUBBLE_SECS + 1.0);
-    if !close {
+    if !close || !super::theme::bubbles_on() {
         return Ok(());
     }
     let tick = w.clock.tick;
