@@ -94,7 +94,7 @@ fn draw_marks(mut gizmos: Gizmos, sim: Res<Sim>, selection: Res<Selection>, tool
                 let foot = Vec3::new(top.x, w.surface_height(SVec2::new(top.x, top.z)), top.z);
                 gizmos.line(foot, top - Vec3::Y * 4.0, col);
                 gizmos.circle(Isometry3d::new(foot + Vec3::Y * 0.5, flat), 4.0, col);
-                lot_outline(&mut gizmos, w, b, foot.y + 1.0, col);
+                lot_outline(&mut gizmos, w, b, 1.0, col);
             }
         }
         // A delivery robot: its outline, the pavement ahead in its fleet's

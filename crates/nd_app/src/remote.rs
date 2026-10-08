@@ -2584,8 +2584,11 @@ fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     } else {
         Selection::None
     };
-    *ctx.selection = sel;
-    Ok(json!({ "selection": selection(w, sel) }))
+    // [fix/review-app] As a click does: a unit's car selects the unit, a
+    // bus its line.
+    crate::tools::apply_pick(&ctx.sim, &mut ctx.tools, &mut ctx.selection, sel);
+    let sel = *ctx.selection;
+    Ok(json!({ "selection": selection(&ctx.sim.world, sel) }))
 }
 
 
@@ -3160,7 +3163,7 @@ fn help() -> Value {
     v["commands"]["tow_car"] = json!({ "car": "a car id on the road (it pulls over first)", "vehicle": "or a vehicle record id (parked or driving)", "returns": "tow_job, vehicle, company (null: an out-of-town firm)" });
     // [road-inspect]
     // [committee]
-    v["commands"]["committee"] = json!({ "action": "state (default)|members|appoint {id, seat?}|dismiss {id}|alerts {limit, mark_seen}|check_alerts|projects|implement {project}|dismiss_project {project}|pick_site {project, option}|refresh_sites {project}|report|minutes {meeting?}|settings {backend: mock|local|claude, local_url, local_model, claude_model, claude_effort, claude_fallbacks, timeout_s, auto_meetings, veto_allowed, save, test}", "note": "the mayor's AI committee (docs/AI_COMMITTEE.md): fictional politicians, six seats, alerts, projects; never takes or returns an API key" });
+    v["commands"]["committee"] = json!({ "action": "state (default)|members|appoint {id, seat?}|dismiss {id}|alerts {limit, mark_seen}|check_alerts|projects|implement {project}|dismiss_project {project}|pick_site {project, option}|refresh_sites {project}|report|minutes {meeting?}|settings {backend: mock|local|claude, local_url, local_model, claude_model, claude_effort, claude_fallbacks, timeout_s, auto_meetings, veto_allowed, save, test}", "note": "the mayor's AI committee (docs/AI_COMMITTEE.md): fictional politicians, six seats, alerts, projects; never takes or returns an API key; the backend fields need the player's leave (the Committee window's settings)" });
     v["commands"]["grounds_junctions"] = json!({ "lot": "optional lot id", "kind": "park|plaza|stadium|campus|station|beach", "near": "[x,y]", "radius": "m around near (default 150)", "returns": "junctions [{index, pos, kind, lot, attached, walk_node, gesture_id}] (the Path tool's snap rings) and links (paths joined to grounds)" });
     v["commands"]["diary"] = json!({ "citizen": "id", "refresh": "bool: write it again", "returns": "day, text, pending (a model still writing: call again), by_model, backend; display only, never in the save" });
     v["commands"]["voices"] = json!({ "limit": "default 20", "returns": "conversations of spotlit or favourite citizens that got a model's line (template and line), lines_written, diaries_written, backend" });
@@ -3388,6 +3391,22 @@ mod dispatch_tests {
         assert!(app.world().resource::<Sim>().generation > generation);
         assert_eq!(app.world().resource::<ToolState>().selected_gesture, None);
         assert_eq!(app.world().resource::<crate::city_reset::CityEpoch>().0, app.world().resource::<Sim>().generation);
+    }
+
+    /// [fix/review-app] The committee's backend is the player's to change.
+    #[test]
+    fn the_committee_backend_needs_the_players_leave() {
+        let mut app = app();
+        let (status, body) = send(&mut app, json!({ "cmd": "committee", "action": "settings", "backend": "claude" }));
+        assert_eq!(status, 400, "{body}");
+        let (status, body) = send(&mut app, json!({ "cmd": "committee", "action": "settings", "local_url": "http://example.invalid" }));
+        assert_eq!(status, 400, "{body}");
+        let (status, body) = send(&mut app, json!({ "cmd": "committee", "action": "settings", "veto_allowed": false }));
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["remote_may_switch"], false);
+        app.world_mut().resource_mut::<crate::committee::CommitteeRt>().remote_may_switch = true;
+        let (status, body) = send(&mut app, json!({ "cmd": "committee", "action": "settings", "backend": "mock" }));
+        assert_eq!(status, 200, "{body}");
     }
 
     /// Every name `execute` matches, read from its source: the arms

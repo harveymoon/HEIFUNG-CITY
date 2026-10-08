@@ -229,7 +229,7 @@ fn project(ui: &mut egui::Ui, p: &mut UiCtx) {
         ui.horizontal(|ui| {
             if ui.add(egui::Button::new(egui::RichText::new("Implement").strong()).min_size(egui::vec2(78.0, 0.0))).on_hover_text("Ctrl+Enter").clicked() {
                 let roads = sim.world.preview().planned_roads.len();
-                let warnings = sim.world.implement_project(i.id).unwrap_or_default();
+                let warnings = crate::road_select::keeping_road(&mut sim.world, p.selection, |w| w.implement_project(i.id)).unwrap_or_default();
                 tools.points.clear();
                 // [tools] A refusal is not a warning: nothing was built.
                 tools.status = match sim.world.implement_refused.clone() {

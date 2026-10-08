@@ -1821,8 +1821,12 @@ button) does.
 - `settings {backend?, local_url?, local_model?, claude_model?, claude_effort?,
   claude_fallbacks?, timeout_s?, auto_meetings?, veto_allowed?, save?, test?}`: switch the
   backend (applied at once; `save: true` writes `committee_settings.ron`), start a "Test
-  connection" (`test: true`; the result shows in `backend.test` on a later call). Never takes or
-  returns an API key: set `ANTHROPIC_API_KEY`, or paste one in the window.
+  connection" (`test: true`, ignored while one runs; the result shows in `backend.test` on a later
+  call). Never takes or returns an API key: set `ANTHROPIC_API_KEY`, or paste one in the window.
+  The backend fields (`backend`, `local_url`, `local_model`, `claude_model`, `claude_effort`,
+  `claude_fallbacks`, `timeout_s`) are refused unless the player has ticked "Let the remote API
+  change the backend" in the Committee window's settings (this run only; the reply's
+  `remote_may_switch` says): a model may cost money and a URL points the committee at a server.
 
 `committee_meeting {start?, vote?, abstain_rest?, fast_forward?, transcript_from?}` (alias
 `meeting`):

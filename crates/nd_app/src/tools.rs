@@ -1364,13 +1364,8 @@ pub(crate) fn tool_input(
         Tool::Inspect => {
             if click {
                 if let Some(p) = ground {
-                    *selection = pick(&sim, p, tools.depth);
-                    // A bus picked shows its whole line: path, stops, its
-                    // sister buses. Anything else picked lets the line go.
-                    tools.route_sel = match *selection {
-                        Selection::Car(id) => sim.world.traffic.cars.get(id).and_then(|c| c.bus.as_ref()).map(|b| b.route),
-                        _ => None,
-                    };
+                    let picked = pick(&sim, p, tools.depth);
+                    apply_pick(&sim, &mut tools, &mut selection, picked);
                 }
             }
         }
@@ -1614,6 +1609,25 @@ pub(crate) fn pick(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
     match pick_any(sim, p, depth) {
         Selection::Car(id) => sim.world.services.unit_of_car(id).map_or(Selection::Car(id), Selection::Unit),
         s => s,
+    }
+}
+
+/// [fix/review-app] Select `sel` as a click with the Inspect tool does,
+/// for the click and the remote API's `select` alike: an emergency unit's
+/// car is the unit, and a bus shows its whole line (path, stops, its
+/// sister buses). With the Inspect tool, anything else lets the line go.
+pub(crate) fn apply_pick(sim: &Sim, tools: &mut ToolState, selection: &mut Selection, sel: Selection) {
+    let sel = match sel {
+        Selection::Car(id) => sim.world.services.unit_of_car(id).map_or(sel, Selection::Unit),
+        s => s,
+    };
+    *selection = sel;
+    let line = match sel {
+        Selection::Car(id) => sim.world.traffic.cars.get(id).and_then(|c| c.bus.as_ref()).map(|b| b.route),
+        _ => None,
+    };
+    if line.is_some() || tools.tool == Tool::Inspect {
+        tools.route_sel = line;
     }
 }
 
@@ -2398,10 +2412,13 @@ pub(crate) fn vehicle_outline(gizmos: &mut Gizmos, p: SVec2, heading: f32, lengt
     gizmos.linestrip(pts.iter().map(|v| *v + Vec3::Y * 1.4), col);
 }
 
+/// `y` metres above the built ground at each corner. [fix/review-app] It
+/// was an absolute height: on relief maps outlines sank under the terrain.
 pub(crate) fn lot_outline(gizmos: &mut Gizmos, w: &nd_sim::World, b: BuildingId, y: f32, col: Color) {
     // [land] the whole footprint of a building over merged plots
     let Some(lot) = w.footprint(b) else { return };
-    let mut pts: Vec<Vec3> = lot.polygon.iter().map(|&p| Vec3::new(p.x, y, p.y)).collect();
+    let ground = |p: SVec2| if w.relief { w.ground_height(p) } else { 0.0 };
+    let mut pts: Vec<Vec3> = lot.polygon.iter().map(|&p| Vec3::new(p.x, y + ground(p), p.y)).collect();
     if pts.len() >= 3 {
         if let Some(&first) = pts.first() { pts.push(first); }
         gizmos.linestrip(pts, col);

@@ -41,6 +41,10 @@ pub struct CommitteeRt {
     /// [voices] Model lines for spotlit and favourite citizens'
     /// conversations, and diaries on demand (display only).
     pub voices: nd_minds::committee::voices::Voices,
+    /// [fix/review-app] The player let the remote API change the backend
+    /// and its connection (this run only). Off, a script cannot switch the
+    /// committee to a paid model or point it at another server.
+    pub remote_may_switch: bool,
 }
 
 impl Default for CommitteeRt {
@@ -61,6 +65,7 @@ impl Default for CommitteeRt {
             shown: (0, 0),
             fast_forward: false,
             voices: Default::default(),
+            remote_may_switch: false,
         };
         rt.apply_settings();
         rt

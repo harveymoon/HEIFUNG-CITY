@@ -362,11 +362,14 @@ pub(super) fn sync_layers(
     let f = sim.frac();
     let mut have = std::collections::HashSet::new();
     for (e, mk, mut tf) in &mut markers {
-        match w.traffic.cars.get(mk.0) {
+        // [fix/review-app] A loaded city reuses car ids: its markers start
+        // over rather than stick to a different car (of another class).
+        match w.traffic.cars.get(mk.0).filter(|_| !sim.full_rebuild) {
             Some(car) => {
-                let p = car.pose_at(f).0;
+                // The interpolated pose, heading included, as the car's own.
+                let (p, heading) = car.pose_at(f);
                 tf.translation = Vec3::new(p.x, 0.0, p.y);
-                tf.rotation = Quat::from_rotation_y(-car.heading);
+                tf.rotation = Quat::from_rotation_y(-heading);
                 have.insert(mk.0);
             }
             None => commands.entity(e).despawn(),

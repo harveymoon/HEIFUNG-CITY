@@ -1786,6 +1786,8 @@ fn sync_buildings(
         // picked against live in `Sim::styles` (`nd_procgen::buildings::
         // adjacency`), where the inspector reads them too.
         sim.styles.clear();
+        // [fix/review-app] Drawn heights are keyed by building id too.
+        sim.building_tops.0.clear();
     }
     let mut dirty: HashSet<ChunkKey> = HashSet::new();
     if rebuild_all {
