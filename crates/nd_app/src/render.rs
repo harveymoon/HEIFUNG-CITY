@@ -77,6 +77,7 @@ pub use nights::road_wear_color;
 pub use mapview::{zone_tint as map_zone_tint, PIN_KEY as MAP_PIN_KEY, ROAD_KEY as MAP_ROAD_KEY};
 /// The sky dome: light pollution at night, glare round the sun by day.
 mod sky;
+mod street_look;
 /// [looks] Citizens drawn with their own look.
 mod people;
 pub use people::MESH_CAP as PEOPLE_MESH_CAP;
@@ -90,6 +91,8 @@ mod subway;
 mod society;
 /// [social] Murals and community gardens.
 mod social;
+/// [dirty-industry] Clean-up crews digging out contaminated ground.
+mod cleanup;
 mod solar;
 mod turbines;
 /// [taxis] Cabs in their yards, at ranks and kerbs; yard signs.
@@ -379,6 +382,10 @@ struct ChunkMeshes {
 struct RenderState {
     roads_version: u64,
     lanes_version: u64,
+    /// [footbridge] Hash of the crosswalks footbridges replaced, as the
+    /// streets (their paint) and the walk lamps were last drawn for.
+    closed_roads: u64,
+    closed_signals: u64,
     /// What the project holograms were built for: plan version, parcels
     /// version, whether parked projects are shown.
     preview_key: Option<(u64, u64, bool)>,
@@ -480,11 +487,18 @@ impl Plugin for RenderPlugin {
         // [society] Skid row and the trash.
         app.init_resource::<society::SocietyRender>().add_systems(Update, society::sync_society.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
         // [social] Murals and gardens.
-        app.init_resource::<social::SocialRender>().add_systems(Update, social::sync_social.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
+        app.init_resource::<social::SocialRender>().add_systems(Update, social::sync_social.after(sync_vacant).after(sync_buildings).before(update_daylight).in_set(SimSet::Sync));
+        // [dirty-industry] Clean-up crews.
+        app.init_resource::<cleanup::CleanupRender>().add_systems(Update, cleanup::sync_cleanup.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
         // Drone taxis and helicopters, after the buildings whose pads they land on.
         app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, check_car_bodies.after(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, sky::sync_sky.after(update_daylight).in_set(SimSet::Sync));
+        // [look] Street lamps that light the road at night, wet roads in
+        // the rain, and the fog's reach by climate and weather.
+        app.init_resource::<street_look::StreetLamps>()
+            .add_systems(Update, (street_look::sync_lamp_lights, street_look::sync_wet_roads).after(update_daylight).in_set(SimSet::Sync))
+            .add_systems(PostUpdate, street_look::sync_fog_reach.before(heat::apply_heat));
         // Tower cranes slewing on building sites.
         app.add_systems(Update, animate_cranes.after(sync_buildings).in_set(SimSet::Sync));
         app.add_plugins(heat::HeatPlugin);
@@ -620,6 +634,23 @@ fn spawn_glow<T: Component>(commands: &mut Commands, meshes: &mut Assets<Mesh>, 
 /// Spawn a translucent overlay mesh (heat map, haze): no shadows either way.
 fn spawn_overlay<T: Component>(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, data: &MeshData, tag: T) {
     commands.spawn((Mesh3d(meshes.add(to_mesh(data, false))), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, tag));
+}
+
+/// [island-lots] `pts` with points added along every leg longer than
+/// `step`, so a line lifted onto the ground vertex by vertex follows it.
+fn densify(pts: &[SVec2], step: f32) -> Vec<SVec2> {
+    let mut out = Vec::with_capacity(pts.len());
+    for (k, &p) in pts.iter().enumerate() {
+        if k > 0 {
+            let a = pts[k - 1];
+            let n = (a.distance(p) / step).floor() as usize;
+            for i in 1..=n.min(256) {
+                out.push(a.lerp(p, i as f32 / (n + 1) as f32));
+            }
+        }
+        out.push(p);
+    }
+    out
 }
 
 /// Hash helper for change detection on generated geometry inputs.
@@ -947,6 +978,17 @@ fn sync_scatter(
     spawn_geometry(&mut commands, &mut meshes, &mats, &geo, ScatterTag);
 }
 
+/// [footbridge] A key for the set of crosswalks footbridges replaced.
+fn closed_hash(closed: &[SVec2]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for p in closed {
+        (p.x.to_bits(), p.y.to_bits()).hash(&mut h);
+    }
+    closed.len().hash(&mut h);
+    h.finish()
+}
+
 fn sync_roads(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -955,20 +997,27 @@ fn sync_roads(
     mats: Res<Materials>,
     mut state: ResMut<RenderState>,
     mut stats: ResMut<RenderStats>,
+    mut lamps: ResMut<street_look::StreetLamps>,
     existing: Query<Entity, Or<(With<RoadsTag>, With<holo::TunnelTag>, With<holo::GhostRoadTag>)>>,
 ) {
     let version = sim.world.roads.version;
-    if version == state.roads_version && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
+    // [footbridge] A footbridge built (or its crosswalk kept) repaints the
+    // streets: its zebra goes or comes back.
+    let closed = sim.world.closed_crosswalks();
+    let closed_key = closed_hash(&closed);
+    if version == state.roads_version && closed_key == state.closed_roads && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
     state.roads_version = version;
+    state.closed_roads = closed_key;
     despawn_all(&mut commands, &existing);
     let w = &sim.world;
     // Each run is set on its own height profile here (a viaduct over a
     // street, the street under it), so the roads are not lifted again.
     let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
-    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Surface });
+    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Surface, closed: &closed });
     stats.street_triangles = geo.triangle_count();
+    lamps.lamps.clone_from(&geo.lamps);
     for (s, data) in geo.iter() {
         let mesh = meshes.add(to_mesh(data, !s.is_glow()));
         let mut e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, RoadsTag));
@@ -981,7 +1030,7 @@ fn sync_roads(
     }
     // The tunnels on their own, shown in the underground view.
     if w.roads.alive_segments().any(|(_, s)| s.tunnel) {
-        let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Underground });
+        let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Underground, closed: &closed });
         stats.street_triangles += geo.triangle_count();
         for (s, data) in geo.iter() {
             commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, holo::TunnelTag, Visibility::Hidden, NotShadowCaster));
@@ -1024,8 +1073,11 @@ fn sync_signals(
     mut q: Query<(&SignalTag, Option<&PedSignalTag>, &mut MeshMaterial3d<StandardMaterial>, Option<&swap::SwapOriginal>)>,
 ) {
     let net = &sim.world.traffic.net;
-    if net.version != state.lanes_version || sim.full_rebuild {
+    let closed = sim.world.closed_crosswalks();
+    let closed_key = closed_hash(&closed);
+    if net.version != state.lanes_version || closed_key != state.closed_signals || sim.full_rebuild {
         state.lanes_version = net.version;
+        state.closed_signals = closed_key;
         despawn_all(&mut commands, &existing);
         for post in signal_posts(&sim.world.roads, net) {
             commands.spawn((
@@ -1036,7 +1088,7 @@ fn sync_signals(
                 SignalTag(post.lane),
             ));
         }
-        for post in nd_procgen::street::ped_signal_posts(&sim.world.roads, net) {
+        for post in nd_procgen::street::ped_signal_posts(&sim.world.roads, net).into_iter().filter(|p| !nd_procgen::street::crosswalk_closed(&closed, p.crosswalk)) {
             commands.spawn((
                 Mesh3d(mats.signal_mesh.clone()),
                 MeshMaterial3d(mats.ped_stop.clone()),
@@ -1332,9 +1384,15 @@ fn sync_lots(
     }
     if show_parcels {
         let grey = [0.5f32, 0.5, 0.56];
+        // [island-lots] On a hillside the outline is lifted onto the ground
+        // vertex by vertex: long edges get points every few metres so they
+        // follow the slope rather than cut through it (dark dashes and
+        // spikes on the island hills).
+        let step = if w.landscape.is_flat() { f32::INFINITY } else { 4.0 };
         for p in w.parcels.parcels.iter().filter(|p| p.lot.is_none() && p.polygon.len() >= 3) {
-            let mut outline = p.polygon.clone();
-            outline.push(p.polygon[0]);
+            let mut closed = p.polygon.clone();
+            closed.push(p.polygon[0]);
+            let outline = densify(&closed, step);
             let k = if p.landlocked() { 0.18 } else { 0.32 };
             glow.ground_strip(&outline, 0.16, 0.03, scale(grey, k));
         }
@@ -1571,6 +1629,21 @@ fn mass_top(g: &Geometry) -> f32 {
 
 fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<f32> {
     let b = world.buildings.get(id)?;
+    let mut g = building_geometry(world, assets, styles, id)?;
+    // [climate] Snow on the roofs in a cold climate.
+    nd_procgen::climate::snow_cover(&mut g, assets.palette.snow);
+    lights::tag_windows(&mut g, lights::slot_of(id));
+    let top = mass_top(&g);
+    // Every building stands on its lot's levelled pad.
+    nd_procgen::terrain::raise_geometry(&mut g, world.lot_pad(b.lot));
+    geo.append(&g);
+    Some(top)
+}
+
+/// One building's geometry as drawn, before it is raised onto its lot's
+/// pad (`World::lot_pad`); [social] murals read their wall off it.
+pub(crate) fn building_geometry(world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<Geometry> {
+    let b = world.buildings.get(id)?;
     // [land] A building over merged plots is drawn on their combined
     // footprint (`World::footprint`): one building, no seams.
     let footprint = world.footprint(id)?;
@@ -1592,7 +1665,7 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
         ..nd_procgen::style_extras(world, id, styles.neighbours(id))
     };
-    let mut g = match &b.demolition {
+    let g = match &b.demolition {
         // Coming down: what stood there (which, during a redevelopment or a
         // civic take-over, is not what the building's own fields describe),
         // cut down to what is left, with the demolition site around it.
@@ -1602,14 +1675,7 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         }
         None => generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras),
     };
-    // [climate] Snow on the roofs in a cold climate.
-    nd_procgen::climate::snow_cover(&mut g, assets.palette.snow);
-    lights::tag_windows(&mut g, lights::slot_of(id));
-    let top = mass_top(&g);
-    // Every building stands on its lot's levelled pad.
-    nd_procgen::terrain::raise_geometry(&mut g, world.lot_pad(b.lot));
-    geo.append(&g);
-    Some(top)
+    Some(g)
 }
 
 /// The chunk a building is drawn in: by its lot centre, so a building and
@@ -1896,7 +1962,7 @@ fn sync_citizens(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
-    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d, Option<&swap::SwapOriginal>), With<CitizenTag>>,
+    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d, Option<&swap::SwapOriginal>, Option<&mut WayHeight>), With<CitizenTag>>,
 ) {
     let w = &sim.world;
     let f = sim.frac();
@@ -1908,7 +1974,7 @@ fn sync_citizens(
     for (id, _) in w.citizens.iter() {
         if !state.citizens.contains_key(&id) {
             let e = commands
-                .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(look_mat.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CitizenTag))
+                .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(look_mat.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CitizenTag, WayHeight::default()))
                 .id();
             state.citizens.insert(id, e);
         }
@@ -1943,7 +2009,7 @@ fn sync_citizens(
     let down = w.down_on_street();
     for &(id, e, key, stature, _) in &outdoors {
         let Some(c) = w.citizens.get(id) else { continue };
-        let Ok((mut tf, mut vis, _, mut mesh, _)) = q.get_mut(e) else { continue };
+        let Ok((mut tf, mut vis, _, mut mesh, _, way)) = q.get_mut(e) else { continue };
         *vis = Visibility::Visible;
         let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
         let heading = lerp_angle(c.prev_heading, c.heading, f);
@@ -1956,6 +2022,10 @@ fn sync_citizens(
         let pos = if lying && down.contains(&id) { pos + SVec2::new(-c.heading.sin(), c.heading.cos()) * 2.6 } else { pos };
         // [tools] Up the stairs and over a footbridge (a raised walkway).
         let raised = w.walker_level(c, pos);
+        // [footbridge] On an elevated path, a viaduct or a bridge: on its deck.
+        if let Some(mut way) = way {
+            way.0 = w.walker_way_height(c, pos);
+        }
         tf.translation = Vec3::new(pos.x, if lying { 0.12 } else if seated { 0.02 } else { 0.16 } + raised, pos.y);
         tf.rotation = Quat::from_rotation_y(-heading);
         if lying {
@@ -1980,7 +2050,7 @@ fn sync_citizens(
     }
     for (id, &e) in state.citizens.iter() {
         let Some(c) = w.citizens.get(*id) else { continue };
-        let Ok((_, mut vis, mut mat, mut mesh, heat_original)) = q.get_mut(e) else { continue };
+        let Ok((_, mut vis, mut mat, mut mesh, heat_original, _)) = q.get_mut(e) else { continue };
         if !c.is_visible() {
             *vis = Visibility::Hidden;
             // Indoors: let go of the figure so the cache can drop it.
@@ -2815,7 +2885,11 @@ fn update_daylight(
     // Quantised to 1/4096 of a day (about 20 sim seconds, a 0.09 degree
     // step of the sun), so at 1x speed the lighting is written a few times a
     // second rather than every frame.
-    let daylight_key = (t * 4096.0).round() as i32;
+    // [look] The fog's tint follows the climate and the rain or snow too.
+    let climate = sim.world.landscape.params.climate;
+    let precip = climate::precip_now(&sim.world).map(|(_, i)| i).unwrap_or(0.0);
+    let climate_ix = nd_sim::Climate::ALL.iter().position(|c| *c == climate).unwrap_or(0) as i32;
+    let daylight_key = (t * 4096.0).round() as i32 + 8192 * (climate_ix * 16 + (precip * 15.0).round() as i32);
     if state.daylight_key == Some(daylight_key) && !assets.palette_changed {
         return;
     }
@@ -2854,6 +2928,7 @@ fn update_daylight(
     let fog_c = lerp3(lerp3(pal.fog, pal.fog_day, daylight), pal.sky_dusk, dusk * 0.5);
     // At night the haze is lit from below by the city.
     let fog_c = [fog_c[0] + glow_color[0] * 0.15 * pollution, fog_c[1] + glow_color[1] * 0.15 * pollution, fog_c[2] + glow_color[2] * 0.15 * pollution];
+    let fog_c = street_look::tint_fog(fog_c, climate, daylight, precip);
     // The zenith stays dark and a little blue at night.
     let zenith = lerp3(sky, [0.003, 0.004, 0.016], night * 0.85);
     clear.0 = Color::linear_rgb(zenith[0], zenith[1], zenith[2]);
@@ -2940,6 +3015,13 @@ struct Lifted {
     after: f32,
     lift: f32,
 }
+
+/// [footbridge] The height of the raised way (elevated path, viaduct,
+/// bridge) a walker or rider is going along this frame, if any
+/// (`World::walker_way_height`): `lift_movers` puts them on it rather than
+/// on whatever surface is nearest their last height.
+#[derive(Component, Default)]
+pub struct WayHeight(pub Option<f32>);
 
 #[derive(Component)]
 struct WaterTag;
@@ -3119,12 +3201,12 @@ fn lift_spawned(
 
 /// Raise movers onto the ground after their poses are written.
 #[allow(clippy::type_complexity)]
-fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>) {
+fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>, Option<&WayHeight>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>) {
     let w = &sim.world;
     if !w.relief {
         return;
     }
-    for (e, mut tf, lifted) in &mut q {
+    for (e, mut tf, lifted, way) in &mut q {
         let base = match &lifted {
             // Not rewritten since the last lift: take the old lift off.
             Some(l) if tf.translation.y == l.after => tf.translation.y - l.lift,
@@ -3132,9 +3214,11 @@ fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut
         };
         // Keep to the level it was on: under a viaduct or on it.
         let at = SVec2::new(tf.translation.x, tf.translation.z);
-        let lift = match &lifted {
-            Some(l) => w.surface_height_near(at, l.lift),
-            None => w.surface_height_near(at, w.ground_height(at)),
+        let lift = match (way.and_then(|h| h.0), &lifted) {
+            // [footbridge] On a raised way: its deck, whatever was nearest.
+            (Some(h), _) => h,
+            (None, Some(l)) => w.surface_height_near(at, l.lift),
+            (None, None) => w.surface_height_near(at, w.ground_height(at)),
         };
         tf.translation.y = base + lift;
         let after = tf.translation.y;

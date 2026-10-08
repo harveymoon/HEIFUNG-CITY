@@ -97,11 +97,26 @@ pub fn ground_label(lot: &nd_sim::Lot) -> &'static str {
 pub fn build_card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor, tools: &crate::tools::ToolState) {
     let what = tools.build_item();
     use nd_sim::Placeable;
-    if matches!(what, Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_)) {
+    if matches!(what, Placeable::Toll(_)) {
         return;
     }
     let (Some(ground), Some(pointer)) = (cursor.ground, ctx.pointer_latest_pos()) else { return };
     let w = &sim.world;
+    // [dock-access] Docks and rail pieces: no lot and no road needed; the
+    // verdict says what it would lay to be joined up later.
+    if let Some(v) = w.piece_verdict(what, ground) {
+        let small = |t: String| egui::RichText::new(t).small();
+        let mut lines = vec![small(format!("costs {:.0}  ·  {:.0}/day", what.cost(), what.upkeep()))];
+        match v {
+            Ok(note) => {
+                lines.push(small(note).color(egui::Color32::from_rgb(120, 230, 150)));
+                lines.push(small("click to build".to_string()).color(egui::Color32::from_rgb(120, 230, 150)));
+            }
+            Err(e) => lines.push(small(format!("cannot build: {e}")).color(egui::Color32::from_rgb(255, 120, 110))),
+        }
+        show_card(ctx, pointer, &format!("{} here", capitalise(&what.label())), lines);
+        return;
+    }
     // [plant-scale] Any lot, or the site on unzoned ground a click there
     // would make (`World::placement_site`), as the click sees it.
     // The site the tool worked out this frame while the pointer stays on
@@ -147,6 +162,11 @@ pub fn build_card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor, tools: &crate
         Some(e) => lines.push(small(format!("cannot build: {e}")).color(bad)),
         None => lines.push(small("click to build".to_string()).color(good)),
     }
+    show_card(ctx, pointer, &title, lines);
+}
+
+/// The card beside the pointer: a title and its lines.
+fn show_card(ctx: &egui::Context, pointer: egui::Pos2, title: &str, lines: Vec<egui::RichText>) {
     let size = egui::vec2(300.0, 20.0 + 16.0 * lines.len() as f32);
     let view = ctx.viewport_rect();
     let mut at = pointer + egui::vec2(18.0, 18.0);
@@ -159,7 +179,7 @@ pub fn build_card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor, tools: &crate
     egui::Area::new(egui::Id::new("build_hover_card")).order(egui::Order::Tooltip).interactable(false).fixed_pos(at).show(ctx, |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_max_width(size.x);
-            neon(ui, &title);
+            neon(ui, title);
             for l in lines {
                 ui.label(l);
             }

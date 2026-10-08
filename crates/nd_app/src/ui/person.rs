@@ -164,7 +164,7 @@ pub fn memory_line(ui: &mut egui::Ui, m: &nd_sim::Memory) {
 
 /// A draggable window on the selected citizen: who they are, what they are
 /// doing, where they are going, and everything they remember. The star keeps
-/// them in the People window's favourites; closing the pane deselects them.
+/// them in City Data's People, Favourites; closing the pane deselects them.
 /// `content` is the map area between the bars the window stays inside.
 pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, flags: &mut super::UiFlags, content: egui::Rect, cam: (&mut CameraFollow, &mut CameraFly, &mut CameraMode)) {
     let (follow, fly, mode) = cam;
@@ -188,9 +188,11 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
         .show(ctx, |ui| {
             let star = if is_fav { "★ favourite" } else { "☆ favourite" };
             ui.horizontal(|ui| {
-                if ui.selectable_label(is_fav, star).on_hover_text("Keep this person in the favourites list of the People window").clicked() {
+                if ui.selectable_label(is_fav, star).on_hover_text("Keep this person in the favourites list (City Data, People, Favourites)").clicked() {
                     toggle_fav = true;
                 }
+                // [voices] Their diary of today, beside the pane.
+                super::diary::button(ui);
                 if ui.small_button("Flag for Claude (F8)").on_hover_text("Bookmark this person with a note; the remote API's `flags` command lists it").clicked() {
                     flags.want_flag = true;
                 }

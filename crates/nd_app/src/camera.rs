@@ -108,7 +108,7 @@ impl CameraFollow {
             return false;
         }
         match self.target {
-            Some(Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_)) => true,
+            Some(Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_) | Selection::Ship(_)) => true,
             Some(Selection::Citizen(id)) => sim.world.citizens.get(id).is_some_and(|c| matches!(c.activity, nd_sim::Activity::Driving { .. } | nd_sim::Activity::Riding { .. } | nd_sim::Activity::Passenger { seated: true, .. })),
             _ => false,
         }
@@ -180,6 +180,8 @@ pub fn zoom_distance(sim: &Sim, sel: Selection) -> f32 {
         // [train-inspect] Far enough back to see the whole train.
         Selection::Train(_) => 110.0,
         Selection::Metro(_) => 70.0,
+        // [ferry-routes] The whole boat and some water round it.
+        Selection::Ship(id) => sim.world.ports.ships.get(id).map_or(120.0, |s| (s.length() * 3.0).clamp(90.0, 240.0)),
         Selection::Building(id) => {
             let w = &sim.world;
             let r = w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map_or(30.0, |l| l.polygon.iter().map(|p| p.distance(l.center)).fold(0.0, f32::max));
@@ -258,6 +260,11 @@ pub fn thing_pose(sim: &Sim, sel: Selection) -> Option<ThingPose> {
             };
             Some(ThingPose { pos: p + fwd, heading: Some(h), eye: floor + 3.4 })
         }
+        // [ferry-routes] On deck, up front.
+        Selection::Ship(id) => w.ports.ships.get(id).map(|s| {
+            let (p, h) = crate::ferry_select::ship_pose(s, f);
+            ThingPose { pos: p + Vec2::new(h.cos(), h.sin()) * (s.length() * 0.3), heading: Some(h), eye: nd_sim::landscape::WATER_LEVEL + 7.0 }
+        }),
         Selection::Bot(id) => w.bots.bots.get(id).map(|b| {
             let p = if b.prev_pos.distance(b.pos) < 30.0 { b.prev_pos.lerp(b.pos, f) } else { b.pos };
             ThingPose { pos: p, heading: Some(lerp_angle(b.prev_heading, b.heading, f)), eye: ground(p) + 0.75 }
@@ -279,7 +286,10 @@ pub fn thing_pose(sim: &Sim, sel: Selection) -> Option<ThingPose> {
             };
             riding.or_else(|| {
                 let p = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
-                Some(ThingPose { pos: p, heading: Some(lerp_angle(c.prev_heading, c.heading, f)), eye: ground(p) + EYE_HEIGHT - 0.05 })
+                // [footbridge] On a raised way's deck (as drawn), and up a
+                // footbridge's stairs.
+                let feet = w.walker_way_height(c, p).unwrap_or_else(|| ground(p)) + w.walker_level(c, p);
+                Some(ThingPose { pos: p, heading: Some(lerp_angle(c.prev_heading, c.heading, f)), eye: feet + EYE_HEIGHT - 0.05 })
             })
         }
     }
@@ -354,7 +364,7 @@ fn control_camera(
     }
     // [camera] Escape first ends a follow (and its point of view) or a
     // flight, and is used up by it: the selection stays for a second Escape.
-    if keys.just_pressed(KeyCode::Escape) && (follow.target.is_some() || fly.flying()) {
+    if keys.just_pressed(KeyCode::Escape) && !flags.data_view && (follow.target.is_some() || fly.flying()) {
         follow.stop();
         fly.flight = None;
         if *mode == CameraMode::Walk {
@@ -374,7 +384,7 @@ fn control_camera(
     let held = |k: KeyCode| !flags.keyboard_captured && keys.pressed(k);
 
     // Tab toggles walk mode; Escape leaves it.
-    if key(KeyCode::Tab) || (keys.just_pressed(KeyCode::Escape) && *mode == CameraMode::Walk) {
+    if key(KeyCode::Tab) || (keys.just_pressed(KeyCode::Escape) && !flags.data_view && *mode == CameraMode::Walk) {
         *mode = if *mode == CameraMode::Walk { CameraMode::Orbit } else { CameraMode::Walk };
     }
     let pov = *mode == CameraMode::Walk && pov_capable;

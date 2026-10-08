@@ -1,14 +1,15 @@
 //! [events] Street races, raves and the roads in the HUD: news lines as
-//! toasts and in the Emergencies window, a racer's line in the car
+//! toasts and in City Data's Services, Emergencies, a racer's line in the car
 //! inspector, a rave's in the warehouse's, and the road maintenance budget
-//! in the Taxes window.
+//! in City Data's Economy, Taxes.
 
 use bevy::prelude::Vec2;
 use bevy_egui::egui;
 use nd_sim::road_wear;
 use nd_sim::street_events::EventKind;
 
-use super::{hint, section, UiCtx, UiFlags, GOLD, WARN};
+use super::pane::heading;
+use super::{hint, UiCtx, UiFlags, GOLD, WARN};
 
 /// Neon pink for raves, electric blue for races.
 pub const RAVE: egui::Color32 = egui::Color32::from_rgb(255, 90, 220);
@@ -41,7 +42,7 @@ pub fn news_toast(w: &nd_sim::World, flags: &mut UiFlags) {
 pub fn news(ui: &mut egui::Ui, p: &mut UiCtx) {
     let w = &p.sim.world;
     let e = &w.street_events;
-    section(ui, "STREET NIGHTS");
+    heading(ui, "Street nights");
     let now = match (&e.race, &e.rave) {
         (Some(r), _) => Some(format!("Race {} · {} cars · {} to {}", r.stage.label(), r.cars.len(), r.meet.name, r.finish.name)),
         (None, Some(r)) => Some(format!("Rave at {} · {} inside · {} queueing", r.place, r.inside.len(), r.queue.len())),
@@ -104,7 +105,7 @@ pub fn rave_line(ui: &mut egui::Ui, w: &nd_sim::World, b: nd_sim::BuildingId) {
 
 /// The road maintenance line: funding slider, what it buys, who it serves.
 pub fn road_budget(ui: &mut egui::Ui, p: &mut UiCtx) {
-    section(ui, "ROAD MAINTENANCE");
+    heading(ui, "Road maintenance");
     let w = &p.sim.world;
     let rw = &w.road_wear;
     let need = rw.need_per_day(&w.roads);

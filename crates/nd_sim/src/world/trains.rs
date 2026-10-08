@@ -16,6 +16,13 @@ impl World {
         self.stations = self.facilities(RailFacility::Station);
         self.stations.extend(self.facilities(RailFacility::Central));
         self.yards = self.facilities(RailFacility::FreightYard);
+        // [dock-access] Rail-only stations: on the railway, not yet on the roads.
+        self.halts = self
+            .buildings
+            .iter()
+            .filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind.is_passenger() && l.rail_connected && !l.road_connected) && !b.is_derelict())
+            .map(|(id, _)| id)
+            .collect();
     }
 
     pub(super) fn nearest_yard(&self, to: BuildingId) -> Option<BuildingId> {
@@ -33,26 +40,16 @@ impl World {
         if self.economy.treasury < cost {
             return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), cost));
         }
+        if let Some(why) = self.rail_piece_problem(&facility) {
+            return Err(why);
+        }
         let fp = facility.footprint();
-        // Everything that grew under the footprint is bought out; another
-        // civic structure there stops the placement.
         let under: Vec<(BuildingId, LotId)> = self
             .buildings
             .iter()
             .filter(|(_, b)| self.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp) || polygons_overlap(&fp, &l.polygon)))
             .map(|(id, b)| (id, b.lot))
             .collect();
-        if let Some(b) = under.iter().filter_map(|(id, _)| self.buildings.get(*id)).find(|b| Self::is_civic_structure(b)) {
-            return Err(format!("{} stands there; bulldoze it first", b.name));
-        }
-        // [subway] The Central Station is the one grand terminus.
-        if kind == RailFacility::Central && self.buildings.values().any(|b| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::Central)) {
-            return Err("the city has its Central Station already".into());
-        }
-        let spacing = |k: RailFacility| Facility::size(k).0 * 0.5;
-        if self.facilities.values().any(|f| f.center.distance(facility.center) < (spacing(kind) + spacing(f.kind)) * 0.9) {
-            return Err("too close to another station or yard".into());
-        }
         for (_, lot) in under {
             self.take_over_lot(lot, kind.label())?;
         }
@@ -80,6 +77,27 @@ impl World {
         self.facilities[fid].building = Some(id);
         self.refresh_rail_links();
         Ok(id)
+    }
+
+    /// Why a station or yard planned as `facility` cannot go where it is
+    /// (`place_rail_facility` and the Build tool's verdict share this).
+    /// Everything that grew under the footprint is bought out; another
+    /// civic structure there stops the placement. No road is needed.
+    pub fn rail_piece_problem(&self, facility: &Facility) -> Option<String> {
+        let kind = facility.kind;
+        let fp = facility.footprint();
+        if let Some(b) = self.buildings.values().filter(|b| self.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp) || polygons_overlap(&fp, &l.polygon))).find(|b| Self::is_civic_structure(b)) {
+            return Some(format!("{} stands there; bulldoze it first", b.name));
+        }
+        // [subway] The Central Station is the one grand terminus.
+        if kind == RailFacility::Central && self.buildings.values().any(|b| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::Central)) {
+            return Some("the city has its Central Station already".into());
+        }
+        let spacing = |k: RailFacility| Facility::size(k).0 * 0.5;
+        if self.facilities.values().any(|f| f.center.distance(facility.center) < (spacing(kind) + spacing(f.kind)) * 0.9) {
+            return Some("too close to another station or yard".into());
+        }
+        None
     }
 
     /// The lot a facility stands on: its footprint, fronting the nearest
@@ -122,7 +140,8 @@ impl World {
         // reached when the facility's street shares a component with a
         // zoned lot's street: there is a city at the other end of it.
         let trunk_ends: Vec<NodeId> = self.roads.rail_leaf_nodes().into_iter().filter(|&n| (self.roads.node(n).pos.y - TRUNK_Y).abs() < 1.0).collect();
-        let city: std::collections::HashSet<u32> = self.lots.values().filter(|l| l.zone != ZoneId::default() && l.usable()).filter_map(|l| self.road_component(l.access_node)).collect();
+        // [dock-access] Or reaches off the map (the highway, a road out).
+        let city = self.network_components();
         let ids: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.rail.is_some()).map(|(id, _)| id).collect();
         for id in ids {
             // The track beside the facility may have been split, re-laid or
@@ -185,6 +204,9 @@ impl World {
             b.metro = central;
             b.depot = central;
         });
+        // [dock-access] Like a dock: on its own footprint and drawn as itself
+        // at once, not as the clearing of what grew there.
+        self.buildings[id].demolition = None;
         if central {
             self.subway.version += 1;
         }
@@ -439,8 +461,10 @@ impl World {
         let seconds = self.config.traffic_seconds_per_tick;
         let queued = self.rail.trains.values().any(|t| t.held && t.branch.is_some_and(|(a, _)| t.s <= a + 0.5));
         let room = self.rail.trains.len() < rail::MAX_TRAINS && !queued;
-        if room && Rail::in_service(minute) && !self.stations.is_empty() && tick.saturating_sub(self.rail.last_passenger_tick) >= rail::PASSENGER_HEADWAY {
-            let stations = self.stations.clone();
+        // [dock-access] Trains call at stations not yet on the roads too
+        // (rail to rail); nobody gets on or off there.
+        if room && Rail::in_service(minute) && !(self.stations.is_empty() && self.halts.is_empty()) && tick.saturating_sub(self.rail.last_passenger_tick) >= rail::PASSENGER_HEADWAY {
+            let stations: Vec<BuildingId> = self.stations.iter().chain(self.halts.iter()).copied().collect();
             if self.spawn_train(TrainKind::Passenger, &stations) {
                 self.rail.stats.passenger_trains_today += 1;
             }
@@ -523,7 +547,7 @@ impl World {
         // The counts are tallied in `update_economy`; only the countdown is
         // worth keeping to the minute.
         self.rail.stats.trains = self.rail.trains.len() as u32;
-        self.rail.stats.next_passenger_in = if self.stations.is_empty() { 0 } else { rail::PASSENGER_HEADWAY.saturating_sub(tick.saturating_sub(self.rail.last_passenger_tick)) as u32 };
+        self.rail.stats.next_passenger_in = if self.stations.is_empty() && self.halts.is_empty() { 0 } else { rail::PASSENGER_HEADWAY.saturating_sub(tick.saturating_sub(self.rail.last_passenger_tick)) as u32 };
     }
 
     /// A train stands at a station or yard: people off and on, goods off.
@@ -534,6 +558,9 @@ impl World {
             (t.stops[t.next_stop].0, t.kind)
         };
         match kind {
+            // [dock-access] A station off the roads: the train stands its
+            // time and goes on; nobody could walk away from it.
+            TrainKind::Passenger if !self.stations.contains(&at) => {}
             TrainKind::Passenger => {
                 let entrance = self.building_entrance(at).unwrap_or(self.rail.trains[id].head());
                 let passengers = self.rail.trains[id].passengers.clone();

@@ -156,6 +156,7 @@ impl World {
 
     /// Out of the car at `at`: walk on to where they were going, or be there.
     fn get_out(&mut self, p: CitizenId, at: Vec2) {
+        let at = self.kerbside(at);
         let Some(c) = self.citizens.get(p) else { return };
         let Activity::Passenger { to, purpose, .. } = c.activity else { return };
         let Some(entrance) = to.and_then(|b| self.building_entrance(b)) else {
