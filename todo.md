@@ -285,6 +285,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Fishing boats actually go out, fish at grounds for hours, return and unload; berths empty while at sea [feat/fishing]
 - [ ] Selecting a ferry terminal highlights its routes; other routes dim; route list in the inspector [feat/ferry-routes]
 - [ ] FLAG (day 24): no lots along roads on a hilly island (slope ~0.42); zoning there impossible, no reason shown [fix/island-lots]
+- [ ] People on an elevated path walk at ground level (even over water) under it; walkers/cars on raised ways must be drawn on the deck [fix/footbridge]
 
 ## Agents running (update when starting/merging; survives context compaction)
 - feat/committee: AI committee, mock backend first, Ollama/Claude connectors (started 2026-10-07 evening)
