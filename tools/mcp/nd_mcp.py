@@ -208,8 +208,8 @@ TOOLS = [
     },
     {
         "name": "saves",
-        "description": "action=save (path optional: default writes saves/city.ron plus a dated slot), load (path; the city comes up paused), list.",
-        "inputSchema": obj({"action": {"type": "string", "enum": ["save", "load", "list"]}, "path": {"type": "string", "description": "a .ron path inside saves/, screenshots/ or exports/ (relative to the game dir) or the OS temp folder; no '..'"}}, ["action"]),
+        "description": "action=save (path optional: default writes saves/city.ron plus a dated slot), load (path; the city comes up paused; replacing a city with unsaved play time needs confirm=true), list.",
+        "inputSchema": obj({"action": {"type": "string", "enum": ["save", "load", "list"]}, "path": {"type": "string", "description": "a .ron path inside saves/, screenshots/ or exports/ (relative to the game dir) or the OS temp folder; no '..'"}, "confirm": {"type": "boolean", "description": "load only: true to replace a running city whose play time no save holds (the game refuses without it and says what would be lost)"}}, ["action"]),
     },
     {
         "name": "seed_demo",
@@ -359,7 +359,7 @@ def run_tool(name, args):
         if a == "save":
             return call_game({"cmd": "save", **pick(args, "path")}), []
         if a == "load":
-            return call_game({"cmd": "load", **pick(args, "path")}), []
+            return call_game({"cmd": "load", **pick(args, "path", "confirm")}), []
         if a == "list":
             return call_game({"cmd": "list_saves"}), []
         return {"ok": False, "error": f"unknown saves action {a!r}"}, []

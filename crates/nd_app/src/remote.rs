@@ -206,14 +206,24 @@ fn serve(server: tiny_http::Server, tx: Sender<Pending>, port: u16) {
             continue;
         }
         let tx = tx.clone();
-        let count = in_flight.clone();
-        let spawned = std::thread::Builder::new().name("nd-remote-req".into()).spawn(move || {
+        // [fix/review-app] The slot goes back however the thread ends: a
+        // panic in `handle` used to keep it, and after 16 of them every
+        // request got a 503. (A failed spawn drops the closure, and the
+        // guard with it.)
+        let slot = Slot(in_flight.clone());
+        let _ = std::thread::Builder::new().name("nd-remote-req".into()).spawn(move || {
+            let _slot = slot;
             handle(req, &tx, port);
-            count.fetch_sub(1, Ordering::SeqCst);
         });
-        if spawned.is_err() {
-            in_flight.fetch_sub(1, Ordering::SeqCst);
-        }
+    }
+}
+
+/// One of the `MAX_IN_FLIGHT` request slots, given back on drop.
+struct Slot(Arc<AtomicUsize>);
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -350,25 +360,30 @@ fn remote_commands(inbox: Res<Inbox>, mut ctx: Ctx) {
         if p.state.compare_exchange(QUEUED, TAKEN, Ordering::SeqCst, Ordering::SeqCst).is_err() {
             continue;
         }
-        let result = execute(&p.cmd, &mut ctx);
-        // [fix/review-app] A command that replaced the city: reset what
-        // named the old one's ids now, before the next command in this
-        // batch reads it (`city_reset` would only run later this frame).
-        {
-            let Ctx { sim, epoch, tools, selection, eplan, follow, fly, .. } = &mut ctx;
-            crate::city_reset::catch_up(sim.generation, epoch, tools, selection, eplan, follow, fly);
-        }
-        let reply = match result {
-            Ok(mut body) => {
-                if body.get("ok").is_none() {
-                    body["ok"] = json!(true);
-                }
-                Reply { status: 200, body }
-            }
-            Err(e) => Reply { status: 400, body: json!({ "ok": false, "error": e }) },
-        };
+        let reply = run_one(&p.cmd, &mut ctx);
         // The HTTP side may have timed out and gone; nothing to do then.
         let _ = p.reply.send(reply);
+    }
+}
+
+/// Run one command and shape its reply.
+fn run_one(cmd: &Value, ctx: &mut Ctx) -> Reply {
+    let result = execute(cmd, ctx);
+    // [fix/review-app] A command that replaced the city: reset what named
+    // the old one's ids now, before the next command in this batch reads
+    // it (`city_reset` would only run later this frame).
+    {
+        let Ctx { sim, epoch, tools, selection, eplan, follow, fly, .. } = ctx;
+        crate::city_reset::catch_up(sim.generation, epoch, tools, selection, eplan, follow, fly);
+    }
+    match result {
+        Ok(mut body) => {
+            if body.get("ok").is_none() {
+                body["ok"] = json!(true);
+            }
+            Reply { status: 200, body }
+        }
+        Err(e) => Reply { status: 400, body: json!({ "ok": false, "error": e }) },
     }
 }
 
@@ -3040,6 +3055,44 @@ fn build_highlight(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     Ok(json!({ "on": true, "section": cat.key(), "sub": sub, "item": item.map(|i| i.label()), "note": "the highlight and its summary are worked out next frame: build_highlight {} reads them" }))
 }
 
+/// [fix/review-app] The other names `execute` accepts, each with the
+/// command `help` documents it under. `help` lists them from here, and a
+/// test checks that every name `execute` matches is a help command or one
+/// of these (and the other way round).
+const ALIASES: &[(&str, &str)] = &[
+    ("city_identity", "city_name"),
+    ("clean_up", "cleanup"),
+    ("contamination_at", "dirt_at"),
+    ("park_junctions", "grounds_junctions"),
+    ("interchange", "add_interchange"),
+    ("tax", "taxes"),
+    ("toll", "tolls"),
+    ("nights", "street_events"),
+    ("road_condition", "roads"),
+    ("road_budget", "roads"),
+    ("districts", "district"),
+    ("tourists", "tourism"),
+    ("meeting", "committee_meeting"),
+    ("land_market", "estate"),
+    ("corp", "corps"),
+    ("megacorp", "corps"),
+    ("university", "campus"),
+    ("towers", "skyline"),
+    ("height_limit", "skyline"),
+    ("pressures", "pressure"),
+    ("waterfront", "shore"),
+    ("metro", "subway"),
+    ("level_crossing", "level_crossings"),
+    ("crossings", "level_crossings"),
+    ("rail_crossings", "level_crossings"),
+    ("tow", "tow_car"),
+    ("boot", "tow_car"),
+    ("favorite", "favourite"),
+    ("zoom", "zoom_to"),
+    ("heat", "heat_vision"),
+    ("quality", "graphics"),
+];
+
 fn help() -> Value {
     let mut v = json!({
         "transport": "POST http://127.0.0.1:<port>/cmd (default port 4817) with JSON {\"cmd\": name, ...fields} and Content-Type: application/json (or the header X-ND-Remote: 1); GET /status, GET /help. Replies {ok: true, ...} or {ok: false, error} with HTTP 400. Requests from web pages (an Origin or Sec-Fetch-Site header from another site, a foreign Host) get 403; bodies over 1 MB 413; a 504 means the command was withdrawn unrun. See docs/REMOTE.md.",
@@ -3050,19 +3103,19 @@ fn help() -> Value {
             "status": {},
             "pause": { "paused": "bool, omitted toggles" },
             "speed": { "index": "0..5", "value": "multiple of real time for what moves (1 = people walk at their true pace; the clock runs 15x faster than that), snapped to the nearest step" },
-            "step": { "ticks": "advance n sim minutes now, even while paused (default 1, max 100000)" },
+            "step": { "ticks": "advance n sim minutes now, even while paused (default 1, max 100000); the committee's round runs each new day, and a meeting it calls stops the step there (reply `stopped`)" },
             "seed_demo": {},
             "save": { "name": "optional: save as a named game, saves/<name>.ron (file-safe) with a sidecar <name>.meta.json and a map picture <name>.png", "path": "optional; neither: writes saves/city.ron and a dated slot (with a picture)" },
-            "load": { "path": "a .ron save (see files)" },
+            "load": { "path": "a .ron save (see files)", "confirm": "true to replace a city with play time no save holds (refused without it)" },
             "list_saves": { "note": "newest first: path, name, kind (named|latest|autosave|dated), modified_unix, bytes, day, population, treasury, buildings, landscape (null for saves without a sidecar), thumbnail (absolute path of the PNG, or null), city (\"Unnamed city\" when none), game_id; by_city groups the paths by city name" },
             "plan": {},
             "add_roundabout": { "center": "[x,y] (snaps onto a junction within 12 m or a street within 6 m)", "radius": "m to the ring centreline, 12..120 (or diameter 24..240)", "lanes": "1|2|3 ring lanes", "implement": "bool", "returns": "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state" },
             "add_road": { "points": "[[x,y] or [x,y,level],...] (2+; level metres above ground, negative below)", "elevation": "level for points without one (number), or a list", "tunnel": "bool: default level -8 m", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true (a path end also snaps onto a park gate)", "from_junction": "path only: start on this grounds_junctions index", "to_junction": "path only: end on this index", "implement": "bool, default false (pending in the project)", "returns": "gesture_id, joined (path ends on a grounds gate), project state" },
             "add_zone": { "polygon": "[[x,y],...] (3+)", "land_use": "residential|commercial|industrial|entertainment|civic|park", "implement": "bool" },
-            "bulldoze": { "gesture_id": "int", "implement": "bool" },
+            "bulldoze": { "gesture_id": "int", "implement": "bool", "building": "or a city building's id: it goes at once, its ground back to the zoning plan" },
             "project": { "action": "start|implement|undo|redo|discard" },
             "place": { "kind": "toll_booth|toll_plaza (on a road: across the carriageway)|station|freight_yard|depot|parking|coal|solar|wind|nuclear|hydro|tidal|geothermal|shipping_port|ferry_terminal|police|fire|hospital|clinic|school|dispatch|monument|stadium|jail|trash_depot (services: tier or kind:tier)", "tier": "low|mid|high", "x": "f", "y": "f", "note": "hydro beside a river or stream with a current >= 0.8 m/s, tidal on the sea shore, geothermal over a hot spot; docks at the water's edge (they build a pier and a street stub)" },
-            "new_game": { "preset": "river_valley|islands|coast|delta|plains|flat (default river_valley)", "seed": "u64", "water": "0..1", "relief": "0..1 height variation", "branching": "0..1", "islands": "0..8", "climate": "temperate|desert|tropical|arctic|volcanic (default desert; iceland = volcanic)", "highway": "ignored: every new game has the highway and the trunk line", "note": "throws the city away; omitted levers take the preset's" },
+            "new_game": { "preset": "river_valley|islands|coast|delta|plains|flat (default river_valley)", "seed": "u64", "water": "0..1", "relief": "0..1 height variation", "branching": "0..1", "islands": "0..8", "climate": "temperate|desert|tropical|arctic|volcanic (default desert; iceland = volcanic)", "highway": "ignored: every new game has the highway and the trunk line", "confirm": "true to replace a city with play time no save holds (refused without it)", "note": "throws the city away; omitted levers take the preset's" },
             "terrain_at": { "x": "f", "y": "f", "returns": "natural/ground/surface heights, slope, water (kind, current, width), nearest shore, hot spot, power sites and dock placement for the lot there, survey (every land layer's value 0..1 there: resources, and the chance of each industry kind)" },
             "grant": { "amount": "money added to the treasury (dev), default 100000" },
             "landscape": { "returns": "preset and levers, rivers (width, current, hydro_ok), lakes, sea, hot spots, highway ends and through cars, bridges, docks, ships" },
@@ -3085,7 +3138,10 @@ fn help() -> Value {
     });
     // Kept out of the literal above: it is at the json! recursion limit.
     v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
-    v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "crossings": "level_crossings", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
+    v["aliases"] = Value::Object(ALIASES.iter().map(|(a, c)| (a.to_string(), json!(c))).collect());
+    // [fix/review-app] Missing until the dispatcher test found them.
+    v["commands"]["pressure"] = json!({ "note": "the pressures report section (what the city lacks, by kind)", "open": "optional: a business kind key (mechanic, car_dealer, golf_range, ...) to open on the vacant lot at `at`", "at": "[x, y] with open", "finish": "bool: built at once" });
+    v["commands"]["tow_car"] = json!({ "car": "a car id on the road (it pulls over first)", "vehicle": "or a vehicle record id (parked or driving)", "returns": "tow_job, vehicle, company (null: an out-of-town firm)" });
     // [road-inspect]
     // [committee]
     v["commands"]["committee"] = json!({ "action": "state (default)|members|appoint {id, seat?}|dismiss {id}|alerts {limit, mark_seen}|check_alerts|projects|implement {project}|dismiss_project {project}|pick_site {project, option}|refresh_sites {project}|report|minutes {meeting?}|settings {backend: mock|local|claude, local_url, local_model, claude_model, claude_effort, claude_fallbacks, timeout_s, auto_meetings, veto_allowed, save, test}", "note": "the mayor's AI committee (docs/AI_COMMITTEE.md): fictional politicians, six seats, alerts, projects; never takes or returns an API key" });
@@ -3153,7 +3209,7 @@ fn help() -> Value {
     v["commands"]["set_weather"] = json!({ "cloud": "0..1 (rain or snow above 0.6, by climate)", "wind": "0.05..1", "temp_c": "-50..55", "note": "dev: sets the sky now; it drifts again hour by hour" });
     v["commands"]["ships"] = json!({ "returns": "every ship and boat: freighters, ferries, marina boats and (fishing) trawlers with name, port, at, heading_deg, state (in_port|outbound|fishing|hauling|returning|unloading), at_sea, nets_out, fish_aboard, catch_today; count, trawlers_at_sea" });
     v["commands"]["memory"] = json!({ "note": "[memory] the process working set, peak and commit charge (MB), the renderer's mesh/material/image and entity counts, and the world's big counts" });
-    v["commands"]["generate_city"] = json!({ "preset": "grid_plaza|coastal_river|old_town|twin_centres (default grid_plaza)", "seed": "u64 (default 1): the city and its landscape", "landscape": "optional landscape preset to lay it on instead of the city preset's own (river_valley|islands|coast|delta|plains|flat)", "water": "0..1", "relief": "0..1", "branching": "0..1", "climate": "temperate|desert|tropical|arctic|volcanic (default: the city preset's, desert)", "note": "throws the city away: a new game with a whole generated city (tensor-field streets, zoning, highway interchanges, a coal plant); returns the landscape summary and city {arterial, collector, local, zones, lots, interchanges, way_in, centres}" });
+    v["commands"]["generate_city"] = json!({ "preset": "grid_plaza|coastal_river|old_town|twin_centres (default grid_plaza)", "seed": "u64 (default 1): the city and its landscape", "landscape": "optional landscape preset to lay it on instead of the city preset's own (river_valley|islands|coast|delta|plains|flat)", "water": "0..1", "relief": "0..1", "branching": "0..1", "climate": "temperate|desert|tropical|arctic|volcanic (default: the city preset's, desert)", "confirm": "true to replace a city with play time no save holds (refused without it)", "note": "throws the city away: a new game with a whole generated city (tensor-field streets, zoning, highway interchanges, a coal plant); returns the landscape summary and city {arterial, collector, local, zones, lots, interchanges, way_in, centres}" });
     // [districts] [tourism]
     v["commands"]["district"] = json!({ "action": "list (default)|create|paint|erase|set|remove|at|select|layer", "id": "district id (or district: id or name)", "at": "[x,y] brush centre", "radius": "m, default 40", "polygon": "[[x,y],...]", "rect": "[[x0,y0],[x1,y1]]", "residential": "kowloon|suburban|eco|none", "commercial": "neon_strip|tech_campus|night_market|tourist|none", "industry": "farming|oil|refinery|manufacturing|logistics|fishing|tech|none", "historic": "bool", "height_limit": "metres (null or 0 lifts it): nothing new rises over it in the district", "rename": "new name", "on": "bool (layer)" });
     v["commands"]["tourism"] = json!({ "action": "refresh (re-read attractions now)", "limit": "tourists listed, default 20", "returns": "attractiveness, demand, ways in, today's and yesterday's arrivals, spending and tourist tax, hotels, attractions, tourists" });
@@ -3199,4 +3255,163 @@ fn overlays_json(o: &Overlays) -> Value {
     m.insert("active".into(), json!(crate::map_layers::active(o).map(|l| l.key())));
     m.insert("projects".into(), json!(o.projects));
     Value::Object(m)
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    /// A headless app holding everything `Ctx` borrows (no window, no
+    /// renderer, no files read).
+    fn app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        let mut committee = crate::committee::CommitteeRt::default();
+        committee.settings = Default::default();
+        committee.courier = nd_minds::committee::Courier::mock();
+        app.insert_resource(Sim::new())
+            .insert_resource(GameAssets::for_tests())
+            .insert_resource(committee)
+            .insert_resource(Saves::default())
+            .init_resource::<ToolState>()
+            .init_resource::<Selection>()
+            .init_resource::<EffectivePlan>()
+            .init_resource::<UiFlags>()
+            .init_resource::<Overlays>()
+            .init_resource::<Lighting>()
+            .init_resource::<CameraMode>()
+            .init_resource::<WalkState>()
+            .init_resource::<crate::camera::CameraFollow>()
+            .init_resource::<crate::camera::CameraFly>()
+            .init_resource::<EventLog>()
+            .init_resource::<History>()
+            .init_resource::<WindowRequests>()
+            .init_resource::<RenderStats>()
+            .init_resource::<DiagnosticsStore>()
+            .init_resource::<crate::flags::ClaudeFlags>()
+            .init_resource::<crate::build_highlight::BuildHighlight>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<crate::city_reset::CityEpoch>();
+        app
+    }
+
+    /// Run one command as the API does; (HTTP status, body).
+    fn send(app: &mut App, cmd: Value) -> (u16, Value) {
+        let r = app.world_mut().run_system_once(move |mut ctx: Ctx| run_one(&cmd, &mut ctx)).expect("the command runs");
+        (r.status, r.body)
+    }
+
+    fn tick(app: &App) -> u64 {
+        app.world().resource::<Sim>().world.clock.tick
+    }
+
+    fn start(app: &App) -> u64 {
+        app.world().resource::<Sim>().saved_tick.expect("a city starts clean")
+    }
+
+    #[test]
+    fn read_only_commands_leave_the_city_alone() {
+        let mut app = app();
+        let generation = app.world().resource::<Sim>().generation;
+        for cmd in ["status", "help", "report", "list_saves"] {
+            let (status, body) = send(&mut app, json!({ "cmd": cmd }));
+            assert_eq!(status, 200, "{cmd}: {body}");
+            assert_eq!(body["ok"], true);
+        }
+        assert_eq!(tick(&app), start(&app));
+        assert_eq!(app.world().resource::<Sim>().generation, generation);
+        let (status, body) = send(&mut app, json!({ "cmd": "no_such_command" }));
+        assert_eq!(status, 400);
+        assert_eq!(body["ok"], false);
+    }
+
+    #[test]
+    fn mutating_commands_change_the_city() {
+        let mut app = app();
+        let t0 = tick(&app);
+        let (status, body) = send(&mut app, json!({ "cmd": "step", "ticks": 5 }));
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["ticks"], 5);
+        assert_eq!(tick(&app), t0 + 5);
+        let before = app.world().resource::<Sim>().world.economy.treasury;
+        let (status, _) = send(&mut app, json!({ "cmd": "grant", "amount": 1000 }));
+        assert_eq!(status, 200);
+        assert_eq!(app.world().resource::<Sim>().world.economy.treasury, before + 1000.0);
+        // An amount that is infinite as an f32 is refused.
+        let (status, _) = send(&mut app, json!({ "cmd": "grant", "amount": 1e39 }));
+        assert_eq!(status, 400);
+        assert!(app.world().resource::<Sim>().world.economy.treasury.is_finite());
+    }
+
+    /// [fix/review-app] `new_game` and `generate_city` need `confirm` when
+    /// the city has play time no save holds, and a city that was replaced
+    /// leaves no selection or tool ids behind.
+    #[test]
+    fn replacing_a_played_city_needs_confirm() {
+        let mut app = app();
+        // A city just started has nothing to lose.
+        let (status, body) = send(&mut app, json!({ "cmd": "new_game", "preset": "flat" }));
+        assert_eq!(status, 200, "{body}");
+        let t0 = tick(&app);
+        send(&mut app, json!({ "cmd": "step", "ticks": 30 }));
+        let generation = app.world().resource::<Sim>().generation;
+        for cmd in ["new_game", "generate_city"] {
+            let (status, body) = send(&mut app, json!({ "cmd": cmd }));
+            assert_eq!(status, 400, "{cmd}: {body}");
+            assert!(body["error"].as_str().unwrap().contains("confirm: true"), "{body}");
+        }
+        assert_eq!(app.world().resource::<Sim>().generation, generation, "nothing replaced");
+        assert_eq!(tick(&app), t0 + 30);
+        // With confirm it goes ahead; the old ids go with the old city.
+        app.world_mut().resource_mut::<ToolState>().selected_gesture = Some(GestureId(3));
+        let (status, body) = send(&mut app, json!({ "cmd": "new_game", "preset": "flat", "confirm": true }));
+        assert_eq!(status, 200, "{body}");
+        assert!(app.world().resource::<Sim>().generation > generation);
+        assert_eq!(app.world().resource::<ToolState>().selected_gesture, None);
+        assert_eq!(app.world().resource::<crate::city_reset::CityEpoch>().0, app.world().resource::<Sim>().generation);
+    }
+
+    /// Every name `execute` matches, read from its source: the arms
+    /// `"name" | "other" =>` at the match's own indent.
+    fn dispatched() -> std::collections::BTreeSet<String> {
+        let src = include_str!("remote.rs").replace("\r\n", "\n");
+        let body = &src[src.find("fn execute(").expect("execute")..];
+        let body = &body[..body.find("\n}\n").expect("end of execute")];
+        let mut out = std::collections::BTreeSet::new();
+        for line in body.lines() {
+            // An arm: names, then a guard (` if ...`) or ` =>`.
+            let Some(rest) = line.strip_prefix("        \"") else { continue };
+            let names = rest.split(" if ").next().unwrap_or("").split(" =>").next().unwrap_or("");
+            for name in format!("\"{names}").split(" | ") {
+                let name = name.trim().trim_matches('"');
+                if !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_') {
+                    out.insert(name.to_string());
+                }
+            }
+        }
+        out
+    }
+
+    /// [fix/review-app] `help` documents every command the dispatcher
+    /// knows (or names it as an alias), and nothing it does not.
+    #[test]
+    fn help_matches_the_dispatcher() {
+        let mut app = app();
+        let (_, body) = send(&mut app, json!({ "cmd": "help" }));
+        let listed: std::collections::BTreeSet<String> = body["commands"].as_object().expect("commands").keys().cloned().collect();
+        let aliases: std::collections::BTreeSet<String> = ALIASES.iter().map(|(a, _)| a.to_string()).collect();
+        let known = dispatched();
+        assert!(known.len() > 100, "the parse found the arms: {known:?}");
+        let missing: Vec<_> = known.iter().filter(|n| !listed.contains(*n) && !aliases.contains(*n)).collect();
+        let extra: Vec<_> = listed.iter().chain(&aliases).filter(|n| !known.contains(*n)).collect();
+        assert!(missing.is_empty(), "dispatched but not in help: {missing:?}");
+        assert!(extra.is_empty(), "in help but not dispatched: {extra:?}");
+        for (a, c) in ALIASES {
+            assert!(listed.contains(*c), "alias {a} points at {c}, which help does not list");
+            assert!(!listed.contains(*a), "{a} is both a command and an alias");
+        }
+    }
 }

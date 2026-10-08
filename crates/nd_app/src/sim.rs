@@ -39,8 +39,8 @@ pub struct Sim {
     /// API's follow and history) can tell the city was replaced, whoever
     /// replaced it.
     pub generation: u64,
-    /// [fix/review-app] The tick this city was last saved or loaded at
-    /// (None: never). See [`Sim::unsaved_play`].
+    /// [fix/review-app] The tick this city was last saved, loaded or
+    /// started at (None: never). See [`Sim::unsaved_play`].
     pub saved_tick: Option<u64>,
     pub ticks_last_frame: u32,
     /// Milliseconds the last frame spent ticking (the graphics throttler
@@ -62,6 +62,7 @@ pub struct Sim {
 impl Sim {
     pub fn new() -> Self {
         let world = Self::fresh_world(nd_sim::LandscapeParams::default());
+        let start = world.clock.tick;
         Self {
             world,
             minds: HybridMind::new(Box::new(MockBackend::default())),
@@ -71,7 +72,7 @@ impl Sim {
             events: Vec::new(),
             full_rebuild: true,
             generation: 0,
-            saved_tick: None,
+            saved_tick: Some(start),
             ticks_last_frame: 0,
             tick_ms: 0.0,
             effective_speed: 1.0,
@@ -234,13 +235,13 @@ impl Sim {
         Ok(())
     }
 
-    /// [fix/review-app] The city has play time that no save holds: it has
-    /// run since it was last saved or loaded (the autosave does not count:
-    /// the next day overwrites it). The remote API asks for `confirm`
-    /// before replacing such a city. Edits made while paused do not count.
+    /// [fix/review-app] The city has play time that no save holds: its
+    /// clock has run since it was last saved, loaded or started (the
+    /// autosave does not count: the next day overwrites it). The remote API
+    /// asks for `confirm` before replacing such a city. Edits made while
+    /// paused do not count.
     pub fn unsaved_play(&self) -> bool {
-        let tick = self.world.clock.tick;
-        tick > 0 && self.saved_tick != Some(tick)
+        self.saved_tick != Some(self.world.clock.tick)
     }
 
     pub fn load(&mut self, path: &str) -> Result<(), String> {
@@ -260,7 +261,8 @@ impl Sim {
     fn city_replaced(&mut self) {
         self.full_rebuild = true;
         self.generation += 1;
-        self.saved_tick = None;
+        // A new city starts with nothing to lose (a load sets it again).
+        self.saved_tick = Some(self.world.clock.tick);
         self.minds = HybridMind::new(Box::new(MockBackend::default()));
     }
 }
