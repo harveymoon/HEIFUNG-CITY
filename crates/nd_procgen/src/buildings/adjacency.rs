@@ -465,6 +465,7 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
         form: b.plot.form,
         // [waterfront] the water off a lot on it, a beach's crowd
         shore: super::shore::shore_look(world, id),
+        tower: b.plot.tower,
         ..Extras::default()
     }
 }

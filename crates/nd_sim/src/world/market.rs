@@ -37,7 +37,15 @@ impl World {
                 bz.spend_today = 0.0;
                 bz.broke_days = bz.broke_days.saturating_add(1);
                 if bz.broke_days > 7 {
-                    demolish.push(bid);
+                    if b.plot.tower.is_some() {
+                        // [supertall] Nobody pulls down a landmark tower
+                        // for a failed tenant: offices take the floors.
+                        let jobs = b.jobs;
+                        b.business = Some(Business::new(BusinessKind::Office, jobs));
+                        self.events.push(SimEvent::BuildingChanged(bid));
+                    } else {
+                        demolish.push(bid);
+                    }
                 }
                 continue;
             }

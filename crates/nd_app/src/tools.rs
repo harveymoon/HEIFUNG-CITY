@@ -378,6 +378,11 @@ impl ToolState {
     /// street under it), unless `any` (the first point: a ramp or a portal
     /// starts on whatever road it is put on, at that road's level).
     pub fn road_snap_level(sim: &Sim, p: SVec2, kind: RoadKind, level: f32, any: bool) -> (SVec2, bool, f32) {
+        // [park-paths] A path snaps onto a park's (or other grounds') gate
+        // when one is nearer than any road; streets never do.
+        if let Some(j) = Self::grounds_snap(sim, p, kind) {
+            return (j, true, 0.0);
+        }
         let roads = &sim.world.roads;
         let (q, snapped) = roads.snap_point_kind(p, POINT_PICK_RADIUS, kind);
         if !snapped {
@@ -389,6 +394,17 @@ impl ToolState {
         } else {
             (p, false, level)
         }
+    }
+
+    /// [park-paths] The grounds gate a path point at `p` snaps onto: the
+    /// nearest within the pick radius, unless a road is nearer.
+    pub fn grounds_snap(sim: &Sim, p: SVec2, kind: RoadKind) -> Option<SVec2> {
+        if kind != RoadKind::Path {
+            return None;
+        }
+        let j = sim.world.grounds_junction_near(p, POINT_PICK_RADIUS)?;
+        let (q, on_road) = sim.world.roads.snap_point_kind(p, POINT_PICK_RADIUS, kind);
+        (!on_road || q.distance(p) > j.pos.distance(p)).then_some(j.pos)
     }
 
     /// Add a point of the road being drawn with its level.
@@ -710,11 +726,26 @@ impl Plugin for ToolsPlugin {
             .init_resource::<Selection>()
             .init_resource::<EffectivePlan>()
             .configure_sets(Update, (SimSet::Input, SimSet::Step, SimSet::Sync).chain())
-            .add_systems(Update, (tool_input, crate::road_select::keep_on_rebuild, draw_gizmos).chain().in_set(SimSet::Input));
+            .add_systems(Update, (tool_input, crate::road_select::keep_on_rebuild, draw_gizmos).chain().in_set(SimSet::Input))
+            .add_systems(Update, path_trim_toasts.in_set(SimSet::Sync));
     }
 }
 
 const POINT_PICK_RADIUS: f32 = 8.0;
+
+/// [park-paths] A path cut back because the park (or other grounds) it was
+/// joined to went: say so.
+fn path_trim_toasts(sim: Res<Sim>, mut flags: ResMut<UiFlags>) {
+    for e in &sim.events {
+        if let nd_sim::SimEvent::PathTrimmed { removed, grounds, .. } = e {
+            flags.message = if *removed {
+                format!("The {} a path was joined to is gone: the path is removed.", grounds.label())
+            } else {
+                format!("The {} a path was joined to is gone: the path is cut back to its last point.", grounds.label())
+            };
+        }
+    }
+}
 
 /// Control points of different gestures closer than this are one joint.
 const SAME_POINT: f32 = 0.5;
@@ -991,9 +1022,12 @@ pub(crate) fn tool_input(
             if click {
                 if let Some(p) = ground {
                     let first = tools.points.is_empty();
+                    let grounds = ToolState::grounds_snap(&sim, p, tools.kind).and_then(|q| sim.world.grounds_junction_near(q, 0.01).map(|j| j.kind.label()));
                     let (p, snapped, level) = ToolState::road_snap_level(&sim, p, tools.kind, tools.elevation, first);
                     tools.push_point(p, level);
-                    if snapped && !tools.interchange {
+                    if let Some(what) = grounds {
+                        tools.status = format!("Snapped to the {what}'s gate: the path joins its walkways there once implemented.");
+                    } else if snapped && !tools.interchange {
                         tools.status = format!("Snapped to the road at {}: a junction forms there.", elevation_label(level));
                     }
                 }
@@ -1749,10 +1783,31 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             let at = |p: SVec2, level: f32| Vec3::new(p.x, sim.world.ground_height(p).max(if sim.world.landscape.is_flat() { 0.0 } else { nd_sim::landscape::WATER_LEVEL }) + level + 0.8, p.y);
             let levels = tools.levels();
             let mut ctrl: Vec<SVec2> = tools.points.clone();
+            // [park-paths] Drawing a path: every gate of a park or other
+            // grounds near the pointer shows as a small ring (green where a
+            // path is joined already); the one the pointer snaps to glows.
+            let green = Color::linear_rgb(0.3, 3.0, 0.6);
+            let gate_snap = tools.cursor_pin.or(cursor.ground).and_then(|c| ToolState::grounds_snap(&sim, c, tools.kind));
+            if tools.kind == RoadKind::Path {
+                let near = tools.cursor_pin.or(cursor.ground);
+                for j in sim.world.grounds_junctions() {
+                    if near.is_some_and(|c| c.distance(j.pos) > 600.0) {
+                        continue;
+                    }
+                    let col = if j.attached { green } else { Color::linear_rgb(2.4, 1.6, 0.4) };
+                    gizmos.circle(Isometry3d::new(lift(j.pos), flat), 1.4, col);
+                    gizmos.circle(Isometry3d::new(lift(j.pos), flat), 0.6, col);
+                }
+                if let Some(g) = gate_snap {
+                    let pulse = 1.0 + 0.25 * (time.elapsed_secs() * 5.0).sin();
+                    gizmos.circle(Isometry3d::new(lift(g), flat), 2.6 * pulse, green);
+                }
+            }
             if let Some(c) = tools.cursor_pin.or(cursor.ground) {
                 let (c, snapped, level) = ToolState::road_snap_level(&sim, c, tools.kind, tools.elevation, tools.points.is_empty());
                 let top = at(c, level);
-                gizmos.circle(Isometry3d::new(top, flat), if snapped { 4.5 } else { 3.0 }, if snapped { white } else { cyan });
+                let ring = if gate_snap.is_some() { green } else if snapped { white } else { cyan };
+                gizmos.circle(Isometry3d::new(top, flat), if snapped { 4.5 } else { 3.0 }, ring);
                 if level != 0.0 {
                     gizmos.line(at(c, 0.0), top, cyan);
                 }

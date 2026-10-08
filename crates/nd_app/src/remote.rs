@@ -26,6 +26,7 @@ mod economy;
 mod follow;
 /// Request checks (Host, Origin, content type, body size) and the folders
 /// file commands may use.
+mod grounds;
 mod guard;
 mod history;
 /// [identity] `city_name` and `game_history`.
@@ -52,6 +53,8 @@ mod taxes;
 mod tolls;
 /// [road-inspect] A street piece in full for `inspect {road}`.
 mod road;
+// [supertall] the skyscraper league
+mod skyline;
 /// [taxis] Taxi companies and cargo hubs in the report and inspector.
 mod taxis;
 mod trains;
@@ -377,6 +380,7 @@ fn log_events(sim: Res<Sim>, flags: Res<UiFlags>, tools: Res<ToolState>, mut log
                 let n = w.street_events.news_item(*seq);
                 json!({ "kind": "News", "seq": seq, "event": n.map(|n| n.kind.label()), "headline": n.map(|n| n.headline.as_str()), "pos": n.map(|n| [n.pos.x, n.pos.y]) })
             }
+            SimEvent::PathTrimmed { gesture, removed, grounds } => json!({ "kind": "PathTrimmed", "gesture_id": gesture.0, "removed": removed, "grounds": grounds.key() }),
             SimEvent::StadiumEvent(b) => json!({ "kind": "StadiumEvent", "building": key_str(*b), "name": building_name(w, Some(*b)) }),
             SimEvent::NewThought(c) => {
                 let cit = w.citizens.get(*c);
@@ -624,6 +628,12 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "list_saves" => Ok(list_saves()),
         "plan" => Ok(plan(ctx)),
         "add_road" => add_road(cmd, ctx),
+        "grounds_junctions" | "park_junctions" => {
+            let lot: Option<nd_sim::LotId> = field(cmd, "lot").map(key_from).transpose()?;
+            let near = opt_vec2(cmd, "near")?;
+            let radius = opt_f32(cmd, "radius")?.unwrap_or(150.0);
+            Ok(grounds::list(&ctx.sim.world, lot, opt_str(cmd, "kind")?, near, radius))
+        }
         "add_roundabout" => add_roundabout(cmd, ctx),
         // [interchange] A diamond interchange across the highway.
         "add_interchange" | "interchange" => add_interchange(cmd, ctx),
@@ -687,6 +697,8 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         // [land] the land market; ownership highlight data
         "estate" | "land_market" => property::command(cmd, &mut ctx.sim.world),
         "ownership" => property::ownership(cmd, &ctx.sim.world),
+        // [supertall] the skyline, height limits, the record book; dev tower starts
+        "skyline" | "towers" | "height_limit" => skyline::command(cmd, &mut ctx.sim.world),
         "pressure" | "pressures" => economy::command(cmd, &mut ctx.sim.world),
         // [waterfront] waterfront lots, beaches and private jetties
         "shore" | "waterfront" | "beaches" | "jetties" | "waterfront_parcels" => shore::command(name, cmd, &mut ctx.sim.world),
@@ -1409,6 +1421,19 @@ fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         return Err("a road needs at least two points".into());
     }
     let kind = opt_str(cmd, "kind")?.map(road_kind_of).transpose()?.unwrap_or(RoadKind::Street);
+    // [park-paths] A path may start or end on a grounds gate by its index
+    // in `grounds_junctions`.
+    for (key, first) in [("from_junction", true), ("to_junction", false)] {
+        if let Some(i) = opt_u64(cmd, key)? {
+            if kind != RoadKind::Path {
+                return Err(format!("{key}: only a path joins a park's walkways"));
+            }
+            let j = ctx.sim.world.grounds_junctions().get(i as usize).ok_or_else(|| format!("{key}: no junction {i} (see grounds_junctions)"))?;
+            let at = if first { 0 } else { pts.len() - 1 };
+            pts[at] = j.pos;
+            levels[at] = 0.0;
+        }
+    }
     // Range-checked as u64 before narrowing: `as u8` wrapped 257 to 1, and
     // a u8 sum of 200 + 100 overflowed (a panic in a dev build).
     let (lf, lb) = if kind == RoadKind::Street { (opt_u64(cmd, "lanes_fwd")?.unwrap_or(1), opt_u64(cmd, "lanes_bwd")?.unwrap_or(1)) } else { (0, 0) };
@@ -1454,6 +1479,19 @@ fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let mut v = project_state(ctx);
     v["gesture_id"] = json!(id.0);
     v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
+    if kind == RoadKind::Path {
+        // [park-paths] Ends on a grounds gate (joined once implemented).
+        let ends = match ctx.sim.world.gesture(id) {
+            Some(Gesture::Road { points, .. }) if points.len() >= 2 => vec![points[0], points[points.len() - 1]],
+            _ => Vec::new(),
+        };
+        let w = &ctx.sim.world;
+        v["joined"] = json!(ends
+            .iter()
+            .filter_map(|p| w.grounds_junctions().iter().position(|j| j.pos.distance(*p) < 1.0))
+            .map(|i| grounds::junction_json(w, i))
+            .collect::<Vec<_>>());
+    }
     v["grade_warnings"] = json!(warnings);
     Ok(v)
 }
@@ -2175,6 +2213,8 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         v["place"] = places::building_place(w, id);
         // [land] owner, sale price, plots, form, pressure
         v["land"] = property::building_land(w, id);
+        // [supertall] height, rank in the skyline, and a league tower's record
+        v["tower"] = skyline::building_tower(w, id);
         // [ferry-routes] a terminal's routes, a shipping port's lane
         if crate::ferry_select::is_route_dock(w, id) {
             v["routes"] = ferry::routes_json(w, id);
@@ -2953,7 +2993,7 @@ fn help() -> Value {
             "list_saves": { "note": "newest first: path, name, kind (named|latest|autosave|dated), modified_unix, bytes, day, population, treasury, buildings, landscape (null for saves without a sidecar), thumbnail (absolute path of the PNG, or null), city (\"Unnamed city\" when none), game_id; by_city groups the paths by city name" },
             "plan": {},
             "add_roundabout": { "center": "[x,y] (snaps onto a junction within 12 m or a street within 6 m)", "radius": "m to the ring centreline, 12..120 (or diameter 24..240)", "lanes": "1|2|3 ring lanes", "implement": "bool", "returns": "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state" },
-            "add_road": { "points": "[[x,y] or [x,y,level],...] (2+; level metres above ground, negative below)", "elevation": "level for points without one (number), or a list", "tunnel": "bool: default level -8 m", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true", "implement": "bool, default false (pending in the project)" },
+            "add_road": { "points": "[[x,y] or [x,y,level],...] (2+; level metres above ground, negative below)", "elevation": "level for points without one (number), or a list", "tunnel": "bool: default level -8 m", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true (a path end also snaps onto a park gate)", "from_junction": "path only: start on this grounds_junctions index", "to_junction": "path only: end on this index", "implement": "bool, default false (pending in the project)", "returns": "gesture_id, joined (path ends on a grounds gate), project state" },
             "add_zone": { "polygon": "[[x,y],...] (3+)", "land_use": "residential|commercial|industrial|entertainment|civic|park", "implement": "bool" },
             "bulldoze": { "gesture_id": "int", "implement": "bool" },
             "project": { "action": "start|implement|undo|redo|discard" },
@@ -2985,6 +3025,7 @@ fn help() -> Value {
     // [road-inspect]
     // [committee]
     v["commands"]["committee"] = json!({ "action": "state (default)|members|appoint {id, seat?}|dismiss {id}|alerts {limit, mark_seen}|check_alerts|projects|implement {project}|dismiss_project {project}|pick_site {project, option}|refresh_sites {project}|report|minutes {meeting?}|settings {backend: mock|local|claude, local_url, local_model, claude_model, claude_effort, claude_fallbacks, timeout_s, auto_meetings, veto_allowed, save, test}", "note": "the mayor's AI committee (docs/AI_COMMITTEE.md): fictional politicians, six seats, alerts, projects; never takes or returns an API key" });
+    v["commands"]["grounds_junctions"] = json!({ "lot": "optional lot id", "kind": "park|plaza|stadium|campus|station|beach", "near": "[x,y]", "radius": "m around near (default 150)", "returns": "junctions [{index, pos, kind, lot, attached, walk_node, gesture_id}] (the Path tool's snap rings) and links (paths joined to grounds)" });
     v["commands"]["diary"] = json!({ "citizen": "id", "refresh": "bool: write it again", "returns": "day, text, pending (a model still writing: call again), by_model, backend; display only, never in the save" });
     v["commands"]["voices"] = json!({ "limit": "default 20", "returns": "conversations of spotlit or favourite citizens that got a model's line (template and line), lines_written, diaries_written, backend" });
     v["commands"]["committee_meeting"] = json!({ "start": "bool: call a meeting now (pauses the sim)", "vote": "{proposal, vote: yes|no|abstain|veto} (the mayor's vote)", "abstain_rest": "bool", "fast_forward": "bool: show all; with the stand-in, run to the mayor's vote or the end now", "transcript_from": "line index", "returns": "the meeting in session (stage, transcript, proposals with votes and tally) or the last minutes" });
@@ -3030,7 +3071,8 @@ fn help() -> Value {
         "export": { "path": "optional .json (see files); default exports/city-<unix>.json: report + map + history + every row of every list" },
         "build_highlight": { "category": "a Build section (power|services|transit|rail|water|attractions), a sub-section (safety, health and education, sanitation, parking, metro, buses...) or a kind (health, police, fire, school, metro_station, coal...): opens the Build window there (a kind also picks it, as a click on its tile) and highlights those buildings on the map with their service areas", "off": "bool: close the Build window (the highlight goes with it)", "note": "no fields: what is highlighted now and the summary (worked out the frame after a change)" },
         "window": { "name": "a tool window: lines|view (or land)|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), new_game, title (the title screen), history (the Game history window); the old report names city|economy|taxes|market|people|power|transit|emergencies|districts|tourism open their City Data tab or page", "open": "bool, omitted toggles", "sub": "with a City Data name: the sub-tab (people's old tab overview|concerns|social works too)" },
-        "city_data": { "tab": "city|economy|market|people|services (omitted with open: the page it was on)", "sub": "the tab's sub-tab: city overview|land|districts|tourism; economy overview|cash_flow|ledger|taxes; market goods|businesses|trade; people population|inequality|concerns|social|favourites; services power|transit|emergencies (omitted: the tab's last one)", "open": "bool; omitted with a tab opens; no fields reports the view and the list of tabs", "scroll": "points from the page's top to scroll to (for screenshots of long pages)", "note": "the full-screen City Data view (J in the game, Esc closes); status.city_data says what it shows" },
+        "skyline": { "action": "summary (default) | limit | sites | start | finish | fund", "limit": "limit: the city's height limit in metres, null or 0 for none (also cmd height_limit {limit})", "vertiport_clearance": "limit: bool, keep the approach round the player's vertiports clear (towers there held to 120 m)", "height": "start: metres (else the developer decides: over the record when demand and money allow)", "design": "start: deco_spire|bundled|twist|needle", "at": "start: [x,y] build as near here as a site allows", "force": "start (dev, default true): skip the money, demand, population and downtown tests (height limits and site rules still hold); sites: list every site that passes the limits", "rich": "start: give the developers $2B first", "amount": "fund (dev): dollars to every tower developer (default 1e9)", "limit_rows": "rows of the ranking and sites (default 15)", "returns": "summary: limit_m, vertiport_clearance, classes_m, record_m, tallest_planned_m, population_cap_m, demand, classes (standing/rising), towers (id, name, height_m, league, design, developer, lots, pos, under_construction, progress, rank, homes, jobs), ranking (the tallest standing), records, news, developers (name, capital), totals; inspect {building} has a tower block (height_m, rank, rank_label, height_limit_m; for a league tower league, design, developer, lots, pending_lots, site_m2, floors, started_day, topped_out_day, record_bid, progress, days_left)" },
+        "city_data": { "tab": "city|economy|market|people|services (omitted with open: the page it was on)", "sub": "the tab's sub-tab: city overview|land|districts|skyline|tourism; economy overview|cash_flow|ledger|taxes; market goods|businesses|trade; people population|inequality|concerns|social|favourites; services power|transit|emergencies (omitted: the tab's last one)", "open": "bool; omitted with a tab opens; no fields reports the view and the list of tabs", "scroll": "points from the page's top to scroll to (for screenshots of long pages)", "note": "the full-screen City Data view (J in the game, Esc closes); status.city_data says what it shows" },
         "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" },
         "social": { "days": "daily history to include (default 7)", "talks": "latest conversations to list (default 10)", "group": "optional group id: that group in full, with its members", "note": "people talking: today's and yesterday's conversations, friendships, feuds, fights, meet-ups, jobs and flats through friends, couples moving in; pairs by bond city-wide; every crew and club with momentum, reputation, base and works (gigs, matches, readings, murals, gardens, businesses, petitions, protests); petitions to the player; murals, gardens, gigs; news. inspect {citizen} has a social block (ties with bond and how they met, groups, recent conversations)" }
     });
@@ -3045,7 +3087,7 @@ fn help() -> Value {
     v["commands"]["ships"] = json!({ "returns": "every ship and boat: freighters, ferries, marina boats and (fishing) trawlers with name, port, at, heading_deg, state (in_port|outbound|fishing|hauling|returning|unloading), at_sea, nets_out, fish_aboard, catch_today; count, trawlers_at_sea" });
     v["commands"]["generate_city"] = json!({ "preset": "grid_plaza|coastal_river|old_town|twin_centres (default grid_plaza)", "seed": "u64 (default 1): the city and its landscape", "landscape": "optional landscape preset to lay it on instead of the city preset's own (river_valley|islands|coast|delta|plains|flat)", "water": "0..1", "relief": "0..1", "branching": "0..1", "climate": "temperate|desert|tropical|arctic|volcanic (default: the city preset's, desert)", "note": "throws the city away: a new game with a whole generated city (tensor-field streets, zoning, highway interchanges, a coal plant); returns the landscape summary and city {arterial, collector, local, zones, lots, interchanges, way_in, centres}" });
     // [districts] [tourism]
-    v["commands"]["district"] = json!({ "action": "list (default)|create|paint|erase|set|remove|at|select|layer", "id": "district id (or district: id or name)", "at": "[x,y] brush centre", "radius": "m, default 40", "polygon": "[[x,y],...]", "rect": "[[x0,y0],[x1,y1]]", "residential": "kowloon|suburban|eco|none", "commercial": "neon_strip|tech_campus|night_market|tourist|none", "industry": "farming|oil|refinery|manufacturing|logistics|fishing|tech|none", "historic": "bool", "rename": "new name", "on": "bool (layer)" });
+    v["commands"]["district"] = json!({ "action": "list (default)|create|paint|erase|set|remove|at|select|layer", "id": "district id (or district: id or name)", "at": "[x,y] brush centre", "radius": "m, default 40", "polygon": "[[x,y],...]", "rect": "[[x0,y0],[x1,y1]]", "residential": "kowloon|suburban|eco|none", "commercial": "neon_strip|tech_campus|night_market|tourist|none", "industry": "farming|oil|refinery|manufacturing|logistics|fishing|tech|none", "historic": "bool", "height_limit": "metres (null or 0 lifts it): nothing new rises over it in the district", "rename": "new name", "on": "bool (layer)" });
     v["commands"]["tourism"] = json!({ "action": "refresh (re-read attractions now)", "limit": "tourists listed, default 20", "returns": "attractiveness, demand, ways in, today's and yesterday's arrivals, spending and tourist tax, hotels, attractions, tourists" });
     // [society]
     // [subway]

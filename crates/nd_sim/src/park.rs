@@ -143,6 +143,14 @@ const SHARED_MIN: f32 = 4.0;
 /// Plan every park in the city. Lots that are not usable park land lose
 /// their layout.
 pub fn plan_parks(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue) {
+    plan_parks_with(lots, land_value, &[]);
+}
+
+/// [park-paths] `plan_parks`, with the ends of player paths joined to a
+/// park (`links`): each becomes an entrance of the park lot it reaches
+/// (inside it or within `walk::GROUNDS_REACH` of its edge), so the park's
+/// walkways run out to meet the path.
+pub fn plan_parks_with(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue, links: &[Vec2]) {
     let ids: Vec<LotId> = lots.iter().filter(|(_, l)| l.land_use == LandUse::Park && l.polygon.len() >= 3 && !l.shore.beach).map(|(id, _)| id).collect();
     for (id, l) in lots.iter_mut() {
         if !ids.contains(&id) {
@@ -168,6 +176,21 @@ pub fn plan_parks(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue) {
             }
         }
     }
+    // [park-paths] Each joined path end is an extra gap of the park lot
+    // nearest it.
+    let mut linked: Vec<Vec<Vec2>> = vec![Vec::new(); n];
+    for &p in links {
+        let near = (0..n)
+            .map(|i| {
+                let poly = &lots[ids[i]].polygon;
+                (i, if point_in_polygon(p, poly) { 0.0 } else { distance_to_boundary(p, poly) })
+            })
+            .filter(|(_, d)| *d <= crate::walk::GROUNDS_REACH)
+            .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        if let Some((i, _)) = near {
+            linked[i].push(p);
+        }
+    }
     let mut cluster = vec![usize::MAX; n];
     let mut next = 0;
     for s in 0..n {
@@ -188,7 +211,7 @@ pub fn plan_parks(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue) {
     }
     for c in 0..next {
         let members: Vec<usize> = (0..n).filter(|&i| cluster[i] == c).collect();
-        let layouts = plan_cluster(&members, &ids, &adj, lots, land_value);
+        let layouts = plan_cluster(&members, &ids, &adj, &linked, lots, land_value);
         for (i, mut layout) in members.iter().zip(layouts) {
             layout.shared_edges = shared[*i].clone();
             layout.seams = seams[*i].clone();
@@ -223,7 +246,7 @@ pub fn plan_single(lot: &Lot, tier: Tier) -> ParkLayout {
     l
 }
 
-fn plan_cluster(members: &[usize], ids: &[LotId], adj: &[Vec<(usize, Vec2)>], lots: &SlotMap<LotId, Lot>, land_value: &LandValue) -> Vec<ParkLayout> {
+fn plan_cluster(members: &[usize], ids: &[LotId], adj: &[Vec<(usize, Vec2)>], linked: &[Vec<Vec2>], lots: &SlotMap<LotId, Lot>, land_value: &LandValue) -> Vec<ParkLayout> {
     let areas: Vec<f32> = members.iter().map(|&i| polygon_area(&lots[ids[i]].polygon).abs()).collect();
     let total: f32 = areas.iter().sum();
     let lv = members.iter().zip(&areas).map(|(&i, a)| land_value.at(lots[ids[i]].center) * a).sum::<f32>() / total.max(1.0);
@@ -235,7 +258,7 @@ fn plan_cluster(members: &[usize], ids: &[LotId], adj: &[Vec<(usize, Vec2)>], lo
     let mut layouts: Vec<ParkLayout> = members
         .iter()
         .map(|&i| {
-            let gaps: Vec<Vec2> = adj[i].iter().map(|(_, m)| *m).collect();
+            let gaps: Vec<Vec2> = adj[i].iter().map(|(_, m)| *m).chain(linked[i].iter().copied()).collect();
             let mut l = plan_lot_paths(&lots[ids[i]], &gaps, !lots[ids[i]].landlocked);
             l.tier = tier;
             l

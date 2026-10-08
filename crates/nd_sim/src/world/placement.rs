@@ -361,6 +361,8 @@ impl World {
             return Err(format!("{} is not the city's: place a city building over it to buy it out", b.name));
         }
         let (name, power, service, metro) = (b.name.clone(), b.is_power(), b.service.is_some(), b.metro);
+        let lot = b.lot;
+        let grounds = self.walk.junctions.iter().any(|j| j.lot == Some(lot));
         self.demolish(bid);
         if power {
             self.refresh_power();
@@ -371,6 +373,12 @@ impl World {
         if metro {
             self.subway.version += 1;
         }
+        // [park-paths] Its grounds' gates go, and a path joined to them is
+        // cut back now.
+        if grounds {
+            self.build_walk_graph();
+        }
+        self.settle_path_links();
         Ok(format!("{name} bulldozed"))
     }
 }

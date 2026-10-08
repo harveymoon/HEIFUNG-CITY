@@ -29,6 +29,8 @@ mod rail;
 pub mod waterworks;
 pub mod transit;
 mod residential;
+/// [supertall] Skyscrapers, supertalls and megatalls.
+mod supertall;
 mod towers;
 mod works;
 /// [subway] Metro entrances and the Central Station.
@@ -288,6 +290,9 @@ pub enum Style {
     Feedlot,
     /// Cell houses, banded tank rows, a stack and a poisoned pond.
     ChemicalWorks,
+    /// [supertall] A league tower on its podium (`buildings/supertall.rs`):
+    /// its form comes from `nd_sim::towers::Tower::design`.
+    Supertall,
     // -- [waterfront] the shore's looks (`buildings/shore.rs`), appended so
     // `ALL` keeps its order. --
     /// A public beach: sand, towels, umbrellas, a lifeguard tower, bathers.
@@ -310,7 +315,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 116] = [
+    pub const ALL: [Style; 117] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -421,6 +426,7 @@ impl Style {
         Style::Smelter,
         Style::Feedlot,
         Style::ChemicalWorks,
+        Style::Supertall,
         Style::Beach,
         Style::BeachResort,
         Style::WaterfrontHotel,
@@ -438,6 +444,7 @@ impl Style {
             Form::Mansion => Some(Style::Mansion),
             Form::MegaHotel => Some(Style::MegaHotel),
             Form::Museum => Some(Style::Museum),
+            Form::Tower => Some(Style::Supertall),
             Form::Merged => None,
         }
     }
@@ -589,6 +596,7 @@ impl Style {
             Style::Smelter => "smelter",
             Style::Feedlot => "factory farm",
             Style::ChemicalWorks => "chemical works",
+            Style::Supertall => "league tower",
             Style::Beach => "public beach",
             Style::BeachResort => "beach resort",
             Style::WaterfrontHotel => "waterfront hotel",
@@ -1147,13 +1155,15 @@ pub struct Extras<'a> {
     /// (`World::plant_scale`): a coal or nuclear station is composed of
     /// more units, not stretched, when it is bigger.
     pub plant_scale: f32,
+    /// [supertall] A league tower: its height and form.
+    pub tower: Option<nd_sim::towers::Tower>,
     /// [waterfront] Where the water is for a lot on it, and a beach's crowd.
     pub shore: Option<ShoreLook>,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { shore: None, plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, shore: None }
     }
 }
 
@@ -1494,6 +1504,11 @@ fn generate_styled_extras(
         return g;
     }
     if let Some(progress) = extras.construction {
+        // [supertall] A league tower's site: the core leading, a jump crane.
+        if let Some(t) = extras.tower.filter(|_| style == Style::Supertall) {
+            supertall::site(&mut g, &ctx, &t, progress);
+            return g;
+        }
         construction::construction_site(&mut g, &ctx, &mut rng, progress);
         if weathered(tier, ctx.wear) {
             g.weather();
@@ -1611,6 +1626,11 @@ fn generate_styled_extras(
         Style::Smelter => dirty::smelter(&mut g, &ctx, &mut rng),
         Style::Feedlot => dirty::feedlot(&mut g, &ctx, &mut rng),
         Style::ChemicalWorks => dirty::chemical_works(&mut g, &ctx, &mut rng),
+        Style::Supertall => match &extras.tower {
+            Some(t) => supertall::tower(&mut g, &ctx, t),
+            // A tower without its record (a preview): a plain glass slab.
+            None => commercial::slab_tower(&mut g, &ctx, &mut rng),
+        },
         // [waterfront]
         Style::Beach => shore::beach(&mut g, &ctx, &mut rng, ctx.shore),
         Style::BeachResort => shore::beach_resort(&mut g, &ctx, &mut rng, ctx.shore),

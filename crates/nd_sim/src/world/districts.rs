@@ -36,6 +36,8 @@ pub struct PolicyChange {
     pub industry: Option<Option<IndustryKind>>,
     pub historic: Option<bool>,
     pub name: Option<String>,
+    /// [supertall] The district's height limit (m), `Some(None)` to lift it.
+    pub height_limit: Option<Option<f32>>,
 }
 
 /// One district's figures, for the window and the API.
@@ -115,6 +117,9 @@ impl World {
         }
         if let Some(h) = change.historic {
             d.historic = h;
+        }
+        if let Some(l) = change.height_limit {
+            d.height_limit = l.filter(|m| m.is_finite()).map(|m| m.clamp(10.0, crate::towers::TOWER_MAX_M));
         }
         if let Some(n) = change.name.filter(|n| !n.trim().is_empty()) {
             d.name = n.trim().chars().take(40).collect();
@@ -208,7 +213,8 @@ impl World {
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         for id in ids {
             let b = &self.buildings[id];
-            if b.construction.is_some() || b.demolition.is_some() || b.is_special() || b.is_parking() || b.port.is_some() {
+            // [supertall] a league tower keeps its own architecture
+            if b.construction.is_some() || b.demolition.is_some() || b.is_special() || b.is_parking() || b.port.is_some() || b.plot.tower.is_some() {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };

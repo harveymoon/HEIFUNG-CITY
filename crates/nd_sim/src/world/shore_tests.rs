@@ -423,3 +423,11 @@ fn a_road_close_to_the_shore_gets_lots_that_run_down_to_it_not_a_front_row_and_b
     assert!(wet * 4 >= sea_side.len() * 3, "nearly every parcel between road and sea fronts both: {wet} of {}", sea_side.len());
     assert!(sea_side.iter().all(|q| !q.landlocked()), "no backland behind a front row");
 }
+
+#[test]
+fn a_beach_is_grounds_a_player_path_can_join() {
+    let (w, _, beach) = beach_behind(LandUse::Commercial);
+    let g = w.grounds().into_iter().find(|g| g.lot == Some(beach)).expect("the beach is listed as grounds");
+    assert_eq!(g.kind, crate::walk::GroundsKind::Beach);
+    assert!(!g.gates.is_empty(), "with gates on its edge for the Path tool");
+}
