@@ -157,6 +157,12 @@ mod moto;
 mod roadworks;
 mod relocate;
 mod rich;
+/// [megacorp] Mega-corporations.
+mod corp;
+/// [megacorp] Universities, students and schools near families.
+mod campus;
+#[cfg(test)]
+mod corp_tests;
 #[cfg(test)]
 mod econ_followups_tests;
 mod dirt;
@@ -665,6 +671,11 @@ pub struct World {
     /// saves load with none.
     #[serde(default)]
     pub path_links: grounds::PathLinks,
+    /// [megacorp] Mega-corporations and universities: brands, HQs, campus
+    /// annexes, students and the player's rules (`crate::corp`,
+    /// `world/corp.rs`, `world/campus.rs`). Old saves load with none.
+    #[serde(default)]
+    pub corps: crate::corp::Corporations,
 }
 
 impl World {
@@ -768,6 +779,7 @@ impl World {
             committee: Default::default(),
             shore: crate::shore::ShoreState { reach_water: true, ..Default::default() },
             path_links: Default::default(),
+            corps: Default::default(),
         };
         w.estate.pressure = crate::estate::Pressure::new(half + 200.0);
         w.landscape = Landscape::new(&w.config.landscape);
@@ -1167,6 +1179,8 @@ impl World {
             self.daily_estate();
             // [supertall] Tower developers' money, and maybe a new project.
             crate::prof!("daily_towers", self.daily_towers());
+            // [megacorp] Mega-corps and campuses grow.
+            crate::prof!("daily_corps", self.daily_corps());
         }
         // Periodic work is staggered so no tick carries more than one heavy
         // job: the hour starts at :00, sites advance at :30, land value runs
@@ -1224,6 +1238,8 @@ impl World {
         if tick % 60 == 25 {
             self.hourly_social();
         }
+        // [megacorp] Students to class and out at night.
+        self.step_campus();
         // [parking] Drivers worn out by the hunt and stuck in a queue leave
         // the car where it stands.
         if tick % 5 == 2 {

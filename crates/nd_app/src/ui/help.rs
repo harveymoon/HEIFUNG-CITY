@@ -73,5 +73,6 @@ pub fn service_note(k: nd_sim::ServiceKind) -> &'static str {
         K::TrashDepot => "Garbage trucks (two crew each) empty the bins of every building within its radius, 06:00 to 18:00. Without one only the rich pay a private hauler; everyone else's trash overflows onto the pavement.",
         K::Vertiport => "Base for the air taxi company's drones: the rich fly between vertiports and rooftop pads, above the traffic. Noisy neighbours.",
         K::ParkingEnforcement => "Officers (two a car) patrol the streets in its radius 07:00 to 21:00: a ticket for cars over the two-hour kerb limit (residents near home have permits), the tow truck after an hour more, or at once for illegal parking. Fines go to the treasury.",
+        K::University => "A campus: enrols the town's 18-24s and brings students to dorms, buys nearby homes for dorms, builds offices, a theatre, sports and frats nearby and claims parks as plazas. Pizza places, cafés, bookshops and bars near it do well.",
     }
 }

@@ -2153,7 +2153,7 @@ fn rent_stressed_households_move_somewhere_cheaper_before_leaving() {
     // Choosing a home: the best tier at most 35% of income where possible.
     w.buildings[cheap].rent = income * 0.3;
     w.buildings[home].rent = income * 0.45;
-    let picks: Vec<Option<BuildingId>> = (0..10).map(|_| w.choose_home(income, None)).collect();
+    let picks: Vec<Option<BuildingId>> = (0..10).map(|_| w.choose_home(income, None, false)).collect();
     assert!(picks.iter().all(|p| p.is_none_or(|b| w.buildings[b].rent <= income * 0.35)), "an affordable home first");
     // With nothing cheaper anywhere and the money gone, the household leaves.
     for &h in &homes {
