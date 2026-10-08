@@ -42,6 +42,9 @@ pub const PICKUP_REACH: f32 = 1100.0;
 /// Ticks a rider waits at the kerb for a cab that has not been assigned
 /// before giving up; one on its way is waited for twice as long.
 pub const WAIT_GIVE_UP: u64 = 30;
+/// [ped-highway] Ticks a rider who gave up on a cab books no other: they
+/// walk, ride or take the bus instead of standing at the kerb again.
+pub const GAVE_UP_SHY: u64 = 240;
 /// What a company pays for a cab.
 pub const CAB_PRICE: f32 = 420.0;
 /// Cabs a new company starts with.
@@ -282,6 +285,10 @@ pub struct Taxis {
     /// Rides each company gave today and yesterday.
     #[serde(default)]
     pub rides_by_company: std::collections::BTreeMap<BuildingId, (u32, u32)>,
+    /// [ped-highway] Riders who gave up waiting for a cab, until the tick
+    /// they would book one again (`GAVE_UP_SHY`).
+    #[serde(default)]
+    pub shy: std::collections::BTreeMap<CitizenId, u64>,
 }
 
 impl Taxis {

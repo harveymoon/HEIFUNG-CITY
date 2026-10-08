@@ -5,6 +5,8 @@ mod assets;
 /// [build-highlight] A Build window section's buildings and service areas on the map.
 mod build_highlight;
 mod camera;
+/// [committee] The mayor's AI committee in the running game.
+mod committee;
 mod district_tool;
 mod fire_scene;
 mod flags;
@@ -69,6 +71,7 @@ fn main() {
             map_layers::MapLayersPlugin,
             marks::MarksPlugin,
             metro_ux::MetroUxPlugin,
+            committee::CommitteePlugin,
             build_highlight::BuildHighlightPlugin,
             ferry_select::FerrySelectPlugin,
         ))
