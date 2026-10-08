@@ -335,7 +335,8 @@ struct Ctx<'w, 's> {
 /// [fix/review-app] `load`, `new_game` and `generate_city` throw the running
 /// city away. When it has play time no save holds (`Sim::unsaved_play`)
 /// they ask for `"confirm": true`, so an agent cannot wipe a player's game
-/// by accident; a city just saved, just loaded or not yet started needs none.
+/// by accident; a city just saved, just loaded, not yet run or untouched
+/// (no building, project or new road) needs none.
 fn confirm_replace(cmd: &Value, ctx: &Ctx, what: &str) -> Result<(), String> {
     if !ctx.sim.unsaved_play() || opt_bool(cmd, "confirm")? == Some(true) {
         return Ok(());
@@ -3374,6 +3375,12 @@ mod dispatch_tests {
         // A city just started has nothing to lose.
         let (status, body) = send(&mut app, json!({ "cmd": "new_game", "preset": "flat" }));
         assert_eq!(status, 200, "{body}");
+        // Left running empty, it still has nothing to lose.
+        send(&mut app, json!({ "cmd": "step", "ticks": 30 }));
+        let (status, body) = send(&mut app, json!({ "cmd": "new_game", "preset": "flat" }));
+        assert_eq!(status, 200, "an untouched city: {body}");
+        // Something built and run: now it does.
+        send(&mut app, json!({ "cmd": "seed_demo" }));
         let t0 = tick(&app);
         send(&mut app, json!({ "cmd": "step", "ticks": 30 }));
         let generation = app.world().resource::<Sim>().generation;

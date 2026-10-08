@@ -204,8 +204,10 @@ not count, the next day overwrites it), they are refused unless the request carr
 {"cmd": "new_game", "preset": "coast", "confirm": true}
 ```
 
-A city just started, saved or loaded needs no `confirm`. `game_history {action: "revert"}` always
-needs it. Edits made while paused do not count as play time.
+A city just started, saved or loaded needs no `confirm`, and neither does an untouched one (no
+building, no project and no road beyond those it started with, such as the empty landscape a
+`ND_TITLE=0` instance starts on). `game_history {action: "revert"}` always needs it. Edits made
+while paused do not count as play time.
 
 ### Landscape and new games
 

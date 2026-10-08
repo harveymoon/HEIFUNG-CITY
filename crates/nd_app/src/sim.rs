@@ -42,6 +42,9 @@ pub struct Sim {
     /// [fix/review-app] The tick this city was last saved, loaded or
     /// started at (None: never). See [`Sim::unsaved_play`].
     pub saved_tick: Option<u64>,
+    /// The plan's gesture count when this city started or was loaded: a
+    /// city still at it, with no building and no project, is untouched.
+    start_gestures: usize,
     pub ticks_last_frame: u32,
     /// Milliseconds the last frame spent ticking (the graphics throttler
     /// holds its tier when the sim, not the renderer, fills the frame).
@@ -62,7 +65,7 @@ pub struct Sim {
 impl Sim {
     pub fn new() -> Self {
         let world = Self::fresh_world(nd_sim::LandscapeParams::default());
-        let start = world.clock.tick;
+        let (start, start_gestures) = (world.clock.tick, world.master.gestures.len());
         Self {
             world,
             minds: HybridMind::new(Box::new(MockBackend::default())),
@@ -73,6 +76,7 @@ impl Sim {
             full_rebuild: true,
             generation: 0,
             saved_tick: Some(start),
+            start_gestures,
             ticks_last_frame: 0,
             tick_ms: 0.0,
             effective_speed: 1.0,
@@ -241,7 +245,15 @@ impl Sim {
     /// asks for `confirm` before replacing such a city. Edits made while
     /// paused do not count.
     pub fn unsaved_play(&self) -> bool {
-        self.saved_tick != Some(self.world.clock.tick)
+        self.saved_tick != Some(self.world.clock.tick) && !self.untouched()
+    }
+
+    /// Nothing of the player's in it: no building, no project, no gesture
+    /// beyond what the city started with (an empty landscape left running
+    /// at the start, say). Replacing it loses nothing.
+    pub fn untouched(&self) -> bool {
+        let w = &self.world;
+        w.buildings.is_empty() && !w.has_project() && w.master.gestures.len() <= self.start_gestures
     }
 
     pub fn load(&mut self, path: &str) -> Result<(), String> {
@@ -263,6 +275,7 @@ impl Sim {
         self.generation += 1;
         // A new city starts with nothing to lose (a load sets it again).
         self.saved_tick = Some(self.world.clock.tick);
+        self.start_gestures = self.world.master.gestures.len();
         self.minds = HybridMind::new(Box::new(MockBackend::default()));
     }
 }
