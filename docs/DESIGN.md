@@ -501,7 +501,20 @@ Citizens are rendered from their simulated positions every frame.
   0.004 within 110 m, coal plants 0.003 within 120 m; each day an eighth of every cell seeps
   into its neighbours and 1% fades (half-life about ten weeks), parks take another 3% a day
   off the ground under them, and the player can pay to dig it out (`remediate`, 450 per cell
-  of full contamination, at most 300 m round). Grain farms yield 0.6 + 0.8 x fertility and lose
+  of full contamination, at most 300 m round). It also drifts (`Contamination::drift`, daily,
+  only cells over 0.01): up to 5% of a cell a day blows one cell downwind (the wind's strength
+  times the direction the smoke drifts, `weather::wind_dir`), and 15 to 30% of a cell in or on
+  the bank of a river or stream (by its current) is carried one cell downstream; nothing is
+  made, what leaves the map is gone. In the game the Bulldoze tool's "Clean up ground" mode
+  (a radius of 20 to 300 m) shows the circle, the stained cells, the cost and the days by the
+  pointer, green or red like the Build hover (`World::cleanup_quote`: refused on clean ground,
+  where a crew is already at work, or when the treasury is short); a click pays up front and
+  sends a crew (`World::start_cleanup`, saved in `World::cleanups`) that digs from the middle
+  outwards over 2 to 6 days (1 + amount/20 + radius/150, rounded up), clearing everything
+  inside the radius it has reached each hour, what seeped back in too. The site shows a
+  taped fence, fresh earth to the dig front, spoil heaps, workers in hi-vis and swinging
+  excavators (`render/cleanup.rs`). The remote API's `cleanup` (with `quote`) does the same;
+  `remediate` still cleans at once. Grain farms yield 0.6 + 0.8 x fertility and lose
   up to 90% on fouled ground (pasture farms and dairies 70%, vertical farms, chicken farms and
   fisheries 50%); container yards and truck lots burn fuel and earn handling fees (2 per filled
   job hour, more near a port or yard), truck lots a bay fee per parked lorry.
@@ -753,7 +766,9 @@ Citizens are rendered from their simulated positions every frame.
   moment it is placed (specials always have) and inherits the clearing: its lot shows the
   old building coming down, and the structure appears when the rubble is gone. (Making
   the structure wait would mean gating plants, depots, stations and docks on a state they
-  never had; showing the clearing first gives the same picture without that.) Sites are
+  never had; showing the clearing first gives the same picture without that.) [dock-access]
+  Stations, yards and docks are the exception: they stand on footprints of their own and are
+  drawn as themselves at once, what they bought out cleared away. Sites are
   drawn as the real building cut down from the top (triangles above the working level are
   dropped, those across it clipped), a raw broken slab with rebar on what is left,
   hoarding, a high-reach excavator with a crusher at the cut (a small machine on the roof
@@ -854,7 +869,12 @@ Citizens are rendered from their simulated positions every frame.
   side (`RailLink`). Nothing runs until the rail side reaches an end of the railway and
   the street side reaches the city's roads (`RailLink::works`), recomputed on every
   rebuild; unjoined connectors show red in the Rail tool and the inspector says which
-  side is missing. Track drawn by the player is eased when built: ends joining existing
+  side is missing. [dock-access] No road is needed to place one. A passenger station whose
+  track is joined but whose street is not is a halt (`World::halts`): passenger trains call
+  and stand their time, nobody gets on or off, it hires nobody. "The roads" are a road
+  component holding zoned lots or reaching off the map (`World::network_components`). The
+  free ends of an unjoined street stub carry an amber "connect a road here" ring and label
+  (`nd_app::stub_marks`), and the inspector, the Build tool's hover card and the alerts say so. Track drawn by the player is eased when built: ends joining existing
   track leave or arrive along it through a 60 m turnout, corners are rounded to a 120 m
   radius, long legs stay straight, so there are no right angles or square forks.
   Trains run west to east from one end of the line to the other, calling at every
@@ -1290,6 +1310,34 @@ Citizens are rendered from their simulated positions every frame.
   lowered to the grade. Cars ride the height of the way they are on (`car_height`), movers keep to
   the surface nearest the height they were at (`surface_height_near`), so a walker under a
   viaduct stays under it. Elevated roads pass roundabouts by.
+- **Interchanges** [interchange]: slip roads (`Segment::ramp`) are grade-separated from what
+  merely crosses them, like the highway (`roads::WayClass`, `roads::separated`): a street or the
+  railway crossing a ramp passes under it (the ramp's vertex over it is lifted), so a street drawn
+  under a highway with ramps no longer cuts the ramps into junctions (which ended the ramp there
+  and made the rest a town street). A ramp meets the highway only by its ends, other ramps (forks
+  and merges, and one-way streets being laid), and paths at grade (people cross a slip road at its
+  foot); a street meets a ramp where an end is dropped on it or a control point is put right on
+  one of its nodes (`SNAP_EXACT`, 1 m: a street drawn through a ramp's end is its terminal). Road
+  ends (`RoadNetwork::end_target`) prefer a way at their own level (within 4.5 m) of everything in
+  reach, so an end dropped where a viaduct passes over a street joins the one at its level; only
+  with none at its level does it come up or down to another (a raised road ramps down to the
+  road it is dropped on). A path end lands on the highway or a ramp only with no other way in reach. Ramp easing
+  (`ease_ramp_ends`) scales the lead to the ramp: 45% of how far the ramp's next point lies along
+  the highway, 15 to 40 m, then rounds the bend with a few points; it is idempotent and the
+  holograms ease what they draw (`ease_ramp_way`), so the preview is what is built (a fixed 40 m
+  lead on a short diamond ran each ramp alongside the highway up to the street under it and then
+  hairpinned onto it over the street's asphalt). A gore's hatching stops where the ramp's first
+  piece ends. The Road tool's **Interchange** preset (Build window, Roads > Highways) lays a diamond
+  from two clicks across the highway (`World::plan_diamond`, `add_diamond`): the cross street
+  under the highway (kept if one runs there already), and per carriageway an off-ramp leaving it
+  150 m before the crossing and an on-ramp joining 150 m after (`DIAMOND_SPAN`), on its outer
+  side, meeting the street at one signalled junction 55 m out (`DIAMOND_TERMINAL`), with a 40 m
+  lead beside the carriageway and an easy S into the street square. The hologram is the whole
+  diamond; it is refused, with a red pin and label at the spot, when the line does not cross the
+  highway or crosses it more than 40 degrees off square, the street is too short for the
+  terminals, the highway bends or ends near a join, a ramp would cross another road, or another
+  road already joins the highway there. Remote: `add_interchange {from, to, check?, implement?}`;
+  dev `rebuild_roads` lays the roads again from the plan with the current rules.
 - **Raising roads while drawing, and pillars** [tools]: with the Road tool, `]` raises and `[`
   lowers the next point by 2 m (as Page Up / Page Down; the camera's bracket zoom gives way while
   the Road tool is out); `Shift+]` / `Shift+[` move the whole road drawn so far, its placed points
@@ -1382,7 +1430,14 @@ Citizens are rendered from their simulated positions every frame.
   highway carries on across a road rebuild. The ground and water beyond the map are drawn out to
   the horizon, graded to the ways that run out there. Docks
   (`nd_sim::ports`) stand on the shore with a pier and a street stub, take over grown lots, and work
-  once their street reaches the city: freighters route by water (river centrelines, tributaries
+  once their street reaches the city. [dock-access] They need only the water's edge: one not set
+  down by a street lays its own access road (`Port::stub`, a 1+1 street with pavements from its gate
+  14-32 m inland, turned up to 60 degrees or shortened round water, buildings and other docks) whose
+  free end is marked for the player to draw a road onto. Off the roads a ferry terminal's boats
+  still sail (`Port::sails`) but carry no one (nobody steps off or is sent there; residents back
+  from a day out are set down at home), nothing lands at a port, nobody is hired. A dock or station
+  over zoned ground takes it out of the zone and is drawn as itself at once (it never inherits
+  the clearing); a dock can be bulldozed, giving its ground back to the plan: freighters route by water (river centrelines, tributaries
   joining, mouths opening on the sea) from off the map to the berth and back, landing imports for
   lorries; ferries run terminal to terminal or out to elsewhere with fares. A ferry terminal must
   stand on water that reaches the map edge; it is given one or two towns off the map
@@ -1462,8 +1517,8 @@ passion in common form groups that make things in the city.
   who turn up grow closer), recruits members' friends who care (never someone with an enemy in
   it), builds momentum from its members' passion and meetings (cooling 5% a day) and at its kind's
   threshold makes something: a gig at its venue (news, the venue's name up, a crowd drawn that
-  night), a match in its park or a reading at its café (the place's name up), a mural (a painted
-  wall at the front of a building near the members; land value +0.02 x quality near by, less
+  night), a match in its park or a reading at its café (the place's name up), a mural (painted on
+  the street face of a building near the members; land value +0.02 x quality near by, less
   where the land is dear), a community garden on a vacant lot (land value +0.025; lost if the lot
   is built on), a business (the members' pooled savings, 40% up to 2,500, open a venue, bakery,
   gadget shop or office on a vacant lot near the founder, who owns it), or a petition to the
@@ -1478,6 +1533,19 @@ passion in common form groups that make things in the city.
   people talking when the camera is within about 320 m (an icon and the topic; within 90 m the
   line said; red for a fight; at the door of the bar when they talk inside; overlapping ones
   stack), a note over a venue while a band plays and a fist over a protest; murals and gardens.
+  A mural is painted on its building as drawn (`nd_procgen::social::facade_spot`): the
+  building's geometry is generated again, its walls facing the street grouped by plane,
+  anything drawn within 3 m in front of a wall (windows, frames, signs, balconies, AC units)
+  marks cells there off, and the largest clear rectangle (up to 16 x 12 m, at least 3 x 2.4 m,
+  lower and nearer the street preferred) takes the paint; a wall with no clear stretch is
+  painted round its windows. The design (`paint_mural`) keeps a crew's palette, motif (a
+  synthwave sun, a figure, a face, an eye, rings, waves), rays and skyline or hills from wall
+  to wall, laid out per mural from its seed: gradients and soft spray edges from vertex colours
+  on a grid of up to 40 cells a side, crisp neon strokes (Glow), the crew's tag in block letters
+  with a drop shadow, two lamps over the top. A second, unlit copy of the paint is shown only
+  after dark (daylight under 0.35), so the mural reads floodlit at night. Poorly regarded crews
+  scrawl a tag instead. Only a mural with no wall to paint (a vacant lot, a glass front) stands
+  on the old free-standing wall, painted the same way.
   The person pane lists friends and foes (clickable, coloured by bond, how and when they met),
   their groups and recent conversations ("talked rent with Mara Okafor at The Blue Lantern:
   agreed"). City Data's People › Social has the day's counts, a friendships chart, pairs by

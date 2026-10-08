@@ -200,6 +200,7 @@ pub fn summary(w: &World) -> Value {
         .ports
         .values()
         .map(|p| json!({ "kind": p.kind.label(), "center": v2(p.center), "berth": v2(p.berth), "water": p.water.label(), "road_connected": p.road_connected, "reaches_elsewhere": p.reaches_elsewhere, "works": p.works(), "building": p.building.map(super::view::key_str),
+            "ferries_sail": p.sails(), "stub_ends": p.building.map(|b| w.stub_ends_of(b).into_iter().map(v2).collect::<Vec<_>>()).unwrap_or_default(),
             "remote_towns": p.remote.iter().map(|t| json!({ "name": t.name, "edge": t.edge.label(), "km": round(t.km) })).collect::<Vec<_>>(), "sailings": p.sailings,
             "waiting_to_board": p.building.and_then(|b| w.ports.boarding.get(&b)).copied().unwrap_or(0) }))
         .collect();
@@ -216,8 +217,10 @@ pub fn summary(w: &World) -> Value {
         "highway": { "entries": entries.len(), "exits": exits.len(), "through_cars": w.through_cars() },
         "bridges": { "count": bridges.len(), "metres": round(bridges.iter().map(|b| b.0).sum::<f32>()), "highway": bridges.iter().filter(|b| b.1).count() },
         "ports": ports,
-        "ships": w.ports.ships.values().map(|sh| json!({ "kind": format!("{:?}", sh.kind).to_lowercase(), "at": v2(sh.pose().0), "docked": sh.docked, "passengers": sh.passengers, "cargo": sh.cargo.len(),
+        "ships": w.ports.ships.iter().map(|(id, sh)| json!({ "id": super::view::key_str(id), "kind": format!("{:?}", sh.kind).to_lowercase(), "at": v2(sh.pose().0), "docked": sh.docked, "passengers": sh.passengers, "cargo": sh.cargo.len(),
             "remote_town": sh.remote.map(|k| w.ferry_town_name(sh.port, k)), "back_home": sh.home })).collect::<Vec<_>>(),
+        // [fishing] Trawlers out at sea (those in port: `ships`).
+        "trawlers": w.fishing.fleets.iter().flat_map(|(b, f)| f.boats.iter().enumerate().filter(|(_, t)| t.phase.at_sea()).map(move |(k, t)| json!({ "name": t.name, "port": super::view::key_str(*b), "at": v2(f.boat_pose(k, 1.0).0), "state": t.phase.key() }))).collect::<Vec<_>>(),
         "port_stats": { "freight_landed_today": s.freight_landed_today, "waiting_cargo": s.waiting_cargo, "ferry_riders_today": s.ferry_riders_today, "ferry_fares_today": round(s.ferry_fares_today),
             "remote_sailings_today": s.remote_sailings_today, "visitors_in_today": s.visitors_in_today, "visitors_out_today": s.visitors_out_today, "commuters_in_today": s.commuters_in_today, "commuters_out_today": s.commuters_out_today,
             "day_trips_today": s.day_trips_today, "day_trippers_back_today": s.day_trippers_back_today,

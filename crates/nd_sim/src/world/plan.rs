@@ -16,12 +16,51 @@ use crate::plan::{parcel_zoning, ParcelZoning};
 pub struct ProjectCheck {
     /// The city's own structures its roads would take.
     pub blockers: Vec<BuildingId>,
+    /// The same, each with the planned road that takes it and where.
+    pub blocks: Vec<Blocker>,
     /// Stretches of raised road with no room for a column.
     pub pillar_gaps: Vec<crate::pillars::Gap>,
     /// The first of them in words ("Not implemented: ...").
     pub pillar_refusal: Option<String>,
+    /// What implementing would say, word for word, if it refuses: the
+    /// structures taken first, then the columns. `try_implement` refuses
+    /// exactly when this is set, so a plan shown clear always implements.
+    pub refusal: Option<String>,
     /// Roads the project lays.
     pub roads: usize,
+}
+
+/// [tools] One of the city's own structures a project would take: which,
+/// by which planned road, and where (for the red marks and "show").
+#[derive(Clone, Debug)]
+pub struct Blocker {
+    pub building: BuildingId,
+    pub name: String,
+    /// Where it stands (its lot's centre): the red pin.
+    pub at: Vec2,
+    /// The planned road (its gesture) that takes it, if one does.
+    pub road: Option<GestureId>,
+    /// That road in words: "the new road off Pylon Drive (from (x, y))".
+    pub road_label: String,
+    /// The stretch of that road over the structure's ground (for a
+    /// structure the rebuild loses, the road's nearest point, twice).
+    pub a: Vec2,
+    pub b: Vec2,
+    /// The road runs over it; else rebuilding the lots for the project
+    /// leaves it no lot (no street left to front). The label of a road the
+    /// project takes out reads "taking out <street>".
+    pub runs_over: bool,
+}
+
+impl Blocker {
+    /// Why it refuses, in words.
+    pub fn reason(&self) -> String {
+        if self.runs_over {
+            format!("{} would run over {} at ({:.0}, {:.0})", self.road_label, self.name, self.at.x, self.at.y)
+        } else {
+            format!("{} would leave {} at ({:.0}, {:.0}) with no street to front, and it would be lost", self.road_label, self.name, self.at.x, self.at.y)
+        }
+    }
 }
 use crate::zoning::{generate_parcels, inner_center, join_parcels, make_lot, Parcel, ParcelKey, ParcelMap};
 
@@ -699,16 +738,8 @@ impl World {
         if !project.is_empty() {
             // One trial rebuild answers both: the structures the project
             // would take, and [tools] whether every raised road has room
-            // for its columns.
-            let (blockers, pillars) = self.implement_checks(&project);
-            if !blockers.is_empty() {
-                let names: Vec<String> = blockers.iter().filter_map(|b| self.buildings.get(*b)).map(|b| b.name.clone()).collect();
-                let why = format!("Not implemented: the planned roads would take {}. Move the road clear of it (outlined in red) or bulldoze it first.", names.join(", "));
-                self.project = Some(project);
-                self.implement_refused = Some(why.clone());
-                return Err(why);
-            }
-            if let Some(why) = pillars {
+            // for its columns. The plan view shows this same check.
+            if let Some(why) = self.project_check(&project).refusal {
                 self.project = Some(project);
                 self.implement_refused = Some(why.clone());
                 return Err(why);
@@ -759,11 +790,6 @@ impl World {
         }
     }
 
-    fn implement_checks(&self, project: &Project) -> (Vec<BuildingId>, Option<String>) {
-        let c = self.project_check(project);
-        (c.blockers, c.pillar_refusal)
-    }
-
     /// Everything that would refuse `project`, as implementing checks it:
     /// the structures its roads would take, and [tools] the stretches of
     /// its raised roads (or of a viaduct a road it lays runs under) with no
@@ -772,8 +798,8 @@ impl World {
     /// trial rebuild), so the plan view, the hologram and the refusal all
     /// say the same thing.
     pub fn project_check(&self, project: &Project) -> ProjectCheck {
-        let mut out = ProjectCheck { blockers: self.road_blockers(project), ..Default::default() };
         let pv = preview(&self.master, project);
+        let mut out = ProjectCheck { blocks: self.road_blocks(&pv), ..Default::default() };
         let roads_change = !pv.planned_roads.is_empty() || !pv.removed_roads.is_empty() || !pv.planned_rings.is_empty() || !pv.removed_rings.is_empty();
         out.roads = pv.planned_roads.len();
         let raised_new = pv.planned_levels.iter().any(|l| crate::pillars::is_raised(l));
@@ -790,8 +816,8 @@ impl World {
             trial.master = project.apply_to(&trial.master);
             trial.rebuild_from_master();
             for (id, b) in self.buildings.iter() {
-                if Self::is_civic_structure(b) && !trial.buildings.contains_key(id) && !out.blockers.contains(&id) {
-                    out.blockers.push(id);
+                if Self::is_civic_structure(b) && !trial.buildings.contains_key(id) && !out.blocks.iter().any(|k| k.building == id) {
+                    out.blocks.push(self.lost_block(id, &pv));
                 }
             }
             if check_pillars {
@@ -802,11 +828,79 @@ impl World {
                 }
             }
         }
-        out.blockers.sort();
+        out.blocks.sort_by_key(|k| k.building);
+        out.blockers = out.blocks.iter().map(|k| k.building).collect();
         // An end left in the air is the plainer problem: say it first.
         out.pillar_gaps.sort_by_key(|g| !g.end);
         out.pillar_refusal = out.pillar_gaps.first().map(|g| format!("Not implemented: {}.", g.reason()));
+        out.refusal = Self::blocks_refusal(&out.blocks).or_else(|| out.pillar_refusal.clone());
         out
+    }
+
+    /// The refusal for structures a project would take, naming the first
+    /// with the road that takes it.
+    fn blocks_refusal(blocks: &[Blocker]) -> Option<String> {
+        let first = blocks.first()?;
+        let more = match blocks.len() {
+            1 => String::new(),
+            2 => " (and 1 more structure)".to_string(),
+            n => format!(" (and {} more structures)", n - 1),
+        };
+        let hint = if first.runs_over { "Move the road clear of it (outlined in red) or bulldoze it first." } else { "Leave it a street to front, or bulldoze it first (outlined in red)." };
+        Some(format!("Not implemented: {}{more}. {hint}", first.reason()))
+    }
+
+    /// [tools] A planned road in words for a refusal: "the new road off
+    /// Pylon Drive (from (x, y))" when it joins a named street, else where
+    /// it starts.
+    fn planned_road_label(&self, pts: &[Vec2]) -> String {
+        let start = pts.first().copied().unwrap_or_default();
+        let joins = |p: Vec2| {
+            self.roads
+                .nearest_where(p, |s| !s.is_rail())
+                .filter(|(sid, _, q)| q.distance(p) < self.roads.segment(*sid).half_width() + 2.0)
+                .and_then(|(sid, _, _)| self.streets.of(sid))
+                .map(|st| st.name.clone())
+        };
+        match pts.iter().copied().find_map(joins) {
+            Some(name) => format!("the new road off {name} (from ({:.0}, {:.0}))", start.x, start.y),
+            None => format!("the new road from ({:.0}, {:.0})", start.x, start.y),
+        }
+    }
+
+    /// [tools] A road the project takes out, in words: "taking out Pylon
+    /// Drive" (the street it is today), else where it starts.
+    fn removed_road_label(&self, pts: &[Vec2]) -> String {
+        let start = pts.first().copied().unwrap_or_default();
+        let mid = match pts {
+            [a, b, ..] => a.lerp(*b, 0.5),
+            _ => start,
+        };
+        let name = self.roads.nearest_where(mid, |s| !s.is_rail()).filter(|(_, _, q)| q.distance(mid) < 3.0).and_then(|(sid, _, _)| self.streets.of(sid)).map(|st| st.name.clone());
+        match name {
+            Some(name) => format!("taking out {name}"),
+            None => format!("taking out the road from ({:.0}, {:.0})", start.x, start.y),
+        }
+    }
+
+    /// A structure the trial rebuild loses: the planned (or removed) road
+    /// nearest it.
+    fn lost_block(&self, id: BuildingId, pv: &PlanPreview) -> Blocker {
+        let b = &self.buildings[id];
+        let at = self.lots.get(b.lot).map_or(Vec2::ZERO, |l| l.center);
+        let nearest = pv
+            .planned_roads
+            .iter()
+            .map(|r| (r, true))
+            .chain(pv.removed_roads.iter().map(|r| (r, false)))
+            .map(|((gid, pts, ..), new)| (gid, pts, new, closest_on(at, pts)))
+            .min_by(|x, y| x.3.distance(at).total_cmp(&y.3.distance(at)));
+        let (road, road_label, q) = match nearest {
+            Some((gid, pts, true, q)) => (Some(*gid), self.planned_road_label(pts), q),
+            Some((gid, pts, false, q)) => (Some(*gid), self.removed_road_label(pts), q),
+            None => (None, "the project".to_string(), at),
+        };
+        Blocker { building: id, name: b.name.clone(), at, road, road_label, a: q, b: q, runs_over: false }
     }
 
     /// The city's own structures whose lots the asphalt of one road would
@@ -816,13 +910,19 @@ impl World {
     /// onto the street in front is no trespass), and so are bored tunnels,
     /// which leave the ground alone.
     pub fn structures_in_way(&self, pts: &[Vec2], levels: &[f32], fwd: u8, bwd: u8, kind: RoadKind) -> Vec<BuildingId> {
+        self.structures_in_way_at(pts, levels, fwd, bwd, kind).into_iter().map(|(id, ..)| id).collect()
+    }
+
+    /// `structures_in_way`, each with the stretch of the road over it
+    /// (the first and last points found on its ground).
+    pub fn structures_in_way_at(&self, pts: &[Vec2], levels: &[f32], fwd: u8, bwd: u8, kind: RoadKind) -> Vec<(BuildingId, Vec2, Vec2)> {
         let civic: Vec<(BuildingId, &Lot)> = self
             .buildings
             .iter()
             .filter(|(_, b)| Self::is_civic_structure(b))
             .filter_map(|(id, b)| self.lots.get(b.lot).filter(|l| l.building == Some(id) && l.polygon.len() >= 3).map(|l| (id, l)))
             .collect();
-        let mut out: Vec<BuildingId> = Vec::new();
+        let mut out: Vec<(BuildingId, Vec2, Vec2)> = Vec::new();
         if civic.is_empty() {
             return out;
         }
@@ -844,7 +944,7 @@ impl World {
                     continue;
                 }
                 for (id, l) in &civic {
-                    if out.contains(id) || l.center.distance(p) > hw + l.polygon.iter().map(|c| c.distance(l.center)).fold(0.0, f32::max) {
+                    if l.center.distance(p) > hw + l.polygon.iter().map(|c| c.distance(l.center)).fold(0.0, f32::max) {
                         continue;
                     }
                     if point_in_polygon(p, &l.polygon) || crate::geom::distance_to_outline(p, &l.polygon) < hw - 0.5 {
@@ -856,7 +956,10 @@ impl World {
                         if la.min(lb) >= crate::pillars::SPAN_LEVEL && self.buildings.get(*id).is_some_and(|b| storeys(b) && b.floors <= crate::pillars::floors_under(la.min(lb))) {
                             continue;
                         }
-                        out.push(*id);
+                        match out.iter_mut().find(|(o, ..)| o == id) {
+                            Some(hit) => hit.2 = p,
+                            None => out.push((*id, p, p)),
+                        }
                     }
                 }
             }
@@ -867,26 +970,35 @@ impl World {
     /// Civic structures `project`'s new or changed roads (or roundabouts)
     /// would run over (`structures_in_way` for each).
     fn road_blockers(&self, project: &Project) -> Vec<BuildingId> {
-        let pv = preview(&self.master, project);
-        let mut out: Vec<BuildingId> = Vec::new();
-        for ((_, pts, fwd, bwd, kind), levels) in pv.planned_roads.iter().zip(&pv.planned_levels) {
-            for id in self.structures_in_way(pts, levels, *fwd, *bwd, *kind) {
-                if !out.contains(&id) {
-                    out.push(id);
+        let mut out: Vec<BuildingId> = self.road_blocks(&preview(&self.master, project)).into_iter().map(|k| k.building).collect();
+        out.sort();
+        out
+    }
+
+    /// `road_blockers`, each with the road that takes it and where.
+    fn road_blocks(&self, pv: &PlanPreview) -> Vec<Blocker> {
+        let mut out: Vec<Blocker> = Vec::new();
+        let at = |id: BuildingId| self.buildings.get(id).and_then(|b| self.lots.get(b.lot)).map_or(Vec2::ZERO, |l| l.center);
+        let name = |id: BuildingId| self.buildings.get(id).map(|b| b.name.clone()).unwrap_or_default();
+        for ((gid, pts, fwd, bwd, kind), levels) in pv.planned_roads.iter().zip(&pv.planned_levels) {
+            for (id, a, b) in self.structures_in_way_at(pts, levels, *fwd, *bwd, *kind) {
+                if !out.iter().any(|k| k.building == id) {
+                    out.push(Blocker { building: id, name: name(id), at: at(id), road: Some(*gid), road_label: self.planned_road_label(pts), a, b, runs_over: true });
                 }
             }
         }
         let civic = |b: &BuildingId| self.buildings.get(*b).is_some_and(Self::is_civic_structure);
-        for (_, effect) in &pv.planned_rings {
+        for (gid, effect) in &pv.planned_rings {
             if let Some(ring) = effect.ring {
                 for lot in self.roundabout_takes(ring) {
-                    if let Some(b) = self.lots[lot].building.filter(|b| civic(b) && !out.contains(b)) {
-                        out.push(b);
+                    if let Some(id) = self.lots[lot].building.filter(|b| civic(b) && !out.iter().any(|k| k.building == *b)) {
+                        let label = format!("the new roundabout at ({:.0}, {:.0})", ring.center.x, ring.center.y);
+                        let q = closest_on(ring.center, &self.lots[lot].polygon);
+                        out.push(Blocker { building: id, name: name(id), at: at(id), road: Some(*gid), road_label: label, a: q, b: q, runs_over: true });
                     }
                 }
             }
         }
-        out.sort();
         out
     }
 
@@ -918,6 +1030,14 @@ impl World {
         self.implement();
         self.project = had_project;
         Some(id)
+    }
+
+    /// [interchange] Rebuild roads, lots and lanes from the master plan as
+    /// implementing does, with nothing changed in the plan: the network is
+    /// laid again with the current road-building rules (the `rebuild_roads`
+    /// dev command, and probes comparing old saves).
+    pub fn rebuild_from_plan(&mut self) {
+        self.rebuild_from_master();
     }
 
     pub(super) fn rebuild_from_master(&mut self) {
@@ -1066,18 +1186,21 @@ impl World {
                 }
                 continue;
             }
+            // [free-placement] City buildings (city parking too) stay on the
+            // city lot under them: their own recut ground, kept while it
+            // fronts any way at all, whatever its shape (a road far off
+            // reshaping the block must not take a plant).
+            let civic = self.is_city_building(bid);
+            let fits = |id: LotId, l: &Lot| l.usable() || (civic && pinned.contains(&id) && crate::zoning::fronts_a_way(&l.polygon, &self.roads));
             let found = grid
                 .near(old.center, 6.0)
                 .into_iter()
                 .map(|id| (id, &self.lots[id]))
-                .filter(|(_, l)| l.building.is_none() && l.usable())
+                .filter(|(id, l)| l.building.is_none() && fits(*id, l))
                 .map(|(id, l)| (id, if l.contains(old.center) { 0.0 } else { l.center.distance(old.center) }))
                 .filter(|(_, d)| *d < 6.0)
                 .min_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|(id, _)| id);
-            // [free-placement] City buildings (city parking too) stay on the
-            // city lot under them.
-            let civic = self.is_city_building(bid);
             let floors = self.buildings.get(bid).map_or(0, |b| b.floors);
             match found {
                 // [tools] Bought out for a column, or too tall for the deck
@@ -1576,6 +1699,20 @@ impl LotGrid {
 
 /// A polygon scaled about its centroid, to test overlap without counting
 /// outlines that merely touch.
+/// The point of a polyline nearest `p`.
+fn closest_on(p: Vec2, pts: &[Vec2]) -> Vec2 {
+    let mut best = pts.first().copied().unwrap_or(p);
+    for w in pts.windows(2) {
+        let d = w[1] - w[0];
+        let t = if d.length_squared() > 0.0 { ((p - w[0]).dot(d) / d.length_squared()).clamp(0.0, 1.0) } else { 0.0 };
+        let q = w[0] + d * t;
+        if q.distance(p) < best.distance(p) {
+            best = q;
+        }
+    }
+    best
+}
+
 pub(super) fn shrink_about_centroid(poly: &[Vec2], factor: f32) -> Vec<Vec2> {
     let c = crate::zoning::polygon_centroid(poly);
     poly.iter().map(|&p| c + (p - c) * factor).collect()

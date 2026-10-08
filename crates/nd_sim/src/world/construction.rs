@@ -708,7 +708,9 @@ mod tests {
         }
         let station = w.place_rail_facility(crate::rail::RailFacility::Station, Vec2::new(240.0, 40.0)).expect("station");
         let fp = w.facilities.values().find(|f| f.building == Some(station)).unwrap().footprint();
-        assert!(w.buildings[station].demolition.is_some(), "the station's ground is cleared first");
+        // [dock-access] Drawn as itself at once: the shops are cleared away,
+        // the station never shows as their demolition.
+        assert!(w.buildings[station].demolition.is_none(), "the station stands at once on its own footprint");
         // Every building and lot agree, and nothing else stands on the
         // station's ground: the shops under it went into its clearing.
         for (id, b) in w.buildings.iter() {
@@ -717,7 +719,6 @@ mod tests {
                 assert!(!point_in_polygon(w.lots[b.lot].center, &fp), "a site left on the station's ground");
             }
         }
-        run_until(&mut w, 4 * 1440, |w| w.buildings[station].demolition.is_none());
-        assert!(w.buildings[station].demolition.is_none() && w.buildings[station].rail.is_some());
+        assert!(w.buildings[station].rail.is_some());
     }
 }

@@ -152,8 +152,11 @@ pub enum CrossingUpgrade {
     /// after someone presses the button, for long enough to cross.
     Button,
     /// A footbridge: a raised walkway over the street with stairs at both
-    /// ends. The crosswalk under it stays, but walkers prefer the bridge,
-    /// and nobody on the bridge holds up traffic.
+    /// ends. Nobody on the bridge holds up traffic. [footbridge] It
+    /// replaces the crosswalk under it (paint, walk lights and the walk
+    /// graph's at-grade edge go) unless the player keeps that crosswalk
+    /// (`CrossingRule::keep_crosswalk`), when walkers merely prefer the
+    /// bridge.
     Footbridge,
 }
 
@@ -193,6 +196,11 @@ pub struct CrossingRule {
     /// Unit direction of the street crossed (either way along it).
     pub dir: Vec2,
     pub upgrade: CrossingUpgrade,
+    /// [footbridge] A footbridge's crosswalk kept at grade under it (the
+    /// player's choice). Off by default, and in saves from before it, so a
+    /// footbridge replaces its crosswalk.
+    #[serde(default)]
+    pub keep_crosswalk: bool,
 }
 
 /// Every crosswalk upgrade in the city.
@@ -211,7 +219,19 @@ impl Crosswalks {
     pub fn set(&mut self, at: Vec2, dir: Vec2, upgrade: CrossingUpgrade) {
         self.rules.retain(|r| !(r.at.distance(at) < 2.0 && r.dir.dot(dir).abs() > 0.9));
         if upgrade != CrossingUpgrade::None {
-            self.rules.push(CrossingRule { at, dir, upgrade });
+            self.rules.push(CrossingRule { at, dir, upgrade, keep_crosswalk: false });
+        }
+    }
+
+    /// [footbridge] Keep (or take away) the crosswalk under the footbridge
+    /// at `at`; false where there is no footbridge rule there.
+    pub fn set_keep_crosswalk(&mut self, at: Vec2, dir: Vec2, keep: bool) -> bool {
+        match self.rules.iter_mut().find(|r| r.at.distance(at) < 2.0 && r.dir.dot(dir).abs() > 0.9 && r.upgrade == CrossingUpgrade::Footbridge) {
+            Some(r) => {
+                r.keep_crosswalk = keep;
+                true
+            }
+            None => false,
         }
     }
 }

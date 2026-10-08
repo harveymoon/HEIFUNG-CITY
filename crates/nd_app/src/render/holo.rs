@@ -80,6 +80,11 @@ fn half_width(kind: RoadKind, f: u8, b: u8) -> f32 {
 /// column would buy out outlined in orange with a marker where it stands.
 #[allow(clippy::too_many_arguments)]
 fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32], f: u8, b: u8, kind: RoadKind, alpha: f32) -> (MeshData, MeshData, nd_sim::pillars::PillarPlan) {
+    // [interchange] A ramp as it will be built (`roads::ease_ramp_way`): the
+    // hologram used to show the line as drawn while the build ran it
+    // alongside the highway first.
+    let (pts, levels) = nd_sim::roads::ease_ramp_way(pts, levels, f, b, kind, &w.roads);
+    let (pts, levels) = (&pts[..], &levels[..]);
     let steep = w.steep_legs(pts, levels, kind);
     let plan = w.road_pillar_plan(pts, levels, f, b, kind);
     let raised = nd_sim::pillars::is_raised(levels);
@@ -148,11 +153,47 @@ fn gap_marks(w: &World, g: &nd_sim::pillars::Gap, deck_w: f32, red: &mut MeshDat
     red.ground_strip(&ring, 0.8, z + 0.7, pin);
 }
 
+/// [tools] A city structure the active project would take: its lot
+/// outlined in a wide red border (also for one the rebuild loses, which no
+/// per-road hologram shows), the stretch of the road that takes it red on
+/// the ground, and a tall red pin on the structure so it can be found.
+fn blocker_marks(w: &World, k: &nd_sim::Blocker, red: &mut MeshData) {
+    let bright = [WARN_TINT[0] * 2.0, WARN_TINT[1] * 1.5, WARN_TINT[2] * 1.5, 1.0];
+    if let Some(lot) = w.buildings.get(k.building).map(|b| b.lot) {
+        if let Some(l) = w.lots.get(lot) {
+            let y = w.lot_pad(lot) + 0.45;
+            let mut outline = l.polygon.clone();
+            outline.push(l.polygon[0]);
+            red.ground_polygon(&l.polygon, y - 0.05, [WARN_TINT[0] * 0.3, WARN_TINT[1] * 0.3, WARN_TINT[2] * 0.3, 1.0]);
+            red.ground_strip(&outline, 2.4, y, bright);
+        }
+    }
+    // The road's stretch over it (or its nearest point): a red band.
+    let (a, b) = if k.a.distance(k.b) < 2.0 {
+        let d = (k.at - k.a).normalize_or_zero().perp() * 4.0;
+        (k.a - d, k.a + d)
+    } else {
+        (k.a, k.b)
+    };
+    red.ground_strip(&[a, b], 4.0, w.ground_height(a.lerp(b, 0.5)) + 0.7, [WARN_TINT[0] * 2.4, WARN_TINT[1] * 1.2, WARN_TINT[2] * 1.2, 1.0]);
+    let spot = k.at;
+    let z = w.ground_height(spot);
+    let pin = [WARN_TINT[0] * 2.4, WARN_TINT[1] * 1.6, WARN_TINT[2] * 1.6, 1.0];
+    red.boxed(glam::Vec3::new(spot.x, z + 12.0, spot.y), glam::Vec3::new(0.6, 24.0, 0.6), 0.0, pin);
+    red.boxed(glam::Vec3::new(spot.x, z + 25.0, spot.y), glam::Vec3::new(2.4, 2.4, 2.4), 0.785, pin);
+}
+
 /// [tools] A label on the map over each red pin: what is wrong there, for
 /// the road being drawn and for the active project's pending roads.
 pub fn gap_labels(mut contexts: bevy_egui::EguiContexts, sim: Res<Sim>, tools: Res<ToolState>, cams: Query<(&Camera, &GlobalTransform), With<crate::camera::OrbitCamera>>) -> Result {
     use bevy_egui::egui;
     let mut gaps: Vec<nd_sim::pillars::Gap> = tools.pillars.gaps.clone();
+    let mut texts: Vec<Option<String>> = vec![None; gaps.len()];
+    // [interchange] Why the diamond under the pointer would be refused.
+    if let Some((why, at)) = &tools.interchange_refusal {
+        gaps.push(nd_sim::pillars::Gap { a: *at, b: *at, level: 0.0, end: true, over_road: false });
+        texts.push(Some(format!("No interchange: {why}")));
+    }
     if let Some(c) = &tools.plan_check {
         for g in &c.pillar_gaps {
             if !gaps.iter().any(|o| o.a.distance(g.a) < 3.0 && o.b.distance(g.b) < 3.0) {
@@ -160,7 +201,8 @@ pub fn gap_labels(mut contexts: bevy_egui::EguiContexts, sim: Res<Sim>, tools: R
             }
         }
     }
-    if gaps.is_empty() {
+    let blocks: Vec<nd_sim::Blocker> = tools.plan_check.as_ref().map(|c| c.blocks.clone()).unwrap_or_default();
+    if gaps.is_empty() && blocks.is_empty() {
         return Ok(());
     }
     let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
@@ -171,16 +213,27 @@ pub fn gap_labels(mut contexts: bevy_egui::EguiContexts, sim: Res<Sim>, tools: R
         return Ok(());
     }
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("pillar_gap_labels")));
-    for g in &gaps {
-        let spot = gap_spot(g);
-        let top = w.ground_height(spot) + g.level + 17.0;
+    let labels = gaps
+        .iter()
+        .enumerate()
+        .map(|(k, g)| {
+            let spot = gap_spot(g);
+            let text = if let Some(Some(t)) = texts.get(k) {
+                t.clone()
+            } else if g.end {
+                format!("Ends in the air: no room for a column within {:.0} m", nd_sim::pillars::PILLAR_END_REACH)
+            } else {
+                format!("No room for a column for {:.0} m (a span may be {:.0})", g.a.distance(g.b), nd_sim::pillars::PILLAR_MAX_SPAN)
+            };
+            (spot, w.ground_height(spot) + g.level + 17.0, text)
+        })
+        .chain(blocks.iter().map(|k| {
+            let text = if k.runs_over { format!("The planned road would take {}", k.name) } else { format!("{} would lose its lot", k.name) };
+            (k.at, w.ground_height(k.at) + 27.0, text)
+        }));
+    for (spot, top, text) in labels {
         let Ok(v) = camera.world_to_viewport(gt, Vec3::new(spot.x, top, spot.y)) else { continue };
         let v = crate::ui::theme::to_points(ctx, v);
-        let text = if g.end {
-            format!("Ends in the air: no room for a column within {:.0} m", nd_sim::pillars::PILLAR_END_REACH)
-        } else {
-            format!("No room for a column for {:.0} m (a span may be {:.0})", g.a.distance(g.b), nd_sim::pillars::PILLAR_MAX_SPAN)
-        };
         let galley = painter.layout_no_wrap(text, crate::ui::theme::small(), egui::Color32::WHITE);
         let at = egui::pos2(v.x - galley.size().x * 0.5, v.y - galley.size().y - 6.0);
         let r = egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(6.0, 3.0));
@@ -234,6 +287,41 @@ pub fn sync_draw_hologram(
     };
     let kind = tools.kind;
     let (f, b) = if kind == RoadKind::Street { (tools.lanes_fwd, tools.lanes_bwd) } else { (0, 0) };
+    // [interchange] The Interchange preset: the whole diamond as it would
+    // be laid, or the line red with a pin where it would be refused.
+    tools.interchange_refusal = None;
+    if tools.interchange {
+        tools.grade_warnings.clear();
+        tools.pillars = Default::default();
+        let (a, z) = (ctrl[0], ctrl[ctrl.len() - 1]);
+        let mut mesh = MeshData::default();
+        let mut red = MeshData::default();
+        match w.plan_diamond(a, z, (f.max(1), b.max(1))) {
+            Ok(plan) => {
+                for g in &plan.gestures {
+                    if let nd_sim::Gesture::Road { points, lanes_fwd, lanes_bwd, kind, .. } = g {
+                        let (m, r, _) = hologram(w, &assets.palette, points, &vec![0.0; points.len()], *lanes_fwd, *lanes_bwd, *kind, 0.55);
+                        mesh.append(&m);
+                        red.append(&r);
+                    }
+                }
+            }
+            Err(r) => {
+                let (m, _, _) = hologram(w, &assets.palette, &[a, z], &[0.0, 0.0], f.max(1), b.max(1), kind, 0.35);
+                mesh.append(&m);
+                let line = nd_sim::pillars::Gap { a: r.at, b: r.at, level: 0.0, end: true, over_road: false };
+                gap_marks(w, &line, 6.0, &mut red);
+                tools.interchange_refusal = Some((r.why, r.at));
+            }
+        }
+        if !mesh.is_empty() {
+            spawn_overlay(&mut commands, &mut meshes, &mats, &mesh, DrawHoloTag);
+        }
+        if !red.is_empty() {
+            spawn_glow(&mut commands, &mut meshes, &mats, &red, DrawHoloTag);
+        }
+        return;
+    }
     tools.grade_warnings = w.road_grade_warnings(&ctrl, &ctrl_levels, kind, f, b);
     let (pts, levels) = built(&ctrl, &ctrl_levels, tools.curved);
     let (mesh, red, plan) = hologram(w, &assets.palette, &pts, &levels, f, b, kind, 0.55);
@@ -294,7 +382,12 @@ pub fn sync_plan_holograms(
     for g in &check.pillar_gaps {
         gap_marks(w, g, 12.0, &mut red);
     }
-    tools.plan_check = (!check.pillar_gaps.is_empty() || !check.blockers.is_empty()).then_some(check);
+    // [tools] Every structure implementing would refuse on, as the check
+    // found it: the one the refusal names is always marked.
+    for k in &check.blocks {
+        blocker_marks(w, k, &mut red);
+    }
+    tools.plan_check = check.refusal.is_some().then_some(check);
     if !all.is_empty() {
         spawn_overlay(&mut commands, &mut meshes, &mats, &all, PlanHoloTag);
     }

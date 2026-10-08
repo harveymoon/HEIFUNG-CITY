@@ -110,4 +110,32 @@ mod tests {
         assert!(top > nd_sim::junctions::FOOTBRIDGE_LEVEL, "the balustrade stands over the walkway: {top}");
         assert!(g.iter().any(|(s, m)| s == Surface::Glow && !m.positions.is_empty()), "neon strips");
     }
+
+    /// [footbridge] The zebra (and its beacons) under a footbridge is not
+    /// painted: the bridge replaced it.
+    #[test]
+    fn the_zebra_under_a_footbridge_is_not_painted() {
+        use crate::street::{generate_street, StreetInput, StreetLayer};
+        let mut w = World::new(WorldConfig { landscape: nd_sim::landscape::LandscapeParams::flat(), ..WorldConfig::default() });
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 2, 2);
+        w.add_zone(vec![Vec2::new(-200.0, 8.0), Vec2::new(200.0, 8.0), Vec2::new(200.0, 60.0), Vec2::new(-200.0, 60.0)], LandUse::Residential);
+        let cr = w.walk.crossings.iter().position(|c| c.kind == nd_sim::walk::CrossingKind::Zebra).expect("a zebra") as u32;
+        let mid = w.walk.crossings[cr as usize].mid;
+        w.economy.treasury = 1.0e6;
+        w.set_crossing_upgrade(cr, CrossingUpgrade::Footbridge).unwrap();
+        let closed = w.closed_crosswalks();
+        assert_eq!(closed, vec![mid]);
+        let pal = Palette::default();
+        let paint_near = |closed: &[Vec2]| {
+            let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: 1, heights: &[], inner: &[], layer: StreetLayer::Surface, closed });
+            // The street runs along x: the zebra's stripes lie across it.
+            let paint = g.get(Surface::Paint).positions.iter().filter(|p| (p[0] - mid.x).abs() < 1.4 && (p[2] - mid.y).abs() < 9.0).count();
+            let beacons = g.get(Surface::Glow).positions.iter().filter(|p| Vec2::new(p[0], p[2]).distance(mid) < 12.0).count();
+            (paint, beacons)
+        };
+        let (paint, beacons) = paint_near(&[]);
+        let (left, beacons_left) = paint_near(&closed);
+        assert!(beacons > 0 && beacons_left == 0, "the beacons go: {beacons} -> {beacons_left}");
+        assert!(paint >= left + 40, "the stripes go: {paint} -> {left}");
+    }
 }

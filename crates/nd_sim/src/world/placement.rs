@@ -349,8 +349,13 @@ impl World {
     /// docks go with their track or pier.
     pub fn bulldoze_building(&mut self, bid: BuildingId) -> Result<String, String> {
         let b = self.buildings.get(bid).ok_or("no such building")?;
-        if b.rail.is_some() || b.port.is_some() {
-            return Err(format!("{} is a station, yard or dock: it is not bulldozed on its own", b.name));
+        // [dock-access] A dock goes with its pier: the ground under its
+        // footprint goes back to the plan; its access road stays a road.
+        if b.port.is_some() {
+            return self.bulldoze_dock(bid);
+        }
+        if b.rail.is_some() {
+            return Err(format!("{} is a station or yard: it is not bulldozed on its own", b.name));
         }
         if !self.is_city_building(bid) {
             return Err(format!("{} is not the city's: place a city building over it to buy it out", b.name));

@@ -52,6 +52,10 @@ mod districts;
 mod districts_tests;
 mod driving;
 mod industry;
+// [interchange] The Road tool's Interchange preset: diamond interchanges.
+pub mod interchange;
+#[cfg(test)]
+mod interchange_tests;
 mod market;
 mod parking;
 mod pedestrians;
@@ -61,6 +65,8 @@ mod placement;
 pub use placement::PlacementSite;
 #[cfg(test)]
 mod placement_tests;
+#[cfg(test)]
+mod dock_access_tests;
 pub mod poses;
 /// [clarity] Origins and destinations, crews, crash sites.
 pub mod journeys;
@@ -76,7 +82,7 @@ mod places;
 #[cfg(test)]
 mod places_tests;
 mod industry_bridge;
-pub use plan::{ProjectCheck, ProjectInfo, ProjectPreview};
+pub use plan::{Blocker, ProjectCheck, ProjectInfo, ProjectPreview};
 mod power;
 pub use power::{GridAsset, GridHour, PlantRow};
 pub mod plant_groups;
@@ -85,6 +91,8 @@ pub use plant_groups::{PlantGroup, PlantJoin, PlantPreview};
 mod plant_groups_tests;
 #[cfg(test)]
 mod plant_scale_tests;
+#[cfg(test)]
+mod blocker_tests;
 mod services;
 mod society;
 /// [social] Encounters, conversations, friends and feuds, crews and clubs.
@@ -123,10 +131,15 @@ mod tourism;
 mod trips;
 mod water;
 mod ferry;
+/// [ferry-routes] Ferry routes and shipping lanes as lines on the water.
+pub mod ferry_routes;
 mod rides;
 // [economy] business pressure, the new trades, the waterfront and the art scene
 mod pressure;
 mod waterfront;
+mod fishing;
+#[cfg(test)]
+mod fishing_tests;
 // [events] street races and warehouse raves; road wear and maintenance
 mod nights;
 mod roadworks;
@@ -135,7 +148,8 @@ mod rich;
 #[cfg(test)]
 mod econ_followups_tests;
 mod dirt;
-pub use dirt::{DirtyNeighbour, ADJACENCY_OUTPUT_HIT, ADJACENCY_VALUE_HIT};
+pub use fishing::BoatReport;
+pub use dirt::{CleanupJob, CleanupQuote, DirtyNeighbour, ADJACENCY_OUTPUT_HIT, ADJACENCY_VALUE_HIT, CLEANUP_COST, CLEANUP_MAX_RADIUS, CLEANUP_MIN_RADIUS};
 // [road-inspect] the road inspector's traffic counts, live read-out and Repair now
 mod road_inspect;
 #[cfg(test)]
@@ -425,6 +439,10 @@ pub struct World {
     stations: Vec<BuildingId>,
     #[serde(skip)]
     yards: Vec<BuildingId>,
+    /// [dock-access] Passenger stations on the railway whose street does not
+    /// reach the city yet: trains call there, nobody gets on or off.
+    #[serde(skip)]
+    halts: Vec<BuildingId>,
     /// Businesses selling each resource, with their lot centres, for the
     /// hour `seller_index_hour` was built in.
     #[serde(skip)]
@@ -444,6 +462,11 @@ pub struct World {
     /// Shipping ports, ferry terminals and the ships between them.
     #[serde(default)]
     pub ports: Ports,
+    /// [fishing] The fishing ports' trawlers and the grounds they fish
+    /// (`crate::fishing`, `world/fishing.rs`). Old saves start with every
+    /// boat in port.
+    #[serde(default)]
+    pub fishing: crate::fishing::Fishing,
     /// Height of every road node (index = node id): the terrain under it,
     /// eased to gentle grades and lifted onto bridge decks over water.
     #[serde(skip)]
@@ -507,6 +530,10 @@ pub struct World {
     /// spreads and fades daily. Old saves load clean.
     #[serde(default)]
     pub contamination: crate::ground::Contamination,
+    /// [dirty-industry] Clean-up crews digging out poisoned ground, paid
+    /// for up front (`world/dirt.rs`, `World::start_cleanup`).
+    #[serde(default)]
+    pub cleanups: Vec<dirt::CleanupJob>,
     /// The player's industry sub-zone bias over areas, newest last.
     #[serde(default)]
     pub industry_bias: Vec<crate::industry::IndustryBias>,
@@ -655,6 +682,7 @@ impl World {
             road_component: Vec::new(),
             stations: Vec::new(),
             yards: Vec::new(),
+            halts: Vec::new(),
             seller_index: HashMap::new(),
             seller_index_hour: None,
             available: [false; 6],
@@ -662,6 +690,7 @@ impl World {
             meals_for_sale: false,
             landscape: Landscape::default(),
             ports: Ports::default(),
+            fishing: Default::default(),
             road_z: Vec::new(),
             road_inner: Vec::new(),
             relief: false,
@@ -679,6 +708,7 @@ impl World {
             enforcement: Default::default(),
             air: Default::default(),
             contamination: crate::ground::Contamination::new(half + 200.0, crate::ground::CONTAMINATION_CELL),
+            cleanups: Vec::new(),
             industry_bias: Vec::new(),
             places: Default::default(),
             concerns: Default::default(),
@@ -1083,6 +1113,8 @@ impl World {
         if tick % 60 == 0 {
             crate::prof!("hourly_economy", self.hourly_economy());
             crate::prof!("industry_hourly", self.industry_hourly());
+            // [dirty-industry] Clean-up crews dig on.
+            self.hourly_cleanups();
             // [economy] repair shops, bike shops, galleries and boats
             crate::prof!("trades_hourly", self.trades_hourly());
             crate::prof!("record_hour", self.record_hour());
@@ -1173,8 +1205,10 @@ impl World {
         self.step_rail();
         self.step_subway();
         self.step_ships();
-        // [economy] marina and fishing boats out on the water
+        // [economy] marina boats out on the water
         self.step_boats();
+        // [fishing] trawlers out to the grounds and home
+        self.step_fishing();
         // [ferries] Day trips out, and anyone stranded abroad.
         self.step_ferry_people();
         self.step_cargo_hubs();

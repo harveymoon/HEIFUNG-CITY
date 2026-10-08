@@ -21,7 +21,7 @@ use crate::tools::{Tool, ToolState, TransitMode, ROAD_PRESETS};
 
 /// The road presets offered under Roads, in menu order (Rail track is
 /// under Rail).
-const ROADS: [&str; 9] = ["Path", "Lane", "Street", "Avenue", "One-way", "Ramp", "Highway", "Tunnel", "Roundabout"];
+const ROADS: [&str; 10] = ["Path", "Lane", "Street", "Avenue", "One-way", "Ramp", "Highway", "Interchange", "Tunnel", "Roundabout"];
 
 /// A section of the tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -224,7 +224,7 @@ pub fn groups(cat: Cat) -> Vec<Group> {
             for r in ROADS {
                 let group = match r {
                     "Path" => "Paths",
-                    "Highway" | "Ramp" => "Highways",
+                    "Highway" | "Ramp" | "Interchange" => "Highways",
                     "Tunnel" | "Roundabout" => "Special",
                     _ => "Streets",
                 };
@@ -272,6 +272,8 @@ pub fn current_item(t: &ToolState) -> Option<Item> {
     match t.tool {
         Tool::Road => Some(if t.roundabout {
             Item::Road("Roundabout")
+        } else if t.interchange {
+            Item::Road("Interchange")
         } else if t.tunnel {
             Item::Road("Tunnel")
         } else {
@@ -333,6 +335,7 @@ pub fn activate(item: Item, t: &mut ToolState) {
     match item {
         Item::Road("Roundabout") => {
             t.roundabout = true;
+            t.interchange = false;
             t.tunnel = false;
             t.points.clear();
         }
@@ -760,6 +763,7 @@ fn elide(s: &str, n: usize) -> String {
 fn icon(painter: &egui::Painter, r: Rect, item: Item, p: &UiCtx, col: Color32) {
     match item {
         Item::Road("Roundabout") => icons::roundabout(painter, r, col),
+        Item::Road("Interchange") => icons::interchange(painter, r, col),
         Item::Road("Tunnel") => {
             icons::road(painter, r, RoadKind::Street, 2, 2, col);
             painter.rect_stroke(r.shrink(r.width() * 0.08), r.width() * 0.3, egui::Stroke::new(1.5, Color32::from_rgb(170, 160, 150)), egui::StrokeKind::Inside);
@@ -833,6 +837,8 @@ fn info(ui: &mut egui::Ui, p: &mut UiCtx, item: Item, hovered: bool) {
             }
             if label == "Roundabout" {
                 hint(ui, help::ROAD_ROUNDABOUT);
+            } else if label == "Interchange" {
+                hint(ui, help::ROAD_INTERCHANGE);
             } else if label == "Path" {
                 hint(ui, help::ROAD_PATH);
             }

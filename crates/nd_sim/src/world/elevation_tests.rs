@@ -614,3 +614,62 @@ fn a_wreck_in_a_tunnel_sits_on_the_tunnel_road_and_in_the_tunnel() {
     assert!(w.car_height(c) < -0.5, "below the street");
     assert!(w.car_in_tunnel(c), "in the tunnel layer");
 }
+
+/// [footbridge] Harvey's flag: "i made an elevated path but people seem to
+/// be walking at ground level, even over water, along the same route as
+/// the path but not on it". A walker going along an elevated path over the
+/// water stands on its deck (`walker_way_height`, what the renderer and the
+/// walk view put them at), and keeps within its width.
+#[test]
+fn a_walker_on_an_elevated_path_over_water_stands_on_its_deck() {
+    let mut w = World::new(WorldConfig::default());
+    let land = w.landscape.clone();
+    // A short crossing of the water: dry land 30 m beyond both banks.
+    let mut pick: Option<(Vec2, Vec2)> = None;
+    'search: for cx in -8..=8 {
+        for cy in -8..=8 {
+            let c = Vec2::new(cx as f32 * 60.0, cy as f32 * 60.0);
+            if !land.is_water(c) {
+                continue;
+            }
+            for k in 0..8 {
+                let d = Vec2::from_angle(k as f32 * 0.3927);
+                let bank = |s: f32| (1..40).map(|i| c + d * s * i as f32 * 5.0).find(|&p| !land.is_water(p));
+                if let (Some(a), Some(b)) = (bank(-1.0), bank(1.0)) {
+                    let (a, b) = (a - d * 30.0, b + d * 30.0);
+                    if a.distance(b) < 160.0 && !land.is_water(a) && !land.is_water(b) {
+                        pick = Some((a, b));
+                        break 'search;
+                    }
+                }
+            }
+        }
+    }
+    let (a, b) = pick.expect("a narrow stretch of water");
+    let d = (b - a).normalize();
+    let pts = [a, a + d * 25.0, b - d * 25.0, b];
+    build(&mut w, road(&pts, (1, 1), RoadKind::Path, &[0.0, 7.0, 7.0, 0.0]));
+    let over = (a + b) * 0.5;
+    assert!(land.is_water(over));
+    let (sid, t, _) = w.roads.nearest_where(over, |s| s.kind == RoadKind::Path).expect("the path");
+    let deck = w.road_height(sid, t);
+    assert!(deck > crate::landscape::WATER_LEVEL + 3.0, "the path is up over the water: {deck}");
+    // From one end to the other on foot.
+    let (path, _) = w.walk.route(a, b).expect("a walk along the path");
+    let leg = path.windows(2).position(|p| land.is_water((p[0] + p[1]) * 0.5) && p[0].distance(p[1]) > 1.0).expect("a leg over the water") + 1;
+    let at = (path[leg - 1] + path[leg]) * 0.5;
+    let z = w.way_height_on_leg(path[leg - 1], path[leg], at).expect("on the raised path");
+    let (s2, t2, _) = w.roads.nearest_where(at, |s| s.kind == RoadKind::Path).unwrap();
+    assert!((z - w.road_height(s2, t2)).abs() < 0.3, "at the deck's height: {z} vs {}", w.road_height(s2, t2));
+    assert!(z > crate::landscape::WATER_LEVEL + 3.0, "not on the water: {z}");
+    // Stepping a little to the side (as walkers keep their distance) is
+    // still on the deck, not down on the water.
+    let side = Vec2::new(-d.y, d.x);
+    assert!(w.way_height_on_leg(path[leg - 1], path[leg], at + side).is_some_and(|z2| (z2 - z).abs() < 0.5));
+    // And the room they have to step aside in is the deck's width.
+    let (lo, hi) = w.walk_room(path[leg - 1], path[leg]);
+    assert!(lo >= -crate::roads::PATH_HALF_WIDTH && hi <= crate::roads::PATH_HALF_WIDTH, "kept on the deck: {lo} {hi}");
+    // At grade (on the bank, well off the path) nothing changes.
+    let off = Vec2::new(-d.y, d.x) * 50.0;
+    assert_eq!(w.way_height_on_leg(a + off, a + off + d * 20.0, a + off + d * 10.0), None);
+}

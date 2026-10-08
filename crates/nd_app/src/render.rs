@@ -43,6 +43,8 @@ mod fire_scene;
 /// [land] Police light bars on convoys, bodyguards on foot.
 mod convoys;
 mod far;
+// [fishing] trawlers at their berths and out on the grounds
+mod fishing;
 /// [layers] Traffic and Crime focus views: the city dimmed, vehicles lit.
 mod focus;
 mod haze;
@@ -91,6 +93,8 @@ mod subway;
 mod society;
 /// [social] Murals and community gardens.
 mod social;
+/// [dirty-industry] Clean-up crews digging out contaminated ground.
+mod cleanup;
 mod solar;
 mod turbines;
 /// [taxis] Cabs in their yards, at ranks and kerbs; yard signs.
@@ -380,6 +384,10 @@ struct ChunkMeshes {
 struct RenderState {
     roads_version: u64,
     lanes_version: u64,
+    /// [footbridge] Hash of the crosswalks footbridges replaced, as the
+    /// streets (their paint) and the walk lamps were last drawn for.
+    closed_roads: u64,
+    closed_signals: u64,
     /// What the project holograms were built for: plan version, parcels
     /// version, whether parked projects are shown.
     preview_key: Option<(u64, u64, bool)>,
@@ -461,6 +469,7 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, (turbines::sync_turbines, solar::sync_solar, haze::sync_haze, grime::sync_grime, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.add_systems(Update, (climate::sync_precipitation, climate::sync_steam).in_set(SimSet::Sync).after(sync_landscape));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
+        app.add_systems(Update, fishing::sync_trawlers.in_set(SimSet::Sync).after(sync_ships));
         // The ground and water out past the map, into the fog.
         app.init_resource::<far::FarRender>().add_systems(Update, far::sync_far.in_set(SimSet::Sync).after(sync_landscape));
         app.add_systems(Update, retaining::sync_retaining.in_set(SimSet::Sync).after(sync_landscape));
@@ -481,7 +490,9 @@ impl Plugin for RenderPlugin {
         // [society] Skid row and the trash.
         app.init_resource::<society::SocietyRender>().add_systems(Update, society::sync_society.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
         // [social] Murals and gardens.
-        app.init_resource::<social::SocialRender>().add_systems(Update, social::sync_social.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
+        app.init_resource::<social::SocialRender>().add_systems(Update, social::sync_social.after(sync_vacant).after(sync_buildings).before(update_daylight).in_set(SimSet::Sync));
+        // [dirty-industry] Clean-up crews.
+        app.init_resource::<cleanup::CleanupRender>().add_systems(Update, cleanup::sync_cleanup.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
         // Drone taxis and helicopters, after the buildings whose pads they land on.
         app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, check_car_bodies.after(lift_movers).in_set(SimSet::Sync));
@@ -970,6 +981,17 @@ fn sync_scatter(
     spawn_geometry(&mut commands, &mut meshes, &mats, &geo, ScatterTag);
 }
 
+/// [footbridge] A key for the set of crosswalks footbridges replaced.
+fn closed_hash(closed: &[SVec2]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for p in closed {
+        (p.x.to_bits(), p.y.to_bits()).hash(&mut h);
+    }
+    closed.len().hash(&mut h);
+    h.finish()
+}
+
 fn sync_roads(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -982,16 +1004,21 @@ fn sync_roads(
     existing: Query<Entity, Or<(With<RoadsTag>, With<holo::TunnelTag>, With<holo::GhostRoadTag>)>>,
 ) {
     let version = sim.world.roads.version;
-    if version == state.roads_version && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
+    // [footbridge] A footbridge built (or its crosswalk kept) repaints the
+    // streets: its zebra goes or comes back.
+    let closed = sim.world.closed_crosswalks();
+    let closed_key = closed_hash(&closed);
+    if version == state.roads_version && closed_key == state.closed_roads && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
     state.roads_version = version;
+    state.closed_roads = closed_key;
     despawn_all(&mut commands, &existing);
     let w = &sim.world;
     // Each run is set on its own height profile here (a viaduct over a
     // street, the street under it), so the roads are not lifted again.
     let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
-    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Surface });
+    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Surface, closed: &closed });
     stats.street_triangles = geo.triangle_count();
     lamps.lamps.clone_from(&geo.lamps);
     for (s, data) in geo.iter() {
@@ -1006,7 +1033,7 @@ fn sync_roads(
     }
     // The tunnels on their own, shown in the underground view.
     if w.roads.alive_segments().any(|(_, s)| s.tunnel) {
-        let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Underground });
+        let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Underground, closed: &closed });
         stats.street_triangles += geo.triangle_count();
         for (s, data) in geo.iter() {
             commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, holo::TunnelTag, Visibility::Hidden, NotShadowCaster));
@@ -1049,8 +1076,11 @@ fn sync_signals(
     mut q: Query<(&SignalTag, Option<&PedSignalTag>, &mut MeshMaterial3d<StandardMaterial>, Option<&swap::SwapOriginal>)>,
 ) {
     let net = &sim.world.traffic.net;
-    if net.version != state.lanes_version || sim.full_rebuild {
+    let closed = sim.world.closed_crosswalks();
+    let closed_key = closed_hash(&closed);
+    if net.version != state.lanes_version || closed_key != state.closed_signals || sim.full_rebuild {
         state.lanes_version = net.version;
+        state.closed_signals = closed_key;
         despawn_all(&mut commands, &existing);
         for post in signal_posts(&sim.world.roads, net) {
             commands.spawn((
@@ -1061,7 +1091,7 @@ fn sync_signals(
                 SignalTag(post.lane),
             ));
         }
-        for post in nd_procgen::street::ped_signal_posts(&sim.world.roads, net) {
+        for post in nd_procgen::street::ped_signal_posts(&sim.world.roads, net).into_iter().filter(|p| !nd_procgen::street::crosswalk_closed(&closed, p.crosswalk)) {
             commands.spawn((
                 Mesh3d(mats.signal_mesh.clone()),
                 MeshMaterial3d(mats.ped_stop.clone()),
@@ -1602,6 +1632,21 @@ fn mass_top(g: &Geometry) -> f32 {
 
 fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<f32> {
     let b = world.buildings.get(id)?;
+    let mut g = building_geometry(world, assets, styles, id)?;
+    // [climate] Snow on the roofs in a cold climate.
+    nd_procgen::climate::snow_cover(&mut g, assets.palette.snow);
+    lights::tag_windows(&mut g, lights::slot_of(id));
+    let top = mass_top(&g);
+    // Every building stands on its lot's levelled pad.
+    nd_procgen::terrain::raise_geometry(&mut g, world.lot_pad(b.lot));
+    geo.append(&g);
+    Some(top)
+}
+
+/// One building's geometry as drawn, before it is raised onto its lot's
+/// pad (`World::lot_pad`); [social] murals read their wall off it.
+pub(crate) fn building_geometry(world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<Geometry> {
+    let b = world.buildings.get(id)?;
     // [land] A building over merged plots is drawn on their combined
     // footprint (`World::footprint`): one building, no seams.
     let footprint = world.footprint(id)?;
@@ -1623,7 +1668,7 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
         ..nd_procgen::style_extras(world, id, styles.neighbours(id))
     };
-    let mut g = match &b.demolition {
+    let g = match &b.demolition {
         // Coming down: what stood there (which, during a redevelopment or a
         // civic take-over, is not what the building's own fields describe),
         // cut down to what is left, with the demolition site around it.
@@ -1633,14 +1678,7 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
         }
         None => generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras),
     };
-    // [climate] Snow on the roofs in a cold climate.
-    nd_procgen::climate::snow_cover(&mut g, assets.palette.snow);
-    lights::tag_windows(&mut g, lights::slot_of(id));
-    let top = mass_top(&g);
-    // Every building stands on its lot's levelled pad.
-    nd_procgen::terrain::raise_geometry(&mut g, world.lot_pad(b.lot));
-    geo.append(&g);
-    Some(top)
+    Some(g)
 }
 
 /// The chunk a building is drawn in: by its lot centre, so a building and
@@ -1927,7 +1965,7 @@ fn sync_citizens(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
-    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d, Option<&swap::SwapOriginal>), With<CitizenTag>>,
+    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d, Option<&swap::SwapOriginal>, Option<&mut WayHeight>), With<CitizenTag>>,
 ) {
     let w = &sim.world;
     let f = sim.frac();
@@ -1939,7 +1977,7 @@ fn sync_citizens(
     for (id, _) in w.citizens.iter() {
         if !state.citizens.contains_key(&id) {
             let e = commands
-                .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(look_mat.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CitizenTag))
+                .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(look_mat.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CitizenTag, WayHeight::default()))
                 .id();
             state.citizens.insert(id, e);
         }
@@ -1974,7 +2012,7 @@ fn sync_citizens(
     let down = w.down_on_street();
     for &(id, e, key, stature, _) in &outdoors {
         let Some(c) = w.citizens.get(id) else { continue };
-        let Ok((mut tf, mut vis, _, mut mesh, _)) = q.get_mut(e) else { continue };
+        let Ok((mut tf, mut vis, _, mut mesh, _, way)) = q.get_mut(e) else { continue };
         *vis = Visibility::Visible;
         let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
         let heading = lerp_angle(c.prev_heading, c.heading, f);
@@ -1987,6 +2025,10 @@ fn sync_citizens(
         let pos = if lying && down.contains(&id) { pos + SVec2::new(-c.heading.sin(), c.heading.cos()) * 2.6 } else { pos };
         // [tools] Up the stairs and over a footbridge (a raised walkway).
         let raised = w.walker_level(c, pos);
+        // [footbridge] On an elevated path, a viaduct or a bridge: on its deck.
+        if let Some(mut way) = way {
+            way.0 = w.walker_way_height(c, pos);
+        }
         tf.translation = Vec3::new(pos.x, if lying { 0.12 } else if seated { 0.02 } else { 0.16 } + raised, pos.y);
         tf.rotation = Quat::from_rotation_y(-heading);
         if lying {
@@ -2011,7 +2053,7 @@ fn sync_citizens(
     }
     for (id, &e) in state.citizens.iter() {
         let Some(c) = w.citizens.get(*id) else { continue };
-        let Ok((_, mut vis, mut mat, mut mesh, heat_original)) = q.get_mut(e) else { continue };
+        let Ok((_, mut vis, mut mat, mut mesh, heat_original, _)) = q.get_mut(e) else { continue };
         if !c.is_visible() {
             *vis = Visibility::Hidden;
             // Indoors: let go of the figure so the cache can drop it.
@@ -2977,6 +3019,13 @@ struct Lifted {
     lift: f32,
 }
 
+/// [footbridge] The height of the raised way (elevated path, viaduct,
+/// bridge) a walker or rider is going along this frame, if any
+/// (`World::walker_way_height`): `lift_movers` puts them on it rather than
+/// on whatever surface is nearest their last height.
+#[derive(Component, Default)]
+pub struct WayHeight(pub Option<f32>);
+
 #[derive(Component)]
 struct WaterTag;
 #[derive(Component, Clone)]
@@ -3155,12 +3204,12 @@ fn lift_spawned(
 
 /// Raise movers onto the ground after their poses are written.
 #[allow(clippy::type_complexity)]
-fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>) {
+fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>, Option<&WayHeight>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>) {
     let w = &sim.world;
     if !w.relief {
         return;
     }
-    for (e, mut tf, lifted) in &mut q {
+    for (e, mut tf, lifted, way) in &mut q {
         let base = match &lifted {
             // Not rewritten since the last lift: take the old lift off.
             Some(l) if tf.translation.y == l.after => tf.translation.y - l.lift,
@@ -3168,9 +3217,11 @@ fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut
         };
         // Keep to the level it was on: under a viaduct or on it.
         let at = SVec2::new(tf.translation.x, tf.translation.z);
-        let lift = match &lifted {
-            Some(l) => w.surface_height_near(at, l.lift),
-            None => w.surface_height_near(at, w.ground_height(at)),
+        let lift = match (way.and_then(|h| h.0), &lifted) {
+            // [footbridge] On a raised way: its deck, whatever was nearest.
+            (Some(h), _) => h,
+            (None, Some(l)) => w.surface_height_near(at, l.lift),
+            (None, None) => w.surface_height_near(at, w.ground_height(at)),
         };
         tf.translation.y = base + lift;
         let after = tf.translation.y;

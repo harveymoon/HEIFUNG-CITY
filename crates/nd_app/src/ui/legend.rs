@@ -99,7 +99,9 @@ pub fn land_here(w: &nd_sim::World, l: LandLayer, p: nd_sim::Vec2) -> String {
             let c = w.contamination.at(p);
             let src = w.dirty.iter().filter(|s| s.pos.distance(p) < s.reach).min_by(|a, b| a.pos.distance(p).total_cmp(&b.pos.distance(p)));
             let near = src.and_then(|s| w.buildings.get(s.building).map(|b| format!(" · {} {:.0} m away", b.name, s.pos.distance(p)))).unwrap_or_default();
-            return format!("under the pointer: contamination {:.0}%{near}", c * 100.0);
+            // Where the wind and the rivers take it, and how to dig it out.
+            let tail = if c >= 0.02 { " · it drifts downwind and down rivers · Bulldoze (B) → Clean up ground" } else { "" };
+            return format!("under the pointer: contamination {:.0}%{near}{tail}", c * 100.0);
         }
         _ => {}
     }
