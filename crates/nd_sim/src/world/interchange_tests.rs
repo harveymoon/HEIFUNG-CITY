@@ -368,3 +368,25 @@ fn cars_stop_at_a_sharp_forks_painted_line() {
     // Still a junction cars can drive through.
     assert!(route(&w, Vec2::new(-150.0, 0.0), fork + Vec2::from_angle(25f32.to_radians()) * 120.0));
 }
+
+/// [sweep-visual] A road planned in the active project but not built yet
+/// is in a ramp's way as much as a built one: refused at the crossing, and
+/// nothing is added.
+#[test]
+fn the_interchange_tool_sees_roads_pending_in_the_project() {
+    let mut w = flat_world();
+    highway(&mut w);
+    assert!(w.plan_diamond(Vec2::new(0.0, -220.0), Vec2::new(0.0, 220.0), (2, 2)).is_ok());
+    // The same street as above, only planned.
+    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-90.0, 24.0), Vec2::new(-90.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+    let steps = w.project.as_ref().map_or(0, |p| p.steps.len());
+    let r = w.plan_diamond(Vec2::new(0.0, -220.0), Vec2::new(0.0, 220.0), (2, 2)).unwrap_err();
+    assert!(r.why.contains("off-ramp would cross a road planned"), "{}", r.why);
+    assert!((r.at.x + 90.0).abs() < 1.0 && r.at.y > 9.0, "the spot is where they cross: {:?}", r.at);
+    assert!(w.add_diamond(Vec2::new(0.0, -220.0), Vec2::new(0.0, 220.0), (2, 2)).is_err());
+    assert_eq!(w.project.as_ref().map_or(0, |p| p.steps.len()), steps, "nothing added");
+    // A planned path ending where a ramp would join the highway crowds it.
+    w.discard_project();
+    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-150.0, 14.0), Vec2::new(-150.0, 200.0)], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Path, elevation: Vec::new() });
+    assert!(w.plan_diamond(Vec2::new(0.0, -220.0), Vec2::new(0.0, 220.0), (2, 2)).is_err());
+}

@@ -228,7 +228,7 @@ pub fn plan_parks_with(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue, l
 
 /// A one-lot park with no neighbours, for previews and tests.
 pub fn plan_single(lot: &Lot, tier: Tier) -> ParkLayout {
-    let mut l = plan_lot_paths(lot, &[], true);
+    let mut l = plan_lot_paths(lot, &[], &[], true);
     l.tier = tier;
     let area = polygon_area(&lot.polygon).abs();
     let wanted = feature_budget(tier, area, inradius(&lot.polygon));
@@ -259,7 +259,7 @@ fn plan_cluster(members: &[usize], ids: &[LotId], adj: &[Vec<(usize, Vec2)>], li
         .iter()
         .map(|&i| {
             let gaps: Vec<Vec2> = adj[i].iter().map(|(_, m)| *m).chain(linked[i].iter().copied()).collect();
-            let mut l = plan_lot_paths(&lots[ids[i]], &gaps, !lots[ids[i]].landlocked);
+            let mut l = plan_lot_paths(&lots[ids[i]], &gaps, &linked[i], !lots[ids[i]].landlocked);
             l.tier = tier;
             l
         })
@@ -389,7 +389,10 @@ fn feature_radius(kind: ParkFeature, tier: Tier, lot_inradius: f32) -> f32 {
 
 /// Spokes from a hub deep in the lot to every entrance, plus a loop on big
 /// lots with only one way in.
-fn plan_lot_paths(lot: &Lot, gaps: &[Vec2], has_gate: bool) -> ParkLayout {
+/// `links` (some of `gaps`) are the ends of player paths joined to the
+/// park: their spokes start out at the path's end itself, so the walkway
+/// is paved right up to the path rather than stopping inside the edge.
+fn plan_lot_paths(lot: &Lot, gaps: &[Vec2], links: &[Vec2], has_gate: bool) -> ParkLayout {
     let poly = &lot.polygon;
     let mut entrances: Vec<Vec2> = Vec::new();
     // Street gate: the front edge midpoint, pulled a step inside. Backland
@@ -399,7 +402,21 @@ fn plan_lot_paths(lot: &Lot, gaps: &[Vec2], has_gate: bool) -> ParkLayout {
         entrances.push(if point_in_polygon(gate, poly) { gate } else { pull_inside(poly, lot.entrance(), lot.center) });
     }
     for g in gaps {
-        let inward = (lot.center - *g).normalize_or_zero();
+        let mut inward = (lot.center - *g).normalize_or_zero();
+        // [sweep-visual] A joined path's end outside the edge comes in
+        // square to the edge, straight on from the path.
+        if links.contains(g) && !point_in_polygon(*g, poly) {
+            let n = poly.len();
+            let q = (0..n).map(|i| crate::geom::project_on_segment(*g, poly[i], poly[(i + 1) % n]).1).min_by(|a, b| a.distance(*g).total_cmp(&b.distance(*g)));
+            if let Some(q) = q.filter(|q| q.distance(*g) > 0.05) {
+                inward = (q - *g).normalize_or_zero();
+                let p = q + inward * 0.8;
+                if point_in_polygon(p, poly) && entrances.iter().all(|e| e.distance(p) > 4.0) {
+                    entrances.push(p);
+                    continue;
+                }
+            }
+        }
         let p = *g + inward * 0.8;
         let p = if point_in_polygon(p, poly) { p } else { pull_inside(poly, *g, lot.center) };
         if entrances.iter().all(|e| e.distance(p) > 4.0) {
@@ -412,6 +429,20 @@ fn plan_lot_paths(lot: &Lot, gaps: &[Vec2], has_gate: bool) -> ParkLayout {
         entrances.push(pull_inside(poly, hub + (polygon_centroid(poly) - hub).normalize_or_zero() * 2.0 + Vec2::X * 0.5, hub));
     }
     let mut paths: Vec<Vec<Vec2>> = entrances.iter().map(|e| vec![*e, hub]).collect();
+    // [sweep-visual] A joined path ends a step outside the edge (at its
+    // gate, `walk::GATE_OUT`): the spoke nearest it runs out to meet it, so
+    // no strip of grass is left between the two.
+    for l in links {
+        if point_in_polygon(*l, poly) {
+            continue;
+        }
+        let near = paths.iter_mut().filter(|p| p[0].distance(*l) < 6.0).min_by(|a, b| a[0].distance(*l).total_cmp(&b[0].distance(*l)));
+        if let Some(path) = near {
+            if path[0].distance(*l) > 0.3 {
+                path.insert(0, *l);
+            }
+        }
+    }
     let r = inradius(poly);
     if entrances.len() == 1 && r >= 9.0 {
         // A loop out to the far side and back along the other edge.

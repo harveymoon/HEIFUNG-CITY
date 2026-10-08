@@ -199,6 +199,9 @@ impl World {
         // join and its terminal, and no other road already joins the
         // carriageway where it does.
         let new_street: Option<(Vec2, Vec2)> = existing.is_none().then_some((a, b));
+        // [sweep-visual] Roads drawn in the active project but not built
+        // yet are in the way as much as built ones.
+        let pending = self.pending_roads();
         for (pts, what) in &ramps {
             let (first, last) = (pts[0], pts[pts.len() - 1]);
             for w in pts.windows(2) {
@@ -215,6 +218,16 @@ impl World {
                     let what_road = if s.is_highway() { "the highway".to_string() } else { self.road_name_at(x) };
                     return Err(InterchangeRefusal::new(format!("the {what} would cross {what_road}: move the interchange along the highway or clear the way"), x));
                 }
+                for (road, kind) in &pending {
+                    for w2 in road.windows(2) {
+                        let Some((t, _)) = segment_intersection_closed(p, q, w2[0], w2[1], 1e-3) else { continue };
+                        let x = p.lerp(q, t);
+                        if x.distance(first) < 3.0 || x.distance(last) < 3.0 {
+                            continue;
+                        }
+                        return Err(InterchangeRefusal::new(format!("the {what} would cross a {} planned in this project: move the interchange or change the plan", match kind { RoadKind::Street => "road", RoadKind::Path => "path", RoadKind::Rail => "railway" }), x));
+                    }
+                }
                 if let Some((s0, s1)) = new_street {
                     if let Some((t, _)) = segment_intersection(p, q, s0, s1) {
                         let x = p.lerp(q, t);
@@ -229,6 +242,8 @@ impl World {
             let crowded = roads.nodes.iter().enumerate().any(|(i, n)| {
                 n.pos.distance(join) < RAMP_LEAD && roads.node(NodeId(i as u32)).segments.iter().any(|&s| roads.segment(s).alive && !roads.segment(s).is_highway())
             });
+            // A planned road ending at the join counts too.
+            let crowded = crowded || pending.iter().any(|(road, _)| [road[0], road[road.len() - 1]].iter().any(|e| e.distance(join) < RAMP_LEAD));
             if crowded {
                 return Err(InterchangeRefusal::new(format!("another road already joins the highway where the {what} would: move the interchange along the highway"), join));
             }
@@ -271,6 +286,24 @@ impl World {
             }
         }
         best.map(|(_, s)| s)
+    }
+
+    /// [sweep-visual] The roads the active project adds or changes and has
+    /// not built yet: their control points (a curved one's are close
+    /// enough to its line for a crossing check) and kind.
+    fn pending_roads(&self) -> Vec<(Vec<Vec2>, RoadKind)> {
+        if self.project.is_none() {
+            return Vec::new();
+        }
+        self.effective_plan()
+            .gestures
+            .iter()
+            .filter(|(id, g)| self.master.gestures.get(*id) != Some(*g))
+            .filter_map(|(_, g)| match g {
+                Gesture::Road { points, kind, .. } if points.len() >= 2 => Some((points.clone(), *kind)),
+                _ => None,
+            })
+            .collect()
     }
 
     /// A road's name for a message: the street name at `p`, else where.

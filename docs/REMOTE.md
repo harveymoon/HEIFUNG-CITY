@@ -1550,7 +1550,8 @@ storm), `fishes_grounds`, `offing` (where boats gather off the quay head), `boat
 (in_port, outbound, fishing, hauling, returning, unloading), doing, at, at_sea, nets_out, ground
 (1-based), fish_aboard, minutes_fished, catch_today, home_by ("HH:MM" while out)}]), `berths`
 ([{at, boat, empty}]), `grounds` ([{ground, center, radius_m, richness, route_m, km_out,
-fouled}]). Null for other buildings.
+fouled}]). [sweep-visual] A fishery with its own fishing jetty has the same (one trawler, sailing
+from the jetty). Null for other buildings.
 
 `ships`: every ship and boat on the water: `count`, `trawlers_at_sea`, `ships` ([{kind (freighter,
 ferry, yacht, sailboat, fishingboat), port, at, heading_deg, docked} — trawlers also name,

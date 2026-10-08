@@ -206,6 +206,9 @@ pub struct Fleet {
     pub trips_today: u32,
     /// Why the boats stayed in today, if they did.
     pub kept_in: Option<String>,
+    /// [sweep-visual] The fleet of a fishing company's private jetty
+    /// (`shore::Jetty`, one trawler at its berth), not a fishing port's.
+    pub jetty: bool,
 }
 
 impl Fleet {
@@ -376,6 +379,37 @@ pub fn leave_quay(port: &Port, mooring: Vec2, offing: Vec2, land: &Landscape) ->
     };
     let ok = pts.windows(2).all(|w| line_wet(land, w[0], w[1], 3.0, 0.0));
     let mut pts = if ok { pts } else { vec![mooring, offing] };
+    pts.dedup_by(|a, b| a.distance(*b) < 0.5);
+    pts
+}
+
+/// [sweep-visual] A private fishing jetty's one berth: its trawler lies
+/// alongside, bow out along the jetty.
+pub fn jetty_mooring(j: &crate::shore::Jetty) -> (Vec2, f32) {
+    let d = (j.tip - j.root).normalize_or(j.seaward);
+    (j.berth, d.y.atan2(d.x))
+}
+
+/// [sweep-visual] Where a jetty's trawler heads out to before making for
+/// its grounds: out past the jetty's end, on water.
+pub fn jetty_offing(j: &crate::shore::Jetty, land: &Landscape) -> Vec2 {
+    let out = j.seaward.normalize_or((j.tip - j.root).normalize_or_zero());
+    for d in [30.0, 22.0, 15.0, 9.0] {
+        let p = j.tip + out * d;
+        if land.is_water(p) && line_wet(land, j.berth, p, 3.0, 0.0) {
+            return p;
+        }
+    }
+    j.berth
+}
+
+/// [sweep-visual] The way from a jetty's berth out to its offing: astern
+/// off the berth a few metres, then out (a straight line where that is not
+/// all on water).
+pub fn leave_jetty(j: &crate::shore::Jetty, offing: Vec2, land: &Landscape) -> Vec<Vec2> {
+    let off = j.berth + j.seaward.normalize_or_zero() * 8.0;
+    let pts = vec![j.berth, off, offing];
+    let mut pts = if pts.windows(2).all(|w| line_wet(land, w[0], w[1], 3.0, 0.0)) { pts } else { vec![j.berth, offing] };
     pts.dedup_by(|a, b| a.distance(*b) < 0.5);
     pts
 }

@@ -678,7 +678,8 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
         hint(ui, problem.split("; ").nth(1).unwrap_or(""));
     }
     // [fishing] The port's trawlers, what each is doing, and its grounds.
-    if let Some(f) = b.port.filter(|k| k.is_fishing()).and_then(|_| w.fleet(id)) {
+    // [sweep-visual] And a fishery's trawler off its own jetty.
+    if let Some(f) = w.fleet(id).filter(|f| f.jetty || b.port.is_some_and(|k| k.is_fishing())) {
         section(ui, "FISHING FLEET");
         ui.label(format!("{} boats, {} at sea · {:.0} fish landed today, {:.0} yesterday · {} trips today", f.boats.len(), f.at_sea(), f.landed_today, f.landed_yesterday, f.trips_today));
         if let Some(why) = &f.kept_in {

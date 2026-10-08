@@ -196,3 +196,23 @@ fn a_path_joined_to_a_stadium_goes_when_the_stadium_is_bulldozed() {
     assert!(!w.master.gestures.contains_key(&g), "the path to it is removed");
     assert!(w.events.iter().any(|e| matches!(e, SimEvent::PathTrimmed { removed: true, grounds: GroundsKind::Stadium, .. })));
 }
+
+/// [sweep-visual] The park's walkway is paved right out to a joined path's
+/// end (a step outside the edge), straight on from the path: no strip of
+/// grass is left between the two.
+#[test]
+fn the_park_walkway_meets_a_joined_path_end() {
+    let mut w = town();
+    let gate = back_gate(&w);
+    w.add_path(&[Vec2::new(gate.x, 220.0), gate]);
+    let lot = w.grounds_junctions().iter().find(|j| j.attached).and_then(|j| j.lot).expect("joined");
+    let park = w.lots[lot].park.as_ref().unwrap();
+    let spoke = park.paths.iter().find(|p| p[0].distance(gate) < 0.05).expect("a walkway starts at the path's end");
+    // Its next point is just inside the edge, square to it (the path runs
+    // north-south here, so straight on means the same x).
+    assert!((spoke[1].x - gate.x).abs() < 0.3, "straight on from the path: {:?} -> {:?}", spoke[0], spoke[1]);
+    assert!(crate::geom::point_in_polygon(spoke[1], &w.lots[lot].polygon));
+    // And the walk graph still takes people in by it.
+    let start = north_pavement(&w, gate.x + 30.0);
+    assert!(w.walk.route(start, park_bench(&w)).is_some());
+}

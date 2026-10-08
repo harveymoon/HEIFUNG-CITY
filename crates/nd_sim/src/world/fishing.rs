@@ -33,7 +33,20 @@ impl World {
             let b = p.building.map_or(0, port_seed);
             k = fish::hash(k, b ^ (p.kind as u64) << 56 ^ (p.berth.x.to_bits() as u64) << 20 ^ p.berth.y.to_bits() as u64);
         }
+        // [sweep-visual] and the fishing companies' own jetties.
+        for (b, j) in &self.shore.jetties {
+            if self.jetty_fleet_wanted(*b) {
+                k = fish::hash(k, port_seed(*b) ^ 0x7E77 ^ (j.berth.x.to_bits() as u64) << 20 ^ j.berth.y.to_bits() as u64);
+            }
+        }
         k
+    }
+
+    /// [sweep-visual] A fishing company (a fishery) with its own jetty
+    /// sends a trawler out with the fleets.
+    fn jetty_fleet_wanted(&self, b: BuildingId) -> bool {
+        self.shore.jetties.get(&b).is_some_and(|j| j.kind == crate::shore::JettyKind::Fishing)
+            && self.buildings.get(b).is_some_and(|x| x.construction.is_none() && x.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Fishery))
     }
 
     /// Shipping lanes and ferry routes fishing grounds keep clear of.
@@ -66,8 +79,9 @@ impl World {
         }
         self.fishing.key = key;
         let ports: Vec<(BuildingId, Port)> = self.ports.ports.values().filter(|p| p.kind.is_fishing()).filter_map(|p| p.building.map(|b| (b, p.clone()))).collect();
-        self.fishing.fleets.retain(|b, _| ports.iter().any(|(pb, _)| pb == b));
-        if ports.is_empty() {
+        let jetties: Vec<(BuildingId, crate::shore::Jetty)> = self.shore.jetties.iter().filter(|(b, _)| self.jetty_fleet_wanted(**b)).map(|(b, j)| (*b, j.clone())).collect();
+        self.fishing.fleets.retain(|b, f| if f.jetty { jetties.iter().any(|(jb, _)| jb == b) } else { ports.iter().any(|(pb, _)| pb == b) });
+        if ports.is_empty() && jetties.is_empty() {
             return;
         }
         let grid = fish::WaterGrid::build(&self.landscape);
@@ -89,7 +103,28 @@ impl World {
                 fleet.boats.push(Trawler { name: fish::boat_name(port_seed(b), slot), slot: slot as u8, ..Default::default() });
             }
             fleet.kind = Some(port.kind);
+            fleet.jetty = false;
             fleet.moorings = moorings;
+            fleet.offing = offing;
+            fleet.grounds = grounds;
+        }
+        // [sweep-visual] A jetty's one trawler, on the same grounds logic.
+        for (b, j) in jetties {
+            let land = &self.landscape;
+            let offing = fish::jetty_offing(&j, land);
+            let docks: Vec<Vec2> = self.ports.ports.values().map(|p| p.berth).chain(self.shore.jetties.iter().filter(|(x, _)| **x != b).map(|(_, o)| o.berth)).collect();
+            let grounds = if offing.distance(j.berth) < 1.0 { Vec::new() } else { fish::find_grounds(land, &grid, offing, &lanes, &docks) };
+            let fleet = self.fishing.fleets.entry(b).or_default();
+            if fleet.kind.is_some() || !fleet.jetty {
+                fleet.boats.clear();
+            }
+            fleet.boats.truncate(1);
+            if fleet.boats.is_empty() {
+                fleet.boats.push(Trawler { name: fish::boat_name(port_seed(b), 0), slot: 0, ..Default::default() });
+            }
+            fleet.kind = None;
+            fleet.jetty = true;
+            fleet.moorings = vec![fish::jetty_mooring(&j)];
             fleet.offing = offing;
             fleet.grounds = grounds;
         }
@@ -106,7 +141,13 @@ impl World {
     /// fished on an ordinary ground: about what the port's recipe used to
     /// make round the clock, spread over its boats' fishing time.
     pub fn catch_rate(jobs: u16, boats: usize) -> f32 {
-        let per = BusinessKind::FishingPort.recipe().outputs.first().map_or(3.0, |o| o.1);
+        World::catch_rate_for(BusinessKind::FishingPort, jobs, boats)
+    }
+
+    /// `catch_rate` for a business of `kind` (a fishing port, or a fishery
+    /// with its own jetty): its recipe's fish over its boats' time at sea.
+    pub fn catch_rate_for(kind: BusinessKind, jobs: u16, boats: usize) -> f32 {
+        let per = kind.recipe().outputs.first().map_or(3.0, |o| o.1);
         let days_out = 1.0 - 1.0 / fish::REST_DAY_IN as f32;
         per * jobs as f32 * crate::market::JOB_RATE * 24.0 / (boats.max(1) as f32 * days_out * fish::NOMINAL_FISH_MIN)
     }
@@ -120,7 +161,7 @@ impl World {
     /// Every tick: the fleets keep up with the docks, boats go out, fish
     /// and come home.
     pub(super) fn step_fishing(&mut self) {
-        if self.fishing.fleets.is_empty() && !self.ports.ports.values().any(|p| p.kind.is_fishing()) {
+        if self.fishing.fleets.is_empty() && !self.ports.ports.values().any(|p| p.kind.is_fishing()) && !self.shore.jetties.values().any(|j| j.kind == crate::shore::JettyKind::Fishing) {
             return;
         }
         self.refresh_fleets();
@@ -143,13 +184,21 @@ impl World {
         let ids: Vec<BuildingId> = self.fishing.fleets.keys().copied().collect();
         let mut at_sea = 0;
         for b in ids {
-            let Some(port) = self.ports.port_of(b).cloned() else { continue };
+            // A port's fleet sails from its quay; [sweep-visual] a jetty's
+            // from the jetty.
+            let is_jetty = self.fishing.fleets.get(&b).is_some_and(|f| f.jetty);
+            let port = if is_jetty { None } else { self.ports.port_of(b).cloned() };
+            let jetty = if is_jetty { self.shore.jetties.get(&b).cloned() } else { None };
+            if port.is_none() && jetty.is_none() {
+                continue;
+            }
             let Some(bld) = self.buildings.get(b) else { continue };
-            let open = port.works() && bld.construction.is_none() && bld.business.as_ref().is_some_and(|z| !z.closed && z.kind == BusinessKind::FishingPort);
+            let kind = if is_jetty { BusinessKind::Fishery } else { BusinessKind::FishingPort };
+            let open = port.as_ref().is_none_or(|p| p.works()) && bld.construction.is_none() && bld.business.as_ref().is_some_and(|z| !z.closed && z.kind == kind);
             let staffing = bld.staffing();
             let jobs = bld.jobs;
             let mut fleet = std::mem::take(self.fishing.fleets.get_mut(&b).expect("listed"));
-            let rate = World::catch_rate(jobs, fleet.boats.len());
+            let rate = World::catch_rate_for(kind, jobs, fleet.boats.len());
             let crewed = ((fleet.boats.len() as f32) * staffing).round() as usize;
             let seed = port_seed(b);
             let mut landed = 0.0f32;
@@ -177,7 +226,11 @@ impl World {
                         }
                         let g = ((h >> 8) % grounds.len() as u64) as usize;
                         let ground = &grounds[g];
-                        let mut path = fish::leave_quay(&port, mooring, fleet.offing, &self.landscape);
+                        let mut path = match (&port, &jetty) {
+                            (Some(p), _) => fish::leave_quay(p, mooring, fleet.offing, &self.landscape),
+                            (None, Some(j)) => fish::leave_jetty(j, fleet.offing, &self.landscape),
+                            (None, None) => vec![mooring, fleet.offing],
+                        };
                         path.extend(ground.route.iter().skip(1).copied());
                         path.dedup_by(|a, b| a.distance(*b) < 0.5);
                         boat.out = path.clone();
@@ -288,7 +341,7 @@ impl World {
         let Some(bld) = self.buildings.get_mut(b) else { return };
         let jobs = bld.jobs;
         let Some(z) = bld.business.as_mut() else { return };
-        let per = BusinessKind::FishingPort.recipe().outputs.first().map_or(3.0, |o| o.1);
+        let per = z.kind.recipe().outputs.first().map_or(3.0, |o| o.1);
         let cap = per * jobs as f32 * crate::market::JOB_RATE * 96.0;
         let room = (cap - z.stock_of(Resource::Fish)).max(0.0);
         z.add(Resource::Fish, amount.min(room));

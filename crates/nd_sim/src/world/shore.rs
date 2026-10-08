@@ -534,6 +534,7 @@ impl World {
             if self.cargo_jetty(b).is_some() {
                 if let Some(j) = self.shore.jetties.get_mut(&b) {
                     j.loads += 1;
+                    j.last_load = tick;
                 }
                 self.deliver(cargo);
             } else if self.buildings.contains_key(b) {
