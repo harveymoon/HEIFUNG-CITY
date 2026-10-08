@@ -796,6 +796,8 @@ pub fn refinery(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
     let lot = yard(g, c, 0.4, Asphalt, mul(pal.asphalt, 1.4));
+    // [dirty-industry] Oil and soot soaked into the yard.
+    super::dirty::soot_stains(g, c, rng, &lot, 0.7, false);
     fence_lot(g, c, &lot, 2.6, true);
     let (lo, hi) = bounds(&offset_poly(&lot, 3.0));
     let mid = (lo + hi) * 0.5;

@@ -94,14 +94,25 @@ pub fn ground_label(lot: &nd_sim::Lot) -> &'static str {
 /// show their MW, cost and upkeep for this lot (solar and wind are sized
 /// to it) and the Sunfield or Wind Park they would join; anything else its
 /// cost; and why it cannot go, if it cannot.
-pub fn build_card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor, what: nd_sim::Placeable) {
+pub fn build_card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor, tools: &crate::tools::ToolState) {
+    let what = tools.build_item();
     use nd_sim::Placeable;
     if matches!(what, Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_)) {
         return;
     }
     let (Some(ground), Some(pointer)) = (cursor.ground, ctx.pointer_latest_pos()) else { return };
     let w = &sim.world;
-    let Some((lot_id, lot)) = w.lots.iter().find(|(_, l)| point_in_polygon(ground, &l.polygon)) else { return };
+    // [plant-scale] Any lot, or the site on unzoned ground a click there
+    // would make (`World::placement_site`), as the click sees it.
+    // The site the tool worked out this frame while the pointer stays on
+    // its parcel (joining unzoned parcels is the dear part).
+    let key = w.parcels.at(ground).map(|i| (what, i, w.parcels.version, w.lots.len()));
+    let site = match (&tools.build_site, key) {
+        (Some((a, b, c, d, s)), Some(k)) if (*a, *b, *c, *d) == k => s.clone(),
+        _ => w.placement_site(what, ground),
+    };
+    let Ok(site) = site else { return };
+    let area = polygon_area(&site.outline).abs();
     let small = |t: String| egui::RichText::new(t).small();
     let good = egui::Color32::from_rgb(120, 230, 150);
     let bad = egui::Color32::from_rgb(255, 120, 110);
@@ -109,17 +120,19 @@ pub fn build_card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor, what: nd_sim:
     let title;
     let problem;
     if let Placeable::Plant(k) = what {
-        let Some(p) = w.plant_preview(k, lot_id) else { return };
-        title = format!("{} on {:.0} m²", capitalise(k.label()), p.area);
-        let site = if p.site > 0.0 && (p.site - 1.0).abs() > 0.01 { format!("  ·  site {:.0}%", p.site * 100.0) } else { String::new() };
-        lines.push(small(format!("{:.1} MW nameplate{site}  ·  costs {:.0}  ·  {:.0}/day", p.capacity_mw, p.cost, p.upkeep_per_day)));
+        let Some(p) = w.plant_preview_site(k, &site) else { return };
+        title = format!("{} on {:.0} m²{}", capitalise(k.label()), p.area, if site.lot.is_none() { " (unzoned)" } else { "" });
+        let site_f = if p.site > 0.0 && (p.site - 1.0).abs() > 0.01 { format!("  ·  site {:.0}%", p.site * 100.0) } else { String::new() };
+        lines.push(small(format!("{:.1} MW nameplate{site_f}  ·  costs {:.0}  ·  {:.0}/day", p.capacity_mw, p.cost, p.upkeep_per_day)));
         lines.push(small(format!("about {:.1} MW right now (weather, hour and site)", p.now_mw)).weak());
         if let Some(a) = k.reference_area() {
-            lines.push(small(format!("{:.2}× a standard {:.0} m² {}", k.size_scale(p.area), a, k.label())).weak());
+            let (_, top) = k.size_range();
+            let capped = if p.scale >= top - 1e-3 && k.sized_when_built() { "  ·  its largest: the rest is yard" } else { "" };
+            lines.push(small(format!("{:.2}× a standard {:.0} m² {}{capped}", p.scale, a, k.label())).weak());
         }
         if let Some(j) = &p.join {
             let name = j.joins.clone().unwrap_or_default();
-            lines.push(small(format!("joins {name}: {} lots, {:.0} m², {:.0} MW together", j.members.len() + 1, j.area, j.capacity_mw)).color(good));
+            lines.push(small(format!("joins {name}: {} lots, {:.0} m², {:.0} MW together (+{:.0} MW)", j.members.len() + 1, j.area, j.capacity_mw, j.capacity_mw - j.before_mw)).color(good));
             if p.small_lot_joins {
                 lines.push(small(format!("too small alone ({:.0} m² needed): allowed as part of {name}", k.min_area())).color(good));
             }
@@ -127,8 +140,8 @@ pub fn build_card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor, what: nd_sim:
         problem = p.problem;
     } else {
         title = format!("{} here", capitalise(&what.label()));
-        lines.push(small(format!("costs {:.0}  ·  {:.0}/day  ·  lot {:.0} m²", what.cost(), what.upkeep(), lot.area())));
-        problem = w.placement_problem(what, lot_id);
+        lines.push(small(format!("costs {:.0}  ·  {:.0}/day  ·  lot {area:.0} m²", what.cost(), what.upkeep())));
+        problem = w.site_problem(what, &site);
     }
     match &problem {
         Some(e) => lines.push(small(format!("cannot build: {e}")).color(bad)),

@@ -50,6 +50,8 @@ pub mod rail;
 pub mod rides;
 /// [events] Road wear, the maintenance budget and its bias.
 pub mod road_wear;
+/// [road-inspect] Hourly traffic and wear history per street piece.
+pub mod road_traffic;
 pub mod roads;
 pub mod services;
 /// Street names: chains of segments named once and kept across rebuilds.

@@ -55,6 +55,8 @@ fn industry_of(s: &str) -> Option<IndustryKind> {
             IndustryKind::Fishing => "fishing",
             IndustryKind::Tech => "tech",
             IndustryKind::Mining => "mining",
+            IndustryKind::Smelting => "smelting",
+            IndustryKind::FactoryFarming => "factory_farming",
         };
         s == key || k.label().eq_ignore_ascii_case(&s)
     })

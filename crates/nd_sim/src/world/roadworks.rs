@@ -6,7 +6,7 @@
 //! traffic model. No random numbers.
 
 use super::*;
-use crate::road_wear::{self, lane_metres, priority, repair_cost, roughness, wears, MaintenanceDay, AGE_WEAR, BRIDGE_WEAR, HEAVY, REPAIR_AT, TRAFFIC_WEAR};
+use crate::road_wear::{self, lane_metres, priority, repair_cost, roughness, wears, MaintenanceDay, AGE_WEAR, BRIDGE_WEAR, REPAIR_AT, TRAFFIC_WEAR};
 use crate::traffic::LaneKind;
 
 /// A worn piece in the crews' queue.
@@ -34,7 +34,7 @@ impl World {
             if let LaneKind::Road { segment, .. } = l.kind {
                 let i = segment.0 as usize;
                 if i < n {
-                    self.road_wear.load[i] += if car.cargo.is_some() || car.bus.is_some() { HEAVY } else { 1.0 };
+                    self.road_wear.load[i] += road_wear::vehicle_load(car.cargo.as_ref(), car.bus.is_some());
                 }
             }
         }

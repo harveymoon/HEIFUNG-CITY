@@ -151,6 +151,11 @@ pub fn traits(style: Style) -> (Family, f32) {
         Style::ChickenFarm => (Farm, 0.6),
         Style::Slaughterhouse => (Heavy, -0.3),
         Style::StripMine => (Heavy, 0.4),
+        // [dirty-industry] with the heavy industry; feedlots with the farms
+        // they feed off, but never repeating in a row of looks.
+        Style::Smelter => (Heavy, 0.3),
+        Style::ChemicalWorks => (Heavy, 0.2),
+        Style::Feedlot => (Farm, -0.2),
         Style::FishStickFactory => (Heavy, 0.0),
         Style::TrashCompany => (Logistics, -0.2),
         Style::FishGutting => (Logistics, 0.5),
@@ -439,6 +444,8 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
     Extras {
         parking: b.parking_visual().or(taxi_yard.then_some(0.0)),
         plant: b.plant,
+        // [plant-scale] how big the plant is (modules, not stretching)
+        plant_scale: world.plant_scale(b),
         // [power] grid battery: size, share full and flow
         battery: b.battery.as_ref().map(|x| (x.kind, x.level(), x.flow_mw)),
         depot: b.depot,

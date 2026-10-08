@@ -45,10 +45,13 @@ pub enum Resource {
     /// Paintings and sculpture from the artists' studios, hung and sold by
     /// the galleries.
     Art,
+    /// [dirty-industry] Ingots and billets from the smelters; sold out of
+    /// town. Appended.
+    Metal,
 }
 
 impl Resource {
-    pub const ALL: [Resource; 18] = [
+    pub const ALL: [Resource; 19] = [
         Resource::Produce,
         Resource::Grain,
         Resource::Flour,
@@ -67,6 +70,7 @@ impl Resource {
         Resource::Ore,
         Resource::Fillets,
         Resource::Art,
+        Resource::Metal,
     ];
 
     pub fn label(self) -> &'static str {
@@ -89,6 +93,7 @@ impl Resource {
             Resource::Ore => "ore",
             Resource::Fillets => "fish fillets",
             Resource::Art => "art",
+            Resource::Metal => "metal",
         }
     }
 
@@ -113,6 +118,31 @@ impl Resource {
             Resource::Ore => 6.0,
             Resource::Fillets => 6.0,
             Resource::Art => 30.0,
+            // Dear enough that a smelter on local ore pays its way shipping
+            // ingots out of town at the export discount.
+            Resource::Metal => 75.0,
+        }
+    }
+
+    /// Hours of its own output a business keeps before shipping the rest
+    /// out of town. [dirty-industry] Ingots have no local buyer: they go
+    /// as soon as a lorryload stands in the yard.
+    pub fn export_keep_hours(self) -> f32 {
+        match self {
+            Resource::Metal => 8.0,
+            _ => 48.0,
+        }
+    }
+
+    /// [dirty-industry] How much harder than an ordinary load a lorry full
+    /// of this is on the road: ore, ingots and crude are dense, livestock
+    /// lorries heavy and sloshing (`crate::road_wear::HEAVY` times this).
+    pub fn road_wear_factor(self) -> f32 {
+        match self {
+            Resource::Ore | Resource::Metal => 2.5,
+            Resource::Crude => 2.0,
+            Resource::Livestock => 1.6,
+            _ => 1.0,
         }
     }
 
@@ -205,6 +235,16 @@ pub enum BusinessKind {
     ArtStudio,
     /// A small gallery: hangs and sells art, holds openings, takes donations.
     Gallery,
+    // -- [dirty-industry] appended so saved kinds keep their order --
+    /// Smelter and foundry: ore and fuel in, metal out; slag heaps, soot,
+    /// heavy metals in the ground.
+    Smelter,
+    /// Factory farm: feedlot pens and battery sheds, grain in, livestock
+    /// out by the lorryload; manure lagoons.
+    Feedlot,
+    /// Chemical works (chlor-alkali, mercury cells): crude in, chemicals
+    /// (plastics) out; the dirtiest neighbour of all.
+    ChemicalWorks,
 }
 
 /// Opening hours on the clock, `open..close`; a close earlier than the open
@@ -278,7 +318,7 @@ pub struct Recipe {
 }
 
 impl BusinessKind {
-    pub const COUNT: usize = 40;
+    pub const COUNT: usize = 43;
     /// Every kind, in `index` order.
     pub const ALL: [BusinessKind; Self::COUNT] = [
         BusinessKind::VertFarm,
@@ -321,6 +361,9 @@ impl BusinessKind {
         BusinessKind::GolfRange,
         BusinessKind::ArtStudio,
         BusinessKind::Gallery,
+        BusinessKind::Smelter,
+        BusinessKind::Feedlot,
+        BusinessKind::ChemicalWorks,
     ];
 
     pub fn index(self) -> usize {
@@ -369,6 +412,9 @@ impl BusinessKind {
             BusinessKind::GolfRange => "golf driving range",
             BusinessKind::ArtStudio => "artists' studios",
             BusinessKind::Gallery => "gallery",
+            BusinessKind::Smelter => "smelter",
+            BusinessKind::Feedlot => "factory farm",
+            BusinessKind::ChemicalWorks => "chemical works",
         }
     }
 
@@ -448,6 +494,16 @@ impl BusinessKind {
             BusinessKind::ArtStudio => Recipe { inputs: &[], outputs: &[(Resource::Art, 0.5)] },
             // Hangs art bought from the studios; sells it to visitors.
             BusinessKind::Gallery => Recipe { inputs: &[(Resource::Art, 0.1)], outputs: &[] },
+            // [dirty-industry] One and a half of ore (9 at base) and a little
+            // fuel make an ingot (75): exported at the discount (34) it
+            // clears local ore and the wages, as the mine's ore does; on
+            // imported ore the margin is thin, so smelters stay by the mines.
+            BusinessKind::Smelter => Recipe { inputs: &[(Resource::Ore, 1.5), (Resource::Fuel, 0.1)], outputs: &[(Resource::Metal, 1.0)] },
+            // Intensive: five times the livestock per hand of a cattle
+            // farm (the whole point of it), so it pays its way even
+            // selling out of town.
+            BusinessKind::Feedlot => Recipe { inputs: &[(Resource::Grain, 2.0)], outputs: &[(Resource::Livestock, 12.0)] },
+            BusinessKind::ChemicalWorks => Recipe { inputs: &[(Resource::Crude, 1.2)], outputs: &[(Resource::Plastics, 0.7)] },
         }
     }
 
@@ -478,6 +534,9 @@ impl BusinessKind {
                 BusinessKind::FishGutting,
                 BusinessKind::FishStickFactory,
                 BusinessKind::TrashCompany,
+                BusinessKind::Smelter,
+                BusinessKind::Feedlot,
+                BusinessKind::ChemicalWorks,
             ],
             LandUse::Commercial => &[BusinessKind::Grocery, BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::GadgetShop, BusinessKind::Office],
             LandUse::Entertainment => &[BusinessKind::Venue],
@@ -506,7 +565,8 @@ impl BusinessKind {
             BusinessKind::GolfRange => Hours::new(8, 23),
             BusinessKind::ArtStudio => Hours::new(10, 20),
             BusinessKind::Gallery => Hours::new(11, 22),
-            BusinessKind::CowFarm | BusinessKind::ChickenFarm | BusinessKind::Slaughterhouse | BusinessKind::StripMine | BusinessKind::FishStickFactory => Hours::new(6, 22),
+            BusinessKind::CowFarm | BusinessKind::ChickenFarm | BusinessKind::Slaughterhouse | BusinessKind::StripMine | BusinessKind::FishStickFactory | BusinessKind::Feedlot => Hours::new(6, 22),
+            BusinessKind::Smelter | BusinessKind::ChemicalWorks => Hours::new(6, 22),
             BusinessKind::Fishery => Hours::new(4, 16),
             BusinessKind::Refinery | BusinessKind::FishPlant => Hours::new(6, 22),
             // Plants run two shifts.
@@ -548,6 +608,7 @@ impl BusinessKind {
                 | BusinessKind::FishGutting
                 | BusinessKind::FishStickFactory
                 | BusinessKind::FishMarket
+                | BusinessKind::Feedlot
         )
     }
 
@@ -593,6 +654,9 @@ impl BusinessKind {
                 | BusinessKind::GolfRange
                 | BusinessKind::ArtStudio
                 | BusinessKind::Gallery
+                | BusinessKind::Smelter
+                | BusinessKind::Feedlot
+                | BusinessKind::ChemicalWorks
         )
     }
 
@@ -600,7 +664,8 @@ impl BusinessKind {
     /// forecourts and ranges stay low.
     pub fn max_floors(self) -> Option<u8> {
         Some(match self {
-            BusinessKind::Mechanic | BusinessKind::TrashCompany | BusinessKind::GolfRange | BusinessKind::StripMine | BusinessKind::CowFarm | BusinessKind::ChickenFarm | BusinessKind::CarDealer | BusinessKind::BikeShop => 1,
+            BusinessKind::Mechanic | BusinessKind::TrashCompany | BusinessKind::GolfRange | BusinessKind::StripMine | BusinessKind::CowFarm | BusinessKind::ChickenFarm | BusinessKind::CarDealer | BusinessKind::BikeShop | BusinessKind::Feedlot => 1,
+            BusinessKind::Smelter | BusinessKind::ChemicalWorks => 2,
             BusinessKind::FishMarket | BusinessKind::SeafoodRestaurant | BusinessKind::ArtStudio | BusinessKind::Gallery | BusinessKind::FishGutting => 2,
             BusinessKind::Slaughterhouse | BusinessKind::FishStickFactory => 3,
             _ => return None,
@@ -610,6 +675,25 @@ impl BusinessKind {
     /// The industry sub-zone this business belongs to, if any.
     pub fn industry(self) -> Option<crate::industry::IndustryKind> {
         crate::industry::IndustryKind::of_business(self)
+    }
+
+    /// [dirty-industry] How dirty this business is, `0..1`: its kind's
+    /// dirtiness, the chemical works (mercury cells) dirtier still.
+    pub fn dirtiness(self) -> f32 {
+        match self {
+            BusinessKind::ChemicalWorks => 1.0,
+            _ => self.industry().map_or(0.0, |k| k.dirtiness()),
+        }
+    }
+
+    /// [dirty-industry] Contamination it pours on the ground per working
+    /// hour at full staff: (radius, amount). The chemical works leaks more
+    /// than its kind.
+    pub fn spill(self) -> Option<(f32, f32)> {
+        match self {
+            BusinessKind::ChemicalWorks => Some((140.0, 0.008)),
+            _ => self.industry().and_then(|k| k.spill()),
+        }
     }
 
     /// Parks lorries in bays: a truck and bus lot, or a cargo hub's own
@@ -700,7 +784,10 @@ impl Business {
         Self {
             kind,
             stock: BTreeMap::new(),
-            money: 150.0 + jobs as f32 * 40.0,
+            // [dirty-industry] Heavy plant that sells out of town opens
+            // with an investor's money: its first loads only leave once two
+            // days of output stand in the yard.
+            money: (150.0 + jobs as f32 * 40.0) * if matches!(kind, BusinessKind::Smelter | BusinessKind::Feedlot | BusinessKind::ChemicalWorks) { 5.0 } else { 1.0 },
             revenue_today: 0.0,
             spend_today: 0.0,
             deals: 0,

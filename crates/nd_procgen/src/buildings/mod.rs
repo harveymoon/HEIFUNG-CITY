@@ -44,11 +44,15 @@ mod trades;
 mod rural;
 /// [economy] Land side of marinas and fishing ports.
 mod docks;
+// [dirty-industry] smelters, factory farms, chemical works, stained ground
+pub mod dirty;
+#[cfg(test)]
+mod dirty_tests;
 #[cfg(test)]
 mod economy_tests;
 pub use parts::WINDOW_LIGHT_MARK;
 pub use construction::{crane_paint, crane_slew, CraneRig, CRANE_LIFT_MINUTES, CRANE_SLEW_RANGE};
-pub use power::{battery_lights, coal_stacks, solar_head, solar_trackers, wind_rotor, wind_turbines, PlantField, SolarTracker, Turbine, SOLAR_HUB, SOLAR_MAX_TILT, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};
+pub use power::{battery_lights, coal_vents, CoalVent, solar_head, solar_trackers, wind_rotor, wind_turbines, PlantField, SolarTracker, Turbine, SOLAR_HUB, SOLAR_MAX_TILT, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};
 pub use parking::surface_lot_bays_world;
 
 use crate::palette::Palette;
@@ -272,6 +276,14 @@ pub enum Style {
     MegaHotel,
     /// A gallery grown into a museum.
     Museum,
+    // -- [dirty-industry] the new dirty trades (`buildings/dirty.rs`),
+    // appended so `ALL` keeps its order. --
+    /// Blast furnace, rusted casting hall, stacks, ore and slag heaps.
+    Smelter,
+    /// Battery sheds, packed mud pens and a manure lagoon.
+    Feedlot,
+    /// Cell houses, banded tank rows, a stack and a poisoned pond.
+    ChemicalWorks,
 }
 
 impl Style {
@@ -280,7 +292,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 107] = [
+    pub const ALL: [Style; 110] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -388,6 +400,9 @@ impl Style {
         Style::Mansion,
         Style::MegaHotel,
         Style::Museum,
+        Style::Smelter,
+        Style::Feedlot,
+        Style::ChemicalWorks,
     ];
 
     /// [land] The style a building's form forces (`nd_sim::estate::Form`);
@@ -547,6 +562,9 @@ impl Style {
             Style::Mansion => "mansion",
             Style::MegaHotel => "mega hotel",
             Style::Museum => "museum",
+            Style::Smelter => "smelter",
+            Style::Feedlot => "factory farm",
+            Style::ChemicalWorks => "chemical works",
         }
     }
 }
@@ -1037,6 +1055,8 @@ pub struct Ctx<'a> {
     /// A grid battery: its size, share full and flow (MW, positive
     /// delivering), for the module count and the status lights.
     pub battery: Option<(nd_sim::BatteryKind, f32, f32)>,
+    /// [plant-scale] See [`Extras::plant_scale`].
+    pub plant_scale: f32,
 }
 
 /// Per-building state that changes the look beyond style and condition.
@@ -1091,11 +1111,15 @@ pub struct Extras<'a> {
     /// [power] A grid battery: size, share full and flow (see
     /// [`Ctx::battery`]).
     pub battery: Option<(nd_sim::BatteryKind, f32, f32)>,
+    /// [plant-scale] A plant's size as a share of its kind's nameplate
+    /// (`World::plant_scale`): a coal or nuclear station is composed of
+    /// more units, not stretched, when it is bigger.
+    pub plant_scale: f32,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None }
     }
 }
 
@@ -1289,6 +1313,10 @@ pub fn industry_styles(kind: nd_sim::BusinessKind, tier: Tier) -> Option<&'stati
         B::ChickenFarm => &[(Style::ChickenFarm, 1.0)],
         B::Slaughterhouse => &[(Style::Slaughterhouse, 1.0)],
         B::StripMine => &[(Style::StripMine, 1.0)],
+        // [dirty-industry]
+        B::Smelter => &[(Style::Smelter, 1.0)],
+        B::Feedlot => &[(Style::Feedlot, 1.0)],
+        B::ChemicalWorks => &[(Style::ChemicalWorks, 1.0)],
         B::FishGutting => &[(Style::FishGutting, 1.0)],
         B::FishStickFactory => &[(Style::FishStickFactory, 1.0)],
         B::FishMarket => &[(Style::FishMarket, 1.0)],
@@ -1320,7 +1348,7 @@ pub fn business_look_wins(kind: nd_sim::BusinessKind) -> bool {
     use nd_sim::BusinessKind as B;
     matches!(
         kind,
-        B::Mechanic | B::CarDealer | B::TrashCompany | B::BikeShop | B::CowFarm | B::ChickenFarm | B::Slaughterhouse | B::StripMine | B::Marina | B::FishingPort | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::GolfRange | B::ArtStudio | B::Gallery
+        B::Mechanic | B::CarDealer | B::TrashCompany | B::BikeShop | B::CowFarm | B::ChickenFarm | B::Slaughterhouse | B::StripMine | B::Marina | B::FishingPort | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::GolfRange | B::ArtStudio | B::Gallery | B::Smelter | B::Feedlot | B::ChemicalWorks
     )
 }
 
@@ -1414,6 +1442,7 @@ fn generate_styled_extras(
         animated_cranes: extras.animated_cranes,
         dynamic_lights: extras.dynamic_lights,
         battery: extras.battery,
+        plant_scale: extras.plant_scale,
     };
     if let Some(progress) = extras.demolition {
         let mut g = generate_styled_extras(lot, land_use, floors, tier, condition, seed, style, rules, palette, &Extras { demolition: None, construction: None, ..*extras });
@@ -1535,6 +1564,9 @@ fn generate_styled_extras(
         Style::Mansion => estates::mansion(&mut g, &ctx, &mut rng),
         Style::MegaHotel => estates::mega_hotel(&mut g, &ctx, &mut rng),
         Style::Museum => estates::museum(&mut g, &ctx, &mut rng),
+        Style::Smelter => dirty::smelter(&mut g, &ctx, &mut rng),
+        Style::Feedlot => dirty::feedlot(&mut g, &ctx, &mut rng),
+        Style::ChemicalWorks => dirty::chemical_works(&mut g, &ctx, &mut rng),
     }
     if extras.rooftop_pad && style.pad_capable() && g.pads.is_empty() {
         air::rooftop_deck(&mut g, &ctx);
@@ -2280,6 +2312,7 @@ mod tests {
             animated_cranes: false,
             dynamic_lights: false,
             battery: None,
+            plant_scale: 1.0,
         }
     }
 

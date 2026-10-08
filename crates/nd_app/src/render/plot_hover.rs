@@ -29,6 +29,34 @@ pub struct HoverSite {
     pub verdict: Result<String, String>,
     /// The Zone tool's parcel (a lower wall, and a label only on refusal).
     pub zone: bool,
+    /// [dirty-industry] A warning on a site that would go ahead: homes or
+    /// farms painted next to dirty industry (shown even for a zone).
+    pub warning: Option<String>,
+}
+
+/// [dirty-industry] What a homes, shops or farm parcel at `p` would suffer
+/// from the dirty plants around, as a warning for the hover label.
+fn dirt_warning(w: &World, p: SVec2, lu: nd_sim::LandUse) -> Option<String> {
+    use nd_sim::industry::{IndustryKind, Neighbour};
+    if w.dirty.is_empty() {
+        return None;
+    }
+    let who = match lu {
+        nd_sim::LandUse::Industrial => Neighbour::Industry(IndustryKind::Farming),
+        other => Neighbour::Land(other),
+    };
+    let e = w.dirt_exposure_at(p, who, None);
+    if e < 0.1 {
+        return None;
+    }
+    let worst = w.dirty.iter().filter(|s| nd_sim::industry::sensitivity(who, s.as_kind) > 0.0 && s.pos.distance(p) < s.reach).min_by(|a, b| a.pos.distance(p).total_cmp(&b.pos.distance(p)))?;
+    let name = w.buildings.get(worst.building).map_or("dirty industry".to_string(), |b| b.name.clone());
+    let d = worst.pos.distance(p);
+    Some(match lu {
+        nd_sim::LandUse::Industrial => format!("Next to {name} ({d:.0} m): no farm will open here (food output −{:.0}%)", 100.0 * nd_sim::world::ADJACENCY_OUTPUT_HIT * e),
+        nd_sim::LandUse::Residential => format!("Next to {name} ({d:.0} m): homes here lose value (−{:.2}) and their people fall ill", nd_sim::world::ADJACENCY_VALUE_HIT * e),
+        _ => format!("Next to {name} ({d:.0} m): land value −{:.2}, slow to build", nd_sim::world::ADJACENCY_VALUE_HIT * e),
+    })
 }
 
 /// What the pointer at `p` is over for the active tool, and the sim's
@@ -52,10 +80,10 @@ pub fn hover_site(w: &World, tools: &ToolState, p: SVec2) -> Option<HoverSite> {
                 _ => w.placement_site(what, p),
             };
             let (ok, text, outline) = match site {
-                Ok(site) => match w.site_problem(what, &site) {
-                    None => (true, site.note(), site.outline),
-                    Some(why) => (false, why, site.outline),
-                },
+                Ok(site) => {
+                    let (ok, text) = site_verdict(w, what, &site);
+                    (ok, text, site.outline)
+                }
                 Err(why) => (false, why, Vec::new()),
             };
             buildings_site(w, tools, p, ok, text, outline)
@@ -68,10 +96,66 @@ pub fn hover_site(w: &World, tools: &ToolState, p: SVec2) -> Option<HoverSite> {
                 Some(why) => Err(why.to_string()),
                 None => Ok(format!("{} zoning", lu.label())),
             };
-            Some(HoverSite { outline: parcel.polygon.clone(), verdict, zone: true })
+            let warning = if verdict.is_ok() { dirt_warning(w, nd_sim::geom::polygon_centroid(&parcel.polygon), lu) } else { None };
+            Some(HoverSite { outline: parcel.polygon.clone(), verdict, zone: true, warning })
         }
         _ => None,
     }
+}
+
+/// [plant-scale] What a click on `site` would do, as the hover label says
+/// it: `(true, what it would be)` or `(false, why not)`. A plant shows its
+/// nameplate there, what it costs to build and to run and, for solar and
+/// wind, the Sunfield or Wind Park it would join and what the joined
+/// installation makes (`World::plant_preview_site`: the figures the click
+/// charges, on an existing lot or the one made of unzoned ground);
+/// anything else its cost and upkeep. The ground note follows.
+pub fn site_verdict(w: &World, what: nd_sim::Placeable, site: &nd_sim::PlacementSite) -> (bool, String) {
+    if let Some(why) = w.site_problem(what, site) {
+        return (false, why);
+    }
+    let figures = match what {
+        nd_sim::Placeable::Plant(k) => match w.plant_preview_site(k, site) {
+            Some(p) => plant_figures(&p),
+            None => String::new(),
+        },
+        _ => format!("costs {}, {}/day", thousands(what.cost()), thousands(what.upkeep())),
+    };
+    (true, if figures.is_empty() { site.note() } else { format!("{figures}\n{}", site.note()) })
+}
+
+/// [plant-scale] A plant preview in a line or two: "130 MW, costs 21,600,
+/// 1,170/day" and "joins Saffron Sunfield: 3 lots, 124 MW together (+38 MW)".
+pub fn plant_figures(p: &nd_sim::PlantPreview) -> String {
+    let site = if p.site > 0.0 && (p.site - 1.0).abs() > 0.01 { p.site } else { 1.0 };
+    let mut s = format!("{} MW, costs {}, {}/day", mw(p.capacity_mw * site), thousands(p.cost), thousands(p.upkeep_per_day));
+    if site != 1.0 {
+        s.push_str(&format!(" (site {:.0}%)", site * 100.0));
+    }
+    if let Some(j) = &p.join {
+        let name = j.joins.clone().unwrap_or_default();
+        s.push_str(&format!("\njoins {name}: {} lots, {} MW together (+{} MW)", j.members.len() + 1, mw(j.capacity_mw), mw(j.capacity_mw - j.before_mw)));
+    }
+    s
+}
+
+/// Megawatts to a tenth below ten, whole above.
+fn mw(x: f32) -> String {
+    if x.abs() < 10.0 { format!("{x:.1}") } else { format!("{x:.0}") }
+}
+
+/// A whole number with thousands separators: 21,600.
+pub fn thousands(x: f32) -> String {
+    let n = x.round() as i64;
+    let digits = n.unsigned_abs().to_string();
+    let mut out = String::new();
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    if n < 0 { format!("-{out}") } else { out }
 }
 
 fn capitalised(s: &str) -> String {
@@ -93,7 +177,7 @@ fn buildings_site(w: &World, tools: &ToolState, p: SVec2, ok: bool, text: String
     let outline = if outline.len() >= 3 { outline } else { w.parcels.parcels.get(w.parcels.at(p)?)?.polygon.clone() };
     let label = capitalised(&tools.build_item().label());
     let verdict = if ok { Ok(format!("{label} can go here: {text}")) } else { Err(text) };
-    Some(HoverSite { outline, verdict, zone: false })
+    Some(HoverSite { outline, verdict, zone: false, warning: None })
 }
 
 /// The point standing in for the pointer: the remote API's pin, else the
@@ -251,6 +335,7 @@ pub fn plot_hover_label(mut contexts: bevy_egui::EguiContexts, hover: Res<PlotHo
     use bevy_egui::egui;
     let (Some(site), Some(at)) = (&hover.site, hover.at) else { return Ok(()) };
     let (text, bg) = match &site.verdict {
+        Ok(_) if site.warning.is_some() => (site.warning.clone().unwrap_or_default(), egui::Color32::from_rgba_unmultiplied(150, 100, 10, 230)),
         Ok(_) if site.zone => return Ok(()),
         Ok(note) => (note.clone(), egui::Color32::from_rgba_unmultiplied(18, 110, 52, 225)),
         Err(why) => (format!("Can't build: {why}"), egui::Color32::from_rgba_unmultiplied(150, 20, 28, 230)),
@@ -287,8 +372,8 @@ mod tests {
     fn the_wall_fades_to_nothing_and_takes_the_verdicts_colour() {
         let w = World::new(nd_sim::WorldConfig { emergencies: false, society: false, landscape: nd_sim::LandscapeParams::flat(), ..nd_sim::WorldConfig::default() });
         let sq = vec![SVec2::new(0.0, 0.0), SVec2::new(20.0, 0.0), SVec2::new(20.0, 20.0), SVec2::new(0.0, 20.0)];
-        let ok = HoverSite { outline: sq.clone(), verdict: Ok("fits".into()), zone: false };
-        let no = HoverSite { outline: sq, verdict: Err("no".into()), zone: false };
+        let ok = HoverSite { outline: sq.clone(), verdict: Ok("fits".into()), zone: false, warning: None };
+        let no = HoverSite { outline: sq, verdict: Err("no".into()), zone: false, warning: None };
         let m = highlight_mesh(&w, &ok, 8.0, 1.0);
         let top = m.positions.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
         assert!(top >= 8.0);

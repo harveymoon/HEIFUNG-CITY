@@ -276,7 +276,8 @@ impl World {
                 b.splat(c, r, w);
             }
             if let Some(kind) = bld.plant {
-                let (r, w) = kind.pollution();
+                // [plant-scale] by its size (1 on older saves' plants).
+                let (r, w) = kind.pollution_at(if kind.sized_when_built() { bld.plant_scale.unwrap_or(1.0) } else { 1.0 });
                 if r > 0.0 {
                     // [industry] a nuisance: homes feel it most
                     b.splat_nuisance(c, r, -w);
@@ -555,6 +556,12 @@ impl World {
             if lu == LandUse::Residential && !self.economy.taxes.is_standard() {
                 let tier = Tier::for_land_value(self.lot_value(lot_id));
                 chance *= self.economy.taxes.pull(crate::tax::TaxCategory::residential(tier));
+            }
+            // [dirty-industry] Nobody wants to build homes or shops in the
+            // shadow of a smelter: the more exposed, the less likely.
+            if matches!(lu, LandUse::Residential | LandUse::Commercial | LandUse::Entertainment) && !self.dirty.is_empty() {
+                let e = self.dirt_exposure_at(self.lots[lot_id].center, crate::industry::Neighbour::Land(lu), None);
+                chance *= 1.0 - super::dirt::ADJACENCY_BUILD_HIT * e;
             }
             if self.rng.random::<f32>() < chance {
                 self.build_on(lot_id);

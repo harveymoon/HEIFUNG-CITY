@@ -78,6 +78,8 @@ pub mod plant_groups;
 pub use plant_groups::{PlantGroup, PlantJoin, PlantPreview};
 #[cfg(test)]
 mod plant_groups_tests;
+#[cfg(test)]
+mod plant_scale_tests;
 mod services;
 mod society;
 /// [social] Encounters, conversations, friends and feuds, crews and clubs.
@@ -123,6 +125,10 @@ mod waterfront;
 // [events] street races and warehouse raves; road wear and maintenance
 mod nights;
 mod roadworks;
+mod dirt;
+pub use dirt::{DirtyNeighbour, ADJACENCY_OUTPUT_HIT, ADJACENCY_VALUE_HIT};
+// [road-inspect] the road inspector's traffic counts, live read-out and Repair now
+mod road_inspect;
 #[cfg(test)]
 mod events_tests;
 #[cfg(test)]
@@ -569,6 +575,16 @@ pub struct World {
     /// (`world/roadworks.rs`). Old saves load with every road like new.
     #[serde(default)]
     pub road_wear: crate::road_wear::RoadCondition,
+    /// [dirty-industry] The dirty plants and how hard each is working,
+    /// refreshed every hour (`world/dirt.rs`). Saved, so a loaded city
+    /// reads its neighbours exactly as the running one did; old saves fill
+    /// it on load.
+    #[serde(default)]
+    pub dirty: Vec<crate::industry::DirtySource>,
+    /// [road-inspect] Vehicles per street piece hour by hour, and each
+    /// piece's wear history, for the road inspector (`world/road_inspect.rs`).
+    #[serde(default)]
+    pub road_log: crate::road_traffic::RoadLog,
     /// [social] Ties, conversations, groups and what they made
     /// (`crate::social`, `world/social.rs`). Old saves start with nobody
     /// knowing anybody.
@@ -669,6 +685,8 @@ impl World {
             identity: Default::default(),
             street_events: Default::default(),
             road_wear: Default::default(),
+            dirty: Vec::new(),
+            road_log: Default::default(),
             social: Default::default(),
             social_concern: None,
         };
@@ -777,6 +795,11 @@ impl World {
         self.prune_estate();
         self.subway_after_load();
         self.seats_after_load();
+        // [dirty-industry] A save from before the dirty plants were kept
+        // (or a stale entry): read them off the buildings.
+        if self.dirty.is_empty() || self.dirty.iter().any(|d| !self.buildings.contains_key(d.building)) {
+            self.refresh_dirty();
+        }
         self.update_economy();
         // A save from before named projects: number and name the one it has.
         self.name_active_project();
@@ -1003,6 +1026,8 @@ impl World {
             crate::prof!("daily_subway", self.daily_subway());
             // [events] Roads wear and the crews resurface, before the books close.
             crate::prof!("daily_roads", self.daily_roads());
+            // [road-inspect] Each piece's wear a day and its repairs, read off.
+            self.note_road_day();
             // [society] crime, the street and the bins settle their day.
             self.daily_society();
             // [clarity] Dangerous streets and far hospitals, complained of.
@@ -1096,6 +1121,8 @@ impl World {
             self.deferred_intents.retain(|_, (_, at)| tick.saturating_sub(*at) <= trips::DEFERRED_INTENT_TTL);
         }
         self.step_traffic();
+        // [road-inspect] The vehicles that drove onto each piece, counted.
+        self.log_road_traffic();
         // [land] Billionaires' convoys form and follow.
         self.step_convoys();
         self.step_air();

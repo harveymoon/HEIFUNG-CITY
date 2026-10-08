@@ -48,6 +48,8 @@ mod subway;
 mod taxes;
 /// [toll-inspect] A toll booth in full for `inspect {toll}`.
 mod tolls;
+/// [road-inspect] A street piece in full for `inspect {road}`.
+mod road;
 /// [taxis] Taxi companies and cargo hubs in the report and inspector.
 mod taxis;
 mod trains;
@@ -515,6 +517,19 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(v)
         }
         "terrain_at" => Ok(land::terrain_at(&ctx.sim.world, req_point(cmd)?)),
+        // [dirty-industry] Pay to clean up poisoned ground: {x, y, radius}.
+        "remediate" | "cleanup" | "clean_up" => {
+            let p = req_point(cmd)?;
+            let r = opt_f32(cmd, "radius")?.unwrap_or(100.0);
+            let (cost, removed) = ctx.sim.world.remediate(p, r)?;
+            Ok(json!({ "ok": true, "cost": round(cost), "removed_cells": round(removed), "treasury": round(ctx.sim.world.economy.treasury) }))
+        }
+        // [dirty-industry] Dirty plants and contamination near a point.
+        "dirt_at" | "contamination_at" => {
+            let p = req_point(cmd)?;
+            let w = &ctx.sim.world;
+            Ok(json!({ "at": [p.x, p.y], "contamination": round(w.contamination.at(p)), "dirty_nearby": land::dirty_near(w, p) }))
+        }
         // [grid-weather] Wind and sun at a point; y may be given as z (the
         // renderer's name for the sim's y).
         "resource" => {
@@ -597,6 +612,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "race" => nights::race(cmd, &mut ctx.sim.world),
         "rave" => nights::rave(cmd, &mut ctx.sim.world),
         "roads" | "road_condition" | "road_budget" => nights::roads(cmd, &mut ctx.sim.world),
+        "repair_road" => repair_road(cmd, ctx),
         "district" | "districts" => districts::district(cmd, &mut ctx.sim.world, &mut ctx.overlays, &mut ctx.tools),
         "tourism" | "tourists" => districts::tourism(cmd, &mut ctx.sim.world),
         "concerns" => concerns::command(cmd, &ctx.sim.world),
@@ -1477,12 +1493,15 @@ fn plant_preview(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let p = req_point(cmd)?;
     let w = &ctx.sim.world;
     let Some(nd_sim::Placeable::Plant(k)) = nd_sim::Placeable::parse(&kind, None) else { return Err(format!("{kind:?} is not a power plant")) };
-    let lot = lot_near(w, p).ok_or("no lot there: aim at a lot")?;
-    let v = w.plant_preview(k, lot).ok_or("no such lot")?;
+    // [plant-scale] The site a click there takes: a lot, or unzoned ground
+    // (`placement_site`), so the figures are what the click charges.
+    let site = w.placement_site(nd_sim::Placeable::Plant(k), p)?;
+    let v = w.plant_preview_site(k, &site).ok_or("no road access to front")?;
     Ok(json!({
-        "lot": key_str(lot), "kind": kind, "area_m2": round(v.area), "size_scale": round(k.size_scale(v.area)), "capacity_mw": round(v.capacity_mw), "site": round(v.site), "now_mw": round(v.now_mw),
-        "cost": round(v.cost), "upkeep_per_day": round(v.upkeep_per_day), "min_area": k.min_area(), "small_lot_joins": v.small_lot_joins,
-        "joins": v.join.as_ref().and_then(|j| j.joins.clone()), "joined_lots": v.join.as_ref().map(|j| j.members.len() + 1), "joined_area_m2": v.join.as_ref().map(|j| round(j.area)), "joined_capacity_mw": v.join.as_ref().map(|j| round(j.capacity_mw)),
+        "lot": site.lot.map(key_str), "unzoned_parcels": site.parcels.len(), "kind": kind, "area_m2": round(v.area), "size_scale": round(v.scale), "capacity_mw": round(v.capacity_mw), "site": round(v.site), "now_mw": round(v.now_mw),
+        "cost": round(v.cost), "upkeep_per_day": round(v.upkeep_per_day), "min_area": k.min_area(), "max_area": k.max_area(), "small_lot_joins": v.small_lot_joins,
+        "joins": v.join.as_ref().and_then(|j| j.joins.clone()), "joined_lots": v.join.as_ref().map(|j| j.members.len() + 1), "joined_area_m2": v.join.as_ref().map(|j| round(j.area)), "joined_capacity_mw": v.join.as_ref().map(|j| round(j.capacity_mw)), "adds_mw": v.join.as_ref().map(|j| round(j.capacity_mw - j.before_mw)),
+        "outline": view::points(&site.outline),
         "ok": v.problem.is_none(), "problem": v.problem,
     }))
 }
@@ -2010,9 +2029,10 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         return Ok(json!({ "gesture": gesture(id, &g) }));
     }
     // A road piece: by id, or the one nearest a point.
+    // [road-inspect] `road`: an id, or [x, y] picked as a click would be.
     let seg = match (field(cmd, "segment"), field(cmd, "road")) {
         (Some(v), _) => Some(nd_sim::SegmentId(v.as_u64().ok_or("segment id is a number")? as u32)),
-        (None, Some(v)) => Some(w.roads.nearest_on_network(vec2_of(v)?).ok_or("no roads")?.0),
+        (None, Some(v)) => Some(road::road_id(w, v, ctx.tools.depth)?),
         _ => None,
     };
     if let Some(sid) = seg {
@@ -2038,11 +2058,12 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             "nodes": [s.a.0, s.b.0], "junction_degrees": [w.roads.neighbors(s.a).count(), w.roads.neighbors(s.b).count()],
             "grade_crossings": crossings,
             "condition": nights::segment_condition(w, sid),
-        }}));
+        }, "road": road::road_detail(w, sid) }));
     }
     // No id: whatever is selected.
     match *ctx.selection {
         Selection::Toll(id) => inspect(&json!({ "toll": id }), ctx),
+        Selection::Road(sid) => inspect(&json!({ "segment": sid.0 }), ctx),
         Selection::Citizen(id) => inspect(&json!({ "citizen": key_str(id) }), ctx),
         Selection::Building(id) => inspect(&json!({ "building": key_str(id) }), ctx),
         Selection::Car(id) => inspect(&json!({ "car": key_str(id) }), ctx),
@@ -2050,7 +2071,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Bot(id) => inspect(&json!({ "bot": key_str(id) }), ctx),
         Selection::Train(id) => inspect(&json!({ "train": key_str(id) }), ctx),
         Selection::Metro(id) => inspect(&json!({ "metro": key_str(id) }), ctx),
-        Selection::None => Err("inspect needs one of citizen, building, lot, car, bot, train, metro, toll, route, gesture (an id), or a selection".into()),
+        Selection::None => Err("inspect needs one of citizen, building, lot, car, bot, train, metro, toll, road, segment, route, gesture (an id), or a selection".into()),
     }
 }
 
@@ -2079,6 +2100,7 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
     let detail = match sel {
         Selection::None => Value::Null,
         Selection::Toll(id) => tolls::toll_detail(w, id).unwrap_or(Value::Null),
+        Selection::Road(sid) => road::road_detail(w, sid).unwrap_or(Value::Null),
         Selection::Car(id) => w.traffic.cars.get(id).map_or(Value::Null, |c| car_detail(w, id, c)),
         Selection::Citizen(id) => match w.citizens.get(id) {
             Some(c) => {
@@ -2142,11 +2164,29 @@ fn flags_cmd(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     Ok(json!({ "flags": rows, "total": total, "file": absolute(crate::flags::FLAG_FILE) }))
 }
 
+/// [road-inspect] `repair_road {road?}`: "Repair now" on a piece (by id or
+/// [x, y]; else the selected one): resurfaced at once, paid from the
+/// treasury as road maintenance.
+fn repair_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let sid = match field(cmd, "road").or_else(|| field(cmd, "segment")) {
+        Some(v) => road::road_id(&ctx.sim.world, v, ctx.tools.depth)?,
+        None => match *ctx.selection {
+            Selection::Road(sid) => sid,
+            _ => return Err("missing field \"road\": an id or [x, y] (or select a road first)".into()),
+        },
+    };
+    let cost = ctx.sim.world.repair_road_now(sid)?;
+    Ok(json!({ "repaired": sid.0, "cost": round(cost), "treasury": round(ctx.sim.world.economy.treasury), "road": road::road_detail(&ctx.sim.world, sid) }))
+}
+
 fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let w = &ctx.sim.world;
     let sel = if let Some(v) = field(cmd, "toll") {
         // [toll-inspect]
         Selection::Toll(tolls::toll_id(w, v)?)
+    } else if let Some(v) = field(cmd, "road").or_else(|| field(cmd, "segment")) {
+        // [road-inspect] A street piece by id, or the one under [x, y].
+        Selection::Road(road::road_id(w, v, ctx.tools.depth)?)
     } else if let Some(v) = field(cmd, "citizen") {
         let id = key_from(v)?;
         if !w.citizens.contains_key(id) {
@@ -2612,9 +2652,9 @@ fn help() -> Value {
             "incidents": { "active": "bool (only those under way)", "limit": "default 50, newest first", "kind": "fire|crime|medical|crash" },
             "bus": { "action": "select|new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|rename|recolour|line|select_stop|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses", "name": "rename", "color": "0..7", "look": "select_stop: point the camera" },
             "find": { "what": "citizens|buildings|lots|parcels|cars|trains|drones|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
-            "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "[x,y]: the road piece nearest a point, as segment", "toll": "int: a toll booth in full (traffic, lorries, free, avoided, queue, hourly)" },
+            "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "id, or [x,y]: the piece a click there picks (else the nearest), as segment, plus road: the road card (kind, lanes, limit, level, run, now {vehicles by kind, bikes, walkers, speed, congestion, queue}, flow, hourly (72 h), decay {wear, condition, effects, wear_per_day, next_condition, repair_cost, queue_place, last_repaired_day}, tolls, crossings, bus_stops, kerb parking)", "toll": "int: a toll booth in full (traffic, lorries, free, avoided, queue, hourly)" },
             "lane_use": { "junction": "[x,y]", "approach": "[x,y] on the arriving street", "lanes": "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default" },
-            "select": { "citizen|building|car|vehicle|bot": "id (vehicle: a parked car; bot: a delivery robot)", "toll": "int: a toll booth", "at": "[x,y] picks like a click; nothing clears" },
+            "select": { "citizen|building|car|vehicle|bot": "id (vehicle: a parked car; bot: a delivery robot)", "toll": "int: a toll booth", "road|segment": "id or [x,y]: a street piece", "at": "[x,y] picks like a click (vehicles, people, booths, parked cars, then the road piece, then lots); nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
             "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|bot|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
             "overlay": { "active": "the map layer to show, or none (layers are exclusive: showing one hides the others)", "layer": "zoning|land_value|districts|traffic|traffic_types|paths|people|pollution, a land survey layer (farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech), or projects (the dim other-projects switch, not a layer)", "on": "bool, omitted toggles; on hides every other layer", "land": "a land survey layer key, or none", "<layer name>": "bool (older form): true shows it alone, false hides it if it shows" },
@@ -2628,8 +2668,13 @@ fn help() -> Value {
     // Kept out of the literal above: it is at the json! recursion limit.
     v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
     v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
+    // [road-inspect]
+    v["commands"]["repair_road"] = json!({ "road": "id or [x,y]; default the selected road", "returns": "repaired, cost, treasury, road (the card); pays the crews' price (lane-m x wear x 6) from the treasury as road maintenance" });
     // [plant-groups]
-    v["commands"]["plant_preview"] = json!({ "kind": "solar|wind|coal|...", "x": "f", "y": "f", "note": "read-only: MW, cost and upkeep on the lot there, the Sunfield / Wind Park it would join, and any problem" });
+    // [dirty-industry]
+    v["commands"]["remediate"] = json!({ "x": "f", "y": "f", "radius": "m, default 100, at most 300", "note": "pay to dig out the contamination there (450 per cell of full contamination); alias cleanup" });
+    v["commands"]["dirt_at"] = json!({ "x": "f", "y": "f", "returns": "contamination, dirty_nearby {plants [{building, name, what, distance_m, level, reach_m}], home_exposure, farm_exposure}" });
+    v["commands"]["plant_preview"] = json!({ "kind": "solar|wind|coal|...", "x": "f", "y": "f", "note": "read-only: MW, cost and upkeep on the site a click there takes (a lot, or unzoned ground joined into one), the Sunfield / Wind Park it would join and what it adds, and any problem" });
     // [grid-weather]
     v["commands"]["resource"] = json!({ "x": "f", "y": "f (or z)", "returns": "wind (site_factor, mean_ms, now_ms, typical_yield, yield_now, cut_out_now) and solar (site_factor, climate_sun, sun, yield_now) at the point, and the climate" });
     v["commands"]["grid"] = json!({ "returns": "time-of-use import/export price now, demand now vs the full draw, weather, day_ahead (24 h: hour, temp_c, demand_mw, import_price, export_price if the weather holds), last_24h (recorded demand, supply, imports, exports, price, temperature)" });
@@ -2647,7 +2692,7 @@ fn help() -> Value {
     let review = json!({
         "report": { "sections": "optional subset of overview, people, economy, land, services, industry, society, alerts, history (default all but history): the one-call city review", "history_days": "days of the history section (default 30, max 365)" },
         "map": { "cell_m": "cell size in metres, default 100 (grown to keep at most 400 cells)", "layer": "summary (table of cells) | population | land_value | jobs | hunger | vacancy | power | traffic | fertility | oil | contamination | industry | crime | homeless | trash (grid + ASCII heat map)" },
-        "industry": { "lot": "lot id, or", "polygon": "[[x, y], ...] area, or", "pos": "[x, y] (query only)", "kind": "farming | oil | refinery | manufacturing | logistics | fishing | tech | none: sets the industry sub-zone bias (none hands the area back to the ground); omit to query the ground, contamination and industry weights of the lot" },
+        "industry": { "lot": "lot id, or", "polygon": "[[x, y], ...] area, or", "pos": "[x, y] (query only)", "kind": "farming | oil | refinery | manufacturing | logistics | fishing | tech | mining | smelting | factory_farming | none: sets the industry sub-zone bias (none hands the area back to the ground); omit to query the ground, contamination and industry weights of the lot" },
         "history": { "keys": "optional daily/hourly series names (default all)", "days": "last n days (default all kept, up to 365)" },
         "list": { "what": "businesses|buildings|citizens|lots|routes|plants|facilities", "sort": "column", "desc": "bool", "filter": "{column: substring | value | {min, max}}", "fields": "[columns] (id always kept)", "offset": "default 0", "limit": "default 50, max 1000" },
         "street_events": { "limit": "rows of history and news (default 10)", "fresh": "bool: weigh the warehouses for a rave now (else the last 22:00 roll's)", "returns": "race (stage, meet, finish, route_m, racers with place and speed, crowd, incident, arrests, fines), race_planned, race_crew, rave (place, door, guests, queue, queue_at_door, inside, peak, complaints, incident, pull), rave_planned, rave_spots (warehouses with youth, artists, art_scene, neighbours, culture, has_scene, night_chance, why), history, news, totals" },
@@ -2691,7 +2736,7 @@ fn help() -> Value {
     let planning = json!({
         "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway|Tunnel|Roundabout (Tunnel switches the view underground, the others back to ground)", "elevation": "road tool level for the next point, m (-20..24)", "depth": "underground|ground|sky: the view layer", "draw": "[[x,y,level?],...]: the road being drawn, for its preview", "cursor": "[x,y]: where the pointer stands for the road preview (until the mouse is used)", "diameter": "roundabout 24..240 m", "ring_lanes": "roundabout 1|2|3", "ring_at": "[x,y]: show the roundabout preview there as if hovered (until the mouse is used)", "kind": "sub-mode of the active tool", "mode": "zone tool: polygon|brush|marquee", "radius": "zone brush radius m", "unzone": "bool", "industry": "zone tool sub-zone for industrial land: auto|farming|oil|...", "land_use": "(or none: the brush unzones)", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
         "project": { "action": "list|new|switch|rename|delete|park|start|implement|undo|redo|discard", "id": "project id (default: the active one)", "name": "for new/rename, or to pick a project by name", "note": "several named projects; the active one is edited, the rest previewed dim; implement builds one at a time, the later one wins where two change the same gesture or parcel (warnings in the reply)" },
-        "paint": { "land_use": "residential|...|park, or none to unzone", "at": "[x,y] brush centre", "radius": "m (default the tool's)", "industry": "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech, the sub-zone set on implement", "rect": "[[x0,y0],[x1,y1]] marquee", "polygon": "[[x,y],...]", "implement": "bool", "note": "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step" }
+        "paint": { "land_use": "residential|...|park, or none to unzone", "at": "[x,y] brush centre", "radius": "m (default the tool's)", "industry": "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech|mining|smelting|factory_farming, the sub-zone set on implement", "rect": "[[x0,y0],[x1,y1]] marquee", "polygon": "[[x,y],...]", "implement": "bool", "note": "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step" }
     });
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), planning.as_object()) {
         c.extend(r.clone());

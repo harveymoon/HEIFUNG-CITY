@@ -186,6 +186,14 @@ pub fn zoom_distance(sim: &Sim, sel: Selection) -> f32 {
             Some(nd_sim::tolls::TollSize::Plaza) => 110.0,
             _ => 70.0,
         },
+        // [road-inspect] The whole piece in view.
+        Selection::Road(sid) => match sim.world.roads.try_segment(sid) {
+            Some(_) => {
+                let (a, b) = sim.world.roads.segment_points(sid);
+                (a.distance(b) * 1.1).clamp(45.0, 260.0)
+            }
+            None => 70.0,
+        },
         Selection::None => 70.0,
     }
 }
@@ -216,6 +224,10 @@ pub fn thing_pose(sim: &Sim, sel: Selection) -> Option<ThingPose> {
     match sel {
         Selection::None => None,
         Selection::Toll(id) => w.tolls.get(id).map(|b| ThingPose { pos: b.pos, heading: None, eye: w.surface_height(b.pos) + EYE_HEIGHT }),
+        Selection::Road(sid) => w.roads.try_segment(sid).filter(|s| s.alive).map(|_| {
+            let (a, b) = w.roads.segment_points(sid);
+            ThingPose { pos: (a + b) * 0.5, heading: None, eye: w.road_height(sid, 0.5) + EYE_HEIGHT }
+        }),
         Selection::Car(id) => {
             let big = w.traffic.cars.get(id).is_some_and(|c| c.bus.is_some() || c.cargo.is_some());
             car_pose(id, if big { 2.6 } else { 1.25 })
