@@ -137,7 +137,7 @@ mod waterfront;
 mod nights;
 mod roadworks;
 mod dirt;
-pub use dirt::{DirtyNeighbour, ADJACENCY_OUTPUT_HIT, ADJACENCY_VALUE_HIT};
+pub use dirt::{CleanupJob, CleanupQuote, DirtyNeighbour, ADJACENCY_OUTPUT_HIT, ADJACENCY_VALUE_HIT, CLEANUP_COST, CLEANUP_MAX_RADIUS, CLEANUP_MIN_RADIUS};
 // [road-inspect] the road inspector's traffic counts, live read-out and Repair now
 mod road_inspect;
 #[cfg(test)]
@@ -513,6 +513,10 @@ pub struct World {
     /// spreads and fades daily. Old saves load clean.
     #[serde(default)]
     pub contamination: crate::ground::Contamination,
+    /// [dirty-industry] Clean-up crews digging out poisoned ground, paid
+    /// for up front (`world/dirt.rs`, `World::start_cleanup`).
+    #[serde(default)]
+    pub cleanups: Vec<dirt::CleanupJob>,
     /// The player's industry sub-zone bias over areas, newest last.
     #[serde(default)]
     pub industry_bias: Vec<crate::industry::IndustryBias>,
@@ -686,6 +690,7 @@ impl World {
             enforcement: Default::default(),
             air: Default::default(),
             contamination: crate::ground::Contamination::new(half + 200.0, crate::ground::CONTAMINATION_CELL),
+            cleanups: Vec::new(),
             industry_bias: Vec::new(),
             places: Default::default(),
             concerns: Default::default(),
@@ -1090,6 +1095,8 @@ impl World {
         if tick % 60 == 0 {
             crate::prof!("hourly_economy", self.hourly_economy());
             crate::prof!("industry_hourly", self.industry_hourly());
+            // [dirty-industry] Clean-up crews dig on.
+            self.hourly_cleanups();
             // [economy] repair shops, bike shops, galleries and boats
             crate::prof!("trades_hourly", self.trades_hourly());
             crate::prof!("record_hour", self.record_hour());

@@ -73,12 +73,9 @@ fn main() {
             map_layers::MapLayersPlugin,
             marks::MarksPlugin,
             metro_ux::MetroUxPlugin,
-            committee::CommitteePlugin,
-            build_highlight::BuildHighlightPlugin,
-            stub_marks::StubMarksPlugin,
         ))
-        // A plugin tuple takes at most 15: the rest go in their own call.
-        .add_plugins(ferry_select::FerrySelectPlugin)
+        // A plugin tuple holds at most 15: the rest go in a second one.
+        .add_plugins((committee::CommitteePlugin, build_highlight::BuildHighlightPlugin, stub_marks::StubMarksPlugin, ferry_select::FerrySelectPlugin))
         .run();
 }
 

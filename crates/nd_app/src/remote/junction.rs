@@ -33,6 +33,7 @@ pub fn view_json(w: &World, v: &IntersectionView) -> Value {
                 "index": c.index, "mid": v2(c.mid), "ends": [v2(c.ends[0]), v2(c.ends[1])], "upgrade": c.upgrade.label(), "signalised": c.signalised,
                 "kind": format!("{:?}", c.kind).to_lowercase(), "button_light": c.light.map(|l| l.label()),
                 "footbridge": c.footbridge.map(|(top, foot, width)| json!({ "walkway": [v2(top[0]), v2(top[1])], "stair_feet": [v2(foot[0]), v2(foot[1])], "width": round(width) })),
+                "crosswalk_kept": c.kept, "crosswalk_removed": c.closed,
             })
         })
         .collect();
@@ -61,6 +62,24 @@ fn approach_index(v: &IntersectionView, sel: &Value) -> Result<usize, String> {
         .min_by(|a, b| (v.at + a.1.dir * 30.0).distance(p).total_cmp(&(v.at + b.1.dir * 30.0).distance(p)))
         .map(|(i, _)| i)
         .ok_or_else(|| "no street arrives there".into())
+}
+
+/// The crosswalk a command names: `crossing` as a walk-graph index or a
+/// point near it, or the only one there.
+fn pick_crossing(cmd: &Value, view: &IntersectionView, what: &str) -> Result<u32, String> {
+    let k = match field(cmd, "crossing") {
+        Some(Value::Number(n)) => n.as_u64().ok_or("crossing: an index")? as u32,
+        Some(p) => {
+            let p = vec2_of(p)?;
+            view.crossings.iter().min_by(|a, b| a.mid.distance(p).total_cmp(&b.mid.distance(p))).map(|c| c.index).ok_or("no crosswalk here")?
+        }
+        None if view.crossings.len() == 1 => view.crossings[0].index,
+        None => return Err(format!("{what} needs \"crossing\": its index or [x,y] (this junction has several)")),
+    };
+    if !view.crossings.iter().any(|c| c.index == k) {
+        return Err(format!("crosswalk {k} is not at this junction"));
+    }
+    Ok(k)
 }
 
 /// `{"cmd":"intersection","at":[x,y], ...}`: with only `at` (or nothing:
@@ -149,20 +168,17 @@ pub fn command(cmd: &Value, w: &mut World, tools: &mut ToolState) -> Result<Valu
     if let Some(u) = opt_str(cmd, "upgrade")? {
         let upgrade = CrossingUpgrade::parse(u).ok_or("upgrade: none|button|footbridge")?;
         let view = w.intersection_view(at).ok_or("the junction is gone")?;
-        let k = match field(cmd, "crossing") {
-            Some(Value::Number(n)) => n.as_u64().ok_or("crossing: an index")? as u32,
-            Some(p) => {
-                let p = vec2_of(p)?;
-                view.crossings.iter().min_by(|a, b| a.mid.distance(p).total_cmp(&b.mid.distance(p))).map(|c| c.index).ok_or("no crosswalk here")?
-            }
-            None if view.crossings.len() == 1 => view.crossings[0].index,
-            None => return Err("upgrade needs \"crossing\": its index or [x,y] (this junction has several)".into()),
-        };
-        if !view.crossings.iter().any(|c| c.index == k) {
-            return Err(format!("crosswalk {k} is not at this junction"));
-        }
+        let k = pick_crossing(cmd, &view, "upgrade")?;
         w.set_crossing_upgrade(k, upgrade)?;
         done.push(format!("crosswalk {k}: {}", upgrade.label()));
+    }
+    // [footbridge] Keep the crosswalk under a footbridge at grade (true), or
+    // let the bridge replace it (false, the default).
+    if let Some(keep) = opt_bool(cmd, "keep_crosswalk")? {
+        let view = w.intersection_view(at).ok_or("the junction is gone")?;
+        let k = pick_crossing(cmd, &view, "keep_crosswalk")?;
+        w.set_crosswalk_kept(k, keep)?;
+        done.push(format!("crosswalk {k}: {}", if keep { "kept under its footbridge" } else { "replaced by its footbridge" }));
     }
     if opt_bool(cmd, "open")? == Some(true) {
         tools.junction_editor = crate::ui::junction::EditorState::open(w, at);

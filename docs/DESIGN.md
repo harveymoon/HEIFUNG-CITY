@@ -501,7 +501,20 @@ Citizens are rendered from their simulated positions every frame.
   0.004 within 110 m, coal plants 0.003 within 120 m; each day an eighth of every cell seeps
   into its neighbours and 1% fades (half-life about ten weeks), parks take another 3% a day
   off the ground under them, and the player can pay to dig it out (`remediate`, 450 per cell
-  of full contamination, at most 300 m round). Grain farms yield 0.6 + 0.8 x fertility and lose
+  of full contamination, at most 300 m round). It also drifts (`Contamination::drift`, daily,
+  only cells over 0.01): up to 5% of a cell a day blows one cell downwind (the wind's strength
+  times the direction the smoke drifts, `weather::wind_dir`), and 15 to 30% of a cell in or on
+  the bank of a river or stream (by its current) is carried one cell downstream; nothing is
+  made, what leaves the map is gone. In the game the Bulldoze tool's "Clean up ground" mode
+  (a radius of 20 to 300 m) shows the circle, the stained cells, the cost and the days by the
+  pointer, green or red like the Build hover (`World::cleanup_quote`: refused on clean ground,
+  where a crew is already at work, or when the treasury is short); a click pays up front and
+  sends a crew (`World::start_cleanup`, saved in `World::cleanups`) that digs from the middle
+  outwards over 2 to 6 days (1 + amount/20 + radius/150, rounded up), clearing everything
+  inside the radius it has reached each hour, what seeped back in too. The site shows a
+  taped fence, fresh earth to the dig front, spoil heaps, workers in hi-vis and swinging
+  excavators (`render/cleanup.rs`). The remote API's `cleanup` (with `quote`) does the same;
+  `remediate` still cleans at once. Grain farms yield 0.6 + 0.8 x fertility and lose
   up to 90% on fouled ground (pasture farms and dairies 70%, vertical farms, chicken farms and
   fisheries 50%); container yards and truck lots burn fuel and earn handling fees (2 per filled
   job hour, more near a port or yard), truck lots a bay fee per parked lorry.
@@ -1442,8 +1455,8 @@ passion in common form groups that make things in the city.
   who turn up grow closer), recruits members' friends who care (never someone with an enemy in
   it), builds momentum from its members' passion and meetings (cooling 5% a day) and at its kind's
   threshold makes something: a gig at its venue (news, the venue's name up, a crowd drawn that
-  night), a match in its park or a reading at its café (the place's name up), a mural (a painted
-  wall at the front of a building near the members; land value +0.02 x quality near by, less
+  night), a match in its park or a reading at its café (the place's name up), a mural (painted on
+  the street face of a building near the members; land value +0.02 x quality near by, less
   where the land is dear), a community garden on a vacant lot (land value +0.025; lost if the lot
   is built on), a business (the members' pooled savings, 40% up to 2,500, open a venue, bakery,
   gadget shop or office on a vacant lot near the founder, who owns it), or a petition to the
@@ -1458,6 +1471,19 @@ passion in common form groups that make things in the city.
   people talking when the camera is within about 320 m (an icon and the topic; within 90 m the
   line said; red for a fight; at the door of the bar when they talk inside; overlapping ones
   stack), a note over a venue while a band plays and a fist over a protest; murals and gardens.
+  A mural is painted on its building as drawn (`nd_procgen::social::facade_spot`): the
+  building's geometry is generated again, its walls facing the street grouped by plane,
+  anything drawn within 3 m in front of a wall (windows, frames, signs, balconies, AC units)
+  marks cells there off, and the largest clear rectangle (up to 16 x 12 m, at least 3 x 2.4 m,
+  lower and nearer the street preferred) takes the paint; a wall with no clear stretch is
+  painted round its windows. The design (`paint_mural`) keeps a crew's palette, motif (a
+  synthwave sun, a figure, a face, an eye, rings, waves), rays and skyline or hills from wall
+  to wall, laid out per mural from its seed: gradients and soft spray edges from vertex colours
+  on a grid of up to 40 cells a side, crisp neon strokes (Glow), the crew's tag in block letters
+  with a drop shadow, two lamps over the top. A second, unlit copy of the paint is shown only
+  after dark (daylight under 0.35), so the mural reads floodlit at night. Poorly regarded crews
+  scrawl a tag instead. Only a mural with no wall to paint (a vacant lot, a glass front) stands
+  on the old free-standing wall, painted the same way.
   The person pane lists friends and foes (clickable, coloured by bond, how and when they met),
   their groups and recent conversations ("talked rent with Mara Okafor at The Blue Lantern:
   agreed"). City Data's People › Social has the day's counts, a friendships chart, pairs by

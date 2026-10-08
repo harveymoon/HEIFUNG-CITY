@@ -120,6 +120,11 @@ pub struct Crossing {
     pub button: bool,
     /// [tools] A footbridge spans it: walkers prefer the bridge.
     pub bridged: bool,
+    /// [footbridge] The footbridge over it replaced it: the at-grade edge
+    /// is gone from the walk graph, nothing is painted, no walk light, and
+    /// drivers do not give way here (someone still out on it, on a route
+    /// planned before, is watched like anyone in the road).
+    pub closed: bool,
 }
 
 impl Crossing {
@@ -133,7 +138,7 @@ impl Crossing {
     /// straight over mid-block) nothing is painted and nobody stops: the
     /// walker finds a gap, at their own risk.
     pub fn marked(&self) -> bool {
-        matches!(self.kind, CrossingKind::Junction | CrossingKind::Zebra)
+        matches!(self.kind, CrossingKind::Junction | CrossingKind::Zebra) && !self.closed
     }
 }
 
@@ -368,7 +373,7 @@ impl WalkGraph {
         let (s0, s1) = roads.segment_points(segment);
         let mid = geom::project_on_segment((pa + pb) * 0.5, s0, s1).1;
         let k = self.crossings.len() as u32;
-        self.crossings.push(Crossing { a, b, segment, node, kind, mid, button: false, bridged: false });
+        self.crossings.push(Crossing { a, b, segment, node, kind, mid, button: false, bridged: false, closed: false });
         let len = pa.distance(pb).max(0.05);
         self.adj[a as usize].push(WalkEdge { to: b, len, interior: false, park: false, cross: k, raised: false });
         self.adj[b as usize].push(WalkEdge { to: a, len, interior: false, park: false, cross: k, raised: false });
@@ -890,6 +895,12 @@ impl WalkGraph {
                 CrossingUpgrade::Footbridge => {
                     let along = Self::stair_dir(c, dir, roads);
                     self.add_footbridge(k as u32, along);
+                    // [footbridge] The bridge replaces the crosswalk under
+                    // it unless the player kept it: everyone crossing here
+                    // climbs over, and nobody waits in the road.
+                    if !rule.keep_crosswalk {
+                        self.close_crossing(k as u32);
+                    }
                 }
             }
         }
@@ -958,6 +969,17 @@ impl WalkGraph {
         self.link_raised(nodes[1], nodes[3]);
         self.crossings[k as usize].bridged = true;
         self.footbridges.push(Footbridge { crossing: k, top: tops, foot: feet, level: FOOTBRIDGE_LEVEL, width: FOOTBRIDGE_WIDTH, nodes: [nodes[0], nodes[2], nodes[1], nodes[3]] });
+    }
+
+    /// [footbridge] Take crossing `k`'s at-grade edge out of the walk graph
+    /// (its footbridge stands in for it). The crossing itself stays listed,
+    /// `closed`, so indices and the editor's view of it hold.
+    fn close_crossing(&mut self, k: u32) {
+        let Some(c) = self.crossings.get_mut(k as usize) else { return };
+        c.closed = true;
+        let (a, b) = (c.a as usize, c.b as usize);
+        self.adj[a].retain(|e| e.cross != k);
+        self.adj[b].retain(|e| e.cross != k);
     }
 
     /// Join two nodes by a raised walkway edge (a deck or a flight of
