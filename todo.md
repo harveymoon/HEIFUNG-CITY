@@ -326,3 +326,10 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - feat/fishing: fishing trips (started 2026-10-08 00:35)
 - feat/ferry-routes: ferry route highlight (started 2026-10-08 00:40)
 - fix/island-lots: no lots on hilly island roads (started 2026-10-08 00:50)
+- feat/econ-followups: batteries arbitrage, parking pressure → lots, industry lifts cheap land, relocating businesses, rich owners' holdings, wind small-lot check (started 2026-10-08)
+- feat/street-followups: tow trucks on a job (one-ways/U-turns), booted cars towed, murder, moto packs, fire engines park at the kerb (started 2026-10-08)
+- feat/freight: freight trains carry cargo, hydro/tidal scale (started 2026-10-08)
+- feat/mural-cleanup: murals on facades, clean-up tool, contamination spread (started 2026-10-08)
+- fix/haze (extended): + look-dev: normal maps, sky/atmosphere/fog, lamp light, wet roads, coal smoke in walk view
+- fix/interchange (extended): + road-polish leftovers: abutments, gore deck, signal arms, stop line, town street tapers
+- feat/committee (extended): + LLM dialogue for spotlit citizens and on-demand diaries
