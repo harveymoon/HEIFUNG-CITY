@@ -76,8 +76,9 @@ fn main() {
             committee::CommitteePlugin,
             build_highlight::BuildHighlightPlugin,
             stub_marks::StubMarksPlugin,
-            ferry_select::FerrySelectPlugin,
         ))
+        // A plugin tuple takes at most 15: the rest go in their own call.
+        .add_plugins(ferry_select::FerrySelectPlugin)
         .run();
 }
 

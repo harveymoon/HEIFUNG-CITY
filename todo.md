@@ -288,7 +288,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] People on an elevated path walk at ground level (even over water) under it; walkers/cars on raised ways must be drawn on the deck [fix/footbridge]
 - [x] People window grew every frame until it filled the screen → DONE [main 53c3a89]: histogram reserves the Lorenz chart's width; compact windows capped
 - [x] Speech bubbles around town off → DONE [main 2b7c892]: off by default, View window checkbox, saved in settings.ron
-- [ ] FLAG (new city day 3): blue plan near Pylon Drive refused on Implement, "would take" a far-away geothermal plant, nothing outlined [fix/false-block]
+- [x] FLAG (new city day 3): blue plan near Pylon Drive refused on Implement, "would take" a far-away geothermal plant, nothing outlined [fix/false-block] → DONE [fix/false-block]: the recut lot under the plant had a slit (read as a sliver, landlocked) so the trial rebuild lost it; slits dropped, a city building keeps its recut lot while it fronts a way; plan view/toolbar/remote show every refusal (red outline, pin, label, "show"), naming road and structure
 
 ## Queued (Harvey 2026-10-08: add new requests here; start agents only as running ones finish)
 - [ ] Mega-corps: a company that grows big enough becomes a mega-corp (fictional), buys land in every kind of area and owns many industries and companies; procedural logo and colour shown on its skyscrapers, trucks and other buildings; owns employee housing; builds a headquarters tower; buys first what is closest by driving distance to HQ
