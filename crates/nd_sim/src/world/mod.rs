@@ -81,6 +81,8 @@ mod riders;
 mod places;
 #[cfg(test)]
 mod places_tests;
+#[cfg(test)]
+mod under_construction_tests;
 mod industry_bridge;
 pub use plan::{Blocker, ProjectCheck, ProjectInfo, ProjectPreview};
 mod power;
@@ -1130,7 +1132,7 @@ impl World {
 
     fn available_land_uses(&self) -> [bool; 6] {
         let mut out = [false; 6];
-        for b in self.buildings.values().filter(|b| b.construction.is_none()) {
+        for b in self.buildings.values().filter(|b| b.operating()) {
             out[b.land_use.index()] = true;
         }
         out
@@ -1139,6 +1141,9 @@ impl World {
     pub fn tick(&mut self, minds: &mut dyn MindProvider) {
         // [park-paths] A path whose park went since the last tick is cut back.
         self.settle_path_links();
+        // [under-construction] Park walkways and gates shut while their
+        // building is a site.
+        self.refresh_closed_grounds();
         self.clock.advance();
         let tick = self.clock.tick;
         if self.clock.minute_of_day() == 0 {

@@ -89,7 +89,7 @@ impl World {
         let centre = |b: BuildingId| self.building_lot(b).map(|l| l.center);
         let ports = self.ports.working(PortKind::ShippingPort).into_iter().filter_map(centre).collect();
         let yards = self.yards.iter().copied().filter_map(centre).collect();
-        let depots = self.buildings.iter().filter(|(_, b)| b.depot && !b.is_derelict()).filter_map(|(id, _)| centre(id)).collect();
+        let depots = self.buildings.iter().filter(|(_, b)| b.depot && !b.is_derelict() && b.operating()).filter_map(|(id, _)| centre(id)).collect();
         let highway = self.roads.alive_segments().filter(|(_, s)| s.is_highway()).map(|(sid, _)| self.roads.segment_points(sid)).collect();
         let mut others = Vec::new();
         let mut livestock = Vec::new();

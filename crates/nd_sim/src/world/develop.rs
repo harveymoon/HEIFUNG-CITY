@@ -20,7 +20,7 @@ impl World {
         // Children and retirees are not looking for work.
         e.working_age = self.citizens.values().filter(|c| c.can_work()).count() as u32;
         e.unemployed = self.citizens.values().filter(|c| c.work.is_none() && c.can_work()).count() as u32;
-        e.jobs_permanent = self.buildings.values().filter(|b| b.construction.is_none()).map(|b| b.jobs as u32).sum();
+        e.jobs_permanent = self.buildings.values().filter(|b| b.operating()).map(|b| b.jobs as u32).sum();
         e.households = self.households.len() as u32;
         e.household_sizes = [0; 6];
         let mut stressed = 0;
@@ -93,7 +93,7 @@ impl World {
             }
         }
         self.tally_subway(metro_wait, on_metro);
-        let depots = self.buildings.values().filter(|b| b.depot && !b.is_derelict()).count() as u32;
+        let depots = self.buildings.values().filter(|b| b.depot && !b.is_derelict() && b.operating()).count() as u32;
         let t = &mut self.economy.transit;
         t.buses = self.traffic.cars.values().filter(|c| c.bus.is_some()).count() as u32;
         t.depots = depots;
@@ -217,7 +217,7 @@ impl World {
         // 1 = park, 2 = nightlife, by lot.
         let mut kind: slotmap::SecondaryMap<LotId, u8> = slotmap::SecondaryMap::new();
         for b in self.buildings.values() {
-            if b.construction.is_some() || b.demolition.is_some() {
+            if !b.operating() {
                 continue;
             }
             let bit = match b.land_use {
@@ -260,6 +260,11 @@ impl World {
 
     /// One building's pull on the land around it.
     pub(super) fn splat_building(b: &mut LandValueBuilder, bld: &Building, lots: &SlotMap<LotId, Lot>) {
+        // [under-construction] A site lifts (or sours) nothing yet: the
+        // park, the tower, the station, the smokestack count once open.
+        if !bld.operating() {
+            return;
+        }
         {
             let Some(lot) = lots.get(bld.lot) else { return };
             let c = lot.center;
@@ -314,7 +319,7 @@ impl World {
                 let (r, mut w) = s.kind.land_value(s.tier);
                 // [megacorp] A good school (well staffed) lifts the homes
                 // round it more than one short of teachers.
-                if s.kind == crate::services::ServiceKind::School && bld.construction.is_none() {
+                if s.kind == crate::services::ServiceKind::School && bld.operating() {
                     w *= 0.8 + 0.4 * bld.staffing();
                 }
                 if s.kind == crate::services::ServiceKind::Vertiport {
@@ -517,7 +522,7 @@ impl World {
     pub(super) fn rezoned_park(&self, lot: &Lot) -> Option<BuildingId> {
         let b = lot.building?;
         let bld = self.buildings.get(b)?;
-        (bld.land_use == LandUse::Park && lot.land_use != LandUse::Park && bld.construction.is_none() && bld.demolition.is_none()).then_some(b)
+        (bld.land_use == LandUse::Park && lot.land_use != LandUse::Park && bld.operating()).then_some(b)
     }
 
     pub(super) fn develop(&mut self) {

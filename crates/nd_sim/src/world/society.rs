@@ -547,6 +547,8 @@ mod tests {
         let what = crate::services::Placeable::Service(ServiceKind::TrashDepot, Tier::Mid);
         let lot = w.lots.iter().filter(|(id, l)| l.land_use == LandUse::Civic && w.placement_problem(what, *id).is_none()).min_by(|a, b| a.1.center.x.abs().total_cmp(&b.1.center.x.abs())).map(|(id, _)| id).expect("a lot for the depot");
         let depot = w.build_service(lot, ServiceKind::TrashDepot, Tier::Mid).unwrap();
+        // [under-construction] It covers once what stood there is cleared.
+        w.finish_demolition(depot);
         staff(&mut w, depot, &crew[..8]);
         w.hourly_trash();
         assert_eq!(w.society.trash.stats.private_clients, 0, "demand falls as the city covers");

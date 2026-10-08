@@ -78,6 +78,8 @@ fn tow_yard(w: &mut World) -> BuildingId {
     w.take_over_lot(lot, "a tow yard").unwrap();
     let bz = Business::new(BusinessKind::TowYard, 4);
     let id = w.place_special(lot, "Hook & Haul".into(), 4, 0, |b| b.business = Some(bz));
+    // [under-construction] It opens once what stood there is cleared.
+    w.finish_demolition(id);
     let staff: Vec<CitizenId> = w.citizens.keys().take(4).collect();
     w.buildings[id].workers = staff;
     id
@@ -498,6 +500,11 @@ fn a_tow_truck_takes_the_last_stretch_of_a_one_way_against_the_traffic() {
     let (_, vid) = car_near(&mut w, Vec2::new(300.0, -45.0));
     let spot = *w.vehicles.cars[vid].spot().unwrap();
     assert!(spot.kind.on_street() && (spot.pos.x - 300.0).abs() < 8.0, "parked on the one-way: {:?}", spot.pos);
+    // A tow company in town, west of the cross street: the long way round
+    // to the car is down the cross street and back up the one-way; from
+    // out of town the truck's way in is drawn at random and may come
+    // up the one-way from the south anyway.
+    tow_yard(&mut w);
     let job = w.call_tow(vid, TowReason::Illegal).expect("tow called");
     let mut against = false;
     let mut truck = None;

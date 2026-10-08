@@ -121,6 +121,22 @@ impl World {
         self.estate_finished(bid);
         // [relocate] A business that moved here takes its old staff back.
         self.rehire_moved_staff(bid);
+        self.building_opened(bid);
+    }
+
+    /// [under-construction] `bid` has just opened (topped out, or its lot
+    /// cleared): the lists that only list working buildings take it in now
+    /// rather than at their next refresh.
+    fn building_opened(&mut self, bid: BuildingId) {
+        let Some(b) = self.buildings.get(bid).filter(|b| b.operating()) else { return };
+        let (rail, power) = (b.rail.is_some() || b.metro, b.is_power());
+        self.refresh_closed_grounds();
+        if rail {
+            self.refresh_facility_cache();
+        }
+        if power {
+            self.refresh_power();
+        }
     }
 }
 
@@ -208,6 +224,8 @@ impl World {
             self.events.push(SimEvent::BuildingChanged(bid));
             if site {
                 self.order_materials(bid);
+            } else {
+                self.building_opened(bid);
             }
             return;
         }

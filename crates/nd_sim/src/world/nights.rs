@@ -133,7 +133,7 @@ impl World {
             .filter(|(_, l)| l.car_segment.is_some() && !l.landlocked && l.land_use != LandUse::Park && l.area() >= 350.0)
             .filter_map(|(id, l)| match l.building.and_then(|b| self.buildings.get(b)) {
                 None => Some((id, "the empty lot".to_string())),
-                Some(b) if b.floors == 0 && b.construction.is_none() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Parking) => Some((id, b.name.clone())),
+                Some(b) if b.floors == 0 && b.operating() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Parking) => Some((id, b.name.clone())),
                 _ => None,
             })
             .filter(|(id, _)| !self.under_facility(self.lots[*id].center))
@@ -669,7 +669,7 @@ impl World {
         let warehouses: Vec<(BuildingId, String, Vec2)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.land_use == LandUse::Industrial && b.tier == Tier::Low && b.construction.is_none() && b.port.is_none() && !b.is_power() && b.service.is_none() && b.rail.is_none())
+            .filter(|(_, b)| b.land_use == LandUse::Industrial && b.tier == Tier::Low && b.operating() && b.port.is_none() && !b.is_power() && b.service.is_none() && b.rail.is_none())
             .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, b.name.clone(), l.center)))
             .collect();
         if warehouses.is_empty() {

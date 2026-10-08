@@ -232,7 +232,7 @@ impl World {
         let now: Vec<(BuildingId, LotId)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.land_use == LandUse::Park && b.construction.is_none())
+            .filter(|(_, b)| b.land_use == LandUse::Park && b.operating())
             .filter(|(_, b)| self.lots.get(b.lot).is_some_and(|l| l.shore.beach))
             .map(|(id, b)| (id, b.lot))
             .collect();
@@ -471,7 +471,7 @@ impl World {
         let candidates: Vec<(BuildingId, JettyKind)> = self
             .buildings
             .iter()
-            .filter(|(id, b)| b.construction.is_none() && b.demolition.is_none() && !self.shore.jetties.contains_key(id))
+            .filter(|(id, b)| b.operating() && !self.shore.jetties.contains_key(id))
             .filter_map(|(id, b)| {
                 let z = b.business.as_ref().filter(|z| !z.closed)?;
                 let k = Self::jetty_kind_for(z.kind)?;
@@ -501,7 +501,7 @@ impl World {
     /// The working cargo quay of a business, whose coasters can reach the
     /// world beyond the map.
     fn cargo_jetty(&self, b: BuildingId) -> Option<&Jetty> {
-        self.shore.jetties.get(&b).filter(|j| j.kind == JettyKind::Cargo && self.buildings.get(b).is_some_and(|x| x.construction.is_none()))
+        self.shore.jetties.get(&b).filter(|j| j.kind == JettyKind::Cargo && self.buildings.get(b).is_some_and(|x| x.operating()))
     }
 
     /// Import through the buyer's own quay: the sea price, landed by a

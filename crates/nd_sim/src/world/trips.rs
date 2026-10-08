@@ -207,7 +207,7 @@ impl World {
         if money > 300.0 && self.rng.random::<f32>() < 0.2 {
             let ct = self.buildings[home].tier;
             if ct < Self::tier_affordable(income) {
-                let better = self.pick_building(|b| b.land_use == LandUse::Residential && b.construction.is_none() && b.tier > ct && b.free_homes() > 0 && b.rent <= income * AFFORDABLE_SHARE);
+                let better = self.pick_building(|b| b.land_use == LandUse::Residential && b.operating() && b.tier > ct && b.free_homes() > 0 && b.rent <= income * AFFORDABLE_SHARE);
                 if let Some(new_home) = better {
                     self.move_household(hid, new_home, "Moving up to {}.");
                 }
@@ -238,7 +238,7 @@ impl World {
         let candidates: Vec<(BuildingId, Tier, f32)> = self
             .buildings
             .iter()
-            .filter(|(id, b)| b.land_use == LandUse::Residential && b.construction.is_none() && b.free_homes() > 0 && b.annex.is_none() && cheaper_than.is_none_or(|(h, r)| *id != h && b.rent < r * 0.95))
+            .filter(|(id, b)| b.land_use == LandUse::Residential && b.operating() && b.free_homes() > 0 && b.annex.is_none() && cheaper_than.is_none_or(|(h, r)| *id != h && b.rent < r * 0.95))
             .filter(|(_, b)| b.rent <= income * RENT_STRESS_SHARE)
             .map(|(id, b)| (id, b.tier, b.rent))
             .collect();
@@ -458,6 +458,10 @@ impl World {
             .buildings
             .iter()
             .filter(|(id, b)| b.free_jobs() as usize > taken.iter().filter(|t| *t == id).count())
+            // [under-construction] Open, or a site hiring its crew: a
+            // station or plant whose lot is still being cleared hires
+            // nobody yet.
+            .filter(|(_, b)| b.operating() || b.construction.is_some())
             // [dock-access] A dock or station off the roads hires nobody yet.
             .filter(|(id, b)| !((b.port.is_some() || b.rail.is_some()) && self.road_access(*id) == Some(false)))
             .map(|(id, b)| (b.staffing() - bonus(b), id))
@@ -514,7 +518,7 @@ impl World {
             return 1.0;
         }
         let mut free = [0.0f32; 3];
-        for b in self.buildings.values().filter(|b| b.land_use == LandUse::Residential && b.construction.is_none()) {
+        for b in self.buildings.values().filter(|b| b.land_use == LandUse::Residential && b.operating()) {
             free[b.tier.index()] += b.free_homes() as f32;
         }
         let total: f32 = free.iter().sum();
@@ -911,7 +915,10 @@ impl World {
         }
         // A park is not a building to go inside: walk its paths to a free
         // seat on a bench ([benches]), held from now so nobody else takes it.
-        if let (Purpose::Visit(LandUse::Park), Some(b)) = (purpose, to) {
+        // [under-construction] A park that is a site (or coming down) has
+        // no benches to sit on: the visit ends at the gate, below.
+        let park_open = to.and_then(|b| self.buildings.get(b)).is_some_and(|b| b.operating());
+        if let (Purpose::Visit(LandUse::Park), Some(b), true) = (purpose, to, park_open) {
             let lot = self.buildings.get(b).map(|bld| bld.lot);
             let pick = self.rng.random_range(0..64usize);
             let has_benches = lot.is_some_and(|l| self.walk.benches_in(l).next().is_some());
@@ -972,7 +979,7 @@ impl World {
             let hours_ok = matches!(purpose, Purpose::Visit(_)) || bld.opening_hours().contains(hour);
             if !hours_ok || !bld.takes_customers() {
                 let open = bld.opening_hours();
-                let shut = !hours_ok || bld.business.as_ref().is_some_and(|z| z.closed) || bld.is_derelict() || bld.construction.is_some();
+                let shut = !hours_ok || bld.business.as_ref().is_some_and(|z| z.closed) || bld.is_derelict() || !bld.operating();
                 let name = bld.name.clone();
                 let c = &mut self.citizens[id];
                 if shut {
@@ -1265,6 +1272,11 @@ impl World {
     /// for the car), the next best is taken.
     pub(super) fn travel_with(&mut self, id: CitizenId, target: Option<BuildingId>, purpose: Purpose, allow_bus: bool, fresh: bool, allow_car: bool) {
         let Some(target) = target else { return };
+        // [under-construction] Nobody goes out to, shops at or sits in a
+        // building that is not open yet: whatever chose it should not have.
+        if fresh && matches!(purpose, Purpose::Visit(_) | Purpose::Shop(_) | Purpose::Sit) && self.buildings.get(target).is_some_and(|b| !b.operating()) && self.citizens[id].home != Some(target) {
+            return;
+        }
         let origin = self.citizens[id].inside;
         self.citizens[id].transit = None;
         self.citizens[id].to_car = None;

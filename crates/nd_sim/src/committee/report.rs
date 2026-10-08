@@ -272,9 +272,9 @@ impl CityReport {
             }
         }
         let rent_burden = if housed == 0 { 0.0 } else { burdened as f32 / housed as f32 };
-        let rents: Vec<f32> = w.buildings.values().filter(|b| b.homes > 0 && b.construction.is_none()).map(|b| b.rent).collect();
+        let rents: Vec<f32> = w.buildings.values().filter(|b| b.homes > 0 && b.operating()).map(|b| b.rent).collect();
         let avg_rent = if rents.is_empty() { 0.0 } else { rents.iter().sum::<f32>() / rents.len() as f32 };
-        let depots = w.buildings.values().filter(|b| b.depot && b.construction.is_none()).count() as u32;
+        let depots = w.buildings.values().filter(|b| b.depot && b.operating()).count() as u32;
         let cont = &w.contamination;
         let taxes = &e.taxes;
         let tax_rates = ["residential_low", "residential_mid", "residential_high", "grocery", "gadget_shop", "manufacturing", "logistics"]
@@ -457,7 +457,7 @@ fn area_summaries(w: &World) -> Vec<AreaSummary> {
     let areas = areas(w);
     let mut out: Vec<AreaSummary> = areas.iter().map(|a| AreaSummary { name: a.name.clone(), ..Default::default() }).collect();
     let mut covered_homes = vec![[0.0f32; 4]; areas.len()];
-    for b in w.buildings.values().filter(|b| b.construction.is_none()) {
+    for b in w.buildings.values().filter(|b| b.operating()) {
         let Some(l) = w.lots.get(b.lot) else { continue };
         for (i, a) in areas.iter().enumerate() {
             if !in_area(w, &areas, a, l.center) {

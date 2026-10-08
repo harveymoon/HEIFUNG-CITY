@@ -95,7 +95,7 @@ impl World {
     fn investment_business(&self) -> Option<BuildingId> {
         self.buildings
             .iter()
-            .filter(|(id, b)| b.plot.owner.is_none() && b.construction.is_none() && self.buyable(*id))
+            .filter(|(id, b)| b.plot.owner.is_none() && b.operating() && self.buyable(*id))
             .filter_map(|(id, b)| {
                 let z = b.business.as_ref()?;
                 if z.closed || z.owner.is_some() || z.books.len() < 3 {
@@ -115,7 +115,7 @@ impl World {
         let home = self.households.get(hid)?.home;
         self.buildings
             .iter()
-            .filter(|(id, b)| Some(*id) != home && b.land_use == LandUse::Residential && b.business.is_none() && b.tier >= Tier::Mid && b.homes > 0 && b.homes <= 24 && b.plot.owner.is_none() && b.construction.is_none() && self.buyable(*id))
+            .filter(|(id, b)| Some(*id) != home && b.land_use == LandUse::Residential && b.business.is_none() && b.tier >= Tier::Mid && b.homes > 0 && b.homes <= 24 && b.plot.owner.is_none() && b.operating() && self.buyable(*id))
             .max_by(|a, b| a.1.land_value.total_cmp(&b.1.land_value).then(b.0.cmp(&a.0)))
             .map(|(id, _)| id)
     }

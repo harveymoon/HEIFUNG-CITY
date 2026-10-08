@@ -1110,7 +1110,7 @@ impl World {
             for (aff, f) in ties {
                 let Some(w) = self.citizens.get(f).and_then(|c| c.work) else { continue };
                 let Some(b) = self.buildings.get(w) else { continue };
-                if b.free_jobs() == 0 || b.business.as_ref().is_some_and(|z| z.closed) || b.construction.is_some() {
+                if b.free_jobs() == 0 || b.business.as_ref().is_some_and(|z| z.closed) || !b.operating() {
                     continue;
                 }
                 if best.is_none_or(|x| aff > x.0) {
@@ -1143,7 +1143,7 @@ impl World {
                 for t in c.ties.iter().filter(|t| t.bond().is_friendly()) {
                     let Some(h) = self.citizens.get(t.who).and_then(|x| x.home) else { continue };
                     let Some(b) = self.buildings.get(h) else { continue };
-                    if Some(h) != hh.home && b.land_use == LandUse::Residential && b.construction.is_none() && b.free_homes() > 0 && b.rent < cur_rent * 0.9 && b.rent <= income * trips::RENT_STRESS_SHARE {
+                    if Some(h) != hh.home && b.land_use == LandUse::Residential && b.operating() && b.free_homes() > 0 && b.rent < cur_rent * 0.9 && b.rent <= income * trips::RENT_STRESS_SHARE {
                         found = Some((h, t.who));
                         break 'm;
                     }
@@ -1415,7 +1415,7 @@ impl World {
         }
         // Nothing liked in common: the nearest such place to the first member.
         let at = members.first().and_then(|m| self.citizens.get(*m)).and_then(|c| c.home).and_then(|h| self.building_lot(h)).map(|l| l.center)?;
-        self.buildings.iter().filter(|(_, b)| want(b) && b.construction.is_none()).filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, l.center.distance(at)))).min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0))).map(|x| x.0)
+        self.buildings.iter().filter(|(_, b)| want(b) && b.operating()).filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, l.center.distance(at)))).min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0))).map(|x| x.0)
     }
 
     fn street_of_home(&self, c: CitizenId) -> Option<String> {
@@ -1728,7 +1728,7 @@ impl World {
         let mut cands: Vec<(f32, LotId, BuildingId)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.construction.is_none() && b.service.is_none() && b.rail.is_none() && b.port.is_none() && !b.is_power() && b.land_use != LandUse::Park)
+            .filter(|(_, b)| b.operating() && b.service.is_none() && b.rail.is_none() && b.port.is_none() && !b.is_power() && b.land_use != LandUse::Park)
             .filter(|(_, b)| matches!(b.land_use, LandUse::Commercial | LandUse::Industrial | LandUse::Entertainment) || (b.land_use == LandUse::Residential && b.tier != Tier::High))
             .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, b.lot, l)))
             .filter(|(_, lid, l)| !painted.contains(lid) && l.front_edge[0].distance(l.front_edge[1]) >= 10.0 && l.center.distance(at) <= 600.0)
@@ -1895,7 +1895,7 @@ impl World {
         let police = lot.map_or(0.0, |l| self.services.coverage_of(l, ServiceKind::Police));
         let near_misses = self.peds.recent.iter().filter(|p| p.pos.distance(at) < 300.0).count() as f32;
         let mess: f32 = self.society.trash.bins.iter().filter(|(b, _)| self.building_lot(**b).is_some_and(|l| l.center.distance(at) < 250.0)).map(|(_, x)| x.overflow().min(2.0)).sum();
-        let park = self.buildings.values().filter(|b| b.land_use == LandUse::Park).filter_map(|b| self.lots.get(b.lot)).any(|l| l.center.distance(at) < 400.0);
+        let park = self.buildings.values().filter(|b| b.land_use == LandUse::Park && b.operating()).filter_map(|b| self.lots.get(b.lot)).any(|l| l.center.distance(at) < 400.0);
         let noise = self.land_value.nuisance_at(at);
         let street = self.street_of_home(g.founder).unwrap_or_else(|| "our street".into());
         let mut asks: Vec<(f32, Ask, String)> = vec![
@@ -1919,7 +1919,7 @@ impl World {
             Ask::LowerRent => g.members.iter().all(|m| self.citizens.get(*m).is_none_or(|c| c.household.and_then(|h| self.households.get(h)).is_none_or(|h| h.rent_stress_days == 0))),
             Ask::Crossing => !self.peds.recent.iter().any(|x| x.pos.distance(p.at) < 300.0 && x.tick + 1440 * 2 > self.clock.tick),
             Ask::CleanStreets => !self.society.trash.bins.iter().any(|(b, x)| x.overflow() > 0.3 && self.building_lot(*b).is_some_and(|l| l.center.distance(p.at) < 250.0)),
-            Ask::APark => self.buildings.values().filter(|b| b.land_use == LandUse::Park && b.construction.is_none()).filter_map(|b| self.lots.get(b.lot)).any(|l| l.center.distance(p.at) < 400.0),
+            Ask::APark => self.buildings.values().filter(|b| b.land_use == LandUse::Park && b.operating()).filter_map(|b| self.lots.get(b.lot)).any(|l| l.center.distance(p.at) < 400.0),
             Ask::Jobs => g.members.iter().all(|m| self.citizens.get(*m).is_none_or(|c| !c.can_work() || c.work.is_some())),
             Ask::Quiet => self.land_value.nuisance_at(p.at) < 0.1,
         }
@@ -1944,7 +1944,7 @@ impl World {
         let rally = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.construction.is_none() && b.land_use != LandUse::Residential && !b.is_power())
+            .filter(|(_, b)| b.operating() && b.land_use != LandUse::Residential && !b.is_power())
             // City hall's steps first, then a park, then anywhere public.
             .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, l.center.distance(at) + match b.land_use { LandUse::Civic => 0.0, LandUse::Park => 400.0, _ => 900.0 })))
             .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
