@@ -148,33 +148,65 @@ fn height_noise(cfg: &TerrainConfig) -> Fbm<Perlin> {
 /// Every cell draws from its own RNG seeded by its grid position, so a new
 /// road that clears one cell leaves every rock downstream exactly where it
 /// was instead of re-rolling the whole field.
-pub fn scatter_nature(cfg: &TerrainConfig, palette: &Palette, seed: u64, clear: &dyn Fn(Vec2) -> bool) -> Geometry {
-    const STEP: f32 = 18.0;
+/// The scatter's grid cells that grow something, each with its own stream
+/// already past the draws that placed it: every cell that passes its own
+/// chance and `clear`, then the `cap` with the lowest hash of the cell. So
+/// clearing a cell (a road through it) changes that cell and at most lets
+/// one other in at the cap, instead of shifting where a running count ran
+/// out (review §1.5).
+fn scatter_cells(cfg: &TerrainConfig, seed: u64, growth: f32, clear: &dyn Fn(Vec2) -> bool) -> Vec<(i32, i32)> {
     const CAP: usize = 3500;
-    let mut g = Geometry::default();
-    let heights = height_noise(cfg);
-    let density = Fbm::<Perlin>::new(cfg.seed.wrapping_add(7)).set_octaves(2);
-    let n = ((cfg.half_size * 2.0 - 40.0) / STEP) as i32;
-    let dry = palette.foliage_dry;
-    let rock = mix(palette.stone, palette.hills, 0.3);
-    let mut count = 0;
-    // [climate] Lusher climates grow more, and may draw more pieces.
-    let growth = palette.flora.growth();
     let cap = (CAP as f32 * growth) as usize;
+    let density = Fbm::<Perlin>::new(cfg.seed.wrapping_add(7)).set_octaves(2);
+    let n = ((cfg.half_size * 2.0 - 40.0) / SCATTER_STEP) as i32;
+    let mut cells: Vec<(u64, i32, i32)> = Vec::new();
     for j in 0..n {
         for i in 0..n {
-            let mut rng = rng_for(seed, 41 + ((i as u64) << 20 | j as u64) * 0x9E37);
-            let x = -cfg.half_size + 20.0 + (i as f32 + 0.5 + rng.random_range(-0.45..0.45)) * STEP;
-            let z = -cfg.half_size + 20.0 + (j as f32 + 0.5 + rng.random_range(-0.45..0.45)) * STEP;
-            let d = density.get([x as f64 * 0.004, z as f64 * 0.004]) as f32 * 0.5 + 0.5;
+            let mut rng = scatter_rng(seed, i, j);
+            let p = scatter_spot(cfg, &mut rng, i, j);
+            let d = density.get([p.x as f64 * 0.004, p.y as f64 * 0.004]) as f32 * 0.5 + 0.5;
             let chance = ((d - 0.35) * 0.45).clamp(0.0, 0.4) * growth;
-            if !rng.random_bool(chance as f64) {
+            if !rng.random_bool(chance as f64) || !clear(p) {
                 continue;
             }
-            let p = Vec2::new(x, z);
-            if !clear(p) {
-                continue;
-            }
+            cells.push((rng_for(seed ^ 0x5CA7, ((i as u64) << 20) | j as u64).random::<u64>(), i, j));
+        }
+    }
+    if cells.len() > cap {
+        cells.sort_unstable();
+        cells.truncate(cap);
+        cells.sort_unstable_by_key(|c| (c.2, c.1));
+    }
+    cells.into_iter().map(|(_, i, j)| (i, j)).collect()
+}
+
+const SCATTER_STEP: f32 = 18.0;
+
+fn scatter_rng(seed: u64, i: i32, j: i32) -> nd_sim::SimRng {
+    rng_for(seed, 41 + ((i as u64) << 20 | j as u64) * 0x9E37)
+}
+
+/// A cell's jittered spot, drawn first from its stream.
+fn scatter_spot(cfg: &TerrainConfig, rng: &mut impl Rng, i: i32, j: i32) -> Vec2 {
+    let x = -cfg.half_size + 20.0 + (i as f32 + 0.5 + rng.random_range(-0.45..0.45)) * SCATTER_STEP;
+    let z = -cfg.half_size + 20.0 + (j as f32 + 0.5 + rng.random_range(-0.45..0.45)) * SCATTER_STEP;
+    Vec2::new(x, z)
+}
+
+pub fn scatter_nature(cfg: &TerrainConfig, palette: &Palette, seed: u64, clear: &dyn Fn(Vec2) -> bool) -> Geometry {
+    let mut g = Geometry::default();
+    let heights = height_noise(cfg);
+    let dry = palette.foliage_dry;
+    let rock = mix(palette.stone, palette.hills, 0.3);
+    // [climate] Lusher climates grow more, and may draw more pieces.
+    let growth = palette.flora.growth();
+    for (i, j) in scatter_cells(cfg, seed, growth, clear) {
+        {
+            let mut rng = scatter_rng(seed, i, j);
+            let p = scatter_spot(cfg, &mut rng, i, j);
+            // The chance draw `scatter_cells` made, so the rest follows.
+            let _: u64 = rng.random();
+            let (x, z) = (p.x, p.y);
             // Sunk a little so nothing floats where the mesh cuts a corner.
             let y = terrain_height(cfg, &heights, x, z) - 0.1;
             let kind = rng.random_range(0..10);
@@ -212,10 +244,6 @@ pub fn scatter_nature(cfg: &TerrainConfig, palette: &Palette, seed: u64, clear: 
                 (Flora::Moss, 5..=7) => rock_world(&mut g, &mut rng, p, y, 0.5 + size * 1.6, mul(palette.ground, 1.6 + tint)),
                 (Flora::Moss, 8) => tree_kind(&mut g, p, y, TreeKind::Round, 2.0 + size * 1.5, 1.4 + size, [0.55, 0.53, 0.5], mul(leaf, 0.9)),
                 (Flora::Moss, _) => scrub_world(&mut g, &mut rng, p, y, 0.5 + size * 0.6, mul(leaf, 0.7)),
-            }
-            count += 1;
-            if count >= cap {
-                return g;
             }
         }
     }
@@ -1660,5 +1688,27 @@ mod orientation_tests {
             portal_arch(&mut g, Vec2::new(-7.0, 3.0), dir, 0.0, 5.0, 12.0, col, col, col);
             faces_along_are(&upright_faces(g.get(Surface::Concrete), 0.4), dir, (5.0 + 0.2 + 1.6) * 2.0 + 0.4).map_err(|e| format!("portal at {deg}: {e}")).unwrap();
         }
+    }
+
+    /// Review §1.5: clearing ground (a road through it) drops the scatter
+    /// there and leaves every other piece where it was; at the cap at most
+    /// as many others come in as were cleared.
+    #[test]
+    fn clearing_a_cell_changes_only_that_cell() {
+        // Wide enough for the cap to bite.
+        let cfg = TerrainConfig { half_size: 3200.0, ..TerrainConfig::default() };
+        let growth = 1.0;
+        let all = scatter_cells(&cfg, 9, growth, &|_| true);
+        assert!(all.len() >= (3500.0 * growth) as usize, "the cap is in play: {}", all.len());
+        let hole = |p: Vec2| p.distance(Vec2::new(300.0, -200.0)) > 120.0;
+        let some = scatter_cells(&cfg, 9, growth, &hole);
+        let spot = |(i, j): (i32, i32)| scatter_spot(&cfg, &mut scatter_rng(9, i, j), i, j);
+        let cleared = all.iter().filter(|c| !hole(spot(**c))).count();
+        assert!(cleared > 0);
+        for c in &all {
+            assert!(!hole(spot(*c)) || some.contains(c), "cell {c:?} outside the cleared ground went");
+        }
+        let new = some.iter().filter(|c| !all.contains(c)).count();
+        assert!(new <= cleared, "{new} cells came in for {cleared} cleared");
     }
 }
