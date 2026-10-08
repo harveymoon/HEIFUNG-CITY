@@ -322,7 +322,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] A bought-out business moves to a new location instead of only closing (todo5)
 
 ## Questions for Harvey (unanswered)
-- [ ] Should parking lots the player places stop a road (like stations/plants) instead of being bought out?
+- [x] Player-placed parking lots stop a road like other city buildings → DONE [main]: `city_parking` flag, old saves migrate (Harvey: any user-placed building must not be demolished by a road)
 - [x] Cranes stand still 17:00–08:00 by design → ANSWERED 2026-10-08: keep as is.
 - [ ] Delete old todo2.md–todo5.md (their items were carried into todo.md)?
 
