@@ -17,6 +17,8 @@ mod flags;
 mod map_layers;
 /// [camera] Favourites' gold, a person's place posts, a robot's route.
 mod marks;
+/// [memory] The process's memory counters (the remote `memory` command).
+mod memory;
 /// [metro-ux] The Metro map layer and drawing lines station to station.
 mod metro_ux;
 /// [toll-inspect] Picking and outlining toll booths.

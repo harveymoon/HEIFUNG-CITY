@@ -183,7 +183,7 @@ impl World {
     pub(super) fn dorm_arrivals(&mut self, ki: usize) {
         let places = self.campus_places(ki);
         let k = &self.corps.campuses[ki];
-        let mut free: Vec<BuildingId> = k.annexes.iter().filter(|(_, a)| matches!(a, Annex::Dorm | Annex::Frat)).map(|(b, _)| *b).filter(|b| self.buildings.get(*b).is_some_and(|x| x.construction.is_none() && x.free_homes() > 0)).collect();
+        let mut free: Vec<BuildingId> = k.annexes.iter().filter(|(_, a)| matches!(a, Annex::Dorm | Annex::Frat)).map(|(b, _)| *b).filter(|b| self.buildings.get(*b).is_some_and(|x| x.operating() && x.free_homes() > 0)).collect();
         free.sort();
         // [sweep-sim] Local students first: some leave the family home.
         let mut n = self.students_leave_home(ki, &mut free);
@@ -326,7 +326,7 @@ impl World {
         let parks: Vec<BuildingId> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.land_use == LandUse::Park && b.plot.owner.is_none() && b.construction.is_none() && b.demolition.is_none())
+            .filter(|(_, b)| b.land_use == LandUse::Park && b.plot.owner.is_none() && b.operating())
             .filter(|(_, b)| self.lots.get(b.lot).is_some_and(|l| l.center.distance(at) <= CAMPUS_REACH * 0.8))
             .map(|(id, _)| id)
             .collect();
@@ -574,7 +574,7 @@ impl World {
 
     pub(super) fn send_students_to_class(&mut self) {
         let tick = self.clock.tick;
-        let list: Vec<(BuildingId, Vec<CitizenId>)> = self.corps.campuses.iter().filter(|k| self.buildings.get(k.building).is_some_and(|b| b.construction.is_none() && !b.is_derelict())).map(|k| (k.building, k.students.clone())).collect();
+        let list: Vec<(BuildingId, Vec<CitizenId>)> = self.corps.campuses.iter().filter(|k| self.buildings.get(k.building).is_some_and(|b| b.operating() && !b.is_derelict())).map(|k| (k.building, k.students.clone())).collect();
         for (campus, students) in list {
             let name = self.buildings[campus].name.clone();
             for cid in students {
@@ -598,7 +598,7 @@ impl World {
         let mut v: Vec<(f32, BuildingId, LandUse)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.construction.is_none() && !b.is_derelict() && b.opening_hours().contains(hour))
+            .filter(|(_, b)| b.operating() && !b.is_derelict() && b.opening_hours().contains(hour))
             .filter(|(_, b)| b.business.as_ref().is_some_and(|z| !z.closed && (z.kind.is_outing() || matches!(z.kind, BusinessKind::Bakery | BusinessKind::Cafe))) || b.annex == Some(Annex::Theatre))
             .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (l.center.distance(at), id, b.land_use)))
             .filter(|(d, _, _)| *d <= STUDENT_TRADE_REACH)
@@ -719,7 +719,7 @@ impl World {
         let best = self
             .buildings
             .iter()
-            .filter(|(id, b)| *id != home && b.land_use == LandUse::Residential && b.construction.is_none() && b.free_homes() > 0 && b.annex.is_none() && b.tier >= tier && b.rent <= budget)
+            .filter(|(id, b)| *id != home && b.land_use == LandUse::Residential && b.operating() && b.free_homes() > 0 && b.annex.is_none() && b.tier >= tier && b.rent <= budget)
             .filter(|(id, _)| self.school_cover(*id) >= FAMILY_SCHOOL_COVER)
             .max_by(|a, b| self.school_cover(a.0).total_cmp(&self.school_cover(b.0)).then(b.0.cmp(&a.0)))
             .map(|(id, _)| id);

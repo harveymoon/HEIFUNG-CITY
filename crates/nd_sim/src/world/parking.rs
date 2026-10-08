@@ -84,7 +84,7 @@ impl World {
         let lots = &self.lots;
         let lv = &self.land_value;
         for (id, b) in self.buildings.iter_mut() {
-            if !b.is_parking() || b.parking_capacity == 0 || city.contains(&id) || b.construction.is_some() {
+            if !b.is_parking() || b.parking_capacity == 0 || city.contains(&id) || !b.operating() {
                 b.parking_peak = 0;
                 continue;
             }
@@ -105,7 +105,7 @@ impl World {
     /// `r` m (`None` with none).
     pub fn parking_fill_near(&self, at: Vec2, r: f32) -> Option<f32> {
         let (mut peak, mut cap) = (0u32, 0u32);
-        for b in self.buildings.values().filter(|b| b.is_parking() && b.construction.is_none() && b.parking_capacity > 0) {
+        for b in self.buildings.values().filter(|b| b.is_parking() && b.operating() && b.parking_capacity > 0) {
             if self.lots.get(b.lot).is_some_and(|l| l.center.distance(at) <= r) {
                 peak += b.parking_peak.max(b.parking_used) as u32;
                 cap += b.parking_capacity as u32;

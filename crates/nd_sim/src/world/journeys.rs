@@ -494,14 +494,14 @@ impl World {
         let health: Vec<Vec2> = self
             .buildings
             .values()
-            .filter(|b| b.construction.is_none() && !b.is_derelict() && b.service.is_some_and(|s| s.kind == crate::services::ServiceKind::Health))
+            .filter(|b| b.operating() && !b.is_derelict() && b.service.is_some_and(|s| s.kind == crate::services::ServiceKind::Health))
             .filter_map(|b| self.lots.get(b.lot).map(|l| l.center))
             .collect();
         let day = self.clock.tick / 1440;
         let mut homes: Vec<(BuildingId, Vec2, CitizenId)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.land_use == LandUse::Residential && b.construction.is_none())
+            .filter(|(_, b)| b.land_use == LandUse::Residential && b.operating())
             .filter_map(|(id, b)| Some((id, self.lots.get(b.lot)?.center, *b.residents.first()?)))
             .collect();
         // A different few each day.

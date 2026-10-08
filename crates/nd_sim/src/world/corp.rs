@@ -141,7 +141,7 @@ impl World {
     /// Everyone working at a building the corp owns.
     pub fn corp_staff(&self, owner: OwnerId) -> Vec<CitizenId> {
         let Some(o) = self.estate.owners.get(owner) else { return Vec::new() };
-        let mut v: Vec<CitizenId> = o.properties.iter().filter_map(|p| self.buildings.get(*p)).filter(|b| b.construction.is_none()).flat_map(|b| b.workers.iter().copied()).collect();
+        let mut v: Vec<CitizenId> = o.properties.iter().filter_map(|p| self.buildings.get(*p)).filter(|b| b.operating()).flat_map(|b| b.workers.iter().copied()).collect();
         v.sort();
         v.dedup();
         v
@@ -275,7 +275,7 @@ impl World {
                 }
             })
         };
-        let eligible = |b: &Building| b.business.as_ref().is_some_and(|z| !z.closed && !matches!(z.kind, BusinessKind::CargoHub | BusinessKind::Parking)) && b.construction.is_none() && !b.is_special();
+        let eligible = |b: &Building| b.business.as_ref().is_some_and(|z| !z.closed && !matches!(z.kind, BusinessKind::CargoHub | BusinessKind::Parking)) && b.operating() && !b.is_special();
         let mut out: Vec<CompanySize> = Vec::new();
         for (oid, o) in self.estate.owners.iter() {
             if !matches!(o.kind, OwnerKind::Firm { .. } | OwnerKind::Person { .. }) {
@@ -836,7 +836,7 @@ impl World {
     pub(super) fn house_staff(&mut self, ci: usize) {
         let owner = self.corps.corps[ci].owner;
         let (_, blocks) = self.corp_homes(owner);
-        let mut free: Vec<BuildingId> = blocks.into_iter().filter(|b| self.buildings[*b].construction.is_none() && self.buildings[*b].free_homes() > 0).collect();
+        let mut free: Vec<BuildingId> = blocks.into_iter().filter(|b| self.buildings[*b].operating() && self.buildings[*b].free_homes() > 0).collect();
         if free.is_empty() {
             return;
         }

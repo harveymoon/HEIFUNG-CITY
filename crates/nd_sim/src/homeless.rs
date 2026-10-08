@@ -509,7 +509,7 @@ impl World {
             let bed = self.society.homeless.bed_of(hid);
             let reach = bed.map_or(0.0, |p| self.coverage_at(p, ServiceKind::Health).max(self.coverage_at(p, ServiceKind::Police)));
             if reach >= 0.5 && self.society_rng().random::<f32>() < OUTREACH_CHANCE {
-                let home = self.buildings.iter().filter(|(_, b)| b.land_use == LandUse::Residential && b.construction.is_none() && b.free_homes() > 0 && b.rent <= income * OUTREACH_SHARE).min_by(|a, b| a.1.rent.total_cmp(&b.1.rent)).map(|(id, _)| id);
+                let home = self.buildings.iter().filter(|(_, b)| b.land_use == LandUse::Residential && b.operating() && b.free_homes() > 0 && b.rent <= income * OUTREACH_SHARE).min_by(|a, b| a.1.rent.total_cmp(&b.1.rent)).map(|(id, _)| id);
                 if let Some(home) = home {
                     self.society_move_household(hid, home, "An outreach worker found us a place at {}.");
                     self.society.homeless.stats.outreach_total += 1;

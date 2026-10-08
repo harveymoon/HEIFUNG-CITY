@@ -35,7 +35,7 @@ impl World {
             .map(|&c| TaxRow { category: c, rate: t.rate(c), default_rate: c.default_rate(), pull: t.pull(c), buildings: 0, capacity: 0, people: 0, today: t.today_of(c), yesterday: t.yesterday_of(c), recent: t.recent_of(c) })
             .collect();
         for (id, b) in self.buildings.iter() {
-            if b.construction.is_some() {
+            if !b.operating() {
                 continue;
             }
             let line = if b.land_use == LandUse::Residential && b.homes > 0 {

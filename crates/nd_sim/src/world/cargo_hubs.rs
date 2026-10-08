@@ -15,7 +15,7 @@ use crate::vehicle::Errand;
 impl World {
     /// Is `b` a working cargo hub?
     pub fn cargo_hub_works(&self, b: BuildingId) -> bool {
-        self.cargo_hubs.hubs.contains_key(&b) && self.buildings.get(b).is_some_and(|bld| bld.construction.is_none() && bld.demolition.is_none() && !bld.is_derelict() && bld.business.as_ref().is_some_and(|z| z.kind == BusinessKind::CargoHub && !z.closed))
+        self.cargo_hubs.hubs.contains_key(&b) && self.buildings.get(b).is_some_and(|bld| bld.operating() && !bld.is_derelict() && bld.business.as_ref().is_some_and(|z| z.kind == BusinessKind::CargoHub && !z.closed))
     }
 
     /// Place a cargo hub on a lot with a street (Buildings tool, Rail).

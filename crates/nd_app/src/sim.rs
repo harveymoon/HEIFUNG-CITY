@@ -249,9 +249,18 @@ impl Sim {
 }
 
 /// Serialise `world` to `path`, atomically.
+///
+/// [memory] Streamed straight into the file: a big city's save is well over
+/// 100 MB, and building it as one `String` first asked for a single 256 MiB
+/// block (the crash at day 10 of a 2,000-lot city).
 pub fn save_world(world: &World, path: &Path) -> Result<(), String> {
-    let text = world.to_ron().map_err(|e| e.to_string())?;
-    write_atomic(path, text.as_bytes()).map_err(|e| e.to_string())
+    write_atomic_with(path, |out| world.write_ron(out).map_err(std::io::Error::other)).map_err(|e| e.to_string())
+}
+
+/// Copy `from` to `to` atomically (as [`write_atomic`]): the autosave's
+/// second copy, written once and copied instead of serialised twice.
+pub fn copy_atomic(from: &Path, to: &Path) -> std::io::Result<()> {
+    write_atomic_with(to, |out| std::io::copy(&mut std::fs::File::open(from)?, out).map(|_| ()))
 }
 
 /// Write `bytes` to a temporary file beside `path`, flush it to disk, then
@@ -260,6 +269,13 @@ pub fn save_world(world: &World, path: &Path) -> Result<(), String> {
 /// file on Windows too.) The temporary name ends in `.tmp`, so save
 /// listings, which look for `.ron`, never show it.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    write_atomic_with(path, |out| out.write_all(bytes))
+}
+
+/// [`write_atomic`] with the bytes written by `fill` into a buffered
+/// writer on the temporary file, so a big save never sits whole in memory.
+pub fn write_atomic_with(path: &Path, fill: impl FnOnce(&mut std::io::BufWriter<std::fs::File>) -> std::io::Result<()>) -> std::io::Result<()> {
     use std::io::Write;
     // [sweep-sim] For the crash log.
     crate::crash::note_io("saving", path);
@@ -271,8 +287,10 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let tmp = path.with_file_name(format!("{name}.{}-{}.tmp", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
     let result = (|| {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(bytes)?;
+        let mut out = std::io::BufWriter::with_capacity(1 << 20, std::fs::File::create(&tmp)?);
+        fill(&mut out)?;
+        out.flush()?;
+        let f = out.into_inner().map_err(|e| e.into_error())?;
         f.sync_all()?;
         drop(f);
         std::fs::rename(&tmp, path)

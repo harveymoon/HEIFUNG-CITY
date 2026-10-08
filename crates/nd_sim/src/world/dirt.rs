@@ -109,7 +109,7 @@ impl World {
     pub fn refresh_dirty(&mut self) {
         let mut out = Vec::new();
         for (id, b) in self.buildings.iter() {
-            if b.construction.is_some() {
+            if !b.operating() {
                 continue;
             }
             let Some(l) = self.lots.get(b.lot) else { continue };
@@ -223,7 +223,7 @@ impl World {
             let parks: Vec<(Vec2, f32)> = self
                 .buildings
                 .values()
-                .filter(|b| b.land_use == LandUse::Park && b.construction.is_none())
+                .filter(|b| b.land_use == LandUse::Park && b.operating())
                 .filter_map(|b| self.lots.get(b.lot).map(|l| (l.center, l.polygon.iter().map(|q| q.distance(l.center)).fold(0.0, f32::max))))
                 .collect();
             for (c, r) in parks {
@@ -237,7 +237,7 @@ impl World {
         let day = self.clock.tick / 1440;
         let mut homes: Vec<(BuildingId, f32, Option<DirtyNeighbour>, f32)> = Vec::new();
         for (id, b) in self.buildings.iter() {
-            if b.land_use != LandUse::Residential || b.construction.is_some() || b.residents.is_empty() {
+            if b.land_use != LandUse::Residential || !b.operating() || b.residents.is_empty() {
                 continue;
             }
             let Some(l) = self.lots.get(b.lot) else { continue };

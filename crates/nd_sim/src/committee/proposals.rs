@@ -298,7 +298,7 @@ impl Action {
                 if f == t {
                     return Err("a bus line needs two different areas".into());
                 }
-                if !w.buildings.values().any(|b| b.depot && b.construction.is_none()) {
+                if !w.buildings.values().any(|b| b.depot && b.operating()) {
                     return Err("there is no bus depot, so no buses could run: build a depot first".into());
                 }
                 Ok(Action::AddBusLine { from: f, to: t })
@@ -660,7 +660,7 @@ fn street_near(w: &World, p: Vec2) -> Option<String> {
 fn uncovered_homes(w: &World, p: Vec2, kind: ServiceKind, reach: f32) -> f32 {
     w.buildings
         .values()
-        .filter(|b| b.homes > 0 && b.construction.is_none())
+        .filter(|b| b.homes > 0 && b.operating())
         .filter_map(|b| w.lots.get(b.lot).map(|l| (b, l)))
         .filter(|(_, l)| l.center.distance(p) <= reach)
         .map(|(b, _)| b.homes as f32 * (1.0 - w.services.coverage_of(b.lot, kind)).max(0.0))
@@ -779,7 +779,7 @@ pub fn site_options(w: &World, action: &Action) -> Vec<SiteOption> {
                 let mut v: Vec<(Vec2, u16)> = w
                     .buildings
                     .values()
-                    .filter(|b| b.construction.is_none())
+                    .filter(|b| b.operating())
                     .filter_map(|b| w.lots.get(b.lot).map(|l| (l.entrance(), if homes { b.homes } else { b.jobs })))
                     .filter(|(p, n)| *n > 0 && in_area(w, &areas, a, *p))
                     .collect();

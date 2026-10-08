@@ -46,6 +46,7 @@ mod estate;
 mod estate_tests;
 pub use estate::{escort_model, police_escort_model, supercar};
 mod history;
+mod memory;
 mod develop;
 mod districts;
 #[cfg(test)]
@@ -81,6 +82,8 @@ mod riders;
 mod places;
 #[cfg(test)]
 mod places_tests;
+#[cfg(test)]
+mod under_construction_tests;
 mod industry_bridge;
 pub use plan::{Blocker, ProjectCheck, ProjectInfo, ProjectPreview};
 mod power;
@@ -816,8 +819,22 @@ impl World {
         self.build_walk_graph();
     }
 
+    /// The save format: pretty RON, nested six deep.
+    fn ron_config() -> ron::ser::PrettyConfig {
+        ron::ser::PrettyConfig::default().depth_limit(6)
+    }
+
     pub fn to_ron(&self) -> Result<String, ron::Error> {
-        ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default().depth_limit(6))
+        ron::ser::to_string_pretty(self, Self::ron_config())
+    }
+
+    /// [memory] The save, byte for byte as [`World::to_ron`], streamed into
+    /// `out` (wrap a file in a `BufWriter`). A big city's save runs past
+    /// 128 MiB, and building it as one `String` first needs a single 256 MiB
+    /// block when the string doubles: the "memory allocation of 268435456
+    /// bytes failed" crash.
+    pub fn write_ron(&self, out: impl std::io::Write) -> Result<(), ron::Error> {
+        ron::Options::default().to_io_writer_pretty(out, self, Self::ron_config())
     }
 
     pub fn from_ron(text: &str) -> Result<Self, ron::error::SpannedError> {
@@ -1141,7 +1158,7 @@ impl World {
 
     fn available_land_uses(&self) -> [bool; 6] {
         let mut out = [false; 6];
-        for b in self.buildings.values().filter(|b| b.construction.is_none()) {
+        for b in self.buildings.values().filter(|b| b.operating()) {
             out[b.land_use.index()] = true;
         }
         out
@@ -1150,6 +1167,9 @@ impl World {
     pub fn tick(&mut self, minds: &mut dyn MindProvider) {
         // [park-paths] A path whose park went since the last tick is cut back.
         self.settle_path_links();
+        // [under-construction] Park walkways and gates shut while their
+        // building is a site.
+        self.refresh_closed_grounds();
         self.clock.advance();
         let tick = self.clock.tick;
         if self.clock.minute_of_day() == 0 {
