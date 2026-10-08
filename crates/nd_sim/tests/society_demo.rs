@@ -97,8 +97,16 @@ fn run(services: bool) -> Day8 {
                 // and anything already alight, and a refused pick left the
                 // day short of drill fires.
                 let flammable: Vec<_> = occupied.iter().copied().filter(|&b| world.buildings.get(b).is_some_and(|b| b.land_use != nd_sim::LandUse::Park && b.rail.is_none())).collect();
+                // The fire's place is drawn as a point over the district and
+                // the flammable building nearest it burns: an index into the
+                // list of occupied buildings reshuffled every drill fire with
+                // any change in who lives where, and the median of seven
+                // calls swung 13 to 15 minutes on which corners they landed.
                 if minute % 180 == 110 && !flammable.is_empty() {
-                    world.start_fire(flammable[next(flammable.len())]);
+                    let at = nd_sim::Vec2::new(next(560) as f32 - 280.0, next(560) as f32 - 280.0);
+                    let near = |b: &nd_sim::BuildingId| world.building_entrance(*b).map_or(f32::MAX, |p| p.distance(at));
+                    let b = *flammable.iter().min_by(|x, y| near(x).total_cmp(&near(y))).unwrap();
+                    world.start_fire(b);
                 }
                 if minute % 90 == 62 {
                     let indoors: Vec<_> = world.citizens.iter().filter(|(_, c)| c.inside.is_some_and(|b| world.buildings.get(b).is_some_and(|b| b.service.is_none()))).map(|(id, _)| id).collect();

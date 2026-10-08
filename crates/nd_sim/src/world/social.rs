@@ -524,10 +524,16 @@ impl World {
             self.social.today.fights += 1;
             self.social.fights_total += 1;
             let target = spot.place.filter(|p| self.buildings.contains_key(*p)).or_else(|| self.building_nearest(pos));
+            // [murder] Between enemies a fight can, rarely, go too far.
+            let enemies = self.social.bond(a, b) == Bond::Enemy || self.social.bond(b, a) == Bond::Enemy;
+            let deadly = enemies && target.is_some() && feud_turns_deadly(salt, tick);
             if let Some(t) = target {
-                self.society.crime.stats.offences_today[crate::crime::Offence::Assault.index()] += 1;
-                self.society.crime.stats.offences_total[crate::crime::Offence::Assault.index()] += 1;
-                self.report_crime(crate::services::CrimeKind::Assault, t, Some(a), Some(b));
+                let o = if deadly { crate::crime::Offence::Murder } else { crate::crime::Offence::Assault };
+                self.society.crime.stats.offences_today[o.index()] += 1;
+                self.society.crime.stats.offences_total[o.index()] += 1;
+                if !deadly {
+                    self.report_crime(crate::services::CrimeKind::Assault, t, Some(a), Some(b));
+                }
             }
             let where_ = place_name.clone().unwrap_or_else(|| "the street".into());
             for (me, o) in [(a, &nb), (b, &na)] {
@@ -536,6 +542,9 @@ impl World {
                     c.thought = format!("{o} had it coming.");
                     self.concerns.heard(me, c, crate::concerns::Concern::Safety, 0.3);
                 }
+            }
+            if let (true, Some(t)) = (deadly, target) {
+                self.feud_killing(a, b, t);
             }
         }
         let line = talk_line(topic, outcome, place_name.as_deref().or(topic_place.and_then(|p| self.buildings.get(p)).map(|b| b.name.as_str())), about.and_then(|c| self.citizens.get(c)).map(|c| c.name.as_str()), salt ^ tick);
@@ -552,6 +561,17 @@ impl World {
         }
         self.social.talks_total += 1;
         self.social.push_talk(Talk { serial: 0, tick, a, b, topic, outcome, setting: spot.setting, place: spot.place, pos, line });
+    }
+
+    /// [murder] `killer` kills `victim`, an enemy, in a fight at `at`: a
+    /// homicide whose suspect the police know (`World::murder`).
+    pub(crate) fn feud_killing(&mut self, killer: CitizenId, victim: CitizenId, at: BuildingId) -> Option<u32> {
+        let tick = self.clock.tick;
+        let vname = self.citizens.get(victim)?.name.clone();
+        if let Some(c) = self.citizens.get_mut(killer) {
+            c.remember(tick, format!("The feud with {vname} ended the worst way."));
+        }
+        self.murder(killer, victim, at, true)
     }
 
     /// `c` has no partner, or it is `a` or `b`.
@@ -2090,3 +2110,8 @@ fn capital(s: &str) -> String {
     c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
 }
 
+/// [murder] Does this fight between enemies (pair `salt`, at `tick`) end in
+/// a death? `FEUD_KILL_CHANCE` of them, by a hash: no draws.
+pub(crate) fn feud_turns_deadly(salt: u64, tick: u64) -> bool {
+    hash01(salt, tick, 0x4D_0D3E) < crate::crime::FEUD_KILL_CHANCE
+}

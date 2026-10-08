@@ -110,6 +110,8 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 ui.label(format!("{:.0} km/h", car.v * 3.6));
                 // [events] A street racer: the race and their place.
                 super::nights::racer_line(ui, w, id);
+                // [moto] A pack rider.
+                super::nights::moto_line(ui, w, id);
                 driver_shown = driver_card(ui, w, id, selection);
                 // (Crews and strangers are named by the journey card below.)
                 // [boot] Clamp it: it pulls over and waits for the tow truck.
@@ -172,7 +174,14 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             }
             // [boot] Clamped and waiting, or the button to have it done.
             if spot.booted {
-                let truck = sim.world.enforcement.job_for(vid).map(|j| if j.truck.is_some() { "the tow truck is on its way" } else if j.company.is_none() { "a tow truck is coming from out of town" } else { "waiting for a tow truck" }).unwrap_or("waiting for a tow truck");
+                let now = sim.world.clock.tick;
+                let truck = sim.world.enforcement.job_for(vid).map(|j| match j.state {
+                    // [clamp] An officer's clamp: the fine or the tow truck.
+                    nd_sim::enforcement::TowState::Waiting { until } if j.reason == nd_sim::enforcement::TowReason::Unpaid => format!("fine {:.0} unpaid  ·  towed in {}", nd_sim::enforcement::CLAMP_FINE, minutes_label(until.saturating_sub(now))),
+                    _ if j.truck.is_some() => "the tow truck is on its way".to_string(),
+                    _ if j.company.is_none() => "a tow truck is coming from out of town".to_string(),
+                    _ => "waiting for a tow truck".to_string(),
+                }).unwrap_or_else(|| "waiting for a tow truck".to_string());
                 ui.label(egui::RichText::new(format!("Clamped  ·  {truck}")).color(egui::Color32::from_rgb(255, 140, 20)));
             } else if spot.kind.on_street() && tow_button(ui) {
                 if let Err(e) = sim.world.order_tow(vid) {
@@ -1197,4 +1206,13 @@ fn dirt_lines(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId) -> O
         }
     }
     clicked
+}
+
+/// [clamp] "2 h 15 min", "40 min".
+fn minutes_label(m: u64) -> String {
+    if m >= 60 {
+        format!("{} h {:02} min", m / 60, m % 60)
+    } else {
+        format!("{m} min")
+    }
 }

@@ -1229,7 +1229,9 @@ minutes. `incidents {kind}` filters by fire, crime or
 medical (crash victims are medical incidents).
 `incident {kind: "crash", car? | at?: [x, y], speed? (m/s, default 25 = written off)}` crashes a car
 (the next tick turns it into injuries and 911 calls); `incident {kind: "takeover", at?: [x, y]}`
-starts a street takeover at the junction nearest `at`.
+starts a street takeover at the junction nearest `at`; `incident {kind: "moto_pack", at?: [x, y]}`
+starts a moto pack ride meeting at the road end nearest `at` (car `inspect` shows
+`takeover.moto_pack: true` for its riders).
 `incident {kind: "chase"}` stages a car chase: a free police car comes for someone whose car is
 parked near home (a robbery on the record) and they run for it; `chases` in `incidents` follows it.
 

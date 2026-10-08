@@ -91,6 +91,8 @@ pub use plant_groups::{PlantGroup, PlantJoin, PlantPreview};
 mod plant_groups_tests;
 #[cfg(test)]
 mod plant_scale_tests;
+mod scenes;
+pub mod tow_moves;
 #[cfg(test)]
 mod blocker_tests;
 mod services;
@@ -142,6 +144,7 @@ mod fishing;
 mod fishing_tests;
 // [events] street races and warehouse raves; road wear and maintenance
 mod nights;
+mod moto;
 mod roadworks;
 mod relocate;
 mod rich;
@@ -1267,6 +1270,8 @@ impl World {
     }
 
     fn step_traffic(&mut self) {
+        // [fire-scene] What stands at the roadside for the traffic to pass.
+        self.set_traffic_scenes();
         let arrived = self.traffic.step(self.config.traffic_seconds_per_tick, self.config.traffic_substeps);
         // [tolls] Before anyone arriving is taken off the road.
         self.settle_tolls();
