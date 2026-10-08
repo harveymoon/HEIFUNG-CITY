@@ -164,7 +164,7 @@ pub fn cinema(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let pal = c.palette;
     let poly = &c.poly;
     let lobby_h = c.fh() * 2.0;
-    let hall_h = (c.floors as f32 * c.fh()).clamp(lobby_h + 4.0, 20.0);
+    let hall_h = (c.floors as f32 * c.fh()).min(20.0).max(lobby_h + 4.0);
     let col = mul(pick(rng, &pal.plaster), 1.0 - 0.25 * c.wear);
     extrude(g, f, Plaster, poly, 0.0, lobby_h, col);
     // Auditorium block set back from the front.

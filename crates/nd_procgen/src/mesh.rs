@@ -2,6 +2,17 @@ use glam::{Vec2, Vec3};
 
 pub use nd_sim::rail::{path_length, point_along};
 
+/// `x.clamp(lo, hi)` that never panics: when the bounds cross (a lot or a
+/// part too small for the margins asked of it) it returns their midpoint.
+/// Use it wherever a bound is computed rather than a literal.
+pub fn clamp_safe(x: f32, lo: f32, hi: f32) -> f32 {
+    if lo > hi {
+        (lo + hi) * 0.5
+    } else {
+        x.max(lo).min(hi)
+    }
+}
+
 /// Engine-independent triangle mesh with per-vertex colours and world-scaled
 /// UVs. Colours may exceed 1.0 for HDR glow when rendered through an unlit
 /// material. UVs are planar projections in metres (u horizontal, v up for

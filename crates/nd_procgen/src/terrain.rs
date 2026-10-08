@@ -685,11 +685,11 @@ pub fn pillar_column(g: &mut Geometry, at: Vec2, dir: Vec2, top: f32, foot: f32,
     }
     let yaw = dir.y.atan2(dir.x);
     let w = (hw * 0.35).clamp(1.2, 3.0);
-    g.part(Surface::Concrete).boxed(Vec3::new(at.x, (top + foot) * 0.5, at.y), Vec3::new(1.6, top - foot, w), -yaw, rgba(mul(concrete, 0.8)));
+    g.part(Surface::Concrete).boxed(Vec3::new(at.x, (top + foot) * 0.5, at.y), Vec3::new(1.6, top - foot, w), yaw, rgba(mul(concrete, 0.8)));
     // The footing, just showing above the ground.
-    g.part(Surface::Concrete).boxed(Vec3::new(at.x, foot + 0.15, at.y), Vec3::new(2.6, 0.3, w + 1.0), -yaw, rgba(mul(concrete, 0.7)));
+    g.part(Surface::Concrete).boxed(Vec3::new(at.x, foot + 0.15, at.y), Vec3::new(2.6, 0.3, w + 1.0), yaw, rgba(mul(concrete, 0.7)));
     // A crosshead under the deck.
-    g.part(Surface::Concrete).boxed(Vec3::new(at.x, top - 0.35, at.y), Vec3::new(1.9, 0.7, hw * 1.7), -yaw, rgba(mul(concrete, 0.85)));
+    g.part(Surface::Concrete).boxed(Vec3::new(at.x, top - 0.35, at.y), Vec3::new(1.9, 0.7, hw * 1.7), yaw, rgba(mul(concrete, 0.85)));
 }
 
 /// What shows of the tunnels: a portal frame where each tunnel comes out
@@ -746,8 +746,8 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
                     continue;
                 }
                 let gz = world.ground_height(p);
-                g.part(Surface::Concrete).boxed(Vec3::new(p.x, gz + 1.2, p.y), Vec3::new(3.0, 2.4, 3.0), -yaw, wall);
-                g.part(Surface::Metal).boxed(Vec3::new(p.x, gz + 2.5, p.y), Vec3::new(2.6, 0.25, 2.6), -yaw, rgba(mul(steel, 0.6)));
+                g.part(Surface::Concrete).boxed(Vec3::new(p.x, gz + 1.2, p.y), Vec3::new(3.0, 2.4, 3.0), yaw, wall);
+                g.part(Surface::Metal).boxed(Vec3::new(p.x, gz + 2.5, p.y), Vec3::new(2.6, 0.25, 2.6), yaw, rgba(mul(steel, 0.6)));
             }
             continue;
         }
@@ -876,10 +876,10 @@ fn portal_arch(g: &mut Geometry, p: Vec2, out: Vec2, z: f32, hw: f32, hill: f32,
     // A coping a little proud of the wall, along the top.
     let c = p;
     let yaw = out.y.atan2(out.x);
-    m.boxed(Vec3::new(c.x, z + wall_top + 0.2, c.y), Vec3::new(thick + 0.4, 0.4, wall_half * 2.0 + 0.4), -yaw, coping);
+    m.boxed(Vec3::new(c.x, z + wall_top + 0.2, c.y), Vec3::new(thick + 0.4, 0.4, wall_half * 2.0 + 0.4), yaw, coping);
     // A lit band under the crown, just inside the mouth.
     let lit = p - out * (thick * 0.5 + 0.3);
-    g.part(Surface::Glow).boxed(Vec3::new(lit.x, z + spring + rise - 0.35, lit.y), Vec3::new(0.08, 0.2, r * 1.2), -yaw, lamp);
+    g.part(Surface::Glow).boxed(Vec3::new(lit.x, z + spring + rise - 0.35, lit.y), Vec3::new(0.08, 0.2, r * 1.2), yaw, lamp);
     // The dark of the bore, across the opening just behind the wall: the
     // built ground is a height field and cannot overhang, so through the
     // arch one saw the hillside the tunnel runs into. The ground is held
@@ -894,8 +894,8 @@ fn portal_arch(g: &mut Geometry, p: Vec2, out: Vec2, z: f32, hw: f32, hill: f32,
     // reaches a cell past the held ground, over the slope up to the hill.
     let reach = PORTAL_HOLD + nd_sim::landscape::GROUND_CELL;
     let lid = p - out * (thick * 0.5 + reach * 0.5);
-    let top = (hill - z).clamp(spring + rise + 0.4, wall_top);
-    g.part(Surface::Concrete).boxed(Vec3::new(lid.x, z + top - 0.3, lid.y), Vec3::new(reach, 0.6, wall_half * 2.0 + 2.0), -yaw, coping);
+    let top = crate::mesh::clamp_safe(hill - z, spring + rise + 0.4, wall_top);
+    g.part(Surface::Concrete).boxed(Vec3::new(lid.x, z + top - 0.3, lid.y), Vec3::new(reach, 0.6, wall_half * 2.0 + 2.0), yaw, coping);
 }
 
 /// How far into the hill behind a tunnel portal the built ground is held at
@@ -920,7 +920,7 @@ pub fn abutment(g: &mut Geometry, p: Vec2, out: Vec2, z: f32, hw: f32, ground: f
     let yaw = out.y.atan2(out.x);
     // The seat: from just behind the deck's end to under it.
     let seat = p + out * 0.6;
-    g.part(Surface::Concrete).boxed(Vec3::new(seat.x, (top + foot) * 0.5, seat.y), Vec3::new(2.4, top - foot, hw * 2.0 + 0.8), -yaw, rgba(mul(concrete, 0.82)));
+    g.part(Surface::Concrete).boxed(Vec3::new(seat.x, (top + foot) * 0.5, seat.y), Vec3::new(2.4, top - foot, hw * 2.0 + 0.8), yaw, rgba(mul(concrete, 0.82)));
     // The wing walls, stepping down as they run back into the embankment.
     let side = Vec2::new(-out.y, out.x);
     for sgn in [-1.0f32, 1.0] {
@@ -931,7 +931,7 @@ pub fn abutment(g: &mut Geometry, p: Vec2, out: Vec2, z: f32, hw: f32, ground: f
             if h < 0.3 {
                 continue;
             }
-            g.part(Surface::Concrete).boxed(Vec3::new(c.x, foot + h * 0.5, c.y), Vec3::new(2.5, h, 0.5), -yaw, rgba(mul(concrete, 0.86)));
+            g.part(Surface::Concrete).boxed(Vec3::new(c.x, foot + h * 0.5, c.y), Vec3::new(2.5, h, 0.5), yaw, rgba(mul(concrete, 0.86)));
         }
     }
 }
@@ -972,9 +972,9 @@ pub fn viaduct_span(g: &mut Geometry, a: Vec2, b: Vec2, za: f32, zb: f32, hw: f3
             continue;
         }
         let w = (hw * 0.35).clamp(1.2, 3.0);
-        g.part(Surface::Concrete).boxed(Vec3::new(p.x, (top + foot) * 0.5, p.y), Vec3::new(1.6, top - foot, w), -yaw, rgba(mul(concrete, 0.8)));
+        g.part(Surface::Concrete).boxed(Vec3::new(p.x, (top + foot) * 0.5, p.y), Vec3::new(1.6, top - foot, w), yaw, rgba(mul(concrete, 0.8)));
         // A crosshead under the deck.
-        g.part(Surface::Concrete).boxed(Vec3::new(p.x, top - 0.35, p.y), Vec3::new(1.9, 0.7, hw * 1.7), -yaw, rgba(mul(concrete, 0.85)));
+        g.part(Surface::Concrete).boxed(Vec3::new(p.x, top - 0.35, p.y), Vec3::new(1.9, 0.7, hw * 1.7), yaw, rgba(mul(concrete, 0.85)));
     }
 }
 
@@ -1055,7 +1055,7 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
                         let mid = (r + q) * 0.5;
                         let zz = z0 + (z1 - z0) * (s + 2.0) / run.max(1e-3) - 0.05;
                         let yaw = hd.y.atan2(hd.x);
-                        g.part(Surface::Concrete).boxed(Vec3::new(mid.x, zz - 0.7, mid.y), Vec3::new(4.2, 1.4, gap), -yaw, rgba(concrete));
+                        g.part(Surface::Concrete).boxed(Vec3::new(mid.x, zz - 0.7, mid.y), Vec3::new(4.2, 1.4, gap), yaw, rgba(concrete));
                     }
                     s += 4.0;
                 }
@@ -1070,7 +1070,7 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
             let p = a.lerp(b, t);
             let top = za + (zb - za) * t - 1.4;
             let bed = land.height(p).min(WATER_LEVEL - 1.0);
-            g.part(Surface::Concrete).boxed(Vec3::new(p.x, (top + bed) * 0.5, p.y), Vec3::new(2.2, top - bed, hw * 1.6), -yaw, rgba(mul(concrete, 0.8)));
+            g.part(Surface::Concrete).boxed(Vec3::new(p.x, (top + bed) * 0.5, p.y), Vec3::new(2.2, top - bed, hw * 1.6), yaw, rgba(mul(concrete, 0.8)));
         }
     }
     underpasses(world, &mut g, concrete, steel);
@@ -1117,7 +1117,7 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
             PortKind::FerryTerminal => {
                 // A floating pontoon at the tip with a lamp.
                 let p = tip + along * 4.0;
-                g.part(Surface::Metal).boxed(Vec3::new(p.x, WATER_LEVEL + 0.5, p.y), Vec3::new(8.0, 1.0, 5.0), -along.y.atan2(along.x), rgba(mul(palette.metal_paint(2), 0.8)));
+                g.part(Surface::Metal).boxed(Vec3::new(p.x, WATER_LEVEL + 0.5, p.y), Vec3::new(8.0, 1.0, 5.0), along.y.atan2(along.x), rgba(mul(palette.metal_paint(2), 0.8)));
                 g.part(Surface::Metal).cylinder(p, 0.08, 0.08, WATER_LEVEL + 1.0, WATER_LEVEL + 5.0, 6, rgba([0.2, 0.2, 0.22]));
                 g.part(Surface::Glow).boxed(Vec3::new(p.x, WATER_LEVEL + 5.1, p.y), Vec3::new(0.4, 0.25, 0.4), 0.0, rgba(palette.lamp));
             }

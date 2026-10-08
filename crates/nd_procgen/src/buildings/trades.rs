@@ -194,7 +194,7 @@ pub(super) fn bunting(g: &mut Geometry, f: &Frame, a: Vec3, b: Vec3, n: i32, col
     let wa = f.at(a.x, a.y, a.z);
     let wb = f.at(b.x, b.y, b.z);
     g.part(Matte).wire(wa, wb, 0.4, 0.025, rgba(DARK));
-    let yaw = -(wb.z - wa.z).atan2(wb.x - wa.x);
+    let yaw = (wb.z - wa.z).atan2(wb.x - wa.x);
     for i in 1..n {
         let t = i as f32 / n as f32;
         let p = wa.lerp(wb, t) - Vec3::Y * (0.4 * 4.0 * t * (1.0 - t) + 0.25);
@@ -380,7 +380,7 @@ pub fn mechanic(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         f.bx(g, Metal, r.c().x, h + 0.15, r.c().y, Vec3::new(r.w() + 0.3, 0.3, r.d() + 0.3), mul(pal.steel, 0.55));
         for k in 0..=n {
             let u = bays.u0 + k as f32 * bw;
-            let u = u.clamp(bays.u0 + 0.15, bays.u1 - 0.15);
+            let u = crate::mesh::clamp_safe(u, bays.u0 + 0.15, bays.u1 - 0.15);
             f.bx(g, wall_s, u, h * 0.5, r.c().y, Vec3::new(0.3, h, r.d()), wall);
         }
         f.bx(g, wall_s, bays.c().x, h - 0.4, r.v0 + 0.15, Vec3::new(bays.w(), 0.8, 0.3), mul(wall, 0.9));
@@ -958,7 +958,7 @@ pub fn golf_range(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let n = ((bays.w() / 3.0).floor() as i32).max(1);
         let bw = bays.w() / n as f32;
         for k in 0..=n {
-            let u = (bays.u0 + k as f32 * bw).clamp(bays.u0 + 0.1, bays.u1 - 0.1);
+            let u = crate::mesh::clamp_safe(bays.u0 + k as f32 * bw, bays.u0 + 0.1, bays.u1 - 0.1);
             f.bx(g, Matte, u, h * 0.5, bays.c().y, Vec3::new(0.15, h, bays.d()), mul(wall, 0.85));
         }
         for s in 0..storeys {

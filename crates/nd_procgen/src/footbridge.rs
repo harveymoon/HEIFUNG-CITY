@@ -66,7 +66,7 @@ pub fn footbridges(world: &World, palette: &Palette) -> Geometry {
                 // Step k counted down from the top.
                 let c = top + along * (tread * (k as f32 + 0.5));
                 let h = z - rise * (k as f32 + 1.0) / steps as f32;
-                g.part(Surface::Concrete).boxed(Vec3::new(c.x, h + STEP_RISE * 0.5 - 0.02, c.y), Vec3::new(tread + 0.02, STEP_RISE, w - 0.2), -yaw, rgba(mul(concrete, 1.05)));
+                g.part(Surface::Concrete).boxed(Vec3::new(c.x, h + STEP_RISE * 0.5 - 0.02, c.y), Vec3::new(tread + 0.02, STEP_RISE, w - 0.2), yaw, rgba(mul(concrete, 1.05)));
             }
             // The stringer slab under the steps.
             let top3 = Vec3::new(top.x, z - DECK_DEPTH, top.y);
@@ -85,7 +85,7 @@ pub fn footbridges(world: &World, palette: &Palette) -> Geometry {
             // A column under the stair head, on the pavement.
             let col = top + along * 0.6;
             let cz = ground(col);
-            g.part(Surface::Concrete).boxed(Vec3::new(col.x, (z - DECK_DEPTH + cz) * 0.5, col.y), Vec3::new(0.7, z - DECK_DEPTH - cz, 0.7), -yaw, rgba(mul(concrete, 0.8)));
+            g.part(Surface::Concrete).boxed(Vec3::new(col.x, (z - DECK_DEPTH + cz) * 0.5, col.y), Vec3::new(0.7, z - DECK_DEPTH - cz, 0.7), yaw, rgba(mul(concrete, 0.8)));
         }
     }
     g
