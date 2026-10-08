@@ -363,6 +363,15 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] City rating: liveability, prosperity, safety, environment — measured, with history charts (no challenges/scenarios yet)
 - [ ] Banks and debt: bank businesses open and lend to other businesses (loans can go bad, defaults, failures like real life); broke people can fall into debt (hospital bills, gambling, etc.) with consequences
 - [ ] Large ferry terminal + car ferries: a bigger terminal (vehicle ramps, marshalling lanes, needs a road connection) whose ferries carry cars and trucks as well as passengers; routing treats car-ferry links as part of the road network (with a fare and a wait), so drivers and freight can cross water
+- [ ] Regional commuters: while local labour is short, businesses hire out-of-town workers who drive in on the highway (dearer wage, travel time, sometimes late, highway rush hours); as residents arrive locals are cheaper/closer and are preferred, so the commuter share falls; City Data shows "jobs held by commuters %" as a goal to drive to 0; residents without local work commute out (wages spent elsewhere)
+- [ ] New business kinds (append to enums, each with its own look, demand and staffing):
+  - construction firms (builders who actually put buildings up and employ crews)
+  - pharmacy, private clinics, doctors, dentists; childcare/daycare
+  - clothing, hardware, furniture shops; fuel/EV charging stations, car wash
+  - hair salons/barbers, gyms, laundromats; trades (plumbers, electricians, repair shops)
+  - food variety: fast food, pizza place, noodle bar, restaurants; nightlife split: clubs, cinemas, theatres
+  - office economy: software studios, data centres (big power, few jobs), call centres, media, security, cleaning, real estate, law, insurance
+  - recycling plants (ties into trash and contamination)
 - [ ] Cable cars (on hilly maps)
 - [ ] Monorail: a new elevated train type running above the road, hanging (suspended) design like Wuppertal / Shonan; stations need no zoning but must connect to a road or path at their connection points to work
 - [ ] Transit economics: ridership per line, fare/fee settings per line and info
