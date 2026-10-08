@@ -61,6 +61,39 @@ pub const BRIDGED_GRADE_PENALTY: f32 = 30.0;
 /// `WalkEdge::cross` of an edge that crosses no street.
 pub const NO_CROSSING: u32 = u32::MAX;
 
+/// [park-paths] Gates on the edges of a lot `outline` for paths to be drawn
+/// to: one every 40 m or so on each edge of 10 m or more (up to three),
+/// `GATE_OUT` outside it, except on the edges in `skip` (shared with more
+/// of the same park).
+pub fn edge_gates(outline: &[Vec2], skip: &[usize]) -> Vec<Vec2> {
+    let n = outline.len();
+    let mut out = Vec::new();
+    if n < 3 {
+        return out;
+    }
+    for i in 0..n {
+        if skip.contains(&i) {
+            continue;
+        }
+        let (a, b) = (outline[i], outline[(i + 1) % n]);
+        let len = a.distance(b);
+        if len < 10.0 {
+            continue;
+        }
+        let d = (b - a) / len;
+        let k = ((len / 40.0).ceil() as usize).clamp(1, 3);
+        for j in 0..k {
+            let m = a + d * (len * (j as f32 + 0.5) / k as f32);
+            let normal = Vec2::new(d.y, -d.x);
+            let q = if geom::point_in_polygon(m + normal * 0.2, outline) { m - normal * GATE_OUT } else { m + normal * GATE_OUT };
+            if !geom::point_in_polygon(q, outline) {
+                out.push(q);
+            }
+        }
+    }
+    out
+}
+
 #[derive(Clone, Debug)]
 pub struct WalkNode {
     pub pos: Vec2,
@@ -167,7 +200,82 @@ pub struct WalkGraph {
     pub footbridges: Vec<Footbridge>,
     /// [tools] Level of each raised node by its exact position.
     raised_at: HashMap<(u32, u32), f32>,
+    /// [park-paths] Where a player path may join the walkways of a park or
+    /// other public grounds (`add_grounds`): the Path tool's snap points,
+    /// and the ones a path is joined to.
+    pub junctions: Vec<GroundsJunction>,
 }
+
+/// [park-paths] What kind of public ground a walkway network belongs to.
+/// Saved with a path's attachment, so kinds keep their order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum GroundsKind {
+    #[default]
+    Park,
+    /// A monument's paved plaza.
+    Plaza,
+    Stadium,
+    /// A school or college campus.
+    Campus,
+    /// A railway station's forecourt.
+    Station,
+    /// A public beach (`feat/waterfront` may register them).
+    Beach,
+}
+
+impl GroundsKind {
+    pub fn key(self) -> &'static str {
+        match self {
+            GroundsKind::Park => "park",
+            GroundsKind::Plaza => "plaza",
+            GroundsKind::Stadium => "stadium",
+            GroundsKind::Campus => "campus",
+            GroundsKind::Station => "station",
+            GroundsKind::Beach => "beach",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GroundsKind::Park => "park",
+            GroundsKind::Plaza => "plaza",
+            GroundsKind::Stadium => "stadium grounds",
+            GroundsKind::Campus => "campus",
+            GroundsKind::Station => "station forecourt",
+            GroundsKind::Beach => "beach",
+        }
+    }
+}
+
+/// [park-paths] A piece of public ground with walkways a player path may
+/// join: its outline, the gates on its edge a path may be drawn to, and
+/// the lot whose walk nodes (its loop, a park's paths) it is joined to.
+/// Generic so any ground with a walkway network (a beach) can register.
+#[derive(Clone, Debug)]
+pub struct Grounds {
+    pub kind: GroundsKind,
+    pub lot: Option<LotId>,
+    pub outline: Vec<Vec2>,
+    /// Snap points on (just outside) the edge.
+    pub gates: Vec<Vec2>,
+}
+
+/// [park-paths] One snap point: where it is, whose ground, and whether a
+/// player path is joined there (`node`: the grounds' walk node it joins).
+#[derive(Clone, Debug)]
+pub struct GroundsJunction {
+    pub pos: Vec2,
+    pub kind: GroundsKind,
+    pub lot: Option<LotId>,
+    pub attached: bool,
+    pub node: Option<u32>,
+}
+
+/// [park-paths] A path end this close to a grounds' outline (or inside it)
+/// is joined to it; further out, the grounds have gone.
+pub const GROUNDS_REACH: f32 = 4.0;
+/// [park-paths] Gates are put this far outside the edge, clear of it.
+pub const GATE_OUT: f32 = 1.6;
 
 /// [tools] A footbridge over a crossing: its walkway from `top[0]` to
 /// `top[1]` at `level` above the street, and the stairs down from each end
@@ -1243,6 +1351,60 @@ impl WalkGraph {
             }
         }
         out
+    }
+
+    /// [park-paths] Join player paths to the public grounds they were drawn
+    /// to, and list every grounds' snap points. `links` are the path ends
+    /// attached to grounds; each is joined (a walk edge from the path's end
+    /// to the nearest walk node of the grounds) when grounds still lie
+    /// within `GROUNDS_REACH` of it: the returned flags say which were.
+    /// Gates within a road end's snap reach (`END_SNAP_RADIUS`) are left
+    /// out: a path drawn there joins the road instead.
+    pub fn add_grounds(&mut self, roads: &RoadNetwork, grounds: &[Grounds], links: &[Vec2]) -> Vec<bool> {
+        let mut joined = Vec::with_capacity(links.len());
+        for &p in links {
+            let near = grounds
+                .iter()
+                .enumerate()
+                .map(|(i, g)| (i, if geom::point_in_polygon(p, &g.outline) { 0.0 } else { geom::distance_to_outline(p, &g.outline) }))
+                .filter(|(_, d)| *d <= GROUNDS_REACH)
+                .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+            let Some((gi, _)) = near else {
+                joined.push(false);
+                continue;
+            };
+            let g = &grounds[gi];
+            // The path's own end: a street-side node (no lot) at the end.
+            let end = self.nearest_matching(p, 1.0, |n| self.nodes[n as usize].lot.is_none());
+            let inside = |n: u32| match g.lot {
+                Some(l) => self.nodes[n as usize].lot == Some(l),
+                None => geom::point_in_polygon(self.nodes[n as usize].pos, &g.outline),
+            };
+            let target = self.nearest_matching(p, 40.0, |n| inside(n) && Some(n) != end);
+            if let (Some(a), Some(b)) = (end, target) {
+                self.link_kind(a, b, true, g.kind == GroundsKind::Park);
+            }
+            self.junctions.push(GroundsJunction { pos: p, kind: g.kind, lot: g.lot, attached: true, node: target });
+            joined.push(true);
+        }
+        let reach = crate::roads::END_SNAP_RADIUS + 1.0;
+        for g in grounds {
+            for &q in &g.gates {
+                if links.iter().any(|l| l.distance(q) < 3.0) {
+                    continue;
+                }
+                if roads.nearest_where(q, |s| !s.is_rail()).is_some_and(|(_, _, r)| r.distance(q) < reach) {
+                    continue;
+                }
+                self.junctions.push(GroundsJunction { pos: q, kind: g.kind, lot: g.lot, attached: false, node: None });
+            }
+        }
+        joined
+    }
+
+    /// [park-paths] The snap point nearest `p` within `r`.
+    pub fn junction_near(&self, p: Vec2, r: f32) -> Option<&GroundsJunction> {
+        self.junctions.iter().filter(|j| j.pos.distance(p) <= r).min_by(|a, b| a.pos.distance(p).total_cmp(&b.pos.distance(p)))
     }
 
     /// Interior edges (alleys, loops, gates) for drawing.
