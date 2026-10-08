@@ -1380,7 +1380,10 @@ impl WalkGraph {
                 Some(l) => self.nodes[n as usize].lot == Some(l),
                 None => geom::point_in_polygon(self.nodes[n as usize].pos, &g.outline),
             };
-            let target = self.nearest_matching(p, 40.0, |n| inside(n) && Some(n) != end);
+            // A park's own walkways first (the entrance laid out to meet
+            // the path), else any walk node of the grounds.
+            let on_paths = |n: u32| g.kind != GroundsKind::Park || self.adj[n as usize].iter().any(|e| e.park);
+            let target = self.nearest_matching(p, 40.0, |n| inside(n) && on_paths(n) && Some(n) != end).or_else(|| self.nearest_matching(p, 40.0, |n| inside(n) && Some(n) != end));
             if let (Some(a), Some(b)) = (end, target) {
                 self.link_kind(a, b, true, g.kind == GroundsKind::Park);
             }
