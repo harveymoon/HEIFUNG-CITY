@@ -59,6 +59,8 @@ mod placement;
 pub use placement::PlacementSite;
 #[cfg(test)]
 mod placement_tests;
+#[cfg(test)]
+mod dock_access_tests;
 pub mod poses;
 /// [clarity] Origins and destinations, crews, crash sites.
 pub mod journeys;
@@ -416,6 +418,10 @@ pub struct World {
     stations: Vec<BuildingId>,
     #[serde(skip)]
     yards: Vec<BuildingId>,
+    /// [dock-access] Passenger stations on the railway whose street does not
+    /// reach the city yet: trains call there, nobody gets on or off.
+    #[serde(skip)]
+    halts: Vec<BuildingId>,
     /// Businesses selling each resource, with their lot centres, for the
     /// hour `seller_index_hour` was built in.
     #[serde(skip)]
@@ -641,6 +647,7 @@ impl World {
             road_component: Vec::new(),
             stations: Vec::new(),
             yards: Vec::new(),
+            halts: Vec::new(),
             seller_index: HashMap::new(),
             seller_index_hour: None,
             available: [false; 6],

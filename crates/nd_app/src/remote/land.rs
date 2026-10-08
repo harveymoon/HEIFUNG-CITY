@@ -200,6 +200,7 @@ pub fn summary(w: &World) -> Value {
         .ports
         .values()
         .map(|p| json!({ "kind": p.kind.label(), "center": v2(p.center), "berth": v2(p.berth), "water": p.water.label(), "road_connected": p.road_connected, "reaches_elsewhere": p.reaches_elsewhere, "works": p.works(), "building": p.building.map(super::view::key_str),
+            "ferries_sail": p.sails(), "stub_ends": p.building.map(|b| w.stub_ends_of(b).into_iter().map(v2).collect::<Vec<_>>()).unwrap_or_default(),
             "remote_towns": p.remote.iter().map(|t| json!({ "name": t.name, "edge": t.edge.label(), "km": round(t.km) })).collect::<Vec<_>>(), "sailings": p.sailings,
             "waiting_to_board": p.building.and_then(|b| w.ports.boarding.get(&b)).copied().unwrap_or(0) }))
         .collect();

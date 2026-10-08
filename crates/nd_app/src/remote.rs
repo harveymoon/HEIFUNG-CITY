@@ -1417,7 +1417,7 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let link = w.buildings.get(id).and_then(|b| b.rail.as_ref()).map(|l| (l.rail_connected, l.road_connected));
             let note = match link {
                 Some((true, true)) => "placed and connected",
-                Some((true, false)) => "placed on the track; join a road to its street stub",
+                Some((true, false)) => "placed on the track; trains call, nobody gets on or off until a road reaches the marked end of its street stub (road_access.stub_ends)",
                 Some((false, true)) => "placed by the street; lay track onto its rail stub",
                 Some((false, false)) => "placed; needs track to its rail stub and a road to its street stub",
                 None => "placed",
@@ -1443,7 +1443,7 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let port = w.ports.port_of(id).cloned();
             let note = match port {
                 Some(p) if p.works() => format!("{} built with its pier; ships call from the next sailing", dock.label()),
-                Some(p) if !p.road_connected => format!("{} built with its pier; join its street stub to the city's roads", dock.label()),
+                Some(p) if !p.road_connected => format!("{} built with its pier and an access road; not connected to the road network: draw a road to the marked end of its stub (road_access.stub_ends)", dock.label()),
                 _ => format!("{} built, but no ship can reach it from off the map", dock.label()),
             };
             (id, note)
@@ -1488,7 +1488,12 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     *ctx.selection = Selection::Building(id);
     ctx.tools.status = note.clone();
     let b = ctx.sim.world.buildings.get(id).map(|b| building_row(&ctx.sim.world, id, b)).unwrap_or(Value::Null);
-    Ok(json!({ "building": key_str(id), "message": note, "row": b, "treasury": round(ctx.sim.world.economy.treasury) }))
+    let mut out = json!({ "building": key_str(id), "message": note, "row": b, "treasury": round(ctx.sim.world.economy.treasury) });
+    // [dock-access] A dock or station: connected, and the stub's free end.
+    if let Some(connected) = ctx.sim.world.road_access(id) {
+        out["road_access"] = view::access_json(&ctx.sim.world, id, connected);
+    }
+    Ok(out)
 }
 
 /// [plant-groups] What a plant `kind` would be on the lot at `x`,`y`

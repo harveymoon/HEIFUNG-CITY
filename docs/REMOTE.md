@@ -319,8 +319,10 @@ within 80 m is used, as before.
 
 
 - `station`, `freight_yard`, `central_station` (also `central`, `main_station`): rail pieces, placed
-  anywhere (`World::place_rail_facility`); the reply message says whether track and street are
-  joined. The Central Station (one per city) is also a metro station and a bus terminal (a depot).
+  anywhere (`World::place_rail_facility`); no road is needed. The reply message says whether track and street are
+  joined. [dock-access] A passenger station on the track whose street is not yet on the road
+  network is a halt: trains call there, nobody gets on or off, it hires nobody. Draw a road to
+  a marked end of its street stub (`road_access.stub_ends`) and it opens. The Central Station (one per city) is also a metro station and a bus terminal (a depot).
 - `metro_station` (also `metro`, `subway_station`): a metro entrance on the lot under the point
   (`World::build_metro_station`); stations need 160 m between them. Join them with `subway {action:
   "line"}`.
@@ -348,8 +350,16 @@ within 80 m is used, as before.
   figures are in the Buildings tool's hover `note` (`tool {hover}`).
 - `shipping_port` (or `port`), `ferry_terminal` (or `ferry`): at the water's edge within 90 m of the
   point (`World::place_port`). Ports need a river at least 40 m wide or the sea; ferries any water
-  16 m or wider. Each builds a pier and, unless a street is already along its landward side, a
-  street stub to join to the city.
+  16 m or wider. Each builds a pier. [dock-access] No road is needed: unless a street is already
+  along its landward side, a dock lays its own access road, a 1+1 street with pavements running
+  14-32 m inland from its gate (turned or shortened round water, buildings and other docks), and
+  the far end (`road_access.stub_ends`) is where a road is drawn onto it; it snaps there like any
+  road end. Until it is on the road network (a road component with zoned lots, or one reaching
+  off the map) a ferry terminal's boats still sail but carry no one, a port lands nothing and a
+  marina or fishing port does not open; nobody is hired and no lorry or taxi is sent there.
+  Docks placed over zoned land take the ground out of the zone (zoned lots under the footprint
+  go) and are drawn as themselves at once; `bulldoze {building}` on a dock takes it and its pier
+  away and gives the ground back to the plan (its access road stays).
 - `toll_booth` (also `toll`), `toll_plaza` (also `plaza`): across the road at the point
   (`World::place_toll`), not on a lot: the nearest street or highway piece within 15 m that has a
   straight run either side (booth 18 m, plaza 50 m between junctions or bends; a click near a
@@ -365,7 +375,12 @@ within 80 m is used, as before.
   treasury. Costs, upkeep, jobs, coverage radius, vehicles and capacity per tier are in
   `nd_sim::services::ServiceKind`.
 
-Reply: `building` id, `message`, `row`, `treasury`; or the sim's reason as `error`.
+Reply: `building` id, `message`, `row`, `treasury`; or the sim's reason as `error`. For a dock,
+station or yard the reply adds [dock-access] `road_access` {`connected`, `stub_ends` ([[x, y]]: the
+free ends of its street stub to draw a road to; empty once joined), `problem` (what is held up,
+or null)}; `inspect {building}` carries the same `road_access`, and for a dock `dock` {kind,
+road_connected, reaches_elsewhere, works, ferries_sail, berth, stub}. `report`'s alerts add
+`dock_not_connected`.
 
 ```json
 {"cmd": "place", "kind": "solar", "x": -210, "y": -210}

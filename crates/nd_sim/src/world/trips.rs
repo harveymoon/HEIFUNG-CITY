@@ -448,6 +448,8 @@ impl World {
             .buildings
             .iter()
             .filter(|(id, b)| b.free_jobs() as usize > taken.iter().filter(|t| *t == id).count())
+            // [dock-access] A dock or station off the roads hires nobody yet.
+            .filter(|(id, b)| !((b.port.is_some() || b.rail.is_some()) && self.road_access(*id) == Some(false)))
             .map(|(id, b)| (b.staffing() - bonus(b), id))
             .collect();
         let best = scored.iter().map(|(s, _)| *s).fold(f32::INFINITY, f32::min);
