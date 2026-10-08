@@ -2186,6 +2186,29 @@ tab's sub-tabs:
   Trade.
 - **People**: Population, Income and inequality, Complaints and concerns, Social, Favourites.
 - **Services**: Power, Transit, Emergencies.
+- **Directory**: Businesses, People ([directory], `ui/directory.rs`, rows from `directory.rs`).
+
+The Directory lists every business and every person in one table each, with a column per thing
+the player asks of them. Businesses: name, kind (and industry), owner (chain, developer,
+billionaire, founder; "independent" when nobody holds it), district, the street it fronts,
+staff of jobs, takings today and yesterday, yesterday's net, cash, rating (stars) and today's
+footfall, and its state (under construction, out of business, broke, no staff, open, closed for
+the night). People: name, age, class, income, workplace (or unemployed, child, retired), home and
+its street, household size, mood, health (ill, or how well fed and days hungry), the way they
+have travelled most lately, favourite place, friends, and what they are doing now (working, at
+home, asleep, out, on the move, ill, homeless, arriving, away). A click on a heading sorts by it
+(numbers biggest first), again reverses it, and a painted arrow marks it; values missing (no
+rating yet, no job) sit at the bottom either way and ties go by name. A search box (every word
+must appear in the row's name, kind, owner, street, district, workplace or home) and pickers
+(kind, district and state; class, district and status) narrow it, with a count of the rows shown.
+Cities run to ten thousand people, so the table body is a `ScrollArea::show_rows` that lays out
+only the rows in view (each painted by hand: no widget per cell), under a header that stays put.
+The rows are a snapshot read from the world once every five seconds while the page shows (and
+at once on another city), and the sorted, filtered order is cached beside it, made again only
+when the sort, the filter or the snapshot changes; both live in egui memory with the page's
+settings. A click on a row selects it (the inspector opens over the page); "go" or a double
+click flies there and shows the map. The API's `directory` returns the same rows in the same
+order.
 
 Tools stay floating windows above it, because they are used with the map: the inspector and
 person pane, the Build window, the Lines editor, View (map layers, lighting, graphics, text size),

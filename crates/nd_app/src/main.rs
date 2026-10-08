@@ -7,6 +7,8 @@ mod build_highlight;
 mod camera;
 /// [committee] The mayor's AI committee in the running game.
 mod committee;
+/// [directory] Every business and person as sortable rows (City Data's Directory).
+mod directory;
 mod district_tool;
 mod fire_scene;
 mod flags;

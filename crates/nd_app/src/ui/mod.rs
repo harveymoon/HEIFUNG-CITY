@@ -19,6 +19,8 @@ mod concerns;
 /// [city-data] The full-screen City Data view: tabs, sub-tabs, pages.
 pub mod city_data;
 mod detail;
+/// [directory] City Data's Directory: every business and person, sortable.
+pub mod directory;
 mod economy;
 /// [districts] The District tool's pane and City Data's Districts and Tourism pages.
 mod districts;
