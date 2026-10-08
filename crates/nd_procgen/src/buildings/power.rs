@@ -132,7 +132,7 @@ pub(crate) fn coal_layout(poly: &[Vec2], seed: u64, scale: f32) -> CoalLayout {
     let roomy = lot_area > plant_area * 1.4;
     let (cw, cd) = if roomy {
         let cw = (plant_area * 1.3).sqrt().max(30.0).min(w);
-        (cw, (plant_area * 1.3 / cw).clamp(26.0, d))
+        (cw, (plant_area * 1.3 / cw).max(26.0).min(d))
     } else {
         (w, d)
     };
@@ -383,7 +383,7 @@ pub fn coal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         smokestack(g, f, q, r, h, pal.aviation_light, tone);
         if let Some(&(p, bh_half, bh)) = unit.and_then(|i| lay.boilers.get(i)) {
             let y = (bh * 0.62).min(h * 0.4);
-            let from = Vec2::new(q.x.clamp(p.x - bh_half.x + 1.0, p.x + bh_half.x - 1.0), p.y + bh_half.y);
+            let from = Vec2::new(crate::mesh::clamp_safe(q.x, p.x - bh_half.x + 1.0, p.x + bh_half.x - 1.0), p.y + bh_half.y);
             let a = f.at(from.x, y, from.y);
             let b = f.at(q.x, y, q.y);
             g.part(Metal).tube(a, b, 1.3, 10, rgba(mul(BLACK_STEEL, 0.9)));
@@ -422,7 +422,7 @@ pub fn coal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         for &(b, bh_half, _) in &lay.boilers {
             for (k, y) in [6.0f32, 7.2].iter().enumerate() {
                 let du = (k as f32 - 0.5) * 1.4;
-                let u = (b.x + du).clamp(p.x - h.x + 1.0, p.x + h.x - 1.0);
+                let u = crate::mesh::clamp_safe(b.x + du, p.x - h.x + 1.0, p.x + h.x - 1.0);
                 let pts = [Vec3::new(u, *y, p.y + h.y), Vec3::new(u, *y, (p.y + h.y + b.y - bh_half.y) * 0.5), Vec3::new(b.x + du, *y, b.y - bh_half.y)];
                 if pts[2].z > pts[0].z {
                     pipe_run(g, f, &pts, 0.45, mul(pal.steel, 0.35));

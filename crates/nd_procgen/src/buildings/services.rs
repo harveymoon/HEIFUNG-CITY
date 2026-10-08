@@ -493,7 +493,7 @@ pub fn stadium(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let (a, b) = (outer[i], outer[j]);
         let mid = (a + b) * 0.5;
         let out = (mid - center).normalize_or_zero() * 0.08;
-        let led = mul(pal.led_colors[i % pal.led_colors.len().max(1)], 0.8);
+        let led = mul(crate::palette::at(&pal.led_colors, i), 0.8);
         g.part(Glow).quad_facing([f.at2(a + out, h * 0.55), f.at2(b + out, h * 0.55), f.at2(b + out, h * 0.62), f.at2(a + out, h * 0.62)], f.at2(mid + out * 10.0, 0.0) - f.at2(mid, 0.0), rgba(led));
     }
     // Gates at the road side.

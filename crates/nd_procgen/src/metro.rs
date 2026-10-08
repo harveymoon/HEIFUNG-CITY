@@ -54,26 +54,32 @@ pub fn tunnels(lines: &[TunnelLine], stations: &[PlatformSite], ground: &dyn Fn(
     let rail = rgba([0.55, 0.55, 0.6]);
     for line in lines {
         let glow = rgba(mul(line_colour(line.colour), 0.8));
-        for w in line.path.windows(2) {
-            let (a, b) = (w[0], w[1]);
-            if a.distance(b) < 0.05 {
-                continue;
+        // The whole line as one mitred path, its floor at `DEPTH` under the
+        // ground at every vertex: no steps on a slope, no gaps or overlaps
+        // at a bend (each leg used to be a box at its own middle's depth).
+        let mut pts: Vec<Vec2> = Vec::with_capacity(line.path.len());
+        for p in line.path {
+            if pts.last().is_none_or(|q: &Vec2| q.distance(*p) >= 0.05) {
+                pts.push(*p);
             }
-            let y = ground((a + b) * 0.5) - DEPTH;
-            for side in [-1.0f32, 1.0] {
-                let c = side * TRACK_OFFSET;
-                // Floor and the two walls of the bore (no roof: the view
-                // looks down into it), track and the lit strip on the wall.
-                g.part(Concrete).strip_box(a, b, c, BORE_HALF * 2.0, y - 0.3, y, floor);
-                g.part(Concrete).strip_box(a, b, c + side * BORE_HALF, 0.35, y, y + BORE_H, wall);
-                for r in [-0.72f32, 0.72] {
-                    g.part(Metal).strip_box(a, b, c + r, 0.08, y, y + 0.18, rail);
-                }
-                g.part(Glow).strip_box(a, b, c + side * (BORE_HALF - 0.2), 0.08, y + 2.6, y + 2.75, glow);
-            }
-            // The wall between the bores.
-            g.part(Concrete).strip_box(a, b, 0.0, TRACK_OFFSET * 2.0 - BORE_HALF * 2.0 + 0.3, y, y + BORE_H, wall);
         }
+        if pts.len() < 2 {
+            continue;
+        }
+        let ys: Vec<f32> = pts.iter().map(|p| ground(*p) - DEPTH).collect();
+        for side in [-1.0f32, 1.0] {
+            let c = side * TRACK_OFFSET;
+            // Floor and the two walls of the bore (no roof: the view looks
+            // down into it), track and the lit strip on the wall.
+            sloped_box(g.part(Concrete), &pts, &ys, c, BORE_HALF * 2.0, -0.3, 0.0, floor);
+            sloped_box(g.part(Concrete), &pts, &ys, c + side * BORE_HALF, 0.35, 0.0, BORE_H, wall);
+            for r in [-0.72f32, 0.72] {
+                sloped_box(g.part(Metal), &pts, &ys, c + r, 0.08, 0.0, 0.18, rail);
+            }
+            sloped_box(g.part(Glow), &pts, &ys, c + side * (BORE_HALF - 0.2), 0.08, 2.6, 2.75, glow);
+        }
+        // The wall between the bores.
+        sloped_box(g.part(Concrete), &pts, &ys, 0.0, TRACK_OFFSET * 2.0 - BORE_HALF * 2.0 + 0.3, 0.0, BORE_H, wall);
     }
     for s in stations {
         let y = ground(s.at) - DEPTH;
@@ -87,12 +93,10 @@ pub fn tunnels(lines: &[TunnelLine], stations: &[PlatformSite], ground: &dyn Fn(
             g.part(Concrete).strip_box(a, b, side * (TRACK_OFFSET + BORE_HALF + 1.2), 0.4, y - 0.3, y + 6.0, wall);
             g.part(Glow).strip_box(a, b, side * (TRACK_OFFSET + BORE_HALF + 0.95), 0.06, y + 3.2, y + 3.6, glow);
         }
-        let n = Vec2::new(-d.y, d.x);
         for k in 0..6 {
             let p = a.lerp(b, (k as f32 + 0.5) / 6.0);
             g.part(Glow).boxed(Vec3::new(p.x, y + 4.6, p.y), Vec3::new(5.0, 0.15, 0.6), d.y.atan2(d.x), rgba([1.4, 1.35, 1.2]));
-            let q = p + n * 0.0;
-            g.part(Concrete).boxed(Vec3::new(q.x, y + 3.0, q.y), Vec3::new(0.5, 4.0, 0.5), 0.0, wall);
+            g.part(Concrete).boxed(Vec3::new(p.x, y + 3.0, p.y), Vec3::new(0.5, 4.0, 0.5), 0.0, wall);
         }
         // The shaft up to the street: escalators in a lit box.
         let top = ground(s.entrance);
@@ -105,6 +109,30 @@ pub fn tunnels(lines: &[TunnelLine], stations: &[PlatformSite], ground: &dyn Fn(
         g.part(Concrete).boxed(Vec3::new(e.x, (y + top) * 0.5 - 0.5, e.y), Vec3::new(3.2, (top - y - 1.0).max(1.0), 3.2), yaw, rgba([0.25, 0.26, 0.29]));
     }
     g
+}
+
+/// A box along the mitred path `pts`, `offset` to the right and `width`
+/// across, from `dy0` to `dy1` over the height `ys[i]` at each vertex.
+#[allow(clippy::too_many_arguments)]
+fn sloped_box(m: &mut crate::mesh::MeshData, pts: &[Vec2], ys: &[f32], offset: f32, width: f32, dy0: f32, dy1: f32, color: [f32; 4]) {
+    let l = crate::mesh::offset_path(pts, offset - width * 0.5);
+    let r = crate::mesh::offset_path(pts, offset + width * 0.5);
+    let n = l.len().min(r.len()).min(ys.len());
+    if n < 2 {
+        return;
+    }
+    let at = |p: Vec2, i: usize, dy: f32| Vec3::new(p.x, ys[i] + dy, p.y);
+    for i in 0..n - 1 {
+        let j = i + 1;
+        let d = (pts[j] - pts[i]).normalize_or_zero();
+        let out_l = Vec3::new(d.y, 0.0, -d.x);
+        m.quad_facing([at(l[i], i, dy1), at(l[j], j, dy1), at(r[j], j, dy1), at(r[i], i, dy1)], Vec3::Y, color);
+        m.quad_facing([at(l[i], i, dy0), at(l[j], j, dy0), at(l[j], j, dy1), at(l[i], i, dy1)], out_l, color);
+        m.quad_facing([at(r[i], i, dy0), at(r[j], j, dy0), at(r[j], j, dy1), at(r[i], i, dy1)], -out_l, color);
+    }
+    let (d0, d1) = ((pts[1] - pts[0]).normalize_or_zero(), (pts[n - 1] - pts[n - 2]).normalize_or_zero());
+    m.quad_facing([at(l[0], 0, dy0), at(r[0], 0, dy0), at(r[0], 0, dy1), at(l[0], 0, dy1)], Vec3::new(-d0.x, 0.0, -d0.y), color);
+    m.quad_facing([at(l[n - 1], n - 1, dy0), at(r[n - 1], n - 1, dy0), at(r[n - 1], n - 1, dy1), at(l[n - 1], n - 1, dy1)], Vec3::new(d1.x, 0.0, d1.y), color);
 }
 
 /// One metro car at the origin along +x, `CAR_LEN` long: a dark body, a
@@ -151,5 +179,44 @@ mod tests {
         assert!(top < 5.0 - DEPTH + 6.5, "bores and platforms stay underground: {top}");
         assert!(metro_car(3).triangle_count() > 20);
         assert_eq!(line_colour(9), LINE_COLOURS[1]);
+    }
+
+    /// Review #10: on a slope and round a bend the bore floor is one
+    /// surface: every point along each track has floor right under it, at
+    /// the depth below the ground there (each leg used to be a level box at
+    /// its middle's depth, stepping on slopes and gapping at bends).
+    #[test]
+    fn bore_floors_are_continuous_on_slopes_and_bends() {
+        let path = [Vec2::ZERO, Vec2::new(60.0, 0.0), Vec2::new(110.0, 45.0), Vec2::new(120.0, 120.0)];
+        let lines = [TunnelLine { path: &path, colour: 2 }];
+        let ground = |p: Vec2| 20.0 + p.x * 0.12 + p.y * 0.05;
+        let g = tunnels(&lines, &[], &ground);
+        let m = g.get(Concrete);
+        let tops: Vec<[Vec3; 3]> = m
+            .indices
+            .chunks_exact(3)
+            .map(|t| [t[0], t[1], t[2]].map(|i| Vec3::from(m.positions[i as usize])))
+            .filter(|v| (v[1] - v[0]).cross(v[2] - v[0]).normalize_or_zero().y > 0.9)
+            .collect();
+        let len = crate::mesh::path_length(&path);
+        for k in 0..=200 {
+            let (p, d) = crate::mesh::point_along(&path, len * k as f32 / 200.0);
+            for side in [-1.0f32, 1.0] {
+                let q = p + Vec2::new(-d.y, d.x) * side * TRACK_OFFSET;
+                // Level across the line, at the depth under its centre.
+                let want = ground(p) - DEPTH;
+                // The floor: the up-facing face under the track's middle
+                // (the rails stand either side of it).
+                let under = tops.iter().filter_map(|v| {
+                    let (a, b, c) = (Vec2::new(v[0].x, v[0].z), Vec2::new(v[1].x, v[1].z), Vec2::new(v[2].x, v[2].z));
+                    let area = (b - a).perp_dot(c - a);
+                    let (u, w) = ((q - a).perp_dot(c - a) / area, (b - a).perp_dot(q - a) / area);
+                    (u >= -1e-3 && w >= -1e-3 && u + w <= 1.0 + 1e-3).then(|| v[0].y + (v[1].y - v[0].y) * u + (v[2].y - v[0].y) * w)
+                }).fold(f32::MIN, f32::max);
+                // A mitred corner carries its vertex's depth a little way
+                // along the inside of the bend.
+                assert!((under - want).abs() < 0.25, "at {q}: floor at {under}, the depth under the ground is {want}");
+            }
+        }
     }
 }

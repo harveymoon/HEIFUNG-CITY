@@ -287,8 +287,66 @@ fn plaza(g: &mut Geometry, c: &Ctx, seed: u64, site: &[Vec2], pod: &[Vec2]) {
 fn shaft(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], y0: f32, y1: f32, s: crate::surface::Surface, wall: [f32; 3], band: [f32; 3]) {
     let f = &c.frame;
     extrude(g, f, s, poly, y0, y1, wall);
-    loft(g, f, Panel, &offset_poly(poly, -0.15), &offset_poly(poly, -0.15), y1 - 0.5, y1, band);
+    // Sides only: its caps would lie in the shaft's top and the next
+    // section's bottom.
+    let edge = offset_poly(poly, -0.15);
+    super::parts::band(g, f, Panel, &edge, &edge, y1 - 0.5, y1, band);
     lights(g, c, rng, poly, y0, y1);
+}
+
+/// `a` and `b` (same vertex count) mixed `t` of the way: the plan of a
+/// lofted section at a height inside it.
+fn lerp_plan(a: &[Vec2], b: &[Vec2], t: f32) -> Vec<Vec2> {
+    if a.len() != b.len() {
+        return a.to_vec();
+    }
+    a.iter().zip(b).map(|(p, q)| p.lerp(*q, t)).collect()
+}
+
+/// The plan at height `y` of a shaft lofted in `sections` straight sections
+/// from `plan(0)` at `y0` to `plan(1)` at `y1`: on the glass, not on the
+/// plan of the section's foot.
+fn plan_at(plan: &impl Fn(f32) -> Vec<Vec2>, sections: i32, y0: f32, y1: f32, y: f32) -> Vec<Vec2> {
+    let k = ((y - y0) / (y1 - y0).max(1e-3)).clamp(0.0, 1.0) * sections as f32;
+    let i = (k.floor() as i32).min(sections - 1).max(0);
+    lerp_plan(&plan(i as f32 / sections as f32), &plan((i + 1) as f32 / sections as f32), k - i as f32)
+}
+
+/// [`lights`] on a lofted section from `prev` at `y0` to `next` at `y1`:
+/// each row on the plan at its own height, so a twisting or tapering shaft
+/// keeps its lights on the glass.
+fn lofted_lights(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, prev: &[Vec2], next: &[Vec2], y0: f32, y1: f32) {
+    let floors = ((y1 - y0) / FH).floor() as i32;
+    if floors < 1 {
+        return;
+    }
+    let (rows, rh) = if y0 < 200.0 { (floors, FH) } else { ((floors / 2).max(1), FH * 2.0) };
+    for k in 0..rows {
+        let y = y0 + k as f32 * rh;
+        let plan = lerp_plan(prev, next, (y + rh * 0.5 - y0) / (y1 - y0));
+        curtain_lights(g, c, rng, &plan, y, 1, rh);
+    }
+}
+
+/// [`lit_band`] on a lofted section: each floor on the plan at its height.
+#[allow(clippy::too_many_arguments)]
+fn lofted_lit_band(g: &mut Geometry, c: &Ctx, prev: &[Vec2], next: &[Vec2], ys0: f32, ys1: f32, y0: f32, floors: i32, color: [f32; 3]) {
+    let f = &c.frame;
+    for k in 0..floors {
+        let y = y0 + k as f32 * FH + FH * 0.5;
+        let plan = lerp_plan(prev, next, (y - ys0) / (ys1 - ys0).max(1e-3));
+        for (fi, face) in c.faces(&plan).iter().enumerate() {
+            let segs = (face.len / 3.2).floor().max(1.0) as i32;
+            let seg = face.len / segs as f32;
+            for i in 0..segs {
+                if (i * 7 + k * 3 + fi as i32 * 5) % 9 == 0 {
+                    continue;
+                }
+                let t = -face.len * 0.5 + (i as f32 + 0.5) * seg;
+                face.decal(g, f, Glow, t, y, 0.12, seg * 0.85, FH * 0.5, color);
+            }
+        }
+    }
 }
 
 fn lights(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], y0: f32, y1: f32) {
@@ -357,18 +415,21 @@ fn mast(g: &mut Geometry, c: &Ctx, p: Vec2, r0: f32, y0: f32, y1: f32, neon: [f3
         let yb = y0 + (y1 - y0) * b;
         loft(g, f, Metal, &ngon(p.x, p.y, ra, 8, PI / 8.0), &ngon(p.x, p.y, rb, 8, PI / 8.0), ya, yb, steel);
         if rings && k > 0 {
-            g.part(Glow).frustum(&f.poly3(&ngon(p.x, p.y, ra + 0.35, 8, PI / 8.0), ya - 0.9), &f.poly3(&ngon(p.x, p.y, ra + 0.35, 8, PI / 8.0), ya + 0.9), rgba(neon));
+            // A band: its caps would be inside the mast.
+            g.part(Glow).band(&f.poly3(&ngon(p.x, p.y, ra + 0.35, 8, PI / 8.0), ya - 0.9), &f.poly3(&ngon(p.x, p.y, ra + 0.35, 8, PI / 8.0), ya + 0.9), rgba(neon));
         }
     }
     f.bx(g, Glow, p.x, y1 + 1.0, p.y, Vec3::splat(2.0), c.palette.aviation_light);
     f.bx(g, Glow, p.x, y0 + (y1 - y0) * 0.5, p.y, Vec3::splat(r0 * 0.6 + 0.5), c.palette.aviation_light);
 }
 
-/// Aviation lights up the shaft: every ninety metres or so.
-fn aviation_up(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y0: f32, y1: f32) {
+/// Aviation lights up the shaft: every ninety metres or so, on the plan
+/// the shaft has at that height (`plan(y)`), so they stay on a tapering or
+/// twisting tower instead of hanging in the air beside it.
+fn aviation_up(g: &mut Geometry, c: &Ctx, plan: impl Fn(f32) -> Vec<Vec2>, y0: f32, y1: f32) {
     let mut y = y0 + 90.0;
     while y < y1 - 20.0 {
-        aviation(g, c, poly, y);
+        aviation(g, c, &plan(y), y);
         y += 90.0;
     }
 }
@@ -399,7 +460,9 @@ fn deco_spire(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Ve
             let step = face.len / n as f32;
             for j in 0..n {
                 let tt = -face.len * 0.5 + (j as f32 + 0.5) * step;
-                face.decal(g, f, Glass, tt, (y0 + y1) * 0.5, 0.04, step * 0.55, (y1 - y0) - 1.0, mul(pal.glass_dark, 1.1));
+                // 3 cm out: clear of the dark glass a switchable window
+                // light lays 1.3 cm behind itself (0.037).
+                face.decal(g, f, Glass, tt, (y0 + y1) * 0.5, 0.03, step * 0.55, (y1 - y0) - 1.0, mul(pal.glass_dark, 1.1));
                 face.bx(g, f, Stone, tt - step * 0.5, (y0 + y1) * 0.5, 0.2, Vec3::new(0.7, y1 - y0, 0.4), pier);
             }
         }
@@ -424,12 +487,18 @@ fn deco_spire(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Ve
         last = plan;
         y0 = y1;
     }
-    aviation_up(g, c, &rect(seat.x, seat.y, hw, hd), base, top * 0.86);
+    // The tier standing at each height.
+    let tier_plan = |y: f32| {
+        let k = tiers.iter().find(|(share, _)| y <= base + (top - base) * share).map_or(tiers[3].1, |t| t.1);
+        rect(seat.x, seat.y, hw * k, hd * k)
+    };
+    aviation_up(g, c, tier_plan, base, top * 0.86);
     // A stepped lantern and the mast.
     let lantern = rect(seat.x, seat.y, hw * 0.24, hd * 0.24 / 0.78 * 0.78);
     extrude(g, f, Stone, &lantern, top, top + 8.0, stone);
     glow_outline(g, c, &lantern, top + 8.4, 0.8, gold);
-    extrude(g, f, Glow, &scale_poly(&lantern, 1.02), top + 2.0, top + 5.0, mul(gold, 0.8));
+    let lit = scale_poly(&lantern, 1.02);
+    super::parts::band(g, f, Glow, &lit, &lit, top + 2.0, top + 5.0, mul(gold, 0.8));
     let _ = last;
     mast(g, c, seat, (hw * 0.12).clamp(0.8, 3.0), top + 8.0, t.height, gold, true);
 }
@@ -510,7 +579,7 @@ fn bundled(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2,
         let tip = (nose[2] + nose[3]) * 0.5;
         f.bx(g, Panel, tip.x, (base + base + seg) * 0.5, tip.y, Vec3::new(0.5, seg, 0.5), steel);
     }
-    aviation_up(g, c, &core, base, core_top);
+    aviation_up(g, c, |_| core.clone(), base, core_top);
     // The crown: the core's last floors lit, then the needle.
     glow_outline(g, c, &offset_poly(&core, -0.3), core_top - 2.0, 1.2, neon);
     glow_outline(g, c, &offset_poly(&core, -0.3), core_top - 7.0, 0.8, mul(neon, 0.8));
@@ -552,15 +621,18 @@ fn twist(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2, r
         let y0 = base + k as f32 * sh;
         let next = plate((k + 1) as f32 / sections as f32);
         loft(g, f, Glass, &prev, &next, y0, y0 + sh, glass);
-        loft(g, f, Panel, &offset_poly(&next, -0.2), &offset_poly(&next, -0.2), y0 + sh - 0.4, y0 + sh, band);
-        lights(g, c, rng, &prev, y0, y0 + sh);
+        // The floor band round the section's top: on the glass there, and
+        // without caps.
+        let low = offset_poly(&lerp_plan(&prev, &next, 1.0 - 0.4 / sh), -0.2);
+        super::parts::band(g, f, Panel, &low, &offset_poly(&next, -0.2), y0 + sh - 0.4, y0 + sh, band);
+        lofted_lights(g, c, rng, &prev, &next, y0, y0 + sh);
         // [sweep-visual] The top sections and a band every quarter stay lit.
         if k >= sections - 2 || (k > 0 && k % (sections / 4).max(2) == 0) {
-            lit_band(g, c, &prev, y0, ((sh / FH) as i32).clamp(1, 2), landmark_light(c, neon));
+            lofted_lit_band(g, c, &prev, &next, y0, y0 + sh, y0, ((sh / FH) as i32).clamp(1, 2), landmark_light(c, neon));
         }
         prev = next;
     }
-    aviation_up(g, c, &plate(0.0), base, top);
+    aviation_up(g, c, |y| plan_at(&plate, sections, base, top, y), base, top);
     // A halo crown: rings of neon over an open frame, and a short mast.
     for (i, k) in [0.0f32, 6.0, 12.0].iter().enumerate() {
         let ring = scale_poly(&prev, 1.0 - 0.08 * i as f32);
@@ -600,10 +672,10 @@ fn needle(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2, 
         let y0 = base + k as f32 * sh;
         let next = plan((k + 1) as f32 / sections as f32);
         loft(g, f, Glass, &prev, &next, y0, y0 + sh, glass);
-        lights(g, c, rng, &prev, y0, y0 + sh);
+        lofted_lights(g, c, rng, &prev, &next, y0, y0 + sh);
         // [sweep-visual] The top sections and a band every quarter stay lit.
         if k >= sections - 2 || (k > 0 && k % (sections / 4).max(2) == 0) {
-            lit_band(g, c, &prev, y0, ((sh / FH) as i32).clamp(1, 2), landmark_light(c, neon));
+            lofted_lit_band(g, c, &prev, &next, y0, y0 + sh, y0, ((sh / FH) as i32).clamp(1, 2), landmark_light(c, neon));
         }
         // Neon edges up the chamfered corners.
         for i in (0..8).step_by(2) {
@@ -612,13 +684,14 @@ fn needle(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2, 
         }
         prev = next;
     }
-    aviation_up(g, c, &plan(0.0), base, top);
+    aviation_up(g, c, |y| plan_at(&plan, sections, base, top, y), base, top);
     glow_outline(g, c, &offset_poly(&prev, -0.3), top + 0.6, 1.2, neon);
     // A sky deck: a glass drum with a lit rim, then the long needle.
     let deck = ngon(seat.x, seat.y, inradius(&prev).max(3.0) * 1.15, 12, 0.0);
     extrude(g, f, Glass, &deck, top, top + 7.0, mul(glass, 1.3));
     glow_outline(g, c, &offset_poly(&deck, -0.3), top + 7.4, 1.0, mul(pal.window_cold, 1.2));
-    extrude(g, f, Glow, &scale_poly(&deck, 0.98), top + 2.0, top + 4.5, mul(neon, 0.7));
+    let lit = scale_poly(&deck, 0.98);
+    super::parts::band(g, f, Glow, &lit, &lit, top + 2.0, top + 4.5, mul(neon, 0.7));
     mast(g, c, seat, (r * 0.14).clamp(0.8, 3.5), top + 7.0, t.height, neon, true);
 }
 
@@ -811,6 +884,92 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// Distance from `p` to the triangle `a b c`.
+    fn to_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f32 {
+        let n = (b - a).cross(c - a);
+        if n.length_squared() < 1e-12 {
+            return f32::MAX;
+        }
+        let n = n.normalize();
+        let q = p - n * (p - a).dot(n);
+        let inside = [(a, b), (b, c), (c, a)].iter().all(|(u, v)| (*v - *u).cross(q - *u).dot(n) >= 0.0);
+        if inside {
+            return (p - q).length();
+        }
+        let seg = |u: Vec3, v: Vec3| {
+            let t = ((p - u).dot(v - u) / (v - u).length_squared().max(1e-12)).clamp(0.0, 1.0);
+            (p - (u + (v - u) * t)).length()
+        };
+        seg(a, b).min(seg(b, c)).min(seg(c, a))
+    }
+
+    /// The farthest an aviation light and a window light (marked, drawn
+    /// with dynamic lights) of `g` stand from the building's mass, with
+    /// where.
+    fn light_gaps(g: &Geometry, red: [f32; 3]) -> ((f32, Vec3), (f32, Vec3)) {
+        let mass: Vec<[Vec3; 3]> = [Surface::Glass, Surface::Stone, Surface::Panel, Surface::Metal, Surface::Concrete]
+            .iter()
+            .flat_map(|s| {
+                let m = g.get(*s);
+                m.indices.chunks_exact(3).map(move |t| [t[0], t[1], t[2]].map(|i| Vec3::from(m.positions[i as usize]))).collect::<Vec<_>>()
+            })
+            .collect();
+        let glow = g.get(Surface::Glow);
+        // The beacon over the tip of the mast stands clear of it by design.
+        let top = mass.iter().flatten().map(|v| v.y).fold(0.0f32, f32::max);
+        let (mut aviation, mut other) = ((0.0f32, Vec3::ZERO), (0.0f32, Vec3::ZERO));
+        // Each light's centre: the light boxes and decals are small, so
+        // their vertex mean stands for them.
+        for t in glow.indices.chunks_exact(6) {
+            let ids: Vec<usize> = t.iter().map(|i| *i as usize).collect();
+            let p = ids.iter().map(|&i| Vec3::from(glow.positions[i])).sum::<Vec3>() / ids.len() as f32;
+            let col = glow.colors[ids[0]];
+            let is_red = (col[0] - red[0]).abs() < 1e-3 && (col[1] - red[1]).abs() < 1e-3;
+            if p.y > top - 1.0 {
+                continue;
+            }
+            let near = mass.iter().filter(|tri| tri.iter().map(|v| v.y).fold(f32::MAX, f32::min) < p.y + 3.0 && tri.iter().map(|v| v.y).fold(f32::MIN, f32::max) > p.y - 3.0).map(|tri| to_triangle(p, tri[0], tri[1], tri[2])).fold(f32::MAX, f32::min);
+            let window = col[3] >= WINDOW_LIGHT_MARK;
+            if !is_red && !window {
+                continue;
+            }
+            let slot = if is_red { &mut aviation } else { &mut other };
+            if near > slot.0 {
+                *slot = (near, p);
+            }
+        }
+        (aviation, other)
+    }
+
+    /// Lights sit on the surfaces at their height: the aviation lights on
+    /// the shaft as it tapers and steps back, the window lights and lit
+    /// bands on the twisting and tapering glass rather than on the plan of
+    /// the section's foot.
+    #[test]
+    fn lights_stay_on_the_shafts() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let lot = lots().into_iter().max_by(|a, b| a.area().total_cmp(&b.area())).unwrap();
+        for (i, design) in TowerDesign::ALL.into_iter().enumerate() {
+            for height in [420.0f32, 820.0] {
+                let t = Tower { height, design, seed: 7 + i as u64, started_day: 0, topped_out_day: None, record_bid: false };
+                let ex = Extras { tower: Some(t), form: Some(nd_sim::estate::Form::Tower), dynamic_lights: true, ..Extras::default() };
+                let g = generate_building(&lot, LandUse::Commercial, t.floors(), Tier::High, 1.0, 3, &rules, &pal, &ex);
+                let ((a, pa), (o, po)) = light_gaps(&g, pal.aviation_light);
+                assert!(a < 1.6, "{design:?} {height} m: an aviation light {a:.1} m off the tower at {pa}");
+                assert!(o < 0.4, "{design:?} {height} m: a window light {o:.2} m off the glass at {po}");
+            }
+        }
+        // The commercial twist tower and the glass castle's seams.
+        for style in [Style::TwistTower, Style::Fortress] {
+            for seed in 0..4 {
+                let g = generate_styled_extras(&lot, LandUse::Commercial, 30, Tier::High, 1.0, seed, style, &rules, &pal, &Extras { dynamic_lights: true, ..Extras::default() });
+                let (_, (o, po)) = light_gaps(&g, pal.aviation_light);
+                assert!(o < 0.4, "{style:?} seed {seed}: a window light {o:.2} m off the glass at {po}");
             }
         }
     }

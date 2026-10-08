@@ -66,7 +66,7 @@ pub fn footbridges(world: &World, palette: &Palette) -> Geometry {
                 // Step k counted down from the top.
                 let c = top + along * (tread * (k as f32 + 0.5));
                 let h = z - rise * (k as f32 + 1.0) / steps as f32;
-                g.part(Surface::Concrete).boxed(Vec3::new(c.x, h + STEP_RISE * 0.5 - 0.02, c.y), Vec3::new(tread + 0.02, STEP_RISE, w - 0.2), -yaw, rgba(mul(concrete, 1.05)));
+                g.part(Surface::Concrete).boxed(Vec3::new(c.x, h + STEP_RISE * 0.5 - 0.02, c.y), Vec3::new(tread + 0.02, STEP_RISE, w - 0.2), yaw, rgba(mul(concrete, 1.05)));
             }
             // The stringer slab under the steps.
             let top3 = Vec3::new(top.x, z - DECK_DEPTH, top.y);
@@ -85,7 +85,7 @@ pub fn footbridges(world: &World, palette: &Palette) -> Geometry {
             // A column under the stair head, on the pavement.
             let col = top + along * 0.6;
             let cz = ground(col);
-            g.part(Surface::Concrete).boxed(Vec3::new(col.x, (z - DECK_DEPTH + cz) * 0.5, col.y), Vec3::new(0.7, z - DECK_DEPTH - cz, 0.7), -yaw, rgba(mul(concrete, 0.8)));
+            g.part(Surface::Concrete).boxed(Vec3::new(col.x, (z - DECK_DEPTH + cz) * 0.5, col.y), Vec3::new(0.7, z - DECK_DEPTH - cz, 0.7), yaw, rgba(mul(concrete, 0.8)));
         }
     }
     g
@@ -137,5 +137,23 @@ mod tests {
         let (left, beacons_left) = paint_near(&closed);
         assert!(beacons > 0 && beacons_left == 0, "the beacons go: {beacons} -> {beacons_left}");
         assert!(paint >= left + 40, "the stripes go: {paint} -> {left}");
+    }
+
+    /// Review #4: on a footbridge across a way at 45 degrees the steps run
+    /// across the stair and the stair-head columns stand square to it (they
+    /// were turned by twice the angle).
+    #[test]
+    fn steps_lie_across_their_stair_at_any_angle() {
+        for deg in [45.0f32, 30.0, 0.0] {
+            let mut w = World::new(WorldConfig { landscape: nd_sim::landscape::LandscapeParams::flat(), ..WorldConfig::default() });
+            let across = Vec2::new(deg.to_radians().cos(), deg.to_radians().sin());
+            let along = Vec2::new(-across.y, across.x);
+            let (t0, t1) = (Vec2::new(10.0, 10.0), Vec2::new(10.0, 10.0) + across * 16.0);
+            let width = 3.0;
+            w.walk.footbridges.push(nd_sim::walk::Footbridge { crossing: 0, top: [t0, t1], foot: [t0 + along * 9.0, t1 + along * 9.0], level: 5.4, width, nodes: [0; 4] });
+            let g = footbridges(&w, &Palette::default());
+            let steps = crate::terrain::upright_faces(g.get(Surface::Concrete), STEP_RISE);
+            crate::terrain::faces_along_are(&steps, along, width - 0.2).map_err(|e| format!("steps at {deg}: {e}")).unwrap();
+        }
     }
 }

@@ -37,7 +37,7 @@ pub fn terrain_height(cfg: &TerrainConfig, noise: &Fbm<Perlin>, x: f32, z: f32) 
     if r <= cfg.basin_radius {
         return 0.0;
     }
-    let t = ((r - cfg.basin_radius) / (cfg.half_size - cfg.basin_radius)).clamp(0.0, 1.0);
+    let t = ((r - cfg.basin_radius) / (cfg.half_size - cfg.basin_radius).max(1e-3)).clamp(0.0, 1.0);
     let ramp = t * t * (3.0 - 2.0 * t);
     let n = noise.get([x as f64 * 0.0025, z as f64 * 0.0025]) as f32 * 0.5 + 0.5;
     let mut level = 1.0f32;
@@ -148,33 +148,65 @@ fn height_noise(cfg: &TerrainConfig) -> Fbm<Perlin> {
 /// Every cell draws from its own RNG seeded by its grid position, so a new
 /// road that clears one cell leaves every rock downstream exactly where it
 /// was instead of re-rolling the whole field.
-pub fn scatter_nature(cfg: &TerrainConfig, palette: &Palette, seed: u64, clear: &dyn Fn(Vec2) -> bool) -> Geometry {
-    const STEP: f32 = 18.0;
+/// The scatter's grid cells that grow something, each with its own stream
+/// already past the draws that placed it: every cell that passes its own
+/// chance and `clear`, then the `cap` with the lowest hash of the cell. So
+/// clearing a cell (a road through it) changes that cell and at most lets
+/// one other in at the cap, instead of shifting where a running count ran
+/// out (review §1.5).
+fn scatter_cells(cfg: &TerrainConfig, seed: u64, growth: f32, clear: &dyn Fn(Vec2) -> bool) -> Vec<(i32, i32)> {
     const CAP: usize = 3500;
-    let mut g = Geometry::default();
-    let heights = height_noise(cfg);
-    let density = Fbm::<Perlin>::new(cfg.seed.wrapping_add(7)).set_octaves(2);
-    let n = ((cfg.half_size * 2.0 - 40.0) / STEP) as i32;
-    let dry = palette.foliage_dry;
-    let rock = mix(palette.stone, palette.hills, 0.3);
-    let mut count = 0;
-    // [climate] Lusher climates grow more, and may draw more pieces.
-    let growth = palette.flora.growth();
     let cap = (CAP as f32 * growth) as usize;
+    let density = Fbm::<Perlin>::new(cfg.seed.wrapping_add(7)).set_octaves(2);
+    let n = ((cfg.half_size * 2.0 - 40.0) / SCATTER_STEP) as i32;
+    let mut cells: Vec<(u64, i32, i32)> = Vec::new();
     for j in 0..n {
         for i in 0..n {
-            let mut rng = rng_for(seed, 41 + ((i as u64) << 20 | j as u64) * 0x9E37);
-            let x = -cfg.half_size + 20.0 + (i as f32 + 0.5 + rng.random_range(-0.45..0.45)) * STEP;
-            let z = -cfg.half_size + 20.0 + (j as f32 + 0.5 + rng.random_range(-0.45..0.45)) * STEP;
-            let d = density.get([x as f64 * 0.004, z as f64 * 0.004]) as f32 * 0.5 + 0.5;
+            let mut rng = scatter_rng(seed, i, j);
+            let p = scatter_spot(cfg, &mut rng, i, j);
+            let d = density.get([p.x as f64 * 0.004, p.y as f64 * 0.004]) as f32 * 0.5 + 0.5;
             let chance = ((d - 0.35) * 0.45).clamp(0.0, 0.4) * growth;
-            if !rng.random_bool(chance as f64) {
+            if !rng.random_bool(chance as f64) || !clear(p) {
                 continue;
             }
-            let p = Vec2::new(x, z);
-            if !clear(p) {
-                continue;
-            }
+            cells.push((rng_for(seed ^ 0x5CA7, ((i as u64) << 20) | j as u64).random::<u64>(), i, j));
+        }
+    }
+    if cells.len() > cap {
+        cells.sort_unstable();
+        cells.truncate(cap);
+        cells.sort_unstable_by_key(|c| (c.2, c.1));
+    }
+    cells.into_iter().map(|(_, i, j)| (i, j)).collect()
+}
+
+const SCATTER_STEP: f32 = 18.0;
+
+fn scatter_rng(seed: u64, i: i32, j: i32) -> nd_sim::SimRng {
+    rng_for(seed, 41 + ((i as u64) << 20 | j as u64) * 0x9E37)
+}
+
+/// A cell's jittered spot, drawn first from its stream.
+fn scatter_spot(cfg: &TerrainConfig, rng: &mut impl Rng, i: i32, j: i32) -> Vec2 {
+    let x = -cfg.half_size + 20.0 + (i as f32 + 0.5 + rng.random_range(-0.45..0.45)) * SCATTER_STEP;
+    let z = -cfg.half_size + 20.0 + (j as f32 + 0.5 + rng.random_range(-0.45..0.45)) * SCATTER_STEP;
+    Vec2::new(x, z)
+}
+
+pub fn scatter_nature(cfg: &TerrainConfig, palette: &Palette, seed: u64, clear: &dyn Fn(Vec2) -> bool) -> Geometry {
+    let mut g = Geometry::default();
+    let heights = height_noise(cfg);
+    let dry = palette.foliage_dry;
+    let rock = mix(palette.stone, palette.hills, 0.3);
+    // [climate] Lusher climates grow more, and may draw more pieces.
+    let growth = palette.flora.growth();
+    for (i, j) in scatter_cells(cfg, seed, growth, clear) {
+        {
+            let mut rng = scatter_rng(seed, i, j);
+            let p = scatter_spot(cfg, &mut rng, i, j);
+            // The chance draw `scatter_cells` made, so the rest follows.
+            let _: u64 = rng.random();
+            let (x, z) = (p.x, p.y);
             // Sunk a little so nothing floats where the mesh cuts a corner.
             let y = terrain_height(cfg, &heights, x, z) - 0.1;
             let kind = rng.random_range(0..10);
@@ -212,10 +244,6 @@ pub fn scatter_nature(cfg: &TerrainConfig, palette: &Palette, seed: u64, clear: 
                 (Flora::Moss, 5..=7) => rock_world(&mut g, &mut rng, p, y, 0.5 + size * 1.6, mul(palette.ground, 1.6 + tint)),
                 (Flora::Moss, 8) => tree_kind(&mut g, p, y, TreeKind::Round, 2.0 + size * 1.5, 1.4 + size, [0.55, 0.53, 0.5], mul(leaf, 0.9)),
                 (Flora::Moss, _) => scrub_world(&mut g, &mut rng, p, y, 0.5 + size * 0.6, mul(leaf, 0.7)),
-            }
-            count += 1;
-            if count >= cap {
-                return g;
             }
         }
     }
@@ -685,11 +713,11 @@ pub fn pillar_column(g: &mut Geometry, at: Vec2, dir: Vec2, top: f32, foot: f32,
     }
     let yaw = dir.y.atan2(dir.x);
     let w = (hw * 0.35).clamp(1.2, 3.0);
-    g.part(Surface::Concrete).boxed(Vec3::new(at.x, (top + foot) * 0.5, at.y), Vec3::new(1.6, top - foot, w), -yaw, rgba(mul(concrete, 0.8)));
+    g.part(Surface::Concrete).boxed(Vec3::new(at.x, (top + foot) * 0.5, at.y), Vec3::new(1.6, top - foot, w), yaw, rgba(mul(concrete, 0.8)));
     // The footing, just showing above the ground.
-    g.part(Surface::Concrete).boxed(Vec3::new(at.x, foot + 0.15, at.y), Vec3::new(2.6, 0.3, w + 1.0), -yaw, rgba(mul(concrete, 0.7)));
+    g.part(Surface::Concrete).boxed(Vec3::new(at.x, foot + 0.15, at.y), Vec3::new(2.6, 0.3, w + 1.0), yaw, rgba(mul(concrete, 0.7)));
     // A crosshead under the deck.
-    g.part(Surface::Concrete).boxed(Vec3::new(at.x, top - 0.35, at.y), Vec3::new(1.9, 0.7, hw * 1.7), -yaw, rgba(mul(concrete, 0.85)));
+    g.part(Surface::Concrete).boxed(Vec3::new(at.x, top - 0.35, at.y), Vec3::new(1.9, 0.7, hw * 1.7), yaw, rgba(mul(concrete, 0.85)));
 }
 
 /// What shows of the tunnels: a portal frame where each tunnel comes out
@@ -746,8 +774,8 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
                     continue;
                 }
                 let gz = world.ground_height(p);
-                g.part(Surface::Concrete).boxed(Vec3::new(p.x, gz + 1.2, p.y), Vec3::new(3.0, 2.4, 3.0), -yaw, wall);
-                g.part(Surface::Metal).boxed(Vec3::new(p.x, gz + 2.5, p.y), Vec3::new(2.6, 0.25, 2.6), -yaw, rgba(mul(steel, 0.6)));
+                g.part(Surface::Concrete).boxed(Vec3::new(p.x, gz + 1.2, p.y), Vec3::new(3.0, 2.4, 3.0), yaw, wall);
+                g.part(Surface::Metal).boxed(Vec3::new(p.x, gz + 2.5, p.y), Vec3::new(2.6, 0.25, 2.6), yaw, rgba(mul(steel, 0.6)));
             }
             continue;
         }
@@ -876,10 +904,10 @@ fn portal_arch(g: &mut Geometry, p: Vec2, out: Vec2, z: f32, hw: f32, hill: f32,
     // A coping a little proud of the wall, along the top.
     let c = p;
     let yaw = out.y.atan2(out.x);
-    m.boxed(Vec3::new(c.x, z + wall_top + 0.2, c.y), Vec3::new(thick + 0.4, 0.4, wall_half * 2.0 + 0.4), -yaw, coping);
+    m.boxed(Vec3::new(c.x, z + wall_top + 0.2, c.y), Vec3::new(thick + 0.4, 0.4, wall_half * 2.0 + 0.4), yaw, coping);
     // A lit band under the crown, just inside the mouth.
     let lit = p - out * (thick * 0.5 + 0.3);
-    g.part(Surface::Glow).boxed(Vec3::new(lit.x, z + spring + rise - 0.35, lit.y), Vec3::new(0.08, 0.2, r * 1.2), -yaw, lamp);
+    g.part(Surface::Glow).boxed(Vec3::new(lit.x, z + spring + rise - 0.35, lit.y), Vec3::new(0.08, 0.2, r * 1.2), yaw, lamp);
     // The dark of the bore, across the opening just behind the wall: the
     // built ground is a height field and cannot overhang, so through the
     // arch one saw the hillside the tunnel runs into. The ground is held
@@ -894,8 +922,8 @@ fn portal_arch(g: &mut Geometry, p: Vec2, out: Vec2, z: f32, hw: f32, hill: f32,
     // reaches a cell past the held ground, over the slope up to the hill.
     let reach = PORTAL_HOLD + nd_sim::landscape::GROUND_CELL;
     let lid = p - out * (thick * 0.5 + reach * 0.5);
-    let top = (hill - z).clamp(spring + rise + 0.4, wall_top);
-    g.part(Surface::Concrete).boxed(Vec3::new(lid.x, z + top - 0.3, lid.y), Vec3::new(reach, 0.6, wall_half * 2.0 + 2.0), -yaw, coping);
+    let top = crate::mesh::clamp_safe(hill - z, spring + rise + 0.4, wall_top);
+    g.part(Surface::Concrete).boxed(Vec3::new(lid.x, z + top - 0.3, lid.y), Vec3::new(reach, 0.6, wall_half * 2.0 + 2.0), yaw, coping);
 }
 
 /// How far into the hill behind a tunnel portal the built ground is held at
@@ -920,7 +948,7 @@ pub fn abutment(g: &mut Geometry, p: Vec2, out: Vec2, z: f32, hw: f32, ground: f
     let yaw = out.y.atan2(out.x);
     // The seat: from just behind the deck's end to under it.
     let seat = p + out * 0.6;
-    g.part(Surface::Concrete).boxed(Vec3::new(seat.x, (top + foot) * 0.5, seat.y), Vec3::new(2.4, top - foot, hw * 2.0 + 0.8), -yaw, rgba(mul(concrete, 0.82)));
+    g.part(Surface::Concrete).boxed(Vec3::new(seat.x, (top + foot) * 0.5, seat.y), Vec3::new(2.4, top - foot, hw * 2.0 + 0.8), yaw, rgba(mul(concrete, 0.82)));
     // The wing walls, stepping down as they run back into the embankment.
     let side = Vec2::new(-out.y, out.x);
     for sgn in [-1.0f32, 1.0] {
@@ -931,7 +959,7 @@ pub fn abutment(g: &mut Geometry, p: Vec2, out: Vec2, z: f32, hw: f32, ground: f
             if h < 0.3 {
                 continue;
             }
-            g.part(Surface::Concrete).boxed(Vec3::new(c.x, foot + h * 0.5, c.y), Vec3::new(2.5, h, 0.5), -yaw, rgba(mul(concrete, 0.86)));
+            g.part(Surface::Concrete).boxed(Vec3::new(c.x, foot + h * 0.5, c.y), Vec3::new(2.5, h, 0.5), yaw, rgba(mul(concrete, 0.86)));
         }
     }
 }
@@ -972,9 +1000,9 @@ pub fn viaduct_span(g: &mut Geometry, a: Vec2, b: Vec2, za: f32, zb: f32, hw: f3
             continue;
         }
         let w = (hw * 0.35).clamp(1.2, 3.0);
-        g.part(Surface::Concrete).boxed(Vec3::new(p.x, (top + foot) * 0.5, p.y), Vec3::new(1.6, top - foot, w), -yaw, rgba(mul(concrete, 0.8)));
+        g.part(Surface::Concrete).boxed(Vec3::new(p.x, (top + foot) * 0.5, p.y), Vec3::new(1.6, top - foot, w), yaw, rgba(mul(concrete, 0.8)));
         // A crosshead under the deck.
-        g.part(Surface::Concrete).boxed(Vec3::new(p.x, top - 0.35, p.y), Vec3::new(1.9, 0.7, hw * 1.7), -yaw, rgba(mul(concrete, 0.85)));
+        g.part(Surface::Concrete).boxed(Vec3::new(p.x, top - 0.35, p.y), Vec3::new(1.9, 0.7, hw * 1.7), yaw, rgba(mul(concrete, 0.85)));
     }
 }
 
@@ -1055,7 +1083,7 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
                         let mid = (r + q) * 0.5;
                         let zz = z0 + (z1 - z0) * (s + 2.0) / run.max(1e-3) - 0.05;
                         let yaw = hd.y.atan2(hd.x);
-                        g.part(Surface::Concrete).boxed(Vec3::new(mid.x, zz - 0.7, mid.y), Vec3::new(4.2, 1.4, gap), -yaw, rgba(concrete));
+                        g.part(Surface::Concrete).boxed(Vec3::new(mid.x, zz - 0.7, mid.y), Vec3::new(4.2, 1.4, gap), yaw, rgba(concrete));
                     }
                     s += 4.0;
                 }
@@ -1070,7 +1098,7 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
             let p = a.lerp(b, t);
             let top = za + (zb - za) * t - 1.4;
             let bed = land.height(p).min(WATER_LEVEL - 1.0);
-            g.part(Surface::Concrete).boxed(Vec3::new(p.x, (top + bed) * 0.5, p.y), Vec3::new(2.2, top - bed, hw * 1.6), -yaw, rgba(mul(concrete, 0.8)));
+            g.part(Surface::Concrete).boxed(Vec3::new(p.x, (top + bed) * 0.5, p.y), Vec3::new(2.2, top - bed, hw * 1.6), yaw, rgba(mul(concrete, 0.8)));
         }
     }
     underpasses(world, &mut g, concrete, steel);
@@ -1117,7 +1145,7 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
             PortKind::FerryTerminal => {
                 // A floating pontoon at the tip with a lamp.
                 let p = tip + along * 4.0;
-                g.part(Surface::Metal).boxed(Vec3::new(p.x, WATER_LEVEL + 0.5, p.y), Vec3::new(8.0, 1.0, 5.0), -along.y.atan2(along.x), rgba(mul(palette.metal_paint(2), 0.8)));
+                g.part(Surface::Metal).boxed(Vec3::new(p.x, WATER_LEVEL + 0.5, p.y), Vec3::new(8.0, 1.0, 5.0), along.y.atan2(along.x), rgba(mul(palette.metal_paint(2), 0.8)));
                 g.part(Surface::Metal).cylinder(p, 0.08, 0.08, WATER_LEVEL + 1.0, WATER_LEVEL + 5.0, 6, rgba([0.2, 0.2, 0.22]));
                 g.part(Surface::Glow).boxed(Vec3::new(p.x, WATER_LEVEL + 5.1, p.y), Vec3::new(0.4, 0.25, 0.4), 0.0, rgba(palette.lamp));
             }
@@ -1583,5 +1611,104 @@ mod sweep_visual_tests {
         assert!(on_other_way(&roads, sid, Vec2::new(1.0, off)));
         // Further along it is clear.
         assert!(!on_other_way(&roads, sid, Vec2::new(40.0, off)));
+    }
+}
+
+/// Test support for the orientation checks: the vertical faces of `m`
+/// standing `height` tall (one kind of box in a mix), as (horizontal
+/// normal, horizontal width). A box turned the wrong way round has its
+/// long faces where its short ones should be.
+#[cfg(test)]
+pub(crate) fn upright_faces(m: &crate::mesh::MeshData, height: f32) -> Vec<(Vec2, f32)> {
+    let mut out = Vec::new();
+    for t in m.indices.chunks_exact(3) {
+        let v = [t[0], t[1], t[2]].map(|i| glam::Vec3::from(m.positions[i as usize]));
+        let n = (v[1] - v[0]).cross(v[2] - v[0]).normalize_or_zero();
+        if n.y.abs() > 0.05 || n == glam::Vec3::ZERO {
+            continue;
+        }
+        let (lo, hi) = v.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p.y), hi.max(p.y)));
+        if ((hi - lo) - height).abs() > 0.01 {
+            continue;
+        }
+        let along = Vec2::new(-n.z, n.x);
+        let (a, b) = v.iter().fold((f32::MAX, f32::MIN), |(a, b), p| {
+            let s = Vec2::new(p.x, p.z).dot(along);
+            (a.min(s), b.max(s))
+        });
+        out.push((Vec2::new(n.x, n.z), b - a));
+    }
+    out
+}
+
+/// Every face of `faces` whose normal runs along `dir` is `want` wide
+/// (within 5 cm): the box lies the right way round on the way.
+#[cfg(test)]
+pub(crate) fn faces_along_are(faces: &[(Vec2, f32)], dir: Vec2, want: f32) -> Result<(), String> {
+    let hits: Vec<f32> = faces.iter().filter(|(n, _)| n.dot(dir).abs() > 0.95).map(|(_, w)| *w).collect();
+    if hits.is_empty() {
+        return Err("no faces along the way".into());
+    }
+    match hits.iter().find(|w| (**w - want).abs() > 0.05) {
+        Some(w) => Err(format!("a face square to the way is {w:.2} m wide, not {want:.2}")),
+        None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod orientation_tests {
+    use super::*;
+
+    /// Review #4: every box on a way at 45 degrees lies along or across it
+    /// as drawn on an axis-aligned one. `boxed` turns local +x to (cos yaw,
+    /// sin yaw); the terrain works passed -yaw and turned each by twice
+    /// the way's angle, so a crosshead ran along the deck.
+    #[test]
+    fn works_on_a_45_degree_way_face_the_way() {
+        let c = [0.6, 0.6, 0.6];
+        for deg in [45.0f32, 30.0, 0.0, 135.0] {
+            let dir = Vec2::new(deg.to_radians().cos(), deg.to_radians().sin());
+            let hw = 6.0;
+            // A pillar: its crosshead lies across the deck.
+            let mut g = Geometry::default();
+            pillar_column(&mut g, Vec2::new(40.0, -30.0), dir, 10.0, 0.0, hw, c);
+            faces_along_are(&upright_faces(g.get(Surface::Concrete), 0.7), dir, hw * 1.7).map_err(|e| format!("pillar at {deg}: {e}")).unwrap();
+            // A viaduct span's own columns.
+            let mut g = Geometry::default();
+            let a = Vec2::new(-20.0, 15.0);
+            viaduct_span(&mut g, a, a + dir * 60.0, 12.0, 12.0, hw, &|_| 0.0, c, c, true);
+            faces_along_are(&upright_faces(g.get(Surface::Concrete), 0.7), dir, hw * 1.7).map_err(|e| format!("viaduct at {deg}: {e}")).unwrap();
+            // A bridge abutment's seat spans the deck's width.
+            let mut g = Geometry::default();
+            abutment(&mut g, Vec2::new(5.0, 5.0), dir, 8.0, hw, 0.0, c);
+            faces_along_are(&upright_faces(g.get(Surface::Concrete), 7.6), dir, hw * 2.0 + 0.8).map_err(|e| format!("abutment at {deg}: {e}")).unwrap();
+            // A tunnel portal's coping runs along the headwall's top.
+            let mut g = Geometry::default();
+            let col = [0.5, 0.5, 0.5, 1.0];
+            portal_arch(&mut g, Vec2::new(-7.0, 3.0), dir, 0.0, 5.0, 12.0, col, col, col);
+            faces_along_are(&upright_faces(g.get(Surface::Concrete), 0.4), dir, (5.0 + 0.2 + 1.6) * 2.0 + 0.4).map_err(|e| format!("portal at {deg}: {e}")).unwrap();
+        }
+    }
+
+    /// Review §1.5: clearing ground (a road through it) drops the scatter
+    /// there and leaves every other piece where it was; at the cap at most
+    /// as many others come in as were cleared.
+    #[test]
+    fn clearing_a_cell_changes_only_that_cell() {
+        // Wide enough for the cap to bite.
+        let cfg = TerrainConfig { half_size: 3200.0, ..TerrainConfig::default() };
+        let growth = 1.0;
+        let all = scatter_cells(&cfg, 9, growth, &|_| true);
+        assert!(all.len() >= (3500.0 * growth) as usize, "the cap is in play: {}", all.len());
+        let hole = |p: Vec2| p.distance(Vec2::new(300.0, -200.0)) > 120.0;
+        let some = scatter_cells(&cfg, 9, growth, &hole);
+        let spot = |(i, j): (i32, i32)| scatter_spot(&cfg, &mut scatter_rng(9, i, j), i, j);
+        let cleared = all.iter().filter(|c| !hole(spot(**c))).count();
+        assert!(cleared > 0);
+        for c in &all {
+            assert!(!hole(spot(*c)) || some.contains(c), "cell {c:?} outside the cleared ground went");
+        }
+        let new = some.iter().filter(|c| !all.contains(c)).count();
+        assert!(new <= cleared, "{new} cells came in for {cleared} cleared");
     }
 }

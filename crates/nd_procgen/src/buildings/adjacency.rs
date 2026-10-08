@@ -293,10 +293,33 @@ fn rank(b: &nd_sim::Building) -> (u64, u64) {
     (b.built_tick, b.seed)
 }
 
+/// Everything about a building that can change the style `choose_style`
+/// picks for it: while it is unchanged the book keeps the entry. Each
+/// input that forces a style has a field of its own, so no two roles can
+/// alias (the old packed `u8` could, and a brand HQ or a campus annex was
+/// left out, so the book's label could disagree with the mesh).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Key {
+    seed: u64,
+    land_use: LandUse,
+    tier: Tier,
+    floors: u8,
+    role: u16,
+    rooftop: bool,
+    look: Option<nd_sim::districts::Look>,
+    /// [megacorp] The owner's headquarters (a tower style is forced).
+    hq: bool,
+    annex: Option<nd_sim::corp::Annex>,
+    /// [supertall] A league tower (an HQ that is one keeps its own form).
+    tower: bool,
+    /// [waterfront] The lot is a beach, or on the water (a hotel there).
+    beach: bool,
+    waterfront: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct Entry {
-    /// Seed, land use, tier, floors, role, [districts] look (0 none).
-    key: (u64, LandUse, Tier, u8, u8, u8),
+    key: Key,
     style: Style,
     neighbours: Vec<Neighbour>,
 }
@@ -316,29 +339,29 @@ pub struct StyleBook {
 /// businesses count by kind, so a retooled plant is restyled. Every input
 /// [`style_extras`] passes that can force a style has its own value here,
 /// so a building that gains or loses one is styled again.
-fn role(b: &nd_sim::Building) -> u8 {
+fn role(b: &nd_sim::Building) -> u16 {
     // [land] A McMansion, mansion, mega hotel or museum is its own look.
     if let Some(f) = b.plot.form {
-        return 90 + f as u8;
+        return 90 + f as u16;
     }
     if let Some(s) = b.service {
-        return 50 + nd_sim::ServiceKind::ALL.iter().position(|k| *k == s.kind).unwrap_or(0) as u8;
+        return 1000 + nd_sim::ServiceKind::ALL.iter().position(|k| *k == s.kind).unwrap_or(0) as u16;
     }
     if b.metro {
         return 70;
     }
     if let Some(p) = b.port {
         // [economy] Six dock kinds now: kept clear of the taxi and hotel values.
-        return 100 + p as u8;
+        return 100 + p as u16;
     }
     if b.business.as_ref().is_some_and(|z| matches!(z.kind, nd_sim::BusinessKind::TaxiCompany | nd_sim::BusinessKind::Hotel)) {
-        return 75 + u8::from(b.business.as_ref().is_some_and(|z| z.kind == nd_sim::BusinessKind::Hotel));
+        return 75 + u16::from(b.business.as_ref().is_some_and(|z| z.kind == nd_sim::BusinessKind::Hotel));
     }
     // [economy] Every business with a look of its own counts by kind (the
     // new trades are not all industries), clear of the service values.
     if let Some(z) = b.business.as_ref().filter(|z| z.kind.industry().is_some() || super::industry_styles(z.kind, Tier::Mid).is_some()) {
         if let Some(i) = nd_sim::BusinessKind::ALL.iter().position(|k| *k == z.kind) {
-            return 120 + i as u8;
+            return 2000 + i as u16;
         }
     }
     if b.depot {
@@ -384,7 +407,20 @@ impl StyleBook {
     pub fn refresh(&mut self, world: &World, rules: &BuildingRules) {
         self.entries.retain(|id, _| world.buildings.contains_key(*id));
         // A rooftop pad picks a pad-capable style, so it is part of the key.
-        let key_of = |id: BuildingId, b: &nd_sim::Building| (b.seed, b.land_use, b.tier, b.floors, role(b) + if world.air.has_rooftop(id) { 8 } else { 0 }, b.look.map_or(0, |l| l.index() as u8 + 1));
+        let key_of = |id: BuildingId, b: &nd_sim::Building| Key {
+            seed: b.seed,
+            land_use: b.land_use,
+            tier: b.tier,
+            floors: b.floors,
+            role: role(b),
+            rooftop: world.air.has_rooftop(id),
+            look: b.look,
+            hq: world.brand_mark(id).is_some_and(|m| m.role == nd_sim::corp::BrandRole::Headquarters),
+            annex: b.annex,
+            tower: b.plot.tower.is_some(),
+            beach: world.lots.get(b.lot).is_some_and(|l| l.shore.beach),
+            waterfront: world.lots.get(b.lot).is_some_and(|l| l.shore.is_waterfront()),
+        };
         let mut pending: Vec<BuildingId> = world
             .buildings
             .iter()
@@ -651,6 +687,50 @@ mod tests {
         w.buildings[later].business = Some(nd_sim::Business::new(B::GrainFarm, 4));
         book.refresh(&w, &rules);
         assert_eq!(book.style(later), Some(Style::Farmstead));
+    }
+
+    /// Review B3: a building that becomes a campus annex (which forces its
+    /// style) is restyled, so the book's label is what is drawn; and no two
+    /// style-forcing roles share a key value.
+    #[test]
+    fn the_book_follows_annexes_and_roles_do_not_alias() {
+        let mut w = town();
+        let rules = BuildingRules::default();
+        let mut book = StyleBook::default();
+        book.refresh(&w, &rules);
+        let ids: Vec<BuildingId> = w.buildings.keys().collect();
+        for (k, annex) in [nd_sim::corp::Annex::Admin, nd_sim::corp::Annex::Theatre, nd_sim::corp::Annex::Sports, nd_sim::corp::Annex::Frat].into_iter().enumerate() {
+            w.buildings[ids[k]].annex = Some(annex);
+        }
+        book.refresh(&w, &rules);
+        for &id in &ids {
+            let b = &w.buildings[id];
+            let drawn = choose_style(&w.lots[b.lot], b.land_use, b.floors, b.tier, b.seed, &rules, &style_extras(&w, id, book.neighbours(id)));
+            assert_eq!(book.style(id), Some(drawn), "the book records what is drawn");
+        }
+        assert_eq!(book.style(ids[0]), Some(Style::Ministry));
+        // Every forcing input gets its own role value.
+        let mut seen = std::collections::HashMap::new();
+        let base = w.buildings[ids[5]].clone();
+        let mut probe = |what: String, b: &nd_sim::Building| {
+            let r = role(b);
+            if let Some(prev) = seen.insert(r, what.clone()) {
+                panic!("{what} and {prev} share role {r}");
+            }
+        };
+        probe("plain".into(), &base);
+        for f in [nd_sim::estate::Form::McMansion, nd_sim::estate::Form::Mansion, nd_sim::estate::Form::MegaHotel, nd_sim::estate::Form::Museum] {
+            let mut b = base.clone();
+            b.plot.form = Some(f);
+            probe(format!("{f:?}"), &b);
+        }
+        for kind in nd_sim::BusinessKind::ALL {
+            let mut b = base.clone();
+            b.business = Some(nd_sim::Business::new(kind, 4));
+            if role(&b) != role(&base) {
+                probe(format!("{kind:?}"), &b);
+            }
+        }
     }
 
     #[test]

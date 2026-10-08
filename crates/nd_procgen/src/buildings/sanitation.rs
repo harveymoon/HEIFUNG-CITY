@@ -110,7 +110,7 @@ pub fn trash_depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Weighbridge hut and plate at the gate, a fence round the rest.
     let gate = Vec2::new(lo.x + w * 0.8, lo.y + 2.0);
     if c.inside_local(gate) && distance_to_boundary(gate, &c.lot_poly) > 1.2 {
-        f.bx(g, Panel, gate.x, 1.3, gate.y, Vec3::new(2.4, 2.6, 2.0), mul(pal.panel[0], 0.9));
+        f.bx(g, Panel, gate.x, 1.3, gate.y, Vec3::new(2.4, 2.6, 2.0), mul(pal.panel(0), 0.9));
         f.bx(g, Glass, gate.x, 1.6, gate.y - 1.01, Vec3::new(1.6, 0.8, 0.04), pal.glass_dark);
         let plate = Vec2::new(gate.x - 4.5, gate.y + 2.0);
         if [Vec2::new(-1.7, -3.6), Vec2::new(1.7, -3.6), Vec2::new(-1.7, 3.6), Vec2::new(1.7, 3.6)].iter().all(|o| c.inside_local(plate + *o)) {

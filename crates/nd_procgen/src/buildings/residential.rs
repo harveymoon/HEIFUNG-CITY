@@ -354,6 +354,9 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let upper: Vec<&Unit> = units.iter().filter(|x| x.level >= 1).collect();
     for unit in upper.choose_multiple(rng, 3) {
         let corner = unit.corners()[rng.random_range(0..4)];
+        if !c.spans_lot(pole, corner) {
+            continue;
+        }
         g.part(Matte).wire(pole_top, f.at2(corner, unit.top() + 0.1), 0.6, 0.05, rgba(DARK));
     }
     for _ in 0..rng.random_range(2..5) {
@@ -363,7 +366,7 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         let pa = Vec2::new(a.u, a.v);
         let pb = Vec2::new(b.u, b.v);
-        if pa.distance(pb) < 3.0 {
+        if pa.distance(pb) < 3.0 || !c.spans_lot(pa, pb) {
             continue;
         }
         let from = f.at2(pa, a.top() + 0.1);
@@ -518,16 +521,18 @@ pub fn brutalist_block(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, monumental
         } else {
             extrude(g, f, Concrete, poly, y0, y0 + h, concrete);
         }
-        let first = if si == 0 && monumental { 1 } else { 0 };
-        let fl = (h / fh).round() as i32;
-        for k in first..fl {
-            cornice(g, c, poly, y0 + k as f32 * fh + fh * 0.95, 0.35, 0.25, Concrete, mul(concrete, 1.08));
+        // Over the pilotis the floors start where the mass does (1.6 floor
+        // heights up), not one floor up: the first band hung under it.
+        let start = if si == 0 && monumental { ground_h } else { 0.0 };
+        let fl = if start > 0.0 { ((h - start) / fh + 0.05).floor().max(0.0) as i32 } else { (h / fh).round() as i32 };
+        for k in 0..fl {
+            cornice(g, c, poly, y0 + start + k as f32 * fh + fh * 0.95, 0.35, 0.25, Concrete, mul(concrete, 1.08));
         }
         for face in c.faces(poly) {
             if face.len < 4.0 {
                 continue;
             }
-            band_windows(g, c, rng, &face, y0 + first as f32 * fh, fl - first, fh);
+            band_windows(g, c, rng, &face, y0 + start, fl, fh);
             if face.is_front {
                 let fins = ((face.len / 3.2) as i32).max(2);
                 for k in 0..=fins {
@@ -893,7 +898,10 @@ pub fn villas(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             solar_array(g, f, poly_center(&upper), h1 * 2.0 + 0.6, 3.0, 2.0, yaw, pal.glass_dark);
         }
         let hf = c.front_face(&house);
-        entrance(g, c, rng, &hf, 0.0, 1.4, 2.4);
+        // The porch canopy stands out from the door: only where there is lot.
+        if [-1.6f32, 0.0, 1.6].iter().all(|t| c.inside_local(hf.at(*t, 1.6))) {
+            entrance(g, c, rng, &hf, 0.0, 1.4, 2.4);
+        }
         if rng.random_bool(0.6) {
             let pp = p + Vec2::new(0.0, d * 0.5 + 4.0);
             if poly_inside(c, &rect(pp.x, pp.y, 4.4, 2.7)) {

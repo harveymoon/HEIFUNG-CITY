@@ -6,7 +6,9 @@
 //!
 //! Everything is laid out per road segment from a seed of its own, then
 //! culled to a radius around the walker, so stepping along a street keeps
-//! the same carts where they were.
+//! the same carts where they were. The segment's stream only spaces the
+//! slots and hands each one a seed; what stands in a slot is drawn from
+//! that seed alone, so culling one item never shifts the next.
 
 use crate::buildings::parts::{mul, pick, rgba, CHARCOAL, DARK};
 use crate::palette::Palette;
@@ -108,6 +110,9 @@ pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> G
             let mut s = trim0 + rng.random_range(0.0..3.0);
             while s < len - trim1 {
                 let step = rng.random_range(3.5..8.0);
+                // Each feature of the slot draws from its own stream.
+                let slot: u64 = rng.random();
+                let mut rng = rng_for(slot, 1);
                 let p_back = at(s, side, hw + SIDEWALK - 0.45);
                 let roll: f32 = rng.random();
                 let front = frontage(s, side);
@@ -154,17 +159,19 @@ pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> G
                     }
                 }
                 // Scooters parked in the gutter, in little rows.
+                let mut rng = rng_for(slot, 2);
                 if rng.random::<f32>() < 0.12 && lv < 0.8 {
                     let n = rng.random_range(1..=4);
                     for k in 0..n {
                         let p = at(s + k as f32 * 0.9, side, hw - SHOULDER * 0.5);
                         if near(p) && s + k as f32 * 0.9 < len - trim1 {
-                            scooter(&mut g, pal, &mut rng, p, yaw + std::f32::consts::FRAC_PI_2 * 0.85 * side);
+                            scooter(&mut g, pal, &mut rng_for(slot, 10 + k as u64), p, yaw + std::f32::consts::FRAC_PI_2 * 0.85 * side);
                         }
                     }
                 }
                 // Puddles in the gutter and on sunken slabs: dark glass
                 // with a smear of sign colour in it.
+                let mut rng = rng_for(slot, 3);
                 let wet = 0.08 + 0.25 * (1.0 - lv).clamp(0.0, 1.0);
                 if rng.random::<f32>() < wet {
                     let on_road = rng.random_bool(0.6);
@@ -175,7 +182,8 @@ pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> G
                 }
                 // Cracks, stains and gum on the slabs: dense where cheap.
                 let crack_n = ((1.0 - lv) * 3.0).round() as i32;
-                for _ in 0..crack_n {
+                for k in 0..crack_n.max(0) {
+                    let mut rng = rng_for(slot, 20 + k as u64);
                     let p = at(s + rng.random_range(-2.0..2.0), side, hw + rng.random_range(0.5..SIDEWALK - 0.2));
                     if near(p) {
                         slab_mark(&mut g, pal, &mut rng, p, yaw, lv);
@@ -187,18 +195,22 @@ pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> G
         // Steam from vents and manholes in the carriageway.
         let mut s = trim0 + rng.random_range(5.0..25.0);
         while s < len - trim1 {
+            let step = rng.random_range(25.0..55.0);
+            let mut rng = rng_for(rng.random::<u64>(), 4);
             let lane = rng.random_range(-(hw - SHOULDER - 0.8).max(0.1)..(hw - SHOULDER - 0.8).max(0.2));
             let p = at(s, 1.0, lane);
             if near(p) {
                 let venting = rng.random::<f32>() < 0.45 + 0.3 * (1.0 - lv_mid).clamp(0.0, 1.0);
                 manhole(&mut g, pal, p, venting, &mut rng);
             }
-            s += rng.random_range(25.0..55.0);
+            s += step;
         }
         // Cables across the street on cheap blocks, a banner or lanterns now and then.
         if lv_mid < 0.65 {
             let mut s = trim0 + rng.random_range(3.0..12.0);
             while s < len - trim1 {
+                let step = rng.random_range(10.0..26.0);
+                let mut rng = rng_for(rng.random::<u64>(), 5);
                 let pa = at(s, -1.0, hw + SIDEWALK - 0.2);
                 let pb = at(s + rng.random_range(-3.0..3.0), 1.0, hw + SIDEWALK - 0.2);
                 if near((pa + pb) * 0.5) {
@@ -237,7 +249,7 @@ pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> G
                         _ => {}
                     }
                 }
-                s += rng.random_range(10.0..26.0);
+                s += step;
             }
         }
         if world.relief {
@@ -536,5 +548,39 @@ mod tests {
         // Nothing far from any street.
         let empty = walk_detail(&w, &pal, Vec2::new(5000.0, 5000.0), WALK_RADIUS);
         assert_eq!(empty.triangle_count(), 0);
+    }
+
+    /// Every triangle of `g` lying wholly within `r` of both centres, as
+    /// millimetre-rounded vertices, sorted: what the two views share.
+    fn shared_tris(g: &Geometry, a: Vec2, b: Vec2, r: f32) -> Vec<(String, [[i64; 3]; 3])> {
+        let mut out = Vec::new();
+        for (s, m) in g.iter() {
+            for t in m.indices.chunks_exact(3) {
+                let v = [t[0], t[1], t[2]].map(|i| m.positions[i as usize]);
+                if v.iter().all(|p| {
+                    let q = Vec2::new(p[0], p[2]);
+                    q.distance(a) < r && q.distance(b) < r
+                }) {
+                    out.push((format!("{s:?}"), v.map(|p| p.map(|x| (x * 1000.0).round() as i64))));
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn walk_detail_is_the_same_where_two_views_overlap() {
+        // Moving the walker culls items at the rim; nothing well inside both
+        // views may change type, place or colour.
+        let w = town();
+        let pal = Palette::default();
+        for (a, b) in [(Vec2::new(10.0, 3.0), Vec2::new(50.0, 3.0)), (Vec2::new(-60.0, 120.0), Vec2::new(-60.0, 80.0)), (Vec2::new(0.0, 0.0), Vec2::new(30.0, 30.0))] {
+            let ga = walk_detail(&w, &pal, a, WALK_RADIUS);
+            let gb = walk_detail(&w, &pal, b, WALK_RADIUS);
+            let (sa, sb) = (shared_tris(&ga, a, b, WALK_RADIUS - 25.0), shared_tris(&gb, a, b, WALK_RADIUS - 25.0));
+            assert!(sa.len() > 200, "overlap of {a} and {b} too sparse to compare: {}", sa.len());
+            assert!(sa == sb, "walk detail reshuffled between {a} and {b}: {} vs {} shared triangles", sa.len(), sb.len());
+        }
     }
 }

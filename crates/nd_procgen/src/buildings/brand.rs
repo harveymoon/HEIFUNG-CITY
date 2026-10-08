@@ -64,6 +64,15 @@ fn mass(g: &Geometry, c: &Ctx) -> Option<(f32, Vec2, Vec2)> {
     Some((top, lo, hi))
 }
 
+/// A flat piece `half` metres either side of `at` along the face whose
+/// outward normal is `out`, standing up to `proud` metres off it, stays on
+/// the lot: the mass's extent is a box, and on a triangle or an L its
+/// corners are off the parcel.
+fn on_lot(c: &Ctx, at: Vec2, out: Vec2, half: f32, proud: f32) -> bool {
+    let right = Vec2::new(out.y, -out.x);
+    [at + right * half, at - right * half, at + right * half + out * proud, at - right * half + out * proud].iter().all(|p| c.inside_local(*p))
+}
+
 /// The logo, `size` metres square, standing in the vertical plane through
 /// `at` (lot-local) facing `out` (lot-local), centred at height `y`, on a
 /// dark board a little bigger. Rows of equal pixels are merged.
@@ -78,6 +87,9 @@ pub fn logo(g: &mut Geometry, c: &Ctx, m: &BrandMark, at: Vec2, out: Vec2, y: f3
     let yaw = right.y.atan2(right.x);
     let px = size / LOGO_N as f32;
     let half = (LOGO_N as f32 - 1.0) * 0.5;
+    if !on_lot(c, at, out, size * 0.5 + px, 0.1) {
+        return;
+    }
     // The board.
     let b = at - out * 0.06;
     f.bx_yaw(g, Matte, b.x, y, b.y, Vec3::new(size + px * 1.4, size + px * 1.4, 0.12), BOARD, yaw);
@@ -131,7 +143,7 @@ fn roof_sign(g: &mut Geometry, c: &Ctx, m: &BrandMark, p: Vec2, out: Vec2, roof:
 /// `at`, from `y0` to `y1`: a lit strip in the brand colour with the logo
 /// at its head.
 fn banner(g: &mut Geometry, c: &Ctx, m: &BrandMark, at: Vec2, out: Vec2, y0: f32, y1: f32, w: f32) {
-    if y1 - y0 < w * 1.5 {
+    if y1 - y0 < w * 1.5 || !on_lot(c, at, out, w * 0.55, 0.2) {
         return;
     }
     let f = &c.frame;
@@ -151,7 +163,8 @@ fn crown(g: &mut Geometry, c: &Ctx, m: &BrandMark, top: f32, lo: Vec2, hi: Vec2)
     let f = &c.frame;
     let (w, d) = (hi.x - lo.x, hi.y - lo.y);
     let mid = (lo + hi) * 0.5;
-    for (k, y) in [top - 1.2, top + 0.4].into_iter().enumerate() {
+    let banded = [Vec2::new(lo.x, lo.y), Vec2::new(hi.x, lo.y), Vec2::new(hi.x, hi.y), Vec2::new(lo.x, hi.y)].iter().all(|q| c.inside_local(*q + (*q - mid).signum() * 0.3));
+    for (k, y) in [top - 1.2, top + 0.4].into_iter().enumerate().filter(|_| banded) {
         let col = lit(m, if k == 0 { 1.4 } else { 2.2 });
         f.bx(g, Glow, mid.x, y, lo.y - 0.12, Vec3::new(w + 0.3, 0.8, 0.12), col);
         f.bx(g, Glow, mid.x, y, hi.y + 0.12, Vec3::new(w + 0.3, 0.8, 0.12), col);
@@ -171,10 +184,17 @@ fn crown(g: &mut Geometry, c: &Ctx, m: &BrandMark, top: f32, lo: Vec2, hi: Vec2)
     ];
     for (p, out, len) in sides {
         let right = Vec2::new(out.y, -out.x);
+        if !on_lot(c, p, out, (len * 0.5 - inset).max(0.5), 0.1) {
+            continue;
+        }
         f.bx_yaw(g, Panel, p.x - out.x * 0.2, y, p.y - out.y * 0.2, Vec3::new((len - inset * 2.0).max(1.0), wall, 0.3), BOARD, right.y.atan2(right.x));
         logo(g, c, m, p, out, y, size);
     }
-    // The spire.
+    // The spire, over the middle of the crown when that is on the lot (an
+    // L's box can have its middle over the notch).
+    if !c.inside_local(mid) {
+        return;
+    }
     let spire = (top * 0.18).clamp(6.0, 30.0);
     g.part(Metal).cylinder(f.to_world(mid.x, mid.y), 0.6, 0.12, top + 0.6, top + 0.6 + spire + wall, 8, rgba(POLE));
     f.bx(g, Glow, mid.x, top + 0.6 + spire + wall, mid.y, Vec3::splat(0.5), c.palette.aviation_light);
