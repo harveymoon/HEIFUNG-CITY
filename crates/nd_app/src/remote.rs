@@ -1475,12 +1475,15 @@ fn plant_preview(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let p = req_point(cmd)?;
     let w = &ctx.sim.world;
     let Some(nd_sim::Placeable::Plant(k)) = nd_sim::Placeable::parse(&kind, None) else { return Err(format!("{kind:?} is not a power plant")) };
-    let lot = lot_near(w, p).ok_or("no lot there: aim at a lot")?;
-    let v = w.plant_preview(k, lot).ok_or("no such lot")?;
+    // [plant-scale] The site a click there takes: a lot, or unzoned ground
+    // (`placement_site`), so the figures are what the click charges.
+    let site = w.placement_site(nd_sim::Placeable::Plant(k), p)?;
+    let v = w.plant_preview_site(k, &site).ok_or("no road access to front")?;
     Ok(json!({
-        "lot": key_str(lot), "kind": kind, "area_m2": round(v.area), "size_scale": round(k.size_scale(v.area)), "capacity_mw": round(v.capacity_mw), "site": round(v.site), "now_mw": round(v.now_mw),
-        "cost": round(v.cost), "upkeep_per_day": round(v.upkeep_per_day), "min_area": k.min_area(), "small_lot_joins": v.small_lot_joins,
-        "joins": v.join.as_ref().and_then(|j| j.joins.clone()), "joined_lots": v.join.as_ref().map(|j| j.members.len() + 1), "joined_area_m2": v.join.as_ref().map(|j| round(j.area)), "joined_capacity_mw": v.join.as_ref().map(|j| round(j.capacity_mw)),
+        "lot": site.lot.map(key_str), "unzoned_parcels": site.parcels.len(), "kind": kind, "area_m2": round(v.area), "size_scale": round(v.scale), "capacity_mw": round(v.capacity_mw), "site": round(v.site), "now_mw": round(v.now_mw),
+        "cost": round(v.cost), "upkeep_per_day": round(v.upkeep_per_day), "min_area": k.min_area(), "max_area": k.max_area(), "small_lot_joins": v.small_lot_joins,
+        "joins": v.join.as_ref().and_then(|j| j.joins.clone()), "joined_lots": v.join.as_ref().map(|j| j.members.len() + 1), "joined_area_m2": v.join.as_ref().map(|j| round(j.area)), "joined_capacity_mw": v.join.as_ref().map(|j| round(j.capacity_mw)), "adds_mw": v.join.as_ref().map(|j| round(j.capacity_mw - j.before_mw)),
+        "outline": view::points(&site.outline),
         "ok": v.problem.is_none(), "problem": v.problem,
     }))
 }
@@ -2648,7 +2651,7 @@ fn help() -> Value {
     // [road-inspect]
     v["commands"]["repair_road"] = json!({ "road": "id or [x,y]; default the selected road", "returns": "repaired, cost, treasury, road (the card); pays the crews' price (lane-m x wear x 6) from the treasury as road maintenance" });
     // [plant-groups]
-    v["commands"]["plant_preview"] = json!({ "kind": "solar|wind|coal|...", "x": "f", "y": "f", "note": "read-only: MW, cost and upkeep on the lot there, the Sunfield / Wind Park it would join, and any problem" });
+    v["commands"]["plant_preview"] = json!({ "kind": "solar|wind|coal|...", "x": "f", "y": "f", "note": "read-only: MW, cost and upkeep on the site a click there takes (a lot, or unzoned ground joined into one), the Sunfield / Wind Park it would join and what it adds, and any problem" });
     // [grid-weather]
     v["commands"]["resource"] = json!({ "x": "f", "y": "f (or z)", "returns": "wind (site_factor, mean_ms, now_ms, typical_yield, yield_now, cut_out_now) and solar (site_factor, climate_sun, sun, yield_now) at the point, and the climate" });
     v["commands"]["grid"] = json!({ "returns": "time-of-use import/export price now, demand now vs the full draw, weather, day_ahead (24 h: hour, temp_c, demand_mw, import_price, export_price if the weather holds), last_24h (recorded demand, supply, imports, exports, price, temperature)" });

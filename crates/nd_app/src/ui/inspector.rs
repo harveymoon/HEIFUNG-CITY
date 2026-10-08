@@ -462,7 +462,13 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
                 hint(ui, &format!("wind here now {v:.1} m/s: {state}"));
             }
         }
-        if kind.reference_area().is_some() {
+        if kind.sized_when_built() {
+            // [plant-scale] Fixed when it was built (1 on older saves').
+            match b.plant_scale {
+                Some(s) => hint(ui, &format!("built for its {:.0} m² site: {:.2}× a standard {}", w.lots.get(b.lot).map_or(0.0, |l| l.area()), s, kind.label())),
+                None => hint(ui, &format!("a standard {} (built before plants were sized to their site)", kind.label())),
+            }
+        } else if kind.reference_area().is_some() {
             hint(ui, &format!("sized to its lot: {:.0} m², {:.2}× a standard {}", w.lots.get(b.lot).map_or(0.0, |l| l.area()), w.plant_scale(b), kind.label()));
         }
         if b.demolition.is_some() {

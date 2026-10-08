@@ -903,11 +903,24 @@ Citizens are rendered from their simulated positions every frame.
   Every building draws megawatts by land use, floors and tier (industry most, homes
   least, high tiers more); plants draw none. Four kinds of plant go on any lot or unzoned
   ground by a road with the Power tool (no zoning needed: see Free placement below), paid
-  from the treasury: coal (120 MW, cheap, steady,
+  from the treasury: coal (120 MW per 1,000 m² of site, cheap, steady,
   a brown haze, ash on the ground and a heavy land value penalty for 360 m), solar (25 MW nameplate,
   output follows the sun and is dimmed by cloud), wind (40 MW nameplate,
-  output follows the wind) and nuclear (400 MW, steady, very expensive to build and
-  run, a smaller penalty for the nervous neighbours). Weather is a
+  output follows the wind) and nuclear (400 MW per 1,500 m², steady, very expensive to build and
+  run, a smaller penalty for the nervous neighbours). [plant-scale] Coal, nuclear and geothermal
+  plants are sized to their site in a capped range (`PowerPlantKind::size_range`: coal 600 to
+  2,400 m², 72 to 288 MW; nuclear 900 to 3,000 m², 240 to 800 MW; geothermal 400 to 1,600 m²),
+  output, cost, upkeep and jobs alike (land-value cone and ash by the square root of the size);
+  the size is fixed when built (`Building::plant_scale`; plants from older saves keep the
+  standard size). A bigger site past the cap makes it no bigger: the station stands on part of it
+  and the rest is coal yard. On unzoned ground free placement joins just enough parcels to reach
+  the plant's minimum, never past its cap (`zoning::grow_site`). The coal station is composed of
+  units, not stretched (`buildings::power::coal_layout`): one to four black boiler houses with
+  orange-lit slits, each with its own smokestack of its own height, a start-up stack, a tall
+  common stack and cooling towers (steam) on the big ones, a turbine hall, ash filters, conveyor
+  galleries and coal heaps; the renderer's plumes start at the same stacks (`coal_vents`). The
+  Build hover label shows a plant's MW, cost and upkeep on the site before the click, and for
+  solar and wind the Sunfield or Wind Park it would join with the combined output. Weather is a
   slow random walk of cloud and wind, stepped hourly. Each hour the supply is summed, the
   regional grid sells up to 60 MW at a price to cover any shortfall, and what is left is
   shared out highest tier first, so brownouts land on the cheap districts. A building

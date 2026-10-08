@@ -48,7 +48,7 @@ mod docks;
 mod economy_tests;
 pub use parts::WINDOW_LIGHT_MARK;
 pub use construction::{crane_paint, crane_slew, CraneRig, CRANE_LIFT_MINUTES, CRANE_SLEW_RANGE};
-pub use power::{battery_lights, coal_stacks, solar_head, solar_trackers, wind_rotor, wind_turbines, PlantField, SolarTracker, Turbine, SOLAR_HUB, SOLAR_MAX_TILT, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};
+pub use power::{battery_lights, coal_vents, CoalVent, solar_head, solar_trackers, wind_rotor, wind_turbines, PlantField, SolarTracker, Turbine, SOLAR_HUB, SOLAR_MAX_TILT, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};
 pub use parking::surface_lot_bays_world;
 
 use crate::palette::Palette;
@@ -1037,6 +1037,8 @@ pub struct Ctx<'a> {
     /// A grid battery: its size, share full and flow (MW, positive
     /// delivering), for the module count and the status lights.
     pub battery: Option<(nd_sim::BatteryKind, f32, f32)>,
+    /// [plant-scale] See [`Extras::plant_scale`].
+    pub plant_scale: f32,
 }
 
 /// Per-building state that changes the look beyond style and condition.
@@ -1091,11 +1093,15 @@ pub struct Extras<'a> {
     /// [power] A grid battery: size, share full and flow (see
     /// [`Ctx::battery`]).
     pub battery: Option<(nd_sim::BatteryKind, f32, f32)>,
+    /// [plant-scale] A plant's size as a share of its kind's nameplate
+    /// (`World::plant_scale`): a coal or nuclear station is composed of
+    /// more units, not stretched, when it is bigger.
+    pub plant_scale: f32,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None }
     }
 }
 
@@ -1414,6 +1420,7 @@ fn generate_styled_extras(
         animated_cranes: extras.animated_cranes,
         dynamic_lights: extras.dynamic_lights,
         battery: extras.battery,
+        plant_scale: extras.plant_scale,
     };
     if let Some(progress) = extras.demolition {
         let mut g = generate_styled_extras(lot, land_use, floors, tier, condition, seed, style, rules, palette, &Extras { demolition: None, construction: None, ..*extras });
@@ -2280,6 +2287,7 @@ mod tests {
             animated_cranes: false,
             dynamic_lights: false,
             battery: None,
+            plant_scale: 1.0,
         }
     }
 

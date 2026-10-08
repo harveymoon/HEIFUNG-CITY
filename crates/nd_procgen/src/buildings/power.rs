@@ -7,104 +7,469 @@ use super::Ctx;
 use crate::mesh::MeshData;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
+use nd_sim::rng_for;
 use rand::Rng;
 
-/// Height of the coal plant's boiler hall, which the stacks stand on.
-const COAL_HALL_H: f32 = 22.0;
-/// Height of a coal stack above the hall.
-const COAL_STACK_H: f32 = 42.0;
+// ── coal: a station composed of units, not stretched ─────────────────────
 
-/// Where a coal plant's stacks stand, in lot coordinates: two along the
-/// back, pulled in towards the boiler hall until they have 5 m from the lot
-/// edge, dropped if they never do.
-fn stack_sites(lot_poly: &[Vec2]) -> Vec<Vec2> {
-    let (lo, hi) = bounds(lot_poly);
-    let hc = Vec2::new((lo.x + hi.x) * 0.5, lo.y + (hi.y - lo.y) * 0.68);
-    let ok = |p: Vec2| nd_sim::zoning::point_in_polygon(p, lot_poly) && distance_to_boundary(p, lot_poly) >= 5.0;
-    let mut out = Vec::new();
-    for k in 0..2 {
-        let mut p = Vec2::new(lo.x + (hi.x - lo.x) * (0.3 + 0.4 * k as f32), hi.y - 6.0);
-        for _ in 0..6 {
-            if ok(p) {
-                break;
+/// [plant-scale] Near-black, sooty materials of the coal station.
+const SOOT_CONCRETE: [f32; 3] = [0.034, 0.032, 0.031];
+const BLACK_STEEL: [f32; 3] = [0.022, 0.023, 0.026];
+const COAL_BLACK: [f32; 3] = [0.012, 0.011, 0.013];
+const RUST_DARK: [f32; 3] = [0.075, 0.03, 0.017];
+/// Firelight through the boiler house slits: a dim orange glow.
+const EMBER: [f32; 3] = [1.6, 0.42, 0.07];
+
+/// Where a stack or a cooling tower lets out its plume, in world
+/// coordinates with the height above the lot pad: the renderer starts the
+/// smoke (or, from a cooling tower, the steam) there. The same layout the
+/// mesh is drawn from ([`coal_vents`]), so every stack smokes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CoalVent {
+    pub top: Vec3,
+    /// Radius of the flue, or of the cooling tower's mouth.
+    pub r: f32,
+    /// A cooling tower: white steam, not smoke.
+    pub steam: bool,
+}
+
+/// A coal station's units in lot coordinates (u along the road, v inward):
+/// worked out from the outline, the building's seed and its size alone, so
+/// the mesh and the renderer's plumes agree.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct CoalLayout {
+    /// Boiler houses: centre, half size, height.
+    pub boilers: Vec<(Vec2, Vec2, f32)>,
+    /// Smokestacks: base, radius at the foot, height; the boiler it serves.
+    pub stacks: Vec<(Vec2, f32, f32, Option<usize>)>,
+    /// Ash filters (precipitators) beside the boilers: centre, half size, height.
+    pub filters: Vec<(Vec2, Vec2, f32)>,
+    pub turbine: Option<(Vec2, Vec2, f32)>,
+    /// Cooling towers: base, radius at the foot, height.
+    pub towers: Vec<(Vec2, f32, f32)>,
+    /// Coal heaps: centre, half size, height.
+    pub heaps: Vec<(Vec2, Vec2, f32)>,
+    pub transformer: Option<Vec2>,
+}
+
+/// Lays boxes out on a lot: each goes as near where it is wanted as it fits
+/// (inside the outline by a margin, clear of what is already down).
+pub(crate) struct Packer<'a> {
+    poly: &'a [Vec2],
+    pts: Vec<Vec2>,
+    taken: Vec<(Vec2, Vec2)>,
+}
+
+impl<'a> Packer<'a> {
+    pub fn new(poly: &'a [Vec2]) -> Self {
+        let (lo, hi) = bounds(poly);
+        let area = nd_sim::zoning::polygon_area(poly).abs();
+        let step = (area.sqrt() / 60.0).max(1.0);
+        let mut pts = Vec::new();
+        let mut v = lo.y + step * 0.5;
+        while v < hi.y {
+            let mut u = lo.x + step * 0.5;
+            while u < hi.x {
+                let p = Vec2::new(u, v);
+                if nd_sim::zoning::point_in_polygon(p, poly) {
+                    pts.push(p);
+                }
+                u += step;
             }
-            p = p.lerp(hc, 0.3);
+            v += step;
         }
-        if ok(p) {
-            out.push(p);
+        Self { poly, pts, taken: Vec::new() }
+    }
+
+    fn free(&self, c: Vec2, h: Vec2, margin: f32, gap: f32) -> bool {
+        let (a, b) = (c - h - Vec2::splat(margin), c + h + Vec2::splat(margin));
+        let corners = [a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y)];
+        for i in 0..4 {
+            let (p, q) = (corners[i], corners[(i + 1) % 4]);
+            let n = (p.distance(q) / 0.75).ceil().max(1.0) as i32;
+            if (0..n).any(|k| !nd_sim::zoning::point_in_polygon(p.lerp(q, k as f32 / n as f32), self.poly)) {
+                return false;
+            }
+        }
+        // A notch of the outline poking in between the samples.
+        if self.poly.iter().any(|v| v.x > a.x && v.x < b.x && v.y > a.y && v.y < b.y) {
+            return false;
+        }
+        let (a, b) = (c - h - Vec2::splat(gap), c + h + Vec2::splat(gap));
+        !self.taken.iter().any(|(lo, hi)| a.x < hi.x && b.x > lo.x && a.y < hi.y && b.y > lo.y)
+    }
+
+    /// Put down a box of half size `h` as near `want` as it fits, no
+    /// further than `reach`; `None` when it fits nowhere there.
+    pub fn place(&mut self, want: Vec2, h: Vec2, margin: f32, gap: f32, reach: f32) -> Option<Vec2> {
+        let at = if self.free(want, h, margin, gap) {
+            Some(want)
+        } else {
+            let mut near: Vec<(f32, Vec2)> = self.pts.iter().map(|p| (p.distance_squared(want), *p)).filter(|(d, _)| *d <= reach * reach).collect();
+            near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.x.total_cmp(&b.1.x)).then(a.1.y.total_cmp(&b.1.y)));
+            near.into_iter().map(|x| x.1).find(|p| self.free(*p, h, margin, gap))
+        }?;
+        self.taken.push((at - h, at + h));
+        Some(at)
+    }
+}
+
+/// [plant-scale] The units of a coal station of size `scale` (share of the
+/// nameplate) on a lot outline: one to four boiler houses, each with its
+/// own smokestack of its own height and girth, a small start-up stack, a
+/// tall common stack on the big ones, a turbine hall in front, ash filters,
+/// one or two cooling towers on the biggest, and heaps of coal. A lot
+/// bigger than the station needs is coal yard beyond its block.
+pub(crate) fn coal_layout(poly: &[Vec2], seed: u64, scale: f32) -> CoalLayout {
+    let mut rng = rng_for(seed, 0xC0A1);
+    let s = scale.clamp(0.3, 3.0);
+    let (lo, hi) = bounds(poly);
+    let (w, d) = (hi.x - lo.x, hi.y - lo.y);
+    let lot_area = nd_sim::zoning::polygon_area(poly).abs();
+    let plant_area = s * nd_sim::power::COAL_REFERENCE_AREA;
+    // The station's block: the whole lot, or on a lot much bigger than it
+    // needs a block at the front, the rest of the lot its coal yard.
+    let roomy = lot_area > plant_area * 1.4;
+    let (cw, cd) = if roomy {
+        let cw = (plant_area * 1.3).sqrt().max(30.0).min(w);
+        (cw, (plant_area * 1.3 / cw).clamp(26.0, d))
+    } else {
+        (w, d)
+    };
+    let cu = (lo.x + hi.x) * 0.5;
+    // Fractions of the block: u from the left, v from the road.
+    let at = |fu: f32, fv: f32| Vec2::new(cu + (fu - 0.5) * cw, lo.y + fv * cd);
+    let mut pk = Packer::new(poly);
+    let mut lay = CoalLayout::default();
+    let units: usize = if s < 0.9 {
+        1
+    } else if s < 1.7 {
+        2
+    } else {
+        3
+    };
+    // Bands from the road back: transformers and the turbine hall, the
+    // boiler houses, their stacks; the coal yard down the left side.
+    let yard_w = if units == 1 { 0.3 } else { 0.24 };
+    let row = |k: usize| yard_w + (1.0 - yard_w) * (k as f32 + 0.5) / units as f32;
+    let reach_b = (cw / units as f32).max(10.0);
+    for k in 0..units {
+        let h = Vec2::new(rng.random_range(3.6..4.4), rng.random_range(4.6..5.6));
+        let bh = rng.random_range(26.0..36.0);
+        let want = at(row(k), 0.56);
+        let placed = pk.place(want, h, 1.5, 1.2, reach_b).map(|p| (p, h, bh)).or_else(|| pk.place(want, h * 0.75, 1.0, 1.0, reach_b).map(|p| (p, h * 0.75, bh * 0.8)));
+        if let Some(b) = placed {
+            lay.boilers.push(b);
         }
     }
+    // Each boiler's own stack behind it: heights and girths differ.
+    for (i, &(p, h, bh)) in lay.boilers.clone().iter().enumerate() {
+        let r = rng.random_range(1.6..2.5);
+        let sh = (bh + rng.random_range(20.0..44.0)).max(46.0);
+        let want = p + Vec2::new(rng.random_range(-1.5..1.5), h.y + r + 3.0);
+        if let Some(q) = pk.place(want, Vec2::splat(r * 1.2), 1.2, 1.0, 12.0) {
+            lay.stacks.push((q, r, sh, Some(i)));
+        }
+    }
+    // Turbine hall in front of the boilers.
+    let hw = (3.5 + 6.5 * units as f32).min(cw * (1.0 - yard_w) * 0.45);
+    let th = Vec2::new(hw, rng.random_range(4.0..5.0));
+    let hall_h = rng.random_range(12.0..15.0);
+    let hall_at = at(yard_w + (1.0 - yard_w) * 0.5, 0.22);
+    if let Some(p) = pk.place(hall_at, th, 1.5, 1.2, cw * 0.4) {
+        lay.turbine = Some((p, th, hall_h));
+    } else if let Some(p) = pk.place(hall_at, th * 0.7, 1.0, 1.0, cw * 0.4) {
+        lay.turbine = Some((p, th * 0.7, hall_h * 0.85));
+    }
+    // The tall common stack of a big station, at the back.
+    if s >= 1.4 {
+        let r = rng.random_range(3.0..3.5);
+        if let Some(q) = pk.place(at(yard_w + (1.0 - yard_w) * 0.5, 0.92), Vec2::splat(r * 1.2), 1.5, 1.2, cw * 0.5) {
+            lay.stacks.push((q, r, rng.random_range(96.0..112.0), None));
+        }
+    }
+    // Cooling towers on the big stations, at the back of the coal yard
+    // (as big as the ground there allows).
+    let towers = if s >= 1.9 { 2 } else if s >= 1.3 { 1 } else { 0 };
+    for k in 0..towers {
+        let rb = rng.random_range(7.0..8.2);
+        let want = at(0.12 + 0.3 * k as f32, 0.84);
+        if let Some((q, rb)) = [1.0f32, 0.85, 0.72, 0.62].iter().find_map(|f| pk.place(want, Vec2::splat(rb * f), 1.0, 1.4, cw.max(cd) * 0.7).map(|q| (q, rb * f))) {
+            lay.towers.push((q, rb, rb * rng.random_range(3.2..3.6)));
+        }
+    }
+    // The start-up boiler's small stack by the turbine hall.
+    let want = lay.turbine.map_or(at(0.9, 0.4), |(p, h, _)| p + Vec2::new(h.x + 2.5, h.y * 0.4));
+    if let Some(q) = pk.place(want, Vec2::splat(1.3), 0.8, 0.8, cw.max(cd) * 0.6) {
+        lay.stacks.push((q, 1.1, rng.random_range(24.0..32.0), None));
+    }
+    // Ash filters beside the boilers.
+    for &(p, h, bh) in lay.boilers.clone().iter() {
+        let fh = Vec2::new(2.2, 3.0);
+        if let Some(q) = pk.place(p + Vec2::new(h.x + 3.6, -0.5), fh, 1.0, 0.8, 5.0) {
+            lay.filters.push((q, fh, (bh * 0.42).max(10.0)));
+        }
+    }
+    // Transformers by the road.
+    lay.transformer = pk.place(at(0.88, 0.07), Vec2::new(5.3, 4.3), 0.6, 1.0, cw * 0.3);
+    // Heaps of coal in the yard: more for a bigger station, and over all
+    // the spare ground of a lot bigger than it needs.
+    let spare = if roomy { ((lot_area - plant_area * 1.3) / 240.0) as usize } else { 0 };
+    let heaps = (2 + (s * 1.5) as usize + spare).min(18);
+    for k in 0..heaps {
+        let hh = Vec2::new(rng.random_range(2.4..4.0), rng.random_range(4.0..7.5));
+        let want = if k < 3 { at(yard_w * 0.45, 0.2 + 0.24 * k as f32) } else { Vec2::new(lo.x + w * rng.random_range(0.08..0.92), lo.y + d * rng.random_range(0.3..0.95)) };
+        let placed = match pk.place(want, hh, 1.0, 1.6, w.max(d)) {
+            Some(p) => Some((p, hh)),
+            None => pk.place(want, hh * 0.6, 0.8, 1.2, w.max(d)).map(|p| (p, hh * 0.6)),
+        };
+        if let Some((p, hh)) = placed {
+            lay.heaps.push((p, hh, (hh.x * 0.9).clamp(1.6, 4.2)));
+        }
+    }
+    lay
+}
+
+/// [plant-scale] The plumes of a coal station on `lot`: every stack's top
+/// (smoke) and every cooling tower's mouth (steam), for the renderer.
+pub fn coal_vents(lot: &nd_sim::Lot, seed: u64, scale: f32) -> Vec<CoalVent> {
+    let (frame, poly) = local_lot(lot);
+    let lay = coal_layout(&poly, seed, scale);
+    let world = |p: Vec2| frame.to_world(p.x, p.y);
+    let mut out: Vec<CoalVent> = lay
+        .stacks
+        .iter()
+        .map(|&(p, r, h, _)| {
+            let w = world(p);
+            CoalVent { top: Vec3::new(w.x, h + 0.8, w.y), r: r * 0.75, steam: false }
+        })
+        .collect();
+    out.extend(lay.towers.iter().map(|&(p, rb, th)| {
+        let w = world(p);
+        CoalVent { top: Vec3::new(w.x, th + 1.0, w.y), r: rb * 0.62, steam: true }
+    }));
     out
 }
 
-/// The tops of a coal plant's stacks on `lot`, in world coordinates with
-/// the height above the lot pad: where the renderer starts the plumes.
-pub fn coal_stacks(lot: &nd_sim::Lot) -> Vec<Vec3> {
-    let (frame, poly) = local_lot(lot);
-    stack_sites(&poly).into_iter().map(|p| {
-        let w = frame.to_world(p.x, p.y);
-        Vec3::new(w.x, COAL_HALL_H + COAL_STACK_H + 1.0, w.y)
-    }).collect()
+/// An oval ring about `c` (lot-local) with half axes along u and v.
+fn oval(f: &super::Frame, c: Vec2, h: Vec2, y: f32, n: usize) -> Vec<Vec3> {
+    (0..n)
+        .map(|i| {
+            let a = i as f32 / n as f32 * std::f32::consts::TAU;
+            f.at(c.x + a.cos() * h.x, y, c.y + a.sin() * h.y)
+        })
+        .collect()
+}
+
+/// A smokestack: a tapering sooty shaft on a plinth, blackened at the top,
+/// service galleries, and red aviation lights at the top (and half way up
+/// on the tall ones).
+fn smokestack(g: &mut Geometry, f: &super::Frame, p: Vec2, r: f32, h: f32, light: [f32; 3], tone: f32) {
+    let w = f.to_world(p.x, p.y);
+    let top_r = r * 0.72;
+    g.part(Concrete).cylinder(w, r * 1.3, r * 1.18, 0.0, 2.5, 14, rgba(mul(SOOT_CONCRETE, 1.3)));
+    g.part(Concrete).cylinder(w, r, top_r * 1.03, 2.5, h * 0.88, 14, rgba(mul(SOOT_CONCRETE, tone)));
+    g.part(Matte).cylinder(w, top_r * 1.03, top_r, h * 0.88, h, 14, rgba(COAL_BLACK));
+    g.part(Matte).cylinder(w, top_r * 0.86, top_r * 0.86, h, h + 0.5, 14, rgba([0.01, 0.01, 0.01]));
+    let mut gallery = |y: f32| {
+        let rr = r + (top_r - r) * (y / h) + 0.7;
+        g.part(Matte).cylinder(w, rr, rr, y, y + 0.35, 14, rgba(BLACK_STEEL));
+    };
+    gallery(h - 4.0);
+    if h > 60.0 {
+        gallery(h * 0.55);
+    }
+    for k in 0..3 {
+        let a = k as f32 / 3.0 * std::f32::consts::TAU + 0.4;
+        let rr = top_r + 0.25;
+        g.part(Glow).boxed(Vec3::new(w.x + a.cos() * rr, h - 1.2, w.y + a.sin() * rr), Vec3::splat(0.45), 0.0, rgba(light));
+        if h > 60.0 {
+            let rr = r + (top_r - r) * 0.55 + 0.9;
+            g.part(Glow).boxed(Vec3::new(w.x + a.cos() * rr, h * 0.55 + 0.9, w.y + a.sin() * rr), Vec3::splat(0.4), 0.0, rgba(light));
+        }
+    }
+}
+
+/// A boiler house: a tall black steel box, ribbed, braced, its slits lit
+/// orange by the fires inside, soot running down from the roof.
+fn boiler_house(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, h: Vec2, bh: f32) {
+    let f = &c.frame;
+    let body = rect(p.x, p.y, h.x, h.y);
+    let tone = rng.random_range(0.85..1.2);
+    extrude(g, f, Matte, &body, 0.0, bh, mul(BLACK_STEEL, tone));
+    extrude(g, f, Concrete, &rect(p.x, p.y, h.x + 0.3, h.y + 0.3), 0.0, 3.0, mul(SOOT_CONCRETE, 1.2));
+    // Penthouse and the fans on the roof.
+    let ph = rect(p.x + rng.random_range(-1.0..1.0), p.y, h.x * 0.6, h.y * 0.5);
+    extrude(g, f, Matte, &ph, bh, bh + 3.5, mul(BLACK_STEEL, 0.8));
+    for k in 0..2 {
+        let q = Vec2::new(p.x + (k as f32 - 0.5) * h.x * 0.9, p.y - h.y * 0.6);
+        vent_stack(g, f, q, bh, 0.5, 2.5, mul(BLACK_STEEL, 0.7));
+    }
+    for face in c.faces(&body) {
+        // Ribs.
+        let n = (face.len / 2.6).floor() as i32;
+        for k in 1..n {
+            let t = -face.len * 0.5 + k as f32 * face.len / n as f32;
+            face.bx(g, f, Metal, t, bh * 0.5, 0.12, Vec3::new(0.22, bh, 0.25), mul(BLACK_STEEL, 0.6));
+        }
+        // Firelight slits at odd heights.
+        let slits = rng.random_range(2..5);
+        for _ in 0..slits {
+            let t = rng.random_range(-face.len * 0.4..face.len * 0.4);
+            let sh = rng.random_range(2.5..6.0);
+            let y = rng.random_range(5.0..(bh - sh).max(6.0));
+            face.decal(g, f, Glow, t, y, 0.28, rng.random_range(0.35..0.6), sh, mul(EMBER, rng.random_range(0.55..1.0)));
+        }
+        // The control room's low strip of light.
+        if face.is_front {
+            face.decal(g, f, Glow, 0.0, 4.2, 0.28, face.len * 0.7, 0.5, mul(EMBER, 0.45));
+        }
+        grime(g, c, rng, &face, 0.0, bh, 3.0);
+        // Cross bracing up the side walls.
+        if face.out.y.abs() < 0.5 {
+            let panels = ((bh / 9.0).floor() as i32).max(1);
+            for k in 0..panels {
+                let (y0, y1) = (3.0 + k as f32 * (bh - 3.0) / panels as f32, 3.0 + (k + 1) as f32 * (bh - 3.0) / panels as f32);
+                let (a, b) = (face.at(-face.len * 0.45, 0.35), face.at(face.len * 0.45, 0.35));
+                g.part(Metal).beam(f.at(a.x, y0, a.y), f.at(b.x, y1, b.y), 0.3, rgba(RUST_DARK));
+                g.part(Metal).beam(f.at(b.x, y0, b.y), f.at(a.x, y1, a.y), 0.3, rgba(RUST_DARK));
+            }
+        }
+    }
+}
+
+/// A cooling tower: a sooty concrete hyperboloid, darker at the lip.
+fn cooling_tower(g: &mut Geometry, f: &super::Frame, p: Vec2, rb: f32, th: f32) {
+    let w = f.to_world(p.x, p.y);
+    let profile = [(0.0f32, 1.0f32), (0.12, 0.9), (0.3, 0.77), (0.55, 0.64), (0.78, 0.6), (0.92, 0.63), (1.0, 0.66)];
+    let shade = |t: f32| mul(SOOT_CONCRETE, 2.6 - 1.6 * t * t);
+    for seg in profile.windows(2) {
+        let a = MeshData::ngon(w, rb * seg[0].1, 24, 0.0, th * seg[0].0);
+        let b = MeshData::ngon(w, rb * seg[1].1, 24, 0.0, th * seg[1].0);
+        g.part(Concrete).frustum(&a, &b, rgba(shade(seg[1].0)));
+    }
+    // The dark mouth and the shadowed ring of legs at the foot.
+    g.part(Matte).cylinder(w, rb * 0.62, rb * 0.62, th - 0.2, th + 0.05, 24, rgba([0.012, 0.012, 0.014]));
+    g.part(Matte).cylinder(w, rb * 1.02, rb * 1.01, 0.0, 1.6, 24, rgba([0.02, 0.02, 0.022]));
 }
 
 pub fn coal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
-    let yard = yard(g, c, 0.5, Asphalt, mul(pal.asphalt, 1.3));
-    let poly = &c.poly;
-    let (lo, hi) = bounds(poly);
-    // Boiler hall at the back, turbine hall in front of it.
-    let hall = fit_inside(c, &rect((lo.x + hi.x) * 0.5, lo.y + (hi.y - lo.y) * 0.68, (hi.x - lo.x) * 0.42, (hi.y - lo.y) * 0.26));
-    let h = COAL_HALL_H;
-    let panel = mul(pick(rng, &pal.panel), 0.75);
-    extrude(g, f, Panel, &hall, 0.0, h, panel);
-    cornice(g, c, &hall, h - 0.5, 1.0, 0.3, Panel, mul(panel, 0.8));
-    for face in c.faces(&hall) {
-        if face.len > 8.0 {
-            band_windows(g, c, rng, &face, h * 0.6, 1, 4.0);
-            grime(g, c, rng, &face, 0.0, h, 3.0);
+    let lay = coal_layout(&c.lot_poly, c.seed, c.plant_scale);
+    // Ground black with coal dust.
+    let yard = yard(g, c, 0.5, Dirt, [0.03, 0.028, 0.027]);
+    // Coal heaps: long black windrows on their own dust.
+    for &(p, h, hh) in &lay.heaps {
+        let dust: Vec<Vec2> = (0..16)
+            .map(|i| {
+                let a = i as f32 / 16.0 * std::f32::consts::TAU;
+                p + Vec2::new(a.cos() * (h.x + 1.2), a.sin() * (h.y + 1.2))
+            })
+            .collect();
+        if poly_inside(c, &dust) {
+            ground(g, f, Dirt, &dust, 0.06, [0.035, 0.032, 0.03]);
+        }
+        let base = oval(f, p, h, 0.0, 14);
+        let top = oval(f, p, h * Vec2::new(0.22, 0.7), hh, 14);
+        g.part(Matte).frustum(&base, &top, rgba(mul(COAL_BLACK, rng.random_range(0.8..1.3))));
+    }
+    for &(p, h, bh) in &lay.boilers {
+        boiler_house(g, c, rng, p, h, bh);
+    }
+    // Stacks, and the flue duct from each boiler to its own, on a trestle.
+    for &(q, r, h, unit) in &lay.stacks {
+        let tone = 0.9 + 0.3 * ((q.x * 7.3 + q.y * 3.1).sin() * 0.5 + 0.5);
+        smokestack(g, f, q, r, h, pal.aviation_light, tone);
+        if let Some(&(p, bh_half, bh)) = unit.and_then(|i| lay.boilers.get(i)) {
+            let y = (bh * 0.62).min(h * 0.4);
+            let from = Vec2::new(q.x.clamp(p.x - bh_half.x + 1.0, p.x + bh_half.x - 1.0), p.y + bh_half.y);
+            let a = f.at(from.x, y, from.y);
+            let b = f.at(q.x, y, q.y);
+            g.part(Metal).tube(a, b, 1.3, 10, rgba(mul(BLACK_STEEL, 0.9)));
+            let m = a.lerp(b, 0.5);
+            g.part(Matte).boxed(Vec3::new(m.x, y * 0.5, m.z), Vec3::new(0.6, y, 0.6), f.yaw(), rgba(RUST_DARK));
         }
     }
-    let turbine = fit_inside(c, &rect((lo.x + hi.x) * 0.5, lo.y + (hi.y - lo.y) * 0.3, (hi.x - lo.x) * 0.38, (hi.y - lo.y) * 0.16));
-    extrude(g, f, Metal, &turbine, 0.0, 11.0, mul(pick(rng, &pal.metal_paint), 0.9));
-    weeds(g, c, rng, &yard, 4);
-    // Two tall stacks with a glowing top. The smoke is drawn by the
-    // renderer as drifting translucent puffs (see `coal_stacks`).
-    for p in stack_sites(&c.lot_poly) {
-        chimney(g, f, p, 2.2, COAL_HALL_H, COAL_STACK_H, mul(pal.concrete(0), 0.7), pal.aviation_light);
-    }
-    // Coal pile, conveyor up to the boiler hall, rail-side hopper.
-    let pile = Vec2::new(lo.x + (hi.x - lo.x) * 0.2, lo.y + (hi.y - lo.y) * 0.45);
-    let pile_r = if c.inside_local(pile) { (distance_to_boundary(pile, &c.lot_poly) - 0.5).min(7.0) } else { 0.0 };
-    if pile_r >= 3.0 {
-        let w = f.to_world(pile.x, pile.y);
-        g.part(Matte).frustum(&MeshData::ngon(w, pile_r, 10, 0.0, 0.0), &MeshData::ngon(w, pile_r * 0.3, 10, 0.3, pile_r * 0.7), rgba([0.07, 0.07, 0.07]));
-        let a = f.at(pile.x, 5.0, pile.y);
-        let hc = poly_center(&hall);
-        let b = f.at(hc.x, h + 1.0, hc.y);
-        g.part(Metal).beam(a, b, 1.6, rgba(mul(pal.steel, 0.6)));
-        for t in [0.3f32, 0.6] {
-            let p = a.lerp(b, t);
-            g.part(Matte).boxed(Vec3::new(p.x, p.y * 0.5, p.z), Vec3::new(0.5, p.y, 0.5), f.yaw(), rgba(mul(pal.steel, 0.5)));
+    // Ash filters: boxes on legs with hoppers under them.
+    for &(p, h, fh) in &lay.filters {
+        extrude(g, f, Metal, &rect(p.x, p.y, h.x, h.y), 4.0, 4.0 + fh, mul(BLACK_STEEL, 1.15));
+        for (du, dv) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+            f.bx(g, Matte, p.x + du * (h.x - 0.4), 2.0, p.y + dv * (h.y - 0.4), Vec3::new(0.45, 4.0, 0.45), RUST_DARK);
         }
+        let w = f.to_world(p.x, p.y);
+        g.part(Metal).cylinder(w, 0.4, h.x * 0.8, 1.6, 4.0, 4, rgba(mul(BLACK_STEEL, 0.8)));
+    }
+    // Turbine hall: long and low, a monitor along the roof glowing dimly.
+    if let Some((p, h, th)) = lay.turbine {
+        let hall = rect(p.x, p.y, h.x, h.y);
+        extrude(g, f, Concrete, &hall, 0.0, th, mul(SOOT_CONCRETE, 1.1));
+        cornice(g, c, &hall, th - 0.4, 0.8, 0.25, Metal, mul(BLACK_STEEL, 0.7));
+        let monitor = rect(p.x, p.y, h.x * 0.85, h.y * 0.22);
+        extrude(g, f, Metal, &monitor, th, th + 1.8, mul(BLACK_STEEL, 0.9));
+        for face in c.faces(&monitor) {
+            if face.len > 4.0 {
+                face.decal(g, f, Glow, 0.0, th + 0.9, 0.05, face.len * 0.9, 0.7, mul(EMBER, 0.35));
+            }
+        }
+        for face in c.faces(&hall) {
+            if face.len > 6.0 {
+                face.decal(g, f, Glow, 0.0, th * 0.62, 0.06, face.len * 0.8, 0.5, mul(EMBER, 0.3));
+                grime(g, c, rng, &face, 0.0, th, 2.0);
+            }
+        }
+        // Pipe racks from the hall back to each boiler.
+        for &(b, bh_half, _) in &lay.boilers {
+            for (k, y) in [6.0f32, 7.2].iter().enumerate() {
+                let du = (k as f32 - 0.5) * 1.4;
+                let u = (b.x + du).clamp(p.x - h.x + 1.0, p.x + h.x - 1.0);
+                let pts = [Vec3::new(u, *y, p.y + h.y), Vec3::new(u, *y, (p.y + h.y + b.y - bh_half.y) * 0.5), Vec3::new(b.x + du, *y, b.y - bh_half.y)];
+                if pts[2].z > pts[0].z {
+                    pipe_run(g, f, &pts, 0.45, mul(pal.steel, 0.35));
+                }
+            }
+        }
+    }
+    // Conveyor galleries from the coal yard up to the boiler houses.
+    for (i, &(b, bh_half, bh)) in lay.boilers.iter().enumerate() {
+        let Some(&(hp, hh, _)) = lay.heaps.iter().take(3).min_by(|x, y| x.0.distance(b).total_cmp(&y.0.distance(b))) else { continue };
+        let foot = hp + Vec2::new(hh.x + 1.5, 0.0);
+        let side = Vec2::new(b.x - bh_half.x, b.y + (i as f32 - 0.5) * 2.0);
+        if !c.inside_local(foot) || distance_to_boundary(foot, &c.lot_poly) < 2.3 || foot.distance(side) < 6.0 {
+            continue;
+        }
+        let a = f.at(foot.x, 3.0, foot.y);
+        let top = f.at(side.x, bh - 3.0, side.y);
+        g.part(Metal).beam(a, top, 1.5, rgba(mul(RUST_DARK, 0.9)));
+        f.bx(g, Metal, foot.x, 2.0, foot.y, Vec3::new(3.0, 4.0, 3.0), mul(BLACK_STEEL, 1.1));
+        let n = ((a.distance(top) / 12.0).floor() as i32).max(1);
+        for k in 1..=n {
+            let m = a.lerp(top, k as f32 / (n + 1) as f32);
+            g.part(Matte).boxed(Vec3::new(m.x, m.y * 0.5, m.z), Vec3::new(0.5, m.y, 0.5), f.yaw(), rgba(RUST_DARK));
+        }
+    }
+    for &(p, rb, th) in &lay.towers {
+        cooling_tower(g, f, p, rb, th);
     }
     // Transformer yard: fenced, insulators, bus bars.
-    let ty = Vec2::new(hi.x - 7.0, lo.y + 6.0);
-    if poly_inside(c, &rect(ty.x, ty.y, 5.3, 4.3)) {
+    if let Some(ty) = lay.transformer {
         let pen = rect(ty.x, ty.y, 5.0, 4.0);
         ground(g, f, Dirt, &pen, 0.05, pal.gravel);
         fence_poly(g, c, &pen, 2.0, None, true);
         for k in 0..3 {
             let p = ty + Vec2::new((k as f32 - 1.0) * 3.0, 0.0);
-            f.bx(g, Metal, p.x, 1.2, p.y, Vec3::new(1.6, 2.4, 1.2), mul(pal.metal_paint(1), 0.9));
-            f.bx(g, Matte, p.x, 3.3, p.y, Vec3::new(0.15, 1.8, 0.15), [0.6, 0.6, 0.55]);
+            f.bx(g, Metal, p.x, 1.2, p.y, Vec3::new(1.6, 2.4, 1.2), mul(pal.metal_paint(1), 0.5));
+            f.bx(g, Matte, p.x, 3.3, p.y, Vec3::new(0.15, 1.8, 0.15), [0.45, 0.45, 0.42]);
         }
-        f.bx(g, Matte, ty.x, 4.3, ty.y, Vec3::new(8.0, 0.08, 0.08), [0.5, 0.5, 0.5]);
+        f.bx(g, Matte, ty.x, 4.3, ty.y, Vec3::new(8.0, 0.08, 0.08), [0.4, 0.4, 0.4]);
     }
     let front = c.front_face(&yard);
-    fence_lot(g, c, &yard, 2.4, true);
-    floodlight(g, c, front.at(-front.len * 0.4, -1.5), 10.0);
-    floodlight(g, c, front.at(front.len * 0.4, -1.5), 10.0);
+    fence_lot(g, c, &yard, 2.6, true);
+    // Sodium floodlights round the yard.
+    let (lo, hi) = bounds(&c.lot_poly);
+    for p in [front.at(-front.len * 0.4, -1.5), front.at(front.len * 0.4, -1.5), Vec2::new(lo.x + 3.0, hi.y - 3.0), Vec2::new(hi.x - 3.0, hi.y - 3.0)] {
+        floodlight(g, c, p, 11.0);
+    }
     sign_board(g, c, rng, &front, 0.0, 3.0, (front.len * 0.4).min(10.0), 0.9);
 }
 
@@ -813,17 +1178,67 @@ pub fn battery(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     sign_board(g, c, rng, &front, -front.len * 0.3, 2.6, (front.len * 0.3).min(6.0), 0.6);
 }
 
+/// [plant-scale] A nuclear station's units in lot coordinates: one or two
+/// reactors (a domed containment with its turbine and service hall), two to
+/// four cooling towers, and a switchyard, laid out at their own sizes on
+/// the lot rather than stretched across it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct NuclearLayout {
+    /// Containments: centre, radius.
+    pub reactors: Vec<(Vec2, f32)>,
+    /// Service and turbine halls: centre, half size, height.
+    pub halls: Vec<(Vec2, Vec2, f32)>,
+    /// Cooling towers: base, radius at the foot.
+    pub towers: Vec<(Vec2, f32)>,
+    pub switchyard: Option<Vec2>,
+    pub gate: Option<Vec2>,
+}
+
+pub(crate) fn nuclear_layout(poly: &[Vec2], seed: u64, scale: f32) -> NuclearLayout {
+    let mut rng = rng_for(seed, 0x0A70);
+    let s = scale.clamp(0.3, 3.0);
+    let (lo, hi) = bounds(poly);
+    let (w, d) = (hi.x - lo.x, hi.y - lo.y);
+    let at = |fu: f32, fv: f32| Vec2::new(lo.x + fu * w, lo.y + fv * d);
+    let reach = w.max(d);
+    let mut pk = Packer::new(poly);
+    let mut lay = NuclearLayout::default();
+    let reactors = if s >= 1.6 { 2 } else { 1 };
+    let r = (8.0 + 3.0 * s.min(1.6)).min(w.min(d) * 0.22).max(5.0);
+    for k in 0..reactors {
+        let want = at(0.3 + 0.32 * k as f32, 0.62);
+        if let Some(p) = pk.place(want, Vec2::splat(r), 2.0, 2.0, reach * 0.5).or_else(|| pk.place(want, Vec2::splat(r * 0.7), 1.5, 1.5, reach * 0.5)) {
+            let rr = pk.taken.last().map_or(r, |(a, b)| (b.x - a.x) * 0.5);
+            lay.reactors.push((p, rr));
+            let hh = Vec2::new(rng.random_range(6.0..8.0), rng.random_range(5.0..7.0));
+            if let Some(q) = pk.place(p + Vec2::new(rr + hh.x + 3.0, 0.0), hh, 1.5, 1.5, reach * 0.4) {
+                lay.halls.push((q, hh, rng.random_range(14.0..18.0)));
+            }
+        }
+    }
+    let towers = 2 + usize::from(s >= 1.2) + usize::from(s >= 1.9);
+    let rb = (7.5 + 2.0 * s.min(1.5)).min(w.min(d) * 0.2).max(3.0);
+    for k in 0..towers {
+        let fu = (k as f32 + 0.5) / towers as f32;
+        if let Some(q) = pk.place(at(fu, 0.2), Vec2::splat(rb), 1.5, 2.0, reach) {
+            lay.towers.push((q, rb));
+        }
+    }
+    lay.switchyard = pk.place(at(0.9, 0.9), Vec2::new(6.3, 5.3), 0.8, 1.0, reach * 0.5);
+    lay.gate = pk.place(at(0.75, 0.05), Vec2::new(2.0, 1.6), 1.5, 0.5, reach * 0.3);
+    lay
+}
+
 pub fn nuclear(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
     let yard = yard(g, c, 0.5, Asphalt, mul(pal.asphalt, 1.4));
-    let poly = &c.poly;
-    let (lo, hi) = bounds(poly);
+    let (lo, hi) = bounds(&c.lot_poly);
     let concrete = mul(pal.concrete(0), 1.15);
+    let lay = nuclear_layout(&c.lot_poly, c.seed, c.plant_scale);
+    let panel = mul(pick(rng, &pal.panel), 0.95);
     // Containment: a cylinder with a dome.
-    let cc = Vec2::new(lo.x + (hi.x - lo.x) * 0.3, lo.y + (hi.y - lo.y) * 0.6);
-    let r = ((hi.x - lo.x).min(hi.y - lo.y) * 0.16).clamp(6.0, 14.0).min(distance_to_boundary(cc, &yard) - 0.5);
-    if r >= 2.5 && c.inside_local(cc) {
+    for &(cc, r) in &lay.reactors {
         let w = f.to_world(cc.x, cc.y);
         g.part(Concrete).cylinder(w, r, r, 0.0, r * 1.8, 20, rgba(concrete));
         let mut prev = MeshData::ngon(w, r, 20, 0.0, r * 1.8);
@@ -838,26 +1253,19 @@ pub fn nuclear(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         g.part(Glow).boxed(Vec3::new(w.x, r * 2.75, w.y), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
     }
     // Turbine and reactor service halls.
-    let hall = fit_inside(c, &rect(lo.x + (hi.x - lo.x) * 0.7, lo.y + (hi.y - lo.y) * 0.6, (hi.x - lo.x) * 0.18, (hi.y - lo.y) * 0.3));
-    let panel = mul(pick(rng, &pal.panel), 0.95);
-    extrude(g, f, Panel, &hall, 0.0, 16.0, panel);
-    cornice(g, c, &hall, 15.5, 1.0, 0.3, Panel, mul(panel, 0.8));
-    for face in c.faces(&hall) {
-        if face.len > 6.0 {
-            band_windows(g, c, rng, &face, 10.0, 1, 4.0);
+    for &(p, h, hh) in &lay.halls {
+        let hall = rect(p.x, p.y, h.x, h.y);
+        extrude(g, f, Panel, &hall, 0.0, hh, panel);
+        cornice(g, c, &hall, hh - 0.5, 1.0, 0.3, Panel, mul(panel, 0.8));
+        for face in c.faces(&hall) {
+            if face.len > 6.0 {
+                band_windows(g, c, rng, &face, hh * 0.62, 1, 4.0);
+            }
         }
     }
     // Cooling towers: hyperboloids from stacked frustums, with a steam plume.
-    for k in 0..2 {
-        let p = Vec2::new(lo.x + (hi.x - lo.x) * (0.25 + 0.5 * k as f32), lo.y + (hi.y - lo.y) * 0.18);
-        if !c.inside_local(p) {
-            continue;
-        }
+    for &(p, rb) in &lay.towers {
         let w = f.to_world(p.x, p.y);
-        let rb = (r * 0.75).min(distance_to_boundary(p, &yard) - 1.5);
-        if rb < 2.5 {
-            continue;
-        }
         let profile = [(0.0f32, 1.0f32), (0.3, 0.78), (0.6, 0.62), (0.8, 0.6), (1.0, 0.68)];
         let th = rb * 3.6;
         for seg in profile.windows(2) {
@@ -871,8 +1279,7 @@ pub fn nuclear(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
     // Switchyard, double fence, floodlights, gatehouse.
-    let sy = Vec2::new(hi.x - 8.0, hi.y - 7.0);
-    if poly_inside(c, &rect(sy.x, sy.y, 6.3, 5.3)) {
+    if let Some(sy) = lay.switchyard {
         let pen = rect(sy.x, sy.y, 6.0, 5.0);
         ground(g, f, Dirt, &pen, 0.05, pal.gravel);
         fence_poly(g, c, &pen, 2.2, None, true);
@@ -892,9 +1299,8 @@ pub fn nuclear(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             floodlight(g, c, p, 12.0);
         }
     }
-    let gate = front.at(front.len * 0.3, -3.0);
-    if c.inside_local(gate) {
-        let house = fit_inside(c, &rect(gate.x, gate.y, 2.0, 1.6));
+    if let Some(gate) = lay.gate {
+        let house = rect(gate.x, gate.y, 2.0, 1.6);
         extrude(g, f, Panel, &house, 0.0, 3.0, mul(panel, 0.9));
         curtain_lights(g, c, rng, &house, 1.0, 1, 1.6);
     }
@@ -990,5 +1396,125 @@ mod tests {
         let rotor = wind_rotor(0.3);
         let reach = rotor.iter().flat_map(|(_, m)| m.positions.iter()).map(|p| (p[0] * p[0] + p[2] * p[2]).sqrt()).fold(0.0f32, f32::max);
         assert!(reach <= TURBINE_RADIUS + 0.7, "blades sweep {reach} m, past the clearance");
+    }
+    /// [plant-scale] A street along y = 0 and an industrial lot `w` wide and
+    /// `d` deep fronting it.
+    fn plant_lot(w: f32, d: f32) -> nd_sim::Lot {
+        let mut roads = nd_sim::RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+        let poly = vec![Vec2::new(-w * 0.5, 6.0), Vec2::new(w * 0.5, 6.0), Vec2::new(w * 0.5, 6.0 + d), Vec2::new(-w * 0.5, 6.0 + d)];
+        nd_sim::zoning::make_lot(nd_sim::zoning::ZoneId::default(), nd_sim::LandUse::Industrial, poly, Vec2::new(0.0, 6.0 + d * 0.5), &roads).expect("a lot")
+    }
+
+    fn coal_mesh(lot: &nd_sim::Lot, seed: u64, scale: f32) -> Geometry {
+        let extras = super::super::Extras { plant: Some(nd_sim::PowerPlantKind::Coal), plant_scale: scale, ..Default::default() };
+        super::super::generate_building(lot, nd_sim::LandUse::Industrial, 1, nd_sim::Tier::Mid, 1.0, seed, &super::super::BuildingRules::default(), &crate::palette::Palette::default(), &extras)
+    }
+
+    fn fingerprint(g: &Geometry) -> (usize, f64) {
+        let mut sum = 0.0f64;
+        for (_, m) in g.iter() {
+            for p in &m.positions {
+                sum += (p[0] as f64) * 1.3 + (p[1] as f64) * 0.7 + (p[2] as f64) * 1.9;
+            }
+        }
+        (g.triangle_count(), sum)
+    }
+
+    /// [plant-scale] The coal station is the same for the same seed and
+    /// size, composed of more units (not stretched) on a bigger site: more
+    /// stacks of different heights, cooling towers on the biggest, every
+    /// stack on the lot, and the renderer's plumes start at the stacks.
+    #[test]
+    fn coal_station_is_deterministic_and_grows_by_units() {
+        let small = plant_lot(24.0, 30.0);
+        let mid = plant_lot(32.0, 34.0);
+        let big = plant_lot(48.0, 52.0);
+        let cases = [(&small, 0.72f32), (&mid, 1.09), (&big, 2.4)];
+        let mut last_stacks = 0;
+        for (lot, scale) in cases {
+            let (_, poly) = local_lot(lot);
+            let a = coal_layout(&poly, 77, scale);
+            assert_eq!(a, coal_layout(&poly, 77, scale), "same seed, same station");
+            assert!(!a.boilers.is_empty() && !a.stacks.is_empty() && !a.heaps.is_empty(), "{scale}: {a:?}");
+            assert!(a.stacks.len() >= last_stacks, "{scale}: {} stacks after {last_stacks}", a.stacks.len());
+            last_stacks = a.stacks.len();
+            for &(p, r, h, _) in &a.stacks {
+                assert!(nd_sim::zoning::point_in_polygon(p, &poly) && distance_to_boundary(p, &poly) >= r, "{scale}: a stack off the lot");
+                assert!(h > 20.0);
+            }
+            let heights: Vec<i32> = a.stacks.iter().map(|s| s.2.round() as i32).collect();
+            if a.stacks.len() >= 2 {
+                assert!(heights.iter().any(|h| *h != heights[0]), "{scale}: stacks of different heights {heights:?}");
+            }
+            let vents = coal_vents(lot, 77, scale);
+            assert_eq!(vents.iter().filter(|v| !v.steam).count(), a.stacks.len(), "a plume per stack");
+            assert_eq!(vents.iter().filter(|v| v.steam).count(), a.towers.len(), "steam per cooling tower");
+            let g1 = coal_mesh(lot, 77, scale);
+            let g2 = coal_mesh(lot, 77, scale);
+            assert_eq!(fingerprint(&g1), fingerprint(&g2), "{scale}: same seed, same mesh");
+            check_mesh_ok(&g1);
+        }
+        let (_, poly) = local_lot(&big);
+        let b = coal_layout(&poly, 77, 2.4);
+        let (_, poly_s) = local_lot(&small);
+        let s = coal_layout(&poly_s, 77, 0.72);
+        assert!(b.stacks.len() >= s.stacks.len() + 3, "big {} stacks, small {}", b.stacks.len(), s.stacks.len());
+        assert!(b.boilers.len() > s.boilers.len());
+        assert!(!b.towers.is_empty(), "cooling towers on the biggest");
+        assert!(s.towers.is_empty());
+        // Another seed lays it out differently.
+        assert_ne!(coal_layout(&poly, 78, 2.4), b);
+        // A huge lot does not stretch it: the station keeps its size and
+        // the rest is coal yard.
+        let huge = plant_lot(110.0, 110.0);
+        let (_, poly_h) = local_lot(&huge);
+        let h = coal_layout(&poly_h, 77, 2.4);
+        assert_eq!(h.boilers.len(), b.boilers.len());
+        let size = |l: &CoalLayout| l.boilers.iter().map(|x| x.1.x * x.1.y).sum::<f32>();
+        assert!((size(&h) - size(&b)).abs() < 1e-3 || h.boilers.iter().all(|x| x.1.x < 5.5), "boilers keep their size");
+        assert!(h.heaps.len() > b.heaps.len(), "more coal yard on the spare ground");
+        // Older saves' plants (scale 1) are the two-unit station.
+        let (_, poly_m) = local_lot(&mid);
+        assert_eq!(coal_layout(&poly_m, 5, 1.0).boilers.len(), 2);
+    }
+
+    fn check_mesh_ok(g: &Geometry) {
+        for (s, m) in g.iter() {
+            assert!(m.positions.iter().all(|p| p.iter().all(|v| v.is_finite())), "{s:?} has NaN");
+            assert!(m.indices.iter().all(|&i| (i as usize) < m.positions.len()), "{s:?} bad index");
+        }
+    }
+    #[test]
+    #[ignore]
+    fn coal_layout_ascii() {
+        for (w, d, scale) in [(24.0f32, 30.0f32, 0.72f32), (32.0, 34.0, 1.09), (40.0, 40.0, 1.6), (48.0, 52.0, 2.4), (110.0, 110.0, 2.4)] {
+            let lot = plant_lot(w, d);
+            let (_, poly) = local_lot(&lot);
+            let l = coal_layout(&poly, 77, scale);
+            let (lo, hi) = bounds(&poly);
+            let mut grid = vec![vec!['.'; ((hi.x - lo.x) / 1.0) as usize + 1]; ((hi.y - lo.y) / 2.0) as usize + 1];
+            let mut mark = |c: Vec2, h: Vec2, ch: char| {
+                for row in 0..grid.len() {
+                    for col in 0..grid[row].len() {
+                        let p = Vec2::new(lo.x + col as f32 * 1.0, lo.y + row as f32 * 2.0);
+                        if (p.x - c.x).abs() <= h.x && (p.y - c.y).abs() <= h.y {
+                            grid[row][col] = ch;
+                        }
+                    }
+                }
+            };
+            for h in &l.heaps { mark(h.0, h.1, 'c'); }
+            for b in &l.boilers { mark(b.0, b.1, 'B'); }
+            for f in &l.filters { mark(f.0, f.1, 'f'); }
+            if let Some(t) = l.turbine { mark(t.0, t.1, 'T'); }
+            for t in &l.towers { mark(t.0, Vec2::splat(t.1), 'O'); }
+            for s in &l.stacks { mark(s.0, Vec2::splat(s.1), 'S'); }
+            if let Some(t) = l.transformer { mark(t, Vec2::new(5.0, 4.0), 'x'); }
+            println!("{w}x{d} scale {scale}: {} boilers, {} stacks {:?}, {} towers, {} heaps, turbine {}", l.boilers.len(), l.stacks.len(), l.stacks.iter().map(|s| s.2.round()).collect::<Vec<_>>(), l.towers.len(), l.heaps.len(), l.turbine.is_some());
+            for row in grid.iter().rev() {
+                println!("{}", row.iter().collect::<String>());
+            }
+        }
     }
 }

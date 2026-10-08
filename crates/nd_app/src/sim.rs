@@ -169,7 +169,8 @@ impl Sim {
             .lots
             .iter()
             .filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial && l.building.is_none() && l.area() >= 600.0)
-            .max_by(|a, b| a.1.area().total_cmp(&b.1.area()))
+            // [plant-scale] The lot nearest a standard coal plant's site.
+            .min_by(|a, b| (a.1.area() - nd_sim::power::COAL_REFERENCE_AREA).abs().total_cmp(&(b.1.area() - nd_sim::power::COAL_REFERENCE_AREA).abs()))
             .map(|(id, _)| id);
         if let Some(lot) = lot {
             let _ = self.world.build_power(lot, nd_sim::PowerPlantKind::Coal);
