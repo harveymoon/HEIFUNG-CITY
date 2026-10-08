@@ -65,6 +65,8 @@ pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> G
         fronts.entry(lot.front_segment.0).or_default().push(Frontage { land_use: lot.land_use, built, s0, s1, side });
     }
     let near = |p: Vec2| p.distance(centre) < radius;
+    let heights: &[f32] = if world.relief { &world.road_z } else { &[] };
+    let inner: &[Vec<(f32, f32)>] = if world.relief { &world.road_inner } else { &[] };
     for (sid, seg) in roads.alive_segments() {
         // Only streets with pavements: the highway, its ramps and a
         // roundabout's ring have hard shoulders (nobody walks them), and a
@@ -99,6 +101,7 @@ pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> G
         // viaduct's pavement carries its clutter up with it and a street on
         // a hillside is not buried. The renderer does not lift this mesh.
         let from = crate::street::marks(&g);
+        let seg_z = |p: Vec2| if world.relief { world.road_height(sid, nd_sim::roads::project_on_segment(p, a, b).0) } else { 0.0 };
 
         // Things on the pavement, both sides, every few metres.
         for side in [-1.0f32, 1.0] {
@@ -113,7 +116,10 @@ pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> G
                 let lv = world.land_value.at(p_back);
                 // Facing the road from the back of the pavement.
                 let to_road = -right * side;
-                if near(p_back) {
+                // Nothing on another street's lanes (a sharp fork, a tight
+                // corner): the pavement is laid out from this piece alone.
+                let clear = |p: Vec2| !crate::street::on_carriageway(roads, heights, inner, p, seg_z(p));
+                if near(p_back) && clear(p_back) && clear(at(s, side, hw + SIDEWALK * 0.55)) {
                     match (lu, built) {
                         (Some(LandUse::Commercial | LandUse::Entertainment), true) => {
                             if roll < 0.32 {
