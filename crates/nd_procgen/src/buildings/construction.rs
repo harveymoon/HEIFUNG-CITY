@@ -14,6 +14,14 @@ use rand::Rng;
 
 const HOARDING_H: f32 = 2.3;
 
+/// A stream of its own for one block of a site, so the blocks whose draw
+/// counts change with progress (the structure, the crane, the stacks that
+/// thin out) never shift what the others draw: the yard keeps its cabin,
+/// truck and heaps where they were from one rebuild to the next.
+fn sub(c: &Ctx, salt: u64) -> nd_sim::SimRng {
+    nd_sim::rng_for(c.seed, 0x517E_0000 + salt)
+}
+
 /// Draw the site at `progress` in `0..1`.
 pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: f32) {
     let f = &c.frame;
@@ -73,16 +81,17 @@ pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress
     if poly.len() >= 3 {
         extrude(g, f, Concrete, poly, 0.0, 0.35, mul(pal.concrete(0), 0.7));
         if !landscaping {
-            structure(g, c, rng, poly, built, floors_done, fh, concrete, pale, steel);
+            structure(g, c, &mut sub(c, 1), poly, built, floors_done, fh, concrete, pale, steel);
             if progress > 0.02 && progress < 0.97 && built > 0.3 {
-                scaffolding(g, c, rng, poly, (built + 2.5).min(height + 1.5), steel);
+                scaffolding(g, c, &mut sub(c, 2), poly, (built + 2.5).min(height + 1.5), steel);
             }
             if c.floors >= 6 && progress > 0.06 && progress < 0.98 {
-                tower_crane(g, c, rng, poly, built, height);
+                tower_crane(g, c, &mut sub(c, 3), poly, built, height);
             }
         } else {
             // Landscaping: the raft is a plaza base; spoil heaps around it.
-            for _ in 0..3 {
+            for k in 0..3 {
+                let rng = &mut sub(c, 10 + k);
                 if let Some(p) = c.random_inside(rng, 1.5) {
                     let r = rng.random_range(1.5..3.0);
                     spoil_heap(g, c, rng, p, r);
@@ -98,10 +107,11 @@ pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress
     // Cabin and mixer by the gate.
     let cabin_at = front.at(-front.len * 0.32, -3.6);
     if clear(cabin_at) && clear(cabin_at + yard_front * 1.6) {
-        site_cabin(g, c, rng, cabin_at, front.yaw());
+        site_cabin(g, c, &mut sub(c, 4), cabin_at, front.yaw());
     }
     let truck_at = front.at(front.len * 0.22, -5.2);
     if progress < 0.97 && clear(truck_at) && clear(truck_at + front.tangent * 3.5) && clear(truck_at - front.tangent * 3.5) {
+        let rng = &mut sub(c, 5);
         let side = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
         mixer_truck(g, c, rng, truck_at, front.yaw() + std::f32::consts::FRAC_PI_2 * side);
     }
@@ -111,7 +121,8 @@ pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress
     }
     // Stacks of materials, fewer as they are built in.
     let stacks = (2.0 + 5.0 * (1.0 - progress)).round() as i32 + c.floors as i32 / 8;
-    for _ in 0..stacks {
+    for k in 0..stacks.max(0) {
+        let rng = &mut sub(c, 100 + k as u64);
         let Some(p) = c.random_inside(rng, 2.0) else { continue };
         if !clear(p) {
             continue;
@@ -120,7 +131,8 @@ pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress
         material_stack(g, c, rng, p, yaw);
     }
     if progress < 0.5 {
-        for _ in 0..rng.random_range(1..3) {
+        for k in 0..sub(c, 6).random_range(1..3) {
+            let rng = &mut sub(c, 200 + k as u64);
             if let Some(p) = c.random_inside(rng, 2.0) {
                 if clear(p) {
                     let r = rng.random_range(1.2..2.4);
@@ -134,6 +146,7 @@ pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress
     if (0.05..=0.95).contains(&progress) {
         let n = 3 + (c.floors as usize / 6).min(3);
         for k in 0..n {
+            let rng = &mut sub(c, 300 + k as u64);
             if k % 2 == 0 && floors_done > 0 && poly.len() >= 3 {
                 if let Some(p) = random_in_poly(rng, poly, 0.0) {
                     worker(g, c, rng, p, slab_top + 0.35);
@@ -296,6 +309,10 @@ fn scaffolding(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], top
     let d_in = 0.35;
     let d_out = 1.25;
     for face in c.faces(poly) {
+        // A stream per face, its netting drawn first: the lifts above
+        // change with every floor, the sheeting on a side does not.
+        let rng = &mut nd_sim::rng_for(rng.random::<u64>(), 0x5CAF);
+        let net = rng.random_bool(0.55).then(|| pick(rng, &c.palette.tarp_colors));
         if face.len < 3.0 {
             continue;
         }
@@ -348,9 +365,8 @@ fn scaffolding(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], top
         let a = f.at2(face.at(-face.len * 0.5, d_out), 0.1);
         let b = f.at2(face.at((face.len * 0.5).min(-face.len * 0.5 + lift * 2.5), d_out), top.min(lift * 2.5));
         g.part(Metal).tube(a, b, 0.04, 5, rgba(steel));
-        if rng.random_bool(0.55) {
-            let tarp = pick(rng, &c.palette.tarp_colors);
-            face.bx(g, f, Tarp, 0.0, top * 0.5, d_out + 0.08, Vec3::new(face.len, top * 0.96, 0.02), tarp);
+        if let Some(tarp) = net {
+            face.bx(g, f, Tarp, 0.0, (top + 0.25) * 0.5, d_out + 0.08, Vec3::new(face.len, top - 0.25, 0.02), tarp);
         }
     }
 }
@@ -494,7 +510,7 @@ fn tower_crane(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], bui
     }
     // No room beside it: the crane climbs inside the core.
     let base = best.map(|(_, p)| p).unwrap_or(centre);
-    let mast_h = (built + 14.0).clamp(18.0, height + 16.0);
+    let mast_h = (built + 14.0).min(height + 16.0).max(18.0);
     let w = 1.5;
     // Lattice mast: corner legs and a lighter core.
     for (du, dv) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
@@ -768,6 +784,7 @@ pub fn demolition_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: 
     let hull = if hull.len() >= 3 && polygon_area(&hull).abs() > 6.0 && poly_inside(c, &hull) { hull } else { Vec::new() };
     if cut > 0.6 && !hull.is_empty() {
         extrude(g, f, Concrete, &offset_poly(&hull, 0.1), (cut - 0.3).max(0.0), cut, mul(concrete, 0.75));
+        let rng = &mut sub(c, 20);
         for face in c.faces(&hull) {
             if face.len < 1.5 {
                 continue;
@@ -798,6 +815,7 @@ pub fn demolition_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: 
 
     // The machine.
     if s > STRIP_OUT * 0.5 && s < 0.98 {
+        let rng = &mut sub(c, 21);
         // A small excavator on the top slab, turned so it and its arm
         // stay on the slab.
         let on_roof = |g: &mut Geometry, rng: &mut _| -> bool {
@@ -826,7 +844,7 @@ pub fn demolition_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: 
             // Tall job: the machine works on the roof, a tower crane lowers
             // the pieces.
             on_roof(g, rng);
-            tower_crane(g, c, rng, poly, cut, top);
+            tower_crane(g, c, &mut sub(c, 3), poly, cut, top);
         } else if standing {
             // A high-reach excavator on the ground facing the building, its
             // arm at the cut; on a lot with no room beside the building, a
@@ -861,7 +879,8 @@ pub fn demolition_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: 
 
     // Rubble heaps: growing while the structure comes down, carted away after.
     let heaps = if standing { (1.0 + wreck * 5.0).round() as i32 } else { (6.0 * (1.0 - (s - WRECK_END) / (1.0 - WRECK_END))).round() as i32 };
-    for _ in 0..heaps {
+    for k in 0..heaps.max(0) {
+        let rng = &mut sub(c, 400 + k as u64);
         let at = if standing { c.random_inside(rng, 2.0) } else { random_in_poly(rng, poly, 1.0).or_else(|| c.random_inside(rng, 2.0)) };
         let Some(p) = at else { continue };
         if !clear(p) {
@@ -873,6 +892,7 @@ pub fn demolition_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: 
 
     // A dump truck by the gate being loaded.
     let truck_at = front.at(front.len * 0.22, -5.2);
+    let rng = &mut sub(c, 22);
     let side = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
     let truck_yaw = front.yaw() + std::f32::consts::FRAC_PI_2 * side;
     let (axis, across) = (Vec2::new(truck_yaw.cos(), truck_yaw.sin()), front.tangent);
@@ -883,13 +903,14 @@ pub fn demolition_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: 
     let cabin_at = front.at(-front.len * 0.32, -3.6);
     let cabin_room = [front.tangent * 3.3, front.tangent * -3.3, front.out * 1.4, front.out * -1.6].iter().all(|o| clear(cabin_at + *o));
     if clear(cabin_at) && cabin_room {
-        site_cabin(g, c, rng, cabin_at, front.yaw());
+        site_cabin(g, c, &mut sub(c, 4), cabin_at, front.yaw());
     }
 
     // The crew, one of them on a hose keeping the dust down.
     if (0.03..=0.97).contains(&s) {
         let n = 2 + (c.floors as usize / 8).min(3);
-        for _ in 0..n {
+        for k in 0..n {
+            let rng = &mut sub(c, 300 + k as u64);
             if let Some(p) = c.random_inside(rng, 1.5) {
                 if clear(p) {
                     worker(g, c, rng, p, 0.04);
