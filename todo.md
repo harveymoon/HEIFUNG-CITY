@@ -278,7 +278,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] FLAG (day 23): interchange with a street underpass came out as garbage, ramps re-routed, artifacts; clean interchanges (maybe a diamond tool) [fix/interchange]
 - [ ] FLAG (day 23): footbridge over Umbra Parade left the crosswalk; nobody uses the bridge; cars stop for people on it [fix/footbridge]
 - [x] One full-screen City Data pane (tabs City/Economy/Market/People/... with sub-tabs), consistent page style; tools stay floating → DONE [feat/city-data]: City Data view (J, top bar), 5 tabs × 19 pages, one page style in ui/pane.rs; Lines/View/Saves/Help/Dev stay windows; API city_data {tab, sub, open, scroll}, old window names map to pages
-- [ ] High quality: near-camera geometry washes out white in walk/close orbit [fix/haze]
+- [x] High quality: near-camera geometry washes out white in walk/close orbit [fix/haze] → DONE [fix/haze]: Bevy's volumetric fog painted its full unexposed ambient over anything a few metres from the camera; patched shader (render/volumetric_fog_city.wgsl). Also smoke/steam puffs fade out round the camera (no wash walking through smog). Look-dev follow-up on the same branch: street lamps cast light near the camera at night (40 High / 18 Medium / 0 Low), wet glossy roads in rain, fog tint and reach by climate/weather/mode, a thicker coal plume. Not done: Bevy Atmosphere (would mean retuning every light to physical units; the dome stays)
 - [ ] Fire engines park mid-road/junction at a scene; crew stand in traffic (from feat/fire-scene leftovers)
 - [ ] Ferry/docks need only water access, rail stations only track; each gets a connectable road stub to join the network later [feat/dock-access]
 - [ ] Ferry terminal on a civic zone took the zone's shape/look: unzone first, own footprint [feat/dock-access]
@@ -316,13 +316,14 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Wind small-lot exception on unzoned sites with no lot yet (fixed in plant-scale? verify)
 - [ ] Tow trucks on a job may drive against one-ways and make U-turns (todo5; noted not done)
 - [ ] Rich owners own several homes/businesses/cars: selecting highlights everything they own; several map pins per person (todo5; "no data yet")
-- [ ] Look-dev leftovers: normal maps, Bevy atmosphere/sky and distance fog, street lamps casting light, wet roads (todo5)
+- [x] Look-dev leftovers → DONE [fix/haze]: lamp light (40/18/0 by tier), wet roads in rain, climate/weather/hour fog, coal smoke from walk view; normal maps already present. Left: Bevy Atmosphere (would need physical light units), building-lot lamps
 - [ ] Parking pressure makes parking businesses profitable so entrepreneurs build more parking lots (todo2, todo5; verify, likely missing)
 - [ ] A booted car gets towed away eventually (todo4; verify)
 - [ ] Crime can include murder (todo2; only theft/burglary/assault/vandalism now)
 - [ ] Industry on cheap land lifts land value a little (todo2; verify)
 - [ ] Moto gangs ride as a pack, reckless, weaving through traffic (todo2; verify)
-- [ ] Coal smoke visible from walk view (todo2; verify); wind farm sizes (now per lot — check the original complaint is answered)
+- [x] Coal smoke visible from walk view → DONE [fix/haze]
+- [ ] Wind farm sizes (now per lot — check the original complaint is answered)
 - [ ] A bought-out business moves to a new location instead of only closing (todo5)
 
 ## Questions for Harvey (unanswered)
@@ -334,7 +335,6 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - fix/interchange: clean interchanges, ramp+street logic (started 2026-10-07 23:25)
 - fix/footbridge: footbridge replaces crosswalk (started 2026-10-08 00:00)
 - feat/city-data: full-screen City Data pane with tabs (started 2026-10-08 00:05)
-- fix/haze: white washout near the camera at High (started 2026-10-08 00:20)
 - feat/dock-access: docks/stations without road access, road stubs (started 2026-10-08 00:25)
 - feat/fishing: fishing trips (started 2026-10-08 00:35)
 - feat/ferry-routes: ferry route highlight (started 2026-10-08 00:40)
@@ -342,6 +342,5 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - feat/street-followups: tow trucks on a job (one-ways/U-turns), booted cars towed, murder, moto packs, fire engines park at the kerb (started 2026-10-08)
 - feat/freight: freight trains carry cargo, hydro/tidal scale (started 2026-10-08)
 - feat/mural-cleanup: murals on facades, clean-up tool, contamination spread (started 2026-10-08)
-- fix/haze (extended): + look-dev: normal maps, sky/atmosphere/fog, lamp light, wet roads, coal smoke in walk view
 - fix/interchange (extended): + road-polish leftovers: abutments, gore deck, signal arms, stop line, town street tapers
 - fix/false-block: false road refusal by a far plant; blockers in the plan preview (started 2026-10-08)
