@@ -1103,6 +1103,9 @@ fn paint(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Some(lu) => ids.iter().filter_map(|&i| w.parcel_refusal(i, Some(lu)).map(|why| json!({ "parcel": i, "center": v2(w.parcels.parcels[i].center), "why": why }))).collect(),
         None => Vec::new(),
     };
+    // [island-lots] Nothing under the brush: why (water, too far from a
+    // road, past the buildable land), as the hover says at the cursor.
+    let none_why = if ids.is_empty() { opt_vec2(cmd, "at")?.and_then(|at| w.no_parcel_why(at)) } else { None };
     let industry = match opt_str(cmd, "industry")? {
         Some(k) => Some(nd_sim::world::INDUSTRY_CHOICES.iter().map(|(key, _)| *key).find(|key| key.eq_ignore_ascii_case(k.trim())).ok_or_else(|| format!("unknown industry {k:?}; one of {}", nd_sim::world::INDUSTRY_CHOICES.map(|c| c.0).join(", ")))?),
         None => None,
@@ -1119,6 +1122,9 @@ fn paint(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     v["touched"] = json!(ids.len());
     v["painted"] = json!(painted);
     v["refused"] = json!(refused);
+    if let Some(why) = none_why {
+        v["no_parcel"] = json!(why);
+    }
     v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
     Ok(v)
 }
@@ -1926,7 +1932,7 @@ fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     let plan = planned.get(i).copied().flatten().map_or("unzoned", |l| l.label());
                     rows.push((d, json!({
                         "index": i, "center": v2(p.center), "area": round(p.area), "land_use": built, "planned": plan,
-                        "landlocked": p.landlocked(), "street": p.street_frontage, "rough": p.rough, "accepts": accepts,
+                        "landlocked": p.landlocked(), "street": p.street_frontage, "rough": p.rough, "rough_why": p.rough_why, "accepts": accepts,
                         "lot": p.lot.map(key_str), "key": [p.key.center.0, p.key.center.1],
                     })));
                 }

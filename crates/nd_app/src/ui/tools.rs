@@ -147,7 +147,7 @@ fn zone(ui: &mut egui::Ui, sim: &Sim, tools: &mut ToolState, assets: &GameAssets
         let built = p.land_use.map_or("unzoned", |l| l.label());
         let planned = tools.hover_parcel.and_then(|i| sim.world.planned_zoning().get(i).copied()).flatten();
         let plan_note = if planned != p.land_use { format!(" → {} planned", planned.map_or("unzoned", |l| l.label())) } else { String::new() };
-        let front = if p.rough { "rough ground" } else if p.street_frontage { "street frontage" } else if p.path_frontage { "footpath frontage" } else { "landlocked backland" };
+        let front = if p.rough { p.rough_why.unwrap_or("rough ground") } else if p.street_frontage { "street frontage" } else if p.path_frontage { "footpath frontage" } else { "landlocked backland" };
         let verdict = if tools.unzone { String::new() } else {
             match tools.hover_parcel.and_then(|i| sim.world.parcel_refusal(i, Some(tools.land_use))).or_else(|| p.refusal(tools.land_use)) {
                 None => format!(" · takes {}", tools.land_use.label()),
