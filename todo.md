@@ -286,6 +286,24 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Selecting a ferry terminal highlights its routes; other routes dim; route list in the inspector [feat/ferry-routes]
 - [ ] FLAG (day 24): no lots along roads on a hilly island (slope ~0.42); zoning there impossible, no reason shown [fix/island-lots]
 - [ ] People on an elevated path walk at ground level (even over water) under it; walkers/cars on raised ways must be drawn on the deck [fix/footbridge]
+- [x] People window grew every frame until it filled the screen → DONE [main 53c3a89]: histogram reserves the Lorenz chart's width; compact windows capped
+- [x] Speech bubbles around town off → DONE [main 2b7c892]: off by default, View window checkbox, saved in settings.ron
+
+## Follow-ups noted in agent reports (not started)
+- [ ] Batteries charge on cheap night power and discharge at the evening peak (grid-weather)
+- [ ] Freight trains really carry their cargo instead of yards handing it to any train (train-inspect)
+- [ ] In-game Clean up button for contaminated land (API only now); contamination along rivers/downwind (dirty-industry)
+- [ ] Murals painted on the building facade, not a free-standing wall; LLM dialogue for spotlit citizens (social)
+- [ ] Bridge deck ends need abutments; ramp gore on a highway bridge has no deck; low signal arms on steep approaches; cars stop short of the stop line at sharp forks (road-polish)
+- [ ] Hydro/tidal still fixed size; huge 2-tower coal plant only seen in a unit test (plant-scale)
+- [ ] Town streets 2+2 into 1+1 step at the kerbs instead of tapering (lane-join)
+- [ ] One engine per fire; crew are station payroll names (fire-scene)
+- [ ] Wind small-lot exception on unzoned sites with no lot yet (fixed in plant-scale? verify)
+
+## Questions for Harvey (unanswered)
+- [ ] Should parking lots the player places stop a road (like stations/plants) instead of being bought out?
+- [ ] Cranes stand still 17:00–08:00 by design: add a night shift on big sites, or let parked jibs drift in the wind?
+- [ ] Delete old todo2.md–todo5.md (their items were carried into todo.md)?
 
 ## Agents running (update when starting/merging; survives context compaction)
 - feat/committee: AI committee, mock backend first, Ollama/Claude connectors (started 2026-10-07 evening)
