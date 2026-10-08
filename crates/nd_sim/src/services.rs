@@ -1490,8 +1490,9 @@ pub struct Services {
     /// are retried every five minutes rather than every tick).
     #[serde(skip)]
     pub route_failed: HashMap<u32, u64>,
-    /// The services' own random stream (see `World::srng`).
-    #[serde(skip)]
+    /// The services' own random stream (see `World::srng`). Saved, so a
+    /// loaded game rolls the same fires and crimes as one left running.
+    #[serde(default, with = "crate::rng_save::opt")]
     pub rng: Option<crate::SimRng>,
     /// [emergency] Car chases under way.
     pub chases: Vec<Chase>,
