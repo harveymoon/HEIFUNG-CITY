@@ -434,10 +434,12 @@ pub fn apply_depth(
             Without<TunnelTag>,
             Without<GhostRoadTag>,
             Without<CarTag>,
+            Without<super::focus::UnitTag>,
         ),
     >,
-    mut tunnels: Query<&mut Visibility, (Or<(With<TunnelTag>, With<GhostRoadTag>)>, Without<CarTag>)>,
-    mut cars: Query<(Entity, &Transform, &mut Visibility, Has<DepthHidden>, Option<&InTunnel>), (With<CarTag>, Without<TunnelTag>)>,
+    mut tunnels: Query<&mut Visibility, (Or<(With<TunnelTag>, With<GhostRoadTag>)>, Without<CarTag>, Without<super::focus::UnitTag>)>,
+    // [fix/review-app] Emergency units (body and light bar) go by their lane like any car.
+    mut cars: Query<(Entity, &Transform, &mut Visibility, Has<DepthHidden>, Option<&InTunnel>), (Or<(With<CarTag>, With<super::focus::UnitTag>)>, Without<TunnelTag>, Without<GhostRoadTag>)>,
 ) {
     let under = tools.depth == Depth::Underground;
     // Hide (and mark) or restore (only if marked); `restore` false leaves

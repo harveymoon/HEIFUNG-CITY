@@ -305,6 +305,32 @@ pub const UNDERGROUND_BELOW: f32 = -2.5;
 #[derive(Component)]
 pub struct SelfLifted;
 
+/// How far a selected mover (a person, a car, an emergency unit) is lifted
+/// off the road to stand out.
+pub(crate) const SELECTED_LIFT: f32 = 0.4;
+
+/// [fix/review-app] The movers the selection lifts: a person (and the car
+/// they drive), a car or bus, an emergency unit. One exhaustive match, so a
+/// new `Selection` kind has to say here whether it lifts anything (a
+/// selected ambulance used to be lifted by nobody: its generic car is
+/// hidden and the unit body ignored the selection).
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+pub(crate) struct Lifts {
+    pub citizen: Option<nd_sim::CitizenId>,
+    pub car: Option<CarId>,
+    pub unit: Option<nd_sim::UnitId>,
+}
+
+pub(crate) fn lifts(sel: Selection) -> Lifts {
+    match sel {
+        Selection::Citizen(c) => Lifts { citizen: Some(c), ..Default::default() },
+        Selection::Car(c) => Lifts { car: Some(c), ..Default::default() },
+        Selection::Unit(u) => Lifts { unit: Some(u), ..Default::default() },
+        // Outlined by their own gizmos or meshes, not lifted.
+        Selection::None | Selection::Building(_) | Selection::Parked(_) | Selection::Toll(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Road(_) | Selection::Ship(_) => Lifts::default(),
+    }
+}
+
 /// Where a mover is spawned before its first pose: far below the map.
 /// Spawns go through `Commands`, so the frame's pose systems cannot see the
 /// new entity yet; spawned at `Transform::IDENTITY` it would flash for a
@@ -2021,6 +2047,7 @@ fn sync_citizens(
     camera: Query<&GlobalTransform, With<Camera3d>>,
     mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d, Option<&swap::SwapOriginal>, Option<&mut WayHeight>), With<CitizenTag>>,
 ) {
+    let lifted = lifts(*selection);
     let w = &sim.world;
     let f = sim.frac();
     let plain = people::plain();
@@ -2115,7 +2142,7 @@ fn sync_citizens(
                 mesh.0 = mats.citizen_mesh.clone();
             }
         }
-        let wanted = if *selection == Selection::Citizen(*id) {
+        let wanted = if lifted.citizen == Some(*id) {
             &mats.citizen_selected
         } else if c.spotlight {
             &mats.citizen_spotlight
@@ -2301,6 +2328,7 @@ fn sync_cars(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut q: Query<(&mut Transform, Option<&mut InTunnel>), With<CarTag>>,
 ) {
+    let lifted = lifts(*selection);
     vr.ensure_materials(&mut materials);
     let fx_mat = vr.fx.clone().expect("vehicle materials");
     // Underglow and trails only show after dark.
@@ -2391,7 +2419,7 @@ fn sync_cars(
         let (pos, heading) = car.pose_at(f);
         // Lifted when selected, whether through its driver or, for a bus or
         // truck with nobody to inspect, as the vehicle itself.
-        let selected = *selection == Selection::Citizen(car.citizen) || *selection == Selection::Car(*id);
+        let selected = lifted.citizen == Some(car.citizen) || lifted.car == Some(*id);
         let fx = vr.car_fx.get(id).copied();
         // Lifted here from the road the car is on, not by `lift_movers`:
         // under the highway's decks position alone would put it up top.
@@ -2401,7 +2429,7 @@ fn sync_cars(
         let tunnel = sim.world.car_in_tunnel(car);
         for e in ents.iter().copied().chain(fx) {
             if let Ok((mut tf, depth)) = q.get_mut(e) {
-                tf.translation = Vec3::new(pos.x, lift + 0.05 + if selected { 0.4 } else { 0.0 }, pos.y);
+                tf.translation = Vec3::new(pos.x, lift + 0.05 + if selected { SELECTED_LIFT } else { 0.0 }, pos.y);
                 tf.rotation = Quat::from_rotation_y(-heading);
                 if let Some(mut d) = depth.filter(|d| d.0 != tunnel) {
                     d.0 = tunnel;
