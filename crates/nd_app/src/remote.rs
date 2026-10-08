@@ -574,6 +574,8 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "plan" => Ok(plan(ctx)),
         "add_road" => add_road(cmd, ctx),
         "add_roundabout" => add_roundabout(cmd, ctx),
+        // [interchange] A diamond interchange across the highway.
+        "add_interchange" | "interchange" => add_interchange(cmd, ctx),
         "add_zone" => add_zone(cmd, ctx),
         "paint" => paint(cmd, ctx),
         "bulldoze" => {
@@ -613,6 +615,14 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "rave" => nights::rave(cmd, &mut ctx.sim.world),
         "roads" | "road_condition" | "road_budget" => nights::roads(cmd, &mut ctx.sim.world),
         "repair_road" => repair_road(cmd, ctx),
+        // [interchange] dev: lay the roads again from the plan (as an
+        // implement does) with the current rules, nothing in the plan changed.
+        "rebuild_roads" => {
+            let w = &mut ctx.sim.world;
+            let before = w.roads.alive_segments().count();
+            w.rebuild_from_plan();
+            Ok(json!({ "segments_before": before, "segments": w.roads.alive_segments().count(), "roads_version": w.roads.version }))
+        }
         "district" | "districts" => districts::district(cmd, &mut ctx.sim.world, &mut ctx.overlays, &mut ctx.tools),
         "tourism" | "tourists" => districts::tourism(cmd, &mut ctx.sim.world),
         "concerns" => concerns::command(cmd, &ctx.sim.world),
@@ -940,6 +950,7 @@ fn tool_state(t: &ToolState) -> Value {
         "transit_mode": transit_mode_name(t.transit_mode), "route": opt_key(t.route_sel), "show_routes": t.show_routes,
         "pending_points": t.points.len(), "selected_gesture": t.selected_gesture.map(|g| g.0), "status": t.status,
         "elevation": t.elevation, "elevation_label": crate::tools::elevation_label(t.elevation), "point_levels": t.levels(), "tunnel": t.tunnel, "depth": t.depth.label(), "grade_warnings": t.grade_warnings,
+        "interchange": t.interchange, "interchange_refusal": t.interchange_refusal.as_ref().map(|(why, at)| json!({ "why": why, "at": [at.x, at.y] })),
         "pillars": junction::pillars_json(&t.pillars), "intersection_editor": t.junction_editor.as_ref().map(|e| v2(e.at)),
     })
 }
@@ -1363,6 +1374,51 @@ fn add_roundabout(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "joins": fx.joins.iter().map(|p| json!([p.x, p.y])).collect::<Vec<_>>(),
         "cuts_roads": fx.cut_roads.iter().map(|g| g.0).collect::<Vec<_>>(),
         "takes_buildings": takes,
+    });
+    Ok(v)
+}
+
+/// [interchange] `add_interchange {from, to, lanes_fwd?, lanes_bwd?, check?,
+/// implement?}`: a diamond interchange for a cross street drawn from `from`
+/// to `to` across the highway, as the Road tool's Interchange preset lays
+/// it. `check` only plans it (nothing is added). Refused with `refused`
+/// {why, at}: the spot to look at.
+fn add_interchange(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let from = view::opt_vec2(cmd, "from")?.ok_or("from [x,y] is required")?;
+    let to = view::opt_vec2(cmd, "to")?.ok_or("to [x,y] is required")?;
+    let f = opt_u64(cmd, "lanes_fwd")?.map_or(2, |n| n.min(4) as u8);
+    let b = opt_u64(cmd, "lanes_bwd")?.map_or(2, |n| n.min(4) as u8);
+    let check = opt_bool(cmd, "check")?.unwrap_or(false);
+    let w = &mut ctx.sim.world;
+    let planned = if check { w.plan_diamond(from, to, (f, b)).map(|p| (p, Vec::new())) } else { w.add_diamond(from, to, (f, b)) };
+    let (plan, ids) = match planned {
+        Ok(x) => x,
+        Err(r) => {
+            let mut v = project_state(ctx);
+            v["refused"] = json!({ "why": r.why, "at": [r.at.x, r.at.y] });
+            v["implemented"] = json!(false);
+            return Ok(v);
+        }
+    };
+    let implemented = !check && opt_bool(cmd, "implement")?.unwrap_or(false);
+    if implemented {
+        ctx.sim.world.implement();
+    }
+    if !check {
+        ctx.tools.status = format!("Diamond interchange added by remote{}", if implemented { " and implemented" } else { " (pending)" });
+    }
+    let mut v = project_state(ctx);
+    v["gesture_ids"] = json!(ids.iter().map(|g| g.0).collect::<Vec<_>>());
+    v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
+    let pts = |g: &Gesture| match g {
+        Gesture::Road { points, lanes_fwd, lanes_bwd, .. } => json!({ "points": points.iter().map(|p| [round(p.x), round(p.y)]).collect::<Vec<_>>(), "lanes_fwd": lanes_fwd, "lanes_bwd": lanes_bwd }),
+        _ => json!(null),
+    };
+    v["interchange"] = json!({
+        "kept_street": plan.kept_street,
+        "terminals": plan.terminals.iter().map(|p| [round(p.x), round(p.y)]).collect::<Vec<_>>(),
+        "crossings": plan.crossings.iter().map(|p| [round(p.x), round(p.y)]).collect::<Vec<_>>(),
+        "roads": plan.gestures.iter().map(pts).collect::<Vec<_>>(),
     });
     Ok(v)
 }
@@ -2266,9 +2322,13 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         let _ = preset;
         t.tool = Tool::Road;
         t.roundabout = true;
+        t.interchange = false;
     } else if let Some(preset) = opt_str(cmd, "preset")? {
         if !t.pick_preset(preset) {
-            return Err(format!("unknown preset {preset:?}; one of {}, Tunnel, Roundabout", ROAD_PRESETS.iter().map(|p| p.0).collect::<Vec<_>>().join(", ")));
+            return Err(format!("unknown preset {preset:?}; one of {}, Tunnel, Roundabout, Interchange", ROAD_PRESETS.iter().map(|p| p.0).collect::<Vec<_>>().join(", ")));
+        }
+        if preset.eq_ignore_ascii_case("interchange") {
+            t.tool = Tool::Road;
         }
     }
     if let Some(e) = opt_f32(cmd, "elevation")? {
@@ -2670,6 +2730,8 @@ fn help() -> Value {
     v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
     // [road-inspect]
     v["commands"]["repair_road"] = json!({ "road": "id or [x,y]; default the selected road", "returns": "repaired, cost, treasury, road (the card); pays the crews' price (lane-m x wear x 6) from the treasury as road maintenance" });
+    v["commands"]["add_interchange"] = json!({ "from": "[x,y]: one end of the cross street, on one side of the highway", "to": "[x,y]: the other end, across the highway", "lanes_fwd": "cross street lanes (default 2)", "lanes_bwd": "(default 2)", "check": "bool: only plan it, add nothing", "implement": "bool", "returns": "gesture_ids, interchange {kept_street, terminals, crossings, roads [{points, lanes}]}, or refused {why, at}; project state" });
+    v["commands"]["rebuild_roads"] = json!({ "returns": "segments_before, segments, roads_version", "note": "dev: lays the roads, lots and lanes again from the plan as an implement does, with the current road-building rules (nothing in the plan changes)" });
     // [plant-groups]
     // [dirty-industry]
     v["commands"]["remediate"] = json!({ "x": "f", "y": "f", "radius": "m, default 100, at most 300", "note": "pay to dig out the contamination there (450 per cell of full contamination); alias cleanup" });
