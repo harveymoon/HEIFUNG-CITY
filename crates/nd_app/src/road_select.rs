@@ -275,8 +275,7 @@ impl Card {
         // on both (Harvey's footbridge there showed on neither card's
         // neighbour). A crosswalk a footbridge replaced counts only as the
         // footbridge.
-        let ends = [w.roads.node(s.a).pos, w.roads.node(s.b).pos];
-        let on_piece = |c: &&nd_sim::walk::Crossing| c.segment == sid || (c.node.is_none() && c.kind == nd_sim::walk::CrossingKind::Zebra && ends.iter().any(|e| e.distance(c.mid) < 1.0));
+        let on_piece = |c: &&nd_sim::walk::Crossing| c.segment == sid || (c.kind == nd_sim::walk::CrossingKind::Zebra && (c.node == Some(s.a) || c.node == Some(s.b)));
         for c in w.walk.crossings.iter().filter(on_piece) {
             match c.kind {
                 _ if c.closed => {}
