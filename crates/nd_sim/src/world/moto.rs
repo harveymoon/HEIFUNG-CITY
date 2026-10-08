@@ -119,9 +119,17 @@ impl World {
             return Err("a moto pack is already riding".into());
         }
         let tick = self.clock.tick;
-        let mut leaves: Vec<NodeId> = self.city_leaves().into_iter().filter(|&n| self.lane_in_from(n).is_some() && self.lane_out_to(n).is_some()).collect();
-        leaves.sort_by_key(|n| n.0);
-        if leaves.len() < 2 {
+        // Road ends to ride in by and out by: the city's own, and the
+        // highway's carriageways at the map edge (one-way: in on one, out
+        // on another; a city reached only by the highway has no other).
+        let (hw_in, hw_out) = self.highway_ends();
+        let mut ends: Vec<NodeId> = self.city_leaves();
+        ends.extend(hw_in.iter().chain(hw_out.iter()).map(|e| e.0));
+        ends.sort_by_key(|n| n.0);
+        ends.dedup();
+        let leaves: Vec<NodeId> = ends.iter().copied().filter(|&n| self.lane_in_from(n).is_some()).collect();
+        let outs: Vec<NodeId> = ends.iter().copied().filter(|&n| self.lane_out_to(n).is_some()).collect();
+        if leaves.is_empty() || outs.iter().all(|o| leaves == [*o]) {
             return Err("no road ends to ride in and out by".into());
         }
         let (via_lane, via_s, via, via_name) = self.moto_via().ok_or("nowhere to ride to")?;
@@ -142,7 +150,7 @@ impl World {
             let len = self.traffic.net.lanes[lane as usize].length;
             let meet_s = (len * 0.5).min(40.0).max(0.5);
             let at = self.roads.node(entry).pos;
-            let mut exits: Vec<NodeId> = leaves.iter().copied().filter(|&n| n != entry).collect();
+            let mut exits: Vec<NodeId> = outs.iter().copied().filter(|&n| n != entry).collect();
             exits.sort_by(|a, b| self.roads.node(*b).pos.distance(at).total_cmp(&self.roads.node(*a).pos.distance(at)).then(a.0.cmp(&b.0)));
             for exit in exits {
                 let out = self.lane_out_to(exit).unwrap();
