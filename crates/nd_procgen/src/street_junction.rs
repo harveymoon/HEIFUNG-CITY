@@ -558,6 +558,45 @@ mod tests {
         }
     }
 
+    /// A town street narrowing at a joint (an avenue carried on as a
+    /// street) brings its kerb in over a taper: no kerb steps across at the
+    /// joint, and the ground between the narrower carriageway and the
+    /// tapering kerb is asphalt, not bare.
+    #[test]
+    fn a_narrowing_street_tapers_its_kerb() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(0.0, 0.0)], 2, 2);
+        roads.add_polyline(&[Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+        let mut net = LaneNetwork::default();
+        net.rebuild(&roads);
+        let g = draw(&roads, &net);
+        let (wide, narrow) = (2.0 * LANE_WIDTH + SHOULDER, LANE_WIDTH + SHOULDER);
+        // The kerb face: none standing across the joint at its middle.
+        let across = g.get(Concrete).positions.iter().filter(|p| (p[1] - KERB_H).abs() < 1e-3 && p[0] > -0.4 && p[0] < 0.4 && p[2].abs() > narrow + 0.3 && p[2].abs() < wide - 0.3).count();
+        assert_eq!(across, 0, "the kerb steps across the joint");
+        // Covered: asphalt or paving over the taper.
+        let flat: Vec<[Vec2; 3]> = [Asphalt, Paving, Concrete]
+            .iter()
+            .flat_map(|&s| {
+                let m = g.get(s);
+                m.indices.chunks(3).map(|t| [t[0], t[1], t[2]].map(|i| Vec2::new(m.positions[i as usize][0], m.positions[i as usize][2]))).collect::<Vec<_>>()
+            })
+            .collect();
+        let covered = |q: Vec2| {
+            flat.iter().any(|t| {
+                let s = |a: Vec2, b: Vec2| (b - a).perp_dot(q - a);
+                let (d0, d1, d2) = (s(t[0], t[1]), s(t[1], t[2]), s(t[2], t[0]));
+                (d0 >= -1e-4 && d1 >= -1e-4 && d2 >= -1e-4) || (d0 <= 1e-4 && d1 <= 1e-4 && d2 <= 1e-4)
+            })
+        };
+        for x in [0.5f32, 2.0, 4.0, 6.0] {
+            for side in [-1.0f32, 1.0] {
+                let q = Vec2::new(x, side * (narrow + 0.2));
+                assert!(covered(q), "bare ground beside the narrower carriageway at {q:?}");
+            }
+        }
+    }
+
     /// Where track crosses a street the rails lie flush in the road: no
     /// ballast, sleeper or rail stands over the carriageway or the
     /// pavements; and a path crossing a street stops at its pavements.

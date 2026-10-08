@@ -1399,6 +1399,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             if corner.apron.len() >= 3 {
                 g.part(Asphalt).ground_polygon(&corner.apron, ASPHALT_Y + 0.01, asphalt_c);
             }
+
             if corner.fill.len() >= 3 {
                 g.part(Paving).ground_polygon(&corner.fill, KERB_H - 0.01, paving_c);
                 let mut edges: Vec<(Vec2, Vec2, Option<Vec2>)> = corner.rim.windows(2).map(|w| (w[0], w[1], None)).collect();
@@ -2281,6 +2282,9 @@ fn simple_polygon(poly: &[Vec2]) -> bool {
     true
 }
 
+/// Metres of kerb taper per metre a town street narrows by at a joint.
+const TOWN_TAPER_PER_M: f32 = 4.0;
+
 /// The longest straight a corner's rounding takes from each kerb
 /// (`nd_sim::walk::CORNER_TANGENT_MAX`, which sets the crosswalks back by it).
 const CORNER_TANGENT_MAX: f32 = nd_sim::walk::CORNER_TANGENT_MAX;
@@ -2319,6 +2323,27 @@ fn corner_between(a: &ArmEnd, b: &ArmEnd, base: f32) -> Option<(Corner, f32, f32
                     return None; // two arms leaving the same way
                 }
                 // Straight on (a T's through side): the kerbs simply join.
+                // Where the road narrows (a lane dropped at a joint) the
+                // kerb comes in over a taper along the narrower arm, the
+                // asphalt filled out to it, instead of a step across.
+                let dw = a.hw - b.hw;
+                if dw.abs() > 0.5 {
+                    let l = (dw.abs() * TOWN_TAPER_PER_M).clamp(4.0, 14.0);
+                    let need = if dw > 0.0 { (0.0, base + l - eb) } else { (base + l - ea, 0.0) };
+                    if (need.0 > 0.02 || need.1 > 0.02) && step < 4 {
+                        ea += need.0.max(0.0);
+                        eb += need.1.max(0.0);
+                        if ea > lim_a || eb > lim_b {
+                            break;
+                        }
+                        continue;
+                    }
+                    // From the wider arm's kerb back to the node along its
+                    // edge, across to the narrower's edge and out to where
+                    // its kerb begins.
+                    let node = pa - ta * ea;
+                    apron = if dw > 0.0 { vec![ka, node + na * a.hw, node + nb * b.hw, kb] } else { vec![kb, node + nb * b.hw, node + na * a.hw, ka] };
+                }
                 kerb = vec![ka, kb];
                 normals = vec![na, nb];
                 turn = 0.0;
