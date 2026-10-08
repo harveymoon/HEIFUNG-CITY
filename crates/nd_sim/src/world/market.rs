@@ -156,10 +156,18 @@ impl World {
         // Walk-in trade: a share of the people who passed a shop this hour
         // step inside and buy something off the shelf, if it is open.
         let hour = self.clock.hour() as u8;
+        // [megacorp] Students near a campus drop into pizza places, cafés
+        // and bookshops.
+        let pull = self.campus_pull();
         for &bid in &ids {
             let (lot, jobs) = (self.buildings[bid].lot, self.buildings[bid].jobs);
-            let feet = self.lots.get(lot).map_or(0, |l| l.footfall_hour);
-            if feet == 0 {
+            let students = if pull.is_empty() || !self.buildings[bid].business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::Bakery | BusinessKind::GadgetShop)) {
+                0.0
+            } else {
+                self.lots.get(lot).map_or(0.0, |l| Self::student_feet(&pull, l.center))
+            };
+            let feet = self.lots.get(lot).map_or(0, |l| l.footfall_hour) as f32 + students;
+            if feet <= 0.0 {
                 continue;
             }
             let b = &mut self.buildings[bid];
@@ -177,10 +185,13 @@ impl World {
                 BusinessKind::GadgetShop => Resource::Goods,
                 _ => continue,
             };
-            let want = feet as f32 * 0.06;
+            let want = feet * 0.06;
             let got = bz.take(output, want.min(bz.stock_of(output)));
             if got > 0.0 {
                 let price = bz.sell_price(output, jobs);
+                if students > 0.0 {
+                    self.corps.stats.student_trade_today += got * price * students / feet;
+                }
                 bz.money += got * price;
                 bz.revenue_today += got * price;
                 bz.deals += 1;
@@ -667,6 +678,13 @@ impl World {
                 let id = self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, color);
                 let mut rng = crate::vehicle::model_rng(self.clock.tick, slotmap::Key::data(&id).as_ffi());
                 self.traffic.cars[id].model = crate::vehicle::VehicleModel::for_cargo(cargo.resource, seller, to_site, long_haul, &mut rng);
+                // [megacorp] A corp's lorries wear its brand (not on a
+                // building-site run or a haul in from out of town).
+                if !to_site && !long_haul {
+                    if let Some(l) = self.corp_livery(cargo.from) {
+                        self.traffic.cars[id].model.livery = l;
+                    }
+                }
             }
             None => self.deliver(cargo),
         }

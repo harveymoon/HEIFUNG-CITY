@@ -180,7 +180,8 @@ fn hsv(h: f32, s: f32, v: f32) -> [f32; 3] {
 
 fn is_delivery(m: &VehicleModel) -> bool {
     use crate::vehicle::Livery::*;
-    matches!(m.livery, Pizza | Grocery | Parcels)
+    // [megacorp] a mega-corp's vans count too
+    matches!(m.livery, Pizza | Grocery | Parcels | Corp(..))
 }
 
 impl World {
@@ -251,6 +252,10 @@ impl World {
                 let Some((route, s0, s1)) = self.traffic.net.find_route(fs, fp, ts, tp) else { continue };
                 let id = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, 0);
                 self.traffic.cars[id].model = VehicleModel::delivery(kind, &mut rng);
+                // [megacorp] A corp's shop sends its van in the corp's colours.
+                if let Some(l) = self.corp_livery(shop) {
+                    self.traffic.cars[id].model.livery = l;
+                }
                 // [carlife] The van drives back to the shop afterwards.
                 self.truck_dispatched(id, Some(shop));
                 vans += 1;

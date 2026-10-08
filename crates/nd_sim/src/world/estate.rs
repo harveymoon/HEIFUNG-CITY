@@ -314,7 +314,8 @@ impl World {
             return false;
         }
         if let Some((_, o)) = self.owner_of(bid) {
-            if matches!(o.kind, OwnerKind::Elite { .. } | OwnerKind::Household { .. }) {
+            // [megacorp] A corp's or a university's holdings are not for sale.
+            if matches!(o.kind, OwnerKind::Elite { .. } | OwnerKind::Household { .. } | OwnerKind::MegaCorp { .. } | OwnerKind::University { .. }) {
                 return false;
             }
         }
