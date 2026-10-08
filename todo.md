@@ -367,3 +367,4 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Settings menu (graphics, controls, UI scale, etc.)
 - (Later / skipped for now: challenges and scenarios, elections and disasters, water and sewage, seasons and events, advisor and heat maps, neighbouring towns, sound, tutorial)
 - fix/sweep-visual: leftovers sweep (supertall podium/night, park-path step, interchange overlap, jetty trawlers, coasters) (started 2026-10-08)
+- feat/rail-crossing: level crossing barriers and flashing lights (started 2026-10-08)
