@@ -89,6 +89,17 @@ fn main() {
             }
         }
         prev = now;
+        // `WATCH=<slot index>`: the walk route of that citizen when it changes.
+        if let Ok(k) = std::env::var("WATCH") {
+            let k: u32 = k.parse().unwrap_or(0);
+            if let Some((id, c)) = w.citizens.iter().find(|(id, _)| format!("{id:?}").starts_with(&format!("CitizenId({k}v"))) {
+                if let nd_sim::citizens::Activity::Traveling { path, idx, .. } = &c.activity {
+                    if *idx == 0 {
+                        println!("WATCH {id:?} tick {} mode {:?} from ({:.1},{:.1}) path {:?}", w.clock.tick, c.mode, c.pos.x, c.pos.y, path.iter().map(|q| (q.x.round(), q.y.round())).collect::<Vec<_>>());
+                    }
+                }
+            }
+        }
         if (i + 1) % 120 == 0 {
             report(&w, &format!("+{}", i + 1), at);
         }

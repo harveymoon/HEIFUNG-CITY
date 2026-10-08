@@ -209,3 +209,20 @@ fn a_rider_no_cab_comes_for_gives_up_and_goes_another_way() {
     let q = super::trips::TripQuery { from, to, target: home, purpose: Purpose::Home, allow_transit: true, allow_car: true, allow_bike: true };
     assert!(w.mode_options(r, &q).iter().all(|o| o.mode != TripMode::Taxi), "books another cab straight away");
 }
+
+#[test]
+fn a_trip_beside_a_footpath_dropped_onto_a_ramp_does_not_start_on_the_ramp() {
+    let mut w = interchange();
+    run(&mut w, 2 * 60);
+    assert!(!w.citizens.is_empty());
+    // Beside the footpath, a few metres short of where it meets the ramp.
+    let id = w.citizens.keys().next().unwrap();
+    let p = Vec2::new(-160.0, -62.0);
+    let c = &mut w.citizens[id];
+    c.inside = None;
+    c.pos = p;
+    let (sid, _, node) = w.origin_for(id).expect("an origin");
+    assert!(!w.roads.segment(sid).fronts_nothing(), "starts on a carriageway");
+    let on_ramp = w.roads.node(node).segments.iter().any(|&s| w.roads.segment(s).alive && w.roads.segment(s).fronts_nothing());
+    assert!(!on_ramp, "the trip starts from the ramp's node at {:?}", w.roads.node(node).pos);
+}

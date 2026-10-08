@@ -1224,7 +1224,14 @@ impl World {
         // or ramp (no foot path starts there; standing beside one, every
         // trip used to fail with "No way through").
         let (sid, t, q) = self.roads.nearest_where(c.pos, |s| !s.is_rail() && !s.fronts_nothing()).or_else(|| self.roads.nearest_on_network(c.pos))?;
-        Some((sid, q, self.roads.nearest_endpoint(sid, t)))
+        // Nor from an end out on a carriageway (a footpath dropped onto a
+        // ramp): a cyclist set off by riding out to the ramp and back.
+        let near = self.roads.nearest_endpoint(sid, t);
+        let seg = self.roads.segment(sid);
+        let far = if near == seg.a { seg.b } else { seg.a };
+        let on_motorway = |n: NodeId| self.roads.node(n).segments.iter().any(|&s| self.roads.segment(s).alive && self.roads.segment(s).fronts_nothing());
+        let start = if on_motorway(near) && !on_motorway(far) { far } else { near };
+        Some((sid, q, start))
     }
 
     pub(super) fn travel_to(&mut self, id: CitizenId, target: Option<BuildingId>, purpose: Purpose) {
