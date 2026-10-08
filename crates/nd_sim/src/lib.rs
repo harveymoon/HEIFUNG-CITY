@@ -59,6 +59,8 @@ pub mod road_wear;
 /// [road-inspect] Hourly traffic and wear history per street piece.
 pub mod road_traffic;
 pub mod roads;
+/// Which old street piece a new one continues, through a road rebuild.
+pub(crate) mod seg_match;
 pub mod services;
 /// [waterfront] Waterfront lots, public beaches and private jetties.
 pub mod shore;

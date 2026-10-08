@@ -11,9 +11,9 @@
 //! traffic or the wear. No random numbers.
 
 use crate::roads::RoadNetwork;
+use crate::seg_match::{Matcher, OldPiece};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Hours of traffic kept per piece (three days).
 pub const HOURS: usize = 72;
@@ -83,6 +83,9 @@ impl HourCounts {
 pub struct SegLog {
     /// The piece's midpoint when laid out, to follow it through rebuilds.
     pub mid: Vec2,
+    /// Its two ends then (`None` in saves from before they were kept:
+    /// those match by midpoint).
+    pub ends: Option<(Vec2, Vec2)>,
     pub traffic: HourCounts,
     /// Wear at the last midnight it was read.
     pub wear_midnight: Option<f32>,
@@ -111,63 +114,38 @@ impl Default for RoadLog {
     }
 }
 
-const MATCH_CELL: f32 = 4.0;
-/// A new piece takes the log of an old one whose midpoint is this close.
-const MATCH_REACH: f32 = 4.5;
-
-fn cell(p: Vec2) -> (i32, i32) {
-    ((p.x / MATCH_CELL).floor() as i32, (p.y / MATCH_CELL).floor() as i32)
-}
-
-fn midpoint(roads: &RoadNetwork, i: usize) -> Vec2 {
+fn ends_of(roads: &RoadNetwork, i: usize) -> (Vec2, Vec2) {
     let s = &roads.segments[i];
-    (roads.node(s.a).pos + roads.node(s.b).pos) * 0.5
+    (roads.node(s.a).pos, roads.node(s.b).pos)
 }
 
 impl RoadLog {
     /// Lay the log out for the network as it is now: unchanged pieces keep
-    /// theirs, a changed one takes the log of the old piece whose midpoint
-    /// was nearest its own (within `MATCH_REACH`; a street cut in two keeps
-    /// its history on both halves), new road starts empty.
+    /// theirs, a changed one takes the log of the old piece it continues
+    /// (`seg_match`: its midpoint on that old piece; a street cut in two
+    /// keeps its history on both halves), new road starts empty.
     pub fn remap(&mut self, roads: &RoadNetwork) {
         let n = roads.segments.len();
         if self.roads_version == roads.version && self.segs.len() == n {
             return;
         }
         let old = std::mem::take(&mut self.segs);
-        let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
-        for (k, l) in old.iter().enumerate() {
-            if *l != (SegLog { mid: l.mid, ..Default::default() }) {
-                grid.entry(cell(l.mid)).or_default().push(k);
-            }
-        }
+        let empty = |l: &SegLog| *l == SegLog { mid: l.mid, ends: l.ends, ..Default::default() };
+        let matcher = Matcher::new(old.iter().enumerate().filter(|(_, l)| !empty(l)).map(|(k, l)| (k, OldPiece { mid: l.mid, ends: l.ends })));
         let mut segs = vec![SegLog::default(); n];
         for (i, slot) in segs.iter_mut().enumerate() {
             if !roads.segments[i].alive {
                 continue;
             }
-            let m = midpoint(roads, i);
-            let found = if old.get(i).is_some_and(|o| o.mid.distance(m) < 0.01) {
-                Some(i)
-            } else {
-                let (cx, cy) = cell(m);
-                let mut best: Option<(f32, usize)> = None;
-                for dx in -1..=1 {
-                    for dy in -1..=1 {
-                        for &k in grid.get(&(cx + dx, cy + dy)).map(|v| v.as_slice()).unwrap_or(&[]) {
-                            let d = old[k].mid.distance(m);
-                            if d <= MATCH_REACH && best.is_none_or(|b| d < b.0 || (d == b.0 && k < b.1)) {
-                                best = Some((d, k));
-                            }
-                        }
-                    }
-                }
-                best.map(|b| b.1)
-            };
+            let (a, b) = ends_of(roads, i);
+            let m = (a + b) * 0.5;
+            let same = old.get(i).is_some_and(|o| o.mid.distance(m) < 0.01 && o.ends.is_none_or(|(oa, ob)| oa.distance(a) < 0.01 && ob.distance(b) < 0.01));
+            let found = if same { Some(i) } else { matcher.find(a, b) };
             if let Some(k) = found {
                 *slot = old[k].clone();
             }
             slot.mid = m;
+            slot.ends = Some((a, b));
         }
         self.segs = segs;
         self.roads_version = roads.version;
@@ -335,5 +313,32 @@ mod tests {
         assert!((log.segs[0].wear_rate.unwrap() - 0.01).abs() < 1e-5);
         assert_eq!((log.segs[1].repaired_day, log.segs[1].repaired_whole), (Some(1), true));
         assert_eq!(log.segs[1].wear_rate, None);
+    }
+
+    /// A street cut in two keeps its traffic history on both halves.
+    #[test]
+    fn a_split_street_keeps_its_history_on_both_halves() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-100.0, 0.0), Vec2::new(100.0, 0.0)], 1, 1);
+        let mut log = RoadLog::default();
+        log.remap(&roads);
+        log.segs[0].traffic.add(5, 7);
+        log.segs[0].repaired_day = Some(3);
+        roads.add_polyline(&[Vec2::new(0.0, -100.0), Vec2::new(0.0, 100.0)], 1, 1);
+        log.remap(&roads);
+        let mut halves = 0;
+        for (i, l) in log.segs.iter().enumerate() {
+            if !roads.segments[i].alive {
+                continue;
+            }
+            let (a, b) = l.ends.expect("ends kept");
+            if (a.y - b.y).abs() < 0.1 {
+                halves += 1;
+                assert_eq!((l.traffic.at(5), l.repaired_day), (7, Some(3)), "half {i}");
+            } else {
+                assert_eq!(l.traffic.at(5), 0, "the crossing street is new");
+            }
+        }
+        assert_eq!(halves, 2);
     }
 }
