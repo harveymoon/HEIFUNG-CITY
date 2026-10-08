@@ -341,7 +341,6 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 ## Agents running (update when starting/merging; survives context compaction)
 - feat/econ-followups: batteries arbitrage, parking pressure → lots, industry lifts cheap land, relocating businesses, rich owners' holdings, wind small-lot check (started 2026-10-08)
 - feat/street-followups: tow trucks on a job (one-ways/U-turns), booted cars towed, murder, moto packs, fire engines park at the kerb (started 2026-10-08)
-- feat/freight: freight trains carry cargo, hydro/tidal scale (started 2026-10-08)
 - feat/supertall: supertall league (started 2026-10-08, from the queue)
 - feat/waterfront: waterfront parcels, beach businesses, private jetties, public beach zone (started 2026-10-08, from the queue)
 - feat/park-paths: park walkways in the walk graph, junctions for the path tool (started 2026-10-08, from the queue)
