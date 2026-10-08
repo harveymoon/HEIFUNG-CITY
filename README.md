@@ -5,7 +5,7 @@ The simulation is engine-independent and deterministic; the renderer is a thin l
 
 ```
 cargo run --release -p nd_app                  # the game
-cargo run --example headless -p nd_sim -- 3   # simulate a small grid city for 3 days in the terminal
+cargo run --example headless -p nd_sim -- 3    # simulate a small grid city for 3 days in the terminal
 cargo test --profile fast --workspace          # the tests
 ```
 
