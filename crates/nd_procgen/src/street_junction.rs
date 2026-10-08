@@ -140,9 +140,18 @@ pub(crate) struct PadPoint {
 
 /// The pad of a junction at `here` with arms `m` (counter-clockwise): each
 /// arm's mouth across its carriageway, and between neighbours the point
-/// where their facing kerb lines meet if that lies inside both mouths (the
-/// corner's apron lies beyond it), else the straight edge between mouths.
+/// where their facing kerb lines meet (the corner's apron lies beyond it),
+/// else (arms straight on, or turned away) the straight edge between
+/// mouths.
 pub(crate) fn pad_outline(here: Vec2, m: &[Mouth]) -> Vec<PadPoint> {
+    pad_outline_with(here, m, &|_, _| None)
+}
+
+/// `pad_outline`, taking the point where two neighbours' kerb lines meet
+/// from `corner` (the rounded corner's own apron starts there: drawn from
+/// the arms' paths it differs a little from the straight arms' on a curved
+/// street, and the two used to leave a sliver of bare ground between).
+pub(crate) fn pad_outline_with(here: Vec2, m: &[Mouth], corner: &dyn Fn(SegmentId, SegmentId) -> Option<Vec2>) -> Vec<PadPoint> {
     let mut out = Vec::new();
     let k = m.len();
     for i in 0..k {
@@ -163,6 +172,10 @@ pub(crate) fn pad_outline(here: Vec2, m: &[Mouth]) -> Vec<PadPoint> {
         }
         let left = Vec2::new(-a.dir.y, a.dir.x);
         let lb = Vec2::new(-b.dir.y, b.dir.x);
+        if let Some(x) = corner(a.seg, b.seg) {
+            out.push(PadPoint { p: x, arms: [i, j] });
+            continue;
+        }
         // Kerb lines: a's counter-clockwise side, b's clockwise side.
         let (pa, pb) = (here + left * a.hw, here - lb * b.hw);
         let den = a.dir.perp_dot(b.dir);
@@ -171,7 +184,10 @@ pub(crate) fn pad_outline(here: Vec2, m: &[Mouth]) -> Vec<PadPoint> {
         }
         let w = pb - pa;
         let (sa, sb) = (w.perp_dot(b.dir) / den, w.perp_dot(a.dir) / den);
-        if sa > 0.05 && sb > 0.05 && sa <= a.at + 0.01 && sb <= b.at + 0.01 {
+        // Out to it even past one arm's mouth: the chord between the mouths
+        // left a sliver of bare ground between it, that arm's kerb line and
+        // the corner's apron (which begins at the point).
+        if sa > 0.05 && sb > 0.05 && sa < 60.0 && sb < 60.0 {
             out.push(PadPoint { p: pa + a.dir * sa, arms: [i, j] });
         }
     }

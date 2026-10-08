@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[path = "street_junction.rs"]
 mod junction;
-use junction::{cul_de_sac, gore_ramp, mouths, pad_node, pad_outline, Mouth};
+use junction::{cul_de_sac, gore_ramp, mouths, pad_node, Mouth};
 
 pub struct StreetInput<'a> {
     pub roads: &'a RoadNetwork,
@@ -1320,7 +1320,9 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         // kerb lines (`junction::pad_outline`), each point at the height of
         // the road beside it (the node loop adds the node's own), worn like
         // the corners at a cheap junction.
-        let outline = pad_outline(node.pos, arms);
+        let node_corners = corners.by_node.get(&(i as u32));
+        let corner_x = |sa: SegmentId, sb: SegmentId| node_corners.into_iter().flatten().find(|c| c.arms[0].2 == sa && c.arms[1].2 == sb && c.turn < 0.0 && !c.apron.is_empty()).map(|c| c.apron[0]);
+        let outline = junction::pad_outline_with(node.pos, arms, &corner_x);
         if outline.len() >= 3 {
             let z0 = node_z(nid);
             let local = |pp: &junction::PadPoint| {
@@ -2307,7 +2309,8 @@ fn corner_between(a: &ArmEnd, b: &ArmEnd, base: f32) -> Option<(Corner, f32, f32
     // A fork at a sharp angle needs its corner far out: the kerb lines of
     // two streets 25 degrees apart meet 20-odd metres from the node. The
     // corner is only refused where it would reach past most of either arm.
-    let (lim_a, lim_b) = ((path_length(&a.path) * 0.45).min(base + 60.0), (path_length(&b.path) * 0.45).min(base + 60.0));
+    // Half a run each: the corners at its two ends never overlap.
+    let (lim_a, lim_b) = ((path_length(&a.path) * 0.5).min(base + 60.0), (path_length(&b.path) * 0.5).min(base + 60.0));
     if base > lim_a || base > lim_b {
         return None;
     }
