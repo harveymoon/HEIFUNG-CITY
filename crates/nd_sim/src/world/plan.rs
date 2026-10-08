@@ -1258,10 +1258,14 @@ impl World {
     }
 
     /// Take every train off the line; its passengers stand where it was
-    /// and decide again.
+    /// and decide again. [freight] Goods aboard go back out of town, first
+    /// in the queue for the next freight train (or by road, should their
+    /// yard no longer work: `drain_stranded_rail_imports`).
     pub(super) fn clear_trains(&mut self) {
         let trains: Vec<Train> = self.rail.trains.drain().map(|(_, t)| t).collect();
+        let since = self.clock.tick.saturating_sub(crate::rail::FREIGHT_HEADWAY);
         for t in trains {
+            self.rail.orders.extend(t.cargo.iter().map(|c| crate::rail::RailOrder { cargo: *c, since }));
             let pos = t.head();
             for p in t.passengers {
                 if let Some(c) = self.citizens.get_mut(p) {

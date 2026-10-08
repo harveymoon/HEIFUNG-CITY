@@ -834,12 +834,26 @@ Citizens are rendered from their simulated positions every frame.
   have no passing loops, so one train holds the branch at a time: others wait at the
   switch, and no new train is dispatched while one is waiting. Passenger trains come
   every two hours of clock from 05:00 to 23:00 when a station exists; freight trains
-  every three hours when a yard has goods waiting, or six regardless. Trains are not
+  every three hours when a yard has goods waiting, or six regardless (and an extra one 45
+  minutes after the last when goods were left behind: more than a full train waiting, or an
+  order that already missed one). Trains are not
   saved; they are back on the next headway. People take the train for trips over 500 m
   between two stations within 240 m of each end (`TransitLeg::Rail`), pay a fare, and
   newcomers mostly arrive by train when a station exists. With a freight yard, imports
-  come by rail at 80% of the price and wait at the yard for the next train, which hands
-  them to lorries; exports earn 20% more. Stations lift land value, yards lower it.
+  come by rail at 80% of the price; exports earn 20% more. [freight] The goods really ride the
+  trains: an order waits out of town (`Rail::orders`, saved) until the next freight train is
+  made up at the west edge of the map; its orders for the yards it calls at are loaded there,
+  oldest first, into wagons of 50 units (5 to 12 wagons, enough for what waits; an order that does
+  not fit waits for the next train, but an empty train always takes the first, so even a 400-unit
+  order leaves). They ride in on it, come off at their yard and go on by lorry (or straight into a
+  cargo hub on the siding). At each yard the train then takes on the exports from the apron, as
+  much as its wagons have room for. The train inspector's manifest is what is aboard: loads with
+  their yard and buyer, wagons, units aboard of capacity. A train taken off by a rebuild, or run
+  out of town with goods for a yard that went, puts them back in the queue (by road when the yard
+  no longer works); trains are not saved, but goods aboard are saved back into the queue. Orders
+  for a yard that stops working, when no freight has run for two headways, or after twelve hours
+  waiting come by road from the edge instead. Older saves' orders waiting at yards move to the
+  queue on load. Stations lift land value, yards lower it.
 - **Buses** (`nd_sim::transit`): the player draws lines and places a depot; without a
   depot no bus runs. A line is a loop of stops on streets; a click snaps to the nearest
   street and the stop sits on the kerb of the side clicked, so buses driving that way
@@ -938,7 +952,14 @@ Citizens are rendered from their simulated positions every frame.
   the size is fixed when built (`Building::plant_scale`; plants from older saves keep the
   standard size). A bigger site past the cap makes it no bigger: the station stands on part of it
   and the rest is coal yard. On unzoned ground free placement joins just enough parcels to reach
-  the plant's minimum, never past its cap (`zoning::grow_site`). The coal station is composed of
+  the plant's minimum, never past its cap (`zoning::grow_site`). [freight] Hydro and tidal plants
+  are sized the same way (70 and 60 MW per 700 m², 300 to 1,866 m²: one to eight turbine bays,
+  `PowerPlantKind::turbine_bays`, three at the nameplate; hydro's output still follows the
+  current), fixed when built; older plants keep the nameplate. Their meshes grow by bays: a hydro
+  hall of 8 m bays (a roof generator housing, a pilaster and a penstock each), a tidal house of 7 m
+  modules (a sluice gate each), the same height and depth whatever the size; the dam keeps its arch
+  across the river and gains intake towers (one per two bays) and spillway gates (two to four),
+  the tidal barrage a caisson per bay (`waterworks::bays_on`, `dam::dam_parts`). The coal station is composed of
   units, not stretched (`buildings::power::coal_layout`): one to four black boiler houses with
   orange-lit slits, each with its own smokestack of its own height, a start-up stack, a tall
   common stack and cooling towers (steam) on the big ones, a turbine hall, ash filters, conveyor
@@ -1082,7 +1103,7 @@ Citizens are rendered from their simulated positions every frame.
   back to park in its bays: the hub is a truck lot for the fleet code (`BusinessKind::is_truck_lot`),
   so any lorry nearby may park there too. Exports through a hub earn 6% more and leave in semis of
   80 units. A 3% handling fee is the hub's income. A hub that closes or is bulldozed sends what it
-  holds on to the buyers, and readdresses loads still at yards, ports, on trains or ships to them:
+  holds on to the buyers, and readdresses loads still waiting for a train, at ports, on trains or ships to them:
   nothing is lost. Transit window and `report.transit.cargo_hubs`.
 - **Crime, the street and the bins** (`nd_sim::{crime, homeless, trash}`, hooked in from
   `world/society.rs`, their own random stream). *Crime*: every hour each adult may turn, by class

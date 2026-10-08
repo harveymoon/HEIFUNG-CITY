@@ -764,7 +764,7 @@ fn services(w: &World) -> Value {
             json!({
                 "id": key_str(id), "name": b.name, "kind": rail_name(l.kind), "rail_connected": l.rail_connected, "road_connected": l.road_connected,
                 "works": l.works() && !b.is_derelict(), "waiting_passengers": station_waiting.get(&id).copied().unwrap_or(0),
-                "inbound_units": round(b.rail_inbound.iter().map(|c| c.amount).sum()), "outbound_units": round(b.rail_outbound), "pos": building_pos(w, b).map_or(Value::Null, v2),
+                "inbound_units": round(w.rail.orders_for(id).1), "aboard_units": round(w.rail.aboard_for(id)), "outbound_units": round(b.rail_outbound), "pos": building_pos(w, b).map_or(Value::Null, v2),
             })
         })
         .collect();

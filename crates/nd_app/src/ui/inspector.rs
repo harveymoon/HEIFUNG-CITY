@@ -643,7 +643,12 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
         match link.kind {
             nd_sim::RailFacility::Station => ui.label(format!("railway station: platform {:.0} m, {} trains today, {} riders today across the line{joined}", link.platform[0].distance(link.platform[1]), w.rail.stats.passenger_trains_today, w.rail.stats.riders_today)),
             nd_sim::RailFacility::Central => ui.label(format!("Central Station: intercity platform {:.0} m, {} trains today, {} rail riders today; metro below, bus terminal in front{joined}", link.platform[0].distance(link.platform[1]), w.rail.stats.passenger_trains_today, w.rail.stats.riders_today)),
-            nd_sim::RailFacility::FreightYard => ui.label(format!("freight yard: {} orders ({:.0} units) waiting for the next train, {:.0} units of exports on the apron{joined}", b.rail_inbound.len(), b.rail_inbound.iter().map(|c| c.amount).sum::<f32>(), b.rail_outbound)),
+            nd_sim::RailFacility::FreightYard => {
+                // [freight] Orders wait out of town for a train; then they ride in on it.
+                let (orders, units) = w.rail.orders_for(id);
+                let aboard = w.rail.aboard_for(id);
+                ui.label(format!("freight yard: {orders} orders ({units:.0} units) waiting out of town for the next train, {aboard:.0} units on their way by train, {:.0} units of exports on the apron{joined}", b.rail_outbound))
+            }
         };
     }
     // [subway]
