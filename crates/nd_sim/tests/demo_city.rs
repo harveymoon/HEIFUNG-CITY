@@ -5,64 +5,11 @@
 //!
 //! cargo test --release -p nd_sim --test demo_city -- --nocapture
 
-use nd_minds::RuleBasedMind;
-use nd_sim::roads::RoadKind;
-use nd_sim::{Gesture, LandUse, PowerPlantKind, RailFacility, Vec2, World, WorldConfig};
+mod common;
 
-/// The same layout as `Sim::new` + `Sim::seed_demo_district` in nd_app.
-pub fn demo_world() -> World {
-    let mut world = World::new(WorldConfig::default());
-    world.drain_events();
-    world.start_project();
-    for i in -2..=2 {
-        let c = i as f32 * 140.0;
-        world.add_gesture(Gesture::Road { points: vec![Vec2::new(-280.0, c), Vec2::new(280.0, c)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
-        world.add_gesture(Gesture::Road { points: vec![Vec2::new(c, -280.0), Vec2::new(c, 280.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
-    }
-    let cell = |cx: f32, cy: f32| vec![Vec2::new(cx - 65.0, cy - 65.0), Vec2::new(cx + 65.0, cy - 65.0), Vec2::new(cx + 65.0, cy + 65.0), Vec2::new(cx - 65.0, cy + 65.0)];
-    let plan = [
-        (-210.0, -210.0, LandUse::Industrial), (-70.0, -210.0, LandUse::Industrial), (70.0, -210.0, LandUse::Residential), (210.0, -210.0, LandUse::Residential),
-        (-210.0, -70.0, LandUse::Commercial), (-70.0, -70.0, LandUse::Entertainment), (70.0, -70.0, LandUse::Commercial), (210.0, -70.0, LandUse::Residential),
-        (-210.0, 70.0, LandUse::Residential), (-70.0, 70.0, LandUse::Park), (70.0, 70.0, LandUse::Civic), (210.0, 70.0, LandUse::Commercial),
-        (-210.0, 210.0, LandUse::Residential), (-70.0, 210.0, LandUse::Residential), (70.0, 210.0, LandUse::Entertainment), (210.0, 210.0, LandUse::Residential),
-    ];
-    for (x, y, lu) in plan {
-        world.add_gesture(Gesture::Zone { polygon: cell(x, y), land_use: lu });
-    }
-    world.add_gesture(Gesture::Road {
-        points: vec![Vec2::new(-420.0, nd_sim::rail::TRUNK_Y), Vec2::new(-330.0, -410.0), Vec2::new(-280.0, -348.0), Vec2::new(-110.0, -348.0), Vec2::new(-70.0, -324.0), Vec2::new(150.0, -324.0)],
-        lanes_fwd: 0,
-        lanes_bwd: 0,
-        curved: false,
-        kind: RoadKind::Rail,
-        elevation: Vec::new(),
-    });
-    world.implement();
-    world.economy.treasury = world.economy.treasury.max(150_000.0);
-    // The district's way in: a street north from the grid onto the highway.
-    world.link_to_highway(Vec2::new(0.0, 280.0));
-    let _ = world.place_rail_facility(RailFacility::FreightYard, Vec2::new(-200.0, -330.0));
-    let _ = world.place_rail_facility(RailFacility::Station, Vec2::new(80.0, -310.0));
-    let lot = world.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial && l.building.is_none() && l.area() >= 600.0).min_by(|a, b| (a.1.area() - nd_sim::power::COAL_REFERENCE_AREA).abs().total_cmp(&(b.1.area() - nd_sim::power::COAL_REFERENCE_AREA).abs())).map(|(id, _)| id);
-    if let Some(lot) = lot {
-        let _ = world.build_power(lot, PowerPlantKind::Coal);
-    }
-    let lot = world
-        .lots
-        .iter()
-        .filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial && l.building.is_none() && l.car_access() && l.area() >= nd_sim::transit::DEPOT_MIN_AREA)
-        .max_by(|a, b| a.1.area().total_cmp(&b.1.area()))
-        .map(|(id, _)| id);
-    if let Some(lot) = lot {
-        let _ = world.build_depot(lot);
-    }
-    let line = world.add_bus_route();
-    for p in [(-70.0, -136.0), (70.0, -136.0), (136.0, -70.0), (136.0, 70.0), (70.0, 136.0), (-70.0, 136.0), (-136.0, 70.0), (-136.0, -70.0)] {
-        let _ = world.add_bus_stop(line, Vec2::new(p.0, p.1));
-    }
-    world.set_route_buses(line, 2);
-    world
-}
+use common::*;
+use nd_minds::RuleBasedMind;
+use nd_sim::{LandUse, Vec2, World};
 
 /// One daily sample: (population, hungry share, starving share, share of
 /// housed households paying over half their income in rent).
@@ -263,18 +210,6 @@ fn demo_city_parked_cars_never_overlap_and_towing_keeps_every_car() {
 
 use nd_sim::CarId;
 
-fn busy_city() -> (World, RuleBasedMind) {
-    let mut world = demo_world();
-    let mut minds = RuleBasedMind::default();
-    let mut ticks = 0;
-    while world.traffic.cars.values().filter(|c| !World::is_through_car(c)).count() < 40 && ticks < 40_000 {
-        world.tick(&mut minds);
-        ticks += 1;
-    }
-    assert!(world.traffic.cars.values().filter(|c| !World::is_through_car(c)).count() >= 40, "the demo city gets busy");
-    (world, minds)
-}
-
 fn snapshot(w: &World) -> Vec<(CarId, Vec2)> {
     w.traffic.cars.iter().map(|(id, c)| (id, c.pos)).collect()
 }
@@ -355,46 +290,11 @@ fn road_works_never_take_a_civic_structure() {
 // empty, or they left a bus still listing them. Now the thought lands at
 // once and the intent waits for their next decision.
 
-struct Late {
-    rules: RuleBasedMind,
-    queue: Vec<(nd_sim::CitizenId, nd_sim::Decision)>,
-}
-
-impl nd_sim::MindProvider for Late {
-    fn decide(&mut self, ctx: &nd_sim::MindContext) -> Option<nd_sim::Decision> {
-        self.rules.decide(ctx)
-    }
-    fn poll(&mut self) -> Vec<(nd_sim::CitizenId, nd_sim::Decision)> {
-        std::mem::take(&mut self.queue)
-    }
-    fn name(&self) -> &'static str {
-        "late"
-    }
-}
-
-/// (bus riders not riding it, cars driven by someone not in them, train
-/// riders not on it)
-fn ghosts(w: &World) -> (usize, usize, usize) {
-    use nd_sim::Activity;
-    let mut bus = 0;
-    let mut car_ghost = 0;
-    for (cid, car) in w.traffic.cars.iter() {
-        if let Some(b) = &car.bus {
-            bus += b.passengers.iter().filter(|p| !w.citizens.get(**p).is_some_and(|c| matches!(c.activity, Activity::Riding { bus } if bus == cid))).count();
-        }
-        if car.bus.is_none() && car.cargo.is_none() && car.owned.is_some() && w.citizens.get(car.citizen).is_some_and(|c| !matches!(c.activity, Activity::Driving { car, .. } if car == cid)) {
-            car_ghost += 1;
-        }
-    }
-    let train = w.rail.trains.iter().map(|(tid, t)| t.passengers.iter().filter(|p| !w.citizens.get(**p).is_some_and(|c| matches!(c.activity, Activity::OnTrain { train } if train == tid))).count()).sum();
-    (bus, car_ghost, train)
-}
-
 #[test]
 fn late_mind_answers_wait_until_the_trip_is_over() {
     use nd_sim::{Activity, Decision, Intent};
     let mut w = demo_world();
-    let mut m = Late { rules: RuleBasedMind::default(), queue: Vec::new() };
+    let mut m = Late::new();
     for _ in 0..1440 * 2 {
         w.tick(&mut m);
     }
