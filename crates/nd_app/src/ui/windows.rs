@@ -122,7 +122,9 @@ pub fn show_all(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
             let size = egui::vec2(EXPANDED_WIDTH.min(content.width() - 24.0), EXPANDED_HEIGHT.min(content.height() - 24.0));
             window.id(info.id().with("expanded")).default_pos(pos).default_size(size).resizable(true)
         } else {
-            window.id(info.id().with("window")).default_pos(cascade).default_width(info.width())
+            // A compact window keeps its width: content sized from the space it
+            // has must never push it wider frame after frame.
+            window.id(info.id().with("window")).default_pos(cascade).default_width(info.width()).max_width(info.width())
         };
         let mut keep = true;
         let shown = window.show(ctx, |ui| {
