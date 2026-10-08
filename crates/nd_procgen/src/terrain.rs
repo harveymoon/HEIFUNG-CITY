@@ -886,6 +886,36 @@ const PORTAL_HOLD: f32 = nd_sim::landscape::PORTAL_HOLD;
 /// `hw` either side of the centreline, standing on `ground`. Shared with
 /// the plan preview.
 #[allow(clippy::too_many_arguments)]
+/// [interchange] A bridge's abutment on the bank at `p`, the deck running
+/// out over the water along `out` at height `z` (`hw` its half width): a
+/// bank seat under the deck's end and wing walls running back along the
+/// approach, down into the ground at `ground`.
+pub fn abutment(g: &mut Geometry, p: Vec2, out: Vec2, z: f32, hw: f32, ground: f32, concrete: [f32; 3]) {
+    use glam::Vec3;
+    let top = z - 1.4;
+    let foot = ground - 1.0;
+    if top - foot < 0.6 {
+        return;
+    }
+    let yaw = out.y.atan2(out.x);
+    // The seat: from just behind the deck's end to under it.
+    let seat = p + out * 0.6;
+    g.part(Surface::Concrete).boxed(Vec3::new(seat.x, (top + foot) * 0.5, seat.y), Vec3::new(2.4, top - foot, hw * 2.0 + 0.8), -yaw, rgba(mul(concrete, 0.82)));
+    // The wing walls, stepping down as they run back into the embankment.
+    let side = Vec2::new(-out.y, out.x);
+    for sgn in [-1.0f32, 1.0] {
+        for k in 0..3 {
+            let back = 1.5 + k as f32 * 2.5;
+            let c = p - out * back + side * sgn * (hw + 0.25);
+            let h = (z - 0.1 - foot) * (1.0 - k as f32 * 0.3);
+            if h < 0.3 {
+                continue;
+            }
+            g.part(Surface::Concrete).boxed(Vec3::new(c.x, foot + h * 0.5, c.y), Vec3::new(2.5, h, 0.5), -yaw, rgba(mul(concrete, 0.86)));
+        }
+    }
+}
+
 pub fn viaduct_span(g: &mut Geometry, a: Vec2, b: Vec2, za: f32, zb: f32, hw: f32, ground: &dyn Fn(Vec2) -> f32, concrete: [f32; 3], steel: [f32; 3], columns: bool) {
     let parapets = true;
     use glam::Vec3;
@@ -973,6 +1003,44 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
             g.part(Surface::Metal).beam(a3 + off + Vec3::Y * 1.0, b3 + off + Vec3::Y * 1.0, 0.15, rgba(steel));
             g.part(Surface::Concrete).slab(a3 + off + Vec3::Y * 0.45, b3 + off + Vec3::Y * 0.45, 0.35, 0.5, rgba(mul(concrete, 0.9)));
         }
+        // [interchange] An abutment at each end on the bank (no other bridge
+        // piece goes on from it): a bank seat under the deck's end and wing
+        // walls back along the approach into the embankment. The deck used
+        // to simply stop, a concrete block standing on the bank.
+        for (n, p, out, z) in [(seg.a, a, dir, za), (seg.b, b, -dir, zb)] {
+            let goes_on = roads.node(n).segments.iter().any(|&o| o != sid && roads.segment(o).alive && roads.segment(o).bridge && !roads.segment(o).viaduct);
+            if !goes_on {
+                abutment(&mut g, p, out, z, hw, land.height(p).max(WATER_LEVEL - 1.0), concrete);
+            }
+        }
+        // [interchange] A ramp leaving (or joining) a highway on the bridge:
+        // deck under the gore between the two, which used to be a thin
+        // asphalt sheet over the water.
+        let seg_len = a.distance(b);
+        if seg.ramp {
+            for (n, p, out) in [(seg.a, a, dir), (seg.b, b, -dir)] {
+                let hw_seg = roads.node(n).segments.iter().copied().find(|&o| o != sid && roads.segment(o).alive && roads.segment(o).is_highway() && roads.segment(o).bridge);
+                let Some(h) = hw_seg else { continue };
+                let (h0, h1) = roads.segment_points(h);
+                let hd = if h0.distance(p) < h1.distance(p) { (h1 - h0).normalize_or_zero() } else { (h0 - h1).normalize_or_zero() };
+                let run = seg_len.min(40.0);
+                let z0 = world.road_z.get(n.0 as usize).copied().unwrap_or(0.0);
+                let z1 = if n == seg.a { za + (zb - za) * (run / seg_len.max(1e-3)) } else { zb + (za - zb) * (run / seg_len.max(1e-3)) };
+                let mut s = 0.0f32;
+                while s < run {
+                    let r = p + out * (s + 2.0);
+                    let q = p + hd * (r - p).dot(hd);
+                    let gap = r.distance(q);
+                    if gap > 0.5 {
+                        let mid = (r + q) * 0.5;
+                        let zz = z0 + (z1 - z0) * (s + 2.0) / run.max(1e-3) - 0.05;
+                        let yaw = hd.y.atan2(hd.x);
+                        g.part(Surface::Concrete).boxed(Vec3::new(mid.x, zz - 0.7, mid.y), Vec3::new(4.2, 1.4, gap), -yaw, rgba(concrete));
+                    }
+                    s += 4.0;
+                }
+            }
+        }
         // Piers down to the bed every 28 m or so.
         let len = a.distance(b);
         let spans = (len / 28.0).ceil().max(1.0) as i32;
@@ -1057,6 +1125,11 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
                 g.part(Surface::Matte).cylinder(lamp, 0.07, 0.07, top, top + 4.0, 6, rgba([0.2, 0.2, 0.22]));
                 g.part(Surface::Glow).boxed(Vec3::new(lamp.x, top + 4.1, lamp.y), Vec3::new(0.35, 0.22, 0.35), 0.0, rgba(palette.lamp));
                 for m in &layout.boats {
+                    // [fishing] Trawlers are drawn by the app where the
+                    // sim has them: at their berth or out at sea.
+                    if m.kind == ShipKind::FishingBoat {
+                        continue;
+                    }
                     let mesh = match m.kind {
                         ShipKind::Yacht => &meshes[1],
                         ShipKind::FishingBoat => &meshes[2],
@@ -1235,43 +1308,12 @@ pub fn dock_layout(port: &nd_sim::ports::Port, land: &nd_sim::landscape::Landsca
             }
         }
     } else {
-        // A quay with a T-head: trawlers on the seaward face first, then
-        // alongside the quay, then on the head's landward arms.
-        let k = ShipKind::FishingBoat;
-        let (l, b) = boat_size(k);
-        let head = if kind == nd_sim::ports::PortKind::FishingPortLarge { 56.0 } else { 36.0 };
-        let hw = width;
-        out.decks.push((tip - across * head * 0.5, tip + across * head * 0.5, hw));
-        let mut slots: Vec<Mooring> = Vec::new();
-        let n_sea = ((head / (l + 2.0)).floor() as i32).max(1);
-        for i in 0..n_sea {
-            let x = -head * 0.5 + (i as f32 + 0.5) * head / n_sea as f32;
-            slots.push(Mooring { pos: tip + along * (hw * 0.5 + b * 0.5 + 0.5) + across * x, yaw: yaw_of(if i % 2 == 0 { across } else { -across }), kind: k });
-        }
-        let limit = len - hw * 0.5 - b - 1.5;
-        let mut s = s_water + l * 0.5 + 1.0;
-        while s + l * 0.5 <= limit {
-            for side in [1.0f32, -1.0] {
-                slots.push(Mooring { pos: root + along * s + across * side * (width * 0.5 + b * 0.5 + 0.5), yaw: yaw_of(along), kind: k });
-            }
-            s += l + 2.0;
-        }
-        let arm = head * 0.5 - width * 0.5;
-        let n_arm = (arm / (l + 2.0)).floor() as i32;
-        for side in [1.0f32, -1.0] {
-            for i in 0..n_arm {
-                let x = width * 0.5 + 1.0 + (i as f32 + 0.5) * (l + 2.0);
-                slots.push(Mooring { pos: tip - along * (hw * 0.5 + b * 0.5 + 0.5) + across * side * x, yaw: yaw_of(across * side), kind: k });
-            }
-        }
-        for m in slots {
-            if out.boats.len() >= berths {
-                break;
-            }
-            if afloat(m.pos, Vec2::from_angle(m.yaw), k) {
-                out.boats.push(m);
-            }
-        }
+        // A quay with a T-head; the trawlers' berths are the sim's
+        // (`nd_sim::fishing::quay_moorings`), so a boat out at sea leaves
+        // its own berth empty.
+        let head = nd_sim::fishing::quay_head(kind);
+        out.decks.push((tip - across * head * 0.5, tip + across * head * 0.5, width));
+        out.boats = nd_sim::fishing::quay_moorings(port, land).into_iter().map(|(pos, yaw)| Mooring { pos, yaw, kind: ShipKind::FishingBoat }).collect();
     }
     out
 }
@@ -1308,6 +1350,63 @@ fn hull(m: &mut MeshData, len: f32, beam: f32, bow: f32, y0: f32, y1: f32, color
     m.cap(&d, Vec3::Y, rgba(deck));
 }
 
+/// [fishing] A trawler, bow along +x, waterline at 0: wheelhouse forward,
+/// a gantry over the stern. Steaming or in port its outrigger booms stand
+/// up; with `nets_out` they are lowered out over the water either side and
+/// the warps run from the gantry down into the sea astern.
+pub fn trawler_mesh(nets_out: bool, palette: &Palette) -> MeshData {
+    use glam::Vec3;
+    let mut m = MeshData::default();
+    let white = [0.92, 0.92, 0.9];
+    let glass = palette.glass_dark;
+    let (len, beam) = boat_size(ShipKind::FishingBoat);
+    let red = [0.55, 0.13, 0.1];
+    hull(&mut m, len, beam, 3.5, -1.2, 1.4, red, [0.45, 0.42, 0.38]);
+    // White sheer strake along the top of the hull.
+    m.boxed(Vec3::new(-1.5, 1.25, 0.0), Vec3::new(len - 5.0, 0.3, beam * 1.005), 0.0, rgba(white));
+    // Wheelhouse forward, windows round it.
+    m.boxed(Vec3::new(2.4, 2.75, 0.0), Vec3::new(3.6, 2.7, 3.4), 0.0, rgba(white));
+    m.boxed(Vec3::new(2.4, 3.55, 0.0), Vec3::new(3.65, 0.65, 3.45), 0.0, rgba(glass));
+    m.boxed(Vec3::new(2.4, 4.2, 0.0), Vec3::new(3.9, 0.15, 3.7), 0.0, rgba([0.3, 0.3, 0.32]));
+    // Mast with a crosstree and the outrigger booms.
+    let spar = rgba([0.8, 0.8, 0.78]);
+    m.boxed(Vec3::new(3.2, 6.5, 0.0), Vec3::new(0.2, 4.6, 0.2), 0.0, spar);
+    m.boxed(Vec3::new(3.2, 7.6, 0.0), Vec3::new(0.15, 0.15, 2.0), 0.0, spar);
+    for s in [-1.0f32, 1.0] {
+        if nets_out {
+            // Lowered nearly flat, a line from each boom end to the water.
+            let end = Vec3::new(0.0, 3.4, s * 9.5);
+            m.beam(Vec3::new(3.0, 4.5, s * 0.3), end, 0.16, rgba([0.75, 0.75, 0.72]));
+            m.beam(end, Vec3::new(-6.0, -0.2, s * 11.0), 0.06, rgba([0.25, 0.25, 0.25]));
+        } else {
+            m.beam(Vec3::new(3.0, 4.5, 0.0), Vec3::new(1.0, 6.5, s * 5.5), 0.14, rgba([0.75, 0.75, 0.72]));
+        }
+    }
+    // Stern gantry (A-frame) and the net drum.
+    let yellow = [0.9, 0.62, 0.1];
+    for s in [-1.0f32, 1.0] {
+        m.beam(Vec3::new(-6.6, 1.4, s * 2.0), Vec3::new(-6.0, 6.2, s * 1.6), 0.25, rgba(yellow));
+    }
+    m.boxed(Vec3::new(-6.0, 6.2, 0.0), Vec3::new(0.35, 0.35, 3.6), 0.0, rgba(yellow));
+    if nets_out {
+        // The drum paid out: warps from the gantry into the water astern,
+        // and the net's floats strung out behind.
+        for s in [-1.0f32, 1.0] {
+            m.beam(Vec3::new(-6.0, 6.0, s * 1.5), Vec3::new(-26.0, -0.3, s * 4.0), 0.07, rgba([0.2, 0.2, 0.2]));
+        }
+        for k in 0..6 {
+            let x = -27.0 - k as f32 * 2.2;
+            let z = (k as f32 - 2.5) * 1.3;
+            m.boxed(Vec3::new(x, 0.12, z), Vec3::new(0.7, 0.35, 0.7), 0.0, rgba([0.95, 0.45, 0.08]));
+        }
+        m.boxed(Vec3::new(-4.0, 1.85, 0.0), Vec3::new(1.6, 0.9, 3.0), 0.0, rgba([0.15, 0.35, 0.2]));
+    } else {
+        m.boxed(Vec3::new(-4.0, 2.1, 0.0), Vec3::new(1.6, 1.4, 3.0), 0.0, rgba([0.15, 0.35, 0.2]));
+    }
+    m.boxed(Vec3::new(-1.0, 1.75, 0.0), Vec3::new(1.4, 0.7, 1.4), 0.0, rgba([0.2, 0.4, 0.75]));
+    m
+}
+
 /// [economy] The mesh of a boat of any kind, bow along +x, waterline at 0:
 /// a trawler with its wheelhouse forward and a gantry over the stern, a
 /// white motor yacht with stepped decks, or a small sailing boat with a
@@ -1320,31 +1419,7 @@ pub fn boat_mesh(kind: ShipKind, palette: &Palette) -> MeshData {
     match kind {
         ShipKind::Freighter => return ship_mesh(true, palette),
         ShipKind::Ferry => return ship_mesh(false, palette),
-        ShipKind::FishingBoat => {
-            let (len, beam) = boat_size(kind);
-            let red = [0.55, 0.13, 0.1];
-            hull(&mut m, len, beam, 3.5, -1.2, 1.4, red, [0.45, 0.42, 0.38]);
-            // White sheer strake along the top of the hull.
-            m.boxed(Vec3::new(-1.5, 1.25, 0.0), Vec3::new(len - 5.0, 0.3, beam * 1.005), 0.0, rgba(white));
-            // Wheelhouse forward, windows round it.
-            m.boxed(Vec3::new(2.4, 2.75, 0.0), Vec3::new(3.6, 2.7, 3.4), 0.0, rgba(white));
-            m.boxed(Vec3::new(2.4, 3.55, 0.0), Vec3::new(3.65, 0.65, 3.45), 0.0, rgba(glass));
-            m.boxed(Vec3::new(2.4, 4.2, 0.0), Vec3::new(3.9, 0.15, 3.7), 0.0, rgba([0.3, 0.3, 0.32]));
-            // Mast with a crosstree and outrigger booms.
-            m.boxed(Vec3::new(3.2, 6.5, 0.0), Vec3::new(0.2, 4.6, 0.2), 0.0, rgba([0.8, 0.8, 0.78]));
-            m.boxed(Vec3::new(3.2, 7.6, 0.0), Vec3::new(0.15, 0.15, 2.0), 0.0, rgba([0.8, 0.8, 0.78]));
-            for s in [-1.0f32, 1.0] {
-                m.beam(Vec3::new(3.0, 4.5, 0.0), Vec3::new(1.0, 6.5, s * 5.5), 0.14, rgba([0.75, 0.75, 0.72]));
-            }
-            // Stern gantry (A-frame) and the net drum.
-            let yellow = [0.9, 0.62, 0.1];
-            for s in [-1.0f32, 1.0] {
-                m.beam(Vec3::new(-6.6, 1.4, s * 2.0), Vec3::new(-6.0, 6.2, s * 1.6), 0.25, rgba(yellow));
-            }
-            m.boxed(Vec3::new(-6.0, 6.2, 0.0), Vec3::new(0.35, 0.35, 3.6), 0.0, rgba(yellow));
-            m.boxed(Vec3::new(-4.0, 2.1, 0.0), Vec3::new(1.6, 1.4, 3.0), 0.0, rgba([0.15, 0.35, 0.2]));
-            m.boxed(Vec3::new(-1.0, 1.75, 0.0), Vec3::new(1.4, 0.7, 1.4), 0.0, rgba([0.2, 0.4, 0.75]));
-        }
+        ShipKind::FishingBoat => return trawler_mesh(false, palette),
         ShipKind::Yacht => {
             let (len, beam) = boat_size(kind);
             hull(&mut m, len, beam, beam * 1.4, -1.2, 2.0, white, [0.72, 0.6, 0.45]);

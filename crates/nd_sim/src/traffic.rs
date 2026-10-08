@@ -439,6 +439,9 @@ pub struct LaneNetwork {
     pub intersections: Vec<Intersection>,
     pub segment_lanes: HashMap<SegmentId, Vec<LaneId>>,
     pub node_radius: Vec<f32>,
+    /// [interchange] Lanes of an arm ending further out than its node's
+    /// radius (`walk::stop_back`: a sharp fork's stop line), by (node, arm).
+    pub stop_back: HashMap<(NodeId, SegmentId), f32>,
     /// Index into `intersections` per node, `usize::MAX` for none.
     pub node_intersection: Vec<usize>,
     pub approaches: Vec<Approach>,
@@ -1356,6 +1359,7 @@ impl LaneNetwork {
         self.segment_lanes.clear();
         self.node_intersection = vec![usize::MAX; roads.nodes.len()];
         self.approaches.clear();
+        self.stop_back.clear();
         self.version += 1;
         self.arrows_version += 1;
 
@@ -1396,8 +1400,18 @@ impl LaneNetwork {
                 continue;
             }
             let dir = (pb - pa) / len;
-            let mut ra = self.node_radius[seg.a.0 as usize];
-            let mut rb = self.node_radius[seg.b.0 as usize];
+            // [interchange] At a sharp fork the lanes end at the painted stop
+            // line's distance, as at any junction.
+            let back_a = crate::walk::stop_back(roads, seg.a, sid, self.node_radius[seg.a.0 as usize]);
+            let back_b = crate::walk::stop_back(roads, seg.b, sid, self.node_radius[seg.b.0 as usize]);
+            if back_a > 0.0 {
+                self.stop_back.insert((seg.a, sid), back_a);
+            }
+            if back_b > 0.0 {
+                self.stop_back.insert((seg.b, sid), back_b);
+            }
+            let mut ra = self.node_radius[seg.a.0 as usize] + back_a;
+            let mut rb = self.node_radius[seg.b.0 as usize] + back_b;
             if len - ra - rb < 2.0 {
                 let k = ((len - 2.0) / (ra + rb).max(1e-3)).clamp(0.0, 1.0);
                 ra *= k;
@@ -1726,6 +1740,26 @@ impl LaneNetwork {
                 }
             }
         }
+        // [interchange] Bends close together are one curve (a ramp rounded
+        // in a few pieces): the lowest cap holds from its first bend to its
+        // last, so the limit does not rise between them and fall again.
+        let caps: HashMap<usize, Vec<(f32, f32, f32)>> = caps
+            .into_iter()
+            .map(|(r, mut cs)| {
+                cs.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let mut out: Vec<(f32, f32, f32)> = Vec::new();
+                for (x, c) in cs {
+                    match out.last_mut() {
+                        Some(last) if x - last.1 < 30.0 => {
+                            last.1 = x;
+                            last.2 = last.2.min(c);
+                        }
+                        _ => out.push((x, x, c)),
+                    }
+                }
+                (r, out)
+            })
+            .collect();
         for i in 0..n {
             if !self.lanes[i].ramp || !up[i].0.is_finite() || !down[i].0.is_finite() {
                 continue;
@@ -1737,10 +1771,15 @@ impl LaneNetwork {
             // eases off either side at the rate drivers brake for limits,
             // so the limit never steps.
             let at = |x: f32, v: f32| {
-                caps.get(&r).map_or(v, |cs| cs.iter().fold(v, |v, &(cx, c)| v.min((c * c + 2.0 * ANTICIPATE_BRAKE * (x - cx).abs()).sqrt())))
+                caps.get(&r).map_or(v, |cs| cs.iter().fold(v, |v, &(x0, x1, c)| v.min((c * c + 2.0 * ANTICIPATE_BRAKE * (x0 - x).max(x - x1).max(0.0)).sqrt())))
             };
             self.lanes[i].speed_limit = at(up[i].0, profile(up[i].0, down[i].0 + len, uh, dh));
             self.lanes[i].limit_end = at(up[i].0 + len, profile(up[i].0 + len, down[i].0, uh, dh));
+            // [interchange] Off a curve's last bend the cap eases off into a
+            // profile still falling: an off-ramp's limit never rises along a
+            // lane (nor an on-ramp's falls).
+            let (a, b) = (self.lanes[i].speed_limit, self.lanes[i].limit_end);
+            self.lanes[i].limit_end = if uh && !dh { b.min(a) } else if dh && !uh { b.max(a) } else { b };
         }
     }
 

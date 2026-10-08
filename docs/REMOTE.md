@@ -295,6 +295,7 @@ them a land use.
 | `plan` | none: every gesture in the effective plan (id, kind, points, lanes, land_use), `pending_gesture_ids`, project steps |
 | `add_road` | `points` `[[x,y],...]` or `[[x,y,level],...]` (2+; level metres above the ground, negative below), `elevation` (a level for every point without its own, or a list), `tunnel` (default level -8 m), `kind` street (default) / path / rail, `lanes_fwd`, `lanes_bwd` (0..4, default 1/1, streets only), `curved`, `snap` (default true: points snap to a road at about their level; an end with no level of its own snaps to any road and takes its level), `implement`. Reply adds `grade_warnings` (too steep, crossing at an awkward height). Refused (400) if it would meet the railway at a level neither at grade nor clear of it, e.g. a portal ramp part way down: the error says how far to lower or raise it |
 | `add_roundabout` | `center` `[x,y]` (or `pos` / `x`,`y`; snaps onto a junction within 12 m or a street within 6 m), `radius` 12..120 m to the ring centreline or `diameter` 24..240 (default the tool's), `lanes` 1 / 2 / 3, `implement`. Reply adds `roundabout` {`center`, `radius`, `diameter`, `lanes`, `joins`, `cuts_roads` (gesture ids), `takes_buildings`}; refused where it would partly overlap another roundabout (nesting one wholly inside another, with a lane and pavement between, is fine) |
+| `add_interchange` (alias `interchange`) | `from`, `to` `[x,y]`: the cross street's ends, one each side of the highway; `lanes_fwd`, `lanes_bwd` (default 2, 2), `check` (only plan it), `implement` | [interchange] a diamond interchange as the Road tool's Interchange preset lays it: the street under the highway (kept when one runs along the line already) and four ramps meeting it at a signalled junction each side. Reply adds `gesture_ids`, `interchange` {`kept_street`, `terminals`, `crossings`, `roads` [{points, lanes_fwd, lanes_bwd}]}, or `refused` {`why`, `at`} (the spot). `tool {preset: "Interchange"}` picks the preset; with `draw` [[a],[b]] its hologram and `interchange_refusal` show. Dev: `rebuild_roads` lays the roads again from the plan with the current rules |
 | `add_zone` | `polygon` `[[x,y],...]` (3+), `land_use` residential / commercial / industrial / entertainment / civic / park, `implement` |
 | `bulldoze` | `gesture_id`, `implement`; or `building` (id): a city building (plant, battery, service, attraction, depot, metro station, cargo hub, city parking) goes at once and its lot goes back to the zoning plan (or unzoned ground). Grown buildings, stations, yards and docks refuse |
 | `paint` | `land_use` (or `none` to unzone), then `at` `[x,y]` + `radius` (the brush), `rect` `[[x0,y0],[x1,y1]]` (the marquee) or `polygon`; `industry` (industrial only: auto / farming / oil / refinery / manufacturing / logistics / fishing / tech), `implement`. Reply: `painted`, `touched`, `refused` (`[{parcel, center, why}]`), `gesture_id`; `no_parcel` (why, when `at` touched no parcel: water, too far from a road, past the buildable land) |
@@ -312,7 +313,7 @@ them a land use.
 
 Reply: `gesture_id`, `implemented`, `project` (`id`, `name`, `steps`, `redo`), `projects`, `plan_version`.
 
-Road works never take the city's own structures (depots, stations, yards, plants, service buildings, docks, metro stations, cargo hubs). An implement whose roads would run over one, or leave one with no street, is refused and the project stays pending: `implemented` is false (`project implement` replies `did: false`), `implement_refused` gives the reason, and every project reply lists `blockers` (`[{id, name}]`), the structures the pending roads run over now (drawn with a wide red border in the game). Move the road or bulldoze the structure, then implement again.
+Road works never take the city's own structures (depots, stations, yards, plants, service buildings, docks, metro stations, cargo hubs). An implement whose roads would run over one, or leave one with no street, is refused and the project stays pending: `implemented` is false (`project implement` replies `did: false`), `implement_refused` gives the reason, and every project reply lists `blockers` (`[{id, name}]`), the structures the pending roads run over now (drawn with a wide red border and a red pin in the game; `plan` gives the full check, with the structures the rebuild would lose and the road that takes each). Move the road or bulldoze the structure, then implement again.
 
 ### Placing buildings
 
@@ -706,9 +707,12 @@ was changed) and `editor_open`. Everything is saved with the city (`Traffic::jun
 {"cmd": "intersection", "at": [209, -149], "crossing": 700, "upgrade": "footbridge"}
 ```
 
-`plan` also carries `will_refuse` (null, or why implementing the active project would be refused
-for want of room for a raised road's columns) and `pillar_gaps` (as in the tool state): the same
-check implementing makes, a trial rebuild included, so nothing is refused that `plan` did not say.
+`plan` also carries `will_refuse` (null, or word for word what implementing the active project
+would answer: a city structure its roads take, else no room for a raised road's columns), `blockers`
+(each structure as `{id, name, at, road_gesture, road, stretch, runs_over, reason}`: the planned road
+that takes it, the stretch of that road over it, or `runs_over: false` for one the rebuild would leave
+with no street) and `pillar_gaps` (as in the tool state): the same check implementing makes, a trial
+rebuild included, so nothing is refused that `plan` did not say.
 A raised road's ends are planned where the network lays them: an end dropped on a road lands on it
 at its level (the deck ramps down) and needs no column; an end left in the air needs one within
 10 m, and is refused with "the road ends in the air over a road at (x, y) ..." when there is none.
@@ -1412,8 +1416,42 @@ A building's `inspect` (and `selected`) has `story`: `why` (why the business is 
 of its kind than the city needs, competitors, donations, an opening tonight), `struggling`,
 `wants_expand` (a thriving gallery: the hook for growing into a museum), `opened_by_pressure` (the
 pressure key when its kind is one a pressure opens), `donations`, `opening_now` {invited,
-visitors, donations}. Boats are port ships of kinds `FishingBoat`, `Yacht` and `Sailboat` besides
-the freighters and ferries.
+visitors, donations}. Marina boats are port ships of kinds `Yacht` and `Sailboat` besides the
+freighters and ferries; trawlers are the fishing fleets below.
+
+### Fishing fleets [fishing]
+
+A fishing port keeps one trawler per berth on its quay. On a working day each crewed boat
+(boats out = berths × staffing, one day in eight a boat stays in for repairs) casts off in the
+early morning (staggered 03:00–08:00), steams out (4.5 m/s) to one of the port's fishing grounds,
+trawls there with its nets out (1.5 m/s sweeps, stopping every 50 min to haul for 12 min) and heads
+home to tie up between 12:00 and 17:00, unloading for 40 min. A boat at sea leaves its berth empty
+(the renderer draws every trawler where the sim has it). The catch is landed into the port's fish
+stock when the boat ties up: per minute fished, times the ground's richness (further out is
+richer), less up to 70% on water fouled by dirty industry (ground contamination reaching the water
+and dirty plants nearby); a port's days add up to about what its recipe made by the hour before.
+A storm (weather spell) keeps the fleet in and calls boats at sea home. A port with no grounds in
+reach (cramped water) makes its fish by the hour as before. Fleets are saved; old saves start with
+every boat in port.
+
+Grounds are found per port from the landscape seed: open water at least 32 m from the shore,
+300–2600 m away by water (routes on a 20 m water grid, never over land), at least 140 m from
+shipping lanes and ferry routes and 200 m from other docks, up to five, 320 m apart. They show as
+rings on the Water survey layer (`overlay {layer: "water"}`).
+
+`inspect {building}` on a fishing port has `fishing`: `boats_total`, `at_sea`, `in_port`,
+`landed_today`, `landed_yesterday`, `trips_today`, `kept_in` (why the boats stayed in today, e.g. a
+storm), `fishes_grounds`, `offing` (where boats gather off the quay head), `boats` ([{name, state
+(in_port, outbound, fishing, hauling, returning, unloading), doing, at, at_sea, nets_out, ground
+(1-based), fish_aboard, minutes_fished, catch_today, home_by ("HH:MM" while out)}]), `berths`
+([{at, boat, empty}]), `grounds` ([{ground, center, radius_m, richness, route_m, km_out,
+fouled}]). Null for other buildings.
+
+`ships`: every ship and boat on the water: `count`, `trawlers_at_sea`, `ships` ([{kind (freighter,
+ferry, yacht, sailboat, fishingboat), port, at, heading_deg, docked} — trawlers also name,
+port_name, state, at_sea, nets_out, fish_aboard, catch_today, and are listed at their berths too]).
+`landscape` adds `trawlers` (those at sea: name, port, at, state). The pressure report's
+`waterfront.boats_out` counts trawlers at sea.
 
 ## Street races, raves and the roads
 
