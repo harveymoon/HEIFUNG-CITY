@@ -368,6 +368,9 @@ pub struct Economy {
     /// Where the last driver gave up looking for a space.
     #[serde(default)]
     pub parking_shortage_at: Option<glam::Vec2>,
+    /// [parking-market] Parking businesses opened where drivers circled.
+    #[serde(default)]
+    pub parking_opened_total: u32,
     /// Pedestrian trips started today and sales to passers-by.
     #[serde(default)]
     pub walk_trips_today: u32,

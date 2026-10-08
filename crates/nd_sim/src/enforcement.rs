@@ -20,6 +20,14 @@
 //! its people get out and walk on; the clamp (`ParkSpot::booted`, drawn as
 //! an orange clamp on a wheel) keeps it there, off the lanes so traffic
 //! passes, until the tow truck takes it to the pound like any other.
+//!
+//! [clamp] Officers clamp too: a car still over its limit when the ticket's
+//! grace has run out is clamped (`ParkSpot::booted`) with a clamp fine
+//! (`CLAMP_FINE`) instead of being towed at once. The owner pays it (by
+//! phone, when awake and able: the clamp comes off) or, after
+//! `CLAMP_LIMIT`, the tow truck takes the car to the pound like any other,
+//! the unpaid fine added to the release fee. Cars parked where parking is
+//! banned are still towed at once (they are in the way).
 
 use crate::buildings::BuildingId;
 use crate::traffic::CarId;
@@ -42,6 +50,13 @@ pub const OUT_OF_TOWN_TOW_FEE: f32 = 180.0;
 pub const STORAGE_PER_DAY: f32 = 15.0;
 /// Minutes before a truck from out of town sets off (it has far to come).
 pub const OUT_OF_TOWN_DELAY: u64 = 45;
+/// [clamp] What getting an officer's clamp taken off costs.
+pub const CLAMP_FINE: f32 = 90.0;
+/// [clamp] Minutes a clamped car waits for its fine before it is towed.
+pub const CLAMP_LIMIT: u64 = 6 * 60;
+/// [clamp] Hourly chance an owner who can pay settles the clamp fine
+/// (people put it off; the poor cannot pay at all).
+pub const CLAMP_PAY_CHANCE: f32 = 0.35;
 /// Tow trucks the out-of-town company has on the city's roads at once.
 pub const OUT_OF_TOWN_TOW_TRUCKS: usize = 4;
 /// Minutes a towed car waits in the pound before it is auctioned.
@@ -62,6 +77,9 @@ pub enum TowReason {
     Illegal,
     /// [boot] The player had it clamped and towed (`World::order_tow`).
     Ordered,
+    /// [clamp] An officer clamped it and the fine was not paid in time
+    /// (`CLAMP_LIMIT`): the job waits that long before the truck sets off.
+    Unpaid,
 }
 
 impl TowReason {
@@ -70,6 +88,7 @@ impl TowReason {
             TowReason::Overstay => "over the time limit",
             TowReason::Illegal => "parked illegally",
             TowReason::Ordered => "clamped on the city's orders",
+            TowReason::Unpaid => "clamped and the fine went unpaid",
         }
     }
 }
@@ -96,6 +115,10 @@ pub struct TowJob {
     pub state: TowState,
     pub reason: TowReason,
     pub since: u64,
+    /// [tow-moves] The truck comes the last stretch against a one-way
+    /// street (`world/tow_moves.rs`).
+    #[serde(default)]
+    pub contra: Option<crate::world::tow_moves::Contra>,
 }
 
 /// An enforcement car out on its rounds.
@@ -127,6 +150,18 @@ pub struct EnforcementStats {
     /// [boot] Cars the player had clamped and towed.
     pub boots_today: u32,
     pub boots_total: u32,
+    /// [clamp] Cars officers clamped, clamp fines paid (and what they
+    /// brought in), and clamped cars towed for want of payment.
+    pub clamps_today: u32,
+    pub clamps_total: u32,
+    pub clamps_paid_today: u32,
+    pub clamps_paid_total: u32,
+    pub clamp_fines_today: f32,
+    pub clamps_towed_total: u32,
+    /// [tow-moves] Tow trucks that drove the last stretch against a
+    /// one-way street, and that turned round in the street.
+    pub contraflow_total: u32,
+    pub u_turns_total: u32,
 }
 
 /// Officers on patrol, tow jobs, and the counts.

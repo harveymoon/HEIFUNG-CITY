@@ -87,6 +87,8 @@ pub struct DayRecord {
     /// Into and out of the batteries (grid side), MWh.
     pub battery_in_mwh: f32,
     pub battery_out_mwh: f32,
+    /// [batteries] What the batteries saved the city that day.
+    pub battery_savings: f32,
     pub peak_demand_mw: f32,
     pub brownout_hours: u32,
     pub bus_riders: u32,
@@ -155,6 +157,8 @@ pub struct HourRecord {
     pub battery_out_mw: f32,
     pub battery_charge_mwh: f32,
     pub battery_capacity_mwh: f32,
+    /// [batteries] What they saved this hour.
+    pub battery_savings: f32,
     pub served: f32,
     /// [grid-weather] The regional grid's import price this hour, per MWh,
     /// and the air temperature, °C.
@@ -176,6 +180,7 @@ pub struct DayAcc {
     pub exported_mwh: f32,
     pub battery_in_mwh: f32,
     pub battery_out_mwh: f32,
+    pub battery_savings: f32,
     pub peak_demand_mw: f32,
 }
 
@@ -231,6 +236,7 @@ impl History {
         self.acc.exported_mwh += h.exported_mw;
         self.acc.battery_in_mwh += h.battery_in_mw;
         self.acc.battery_out_mwh += h.battery_out_mw;
+        self.acc.battery_savings += h.battery_savings;
         self.acc.peak_demand_mw = self.acc.peak_demand_mw.max(h.demand_mw);
         self.hours.push_back(h);
         while self.hours.len() > HOURS_KEPT {
@@ -247,6 +253,7 @@ impl History {
         d.exported_mwh = acc.exported_mwh;
         d.battery_in_mwh = acc.battery_in_mwh;
         d.battery_out_mwh = acc.battery_out_mwh;
+        d.battery_savings = acc.battery_savings;
         d.peak_demand_mw = acc.peak_demand_mw;
         for p in &mut self.plants {
             p.days.push_back(std::mem::take(&mut p.today_mwh));

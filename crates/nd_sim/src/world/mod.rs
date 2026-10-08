@@ -52,6 +52,10 @@ mod districts;
 mod districts_tests;
 mod driving;
 mod industry;
+// [interchange] The Road tool's Interchange preset: diamond interchanges.
+pub mod interchange;
+#[cfg(test)]
+mod interchange_tests;
 mod market;
 mod parking;
 mod pedestrians;
@@ -78,7 +82,7 @@ mod places;
 #[cfg(test)]
 mod places_tests;
 mod industry_bridge;
-pub use plan::{ProjectCheck, ProjectInfo, ProjectPreview};
+pub use plan::{Blocker, ProjectCheck, ProjectInfo, ProjectPreview};
 mod power;
 pub use power::{GridAsset, GridHour, PlantRow};
 pub mod plant_groups;
@@ -87,6 +91,10 @@ pub use plant_groups::{PlantGroup, PlantJoin, PlantPreview};
 mod plant_groups_tests;
 #[cfg(test)]
 mod plant_scale_tests;
+mod scenes;
+pub mod tow_moves;
+#[cfg(test)]
+mod blocker_tests;
 mod services;
 mod society;
 /// [social] Encounters, conversations, friends and feuds, crews and clubs.
@@ -131,10 +139,19 @@ mod rides;
 // [economy] business pressure, the new trades, the waterfront and the art scene
 mod pressure;
 mod waterfront;
+mod fishing;
+#[cfg(test)]
+mod fishing_tests;
 // [events] street races and warehouse raves; road wear and maintenance
 mod nights;
+mod moto;
 mod roadworks;
+mod relocate;
+mod rich;
+#[cfg(test)]
+mod econ_followups_tests;
 mod dirt;
+pub use fishing::BoatReport;
 pub use dirt::{CleanupJob, CleanupQuote, DirtyNeighbour, ADJACENCY_OUTPUT_HIT, ADJACENCY_VALUE_HIT, CLEANUP_COST, CLEANUP_MAX_RADIUS, CLEANUP_MIN_RADIUS};
 // [road-inspect] the road inspector's traffic counts, live read-out and Repair now
 mod road_inspect;
@@ -452,6 +469,11 @@ pub struct World {
     /// Shipping ports, ferry terminals and the ships between them.
     #[serde(default)]
     pub ports: Ports,
+    /// [fishing] The fishing ports' trawlers and the grounds they fish
+    /// (`crate::fishing`, `world/fishing.rs`). Old saves start with every
+    /// boat in port.
+    #[serde(default)]
+    pub fishing: crate::fishing::Fishing,
     /// Height of every road node (index = node id): the terrain under it,
     /// eased to gentle grades and lifted onto bridge decks over water.
     #[serde(skip)]
@@ -680,6 +702,7 @@ impl World {
             meals_for_sale: false,
             landscape: Landscape::default(),
             ports: Ports::default(),
+            fishing: Default::default(),
             road_z: Vec::new(),
             road_inner: Vec::new(),
             relief: false,
@@ -874,6 +897,15 @@ impl World {
             b.workers.retain(|c| self.citizens.contains_key(*c));
             b.rail_inbound.retain(|c| building_ids.contains(&c.to));
         }
+        self.rail.orders.retain(|o| building_ids.contains(&o.cargo.to));
+        // [freight] Saves from before freight rode the trains kept rail
+        // orders on the yard, waiting for any train to call: they are out of
+        // town now, first in the queue for the next freight train.
+        let mut legacy: Vec<crate::rail::RailOrder> = Vec::new();
+        for (_, b) in self.buildings.iter_mut() {
+            legacy.extend(std::mem::take(&mut b.rail_inbound).into_iter().map(|cargo| crate::rail::RailOrder { cargo, since: tick }));
+        }
+        self.rail.orders.extend(legacy);
         for f in self.facilities.values_mut() {
             if f.building.is_some_and(|b| !self.buildings.contains_key(b)) {
                 f.building = None;
@@ -1201,8 +1233,10 @@ impl World {
         self.step_rail();
         self.step_subway();
         self.step_ships();
-        // [economy] marina and fishing boats out on the water
+        // [economy] marina boats out on the water
         self.step_boats();
+        // [fishing] trawlers out to the grounds and home
+        self.step_fishing();
         // [ferries] Day trips out, and anyone stranded abroad.
         self.step_ferry_people();
         self.step_cargo_hubs();
@@ -1252,6 +1286,8 @@ impl World {
     }
 
     fn step_traffic(&mut self) {
+        // [fire-scene] What stands at the roadside for the traffic to pass.
+        self.set_traffic_scenes();
         let arrived = self.traffic.step(self.config.traffic_seconds_per_tick, self.config.traffic_substeps);
         // [tolls] Before anyone arriving is taken off the road.
         self.settle_tolls();

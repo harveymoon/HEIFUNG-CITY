@@ -14,11 +14,14 @@ use super::{hint, UiCtx, UiFlags, GOLD, WARN};
 /// Neon pink for raves, electric blue for races.
 pub const RAVE: egui::Color32 = egui::Color32::from_rgb(255, 90, 220);
 pub const RACE: egui::Color32 = egui::Color32::from_rgb(90, 200, 255);
+/// [moto] Hot orange for moto packs.
+pub const MOTO: egui::Color32 = egui::Color32::from_rgb(255, 140, 40);
 
 fn kind_color(k: EventKind) -> egui::Color32 {
     match k {
         EventKind::Race => RACE,
         EventKind::Rave => RAVE,
+        EventKind::MotoPack => MOTO,
     }
 }
 
@@ -80,6 +83,13 @@ pub fn racer_line(ui: &mut egui::Ui, w: &nd_sim::World, car: nd_sim::CarId) {
     };
     ui.label(egui::RichText::new(format!("STREET RACER · {what}")).color(RACE).strong());
     hint(ui, &format!("{} to {} · {:.1} km · {} cars{}", r.meet.name, r.finish.name, r.route_m / 1000.0, r.cars.len(), if r.incident.is_some() { " · someone called the police" } else { "" }));
+}
+
+/// [moto] A rider in a moto pack: where the pack is going.
+pub fn moto_line(ui: &mut egui::Ui, w: &nd_sim::World, car: nd_sim::CarId) {
+    let Some(p) = w.street_events.pack_of_car(car) else { return };
+    ui.label(egui::RichText::new(format!("MOTO PACK · {} riders through {}", p.riders.len(), p.via_name)).color(MOTO).strong());
+    hint(ui, &format!("met at {} · {} reds run · {} lane changes{}", p.place, p.red_runs, p.lane_changes, if p.incident.is_some() { " · someone called the police" } else { "" }));
 }
 
 /// A warehouse with a rave on (or the scene round it).

@@ -35,12 +35,14 @@ mod hazard;
 mod junction;
 mod remap;
 mod roundabout;
+mod scene;
 mod siren;
 mod why;
 
 pub use crosswalk::{Hold, PedTraffic, PED_CLEARANCE};
 pub use remap::CarryReport;
 pub use roundabout::{RingLanes, RingNode, RING_CRITICAL_GAP, RING_SPEED};
+pub use scene::SceneZone;
 pub use siren::{pulls_over, OffLaw, OffLawMove, PURSUIT_SPEED_FACTOR};
 pub use why::{JamChain, StopReason};
 
@@ -437,6 +439,9 @@ pub struct LaneNetwork {
     pub intersections: Vec<Intersection>,
     pub segment_lanes: HashMap<SegmentId, Vec<LaneId>>,
     pub node_radius: Vec<f32>,
+    /// [interchange] Lanes of an arm ending further out than its node's
+    /// radius (`walk::stop_back`: a sharp fork's stop line), by (node, arm).
+    pub stop_back: HashMap<(NodeId, SegmentId), f32>,
     /// Index into `intersections` per node, `usize::MAX` for none.
     pub node_intersection: Vec<usize>,
     pub approaches: Vec<Approach>,
@@ -863,6 +868,9 @@ pub struct GangRole {
     /// [events] A street racer (`crate::street_events`), not a takeover crew.
     #[serde(default)]
     pub race: bool,
+    /// [moto] A rider in a moto pack (`World::start_moto_pack`).
+    #[serde(default)]
+    pub pack: bool,
 }
 
 /// What a car in a takeover show does, off the lanes.
@@ -872,6 +880,11 @@ pub enum StuntKind {
     Ring { at: Vec2, face: f32 },
     /// Spinning round `centre` with the tail out; `dir` +1 or -1.
     Donut { centre: Vec2, radius: f32, dir: f32 },
+    /// [scene] A slow move off the lanes at work (a tow truck against a
+    /// one-way street, or turning round): to `to` at `speed`, then on along
+    /// `DriveState::path`, and at the end round to face `face`
+    /// (`traffic/scene.rs`).
+    Manoeuvre { to: Vec2, face: f32, speed: f32 },
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -945,6 +958,13 @@ pub struct DriveState {
     /// off-law moves (`traffic/siren.rs`) round the queue in its way, but
     /// not run red lights. Set by the world every tick.
     pub recovering: bool,
+    /// [scene] The waypoints of a manoeuvre still to come after the one
+    /// it is driving to (`StuntKind::Manoeuvre`).
+    pub path: Vec<Vec2>,
+    /// [scene] Sideways ease (m, + right) round a scene at the roadside
+    /// (`traffic/scene.rs`), drawn on top of the lane.
+    #[serde(skip)]
+    pub dodge: f32,
 }
 
 /// [rage] How angry (`0..1`) a driver gets `elapsed` minutes into a drive
@@ -1208,6 +1228,11 @@ pub struct Traffic {
     /// position (`traffic/junction.rs`).
     #[serde(default)]
     pub junction_rules: Vec<crate::junctions::JunctionRule>,
+    /// [scene] What stands at the roadside this tick for traffic to slow
+    /// for and steer round (fire engines at a fire), set by the world
+    /// before every step (`traffic/scene.rs`).
+    #[serde(skip)]
+    pub scenes: Vec<SceneZone>,
 }
 
 /// Arrows for the lanes (leftmost first) of `segment` arriving at `node`.
@@ -1334,6 +1359,7 @@ impl LaneNetwork {
         self.segment_lanes.clear();
         self.node_intersection = vec![usize::MAX; roads.nodes.len()];
         self.approaches.clear();
+        self.stop_back.clear();
         self.version += 1;
         self.arrows_version += 1;
 
@@ -1374,8 +1400,18 @@ impl LaneNetwork {
                 continue;
             }
             let dir = (pb - pa) / len;
-            let mut ra = self.node_radius[seg.a.0 as usize];
-            let mut rb = self.node_radius[seg.b.0 as usize];
+            // [interchange] At a sharp fork the lanes end at the painted stop
+            // line's distance, as at any junction.
+            let back_a = crate::walk::stop_back(roads, seg.a, sid, self.node_radius[seg.a.0 as usize]);
+            let back_b = crate::walk::stop_back(roads, seg.b, sid, self.node_radius[seg.b.0 as usize]);
+            if back_a > 0.0 {
+                self.stop_back.insert((seg.a, sid), back_a);
+            }
+            if back_b > 0.0 {
+                self.stop_back.insert((seg.b, sid), back_b);
+            }
+            let mut ra = self.node_radius[seg.a.0 as usize] + back_a;
+            let mut rb = self.node_radius[seg.b.0 as usize] + back_b;
             if len - ra - rb < 2.0 {
                 let k = ((len - 2.0) / (ra + rb).max(1e-3)).clamp(0.0, 1.0);
                 ra *= k;
@@ -1704,6 +1740,26 @@ impl LaneNetwork {
                 }
             }
         }
+        // [interchange] Bends close together are one curve (a ramp rounded
+        // in a few pieces): the lowest cap holds from its first bend to its
+        // last, so the limit does not rise between them and fall again.
+        let caps: HashMap<usize, Vec<(f32, f32, f32)>> = caps
+            .into_iter()
+            .map(|(r, mut cs)| {
+                cs.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let mut out: Vec<(f32, f32, f32)> = Vec::new();
+                for (x, c) in cs {
+                    match out.last_mut() {
+                        Some(last) if x - last.1 < 30.0 => {
+                            last.1 = x;
+                            last.2 = last.2.min(c);
+                        }
+                        _ => out.push((x, x, c)),
+                    }
+                }
+                (r, out)
+            })
+            .collect();
         for i in 0..n {
             if !self.lanes[i].ramp || !up[i].0.is_finite() || !down[i].0.is_finite() {
                 continue;
@@ -1715,10 +1771,15 @@ impl LaneNetwork {
             // eases off either side at the rate drivers brake for limits,
             // so the limit never steps.
             let at = |x: f32, v: f32| {
-                caps.get(&r).map_or(v, |cs| cs.iter().fold(v, |v, &(cx, c)| v.min((c * c + 2.0 * ANTICIPATE_BRAKE * (x - cx).abs()).sqrt())))
+                caps.get(&r).map_or(v, |cs| cs.iter().fold(v, |v, &(x0, x1, c)| v.min((c * c + 2.0 * ANTICIPATE_BRAKE * (x0 - x).max(x - x1).max(0.0)).sqrt())))
             };
             self.lanes[i].speed_limit = at(up[i].0, profile(up[i].0, down[i].0 + len, uh, dh));
             self.lanes[i].limit_end = at(up[i].0 + len, profile(up[i].0 + len, down[i].0, uh, dh));
+            // [interchange] Off a curve's last bend the cap eases off into a
+            // profile still falling: an off-ramp's limit never rises along a
+            // lane (nor an on-ramp's falls).
+            let (a, b) = (self.lanes[i].speed_limit, self.lanes[i].limit_end);
+            self.lanes[i].limit_end = if uh && !dh { b.min(a) } else if dh && !uh { b.max(a) } else { b };
         }
     }
 
@@ -2081,7 +2142,7 @@ impl LaneNetwork {
     }
 
     /// Metres left to drive on `route` from `s` along its first lane.
-    fn route_length(&self, route: &[LaneId], s: f32) -> f32 {
+    pub fn route_length(&self, route: &[LaneId], s: f32) -> f32 {
         let mut total = 0.0;
         for (k, &l) in route.iter().enumerate() {
             let lane = &self.lanes[l as usize];
@@ -3176,17 +3237,19 @@ impl Traffic {
             }
             // [emergency] Sirens and fugitives plan their way round.
             self.plan_offlaw(dt);
+            // [scene] Fire engines at the kerb, tow trucks at work.
+            let zones = self.scene_zones();
             let mut accs: Vec<Step> = Vec::with_capacity(self.cars.len());
             for (lane_id, lane) in self.net.lanes.iter().enumerate() {
                 let lane_claims = claims.get(&(lane_id as LaneId));
                 for (k, &cid) in lane.cars.iter().enumerate() {
                     let car = &self.cars[cid];
                     if car.hold > 0.0 {
-                        accs.push(Step { by: None, id: cid, acc: -1000.0, why: Wait::Dwell, left_wait: false, seen: 0.0, run: None });
+                        accs.push(Step { by: None, id: cid, acc: -1000.0, why: Wait::Dwell, left_wait: false, seen: 0.0, run: None, dodge: 0.0 });
                         continue;
                     }
                     if car.crashed() {
-                        accs.push(Step { by: None, id: cid, acc: -1000.0, why: Wait::Crashed, left_wait: false, seen: 0.0, run: None });
+                        accs.push(Step { by: None, id: cid, acc: -1000.0, why: Wait::Crashed, left_wait: false, seen: 0.0, run: None, dodge: car.drive.dodge });
                         continue;
                     }
                     let pending = car.change_pending(&self.net).is_some();
@@ -3247,6 +3310,12 @@ impl Traffic {
                     if let Some(g) = self.crosswalk_gap(car).filter(|&g| g < gap) {
                         (gap, lead_v, why) = (g, 0.0, Wait::Yield);
                     }
+                    // [scene] Something at the roadside: slow, ease round
+                    // it, or stop short where there is no room.
+                    let ask = if zones.is_empty() { Default::default() } else { self.scene_ask(car, lane, &zones) };
+                    if let Some(g) = ask.stop.filter(|&g| g < gap) {
+                        (gap, lead_v, why) = (g, 0.0, Wait::Blocked);
+                    }
                     if why == Wait::Leader && gap > 50.0 {
                         why = Wait::Free;
                     }
@@ -3273,11 +3342,15 @@ impl Traffic {
                     if let Some(cap) = Self::offlaw_cap(car) {
                         v0 = v0.min(cap);
                     }
-                    accs.push(Step { by, id: cid, acc: car.idm(v0, gap, car.v - seen), why, left_wait, seen, run });
+                    if let Some(cap) = ask.cap {
+                        v0 = v0.min(cap);
+                    }
+                    accs.push(Step { by, id: cid, acc: car.idm(v0, gap, car.v - seen), why, left_wait, seen, run, dodge: ask.dodge });
                 }
             }
             for st in accs {
                 let car = &mut self.cars[st.id];
+                Self::ease_dodge(car, st.dodge, dt);
                 car.wait = st.why;
                 car.blocked_by = st.by;
                 car.drive.seen_lead_v = st.seen;
@@ -3831,7 +3904,7 @@ impl Traffic {
                 let d = c.pos - centre;
                 d.y.atan2(d.x)
             }
-            StuntKind::Ring { .. } => 0.0,
+            StuntKind::Ring { .. } | StuntKind::Manoeuvre { .. } => 0.0,
         };
         c.drive.stunt = Some(Stunt { kind, angle, settled: false });
         if let Some(g) = c.drive.gang.as_mut() {
@@ -3851,6 +3924,7 @@ impl Traffic {
             return;
         }
         c.drive.stunt = None;
+        c.drive.path.clear();
         if let Some(g) = c.drive.gang.as_mut() {
             g.phase = GangPhase::Leaving;
         }
@@ -3870,6 +3944,16 @@ impl Traffic {
     /// drawing (`Car::pose_at`).
     fn place_cars(&mut self, dt: f32) {
         for car in self.cars.values_mut() {
+            if let Some(mut st) = car.drive.stunt.filter(|s| matches!(s.kind, StuntKind::Manoeuvre { .. })) {
+                // [scene] A slow move at work, along its waypoints.
+                let (pos, heading, v) = scene::step_manoeuvre(&mut st, &mut car.drive.path, car.pos, car.heading, dt);
+                car.drive.stunt = Some(st);
+                car.pos = pos;
+                car.heading = heading;
+                car.v = v;
+                car.drive.poses.push((pos, heading));
+                continue;
+            }
             if let Some(mut st) = car.drive.stunt {
                 let (pos, heading) = step_stunt(&mut st, car.pos, car.heading, dt);
                 car.drive.stunt = Some(st);
@@ -3899,7 +3983,7 @@ impl Traffic {
             };
             car.drive.weave = weave;
             // [emergency] Plus an off-law move's swing out of the lane.
-            let mut side = car.lateral + weave + car.drive.offlaw.side;
+            let mut side = car.lateral + weave + car.drive.offlaw.side + car.drive.dodge;
             if lane.is_connector() && lane.turn != 0 {
                 let swing = car.swing();
                 if swing > 0.0 {
@@ -3944,6 +4028,8 @@ struct Step {
     seen: f32,
     /// Committed to running this red.
     run: Option<LaneId>,
+    /// [scene] How far sideways to ease round a scene.
+    dodge: f32,
 }
 
 /// Rolling to a ring spot or spinning a donut. Returns the new pose.
@@ -3981,6 +4067,8 @@ fn step_stunt(st: &mut Stunt, pos: Vec2, heading: f32, dt: f32) -> (Vec2, f32) {
             let p = centre + Vec2::new(st.angle.cos(), st.angle.sin()) * radius;
             (p, st.angle + dir * (std::f32::consts::FRAC_PI_2 + 0.85))
         }
+        // Driven by `scene::step_manoeuvre` (it needs the path).
+        StuntKind::Manoeuvre { .. } => (pos, heading),
     }
 }
 

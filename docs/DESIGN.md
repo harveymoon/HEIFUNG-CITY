@@ -182,6 +182,23 @@ Citizens are rendered from their simulated positions every frame.
   cars ring it and the flashiest spin donuts in tyre smoke, a crowd walks over, a neighbour calls
   the police; police on scene break it up (some arrests, cars impounded), else it ends after
   45-80 minutes and everyone leaves in convoy.
+- **Moto packs** (`world/moto.rs`, `street_events::MotoPack`): from day 10, at 20:00 on 25% of
+  evenings with no takeover planned (by a hash of the seed and the day), when the takeover crew
+  has members who ride a two-wheeler, a pack ride is planned 20-150 minutes later. Up to four
+  local gang members on bikes ride to a road end at the city's edge (the meet) and wait at the
+  kerb; once they are in (or after 45 minutes) a club of 3-7 riders from out of town rolls in
+  there as a column, two abreast where the street has two lanes in, and the locals pull out
+  into it. They all take the same route through town: past the nightlife nearest the middle of
+  town (else the lot nearest it), then off the map at the farthest road end. Riders drive a pack
+  profile (`moto_profile`: 1.3-1.45x the limit, close, hard on the throttle, overtaking and
+  changing lanes through ordinary traffic); the leader runs every light, the rest a late red
+  now and then. The column stays loose but together: a rider more than 60 m ahead of the pack
+  eases off, one as far behind opens up. Locals peel off home once through the nightlife.
+  Three ticks after they set off a witness calls it in on most rides (`CrimeKind::RecklessRiding`);
+  a police car on patrol, or the one sent, that comes within 150 m of a local rider gives chase
+  (60%, once a ride) with the chase system, the rider fleeing on their bike. Riders are marked
+  `GangRole::pack` ("MOTO PACK" in the car inspector, `moto_pack` in the API); the ride is in the
+  news and the event record (reds run, chase). API: `incident {kind: "moto_pack", at}`.
 - **Street races** (`nd_sim::street_events`, `world/nights.rs`): a young town has no scene, so
   neither races nor raves happen on their own before day 10 (`SCENE_FROM_DAY`; the API forces one
   any time). From then, at 23:00, on 35% of nights when three or more locals aged 18-42 at home
@@ -618,9 +635,25 @@ Citizens are rendered from their simulated positions every frame.
   150 m of home hold a permit. A parking enforcement office (Services, three tiers) sends officers,
   two a car, round the streets within its reach from 07:00 to 21:00: a car over its limit gets a 35
   ticket (household to treasury, ledger "parking fines"); an hour later, or at once if parked where
-  parking is banned, the tow truck is called. A company in town sends a truck only when one is free; the company from out of town has four on the city's roads at most, the other jobs wait their turn (uncapped, a city short of parking had 170 tow trucks in its jam). Tow companies are businesses on industrial land
+  parking is banned, the tow truck is called. *Clamps* (`[clamp]`): a car still over its limit when
+  the grace runs out is clamped instead (`ParkSpot::booted`, the orange clamp) with a 90 clamp fine
+  (`CLAMP_FINE`) and the tow booked for six hours later (`CLAMP_LIMIT`, `TowReason::Unpaid`); the owner
+  pays it by phone when awake and able (35% an hour by a hash, 07:00-23:00, the household's money),
+  the clamp comes off and the tow is cancelled; unpaid (or broke) the truck comes when the time runs
+  out and the fine is owed at the pound on top of the tow fee. The inspector shows the time left;
+  `report`'s parking block counts clamps, fines paid and cars towed unpaid. A car parked where
+  parking is banned is still towed at once. A company in town sends a truck only when one is free; the company from out of town has four on the city's roads at most, the other jobs wait their turn (uncapped, a city short of parking had 170 tow trucks in its jam). Tow companies are businesses on industrial land
   (logistics); the nearest with a truck free sends one, which hooks the car where it stands and
-  carries it to its pound (drawn on the truck as wrecks are). With none in town a company from out
+  carries it to its pound (drawn on the truck as wrecks are). *Tow trucks at work* (`world/tow_moves.rs`):
+  a car on a one-way street whose legal way in is a long loop (150 m+ longer than coming in from the
+  far end, and at most 160 m up the street) is reached from the far junction: the truck leaves the
+  lanes there and creeps up the kerb side against the traffic at 3 m/s with its ambers flashing
+  (`StuntKind::Manoeuvre`), stops nose to nose with the car, hooks it and turns round in the street
+  to leave the right way. A truck that has hooked its car (or a wreck) facing away from its pound or
+  yard turns round in the road (a slow arc onto the other lane) when that is 120 m+ shorter than
+  driving on. Traffic meeting a truck on such a move slows and eases round it, or waits where there
+  is no room (the scene zones, `traffic/scene.rs`); `enforcement` counts `contraflow_total` and
+  `u_turns_total`. With none in town a company from out
   of town comes in from the edge 45 minutes later and charges 180 instead of 80. The owner pays the
   fee plus 15 a day and goes to fetch the car (a pound out of town delivers it), or after three days
   it is auctioned and driven away. Crash wrecks go to the same companies. The player places parking
@@ -646,10 +679,18 @@ Citizens are rendered from their simulated positions every frame.
   at the school, the child gets out, it drives on), and the mode choice: a seat in the car of family
   or a coworker setting off by car from the same spot to within 300 m of where the trip goes is a
   free, comfortable option (`ModePlan::Lift`).
-- **Parking businesses**: when the day's circling outruns free spaces, development opens a
-  parking lot on a vacant lot near the last driver who could not find a space: a surface lot where
-  land is cheap (about one space per 28 m², two jobs), a multi-storey car park on middle land
-  (three to five decks). It is the cheapest business in town and lives or dies on fees (a fee by
+- **Parking businesses**: [parking-market] when drivers circle where the lots are full, a resident
+  opens another (`world/parking.rs::maybe_open_parking`): the trigger is four drivers circling today
+  (three while the town's parking businesses cover their costs 1.3x, ten while they lose money); the
+  spot is the concerns' Parking hotspot of the last three days, then where the last driver gave up;
+  nothing opens while the lots within 220 m were under 85% full at their busiest, within 150 m of a
+  lot opened in the last two days, or once paid spaces match the town's cars (60 at least). The founder is a
+  grown-up within 1.5 km who can pay (300 for a surface lot, 1,200 for a car park), who owns it; with
+  nobody able, an operator from out of town comes only for three times the trigger. Every parking
+  business sets tomorrow's fee at midnight by its busiest moment (`Building::parking_peak`): 85%
+  full or more, +15% (up to 2.5x its base by tier and land value); under 40%, -10% (down to 0.6x).
+  The lot is a surface lot where land is cheap (about one space per 28 m², two jobs), a
+  multi-storey car park on middle land (three to five decks). It is the cheapest business in town and lives or dies on fees (a fee by
   tier and land value per car parked). Towers (high tier) bring their own spaces for about half
   their homes and jobs, middle-tier blocks a quarter, cheap buildings none. Parking lots render
   their occupancy; cars at the kerb are drawn there.
@@ -842,6 +883,21 @@ Citizens are rendered from their simulated positions every frame.
   escorts take the boss's driving style, follow every change of course and leave at the end
   of the run. Guards (one per escort car) walk round them on foot and stand at the kerb for
   an hour where the convoy stopped (drawn by `render/convoys.rs`).
+  *Relocation* (`world/relocate.rs`): a business bought out of its building (road works through
+  it, a city building on its lot, a developer's rebuild, a neighbour's expansion, a mansion) is
+  packed up first (`EstateMarket::moving`: cash, books, stock, owner, staff). The next development
+  round moves it to the nearest vacant lot of its land use within 1.5 km with at least half its
+  ground, if it can pay 200 + 20 a job: same name, same owner, a building site that reopens with
+  its old staff hired back if they are still out of work; "moved from ..." in the inspector and a
+  news line. It looks for two days, then is gone. Kinds tied to their ground (farms, wells,
+  fishing, marinas) and parking, taxi yards and cargo hubs close as before.
+  *The well-off invest* (`world/rich.rs`): daily (35% roll) the richest household earning 220+ a
+  day with 1,000 in the bank, not a billionaire's, buys in its top earner's name a business in
+  profit (if it owns none) or else a second home in a middle or high block of up to 24 homes,
+  putting 30% of its cash down; at most one property per 220 of daily income (four at most).
+  *Garages*: a finished mansion takes the billionaire's supercars beyond the one they drive, a
+  McMansion a second car, as real cars in the house's own spaces (`OwnedCar::spare`), never driven,
+  sold when the owner is gone.
 - **Railway** (`RoadKind::Rail`, `nd_sim::rail`): track is a third kind of way in the road
   network, single track 4.8 m wide. A trunk line crosses the map 480 m south of the
   centre from the start, edge to edge and on out of sight; the player lays branches off it with the Road tool's Rail
@@ -873,12 +929,26 @@ Citizens are rendered from their simulated positions every frame.
   have no passing loops, so one train holds the branch at a time: others wait at the
   switch, and no new train is dispatched while one is waiting. Passenger trains come
   every two hours of clock from 05:00 to 23:00 when a station exists; freight trains
-  every three hours when a yard has goods waiting, or six regardless. Trains are not
+  every three hours when a yard has goods waiting, or six regardless (and an extra one 45
+  minutes after the last when goods were left behind: more than a full train waiting, or an
+  order that already missed one). Trains are not
   saved; they are back on the next headway. People take the train for trips over 500 m
   between two stations within 240 m of each end (`TransitLeg::Rail`), pay a fare, and
   newcomers mostly arrive by train when a station exists. With a freight yard, imports
-  come by rail at 80% of the price and wait at the yard for the next train, which hands
-  them to lorries; exports earn 20% more. Stations lift land value, yards lower it.
+  come by rail at 80% of the price; exports earn 20% more. [freight] The goods really ride the
+  trains: an order waits out of town (`Rail::orders`, saved) until the next freight train is
+  made up at the west edge of the map; its orders for the yards it calls at are loaded there,
+  oldest first, into wagons of 50 units (5 to 12 wagons, enough for what waits; an order that does
+  not fit waits for the next train, but an empty train always takes the first, so even a 400-unit
+  order leaves). They ride in on it, come off at their yard and go on by lorry (or straight into a
+  cargo hub on the siding). At each yard the train then takes on the exports from the apron, as
+  much as its wagons have room for. The train inspector's manifest is what is aboard: loads with
+  their yard and buyer, wagons, units aboard of capacity. A train taken off by a rebuild, or run
+  out of town with goods for a yard that went, puts them back in the queue (by road when the yard
+  no longer works); trains are not saved, but goods aboard are saved back into the queue. Orders
+  for a yard that stops working, when no freight has run for two headways, or after twelve hours
+  waiting come by road from the edge instead. Older saves' orders waiting at yards move to the
+  queue on load. Stations lift land value, yards lower it.
 - **Buses** (`nd_sim::transit`): the player draws lines and places a depot; without a
   depot no bus runs. A line is a loop of stops on streets; a click snaps to the nearest
   street and the stop sits on the kerb of the side clicked, so buses driving that way
@@ -977,7 +1047,14 @@ Citizens are rendered from their simulated positions every frame.
   the size is fixed when built (`Building::plant_scale`; plants from older saves keep the
   standard size). A bigger site past the cap makes it no bigger: the station stands on part of it
   and the rest is coal yard. On unzoned ground free placement joins just enough parcels to reach
-  the plant's minimum, never past its cap (`zoning::grow_site`). The coal station is composed of
+  the plant's minimum, never past its cap (`zoning::grow_site`). [freight] Hydro and tidal plants
+  are sized the same way (70 and 60 MW per 700 m², 300 to 1,866 m²: one to eight turbine bays,
+  `PowerPlantKind::turbine_bays`, three at the nameplate; hydro's output still follows the
+  current), fixed when built; older plants keep the nameplate. Their meshes grow by bays: a hydro
+  hall of 8 m bays (a roof generator housing, a pilaster and a penstock each), a tidal house of 7 m
+  modules (a sluice gate each), the same height and depth whatever the size; the dam keeps its arch
+  across the river and gains intake towers (one per two bays) and spillway gates (two to four),
+  the tidal barrage a caisson per bay; on a lot too narrow for one row a second hall stands in front (`waterworks::bay_rows`, `dam::dam_parts`). The coal station is composed of
   units, not stretched (`buildings::power::coal_layout`): one to four black boiler houses with
   orange-lit slits, each with its own smokestack of its own height, a start-up stack, a tall
   common stack and cooling towers (steam) on the big ones, a turbine hall, ash filters, conveyor
@@ -996,7 +1073,18 @@ Citizens are rendered from their simulated positions every frame.
   is imported. Battery packs (Buildings, Power: small 20 MWh / 5 MW, medium 80 / 20, farm 240 / 80;
   `BatteryKind`) charge and discharge at 95% each way (about 90% round trip); every pack takes or
   gives the same share of its own headroom, so they fill and empty together; they work once their
-  lot is clear and run in slot order, so the dispatch is deterministic. Placing a plant or battery
+  lot is clear and run in slot order, so the dispatch is deterministic. [batteries] They play the
+  day's time-of-use prices by one rule (`power::PriceBands`, `dispatch_tou`): the day's 24 import
+  prices (at the temperature the day's swing gives each hour) mark its six cheapest hours (cheap) and
+  six dearest (dear). A surplus always charges them first. In a cheap hour they also buy from the
+  regional grid, within its import line, to fill up (only if the round trip pays: cheap under
+  0.9 x 0.9025 x dear). In a dear hour a shortfall drains them before anything is imported. In
+  between they hold the charge for the peak and give only what the import line cannot cover
+  (nobody browns out to save a charge). A flat price day falls back to the old merit order. What
+  they save is booked per hour (`Dispatch::battery_savings`: imports spared at the hour's price,
+  less power bought to charge them, less exports their surplus would have earned), summed per day
+  (`DayRecord::battery_savings`) and split per pack by its share of the flow
+  (`Battery::savings_today/yesterday`). Placing a plant or battery
   refreshes who is powered but books no hour (no money, no battery energy, no dark hour); the hour is
   booked once, on the hour. A plant does not feed the grid while the old building on its lot is
   still being cleared; solar, wind and battery yards clear it at once. Each plant kind has an air
@@ -1019,7 +1107,7 @@ Citizens are rendered from their simulated positions every frame.
   calls it in after a few minutes; the dispatcher (a worker at a dispatch centre who is at the desk:
   2 min; staffed but nobody in: 8; no centre: 20, the regional line) sends the nearest idle unit whose
   station has the crew; the vehicle is a car of the traffic model, drives over the lanes, parks on
-  scene, works (engines knock fire down 0.012 a minute; crimes 25 min, patients 12), resolves (fire
+  scene, works (engines knock fire down 0.012 a minute each; crimes 25 min, patients 12), resolves (fire
   out, arrest 75 % if quick else 40 %, patient driven to the nearest hospital with a free bed for
   6-24 h) and drives home. Unanswered crimes go unsolved after 3 h, patients recover alone after 8 h;
   unanswered fires grow, jump to buildings on touching lots (4 % x intensity per neighbour every 20 min) and burn a building down at condition 0.08,
@@ -1036,6 +1124,20 @@ Citizens are rendered from their simulated positions every frame.
   taken, unit and whether it came from out of town, fee, fire damage per building), the last 500
   resolved ones on file, shown live in City Data's Services › Emergencies and by the `incidents` API command.
   Services draw from their own random stream so the rest of the simulation is not perturbed.
+- **Fire engines at the scene** (`world/scenes.rs`, `traffic/scene.rs`): an engine is sent to the
+  burning building's street, clear of the junctions at either end (18 m, `SCENE_JUNCTION_CLEAR`), up
+  whichever side is quicker, and on arrival pulls in to the kerb on the building's side (crossing
+  over if it came up the far side), its body flush with the road's edge and nose the way it came, so the crew climbs out on the pavement side; the hose crew stands between
+  the engine and the building, never on the road side (`fire_scene.rs`, `CREW_OFF_ENGINE`). (It used
+  to stand where its route ended, mid-lane and sometimes in the junction, with traffic driving
+  through it.) The world tells the traffic each tick what stands at the roadside (`Traffic::scenes`):
+  drivers coming up to an engine at work crawl past at 4.5 m/s and ease sideways round its body (up
+  to 1.9 m, a little over the centre line), or stop short where there is no room; sirens are not
+  held. *Second alarm*: a fire still burning at 0.6 or more once its first engine is on the way
+  sounds a second alarm (once a fire): the nearest other free engine comes with its own crew,
+  pulls in 11 m behind the first (`SECOND_ENGINE_GAP`) and each engine at work knocks the fire down,
+  so two put it out twice as fast. Either may arrive first; if the first engine is lost the second
+  takes the fire over. Counted in `ServiceStats::second_alarms_*`.
 - **Lights and sirens, and car chases** (`traffic/siren.rs`, `world/chases.rs`): drivers up to
   60 m ahead of an emergency vehicle on its lane or the next lane of its route (and oncoming drivers
   on a lane it overtakes in) pull right, onto the kerb edge from a kerb lane, and slow to a crawl,
@@ -1121,7 +1223,7 @@ Citizens are rendered from their simulated positions every frame.
   back to park in its bays: the hub is a truck lot for the fleet code (`BusinessKind::is_truck_lot`),
   so any lorry nearby may park there too. Exports through a hub earn 6% more and leave in semis of
   80 units. A 3% handling fee is the hub's income. A hub that closes or is bulldozed sends what it
-  holds on to the buyers, and readdresses loads still at yards, ports, on trains or ships to them:
+  holds on to the buyers, and readdresses loads still waiting for a train, at ports, on trains or ships to them:
   nothing is lost. Services › Transit and `report.transit.cargo_hubs`.
 - **Crime, the street and the bins** (`nd_sim::{crime, homeless, trash}`, hooked in from
   `world/society.rs`, their own random stream). *Crime*: every hour each adult may turn, by class
@@ -1136,7 +1238,16 @@ Citizens are rendered from their simulated positions every frame.
   `report_crime`; the services arrest. A jail term ends a career at 20% + 8% a day served, an early
   release from a police cell at 5% (and emboldens); released offenders who strike again make the
   reoffending rate. Offences leave decaying heat at hot spots, which take land value off the block
-  and frighten the neighbours (mood; rich households near heat 4+ leave). *Homelessness*: a
+  and frighten the neighbours (mood; rich households near heat 4+ leave). *Homicide*
+  (`World::murder`): rare. Besides the 6% of offenders' assaults, a fight between enemies (social
+  layer, `Bond::Enemy`) ends in a death 3% of the time (a hash of the pair and the minute, no
+  draws). Before the victim leaves the city their household and friends remember it (mood down a
+  lot, a heavy Safety concern), the place's regulars and the neighbours within 150 m are shaken, a
+  sober line goes in the city news ("Police are investigating") and the spot takes triple heat. It
+  is reported as a `Homicide` (a violent crime, ahead in the queue): the police hold the scene for a
+  150-minute investigation, then arrest 80% of the time when the killer is known (a feud), 45%
+  when not (an offender), for 12-20 days in jail; an arrest is in the news and the grieving hear.
+  No gore: nothing is drawn but the police at work. *Homelessness*: a
   household evicted with nowhere cheaper and no money stays on the street 70% of the time if any
   land is cheap (value < 0.36): camps of up to six households on cheap pavements, vacant lots and
   unzoned parcels, or (with a car) an RV or van at the kerb; they eat charity meals, walk back to
@@ -1290,6 +1401,34 @@ Citizens are rendered from their simulated positions every frame.
   lowered to the grade. Cars ride the height of the way they are on (`car_height`), movers keep to
   the surface nearest the height they were at (`surface_height_near`), so a walker under a
   viaduct stays under it. Elevated roads pass roundabouts by.
+- **Interchanges** [interchange]: slip roads (`Segment::ramp`) are grade-separated from what
+  merely crosses them, like the highway (`roads::WayClass`, `roads::separated`): a street or the
+  railway crossing a ramp passes under it (the ramp's vertex over it is lifted), so a street drawn
+  under a highway with ramps no longer cuts the ramps into junctions (which ended the ramp there
+  and made the rest a town street). A ramp meets the highway only by its ends, other ramps (forks
+  and merges, and one-way streets being laid), and paths at grade (people cross a slip road at its
+  foot); a street meets a ramp where an end is dropped on it or a control point is put right on
+  one of its nodes (`SNAP_EXACT`, 1 m: a street drawn through a ramp's end is its terminal). Road
+  ends (`RoadNetwork::end_target`) prefer a way at their own level (within 4.5 m) of everything in
+  reach, so an end dropped where a viaduct passes over a street joins the one at its level; only
+  with none at its level does it come up or down to another (a raised road ramps down to the
+  road it is dropped on). A path end lands on the highway or a ramp only with no other way in reach. Ramp easing
+  (`ease_ramp_ends`) scales the lead to the ramp: 45% of how far the ramp's next point lies along
+  the highway, 15 to 40 m, then rounds the bend with a few points; it is idempotent and the
+  holograms ease what they draw (`ease_ramp_way`), so the preview is what is built (a fixed 40 m
+  lead on a short diamond ran each ramp alongside the highway up to the street under it and then
+  hairpinned onto it over the street's asphalt). A gore's hatching stops where the ramp's first
+  piece ends. The Road tool's **Interchange** preset (Build window, Roads > Highways) lays a diamond
+  from two clicks across the highway (`World::plan_diamond`, `add_diamond`): the cross street
+  under the highway (kept if one runs there already), and per carriageway an off-ramp leaving it
+  150 m before the crossing and an on-ramp joining 150 m after (`DIAMOND_SPAN`), on its outer
+  side, meeting the street at one signalled junction 55 m out (`DIAMOND_TERMINAL`), with a 40 m
+  lead beside the carriageway and an easy S into the street square. The hologram is the whole
+  diamond; it is refused, with a red pin and label at the spot, when the line does not cross the
+  highway or crosses it more than 40 degrees off square, the street is too short for the
+  terminals, the highway bends or ends near a join, a ramp would cross another road, or another
+  road already joins the highway there. Remote: `add_interchange {from, to, check?, implement?}`;
+  dev `rebuild_roads` lays the roads again from the plan with the current rules.
 - **Raising roads while drawing, and pillars** [tools]: with the Road tool, `]` raises and `[`
   lowers the next point by 2 m (as Page Up / Page Down; the camera's bracket zoom gives way while
   the Road tool is out); `Shift+]` / `Shift+[` move the whole road drawn so far, its placed points
@@ -2049,7 +2188,10 @@ What the pages chart:
   energy per day the same way; money for power per day (export income, import cost, upkeep);
   brownout hours and peak demand; a table of plants and batteries (output now and 24-hour mean,
   upkeep, cost per MWh, CO2 a day, smog, noise; batteries' charge and flow) and a 72-hour chart per
-  plant (output against nameplate) and per battery (stored MWh and flow).
+  plant (output against nameplate) and per battery (stored MWh and flow); [batteries] the
+  batteries' rule this hour and the day's cheap and dear prices, and their savings per day. A
+  battery's inspector shows its rule, its savings today and yesterday, and its state of charge
+  against the price over the last hours.
   The page ends with the hour's balance, the batteries' fill, costs, the next 24 hours and the weather.
 - **Transit**: riders per day by mode; riders per bus line; fares against upkeep; who is waiting
   and riding hour by hour; a table of lines with today, yesterday, the average and fares.
@@ -2131,8 +2273,9 @@ legs it changed. Nothing here draws random numbers.
 - **A person's places**: `World::holdings_of` is their home, work and every business they own
   (`Business::owner`; taxi founders own their firm). Each is a big clickable pin (HOME, WORK,
   OWNS, `ui/pins.rs`) over its building on a post (`marks.rs`), held at the screen edge when off
-  screen, and a button in the person pane. Either selects the building. Multiple homes have no
-  data yet; when they do, `holdings_of` lists them and they get pins with no UI change.
+  screen, and a button in the person pane. Either selects the building. Second homes and
+  businesses the well-off buy (`world/rich.rs`) are listed and pinned the same way; the person
+  pane sums them up ("owns 3 properties · 4 cars: one driven, 3 in the garage at ...").
 - **Favourites** wear gold in the world: a ring and a diamond over the head, and a gold box round
   the car they drive or ride in and their parked car (`marks.rs`). City Data's People › Favourites has
   go (a smooth flight), follow and a "$" gift.

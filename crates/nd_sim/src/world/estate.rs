@@ -22,7 +22,7 @@ const DEVELOPERS: &[&str] = &["Kessler Land", "Halcyon Developments", "Argent Ho
 impl World {
     /// A generator for one draw site, keyed by the tick: deterministic and
     /// independent of the world's own stream.
-    fn erng(&self, salt: u64) -> SimRng {
+    pub(super) fn erng(&self, salt: u64) -> SimRng {
         crate::rng_for(self.config.seed ^ ESTATE_SALT ^ salt.wrapping_mul(0x51_7C_C1_B7), self.clock.tick)
     }
 
@@ -208,7 +208,7 @@ impl World {
 
     /// `owner` buys `bid` (or takes it on as built): off its old owner's
     /// books, onto the new one's.
-    fn give_to(&mut self, bid: BuildingId, owner: OwnerId, price: f64) {
+    pub(super) fn give_to(&mut self, bid: BuildingId, owner: OwnerId, price: f64) {
         let Some(b) = self.buildings.get_mut(bid) else { return };
         let old = b.plot.owner.replace(owner);
         if let Some(o) = old.filter(|o| *o != owner).and_then(|o| self.estate.owners.get_mut(o)) {
@@ -224,7 +224,7 @@ impl World {
 
     /// The owner record that is `cid`'s own: their billionaire record, a
     /// person record, or the household's (a McMansion), made on first use.
-    fn owner_for_citizen(&mut self, cid: CitizenId) -> Option<OwnerId> {
+    pub(super) fn owner_for_citizen(&mut self, cid: CitizenId) -> Option<OwnerId> {
         let c = self.citizens.get(cid)?;
         let hh = c.household;
         let name = c.name.clone();
@@ -296,7 +296,7 @@ impl World {
     /// Can the market buy this building? Built and standing, ordinary (not
     /// the city's, a car park, a taxi yard or cargo hub), not in a frozen
     /// historic district, not a home bought outright, not a billionaire's.
-    fn buyable(&self, bid: BuildingId) -> bool {
+    pub(super) fn buyable(&self, bid: BuildingId) -> bool {
         let Some(b) = self.buildings.get(bid) else { return false };
         if b.construction.is_some() || b.demolition.is_some() || b.is_special() || b.is_parking() || b.land_use == LandUse::Park || b.land_use == LandUse::Civic {
             return false;
@@ -328,6 +328,8 @@ impl World {
         self.densify();
         self.expand_firms();
         self.build_mcmansions();
+        // [rich] The well-off buy a business or a second home.
+        self.invest_rich();
         self.daily_elites();
         self.daily_nimby();
     }
@@ -382,6 +384,8 @@ impl World {
         }
         let tick = self.clock.tick;
         self.estate.convoys.retain(|c| cars.contains_key(c.boss) || !c.escorts.is_empty() || c.police.is_some() || c.stop.is_some_and(|(_, t)| t > tick));
+        // [rich] Garages of people who left are sold off.
+        self.prune_spare_cars();
     }
 
     /// A building is gone (removed outright or cleared after demolition):
@@ -445,6 +449,9 @@ impl World {
                     self.claim_reserved(l);
                 }
                 Some(other) => {
+                    // [relocate] A business next door looks for a new place.
+                    let why = format!("{}'s expansion", self.buildings.get(bid).map_or(String::new(), |b| b.name.clone()));
+                    self.pack_business(other, &why);
                     // A park standing on rezoned ground just goes.
                     self.estate.reserved.insert(l, bid);
                     if let Some(b) = self.buildings.get_mut(bid) {
@@ -573,6 +580,10 @@ impl World {
         }
         let dev_name = self.estate.owners.get(dev).map(|o| o.name.clone()).unwrap_or_default();
         let memory = format!("{name} was sold to {dev_name} for ${:.0}k and is coming down for something bigger. We had to go.", price / 1000.0);
+        // [relocate] The business looks for a new place.
+        if had_business {
+            self.pack_business(bid, &format!("{dev_name}'s rebuild"));
+        }
         self.redevelop_with(bid, tier, floors, value, memory, false);
         if had_business {
             // The old business closes with the sale; the new building
@@ -834,6 +845,12 @@ impl World {
         let value = self.lot_value(primary);
         let bid = match self.lots[primary].building {
             Some(b) => {
+                // [relocate] A business on the plot looks for a new place.
+                let why = match form {
+                    Form::Mansion => "a billionaire's estate".to_string(),
+                    _ => "a family's new house".to_string(),
+                };
+                self.pack_business(b, &why);
                 self.buildings[b].plot.form = Some(form);
                 self.buildings[b].plot.buyer = buyer;
                 self.buildings[b].land_use = LandUse::Residential;
@@ -889,6 +906,8 @@ impl World {
             self.estate.nimby.push(Nimby { center, radius: NIMBY_RADIUS.min(NIMBY_MAX_RADIUS), strength: NIMBY_LIFT, mansion: bid, price_out_left: NIMBY_PRICE_OUT_CAP });
             self.estate.stats.mansions_total += 1;
         }
+        // [rich] The garage fills.
+        self.fill_garage(bid);
     }
 
     // ── the super-elite ────────────────────────────────────────────────────

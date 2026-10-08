@@ -181,6 +181,20 @@ pub fn road(painter: &Painter, rect: Rect, kind: RoadKind, fwd: u8, bwd: u8, col
 
 /// A small arrowhead at (x, y) pointing up (`dir < 0`) or down; `dir`'s
 /// size tilts it for ramps.
+/// [interchange] A diamond interchange from above: the highway across, the
+/// cross street up the middle and the four ramps making a diamond.
+pub fn interchange(painter: &Painter, rect: Rect, color: Color32) {
+    let f = Frame::new(rect);
+    // The highway across, the cross street under it, the ramps a diamond.
+    painter.add(f.line(&[(0.0, 0.5), (1.0, 0.5)], Stroke::new(f.s(0.22), ASPHALT)));
+    painter.add(f.line(&[(0.5, 0.0), (0.5, 1.0)], Stroke::new(f.s(0.12), ASPHALT)));
+    let ramp = Stroke::new(f.s(0.07), color);
+    for (x, y) in [(0.08, 0.36), (0.92, 0.36), (0.08, 0.64), (0.92, 0.64)] {
+        let ty = if y < 0.5 { 0.14 } else { 0.86 };
+        painter.add(f.line(&[(x, y), (0.5, ty)], ramp));
+    }
+}
+
 /// A roundabout seen from above: four arms, the ring with a dashed lane
 /// line, a green island, and an arrow showing the way round (anticlockwise
 /// on screen).

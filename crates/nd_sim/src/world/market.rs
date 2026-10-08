@@ -126,6 +126,11 @@ impl World {
         // [ferries] Commuters off the boat work their shift too.
         let ferry_staff = self.ferry_staff();
         for &bid in &ids {
+            // [fishing] A fishing port's fish come in on its boats
+            // (`world/fishing.rs`), not by the hour.
+            if self.port_fishes_grounds(bid) {
+                continue;
+            }
             let b = &mut self.buildings[bid];
             if b.construction.is_some() {
                 continue;
@@ -330,7 +335,8 @@ impl World {
                 }
             }
         }
-        if let Some(&y) = yards.first() {
+        // [freight] Onto the apron of a yard the freight trains call at.
+        if let Some(&y) = self.yards.first().or(yards.first()) {
             self.buildings[y].rail_outbound += shipped;
         }
         // Exports through a cargo hub leave in full semis.
@@ -487,22 +493,19 @@ impl World {
         self.citizens.len() as f32 * crate::citizens::GROCERIES_PER_PERSON_DAY * 0.66 * self.economy.food_order_factor() / grocers as f32
     }
 
-    /// Goods waiting at a yard no freight train will reach go by truck:
-    /// the yard lost its track or its street, or no freight has run for two
-    /// headways (the dispatcher is stuck, say at `MAX_TRAINS`).
+    /// [freight] Rail orders no freight train will bring come by road from
+    /// the edge of the map instead: their yard lost its track or its street
+    /// (or is gone), no freight has run for two headways (the dispatcher is
+    /// stuck, say at `MAX_TRAINS`), or the order has waited far too long.
     pub(super) fn drain_stranded_rail_imports(&mut self) {
         let tick = self.clock.tick;
         let stuck = tick.saturating_sub(self.rail.last_freight_tick) >= rail::FREIGHT_HEADWAY * 2;
-        let yards: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| !b.rail_inbound.is_empty() && b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::FreightYard)).map(|(id, _)| id).collect();
-        for y in yards {
-            let works = self.buildings[y].rail.as_ref().is_some_and(|l| l.works()) && !self.buildings[y].is_derelict();
-            if works && !stuck {
-                continue;
-            }
-            let queued = std::mem::take(&mut self.buildings[y].rail_inbound);
-            for cargo in queued {
-                self.dispatch_truck(TruckOrigin::Building(y), cargo, 6);
-            }
+        let works = |w: &World, y: BuildingId| w.buildings.get(y).is_some_and(|b| b.rail.as_ref().is_some_and(|l| l.works()) && !b.is_derelict());
+        let orders = std::mem::take(&mut self.rail.orders);
+        let (stranded, keep): (Vec<rail::RailOrder>, Vec<rail::RailOrder>) = orders.into_iter().partition(|o| stuck || !works(self, o.cargo.from) || tick.saturating_sub(o.since) >= rail::ORDER_GIVE_UP);
+        self.rail.orders = keep;
+        for o in stranded {
+            self.dispatch_truck(TruckOrigin::CityEdge, Cargo { from: BuildingId::default(), ..o.cargo }, 6);
         }
     }
 
@@ -608,7 +611,8 @@ impl World {
                     bz.spend_today -= refund;
                 }
                 self.economy.market.imports_today -= refund;
-                self.buildings[yard].rail_inbound.push(Cargo { from: yard, to, resource, amount, price: price * rail::RAIL_IMPORT_FACTOR });
+                // [freight] Out of town until a freight train brings it in.
+                self.rail.orders.push(rail::RailOrder { cargo: Cargo { from: yard, to, resource, amount, price: price * rail::RAIL_IMPORT_FACTOR }, since: self.clock.tick });
                 return;
             }
         }

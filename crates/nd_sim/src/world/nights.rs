@@ -77,9 +77,11 @@ impl World {
         if self.street_events.rave.is_some() {
             self.run_rave();
         }
+        // ── [moto] packs ──
+        self.step_moto();
     }
 
-    fn news(&mut self, kind: EventKind, headline: String, pos: Vec2) {
+    pub(super) fn news(&mut self, kind: EventKind, headline: String, pos: Vec2) {
         let seq = self.street_events.push_news(self.clock.tick, kind, headline, pos);
         self.events.push(SimEvent::News(seq));
     }
@@ -261,7 +263,7 @@ impl World {
         let car = self.drive_from_spot(vid, seg, s.kerb, cid, crate::vehicle::Errand::Trip)?;
         self.leave_building(cid);
         let tc = &mut self.traffic.cars[car];
-        tc.drive.gang = Some(GangRole { takeover: race, phase: GangPhase::Joining, race: true });
+        tc.drive.gang = Some(GangRole { takeover: race, phase: GangPhase::Joining, race: true, pack: false });
         let (pos, model) = (tc.pos, tc.model);
         let c = &mut self.citizens[cid];
         c.pos = pos;

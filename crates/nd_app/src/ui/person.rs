@@ -275,5 +275,20 @@ fn places_row(ui: &mut egui::Ui, w: &World, id: CitizenId) -> Option<nd_sim::Bui
             }
         }
     });
+    // [rich] Everything they own in one line: properties (each pinned on
+    // the map) and the cars, the one they drive and those in the garage.
+    let owns = w.holdings_of(id).iter().filter(|(_, h)| *h == nd_sim::Holding::Owns).count();
+    let spares = w.spare_cars_of(id);
+    if owns > 1 || !spares.is_empty() {
+        let drives = w.citizens.get(id).is_some_and(|c| c.car.is_some());
+        let garage = spares.first().and_then(|v| w.vehicles.cars.get(*v)).and_then(|c| c.spot()).and_then(|s| s.building).and_then(|b| w.buildings.get(b)).map(|b| b.name.clone());
+        let mut bits = vec![format!("owns {owns} propert{} (pinned on the map)", if owns == 1 { "y" } else { "ies" })];
+        if !spares.is_empty() {
+            let at = garage.map_or(String::new(), |g| format!(" at {g}"));
+            let k = spares.len();
+            bits.push(if drives { format!("{} cars: one driven, {k} in the garage{at}", k + 1) } else { format!("{k} car{} in the garage{at}", if k == 1 { "" } else { "s" }) });
+        }
+        ui.label(egui::RichText::new(bits.join("  ·  ")).small().color(egui::Color32::from_rgb(255, 215, 120)));
+    }
     pick
 }

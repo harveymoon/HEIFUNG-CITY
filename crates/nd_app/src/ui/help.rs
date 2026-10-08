@@ -29,6 +29,9 @@ pub fn tool_hint(tool: Tool) -> &'static str {
     TOOL_HINTS.iter().find(|(t, _)| *t == tool).map_or("", |(_, h)| h)
 }
 
+/// [interchange] The Road tool's Interchange preset.
+pub const ROAD_INTERCHANGE: &str = "A diamond interchange in two clicks: click one side of the highway, then the other, where the cross street should run. The street passes under the highway (lifted over it on a short deck), and each carriageway gets an off-ramp leaving it 150 m before and an on-ramp joining it 150 m after, meeting the street at one signalled junction per side, 55 m out. Drawn along a street already under the highway, it keeps the street and adds the ramps. The hologram shows exactly what will be built; if it would cross another road, a red pin marks the spot and says why. The lanes set are the cross street's. Ctrl+Z undoes, Ctrl+Enter builds.";
+
 /// The Road tool's roundabout preset.
 pub const ROAD_ROUNDABOUT: &str = "Hover to see the roundabout land: the ring, where roads are cut back and joined (dots), the road it takes up (dashed red) and the buildings that would come down (red lots). Click to stamp it into the project; it snaps onto a junction (whose signals go) or a road. Ctrl+wheel or the slider sizes it, 24 to 240 m across. The middle stays open land to zone, build or draw roads in (they join the ring), even another roundabout. Traffic goes round anticlockwise; entering cars give way to the ring, on two lanes later exits keep to the inside. Ctrl+Z undoes, Ctrl+Enter builds.";
 pub const ROAD_PATH: &str = "Path: 3 m wide, for walkers and bikes only. Cars never use it; it joins streets at junctions and crosses them with a zebra.";
@@ -49,8 +52,8 @@ pub fn power_note(k: PowerPlantKind) -> &'static str {
         PowerPlantKind::Solar => ". Any lot but parks and civic. Hexagonal panels on trackers that turn to face the sun; clean, but only by day and dimmed by cloud.",
         PowerPlantKind::Wind => ". Any vacant lot. Clean; output follows the wind.",
         PowerPlantKind::Nuclear => ". Enormous, steady, expensive, and the neighbours are nervous.",
-        PowerPlantKind::Hydro => ". On a lot beside a river or stream with a current of 0.8 m/s or more; output follows the current. A weir is built across the water.",
-        PowerPlantKind::Tidal => ". On the sea shore. Clean; output rises and falls with the two tides a day.",
+        PowerPlantKind::Hydro => ". On a lot beside a river or stream with a current of 0.8 m/s or more; output follows the current, and a bigger site holds more turbine bays (one to eight). A dam is built across the water.",
+        PowerPlantKind::Tidal => ". On the sea shore. Clean; output rises and falls with the two tides a day, and a bigger site holds more turbine bays (one to eight).",
         PowerPlantKind::Geothermal => ". Over a geothermal hot spot (yellow ground, steaming vents). Steady; output follows the heat.",
     }
 }

@@ -311,6 +311,27 @@ fn widest(roads: &RoadNetwork, n: NodeId) -> f32 {
     roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).is_street()).map(|&s| roads.segment(s).half_width()).fold(0.0, f32::max)
 }
 
+/// [interchange] How much further out than the junction's radius
+/// (`node_radius`, `r`) the lanes of arm `seg` at `node` end, so cars stop
+/// as far back from the painted stop line as at any junction: at a sharp
+/// fork the crosswalk and stop line stand out past the rounded kerb
+/// (`acute_setback`), and cars used to drive on to the junction's radius,
+/// metres past the line. Zero for an ordinary arm, a roundabout, a ramp's
+/// gore, the highway and its slip roads.
+pub fn stop_back(roads: &RoadNetwork, node: NodeId, seg: SegmentId, r: f32) -> f32 {
+    let s = roads.segment(seg);
+    if street_arms(roads, node) < 3 || s.fronts_nothing() || roads.ring_of_node(node).is_some() {
+        return 0.0;
+    }
+    if roads.node(node).segments.iter().any(|&o| roads.segment(o).alive && (roads.segment(o).is_motorway() || roads.segment(o).is_rail())) {
+        return 0.0;
+    }
+    // The stop line (`nd_procgen::street_junction::mouths`) stands half a
+    // metre past the crosswalk; an ordinary junction's lanes end 4 m in
+    // from it.
+    (crosswalk_setback(roads, node, seg) + CROSSWALK_HALF + 0.5 - r - 4.0).max(0.0)
+}
+
 /// A junction of three or more streets: its arms get crosswalks.
 pub fn is_junction(roads: &RoadNetwork, n: NodeId) -> bool {
     street_arms(roads, n) >= 3

@@ -346,6 +346,10 @@ fn a_billionaire_buys_quiet_land_and_stays_within_limits() {
     w.finish_construction(mansion);
     assert_eq!(w.citizens[e.citizen].home, Some(mansion), "the billionaire moved in");
     assert_eq!(w.buildings[mansion].rent, 0.0, "bought outright");
+    // [rich] The supercars beyond the one they drive stand in its garage.
+    let spares = w.spare_cars_of(e.citizen);
+    assert_eq!(spares.len(), e.cars.len() - 1, "the garage holds the rest of the cars");
+    assert!(spares.iter().all(|v| w.vehicles.cars[*v].spot().and_then(|s| s.building) == Some(mansion)));
     assert_eq!(w.estate.nimby.len(), 1);
     let n = w.estate.nimby[0].clone();
     assert!(n.radius <= NIMBY_MAX_RADIUS);

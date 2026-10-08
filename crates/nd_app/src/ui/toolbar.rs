@@ -247,15 +247,19 @@ fn project(ui: &mut egui::Ui, p: &mut UiCtx) {
         // [tools] What implementing would refuse on, before it is tried
         // (the plan view marks the spot red with a pin).
         if let Some(check) = tools.plan_check.as_ref() {
-            if let Some(why) = &check.pillar_refusal {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format!("Will be refused: {}", why.trim_start_matches("Not implemented: "))).small().color(WARN));
-                    if let Some(g) = check.pillar_gaps.first() {
+            if let Some(why) = &check.refusal {
+                // Wrapped, "show" first: a refusal naming a road and a
+                // structure runs long, and the button must stay on screen.
+                ui.horizontal_wrapped(|ui| {
+                    ui.set_max_width(460.0);
+                    // The structure the refusal names first, else the gap.
+                    let spot = check.blocks.first().map(|k| k.at).or_else(|| check.pillar_gaps.first().map(crate::render::gap_spot));
+                    if let Some(s) = spot {
                         if ui.small_button("show").on_hover_text("Fly to the red pin").clicked() {
-                            let s = crate::render::gap_spot(g);
                             p.fly_to = Some(bevy::math::Vec2::new(s.x, s.y));
                         }
                     }
+                    ui.label(egui::RichText::new(format!("Will be refused: {}", why.trim_start_matches("Not implemented: "))).small().color(WARN));
                 });
             }
         }

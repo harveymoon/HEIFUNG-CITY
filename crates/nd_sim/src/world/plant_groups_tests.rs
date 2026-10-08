@@ -57,8 +57,8 @@ fn cost_upkeep_and_output_follow_the_lot_and_are_capped() {
         // One lot only goes so far.
         assert_eq!(kind.size_scale(1e7), crate::power::MAX_LOT_SCALE);
     }
-    // Fixed-size plants are not scaled.
-    assert_eq!(PowerPlantKind::Hydro.size_scale(50.0), 1.0);
+    // [freight] Hydro is sized when built, within its own range.
+    assert_eq!(PowerPlantKind::Hydro.size_scale(50.0), PowerPlantKind::Hydro.size_range().0);
 }
 
 #[test]

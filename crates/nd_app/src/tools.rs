@@ -260,6 +260,12 @@ pub struct ToolState {
     pub industry: &'static str,
     /// Road tool: stamp roundabouts instead of drawing roads.
     pub roundabout: bool,
+    /// [interchange] Road tool, Interchange preset: two clicks across the
+    /// highway lay a diamond interchange (`World::plan_diamond`).
+    pub interchange: bool,
+    /// [interchange] Why the diamond under the pointer would be refused, and
+    /// where (refreshed with its hologram).
+    pub interchange_refusal: Option<(String, SVec2)>,
     /// Roundabout radius (centre to the middle of the ring road), metres.
     pub ring_radius: f32,
     /// Roundabout ring lanes, 1 to 3 (`roads::RING_MAX_LANES`).
@@ -416,6 +422,28 @@ impl ToolState {
     /// the depth it is built at; the view follows (tunnels underground,
     /// everything else on the ground).
     pub fn pick_preset(&mut self, label: &str) -> bool {
+        if label.eq_ignore_ascii_case("interchange") {
+            // [interchange] A diamond: the cross street is a two-way street
+            // of the lanes set (a Street unless two-way lanes are set).
+            self.roundabout = false;
+            self.interchange = true;
+            self.kind = RoadKind::Street;
+            if self.lanes_fwd == 0 || self.lanes_bwd == 0 {
+                self.lanes_fwd = 2;
+                self.lanes_bwd = 2;
+            }
+            if self.tunnel {
+                self.tunnel = false;
+            }
+            self.elevation = 0.0;
+            self.points.clear();
+            self.point_levels.clear();
+            if self.depth == Depth::Underground {
+                self.depth = Depth::Ground;
+            }
+            return true;
+        }
+        self.interchange = false;
         if label.eq_ignore_ascii_case("tunnel") {
             self.roundabout = false;
             self.kind = RoadKind::Street;
@@ -520,6 +548,8 @@ impl Default for ToolState {
             rename: None,
             industry: "auto",
             roundabout: false,
+            interchange: false,
+            interchange_refusal: None,
             ring_radius: 20.0,
             ring_lanes: 1,
             ring_hover: None,
@@ -979,12 +1009,36 @@ pub(crate) fn tool_input(
                     tools.push_point(p, level);
                     if let Some(what) = grounds {
                         tools.status = format!("Snapped to the {what}'s gate: the path joins its walkways there once implemented.");
-                    } else if snapped {
+                    } else if snapped && !tools.interchange {
                         tools.status = format!("Snapped to the road at {}: a junction forms there.", elevation_label(level));
                     }
                 }
             }
-            if finish {
+            // [interchange] The Interchange preset: the second click lays the
+            // diamond (or says why not, with the spot pinned on the map).
+            if tools.interchange {
+                if tools.points.len() == 1 && click {
+                    tools.status = "Interchange: now click the other side of the highway, where the cross street ends.".into();
+                }
+                if tools.points.len() >= 2 {
+                    let (a, b) = (tools.points[0], tools.points[tools.points.len() - 1]);
+                    let lanes = (tools.lanes_fwd.max(1), tools.lanes_bwd.max(1));
+                    tools.status = match sim.world.add_diamond(a, b, lanes) {
+                        Ok((plan, ids)) => format!(
+                            "Diamond interchange added to the project: {}{} ramps, a signalled junction where they meet the street on each side. Ctrl+Z undoes, Ctrl+Enter implements.",
+                            if plan.kept_street { "the street under the highway kept, " } else { "the cross street under the highway, " },
+                            ids.len() - usize::from(!plan.kept_street)
+                        ),
+                        Err(r) => format!("No interchange: {} (pinned in red at {:.0}, {:.0}).", r.why, r.at.x, r.at.y),
+                    };
+                    tools.points.clear();
+                    tools.point_levels.clear();
+                } else if finish {
+                    tools.points.clear();
+                    tools.point_levels.clear();
+                }
+            }
+            if finish && !tools.interchange {
                 if tools.points.len() >= 2 {
                     let kind = tools.kind;
                     let (lf, lb) = if kind != RoadKind::Street { (0, 0) } else { (tools.lanes_fwd, tools.lanes_bwd) };

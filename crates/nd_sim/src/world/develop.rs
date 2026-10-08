@@ -41,6 +41,12 @@ impl World {
         e.parking_capacity = self.buildings.values().map(|b| b.parking_capacity as u32).sum();
         e.parking_used = self.buildings.values().map(|b| b.parking_used as u32).sum();
         e.parking_lots = self.buildings.values().filter(|b| b.is_parking()).count() as u32;
+        // [parking-market] Each lot's busiest moment today.
+        for b in self.buildings.values_mut() {
+            if b.parking_used > b.parking_peak {
+                b.parking_peak = b.parking_used;
+            }
+        }
         e.sites = self.buildings.values().filter(|b| b.construction.is_some()).count() as u32;
         let (hb, jb) = self.buildings.values().filter(|b| b.construction.is_some()).fold((0u32, 0u32), |(h, j), b| {
             let (homes, jobs) = b.planned_capacity();
@@ -100,7 +106,9 @@ impl World {
         r.trains = self.rail.trains.len() as u32;
         r.stations = self.stations.len() as u32;
         r.yards = self.yards.len() as u32;
-        r.freight_waiting = self.yards.iter().filter_map(|y| self.buildings.get(*y)).map(|b| b.rail_inbound.iter().map(|c| c.amount).sum::<f32>()).sum();
+        // [freight] Ordered by rail and not yet in town: waiting out of town
+        // or aboard a freight train on its way.
+        r.freight_waiting = self.rail.orders.iter().map(|o| o.cargo.amount).sum::<f32>() + self.rail.trains.values().flat_map(|t| t.cargo.iter()).map(|c| c.amount).sum::<f32>();
         self.available = self.available_land_uses();
         self.groceries_for_sale = self.retail_available(Resource::Groceries);
         self.meals_for_sale = self.retail_available(Resource::BakedGoods);
@@ -338,6 +346,13 @@ impl World {
         self.economy.power.upkeep_today = upkeep;
         self.economy.tax_today = 0.0;
         self.economy.power.import_cost_today = 0.0;
+        // [batteries] Savings roll over to yesterday's.
+        self.economy.power.battery_savings_today = 0.0;
+        for b in self.buildings.values_mut() {
+            if let Some(bat) = b.battery.as_mut() {
+                bat.savings_yesterday = std::mem::take(&mut bat.savings_today);
+            }
+        }
         self.economy.power.brownout_hours_today = 0;
         for b in self.buildings.values_mut() {
             b.unpowered_hours_today = 0;
@@ -382,6 +397,8 @@ impl World {
         // Buses that left the road without going home leave no timings behind.
         let cars = &self.traffic.cars;
         self.transit.departures.retain(|id, _| cars.contains_key(*id));
+        // [parking-market] Tomorrow's fees by today's busiest hour.
+        self.reprice_parking();
         self.economy.parking_street_today = 0;
         self.economy.parking_fees_today = 0.0;
         self.economy.materials_today = 0.0;
@@ -493,6 +510,8 @@ impl World {
     }
 
     pub(super) fn develop(&mut self) {
+        // [relocate] Businesses bought out of their buildings move first.
+        self.relocate_waiting();
         let vacant: Vec<LotId> = self.lots.iter().filter(|(_, l)| (l.building.is_none() || self.rezoned_park(l).is_some()) && l.usable()).map(|(id, _)| id).collect();
         if vacant.is_empty() {
             return;
@@ -500,30 +519,9 @@ impl World {
         let mut built = 0;
         let start = self.rng.random_range(0..vacant.len());
         // Parking follows the drivers who could not find a space: once a few
-        // are circling, someone opens a lot nearby.
-        if self.economy.parking_street_today >= 4 && self.rng.random_bool(0.6) {
-            if let Some(at) = self.economy.parking_shortage_at {
-                // The vacant lot nearest the trouble spot, on land that is not
-                // precious and not a park or civic site.
-                let mut candidates: Vec<(f32, LotId)> = vacant
-                    .iter()
-                    .copied()
-                    .filter(|&l| !matches!(self.lots[l].land_use, LandUse::Park | LandUse::Civic))
-                    .filter(|&l| Tier::for_land_value(self.land_value.at(self.lots[l].center)) != Tier::High)
-                    .map(|l| (self.lots[l].center.distance(at), l))
-                    .collect();
-                candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
-                for (d, lot_id) in candidates.into_iter().take(6) {
-                    if d > 220.0 {
-                        break;
-                    }
-                    if self.build_parking(lot_id).is_some() {
-                        self.economy.parking_street_today = self.economy.parking_street_today.saturating_sub(8);
-                        built += 1;
-                        break;
-                    }
-                }
-            }
+        // are circling where the lots are full, someone opens one nearby.
+        if built < self.config.max_builds_per_interval && self.maybe_open_parking(&vacant) {
+            built += 1;
         }
         // [taxis] Trips that wanted a cab and found none: a citizen with
         // savings opens a taxi company near them.
@@ -726,6 +724,12 @@ impl World {
     /// to the kind's height. Returns the new building site.
     /// [land] Also a firm's branch (`World::open_branch`).
     pub fn build_on_as(&mut self, lot_id: LotId, forced: Option<BusinessKind>) -> Option<BuildingId> {
+        self.build_on_named(lot_id, forced, None)
+    }
+
+    /// [relocate] [`World::build_on_as`] with the building's name given
+    /// (no draw for one): a business moving keeps its name.
+    pub(super) fn build_on_named(&mut self, lot_id: LotId, forced: Option<BusinessKind>, named: Option<String>) -> Option<BuildingId> {
         let Some(lot) = self.lots.get(lot_id) else { return None };
         // A park on ground rezoned for building goes when building begins.
         if let Some(park) = self.rezoned_park(lot) {
@@ -758,7 +762,10 @@ impl World {
             floors = l.floors(floors, self.height_cap(lot_id));
         }
         let seed = self.fresh_seed();
-        let name = names::building_name(&mut self.rng, lu);
+        let name = match named {
+            Some(n) => n,
+            None => names::building_name(&mut self.rng, lu),
+        };
         let mut b = Building::new(lot_id, lu, floors, tier, seed, name, self.clock.tick, value);
         b.look = look;
         if !self.lots[lot_id].car_access() {

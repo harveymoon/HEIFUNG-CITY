@@ -758,6 +758,13 @@ pub struct Business {
     /// taxi firm's founder). The inspector pins it among their places.
     #[serde(default)]
     pub owner: Option<crate::citizens::CitizenId>,
+    /// [relocate] Where it stood before a buyout moved it, in words
+    /// ("Kessler Tower, by Lucky Bodega, after road works").
+    #[serde(default)]
+    pub moved_from: Option<String>,
+    /// [relocate] Its old staff, hired back when the new building opens.
+    #[serde(default)]
+    pub rehire: Vec<crate::citizens::CitizenId>,
 }
 
 /// One closed day of a business's books.
@@ -802,6 +809,8 @@ impl Business {
             donations: 0.0,
             wants_expand: false,
             owner: None,
+            moved_from: None,
+            rehire: Vec::new(),
         }
     }
 

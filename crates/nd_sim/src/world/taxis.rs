@@ -83,7 +83,7 @@ impl World {
 
     /// What a citizen could put into a business: their own savings and
     /// their household's.
-    fn wealth_of(&self, c: &crate::citizens::Citizen) -> f32 {
+    pub(super) fn wealth_of(&self, c: &crate::citizens::Citizen) -> f32 {
         c.savings.max(0.0) + c.household.and_then(|h| self.households.get(h)).map_or(0.0, |h| h.money.max(0.0))
     }
 
