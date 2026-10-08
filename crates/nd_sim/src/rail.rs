@@ -811,7 +811,7 @@ impl Rail {
 
     /// [freight] Units of imports aboard freight trains for `yard`.
     pub fn aboard_for(&self, yard: BuildingId) -> f32 {
-        self.trains.values().flat_map(|t| t.cargo.iter()).filter(|c| c.from == yard).map(|c| c.amount).sum()
+        self.trains.values().flat_map(|t| t.cargo.iter()).filter(|c| c.from == yard).fold(0.0, |a, c| a + c.amount)
     }
 
     pub fn state(&self, id: TrainId) -> Option<TrainState> {

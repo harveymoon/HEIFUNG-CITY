@@ -959,7 +959,7 @@ Citizens are rendered from their simulated positions every frame.
   hall of 8 m bays (a roof generator housing, a pilaster and a penstock each), a tidal house of 7 m
   modules (a sluice gate each), the same height and depth whatever the size; the dam keeps its arch
   across the river and gains intake towers (one per two bays) and spillway gates (two to four),
-  the tidal barrage a caisson per bay (`waterworks::bays_on`, `dam::dam_parts`). The coal station is composed of
+  the tidal barrage a caisson per bay; on a lot too narrow for one row a second hall stands in front (`waterworks::bay_rows`, `dam::dam_parts`). The coal station is composed of
   units, not stretched (`buildings::power::coal_layout`): one to four black boiler houses with
   orange-lit slits, each with its own smokestack of its own height, a start-up stack, a tall
   common stack and cooling towers (steam) on the big ones, a turbine hall, ash filters, conveyor
