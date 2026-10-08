@@ -353,7 +353,13 @@ pub fn plot_hover_label(mut contexts: bevy_egui::EguiContexts, hover: Res<PlotHo
     let v = crate::ui::theme::to_points(ctx, v);
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("plot_hover_label")));
     let galley = painter.layout(text, crate::ui::theme::small(), egui::Color32::WHITE, 440.0);
-    let pos = egui::pos2(v.x + 18.0, v.y + 16.0);
+    // Beside the pointer, flipped to its left (or above it) where it would
+    // run off the screen, so a long reason is never cut off.
+    let screen = ctx.content_rect();
+    let size = galley.size();
+    let x = if v.x + 18.0 + size.x + 8.0 > screen.right() { v.x - 18.0 - size.x } else { v.x + 18.0 };
+    let y = if v.y + 16.0 + size.y + 6.0 > screen.bottom() { v.y - 16.0 - size.y } else { v.y + 16.0 };
+    let pos = egui::pos2(x.max(screen.left() + 8.0), y.max(screen.top() + 6.0));
     let r = egui::Rect::from_min_size(pos, galley.size()).expand2(egui::vec2(7.0, 4.0));
     painter.rect_filled(r, 4.0, bg);
     painter.galley(pos, galley, egui::Color32::WHITE);
