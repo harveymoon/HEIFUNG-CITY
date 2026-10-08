@@ -9,6 +9,10 @@
 /// [concerns] The People window's complaints tab.
 /// The Build window: every road, zone and building in one catalogue.
 pub mod build;
+/// [committee] The Committee window.
+pub mod committee;
+/// [voices] A citizen's diary, on demand.
+pub mod diary;
 mod concerns;
 mod detail;
 mod economy;
