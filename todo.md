@@ -345,3 +345,4 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - fix/false-block: false road refusal by a far plant; blockers in the plan preview (started 2026-10-08)
 - feat/supertall: supertall league (started 2026-10-08, from the queue)
 - feat/waterfront: waterfront parcels, beach businesses, private jetties, public beach zone (started 2026-10-08, from the queue)
+- feat/park-paths: park walkways in the walk graph, junctions for the path tool (started 2026-10-08, from the queue)
