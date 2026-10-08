@@ -3291,6 +3291,8 @@ mod tests {
         // Both go home afterwards.
         run_until(&mut w, 20, |w| w.services.units.values().all(|u| u.incident != Some(id)));
         assert!(w.services.units.values().all(|u| u.incident != Some(id)), "everyone packed up and left");
+    }
+
     // ── [murder] ──────────────────────────────────────────────────────────
 
     /// A town with police and a jail, a shop, and a victim with a household
