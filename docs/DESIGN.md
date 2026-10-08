@@ -1127,7 +1127,16 @@ Citizens are rendered from their simulated positions every frame.
   `report_crime`; the services arrest. A jail term ends a career at 20% + 8% a day served, an early
   release from a police cell at 5% (and emboldens); released offenders who strike again make the
   reoffending rate. Offences leave decaying heat at hot spots, which take land value off the block
-  and frighten the neighbours (mood; rich households near heat 4+ leave). *Homelessness*: a
+  and frighten the neighbours (mood; rich households near heat 4+ leave). *Homicide*
+  (`World::murder`): rare. Besides the 6% of offenders' assaults, a fight between enemies (social
+  layer, `Bond::Enemy`) ends in a death 3% of the time (a hash of the pair and the minute, no
+  draws). Before the victim leaves the city their household and friends remember it (mood down a
+  lot, a heavy Safety concern), the place's regulars and the neighbours within 150 m are shaken, a
+  sober line goes in the city news ("Police are investigating") and the spot takes triple heat. It
+  is reported as a `Homicide` (a violent crime, ahead in the queue): the police hold the scene for a
+  150-minute investigation, then arrest 80% of the time when the killer is known (a feud), 45%
+  when not (an offender), for 12-20 days in jail; an arrest is in the news and the grieving hear.
+  No gore: nothing is drawn but the police at work. *Homelessness*: a
   household evicted with nowhere cheaper and no money stays on the street 70% of the time if any
   land is cheap (value < 0.36): camps of up to six households on cheap pavements, vacant lots and
   unzoned parcels, or (with a car) an RV or van at the kerb; they eat charity meals, walk back to

@@ -82,6 +82,15 @@ pub const DISPATCH_ON_CALL: u64 = 8;
 pub const DISPATCH_REGIONAL: u64 = 20;
 /// Ticks of work on scene: a crime, a patient (fires burn until out).
 pub const CRIME_WORK: f32 = 25.0;
+/// [murder] Minutes the police spend on a homicide scene: the
+/// investigation (the scene held, witnesses, the neighbours asked).
+pub const HOMICIDE_WORK: f32 = 150.0;
+/// [murder] Chance the investigation ends in an arrest: the killer known
+/// (a feud), or a stranger (an offender's job gone wrong).
+pub const HOMICIDE_ARREST_KNOWN: f32 = 0.8;
+pub const HOMICIDE_ARREST_UNKNOWN: f32 = 0.45;
+/// [murder] Days in jail for a killing (`SENTENCE_DAYS` for the rest).
+pub const HOMICIDE_SENTENCE_DAYS: (u64, u64) = (12, 20);
 pub const MEDICAL_WORK: f32 = 12.0;
 /// [driving] Ticks the police spend at a crash scene, by the case: someone
 /// hurt (statements, the scene kept while the paramedics work); a driver to
@@ -875,6 +884,9 @@ pub enum CrimeKind {
     StreetRace,
     /// [events] A noise complaint about a warehouse rave.
     Rave,
+    /// [murder] Someone was killed: a long investigation on scene
+    /// (`HOMICIDE_WORK`), a likelier arrest when the killer is known.
+    Homicide,
 }
 
 impl CrimeKind {
@@ -882,7 +894,7 @@ impl CrimeKind {
 
     /// Robbery and assault put people in danger: they jump the queue.
     pub fn violent(self) -> bool {
-        matches!(self, CrimeKind::Robbery | CrimeKind::Assault)
+        matches!(self, CrimeKind::Robbery | CrimeKind::Assault | CrimeKind::Homicide)
     }
 
     pub fn label(self) -> &'static str {
@@ -894,6 +906,7 @@ impl CrimeKind {
             CrimeKind::StreetTakeover => "street takeover",
             CrimeKind::StreetRace => "street race",
             CrimeKind::Rave => "illegal rave",
+            CrimeKind::Homicide => "homicide",
         }
     }
 }
@@ -1058,6 +1071,10 @@ pub struct Incident {
     pub second: Option<UnitId>,
     #[serde(default)]
     pub second_alarm: Option<u64>,
+    /// [murder] The police know who did it (a feud everyone knew about):
+    /// a homicide arrest is likelier.
+    #[serde(default)]
+    pub known_suspect: bool,
 }
 
 impl Incident {

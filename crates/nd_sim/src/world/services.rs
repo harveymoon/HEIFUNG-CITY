@@ -419,6 +419,7 @@ impl World {
             chase: None,
             second: None,
             second_alarm: None,
+            known_suspect: false,
         });
         if let Some(n) = self.services.stats.incidents_today.get_mut(kind.index()) {
             *n += 1;
@@ -462,6 +463,9 @@ impl World {
         let names: Vec<(CitizenId, String, &str)> = [(victim, "victim"), (suspect, "suspect")].into_iter().filter_map(|(c, role)| c.and_then(|c| self.citizens.get(c).map(|x| (c, x.name.clone(), role)))).collect();
         if let Some(i) = self.services.incident_mut(id) {
             i.crime = Some(kind);
+            if kind == CrimeKind::Homicide {
+                i.work_left = HOMICIDE_WORK;
+            }
             for (c, n, role) in names {
                 i.involve(c, &n, role);
             }
@@ -1950,7 +1954,16 @@ impl World {
                     return;
                 }
                 let quick = inc.arrived.unwrap_or(tick).saturating_sub(inc.started) <= QUICK_RESPONSE;
-                let caught = inc.suspect.is_some() && self.srng().random::<f32>() < if quick { ARREST_QUICK } else { ARREST_SLOW };
+                let homicide = inc.crime == Some(CrimeKind::Homicide);
+                // [murder] A killing is investigated, not just answered: the
+                // odds follow whether the killer is known, not the response time.
+                let odds = match (homicide, inc.known_suspect, quick) {
+                    (true, true, _) => HOMICIDE_ARREST_KNOWN,
+                    (true, false, _) => HOMICIDE_ARREST_UNKNOWN,
+                    (false, _, true) => ARREST_QUICK,
+                    (false, _, false) => ARREST_SLOW,
+                };
+                let caught = inc.suspect.is_some() && self.srng().random::<f32>() < odds;
                 let bname = self.buildings.get(inc.building).map(|b| b.name.clone()).unwrap_or_default();
                 if caught {
                     if let Some(s) = inc.suspect.and_then(|s| self.citizens.get_mut(s)) {
@@ -1964,6 +1977,9 @@ impl World {
                     self.services.stats.arrests_today += 1;
                     if let Some(s) = inc.suspect {
                         self.take_into_custody(id, s);
+                    }
+                    if homicide {
+                        self.homicide_solved(&inc);
                     }
                     self.resolve(id, Outcome::Arrest);
                 } else {
@@ -2113,7 +2129,8 @@ impl World {
         };
         let (place, jailed, until) = match nearest(self, ServiceKind::Jail, true) {
             Some(j) => {
-                let days = self.srng().random_range(SENTENCE_DAYS.0..=SENTENCE_DAYS.1);
+                let range = if self.services.incident(id).is_some_and(|i| i.crime == Some(CrimeKind::Homicide)) { HOMICIDE_SENTENCE_DAYS } else { SENTENCE_DAYS };
+                let days = self.srng().random_range(range.0..=range.1);
                 (Some(j), true, tick + days * 1440)
             }
             None => (nearest(self, ServiceKind::Police, false), false, tick + HELD_HOURS * 60),
@@ -3274,5 +3291,102 @@ mod tests {
         // Both go home afterwards.
         run_until(&mut w, 20, |w| w.services.units.values().all(|u| u.incident != Some(id)));
         assert!(w.services.units.values().all(|u| u.incident != Some(id)), "everyone packed up and left");
+    // ── [murder] ──────────────────────────────────────────────────────────
+
+    /// A town with police and a jail, a shop, and a victim with a household
+    /// of two or more (when immigration gave one) and a friend.
+    fn murder_town(seed: u64) -> (World, BuildingId, CitizenId, CitizenId, CitizenId) {
+        let mut w = town_with(seed);
+        let folk = people(&mut w, 16);
+        let station = w.build_service(civic_lot(&w, -350.0), ServiceKind::Police, Tier::Mid).unwrap();
+        staff(&mut w, station, &folk[..4], false);
+        w.build_service(civic_lot(&w, -150.0), ServiceKind::Jail, Tier::Low).unwrap();
+        let shop = building_at(&mut w, 100.0);
+        let size = |w: &World, c: CitizenId| w.citizens[c].household.and_then(|h| w.households.get(h)).map_or(0, |h| h.members.len());
+        let victim = *folk[4..].iter().max_by_key(|&&c| (size(&w, c).min(3), std::cmp::Reverse(c))).unwrap();
+        let others: Vec<CitizenId> = folk[4..].iter().copied().filter(|&c| c != victim && w.citizens[c].household != w.citizens[victim].household).collect();
+        let (killer, friend) = (others[0], others[1]);
+        let tick = w.clock.tick;
+        let tie = |w: &mut World, a: CitizenId, b: CitizenId, aff: f32| {
+            let t = w.social.circles.entry(a).or_default().tie_or_new(b, tick, crate::social::Met::Around, None);
+            t.affinity = aff;
+            t.familiarity = 0.9;
+        };
+        tie(&mut w, killer, victim, -0.95);
+        tie(&mut w, victim, killer, -0.95);
+        tie(&mut w, victim, friend, 0.9);
+        tie(&mut w, friend, victim, 0.9);
+        (w, shop, killer, victim, friend)
+    }
+
+    #[test]
+    fn a_feud_killing_is_grieved_investigated_and_the_known_killer_mostly_caught() {
+        assert_eq!(CrimeKind::Homicide.label(), "homicide");
+        assert!(CrimeKind::Homicide.violent() && !CrimeKind::ALL.contains(&CrimeKind::Homicide));
+        let mut arrested = 0;
+        for seed in 1..=5u64 {
+            let (mut w, shop, killer, victim, friend) = murder_town(seed);
+            let vname = w.citizens[victim].name.clone();
+            let family: Vec<CitizenId> = w.citizens[victim].household.and_then(|h| w.households.get(h)).map(|h| h.members.clone()).unwrap_or_default().into_iter().filter(|m| *m != victim).collect();
+            let day = w.clock.day();
+            let before = w.concerns.count(crate::concerns::Concern::Safety, day, day);
+            let id = w.feud_killing(killer, victim, shop).expect("a homicide incident");
+            assert!(!w.citizens.contains_key(victim), "the victim is gone from the city");
+            assert_eq!(w.society.crime.stats.killed_total, 1);
+            assert!(w.citizens[friend].memories.iter().any(|m| m.text.contains(&vname) && m.text.contains("dead")), "the friend grieves");
+            for m in &family {
+                assert!(w.citizens[*m].memories.iter().any(|x| x.text.contains(&format!("{vname} was killed"))), "the family grieves");
+            }
+            assert!(w.concerns.count(crate::concerns::Concern::Safety, day, day) > before, "people are afraid");
+            assert!(w.social.news.iter().any(|n| n.text.contains(&vname) && n.text.contains("investigating")));
+            let inc = w.services.incident(id).unwrap();
+            assert_eq!(inc.crime, Some(CrimeKind::Homicide));
+            assert!(inc.known_suspect && inc.work_left == HOMICIDE_WORK && inc.suspect == Some(killer));
+            // The investigation takes its time, then (mostly) an arrest.
+            let mut minds = IdleMind;
+            let mut on_scene_from = None;
+            for _ in 0..900 {
+                w.tick(&mut minds);
+                let i = w.services.incident(id).unwrap();
+                if i.stage == Stage::OnScene && on_scene_from.is_none() {
+                    on_scene_from = Some(w.clock.tick);
+                }
+                if !i.active() {
+                    break;
+                }
+            }
+            let inc = w.services.incident(id).unwrap().clone();
+            assert!(!inc.active(), "seed {seed}: the case closes");
+            if inc.outcome == Some(Outcome::Arrest) {
+                arrested += 1;
+                let worked = inc.resolved.unwrap() - on_scene_from.expect("the police came");
+                assert!(worked as f32 >= HOMICIDE_WORK - 2.0, "a long investigation: {worked} min");
+                assert!(w.services.in_custody(killer));
+                assert!(w.social.news.iter().any(|n| n.text.contains("arrested") && n.text.contains(&vname)));
+                let c = w.services.custody.iter().find(|c| c.citizen == killer).unwrap();
+                assert!(!c.jailed || c.until >= w.clock.tick + (HOMICIDE_SENTENCE_DAYS.0 - 1) * 1440, "a long sentence");
+            }
+        }
+        assert!(arrested >= 2, "known killers are mostly caught: {arrested} of 5");
+    }
+
+    #[test]
+    fn an_offenders_job_can_end_in_a_killing_with_no_name_to_go_on() {
+        let (mut w, shop, killer, victim, _) = murder_town(7);
+        staff(&mut w, shop, &[victim], true);
+        let id = w.offend(killer, shop, crate::crime::Offence::Murder).expect("reported");
+        assert!(!w.citizens.contains_key(victim));
+        let inc = w.services.incident(id).unwrap();
+        assert_eq!(inc.crime, Some(CrimeKind::Homicide));
+        assert!(!inc.known_suspect);
+        assert_eq!(w.society.crime.stats.offences_total[crate::crime::Offence::Murder.index()], 1);
+        assert_eq!(w.society.crime.stats.killed_total, 1);
+    }
+
+    #[test]
+    fn feuds_rarely_turn_deadly_and_always_the_same_way() {
+        let n = (0..20_000u64).filter(|&t| super::super::social::feud_turns_deadly(0xABCD, t)).count();
+        assert!((300..900).contains(&n), "about 3% of fights: {n}");
+        assert_eq!((0..500u64).map(|t| super::super::social::feud_turns_deadly(77, t)).collect::<Vec<_>>(), (0..500u64).map(|t| super::super::social::feud_turns_deadly(77, t)).collect::<Vec<_>>());
     }
 }
