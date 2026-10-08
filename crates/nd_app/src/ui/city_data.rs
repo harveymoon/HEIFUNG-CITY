@@ -62,7 +62,7 @@ impl Tab {
     pub fn pages(self) -> &'static [Page] {
         use Page::*;
         match self {
-            Tab::City => &[CityOverview, CityLand, CityDistricts, CityTourism],
+            Tab::City => &[CityOverview, CityLand, CityDistricts, CitySkyline, CityTourism],
             Tab::Economy => &[EconomyOverview, EconomyCashFlow, EconomyLedger, EconomyTaxes],
             Tab::Market => &[MarketGoods, MarketBusinesses, MarketTrade],
             Tab::People => &[PeoplePopulation, PeopleInequality, PeopleConcerns, PeopleSocial, PeopleFavourites],
@@ -82,6 +82,7 @@ pub enum Page {
     CityOverview,
     CityLand,
     CityDistricts,
+    CitySkyline,
     CityTourism,
     EconomyOverview,
     EconomyCashFlow,
@@ -112,6 +113,7 @@ impl Page {
             CityOverview | EconomyOverview => "Overview",
             CityLand => "Land and rent",
             CityDistricts => "Districts",
+            CitySkyline => "Skyline",
             CityTourism => "Tourism",
             EconomyCashFlow => "Cash flow",
             EconomyLedger => "Ledger",
@@ -137,6 +139,7 @@ impl Page {
             CityOverview | EconomyOverview => "overview",
             CityLand => "land",
             CityDistricts => "districts",
+            CitySkyline => "skyline",
             CityTourism => "tourism",
             EconomyCashFlow => "cash_flow",
             EconomyLedger => "ledger",
@@ -162,6 +165,7 @@ impl Page {
             CityOverview => "The city at a glance",
             CityLand => "Land and rent",
             CityDistricts => "Districts",
+            CitySkyline => "The skyline",
             CityTourism => "Tourism",
             EconomyOverview => "The city's money",
             EconomyCashFlow => "Cash flow",
@@ -188,6 +192,7 @@ impl Page {
             CityOverview => "Homes, jobs, buildings and traffic over time, and the city's standing figures.",
             CityLand => "What land is worth, what homes rent for by tier, and how the lots are used.",
             CityDistricts => "Every district with its figures and policies. Pick one to edit it; the District tool (9) paints them.",
+            CitySkyline => "The tallest buildings, the towers rising, the race for the city's tallest, and the height limit that holds it.",
             CityTourism => "Who visits, what draws them, where they sleep and what they spend.",
             EconomyOverview => "The treasury, where it is heading, and what the city's businesses want.",
             EconomyCashFlow => "Money in and out of the treasury day by day, by flow.",
@@ -254,6 +259,7 @@ impl Page {
             "emergencies" | "911" => Target::Page(Page::ServicesEmergencies),
             "districts" => Target::Page(Page::CityDistricts),
             "tourism" => Target::Page(Page::CityTourism),
+            "skyline" | "towers" => Target::Page(Page::CitySkyline),
             _ => return None,
         })
     }
@@ -486,6 +492,7 @@ fn body_of(ui: &mut egui::Ui, p: &mut UiCtx, page: Page) {
         CityOverview => super::detail::city_overview(ui, p),
         CityLand => super::detail::city_land(ui, p),
         CityDistricts => super::districts::page(ui, p),
+        CitySkyline => super::skyline::page(ui, p),
         CityTourism => super::districts::tourism_page(ui, p),
         EconomyOverview => super::economy::overview(ui, p),
         EconomyCashFlow => super::economy::cash_flow(ui, p),

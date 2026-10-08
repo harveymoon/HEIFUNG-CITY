@@ -706,7 +706,9 @@ pub fn demand_mw(b: &Building) -> f32 {
         Tier::Mid => 1.0,
         Tier::High => 1.4,
     };
-    per_floor * b.floors.max(1) as f32 * tier
+    // [supertall] Lifts, pumps and cooling up a league tower.
+    let tall = if b.plot.tower.is_some() { 1.25 } else { 1.0 };
+    per_floor * b.floors.max(1) as f32 * tier * tall
 }
 
 // ── [grid-weather] the daily load curve ─────────────────────────────────────

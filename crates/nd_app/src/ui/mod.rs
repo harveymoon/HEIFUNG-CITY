@@ -49,6 +49,8 @@ mod taxes;
 mod toll;
 /// [road-inspect] The card on a selected street piece.
 mod road;
+/// [supertall] The skyline: inspector line, City Data page, news toasts.
+mod skyline;
 /// [fonts] The HUD's fonts and type scale.
 pub mod theme;
 /// The title screen: saved games with their map pictures.
@@ -108,6 +110,8 @@ pub struct UiFlags {
     news_seen: u32,
     /// [social] The last social news line toasted.
     social_seen: u32,
+    /// [supertall] The last skyline news line toasted.
+    skyline_seen: u32,
     /// [city-data] The City Data view covered the map last pass: Esc is
     /// its, not the tools' or the camera's.
     pub data_view: bool,
@@ -270,6 +274,7 @@ pub(crate) fn side_panel(
     flags.data_view = data_rect.is_some();
     nights::news_toast(&sim.world, &mut flags);
     social::news_toast(&sim.world, &mut flags);
+    skyline::news_toast(&sim.world, &mut flags);
     toast(ctx, &mut flags, bottom_rect.height());
     // The land layer's reading under the pointer, for the legend.
     let here = overlays.land.zip(cursor.ground).map(|(l, p)| legend::land_here(&sim.world, l, p));

@@ -126,6 +126,9 @@ pub enum Form {
     MegaHotel,
     /// A gallery grown into a museum.
     Museum,
+    /// [supertall] A league tower (skyscraper, supertall or megatall) on a
+    /// site its developer assembled; `Plot::tower` has its height and form.
+    Tower,
 }
 
 impl Form {
@@ -136,6 +139,7 @@ impl Form {
             Form::Merged => "merged plots",
             Form::MegaHotel => "mega hotel",
             Form::Museum => "museum",
+            Form::Tower => "tower",
         }
     }
 
@@ -197,6 +201,9 @@ pub struct Plot {
     /// and mansions).
     #[serde(default)]
     pub buyer: Option<HouseholdId>,
+    /// [supertall] A league tower: its height, form and developer.
+    #[serde(default)]
+    pub tower: Option<crate::towers::Tower>,
 }
 
 impl Plot {
@@ -552,6 +559,12 @@ pub fn convex_hull(points: &[Vec2]) -> Vec<Vec2> {
 /// `None` when the plots do not make one compact block (the hull is more
 /// than `MERGE_HULL_SLACK` times their area).
 pub fn merged_lot(primary: &Lot, others: &[&Lot]) -> Option<Lot> {
+    merged_lot_within(primary, others, MERGE_HULL_SLACK)
+}
+
+/// `merged_lot` with the compactness test at `slack` (a tower's site may
+/// be a little less compact: `towers::TOWER_HULL_SLACK`).
+pub fn merged_lot_within(primary: &Lot, others: &[&Lot], slack: f32) -> Option<Lot> {
     if others.is_empty() {
         return Some(primary.clone());
     }
@@ -562,7 +575,7 @@ pub fn merged_lot(primary: &Lot, others: &[&Lot]) -> Option<Lot> {
     }
     let area: f32 = primary.area() + others.iter().map(|l| l.area()).sum::<f32>();
     let hull_area = polygon_area(&hull).abs();
-    if hull_area > area * MERGE_HULL_SLACK {
+    if hull_area > area * slack {
         return None;
     }
     let along = (primary.corners[1] - primary.corners[0]).normalize_or_zero();

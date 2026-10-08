@@ -699,7 +699,7 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
 - [land] building `land`: `owner` ({id, name, properties, spent, detail {kind: firm (business) |
   developer | household | elite (citizen)}}, or {kind: independent}), `sale_price`, `lots` (every
   plot it spans, primary first), `merged`, `pending_lots` (bought, still clearing), `form`
-  (mcmansion | mansion | merged | mega_hotel | museum | null), `pressure` and `pressure_floors` at
+  (mcmansion | mansion | merged | mega_hotel | museum | tower | null), `pressure` and `pressure_floors` at
   its lot, `height_cap`, `wants_to_expand`, `owned_with` (every property of its owner)
 
 ### Land market
@@ -723,6 +723,40 @@ several plots), home, business, form. A billionaire's other homes and businesses
 ```json
 {"cmd": "ownership", "building": "146:1"}
 {"cmd": "estate", "action": "pressure", "at": [0, 0]}
+```
+
+### Skyline: skyscrapers, supertalls, megatalls [supertall]
+
+League towers rise over everything the ordinary growth builds: skyscrapers from 150 m, supertalls
+from 300 m, megatalls from 600 m. A tower developer (fictional firm) with the money breaks ground on
+the densest, dearest downtown land (commercial or residential, land value 0.6+, busy streets, 50+
+floors of neighbours within 160 m) in a city of 1,200 people or more; a supertall needs two plots
+(1,500 m²), a megatall three (2,600 m²), so it buys out the grown buildings next door (never the
+city's, a home bought outright, a billionaire's or another tower) and builds a podium and tower over
+one to three months. A record attempt aims 6-24% over the tallest standing or rising when demand and
+money allow; the city's height limit, a district's and the clear approach round a vertiport (120 m
+within 350 m) hold it.
+
+`skyline {action?}` (also `towers`; `height_limit {limit}` sets the limit):
+
+| action | fields | reply |
+| --- | --- | --- |
+| `summary` (default) | `limit_rows` (default 15) | `limit_m`, `vertiport_clearance`, `classes_m`, `record_m`, `tallest_planned_m`, `population_cap_m`, `demand`, `classes` (standing/rising per class), `towers` (id, name, height_m, league, design, developer, lots, pos, under_construction, progress, rank, land_use, homes, jobs), `ranking` (tallest standing: rank, id, name, height_m, league, pos), `records` (newest first), `news`, `developers` (name, capital, pull, owner), `totals` |
+| `limit` | `limit` (m; null or 0: none), `vertiport_clearance` bool | the settings |
+| `sites` | `force` bool | where a tower could go: lot, pos, score, value, neighbour_floors, limit_m |
+| `start` | `height` (m), `design` deco_spire / bundled / twist / needle, `at` [x,y], `force` (default true: skip the money, demand, population and downtown tests; limits and site rules hold), `rich` | dev: break ground now; `tower` row, or why not |
+| `finish` | | dev: clear the bought plots and top out every tower site now |
+| `fund` | `amount` (default 1e9) | dev: money to every tower developer |
+
+Building `inspect` carries `tower`: `height_m`, `rank`, `rank_label`, `height_limit_m`, and for a
+league tower `league`, `design`, `design_label`, `developer`, `lots`, `pending_lots`, `site_m2`,
+`floors`, `started_day`, `topped_out_day`, `record_bid`, `progress`, `days_left`. City Data's City,
+Skyline page (`city_data {tab: "city", sub: "skyline"}`) shows the same.
+
+```json
+{"cmd": "skyline"}
+{"cmd": "skyline", "action": "start", "height": 520, "design": "bundled", "at": [0, 0]}
+{"cmd": "height_limit", "limit": 300}
 ```
 
 ### Selection and the player's UI
@@ -1278,11 +1312,11 @@ Reply:
 
 | action | fields | reply |
 | --- | --- | --- |
-| `list` (default) | | `districts`: id, name, policy, residential, commercial, industry, historic, landmark, area_m2, centroid, lots, vacant_lots, buildings, under_construction, by_land_use, by_tier, in_look (buildings already in the district's look), homes, residents, jobs, workers, businesses_open, hotels, beds, tourists_staying, land_value_avg, rent_avg, attraction |
+| `list` (default) | | `districts`: id, name, policy, residential, commercial, industry, historic, height_limit, landmark, area_m2, centroid, lots, vacant_lots, buildings, under_construction, by_land_use, by_tier, in_look (buildings already in the district's look), homes, residents, jobs, workers, businesses_open, hotels, beds, tourists_staying, land_value_avg, rent_avg, attraction |
 | `create` | `name` optional (generated otherwise) | `id`, `name` |
 | `paint` | `id` (or `district`: id or name; none starts a new district, `new_name`), then `at` `[x,y]` + `radius` (default 40), `polygon`, or `rect` `[[x0,y0],[x1,y1]]`; `erase` | `id`, `cells_changed` (16 m cells) |
 | `erase` | `at` + `radius`, `polygon` or `rect` | `cells_changed` |
-| `set` | `id` / `district`; any of `residential` kowloon / suburban / eco / none, `commercial` neon_strip / tech_campus / night_market / tourist / none, `industry` farming / oil / refinery / manufacturing / logistics / fishing / tech / none, `historic` bool, `rename` | `id`, `name`, `policy` |
+| `set` | `id` / `district`; any of `residential` kowloon / suburban / eco / none, `commercial` neon_strip / tech_campus / night_market / tourist / none, `industry` farming / oil / refinery / manufacturing / logistics / fishing / tech / none, `historic` bool, `height_limit` (m; null or 0 lifts it), `rename` | `id`, `name`, `policy` |
 | `remove` | `id` / `district` | `removed` |
 | `at` | `at` `[x,y]` | the district there |
 | `select` | `id` / `district` (none clears) | the District tool's selected district |

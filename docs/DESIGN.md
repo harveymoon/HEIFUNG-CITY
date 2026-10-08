@@ -1118,6 +1118,36 @@ Citizens are rendered from their simulated positions every frame.
   19 offenders and about 10 offences a day, 103 of ~350 buildings overflowing, the hauler with 88
   clients; with a police station, jail, dispatch and depot, 11 offenders, 5 arrests, nothing
   overflowing.
+- **The skyline league** (`nd_sim::towers`, `world/towers.rs`, [supertall]): towers far above the
+  ordinary growth, in three classes: skyscrapers (150 m up), supertalls (300 m up), megatalls (600 m
+  up). Tower developers (fictional firms) gather capital daily with the city (900 per person, more
+  with demand for offices or homes; one more firm per 5,000 people, four at most). Once a city has
+  1,200 people, with at most one project rising (plus one per 10,000 people) and three days since the
+  last, a 40% roll a day lets the richest break ground. Sites: commercial or residential plots on land
+  worth 0.6+, pressure for 9+ floors and 50+ floors of neighbours within 160 m, under every height
+  limit, scored by value x (pressure floors + neighbour floors / 12). The height: 6-24% over the
+  tallest standing or rising (the record) when demand is 0.2+ and the money (height² x $900 plus the
+  plots) is there, else a skyscraper under the record; never over the limit or what the town can
+  carry (110 m + 0.05 m a person). The site: a supertall needs two plots and 1,500 m², a megatall
+  three and 2,600 m² (a skyscraper one and 700 m²): touching plots of its land use are bought, vacant
+  first then cheapest, never the city's, a home bought outright, a billionaire's, a merged building
+  or another tower, as long as they make one compact block (hull within 18%). The grown buildings
+  come down (residents move with a memory), the plots join as their rubble goes, and the podium and
+  tower go up over 12 + height/15 days (a month for a skyscraper, two for a megatall). The sim counts
+  floors at 4 m (88% of the height: the spire is not floors); homes (2 a floor) or offices (6 a floor)
+  count all of the first 40 floors, half of the next 80 and a quarter above, capped at 900 homes or
+  1,500 jobs; power is the usual per floor x 1.25 (lifts, cooling). A finished tower lifts the land
+  round it (up to 460 m, by its height). Topping out writes the record book when it is the tallest and
+  a line of news either way ("Kestrel Group tops out Meridian Spire at 412 m, the city's tallest").
+  Towers are never bought out, refitted to a district's look, retiered into a redevelopment, given a
+  drone pad or demolished for a failed tenant (offices take the floors). Height limits: the city's
+  (City Data, City, Skyline), a district's (the District tool) and 120 m within 350 m of a vertiport
+  the player placed; they hold ordinary buildings too (`height_cap`). Drawn by
+  `nd_procgen::buildings::supertall`: a stone podium with a glass lobby and roof garden, and one of
+  four forms: a stepped Art Deco spire, bundled tubes on a Y plan stepping back in a spiral to a
+  needle (the Burj type), a twisting tower with a halo crown, a needle tower with neon edges; gold or
+  neon on every setback, lit crowns, red aviation lights every 90 m. The site shows the concrete core
+  leading, bare floor plates, glazing behind, netting and a jump crane on the core.
 - **Districts** (`nd_sim::districts`, `world/districts.rs`, the District tool 9): named areas painted
   over the map with a brush or a polygon, as in Cities: Skylines, on a 16 m raster of district ids
   (saved run-length encoded). Painting applies at once, outside projects: it moves no road, lot or

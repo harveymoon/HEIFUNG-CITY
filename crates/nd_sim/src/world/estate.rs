@@ -22,7 +22,7 @@ const DEVELOPERS: &[&str] = &["Kessler Land", "Halcyon Developments", "Argent Ho
 impl World {
     /// A generator for one draw site, keyed by the tick: deterministic and
     /// independent of the world's own stream.
-    fn erng(&self, salt: u64) -> SimRng {
+    pub(super) fn erng(&self, salt: u64) -> SimRng {
         crate::rng_for(self.config.seed ^ ESTATE_SALT ^ salt.wrapping_mul(0x51_7C_C1_B7), self.clock.tick)
     }
 
@@ -182,7 +182,9 @@ impl World {
             return Some(Cow::Borrowed(lot));
         }
         let others: Vec<&Lot> = b.plot.extra_lots.iter().filter_map(|l| self.lots.get(*l)).collect();
-        Some(match merged_lot(lot, &others) {
+        // [supertall] A tower's assembled site may be a little less compact.
+        let slack = if b.plot.form == Some(Form::Tower) { crate::towers::TOWER_HULL_SLACK } else { MERGE_HULL_SLACK };
+        Some(match merged_lot_within(lot, &others, slack) {
             Some(m) => Cow::Owned(m),
             None => Cow::Borrowed(lot),
         })
@@ -208,7 +210,7 @@ impl World {
 
     /// `owner` buys `bid` (or takes it on as built): off its old owner's
     /// books, onto the new one's.
-    fn give_to(&mut self, bid: BuildingId, owner: OwnerId, price: f64) {
+    pub(super) fn give_to(&mut self, bid: BuildingId, owner: OwnerId, price: f64) {
         let Some(b) = self.buildings.get_mut(bid) else { return };
         let old = b.plot.owner.replace(owner);
         if let Some(o) = old.filter(|o| *o != owner).and_then(|o| self.estate.owners.get_mut(o)) {
@@ -296,7 +298,7 @@ impl World {
     /// Can the market buy this building? Built and standing, ordinary (not
     /// the city's, a car park, a taxi yard or cargo hub), not in a frozen
     /// historic district, not a home bought outright, not a billionaire's.
-    fn buyable(&self, bid: BuildingId) -> bool {
+    pub(super) fn buyable(&self, bid: BuildingId) -> bool {
         let Some(b) = self.buildings.get(bid) else { return false };
         if b.construction.is_some() || b.demolition.is_some() || b.is_special() || b.is_parking() || b.land_use == LandUse::Park || b.land_use == LandUse::Civic {
             return false;
@@ -305,6 +307,10 @@ impl World {
             return false;
         }
         if b.plot.form.is_some_and(|f| f.owner_occupied()) || !b.plot.pending_lots.is_empty() {
+            return false;
+        }
+        // [supertall] A league tower is nobody's teardown.
+        if b.plot.tower.is_some() {
             return false;
         }
         if let Some((_, o)) = self.owner_of(bid) {
@@ -435,7 +441,7 @@ impl World {
     /// Buy `plots` for `bid`: vacant ones join at once, built ones are
     /// pulled down first (`memory` for those who must leave) and join when
     /// the rubble is gone.
-    fn take_plots(&mut self, bid: BuildingId, plots: &[LotId], memory: &str) {
+    pub(super) fn take_plots(&mut self, bid: BuildingId, plots: &[LotId], memory: &str) {
         for &l in plots {
             let Some(lot) = self.lots.get(l) else { continue };
             match lot.building {
@@ -692,7 +698,7 @@ impl World {
         let Some(b) = self.buildings.get(bid) else { return false };
         let Some(kind) = b.business.as_ref().map(|z| z.kind) else { return false };
         let Some(form) = expansion_form(kind) else { return false };
-        if !b.plot.pending_lots.is_empty() || b.construction.is_some() {
+        if !b.plot.pending_lots.is_empty() || b.construction.is_some() || b.plot.tower.is_some() {
             return false;
         }
         let ours = b.plot.lots(b.lot);
@@ -723,6 +729,7 @@ impl World {
         let new_floors = match form {
             Form::MegaHotel => floors.max(5) + 3,
             Form::Museum => floors.clamp(2, 4) + 1,
+            Form::Tower => floors,
             _ if lu == LandUse::Industrial => floors,
             _ => floors + 1,
         };
@@ -873,6 +880,8 @@ impl World {
     /// A building finished: whoever bought it moves in; a mansion starts
     /// its NIMBY pull. Called from `finish_construction`.
     pub(super) fn estate_finished(&mut self, bid: BuildingId) {
+        // [supertall] A league tower tops out: the record book and the news.
+        self.tower_finished(bid);
         let Some(b) = self.buildings.get(bid) else { return };
         let (form, buyer) = (b.plot.form, b.plot.buyer);
         if let Some(hid) = buyer.filter(|h| self.households.contains_key(*h)) {

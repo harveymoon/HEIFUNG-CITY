@@ -535,6 +535,8 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
     super::places::building_place(ui, w, id);
     // [land] owner, price, plots and the owner's other properties
     super::estate::building_section(ui, w, id, selection);
+    // [supertall] height, rank, and a league tower's record
+    super::skyline::building_section(ui, w, id, selection);
 
     // ── People ──
     let inside: Vec<nd_sim::CitizenId> = w.citizens.iter().filter(|(_, c)| c.inside == Some(id)).map(|(cid, _)| cid).collect();
