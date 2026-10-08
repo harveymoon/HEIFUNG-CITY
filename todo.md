@@ -277,6 +277,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] FLAG (day 23): pedestrians and taxis stuck on the highway near (590, 408); Cass Baptiste waits for a cab that never comes for days [fix/ped-highway]
 - [ ] FLAG (day 23): interchange with a street underpass came out as garbage, ramps re-routed, artifacts; clean interchanges (maybe a diamond tool) [fix/interchange]
 - [ ] FLAG (day 23): footbridge over Umbra Parade left the crosswalk; nobody uses the bridge; cars stop for people on it [fix/footbridge]
+- [ ] One full-screen City Data pane (tabs City/Economy/Market/People/... with sub-tabs), consistent page style; tools stay floating [feat/city-data]
 
 ## Agents running (update when starting/merging; survives context compaction)
 - feat/fire-scene: fire scene crews, hoses, ladder (started 2026-10-07 evening)
@@ -284,3 +285,4 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - fix/ped-highway: pedestrians/taxis stranded on the highway (started 2026-10-07 23:20)
 - fix/interchange: clean interchanges, ramp+street logic (started 2026-10-07 23:25)
 - fix/footbridge: footbridge replaces crosswalk (started 2026-10-08 00:00)
+- feat/city-data: full-screen City Data pane with tabs (started 2026-10-08 00:05)
