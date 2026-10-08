@@ -161,7 +161,7 @@ impl World {
         let pull = self.campus_pull();
         for &bid in &ids {
             let (lot, jobs) = (self.buildings[bid].lot, self.buildings[bid].jobs);
-            let students = if pull.is_empty() || !self.buildings[bid].business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::Bakery | BusinessKind::GadgetShop)) {
+            let students = if pull.is_empty() || !self.buildings[bid].business.as_ref().is_some_and(|z| z.kind.student_trade()) {
                 0.0
             } else {
                 self.lots.get(lot).map_or(0.0, |l| Self::student_feet(&pull, l.center))
@@ -179,12 +179,7 @@ impl World {
             if bz.closed || !open {
                 continue;
             }
-            let output = match bz.kind {
-                BusinessKind::Grocery => Resource::Groceries,
-                BusinessKind::Bakery => Resource::BakedGoods,
-                BusinessKind::GadgetShop => Resource::Goods,
-                _ => continue,
-            };
+            let Some(output) = bz.kind.walk_in_sale() else { continue };
             let want = feet * 0.06;
             let got = bz.take(output, want.min(bz.stock_of(output)));
             if got > 0.0 {
@@ -687,6 +682,12 @@ impl World {
                 if !to_site && !long_haul {
                     if let Some(l) = self.corp_livery(cargo.from) {
                         self.traffic.cars[id].model.livery = l;
+                    } else if let Some(l) = self.corp_livery(cargo.to).filter(|_| self.buildings.get(cargo.to).and_then(|b| b.business.as_ref()).is_some_and(|z| z.kind.customers_per_job().is_some())) {
+                        // [sweep-sim] A corp's shop is stocked by the corp's
+                        // own vans, so a corp of shops alone has a fleet too.
+                        let m = &mut self.traffic.cars[id].model;
+                        m.livery = l;
+                        m.body = crate::vehicle::BodyType::DeliveryVan;
                     }
                 }
             }

@@ -1413,13 +1413,17 @@ fn sync_lots(
             if lot.polygon.len() < 3 || lot.landlocked {
                 continue;
             }
-            let c = if lot.shore.beach { BEACH_TINT } else { zone_layer_color(lot.land_use) };
+            // [sweep-sim] A dock or a station stands on its own unzoned
+            // footprint: drawn as itself (a pale transport outline), not as
+            // the civic/industrial use its lot carries for the economy.
+            let transport = lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.port.is_some() || b.rail.is_some());
+            let c = if lot.shore.beach { BEACH_TINT } else if transport { TRANSPORT_TINT } else { zone_layer_color(lot.land_use) };
             let alpha = if lot.building.is_some() { 0.5 } else { 0.72 };
             // A plant or battery field is a flat yard: the wash would flood
             // it in the zone's colour (a solar farm on a residential lot
             // read as a green block), so it keeps only the outline.
             let power = lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.is_power());
-            if !power {
+            if !power && !transport {
                 wash.ground_polygon(&lot.polygon, 0.35, [c[0], c[1], c[2], alpha]);
             }
             // A park's lots are one park: no zone edge down the seams
@@ -1463,6 +1467,9 @@ fn sync_lots(
 
 /// [waterfront] Public beaches on the zoning layer and in previews: sand.
 const BEACH_TINT: [f32; 3] = [1.15, 0.9, 0.45];
+/// [sweep-sim] Docks and stations on the zoning layer: their own use, an
+/// outline in pale steel, no zone wash.
+const TRANSPORT_TINT: [f32; 3] = [0.75, 0.8, 0.95];
 
 /// The zoning layer's colours: fixed, saturated and far apart (as city
 /// builders use them), not the palette's subdued tints, so zones read at a

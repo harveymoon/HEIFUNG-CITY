@@ -223,3 +223,59 @@ fn a_dock_from_an_older_save_keeps_its_street_along_the_front() {
     assert_eq!(port.road_line(), port.front_line(), "an old dock's street is the one along its front");
     assert_eq!(back.road_access(id), Some(false));
 }
+
+/// [sweep-sim] A path from the city to the stub's end is enough for
+/// passengers (a ferry terminal, a station): they walk in; a dock that
+/// lands goods still waits for a road.
+#[test]
+fn a_path_to_the_stub_serves_passengers_but_not_goods() {
+    let mut w = valley(8);
+    let (p, flow, n, width) = river_spot(&w);
+    let id = w.place_port(PortKind::FerryTerminal, p + n * (width * 0.5 + 18.0)).unwrap();
+    let stub = w.ports.port_of(id).unwrap().stub.unwrap();
+    let dir = (stub[1] - stub[0]).normalize();
+    let start = stub[1] + dir * 120.0;
+    town_from(&mut w, start, dir);
+    assert_eq!(w.access_serves(id), Some(false), "a town nearby is not enough");
+    w.add_path(&[stub[1], start]);
+    let port = w.ports.port_of(id).unwrap();
+    assert!(!port.road_connected && port.walk_connected, "on foot only: {} {}", port.road_connected, port.walk_connected);
+    assert!(port.works() && port.walk_only(), "a ferry terminal works on foot");
+    assert_eq!(w.road_access(id), Some(false));
+    assert_eq!(w.access_problem(id), None, "nothing wrong for passengers");
+    assert!(w.access_note(id).is_some_and(|s| s.contains("on foot")));
+    assert!((0..40).any(|_| w.pick_job() == Some(id)), "it hires: staff walk in");
+    // A shipping port on the same terms waits for a road.
+    let q = p + flow * 400.0;
+    if let Ok(dock) = w.place_port(PortKind::ShippingPort, q + n * (width * 0.5 + 18.0)) {
+        if let Some(st) = w.ports.port_of(dock).unwrap().stub {
+            w.add_path(&[st[1], start]);
+            let dp = w.ports.port_of(dock).unwrap();
+            if dp.walk_connected {
+                assert!(!dp.works(), "goods need a road");
+                assert!(w.access_problem(dock).is_some_and(|s| s.contains("goods need a road")), "{:?}", w.access_problem(dock));
+            }
+        }
+    }
+}
+
+#[test]
+fn a_station_joined_by_a_path_takes_passengers() {
+    let mut w = valley(8);
+    let spot = [-200.0f32, 200.0, -700.0, 700.0, 0.0]
+        .iter()
+        .map(|&x| Vec2::new(x, TRUNK_Y + 30.0))
+        .find(|&q| (0..8).all(|k| !w.landscape.is_water(q + Vec2::new(k as f32 * 15.0 - 60.0, 0.0))) && w.landscape.rivers.iter().all(|r| r.nearest(q).2 > 160.0))
+        .expect("dry ground by the trunk");
+    let id = w.place_rail_facility(RailFacility::Station, spot).expect("a station needs only its track");
+    assert!(w.halts.contains(&id));
+    let ends = w.stub_ends_of(id);
+    let f = w.facilities.values().find(|f| f.building == Some(id)).unwrap().clone();
+    let start = ends[0] - f.inward() * 100.0;
+    town_from(&mut w, start, -f.inward());
+    w.add_path(&[ends[0], start]);
+    let link = w.buildings[id].rail.clone().unwrap();
+    assert!(link.walk_connected && !link.road_connected && link.works(), "{link:?}");
+    assert!(w.stations.contains(&id) && !w.halts.contains(&id), "a station people walk to");
+    assert!(w.access_problem(id).is_none() && w.access_note(id).is_some());
+}

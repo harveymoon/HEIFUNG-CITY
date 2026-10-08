@@ -253,7 +253,7 @@ pub fn swatches(ui: &mut egui::Ui, items: &[(Color32, String)], round: bool) {
 fn legend_zoning(ui: &mut egui::Ui, cx: &LegendCtx) {
     let items: Vec<(Color32, String)> = LandUse::ALL.iter().map(|lu| (linear(cx.assets.palette.zone_color(*lu)), lu.label().to_string())).collect();
     swatches(ui, &items, false);
-    small(ui, "glowing outlines: zoned lots by use; plain outlines: vacant lots");
+    small(ui, "glowing outlines: zoned lots by use; plain outlines: vacant lots; pale steel outlines: docks and stations (their own ground, no zone)");
 }
 
 fn legend_land_value(ui: &mut egui::Ui, cx: &LegendCtx) {

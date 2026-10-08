@@ -533,12 +533,8 @@ impl World {
                     venue = true;
                     paid = want;
                 }
-                BusinessKind::GadgetShop | BusinessKind::Bakery | BusinessKind::Grocery => {
-                    let r = match bz.kind {
-                        BusinessKind::GadgetShop => Resource::Goods,
-                        BusinessKind::Bakery => Resource::BakedGoods,
-                        _ => Resource::Groceries,
-                    };
+                BusinessKind::GadgetShop | BusinessKind::Bakery | BusinessKind::Grocery | BusinessKind::Cafe | BusinessKind::Bookshop => {
+                    let r = bz.kind.walk_in_sale().unwrap_or(Resource::Groceries);
                     let price = bz.sell_price(r, jobs).max(0.1);
                     let got = bz.take(r, want / price);
                     paid = got * price;
@@ -711,7 +707,7 @@ impl World {
             let Some(z) = b.business.as_ref() else { continue };
             // [waterfront] the restaurants on piers, beach bars and boat rentals too
             let shore = matches!(z.kind, BusinessKind::PierRestaurant | BusinessKind::BeachBar) || (!night && z.kind == BusinessKind::BoatRental);
-            let wanted = shore || if night { z.kind == BusinessKind::Venue } else { matches!(z.kind, BusinessKind::GadgetShop | BusinessKind::Bakery) || (z.kind == BusinessKind::Venue && hour >= 18) };
+            let wanted = shore || if night { z.kind == BusinessKind::Venue } else { matches!(z.kind, BusinessKind::GadgetShop | BusinessKind::Bakery | BusinessKind::Cafe | BusinessKind::Bookshop) || (z.kind == BusinessKind::Venue && hour >= 18) };
             if !wanted || z.closed || !b.operating() || !b.opening_hours().contains(hour) {
                 continue;
             }

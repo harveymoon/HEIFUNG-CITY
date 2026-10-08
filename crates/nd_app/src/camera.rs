@@ -483,7 +483,10 @@ fn control_camera(
         if mv != Vec3::ZERO {
             walk.pos += mv.normalize() * speed * dt;
         }
-        let limit = sim.world.config.half_extent + 150.0;
+        // [sweep-sim] As far as there is land to build on (lots on far
+        // islands), not just the configured square.
+        let limit = (sim.world.parcel_half() + 150.0).min(nd_sim::landscape::LAND_HALF);
+        let limit = limit.max(sim.world.config.half_extent + 150.0);
         walk.pos.x = walk.pos.x.clamp(-limit, limit);
         walk.pos.z = walk.pos.z.clamp(-limit, limit);
         // Eyes above whatever is underfoot: hills, bridge decks.

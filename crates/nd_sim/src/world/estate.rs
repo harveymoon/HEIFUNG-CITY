@@ -32,7 +32,7 @@ impl World {
     /// cars standing, folded into the running averages.
     pub(super) fn hourly_pressure(&mut self) {
         if !self.estate.pressure.ready() {
-            self.estate.pressure = Pressure::new(self.config.half_extent + 200.0);
+            self.estate.pressure = Pressure::new(self.grid_half(crate::estate::PRESSURE_CELL));
         }
         let p = &self.estate.pressure;
         let cells = p.value.len();
@@ -205,7 +205,7 @@ impl World {
 
     pub(super) fn new_owner(&mut self, name: String, kind: OwnerKind) -> OwnerId {
         let day = self.clock.day();
-        self.estate.owners.insert(Owner { name, kind, properties: Vec::new(), spent: 0.0, since_day: day as u32 })
+        self.estate.owners.insert(Owner { name, kind, properties: Vec::new(), spent: 0.0, since_day: day as u32, income_day: 0.0, earned: 0.0 })
     }
 
     /// `owner` buys `bid` (or takes it on as built): off its old owner's
@@ -337,6 +337,9 @@ impl World {
         self.build_mcmansions();
         // [rich] The well-off buy a business or a second home.
         self.invest_rich();
+        // [sweep-sim] ... and what they hold pays them.
+        self.pay_investors();
+        self.weekend_cars();
         self.daily_elites();
         self.daily_nimby();
     }

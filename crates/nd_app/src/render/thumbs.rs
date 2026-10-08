@@ -154,7 +154,7 @@ fn building(p: Placeable, rules: &nd_procgen::BuildingRules, palette: &nd_procge
         }
         Placeable::Rail(f) => {
             let (w, d) = nd_sim::Facility::size(f);
-            rail_link = nd_sim::rail::RailLink { kind: f, segment: SegmentId(0), platform: [SVec2::new(-w * 0.5, d * 0.5 + 2.0), SVec2::new(w * 0.5, d * 0.5 + 2.0)], side: 1.0, rail_connected: true, road_connected: true };
+            rail_link = nd_sim::rail::RailLink { kind: f, segment: SegmentId(0), platform: [SVec2::new(-w * 0.5, d * 0.5 + 2.0), SVec2::new(w * 0.5, d * 0.5 + 2.0)], side: 1.0, rail_connected: true, road_connected: true, walk_connected: true };
             extras.rail = Some(&rail_link);
             (w, d, LandUse::Industrial, 1)
         }

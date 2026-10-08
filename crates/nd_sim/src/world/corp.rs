@@ -747,12 +747,12 @@ impl World {
         let kind = match lu {
             LandUse::Residential => None,
             LandUse::Commercial => {
-                let opts = [BusinessKind::Office, BusinessKind::GadgetShop, BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::Hotel];
-                let owned: Vec<BusinessKind> = self.estate.owners.get(self.corps.corps[ci].owner).map(|o| o.properties.iter().filter_map(|p| self.buildings.get(*p)?.business.as_ref().map(|z| z.kind)).collect()).unwrap_or_default();
-                let start = (h % opts.len() as u64) as usize;
-                Some((0..opts.len()).map(|k| opts[(start + k) % opts.len()]).find(|k| !owned.contains(k)).unwrap_or(opts[start]))
+                let opts = [BusinessKind::Office, BusinessKind::GadgetShop, BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::Hotel, BusinessKind::Cafe, BusinessKind::Bookshop];
+                Some(self.corp_new_kind(ci, &opts, h))
             }
-            LandUse::Entertainment => Some(BusinessKind::Venue),
+            // [sweep-sim] Not a row of "<Corp> Venue"s: a bar, a driving
+            // range or a café, what it does not run yet first.
+            LandUse::Entertainment => Some(self.corp_new_kind(ci, &[BusinessKind::Venue, BusinessKind::GolfRange, BusinessKind::Cafe], h)),
             LandUse::Industrial => Some(match self.corps.corps[ci].origin {
                 k if k.industry().is_some() && !k.needs_site() => k,
                 _ => [BusinessKind::Fab, BusinessKind::Assembly, BusinessKind::Mill][(h % 3) as usize],
@@ -773,6 +773,8 @@ impl World {
         let short = self.corps.corps[ci].brand.name.split_whitespace().next().unwrap_or("Corp").to_string();
         let name = match (lu, kind) {
             (LandUse::Residential, _) => format!("{short} Residences"),
+            // [sweep-sim] A bar is named like one.
+            (_, Some(BusinessKind::Venue)) => format!("{short} {}", ["Lounge", "Club", "Social", "Taproom", "Hall"][(mix(h, 7) % 5) as usize]),
             (_, Some(k)) => format!("{short} {}", title_case(k.label())),
             _ => format!("{short} Building"),
         };
@@ -794,6 +796,14 @@ impl World {
         let owner = self.corps.corps[ci].owner;
         self.give_to(id, owner, 0.0);
         Some(id)
+    }
+
+    /// [sweep-sim] Of `opts`, the first from a hash-picked start that corp
+    /// `ci` does not run yet (the start itself when it runs them all).
+    fn corp_new_kind(&self, ci: usize, opts: &[BusinessKind], h: u64) -> BusinessKind {
+        let owned: Vec<BusinessKind> = self.estate.owners.get(self.corps.corps[ci].owner).map(|o| o.properties.iter().filter_map(|p| self.buildings.get(*p)?.business.as_ref().map(|z| z.kind)).collect()).unwrap_or_default();
+        let start = (h % opts.len() as u64) as usize;
+        (0..opts.len()).map(|k| opts[(start + k) % opts.len()]).find(|k| !owned.contains(k)).unwrap_or(opts[start])
     }
 
     /// Over the player's cap (it was lowered): sell the newest holdings

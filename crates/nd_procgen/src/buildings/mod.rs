@@ -1704,7 +1704,7 @@ fn back_edge_link(lot: &Lot, kind: RailFacility) -> RailLink {
     // `perp(along) * side` is the direction from the track to the building:
     // here, from behind the lot towards the road.
     let side = if Vec2::new(-d.y, d.x).dot(lot.front_dir) >= 0.0 { 1.0 } else { -1.0 };
-    RailLink { kind, segment: nd_sim::SegmentId(0), platform: [back - d * half, back + d * half], side, rail_connected: true, road_connected: true }
+    RailLink { kind, segment: nd_sim::SegmentId(0), platform: [back - d * half, back + d * half], side, rail_connected: true, road_connected: true, walk_connected: true }
 }
 
 #[cfg(test)]
@@ -2371,7 +2371,7 @@ mod tests {
                     let along = if Vec2::new(-d.y, d.x).dot(lot.front_dir) * side > 0.0 { d } else { -d };
                     let centre = (a + b) * 0.5 - lot.front_dir * 4.0;
                     let half = (a.distance(b) * 0.45).min(40.0);
-                    let link = RailLink { kind, segment: nd_sim::SegmentId(0), platform: [centre - along * half, centre + along * half], side, rail_connected: true, road_connected: true };
+                    let link = RailLink { kind, segment: nd_sim::SegmentId(0), platform: [centre - along * half, centre + along * half], side, rail_connected: true, road_connected: true, walk_connected: true };
                     let g = generate_building(lot, LandUse::Industrial, 2, Tier::Mid, 0.8, 5 + li as u64, &rules, &pal, &Extras { rail: Some(&link), ..Extras::default() });
                     check_mesh(&g, "rail");
                     let (over, _, low, culprit) = extent(&g, lot, Some(&link));

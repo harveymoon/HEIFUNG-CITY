@@ -339,6 +339,12 @@ impl World {
     /// [batteries] Today's price thresholds for the batteries: the regional
     /// prices of every hour of the day, at the temperature the day's swing
     /// gives it (this hour's at the air now).
+    ///
+    /// [sweep-sim] The other hours use the predicted temperature on
+    /// purpose: an operator sets tomorrow's charge plan from the forecast,
+    /// not from weather nobody has seen yet, so a cold snap that beats the
+    /// forecast can catch the packs half full. That is the intended play,
+    /// not a shortcut.
     pub fn price_bands_today(&self) -> crate::power::PriceBands {
         let now = self.clock.hour() as u32;
         let prices: Vec<f32> = (0..24u32)

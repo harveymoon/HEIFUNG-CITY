@@ -839,6 +839,10 @@ impl World {
         if let Some(k) = self.campus_business(lot_id, lu) {
             return Some(k);
         }
+        // [sweep-sim] Cafés and bookshops on dear downtown streets.
+        if let Some(k) = self.downtown_business(lot_id, lu) {
+            return Some(k);
+        }
         if lu == LandUse::Industrial {
             let forced = self.lots.get(lot_id).and_then(|l| self.industry_bias_at(l.center)).flatten().is_some();
             if let Some(k) = self.pick_industrial_business(lot_id) {

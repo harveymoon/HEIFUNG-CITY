@@ -24,7 +24,7 @@ impl World {
             version config clock rng master project parked_projects next_project plan_warnings
             implement_refused parcels planned parcel_lots next_gesture plan_version plan_cache roads zones
             lots buildings citizens households traffic walk weather transit rail facilities economy
-            services land_value land_value_work events next_seed road_component deferred_intents stations
+            services land_value land_value_work events next_seed road_component drive_component deferred_intents stations
             yards halts seller_index seller_index_hour available groceries_for_sale meals_for_sale
             landscape ports fishing road_z road_inner relief ground bridge_metres bots driving journeys
             peds waiting_cache crowds_cache seats society vehicles enforcement air contamination cleanups

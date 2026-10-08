@@ -463,7 +463,9 @@ impl World {
             // nobody yet.
             .filter(|(_, b)| b.operating() || b.construction.is_some())
             // [dock-access] A dock or station off the roads hires nobody yet.
-            .filter(|(id, b)| !((b.port.is_some() || b.rail.is_some()) && self.road_access(*id) == Some(false)))
+            // [sweep-sim] One people can walk to (a ferry terminal or a
+            // station joined by a path) hires: its staff walk in too.
+            .filter(|(id, b)| !((b.port.is_some() || b.rail.is_some()) && self.access_serves(*id) == Some(false)))
             .map(|(id, b)| (b.staffing() - bonus(b), id))
             .collect();
         let best = scored.iter().map(|(s, _)| *s).fold(f32::INFINITY, f32::min);

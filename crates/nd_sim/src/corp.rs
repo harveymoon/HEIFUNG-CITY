@@ -582,6 +582,8 @@ pub struct CorpStats {
     pub students_to_class_today: u32,
     pub student_trade_today: f32,
     pub campus_expansions_total: u32,
+    /// [sweep-sim] Local students who left the family home for a dorm.
+    pub students_left_home_total: u32,
     pub divested_total: u32,
 }
 

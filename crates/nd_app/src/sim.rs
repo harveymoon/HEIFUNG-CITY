@@ -229,8 +229,10 @@ impl Sim {
     }
 
     pub fn load(&mut self, path: &str) -> Result<(), String> {
+        crate::crash::note_io("loading", Path::new(path));
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         self.world = World::from_ron(&text).map_err(|e| e.to_string())?;
+        crate::crash::note_io("loaded", Path::new(path));
         self.city_replaced();
         Ok(())
     }
@@ -275,6 +277,8 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// writer on the temporary file, so a big save never sits whole in memory.
 pub fn write_atomic_with(path: &Path, fill: impl FnOnce(&mut std::io::BufWriter<std::fs::File>) -> std::io::Result<()>) -> std::io::Result<()> {
     use std::io::Write;
+    // [sweep-sim] For the crash log.
+    crate::crash::note_io("saving", path);
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {

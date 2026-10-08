@@ -13,9 +13,11 @@
 //!
 //! *Students* go to class at 09:00 and stay till 15:00, and on a share of
 //! evenings go out to a bar, a pizza place or the theatre near campus.
-//! Pizza places, cafés (bakeries) and bookshops (gadget shops) near campus
-//! see student walk-ins every open hour, and new shops and bars near a busy
-//! campus open as those trades.
+//! Pizza places (bakeries), cafés and bookshops near campus see student
+//! walk-ins every open hour, and new shops and bars near a busy campus
+//! open as those trades. [sweep-sim] Some local students leave the family
+//! home for a free dorm room before any arrive from out of town
+//! (`students_leave_home`).
 //!
 //! *Schools and families*: a household with children picks a home a school
 //! covers when one of its tier is free, and a family living out of reach of
@@ -37,6 +39,13 @@ pub const DORM_SHARE: f32 = 0.35;
 pub const FAMILY_SCHOOL_COVER: f32 = 0.3;
 /// Chance a day a family out of reach of any school moves to one.
 pub const FAMILY_MOVE_CHANCE: f32 = 0.12;
+/// [sweep-sim] Share of local students (by a hash of their seed) who would
+/// rather live in a dorm than with their family.
+pub const LOCAL_DORM_SHARE: f32 = 0.4;
+/// [sweep-sim] Land value from which a new shop counts as downtown, and the
+/// share of those that open as a café or a bookshop.
+pub const DOWNTOWN_VALUE: f32 = 0.7;
+pub const DOWNTOWN_SHARE: f32 = 0.2;
 
 impl World {
     // ── founding ───────────────────────────────────────────────────────────
@@ -176,7 +185,8 @@ impl World {
         let k = &self.corps.campuses[ki];
         let mut free: Vec<BuildingId> = k.annexes.iter().filter(|(_, a)| matches!(a, Annex::Dorm | Annex::Frat)).map(|(b, _)| *b).filter(|b| self.buildings.get(*b).is_some_and(|x| x.operating() && x.free_homes() > 0)).collect();
         free.sort();
-        let mut n = 0;
+        // [sweep-sim] Local students first: some leave the family home.
+        let mut n = self.students_leave_home(ki, &mut free);
         while n < DORM_ARRIVALS_PER_DAY && self.corps.campuses[ki].students.len() < places {
             let Some(&dorm) = free.first() else { break };
             let Some(cid) = self.student_arrives(ki, dorm) else { break };
@@ -186,6 +196,64 @@ impl World {
                 free.remove(0);
             }
         }
+    }
+
+    /// [sweep-sim] Enrolled students living with family (a grown-up past
+    /// student age at home too) who would rather live in a dorm
+    /// ([`LOCAL_DORM_SHARE`], by their seed) move into free rooms, nearest
+    /// the campus first, a few a day: a household of one, with a little
+    /// money from home. Returns how many moved.
+    pub(super) fn students_leave_home(&mut self, ki: usize, free: &mut Vec<BuildingId>) -> usize {
+        let dorms: Vec<BuildingId> = self.corps.campuses[ki].annexes.iter().filter(|(_, a)| matches!(a, Annex::Dorm | Annex::Frat)).map(|(b, _)| *b).collect();
+        let mut movers: Vec<(CitizenId, HouseholdId)> = self.corps.campuses[ki]
+            .students
+            .iter()
+            .copied()
+            .filter_map(|s| {
+                let c = self.citizens.get(s)?;
+                let hid = c.household?;
+                let h = self.households.get(hid)?;
+                let home = c.home?;
+                let family = h.members.len() > 1 && h.members.iter().any(|m| *m != s && self.citizens.get(*m).is_some_and(|o| o.age > *STUDENT_AGES.end()));
+                (family && !dorms.contains(&home) && unit(mix(c.seed, 0xD0_4E)) < LOCAL_DORM_SHARE && matches!(c.activity, Activity::AtHome | Activity::Idle)).then_some((s, hid))
+            })
+            .collect();
+        movers.sort();
+        let tick = self.clock.tick;
+        let day = self.clock.day();
+        let mut n = 0;
+        for (cid, old) in movers {
+            if n >= DORM_ARRIVALS_PER_DAY {
+                break;
+            }
+            let Some(&dorm) = free.first() else { break };
+            let from_home = (self.households[old].money * 0.1).clamp(0.0, 150.0);
+            self.households[old].money -= from_home;
+            self.households[old].members.retain(|m| *m != cid);
+            if let Some(b) = self.citizens[cid].home.and_then(|h| self.buildings.get_mut(h)) {
+                b.residents.retain(|r| *r != cid);
+            }
+            let hid = self.households.insert(Household { members: vec![cid], home: Some(dorm), money: from_home + 40.0, groceries: 1.0, rent_stress_days: 0, moved_day: day });
+            let name = self.buildings[dorm].name.clone();
+            {
+                let c = &mut self.citizens[cid];
+                c.home = Some(dorm);
+                c.household = Some(hid);
+                c.rent_stress_days = 0;
+                c.thought = "My own room at last.".to_string();
+                c.remember(tick, format!("Moved out of the family home into the dorm at {name}."));
+                c.next_decision_tick = tick + 1;
+            }
+            let b = &mut self.buildings[dorm];
+            b.households.push(hid);
+            b.residents.push(cid);
+            self.corps.stats.students_left_home_total += 1;
+            n += 1;
+            if self.buildings[dorm].free_homes() == 0 {
+                free.remove(0);
+            }
+        }
+        n
     }
 
     /// A student from out of town moves into a dorm room: a household of
@@ -531,7 +599,7 @@ impl World {
             .buildings
             .iter()
             .filter(|(_, b)| b.operating() && !b.is_derelict() && b.opening_hours().contains(hour))
-            .filter(|(_, b)| b.business.as_ref().is_some_and(|z| !z.closed && (z.kind.is_outing() || z.kind == BusinessKind::Bakery)) || b.annex == Some(Annex::Theatre))
+            .filter(|(_, b)| b.business.as_ref().is_some_and(|z| !z.closed && (z.kind.is_outing() || matches!(z.kind, BusinessKind::Bakery | BusinessKind::Cafe))) || b.annex == Some(Annex::Theatre))
             .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (l.center.distance(at), id, b.land_use)))
             .filter(|(d, _, _)| *d <= STUDENT_TRADE_REACH)
             .collect();
@@ -592,7 +660,24 @@ impl World {
         if !near || unit(mix(lot_id.data().as_ffi(), self.clock.day())) >= 0.5 {
             return None;
         }
-        Some(if lu == LandUse::Commercial { BusinessKind::Bakery } else { BusinessKind::Venue })
+        // [sweep-sim] On shop land a pizza place, a café or a bookshop.
+        let shops = [BusinessKind::Bakery, BusinessKind::Cafe, BusinessKind::Bookshop];
+        Some(if lu == LandUse::Commercial { shops[(mix(lot_id.data().as_ffi() ^ 0xCAFE, self.clock.day()) % 3) as usize] } else { BusinessKind::Venue })
+    }
+
+    /// [sweep-sim] A new shop on dear downtown land opens as a café or a
+    /// bookshop now and then (a hash of the lot and the day), so the
+    /// trades are not only round campuses.
+    pub(super) fn downtown_business(&self, lot_id: LotId, lu: LandUse) -> Option<BusinessKind> {
+        if lu != LandUse::Commercial {
+            return None;
+        }
+        let p = self.lots.get(lot_id)?.center;
+        if self.land_value.at(p) < DOWNTOWN_VALUE {
+            return None;
+        }
+        let h = mix(lot_id.data().as_ffi() ^ 0xB00C, self.clock.day());
+        (unit(h) < DOWNTOWN_SHARE).then(|| if mix(h, 1) % 2 == 0 { BusinessKind::Cafe } else { BusinessKind::Bookshop })
     }
 
     // ── schools and families ───────────────────────────────────────────────
