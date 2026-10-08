@@ -334,7 +334,6 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 ## Agents running (update when starting/merging; survives context compaction)
 - fix/interchange: clean interchanges, ramp+street logic (started 2026-10-07 23:25)
 - fix/footbridge: footbridge replaces crosswalk (started 2026-10-08 00:00)
-- feat/city-data: full-screen City Data pane with tabs (started 2026-10-08 00:05)
 - feat/dock-access: docks/stations without road access, road stubs (started 2026-10-08 00:25)
 - feat/fishing: fishing trips (started 2026-10-08 00:35)
 - feat/ferry-routes: ferry route highlight (started 2026-10-08 00:40)
