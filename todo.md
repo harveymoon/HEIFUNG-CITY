@@ -280,6 +280,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] One full-screen City Data pane (tabs City/Economy/Market/People/... with sub-tabs), consistent page style; tools stay floating [feat/city-data]
 - [ ] High quality: near-camera geometry washes out white in walk/close orbit [fix/haze]
 - [ ] Fire engines park mid-road/junction at a scene; crew stand in traffic (from feat/fire-scene leftovers)
+- [ ] Ferry/docks need only water access, rail stations only track; each gets a connectable road stub to join the network later [feat/dock-access]
 
 ## Agents running (update when starting/merging; survives context compaction)
 - feat/committee: AI committee, mock backend first, Ollama/Claude connectors (started 2026-10-07 evening)
@@ -288,3 +289,4 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - fix/footbridge: footbridge replaces crosswalk (started 2026-10-08 00:00)
 - feat/city-data: full-screen City Data pane with tabs (started 2026-10-08 00:05)
 - fix/haze: white washout near the camera at High (started 2026-10-08 00:20)
+- feat/dock-access: docks/stations without road access, road stubs (started 2026-10-08 00:25)
