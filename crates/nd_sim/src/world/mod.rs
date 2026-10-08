@@ -742,6 +742,14 @@ impl World {
         // [people] Saves from before households: one per citizen. Detected
         // per citizen (no household), so no version bump is needed.
         self.migrate_households();
+        // A parking lot the player placed before the flag existed is one of
+        // the city's own: roads stop at it instead of buying it out.
+        let city_lots: Vec<BuildingId> = self.vehicles.city_lots.keys().copied().collect();
+        for id in city_lots {
+            if let Some(b) = self.buildings.get_mut(id) {
+                b.city_parking = true;
+            }
+        }
         self.version = SAVE_VERSION;
         // Ring pieces and slip roads are flagged from the network's shape;
         // a save from before the flags has them unset.
