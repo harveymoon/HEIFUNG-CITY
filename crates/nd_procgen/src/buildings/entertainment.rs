@@ -284,8 +284,14 @@ pub fn arena(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Outward-leaning shell with a lit band and a roof ring.
     loft(g, f, Panel, &bowl, &scale_poly(&bowl, 1.12), 0.0, h * 0.7, panel);
     loft(g, f, Panel, &scale_poly(&bowl, 1.12), &scale_poly(&bowl, 1.05), h * 0.7, h, mul(panel, 0.85));
-    extrude(g, f, Glow, &scale_poly(&bowl, 1.125), h * 0.35, h * 0.42, mul(pick(rng, &pal.led_colors), 0.7));
-    extrude(g, f, Glow, &scale_poly(&bowl, 1.08), h * 0.74, h * 0.77, mul(pal.window_cold, 0.6));
+    // The lit bands follow the leaning shell, a hair proud of it: the
+    // shell's scale at height y, plus 0.6 per cent. (Drawn as straight
+    // cylinders they floated a metre or two out of one stage and were
+    // buried in the other.)
+    let shell = |y: f32| if y <= h * 0.7 { 1.0 + 0.12 * y / (h * 0.7) } else { 1.12 - 0.07 * (y - h * 0.7) / (h * 0.3) } + 0.006;
+    for (y0, y1, col) in [(h * 0.35, h * 0.42, mul(pick(rng, &pal.led_colors), 0.7)), (h * 0.74, h * 0.77, mul(pal.window_cold, 0.6))] {
+        band(g, f, Glow, &scale_poly(&bowl, shell(y0)), &scale_poly(&bowl, shell(y1)), y0, y1, col);
+    }
     extrude(g, f, Metal, &scale_poly(&bowl, 1.05), h, h + 1.2, mul(pal.steel, 0.9));
     let roof = scale_poly(&bowl, 1.0);
     extrude(g, f, Metal, &roof, h + 1.2, h + 1.5, mul(panel, 0.7));

@@ -521,16 +521,18 @@ pub fn brutalist_block(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, monumental
         } else {
             extrude(g, f, Concrete, poly, y0, y0 + h, concrete);
         }
-        let first = if si == 0 && monumental { 1 } else { 0 };
-        let fl = (h / fh).round() as i32;
-        for k in first..fl {
-            cornice(g, c, poly, y0 + k as f32 * fh + fh * 0.95, 0.35, 0.25, Concrete, mul(concrete, 1.08));
+        // Over the pilotis the floors start where the mass does (1.6 floor
+        // heights up), not one floor up: the first band hung under it.
+        let start = if si == 0 && monumental { ground_h } else { 0.0 };
+        let fl = if start > 0.0 { ((h - start) / fh + 0.05).floor().max(0.0) as i32 } else { (h / fh).round() as i32 };
+        for k in 0..fl {
+            cornice(g, c, poly, y0 + start + k as f32 * fh + fh * 0.95, 0.35, 0.25, Concrete, mul(concrete, 1.08));
         }
         for face in c.faces(poly) {
             if face.len < 4.0 {
                 continue;
             }
-            band_windows(g, c, rng, &face, y0 + first as f32 * fh, fl - first, fh);
+            band_windows(g, c, rng, &face, y0 + start, fl, fh);
             if face.is_front {
                 let fins = ((face.len / 3.2) as i32).max(2);
                 for k in 0..=fins {
