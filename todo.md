@@ -288,6 +288,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] People on an elevated path walk at ground level (even over water) under it; walkers/cars on raised ways must be drawn on the deck [fix/footbridge]
 - [x] People window grew every frame until it filled the screen → DONE [main 53c3a89]: histogram reserves the Lorenz chart's width; compact windows capped
 - [x] Speech bubbles around town off → DONE [main 2b7c892]: off by default, View window checkbox, saved in settings.ron
+- [ ] FLAG (new city day 3): blue plan near Pylon Drive refused on Implement, "would take" a far-away geothermal plant, nothing outlined [fix/false-block]
 
 ## Follow-ups noted in agent reports (not started)
 - [ ] Batteries charge on cheap night power and discharge at the evening peak (grid-weather)
@@ -333,3 +334,4 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - fix/haze (extended): + look-dev: normal maps, sky/atmosphere/fog, lamp light, wet roads, coal smoke in walk view
 - fix/interchange (extended): + road-polish leftovers: abutments, gore deck, signal arms, stop line, town street tapers
 - feat/committee (extended): + LLM dialogue for spotlit citizens and on-demand diaries
+- fix/false-block: false road refusal by a far plant; blockers in the plan preview (started 2026-10-08)
