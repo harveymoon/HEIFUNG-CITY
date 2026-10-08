@@ -1153,7 +1153,14 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             let mut s = 2.0;
             while s < len - 1.0 {
                 let (p, d, right) = at(s, -1.0, back_off);
-                if !free(p) || !kerbed(s, -1.0) {
+                // Wooden poles stand in the ground, not on a bridge's or
+                // viaduct's deck; the wires span it to the next pole.
+                let on_deck = run.nodes.windows(2).filter_map(|w| segment_between(roads, w[0], w[1])).any(|sid| {
+                    let sg = roads.segment(sid);
+                    let (a, b) = roads.segment_points(sid);
+                    (sg.bridge || sg.viaduct) && nd_sim::roads::project_on_segment(p, a, b).1.distance(p) < hw + SIDEWALK + 0.5
+                });
+                if !free(p) || !kerbed(s, -1.0) || on_deck {
                     s += 32.0;
                     continue;
                 }
