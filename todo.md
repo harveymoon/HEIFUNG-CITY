@@ -345,3 +345,4 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - fix/interchange (extended): + road-polish leftovers: abutments, gore deck, signal arms, stop line, town street tapers
 - fix/false-block: false road refusal by a far plant; blockers in the plan preview (started 2026-10-08)
 - feat/supertall: supertall league (started 2026-10-08, from the queue)
+- feat/waterfront: waterfront parcels, beach businesses, private jetties, public beach zone (started 2026-10-08, from the queue)
