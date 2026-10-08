@@ -13,11 +13,19 @@
 //! super-elite already buy their extra homes and firms when they arrive
 //! (`spawn_elite`).
 //!
+//! *Returns* (`pay_investors`, daily): a second home pays its owner the
+//! rent its tenants paid less upkeep and the bank ([`INVEST_RENT_NET`]); a
+//! business bought into pays [`INVEST_PROFIT_SHARE`] of yesterday's profit
+//! out of its till. Founders who run their own firm (a taxi company, a car
+//! park) keep the money in the business.
+//!
 //! *Garages*: a billionaire's mansion, once built, takes the supercars
 //! beyond the one they drive (`Elite::cars`), and a family's McMansion a
 //! second car: real cars parked in the house's own spaces
-//! (`OwnedCar::spare`), never driven, kept with their owner and sold when
-//! the owner is gone.
+//! (`OwnedCar::spare`), kept with their owner and sold when the owner is
+//! gone. At the weekend the owner may take the dearest out instead
+//! (`weekend_cars`): the two swap places in the garage, and on Monday the
+//! everyday car is back in use.
 //!
 //! Draws come from the estate's hash-seeded generators, never the world's.
 
@@ -31,6 +39,14 @@ pub const RICH_INCOME: f32 = 220.0;
 pub const INVEST_CASH: f32 = 1_000.0;
 /// Share of its cash a household puts down on a purchase.
 pub const INVEST_DEPOSIT: f32 = 0.3;
+/// [sweep-sim] Share of a let home's rent its investor keeps (the rest is
+/// upkeep and the bank's).
+pub const INVEST_RENT_NET: f32 = 0.45;
+/// [sweep-sim] Share of a business's day's profit paid to an investor.
+pub const INVEST_PROFIT_SHARE: f32 = 0.3;
+/// [sweep-sim] Chance (hash roll) an owner takes the dearest car out on a
+/// weekend day.
+pub const WEEKEND_DRIVE: f64 = 0.5;
 
 /// How many properties a household earning `income` a day holds at most
 /// (its home not counted): one at the bar, up to four for the very rich.
@@ -95,7 +111,7 @@ impl World {
     fn investment_business(&self) -> Option<BuildingId> {
         self.buildings
             .iter()
-            .filter(|(id, b)| b.plot.owner.is_none() && b.construction.is_none() && self.buyable(*id))
+            .filter(|(id, b)| b.plot.owner.is_none() && b.operating() && self.buyable(*id))
             .filter_map(|(id, b)| {
                 let z = b.business.as_ref()?;
                 if z.closed || z.owner.is_some() || z.books.len() < 3 {
@@ -115,14 +131,120 @@ impl World {
         let home = self.households.get(hid)?.home;
         self.buildings
             .iter()
-            .filter(|(id, b)| Some(*id) != home && b.land_use == LandUse::Residential && b.business.is_none() && b.tier >= Tier::Mid && b.homes > 0 && b.homes <= 24 && b.plot.owner.is_none() && b.construction.is_none() && self.buyable(*id))
+            .filter(|(id, b)| Some(*id) != home && b.land_use == LandUse::Residential && b.business.is_none() && b.tier >= Tier::Mid && b.homes > 0 && b.homes <= 24 && b.plot.owner.is_none() && b.operating() && self.buyable(*id))
             .max_by(|a, b| a.1.land_value.total_cmp(&b.1.land_value).then(b.0.cmp(&a.0)))
             .map(|(id, _)| id)
     }
 
+    /// [sweep-sim] Once a day: every household or person holding a home
+    /// they do not live in, or a business they bought into, is paid by it.
+    pub(super) fn pay_investors(&mut self) {
+        use crate::estate::OwnerKind;
+        // What each home's households paid in rent today.
+        let mut rent: std::collections::HashMap<BuildingId, f32> = std::collections::HashMap::new();
+        for (hid, h) in self.households.iter() {
+            if let Some(home) = h.home.filter(|b| self.buildings.contains_key(*b)) {
+                *rent.entry(home).or_default() += self.rent_due(hid, home);
+            }
+        }
+        let owners: Vec<(crate::estate::OwnerId, HouseholdId, Option<CitizenId>, Vec<BuildingId>)> = self
+            .estate
+            .owners
+            .iter()
+            .filter_map(|(oid, o)| {
+                let (hid, cid) = match o.kind {
+                    OwnerKind::Household { household } => (household, None),
+                    OwnerKind::Person { citizen } => (self.citizens.get(citizen)?.household?, Some(citizen)),
+                    _ => return None,
+                };
+                self.households.contains_key(hid).then(|| (oid, hid, cid, o.properties.clone()))
+            })
+            .collect();
+        for (oid, hid, cid, props) in owners {
+            let home = self.households[hid].home;
+            let mut paid = 0.0f32;
+            for b in props {
+                if Some(b) == home {
+                    continue;
+                }
+                let Some(bld) = self.buildings.get_mut(b) else { continue };
+                if let Some(z) = bld.business.as_mut() {
+                    // A founder runs their own firm: the money stays in it.
+                    if z.owner.is_some() || z.closed {
+                        continue;
+                    }
+                    let profit = z.books.last().map_or(0.0, |d| d.revenue - d.spend);
+                    let share = (profit * INVEST_PROFIT_SHARE).min(z.money).max(0.0);
+                    z.money -= share;
+                    paid += share;
+                } else if bld.homes > 0 {
+                    paid += rent.get(&b).copied().unwrap_or(0.0) * INVEST_RENT_NET;
+                }
+            }
+            self.households[hid].money += paid;
+            if let Some(o) = self.estate.owners.get_mut(oid) {
+                o.income_day = paid;
+                o.earned += paid as f64;
+            }
+            let _ = cid;
+        }
+    }
+
+    /// [sweep-sim] What `cid`'s holdings paid yesterday (0 for none).
+    pub fn investment_income(&self, cid: CitizenId) -> f32 {
+        let hh = self.citizens.get(cid).and_then(|c| c.household);
+        self.estate.owners.values().filter(|o| o.kind.citizen() == Some(cid) || hh.is_some_and(|h| o.kind == crate::estate::OwnerKind::Household { household: h })).map(|o| o.income_day).sum()
+    }
+
+    /// [sweep-sim] Weekend drives: on a Saturday or Sunday an owner with a
+    /// spare car in the same garage as the one they drive may take the
+    /// dearest out (the two swap); on a weekday the cheapest is the one in
+    /// use again. Only cars standing in the same building swap, so nothing
+    /// moves and no space changes hands. Hash rolls, no world draws.
+    pub(super) fn weekend_cars(&mut self) {
+        let day = self.clock.day();
+        let weekend = day % 7 >= 5;
+        let owners: Vec<CitizenId> = {
+            let mut v: Vec<CitizenId> = self.vehicles.cars.values().filter(|c| c.spare).map(|c| c.owner).collect();
+            v.sort();
+            v.dedup();
+            v
+        };
+        for cid in owners {
+            let Some(c) = self.citizens.get(cid) else { continue };
+            if c.to_car.is_some() {
+                continue;
+            }
+            let Some(now) = c.car else { continue };
+            let Some(garage) = self.vehicles.cars.get(now).and_then(|x| x.spot()).and_then(|s| s.building) else { continue };
+            if weekend && crate::rng_for(self.config.seed ^ c.seed ^ 0x3EE6_E4D, day).random::<f64>() >= WEEKEND_DRIVE {
+                continue;
+            }
+            let at_home: Vec<(VehicleId, f32)> = self.spare_cars_of(cid).into_iter().filter(|v| self.vehicles.cars.get(*v).and_then(|x| x.spot()).and_then(|s| s.building) == Some(garage)).map(|v| (v, self.vehicles.cars[v].model.price())).collect();
+            let now_price = self.vehicles.cars[now].model.price();
+            let pick = if weekend {
+                at_home.iter().copied().filter(|(_, p)| *p > now_price).max_by(|a, b| a.1.total_cmp(&b.1).then(b.0.cmp(&a.0)))
+            } else {
+                // Monday: the everyday car, marked when it was left at home.
+                at_home.iter().copied().find(|(v, _)| self.vehicles.cars[*v].usual)
+            };
+            let Some((take, _)) = pick else { continue };
+            self.vehicles.cars[now].spare = true;
+            self.vehicles.cars[now].usual = weekend;
+            self.vehicles.cars[take].spare = false;
+            self.vehicles.cars[take].usual = false;
+            self.citizens[cid].car = Some(take);
+            if weekend {
+                let tick = self.clock.tick;
+                self.citizens[cid].remember(tick, "Took the good car out for the weekend.".to_string());
+            }
+        }
+    }
+
     // ── garages ──────────────────────────────────────────────────────────
 
-    /// The cars `cid` keeps in a garage: spare cars, never driven.
+    /// The cars `cid` keeps in a garage: spare cars, out only at weekends
+    /// (`weekend_cars`).
     pub fn spare_cars_of(&self, cid: CitizenId) -> Vec<VehicleId> {
         self.vehicles.cars.iter().filter(|(_, c)| c.spare && c.owner == cid).map(|(id, _)| id).collect()
     }
@@ -139,7 +261,7 @@ impl World {
         for (k, model) in models.iter().enumerate() {
             let Some(spot) = self.building_spot(ParkKind::Home, at) else { return };
             let color = ((self.citizens[cid].seed >> 8) as u8).wrapping_add(k as u8) % 8;
-            let vid = self.vehicles.cars.insert(OwnedCar { owner: cid, model: *model, place: CarPlace::Parked(spot), color, since: tick, spare: true });
+            let vid = self.vehicles.cars.insert(OwnedCar { owner: cid, model: *model, place: CarPlace::Parked(spot), color, since: tick, spare: true, usual: false });
             // `park_at` books the space.
             self.park_at(vid, spot);
             self.vehicles.note(CarEvent::Bought);

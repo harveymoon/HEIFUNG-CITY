@@ -46,6 +46,7 @@ mod estate;
 mod estate_tests;
 pub use estate::{escort_model, police_escort_model, supercar};
 mod history;
+mod memory;
 mod develop;
 mod districts;
 #[cfg(test)]
@@ -81,6 +82,8 @@ mod riders;
 mod places;
 #[cfg(test)]
 mod places_tests;
+#[cfg(test)]
+mod under_construction_tests;
 mod industry_bridge;
 pub use plan::{Blocker, ProjectCheck, ProjectInfo, ProjectPreview};
 mod power;
@@ -449,6 +452,10 @@ pub struct World {
     /// segments (index = node id), rebuilt with the roads.
     #[serde(skip)]
     road_component: Vec<u32>,
+    /// [sweep-sim] The same over street segments alone: where a car or a
+    /// lorry can get (a footpath joins walkers, not drivers).
+    #[serde(skip)]
+    drive_component: Vec<u32>,
     /// Late mind answers (`MindProvider::poll`) for citizens who were
     /// travelling when they came, with the tick they came: acted on at the
     /// citizen's next decision (`step_citizens`) if still fresh. Not saved:
@@ -722,6 +729,7 @@ impl World {
             events: Vec::new(),
             next_seed: 1,
             road_component: Vec::new(),
+            drive_component: Vec::new(),
             stations: Vec::new(),
             yards: Vec::new(),
             halts: Vec::new(),
@@ -781,8 +789,10 @@ impl World {
             path_links: Default::default(),
             corps: Default::default(),
         };
-        w.estate.pressure = crate::estate::Pressure::new(half + 200.0);
         w.landscape = Landscape::new(&w.config.landscape);
+        // [sweep-sim] Grids over the whole buildable land (far islands too).
+        w.land_value = LandValue::new(w.grid_half(32.0), 32.0);
+        w.estate.pressure = crate::estate::Pressure::new(w.grid_half(crate::estate::PRESSURE_CELL));
         // [grid-weather] The climate's ordinary weather to start.
         w.weather = Weather::for_climate(w.landscape.params.climate);
         w.plan_changed();
@@ -809,8 +819,22 @@ impl World {
         self.build_walk_graph();
     }
 
+    /// The save format: pretty RON, nested six deep.
+    fn ron_config() -> ron::ser::PrettyConfig {
+        ron::ser::PrettyConfig::default().depth_limit(6)
+    }
+
     pub fn to_ron(&self) -> Result<String, ron::Error> {
-        ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default().depth_limit(6))
+        ron::ser::to_string_pretty(self, Self::ron_config())
+    }
+
+    /// [memory] The save, byte for byte as [`World::to_ron`], streamed into
+    /// `out` (wrap a file in a `BufWriter`). A big city's save runs past
+    /// 128 MiB, and building it as one `String` first needs a single 256 MiB
+    /// block when the string doubles: the "memory allocation of 268435456
+    /// bytes failed" crash.
+    pub fn write_ron(&self, out: impl std::io::Write) -> Result<(), ron::Error> {
+        ron::Options::default().to_io_writer_pretty(out, self, Self::ron_config())
     }
 
     pub fn from_ron(text: &str) -> Result<Self, ron::error::SpannedError> {
@@ -896,8 +920,12 @@ impl World {
         // [land] A save from before the land market: a cold pressure grid
         // (it warms on the first hourly sample); stale references dropped.
         if !self.estate.pressure.ready() {
-            self.estate.pressure = crate::estate::Pressure::new(self.config.half_extent + 200.0);
+            self.estate.pressure = crate::estate::Pressure::new(self.grid_half(crate::estate::PRESSURE_CELL));
         }
+        // [sweep-sim] A save from before the grids covered far islands:
+        // grown (cells keep their place; land value refills on its next
+        // pass, pressure warms again).
+        self.grow_grids();
         self.prune_estate();
         self.subway_after_load();
         self.seats_after_load();
@@ -1130,7 +1158,7 @@ impl World {
 
     fn available_land_uses(&self) -> [bool; 6] {
         let mut out = [false; 6];
-        for b in self.buildings.values().filter(|b| b.construction.is_none()) {
+        for b in self.buildings.values().filter(|b| b.operating()) {
             out[b.land_use.index()] = true;
         }
         out
@@ -1139,6 +1167,9 @@ impl World {
     pub fn tick(&mut self, minds: &mut dyn MindProvider) {
         // [park-paths] A path whose park went since the last tick is cut back.
         self.settle_path_links();
+        // [under-construction] Park walkways and gates shut while their
+        // building is a site.
+        self.refresh_closed_grounds();
         self.clock.advance();
         let tick = self.clock.tick;
         if self.clock.minute_of_day() == 0 {

@@ -37,7 +37,7 @@ impl World {
 
     /// Is `b` a working taxi company (built, open, not derelict)?
     pub fn taxi_company_works(&self, b: BuildingId) -> bool {
-        self.buildings.get(b).is_some_and(|bld| bld.construction.is_none() && bld.demolition.is_none() && !bld.is_derelict() && bld.business.as_ref().is_some_and(|z| z.kind == BusinessKind::TaxiCompany && !z.closed))
+        self.buildings.get(b).is_some_and(|bld| bld.operating() && !bld.is_derelict() && bld.business.as_ref().is_some_and(|z| z.kind == BusinessKind::TaxiCompany && !z.closed))
     }
 
     /// Every working taxi company.
@@ -807,13 +807,14 @@ impl World {
                 }
             }
         };
-        for &s in &self.stations {
+        // [sweep-sim] Not at a station people only walk to: no road for the cabs.
+        for &s in self.stations.iter().filter(|&&s| self.road_access(s) != Some(false)) {
             push(s, self);
         }
         let mut venues: Vec<(BuildingId, u16)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Venue && !z.closed) && b.construction.is_none() && b.serves_at(hour))
+            .filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Venue && !z.closed) && b.operating() && b.serves_at(hour))
             .map(|(id, b)| (id, b.visitors))
             .collect();
         venues.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));

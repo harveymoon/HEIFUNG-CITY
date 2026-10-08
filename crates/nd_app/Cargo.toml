@@ -38,3 +38,6 @@ embed-resource = "3"
 [features]
 # `cargo run --features fast-dev` links Bevy dynamically for quicker rebuilds.
 fast-dev = ["bevy/dynamic_linking"]
+# [memory] Count heap allocations (live, peak, biggest block) for the
+# remote `memory` command. Off in the game: every allocation pays for it.
+heap-count = []

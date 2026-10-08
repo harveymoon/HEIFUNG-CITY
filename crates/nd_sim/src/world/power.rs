@@ -276,8 +276,8 @@ impl World {
     /// a derelict plant or any other building.
     pub fn plant_output_mw(&self, b: &Building) -> f32 {
         let Some(kind) = b.plant else { return 0.0 };
-        // Derelict, or the lot still being cleared for it.
-        if b.is_derelict() || b.demolition.is_some() {
+        // Derelict, or still being built (the lot still being cleared for it).
+        if b.is_derelict() || !b.operating() {
             return 0.0;
         }
         let site = self.power_site(b.lot, kind).unwrap_or(0.0);
@@ -339,6 +339,12 @@ impl World {
     /// [batteries] Today's price thresholds for the batteries: the regional
     /// prices of every hour of the day, at the temperature the day's swing
     /// gives it (this hour's at the air now).
+    ///
+    /// [sweep-sim] The other hours use the predicted temperature on
+    /// purpose: an operator sets tomorrow's charge plan from the forecast,
+    /// not from weather nobody has seen yet, so a cold snap that beats the
+    /// forecast can catch the packs half full. That is the intended play,
+    /// not a shortcut.
     pub fn price_bands_today(&self) -> crate::power::PriceBands {
         let now = self.clock.hour() as u32;
         let prices: Vec<f32> = (0..24u32)
@@ -362,7 +368,7 @@ impl World {
     /// Whether a battery on this building takes part in the grid: built,
     /// not still clearing the lot, not run down.
     fn battery_online(b: &Building) -> bool {
-        b.battery.is_some() && b.construction.is_none() && b.demolition.is_none() && !b.is_derelict()
+        b.battery.is_some() && b.operating() && !b.is_derelict()
     }
 
     /// The hour on the grid: [`Self::dispatch_power`] with the batteries
@@ -391,7 +397,7 @@ impl World {
         let mut by_kind = [0.0f32; 7];
         for b in self.buildings.values() {
             if let Some(kind) = b.plant {
-                if !b.is_derelict() {
+                if !b.is_derelict() && b.operating() {
                     let mw = self.plant_output_mw(b);
                     supply += mw;
                     by_kind[kind.index()] += mw;
@@ -566,7 +572,7 @@ impl World {
     /// for a building that does not exist).
     pub fn plant_cluster(&self, id: BuildingId) -> Vec<LotId> {
         let Some(b) = self.buildings.get(id) else { return Vec::new() };
-        let finished = |b: &Building| b.construction.is_none() && b.demolition.is_none();
+        let finished = |b: &Building| b.operating();
         let kind = match b.plant {
             Some(k) if k.merges_with_neighbours() && finished(b) => k,
             _ => return vec![b.lot],

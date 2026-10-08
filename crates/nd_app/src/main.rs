@@ -7,6 +7,8 @@ mod build_highlight;
 mod camera;
 /// [committee] The mayor's AI committee in the running game.
 mod committee;
+/// [sweep-sim] Crash logs beside the saves: panics and failed allocations.
+mod crash;
 /// [directory] Every business and person as sortable rows (City Data's Directory).
 mod directory;
 mod district_tool;
@@ -15,6 +17,8 @@ mod flags;
 mod map_layers;
 /// [camera] Favourites' gold, a person's place posts, a robot's route.
 mod marks;
+/// [memory] The process's memory counters (the remote `memory` command).
+mod memory;
 /// [metro-ux] The Metro map layer and drawing lines station to station.
 mod metro_ux;
 /// [toll-inspect] Picking and outlining toll booths.
@@ -46,6 +50,7 @@ fn window_size() -> WindowResolution {
 }
 
 fn main() {
+    crash::install();
     App::new()
         .insert_resource(ClearColor(Color::linear_rgb(0.02, 0.018, 0.028)))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -77,7 +82,7 @@ fn main() {
             metro_ux::MetroUxPlugin,
         ))
         // A plugin tuple holds at most 15: the rest go in a second one.
-        .add_plugins((committee::CommitteePlugin, build_highlight::BuildHighlightPlugin, stub_marks::StubMarksPlugin, ferry_select::FerrySelectPlugin))
+        .add_plugins((committee::CommitteePlugin, build_highlight::BuildHighlightPlugin, stub_marks::StubMarksPlugin, ferry_select::FerrySelectPlugin, crash::CrashPlugin))
         .run();
 }
 

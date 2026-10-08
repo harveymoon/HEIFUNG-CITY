@@ -235,7 +235,7 @@ impl World {
             if let Some(route) = want {
                 // The depot with room nearest the first stop.
                 let first = self.transit.routes[route].stops[0];
-                let depots: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.depot && !b.is_derelict()).map(|(id, _)| id).collect();
+                let depots: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.depot && !b.is_derelict() && b.operating()).map(|(id, _)| id).collect();
                 let depot = depots
                     .iter()
                     .copied()
@@ -305,7 +305,7 @@ impl World {
         let Some(car) = self.traffic.cars.get(car_id) else { return };
         let pos = car.pos;
         let own = car.bus.as_ref().map(|b| b.depot).filter(|d| self.buildings.get(*d).is_some_and(|b| b.depot));
-        let mut others: Vec<(f32, BuildingId)> = self.buildings.iter().filter(|(id, b)| b.depot && !b.is_derelict() && Some(*id) != own).filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (l.car_point.distance(pos), id))).collect();
+        let mut others: Vec<(f32, BuildingId)> = self.buildings.iter().filter(|(id, b)| b.depot && !b.is_derelict() && b.operating() && Some(*id) != own).filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (l.car_point.distance(pos), id))).collect();
         others.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
         let depots: Vec<BuildingId> = own.into_iter().chain(others.into_iter().map(|d| d.1)).collect();
         for d in depots {

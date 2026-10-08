@@ -676,6 +676,11 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
         let todo = if w.stub_ends_of(id).is_empty() { "Its street is joined to roads that reach neither the city nor a way out of town: carry them on to the network." } else { "Draw a road to the marked end of its street stub (the amber ring); it snaps on like any road end." };
         hint(ui, todo);
         hint(ui, problem.split("; ").nth(1).unwrap_or(""));
+    } else if let Some(note) = w.access_note(id) {
+        // [sweep-sim] Walk-only: it works for passengers; say what a road would add.
+        section(ui, "ROAD ACCESS");
+        ui.label(egui::RichText::new("ON FOOT ONLY").color(egui::Color32::from_rgb(150, 210, 255)).strong());
+        hint(ui, &note);
     }
     // [fishing] The port's trawlers, what each is doing, and its grounds.
     // [sweep-visual] And a fishery's trawler off its own jetty.
@@ -723,7 +728,7 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
     // [waterfront] its edge on the water, a beach, a private jetty
     super::shore::lines(ui, w, id);
     if let Some(link) = &b.rail {
-        let joined = if link.works() { "" } else if !link.rail_connected { " · NOT CONNECTED TO THE RAILWAY" } else { " · NOT CONNECTED TO THE ROADS" };
+        let joined = if link.walk_only() { " · on foot only (no road yet)" } else if link.works() { "" } else if !link.rail_connected { " · NOT CONNECTED TO THE RAILWAY" } else { " · NOT CONNECTED TO THE ROADS" };
         section(ui, "RAIL");
         match link.kind {
             nd_sim::RailFacility::Station => ui.label(format!("railway station: platform {:.0} m, {} trains today, {} riders today across the line{joined}", link.platform[0].distance(link.platform[1]), w.rail.stats.passenger_trains_today, w.rail.stats.riders_today)),

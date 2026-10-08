@@ -153,7 +153,7 @@ impl World {
         let mut gaps: Vec<(BuildingId, u32)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.construction.is_none() && !b.is_derelict() && b.business.as_ref().is_some_and(|z| !z.closed))
+            .filter(|(_, b)| b.operating() && !b.is_derelict() && b.business.as_ref().is_some_and(|z| !z.closed))
             .filter(|(_, b)| self.lots.get(b.lot).is_some_and(|l| l.center.distance(at) <= ports::FERRY_CATCHMENT && l.car_segment.is_some()))
             .filter_map(|(id, b)| {
                 let short = (b.jobs as u32).saturating_sub(b.workers.len() as u32 + here.get(&id).copied().unwrap_or(0));
@@ -224,7 +224,7 @@ impl World {
     /// A commuter at the door of the job: in for the shift, to about five.
     pub(super) fn commuter_at_work(&mut self, id: TouristId, work: BuildingId) {
         let tick = self.clock.tick;
-        let open = self.buildings.get(work).is_some_and(|b| b.construction.is_none() && b.business.as_ref().is_some_and(|z| !z.closed));
+        let open = self.buildings.get(work).is_some_and(|b| b.operating() && b.business.as_ref().is_some_and(|z| !z.closed));
         if !open {
             self.tourist_depart(id);
             return;

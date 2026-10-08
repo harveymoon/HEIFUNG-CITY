@@ -12,7 +12,7 @@ impl World {
         let mut demolish = Vec::new();
         let mut cover = [(0.0f32, 0.0f32); BusinessKind::COUNT];
         for bid in ids {
-            if self.buildings[bid].construction.is_some() {
+            if !self.buildings[bid].operating() {
                 continue;
             }
             let revenue = self.buildings[bid].business.as_ref().map_or(0.0, |z| z.revenue_today);
@@ -140,7 +140,7 @@ impl World {
                 continue;
             }
             let b = &mut self.buildings[bid];
-            if b.construction.is_some() {
+            if !b.operating() {
                 continue;
             }
             let tired = exhausted.get(&bid).copied().unwrap_or(0) as f32;
@@ -161,7 +161,7 @@ impl World {
         let pull = self.campus_pull();
         for &bid in &ids {
             let (lot, jobs) = (self.buildings[bid].lot, self.buildings[bid].jobs);
-            let students = if pull.is_empty() || !self.buildings[bid].business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::Bakery | BusinessKind::GadgetShop)) {
+            let students = if pull.is_empty() || !self.buildings[bid].business.as_ref().is_some_and(|z| z.kind.student_trade()) {
                 0.0
             } else {
                 self.lots.get(lot).map_or(0.0, |l| Self::student_feet(&pull, l.center))
@@ -171,7 +171,7 @@ impl World {
                 continue;
             }
             let b = &mut self.buildings[bid];
-            if b.construction.is_some() {
+            if !b.operating() {
                 continue;
             }
             let open = b.opening_hours().contains(hour);
@@ -179,12 +179,7 @@ impl World {
             if bz.closed || !open {
                 continue;
             }
-            let output = match bz.kind {
-                BusinessKind::Grocery => Resource::Groceries,
-                BusinessKind::Bakery => Resource::BakedGoods,
-                BusinessKind::GadgetShop => Resource::Goods,
-                _ => continue,
-            };
+            let Some(output) = bz.kind.walk_in_sale() else { continue };
             let want = feet * 0.06;
             let got = bz.take(output, want.min(bz.stock_of(output)));
             if got > 0.0 {
@@ -214,7 +209,7 @@ impl World {
         for &bid in &ids {
             let (kind, jobs, needs, at, closed) = {
                 let b = &self.buildings[bid];
-                if b.construction.is_some() {
+                if !b.operating() {
                     continue;
                 }
                 let Some(bz) = &b.business else { continue };
@@ -324,12 +319,12 @@ impl World {
         }
         // Exports: surplus outputs leave town at a discount, less of one
         // when a freight yard ships them by rail.
-        let yards: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::FreightYard) && !b.is_derelict()).map(|(id, _)| id).collect();
+        let yards: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::FreightYard) && !b.is_derelict() && b.operating()).map(|(id, _)| id).collect();
         let export_bonus = (if yards.is_empty() { 1.0 } else { rail::RAIL_EXPORT_BONUS }).max(self.sea_export_bonus()) * self.hub_export_bonus();
         let mut shipped = 0.0f32;
         for &bid in &ids {
             let b = &mut self.buildings[bid];
-            if b.construction.is_some() {
+            if !b.operating() {
                 continue;
             }
             let jobs = b.jobs;
@@ -366,7 +361,7 @@ impl World {
         let mut businesses = 0;
         for b in self.buildings.values() {
             let Some(bz) = &b.business else { continue };
-            if bz.closed || b.construction.is_some() {
+            if bz.closed || !b.operating() {
                 continue;
             }
             businesses += 1;
@@ -497,14 +492,14 @@ impl World {
 
     /// Groceries on the shelves of every open grocer in town.
     pub(super) fn town_grocery_stock(&self) -> f32 {
-        self.buildings.values().filter(|b| b.construction.is_none()).filter_map(|b| b.business.as_ref()).filter(|z| z.kind == BusinessKind::Grocery && !z.closed).map(|z| z.stock_of(Resource::Groceries)).sum()
+        self.buildings.values().filter(|b| b.operating()).filter_map(|b| b.business.as_ref()).filter(|z| z.kind == BusinessKind::Grocery && !z.closed).map(|z| z.stock_of(Resource::Groceries)).sum()
     }
 
     /// Groceries a day each open grocer should have for its share of the
     /// town (everyone eats `GROCERIES_PER_PERSON_DAY`), grown by the food
     /// order factor; zero when no grocer is open.
     pub(super) fn grocery_share_per_day(&self) -> f32 {
-        let grocers = self.buildings.values().filter(|b| b.construction.is_none() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Grocery && !z.closed)).count();
+        let grocers = self.buildings.values().filter(|b| b.operating() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Grocery && !z.closed)).count();
         if grocers == 0 {
             return 0.0;
         }
@@ -539,7 +534,7 @@ impl World {
         self.seller_index_hour = Some(hour);
         self.seller_index.clear();
         for (id, b) in self.buildings.iter() {
-            if b.construction.is_some() {
+            if !b.operating() {
                 continue;
             }
             let Some(bz) = &b.business else { continue };
@@ -564,7 +559,7 @@ impl World {
             }
             let Some(b) = self.buildings.get(id) else { continue };
             let Some(bz) = &b.business else { continue };
-            if bz.closed || b.construction.is_some() || bz.stock_of(r) < amount * 0.5 {
+            if bz.closed || !b.operating() || bz.stock_of(r) < amount * 0.5 {
                 continue;
             }
             let price = bz.sell_price(r, b.jobs) + HAULAGE * pos.distance(at) * r.base_price();
@@ -687,6 +682,12 @@ impl World {
                 if !to_site && !long_haul {
                     if let Some(l) = self.corp_livery(cargo.from) {
                         self.traffic.cars[id].model.livery = l;
+                    } else if let Some(l) = self.corp_livery(cargo.to).filter(|_| self.buildings.get(cargo.to).and_then(|b| b.business.as_ref()).is_some_and(|z| z.kind.customers_per_job().is_some())) {
+                        // [sweep-sim] A corp's shop is stocked by the corp's
+                        // own vans, so a corp of shops alone has a fleet too.
+                        let m = &mut self.traffic.cars[id].model;
+                        m.livery = l;
+                        m.body = crate::vehicle::BodyType::DeliveryVan;
                     }
                 }
             }
@@ -723,7 +724,7 @@ impl World {
 
     /// Any business currently stocking a retail resource.
     pub(super) fn retail_available(&self, r: Resource) -> bool {
-        self.buildings.values().any(|b| b.construction.is_none() && b.business.as_ref().map_or(false, |bz| !bz.closed && bz.sells(r) && bz.stock_of(r) >= 1.0))
+        self.buildings.values().any(|b| b.operating() && b.business.as_ref().map_or(false, |bz| !bz.closed && bz.sells(r) && bz.stock_of(r) >= 1.0))
     }
 
     /// Nearest well-stocked shop for a resource, cheapest within reach,
@@ -735,7 +736,7 @@ impl World {
         let mut best: Option<(f32, BuildingId)> = None;
         for (id, b) in self.buildings.iter() {
             let Some(bz) = &b.business else { continue };
-            if b.construction.is_some() || bz.closed || !bz.sells(r) || bz.stock_of(r) < 1.0 || !b.serves_at(hour) {
+            if !b.operating() || bz.closed || !bz.sells(r) || bz.stock_of(r) < 1.0 || !b.serves_at(hour) {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };

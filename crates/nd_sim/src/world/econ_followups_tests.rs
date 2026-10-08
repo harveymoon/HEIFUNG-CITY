@@ -391,3 +391,68 @@ fn a_small_unzoned_site_may_join_the_wind_park_next_door() {
     let why = w.site_problem(Placeable::Plant(kind), &site).expect("refused alone");
     assert!(why.contains("too small"), "{why}");
 }
+
+// ── [sweep-sim] investments pay; spare cars go out at weekends ─────────
+
+#[test]
+fn an_investor_is_paid_rent_and_a_share_of_profit() {
+    let (mut w, shop) = high_street();
+    let hid = w.households.iter().find(|(_, h)| !h.members.is_empty() && h.home.is_some()).map(|(id, _)| id).unwrap();
+    let cid = w.households[hid].members[0];
+    let home = w.households[hid].home.unwrap();
+    // A let block someone else lives in.
+    let block = w.households.iter().filter_map(|(id, h)| h.home.filter(|b| *b != home && id != hid)).next().expect("another home");
+    let owner = w.owner_for_citizen(cid).unwrap();
+    w.give_to(shop, owner, 0.0);
+    w.give_to(block, owner, 0.0);
+    {
+        let z = w.buildings[shop].business.as_mut().unwrap();
+        z.owner = None;
+        z.closed = false;
+        z.money = 1_000.0;
+        z.books = vec![crate::market::DayBook { revenue: 500.0, spend: 200.0 }];
+    }
+    let rent: f32 = w.households.iter().filter(|(_, h)| h.home == Some(block)).map(|(id, _)| w.rent_due(id, block)).sum();
+    assert!(rent > 0.0);
+    let before = w.households[hid].money;
+    w.pay_investors();
+    let expect = 300.0 * super::rich::INVEST_PROFIT_SHARE + rent * super::rich::INVEST_RENT_NET;
+    let got = w.households[hid].money - before;
+    assert!((got - expect).abs() < 0.01, "paid {got}, expected {expect}");
+    assert!((w.buildings[shop].business.as_ref().unwrap().money - (1_000.0 - 300.0 * super::rich::INVEST_PROFIT_SHARE)).abs() < 0.01, "out of the till");
+    assert!((w.investment_income(cid) - expect).abs() < 0.01);
+    // A founder running their own firm keeps the money in it.
+    w.buildings[shop].business.as_mut().unwrap().owner = Some(cid);
+    let till = w.buildings[shop].business.as_ref().unwrap().money;
+    w.pay_investors();
+    assert_eq!(w.buildings[shop].business.as_ref().unwrap().money, till);
+}
+
+#[test]
+fn the_good_car_goes_out_at_weekends_and_back_in_on_monday() {
+    let (mut w, _) = high_street();
+    let cid = w.citizens.iter().find(|(_, c)| c.home.is_some() && c.car.is_none()).map(|(id, _)| id).unwrap();
+    let home = w.citizens[cid].home.unwrap();
+    let cheap = crate::vehicle::VehicleModel::fallback(7, 30.0, 40);
+    let dear = super::estate::supercar(1);
+    assert!(dear.price() > cheap.price());
+    w.garage_spares(cid, home, &[cheap, dear]);
+    let spares = w.spare_cars_of(cid);
+    let (everyday, good) = if w.vehicles.cars[spares[0]].model.price() < w.vehicles.cars[spares[1]].model.price() { (spares[0], spares[1]) } else { (spares[1], spares[0]) };
+    w.vehicles.cars[everyday].spare = false;
+    w.citizens[cid].car = Some(everyday);
+    let mut out = 0;
+    for week in 0..8u64 {
+        w.clock.tick = (week * 7 + 5) * 1440 + 600;
+        w.weekend_cars();
+        if w.citizens[cid].car == Some(good) {
+            out += 1;
+            assert!(w.vehicles.cars[everyday].spare && !w.vehicles.cars[good].spare);
+        }
+        w.clock.tick = (week * 7 + 7) * 1440 + 600;
+        w.weekend_cars();
+        assert_eq!(w.citizens[cid].car, Some(everyday), "Monday: the everyday car");
+        assert!(w.vehicles.cars[good].spare && !w.vehicles.cars[everyday].spare);
+    }
+    assert!(out >= 2, "out some weekends ({out}/8)");
+}

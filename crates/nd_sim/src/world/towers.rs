@@ -63,7 +63,7 @@ impl World {
         let mut v: Vec<(BuildingId, f32)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.construction.is_none() && b.demolition.is_none() && b.land_use != LandUse::Park && !b.is_parking() && !b.is_power())
+            .filter(|(_, b)| b.operating() && b.land_use != LandUse::Park && !b.is_parking() && !b.is_power())
             .map(|(id, _)| (id, self.building_height(id)))
             .collect();
         v.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
@@ -74,7 +74,7 @@ impl World {
     pub fn skyline_rank(&self, bid: BuildingId) -> Option<usize> {
         let h = self.building_height(bid);
         let b = self.buildings.get(bid)?;
-        if b.construction.is_some() || b.demolition.is_some() {
+        if !b.operating() {
             return None;
         }
         Some(1 + self.skyline_ranking().iter().take_while(|(id, x)| *x > h || (*x == h && *id < bid)).count())
@@ -200,7 +200,7 @@ impl World {
     fn neighbour_floors(&self, center: Vec2, except: LotId) -> u32 {
         self.buildings
             .values()
-            .filter(|b| b.lot != except && b.land_use != LandUse::Park && !b.is_parking() && !b.is_special() && b.construction.is_none())
+            .filter(|b| b.lot != except && b.land_use != LandUse::Park && !b.is_parking() && !b.is_special() && b.operating())
             .filter_map(|b| self.lots.get(b.lot).map(|l| (b.floors as u32, l.center)))
             .filter(|(_, c)| c.distance(center) <= TOWER_DENSITY_RADIUS)
             .map(|(f, _)| f)
@@ -501,7 +501,7 @@ impl World {
     pub(super) fn splat_towers(&self, b: &mut LandValueBuilder) {
         for (id, bld) in self.buildings.iter() {
             let Some(t) = &bld.plot.tower else { continue };
-            if bld.construction.is_some() || bld.demolition.is_some() {
+            if !bld.operating() {
                 continue;
             }
             let Some(c) = self.footprint(id).map(|l| l.center) else { continue };

@@ -258,6 +258,14 @@ pub enum BusinessKind {
     BeachBar,
     /// Boat rental: kayaks, pedalos and small motorboats off a pontoon.
     BoatRental,
+    // -- [sweep-sim] the trades students and downtown want. Appended so
+    // saved kinds keep their order. --
+    /// A café: coffee and pastries (baked goods on flour and milk), a
+    /// place to sit; by campuses and on dear downtown streets.
+    Cafe,
+    /// A bookshop: books and stationery (goods printed on plastics-grade
+    /// paper stock); by campuses and downtown.
+    Bookshop,
 }
 
 /// Opening hours on the clock, `open..close`; a close earlier than the open
@@ -331,7 +339,7 @@ pub struct Recipe {
 }
 
 impl BusinessKind {
-    pub const COUNT: usize = 47;
+    pub const COUNT: usize = 49;
     /// Every kind, in `index` order.
     pub const ALL: [BusinessKind; Self::COUNT] = [
         BusinessKind::VertFarm,
@@ -381,6 +389,8 @@ impl BusinessKind {
         BusinessKind::PierRestaurant,
         BusinessKind::BeachBar,
         BusinessKind::BoatRental,
+        BusinessKind::Cafe,
+        BusinessKind::Bookshop,
     ];
 
     pub fn index(self) -> usize {
@@ -436,6 +446,8 @@ impl BusinessKind {
             BusinessKind::PierRestaurant => "pier restaurant",
             BusinessKind::BeachBar => "beach bar",
             BusinessKind::BoatRental => "boat rental",
+            BusinessKind::Cafe => "cafe",
+            BusinessKind::Bookshop => "bookshop",
         }
     }
 
@@ -532,6 +544,11 @@ impl BusinessKind {
             BusinessKind::PierRestaurant => Recipe { inputs: &[(Resource::Groceries, 0.35)], outputs: &[] },
             BusinessKind::BeachBar => Recipe { inputs: &[(Resource::Groceries, 0.2)], outputs: &[] },
             BusinessKind::BoatRental => Recipe { inputs: &[(Resource::Fuel, 0.05)], outputs: &[] },
+            // [sweep-sim] A job adds about 9 an hour at base prices, a
+            // baker's 15 (the café sells fewer, sits people down), a
+            // bookseller's about 17 against a gadget seller's 25.
+            BusinessKind::Cafe => Recipe { inputs: &[(Resource::Flour, 0.6), (Resource::Dairy, 0.3)], outputs: &[(Resource::BakedGoods, 2.5)] },
+            BusinessKind::Bookshop => Recipe { inputs: &[(Resource::Plastics, 0.25)], outputs: &[(Resource::Goods, 0.35)] },
         }
     }
 
@@ -604,6 +621,8 @@ impl BusinessKind {
             BusinessKind::PierRestaurant => Hours::new(12, 24),
             BusinessKind::BeachBar => Hours::new(10, 2),
             BusinessKind::BoatRental => Hours::new(8, 20),
+            BusinessKind::Cafe => Hours::new(7, 21),
+            BusinessKind::Bookshop => Hours::new(9, 20),
         }
     }
 
@@ -611,7 +630,7 @@ impl BusinessKind {
     /// per job.
     pub fn customers_per_job(self) -> Option<u16> {
         match self {
-            BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop => Some(3),
+            BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Cafe | BusinessKind::Bookshop => Some(3),
             BusinessKind::Venue => Some(8),
             BusinessKind::FishMarket | BusinessKind::BikeShop => Some(3),
             BusinessKind::SeafoodRestaurant | BusinessKind::GolfRange => Some(6),
@@ -714,7 +733,27 @@ impl BusinessKind {
                 | BusinessKind::PierRestaurant
                 | BusinessKind::BeachBar
                 | BusinessKind::BoatRental
+                | BusinessKind::Cafe
+                | BusinessKind::Bookshop
         )
+    }
+
+    /// [sweep-sim] Shops that sell what they make over the counter to
+    /// whoever walks in: (what they sell). The café sells as a bakery
+    /// does, the bookshop as a gadget shop.
+    pub fn walk_in_sale(self) -> Option<Resource> {
+        match self {
+            BusinessKind::Grocery => Some(Resource::Groceries),
+            BusinessKind::Bakery | BusinessKind::Cafe => Some(Resource::BakedGoods),
+            BusinessKind::GadgetShop | BusinessKind::Bookshop => Some(Resource::Goods),
+            _ => None,
+        }
+    }
+
+    /// [megacorp] [sweep-sim] The trades students drop into by campus:
+    /// pizza places (bakeries), cafés and bookshops.
+    pub fn student_trade(self) -> bool {
+        matches!(self, BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Cafe | BusinessKind::Bookshop)
     }
 
     /// [economy] Most floors a building of this kind goes up with: sheds,
@@ -766,7 +805,7 @@ impl BusinessKind {
     /// Stock a business tries to keep of each input, in hours of production.
     pub fn target_hours(self) -> f32 {
         match self {
-            BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Venue | BusinessKind::FishMarket | BusinessKind::SeafoodRestaurant | BusinessKind::Gallery | BusinessKind::PierRestaurant | BusinessKind::BeachBar => 36.0,
+            BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Cafe | BusinessKind::Bookshop | BusinessKind::Venue | BusinessKind::FishMarket | BusinessKind::SeafoodRestaurant | BusinessKind::Gallery | BusinessKind::PierRestaurant | BusinessKind::BeachBar => 36.0,
             _ => 24.0,
         }
     }

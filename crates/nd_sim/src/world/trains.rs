@@ -6,7 +6,7 @@ use super::*;
 impl World {
     /// Stations and yards that run: connected both ways and standing.
     pub(super) fn facilities(&self, kind: RailFacility) -> Vec<BuildingId> {
-        self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == kind && l.works()) && !b.is_derelict()).map(|(id, _)| id).collect()
+        self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == kind && l.works()) && !b.is_derelict() && b.operating()).map(|(id, _)| id).collect()
     }
 
     /// Recompute the working station and yard lists. Called when links,
@@ -20,7 +20,7 @@ impl World {
         self.halts = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind.is_passenger() && l.rail_connected && !l.road_connected) && !b.is_derelict())
+            .filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind.is_passenger() && l.rail_connected && !l.works()) && !b.is_derelict())
             .map(|(id, _)| id)
             .collect();
     }
@@ -142,7 +142,7 @@ impl World {
         // zoned lot's street: there is a city at the other end of it.
         let trunk_ends: Vec<NodeId> = self.roads.rail_leaf_nodes().into_iter().filter(|&n| (self.roads.node(n).pos.y - TRUNK_Y).abs() < 1.0).collect();
         // [dock-access] Or reaches off the map (the highway, a road out).
-        let city = self.network_components();
+        let (city_walk, city) = self.network_components();
         let ids: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.rail.is_some()).map(|(id, _)| id).collect();
         for id in ids {
             // The track beside the facility may have been split, re-laid or
@@ -160,15 +160,20 @@ impl World {
                 let node = self.roads.segment(sid).a;
                 trunk_ends.iter().any(|&l| self.roads.rail_path(node, l).is_some_and(|p| p.len() > 1))
             });
-            let road_ok = self.lots.get(self.buildings[id].lot).and_then(|l| self.road_component(l.access_node)).is_some_and(|c| city.contains(&c));
+            let node = self.lots.get(self.buildings[id].lot).map(|l| l.access_node);
+            let road_ok = node.and_then(|n| self.drive_component(n)).is_some_and(|c| city.contains(&c));
+            // [sweep-sim] On foot: a path to the street stub will do for passengers.
+            let walk_ok = node.and_then(|n| self.road_component(n)).is_some_and(|c| city_walk.contains(&c));
             if let Some(mut fresh) = fresh {
                 fresh.rail_connected = rail_ok;
                 fresh.road_connected = road_ok;
+                fresh.walk_connected = walk_ok;
                 self.buildings[id].rail = Some(fresh);
             } else {
                 let link = self.buildings[id].rail.as_mut().unwrap();
                 link.rail_connected = rail_ok;
                 link.road_connected = road_ok;
+                link.walk_connected = walk_ok;
             }
         }
         let had_yards = !self.yards.is_empty();

@@ -154,7 +154,8 @@ impl Livery {
     /// The fleet a business sends its deliveries in.
     pub fn for_business(kind: BusinessKind) -> Livery {
         match kind {
-            BusinessKind::Bakery => Livery::Pizza,
+            BusinessKind::Bakery | BusinessKind::Cafe => Livery::Pizza,
+            BusinessKind::Bookshop => Livery::Parcels,
             BusinessKind::Grocery | BusinessKind::VertFarm | BusinessKind::Dairy | BusinessKind::ProteinVat => Livery::Grocery,
             BusinessKind::GadgetShop | BusinessKind::Assembly | BusinessKind::CargoHub => Livery::Parcels,
             BusinessKind::Fab | BusinessKind::Mill | BusinessKind::GrainFarm => Livery::Utility,
@@ -487,6 +488,10 @@ pub struct OwnedCar {
     /// (`Citizen::car`): parked in their house's own spaces, never driven.
     #[serde(default)]
     pub spare: bool,
+    /// [sweep-sim] The everyday car, left in the garage while a dearer one
+    /// is out for the weekend (`World::weekend_cars` swaps it back).
+    #[serde(default)]
+    pub usual: bool,
 }
 
 impl OwnedCar {

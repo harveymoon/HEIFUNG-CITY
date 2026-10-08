@@ -135,3 +135,33 @@ fn a_saved_city_on_a_hill_keeps_its_lots() {
     assert_eq!(lots, again, "the same lots, as usable as they were");
     assert!(back.parcels.parcels.iter().filter(|p| p.lot.is_some()).count() >= ids.len().min(1));
 }
+
+/// [sweep-sim] The land-value and pressure grids cover the far islands,
+/// and an old save's smaller grids grow with every cell kept in place.
+#[test]
+fn the_value_grids_reach_the_far_islands() {
+    let mut w = hilly_world(LandscapePreset::Islands);
+    let far = Vec2::splat(crate::landscape::LAND_HALF - 60.0);
+    assert!(w.land_value.half >= crate::landscape::LAND_HALF, "land value covers the land ({})", w.land_value.half);
+    assert!(w.estate.pressure.index(far).is_some(), "pressure covers the land");
+    // An old save: grids at half_extent + 200.
+    let old = w.config.half_extent + 200.0;
+    let mut lv = crate::land_value::LandValue::new(old, 32.0);
+    for (i, v) in lv.values.iter_mut().enumerate() {
+        *v = (i % 97) as f32 / 97.0;
+    }
+    let probe = Vec2::new(123.0, -456.0);
+    let before = lv.at(probe);
+    w.land_value = lv;
+    w.estate.pressure = crate::estate::Pressure::new(old);
+    w.grow_grids();
+    assert_eq!(w.land_value.half, w.grid_half(32.0));
+    assert!((w.land_value.at(probe) - before).abs() < 1e-6, "cells kept in place");
+    assert_eq!(w.land_value.values.len(), w.land_value.n * w.land_value.n);
+    assert!(w.estate.pressure.ready() && w.estate.pressure.index(far).is_some());
+    // A flat map keeps the old size.
+    let flat = World::new(WorldConfig::test_town());
+    if flat.landscape.is_flat() {
+        assert_eq!(flat.land_value.half, flat.config.half_extent + 200.0);
+    }
+}

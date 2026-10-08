@@ -110,7 +110,8 @@ fn order_of(kind: BusinessKind) -> Option<(Resource, f32)> {
     match kind {
         BusinessKind::Grocery => Some((Resource::Groceries, 4.0)),
         BusinessKind::Bakery => Some((Resource::BakedGoods, 2.0)),
-        BusinessKind::GadgetShop => Some((Resource::Goods, 1.0)),
+        BusinessKind::GadgetShop | BusinessKind::Bookshop => Some((Resource::Goods, 1.0)),
+        BusinessKind::Cafe => Some((Resource::BakedGoods, 1.0)),
         _ => None,
     }
 }
@@ -198,7 +199,7 @@ impl World {
         let mut shops: Vec<BuildingId> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.construction.is_none() && !b.is_derelict() && b.serves_at(hour))
+            .filter(|(_, b)| b.operating() && !b.is_derelict() && b.serves_at(hour))
             .filter(|(_, b)| b.business.as_ref().is_some_and(|bz| !bz.closed && order_of(bz.kind).is_some_and(|(r, n)| bz.stock_of(r) >= n * 2.0)))
             .map(|(id, _)| id)
             .collect();
@@ -219,7 +220,7 @@ impl World {
             // Homes in range with a household short of food (or, for
             // gadgets, with money to burn) and the money to pay.
             let mut homes: Vec<(BuildingId, HouseholdId)> = Vec::new();
-            for (hid, home) in self.buildings.iter().filter(|(_, h)| h.land_use == LandUse::Residential && !h.households.is_empty() && h.construction.is_none()) {
+            for (hid, home) in self.buildings.iter().filter(|(_, h)| h.land_use == LandUse::Residential && !h.households.is_empty() && h.operating()) {
                 if self.lots.get(home.lot).map_or(true, |l| l.center.distance(at) > DELIVERY_RANGE) {
                     continue;
                 }

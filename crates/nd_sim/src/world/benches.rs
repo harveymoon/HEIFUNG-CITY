@@ -135,7 +135,7 @@ impl World {
         let hour = self.clock.hour() as u8;
         let mut best: Option<(f32, BuildingId)> = None;
         for (bid, b) in self.buildings.iter() {
-            if bid == except || b.land_use != LandUse::Park || b.construction.is_some() || !b.serves_at(hour) {
+            if bid == except || b.land_use != LandUse::Park || !b.serves_at(hour) {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };

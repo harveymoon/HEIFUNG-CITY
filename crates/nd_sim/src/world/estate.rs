@@ -32,7 +32,7 @@ impl World {
     /// cars standing, folded into the running averages.
     pub(super) fn hourly_pressure(&mut self) {
         if !self.estate.pressure.ready() {
-            self.estate.pressure = Pressure::new(self.config.half_extent + 200.0);
+            self.estate.pressure = Pressure::new(self.grid_half(crate::estate::PRESSURE_CELL));
         }
         let p = &self.estate.pressure;
         let cells = p.value.len();
@@ -72,7 +72,7 @@ impl World {
         let stations: Vec<Vec2> = self
             .buildings
             .values()
-            .filter(|b| b.construction.is_none() && (b.metro || b.rail.as_ref().is_some_and(|l| l.kind != RailFacility::FreightYard)))
+            .filter(|b| b.operating() && (b.metro || b.rail.as_ref().is_some_and(|l| l.kind != RailFacility::FreightYard)))
             .filter_map(|b| self.lots.get(b.lot).map(|l| l.center))
             .collect();
         let p = &mut self.estate.pressure;
@@ -205,7 +205,7 @@ impl World {
 
     pub(super) fn new_owner(&mut self, name: String, kind: OwnerKind) -> OwnerId {
         let day = self.clock.day();
-        self.estate.owners.insert(Owner { name, kind, properties: Vec::new(), spent: 0.0, since_day: day as u32 })
+        self.estate.owners.insert(Owner { name, kind, properties: Vec::new(), spent: 0.0, since_day: day as u32, income_day: 0.0, earned: 0.0 })
     }
 
     /// `owner` buys `bid` (or takes it on as built): off its old owner's
@@ -300,7 +300,7 @@ impl World {
     /// historic district, not a home bought outright, not a billionaire's.
     pub(super) fn buyable(&self, bid: BuildingId) -> bool {
         let Some(b) = self.buildings.get(bid) else { return false };
-        if b.construction.is_some() || b.demolition.is_some() || b.is_special() || b.is_parking() || b.land_use == LandUse::Park || b.land_use == LandUse::Civic {
+        if !b.operating() || b.is_special() || b.is_parking() || b.land_use == LandUse::Park || b.land_use == LandUse::Civic {
             return false;
         }
         if b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::TaxiCompany | BusinessKind::CargoHub)) {
@@ -337,6 +337,9 @@ impl World {
         self.build_mcmansions();
         // [rich] The well-off buy a business or a second home.
         self.invest_rich();
+        // [sweep-sim] ... and what they hold pays them.
+        self.pay_investors();
+        self.weekend_cars();
         self.daily_elites();
         self.daily_nimby();
     }
@@ -615,10 +618,10 @@ impl World {
     pub fn wants_to_expand(&self, bid: BuildingId) -> bool {
         let Some(b) = self.buildings.get(bid) else { return false };
         let Some(z) = &b.business else { return false };
-        if z.wants_expand && !z.closed && b.construction.is_none() && b.demolition.is_none() {
+        if z.wants_expand && !z.closed && b.operating() {
             return true;
         }
-        if z.closed || b.construction.is_some() || b.demolition.is_some() || b.is_derelict() || z.days_open < 6 || z.books.len() < 3 {
+        if z.closed || !b.operating() || b.is_derelict() || z.days_open < 6 || z.books.len() < 3 {
             return false;
         }
         let last = &z.books[z.books.len() - 3..];
@@ -1053,7 +1056,7 @@ impl World {
     /// A visitor who stays: a new one-person household, put up in the best
     /// free home until the mansion is done. `None` without a free home.
     fn elite_visitor(&mut self, rng: &mut SimRng) -> Option<CitizenId> {
-        let home = self.buildings.iter().filter(|(_, b)| b.land_use == LandUse::Residential && b.construction.is_none() && b.free_homes() > 0).max_by(|a, b| a.1.tier.cmp(&b.1.tier).then(a.1.rent.total_cmp(&b.1.rent)).then(b.0.cmp(&a.0))).map(|(id, _)| id)?;
+        let home = self.buildings.iter().filter(|(_, b)| b.land_use == LandUse::Residential && b.operating() && b.free_homes() > 0).max_by(|a, b| a.1.tier.cmp(&b.1.tier).then(a.1.rent.total_cmp(&b.1.rent)).then(b.0.cmp(&a.0))).map(|(id, _)| id)?;
         let template = self.citizens.values().find(|c| c.stage() == crate::citizens::LifeStage::Adult)?.clone();
         let seed = self.fresh_seed();
         let family = names::family_name(rng);

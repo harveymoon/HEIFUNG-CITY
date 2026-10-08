@@ -232,7 +232,7 @@ impl World {
         let (r, w) = kind.map_or((220.0, 0.3), |k| k.nuisance());
         b.splat_nuisance(c, r, w);
         if let Some(k) = kind {
-            let open = bld.construction.is_none() && bld.business.as_ref().is_some_and(|z| !z.closed);
+            let open = bld.operating() && bld.business.as_ref().is_some_and(|z| !z.closed);
             if open {
                 let (r, w) = k.lift();
                 b.splat_lift(c, r, w);
@@ -268,7 +268,7 @@ impl World {
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         for id in ids {
             let b = &self.buildings[id];
-            if b.construction.is_some() || b.is_derelict() {
+            if !b.operating() || b.is_derelict() {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };
@@ -372,7 +372,7 @@ impl World {
     /// Bays at a building that is a truck and bus lot, else zero.
     pub fn fleet_capacity(&self, b: BuildingId) -> u16 {
         match self.buildings.get(b) {
-            Some(bld) if bld.business.as_ref().is_some_and(|z| z.kind.is_truck_lot() && !z.closed) && bld.construction.is_none() => self.fleet_bays_for(bld.lot),
+            Some(bld) if bld.business.as_ref().is_some_and(|z| z.kind.is_truck_lot() && !z.closed) && bld.operating() => self.fleet_bays_for(bld.lot),
             _ => 0,
         }
     }
@@ -485,7 +485,7 @@ impl World {
                 if tick.saturating_sub(oldest.since) < FLEET_NIGHT_HOME_AFTER {
                     break;
                 }
-                let home_ok = self.buildings.get(oldest.home).is_some_and(|h| h.construction.is_none() && !h.is_derelict());
+                let home_ok = self.buildings.get(oldest.home).is_some_and(|h| h.operating() && !h.is_derelict());
                 if !home_ok {
                     // Its business is gone: the lorry stays until a job comes.
                     break;
@@ -569,7 +569,7 @@ impl World {
     fn drive_lorry_on(&mut self, car_id: CarId, at: BuildingId, home: BuildingId) -> bool {
         let model = self.traffic.cars[car_id].model;
         let pos = self.building_lot(at).map(|l| l.center).unwrap_or(self.traffic.cars[car_id].pos);
-        let home_ok = home != at && self.buildings.get(home).is_some_and(|h| h.construction.is_none() && !h.is_derelict());
+        let home_ok = home != at && self.buildings.get(home).is_some_and(|h| h.operating() && !h.is_derelict());
         let dest = self
             .fleet_lot_with_room(pos, FLEET_REACH)
             .or_else(|| home_ok.then_some(home))
@@ -653,7 +653,7 @@ impl World {
     #[cfg(test)]
     fn send_truck_back(&mut self, at: BuildingId, home: BuildingId, resource: Resource, model: VehicleModel) {
         let Some(pos) = self.building_lot(at).map(|l| l.center) else { return };
-        let home_ok = home != at && self.buildings.get(home).is_some_and(|h| h.construction.is_none() && !h.is_derelict());
+        let home_ok = home != at && self.buildings.get(home).is_some_and(|h| h.operating() && !h.is_derelict());
         let dest = self
             .fleet_lot_with_room(pos, FLEET_REACH)
             .or_else(|| home_ok.then_some(home))

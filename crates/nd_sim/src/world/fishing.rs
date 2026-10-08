@@ -46,7 +46,7 @@ impl World {
     /// sends a trawler out with the fleets.
     fn jetty_fleet_wanted(&self, b: BuildingId) -> bool {
         self.shore.jetties.get(&b).is_some_and(|j| j.kind == crate::shore::JettyKind::Fishing)
-            && self.buildings.get(b).is_some_and(|x| x.construction.is_none() && x.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Fishery))
+            && self.buildings.get(b).is_some_and(|x| x.operating() && x.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Fishery))
     }
 
     /// Shipping lanes and ferry routes fishing grounds keep clear of.
@@ -194,7 +194,7 @@ impl World {
             }
             let Some(bld) = self.buildings.get(b) else { continue };
             let kind = if is_jetty { BusinessKind::Fishery } else { BusinessKind::FishingPort };
-            let open = port.as_ref().is_none_or(|p| p.works()) && bld.construction.is_none() && bld.business.as_ref().is_some_and(|z| !z.closed && z.kind == kind);
+            let open = port.as_ref().is_none_or(|p| p.works()) && bld.operating() && bld.business.as_ref().is_some_and(|z| !z.closed && z.kind == kind);
             let staffing = bld.staffing();
             let jobs = bld.jobs;
             let mut fleet = std::mem::take(self.fishing.fleets.get_mut(&b).expect("listed"));

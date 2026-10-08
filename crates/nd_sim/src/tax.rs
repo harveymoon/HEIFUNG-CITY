@@ -230,8 +230,8 @@ impl TaxCategory {
         }
         Some(match kind {
             BusinessKind::Grocery => TaxCategory::Grocery,
-            BusinessKind::Bakery => TaxCategory::Bakery,
-            BusinessKind::GadgetShop => TaxCategory::GadgetShop,
+            BusinessKind::Bakery | BusinessKind::Cafe => TaxCategory::Bakery,
+            BusinessKind::GadgetShop | BusinessKind::Bookshop => TaxCategory::GadgetShop,
             BusinessKind::Parking => TaxCategory::Parking,
             BusinessKind::Venue | BusinessKind::SeafoodRestaurant | BusinessKind::GolfRange | BusinessKind::Gallery | BusinessKind::Marina => match tier {
                 Tier::Low => TaxCategory::NightlifeLow,

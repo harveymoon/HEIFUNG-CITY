@@ -70,7 +70,7 @@ impl World {
 
     /// Working parking enforcement offices.
     pub fn enforcement_offices(&self) -> Vec<BuildingId> {
-        self.buildings.iter().filter(|(_, b)| b.service.is_some_and(|s| s.kind == ServiceKind::ParkingEnforcement) && b.construction.is_none() && !b.is_derelict()).map(|(id, _)| id).collect()
+        self.buildings.iter().filter(|(_, b)| b.service.is_some_and(|s| s.kind == ServiceKind::ParkingEnforcement) && b.operating() && !b.is_derelict()).map(|(id, _)| id).collect()
     }
 
     /// Patrol cars an office puts out now: by tier, two officers a car,
@@ -78,7 +78,7 @@ impl World {
     pub fn enforcement_cars(&self, office: BuildingId) -> usize {
         let Some(b) = self.buildings.get(office) else { return 0 };
         let Some(s) = b.service else { return 0 };
-        if !PATROL_HOURS.contains(&(self.clock.hour() as u8)) || b.is_derelict() || b.construction.is_some() {
+        if !PATROL_HOURS.contains(&(self.clock.hour() as u8)) || b.is_derelict() || !b.operating() {
             return 0;
         }
         [1usize, 2, 4][s.tier.index()].min(b.workers.len() / 2)
@@ -266,7 +266,7 @@ impl World {
     /// with anyone there; none when it is shut.
     pub fn tow_trucks(&self, b: BuildingId) -> usize {
         let Some(bld) = self.buildings.get(b) else { return 0 };
-        let ok = bld.construction.is_none() && !bld.is_derelict() && bld.business.as_ref().is_some_and(|z| z.kind == BusinessKind::TowYard && !z.closed);
+        let ok = bld.operating() && !bld.is_derelict() && bld.business.as_ref().is_some_and(|z| z.kind == BusinessKind::TowYard && !z.closed);
         if !ok || bld.workers.is_empty() {
             return 0;
         }

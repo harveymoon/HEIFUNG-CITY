@@ -1935,7 +1935,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             // Connectors of placed pieces that still want joining.
             for (id, b) in sim.world.buildings.iter() {
                 let Some(link) = &b.rail else { continue };
-                if link.rail_connected && link.road_connected {
+                if link.rail_connected && (link.road_connected || link.works()) {
                     continue;
                 }
                 let Some(fac) = sim.world.facilities.values().find(|x| x.building == Some(id)) else { continue };
@@ -1943,7 +1943,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                     let [a, bb] = fac.rail_line();
                     gizmos.line(lift(a) + Vec3::Y, lift(bb) + Vec3::Y, red);
                 }
-                if !link.road_connected {
+                if !(link.road_connected || (link.kind.is_passenger() && link.walk_connected)) {
                     let [a, bb] = fac.road_line();
                     gizmos.line(lift(a) + Vec3::Y, lift(bb) + Vec3::Y, red);
                 }

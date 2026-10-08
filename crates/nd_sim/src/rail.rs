@@ -187,11 +187,20 @@ pub struct RailLink {
     pub rail_connected: bool,
     #[serde(default)]
     pub road_connected: bool,
+    /// [sweep-sim] The street stub reaches the city over streets or paths:
+    /// enough for a passenger station (people walk in), not for a yard.
+    #[serde(default)]
+    pub walk_connected: bool,
 }
 
 impl RailLink {
     pub fn works(&self) -> bool {
-        self.rail_connected && self.road_connected
+        self.rail_connected && (self.road_connected || (self.kind.is_passenger() && self.walk_connected))
+    }
+
+    /// [sweep-sim] Working, but reached on foot only (no road yet).
+    pub fn walk_only(&self) -> bool {
+        self.works() && !self.road_connected
     }
 }
 
@@ -358,7 +367,7 @@ impl RailLink {
         // The piece of track beside the platform's middle, which is what
         // trains route to and turn at (`plan_train_route`).
         let segment = roads.nearest_rail(mid).filter(|(_, _, q)| q.distance(mid) < 1.0).map_or(segment, |(sid, _, _)| sid);
-        Some(RailLink { kind, segment, platform: [mid - d * half + off, mid + d * half + off], side, rail_connected: false, road_connected: false })
+        Some(RailLink { kind, segment, platform: [mid - d * half + off, mid + d * half + off], side, rail_connected: false, road_connected: false, walk_connected: false })
     }
 
     pub fn centre(&self) -> Vec2 {

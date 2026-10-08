@@ -692,7 +692,7 @@ impl World {
     pub(super) fn truck_base(&self, from: Option<BuildingId>) -> Option<BuildingId> {
         let b = from?;
         let bld = self.buildings.get(b)?;
-        (bld.business.is_some() && bld.construction.is_none() && self.building_lot(b).is_some_and(|l| l.car_segment.is_some())).then_some(b)
+        (bld.business.is_some() && bld.operating() && self.building_lot(b).is_some_and(|l| l.car_segment.is_some())).then_some(b)
     }
 
     /// A truck or van was just put on the road by `from`: it takes one of
@@ -1077,7 +1077,7 @@ impl World {
 
     pub(super) fn new_car(&mut self, owner: CitizenId, model: VehicleModel, place: CarPlace, event: CarEvent) -> VehicleId {
         let color = self.rng.random_range(0..8u8);
-        let vid = self.vehicles.cars.insert(OwnedCar { owner, model, place, color, since: self.clock.tick, spare: false });
+        let vid = self.vehicles.cars.insert(OwnedCar { owner, model, place, color, since: self.clock.tick, spare: false, usual: false });
         self.vehicles.note(event);
         if let Some(c) = self.citizens.get_mut(owner) {
             c.car = Some(vid);
@@ -1146,7 +1146,7 @@ impl World {
     fn specialist_near(&self, p: Vec2, kind: BusinessKind, reach: f32) -> Option<BuildingId> {
         self.buildings
             .iter()
-            .filter(|(_, b)| b.construction.is_none() && b.business.as_ref().is_some_and(|z| z.kind == kind && !z.closed))
+            .filter(|(_, b)| b.operating() && b.business.as_ref().is_some_and(|z| z.kind == kind && !z.closed))
             .filter_map(|(id, b)| self.lots.get(b.lot).filter(|l| l.car_access()).map(|l| (l.center.distance(p), id)))
             .filter(|(d, _)| *d <= reach)
             .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
@@ -1156,7 +1156,7 @@ impl World {
     fn any_shop_near(&self, p: Vec2) -> Option<BuildingId> {
         self.buildings
             .iter()
-            .filter(|(_, b)| b.land_use == LandUse::Commercial && b.construction.is_none() && b.port.is_none() && b.business.as_ref().is_some_and(|z| !z.closed && !b.is_parking()))
+            .filter(|(_, b)| b.land_use == LandUse::Commercial && b.operating() && b.port.is_none() && b.business.as_ref().is_some_and(|z| !z.closed && !b.is_parking()))
             .filter(|(id, _)| self.building_lot(*id).is_some_and(|l| l.car_access()))
             .filter_map(|(id, b)| {
                 let goods = b.business.as_ref().is_some_and(|z| z.sells(Resource::Goods) || z.sells(Resource::Electronics));
