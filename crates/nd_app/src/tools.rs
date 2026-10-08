@@ -186,6 +186,9 @@ pub struct ToolState {
     pub points: Vec<SVec2>,
     pub status: String,
     pub drag: Option<(GestureId, usize)>,
+    /// [fix/review-app] The current drag has moved its point (and so has
+    /// its own undo step, see [`drag_frame`]).
+    pub drag_moved: bool,
     pub hover_point: Option<(GestureId, usize)>,
     pub hover_gesture: Option<GestureId>,
     /// [free-placement] Bulldoze tool: the city building under the pointer
@@ -480,6 +483,48 @@ impl ToolState {
 
     /// [tools] Does the Road tool take the [ and ] keys (the camera zooms
     /// with them otherwise)?
+    /// [fix/review-app] A different city starts (`city_reset`): drop
+    /// everything that names the old city's ids (the drawing, drags,
+    /// hovers, the route and stop being edited, favourites, the district
+    /// polygon, the junction editor) and keep the player's choices: the
+    /// tool, road kind and lanes, zone and brush, the Build pick, transit
+    /// and rail modes, elevation, and the status line (the replacing
+    /// command has just written it).
+    pub fn forget_city(&mut self) {
+        let fresh = ToolState {
+            tool: self.tool,
+            lanes_fwd: self.lanes_fwd,
+            lanes_bwd: self.lanes_bwd,
+            land_use: self.land_use,
+            status: std::mem::take(&mut self.status),
+            cleanup: self.cleanup,
+            cleanup_radius: self.cleanup_radius,
+            curved: self.curved,
+            kind: self.kind,
+            build_cat: self.build_cat,
+            build: self.build,
+            build_tier: self.build_tier,
+            transit_mode: self.transit_mode,
+            show_routes: self.show_routes,
+            rail_kind: self.rail_kind,
+            dock: self.dock,
+            zone_mode: self.zone_mode,
+            brush_radius: self.brush_radius,
+            unzone: self.unzone,
+            industry: self.industry,
+            beach: self.beach,
+            roundabout: self.roundabout,
+            interchange: self.interchange,
+            ring_radius: self.ring_radius,
+            ring_lanes: self.ring_lanes,
+            elevation: self.elevation,
+            tunnel: self.tunnel,
+            depth: self.depth,
+            ..ToolState::default()
+        };
+        *self = fresh;
+    }
+
     pub fn captures_brackets(&self) -> bool {
         self.tool == Tool::Road && !self.roundabout
     }
@@ -516,6 +561,7 @@ impl Default for ToolState {
             points: Vec::new(),
             status: String::new(),
             drag: None,
+            drag_moved: false,
             right_press: None,
             hover_point: None,
             hover_gesture: None,
@@ -589,7 +635,8 @@ impl ToolState {
     /// Does the active tool use right-drags itself (the zone brush erases
     /// with them), so the camera must not orbit?
     pub fn captures_right_drag(&self) -> bool {
-        self.tool == Tool::Zone && matches!(self.zone_mode, ZoneMode::Brush | ZoneMode::Marquee)
+        // [fix/review-app] The District brush erases with a right-drag too.
+        (self.tool == Tool::Zone && matches!(self.zone_mode, ZoneMode::Brush | ZoneMode::Marquee)) || (self.tool == Tool::District && self.district.mode == crate::district_tool::DistrictMode::Brush)
     }
 
     /// The land use a paint stroke gives: the selected one, or none when
@@ -726,12 +773,57 @@ impl Plugin for ToolsPlugin {
             .init_resource::<Selection>()
             .init_resource::<EffectivePlan>()
             .configure_sets(Update, (SimSet::Input, SimSet::Step, SimSet::Sync).chain())
-            .add_systems(Update, (tool_input, crate::road_select::keep_on_rebuild, draw_gizmos).chain().in_set(SimSet::Input))
+            .add_systems(Update, (tool_input, crate::road_select::keep_on_rebuild).chain().in_set(SimSet::Input))
+            // [fix/review-app] After the sim step, like the meshes: drawn in
+            // Input, outlines and rings used the pre-tick state and last
+            // frame's `frac`, so at speed the gold box trailed its car.
+            .add_systems(Update, draw_gizmos.in_set(SimSet::Sync))
+            // [fix/review-app] The selection checked once, right after the
+            // sim moved, for every reader after it (overlays, the remote
+            // API's `selected`, a flag's snapshot), not only by the
+            // inspector's egui pass.
+            .add_systems(Update, validate_selection.after(SimSet::Step).before(SimSet::Sync))
             .add_systems(Update, path_trim_toasts.in_set(SimSet::Sync));
     }
 }
 
 const POINT_PICK_RADIUS: f32 = 8.0;
+
+/// [fix/review-app] What the selection should be now that the sim has
+/// moved: the same, `None` when the thing is gone, or the station for an
+/// emergency unit back home. One exhaustive match, so a new kind of
+/// selection has to say how it can vanish.
+pub fn validated(sel: Selection, sim: &Sim) -> Selection {
+    let w = &sim.world;
+    let alive = match sel {
+        Selection::None => true,
+        Selection::Citizen(id) => w.citizens.contains_key(id),
+        Selection::Building(id) => w.buildings.contains_key(id),
+        Selection::Car(id) => w.traffic.cars.contains_key(id),
+        Selection::Parked(id) => w.vehicles.cars.get(id).is_some_and(|c| c.spot().is_some()),
+        Selection::Toll(id) => w.tolls.get(id).is_some(),
+        Selection::Bot(id) => w.bots.bots.contains_key(id),
+        Selection::Train(id) => w.rail.trains.contains_key(id),
+        Selection::Metro(id) => w.subway.trains.contains_key(id),
+        // A street piece is re-pointed across rebuilds by
+        // `road_select::keep_on_rebuild` and the road card: left to them.
+        Selection::Road(_) => true,
+        Selection::Unit(id) => match w.services.units.get(id) {
+            None => false,
+            Some(u) if crate::fire_scene::unit_pose(w, id, sim.frac()).is_none() => return Selection::Building(u.station),
+            Some(_) => true,
+        },
+        Selection::Ship(id) => w.ports.ships.contains_key(id),
+    };
+    if alive { sel } else { Selection::None }
+}
+
+fn validate_selection(sim: Res<Sim>, mut selection: ResMut<Selection>) {
+    let now = validated(*selection, &sim);
+    if now != *selection {
+        *selection = now;
+    }
+}
 
 /// [park-paths] A path cut back because the park (or other grounds) it was
 /// joined to went: say so.
@@ -952,9 +1044,12 @@ pub(crate) fn tool_input(
     if ctrl && key(KeyCode::KeyZ) {
         tools.points.clear();
         tools.drag = None;
+        // [fix/review-app] A brush stroke's counts end with it.
+        tools.stroke = None;
         tools.status = if sim.world.undo() { "Undid last step".into() } else { "Nothing to undo".into() };
     }
     if ctrl && key(KeyCode::KeyY) {
+        tools.stroke = None;
         tools.status = if sim.world.redo() { "Redid step".into() } else { "Nothing to redo".into() };
     }
     if ctrl && key(KeyCode::Enter) {
@@ -984,13 +1079,16 @@ pub(crate) fn tool_input(
     let right_down = buttons.just_pressed(MouseButton::Right) && !flags.pointer_over_ui;
     let click = buttons.just_pressed(MouseButton::Left) && !shift && !flags.pointer_over_ui;
     let shift_click = buttons.just_pressed(MouseButton::Left) && shift && !flags.pointer_over_ui;
+    // [fix/review-app] A middle click on a panel is not a map click: it
+    // used to clear the remote API's pins.
+    let middle = buttons.just_pressed(MouseButton::Middle) && !flags.pointer_over_ui;
     let ground = cursor.ground;
     tools.hover_ground = ground;
 
     match tools.tool {
         Tool::Road if tools.roundabout => {
             // The pointer takes over from a centre the remote API pinned.
-            if click || right_down || buttons.just_pressed(MouseButton::Middle) {
+            if click || right_down || middle {
                 tools.ring_pin = None;
             }
             tools.ring_hover = tools.ring_pin.or(if flags.pointer_over_ui { None } else { ground }).map(|p| sim.world.roundabout_snap(p));
@@ -1016,7 +1114,7 @@ pub(crate) fn tool_input(
             }
         }
         Tool::Road => {
-            if ground.is_some() && (click || buttons.just_pressed(MouseButton::Middle)) {
+            if ground.is_some() && (click || middle) {
                 tools.cursor_pin = None;
             }
             if click {
@@ -1147,9 +1245,10 @@ pub(crate) fn tool_input(
             if let Some((id, idx)) = tools.drag {
                 if let (Some(p), Some(mut g)) = (ground, plan.gestures.get(&id).cloned()) {
                     if idx < g.points().len() {
+                        let before = g.clone();
                         g.move_point(idx, p);
                         let release = !buttons.pressed(MouseButton::Left);
-                        sim.world.set_gesture(id, g, release);
+                        drag_frame(&mut sim.world, id, &before, g, &mut tools.drag_moved);
                         if release {
                             tools.drag = None;
                             tools.status = "Control point moved".into();
@@ -1169,6 +1268,7 @@ pub(crate) fn tool_input(
                     tools.status = "Intersection editor: lanes, left turns, signals and crosswalks.".into();
                 } else if let Some(hp) = tools.hover_point {
                     tools.drag = Some(hp);
+                    tools.drag_moved = false;
                     tools.selected_gesture = Some(hp.0);
                 } else {
                     tools.selected_gesture = tools.hover_gesture;
@@ -1264,13 +1364,8 @@ pub(crate) fn tool_input(
         Tool::Inspect => {
             if click {
                 if let Some(p) = ground {
-                    *selection = pick(&sim, p, tools.depth);
-                    // A bus picked shows its whole line: path, stops, its
-                    // sister buses. Anything else picked lets the line go.
-                    tools.route_sel = match *selection {
-                        Selection::Car(id) => sim.world.traffic.cars.get(id).and_then(|c| c.bus.as_ref()).map(|b| b.route),
-                        _ => None,
-                    };
+                    let picked = pick(&sim, p, tools.depth);
+                    apply_pick(&sim, &mut tools, &mut selection, picked);
                 }
             }
         }
@@ -1517,6 +1612,25 @@ pub(crate) fn pick(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
     }
 }
 
+/// [fix/review-app] Select `sel` as a click with the Inspect tool does,
+/// for the click and the remote API's `select` alike: an emergency unit's
+/// car is the unit, and a bus shows its whole line (path, stops, its
+/// sister buses). With the Inspect tool, anything else lets the line go.
+pub(crate) fn apply_pick(sim: &Sim, tools: &mut ToolState, selection: &mut Selection, sel: Selection) {
+    let sel = match sel {
+        Selection::Car(id) => sim.world.services.unit_of_car(id).map_or(sel, Selection::Unit),
+        s => s,
+    };
+    *selection = sel;
+    let line = match sel {
+        Selection::Car(id) => sim.world.traffic.cars.get(id).and_then(|c| c.bus.as_ref()).map(|b| b.route),
+        _ => None,
+    };
+    if line.is_some() || tools.tool == Tool::Inspect {
+        tools.route_sel = line;
+    }
+}
+
 fn pick_any(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
     let w = &sim.world;
     let f = sim.frac();
@@ -1739,7 +1853,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             let outline = |gizmos: &mut Gizmos, poly: &[SVec2], col: Color| {
                 let mut pts: Vec<Vec3> = poly.iter().map(|&p| lift(p)).collect();
                 if pts.len() >= 3 {
-                    pts.push(pts[0]);
+                    if let Some(&first) = pts.first() { pts.push(first); }
                     gizmos.linestrip(pts, col);
                 }
             };
@@ -1839,7 +1953,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             let mut pts: Vec<Vec3> = ctrl.iter().map(|&p| lift(p)).collect();
             if pts.len() >= 2 {
                 if pts.len() >= 3 {
-                    pts.push(pts[0]);
+                    if let Some(&first) = pts.first() { pts.push(first); }
                 }
                 gizmos.linestrip(pts, cyan);
             }
@@ -1856,7 +1970,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 if let Some(g) = plan.gestures.get(&id) {
                     let mut pts: Vec<Vec3> = g.road_polyline().iter().map(|&p| lift(p)).collect();
                     if !g.is_road() && pts.len() >= 3 {
-                        pts.push(pts[0]);
+                        if let Some(&first) = pts.first() { pts.push(first); }
                     }
                     gizmos.linestrip(pts, colour);
                 }
@@ -1875,7 +1989,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             if let Some(l) = tools.hover_city_building.and_then(|b| sim.world.buildings.get(b)).and_then(|b| sim.world.lots.get(b.lot)) {
                 let mut pts: Vec<Vec3> = l.polygon.iter().map(|&p| lift(p)).collect();
                 if pts.len() >= 3 {
-                    pts.push(pts[0]);
+                    if let Some(&first) = pts.first() { pts.push(first); }
                     gizmos.linestrip(pts, red);
                 }
             }
@@ -1883,7 +1997,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 if let Some(g) = plan.gestures.get(&id) {
                     let mut pts: Vec<Vec3> = g.points().iter().map(|&p| lift(p)).collect();
                     if !g.is_road() && pts.len() >= 3 {
-                        pts.push(pts[0]);
+                        if let Some(&first) = pts.first() { pts.push(first); }
                     }
                     gizmos.linestrip(pts, red);
                 }
@@ -1896,7 +2010,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                     Ok(port) => {
                         let ok = Color::linear_rgb(0.3, 2.5, 0.6);
                         let mut pts: Vec<Vec3> = port.footprint().iter().map(|&p| lift(p)).collect();
-                        pts.push(pts[0]);
+                        if let Some(&first) = pts.first() { pts.push(first); }
                         gizmos.linestrip(pts, ok);
                         let [a, b] = port.pier;
                         gizmos.line(lift(a), lift(b), white);
@@ -1922,10 +2036,12 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 // The piece as it would land: footprint, track side, street side.
                 let (f, rail_fused, road_fused) = nd_sim::Facility::plan(tools.rail_kind, c, &sim.world.roads);
                 let fp = f.footprint();
-                let blocked = sim.world.buildings.values().any(|b| sim.world.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp)));
+                // [fix/review-app] Red by the game's own rule, as the
+                // Buildings tool's preview and placing it decide.
+                let blocked = sim.world.piece_verdict(nd_sim::Placeable::Rail(tools.rail_kind), c).is_some_and(|v| v.is_err());
                 let col = if blocked { red } else { Color::linear_rgb(0.3, 2.5, 0.6) };
                 let mut pts: Vec<Vec3> = fp.iter().map(|&p| lift(p)).collect();
-                pts.push(pts[0]);
+                if let Some(&first) = pts.first() { pts.push(first); }
                 gizmos.linestrip(pts, col);
                 let [ra, rb] = f.rail_line();
                 gizmos.line(lift(ra), lift(rb), if rail_fused { white } else { Color::linear_rgb(1.6, 1.2, 0.3) });
@@ -2298,12 +2414,15 @@ pub(crate) fn vehicle_outline(gizmos: &mut Gizmos, p: SVec2, heading: f32, lengt
     gizmos.linestrip(pts.iter().map(|v| *v + Vec3::Y * 1.4), col);
 }
 
+/// `y` metres above the built ground at each corner. [fix/review-app] It
+/// was an absolute height: on relief maps outlines sank under the terrain.
 pub(crate) fn lot_outline(gizmos: &mut Gizmos, w: &nd_sim::World, b: BuildingId, y: f32, col: Color) {
     // [land] the whole footprint of a building over merged plots
     let Some(lot) = w.footprint(b) else { return };
-    let mut pts: Vec<Vec3> = lot.polygon.iter().map(|&p| Vec3::new(p.x, y, p.y)).collect();
+    let ground = |p: SVec2| if w.relief { w.ground_height(p) } else { 0.0 };
+    let mut pts: Vec<Vec3> = lot.polygon.iter().map(|&p| Vec3::new(p.x, y + ground(p), p.y)).collect();
     if pts.len() >= 3 {
-        pts.push(pts[0]);
+        if let Some(&first) = pts.first() { pts.push(first); }
         gizmos.linestrip(pts, col);
     }
 }
@@ -2384,7 +2503,7 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
         match w.plan_port(kind, c) {
             Ok(port) => {
                 let mut pts: Vec<Vec3> = port.footprint().iter().map(|&p| lift(p)).collect();
-                pts.push(pts[0]);
+                if let Some(&first) = pts.first() { pts.push(first); }
                 gizmos.linestrip(pts, green);
                 let [a, b] = port.pier;
                 gizmos.line(lift(a), lift(b), Color::linear_rgb(3.0, 3.0, 3.0));
@@ -2428,9 +2547,9 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
     if let nd_sim::Placeable::Rail(kind) = what {
         let (f, _, _) = nd_sim::Facility::plan(kind, c, &w.roads);
         let fp = f.footprint();
-        let blocked = w.buildings.values().any(|b| b.is_special() && w.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp)));
+        let blocked = w.piece_verdict(what, c).is_some_and(|v| v.is_err());
         let mut pts: Vec<Vec3> = fp.iter().map(|&p| lift(p)).collect();
-        pts.push(pts[0]);
+        if let Some(&first) = pts.first() { pts.push(first); }
         gizmos.linestrip(pts, if blocked { red } else { green });
         return;
     }
@@ -2448,6 +2567,21 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
         let col = Color::linear_rgb(0.4, 1.4, 2.4);
         gizmos.circle(Isometry3d::new(lift(centre), flat), r, col);
         gizmos.circle(Isometry3d::new(lift(centre), flat), (r - nd_sim::services::COVERAGE_FADE).max(1.0), col.with_alpha(0.5));
+    }
+}
+
+/// [fix/review-app] One frame of a control-point drag of gesture `id`
+/// from `before` to `after`. The first frame that moves the point records
+/// a new undo step, so the shape before the drag stays one Ctrl+Z away;
+/// every later frame, the release included, amends that step. (Amending
+/// from the first frame overwrote the step that drew the gesture: undo
+/// then kept the moved shape, and a second undo deleted it.)
+pub fn drag_frame(world: &mut nd_sim::World, id: GestureId, before: &nd_sim::Gesture, after: nd_sim::Gesture, moved: &mut bool) {
+    if *moved {
+        world.set_gesture(id, after, false);
+    } else if after != *before {
+        world.set_gesture(id, after, true);
+        *moved = true;
     }
 }
 
@@ -2480,5 +2614,54 @@ mod pick_tests {
         let on_highway = start + (SVec2::new(-150.0, 10.0) - start).normalize() * 3.0;
         assert_eq!(nearest_control_point(&plan, on_highway), Some((GestureId(1), 0)));
         assert_eq!(nearest_gesture(&plan, on_highway).map(|g| g.0), Some(GestureId(1)));
+    }
+}
+
+#[cfg(test)]
+mod drag_tests {
+    use super::*;
+
+    fn road(x: f32) -> Gesture {
+        Gesture::Road { points: vec![SVec2::new(x, -300.0), SVec2::new(x, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() }
+    }
+
+    /// Run a drag of `id`'s first point to x = 300, 320, 340 (release on
+    /// the last), the way the Edit tool calls `drag_frame`.
+    fn drag(w: &mut World, id: GestureId) {
+        let mut moved = false;
+        let mut current = w.gesture(id).unwrap();
+        // A frame that does not move it yet records nothing.
+        drag_frame(w, id, &current.clone(), current.clone(), &mut moved);
+        for x in [300.0, 320.0, 340.0] {
+            let mut g = current.clone();
+            g.move_point(0, SVec2::new(x, -300.0));
+            drag_frame(w, id, &current, g.clone(), &mut moved);
+            current = g;
+        }
+    }
+
+    /// [fix/review-app] Draw a road, drag a control point, undo: the road is
+    /// back where it was drawn (one undo), and a second undo removes it.
+    #[test]
+    fn undo_after_drag_restores_the_drawn_shape() {
+        let mut w = World::new(nd_sim::WorldConfig { landscape: nd_sim::LandscapeParams::flat(), ..Default::default() });
+        let id = w.add_gesture(road(200.0));
+        drag(&mut w, id);
+        assert_eq!(w.gesture(id).unwrap().points()[0], SVec2::new(340.0, -300.0));
+        assert!(w.undo());
+        assert_eq!(w.gesture(id), Some(road(200.0)), "one undo puts the drawn shape back");
+        assert!(w.redo());
+        assert_eq!(w.gesture(id).unwrap().points()[0], SVec2::new(340.0, -300.0), "redo moves it again");
+        assert!(w.undo());
+        assert!(w.undo());
+        assert_eq!(w.gesture(id), None, "the second undo removes the road");
+        // Two drags in a row are two undo steps.
+        assert!(w.redo());
+        drag(&mut w, id);
+        drag(&mut w, id);
+        assert!(w.undo());
+        assert!(w.gesture(id).is_some());
+        assert!(w.undo());
+        assert_eq!(w.gesture(id), Some(road(200.0)));
     }
 }

@@ -271,6 +271,23 @@ pub fn news_toast(w: &World, flags: &mut UiFlags) {
 
 /// Bubbles show for this long (real seconds) after the talk was first seen.
 const BUBBLE_SECS: f64 = 4.0;
+/// The newest talks considered for a bubble.
+const BUBBLE_WINDOW: usize = 200;
+
+/// Note the first sighting of each talk in `window` (the newest talks'
+/// serials) at time `now`, and forget talks that have left the window.
+///
+/// [fix/review-app] Forgetting by window, not by age: a talk dropped after
+/// five seconds while still among the newest came straight back with a
+/// fresh time, so its bubble showed 4 s, hid 1 s and showed again forever.
+fn note_talks(seen: &mut std::collections::BTreeMap<u64, f64>, window: impl Iterator<Item = u64>, now: f64) {
+    let mut oldest = u64::MAX;
+    for serial in window {
+        oldest = oldest.min(serial);
+        seen.entry(serial).or_insert(now);
+    }
+    seen.retain(|serial, _| *serial >= oldest);
+}
 /// The camera closer than this (metres) to show them.
 const BUBBLE_RANGE: f32 = 320.0;
 const MAX_BUBBLES: usize = 40;
@@ -278,7 +295,7 @@ const MAX_BUBBLES: usize = 40;
 /// Speech bubbles over people talking (or over the door of the place they
 /// are talking in), a gig's note over the venue, a protest's fist: when the
 /// camera is close.
-pub fn bubbles(mut contexts: EguiContexts, sim: Res<Sim>, voices: Res<crate::committee::CommitteeRt>, mode: Res<CameraMode>, flags: Res<UiFlags>, cams: Query<(&Camera, &GlobalTransform, &OrbitCamera)>, mut seen: Local<std::collections::BTreeMap<u64, f64>>) -> Result {
+pub fn bubbles(mut contexts: EguiContexts, sim: Res<Sim>, voices: Res<crate::committee::CommitteeRt>, mode: Res<CameraMode>, flags: Res<UiFlags>, cams: Query<(&Camera, &GlobalTransform, &OrbitCamera)>, mut seen: Local<(u64, std::collections::BTreeMap<u64, f64>)>) -> Result {
     let Some((camera, gt, orbit)) = cams.iter().next() else { return Ok(()) };
     let ctx = contexts.ctx_mut()?;
     // [city-data] The map is covered: nothing to label.
@@ -289,11 +306,13 @@ pub fn bubbles(mut contexts: EguiContexts, sim: Res<Sim>, voices: Res<crate::com
     let w = &sim.world;
     let eye = gt.translation();
     let close = *mode == CameraMode::Walk || orbit.distance < BUBBLE_RANGE;
-    // Remember when each talk first showed; forget old ones.
-    for t in w.social.recent.iter().rev().take(200) {
-        seen.entry(t.serial).or_insert(now);
+    // Remember when each talk first showed. [fix/review-app] A new city
+    // numbers its talks from 1 again: start over.
+    if seen.0 != sim.generation {
+        *seen = (sim.generation, Default::default());
     }
-    seen.retain(|_, at| now - *at < BUBBLE_SECS + 1.0);
+    let seen = &mut seen.1;
+    note_talks(seen, w.social.recent.iter().rev().take(BUBBLE_WINDOW).map(|t| t.serial), now);
     if !close || !super::theme::bubbles_on() {
         return Ok(());
     }
@@ -396,4 +415,25 @@ pub fn bubbles(mut contexts: EguiContexts, sim: Res<Sim>, voices: Res<crate::com
         painter.galley(rect.min + egui::vec2(6.0, 3.0), galley, IVORY);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod bubble_tests {
+    use super::*;
+
+    /// A talk seen once keeps its first time while it stays among the
+    /// newest, so its bubble ages out and stays out.
+    #[test]
+    fn a_bubble_does_not_come_back() {
+        let mut seen = std::collections::BTreeMap::new();
+        note_talks(&mut seen, [3, 2, 1].into_iter(), 0.0);
+        for step in 1..20 {
+            note_talks(&mut seen, [3, 2, 1].into_iter(), step as f64);
+        }
+        assert_eq!(seen.get(&1), Some(&0.0), "first sighting kept");
+        assert!(19.0 - seen[&1] > BUBBLE_SECS);
+        // Talks that fall out of the window are forgotten.
+        note_talks(&mut seen, [5, 4].into_iter(), 20.0);
+        assert_eq!(seen.keys().copied().collect::<Vec<_>>(), vec![4, 5]);
+    }
 }

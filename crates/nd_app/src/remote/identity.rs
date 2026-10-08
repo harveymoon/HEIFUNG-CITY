@@ -97,14 +97,8 @@ pub fn game_history(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     e.bookmark().map_or(String::new(), |b| format!(" (\"{b}\")"))
                 ));
             }
-            let Ctx { sim, tools, selection, eplan, flags, saves, follow, fly, .. } = &mut *ctx;
-            saves::revert(&e.path, sim, tools, selection, eplan, saves, flags);
-            saves.title = false;
-            follow.stop();
-            fly.flight = None;
-            if flags.message.starts_with("load failed") {
-                return Err(flags.message.clone());
-            }
+            saves::revert(&e.path, &mut ctx.sim, &mut ctx.saves, &mut ctx.flags)?;
+            ctx.saves.title = false;
             ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "reverted");
             Ok(json!({ "message": ctx.flags.message, "day": e.meta.day, "clock": clock(&ctx.sim), "paused": ctx.sim.paused, "city": identity_json(&ctx.sim.world) }))
         }

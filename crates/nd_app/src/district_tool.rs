@@ -159,7 +159,7 @@ fn district_input(
             if !typing && !over_ui && keys.just_pressed(KeyCode::Backspace) {
                 tools.district.points.pop();
             }
-            let finish = right_click || (!typing && !over_ui && keys.just_pressed(KeyCode::Enter) && !keys.pressed(KeyCode::ControlLeft));
+            let finish = right_click || (!typing && !over_ui && keys.just_pressed(KeyCode::Enter) && !keys.pressed(KeyCode::ControlLeft) && !keys.pressed(KeyCode::ControlRight));
             if finish && tools.district.points.len() >= 3 {
                 let erase = tools.district.erase;
                 let id = if erase { Some(0) } else { target(&mut tools, &mut sim) };
@@ -199,7 +199,7 @@ fn district_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor
                 pts.push(lift(p));
             }
             if pts.len() >= 3 {
-                pts.push(pts[0]);
+                if let Some(&first) = pts.first() { pts.push(first); }
             }
             if pts.len() >= 2 {
                 gizmos.linestrip(pts, col);

@@ -28,9 +28,14 @@ pub fn key_str<K: Key>(k: K) -> String {
 pub fn key_from<K: Key>(v: &Value) -> Result<K, String> {
     let s = v.as_str().ok_or_else(|| format!("id must be an \"idx:version\" string, got {v}"))?;
     let (idx, ver) = s.split_once(':').ok_or_else(|| format!("id {s:?} is not \"idx:version\""))?;
-    let idx: u64 = idx.trim().parse().map_err(|_| format!("bad id {s:?}"))?;
-    let ver: u64 = ver.trim().parse().map_err(|_| format!("bad id {s:?}"))?;
-    Ok(K::from(KeyData::from_ffi((ver << 32) | idx)))
+    let idx: u32 = idx.trim().parse().map_err(|_| format!("bad id {s:?}"))?;
+    let ver: u32 = ver.trim().parse().map_err(|_| format!("bad id {s:?}"))?;
+    // [fix/review-app] A live key's version is odd; slotmap would quietly
+    // make an even one odd, so "42:2" named 42:3.
+    if ver % 2 == 0 {
+        return Err(format!("bad id {s:?}: no live id has an even version"));
+    }
+    Ok(K::from(KeyData::from_ffi((u64::from(ver) << 32) | u64::from(idx))))
 }
 
 pub fn opt_key<K: Key>(k: Option<K>) -> Value {
@@ -50,7 +55,13 @@ pub fn req_f32(cmd: &Value, name: &str) -> Result<f32, String> {
 pub fn opt_f32(cmd: &Value, name: &str) -> Result<Option<f32>, String> {
     match field(cmd, name) {
         None => Ok(None),
-        Some(v) => v.as_f64().map(|x| Some(x as f32)).ok_or_else(|| format!("field {name:?} must be a number")),
+        // [fix/review-app] Finite as an f32 too: 1e39 became infinity (an
+        // infinite `grant` went into the save).
+        Some(v) => match v.as_f64().map(|x| x as f32) {
+            Some(x) if x.is_finite() => Ok(Some(x)),
+            Some(_) => Err(format!("field {name:?} is out of range")),
+            None => Err(format!("field {name:?} must be a number")),
+        },
     }
 }
 
@@ -84,6 +95,9 @@ pub fn vec2_of(v: &Value) -> Result<SVec2, String> {
     let arr = v.as_array().filter(|a| a.len() == 2).ok_or_else(|| format!("expected [x, y], got {v}"))?;
     let x = arr[0].as_f64().ok_or("x must be a number")? as f32;
     let y = arr[1].as_f64().ok_or("y must be a number")? as f32;
+    if !(x.is_finite() && y.is_finite()) {
+        return Err(format!("{v}: coordinates out of range"));
+    }
     Ok(SVec2::new(x, y))
 }
 
@@ -95,7 +109,7 @@ pub fn req_points_levels(cmd: &Value, name: &str) -> Result<(Vec<SVec2>, Vec<Opt
     let mut levels = Vec::new();
     for v in arr {
         let a = v.as_array().filter(|a| a.len() == 2 || a.len() == 3).ok_or_else(|| format!("expected [x, y] or [x, y, level], got {v}"))?;
-        let n = |i: usize| a[i].as_f64().map(|x| x as f32).ok_or_else(|| format!("{v}: coordinates must be numbers"));
+        let n = |i: usize| a[i].as_f64().map(|x| x as f32).filter(|x| x.is_finite()).ok_or_else(|| format!("{v}: coordinates must be numbers in range"));
         pts.push(SVec2::new(n(0)?, n(1)?));
         levels.push(if a.len() == 3 { Some(n(2)?) } else { None });
     }
@@ -1026,4 +1040,25 @@ pub fn access_json(w: &World, id: nd_sim::BuildingId, connected: bool) -> Value 
         "stub_ends": w.stub_ends_of(id).into_iter().map(v2).collect::<Vec<_>>(),
         "problem": w.access_problem(id),
     })
+}
+
+#[cfg(test)]
+mod parse_tests {
+    use super::*;
+
+    /// [fix/review-app] Numbers that do not fit an f32 and ids that do not
+    /// name a live key are refused, not wrapped or rounded.
+    #[test]
+    fn out_of_range_numbers_and_bad_ids_are_refused() {
+        assert_eq!(opt_f32(&json!({ "amount": 5.5 }), "amount"), Ok(Some(5.5)));
+        assert!(opt_f32(&json!({ "amount": 1e39 }), "amount").is_err());
+        assert!(opt_f32(&json!({ "amount": -1e39 }), "amount").is_err());
+        assert!(vec2_of(&json!([1e39, 0])).is_err());
+        assert!(req_points_levels(&json!({ "p": [[0, 0], [1, 1e40]] }), "p").is_err());
+        let ok: Result<CarId, String> = key_from(&json!("42:3"));
+        assert_eq!(ok.map(key_str), Ok("42:3".to_string()));
+        assert!(key_from::<CarId>(&json!("42:2")).is_err(), "even versions are never live");
+        assert!(key_from::<CarId>(&json!("4294967296:1")).is_err(), "index past u32");
+        assert!(key_from::<CarId>(&json!("1:4294967297")).is_err(), "version past u32");
+    }
 }

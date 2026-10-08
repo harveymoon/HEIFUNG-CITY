@@ -769,7 +769,7 @@ fn elide(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
         s.to_string()
     } else {
-        format!("{}…", s.chars().take(n - 1).collect::<String>())
+        format!("{}…", s.chars().take(n.saturating_sub(1)).collect::<String>())
     }
 }
 

@@ -22,7 +22,6 @@ use nd_sim::{IndustryKind, LandscapeParams, World};
 
 use super::{despawn_all, to_mesh, Materials, Overlays};
 use crate::sim::Sim;
-use crate::ui::UiFlags;
 
 #[derive(Component)]
 pub(super) struct LandLayerTag;
@@ -133,18 +132,13 @@ fn fishing_grounds(w: &World, m: &mut nd_procgen::MeshData) {
 pub(super) fn sync_land_layer(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    keys: Res<ButtonInput<KeyCode>>,
-    flags: Res<UiFlags>,
     sim: Res<Sim>,
     mats: Res<Materials>,
     time: Res<Time>,
-    mut overlays: ResMut<Overlays>,
+    overlays: Res<Overlays>,
     mut st: Local<SurveyState>,
     q: Query<Entity, With<LandLayerTag>>,
 ) {
-    if keys.just_pressed(KeyCode::KeyK) && !flags.keyboard_captured {
-        overlays.cycle_land();
-    }
     let w = &sim.world;
     let Some(layer) = overlays.land else {
         if st.shown.take().is_some() {
@@ -158,7 +152,17 @@ pub(super) fn sync_land_layer(
     let current = st.survey.as_ref().is_some_and(|(p, h, _)| *p == params && *h == half);
     if !current {
         let done = match &st.pending {
-            Some((p, h, rx)) if *p == params && *h == half => rx.try_recv().ok(),
+            Some((p, h, rx)) if *p == params && *h == half => match rx.try_recv() {
+                Ok(s) => Some(s),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                // [fix/review-app] The worker died (it panicked): try again
+                // on the next frame rather than wait for ever.
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    warn!("the land survey worker stopped; starting it again");
+                    st.pending = None;
+                    return;
+                }
+            },
             _ => {
                 let (tx, rx) = channel();
                 let land = w.landscape.clone();

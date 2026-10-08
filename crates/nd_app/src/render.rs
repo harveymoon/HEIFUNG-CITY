@@ -26,7 +26,6 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use crate::assets::GameAssets;
-use crate::ui::UiFlags;
 use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
 
@@ -304,6 +303,32 @@ pub const UNDERGROUND_BELOW: f32 = -2.5;
 /// `lift_movers` leaves it alone.
 #[derive(Component)]
 pub struct SelfLifted;
+
+/// How far a selected mover (a person, a car, an emergency unit) is lifted
+/// off the road to stand out.
+pub(crate) const SELECTED_LIFT: f32 = 0.4;
+
+/// [fix/review-app] The movers the selection lifts: a person (and the car
+/// they drive), a car or bus, an emergency unit. One exhaustive match, so a
+/// new `Selection` kind has to say here whether it lifts anything (a
+/// selected ambulance used to be lifted by nobody: its generic car is
+/// hidden and the unit body ignored the selection).
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+pub(crate) struct Lifts {
+    pub citizen: Option<nd_sim::CitizenId>,
+    pub car: Option<CarId>,
+    pub unit: Option<nd_sim::UnitId>,
+}
+
+pub(crate) fn lifts(sel: Selection) -> Lifts {
+    match sel {
+        Selection::Citizen(c) => Lifts { citizen: Some(c), ..Default::default() },
+        Selection::Car(c) => Lifts { car: Some(c), ..Default::default() },
+        Selection::Unit(u) => Lifts { unit: Some(u), ..Default::default() },
+        // Outlined by their own gizmos or meshes, not lifted.
+        Selection::None | Selection::Building(_) | Selection::Parked(_) | Selection::Toll(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Road(_) | Selection::Ship(_) => Lifts::default(),
+    }
+}
 
 /// Where a mover is spawned before its first pose: far below the map.
 /// Spawns go through `Commands`, so the frame's pose systems cannot see the
@@ -1213,7 +1238,7 @@ fn sync_preview(
             continue;
         }
         let mut outline = p.polygon.clone();
-        outline.push(p.polygon[0]);
+        if let Some(&first) = p.polygon.first() { outline.push(first); }
         match want {
             Some(lu) => {
                 let c = if beach_want { BEACH_TINT } else { pal.zone_color(lu) };
@@ -1229,17 +1254,19 @@ fn sync_preview(
             let dim = 0.35;
             // Their planned roads are holograms (`holo::sync_plan_holograms`).
             for (_, pts, _, _, _) in &other.preview.removed_roads {
-                dashes(&mut glow, pts[0], *pts.last().unwrap(), 0.5, 0.21, 4.0, 3.0, scale(pal.preview_remove, dim));
+                if let (Some(&a), Some(&b)) = (pts.first(), pts.last()) {
+                    dashes(&mut glow, a, b, 0.5, 0.21, 4.0, 3.0, scale(pal.preview_remove, dim));
+                }
             }
             for (_, poly, lu) in &other.preview.planned_zones {
                 let mut outline = poly.clone();
-                outline.push(poly[0]);
+                if let Some(&first) = poly.first() { outline.push(first); }
                 glow.ground_strip(&outline, 0.6, 0.2, scale(pal.zone_color(*lu), 1.3 * dim));
             }
             for &(i, want) in &other.zoning {
                 let Some(p) = w.parcels.parcels.get(i) else { continue };
                 let mut outline = p.polygon.clone();
-                outline.push(p.polygon[0]);
+                if let Some(&first) = p.polygon.first() { outline.push(first); }
                 let c = want.map_or(unzoned, |lu| pal.zone_color(lu));
                 glow.ground_strip(&outline, 0.35, 0.2, scale(c, dim));
             }
@@ -1250,18 +1277,20 @@ fn sync_preview(
     for (_, pts, fwd, bwd, kind) in &pv.removed_roads {
         let w = preview_width(*kind, *fwd, *bwd);
         glow.ground_strip(pts, w, 0.22, scale(pal.preview_remove, 0.35));
-        dashes(&mut glow, pts[0], *pts.last().unwrap(), 0.6, 0.23, 4.0, 3.0, rgba(pal.preview_remove));
+        if let (Some(&a), Some(&b)) = (pts.first(), pts.last()) {
+            dashes(&mut glow, a, b, 0.6, 0.23, 4.0, 3.0, rgba(pal.preview_remove));
+        }
     }
     for (_, poly, lu) in &pv.planned_zones {
         let c = pal.zone_color(*lu);
         let mut outline = poly.clone();
-        outline.push(poly[0]);
+        if let Some(&first) = poly.first() { outline.push(first); }
         glow.ground_strip(&outline, 0.8, 0.22, scale(c, 1.3));
         glow.ground_polygon(poly, 0.045, scale(c, 0.12));
     }
     for (_, poly) in &pv.removed_zones {
         let mut outline = poly.clone();
-        outline.push(poly[0]);
+        if let Some(&first) = poly.first() { outline.push(first); }
         glow.ground_strip(&outline, 0.8, 0.22, rgba(pal.preview_remove));
     }
     for (_, fx) in &pv.planned_rings {
@@ -1352,7 +1381,7 @@ fn sync_ring_preview(
         for lot in w.roundabout_takes(ring) {
             let Some(l) = w.lots.get(lot) else { continue };
             let mut outline = l.polygon.clone();
-            outline.push(l.polygon[0]);
+            if let Some(&first) = l.polygon.first() { outline.push(first); }
             glow.ground_polygon(&l.polygon, 0.2, scale(pal.preview_remove, 0.3));
             glow.ground_strip(&outline, 0.7, 0.24, scale(pal.preview_remove, 1.3));
         }
@@ -1379,19 +1408,14 @@ fn is_vacant_lot(lot: &nd_sim::Lot) -> bool {
 fn sync_lots(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    keys: Res<ButtonInput<KeyCode>>,
     sim: Res<Sim>,
     assets: Res<GameAssets>,
     mats: Res<Materials>,
-    mut overlays: ResMut<Overlays>,
+    overlays: Res<Overlays>,
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<LotsTag>>,
-    flags: Res<UiFlags>,
     tools: Res<crate::tools::ToolState>,
 ) {
-    if keys.just_pressed(KeyCode::KeyO) && !flags.keyboard_captured {
-        overlays.zoning = !overlays.zoning;
-    }
     let w = &sim.world;
     let mut h = DefaultHasher::new();
     for (id, lot) in w.lots.iter() {
@@ -1425,7 +1449,7 @@ fn sync_lots(
             }
             let c = pal.zone_color(lu);
             let mut outline = polygon.to_vec();
-            outline.push(polygon[0]);
+            if let Some(&first) = polygon.first() { outline.push(first); }
             glow.ground_strip(&outline, 0.5, 0.04, scale(c, 1.0));
         }
     }
@@ -1438,7 +1462,7 @@ fn sync_lots(
         let step = if w.landscape.is_flat() { f32::INFINITY } else { 4.0 };
         for p in w.parcels.parcels.iter().filter(|p| p.lot.is_none() && p.polygon.len() >= 3) {
             let mut closed = p.polygon.clone();
-            closed.push(p.polygon[0]);
+            if let Some(&first) = p.polygon.first() { closed.push(first); }
             let outline = densify(&closed, step);
             let k = if p.landlocked() { 0.18 } else { 0.32 };
             glow.ground_strip(&outline, 0.16, 0.03, scale(grey, k));
@@ -1467,7 +1491,7 @@ fn sync_lots(
             let shared: &[usize] = lot.park.as_ref().map_or(&[], |p| p.shared_edges.as_slice());
             if shared.is_empty() {
                 let mut edge = lot.polygon.clone();
-                edge.push(lot.polygon[0]);
+                if let Some(&first) = lot.polygon.first() { edge.push(first); }
                 glow.ground_strip(&edge, 0.35, 0.4, scale(c, 1.3));
             } else {
                 let n = lot.polygon.len();
@@ -1762,6 +1786,8 @@ fn sync_buildings(
         // picked against live in `Sim::styles` (`nd_procgen::buildings::
         // adjacency`), where the inspector reads them too.
         sim.styles.clear();
+        // [fix/review-app] Drawn heights are keyed by building id too.
+        sim.building_tops.0.clear();
     }
     let mut dirty: HashSet<ChunkKey> = HashSet::new();
     if rebuild_all {
@@ -2021,6 +2047,7 @@ fn sync_citizens(
     camera: Query<&GlobalTransform, With<Camera3d>>,
     mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d, Option<&swap::SwapOriginal>, Option<&mut WayHeight>), With<CitizenTag>>,
 ) {
+    let lifted = lifts(*selection);
     let w = &sim.world;
     let f = sim.frac();
     let plain = people::plain();
@@ -2115,7 +2142,7 @@ fn sync_citizens(
                 mesh.0 = mats.citizen_mesh.clone();
             }
         }
-        let wanted = if *selection == Selection::Citizen(*id) {
+        let wanted = if lifted.citizen == Some(*id) {
             &mats.citizen_selected
         } else if c.spotlight {
             &mats.citizen_spotlight
@@ -2185,6 +2212,12 @@ struct VehicleRender {
 }
 
 impl VehicleRender {
+    /// [fix/review-app] The paint for a car class, without indexing past
+    /// the list (a new `VehicleClass` would have panicked here).
+    pub(super) fn finish_of(&self, class: nd_sim::vehicle::VehicleClass) -> Handle<StandardMaterial> {
+        self.finish.get(class as usize).or(self.finish.first()).cloned().unwrap_or_default()
+    }
+
     fn ensure_materials(&mut self, materials: &mut Assets<StandardMaterial>) {
         if self.fx.is_some() {
             return;
@@ -2301,6 +2334,7 @@ fn sync_cars(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut q: Query<(&mut Transform, Option<&mut InTunnel>), With<CarTag>>,
 ) {
+    let lifted = lifts(*selection);
     vr.ensure_materials(&mut materials);
     let fx_mat = vr.fx.clone().expect("vehicle materials");
     // Underglow and trails only show after dark.
@@ -2327,7 +2361,7 @@ fn sync_cars(
             }
             let model = car_model(car);
             let v = vr.variant(&mut meshes, &model);
-            let finish = vr.finish[model.class as usize].clone();
+            let finish = vr.finish_of(model.class);
             // [carlife] Spawned where the car is. Entities spawned through
             // `Commands` are not in this frame's query below, so a car
             // spawned at the identity transform was drawn for one frame at
@@ -2391,7 +2425,7 @@ fn sync_cars(
         let (pos, heading) = car.pose_at(f);
         // Lifted when selected, whether through its driver or, for a bus or
         // truck with nobody to inspect, as the vehicle itself.
-        let selected = *selection == Selection::Citizen(car.citizen) || *selection == Selection::Car(*id);
+        let selected = lifted.citizen == Some(car.citizen) || lifted.car == Some(*id);
         let fx = vr.car_fx.get(id).copied();
         // Lifted here from the road the car is on, not by `lift_movers`:
         // under the highway's decks position alone would put it up top.
@@ -2401,7 +2435,7 @@ fn sync_cars(
         let tunnel = sim.world.car_in_tunnel(car);
         for e in ents.iter().copied().chain(fx) {
             if let Ok((mut tf, depth)) = q.get_mut(e) {
-                tf.translation = Vec3::new(pos.x, lift + 0.05 + if selected { 0.4 } else { 0.0 }, pos.y);
+                tf.translation = Vec3::new(pos.x, lift + 0.05 + if selected { SELECTED_LIFT } else { 0.0 }, pos.y);
                 tf.rotation = Quat::from_rotation_y(-heading);
                 if let Some(mut d) = depth.filter(|d| d.0 != tunnel) {
                     d.0 = tunnel;
@@ -2547,7 +2581,7 @@ fn sync_parked_cars(mut commands: Commands, sim: Res<Sim>, mut pr: ResMut<Parked
             }
         }
         let v = vr.variant(&mut meshes, &car.model);
-        let finish = vr.finish[car.model.class as usize].clone();
+        let finish = vr.finish_of(car.model.class);
         let pose = Transform::from_translation(Vec3::new(spot.pos.x, 0.05, spot.pos.y)).with_rotation(Quat::from_rotation_y(-spot.heading));
         let e = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, ParkedTag, Grounded)).id();
         // [boot] An orange clamp on the front wheel on the street side.
@@ -2684,18 +2718,13 @@ fn sync_bots(
 fn sync_overlay(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    keys: Res<ButtonInput<KeyCode>>,
     sim: Res<Sim>,
     assets: Res<GameAssets>,
     mats: Res<Materials>,
-    mut overlays: ResMut<Overlays>,
+    overlays: Res<Overlays>,
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<OverlayTag>>,
-    flags: Res<UiFlags>,
 ) {
-    if keys.just_pressed(KeyCode::KeyV) && !flags.keyboard_captured {
-        overlays.land_value = !overlays.land_value;
-    }
     let lv = &sim.world.land_value;
     if overlays.land_value == state.overlay_shown && lv.version == state.overlay_version && !assets.palette_changed && !sim.full_rebuild {
         return;
@@ -2726,18 +2755,13 @@ fn sync_overlay(
 fn sync_paths(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    keys: Res<ButtonInput<KeyCode>>,
     sim: Res<Sim>,
     assets: Res<GameAssets>,
     mats: Res<Materials>,
-    mut overlays: ResMut<Overlays>,
+    overlays: Res<Overlays>,
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<PathsTag>>,
-    flags: Res<UiFlags>,
 ) {
-    if keys.just_pressed(KeyCode::KeyP) && !flags.keyboard_captured {
-        overlays.paths = !overlays.paths;
-    }
     let walk = &sim.world.walk;
     if overlays.paths == state.paths_shown && walk.version == state.paths_version && !sim.full_rebuild {
         return;
@@ -3094,7 +3118,43 @@ struct LandscapeRender {
     water_mat: Option<Handle<StandardMaterial>>,
     /// [economy] One mesh per `ShipKind` (freighter, ferry, trawler, yacht, sailboat).
     ship_meshes: Option<[Handle<Mesh>; 5]>,
-    ships: HashMap<nd_sim::ports::ShipId, Entity>,
+    /// Each drawn ship and the kind its mesh shows.
+    ships: HashMap<nd_sim::ports::ShipId, (Entity, nd_sim::ports::ShipKind)>,
+}
+
+/// [fix/review-app] Bring `drawn` (sim id to entity, and what it was drawn
+/// as) in line with the `live` sim collection. Returns the entities to
+/// despawn (gone from the sim, drawn as something else, or everything on a
+/// `full_rebuild`) and the ids to spawn, which the caller inserts. A loaded
+/// city reuses slotmap ids: without the rebuild and kind checks a new
+/// ferry kept the old city's freighter under the same id.
+fn reconcile<K: Copy + Eq + Hash, V: Copy + PartialEq>(drawn: &mut HashMap<K, (Entity, V)>, live: impl Iterator<Item = (K, V)>, full_rebuild: bool) -> (Vec<Entity>, Vec<(K, V)>) {
+    let mut despawn: Vec<Entity> = Vec::new();
+    if full_rebuild {
+        despawn.extend(drawn.drain().map(|(_, (e, _))| e));
+    }
+    let mut keep: HashSet<K> = HashSet::new();
+    let mut spawn = Vec::new();
+    for (k, v) in live {
+        keep.insert(k);
+        match drawn.get(&k) {
+            Some((_, was)) if *was == v => {}
+            Some(&(e, _)) => {
+                despawn.push(e);
+                drawn.remove(&k);
+                spawn.push((k, v));
+            }
+            None => spawn.push((k, v)),
+        }
+    }
+    drawn.retain(|k, (e, _)| {
+        let alive = keep.contains(k);
+        if !alive {
+            despawn.push(*e);
+        }
+        alive
+    });
+    (despawn, spawn)
 }
 
 fn landscape_signature(w: &World) -> u64 {
@@ -3181,21 +3241,17 @@ fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res
         .ship_meshes
         .get_or_insert_with(|| SHIP_KINDS.map(|k| meshes.add(shared_mesh(&nd_procgen::terrain::boat_mesh(k, &assets.palette), true))))
         .clone();
-    for (id, ship) in ships.iter() {
-        if !state.ships.contains_key(&id) {
-            let mesh = handles[SHIP_KINDS.iter().position(|k| *k == ship.kind).unwrap_or(1)].clone();
-            let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(mats.surface(Surface::Panel)), Transform::IDENTITY, ShipTag)).id();
-            state.ships.insert(id, e);
-        }
+    let (despawn, spawn) = reconcile(&mut state.ships, ships.iter().map(|(id, s)| (id, s.kind)), sim.full_rebuild);
+    for e in despawn {
+        commands.entity(e).despawn();
     }
-    let gone: Vec<nd_sim::ports::ShipId> = state.ships.keys().copied().filter(|id| !ships.contains_key(*id)).collect();
-    for id in gone {
-        if let Some(e) = state.ships.remove(&id) {
-            commands.entity(e).despawn();
-        }
+    for (id, kind) in spawn {
+        let mesh = handles[SHIP_KINDS.iter().position(|k| *k == kind).unwrap_or(1)].clone();
+        let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(mats.surface(Surface::Panel)), Transform::IDENTITY, ShipTag)).id();
+        state.ships.insert(id, (e, kind));
     }
     let f = sim.frac();
-    for (id, e) in state.ships.iter() {
+    for (id, (e, _)) in state.ships.iter() {
         let Some(ship) = ships.get(*id) else { continue };
         let s = ship.prev_s + (ship.s - ship.prev_s) * f;
         let (p, dir) = ship.pose_at(s);
@@ -3288,5 +3344,40 @@ fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut
                 commands.entity(e).insert(Lifted { after, lift });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod reconcile_tests {
+    use super::*;
+
+    fn e(n: u32) -> Entity {
+        Entity::from_raw_u32(n).unwrap()
+    }
+
+    /// [fix/review-app] A reloaded city reuses ids: the drawn entities must
+    /// not survive a `full_rebuild`, and an id drawn as another kind is
+    /// redrawn even without one (the ship that kept the old city's model).
+    #[test]
+    fn reloaded_ids_are_redrawn() {
+        let mut drawn: HashMap<u32, (Entity, char)> = HashMap::new();
+        let (gone, spawn) = reconcile(&mut drawn, [(1, 'f'), (2, 'y')].into_iter(), false);
+        assert!(gone.is_empty());
+        assert_eq!(spawn, vec![(1, 'f'), (2, 'y')]);
+        drawn.insert(1, (e(10), 'f'));
+        drawn.insert(2, (e(11), 'y'));
+        // Steady state: nothing to do.
+        let (gone, spawn) = reconcile(&mut drawn, [(1, 'f'), (2, 'y')].into_iter(), false);
+        assert!(gone.is_empty() && spawn.is_empty());
+        // Same id, other kind; 2 gone.
+        let (gone, spawn) = reconcile(&mut drawn, [(1, 's')].into_iter(), false);
+        assert_eq!(gone.len(), 2);
+        assert_eq!(spawn, vec![(1, 's')]);
+        assert!(drawn.is_empty());
+        // A load with the same ids and kinds still redraws everything.
+        drawn.insert(1, (e(12), 's'));
+        let (gone, spawn) = reconcile(&mut drawn, [(1, 's')].into_iter(), true);
+        assert_eq!(gone, vec![e(12)]);
+        assert_eq!(spawn, vec![(1, 's')]);
     }
 }

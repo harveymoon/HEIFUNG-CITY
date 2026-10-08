@@ -48,5 +48,7 @@ Open work: `todo.md` (sorted by area; tick items with "→ DONE [branch]: what")
 - Drive it with `curl -H "Content-Type: application/json" -d '{"cmd":"..."}' http://127.0.0.1:<port>/cmd`:
   `status`, `step`, `generate_city {preset, seed}`, `camera`, `screenshot`, `select`,
   `inspect`, `report`, `tool`, `overlay`, `window`. Full list: `{"cmd":"help"}`.
+- `load`, `new_game` and `generate_city` need `"confirm": true` once the city has unsaved play time
+  (a fresh, untouched city needs none). F8 is Flag for Claude; the camera jump is Shift+F8.
 - Harvey's in-game flags ("Flag for Claude") land in `flags/claude_flags.jsonl` under the
   game's working directory, and via the `flags` command.

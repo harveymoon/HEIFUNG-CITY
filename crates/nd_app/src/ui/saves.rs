@@ -35,7 +35,6 @@ use serde::{Deserialize, Serialize};
 
 use super::{hint, section, UiFlags, GOLD, IVORY, WARN};
 use crate::sim::Sim;
-use crate::tools::{EffectivePlan, Selection, ToolState};
 
 pub const DIR: &str = "saves";
 pub const LATEST: &str = "saves/city.ron";
@@ -406,12 +405,13 @@ pub fn save_now(sim: &mut Sim, saves: &mut Saves, flags: &mut UiFlags) {
     };
 }
 
-/// Replace the running city. The tools and the selection refer to ids in
-/// the old world, so they go back to defaults; the plan cache forgets its
-/// version key; and the city comes up paused so the player can look first.
-pub fn load_now(path: &Path, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, plan: &mut EffectivePlan, flags: &mut UiFlags) {
+/// Replace the running city; it comes up paused so the player can look
+/// first. The message (also put in `flags.message`) says how it went. The
+/// tools, the selection and the plan cache refer to the old city's ids:
+/// `city_reset` clears them for the new `Sim::generation`.
+pub fn load_now(path: &Path, sim: &mut Sim, flags: &mut UiFlags) -> Result<String, String> {
     let shown = path.display().to_string();
-    flags.message = match sim.load(&shown) {
+    let result = match sim.load(&shown) {
         Ok(()) => {
             // [identity] A named save from before city names: the name it
             // was saved under becomes the city's.
@@ -420,14 +420,15 @@ pub fn load_now(path: &Path, sim: &mut Sim, tools: &mut ToolState, selection: &m
                     rename_city(&mut sim.world, &name);
                 }
             }
-            *tools = ToolState::default();
-            *selection = Selection::None;
-            plan.invalidate();
             sim.paused = true;
-            format!("loaded {shown} (paused)")
+            Ok(format!("loaded {shown} (paused)"))
         }
-        Err(e) => format!("load failed: {e}"),
+        Err(e) => Err(format!("load failed: {e}")),
     };
+    flags.message = match &result {
+        Ok(m) | Err(m) => m.clone(),
+    };
+    result
 }
 
 /// [identity] The city name an unnamed save takes on load: a named save's
@@ -463,16 +464,15 @@ pub fn mark_now(sim: &mut Sim, saves: &mut Saves, label: &str) -> Result<PathBuf
 
 /// [identity] Go back to a moment of the game's history: load it as Load
 /// does (the city comes up paused). The caller has asked first.
-pub fn revert(path: &Path, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, plan: &mut EffectivePlan, saves: &mut Saves, flags: &mut UiFlags) {
+pub fn revert(path: &Path, sim: &mut Sim, saves: &mut Saves, flags: &mut UiFlags) -> Result<String, String> {
     let day = super::history::list(Path::new(DIR), &sim.world.identity.game_id).into_iter().find(|e| e.path == path).map(|e| e.meta.day);
-    load_now(path, sim, tools, selection, plan, flags);
+    load_now(path, sim, flags)?;
     saves.dirty = true;
-    if !flags.message.starts_with("load failed") {
-        flags.message = match day {
-            Some(d) => format!("reverted to day {d} (paused)"),
-            None => format!("reverted to {} (paused)", path.display()),
-        };
-    }
+    flags.message = match day {
+        Some(d) => format!("reverted to day {d} (paused)"),
+        None => format!("reverted to {} (paused)", path.display()),
+    };
+    Ok(flags.message.clone())
 }
 
 /// [identity] Slots grouped by city name: (city, indices into `slots`),
@@ -547,7 +547,7 @@ pub fn age(modified: Option<SystemTime>) -> String {
 
 /// The body of the Saves window: save as a name, quick save, the list with
 /// pictures, the load confirmation.
-pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, plan: &mut EffectivePlan, saves: &mut Saves, flags: &mut UiFlags) {
+pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, saves: &mut Saves, flags: &mut UiFlags) {
     section(ui, "CITY");
     city_name_row(ui, sim, flags);
     if ui.button("Game history…").on_hover_text("This game's autosaves: mark key moments, revert to an earlier day").clicked() {
@@ -586,7 +586,7 @@ pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, selection:
         ui.label(egui::RichText::new(format!("Load {label}? The running city (day {}, {}) is lost unless saved.", sim.world.clock.day() + 1, sim.world.clock.format_hhmm())).color(WARN));
         ui.horizontal(|ui| {
             if ui.button("Load it").clicked() {
-                load_now(&pending, sim, tools, selection, plan, flags);
+                let _ = load_now(&pending, sim, flags);
                 saves.pending_load = None;
             }
             if ui.button("Cancel").clicked() {
@@ -638,7 +638,7 @@ pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, selection:
         if sim.world.clock.tick > 0 {
             saves.pending_load = Some(path);
         } else {
-            load_now(&path, sim, tools, selection, plan, flags);
+            let _ = load_now(&path, sim, flags);
         }
     }
 }
@@ -838,8 +838,8 @@ mod tests {
         let legacy = dir.join("Old_Town.ron");
         std::fs::write(&legacy, legacy_ron(&sim0.world)).unwrap();
         let mut sim = Sim::new();
-        let (mut tools, mut selection, mut plan, mut flags) = (ToolState::default(), Selection::None, EffectivePlan::default(), UiFlags::default());
-        load_now(&legacy, &mut sim, &mut tools, &mut selection, &mut plan, &mut flags);
+        let mut flags = UiFlags::default();
+        load_now(&legacy, &mut sim, &mut flags).unwrap();
         assert!(flags.message.starts_with("loaded"), "{}", flags.message);
         assert_eq!(sim.world.identity.name, "Old Town");
         assert!(!sim.world.identity.has_id(), "the id still comes with the next save");
@@ -886,9 +886,9 @@ mod tests {
         sim.save(&late).unwrap();
         sim.set_city_name("Renamed later");
         assert_ne!(sim.world.clock.tick, early_tick);
-        let (mut tools, mut selection, mut plan, mut saves, mut flags) = (ToolState::default(), Selection::None, EffectivePlan::default(), Saves::default(), UiFlags::default());
+        let (mut saves, mut flags) = (Saves::default(), UiFlags::default());
         let generation = sim.generation;
-        revert(&early, &mut sim, &mut tools, &mut selection, &mut plan, &mut saves, &mut flags);
+        revert(&early, &mut sim, &mut saves, &mut flags).unwrap();
         assert!(flags.message.starts_with("reverted"), "{}", flags.message);
         assert_eq!(sim.world.clock.tick, early_tick);
         assert_eq!(sim.world.identity.game_id, game, "the same game");

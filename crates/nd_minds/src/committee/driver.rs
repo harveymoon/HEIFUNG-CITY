@@ -526,20 +526,29 @@ impl Driver {
     /// Run until the meeting needs the mayor or is over, polling the
     /// courier (for the stand-in, which answers at once; tests and the
     /// remote API's fast-forward). Gives up after `max_rounds` polls.
-    pub fn run(&mut self, w: &mut World, courier: &mut Courier, max_rounds: usize) {
+    ///
+    /// Returns the deliveries that were not the meeting's (alerts, voice
+    /// lines, diaries polled on the way): the caller hands them on, or they
+    /// would stay pending for ever.
+    #[must_use = "deliveries that are not the meeting's must be handed on"]
+    pub fn run(&mut self, w: &mut World, courier: &mut Courier, max_rounds: usize) -> Vec<Delivered> {
+        let mut others = Vec::new();
         for _ in 0..max_rounds {
             self.advance(w, courier);
             for d in courier.poll() {
-                self.take(w, &d);
+                if !self.take(w, &d) {
+                    others.push(d);
+                }
             }
-            let Some(m) = w.committee.meeting.as_ref() else { return };
+            let Some(m) = w.committee.meeting.as_ref() else { return others };
             if self.pending.is_none() && (m.waiting_for_mayor() || m.is_done()) {
                 self.advance(w, courier);
-                return;
+                return others;
             }
             if self.pending.is_some() && !courier.is_mock() {
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
         }
+        others
     }
 }

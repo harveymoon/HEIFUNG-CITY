@@ -89,7 +89,7 @@ fn a_meeting_runs_the_agenda_and_waits_for_the_mayor() {
     assert!(speeches >= m.members.len() + 2, "opening, a report each, the topics");
     assert!(m.calls <= 22, "turn limits: {} calls", m.calls);
     abstain_rest(&mut w).unwrap();
-    d.run(&mut w, &mut c, 400);
+    let _ = d.run(&mut w, &mut c, 400);
     assert!(w.committee.meeting.is_none(), "the meeting closed and was filed");
     let minutes = w.committee.minutes.last().unwrap();
     assert_eq!(minutes.stage, Stage::Done);
@@ -111,7 +111,7 @@ fn the_stand_in_meeting_is_deterministic() {
         for id in ids {
             cast_mayor_vote(&mut w, id, MayorVote::Yes).unwrap();
         }
-        d.run(&mut w, &mut c, 400);
+        let _ = d.run(&mut w, &mut c, 400);
         (w.committee.minutes.last().unwrap().clone(), w.committee.projects.clone())
     };
     let (a, pa) = run();
@@ -166,7 +166,7 @@ fn passed_proposals_become_projects_on_valid_sites_and_the_mayor_implements_them
     for id in &ids {
         cast_mayor_vote(&mut w, *id, MayorVote::Yes).unwrap();
     }
-    d.run(&mut w, &mut c, 400);
+    let _ = d.run(&mut w, &mut c, 400);
     let minutes = w.committee.minutes.last().unwrap().clone();
     let passed: Vec<_> = minutes.proposals.iter().filter(|p| p.outcome == Some(Outcome::Passed)).collect();
     assert!(!passed.is_empty(), "with the mayor's yes something passes: {:#?}", minutes.transcript);
@@ -285,7 +285,7 @@ fn invalid_proposals_are_ruled_out_of_order() {
     start_meeting(&mut w, true).unwrap();
     let mut d = Driver::default();
     let mut c = Courier::new(Box::new(Liar), Duration::from_secs(60));
-    d.run(&mut w, &mut c, 400);
+    let _ = d.run(&mut w, &mut c, 400);
     let m = w.committee.meeting.as_ref().or(w.committee.minutes.last()).unwrap();
     assert!(m.proposals.is_empty(), "nothing valid was tabled: {:?}", m.proposals);
     assert!(m.transcript.iter().any(|l| l.kind == LineKind::Note && l.text.starts_with("Out of order")), "{:#?}", m.transcript);
@@ -296,7 +296,7 @@ fn memory_and_meetings_survive_a_save() {
     let mut w = grown();
     let (mut d, mut c) = meet(&mut w);
     abstain_rest(&mut w).unwrap();
-    d.run(&mut w, &mut c, 400);
+    let _ = d.run(&mut w, &mut c, 400);
     let text = w.to_ron().unwrap();
     let back = World::from_ron(&text).unwrap();
     assert_eq!(back.committee, w.committee);
@@ -419,6 +419,30 @@ fn the_local_connector_speaks_openai_chat_completions() {
     assert_eq!(v["model"], "qwen-test");
     assert_eq!(v["messages"][0]["role"], "system");
     assert!(v["messages"][1]["content"].as_str().unwrap().contains("CITY REPORT"));
+}
+
+/// [fix/review-app] A turn the courier gave up on is not sent once the
+/// worker reaches it (a paid call whose answer would be thrown away).
+#[test]
+fn a_cancelled_turn_is_never_sent() {
+    let (url, rx) = fake_server(200, r#"{"choices":[{"message":{"role":"assistant","content":"Noted."}}]}"#);
+    let mut b = HttpBackend::new(http::Flavor::OpenAi { base_url: format!("{url}/v1"), model: "m".into(), max_tokens: 50 }, Duration::from_secs(5));
+    b.cancel(2);
+    for id in 1..=3 {
+        b.submit(id, sample_request());
+    }
+    let mut got = Vec::new();
+    for _ in 0..500 {
+        got.extend(b.poll().into_iter().map(|(id, _)| id));
+        if got.len() >= 2 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    got.extend(b.poll().into_iter().map(|(id, _)| id));
+    assert_eq!(got, vec![1, 3]);
+    assert_eq!(rx.try_iter().count(), 2, "the server saw two requests");
 }
 
 #[test]
@@ -579,4 +603,21 @@ fn model_lines_are_cleaned() {
     assert_eq!(clean_line("Note: this is a line: with colons"), "this is a line: with colons");
     let long = (0..40).map(|_| "word").collect::<Vec<_>>().join(" ");
     assert!(clean_line(&long).ends_with("..."));
+}
+
+/// [fix/review-app] A diary asked for while a meeting runs to the mayor's
+/// vote is not dropped by the meeting's driver: `run` hands it back.
+#[test]
+fn a_meeting_run_hands_back_other_deliveries() {
+    let mut w = grown();
+    let id = w.citizens.iter().filter(|(_, c)| c.memories.len() >= 2).map(|(id, _)| id).next().expect("someone remembers something");
+    let mut v = Voices::default();
+    let mut c = Courier::mock();
+    v.ask_diary(&w, id, &mut c, false);
+    let mut d = Driver::default();
+    start_meeting(&mut w, true).expect("a meeting starts");
+    let others = d.run(&mut w, &mut c, 400);
+    assert_eq!(others.len(), 1);
+    assert!(v.take(&others[0]));
+    assert!(!v.diary(id).unwrap().pending, "the diary arrived");
 }
