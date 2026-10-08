@@ -302,7 +302,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 - [ ] Land-value and estate-pressure grids stop at half_extent+200; Walk camera clamped to half_extent+150 (island-lots leftovers)
 - [ ] A big generated city (2,168 lots) hit "memory allocation of 268435456 bytes failed" at day 10 under heavy machine load (committee agent) — check memory growth
-- [ ] fix/ped-highway merged with 2 failing tests (its last test; society_demo 911 borderline) — agent fixing
+- [x] fix/ped-highway's 2 failing tests → DONE: its test uses a lived-in city; society_demo drill now 7 fires (median 13 min, was decided by 4)
 
 ## Follow-ups noted in agent reports (not started)
 - [ ] Batteries charge on cheap night power and discharge at the evening peak (grid-weather)
