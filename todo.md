@@ -284,7 +284,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Ferry terminal on a civic zone took the zone's shape/look: unzone first, own footprint [feat/dock-access]
 - [ ] Fishing boats actually go out, fish at grounds for hours, return and unload; berths empty while at sea [feat/fishing]
 - [ ] Selecting a ferry terminal highlights its routes; other routes dim; route list in the inspector [feat/ferry-routes]
-- [ ] FLAG (day 24): no lots along roads on a hilly island (slope ~0.42); zoning there impossible, no reason shown [fix/island-lots]
+- [x] FLAG (day 24): no lots along roads on a hilly island (slope ~0.42); zoning there impossible, no reason shown [fix/island-lots] → DONE [fix/island-lots]: parcels were clipped to `half_extent` (900 m) so streets past it (his island at y 1140-1340) had none; the clip and the built-ground raster now grow to take in every fronting street (to the map edge). Lots go on hillsides up to 70% (cut and filled to a pad at their street) with at most 18 m of rise across one lot; only cliffs/water are rough, with the reason shown. The Zone tool hover says why at the cursor where there is no parcel (water, too far from a road, past the buildable land).
 
 ## Agents running (update when starting/merging; survives context compaction)
 - feat/committee: AI committee, mock backend first, Ollama/Claude connectors (started 2026-10-07 evening)

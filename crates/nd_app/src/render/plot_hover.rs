@@ -90,7 +90,13 @@ pub fn hover_site(w: &World, tools: &ToolState, p: SVec2) -> Option<HoverSite> {
         }
         Tool::Zone if tools.zone_mode != ZoneMode::Polygon => {
             let lu = tools.paint_use(tools.stroke.as_ref().map_or(tools.unzone, |s| s.erase))?;
-            let i = w.parcels.at(p)?;
+            // [island-lots] No parcel under the pointer: say why at the
+            // cursor (water, too far from a road, past the buildable land)
+            // rather than show nothing, as a click there does nothing.
+            let Some(i) = w.parcels.at(p) else {
+                let why = w.no_parcel_why(p)?;
+                return Some(HoverSite { outline: Vec::new(), verdict: Err(why.to_string()), zone: true, warning: None });
+            };
             let parcel = w.parcels.parcels.get(i)?;
             let verdict = match w.parcel_refusal(i, Some(lu)) {
                 Some(why) => Err(why.to_string()),
@@ -338,6 +344,7 @@ pub fn plot_hover_label(mut contexts: bevy_egui::EguiContexts, hover: Res<PlotHo
         Ok(_) if site.warning.is_some() => (site.warning.clone().unwrap_or_default(), egui::Color32::from_rgba_unmultiplied(150, 100, 10, 230)),
         Ok(_) if site.zone => return Ok(()),
         Ok(note) => (note.clone(), egui::Color32::from_rgba_unmultiplied(18, 110, 52, 225)),
+        Err(why) if site.zone => (format!("Can't zone here: {why}"), egui::Color32::from_rgba_unmultiplied(150, 20, 28, 230)),
         Err(why) => (format!("Can't build: {why}"), egui::Color32::from_rgba_unmultiplied(150, 20, 28, 230)),
     };
     let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
