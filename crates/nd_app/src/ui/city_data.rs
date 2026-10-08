@@ -3,7 +3,7 @@
 //! it does not move or resize, and the map's labels, pins and legend stand
 //! down while it is up. The game keeps running behind it.
 //!
-//! A row of tabs (City, Economy, Market, People, Services), a row of
+//! A row of tabs (City, Economy, Market, People, Services, Directory), a row of
 //! sub-tabs under it, then the page. Every page has the same furniture
 //! (`ui/pane.rs`): a title and a line on what it is for, headline figures
 //! as cards, then sections under one kind of heading with full-width charts,
@@ -33,10 +33,12 @@ pub enum Tab {
     Market,
     People,
     Services,
+    /// [directory] Every business and every person, in sortable tables.
+    Directory,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 5] = [Tab::City, Tab::Economy, Tab::Market, Tab::People, Tab::Services];
+    pub const ALL: [Tab; 6] = [Tab::City, Tab::Economy, Tab::Market, Tab::People, Tab::Services, Tab::Directory];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -45,6 +47,7 @@ impl Tab {
             Tab::Market => "Market",
             Tab::People => "People",
             Tab::Services => "Services",
+            Tab::Directory => "Directory",
         }
     }
 
@@ -55,6 +58,7 @@ impl Tab {
             Tab::Market => "market",
             Tab::People => "people",
             Tab::Services => "services",
+            Tab::Directory => "directory",
         }
     }
 
@@ -67,6 +71,7 @@ impl Tab {
             Tab::Market => &[MarketGoods, MarketBusinesses, MarketTrade],
             Tab::People => &[PeoplePopulation, PeopleInequality, PeopleConcerns, PeopleSocial, PeopleFavourites],
             Tab::Services => &[ServicesPower, ServicesTransit, ServicesEmergencies],
+            Tab::Directory => &[DirectoryBusinesses, DirectoryPeople],
         }
     }
 
@@ -101,6 +106,8 @@ pub enum Page {
     ServicesPower,
     ServicesTransit,
     ServicesEmergencies,
+    DirectoryBusinesses,
+    DirectoryPeople,
 }
 
 impl Page {
@@ -132,6 +139,8 @@ impl Page {
             ServicesPower => "Power",
             ServicesTransit => "Transit",
             ServicesEmergencies => "Emergencies",
+            DirectoryBusinesses => "Businesses",
+            DirectoryPeople => "People",
         }
     }
 
@@ -159,6 +168,8 @@ impl Page {
             ServicesPower => "power",
             ServicesTransit => "transit",
             ServicesEmergencies => "emergencies",
+            DirectoryBusinesses => "businesses",
+            DirectoryPeople => "people",
         }
     }
 
@@ -187,6 +198,8 @@ impl Page {
             ServicesPower => "Power",
             ServicesTransit => "Transit",
             ServicesEmergencies => "Emergencies",
+            DirectoryBusinesses => "Every business",
+            DirectoryPeople => "Everyone in town",
         }
     }
 
@@ -215,6 +228,8 @@ impl Page {
             ServicesPower => "Supply and demand hour by hour, the batteries, the grid's price, and every plant.",
             ServicesTransit => "Riders by mode and line, fares against upkeep; buses, rail, metro, taxis and cargo.",
             ServicesEmergencies => "Every 911 call, live and on record: response times, units, outcomes.",
+            DirectoryBusinesses => "Every business in town: click a heading to sort, search or pick to narrow it, click a row to inspect it, go to fly there.",
+            DirectoryPeople => "Every citizen: click a heading to sort, search or pick to narrow it, click a row to inspect them, go to fly there.",
         }
     }
 
@@ -243,6 +258,8 @@ impl Page {
                     "favorites" => "favourites",
                     "land_and_rent" | "rent" => "land",
                     "911" => "emergencies",
+                    "citizens" | "residents" | "population" if t == Tab::Directory => "people",
+                    "shops" | "firms" | "companies" if t == Tab::Directory => "businesses",
                     other => other,
                 };
                 t.pages().iter().copied().find(|p| p.key() == s).ok_or_else(|| format!("{} has no sub-tab {s:?}; one of {}", t.key(), t.pages().iter().map(|p| p.key()).collect::<Vec<_>>().join(", ")))
@@ -260,6 +277,7 @@ impl Page {
             "market" => Target::Tab(Tab::Market),
             "people" => Target::Tab(Tab::People),
             "services" => Target::Tab(Tab::Services),
+            "directory" => Target::Tab(Tab::Directory),
             "taxes" => Target::Page(Page::EconomyTaxes),
             "power" => Target::Page(Page::ServicesPower),
             "transit" => Target::Page(Page::ServicesTransit),
@@ -517,6 +535,8 @@ fn body_of(ui: &mut egui::Ui, p: &mut UiCtx, page: Page) {
         ServicesPower => super::detail::power(ui, p),
         ServicesTransit => super::detail::transit(ui, p),
         ServicesEmergencies => super::emergencies::page(ui, p),
+        DirectoryBusinesses => super::directory::businesses(ui, p),
+        DirectoryPeople => super::directory::people(ui, p),
     }
 }
 
@@ -539,7 +559,7 @@ mod tests {
                 assert_eq!(Page::parse(None, t.key(), Some(p.key())), Ok(*p));
             }
         }
-        assert_eq!(seen.len(), 21);
+        assert_eq!(seen.len(), 23);
     }
 
     /// The old window names still find their pages.
