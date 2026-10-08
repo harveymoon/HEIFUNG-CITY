@@ -295,7 +295,7 @@ them a land use.
 
 Reply: `gesture_id`, `implemented`, `project` (`id`, `name`, `steps`, `redo`), `projects`, `plan_version`.
 
-Road works never take the city's own structures (depots, stations, yards, plants, service buildings, docks, metro stations, cargo hubs). An implement whose roads would run over one, or leave one with no street, is refused and the project stays pending: `implemented` is false (`project implement` replies `did: false`), `implement_refused` gives the reason, and every project reply lists `blockers` (`[{id, name}]`), the structures the pending roads run over now (drawn with a wide red border in the game). Move the road or bulldoze the structure, then implement again.
+Road works never take the city's own structures (depots, stations, yards, plants, service buildings, docks, metro stations, cargo hubs). An implement whose roads would run over one, or leave one with no street, is refused and the project stays pending: `implemented` is false (`project implement` replies `did: false`), `implement_refused` gives the reason, and every project reply lists `blockers` (`[{id, name}]`), the structures the pending roads run over now (drawn with a wide red border and a red pin in the game; `plan` gives the full check, with the structures the rebuild would lose and the road that takes each). Move the road or bulldoze the structure, then implement again.
 
 ### Placing buildings
 
@@ -673,9 +673,12 @@ was changed) and `editor_open`. Everything is saved with the city (`Traffic::jun
 {"cmd": "intersection", "at": [209, -149], "crossing": 700, "upgrade": "footbridge"}
 ```
 
-`plan` also carries `will_refuse` (null, or why implementing the active project would be refused
-for want of room for a raised road's columns) and `pillar_gaps` (as in the tool state): the same
-check implementing makes, a trial rebuild included, so nothing is refused that `plan` did not say.
+`plan` also carries `will_refuse` (null, or word for word what implementing the active project
+would answer: a city structure its roads take, else no room for a raised road's columns), `blockers`
+(each structure as `{id, name, at, road_gesture, road, stretch, runs_over, reason}`: the planned road
+that takes it, the stretch of that road over it, or `runs_over: false` for one the rebuild would leave
+with no street) and `pillar_gaps` (as in the tool state): the same check implementing makes, a trial
+rebuild included, so nothing is refused that `plan` did not say.
 A raised road's ends are planned where the network lays them: an end dropped on a road lands on it
 at its level (the deck ramps down) and needs no column; an end left in the air needs one within
 10 m, and is refused with "the road ends in the air over a road at (x, y) ..." when there is none.
