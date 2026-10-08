@@ -100,7 +100,31 @@ pub(super) fn land_mesh(w: &World, s: &LandSurvey, layer: LandLayer, weights: &[
         _ => {
             let g = grid(s, w.survey_values(s, layer, None));
             let hue = land_hue(layer);
-            g.mesh_by(WASH_Y, |k| land_color(hue, g.values[k]), |k| g.values[k] < 0.04, height)
+            let mut m = g.mesh_by(WASH_Y, |k| land_color(hue, g.values[k]), |k| g.values[k] < 0.04, height);
+            if layer == LandLayer::Water {
+                fishing_grounds(w, &mut m);
+            }
+            m
+        }
+    }
+}
+
+/// [fishing] The fishing ports' grounds on the water layer: a dashed ring
+/// round each, brighter the richer it is, and a dot at its middle.
+fn fishing_grounds(w: &World, m: &mut nd_procgen::MeshData) {
+    let y = nd_sim::landscape::WATER_LEVEL + WASH_Y + 0.2;
+    for f in w.fishing.fleets.values() {
+        for g in &f.grounds {
+            let a = (0.35 + 0.4 * (g.richness - 0.75) / 0.55).clamp(0.3, 0.8);
+            let col = [0.55, 0.95, 1.0, a];
+            let r = g.radius + 10.0;
+            let n = 36;
+            for k in (0..n).step_by(2) {
+                let (t0, t1) = (k as f32 / n as f32 * std::f32::consts::TAU, (k + 1) as f32 / n as f32 * std::f32::consts::TAU);
+                let (p0, p1) = (g.center + nd_sim::Vec2::from_angle(t0) * r, g.center + nd_sim::Vec2::from_angle(t1) * r);
+                m.ground_strip(&[p0, p1], 3.0, y, col);
+            }
+            m.ground_polygon(&(0..10).map(|k| g.center + nd_sim::Vec2::from_angle(k as f32 * 0.628) * 5.0).collect::<Vec<_>>(), y, col);
         }
     }
 }
@@ -153,10 +177,11 @@ pub(super) fn sync_land_layer(
     }
     let now = time.elapsed_secs();
     let key = weights_key(w);
-    let contamination = w.contamination.version;
+    // [fishing] The water layer shows the fishing grounds too.
+    let contamination = w.contamination.version ^ w.fishing.key;
     let stale = match st.shown {
         None => true,
-        Some((l, k, c)) => l != layer || sim.full_rebuild || (layer.is_industry() && k != key) || (matches!(layer, LandLayer::Farmland | LandLayer::Contamination) && c != contamination),
+        Some((l, k, c)) => l != layer || sim.full_rebuild || (layer.is_industry() && k != key) || (matches!(layer, LandLayer::Farmland | LandLayer::Contamination | LandLayer::Water) && c != contamination),
     };
     let changed_layer = st.shown.is_none_or(|(l, _, _)| l != layer) || sim.full_rebuild;
     if !stale || (!changed_layer && now - st.last_build < MIN_REBUILD_SECS) {

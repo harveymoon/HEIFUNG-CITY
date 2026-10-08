@@ -122,10 +122,14 @@ mod rides;
 // [economy] business pressure, the new trades, the waterfront and the art scene
 mod pressure;
 mod waterfront;
+mod fishing;
+#[cfg(test)]
+mod fishing_tests;
 // [events] street races and warehouse raves; road wear and maintenance
 mod nights;
 mod roadworks;
 mod dirt;
+pub use fishing::BoatReport;
 pub use dirt::{DirtyNeighbour, ADJACENCY_OUTPUT_HIT, ADJACENCY_VALUE_HIT};
 // [road-inspect] the road inspector's traffic counts, live read-out and Repair now
 mod road_inspect;
@@ -435,6 +439,11 @@ pub struct World {
     /// Shipping ports, ferry terminals and the ships between them.
     #[serde(default)]
     pub ports: Ports,
+    /// [fishing] The fishing ports' trawlers and the grounds they fish
+    /// (`crate::fishing`, `world/fishing.rs`). Old saves start with every
+    /// boat in port.
+    #[serde(default)]
+    pub fishing: crate::fishing::Fishing,
     /// Height of every road node (index = node id): the terrain under it,
     /// eased to gentle grades and lifted onto bridge decks over water.
     #[serde(skip)]
@@ -648,6 +657,7 @@ impl World {
             meals_for_sale: false,
             landscape: Landscape::default(),
             ports: Ports::default(),
+            fishing: Default::default(),
             road_z: Vec::new(),
             road_inner: Vec::new(),
             relief: false,
@@ -1143,8 +1153,10 @@ impl World {
         self.step_rail();
         self.step_subway();
         self.step_ships();
-        // [economy] marina and fishing boats out on the water
+        // [economy] marina boats out on the water
         self.step_boats();
+        // [fishing] trawlers out to the grounds and home
+        self.step_fishing();
         // [ferries] Day trips out, and anyone stranded abroad.
         self.step_ferry_people();
         self.step_cargo_hubs();

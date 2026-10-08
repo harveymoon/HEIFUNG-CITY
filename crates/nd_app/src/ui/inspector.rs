@@ -637,6 +637,46 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
             ui.label(format!("ferries to {} · {waiting} waiting to board", list.join(", ")));
         }
     }
+    // [fishing] The port's trawlers, what each is doing, and its grounds.
+    if let Some(f) = b.port.filter(|k| k.is_fishing()).and_then(|_| w.fleet(id)) {
+        section(ui, "FISHING FLEET");
+        ui.label(format!("{} boats, {} at sea · {:.0} fish landed today, {:.0} yesterday · {} trips today", f.boats.len(), f.at_sea(), f.landed_today, f.landed_yesterday, f.trips_today));
+        if let Some(why) = &f.kept_in {
+            hint(ui, &format!("kept in today: {why}"));
+        }
+        if f.grounds.is_empty() {
+            hint(ui, "no open water within reach for fishing grounds: the crews fish off the quay");
+        }
+        for r in w.fishing_boats(id) {
+            let mut line = format!("{}: {}", r.name, r.phase.label());
+            if let Some(g) = r.ground {
+                line += &format!(" (ground {})", g + 1);
+            }
+            if r.phase.at_sea() {
+                line += &format!(" · {:.0} fish aboard after {} min", r.hold, r.fished_min);
+                if let Some(h) = r.home_by {
+                    line += &format!(" · home by {:02}:{:02}", h / 60, h % 60);
+                }
+            }
+            line += &format!(" · {:.0} landed today", r.catch_today);
+            ui.label(egui::RichText::new(line).small());
+        }
+        if let Some(port) = w.ports.port_of(id) {
+            let grounds: Vec<String> = f
+                .grounds
+                .iter()
+                .enumerate()
+                .map(|(i, g)| {
+                    let foul = w.water_fouling(g.center);
+                    let clean = if foul > 0.02 { format!(", water {:.0}% fouled", foul * 100.0) } else { String::new() };
+                    format!("{}: {:.1} km out, {:.0}% rich{clean}", i + 1, g.center.distance(port.berth) / 1000.0, g.richness * 100.0)
+                })
+                .collect();
+            if !grounds.is_empty() {
+                hint(ui, &format!("grounds (shown on the Water survey layer): {}", grounds.join(" · ")));
+            }
+        }
+    }
     if let Some(link) = &b.rail {
         let joined = if link.works() { "" } else if !link.rail_connected { " · NOT CONNECTED TO THE RAILWAY" } else { " · NOT CONNECTED TO THE ROADS" };
         section(ui, "RAIL");

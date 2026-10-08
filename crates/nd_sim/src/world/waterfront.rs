@@ -11,10 +11,12 @@
 //! the lease (the dock stays). Marinas raise the land value around them
 //! and draw seafood restaurants (`crate::pressure`).
 //!
-//! Boats: trawlers put out before dawn and come back by early afternoon;
-//! sailing boats and motor yachts go out for a few hours by day. They are
-//! ships of the port model (`ports::Ship`, not saved), drawn moving; the
-//! rest lie at their berths (drawn with the dock, `nd_procgen::terrain`).
+//! Boats: sailing boats and motor yachts go out for a few hours by day.
+//! They are ships of the port model (`ports::Ship`, not saved), drawn
+//! moving; the rest lie at their berths (drawn with the dock,
+//! `nd_procgen::terrain`). [fishing] Trawlers are the fishing fleets of
+//! `crate::fishing` (`world/fishing.rs`): out to the grounds in the
+//! morning, home in the afternoon, their berths empty while they are out.
 
 use super::*;
 use crate::ports::{Port, PortKind, Ship, ShipKind};
@@ -26,10 +28,7 @@ pub const YACHT_FEE: f32 = 32.0;
 pub const MARINA_CATCHMENT: f32 = 1500.0;
 /// The float a new operator starts with: boats and nets to buy.
 pub const OPERATOR_FLOAT: f32 = 1500.0;
-/// Fish a trawler lands when it comes home (counted; production is the
-/// port's recipe).
-pub const CATCH_PER_BOAT: f32 = 6.0;
-/// Boats out on the water at once, all docks together.
+/// Marina boats out on the water at once, all docks together.
 pub const MAX_BOATS: usize = 24;
 /// Land value a marina lends the streets around: (radius, lift).
 pub fn marina_lift(kind: PortKind) -> (f32, f32) {
@@ -131,15 +130,12 @@ impl World {
         self.scene.berth_fees_today = fees_total;
     }
 
-    /// A boat is home: a trawler lands its catch.
-    pub(super) fn boat_home(&mut self, ship: &Ship) {
-        if ship.kind == ShipKind::FishingBoat {
-            self.scene.fish_landed_today += CATCH_PER_BOAT;
-        }
-    }
+    /// A boat is home. ([fishing] Trawlers land their catch in
+    /// `world/fishing.rs`.)
+    pub(super) fn boat_home(&mut self, _ship: &Ship) {}
 
-    /// Every ten minutes: trawlers put out before dawn, pleasure boats by
-    /// day, a few from each dock, never more than the dock's berths.
+    /// Every ten minutes: pleasure boats go out by day, a few from each
+    /// marina, never more than its berths.
     pub(super) fn step_boats(&mut self) {
         let tick = self.clock.tick;
         if tick % 10 != 6 || self.ports.ports.is_empty() {
@@ -150,18 +146,17 @@ impl World {
             .ports
             .ports
             .values()
-            .filter(|p| (p.kind.is_marina() || p.kind.is_fishing()) && p.works())
+            .filter(|p| p.kind.is_marina() && p.works())
             .filter_map(|p| p.building.map(|b| (b, p.clone())))
             .filter(|(b, _)| self.buildings.get(*b).is_some_and(|x| x.construction.is_none() && x.business.as_ref().is_some_and(|z| !z.closed)))
             .collect();
-        let boats = |w: &World| w.ports.ships.values().filter(|s| matches!(s.kind, ShipKind::FishingBoat | ShipKind::Yacht | ShipKind::Sailboat)).count();
-        self.scene.boats_out = boats(self) as u32;
+        let boats = |w: &World| w.ports.ships.values().filter(|s| matches!(s.kind, ShipKind::Yacht | ShipKind::Sailboat)).count();
         for (b, port) in docks {
             if boats(self) >= MAX_BOATS {
                 break;
             }
             let out = self.ports.ships.values().filter(|s| s.port == b).count() as u32;
-            let (window, most) = if port.kind.is_fishing() { (4..7, (port.kind.berths() * 2).div_ceil(3)) } else { (9..18, port.kind.berths().div_ceil(4)) };
+            let (window, most) = (9..18, port.kind.berths().div_ceil(4));
             if !window.contains(&hour) || out >= most {
                 continue;
             }
@@ -169,9 +164,7 @@ impl World {
             if h % 3 != 0 {
                 continue;
             }
-            let kind = if port.kind.is_fishing() {
-                ShipKind::FishingBoat
-            } else if port.kind == PortKind::MarinaLarge && h % 5 < 2 {
+            let kind = if port.kind == PortKind::MarinaLarge && h % 5 < 2 {
                 ShipKind::Yacht
             } else {
                 ShipKind::Sailboat

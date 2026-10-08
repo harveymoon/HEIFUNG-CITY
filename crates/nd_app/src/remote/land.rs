@@ -218,6 +218,8 @@ pub fn summary(w: &World) -> Value {
         "ports": ports,
         "ships": w.ports.ships.values().map(|sh| json!({ "kind": format!("{:?}", sh.kind).to_lowercase(), "at": v2(sh.pose().0), "docked": sh.docked, "passengers": sh.passengers, "cargo": sh.cargo.len(),
             "remote_town": sh.remote.map(|k| w.ferry_town_name(sh.port, k)), "back_home": sh.home })).collect::<Vec<_>>(),
+        // [fishing] Trawlers out at sea (those in port: `ships`).
+        "trawlers": w.fishing.fleets.iter().flat_map(|(b, f)| f.boats.iter().enumerate().filter(|(_, t)| t.phase.at_sea()).map(move |(k, t)| json!({ "name": t.name, "port": super::view::key_str(*b), "at": v2(f.boat_pose(k, 1.0).0), "state": t.phase.key() }))).collect::<Vec<_>>(),
         "port_stats": { "freight_landed_today": s.freight_landed_today, "waiting_cargo": s.waiting_cargo, "ferry_riders_today": s.ferry_riders_today, "ferry_fares_today": round(s.ferry_fares_today),
             "remote_sailings_today": s.remote_sailings_today, "visitors_in_today": s.visitors_in_today, "visitors_out_today": s.visitors_out_today, "commuters_in_today": s.commuters_in_today, "commuters_out_today": s.commuters_out_today,
             "day_trips_today": s.day_trips_today, "day_trippers_back_today": s.day_trippers_back_today,

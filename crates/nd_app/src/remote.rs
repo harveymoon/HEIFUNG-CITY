@@ -546,6 +546,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "grid" => Ok(land::grid_json(&ctx.sim.world)),
         "weather" => Ok(land::weather_json(&ctx.sim.world)),
         "landscape" => Ok(land::summary(&ctx.sim.world)),
+        "ships" => Ok(economy::ships(&ctx.sim.world)),
         // [climate] Dev: set the sky, to see rain, snow or sun on demand.
         "set_weather" => {
             let w = &mut ctx.sim.world;
@@ -2801,6 +2802,7 @@ fn help() -> Value {
     v["commands"]["estate"] = json!({ "action": "summary (default: counters, floors histogram, the billionaire gate, elites with their convoys, NIMBY zones, forms, owners) | pressure ({at: [x,y]} for one point, else every busy cell) | spawn_elite (dev: a billionaire now, needs quiet land) | expand {building} (dev: branch or merge now) | buyout {building} (dev) | drive {citizen, to} (dev)" });
     v["commands"]["ownership"] = json!({ "building": "id: what to highlight when it is selected: the owner and every property with its outline (a rich person's other homes and businesses too)" });
     v["commands"]["set_weather"] = json!({ "cloud": "0..1 (rain or snow above 0.6, by climate)", "wind": "0.05..1", "temp_c": "-50..55", "note": "dev: sets the sky now; it drifts again hour by hour" });
+    v["commands"]["ships"] = json!({ "returns": "every ship and boat: freighters, ferries, marina boats and (fishing) trawlers with name, port, at, heading_deg, state (in_port|outbound|fishing|hauling|returning|unloading), at_sea, nets_out, fish_aboard, catch_today; count, trawlers_at_sea" });
     v["commands"]["generate_city"] = json!({ "preset": "grid_plaza|coastal_river|old_town|twin_centres (default grid_plaza)", "seed": "u64 (default 1): the city and its landscape", "landscape": "optional landscape preset to lay it on instead of the city preset's own (river_valley|islands|coast|delta|plains|flat)", "water": "0..1", "relief": "0..1", "branching": "0..1", "climate": "temperate|desert|tropical|arctic|volcanic (default: the city preset's, desert)", "note": "throws the city away: a new game with a whole generated city (tensor-field streets, zoning, highway interchanges, a coal plant); returns the landscape summary and city {arterial, collector, local, zones, lots, interchanges, way_in, centres}" });
     // [districts] [tourism]
     v["commands"]["district"] = json!({ "action": "list (default)|create|paint|erase|set|remove|at|select|layer", "id": "district id (or district: id or name)", "at": "[x,y] brush centre", "radius": "m, default 40", "polygon": "[[x,y],...]", "rect": "[[x0,y0],[x1,y1]]", "residential": "kowloon|suburban|eco|none", "commercial": "neon_strip|tech_campus|night_market|tourist|none", "industry": "farming|oil|refinery|manufacturing|logistics|fishing|tech|none", "historic": "bool", "rename": "new name", "on": "bool (layer)" });

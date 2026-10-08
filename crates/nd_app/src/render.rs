@@ -43,6 +43,8 @@ mod fire_scene;
 /// [land] Police light bars on convoys, bodyguards on foot.
 mod convoys;
 mod far;
+// [fishing] trawlers at their berths and out on the grounds
+mod fishing;
 /// [layers] Traffic and Crime focus views: the city dimmed, vehicles lit.
 mod focus;
 mod haze;
@@ -460,6 +462,7 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, (turbines::sync_turbines, solar::sync_solar, haze::sync_haze, grime::sync_grime, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.add_systems(Update, (climate::sync_precipitation, climate::sync_steam).in_set(SimSet::Sync).after(sync_landscape));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
+        app.add_systems(Update, fishing::sync_trawlers.in_set(SimSet::Sync).after(sync_ships));
         // The ground and water out past the map, into the fog.
         app.init_resource::<far::FarRender>().add_systems(Update, far::sync_far.in_set(SimSet::Sync).after(sync_landscape));
         app.add_systems(Update, retaining::sync_retaining.in_set(SimSet::Sync).after(sync_landscape));

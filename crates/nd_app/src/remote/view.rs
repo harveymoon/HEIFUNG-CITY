@@ -479,6 +479,8 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
     // [free-placement] The building's own use (power, wages, venues); `land_use` is Civic for a city building.
     v["use"] = json!(b.land_use.label());
     v["dirt"] = dirt_json(w, id);
+    // [fishing] A fishing port's boats and grounds.
+    v["fishing"] = super::economy::fishing(w, id);
     v
 }
 

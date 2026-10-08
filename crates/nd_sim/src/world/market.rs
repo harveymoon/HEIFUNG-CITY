@@ -126,6 +126,11 @@ impl World {
         // [ferries] Commuters off the boat work their shift too.
         let ferry_staff = self.ferry_staff();
         for &bid in &ids {
+            // [fishing] A fishing port's fish come in on its boats
+            // (`world/fishing.rs`), not by the hour.
+            if self.port_fishes_grounds(bid) {
+                continue;
+            }
             let b = &mut self.buildings[bid];
             if b.construction.is_some() {
                 continue;

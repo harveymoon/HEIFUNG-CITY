@@ -102,26 +102,29 @@ fn a_marina_lifts_the_land_and_its_boats_sail_on_the_water() {
 }
 
 #[test]
-fn a_fishing_port_s_trawlers_go_out_before_dawn_and_land_the_catch() {
+fn a_fishing_port_s_trawlers_go_out_in_the_morning_and_land_the_catch() {
     let (mut w, click, flow, road_at) = riverside();
     let port = w.place_port(PortKind::FishingPortLarge, click).unwrap();
     join_stub(&mut w, port, road_at, flow);
     let jobs = w.buildings[port].jobs as usize;
     w.buildings[port].workers = vec![CitizenId::default(); jobs];
     let mut minds = IdleMind;
-    while w.clock.hour() != 3 {
+    while w.clock.hour() != 2 {
         w.tick(&mut minds);
     }
     let mut out = 0;
     let mut landed = 0.0f32;
-    for _ in 0..(14 * 60) {
+    for _ in 0..(18 * 60) {
         w.tick(&mut minds);
-        out = out.max(w.ports.ships.values().filter(|s| s.kind == ShipKind::FishingBoat).count());
+        out = out.max(w.fleet(port).map_or(0, |f| f.at_sea()));
         landed = landed.max(w.scene.fish_landed_today);
         w.buildings[port].workers = vec![CitizenId::default(); jobs];
     }
+    let f = w.fleet(port).expect("a fleet");
+    assert!(!f.grounds.is_empty(), "grounds on the river");
     assert!(out > 0, "trawlers put out");
     assert!(landed > 0.0, "and came back with fish");
+    assert!(w.ports.ships.values().all(|s| s.kind != ShipKind::FishingBoat), "trawlers are the fleet's, not port ships");
     let z = w.buildings[port].business.as_ref().unwrap();
     assert!(z.stock_of(Resource::Fish) > 0.0 || z.deals > 0 || z.revenue_today > 0.0, "the quay has fish to sell");
 }
