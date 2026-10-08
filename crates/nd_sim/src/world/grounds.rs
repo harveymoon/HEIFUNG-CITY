@@ -106,7 +106,7 @@ impl World {
                 if self.path_links.links.iter().chain(&new).any(|l| l.gesture == *id && l.pos.distance(p) < 0.05) {
                     continue;
                 }
-                if let Some(j) = self.walk.junctions.iter().filter(|j| !j.attached && j.pos.distance(p) <= LINK_SNAP).min_by(|a, b| a.pos.distance(p).total_cmp(&b.pos.distance(p))) {
+                if let Some(j) = self.walk.junctions.iter().filter(|j| j.pos.distance(p) <= LINK_SNAP).min_by(|a, b| a.pos.distance(p).total_cmp(&b.pos.distance(p))) {
                     new.push(PathLink { gesture: *id, pos: p, kind: j.kind });
                 }
             }

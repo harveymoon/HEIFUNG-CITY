@@ -26,6 +26,7 @@ mod economy;
 mod follow;
 /// Request checks (Host, Origin, content type, body size) and the folders
 /// file commands may use.
+mod grounds;
 mod guard;
 mod history;
 /// [identity] `city_name` and `game_history`.
@@ -375,6 +376,7 @@ fn log_events(sim: Res<Sim>, flags: Res<UiFlags>, tools: Res<ToolState>, mut log
                 let n = w.street_events.news_item(*seq);
                 json!({ "kind": "News", "seq": seq, "event": n.map(|n| n.kind.label()), "headline": n.map(|n| n.headline.as_str()), "pos": n.map(|n| [n.pos.x, n.pos.y]) })
             }
+            SimEvent::PathTrimmed { gesture, removed, grounds } => json!({ "kind": "PathTrimmed", "gesture_id": gesture.0, "removed": removed, "grounds": grounds.key() }),
             SimEvent::StadiumEvent(b) => json!({ "kind": "StadiumEvent", "building": key_str(*b), "name": building_name(w, Some(*b)) }),
             SimEvent::NewThought(c) => {
                 let cit = w.citizens.get(*c);
@@ -621,6 +623,12 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "list_saves" => Ok(list_saves()),
         "plan" => Ok(plan(ctx)),
         "add_road" => add_road(cmd, ctx),
+        "grounds_junctions" | "park_junctions" => {
+            let lot: Option<nd_sim::LotId> = field(cmd, "lot").map(key_from).transpose()?;
+            let near = opt_vec2(cmd, "near")?;
+            let radius = opt_f32(cmd, "radius")?.unwrap_or(150.0);
+            Ok(grounds::list(&ctx.sim.world, lot, opt_str(cmd, "kind")?, near, radius))
+        }
         "add_roundabout" => add_roundabout(cmd, ctx),
         "add_zone" => add_zone(cmd, ctx),
         "paint" => paint(cmd, ctx),
@@ -1377,6 +1385,19 @@ fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         return Err("a road needs at least two points".into());
     }
     let kind = opt_str(cmd, "kind")?.map(road_kind_of).transpose()?.unwrap_or(RoadKind::Street);
+    // [park-paths] A path may start or end on a grounds gate by its index
+    // in `grounds_junctions`.
+    for (key, first) in [("from_junction", true), ("to_junction", false)] {
+        if let Some(i) = opt_u64(cmd, key)? {
+            if kind != RoadKind::Path {
+                return Err(format!("{key}: only a path joins a park's walkways"));
+            }
+            let j = ctx.sim.world.grounds_junctions().get(i as usize).ok_or_else(|| format!("{key}: no junction {i} (see grounds_junctions)"))?;
+            let at = if first { 0 } else { pts.len() - 1 };
+            pts[at] = j.pos;
+            levels[at] = 0.0;
+        }
+    }
     // Range-checked as u64 before narrowing: `as u8` wrapped 257 to 1, and
     // a u8 sum of 200 + 100 overflowed (a panic in a dev build).
     let (lf, lb) = if kind == RoadKind::Street { (opt_u64(cmd, "lanes_fwd")?.unwrap_or(1), opt_u64(cmd, "lanes_bwd")?.unwrap_or(1)) } else { (0, 0) };
@@ -1422,6 +1443,19 @@ fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let mut v = project_state(ctx);
     v["gesture_id"] = json!(id.0);
     v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
+    if kind == RoadKind::Path {
+        // [park-paths] Ends on a grounds gate (joined once implemented).
+        let ends = match ctx.sim.world.gesture(id) {
+            Some(Gesture::Road { points, .. }) if points.len() >= 2 => vec![points[0], points[points.len() - 1]],
+            _ => Vec::new(),
+        };
+        let w = &ctx.sim.world;
+        v["joined"] = json!(ends
+            .iter()
+            .filter_map(|p| w.grounds_junctions().iter().position(|j| j.pos.distance(*p) < 1.0))
+            .map(|i| grounds::junction_json(w, i))
+            .collect::<Vec<_>>());
+    }
     v["grade_warnings"] = json!(warnings);
     Ok(v)
 }
@@ -2853,7 +2887,7 @@ fn help() -> Value {
             "list_saves": { "note": "newest first: path, name, kind (named|latest|autosave|dated), modified_unix, bytes, day, population, treasury, buildings, landscape (null for saves without a sidecar), thumbnail (absolute path of the PNG, or null), city (\"Unnamed city\" when none), game_id; by_city groups the paths by city name" },
             "plan": {},
             "add_roundabout": { "center": "[x,y] (snaps onto a junction within 12 m or a street within 6 m)", "radius": "m to the ring centreline, 12..120 (or diameter 24..240)", "lanes": "1|2|3 ring lanes", "implement": "bool", "returns": "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state" },
-            "add_road": { "points": "[[x,y] or [x,y,level],...] (2+; level metres above ground, negative below)", "elevation": "level for points without one (number), or a list", "tunnel": "bool: default level -8 m", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true", "implement": "bool, default false (pending in the project)" },
+            "add_road": { "points": "[[x,y] or [x,y,level],...] (2+; level metres above ground, negative below)", "elevation": "level for points without one (number), or a list", "tunnel": "bool: default level -8 m", "lanes_fwd": "0..4 (streets)", "lanes_bwd": "0..4", "kind": "street|path|rail", "curved": "bool", "snap": "bool, default true (a path end also snaps onto a park gate)", "from_junction": "path only: start on this grounds_junctions index", "to_junction": "path only: end on this index", "implement": "bool, default false (pending in the project)", "returns": "gesture_id, joined (path ends on a grounds gate), project state" },
             "add_zone": { "polygon": "[[x,y],...] (3+)", "land_use": "residential|commercial|industrial|entertainment|civic|park", "implement": "bool" },
             "bulldoze": { "gesture_id": "int", "implement": "bool" },
             "project": { "action": "start|implement|undo|redo|discard" },
@@ -2885,6 +2919,7 @@ fn help() -> Value {
     // [road-inspect]
     // [committee]
     v["commands"]["committee"] = json!({ "action": "state (default)|members|appoint {id, seat?}|dismiss {id}|alerts {limit, mark_seen}|check_alerts|projects|implement {project}|dismiss_project {project}|pick_site {project, option}|refresh_sites {project}|report|minutes {meeting?}|settings {backend: mock|local|claude, local_url, local_model, claude_model, claude_effort, claude_fallbacks, timeout_s, auto_meetings, veto_allowed, save, test}", "note": "the mayor's AI committee (docs/AI_COMMITTEE.md): fictional politicians, six seats, alerts, projects; never takes or returns an API key" });
+    v["commands"]["grounds_junctions"] = json!({ "lot": "optional lot id", "kind": "park|plaza|stadium|campus|station|beach", "near": "[x,y]", "radius": "m around near (default 150)", "returns": "junctions [{index, pos, kind, lot, attached, walk_node, gesture_id}] (the Path tool's snap rings) and links (paths joined to grounds)" });
     v["commands"]["diary"] = json!({ "citizen": "id", "refresh": "bool: write it again", "returns": "day, text, pending (a model still writing: call again), by_model, backend; display only, never in the save" });
     v["commands"]["voices"] = json!({ "limit": "default 20", "returns": "conversations of spotlit or favourite citizens that got a model's line (template and line), lines_written, diaries_written, backend" });
     v["commands"]["committee_meeting"] = json!({ "start": "bool: call a meeting now (pauses the sim)", "vote": "{proposal, vote: yes|no|abstain|veto} (the mayor's vote)", "abstain_rest": "bool", "fast_forward": "bool: show all; with the stand-in, run to the mayor's vote or the end now", "transcript_from": "line index", "returns": "the meeting in session (stage, transcript, proposals with votes and tally) or the last minutes" });
