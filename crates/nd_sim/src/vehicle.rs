@@ -487,6 +487,10 @@ pub struct OwnedCar {
     /// (`Citizen::car`): parked in their house's own spaces, never driven.
     #[serde(default)]
     pub spare: bool,
+    /// [sweep-sim] The everyday car, left in the garage while a dearer one
+    /// is out for the weekend (`World::weekend_cars` swaps it back).
+    #[serde(default)]
+    pub usual: bool,
 }
 
 impl OwnedCar {

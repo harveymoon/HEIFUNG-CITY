@@ -1077,7 +1077,7 @@ impl World {
 
     pub(super) fn new_car(&mut self, owner: CitizenId, model: VehicleModel, place: CarPlace, event: CarEvent) -> VehicleId {
         let color = self.rng.random_range(0..8u8);
-        let vid = self.vehicles.cars.insert(OwnedCar { owner, model, place, color, since: self.clock.tick, spare: false });
+        let vid = self.vehicles.cars.insert(OwnedCar { owner, model, place, color, since: self.clock.tick, spare: false, usual: false });
         self.vehicles.note(event);
         if let Some(c) = self.citizens.get_mut(owner) {
             c.car = Some(vid);

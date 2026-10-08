@@ -283,6 +283,11 @@ fn places_row(ui: &mut egui::Ui, w: &World, id: CitizenId) -> Option<nd_sim::Bui
         let drives = w.citizens.get(id).is_some_and(|c| c.car.is_some());
         let garage = spares.first().and_then(|v| w.vehicles.cars.get(*v)).and_then(|c| c.spot()).and_then(|s| s.building).and_then(|b| w.buildings.get(b)).map(|b| b.name.clone());
         let mut bits = vec![format!("owns {owns} propert{} (pinned on the map)", if owns == 1 { "y" } else { "ies" })];
+        // [sweep-sim] What the holdings paid them yesterday: rent, a share of profit.
+        let earns = w.investment_income(id);
+        if earns >= 0.5 {
+            bits.push(format!("${earns:.0} a day from them (rent, profit share)"));
+        }
         if !spares.is_empty() {
             let at = garage.map_or(String::new(), |g| format!(" at {g}"));
             let k = spares.len();

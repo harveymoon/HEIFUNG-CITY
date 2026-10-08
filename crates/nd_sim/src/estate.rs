@@ -259,6 +259,12 @@ pub struct Owner {
     #[serde(default)]
     pub spent: f64,
     pub since_day: u32,
+    /// [sweep-sim] What an investor's holdings paid them yesterday (rent
+    /// from tenants, a share of a business's profit), and in all.
+    #[serde(default)]
+    pub income_day: f32,
+    #[serde(default)]
+    pub earned: f64,
 }
 
 // ── the super-elite ──────────────────────────────────────────────────────────
