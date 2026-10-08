@@ -319,7 +319,7 @@ impl World {
                 let (r, mut w) = s.kind.land_value(s.tier);
                 // [megacorp] A good school (well staffed) lifts the homes
                 // round it more than one short of teachers.
-                if s.kind == crate::services::ServiceKind::School && bld.construction.is_none() {
+                if s.kind == crate::services::ServiceKind::School && bld.operating() {
                     w *= 0.8 + 0.4 * bld.staffing();
                 }
                 if s.kind == crate::services::ServiceKind::Vertiport {
