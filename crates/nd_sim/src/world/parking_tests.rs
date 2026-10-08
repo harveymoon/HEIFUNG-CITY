@@ -570,6 +570,7 @@ fn tow_moves_are_deterministic() {
     let poses = |w: &World| w.traffic.cars.iter().map(|(id, c)| format!("{id:?} {:.3} {:.3} {:.3}", c.pos.x, c.pos.y, c.heading)).collect::<Vec<_>>();
     assert_eq!(poses(&a), poses(&b));
     assert_eq!(format!("{:?}", a.enforcement.stats), format!("{:?}", b.enforcement.stats));
+}
 
 #[test]
 fn a_road_stops_at_a_parking_lot_the_player_placed() {
