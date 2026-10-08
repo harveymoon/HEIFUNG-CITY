@@ -294,6 +294,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Mega-corps: a company that grows big enough becomes a mega-corp (fictional), buys land in every kind of area and owns many industries and companies; procedural logo and colour shown on its skyscrapers, trucks and other buildings; owns employee housing; builds a headquarters tower; buys first what is closest by driving distance to HQ
 - [ ] Universities act like mega-corps around campus: buy nearby residential plots for dorms, build admin offices, theatres, sports facilities, frat houses on nearby plots, claim nearby parks as campus plaza; adjacency bonus with pizza shops and bars for students
 - [ ] Schools raise the desirability of nearby homes for families with children
+- [ ] Supertall league: much taller buildings on high-density, high-value land; mega-tall towers buy out adjacent lots for a big footprint (Empire State → Burj Khalifa scale); developers keep out-building each other for the city's tallest if city rules allow (height caps)
 
 ## Follow-ups noted in agent reports (not started)
 - [ ] Batteries charge on cheap night power and discharge at the evening peak (grid-weather)
