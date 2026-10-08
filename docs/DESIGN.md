@@ -503,8 +503,8 @@ Citizens are rendered from their simulated positions every frame.
 - **Dirty industry** (`industry::IndustryKind::dirtiness`, `world/dirt.rs`): strip mining
   (0.75), oil extraction (0.55), refineries (0.8; a chemical works with mercury cells 1.0),
   smelting (0.9: smelters turn 1.5 ore and 0.1 fuel into 1 metal, base 75, shipped out as soon as 8 hours of it stand in the yard) and factory
-  farming (0.6: feedlots turn 2 grain into 12 livestock; still food) are dirty, and so is a
-  coal plant (0.7, read as a refinery). A dirty plant is felt out to 150 + 250 x dirtiness
+  farming (0.6: feedlots turn 2 grain into 12 livestock; still food) are dirty (coal
+  plants keep their own pollution and nuisance figures and are not on this table). A dirty plant is felt out to 150 + 250 x dirtiness
   metres (about 290..400 m); what a neighbour suffers is level x sensitivity x (1 - d/reach)^1.5
   per plant, combined as 1 - prod(1 - hit), capped at 0.9 (its *exposure*). Level is the
   dirtiness times 0.6 + 0.4 x staffing (0.35 when shut). The compatibility table

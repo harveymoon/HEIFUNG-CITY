@@ -1,7 +1,8 @@
 //! [dirty-industry] Dirty industry and its neighbours: mines, oil wells,
 //! refineries and chemical works, smelters, factory farms and coal plants.
 //!
-//! - The dirty plants are read off the buildings every hour into
+//! - The dirty plants (dirty *industry*: power plants keep their own
+//!   pollution figures) are read off the buildings every hour into
 //!   `World::dirty` ([`World::refresh_dirty`]): where each is, how dirty
 //!   it is right now and how far its neighbours feel it.
 //! - Every neighbour suffers by the compatibility table
@@ -43,8 +44,6 @@ pub const HOME_EXPOSED: f32 = 0.12;
 pub const DIRT_MOOD: f32 = 0.04;
 /// Homes heard from per day about dirty neighbours, at most.
 const DIRT_VOICES: usize = 16;
-/// A coal plant's dirtiness as a neighbour (it reads as a refinery).
-pub const COAL_DIRTINESS: f32 = 0.7;
 
 /// A dirty plant as one neighbour sees it, for the inspector.
 #[derive(Clone, Debug, PartialEq)]
@@ -68,9 +67,9 @@ impl World {
                 continue;
             }
             let Some(l) = self.lots.get(b.lot) else { continue };
-            let (as_kind, d, activity) = if b.plant == Some(crate::power::PowerPlantKind::Coal) {
-                (IndustryKind::Refinery, COAL_DIRTINESS, if b.is_derelict() { 0.4 } else { 1.0 })
-            } else if let Some(z) = &b.business {
+            // (Coal plants carry their own pollution and nuisance figures,
+            // `PowerPlantKind::pollution`; the table is about industry.)
+            let (as_kind, d, activity) = if let Some(z) = &b.business {
                 let Some(k) = z.kind.industry() else { continue };
                 let d = z.kind.dirtiness();
                 if d < industry::DIRTY {

@@ -22,8 +22,8 @@ pub struct SiteContext {
     yards: Vec<Vec2>,
     depots: Vec<Vec2>,
     highway: Vec<(Vec2, Vec2)>,
-    /// Lot, centre, the industry kind it reads as, a working oil well, a fleet lot.
-    others: Vec<(LotId, Vec2, Option<IndustryKind>, bool, bool)>,
+    /// Lot, centre, the industry kind it reads as, a working oil well, a fleet lot, a business (power plants are not dirty industry).
+    others: Vec<(LotId, Vec2, Option<IndustryKind>, bool, bool, bool)>,
     /// [dirty-industry] Working strip mines (ore for a smelter), and the
     /// smelters standing.
     mines: Vec<(LotId, Vec2)>,
@@ -50,7 +50,7 @@ impl SiteContext {
         let mut dirty = Vec::new();
         let mut fleet_lot_near = false;
         let mut crude_wells = 0u32;
-        for &(lot, at, kind, well, fleet) in &self.others {
+        for &(lot, at, kind, well, fleet, dirty_business) in &self.others {
             if Some(lot) == exclude {
                 continue;
             }
@@ -65,8 +65,9 @@ impl SiteContext {
                 if d < industry::NEIGHBOUR_RADIUS {
                     neighbours.push((k, d));
                 }
-                // [dirty-industry] Dirty plants count as far as they carry.
-                if k.is_dirty() && d < k.dirt_reach() {
+                // [dirty-industry] Dirty plants count as far as they carry
+                // (industry only: a power plant is not on the table).
+                if dirty_business && k.is_dirty() && d < k.dirt_reach() {
                     dirty.push((k, d));
                 }
             }
@@ -107,7 +108,7 @@ impl World {
             let well = b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::OilWell && !z.closed);
             let fleet = b.business.as_ref().is_some_and(|z| z.kind.is_truck_lot());
             if kind.is_some() || well || fleet {
-                others.push((b.lot, l.center, kind, well, fleet));
+                others.push((b.lot, l.center, kind, well, fleet, b.business.is_some()));
             }
             if b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::StripMine && !z.closed) {
                 mines.push((b.lot, l.center));
