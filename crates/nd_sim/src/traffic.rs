@@ -2030,9 +2030,15 @@ impl LaneNetwork {
         let mut g: HashMap<LaneId, f32> = HashMap::new();
         let start_cost = self.lanes[start as usize].length - s_start;
         g.insert(start, start_cost);
-        open.push(Open { f: start_cost + self.lanes[start as usize].end().distance(to), lane: start, expanded: 0 });
+        open.push(Open { f: start_cost + self.lanes[start as usize].end().distance(to), g: start_cost, lane: start, expanded: 0 });
         let mut expansions = 0usize;
-        while let Some(Open { lane, expanded, .. }) = open.pop() {
+        while let Some(Open { lane, expanded, g: popped_g, .. }) = open.pop() {
+            // A lane reached again more cheaply leaves its older entry in
+            // the heap: skip it rather than expand it (and count it toward
+            // the cap) a second time.
+            if popped_g > g[&lane] {
+                continue;
+            }
             if lane == goal && expanded > 0 {
                 let mut route = vec![goal];
                 let mut cur = goal;
@@ -2083,7 +2089,7 @@ impl LaneNetwork {
                 if g.get(&next).map_or(true, |&old| cost < old) {
                     g.insert(next, cost);
                     came.insert(next, lane);
-                    open.push(Open { f: cost + self.lanes[next as usize].end().distance(to), lane: next, expanded: expanded + 1 });
+                    open.push(Open { f: cost + self.lanes[next as usize].end().distance(to), g: cost, lane: next, expanded: expanded + 1 });
                 }
             }
         }
@@ -2184,6 +2190,9 @@ impl LaneNetwork {
 #[derive(PartialEq)]
 struct Open {
     f: f32,
+    /// The cost to reach `lane` when this entry was pushed (stale when
+    /// the lane has since been reached for less).
+    g: f32,
     lane: LaneId,
     expanded: u32,
 }
@@ -2396,15 +2405,20 @@ impl Traffic {
             l.cars.retain(|&c| c != id);
         }
         let first = route[0];
-        {
+        let off_lanes = {
             let car = &mut self.cars[id];
             car.route = route;
             car.idx = 0;
             car.s = s_start;
             car.s_end = s_end;
             car.age = 0.0;
+            car.entering || car.in_stunt()
+        };
+        // A car at the kerb (or in a stunt) is in no lane list: `pull_out`
+        // (or `end_stunt`) puts it in. Inserting it here too listed it twice.
+        if !off_lanes {
+            self.insert_sorted(first, id);
         }
-        self.insert_sorted(first, id);
     }
 
     pub fn remove_car(&mut self, id: CarId) -> Option<Car> {
@@ -3510,11 +3524,6 @@ impl Traffic {
                     self.cars[cid].age = 0.0;
                     continue;
                 }
-                let (lane_id, idx, len, s, s_end) = {
-                    let c = &self.cars[cid];
-                    let lane_id = c.route[c.idx];
-                    (lane_id, c.idx, self.net.lanes[lane_id as usize].length, c.s, c.s_end)
-                };
                 // [carlife] A trip this long is stuck somewhere: look for
                 // another way from where it stands. Nobody is taken off
                 // the road; a jam is part of the city and its drivers feel it.
@@ -3527,6 +3536,14 @@ impl Traffic {
                 if self.cars[cid].entering {
                     continue;
                 }
+                // Read after the replan: it swaps the route and resets `idx`,
+                // so a snapshot taken before would test the old index against
+                // the new route (and could "arrive" a car blocks from its goal).
+                let (lane_id, idx, len, s, s_end) = {
+                    let c = &self.cars[cid];
+                    let lane_id = c.route[c.idx];
+                    (lane_id, c.idx, self.net.lanes[lane_id as usize].length, c.s, c.s_end)
+                };
                 if idx + 1 == self.cars[cid].route.len() {
                     if s >= s_end - 0.5 {
                         let c = &mut self.cars[cid];
@@ -5345,5 +5362,66 @@ mod tests {
         let inside = t.spawn_car(CitizenId::default(), None, vec![conn, out], 4.0, 300.0, 0);
         assert_eq!(t.net.lanes[conn as usize].cars, vec![inside]);
         assert!(t.exit_blocked(&t.net.lanes[conn as usize], out, true), "that room is taken by the car already in the junction");
+    }
+
+    /// The 30-minute replan swaps the route and resets `idx`: the end-of-
+    /// route test must read the new index, not one taken before the swap.
+    /// A car on the connector, its old `idx` 1 on a 3-lane route, must not
+    /// be taken for one on the last lane of its new 2-lane route.
+    #[test]
+    fn a_replan_mid_route_does_not_arrive_the_car_early() {
+        let roads = cross();
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let west = roads.nearest_on_network(Vec2::new(-150.0, 0.0)).unwrap().0;
+        let north = roads.nearest_on_network(Vec2::new(0.0, 150.0)).unwrap().0;
+        let (route, s0, _) = t.net.find_route(west, Vec2::new(-150.0, -2.0), north, Vec2::new(2.0, 150.0)).expect("route");
+        // Mid-route at `k`, where the replanned route (the rest of this
+        // one) is `k + 1` lanes long: the old index reads as its last lane.
+        assert!(route.len() >= 3 && route.len() % 2 == 1, "route of {} lanes", route.len());
+        let k = (route.len() - 1) / 2;
+        let car = t.spawn_car(CitizenId::default(), None, route.clone(), s0, 1.0, 0);
+        // Put it near the end of lane `k`, and make the trip stale.
+        t.net.lanes[route[0] as usize].cars.retain(|&c| c != car);
+        let len = t.net.lanes[route[k] as usize].length;
+        {
+            let c = &mut t.cars[car];
+            c.idx = k;
+            c.s = len - 0.2;
+            c.age = REPLAN_AFTER + 1.0;
+        }
+        t.insert_sorted(route[k], car);
+        let arrived = t.step(0.05, 1);
+        assert!(!arrived.contains(&car), "arrived on lane {k} of {}, short of its goal", route.len());
+        let c = &t.cars[car];
+        assert_eq!(c.route.len(), route.len() - k, "replanned from lane {k}");
+        assert!(c.idx + 1 < c.route.len(), "not on its last lane yet");
+    }
+
+    /// A car waiting at the kerb is in no lane list; a reroute must not
+    /// put it in one, or `pull_out` lists it twice.
+    #[test]
+    fn rerouting_a_car_at_the_kerb_lists_it_once() {
+        let roads = cross();
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let west = roads.nearest_on_network(Vec2::new(-150.0, 0.0)).unwrap().0;
+        let north = roads.nearest_on_network(Vec2::new(0.0, 150.0)).unwrap().0;
+        let (route, s0, s1) = t.net.find_route(west, Vec2::new(-150.0, -2.0), north, Vec2::new(2.0, 150.0)).expect("route");
+        let car = t.spawn_car(CitizenId::default(), None, route.clone(), s0, s1, 0);
+        t.pull_in(car, 0.0);
+        assert!(t.cars[car].entering);
+        // A new route from another lane (from the south arm).
+        let south = roads.nearest_on_network(Vec2::new(0.0, -150.0)).unwrap().0;
+        let (other, o0, o1) = t.net.find_route(south, Vec2::new(-2.0, -150.0), north, Vec2::new(-2.0, 150.0)).expect("route");
+        assert_ne!(other[0], route[0]);
+        t.reroute(car, other, o0, o1);
+        let listed = |t: &Traffic| t.net.lanes.iter().map(|l| l.cars.iter().filter(|&&c| c == car).count()).sum::<usize>();
+        assert_eq!(listed(&t), 0, "still at the kerb");
+        for _ in 0..20 {
+            t.step(0.5, 1);
+            assert!(listed(&t) <= 1, "listed {} times", listed(&t));
+        }
+        assert_eq!(listed(&t), 1, "pulled out");
     }
 }
