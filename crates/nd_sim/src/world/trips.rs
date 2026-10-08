@@ -902,7 +902,9 @@ impl World {
             let lot = self.buildings.get(b).map(|bld| bld.lot);
             let pick = self.rng.random_range(0..64usize);
             let has_benches = lot.is_some_and(|l| self.walk.benches_in(l).next().is_some());
-            if let Some((seat, facing, bench)) = lot.and_then(|l| self.free_seat(l, pick)) {
+            // [social] Beside a friend already sitting there, if there is room.
+            let by_friend = lot.and_then(|l| self.seat_by_friend(id, l));
+            if let Some((seat, facing, bench)) = by_friend.or_else(|| lot.and_then(|l| self.free_seat(l, pick))) {
                 let here = self.citizens[id].pos;
                 let mut path = match self.walk.route(here, seat) {
                     Some((pts, _)) => pts,

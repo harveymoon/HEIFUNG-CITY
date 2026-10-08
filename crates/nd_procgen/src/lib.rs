@@ -20,6 +20,8 @@ pub mod preview;
 pub mod people;
 /// [society] Camps, RVs and overflowing trash.
 pub mod society;
+/// [social] Murals and community gardens.
+pub mod social;
 pub mod street;
 pub mod surface;
 pub mod terrain;

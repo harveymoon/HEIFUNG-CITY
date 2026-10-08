@@ -82,6 +82,10 @@ mod plant_groups_tests;
 mod plant_scale_tests;
 mod services;
 mod society;
+/// [social] Encounters, conversations, friends and feuds, crews and clubs.
+mod social;
+#[cfg(test)]
+mod social_tests;
 mod survey;
 pub use survey::SiteContext;
 mod subway;
@@ -238,6 +242,9 @@ pub struct WorldConfig {
     /// appear there. A real game never sets it: there, only the far ends
     /// of ways run out past the map edge do (`landscape::reach_elsewhere`).
     pub dead_ends_lead_elsewhere: bool,
+    /// [social] People talking, friendships and feuds, groups
+    /// (`world/social.rs`). Tests about other systems may turn it off.
+    pub social: bool,
 }
 
 impl WorldConfig {
@@ -271,6 +278,7 @@ impl Default for WorldConfig {
             landscape: LandscapeParams::default(),
             society: true,
             dead_ends_lead_elsewhere: false,
+            social: true,
         };
         c.derive_speeds();
         c
@@ -577,6 +585,14 @@ pub struct World {
     /// piece's wear history, for the road inspector (`world/road_inspect.rs`).
     #[serde(default)]
     pub road_log: crate::road_traffic::RoadLog,
+    /// [social] Ties, conversations, groups and what they made
+    /// (`crate::social`, `world/social.rs`). Old saves start with nobody
+    /// knowing anybody.
+    #[serde(default)]
+    pub social: crate::social::Social,
+    /// [social] The city's concern of the week, for small talk (hourly).
+    #[serde(skip)]
+    social_concern: Option<crate::concerns::Concern>,
 }
 
 impl World {
@@ -671,6 +687,8 @@ impl World {
             road_wear: Default::default(),
             dirty: Vec::new(),
             road_log: Default::default(),
+            social: Default::default(),
+            social_concern: None,
         };
         w.estate.pressure = crate::estate::Pressure::new(half + 200.0);
         w.landscape = Landscape::new(&w.config.landscape);
@@ -1021,6 +1039,8 @@ impl World {
             self.daily_vehicles();
             self.industry_daily();
             self.daily_places();
+            // [social] ties fade, friends help, groups form and make things
+            crate::prof!("daily_social", self.daily_social());
             self.rides.stats.roll();
             // [benches] seats and bench-neighbour tallies
             self.daily_benches();
@@ -1076,6 +1096,10 @@ impl World {
         }
         if tick % 60 == 45 {
             crate::prof!("hourly_vehicles", self.hourly_vehicles());
+        }
+        // [social] Outings, group nights, gigs and protests at :25.
+        if tick % 60 == 25 {
+            self.hourly_social();
         }
         // [parking] Drivers worn out by the hunt and stuck in a queue leave
         // the car where it stands.
@@ -1137,6 +1161,8 @@ impl World {
         self.step_citizens(minds);
         // [passengers] With their drivers, in or out of the car.
         self.step_passengers();
+        // [social] Who gets talking, and friends calling round.
+        self.step_social();
         // [concerns] Happiness on the hour and at midnight.
         crate::prof!("step_concerns", self.step_concerns());
         // Every system that moves people has run: lay the breadcrumbs.
