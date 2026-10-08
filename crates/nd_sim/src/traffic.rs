@@ -1718,6 +1718,26 @@ impl LaneNetwork {
                 }
             }
         }
+        // [interchange] Bends close together are one curve (a ramp rounded
+        // in a few pieces): the lowest cap holds from its first bend to its
+        // last, so the limit does not rise between them and fall again.
+        let caps: HashMap<usize, Vec<(f32, f32, f32)>> = caps
+            .into_iter()
+            .map(|(r, mut cs)| {
+                cs.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let mut out: Vec<(f32, f32, f32)> = Vec::new();
+                for (x, c) in cs {
+                    match out.last_mut() {
+                        Some(last) if x - last.1 < 30.0 => {
+                            last.1 = x;
+                            last.2 = last.2.min(c);
+                        }
+                        _ => out.push((x, x, c)),
+                    }
+                }
+                (r, out)
+            })
+            .collect();
         for i in 0..n {
             if !self.lanes[i].ramp || !up[i].0.is_finite() || !down[i].0.is_finite() {
                 continue;
@@ -1729,10 +1749,15 @@ impl LaneNetwork {
             // eases off either side at the rate drivers brake for limits,
             // so the limit never steps.
             let at = |x: f32, v: f32| {
-                caps.get(&r).map_or(v, |cs| cs.iter().fold(v, |v, &(cx, c)| v.min((c * c + 2.0 * ANTICIPATE_BRAKE * (x - cx).abs()).sqrt())))
+                caps.get(&r).map_or(v, |cs| cs.iter().fold(v, |v, &(x0, x1, c)| v.min((c * c + 2.0 * ANTICIPATE_BRAKE * (x0 - x).max(x - x1).max(0.0)).sqrt())))
             };
             self.lanes[i].speed_limit = at(up[i].0, profile(up[i].0, down[i].0 + len, uh, dh));
             self.lanes[i].limit_end = at(up[i].0 + len, profile(up[i].0 + len, down[i].0, uh, dh));
+            // [interchange] Off a curve's last bend the cap eases off into a
+            // profile still falling: an off-ramp's limit never rises along a
+            // lane (nor an on-ramp's falls).
+            let (a, b) = (self.lanes[i].speed_limit, self.lanes[i].limit_end);
+            self.lanes[i].limit_end = if uh && !dh { b.min(a) } else if dh && !uh { b.max(a) } else { b };
         }
     }
 
