@@ -319,16 +319,16 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [x] Bridge abutments, signal arms, stop line → DONE [fix/interchange]
 - [ ] Hydro/tidal still fixed size; huge 2-tower coal plant only seen in a unit test (plant-scale)
 - [x] Town street tapers → already on main (road-polish #14)
-- [ ] One engine per fire; crew are station payroll names (fire-scene)
+- [x] One engine per fire; crew are station payroll names (fire-scene)   → DONE [feat/street-followups]: engines pull in to the kerb on the building's side clear of junctions, hose crew stays on the pavement side, traffic crawls and eases round the scene; a second alarm (fire ≥ 0.6) brings a second engine with its own crew. Crew names still from the station payroll (by design)
 - [ ] Wind small-lot exception on unzoned sites with no lot yet (fixed in plant-scale? verify)
-- [ ] Tow trucks on a job may drive against one-ways and make U-turns (todo5; noted not done)
+- [x] Tow trucks on a job may drive against one-ways and make U-turns (todo5; noted not done)   → DONE [feat/street-followups]: last stretch (≤160 m) up a one-way against the traffic at a crawl with ambers when the legal loop is 150 m+ longer; U-turn in the street after hooking (parking tows and wrecks) when 120 m+ shorter; oncoming traffic slows and eases round or waits
 - [ ] Rich owners own several homes/businesses/cars: selecting highlights everything they own; several map pins per person (todo5; "no data yet")
 - [x] Look-dev leftovers → DONE [fix/haze]: lamp light (40/18/0 by tier), wet roads in rain, climate/weather/hour fog, coal smoke from walk view; normal maps already present. Left: Bevy Atmosphere (would need physical light units), building-lot lamps
 - [ ] Parking pressure makes parking businesses profitable so entrepreneurs build more parking lots (todo2, todo5; verify, likely missing)
-- [ ] A booted car gets towed away eventually (todo4; verify)
-- [ ] Crime can include murder (todo2; only theft/burglary/assault/vandalism now)
+- [x] A booted car gets towed away eventually (todo4; verify)   → DONE [feat/street-followups]: verified the player's boot always towed; now officers clamp overstayers (90 fine), paid in time the clamp comes off, else towed after 6 h with the fine owed at the pound
+- [x] Crime can include murder (todo2; only theft/burglary/assault/vandalism now)   → DONE [feat/street-followups]: offender murders existed; now a Homicide crime kind, rare feud killings between enemies (3% of their fights), a 150-min investigation, arrest 80% when the killer is known, long sentences, family/friends/neighbours grieve with a heavy Safety concern, sober news lines
 - [ ] Industry on cheap land lifts land value a little (todo2; verify)
-- [ ] Moto gangs ride as a pack, reckless, weaving through traffic (todo2; verify)
+- [x] Moto gangs ride as a pack, reckless, weaving through traffic (todo2; verify)   → DONE [feat/street-followups]: some evenings from day 10 local crew bikers meet an out-of-town club at a road end and ride across town as a loose column, speeding, overtaking, leader through every red; a witness may call it in and police near a local rider give chase; `incident {kind: moto_pack}`
 - [x] Coal smoke visible from walk view → DONE [fix/haze]
 - [ ] Wind farm sizes (now per lot — check the original complaint is answered)
 - [ ] A bought-out business moves to a new location instead of only closing (todo5)
