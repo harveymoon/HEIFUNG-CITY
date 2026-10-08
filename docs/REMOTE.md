@@ -1082,7 +1082,7 @@ pane; clicking either selects the building.
 
 `screenshot {path?}`: queues a capture of the window (`Screenshot::primary_window()` with
 `save_to_disk`) and replies at once with the absolute `path` (default
-`<working dir>/screenshots/shot-<unix seconds>.png`). A given path must end in `.png` and lie in
+`<working dir>/screenshots/shot-<unix ms>.png`). A given path must end in `.png` and lie in
 the allowed folders (see [Who may call](#who-may-call)). **The file is written a frame or two later**,
 when the GPU copy lands: poll for it (the MCP tool waits up to 5 s). It captures the whole window,
 UI panel included, at the window's size (a full-HD window makes a 2–5 MB PNG). PNG only. A
@@ -1331,7 +1331,7 @@ settings. Reply: `kind`, `sort`, `desc`, `total`, `matched`, `offset`, `rows`, `
 
 `{"cmd": "export", "path": "exports/optional.json"}` writes `report` (all sections), `map_summary`,
 `history` and `tables` (every row of every `list` kind) as one JSON document, by default to
-`<working dir>/exports/city-<unix>.json` (`/exports` is git-ignored). A given path must end in
+`<working dir>/exports/city-<unix ms>.json` (`/exports` is git-ignored). A given path must end in
 `.json` and lie in the allowed folders (see [Who may call](#who-may-call)). The file is written
 atomically. Reply: `path`, `bytes`, `took_ms`.
 

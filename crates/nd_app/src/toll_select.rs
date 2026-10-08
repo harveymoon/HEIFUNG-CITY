@@ -9,7 +9,7 @@ use nd_sim::{Vec2 as SVec2, World};
 /// The booth's footprint: its centre, its direction along the road, and
 /// its depth along and width across the road (a plaza's flare included).
 pub fn footprint(w: &World, b: &TollBooth) -> (SVec2, SVec2, f32, f32) {
-    let road = b.segment.filter(|s| (s.0 as usize) < w.roads.segments.len()).map_or(6.0, |s| w.roads.segment(s).half_width());
+    let road = b.segment.filter(|s| (s.0 as usize) < w.roads.segments.len() && w.roads.segment(*s).alive).map_or(6.0, |s| w.roads.segment(s).half_width());
     let (depth, wide) = match b.size {
         TollSize::Booth => (9.0, road * 2.0 + 1.0),
         TollSize::Plaza => (b.size.flare() * 2.0, road * 2.0 + 16.0),

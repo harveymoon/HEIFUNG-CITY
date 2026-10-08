@@ -94,7 +94,7 @@ fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32],
         let Some(l) = w.lots.get(lot) else { continue };
         let y = w.lot_pad(lot) + 0.35;
         let mut outline = l.polygon.clone();
-        outline.push(l.polygon[0]);
+        if let Some(&first) = l.polygon.first() { outline.push(first); }
         red.ground_polygon(&l.polygon, y, [WARN_TINT[0] * 0.25, WARN_TINT[1] * 0.25, WARN_TINT[2] * 0.25, 1.0]);
         red.ground_strip(&outline, 0.7, y + 0.02, [WARN_TINT[0], WARN_TINT[1], WARN_TINT[2], 1.0]);
     }
@@ -106,7 +106,7 @@ fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32],
         let Some(l) = w.lots.get(lot) else { continue };
         let y = w.lot_pad(lot) + 0.45;
         let mut outline = l.polygon.clone();
-        outline.push(l.polygon[0]);
+        if let Some(&first) = l.polygon.first() { outline.push(first); }
         red.ground_strip(&outline, 2.4, y, [WARN_TINT[0] * 2.0, WARN_TINT[1] * 1.5, WARN_TINT[2] * 1.5, 1.0]);
     }
     // [tools] Buildings a column would buy out, and where the column goes.
@@ -114,7 +114,7 @@ fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32],
         let Some(l) = w.lots.get(*lot) else { continue };
         let y = w.lot_pad(*lot) + 0.4;
         let mut outline = l.polygon.clone();
-        outline.push(l.polygon[0]);
+        if let Some(&first) = l.polygon.first() { outline.push(first); }
         red.ground_polygon(&l.polygon, y, [PILLAR_TINT[0] * 0.3, PILLAR_TINT[1] * 0.3, PILLAR_TINT[2] * 0.3, 1.0]);
         red.ground_strip(&outline, 1.6, y + 0.02, [PILLAR_TINT[0], PILLAR_TINT[1], PILLAR_TINT[2], 1.0]);
     }
@@ -163,7 +163,7 @@ fn blocker_marks(w: &World, k: &nd_sim::Blocker, red: &mut MeshData) {
         if let Some(l) = w.lots.get(lot) {
             let y = w.lot_pad(lot) + 0.45;
             let mut outline = l.polygon.clone();
-            outline.push(l.polygon[0]);
+            if let Some(&first) = l.polygon.first() { outline.push(first); }
             red.ground_polygon(&l.polygon, y - 0.05, [WARN_TINT[0] * 0.3, WARN_TINT[1] * 0.3, WARN_TINT[2] * 0.3, 1.0]);
             red.ground_strip(&outline, 2.4, y, bright);
         }

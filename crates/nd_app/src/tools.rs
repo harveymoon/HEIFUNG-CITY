@@ -635,7 +635,8 @@ impl ToolState {
     /// Does the active tool use right-drags itself (the zone brush erases
     /// with them), so the camera must not orbit?
     pub fn captures_right_drag(&self) -> bool {
-        self.tool == Tool::Zone && matches!(self.zone_mode, ZoneMode::Brush | ZoneMode::Marquee)
+        // [fix/review-app] The District brush erases with a right-drag too.
+        (self.tool == Tool::Zone && matches!(self.zone_mode, ZoneMode::Brush | ZoneMode::Marquee)) || (self.tool == Tool::District && self.district.mode == crate::district_tool::DistrictMode::Brush)
     }
 
     /// The land use a paint stroke gives: the selected one, or none when
@@ -1002,9 +1003,12 @@ pub(crate) fn tool_input(
     if ctrl && key(KeyCode::KeyZ) {
         tools.points.clear();
         tools.drag = None;
+        // [fix/review-app] A brush stroke's counts end with it.
+        tools.stroke = None;
         tools.status = if sim.world.undo() { "Undid last step".into() } else { "Nothing to undo".into() };
     }
     if ctrl && key(KeyCode::KeyY) {
+        tools.stroke = None;
         tools.status = if sim.world.redo() { "Redid step".into() } else { "Nothing to redo".into() };
     }
     if ctrl && key(KeyCode::Enter) {
@@ -1034,13 +1038,16 @@ pub(crate) fn tool_input(
     let right_down = buttons.just_pressed(MouseButton::Right) && !flags.pointer_over_ui;
     let click = buttons.just_pressed(MouseButton::Left) && !shift && !flags.pointer_over_ui;
     let shift_click = buttons.just_pressed(MouseButton::Left) && shift && !flags.pointer_over_ui;
+    // [fix/review-app] A middle click on a panel is not a map click: it
+    // used to clear the remote API's pins.
+    let middle = buttons.just_pressed(MouseButton::Middle) && !flags.pointer_over_ui;
     let ground = cursor.ground;
     tools.hover_ground = ground;
 
     match tools.tool {
         Tool::Road if tools.roundabout => {
             // The pointer takes over from a centre the remote API pinned.
-            if click || right_down || buttons.just_pressed(MouseButton::Middle) {
+            if click || right_down || middle {
                 tools.ring_pin = None;
             }
             tools.ring_hover = tools.ring_pin.or(if flags.pointer_over_ui { None } else { ground }).map(|p| sim.world.roundabout_snap(p));
@@ -1066,7 +1073,7 @@ pub(crate) fn tool_input(
             }
         }
         Tool::Road => {
-            if ground.is_some() && (click || buttons.just_pressed(MouseButton::Middle)) {
+            if ground.is_some() && (click || middle) {
                 tools.cursor_pin = None;
             }
             if click {
@@ -1791,7 +1798,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             let outline = |gizmos: &mut Gizmos, poly: &[SVec2], col: Color| {
                 let mut pts: Vec<Vec3> = poly.iter().map(|&p| lift(p)).collect();
                 if pts.len() >= 3 {
-                    pts.push(pts[0]);
+                    if let Some(&first) = pts.first() { pts.push(first); }
                     gizmos.linestrip(pts, col);
                 }
             };
@@ -1891,7 +1898,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             let mut pts: Vec<Vec3> = ctrl.iter().map(|&p| lift(p)).collect();
             if pts.len() >= 2 {
                 if pts.len() >= 3 {
-                    pts.push(pts[0]);
+                    if let Some(&first) = pts.first() { pts.push(first); }
                 }
                 gizmos.linestrip(pts, cyan);
             }
@@ -1908,7 +1915,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 if let Some(g) = plan.gestures.get(&id) {
                     let mut pts: Vec<Vec3> = g.road_polyline().iter().map(|&p| lift(p)).collect();
                     if !g.is_road() && pts.len() >= 3 {
-                        pts.push(pts[0]);
+                        if let Some(&first) = pts.first() { pts.push(first); }
                     }
                     gizmos.linestrip(pts, colour);
                 }
@@ -1927,7 +1934,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             if let Some(l) = tools.hover_city_building.and_then(|b| sim.world.buildings.get(b)).and_then(|b| sim.world.lots.get(b.lot)) {
                 let mut pts: Vec<Vec3> = l.polygon.iter().map(|&p| lift(p)).collect();
                 if pts.len() >= 3 {
-                    pts.push(pts[0]);
+                    if let Some(&first) = pts.first() { pts.push(first); }
                     gizmos.linestrip(pts, red);
                 }
             }
@@ -1935,7 +1942,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 if let Some(g) = plan.gestures.get(&id) {
                     let mut pts: Vec<Vec3> = g.points().iter().map(|&p| lift(p)).collect();
                     if !g.is_road() && pts.len() >= 3 {
-                        pts.push(pts[0]);
+                        if let Some(&first) = pts.first() { pts.push(first); }
                     }
                     gizmos.linestrip(pts, red);
                 }
@@ -1948,7 +1955,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                     Ok(port) => {
                         let ok = Color::linear_rgb(0.3, 2.5, 0.6);
                         let mut pts: Vec<Vec3> = port.footprint().iter().map(|&p| lift(p)).collect();
-                        pts.push(pts[0]);
+                        if let Some(&first) = pts.first() { pts.push(first); }
                         gizmos.linestrip(pts, ok);
                         let [a, b] = port.pier;
                         gizmos.line(lift(a), lift(b), white);
@@ -1977,7 +1984,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 let blocked = sim.world.buildings.values().any(|b| sim.world.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp)));
                 let col = if blocked { red } else { Color::linear_rgb(0.3, 2.5, 0.6) };
                 let mut pts: Vec<Vec3> = fp.iter().map(|&p| lift(p)).collect();
-                pts.push(pts[0]);
+                if let Some(&first) = pts.first() { pts.push(first); }
                 gizmos.linestrip(pts, col);
                 let [ra, rb] = f.rail_line();
                 gizmos.line(lift(ra), lift(rb), if rail_fused { white } else { Color::linear_rgb(1.6, 1.2, 0.3) });
@@ -2355,7 +2362,7 @@ pub(crate) fn lot_outline(gizmos: &mut Gizmos, w: &nd_sim::World, b: BuildingId,
     let Some(lot) = w.footprint(b) else { return };
     let mut pts: Vec<Vec3> = lot.polygon.iter().map(|&p| Vec3::new(p.x, y, p.y)).collect();
     if pts.len() >= 3 {
-        pts.push(pts[0]);
+        if let Some(&first) = pts.first() { pts.push(first); }
         gizmos.linestrip(pts, col);
     }
 }
@@ -2436,7 +2443,7 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
         match w.plan_port(kind, c) {
             Ok(port) => {
                 let mut pts: Vec<Vec3> = port.footprint().iter().map(|&p| lift(p)).collect();
-                pts.push(pts[0]);
+                if let Some(&first) = pts.first() { pts.push(first); }
                 gizmos.linestrip(pts, green);
                 let [a, b] = port.pier;
                 gizmos.line(lift(a), lift(b), Color::linear_rgb(3.0, 3.0, 3.0));
@@ -2482,7 +2489,7 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
         let fp = f.footprint();
         let blocked = w.buildings.values().any(|b| b.is_special() && w.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp)));
         let mut pts: Vec<Vec3> = fp.iter().map(|&p| lift(p)).collect();
-        pts.push(pts[0]);
+        if let Some(&first) = pts.first() { pts.push(first); }
         gizmos.linestrip(pts, if blocked { red } else { green });
         return;
     }

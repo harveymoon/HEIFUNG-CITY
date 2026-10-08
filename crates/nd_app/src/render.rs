@@ -1239,7 +1239,7 @@ fn sync_preview(
             continue;
         }
         let mut outline = p.polygon.clone();
-        outline.push(p.polygon[0]);
+        if let Some(&first) = p.polygon.first() { outline.push(first); }
         match want {
             Some(lu) => {
                 let c = if beach_want { BEACH_TINT } else { pal.zone_color(lu) };
@@ -1255,17 +1255,19 @@ fn sync_preview(
             let dim = 0.35;
             // Their planned roads are holograms (`holo::sync_plan_holograms`).
             for (_, pts, _, _, _) in &other.preview.removed_roads {
-                dashes(&mut glow, pts[0], *pts.last().unwrap(), 0.5, 0.21, 4.0, 3.0, scale(pal.preview_remove, dim));
+                if let (Some(&a), Some(&b)) = (pts.first(), pts.last()) {
+                    dashes(&mut glow, a, b, 0.5, 0.21, 4.0, 3.0, scale(pal.preview_remove, dim));
+                }
             }
             for (_, poly, lu) in &other.preview.planned_zones {
                 let mut outline = poly.clone();
-                outline.push(poly[0]);
+                if let Some(&first) = poly.first() { outline.push(first); }
                 glow.ground_strip(&outline, 0.6, 0.2, scale(pal.zone_color(*lu), 1.3 * dim));
             }
             for &(i, want) in &other.zoning {
                 let Some(p) = w.parcels.parcels.get(i) else { continue };
                 let mut outline = p.polygon.clone();
-                outline.push(p.polygon[0]);
+                if let Some(&first) = p.polygon.first() { outline.push(first); }
                 let c = want.map_or(unzoned, |lu| pal.zone_color(lu));
                 glow.ground_strip(&outline, 0.35, 0.2, scale(c, dim));
             }
@@ -1276,18 +1278,20 @@ fn sync_preview(
     for (_, pts, fwd, bwd, kind) in &pv.removed_roads {
         let w = preview_width(*kind, *fwd, *bwd);
         glow.ground_strip(pts, w, 0.22, scale(pal.preview_remove, 0.35));
-        dashes(&mut glow, pts[0], *pts.last().unwrap(), 0.6, 0.23, 4.0, 3.0, rgba(pal.preview_remove));
+        if let (Some(&a), Some(&b)) = (pts.first(), pts.last()) {
+            dashes(&mut glow, a, b, 0.6, 0.23, 4.0, 3.0, rgba(pal.preview_remove));
+        }
     }
     for (_, poly, lu) in &pv.planned_zones {
         let c = pal.zone_color(*lu);
         let mut outline = poly.clone();
-        outline.push(poly[0]);
+        if let Some(&first) = poly.first() { outline.push(first); }
         glow.ground_strip(&outline, 0.8, 0.22, scale(c, 1.3));
         glow.ground_polygon(poly, 0.045, scale(c, 0.12));
     }
     for (_, poly) in &pv.removed_zones {
         let mut outline = poly.clone();
-        outline.push(poly[0]);
+        if let Some(&first) = poly.first() { outline.push(first); }
         glow.ground_strip(&outline, 0.8, 0.22, rgba(pal.preview_remove));
     }
     for (_, fx) in &pv.planned_rings {
@@ -1378,7 +1382,7 @@ fn sync_ring_preview(
         for lot in w.roundabout_takes(ring) {
             let Some(l) = w.lots.get(lot) else { continue };
             let mut outline = l.polygon.clone();
-            outline.push(l.polygon[0]);
+            if let Some(&first) = l.polygon.first() { outline.push(first); }
             glow.ground_polygon(&l.polygon, 0.2, scale(pal.preview_remove, 0.3));
             glow.ground_strip(&outline, 0.7, 0.24, scale(pal.preview_remove, 1.3));
         }
@@ -1451,7 +1455,7 @@ fn sync_lots(
             }
             let c = pal.zone_color(lu);
             let mut outline = polygon.to_vec();
-            outline.push(polygon[0]);
+            if let Some(&first) = polygon.first() { outline.push(first); }
             glow.ground_strip(&outline, 0.5, 0.04, scale(c, 1.0));
         }
     }
@@ -1464,7 +1468,7 @@ fn sync_lots(
         let step = if w.landscape.is_flat() { f32::INFINITY } else { 4.0 };
         for p in w.parcels.parcels.iter().filter(|p| p.lot.is_none() && p.polygon.len() >= 3) {
             let mut closed = p.polygon.clone();
-            closed.push(p.polygon[0]);
+            if let Some(&first) = p.polygon.first() { closed.push(first); }
             let outline = densify(&closed, step);
             let k = if p.landlocked() { 0.18 } else { 0.32 };
             glow.ground_strip(&outline, 0.16, 0.03, scale(grey, k));
@@ -1493,7 +1497,7 @@ fn sync_lots(
             let shared: &[usize] = lot.park.as_ref().map_or(&[], |p| p.shared_edges.as_slice());
             if shared.is_empty() {
                 let mut edge = lot.polygon.clone();
-                edge.push(lot.polygon[0]);
+                if let Some(&first) = lot.polygon.first() { edge.push(first); }
                 glow.ground_strip(&edge, 0.35, 0.4, scale(c, 1.3));
             } else {
                 let n = lot.polygon.len();
@@ -2212,6 +2216,12 @@ struct VehicleRender {
 }
 
 impl VehicleRender {
+    /// [fix/review-app] The paint for a car class, without indexing past
+    /// the list (a new `VehicleClass` would have panicked here).
+    pub(super) fn finish_of(&self, class: nd_sim::vehicle::VehicleClass) -> Handle<StandardMaterial> {
+        self.finish.get(class as usize).or(self.finish.first()).cloned().unwrap_or_default()
+    }
+
     fn ensure_materials(&mut self, materials: &mut Assets<StandardMaterial>) {
         if self.fx.is_some() {
             return;
@@ -2355,7 +2365,7 @@ fn sync_cars(
             }
             let model = car_model(car);
             let v = vr.variant(&mut meshes, &model);
-            let finish = vr.finish[model.class as usize].clone();
+            let finish = vr.finish_of(model.class);
             // [carlife] Spawned where the car is. Entities spawned through
             // `Commands` are not in this frame's query below, so a car
             // spawned at the identity transform was drawn for one frame at
@@ -2575,7 +2585,7 @@ fn sync_parked_cars(mut commands: Commands, sim: Res<Sim>, mut pr: ResMut<Parked
             }
         }
         let v = vr.variant(&mut meshes, &car.model);
-        let finish = vr.finish[car.model.class as usize].clone();
+        let finish = vr.finish_of(car.model.class);
         let pose = Transform::from_translation(Vec3::new(spot.pos.x, 0.05, spot.pos.y)).with_rotation(Quat::from_rotation_y(-spot.heading));
         let e = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, ParkedTag, Grounded)).id();
         // [boot] An orange clamp on the front wheel on the street side.

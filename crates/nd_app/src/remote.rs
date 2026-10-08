@@ -926,7 +926,9 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let limit = opt_u64(cmd, "limit")?.unwrap_or(500) as usize;
             let log = &ctx.log;
             let events: Vec<Value> = log.ring.iter().filter(|e| e["seq"].as_u64().unwrap_or(0) > since).take(limit).cloned().collect();
-            let dropped = log.ring.front().and_then(|e| e["seq"].as_u64()).is_some_and(|first| since + 1 < first && since > 0);
+            // [fix/review-app] From 0 too: events 1.. are gone once the ring
+            // has turned over.
+            let dropped = log.ring.front().and_then(|e| e["seq"].as_u64()).is_some_and(|first| since + 1 < first);
             Ok(json!({ "seq": log.seq, "events": events, "dropped": dropped, "message": ctx.flags.message, "tool_status": ctx.tools.status }))
         }
         "thoughts" => {
@@ -2950,9 +2952,24 @@ fn graphics_json(ctx: &Ctx) -> Value {
     })
 }
 
+/// [fix/review-app] A default file name stamp: unix milliseconds, and a
+/// counter after the first in the same millisecond (two shots in one
+/// second used to overwrite each other).
+fn unique_stamp() -> String {
+    static LAST: Mutex<(u128, u32)> = Mutex::new((0, 0));
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+    let Ok(mut last) = LAST.lock() else { return ms.to_string() };
+    if last.0 == ms {
+        last.1 += 1;
+        format!("{ms}-{}", last.1)
+    } else {
+        *last = (ms, 0);
+        ms.to_string()
+    }
+}
+
 fn screenshot(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
-    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let default = format!("screenshots/shot-{secs}.png");
+    let default = format!("screenshots/shot-{}.png", unique_stamp());
     // PNG only: Bevy's `jpeg` image feature is not enabled in this build,
     // and the failure would surface only as a log line, not as a reply.
     let path = allowed_path(opt_str(cmd, "path")?.unwrap_or(&default), "png", true)?;
@@ -2983,12 +3000,11 @@ fn opt_strings(cmd: &Value, name: &str) -> Result<Option<Vec<String>>, String> {
 /// `export {path?}`: everything the review commands know, in one JSON file
 /// for offline analysis: the full report, the summary map, history, and
 /// every building, business, citizen, route, plant and rail facility as
-/// `list` rows. Default `exports/city-<unix>.json` under the working
+/// `list` rows. Default `exports/city-<unix ms>.json` under the working
 /// directory (the repo root under `cargo run`; `/exports` is git-ignored).
 fn export(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let start = std::time::Instant::now();
-    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let default = format!("exports/city-{secs}.json");
+    let default = format!("exports/city-{}.json", unique_stamp());
     let path = allowed_path(opt_str(cmd, "path")?.unwrap_or(&default), "json", true)?;
     let w = &ctx.sim.world;
     let mut tables = serde_json::Map::new();
@@ -3131,7 +3147,7 @@ fn help() -> Value {
             "overlay": { "active": "the map layer to show, or none (layers are exclusive: showing one hides the others)", "layer": "zoning|land_value|districts|traffic|traffic_types|paths|people|pollution, a land survey layer (farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech), or projects (the dim other-projects switch, not a layer)", "on": "bool, omitted toggles; on hides every other layer", "land": "a land survey layer key, or none", "<layer name>": "bool (older form): true shows it alone, false hides it if it shows" },
             "lighting": { "follow_clock": "bool", "hour": "0..24 (also unpins from the clock)" },
             "heat_vision": { "on": "bool, omitted toggles: the drone thermal camera view (also key H)" },
-            "screenshot": { "path": "optional .png (see files); default screenshots/shot-<unix>.png; written a frame or two later" },
+            "screenshot": { "path": "optional .png (see files); default screenshots/shot-<unix ms>.png; written a frame or two later" },
             "events": { "since": "seq", "limit": "default 500" },
             "thoughts": { "limit": "default 50" }
         }
@@ -3189,7 +3205,7 @@ fn help() -> Value {
         "roads": { "funding": "optional 0..1.5: road maintenance funding level (1 = what the network needs to stand still)", "age_days": "dev, optional: wear every street that many days at yesterday's traffic (the crews work each night unless crews: false; nothing is charged)", "near": "[x,y] optional: list the pieces nearest it", "limit": "pieces listed (default 10, worst first)", "returns": "pieces, lane_km, mean_wear, worn, crumbling, waiting_for_repair, mean_wear_by_land_value {cheap, middle, dear}, budget {funding, need_per_day, allowance_per_day, spent_yesterday, repaired_yesterday, repaired_land_value_yesterday, ledger_today/yesterday, repaired_total}, days, pieces_listed (wear, condition, label, speed_factor, crash_factor, land_value, repair_cost, queue_place, street)" },
         "taxes": { "set": "{line: rate, ...} where line is a key (residential_low|residential_mid|residential_high|grocery|bakery|gadget_shop|parking|nightlife_low|nightlife_mid|nightlife_high|farming|oil|refinery|manufacturing|logistics|fishing|tech) or a land use for its whole group; rate 0.2 or 20 (= 20%)", "category": "one line (with rate)", "import_duty": "share of import prices (0..1)", "reset": "bool: back to the standard rates", "returns": "every line: rate, default, pull, buildings, homes/jobs, today, yesterday, recent_per_day; by_land_use; duty" },
         "tolls": { "action": "list (default) | price | remove | inspect", "id": "booth id (or at: [x,y])", "price": "toll per car (lorries pay double)", "returns": "booths with cars and revenue today/yesterday/total, paid/free today, upkeep" },
-        "export": { "path": "optional .json (see files); default exports/city-<unix>.json: report + map + history + every row of every list" },
+        "export": { "path": "optional .json (see files); default exports/city-<unix ms>.json: report + map + history + every row of every list" },
         "build_highlight": { "category": "a Build section (power|services|transit|rail|water|attractions), a sub-section (safety, health and education, sanitation, parking, metro, buses...) or a kind (health, police, fire, school, metro_station, coal...): opens the Build window there (a kind also picks it, as a click on its tile) and highlights those buildings on the map with their service areas", "off": "bool: close the Build window (the highlight goes with it)", "note": "no fields: what is highlighted now and the summary (worked out the frame after a change)" },
         "window": { "name": "a tool window: lines|view (or land)|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), new_game, title (the title screen), history (the Game history window); the old report names city|economy|taxes|market|people|power|transit|emergencies|districts|tourism open their City Data tab or page", "open": "bool, omitted toggles", "sub": "with a City Data name: the sub-tab (people's old tab overview|concerns|social works too)" },
         "skyline": { "action": "summary (default) | limit | sites | start | finish | fund", "limit": "limit: the city's height limit in metres, null or 0 for none (also cmd height_limit {limit})", "vertiport_clearance": "limit: bool, keep the approach round the player's vertiports clear (towers there held to 120 m)", "height": "start: metres (else the developer decides: over the record when demand and money allow)", "design": "start: deco_spire|bundled|twist|needle", "at": "start: [x,y] build as near here as a site allows", "force": "start (dev, default true): skip the money, demand, population and downtown tests (height limits and site rules still hold); sites: list every site that passes the limits", "rich": "start: give the developers $2B first", "amount": "fund (dev): dollars to every tower developer (default 1e9)", "limit_rows": "rows of the ranking and sites (default 15)", "returns": "summary: limit_m, vertiport_clearance, classes_m, record_m, tallest_planned_m, population_cap_m, demand, classes (standing/rising), towers (id, name, height_m, league, design, developer, lots, pos, under_construction, progress, rank, homes, jobs), ranking (the tallest standing), records, news, developers (name, capital), totals; inspect {building} has a tower block (height_m, rank, rank_label, height_limit_m; for a league tower league, design, developer, lots, pending_lots, site_m2, floors, started_day, topped_out_day, record_bid, progress, days_left)" },

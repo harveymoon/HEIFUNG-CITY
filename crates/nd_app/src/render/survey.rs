@@ -158,7 +158,17 @@ pub(super) fn sync_land_layer(
     let current = st.survey.as_ref().is_some_and(|(p, h, _)| *p == params && *h == half);
     if !current {
         let done = match &st.pending {
-            Some((p, h, rx)) if *p == params && *h == half => rx.try_recv().ok(),
+            Some((p, h, rx)) if *p == params && *h == half => match rx.try_recv() {
+                Ok(s) => Some(s),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                // [fix/review-app] The worker died (it panicked): try again
+                // on the next frame rather than wait for ever.
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    warn!("the land survey worker stopped; starting it again");
+                    st.pending = None;
+                    return;
+                }
+            },
             _ => {
                 let (tx, rx) = channel();
                 let land = w.landscape.clone();
