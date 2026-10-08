@@ -35,6 +35,7 @@ pub mod industry;
 pub mod junctions;
 pub mod land_value;
 pub mod landscape;
+pub mod level_crossing;
 /// [looks] What citizens look like.
 pub mod looks;
 pub mod market;

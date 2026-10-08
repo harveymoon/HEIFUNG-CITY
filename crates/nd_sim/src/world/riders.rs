@@ -303,6 +303,7 @@ impl World {
         let mut heading = self.citizens[id].heading;
         let mut budget = speed;
         let mut stopped: Option<u32> = None;
+        let mut rail_wait: Option<usize> = None;
         let mut guard = 0;
         // Crossings matter only once the walk graph and lanes are matched.
         let rules = !self.peds.cross_grid.is_empty() && self.peds.crossings.len() == self.walk.crossings.len();
@@ -323,6 +324,12 @@ impl World {
                         }
                     }
                 }
+                // [rail-crossing] A level crossing with its lights on.
+                if let Some((k, stop)) = self.rail_stop(pos, pos + dir * d.min(budget)) {
+                    pos = stop;
+                    rail_wait = Some(k);
+                    break;
+                }
                 if d <= budget {
                     pos = target;
                     *idx += 1;
@@ -342,6 +349,10 @@ impl World {
             let c = &mut self.citizens[id];
             c.pos = pos;
             c.heading = heading;
+        }
+        if let Some(k) = rail_wait {
+            self.note_rail_wait(k);
+            feet.riders_waiting += 1;
         }
         if stopped.is_some() {
             feet.riders_waiting += 1;

@@ -107,6 +107,9 @@ const PASS_MAX_SPEED: f32 = 8.0;
 const CAR_WIDTH: f32 = 1.8;
 const PASS_LATERAL_SPEED: f32 = 1.4;
 const CROSSING_SETBACK: f32 = 3.0;
+/// [rail-crossing] Hardest a driver brakes to stop for a level crossing's
+/// lights; closer than that they go on over.
+const RAIL_STOP_BRAKE: f32 = 4.5;
 /// Left turn waits remembered for the report.
 const LEFT_WAIT_WINDOW: usize = 500;
 /// Shortest green before an actuated signal may cut to a waiting approach.
@@ -237,6 +240,9 @@ pub struct Lane {
     pub red_for: f32,
     /// [driving] Connectors closed by a street takeover: nobody enters.
     pub blocked: bool,
+    /// [rail-crossing] Connectors over a level crossing that is warning or
+    /// closed (set by the world every tick): drivers stop at the stop line.
+    pub rail_closed: bool,
     /// [tolls] A toll booth across this lane, set by the world after every
     /// rebuild (`World::apply_tolls`).
     pub toll: Option<LaneToll>,
@@ -274,7 +280,7 @@ impl Lane {
             cum.push(cum.last().unwrap() + w[0].distance(w[1]));
         }
         let length = *cum.last().unwrap();
-        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, limit_end: speed_limit, highway: false, ramp: false, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX, red_for: 0.0, blocked: false, toll: None, rough: 0.0 }
+        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, limit_end: speed_limit, highway: false, ramp: false, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX, red_for: 0.0, blocked: false, rail_closed: false, toll: None, rough: 0.0 }
     }
 
     pub fn is_connector(&self) -> bool {
@@ -455,6 +461,9 @@ pub struct LaneNetwork {
     /// [toll-inspect] Every booth and where it stands (set with the lanes'
     /// tolls), for telling who drove round one.
     pub toll_points: Vec<(u32, Vec2)>,
+    /// [rail-crossing] Some connector is closed for a level crossing (skips
+    /// the crossing checks when none is).
+    pub rail_closed_any: bool,
 }
 
 /// Arrow bit for a connector's turn.
@@ -680,6 +689,8 @@ pub enum Wait {
     Crashed,
     /// [driving] The junction ahead is blocked (a street takeover).
     Blocked,
+    /// [rail-crossing] At a level crossing's stop line: a train is coming.
+    RailCrossing,
 }
 
 // ── [driving] drivers, crashes, takeovers ───────────────────────────────────
@@ -1389,6 +1400,14 @@ impl LaneNetwork {
                 }
             })
             .collect();
+        // [rail-crossing] At a level crossing the lanes end at the stop
+        // line, clear of the track: the connector spans the crossing.
+        for (ni, r) in self.node_radius.iter_mut().enumerate() {
+            if let Some(stop) = crate::level_crossing::stop_radius(roads, NodeId(ni as u32)) {
+                *r = r.max(stop);
+            }
+        }
+        self.rail_closed_any = false;
 
         for (sid, seg) in roads.alive_segments() {
             if !seg.is_street() {
@@ -2583,6 +2602,41 @@ impl Traffic {
         (LOOKAHEAD * 2.0, ROAD_SPEED, Wait::Free, run)
     }
 
+    /// [rail-crossing] The gap to the stop line of a level crossing ahead
+    /// on the route whose lights are on, or `None`: none ahead, the car is
+    /// on the crossing already (it drives off), or it is too close to stop
+    /// at [`RAIL_STOP_BRAKE`] (it goes on over and clears it, as drivers do
+    /// when the lights come on just in front of them).
+    fn rail_gap(&self, car: &Car, lane: &Lane) -> Option<f32> {
+        if lane.is_connector() {
+            return None;
+        }
+        let mut dist = lane.length - car.s;
+        let mut prev = car.route[car.idx];
+        for &next in car.route.iter().skip(car.idx + 1).take(6) {
+            if self.net.lanes[prev as usize].is_beside(next) {
+                prev = next;
+                continue;
+            }
+            let nl = &self.net.lanes[next as usize];
+            if nl.is_connector() && nl.rail_closed {
+                let stop = dist - 1.0;
+                // Already braking for it: carries on braking (the decision
+                // is not taken again at every step).
+                if car.wait != Wait::RailCrossing && car.v * car.v > 2.0 * RAIL_STOP_BRAKE * stop.max(0.0) {
+                    return None;
+                }
+                return Some(stop + IDM_MIN_GAP);
+            }
+            dist += nl.length;
+            if dist > LOOKAHEAD {
+                break;
+            }
+            prev = next;
+        }
+        None
+    }
+
     /// A left turn on a shared green yields to oncoming traffic going
     /// straight or right: vehicles in the junction from the opposite
     /// approach, or about to enter it at speed. Opposing left turns pass
@@ -3309,6 +3363,12 @@ impl Traffic {
                     // (sirens included: they slow for people in the road).
                     if let Some(g) = self.crosswalk_gap(car).filter(|&g| g < gap) {
                         (gap, lead_v, why) = (g, 0.0, Wait::Yield);
+                    }
+                    // [rail-crossing] A level crossing ahead with its lights on.
+                    if self.net.rail_closed_any {
+                        if let Some(g) = self.rail_gap(car, lane).filter(|&g| g < gap) {
+                            (gap, lead_v, why) = (g, 0.0, Wait::RailCrossing);
+                        }
                     }
                     // [scene] Something at the roadside: slow, ease round
                     // it, or stop short where there is no room.

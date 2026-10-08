@@ -421,6 +421,7 @@ impl World {
         let mut budget = speed;
         let mut hurried = false;
         let mut wait_at: Option<(u32, Vec2, Vec2)> = None;
+        let mut rail_wait: Option<usize> = None;
         let mut leg_start = if *idx > 0 { path[*idx - 1] } else { w.base };
         let mut guard = 0;
         while budget > 1e-4 && *idx < path.len() && guard < 256 {
@@ -478,6 +479,14 @@ impl World {
             if d > 1e-4 {
                 dir = (target - w.base) / d;
             }
+            // [rail-crossing] A level crossing with its lights on: wait at
+            // the edge of the track (whoever is on it walks off).
+            if let Some((k, stop)) = self.rail_stop(w.base, w.base + dir * d.min(budget)) {
+                w.base = stop;
+                budget = 0.0;
+                rail_wait = Some(k);
+                break;
+            }
             if d <= budget {
                 w.base = target;
                 leg_start = target;
@@ -494,6 +503,9 @@ impl World {
         }
         let arrived = *idx >= path.len();
         let moved = speed - budget;
+        if let Some(k) = rail_wait {
+            self.note_rail_wait(k);
+        }
         // The leg now being walked, for its width.
         let (leg_idx, leg) = (*idx, (*idx < path.len()).then(|| (leg_start_of(path, *idx, w.base), path[*idx])));
         self.citizens[id].activity = act;
