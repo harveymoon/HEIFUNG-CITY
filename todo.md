@@ -302,7 +302,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 ## Questions for Harvey (unanswered)
 - [ ] Should parking lots the player places stop a road (like stations/plants) instead of being bought out?
-- [ ] Cranes stand still 17:00–08:00 by design: add a night shift on big sites, or let parked jibs drift in the wind?
+- [x] Cranes stand still 17:00–08:00 by design → ANSWERED 2026-10-08: keep as is.
 - [ ] Delete old todo2.md–todo5.md (their items were carried into todo.md)?
 
 ## Agents running (update when starting/merging; survives context compaction)
