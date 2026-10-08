@@ -94,9 +94,10 @@ pub(super) fn puff_image() -> Image {
 }
 
 /// Prevailing wind direction (unit, sim plane): veers slowly over the days.
+/// The sim's (`nd_sim::weather::wind_dir`), which ground contamination
+/// drifts along too.
 pub(super) fn wind_dir(tick: u64) -> SVec2 {
-    let a = 0.55 + 0.9 * ((tick as f32 / 1440.0) * 0.7).sin();
-    SVec2::new(a.cos(), a.sin())
+    nd_sim::weather::wind_dir(tick)
 }
 
 fn hash01(a: u64, b: u64) -> f32 {

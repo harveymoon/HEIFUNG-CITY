@@ -191,6 +191,10 @@ pub struct ToolState {
     /// [free-placement] Bulldoze tool: the city building under the pointer
     /// (a click bulldozes it).
     pub hover_city_building: Option<nd_sim::BuildingId>,
+    /// [dirty-industry] Bulldoze tool: clean up contaminated ground
+    /// instead of removing things, over a circle of `cleanup_radius` metres.
+    pub cleanup: bool,
+    pub cleanup_radius: f32,
     /// [free-placement] Buildings tool: what a click here would do (true:
     /// it can go down) and the site's outline.
     pub build_here: Option<(bool, String, Vec<SVec2>)>,
@@ -469,6 +473,8 @@ impl Default for ToolState {
             hover_point: None,
             hover_gesture: None,
             hover_city_building: None,
+            cleanup: false,
+            cleanup_radius: 80.0,
             build_here: None,
             build_site: None,
             build_verdict: None,
@@ -1099,6 +1105,20 @@ pub(crate) fn tool_input(
         }
         // [districts] input in `district_tool::district_input`
         Tool::District => {}
+        // [dirty-industry] Clean-up: the hover label shows area, cost and
+        // days (`render::plot_hover`); a click sends the crew.
+        Tool::Bulldoze if tools.cleanup => {
+            tools.hover_gesture = None;
+            tools.hover_city_building = None;
+            if click {
+                if let Some(p) = ground {
+                    tools.status = match sim.world.start_cleanup(p, tools.cleanup_radius) {
+                        Ok(q) => format!("Clean-up crew sent: {:.0} m round, {} stained cells, paid {:.0}; digging for {} days.", q.radius, q.cells, q.cost, q.days),
+                        Err(e) => format!("Cannot clean up: {e}."),
+                    };
+                }
+            }
+        }
         Tool::Bulldoze => {
             tools.hover_gesture = ground.and_then(|p| nearest_gesture(plan, p)).map(|(id, _)| id);
             // [free-placement] A city building under the pointer is what a

@@ -292,8 +292,9 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 ## Follow-ups noted in agent reports (not started)
 - [ ] Batteries charge on cheap night power and discharge at the evening peak (grid-weather)
 - [ ] Freight trains really carry their cargo instead of yards handing it to any train (train-inspect)
-- [ ] In-game Clean up button for contaminated land (API only now); contamination along rivers/downwind (dirty-industry)
-- [ ] Murals painted on the building facade, not a free-standing wall; LLM dialogue for spotlit citizens (social)
+- [x] In-game Clean up button for contaminated land (API only now); contamination along rivers/downwind (dirty-industry) → DONE [feat/mural-cleanup]: Bulldoze → Clean up ground (radius, red/green hover with cells, cost, days), crews dig over 2-6 days with a visible site; daily drift downwind (smoke wind) and downstream
+- [x] Murals painted on the building facade, not a free-standing wall → DONE [feat/mural-cleanup]: painted on the drawn street wall clear of windows, procedural per crew (motif, palette, tag), floodlit night copy; wall only on vacant lots/glass fronts
+- [ ] LLM dialogue for spotlit citizens (social)
 - [ ] Bridge deck ends need abutments; ramp gore on a highway bridge has no deck; low signal arms on steep approaches; cars stop short of the stop line at sharp forks (road-polish)
 - [ ] Hydro/tidal still fixed size; huge 2-tower coal plant only seen in a unit test (plant-scale)
 - [ ] Town streets 2+2 into 1+1 step at the kerbs instead of tapering (lane-join)
