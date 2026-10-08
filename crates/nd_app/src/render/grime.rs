@@ -21,7 +21,7 @@ use nd_procgen::overlay::{ground_stain_color, HeatGrid};
 use nd_sim::{BuildingId, Vec2 as SVec2};
 use std::collections::HashMap;
 
-use super::haze::{puff_image, wind_dir};
+use super::haze::{near_fade, puff_image, wind_dir};
 use super::{smoothstep, to_mesh, Lighting};
 use crate::sim::Sim;
 
@@ -101,7 +101,7 @@ pub(super) fn sync_grime(
     lighting: Res<Lighting>,
     time: Res<Time>,
     mut state: Local<GrimeState>,
-    cams: Query<&GlobalTransform, With<Camera3d>>,
+    cams: Query<&GlobalTransform, With<crate::camera::OrbitCamera>>,
     mut puffs: Query<(&DirtyPuff, &mut Transform, &mut MeshMaterial3d<StandardMaterial>, &mut Visibility)>,
     stains: Query<Entity, With<StainTag>>,
 ) {
@@ -234,6 +234,7 @@ pub(super) fn sync_grime(
     }
     let Some(cam) = cams.iter().next() else { return };
     let face = cam.compute_transform().rotation;
+    let eye = cam.translation();
     let dir = wind_dir(w.clock.tick);
     let wind = w.weather.wind.clamp(0.05, 1.0);
     let along = Vec3::new(dir.x, 0.0, dir.y);
@@ -275,7 +276,7 @@ pub(super) fn sync_grime(
                 (pos, size, alpha, true)
             }
         };
-        let a = alpha * src.intensity;
+        let a = alpha * src.intensity * near_fade(eye.distance(pos), size);
         if a < 0.5 / ALPHA_STEPS as f32 {
             *vis = Visibility::Hidden;
             continue;

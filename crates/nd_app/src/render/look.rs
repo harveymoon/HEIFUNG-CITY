@@ -326,6 +326,10 @@ impl Fx {
 
 pub(super) struct LookPlugin;
 
+/// Bevy's volumetric fog shader with the ambient light scattered in by the
+/// fog itself (see the file's header).
+const VOLUMETRIC_FOG_WGSL: &str = include_str!("volumetric_fog_city.wgsl");
+
 impl Plugin for LookPlugin {
     fn build(&self, app: &mut App) {
         // The SSAO shader with a city-scale radius in place of Bevy's own
@@ -333,6 +337,11 @@ impl Plugin for LookPlugin {
         // loads this one). The default plugins are added before ours.
         if let Some(reg) = app.world().get_resource::<bevy::asset::io::embedded::EmbeddedAssetRegistry>() {
             reg.insert_asset(std::path::PathBuf::new(), std::path::Path::new("bevy_pbr/ssao/ssao.wgsl"), include_str!("ssao_city.wgsl").as_bytes());
+            // [haze] The volumetric fog shader with its ambient term fixed
+            // (Bevy's painted the full, unexposed ambient over anything a
+            // few metres from the camera: the white wash of a low view at
+            // High). See the header of `volumetric_fog_city.wgsl`.
+            reg.insert_asset(std::path::PathBuf::new(), std::path::Path::new("bevy_pbr/volumetric_fog/volumetric_fog.wgsl"), VOLUMETRIC_FOG_WGSL.as_bytes());
         }
         app.init_resource::<Throttle>()
             .init_resource::<SkyCube>()
@@ -740,6 +749,16 @@ fn sync_fog_volume(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [haze] The ambient goes in scaled by the fog's coverage and the
+    /// exposure, not as Bevy's `exp(-length) * ambient` that whitened the
+    /// near view.
+    #[test]
+    fn fog_shader_ambient_follows_coverage() {
+        assert!(!VOLUMETRIC_FOG_WGSL.contains("exp(-ray_length_view * (absorption + scattering)) * ambient_color"));
+        assert!(VOLUMETRIC_FOG_WGSL.contains("ambient_color * ambient_intensity * exposure * albedo * (1.0 - background_alpha)"));
+        assert!(VOLUMETRIC_FOG_WGSL.contains("@fragment"));
+    }
 
     fn run(t: &mut Throttle, setting: QualitySetting, ms: f32, secs: f32) -> Quality {
         let mut q = t.tier;

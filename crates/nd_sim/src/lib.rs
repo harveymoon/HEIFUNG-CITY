@@ -11,6 +11,8 @@ pub mod buildings;
 pub mod cargo_hub;
 pub mod citizens;
 pub mod clock;
+/// [committee] The mayor's AI committee: pool, seats, alerts, proposals.
+pub mod committee;
 /// [concerns] Complaints by category and city happiness over time.
 pub mod concerns;
 pub mod crime;

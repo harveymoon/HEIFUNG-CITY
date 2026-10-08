@@ -31,6 +31,8 @@ mod buses;
 mod cargo_hubs;
 #[cfg(test)]
 mod cargo_hub_tests;
+#[cfg(test)]
+mod island_lots_tests;
 mod cars;
 mod chases;
 mod enforcement;
@@ -59,6 +61,8 @@ mod placement;
 pub use placement::PlacementSite;
 #[cfg(test)]
 mod placement_tests;
+#[cfg(test)]
+mod dock_access_tests;
 pub mod poses;
 /// [clarity] Origins and destinations, crews, crash sites.
 pub mod journeys;
@@ -121,6 +125,8 @@ mod tourism;
 mod trips;
 mod water;
 mod ferry;
+/// [ferry-routes] Ferry routes and shipping lanes as lines on the water.
+pub mod ferry_routes;
 mod rides;
 // [economy] business pressure, the new trades, the waterfront and the art scene
 mod pressure;
@@ -423,6 +429,10 @@ pub struct World {
     stations: Vec<BuildingId>,
     #[serde(skip)]
     yards: Vec<BuildingId>,
+    /// [dock-access] Passenger stations on the railway whose street does not
+    /// reach the city yet: trains call there, nobody gets on or off.
+    #[serde(skip)]
+    halts: Vec<BuildingId>,
     /// Businesses selling each resource, with their lot centres, for the
     /// hour `seller_index_hour` was built in.
     #[serde(skip)]
@@ -605,6 +615,11 @@ pub struct World {
     /// [social] The city's concern of the week, for small talk (hourly).
     #[serde(skip)]
     social_concern: Option<crate::concerns::Concern>,
+    /// [committee] The mayor's committee: the pool, the seats, alerts,
+    /// meetings and their projects (`crate::committee`). The sim never
+    /// reads it; old saves load with none and set one up when first used.
+    #[serde(default)]
+    pub committee: crate::committee::Committee,
 }
 
 impl World {
@@ -653,6 +668,7 @@ impl World {
             road_component: Vec::new(),
             stations: Vec::new(),
             yards: Vec::new(),
+            halts: Vec::new(),
             seller_index: HashMap::new(),
             seller_index_hour: None,
             available: [false; 6],
@@ -702,6 +718,7 @@ impl World {
             road_log: Default::default(),
             social: Default::default(),
             social_concern: None,
+            committee: Default::default(),
         };
         w.estate.pressure = crate::estate::Pressure::new(half + 200.0);
         w.landscape = Landscape::new(&w.config.landscape);

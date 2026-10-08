@@ -81,7 +81,9 @@ fn run(services: bool) -> Day8 {
             }
             // Day 8, services placed: a 911 drill on top of the day's own
             // calls, so the response figures rest on enough calls: a crime
-            // every 90 minutes, someone taken ill every 90, a fire every 6 h.
+            // every 90 minutes, someone taken ill every 90, a fire every 3 h
+            // (every 6 h gave a median of 4 fires, so one slow call moved it
+            // by minutes and unrelated changes flipped the check).
             if services && day == 8 && minute < 22 * 60 {
                 let mut next = |n: usize| {
                     pick = pick.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -95,7 +97,7 @@ fn run(services: bool) -> Day8 {
                 // and anything already alight, and a refused pick left the
                 // day short of drill fires.
                 let flammable: Vec<_> = occupied.iter().copied().filter(|&b| world.buildings.get(b).is_some_and(|b| b.land_use != nd_sim::LandUse::Park && b.rail.is_none())).collect();
-                if minute % 360 == 200 && !flammable.is_empty() {
+                if minute % 180 == 110 && !flammable.is_empty() {
                     world.start_fire(flammable[next(flammable.len())]);
                 }
                 if minute % 90 == 62 {
