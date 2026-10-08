@@ -175,18 +175,28 @@ pub struct Tie {
     pub lent: f32,
 }
 
-type TieRepr = (CitizenId, f32, f32, f32, u64, u64, Met, Option<BuildingId>, u16, bool, f32, f32);
+/// Ids in the saved tuples as their 64-bit form (`KeyData::as_ffi`, stable
+/// across saves): a pretty-printed id struct took more room than the rest.
+fn to_ffi<K: slotmap::Key>(k: K) -> u64 {
+    k.data().as_ffi()
+}
+
+fn from_ffi<K: slotmap::Key>(v: u64) -> K {
+    slotmap::KeyData::from_ffi(v).into()
+}
+
+type TieRepr = (u64, f32, f32, f32, u64, u64, Met, Option<u64>, u16, bool, f32, f32);
 
 impl From<TieRepr> for Tie {
     fn from(t: TieRepr) -> Self {
         let (who, affinity, familiarity, trust, since, last, met, met_at, talks, partner, spark, lent) = t;
-        Tie { who, affinity, familiarity, trust, since, last, met, met_at, talks, partner, spark, lent }
+        Tie { who: from_ffi(who), affinity, familiarity, trust, since, last, met, met_at: met_at.map(from_ffi), talks, partner, spark, lent }
     }
 }
 
 impl From<Tie> for TieRepr {
     fn from(t: Tie) -> Self {
-        (t.who, t.affinity, t.familiarity, t.trust, t.since, t.last, t.met, t.met_at, t.talks, t.partner, t.spark, t.lent)
+        (to_ffi(t.who), t.affinity, t.familiarity, t.trust, t.since, t.last, t.met, t.met_at.map(to_ffi), t.talks, t.partner, t.spark, t.lent)
     }
 }
 
@@ -535,18 +545,18 @@ pub struct TalkNote {
     pub setting: Setting,
 }
 
-type NoteRepr = (u64, CitizenId, Topic, Outcome, Option<BuildingId>, Setting);
+type NoteRepr = (u64, u64, Topic, Outcome, Option<u64>, Setting);
 
 impl From<NoteRepr> for TalkNote {
     fn from(n: NoteRepr) -> Self {
         let (tick, with, topic, outcome, place, setting) = n;
-        TalkNote { tick, with, topic, outcome, place, setting }
+        TalkNote { tick, with: from_ffi(with), topic, outcome, place: place.map(from_ffi), setting }
     }
 }
 
 impl From<TalkNote> for NoteRepr {
     fn from(n: TalkNote) -> Self {
-        (n.tick, n.with, n.topic, n.outcome, n.place, n.setting)
+        (n.tick, to_ffi(n.with), n.topic, n.outcome, n.place.map(to_ffi), n.setting)
     }
 }
 
@@ -1077,6 +1087,22 @@ mod tests {
     fn ids(n: usize) -> Vec<CitizenId> {
         let mut m: slotmap::SlotMap<CitizenId, ()> = slotmap::SlotMap::with_key();
         (0..n).map(|_| m.insert(())).collect()
+    }
+
+    #[test]
+    fn ties_and_notes_survive_a_save_compactly() {
+        let people = ids(3);
+        let mut b: slotmap::SlotMap<BuildingId, ()> = slotmap::SlotMap::with_key();
+        let bar = b.insert(());
+        let mut c = Circle::default();
+        let t = c.tie_or_new(people[1], 5, Met::Venue, Some(bar));
+        t.affinity = 0.4;
+        t.partner = true;
+        c.note(TalkNote { tick: 9, with: people[2], topic: Topic::Rent, outcome: Outcome::Laughed, place: Some(bar), setting: Setting::Venue });
+        let text = ron::ser::to_string_pretty(&c, ron::ser::PrettyConfig::default()).unwrap();
+        assert!(!text.contains("idx"), "ids are compact: {text}");
+        let back: Circle = ron::from_str(&text).unwrap();
+        assert_eq!(back, c);
     }
 
     #[test]
