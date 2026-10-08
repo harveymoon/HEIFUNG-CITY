@@ -425,7 +425,9 @@ pub fn pier_restaurant(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, _look: Opt
     let floors = c.floors.clamp(1, 2) as i32;
     let fh = 4.0;
     let h = floors as f32 * fh;
-    let want = R::new(area.u0 + 2.5, area.u1 - 2.5, (area.v1 - 16.0).max(area.v0 + 6.0), area.v1 - 1.0);
+    // A pavilion, not a hangar: at most 24 m along the water.
+    let half = ((area.w() - 5.0) * 0.5).min(12.0);
+    let want = R::new(area.c().x - half, area.c().x + half, (area.v1 - 14.0).max(area.v0 + 6.0), area.v1 - 1.0);
     let accent = neon_color(rng);
     if let Some(r) = fit(c, want, 5.0) {
         // Slab floor, slim columns, glass all round, a thin roof that

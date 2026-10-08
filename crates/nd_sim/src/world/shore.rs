@@ -286,16 +286,30 @@ impl World {
             s.appeal = appeal;
             list.push((*b, lot.center, lot_id, lot.area()));
         }
-        // Residents to their nearest usable beach within reach.
-        let usable: Vec<(BuildingId, Vec2)> = list.iter().filter(|(b, ..)| self.shore.beaches[b].usable()).map(|(b, c, ..)| (*b, *c)).collect();
+        // Residents to a usable beach within reach: each picks one by its
+        // sand and how near it is (a hash of who they are and the day, so
+        // neighbours spread over the beaches along a shore).
+        let usable: Vec<(BuildingId, Vec2, f32)> = list.iter().filter(|(b, ..)| self.shore.beaches[b].usable()).map(|(b, c, _, a)| (*b, *c, *a)).collect();
         let mut catchment: HashMap<BuildingId, u32> = HashMap::new();
         if !usable.is_empty() {
+            let day = self.clock.day();
             for c in self.citizens.values() {
                 let Some(home) = c.home.and_then(|h| self.building_lot(h)).map(|l| l.center) else { continue };
-                let best = usable.iter().map(|(b, p)| (*b, p.distance(home))).filter(|(_, d)| *d <= shore::BEACH_CATCHMENT).min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
-                if let Some((b, _)) = best {
-                    *catchment.entry(b).or_default() += 1;
+                let weights: Vec<(BuildingId, f32)> = usable.iter().map(|(b, p, a)| (*b, p.distance(home), *a)).filter(|(_, d, _)| *d <= shore::BEACH_CATCHMENT).map(|(b, d, a)| (b, a.sqrt() / (1.0 + d / 300.0))).collect();
+                let total: f32 = weights.iter().map(|w| w.1).sum();
+                if total <= 0.0 {
+                    continue;
                 }
+                let mut r = crate::pedestrians::hash01(c.seed, day, 0xBEAC) * total;
+                let mut pick = weights[weights.len() - 1].0;
+                for (b, w) in &weights {
+                    if r < *w {
+                        pick = *b;
+                        break;
+                    }
+                    r -= w;
+                }
+                *catchment.entry(pick).or_default() += 1;
             }
         }
         // The sim's own people there now.
@@ -467,7 +481,7 @@ impl World {
             .collect();
         for (b, kind) in candidates {
             let paid = matches!(kind, JettyKind::Fishing | JettyKind::Cargo);
-            if paid && self.buildings[b].business.as_ref().is_none_or(|z| z.money < shore::JETTY_COST * 2.0) {
+            if paid && self.buildings[b].business.as_ref().is_none_or(|z| z.money < shore::JETTY_COST * 1.2) {
                 continue;
             }
             let Some(lot) = self.lots.get(self.buildings[b].lot) else { continue };

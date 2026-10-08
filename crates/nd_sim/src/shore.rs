@@ -62,7 +62,8 @@ pub const FULL_FRONTAGE: f32 = 30.0;
 pub const BEACH_HAPPY_REACH: f32 = 700.0;
 /// Narrowest river a jetty's boats can use. Lakes and the sea always do.
 pub const NAVIGABLE_RIVER: f32 = 18.0;
-/// What a private jetty costs the business that builds it.
+/// What a private jetty costs the business that builds it (it waits until
+/// it has a fifth more than that).
 pub const JETTY_COST: f32 = 600.0;
 /// Hours a load ordered through a private cargo jetty takes to come in.
 pub const JETTY_LEAD_HOURS: u64 = 5;

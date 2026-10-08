@@ -89,13 +89,6 @@ fn zone_both_sides(w: &mut World, p: Vec2, inland: Vec2, along: Vec2, lu: LandUs
     w.add_zone(vec![a, b, b + inland * (far + 30.0), a + inland * (far + 30.0)], lu);
 }
 
-fn tick(w: &mut World, n: u32) {
-    let mut minds = IdleMind;
-    for _ in 0..n {
-        w.tick(&mut minds);
-    }
-}
-
 fn seaside(p: Vec2, inland: Vec2, along: Vec2, c: Vec2) -> bool {
     (c - p).dot(inland) < SHORE_GAP && (c - p).dot(along).abs() < 120.0
 }
@@ -418,4 +411,15 @@ fn saves_round_trip_and_a_save_from_before_loads_with_its_old_parcels() {
     assert!(!back.shore.reach_water, "an old city keeps the parcels it was cut with");
     assert_eq!(back.lots.len(), w.lots.len(), "every lot is still there");
     assert!(back.shore.beaches.is_empty() && back.shore.jetties.is_empty());
+}
+
+#[test]
+fn a_road_close_to_the_shore_gets_lots_that_run_down_to_it_not_a_front_row_and_backland() {
+    let gap = 58.0;
+    let (w, p, inland, along, _) = coast_town(7, gap, true);
+    let sea_side: Vec<&crate::zoning::Parcel> = w.parcels.parcels.iter().filter(|q| (q.center - p).dot(inland) < gap && (q.center - p).dot(along).abs() < 120.0).collect();
+    assert!(sea_side.len() >= 4, "{}", sea_side.len());
+    let wet = sea_side.iter().filter(|q| q.water_frontage >= LotShore::MIN_FRONTAGE && q.street_frontage).count();
+    assert!(wet * 4 >= sea_side.len() * 3, "nearly every parcel between road and sea fronts both: {wet} of {}", sea_side.len());
+    assert!(sea_side.iter().all(|q| !q.landlocked()), "no backland behind a front row");
 }

@@ -1515,7 +1515,6 @@ pub fn generate_parcels_with(roads: &RoadNetwork, water: &WaterMask, clip: Optio
     // [waterfront] Land past the usual reach that runs down to the water
     // (nothing else in the way) joins the region: between a road and the
     // shore, every metre is somebody's lot.
-    let mut shore_land: Option<MultiPolygon<f64>> = None;
     if !wide.is_empty() {
         let wide: MultiPolygon<f64> = geo::unary_union(&wide);
         let mut extra = wide.difference(&region);
@@ -1527,9 +1526,7 @@ pub fn generate_parcels_with(roads: &RoadNetwork, water: &WaterMask, clip: Optio
         use geo::Intersects;
         let keep: Vec<Polygon<f64>> = extra.0.into_iter().filter(|p| area_f(p) >= MIN_AREA && water.touches(&from_geo(p), 1.2) && region.intersects(p)).collect();
         if !keep.is_empty() {
-            let keep = MultiPolygon(keep);
-            region = region.union(&keep);
-            shore_land = Some(keep);
+            region = region.union(&MultiPolygon(keep));
         }
     }
     // Ground the reach does not quite get to but that roads close round
@@ -1564,7 +1561,7 @@ pub fn generate_parcels_with(roads: &RoadNetwork, water: &WaterMask, clip: Optio
             let mut pieces: Vec<Vec<Vec2>> = Vec::new();
             // [waterfront] A chunk on the water that took in shore land is
             // sliced into lots running from the road to the waterline.
-            match shore_land.as_ref().and_then(|s| shore_lot_size(&chunk, s, water, roads)) {
+            match shore_reach.and_then(|_| shore_lot_size(&chunk, water, roads)) {
                 Some(size) => subdivide_sized(chunk, PARCEL_USE, size, roads, &mut rng, 0, &mut pieces),
                 None => subdivide(chunk, PARCEL_USE, roads, &mut rng, 0, &mut pieces),
             }
@@ -1584,18 +1581,14 @@ pub fn generate_parcels_with(roads: &RoadNetwork, water: &WaterMask, clip: Optio
     out
 }
 
-/// [waterfront] The lot size for a chunk of land on the water that took
-/// in shore land past the usual reach: as deep as the chunk runs back from
-/// its road (so one row reaches the water), and wide in proportion. None
-/// for a chunk off the water, or with no road to measure from.
-fn shore_lot_size(chunk: &Polygon<f64>, shore: &MultiPolygon<f64>, water: &WaterMask, roads: &RoadNetwork) -> Option<(f32, f32)> {
+/// [waterfront] The lot size for a chunk of land on the water: as deep
+/// as the chunk runs back from its road (so one row reaches the water),
+/// and wide in proportion. None for a chunk off the water, one shallow
+/// enough for ordinary rows to reach it, or one with no road to measure
+/// from.
+fn shore_lot_size(chunk: &Polygon<f64>, water: &WaterMask, roads: &RoadNetwork) -> Option<(f32, f32)> {
     let pts = from_geo(chunk);
     if pts.len() < 3 || !water.touches(&pts, 1.2) {
-        return None;
-    }
-    let (clo, chi) = bounds_of(&pts);
-    let near: Vec<Polygon<f64>> = shore.0.iter().filter(|s| boxes_overlap(bounds_of(&from_geo(s)), (clo, chi), 0.5)).cloned().collect();
-    if near.is_empty() || MultiPolygon(vec![chunk.clone()]).intersection(&MultiPolygon(near)).unsigned_area() < 1.0 {
         return None;
     }
     let runs = frontage_runs(&pts, roads, true);
