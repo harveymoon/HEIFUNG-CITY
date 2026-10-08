@@ -232,7 +232,8 @@ pub fn twin_slab(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 if room > 0.3 {
                     for k in 1..fl {
                         face.bx(g, f, Concrete, 0.0, k as f32 * fh, room * 0.5, Vec3::new(face.len * 0.9, 0.18, room), trim);
-                        face.decal(g, f, Matte, 0.0, k as f32 * fh + 0.5, room, face.len * 0.9, 0.85, mul(pal.steel, 0.5));
+                        // The railing 2 cm proud of the slab's edge, not in its face.
+                        face.decal(g, f, Matte, 0.0, k as f32 * fh + 0.5, room + 0.02, face.len * 0.9, 0.85, mul(pal.steel, 0.5));
                     }
                 }
             }

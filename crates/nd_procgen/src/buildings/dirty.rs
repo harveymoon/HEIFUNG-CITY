@@ -145,7 +145,9 @@ pub fn dirty_vents(lot: &nd_sim::Lot, kind: nd_sim::BusinessKind) -> Vec<Vent> {
 pub(super) fn soot_stains(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, yard: &[Vec2], amount: f32, sickly: bool) {
     let f = &c.frame;
     let pal = c.palette;
-    let n = ((4.0 + 6.0 * amount) * (0.8 + 0.4 * c.wear)) as i32;
+    // At most eleven, so the layers stay in 0.045..0.115 (each its own
+    // height), under the feedlot's pens at 0.125.
+    let n = (((4.0 + 6.0 * amount) * (0.8 + 0.4 * c.wear)) as i32).min(11);
     for k in 0..n {
         let Some(p) = random_in_poly(rng, yard, 2.0) else { continue };
         let r = rng.random_range(2.0..6.5) * (0.6 + 0.6 * amount);
@@ -351,7 +353,8 @@ pub fn feedlot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // The feedlot: bare mud in pens, packed.
     let pens_want = R::new(area.u0 + sheds_w + 2.0, area.u1 - 1.5, area.v0 + 5.0, area.v0 + area.d() * 0.62);
     if let Some(p) = fit(c, pens_want, 5.0) {
-        ground(g, f, Dirt, &p.poly(), 0.08, mix(mud, SOOT, 0.25));
+        // Above every soot stain layer (0.045..0.115), not in one of them.
+        ground(g, f, Dirt, &p.poly(), 0.125, mix(mud, SOOT, 0.25));
         for face in p.faces() {
             super::rural::rail_fence(g, c, face.a, face.b, 1.4, rail);
         }

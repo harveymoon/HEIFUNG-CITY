@@ -460,7 +460,9 @@ fn deco_spire(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Ve
             let step = face.len / n as f32;
             for j in 0..n {
                 let tt = -face.len * 0.5 + (j as f32 + 0.5) * step;
-                face.decal(g, f, Glass, tt, (y0 + y1) * 0.5, 0.04, step * 0.55, (y1 - y0) - 1.0, mul(pal.glass_dark, 1.1));
+                // 3 cm out: clear of the dark glass a switchable window
+                // light lays 1.3 cm behind itself (0.037).
+                face.decal(g, f, Glass, tt, (y0 + y1) * 0.5, 0.03, step * 0.55, (y1 - y0) - 1.0, mul(pal.glass_dark, 1.1));
                 face.bx(g, f, Stone, tt - step * 0.5, (y0 + y1) * 0.5, 0.2, Vec3::new(0.7, y1 - y0, 0.4), pier);
             }
         }

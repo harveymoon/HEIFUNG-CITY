@@ -99,7 +99,9 @@ fn toll(g: &mut Geometry, b: &TollDraw, pal: &Palette) {
         // The road's edges in the booth line's frame.
         let (el, er) = (-hw - c, hw - c);
         let apron = [at(-f, el), at(-s, -w), at(s, -w), at(f, el), at(f, er), at(s, w), at(-s, w), at(-f, er)];
-        g.part(Asphalt).ground_polygon(&apron, 0.06, rgba(mul(pal.asphalt, 1.12)));
+        // Over the road's own lane marks (0.085), which it replaces, rather
+        // than under them; its lines a layer above that.
+        g.part(Asphalt).ground_polygon(&apron, 0.092, rgba(mul(pal.asphalt, 1.12)));
         // Kerbs along the flared edges, a strip of kerb lights on them.
         for (side, edge) in [(-1.0f32, el), (1.0, er)] {
             let pts = [at(-f, edge), at(-s, side * w), at(s, side * w), at(f, edge)];
@@ -120,7 +122,7 @@ fn toll(g: &mut Geometry, b: &TollDraw, pal: &Palette) {
             for sgn in [-1.0f32, 1.0] {
                 let a = at(sgn * s, v);
                 let e = at(sgn * f, v_road);
-                line(g, a, e, 0.14, 0.085, marker);
+                line(g, a, e, 0.14, 0.1, marker);
             }
         }
         // Tall lamps at the four corners of the straight part.

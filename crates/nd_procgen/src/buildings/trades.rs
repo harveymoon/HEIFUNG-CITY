@@ -353,7 +353,8 @@ pub fn mechanic(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         if let Some(p) = c.random_inside(rng, 2.5) {
             let stain = ngon(p.x, p.y, rng.random_range(0.6..1.4), 6, rng.random_range(0.0..1.0));
             if poly_inside(c, &stain) {
-                ground(g, f, Asphalt, &stain, 0.05, mul(DARK, 0.6));
+                // Over the bay floors (0.05), not in them.
+                ground(g, f, Asphalt, &stain, 0.056, mul(DARK, 0.6));
             }
         }
     }
