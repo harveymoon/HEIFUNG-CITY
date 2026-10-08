@@ -687,7 +687,8 @@ in this order, and the reply is the state after:
 | `left_turns` | `true` allows the left from every street, `false` forbids it from every street |
 | `no_left` | `[approach index or [x,y], ...]`: those streets forbid the left, the others allow it. A banned left is taken out of what the junction offers there, so its lane arrows lose it and no route turns left there |
 | `approach` + `lanes` | lane permissions of one arriving street (index, or a point on it): `["L+S", "S+R"]` leftmost first, or `"reset"` (as `lane_use`) |
-| `crossing` + `upgrade` | a crosswalk (walk-graph index from `crossings`, or a point near it): `none`, `button` (a push-button signal: traffic gets a red only after someone presses it; not on a crosswalk that already has walk lights) or `footbridge` (a raised walkway with stairs at both ends; refused where it would stand in another's way). Paid for: 1,500 and 18,000 |
+| `crossing` + `upgrade` | a crosswalk (walk-graph index from `crossings`, or a point near it): `none`, `button` (a push-button signal: traffic gets a red only after someone presses it; not on a crosswalk that already has walk lights) or `footbridge` (a raised walkway with stairs at both ends; refused where it would stand in another's way). A footbridge replaces the crosswalk under it: its paint, walk lights and at-grade walk edge go, so everyone crossing there climbs over and nobody holds up traffic. Paid for: 1,500 and 18,000 |
+| `crossing` + `keep_crosswalk` | [footbridge] `true` keeps the crosswalk at grade under its footbridge (walkers then take the bridge when it costs them at most 30 m more); `false` (the default, also for footbridges from older saves) lets the bridge replace it. Free |
 | `open`, `extent`, `select_approach`, `select_crossing` | show the editor modal (and its road view's width in metres, 30..300; which street or crosswalk is picked) |
 | `close` | hide it |
 
@@ -696,7 +697,7 @@ Reply: `intersection` {`at`, `junction` (false for a lone crosswalk), `node`, `r
 `approaches` [{index, segment, street, dir (the way it leaves the junction), from, lanes, offered,
 set_by_player, left_forbidden, left_possible, queued}], `phases` [{index, approaches, green_s,
 running}], `crossings` [{index, mid, ends, upgrade, signalised, kind, button_light, footbridge
-{walkway, stair_feet, width}}], `footbridges` (in the city), `button_presses_total`}, `done` (what
+{walkway, stair_feet, width}, crosswalk_kept, crosswalk_removed}], `footbridges` (in the city), `button_presses_total`}, `done` (what
 was changed) and `editor_open`. Everything is saved with the city (`Traffic::junction_rules`,
 `World::crosswalks`, serde defaults) and found again by position after the roads are rebuilt.
 
@@ -713,7 +714,9 @@ at its level (the deck ramps down) and needs no column; an end left in the air n
 10 m, and is refused with "the road ends in the air over a road at (x, y) ..." when there is none.
 
 A citizen's `inspect` carries `raised_level`: how high they stand on a raised walkway (a
-footbridge's stairs or deck), 0 at grade. Dev: `walk_to {citizen, to: [x, y], from?}` sends a
+footbridge's stairs or deck), 0 at grade, and `way_height`: on an elevated path, a viaduct or a
+bridge, the height of its deck where they are (what they are drawn at, walk view too), null at
+grade. Dev: `walk_to {citizen, to: [x, y], from?}` sends a
 citizen out on foot along the walk graph (footbridges included).
 
 `inspect` with one of `citizen`, `building`, `lot`, `car`, `drone`, `vehicle` (a private car's record: owner, model, place with minutes_here, limit_min, illegal, ticketed_tick, impounded {pound, out_of_town, release_fee, auction_in_min} and tow_job), `train`, `metro` (a metro train; see **Trains** below), `toll` (a booth id; see Taxes and tolls), `road` (a street piece: id or [x, y]; see Street races, raves and the roads), `route` (ids) or `gesture` (int). A building that is a parking office adds `parking_office` {officers, patrol cars}, a tow company `tow_company` {trucks, jobs_open, pound}, a lot the city runs `parking.city_run`; a tow truck's `car` adds `tow` {job, state, reason, vehicle, company, out_of_town}, an officer's car `patrol`; [services] a recovery truck going to a wreck (errand `Recover`) adds `recovery` {wreck, metres_to_go, amber, off_law_allowed (within 250 m), move (its off-law move: Lane, Overtake, Kerb, Wait), company, out_of_town, sent_tick}, a written-off car `wreck` {since_tick, incident, tow_due_tick, truck, truck_sent_tick, pushed_aside_m, flipped (0 upright, 1 side, 2 roof), righted_at_tick}, and a car easing past a crash on the shoulder `passing_hazard` (the crashed car's id). `parking_price {building, price}` sets the fee at a city-run lot. [boot] `tow_car {car | vehicle}` (also `tow`, `boot`) clamps a private car and calls the tow truck, as the inspector's "Tow this car" button does: `car` is a car on the road (it pulls over to a kerb slot, or the street's edge, is taken off the lanes, and its driver and passengers walk on), `vehicle` a car's record (parked at a kerb, or driving). Reply {tow_job, vehicle, company, out_of_town}; an error says why not (not a resident's car, off the street, already towed, leaving town). A clamped car's place has `booted: true`; the owner's mood drops, they remember it, and they pay the release fee at the pound as for any tow. The enforcement report adds `boots_today` and `boots_total`. [passengers] A car row of kind car carries `occupants` ([{id, name}]: everyone riding along besides the driver, `citizen`) and `vehicle` (its record); a passenger's activity has `driver`, `driver_name`, `in_car`, `car`, `to`, `purpose`. `report` traffic.private_cars adds `passengers` {riding_now, walking_to_a_car, cars_with_passengers, today, outings_today, carpools_today, school_runs_today, lifts_today, yesterday, total, fullest_car, drop_offs_pending}. `place` takes `parking_enforcement[:tier]`, `parking_small`, `parking_large`, `parking_garage`;

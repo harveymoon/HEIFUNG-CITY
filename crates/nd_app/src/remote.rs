@@ -528,11 +528,49 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         "terrain_at" => Ok(land::terrain_at(&ctx.sim.world, req_point(cmd)?)),
         // [dirty-industry] Pay to clean up poisoned ground: {x, y, radius}.
-        "remediate" | "cleanup" | "clean_up" => {
+        "remediate" => {
             let p = req_point(cmd)?;
             let r = opt_f32(cmd, "radius")?.unwrap_or(100.0);
             let (cost, removed) = ctx.sim.world.remediate(p, r)?;
             Ok(json!({ "ok": true, "cost": round(cost), "removed_cells": round(removed), "treasury": round(ctx.sim.world.economy.treasury) }))
+        }
+        // [dirty-industry] The Bulldoze tool's clean-up: a crew digs it out
+        // over a few days (`quote: true` only prices it).
+        "cleanup" | "clean_up" => {
+            let p = req_point(cmd)?;
+            let r = opt_f32(cmd, "radius")?.unwrap_or(100.0);
+            let w = &mut ctx.sim.world;
+            let q = if opt_bool(cmd, "quote")?.unwrap_or(false) { w.cleanup_quote(p, r)? } else { w.start_cleanup(p, r)? };
+            let crews: Vec<_> = w.cleanups.iter().map(|j| json!({ "id": j.id, "at": [round(j.center.x), round(j.center.y)], "radius": round(j.radius), "progress": round(j.progress()), "days": j.hours / 24, "cost": round(j.cost) })).collect();
+            Ok(json!({ "ok": true, "radius": round(q.radius), "cells": q.cells, "amount": round(q.amount), "cost": round(q.cost), "days": q.days, "treasury": round(w.economy.treasury), "crews": crews }))
+        }
+        // [dirty-industry] Testing: pour contamination onto the ground.
+        "contaminate" => {
+            let p = req_point(cmd)?;
+            let r = opt_f32(cmd, "radius")?.unwrap_or(60.0).clamp(0.0, 400.0);
+            let a = opt_f32(cmd, "amount")?.unwrap_or(0.6).clamp(0.0, 1.0);
+            ctx.sim.world.contamination.add(p, r, a);
+            Ok(json!({ "ok": true, "at": [p.x, p.y], "contamination": round(ctx.sim.world.contamination.at(p)) }))
+        }
+        // [social] Testing: a street-art crew's mural on a building now.
+        "paint_mural" => {
+            let bid: nd_sim::BuildingId = key_from(field(cmd, "building").ok_or("missing building")?)?;
+            let w = &mut ctx.sim.world;
+            let b = w.buildings.get(bid).ok_or("no such building")?;
+            let lot = b.lot;
+            let l = w.lots.get(lot).ok_or("no lot")?;
+            let along = (l.front_edge[1] - l.front_edge[0]).normalize_or_zero();
+            let mid = (l.front_edge[0] + l.front_edge[1]) * 0.5;
+            let inward = (l.center - mid).normalize_or_zero();
+            let group = match opt_u64(cmd, "group")? {
+                Some(g) => g as u32,
+                None => w.social.groups.iter().find(|g| g.kind == nd_sim::social::GroupKind::StreetArt).map_or(0, |g| g.id),
+            };
+            let quality = opt_f32(cmd, "quality")?.unwrap_or(0.6).clamp(-1.0, 1.0);
+            let seed = opt_u64(cmd, "seed")?.unwrap_or((l.center.x * 31.0 + l.center.y * 17.0).abs() as u64 ^ 0x5EED);
+            w.social.murals.retain(|m| m.lot != lot);
+            w.social.murals.push(nd_sim::social::Mural { group, lot, building: Some(bid), seed, day: w.clock.day(), quality, pos: mid + inward * 0.9, along, facing: -inward, width: 6.0, height: 3.4 });
+            Ok(json!({ "ok": true, "group": group, "at": [mid.x, mid.y], "facing": [-inward.x, -inward.y] }))
         }
         // [dirty-industry] Dirty plants and contamination near a point.
         "dirt_at" | "contamination_at" => {
@@ -2452,7 +2490,14 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     _ => return Err("district kind is brush or polygon".into()),
                 };
             }
-            Tool::Inspect | Tool::Bulldoze => return Err("this tool has no kind".into()),
+            Tool::Bulldoze => {
+                t.cleanup = match kind.to_ascii_lowercase().as_str() {
+                    "cleanup" | "clean_up" | "clean" => true,
+                    "remove" | "bulldoze" => false,
+                    _ => return Err("bulldoze kind is remove or cleanup".into()),
+                }
+            }
+            Tool::Inspect => return Err("this tool has no kind".into()),
         }
     }
     if let Some(lu) = opt_str(cmd, "land_use")? {
@@ -2468,7 +2513,11 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         t.stroke = None;
     }
     if let Some(r) = opt_f32(cmd, "radius")? {
-        t.brush_radius = r.clamp(BRUSH_MIN, BRUSH_MAX);
+        if t.tool == Tool::Bulldoze {
+            t.cleanup_radius = r.clamp(nd_sim::world::CLEANUP_MIN_RADIUS, nd_sim::world::CLEANUP_MAX_RADIUS);
+        } else {
+            t.brush_radius = r.clamp(BRUSH_MIN, BRUSH_MAX);
+        }
     }
     if let Some(u) = opt_bool(cmd, "unzone")? {
         t.unzone = u;
@@ -2845,7 +2894,10 @@ fn help() -> Value {
     v["commands"]["repair_road"] = json!({ "road": "id or [x,y]; default the selected road", "returns": "repaired, cost, treasury, road (the card); pays the crews' price (lane-m x wear x 6) from the treasury as road maintenance" });
     // [plant-groups]
     // [dirty-industry]
-    v["commands"]["remediate"] = json!({ "x": "f", "y": "f", "radius": "m, default 100, at most 300", "note": "pay to dig out the contamination there (450 per cell of full contamination); alias cleanup" });
+    v["commands"]["remediate"] = json!({ "x": "f", "y": "f", "radius": "m, default 100, at most 300", "note": "pay to dig out the contamination there at once (450 per cell of full contamination)" });
+    v["commands"]["cleanup"] = json!({ "x": "f", "y": "f", "radius": "m, default 100, at most 300", "quote": "bool: only price it", "note": "the Bulldoze tool's Clean up ground: paid up front (450 per cell of full contamination), a crew digs it out from the middle over 2-6 days; returns the quote and the crews at work. tool {tool: bulldoze, kind: cleanup, radius, hover: [x, y]} shows the preview" });
+    v["commands"]["contaminate"] = json!({ "x": "f", "y": "f", "radius": "m, default 60", "amount": "0..1, default 0.6", "note": "testing: pour contamination onto the ground" });
+    v["commands"]["paint_mural"] = json!({ "building": "id", "group": "crew id (default: the first street-art crew)", "quality": "-1..1, default 0.6", "seed": "u64", "note": "testing: a mural on that building's street face now" });
     v["commands"]["dirt_at"] = json!({ "x": "f", "y": "f", "returns": "contamination, dirty_nearby {plants [{building, name, what, distance_m, level, reach_m}], home_exposure, farm_exposure}" });
     v["commands"]["plant_preview"] = json!({ "kind": "solar|wind|coal|...", "x": "f", "y": "f", "note": "read-only: MW, cost and upkeep on the site a click there takes (a lot, or unzoned ground joined into one), the Sunfield / Wind Park it would join and what it adds, and any problem" });
     // [grid-weather]
@@ -2906,7 +2958,7 @@ fn help() -> Value {
     v["commands"]["flags"] = json!({ "since": "flag id: only newer ones", "clear": "bool: empty the list after reading" });
     v["commands"]["flag"] = json!({ "note": "text: flag the current selection, as F8 does in game" });
     v["commands"]["walk_to"] = json!({ "citizen": "id", "to": "[x,y]", "from": "[x,y] (default: where they are)", "note": "dev: sends the citizen out on foot by the walk graph (footbridges included)" });
-    v["commands"]["intersection"] = json!({ "at": "[x,y] near a junction or crosswalk (default: the editor's)", "signal": "auto|signals|none", "greens": "[seconds per phase, ...] (phases as listed) or \"default\"", "left_arrow": "auto|always|never", "arrow_seconds": "3..30", "left_turns": "bool: allow (true) or forbid every left", "no_left": "[approach index or [x,y], ...]: approaches with the left forbidden (the rest allowed)", "approach": "index or [x,y] (with lanes)", "lanes": "[\"L\", \"S+R\", ...] leftmost first, or \"reset\"", "crossing": "index or [x,y]", "upgrade": "none|button|footbridge (with crossing)", "open": "bool: show the Intersection editor modal", "close": "bool", "select_approach": "index (open)", "select_crossing": "walk crossing index (open)", "returns": "intersection: at, signalized, rule, approaches (lanes, offered, left_forbidden), phases (green_s, running), crossings (upgrade, signalised, button_light); done; editor_open" });
+    v["commands"]["intersection"] = json!({ "at": "[x,y] near a junction or crosswalk (default: the editor's)", "signal": "auto|signals|none", "greens": "[seconds per phase, ...] (phases as listed) or \"default\"", "left_arrow": "auto|always|never", "arrow_seconds": "3..30", "left_turns": "bool: allow (true) or forbid every left", "no_left": "[approach index or [x,y], ...]: approaches with the left forbidden (the rest allowed)", "approach": "index or [x,y] (with lanes)", "lanes": "[\"L\", \"S+R\", ...] leftmost first, or \"reset\"", "crossing": "index or [x,y]", "upgrade": "none|button|footbridge (with crossing; a footbridge replaces the crosswalk under it)", "keep_crosswalk": "bool (with crossing): keep the crosswalk at grade under its footbridge (default false: the bridge replaces it)", "open": "bool: show the Intersection editor modal", "close": "bool", "select_approach": "index (open)", "select_crossing": "walk crossing index (open)", "returns": "intersection: at, signalized, rule, approaches (lanes, offered, left_forbidden), phases (green_s, running), crossings (upgrade, signalised, button_light, crosswalk_kept, crosswalk_removed); done; editor_open" });
     v["commands"]["society"] = json!({ "action": "report (default)|evict|offend|trash", "building": "id (evict: its households go on the street; offend: the target; trash: one building's bins)", "citizen": "id (offend)", "kind": "theft|burglary|assault|murder|vandalism (offend, with building)", "kg": "trash to add, default 100" });
     // Planning: several projects, and painting parcels.
     let planning = json!({
