@@ -151,6 +151,10 @@ pub const MUTUAL_AID_WAIT: u64 = 40;
 pub const MUTUAL_AID_TRAVEL: u64 = 20;
 /// A responding unit is on scene once its car is this close to its stop.
 pub const PULL_UP: f32 = 25.0;
+/// [fire-scene] Ticks a fire engine stays once the fire is out (or the
+/// building is lost): the crew shuts the water off, rolls the hoses, lowers
+/// the ladder and climbs back in before it drives home.
+pub const PACK_UP_TICKS: u64 = 3;
 /// A kind counts as saturated while it has no unit free; the report raises
 /// an alert after this many saturated minutes in a day.
 pub const SATURATED_ALERT_MIN: u32 = 60;
@@ -1147,6 +1151,10 @@ pub struct Unit {
     /// leaves the world (it takes no calls any more).
     #[serde(default)]
     pub leaving: bool,
+    /// [fire-scene] A fire engine packing up on scene after its fire ended
+    /// (`incident` still names it): it leaves at this tick. 0 otherwise.
+    #[serde(default)]
+    pub packing_until: u64,
 }
 
 impl Unit {
@@ -1164,6 +1172,11 @@ impl Unit {
     /// Lights and sirens: on the way to a job or carrying a patient.
     pub fn lights(&self) -> bool {
         matches!(self.state, UnitState::Responding | UnitState::Transporting | UnitState::OnScene | UnitState::Pursuing)
+    }
+
+    /// [fire-scene] Packing up on scene after the fire ended.
+    pub fn packing(&self) -> bool {
+        self.state == UnitState::OnScene && self.packing_until > 0
     }
 }
 

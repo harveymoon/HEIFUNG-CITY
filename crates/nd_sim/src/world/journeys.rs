@@ -219,6 +219,13 @@ impl World {
         b.workers.iter().skip(start).take(n).copied().filter(|c| self.citizens.contains_key(*c)).collect()
     }
 
+    /// [fire-scene] The unit a citizen is out with: on its crew
+    /// (`unit_crew`) while it is out of the station.
+    pub fn crew_unit_of(&self, id: CitizenId) -> Option<UnitId> {
+        let work = self.citizens.get(id)?.work?;
+        self.services.units.iter().filter(|(_, u)| u.station == work && u.out()).map(|(uid, _)| uid).find(|uid| self.unit_crew(*uid).contains(&id))
+    }
+
     /// Where a citizen is headed and why: `(destination, purpose)`, from
     /// whatever they are doing (walking, driving, riding, waiting).
     pub fn citizen_target(&self, id: CitizenId) -> Option<(Option<BuildingId>, Purpose)> {
@@ -259,6 +266,17 @@ impl World {
                 Some(n) => format!("{base}: {prep} {n}{how}"),
                 None => format!("{base}{how}"),
             };
+        }
+        // [fire-scene] Out on a call with their unit.
+        if let Some(u) = self.crew_unit_of(id).and_then(|u| self.services.units.get(u)) {
+            let at = u.incident.and_then(|i| self.services.incident(i)).and_then(|i| self.buildings.get(i.building)).map(|b| b.name.clone());
+            let doing = match (u.state, at) {
+                (UnitState::OnScene, Some(b)) if u.packing() => format!("packing up at {b}"),
+                (UnitState::OnScene, Some(b)) => format!("on scene at {b}"),
+                (UnitState::Responding, Some(b)) => format!("on the way to {b}"),
+                (s, _) => s.label().to_string(),
+            };
+            return format!("out with {} {}: {doing}", u.kind.call_sign(), u.number);
         }
         if c.inside.is_none() {
             let down = self.down_on_street();

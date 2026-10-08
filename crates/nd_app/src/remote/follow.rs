@@ -41,6 +41,10 @@ pub(super) fn target_of(cmd: &Value, ctx: &Ctx, what: &str) -> Result<Selection,
         let id = key_from(v)?;
         return w.subway.trains.contains_key(id).then_some(Selection::Metro(id)).ok_or_else(|| format!("{what}: no such metro train"));
     }
+    if let Some(v) = field(cmd, "unit") {
+        let id = key_from(v)?;
+        return crate::fire_scene::unit_pose(w, id, ctx.sim.frac()).map(|_| Selection::Unit(id)).ok_or_else(|| format!("{what}: no such unit out of its station"));
+    }
     if let Some(v) = field(cmd, "vehicle") {
         let id = key_from(v)?;
         return w.vehicles.cars.get(id).is_some_and(|c| c.spot().is_some()).then_some(Selection::Parked(id)).ok_or_else(|| format!("{what}: no such parked vehicle"));
