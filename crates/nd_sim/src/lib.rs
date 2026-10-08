@@ -15,6 +15,8 @@ pub mod clock;
 pub mod committee;
 /// [concerns] Complaints by category and city happiness over time.
 pub mod concerns;
+/// [megacorp] Mega-corporations, universities, brands and logos.
+pub mod corp;
 pub mod crime;
 /// [districts] Named districts with specialisations and the Historic freeze.
 pub mod districts;
@@ -57,6 +59,8 @@ pub mod road_wear;
 pub mod road_traffic;
 pub mod roads;
 pub mod services;
+/// [waterfront] Waterfront lots, public beaches and private jetties.
+pub mod shore;
 /// Street names: chains of segments named once and kept across rebuilds.
 pub mod streets;
 /// [events] Street races and warehouse raves.

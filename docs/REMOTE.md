@@ -298,7 +298,7 @@ them a land use.
 | `add_interchange` (alias `interchange`) | `from`, `to` `[x,y]`: the cross street's ends, one each side of the highway; `lanes_fwd`, `lanes_bwd` (default 2, 2), `check` (only plan it), `implement` | [interchange] a diamond interchange as the Road tool's Interchange preset lays it: the street under the highway (kept when one runs along the line already) and four ramps meeting it at a signalled junction each side. Reply adds `gesture_ids`, `interchange` {`kept_street`, `terminals`, `crossings`, `roads` [{points, lanes_fwd, lanes_bwd}]}, or `refused` {`why`, `at`} (the spot). `tool {preset: "Interchange"}` picks the preset; with `draw` [[a],[b]] its hologram and `interchange_refusal` show. Dev: `rebuild_roads` lays the roads again from the plan with the current rules |
 | `add_zone` | `polygon` `[[x,y],...]` (3+), `land_use` residential / commercial / industrial / entertainment / civic / park, `implement` |
 | `bulldoze` | `gesture_id`, `implement`; or `building` (id): a city building (plant, battery, service, attraction, depot, metro station, cargo hub, city parking) goes at once and its lot goes back to the zoning plan (or unzoned ground). Grown buildings, stations, yards and docks refuse |
-| `paint` | `land_use` (or `none` to unzone), then `at` `[x,y]` + `radius` (the brush), `rect` `[[x0,y0],[x1,y1]]` (the marquee) or `polygon`; `industry` (industrial only: auto / farming / oil / refinery / manufacturing / logistics / fishing / tech), `implement`. Reply: `painted`, `touched`, `refused` (`[{parcel, center, why}]`), `gesture_id`; `no_parcel` (why, when `at` touched no parcel: water, too far from a road, past the buildable land) |
+| `paint` | `land_use` (or `none` to unzone; `beach` paints a public beach, see the waterfront section), then `at` `[x,y]` + `radius` (the brush), `rect` `[[x0,y0],[x1,y1]]` (the marquee) or `polygon`; `industry` (industrial only: auto / farming / oil / refinery / manufacturing / logistics / fishing / tech), `implement`. Reply: `painted`, `touched`, `refused` (`[{parcel, center, why}]`), `gesture_id`; `no_parcel` (why, when `at` touched no parcel: water, too far from a road, past the buildable land) |
 | `project` | `action`: list / new / switch / rename / delete / park / start / implement / undo / redo / discard; `id` (default the active project) or `name` to pick one; `name` for new and rename. Reply: `projects` (`id`, `name`, `active`, `steps`, `redo`, `conflicts` `[{gesture, project}]`, `shared_parcels`), `warnings` from the last implement |
 | `grounds_junctions` (or `park_junctions`) | optional `lot`, `kind` (park / plaza / stadium / campus / station / beach), `near` `[x,y]` + `radius` (default 150 m). [park-paths] The gates on the edges of parks and other public grounds (a stadium, a monument's plaza, a school's campus, a station) where a path may join their walkways: the Path tool's snap rings. Reply `junctions` `[{index, pos, kind, label, lot, attached, walk_node, gesture_id}]` (`attached`: a path is joined there, `walk_node` the grounds' walk node it joins, `gesture_id` the path) and `links` (every joined path end). A path whose end is on a gate when its project is implemented is joined: the park lays a walkway out to meet it and walkers route through. When the grounds go (rezoned, bulldozed, re-cut away) the path is cut back to its last point before that end, or removed if fewer than two points are left; the event log gets `PathTrimmed` {`gesture_id`, `removed`, `grounds`} and the game a toast |
 | `find` `{what: "parcels"}` | per parcel: `index`, `center`, `area`, `land_use` (built), `planned`, `landlocked`, `street`, `rough`, `accepts`, `lot`; filter `land_use`, `zoned`, `landlocked` |
@@ -767,6 +767,42 @@ several plots), home, business, form. A billionaire's other homes and businesses
 {"cmd": "estate", "action": "pressure", "at": [0, 0]}
 ```
 
+### Mega-corps and universities [megacorp]
+
+`inspect {building}` carries `brand` for a building a mega-corp or a university owns (null
+otherwise): `kind` (`mega_corp` or `university`), `corp` / `campus` id, `role` (headquarters,
+holding, staff housing; main building, dorm, administration, theatre, sports centre, frat house,
+campus plaza), `rent_discount` for staff housing, and `brand`: `name`, `colour` (hex),
+`colour_index`, `shape` (circle, ring, hexagon, diamond, triangle, square, chevron, shield),
+`monogram` and `logo`: the 11x11 pixel mark as text rows (`#` shape, `x` letter cut into the
+shape, `o` letter on empty ground, `.` empty), the same mark the renderer lights on roofs,
+banners, the HQ crown and the fleet's trucks. `ownership` and `inspect.building.land` show the
+owner's kind as `mega_corp` (with the business it grew out of) or `university`.
+
+`corps {action?}` (also `corp`, `megacorp`):
+
+| action | fields | reply |
+| --- | --- | --- |
+| `summary` (default) | | `corps` (id, brand, origin, origin_kind, founded_day, `hq` {id, name, floors, building, pos}, cash, holdings, holdings_by_use, industries, staff, `housing` {blocks, homes, staff_housed}, revenue_yesterday, market_share, bought_total, levy_total, properties), `campuses` (as `campus`), `rules` {allowed, max_share, levy, cap_per_corp, room}, `thresholds`, `biggest_companies` (flagship, name, kind, holdings, staff, revenue, qualifies), `stats` |
+| `rules` | `allowed` (bool), `max_share` (0.02-0.25), `levy` (0-0.2) | the rules as set (clamped) |
+| `promote` | `building` (a business) | dev: its company becomes a mega-corp now (brand, HQ site bought); the corp |
+| `buy` | `corp` or `building`, `n` | dev: the corp buys what it would buy next, `n` times (cash topped up); `bought` |
+| `finish` | `corp` | dev: HQ now if none, every building site of the corp finished |
+| `drive` | `corp`, `lot` | road metres from the corp's HQ (the cached table its buys sort by) |
+
+`campus {action?}` (also `university`): `summary` (default) lists `campuses`: id, owner, brand,
+name, tier, pos, places, students, dorm_homes, funds, `annexes` [{id, kind, name, building}],
+`pending` [{lot, kind}], expansions_total. `grow {building?, days}` (dev) runs the campus's daily
+round `days` times with one annex each day and every site finished.
+
+A University is placed like any service: `place {kind: "university", tier, x, y}` (Services; also `campus`, `college`; needs about 825 m² at its lowest tier).
+
+```json
+{"cmd": "corps", "action": "promote", "building": "88:1"}
+{"cmd": "corps", "action": "rules", "max_share": 0.05, "levy": 0.1}
+{"cmd": "campus", "action": "grow", "days": 10}
+```
+
 ### Skyline: skyscrapers, supertalls, megatalls [supertall]
 
 League towers rise over everything the ordinary growth builds: skyscrapers from 150 m, supertalls
@@ -816,7 +852,7 @@ Skyline page (`city_data {tab: "city", sub: "skyline"}`) shows the same.
 | `heat_vision` (alias `heat`) | `on` (bool; omitted toggles). Drone heat vision: buildings, ground and roads go near-black, people, vehicles, fires and drones glow by temperature (lights and engines white-hot), with motion blur, scanlines, noise, a vignette and a reticle. Same as key H and the top bar's Heat button. Reply `heat_vision`; also `status.lighting.heat_vision` |
 | `graphics` (alias `quality`) | `quality` auto / low / medium / high. Pins the graphics tier (Low: MSAA, no SSAO or haze, no rain or snow, street lamps only glow; Medium: TAA, light SSAO, real light from the 18 street lamps nearest the view at night; High: TAA, full SSAO, volumetric haze, big shadows, 40 lit lamps. Every tier: wet, glossy roads while it rains, fog tinted and thickened by climate and weather) or hands it back to the frame-rate throttler (Auto). Pin one before screenshots that must compare. Reply `quality`, `tier` (in force from the next frame), `frame_ms` (smoothed), `sim_ms`, `auto_steps`, `reason`, `effects`; also `status.render.graphics`. `ND_QUALITY` sets the starting setting |
 | `window` | `name` a tool window: lines / view (also `land`, `layers`, `map`: the View window, once Land) / saves / help / dev, `open` (omit to toggle). Reply `open`, `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it. The old report windows are City Data pages now: `name` city / economy / market / people / services opens that tab (at its last sub-tab), taxes / power / transit / emergencies / districts / tourism their page (Economy › Taxes, Services › Power, ...); `sub` (or People's old `tab` overview / concerns / social) picks a sub-tab, `open` false closes the view, omitted toggles, `expanded` is accepted and opens. The reply is `city_data`'s. `name: "build"`: the Build window, `open` (omit to toggle), `section` roads / zoning / parks / districts / power / services / transit / rail / water / attractions (opens it there); `status.build_window` {open, section}. A building tool picked with `tool` opens the Build window at its section, as its hotkey does. `name: "title"`: the title screen (above) |
-| `city_data` | `tab` city / economy / market / people / services, `sub` (the tab's sub-tab, below; omitted: the tab's last one this session), `open` (bool; a `tab` alone opens; `open: true` alone reopens where it was; `open: false` closes). No fields: the state only. Reply `open`, `tab`, `sub`, `title` (the page's), `tabs` [{tab, label, subs}]. The full-screen City Data view (top bar, or J; Esc closes): **city** overview / land / districts / tourism; **economy** overview / cash_flow / ledger / taxes; **market** goods / businesses / trade; **people** population / inequality / concerns / social / favourites; **services** power / transit / emergencies. Applied in the same frame's egui pass, so a following `screenshot` shows it; `status.city_data` says what shows |
+| `city_data` | `tab` city / economy / market / people / services / directory, `sub` (the tab's sub-tab, below; omitted: the tab's last one this session), `open` (bool; a `tab` alone opens; `open: true` alone reopens where it was; `open: false` closes). No fields: the state only. Reply `open`, `tab`, `sub`, `title` (the page's), `tabs` [{tab, label, subs}]. The full-screen City Data view (top bar, or J; Esc closes): **city** overview / land / districts / tourism; **economy** overview / cash_flow / ledger / taxes; **market** goods / businesses / trade; **people** population / inequality / concerns / social / favourites; **services** power / transit / emergencies; **directory** businesses / people (also `citizens`). Applied in the same frame's egui pass, so a following `screenshot` shows it; `status.city_data` says what shows |
 
 Land survey layers (map layers like the rest, so one at a time with them; K steps through these
 in the game; the top bar's Layer button and the View window list them;
@@ -1197,6 +1233,36 @@ numeric range, anything else by equality. Sorting puts nulls last; `id` is alway
   {"id": "327:1", "name": "Court 25", "kind": "office", "staffing": 0.139, "workers": 5, "jobs": 36, "money": 1590.0, "closed": false}, "..."]}
 ```
 
+### directory [directory]
+
+`{"cmd": "directory", "kind": "people", "sort": "income", "desc": true, "search": "kessler", "class": "middle", "district": "Old Town", "offset": 0, "limit": 50, "show": true}`
+
+The rows of City Data's Directory tab (`city_data {tab: "directory", sub: "businesses" | "people"}`),
+sorted and filtered by the page's own code (`crate::directory`), so they match what the player
+sees. `kind`: businesses (default) or people. `sort`: a column key, below (default name); `desc`
+reverses; missing values (no rating yet, no job, no district) sort last either way and ties fall
+back to the name. `search`: words that must all appear (case-blind) in the row's name, kind,
+owner, street, district, state (businesses) or name, workplace, home, street, district,
+favourite place, status (people). Pickers: `district` (both), `business_kind` (a kind key) and
+`state` (businesses), `class` and `status` (people). `show: true` also opens the page with these
+settings. Reply: `kind`, `sort`, `desc`, `total`, `matched`, `offset`, `rows`, `took_ms`.
+
+- Businesses' columns: `name`, `kind` (key) and `kind_label` ("Mill · farming"), `owner` and
+  `owner_kind` (chain, developer, billionaire, person, household, mega-corp, university;
+  empty for an independent), `district`, `street` (the street the lot fronts), `staff`/`jobs`,
+  `revenue_today`, `spend_today`, `revenue_yesterday` and `profit_yesterday` (the closed books;
+  null on the first day), `money`, `rating` (1-5 stars, null before anyone rated it), `rated`,
+  `footfall` (passers-by today), `state` (building, shut = out of business, broke, no_staff, open,
+  closed = outside its hours), `pos`. Sort keys: name, kind, owner, district, street, staff,
+  revenue_today, revenue_yesterday, profit_yesterday, money, rating, footfall, state.
+- People's columns: `name`, `age`, `class` (low, middle, high, elite), `income`, `work` and
+  `work_label` (the workplace, or unemployed / child / retired), `home` and `home_label`, `street`
+  and `district` (of the home), `household` (size), `mood`, `satiety`, `hungry_days`, `ill` (waiting
+  for an ambulance or in hospital), `commute` (the mode they have used most lately), `favourite`
+  (their best-liked place), `friends`, `status` (working, at_home, asleep, out, travelling, ill,
+  homeless, arriving, away), `pos`. Sort keys: name, age, class (then income), income, job, home,
+  household, mood, health (ill lowest, then how well fed), commute, favourite, friends, status.
+
 ### export
 
 `{"cmd": "export", "path": "exports/optional.json"}` writes `report` (all sections), `map_summary`,
@@ -1420,7 +1486,7 @@ front). Garbage trucks are cars in `find {what: "cars"}` with a garbage truck bo
 `report {sections: ["pressure"]}` (also the `pressure` command with no fields): `pressures` (every
 pressure, strongest first: `kind` (tow_company, mechanic, car_dealer, trash_company, bike_shop,
 slaughterhouse, fish_gutting, fish_stick_factory, fish_market, seafood_restaurant, golf_range,
-art_studio, gallery, marina), `label`, `business` (the business kind key it opens), `strength`
+art_studio, gallery, marina, and [waterfront] beach_resort, pier_restaurant, beach_bar, boat_rental), `label`, `business` (the business kind key it opens), `strength`
 0..1, `wanted`, `have` (open and being built), `gap`, `struggling`, `wants_more`, `why` (the
 cause in words), `held` (why nothing opens despite the gap: cooling down after one closed, no
 lot, a player-placed kind), `player_placed`), `opened_total` (by kind), `signals` (the smoothed
@@ -1428,7 +1494,8 @@ causes: outside and local tows a day, crashes a day, cars, rich households, cars
 of them out of town, buildings out of the city's trash rounds, overflowing bins, depots, bike
 owners, bikes bought, long walks a day, livestock, fish and fillets a day, fishing ports and
 marinas [small, large], comfortable adults, artists, artists of middle income, rich adults, rich
-households near the water, has_water, art_scene), `trash` {local_companies, local_clients,
+households near the water, has_water, art_scene; [waterfront] tourists, beach_visits, beaches_open,
+beach_appeal, waterfront_sites), `trash` {local_companies, local_clients,
 local_fee, out_of_town_fee}, `art` {openings_total, donations_total, art_sold_total, openings (the
 last six: gallery, name, from/until tick, on_now, invited, visitors, donations, sales),
 galleries_wanting_to_expand}, `waterfront` {boats_out, berth_fees_last_night, docks: kind, label,
@@ -1438,7 +1505,8 @@ building, pos, works, berths, boats_out, open}, `repairs_today`, `bike_repairs_t
 variant name: `mechanic` (`car_repair_shop`), `car_dealer` (`car_dealership`), `trash_company`,
 `bike_shop`, `cow_farm` (`cattle_farm`), `chicken_farm`, `slaughterhouse`, `strip_mine`,
 `fish_gutting` (`fish_gutting_shed`), `fish_stick_factory`, `fish_market`, `seafood_restaurant`,
-`golf_range` (`golf_driving_range`), `art_studio` (`artists_studios`), `gallery`, and the older
+ `beach_resort`,
+`pier_restaurant`, `beach_bar`, `boat_rental` (these only on a lot that runs down to the water), and the older
 kinds) on the vacant lot under or nearest the point (within 150 m), as a pressure would; `finish:
 true` builds it at once. Reply `building`, `kind`, `lot`, `finished`, `story`. Marinas and fishing
 ports are docks: use `place`.
@@ -1489,6 +1557,52 @@ ferry, yacht, sailboat, fishingboat), port, at, heading_deg, docked} — trawler
 port_name, state, at_sea, nets_out, fish_aboard, catch_today, and are listed at their berths too]).
 `landscape` adds `trawlers` (those at sea: name, port, at, state). The pressure report's
 `waterfront.boats_out` counts trawlers at sea.
+
+### Waterfront lots, public beaches and private jetties [waterfront]
+
+Where a street or path runs within 80 m of a river, lake or the sea, the land between it and the
+water is parcelled the whole way down to the waterline: those lots run from the road to the shore
+(new cities; a save from before keeps the parcels it was cut with, see `waterfront_parcels`).
+Every lot knows its edge on the water: lot rows (`find`, `list`) carry `waterfront`,
+`water_frontage_m` and `beach`; parcel rows `water_frontage_m`; a lot's `inspect` has `shore`
+{waterfront, frontage_m, seaward, beach, beach_state}. Waterfront lots carry a land value premium
+by their frontage; open beaches lift the land around them.
+
+| Command | Fields | Reply |
+|---|---|---|
+| `shore` (alias `waterfront`) | | `parcels_reach_water`, `waterfront_lots`, `waterfront_vacant`, `waterfront_frontage_m`, `beaches`, `beaches_open`, `bathers_now`, `jetties`, `trades` {beach_resorts, pier_restaurants, beach_bars, boat_rentals, waterfront_hotels}, `pressures` (the waterfront trades' readings: kind, wanted, have, gap, why, held) |
+| `beaches` | | `beaches` [{building, name, pos, area_m2, access, open, usable, note (no access, closed, too cold, a storm, ...), visitors, swimmers, people_here (the sim's own citizens and tourists on the sand), draw (the hour's crowd before rounding), capacity, crowded, catchment (residents within reach), appeal (weather and hour, 0..1), contamination, peak_today, visits_today, visits_yesterday, towel_spots}], `bathers_now`, `appeal_now`, `appeal_season` |
+| `jetties` | | `jetties` [{building, name, business, kind (fishing jetty, cargo quay, restaurant pier, boat pontoon), root, tip, berth, water, berths, built_day, loads_landed, loads_coming}] |
+| `waterfront_parcels` | `on` (bool; omitted reads) | `on`, `parcels_on_water`, `note`. Re-cuts the parcels now; lots follow at the next implement, and a building whose parcel changes shape is pulled down |
+
+A **public beach** is a park sub-zone: `paint {land_use: "beach", ...}` (or the Zone tool after
+Build > Parks > Public beach) on parcels that run down to the water (others are refused: "a beach
+must run down to the water"); painting plain `park` over it makes it a park again. Its lot is laid
+out as sand with a boardwalk and towel spots (the park's benches: people walk to one and lie down)
+and gets a park building named for the beach. It joins the walk graph only through a street or path
+it fronts, or a park next to it (never across a private lot); without either it stays empty with
+the note "no access: connect a path or a road, or a park next to it". The crowd follows the
+weather and the hour (`shore::beach_weather`: nobody under 12 °C, in a storm or at night, few in
+the rain; Arctic beaches stay deserted) and the residents within 1.5 km; past its capacity it is
+crowded. Contamination over the sand or the water off it at 20% closes it (a red sign and tape)
+until it falls under 12%. Open beaches are tourist sights (attraction kind `beach`), cheer the
+households within 700 m at midnight, and bring beach bars (pressure `beach_bar`).
+
+A building's `inspect` adds `beach` (the row above) for a beach's park building, `jetty` for a
+business with a private jetty, and `shore` for any building on the water.
+
+**Waterfront trades** open by pressure on vacant waterfront lots only: `beach_resort` (lodging: two
+beds a floor more than a hotel's, 1.6× the night), `pier_restaurant` (a place to go out at 2.4×
+a venue's tab; its deck over the water is its jetty), `beach_bar`, `boat_rental` (its pontoon is
+its jetty). A hotel opening for want of beds prefers a waterfront lot and is drawn as a waterfront
+hotel.
+
+**Private jetties**: a fishing company or fish works (fishery, fish plant, gutting shed, fish-stick
+factory, fish market) or a works that ships (container yard, refinery, smelter, chemical works,
+mill, parts fab, assembly plant, cargo hub) on a waterfront lot builds a small jetty of its own for
+600 when it has the money and the water off it is navigable (the sea, a lake, a river at least 18 m
+wide; never a stream). A fishing jetty is a trawler's berth; a cargo quay lands the business's
+imports by its own coaster at the sea price (5 hours on; `loads_coming`).
 
 ## Street races, raves and the roads
 

@@ -17,9 +17,13 @@
 /// [concerns] complaints by category and city happiness.
 /// [committee] `committee`, `committee_meeting`.
 mod committee;
+/// [megacorp] Mega-corps and universities.
+mod corp;
 mod concerns;
 /// [districts] [tourism] `district` and `tourism`.
 mod districts;
+/// [directory] `directory`: City Data's Directory rows, sorted and filtered.
+mod directory;
 /// [economy] business pressure: what the city's businesses want
 mod economy;
 /// [camera] `follow`, `zoom_to`, `gift`; delivery robots' detail.
@@ -64,6 +68,8 @@ mod view;
 mod window;
 /// [ferry-routes] A dock's routes and `inspect {ship}`.
 mod ferry;
+/// [waterfront] Waterfront lots, public beaches and private jetties.
+mod shore;
 
 use std::collections::VecDeque;
 use std::io::Read;
@@ -695,9 +701,14 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         // [land] the land market; ownership highlight data
         "estate" | "land_market" => property::command(cmd, &mut ctx.sim.world),
         "ownership" => property::ownership(cmd, &ctx.sim.world),
+        // [megacorp] mega-corps and universities
+        "corps" | "corp" | "megacorp" => corp::command(cmd, &mut ctx.sim.world),
+        "campus" | "university" => corp::campus(cmd, &mut ctx.sim.world),
         // [supertall] the skyline, height limits, the record book; dev tower starts
         "skyline" | "towers" | "height_limit" => skyline::command(cmd, &mut ctx.sim.world),
         "pressure" | "pressures" => economy::command(cmd, &mut ctx.sim.world),
+        // [waterfront] waterfront lots, beaches and private jetties
+        "shore" | "waterfront" | "beaches" | "jetties" | "waterfront_parcels" => shore::command(name, cmd, &mut ctx.sim.world),
         "bus" => bus(cmd, ctx),
         "subway" | "metro" => subway::command(cmd, &mut ctx.sim.world),
         // [metro-ux] The metro line tool, click by click.
@@ -917,6 +928,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(v)
         }
         "export" => export(cmd, ctx),
+        "directory" => directory::directory(&ctx.sim.world, &mut ctx.windows, cmd),
         "build_highlight" => build_highlight(cmd, ctx),
         "window" if req_str(cmd, "name").is_ok_and(|n| n.trim().eq_ignore_ascii_case("new_game") || n.trim().eq_ignore_ascii_case("new game")) => {
             let open = opt_bool(cmd, "open")?.unwrap_or(true);
@@ -1003,7 +1015,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             }
             let target = match (tab, sub) {
                 (Some(t), Some(s)) => Some(Target::Page(Page::parse(None, t, Some(s))?)),
-                (Some(t), None) => Some(Target::Tab(crate::ui::city_data::Tab::parse(t).ok_or_else(|| format!("unknown tab {t:?}; one of city, economy, market, people, services"))?)),
+                (Some(t), None) => Some(Target::Tab(crate::ui::city_data::Tab::parse(t).ok_or_else(|| format!("unknown tab {t:?}; one of city, economy, market, people, services, directory"))?)),
                 _ => None,
             };
             // Naming a page opens it unless told otherwise.
@@ -1170,6 +1182,8 @@ fn paint(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let lu_s = req_str(cmd, "land_use")?;
     let land_use = match lu_s.trim().to_ascii_lowercase().as_str() {
         "none" | "unzoned" | "erase" => None,
+        // [waterfront] a public beach: a park on parcels down to the water
+        "beach" | "public_beach" | "public beach" => Some(nd_sim::LandUse::Park),
         other => Some(land_use_of(other)?),
     };
     let w = &mut ctx.sim.world;
@@ -1185,14 +1199,16 @@ fn paint(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     } else {
         return Err("give at (+ radius), rect or polygon".into());
     };
+    let beach = matches!(lu_s.trim().to_ascii_lowercase().as_str(), "beach" | "public_beach" | "public beach");
     let refused: Vec<Value> = match land_use {
-        Some(lu) => ids.iter().filter_map(|&i| w.parcel_refusal(i, Some(lu)).map(|why| json!({ "parcel": i, "center": v2(w.parcels.parcels[i].center), "why": why }))).collect(),
+        Some(lu) => ids.iter().filter_map(|&i| (if beach { w.beach_refusal(i) } else { w.parcel_refusal(i, Some(lu)) }).map(|why| json!({ "parcel": i, "center": v2(w.parcels.parcels[i].center), "why": why }))).collect(),
         None => Vec::new(),
     };
     // [island-lots] Nothing under the brush: why (water, too far from a
     // road, past the buildable land), as the hover says at the cursor.
     let none_why = if ids.is_empty() { opt_vec2(cmd, "at")?.and_then(|at| w.no_parcel_why(at)) } else { None };
     let industry = match opt_str(cmd, "industry")? {
+        _ if beach => Some(nd_sim::shore::BEACH_SUBZONE),
         Some(k) => Some(nd_sim::world::INDUSTRY_CHOICES.iter().map(|(key, _)| *key).find(|key| key.eq_ignore_ascii_case(k.trim())).ok_or_else(|| format!("unknown industry {k:?}; one of {}", nd_sim::world::INDUSTRY_CHOICES.map(|c| c.0).join(", ")))?),
         None => None,
     };
@@ -2114,7 +2130,7 @@ fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     let plan = planned.get(i).copied().flatten().map_or("unzoned", |l| l.label());
                     rows.push((d, json!({
                         "index": i, "center": v2(p.center), "area": round(p.area), "land_use": built, "planned": plan,
-                        "landlocked": p.landlocked(), "street": p.street_frontage, "rough": p.rough, "rough_why": p.rough_why, "accepts": accepts,
+                        "landlocked": p.landlocked(), "street": p.street_frontage, "rough": p.rough, "rough_why": p.rough_why, "accepts": accepts, "water_frontage_m": round(p.water_frontage),
                         "lot": p.lot.map(key_str), "key": [p.key.center.0, p.key.center.1],
                     })));
                 }
@@ -2205,6 +2221,8 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         v["place"] = places::building_place(w, id);
         // [land] owner, sale price, plots, form, pressure
         v["land"] = property::building_land(w, id);
+        // [megacorp] the owning corp or university and its logo
+        v["brand"] = corp::building_brand(w, id);
         // [supertall] height, rank in the skyline, and a league tower's record
         v["tower"] = skyline::building_tower(w, id);
         // [ferry-routes] a terminal's routes, a shipping port's lane
@@ -2601,7 +2619,15 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             }
             Tool::Zone => match ZoneMode::parse(kind) {
                 Some(m) => t.zone_mode = m,
-                None => t.land_use = land_use_of(kind)?,
+                // [waterfront] "beach": parks painted as public beaches
+                None if kind.eq_ignore_ascii_case("beach") => {
+                    t.land_use = nd_sim::LandUse::Park;
+                    t.beach = true;
+                }
+                None => {
+                    t.land_use = land_use_of(kind)?;
+                    t.beach = false;
+                }
             },
             Tool::District => {
                 t.district.mode = match kind.to_ascii_lowercase().as_str() {
@@ -2624,7 +2650,10 @@ fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         if lu.eq_ignore_ascii_case("none") || lu.eq_ignore_ascii_case("unzoned") {
             t.unzone = true;
         } else {
-            t.land_use = land_use_of(lu)?;
+            // [waterfront] "beach": parks painted as public beaches
+            let beach = lu.eq_ignore_ascii_case("beach") || lu.eq_ignore_ascii_case("public_beach");
+            t.land_use = if beach { nd_sim::LandUse::Park } else { land_use_of(lu)? };
+            t.beach = beach;
             t.unzone = false;
         }
     }
@@ -3042,6 +3071,7 @@ fn help() -> Value {
         "map": { "cell_m": "cell size in metres, default 100 (grown to keep at most 400 cells)", "layer": "summary (table of cells) | population | land_value | jobs | hunger | vacancy | power | traffic | fertility | oil | contamination | industry | crime | homeless | trash (grid + ASCII heat map)" },
         "industry": { "lot": "lot id, or", "polygon": "[[x, y], ...] area, or", "pos": "[x, y] (query only)", "kind": "farming | oil | refinery | manufacturing | logistics | fishing | tech | mining | smelting | factory_farming | none: sets the industry sub-zone bias (none hands the area back to the ground); omit to query the ground, contamination and industry weights of the lot" },
         "history": { "keys": "optional daily/hourly series names (default all)", "days": "last n days (default all kept, up to 365)" },
+        "directory": { "kind": "businesses|people (default businesses)", "sort": "businesses: name|kind|owner|district|street|staff|revenue_today|revenue_yesterday|profit_yesterday|money|rating|footfall|state; people: name|age|class|income|job|home|household|mood|health|commute|favourite|friends|status", "desc": "bool", "search": "words to find in name, kind, owner, street, district, workplace, home", "district": "district name", "business_kind": "businesses: a kind key", "state": "businesses: building|shut|broke|no_staff|open|closed", "class": "people: low|middle|high|elite", "status": "people: working|at_home|asleep|out|travelling|ill|homeless|arriving|away", "offset": "default 0", "limit": "default 50, max 1000", "show": "bool: also open City Data's Directory page with these settings", "note": "the rows of City Data's Directory tab, sorted and filtered by the page's own code; missing values sort last" },
         "list": { "what": "businesses|buildings|citizens|lots|routes|plants|facilities", "sort": "column", "desc": "bool", "filter": "{column: substring | value | {min, max}}", "fields": "[columns] (id always kept)", "offset": "default 0", "limit": "default 50, max 1000" },
         "street_events": { "limit": "rows of history and news (default 10)", "fresh": "bool: weigh the warehouses for a rave now (else the last 22:00 roll's)", "returns": "race (stage, meet, finish, route_m, racers with place and speed, crowd, incident, arrests, fines), race_planned, race_crew, rave (place, door, guests, queue, queue_at_door, inside, peak, complaints, incident, pull), rave_planned, rave_spots (warehouses with youth, artists, art_scene, neighbours, culture, has_scene, night_chance, why), history, news, totals" },
         "race": { "at": "[x,y] optional: meet at the empty lot or surface car park nearest it", "returns": "race id and detail; errors if fewer than two locals with a fast car are free, or no lot pair 0.9-2.4 km apart" },
@@ -3053,7 +3083,7 @@ fn help() -> Value {
         "build_highlight": { "category": "a Build section (power|services|transit|rail|water|attractions), a sub-section (safety, health and education, sanitation, parking, metro, buses...) or a kind (health, police, fire, school, metro_station, coal...): opens the Build window there (a kind also picks it, as a click on its tile) and highlights those buildings on the map with their service areas", "off": "bool: close the Build window (the highlight goes with it)", "note": "no fields: what is highlighted now and the summary (worked out the frame after a change)" },
         "window": { "name": "a tool window: lines|view (or land)|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), new_game, title (the title screen), history (the Game history window); the old report names city|economy|taxes|market|people|power|transit|emergencies|districts|tourism open their City Data tab or page", "open": "bool, omitted toggles", "sub": "with a City Data name: the sub-tab (people's old tab overview|concerns|social works too)" },
         "skyline": { "action": "summary (default) | limit | sites | start | finish | fund", "limit": "limit: the city's height limit in metres, null or 0 for none (also cmd height_limit {limit})", "vertiport_clearance": "limit: bool, keep the approach round the player's vertiports clear (towers there held to 120 m)", "height": "start: metres (else the developer decides: over the record when demand and money allow)", "design": "start: deco_spire|bundled|twist|needle", "at": "start: [x,y] build as near here as a site allows", "force": "start (dev, default true): skip the money, demand, population and downtown tests (height limits and site rules still hold); sites: list every site that passes the limits", "rich": "start: give the developers $2B first", "amount": "fund (dev): dollars to every tower developer (default 1e9)", "limit_rows": "rows of the ranking and sites (default 15)", "returns": "summary: limit_m, vertiport_clearance, classes_m, record_m, tallest_planned_m, population_cap_m, demand, classes (standing/rising), towers (id, name, height_m, league, design, developer, lots, pos, under_construction, progress, rank, homes, jobs), ranking (the tallest standing), records, news, developers (name, capital), totals; inspect {building} has a tower block (height_m, rank, rank_label, height_limit_m; for a league tower league, design, developer, lots, pending_lots, site_m2, floors, started_day, topped_out_day, record_bid, progress, days_left)" },
-        "city_data": { "tab": "city|economy|market|people|services (omitted with open: the page it was on)", "sub": "the tab's sub-tab: city overview|land|districts|skyline|tourism; economy overview|cash_flow|ledger|taxes; market goods|businesses|trade; people population|inequality|concerns|social|favourites; services power|transit|emergencies (omitted: the tab's last one)", "open": "bool; omitted with a tab opens; no fields reports the view and the list of tabs", "scroll": "points from the page's top to scroll to (for screenshots of long pages)", "note": "the full-screen City Data view (J in the game, Esc closes); status.city_data says what it shows" },
+        "city_data": { "tab": "city|economy|market|people|services|directory (omitted with open: the page it was on)", "sub": "the tab's sub-tab: city overview|land|districts|skyline|tourism; economy overview|cash_flow|ledger|taxes; market goods|businesses|trade; people population|inequality|concerns|social|favourites; services power|transit|emergencies; directory businesses|people (omitted: the tab's last one)", "open": "bool; omitted with a tab opens; no fields reports the view and the list of tabs", "scroll": "points from the page's top to scroll to (for screenshots of long pages)", "note": "the full-screen City Data view (J in the game, Esc closes); status.city_data says what it shows" },
         "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" },
         "social": { "days": "daily history to include (default 7)", "talks": "latest conversations to list (default 10)", "group": "optional group id: that group in full, with its members", "note": "people talking: today's and yesterday's conversations, friendships, feuds, fights, meet-ups, jobs and flats through friends, couples moving in; pairs by bond city-wide; every crew and club with momentum, reputation, base and works (gigs, matches, readings, murals, gardens, businesses, petitions, protests); petitions to the player; murals, gardens, gigs; news. inspect {citizen} has a social block (ties with bond and how they met, groups, recent conversations)" }
     });
@@ -3062,6 +3092,8 @@ fn help() -> Value {
     }
     // [mapgen] (out of the literal above: it is at the json! recursion limit)
     // [land]
+    v["commands"]["corps"] = json!({ "action": "summary (default: corps with brand/logo, HQ, holdings by use and industry, staff, housing, market share; campuses; rules; biggest companies vs thresholds) | rules {allowed, max_share 0.02-0.25, levy 0-0.2} | promote {building} (dev: its company becomes a mega-corp now) | buy {corp|building, n} (dev) | finish {corp} (dev: HQ now, sites finished) | drive {corp, lot} (road metres from HQ)" });
+    v["commands"]["campus"] = json!({ "action": "summary (default) | grow {building, days} (dev: run the campus's days with one annex each, sites finished)" });
     v["commands"]["estate"] = json!({ "action": "summary (default: counters, floors histogram, the billionaire gate, elites with their convoys, NIMBY zones, forms, owners) | pressure ({at: [x,y]} for one point, else every busy cell) | spawn_elite (dev: a billionaire now, needs quiet land) | expand {building} (dev: branch or merge now) | buyout {building} (dev) | drive {citizen, to} (dev)" });
     v["commands"]["ownership"] = json!({ "building": "id: what to highlight when it is selected: the owner and every property with its outline (a rich person's other homes and businesses too)" });
     v["commands"]["set_weather"] = json!({ "cloud": "0..1 (rain or snow above 0.6, by climate)", "wind": "0.05..1", "temp_c": "-50..55", "note": "dev: sets the sky now; it drifts again hour by hour" });
@@ -3088,7 +3120,11 @@ fn help() -> Value {
     let planning = json!({
         "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway|Tunnel|Roundabout (Tunnel switches the view underground, the others back to ground)", "elevation": "road tool level for the next point, m (-20..24)", "depth": "underground|ground|sky: the view layer", "draw": "[[x,y,level?],...]: the road being drawn, for its preview", "cursor": "[x,y]: where the pointer stands for the road preview (until the mouse is used)", "diameter": "roundabout 24..240 m", "ring_lanes": "roundabout 1|2|3", "ring_at": "[x,y]: show the roundabout preview there as if hovered (until the mouse is used)", "kind": "sub-mode of the active tool", "mode": "zone tool: polygon|brush|marquee", "radius": "zone brush radius m", "unzone": "bool", "industry": "zone tool sub-zone for industrial land: auto|farming|oil|...", "land_use": "(or none: the brush unzones)", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
         "project": { "action": "list|new|switch|rename|delete|park|start|implement|undo|redo|discard", "id": "project id (default: the active one)", "name": "for new/rename, or to pick a project by name", "note": "several named projects; the active one is edited, the rest previewed dim; implement builds one at a time, the later one wins where two change the same gesture or parcel (warnings in the reply)" },
-        "paint": { "land_use": "residential|...|park, or none to unzone", "at": "[x,y] brush centre", "radius": "m (default the tool's)", "industry": "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech|mining|smelting|factory_farming, the sub-zone set on implement", "rect": "[[x0,y0],[x1,y1]] marquee", "polygon": "[[x,y],...]", "implement": "bool", "note": "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step" }
+        "shore": { "returns": "[waterfront] waterfront lots (vacant ones), their frontage, public beaches (open, bathers now), private jetties, the waterfront trades open (beach resorts, pier restaurants, beach bars, boat rentals, waterfront hotels) and their pressures; whether parcels reach the water" },
+        "beaches": { "returns": "[waterfront] every public beach: access, open (fouled water closes it), note, visitors, swimmers, people_here (the sim's own), draw, capacity, crowded, catchment, appeal (weather and hour), contamination, today's peak and visits" },
+        "jetties": { "returns": "[waterfront] every private jetty: owner, kind (fishing jetty, cargo quay, restaurant pier, boat pontoon), root, tip, berth, water, loads landed and coming" },
+        "waterfront_parcels": { "on": "bool, omitted reads: parcels along a road near the water run down to it (on for new cities; a save from before has it off; lots follow at the next implement)" },
+        "paint": { "land_use": "residential|...|park, beach (a public beach: a park on parcels that run down to the water), or none to unzone", "at": "[x,y] brush centre", "radius": "m (default the tool's)", "industry": "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech|mining|smelting|factory_farming, the sub-zone set on implement", "rect": "[[x0,y0],[x1,y1]] marquee", "polygon": "[[x,y],...]", "implement": "bool", "note": "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step" }
     });
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), planning.as_object()) {
         c.extend(r.clone());

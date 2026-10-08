@@ -9,6 +9,8 @@
 
 pub mod adjacency;
 pub mod air;
+/// [megacorp] Brands on buildings and the university's hall.
+pub mod brand;
 mod civic;
 mod commercial;
 mod construction;
@@ -46,6 +48,10 @@ mod trades;
 mod rural;
 /// [economy] Land side of marinas and fishing ports.
 mod docks;
+/// [waterfront] Beach resorts, waterfront hotels, pier restaurants, beach bars,
+/// boat rentals, public beaches and private jetties.
+pub mod shore;
+pub use shore::{BeachLook, ShoreLook};
 // [dirty-industry] smelters, factory farms, chemical works, stained ground
 pub mod dirty;
 #[cfg(test)]
@@ -289,6 +295,22 @@ pub enum Style {
     /// [supertall] A league tower on its podium (`buildings/supertall.rs`):
     /// its form comes from `nd_sim::towers::Tower::design`.
     Supertall,
+    /// [megacorp] A university's main hall, portico, clock tower and quad.
+    University,
+    // -- [waterfront] the shore's looks (`buildings/shore.rs`), appended so
+    // `ALL` keeps its order. --
+    /// A public beach: sand, towels, umbrellas, a lifeguard tower, bathers.
+    Beach,
+    /// Lobby block, wings stepping down to the water round a lit pool, cabanas.
+    BeachResort,
+    /// A tower with a balcony per room facing the water and a roof pool.
+    WaterfrontHotel,
+    /// A glass pavilion at the water's edge; its deck is its pier.
+    PierRestaurant,
+    /// A thatched shack with a bar, torches and string lights on the sand.
+    BeachBar,
+    /// A kiosk, kayak racks and pedalos; its pontoon is its jetty.
+    BoatRental,
 }
 
 impl Style {
@@ -297,7 +319,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 111] = [
+    pub const ALL: [Style; 118] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -409,7 +431,28 @@ impl Style {
         Style::Feedlot,
         Style::ChemicalWorks,
         Style::Supertall,
+        Style::University,
+        Style::Beach,
+        Style::BeachResort,
+        Style::WaterfrontHotel,
+        Style::PierRestaurant,
+        Style::BeachBar,
+        Style::BoatRental,
     ];
+
+    /// [megacorp] The style a campus annex is drawn in (`None`: a dorm
+    /// keeps the block it was bought as).
+    pub fn for_annex(a: nd_sim::corp::Annex) -> Option<Style> {
+        use nd_sim::corp::Annex;
+        match a {
+            Annex::Admin => Some(Style::Ministry),
+            Annex::Theatre => Some(Style::Cinema),
+            Annex::Sports => Some(Style::Arena),
+            Annex::Frat => Some(Style::McMansion),
+            Annex::Plaza => Some(Style::Plaza),
+            Annex::Dorm => None,
+        }
+    }
 
     /// [land] The style a building's form forces (`nd_sim::estate::Form`);
     /// `None` for merged plots, which keep their kind's own looks.
@@ -457,6 +500,7 @@ impl Style {
             K::Vertiport => Style::Vertiport,
             // [parking] A parking enforcement office: a small station.
             K::ParkingEnforcement => Style::PoliceStation,
+            K::University => Style::University,
         }
     }
 
@@ -534,6 +578,7 @@ impl Style {
             Style::Landmark => "landmark",
             Style::Stadium => "stadium",
             Style::Prison => "jail",
+            Style::University => "university hall",
             Style::Farmstead => "farm",
             Style::OilField => "oil field",
             Style::Refinery => "refinery",
@@ -573,6 +618,12 @@ impl Style {
             Style::Feedlot => "factory farm",
             Style::ChemicalWorks => "chemical works",
             Style::Supertall => "league tower",
+            Style::Beach => "public beach",
+            Style::BeachResort => "beach resort",
+            Style::WaterfrontHotel => "waterfront hotel",
+            Style::PierRestaurant => "pier restaurant",
+            Style::BeachBar => "beach bar",
+            Style::BoatRental => "boat rental",
         }
     }
 }
@@ -1065,6 +1116,8 @@ pub struct Ctx<'a> {
     pub battery: Option<(nd_sim::BatteryKind, f32, f32)>,
     /// [plant-scale] See [`Extras::plant_scale`].
     pub plant_scale: f32,
+    /// [waterfront] See [`Extras::shore`].
+    pub shore: Option<ShoreLook>,
 }
 
 /// Per-building state that changes the look beyond style and condition.
@@ -1125,11 +1178,17 @@ pub struct Extras<'a> {
     pub plant_scale: f32,
     /// [supertall] A league tower: its height and form.
     pub tower: Option<nd_sim::towers::Tower>,
+    /// [megacorp] The owner's brand and where it is shown (`World::brand_mark`).
+    pub brand: Option<nd_sim::corp::BrandMark>,
+    /// [megacorp] A campus annex: its own look (`Style::for_annex`).
+    pub annex: Option<nd_sim::corp::Annex>,
+    /// [waterfront] Where the water is for a lot on it, and a beach's crowd.
+    pub shore: Option<ShoreLook>,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, brand: None, annex: None, shore: None }
     }
 }
 
@@ -1235,6 +1294,13 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
     let mut rng = rng_for(seed, 11);
     match (extras.plant, extras.parking) {
         _ if extras.service.is_some() => Style::for_service(extras.service.unwrap()),
+        // [megacorp] A campus annex has its kind's look; an HQ is a tower.
+        _ if extras.annex.is_some_and(|a| Style::for_annex(a).is_some()) => Style::for_annex(extras.annex.unwrap()).unwrap(),
+        _ if extras.brand.is_some_and(|m| m.role == nd_sim::corp::BrandRole::Headquarters) && land_use == LandUse::Commercial && extras.tower.is_none() => {
+            if seed % 2 == 0 { Style::TwistTower } else { Style::SlabTower }
+        }
+        // [waterfront] A public beach is sand, not a lawn.
+        _ if land_use == LandUse::Park && lot.shore.beach => Style::Beach,
         // [land] McMansions, mansions, mega hotels and museums.
         _ if Style::for_form(extras.form).is_some() => Style::for_form(extras.form).unwrap(),
         // [subway] Before the depot: the Central Station is a bus terminal too.
@@ -1266,6 +1332,8 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
             let options = industry_styles(extras.business.unwrap(), tier).unwrap();
             pick_industry_style(options, extras.neighbours, &mut rng)
         }
+        // [waterfront] A hotel on the water: balconies facing it, a roof pool.
+        (None, None) if extras.business == Some(nd_sim::BusinessKind::Hotel) && lot.shore.is_waterfront() => Style::WaterfrontHotel,
         // [districts] A district's look, then hotels, before the land use's menu.
         (None, None) if !extras.rooftop_pad && extras.look.is_some_and(|l| district::look_styles(l, land_use, tier).is_some()) => {
             let menu = district::look_styles(extras.look.unwrap(), land_use, tier).unwrap();
@@ -1327,6 +1395,11 @@ pub fn industry_styles(kind: nd_sim::BusinessKind, tier: Tier) -> Option<&'stati
         B::Smelter => &[(Style::Smelter, 1.0)],
         B::Feedlot => &[(Style::Feedlot, 1.0)],
         B::ChemicalWorks => &[(Style::ChemicalWorks, 1.0)],
+        // [waterfront]
+        B::BeachResort => &[(Style::BeachResort, 1.0)],
+        B::PierRestaurant => &[(Style::PierRestaurant, 1.0)],
+        B::BeachBar => &[(Style::BeachBar, 1.0)],
+        B::BoatRental => &[(Style::BoatRental, 1.0)],
         B::FishGutting => &[(Style::FishGutting, 1.0)],
         B::FishStickFactory => &[(Style::FishStickFactory, 1.0)],
         B::FishMarket => &[(Style::FishMarket, 1.0)],
@@ -1358,7 +1431,7 @@ pub fn business_look_wins(kind: nd_sim::BusinessKind) -> bool {
     use nd_sim::BusinessKind as B;
     matches!(
         kind,
-        B::Mechanic | B::CarDealer | B::TrashCompany | B::BikeShop | B::CowFarm | B::ChickenFarm | B::Slaughterhouse | B::StripMine | B::Marina | B::FishingPort | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::GolfRange | B::ArtStudio | B::Gallery | B::Smelter | B::Feedlot | B::ChemicalWorks
+        B::Mechanic | B::CarDealer | B::TrashCompany | B::BikeShop | B::CowFarm | B::ChickenFarm | B::Slaughterhouse | B::StripMine | B::Marina | B::FishingPort | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::GolfRange | B::ArtStudio | B::Gallery | B::Smelter | B::Feedlot | B::ChemicalWorks | B::BeachResort | B::PierRestaurant | B::BeachBar | B::BoatRental
     )
 }
 
@@ -1453,6 +1526,7 @@ fn generate_styled_extras(
         dynamic_lights: extras.dynamic_lights,
         battery: extras.battery,
         plant_scale: extras.plant_scale,
+        shore: extras.shore,
     };
     if let Some(progress) = extras.demolition {
         let mut g = generate_styled_extras(lot, land_use, floors, tier, condition, seed, style, rules, palette, &Extras { demolition: None, construction: None, ..*extras });
@@ -1544,6 +1618,7 @@ fn generate_styled_extras(
         Style::Landmark => services::landmark(&mut g, &ctx, &mut rng),
         Style::Stadium => services::stadium(&mut g, &ctx, &mut rng),
         Style::Prison => services::prison(&mut g, &ctx, &mut rng),
+        Style::University => brand::university(&mut g, &ctx, &mut rng),
         Style::Farmstead => industrial::farmstead(&mut g, &ctx, &mut rng),
         Style::OilField => industrial::oil_field(&mut g, &ctx, &mut rng),
         Style::Refinery => industrial::refinery(&mut g, &ctx, &mut rng),
@@ -1587,9 +1662,20 @@ fn generate_styled_extras(
             // A tower without its record (a preview): a plain glass slab.
             None => commercial::slab_tower(&mut g, &ctx, &mut rng),
         },
+        // [waterfront]
+        Style::Beach => shore::beach(&mut g, &ctx, &mut rng, ctx.shore),
+        Style::BeachResort => shore::beach_resort(&mut g, &ctx, &mut rng, ctx.shore),
+        Style::WaterfrontHotel => shore::waterfront_hotel(&mut g, &ctx, &mut rng, ctx.shore),
+        Style::PierRestaurant => shore::pier_restaurant(&mut g, &ctx, &mut rng, ctx.shore),
+        Style::BeachBar => shore::beach_bar(&mut g, &ctx, &mut rng, ctx.shore),
+        Style::BoatRental => shore::boat_rental(&mut g, &ctx, &mut rng, ctx.shore),
     }
     if extras.rooftop_pad && style.pad_capable() && g.pads.is_empty() {
         air::rooftop_deck(&mut g, &ctx);
+    }
+    // [megacorp] The owner's brand: rooftop signs, banners, the HQ crown.
+    if let Some(m) = &extras.brand {
+        brand::decorate(&mut g, &ctx, m);
     }
     if weathered(tier, ctx.wear) {
         g.weather();
@@ -2333,6 +2419,7 @@ mod tests {
             dynamic_lights: false,
             battery: None,
             plant_scale: 1.0,
+            shore: None,
         }
     }
 

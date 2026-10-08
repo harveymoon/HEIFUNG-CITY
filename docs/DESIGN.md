@@ -426,6 +426,43 @@ Citizens are rendered from their simulated positions every frame.
   sailing boats and (large marinas) motor yachts go out 09:00-18:00, a quarter of the berths at
   most, for a short loop on open water that keeps 5 m off the banks; 24 boats at most in all,
   never counted against the freighters and ferries.
+- **The shore** (`nd_sim::shore`, `world/shore.rs`, [waterfront]). *Waterfront lots*: where a
+  street or path runs within 80 m (`zoning::SHORE_REACH`, from its corridor) of a river, lake or
+  the sea, the land past the usual 60 m reach that runs down to the water (and borders the road's
+  own reach, so never the far bank) is parcelled too, and every chunk of land on the water that
+  took some in is cut into lots that run from the road the whole way to the waterline:
+  frontage-wide slices (0.38 of the depth wide, 14-36 m), never rows a lot deep, never halved
+  across. Every parcel and lot knows its frontage on the water and which way it lies
+  (`Lot::shore`, probed 1.5 m outside each edge against the water mask). New cities have it;
+  saves from before keep the parcels they were cut with (lots reshaped under buildings would be
+  pulled down) and can switch it on (`waterfront_parcels`). A waterfront lot carries a land value
+  premium (+0.12 over 55 m at 30 m of frontage). *Waterfront trades* open by pressure on vacant
+  waterfront lots only: beach resorts (lodging: twice a hotel's beds a floor, 1.6x the night;
+  wanted by visitors in town and open beaches, scaled by the beach weather), pier restaurants
+  (dear places to go out; by comfortable adults and visitors), beach bars (by bather-hours) and
+  boat rentals (by visitors and the wealthy near the water); a hotel opening for want of beds
+  takes a waterfront lot first and is drawn as a waterfront hotel. *Public beaches*: a park
+  sub-zone painted on parcels that touch the water; laid out as sand with a boardwalk down
+  towards the water and towel spots (the park's benches, so the seats system crowds it); a
+  landlocked one still gets its park building from the city. It joins the walk graph only
+  through a street or path it fronts or a park next to it (a beach never gates into a private
+  lot; a player path drawn to a gate on its edge joins it too: beaches are `GroundsKind::Beach`
+  grounds, `world/grounds.rs`); a breadth-first walk from its nodes to any pavement or path node is
+  its *access*, and without it nobody goes ("no access"). Each hour: contamination over the sand or 8-50 m off it
+  closes it at 0.2 (reopens under 0.12) with a sign and tape; the crowd is the residents within
+  1.5 km going to their nearest open beach (8% of them at a perfect hour) plus a share of the
+  visitors in town, times the beach weather (`beach_weather`: nothing under 12 °C or in a
+  storm, little under a sky heavy enough to rain, building to a 12-16 h peak, nearly nobody
+  after dark; Arctic beaches stay empty), thinning past its capacity (16 m² a bather). Open
+  beaches lift the land (+0.16 over 240 m; less while shut or unreachable), are tourist sights
+  (`AttractionKind::Beach`; visitors lay their towel on a spot of their own), draw citizens out
+  to the park in the heat (`beach_pull`), and households within 700 m of one used that day gain
+  a little mood at midnight. *Private jetties*: a fishing company or fish works, or a works that
+  ships, on a waterfront lot builds its own small jetty (600) when it has twice that and the
+  water off it is navigable (sea, lake, a river 18 m wide; `plan_jetty`); a cargo quay lands its
+  imports by its own coaster at the sea price five hours on; a pier restaurant's deck and a boat
+  rental's pontoon are jetties too. A fishing jetty is a trawler's berth (the fishing fleet
+  model does not sail it yet).
 - **Golf driving ranges**: a place to go out (`BusinessKind::is_outing`): a night out also
   finds restaurants, ranges, galleries and marina clubhouses on any land use; each charges by
   the hour at its own rate (`tab_factor`). Open 08:00-23:00, floodlit after dark.
@@ -898,6 +935,54 @@ Citizens are rendered from their simulated positions every frame.
   *Garages*: a finished mansion takes the billionaire's supercars beyond the one they drive, a
   McMansion a second car, as real cars in the house's own spaces (`OwnedCar::spare`), never driven,
   sold when the owner is gone.
+- **Mega-corps** (`nd_sim::corp`, `world/corp.rs`, [megacorp]). *Growing into one*: daily (25%
+  roll) the biggest company (an owner record of a firm or a founder, or a lone business) whose
+  holdings take 9,000 a day (last three days' average), employ 30 and number two (or twice the
+  takings and staff in one building) becomes a mega-corp, in a town of 600 people or more, one
+  per 3,000 people, four at most. It gets a coined fictional name (two syllables nobody trades
+  under and a sector word), a brand colour (12, a free one first) and a logo: a shape (circle,
+  ring, hexagon, diamond, triangle, square, chevron) with its initial cut into it, an 11x11
+  pixel mark (`Brand::logo_bitmap`) the renderer, the trucks and the UI all draw the same.
+  *Its day*: it skims 40% of each holding's profit (a till keeps 500) into its purse and pays
+  the player's levy; with no HQ it buys the dearest, most pressed commercial plots downtown it
+  can assemble (up to three touching, 900 m²) and raises a tower there (pressure floors + 10,
+  18..40 floors; hook for feat/supertall: order it as a league tower when the city's height
+  limit allows). It buys up to three things a day nearest its HQ *by road* (one Dijkstra per HQ,
+  cached against the road network's version): businesses in profit (over their last three days) of any kind (a kind it does
+  not own counts as 30% nearer, so it spreads into every industry), blocks of homes for its staff
+  while it has under 0.6 homes a head, and vacant land of any zoning (a branded office, shop,
+  hotel, bar or works on it, a kind it lacks first; at most one buy in four is land). Staff move into its housing (six households a day, nearest their work)
+  and pay 30% less rent. *Balance*: the player caps how much of the town's ordinary buildings
+  one corp may own (8% by default, 2-25%, at least four) and sets a levy (0-20% of its daily
+  takings, booked as business tax) or bans new corps (City Data › Economy › Corporations); a
+  corp over the cap sells its newest holdings, two a day, never the HQ. Its holdings are off the
+  market (developers, the rich and billionaires leave them alone). *On the map*: a lit rooftop
+  sign with the logo on every holding, a facade banner on the taller ones, a smaller banner on
+  staff housing, and on the HQ (a twist or slab tower) two bands of light, a screen wall with the
+  logo on all four sides and a spire; its lorries and vans wear a dark brand-tinted livery with
+  the logo lit on the box (`Livery::Corp`). The inspector shows the owner corp with its logo.
+- **Universities** (`ServiceKind::University`, `world/campus.rs`). Placed under Services
+  (community college, university, institute of technology; 825 m² at least): a stone hall with a
+  portico, a clock tower and a lawn quad. It founds a campus (`OwnerKind::University`, a crest
+  in a free colour). Daily it enrols the town's 18-24 year olds (about two in three, nearest
+  first) up to its places (120/320/800), takes 6 a day tuition, lets students arrive from out of
+  town into free dorm rooms (four a day), claims parks within 336 m as campus plaza (flags in
+  its colour, the crest at the gate, coloured paving bands) and, every other day, grows one
+  annex within 420 m: a first dorm (a block of homes nearby bought as it stands, else a new one
+  on the nearest plot, bought and cleared if need be), then administration offices, a sports
+  centre, a theatre and a frat house, then dorms until 35% of its places are housed and more
+  frats, up to 4/7/12 annexes by tier. Dorm rooms are let only to students (45% off the rent).
+  Offices, theatre and sports centre are the campus's own (special: never sold or rebuilt).
+  *Students* go to class at 09:00 and stay till 15:00; at 20:30 about a third go out to a bar,
+  a pizza place or the campus theatre within 600 m. Pizza places, cafés (bakeries) and bookshops
+  (gadget shops) near campus see 0.05 walk-ins an hour per student (full at the gate, none at
+  600 m), and a new shop or bar within 420 m of a campus with 20 students opens as a pizza
+  place or a bar half the time.
+- **Schools and families** [megacorp]: a household with children takes a home a school covers
+  (coverage 0.3+) when one of its tier is free, and a family living out of reach of any school
+  moves to a covered home of its tier or better (12% a day, while the town has a school); the
+  childless choose as before. A school's land value lift follows its staffing (x0.8 empty to
+  x1.2 full).
 - **Railway** (`RoadKind::Rail`, `nd_sim::rail`): track is a third kind of way in the road
   network, single track 4.8 m wide. A trunk line crosses the map 480 m south of the
   centre from the start, edge to edge and on out of sight; the player lays branches off it with the Road tool's Rail
@@ -2186,6 +2271,29 @@ tab's sub-tabs:
   Trade.
 - **People**: Population, Income and inequality, Complaints and concerns, Social, Favourites.
 - **Services**: Power, Transit, Emergencies.
+- **Directory**: Businesses, People ([directory], `ui/directory.rs`, rows from `directory.rs`).
+
+The Directory lists every business and every person in one table each, with a column per thing
+the player asks of them. Businesses: name, kind (and industry), owner (chain, developer,
+billionaire, founder, mega-corp, university; "independent" when nobody holds it), district, the street it fronts,
+staff of jobs, takings today and yesterday, yesterday's net, cash, rating (stars) and today's
+footfall, and its state (being built, out of business, broke, no staff, open, closed for
+the night). People: name, age, class, income, workplace (or unemployed, child, retired), home and
+its street, household size, mood, health (ill, or how well fed and days hungry), the way they
+have travelled most lately, favourite place, friends, and what they are doing now (working, at
+home, asleep, out, on the move, ill, homeless, arriving, away). A click on a heading sorts by it
+(numbers biggest first), again reverses it, and a painted arrow marks it; values missing (no
+rating yet, no job) sit at the bottom either way and ties go by name. A search box (every word
+must appear in the row's name, kind, owner, street, district, workplace or home) and pickers
+(kind, district and state; class, district and status) narrow it, with a count of the rows shown.
+Cities run to ten thousand people, so the table body is a `ScrollArea::show_rows` that lays out
+only the rows in view (each painted by hand: no widget per cell), under a header that stays put.
+The rows are a snapshot read from the world once every five seconds while the page shows (and
+at once on another city), and the sorted, filtered order is cached beside it, made again only
+when the sort, the filter or the snapshot changes; both live in egui memory with the page's
+settings. A click on a row selects it (the inspector opens over the page); "go" or a double
+click flies there and shows the map. The API's `directory` returns the same rows in the same
+order.
 
 Tools stay floating windows above it, because they are used with the map: the inspector and
 person pane, the Build window, the Lines editor, View (map layers, lighting, graphics, text size),

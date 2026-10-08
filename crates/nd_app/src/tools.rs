@@ -258,6 +258,9 @@ pub struct ToolState {
     /// Zone tool, industrial land: the sub-zone painting sets (a key of
     /// `nd_sim::world::INDUSTRY_CHOICES`; "auto" lets the ground decide).
     pub industry: &'static str,
+    /// [waterfront] Zone tool, parks: paint public beaches (parcels that
+    /// run down to the water) instead of green parks.
+    pub beach: bool,
     /// Road tool: stamp roundabouts instead of drawing roads.
     pub roundabout: bool,
     /// [interchange] Road tool, Interchange preset: two clicks across the
@@ -547,6 +550,7 @@ impl Default for ToolState {
             hover_ground: None,
             rename: None,
             industry: "auto",
+            beach: false,
             roundabout: false,
             interchange: false,
             interchange_refusal: None,
@@ -596,7 +600,20 @@ impl ToolState {
 
     /// The industry sub-zone painting industrial land records.
     pub fn paint_industry(&self) -> Option<&'static str> {
-        (self.land_use == LandUse::Industrial && !self.unzone).then_some(self.industry)
+        if self.unzone {
+            return None;
+        }
+        match self.land_use {
+            LandUse::Industrial => Some(self.industry),
+            // [waterfront] a park painted as a public beach
+            LandUse::Park if self.beach => Some(nd_sim::shore::BEACH_SUBZONE),
+            _ => None,
+        }
+    }
+
+    /// [waterfront] Painting public beaches.
+    pub fn painting_beach(&self) -> bool {
+        self.land_use == LandUse::Park && self.beach && !self.unzone
     }
 }
 
@@ -617,7 +634,8 @@ fn paint_step(sim: &mut Sim, tools: &mut ToolState, ids: &[usize]) {
     let lu = tools.paint_use(stroke.erase);
     if let Some(lu) = lu {
         for &i in ids {
-            if let Some(why) = sim.world.parcel_refusal(i, Some(lu)) {
+            let refusal = if tools.painting_beach() && !stroke.erase { sim.world.beach_refusal(i) } else { sim.world.parcel_refusal(i, Some(lu)) };
+            if let Some(why) = refusal {
                 stroke.refused.insert(i, why);
             }
         }

@@ -22,11 +22,22 @@ impl World {
     /// Beds in a working hotel (0 for anything else).
     pub fn hotel_beds(&self, b: BuildingId) -> u16 {
         let Some(bld) = self.buildings.get(b) else { return 0 };
-        let hotel = bld.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Hotel && !z.closed);
-        if !hotel || !bld.operating() || bld.is_derelict() {
+        // [waterfront] Beach resorts sleep visitors too.
+        let Some(kind) = bld.business.as_ref().filter(|z| z.kind.is_lodging() && !z.closed).map(|z| z.kind) else { return 0 };
+        if !bld.operating() || bld.is_derelict() {
             return 0;
         }
-        bld.floors.max(1) as u16 * tm::beds_per_floor(bld.tier)
+        let beds = bld.floors.max(1) as u16 * tm::beds_per_floor(bld.tier);
+        // A resort's low wings spread over its grounds: rooms by the acre.
+        if kind == BusinessKind::BeachResort { beds * 2 } else { beds }
+    }
+
+    /// [waterfront] What a night costs at this hotel or resort: a resort
+    /// charges over a hotel of its tier for the beach.
+    pub fn night_price_at(&self, b: BuildingId) -> f32 {
+        let Some(bld) = self.buildings.get(b) else { return 0.0 };
+        let resort = bld.business.as_ref().is_some_and(|z| z.kind == BusinessKind::BeachResort);
+        tm::night_price(bld.tier) * if resort { tm::RESORT_PREMIUM } else { 1.0 }
     }
 
     /// Visitors booked into each hotel.
@@ -43,7 +54,7 @@ impl World {
         let guests = self.hotel_guests();
         self.buildings
             .iter()
-            .filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Hotel))
+            .filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind.is_lodging()))
             .map(|(id, _)| (id, self.hotel_beds(id), guests.get(&id).copied().unwrap_or(0)))
             .collect()
     }
@@ -69,6 +80,8 @@ impl World {
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };
             match b.land_use {
+                // [waterfront] Beaches are their own sights (below).
+                LandUse::Park if lot.shore.beach => {}
                 LandUse::Park => {
                     let score = tm::park_score(b.tier, lot.area());
                     if score > 0.0 {
@@ -121,6 +134,20 @@ impl World {
                 let mid = shore.iter().fold(Vec2::ZERO, |a, (_, p)| a + *p) / shore.len() as f32;
                 let at = shore.iter().min_by(|a, b| a.1.distance(mid).total_cmp(&b.1.distance(mid))).map(|(_, p)| *p).unwrap_or(mid);
                 out.push(Attraction { kind: AttractionKind::Coast, name: "the waterfront".into(), pos: at, building: None, score: tm::coast_score(shore.len()) });
+            }
+        }
+        // [waterfront] Public beaches people can reach and swim from, by
+        // their sand and this week's weather (an Arctic beach draws nobody).
+        let season = self.beach_appeal_season();
+        for (bid, s) in &self.shore.beaches {
+            let Some(lot) = self.buildings.get(*bid).and_then(|b| self.lots.get(b.lot)) else { continue };
+            if !s.usable() {
+                continue;
+            }
+            let score = tm::beach_score(lot.area(), season);
+            if score > 0.0 {
+                let pos = lot.park.as_ref().and_then(|p| p.paths.first()).and_then(|w| w.last().copied()).unwrap_or(lot.center);
+                out.push(Attraction { kind: AttractionKind::Beach, name: s.name.clone(), pos, building: Some(*bid), score });
             }
         }
         self.tourism.attractiveness = out.iter().map(|a| a.score).sum();
@@ -269,7 +296,7 @@ impl World {
             };
             let nights = 1 + rng.random_range(0..=tm::MAX_EXTRA_NIGHTS);
             let budget = Tourist::daily_budget(class) * (nights + 1) as f32 * rng.random_range(0.8..1.25);
-            let rooms = tm::night_price(self.buildings[hotel].tier) * (1.0 + self.economy.taxes.tourist_tax()) * nights as f32;
+            let rooms = self.night_price_at(hotel) * (1.0 + self.economy.taxes.tourist_tax()) * nights as f32;
             let start = port.and_then(|p| self.building_entrance(p)).or_else(|| self.building_entrance(hotel)).unwrap_or_default();
             let age = rng.random_range(19..72u8);
             let tourist = Tourist {
@@ -347,7 +374,10 @@ impl World {
             .map(|(id, l)| {
                 let quarter = self.districts.at(l.center).is_some_and(|d| d.commercial == Some(crate::districts::CommercialSpec::Tourist));
                 let pull: f32 = sights.iter().map(|(p, s)| s / (1.0 + p.distance(l.center) / 300.0)).sum();
-                (id, pull + if quarter { 1000.0 } else { 0.0 })
+                // [waterfront] Rooms with a view: a hotel on the water first
+                // (after a tourist quarter), drawn as a waterfront hotel.
+                let view = if l.shore.is_waterfront() { 500.0 + l.shore.frontage } else { 0.0 };
+                (id, pull + view + if quarter { 1000.0 } else { 0.0 })
             })
             .collect();
         lots.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| lot_order(a.0).cmp(&lot_order(b.0))));
@@ -651,6 +681,8 @@ impl World {
             }
             let a = &self.tourism.attractions[pick];
             let (kind, to) = (a.kind, a.pos);
+            // [waterfront] A beach-goer lays a towel somewhere on the sand.
+            let to = if kind == AttractionKind::Beach { self.beach_spot(to, self.tourism.tourists[id].seed) } else { to };
             self.tourist_leg(id, Goal::Sight(kind), to);
             return;
         }
@@ -677,7 +709,9 @@ impl World {
         let mut options: Vec<(BuildingId, f32)> = Vec::new();
         for (id, b) in self.buildings.iter() {
             let Some(z) = b.business.as_ref() else { continue };
-            let wanted = if night { z.kind == BusinessKind::Venue } else { matches!(z.kind, BusinessKind::GadgetShop | BusinessKind::Bakery) || (z.kind == BusinessKind::Venue && hour >= 18) };
+            // [waterfront] the restaurants on piers, beach bars and boat rentals too
+            let shore = matches!(z.kind, BusinessKind::PierRestaurant | BusinessKind::BeachBar) || (!night && z.kind == BusinessKind::BoatRental);
+            let wanted = shore || if night { z.kind == BusinessKind::Venue } else { matches!(z.kind, BusinessKind::GadgetShop | BusinessKind::Bakery) || (z.kind == BusinessKind::Venue && hour >= 18) };
             if !wanted || z.closed || !b.operating() || !b.opening_hours().contains(hour) {
                 continue;
             }
@@ -740,9 +774,9 @@ impl World {
                 continue;
             }
             let hotel = self.tourism.tourists[id].hotel;
+            let price = self.night_price_at(hotel);
             let Some(b) = self.buildings.get_mut(hotel) else { continue };
-            let price = tm::night_price(b.tier);
-            let Some(bz) = b.business.as_mut().filter(|z| z.kind == BusinessKind::Hotel && !z.closed) else { continue };
+            let Some(bz) = b.business.as_mut().filter(|z| z.kind.is_lodging() && !z.closed) else { continue };
             let t = &mut self.tourism.tourists[id];
             let tax = price * rate;
             // Rooms are paid ahead (in their money from the start); a broke

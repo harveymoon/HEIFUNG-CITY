@@ -51,7 +51,7 @@ pub fn citizen_name(rng: &mut impl Rng) -> String {
 }
 
 const CORPS: &[&str] = &[
-    "Arasaka", "Tessier", "Kiroshi", "Halcyon", "Nakatomi", "Oberon", "Vantage", "Zenith",
+    "Aramund", "Vellane", "Koridan", "Halcyon", "Namara", "Oberon", "Vantage", "Zenith",
     "Helix", "Meridian", "Kessler", "Nocturne", "Argent", "Sōma", "Fulcrum",
 ];
 

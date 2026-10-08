@@ -84,6 +84,9 @@ pub enum Item {
     /// Rail track: the Road tool's Rail preset.
     Track,
     Zone(LandUse),
+    /// [waterfront] Paint public beaches on parcels that run down to the
+    /// water (the Zone tool, a park sub-zone).
+    Beach,
     /// Paint districts (the District tool).
     District,
     /// Anything the Buildings tool places (services at their middle tier;
@@ -104,6 +107,7 @@ impl Item {
             Item::Road(l) => l.to_string(),
             Item::Track => "Rail track".into(),
             Item::Zone(LandUse::Park) => "Park".into(),
+            Item::Beach => "Public beach".into(),
             Item::Zone(lu) => lu.label().to_string(),
             Item::District => "Paint districts".into(),
             // [plant-groups] Solar and wind are sized to the lot: no flat MW
@@ -152,7 +156,7 @@ pub struct Group {
 fn service_group(k: ServiceKind) -> &'static str {
     match k {
         ServiceKind::Police | ServiceKind::Fire | ServiceKind::Dispatch | ServiceKind::Jail | ServiceKind::ParkingEnforcement => "Safety",
-        ServiceKind::Health | ServiceKind::School => "Health and education",
+        ServiceKind::Health | ServiceKind::School | ServiceKind::University => "Health and education",
         ServiceKind::TrashDepot => "Sanitation",
         _ => "Other",
     }
@@ -236,7 +240,10 @@ pub fn groups(cat: Cat) -> Vec<Group> {
                 add("Land use", Item::Zone(lu));
             }
         }
-        Cat::Parks => add("Parks", Item::Zone(LandUse::Park)),
+        Cat::Parks => {
+            add("Parks", Item::Zone(LandUse::Park));
+            add("Parks", Item::Beach);
+        }
         Cat::Districts => add("Districts", Item::District),
         Cat::Transit => {
             add("Buses", Item::BusLines);
@@ -286,7 +293,7 @@ pub fn current_item(t: &ToolState) -> Option<Item> {
                 }
             }
         }),
-        Tool::Zone => Some(Item::Zone(t.land_use)),
+        Tool::Zone => Some(if t.beach && t.land_use == LandUse::Park { Item::Beach } else { Item::Zone(t.land_use) }),
         Tool::District => Some(Item::District),
         Tool::Buildings => Some(match t.build {
             Placeable::Rail(f) => Item::RailPiece(f),
@@ -308,6 +315,7 @@ pub fn cat_of(item: Item) -> Cat {
         Item::Road(_) => Cat::Roads,
         Item::Track | Item::RailPiece(_) => Cat::Rail,
         Item::Zone(LandUse::Park) => Cat::Parks,
+        Item::Beach => Cat::Parks,
         Item::Zone(_) => Cat::Zoning,
         Item::District => Cat::Districts,
         Item::BusLines | Item::MetroLines => Cat::Transit,
@@ -319,7 +327,7 @@ pub fn cat_of(item: Item) -> Cat {
 pub fn activate(item: Item, t: &mut ToolState) {
     let tool = match item {
         Item::Road(_) | Item::Track => Tool::Road,
-        Item::Zone(_) => Tool::Zone,
+        Item::Zone(_) | Item::Beach => Tool::Zone,
         Item::District => Tool::District,
         Item::Place(_) => Tool::Buildings,
         Item::RailPiece(_) => Tool::Rail,
@@ -348,6 +356,12 @@ pub fn activate(item: Item, t: &mut ToolState) {
         Item::Zone(lu) => {
             t.land_use = lu;
             t.unzone = false;
+            t.beach = false;
+        }
+        Item::Beach => {
+            t.land_use = LandUse::Park;
+            t.unzone = false;
+            t.beach = true;
         }
         Item::District => {}
         Item::Place(p) => {
@@ -775,6 +789,18 @@ fn icon(painter: &egui::Painter, r: Rect, item: Item, p: &UiCtx, col: Color32) {
         }
         Item::Track => icons::road(painter, r, RoadKind::Rail, 0, 0, col),
         Item::Zone(lu) => icons::land_use(painter, r, lu, zone_color32(p.assets.palette.zone_color(lu))),
+        Item::Beach => {
+            // Sand down to a blue sea, a red and white umbrella.
+            let sand = Color32::from_rgb(222, 196, 140);
+            let sea = Color32::from_rgb(40, 150, 210);
+            let inner = r.shrink(r.width() * 0.12);
+            painter.rect_filled(inner, 4.0, sand);
+            let water = egui::Rect::from_min_max(egui::pos2(inner.min.x, inner.center().y + inner.height() * 0.15), inner.max);
+            painter.rect_filled(water, 4.0, sea);
+            let top = egui::pos2(inner.center().x - inner.width() * 0.1, inner.min.y + inner.height() * 0.2);
+            painter.line_segment([top, egui::pos2(top.x, inner.center().y + inner.height() * 0.1)], egui::Stroke::new(1.5, Color32::from_gray(60)));
+            painter.circle_filled(top, inner.width() * 0.2, Color32::from_rgb(230, 70, 60));
+        }
         Item::District => {
             let c = Color32::from_rgb(220, 90, 200);
             painter.rect_stroke(r.shrink(4.0), 6.0, egui::Stroke::new(2.0, c), egui::StrokeKind::Inside);
@@ -844,6 +870,12 @@ fn info(ui: &mut egui::Ui, p: &mut UiCtx, item: Item, hovered: bool) {
             }
         }
         Item::Track => hint(ui, help::ROAD_RAIL),
+        Item::Beach => {
+            let n = p.sim.world.shore.beaches.len();
+            let open = p.sim.world.shore.beaches.values().filter(|b| b.usable()).count();
+            row(ui, "beaches", format!("{n} ({open} open and reachable) · {} on the sand now", p.sim.world.shore.bathers()));
+            hint(ui, BEACH_NOTE);
+        }
         Item::Zone(lu) => {
             let demand = p.sim.world.economy.demand_for(lu);
             let col = zone_color32(p.assets.palette.zone_color(lu));
@@ -1024,3 +1056,6 @@ mod tests {
         assert!(groups(Cat::Rail).iter().any(|g| g.items.contains(&Item::Track)));
     }
 }
+
+/// [waterfront] What a public beach is, for the Build window.
+pub const BEACH_NOTE: &str = "Public beach: paint it on parcels that run down to the water. People walk to it from a street or path it fronts, or through a park next to it (without one it stays empty: no access). Warm, dry afternoons fill it; cold, rain and night empty it, and Arctic beaches stay deserted. Fouled water from dirty industry closes it. Open beaches lift land value and mood nearby, draw tourists and bring beach bars.";

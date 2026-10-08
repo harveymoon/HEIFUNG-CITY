@@ -83,7 +83,8 @@ impl World {
     /// Rent of the household's home over its income (infinite with no
     /// income), or `None` when it has no home.
     pub fn household_rent_share(&self, hid: HouseholdId) -> Option<f32> {
-        let rent = self.households.get(hid)?.home.and_then(|b| self.buildings.get(b))?.rent;
+        let home = self.households.get(hid)?.home.filter(|b| self.buildings.contains_key(*b))?;
+        let rent = self.rent_due(hid, home);
         let income = self.household_income(hid);
         Some(if income > 0.0 { rent / income } else { f32::INFINITY })
     }
@@ -105,7 +106,8 @@ impl World {
             return;
         }
         let home = hh.home.filter(|h| self.buildings.contains_key(*h));
-        let rent = home.map(|h| self.buildings[h].rent).unwrap_or(0.0);
+        // [megacorp] Staff in company housing and students in dorms pay less.
+        let rent = home.map(|h| self.rent_due(hid, h)).unwrap_or(0.0);
         let income = self.household_income(hid);
         let living: f32 = members.iter().map(|m| if self.citizens[*m].stage() == LifeStage::Child { 10.0 } else { 20.0 }).sum();
         // [tax] Wages are what is left after the standard income tax; a
@@ -156,7 +158,7 @@ impl World {
         }
         // Somewhere to live for those who lost theirs.
         let Some(home) = home else {
-            match self.choose_home(income, None) {
+            match self.choose_home(income, None, self.has_children(hid)) {
                 Some(b) => self.move_household(hid, b, "Found a place at {}."),
                 None => self.economy.housing_demand_by_tier[Self::tier_affordable(income).index()] += 1.0,
             }
@@ -165,7 +167,7 @@ impl World {
         // Stressed: somewhere cheaper first, leaving town only when there is
         // nowhere cheaper and the money has run out.
         if stressed {
-            match self.choose_home(income, Some((home, rent))) {
+            match self.choose_home(income, Some((home, rent)), self.has_children(hid)) {
                 Some(b) => {
                     self.move_household(hid, b, "Rent got too steep. Moved to {}.");
                     self.economy.displaced_total += members.len() as u32;
@@ -189,12 +191,16 @@ impl World {
         // Burdened but not yet stressed: take a cheaper place when one is free.
         if rent > income * AFFORDABLE_SHARE {
             if self.rng.random::<f32>() < 0.25 {
-                if let Some(b) = self.choose_home(income, Some((home, rent))) {
+                if let Some(b) = self.choose_home(income, Some((home, rent)), self.has_children(hid)) {
                     if self.buildings[b].rent <= income * AFFORDABLE_SHARE {
                         self.move_household(hid, b, "Found somewhere cheaper: {}.");
                     }
                 }
             }
+            return;
+        }
+        // [megacorp] A family out of reach of any school moves near one.
+        if self.family_school_move(hid, income) {
             return;
         }
         // The comfortable move up a tier.
@@ -225,17 +231,21 @@ impl World {
     /// rent is at most `AFFORDABLE_SHARE` of it (any building of that tier),
     /// failing that the cheapest one under `RENT_STRESS_SHARE`. With
     /// `cheaper_than`, only homes elsewhere with a lower rent count.
-    pub(super) fn choose_home(&mut self, income: f32, cheaper_than: Option<(BuildingId, f32)>) -> Option<BuildingId> {
+    /// [megacorp] A family (`family`: children in the household) takes one a
+    /// school covers when its tier has one free; dorms and frat houses are
+    /// the university's.
+    pub(super) fn choose_home(&mut self, income: f32, cheaper_than: Option<(BuildingId, f32)>, family: bool) -> Option<BuildingId> {
         let candidates: Vec<(BuildingId, Tier, f32)> = self
             .buildings
             .iter()
-            .filter(|(id, b)| b.land_use == LandUse::Residential && b.operating() && b.free_homes() > 0 && cheaper_than.is_none_or(|(h, r)| *id != h && b.rent < r * 0.95))
+            .filter(|(id, b)| b.land_use == LandUse::Residential && b.operating() && b.free_homes() > 0 && b.annex.is_none() && cheaper_than.is_none_or(|(h, r)| *id != h && b.rent < r * 0.95))
             .filter(|(_, b)| b.rent <= income * RENT_STRESS_SHARE)
             .map(|(id, b)| (id, b.tier, b.rent))
             .collect();
         let comfortable: Vec<(BuildingId, Tier)> = candidates.iter().filter(|(_, _, r)| *r <= income * AFFORDABLE_SHARE).map(|(id, t, _)| (*id, *t)).collect();
         if let Some(best) = comfortable.iter().map(|(_, t)| *t).max() {
             let choices: Vec<BuildingId> = comfortable.iter().filter(|(_, t)| *t == best).map(|(id, _)| *id).collect();
+            let choices = if family { self.family_homes(choices) } else { choices };
             return choices.choose(&mut self.rng).copied();
         }
         candidates.iter().min_by(|a, b| a.2.total_cmp(&b.2)).map(|(id, _, _)| *id)
@@ -599,7 +609,8 @@ impl World {
                 people.push((age, seed, job, income));
             }
             let income: f32 = people.iter().map(|p| p.3).sum();
-            let Some(home) = self.choose_home(income, None) else {
+            let family = people.iter().any(|p| LifeStage::of_age(p.0) == LifeStage::Child);
+            let Some(home) = self.choose_home(income, None, family) else {
                 self.economy.priced_out_total += 1;
                 self.economy.waiting_immigrants = (self.economy.waiting_immigrants + 1).min(60);
                 self.economy.housing_demand_by_tier[Self::tier_affordable(income).index()] += 1.0;

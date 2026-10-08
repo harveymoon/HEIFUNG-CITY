@@ -50,6 +50,9 @@ pub struct WindowRequests {
     pub data_last: HashMap<Tab, Page>,
     /// [city-data] Scroll the page to this many points from its top.
     pub data_scroll: Option<f32>,
+    /// [directory] Settings for the Directory tables (`directory {show}`).
+    pub directory_biz: Option<crate::ui::directory::TableState<crate::directory::BizCol>>,
+    pub directory_people: Option<crate::ui::directory::TableState<crate::directory::PersonCol>>,
 }
 
 /// A tool window by name. The View window was the Land window; its old name
@@ -160,6 +163,12 @@ pub fn apply_window_requests(mut contexts: EguiContexts, mut req: ResMut<WindowR
         Some(DataReq::Open(t)) => crate::ui::city_data::open_at(ctx, t.resolve(ctx)),
         Some(DataReq::Close) => crate::ui::city_data::set_open(ctx, false),
         None => {}
+    }
+    if let Some(s) = req.directory_biz.take() {
+        crate::ui::directory::set_businesses(ctx, s);
+    }
+    if let Some(s) = req.directory_people.take() {
+        crate::ui::directory::set_people(ctx, s);
     }
     if let Some(y) = req.data_scroll.take() {
         crate::ui::city_data::scroll_to(ctx, y);

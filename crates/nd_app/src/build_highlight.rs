@@ -74,7 +74,7 @@ impl Family {
                 ServiceKind::Police => Family::Police,
                 ServiceKind::Fire => Family::Fire,
                 ServiceKind::Health => Family::Health,
-                ServiceKind::School => Family::School,
+                ServiceKind::School | ServiceKind::University => Family::School,
                 ServiceKind::Dispatch => Family::Dispatch,
                 ServiceKind::Jail => Family::Jail,
                 ServiceKind::TrashDepot => Family::Trash,

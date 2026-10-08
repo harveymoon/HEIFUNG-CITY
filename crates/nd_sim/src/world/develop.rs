@@ -164,6 +164,8 @@ impl World {
                 self.splat_contamination(&mut b);
                 // [districts] eco and historic districts lift the land
                 self.splat_districts(&mut b);
+                // [waterfront] beaches, and lots on the water
+                self.splat_shore(&mut b);
                 // [land] NIMBY: the land round a mansion jumps, fading.
                 for n in &self.estate.nimby {
                     b.splat(n.center, n.radius, n.strength);
@@ -314,7 +316,12 @@ impl World {
             }
             // Services reassure, landmarks draw (`services::ServiceKind::land_value`).
             if let Some(s) = bld.service {
-                let (r, w) = s.kind.land_value(s.tier);
+                let (r, mut w) = s.kind.land_value(s.tier);
+                // [megacorp] A good school (well staffed) lifts the homes
+                // round it more than one short of teachers.
+                if s.kind == crate::services::ServiceKind::School && bld.construction.is_none() {
+                    w *= 0.8 + 0.4 * bld.staffing();
+                }
                 if s.kind == crate::services::ServiceKind::Vertiport {
                     // Rotor noise: a nuisance the homes around feel most.
                     b.splat_nuisance(c, r, -w);
@@ -797,6 +804,10 @@ impl World {
             }
             let jobs = b.jobs;
             b.business = Some(Business::new(kind, jobs));
+            // [waterfront] the shore's trades are named for the water
+            if let Some(n) = crate::shore::trade_name(kind, b.seed) {
+                b.name = n;
+            }
         }
         // Nothing opens overnight: the lot becomes a building site first.
         b.construction = Some(Construction::new(Construction::days_for(floors, tier)));
@@ -822,6 +833,10 @@ impl World {
         // [tourism x districts] hotels where visitors lack beds, and the
         // trades a district's policy favours
         if let Some(k) = self.district_business(lot_id, lu, jobs) {
+            return Some(k);
+        }
+        // [megacorp] Pizza places and bars by a busy campus.
+        if let Some(k) = self.campus_business(lot_id, lu) {
             return Some(k);
         }
         if lu == LandUse::Industrial {

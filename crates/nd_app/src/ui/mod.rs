@@ -11,6 +11,8 @@
 pub mod build;
 /// [ferry-routes] A dock's routes and the ship card in the inspector.
 mod ferry;
+/// [waterfront] The inspector's waterfront and beach lines.
+mod shore;
 /// [committee] The Committee window.
 pub mod committee;
 /// [voices] A citizen's diary, on demand.
@@ -19,6 +21,8 @@ mod concerns;
 /// [city-data] The full-screen City Data view: tabs, sub-tabs, pages.
 pub mod city_data;
 mod detail;
+/// [directory] City Data's Directory: every business and person, sortable.
+pub mod directory;
 mod economy;
 /// [districts] The District tool's pane and City Data's Districts and Tourism pages.
 mod districts;

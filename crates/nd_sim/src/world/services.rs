@@ -42,6 +42,7 @@ fn service_floors(kind: ServiceKind, tier: Tier) -> u8 {
         ServiceKind::TrashDepot => [1, 1, 2],
         ServiceKind::Vertiport => [1, 2, 4],
         ServiceKind::ParkingEnforcement => [1, 1, 2],
+        ServiceKind::University => [2, 3, 5],
     };
     f[tier.index()]
 }
@@ -159,7 +160,7 @@ impl World {
                 return Some(e);
             }
         }
-        let needs_street = matches!(what, Placeable::BusDepot | Placeable::ParkingLot(_) | Placeable::CargoHub) || matches!(what, Placeable::Service(k, _) if k.unit_kind().is_some() || k == ServiceKind::Stadium || k == ServiceKind::TrashDepot || k == ServiceKind::ParkingEnforcement);
+        let needs_street = matches!(what, Placeable::BusDepot | Placeable::ParkingLot(_) | Placeable::CargoHub) || matches!(what, Placeable::Service(k, _) if k.unit_kind().is_some() || k == ServiceKind::Stadium || k == ServiceKind::TrashDepot || k == ServiceKind::ParkingEnforcement || k == ServiceKind::University);
         if needs_street && !lot.car_access() {
             return Some(format!("a {} needs a street out front", what.label()));
         }
@@ -189,6 +190,7 @@ impl World {
         let parking = match kind {
             ServiceKind::Stadium => [20, 60, 140][tier.index()],
             ServiceKind::Health | ServiceKind::School => [4, 10, 24][tier.index()],
+            ServiceKind::University => [10, 24, 50][tier.index()],
             _ => [2, 4, 8][tier.index()],
         };
         let id = self.place_special(lot_id, name, kind.jobs(tier), parking, |b| {
@@ -197,6 +199,10 @@ impl World {
             b.floors = floors;
         });
         self.services.rubble.retain(|r| r.0 != lot_id);
+        // [megacorp] A university founds its campus: an owner, a brand.
+        if kind == ServiceKind::University {
+            self.found_campus(id);
+        }
         self.ensure_units(id);
         self.refresh_coverage();
         Ok(id)
@@ -227,7 +233,7 @@ impl World {
 
     /// Where a lot meets the street network: the car point, or the
     /// entrance on its frontage for lots on a path.
-    fn lot_access(&self, lot: &Lot) -> Option<(SegmentId, Vec2)> {
+    pub(super) fn lot_access(&self, lot: &Lot) -> Option<(SegmentId, Vec2)> {
         let (seg, p) = match lot.car_segment {
             Some(s) => (s, lot.car_point),
             None => (lot.front_segment, lot.entrance()),
@@ -1913,7 +1919,15 @@ impl World {
     pub(super) fn drive_unit(&mut self, uid: UnitId, to: (SegmentId, Vec2), siren: bool) -> bool {
         let Some(from) = self.services.units.get(uid).map(|u| u.pos) else { return false };
         let Some((seg, _, q)) = self.roads.nearest_street(from) else { return false };
-        let Some((lanes, s0, s1)) = self.traffic.net.find_route(seg, q, to.0, to.1) else { return false };
+        // A goal just behind on the same street has no route (lanes are one
+        // way): set off from the nearer end of the street instead.
+        let route = self.traffic.net.find_route(seg, q, to.0, to.1).or_else(|| {
+            let (a, b) = self.roads.segment_points(seg);
+            let mut ends = [a, b];
+            ends.sort_by(|x, y| x.distance(q).total_cmp(&y.distance(q)));
+            ends.iter().find_map(|e| self.traffic.net.find_route(seg, *e, to.0, to.1))
+        });
+        let Some((lanes, s0, s1)) = route else { return false };
         let car = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, 0);
         self.traffic.cars[car].siren = siren;
         self.services.by_car.insert(car, uid);

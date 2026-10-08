@@ -78,7 +78,7 @@ const MATCH_DIST: f32 = 12.0;
 const CARRIAGEWAY_DIST: f32 = 45.0;
 
 const STEMS: &[&str] = &[
-    "Neon", "Kowloon", "Lotus", "Harbor", "Ember", "Cinder", "Jade", "Onyx", "Mercury", "Aurora", "Cobalt", "Saffron", "Marrow", "Umbra", "Tessier", "Kessler",
+    "Neon", "Kowloon", "Lotus", "Harbor", "Ember", "Cinder", "Jade", "Onyx", "Mercury", "Aurora", "Cobalt", "Saffron", "Marrow", "Umbra", "Vellane", "Kessler",
     "Okafor", "Volkov", "Tanaka", "Reyes", "Lindqvist", "Nakamura", "Diallo", "Castellano", "Marsh", "Osei", "Haddad", "Nguyen", "Fontaine", "Achebe", "Moreau", "Varga",
     "Delacroix", "Baptiste", "Ferreira", "Chrome", "Signal", "Static", "Velvet", "Copper", "Lantern", "Monsoon", "Silk", "Paper", "Glass", "Iron", "Mill", "Canal",
     "Market", "Foundry", "Station", "Ferry", "Orchard", "Quarry", "Tannery", "Cable", "Relay", "Pylon", "Circuit", "Arcade", "Bazaar", "Pagoda", "Temple", "Garden",
