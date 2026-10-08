@@ -103,7 +103,7 @@ fn district_input(
         }
         return;
     }
-    if !typing && keys.just_pressed(KeyCode::Escape) {
+    if !typing && !flags.data_view && keys.just_pressed(KeyCode::Escape) {
         tools.district.points.clear();
     }
     // The district a stroke paints: the selected one, else a new one.
@@ -228,6 +228,10 @@ fn district_labels(mut contexts: EguiContexts, sim: Res<Sim>, overlays: Res<Over
     // The player's view, not a save-thumbnail camera rendering offscreen.
     let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
     let ctx = contexts.ctx_mut()?;
+    // [city-data] The map is covered: nothing to label.
+    if crate::ui::city_data::is_open(ctx) {
+        return Ok(());
+    }
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("district_labels")));
     for (id, at) in &cache.2 {
         let Some(d) = w.districts.get(*id) else { continue };

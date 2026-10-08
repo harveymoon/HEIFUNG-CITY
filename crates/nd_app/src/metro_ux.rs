@@ -297,6 +297,10 @@ fn station_labels(mut contexts: EguiContexts, sim: Res<Sim>, tools: Res<ToolStat
     }
     let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
     let ctx = contexts.ctx_mut()?;
+    // [city-data] The map is covered: nothing to label.
+    if crate::ui::city_data::is_open(ctx) {
+        return Ok(());
+    }
     let w = &sim.world;
     let full = ctx.viewport_rect();
     // Between the bars (the top bar and the toolbar sit on this layer too).

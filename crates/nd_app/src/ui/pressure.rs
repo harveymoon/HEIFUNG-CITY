@@ -1,4 +1,4 @@
-//! [economy] Business pressure in the HUD: the Economy window's "What the
+//! [economy] Business pressure in the HUD: City Data's Economy, Overview: "What the
 //! city's businesses want" (every pressure with its strength and why, from
 //! `nd_sim::pressure`), and the inspector's "why it's here / how it's
 //! doing" for a business (`World::business_story`).
@@ -7,7 +7,8 @@ use bevy_egui::egui::{self, Color32};
 use nd_sim::pressure::{Pressure, PressureKind};
 use nd_sim::{BuildingId, World};
 
-use super::{hint, section, GOLD, IVORY, WARN};
+use super::pane::heading;
+use super::{hint, GOLD, IVORY, WARN};
 
 const GOOD: Color32 = Color32::from_rgb(110, 200, 140);
 
@@ -79,26 +80,9 @@ fn capital(s: &str) -> String {
     }
 }
 
-/// The compact Economy window's short list: what is wanted now.
-pub fn compact(ui: &mut egui::Ui, w: &World) {
-    section(ui, "WHAT THE CITY'S BUSINESSES WANT");
-    if w.pressure.readings.is_empty() {
-        hint(ui, "Read at midnight: tow companies, repair shops, dealers, trash firms, bike shops and more open where the city needs them.");
-        return;
-    }
-    let list = sorted(w);
-    let hot: Vec<&&Pressure> = list.iter().filter(|p| p.strength > 0.0).take(4).collect();
-    if hot.is_empty() {
-        hint(ui, "Nothing wanted: every trade the city calls for is there.");
-    }
-    for p in hot {
-        row(ui, p, false);
-    }
-}
-
-/// The expanded section: every pressure, why, and the scene around it.
-pub fn expanded(ui: &mut egui::Ui, w: &World) {
-    section(ui, "WHAT THE CITY'S BUSINESSES WANT");
+/// Economy, Overview: every pressure, why, and the scene around it.
+pub fn wanted(ui: &mut egui::Ui, w: &World) {
+    heading(ui, "What the city's businesses want");
     hint(ui, "Each trade is opened by a cause in the city. Strength is the unmet need: a full bar is one business more than stands. One opens when a pressure holds two days and a lot suits it; one that cannot pay its way closes like any other, and its kind waits a while.");
     if w.pressure.readings.is_empty() {
         hint(ui, "No reading yet: the first comes at midnight.");

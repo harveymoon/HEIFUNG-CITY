@@ -227,7 +227,7 @@ Citizens are rendered from their simulated positions every frame.
   Wear is kept per segment with each piece's midpoint, so road works carry it to the pieces that
   are still there and new road starts smooth (`RoadCondition::remap`). At midnight the crews work
   down a queue of pieces worn past 0.3 until the day's allowance is spent: the allowance is the
-  funding level (0-150%, the Taxes window's Road maintenance slider, default 100%) times what the
+  funding level (0-150%, City Data's Economy › Taxes Road maintenance slider, default 100%) times what the
   network needs to stand still (lane-metres x 0.033 a day); resurfacing costs 6 per lane-metre per
   unit of wear and leaves the piece like new; the job the money runs out on is patched part way.
   The queue is honest about whose street gets fixed: priority is wear x (0.35 + 1.3 x land
@@ -375,7 +375,7 @@ Citizens are rendered from their simulated positions every frame.
   - *artists' studios* and *galleries* (the art scene, below).
   - *marina* (advice only: the player builds them): wealthy households within 900 m of the
     water / 150.
-  The Economy window's "What the city's businesses want" lists every pressure with its bar,
+  City Data's Economy › Overview "What the city's businesses want" lists every pressure with its bar,
   `have` and `wanted`, why, and why nothing opens when it is held (cooling down, no lot, a
   player-placed kind). The inspector says why a business is where it is (its `origin`, or for
   the market's picks what picked it) and how it is doing (paying its way, struggling, days in
@@ -890,7 +890,7 @@ Citizens are rendered from their simulated positions every frame.
   value: +0.16 within 240 m of an entrance. Upkeep (stations, tunnels, runs) is booked at midnight
   under "subway upkeep". The Underground view draws the bores with track and a lit strip in the
   line's colour, island platforms, the shafts up to the entrances and the trains
-  (`nd_procgen::metro`, `render/subway.rs`); the Transit window and the inspector show lines,
+  (`nd_procgen::metro`, `render/subway.rs`); City Data's Services › Transit and the inspector show lines,
   timetables and boardings per station.
   - **Loops** (`MetroLine::looped`): a line closed back on its first station (three stations or
     more; `add_metro_line` takes the first station again at the end as a loop). Its tunnel
@@ -970,7 +970,7 @@ Citizens are rendered from their simulated positions every frame.
   0), smog at the fence (coal 1, geothermal 0.15) and noise while running (coal 68 dB(A) down to
   solar 38; batteries 40-48). `World::plant_rows` puts each plant's and battery's output, 24-hour
   mean, upkeep, cost per MWh (upkeep over the last 24 hours' energy), CO2, smog and noise in one row
-  for the Power window and the API; `nd_sim::history` keeps a per-plant record (`PlantLog`: 72
+  for City Data's Services › Power and the API; `nd_sim::history` keeps a per-plant record (`PlantLog`: 72
   hours of output, a battery's charge, 90 days of energy). The treasury starts at 60,000, takes 12% of
   incomes and 5% of business revenue each day (the standard rates; see Taxes), and pays plant upkeep
   and imported power.
@@ -1000,7 +1000,7 @@ Citizens are rendered from their simulated positions every frame.
   decided elsewhere; `Services::arrests_of`, `jail_occupancy`, `SimEvent::Arrested/Released` report
   back. Every incident keeps a record (place, crime kind, people and their roles and where they were
   taken, unit and whether it came from out of town, fee, fire damage per building), the last 500
-  resolved ones on file, shown live in the Emergencies window and by the `incidents` API command.
+  resolved ones on file, shown live in City Data's Services › Emergencies and by the `incidents` API command.
   Services draw from their own random stream so the rest of the simulation is not perturbed.
 - **Lights and sirens, and car chases** (`traffic/siren.rs`, `world/chases.rs`): drivers up to
   60 m ahead of an emergency vehicle on its lane or the next lane of its route (and oncoming drivers
@@ -1022,7 +1022,7 @@ Citizens are rendered from their simulated positions every frame.
   it (4.6 m centre to centre at any substep) ends it, the suspect stops, gets out and is arrested,
   the car left at the kerb; more than 280 m apart for 6 minutes or 60 minutes in, they are lost and
   drive home. Each chase is on its incident (`Incident::chase`: vehicle, metres, closest, result),
-  counted in `ServiceStats::chases_*`, shown in the Emergencies window and by `incidents`/`report`.
+  counted in `ServiceStats::chases_*`, shown in City Data's Services › Emergencies and by `incidents`/`report`.
 : the rich fly. Vertiports are placed under Transit (drone pad /
   vertiport / skyport: 2 / 4 / 6 landing slots, decks at 0.4 / 7 / 15 m); rooftop pads are rare: a high-tier
   tower of 9+ floors on land worth 0.8+ qualifies when 8+ rich adults would fly from it (its own in full,
@@ -1073,7 +1073,7 @@ Citizens are rendered from their simulated positions every frame.
   missed riders and the money buys one cab per 8 missed (420 each, up to 4 a night and 20 in all);
   one whose cabs gave under 1.5 rides each and missed nobody sells one. A rider who has booked
   makes no other plans until the cab comes or they give up. On the demo city (day 24) one company
-  ran 11 cabs, about 120 rides a day, 2 to 3% of trips, most of its trade in the evening and night. Transit window and `report.transit.taxis`.
+  ran 11 cabs, about 120 rides a day, 2 to 3% of trips, most of its trade in the evening and night. Services › Transit and `report.transit.taxis`.
 - **Cargo hubs** (`nd_sim::cargo_hub`, `world/cargo_hubs.rs`): a freight terminal the player places
   (Buildings, Rail: 9,000, 140/day, 24 jobs, on a lot of 900 m² or more with a street, not homes or
   parks), run by the city. Businesses within 1.8 km of a working hub import through it
@@ -1088,7 +1088,7 @@ Citizens are rendered from their simulated positions every frame.
   so any lorry nearby may park there too. Exports through a hub earn 6% more and leave in semis of
   80 units. A 3% handling fee is the hub's income. A hub that closes or is bulldozed sends what it
   holds on to the buyers, and readdresses loads still at yards, ports, on trains or ships to them:
-  nothing is lost. Transit window and `report.transit.cargo_hubs`.
+  nothing is lost. Services › Transit and `report.transit.cargo_hubs`.
 - **Crime, the street and the bins** (`nd_sim::{crime, homeless, trash}`, hooked in from
   `world/society.rs`, their own random stream). *Crime*: every hour each adult may turn, by class
   (poor 1, middle 0.22, rich 0.04), being jobless (x2.5) or homeless (x1.6), hunger, unhappiness,
@@ -1137,7 +1137,7 @@ Citizens are rendered from their simulated positions every frame.
   sign density: the strip is dark walls under pink and cyan signs, the campus white and glass, the
   market brick under red lanterns, the old town brick and amber. The Districts layer washes each
   district's cells in its colour with a bright border and its name and policy over the map; the
-  Districts window lists every district's figures (area, buildings by tier, homes and residents,
+  City Data's City › Districts lists every district's figures (area, buildings by tier, homes and residents,
   jobs, land value, rent, hotels and beds, visitors staying, pull) with the policy editor.
 - **Tourism** (`nd_sim::tourism`, `world/tourism.rs`): attractions are re-read every two hours:
   monuments and stadiums by tier, mid and high tier parks by area, open venues, landmark districts
@@ -1156,9 +1156,9 @@ Citizens are rendered from their simulated positions every frame.
   each pays the night to the hotel plus a 12% tourist tax to the treasury (ledger "tourist tax"). On
   the last day they leave the way they came. Visitors are not citizens: no home, job, rent or mind;
   they are drawn with the citizens' figure generator with a daypack and a camera. All of it rolls on
-  its own seeded streams. The Districts window and the `tourism` API show attractiveness, demand,
+  its own seeded streams. City › Districts and City › Tourism and the `tourism` API show attractiveness, demand,
   arrivals by mode, beds, the turned away, spending by hotels / shops / venues and the tax.
-- **Taxes** (`nd_sim::tax`, `world/taxes.rs`, the Taxes window): a rate per line, collected at
+- **Taxes** (`nd_sim::tax`, `world/taxes.rs`, City Data's Economy › Taxes): a rate per line, collected at
   midnight: incomes by the tier of the home (three lines, 12% standard, up to 40%), business takings
   by kind (grocers, bakeries, gadget shops, private car parks; nightlife by tier; each industry
   sub-zone; 5% standard, up to 30%); offices and the city's own businesses stay at 5%. Wages and
@@ -1446,7 +1446,7 @@ passion in common form groups that make things in the city.
   stack), a note over a venue while a band plays and a fist over a protest; murals and gardens.
   The person pane lists friends and foes (clickable, coloured by bond, how and when they met),
   their groups and recent conversations ("talked rent with Mara Okafor at The Blue Lantern:
-  agreed"). The People window's Social tab has the day's counts, a friendships chart, pairs by
+  agreed"). City Data's People › Social has the day's counts, a friendships chart, pairs by
   bond, every group (members, base, works, momentum) and petitions to the player; social news
   toasts.
 - **Determinism**: every roll is a hash of the pair, the tick and a salt; the world's random
@@ -1918,7 +1918,8 @@ trait MindProvider {
   key opens the window at its section. Items come from the sim's `BuildCategory::items()`, so a
   new placeable appears without UI changes (and gets a thumbnail).
 - **Map layers**: see Rendering; the top bar's Layer button is the core control, the View window
-  (once Land) also has lighting, land value and the dim-projects and bus-line switches.
+  (once Land) also has lighting and the dim-projects and bus-line switches; land value and rents
+  are City Data's City › Land and rent.
 - **Saves and the title screen** (`ui/saves.rs`, `ui/title.rs`): Saves, Save as writes
   `saves/<name>.ron` (the name made file-safe), a sidecar `<name>.meta.json` (name as typed, day,
   population, treasury, buildings, landscape, city name, game id) and a top-down picture
@@ -1944,20 +1945,40 @@ trait MindProvider {
   after the one reverted to stay, so a revert can be undone. The newest 24 unmarked entries of a
   game are kept; marked ones are never pruned.
 
-## Info windows: compact and expanded
+## City Data: one full-screen view for the reports
 
-Every info window (City, Economy, Market, People, Power, Transit, Emergencies, View) has two
-views behind one control: the corner-marks button at the right of the window's own header,
-beside close, the same widget in the same place on every window (`ui/pane.rs`). The *compact*
-view is the summary that sits beside the map; the *expanded* view is a large window (820 by 680
-to start, resizable) with charts over time and the detail behind each figure. Only one window is
-expanded at a time: expanding another puts the first back, so the map is never buried under two
-big panels. Saves, Help and Dev are tools, not reports, and stay compact.
+Every report on the city lives in one place, the City Data view (`ui/city_data.rs`): the top
+bar's City Data button or J opens it, Esc or its close button shuts it, and clicking the treasury
+(Economy › Cash flow), the population (People › Population) or the power warning (Services ›
+Power) in the top bar opens that page. It fills the map area between the top bar and the
+toolbar, opaque, and does not move or resize; the game keeps running behind it, and the map's
+labels, pins, bubbles, legend and hover cards stand down while it is up. A row of tabs, then the
+tab's sub-tabs:
 
-Every expanded view follows one pattern, top to bottom: a range picker (72 h, 7, 30, 90 days,
-all), a row of headline figures, charts over the range (hover a day for every series' value),
-then a table with a row per thing (plant, bus line, good, business kind, ledger item), then the
-compact view's figures so nothing goes missing.
+- **City**: Overview, Land and rent, Districts, Tourism.
+- **Economy**: Overview (treasury, today so far, what the businesses want), Cash flow (flows by
+  day, yesterday's books as signed bars), Ledger (the itemised drill-down), Taxes (the take,
+  then the rates and tolls).
+- **Market**: Goods and prices, Businesses (how each kind pays, demand for new buildings),
+  Trade.
+- **People**: Population, Income and inequality, Complaints and concerns, Social, Favourites.
+- **Services**: Power, Transit, Emergencies.
+
+Tools stay floating windows above it, because they are used with the map: the inspector and
+person pane, the Build window, the Lines editor, View (map layers, lighting, graphics, text size),
+Saves, Help, Dev, New game. A name clicked on a page selects it (the inspector opens over the
+page); a "go" or a follow closes the view so the player sees where the camera went. The page
+showing and each tab's last sub-tab live in egui memory for the session; the API's `city_data`
+and the old `window` names reach the same pages.
+
+Every page has the same furniture (`ui/pane.rs`), top to bottom: a title and one line on what
+the page is for, a row of headline figures as cards, then sections under one kind of heading
+(the display face over a hairline), charts full width with the legend under them (hover a day
+for every series' value), tables with the same striped rows and caption headings, and labelled
+figures in a fixed label column. One range picker (72 h, 7, 30, 90 days, all) sits at the right
+of the sub-tab row on pages that chart history, shared by all of them.
+
+What the pages chart:
 
 - **Economy**: treasury over time (hourly for 72 h); income and spending by flow as diverging
   stacked bars per day with the net as a line; the ledger line by line, each flow opening onto
@@ -1965,24 +1986,23 @@ compact view's figures so nothing goes missing.
   car park, help from the next town, less the hospital bills patients paid; transit upkeep by
   depot, port and the bus fleet; plant upkeep by plant; fares by line and station; construction
   by what was built), with a note of what each flow includes and buttons that fly to the
-  building; the tax take by class and land use; trade. A taxes section (rates per sub-type) slots
-  in after the tax take as one more section function.
+  building (Ledger); the tax take by class and land use, then the rates (Taxes).
 - **People**: population, households, employed, unemployed, unhoused and waiting over time; the
-  class mix stacked; Gini over time. The compact view keeps a 30-day population sparkline.
+  class mix stacked; Gini over time.
 - **Power**: the last 72 hours' supply stacked by source above the axis (each kind of plant,
   batteries delivering, imports) and where a surplus went below it (into the batteries, exported),
   under a demand line; the batteries' stored MWh against capacity with charging and delivering MW;
   energy per day the same way; money for power per day (export income, import cost, upkeep);
   brownout hours and peak demand; a table of plants and batteries (output now and 24-hour mean,
   upkeep, cost per MWh, CO2 a day, smog, noise; batteries' charge and flow) and a 72-hour chart per
-  plant (output against nameplate) and per battery (stored MWh and flow). The compact view has the
-  hour's balance, the batteries' fill and the same table, narrower.
+  plant (output against nameplate) and per battery (stored MWh and flow).
+  The page ends with the hour's balance, the batteries' fill, costs, the next 24 hours and the weather.
 - **Transit**: riders per day by mode; riders per bus line; fares against upkeep; who is waiting
   and riding hour by hour; a table of lines with today, yesterday, the average and fares.
 - **City**: homes and jobs (built and filled), buildings and sites, vehicles on the road by hour.
   **Market**: trade, businesses and deals, demand by land use, every good's price against its
-  base, how each kind of business pays. **View**: land value and rents by tier over time, lots by
-  land use. **Emergencies**: calls per day by kind, response time, unanswered and out-of-town calls.
+  base, how each kind of business pays. **City › Land and rent**: land value and rents by tier over
+  time, lots by land use. **Emergencies**: calls per day by kind, response time, unanswered and out-of-town calls.
 
 The numbers come from the sim, not the app. `nd_sim::history` keeps a daily ring (365 days) and
 an hourly ring (72 hours) inside `Economy`, so they are in the save and charts survive a load; a
@@ -2025,7 +2045,7 @@ calm self when anger has moved them). Everyone else aboard is a portrait grid: a
 anyone the sim says rides in the vehicle (`ui::occupants`, the one place a car's passenger list
 plugs in).
 
-The Lines window (top bar, or "Lines" in the Transit window and on a bus) lists every bus line
+The Lines window (top bar, or "Lines" in City Data's Services › Transit and on a bus) lists every bus line
 with riders today and yesterday; picking one shows it on the map and opens its strip diagram: each
 stop in running order, named after the nearest building, with boardings and alightings today
 (yesterday on hover), and between stops the leg's length and minutes, timed by the buses where
@@ -2060,7 +2080,7 @@ legs it changed. Nothing here draws random numbers.
   screen, and a button in the person pane. Either selects the building. Multiple homes have no
   data yet; when they do, `holdings_of` lists them and they get pins with no UI change.
 - **Favourites** wear gold in the world: a ring and a diamond over the head, and a gold box round
-  the car they drive or ride in and their parked car (`marks.rs`). The People window's list has
+  the car they drive or ride in and their parked car (`marks.rs`). City Data's People › Favourites has
   go (a smooth flight), follow and a "$" gift.
 - **Gift**: `World::gift` moves money (the button gives $1000) from the treasury to the
   household, or the savings of someone without one. It is booked as the `Gifts` flow, itemised

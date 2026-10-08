@@ -349,6 +349,10 @@ pub fn plot_hover_label(mut contexts: bevy_egui::EguiContexts, hover: Res<PlotHo
     };
     let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
     let ctx = contexts.ctx_mut()?;
+    // [city-data] The map is covered: nothing to label.
+    if crate::ui::city_data::is_open(ctx) {
+        return Ok(());
+    }
     let Ok(v) = camera.world_to_viewport(gt, Vec3::new(at.x, sim.world.ground_height(at), at.y)) else { return Ok(()) };
     let v = crate::ui::theme::to_points(ctx, v);
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("plot_hover_label")));
