@@ -718,6 +718,20 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
             let vents = (len / 150.0).floor() as i32;
             for k in 1..=vents {
                 let p = a.lerp(b, k as f32 / (vents + 1) as f32);
+                // Not on a way crossing over the bore: the shaft head stood
+                // in the lanes of the street above it.
+                let on_way = roads.segments_in_box(p - Vec2::splat(30.0), p + Vec2::splat(30.0)).any(|o| {
+                    let os = roads.segment(o);
+                    if o == sid || os.tunnel || !os.alive {
+                        return false;
+                    }
+                    let (oa, ob) = roads.segment_points(o);
+                    let reach = os.half_width() + if os.is_street() && !os.fronts_nothing() { nd_sim::zoning::SIDEWALK } else { 0.5 } + 2.2;
+                    nd_sim::roads::project_on_segment(p, oa, ob).1.distance(p) < reach
+                });
+                if on_way {
+                    continue;
+                }
                 let gz = world.ground_height(p);
                 g.part(Surface::Concrete).boxed(Vec3::new(p.x, gz + 1.2, p.y), Vec3::new(3.0, 2.4, 3.0), -yaw, wall);
                 g.part(Surface::Metal).boxed(Vec3::new(p.x, gz + 2.5, p.y), Vec3::new(2.6, 0.25, 2.6), -yaw, rgba(mul(steel, 0.6)));
@@ -930,7 +944,12 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
         let (a, b) = roads.segment_points(sid);
         let za = world.road_z.get(seg.a.0 as usize).copied().unwrap_or(0.0);
         let zb = world.road_z.get(seg.b.0 as usize).copied().unwrap_or(0.0);
-        let hw = seg.half_width() + if seg.is_street() { nd_sim::zoning::SIDEWALK * 0.5 } else { 0.4 };
+        // The deck carries the pavements (a highway's or ramp's, its
+        // shoulders and barriers), with the parapet at its outer edge, as a
+        // viaduct's: it was half a pavement narrower, so the parapet's rail
+        // ran down the middle of the pavement.
+        let motorway = seg.is_motorway() || seg.ring;
+        let hw = seg.half_width() + if seg.is_street() && !motorway { nd_sim::zoning::SIDEWALK } else { 0.6 };
         let a3 = Vec3::new(a.x, za - 0.05, a.y);
         let b3 = Vec3::new(b.x, zb - 0.05, b.y);
         g.part(Surface::Concrete).slab(a3, b3, hw * 2.0, 1.4, rgba(concrete));
