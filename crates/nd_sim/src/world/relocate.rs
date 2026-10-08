@@ -63,6 +63,15 @@ impl World {
         }
         let owner = b.plot.owner.filter(|o| self.estate.owners.get(*o).is_some_and(|o| o.kind != OwnerKind::Developer));
         let staff: Vec<CitizenId> = b.workers.iter().copied().filter(|c| self.citizens.get(*c).is_some_and(|c| c.work == Some(bid))).collect();
+        // Its old address by the nearest neighbour still standing.
+        let from_words = self
+            .buildings
+            .iter()
+            .filter(|(id, x)| *id != bid && x.construction.is_none() && x.demolition.is_none())
+            .filter_map(|(_, x)| self.lots.get(x.lot).map(|l| (l.center.distance(from), x.name.as_str())))
+            .filter(|(d, _)| *d < 150.0)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map_or_else(|| "its old place".to_string(), |(_, n)| format!("its old place next to {n}"));
         let m = Moving {
             business: z.clone(),
             name: b.name.clone(),
@@ -73,6 +82,7 @@ impl World {
             owner,
             staff,
             why: why.to_string(),
+            from_words,
             since_tick: self.clock.tick,
         };
         self.estate.moving.push(m);
@@ -124,7 +134,8 @@ impl World {
         let lot = self.relocation_lot(m)?;
         let new = self.build_on_named(lot, Some(m.business.kind), Some(m.name.clone()))?;
         let to = self.lots[lot].center;
-        let from_words = format!("{}, after {}", self.street_name_near(m.from), m.why);
+        let old = if m.from_words.is_empty() { "its old place".to_string() } else { m.from_words.clone() };
+        let from_words = format!("{old}, {:.0} m away, after {}", to.distance(m.from), m.why);
         let mut z = m.business.clone();
         z.money -= cost;
         z.broke_days = 0;
@@ -135,6 +146,7 @@ impl World {
         z.fleet_trucks = 0;
         z.fleet_log.clear();
         z.moved_from = Some(from_words.clone());
+        z.origin = Some(format!("Moved here after losing its old building to {}.", m.why));
         z.rehire = m.staff.clone();
         let owner_cid = z.owner;
         self.buildings[new].business = Some(z);

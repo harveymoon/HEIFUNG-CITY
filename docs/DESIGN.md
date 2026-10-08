@@ -636,9 +636,9 @@ Citizens are rendered from their simulated positions every frame.
 - **Parking businesses**: [parking-market] when drivers circle where the lots are full, a resident
   opens another (`world/parking.rs::maybe_open_parking`): the trigger is four drivers circling today
   (three while the town's parking businesses cover their costs 1.3x, ten while they lose money); the
-  spot is the concerns' Parking hotspot of the last three days (else the last driver who gave up);
+  spot is the concerns' Parking hotspot of the last three days, then where the last driver gave up;
   nothing opens while the lots within 220 m were under 85% full at their busiest, within 150 m of a
-  lot opened in the last two days, or once paid spaces reach half the town's cars. The founder is a
+  lot opened in the last two days, or once paid spaces match the town's cars (60 at least). The founder is a
   grown-up within 1.5 km who can pay (300 for a surface lot, 1,200 for a car park), who owns it; with
   nobody able, an operator from out of town comes only for three times the trigger. Every parking
   business sets tomorrow's fee at midnight by its busiest moment (`Building::parking_peak`): 85%

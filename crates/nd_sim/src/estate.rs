@@ -493,6 +493,10 @@ pub struct Moving {
     pub staff: Vec<CitizenId>,
     /// "road works", "a developer's rebuild", ...
     pub why: String,
+    /// Where it stood, in words, taken when it packed up ("next to Lucky
+    /// Bodega"), while the old neighbours still stood.
+    #[serde(default)]
+    pub from_words: String,
     pub since_tick: u64,
 }
 

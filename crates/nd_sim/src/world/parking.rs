@@ -121,16 +121,41 @@ impl World {
         self.concerns.hotspot(crate::concerns::Concern::Parking, self.clock.day(), 3).map(|(p, _)| p).or(self.economy.parking_shortage_at)
     }
 
+    /// [parking-market] The vacant lot a new parking business would take
+    /// for trouble at `at`: none while the lots round it had room at their
+    /// busiest (drivers circle for the kerb, not for want of spaces) or one
+    /// opened near it these two days; else the nearest vacant lot within
+    /// 220 m on ground that is not dear, not a park or civic site.
+    pub fn parking_site_near(&self, at: Vec2, vacant: &[LotId]) -> Option<LotId> {
+        if self.parking_fill_near(at, 220.0).is_some_and(|f| f < PARKING_FULL) {
+            return None;
+        }
+        let tick = self.clock.tick;
+        let fresh = self.buildings.values().any(|b| b.is_parking() && tick.saturating_sub(b.built_tick) < 2 * 1440 && self.lots.get(b.lot).is_some_and(|l| l.center.distance(at) < PARKING_SPACING));
+        if fresh {
+            return None;
+        }
+        vacant
+            .iter()
+            .copied()
+            .filter(|&l| self.lots.get(l).is_some_and(|lot| lot.building.is_none() && !matches!(lot.land_use, LandUse::Park | LandUse::Civic)))
+            .filter(|&l| Tier::for_land_value(self.land_value.at(self.lots[l].center)) != Tier::High)
+            .map(|l| (self.lots[l].center.distance(at), l))
+            .filter(|(d, _)| *d <= 220.0)
+            .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+            .map(|(_, l)| l)
+    }
+
     /// [parking-market] Where drivers circle and the parking there is full,
     /// someone opens more: a resident with the savings to build it (a
     /// surface lot or a car park, by the land), on the vacant lot nearest
     /// the trouble. The trigger is drivers circling today
     /// ([`PARKING_CIRCLING`], fewer while the town's parking businesses pay
     /// well, more while they lose money); the spot is where the concerns
-    /// heard about parking most these three days (else the last driver who
-    /// gave up). Nothing opens while the lots near the spot had room at
+    /// heard about parking most these three days, then where the last driver
+    /// gave up. Nothing opens while the lots near the spot had room at
     /// their busiest, within [`PARKING_SPACING`] of a lot opened these two
-    /// days, or when the town's paid spaces already reach half its cars.
+    /// days, or once the town's paid spaces match its cars ([`PARKING_MIN_CAP`] at least).
     /// True if one opened.
     pub(super) fn maybe_open_parking(&mut self, vacant: &[LotId]) -> bool {
         let circling = self.economy.parking_street_today;
@@ -147,33 +172,15 @@ impl World {
         if (self.clock.tick / self.config.development_interval.max(1)) % 3 != 0 {
             return false;
         }
-        let Some(at) = self.parking_trouble_spot() else { return false };
-        // The lots round the spot had room: drivers circle for the kerb, not
-        // for want of spaces.
-        if self.parking_fill_near(at, 220.0).is_some_and(|f| f < PARKING_FULL) {
-            return false;
-        }
-        let tick = self.clock.tick;
-        let fresh = self.buildings.values().any(|b| b.is_parking() && tick.saturating_sub(b.built_tick) < 2 * 1440 && self.lots.get(b.lot).is_some_and(|l| l.center.distance(at) < PARKING_SPACING));
-        if fresh {
-            return false;
-        }
         let paid: u32 = self.buildings.values().filter(|b| b.is_parking()).map(|b| b.parking_capacity as u32).sum();
         if paid as usize >= self.vehicles.cars.len().max(PARKING_MIN_CAP) {
             return false;
         }
-        // The vacant lot nearest the trouble, on land that is not precious
-        // and not a park or civic site.
-        let mut candidates: Vec<(f32, LotId)> = vacant
-            .iter()
-            .copied()
-            .filter(|&l| self.lots.get(l).is_some_and(|lot| lot.building.is_none() && !matches!(lot.land_use, LandUse::Park | LandUse::Civic)))
-            .filter(|&l| Tier::for_land_value(self.land_value.at(self.lots[l].center)) != Tier::High)
-            .map(|l| (self.lots[l].center.distance(at), l))
-            .filter(|(d, _)| *d <= 220.0)
-            .collect();
-        candidates.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        let Some(&(_, lot_id)) = candidates.first() else { return false };
+        // The worst spot of these days first, else where the last driver
+        // gave up (the hotspot may be dear ground with nothing free).
+        let hotspot = self.concerns.hotspot(crate::concerns::Concern::Parking, self.clock.day(), 3).map(|(p, _)| p);
+        let spots: Vec<Vec2> = hotspot.into_iter().chain(self.economy.parking_shortage_at).collect();
+        let Some(lot_id) = spots.iter().find_map(|&at| self.parking_site_near(at, vacant)) else { return false };
         let lot_pos = self.lots[lot_id].center;
         let car_park = Tier::for_land_value(self.land_value.at(lot_pos)) == Tier::Mid && self.lots[lot_id].area() > 500.0;
         let cost = if car_park { PARKING_CAR_PARK_COST } else { PARKING_LOT_COST };
