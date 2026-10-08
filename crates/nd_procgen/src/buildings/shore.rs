@@ -777,7 +777,10 @@ pub fn beach(g: &mut Geometry, c: &Ctx, _rng: &mut impl Rng, look: Option<ShoreL
 /// tables under string lights with a pavilion at the end, or a pontoon of
 /// small boats. `deck` is the height of the decking, `water` of the water's
 /// surface; `night` lights the lamps.
-pub fn jetty(j: &Jetty, deck: f32, water: f32, night: bool, seed: u64) -> Geometry {
+/// `boat`: draw the trawler or coaster alongside. [sweep-visual] Off when
+/// the renderer draws it as a moving boat (a fishery's trawler sailing
+/// with the fleets, a quay's coaster coming and going).
+pub fn jetty(j: &Jetty, deck: f32, water: f32, night: bool, seed: u64, boat_alongside: bool) -> Geometry {
     let mut g = Geometry::default();
     let (_, w) = j.kind.size();
     let a = j.root;
@@ -824,7 +827,9 @@ pub fn jetty(j: &Jetty, deck: f32, water: f32, night: bool, seed: u64) -> Geomet
             for k in 0..3 {
                 g.part(Paint).boxed(Vec3::new(crate_at.x + d.x * k as f32 * 0.7, top + 0.2 + (k % 2) as f32 * 0.4, crate_at.y + d.y * k as f32 * 0.7), Vec3::new(0.6, 0.38, 0.45), yaw, rgba([0.2, 0.45, 0.75]));
             }
-            boat(&mut g, j.berth, d, water, 14.0, 4.4, [0.75, 0.2, 0.15], true, night);
+            if boat_alongside {
+                boat(&mut g, j.berth, d, water, 14.0, 4.4, [0.75, 0.2, 0.15], true, night);
+            }
         }
         JettyKind::Cargo => {
             // A small crane, stacked crates and a coaster alongside.
@@ -839,7 +844,9 @@ pub fn jetty(j: &Jetty, deck: f32, water: f32, night: bool, seed: u64) -> Geomet
                 let q = stack + side * ((k % 2) as f32 * 2.6 - 1.3);
                 g.part(Container).boxed(Vec3::new(q.x, top + 1.3 + (k / 2) as f32 * 2.6, q.y), Vec3::new(6.0, 2.6, 2.4), yaw, rgba(cols[(seed as usize + k) % 4]));
             }
-            boat(&mut g, j.berth, d, water, 30.0, 8.0, [0.2, 0.25, 0.32], false, night);
+            if boat_alongside {
+                boat(&mut g, j.berth, d, water, 30.0, 8.0, [0.2, 0.25, 0.32], false, night);
+            }
         }
         JettyKind::Pier => {
             // Rails, tables under umbrellas, string lights on posts, and a

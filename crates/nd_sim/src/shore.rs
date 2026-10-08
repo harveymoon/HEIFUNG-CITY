@@ -257,6 +257,10 @@ pub struct Jetty {
     /// Loads landed at it, all time.
     #[serde(default)]
     pub loads: u32,
+    /// [sweep-visual] Tick the last load was landed (a cargo quay's
+    /// coaster lies alongside unloading, then sails), 0 for none yet.
+    #[serde(default)]
+    pub last_load: u64,
 }
 
 /// Where a jetty of `kind` goes off a lot: at the middle of its stretch
@@ -291,7 +295,7 @@ pub fn plan_jetty(lot: &Lot, land: &Landscape, kind: JettyKind) -> Result<Jetty,
     }
     let side = Vec2::new(-seaward.y, seaward.x);
     let berth = shore.point + seaward * (len * 0.7) + side * (kind.size().1 * 0.5 + 3.0);
-    Ok(Jetty { kind, root, tip, berth, seaward, water: w.kind, built: 0, loads: 0 })
+    Ok(Jetty { kind, root, tip, berth, seaward, water: w.kind, built: 0, loads: 0, last_load: 0 })
 }
 
 /// How a beach is doing now.

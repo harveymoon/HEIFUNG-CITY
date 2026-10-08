@@ -766,6 +766,12 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
                     continue;
                 }
                 let (q0, q1) = (p0 + o, p1 + o);
+                // [sweep-visual] Not across another way: at a junction on a
+                // slope the wall along one arm ran on over the next arm's
+                // lanes and pavements, a concrete band across the road.
+                if [q0, q1, (q0 + q1) * 0.5].iter().any(|q| on_other_way(roads, sid, *q)) {
+                    continue;
+                }
                 let (t0, t1) = (g0.max(r0) + 0.6, g1.max(r1) + 0.6);
                 let out = Vec3::new(side.x * sgn, 0.0, side.y * sgn);
                 let m = g.part(Surface::Concrete);
@@ -775,6 +781,20 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
             }
         }
     }
+}
+
+/// [sweep-visual] Does `p` stand on a way other than `sid` (its lanes, its
+/// pavements, a little margin): no cutting wall goes there.
+fn on_other_way(roads: &nd_sim::roads::RoadNetwork, sid: nd_sim::roads::SegmentId, p: Vec2) -> bool {
+    roads.segments_in_box(p - Vec2::splat(25.0), p + Vec2::splat(25.0)).any(|o| {
+        let os = roads.segment(o);
+        if o == sid || !os.alive || os.tunnel {
+            return false;
+        }
+        let (oa, ob) = roads.segment_points(o);
+        let reach = os.half_width() + if os.is_street() && !os.fronts_nothing() { nd_sim::zoning::SIDEWALK } else { 0.6 } + 0.5;
+        nd_sim::roads::project_on_segment(p, oa, ob).1.distance(p) < reach
+    })
 }
 
 /// A tunnel mouth: a concrete headwall square across the way at `p`, facing
@@ -1539,4 +1559,29 @@ pub fn retaining_walls(world: &World, palette: &Palette) -> (MeshData, MeshData)
         }
     }
     (walls, caps)
+}
+
+#[cfg(test)]
+mod sweep_visual_tests {
+    use super::*;
+
+    /// [sweep-visual] A cutting wall along one arm of a junction is not
+    /// stood on the next arm: `on_other_way` sees that arm's lanes and
+    /// pavements, and nothing past them.
+    #[test]
+    fn cutting_walls_keep_off_the_other_arms() {
+        let mut roads = nd_sim::roads::RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-100.0, 0.0), Vec2::new(100.0, 0.0)], 1, 1);
+        roads.add_polyline(&[Vec2::new(0.0, -100.0), Vec2::new(0.0, 100.0)], 1, 1);
+        let along_x = roads.alive_segments().find(|(sid, _)| {
+            let (a, b) = roads.segment_points(*sid);
+            (a.y - b.y).abs() < 0.1 && a.x.max(b.x) > 50.0
+        });
+        let (sid, s) = along_x.expect("an east piece");
+        let off = s.half_width() + nd_sim::zoning::SIDEWALK + 3.4;
+        // Its wall line close to the junction crosses the north-south street.
+        assert!(on_other_way(&roads, sid, Vec2::new(1.0, off)));
+        // Further along it is clear.
+        assert!(!on_other_way(&roads, sid, Vec2::new(40.0, off)));
+    }
 }
