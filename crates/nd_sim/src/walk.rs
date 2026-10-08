@@ -441,12 +441,40 @@ impl WalkGraph {
                 self.link_cross(arm.cw, arm.ccw, arm.seg, Some(nid), kind, roads);
             }
         }
+        // [ped-highway] Slip roads joining here have no pavements and no
+        // painted crosswalk: a corner whose way round passes the mouth of
+        // one crosses it there, unmarked (the walker finds a gap), rather
+        // than as a plain pavement edge laid over its carriageway.
+        let slips: Vec<(f32, SegmentId)> = roads
+            .node(nid)
+            .segments
+            .iter()
+            .copied()
+            .filter(|&s| {
+                let sg = roads.segment(s);
+                sg.alive && sg.is_street() && sg.fronts_nothing() && !sg.tunnel
+            })
+            .map(|s| {
+                let sg = roads.segment(s);
+                let (a, b) = roads.segment_points(s);
+                let away = (if sg.a == nid { b - a } else { a - b }).normalize_or_zero();
+                (away.y.atan2(away.x), s)
+            })
+            .collect();
         let reach = widest(roads, nid) + SIDEWALK * 0.55 + 0.4;
         let n = arms.len();
         for i in 0..n {
             let j = (i + 1) % n;
             let gap = (arms[j].ang - arms[i].ang).rem_euclid(std::f32::consts::TAU);
             let gap = if gap <= 1e-4 { std::f32::consts::TAU } else { gap };
+            let slip = slips.iter().filter(|(ang, _)| {
+                let off = (ang - arms[i].ang).rem_euclid(std::f32::consts::TAU);
+                off > 1e-4 && off < gap - 1e-4
+            });
+            if let Some(&(_, s)) = slip.min_by(|x, y| (x.0 - arms[i].ang).rem_euclid(std::f32::consts::TAU).total_cmp(&(y.0 - arms[i].ang).rem_euclid(std::f32::consts::TAU)).then(x.1.cmp(&y.1))) {
+                self.link_cross(arms[i].ccw, arms[j].cw, s, Some(nid), CrossingKind::Informal, roads);
+                continue;
+            }
             if gap > 2.6 {
                 // A wide corner: go round it, not across the junction.
                 let bis = Vec2::from_angle(arms[i].ang + gap * 0.5);
@@ -478,6 +506,26 @@ impl WalkGraph {
         let hub = self.add_node(at, None);
         for (n, _, _) in e {
             self.link(*n, hub, false);
+        }
+    }
+
+    /// [ped-highway] `hub`, except at a road node on a highway or slip road
+    /// carriageway (a footpath dropped onto a ramp): no node out on the
+    /// carriageway; the ends there are joined to each other directly, and
+    /// a lone end is left a dead end short of it.
+    fn hub_off_carriageway(&mut self, roads: &RoadNetwork, nid: NodeId, at: Vec2, e: &[End]) {
+        let carriageway = roads.node(nid).segments.iter().any(|&s| {
+            let sg = roads.segment(s);
+            sg.alive && sg.is_motorway() && !sg.tunnel
+        });
+        if !carriageway {
+            self.hub(at, e);
+            return;
+        }
+        if let Some((first, rest)) = e.split_first() {
+            for x in rest {
+                self.link(first.0, x.0, false);
+            }
         }
     }
 
@@ -625,7 +673,9 @@ impl WalkGraph {
                     }
                 }
             }
-            if streets.len() >= 3 {
+            // A junction of three or more streets, slip roads counted (the
+            // crosswalks are painted where the kerbs meet them all).
+            if streets.len() >= 3 || (streets.len() == 2 && is_junction(roads, nid)) {
                 g.junction(roads, nid, node.pos, e);
                 continue;
             }
@@ -633,10 +683,10 @@ impl WalkGraph {
                 // Footpaths only, or a plain bend of two streets.
                 if arms.len() == 2 && e.len() >= 2 {
                     if !g.pair_ends(e) {
-                        g.hub(node.pos, e);
+                        g.hub_off_carriageway(roads, nid, node.pos, e);
                     }
                 } else {
-                    g.hub(node.pos, e);
+                    g.hub_off_carriageway(roads, nid, node.pos, e);
                 }
                 continue;
             }
@@ -999,6 +1049,27 @@ impl WalkGraph {
             let d = within(i);
             if d.is_finite() && best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, i as u32));
+            }
+        }
+        best.map(|(_, i)| i)
+    }
+
+    /// [ped-highway] Nearest node at ground level within `max_dist` that
+    /// has an edge and passes `keep`; exact ties go to the lower index.
+    pub fn nearest_matching(&self, p: Vec2, max_dist: f32, keep: impl Fn(u32) -> bool) -> Option<u32> {
+        let within = |i: u32| {
+            let n = &self.nodes[i as usize];
+            let d = n.pos.distance(p);
+            if d <= max_dist && n.level == 0.0 && !self.adj[i as usize].is_empty() && keep(i) { d } else { f32::INFINITY }
+        };
+        if self.index.len() == self.nodes.len() {
+            return self.index.nearest(p, within).map(|(i, _)| i);
+        }
+        let mut best: Option<(f32, u32)> = None;
+        for i in 0..self.nodes.len() as u32 {
+            let d = within(i);
+            if d.is_finite() && best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, i));
             }
         }
         best.map(|(_, i)| i)

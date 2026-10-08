@@ -399,14 +399,18 @@ impl World {
     /// under a station, yard or dock footprint.
     fn cut_parcels(&self) -> Vec<Parcel> {
         let water = self.water_mask();
-        let h = self.config.half_extent;
+        // [island-lots] The square grows to take in streets drawn past the
+        // configured one (an island off the coast): parcels used to be cut
+        // off at `half_extent`, so such a road had no land to zone at all.
+        let h = self.parcel_half();
         let mut parcels = generate_parcels(&self.roads, &water, Some((Vec2::splat(-h), Vec2::splat(h))));
         if !self.landscape.is_flat() {
             let land = &self.landscape;
             for p in &mut parcels {
-                let mut pts = p.polygon.clone();
-                pts.push(p.center);
-                p.rough = land.is_water(p.center) || land.slope_over(&pts) > crate::landscape::MAX_LOT_SLOPE;
+                // [island-lots] Hillsides are graded (terraced lot by lot);
+                // only cliffs and water are rough.
+                p.rough_why = land.lot_ground_problem(&p.polygon, p.center);
+                p.rough = p.rough_why.is_some();
             }
         }
         let footprints: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect();
@@ -1304,8 +1308,41 @@ impl World {
         lu.and_then(|lu| p.refusal(lu))
     }
 
+    /// [island-lots] Why there is no parcel at `p` for the Zone tool to
+    /// paint, in plain words; None where there is one, or on a street or
+    /// path itself (the pointer is only between parcels).
+    pub fn no_parcel_why(&self, p: Vec2) -> Option<&'static str> {
+        if self.parcels.at(p).is_some() {
+            return None;
+        }
+        if !self.landscape.is_flat() && self.landscape.is_water(p) {
+            return Some("open water: only the land along a road is zoned");
+        }
+        if self.under_facility(p) || self.ports.ports.values().any(|d| point_in_polygon(p, &d.footprint())) {
+            return Some("a station, yard or dock takes this ground");
+        }
+        let h = self.parcel_half();
+        if p.x.abs() > h || p.y.abs() > h {
+            return Some("past the edge of the buildable land");
+        }
+        let fronting = |s: &crate::roads::Segment| !s.is_rail() && !s.fronts_nothing();
+        match self.roads.nearest_where(p, fronting) {
+            Some((sid, _, q)) => {
+                let d = q.distance(p) - self.roads.segment(sid).half_width();
+                if d <= crate::zoning::SIDEWALK + 0.5 {
+                    None
+                } else if d <= crate::zoning::PARCEL_REACH {
+                    Some("a scrap of land too small to be a parcel")
+                } else {
+                    Some("too far from a street or path: land is zoned along roads")
+                }
+            }
+            None => Some("no street or path here: draw a road to zone along it"),
+        }
+    }
+
     pub(super) fn is_civic_structure(b: &Building) -> bool {
-        b.is_power() || b.depot || b.rail.is_some() || b.port.is_some() || b.service.is_some() || b.metro || b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::CargoHub)
+        b.is_power() || b.depot || b.rail.is_some() || b.port.is_some() || b.service.is_some() || b.metro || b.city_parking || b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::CargoHub)
     }
 
     /// The city takes a lot for one of its own structures: whatever grew
@@ -1464,6 +1501,9 @@ impl World {
     /// Whoever was in a vehicle that vanished (network rebuilt, bad save)
     /// stands where it was and decides again.
     pub(super) fn strand_driver(&mut self, cid: CitizenId, pos: Vec2) {
+        // [ped-highway] Out of the vehicle onto the pavement, never the
+        // carriageway of a highway or ramp.
+        let pos = self.kerbside(pos);
         if let Some(c) = self.citizens.get_mut(cid) {
             c.pos = pos;
             c.inside = None;

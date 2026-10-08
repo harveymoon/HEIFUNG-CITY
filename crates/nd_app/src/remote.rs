@@ -15,6 +15,8 @@
 //! (default 4817). It binds 127.0.0.1 only: the API has no authentication.
 
 /// [concerns] complaints by category and city happiness.
+/// [committee] `committee`, `committee_meeting`.
+mod committee;
 mod concerns;
 /// [districts] [tourism] `district` and `tourism`.
 mod districts;
@@ -294,6 +296,8 @@ struct Ctx<'w, 's> {
     diagnostics: Res<'w, DiagnosticsStore>,
     commands: Commands<'w, 's>,
     claude: ResMut<'w, crate::flags::ClaudeFlags>,
+    /// [committee] The committee's backend and meeting driver.
+    committee: ResMut<'w, crate::committee::CommitteeRt>,
     /// [build-highlight] What the Build window's section shows on the map.
     highlight: Res<'w, crate::build_highlight::BuildHighlight>,
 }
@@ -631,6 +635,12 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "district" | "districts" => districts::district(cmd, &mut ctx.sim.world, &mut ctx.overlays, &mut ctx.tools),
         "tourism" | "tourists" => districts::tourism(cmd, &mut ctx.sim.world),
         "concerns" => concerns::command(cmd, &ctx.sim.world),
+        // [committee] The mayor's committee and its meetings.
+        "committee" => committee::command(cmd, &mut ctx.sim, &mut ctx.committee),
+        "committee_meeting" | "meeting" => committee::meeting_command(cmd, &mut ctx.sim, &mut ctx.committee),
+        // [voices] Diaries on demand; model-written conversation lines.
+        "diary" => committee::diary(cmd, &mut ctx.sim, &mut ctx.committee),
+        "voices" => committee::voices(cmd, &ctx.sim, &ctx.committee),
         // [land] the land market; ownership highlight data
         "estate" | "land_market" => property::command(cmd, &mut ctx.sim.world),
         "ownership" => property::ownership(cmd, &ctx.sim.world),
@@ -870,6 +880,17 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             ctx.windows.build = Some((open, section));
             Ok(json!({ "window": "build", "open": open, "section": section.map(|c| c.key()).or(ctx.windows.build_section) }))
         }
+        "window" if req_str(cmd, "name").is_ok_and(|n| n.trim().eq_ignore_ascii_case("committee")) => {
+            // [committee] The Committee window, optionally at a tab.
+            let open = opt_bool(cmd, "open")?.unwrap_or(true);
+            let tab = match opt_str(cmd, "tab")? {
+                Some(t) => Some(crate::ui::committee::Tab::parse(t).ok_or_else(|| format!("unknown tab {t:?}; meeting, members, alerts, projects, settings"))?),
+                None => None,
+            };
+            ctx.committee.open_request = Some(open);
+            ctx.committee.tab_request = tab;
+            Ok(json!({ "window": "committee", "open": open, "tab": opt_str(cmd, "tab")? }))
+        }
         "window" if req_str(cmd, "name").is_ok_and(|n| matches!(n.trim().to_ascii_lowercase().as_str(), "history" | "game_history" | "game history")) => {
             // [identity] The Game history window.
             let open = opt_bool(cmd, "open")?.unwrap_or(true);
@@ -1093,6 +1114,9 @@ fn paint(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Some(lu) => ids.iter().filter_map(|&i| w.parcel_refusal(i, Some(lu)).map(|why| json!({ "parcel": i, "center": v2(w.parcels.parcels[i].center), "why": why }))).collect(),
         None => Vec::new(),
     };
+    // [island-lots] Nothing under the brush: why (water, too far from a
+    // road, past the buildable land), as the hover says at the cursor.
+    let none_why = if ids.is_empty() { opt_vec2(cmd, "at")?.and_then(|at| w.no_parcel_why(at)) } else { None };
     let industry = match opt_str(cmd, "industry")? {
         Some(k) => Some(nd_sim::world::INDUSTRY_CHOICES.iter().map(|(key, _)| *key).find(|key| key.eq_ignore_ascii_case(k.trim())).ok_or_else(|| format!("unknown industry {k:?}; one of {}", nd_sim::world::INDUSTRY_CHOICES.map(|c| c.0).join(", ")))?),
         None => None,
@@ -1109,6 +1133,9 @@ fn paint(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     v["touched"] = json!(ids.len());
     v["painted"] = json!(painted);
     v["refused"] = json!(refused);
+    if let Some(why) = none_why {
+        v["no_parcel"] = json!(why);
+    }
     v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
     Ok(v)
 }
@@ -1961,7 +1988,7 @@ fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     let plan = planned.get(i).copied().flatten().map_or("unzoned", |l| l.label());
                     rows.push((d, json!({
                         "index": i, "center": v2(p.center), "area": round(p.area), "land_use": built, "planned": plan,
-                        "landlocked": p.landlocked(), "street": p.street_frontage, "rough": p.rough, "accepts": accepts,
+                        "landlocked": p.landlocked(), "street": p.street_frontage, "rough": p.rough, "rough_why": p.rough_why, "accepts": accepts,
                         "lot": p.lot.map(key_str), "key": [p.key.center.0, p.key.center.1],
                     })));
                 }
@@ -2813,6 +2840,11 @@ fn help() -> Value {
     v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
     v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
     // [road-inspect]
+    // [committee]
+    v["commands"]["committee"] = json!({ "action": "state (default)|members|appoint {id, seat?}|dismiss {id}|alerts {limit, mark_seen}|check_alerts|projects|implement {project}|dismiss_project {project}|pick_site {project, option}|refresh_sites {project}|report|minutes {meeting?}|settings {backend: mock|local|claude, local_url, local_model, claude_model, claude_effort, claude_fallbacks, timeout_s, auto_meetings, veto_allowed, save, test}", "note": "the mayor's AI committee (docs/AI_COMMITTEE.md): fictional politicians, six seats, alerts, projects; never takes or returns an API key" });
+    v["commands"]["diary"] = json!({ "citizen": "id", "refresh": "bool: write it again", "returns": "day, text, pending (a model still writing: call again), by_model, backend; display only, never in the save" });
+    v["commands"]["voices"] = json!({ "limit": "default 20", "returns": "conversations of spotlit or favourite citizens that got a model's line (template and line), lines_written, diaries_written, backend" });
+    v["commands"]["committee_meeting"] = json!({ "start": "bool: call a meeting now (pauses the sim)", "vote": "{proposal, vote: yes|no|abstain|veto} (the mayor's vote)", "abstain_rest": "bool", "fast_forward": "bool: show all; with the stand-in, run to the mayor's vote or the end now", "transcript_from": "line index", "returns": "the meeting in session (stage, transcript, proposals with votes and tally) or the last minutes" });
     // [fire-scene]
     v["commands"]["units"] = json!({ "kind": "optional: fire_engine|police_car|ambulance (or Engine|Car|Medic)", "out": "bool: only units out of the station", "returns": "units: unit id, title, kind, state, doing, pos, incident; select {unit} / inspect {unit} take the id" });
     v["commands"]["repair_road"] = json!({ "road": "id or [x,y]; default the selected road", "returns": "repaired, cost, treasury, road (the card); pays the crews' price (lane-m x wear x 6) from the treasury as road maintenance" });
