@@ -478,6 +478,10 @@ pub struct OwnedCar {
     /// Tick it came into the city (arrived with its household or bought).
     #[serde(default)]
     pub since: u64,
+    /// [rich] A car kept in the owner's garage beside the one they drive
+    /// (`Citizen::car`): parked in their house's own spaces, never driven.
+    #[serde(default)]
+    pub spare: bool,
 }
 
 impl OwnedCar {

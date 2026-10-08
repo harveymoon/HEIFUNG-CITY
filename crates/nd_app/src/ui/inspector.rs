@@ -486,6 +486,10 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             figure(ui, "staff", format!("{}/{}", b.workers.len(), b.jobs), IVORY);
         });
         cashflow(ui, &bz.books, (bz.revenue_today, bz.spend_today));
+        // [relocate] A business that lost its old building to a buyout.
+        if let Some(from) = &bz.moved_from {
+            ui.label(egui::RichText::new(format!("moved from {from}")).small().color(GOLD));
+        }
         // [economy] why it is here and how it is doing
         super::pressure::business_story(ui, w, id);
         let recipe = bz.kind.recipe();
@@ -624,6 +628,28 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
         let doing = if bat.flow_mw > 0.05 { format!("delivering {:.1} MW", bat.flow_mw) } else if bat.flow_mw < -0.05 { format!("charging {:.1} MW", -bat.flow_mw) } else { "holding".to_string() };
         ui.label(format!("{}: {:.0} of {:.0} MWh ({:.0}%), {doing}; up to {:.0} MW, {:.0}/day upkeep", k.label(), bat.charge_mwh, k.capacity_mwh(), bat.level() * 100.0, k.max_mw(), k.upkeep_per_day()));
         ui.add(egui::ProgressBar::new(bat.level()).desired_height(10.0).fill(super::detail::BATTERY.gamma_multiply(0.8)));
+        // [batteries] The rule it runs by this hour, and what it saved.
+        let pw = &w.economy.power;
+        let bands = pw.price_bands;
+        ui.label(egui::RichText::new(format!("{} (power {:.2}/MWh now; cheap at {:.2} or less, dear from {:.2})", pw.battery_mode.label(), pw.import_price, bands.cheap, bands.dear)).small());
+        let sign = |v: f32| if v >= 0.0 { format!("saved {v:.0}") } else { format!("cost {:.0}", -v) };
+        ui.label(egui::RichText::new(format!("{} today, {} yesterday", sign(bat.savings_today), sign(bat.savings_yesterday))).small().color(if bat.savings_yesterday >= 0.0 { GOOD } else { WARN }));
+        if let Some(log) = w.economy.history.plant(id).filter(|l| !l.level.is_empty()) {
+            let hours = super::pane::hours(&w.economy.history);
+            let n = log.level.len().min(hours.len());
+            if n >= 2 {
+                let labels = super::pane::hour_labels(&hours[hours.len() - n..]);
+                let price: Vec<f32> = hours[hours.len() - n..].iter().map(|r| r.import_price * 10.0).collect();
+                let series = [
+                    super::pane::Series::new("stored MWh", super::detail::BATTERY, log.level.iter().skip(log.level.len() - n).copied().collect()),
+                    super::pane::Series::new("flow MW (+ out)", egui::Color32::from_rgb(255, 190, 80), log.hours.iter().skip(log.hours.len() - n).copied().collect()),
+                    super::pane::Series::new("price x10", egui::Color32::from_rgb(200, 120, 230), price),
+                ];
+                super::pane::line_chart(ui, &labels, &series, 80.0, &|x| format!("{x:.1}"));
+                super::pane::legend(ui, &series.iter().map(|s| (s.name.as_str(), s.color)).collect::<Vec<_>>());
+                hint(ui, "State of charge over the last hours against the grid price: it fills in the cheap hours (and on any surplus) and empties in the dear evening ones.");
+            }
+        }
     }
     // [ferries] The towns off the map its boats run to.
     if b.port == Some(nd_sim::ports::PortKind::FerryTerminal) {

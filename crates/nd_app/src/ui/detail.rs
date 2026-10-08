@@ -266,6 +266,14 @@ pub fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
             if pw.batteries > 0 {
                 let level = if pw.battery_capacity_mwh > 0.0 { pw.battery_charge_mwh / pw.battery_capacity_mwh } else { 0.0 };
                 pane::kpi(ui, "batteries full", egui::RichText::new(format!("{:.0}%", level * 100.0)).color(BATTERY));
+                // [batteries] The hour's rule and what they saved today.
+                let rule = match pw.battery_mode {
+                    nd_sim::power::BatteryMode::Charge => "charging (cheap)",
+                    nd_sim::power::BatteryMode::Hold => "holding",
+                    nd_sim::power::BatteryMode::Deliver => "delivering (dear)",
+                };
+                pane::kpi(ui, "battery rule", egui::RichText::new(rule).color(BATTERY));
+                pane::kpi(ui, "saved today", egui::RichText::new(format!("{:.0}", pw.battery_savings_today)).color(if pw.battery_savings_today >= 0.0 { GOOD } else { WARN }));
             }
             pane::kpi(ui, "in the dark", warn_if(pw.unpowered_buildings > 0, format!("{}", pw.unpowered_buildings)));
         });
@@ -313,6 +321,8 @@ pub fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
             pane::line_chart(ui, &hour_labels, &series, 110.0, &|x| format!("{x:.1}"));
             legend(ui, &series);
             hint(ui, "How full the batteries were at the end of each hour, and when they took surplus in or carried the city (about 90% of what goes in comes back out).");
+            let b = pw.price_bands;
+            hint(ui, &format!("The rule: a surplus always goes into the batteries. In the day's six cheapest hours (power at {:.2}/MWh or less) they also buy from the regional grid to fill up; in its six dearest (from {:.2}) they deliver before anything is imported; in between they hold the charge for the peak, giving only what the import line cannot. Now: {}.", b.cheap, b.dear, pw.battery_mode.label()));
         }
 
         let days = pane::days(h, if span == Span::Hours { Span::Week } else { span });
@@ -333,6 +343,15 @@ pub fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
         ];
         pane::stacked_bars(ui, &pane::day_labels(&days), &series, 100.0, true, None, &|x| format!("{x:.0}"));
         legend(ui, &series);
+        // [batteries] What the batteries saved each day: imports spared at
+        // the hour's price, less power bought to charge them and exports
+        // forgone.
+        if days.iter().any(|d| d.battery_savings != 0.0) || pw.batteries > 0 {
+            section(ui, "BATTERY SAVINGS PER DAY");
+            let series = [Series::new("saved", BATTERY, pane::col(&days, |d| d.battery_savings))];
+            pane::stacked_bars(ui, &pane::day_labels(&days), &series, 70.0, true, None, &|x| format!("{x:.0}"));
+            hint(ui, &format!("Imports the batteries spared (at that hour's price) less the power bought to charge them and the exports their surplus would have earned. Today so far: {:.0}.", pw.battery_savings_today));
+        }
         section(ui, "BROWNOUTS AND PEAK");
         let series = [Series::new("brownout hours", WARN, pane::col(&days, |d| d.brownout_hours as f32)), Series::new("peak demand MW", IVORY, pane::col(&days, |d| d.peak_demand_mw))];
         pane::line_chart(ui, &pane::day_labels(&days), &series, 90.0, &|x| format!("{x:.0}"));

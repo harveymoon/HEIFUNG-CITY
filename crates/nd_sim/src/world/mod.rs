@@ -125,6 +125,10 @@ mod waterfront;
 // [events] street races and warehouse raves; road wear and maintenance
 mod nights;
 mod roadworks;
+mod relocate;
+mod rich;
+#[cfg(test)]
+mod econ_followups_tests;
 mod dirt;
 pub use dirt::{DirtyNeighbour, ADJACENCY_OUTPUT_HIT, ADJACENCY_VALUE_HIT};
 // [road-inspect] the road inspector's traffic counts, live read-out and Repair now

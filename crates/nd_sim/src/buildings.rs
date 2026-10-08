@@ -274,6 +274,10 @@ pub struct Building {
     pub parking_capacity: u16,
     #[serde(default)]
     pub parking_used: u16,
+    /// [parking-market] The most spaces taken at once today (reset at
+    /// midnight, when a parking business sets its fee by it).
+    #[serde(default)]
+    pub parking_peak: u16,
     /// Fee per visit for paying customers (parking businesses).
     #[serde(default)]
     pub parking_price: f32,
@@ -366,6 +370,7 @@ impl Building {
             business: None,
             parking_capacity: 0,
             parking_used: 0,
+            parking_peak: 0,
             parking_price: 0.0,
             plant: None,
             plant_scale: None,

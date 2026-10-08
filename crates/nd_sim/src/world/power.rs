@@ -335,6 +335,20 @@ impl World {
             .collect()
     }
 
+    /// [batteries] Today's price thresholds for the batteries: the regional
+    /// prices of every hour of the day, at the temperature the day's swing
+    /// gives it (this hour's at the air now).
+    pub fn price_bands_today(&self) -> crate::power::PriceBands {
+        let now = self.clock.hour() as u32;
+        let prices: Vec<f32> = (0..24u32)
+            .map(|h| {
+                let temp = if h == now { self.weather.temp_c } else { self.weather.temp_at(h as f32) };
+                crate::power::import_price(h as f32, temp)
+            })
+            .collect();
+        crate::power::PriceBands::of(&prices)
+    }
+
     /// What a plant actually ran at this hour: its output less its share of
     /// any curtailment (surplus with nowhere to go; every plant turns down
     /// by the same share). This is what the plant table and its record show.
@@ -400,7 +414,12 @@ impl World {
             capacity += bat.kind.capacity_mwh();
             batteries += 1;
         }
-        let d = crate::power::dispatch(supply, demand, room, available);
+        // [batteries] The day's price curve sets the rule for the hour.
+        let bands = self.price_bands_today();
+        let mode = bands.mode(import_price);
+        let d = crate::power::dispatch_tou(supply, demand, room, available, mode);
+        let savings = d.battery_savings(import_price, export_price);
+        let total_flow = d.charge_mw + d.discharge_mw;
         let mut stored = 0.0f32;
         let mut relit = Vec::new();
         for (id, b) in self.buildings.iter_mut() {
@@ -422,6 +441,9 @@ impl World {
             };
             if hourly {
                 bat.run_hour(flow);
+                if total_flow > 0.0 {
+                    bat.savings_today += savings * flow.abs() / total_flow;
+                }
             } else {
                 bat.flow_mw = flow;
             }
@@ -439,6 +461,7 @@ impl World {
         if hourly {
             self.economy.power.import_cost_today += imported * import_price;
             self.economy.power.export_income_today += d.exported_mw * export_price;
+            self.economy.power.battery_savings_today += savings;
         }
         {
             let p = &mut self.economy.power;
@@ -451,11 +474,17 @@ impl World {
             p.battery_charge_mwh = stored + 0.0;
             p.battery_in_mw = d.charge_mw;
             p.battery_out_mw = d.discharge_mw;
+            p.battery_mode = mode;
+            p.price_bands = bands;
+            p.battery_grid_charge_mw = d.grid_charge_mw;
+            if hourly {
+                p.battery_savings_hour = if batteries > 0 { savings } else { 0.0 };
+            }
         }
         // A surplus serves everyone (the rest went to the batteries and the
         // export line); a shortfall shares what came in. The thousandth of a
         // megawatt keeps rounding from browning out the last building.
-        let delivered = supply + d.discharge_mw + imported;
+        let delivered = supply + d.discharge_mw + imported - d.grid_charge_mw;
         let mut remaining = delivered.min(demand + 1e-3);
         let mut order: Vec<(BuildingId, f32)> = self.buildings.iter().map(|(id, b)| (id, crate::power::demand_at(b, hour, temp))).collect();
         order.sort_by(|a, b| {
@@ -611,11 +640,21 @@ mod tests {
         w.daily_update();
         assert!((w.economy.ledger.yesterday_of(Flow::GridExport) - p.export_income_today).abs() < 1e-2, "the day closed with the export income on its books");
         assert_eq!(w.economy.power.export_income_today, 0.0);
-        // The plant runs down: the battery carries the load before any import.
+        // The plant runs down: in a dear hour the battery carries the load
+        // before any import ([batteries]: the evening peak).
         w.buildings[coal].condition = 0.1;
+        let dear = (0..24u64).find(|h| {
+            let t = w.weather.temp_at(*h as f32);
+            crate::power::import_price(*h as f32, t) >= w.price_bands_today().dear
+        });
+        let dear = dear.expect("a dear hour");
+        w.clock.tick = (w.clock.day() * 24 + dear) * 60;
+        w.weather.temp_c = w.weather.temp_at(dear as f32);
         w.allocate_power();
         let p = w.economy.power.clone();
+        assert_eq!(p.battery_mode, crate::power::BatteryMode::Deliver, "{p:?}");
         assert!(p.battery_out_mw > 0.0, "{p:?}");
+        assert!(p.battery_savings_today > 0.0, "delivering in a dear hour spares imports");
         assert_eq!(p.exported_mw, 0.0);
         if p.demand_mw > p.battery_out_mw + 1e-3 {
             assert!(p.imported_mw > 0.0, "the rest is imported");
@@ -639,5 +678,71 @@ mod tests {
         let old = ron.replace("battery: None,", "");
         let old = World::from_ron(&old).expect("a save without the battery field loads");
         assert_eq!(old.buildings.values().filter(|b| b.battery.is_some()).count(), 1);
+    }
+
+    /// [batteries] A town short of power with a battery: over a day the
+    /// battery buys in the cheap night hours, holds through the middle of
+    /// the day and gives back in the evening peak, so it saves money; the
+    /// per-day figure lands in the history and the battery's own books.
+    #[test]
+    fn batteries_buy_cheap_at_night_and_deliver_in_the_evening_peak() {
+        let mut w = World::new(WorldConfig { landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::test_town() });
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(-390.0, 10.0, 380.0), LandUse::Residential);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Commercial);
+        w.economy.treasury = 1e6;
+        let res: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Residential).map(|(id, _)| id).collect();
+        let spot = res.iter().copied().find(|&l| w.lots[l].area() >= BatteryKind::Medium.min_area()).expect("a lot for a battery");
+        let bat = w.build_battery(spot, BatteryKind::Medium).expect("battery placed");
+        w.buildings[bat].demolition = None;
+        let lots: Vec<LotId> = w.lots.iter().filter(|(id, l)| l.usable() && *id != spot).map(|(id, _)| id).collect();
+        for l in lots {
+            w.build_on(l);
+        }
+        let ids: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.construction.is_some()).map(|(id, _)| id).collect();
+        for id in ids {
+            w.finish_construction(id);
+        }
+        let bands = w.price_bands_today();
+        assert!(bands.worth_storing(), "{bands:?}");
+        let day0 = w.clock.day();
+        let mut modes = Vec::new();
+        let mut charged_at_night = false;
+        let mut delivered_dear = false;
+        for h in 0..24u64 {
+            w.clock.tick = (day0 * 24 + h) * 60;
+            w.weather.temp_c = w.weather.temp_at(h as f32);
+            w.allocate_power();
+            let p = w.economy.power.clone();
+            modes.push(p.battery_mode);
+            match p.battery_mode {
+                crate::power::BatteryMode::Charge => {
+                    assert!(p.import_price <= bands.cheap + 1e-4);
+                    charged_at_night |= p.battery_grid_charge_mw > 0.0;
+                }
+                crate::power::BatteryMode::Deliver => delivered_dear |= p.battery_out_mw > 0.0,
+                crate::power::BatteryMode::Hold => {
+                    // Holding: nothing given while the import line covers it.
+                    if p.imported_mw < crate::power::GRID_IMPORT_MW - 1e-3 {
+                        assert_eq!(p.battery_out_mw, 0.0, "hour {h}: {p:?}");
+                    }
+                }
+            }
+            w.record_hour();
+        }
+        let count = |m| modes.iter().filter(|x| **x == m).count();
+        assert_eq!(count(crate::power::BatteryMode::Charge), crate::power::ARBITRAGE_HOURS, "{modes:?}");
+        assert_eq!(count(crate::power::BatteryMode::Deliver), crate::power::ARBITRAGE_HOURS, "{modes:?}");
+        assert!(charged_at_night, "it bought on cheap power");
+        assert!(delivered_dear, "it gave back in the peak");
+        let saved = w.economy.power.battery_savings_today;
+        assert!(saved > 0.0, "the round trip paid: {saved}");
+        let own = w.buildings[bat].battery.as_ref().unwrap().savings_today;
+        assert!((own - saved).abs() < 1e-2, "one battery has all of it: {own} vs {saved}");
+        let hist: f32 = w.economy.history.hours.iter().map(|h| h.battery_savings).sum();
+        assert!((hist - saved).abs() < 1e-2, "the hours add up: {hist} vs {saved}");
+        w.daily_update();
+        assert_eq!(w.economy.power.battery_savings_today, 0.0);
+        assert!((w.buildings[bat].battery.as_ref().unwrap().savings_yesterday - own).abs() < 1e-3);
     }
 }

@@ -119,6 +119,8 @@ impl World {
         self.events.push(SimEvent::BuildingChanged(bid));
         // [land] The buyer moves in; a mansion starts its NIMBY pull.
         self.estate_finished(bid);
+        // [relocate] A business that moved here takes its old staff back.
+        self.rehire_moved_staff(bid);
     }
 }
 

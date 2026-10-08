@@ -1106,7 +1106,12 @@ impl World {
             b.plot.pending_lots.clear();
         }
         self.estate.reserved.clear();
+        // [relocate] Where each building stood, for a business that moves.
+        let old_site: HashMap<BuildingId, (f32, LandUse)> = old_lots.iter().filter_map(|(_, l)| l.building.map(|b| (b, (l.area(), l.land_use)))).collect();
         for (bid, at, expropriated) in demolish {
+            if let Some(&(area, lu)) = old_site.get(&bid) {
+                self.pack_business_at(bid, "the road works", at, area, lu);
+            }
             if expropriated {
                 let lot = self.buildings.get(bid).map(|b| b.lot);
                 if let Some(lot) = lot {
@@ -1312,6 +1317,8 @@ impl World {
         }
         self.check_take_over(bid)?;
         let memory = format!("The city bought out {} to build a {for_what}. Had to move on.", b.name);
+        // [relocate] The business looks for a new place.
+        self.pack_business(bid, &format!("the city's new {for_what}"));
         self.events.push(SimEvent::Expropriated(bid, lot_id));
         self.demolish_with(bid, None, Some(&memory));
         Ok(())
