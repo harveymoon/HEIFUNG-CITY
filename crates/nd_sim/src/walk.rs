@@ -1358,8 +1358,8 @@ impl WalkGraph {
     /// attached to grounds; each is joined (a walk edge from the path's end
     /// to the nearest walk node of the grounds) when grounds still lie
     /// within `GROUNDS_REACH` of it: the returned flags say which were.
-    /// Gates within a road end's snap reach (`END_SNAP_RADIUS`) are left
-    /// out: a path drawn there joins the road instead.
+    /// Gates within a road end's snap reach (`END_SNAP_RADIUS`) of a kerb
+    /// are left out: a path drawn there joins the road instead.
     pub fn add_grounds(&mut self, roads: &RoadNetwork, grounds: &[Grounds], links: &[Vec2]) -> Vec<bool> {
         let mut joined = Vec::with_capacity(links.len());
         for &p in links {
@@ -1387,13 +1387,15 @@ impl WalkGraph {
             self.junctions.push(GroundsJunction { pos: p, kind: g.kind, lot: g.lot, attached: true, node: target });
             joined.push(true);
         }
-        let reach = crate::roads::END_SNAP_RADIUS + 1.0;
+        // Clear of the kerb by more than a road end's snap reach: by the
+        // pavement people walk in from the street anyway.
+        let reach = crate::roads::END_SNAP_RADIUS + 3.0;
         for g in grounds {
             for &q in &g.gates {
                 if links.iter().any(|l| l.distance(q) < 3.0) {
                     continue;
                 }
-                if roads.nearest_where(q, |s| !s.is_rail()).is_some_and(|(_, _, r)| r.distance(q) < reach) {
+                if roads.nearest_where(q, |s| !s.is_rail()).is_some_and(|(sid, _, r)| r.distance(q) - roads.segment(sid).half_width() < reach) {
                     continue;
                 }
                 self.junctions.push(GroundsJunction { pos: q, kind: g.kind, lot: g.lot, attached: false, node: None });

@@ -57,6 +57,8 @@ impl World {
     /// Every piece of public ground a path may be joined to.
     pub fn grounds(&self) -> Vec<Grounds> {
         let mut out = Vec::new();
+        // A gate that lands on more park leads nowhere new.
+        let parks: Vec<&[Vec2]> = self.lots.values().filter(|l| l.land_use == LandUse::Park && l.park.is_some()).map(|l| l.polygon.as_slice()).collect();
         for (lid, lot) in self.lots.iter() {
             if lot.polygon.len() < 3 {
                 continue;
@@ -77,7 +79,7 @@ impl World {
             };
             let Some(kind) = kind else { continue };
             let skip: &[usize] = lot.park.as_ref().map_or(&[], |p| p.shared_edges.as_slice());
-            let gates = edge_gates(&lot.polygon, skip).into_iter().filter(|q| !self.landscape.is_water(*q)).collect();
+            let gates = edge_gates(&lot.polygon, skip).into_iter().filter(|q| !self.landscape.is_water(*q) && !parks.iter().any(|p| crate::geom::point_in_polygon(*q, p))).collect();
             out.push(Grounds { kind, lot: Some(lid), outline: lot.polygon.clone(), gates });
         }
         out
