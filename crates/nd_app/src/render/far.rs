@@ -30,7 +30,7 @@ pub(super) struct FarRender {
 /// Ways that reach out of the city into the hills (flat map) or past the
 /// built-ground raster (landscape): the far ground is graded to them.
 pub(super) fn far_ways(w: &World) -> Vec<(SVec2, SVec2, f32)> {
-    let reach = if w.landscape.is_flat() { w.config.half_extent + 50.0 } else { w.config.half_extent + 150.0 };
+    let reach = if w.landscape.is_flat() { w.config.half_extent + 50.0 } else { w.ground_half() - 50.0 };
     let out = |p: SVec2| if w.landscape.is_flat() { p.length() > reach } else { p.x.abs().max(p.y.abs()) > reach };
     w.roads
         .alive_segments()

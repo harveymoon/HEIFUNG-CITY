@@ -31,6 +31,7 @@ impl World {
             b.floors = size.floors();
             b.business = Some(bz);
             b.parking_price = price;
+            b.city_parking = true;
             // [free-placement] Its own use (the ground is the city's).
             b.land_use = LandUse::Commercial;
         });

@@ -1,6 +1,7 @@
-//! [districts] The District tool's sub-pane and the Districts window:
-//! every district with its policies and figures, and [tourism] the
-//! visitors, what draws them, the hotels and what they bring in.
+//! [districts] The District tool's sub-pane, and City Data's City,
+//! Districts page (every district with its policies and figures) and City,
+//! Tourism page ([tourism] the visitors, what draws them, the hotels and
+//! what they bring in).
 
 use bevy_egui::egui;
 use nd_sim::districts::{CommercialSpec, ResidentialSpec, COLORS};
@@ -8,7 +9,8 @@ use nd_sim::industry::IndustryKind;
 use nd_sim::tourism::{Arrival, AttractionKind};
 use nd_sim::world::PolicyChange;
 
-use super::{hint, section, UiCtx, GOLD, IVORY};
+use super::pane::{self, heading, row};
+use super::{hint, UiCtx, GOLD, IVORY};
 use crate::district_tool::{DistrictMode, BRUSH_MAX, BRUSH_MIN};
 use crate::sim::Sim;
 use crate::tools::ToolState;
@@ -53,10 +55,7 @@ pub fn sub_pane(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
                 tools.district.rename = sim.world.districts.get(id).map(|d| d.name.clone()).unwrap_or_default();
             }
         }
-        let mut open = super::windows::Info::Districts.is_open(ui.ctx());
-        if ui.toggle_value(&mut open, "Window").on_hover_text("The Districts window: figures, policies and tourism").changed() {
-            super::windows::Info::Districts.set_open(ui.ctx(), open);
-        }
+        super::city_data::link(ui, "Figures", super::city_data::Page::CityDistricts, "City Data, City, Districts: every district's figures and policies");
     });
     if let Some(id) = tools.district.selected.filter(|id| sim.world.districts.get(*id).is_some()) {
         policy_editor(ui, sim, id, &mut tools.district.rename);
@@ -119,34 +118,30 @@ fn policy_editor(ui: &mut egui::Ui, sim: &mut Sim, id: u16, rename: &mut String)
     }
 }
 
-fn row(ui: &mut egui::Ui, label: &str, value: impl Into<egui::RichText>) {
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(label).weak());
-        ui.label(value.into());
-    });
-}
-
-/// The Districts window.
-pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
+/// City, Districts: every district's figures; the picked one's detail and
+/// policies.
+pub fn page(ui: &mut egui::Ui, p: &mut UiCtx) {
     let stats = p.sim.world.district_stats();
-    section(ui, "DISTRICTS");
+    pane::cards(ui, |ui| {
+        pane::kpi(ui, "districts", egui::RichText::new(format!("{}", stats.len())).color(GOLD));
+        pane::kpi(ui, "hectares in districts", egui::RichText::new(format!("{:.1}", stats.iter().map(|s| s.area_m2).sum::<f32>() / 10_000.0 + 0.0)));
+        pane::kpi(ui, "residents in districts", egui::RichText::new(format!("{}", stats.iter().map(|s| s.residents).sum::<u32>())));
+        pane::kpi(ui, "visitors staying", egui::RichText::new(format!("{}", stats.iter().map(|s| s.tourists_staying).sum::<u32>())));
+    });
+    heading(ui, "Every district");
     if stats.is_empty() {
         hint(ui, "No districts yet. Pick the District tool (9) and paint one over the map.");
     } else {
-        egui::Grid::new("district_table").num_columns(7).spacing(egui::vec2(10.0, 2.0)).striped(true).show(ui, |ui| {
-            for h in ["district", "policy", "ha", "buildings (+sites)", "residents (homes)", "workers/jobs", "visitors"] {
-                ui.label(egui::RichText::new(h).small().color(GOLD));
-            }
-            ui.end_row();
+        hint(ui, "Click a district to pick it: its detail and policies show below and the District tool paints it.");
+        pane::table(ui, "district_table", &["district", "policy", "ha", "buildings (+sites)", "residents (homes)", "workers/jobs", "visitors"], |ui| {
             for s in &stats {
                 let color = p.sim.world.districts.get(s.id).map_or(IVORY, |d| color_of(d.color));
                 let picked = p.tools.district.selected == Some(s.id);
-                if ui.selectable_label(picked, egui::RichText::new(&s.name).color(color).strong()).on_hover_text("Select it to paint and edit; the camera flies there").clicked() {
+                if ui.selectable_label(picked, egui::RichText::new(&s.name).color(color).strong()).on_hover_text("Pick it to see its detail and edit its policies").clicked() {
                     p.tools.district.selected = Some(s.id);
                     p.tools.district.rename = s.name.clone();
-                    p.fly_to = Some(bevy::math::Vec2::new(s.centroid[0], s.centroid[1]));
                 }
-                ui.label(egui::RichText::new(&s.policy).small());
+                ui.label(&s.policy);
                 ui.label(format!("{:.1}", s.area_m2 / 10_000.0));
                 ui.label(format!("{} (+{})", s.buildings, s.under_construction));
                 ui.label(format!("{} ({})", s.residents, s.homes));
@@ -156,26 +151,36 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
             }
         });
         if let Some(s) = p.tools.district.selected.and_then(|id| stats.iter().find(|s| s.id == id)) {
-            section(ui, &format!("{}", s.name.to_uppercase()));
+            heading(ui, &s.name);
             row(ui, "land value", format!("{:.2}   rent {:.0}/home/day", s.land_value_avg, s.rent_avg));
             row(ui, "tiers", format!("low {}   mid {}   high {}", s.by_tier[0], s.by_tier[1], s.by_tier[2]));
             row(ui, "in the district's look", format!("{} of {}", s.in_look, s.buildings));
             row(ui, "lots", format!("{} ({} vacant)", s.lots, s.vacant_lots));
             row(ui, "businesses", format!("{} open   hotels {} with {} beds", s.businesses_open, s.hotels, s.beds));
             row(ui, "draws visitors", format!("{:.1} points", s.attraction));
-            let id = s.id;
+            let (id, at) = (s.id, s.centroid);
             policy_editor(ui, p.sim, id, &mut p.tools.district.rename);
+            if ui.button("Show on the map").on_hover_text("Close City Data and fly there").clicked() {
+                p.fly_to = Some(bevy::math::Vec2::new(at[0], at[1]));
+            }
         }
     }
-    tourism(ui, p);
 }
 
-/// Tourism: who is here, what draws them, what they spend.
-fn tourism(ui: &mut egui::Ui, p: &mut UiCtx) {
+/// City, Tourism: who is here, what draws them, what they spend.
+pub fn tourism_page(ui: &mut egui::Ui, p: &mut UiCtx) {
     let w = &p.sim.world;
     let t = &w.tourism;
     let s = &t.stats;
-    section(ui, "TOURISM");
+    pane::cards(ui, |ui| {
+        pane::kpi(ui, "attractiveness", egui::RichText::new(format!("{:.0}", t.attractiveness)).color(GOLD));
+        pane::kpi(ui, "visitors in town", egui::RichText::new(format!("{}", t.count())));
+        pane::kpi(ui, "arrivals today", egui::RichText::new(format!("{}", s.arrivals_today)));
+        pane::kpi(ui, "no bed for them today", super::tools::warn_if(s.turned_away_today > 0, format!("{}", s.turned_away_today)));
+        pane::kpi(ui, "spending today", egui::RichText::new(format!("{:.0}", s.spend_today())));
+        pane::kpi(ui, "tourist tax yesterday", egui::RichText::new(format!("{:.0}", s.tax_yesterday)));
+    });
+    heading(ui, "Visitors");
     row(ui, "attractiveness", egui::RichText::new(format!("{:.0}", t.attractiveness)).color(IVORY).strong());
     row(ui, "would come per day", format!("{:.0}   ways in: {}", t.demand_per_day, Arrival::ALL.iter().filter(|a| t.ways_in[a.index()]).map(|a| a.label()).collect::<Vec<_>>().join(", ")));
     row(ui, "visitors in town", format!("{}   out and about {}", t.count(), t.tourists.values().filter(|x| x.is_visible()).count()));
@@ -187,18 +192,28 @@ fn tourism(ui: &mut egui::Ui, p: &mut UiCtx) {
     row(ui, "hotels", format!("{}   beds {}   guests {}", hotels.len(), beds, guests));
     row(ui, "spending today", format!("{:.0}  (hotels {:.0} · shops {:.0} · venues {:.0})   yesterday {:.0}", s.spend_today(), s.spend_hotels_today, s.spend_shops_today, s.spend_venues_today, s.spend_yesterday));
     row(ui, "tourist tax", format!("{:.0} today, {:.0} yesterday", s.tax_today, s.tax_yesterday));
+    heading(ui, "What draws them");
     let by_kind = t.score_by_kind();
-    ui.horizontal_wrapped(|ui| {
-        for k in AttractionKind::ALL {
-            if by_kind[k.index()] > 0.0 {
-                ui.label(egui::RichText::new(format!("{} {:.0}", k.label(), by_kind[k.index()])).small());
+    pane::row_with(ui, "by kind", |ui| {
+        ui.horizontal_wrapped(|ui| {
+            for k in AttractionKind::ALL {
+                if by_kind[k.index()] > 0.0 {
+                    ui.label(format!("{} {:.0}", k.label(), by_kind[k.index()]));
+                }
             }
-        }
+        });
     });
     let mut top: Vec<_> = t.attractions.iter().collect();
     top.sort_by(|a, b| b.score.total_cmp(&a.score));
-    for a in top.into_iter().take(6) {
-        hint(ui, &format!("{:.1}  {} ({})", a.score, a.name, a.kind.label()));
+    if !top.is_empty() {
+        pane::table(ui, "tourism_top", &["attraction", "kind", "points"], |ui| {
+            for a in top.into_iter().take(12) {
+                ui.label(&a.name);
+                ui.label(egui::RichText::new(a.kind.label()).weak());
+                ui.label(format!("{:.1}", a.score));
+                ui.end_row();
+            }
+        });
     }
     hint(ui, "Monuments, stadiums, good parks, nightlife, landmark districts (historic, neon strip, night market, tourist quarter) and the waterfront draw visitors. They need a way in and a bed: hotels open on commercial land when visitors are turned away.");
 }

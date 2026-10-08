@@ -293,6 +293,10 @@ fn map_labels(mut contexts: EguiContexts, sim: Res<Sim>, overlays: Res<Overlays>
     let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
     let w = &sim.world;
     let ctx = contexts.ctx_mut()?;
+    // [city-data] The map is covered: nothing to label.
+    if crate::ui::city_data::is_open(ctx) {
+        return Ok(());
+    }
     // Clear of the top bar and the toolbar with its sub-pane, so no name
     // runs under them.
     let full = ctx.content_rect();

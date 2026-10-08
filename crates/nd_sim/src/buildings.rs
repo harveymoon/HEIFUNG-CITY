@@ -281,6 +281,10 @@ pub struct Building {
     /// Fee per visit for paying customers (parking businesses).
     #[serde(default)]
     pub parking_price: f32,
+    /// A parking lot the player placed (Build, Transit): the city's own, so
+    /// a road never buys it out; it has to be bulldozed first.
+    #[serde(default)]
+    pub city_parking: bool,
     /// A power plant placed by the player.
     #[serde(default)]
     pub plant: Option<crate::power::PowerPlantKind>,
@@ -372,6 +376,7 @@ impl Building {
             parking_used: 0,
             parking_peak: 0,
             parking_price: 0.0,
+            city_parking: false,
             plant: None,
             plant_scale: None,
             battery: None,

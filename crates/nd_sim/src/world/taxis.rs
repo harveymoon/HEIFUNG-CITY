@@ -164,19 +164,31 @@ impl World {
 
     /// Where a citizen would wait for a cab and where it would stop: the
     /// street their building opens on (with car access), else the nearest
-    /// street that is not a highway. `(segment, stop point, wait point)`.
-    fn taxi_pickup(&self, id: CitizenId, from: Vec2) -> Option<(SegmentId, Vec2, Vec2)> {
+    /// street with a kerb: never a highway, a slip road or a tunnel, where
+    /// no cab may stop and nobody can stand. `(segment, stop point, wait
+    /// point)`; the wait point is on the pavement beside the stop, on the
+    /// rider's side of the street.
+    pub(super) fn taxi_pickup(&self, id: CitizenId, from: Vec2) -> Option<(SegmentId, Vec2, Vec2)> {
         let c = self.citizens.get(id)?;
         if let Some(lot) = c.inside.and_then(|b| self.building_lot(b)) {
-            if let Some(s) = lot.car_segment {
+            if let Some(s) = lot.car_segment.filter(|s| self.roads.try_segment(*s).is_some_and(|x| !x.fronts_nothing())) {
                 return Some((s, lot.car_point, lot.entrance()));
             }
         }
-        let (s, _, q) = self.roads.nearest_street(from)?;
-        if self.roads.segment(s).is_highway() || q.distance(from) > 120.0 {
+        let (s, t, q) = self.roads.nearest_where(from, |x| x.is_street() && !x.fronts_nothing())?;
+        if q.distance(from) > 120.0 {
             return None;
         }
-        Some((s, q, from + (q - from) * 0.85))
+        // Clear of the junctions at either end: a cab does not stop in one.
+        let (a, b) = self.roads.segment_points(s);
+        let len = a.distance(b).max(1e-3);
+        let back = (12.0 / len).min(0.5);
+        let q = a.lerp(b, t.clamp(back, 1.0 - back));
+        let d = (b - a).normalize_or_zero();
+        let right = Vec2::new(-d.y, d.x);
+        let side = if (from - q).dot(right) >= 0.0 { 1.0 } else { -1.0 };
+        let wait_at = q + right * side * (self.roads.segment(s).half_width() + crate::zoning::SIDEWALK * 0.55);
+        Some((s, q, wait_at))
     }
 
     /// The nearest cab free for a fare near `p`, within reach: on duty and
@@ -191,6 +203,38 @@ impl World {
             .map(|(id, c)| (id, self.cab_pos(c).distance(p)))
             .filter(|(_, d)| *d <= taxi::PICKUP_REACH)
             .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
+    }
+
+    /// [ped-highway] Up to `n` free cabs in reach of `p`, nearest first.
+    fn free_cabs_near(&self, p: Vec2, n: usize) -> Vec<(CabId, f32)> {
+        let mut v: Vec<(CabId, f32)> = self
+            .taxis
+            .cabs
+            .iter()
+            .filter(|(_, c)| c.on_duty && c.job.free())
+            .filter(|(_, c)| self.taxi_company_works(c.company))
+            .map(|(id, c)| (id, self.cab_pos(c).distance(p)))
+            .filter(|(_, d)| *d <= taxi::PICKUP_REACH)
+            .collect();
+        v.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        v.truncate(n);
+        v
+    }
+
+    /// [ped-highway] A rider whose booking cannot stand: off the taxi leg,
+    /// onto the pavement, deciding again next tick.
+    fn rebook_elsewhere(&mut self, rider: CitizenId) {
+        let tick = self.clock.tick;
+        let Some(p) = self.citizens.get(rider).map(|c| c.pos) else { return };
+        let to = self.kerbside(p);
+        let c = &mut self.citizens[rider];
+        c.transit = None;
+        c.pos = to;
+        c.prev_pos = to;
+        if matches!(c.activity, Activity::Waiting { .. } | Activity::Traveling { purpose: Purpose::ToStop, .. }) {
+            c.activity = Activity::Idle;
+        }
+        c.next_decision_tick = c.next_decision_tick.min(tick + 1);
     }
 
     /// Where a cab is now.
@@ -213,6 +257,11 @@ impl World {
         }
         let c = self.citizens.get(id)?;
         if c.stage() == crate::citizens::LifeStage::Child {
+            return None;
+        }
+        // [ped-highway] Just stood at the kerb for a cab that never came:
+        // not booking another for a while.
+        if !hypothetical && self.taxis.shy.get(&id).is_some_and(|&t| self.clock.tick < t) {
             return None;
         }
         let dist = q.from.distance(q.to);
@@ -397,10 +446,23 @@ impl World {
             if r.cab.is_some_and(|c| self.taxis.cabs.get(c).is_none_or(|x| x.job != CabJob::Pickup { rider: r.rider })) {
                 r.cab = None;
             }
+            // [ped-highway] A stop on a highway or ramp (booked before cabs
+            // kept off them), or on a street since rebuilt: no cab can
+            // stop there. The rider thinks again from the pavement.
+            if self.roads.try_segment(r.segment).is_none_or(|s| s.fronts_nothing() || !s.is_street()) {
+                if let Some(cab) = r.cab {
+                    self.cab_free(cab);
+                }
+                self.rebook_elsewhere(r.rider);
+                continue;
+            }
             if r.cab.is_none() {
-                if let Some((cab, _)) = self.nearest_free_cab(r.at) {
+                // The nearest free cab first; one that cannot get there
+                // (no route from where it stands) leaves it to the next.
+                for (cab, _) in self.free_cabs_near(r.at, 3) {
                     if self.send_cab(cab, r.segment, r.at, CabJob::Pickup { rider: r.rider }) {
                         r.cab = Some(cab);
+                        break;
                     }
                 }
             }
@@ -435,6 +497,7 @@ impl World {
             self.taxis.note_missed(c);
         }
         let Some(trip) = self.citizens.get_mut(rider).and_then(|c| c.transit.take()) else { return };
+        self.taxis.shy.insert(rider, tick + taxi::GAVE_UP_SHY);
         if let Some(c) = self.citizens.get_mut(rider) {
             c.thought = "No cab is coming. Walking it.".to_string();
             c.commute.feel(TripMode::Taxi, 2.5);
@@ -604,6 +667,9 @@ impl World {
     /// when the cab never got there, is left free to decide again).
     fn set_down(&mut self, rider: CitizenId, at: Vec2, arrived: bool) {
         let tick = self.clock.tick;
+        // [ped-highway] Out onto the pavement, never a highway or ramp (a
+        // cab taken off the road there used to leave its rider on it).
+        let at = self.kerbside(at);
         let trip = self.citizens.get_mut(rider).and_then(|c| c.transit.take());
         let entrance = trip.and_then(|t| self.building_entrance(t.target));
         let Some(c) = self.citizens.get(rider) else { return };
@@ -688,7 +754,9 @@ impl World {
     }
 
     fn park_cab_at_kerb(&mut self, id: CabId, car: CarId) {
-        let pose = self.cab_kerb_pose(car);
+        // [ped-highway] No stopping on a highway or slip road: a cab with
+        // nowhere to go from there is taken back to its yard instead.
+        let pose = self.cab_kerb_pose(car).filter(|(s, _, _)| self.roads.try_segment(*s).is_some_and(|x| !x.fronts_nothing()));
         self.traffic.remove_car(car);
         let tick = self.clock.tick;
         let c = &mut self.taxis.cabs[id];
@@ -895,6 +963,8 @@ impl World {
         t.stats.fare_metres_today = 0.0;
         t.latent_yesterday = std::mem::take(&mut t.latent_today);
         t.latent_sum = Vec2::ZERO;
+        let now = self.clock.tick;
+        t.shy.retain(|_, until| *until > now);
         for v in t.missed.values_mut() {
             *v = (0, v.0);
         }
