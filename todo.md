@@ -296,6 +296,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Schools raise the desirability of nearby homes for families with children
 - [ ] Supertall league: much taller buildings on high-density, high-value land; mega-tall towers buy out adjacent lots for a big footprint (Empire State → Burj Khalifa scale); developers keep out-building each other for the city's tallest if city rules allow (height caps)
 - [ ] Waterfront: parcels along a road near the water reach all the way to the water's edge; waterfront businesses that thrive there (beach resorts, hotels, fancy on-the-water restaurants); fishing and shipping industries with water access can build their own small ports
+- [ ] Park paths are real paths: the path tool can snap to and connect them, and they join the walk network (and expand the pedestrian walking area around them)
 - [ ] "Public beach" zone paintable on any waterfront; people walk/relax on it if they can reach it (from a park, a road or a path)
 
 ## Follow-ups noted in agent reports (not started)
