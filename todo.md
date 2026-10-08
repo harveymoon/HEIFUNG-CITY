@@ -364,3 +364,5 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Faster save and load (and smaller saves)
 - [ ] Settings menu (graphics, controls, UI scale, etc.)
 - (Later / skipped for now: challenges and scenarios, elections and disasters, water and sewage, seasons and events, advisor and heat maps, neighbouring towns, sound, tutorial)
+- fix/sweep-sim: leftovers sweep (land-value grids, docks via footpath, ferry estimates, econ/megacorp leftovers, crash log) (started 2026-10-08)
+- fix/sweep-visual: leftovers sweep (supertall podium/night, park-path step, interchange overlap, jetty trawlers, coasters) (started 2026-10-08)
