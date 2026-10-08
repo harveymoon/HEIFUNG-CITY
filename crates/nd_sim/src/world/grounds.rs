@@ -64,7 +64,8 @@ impl World {
                 continue;
             }
             let kind = if lot.land_use == LandUse::Park && lot.park.is_some() {
-                Some(GroundsKind::Park)
+                // [waterfront] a public beach is grounds of its own kind
+                Some(if lot.shore.beach { GroundsKind::Beach } else { GroundsKind::Park })
             } else {
                 lot.building.and_then(|b| self.buildings.get(b)).filter(|b| b.lot == lid).and_then(|b| {
                     use crate::services::ServiceKind;

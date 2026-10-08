@@ -1919,7 +1919,15 @@ impl World {
     pub(super) fn drive_unit(&mut self, uid: UnitId, to: (SegmentId, Vec2), siren: bool) -> bool {
         let Some(from) = self.services.units.get(uid).map(|u| u.pos) else { return false };
         let Some((seg, _, q)) = self.roads.nearest_street(from) else { return false };
-        let Some((lanes, s0, s1)) = self.traffic.net.find_route(seg, q, to.0, to.1) else { return false };
+        // A goal just behind on the same street has no route (lanes are one
+        // way): set off from the nearer end of the street instead.
+        let route = self.traffic.net.find_route(seg, q, to.0, to.1).or_else(|| {
+            let (a, b) = self.roads.segment_points(seg);
+            let mut ends = [a, b];
+            ends.sort_by(|x, y| x.distance(q).total_cmp(&y.distance(q)));
+            ends.iter().find_map(|e| self.traffic.net.find_route(seg, *e, to.0, to.1))
+        });
+        let Some((lanes, s0, s1)) = route else { return false };
         let car = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, 0);
         self.traffic.cars[car].siren = siren;
         self.services.by_car.insert(car, uid);

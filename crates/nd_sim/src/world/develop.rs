@@ -164,6 +164,8 @@ impl World {
                 self.splat_contamination(&mut b);
                 // [districts] eco and historic districts lift the land
                 self.splat_districts(&mut b);
+                // [waterfront] beaches, and lots on the water
+                self.splat_shore(&mut b);
                 // [land] NIMBY: the land round a mansion jumps, fading.
                 for n in &self.estate.nimby {
                     b.splat(n.center, n.radius, n.strength);
@@ -797,6 +799,10 @@ impl World {
             }
             let jobs = b.jobs;
             b.business = Some(Business::new(kind, jobs));
+            // [waterfront] the shore's trades are named for the water
+            if let Some(n) = crate::shore::trade_name(kind, b.seed) {
+                b.name = n;
+            }
         }
         // Nothing opens overnight: the lot becomes a building site first.
         b.construction = Some(Construction::new(Construction::days_for(floors, tier)));

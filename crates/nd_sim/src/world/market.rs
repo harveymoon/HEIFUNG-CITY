@@ -618,6 +618,10 @@ impl World {
                 return;
             }
         }
+        // [waterfront] Its own quay on the water first.
+        if !site && self.import_by_jetty(to, cargo) {
+            return;
+        }
         // By sea is cheaper still than by rail.
         if !site && self.import_by_sea(to, cargo) {
             return;

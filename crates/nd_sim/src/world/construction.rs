@@ -376,6 +376,7 @@ impl World {
             car_segment,
             car_point,
             park: None,
+            shore: Default::default(),
         })
     }
 

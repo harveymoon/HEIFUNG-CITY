@@ -169,6 +169,10 @@ pub fn traits(style: Style) -> (Family, f32) {
         Style::Gallery => (Night, 0.4),
         Style::ArtStudio => (Night, 0.6),
         Style::MarinaSmall | Style::MarinaLarge | Style::FishingPortSmall | Style::FishingPortLarge => (Special, 0.0),
+        // [waterfront] The shore's trades line the water together.
+        Style::BeachResort | Style::WaterfrontHotel => (Night, 0.4),
+        Style::PierRestaurant | Style::BeachBar | Style::BoatRental => (Night, 0.6),
+        Style::Beach => (Special, 0.0),
         _ => (Special, 0.0),
     }
 }
@@ -460,6 +464,8 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
         look: b.look,
         metro: b.metro,
         form: b.plot.form,
+        // [waterfront] the water off a lot on it, a beach's crowd
+        shore: super::shore::shore_look(world, id),
         // [megacorp] the owner's brand; a campus annex's own look
         brand: world.brand_mark(id),
         annex: b.annex,

@@ -301,6 +301,13 @@ pub fn walkable_through(lot: &Lot, land_value: &LandValue) -> bool {
     }
 }
 
+/// [waterfront] May two neighbouring lots share a gate? A public beach is
+/// reached from a street or path it fronts, or through a park next to
+/// it, never across a private lot.
+pub fn beach_gate_ok(a: &Lot, b: &Lot) -> bool {
+    !(a.shore.beach || b.shore.beach) || (a.land_use == LandUse::Park && b.land_use == LandUse::Park)
+}
+
 /// Live streets at a node.
 fn street_arms(roads: &RoadNetwork, n: NodeId) -> usize {
     roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).is_street()).count()
@@ -920,6 +927,10 @@ impl WalkGraph {
                         let Some(list) = grid.get(&(cx + dx, cy + dy)) else { continue };
                         for &(lj, j) in list {
                             if lj <= li || !loops[lj].through {
+                                continue;
+                            }
+                            // [waterfront] A public beach opens only onto a park.
+                            if !beach_gate_ok(&lots[info.lot], &lots[loops[lj].lot]) {
                                 continue;
                             }
                             let other = &lots[loops[lj].lot].polygon;
