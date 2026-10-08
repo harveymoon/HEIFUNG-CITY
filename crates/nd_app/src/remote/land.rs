@@ -110,6 +110,9 @@ pub fn terrain_at(w: &World, p: SVec2) -> Value {
         // the walk network, and what that adds to (or takes off) a home's land value.
         "access": w.land_value.access_at(p).map(|a| json!({ "park_min": a.park_min.map(round), "nightlife_min": a.nightlife_min.map(round), "value_for_homes": round(a.value), "text": a.describe() })),
         "survey": w.survey_at(p).into_iter().map(|(l, v)| (l.key().to_string(), json!(round(v)))).collect::<serde_json::Map<String, Value>>(),
+        // [dirty-industry] The poisoned ground and the dirty plants whose reach covers the point.
+        "contamination": round(w.contamination.at(p)),
+        "dirty_nearby": dirty_near(w, p),
         // [grid-weather] Wind and sun for power plants.
         "resource": resource_at(w, p),
     })
@@ -234,4 +237,27 @@ pub fn dock_of(s: &str) -> Option<PortKind> {
         "fishing_port_large" | "large_fishing_port" | "fishing_harbour" | "fishing_harbor" => Some(PortKind::FishingPortLarge),
         _ => None,
     }
+}
+
+/// [dirty-industry] The dirty plants whose reach covers `p`, nearest first,
+/// and what a home and a farm there would suffer.
+pub fn dirty_near(w: &World, p: nd_sim::Vec2) -> Value {
+    use nd_sim::industry::{IndustryKind, Neighbour};
+    let mut v: Vec<(f32, Value)> = w
+        .dirty
+        .iter()
+        .filter(|s| s.pos.distance(p) < s.reach)
+        .map(|s| {
+            let d = s.pos.distance(p);
+            let name = w.buildings.get(s.building).map(|b| b.name.clone()).unwrap_or_default();
+            let what = w.buildings.get(s.building).and_then(|b| b.business.as_ref().map(|z| z.kind.label()).or(b.plant.map(|k| k.label()))).unwrap_or("plant");
+            (d, json!({ "building": super::view::key_str(s.building), "name": name, "what": what, "distance_m": round(d), "level": round(s.level), "reach_m": round(s.reach) }))
+        })
+        .collect();
+    v.sort_by(|a, b| a.0.total_cmp(&b.0));
+    json!({
+        "plants": v.into_iter().map(|x| x.1).collect::<Vec<_>>(),
+        "home_exposure": round(w.dirt_exposure_at(p, Neighbour::Land(nd_sim::LandUse::Residential), None)),
+        "farm_exposure": round(w.dirt_exposure_at(p, Neighbour::Industry(IndustryKind::Farming), None)),
+    })
 }

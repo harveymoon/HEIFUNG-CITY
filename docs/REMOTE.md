@@ -442,7 +442,8 @@ revenue}). Saves from before this keep their booths with the new books empty.
 ### Industry sub-zones
 
 `industry {lot | pos | polygon, kind}` sets the player's industry bias (`World::set_industry_bias`):
-`kind` is `farming`, `oil`, `refinery`, `manufacturing`, `logistics`, `fishing`, `tech`, or `none`
+`kind` is `farming`, `oil`, `refinery`, `manufacturing`, `logistics`, `fishing`, `tech`, `mining`,
+`smelting`, `factory_farming`, or `none`
 (hand the area back to the ground over an older bias). `lot` is a lot id, `pos: [x, y]` the lot
 under the point, `polygon: [[x, y], ...]` an area (the bias belongs to the ground, so it survives
 the lots being recut). New industrial buildings there take that kind; standing industry of another
@@ -457,6 +458,27 @@ would draw) and `building` (the kind standing there).
 {"cmd": "industry", "pos": [-210, -210], "kind": "farming"}
 {"cmd": "industry", "polygon": [[-280, -280], [-140, -280], [-140, -140], [-280, -140]], "kind": "none"}
 {"cmd": "industry", "pos": [-210, -210]}
+```
+
+### Dirty industry
+
+Mining, oil, refineries (and chemical works), smelters and factory farms are dirty (see DESIGN,
+"Dirty industry"). `inspect {building}` has `dirt`: `dirty` (for a dirty plant: `level`,
+`reach_m`, `reads_as`, `spill` {radius_m, per_hour}), `dirtiness`, `as_neighbour` (the row of the
+compatibility table it reads), `exposure` (0..1), `unhappy_neighbours` ([{building, name, what,
+distance_m, hit}], worst first), `costs` ("food output −30%, land value −0.09") and
+`ground_contamination`. `terrain_at` has `contamination` and `dirty_nearby` {plants ([{building,
+name, what, distance_m, level, reach_m}] whose reach covers the point), home_exposure,
+farm_exposure}; `dirt_at {x, y}` returns just those. `report {section: "industry"}` lists `dirty`
+plants and the count of `suffering_neighbours`.
+
+`remediate {x, y, radius}` (also `cleanup`) pays to dig out the contamination within `radius`
+(default 100, at most 300 m) at 450 per cell of full contamination, booked as construction.
+Reply: `cost`, `removed_cells`, `treasury`; an error when the ground is clean or the treasury short.
+
+```json
+{"cmd": "dirt_at", "x": 120, "y": -40}
+{"cmd": "remediate", "x": 120, "y": -40, "radius": 120}
 ```
 
 ### Buses
@@ -698,8 +720,9 @@ in the game; the top bar's Layer button and the View window list them;
 | `shipping` | shore where a shipping port fits: the sea or a river 40 m wide |
 | `wind` | what a wind farm makes on an ordinary day there (the map's wind field times the climate's wind, through the power curve) |
 | `solar` | the sun a solar field gets (the climate's, a little more on high open ground) |
+| `contamination` | the poisoned ground (0..1, the saved raster), trace yellow-green to poisoned purple; the legend reads the figure and the nearest dirty plant under the pointer. Aliases `toxic`, `poison`, `soil_contamination` |
 | `best_industry` | each spot coloured by the industry kind the ground favours most |
-| `best_farming`, `best_oil`, `best_refinery`, `best_manufacturing`, `best_logistics`, `best_fishing`, `best_tech` | the chance a new industrial lot there takes the kind, from the sim's own industry weights (the player's area bias left out) |
+| `best_farming`, `best_oil`, `best_refinery`, `best_manufacturing`, `best_logistics`, `best_fishing`, `best_tech`, `best_mining`, `best_smelting`, `best_factory_farming` | the chance a new industrial lot there takes the kind, from the sim's own industry weights (the player's area bias left out) |
 
 Aliases: `fertility`, `hot_spots`, `quarry`, `port`, `industry`, and `land_<key>`. `terrain_at`
 returns every layer's value at a point under `survey`.

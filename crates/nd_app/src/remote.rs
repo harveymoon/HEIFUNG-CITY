@@ -515,6 +515,19 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(v)
         }
         "terrain_at" => Ok(land::terrain_at(&ctx.sim.world, req_point(cmd)?)),
+        // [dirty-industry] Pay to clean up poisoned ground: {x, y, radius}.
+        "remediate" | "cleanup" | "clean_up" => {
+            let p = req_point(cmd)?;
+            let r = opt_f32(cmd, "radius")?.unwrap_or(100.0);
+            let (cost, removed) = ctx.sim.world.remediate(p, r)?;
+            Ok(json!({ "ok": true, "cost": round(cost), "removed_cells": round(removed), "treasury": round(ctx.sim.world.economy.treasury) }))
+        }
+        // [dirty-industry] Dirty plants and contamination near a point.
+        "dirt_at" | "contamination_at" => {
+            let p = req_point(cmd)?;
+            let w = &ctx.sim.world;
+            Ok(json!({ "at": [p.x, p.y], "contamination": round(w.contamination.at(p)), "dirty_nearby": land::dirty_near(w, p) }))
+        }
         // [grid-weather] Wind and sun at a point; y may be given as z (the
         // renderer's name for the sim's y).
         "resource" => {
@@ -2651,6 +2664,9 @@ fn help() -> Value {
     // [road-inspect]
     v["commands"]["repair_road"] = json!({ "road": "id or [x,y]; default the selected road", "returns": "repaired, cost, treasury, road (the card); pays the crews' price (lane-m x wear x 6) from the treasury as road maintenance" });
     // [plant-groups]
+    // [dirty-industry]
+    v["commands"]["remediate"] = json!({ "x": "f", "y": "f", "radius": "m, default 100, at most 300", "note": "pay to dig out the contamination there (450 per cell of full contamination); alias cleanup" });
+    v["commands"]["dirt_at"] = json!({ "x": "f", "y": "f", "returns": "contamination, dirty_nearby {plants [{building, name, what, distance_m, level, reach_m}], home_exposure, farm_exposure}" });
     v["commands"]["plant_preview"] = json!({ "kind": "solar|wind|coal|...", "x": "f", "y": "f", "note": "read-only: MW, cost and upkeep on the site a click there takes (a lot, or unzoned ground joined into one), the Sunfield / Wind Park it would join and what it adds, and any problem" });
     // [grid-weather]
     v["commands"]["resource"] = json!({ "x": "f", "y": "f (or z)", "returns": "wind (site_factor, mean_ms, now_ms, typical_yield, yield_now, cut_out_now) and solar (site_factor, climate_sun, sun, yield_now) at the point, and the climate" });
@@ -2669,7 +2685,7 @@ fn help() -> Value {
     let review = json!({
         "report": { "sections": "optional subset of overview, people, economy, land, services, industry, society, alerts, history (default all but history): the one-call city review", "history_days": "days of the history section (default 30, max 365)" },
         "map": { "cell_m": "cell size in metres, default 100 (grown to keep at most 400 cells)", "layer": "summary (table of cells) | population | land_value | jobs | hunger | vacancy | power | traffic | fertility | oil | contamination | industry | crime | homeless | trash (grid + ASCII heat map)" },
-        "industry": { "lot": "lot id, or", "polygon": "[[x, y], ...] area, or", "pos": "[x, y] (query only)", "kind": "farming | oil | refinery | manufacturing | logistics | fishing | tech | none: sets the industry sub-zone bias (none hands the area back to the ground); omit to query the ground, contamination and industry weights of the lot" },
+        "industry": { "lot": "lot id, or", "polygon": "[[x, y], ...] area, or", "pos": "[x, y] (query only)", "kind": "farming | oil | refinery | manufacturing | logistics | fishing | tech | mining | smelting | factory_farming | none: sets the industry sub-zone bias (none hands the area back to the ground); omit to query the ground, contamination and industry weights of the lot" },
         "history": { "keys": "optional daily/hourly series names (default all)", "days": "last n days (default all kept, up to 365)" },
         "list": { "what": "businesses|buildings|citizens|lots|routes|plants|facilities", "sort": "column", "desc": "bool", "filter": "{column: substring | value | {min, max}}", "fields": "[columns] (id always kept)", "offset": "default 0", "limit": "default 50, max 1000" },
         "street_events": { "limit": "rows of history and news (default 10)", "fresh": "bool: weigh the warehouses for a rave now (else the last 22:00 roll's)", "returns": "race (stage, meet, finish, route_m, racers with place and speed, crowd, incident, arrests, fines), race_planned, race_crew, rave (place, door, guests, queue, queue_at_door, inside, peak, complaints, incident, pull), rave_planned, rave_spots (warehouses with youth, artists, art_scene, neighbours, culture, has_scene, night_chance, why), history, news, totals" },
@@ -2712,7 +2728,7 @@ fn help() -> Value {
     let planning = json!({
         "tool": { "name": "inspect|road|zone|edit|bulldoze|power|transit|rail", "preset": "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway|Tunnel|Roundabout (Tunnel switches the view underground, the others back to ground)", "elevation": "road tool level for the next point, m (-20..24)", "depth": "underground|ground|sky: the view layer", "draw": "[[x,y,level?],...]: the road being drawn, for its preview", "cursor": "[x,y]: where the pointer stands for the road preview (until the mouse is used)", "diameter": "roundabout 24..240 m", "ring_lanes": "roundabout 1|2|3", "ring_at": "[x,y]: show the roundabout preview there as if hovered (until the mouse is used)", "kind": "sub-mode of the active tool", "mode": "zone tool: polygon|brush|marquee", "radius": "zone brush radius m", "unzone": "bool", "industry": "zone tool sub-zone for industrial land: auto|farming|oil|...", "land_use": "(or none: the brush unzones)", "lanes_fwd": "", "lanes_bwd": "", "curved": "", "show_routes": "", "route": "id" },
         "project": { "action": "list|new|switch|rename|delete|park|start|implement|undo|redo|discard", "id": "project id (default: the active one)", "name": "for new/rename, or to pick a project by name", "note": "several named projects; the active one is edited, the rest previewed dim; implement builds one at a time, the later one wins where two change the same gesture or parcel (warnings in the reply)" },
-        "paint": { "land_use": "residential|...|park, or none to unzone", "at": "[x,y] brush centre", "radius": "m (default the tool's)", "industry": "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech, the sub-zone set on implement", "rect": "[[x0,y0],[x1,y1]] marquee", "polygon": "[[x,y],...]", "implement": "bool", "note": "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step" }
+        "paint": { "land_use": "residential|...|park, or none to unzone", "at": "[x,y] brush centre", "radius": "m (default the tool's)", "industry": "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech|mining|smelting|factory_farming, the sub-zone set on implement", "rect": "[[x0,y0],[x1,y1]] marquee", "polygon": "[[x,y],...]", "implement": "bool", "note": "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step" }
     });
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), planning.as_object()) {
         c.extend(r.clone());

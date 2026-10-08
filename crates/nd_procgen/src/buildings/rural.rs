@@ -125,7 +125,7 @@ fn dumpster(g: &mut Geometry, f: &Frame, p: Vec2, yaw: f32, color: [f32; 3], ski
 }
 
 /// A big dump truck for the mine: wheels, chassis, tipper and cab.
-fn haul_truck(g: &mut Geometry, f: &Frame, p: Vec2, y: f32, yaw: f32, paint: [f32; 3]) {
+pub(super) fn haul_truck(g: &mut Geometry, f: &Frame, p: Vec2, y: f32, yaw: f32, paint: [f32; 3]) {
     let d = Vec2::new(yaw.cos(), yaw.sin());
     let n = Vec2::new(-d.y, d.x);
     for (a, s) in [(2.0f32, 1.3f32), (2.0, -1.3), (-1.8, 1.3), (-1.8, -1.3)] {
@@ -145,7 +145,7 @@ fn c_glass() -> [f32; 3] {
 }
 
 /// A cone heap.
-fn heap(g: &mut Geometry, c: &Ctx, p: Vec2, r: f32, h: f32, color: [f32; 3]) {
+pub(super) fn heap(g: &mut Geometry, c: &Ctx, p: Vec2, r: f32, h: f32, color: [f32; 3]) {
     if !c.inside_local(p) || distance_to_boundary(p, &c.lot_poly) < r * 0.8 {
         return;
     }
@@ -404,7 +404,9 @@ pub fn strip_mine(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
     let t = c.tier.index();
-    yard(g, c, 0.3, Dirt, mix(pal.dirt, pal.stone, 0.3));
+    let pad = yard(g, c, 0.3, Dirt, mix(pal.dirt, pal.stone, 0.3));
+    // [dirty-industry] Dust, tailings and diesel on the ground round the pit.
+    super::dirty::soot_stains(g, c, rng, &pad, 0.5, false);
     let area = R::of(&c.poly);
     let fs = (area.d() * 0.22).clamp(4.0, 14.0);
     let pit_poly = super::kit::clip_box(&offset_poly(&c.lot_poly, 1.0), area.u0 - 3.0, area.u1 + 3.0, area.v0 + fs, area.v1 + 3.0);

@@ -29,6 +29,34 @@ pub struct HoverSite {
     pub verdict: Result<String, String>,
     /// The Zone tool's parcel (a lower wall, and a label only on refusal).
     pub zone: bool,
+    /// [dirty-industry] A warning on a site that would go ahead: homes or
+    /// farms painted next to dirty industry (shown even for a zone).
+    pub warning: Option<String>,
+}
+
+/// [dirty-industry] What a homes, shops or farm parcel at `p` would suffer
+/// from the dirty plants around, as a warning for the hover label.
+fn dirt_warning(w: &World, p: SVec2, lu: nd_sim::LandUse) -> Option<String> {
+    use nd_sim::industry::{IndustryKind, Neighbour};
+    if w.dirty.is_empty() {
+        return None;
+    }
+    let who = match lu {
+        nd_sim::LandUse::Industrial => Neighbour::Industry(IndustryKind::Farming),
+        other => Neighbour::Land(other),
+    };
+    let e = w.dirt_exposure_at(p, who, None);
+    if e < 0.1 {
+        return None;
+    }
+    let worst = w.dirty.iter().filter(|s| nd_sim::industry::sensitivity(who, s.as_kind) > 0.0 && s.pos.distance(p) < s.reach).min_by(|a, b| a.pos.distance(p).total_cmp(&b.pos.distance(p)))?;
+    let name = w.buildings.get(worst.building).map_or("dirty industry".to_string(), |b| b.name.clone());
+    let d = worst.pos.distance(p);
+    Some(match lu {
+        nd_sim::LandUse::Industrial => format!("Next to {name} ({d:.0} m): no farm will open here (food output −{:.0}%)", 100.0 * nd_sim::world::ADJACENCY_OUTPUT_HIT * e),
+        nd_sim::LandUse::Residential => format!("Next to {name} ({d:.0} m): homes here lose value (−{:.2}) and their people fall ill", nd_sim::world::ADJACENCY_VALUE_HIT * e),
+        _ => format!("Next to {name} ({d:.0} m): land value −{:.2}, slow to build", nd_sim::world::ADJACENCY_VALUE_HIT * e),
+    })
 }
 
 /// What the pointer at `p` is over for the active tool, and the sim's
@@ -68,7 +96,8 @@ pub fn hover_site(w: &World, tools: &ToolState, p: SVec2) -> Option<HoverSite> {
                 Some(why) => Err(why.to_string()),
                 None => Ok(format!("{} zoning", lu.label())),
             };
-            Some(HoverSite { outline: parcel.polygon.clone(), verdict, zone: true })
+            let warning = if verdict.is_ok() { dirt_warning(w, nd_sim::geom::polygon_centroid(&parcel.polygon), lu) } else { None };
+            Some(HoverSite { outline: parcel.polygon.clone(), verdict, zone: true, warning })
         }
         _ => None,
     }
@@ -148,7 +177,7 @@ fn buildings_site(w: &World, tools: &ToolState, p: SVec2, ok: bool, text: String
     let outline = if outline.len() >= 3 { outline } else { w.parcels.parcels.get(w.parcels.at(p)?)?.polygon.clone() };
     let label = capitalised(&tools.build_item().label());
     let verdict = if ok { Ok(format!("{label} can go here: {text}")) } else { Err(text) };
-    Some(HoverSite { outline, verdict, zone: false })
+    Some(HoverSite { outline, verdict, zone: false, warning: None })
 }
 
 /// The point standing in for the pointer: the remote API's pin, else the
@@ -306,6 +335,7 @@ pub fn plot_hover_label(mut contexts: bevy_egui::EguiContexts, hover: Res<PlotHo
     use bevy_egui::egui;
     let (Some(site), Some(at)) = (&hover.site, hover.at) else { return Ok(()) };
     let (text, bg) = match &site.verdict {
+        Ok(_) if site.warning.is_some() => (site.warning.clone().unwrap_or_default(), egui::Color32::from_rgba_unmultiplied(150, 100, 10, 230)),
         Ok(_) if site.zone => return Ok(()),
         Ok(note) => (note.clone(), egui::Color32::from_rgba_unmultiplied(18, 110, 52, 225)),
         Err(why) => (format!("Can't build: {why}"), egui::Color32::from_rgba_unmultiplied(150, 20, 28, 230)),
@@ -342,8 +372,8 @@ mod tests {
     fn the_wall_fades_to_nothing_and_takes_the_verdicts_colour() {
         let w = World::new(nd_sim::WorldConfig { emergencies: false, society: false, landscape: nd_sim::LandscapeParams::flat(), ..nd_sim::WorldConfig::default() });
         let sq = vec![SVec2::new(0.0, 0.0), SVec2::new(20.0, 0.0), SVec2::new(20.0, 20.0), SVec2::new(0.0, 20.0)];
-        let ok = HoverSite { outline: sq.clone(), verdict: Ok("fits".into()), zone: false };
-        let no = HoverSite { outline: sq, verdict: Err("no".into()), zone: false };
+        let ok = HoverSite { outline: sq.clone(), verdict: Ok("fits".into()), zone: false, warning: None };
+        let no = HoverSite { outline: sq, verdict: Err("no".into()), zone: false, warning: None };
         let m = highlight_mesh(&w, &ok, 8.0, 1.0);
         let top = m.positions.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
         assert!(top >= 8.0);

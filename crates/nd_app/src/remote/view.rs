@@ -477,7 +477,25 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
     });
     // [free-placement] The building's own use (power, wages, venues); `land_use` is Civic for a city building.
     v["use"] = json!(b.land_use.label());
+    v["dirt"] = dirt_json(w, id);
     v
+}
+
+/// [dirty-industry] A building and dirty industry: how dirty it is itself,
+/// its unhappy neighbours (worst first) and what they cost it, and the
+/// ground under it.
+pub fn dirt_json(w: &World, id: BuildingId) -> Value {
+    let Some(b) = w.buildings.get(id) else { return Value::Null };
+    let me = w.dirty.iter().find(|s| s.building == id).map(|s| {
+        json!({ "level": round(s.level), "reach_m": round(s.reach), "reads_as": s.as_kind.label(), "spill": b.business.as_ref().and_then(|z| z.kind.spill()).or_else(|| b.plant.and_then(|k| k.ground_spill())).map(|(r, a)| json!({ "radius_m": r, "per_hour": a })) })
+    });
+    let neighbours: Vec<Value> = w.unhappy_neighbours(id).into_iter().map(|n| json!({ "building": key_str(n.source), "name": n.name, "what": n.what, "distance_m": round(n.distance), "hit": round(n.hit) })).collect();
+    let contamination = w.lots.get(b.lot).map_or(0.0, |l| w.contamination.over(l.center, &l.polygon));
+    json!({
+        "dirty": me, "dirtiness": round(b.business.as_ref().map_or(0.0, |z| z.kind.dirtiness())),
+        "as_neighbour": w.neighbour_use(id).map(|n| n.label()), "exposure": round(w.building_exposure(id)),
+        "unhappy_neighbours": neighbours, "costs": w.adjacency_cost(id), "ground_contamination": round(contamination),
+    })
 }
 
 // ── lots ────────────────────────────────────────────────────────────────────

@@ -44,6 +44,10 @@ mod trades;
 mod rural;
 /// [economy] Land side of marinas and fishing ports.
 mod docks;
+// [dirty-industry] smelters, factory farms, chemical works, stained ground
+pub mod dirty;
+#[cfg(test)]
+mod dirty_tests;
 #[cfg(test)]
 mod economy_tests;
 pub use parts::WINDOW_LIGHT_MARK;
@@ -272,6 +276,14 @@ pub enum Style {
     MegaHotel,
     /// A gallery grown into a museum.
     Museum,
+    // -- [dirty-industry] the new dirty trades (`buildings/dirty.rs`),
+    // appended so `ALL` keeps its order. --
+    /// Blast furnace, rusted casting hall, stacks, ore and slag heaps.
+    Smelter,
+    /// Battery sheds, packed mud pens and a manure lagoon.
+    Feedlot,
+    /// Cell houses, banded tank rows, a stack and a poisoned pond.
+    ChemicalWorks,
 }
 
 impl Style {
@@ -280,7 +292,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 107] = [
+    pub const ALL: [Style; 110] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -388,6 +400,9 @@ impl Style {
         Style::Mansion,
         Style::MegaHotel,
         Style::Museum,
+        Style::Smelter,
+        Style::Feedlot,
+        Style::ChemicalWorks,
     ];
 
     /// [land] The style a building's form forces (`nd_sim::estate::Form`);
@@ -547,6 +562,9 @@ impl Style {
             Style::Mansion => "mansion",
             Style::MegaHotel => "mega hotel",
             Style::Museum => "museum",
+            Style::Smelter => "smelter",
+            Style::Feedlot => "factory farm",
+            Style::ChemicalWorks => "chemical works",
         }
     }
 }
@@ -1295,6 +1313,10 @@ pub fn industry_styles(kind: nd_sim::BusinessKind, tier: Tier) -> Option<&'stati
         B::ChickenFarm => &[(Style::ChickenFarm, 1.0)],
         B::Slaughterhouse => &[(Style::Slaughterhouse, 1.0)],
         B::StripMine => &[(Style::StripMine, 1.0)],
+        // [dirty-industry]
+        B::Smelter => &[(Style::Smelter, 1.0)],
+        B::Feedlot => &[(Style::Feedlot, 1.0)],
+        B::ChemicalWorks => &[(Style::ChemicalWorks, 1.0)],
         B::FishGutting => &[(Style::FishGutting, 1.0)],
         B::FishStickFactory => &[(Style::FishStickFactory, 1.0)],
         B::FishMarket => &[(Style::FishMarket, 1.0)],
@@ -1326,7 +1348,7 @@ pub fn business_look_wins(kind: nd_sim::BusinessKind) -> bool {
     use nd_sim::BusinessKind as B;
     matches!(
         kind,
-        B::Mechanic | B::CarDealer | B::TrashCompany | B::BikeShop | B::CowFarm | B::ChickenFarm | B::Slaughterhouse | B::StripMine | B::Marina | B::FishingPort | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::GolfRange | B::ArtStudio | B::Gallery
+        B::Mechanic | B::CarDealer | B::TrashCompany | B::BikeShop | B::CowFarm | B::ChickenFarm | B::Slaughterhouse | B::StripMine | B::Marina | B::FishingPort | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::GolfRange | B::ArtStudio | B::Gallery | B::Smelter | B::Feedlot | B::ChemicalWorks
     )
 }
 
@@ -1542,6 +1564,9 @@ fn generate_styled_extras(
         Style::Mansion => estates::mansion(&mut g, &ctx, &mut rng),
         Style::MegaHotel => estates::mega_hotel(&mut g, &ctx, &mut rng),
         Style::Museum => estates::museum(&mut g, &ctx, &mut rng),
+        Style::Smelter => dirty::smelter(&mut g, &ctx, &mut rng),
+        Style::Feedlot => dirty::feedlot(&mut g, &ctx, &mut rng),
+        Style::ChemicalWorks => dirty::chemical_works(&mut g, &ctx, &mut rng),
     }
     if extras.rooftop_pad && style.pad_capable() && g.pads.is_empty() {
         air::rooftop_deck(&mut g, &ctx);

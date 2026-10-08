@@ -307,6 +307,8 @@ impl VehicleModel {
                 Resource::Plastics | Resource::Fish => BodyType::BoxVan,
                 // [economy] cattle trucks, ore tippers, reefers and art vans
                 Resource::Livestock | Resource::Ore => BodyType::Semi,
+                // [dirty-industry] ingots on a flatbed semi
+                Resource::Metal => BodyType::Semi,
                 Resource::Fillets | Resource::Art => BodyType::BoxVan,
             };
             let mut m = Self::new(VehicleClass::Mid, body);

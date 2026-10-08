@@ -52,6 +52,19 @@ pub const MAX_FUNDING: f32 = 1.5;
 pub const WORN: f32 = 0.5;
 pub const CRUMBLING: f32 = 0.8;
 
+/// [dirty-industry] What one vehicle seen on a piece counts as: a car one,
+/// a bus or an empty lorry `HEAVY`, a loaded lorry `HEAVY` times how hard
+/// its load is on the road (`Resource::road_wear_factor`: ore, ingots,
+/// crude and livestock for the dirty industries weigh most).
+pub fn vehicle_load(cargo: Option<&crate::traffic::Cargo>, bus: bool) -> f32 {
+    match cargo {
+        Some(c) if c.amount > 0.0 => HEAVY * c.resource.road_wear_factor(),
+        Some(_) => HEAVY,
+        None if bus => HEAVY,
+        None => 1.0,
+    }
+}
+
 /// How rough a piece is for traffic, `0..1` (0 below `ROUGH_FROM`).
 pub fn roughness(wear: f32) -> f32 {
     ((wear - ROUGH_FROM) / (1.0 - ROUGH_FROM)).clamp(0.0, 1.0)

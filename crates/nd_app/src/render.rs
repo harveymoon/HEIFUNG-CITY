@@ -44,6 +44,8 @@ mod far;
 /// [layers] Traffic and Crime focus views: the city dimmed, vehicles lit.
 mod focus;
 mod haze;
+// [dirty-industry] smoke over the dirty plants and the poisoned ground's stain
+mod grime;
 /// [climate] Rain, snow and hot-spot steam.
 pub mod climate;
 /// Drone heat vision (render/heat.rs).
@@ -451,7 +453,7 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, (holo::sync_draw_hologram, holo::sync_plan_holograms).in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
         app.add_systems(Update, holo::apply_depth.in_set(SimSet::Sync).after(lift_movers));
         app.add_systems(Update, (subway::sync_metro_tunnels, subway::sync_metro_trains).in_set(SimSet::Sync).after(sync_trains).before(holo::apply_depth));
-        app.add_systems(Update, (turbines::sync_turbines, solar::sync_solar, haze::sync_haze, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
+        app.add_systems(Update, (turbines::sync_turbines, solar::sync_solar, haze::sync_haze, grime::sync_grime, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.add_systems(Update, (climate::sync_precipitation, climate::sync_steam).in_set(SimSet::Sync).after(sync_landscape));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
         // The ground and water out past the map, into the fog.
