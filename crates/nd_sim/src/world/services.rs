@@ -191,7 +191,7 @@ impl World {
         let Some(uk) = kind.unit_kind() else { return };
         let have = self.services.units.values().filter(|u| u.station == station).count();
         for k in have..kind.units(tier) {
-            self.services.units.insert(Unit { kind: uk, station, number: k as u8 + 1, state: UnitState::Idle, car: None, incident: None, pos, heading: 0.0, hospital: None, patrol_until: 0, leaving: false });
+            self.services.units.insert(Unit { kind: uk, station, number: k as u8 + 1, state: UnitState::Idle, car: None, incident: None, pos, heading: 0.0, hospital: None, patrol_until: 0, leaving: false, packing_until: 0 });
         }
     }
 
@@ -740,6 +740,7 @@ impl World {
         for id in active {
             self.step_incident(id);
         }
+        self.step_packing();
         self.dispatch_queue();
         if tick % 5 == 2 {
             self.step_patrols();
@@ -1833,6 +1834,19 @@ impl World {
         }
     }
 
+    /// [fire-scene] Fire engines whose crew has packed up drive home.
+    fn step_packing(&mut self) {
+        let tick = self.clock.tick;
+        let done: Vec<UnitId> = self.services.units.iter().filter(|(_, u)| u.packing_until > 0 && (tick >= u.packing_until || u.state != UnitState::OnScene)).map(|(id, _)| id).collect();
+        for uid in done {
+            let u = &mut self.services.units[uid];
+            u.packing_until = 0;
+            if u.state == UnitState::OnScene {
+                self.send_home(uid);
+            }
+        }
+    }
+
     /// Work on scene is done (crimes and patients; fires end when out).
     fn finish_scene(&mut self, id: u32) {
         let tick = self.clock.tick;
@@ -2128,7 +2142,10 @@ impl World {
         }
         if let Some(uid) = unit {
             let u = self.services.units.get(uid).filter(|u| u.incident == Some(id)).map(|u| u.state);
-            if u == Some(UnitState::OnScene) {
+            if u == Some(UnitState::OnScene) && kind == IncidentKind::Fire {
+                // [fire-scene] The crew packs up first (`step_packing`).
+                self.services.units[uid].packing_until = tick + PACK_UP_TICKS;
+            } else if u == Some(UnitState::OnScene) {
                 self.send_home(uid);
             } else if u == Some(UnitState::Responding) {
                 // Called off on the way: free at once, from where it is.
@@ -2369,6 +2386,40 @@ mod tests {
             w.tick(&mut minds);
         }
         max
+    }
+
+    /// [fire-scene] Once the fire is out the engine stays a few minutes on
+    /// scene while the crew packs up (still on the job, its incident still
+    /// named for the renderer), then drives home.
+    #[test]
+    fn a_fire_engine_packs_up_before_it_leaves() {
+        let mut w = town();
+        let crew = people(&mut w, 8);
+        let station = w.build_service(civic_lot(&w, -350.0), ServiceKind::Fire, Tier::Mid).unwrap();
+        let desk = w.build_service(civic_lot(&w, -150.0), ServiceKind::Dispatch, Tier::Mid).unwrap();
+        staff(&mut w, station, &crew[..6], false);
+        staff(&mut w, desk, &crew[6..7], true);
+        let target = building_at(&mut w, 100.0);
+        let id = w.start_fire(target).unwrap();
+        run_until(&mut w, 600, |w| !w.services.incident(id).unwrap().active());
+        let inc = w.services.incident(id).unwrap();
+        assert_eq!(inc.outcome, Some(Outcome::Extinguished));
+        let (uid, out_at) = (inc.unit.unwrap(), inc.resolved.unwrap());
+        let u = &w.services.units[uid];
+        assert!(u.packing(), "packing up: {:?}", u.state);
+        assert_eq!(u.incident, Some(id), "still at its fire");
+        assert_eq!(u.packing_until, out_at + PACK_UP_TICKS);
+        assert!(u.busy() && u.car.is_none(), "parked and not free for calls");
+        // Its crew is out with it, and says so.
+        let hand = w.unit_crew(uid)[0];
+        assert_eq!(w.crew_unit_of(hand), Some(uid));
+        assert!(w.activity_line(hand).starts_with("out with Engine"), "{}", w.activity_line(hand));
+        run_until(&mut w, 20, |w| !w.services.units[uid].packing());
+        let u = &w.services.units[uid];
+        assert_eq!(w.clock.tick, out_at + PACK_UP_TICKS, "left on time");
+        assert_eq!(u.state, UnitState::Returning);
+        assert_eq!(u.packing_until, 0);
+        assert!(u.incident.is_none() && u.car.is_some(), "driving home");
     }
 
     #[test]

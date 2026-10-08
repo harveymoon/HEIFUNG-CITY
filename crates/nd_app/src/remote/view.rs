@@ -231,6 +231,7 @@ pub fn selection(w: &World, sel: Selection) -> Value {
         Selection::Parked(id) => json!({ "kind": "parked_car", "id": key_str(id) }),
         Selection::Bot(id) => json!({ "kind": "bot", "id": key_str(id), "name": nd_sim::bots::bot_name(w, id) }),
         Selection::Train(id) => json!({ "kind": "train", "id": key_str(id), "headcode": w.rail.trains.get(id).map(|t| crate::train_select::headcode(id, t.kind)) }),
+        Selection::Unit(id) => json!({ "kind": "unit", "id": key_str(id), "label": crate::fire_scene::unit_title(w, id), "doing": crate::fire_scene::unit_doing(w, id) }),
         Selection::Metro(id) => json!({ "kind": "metro_train", "id": key_str(id), "headcode": crate::train_select::metro_code(id), "line": w.subway.trains.get(id).and_then(|t| w.subway.lines.get(t.line)).map(|l| l.name.clone()) }),
     }
 }

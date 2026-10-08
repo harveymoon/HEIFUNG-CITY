@@ -732,7 +732,7 @@ several plots), home, business, form. A billionaire's other homes and businesses
 
 | Command | Fields |
 | --- | --- |
-| `select` | `citizen` / `building` / `car` / `vehicle` (a parked car) / `bot` (a delivery robot) / `train` / `metro` (a metro train) id, `toll` (a booth id, an integer), `road` / `segment` (a street piece: id or [x, y]), or `at: [x, y]` (picks like a click: on a train's car it picks the train; a metro train only with the Underground view on; a road piece when nothing else is there), or nothing to clear |
+| `select` | `citizen` / `building` / `car` / `vehicle` (a parked car) / `bot` (a delivery robot) / `train` / `metro` (a metro train) / `unit` (an emergency unit, see Emergency units) id, `toll` (a booth id, an integer), `road` / `segment` (a street piece: id or [x, y]), or `at: [x, y]` (picks like a click: on a train's car it picks the train; a metro train only with the Underground view on; a road piece when nothing else is there), or nothing to clear |
 | `selected` | full detail of the player's selection (see below) |
 | `flags` / `flag` | the player's "Flag for Claude" bookmarks (see below) |
 | `favourite` | `citizen`, `on` (omit to toggle). Favourites wear a gold ring and diamond in the world (their car, driving or parked, a gold box) |
@@ -1186,7 +1186,9 @@ patients before the queue runs. Round-the-clock posts keep all three shifts mann
 night crews keep night hours.
 
 `incident {kind, building | citizen}` starts one by hand (fire, crime or medical) for testing; reply
-`incident` (its id, as in the report and the events). `incidents {kind}` filters by fire, crime or
+`incident` (its id, as in the report and the events). [fire-scene] A fire takes `intensity` (dev,
+0..1) to start it that big: one engine knocks off 0.012 a minute, so 0.8 keeps it busy about 70
+minutes. `incidents {kind}` filters by fire, crime or
 medical (crash victims are medical incidents).
 `incident {kind: "crash", car? | at?: [x, y], speed? (m/s, default 25 = written off)}` crashes a car
 (the next tick turns it into injuries and 911 calls); `incident {kind: "takeover", at?: [x, y]}`
@@ -1213,6 +1215,41 @@ Events in the log (`events`): `IncidentStarted`, `EmergencyCall`, `UnitDispatche
 `FireSpread`, `BurnedDown`, `StadiumEvent`, `Arrested` (incident, citizen), `Released` (citizen). Building rows carry `service` (`"fire:mid"`) and
 `burning`. Emergency vehicles are cars in `find {what: "cars"}`; the units behind them are in
 `report {sections: ["services"]}` under `emergency.stations` and `emergency.active_incidents`.
+
+### Emergency units and the fire scene [fire-scene]
+
+`units {kind?, out?}` lists every fire engine, police car and ambulance: `unit` (its id), title
+("Engine 2 · Eastgate Fire Station"), kind, state, doing ("on scene at Mira Tower fire, 12 min",
+"responding to a fire at ...", "packing up at ...", "on patrol, parked on the beat"), pos (null in the
+station) and incident. `kind` filters (fire_engine, police_car, ambulance, or Engine / Car / Medic),
+`out: true` keeps the ones out of the station.
+
+`select {unit}` selects one (driving, or standing on scene or on a beat), as a click does: a click
+on a unit's car or on a unit standing still picks the unit (Selection kind `unit`), and a click right
+on a firefighter at work picks that crew member (a citizen). `inspect {unit}` (or `inspect` /
+`selected` with one selected; `inspect {car}` of a unit's car adds `unit`) gives: unit, title, kind,
+call_sign, station, station_name, state, doing, lights, packing, car (while driving), pos, heading,
+crew_size, crew (citizen, name, and at a fire role pump operator / on the hose / on the ladder, out,
+pos [x, height, y], pose stand / nozzle / pump), incident (id, kind, stage, place, building, name,
+minutes_on_scene, outcome; a fire adds intensity, how_bad smouldering / burning / well alight /
+fully involved / out, minutes_to_out at one engine's rate, progress 0..1 knocked down, damage; other
+calls add patient, suspect, people), hospital (ambulances), and for a fire engine at work `scene`:
+incident, building, seconds on scene (sim time at 1x), water_litres (950 L/min on the hand line,
+1,900 on the ladder), aim [x, height, y], ladder {yaw_deg (from straight ahead), pitch_deg, length
+(7 stowed to 26 m), outriggers 0..1, tip}, hoses, streams (from, to, flow 0..1).
+`camera {follow: {unit: id}}`, `follow {unit}` and `zoom_to {unit}` take a unit too.
+
+What is drawn: when an engine stops at a fire its crew climbs out and walks to their places (pump
+operator at the panel on the building side, the nozzle crew to a hose line in front of the
+building, the ladder crew up the turntable); the outriggers go down, the roof ladder raises, turns
+and extends towards the fire (the roof line, or on a tower too tall to reach, the highest floors it
+reaches, where flames show in the windows) and the ladder crew climbs it to spray from the tip.
+Water arcs from both nozzles (fewer droplets at the Medium tier, a thin stream at Low); a fire under
+the hoses smokes less and steams more as it weakens. When it is out the engine packs up for
+`PACK_UP_TICKS` (3) minutes (`packing: true`, still on scene and busy: water off, crew back, ladder
+down) before it drives home. The scene is worked out from the sim each frame (`fire_scene.rs`),
+never stored; a crew member out with a unit says so in their activity ("out with Engine 1: on scene
+at Lotus Towers") and the camera follows them to the scene.
 
 ## Concerns and happiness
 

@@ -38,6 +38,8 @@ mod air;
 /// [districts] The district layer; [tourism] visitors on foot.
 mod districts;
 mod emergency;
+// [fire-scene] Firefighters, hoses and water at a fire.
+mod fire_scene;
 /// [land] Police light bars on convoys, bodyguards on foot.
 mod convoys;
 mod far;
@@ -472,6 +474,7 @@ impl Plugin for RenderPlugin {
         // Emergency vehicles, fires and rubble, after the cars they hide.
         app.add_systems(Update, emergency::sync_emergency.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, emergency::amber_beacons.after(sync_cars).in_set(SimSet::Sync));
+        app.add_systems(Update, fire_scene::sync_fire_scene.after(emergency::sync_emergency).in_set(SimSet::Sync));
         // [driving] Tyre smoke, skid marks, wrecks and tows.
         app.add_systems(Update, stunts::sync_stunts.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // [land] billionaires' convoys and bodyguards
@@ -1578,7 +1581,18 @@ pub(crate) fn plant_field(world: &World, id: BuildingId) -> Option<nd_procgen::P
 /// it: further than any parcel of a field it could touch.
 const PLANT_FIELD_REACH: f32 = 300.0;
 
-fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<()> {
+/// [fire-scene] The top of a building's mass as drawn (walls, glass and
+/// roofs; not masts, signs or lights), above its pad.
+fn mass_top(g: &Geometry) -> f32 {
+    use Surface as S;
+    [S::Concrete, S::Plaster, S::Brick, S::Stone, S::Panel, S::Glass, S::WornConcrete, S::WornPlaster, S::WornBrick, S::WornPanel]
+        .iter()
+        .filter_map(|s| g.parts.get(s.index()))
+        .flat_map(|m| m.positions.iter().map(|p| p[1]))
+        .fold(0.0, f32::max)
+}
+
+fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<f32> {
     let b = world.buildings.get(id)?;
     // [land] A building over merged plots is drawn on their combined
     // footprint (`World::footprint`): one building, no seams.
@@ -1614,10 +1628,11 @@ fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, style
     // [climate] Snow on the roofs in a cold climate.
     nd_procgen::climate::snow_cover(&mut g, assets.palette.snow);
     lights::tag_windows(&mut g, lights::slot_of(id));
+    let top = mass_top(&g);
     // Every building stands on its lot's levelled pad.
     nd_procgen::terrain::raise_geometry(&mut g, world.lot_pad(b.lot));
     geo.append(&g);
-    Some(())
+    Some(top)
 }
 
 /// The chunk a building is drawn in: by its lot centre, so a building and
@@ -1767,7 +1782,8 @@ fn sync_buildings(
             let Some(ids) = members.remove(&k) else { continue };
             let mut geo = Geometry::default();
             for &id in &ids {
-                if append_building(&mut geo, &sim.world, &assets, &sim.styles, id).is_some() {
+                if let Some(top) = append_building(&mut geo, &sim.world, &assets, &sim.styles, id) {
+                    sim.building_tops.0.insert(id, top);
                     state.building_chunks.insert(id, k);
                     let w = &sim.world;
                     match w.buildings[id].plant.filter(|k| k.merges_with_neighbours()).and_then(|_| w.lots.get(w.buildings[id].lot)) {
