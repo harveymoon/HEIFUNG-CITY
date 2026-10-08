@@ -168,8 +168,38 @@ impl PillarPlan {
     }
 }
 
-/// A key for a raised way: its points and levels.
+/// A key for a raised way: its points and levels, to the decimetre. Saved
+/// (`Pillar::way`), so the hash is spelled out here (FNV-1a over the
+/// quantised numbers, then a splitmix finish) and never changes with the
+/// toolchain, as `std`'s `DefaultHasher` may.
 pub fn way_key(pts: &[Vec2], levels: &[f32]) -> u64 {
+    const PRIME: u64 = 0x0000_0100_0000_01B3;
+    let mut h: u64 = 0xCBF2_9CE4_8422_2325;
+    let mut eat = |x: i64| {
+        for b in x.to_le_bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(PRIME);
+        }
+    };
+    eat(pts.len() as i64);
+    for p in pts {
+        eat((p.x * 10.0).round() as i64);
+        eat((p.y * 10.0).round() as i64);
+    }
+    for l in levels {
+        eat((l * 10.0).round() as i64);
+    }
+    let mut z = h;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// The key saves made before `way_key` was spelled out hold (`std`'s
+/// `DefaultHasher`), only to carry their columns over on load
+/// (`migrate_way_keys`). If the toolchain changed that hash since, the
+/// old columns are not recognised and are planned again.
+pub fn legacy_way_key(pts: &[Vec2], levels: &[f32]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     for p in pts {
@@ -179,6 +209,31 @@ pub fn way_key(pts: &[Vec2], levels: &[f32]) -> u64 {
         ((l * 10.0).round() as i64).hash(&mut h);
     }
     h.finish()
+}
+
+/// After a load: columns saved under a way's `legacy_way_key` take its
+/// `way_key`. `ways` are the raised ways as drawn (points, levels). A
+/// column already under a current key is left alone, so this can run on
+/// every load.
+pub fn migrate_way_keys<'a>(pillars: &mut [Pillar], ways: impl IntoIterator<Item = (&'a [Vec2], &'a [f32])>) {
+    if pillars.is_empty() {
+        return;
+    }
+    let mut current = std::collections::BTreeSet::new();
+    let mut from_legacy = std::collections::BTreeMap::new();
+    for (pts, levels) in ways {
+        let key = way_key(pts, levels);
+        current.insert(key);
+        from_legacy.insert(legacy_way_key(pts, levels), key);
+    }
+    for p in pillars.iter_mut() {
+        if current.contains(&p.way) {
+            continue;
+        }
+        if let Some(&key) = from_legacy.get(&p.way) {
+            p.way = key;
+        }
+    }
 }
 
 /// Does this way need columns anywhere?
@@ -434,5 +489,27 @@ mod tests {
         assert!(plan.ok());
         assert!(plan.pillars.iter().all(|q| q.level >= crate::roads::VIADUCT_LEVEL));
         assert!(plan.pillars.len() >= 3);
+    }
+
+    /// The key is saved, so it is pinned: the same way gives the same key
+    /// on any toolchain. (A change here orphans every saved column.)
+    #[test]
+    fn way_keys_are_pinned() {
+        let pts = [Vec2::new(0.0, 0.0), Vec2::new(120.0, 35.5)];
+        let levels = [0.0, 8.0];
+        assert_eq!(way_key(&pts, &levels), way_key(&pts, &levels));
+        assert_ne!(way_key(&pts, &levels), way_key(&pts, &[0.0, 8.5]));
+        assert_eq!(way_key(&pts, &levels), PINNED, "way_key changed: {:#x}", way_key(&pts, &levels));
+    }
+    const PINNED: u64 = 0x6aab_3054_84e0_9126;
+
+    #[test]
+    fn columns_saved_under_the_old_key_take_the_new_one() {
+        let pts = [Vec2::new(0.0, 0.0), Vec2::new(120.0, 35.5)];
+        let levels = [0.0, 8.0];
+        let col = |way| Pillar { at: Vec2::ZERO, dir: Vec2::X, half_width: 5.0, level: 8.0, way };
+        let mut cols = [col(legacy_way_key(&pts, &levels)), col(way_key(&pts, &levels)), col(12345)];
+        migrate_way_keys(&mut cols, [(&pts[..], &levels[..])]);
+        assert_eq!(cols.map(|c| c.way), [way_key(&pts, &levels), way_key(&pts, &levels), 12345]);
     }
 }
