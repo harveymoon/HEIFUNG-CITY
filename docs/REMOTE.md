@@ -110,6 +110,7 @@ Every example is the POST body; the reply always carries `"ok"`.
 | --- | --- | --- |
 | `help` | | every command and its fields |
 | `status` | | clock, paused, speed, effective_speed, population, buildings, under_construction, lots, homes/jobs, treasury, ledger_yesterday, power, weather, land, market, demand, traffic, transit, rail, render (fps, ticks_per_frame, triangles), camera, tool, selection, project, overlays, lighting, message, tool_status, event_seq, favourites, `windows_open` (the tool windows), `city_data` {open, tab, sub}, `build_window` {open, section}, `title_screen`, `climate` {climate, label, precipitation: null or {kind rain/snow, intensity 0..1}}, `alerts_top` (the first 5 of `report`'s alerts) |
+| `memory` | | [memory] `working_set_mb`, `peak_working_set_mb`, `commit_mb` (the process's private commit); `meshes`, `materials`, `images`, `entities`; `render` {building_entities, people_meshes}; `world` {citizens, buildings, cars, lots, day}; `heap` {live_mb, peak_mb, biggest_block_mb} with the `heap-count` cargo feature only (zeros otherwise) |
 | `pause` | `paused` bool (omit to toggle) | `paused` |
 | `speed` | `index` 0..5 (1×, 4×, 16×, 64×, 256×, 1024×), or `value`: a multiple of real time for what moves, snapped to the nearest step on a log scale. At 1× people walk at their true pace; the clock runs 15× faster than that | `speed_index`, `speed`, `ticks_per_second`, `label` |
 | `step` | `ticks` (default 1, max 100000) | `clock`, `took_ms` |
