@@ -110,6 +110,10 @@ const CROSSING_SETBACK: f32 = 3.0;
 /// [rail-crossing] Hardest a driver brakes to stop for a level crossing's
 /// lights; closer than that they go on over.
 const RAIL_STOP_BRAKE: f32 = 4.5;
+/// [rail-crossing] How far short of the end of its lane a vehicle's front
+/// stops for a level crossing: its body (drawn about its front point) stays
+/// behind the painted stop line.
+const RAIL_STOP_SHORT: f32 = 3.5;
 /// Left turn waits remembered for the report.
 const LEFT_WAIT_WINDOW: usize = 500;
 /// Shortest green before an actuated signal may cut to a waiting approach.
@@ -2620,7 +2624,7 @@ impl Traffic {
             }
             let nl = &self.net.lanes[next as usize];
             if nl.is_connector() && nl.rail_closed {
-                let stop = dist - 1.0;
+                let stop = dist - RAIL_STOP_SHORT;
                 // Already braking for it: carries on braking (the decision
                 // is not taken again at every step).
                 if car.wait != Wait::RailCrossing && car.v * car.v > 2.0 * RAIL_STOP_BRAKE * stop.max(0.0) {

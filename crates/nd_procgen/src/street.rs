@@ -1769,7 +1769,7 @@ fn level_crossing(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, node: No
             let h = a.heading();
             let right = Vec2::new(-h.y, h.x);
             let total = (a.lanes_in + a.lanes_out) as f32;
-            let p = at + a.away * (a.stop + 0.25);
+            let p = at + a.away * (a.stop + 1.0);
             let (from, to) = (-total * 0.5 * LANE_WIDTH + a.lanes_out as f32 * LANE_WIDTH, total * 0.5 * LANE_WIDTH);
             let from = if a.lanes_out > 0 { from + 0.15 } else { from };
             g.part(Paint).ground_strip(&[p + right * from, p + right * to], 0.45, MARK_Y + 0.003, rgba(mul(pal.lane_marker, 1.0)));
