@@ -2,6 +2,8 @@
 //! crate renders it, drives it, and gives the player tools.
 
 mod assets;
+/// [build-highlight] A Build window section's buildings and service areas on the map.
+mod build_highlight;
 mod camera;
 mod district_tool;
 mod flags;
@@ -64,6 +66,7 @@ fn main() {
             map_layers::MapLayersPlugin,
             marks::MarksPlugin,
             metro_ux::MetroUxPlugin,
+            build_highlight::BuildHighlightPlugin,
         ))
         .run();
 }
