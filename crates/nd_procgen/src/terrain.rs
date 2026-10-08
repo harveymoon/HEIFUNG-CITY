@@ -1585,3 +1585,80 @@ mod sweep_visual_tests {
         assert!(!on_other_way(&roads, sid, Vec2::new(40.0, off)));
     }
 }
+
+/// Test support for the orientation checks: the vertical faces of `m`
+/// standing `height` tall (one kind of box in a mix), as (horizontal
+/// normal, horizontal width). A box turned the wrong way round has its
+/// long faces where its short ones should be.
+#[cfg(test)]
+pub(crate) fn upright_faces(m: &crate::mesh::MeshData, height: f32) -> Vec<(Vec2, f32)> {
+    let mut out = Vec::new();
+    for t in m.indices.chunks_exact(3) {
+        let v = [t[0], t[1], t[2]].map(|i| glam::Vec3::from(m.positions[i as usize]));
+        let n = (v[1] - v[0]).cross(v[2] - v[0]).normalize_or_zero();
+        if n.y.abs() > 0.05 || n == glam::Vec3::ZERO {
+            continue;
+        }
+        let (lo, hi) = v.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p.y), hi.max(p.y)));
+        if ((hi - lo) - height).abs() > 0.01 {
+            continue;
+        }
+        let along = Vec2::new(-n.z, n.x);
+        let (a, b) = v.iter().fold((f32::MAX, f32::MIN), |(a, b), p| {
+            let s = Vec2::new(p.x, p.z).dot(along);
+            (a.min(s), b.max(s))
+        });
+        out.push((Vec2::new(n.x, n.z), b - a));
+    }
+    out
+}
+
+/// Every face of `faces` whose normal runs along `dir` is `want` wide
+/// (within 5 cm): the box lies the right way round on the way.
+#[cfg(test)]
+pub(crate) fn faces_along_are(faces: &[(Vec2, f32)], dir: Vec2, want: f32) -> Result<(), String> {
+    let hits: Vec<f32> = faces.iter().filter(|(n, _)| n.dot(dir).abs() > 0.95).map(|(_, w)| *w).collect();
+    if hits.is_empty() {
+        return Err("no faces along the way".into());
+    }
+    match hits.iter().find(|w| (**w - want).abs() > 0.05) {
+        Some(w) => Err(format!("a face square to the way is {w:.2} m wide, not {want:.2}")),
+        None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod orientation_tests {
+    use super::*;
+
+    /// Review #4: every box on a way at 45 degrees lies along or across it
+    /// as drawn on an axis-aligned one. `boxed` turns local +x to (cos yaw,
+    /// sin yaw); the terrain works passed -yaw and turned each by twice
+    /// the way's angle, so a crosshead ran along the deck.
+    #[test]
+    fn works_on_a_45_degree_way_face_the_way() {
+        let c = [0.6, 0.6, 0.6];
+        for deg in [45.0f32, 30.0, 0.0, 135.0] {
+            let dir = Vec2::new(deg.to_radians().cos(), deg.to_radians().sin());
+            let hw = 6.0;
+            // A pillar: its crosshead lies across the deck.
+            let mut g = Geometry::default();
+            pillar_column(&mut g, Vec2::new(40.0, -30.0), dir, 10.0, 0.0, hw, c);
+            faces_along_are(&upright_faces(g.get(Surface::Concrete), 0.7), dir, hw * 1.7).map_err(|e| format!("pillar at {deg}: {e}")).unwrap();
+            // A viaduct span's own columns.
+            let mut g = Geometry::default();
+            let a = Vec2::new(-20.0, 15.0);
+            viaduct_span(&mut g, a, a + dir * 60.0, 12.0, 12.0, hw, &|_| 0.0, c, c, true);
+            faces_along_are(&upright_faces(g.get(Surface::Concrete), 0.7), dir, hw * 1.7).map_err(|e| format!("viaduct at {deg}: {e}")).unwrap();
+            // A bridge abutment's seat spans the deck's width.
+            let mut g = Geometry::default();
+            abutment(&mut g, Vec2::new(5.0, 5.0), dir, 8.0, hw, 0.0, c);
+            faces_along_are(&upright_faces(g.get(Surface::Concrete), 7.6), dir, hw * 2.0 + 0.8).map_err(|e| format!("abutment at {deg}: {e}")).unwrap();
+            // A tunnel portal's coping runs along the headwall's top.
+            let mut g = Geometry::default();
+            let col = [0.5, 0.5, 0.5, 1.0];
+            portal_arch(&mut g, Vec2::new(-7.0, 3.0), dir, 0.0, 5.0, 12.0, col, col, col);
+            faces_along_are(&upright_faces(g.get(Surface::Concrete), 0.4), dir, (5.0 + 0.2 + 1.6) * 2.0 + 0.4).map_err(|e| format!("portal at {deg}: {e}")).unwrap();
+        }
+    }
+}
