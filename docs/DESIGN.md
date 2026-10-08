@@ -2240,7 +2240,7 @@ The Directory lists every business and every person in one table each, with a co
 the player asks of them. Businesses: name, kind (and industry), owner (chain, developer,
 billionaire, founder, mega-corp, university; "independent" when nobody holds it), district, the street it fronts,
 staff of jobs, takings today and yesterday, yesterday's net, cash, rating (stars) and today's
-footfall, and its state (under construction, out of business, broke, no staff, open, closed for
+footfall, and its state (being built, out of business, broke, no staff, open, closed for
 the night). People: name, age, class, income, workplace (or unemployed, child, retired), home and
 its street, household size, mood, health (ill, or how well fed and days hungry), the way they
 have travelled most lately, favourite place, friends, and what they are doing now (working, at

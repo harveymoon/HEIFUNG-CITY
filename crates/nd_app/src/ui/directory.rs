@@ -200,7 +200,7 @@ pub fn businesses(ui: &mut egui::Ui, p: &mut UiCtx) {
         _ => None,
     };
     let cols = &BizCol::ALL;
-    let weights = [2.2, 1.6, 1.5, 1.1, 1.4, 0.7, 0.8, 0.8, 0.8, 0.8, 0.7, 0.75, 1.1];
+    let weights = [2.1, 1.5, 1.4, 1.0, 1.3, 0.7, 0.8, 0.8, 0.8, 0.8, 0.7, 0.75, 1.45];
     let act = table(ui, "directory_biz", cols, &weights, &mut st.col, &mut st.desc, |c| (c.label(), c.tip(), c.numeric()), &rows, &order, |r| sel == Some(r.id), biz_cell);
     if st != before {
         save_state(&ctx, "businesses", st);

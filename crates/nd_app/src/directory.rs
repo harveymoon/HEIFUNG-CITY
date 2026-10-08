@@ -149,7 +149,7 @@ impl BizState {
 
     pub fn label(self) -> &'static str {
         match self {
-            BizState::Building => "under construction",
+            BizState::Building => "being built",
             BizState::Shut => "out of business",
             BizState::Broke => "broke",
             BizState::NoStaff => "no staff",
@@ -171,6 +171,7 @@ impl BizState {
 
     pub fn parse(s: &str) -> Option<BizState> {
         let s = s.trim().to_ascii_lowercase().replace([' ', '-'], "_");
+        let s = if s == "under_construction" { "building".to_string() } else { s };
         BizState::ALL.into_iter().find(|x| x.key() == s || x.label().replace(' ', "_") == s)
     }
 }
