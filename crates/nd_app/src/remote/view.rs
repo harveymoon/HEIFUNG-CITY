@@ -491,6 +491,8 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         v["dock"] = json!({ "kind": p.kind.label(), "road_connected": p.road_connected, "reaches_elsewhere": p.reaches_elsewhere, "works": p.works(), "ferries_sail": p.sails(), "berth": v2(p.berth), "stub": points(&p.road_line()) });
     }
     v["dirt"] = dirt_json(w, id);
+    // [fishing] A fishing port's boats and grounds.
+    v["fishing"] = super::economy::fishing(w, id);
     v
 }
 

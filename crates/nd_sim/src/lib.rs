@@ -43,6 +43,7 @@ pub mod pedestrians;
 pub mod pillars;
 pub mod places;
 pub mod plan;
+pub mod fishing;
 pub mod ports;
 pub mod power;
 pub mod pressure;
